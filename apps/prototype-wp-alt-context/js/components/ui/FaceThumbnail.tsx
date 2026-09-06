@@ -109,12 +109,13 @@ export const FaceThumbnail = React.forwardRef<HTMLDivElement, FaceThumbnailProps
     // Show placeholder on error
     if (loadState === 'error') {
       const errorLabel = __('Face image unavailable', 'alt-context');
+      const accessibleErrorLabel = alt ? `${errorLabel}. ${alt}` : errorLabel;
       return (
         <div
           ref={ref}
           className={classes}
           role="img"
-          aria-label={errorLabel}
+          aria-label={accessibleErrorLabel}
           style={{ width: displaySize, height: displaySize }}
         >
           <span className={`${baseClass}__error`}>

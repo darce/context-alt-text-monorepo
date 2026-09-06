@@ -806,9 +806,9 @@ class ReapCycleResult:
     actuated: list[tuple[str, str]]
     fenced_off: bool
     errors: list[str]
-    # STOPs forced unconditionally by the max-lease cost cap. Reported
-    # separately so an operator can distinguish the queue draining from the
-    # cost backstop firing.
+    # STOPs forced by the max-lease cost cap, including when the load boundary
+    # is untrustworthy. Reported separately so an operator can distinguish the
+    # queue draining from the cost backstop firing.
     lease_expired: list[tuple[str, str]] = field(default_factory=list)
     snapshot_persisted: bool = True
 
@@ -1077,7 +1077,16 @@ def _apply_running_since_leases(
             )
             logger.warning(msg)
             errors.append(msg)
-            observed.append(instance)
+            # The age this instance carries came from OCI, not from the lease, so
+            # feeding it to the absolute cost cap would STOP a machine whose lease
+            # age is unknown. Zero is the only value that keeps the log honest.
+            observed.append(
+                GpuInstance(
+                    instance_id=instance.instance_id,
+                    state=instance.state,
+                    idle_for_seconds=0,
+                )
+            )
             continue
         else:
             source = record.source
@@ -1126,8 +1135,9 @@ def _run_reap_cycle(
 
     Per-instance STOP failures are collected; the loop continues (rg-007).
 
-    The max-lease cost cap is unconditional. Load evidence gates only ordinary
-    idle STOP decisions and cannot extend a RUNNING lease beyond its cost cap.
+    The max-lease cost cap is absolute: it may STOP a RUNNING instance when the
+    load boundary is busy, untrustworthy, unavailable, or fails to sample. The
+    idle-STOP path remains fail-closed and refuses STOP on untrustworthy load.
     """
     lease_expired: list[tuple[str, str]] = []
     lease_errors: list[str] = []
@@ -1138,13 +1148,31 @@ def _run_reap_cycle(
             use_recorded_age=use_recorded_lease_age,
             dry_run=dry_run,
         )
+    try:
+        load = load_source.snapshot()
+    except Exception as exc:  # noqa: BLE001 - an unusable load fence fails closed
+        logger.error("load snapshot failed; treating load as untrustworthy: %s", exc)
+        load = None
+
+    load_trustworthy = isinstance(load, JobLoadSnapshot) and not load.untrustworthy
+
     forced = controller.lease_expired_instances(instances, max_lease_seconds=max_lease_seconds)
     for action, instance_id in forced:
-        logger.warning(
-            "max lease %ss exceeded; forcing STOP regardless of load evidence: %s",
-            max_lease_seconds,
-            instance_id,
-        )
+        if load_trustworthy:
+            logger.warning(
+                "max lease %ss exceeded; forcing STOP despite trustworthy busy load: %s",
+                max_lease_seconds,
+                instance_id,
+            )
+        else:
+            logger.error(
+                "max lease exceeded with untrustworthy load; forcing STOP (cost cap is absolute): %s",
+                instance_id,
+            )
+        if dry_run:
+            logger.info("dry-run would force STOP for expired lease: %s", instance_id)
+            lease_expired.append((action, instance_id))
+            continue
         try:
             actuator.stop_instance(instance_id)
             lease_expired.append((action, instance_id))
@@ -1167,17 +1195,18 @@ def _run_reap_cycle(
     if forced_ids:
         instances = [i for i in instances if i.instance_id not in forced_ids]
 
-    load = load_source.snapshot()
-    if not isinstance(load, JobLoadSnapshot) or load.untrustworthy:
-        logger.error("load snapshot untrustworthy; refusing ordinary idle STOP")
+    if not load_trustworthy:
+        msg = "load snapshot untrustworthy; refusing STOP (fail closed)"
+        logger.error(msg)
         return ReapCycleResult(
             decided=[],
             actuated=[],
             fenced_off=True,
-            errors=[*lease_errors, "load snapshot untrustworthy; refusing ordinary idle STOP"],
+            errors=[*lease_errors, msg],
             lease_expired=lease_expired,
         )
 
+    assert isinstance(load, JobLoadSnapshot)
     decided = controller.reap_idle_instances(
         instances,
         queue_depth=load.queue_depth,
@@ -1251,6 +1280,10 @@ def _run_reap_cycle(
                 errors=[*lease_errors, *errors],
                 lease_expired=lease_expired,
             )
+        if dry_run:
+            logger.info("dry-run would STOP idle instance: %s", instance_id)
+            actuated.append((action, instance_id))
+            continue
         try:
             stopped, fence_supported = _actuate_stop_with_generation_fence(
                 load_source,
@@ -1599,8 +1632,8 @@ def _build_parser() -> argparse.ArgumentParser:
         default=3600,
         help=(
             "Cost backstop: force STOP of a RUNNING instance this old despite "
-            "trustworthy reported work. An untrustworthy load boundary still "
-            "fails closed so STOP cannot strand a GPU that START would refuse. "
+            "reported work or an untrustworthy load boundary. Idle STOP still "
+            "fails closed when load evidence is untrustworthy. "
             "0 disables (not recommended). Default 3600 (1h)."
         ),
     )

@@ -11,6 +11,7 @@ import {
 } from '../useJobProgressStream';
 import { useJobCoordination } from '../useJobCoordination';
 import { resetConfigCache, setNonce } from '../../api/config';
+import { JOB_STREAM_ERROR_CODE } from '../../utils/errorTaxonomy';
 import { setLogLevel, setLogSink, type LogRecord } from '../../utils/logger';
 
 vi.mock('../useJobCoordination', () => ({
@@ -334,6 +335,20 @@ describe('useJobProgressStream', () => {
     // Ported from feature/febt-1-g1 (FEBT1-W2C-02 / FEBT1-W2D-05). The branch terminalised
     // every parseable server `error` frame; main terminalises only definite negatives and
     // lets transient ones ride the browser reconnect. Both halves are pinned below.
+    it('terminalises a typed missing-job error without inspecting localized message copy', async () => {
+      const { result } = renderHook(() => useJobProgressStream('job-missing-typed'));
+
+      await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+      act(() => {
+        MockEventSource.instances[0].emit('error', {
+          code: JOB_STREAM_ERROR_CODE.JOB_NOT_FOUND,
+          message: 'Der Auftrag ist nicht mehr vorhanden.',
+        });
+      });
+
+      await waitFor(() => expect(result.current.status).toBe(JOB_STATUS.FAILED));
+    });
+
     it('[FEBT1-W2C-02] a definite-negative server error frame terminates the stream as failed', async () => {
       const records = captureRecords();
       const { result } = renderHook(() => useJobProgressStream('job-missing'));
@@ -347,6 +362,33 @@ describe('useJobProgressStream', () => {
       const done = records.find((entry) => entry.fields.event === 'stream.done');
       expect(done?.fields.status).toBe(JOB_STATUS.FAILED);
       expect(records.some((entry) => JSON.stringify(entry).includes('stream failed'))).toBe(false);
+    });
+
+    it('keeps the message classifier only as a legacy fallback for code-less server errors', async () => {
+      const { result } = renderHook(() => useJobProgressStream('job-missing-legacy'));
+
+      await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+      act(() => {
+        MockEventSource.instances[0].emit('error', { message: 'Job job-missing-legacy not found' });
+      });
+
+      await waitFor(() => expect(result.current.status).toBe(JOB_STATUS.FAILED));
+    });
+
+    it('does not let message copy override an explicit non-terminal typed error code', async () => {
+      const records = captureRecords();
+      const { result } = renderHook(() => useJobProgressStream('job-overloaded'));
+
+      await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+      act(() => {
+        MockEventSource.instances[0].emit('error', {
+          code: 'upstream_unavailable',
+          message: 'Job lookup not found in the current replica',
+        });
+      });
+
+      await waitFor(() => expect(records.some((entry) => entry.message === 'sse.server_error')).toBe(true));
+      expect(result.current.status).not.toBe(JOB_STATUS.FAILED);
     });
 
     it('[FEBT1-W2D-05] the failed terminal log record omits failedCount rather than deriving it', async () => {

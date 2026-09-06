@@ -760,6 +760,13 @@ UNIT
 # atomically in the separate load directory. SupplementaryGroups=10001 lets the
 # ubuntu units read the API-owned load dump without granting the API host-side
 # write access to lifecycle state.
+# systemd resolves SupplementaryGroups=10001 through NSS before ExecStart. A bare
+# numeric chown creates no group entry, so both lifecycle units died with
+# "Failed to determine supplementary groups: No such process" (status=216/GROUP)
+# and the burst GPU lost its only stop path. Create the group by GID, idempotently.
+if ! getent group 10001 >/dev/null 2>&1; then
+    sudo groupadd -r -g 10001 acxapi
+fi
 sudo mkdir -p /run/acx /run/acx-write ${LOAD_ENVIRONMENT_DIRS}
 sudo chown ubuntu:ubuntu /run/acx
 sudo chmod 0755 /run/acx

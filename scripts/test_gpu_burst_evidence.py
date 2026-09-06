@@ -10,7 +10,6 @@ from pathlib import Path
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[1]
 CHECKER = ROOT / "scripts" / "gpu_burst_evidence.py"
 SINCE = "2026-09-01T00:00:00Z"
@@ -34,6 +33,7 @@ def _write_bundle(bundle: Path) -> None:
                     "eventName": "StartInstance",
                     "eventTime": "2026-09-01T00:10:00Z",
                     "eventId": "start-1",
+                    "responseStatus": 200,
                     "data": {
                         "resourceId": "ocid1.instance.example",
                         "identity": {"principalName": "burst-start"},
@@ -43,6 +43,7 @@ def _write_bundle(bundle: Path) -> None:
                     "eventName": "StopInstance",
                     "eventTime": "2026-09-01T00:30:00Z",
                     "eventId": "stop-1",
+                    "responseStatus": 200,
                     "data": {
                         "resourceId": "ocid1.instance.example",
                         "identity": {"principalName": "gpu-reaper"},
@@ -73,6 +74,7 @@ def _write_bundle(bundle: Path) -> None:
         json.dumps(
             {
                 "schema_version": 1,
+                "format": "oci-gpu-burst-evidence-v1",
                 "instance_id": "ocid1.instance.example",
                 "since": SINCE,
                 "until": UNTIL,
@@ -150,6 +152,7 @@ def _custom_bundle(
                     "eventName": "StartInstance",
                     "eventTime": RUNNING_AT,
                     "eventId": "start-1",
+                    "responseStatus": 200,
                     "data": {
                         "resourceId": INSTANCE_ID,
                         "identity": {"principalName": "burst-start"},
@@ -159,6 +162,7 @@ def _custom_bundle(
                     "eventName": "StopInstance",
                     "eventTime": STOPPED_AT,
                     "eventId": "stop-1",
+                    "responseStatus": 200,
                     "data": {
                         "resourceId": INSTANCE_ID,
                         "identity": {"principalName": "gpu-reaper"},
@@ -192,14 +196,13 @@ def _custom_bundle(
     if manifest is _OMITTED:
         manifest = {
             "schema_version": 1,
+            "format": "oci-gpu-burst-evidence-v1",
             "instance_id": INSTANCE_ID,
             "since": SINCE,
             "until": UNTIL,
             "files": entries,
         }
-    (bundle / "manifest.json").write_text(
-        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    (bundle / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     if extra_file:
         (bundle / "unlisted.txt").write_text("not in the manifest\n", encoding="utf-8")
     return bundle
@@ -233,9 +236,7 @@ def _rewrite_manifest(bundle: Path) -> None:
         target = bundle / entry["path"]
         if target.exists():
             entry["sha256"] = sha256(target.read_bytes()).hexdigest()
-    (bundle / "manifest.json").write_text(
-        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    (bundle / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def test_json_verdict_and_optional_receipts_pass(tmp_path: Path) -> None:
@@ -355,7 +356,13 @@ def test_missing_state_history_fails(tmp_path: Path) -> None:
             "expected STOPPED -> RUNNING -> STOPPED",
         ),
         (
-            {"observations": [{"state": "STOPPED"}, {"state": "RUNNING", "timestamp": RUNNING_AT}, {"state": "STOPPED", "timestamp": STOPPED_AT}]},
+            {
+                "observations": [
+                    {"state": "STOPPED"},
+                    {"state": "RUNNING", "timestamp": RUNNING_AT},
+                    {"state": "STOPPED", "timestamp": STOPPED_AT},
+                ]
+            },
             "expected STOPPED -> RUNNING -> STOPPED",
         ),
     ],
@@ -396,9 +403,27 @@ def test_missing_audit_receipt_fails(tmp_path: Path) -> None:
         (
             {
                 "data": [
-                    {"eventName": "StartInstance", "eventTime": RUNNING_AT, "eventId": "start-1"},
-                    {"eventName": "StartInstance", "eventTime": RUNNING_AT, "eventId": "start-2"},
-                    {"eventName": "StopInstance", "eventTime": STOPPED_AT, "eventId": "stop-1", "data": {"identity": {"principalName": "gpu-reaper"}}},
+                    {
+                        "eventName": "StartInstance",
+                        "eventTime": RUNNING_AT,
+                        "eventId": "start-1",
+                        "responseStatus": 200,
+                        "data": {"resourceId": INSTANCE_ID},
+                    },
+                    {
+                        "eventName": "StartInstance",
+                        "eventTime": RUNNING_AT,
+                        "eventId": "start-2",
+                        "responseStatus": 200,
+                        "data": {"resourceId": INSTANCE_ID},
+                    },
+                    {
+                        "eventName": "StopInstance",
+                        "eventTime": STOPPED_AT,
+                        "eventId": "stop-1",
+                        "responseStatus": 200,
+                        "data": {"resourceId": INSTANCE_ID, "identity": {"principalName": "gpu-reaper"}},
+                    },
                 ]
             },
             "observed 2 StartInstance audit events",
@@ -478,3 +503,236 @@ def test_wp_receipts_minimum_is_enforced(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "required 2" in result.stdout
+
+
+def test_receipt_generated_at_is_accepted(tmp_path: Path) -> None:
+    bundle = _custom_bundle(
+        tmp_path,
+        receipts={"items": [{"description": "one", "generatedAt": RUNNING_AT}]},
+    )
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_manifest_schema_version_is_validated(tmp_path: Path) -> None:
+    bundle = _custom_bundle(tmp_path)
+    manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
+    manifest["schema_version"] = 99
+    (bundle / "manifest.json").write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 1
+    assert "manifest_schema" in result.stdout
+    assert "unsupported schema_version" in result.stdout
+
+
+def test_manifest_format_is_validated(tmp_path: Path) -> None:
+    bundle = _custom_bundle(tmp_path)
+    manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
+    manifest["format"] = "foreign-evidence-format"
+    (bundle / "manifest.json").write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 1
+    assert "manifest_schema" in result.stdout
+    assert "unsupported format" in result.stdout
+
+
+def test_audit_event_without_resource_id_cannot_match_instance(tmp_path: Path) -> None:
+    audit = {
+        "data": [
+            {"eventName": "StartInstance", "eventTime": RUNNING_AT, "eventId": "start-1", "responseStatus": 200},
+            {
+                "eventName": "StopInstance",
+                "eventTime": STOPPED_AT,
+                "eventId": "stop-1",
+                "responseStatus": 200,
+                "data": {"identity": {"principalName": "gpu-reaper"}},
+            },
+        ]
+    }
+    bundle = _custom_bundle(tmp_path, audit=audit)
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 1
+    assert "observed 0 StartInstance audit events" in result.stdout
+
+
+def test_audit_event_for_other_instance_cannot_match_target(tmp_path: Path) -> None:
+    audit = {
+        "data": [
+            {
+                "eventName": "StartInstance",
+                "eventTime": RUNNING_AT,
+                "eventId": "start-other",
+                "responseStatus": 200,
+                "data": {"resourceId": "ocid1.instance.other"},
+            },
+            {
+                "eventName": "StopInstance",
+                "eventTime": STOPPED_AT,
+                "eventId": "stop-other",
+                "responseStatus": 200,
+                "data": {
+                    "resourceId": "ocid1.instance.other",
+                    "identity": {"principalName": "gpu-reaper"},
+                },
+            },
+        ]
+    }
+    bundle = _custom_bundle(tmp_path, audit=audit)
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 1
+    assert "observed 0 StartInstance audit events" in result.stdout
+
+
+def test_manifest_instance_id_is_required(tmp_path: Path) -> None:
+    bundle = _custom_bundle(tmp_path)
+    manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
+    manifest.pop("instance_id")
+    (bundle / "manifest.json").write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 1
+    assert "instance_identity" in result.stdout
+    assert "manifest instance_id is required" in result.stdout
+
+
+def test_not_start_instance_is_not_a_start_event(tmp_path: Path) -> None:
+    audit = {
+        "data": [
+            {
+                "eventName": "NotStartInstance",
+                "eventTime": RUNNING_AT,
+                "eventId": "not-start",
+                "responseStatus": 200,
+                "data": {"resourceId": INSTANCE_ID},
+            },
+            {
+                "eventName": "StopInstance",
+                "eventTime": STOPPED_AT,
+                "eventId": "stop-1",
+                "responseStatus": 200,
+                "data": {
+                    "resourceId": INSTANCE_ID,
+                    "identity": {"principalName": "gpu-reaper"},
+                },
+            },
+        ]
+    }
+    bundle = _custom_bundle(tmp_path, audit=audit)
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 1
+    assert "observed 0 StartInstance audit events" in result.stdout
+
+
+def test_failed_audit_action_is_not_evidence(tmp_path: Path) -> None:
+    audit = {
+        "data": [
+            {
+                "eventName": "StartInstance",
+                "eventTime": RUNNING_AT,
+                "eventId": "start-failed",
+                "responseStatus": 500,
+                "data": {"resourceId": INSTANCE_ID},
+            },
+            {
+                "eventName": "StopInstance",
+                "eventTime": STOPPED_AT,
+                "eventId": "stop-1",
+                "responseStatus": 200,
+                "data": {
+                    "resourceId": INSTANCE_ID,
+                    "identity": {"principalName": "gpu-reaper"},
+                },
+            },
+        ]
+    }
+    bundle = _custom_bundle(tmp_path, audit=audit)
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 1
+    assert "observed 0 StartInstance audit events" in result.stdout
+
+
+def test_stop_before_start_cannot_prove_burst(tmp_path: Path) -> None:
+    audit = {
+        "data": [
+            {
+                "eventName": "StopInstance",
+                "eventTime": "2026-09-01T00:05:00Z",
+                "eventId": "stop-before-start",
+                "responseStatus": 200,
+                "data": {
+                    "resourceId": INSTANCE_ID,
+                    "identity": {"principalName": "gpu-reaper"},
+                },
+            },
+            {
+                "eventName": "StartInstance",
+                "eventTime": RUNNING_AT,
+                "eventId": "start-1",
+                "responseStatus": 200,
+                "data": {"resourceId": INSTANCE_ID},
+            },
+            {
+                "eventName": "StopInstance",
+                "eventTime": STOPPED_AT,
+                "eventId": "stop-after-start",
+                "responseStatus": 200,
+                "data": {
+                    "resourceId": INSTANCE_ID,
+                    "identity": {"principalName": "gpu-reaper"},
+                },
+            },
+        ]
+    }
+    bundle = _custom_bundle(tmp_path, audit=audit)
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 1
+    assert "audit transition order" in result.stdout
+
+
+def test_nested_oci_audit_event_fields_are_supported(tmp_path: Path) -> None:
+    audit = {
+        "data": [
+            {
+                "data": {
+                    "eventName": "StartInstance",
+                    "eventTime": RUNNING_AT,
+                    "eventId": "start-nested",
+                    "resourceId": INSTANCE_ID,
+                    "response": {"status": "200"},
+                    "identity": {"principalName": "burst-start"},
+                }
+            },
+            {
+                "data": {
+                    "eventName": "StopInstance",
+                    "eventTime": STOPPED_AT,
+                    "eventId": "stop-nested",
+                    "resourceId": INSTANCE_ID,
+                    "response": {"status": "200"},
+                    "identity": {"principalName": "gpu-reaper"},
+                }
+            },
+        ]
+    }
+    bundle = _custom_bundle(tmp_path, audit=audit)
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 0, result.stdout + result.stderr

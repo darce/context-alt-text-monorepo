@@ -23,7 +23,7 @@ case " $* " in
         printf '%s\n' '{"data":{"id":"ocid1.instance.example","compartment-id":"ocid1.compartment.example","lifecycle-state":"STOPPED"}}'
         ;;
     *" audit event list "*)
-        printf '%s\n' '{"data":[{"eventName":"StartInstance","eventTime":"2026-09-01T00:10:00Z","eventId":"start-1","data":{"resourceId":"ocid1.instance.example","identity":{"principalName":"burst-start"}}},{"eventName":"StopInstance","eventTime":"2026-09-01T00:30:00Z","eventId":"stop-1","data":{"resourceId":"ocid1.instance.example","identity":{"principalName":"gpu-reaper"}}}]}'
+        printf '%s\n' '{"data":[{"eventName":"StartInstance","eventTime":"2026-09-01T00:10:00Z","eventId":"start-1","responseStatus":200,"data":{"resourceId":"ocid1.instance.example","identity":{"principalName":"burst-start"},"stateChange":{"previous":{"lifecycleState":"STOPPED"}}}},{"eventName":"StopInstance","eventTime":"2026-09-01T00:30:00Z","eventId":"stop-1","responseStatus":200,"data":{"resourceId":"ocid1.instance.example","identity":{"principalName":"gpu-reaper"}}}]}'
         ;;
     *)
         echo "unexpected OCI argv: $*" >&2
@@ -32,12 +32,33 @@ case " $* " in
 esac
 EOF
 chmod +x "${fake_oci}"
+fake_curl="${fixture_root}/curl"
+cat >"${fake_curl}" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+output=""
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --output)
+            output="$2"
+            shift 2
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+[ -n "$output" ] || exit 42
+printf '%s\n' '{"gpu_state":"STOPPED","written_at":"2026-09-01T00:30:00Z"}' >"$output"
+EOF
+chmod +x "${fake_curl}"
 snapshot="${fixture_root}/gpu-state.json"
 receipts="${fixture_root}/wp-receipts.json"
 printf '%s\n' '{"state":"stopped","written_at":1788222600}' >"${snapshot}"
 printf '%s\n' '{"items":[{"description":"A red bicycle","timestamp":"2026-09-01T00:20:00Z"}]}' >"${receipts}"
 export OCI_BIN="${fake_oci}"
 export OCI_CALL_LOG="${call_log}"
+export PATH="${fixture_root}:${PATH}"
 
 one="${fixture_root}/one"
 two="${fixture_root}/two"
@@ -98,7 +119,7 @@ assert "compute instance get" in commands["instance.json"]
 assert "audit event list" in commands["audit-events.json"]
 assert "derived from" in commands["state_history.json"]
 history = load(one / "state_history.json")
-assert [item["state"] for item in history["observations"]] == ["STOPPED", "RUNNING", "STOPPED", "STOPPED"]
+assert [item["state"] for item in history["observations"]] == ["STOPPED", "RUNNING", "STOPPED"]
 
 
 def without_capture_time(value):
@@ -118,8 +139,17 @@ for name in ("instance.json", "audit-events.json", "state_history.json", "state_
     assert (one / name).read_bytes() == (two / name).read_bytes(), name
 PY
 
+"$resolved_python" "${root}/scripts/gpu_burst_evidence.py" \
+    --bundle "$one" \
+    --expected-stop-principal gpu-reaper \
+    --min-descriptions 1 >/dev/null
+
 if [ "$(wc -l <"${call_log}" | tr -d ' ')" -ne 4 ]; then
     echo "FAIL: expected exactly two read-only OCI calls per export" >&2
+    exit 1
+fi
+if ! grep -Fq -- '--connection-timeout' "${call_log}" || ! grep -Fq -- '--read-timeout' "${call_log}"; then
+    echo "FAIL: OCI calls did not carry explicit connection/read timeouts" >&2
     exit 1
 fi
 
@@ -142,6 +172,37 @@ action_rc=0
     --out "${fixture_root}/action" >"${fixture_root}/action.out" 2>&1 || action_rc=$?
 if [ "$action_rc" -ne 3 ]; then
     echo "FAIL: action verb was not rejected with exit 3 (got ${action_rc})" >&2
+    exit 1
+fi
+
+mutated_update="${fixture_root}/mutated-update-exporter.sh"
+sed 's/run_oci compute instance get/run_oci compute instance update/' "$exporter" >"${mutated_update}"
+chmod +x "${mutated_update}"
+update_rc=0
+"$mutated_update" --instance-id ocid1.instance.example \
+    --compartment-id ocid1.compartment.example \
+    --since 2026-09-01T00:00:00Z --until 2026-09-01T01:00:00Z \
+    --out "${fixture_root}/update" >"${fixture_root}/update.out" 2>&1 || update_rc=$?
+if [ "$update_rc" -ne 3 ]; then
+    echo "FAIL: update verb was not rejected with exit 3 (got ${update_rc})" >&2
+    exit 1
+fi
+
+url_bundle="${fixture_root}/url-bundle"
+snapshot_url='https://snapshot.example.test/gpu-state.json?token=do-not-persist'
+"$exporter" \
+    --instance-id ocid1.instance.example \
+    --compartment-id ocid1.compartment.example \
+    --since 2026-09-01T00:00:00Z \
+    --until 2026-09-01T01:00:00Z \
+    --out "$url_bundle" \
+    --state-snapshot "$snapshot_url"
+if grep -Fq -- 'do-not-persist' "${url_bundle}/manifest.json"; then
+    echo "FAIL: snapshot URL query token was persisted in manifest" >&2
+    exit 1
+fi
+if ! grep -Fq -- '<redacted-url>' "${url_bundle}/manifest.json"; then
+    echo "FAIL: snapshot manifest command was not redacted" >&2
     exit 1
 fi
 

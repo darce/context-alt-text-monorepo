@@ -19,7 +19,16 @@ It also requires exactly one `StartInstance` Audit event and at least one
 `StopInstance` event from the expected reaper principal. If supplied, the
 reaper snapshot must be written during the window and report `STOPPED`; WP
 describe receipts must have non-empty descriptions whose timestamps fall in
-the observed RUNNING interval.
+the observed RUNNING interval. Audit events must identify the selected
+instance and have a successful response status.
+
+The exporter derives `state_history.json` only from successful Audit
+transitions and an explicit Audit `stateChange.previous` state when present.
+It does not invent a `STOPPED` observation at the window start or label the
+point-in-time instance read as the window end. If the receipts do not contain
+an independently observed `STOPPED → RUNNING → STOPPED` history, the checker
+fails closed and the window must be recaptured with the required Audit state
+change fields.
 
 The distinction between lifecycle state and billing matters: a stopped
 instance stops OCPU/GPU compute charges, while its boot volume still costs
@@ -53,6 +62,9 @@ sweep guidance.
    The last two variables are optional. Without them the bundle still proves
    the OCI transition and Audit events, but the corresponding optional checks
    are recorded as not supplied.
+
+   Snapshot URLs are used only for retrieval; their query tokens are replaced
+   with `<redacted-url>` in the manifest command receipt.
 
 4. Check the bundle. The normal reaper principal is `gpu-reaper`; confirm the
    deployment's configured principal before accepting a result. Set the

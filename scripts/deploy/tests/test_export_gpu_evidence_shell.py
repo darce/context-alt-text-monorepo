@@ -6,7 +6,6 @@ import os
 import subprocess
 from pathlib import Path
 
-
 SUITE = Path(__file__).with_name("test-export-gpu-evidence.sh")
 REPO_ROOT = Path(__file__).resolve().parents[3]
 

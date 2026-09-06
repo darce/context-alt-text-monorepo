@@ -16,8 +16,8 @@ gpu_image_ocid = "ocid1.image.oc1.iad.aaaaaaaa-gpu-golden-image"
 gpu_shape      = "VM.GPU.A10.1"
 
 # Independent on-instance cost guard; cloud-init starts the timer before the
-# VLM service. A failed OCI stop is observable and does not silently fall back
-# to guest poweroff (which would be audited as STOPPED-by-guest).
+# VLM service. A failed OCI stop uses the bounded guest poweroff fallback and
+# is audited as STOPPED-by-guest.
 gpu_max_uptime_seconds = 3600
 gpu_self_stop_enabled  = true
 

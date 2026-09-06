@@ -845,10 +845,28 @@ dev-stop:
 eval-captions:
 	@$(ROOT_MAKEFILE_DIR)/scripts/eval-captions.sh $(EVAL_ARGS)
 
-.PHONY: gpu-burst-smoke gpu-burst-smoke-live
+.PHONY: gpu-burst-smoke gpu-burst-smoke-live gpu-cost-report
 GPU_SMOKE_PYTHON ?= apps/prototype-description-service/.venv/bin/python
 gpu-burst-smoke:
 	@$(GPU_SMOKE_PYTHON) scripts/gpu_burst_smoke.py --dry-run
+
+# Reconcile one or more OCI Usage API exports with a smoke evidence report.
+# Usage: make gpu-cost-report GPU_COST_USAGE_JSON="usage-a.json usage-b.json" \
+#          GPU_COST_SMOKE_REPORT=.workbay/tmp/gpu-burst-smoke/GPUSMOKE-1-evidence.json
+GPU_COST_USAGE_JSON ?=
+GPU_COST_SMOKE_REPORT ?=
+GPU_COST_REPORT_ARGS ?=
+gpu-cost-report:
+	@test -n "$(GPU_COST_USAGE_JSON)" || { \
+	  echo "GPU_COST_USAGE_JSON must name one or more OCI usage JSON exports" >&2; \
+	  exit 2; \
+	}
+	@test -n "$(GPU_COST_SMOKE_REPORT)" || { \
+	  echo "GPU_COST_SMOKE_REPORT must name a GPU smoke evidence JSON report" >&2; \
+	  exit 2; \
+	}
+	@$(GPU_SMOKE_PYTHON) scripts/gpu_cost_report.py $(GPU_COST_USAGE_JSON) \
+	  --smoke-report "$(GPU_COST_SMOKE_REPORT)" $(GPU_COST_REPORT_ARGS)
 
 # Operator-only: needs ACX_GPU_SMOKE_CONFIRM=RUN and runs on acx-backend as
 # ubuntu, since only that host has the OCI binary and vaulted key. Override

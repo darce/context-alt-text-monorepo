@@ -1141,6 +1141,30 @@ def test_make_dry_smoke_uses_configured_python() -> None:
     assert "$(GPU_SMOKE_PYTHON) scripts/gpu_burst_smoke.py --dry-run" in recipe
 
 
+def test_make_gpu_cost_report_target_uses_the_stdlib_reporter() -> None:
+    makefile = (Path(__file__).resolve().parents[1] / "Makefile").read_text(encoding="utf-8")
+    smoke_block = makefile.split(".PHONY: gpu-burst-smoke", 1)[1].split("# FIR-5", 1)[0]
+
+    assert "gpu-cost-report" in smoke_block
+    assert "scripts/gpu_cost_report.py" in smoke_block
+
+
+def test_gpu_burst_runbook_documents_all_four_smoke_proofs() -> None:
+    runbook = (Path(__file__).resolve().parents[1] / "infra" / "oci" / "GPU-BURST-PROVISIONING.md").read_text(
+        encoding="utf-8"
+    )
+
+    for required in (
+        "gpu_lifecycle",
+        "--expected-stop-principal",
+        "second_burst_no_enqueue",
+        "STOPPED→STARTING→RUNNING→STOPPING→STOPPED",
+        "oci usage-api usage-summary request-summarized-usages",
+        "gpu_cost_report.py",
+    ):
+        assert required in runbook
+
+
 def test_missing_gpu_state_json_is_recorded_not_failed(tmp_path: Path) -> None:
     result, _ = _run(tmp_path)
 
@@ -1372,6 +1396,9 @@ class SignallingOci(smoke.FakeOci):
         # Leave the instance RUNNING after the reaper window so the compensating
         # STOP in run_smoke's `finally` is the thing that actually runs.
         kwargs.setdefault("reaper_states", ["RUNNING"])
+        # main() supplies the normal dry gpu_state timeline to FakeOci. This
+        # harness intentionally exercises the compensating STOP path instead.
+        kwargs["gpu_states"] = None
         super().__init__(*args, **kwargs)
 
     def stop_instance(self, instance_id, *, timeout):
@@ -1486,6 +1513,29 @@ def test_missing_stop_audit_event_fails_the_smoke(tmp_path: Path) -> None:
     assert result.stop_event_time is None
     assert not _check(result, "stop_event_observed")
     assert "zero STOP events" in _detail(result, "stop_event_observed")
+
+
+def test_stop_audit_event_outside_the_run_window_is_not_attributed(tmp_path: Path) -> None:
+    stale_event = {
+        "eventType": "com.oraclecloud.computeapi.instanceaction.end",
+        "eventId": "stale-stop-event",
+        "eventTime": "2025-12-31T23:59:59Z",
+        "data": {
+            "resourceId": "<burst-instance-ocid>",
+            "identity": {"principalName": smoke.DEFAULT_STOP_PRINCIPAL},
+            "request": {
+                "id": "stale-stop-request",
+                "parameters": {"action": ["StopInstance"]},
+            },
+        },
+    }
+
+    result, _ = _run(tmp_path, oci=smoke.FakeOci(stop_events=[stale_event]))
+
+    assert result.exit_code == 1
+    assert result.stop_principal is None
+    assert result.stop_event_time is None
+    assert not _check(result, "stop_event_observed")
 
 
 def test_expected_stop_principal_is_repeatable_and_overrides_default() -> None:

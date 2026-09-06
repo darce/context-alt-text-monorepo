@@ -418,13 +418,14 @@ def test_gpu_self_stop_enabled_path_fails_closed_when_cli_missing(tmp_path: Path
 
 def test_terraform_configuration_validates() -> None:
     if shutil.which("terraform") is None:
-        pytest.skip(
-            "developer check: terraform binary not on PATH; "
-            "run `make test-infra-terraform` for the mandatory release gate"
+        pytest.fail(
+            "terraform binary not on PATH; the mandatory release gate is "
+            "`make test-infra-terraform`"
         )
 
-    # validate requires an initialized working directory; skip cleanly when
-    # providers have not been downloaded (no cloud credentials / no init).
+    # validate requires an initialized working directory. Initialization is
+    # part of the release gate, so provider download failures must be visible
+    # instead of allowing this suite to pass with validation skipped.
     if not (OCI_ROOT / ".terraform").is_dir():
         init = subprocess.run(
             ["terraform", "-chdir=infra/oci", "init", "-backend=false", "-input=false"],
@@ -434,9 +435,9 @@ def test_terraform_configuration_validates() -> None:
             text=True,
         )
         if init.returncode != 0:
-            pytest.skip(
-                "developer check: terraform init unavailable; "
-                "run `make test-infra-terraform` for the mandatory release gate: " + (init.stderr or init.stdout)[:400]
+            pytest.fail(
+                "terraform init unavailable; the mandatory release gate is "
+                "`make test-infra-terraform`: " + (init.stderr or init.stdout)[:400]
             )
 
     result = subprocess.run(
@@ -448,6 +449,44 @@ def test_terraform_configuration_validates() -> None:
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_terraform_validation_fails_when_terraform_is_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The VLM infrastructure suite must not turn missing Terraform into a skip."""
+
+    monkeypatch.setattr(shutil, "which", lambda _command: None)
+    with pytest.raises(pytest.fail.Exception, match="terraform"):
+        try:
+            test_terraform_configuration_validates()
+        except pytest.skip.Exception as exc:
+            raise AssertionError("missing Terraform must fail the release validation, not skip it") from exc
+
+
+def test_terraform_validation_fails_when_init_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Provider initialization errors must remain visible to the release gate."""
+
+    monkeypatch.setattr(shutil, "which", lambda _command: "/usr/bin/terraform")
+    real_is_dir = Path.is_dir
+
+    def no_initialized_terraform(path: Path) -> bool:
+        if path == OCI_ROOT / ".terraform":
+            return False
+        return real_is_dir(path)
+
+    monkeypatch.setattr(Path, "is_dir", no_initialized_terraform)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], 1, stdout="", stderr="provider initialization unavailable"
+        ),
+    )
+
+    with pytest.raises(pytest.fail.Exception, match="terraform"):
+        try:
+            test_terraform_configuration_validates()
+        except pytest.skip.Exception as exc:
+            raise AssertionError("Terraform init errors must fail the release validation, not skip it") from exc
 
 
 def test_terraform_release_gate_is_mandatory_and_documented() -> None:
@@ -620,3 +659,11 @@ def test_gpu_self_stop_policy_allows_only_targeted_read_for_verification() -> No
     assert "target.instance.id = '${oci_core_instance.acx_backend.id}'" not in watchdog_tf
     assert "to use instance-family" not in watchdog_tf
     assert "to manage instance-family" not in watchdog_tf
+
+
+def test_gpu_self_stop_example_documents_guest_poweroff_recovery() -> None:
+    tfvars_example = (OCI_ROOT / "terraform.tfvars.example").read_text()
+
+    assert "A failed OCI stop uses the bounded guest poweroff fallback" in tfvars_example
+    assert "STOPPED-by-guest" in tfvars_example
+    assert "does not silently fall back" not in tfvars_example

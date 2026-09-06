@@ -156,7 +156,10 @@ curl_max_time="${EVIDENCE_CURL_MAX_TIME:-60}"
 for timeout_value in "$oci_connection_timeout" "$oci_read_timeout" "$curl_connection_timeout" "$curl_max_time"; do
     case "$timeout_value" in
         ''|*[!0-9]*) fail_usage "timeouts must be positive integer seconds" ;;
-        0) fail_usage "timeouts must be positive integer seconds" ;;
+    esac
+    case "$timeout_value" in
+        *[1-9]*) ;;
+        *) fail_usage "timeouts must be positive integer seconds" ;;
     esac
 done
 

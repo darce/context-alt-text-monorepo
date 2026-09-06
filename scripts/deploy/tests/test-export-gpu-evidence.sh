@@ -49,12 +49,12 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 [ -n "$output" ] || exit 42
-printf '%s\n' '{"gpu_state":"STOPPED","written_at":"2026-09-01T00:30:00Z"}' >"$output"
+printf '%s\n' '{"gpu_state":"STOPPED","instance_id":"ocid1.instance.example","written_at":"2026-09-01T00:30:00Z"}' >"$output"
 EOF
 chmod +x "${fake_curl}"
 snapshot="${fixture_root}/gpu-state.json"
 receipts="${fixture_root}/wp-receipts.json"
-printf '%s\n' '{"state":"stopped","written_at":1788222600}' >"${snapshot}"
+printf '%s\n' '{"state":"stopped","instance_id":"ocid1.instance.example","written_at":1788222600}' >"${snapshot}"
 printf '%s\n' '{"items":[{"description":"A red bicycle","timestamp":"2026-09-01T00:20:00Z"}]}' >"${receipts}"
 export OCI_BIN="${fake_oci}"
 export OCI_CALL_LOG="${call_log}"
@@ -161,6 +161,20 @@ if [ "$missing_rc" -ne 2 ]; then
     echo "FAIL: missing --instance-id exited ${missing_rc}, expected 2" >&2
     exit 1
 fi
+
+for zero_timeout in 00 000; do
+    zero_timeout_rc=0
+    EVIDENCE_CURL_MAX_TIME="$zero_timeout" "$exporter" \
+        --instance-id ocid1.instance.example \
+        --compartment-id ocid1.compartment.example \
+        --since 2026-09-01T00:00:00Z --until 2026-09-01T01:00:00Z \
+        --out "${fixture_root}/zero-timeout-${zero_timeout}" \
+        >"${fixture_root}/zero-timeout-${zero_timeout}.out" 2>&1 || zero_timeout_rc=$?
+    if [ "$zero_timeout_rc" -ne 2 ]; then
+        echo "FAIL: zero-padded timeout ${zero_timeout} exited ${zero_timeout_rc}, expected 2" >&2
+        exit 1
+    fi
+done
 
 mutated="${fixture_root}/mutated-exporter.sh"
 sed 's/run_oci compute instance get/run_oci compute instance action/' "$exporter" >"${mutated}"

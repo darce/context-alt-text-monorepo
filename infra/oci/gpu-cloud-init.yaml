@@ -61,8 +61,11 @@ write_files:
     content: |
       MAX_UPTIME_SECONDS=${max_uptime_seconds}
       ACX_SELF_STOP_ENABLED=${self_stop_enabled}
-      # Keep this disabled: guest poweroff is STOPPED-by-guest in the audit trail.
-      ACX_SELF_STOP_FALLBACK_POWEROFF=0
+      # OCI STOP remains the preferred path; guest poweroff is the bounded
+      # recovery path when metadata, IAM, or OCI CLI calls cannot converge.
+      # It still transitions the instance to STOPPED instead of leaving a
+      # failed watchdog billing indefinitely (audit state: STOPPED-by-guest).
+      ACX_SELF_STOP_FALLBACK_POWEROFF=1
 
   - path: /usr/local/bin/acx-gpu-self-stop.sh
     owner: root:root

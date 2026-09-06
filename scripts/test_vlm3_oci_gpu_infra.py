@@ -495,7 +495,7 @@ def test_gpu_self_stop_watchdog_units_and_bootstrap_are_configured() -> None:
     assert "Unit=acx-gpu-self-stop.service" in timer
     assert "MAX_UPTIME_SECONDS=${max_uptime_seconds}" in env
     assert "ACX_SELF_STOP_ENABLED=${self_stop_enabled}" in env
-    assert "ACX_SELF_STOP_FALLBACK_POWEROFF=0" in env
+    assert "ACX_SELF_STOP_FALLBACK_POWEROFF=1" in env
     assert "oci compute instance action" in script
     assert "--auth instance_principal" in script
     assert "ACX_SELF_STOP_ENABLED:-0" in script
@@ -547,6 +547,34 @@ def test_gpu_self_stop_script_exits_without_stop_when_disabled(tmp_path: Path) -
 
     assert result.returncode == 0, result.stderr
     assert not stop_marker.exists(), "disabled self-stop must not invoke the OCI stop command"
+
+
+def test_gpu_self_stop_failure_uses_guest_poweroff_fallback(tmp_path: Path) -> None:
+    cloud_init = yaml.safe_load((OCI_ROOT / "gpu-cloud-init.yaml").read_text())
+    script_path, bin_dir = _self_stop_script(cloud_init, tmp_path)
+    env_path = tmp_path / "watchdog.env"
+    env_path.write_text(
+        "MAX_UPTIME_SECONDS=3600\n"
+        "ACX_SELF_STOP_ENABLED=1\n"
+        "ACX_SELF_STOP_FALLBACK_POWEROFF=1\n"
+    )
+    _write_metadata_fakes(bin_dir, "ocid1.instance.oc1..fallback")
+    (bin_dir / "oci").write_text("#!/bin/sh\nexit 1\n")
+    (bin_dir / "oci").chmod(0o755)
+    poweroff_marker = tmp_path / "poweroff-called"
+    (bin_dir / "systemctl").write_text(f"#!/bin/sh\nprintf '%s\\n' \"$*\" > {poweroff_marker}\n")
+    (bin_dir / "systemctl").chmod(0o755)
+
+    result = subprocess.run(
+        [str(script_path)],
+        env={**os.environ, "PATH": f"{bin_dir}:/usr/bin:/bin"},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert poweroff_marker.read_text().strip() == "poweroff"
 
 
 def test_gpu_self_stop_terraform_wiring_and_narrow_policy_are_present() -> None:

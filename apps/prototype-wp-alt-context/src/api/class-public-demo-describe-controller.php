@@ -681,7 +681,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 		// Compare the complete owner snapshot in the DELETE itself. An option
 		// read followed by delete_option() can erase a concurrently replaced or
 		// renewed lease, even after checking its token immediately beforehand.
-		$wpdb->query(
+		$deleted = $wpdb->query(
 			$wpdb->prepare(
 				"DELETE FROM {$wpdb->options} WHERE option_name = %s AND BINARY option_value = %s",
 				self::INFLIGHT_OPTION,

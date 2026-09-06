@@ -2,11 +2,11 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
+import { createGuidedScenario } from '../../../guidedPrototype/state';
 import { GuidedPrototypePage } from '../GuidedPrototypePage';
 
 const SEED_ALT_TEXT = 'Two people at a film festival.';
-const GENERIC_DRAFT =
-  'A man in a black tuxedo and a woman in a white draped gown pose side by side at the Tribeca Festival. Her hand rests on his chest.';
+const INITIAL_SCENARIO = createGuidedScenario();
 const JUSTIN_DRAFT =
   'Justin Trudeau, in a black tuxedo and white shirt, poses with a woman in a white draped gown at the Tribeca Festival. Her hand rests on his chest.';
 const BOTH_NAMES_DRAFT =
@@ -24,6 +24,8 @@ const identitySection = (): HTMLElement => {
   }
   return section;
 };
+
+const reviewSection = (): HTMLElement => screen.getByRole('region', { name: 'Review the description' });
 
 const confirmButton = (name: 'Justin Trudeau' | 'Katy Perry') =>
   within(identitySection()).getByRole('button', { name: `Yes, this is ${name}` });
@@ -136,7 +138,7 @@ describe('GuidedPrototypePage shell', () => {
         name: 'Reset practice',
       }),
     );
-    expect(screen.getByRole('textbox', { name: 'Description draft' })).toHaveValue(GENERIC_DRAFT);
+    expect(screen.getByRole('textbox', { name: 'Description draft' })).toHaveValue(INITIAL_SCENARIO.drafts.none);
     expect(screen.getByRole('status')).toHaveTextContent('Practice reset. The original text is back.');
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(screen.getAllByText('You have not decided yet.')).toHaveLength(2);
@@ -162,17 +164,44 @@ describe('GuidedPrototypePage shell', () => {
   it('renders the press photo and describes a useful fallback when it fails', () => {
     render(<GuidedPrototypePage />);
 
-    const image = screen.getByRole('img', { name: GENERIC_DRAFT });
+    const image = screen.getByRole('img', { name: INITIAL_SCENARIO.drafts.none });
     expect(image.tagName).toBe('IMG');
     expect(image).toHaveAttribute('src', expect.stringContaining('guided-press-tribeca-2026'));
     fireEvent.error(image);
-    expect(
-      screen.getByRole('img', { name: new RegExp(`Sample photo unavailable\\. ${GENERIC_DRAFT}`) }),
-    ).toHaveTextContent('Sample photo unavailable');
+    const fallback = screen.getByRole('img', {
+      name: new RegExp(`Sample photo unavailable\\. ${INITIAL_SCENARIO.drafts.none}`),
+    });
+    expect(fallback.textContent).toBe(`Sample photo unavailable. ${INITIAL_SCENARIO.drafts.none}`);
+  });
+
+  it('keeps the case-study sentence free of a space before its full stop', () => {
+    render(<GuidedPrototypePage />);
+
+    const boundary = screen.getByText(/This is a practice copy\./, { selector: 'p' });
+    expect(boundary.textContent).not.toContain(' .');
+    expect(boundary.textContent?.endsWith('.')).toBe(true);
   });
 });
 
 describe('GuidedPrototypePage journey', () => {
+  it('moves focus into review after confirming the left face', () => {
+    render(<GuidedPrototypePage />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start the demo' }));
+    fireEvent.click(confirmButton('Justin Trudeau'));
+
+    expect(reviewSection().contains(document.activeElement)).toBe(true);
+  });
+
+  it('moves focus into review after keeping the left face unnamed', () => {
+    render(<GuidedPrototypePage />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start the demo' }));
+    fireEvent.click(unnamedButton('left'));
+
+    expect(reviewSection().contains(document.activeElement)).toBe(true);
+  });
+
   it('carries both confirmed face matches into the draft, through apply, and back out with undo', () => {
     render(<GuidedPrototypePage />);
 
@@ -235,7 +264,7 @@ describe('GuidedPrototypePage journey', () => {
     expect(document.activeElement).toHaveAttribute('id', 'guided-section-apply');
     expect(screen.getByRole('navigation', { name: 'Guided review steps' })).toHaveTextContent('Apply it yourself');
     expect(document.querySelector('[data-applied-text]')).toHaveTextContent(SEED_ALT_TEXT);
-    expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Undo' })).toBeDisabled();
   });
 
   it('keeps one face unnamed while putting only the other confirmed name in the draft', () => {
@@ -279,7 +308,7 @@ describe('GuidedPrototypePage journey', () => {
     );
     expect(screen.getByText('You kept the person on the left unnamed.', { selector: 'li' })).toBeInTheDocument();
     expect(screen.getByText('You kept the person on the right unnamed.', { selector: 'li' })).toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: 'Description draft' })).toHaveValue(GENERIC_DRAFT);
+    expect(screen.getByRole('textbox', { name: 'Description draft' })).toHaveValue(INITIAL_SCENARIO.drafts.none);
     expect(
       screen.getByText('You kept both people unnamed, so the draft only says what is visible.'),
     ).toBeInTheDocument();
@@ -302,6 +331,8 @@ describe('GuidedPrototypePage journey', () => {
 
     expect(screen.getByRole('status')).toHaveTextContent('Draft rejected. The saved text did not change.');
     expect(screen.getByText('Rejected. The saved text did not change')).toBeInTheDocument();
+    expect(reviewSection().contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).not.toBe(document.body);
     expect(screen.getByRole('button', { name: 'Apply to practice copy' })).toBeDisabled();
     expect(document.querySelector('[data-applied-text]')).toHaveTextContent('Two people at a film festival.');
   });
@@ -338,10 +369,20 @@ describe('GuidedPrototypePage journey', () => {
     ).toBe(true);
 
     await user.click(screen.getByRole('button', { name: 'Discard my edit' }));
-    expect(editor).toHaveValue(GENERIC_DRAFT);
+    expect(editor).toHaveValue(INITIAL_SCENARIO.drafts.none);
     expect(applyButton).not.toBeDisabled();
     await user.click(applyButton);
-    expect(document.querySelector('[data-applied-text]')).toHaveTextContent(GENERIC_DRAFT);
+    expect(document.querySelector('[data-applied-text]')).toHaveTextContent(INITIAL_SCENARIO.drafts.none);
+  });
+
+  it('disables undo before an application and leaves feedback unchanged when clicked', () => {
+    render(<GuidedPrototypePage />);
+
+    const feedback = screen.getByRole('status');
+    const undoButton = screen.getByRole('button', { name: 'Undo' });
+    expect(undoButton).toBeDisabled();
+    fireEvent.click(undoButton);
+    expect(feedback).toHaveTextContent('');
   });
 
   it('explains in plain words why either name cannot be used before its match is confirmed', async () => {
@@ -380,7 +421,26 @@ describe('GuidedPrototypePage journey', () => {
 
     await user.click(screen.getByRole('button', { name: 'Undo' }));
     expect(document.querySelector('[data-applied-text]')).toHaveTextContent(SEED_ALT_TEXT);
-    expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Undo' })).toBeDisabled();
     expect(document.activeElement).toHaveAttribute('id', 'guided-section-apply');
+  });
+
+  it('locks the right answer while an edit is unsaved and refreshes the draft after saving it', async () => {
+    const user = userEvent.setup();
+    render(<GuidedPrototypePage />);
+
+    await user.click(screen.getByRole('button', { name: 'Start the demo' }));
+    await user.click(confirmButton('Justin Trudeau'));
+    const editor = screen.getByRole('textbox', { name: 'Description draft' });
+    await user.clear(editor);
+    await user.type(editor, 'Justin Trudeau is pictured at the festival.');
+
+    expect(confirmButton('Katy Perry')).toBeDisabled();
+
+    await user.click(screen.getByRole('button', { name: 'Save my edit' }));
+    expect(confirmButton('Katy Perry')).toBeEnabled();
+
+    await user.click(confirmButton('Katy Perry'));
+    expect(editor).toHaveValue(BOTH_NAMES_DRAFT);
   });
 });

@@ -192,7 +192,7 @@ describe('GuidedPrototypePage journey', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Start the demo' }));
     fireEvent.click(confirmButton('Justin Trudeau'));
 
-    expect(reviewSection().contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).toBe(reviewSection());
   });
 
   it('moves focus into review after keeping the left face unnamed', () => {
@@ -201,7 +201,7 @@ describe('GuidedPrototypePage journey', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Start the demo' }));
     fireEvent.click(unnamedButton('left'));
 
-    expect(reviewSection().contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).toBe(reviewSection());
   });
 
   it('carries both confirmed face matches into the draft, through apply, and back out with undo', () => {
@@ -333,7 +333,7 @@ describe('GuidedPrototypePage journey', () => {
 
     expect(screen.getByRole('status')).toHaveTextContent('Draft rejected. The saved text did not change.');
     expect(screen.getByText('Rejected. The saved text did not change')).toBeInTheDocument();
-    expect(reviewSection().contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).toBe(reviewSection());
     expect(document.activeElement).not.toBe(document.body);
     expect(screen.getByRole('button', { name: 'Apply to practice copy' })).toBeDisabled();
     expect(document.querySelector('[data-applied-text]')).toHaveTextContent('Two people at a film festival.');

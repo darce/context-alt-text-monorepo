@@ -1,9 +1,10 @@
 {
   "map_ref": "guided-prototype",
-  "product": "AltContext \u2014 authenticated guided prototype",
+  "source_fixture": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypePage.tsx",
+  "product": "AltContext — authenticated guided prototype",
   "goals": [
     "Implementation inventory and correction target for feature/guided-prototype-1; one in-memory example inside authenticated WordPress admin, not the public homepage.",
-    "Show visual draft + confirmed identity + page context \u2192 named description; editing/rejection never applies automatically.",
+    "Show visual draft + confirmed identity + page context → named description; editing/rejection never applies automatically.",
     "Only the saved candidate can be applied; pending text is labelled and must be saved or discarded before Apply.",
     "Guide navigation reaches its named region; reset dialog preserves edits on cancel; all disappearing actions restore focus.",
     "Clear illustrative provenance, bundled sample with text fallback, no live inference dependency.",
@@ -23,144 +24,228 @@
     {
       "id": "intro",
       "kind": "screen",
-      "title": "Guided prototype entrance",
-      "purpose": "Explains illustrative memory-only scope; case study and current build status; primary CTA opens the inline guide nav and focuses the guide status region without navigating to a separate screen.",
+      "title": "AltContext guided demo",
+      "purpose": "Follow one photo from start to finish. AltContext finds two faces, matches each one to a person you already named, and puts their names in the image description. You choose what gets saved.",
       "route": "#/guided-prototype",
       "job_entry": true,
       "deep_link": true,
       "url_params": [],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/GuidedPrototypeEntrance.tsx",
       "primary_action_id": "open",
-      "states": ["default"],
+      "states": [
+        "default"
+      ],
       "zones": [
         {
           "id": "intro-0",
-          "label": "Branded heading, scope and current build status",
+          "label": "Guided demo, scope, and current build status: This demo uses one saved run. It does not run recognition live.",
           "role": "content",
-          "states": ["default"]
+          "states": [
+            "default"
+          ]
         },
         {
           "id": "intro-1",
-          "label": "Start the guided walkthrough and case study exit",
+          "label": "Start the demo and read the AltContext case study",
           "role": "nav",
-          "states": ["default"]
+          "states": [
+            "default"
+          ]
         }
       ]
     },
     {
       "id": "guide",
       "kind": "screen",
-      "title": "Inline guided review nav",
-      "purpose": "Persistent inline nav shows the current step, lets you show/hide the full step list, skip to the current step's section, jump between steps, or end the guide; steps mirror the four review sections and never navigate away from the single-route page.",
+      "title": "Step by step",
+      "purpose": "Five steps show the path from the photo to the description: Look at the photo, Find the faces, Confirm each match, Check the description, and Apply it yourself.",
       "route": "#/guided-prototype",
       "job_entry": false,
       "deep_link": true,
       "url_params": [],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypeGuide.tsx",
       "primary_action_id": "toggle-guide",
-      "states": ["first_time", "default"],
+      "states": [
+        "first_time",
+        "default"
+      ],
       "zones": [
         {
           "id": "guide-0",
-          "label": "Status bar: current step label, skip-to-current-section link, Show/Hide guide toggle",
+          "label": "Current step, Skip to this step, and Show steps / Hide steps",
           "role": "nav",
-          "states": ["default"]
+          "states": [
+            "default"
+          ]
         },
         {
           "id": "guide-1",
-          "label": "Expanded step list (understand/identity/review/apply) and End guide",
+          "label": "Five steps: Look at the photo — See the photo and the page it sits on.; Find the faces — AltContext found two faces and matched each one to a person you named before.; Confirm each match — Say yes to each match, or keep that person unnamed.; Check the description — Read the draft. Edit it or reject it.; Apply it yourself — Nothing changes until you press Apply.; Close the steps",
           "role": "nav",
-          "states": ["default"]
+          "states": [
+            "default"
+          ]
         }
       ]
     },
     {
       "id": "evidence",
       "kind": "screen",
-      "title": "Image and page context",
-      "purpose": "Inspect sample photograph/text equivalent, source record and page context; no live recognition claim. Identity confirmation itself lives in the identity evidence card on the review screen, not here.",
+      "title": "Photo and page",
+      "purpose": "See the photo and the page it sits on. AltContext found two faces and the next step shows the matches.",
       "route": "#/guided-prototype",
       "job_entry": false,
       "deep_link": true,
       "url_params": [],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypePage.tsx",
       "primary_action_id": null,
-      "states": ["default"],
+      "states": [
+        "default"
+      ],
       "zones": [
         {
           "id": "evidence-0",
-          "label": "Photograph with descriptive fallback; figcaption shows current alt text on the page and photo credit",
+          "label": "The photo; Alt text on the page right now: Two people at a film festival.; Photo credit: Colleen Sturtevant, CC BY-SA 4.0.; AltContext found two faces in this photo. The next step shows the matches.",
           "role": "ai_review",
-          "states": ["default"],
+          "states": [
+            "default"
+          ],
           "evidence_linked": true
         },
         {
           "id": "evidence-1",
-          "label": "Provenance list with humanised scenario-origin label, page title/summary and sample record",
+          "label": "Saved run — How two faces become two names in the description. AltContext looks at the photo, finds each face, and checks it against people you already named. If you confirm a match, that name goes into the description. You always have the last word. Where this example comes from: Example — Saved from a real run, not a live run; Page — Tribeca Festival 2026: red carpet photos; People on file — Katy Perry (5 saved photos) · Justin Trudeau (2 saved photos); Photo credit — Colleen Sturtevant, CC BY-SA 4.0.; Also checked — A Coachella press photo of the same two people matched both, even with a hand over her mouth. It is not bundled because of licensing.; Flow strip (How the faces reach the description) — Photo · 2 faces found · Matched to Justin Trudeau and Katy Perry · You confirm each match · Names in the description.",
           "role": "content",
-          "states": ["default"]
+          "states": [
+            "default"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "face",
+      "kind": "screen",
+      "title": "Faces found in the photo",
+      "purpose": "AltContext found 2 faces. Each one matched a person you named before.",
+      "route": "#/guided-prototype",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": [],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedFaceMatchCard.tsx",
+      "primary_action_id": null,
+      "states": [
+        "first_time",
+        "default"
+      ],
+      "zones": [
+        {
+          "id": "face-0",
+          "label": "Face crops and matches: Face on the left — It matches a person you named before: Justin Trudeau. ✓ Match strength: strong. This face is close to the 2 saved photos of Justin Trudeau.; Face on the right — It matches a person you named before: Katy Perry. ✓ Match strength: strong. This face is close to the 5 saved photos of Katy Perry.; Her face is turned a little to the side.; Saved photos of Justin Trudeau: 2 of 2 shown.; Saved photos of Katy Perry: 3 of 5 shown.",
+          "role": "ai_review",
+          "states": [
+            "first_time",
+            "default"
+          ],
+          "evidence_linked": true
+        },
+        {
+          "id": "face-1",
+          "label": "How this works: 1. AltContext finds every face in the photo. 2. It compares each face to the people you already named. 3. It asks you to confirm each match. Nothing is named without your OK. These matches were saved from a real run. The demo does not run recognition live.",
+          "role": "content",
+          "states": [
+            "first_time",
+            "default"
+          ]
+        },
+        {
+          "id": "face-2",
+          "label": "Decision status: You have not decided yet. / You confirmed: Justin Trudeau. / You confirmed: Katy Perry. / You kept this person unnamed. Decisions block: Confirm each match. Justin Trudeau, face on the left — Yes, this is Justin Trudeau / Keep this person unnamed. Katy Perry, face on the right — Yes, this is Katy Perry / Keep this person unnamed. Changing an answer swaps in a different saved draft. Save or discard your edit first. Buttons are disabled and described by this note while an edit is unsaved; confirm is disabled when already confirmed; unnamed is disabled when already unidentified. Feedback: Match confirmed. {name} is in the draft. Nothing is applied yet. The person on the {position} stays unnamed. You can still check the description.",
+          "role": "form",
+          "states": [
+            "first_time",
+            "default"
+          ]
         }
       ]
     },
     {
       "id": "draft",
       "kind": "screen",
-      "title": "Description review",
-      "purpose": "Identity evidence card, saved draft and immutable visual-only baseline are distinguishable from current applied text; pending edits require save/discard; proposed-draft origin is humanised and a rejected draft shows a recovery notice.",
+      "title": "Check the description before anything changes",
+      "purpose": "Read the draft. Edit it or reject it. Nothing changes until you press Apply.",
       "route": "#/guided-prototype",
       "job_entry": false,
       "deep_link": true,
       "url_params": [],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedDescriptionReview.tsx",
       "primary_action_id": "save",
-      "states": ["default", "error"],
+      "states": [
+        "default",
+        "error"
+      ],
       "zones": [
         {
           "id": "draft-0",
-          "label": "Identity evidence card: confirm sample identity or leave unidentified; disabled while an unsaved edit exists",
+          "label": "Ready for you to check, Edited by you, or Rejected. The saved text did not change. Both confirmed: You confirmed both matches, so both names are in the draft. The visual details and page context stay the same. One confirmed: You confirmed one match, so one name is in the draft. The other person is described, not named. None confirmed, all decided: You kept both people unnamed, so the draft only says what is visible. Otherwise: Confirm or skip each face match first. Until then the draft only says what is visible.",
           "role": "form",
-          "states": ["default"]
+          "states": [
+            "default"
+          ]
         },
         {
           "id": "draft-1",
-          "label": "Before (generic draft) vs Proposed draft with humanised draft-origin label; rejected-draft recovery notice when applicable",
+          "label": "Draft without names: A man in a black tuxedo and a woman in a white draped gown pose side by side at the Tribeca Festival. Her hand rests on his chest. Without the names. This draft comes from a saved run, not a live one.",
           "role": "ai_review",
-          "states": ["default"],
+          "states": [
+            "default"
+          ],
           "evidence_linked": true
         },
         {
           "id": "draft-2",
-          "label": "Labelled editor with save/discard/reject actions; inline empty-description alert",
+          "label": "Description draft with Save my edit, Discard my edit, and Reject this draft. Rejected notice: You rejected this draft, so Apply is off. Edit and save the text, or change an answer about a face, to get a new draft.",
           "role": "form",
-          "states": ["default", "error"]
+          "states": [
+            "default",
+            "error"
+          ]
         }
       ]
     },
     {
       "id": "apply",
       "kind": "screen",
-      "title": "Review exact application",
-      "purpose": "Before/after shows current practice value and the actual saved candidate that Apply commits; Apply and Undo live in the same explicit-apply section; never commits a hidden older value, and applying a rejected draft is prevented by a disabled button.",
+      "title": "Apply it yourself",
+      "purpose": "Nothing changes until you press Apply. Pressing Apply writes the saved draft to this practice copy only.",
       "route": "#/guided-prototype",
       "job_entry": false,
       "deep_link": true,
       "url_params": [],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedDescriptionReview.tsx",
       "primary_action_id": "apply-now",
-      "states": ["default", "error"],
+      "states": [
+        "default",
+        "error"
+      ],
       "zones": [
         {
           "id": "apply-0",
-          "label": "Current value and reviewed saved candidate; explicit practice-only destination",
+          "label": "The practice copy says {appliedText}; pressing Apply writes the saved draft to this practice copy only",
           "role": "ai_review",
-          "states": ["default", "error"],
+          "states": [
+            "default",
+            "error"
+          ],
           "evidence_linked": true
         },
         {
           "id": "apply-1",
-          "label": "Apply / Undo actions; blocked with explanation while pending or rejected",
+          "label": "Apply to practice copy and Undo; Apply is off while your edit is unsaved",
           "role": "form",
-          "states": ["default", "error"]
+          "states": [
+            "default",
+            "error"
+          ]
         }
       ]
     },
@@ -175,25 +260,35 @@
       "url_params": [],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypePage.tsx",
       "primary_action_id": "reset-open",
-      "states": ["default", "empty"],
+      "states": [
+        "default",
+        "empty"
+      ],
       "zones": [
         {
           "id": "result-0",
           "label": "Applied description and unchanged original media scope",
           "role": "content",
-          "states": ["default"]
+          "states": [
+            "default"
+          ]
         },
         {
           "id": "result-1",
-          "label": "Chronological decision history; empty state before any decisions",
+          "label": "Chronological decision history; empty state before any decisions. History labels: You confirmed the face match: {name}. You kept the person on the {position} unnamed.",
           "role": "status",
-          "states": ["default", "empty"]
+          "states": [
+            "default",
+            "empty"
+          ]
         },
         {
           "id": "result-2",
           "label": "Reset practice trigger in the workspace header",
           "role": "nav",
-          "states": ["default"]
+          "states": [
+            "default"
+          ]
         }
       ]
     },
@@ -208,19 +303,25 @@
       "url_params": [],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedResetDialog.tsx",
       "primary_action_id": "keep",
-      "states": ["default"],
+      "states": [
+        "default"
+      ],
       "zones": [
         {
           "id": "reset-0",
           "label": "Explicit effects: remove practice changes, preserve original WordPress attachment",
           "role": "content",
-          "states": ["default"]
+          "states": [
+            "default"
+          ]
         },
         {
           "id": "reset-1",
           "label": "Cancel / Reset practice; Escape cancels",
           "role": "form",
-          "states": ["default"]
+          "states": [
+            "default"
+          ]
         }
       ]
     },
@@ -235,19 +336,25 @@
       "url_params": [],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedSamplePhoto.tsx",
       "primary_action_id": null,
-      "states": ["default"],
+      "states": [
+        "default"
+      ],
       "zones": [
         {
           "id": "image-fallback-0",
-          "label": "Visible image unavailable explanation and independent visual facts",
+          "label": "Visible image unavailable explanation: Sample photo unavailable. A man in a black tuxedo and a woman in a white draped gown pose side by side at the Tribeca Festival. Her hand rests on his chest.; independent visual facts remain available",
           "role": "status",
-          "states": ["default"]
+          "states": [
+            "default"
+          ]
         },
         {
           "id": "image-fallback-1",
           "label": "Sample record and text-based review remain available",
           "role": "ai_review",
-          "states": ["default"],
+          "states": [
+            "default"
+          ],
           "evidence_linked": true
         }
       ]
@@ -263,13 +370,17 @@
       "url_params": [],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/GuidedPrototypeEntrance.tsx",
       "primary_action_id": null,
-      "states": ["default"],
+      "states": [
+        "default"
+      ],
       "zones": [
         {
           "id": "case-study-0",
           "label": "Case study content",
           "role": "content",
-          "states": ["default"]
+          "states": [
+            "default"
+          ]
         }
       ]
     }
@@ -278,7 +389,7 @@
     {
       "id": "open",
       "screen_id": "intro",
-      "verb": "Start the guided walkthrough",
+      "verb": "Start the demo",
       "target": "guide",
       "hierarchy": "primary",
       "costly": false,
@@ -287,7 +398,7 @@
     {
       "id": "toggle-guide",
       "screen_id": "guide",
-      "verb": "Show guide / Hide guide",
+      "verb": "Show steps / Hide steps",
       "target": "guide",
       "hierarchy": "secondary",
       "costly": false,
@@ -296,7 +407,7 @@
     {
       "id": "skip-guide",
       "screen_id": "guide",
-      "verb": "Skip guide to current section",
+      "verb": "Skip to this step",
       "target": "evidence",
       "hierarchy": "tertiary",
       "costly": false,
@@ -305,7 +416,7 @@
     {
       "id": "guide-step",
       "screen_id": "guide",
-      "verb": "Jump to a guide step (understand/identity/review/apply)",
+      "verb": "Choose a step",
       "target": "draft",
       "hierarchy": "secondary",
       "costly": false,
@@ -314,25 +425,43 @@
     {
       "id": "end-guide",
       "screen_id": "guide",
-      "verb": "End guide",
+      "verb": "Close the steps",
       "target": "evidence",
       "hierarchy": "tertiary",
       "costly": false,
       "irreversible": false
     },
     {
-      "id": "confirm",
-      "screen_id": "draft",
-      "verb": "Confirm Keanu Reeves",
+      "id": "confirm-katy-perry",
+      "screen_id": "face",
+      "verb": "Yes, this is Katy Perry",
       "target": "draft",
       "hierarchy": "secondary",
       "costly": false,
       "irreversible": false
     },
     {
-      "id": "unnamed",
-      "screen_id": "draft",
-      "verb": "Keep the person unidentified",
+      "id": "unnamed-katy-perry",
+      "screen_id": "face",
+      "verb": "Keep this person unnamed",
+      "target": "draft",
+      "hierarchy": "tertiary",
+      "costly": false,
+      "irreversible": false
+    },
+    {
+      "id": "confirm-justin-trudeau",
+      "screen_id": "face",
+      "verb": "Yes, this is Justin Trudeau",
+      "target": "draft",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false
+    },
+    {
+      "id": "unnamed-justin-trudeau",
+      "screen_id": "face",
+      "verb": "Keep this person unnamed",
       "target": "draft",
       "hierarchy": "tertiary",
       "costly": false,
@@ -341,7 +470,7 @@
     {
       "id": "save",
       "screen_id": "draft",
-      "verb": "Save description edit",
+      "verb": "Save my edit",
       "target": "apply",
       "hierarchy": "primary",
       "costly": false,
@@ -350,7 +479,7 @@
     {
       "id": "discard",
       "screen_id": "draft",
-      "verb": "Discard unsaved edit",
+      "verb": "Discard my edit",
       "target": "draft",
       "hierarchy": "tertiary",
       "costly": false,
@@ -359,7 +488,7 @@
     {
       "id": "reject",
       "screen_id": "draft",
-      "verb": "Reject draft",
+      "verb": "Reject this draft",
       "target": "draft",
       "hierarchy": "secondary",
       "costly": false,
@@ -377,7 +506,7 @@
     {
       "id": "undo",
       "screen_id": "apply",
-      "verb": "Undo practice apply",
+      "verb": "Undo",
       "target": "apply",
       "hierarchy": "tertiary",
       "costly": false,
@@ -404,7 +533,7 @@
     {
       "id": "case",
       "screen_id": "intro",
-      "verb": "Read the case study",
+      "verb": "Read the AltContext case study",
       "target": "case-study",
       "hierarchy": "secondary",
       "costly": false,
@@ -423,90 +552,165 @@
   ],
   "flows": [
     {
-      "id": "named",
+      "id": "both-named",
       "job": "review",
-      "label": "Confirmed identity woven into description, reviewed and applied",
+      "label": "Confirm both matches → both names in the draft → apply → undo",
       "steps": [
         {
-          "screen_id": "intro"
+          "screen_id": "intro",
+          "branch_label": "Start the demo"
         },
         {
-          "screen_id": "guide"
+          "screen_id": "guide",
+          "branch_label": "Find the faces → Confirm each match"
         },
         {
-          "screen_id": "evidence"
+          "screen_id": "evidence",
+          "branch_label": "Photo → 2 faces found"
         },
         {
-          "screen_id": "draft"
+          "screen_id": "face",
+          "branch_label": "confirm-justin-trudeau: Yes, this is Justin Trudeau; confirm-katy-perry: Yes, this is Katy Perry"
         },
         {
-          "screen_id": "apply"
+          "screen_id": "draft",
+          "branch_label": "Expected: You confirmed both matches, so both names are in the draft. The visual details and page context stay the same."
         },
         {
-          "screen_id": "result"
+          "screen_id": "apply",
+          "branch_label": "apply-now: Apply to practice copy"
+        },
+        {
+          "screen_id": "result",
+          "branch_label": "Both names are in the applied draft."
+        },
+        {
+          "screen_id": "apply",
+          "branch_label": "undo: Undo"
         }
       ]
     },
     {
-      "id": "unnamed",
+      "id": "one-named",
       "job": "review",
-      "label": "Unresolved identity keeps description generic",
+      "label": "Confirm one match, keep the other unnamed → one name in the draft, other person described",
       "steps": [
         {
-          "screen_id": "evidence"
+          "screen_id": "intro",
+          "branch_label": "Start the demo"
         },
         {
-          "screen_id": "draft"
+          "screen_id": "guide",
+          "branch_label": "Find the faces → Confirm each match"
         },
         {
-          "screen_id": "apply"
+          "screen_id": "evidence",
+          "branch_label": "Photo → 2 faces found"
         },
         {
-          "screen_id": "result"
+          "screen_id": "face",
+          "branch_label": "confirm-katy-perry: Yes, this is Katy Perry + unnamed-justin-trudeau: Keep this person unnamed (or confirm-justin-trudeau + unnamed-katy-perry)"
+        },
+        {
+          "screen_id": "draft",
+          "branch_label": "Expected: You confirmed one match, so one name is in the draft. The other person is described, not named."
+        },
+        {
+          "screen_id": "apply",
+          "branch_label": "apply-now: Apply to practice copy"
+        },
+        {
+          "screen_id": "result",
+          "branch_label": "One name is in the applied draft; the other person is described, not named."
+        }
+      ]
+    },
+    {
+      "id": "nobody-named",
+      "job": "review",
+      "label": "Keep both people unnamed → visual-only draft",
+      "steps": [
+        {
+          "screen_id": "intro",
+          "branch_label": "Start the demo"
+        },
+        {
+          "screen_id": "guide",
+          "branch_label": "Find the faces → Confirm each match"
+        },
+        {
+          "screen_id": "evidence",
+          "branch_label": "Photo → 2 faces found"
+        },
+        {
+          "screen_id": "face",
+          "branch_label": "unnamed-justin-trudeau: Keep this person unnamed + unnamed-katy-perry: Keep this person unnamed"
+        },
+        {
+          "screen_id": "draft",
+          "branch_label": "Expected: You kept both people unnamed, so the draft only says what is visible."
+        },
+        {
+          "screen_id": "apply",
+          "branch_label": "apply-now: Apply to practice copy"
+        },
+        {
+          "screen_id": "result",
+          "branch_label": "Visual-only draft applied."
         }
       ]
     },
     {
       "id": "pending",
       "job": "review",
-      "label": "Pending edit cannot apply old candidate",
+      "label": "Save or discard your edit before Apply",
       "steps": [
         {
-          "screen_id": "draft"
+          "screen_id": "draft",
+          "branch_label": "save: Save my edit or discard: Discard my edit"
         },
         {
-          "screen_id": "apply"
+          "screen_id": "apply",
+          "branch_label": "Apply is off while your edit is unsaved"
         },
         {
-          "screen_id": "result"
+          "screen_id": "result",
+          "branch_label": "Saved draft is ready for Apply"
         }
       ]
     },
     {
       "id": "undo-flow",
       "job": "recover",
-      "label": "Apply two revisions and undo in order",
+      "label": "Apply two edits and undo in order",
       "steps": [
         {
-          "screen_id": "draft"
+          "screen_id": "draft",
+          "branch_label": "Save the first edit"
         },
         {
-          "screen_id": "apply"
+          "screen_id": "apply",
+          "branch_label": "apply-now: Apply to practice copy"
         },
         {
-          "screen_id": "result"
+          "screen_id": "result",
+          "branch_label": "Applied value is separate from draft"
         },
         {
-          "screen_id": "draft"
+          "screen_id": "draft",
+          "branch_label": "Save the second edit"
         },
         {
-          "screen_id": "apply"
+          "screen_id": "apply",
+          "branch_label": "apply-now: Apply to practice copy"
         },
         {
-          "screen_id": "result"
+          "screen_id": "result",
+          "branch_label": "Chronological decision history"
         },
         {
-          "screen_id": "apply"
+          "screen_id": "apply",
+          "branch_label": "undo: Undo"
         }
       ]
     },
@@ -516,34 +720,45 @@
       "label": "Cancel or confirm reset safely",
       "steps": [
         {
-          "screen_id": "draft"
+          "screen_id": "draft",
+          "branch_label": "reset-open: Reset practice"
         },
         {
-          "screen_id": "reset"
+          "screen_id": "reset",
+          "branch_label": "keep: Cancel or reset-confirm: Reset practice"
         },
         {
-          "screen_id": "evidence"
+          "screen_id": "evidence",
+          "branch_label": "Cancel preserves edits; Reset practice clears session state"
         }
       ]
     },
     {
       "id": "image-error",
       "job": "review",
-      "label": "Text fallback retains review path",
+      "label": "The photo is unavailable, but text lets you keep practising",
       "steps": [
         {
-          "screen_id": "image-fallback"
+          "screen_id": "image-fallback",
+          "branch_label": "Sample photo unavailable; text evidence remains"
         },
         {
-          "screen_id": "draft"
+          "screen_id": "draft",
+          "branch_label": "Check the description"
         },
         {
-          "screen_id": "apply"
+          "screen_id": "apply",
+          "branch_label": "Apply it yourself"
         }
       ]
     }
   ],
-  "open_questions": [],
+  "open_questions": [
+    "Saved-run provenance note: recognition engine InsightFace buffalo_l on the AltContext recognition service (dev build); saved run 2026-09-06; Saved from a real run on 2026-09-06, not a live run; threshold 0.6; Tribeca press photo similarities: Justin Trudeau on the left 0.686 and Katy Perry on the right 0.742.",
+    "Cluster ids from the dev tenant: Katy Perry 68adc97c-f81f-42c3-9e5c-061f16770361 (11 photos; 5 saved photos shown in the bundled gallery) and Justin Trudeau fd0d2b5d-108a-42b7-af25-f028e40d5778 (8 photos; 2 saved photos shown).",
+    "Also checked for provenance: a Coachella press photo of the same two people matched both, even with a hand over her mouth. It is not bundled because of licensing.",
+    "Live recognition: the demo ships the saved result and does not run recognition live. If live recognition ships, show a fresh timestamp and drop the saved-run disclosure; keep the engine name out of screen copy."
+  ],
   "not_doing": [
     "Public homepage or marketing deployment",
     "Guest-session authentication or credentials settings",

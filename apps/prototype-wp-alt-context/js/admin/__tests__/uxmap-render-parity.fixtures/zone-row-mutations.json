@@ -1,0 +1,9 @@
+[
+  { "name": "unquoted conflicting duplicate", "row": "| error-action | Incorrect recovery | form | error |" },
+  { "name": "unquoted orphan", "row": "| retired-zone | Incorrect recovery | form | error |" },
+  { "name": "indented row", "row": "  | `error-action` | Incorrect recovery | form | error |" },
+  { "name": "extra column", "row": "| `error-action` | Incorrect recovery | form | error | ignored |" },
+  { "name": "missing column", "row": "| `error-action` | Incorrect recovery | form |" },
+  { "name": "missing closing pipe", "row": "| `error-action` | Incorrect recovery | form | error" },
+  { "name": "missing opening pipe", "row": "`error-action` | Incorrect recovery | form | error |" }
+]

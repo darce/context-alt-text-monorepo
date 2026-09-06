@@ -73,32 +73,32 @@ Screen states: `default`, `loading`, `error`, `first_time`, `degraded`.
 
 ```
 +------------------------------------------------------------+
-| Alt Context                                               |
-| Overview                                                  |
-| It finds the people in your media library and writes      |
-| alt text that names them.                                 |
+| Alt Context                                                |
+| Overview                                                   |
+| It finds the people in your media library and writes       |
+| alt text that names them.                                  |
 +------------------------------------------------------------+
-| Sync Health                                               |
-|   Everything is saved and up to date.                     |
-|   Pending changes 0 / Conflicts 0 / Failed operations 0   |
-|   [Open Review Queue]                                     |
+| Sync Health                                                |
+|   Everything is saved and up to date.                      |
+|   Pending changes 0 / Conflicts 0 / Failed operations 0    |
+|   [Open Review Queue]                                      |
 +------------------------------------------------------------+
-| Identity Recognition                                     |
-|   People 24 | Assigned 20 | Pending Review 4              |
-|   Media with faces 120                                    |
-|   [Go to Review Queue]                                    |
+| Identity Recognition                                       |
+|   People 24 | Assigned 20 | Pending Review 4               |
+|   Media with faces 120                                     |
+|   [Go to Review Queue]                                     |
 +------------------------------------------------------------+
-| Library Coverage                                         |
-|   Total Media 300 | Missing Alt Text 40 | Coverage 87%    |
-|   [Fix missing descriptions]                              |
+| Library Coverage                                           |
+|   Total Media 300 | Missing Alt Text 40 | Coverage 87%     |
+|   [Fix missing descriptions]                               |
 +------------------------------------------------------------+
-| Recent Activity                                          |
-|   Scan finished · 120 images · 2 minutes ago              |
+| Recent Activity                                            |
+|   Scan finished · 120 images · 2 minutes ago               |
 |   Durable batch run                         [View Results] |
 +------------------------------------------------------------+
-| Data Retention                                           |
-|   Current Mode / Last Export / Last Purge                 |
-|   [Open Data Retention]                                   |
+| Data Retention                                             |
+|   Current Mode / Last Export / Last Purge                  |
+|   [Open Data Retention]                                    |
 +------------------------------------------------------------+
 ```
 
@@ -108,34 +108,34 @@ A reachable fourth GuidanceCard branch: `pending_clusters_count === 0`, `unassig
 
 ```
 +------------------------------------------------------------+
-| Alt Context                                               |
-| Overview                                                  |
-| It finds the people in your media library and writes      |
-| alt text that names them.                                 |
+| Alt Context                                                |
+| Overview                                                   |
+| It finds the people in your media library and writes       |
+| alt text that names them.                                  |
 +------------------------------------------------------------+
-| Sync Health                                               |
-|   Everything is saved and up to date.                     |
-|   Pending changes 0 / Conflicts 0 / Failed operations 0   |
-|   [Open Review Queue]                                     |
+| Sync Health                                                |
+|   Everything is saved and up to date.                      |
+|   Pending changes 0 / Conflicts 0 / Failed operations 0    |
+|   [Open Review Queue]                                      |
 +------------------------------------------------------------+
-| Identity Recognition                                     |
-|   People 24 | Assigned 24 | Pending Review 0              |
-|   Media with faces 120                                    |
-|   All caught up. New faces will appear here for review.   |
-|   Open the Review Queue to check for new face groups.     |
-|   [Open Review Queue]                                     |
+| Identity Recognition                                       |
+|   People 24 | Assigned 24 | Pending Review 0               |
+|   Media with faces 120                                     |
+|   All caught up. New faces will appear here for review.    |
+|   Open the Review Queue to check for new face groups.      |
+|   [Open Review Queue]                                      |
 +------------------------------------------------------------+
-| Library Coverage                                         |
-|   Total Media 300 | Missing Alt Text 40 | Coverage 87%    |
-|   [Fix missing descriptions]                              |
+| Library Coverage                                           |
+|   Total Media 300 | Missing Alt Text 40 | Coverage 87%     |
+|   [Fix missing descriptions]                               |
 +------------------------------------------------------------+
-| Recent Activity                                          |
-|   Scan finished · 120 images · 2 minutes ago              |
+| Recent Activity                                            |
+|   Scan finished · 120 images · 2 minutes ago               |
 |   Durable batch run                         [View Results] |
 +------------------------------------------------------------+
-| Data Retention                                           |
-|   Current Mode / Last Export / Last Purge                 |
-|   [Open Data Retention]                                   |
+| Data Retention                                             |
+|   Current Mode / Last Export / Last Purge                  |
+|   [Open Data Retention]                                    |
 +------------------------------------------------------------+
 ```
 
@@ -145,35 +145,35 @@ The hero and orientation surface render while independently loaded sections sett
 
 ```
 +------------------------------------------------------------+
-| Alt Context                                               |
-| Overview                                                  |
-| It finds the people in your media library and writes      |
-| alt text that names them.                                 |
+| Alt Context                                                |
+| Overview                                                   |
+| It finds the people in your media library and writes       |
+| alt text that names them.                                  |
 +------------------------------------------------------------+
-| Getting Started with Identity Recognition                 |
-|   1. Scan  ->  2. Confirm  ->  3. Review                  |
-|   [Start your first scan] [Dismiss getting started]       |
+| Getting Started with Identity Recognition                  |
+|   1. Scan  ->  2. Confirm  ->  3. Review                   |
+|   [Start your first scan] [Dismiss getting started]        |
 +------------------------------------------------------------+
-| Sync Health                                               |
-|   Everything is saved and up to date.                     |
-|   [Open Review Queue]                                     |
+| Sync Health                                                |
+|   Everything is saved and up to date.                      |
+|   [Open Review Queue]                                      |
 +------------------------------------------------------------+
-| Identity Recognition                                     |
-|   People 0 | Assigned 0 | Pending Review 0                |
-|   Media with faces 0                                     |
-|   [Go to Scan tab]                                        |
+| Identity Recognition                                       |
+|   People 0 | Assigned 0 | Pending Review 0                 |
+|   Media with faces 0                                       |
+|   [Go to Scan tab]                                         |
 +------------------------------------------------------------+
-| Library Coverage                                         |
-|   Total Media 0 | Missing Alt Text 0 | Coverage 0%        |
-|   [Fix missing descriptions]                              |
+| Library Coverage                                           |
+|   Total Media 0 | Missing Alt Text 0 | Coverage 0%         |
+|   [Fix missing descriptions]                               |
 +------------------------------------------------------------+
-| Recent Activity                                          |
-|   No recent scans yet                                     |
-|   Run a scan to find faces in your media library.         |
-|   [Run a scan]                                            |
+| Recent Activity                                            |
+|   No recent scans yet                                      |
+|   Run a scan to find faces in your media library.          |
+|   [Run a scan]                                             |
 +------------------------------------------------------------+
-| Data Retention                                           |
-|   (absent while policy is unavailable)                    |
+| Data Retention                                             |
+|   (absent while policy is unavailable)                     |
 +------------------------------------------------------------+
 ```
 
@@ -183,24 +183,25 @@ There is no page-wide loading replacement. The hero and orientation can remain v
 
 ```
 +------------------------------------------------------------+
-| Overview                                                  |
-| Getting Started with Identity Recognition                 |
+| Overview                                                   |
+| Getting Started with Identity Recognition                  |
 +------------------------------------------------------------+
-| Sync Health                                               |
-|   Loading sync health…                                   |
+| Sync Health                                                |
+|   Loading sync health…                                     |
 +------------------------------------------------------------+
-| Identity Recognition                                     |
-|   Loading identity stats…                                |
+| Identity Recognition                                       |
+|   Loading identity stats…                                  |
 +------------------------------------------------------------+
-| Library Coverage                                         |
-|   Loading coverage insights…                             |
-|   (progress bar and [Fix missing descriptions] render regardless of loading) |
+| Library Coverage                                           |
+|   Loading coverage insights…                               |
+|   progress bar remains available while coverage loads      |
+|   [Fix missing descriptions]                               |
 +------------------------------------------------------------+
-| Recent Activity                                          |
-|   History area remains in its hook-provided state         |
+| Recent Activity                                            |
+|   History area remains in its hook-provided state          |
 +------------------------------------------------------------+
-| Data Retention                                           |
-|   absent while retention status is loading                |
+| Data Retention                                             |
+|   absent while retention status is loading                 |
 +------------------------------------------------------------+
 ```
 
@@ -212,28 +213,30 @@ Identity Recognition actually has two distinct, independently-triggered retry co
 
 ```
 +------------------------------------------------------------+
-| Overview                                                  |
-| Getting Started with Identity Recognition                 |
+| Overview                                                   |
+| Getting Started with Identity Recognition                  |
 +------------------------------------------------------------+
-| Sync Health                                               |
-|   Sync health is unavailable right now.                   |
+| Sync Health                                                |
+|   Sync health is unavailable right now.                    |
 +------------------------------------------------------------+
-| Identity Recognition                                     |
+| Identity Recognition                                       |
 |   Unable to load identity stats.             [Retry]       |
-|   (or) Identity stats are unavailable. [Retry identity stats] |
+|   (or) Identity stats are unavailable.                     |
+|   [Retry identity stats]                                   |
 +------------------------------------------------------------+
-| Library Coverage                                         |
-|   Coverage counters and [Fix missing descriptions]        |
+| Library Coverage                                           |
+|   Coverage counters and [Fix missing descriptions]         |
 +------------------------------------------------------------+
-| Recent Activity                                          |
-|   Recent activity is unavailable                          |
-|   Previous scans could not be loaded. You can still       |
-|   start a new scan.                                       |
-|   [Run a scan]                                            |
+| Recent Activity                                            |
+|   Recent activity is unavailable                           |
+|   Previous scans could not be loaded. You can still        |
+|   start a new scan.                                        |
+|   [Run a scan]                                             |
 +------------------------------------------------------------+
-| Data Retention                                           |
-|   Retention status could not load. Check the connection   |
-|   on the Settings page.                      [Open Data Retention] |
+| Data Retention                                             |
+|   Retention status could not load. Check the connection    |
+|   on the Settings page.                                    |
+|   [Open Data Retention]                                    |
 +------------------------------------------------------------+
 ```
 
@@ -245,29 +248,30 @@ Degraded is an intact first_named dashboard with an attention-bearing sync state
 
 ```
 +------------------------------------------------------------+
-| Overview                                                  |
+| Overview                                                   |
 +------------------------------------------------------------+
 | Sync Health                          (attention / offline) |
-|   Mirror is out of sync; pending / conflicts / failures   |
-|   [Open Review Queue]                                     |
-|   [Reset mirror] [Open Conflict Inbox] [Open Failed Sync Queue] |
+|   Mirror is out of sync; pending / conflicts / failures    |
+|   [Open Review Queue]                                      |
+|   [Reset mirror] [Open Conflict Inbox]                     |
+|   [Open Failed Sync Queue]                                 |
 +------------------------------------------------------------+
-| Identity Recognition                                     |
-|   People 24 | Assigned 20 | Pending Review 0              |
-|   [Review unassigned persons]                             |
+| Identity Recognition                                       |
+|   People 24 | Assigned 20 | Pending Review 0               |
+|   [Review unassigned persons]                              |
 +------------------------------------------------------------+
-| Library Coverage                                         |
+| Library Coverage                                           |
 |   Coverage counters remain available                       |
-|   [Fix missing descriptions]                              |
+|   [Fix missing descriptions]                               |
 +------------------------------------------------------------+
-| Recent Activity                                          |
-|   Showing jobs remembered in this browser only.           |
-|   No recent scans yet                                     |
-|   Run a scan to find faces in your media library.         |
-|   [Run a scan]                                            |
+| Recent Activity                                            |
+|   Showing jobs remembered in this browser only.            |
+|   No recent scans yet                                      |
+|   Run a scan to find faces in your media library.          |
+|   [Run a scan]                                             |
 +------------------------------------------------------------+
-| Data Retention                                           |
-|   Policy summary or remediation remains local to panel    |
+| Data Retention                                             |
+|   Policy summary or remediation remains local to panel     |
 +------------------------------------------------------------+
 ```
 
@@ -447,22 +451,23 @@ url_params: `personFilter`, `person`
 
 ## Actions
 
-| id | hierarchy | verb | target |
-| --- | --- | --- | --- |
-| `act-start-first-scan` | primary | Start your first scan | `#/workbench?tab=scan` |
-| `act-dismiss-orientation` | tertiary | Dismiss getting started | dashboard-shell |
-| `act-open-review-queue` | secondary | Open Review Queue | `#/workbench?tab=scan` |
-| `act-fix-missing-descriptions` | secondary | Fix missing descriptions | `#/workbench?status=missing` |
-| `act-open-retention` | secondary | Open Data Retention | `#/retention` |
-| `act-open-conflicts` | secondary | Open Conflict Inbox | `#/workbench?tab=scan&panel=conflicts` |
-| `act-open-failed-sync` | secondary | Open Failed Sync Queue | `#/workbench?tab=scan&panel=dead-letter` |
-| `act-reset-mirror` | destructive | Reset mirror | dashboard sync health |
-| `act-view-results` | secondary | View Results | `#/workbench?advanced=open` |
-| `act-retry-identity-stats` | secondary | Retry | dashboard-shell |
-| `act-retry-identity-stats-unavailable` | secondary | Retry identity stats | dashboard-shell |
-| `act-go-to-review-queue` | secondary | Go to Review Queue | `#/workbench?advanced=open` |
-| `act-review-unassigned` | secondary | Review unassigned persons | `#/workbench?tab=scan` |
-| `act-go-to-scan-tab` | secondary | Go to Scan tab | `#/workbench?tab=scan` |
+| id | verb | target | hierarchy | costly | irreversible | preview required | screen id |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `act-start-first-scan` | Start your first scan | `#/workbench?tab=scan` | primary | no | no | no | `dashboard-shell` |
+| `act-dismiss-orientation` | Dismiss getting started | `dashboard-shell` | tertiary | no | no | no | `dashboard-shell` |
+| `act-open-review-queue` | Open Review Queue | `#/workbench?tab=scan` | secondary | no | no | no | `dashboard-shell` |
+| `act-fix-missing-descriptions` | Fix missing descriptions | `#/workbench?status=missing` | secondary | no | no | no | `dashboard-shell` |
+| `act-open-retention` | Open Data Retention | `#/retention` | secondary | no | no | no | `dashboard-shell` |
+| `act-open-conflicts` | Open Conflict Inbox | `#/workbench?tab=scan&panel=conflicts` | secondary | no | no | no | `dashboard-shell` |
+| `act-open-failed-sync` | Open Failed Sync Queue | `#/workbench?tab=scan&panel=dead-letter` | secondary | no | no | no | `dashboard-shell` |
+| `act-reset-mirror` | Reset mirror | `dashboard sync health` | destructive | yes | yes | yes | `dashboard-shell` |
+| `act-view-results` | View Results | `#/workbench?advanced=open` | secondary | no | no | no | `dashboard-shell` |
+| `act-run-a-scan` | Run a scan | `#/workbench?tab=scan` | secondary | no | no | no | `dashboard-shell` |
+| `act-retry-identity-stats` | Retry | `dashboard-shell` | secondary | no | no | no | `dashboard-shell` |
+| `act-retry-identity-stats-unavailable` | Retry identity stats | `dashboard-shell` | secondary | no | no | no | `dashboard-shell` |
+| `act-go-to-review-queue` | Go to Review Queue | `#/workbench?advanced=open` | secondary | no | no | no | `dashboard-shell` |
+| `act-review-unassigned` | Review unassigned persons | `#/workbench?tab=scan` | secondary | no | no | no | `dashboard-shell` |
+| `act-go-to-scan-tab` | Go to Scan tab | `#/workbench?tab=scan` | secondary | no | no | no | `dashboard-shell` |
 
 ## Flows
 
@@ -470,6 +475,8 @@ url_params: `personFilter`, `person`
 
 ```mermaid
 flowchart TD
+  %% flow: First-time orientation → start first scan → review queue job=job-start-recognition
+  %% steps: [{"screen_id":"dashboard-shell","branch_label":"fresh tenant; orientation before grid"},{"screen_id":"exit-workbench","branch_label":"Start your first scan"},{"screen_id":"dashboard-shell","branch_label":"scan/job appears in Recent Activity"}]
   n_dashboard_first["Overview (first_time)"]
   n_exit_workbench["Workbench (exit)"]
   n_dashboard_first -->|orientation before grid| n_dashboard_first
@@ -481,6 +488,8 @@ flowchart TD
 
 ```mermaid
 flowchart TD
+  %% flow: Read health and identity counts → open review queue or resolve sync debt job=job-triage-dashboard
+  %% steps: [{"screen_id":"dashboard-shell","branch_label":"populated dashboard"},{"screen_id":"dashboard-shell","branch_label":"Identity Recognition promoted when review work exists and sync has no attention"},{"screen_id":"exit-workbench","branch_label":"Open Review Queue / Conflict Inbox / Failed Sync Queue"}]
   n_dashboard_review["Overview (default)"]
   n_exit_workbench_review["Workbench (exit)"]
   n_dashboard_review -->|Identity Recognition promoted when review work exists and sync has no attention| n_dashboard_review
@@ -491,6 +500,8 @@ flowchart TD
 
 ```mermaid
 flowchart TD
+  %% flow: Check coverage → fix missing descriptions → inspect data retention job=job-maintain-library
+  %% steps: [{"screen_id":"dashboard-shell","branch_label":"Library Coverage"},{"screen_id":"exit-workbench","branch_label":"Fix missing descriptions"},{"screen_id":"exit-retention","branch_label":"Open Data Retention"}]
   n_dashboard_maintenance["Overview (default)"]
   n_exit_workbench_fix["Workbench (exit)"]
   n_exit_retention["Data Retention (exit)"]
@@ -511,7 +522,7 @@ flowchart TD
 
 Zone ids: z-dashboard-hero z-orientation z-sync-health z-identity-recognition z-library-coverage z-recent-activity z-retention-posture z-wb-entry z-retention-entry z-roster-entry
 
-Action ids: act-start-first-scan act-dismiss-orientation act-open-review-queue act-fix-missing-descriptions act-open-retention act-open-conflicts act-open-failed-sync act-reset-mirror act-view-results act-retry-identity-stats act-retry-identity-stats-unavailable act-go-to-review-queue act-review-unassigned act-go-to-scan-tab
+Action ids: act-start-first-scan act-dismiss-orientation act-open-review-queue act-fix-missing-descriptions act-open-retention act-open-conflicts act-open-failed-sync act-reset-mirror act-view-results act-run-a-scan act-retry-identity-stats act-retry-identity-stats-unavailable act-go-to-review-queue act-review-unassigned act-go-to-scan-tab
 
 Zone labels (verbatim):
 
@@ -526,7 +537,7 @@ Zone labels (verbatim):
 - Data Retention entry
 - Roster entry
 
-Screen states: default loading error first_time degraded
+States (all zones and screens): default loading error first_time degraded empty
 
 ## Not doing
 

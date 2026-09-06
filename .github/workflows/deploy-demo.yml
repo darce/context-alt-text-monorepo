@@ -41,6 +41,12 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # GitHub's bash default enables `-e` but not pipefail. Without pipefail, a
+    # runner startup failure hidden behind a diagnostic `tail`/`head` reports
+    # the formatter's zero status and turns a suite that ran no tests green.
+    defaults:
+      run:
+        shell: bash --noprofile --norc -eo pipefail {0}
     # One hung network step must not hold the serialized deploy-demo lane for
     # GitHub's 6h default — this job is the cut vertex of the deploy chain.
     timeout-minutes: 30

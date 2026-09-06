@@ -89,7 +89,12 @@ describe('useClusterActionMutations pollSplitJob (BND-1-AUDIT-1)', () => {
 
     await waitFor(() => expect(invalidateQueries).toHaveBeenCalled());
     expect(onError).not.toHaveBeenCalled();
-    expect(recognitionApi.fetchScanStatus).toHaveBeenCalledWith('split-job-1');
+    // RES-13 / TEST-15: the async poll remains owned by the original split,
+    // including terminal partial success (heuristics-canon-research/lexicons/engineering.md:124,396).
+    const splitSignal = vi.mocked(recognitionApi.splitCluster).mock.calls[0][2];
+    expect(splitSignal).toBeInstanceOf(AbortSignal);
+    expect(splitSignal?.aborted).toBe(false);
+    expect(recognitionApi.fetchScanStatus).toHaveBeenCalledExactlyOnceWith('split-job-1', splitSignal);
   });
 
   it('resolves an async split when the job finishes completed', async () => {

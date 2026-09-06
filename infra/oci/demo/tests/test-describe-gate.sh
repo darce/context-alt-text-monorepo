@@ -386,6 +386,35 @@ else
     done
 fi
 
+# Every assertion below greps bootstrap-wp.sh as text, so a shell syntax error
+# introduced while editing those branches would go unnoticed. Parse it.
+if bash -n "$bootstrap_file" 2>/dev/null; then
+    echo "ok   bootstrap-wp.sh parses under bash -n"
+else
+    echo "FAIL bootstrap-wp.sh has a shell syntax error:"
+    bash -n "$bootstrap_file" 2>&1 | sed 's/^/     /'
+    failures=$((failures + 1))
+fi
+
+# --- DEMOGATE-1: probe failure must not be reported as an untrusted profile ---
+# An empty adapter means the /health/detailed probe failed (non-2xx, timeout,
+# missing constant, unparseable body). Telling the operator to "change the
+# description SERVICE profile" in that case routes them at the wrong system.
+assert_eq "block cause: empty adapter is a failed probe" \
+    PROBE_FAILED "$(classify_describe_block_cause "")"
+assert_eq "block cause: unknown adapter is an untrusted profile" \
+    UNTRUSTED_PROFILE "$(classify_describe_block_cause seeded)"
+assert_eq "block cause: allowlisted adapter is trusted" \
+    TRUSTED "$(classify_describe_block_cause gpu_qwen30b)"
+assert_eq "block cause: whitespace-only adapter is a failed probe" \
+    PROBE_FAILED "$(classify_describe_block_cause "   ")"
+assert_file_grep "bootstrap branches on classify_describe_block_cause" \
+    "$bootstrap_file" 'classify_describe_block_cause'
+assert_file_grep "probe-failure BLOCK names the probe, not the profile" \
+    "$bootstrap_file" 'could not read the live description service adapter'
+assert_file_grep "probe-failure BLOCK names the probed endpoint" \
+    "$bootstrap_file" 'health/detailed'
+
 # --- bootstrap-wp.sh wiring (R1-05 / R1-04 / RLSE-08) ---
 health_file="${script_dir}/../../../../apps/prototype-description-service/api/main.py"
 assert_file_grep "service /health/detailed payload includes description_adapter" \

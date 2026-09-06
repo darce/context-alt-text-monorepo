@@ -1059,19 +1059,57 @@ def _audit_event_time(event: dict[str, Any]) -> str | None:
     return None
 
 
+def _parse_audit_event_time(value: str) -> datetime | None:
+    """Parse an OCI Audit timestamp, treating a timezone-less value as UTC."""
+
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
 def _audit_time_sort_key(event: dict[str, Any]) -> tuple[int, float | str]:
     value = _audit_event_time(event)
     if value is None:
         return (1, "")
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        return (0, parsed.timestamp())
-    except ValueError:
-        return (1, value)
+    parsed = _parse_audit_event_time(value)
+    return (0, parsed.timestamp()) if parsed is not None else (1, value)
 
 
 def _first_stop_event(events: Sequence[dict[str, Any]]) -> dict[str, Any] | None:
     return min(events, key=_audit_time_sort_key) if events else None
+
+
+def _stop_events_in_window(
+    events: Sequence[dict[str, Any]],
+    instance_id: str,
+    *,
+    start_time: str,
+    end_time: str,
+) -> list[dict[str, Any]]:
+    """Keep only timestamped STOP records for this instance in the query window.
+
+    The OCI CLI applies the window server-side, but dry fakes and wrapped clients
+    do not necessarily do so. Re-checking it locally keeps an old or malformed
+    audit record from proving a STOP that happened outside this smoke run.
+    """
+
+    start = _parse_audit_event_time(start_time)
+    end = _parse_audit_event_time(end_time)
+    if start is None or end is None or end < start:
+        return []
+    in_window: list[dict[str, Any]] = []
+    for event in events:
+        if not _is_stop_event(event, instance_id):
+            continue
+        event_time = _audit_event_time(event)
+        parsed_event_time = _parse_audit_event_time(event_time) if event_time is not None else None
+        if parsed_event_time is not None and start <= parsed_event_time <= end:
+            in_window.append(event)
+    return in_window
 
 
 def _gpu_snapshot_lifecycle_state(snapshot: Mapping[str, Any]) -> str:
@@ -1981,14 +2019,20 @@ def run_smoke(
                         if stop_audit_attempted:
                             stop_audit_deadline.check("waiting for OCI Audit STOP event indexing")
                         stop_audit_attempted = True
+                        stop_window_end = _iso_utc(now())
                         raw_stop_events = oci.list_stop_events(
                             compartment_id,
                             args.instance_id,
                             start_time=run_window_started_at,
-                            end_time=_iso_utc(now()),
+                            end_time=stop_window_end,
                             timeout=stop_audit_deadline.timeout(OCI_CALL_TIMEOUT_SECONDS),
                         )
-                        stop_events = _unique_stop_events(raw_stop_events, args.instance_id)
+                        stop_events = _stop_events_in_window(
+                            _unique_stop_events(raw_stop_events, args.instance_id),
+                            args.instance_id,
+                            start_time=run_window_started_at,
+                            end_time=stop_window_end,
+                        )
                         if stop_events:
                             break
                     except (SmokeFailure, OSError, ValueError) as exc:

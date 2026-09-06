@@ -174,6 +174,64 @@ purpose to hit the 90 s warm-start target.
 (40 GB) or `VM.GPU.A10.2` (48 GB) at higher $/hr — each needs its **own** service-limit
 increase request; an A10 grant does not cover them.
 
+## GPU burst smoke proof and cost reconciliation
+
+Run the offline proof before an operator considers a live run. The live command is
+deliberately gated and must run on `acx-backend`; it is never a substitute for the
+compensating STOP or the host reaper.
+
+The smoke records four independent checks:
+
+1. **STOP attribution.** After the instance is `STOPPED`, it queries the OCI Audit
+   event window for the first completed `STOP`/`StopInstance` event for that OCID and
+   records its `principalName` (or `principalId`) as `stop_principal`, together with
+   `stop_event_time`. The default allow-list principal is **`gpu_lifecycle`**, the
+   dedicated lifecycle reaper identity. A human console principal fails the smoke.
+   Override or add an accepted name/OCID with repeatable
+   `--expected-stop-principal PRINCIPAL` options.
+2. **Second-burst idempotence.** Once the first run and reaper have completed, the
+   smoke polls the same `/items` endpoint once more. It compares persisted item IDs
+   (falling back to `created_at`) and checks the transport evidence for zero new POSTs
+   to the enqueue route. The report check is named `second_burst_no_enqueue`.
+3. **Shared GPU-state timeline.** Dry mode feeds the same state snapshot vocabulary
+   used by `gpu_lifecycle` through the live transition recorder. Its report therefore
+   has the same transition shape,
+   `STOPPED→STARTING→RUNNING→STOPPING→STOPPED`, with monotonic elapsed timestamps.
+4. **Usage reconciliation.** `scripts/gpu_cost_report.py` is stdlib-only and never
+   calls the network. It multiplies each burst's RUNNING seconds by the hourly rate
+   (default **$2.00/GPU-hour**, matching the [OCI instance state and cost runbook](../../docs/runbooks/oci-instance-state-and-cost.md), rate line 175)
+   and compares that estimate with the OCI Usage API's `computedAmount` for the same
+   resource/time window. The default disagreement tolerance is 25%; a larger
+   disagreement exits 2.
+
+Export the Usage API JSON with the OCI CLI, then reconcile it with the smoke report:
+
+```bash
+cat > usage-request.json <<'JSON'
+{
+  "tenantId": "<tenancy-ocid>",
+  "timeFrom": "2026-01-01T00:00:00Z",
+  "timeTo": "2026-01-01T01:00:00Z",
+  "granularity": "HOURLY",
+  "queryType": "COST",
+  "groupBy": ["resourceId", "resourceName", "service"]
+}
+JSON
+oci usage-api usage-summary request-summarized-usages \
+  --request-summarized-usages-details file://usage-request.json \
+  --output json > usage.json
+python3 scripts/gpu_cost_report.py usage.json \
+  --smoke-report .workbay/tmp/gpu-burst-smoke/GPUSMOKE-1-evidence.json
+```
+
+Multiple exports may be supplied by repeating `--usage-json` (or by passing
+multiple positional paths). The equivalent Make target is:
+
+```bash
+make gpu-cost-report GPU_COST_USAGE_JSON="usage.json" \
+  GPU_COST_SMOKE_REPORT=.workbay/tmp/gpu-burst-smoke/GPUSMOKE-1-evidence.json
+```
+
 ## Sources
 
 - [Oracle Cloud price list](https://www.oracle.com/cloud/price-list/) — GPU compute + Block Volume (source of truth)

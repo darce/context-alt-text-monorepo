@@ -49,6 +49,8 @@ def _run_lifecycle(
     empty_rollback_artifact: str | None = None,
     damaged_rollback_unit: str | None = None,
     partial_reaper_write: bool = False,
+    group_present: bool = False,
+    groupadd_rc: int = 0,
 ) -> tuple[subprocess.CompletedProcess[str], str]:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir(exist_ok=True)
@@ -263,6 +265,32 @@ printf '\n' >>"$FAKE_TRANSPORT_LOG"
 exit "${FAKE_FLOCK_RC:-0}"
 """,
     )
+    # macOS has neither binary, but the units resolve SupplementaryGroups=10001
+    # through NSS, so the fake host has to model group lookup and creation.
+    _write_executable(
+        fake_bin / "getent",
+        """#!/usr/bin/env bash
+set -euo pipefail
+printf 'getent' >>"$FAKE_TRANSPORT_LOG"
+printf ' <%s>' "$@" >>"$FAKE_TRANSPORT_LOG"
+printf '\n' >>"$FAKE_TRANSPORT_LOG"
+if [ "${FAKE_GROUP_10001_PRESENT:-0}" = 1 ]; then
+  printf 'acxapi:x:10001:\n'
+  exit 0
+fi
+exit 2
+""",
+    )
+    _write_executable(
+        fake_bin / "groupadd",
+        """#!/usr/bin/env bash
+set -euo pipefail
+printf 'groupadd' >>"$FAKE_TRANSPORT_LOG"
+printf ' <%s>' "$@" >>"$FAKE_TRANSPORT_LOG"
+printf '\n' >>"$FAKE_TRANSPORT_LOG"
+exit "${FAKE_GROUPADD_RC:-0}"
+""",
+    )
     _write_executable(
         fake_bin / "delete-activation-call",
         """#!/usr/bin/env python3
@@ -317,6 +345,8 @@ printf '\n' >>"$FAKE_TRANSPORT_LOG"
             "FAKE_VERIFY_RC": str(verify_rc),
             "FAKE_REAPER_RC": str(reaper_rc),
             "FAKE_FLOCK_RC": str(flock_rc),
+            "FAKE_GROUP_10001_PRESENT": "1" if group_present else "0",
+            "FAKE_GROUPADD_RC": str(groupadd_rc),
             "FAKE_DROP_IN_PATHS": drop_in_paths,
             "FAKE_MISMATCHED_UNIT": mismatched_unit or "",
             "FAKE_REAP_EXEC_START": reap_exec_start,
@@ -704,6 +734,43 @@ def test_reaper_is_proved_before_start_timer_is_enabled(tmp_path: Path) -> None:
     assert disable < stop_start < lock_quiesced < reap_proof < start_timer_enable
     assert "systemctl <start> <acx-gpu-start" not in calls
     assert calls.index("systemctl <show> <acx-gpu-reap.service>") < start_timer_enable
+
+
+def test_fresh_host_gets_the_supplementary_group_before_the_reaper_is_proved(
+    tmp_path: Path,
+) -> None:
+    """Both units carry SupplementaryGroups=10001, which systemd resolves through NSS
+    before ExecStart. A numeric chown alone leaves no group entry, so the units die at
+    status=216/GROUP and the burst GPU is left with no working stop path."""
+    result, calls = _run_lifecycle(
+        tmp_path,
+        enabled=True,
+        ready_url="http://10.0.1.36:8000/health",
+        dry_run=False,
+        group_present=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "groupadd <-r> <-g> <10001> <acxapi>" in calls
+    assert calls.index("groupadd <-r> <-g> <10001> <acxapi>") < calls.index(
+        "systemctl <start> <acx-gpu-reap.service>"
+    )
+
+
+def test_reinstall_does_not_recreate_an_existing_supplementary_group(
+    tmp_path: Path,
+) -> None:
+    result, calls = _run_lifecycle(
+        tmp_path,
+        enabled=True,
+        ready_url="http://10.0.1.36:8000/health",
+        dry_run=False,
+        group_present=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "getent <group> <10001>" in calls
+    assert "groupadd" not in calls
 
 
 def test_rendered_remote_body_avoids_nonportable_shell_constructs(tmp_path: Path) -> None:

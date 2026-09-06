@@ -761,9 +761,10 @@ UNIT
 # ubuntu units read the API-owned load dump without granting the API host-side
 # write access to lifecycle state.
 # systemd resolves SupplementaryGroups=10001 through NSS before ExecStart. A bare
-# numeric chown creates no group entry, so both lifecycle units died with
-# "Failed to determine supplementary groups: No such process" (status=216/GROUP)
-# and the burst GPU lost its only stop path. Create the group by GID, idempotently.
+# numeric chown creates no group entry, so both lifecycle units died at
+# status=216/GROUP and the burst GPU lost its only stop path. Create the group by
+# GID, idempotently. No quotes or parens in this comment: the whole block is a
+# double-quoted ssh payload run through bash -c on the remote host.
 if ! getent group 10001 >/dev/null 2>&1; then
     sudo groupadd -r -g 10001 acxapi
 fi

@@ -48,7 +48,7 @@ def _run(
 ) -> tuple[smoke.SmokeResult, smoke.FakeOci]:
     scenario = scenario or smoke.DryScenario()
     scenario.service_api_key = service_api_key
-    fake_oci = oci or smoke.FakeOci()
+    fake_oci = oci or smoke.FakeOci(gpu_states=scenario.gpu_states)
     clock = smoke.FastClock()
 
     def load_snapshot_reader(_path: str) -> dict[str, object]:
@@ -209,7 +209,8 @@ def test_subprocess_oci_uses_supported_exact_argv(
                 "data": [
                     {
                         "eventType": "com.oraclecloud.computeapi.instanceaction.end",
-                        "eventId": "event-placeholder",
+                        "eventId": "start-event-placeholder",
+                        "eventTime": "2026-01-01T00:01:00Z",
                         "data": {
                             "resourceId": "instance-placeholder",
                             "request": {
@@ -217,7 +218,23 @@ def test_subprocess_oci_uses_supported_exact_argv(
                                 "parameters": {"action": ["START"]},
                             },
                         },
-                    }
+                    },
+                    {
+                        "eventType": "com.oraclecloud.computeapi.instanceaction.end",
+                        "eventId": "stop-event-placeholder",
+                        "eventTime": "2026-01-01T00:05:00Z",
+                        "data": {
+                            "resourceId": "instance-placeholder",
+                            "identity": {
+                                "principalName": "gpu_lifecycle",
+                                "principalId": "ocid1.dynamicgroup.oc1..gpu-lifecycle",
+                            },
+                            "request": {
+                                "id": "stop-request-placeholder",
+                                "parameters": {"action": ["StopInstance"]},
+                            },
+                        },
+                    },
                 ]
             }
         else:
@@ -237,8 +254,16 @@ def test_subprocess_oci_uses_supported_exact_argv(
         end_time="2026-01-01T00:05:00Z",
         timeout=3,
     )
+    stop_events = oci.list_stop_events(
+        "compartment-placeholder",
+        "instance-placeholder",
+        start_time="2026-01-01T00:00:00Z",
+        end_time="2026-01-01T00:05:00Z",
+        timeout=3,
+    )
 
     assert len(events) == 1
+    assert len(stop_events) == 1
 
     assert calls == [
         [
@@ -270,6 +295,21 @@ def test_subprocess_oci_uses_supported_exact_argv(
             "list",
             "--compartment-id",
             "compartment-placeholder",
+            "--all",
+            "--output",
+            "json",
+        ],
+        [
+            "oci-placeholder",
+            "audit",
+            "event",
+            "list",
+            "--compartment-id",
+            "compartment-placeholder",
+            "--start-time",
+            "2026-01-01T00:00:00Z",
+            "--end-time",
+            "2026-01-01T00:05:00Z",
             "--all",
             "--output",
             "json",
@@ -1412,3 +1452,107 @@ def test_null_measurement_guard_has_red_and_green_cases() -> None:
     smoke.assert_no_null_measurement_values({"cost": 0.0, "nested": [1, 2]})
     with pytest.raises(AssertionError, match=r"measurements\.nested\[1\]"):
         smoke.assert_no_null_measurement_values({"nested": [1, None]})
+
+
+def test_dry_run_records_the_first_stop_principal_and_event_time(tmp_path: Path) -> None:
+    result, _ = _run(tmp_path)
+
+    assert result.exit_code == 0
+    assert result.stop_principal == smoke.DEFAULT_STOP_PRINCIPAL
+    assert result.stop_event_time == "2026-01-01T00:00:10Z"
+    assert result.evidence["stop_principal"] == smoke.DEFAULT_STOP_PRINCIPAL
+    assert result.evidence["stop_event_time"] == "2026-01-01T00:00:10Z"
+    assert _check(result, "stop_event_observed")
+    assert _check(result, "stop_principal_allowed")
+
+
+def test_human_stop_principal_fails_the_smoke(tmp_path: Path) -> None:
+    result, _ = _run(
+        tmp_path,
+        oci=smoke.FakeOci(stop_principal="human-console-user"),
+    )
+
+    assert result.exit_code == 1
+    assert result.stop_principal == "human-console-user"
+    assert not _check(result, "stop_principal_allowed")
+    assert "human-console-user" in _detail(result, "stop_principal_allowed")
+
+
+def test_missing_stop_audit_event_fails_the_smoke(tmp_path: Path) -> None:
+    result, _ = _run(tmp_path, oci=smoke.FakeOci(stop_events=[]))
+
+    assert result.exit_code == 1
+    assert result.stop_principal is None
+    assert result.stop_event_time is None
+    assert not _check(result, "stop_event_observed")
+    assert "zero STOP events" in _detail(result, "stop_event_observed")
+
+
+def test_expected_stop_principal_is_repeatable_and_overrides_default() -> None:
+    args = smoke.build_parser().parse_args(
+        [
+            "--expected-stop-principal",
+            "operator-reaper",
+            "--expected-stop-principal",
+            "ocid1.dynamicgroup.oc1..operator-reaper",
+        ]
+    )
+
+    assert args.expected_stop_principal == [
+        "operator-reaper",
+        "ocid1.dynamicgroup.oc1..operator-reaper",
+    ]
+
+
+def test_second_burst_poll_does_not_enqueue_or_create_a_new_item(tmp_path: Path) -> None:
+    scenario = smoke.DryScenario()
+    result, _ = _run(tmp_path, scenario=scenario)
+
+    assert result.exit_code == 0
+    assert _check(result, "second_burst_no_enqueue")
+    assert result.evidence["second_burst"]["new_items"] == []
+    assert result.evidence["second_burst"]["enqueue_posts_during_poll"] == 0
+    assert scenario.transport_counts["enqueue_posts"] == 1
+
+
+def test_second_burst_duplicate_enqueue_fixture_fails(tmp_path: Path) -> None:
+    scenario = smoke.DryScenario(duplicate_enqueue_on_second_poll=True)
+    result, _ = _run(tmp_path, scenario=scenario)
+
+    assert result.exit_code == 1
+    assert not _check(result, "second_burst_no_enqueue")
+    assert result.evidence["second_burst"]["new_items"]
+
+
+def test_dry_gpu_states_use_live_transition_shape_and_fast_clock(tmp_path: Path) -> None:
+    scenario = smoke.DryScenario(
+        gpu_states=[
+            {"state": "stopped", "written_at": 0.0},
+            {"state": "starting", "written_at": 1.0},
+            {"state": "warming", "written_at": 2.0},
+            {"state": "stopping", "written_at": 3.0},
+            {"state": "stopped", "written_at": 4.0},
+        ]
+    )
+    result, _ = _run(tmp_path, scenario=scenario)
+
+    assert result.exit_code == 0
+    transitions = result.evidence["transitions"]
+    assert [entry["state"] for entry in transitions] == [
+        "STOPPED",
+        "STARTING",
+        "RUNNING",
+        "STOPPING",
+        "STOPPED",
+    ]
+    assert all(set(entry) == {"state", "timestamp", "elapsed_seconds"} for entry in transitions)
+    assert [entry["elapsed_seconds"] for entry in transitions] == sorted(
+        entry["elapsed_seconds"] for entry in transitions
+    )
+    assert [entry["timestamp"] for entry in transitions] == [
+        "2026-01-01T00:00:00Z",
+        "2026-01-01T00:00:00Z",
+        "2026-01-01T00:00:02Z",
+        "2026-01-01T00:00:02Z",
+        "2026-01-01T00:00:04Z",
+    ]

@@ -291,6 +291,8 @@ def test_subprocess_oci_uses_supported_exact_argv(
 
     assert len(events) == 1
     assert len(stop_events) == 1
+    assert len(oci.observed_gpu_states) == 1
+    assert oci.observed_gpu_states[0]["id"] == "instance-placeholder"
 
     assert calls == [
         [
@@ -1766,6 +1768,28 @@ def test_second_burst_replay_issues_a_second_enqueue_and_proves_idempotency(tmp_
     assert result.evidence["second_burst"]["idempotent_response"] is True
 
 
+def test_second_burst_can_prove_idempotency_without_transport_telemetry(tmp_path: Path) -> None:
+    scenario = smoke.DryScenario()
+    base_transport = smoke.make_mock_transport(scenario)
+
+    def live_like_transport(request: httpx.Request) -> httpx.Response:
+        # A real HTTPTransport has no dry-only request counters.  Preserve the
+        # response contract while deliberately hiding those counters.
+        return base_transport.handle_request(request)
+
+    result, _ = _run(
+        tmp_path,
+        scenario=scenario,
+        transport=httpx.MockTransport(live_like_transport),
+    )
+
+    assert result.exit_code == 0
+    assert _check(result, "second_burst_no_enqueue")
+    assert result.evidence["second_burst"]["transport_telemetry_available"] is False
+    assert result.evidence["second_burst"]["idempotent_response"] is True
+    assert result.evidence["second_burst"]["new_items"] == []
+
+
 def test_second_burst_without_idempotent_response_fails_closed_without_transport_telemetry(
     tmp_path: Path,
 ) -> None:
@@ -1793,6 +1817,32 @@ def test_second_burst_without_idempotent_response_fails_closed_without_transport
     assert result.exit_code == 1
     assert not _check(result, "second_burst_no_enqueue")
     assert "idempotent" in _detail(result, "second_burst_no_enqueue")
+
+
+def test_load_observation_failure_stops_before_gpu_processing(tmp_path: Path) -> None:
+    scenario = smoke.DryScenario()
+    base_transport = smoke.make_mock_transport(scenario)
+
+    def load_disappears_after_enqueue(request: httpx.Request) -> httpx.Response:
+        response = base_transport.handle_request(request)
+        if request.method == "POST" and request.url.path.endswith("/describe/runs"):
+            scenario.load_snapshot_after_trigger = None
+        return response
+
+    result, oci = _run(
+        tmp_path,
+        scenario=scenario,
+        oci=smoke.FakeOci(gpu_states=None),
+        transport=httpx.MockTransport(load_disappears_after_enqueue),
+    )
+
+    assert result.exit_code == 1
+    assert scenario.transport_counts["enqueue_posts"] == 1
+    assert scenario.transport_counts["items_gets"] == 0
+    assert scenario.transport_counts["run_gets"] == 0
+    assert not _check(result, "load_snapshot_observed_after_trigger")
+    assert "observation failed after enqueue" in _detail(result, "flow_completed")
+    assert oci.stop_calls == 1
 
 
 def test_dry_gpu_states_use_live_transition_shape_and_fast_clock(tmp_path: Path) -> None:

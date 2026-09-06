@@ -299,3 +299,80 @@ def test_cost_report_rejects_running_seconds_that_disagree_with_transitions(tmp_
 
     with pytest.raises(report.CostReportError, match="running_seconds"):
         report.report_costs([str(usage)], str(smoke))
+
+
+@pytest.mark.parametrize(
+    ("transitions", "message"),
+    [
+        (
+            [
+                {"state": "STOPPED", "elapsed_seconds": 0.0},
+                {"state": "RUNNING", "elapsed_seconds": 10.0},
+                {"state": "UNKNOWN", "elapsed_seconds": 20.0},
+                {"state": "STOPPED", "elapsed_seconds": 30.0},
+            ],
+            "unknown lifecycle state",
+        ),
+        (
+            [
+                {"state": "STOPPED", "elapsed_seconds": -1.0},
+                {"state": "RUNNING", "elapsed_seconds": 10.0},
+                {"state": "STOPPED", "elapsed_seconds": 20.0},
+            ],
+            "non-negative",
+        ),
+        (
+            [
+                {"state": "STARTING", "elapsed_seconds": 0.0},
+                {"state": "RUNNING", "elapsed_seconds": 10.0},
+                {"state": "STOPPED", "elapsed_seconds": 20.0},
+            ],
+            "start in STOPPED",
+        ),
+    ],
+)
+def test_cost_report_rejects_unproven_lifecycle_timeline(
+    tmp_path: Path,
+    transitions: list[dict[str, object]],
+    message: str,
+) -> None:
+    usage = tmp_path / "usage.json"
+    smoke = tmp_path / "smoke.json"
+    _write_json(
+        usage,
+        {"data": {"items": [{"computedAmount": 0.2, "resourceId": "ocid1.instance.oc1.iad.gpu"}]}},
+    )
+    report_payload = _smoke_report()
+    report_payload["transitions"] = transitions
+    _write_json(smoke, report_payload)
+
+    with pytest.raises(report.CostReportError, match=message):
+        report.report_costs([str(usage)], str(smoke))
+
+
+def test_cost_report_rejects_top_level_running_seconds_drift(tmp_path: Path) -> None:
+    usage = tmp_path / "usage.json"
+    smoke = tmp_path / "smoke.json"
+    _write_json(
+        usage,
+        {"data": {"items": [{"computedAmount": 0.2, "resourceId": "ocid1.instance.oc1.iad.gpu"}]}},
+    )
+    report_payload = _smoke_report()
+    report_payload["running_seconds"] = 1.0
+    _write_json(smoke, report_payload)
+
+    with pytest.raises(report.CostReportError, match="top-level running_seconds"):
+        report.report_costs([str(usage)], str(smoke))
+
+
+def test_cost_report_rejects_negative_usage_amount(tmp_path: Path) -> None:
+    usage = tmp_path / "usage.json"
+    smoke = tmp_path / "smoke.json"
+    _write_json(
+        usage,
+        {"data": {"items": [{"computedAmount": -0.2, "resourceId": "ocid1.instance.oc1.iad.gpu"}]}},
+    )
+    _write_json(smoke, _smoke_report())
+
+    with pytest.raises(report.CostReportError, match="non-negative"):
+        report.report_costs([str(usage)], str(smoke))

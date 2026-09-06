@@ -1,0 +1,260 @@
+{
+  "lane_id": "gpface-1-r-writing",
+  "commit": "a820d3eb192cb0198cfb272d5f99097893cf9744",
+  "reviewed_files": [
+    "docs/assessments/current/guided-prototype-face-recognition-2026-09-05.md",
+    "apps/prototype-wp-alt-context/js/admin/pages/GuidedPrototypeEntrance.tsx",
+    "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypePage.tsx",
+    "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypeGuide.tsx",
+    "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedFacesPanel.tsx",
+    "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedFaceMatchCard.tsx",
+    "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedDescriptionReview.tsx",
+    "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedSamplePhoto.tsx",
+    "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedResetDialog.tsx",
+    "apps/prototype-wp-alt-context/js/admin/guidedPrototype/state.ts",
+    "apps/prototype-wp-alt-context/js/admin/styles/components/_guided-prototype.scss",
+    "apps/prototype-wp-alt-context/js/admin/styles/components/_guided-flow-strip.scss",
+    "apps/prototype-wp-alt-context/js/admin/assets/guided/CREDITS.md",
+    "apps/prototype-wp-alt-context/docs/ux-maps/guided-prototype.uxmap.json",
+    "apps/prototype-wp-alt-context/docs/ux-maps/guided-prototype.md",
+    "apps/prototype-wp-alt-context/js/admin/navigation/appLinks.ts",
+    "apps/prototype-wp-alt-context/js/admin/pages/DashboardPage.tsx",
+    "apps/prototype-wp-alt-context/js/admin/pages/guided/__tests__/GuidedFaceMatchCard.test.tsx",
+    "apps/prototype-wp-alt-context/js/admin/pages/guided/__tests__/GuidedPrototypePage.test.tsx",
+    "apps/prototype-wp-alt-context/js/admin/pages/guided/__tests__/GuidedUxMap.contract.test.ts",
+    "apps/prototype-wp-alt-context/js/admin/guidedPrototype/state.test.ts",
+    "apps/prototype-wp-alt-context/js/components/ui/FaceThumbnail.tsx",
+    "apps/prototype-wp-alt-context/js/components/ui/dialog.tsx"
+  ],
+  "hypotheses": [
+    {
+      "claim": "The entrance intro and saved-run status use the v3 two-face wording verbatim.",
+      "verdict": "confirmed",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/GuidedPrototypeEntrance.tsx:18-24 — 'AltContext finds two faces...' and 'This demo uses one saved run. It does not run recognition live.'"
+    },
+    {
+      "claim": "The entrance boundary and case-study link add no punctuation beyond the approved strings.",
+      "verdict": "refuted",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/GuidedPrototypeEntrance.tsx:31-42 — the approved link text is followed by a separate visible '.' text node."
+    },
+    {
+      "claim": "Guide step ids, labels, descriptions, toggle labels, skip link, and close action match sections 4 and 7.4.",
+      "verdict": "confirmed",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypeGuide.tsx:3-20,73-133 — the five approved ids and all listed copy are present."
+    },
+    {
+      "claim": "The page shell uses the approved hero, flow-strip, provenance, history, and feedback strings.",
+      "verdict": "confirmed",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypePage.tsx:265-333,346-365 — the v3 hero, five flow labels, provenance values, and history empty state match the deck."
+    },
+    {
+      "claim": "The faces panel contains only strings specified for the v3 panel and ordered list.",
+      "verdict": "refuted",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedFacesPanel.tsx:35-39 — an extra visible 'How this works' heading precedes the approved list."
+    },
+    {
+      "claim": "Face cards use position-specific crop labels, match and strength copy, notes, gallery counts, and decision statuses.",
+      "verdict": "confirmed",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedFaceMatchCard.tsx:46-78 and apps/prototype-wp-alt-context/js/admin/guidedPrototype/state.ts:190-208 — left/right labels, names, counts, and Katy's note are wired as specified."
+    },
+    {
+      "claim": "A failed face crop retains the approved position-specific face label.",
+      "verdict": "refuted",
+      "evidence": "apps/prototype-wp-alt-context/js/components/ui/FaceThumbnail.tsx:111-125 — the error state renders 'Face image unavailable' instead of the passed 'Face on the {position}' label."
+    },
+    {
+      "claim": "Description review statuses, four explanation cases, edit errors/notices, buttons, and apply copy match the deck.",
+      "verdict": "confirmed",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedDescriptionReview.tsx:15-42,92-219 — all v3 status, explanation, error, notice, action, and apply strings are present."
+    },
+    {
+      "claim": "The sample-photo image-failure state visibly renders the exact v3 fallback sentence.",
+      "verdict": "refuted",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedSamplePhoto.tsx:17,27-29 — only aria-label uses 'Sample photo unavailable. {altText}'; visible elements omit the period and separating space."
+    },
+    {
+      "claim": "Reset practice trigger, title, body, and both buttons match the approved copy.",
+      "verdict": "confirmed",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedResetDialog.tsx:71,77-86 — all four reset strings match section 4."
+    },
+    {
+      "claim": "All four drafts name only confirmed people and retain the same core venue, pose, clothing, and hand details.",
+      "verdict": "confirmed",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/guidedPrototype/state.ts:211-223 — generic, one-name, and both-name captions use unnamed person descriptions and retain Tribeca, pose, garments, and hand placement."
+    },
+    {
+      "claim": "Positions, face order, saved-photo counts, and rendered gallery captions produce the required left/right and 3-of-5/2-of-2 story.",
+      "verdict": "confirmed",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/guidedPrototype/state.ts:151-207 and apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedFaceMatchCard.tsx:73-75 — Justin is left with 2/2 and Katy is right with 3/5."
+    },
+    {
+      "claim": "Rendered guided-screen strings avoid engine names, implementation jargon, percentages, and raw similarity scores.",
+      "verdict": "confirmed",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/guided/__tests__/GuidedUxMap.contract.test.ts:47-53 and apps/prototype-wp-alt-context/docs/ux-maps/guided-prototype.uxmap.json:23-386 — screen payload is tested and contains no InsightFace/buffalo terms; engine facts are confined to non-screen notes."
+    },
+    {
+      "claim": "Every bundled image credit row has an actual source URL, an allowed licence, and per-image crop/resize metadata.",
+      "verdict": "refuted",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/assets/guided/CREDITS.md:3-15 — all source cells are 'Wikimedia Commons File:...' labels, the table has no Changes column, and the Justin rows use 'Attribution'."
+    },
+    {
+      "claim": "CREDITS.md and state.ts use one exact credit string for every bundled gallery image.",
+      "verdict": "refuted",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/assets/guided/CREDITS.md:7-10 and apps/prototype-wp-alt-context/js/admin/guidedPrototype/state.ts:161,167,180,185 — Glenn Francis (Toglenn) is shortened, Public domain casing differs, and Attribution is replaced by 2025."
+    },
+    {
+      "claim": "The markdown UX-map render is not stale relative to JSON for representative intro, evidence, face, draft, and rejection labels.",
+      "verdict": "confirmed",
+      "evidence": "apps/prototype-wp-alt-context/docs/ux-maps/guided-prototype.uxmap.json:28,108,117,143,206 and apps/prototype-wp-alt-context/docs/ux-maps/guided-prototype.md:90,116-117,125,139 — the spot-checked labels are reproduced in both files."
+    },
+    {
+      "claim": "The UX-map screen inventory directly exposes all five runtime guide step ids.",
+      "verdict": "refuted",
+      "evidence": "apps/prototype-wp-alt-context/docs/ux-maps/guided-prototype.uxmap.json:23-31 uses intro/guide/evidence/face/draft/apply/result, while apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypeGuide.tsx:3,26-31 defines understand/face/identity/review/apply."
+    },
+    {
+      "claim": "The no-available-application undo edge has a user-facing plain-language state.",
+      "verdict": "refuted",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedDescriptionReview.tsx:217-221 hides Undo when no application exists; apps/prototype-wp-alt-context/js/admin/guidedPrototype/state.ts:460-464 silently returns unchanged and the page handler still announces 'Apply undone.' at :246-248."
+    },
+    {
+      "claim": "The same identity action uses one consistent verb throughout the guide and review explanation.",
+      "verdict": "refuted",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypeGuide.tsx:18 says 'keep that person unnamed', apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedFacesPanel.tsx:103 says 'Keep this person unnamed', and GuidedDescriptionReview.tsx:41 says 'Confirm or skip each face match first.'"
+    }
+  ],
+  "findings": [
+    {
+      "id": "GPFACE-1-RW-01",
+      "severity": "low",
+      "category": "copy",
+      "file": "apps/prototype-wp-alt-context/js/admin/pages/GuidedPrototypeEntrance.tsx",
+      "line": 42,
+      "evidence": "The approved case-study link is 'Read the AltContext case study'; the JSX adds a separate visible '.' after </a> at line 42.",
+      "impact": "The entrance adds punctuation not present in the verbatim deck and renders a separated full stop after the link.",
+      "recommendation": "Remove the standalone period after the link, or approve and render the punctuation as part of one copy-deck string.",
+      "rule": "Sections 4 and 7.4 Entrance — verbatim copy parity"
+    },
+    {
+      "id": "GPFACE-1-RW-02",
+      "severity": "medium",
+      "category": "copy",
+      "file": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedSamplePhoto.tsx",
+      "line": 27,
+      "evidence": "fallbackLabel is 'Sample photo unavailable. ${altText}' at line 17, but the visible fallback is <strong>Sample photo unavailable</strong> immediately followed by <span>{altText}</span> at lines 27-28.",
+      "impact": "When the image fails, sighted users see the fallback words joined without the required period and space, unlike the exact aria-label.",
+      "recommendation": "Render fallbackLabel visibly, or add '. ' between the visible heading and description.",
+      "rule": "Section 7.4 Sample photo — fallback label"
+    },
+    {
+      "id": "GPFACE-1-RW-03",
+      "severity": "low",
+      "category": "copy",
+      "file": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedFacesPanel.tsx",
+      "line": 35,
+      "evidence": "The panel adds the visible paragraph 'How this works' before the approved three-item how-it-works list at lines 35-39; section 7.4 lists only the ordered-list sentences.",
+      "impact": "The face panel shows unapproved duplicate explanatory copy, so the rendered surface is not character-for-character aligned with the deck.",
+      "recommendation": "Remove the added heading/label, or add it explicitly to the approved deck and UX-map copy.",
+      "rule": "Section 7.4 Faces panel — how-it-works list and verbatim parity"
+    },
+    {
+      "id": "GPFACE-1-RW-04",
+      "severity": "low",
+      "category": "copy",
+      "file": "apps/prototype-wp-alt-context/js/components/ui/FaceThumbnail.tsx",
+      "line": 111,
+      "evidence": "The reachable thumbnail-error label is 'Face image unavailable' at lines 111-125, while GuidedFaceMatchCard passes the approved position-specific alt 'Face on the {position}' at lines 46 and 50.",
+      "impact": "A failed face crop loses the left/right context used by the two-face story and introduces copy not covered by the face-card deck.",
+      "recommendation": "Preserve the passed position-specific label in the error state, with any unavailable-image wording approved in the deck.",
+      "rule": "Section 7.4 Face match card crop and edge-copy parity"
+    },
+    {
+      "id": "GPFACE-1-RW-05",
+      "severity": "low",
+      "category": "coherence",
+      "file": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedDescriptionReview.tsx",
+      "line": 41,
+      "evidence": "The review explanation says 'Confirm or skip each face match first', while the guide says 'keep that person unnamed' at GuidedPrototypeGuide.tsx:18 and the decision button says 'Keep this person unnamed' at GuidedFacesPanel.tsx:103.",
+      "impact": "A non-technical site owner may not know that 'skip' means the explicit Keep unnamed choice used elsewhere in the same flow.",
+      "recommendation": "Use the same identity-action verb in the explanation, preferably 'keep the person unnamed', and update the deck/map together.",
+      "rule": "Lens 4 Narrative coherence and plain-language consistency"
+    },
+    {
+      "id": "GPFACE-1-RW-06",
+      "severity": "medium",
+      "category": "licensing",
+      "file": "apps/prototype-wp-alt-context/js/admin/assets/guided/CREDITS.md",
+      "line": 3,
+      "evidence": "The Source column on rows 5-10 contains labels such as 'Wikimedia Commons File:Justin Trudeau Katy Perry 2.jpg'; an https URL is absent from all six rows.",
+      "impact": "Maintainers and reviewers cannot follow a source link to verify the bundled image attribution or licence.",
+      "recommendation": "Replace each file-title label with the exact Wikimedia/source URL for that bundled image.",
+      "rule": "Lens 8 Licensing and credits — source URL per bundled image"
+    },
+    {
+      "id": "GPFACE-1-RW-07",
+      "severity": "medium",
+      "category": "licensing",
+      "file": "apps/prototype-wp-alt-context/js/admin/assets/guided/CREDITS.md",
+      "line": 3,
+      "evidence": "Rows 5-10 have only File, Subject, Source, Author, and Licence columns; the only transformation note is the aggregate sentence 'Images were resized...' at line 12, with no per-image crop/resize value.",
+      "impact": "The credit record cannot tell which of the six files was cropped or resized, and it cannot support the required change indication for adapted CC BY-SA images.",
+      "recommendation": "Add a Changes column and record the actual cropped/resized operation for every row.",
+      "rule": "Lens 8 Licensing and credits — crop/resize status per bundled image"
+    },
+    {
+      "id": "GPFACE-1-RW-08",
+      "severity": "medium",
+      "category": "licensing",
+      "file": "apps/prototype-wp-alt-context/js/admin/assets/guided/CREDITS.md",
+      "line": 9,
+      "evidence": "Both Justin rows (`guided-justin-trudeau-2025.jpg` and `...2025-b.jpg`) list licence 'Attribution' at lines 9-10, while state.ts exposes only 'European Union, 2025' at lines 180 and 185; neither is one of CC BY, CC BY-SA 4.0, CC0, or public domain.",
+      "impact": "The two hidden gallery credits do not communicate an allowed licence, leaving the bundled Justin images legally incomplete and inconsistent with the allowed-license contract.",
+      "recommendation": "Verify the source licence for both Justin files and use the exact allowed licence string in CREDITS.md and state.ts, or remove files whose rights cannot be verified.",
+      "rule": "Lens 8 Licensing and credits — allowed licence and state/CREDITS parity"
+    },
+    {
+      "id": "GPFACE-1-RW-09",
+      "severity": "medium",
+      "category": "licensing",
+      "file": "apps/prototype-wp-alt-context/js/admin/guidedPrototype/state.ts",
+      "line": 139,
+      "evidence": "The visible press credit is 'Colleen Sturtevant, CC BY-SA 4.0' at lines 139 and 329 of the page; the hidden 2019 gallery credit is 'Glenn Francis, CC BY-SA 4.0' at line 161. CREDITS.md identifies the press row and 2019 source as resized/cropped assets but supplies no change indication.",
+      "impact": "The press credit and hidden CC BY-SA gallery credit omit the required indication that the bundled works were changed.",
+      "recommendation": "Append the actual change indication to both rendered credit strings and mirror it in their CREDITS rows (for example, resized and cropped-and-resized where applicable).",
+      "rule": "Lens 8 Licensing and credits — CC BY-SA author, licence, and changes"
+    },
+    {
+      "id": "GPFACE-1-RW-10",
+      "severity": "low",
+      "category": "licensing",
+      "file": "apps/prototype-wp-alt-context/js/admin/assets/guided/CREDITS.md",
+      "line": 7,
+      "evidence": "CREDITS.md says 'Glenn Francis (Toglenn)' for the 2019 file while state.ts says 'Glenn Francis, CC BY-SA 4.0' at line 161; it says 'Public domain' for 2016 while state.ts says 'public domain' at line 167.",
+      "impact": "The documentation and hidden gallery credit disagree on the author form and licence capitalization for two bundled images.",
+      "recommendation": "Choose one exact author/licence spelling for each image and use it in both CREDITS.md and state.ts.",
+      "rule": "Lens 8 Licensing and credits — exact CREDITS/state parity"
+    },
+    {
+      "id": "GPFACE-1-RW-11",
+      "severity": "low",
+      "category": "edge",
+      "file": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedDescriptionReview.tsx",
+      "line": 217,
+      "evidence": "Undo is rendered only when appliedEvent exists at lines 217-221; state.ts:460-464 returns unchanged when no application is available, and GuidedPrototypePage.tsx:246-248 always supplies the feedback 'Apply undone.'.",
+      "impact": "The no-available-application edge has no plain-language user state, and any invocation of the handler in that state would announce an action that did not happen.",
+      "recommendation": "Add an approved no-op Undo message or disabled control and gate the 'Apply undone.' feedback on an actual available application.",
+      "rule": "Lens 10 Empty, error, and edge copy; section 7.3 undo no-op"
+    },
+    {
+      "id": "GPFACE-1-RW-12",
+      "severity": "low",
+      "category": "uxmap",
+      "file": "apps/prototype-wp-alt-context/docs/ux-maps/guided-prototype.uxmap.json",
+      "line": 25,
+      "evidence": "The map screen ids are 'intro', 'guide', 'evidence', 'face', 'draft', 'apply', and 'result' at lines 25-29; runtime guide ids are 'understand', 'face', 'identity', 'review', and 'apply' at GuidedPrototypeGuide.tsx:3,26-31. The markdown render repeats the legacy screen ids at lines 23-31.",
+      "impact": "The map cannot directly trace the understand, identity, or review guide stages to their runtime regions, leaving screen/step documentation ambiguous.",
+      "recommendation": "Add explicit guide-step ids/mappings for all five runtime stages (or rename the map screens) and regenerate the markdown render.",
+      "rule": "Lens 9 UX-map screen/step-id parity"
+    }
+  ]
+}

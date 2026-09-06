@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'r
 
 import type { JobProgress } from '../api/recognition/types/scan';
 import { getEndpoint, getNonce } from '../api/config';
+import { JOB_STREAM_ERROR_CODE, type JobStreamErrorCode } from '../utils/errorTaxonomy';
 import {
   createLogger,
   logJobEvent,
@@ -101,6 +102,23 @@ const streamEventFields = (event: Event): { type: string; readyState?: number } 
     fields.readyState = event.target.readyState;
   }
   return fields;
+};
+
+export interface JobStreamErrorEventData {
+  readonly code?: JobStreamErrorCode;
+  readonly message?: string;
+}
+
+const isMissingJobStreamError = (error: JobStreamErrorEventData): boolean => {
+  if (error.code === JOB_STREAM_ERROR_CODE.JOB_NOT_FOUND) {
+    return true;
+  }
+
+  // LEGACY FALLBACK: server versions predating the matching typed PHP stream
+  // producer can still emit message-only SSE errors. Remove this English-copy
+  // check, and its dedicated test, once every supported server version sends
+  // the typed `code` field.
+  return error.code === undefined && error.message?.includes('not found') === true;
 };
 
 /**
@@ -524,8 +542,8 @@ export const useJobProgressStream = (
 
       if (event instanceof MessageEvent && event.data) {
         try {
-          const errorData = JSON.parse(event.data as string) as { message?: string };
-          if (errorData.message?.includes('not found')) {
+          const errorData = JSON.parse(event.data as string) as JobStreamErrorEventData;
+          if (isMissingJobStreamError(errorData)) {
             // Carry the real server message instead of a synthesised literal (rg-015).
             emitTerminal(
               JOB_STATUS.FAILED,

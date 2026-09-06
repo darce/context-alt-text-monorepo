@@ -709,7 +709,10 @@ sudo tee \"\$unit_stage/acx-gpu-start.timer\" >/dev/null <<UNIT
 Description=Poll describe load and start the burst GPU
 
 [Timer]
-OnBootSec=2min
+# OnActiveSec, not OnBootSec: a boot-relative deadline is already in the past when the
+# timer is enabled with --now on a host that has been up longer than it, so systemd fires
+# the poll immediately and the settling window is silently skipped on every redeploy.
+OnActiveSec=2min
 OnUnitActiveSec=${START_INTERVAL}
 AccuracySec=5s
 
@@ -742,7 +745,9 @@ sudo tee \"\$unit_stage/acx-gpu-reap.timer\" >/dev/null <<UNIT
 Description=Run the ACX burst GPU reaper every ${REAP_INTERVAL}
 
 [Timer]
-OnBootSec=3min
+# OnActiveSec for the same reason as the start timer: the first reap must be relative to
+# timer activation so a redeploy cannot trigger it before the load snapshot is written.
+OnActiveSec=3min
 OnUnitActiveSec=${REAP_INTERVAL}
 AccuracySec=10s
 

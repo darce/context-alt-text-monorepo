@@ -109,6 +109,34 @@ def test_oneshot_units_have_systemd_execution_deadlines() -> None:
         assert re.search(r"^RuntimeMaxSec=\d+s$", service, flags=re.MULTILINE)
 
 
+def test_timers_delay_their_first_trigger_relative_to_activation_not_boot() -> None:
+    """A boot-relative first trigger is already elapsed on a redeploy.
+
+    Both timers are enabled with `systemctl enable --now` against a host that has been
+    up for hours. systemd.timer(5): an OnBootSec deadline in the past fires the unit
+    immediately at activation, so the settling window would be skipped on every
+    redeploy and the start poll could power the GPU on before the load snapshot the
+    poll reads has been written. OnActiveSec is measured from activation instead, which
+    is the same delay at boot and the intended delay on a running host.
+    """
+    script = INSTALLER.read_text(encoding="utf-8")
+    timers = dict(
+        re.findall(
+            r"sudo tee [^\n]*/acx-gpu-(start|reap)\.timer.*?<<UNIT\n(.*?)\nUNIT",
+            script,
+            flags=re.DOTALL,
+        )
+    )
+
+    assert set(timers) == {"start", "reap"}
+    for name, timer in timers.items():
+        assert "OnBootSec=" not in timer, f"acx-gpu-{name}.timer would fire immediately on a redeploy"
+        assert re.search(r"^OnActiveSec=\d+min$", timer, flags=re.MULTILINE), (
+            f"acx-gpu-{name}.timer has no activation-relative first trigger"
+        )
+        assert re.search(r"^OnUnitActiveSec=", timer, flags=re.MULTILINE)
+
+
 def test_oneshot_units_share_persistent_boot_fenced_lifecycle_state() -> None:
     script = INSTALLER.read_text(encoding="utf-8")
     services = re.findall(

@@ -769,7 +769,11 @@ if [[ "$joined" == *"alt-context describe generate"* ]]; then
         current=10
     else
         current=$((current + limit))
-        if (( current > 25 )); then current=25; fi
+        burst_total="${BOOTSTRAP_BURST_TOTAL:-25}"
+        if (( current > burst_total )); then current="$burst_total"; fi
+        if [[ "${BOOTSTRAP_BURST_MODE:-}" == force ]]; then
+            : >"${state}.force"
+        fi
     fi
     printf '%s\n' "$current" >"$state"
     exit 0
@@ -778,14 +782,14 @@ if [[ "$joined" == *"wp post list"* ]]; then
     if [[ "$joined" == *"--meta_key=_wp_attachment_image_alt"* ]]; then
         cat "$state"
     else
-        printf '25\n'
+        printf '%s\n' "${BOOTSTRAP_BURST_TOTAL:-25}"
     fi
     exit 0
 fi
 if [[ "$joined" == *"wp eval"* ]]; then
     current=$(<"$state")
     if (( current > 0 )); then
-        if [[ "${BOOTSTRAP_BURST_MODE:-}" == flip ]]; then
+        if [[ "${BOOTSTRAP_BURST_MODE:-}" == flip || ( "${BOOTSTRAP_BURST_MODE:-}" == force && ! -f "${state}.force" ) ]]; then
             printf '%s\n' 'A close-up of a small object on a neutral background.'
         else
             printf '%s\n' 'A woman in a red coat speaks at a podium in front of a blue backdrop.'
@@ -810,9 +814,10 @@ printf '200'
 EOF
 chmod 700 "$burst_root/bin/docker" "$burst_root/bin/curl"
 run_bootstrap_burst() {
-    local mode="$1" output_file="$2" log_file
+    local mode="$1" output_file="$2" total="${3:-25}" initial_alt="${4:-0}" log_file
     log_file="$burst_root/${mode}.log"
-    printf '0\n' >"$burst_root/state"
+    printf '%s\n' "$initial_alt" >"$burst_root/state"
+    rm -f "$burst_root/state.force"
     : >"$log_file"
     local rc=0 output
     if output=$(
@@ -820,6 +825,7 @@ run_bootstrap_burst() {
         BOOTSTRAP_LOG="$log_file" \
         BOOTSTRAP_STATE="$burst_root/state" \
         BOOTSTRAP_BURST_MODE="$mode" \
+        BOOTSTRAP_BURST_TOTAL="$total" \
         DEMO_DIR="$burst_root/demo" \
         PLUGIN_ZIP="$burst_root/plugin.zip" \
         ACX_DEMO_DESCRIBE_CHUNK=10 \
@@ -847,6 +853,24 @@ else
     echo "FAIL describe burst reports bounded admitted count"
     failures=$((failures + 1))
 fi
+
+small_output="$burst_root/small.out"
+small_rc=0
+run_bootstrap_burst small "$small_output" 5 0 || small_rc=$?
+assert_eq "describe burst smaller-than-default population rc" 0 "$small_rc"
+small_limits=$(sed -n 's/.*--limit=\([0-9][0-9]*\).*/\1/p' "$burst_root/small.log" | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+assert_eq "describe burst caps first chunk to live media total" "5" "$small_limits"
+small_marker=$(tr -d '\r\n' <"$burst_root/demo/.acx-describe-first-burst.count")
+assert_eq "describe burst marker stays within smaller media total" "5" "$small_marker"
+
+force_output="$burst_root/force.out"
+force_rc=0
+run_bootstrap_burst force "$force_output" 5 5 || force_rc=$?
+assert_eq "describe burst RUN_FORCE smaller-than-default population rc" 0 "$force_rc"
+force_limits=$(sed -n 's/.*--limit=\([0-9][0-9]*\).*/\1/p' "$burst_root/force.log" | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+assert_eq "describe burst RUN_FORCE caps first chunk to live media total" "5" "$force_limits"
+force_marker=$(tr -d '\r\n' <"$burst_root/demo/.acx-describe-first-burst.count")
+assert_eq "describe burst RUN_FORCE marker stays within media total" "5" "$force_marker"
 
 negative_output="$burst_root/negative.out"
 negative_rc=0

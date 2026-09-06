@@ -28,13 +28,16 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from python_multipart.exceptions import FormParserError
+from python_multipart.multipart import parse_options_header
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from starlette.datastructures import FormData, UploadFile
+from starlette.formparsers import MultiPartException, MultiPartParser
 
 from db.tenant_context import require_tenant_record
 from recognition.application.scan.capability import require_scan_dispatch_ready
 from recognition.application.scan.scan_queue_service import ScanQueueService
-from recognition.application.storage import ObjectStore, ObjectStoreError
+from recognition.application.storage import ObjectStore
 from recognition.application.tasks.scan import chain_populate_and_process
 from recognition.domain.job import JobPhase, JobStatus, JobType
 from recognition.interface_adapters.http.deps import (
@@ -48,7 +51,9 @@ from recognition.interface_adapters.http.deps.object_store import (
     ObjectStoreFactory,
     get_object_store_factory_for_request,
 )
-from recognition.interface_adapters.http.middleware.correlation import get_correlation_id
+from recognition.interface_adapters.http.middleware.correlation import (
+    get_correlation_id,
+)
 from recognition.interface_adapters.http.schemas.requests import MediaItem
 from recognition.interface_adapters.http.schemas.responses import (
     JobProgressResponse,
@@ -60,6 +65,74 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_ALLOWED_MIME_TYPES: frozenset[str] = frozenset({"image/jpeg", "image/png", "image/webp"})
 _IMAGE_KEY_PREFIX = "image_"
+_MAX_IMAGE_PARTS = 5
+_MAX_MULTIPART_FILES = _MAX_IMAGE_PARTS + 1  # JSON request envelope may itself be an UploadFile.
+_TOO_MANY_IMAGE_PARTS_DETAIL = f"multipart submission accepts at most {_MAX_IMAGE_PARTS} image parts"
+_INVALID_MULTIPART_DETAIL = "invalid multipart form"
+
+
+class _ClosingMultiPartParser(MultiPartParser):
+    """Close partial upload spools for every parser failure, including disconnects."""
+
+    _current_image_files = 0
+
+    def on_headers_finished(self) -> None:
+        """Reject an oversized image batch before allocating its next spool."""
+        _disposition, options = parse_options_header(self._current_part.content_disposition)
+        field_name = options.get(b"name")
+        if (
+            b"filename" in options
+            and field_name is not None
+            and field_name.startswith(_IMAGE_KEY_PREFIX.encode("ascii"))
+        ):
+            self._current_image_files += 1
+            if self._current_image_files > _MAX_IMAGE_PARTS:
+                raise MultiPartException(_TOO_MANY_IMAGE_PARTS_DETAIL)
+        super().on_headers_finished()
+
+    async def parse(self) -> FormData:
+        parsed_form: FormData | None = None
+        try:
+            parsed_form = await super().parse()
+            return parsed_form
+        finally:
+            # Starlette 0.52.1 closes these only for MultiPartException. Other
+            # failures (including ClientDisconnect) can strand every spool, and
+            # clean EOF can omit an unfinished UploadFile from the FormData that
+            # the route later closes. Keep only files represented in a successful
+            # parse; the parser still owns and closes every other allocation.
+            retained_files = (
+                tuple(value.file for _, value in parsed_form.multi_items() if isinstance(value, UploadFile))
+                if parsed_form is not None
+                else ()
+            )
+            for file in self._files_to_close_on_error:
+                if not any(file is retained_file for retained_file in retained_files):
+                    file.close()
+
+
+async def _parse_multipart_form(request: Request) -> FormData:
+    """Parse a bounded multipart form while retaining ownership of partial spools."""
+    content_type = request.headers.get("content-type", "")
+    # Use the same normalization as the parser: tolerated whitespace must not
+    # route uploads around the parser that owns and closes their partial spools.
+    media_type, _options = parse_options_header(content_type)
+    if media_type.lower() != b"multipart/form-data":
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="content-type must be multipart/form-data",
+        )
+
+    parser = _ClosingMultiPartParser(
+        request.headers,
+        request.stream(),
+        max_files=_MAX_MULTIPART_FILES,
+    )
+    try:
+        return await parser.parse()
+    except (MultiPartException, FormParserError) as exc:
+        detail = exc.message if isinstance(exc, MultiPartException) else _INVALID_MULTIPART_DETAIL
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail) from exc
 
 
 def multipart_to_media_items(
@@ -80,17 +153,24 @@ def multipart_to_media_items(
     Raises:
         HTTPException: 415 for an unsupported MIME type, 422 for a
             zero-byte image part, 400 for a key whose ``media_id``
-            suffix is not a valid integer, and 500 for an unexpected
-            ``ObjectStoreError`` (which generally indicates an
-            out-of-band misconfiguration since the helper validated the
-            inputs first).
+            suffix is not a valid integer, a duplicate ``media_id``, or
+            a batch larger than five images.
+        ObjectStoreError: Propagated after cleaning the job prefix so the
+            shared exception handler can produce the standard opaque 500
+            envelope and correlated server-side traceback.
     """
     allowed = frozenset(allowed_mime_types) if allowed_mime_types is not None else _DEFAULT_ALLOWED_MIME_TYPES
 
-    items: list[MediaItem] = []
+    validated_parts: list[tuple[int, bytes]] = []
+    seen_media_ids: set[int] = set()
     for key, value in form_data.multi_items():
         if not key.startswith(_IMAGE_KEY_PREFIX):
             continue
+        if len(validated_parts) >= _MAX_IMAGE_PARTS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=_TOO_MANY_IMAGE_PARTS_DETAIL,
+            )
         if not isinstance(value, UploadFile):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -105,6 +185,13 @@ def multipart_to_media_items(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(f"form key '{key}' has a non-integer media_id suffix '{media_id_str}'"),
             ) from exc
+
+        if media_id in seen_media_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"duplicate image part for media_id '{media_id}'",
+            )
+        seen_media_ids.add(media_id)
 
         content_type = value.content_type or ""
         if content_type not in allowed:
@@ -122,18 +209,25 @@ def multipart_to_media_items(
                 detail=f"image part '{key}' is empty",
             )
 
-        try:
-            blob_uri = object_store.put(job_id=job_id, media_id=str(media_id), data=data)
-        except ObjectStoreError as exc:
-            # The helper's validation should have prevented this; surface
-            # as 500 so it shows up in logs rather than masquerading as a
-            # client error.
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"failed to store image part '{key}': {exc}",
-            ) from exc
+        validated_parts.append((media_id, data))
 
-        items.append(MediaItem(media_id=media_id, blob_uri=blob_uri))
+    items: list[MediaItem] = []
+    try:
+        for media_id, data in validated_parts:
+            blob_uri = object_store.put(job_id=job_id, media_id=str(media_id), data=data)
+            items.append(MediaItem(media_id=media_id, blob_uri=blob_uri))
+    except Exception:
+        try:
+            object_store.cleanup(job_id=job_id)
+        except Exception:
+            logger.exception(
+                "Failed to clean up multipart image writes",
+                extra={
+                    "correlation_id": get_correlation_id(),
+                    "job_id": job_id,
+                },
+            )
+        raise
 
     return items
 
@@ -227,9 +321,31 @@ async def analyze_media_multipart(
     ``chain_populate_and_process`` as a BackgroundTask, mirroring the JSON
     /recognition/analyze flow so the scan worker has queue items to claim.
     """
-    pre_generated_job_id = uuid.uuid4()
+    form_data = await _parse_multipart_form(request)
+    try:
+        return await _analyze_media_multipart_form(
+            form_data=form_data,
+            background_tasks=background_tasks,
+            auth=auth,
+            session=session,
+            scan_queue=scan_queue,
+            object_store_factory=object_store_factory,
+        )
+    finally:
+        await form_data.close()
 
-    form_data = await request.form()
+
+async def _analyze_media_multipart_form(
+    *,
+    form_data: FormData,
+    background_tasks: BackgroundTasks,
+    auth,
+    session,
+    scan_queue,
+    object_store_factory: ObjectStoreFactory,
+) -> JobStatusResponse:
+    """Validate, persist, and dispatch an already-parsed multipart request."""
+    pre_generated_job_id = uuid.uuid4()
     envelope = _extract_request_envelope(form_data)
 
     tenant_id_raw = envelope.get("tenant_id")

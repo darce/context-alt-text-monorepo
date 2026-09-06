@@ -69,18 +69,13 @@ const PANES_VALID: readonly PanesState[] = [
  * (default two-pane open; param omitted on clean URLs).
  */
 export const parsePanes = (raw: string | null | undefined): PanesState =>
-  raw != null && (PANES_VALID as readonly string[]).includes(raw)
-    ? (raw as PanesState)
-    : APP_LINK_VALUES.panesBoth;
+  raw != null && (PANES_VALID as readonly string[]).includes(raw) ? (raw as PanesState) : APP_LINK_VALUES.panesBoth;
 
 /** Serialize panes state; `'both'` → null so callers omit the param (absent default). */
-export const serializePanes = (v: PanesState): string | null =>
-  v === APP_LINK_VALUES.panesBoth ? null : v;
+export const serializePanes = (v: PanesState): string | null => (v === APP_LINK_VALUES.panesBoth ? null : v);
 
 /** Legal workbench `panel` values: review | conflicts | dead-letter. */
-export type WorkbenchPanelValue =
-  | Exclude<WorkbenchOverlay, null>
-  | typeof APP_LINK_VALUES.panelReview;
+export type WorkbenchPanelValue = Exclude<WorkbenchOverlay, null> | typeof APP_LINK_VALUES.panelReview;
 
 export const reviewPanelUrl = (clusterId: string): string =>
   toWorkbench({ tab: 'scan', panel: APP_LINK_VALUES.panelReview, cluster: clusterId });
@@ -108,6 +103,7 @@ const ROUTE = {
   retention: '/retention',
   settings: '/settings',
   descriptionHistory: '/description-history',
+  guidedPrototype: '/guided-prototype',
 } as const;
 
 const href = (path: string, params?: URLSearchParams): string => {
@@ -165,6 +161,8 @@ export const toRosterPerson = (personUuid: string): string => {
 
 export const toDescriptionHistory = (): string => href(ROUTE.descriptionHistory);
 
+export const toGuidedPrototype = (): string => href(ROUTE.guidedPrototype);
+
 /**
  * Parse `run` search param. Empty / whitespace / missing → null (list surface).
  * Non-empty trimmed string is the run id (apply surface).
@@ -198,10 +196,8 @@ export const toDescriptionHistoryRun = (runId: string): string => {
 
 // ── Folded from workbenchOverlayLinks (deleted; single owner) ─────────────
 
-export const buildWorkbenchOverlayHref = (
-  section: WorkbenchTab,
-  overlay: Exclude<WorkbenchOverlay, null>,
-): string => toWorkbench({ tab: section, panel: overlay });
+export const buildWorkbenchOverlayHref = (section: WorkbenchTab, overlay: Exclude<WorkbenchOverlay, null>): string =>
+  toWorkbench({ tab: section, panel: overlay });
 
 export const SCAN_CONFLICTS_HREF = buildWorkbenchOverlayHref('scan', 'conflicts');
 export const SCAN_DEAD_LETTER_HREF = buildWorkbenchOverlayHref('scan', 'dead-letter');

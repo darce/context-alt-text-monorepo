@@ -252,7 +252,7 @@
         },
         {
           "id": "live-3",
-          "label": "Describe it live and Stop waiting. Describe it live is off until every face match is decided: Decide each face match first. Then you can describe this photo live. It is off entirely when the demo has no live photo: No live photo is configured for this demo, so the live run is off.",
+          "label": "Describe it live and Stop waiting. Describe it live is off until every face match is decided: Decide each face match first, then you can describe this photo live. That is the lesson's order, not something the run needs. It is off entirely when the demo has no live photo: No live photo is configured for this demo, so the live run is off.",
           "role": "form",
           "states": [
             "default",

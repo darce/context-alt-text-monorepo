@@ -182,6 +182,7 @@ def run_preflight(
     check_reaper: bool = False,
     systemctl_script: str | None = None,
     dns_address: str | None = None,
+    group_10001_present: bool = True,
 ) -> subprocess.CompletedProcess[str]:
     producer_file = tmp_path / "producer.env"
     demo_file = tmp_path / "demo.env"
@@ -199,6 +200,16 @@ def run_preflight(
     getent = fake_bin / "getent"
     getent.write_text(
         """#!/usr/bin/env bash
+# The reaper preflight resolves GID 10001 through the group database; every
+# other call in this script resolves a host. Keep the two databases apart so a
+# group lookup can never be answered with an address, or vice versa.
+if [ "${1:-}" = group ]; then
+  if [ "${FAKE_GROUP_10001_PRESENT:-1}" = 1 ] && [ "${2:-}" = 10001 ]; then
+    echo 'acxapi:x:10001:'
+    exit 0
+  fi
+  exit 2
+fi
 host="${2:-}"
 case "$host" in
   localhost) echo '127.0.0.1 STREAM localhost' ;;
@@ -212,7 +223,11 @@ esac
         encoding="utf-8",
     )
     if dns_address is not None:
-        getent.write_text("#!/usr/bin/env bash\nprintf '%s STREAM fake\\n' " + '"$FAKE_DNS_ADDRESS"\n')
+        getent.write_text(
+            "#!/usr/bin/env bash\n"
+            'if [ "${1:-}" = group ]; then echo \'acxapi:x:10001:\'; exit 0; fi\n'
+            "printf '%s STREAM fake\\n' " + '"$FAKE_DNS_ADDRESS"\n'
+        )
     getent.chmod(0o755)
     if systemctl_script is not None:
         systemctl = fake_bin / "systemctl"
@@ -222,6 +237,7 @@ esac
     env["PATH"] = f"{fake_bin}:{env['PATH']}"
     if dns_address is not None:
         env["FAKE_DNS_ADDRESS"] = dns_address
+    env["FAKE_GROUP_10001_PRESENT"] = "1" if group_10001_present else "0"
     args = [str(SCRIPT)]
     if check_reaper:
         args.append("--check-reaper")
@@ -1087,6 +1103,27 @@ PROPERTIES
   *) exit 2 ;;
 esac
 """
+
+
+def test_11_reaper_preflight_rejects_an_unresolvable_supplementary_gid(tmp_path: Path) -> None:
+    """Both lifecycle units pin SupplementaryGroups=10001, which systemd resolves
+    through NSS before ExecStart. A host missing that group entry reports both
+    timers enabled and active while every activation dies at 216/GROUP -- the
+    burst GPU runs with no reaper. Preflight is the last gate before the flip,
+    so it has to check the GID itself, not just the timers that front it."""
+    reaper_env = tmp_path / "gpu-lifecycle.env"
+    reaper_env.write_text("GPU_INSTANCE_ID=ocid1.instance.oc1.iad.fakeinstance\nMAX_LEASE_SECONDS=3600\n")
+    unit = reaper_systemctl_script(reaper_env)
+
+    healthy = run_preflight(tmp_path, check_reaper=True, systemctl_script=unit)
+    assert "216/GROUP" not in healthy.stderr
+
+    result = run_preflight(
+        tmp_path, check_reaper=True, systemctl_script=unit, group_10001_present=False,
+    )
+    assert result.returncode != 0
+    assert "216/GROUP" in result.stderr
+    assert "MANUAL STOP" not in result.stdout
 
 
 @pytest.mark.parametrize("executable", ["/usr/bin/true", "/bin/false"])

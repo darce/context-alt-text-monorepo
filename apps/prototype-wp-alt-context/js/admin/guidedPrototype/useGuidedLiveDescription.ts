@@ -10,12 +10,16 @@ import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
 
 import {
   cancelBulkDescribeRun,
+  DESCRIBE_RUN_PHASE,
+  DESCRIBE_RUN_STATUS,
   fetchBulkDescribeRun,
   fetchDescribeRunItems,
+  isDescribeRunTerminal,
   isGpuState,
   submitBulkDescribeRun,
 } from '../api/describeApi';
 import type { DescribeRunItemsResponse, DescribeRunResponse } from '../api/describeApi';
+import { isFrozenPollFailure } from '../hooks/useDescribeRunProgress';
 import {
   GUIDED_LIVE_STATUS,
   GUIDED_LIVE_WAIT_CEILING_SECONDS,
@@ -33,7 +37,7 @@ import type {
   GuidedLiveState,
   GuidedLiveTier,
 } from './liveDescription';
-import { confirmedPersonKeys } from './state';
+import { GUIDED_IDENTITY_STATUS } from './state';
 import type { GuidedScenario } from './state';
 
 /** Warm-GPU ceiling: the backend's own describe budget with no burst to pay for. */
@@ -81,25 +85,54 @@ const gpuStateOf = (value: unknown): GuidedLiveGpuState => (isGpuState(value) ? 
 const ceilingSecondsFor = (gpu: GuidedLiveGpuState): number =>
   gpu === 'ready' ? GUIDED_LIVE_WARM_CEILING_SECONDS : GUIDED_LIVE_WAIT_CEILING_SECONDS;
 
-const phaseOf = (run: DescribeRunResponse): GuidedLivePhase => {
-  switch (run.phase) {
-    case 'complete':
-    case 'failed':
-    case 'cancelled':
-    case 'warming':
-    case 'describing':
-      return run.phase;
+/**
+ * The run's own terminal statuses outrank `phase`. A run can settle
+ * (`completed_with_errors`, `failed`, `cancelled`) while `phase` still reads as
+ * a running sub-phase; without this the guided screen would poll a finished run
+ * all the way to its client deadline and report a timeout that never happened.
+ * `isDescribeRunTerminal` is the one shared owner of that question -- guessing
+ * it locally is how the two surfaces drift.
+ */
+const terminalPhaseFor = (status: DescribeRunResponse['status']): GuidedLivePhase => {
+  switch (status) {
+    case DESCRIBE_RUN_STATUS.FAILED:
+      return DESCRIBE_RUN_PHASE.FAILED;
+    case DESCRIBE_RUN_STATUS.CANCELLED:
+      return DESCRIBE_RUN_PHASE.CANCELLED;
     default:
-      return 'queued';
+      return DESCRIBE_RUN_PHASE.COMPLETE;
   }
 };
 
+const phaseOf = (run: DescribeRunResponse): GuidedLivePhase => {
+  switch (run.phase) {
+    case DESCRIBE_RUN_PHASE.COMPLETE:
+    case DESCRIBE_RUN_PHASE.FAILED:
+    case DESCRIBE_RUN_PHASE.CANCELLED:
+      return run.phase;
+    case DESCRIBE_RUN_PHASE.WARMING:
+    case DESCRIBE_RUN_PHASE.DESCRIBING:
+    case DESCRIBE_RUN_PHASE.QUEUED:
+      return isDescribeRunTerminal(run.status) ? terminalPhaseFor(run.status) : run.phase;
+    default:
+      return DESCRIBE_RUN_PHASE.QUEUED;
+  }
+};
+
+/**
+ * Null means "this run produced nothing for the image on screen". Falling back
+ * to `items[0]` would show a confident sentence about a different photograph,
+ * which is worse than showing nothing at all.
+ */
 const draftOf = (
   items: DescribeRunItemsResponse,
   mediaId: number,
-): { text: string | null; tier: GuidedLiveTier | null } => {
-  const item = items.items.find((row) => row.media_id === mediaId) ?? items.items[0];
-  return { text: item?.alt_text_draft ?? null, tier: item?.tier ?? null };
+): { text: string | null; tier: GuidedLiveTier | null } | null => {
+  const item = items.items.find((row) => row.media_id === mediaId);
+  if (item === undefined) {
+    return null;
+  }
+  return { text: item.alt_text_draft ?? null, tier: item.tier ?? null };
 };
 
 export const useGuidedLiveDescription = ({
@@ -114,7 +147,13 @@ export const useGuidedLiveDescription = ({
   const generationRef = useRef(0);
   const attemptRef = useRef(0);
 
-  const facesDecided = confirmedPersonKeys(scenario).length > 0;
+  // "Decided" means every face has an answer -- confirmed OR marked
+  // unidentified. Counting only confirmations let a learner who marked every
+  // face unidentified stay blocked forever, and let a learner who answered one
+  // of two faces start a run while the other was still open.
+  const facesDecided = scenario.identities.every(
+    (identity) => identity.status !== GUIDED_IDENTITY_STATUS.UNCONFIRMED,
+  );
   const blockedReason: GuidedLiveBlockedReason | null = !facesDecided
     ? 'no_faces_decided'
     : mediaId === null
@@ -141,6 +180,10 @@ export const useGuidedLiveDescription = ({
       .submit(mediaId)
       .then((run) => {
         if (generationRef.current !== generation) {
+          // The learner stopped waiting while the submit was in flight. The run
+          // exists on the server now, so a burst it started keeps costing money
+          // unless we cancel the run id we only just learned.
+          void client.cancel(run.run_id).catch(() => undefined);
           return;
         }
         dispatch({
@@ -178,44 +221,81 @@ export const useGuidedLiveDescription = ({
     return () => clearInterval(interval);
   }, [waiting]);
 
+  // The poll chain reschedules itself. Keying a `setTimeout` on `state.elapsedMs`
+  // instead meant the 1s tick tore the timer down and re-armed it every second,
+  // so once the backoff passed 1000ms the poll never fired at all and the run
+  // sat in QUEUED until the client deadline. Fake timers hid it; a browser would
+  // not have. Deps hold only the identity of the run being polled.
   useEffect(() => {
     if (!waiting || runId === null || mediaId === null) {
       return undefined;
     }
     const generation = generationRef.current;
-    const timer = setTimeout(() => {
-      void (async () => {
-        try {
-          const run = await client.poll(runId);
-          if (generationRef.current !== generation) {
-            return;
-          }
-          const phase = phaseOf(run);
-          const gpu = gpuStateOf(run.gpu_state);
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
 
-          if (phase !== 'complete') {
-            attemptRef.current += 1;
-            dispatch({ kind: 'polled', phase, gpu, atMs: Date.now() });
-            return;
-          }
+    const live = (): boolean => !cancelled && generationRef.current === generation;
 
-          const draft = draftOf(await client.items(runId), mediaId);
-          if (generationRef.current !== generation) {
-            return;
-          }
-          dispatch({ kind: 'polled', phase, gpu, atMs: Date.now(), ...draft });
-        } catch {
-          if (generationRef.current === generation) {
-            // A single failed poll is not a failed run; back off and retry
-            // inside the deadline the tick already enforces.
-            attemptRef.current += 1;
-            dispatch({ kind: 'tick', atMs: Date.now() });
-          }
+    const schedule = (): void => {
+      timer = setTimeout(() => void poll(), guidedLivePollDelayMs(attemptRef.current));
+    };
+
+    const poll = async (): Promise<void> => {
+      try {
+        const run = await client.poll(runId);
+        if (!live()) {
+          return;
         }
-      })();
-    }, guidedLivePollDelayMs(attemptRef.current));
-    return () => clearTimeout(timer);
-  }, [client, mediaId, runId, state.elapsedMs, state.status, waiting]);
+        const phase = phaseOf(run);
+        const gpu = gpuStateOf(run.gpu_state);
+
+        if (phase !== DESCRIBE_RUN_PHASE.COMPLETE) {
+          attemptRef.current += 1;
+          // A submit-time warm pin can be wrong. If the run reports a colder GPU
+          // than the pin assumed, give the wait back its cold budget.
+          dispatch({ kind: 'deadline_raised', deadlineSeconds: ceilingSecondsFor(gpu) });
+          dispatch({ kind: 'polled', phase, gpu, atMs: Date.now() });
+          if (live()) {
+            schedule();
+          }
+          return;
+        }
+
+        const draft = draftOf(await client.items(runId), mediaId);
+        if (!live()) {
+          return;
+        }
+        if (draft === null) {
+          dispatch({ kind: 'polled', phase, gpu, atMs: Date.now(), reason: 'item_missing' });
+          return;
+        }
+        dispatch({ kind: 'polled', phase, gpu, atMs: Date.now(), ...draft });
+      } catch (error) {
+        if (!live()) {
+          return;
+        }
+        if (!isFrozenPollFailure(error)) {
+          // A hard failure will not heal by waiting. Say so now rather than
+          // spending the learner's whole deadline on a dead channel.
+          dispatch({ kind: 'failed', reason: 'poll_failed' });
+          return;
+        }
+        // Abort/timeout is transient: back off and retry inside the deadline the
+        // tick already enforces.
+        attemptRef.current += 1;
+        dispatch({ kind: 'tick', atMs: Date.now() });
+        schedule();
+      }
+    };
+
+    schedule();
+    return () => {
+      cancelled = true;
+      if (timer !== null) {
+        clearTimeout(timer);
+      }
+    };
+  }, [client, mediaId, runId, waiting]);
 
   const disclosure = useMemo(() => guidedLiveNamingDisclosure(scenario), [scenario]);
 

@@ -37,6 +37,25 @@ describe('guided live media id at the config boundary', () => {
   it.each([0, '0', -3, '-3', 1.5, 'abc', '', null, true])('rejects %p, which is not an attachment id', (value) => {
     expect(normalize(value)).toBeNull();
   });
+
+  /**
+   * Same predicate as the publisher. `Admin::get_guided_live_media_id` runs
+   * `FILTER_VALIDATE_INT`, which reads only decimal digits and tolerates
+   * surrounding whitespace. `Number()` disagreed on every row below: it read
+   * hex and exponent notation as valid ids the PHP side had already refused,
+   * so the two ends could disagree about whether the demo has a subject
+   * (rg-005 schema/contract parity).
+   */
+  it.each(['0x1a', '1e10', '4211.0', '1_000', ' ', '+', '٤٢'])(
+    'rejects %p, which FILTER_VALIDATE_INT also rejects',
+    (value) => {
+      expect(normalize(value)).toBeNull();
+    },
+  );
+
+  it.each([' 4211', '4211 ', ' 4211 ', '+4211'])('accepts %p, which FILTER_VALIDATE_INT also accepts', (value) => {
+    expect(normalize(value)).toBe(4211);
+  });
 });
 
 /**

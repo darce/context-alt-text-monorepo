@@ -38,7 +38,7 @@
       "zones": [
         {
           "id": "intro-0",
-          "label": "Guided demo, scope, and current build status: This demo uses one saved run. It does not run recognition live.",
+          "label": "Guided demo, scope, and current build status: This demo uses one saved face-match run. Descriptions can run live on the real GPU.",
           "role": "content",
           "states": [
             "default"

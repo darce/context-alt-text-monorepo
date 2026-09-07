@@ -5,7 +5,11 @@ import type { Mock } from 'vitest';
 
 import type { DescribeRunItemsResponse, DescribeRunResponse } from '../../../api/describeApi';
 import { GUIDED_LIVE_WAIT_CEILING_SECONDS } from '../../../guidedPrototype/liveDescription';
-import { confirmGuidedIdentity, createGuidedScenario } from '../../../guidedPrototype/state';
+import {
+  confirmGuidedIdentity,
+  createGuidedScenario,
+  leaveGuidedIdentityUnidentified,
+} from '../../../guidedPrototype/state';
 import type { GuidedScenario } from '../../../guidedPrototype/state';
 import type { GuidedLiveDescriptionClient } from '../../../guidedPrototype/useGuidedLiveDescription';
 import { GuidedLiveDescriptionPanel } from '../GuidedLiveDescriptionPanel';
@@ -65,7 +69,9 @@ const stubClient = (over: Partial<StubClient> = {}): StubClient => ({
   ...over,
 });
 
-const decided = (): GuidedScenario => confirmGuidedIdentity(createGuidedScenario(), 'katy-perry');
+/** Every face answered: one confirmed, one deliberately left unidentified. */
+const decided = (): GuidedScenario =>
+  leaveGuidedIdentityUnidentified(confirmGuidedIdentity(createGuidedScenario(), 'katy-perry'), 'justin-trudeau');
 
 const mount = (client: StubClient, over: { scenario?: GuidedScenario; mediaId?: number | null } = {}) =>
   render(
@@ -122,14 +128,40 @@ describe('GuidedLiveDescriptionPanel', () => {
       const client = stubClient();
       mount(client);
 
-      const status = screen.getByTestId('guided-live-status');
-      expect(status).toHaveAttribute('role', 'status');
-      expect(status).toHaveAttribute('aria-live', 'polite');
+      // The live region wraps BOTH the status line and the result sentence, and
+      // is mounted for the panel's whole life -- a region that appears at the
+      // same moment as its content announces nothing.
+      const region = screen.getByRole('status', { name: 'Live run status' });
+      expect(region).toHaveAttribute('aria-live', 'polite');
+      expect(region).toContainElement(screen.getByTestId('guided-live-status'));
 
       await press(runButton());
       await settle(600);
 
-      expect(status).toHaveTextContent(/starting the gpu/i);
+      expect(region).toHaveTextContent(/starting the gpu/i);
+    });
+
+    it('announces the finished sentence from inside the same live region', async () => {
+      const client = stubClient({
+        poll: vi.fn<GuidedLiveDescriptionClient['poll']>(() =>
+          Promise.resolve(runResponse({ status: 'completed', phase: 'complete', gpu_state: 'ready' })),
+        ),
+      });
+      mount(client);
+      const region = screen.getByRole('status', { name: 'Live run status' });
+
+      await press(runButton());
+      await settle(1000);
+
+      expect(region).toContainElement(screen.getByTestId('guided-live-text'));
+    });
+
+    it('points a disabled run button at the reason it is disabled', () => {
+      mount(stubClient(), { mediaId: null });
+
+      const described = runButton().getAttribute('aria-describedby');
+      expect(described).toBe(screen.getByTestId('guided-live-status').id);
+      expect(screen.getByTestId('guided-live-status')).toHaveTextContent(/no live photo is configured/i);
     });
 
     it('shows elapsed time against the ceiling it will not exceed', async () => {

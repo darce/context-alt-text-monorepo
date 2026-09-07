@@ -102,7 +102,7 @@ Purpose: Follow one photo from start to finish. AltContext finds two faces, matc
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
-| `intro-0` | Guided demo, scope, and current build status: This demo uses one saved run. It does not run recognition live. | content | default |
+| `intro-0` | Guided demo, scope, and current build status: This demo uses one saved face-match run. Descriptions can run live on the real GPU. | content | default |
 | `intro-1` | Start the demo and read the AltContext case study | nav | default |
 
 Actions: `open` Start the demo → `guide`; `case` Read the AltContext case study → `case-study`.
@@ -358,7 +358,7 @@ Action ids: open toggle-guide skip-guide guide-step end-guide confirm-katy-perry
 
 Zone labels (verbatim; the tables above escape `|` for markdown, this list does not):
 
-- Guided demo, scope, and current build status: This demo uses one saved run. It does not run recognition live.
+- Guided demo, scope, and current build status: This demo uses one saved face-match run. Descriptions can run live on the real GPU.
 - Start the demo and read the AltContext case study
 - Current step, Skip to this step, and Show steps / Hide steps
 - Five steps: Look at the photo — See the photo and the page it sits on.; Find the faces — AltContext found two faces and matched each one to a person you named before.; Confirm each match — Say yes to each match, or keep that person unnamed.; Check the description — Read the draft. Edit it or reject it.; Apply it yourself — Nothing changes until you press Apply.; Close the steps

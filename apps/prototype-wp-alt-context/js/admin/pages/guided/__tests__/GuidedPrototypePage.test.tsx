@@ -46,7 +46,9 @@ describe('GuidedPrototypePage shell', () => {
         'Follow one photo from start to finish. AltContext finds two faces, matches each one to a person you already named, and puts their names in the image description. You choose what gets saved.',
       ),
     ).toBeInTheDocument();
-    expect(screen.getByText('This demo uses one saved run. It does not run recognition live.')).toBeInTheDocument();
+    expect(
+      screen.getByText('This demo uses one saved face-match run. Descriptions can run live on the real GPU.'),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Start the demo' }));
     expect(screen.getByRole('status', { name: /practice feedback/i })).toHaveTextContent(
       'The steps are open. Start with the photo.',

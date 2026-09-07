@@ -452,4 +452,69 @@ class AdminTest extends TestCase
         $this->assertArrayHasKey('guided_live_media_id', $localized);
         $this->assertNull($localized['guided_live_media_id']);
     }
+
+    /**
+     * @return array<string, array{0: string}>
+     */
+    public static function nonIntegerGuidedLiveMediaIdProvider(): array
+    {
+        return [
+            'hex notation' => ['0x1a'],
+            'exponent notation' => ['1e10'],
+            'trailing decimal' => ['4211.0'],
+            'digit separators' => ['1_000'],
+            'blank' => [' '],
+            'sign alone' => ['+'],
+            'non-ascii digits' => ["\u{0664}\u{0662}"],
+        ];
+    }
+
+    /**
+     * Parity pin for js/admin/api/config.ts `normalizeAttachmentId`. The JS side
+     * used `Number()`, which reads hex and exponent notation as valid ids that
+     * this method has already refused -- so the browser could believe the demo
+     * had a subject the server said it did not (rg-005). Both ends now run the
+     * same decimal-digits predicate, and both ends pin the same table.
+     *
+     * @dataProvider nonIntegerGuidedLiveMediaIdProvider
+     */
+    public function testLocalizeSpaConfigRejectsIdsFilterValidateIntRejects(string $raw): void
+    {
+        $this->setOption('acx_guided_live_media_id', $raw);
+
+        $this->invokePrivateMethod($this->admin, 'localize_spa_config', ['test-handle']);
+
+        $localized = $GLOBALS['__ac_localized_scripts']['test-handle']['AltContextAdmin'] ?? null;
+
+        $this->assertIsArray($localized);
+        $this->assertNull($localized['guided_live_media_id'], sprintf('%s must not publish an id', $raw));
+    }
+
+    /**
+     * @return array<string, array{0: string}>
+     */
+    public static function whitespacePaddedGuidedLiveMediaIdProvider(): array
+    {
+        return [
+            'leading space' => [' 4211'],
+            'trailing space' => ['4211 '],
+            'both sides' => [' 4211 '],
+            'explicit plus' => ['+4211'],
+        ];
+    }
+
+    /**
+     * @dataProvider whitespacePaddedGuidedLiveMediaIdProvider
+     */
+    public function testLocalizeSpaConfigAcceptsIdsFilterValidateIntAccepts(string $raw): void
+    {
+        $this->setOption('acx_guided_live_media_id', $raw);
+
+        $this->invokePrivateMethod($this->admin, 'localize_spa_config', ['test-handle']);
+
+        $localized = $GLOBALS['__ac_localized_scripts']['test-handle']['AltContextAdmin'] ?? null;
+
+        $this->assertIsArray($localized);
+        $this->assertSame(4211, $localized['guided_live_media_id'], sprintf('%s must publish 4211', $raw));
+    }
 }

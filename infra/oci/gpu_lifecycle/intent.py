@@ -129,7 +129,11 @@ class DeferredStopRecord:
         return EffectiveIntent(
             action=self.action,
             requested_at=self.requested_at,
-            expires_at=self.expires_at,
+            # The original publication may have expired while work was in
+            # flight.  The durable deferral is the new authority for the
+            # effective expiry; retaining the old timestamp would make the
+            # reaper discard the very STOP this record is meant to preserve.
+            expires_at=self.deferred_until,
             nonce=self.nonce,
             requested_by=self.requested_by,
             sequence=self.sequence,
@@ -348,9 +352,11 @@ class IntentAuthorityStore:
             changed = logical_now != last_wall or False
             for intent in intents:
                 record = records.get(intent.nonce)
-                if intent.sequence < highest_sequence and (
-                    record is None or int(record.get("sequence", 0)) != intent.sequence
-                ):
+                # A sequence below the persisted high-water mark is stale,
+                # even when it is the same nonce that was previously seen.
+                # Allowing that exception would let an old publication be
+                # reintroduced after a newer publication had fenced it.
+                if intent.sequence < highest_sequence:
                     expired_nonces.add(intent.nonce)
                     logger.warning(
                         "operator intent fenced by higher sequence: nonce=%s sequence=%s highest=%s",

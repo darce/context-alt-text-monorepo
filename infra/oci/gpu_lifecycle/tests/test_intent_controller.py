@@ -18,6 +18,8 @@ from infra.oci.gpu_lifecycle.reaper import (
 
 NOW = datetime(2026, 9, 6, 22, 30, tzinfo=UTC)
 BOOT_ID = "intent-test-boot"
+VALID_NONCE = "123e4567-e89b-42d3-a456-426614174000"
+SECOND_NONCE = "123e4567-e89b-42d3-a456-426614174001"
 
 
 @dataclass
@@ -56,6 +58,36 @@ def _store(path: Path) -> RunningSinceLeaseStore:
         monotonic=lambda: 1000.0,
         boot_id=BOOT_ID,
     )
+
+
+def _write_persisted_intent(
+    root: Path,
+    *,
+    action: str,
+    requested_at: datetime,
+    expires_at: datetime,
+    requested_by: str,
+    sequence: int,
+    nonce: str,
+) -> Path:
+    path = root / "prod" / "gpu-intent.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "action": action,
+                "requested_at": requested_at.isoformat().replace("+00:00", "Z"),
+                "expires_at": expires_at.isoformat().replace("+00:00", "Z"),
+                "ttl_seconds": max(1, int((expires_at - requested_at).total_seconds())),
+                "requested_by": requested_by,
+                "nonce": nonce,
+                "sequence": sequence,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
 
 
 def test_auto_preserves_work_start_and_idle_stop() -> None:
@@ -373,3 +405,307 @@ def test_legacy_cycle_snapshot_has_c2_auto_defaults(tmp_path: Path) -> None:
     assert payload["intent_status"] == "none"
     assert payload["intent_expires_at"] is None
     assert payload["last_transition_reason"] == "unknown"
+
+
+def test_reaper_call_site_uses_sequence_before_wall_clock(tmp_path: Path) -> None:
+    runtime_dir = tmp_path / "runtime"
+    state_dir = tmp_path / "durable"
+    _write_persisted_intent(
+        runtime_dir,
+        action="start",
+        requested_at=NOW - timedelta(minutes=10),
+        expires_at=NOW + timedelta(minutes=5),
+        requested_by="demo-operator",
+        sequence=2,
+        nonce=VALID_NONCE,
+    )
+    low_sequence_path = runtime_dir / "staging" / "gpu-intent.json"
+    low_sequence_path.parent.mkdir(parents=True)
+    low_sequence_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "action": "stop",
+                "requested_at": NOW.isoformat().replace("+00:00", "Z"),
+                "expires_at": (NOW + timedelta(minutes=5)).isoformat().replace("+00:00", "Z"),
+                "ttl_seconds": 300,
+                "requested_by": "newer-clock",
+                "nonce": SECOND_NONCE,
+                "sequence": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+    actuator = RecordingActuator([], [])
+
+    result = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[_running(age=0)],
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
+        actuator=actuator,
+        fence_delay_seconds=0,
+        intent_dir=runtime_dir,
+        durable_state_dir=state_dir,
+        now=NOW,
+    )
+
+    assert result.intent.action is IntentAction.START
+    assert result.intent.sequence == 2
+    assert result.intent.requested_by == "demo-operator"
+    assert result.decided == []
+    assert actuator.stopped == []
+
+
+def test_reaper_call_site_does_not_rearm_expired_start_after_clock_rollback(tmp_path: Path) -> None:
+    runtime_dir = tmp_path / "runtime"
+    state_dir = tmp_path / "durable"
+    _write_persisted_intent(
+        runtime_dir,
+        action="start",
+        requested_at=NOW - timedelta(seconds=30),
+        expires_at=NOW + timedelta(seconds=1),
+        requested_by="demo-operator",
+        sequence=1,
+        nonce=VALID_NONCE,
+    )
+    run_start_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[_stopped()],
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
+        actuator=RecordingActuator([], []),
+        intent_dir=runtime_dir,
+        durable_state_dir=state_dir,
+        now=NOW,
+    )
+
+    first_actuator = RecordingActuator([], [])
+    first = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[_running(age=90)],
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
+        actuator=first_actuator,
+        fence_delay_seconds=0,
+        intent_dir=runtime_dir,
+        durable_state_dir=state_dir,
+        now=NOW + timedelta(seconds=2),
+    )
+    rollback_actuator = RecordingActuator([], [])
+    after_rollback = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[_running(age=90)],
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
+        actuator=rollback_actuator,
+        fence_delay_seconds=0,
+        intent_dir=runtime_dir,
+        durable_state_dir=state_dir,
+        now=NOW + timedelta(seconds=1),
+    )
+
+    assert first.intent.action is IntentAction.AUTO
+    assert first.intent_status is IntentStatus.EXPIRED
+    assert first_actuator.stopped == ["ocid1.gpu"]
+    assert after_rollback.intent.action is IntentAction.AUTO
+    assert after_rollback.intent_status is IntentStatus.EXPIRED
+    assert rollback_actuator.stopped == ["ocid1.gpu"]
+
+
+def test_reaper_call_site_rejects_start_below_persisted_authority_high_water(tmp_path: Path) -> None:
+    runtime_dir = tmp_path / "runtime"
+    state_dir = tmp_path / "durable"
+    _write_persisted_intent(
+        runtime_dir,
+        action="stop",
+        requested_at=NOW,
+        expires_at=NOW + timedelta(minutes=5),
+        requested_by="operator",
+        sequence=5,
+        nonce=VALID_NONCE,
+    )
+    run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[_running(age=90)],
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
+        actuator=RecordingActuator([], []),
+        fence_delay_seconds=0,
+        intent_dir=runtime_dir,
+        durable_state_dir=state_dir,
+        now=NOW,
+    )
+    durable_path = state_dir / "intents" / "prod" / "gpu-intent.json"
+    durable_path.unlink()
+    _write_persisted_intent(
+        runtime_dir,
+        action="start",
+        requested_at=NOW + timedelta(minutes=1),
+        expires_at=NOW + timedelta(minutes=6),
+        requested_by="stale-operator",
+        sequence=4,
+        nonce=SECOND_NONCE,
+    )
+
+    actuator = RecordingActuator([], [])
+    result = run_start_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[_stopped()],
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
+        actuator=actuator,
+        intent_dir=runtime_dir,
+        durable_state_dir=state_dir,
+        now=NOW + timedelta(minutes=1),
+    )
+
+    assert result.intent.action is IntentAction.AUTO
+    assert result.intent_status is IntentStatus.EXPIRED
+    assert result.actuated == []
+    assert actuator.started == []
+
+
+def test_runtime_intent_survives_tmpfs_clear_via_durable_reload(tmp_path: Path) -> None:
+    runtime_dir = tmp_path / "runtime"
+    state_dir = tmp_path / "durable"
+    intent_path = _write_persisted_intent(
+        runtime_dir,
+        action="start",
+        requested_at=NOW,
+        expires_at=NOW + timedelta(minutes=5),
+        requested_by="demo-operator",
+        sequence=1,
+        nonce=VALID_NONCE,
+    )
+    run_start_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[_stopped()],
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
+        actuator=RecordingActuator([], []),
+        intent_dir=runtime_dir,
+        durable_state_dir=state_dir,
+        now=NOW,
+    )
+    intent_path.unlink()
+    intent_path.parent.rmdir()
+
+    actuator = RecordingActuator([], [])
+    result = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[_running(age=0)],
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
+        actuator=actuator,
+        fence_delay_seconds=0,
+        intent_dir=runtime_dir,
+        durable_state_dir=state_dir,
+        now=NOW + timedelta(seconds=1),
+    )
+
+    assert result.intent.action is IntentAction.START
+    assert result.intent.requested_by == "demo-operator"
+    assert result.intent.sequence == 1
+    assert result.decided == []
+    assert actuator.stopped == []
+
+
+def test_deferred_stop_is_rearmed_after_original_ttl_and_honoured(tmp_path: Path) -> None:
+    runtime_dir = tmp_path / "runtime"
+    state_dir = tmp_path / "durable"
+    _write_persisted_intent(
+        runtime_dir,
+        action="stop",
+        requested_at=NOW - timedelta(seconds=10),
+        expires_at=NOW + timedelta(seconds=1),
+        requested_by="operator",
+        sequence=1,
+        nonce=VALID_NONCE,
+    )
+    blocked_actuator = RecordingActuator([], [])
+    blocked = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[_running(age=0)],
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=1),
+        actuator=blocked_actuator,
+        fence_delay_seconds=0,
+        intent_dir=runtime_dir,
+        durable_state_dir=state_dir,
+        now=NOW,
+    )
+
+    drained_actuator = RecordingActuator([], [])
+    drained = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[_running(age=0)],
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
+        actuator=drained_actuator,
+        fence_delay_seconds=0,
+        intent_dir=runtime_dir,
+        durable_state_dir=state_dir,
+        now=NOW + timedelta(seconds=120),
+    )
+
+    assert blocked.intent_status is IntentStatus.BLOCKED_WORK_IN_FLIGHT
+    assert blocked.intent.deferred_until is not None
+    assert blocked.intent.deferred_until > blocked.intent.expires_at - timedelta(seconds=1)
+    assert drained.intent.action is IntentAction.STOP
+    assert drained.intent_status is IntentStatus.HONOURED
+    assert drained.actuated == [("STOP", "ocid1.gpu")]
+    assert drained_actuator.stopped == ["ocid1.gpu"]
+    assert not (state_dir / "deferred-stop.json").exists()
+
+
+def test_decision_log_reconstructs_start_and_idle_stop_cycle(tmp_path: Path) -> None:
+    runtime_dir = tmp_path / "runtime"
+    state_dir = tmp_path / "durable"
+    _write_persisted_intent(
+        runtime_dir,
+        action="start",
+        requested_at=NOW,
+        expires_at=NOW + timedelta(minutes=5),
+        requested_by="demo-operator",
+        sequence=1,
+        nonce=VALID_NONCE,
+    )
+    start_actuator = RecordingActuator([], [])
+    start = run_start_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[_stopped()],
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
+        actuator=start_actuator,
+        intent_dir=runtime_dir,
+        durable_state_dir=state_dir,
+        now=NOW,
+    )
+    _write_persisted_intent(
+        runtime_dir,
+        action="stop",
+        requested_at=NOW + timedelta(seconds=1),
+        expires_at=NOW + timedelta(minutes=5),
+        requested_by="scheduler",
+        sequence=2,
+        nonce=SECOND_NONCE,
+    )
+    stop_actuator = RecordingActuator([], [])
+    stop = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[_running(age=0)],
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
+        actuator=stop_actuator,
+        fence_delay_seconds=0,
+        intent_dir=runtime_dir,
+        durable_state_dir=state_dir,
+        now=NOW + timedelta(seconds=2),
+    )
+
+    lines = (state_dir / "decision-log.jsonl").read_text(encoding="utf-8").splitlines()
+    records = [json.loads(line) for line in lines]
+    assert len(records) == 2
+    assert records[0]["mode"] == "start"
+    assert records[0]["requested_by"] == "demo-operator"
+    assert records[0]["sequence"] == 1
+    assert records[0]["effective_intent"] == "start"
+    assert records[0]["intent_status"] == "honoured"
+    assert records[0]["actuation_outcome"] == "honoured"
+    assert records[1]["mode"] == "reap"
+    assert records[1]["requested_by"] == "scheduler"
+    assert records[1]["sequence"] == 2
+    assert records[1]["effective_intent"] == "stop"
+    assert records[1]["intent_status"] == "honoured"
+    assert records[1]["actuation_outcome"] == "honoured"
+    assert start.actuated == [("START", "ocid1.gpu")]
+    assert stop.actuated == [("STOP", "ocid1.gpu")]

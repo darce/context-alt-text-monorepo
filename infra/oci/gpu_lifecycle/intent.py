@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 INTENT_SCHEMA_VERSION = 1
 MAX_INTENT_TTL_SECONDS = 7200.0
+MAX_INTENT_REQUESTED_AT_FUTURE_SKEW_SECONDS = 5.0
 
 
 class IntentAction(StrEnum):
@@ -103,7 +104,7 @@ def _invalid(path: Path, error: object) -> None:
     logger.warning("operator intent invalid file %s: %s", path, error)
 
 
-def _read_one(path: Path) -> OperatorIntent | None:
+def _read_one(path: Path, *, read_time: datetime | None = None) -> OperatorIntent | None:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
@@ -135,6 +136,20 @@ def _read_one(path: Path) -> OperatorIntent | None:
         _invalid(path, "expires_at must be later than requested_at")
         return None
 
+    expiry_anchor = requested_at
+    if read_time is not None:
+        future_skew = (requested_at - read_time).total_seconds()
+        if future_skew > MAX_INTENT_REQUESTED_AT_FUTURE_SKEW_SECONDS:
+            _invalid(
+                path,
+                "requested_at is future-dated by "
+                f"{future_skew:.1f}s (allowance={MAX_INTENT_REQUESTED_AT_FUTURE_SKEW_SECONDS:.1f}s)",
+            )
+            return None
+        # A small clock skew is tolerated, but its TTL must still be measured
+        # from the reader's clock rather than allowing a writer to extend it.
+        expiry_anchor = min(requested_at, read_time)
+
     nonce = payload.get("nonce")
     if not isinstance(nonce, str) or not nonce.strip():
         _invalid(path, "nonce must be a non-blank string")
@@ -159,7 +174,7 @@ def _read_one(path: Path) -> OperatorIntent | None:
 
     # Treat an overlong expiry as a bounded operator request rather than
     # allowing a malformed writer to pin the machine indefinitely.
-    maximum_expiry = requested_at + timedelta(seconds=MAX_INTENT_TTL_SECONDS)
+    maximum_expiry = expiry_anchor + timedelta(seconds=MAX_INTENT_TTL_SECONDS)
     if expires_at > maximum_expiry:
         logger.warning(
             "operator intent expiry clamped to %.0fs: %s (expires_at=%s)",
@@ -217,7 +232,7 @@ def read_effective_intent(
     valid: list[OperatorIntent] = []
     expired = False
     for path in _candidate_paths(root):
-        intent = _read_one(path)
+        intent = _read_one(path, read_time=current_time)
         if intent is None:
             continue
         if intent.expires_at <= current_time:

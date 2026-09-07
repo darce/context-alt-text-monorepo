@@ -25,6 +25,7 @@
 | `evidence` | screen | `#/guided-prototype` | Photo and page |
 | `face` | screen | `#/guided-prototype` | Faces found in the photo |
 | `draft` | screen | `#/guided-prototype` | Check the description before anything changes |
+| `live` | screen | `#/guided-prototype` | See it run live |
 | `apply` | screen | `#/guided-prototype` | Apply it yourself |
 | `result` | screen | `#/guided-prototype` | Applied result and history |
 | `reset` | overlay | `#/guided-prototype` | Reset practice confirmation |
@@ -38,6 +39,7 @@
 - `screen:evidence` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypePage.tsx`
 - `screen:face` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedFaceMatchCard.tsx`
 - `screen:draft` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedDescriptionReview.tsx`
+- `screen:live` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedLiveDescriptionPanel.tsx`
 - `screen:apply` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedDescriptionReview.tsx`
 - `screen:result` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypePage.tsx`
 - `screen:reset` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedResetDialog.tsx`
@@ -80,6 +82,15 @@
 |                            | [Save my edit] [Reject this draft]              |
 | Apply it yourself  The practice copy says "Two people at a film festival."   |
 | [Apply to practice copy] [Undo]                                              |
++------------------------------------------------------------------------------+
+| See it run live                                        [Describe it live]   |
+| A live run never changes the draft above, and it never changes what Apply   |
+| would write. Names come from your roster on the server, not this page.      |
+| Confirmed here: Justin Trudeau, Katy Perry.                                 |
+| ... Starting the GPU. A cold start can take several minutes.                |
+| 1:05 of up to 8:30                                       [Stop waiting]     |
+| > Katy Perry waves from the red carpet.                                     |
+| (v) Done. The GPU wrote this.   The draft above did not change.             |
 +------------------------------------------------------------------------------+
 ```
 
@@ -139,6 +150,20 @@ Purpose: Read the draft. Edit it or reject it. Nothing changes until you press A
 | `draft-2` | Description draft with Save my edit, Discard my edit, and Reject this draft. Rejected notice: You rejected this draft, so Apply is off. Edit and save the text, or change an answer about a face, to get a new draft. | form | default, error |
 
 Actions: `save` Save my edit → `apply`; `discard` Discard my edit → `draft`; `reject` Reject this draft → `draft`.
+
+### See it run live (`live`)
+
+Purpose: Optional. Send the same photo to the real service and watch it work. The result sits beside the saved draft; it never replaces it, and it never changes what Apply would write.
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `live-0` | See it run live: A live run never changes the draft above, and it never changes what Apply would write. | content | default |
+| `live-1` | Names come from your roster on the server, not from this page. Confirmed here: {names}. Otherwise: You have not confirmed anyone here yet. | content | default |
+| `live-2` | Live run status, colour always paired with a glyph (• waiting, … working, ✓ done, ! degraded or timed out, × stopped): Ready when you are. / Queued. Waiting for the service to pick it up. / Starting the GPU. A cold start can take several minutes. / Describing the photo now. / Done. The GPU wrote this. / Done, but the GPU was not available, so the CPU wrote this. It is rougher than a GPU description. / Stopped waiting. The run may still finish on its own; nothing was applied here. / You stopped the wait. Nothing was applied. / The live run could not finish. Nothing was applied. Elapsed while waiting: 1:05 of up to 8:30. | status | default, loading, degraded, error |
+| `live-3` | Describe it live and Stop waiting. Describe it live is off until every face match is decided: Decide each face match first. Then you can describe this photo live. It is off entirely when the demo has no live photo: No live photo is configured for this demo, so the live run is off. | form | default, loading |
+| `live-4` | The live sentence, quoted beside the saved draft and never written into it. | ai_review | default, degraded |
+
+Actions: `describe-live` Describe it live → `live`; `stop-live` Stop waiting → `live`. Describe it live is a costly action: it can wake a stopped GPU, so the wait is shown honestly in minutes rather than behind a spinner, and it is disabled until every face match is decided. Every terminal state — done, degraded to CPU, timed out, cancelled, failed — says what happened and that nothing was applied; none of them touch the draft above or what Apply would write.
 
 ### Apply it yourself (`apply`)
 
@@ -207,6 +232,8 @@ Purpose: External destination in a new tab; browser owns network failure; closin
 | `save` | `draft` | Save my edit | `apply` | primary |
 | `discard` | `draft` | Discard my edit | `draft` | tertiary |
 | `reject` | `draft` | Reject this draft | `draft` | secondary |
+| `describe-live` | `live` | Describe it live | `live` | primary |
+| `stop-live` | `live` | Stop waiting | `live` | secondary |
 | `apply-now` | `apply` | Apply to practice copy | `result` | primary |
 | `undo` | `apply` | Undo | `apply` | tertiary |
 | `reset-open` | `result` | Reset practice | `reset` | tertiary |
@@ -221,6 +248,7 @@ Purpose: External destination in a new tab; browser owns network failure; closin
 | `both-named` | `review` | Confirm both matches → both names in the draft → apply → undo |
 | `one-named` | `review` | Confirm one match, keep the other unnamed → one name in the draft, other person described |
 | `nobody-named` | `review` | Keep both people unnamed → visual-only draft |
+| `live-run` | `review` | Run the same photo live → the live sentence sits beside the saved draft |
 | `pending` | `review` | Save or discard your edit before Apply |
 | `undo-flow` | `recover` | Apply two edits and undo in order |
 | `reset-flow` | `recover` | Cancel or confirm reset safely |
@@ -263,6 +291,16 @@ Purpose: External destination in a new tab; browser owns network failure; closin
 | `apply` | apply-now: Apply to practice copy |
 | `result` | Visual-only draft applied. |
 
+### Run the same photo live → the live sentence sits beside the saved draft (`live-run`)
+
+| screen | action / expected copy |
+| --- | --- |
+| `face` | Decide each face match first |
+| `live` | describe-live: Describe it live |
+| `live` | Starting the GPU. A cold start can take several minutes. |
+| `live` | Done. The GPU wrote this. Or: stop-live: Stop waiting |
+| `draft` | The saved draft is unchanged; Apply still writes the saved draft |
+
 ### Save or discard your edit before Apply (`pending`)
 
 | screen | action / expected copy |
@@ -304,7 +342,7 @@ Purpose: External destination in a new tab; browser owns network failure; closin
 - Saved-run provenance note: recognition engine InsightFace buffalo_l on the AltContext recognition service (dev build); saved run 2026-09-06; Saved from a real run on 2026-09-06, not a live run; threshold 0.6; Tribeca press photo similarities: Justin Trudeau on the left 0.686 and Katy Perry on the right 0.742.
 - Cluster ids from the dev tenant: Katy Perry 68adc97c-f81f-42c3-9e5c-061f16770361 (11 photos; 5 saved photos shown in the bundled gallery) and Justin Trudeau fd0d2b5d-108a-42b7-af25-f028e40d5778 (8 photos; 2 saved photos shown).
 - Also checked for provenance: a Coachella press photo of the same two people matched both, even with a hand over her mouth. It is not bundled because of licensing.
-- Live recognition: the demo ships the saved result and does not run recognition live. If live recognition ships, show a fresh timestamp and drop the saved-run disclosure; keep the engine name out of screen copy.
+- Live recognition versus live description: the demo now describes the photo live on demand, but the face matches and the names still come from the saved run and the server-side roster. If live recognition also ships, show a fresh timestamp and drop the saved-run disclosure; keep the engine name out of screen copy.
 
 ## Parity index
 
@@ -314,9 +352,9 @@ below must exist in the sibling `.uxmap.json`, and no `z-*`/`act-*` id may appea
 that the JSON does not define. Regenerate with `docs/ux-maps/render_ux_maps.py` when the
 renderer dependency is available.
 
-Zone ids: intro-0 intro-1 guide-0 guide-1 evidence-0 evidence-1 face-0 face-1 face-2 draft-0 draft-1 draft-2 apply-0 apply-1 result-0 result-1 result-2 reset-0 reset-1 image-fallback-0 image-fallback-1 case-study-0
+Zone ids: intro-0 intro-1 guide-0 guide-1 evidence-0 evidence-1 face-0 face-1 face-2 draft-0 draft-1 draft-2 live-0 live-1 live-2 live-3 live-4 apply-0 apply-1 result-0 result-1 result-2 reset-0 reset-1 image-fallback-0 image-fallback-1 case-study-0
 
-Action ids: open toggle-guide skip-guide guide-step end-guide confirm-katy-perry unnamed-katy-perry confirm-justin-trudeau unnamed-justin-trudeau save discard reject apply-now undo reset-open keep case reset-confirm
+Action ids: open toggle-guide skip-guide guide-step end-guide confirm-katy-perry unnamed-katy-perry confirm-justin-trudeau unnamed-justin-trudeau save discard reject describe-live stop-live apply-now undo reset-open keep case reset-confirm
 
 Zone labels (verbatim; the tables above escape `|` for markdown, this list does not):
 
@@ -332,6 +370,11 @@ Zone labels (verbatim; the tables above escape `|` for markdown, this list does 
 - Ready for you to check, Edited by you, or Rejected. The saved text did not change. Both confirmed: You confirmed both matches, so both names are in the draft. The visual details and page context stay the same. One confirmed: You confirmed one match, so one name is in the draft. The other person is described, not named. None confirmed, all decided: You kept both people unnamed, so the draft only says what is visible. Otherwise: Confirm or skip each face match first. Until then the draft only says what is visible.
 - Draft without names: A man in a black tuxedo and a woman in a white draped gown pose side by side at the Tribeca Festival. Her hand rests on his chest. Without the names. This draft comes from a saved run, not a live one.
 - Description draft with Save my edit, Discard my edit, and Reject this draft. Rejected notice: You rejected this draft, so Apply is off. Edit and save the text, or change an answer about a face, to get a new draft.
+- See it run live: A live run never changes the draft above, and it never changes what Apply would write.
+- Names come from your roster on the server, not from this page. Confirmed here: {names}. Otherwise: You have not confirmed anyone here yet.
+- Live run status, colour always paired with a glyph (• waiting, … working, ✓ done, ! degraded or timed out, × stopped): Ready when you are. / Queued. Waiting for the service to pick it up. / Starting the GPU. A cold start can take several minutes. / Describing the photo now. / Done. The GPU wrote this. / Done, but the GPU was not available, so the CPU wrote this. It is rougher than a GPU description. / Stopped waiting. The run may still finish on its own; nothing was applied here. / You stopped the wait. Nothing was applied. / The live run could not finish. Nothing was applied. Elapsed while waiting: 1:05 of up to 8:30.
+- Describe it live and Stop waiting. Describe it live is off until every face match is decided: Decide each face match first. Then you can describe this photo live. It is off entirely when the demo has no live photo: No live photo is configured for this demo, so the live run is off.
+- The live sentence, quoted beside the saved draft and never written into it.
 - The practice copy says {appliedText}; pressing Apply writes the saved draft to this practice copy only
 - Apply to practice copy and Undo; Apply is off while your edit is unsaved
 - Applied description and unchanged original media scope
@@ -343,12 +386,12 @@ Zone labels (verbatim; the tables above escape `|` for markdown, this list does 
 - Sample record and text-based review remain available
 - Case study content
 
-States (all zones and screens): default first_time error empty
+States (all zones and screens): default first_time error empty loading degraded
 
 ## Not doing
 
 - Public homepage or marketing deployment
 - Guest-session authentication or credentials settings
-- Live generation
+- Applying a live result automatically, or letting a live run rewrite the saved draft
 - Multi-scenario library and production privacy settings
 - Full WordPress or screen-reader conformance claim from component-only browser tests

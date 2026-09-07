@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Mock } from 'vitest';
 
 import type { DescribeRunItemsResponse, DescribeRunResponse } from '../api/describeApi';
-import { GUIDED_LIVE_STATUS, GUIDED_LIVE_WAIT_CEILING_SECONDS } from './liveDescription';
+import { GUIDED_LIVE_REASON, GUIDED_LIVE_STATUS, GUIDED_LIVE_WAIT_CEILING_SECONDS } from './liveDescription';
 import { confirmGuidedIdentity, createGuidedScenario, leaveGuidedIdentityUnidentified } from './state';
 import type { GuidedScenario } from './state';
 import { GUIDED_LIVE_WARM_CEILING_SECONDS, useGuidedLiveDescription } from './useGuidedLiveDescription';
@@ -206,7 +206,7 @@ describe('useGuidedLiveDescription', () => {
       await settle(1000);
 
       expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.DEGRADED);
-      expect(result.current.state.reason).toBe('cpu_fallback');
+      expect(result.current.state.reason).toBe(GUIDED_LIVE_REASON.CPU_TIER);
     });
 
     it('takes the warm ceiling when the GPU is already up, the cold one otherwise', async () => {

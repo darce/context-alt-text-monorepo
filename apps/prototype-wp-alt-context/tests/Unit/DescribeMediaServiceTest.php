@@ -103,7 +103,9 @@ class DescribeMediaServiceTest extends TestCase
      */
     private function describeEnvelopeWithIdentityRows(array $identityRows, bool $allowPersonNames): array
     {
-        $this->setOption('acx_description_allow_person_names', $allowPersonNames);
+        // The legacy local option is intentionally ignored. The recognition
+        // service owns the tenant naming agreement and applies the final gate.
+        $this->setOption('acx_legacy_naming_fixture', $allowPersonNames);
         $this->plantAttachment(42, "\xff\xd8\xff\xe0fake-jpeg-bytes", 'jpg');
 
         $host = new DescribeMediaServiceTestHost(self::currentTenantId(), $this->validBackendBody(42));
@@ -1184,7 +1186,7 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertStringContainsString('identity_unconfirmed', $envelopeJson);
     }
 
-    public function testRosterDescriptionContextSuppressesNamesWhenPolicyDisabled(): void
+    public function testRosterDescriptionContextAlwaysSendsConfirmedNamesToService(): void
     {
         $envelopeJson = json_encode(
             $this->describeEnvelopeWithIdentityRows(
@@ -1202,8 +1204,8 @@ class DescribeMediaServiceTest extends TestCase
         );
 
         $this->assertIsString($envelopeJson);
-        $this->assertStringNotContainsString('Ada Lovelace', $envelopeJson);
-        $this->assertStringContainsString('person_naming_policy_disabled', $envelopeJson);
+        $this->assertStringContainsString('Ada Lovelace', $envelopeJson);
+        $this->assertStringNotContainsString('person_naming_policy_disabled', $envelopeJson);
     }
 
     public function testRosterDescriptionContextRepresentsAmbiguousMachineOnlyState(): void

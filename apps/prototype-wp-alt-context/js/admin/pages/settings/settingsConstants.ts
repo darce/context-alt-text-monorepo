@@ -1,5 +1,11 @@
 import { __ } from '@wordpress/i18n';
 
+export const NAMING_AGREEMENT_LABEL = __('Include named people in descriptions', 'alt-context');
+export const NAMING_AGREEMENT_HELP = __(
+  'Names come from the People roster and are applied only when recognition is enabled.',
+  'alt-context',
+);
+
 export const SOURCE_LABELS: Record<string, string> = {
   constant: __('Set via wp-config.php constant', 'alt-context'),
   option: __('Saved in database', 'alt-context'),

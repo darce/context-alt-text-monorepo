@@ -6,8 +6,8 @@
  * state here leaves that draft and the Apply button untouched, so a cold GPU
  * can never block the lesson.
  */
-import { DESCRIBE_RESULT_TIER, DESCRIBE_RUN_PHASE } from '../api/describeApi';
-import type { DescribeResultTier, DescribeRunPhase, DescribeRunResponse, GpuState } from '../api/describeApi';
+import { DESCRIBE_RESULT_TIER, DESCRIBE_RUN_PHASE, GPU_STATE } from '../api/describeApi';
+import type { DescribeResultTier, DescribeRunPhase, GpuState } from '../api/describeApi';
 import { confirmedPersonKeys, getGuidedPerson } from './state';
 import type { GuidedScenario } from './state';
 
@@ -61,8 +61,42 @@ export const GUIDED_LIVE_REASON = {
 
 export type GuidedLiveReason = (typeof GUIDED_LIVE_REASON)[keyof typeof GUIDED_LIVE_REASON];
 
-/** Cold-start ceiling: the GPU warm-up budget the backend advertises. */
-export const GUIDED_LIVE_WAIT_CEILING_SECONDS = 510;
+/**
+ * A cold live run has TWO budgets on the server and they do not overlap.
+ *
+ * Generation: `ACX_DESCRIPTION_TIMEOUT_SECONDS` (default 180). This is the leg
+ * the service discloses as `deadline_seconds` -- and it is generation ONLY; it
+ * does not include the time a scale-to-zero pod spends loading weights.
+ *
+ * Warm-up: `ACX_GPU_WARMUP_TIMEOUT_SECONDS` (default 510, see
+ * `scene/config/settings.py` DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS and
+ * `.env.prod.example`). Paid only when the GPU is not already up.
+ *
+ * The WordPress proxy already states the total the same way -- see
+ * `src/api/class-public-demo-describe-controller.php::public_deadline_seconds()`,
+ * which returns `$warmup + $inference`. Treating the disclosed generation
+ * budget as the whole wait timed a healthy cold run out at 3:15 while the pod
+ * was still loading weights, so the two legs are named separately here and
+ * summed in exactly one place.
+ */
+export const GUIDED_LIVE_WARM_CEILING_SECONDS = 180;
+
+/** The warm-up leg, paid once, only when the GPU is not already `ready`. */
+export const GUIDED_LIVE_GPU_WARMUP_CEILING_SECONDS = 510;
+
+/** Cold-start ceiling: warm-up plus generation, the same total the proxy discloses. */
+export const GUIDED_LIVE_WAIT_CEILING_SECONDS =
+  GUIDED_LIVE_GPU_WARMUP_CEILING_SECONDS + GUIDED_LIVE_WARM_CEILING_SECONDS;
+
+/**
+ * A fresh window granted when the learner explicitly asks to keep waiting on a
+ * run the server may still be finishing (INT-08 offer a side-effect-free way
+ * out, INT-11 refine over restart). One generation budget: long enough for the
+ * answer that was nearly there, short enough that the panel does not wait
+ * forever on the learner's behalf.
+ */
+export const GUIDED_LIVE_KEEP_WAITING_SECONDS = GUIDED_LIVE_WARM_CEILING_SECONDS;
+
 const POLL_BASE_MS = 500;
 const POLL_CEILING_MS = 5000;
 
@@ -74,51 +108,64 @@ const POLL_CEILING_MS = 5000;
 export const GUIDED_LIVE_DEADLINE_SLACK_MS = 15_000;
 
 /**
- * `deadline_seconds` is sibling-lane work landing on the wire contract this
- * module reads (submit response and every status poll). Extending
- * `DescribeRunResponse` itself lives in `../api/describeApi`, outside this
- * lane's owned paths, so it is carried here as a local intersection until the
- * coordinator hoists it onto the shared type.
+ * The lowest server budget this client is willing to believe.
+ *
+ * A misconfigured `ACX_DESCRIPTION_TIMEOUT_SECONDS=1`, or a number truncated in
+ * a proxied body, would otherwise resolve to a 16-second deadline and declare a
+ * healthy run timed out with no path back up. Upstream values are boundary
+ * data, so they are validated against a plausible band rather than merely
+ * type-narrowed (sr-005).
  */
-export type GuidedLiveDescribeRunResponse = DescribeRunResponse & {
-  deadline_seconds?: number | null;
-};
+export const GUIDED_LIVE_DEADLINE_FLOOR_SECONDS = 30;
 
 /**
- * Boundary check for `deadline_seconds`: it is untrusted API data, so it earns
- * an explicit predicate rather than an assertion helper (sr-005). Anything
- * that is not a finite positive number means "the server did not disclose a
- * budget" and must fall back to the client's own ceiling.
+ * Boundary check for `deadline_seconds`: untrusted API data, so it earns an
+ * explicit predicate rather than an assertion helper (sr-005).
  *
- * Exported so the hook can decide, once at accept, whether a disclosed
- * deadline is in effect for this run -- the single source of truth for what
- * counts as a real disclosure, so the poll loop's "ignore it on polls" rule
- * (see the `polled` action) and this resolver never drift apart on the
- * definition of "disclosed".
+ * Outside the band -- `null`, `undefined`, `0`, negative, `NaN`, `Infinity`, a
+ * string, a value under the floor, or a value the local ceiling could not
+ * honour anyway -- means "the server did not disclose a usable budget" and the
+ * caller must fall back to its own ceiling.
  */
-export const isGuidedLiveDeadlineDisclosed = (value: unknown): value is number =>
-  typeof value === 'number' && Number.isFinite(value) && value > 0;
+export const isGuidedLiveDeadlineDisclosed = (value: unknown, localCeilingMs: number): value is number =>
+  typeof value === 'number' &&
+  Number.isFinite(value) &&
+  value >= GUIDED_LIVE_DEADLINE_FLOOR_SECONDS &&
+  value * 1000 <= localCeilingMs;
+
+/**
+ * The warm-up leg the disclosed budget does NOT cover. `ready` is the only
+ * state in which the weights are already loaded; every other state (including
+ * `unknown`) may still have to pay for a scale-to-zero start, and paying it
+ * twice costs nothing while not paying it at all times a live run out.
+ */
+export const guidedLiveWarmupLegSeconds = (gpu: GpuState): number =>
+  gpu === GPU_STATE.READY ? 0 : GUIDED_LIVE_GPU_WARMUP_CEILING_SECONDS;
+
+/** The whole client-side wait for a run submitted against this GPU state. */
+export const guidedLiveCeilingSecondsFor = (gpu: GpuState): number =>
+  GUIDED_LIVE_WARM_CEILING_SECONDS + guidedLiveWarmupLegSeconds(gpu);
 
 /**
  * The one place the server's disclosed budget is turned into a client
- * deadline. `localCeilingMs` is whatever the warm/cold selection already
- * decided (unchanged by this function); the disclosed budget can only pull
- * that ceiling in, never push it out, so an operator's generous local
- * patience bound is never extended by a server that discloses a longer one.
- * The same formula runs whether the local ceiling came from the warm or the
- * cold branch -- a disclosed budget is a statement about generation time, and
- * this function does not layer extra warm-up allowance on top of it even in
- * the cold case; the cold ceiling still wins as the outer cap when the
- * disclosed budget would exceed it.
+ * deadline.
+ *
+ * `deadline_seconds` is the server's GENERATION budget for the accepted run
+ * and explicitly excludes GPU warm-up, so the warm-up leg is added back here
+ * whenever the GPU is not already `ready`. `localCeilingMs` -- whatever the
+ * warm/cold selection decided -- still caps the result, so a server that
+ * discloses more than this client is willing to wait cannot push the wait out.
  */
 export const resolveGuidedLiveDeadlineMs = (
   localCeilingMs: number,
   deadlineSeconds: number | null | undefined,
+  gpu: GpuState,
 ): number => {
-  if (!isGuidedLiveDeadlineDisclosed(deadlineSeconds)) {
+  if (!isGuidedLiveDeadlineDisclosed(deadlineSeconds, localCeilingMs)) {
     return localCeilingMs;
   }
-  return Math.min(localCeilingMs, deadlineSeconds * 1000 + GUIDED_LIVE_DEADLINE_SLACK_MS);
+  const totalSeconds = deadlineSeconds + guidedLiveWarmupLegSeconds(gpu);
+  return Math.min(localCeilingMs, totalSeconds * 1000 + GUIDED_LIVE_DEADLINE_SLACK_MS);
 };
 
 const WAITING_STATUSES: readonly GuidedLiveStatus[] = [
@@ -164,6 +211,23 @@ export interface GuidedLiveState {
   startedAtMs: number | null;
   elapsedMs: number;
   deadlineMs: number;
+  /**
+   * The server's disclosed generation budget for THIS run, verbatim from the
+   * wire, or null when nothing usable was disclosed.
+   *
+   * It lives in the state rather than in a hook ref because the deadline is a
+   * function of two things -- the disclosure and the local ceiling -- and the
+   * local ceiling moves when a poll reveals a colder GPU than the submit
+   * assumed. A ref could only latch "a disclosure happened"; the reducer needs
+   * the number itself to re-derive the deadline against the new ceiling.
+   */
+  disclosedDeadlineSeconds: number | null;
+  /**
+   * The waiting status the run held when the client stopped waiting, so
+   * "Keep waiting" resumes where the run actually was instead of claiming it
+   * went back to queued.
+   */
+  resumeStatus: GuidedLiveStatus | null;
 }
 
 export type GuidedLiveAction =
@@ -175,10 +239,15 @@ export type GuidedLiveAction =
       deadlineSeconds: number;
       atMs: number;
       /**
+       * The GPU state the submit response reported. It decides whether the
+       * warm-up leg is owed on top of the disclosed generation budget; absent
+       * means `unknown`, which owes the leg.
+       */
+      gpu?: GuidedLiveGpuState;
+      /**
        * The server's disclosed generation budget from the submit response
-       * (wire field `deadline_seconds`), taken once here and never re-derived
-       * on a later poll. `null`/`undefined` means the server did not disclose
-       * one; `resolveGuidedLiveDeadlineMs` decides what that is worth.
+       * (wire field `deadline_seconds`). Kept verbatim in the state so a later
+       * `deadline_raised` can re-derive the deadline against a wider ceiling.
        */
       disclosedDeadlineSeconds?: number | null;
     }
@@ -192,15 +261,22 @@ export type GuidedLiveAction =
       /** Passed through from the service, so not drawn from the closed set. */
       reason?: string | null;
       /**
-       * A poll may carry its own `deadline_seconds` (same wire contract as the
-       * submit response). The deadline is taken once, at accept, so this is
-       * typed for wire fidelity but the reducer never reads it: a poll
-       * disagreeing with the submit is a server bug, not a resize.
+       * A poll carries the same `deadline_seconds` wire field as the submit
+       * response. It is adopted only as a FIRST disclosure -- if the accept
+       * already disclosed a budget, a poll disagreeing with it is a server bug,
+       * not a resize, and is ignored. Adopting it can never shrink the wait:
+       * `deadline_raised` only ever takes the larger of the two.
        */
       disclosedDeadlineSeconds?: number | null;
     }
-  | { kind: 'deadline_raised'; deadlineSeconds: number }
+  | {
+      kind: 'deadline_raised';
+      deadlineSeconds: number;
+      /** GPU state from the poll that prompted the raise; absent means `unknown`. */
+      gpu?: GuidedLiveGpuState;
+    }
   | { kind: 'tick'; atMs: number }
+  | { kind: 'wait_resumed'; atMs: number }
   | { kind: 'cancelled' }
   | { kind: 'failed'; reason: GuidedLiveReason };
 
@@ -215,6 +291,8 @@ export const initialGuidedLiveState = (
   startedAtMs: null,
   elapsedMs: 0,
   deadlineMs: GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000,
+  disclosedDeadlineSeconds: null,
+  resumeStatus: null,
 });
 
 export const isGuidedLiveWaiting = (status: GuidedLiveStatus): boolean => WAITING_STATUSES.includes(status);
@@ -283,8 +361,12 @@ const advanceClock = (state: GuidedLiveState, atMs: number): GuidedLiveState => 
   const elapsedMs = state.startedAtMs === null ? state.elapsedMs : atMs - state.startedAtMs;
   if (elapsedMs >= state.deadlineMs) {
     // Stop, say so, and never retry on our own: a burst run costs money and may
-    // still be finishing.
-    return terminal({ ...state, elapsedMs }, GUIDED_LIVE_STATUS.TIMED_OUT, { reason: GUIDED_LIVE_REASON.CLIENT_DEADLINE });
+    // still be finishing. Remember where the run was, so the learner can resume
+    // the same wait instead of being told to start over (INT-11).
+    return terminal({ ...state, elapsedMs }, GUIDED_LIVE_STATUS.TIMED_OUT, {
+      reason: GUIDED_LIVE_REASON.CLIENT_DEADLINE,
+      resumeStatus: isGuidedLiveWaiting(state.status) ? state.status : state.resumeStatus,
+    });
   }
   return { ...state, elapsedMs };
 };
@@ -298,6 +380,8 @@ const startRun = (state: GuidedLiveState, atMs: number): GuidedLiveState => ({
   startedAtMs: atMs,
   elapsedMs: 0,
   deadlineMs: GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000,
+  disclosedDeadlineSeconds: null,
+  resumeStatus: null,
 });
 
 const completion = (state: GuidedLiveState, action: Extract<GuidedLiveAction, { kind: 'polled' }>): GuidedLiveState => {
@@ -345,6 +429,8 @@ export const guidedLiveReducer = (state: GuidedLiveState, action: GuidedLiveActi
           runId: null,
           text: null,
           reason: null,
+          disclosedDeadlineSeconds: null,
+          resumeStatus: null,
         };
       }
       // status and blockedReason are separate fields, so a stale reason can ride
@@ -380,14 +466,22 @@ export const guidedLiveReducer = (state: GuidedLiveState, action: GuidedLiveActi
       // (see GuidedLiveDescriptionPanel: waiting without a runId shows
       // elapsed only).
       const localCeilingMs = Math.max(0, capped) * 1000;
-      // The server's disclosed generation budget (if any) can only pull that
-      // ceiling in, taken once here -- never re-derived on a later poll.
-      const deadlineMs = resolveGuidedLiveDeadlineMs(localCeilingMs, action.disclosedDeadlineSeconds);
+      // Kept verbatim, not folded into deadlineMs: the disclosure is generation
+      // time and the ceiling it is measured against can still widen when a poll
+      // reveals a colder GPU than the submit assumed. Keeping the raw number is
+      // what makes that later re-derivation possible.
+      const disclosedDeadlineSeconds =
+        typeof action.disclosedDeadlineSeconds === 'number' ? action.disclosedDeadlineSeconds : null;
+      const deadlineMs = resolveGuidedLiveDeadlineMs(
+        localCeilingMs,
+        disclosedDeadlineSeconds,
+        action.gpu ?? GPU_STATE.UNKNOWN,
+      );
       //
       // Record the run id before advancing the clock: a run the server has
       // just confirmed is precisely the one that still needs cancelling if
       // acceptance itself lands past the deadline.
-      const accepted = { ...state, runId: action.runId, deadlineMs };
+      const accepted = { ...state, runId: action.runId, deadlineMs, disclosedDeadlineSeconds };
       return advanceClock(accepted, action.atMs);
     }
 
@@ -395,11 +489,42 @@ export const guidedLiveReducer = (state: GuidedLiveState, action: GuidedLiveActi
       // A submit-time warm pin is a guess. If a later poll reveals the GPU is
       // colder than that, the wait must be allowed to grow back toward the
       // cold ceiling -- but never to shrink under a learner mid-wait.
+      //
+      // Re-derived from the SAME disclosed budget rather than from the raw
+      // ceiling: `min(ceiling, disclosed + warm-up + slack)` is idempotent, so
+      // recomputing it against the wider ceiling is always safe. The ref that
+      // used to suppress this action once anything had been disclosed made a
+      // legitimate cold-GPU extension unreachable for the rest of the run.
       if (!isGuidedLiveWaiting(state.status)) {
         return state;
       }
       const capped = Math.min(action.deadlineSeconds, GUIDED_LIVE_WAIT_CEILING_SECONDS);
-      return { ...state, deadlineMs: Math.max(state.deadlineMs, Math.max(0, capped) * 1000) };
+      const raisedMs = resolveGuidedLiveDeadlineMs(
+        Math.max(0, capped) * 1000,
+        state.disclosedDeadlineSeconds,
+        action.gpu ?? GPU_STATE.UNKNOWN,
+      );
+      return { ...state, deadlineMs: Math.max(state.deadlineMs, raisedMs) };
+    }
+
+    case 'wait_resumed': {
+      // The learner looked at a timed-out panel and said keep going. The run is
+      // the server's, still possibly finishing, and the client is the only
+      // thing that stopped -- so resume the same run rather than spending a
+      // second burst on a restart (INT-08, INT-11).
+      if (state.status !== GUIDED_LIVE_STATUS.TIMED_OUT || state.runId === null) {
+        return state;
+      }
+      return {
+        ...state,
+        status: state.resumeStatus ?? GUIDED_LIVE_STATUS.QUEUED,
+        reason: null,
+        resumeStatus: null,
+        // A fresh window measured from where the wait actually stands, so the
+        // panel's "of up to" line moves forward instead of re-arming a bound
+        // the clock has already passed.
+        deadlineMs: state.elapsedMs + GUIDED_LIVE_KEEP_WAITING_SECONDS * 1000,
+      };
     }
 
     case 'tick': {
@@ -413,7 +538,19 @@ export const guidedLiveReducer = (state: GuidedLiveState, action: GuidedLiveActi
       if (!isGuidedLiveWaiting(state.status)) {
         return state;
       }
-      const next = advanceClock(state, action.atMs);
+      // A poll is allowed to make a FIRST disclosure -- a submit that carried
+      // no budget followed by polls that do should not leave the client on a
+      // locally invented ceiling forever. It is not allowed to revise one: a
+      // poll contradicting the accept is a server bug. Either way this only
+      // records the number; `deadline_raised` is the sole path to a new
+      // deadline and it never shrinks the wait.
+      const polledDisclosure =
+        typeof action.disclosedDeadlineSeconds === 'number' ? action.disclosedDeadlineSeconds : null;
+      const seen =
+        state.disclosedDeadlineSeconds === null && polledDisclosure !== null
+          ? { ...state, disclosedDeadlineSeconds: polledDisclosure }
+          : state;
+      const next = advanceClock(seen, action.atMs);
 
       if (action.phase === DESCRIBE_RUN_PHASE.COMPLETE) {
         // Deliberately ahead of the timeout check. The deadline is there to

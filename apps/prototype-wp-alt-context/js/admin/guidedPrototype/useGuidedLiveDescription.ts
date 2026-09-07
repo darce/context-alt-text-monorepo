@@ -23,7 +23,8 @@ import { isFrozenPollFailure } from '../hooks/useDescribeRunProgress';
 import { createLogger } from '../utils/logger';
 import {
   GUIDED_LIVE_STATUS,
-  GUIDED_LIVE_WAIT_CEILING_SECONDS,
+  GUIDED_LIVE_WARM_CEILING_SECONDS,
+  guidedLiveCeilingSecondsFor,
   guidedLiveNamingDisclosure,
   guidedLivePollDelayMs,
   guidedLiveRequestPayload,
@@ -33,12 +34,10 @@ import {
   guidedLiveOwnsRunAttempt,
   guidedLiveRunMayBeLive,
   initialGuidedLiveState,
-  isGuidedLiveDeadlineDisclosed,
   isGuidedLiveWaiting,
 } from './liveDescription';
 import type {
   GuidedLiveBlockedReason,
-  GuidedLiveDescribeRunResponse,
   GuidedLiveGpuState,
   GuidedLiveNamingDisclosure,
   GuidedLivePhase,
@@ -48,8 +47,10 @@ import type {
 import { GUIDED_IDENTITY_STATUS } from './state';
 import type { GuidedScenario } from './state';
 
-/** Warm-GPU ceiling: the backend's own describe budget with no burst to pay for. */
-export const GUIDED_LIVE_WARM_CEILING_SECONDS = 180;
+// The warm/cold ceilings and the warm-up leg they are built from live beside
+// the reducer that enforces them; re-exported here because this hook is where
+// every consumer already imports the ceiling from.
+export { GUIDED_LIVE_WARM_CEILING_SECONDS };
 
 const TICK_MS = 1000;
 
@@ -83,10 +84,10 @@ const releaseRun = (
     });
 
 export interface GuidedLiveDescriptionClient {
-  // The submit response is the one place `deadline_seconds` is read; typed
-  // with the local intersection until the coordinator hoists the field onto
-  // the shared `DescribeRunResponse` contract (see liveDescription.ts).
-  submit: (mediaId: number) => Promise<GuidedLiveDescribeRunResponse>;
+  // Both the submit response and every status poll carry `deadline_seconds` on
+  // the shared contract, so both are typed by it rather than by a local
+  // intersection that a schema rename could not break (rg-015).
+  submit: (mediaId: number) => Promise<DescribeRunResponse>;
   poll: (runId: string) => Promise<DescribeRunResponse>;
   items: (runId: string) => Promise<DescribeRunItemsResponse>;
   cancel: (runId: string) => Promise<unknown>;
@@ -116,14 +117,18 @@ export interface UseGuidedLiveDescriptionResult {
   blockedReason: GuidedLiveBlockedReason | null;
   canRequest: boolean;
   canCancel: boolean;
+  /**
+   * True exactly when the client stopped waiting on a run the server may still
+   * be finishing. The only state in which "keep waiting" is a real offer
+   * rather than a second burst (INT-08).
+   */
+  canKeepWaiting: boolean;
   request: () => void;
   cancel: () => void;
+  keepWaiting: () => void;
 }
 
 const gpuStateOf = (value: unknown): GuidedLiveGpuState => (isGpuState(value) ? value : 'unknown');
-
-const ceilingSecondsFor = (gpu: GuidedLiveGpuState): number =>
-  gpu === 'ready' ? GUIDED_LIVE_WARM_CEILING_SECONDS : GUIDED_LIVE_WAIT_CEILING_SECONDS;
 
 /**
  * The run's own terminal statuses outrank `phase`. A run can settle
@@ -192,13 +197,6 @@ export const useGuidedLiveDescription = ({
   // cancel or a new request must not write into the run that replaced it.
   const generationRef = useRef(0);
   const attemptRef = useRef(0);
-  // Whether the current run's accept carried a usable `deadline_seconds`. Once
-  // the server has disclosed a real budget, the local warm/cold re-guess that
-  // `deadline_raised` performs on every poll must not run at all -- the value
-  // was taken once, at accept, and a poll disagreeing with it is a server bug,
-  // not grounds to widen it back toward a local ceiling (see liveDescription.ts
-  // `resolveGuidedLiveDeadlineMs`).
-  const disclosedDeadlineRef = useRef(false);
 
   // "Decided" means every face has an answer -- confirmed OR marked
   // unidentified. Counting only confirmations let a learner who marked every
@@ -285,7 +283,6 @@ export const useGuidedLiveDescription = ({
     const generation = generationRef.current + 1;
     generationRef.current = generation;
     attemptRef.current = 0;
-    disclosedDeadlineRef.current = false;
     dispatch({ kind: 'requested', atMs: Date.now() });
 
     void (previous === null ? Promise.resolve() : releaseRun(client, previous, 'superseded_by_retry'))
@@ -309,15 +306,15 @@ export const useGuidedLiveDescription = ({
           void releaseRun(client, run.run_id, 'accepted_after_fence');
           return;
         }
-        // Taken once, here, at submit accept: the poll loop below consults
-        // this ref to skip its own local-ceiling regrowth once a real
-        // disclosure is in effect. The reducer never re-derives the value
-        // itself from a later poll either way (see liveDescription.ts).
-        disclosedDeadlineRef.current = isGuidedLiveDeadlineDisclosed(run.deadline_seconds);
+        // The disclosed budget and the GPU state it was measured against
+        // travel together: the reducer needs both to decide whether the
+        // warm-up leg is still owed on top of the generation budget.
+        const acceptedGpu = gpuStateOf(run.gpu_state);
         dispatch({
           kind: 'accepted',
           runId: run.run_id,
-          deadlineSeconds: ceilingSecondsFor(gpuStateOf(run.gpu_state)),
+          deadlineSeconds: guidedLiveCeilingSecondsFor(acceptedGpu),
+          gpu: acceptedGpu,
           disclosedDeadlineSeconds: run.deadline_seconds,
           atMs: Date.now(),
         });
@@ -389,13 +386,19 @@ export const useGuidedLiveDescription = ({
         if (phase !== DESCRIBE_RUN_PHASE.COMPLETE) {
           attemptRef.current += 1;
           // A submit-time warm pin can be wrong. If the run reports a colder GPU
-          // than the pin assumed, give the wait back its cold budget -- but only
-          // when the server never disclosed a real budget of its own. Once it
-          // has, that figure governs and this local re-guess must stay silent.
-          if (!disclosedDeadlineRef.current) {
-            dispatch({ kind: 'deadline_raised', deadlineSeconds: ceilingSecondsFor(gpu) });
-          }
-          dispatch({ kind: 'polled', phase, gpu, atMs: Date.now() });
+          // than the pin assumed, give the wait back the warm-up leg it now
+          // owes. This fires on every poll, disclosure or not: the reducer
+          // re-derives the deadline from the same disclosed budget against the
+          // wider ceiling and keeps the larger of the two, so it is idempotent
+          // while a stale `gpu_state` at submit stays recoverable.
+          dispatch({ kind: 'deadline_raised', deadlineSeconds: guidedLiveCeilingSecondsFor(gpu), gpu });
+          dispatch({
+            kind: 'polled',
+            phase,
+            gpu,
+            atMs: Date.now(),
+            disclosedDeadlineSeconds: run.deadline_seconds,
+          });
           if (live()) {
             schedule();
           }
@@ -407,10 +410,24 @@ export const useGuidedLiveDescription = ({
           return;
         }
         if (draft === null) {
-          dispatch({ kind: 'polled', phase, gpu, atMs: Date.now(), reason: GUIDED_LIVE_REASON.ITEM_MISSING });
+          dispatch({
+            kind: 'polled',
+            phase,
+            gpu,
+            atMs: Date.now(),
+            reason: GUIDED_LIVE_REASON.ITEM_MISSING,
+            disclosedDeadlineSeconds: run.deadline_seconds,
+          });
           return;
         }
-        dispatch({ kind: 'polled', phase, gpu, atMs: Date.now(), ...draft });
+        dispatch({
+          kind: 'polled',
+          phase,
+          gpu,
+          atMs: Date.now(),
+          disclosedDeadlineSeconds: run.deadline_seconds,
+          ...draft,
+        });
       } catch (error) {
         if (!live()) {
           return;
@@ -440,6 +457,14 @@ export const useGuidedLiveDescription = ({
     };
   }, [client, mediaId, runId, waiting]);
 
+  const keepWaiting = useCallback(() => {
+    // No generation bump and no new submit: this is the same run, and the only
+    // thing that stopped was this panel. Resetting the backoff makes the first
+    // resumed poll immediate rather than five seconds late.
+    attemptRef.current = 0;
+    dispatch({ kind: 'wait_resumed', atMs: Date.now() });
+  }, []);
+
   const disclosure = useMemo(() => guidedLiveNamingDisclosure(scenario), [scenario]);
 
   return {
@@ -448,7 +473,9 @@ export const useGuidedLiveDescription = ({
     blockedReason: state.blockedReason,
     canRequest: state.status !== GUIDED_LIVE_STATUS.BLOCKED && !waiting,
     canCancel: waiting,
+    canKeepWaiting: state.status === GUIDED_LIVE_STATUS.TIMED_OUT && state.runId !== null,
     request,
     cancel,
+    keepWaiting,
   };
 };

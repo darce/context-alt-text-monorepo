@@ -276,6 +276,10 @@ def test_installer_provisions_every_supplementary_group_it_references(tmp_path: 
     assert calls.count(getent) >= 2, "the payload must verify the GID before and after groupadd"
     assert calls.index(getent) < calls.index(groupadd) < calls.rindex(getent)
     assert calls.rindex(getent) < calls.index("systemctl <start> <acx-gpu-reap.service>")
+    group_db = (tmp_path / "fake-etc-group").read_text(encoding="utf-8")
+    assert "acxapi:x:10001:" in group_db, (
+        "the executed installer must leave a resolvable GID 10001 in the fake NSS database"
+    )
     for unit in ("acx-gpu-start.service", "acx-gpu-reap.service"):
         rendered = (tmp_path / "effective-systemd" / unit).read_text(encoding="utf-8")
         assert "SupplementaryGroups=10001" in rendered

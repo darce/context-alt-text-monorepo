@@ -6,7 +6,7 @@
  * state here leaves that draft and the Apply button untouched, so a cold GPU
  * can never block the lesson.
  */
-import { DESCRIBE_RESULT_TIER } from '../api/describeApi';
+import { DESCRIBE_RESULT_TIER, DESCRIBE_RUN_PHASE } from '../api/describeApi';
 import type { DescribeResultTier, DescribeRunPhase, GpuState } from '../api/describeApi';
 import { confirmedPersonKeys, getGuidedPerson } from './state';
 import type { GuidedScenario } from './state';
@@ -25,6 +25,41 @@ export const GUIDED_LIVE_STATUS = {
 } as const;
 
 export type GuidedLiveStatus = (typeof GUIDED_LIVE_STATUS)[keyof typeof GUIDED_LIVE_STATUS];
+
+/**
+ * Why the gate is shut. It lives in the state rather than beside it because a
+ * panel that reads "blocked" from one place and "why" from another can render
+ * one without the other for a frame, which is exactly the dead-end disabled
+ * control this screen set out to remove (sr-007).
+ */
+export const GUIDED_LIVE_BLOCKED_REASON = {
+  NO_FACES_DECIDED: 'no_faces_decided',
+  NO_MEDIA: 'no_media',
+} as const;
+
+export type GuidedLiveBlockedReason =
+  (typeof GUIDED_LIVE_BLOCKED_REASON)[keyof typeof GUIDED_LIVE_BLOCKED_REASON];
+
+/**
+ * Every machine reason a run can end on. The panel turns these into sentences,
+ * so a literal drifting in one module and not the other silently changes what
+ * the learner is told without the type checker or a test noticing (sr-007).
+ */
+export const GUIDED_LIVE_REASON = {
+  CPU_FALLBACK: 'cpu_fallback',
+  TIER_UNREPORTED: 'tier_unreported',
+  EMPTY_DESCRIPTION: 'empty_description',
+  CLIENT_DEADLINE: 'client_deadline',
+  RUN_FAILED: 'run_failed',
+  RUN_CANCELLED: 'run_cancelled',
+  STOPPED_BY_OPERATOR: 'stopped_by_operator',
+  ITEM_MISSING: 'item_missing',
+  SUBMIT_FAILED: 'submit_failed',
+  POLL_FAILED: 'poll_failed',
+  UNKNOWN_PHASE: 'unknown_phase',
+} as const;
+
+export type GuidedLiveReason = (typeof GUIDED_LIVE_REASON)[keyof typeof GUIDED_LIVE_REASON];
 
 /** Cold-start ceiling: the GPU warm-up budget the backend advertises. */
 export const GUIDED_LIVE_WAIT_CEILING_SECONDS = 510;
@@ -60,10 +95,16 @@ export type GuidedLiveTier = DescribeResultTier;
 
 export interface GuidedLiveState {
   status: GuidedLiveStatus;
+  /** Non-null in exactly the blocked status; the panel needs no second source. */
+  blockedReason: GuidedLiveBlockedReason | null;
   runId: string | null;
   /** Live description text. Non-null only in ready and degraded. */
   text: string | null;
-  /** Machine reason for a non-success terminal state. */
+  /**
+   * Machine reason for a non-success terminal state: a member of
+   * GUIDED_LIVE_REASON when this client decided, or whatever the service
+   * reported verbatim when it did.
+   */
   reason: string | null;
   startedAtMs: number | null;
   elapsedMs: number;
@@ -71,7 +112,7 @@ export interface GuidedLiveState {
 }
 
 export type GuidedLiveAction =
-  | { kind: 'faces_decided'; decided: boolean }
+  | { kind: 'gate_changed'; blockedReason: GuidedLiveBlockedReason | null }
   | { kind: 'requested'; atMs: number }
   | { kind: 'accepted'; runId: string; deadlineSeconds: number; atMs: number }
   | {
@@ -81,15 +122,19 @@ export type GuidedLiveAction =
       atMs: number;
       tier?: GuidedLiveTier | null;
       text?: string | null;
+      /** Passed through from the service, so not drawn from the closed set. */
       reason?: string | null;
     }
   | { kind: 'deadline_raised'; deadlineSeconds: number }
   | { kind: 'tick'; atMs: number }
   | { kind: 'cancelled' }
-  | { kind: 'failed'; reason: string };
+  | { kind: 'failed'; reason: GuidedLiveReason };
 
-export const initialGuidedLiveState = (): GuidedLiveState => ({
-  status: GUIDED_LIVE_STATUS.BLOCKED,
+export const initialGuidedLiveState = (
+  blockedReason: GuidedLiveBlockedReason | null = GUIDED_LIVE_BLOCKED_REASON.NO_FACES_DECIDED,
+): GuidedLiveState => ({
+  status: blockedReason === null ? GUIDED_LIVE_STATUS.IDLE : GUIDED_LIVE_STATUS.BLOCKED,
+  blockedReason,
   runId: null,
   text: null,
   reason: null,
@@ -99,6 +144,18 @@ export const initialGuidedLiveState = (): GuidedLiveState => ({
 });
 
 export const isGuidedLiveWaiting = (status: GuidedLiveStatus): boolean => WAITING_STATUSES.includes(status);
+
+/**
+ * Whether the server may still be spending GPU on this run.
+ *
+ * Timing out is a statement about the wait, not about the run: the screen stops
+ * and the burst does not. Anything that ends the panel's ownership of a run --
+ * unmount, a retry, the gate closing -- has to ask the same question, so it is
+ * asked in one place.
+ */
+export const guidedLiveRunMayBeLive = (state: GuidedLiveState): boolean =>
+  state.runId !== null &&
+  (isGuidedLiveWaiting(state.status) || state.status === GUIDED_LIVE_STATUS.TIMED_OUT);
 
 export const guidedLivePollDelayMs = (attempt: number): number =>
   Math.min(POLL_BASE_MS * 2 ** Math.max(0, attempt), POLL_CEILING_MS);
@@ -121,11 +178,30 @@ export const guidedLiveNamingDisclosure = (scenario: GuidedScenario): GuidedLive
   confirmedHere: confirmedPersonKeys(scenario).map((key) => getGuidedPerson(scenario, key).name),
 });
 
+const assertNever = (value: never): never => {
+  throw new Error(`Unhandled guided live action: ${JSON.stringify(value)}`);
+};
+
 const terminal = (
   state: GuidedLiveState,
   status: GuidedLiveStatus,
   patch: Partial<GuidedLiveState> = {},
 ): GuidedLiveState => ({ ...state, text: null, ...patch, status });
+
+/**
+ * The one place the promised wait is enforced. Every action that carries a
+ * wall-clock reading goes through it, so the deadline binds the run rather than
+ * only the timer that happens to notice first.
+ */
+const advanceClock = (state: GuidedLiveState, atMs: number): GuidedLiveState => {
+  const elapsedMs = state.startedAtMs === null ? state.elapsedMs : atMs - state.startedAtMs;
+  if (elapsedMs >= state.deadlineMs) {
+    // Stop, say so, and never retry on our own: a burst run costs money and may
+    // still be finishing.
+    return terminal({ ...state, elapsedMs }, GUIDED_LIVE_STATUS.TIMED_OUT, { reason: GUIDED_LIVE_REASON.CLIENT_DEADLINE });
+  }
+  return { ...state, elapsedMs };
+};
 
 const startRun = (state: GuidedLiveState, atMs: number): GuidedLiveState => ({
   ...state,
@@ -145,7 +221,7 @@ const completion = (state: GuidedLiveState, action: Extract<GuidedLiveAction, { 
     // success would hand the learner an empty box and no reason. The caller may
     // name a more precise reason (e.g. the run returned no item for this image
     // at all, which is not the same as an empty draft).
-    return terminal(state, GUIDED_LIVE_STATUS.UNAVAILABLE, { reason: action.reason ?? 'empty_description' });
+    return terminal(state, GUIDED_LIVE_STATUS.UNAVAILABLE, { reason: action.reason ?? GUIDED_LIVE_REASON.EMPTY_DESCRIPTION });
   }
 
   // gpu_state is an advisory lifecycle snapshot that may be stale by the time
@@ -160,14 +236,14 @@ const completion = (state: GuidedLiveState, action: Extract<GuidedLiveAction, { 
     ...state,
     status: GUIDED_LIVE_STATUS.DEGRADED,
     text,
-    reason: action.tier === DESCRIBE_RESULT_TIER.PROVISIONAL_CPU ? 'cpu_fallback' : 'tier_unreported',
+    reason: action.tier === DESCRIBE_RESULT_TIER.PROVISIONAL_CPU ? GUIDED_LIVE_REASON.CPU_FALLBACK : GUIDED_LIVE_REASON.TIER_UNREPORTED,
   };
 };
 
 export const guidedLiveReducer = (state: GuidedLiveState, action: GuidedLiveAction): GuidedLiveState => {
   switch (action.kind) {
-    case 'faces_decided': {
-      if (!action.decided) {
+    case 'gate_changed': {
+      if (action.blockedReason !== null) {
         // Re-opening a face invalidates the sentence the last run produced: it
         // was written against an identity answer that no longer holds. Keeping
         // it on screen under blocked copy would show two contradictory truths
@@ -176,9 +252,18 @@ export const guidedLiveReducer = (state: GuidedLiveState, action: GuidedLiveActi
         // A run still in flight is invalidated for the same reason, so the gate
         // closing stops the wait rather than letting a poll land a sentence
         // into a blocked panel. The hook cancels the server side.
-        return { ...state, status: GUIDED_LIVE_STATUS.BLOCKED, runId: null, text: null, reason: null };
+        return {
+          ...state,
+          status: GUIDED_LIVE_STATUS.BLOCKED,
+          blockedReason: action.blockedReason,
+          runId: null,
+          text: null,
+          reason: null,
+        };
       }
-      return state.status === GUIDED_LIVE_STATUS.BLOCKED ? { ...state, status: GUIDED_LIVE_STATUS.IDLE } : state;
+      return state.status === GUIDED_LIVE_STATUS.BLOCKED
+        ? { ...state, status: GUIDED_LIVE_STATUS.IDLE, blockedReason: null }
+        : state;
     }
 
     case 'requested': {
@@ -213,36 +298,35 @@ export const guidedLiveReducer = (state: GuidedLiveState, action: GuidedLiveActi
       if (!isGuidedLiveWaiting(state.status) || state.startedAtMs === null) {
         return state;
       }
-      const elapsedMs = action.atMs - state.startedAtMs;
-      if (elapsedMs >= state.deadlineMs) {
-        // The bound is the whole point: stop, say so, and never retry on our
-        // own, because a burst run costs money and may still be finishing.
-        return terminal({ ...state, elapsedMs }, GUIDED_LIVE_STATUS.TIMED_OUT, { reason: 'client_deadline' });
-      }
-      return { ...state, elapsedMs };
+      return advanceClock(state, action.atMs);
     }
 
     case 'polled': {
       if (!isGuidedLiveWaiting(state.status)) {
         return state;
       }
-      const elapsedMs = state.startedAtMs === null ? state.elapsedMs : action.atMs - state.startedAtMs;
-      const next = { ...state, elapsedMs };
+      const next = advanceClock(state, action.atMs);
+      if (next.status === GUIDED_LIVE_STATUS.TIMED_OUT) {
+        // The response is later than the wait it belongs to. Reading it would
+        // hand the learner a result at 5:01 under a promise that the wait ends
+        // at 5:00 -- a bound a run can outlive between two ticks is no bound.
+        return next;
+      }
 
-      if (action.phase === 'complete') {
+      if (action.phase === DESCRIBE_RUN_PHASE.COMPLETE) {
         return completion(next, action);
       }
-      if (action.phase === 'failed') {
-        return terminal(next, GUIDED_LIVE_STATUS.UNAVAILABLE, { reason: action.reason ?? 'run_failed' });
+      if (action.phase === DESCRIBE_RUN_PHASE.FAILED) {
+        return terminal(next, GUIDED_LIVE_STATUS.UNAVAILABLE, { reason: action.reason ?? GUIDED_LIVE_REASON.RUN_FAILED });
       }
-      if (action.phase === 'cancelled') {
-        return terminal(next, GUIDED_LIVE_STATUS.CANCELLED, { reason: action.reason ?? 'run_cancelled' });
+      if (action.phase === DESCRIBE_RUN_PHASE.CANCELLED) {
+        return terminal(next, GUIDED_LIVE_STATUS.CANCELLED, { reason: action.reason ?? GUIDED_LIVE_REASON.RUN_CANCELLED });
       }
 
       const polledStatus =
-        action.phase === 'warming'
+        action.phase === DESCRIBE_RUN_PHASE.WARMING
           ? GUIDED_LIVE_STATUS.WARMING
-          : action.phase === 'describing'
+          : action.phase === DESCRIBE_RUN_PHASE.DESCRIBING
             ? GUIDED_LIVE_STATUS.DESCRIBING
             : GUIDED_LIVE_STATUS.QUEUED;
 
@@ -253,7 +337,7 @@ export const guidedLiveReducer = (state: GuidedLiveState, action: GuidedLiveActi
       if (!isGuidedLiveWaiting(state.status)) {
         return state;
       }
-      return terminal(state, GUIDED_LIVE_STATUS.CANCELLED, { reason: 'stopped_by_operator' });
+      return terminal(state, GUIDED_LIVE_STATUS.CANCELLED, { reason: GUIDED_LIVE_REASON.STOPPED_BY_OPERATOR });
     }
 
     case 'failed': {
@@ -264,6 +348,8 @@ export const guidedLiveReducer = (state: GuidedLiveState, action: GuidedLiveActi
     }
 
     default:
-      return state;
+      // A new action must be handled here, not absorbed. sr-005: an assertion
+      // helper for the branch that should be impossible.
+      return assertNever(action);
   }
 };

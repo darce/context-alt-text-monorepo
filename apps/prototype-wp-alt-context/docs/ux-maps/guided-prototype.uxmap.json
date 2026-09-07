@@ -213,6 +213,72 @@
       ]
     },
     {
+      "id": "live",
+      "kind": "screen",
+      "title": "See it run live",
+      "purpose": "Optional. Send the same photo to the real service and watch it work. The result sits beside the saved draft; it never replaces it, and it never changes what Apply would write.",
+      "route": "#/guided-prototype",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": [],
+      "primary_action_id": "describe-live",
+      "zones": [
+        {
+          "id": "live-0",
+          "label": "See it run live: A live run never changes the draft above, and it never changes what Apply would write.",
+          "role": "content",
+          "states": [
+            "default"
+          ]
+        },
+        {
+          "id": "live-1",
+          "label": "Names come from your roster on the server, not from this page. Confirmed here: {names}. Otherwise: You have not confirmed anyone here yet.",
+          "role": "content",
+          "states": [
+            "default"
+          ]
+        },
+        {
+          "id": "live-2",
+          "label": "Live run status, colour always paired with a glyph (• waiting, … working, ✓ done, ! degraded or timed out, × stopped): Ready when you are. / Queued. Waiting for the service to pick it up. / Starting the GPU. A cold start can take several minutes. / Describing the photo now. / Done. The GPU wrote this. / Done, but the GPU was not available, so the CPU wrote this. It is rougher than a GPU description. / Stopped waiting. The run may still finish on its own; nothing was applied here. / You stopped the wait. Nothing was applied. / The live run could not finish. Nothing was applied. Elapsed while waiting: 1:05 of up to 8:30.",
+          "role": "status",
+          "states": [
+            "default",
+            "loading",
+            "degraded",
+            "error"
+          ]
+        },
+        {
+          "id": "live-3",
+          "label": "Describe it live and Stop waiting. Describe it live is off until every face match is decided: Decide each face match first. Then you can describe this photo live. It is off entirely when the demo has no live photo: No live photo is configured for this demo, so the live run is off.",
+          "role": "form",
+          "states": [
+            "default",
+            "loading"
+          ]
+        },
+        {
+          "id": "live-4",
+          "label": "The live sentence, quoted beside the saved draft and never written into it.",
+          "role": "ai_review",
+          "states": [
+            "default",
+            "degraded"
+          ],
+          "evidence_linked": true
+        }
+      ],
+      "states": [
+        "default",
+        "loading",
+        "degraded",
+        "error"
+      ],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedLiveDescriptionPanel.tsx"
+    },
+    {
       "id": "apply",
       "kind": "screen",
       "title": "Apply it yourself",
@@ -495,6 +561,24 @@
       "irreversible": false
     },
     {
+      "id": "describe-live",
+      "screen_id": "live",
+      "verb": "Describe it live",
+      "target": "live",
+      "hierarchy": "primary",
+      "costly": true,
+      "irreversible": false
+    },
+    {
+      "id": "stop-live",
+      "screen_id": "live",
+      "verb": "Stop waiting",
+      "target": "live",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false
+    },
+    {
       "id": "apply-now",
       "screen_id": "apply",
       "verb": "Apply to practice copy",
@@ -661,6 +745,33 @@
       ]
     },
     {
+      "id": "live-run",
+      "job": "review",
+      "label": "Run the same photo live → the live sentence sits beside the saved draft",
+      "steps": [
+        {
+          "screen_id": "face",
+          "branch_label": "Decide each face match first"
+        },
+        {
+          "screen_id": "live",
+          "branch_label": "describe-live: Describe it live"
+        },
+        {
+          "screen_id": "live",
+          "branch_label": "Starting the GPU. A cold start can take several minutes."
+        },
+        {
+          "screen_id": "live",
+          "branch_label": "Done. The GPU wrote this. Or: stop-live: Stop waiting"
+        },
+        {
+          "screen_id": "draft",
+          "branch_label": "The saved draft is unchanged; Apply still writes the saved draft"
+        }
+      ]
+    },
+    {
       "id": "pending",
       "job": "review",
       "label": "Save or discard your edit before Apply",
@@ -757,12 +868,12 @@
     "Saved-run provenance note: recognition engine InsightFace buffalo_l on the AltContext recognition service (dev build); saved run 2026-09-06; Saved from a real run on 2026-09-06, not a live run; threshold 0.6; Tribeca press photo similarities: Justin Trudeau on the left 0.686 and Katy Perry on the right 0.742.",
     "Cluster ids from the dev tenant: Katy Perry 68adc97c-f81f-42c3-9e5c-061f16770361 (11 photos; 5 saved photos shown in the bundled gallery) and Justin Trudeau fd0d2b5d-108a-42b7-af25-f028e40d5778 (8 photos; 2 saved photos shown).",
     "Also checked for provenance: a Coachella press photo of the same two people matched both, even with a hand over her mouth. It is not bundled because of licensing.",
-    "Live recognition: the demo ships the saved result and does not run recognition live. If live recognition ships, show a fresh timestamp and drop the saved-run disclosure; keep the engine name out of screen copy."
+    "Live recognition versus live description: the demo now describes the photo live on demand, but the face matches and the names still come from the saved run and the server-side roster. If live recognition also ships, show a fresh timestamp and drop the saved-run disclosure; keep the engine name out of screen copy."
   ],
   "not_doing": [
     "Public homepage or marketing deployment",
     "Guest-session authentication or credentials settings",
-    "Live generation",
+    "Applying a live result automatically, or letting a live run rewrite the saved draft",
     "Multi-scenario library and production privacy settings",
     "Full WordPress or screen-reader conformance claim from component-only browser tests"
   ]

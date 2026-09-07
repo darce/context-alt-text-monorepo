@@ -155,6 +155,46 @@ The face decisions above therefore gate the live run for a different reason than
 
 A live run never writes alt text. It produces a draft on a run the learner can read and discard. Applying anything to the practice copy stays a separate, explicit press, exactly as it is today.
 
+## What shipped, and what did not
+
+The panel that shipped is strictly additive: the live sentence appears in a quote below the
+saved draft, and there is no **Use this instead** button. The `ready` and `degraded` frames
+above show a replacement offer that the implementation deliberately does not have. Replacing
+the draft from a live run would put a model sentence into the one artifact the lesson asks the
+learner to judge, so the shipped panel keeps the proposal beside the draft rather than in it
+(**HAI-12**: output is a proposal). The frames stay here as the designed option; a future slice
+that adds replacement has its copy already written and reviewed.
+
+The state machine, the bounds table, the naming disclosure, and the accessibility rules above
+are all implemented as written.
+
+## Operator setup
+
+The live run is off unless an operator names one attachment for it. It is a single WordPress
+option holding a positive attachment id; anything else — unset, zero, a float, a string that is
+not a number — reads as "no live photo", and the panel says so instead of submitting a run for
+media 0.
+
+```sh
+wp option update acx_guided_live_media_id 4211
+```
+
+Use the attachment id of the bundled guided sample photo in the Media Library of the demo site.
+Turn the live run off again without touching the page:
+
+```sh
+wp option delete acx_guided_live_media_id
+```
+
+Names come from the server-side roster, not from the practice answers, so an operator who wants
+the live sentence to name the two people has to confirm those faces in the roster for the demo
+tenant as well. Without that, the live description is accurate but unnamed — which is a
+defensible demo state, and the panel already says which of the two is happening.
+
+The GPU itself is a separate switch. A live run on a stopped burst instance pays the cold-start
+minutes the WARMING frame describes; a run with the GPU unavailable comes back as `provisional_cpu`
+and lands on the DEGRADED frame. Neither state needs an operator to intervene mid-demo.
+
 ## Request and poll shape
 
 | Step | Call | Reads |

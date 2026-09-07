@@ -49,6 +49,7 @@ const renderPanel = (currentScenario = scenario, hasUnsavedEdit = false) => {
 const renderReview = (currentScenario = scenario) =>
   render(
     <GuidedDescriptionReview
+      liveMediaId={null}
       scenario={currentScenario}
       resetVersion={0}
       onSaveEdit={vi.fn(() => undefined)}

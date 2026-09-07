@@ -17,6 +17,7 @@ from scene.application.gpu_intent import (
     IntentAction,
     read_gpu_intent,
     resolve_gpu_intent_path,
+    resolve_gpu_intent_durable_path,
     write_gpu_intent,
 )
 
@@ -83,6 +84,26 @@ def test_sequence_is_monotonic_and_lifecycle_reader_accepts_publication(tmp_path
     assert effective_intent.action.value == "stop"
     assert first.sequence == 1
     assert second.sequence == first.sequence + 1
+
+
+def test_runtime_mount_publication_has_no_implicit_var_lib_durable_sibling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The API must not default its durable copy into the controller state dir.
+
+    In production the API container runs as ``acx`` (10001) with exactly one
+    writable host bind mount, ``/run/acx-write/<env>``. ``/var/lib/acx-gpu`` is
+    the lifecycle controller's ``StateDirectory`` at mode 0700 and is not
+    mounted into the container at all, so a defaulted durable write there
+    raises ``PermissionError`` before the runtime publication and turns every
+    operator intent into a 503. Durability is the controller's own copy-before-
+    evaluate step; the service opts in explicitly or not at all.
+    """
+    monkeypatch.delenv("ACX_GPU_INTENT_DURABLE_PATH", raising=False)
+
+    resolved = resolve_gpu_intent_durable_path(Path("/run/acx-write/prod/gpu-intent.json"))
+
+    assert resolved is None
 
 
 def test_durable_mirror_survives_runtime_publication_removal(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

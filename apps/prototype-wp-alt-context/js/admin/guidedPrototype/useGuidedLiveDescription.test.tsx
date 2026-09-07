@@ -605,4 +605,87 @@ describe('useGuidedLiveDescription', () => {
       expect(client.submit).toHaveBeenCalledTimes(2);
     });
   });
+
+
+  describe('a run the panel walks away from is still cancelled', () => {
+    it('cancels the run when the service reports a phase this client cannot read', () => {
+      // Giving up on an unreadable phase stops only the browser's polling. The
+      // run keeps its place on the single-GPU pool unless someone says stop.
+      const client = stubClient({
+        poll: vi.fn<GuidedLiveDescriptionClient['poll']>(() =>
+          Promise.resolve(runResponse({ status: 'running', phase: 'teleporting' as never })),
+        ),
+      });
+      return (async () => {
+        const { result } = mount(client);
+        await press(() => result.current.request());
+        await settle(2000);
+
+        expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.UNAVAILABLE);
+        expect(client.cancel).toHaveBeenCalledWith('run-1');
+      })();
+    });
+
+    it('cancels the run when polling fails in a way waiting cannot heal', async () => {
+      const client = stubClient({
+        poll: vi.fn<GuidedLiveDescriptionClient['poll']>(() => Promise.reject(new Error('500 from the proxy'))),
+      });
+      const { result } = mount(client);
+      await press(() => result.current.request());
+      await settle(2000);
+
+      expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.UNAVAILABLE);
+      expect(client.cancel).toHaveBeenCalledWith('run-1');
+    });
+  });
+
+  describe('one learner gesture never pays for two live runs', () => {
+    it('waits for the cancel to be accepted before submitting the retry', async () => {
+      // The service only REQUESTS cancellation; a worker observes it later. Firing
+      // cancel and submit in the same tick means both runs can be live at once on
+      // a pool that has room for one.
+      let releaseCancel: () => void = () => undefined;
+      const client = stubClient({
+        cancel: vi.fn<GuidedLiveDescriptionClient['cancel']>(
+          () => new Promise((resolve) => { releaseCancel = () => resolve(runResponse({ status: 'cancelled' })); }),
+        ),
+      });
+      const { result } = mount(client);
+      await press(() => result.current.request());
+      await settle(0);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000 + 1000);
+      });
+      expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.TIMED_OUT);
+      expect(client.submit).toHaveBeenCalledTimes(1);
+
+      await press(() => result.current.request());
+
+      expect(client.cancel).toHaveBeenCalledWith('run-1');
+      expect(client.submit).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        releaseCancel();
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      expect(client.submit).toHaveBeenCalledTimes(2);
+    });
+
+    it('still retries when the cancel is refused, rather than stranding the learner', async () => {
+      const client = stubClient({
+        cancel: vi.fn<GuidedLiveDescriptionClient['cancel']>(() => Promise.reject(new Error('403 expired nonce'))),
+      });
+      const { result } = mount(client);
+      await press(() => result.current.request());
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000 + 1000);
+      });
+
+      await press(() => result.current.request());
+
+      expect(client.submit).toHaveBeenCalledTimes(2);
+    });
+  });
+
 });

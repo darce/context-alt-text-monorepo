@@ -400,22 +400,107 @@ describe('which runs the server may still be paying for', () => {
   });
 });
 
+describe('the deadline only ever moves in the learner\'s favour', () => {
+  it('lets the server set the wait it will actually honour, including downward', () => {
+    // The server is the authority on its own work, so acceptance replaces the
+    // client's cold placeholder outright. The learner is protected from seeing
+    // that placeholder revised by the panel, which advertises no ceiling until
+    // a run id exists -- not by freezing the client's guess in the reducer.
+    const queued = guidedLiveReducer(decided(initialGuidedLiveState()), { kind: 'requested', atMs: T0 });
+    expect(queued.runId).toBeNull();
+    expect(queued.deadlineMs).toBe(GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000);
+
+    const accepted = guidedLiveReducer(queued, { kind: 'accepted', runId: 'run-warm', deadlineSeconds: 180, atMs: T0 + 3_000 });
+
+    expect(accepted.runId).toBe('run-warm');
+    expect(accepted.deadlineMs).toBe(180_000);
+  });
+
+  it('keeps the run id when acceptance itself lands past the deadline', () => {
+    // Timing out is right here, but dropping the id is not: a run the server
+    // just confirmed is exactly the one that still needs cancelling.
+    const queued = guidedLiveReducer(decided(initialGuidedLiveState()), { kind: 'requested', atMs: T0 });
+    const accepted = guidedLiveReducer(queued, {
+      kind: 'accepted',
+      runId: 'run-late',
+      deadlineSeconds: 180,
+      atMs: T0 + GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000 + 1,
+    });
+
+    expect(accepted.status).toBe(GUIDED_LIVE_STATUS.TIMED_OUT);
+    expect(accepted.runId).toBe('run-late');
+    expect(guidedLiveRunMayBeLive(accepted)).toBe(true);
+  });
+});
+
+describe('a description already in the browser is not thrown away', () => {
+  it('shows a completed sentence that arrives with the poll that times out', () => {
+    // The deadline exists to bound an unbounded wait, not to discard an answer
+    // the client is holding. Telling the learner "the run may still finish on
+    // its own" while the sentence sits in the same payload is a lie.
+    const state = guidedLiveReducer(started(), {
+      kind: 'polled',
+      phase: 'complete',
+      gpu: 'ready',
+      tier: 'final_gpu',
+      text: 'A real GPU sentence.',
+      atMs: T0 + 300_001,
+    });
+
+    expect(state.status).toBe(GUIDED_LIVE_STATUS.READY);
+    expect(state.text).toBe('A real GPU sentence.');
+  });
+
+  it('still times out when the late poll carries no answer', () => {
+    const state = guidedLiveReducer(started(), {
+      kind: 'polled',
+      phase: 'describing',
+      gpu: 'ready',
+      atMs: T0 + 300_001,
+    });
+
+    expect(state.status).toBe(GUIDED_LIVE_STATUS.TIMED_OUT);
+    expect(state.reason).toBe(GUIDED_LIVE_REASON.CLIENT_DEADLINE);
+  });
+});
+
+describe('blocked reason never outlives the block', () => {
+  it('clears the reason when the gate re-opens from a non-blocked state', () => {
+    // status and blockedReason are independent fields, so nothing structural
+    // stops a stale reason riding out of BLOCKED. The panel reads the reason
+    // with a fallback that would then name the wrong obstacle.
+    const stale = { ...started(), blockedReason: GUIDED_LIVE_BLOCKED_REASON.NO_MEDIA };
+    const reopened = guidedLiveReducer(stale, { kind: 'gate_changed', blockedReason: null });
+
+    expect(reopened.blockedReason).toBeNull();
+  });
+});
+
 describe('the deadline bounds every action, not just the clock', () => {
-  it('refuses a completion that arrives after the deadline the learner was promised', () => {
+  it('shows a completion that arrives just after the deadline rather than discarding it', () => {
     const state = guidedLiveReducer(started(), {
       kind: 'polled',
       phase: 'complete',
       gpu: 'ready',
       atMs: T0 + 300_001,
       tier: 'final_gpu',
-      text: 'A late sentence nobody is still waiting for.',
+      text: 'A sentence the GPU already paid for.',
     });
 
-    // A bound the run can outlive by resolving between two ticks is not a
-    // bound. The learner was told the wait stops at 5:00; it stops at 5:00.
-    expect(state.status).toBe(GUIDED_LIVE_STATUS.TIMED_OUT);
-    expect(state.reason).toBe('client_deadline');
-    expect(state.text).toBeNull();
+    // This reverses the earlier rule that a late completion is refused. That
+    // rule bounded the wrong thing: the deadline exists so a learner is never
+    // left waiting indefinitely, and once the sentence is in the browser there
+    // is no wait left to bound. Refusing it here threw away work the burst had
+    // already been billed for and told the learner "the run may still finish
+    // on its own" while holding its result -- a false statement.
+    //
+    // The bound still binds everywhere it means something: `tick` and every
+    // non-complete poll below still time out at 5:00. Note too that atMs is
+    // sampled after the items round trip that carried this payload, so the
+    // millisecond that pushes a completion over is often fetch latency rather
+    // than the run.
+    expect(state.status).toBe(GUIDED_LIVE_STATUS.READY);
+    expect(state.text).toBe('A sentence the GPU already paid for.');
   });
 
   it('honours a completion that lands one millisecond inside the deadline', () => {

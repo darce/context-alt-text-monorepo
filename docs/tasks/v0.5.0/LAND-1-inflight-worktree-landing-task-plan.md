@@ -58,6 +58,8 @@ Sub-lane worktrees are integrated into their parent branch but never torn down; 
 - **Component**: connected component of the conflict graph whose edges are "changed the same file relative to `main`".
 - **Landed**: `git merge-base --is-ancestor <branch> main` exits 0.
 - **Parked**: branch tagged `archive/<branch>-<yyyymmdd>`, task row `blocked` with rationale, open findings `deferred`.
+- **Parent authority**: the lane registry is authoritative for *ownership*, not for parentage — lane rows carry `branch`, `task_ref` and `status`, but no parent edge, so the parent must be derived. It is derived from the branch-naming convention (`feature/<task>-<sub>` → the longest `feature/<task…>` prefix that exists in the live `refs/heads` inventory; `review/<task>` → `feature/<task>`) and that derivation is treated as an inference, never an authority. Two consequences are load-bearing: a `feature/*` branch whose inferred parent does not exist as a ref is `UNKNOWN`/`NEEDS_REVIEW` and is never silently re-compared against `main`; and the comparison actually used is captured as `(branch, branch_oid, parent, parent_oid)` in one snapshot before any mutation and re-verified inside the delete transaction, so a tip that moved between snapshot and delete aborts rather than deleting against stale evidence. Adding a durable parent edge to the lane row would remove the inference entirely and is the right upstream fix; until it exists, the fail-closed derivation above is the contract.
+- **Lane ownership**: a worktree named by a lane row whose `status` is not terminal (`merged`, `closed`) is owned and is never a reap candidate, whatever its containment or cleanliness says. A re-dispatched lane is landed and clean by construction, so those two signals cannot distinguish it from a finished one. If lane ownership cannot be read at all, every linked worktree is `UNKNOWN`; the `--allow-missing-lane-state` opt-out marks every emitted record `lane_verified: false` so a receipt can never report "examined, nothing eligible" when it means "never examined".
 
 ## Current State Analysis
 
@@ -220,6 +222,19 @@ Recovery for partial states is explicit: (a) a lock conflict or failed DB condit
 ## Verification Strategy
 
 - Tool: `python3 -m pytest scripts/test_worktree_reap.py -q` — fixtures build a temp repo with (a) ancestor sub-lane, (b) sub-lane with one unique commit, (c) dirty ancestor, (d) review branch == main, (e) sub-lane rebased onto parent (SHAs differ, `git cherry` all `-`); assert `classify` returns REDUNDANT for (a)/(d)/(e), LIVE for (b), DIRTY for (c), and that `apply` removes only REDUNDANT. Mutation check: drop the `git cherry` fallback → (e) fails.
+
+The five fixtures above cover the happy classification set only. Idempotence and safe teardown are separately claimed and separately tested, each with a deterministic fixture and an injected failure rather than an observed one:
+
+- **(f) missing parent** — sub-lane whose derived parent ref was deleted: `UNKNOWN`, never compared against `main`, never reaped.
+- **(g) branch-only ref** — a `refs/heads` entry with no worktree record: absent from the class table entirely, and untouched by `apply`.
+- **(h) concurrent run** — a second reaper holding the repository lock: the second invocation refuses with `ReapLockError` and mutates nothing; assert the first run's removals are unaffected.
+- **(i) branch tip advances between classification and delete** — monkeypatch the ref to move inside the delete transaction: the compare-and-delete rejects, the branch survives, and the run reports the abort rather than exiting 0.
+- **(j) half-failed removal** — inject an error from `git worktree remove` and, separately, from `git branch -d` after a successful removal: assert no branch is deleted when its worktree removal failed, and that re-running the reaper converges rather than compounding the partial state.
+- **(k) active lane** — a worktree named by a non-terminal lane row while landed and clean: `LIVE`, survives `--apply`. Mutation check: ignore lane ownership → (k) fails.
+- **(l) unreadable lane registry** — the ownership probe raises: every linked worktree is `UNKNOWN`, `--apply` removes nothing, and `--allow-missing-lane-state` emits `lane_verified: false` on every record.
+- **(m) harness scratch** — a `.task-state/*.stamp` name no allowlist enumerates does not block a reap, while `.task-state/remote-exec-*/turn.patch` still does.
+
+`--apply` is not enabled by the success criterion until (f)–(m) are green; each must refuse or report its case rather than proceeding.
 - Inventory: attach the `INVENTORY_SHA`, `commit.txt`, `worktrees.porcelain`, `branches.tsv`, generated linked/branch-only manifest, and DB snapshot. Re-run the two named Git commands at each mutating-slice boundary and assert that every rendered count and every branch disposition is derivable from those raw files.
 - Landing: per component, `git merge-base --is-ancestor <branch> main` == 0 and a fresh `git worktree list --porcelain` contains no removed path; `handoff_close_check(enforce=True)` JSON is archived with the exact candidate SHA after the remote gate and findings update.
 - Hygiene: `make task-reap` → no ambiguous rows; the DB readback includes exact before/after counts and expected revisions. The worktree reaper's explicit redundancy signal is exit 3; `check-all` is exit 0 for that advisory signal unless `REAP_STRICT=1`.
@@ -354,6 +369,7 @@ All root merges/intakes use one queue protected by the repository lock, for exam
 ### Checklist for Slice 1: Redundancy reaper tool (TDD) and first reap
 
 - [ ] `scripts/test_worktree_reap.py` fixtures (a)–(e) written first and red
+- [ ] `scripts/test_worktree_reap.py` fixtures (f)–(m) — missing parent, branch-only, lock contention, tip advance, half-failed removal, active lane, unreadable registry, harness scratch
 - [ ] `scripts/worktree_reap.py` classify/apply green; `mk/lane-maintenance.mk` targets; `test-scripts` entry
 - [ ] Dry run matches the named inventory table; hygiene closes/reclassifies rows before Git apply; apply records lock/tip revalidation and removes only the redundant linked-worktree class
 - [ ] Missing-parent and branch-only records are visible and not applied; exit 3/advisory `check-all`/`REAP_STRICT=1` semantics verified

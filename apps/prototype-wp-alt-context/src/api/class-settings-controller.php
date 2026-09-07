@@ -49,6 +49,7 @@ use function wp_is_uuid;
 use function wp_remote_retrieve_body;
 use function wp_remote_retrieve_headers;
 use function wp_remote_retrieve_response_code;
+use function wp_json_encode;
 
 /**
  * REST controller for recognition API configuration.
@@ -118,6 +119,7 @@ class SettingsController {
 		$snapshot          = $this->endpoint_resolver->resolve_settings_snapshot();
 		$key_resolution    = $this->resolve_key_source();
 		$tenant_resolution = TenantIdentity::resolve();
+		$naming_resolution = $this->resolve_naming_agreement();
 
 		return new WP_REST_Response(
 			array(
@@ -139,6 +141,8 @@ class SettingsController {
 				'tenant_paired'             => TenantIdentity::is_paired(),
 				'alt_style'                 => AltStyle::current(),
 				'recognition_enabled'       => RecognitionPolicy::enabled(),
+				'allow_person_names'        => $naming_resolution['value'],
+				'allow_person_names_error'  => $naming_resolution['error'],
 				'description_budget'        => $this->get_description_budget_payload(),
 			),
 			200
@@ -221,6 +225,31 @@ class SettingsController {
 			} else {
 				$failed[] = 'recognition_enabled';
 			}
+		}
+
+		if ( array_key_exists( 'allow_person_names', $body ) ) {
+			if ( ! is_bool( $body['allow_person_names'] ) ) {
+				return new WP_Error(
+					'invalid_allow_person_names',
+					'allow_person_names must be a boolean.',
+					array( 'status' => 400 )
+				);
+			}
+
+			$allow_person_names = $body['allow_person_names'];
+			$sync_response      = $this->request_naming_agreement( 'PUT', $allow_person_names );
+			if ( is_wp_error( $sync_response ) || $sync_response['enabled'] !== $allow_person_names ) {
+				$message = is_wp_error( $sync_response )
+					? $sync_response->get_error_message()
+					: 'Recognition service did not confirm the requested naming agreement.';
+				return new WP_Error(
+					'allow_person_names_sync_failed',
+					$message,
+					array( 'status' => 502 )
+				);
+			}
+
+			$saved[] = 'allow_person_names';
 		}
 
 		if ( isset( $body['description_budget'] ) && is_array( $body['description_budget'] ) ) {
@@ -328,6 +357,93 @@ class SettingsController {
 			'usage'         => $this->description_budget_service->usage_summary(),
 			'recent_errors' => $this->description_budget_service->recent_errors( 5 ),
 		);
+	}
+
+	/**
+	 * Read the tenant naming authority from the recognition service.
+	 *
+	 * The PHP plugin deliberately has no local fallback: a service failure is
+	 * surfaced to the settings UI as null so it cannot imply that names are
+	 * enabled or disabled when the authoritative value is unknown.
+	 *
+	 * @return array{value: ?bool, error: ?string}
+	 */
+	private function resolve_naming_agreement(): array {
+		$response = $this->request_naming_agreement( 'GET' );
+		if ( is_wp_error( $response ) ) {
+			return array(
+				'value' => null,
+				'error' => $response->get_error_message(),
+			);
+		}
+
+		return array(
+			'value' => $response['enabled'],
+			'error' => null,
+		);
+	}
+
+	/**
+	 * Proxy one naming-authority request to the tenant-scoped recognition route.
+	 *
+	 * @return array{enabled: bool}|WP_Error
+	 */
+	private function request_naming_agreement( string $method, ?bool $enabled = null ): array|WP_Error {
+		$snapshot = $this->endpoint_resolver->resolve_settings_snapshot();
+		$base_url = rtrim( (string) $snapshot['effective_target_url'], '/' );
+		if ( '' === $base_url ) {
+			return new WP_Error(
+				'allow_person_names_service_unavailable',
+				'Recognition service URL is missing.',
+				array( 'status' => 502 )
+			);
+		}
+
+		$key_resolution    = $this->resolve_key_source();
+		$tenant_resolution = TenantIdentity::resolve();
+		$args              = array(
+			'method'  => $method,
+			'headers' => array(
+				'Content-Type' => 'application/json',
+				'X-Tenant-ID'  => $tenant_resolution['value'],
+				'X-API-Key'    => $key_resolution['value'],
+			),
+			'timeout' => 10,
+		);
+		if ( 'PUT' === $method ) {
+			$args['body'] = wp_json_encode( array( 'enabled' => $enabled ) );
+		}
+
+		$response = RecognitionTransport::request(
+			$base_url . '/recognition/tenant/naming-agreement',
+			$args
+		);
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		$response_status = (int) wp_remote_retrieve_response_code( $response );
+		if ( $response_status < 200 || $response_status >= 300 ) {
+			return new WP_Error(
+				'allow_person_names_service_error',
+				sprintf( 'Recognition service returned HTTP %d.', $response_status ),
+				array(
+					'status'          => 502,
+					'upstream_status' => $response_status,
+				)
+			);
+		}
+
+		$decoded = json_decode( wp_remote_retrieve_body( $response ), true );
+		if ( ! is_array( $decoded ) || ! array_key_exists( 'enabled', $decoded ) || ! is_bool( $decoded['enabled'] ) ) {
+			return new WP_Error(
+				'allow_person_names_invalid_response',
+				'Recognition service returned an invalid naming agreement response.',
+				array( 'status' => 502 )
+			);
+		}
+
+		return array( 'enabled' => $decoded['enabled'] );
 	}
 
 	public function test_connection( WP_REST_Request $request ): WP_REST_Response {

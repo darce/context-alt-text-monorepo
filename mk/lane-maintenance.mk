@@ -9,10 +9,10 @@ REAP_PROTECT ?=
 REAP_STRICT ?= 0
 
 worktree-reap: ## Dry-run: list linked worktrees whose branch is already landed in its parent (REAP_ARGS=--apply to remove)
-	@REAP_STRICT="$(REAP_STRICT)" $(PYTHON) scripts/worktree_reap.py --repo "$(CURDIR)" $(REAP_ARGS) $(foreach p,$(REAP_PROTECT),--protect "$(p)")
+	@REAP_STRICT="$(REAP_STRICT)" $(PYTHON) scripts/worktree_reap.py --repo "$(CURDIR)" $(REAP_ARGS) $(if $(strip $(REAP_PROTECT)),--protect "$(REAP_PROTECT)")
 
 worktree-reap-check: ## Check for redundant worktrees (REAP_STRICT=1 makes it fail; wired into check-all)
-	@REAP_STRICT="$(REAP_STRICT)" $(PYTHON) scripts/worktree_reap.py --repo "$(CURDIR)" --check $(foreach p,$(REAP_PROTECT),--protect "$(p)")
+	@REAP_STRICT="$(REAP_STRICT)" $(PYTHON) scripts/worktree_reap.py --repo "$(CURDIR)" --check $(if $(strip $(REAP_PROTECT)),--protect "$(REAP_PROTECT)")
 
 check-all: worktree-reap-check
 

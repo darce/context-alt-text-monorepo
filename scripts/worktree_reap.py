@@ -13,10 +13,10 @@ import json
 import os
 import subprocess
 import sys
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Collection, Literal
-
+from typing import Literal
 
 WorktreeStatus = Literal["REDUNDANT", "LIVE", "DIRTY", "ROOT", "UNKNOWN"]
 
@@ -41,12 +41,14 @@ class WorktreeRecord:
     proof_parent: str | None = field(default=None, repr=False, compare=False)
     proof_oid: str | None = field(default=None, repr=False, compare=False)
     protected: bool = field(default=False, repr=False, compare=False)
+    allow_ignored: bool = field(default=False, repr=False, compare=False)
 
 
 def _git(
     repo: Path,
     *args: str,
     check: bool = False,
+    input_text: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run Git rooted at ``repo`` and optionally raise on command failure."""
     try:
@@ -55,6 +57,7 @@ def _git(
             capture_output=True,
             text=True,
             check=False,
+            input=input_text,
         )
     except OSError as exc:
         raise GitError(f"could not run git: {exc}") from exc
@@ -156,31 +159,43 @@ def parent_of(branch: str, branches: Collection[str] | None = None) -> str:
     return "main"
 
 
+def _merged_state(
+    repo: Path,
+    branch: str,
+    parent: str,
+) -> tuple[bool | None, str | None]:
+    """Return landed, not-landed, or unknown for one Git reachability check."""
+    try:
+        ancestor = _git(repo, "merge-base", "--is-ancestor", branch, parent)
+        if ancestor.returncode == 0:
+            return True, None
+        if ancestor.returncode != 1:
+            return None, _failure(ancestor, "git merge-base --is-ancestor")
+
+        cherry = _git(repo, "cherry", parent, branch)
+        if cherry.returncode != 0:
+            return None, _failure(cherry, "git cherry")
+        return all(line.startswith("-") for line in cherry.stdout.splitlines()), None
+    except (GitError, OSError, ValueError) as exc:
+        return None, str(exc)
+
+
 def is_merged(repo: Path | str, branch: str, parent: str) -> bool:
     """Return whether ``branch`` is landed in ``parent``.
 
     Reachability is the primary predicate.  When a branch was rebased, the
     commit IDs can differ while the patches remain equivalent, so the Git
-    cherry fallback is also required.  Every Git error is a safe ``False``.
+    cherry fallback is also required.  Git failures remain a safe ``False``
+    for this boolean helper; classification uses ``_merged_state`` so that it
+    can report those failures as ``UNKNOWN`` instead of ``LIVE``.
     """
     repo_path = Path(repo).resolve()
-    try:
-        ancestor = _git(repo_path, "merge-base", "--is-ancestor", branch, parent)
-        if ancestor.returncode == 0:
-            return True
-        if ancestor.returncode != 1:
-            return False
-
-        cherry = _git(repo_path, "cherry", parent, branch)
-        if cherry.returncode != 0:
-            return False
-        return all(line.startswith("-") for line in cherry.stdout.splitlines())
-    except (GitError, OSError, ValueError):
-        return False
+    merged, _reason = _merged_state(repo_path, branch, parent)
+    return merged is True
 
 
-def is_dirty(path: Path | str) -> bool:
-    """Return whether a worktree has tracked, untracked, or ignored changes."""
+def _worktree_status(path: Path | str) -> tuple[bool, bool]:
+    """Return ``(has_real_changes, has_ignored_changes)`` for a worktree."""
     path_obj = Path(path).resolve()
     result = _git(
         path_obj,
@@ -192,7 +207,20 @@ def is_dirty(path: Path | str) -> bool:
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()
         raise GitError(detail or f"cannot inspect worktree {path_obj}")
-    return bool(result.stdout)
+    lines = [line for line in result.stdout.splitlines() if line]
+    ignored = any(line.startswith("!!") for line in lines)
+    dirty = any(not line.startswith("!!") for line in lines)
+    return dirty, ignored
+
+
+def is_dirty(path: Path | str) -> bool:
+    """Return whether a worktree has tracked or untracked changes.
+
+    Ignored-only content is reported separately because it is removable only
+    when the caller explicitly opts into ``allow_ignored``.
+    """
+    dirty, _ignored = _worktree_status(path)
+    return dirty
 
 
 def _protected_values(protected: Collection[str | Path] | str | Path | None) -> tuple[str, ...]:
@@ -252,6 +280,7 @@ def _state_record(
     proof_parent: str | None = None,
     proof_oid: str | None = None,
     protected: bool = False,
+    allow_ignored: bool = False,
 ) -> WorktreeRecord:
     return WorktreeRecord(
         path=path,
@@ -264,16 +293,50 @@ def _state_record(
         proof_parent=proof_parent,
         proof_oid=proof_oid,
         protected=protected,
+        allow_ignored=allow_ignored,
     )
+
+
+def _landing_status(
+    repo: Path,
+    branch: str,
+    parent: str,
+) -> tuple[str | None, str | None]:
+    """Return the branch proving landing, or an inspection failure."""
+    candidates = [parent] if parent == "main" else [parent, "main"]
+    unknown: list[str] = []
+    for candidate in candidates:
+        merged, reason = _merged_state(repo, branch, candidate)
+        if merged is True:
+            return candidate, None
+        if merged is None:
+            unknown.append(f"{candidate}: {reason or 'Git inspection failed'}")
+    if unknown:
+        return None, "cannot determine landing state (" + "; ".join(unknown) + ")"
+    return None, None
 
 
 def _landing_branch(repo: Path, branch: str, parent: str) -> str | None:
     """Return the integration branch that proves ``branch`` redundant."""
-    candidates = [parent] if parent == "main" else [parent, "main"]
-    return next(
-        (candidate for candidate in candidates if is_merged(repo, branch, candidate)),
-        None,
-    )
+    landing, _reason = _landing_status(repo, branch, parent)
+    return landing
+
+
+def _landing_proof(
+    repo: Path,
+    branch: str,
+    parent: str,
+) -> tuple[str | None, str | None, str | None]:
+    """Capture the landing branch and its OID, or a safe inspection result."""
+    proof_parent, reason = _landing_status(repo, branch, parent)
+    if reason is not None:
+        return None, None, reason
+    if proof_parent is None:
+        return None, None, None
+    proof_oid = _ref_oid(repo, proof_parent)
+    if proof_oid is None:
+        return None, None, f"landing parent ref cannot be inspected: {proof_parent}"
+    return proof_parent, proof_oid, None
 
 
 def _classify_clean(
@@ -282,15 +345,17 @@ def _classify_clean(
     branch: str,
     parent: str,
     branch_oid: str,
+    allow_ignored: bool,
 ) -> WorktreeRecord:
     try:
-        proof_parent = _landing_branch(repo, branch, parent)
-        proof_oid = _ref_oid(repo, proof_parent or "")
+        proof_parent, proof_oid, landing_error = _landing_proof(repo, branch, parent)
         branch_unchanged = _ref_oid(repo, branch) == branch_oid
     except (GitError, OSError, ValueError) as exc:
         return _unknown_record(repo, path, branch, parent, f"cannot capture landing proof: {exc}")
     if not branch_unchanged:
         return _unknown_record(repo, path, branch, parent, "branch changed during classification")
+    if landing_error is not None:
+        return _unknown_record(repo, path, branch, parent, landing_error)
     if proof_parent is not None and proof_oid is not None:
         return _state_record(
             repo,
@@ -302,6 +367,7 @@ def _classify_clean(
             proof_parent=proof_parent,
             proof_oid=proof_oid,
             branch_oid=branch_oid,
+            allow_ignored=allow_ignored,
         )
     return _state_record(
         repo,
@@ -311,6 +377,7 @@ def _classify_clean(
         "LIVE",
         f"{branch} is not landed in {parent}",
         branch_oid=branch_oid,
+        allow_ignored=allow_ignored,
     )
 
 
@@ -321,7 +388,9 @@ def _classify_observed(
     parent: str,
     branch_oid: str,
     dirty: bool,
+    ignored: bool,
     protected: bool,
+    allow_ignored: bool,
 ) -> WorktreeRecord:
     if protected:
         return _state_record(
@@ -333,6 +402,7 @@ def _classify_observed(
             "protected by caller",
             branch_oid=branch_oid,
             protected=True,
+            allow_ignored=allow_ignored,
         )
     if dirty:
         return _state_record(
@@ -341,10 +411,22 @@ def _classify_observed(
             branch,
             parent,
             "DIRTY",
-            "worktree has tracked, untracked, or ignored changes",
+            "worktree has tracked or untracked changes",
             branch_oid=branch_oid,
+            allow_ignored=allow_ignored,
         )
-    return _classify_clean(repo, path, branch, parent, branch_oid)
+    if ignored and not allow_ignored:
+        return _state_record(
+            repo,
+            path,
+            branch,
+            parent,
+            "DIRTY",
+            "worktree has ignored changes; pass --allow-ignored to opt in",
+            branch_oid=branch_oid,
+            allow_ignored=allow_ignored,
+        )
+    return _classify_clean(repo, path, branch, parent, branch_oid, allow_ignored)
 
 
 def _classify_linked(
@@ -354,6 +436,7 @@ def _classify_linked(
     parent: str,
     entry: dict[str, object],
     protected: tuple[str, ...],
+    allow_ignored: bool,
 ) -> WorktreeRecord:
     """Classify one non-root worktree from one immutable Git snapshot."""
     if entry.get("locked") or entry.get("prunable"):
@@ -367,7 +450,7 @@ def _classify_linked(
         return _unknown_record(repo, path, branch, parent, "branch ref cannot be inspected")
 
     try:
-        dirty = is_dirty(path)
+        dirty, ignored = _worktree_status(path)
     except (GitError, OSError, ValueError) as exc:
         return _unknown_record(repo, path, branch, parent, f"cannot inspect worktree: {exc}")
 
@@ -378,7 +461,9 @@ def _classify_linked(
         parent,
         branch_oid,
         dirty,
+        ignored,
         _is_protected(repo, path, branch, protected),
+        allow_ignored,
     )
 
 
@@ -388,6 +473,7 @@ def _classify_entry(
     entry: dict[str, object],
     branches: set[str],
     protected: tuple[str, ...],
+    allow_ignored: bool,
 ) -> WorktreeRecord:
     path = Path(entry["path"]).resolve()
     branch = str(entry.get("branch", ""))
@@ -409,13 +495,22 @@ def _classify_entry(
             parent,
             "detached worktree cannot be associated with a branch",
         )
-    return _classify_linked(root_path, path, branch, parent, entry, protected)
+    return _classify_linked(
+        root_path,
+        path,
+        branch,
+        parent,
+        entry,
+        protected,
+        allow_ignored,
+    )
 
 
 def classify(
     repo: Path | str,
     *,
     protected: Collection[str | Path] | str | Path | None = None,
+    allow_ignored: bool = False,
 ) -> list[WorktreeRecord]:
     """Enumerate and classify every worktree Git reports for ``repo``."""
     repo_path = Path(repo).resolve()
@@ -437,7 +532,14 @@ def classify(
         }
     protected_values = _protected_values(protected)
     return [
-        _classify_entry(repo_path, root_path, entry, branches, protected_values)
+        _classify_entry(
+            repo_path,
+            root_path,
+            entry,
+            branches,
+            protected_values,
+            allow_ignored,
+        )
         for entry in entries
     ]
 
@@ -484,15 +586,14 @@ def _branch_is_checked_out(repo: Path, branch: str) -> bool:
 
 def _proof_snapshot(repo: Path, record: WorktreeRecord) -> tuple[str | None, str | None, str | None]:
     """Obtain safe fallback evidence for records built by older callers."""
-    proof_parent = record.proof_parent or record.parent
-    proof_oid = record.proof_oid
-    if proof_oid is None:
-        if not is_merged(repo, record.branch, proof_parent):
-            if proof_parent == "main" or not is_merged(repo, record.branch, "main"):
-                return proof_parent, None, "record has no current landing proof"
-            proof_parent = "main"
-        proof_oid = _ref_oid(repo, proof_parent)
-    return proof_parent, proof_oid, None
+    if record.proof_parent is not None and record.proof_oid is not None:
+        return record.proof_parent, record.proof_oid, None
+    proof_parent, proof_oid, proof_error = _landing_proof(
+        repo,
+        record.branch,
+        record.parent,
+    )
+    return proof_parent, proof_oid, proof_error
 
 
 def _branch_snapshot_for_delete(
@@ -511,31 +612,42 @@ def _branch_snapshot_for_delete(
     return None, expected_oid
 
 
-def _proof_for_delete(repo: Path, record: WorktreeRecord) -> tuple[str | None, str | None]:
+def _proof_for_delete(
+    repo: Path,
+    record: WorktreeRecord,
+) -> tuple[str | None, str | None, str | None]:
     try:
         proof_parent, proof_oid, proof_error = _proof_snapshot(repo, record)
         current_proof_oid = _ref_oid(repo, proof_parent) if proof_parent else None
     except (GitError, OSError, ValueError) as exc:
-        return f"cannot inspect landing proof: {exc}", None
+        return f"cannot inspect landing proof: {exc}", None, None
     if proof_error is not None or proof_oid is None:
-        return proof_error or "landing parent ref cannot be inspected", None
+        return proof_error or "landing parent ref cannot be inspected", None, None
     if current_proof_oid != proof_oid:
-        return "landing parent changed since classification", None
-    return None, proof_parent
+        return "landing parent changed since classification", None, None
+    return None, proof_parent, proof_oid
 
 
 def _delete_ref(
     repo: Path,
     branch: str,
     expected_oid: str,
+    proof_parent: str | None = None,
+    proof_oid: str | None = None,
 ) -> tuple[str | None, bool]:
+    """Delete a branch only while both its OID and landing proof are stable."""
+    if proof_parent is None or proof_oid is None:
+        return "landing proof is required for conditional branch deletion", False
+    commands = (
+        f"verify refs/heads/{proof_parent} {proof_oid}",
+        f"delete refs/heads/{branch} {expected_oid}",
+    )
     try:
         deleted = _git(
             repo,
             "update-ref",
-            "-d",
-            f"refs/heads/{branch}",
-            expected_oid,
+            "--stdin",
+            input_text="\n".join(commands) + "\n",
         )
     except (GitError, OSError, ValueError) as exc:
         return f"cannot delete branch ref: {exc}", False
@@ -547,7 +659,7 @@ def _delete_ref(
         branch_still_exists = True
     if not branch_still_exists:
         return None, False
-    return _failure(deleted, f"git update-ref -d refs/heads/{branch}"), False
+    return _failure(deleted, f"git update-ref refs/heads/{branch}"), False
 
 
 def _delete_branch(repo: Path, record: WorktreeRecord) -> tuple[str | None, bool]:
@@ -563,12 +675,12 @@ def _delete_branch(repo: Path, record: WorktreeRecord) -> tuple[str | None, bool
     branch_error, expected_oid = _branch_snapshot_for_delete(repo, record)
     if branch_error is not None or expected_oid is None:
         return branch_error, False
-    proof_error, _proof_parent = _proof_for_delete(repo, record)
-    if proof_error is not None:
+    proof_error, proof_parent, proof_oid = _proof_for_delete(repo, record)
+    if proof_error is not None or proof_parent is None or proof_oid is None:
         return proof_error, False
     if _branch_is_checked_out(repo, record.branch):
         return "branch is checked out by a worktree", False
-    return _delete_ref(repo, record.branch, expected_oid)
+    return _delete_ref(repo, record.branch, expected_oid, proof_parent, proof_oid)
 
 
 def _validate_target(record: WorktreeRecord, repo: Path, current_path: Path) -> None:
@@ -579,17 +691,92 @@ def _validate_target(record: WorktreeRecord, repo: Path, current_path: Path) -> 
         raise RuntimeError(f"refusing to reap the root worktree: {target}")
 
 
+def _binding_error(repo: Path, target: Path, branch: str) -> str | None:
+    """Ensure a live path still belongs to the classified branch."""
+    try:
+        listing = _git(repo, "worktree", "list", "--porcelain")
+    except (GitError, OSError, ValueError) as exc:
+        return f"cannot inspect worktree binding: {exc}"
+    if listing.returncode != 0:
+        return _failure(listing, "git worktree list")
+    matches = [
+        entry
+        for entry in _worktree_entries(listing.stdout)
+        if Path(entry["path"]).resolve() == target
+    ]
+    if not matches:
+        return f"worktree path no longer maps to {branch}"
+    if len(matches) != 1:
+        return f"worktree path has {len(matches)} Git registrations"
+    actual_branch = str(matches[0].get("branch", ""))
+    if actual_branch != branch:
+        return f"worktree path now maps to {actual_branch or 'a detached worktree'}"
+    if matches[0].get("locked") or matches[0].get("prunable"):
+        return "worktree is locked or prunable"
+    return None
+
+
+@dataclass(frozen=True)
+class _CandidatePlan:
+    record: WorktreeRecord
+    repo: Path
+    target: Path
+    stale: bool = False
+
+
+def _plan_candidate(
+    record: WorktreeRecord,
+    repo: Path,
+    current_path: Path,
+) -> tuple[_CandidatePlan | None, str | None]:
+    """Validate one candidate without mutating Git or the filesystem."""
+    target = Path(record.path).resolve()
+    _validate_target(record, repo, current_path)
+
+    target_exists = target.exists()
+    branch_error, expected_oid = _branch_snapshot_for_delete(repo, record)
+    if branch_error is not None:
+        return None, branch_error
+    if expected_oid is None:
+        # A retry after a successful reap is intentionally idempotent.  A
+        # missing path plus a missing branch is the only stale state accepted.
+        if not target_exists:
+            return _CandidatePlan(record, repo, target, stale=True), None
+        return None, "branch ref cannot be inspected while worktree still exists"
+
+    binding_error = _binding_error(repo, target, record.branch)
+    if binding_error is not None:
+        return None, binding_error
+    if not target_exists:
+        return None, "worktree path disappeared since classification"
+
+    try:
+        dirty, ignored = _worktree_status(target)
+    except (GitError, OSError, ValueError) as exc:
+        return None, f"cannot inspect worktree before removal: {exc}"
+    if dirty:
+        return None, "worktree became dirty since classification"
+    if ignored and not record.allow_ignored:
+        return None, "worktree gained ignored changes; refusing removal"
+
+    proof_error, proof_parent, proof_oid = _proof_for_delete(repo, record)
+    if proof_error is not None or proof_parent is None or proof_oid is None:
+        return None, proof_error or "landing proof cannot be inspected"
+    return _CandidatePlan(record, repo, target), None
+
+
 def _remove_worktree(
     record: WorktreeRecord,
     repo: Path,
     current_path: Path,
 ) -> tuple[str | None, bool]:
     """Remove one candidate without force and retain it for ref cleanup."""
-    target = Path(record.path).resolve()
-    _validate_target(record, repo, current_path)
-    if not target.exists():
+    plan, error = _plan_candidate(record, repo, current_path)
+    if error is not None:
+        return error, False
+    if plan is None or plan.stale:
         return None, False
-    removed = _git(repo, "worktree", "remove", "--", str(target))
+    removed = _git(repo, "worktree", "remove", "--", str(plan.target))
     if removed.returncode != 0:
         return _failure(removed, "git worktree remove"), False
     return None, True
@@ -622,25 +809,12 @@ def _ordered_pending(
     )
 
 
-def _prepare_candidate(
-    record: WorktreeRecord,
-    current_path: Path,
-    dry_run: bool,
-) -> tuple[Path, Path, str | None, bool]:
-    repo = _record_repo(record)
-    if dry_run:
-        _validate_target(record, repo, current_path)
-        return Path(record.path).resolve(), repo, None, False
-    error, did_remove = _remove_worktree(record, repo, current_path)
-    return Path(record.path).resolve(), repo, error, did_remove
-
-
 def apply(records: list[WorktreeRecord], *, dry_run: bool = True) -> dict[str, list[str]]:
-    """Remove redundant clean worktrees and conditionally delete their refs."""
+    """Remove redundant worktrees after a complete, non-mutating preflight."""
     result: dict[str, list[str]] = {"removed": [], "skipped": [], "errors": []}
     current_path = Path.cwd().resolve()
-    pending: list[tuple[WorktreeRecord, Path]] = []
-    removed_worktrees: set[str] = set()
+    candidates: list[tuple[WorktreeRecord, Path, Path]] = []
+    preflight_errors: list[str] = []
 
     for record in records:
         target = Path(record.path).resolve()
@@ -648,17 +822,39 @@ def apply(records: list[WorktreeRecord], *, dry_run: bool = True) -> dict[str, l
             result["skipped"].append(str(target))
             continue
         try:
-            target, repo, error, did_remove = _prepare_candidate(record, current_path, dry_run)
+            repo = _record_repo(record)
+            if dry_run:
+                _validate_target(record, repo, current_path)
+                candidates.append((record, repo, target))
+            else:
+                plan, error = _plan_candidate(record, repo, current_path)
+                if error is not None:
+                    preflight_errors.append(f"{target}: {error}")
+                elif plan is not None and not plan.stale:
+                    candidates.append((record, repo, target))
+                else:
+                    result["skipped"].append(str(target))
         except RuntimeError:
             raise
         except (GitError, OSError, ValueError) as exc:
-            result["errors"].append(f"{target}: cannot resolve repository: {exc}")
-            continue
+            preflight_errors.append(f"{target}: cannot resolve repository: {exc}")
+
+    if dry_run:
+        result["errors"].extend(preflight_errors)
+        result["skipped"].extend(str(target) for _record, _repo, target in candidates)
+        return result
+    if preflight_errors:
+        result["errors"].extend(preflight_errors)
+        result["skipped"].extend(str(target) for _record, _repo, target in candidates)
+        return result
+
+    pending: list[tuple[WorktreeRecord, Path]] = []
+    removed_worktrees: set[str] = set()
+
+    for record, repo, target in candidates:
+        error, did_remove = _remove_worktree(record, repo, current_path)
         if error is not None:
             result["errors"].append(f"{target}: {error}")
-            continue
-        if dry_run:
-            result["skipped"].append(str(target))
             continue
         if did_remove:
             removed_worktrees.add(str(target))
@@ -716,7 +912,17 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--check",
         action="store_true",
-        help="report redundancy; fail only when REAP_STRICT=1",
+        help="report redundancy; fail when strict mode is enabled",
+    )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="return non-zero when redundancy or an unknown inspection exists",
+    )
+    parser.add_argument(
+        "--allow-ignored",
+        action="store_true",
+        help="allow reclaiming landed worktrees containing ignored-only files",
     )
     parser.add_argument(
         "--protect",
@@ -744,7 +950,11 @@ def main(argv: list[str] | None = None) -> int:
         print("worktree-reap: --apply and --check cannot be combined", file=sys.stderr)
         return 1
     try:
-        records = classify(args.repo, protected=args.protect)
+        records = classify(
+            args.repo,
+            protected=args.protect,
+            allow_ignored=args.allow_ignored,
+        )
     except (GitError, OSError, ValueError) as exc:
         print(f"worktree-reap: {exc}", file=sys.stderr)
         return 1
@@ -759,8 +969,14 @@ def main(argv: list[str] | None = None) -> int:
         _print_table(records)
 
     redundant = any(record.status == "REDUNDANT" for record in records)
+    unknown = any(record.status == "UNKNOWN" for record in records)
+    strict = args.strict or _strict_check()
     if args.check:
-        return 3 if redundant and _strict_check() else 0
+        if strict and unknown:
+            return 4
+        return 3 if redundant and strict else 0
+    if strict and unknown:
+        return 4
     if not args.apply:
         return 3 if redundant else 0
 

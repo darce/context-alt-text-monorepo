@@ -167,7 +167,7 @@ def test_demo_quota_refresh_centroids_charges_one_unit(monkeypatch):
             pass
 
         async def refresh_centroids_view_concurrent(self):
-            return True
+            return repo_mod.MvRefreshOutcome.REFRESHED
 
     monkeypatch.setattr(repo_mod, "SqlAlchemyClusterRepository", _RepoFactory)
 

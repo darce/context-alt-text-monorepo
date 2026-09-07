@@ -25,6 +25,45 @@ def _mentions(text: str) -> list[str]:
     return [block for block in re.split(r"\n\s*\n", text) if _REAPER in block]
 
 
+def _shell_default(installer: str, name: str) -> str:
+    """The default value of one installer knob, whichever fallback form it uses.
+
+    GPUOPS-1-HV-01: this guard used to hard-code a different fallback operator
+    per variable (`:-` for one, bare `-` for the others), so it went red the
+    moment the installer converged on the safer `${NAME:-default}` form. That
+    is the same drift class as LAND-1-MR-01: a guard that pins incidental shell
+    syntax rather than the value the runbook has to agree with. Both forms are
+    accepted here; `test_installer_knobs_use_the_empty_safe_fallback_form`
+    below is what pins the operator, so accepting both here loses no coverage.
+    """
+    match = re.search(
+        rf'^{re.escape(name)}="\$\{{{re.escape(name)}:?-([^}}]+)\}}"$',
+        installer,
+        flags=re.MULTILINE,
+    )
+    assert match is not None, (
+        f"{INSTALLER.name} no longer declares {name} as a shell default; "
+        "this guard has lost the value it compares the runbook against"
+    )
+    return match.group(1)
+
+
+def test_installer_knobs_use_the_empty_safe_fallback_form() -> None:
+    """`${NAME-default}` keeps an empty override; `${NAME:-default}` replaces it.
+
+    An empty `IDLE_SECONDS=` reaching the reaper's argv is a broken unit, not a
+    default. LAND-1-MR-01 was exactly this bug on START_INTERVAL, so the safe
+    operator is pinned rather than left to chance.
+    """
+    installer = INSTALLER.read_text(encoding="utf-8")
+
+    for name in ("MAX_LEASE_SECONDS", "IDLE_SECONDS", "START_INTERVAL", "REAP_INTERVAL"):
+        assert re.search(rf'^{name}="\$\{{{name}:-[^}}]+\}}"$', installer, flags=re.MULTILINE), (
+            f"{name} must use the empty-safe ${{{name}:-default}} form; a bare "
+            f"${{{name}-default}} passes an empty override straight into the unit"
+        )
+
+
 def test_runbook_presents_the_installer_reaper_as_an_active_cost_cap() -> None:
     runbook = RUNBOOK.read_text(encoding="utf-8")
     blocks = _mentions(runbook)
@@ -40,29 +79,9 @@ def test_runbook_reaper_numbers_match_installer_defaults() -> None:
     runbook = RUNBOOK.read_text(encoding="utf-8").lower()
     installer = INSTALLER.read_text(encoding="utf-8")
 
-    max_lease = re.search(
-        r'^MAX_LEASE_SECONDS="\$\{MAX_LEASE_SECONDS:-([0-9]+)\}"$',
-        installer,
-        flags=re.MULTILINE,
-    )
-    idle_seconds = re.search(
-        r'^IDLE_SECONDS="\$\{IDLE_SECONDS-([0-9]+)\}"$',
-        installer,
-        flags=re.MULTILINE,
-    )
-    reap_interval = re.search(
-        r'^REAP_INTERVAL="\$\{REAP_INTERVAL-([^}]+)\}"$',
-        installer,
-        flags=re.MULTILINE,
-    )
-
-    assert max_lease is not None
-    assert idle_seconds is not None
-    assert reap_interval is not None
-
-    max_lease_seconds = int(max_lease.group(1))
-    idle_threshold_seconds = int(idle_seconds.group(1))
-    interval = reap_interval.group(1).replace("min", " min")
+    max_lease_seconds = int(_shell_default(installer, "MAX_LEASE_SECONDS"))
+    idle_threshold_seconds = int(_shell_default(installer, "IDLE_SECONDS"))
+    interval = _shell_default(installer, "REAP_INTERVAL").replace("min", " min")
     assert f"every {interval}" in runbook
     assert f"{idle_threshold_seconds}-second" in runbook
     assert f"{idle_threshold_seconds // 60}-minute" in runbook

@@ -41,7 +41,7 @@ import shutil
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
@@ -55,11 +55,23 @@ from infra.oci.gpu_lifecycle.controller import (
     JobLoadSnapshot,
     LifecycleAction,
 )
+from infra.oci.gpu_lifecycle.hostclock import (
+    BootIdentityUnavailableError,
+    read_host_boot_id,
+)
+from infra.oci.gpu_lifecycle.hostclock import (
+    acquire_flock_with_timeout as _acquire_flock_with_timeout,
+)
 from infra.oci.gpu_lifecycle.intent import (
     EffectiveIntent,
     IntentAction,
+    IntentFence,
     IntentStatus,
     read_effective_intent,
+)
+from infra.oci.gpu_lifecycle.intent_journal import (
+    DEFAULT_INTENT_JOURNAL_PATH,
+    IntentJournal,
 )
 from infra.oci.gpu_lifecycle.load_source import AggregateJobLoadSource
 from infra.oci.gpu_lifecycle.probe import (
@@ -100,33 +112,6 @@ _RUNNING_SINCE_FUTURE_SKEW_SECONDS = 5.0
 _HONOURED_NONCES_SCHEMA_VERSION = 1
 # Live describe dumps omit batch_in_progress; warn once per process, not per poll.
 _ABSENT_BATCH_KEY_WARNED = False
-
-
-def _acquire_flock_with_timeout(
-    lock_fd: int,
-    *,
-    timeout_seconds: float,
-) -> None:
-    """Acquire an exclusive flock without allowing a stuck peer to pin a unit."""
-    if (
-        isinstance(timeout_seconds, bool)
-        or not isinstance(timeout_seconds, (int, float))
-        or not math.isfinite(timeout_seconds)
-        or timeout_seconds < 0
-    ):
-        raise ValueError("lock timeout must be finite and non-negative")
-    deadline = time.monotonic() + float(timeout_seconds)
-    while True:
-        try:
-            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return
-        except BlockingIOError:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise TimeoutError(
-                    f"timed out after {float(timeout_seconds):.1f}s waiting for lifecycle lock"
-                ) from None
-            time.sleep(min(_LOCK_RETRY_SECONDS, remaining))
 
 
 @contextmanager
@@ -458,10 +443,6 @@ class CorruptHonouredNonceError(ValueError):
     """Persisted START idempotency metadata is unreadable or invalid."""
 
 
-class BootIdentityUnavailableError(RuntimeError):
-    """The host cannot supply a boot identity for monotonic lease records."""
-
-
 class RunningSinceLeaseStore:
     """Controller-owned grant times for RUNNING leases, keyed by instance."""
 
@@ -499,18 +480,7 @@ class RunningSinceLeaseStore:
             raise ValueError("lock_timeout_seconds must be finite and non-negative")
         self._lock_timeout_seconds = float(lock_timeout_seconds)
         if boot_id is None:
-            try:
-                boot_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
-            except OSError as exc:
-                raise BootIdentityUnavailableError(
-                    "running-since boot identity unavailable: cannot read "
-                    "/proc/sys/kernel/random/boot_id; supply an explicit boot_id"
-                ) from exc
-            if not boot_id:
-                raise BootIdentityUnavailableError(
-                    "running-since boot identity unavailable: "
-                    "/proc/sys/kernel/random/boot_id is blank; supply an explicit boot_id"
-                )
+            boot_id = read_host_boot_id()
         elif not isinstance(boot_id, str) or not boot_id.strip():
             raise ValueError("boot_id must be a non-blank string or None")
         self._boot_id = boot_id
@@ -938,12 +908,41 @@ def _resolve_effective_intent(
     intent_dir: str | Path | None,
     intent: EffectiveIntent | IntentAction | str | None,
     now: datetime | float | int | None,
+    fence: IntentFence | None = None,
 ) -> EffectiveIntent:
     if isinstance(intent, EffectiveIntent):
         return intent
     if intent is None:
-        return read_effective_intent(intent_dir, now)
+        return read_effective_intent(intent_dir, now, fence=fence)
     return EffectiveIntent(action=IntentAction(intent))
+
+
+def _journal_cycle(
+    journal: IntentJournal | None,
+    *,
+    mode: str,
+    intent: EffectiveIntent,
+    intent_status: IntentStatus,
+    actuated: Sequence[tuple[str, str]] = (),
+    lease_expired: Sequence[tuple[str, str]] = (),
+    last_transition_reason: object = None,
+    errors: Sequence[str] = (),
+) -> None:
+    """Append the audit half of a cycle; never let it break the cycle (rg-007)."""
+    if journal is None:
+        return
+    try:
+        journal.record_cycle(
+            mode=mode,
+            intent=intent,
+            intent_status=intent_status,
+            actuated=list(actuated),
+            lease_expired=list(lease_expired),
+            last_transition_reason=None if last_transition_reason is None else str(last_transition_reason),
+            errors=list(errors),
+        )
+    except Exception as exc:  # noqa: BLE001 - the audit trail must not stop the reaper
+        logger.error("could not append to the operator intent journal: %s", exc)
 
 
 def _honoured_instance_ids(
@@ -1591,10 +1590,16 @@ def run_reap_cycle(
     gpu_state_path: str | Path | None = None,
     intent_dir: str | Path | None = None,
     intent: EffectiveIntent | IntentAction | str | None = None,
+    intent_journal: IntentJournal | None = None,
     now: datetime | float | int | None = None,
 ) -> ReapCycleResult:
     """Serialize observe/decide/actuate/publish as one lifecycle transition."""
-    effective_intent = _resolve_effective_intent(intent_dir=intent_dir, intent=intent, now=now)
+    effective_intent = _resolve_effective_intent(
+        intent_dir=intent_dir,
+        intent=intent,
+        now=now,
+        fence=intent_journal,
+    )
     if dry_run:
         return _run_reap_cycle(
             controller=controller,
@@ -1670,6 +1675,16 @@ def run_reap_cycle(
             path=gpu_state_path,
             **snapshot_kwargs,
         )
+    _journal_cycle(
+        intent_journal,
+        mode="reap",
+        intent=result.intent,
+        intent_status=result.intent_status,
+        actuated=result.actuated,
+        lease_expired=result.lease_expired,
+        last_transition_reason=result.last_transition_reason,
+        errors=result.errors,
+    )
     return replace(
         result,
         snapshot_persisted=snapshot_persisted,
@@ -1895,10 +1910,16 @@ def run_start_cycle(
     gpu_state_path: str | Path | None = None,
     intent_dir: str | Path | None = None,
     intent: EffectiveIntent | IntentAction | str | None = None,
+    intent_journal: IntentJournal | None = None,
     now: datetime | float | int | None = None,
 ) -> StartCycleResult:
     """Serialize observe/decide/actuate/publish as one lifecycle transition."""
-    effective_intent = _resolve_effective_intent(intent_dir=intent_dir, intent=intent, now=now)
+    effective_intent = _resolve_effective_intent(
+        intent_dir=intent_dir,
+        intent=intent,
+        now=now,
+        fence=intent_journal,
+    )
     if dry_run:
         return _run_start_cycle(
             controller=controller,
@@ -1964,6 +1985,15 @@ def run_start_cycle(
             instance_running_since=instance_running_since,
             last_transition_reason=result.last_transition_reason,
         )
+    _journal_cycle(
+        intent_journal,
+        mode="start",
+        intent=result.intent,
+        intent_status=result.intent_status,
+        actuated=result.actuated,
+        last_transition_reason=result.last_transition_reason,
+        errors=result.errors,
+    )
     return replace(
         result,
         snapshot_persisted=snapshot_persisted,
@@ -2055,6 +2085,17 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Optional directory containing <environment>/gpu-intent.json files. "
             "The newest unexpired operator intent wins; omitted keeps legacy automatic behavior."
+        ),
+    )
+    parser.add_argument(
+        "--intent-journal-path",
+        type=Path,
+        default=DEFAULT_INTENT_JOURNAL_PATH,
+        help=(
+            "Durable append-only record of operator grants and what the controller did with "
+            "them. It is also the monotonic fence: a nonce is burned once spent, so a "
+            "backwards clock correction cannot re-arm a dead grant. "
+            f"Only used with --intent-dir (default: {DEFAULT_INTENT_JOURNAL_PATH})"
         ),
     )
     load = parser.add_mutually_exclusive_group()
@@ -2205,9 +2246,17 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     try:
         running_since_store = RunningSinceLeaseStore(path=args.running_since_path)
+        # The journal is the operator-intent feature's durable half: no intent
+        # directory means the feature is off and there is nothing to fence.
+        intent_journal = (
+            IntentJournal(path=args.intent_journal_path) if args.intent_dir is not None else None
+        )
     except BootIdentityUnavailableError as exc:
         print(f"fatal: {exc}", file=sys.stderr)
         return 1
+    except ValueError as exc:
+        print(f"error: invalid intent journal configuration: {exc}", file=sys.stderr)
+        return 2
     explicit_idle_override = args.instance_idle_for is not None
 
     if args.load_dir is not None:
@@ -2307,6 +2356,7 @@ def main(argv: list[str] | None = None) -> int:
             max_lease_seconds=args.max_lease_seconds,
             dry_run=args.dry_run,
             intent_dir=args.intent_dir,
+            intent_journal=intent_journal,
         )
         logger.info(
             "start cycle decided=%s actuated=%s errors=%s wait=%s fallbacks=%s",
@@ -2336,6 +2386,7 @@ def main(argv: list[str] | None = None) -> int:
         use_recorded_lease_age=not explicit_idle_override,
         dry_run=args.dry_run,
         intent_dir=args.intent_dir,
+        intent_journal=intent_journal,
     )
     logger.info(
         "reap cycle decided=%s actuated=%s fenced_off=%s lease_expired=%s errors=%s",

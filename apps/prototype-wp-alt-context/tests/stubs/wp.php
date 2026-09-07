@@ -1452,9 +1452,24 @@ if (!function_exists('wp_generate_uuid4')) {
         $GLOBALS['__ac_uuid_counter']++;
 
         // Real wp_generate_uuid4() returns a 36-character RFC 4122 v4 string.
-        // Callers that feed it to a length- or charset-validated field (the
-        // describe-run idempotency key) need that shape, so keep the counter
-        // for determinism but emit the full canonical layout.
+        // Keep that canonical layout so values flowing into uuid-shaped route
+        // patterns (the describe-run `[a-f0-9-]+` run_id segment) still match,
+        // but substitute a monotonic counter for the random bits so fixtures
+        // stay reproducible.
+        //
+        // Two limits are deliberate, not oversights:
+        //  1. No test feeds this value to the describe-run idempotency_key.
+        //     After GUIDEDFIX-2 the public demo never mints a key for the wire
+        //     (rg-015); the only uuid it still mints is a purely local replay
+        //     bucket that is hashed, never length- or charset-validated. The
+        //     validated path is covered with explicit client-supplied keys —
+        //     see PublicDemoDescribeControllerTest
+        //     ::testPublicSubmitForwardsTheClientKeyVerbatimAndOmitsItWhenAbsent
+        //     and ::testMalformedIdempotencyKeyIsRejectedBeforeAnySharedBudgetIsSpent,
+        //     which drive the real DescribeController::submit_describe_run.
+        //  2. A monotonic counter satisfies any uniqueness assertion by
+        //     construction. Passing such an assertion against this stub is not
+        //     evidence that production uuid generation is collision-resistant.
         return sprintf(
             '%08x-0000-4000-8000-%012x',
             $GLOBALS['__ac_uuid_counter'],

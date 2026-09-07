@@ -8,7 +8,13 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from infra.oci.gpu_lifecycle.controller import GpuInstance, GpuLifecycleController
-from infra.oci.gpu_lifecycle.intent import EffectiveIntent, IntentAction, IntentStatus
+from infra.oci.gpu_lifecycle.intent import (
+    DeferredStopRecord,
+    DeferredStopStore,
+    EffectiveIntent,
+    IntentAction,
+    IntentStatus,
+)
 from infra.oci.gpu_lifecycle.reaper import (
     RunningSinceLeaseStore,
     StaticJobLoadSource,
@@ -34,12 +40,18 @@ class RecordingActuator:
         self.stopped.append(instance_id)
 
 
-def _intent(action: IntentAction, *, nonce: str = "nonce-1") -> EffectiveIntent:
+def _intent(
+    action: IntentAction,
+    *,
+    nonce: str = "nonce-1",
+    sequence: int | None = None,
+) -> EffectiveIntent:
     return EffectiveIntent(
         action=action,
         requested_at=NOW - timedelta(minutes=1),
         expires_at=NOW + timedelta(minutes=5),
         nonce=nonce,
+        sequence=sequence,
     )
 
 
@@ -238,6 +250,88 @@ def test_stop_with_work_is_deferred_then_re_evaluated(tmp_path: Path) -> None:
     assert blocked.actuated == []
     assert drained.actuated == [("STOP", "ocid1.gpu")]
     assert actuator.stopped == ["ocid1.gpu"]
+
+
+def test_equal_sequence_with_a_new_nonce_supersedes_deferred_stop(tmp_path: Path) -> None:
+    state_dir = tmp_path / "durable"
+    stop_intent = _intent(IntentAction.STOP, nonce=VALID_NONCE, sequence=1)
+    run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[_running()],
+        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+        actuator=RecordingActuator([], []),
+        fence_delay_seconds=0,
+        durable_state_dir=state_dir,
+        intent=stop_intent,
+        now=NOW,
+    )
+
+    start_actuator = RecordingActuator([], [])
+    result = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[_running()],
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
+        actuator=start_actuator,
+        fence_delay_seconds=0,
+        durable_state_dir=state_dir,
+        intent=_intent(IntentAction.START, nonce=SECOND_NONCE, sequence=1),
+        now=NOW + timedelta(seconds=1),
+    )
+
+    assert result.intent.action is IntentAction.START
+    assert result.decided == []
+    assert result.actuated == []
+    assert not (state_dir / "deferred-stop.json").exists()
+
+
+def test_deferred_stop_rearm_failure_blocks_auto_actuation_and_is_audited(tmp_path: Path) -> None:
+    state_dir = tmp_path / "durable"
+    deferred_path = state_dir / "deferred-stop.json"
+    deferred_store = DeferredStopStore(deferred_path)
+    deferred_store.write(
+        DeferredStopRecord(
+            action=IntentAction.STOP,
+            requested_at=NOW - timedelta(minutes=2),
+            expires_at=NOW - timedelta(minutes=1),
+            nonce=VALID_NONCE,
+            requested_by="operator",
+            ttl_seconds=30,
+            sequence=7,
+            deferred_until=NOW - timedelta(seconds=1),
+            deferred_reason="STOP deferred while work is in flight",
+        )
+    )
+
+    class FailingRearmStore(DeferredStopStore):
+        def write(self, record: DeferredStopRecord) -> None:
+            raise OSError("simulated deferred-stop rearm interruption")
+
+    actuator = RecordingActuator([], [])
+    result = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[_running(age=90)],
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
+        actuator=actuator,
+        fence_delay_seconds=0,
+        deferred_stop_store=FailingRearmStore(deferred_path),
+        intent=None,
+        now=NOW,
+    )
+
+    assert result.intent.action is IntentAction.STOP
+    assert result.intent_status is IntentStatus.BLOCKED_WORK_IN_FLIGHT
+    assert result.actuated == []
+    assert result.errors
+    assert "rearm_failed" in result.errors[0]
+    assert actuator.stopped == []
+    records = [json.loads(line) for line in (state_dir / "decision-log.jsonl").read_text().splitlines()]
+    assert any(
+        record.get("event") == "dropped"
+        and record.get("reason") == "rearm_failed"
+        and record.get("nonce") == VALID_NONCE
+        and record.get("sequence") == 7
+        for record in records
+    )
 
 
 def test_start_nonce_is_honoured_once_across_cycles(tmp_path: Path) -> None:
@@ -709,3 +803,64 @@ def test_decision_log_reconstructs_start_and_idle_stop_cycle(tmp_path: Path) -> 
     assert records[1]["actuation_outcome"] == "honoured"
     assert start.actuated == [("START", "ocid1.gpu")]
     assert stop.actuated == [("STOP", "ocid1.gpu")]
+
+
+def test_expired_supersession_does_not_resurrect_a_deferred_stop(tmp_path: Path) -> None:
+    """R2-01: a newer intent fences a deferred STOP even after it expires.
+
+    The superseding publication is only ever observed past its own TTL, so the
+    live effective intent carries no sequence.  The durable high-water mark is
+    the only surviving evidence of the supersession.
+    """
+    runtime_dir = tmp_path / "runtime"
+    state_dir = tmp_path / "durable"
+    _write_persisted_intent(
+        runtime_dir,
+        action="stop",
+        requested_at=NOW - timedelta(seconds=10),
+        expires_at=NOW + timedelta(seconds=1),
+        requested_by="operator",
+        sequence=1,
+        nonce=VALID_NONCE,
+    )
+    blocked = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[_running(age=0)],
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=1),
+        actuator=RecordingActuator([], []),
+        fence_delay_seconds=0,
+        intent_dir=runtime_dir,
+        durable_state_dir=state_dir,
+        now=NOW,
+    )
+    assert blocked.intent_status is IntentStatus.BLOCKED_WORK_IN_FLIGHT
+    assert (state_dir / "deferred-stop.json").exists()
+
+    # The operator countermands the STOP, but the reaper does not run again
+    # until after the replacement's own TTL has elapsed.
+    _write_persisted_intent(
+        runtime_dir,
+        action="start",
+        requested_at=NOW + timedelta(seconds=10),
+        expires_at=NOW + timedelta(seconds=40),
+        requested_by="operator",
+        sequence=2,
+        nonce=SECOND_NONCE,
+    )
+
+    drained_actuator = RecordingActuator([], [])
+    drained = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[_running(age=0)],
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
+        actuator=drained_actuator,
+        fence_delay_seconds=0,
+        intent_dir=runtime_dir,
+        durable_state_dir=state_dir,
+        now=NOW + timedelta(seconds=120),
+    )
+
+    assert drained.intent.action is not IntentAction.STOP
+    assert drained.actuated == []
+    assert drained_actuator.stopped == []
+    assert not (state_dir / "deferred-stop.json").exists()

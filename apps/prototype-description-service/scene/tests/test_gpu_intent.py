@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
 import sys
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -33,6 +35,7 @@ def test_write_read_round_trip_clamps_ttl_and_publishes_atomic_file(tmp_path: Pa
     )
 
     assert written.schema_version == 1
+    assert written.sequence == 1
     assert written.action is IntentAction.START
     assert written.ttl_seconds == 60
     assert written.requested_at == NOW
@@ -44,7 +47,100 @@ def test_write_read_round_trip_clamps_ttl_and_publishes_atomic_file(tmp_path: Pa
 
     loaded = read_gpu_intent(target)
     assert loaded == written
-    assert json.loads(target.read_text(encoding="utf-8"))["nonce"] == written.nonce
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    assert payload["nonce"] == written.nonce
+    assert payload["sequence"] == written.sequence
+
+
+def test_sequence_is_monotonic_and_lifecycle_reader_accepts_publication(tmp_path: Path) -> None:
+    runtime_target = tmp_path / "runtime" / "prod" / "gpu-intent.json"
+    durable_target = tmp_path / "durable" / "prod" / "gpu-intent.json"
+
+    first = write_gpu_intent(
+        runtime_target,
+        durable_path=durable_target,
+        action=IntentAction.START,
+        requested_by="operator",
+        now=NOW,
+    )
+    second = write_gpu_intent(
+        runtime_target,
+        durable_path=durable_target,
+        action=IntentAction.STOP,
+        requested_by="operator",
+        now=NOW,
+    )
+
+    from infra.oci.gpu_lifecycle.intent import _read_one, read_effective_intent
+
+    lifecycle_intent = _read_one(runtime_target)
+    effective_intent = read_effective_intent(tmp_path / "runtime", NOW)
+
+    assert lifecycle_intent is not None
+    assert lifecycle_intent.sequence == 2
+    assert lifecycle_intent.action.value == "stop"
+    assert effective_intent.sequence == second.sequence
+    assert effective_intent.action.value == "stop"
+    assert first.sequence == 1
+    assert second.sequence == first.sequence + 1
+
+
+def test_durable_mirror_survives_runtime_publication_removal(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    runtime_target = tmp_path / "runtime" / "prod" / "gpu-intent.json"
+    durable_target = tmp_path / "durable" / "prod" / "gpu-intent.json"
+    monkeypatch.setenv("ACX_GPU_INTENT_DURABLE_PATH", str(durable_target))
+
+    written = write_gpu_intent(
+        runtime_target,
+        durable_path=durable_target,
+        action=IntentAction.START,
+        requested_by="operator",
+        now=NOW,
+    )
+    runtime_target.unlink()
+
+    loaded = read_gpu_intent(runtime_target)
+
+    assert durable_target.is_file()
+    assert loaded == written
+
+
+def test_contended_lock_times_out_without_publishing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    target = tmp_path / "gpu-intent.json"
+    lock_path = target.with_name(f"{target.name}.lock")
+    lock_path.touch()
+    monkeypatch.setenv("ACX_GPU_INTENT_LOCK_TIMEOUT_SECONDS", "0.05")
+
+    with lock_path.open("r", encoding="utf-8") as holder:
+        fcntl.flock(holder.fileno(), fcntl.LOCK_EX)
+        started = time.monotonic()
+        with pytest.raises(TimeoutError, match="GPU intent lock"):
+            write_gpu_intent(target, action=IntentAction.START, now=NOW)
+        elapsed = time.monotonic() - started
+
+    assert elapsed < 0.5
+    assert not target.exists()
+
+
+def test_sequence_allocation_failure_does_not_publish(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    target = tmp_path / "runtime" / "gpu-intent.json"
+    durable_target = tmp_path / "durable" / "gpu-intent.json"
+
+    def fail_allocation(_path: Path) -> int:
+        raise OSError("sequence ledger unavailable")
+
+    monkeypatch.setattr("scene.application.gpu_intent._read_persisted_sequence", fail_allocation)
+
+    with pytest.raises(OSError, match="sequence ledger unavailable"):
+        write_gpu_intent(
+            target,
+            durable_path=durable_target,
+            action=IntentAction.START,
+            now=NOW,
+        )
+
+    assert not target.exists()
+    assert not durable_target.exists()
 
 
 @pytest.mark.parametrize(

@@ -1383,12 +1383,50 @@ def _blocked_deferred_intent(
     )
 
 
+def _audit_deferred_fenced(
+    record: DeferredStopRecord,
+    *,
+    high_water: int,
+    decision_log_store: DecisionLogStore | None,
+) -> None:
+    """Record that a deferred STOP was dropped by the durable fencing mark."""
+    logger.warning(
+        "dropped deferred STOP fenced by authority high-water mark: "
+        "nonce=%s sequence=%s highest=%s",
+        record.nonce,
+        record.sequence,
+        high_water,
+    )
+    if decision_log_store is None:
+        return
+    try:
+        decision_log_store.append(
+            {
+                "event": "dropped",
+                "reason": "fenced_by_authority_sequence",
+                "action": IntentAction.STOP.value,
+                "nonce": record.nonce,
+                "sequence": record.sequence,
+                "highest_sequence": high_water,
+                "requested_by": record.requested_by,
+                "deferred_reason": record.deferred_reason,
+            }
+        )
+    except Exception as audit_error:  # noqa: BLE001 - the drop itself is safe
+        logger.error(
+            "deferred fenced audit append failed: %s: %s",
+            type(audit_error).__name__,
+            audit_error,
+        )
+
+
 def _apply_deferred_stop(
     effective_intent: EffectiveIntent,
     *,
     store: DeferredStopStore | None,
     now: datetime,
     decision_log_store: DecisionLogStore | None = None,
+    authority_store: IntentAuthorityStore | None = None,
 ) -> EffectiveIntent:
     if store is None:
         return effective_intent
@@ -1428,6 +1466,39 @@ def _apply_deferred_stop(
                 error=exc,
                 decision_log_store=decision_log_store,
             )
+    # The live intent's own sequence is absent once it expires, so the check
+    # above cannot see a supersession whose publication has already elapsed.
+    # The durable high-water mark still carries it: fence on that before the
+    # record is re-armed, or an expired newer intent silently reinstates the
+    # STOP it superseded.
+    if authority_store is not None:
+        try:
+            high_water = authority_store.highest_sequence()
+        except (IntentAuthorityError, OSError, ValueError) as exc:
+            return _blocked_deferred_intent(
+                effective_intent,
+                record,
+                reason="authority_read_failed",
+                error=exc,
+                decision_log_store=decision_log_store,
+            )
+        if high_water > record.sequence:
+            try:
+                store.clear(sequence=record.sequence)
+            except (OSError, ValueError) as exc:
+                return _blocked_deferred_intent(
+                    effective_intent,
+                    record,
+                    reason="fenced_clear_failed",
+                    error=exc,
+                    decision_log_store=decision_log_store,
+                )
+            _audit_deferred_fenced(
+                record,
+                high_water=high_water,
+                decision_log_store=decision_log_store,
+            )
+            return effective_intent
     try:
         record = _rearm_deferred_record(store, record, now=now)
     except (OSError, ValueError) as exc:
@@ -1457,6 +1528,7 @@ def _resolve_effective_intent(
             store=deferred_stop_store,
             now=_coerce_cycle_time(now),
             decision_log_store=decision_log_store,
+            authority_store=authority_store,
         )
     if intent is not None:
         return _apply_deferred_stop(
@@ -1464,6 +1536,7 @@ def _resolve_effective_intent(
             store=deferred_stop_store,
             now=_coerce_cycle_time(now),
             decision_log_store=decision_log_store,
+            authority_store=authority_store,
         )
     source_dir = _intent_source_dir(
         intent_dir=intent_dir,
@@ -1476,6 +1549,7 @@ def _resolve_effective_intent(
             store=deferred_stop_store,
             now=_coerce_cycle_time(now),
             decision_log_store=decision_log_store,
+            authority_store=authority_store,
         )
     current_time = _coerce_cycle_time(now)
     durable_dir = (
@@ -1514,6 +1588,7 @@ def _resolve_effective_intent(
         store=deferred_stop_store,
         now=current_time,
         decision_log_store=decision_log_store,
+        authority_store=authority_store,
     )
 
 

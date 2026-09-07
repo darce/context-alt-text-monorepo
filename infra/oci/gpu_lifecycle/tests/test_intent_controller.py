@@ -803,3 +803,64 @@ def test_decision_log_reconstructs_start_and_idle_stop_cycle(tmp_path: Path) -> 
     assert records[1]["actuation_outcome"] == "honoured"
     assert start.actuated == [("START", "ocid1.gpu")]
     assert stop.actuated == [("STOP", "ocid1.gpu")]
+
+
+def test_expired_supersession_does_not_resurrect_a_deferred_stop(tmp_path: Path) -> None:
+    """R2-01: a newer intent fences a deferred STOP even after it expires.
+
+    The superseding publication is only ever observed past its own TTL, so the
+    live effective intent carries no sequence.  The durable high-water mark is
+    the only surviving evidence of the supersession.
+    """
+    runtime_dir = tmp_path / "runtime"
+    state_dir = tmp_path / "durable"
+    _write_persisted_intent(
+        runtime_dir,
+        action="stop",
+        requested_at=NOW - timedelta(seconds=10),
+        expires_at=NOW + timedelta(seconds=1),
+        requested_by="operator",
+        sequence=1,
+        nonce=VALID_NONCE,
+    )
+    blocked = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[_running(age=0)],
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=1),
+        actuator=RecordingActuator([], []),
+        fence_delay_seconds=0,
+        intent_dir=runtime_dir,
+        durable_state_dir=state_dir,
+        now=NOW,
+    )
+    assert blocked.intent_status is IntentStatus.BLOCKED_WORK_IN_FLIGHT
+    assert (state_dir / "deferred-stop.json").exists()
+
+    # The operator countermands the STOP, but the reaper does not run again
+    # until after the replacement's own TTL has elapsed.
+    _write_persisted_intent(
+        runtime_dir,
+        action="start",
+        requested_at=NOW + timedelta(seconds=10),
+        expires_at=NOW + timedelta(seconds=40),
+        requested_by="operator",
+        sequence=2,
+        nonce=SECOND_NONCE,
+    )
+
+    drained_actuator = RecordingActuator([], [])
+    drained = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[_running(age=0)],
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
+        actuator=drained_actuator,
+        fence_delay_seconds=0,
+        intent_dir=runtime_dir,
+        durable_state_dir=state_dir,
+        now=NOW + timedelta(seconds=120),
+    )
+
+    assert drained.intent.action is not IntentAction.STOP
+    assert drained.actuated == []
+    assert drained_actuator.stopped == []
+    assert not (state_dir / "deferred-stop.json").exists()

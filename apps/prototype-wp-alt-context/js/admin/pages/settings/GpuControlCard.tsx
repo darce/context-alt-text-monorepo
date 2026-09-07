@@ -208,7 +208,8 @@ export const GpuControlCard = (): React.JSX.Element => {
                   <span aria-hidden="true" className="acx-gpu-control__state-icon">
                     {GPU_STATE_GLYPHS[presentation.icon]}
                   </span>{' '}
-                  {GPU_STATE_VOCABULARY.tierPrefix} {presentation.label} · {snapshotText}
+                  <span>{`${GPU_STATE_VOCABULARY.tierPrefix} ${presentation.label}`}</span>
+                  {` · ${snapshotText}`}
                 </span>
               );
             })()

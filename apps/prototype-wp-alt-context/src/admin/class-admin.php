@@ -397,7 +397,12 @@ class Admin {
 	private function get_guided_live_media_id(): ?int {
 		$raw = get_option( 'acx_guided_live_media_id', null );
 
-		if ( ! is_scalar( $raw ) || is_bool( $raw ) ) {
+		// Allow-list, not deny-list. `! is_scalar( $raw )` was dead -- every
+		// non-scalar it caught is also refused by filter_var below -- and the
+		// surviving `is_bool` half let floats through, which filter_var
+		// truncates into a real id. Naming the two types an option can legally
+		// hold gives one reachable, testable branch per input.
+		if ( ! is_string( $raw ) && ! is_int( $raw ) ) {
 			return null;
 		}
 

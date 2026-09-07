@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   GUIDED_LIVE_BLOCKED_REASON,
+  GUIDED_LIVE_DEADLINE_CEILING_SECONDS,
   GUIDED_LIVE_DEADLINE_FLOOR_SECONDS,
   GUIDED_LIVE_DEADLINE_SLACK_MS,
   GUIDED_LIVE_GPU_WARMUP_CEILING_SECONDS,
@@ -55,14 +56,14 @@ describe('guided live description gate', () => {
 });
 
 describe('guided live description bounds', () => {
-  it('clamps an over-long server deadline to the client ceiling', () => {
+  it('clamps an over-long local fallback deadline to the client ceiling', () => {
     let state = decided(initialGuidedLiveState());
     state = guidedLiveReducer(state, { kind: 'requested', atMs: T0 });
     state = guidedLiveReducer(state, { kind: 'accepted', runId: 'run-1', deadlineSeconds: 9999, atMs: T0 });
     expect(state.deadlineMs).toBe(GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000);
   });
 
-  it('keeps a server deadline shorter than the ceiling', () => {
+  it('keeps a local fallback deadline shorter than the ceiling', () => {
     const state = started();
     expect(state.deadlineMs).toBe(300_000);
   });
@@ -689,9 +690,11 @@ describe('resolveGuidedLiveDeadlineMs: the server budget the client is willing t
     expect(resolveGuidedLiveDeadlineMs(WARM_CEILING_MS, 60, 'ready')).toBe(75_000);
   });
 
-  it('lets the warm local ceiling win upward when the disclosed budget would exceed it', () => {
-    expect(resolveGuidedLiveDeadlineMs(WARM_CEILING_MS, 400, 'ready')).toBe(WARM_CEILING_MS);
-    expect(resolveGuidedLiveDeadlineMs(WARM_CEILING_MS, 400, 'ready')).toBe(180_000);
+  it('lets a warm run honor a disclosed generation budget above the local ceiling', () => {
+    expect(resolveGuidedLiveDeadlineMs(WARM_CEILING_MS, 240, 'ready')).toBe(
+      240_000 + GUIDED_LIVE_DEADLINE_SLACK_MS,
+    );
+    expect(resolveGuidedLiveDeadlineMs(WARM_CEILING_MS, 240, 'ready')).not.toBe(WARM_CEILING_MS);
   });
 
   // Replaces an assertion that pinned the bug: the old formula ran the same
@@ -708,15 +711,22 @@ describe('resolveGuidedLiveDeadlineMs: the server budget the client is willing t
 
   it('does not time a cold run out at 3:15 on the service default budget', () => {
     // The reported run: cold GPU, `deadline_seconds: 180`. The old formula gave
-    // min(510_000, 195_000) = 195_000 and flipped the panel to TIMED_OUT at
-    // 3:15 while the run was healthy and finished minutes later.
+    // 195_000 and flipped the panel to TIMED_OUT at 3:15 while the run was
+    // healthy and finished minutes later. The disclosed generation budget now
+    // remains authoritative, with the cold warm-up leg added back.
     const resolved = resolveGuidedLiveDeadlineMs(COLD_CEILING_MS, 180, 'stopped');
 
     expect(resolved).toBeGreaterThan(195_000);
-    expect(resolved).toBe(COLD_CEILING_MS);
+    expect(resolved).toBe(180_000 + GUIDED_LIVE_GPU_WARMUP_CEILING_SECONDS * 1000 + GUIDED_LIVE_DEADLINE_SLACK_MS);
   });
 
-  it('owes the warm-up leg on every gpu state except ready, including unknown', () => {
+  it('adds the warm-up leg to a disclosed 240-second budget on unknown GPU state', () => {
+    expect(resolveGuidedLiveDeadlineMs(COLD_CEILING_MS, 240, 'unknown')).toBe(
+      (240 + GUIDED_LIVE_GPU_WARMUP_CEILING_SECONDS) * 1000 + GUIDED_LIVE_DEADLINE_SLACK_MS,
+    );
+  });
+
+  it('owes the warm-up leg on every gpu state except ready', () => {
     for (const gpu of ['unknown', 'stopped', 'starting', 'warming', 'degraded'] as const) {
       expect(resolveGuidedLiveDeadlineMs(COLD_CEILING_MS, 60, gpu), gpu).toBe(585_000);
     }
@@ -754,6 +764,12 @@ describe('resolveGuidedLiveDeadlineMs: the server budget the client is willing t
     expect(resolveGuidedLiveDeadlineMs(COLD_CEILING_MS, 0.5, 'ready')).toBe(COLD_CEILING_MS);
   });
 
+  it('refuses a budget just above the generation trust ceiling', () => {
+    expect(resolveGuidedLiveDeadlineMs(WARM_CEILING_MS, GUIDED_LIVE_DEADLINE_CEILING_SECONDS + 1, 'ready')).toBe(
+      WARM_CEILING_MS,
+    );
+  });
+
   it('accepts a budget exactly at the floor, so the band has a boundary and not a gap', () => {
     expect(GUIDED_LIVE_DEADLINE_FLOOR_SECONDS).toBe(30);
     expect(resolveGuidedLiveDeadlineMs(COLD_CEILING_MS, GUIDED_LIVE_DEADLINE_FLOOR_SECONDS, 'ready')).toBe(
@@ -762,11 +778,12 @@ describe('resolveGuidedLiveDeadlineMs: the server budget the client is willing t
   });
 
   it('names the same band from the predicate the resolver uses', () => {
-    expect(isGuidedLiveDeadlineDisclosed(180, COLD_CEILING_MS)).toBe(true);
-    expect(isGuidedLiveDeadlineDisclosed(1, COLD_CEILING_MS)).toBe(false);
-    expect(isGuidedLiveDeadlineDisclosed(null, COLD_CEILING_MS)).toBe(false);
-    expect(isGuidedLiveDeadlineDisclosed('180', COLD_CEILING_MS)).toBe(false);
-    expect(isGuidedLiveDeadlineDisclosed(9999, COLD_CEILING_MS)).toBe(false);
+    expect(isGuidedLiveDeadlineDisclosed(180)).toBe(true);
+    expect(isGuidedLiveDeadlineDisclosed(GUIDED_LIVE_DEADLINE_CEILING_SECONDS)).toBe(true);
+    expect(isGuidedLiveDeadlineDisclosed(1)).toBe(false);
+    expect(isGuidedLiveDeadlineDisclosed(null)).toBe(false);
+    expect(isGuidedLiveDeadlineDisclosed('180')).toBe(false);
+    expect(isGuidedLiveDeadlineDisclosed(GUIDED_LIVE_DEADLINE_CEILING_SECONDS + 1)).toBe(false);
   });
 });
 
@@ -813,8 +830,8 @@ describe('the reducer adopts the server-disclosed deadline once, at accept', () 
   });
 
   it('keeps the disclosed budget verbatim, not folded into the deadline it produced', () => {
-    // The number itself is what makes a later re-derivation against a wider
-    // ceiling possible; a boolean "something was disclosed" latch could not.
+    // The number itself is what makes a later re-derivation with a newly owed
+    // warm-up leg possible; a boolean "something was disclosed" latch could not.
     expect(acceptedWith({ disclosedDeadlineSeconds: 400 }).disclosedDeadlineSeconds).toBe(400);
   });
 
@@ -855,20 +872,22 @@ describe('a legitimate extension stays reachable for the whole run', () => {
     });
   };
 
-  it('lifts a warm-pinned deadline back to the cold ceiling when a poll reveals a cold GPU', () => {
+  it('lifts a warm-pinned deadline when a poll reveals a cold GPU', () => {
     // Regression: a one-way "the server disclosed something" latch suppressed
     // every later deadline_raised, so this run timed out at 3:00 against a
     // server budget of 400s plus a 510s warm-up it had not yet begun.
     const state = acceptedWarmThenCold(400);
 
     expect(state.deadlineMs).toBeGreaterThan(GUIDED_LIVE_WARM_CEILING_SECONDS * 1000);
-    expect(state.deadlineMs).toBe(GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000);
+    expect(state.deadlineMs).toBe(
+      400_000 + GUIDED_LIVE_GPU_WARMUP_CEILING_SECONDS * 1000 + GUIDED_LIVE_DEADLINE_SLACK_MS,
+    );
   });
 
   it('re-derives the raise from the disclosed budget, not from the raw ceiling', () => {
-    // Disclosed 60s of generation plus the 510s warm-up now owed, capped by the
-    // cold ceiling: the disclosure still governs, it is just measured against
-    // the leg the run actually has to pay.
+    // Disclosed 60s of generation plus the 510s warm-up now owed. The disclosure
+    // still governs, and is measured against the leg the run actually has to
+    // pay without being capped by the local whole-wait ceiling.
     const state = acceptedWarmThenCold(60);
 
     expect(state.deadlineMs).toBe(585_000);

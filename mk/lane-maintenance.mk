@@ -2,9 +2,17 @@
 # Lane Maintenance (reset, refresh, clean, close, prune, path, commits, intake)
 # =============================================================================
 
-.PHONY: lane-reset lane-refresh lane-clean lane-close lane-prune lane-path lane-commits lane-intake
+.PHONY: lane-reset lane-refresh lane-clean lane-close lane-prune lane-path lane-commits lane-intake worktree-reap worktree-reap-check
 
 POST_INTAKE_CHECK_CMD ?= $(MAKE) --no-print-directory check-all
+
+worktree-reap: ## Dry-run: list linked worktrees whose branch is already landed in its parent (REAP_ARGS=--apply to remove)
+	@$(PYTHON) scripts/worktree_reap.py --repo "$(CURDIR)" $(REAP_ARGS)
+
+worktree-reap-check: ## Fail when redundant worktrees exist (wired into check-all)
+	@$(PYTHON) scripts/worktree_reap.py --repo "$(CURDIR)"
+
+check-all: worktree-reap-check
 
 lane-reset: lane-guard
 	@if [ -z "$(REF)" ]; then \

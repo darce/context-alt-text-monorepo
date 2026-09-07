@@ -31,8 +31,12 @@ Instance states:
 The description service is the single writer for
 `/run/acx-write/<ACX_ENV>/gpu-intent.json`, where `ACX_ENV` is `dev`,
 `staging`, or `prod`. The lifecycle controller is read-only. With
-`--intent-dir /run/acx-write`, it aggregates `*/gpu-intent.json`; the newest
-unexpired `requested_at` wins, and equal timestamps resolve to `stop`.
+`--intent-dir /run/acx-write`, it aggregates `*/gpu-intent.json`. Precedence is
+by `sequence` first (a monotonically increasing publication counter, minimum
+`1`), then by `requested_at`, and `stop` wins a remaining tie. `requested_at` is
+an interoperability field and a tiebreak only: it can never move an expiry
+later or re-arm a fenced publication (RES-10). A `requested_at` more than 120
+seconds in the future is rejected.
 
 ```json
 {
@@ -42,7 +46,8 @@ unexpired `requested_at` wins, and equal timestamps resolve to `stop`.
   "expires_at": "2026-09-06T22:40:00Z",
   "ttl_seconds": 1800,
   "requested_by": "opaque operator label",
-  "nonce": "uuid4"
+  "nonce": "uuid4",
+  "sequence": 7
 }
 ```
 
@@ -52,7 +57,7 @@ Lifecycle semantics:
 | --- | --- | --- |
 | absent / expired / malformed / `auto` | unchanged: start when `has_work` | unchanged: idle reap, lease cap, boot-failure fallback |
 | `start` (unexpired) | START allowed with no work; honoured at most once per nonce (RES-01) | idle reap suppressed; **lease cap still stops** (RES-10); boot-failure fallback unchanged |
-| `stop` (unexpired) | START suppressed even with work | STOP when `has_work` is false; when work is in flight publish `intent_status = blocked_work_in_flight`, journal the deferral, and re-evaluate next cycle (see [Durable intent journal](#durable-intent-journal)) |
+| `stop` (unexpired) | START suppressed even with work | STOP when `has_work` is false; when work is in flight publish `intent_status = blocked_work_in_flight` and re-evaluate next cycle |
 
 Malformed intent is logged at WARNING with the parse error and treated as
 `auto` (AGT-10, CAL-02). A valid intent whose `expires_at` is more than 7200
@@ -60,62 +65,6 @@ seconds after `requested_at` is clamped to 7200 seconds. The service normally
 enforces the default 1800-second TTL and the 60–7200-second service bounds;
 the lifecycle clamp is a defensive backstop. Omitting `--intent-dir` disables
 the optional reader and retains automatic lifecycle behavior.
-
-### Durable intent journal
-
-`/run/acx-write/<ACX_ENV>/gpu-intent.json` is tmpfs. The instance it starts is
-not. A grant that spends money therefore cannot be a tmpfs-only fact (RES-17),
-and its expiry cannot be a wall-clock fact on a host that takes NTP
-corrections (RES-10). Both are settled by an append-only journal on the unit's
-`StateDirectory`:
-
-`--intent-journal-path` (default `/var/lib/acx-gpu/intent-journal.jsonl`,
-`infra/oci/gpu_lifecycle/intent_journal.py`). It is enabled whenever
-`--intent-dir` is; without `--intent-dir` there is no intent to journal. One
-JSON object per line, `schema_version: 1`, required keys `schema_version`,
-`kind`, `nonce`, `recorded_at`; optional `boot_id`, `monotonic`, `action`,
-`requested_by`, `ttl_seconds`, `reason`. Appends take the same-file `flock`,
-`fsync` before returning, and the file is truncated newest-first at 2000
-records so an unattended host cannot fill its state directory (rg-007).
-
-`kind` ∈ `observed | deferred | rearmed | dropped | burned | cycle`:
-
-| kind | written when | consequence |
-| --- | --- | --- |
-| `observed` | first sight of a nonce, **before** it can be honoured | fixes the monotonic origin and `boot_id` for that grant (write-ahead) |
-| `deferred` | a `stop` was blocked by work in flight | marks the grant eligible for re-arm past its wall-clock expiry |
-| `rearmed` | a deferred `stop` outlived `expires_at` inside the re-arm budget | the STOP survives; logged at WARNING |
-| `dropped` | a deferred `stop` exhausted the re-arm budget (default 3600 s past TTL) | terminal; logged at WARNING naming `requested_by` (FLOW-08) |
-| `burned` | the grant is spent: monotonic TTL elapsed, clock ran backwards, or the host rebooted | terminal; no later clock value can re-arm it (RES-10) |
-| `cycle` | end of every reap/start cycle that had a nonce | records effective intent, `intent_status`, actuations, lease expiry, `last_transition_reason`, errors (HAI-06) |
-
-Expiry rules, in order:
-
-- A nonce with a terminal record (`burned` / `dropped`) is spent. It is never
-  honoured again regardless of what the intent file says.
-- Elapsed time for a grant is `monotonic(now) - monotonic(observed)`, not
-  `now - requested_at`. **Monotonic expiry wins even while the wall clock still
-  says unexpired, and a backwards wall-clock correction cannot resurrect a
-  grant whose monotonic TTL has elapsed.** A negative elapsed value is
-  impossible on a working clock, so it burns the grant rather than trusting it.
-- Wall-clock expiry alone refuses the grant for this cycle but does **not**
-  burn it, so a `deferred` `stop` can still be re-armed.
-- `boot_id` (`/proc/sys/kernel/random/boot_id`) mismatch means the monotonic
-  origin is gone. The grant is burned and the revocation is logged at ERROR
-  naming the original `requested_by` and the reboot. A reboot silently
-  reverting the instance to `auto` is exactly the untraceable transition this
-  journal exists to prevent (OBS-08, RLSE-05).
-- A journal that cannot be read (structurally corrupt, unwritable, no boot
-  identity) refuses the grant and says why; it never defaults open (rg-008,
-  AGT-10). A torn trailing line — the one partial write a crash can leave — is
-  tolerated and dropped.
-
-The journal is the reconstructable record of every automated decision that
-spends money: for any nonce, `requested_by`, the effective intent, the
-`intent_status`, and the actuation outcome are replayable from durable storage
-after the tmpfs intent file is gone (HAI-06). A journal append that fails is
-logged and never aborts the cycle — the cost cap outranks its own audit trail
-(rg-007).
 
 ### `gpu-state.json` additive intent fields
 
@@ -132,6 +81,75 @@ cycle:
 | `lease_expires_at` | iso8601 or null | `running_since + max_lease_seconds` |
 | `instance_running_since` | iso8601 or null | from the running-since lease |
 | `last_transition_reason` | `work\|operator\|idle\|lease_cap\|start_failed\|unknown` | why the last actuation happened |
+
+### Durable intent state
+
+`/run/acx-write` is tmpfs: it does not survive a reboot. An operator intent is a
+write-ahead record for a durable external mutation that spends money, so the
+controller keeps its own state under `/var/lib/acx-gpu` (systemd
+`StateDirectory=acx-gpu`, `StateDirectoryMode=0700`), which both timer units
+already mount (RES-17).
+
+| path | purpose |
+| --- | --- |
+| `/var/lib/acx-gpu/intents/` | durable copy of the runtime publications |
+| `/var/lib/acx-gpu/intent-authority.json` | fencing ledger: high-water wall clock, highest sequence, per-nonce expiry |
+| `/var/lib/acx-gpu/deferred-stop.json` | a STOP that is waiting on in-flight work |
+| `/var/lib/acx-gpu/decision-log.jsonl` | append-only audit trail of spend decisions |
+
+Passing `--intent-dir` enables all four; omitting it disables the reader and all
+durable intent state, retaining the legacy in-memory behavior. Every file is
+written to a temporary inode, `fsync`ed, and renamed into place under a bounded
+10-second `flock`; a lock that cannot be taken is an error, not a bypass.
+
+**Copy before evaluate.** Each cycle copies the valid runtime publications from
+the tmpfs intent dir into `/var/lib/acx-gpu/intents/` and then evaluates from the
+durable dir. A failed copy is logged at WARNING and evaluation continues from
+whatever the durable dir already holds.
+
+**Fencing.** Before an intent is eligible, the authority ledger checks it:
+
+- A `sequence` below the persisted `highest_sequence` is fenced, even for a
+  nonce that was previously honoured. This is what stops an old publication from
+  being reintroduced after a newer one superseded it.
+- Expiry is evaluated against `max(now, last_wall_time)`, so a backwards NTP
+  correction cannot extend a grant, and additionally against a per-boot
+  monotonic deadline recorded when the nonce was first seen.
+- Once expired, the nonce's ledger record is written `expired: true` and that
+  state is terminal. No later reading of any clock re-arms a spent grant.
+- Across a reboot the monotonic deadline no longer applies (its `boot_id` no
+  longer matches) and fencing falls back to the logical wall high-water mark.
+- If the ledger cannot be read or the monotonic clock is unavailable, the cycle
+  logs at ERROR and uses `auto`. An unreadable authority never honours an
+  intent.
+
+**Deferred STOP.** When a `stop` intent arrives while work is in flight, the
+STOP is not dropped. It is persisted to `deferred-stop.json` with its
+`requested_at`, `nonce`, `sequence`, and a `deferred_until` extension of
+`ttl_seconds` clamped to 60–7200 seconds, and the cycle publishes
+`intent_status = blocked_work_in_flight` (FLOW-08). Later cycles rehydrate the
+record and re-arm it — the deferral, not the original `expires_at`, is the
+authority for the effective expiry, so a STOP that waited out its own TTL is
+still honoured when the work drains. A record whose intent lacks `requested_at`,
+`nonce`, or `sequence` cannot be persisted; that is reported as a cycle error, not
+silently deferred. A higher `sequence` clears the deferral.
+
+**Decision log.** Every cycle that decides, actuates, hits the lease cap, or
+blocks a STOP appends one JSON object to `decision-log.jsonl` (HAI-06):
+
+| field | meaning |
+| --- | --- |
+| `timestamp` | cycle time, iso8601 Z |
+| `mode` | `reap` or `start` |
+| `requested_by`, `nonce`, `sequence` | provenance of the effective intent |
+| `effective_intent`, `intent_status`, `intent_expires_at` | what the controller resolved |
+| `decided`, `lease_expired`, `actuated` | `(action, instance_id)` pairs |
+| `actuation_outcome` | `honoured\|partial\|deferred\|failed\|fenced_off\|not_actuated` |
+| `errors` | cycle errors, verbatim |
+
+An append failure is logged at ERROR **and** added to the cycle's `errors`. The
+audit trail is not best-effort: a cycle that spent money without being able to
+record that it did so reports itself as failed.
 
 ## Actuators
 

@@ -521,6 +521,47 @@ def test_successful_start_without_current_state_is_still_counted(tmp_path: Path)
     assert "observed 2 StartInstance audit events" in result.stdout
 
 
+def test_successful_start_after_stop_is_not_ignored_without_state_change(tmp_path: Path) -> None:
+    audit = {
+        "data": [
+            {
+                "eventName": "StartInstance",
+                "eventTime": RUNNING_AT,
+                "eventId": "start-1",
+                "responseStatus": 200,
+                "data": {
+                    "resourceId": INSTANCE_ID,
+                    "stateChange": {"current": {"lifecycleState": "RUNNING"}},
+                },
+            },
+            {
+                "eventName": "StopInstance",
+                "eventTime": STOPPED_AT,
+                "eventId": "stop-1",
+                "responseStatus": 200,
+                "data": {
+                    "resourceId": INSTANCE_ID,
+                    "identity": {"principalName": "gpu-reaper"},
+                    "stateChange": {"current": {"lifecycleState": "STOPPED"}},
+                },
+            },
+            {
+                "eventName": "StartInstance",
+                "eventTime": "2026-09-01T00:45:00Z",
+                "eventId": "start-after-stop",
+                "responseStatus": 200,
+                "data": {"resourceId": INSTANCE_ID},
+            },
+        ]
+    }
+    bundle = _custom_bundle(tmp_path, audit=audit)
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 1
+    assert "observed 2 StartInstance audit events" in result.stdout
+
+
 def test_duplicate_start_records_without_event_ids_fail_closed(tmp_path: Path) -> None:
     audit = {
         "data": [
@@ -670,6 +711,17 @@ def test_receipt_generated_at_is_accepted(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_receipt_generated_at_snake_case_is_accepted(tmp_path: Path) -> None:
+    bundle = _custom_bundle(
+        tmp_path,
+        receipts={"items": [{"description": "one", "generated_at": RUNNING_AT}]},
+    )
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_manifest_schema_version_is_validated(tmp_path: Path) -> None:
     bundle = _custom_bundle(tmp_path)
     manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
@@ -694,6 +746,23 @@ def test_manifest_format_is_validated(tmp_path: Path) -> None:
     assert result.returncode == 1
     assert "manifest_schema" in result.stdout
     assert "unsupported format" in result.stdout
+
+
+def test_unsupported_manifest_schema_fails_before_artifact_interpretation(tmp_path: Path) -> None:
+    bundle = _custom_bundle(tmp_path)
+    manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
+    manifest["schema_version"] = 99
+    (bundle / "manifest.json").write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+
+    result = _run_checker(bundle, "--json")
+
+    assert result.returncode == 1
+    verdict = json.loads(result.stdout)
+    assert any(check["name"] == "manifest_schema" and not check["passed"] for check in verdict["checks"])
+    assert all(
+        check["name"] not in {"oci_instance_receipt", "state_history_receipt", "audit_receipt"}
+        for check in verdict["checks"]
+    )
 
 
 def test_audit_event_without_resource_id_cannot_match_instance(tmp_path: Path) -> None:
@@ -1047,6 +1116,47 @@ def test_stop_before_start_cannot_prove_burst(tmp_path: Path) -> None:
     assert "audit transition order" in result.stdout
 
 
+def test_only_reaper_stop_before_start_cannot_prove_burst(tmp_path: Path) -> None:
+    audit = {
+        "data": [
+            {
+                "eventName": "StopInstance",
+                "eventTime": "2026-09-01T00:05:00Z",
+                "eventId": "stop-before-start",
+                "responseStatus": 200,
+                "data": {
+                    "resourceId": INSTANCE_ID,
+                    "identity": {"principalName": "gpu-reaper"},
+                    "stateChange": {
+                        "previous": {"lifecycleState": "RUNNING"},
+                        "current": {"lifecycleState": "STOPPED"},
+                    },
+                },
+            },
+            {
+                "eventName": "StartInstance",
+                "eventTime": RUNNING_AT,
+                "eventId": "start-after-stop",
+                "responseStatus": 200,
+                "data": {
+                    "resourceId": INSTANCE_ID,
+                    "stateChange": {
+                        "previous": {"lifecycleState": "STOPPED"},
+                        "current": {"lifecycleState": "RUNNING"},
+                    },
+                },
+            },
+        ]
+    }
+    bundle = _custom_bundle(tmp_path, audit=audit)
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 1
+    assert "audit transition order" in result.stdout
+    assert "matching reaper StopInstance" in result.stdout
+
+
 def test_raw_state_transition_order_is_checked_before_collapsing_states(tmp_path: Path) -> None:
     history = {
         "observations": [
@@ -1136,38 +1246,111 @@ def test_nested_oci_audit_event_fields_are_supported(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_history_transition_order_uses_observed_time_not_document_order(tmp_path: Path) -> None:
-    history = {
-        "instance_id": INSTANCE_ID,
-        "observations": [
-            {"state": "RUNNING", "timestamp": "2026-09-01T00:20:00Z", "action": "StartInstance"},
-            {"state": "STOPPED", "timestamp": RUNNING_AT, "action": "StopInstance"},
-            {"state": "STOPPED", "timestamp": STOPPED_AT},
-        ],
+def test_canonical_oci_audit_cloudevents_payload_passes(tmp_path: Path) -> None:
+    audit = {
+        "data": [
+            {
+                "eventType": "com.oraclecloud.computeapi.StartInstance.begin",
+                "eventTime": "2026-09-01T00:09:59Z",
+                "eventGroupingId": "canonical-start",
+                "identity": {"principalName": "burst-start"},
+                "data": {
+                    "resourceId": INSTANCE_ID,
+                    "request": {"parameters": {"action": "START"}},
+                    "response": {"status": "200"},
+                },
+            },
+            {
+                "eventType": "com.oraclecloud.computeapi.StartInstance.end",
+                "eventTime": RUNNING_AT,
+                "eventGroupingId": "canonical-start",
+                "identity": {"principalName": "burst-start"},
+                "data": {
+                    "resourceId": INSTANCE_ID,
+                    "request": {"parameters": {"action": "START"}},
+                    "response": {"status": "200"},
+                    "stateChange": {
+                        "previous": {"lifecycleState": "STOPPED"},
+                        "current": {"lifecycleState": "RUNNING"},
+                    },
+                },
+            },
+            {
+                "eventType": "com.oraclecloud.computeapi.StopInstance.begin",
+                "eventTime": "2026-09-01T00:29:59Z",
+                "eventGroupingId": "canonical-stop",
+                "identity": {"principalName": "gpu-reaper"},
+                "data": {
+                    "resourceId": INSTANCE_ID,
+                    "request": {"parameters": {"action": "STOP"}},
+                    "response": {"status": "200"},
+                },
+            },
+            {
+                "eventType": "com.oraclecloud.computeapi.StopInstance.end",
+                "eventTime": STOPPED_AT,
+                "eventGroupingId": "canonical-stop",
+                "identity": {"principalName": "gpu-reaper"},
+                "data": {
+                    "resourceId": INSTANCE_ID,
+                    "request": {"parameters": {"action": "STOP"}},
+                    "response": {"status": "200"},
+                    "stateChange": {
+                        "previous": {"lifecycleState": "RUNNING"},
+                        "current": {"lifecycleState": "STOPPED"},
+                    },
+                },
+            },
+        ]
     }
-    bundle = _custom_bundle(tmp_path, history=history)
+    bundle = _custom_bundle(tmp_path, audit=audit)
 
     result = _run_checker(bundle)
 
-    assert result.returncode == 1
-    assert "state history transition order" in result.stdout
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_history_start_after_the_recorded_stop_cannot_prove_burst(tmp_path: Path) -> None:
-    history = {
-        "instance_id": INSTANCE_ID,
-        "observations": [
-            {"state": "STOPPED", "timestamp": SINCE, "action": "StopInstance"},
-            {"state": "RUNNING", "timestamp": RUNNING_AT, "action": "StartInstance"},
-            {"state": "STOPPED", "timestamp": STOPPED_AT, "action": "StopInstance"},
-        ],
+def test_gpu_evidence_make_target_does_not_duplicate_deploy_shell_suite() -> None:
+    fragment = (ROOT / "mk" / "gpu-evidence.mk").read_text(encoding="utf-8")
+    target = fragment.split("gpu-evidence-tests:", 1)[1].split(".PHONY:", 1)[0]
+
+    assert "scripts/test_gpu_burst_evidence.py" in target
+    assert "scripts/deploy/tests/test_export_gpu_evidence_shell.py" not in target
+
+
+@pytest.mark.parametrize(
+    ("variable", "target", "extra"),
+    [
+        ("GPU_EVIDENCE_BUNDLE", "gpu-evidence-export", ()),
+        ("GPU_EVIDENCE_STATE_SNAPSHOT", "gpu-evidence-export", ()),
+        ("GPU_EVIDENCE_OCI_BIN", "gpu-evidence-export", ()),
+        ("GPU_EVIDENCE_PYTHON", "gpu-evidence-check", ()),
+        ("GPU_EVIDENCE_EXPECTED_STOP_PRINCIPAL", "gpu-evidence-check", ()),
+    ],
+)
+def test_gpu_evidence_make_rejects_shell_metacharacters(variable: str, target: str, extra: tuple[str, ...]) -> None:
+    marker = ROOT / "scripts" / f".gpu-evidence-make-injection-{variable}"
+    if marker.exists():
+        marker.unlink()
+    values = {
+        "GPU_EVIDENCE_INSTANCE_ID": INSTANCE_ID,
+        "GPU_EVIDENCE_COMPARTMENT_ID": "ocid1.compartment.example",
+        "GPU_EVIDENCE_SINCE": SINCE,
+        "GPU_EVIDENCE_UNTIL": UNTIL,
+        "GPU_EVIDENCE_BUNDLE": str(ROOT / ".git" / "gpu-evidence" / "test-bundle"),
+        "GPU_EVIDENCE_STATE_SNAPSHOT": str(ROOT / "snapshot.json"),
+        "GPU_EVIDENCE_OCI_BIN": "oci",
+        "GPU_EVIDENCE_PYTHON": "python3",
+        "GPU_EVIDENCE_EXPECTED_STOP_PRINCIPAL": "gpu-reaper",
     }
-    bundle = _custom_bundle(tmp_path, history=history)
+    values[variable] = f"safe$(touch {marker})"
+    command = ["make", "-n", target, *extra, *[f"{key}={value}" for key, value in values.items()]]
 
-    result = _run_checker(bundle)
+    result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False)
 
-    assert result.returncode == 1
-    assert "state history transition order" in result.stdout
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "unsafe" in result.stderr
+    assert not marker.exists()
 
 
 def _load_checker_module() -> ModuleType:
@@ -1335,47 +1518,40 @@ def test_golden_oci_audit_with_a_second_start_fails_closed(tmp_path: Path) -> No
 
     assert result.returncode == 1
     assert "observed 2 StartInstance audit events" in result.stdout
-    assert "audit transition order" in result.stdout
+    # audit_transition_order still passes: the extra event carries no stateChange, so it is
+    # not an authoritative transition. exactly_one_start_instance is what fails closed.
+    assert "audit_transition_order" in result.stdout
 
 
-def test_gpu_evidence_make_target_does_not_duplicate_deploy_shell_suite() -> None:
-    fragment = (ROOT / "mk" / "gpu-evidence.mk").read_text(encoding="utf-8")
-    target = fragment.split("gpu-evidence-tests:", 1)[1].split(".PHONY:", 1)[0]
-
-    assert "scripts/test_gpu_burst_evidence.py" in target
-    assert "scripts/deploy/tests/test_export_gpu_evidence_shell.py" not in target
-
-
-@pytest.mark.parametrize(
-    ("variable", "target", "extra"),
-    [
-        ("GPU_EVIDENCE_BUNDLE", "gpu-evidence-export", ()),
-        ("GPU_EVIDENCE_STATE_SNAPSHOT", "gpu-evidence-export", ()),
-        ("GPU_EVIDENCE_OCI_BIN", "gpu-evidence-export", ()),
-        ("GPU_EVIDENCE_PYTHON", "gpu-evidence-check", ()),
-        ("GPU_EVIDENCE_EXPECTED_STOP_PRINCIPAL", "gpu-evidence-check", ()),
-    ],
-)
-def test_gpu_evidence_make_rejects_shell_metacharacters(variable: str, target: str, extra: tuple[str, ...]) -> None:
-    marker = ROOT / "scripts" / f".gpu-evidence-make-injection-{variable}"
-    if marker.exists():
-        marker.unlink()
-    values = {
-        "GPU_EVIDENCE_INSTANCE_ID": INSTANCE_ID,
-        "GPU_EVIDENCE_COMPARTMENT_ID": "ocid1.compartment.example",
-        "GPU_EVIDENCE_SINCE": SINCE,
-        "GPU_EVIDENCE_UNTIL": UNTIL,
-        "GPU_EVIDENCE_BUNDLE": str(ROOT / ".git" / "gpu-evidence" / "test-bundle"),
-        "GPU_EVIDENCE_STATE_SNAPSHOT": str(ROOT / "snapshot.json"),
-        "GPU_EVIDENCE_OCI_BIN": "oci",
-        "GPU_EVIDENCE_PYTHON": "python3",
-        "GPU_EVIDENCE_EXPECTED_STOP_PRINCIPAL": "gpu-reaper",
+def test_history_start_after_the_recorded_stop_cannot_prove_burst(tmp_path: Path) -> None:
+    history = {
+        "instance_id": INSTANCE_ID,
+        "observations": [
+            {"state": "STOPPED", "timestamp": SINCE, "action": "StopInstance"},
+            {"state": "RUNNING", "timestamp": RUNNING_AT, "action": "StartInstance"},
+            {"state": "STOPPED", "timestamp": STOPPED_AT, "action": "StopInstance"},
+        ],
     }
-    values[variable] = f"safe$(touch {marker})"
-    command = ["make", "-n", target, *extra, *[f"{key}={value}" for key, value in values.items()]]
+    bundle = _custom_bundle(tmp_path, history=history)
 
-    result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False)
+    result = _run_checker(bundle)
 
-    assert result.returncode != 0, result.stdout + result.stderr
-    assert "unsafe" in result.stderr
-    assert not marker.exists()
+    assert result.returncode == 1
+    assert "state history transition order" in result.stdout
+
+
+def test_history_transition_order_uses_observed_time_not_document_order(tmp_path: Path) -> None:
+    history = {
+        "instance_id": INSTANCE_ID,
+        "observations": [
+            {"state": "RUNNING", "timestamp": "2026-09-01T00:20:00Z", "action": "StartInstance"},
+            {"state": "STOPPED", "timestamp": RUNNING_AT, "action": "StopInstance"},
+            {"state": "STOPPED", "timestamp": STOPPED_AT},
+        ],
+    }
+    bundle = _custom_bundle(tmp_path, history=history)
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 1
+    assert "state history transition order" in result.stdout

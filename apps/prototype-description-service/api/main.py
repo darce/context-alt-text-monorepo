@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import math
 import os
 import subprocess
 from contextlib import asynccontextmanager, suppress
@@ -70,6 +71,22 @@ _LOAD_SNAPSHOT_REFRESH_REARM_SECONDS = 1.0
 
 
 _LOAD_SNAPSHOT_REFRESH_REARM_MAX_SECONDS = 60.0
+
+_DEFAULT_HEALTH_DB_TIMEOUT_SECONDS = 2.0
+
+
+def _resolve_health_db_timeout_seconds() -> float:
+    """Parse the pool probe timeout once while registering health routes."""
+    raw = os.environ.get("ACX_HEALTH_DB_TIMEOUT_SECONDS")
+    if raw is None:
+        return _DEFAULT_HEALTH_DB_TIMEOUT_SECONDS
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"ACX_HEALTH_DB_TIMEOUT_SECONDS must be a positive number (got {raw!r})") from exc
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"ACX_HEALTH_DB_TIMEOUT_SECONDS must be a positive number (got {raw!r})")
+    return value
 
 
 async def _supervise_load_snapshot_refresher(session_factory) -> None:
@@ -393,6 +410,7 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
     commit_sha = _resolve_version_commit_sha() or "unknown"
     # Baked at image build (/app/.image-variant); resolve once like commit_sha.
     image_variant = _resolve_image_variant()
+    health_db_timeout_seconds = _resolve_health_db_timeout_seconds()
     # Hoist full settings parse once; close over cache/model paths (S3CR-06).
     settings = RecognitionSettings()
     description_settings = DescriptionSettings()
@@ -433,17 +451,42 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
             insightface_model_name,
         )
 
-    @app.get("/health", summary="Liveness probe (PR-01)")
-    def liveness() -> dict[str, str]:
-        # Liveness is process-up only: no DB, breaker, or disk I/O. The Caddy
-        # active probe hits this at 10s so it must never block on a dependency.
+    @app.get("/health", summary="Database-backed health probe")
+    async def liveness(
+        response: Response,
+        session: AsyncSession | None = Depends(http_deps.get_observability_session),
+    ) -> dict[str, object]:
+        # Deploy smoke, verify, status, and uptime checks use /health, so the
+        # pool probe is bounded and reflects database availability.
         # commit_sha / image_variant are static identity strings resolved at
         # registration time from bake artifact + env (rg-015).
+        try:
+            database_check = await asyncio.wait_for(
+                check_database(session),
+                timeout=health_db_timeout_seconds,
+            )
+            database_payload = database_check.to_dict()
+            status = HealthStatus.UNHEALTHY if database_check.status is HealthStatus.UNHEALTHY else HealthStatus.OK
+        except TimeoutError:
+            database_check = CheckResult("database", HealthStatus.UNHEALTHY, "probe_timeout")
+            database_payload = {**database_check.to_dict(), "reason": "timeout"}
+            status = HealthStatus.UNHEALTHY
+        except Exception as exc:  # noqa: BLE001 - health must fail closed, never raise
+            database_check = CheckResult(
+                "database",
+                HealthStatus.UNHEALTHY,
+                f"probe_failed: {type(exc).__name__}",
+            )
+            database_payload = {**database_check.to_dict(), "reason": "probe_error"}
+            status = HealthStatus.UNHEALTHY
+
+        response.status_code = 503 if status is HealthStatus.UNHEALTHY else 200
         return {
-            "status": HealthStatus.OK.value,
+            "status": status.value,
             "timestamp": datetime.now(UTC).isoformat(),
             "commit_sha": commit_sha,
             "image_variant": image_variant,
+            "database": database_payload,
         }
 
     @app.get("/ready", summary="Readiness probe (PR-01)")

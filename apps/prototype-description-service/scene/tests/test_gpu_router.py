@@ -111,6 +111,99 @@ async def test_get_status_reports_snapshot_age_and_freshness(
 
 
 @pytest.mark.asyncio
+async def test_get_status_nulls_invalid_additive_timestamps(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    async with _client(monkeypatch, tmp_path) as (client, state_path, _load, _intent):
+        _write_snapshot(state_path, age=30.0)
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+        payload.update(
+            {
+                "intent_expires_at": "not-a-date",
+                "lease_expires_at": "2026-09-06T23:00:00+01:00",
+                "instance_running_since": "2026-09-06T22:00:00",
+            }
+        )
+        state_path.write_text(json.dumps(payload), encoding="utf-8")
+
+        response = await client.get("/scene/gpu/status")
+
+    assert response.status_code == 200
+    gpu_state = response.json()["gpu_state"]
+    assert gpu_state["state"] == "ready"
+    assert gpu_state["intent_expires_at"] is None
+    assert gpu_state["lease_expires_at"] == "2026-09-06T22:00:00Z"
+    assert gpu_state["instance_running_since"] is None
+
+
+@pytest.mark.asyncio
+async def test_get_status_drops_stale_snapshot_fields(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    async with _client(monkeypatch, tmp_path) as (client, state_path, _load, _intent):
+        _write_snapshot(state_path, age=121.0)
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+        payload.update(
+            {
+                "intent": "start",
+                "intent_expires_at": "2026-09-06T23:00:00Z",
+                "intent_status": "pending",
+                "honoured_nonce": "stale-nonce",
+                "lease_expires_at": "2026-09-06T23:00:00Z",
+                "instance_running_since": "2026-09-06T22:00:00Z",
+                "last_transition_reason": "operator",
+            }
+        )
+        state_path.write_text(json.dumps(payload), encoding="utf-8")
+
+        response = await client.get("/scene/gpu/status")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["snapshot_fresh"] is False
+    assert body["gpu_state"] == {
+        "state": "unknown",
+        "instance_id": None,
+        "written_at": None,
+        "reason": None,
+        "since": None,
+        "intent": "auto",
+        "intent_expires_at": None,
+        "intent_status": "none",
+        "honoured_nonce": None,
+        "lease_expires_at": None,
+        "instance_running_since": None,
+        "last_transition_reason": "unknown",
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_status_treats_overflowing_intent_as_absent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    async with _client(monkeypatch, tmp_path) as (client, _state, _load, intent_path):
+        intent_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "action": "start",
+                    "requested_at": "9999-12-31T23:59:59Z",
+                    "expires_at": "9999-12-31T23:59:59Z",
+                    "ttl_seconds": 60,
+                    "requested_by": "operator",
+                    "nonce": "8f8d2f40-39c0-4a91-8e4b-7e4d1e7b7d6a",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        response = await client.get("/scene/gpu/status")
+
+    assert response.status_code == 200
+    assert response.json()["intent"] is None
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("action", ["start", "stop", "auto"])
 async def test_post_intent_writes_file_and_returns_accepted_status(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, action: str

@@ -160,12 +160,26 @@ export const useGuidedLiveDescription = ({
       ? 'no_media'
       : null;
 
-  useEffect(() => {
-    dispatch({ kind: 'faces_decided', decided: blockedReason === null });
-  }, [blockedReason]);
-
   const waiting = isGuidedLiveWaiting(state.status);
   const runId = state.runId;
+
+  // Re-opening a face while a run is in flight invalidates that run. The
+  // reducer stops the screen; the burst it started keeps costing money until
+  // the server hears about it, so fence the generation and cancel the run id.
+  const waitingRef = useRef<{ waiting: boolean; runId: string | null }>({ waiting, runId });
+  waitingRef.current = { waiting, runId };
+
+  useEffect(() => {
+    const decided = blockedReason === null;
+    if (!decided && waitingRef.current.waiting) {
+      generationRef.current += 1;
+      const inFlight = waitingRef.current.runId;
+      if (inFlight !== null) {
+        void client.cancel(inFlight).catch(() => undefined);
+      }
+    }
+    dispatch({ kind: 'faces_decided', decided });
+  }, [blockedReason, client]);
 
   const request = useCallback(() => {
     if (blockedReason !== null || waiting || mediaId === null) {

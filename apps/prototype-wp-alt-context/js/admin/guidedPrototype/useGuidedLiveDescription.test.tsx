@@ -429,4 +429,45 @@ describe('useGuidedLiveDescription', () => {
       expect(result.current.disclosure.confirmedHere).toContain('Katy Perry');
     });
   });
+
+  describe('re-opening a face mid-run', () => {
+    it('stops the wait and cancels the run on the server', async () => {
+      const client = stubClient();
+      const { result, rerender } = renderHook(
+        ({ scenario }: { scenario: GuidedScenario }) =>
+          useGuidedLiveDescription({ scenario, mediaId: MEDIA_ID, client }),
+        { initialProps: { scenario: decidedScenario() } },
+      );
+
+      await press(() => result.current.request());
+      expect(result.current.state.runId).toBe('run-1');
+
+      await act(async () => {
+        rerender({ scenario: halfDecidedScenario() });
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.BLOCKED);
+      expect(result.current.canRequest).toBe(false);
+      // The burst the run started keeps costing money until the server hears
+      // about it, so the screen stopping is not enough on its own.
+      expect(client.cancel).toHaveBeenCalledWith('run-1');
+    });
+
+    it('does not cancel anything when the gate closes with no run in flight', async () => {
+      const client = stubClient();
+      const { rerender } = renderHook(
+        ({ scenario }: { scenario: GuidedScenario }) =>
+          useGuidedLiveDescription({ scenario, mediaId: MEDIA_ID, client }),
+        { initialProps: { scenario: decidedScenario() } },
+      );
+
+      await act(async () => {
+        rerender({ scenario: halfDecidedScenario() });
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      expect(client.cancel).not.toHaveBeenCalled();
+    });
+  });
 });

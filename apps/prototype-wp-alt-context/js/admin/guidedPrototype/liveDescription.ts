@@ -6,6 +6,7 @@
  * state here leaves that draft and the Apply button untouched, so a cold GPU
  * can never block the lesson.
  */
+import { DESCRIBE_RESULT_TIER } from '../api/describeApi';
 import type { DescribeResultTier, DescribeRunPhase, GpuState } from '../api/describeApi';
 import { confirmedPersonKeys, getGuidedPerson } from './state';
 import type { GuidedScenario } from './state';
@@ -147,12 +148,19 @@ const completion = (state: GuidedLiveState, action: Extract<GuidedLiveAction, { 
     return terminal(state, GUIDED_LIVE_STATUS.UNAVAILABLE, { reason: action.reason ?? 'empty_description' });
   }
 
-  const ranWithoutGpu = action.tier === 'provisional_cpu' || (action.tier == null && action.gpu === 'degraded');
+  // gpu_state is an advisory lifecycle snapshot that may be stale by the time
+  // the item lands; describeApi says so outright. It is never proof of what
+  // wrote the sentence. The item's own tier is that proof, so a completed run
+  // that reports no tier is shown as unattributed rather than claimed for the
+  // GPU ([HAI-12] never overstate the machine).
+  if (action.tier === DESCRIBE_RESULT_TIER.FINAL_GPU) {
+    return { ...state, status: GUIDED_LIVE_STATUS.READY, text, reason: null };
+  }
   return {
     ...state,
-    status: ranWithoutGpu ? GUIDED_LIVE_STATUS.DEGRADED : GUIDED_LIVE_STATUS.READY,
+    status: GUIDED_LIVE_STATUS.DEGRADED,
     text,
-    reason: ranWithoutGpu ? 'cpu_fallback' : null,
+    reason: action.tier === DESCRIBE_RESULT_TIER.PROVISIONAL_CPU ? 'cpu_fallback' : 'tier_unreported',
   };
 };
 
@@ -164,9 +172,11 @@ export const guidedLiveReducer = (state: GuidedLiveState, action: GuidedLiveActi
         // was written against an identity answer that no longer holds. Keeping
         // it on screen under blocked copy would show two contradictory truths
         // at once (S1-B-09).
-        return isGuidedLiveWaiting(state.status)
-          ? state
-          : { ...state, status: GUIDED_LIVE_STATUS.BLOCKED, text: null, reason: null };
+        //
+        // A run still in flight is invalidated for the same reason, so the gate
+        // closing stops the wait rather than letting a poll land a sentence
+        // into a blocked panel. The hook cancels the server side.
+        return { ...state, status: GUIDED_LIVE_STATUS.BLOCKED, runId: null, text: null, reason: null };
       }
       return state.status === GUIDED_LIVE_STATUS.BLOCKED ? { ...state, status: GUIDED_LIVE_STATUS.IDLE } : state;
     }

@@ -67,7 +67,11 @@ const statusLine = (state: GuidedLiveState, blockedReason: GuidedLiveBlockedReas
     case GUIDED_LIVE_STATUS.READY:
       return 'Done. The GPU wrote this.';
     case GUIDED_LIVE_STATUS.DEGRADED:
-      return 'Done, but the GPU was not available, so the CPU wrote this. It is rougher than a GPU description.';
+      // Naming the CPU is itself a claim about who wrote the sentence, so it
+      // is only made when the run reported the CPU tier.
+      return state.reason === 'cpu_fallback'
+        ? 'Done, but the GPU was not available, so the CPU wrote this. It is rougher than a GPU description.'
+        : 'Done, but the run did not say whether the GPU wrote this.';
     case GUIDED_LIVE_STATUS.TIMED_OUT:
       return 'Stopped waiting. The run may still finish on its own; nothing was applied here.';
     case GUIDED_LIVE_STATUS.CANCELLED:

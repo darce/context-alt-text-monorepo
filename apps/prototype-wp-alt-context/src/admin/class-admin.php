@@ -403,7 +403,16 @@ class Admin {
 
 		$id = filter_var( $raw, FILTER_VALIDATE_INT );
 
-		return ( false === $id || $id <= 0 ) ? null : $id;
+		if ( false === $id || $id <= 0 ) {
+			return null;
+		}
+
+		// A well-formed id is not a subject. A deleted attachment, a plain post
+		// id, or a stale id copied from another environment all pass the
+		// integer test and would enable a live run that can only fail. Publish
+		// null so the panel shows the blocked line the feature designed for
+		// this exact case.
+		return 'attachment' === get_post_type( $id ) ? $id : null;
 	}
 
 	private function localize_spa_config( string $handle ): void {

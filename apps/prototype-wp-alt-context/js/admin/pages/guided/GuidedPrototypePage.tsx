@@ -354,7 +354,7 @@ export const GuidedPrototypePage = (): React.JSX.Element => {
           onLeaveUnnamed={handleLeaveUnidentified}
         />
 
-        <p className="acx-guided-page__feedback" role="status" aria-live="polite" aria-label="Practice feedback">
+        <p className="acx-guided-page__feedback" data-testid="guided-page-feedback" role="status" aria-live="polite">
           {feedback}
         </p>
 

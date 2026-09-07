@@ -8,6 +8,7 @@ import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol
 
 import numpy as np
@@ -23,6 +24,14 @@ from recognition.domain.suggestion_details import MergeSuggestionDetails, Sugges
 
 if TYPE_CHECKING:
     from recognition.application.settings.clustering import MaturitySettings
+
+
+class MvRefreshOutcome(StrEnum):
+    """Outcome of a concurrent materialized-view refresh attempt."""
+
+    REFRESHED = "refreshed"
+    SKIPPED_HEADROOM = "skipped_headroom"
+    FAILED = "failed"
 
 
 @dataclass(frozen=True)
@@ -83,8 +92,8 @@ class ClusterRepository(Protocol):
         """Refresh the materialized view for cluster centroids."""
         ...
 
-    async def refresh_centroids_view_concurrent(self) -> bool:
-        """Refresh the materialized view concurrently. Returns True on success, False on failure."""
+    async def refresh_centroids_view_concurrent(self) -> MvRefreshOutcome:
+        """Refresh the materialized view concurrently and report its outcome."""
         ...
 
     # Clustering helpers

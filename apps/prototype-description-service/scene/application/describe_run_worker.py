@@ -401,7 +401,7 @@ async def _apply_naming_preview(
     if tenant is None or not image_bytes or naming_inputs is None or naming_inputs is _NAMING_BUDGET_EXCEEDED:
         return with_naming_payload(_naming_provenance_payload(None, status=NamingStatus.NO_FACES))
     faces, policy = naming_inputs
-    if policy is None or not faces:
+    if policy is None:
         return with_naming_payload(_naming_provenance_payload(None, status=NamingStatus.NO_FACES))
     remaining = item_envelope - (time.monotonic() - item_started)
     if remaining <= 0:

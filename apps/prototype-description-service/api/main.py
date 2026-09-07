@@ -19,8 +19,10 @@ from recognition.application.health import (
     check_active_embedding_model,
     check_breaker,
     check_database,
+    check_disk_headroom,
     check_face_pipeline_models,
     check_model_cache,
+    disk_headroom_probe_failure,
 )
 from recognition.application.scan.capability import (
     embedding_runtime_health_payload,
@@ -451,6 +453,18 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
             insightface_model_name,
         )
 
+    async def _disk_headroom_probe() -> CheckResult:
+        """Run the synchronous filesystem probe under the liveness timeout."""
+        try:
+            return await asyncio.wait_for(
+                check_disk_headroom(),
+                timeout=health_db_timeout_seconds,
+            )
+        except TimeoutError:
+            return disk_headroom_probe_failure("probe_timeout")
+        except Exception as exc:  # noqa: BLE001 - health must fail degraded, never raise
+            return disk_headroom_probe_failure(f"probe_failed: {type(exc).__name__}")
+
     @app.get("/health", summary="Database-backed health probe")
     async def liveness(
         response: Response,
@@ -501,6 +515,7 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
             check_breaker(breaker),
             mc_check,
             check_active_embedding_model(),
+            await _disk_headroom_probe(),
         ]
         status = aggregate_status(checks)
         # UNHEALTHY flips the HTTP code so load balancers pull the pod.
@@ -536,7 +551,8 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
         breaker_check = check_breaker(breaker)
         mc_check, cache_dir, model_name = await _model_probe()
         embedding_model_check = check_active_embedding_model(verbose=True)
-        status = aggregate_status([db_check, breaker_check, mc_check, embedding_model_check])
+        disk_headroom_check = await _disk_headroom_probe()
+        status = aggregate_status([db_check, breaker_check, mc_check, embedding_model_check, disk_headroom_check])
         profile = _current_profile()
         if profile == "face_pipeline":
             bundle_files = sum(
@@ -575,6 +591,7 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
             },
             "embedding_runtime": embedding_runtime,
             "description_adapter": description_adapter,
+            "disk_headroom": disk_headroom_check.payload or {},
         }
 
 

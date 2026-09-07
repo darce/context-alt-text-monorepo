@@ -200,6 +200,161 @@ def _build_ready_app(
     return app
 
 
+@pytest.fixture(autouse=True)
+def _clear_disk_headroom_settings_cache():
+    """Keep cached headroom settings isolated from env-mutating probe tests."""
+    from shared.disk_headroom import get_disk_headroom_settings
+
+    get_disk_headroom_settings.cache_clear()
+    yield
+    get_disk_headroom_settings.cache_clear()
+
+
+def _stub_disk_headroom_probe(monkeypatch, *, free_bytes: int, total_bytes: int, status, reason: str):
+    from shared.disk_headroom import DiskHeadroom
+
+    def _probe(path: str) -> DiskHeadroom:
+        return DiskHeadroom(
+            probe_path=path,
+            free_bytes=free_bytes,
+            total_bytes=total_bytes,
+            status=status,
+            reason=reason,
+        )
+
+    # The alias is added by the readiness implementation; allowing this
+    # pre-implementation keeps the test's RED result about the missing check.
+    monkeypatch.setattr("recognition.application.health.probe_disk_headroom", _probe, raising=False)
+
+
+def test_ready_disk_headroom_below_threshold_is_degraded_without_503(monkeypatch, tmp_path) -> None:
+    """Disk pressure degrades readiness but never removes the pod from service."""
+    from shared.disk_headroom import get_disk_headroom_settings
+    from shared.health import HealthStatus
+
+    monkeypatch.setenv("ACX_PG_HEADROOM_PROBE_PATH", str(tmp_path))
+    monkeypatch.setenv("ACX_PG_HEADROOM_MIN_BYTES", "100")
+    get_disk_headroom_settings.cache_clear()
+    _stub_disk_headroom_probe(
+        monkeypatch,
+        free_bytes=99,
+        total_bytes=1000,
+        status=HealthStatus.UNHEALTHY,
+        reason="free bytes below minimum headroom (100)",
+    )
+
+    bundle = tmp_path / "buffalo_l"
+    bundle.mkdir()
+    (bundle / "det_10g.onnx").write_bytes(b"stub")
+    app = _build_ready_app(model_cache_dir=tmp_path)
+
+    resp = TestClient(app).get("/ready")
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == HealthStatus.DEGRADED.value
+    disk = next(check for check in body["checks"] if check["name"] == "disk_headroom")
+    assert disk["status"] == HealthStatus.DEGRADED.value
+    assert "free bytes below minimum headroom" in disk["detail"]
+    assert "free_bytes=99" in disk["detail"]
+    assert "min_bytes=100" in disk["detail"]
+    assert f"probe_path={tmp_path}" in disk["detail"]
+
+
+def test_ready_disk_headroom_probe_error_is_degraded_without_503(monkeypatch, tmp_path) -> None:
+    """A headroom probe error is diagnostic degradation, not liveness failure."""
+    from shared.disk_headroom import get_disk_headroom_settings
+    from shared.health import HealthStatus
+
+    monkeypatch.setenv("ACX_PG_HEADROOM_PROBE_PATH", str(tmp_path / "missing"))
+    get_disk_headroom_settings.cache_clear()
+    _stub_disk_headroom_probe(
+        monkeypatch,
+        free_bytes=0,
+        total_bytes=0,
+        status=HealthStatus.UNHEALTHY,
+        reason="unable to probe disk headroom: permission denied",
+    )
+
+    bundle = tmp_path / "buffalo_l"
+    bundle.mkdir()
+    (bundle / "det_10g.onnx").write_bytes(b"stub")
+    app = _build_ready_app(model_cache_dir=tmp_path)
+
+    resp = TestClient(app).get("/ready")
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == HealthStatus.DEGRADED.value
+    disk = next(check for check in body["checks"] if check["name"] == "disk_headroom")
+    assert disk["status"] == HealthStatus.DEGRADED.value
+    assert "permission denied" in disk["detail"]
+    assert "free_bytes=0" in disk["detail"]
+    assert f"probe_path={tmp_path / 'missing'}" in disk["detail"]
+
+
+def test_ready_disk_headroom_disabled_is_explicitly_ok(monkeypatch, tmp_path) -> None:
+    """Unset probe path disables the optional guard without silent success."""
+    from shared.disk_headroom import get_disk_headroom_settings
+    from shared.health import HealthStatus
+
+    monkeypatch.delenv("ACX_PG_HEADROOM_PROBE_PATH", raising=False)
+    get_disk_headroom_settings.cache_clear()
+
+    bundle = tmp_path / "buffalo_l"
+    bundle.mkdir()
+    (bundle / "det_10g.onnx").write_bytes(b"stub")
+    app = _build_ready_app(model_cache_dir=tmp_path)
+
+    resp = TestClient(app).get("/ready")
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == HealthStatus.OK.value
+    disk = next(check for check in body["checks"] if check["name"] == "disk_headroom")
+    assert disk["status"] == HealthStatus.OK.value
+    assert disk["detail"] == "disabled: ACX_PG_HEADROOM_PROBE_PATH unset"
+
+
+def test_health_detailed_includes_disk_headroom_payload(monkeypatch, tmp_path) -> None:
+    """The operator payload exposes every headroom measurement and reason."""
+    from recognition.interface_adapters.http.deps.auth import AuthContext, require_auth
+    from shared.disk_headroom import get_disk_headroom_settings
+    from shared.health import HealthStatus
+
+    monkeypatch.setenv("ACX_PG_HEADROOM_PROBE_PATH", str(tmp_path))
+    monkeypatch.setenv("ACX_PG_HEADROOM_MIN_BYTES", "100")
+    get_disk_headroom_settings.cache_clear()
+    _stub_disk_headroom_probe(
+        monkeypatch,
+        free_bytes=99,
+        total_bytes=1000,
+        status=HealthStatus.UNHEALTHY,
+        reason="free bytes below minimum headroom (100)",
+    )
+
+    bundle = tmp_path / "buffalo_l"
+    bundle.mkdir()
+    (bundle / "det_10g.onnx").write_bytes(b"stub")
+    app = _build_ready_app(model_cache_dir=tmp_path)
+
+    async def _auth_ok() -> AuthContext:
+        return AuthContext(token=None, tenant_claim=None, enabled=False)
+
+    app.dependency_overrides[require_auth] = _auth_ok
+    body = TestClient(app).get("/health/detailed").json()
+
+    assert body["status"] == HealthStatus.DEGRADED.value
+    assert body["disk_headroom"] == {
+        "probe_path": str(tmp_path),
+        "free_bytes": 99,
+        "total_bytes": 1000,
+        "min_bytes": 100,
+        "status": HealthStatus.DEGRADED.value,
+        "reason": "free bytes below minimum headroom (100)",
+    }
+
+
 def test_ready_healthy_when_all_deps_up(tmp_path) -> None:
     """/ready returns 200 with status=ok and per-dep check entries when DB,
     breaker, and model-cache bundle are all healthy.
@@ -220,7 +375,7 @@ def test_ready_healthy_when_all_deps_up(tmp_path) -> None:
     assert body["status"] == HealthStatus.OK.value
     names = {check["name"] for check in body["checks"]}
     # FIR23-01: embedding_model readiness is fail-closed with the other deps.
-    assert names == {"database", "breaker", "model_cache", "embedding_model"}
+    assert names == {"database", "breaker", "model_cache", "embedding_model", "disk_headroom"}
     for check in body["checks"]:
         assert check["status"] == HealthStatus.OK.value, check
 

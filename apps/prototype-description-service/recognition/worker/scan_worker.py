@@ -39,6 +39,7 @@ from recognition.application.scan.queue_repository import ScanQueueItem
 from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.config import get_settings as get_recognition_settings
 from recognition.domain.job import CLUSTERING_JOB_TYPES, JobStatus
+from recognition.domain.repositories import MvRefreshOutcome
 from recognition.infrastructure.embeddings.runtime_factory import build_embedding_runtime
 from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
 from recognition.observability.face_pipeline_metrics import FacePipelineMetrics
@@ -667,8 +668,15 @@ class ScanWorker:
             from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
 
             cluster_repo = SqlAlchemyClusterRepository(session)
-            succeeded = await cluster_repo.refresh_centroids_view_concurrent()
-            if succeeded:
+            outcome = await cluster_repo.refresh_centroids_view_concurrent()
+            if outcome is MvRefreshOutcome.SKIPPED_HEADROOM:
+                logger.warning(
+                    "[worker] Skipped centroids MV refresh due to insufficient disk headroom "
+                    "(free/min bytes guard); retrying on the next cycle"
+                )
+            elif outcome is MvRefreshOutcome.FAILED:
+                logger.warning("[worker] Centroids MV refresh failed; retrying on the next cycle")
+            elif outcome is MvRefreshOutcome.REFRESHED:
                 await session.commit()
                 # Stamp completion time AFTER commit so the interval is measured
                 # from the actual end of the refresh, not the start.  If commit

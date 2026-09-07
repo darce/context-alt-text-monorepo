@@ -1789,6 +1789,7 @@ def _run_start_cycle(
             ):
                 msg = f"{instance_id}: START outcome unknown after {type(exc).__name__}: {exc}"
                 errors.append(msg)
+                start_failed.append(instance_id)
                 continue
             actuated.append((action, instance_id))
         except Exception as exc:  # noqa: BLE001 - isolate per-instance (rg-007)

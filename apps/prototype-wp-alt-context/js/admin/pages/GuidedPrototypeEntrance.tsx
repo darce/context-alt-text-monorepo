@@ -21,7 +21,7 @@ export const GuidedPrototypeEntrance = ({ onBegin }: GuidedPrototypeEntranceProp
 
     <div className="acx-guided-entrance__status">
       <strong>Current build</strong>
-      <span>This demo uses one saved run. It does not run recognition live.</span>
+      <span>This demo uses one saved face-match run. Descriptions can run live on the real GPU.</span>
     </div>
 
     <button type="button" className="acx-button acx-button--primary" onClick={onBegin}>

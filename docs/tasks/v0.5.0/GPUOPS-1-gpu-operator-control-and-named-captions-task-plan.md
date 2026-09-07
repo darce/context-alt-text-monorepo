@@ -92,10 +92,40 @@ Service tenant flag `naming_agreement_enabled` is the only gate. New service rou
 
 | group | defects | resolution owner |
 | --- | --- | --- |
-| D1 live unit drift | OPSGPU-H-01, H-02, H-03, R3-01 | operator (reinstall units, redeploy compose); DAG node N12; precondition for live smoke only |
+| D1 live unit drift | OPSGPU-H-01, H-02, H-03, R3-01 | operator (reinstall units, redeploy compose); DAG node N12; task-level pre-merge gate and live-smoke precondition |
 | D2 reaper dual owner | OPSGPU-R3-02 | lane L2 |
 | D3 no operator control | HAI-04 open question | lanes L1, L2, L3, L4, L5 |
 | D4 naming gaps | no toggle authority, GPU tier untested, no provenance UI | lanes L6, L7, L8 |
+
+## Live-safety gate
+
+The D1 live-safety findings (OPSGPU-H-01, OPSGPU-H-02, OPSGPU-H-03, and
+OPSGPU-R3-01) are pre-merge blockers for the whole GPUOPS-1 task, even though
+their operational handoff is recorded on MAINT-reap-20260906. The operator must
+confirm the corrected units and production compose on acx-backend before the
+task can pass its final gate; a green implementation lane does not waive D1.
+The enforced close check runs against task ref `GPUOPS-1`, never against a
+sub-lane, after that operator precondition is recorded.
+
+### Controlled-stock observation ([OBS-12])
+
+The controlled stock is **an A10 is powered on and billing**. The operator
+surface for it is `GET /scene/gpu/status`: `gpu_state.state` is accompanied by
+`snapshot_fresh`, `snapshot_age_seconds`, `gpu_state.instance_running_since`,
+and `gpu_state.lease_expires_at`; a missing or older-than-120-second snapshot
+must be enforced as `gpu_state.state = "unknown"` and must leave Start
+unavailable, rather than being presented as a fresh last-known value. The
+live smoke correlates that status with the pinned OCI Compute
+`GET /20160918/instances/{instanceId}` fields `shape` and `lifecycle-state`,
+then records positive A10 usage from the OCI Usage/Cost Analysis ledger.
+
+The [OBS-12] alert fires when the pinned instance reports
+`shape = VM.GPU.A10.1` and `lifecycle-state = RUNNING` (the compute is
+billable) while the status snapshot is missing/stale or its
+`lease_expires_at` has passed. The alert remains active until the instance is
+no longer `RUNNING` and the billing observation has ceased; an operator may
+acknowledge an intentional, unexpired `start` intent but may not suppress the
+underlying stock observation.
 
 ## Lanes (one wave, width 8)
 
@@ -146,6 +176,7 @@ Shared-file rule: no two lanes own the same file. `api/main.py` belongs to L3 on
 - [ ] C1–C7 frozen and briefs written
 - [ ] L1–L8 dispatched (codex-remote gpt-5.6-luna max, detached, one process per lane)
 - [ ] each lane: tests green, review-slice pass, close_check(enforce) pass, merged to `feature/gpuops-1`
+- [ ] operator precondition D1 confirmed done on acx-backend (required before the task-level close and merge)
+- [ ] task-level `handoff_close_check(enforce=True)` passes for `GPUOPS-1`, not a sub-lane
 - [ ] branch review-slice, merge `main`
-- [ ] operator precondition D1 confirmed done
 - [ ] live smoke recorded as `test_result` on merge SHA

@@ -888,10 +888,17 @@
 }
 
 .acx-guided-live__elapsed {
-  margin: 0 0 var(--acx-space-16);
+  margin: 0 0 var(--acx-space-4);
   color: var(--acx-color-text-muted);
   font-size: var(--acx-text-sm);
   font-variant-numeric: tabular-nums;
+}
+
+/** Whose budget the elapsed line counts against: the server's, or only ours. */
+.acx-guided-live__budget {
+  margin: 0 0 var(--acx-space-16);
+  color: var(--acx-color-text-muted);
+  font-size: var(--acx-text-sm);
 }
 
 .acx-guided-live__actions {

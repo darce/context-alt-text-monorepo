@@ -182,7 +182,36 @@ describe('GuidedLiveDescriptionPanel', () => {
       await press(runButton());
       await settle(65_000);
 
-      expect(screen.getByTestId('guided-live-elapsed')).toHaveTextContent('1:05 of up to 8:30');
+      // 11:30 is warm-up (8:30) plus generation (3:00) -- the same total the WP
+      // proxy discloses in public_deadline_seconds(). The panel used to show
+      // 8:30, the warm-up leg alone, and stop before the run could finish.
+      expect(screen.getByTestId('guided-live-elapsed')).toHaveTextContent('1:05 of up to 11:30');
+    });
+
+    it('says whose budget the ceiling is when the server disclosed none', async () => {
+      mount(stubClient());
+
+      await press(runButton());
+      await settle(1000);
+
+      expect(screen.getByTestId('guided-live-budget')).toHaveTextContent(/no server budget disclosed/i);
+    });
+
+    it('credits the server for the ceiling once it has disclosed one', async () => {
+      const client = stubClient({
+        submit: vi.fn<GuidedLiveDescriptionClient['submit']>(() =>
+          Promise.resolve({ ...runResponse({ gpu_state: 'ready' }), deadline_seconds: 120 }),
+        ),
+        poll: vi.fn<GuidedLiveDescriptionClient['poll']>(() =>
+          Promise.resolve(runResponse({ phase: 'warming', gpu_state: 'ready' })),
+        ),
+      });
+      mount(client);
+
+      await press(runButton());
+      await settle(1000);
+
+      expect(screen.getByTestId('guided-live-budget')).toHaveTextContent(/the service disclosed/i);
     });
 
     it('offers a way to stop and takes it', async () => {
@@ -205,6 +234,60 @@ describe('GuidedLiveDescriptionPanel', () => {
 
       expect(screen.getByTestId('guided-live-status')).toHaveTextContent(/stopped waiting/i);
       expect(screen.getByTestId('guided-live-status')).toHaveTextContent(/nothing was applied/i);
+    });
+  });
+
+  describe('when the panel stops waiting on a run that may still be running', () => {
+    const timeOut = async (client: StubClient) => {
+      mount(client);
+      await press(runButton());
+      await settle(GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000 + 2000);
+    };
+
+    // INT-08: a wait longer than a couple of seconds that is interruptible must
+    // offer a side-effect-free way out. Before this, the only exit from a
+    // timed-out panel was a full restart that discarded a run the backend was
+    // still completing and paid for a second burst.
+    it('offers keeping the wait as well as starting over', async () => {
+      await timeOut(stubClient());
+
+      expect(screen.getByRole('button', { name: /keep waiting/i })).toBeEnabled();
+      expect(screen.getByRole('button', { name: /start over/i })).toBeEnabled();
+    });
+
+    it('keeps waiting on the same run rather than submitting a second one', async () => {
+      const client = stubClient();
+      await timeOut(client);
+
+      await press(screen.getByRole('button', { name: /keep waiting/i }));
+      await settle(2000);
+
+      expect(client.submit).toHaveBeenCalledTimes(1);
+      expect(client.cancel).not.toHaveBeenCalled();
+      expect(screen.getByTestId('guided-live-status')).not.toHaveTextContent(/stopped waiting/i);
+      expect(screen.getByTestId('guided-live-elapsed')).toBeInTheDocument();
+    });
+
+    it('names both ways out in the live region, not only in the buttons', async () => {
+      await timeOut(stubClient());
+
+      const region = screen.getByRole('status', { name: 'Live run status' });
+      expect(region).toHaveTextContent(/keep waiting, or start over/i);
+      expect(region).toHaveTextContent(/the run may still finish on its own/i);
+    });
+
+    it('does not offer to keep waiting when the run itself failed', async () => {
+      const client = stubClient({
+        poll: vi.fn<GuidedLiveDescriptionClient['poll']>(() =>
+          Promise.resolve(runResponse({ status: 'failed', phase: 'failed' })),
+        ),
+      });
+      mount(client);
+      await press(runButton());
+      await settle(1000);
+
+      expect(screen.queryByRole('button', { name: /keep waiting/i })).toBeNull();
+      expect(runButton()).toBeEnabled();
     });
   });
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import fcntl
 import json
 import logging
@@ -9,6 +10,7 @@ import math
 import os
 import tempfile
 import threading
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -21,12 +23,17 @@ from scene.application.describe_load import resolve_load_path
 _logger = logging.getLogger(__name__)
 
 GPU_INTENT_PATH_ENV = "ACX_GPU_INTENT_PATH"
+GPU_INTENT_DURABLE_PATH_ENV = "ACX_GPU_INTENT_DURABLE_PATH"
 DEFAULT_GPU_INTENT_FILENAME = "gpu-intent.json"
 DEFAULT_INTENT_TTL_SECONDS = 1800
 MIN_INTENT_TTL_SECONDS = 60
 MAX_INTENT_TTL_SECONDS = 7200
 INTENT_SCHEMA_VERSION = 1
 INTENT_FILE_MODE = 0o660
+DEFAULT_GPU_INTENT_DURABLE_DIR = Path("/var/lib/acx-gpu/intents")
+RUNTIME_GPU_INTENT_DIR = Path("/run/acx-write")
+GPU_INTENT_LOCK_TIMEOUT_SECONDS = 5.0
+GPU_INTENT_LOCK_RETRY_SECONDS = 0.01
 
 _GPU_INTENT_WRITE_LOCK = threading.Lock()
 
@@ -44,6 +51,7 @@ class OperatorIntent:
     """Validated operator intent as represented in the C1 file."""
 
     schema_version: int
+    sequence: int
     action: IntentAction
     requested_at: datetime
     expires_at: datetime
@@ -61,6 +69,7 @@ class OperatorIntent:
             "ttl_seconds": self.ttl_seconds,
             "requested_by": self.requested_by,
             "nonce": self.nonce,
+            "sequence": self.sequence,
         }
 
 
@@ -72,6 +81,28 @@ def resolve_gpu_intent_path() -> str:
     return str(Path(resolve_load_path()).with_name(DEFAULT_GPU_INTENT_FILENAME))
 
 
+def resolve_gpu_intent_durable_path(path: str | Path) -> Path:
+    """Resolve the durable publication path corresponding to ``path``.
+
+    The API normally publishes into the per-environment ``/run/acx-write``
+    mount.  That mount is a runtime cache, so mirror those publications into
+    the lifecycle state directory before reporting success.  A path that is
+    already outside the runtime mount is treated as its own durable target;
+    this keeps local/test deployments and explicitly provisioned persistent
+    paths useful without a second copy.
+    """
+    configured_path = os.environ.get(GPU_INTENT_DURABLE_PATH_ENV)
+    if configured_path is not None and configured_path.strip():
+        return Path(configured_path)
+
+    target = Path(path)
+    try:
+        relative = target.relative_to(RUNTIME_GPU_INTENT_DIR)
+    except ValueError:
+        return target
+    return DEFAULT_GPU_INTENT_DURABLE_DIR / relative
+
+
 def write_gpu_intent(
     path: str | Path,
     *,
@@ -79,6 +110,7 @@ def write_gpu_intent(
     ttl_seconds: int | None = None,
     requested_by: str | None = None,
     now: datetime | int | float | None = None,
+    durable_path: str | Path | None = None,
 ) -> OperatorIntent:
     """Publish one operator intent under the lifecycle fence.
 
@@ -88,67 +120,173 @@ def write_gpu_intent(
     document.
     """
     target = Path(path)
+    durable_target = Path(durable_path) if durable_path is not None else resolve_gpu_intent_durable_path(target)
     requested_at = _coerce_datetime(now)
     ttl = _clamp_ttl(ttl_seconds)
-    intent = OperatorIntent(
-        schema_version=INTENT_SCHEMA_VERSION,
-        action=_coerce_action(action),
-        requested_at=requested_at,
-        expires_at=requested_at + timedelta(seconds=ttl),
-        ttl_seconds=ttl,
-        requested_by=_coerce_requested_by(requested_by),
-        nonce=str(uuid.uuid4()),
-    )
-    payload = json.dumps(intent.to_payload(), separators=(",", ":"))
+    coerced_action = _coerce_action(action)
+    coerced_requested_by = _coerce_requested_by(requested_by)
     target.parent.mkdir(parents=True, exist_ok=True)
 
     with _GPU_INTENT_WRITE_LOCK:
         lock_fd = _open_gpu_intent_fence(target)
-        fd = -1
-        tmp: Path | None = None
+        locked = False
         try:
-            fcntl.flock(lock_fd, fcntl.LOCK_EX)
-            fd, tmp_name = tempfile.mkstemp(
-                dir=target.parent,
-                prefix=f".{target.name}.",
-                suffix=".tmp",
-                text=True,
+            _acquire_gpu_intent_lock(lock_fd, target)
+            locked = True
+            sequence = _allocate_sequence(target, durable_target)
+            intent = OperatorIntent(
+                schema_version=INTENT_SCHEMA_VERSION,
+                sequence=sequence,
+                action=coerced_action,
+                requested_at=requested_at,
+                expires_at=requested_at + timedelta(seconds=ttl),
+                ttl_seconds=ttl,
+                requested_by=coerced_requested_by,
+                nonce=str(uuid.uuid4()),
             )
-            tmp = Path(tmp_name)
-            with os.fdopen(fd, "w") as tmp_file:
-                fd = -1
-                tmp_file.write(payload)
-                os.fchmod(tmp_file.fileno(), INTENT_FILE_MODE)
-            os.replace(tmp, target)
-            tmp = None
+            payload = json.dumps(intent.to_payload(), separators=(",", ":"))
+            # Write the durable copy first.  The runtime publication is a
+            # cache used by the lifecycle path watcher; the durable copy is
+            # the write-ahead record that makes an accepted intent survive a
+            # restart or power loss.
+            _publish_atomic_json(durable_target, payload)
+            if durable_target != target:
+                _publish_atomic_json(target, payload)
         finally:
-            if fd >= 0:
-                os.close(fd)
-            if tmp is not None:
-                tmp.unlink(missing_ok=True)
-            try:
-                fcntl.flock(lock_fd, fcntl.LOCK_UN)
-            finally:
+            if locked:
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(lock_fd)
+            else:
                 os.close(lock_fd)
     return intent
+
+
+def _acquire_gpu_intent_lock(lock_fd: int, target: Path) -> None:
+    """Acquire the lifecycle fence without blocking forever in ``flock``."""
+    deadline = time.monotonic() + _gpu_intent_lock_timeout_seconds()
+    while True:
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except OSError as exc:
+            if exc.errno not in (errno.EACCES, errno.EAGAIN):
+                raise
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(f"timed out waiting for GPU intent lock: {target}") from None
+            time.sleep(min(GPU_INTENT_LOCK_RETRY_SECONDS, remaining))
+
+
+def _gpu_intent_lock_timeout_seconds() -> float:
+    raw = os.environ.get("ACX_GPU_INTENT_LOCK_TIMEOUT_SECONDS")
+    if raw is None:
+        return GPU_INTENT_LOCK_TIMEOUT_SECONDS
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        _logger.warning(
+            "invalid ACX_GPU_INTENT_LOCK_TIMEOUT_SECONDS=%r; using %.3fs", raw, GPU_INTENT_LOCK_TIMEOUT_SECONDS
+        )
+        return GPU_INTENT_LOCK_TIMEOUT_SECONDS
+    if not math.isfinite(value) or value < 0:
+        _logger.warning(
+            "invalid ACX_GPU_INTENT_LOCK_TIMEOUT_SECONDS=%r; using %.3fs", raw, GPU_INTENT_LOCK_TIMEOUT_SECONDS
+        )
+        return GPU_INTENT_LOCK_TIMEOUT_SECONDS
+    return min(value, GPU_INTENT_LOCK_TIMEOUT_SECONDS)
+
+
+def _allocate_sequence(target: Path, durable_target: Path) -> int:
+    """Allocate the next sequence from the highest persisted publication."""
+    highest = 0
+    candidates = (target,) if target == durable_target else (target, durable_target)
+    for candidate in candidates:
+        highest = max(highest, _read_persisted_sequence(candidate))
+    return highest + 1
+
+
+def _read_persisted_sequence(path: Path) -> int:
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return 0
+    except (OSError, UnicodeError) as exc:
+        raise OSError(f"could not read persisted GPU intent sequence from {path}: {exc}") from exc
+    try:
+        payload = json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        raise OSError(f"could not allocate GPU intent sequence from {path}: invalid JSON") from exc
+    if not isinstance(payload, dict):
+        raise OSError(f"could not allocate GPU intent sequence from {path}: payload is not an object")
+    sequence = payload.get("sequence")
+    if sequence is None:
+        # A pre-GPUOPS publication has no sequence.  It cannot be used as
+        # authority, but replacing it with the first sequenced publication is
+        # safe because the lifecycle reader already treats it as malformed.
+        return 0
+    if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 1:
+        raise OSError(f"could not allocate GPU intent sequence from {path}: invalid sequence")
+    return sequence
+
+
+def _publish_atomic_json(path: Path, payload: str) -> None:
+    """Publish JSON with file and containing-directory durability barriers."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary: Path | None = None
+    fd = -1
+    try:
+        fd, temporary_name = tempfile.mkstemp(
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            text=True,
+        )
+        temporary = Path(temporary_name)
+        with os.fdopen(fd, "w", encoding="utf-8") as temporary_file:
+            fd = -1
+            temporary_file.write(payload)
+            temporary_file.flush()
+            os.fchmod(temporary_file.fileno(), INTENT_FILE_MODE)
+            os.fsync(temporary_file.fileno())
+        os.replace(temporary, path)
+        temporary = None
+        directory_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def read_gpu_intent(path: str | Path) -> OperatorIntent | None:
     """Read and validate an intent, returning ``None`` on malformed input."""
     target = Path(path)
-    try:
-        raw = target.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return None
-    except (OSError, UnicodeDecodeError) as exc:
-        _logger.warning("malformed GPU intent path=%s: %s", target, exc)
-        return None
-    try:
-        payload = json.loads(raw)
-        return _intent_from_payload(payload)
-    except (KeyError, TypeError, ValueError, OverflowError) as exc:
-        _logger.warning("malformed GPU intent path=%s: %s", target, exc)
-        return None
+    durable_target = resolve_gpu_intent_durable_path(target)
+    candidates = (target,) if target == durable_target else (target, durable_target)
+    last_error: Exception | None = None
+    for candidate in candidates:
+        try:
+            raw = candidate.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            continue
+        except (OSError, UnicodeDecodeError) as exc:
+            last_error = exc
+            continue
+        try:
+            payload = json.loads(raw)
+            return _intent_from_payload(payload)
+        except (KeyError, TypeError, ValueError, OverflowError) as exc:
+            last_error = exc
+            continue
+    if last_error is not None:
+        _logger.warning("malformed GPU intent path=%s: %s", target, last_error)
+    return None
 
 
 def _open_gpu_intent_fence(target: Path) -> int:
@@ -234,6 +372,9 @@ def _intent_from_payload(payload: Any) -> OperatorIntent:
     ):
         raise ValueError(f"schema_version must be {INTENT_SCHEMA_VERSION}")
     action = _coerce_action(payload["action"])
+    sequence = payload["sequence"]
+    if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 1:
+        raise ValueError("sequence must be an integer >= 1")
     requested_at = _parse_timestamp(payload["requested_at"], field_name="requested_at")
     expires_at = _parse_timestamp(payload["expires_at"], field_name="expires_at")
     ttl_seconds = payload["ttl_seconds"]
@@ -257,6 +398,7 @@ def _intent_from_payload(payload: Any) -> OperatorIntent:
         raise ValueError("nonce must be a UUID4 string")
     return OperatorIntent(
         schema_version=schema_version,
+        sequence=sequence,
         action=action,
         requested_at=requested_at,
         expires_at=expires_at,
@@ -267,8 +409,12 @@ def _intent_from_payload(payload: Any) -> OperatorIntent:
 
 
 __all__ = [
+    "DEFAULT_GPU_INTENT_DURABLE_DIR",
     "DEFAULT_GPU_INTENT_FILENAME",
     "DEFAULT_INTENT_TTL_SECONDS",
+    "GPU_INTENT_DURABLE_PATH_ENV",
+    "GPU_INTENT_LOCK_RETRY_SECONDS",
+    "GPU_INTENT_LOCK_TIMEOUT_SECONDS",
     "GPU_INTENT_PATH_ENV",
     "INTENT_FILE_MODE",
     "IntentAction",
@@ -276,6 +422,7 @@ __all__ = [
     "MIN_INTENT_TTL_SECONDS",
     "OperatorIntent",
     "read_gpu_intent",
+    "resolve_gpu_intent_durable_path",
     "resolve_gpu_intent_path",
     "write_gpu_intent",
 ]

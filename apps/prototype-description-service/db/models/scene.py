@@ -18,6 +18,7 @@ from db.models.base_imports import (
     Base,
     Boolean,
     CheckConstraint,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -105,6 +106,15 @@ class DescribeRun(Base):
     recognition_enabled: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("true"), default=True
     )
+    # GUIDEDFIX-2 [RES-01]/[COST-10]: caller-supplied retry token. The unique
+    # index below is the dedupe mechanism — a lost 202 plus a blind retry must
+    # collide here rather than spend a second paid run. NULL keys stay distinct,
+    # so submits without a token keep today's non-deduped behaviour. The key
+    # lives on the run row, so it expires with the run's retention (no second TTL).
+    idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # GUIDEDFIX-2 [RES-02]: generation budget in force at accept, snapshotted so
+    # every poll discloses one stable bound instead of a re-read of settings.
+    deadline_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
@@ -127,6 +137,10 @@ class DescribeRun(Base):
             name="valid_describe_run_phase",
         ),
         CheckConstraint("run_kind IN ('bulk', 'single')", name="valid_describe_run_kind"),
+        # GUIDEDFIX-2: the reservation. Two concurrent retries of one key must
+        # produce one run — the constraint violation IS the dedupe signal, so no
+        # caller may rely on a check-then-insert window.
+        UniqueConstraint("tenant_id", "idempotency_key", name="uq_image_description_runs_idempotency_key"),
         Index("idx_image_description_runs_tenant", "tenant_id"),
         Index(
             "idx_image_description_runs_active",

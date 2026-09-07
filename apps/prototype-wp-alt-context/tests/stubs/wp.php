@@ -775,14 +775,19 @@ if (!function_exists('get_post_type')) {
             return (string) $post->post_type;
         }
 
-        $postId = 0;
-        if (is_numeric($post)) {
-            $postId = (int) $post;
-        } elseif ($post === null && isset($GLOBALS['post']) && is_object($GLOBALS['post'])) {
+        // WordPress resolves an *empty* $post -- null, false, 0, '' -- from the
+        // global post before it ever reads the argument as an id, and it does
+        // so first. Matching only null made get_post_type(false) answer false
+        // here while real WP can answer 'attachment' on any admin screen that
+        // has a global post, which hid whether callers' own
+        // false/non-positive guards were load-bearing at all.
+        if (empty($post) && isset($GLOBALS['post']) && is_object($GLOBALS['post'])) {
             return isset($GLOBALS['post']->post_type)
                 ? (string) $GLOBALS['post']->post_type
                 : false;
         }
+
+        $postId = is_numeric($post) ? (int) $post : 0;
 
         if ($postId <= 0) {
             return false;

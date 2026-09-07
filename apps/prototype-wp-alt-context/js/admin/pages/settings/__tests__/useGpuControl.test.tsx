@@ -3,11 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  GPU_INTENT_ACTION,
-  GPU_INTENT_STATUS,
-  type GpuStatusResponse,
-} from '../../../api/gpuApi';
+import { GPU_INTENT_ACTION, GPU_INTENT_STATUS, type GpuStatusResponse } from '../../../api/gpuApi';
 import * as gpuApi from '../../../api/gpuApi';
 import {
   GPU_WARMUP_POLL_INTERVAL_MS,
@@ -94,6 +90,26 @@ describe('useGpuControl', () => {
     expect(result.current.canStop).toBe(false);
     expect(result.current.stopBlockedReason).toBe('already stopped');
     expect(result.current.canReturnToAuto).toBe(false);
+  });
+
+  it('keeps Start disabled when a stopped-looking snapshot is stale', async () => {
+    fetchGpuStatusMock.mockResolvedValue(statusResponse({ snapshot_age_seconds: 240, snapshot_fresh: false }));
+
+    const { result } = renderHook(() => useGpuControl(), { wrapper });
+    await waitFor(() => expect(result.current.data).toBeDefined());
+
+    expect(result.current.canStart).toBe(false);
+    expect(result.current.startBlockedReason).toBe('Lifecycle telemetry is stale — refresh before starting the GPU.');
+  });
+
+  it('keeps Start disabled for a fresh snapshot that reports an unknown machine state', async () => {
+    fetchGpuStatusMock.mockResolvedValue(statusResponse({ gpu_state: { state: 'unknown' } }));
+
+    const { result } = renderHook(() => useGpuControl(), { wrapper });
+    await waitFor(() => expect(result.current.data).toBeDefined());
+
+    expect(result.current.canStart).toBe(false);
+    expect(result.current.startBlockedReason).toBe('GPU state is unknown — refresh before starting the GPU.');
   });
 
   it('blocks stop with an explicit in-flight-work reason', async () => {

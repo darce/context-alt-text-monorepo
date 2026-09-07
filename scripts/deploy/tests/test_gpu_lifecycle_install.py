@@ -95,6 +95,49 @@ def test_start_unit_always_executes_a_readiness_probe() -> None:
     assert "${READY_URL}" in start_unit
 
 
+def test_lifecycle_units_pass_the_operator_intent_directory() -> None:
+    script = INSTALLER.read_text(encoding="utf-8")
+    services = re.findall(
+        r"sudo tee [^\n]*/acx-gpu-(?:start|reap)\.service.*?<<UNIT\n(.*?)\nUNIT",
+        script,
+        flags=re.DOTALL,
+    )
+
+    assert len(services) == 2
+    for service in services:
+        assert "--intent-dir /run/acx-write" in service
+
+
+def test_intent_path_unit_watches_every_registered_environment_and_starts_gpu() -> None:
+    script = INSTALLER.read_text(encoding="utf-8")
+    path_unit = re.search(
+        r"sudo tee [^\n]*/acx-gpu-intent\.path.*?<<UNIT\n(.*?)\nUNIT",
+        script,
+        flags=re.DOTALL,
+    )
+
+    assert path_unit is not None
+    content = path_unit.group(1)
+    assert "${INTENT_PATH_ENTRIES}" in content
+    append_deployment = script[script.index("append_deployment()") : script.index("load_deployments()")]
+    assert "PathChanged=/run/acx-write/${environment}/gpu-intent.json" in append_deployment
+    registered_environments = set(DEPLOYMENTS.read_text(encoding="utf-8").split())
+    assert {"dev", "staging", "prod"} <= registered_environments
+    assert "Unit=acx-gpu-start.service" in content
+    assert "acx-gpu-intent.path" in script
+    assert "systemctl enable --now acx-gpu-intent.path" in script
+
+
+def test_installer_purges_cloud_init_idle_reaper_units() -> None:
+    script = INSTALLER.read_text(encoding="utf-8")
+
+    assert "acx-gpu-idle-reaper.service" in script
+    assert "acx-gpu-idle-reaper.timer" in script
+    assert "systemctl disable --now" in script
+    assert "systemctl daemon-reload" in script
+    assert 'rm -f "/etc/systemd/system/$unit"' in script
+
+
 def test_oneshot_units_have_systemd_execution_deadlines() -> None:
     script = INSTALLER.read_text(encoding="utf-8")
     services = re.findall(

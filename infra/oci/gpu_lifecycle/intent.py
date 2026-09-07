@@ -392,6 +392,16 @@ class IntentAuthorityStore:
             "sequence": intent.sequence,
         }
 
+    def highest_sequence(self) -> int:
+        """Return the durable high-water fencing sequence.
+
+        Survives the publication that set it: an intent observed only after
+        its own TTL elapsed still bumps the mark, so a deferred STOP can be
+        fenced by a supersession the controller never saw while it was live.
+        """
+        with _intent_file_lock(self.path):
+            return int(self._read_state()["highest_sequence"])
+
     def filter_valid(
         self,
         intents: list[OperatorIntent],

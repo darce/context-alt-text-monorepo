@@ -6,6 +6,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -52,6 +53,9 @@ def fixture_repo(tmp_path: Path) -> dict[str, Any]:
     _git(repo, "config", "user.email", "worktree-reap@example.test")
     _git(repo, "config", "user.name", "Worktree Reap Test")
     _commit(repo, "initial", "README", "initial\n")
+    (repo / ".gitignore").write_text("ignored/\n")
+    _git(repo, "add", ".gitignore")
+    _git(repo, "commit", "-m", "ignore test files")
 
     # Keep the parent branch in the root worktree.  That makes it ROOT rather
     # than an accidental REDUNDANT candidate when the fixture is applied.
@@ -73,6 +77,12 @@ def fixture_repo(tmp_path: Path) -> dict[str, Any]:
     paths["dirty"] = repo.parent / "dirty"
     _git(repo, "worktree", "add", str(paths["dirty"]), "feature/parent-dirty")
     (paths["dirty"] / "untracked.txt").write_text("keep me\n")
+
+    _git(repo, "branch", "feature/parent-ignored")
+    paths["ignored"] = repo.parent / "ignored"
+    _git(repo, "worktree", "add", str(paths["ignored"]), "feature/parent-ignored")
+    (paths["ignored"] / "ignored").mkdir()
+    (paths["ignored"] / "ignored" / "keep.txt").write_text("keep ignored data\n")
 
     # review/x has no feature/x parent in this fixture, so it maps to main.
     _git(repo, "branch", "review/x", "main")
@@ -110,6 +120,7 @@ def test_classify_covers_redundant_live_dirty_and_root(fixture_repo: dict[str, A
     assert by_branch["feature/parent-ancestor"].status == "REDUNDANT"
     assert by_branch["feature/parent-live"].status == "LIVE"
     assert by_branch["feature/parent-dirty"].status == "DIRTY"
+    assert by_branch["feature/parent-ignored"].status == "DIRTY"
     assert by_branch["review/x"].status == "REDUNDANT"
     assert by_branch["feature/parent-rebased"].status == "REDUNDANT"
     assert by_branch["misc/live"].status == "LIVE"
@@ -136,6 +147,7 @@ def test_apply_removes_only_redundant_and_is_idempotent(
         paths["ancestor"].resolve(),
         paths["live"].resolve(),
         paths["dirty"].resolve(),
+        paths["ignored"].resolve(),
         paths["review"].resolve(),
         paths["rebased"].resolve(),
         paths["orphan"].resolve(),
@@ -150,9 +162,17 @@ def test_apply_removes_only_redundant_and_is_idempotent(
     assert result["errors"] == []
 
     remaining = {record.branch: record for record in reaper.classify(repo)}
-    assert set(remaining) == {"feature/parent", "feature/parent-live", "feature/parent-dirty", "misc/live"}
+    assert set(remaining) == {
+        "feature/parent",
+        "feature/parent-live",
+        "feature/parent-dirty",
+        "feature/parent-ignored",
+        "misc/live",
+    }
     assert paths["live"].exists()
     assert paths["dirty"].exists()
+    assert paths["ignored"].exists()
+    assert (paths["ignored"] / "ignored" / "keep.txt").read_text() == "keep ignored data\n"
     assert paths["orphan"].exists()
     assert _git(repo, "show-ref", "--verify", "refs/heads/feature/parent-ancestor", check=False).returncode != 0
     assert _git(repo, "show-ref", "--verify", "refs/heads/review/x", check=False).returncode != 0
@@ -162,6 +182,168 @@ def test_apply_removes_only_redundant_and_is_idempotent(
     retry = reaper.apply(records, dry_run=False)
     assert retry["removed"] == []
     assert retry["errors"] == []
+
+
+def test_apply_skips_a_protected_redundant_record(fixture_repo: dict[str, Any]) -> None:
+    repo = fixture_repo["repo"]
+    record = next(
+        item for item in reaper.classify(repo) if item.branch == "feature/parent-ancestor"
+    )
+    protected = replace(record, protected=True)
+
+    result = reaper.apply([protected], dry_run=False)
+
+    assert result == {"removed": [], "skipped": [str(record.path)], "errors": []}
+    assert record.path.exists()
+    assert _git(
+        repo,
+        "show-ref",
+        "--verify",
+        "refs/heads/feature/parent-ancestor",
+        check=False,
+    ).returncode == 0
+
+
+def test_protect_accepts_branch_and_path_forms(
+    fixture_repo: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = fixture_repo["repo"]
+    review_path = fixture_repo["paths"]["review"]
+    monkeypatch.delenv("REAP_STRICT", raising=False)
+
+    for value in ("review/x", str(review_path)):
+        record = next(item for item in reaper.classify(repo, protected={value}) if item.branch == "review/x")
+        assert record.status == "LIVE"
+        assert record.reason == "protected by caller"
+        assert record.protected is True
+        assert (
+            reaper.main(["--repo", str(repo), "--check", "--protect", value])
+            == 0
+        )
+
+
+def test_landed_directly_in_main_is_redundant(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.email", "worktree-reap@example.test")
+    _git(repo, "config", "user.name", "Worktree Reap Test")
+    _commit(repo, "initial", "README", "initial\n")
+    _git(repo, "branch", "feature/parent")
+    _git(repo, "branch", "feature/parent-child", "main")
+    child_path = repo.parent / "direct-main"
+    _git(repo, "worktree", "add", str(child_path), "feature/parent-child")
+    _commit(child_path, "child patch", "child.txt", "child\n")
+    _git(repo, "merge", "--ff-only", "feature/parent-child")
+
+    record = next(
+        item for item in reaper.classify(repo) if item.branch == "feature/parent-child"
+    )
+
+    assert record.parent == "feature/parent"
+    assert record.status == "REDUNDANT"
+    assert record.reason == "feature/parent-child is landed in main"
+    result = reaper.apply([record], dry_run=False)
+    assert result["errors"] == []
+    assert result["removed"] == [str(child_path.resolve())]
+    assert not child_path.exists()
+
+
+def test_apply_deletes_child_branch_when_parent_is_a_linked_worktree(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.email", "worktree-reap@example.test")
+    _git(repo, "config", "user.name", "Worktree Reap Test")
+    _commit(repo, "initial", "README", "initial\n")
+    _git(repo, "branch", "feature/parent")
+    parent_path = repo.parent / "linked-parent"
+    _git(repo, "worktree", "add", str(parent_path), "feature/parent")
+    _commit(parent_path, "parent patch", "parent.txt", "parent\n")
+    _git(repo, "branch", "feature/parent-child", "feature/parent")
+    child_path = repo.parent / "linked-child"
+    _git(repo, "worktree", "add", str(child_path), "feature/parent-child")
+
+    records = reaper.classify(repo)
+    child_record = next(item for item in records if item.branch == "feature/parent-child")
+    assert child_record.status == "REDUNDANT"
+    assert child_record.proof_parent == "feature/parent"
+
+    result = reaper.apply(records, dry_run=False)
+
+    assert result["errors"] == []
+    assert result["removed"] == [str(child_path.resolve())]
+    assert not child_path.exists()
+    assert parent_path.exists()
+    assert _git(
+        repo,
+        "show-ref",
+        "--verify",
+        "refs/heads/feature/parent-child",
+        check=False,
+    ).returncode != 0
+    assert _git(
+        repo,
+        "show-ref",
+        "--verify",
+        "refs/heads/feature/parent",
+        check=False,
+    ).returncode == 0
+
+
+def test_apply_deletes_redundant_children_before_redundant_parents(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.email", "worktree-reap@example.test")
+    _git(repo, "config", "user.name", "Worktree Reap Test")
+    _commit(repo, "initial", "README", "initial\n")
+    _git(repo, "branch", "feature/parent")
+    parent_path = repo.parent / "redundant-parent"
+    _git(repo, "worktree", "add", str(parent_path), "feature/parent")
+    _git(repo, "branch", "feature/parent-child", "feature/parent")
+    child_path = repo.parent / "redundant-child"
+    _git(repo, "worktree", "add", str(child_path), "feature/parent-child")
+
+    records = reaper.classify(repo)
+    assert {
+        item.branch for item in records if item.status == "REDUNDANT"
+    } == {"feature/parent", "feature/parent-child"}
+
+    result = reaper.apply(records, dry_run=False)
+
+    assert result["errors"] == []
+    assert {Path(path).resolve() for path in result["removed"]} == {
+        parent_path.resolve(),
+        child_path.resolve(),
+    }
+    assert not parent_path.exists()
+    assert not child_path.exists()
+    assert _git(
+        repo,
+        "show-ref",
+        "--verify",
+        "refs/heads/feature/parent",
+        check=False,
+    ).returncode != 0
+    assert _git(
+        repo,
+        "show-ref",
+        "--verify",
+        "refs/heads/feature/parent-child",
+        check=False,
+    ).returncode != 0
+
+
+def test_check_exit_honours_reap_strict(
+    fixture_repo: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = fixture_repo["repo"]
+    monkeypatch.delenv("REAP_STRICT", raising=False)
+    assert reaper.main(["--repo", str(repo), "--check"]) == 0
+
+    monkeypatch.setenv("REAP_STRICT", "1")
+    assert reaper.main(["--repo", str(repo), "--check"]) == 3
 
 
 def test_apply_refuses_root_and_current_worktree(
@@ -176,8 +358,9 @@ def test_apply_refuses_root_and_current_worktree(
         reason="synthetic safety check",
         repo=repo,
     )
-    with pytest.raises(RuntimeError, match="root worktree"):
-        reaper.apply([root_record], dry_run=False)
+    for dry_run in (True, False):
+        with pytest.raises(RuntimeError, match="root worktree"):
+            reaper.apply([root_record], dry_run=dry_run)
 
     current = repo.parent / "current"
     _git(repo, "branch", "feature/current", "main")
@@ -186,8 +369,9 @@ def test_apply_refuses_root_and_current_worktree(
     current_record = next(
         record for record in reaper.classify(repo) if record.branch == "feature/current"
     )
-    with pytest.raises(RuntimeError, match="current worktree"):
-        reaper.apply([current_record], dry_run=False)
+    for dry_run in (True, False):
+        with pytest.raises(RuntimeError, match="current worktree"):
+            reaper.apply([current_record], dry_run=dry_run)
 
 
 def test_json_cli_emits_full_records_and_dry_run_exit_code(

@@ -115,6 +115,14 @@ def _contract_gate(workflow: dict) -> tuple[str, dict]:
     return matching_jobs[0]
 
 
+def _contract_lifecycle_suites() -> tuple[str, ...]:
+    """Discover every on-disk GPU lifecycle suite that the contract gate owns."""
+    lifecycle_dir = REPO_ROOT / "scripts" / "deploy" / "tests"
+    suites = sorted(lifecycle_dir.glob("test_gpu_lifecycle_*.py"))
+    assert suites, "lifecycle suites vanished from scripts/deploy/tests"
+    return tuple(path.relative_to(REPO_ROOT).as_posix() for path in suites)
+
+
 def test_deploy_needs_contract_gate() -> None:
     workflow = _workflow()
     gate_name, _ = _contract_gate(workflow)
@@ -196,7 +204,7 @@ def test_gpu_lifecycle_dry_run_does_not_mask_gh_variable_failures() -> None:
     assert "`resolved-by-name`" in runbook
 
 
-def test_make_target_keeps_credential_suites() -> None:
+def test_make_target_keeps_contract_suites() -> None:
     result = subprocess.run(
         ["make", "-n", "test-deploy-contract"],
         cwd=REPO_ROOT,
@@ -207,8 +215,20 @@ def test_make_target_keeps_credential_suites() -> None:
     output = result.stdout + result.stderr
 
     assert result.returncode == 0, output
-    assert "test_ocirv1_vault_readiness.py" in output
-    assert "test-ocir-auth.sh" in output
+    expected_suites = (
+        "scripts/test_e15_31_admin_deploy_contract.py",
+        "scripts/test_e15_33_deploy_convergence.py",
+        "scripts/test_e15_33_boot_smoke.py",
+        "scripts/test_deploy_workflow_gate.py",
+        "scripts/test_ocirv1_vault_readiness.py",
+        *_contract_lifecycle_suites(),
+        "scripts/deploy/tests/test-smoke-gate.sh",
+        "scripts/deploy/tests/test-ocir-auth.sh",
+        "scripts/deploy/tests/test-ocir-rotate.sh",
+        "scripts/deploy/tests/test-check-gpu-snapshots.sh",
+    )
+    missing = [suite for suite in expected_suites if suite not in output]
+    assert missing == [], f"test-deploy-contract dropped suite(s): {missing}"
 
 
 def _rollback_prose() -> str:

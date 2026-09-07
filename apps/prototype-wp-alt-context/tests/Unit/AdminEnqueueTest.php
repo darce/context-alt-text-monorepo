@@ -66,10 +66,12 @@ class AdminEnqueueTest extends TestCase
 
         $localized = $GLOBALS['__ac_localized_scripts']['alt-context-attachment-edit']['AltContextAttachmentEdit'] ?? null;
         $this->assertIsArray($localized);
-        $this->assertSame(55, $localized['attachmentId'] ?? null);
+        // wp_localize_script casts every scalar to string on the way out, so
+        // these are the shapes the browser actually parses.
+        $this->assertSame('55', $localized['attachmentId'] ?? null);
         $this->assertSame('http://example.test/wp-content/uploads/face.jpg', $localized['imageUrl'] ?? null);
-        $this->assertSame(1200, $localized['imageWidth'] ?? null);
-        $this->assertSame(800, $localized['imageHeight'] ?? null);
+        $this->assertSame('1200', $localized['imageWidth'] ?? null);
+        $this->assertSame('800', $localized['imageHeight'] ?? null);
         $this->assertSame(
             '/wp-admin/admin.php?page=alt-context-workbench',
             $localized['workbenchUrl'] ?? null

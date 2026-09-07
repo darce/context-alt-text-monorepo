@@ -22,8 +22,6 @@ if _description_service_root not in sys.path:
 
 
 @pytest.fixture(autouse=True)
-def _isolate_gpu_state_snapshot(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def _isolate_gpu_state_snapshot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep lifecycle cycles from publishing to the host's /run/acx in tests."""
     monkeypatch.setenv("ACX_GPU_STATE_PATH", str(tmp_path / "gpu-state.json"))

@@ -533,8 +533,8 @@ lint-scripts:
 	@if [ -d scripts/hooks ]; then python3 scripts/hooks/lint-no-inline-python-heredoc.py; fi
 	@if [ -d scripts/hooks ]; then python3 scripts/hooks/lint-expected-revision.py; fi
 	@python3 scripts/check_published_head_sha.py
-	@ruff check infra/oci scripts/gpu_burst_smoke.py scripts/gpu_spike_bench.py scripts/test_gpu_burst_smoke.py scripts/test_gpu_spike_bench.py $(OCIRV1_PYTHON_FILES)
-	@ruff format --check infra/oci scripts/gpu_burst_smoke.py scripts/gpu_spike_bench.py scripts/test_gpu_burst_smoke.py scripts/test_gpu_spike_bench.py $(OCIRV1_PYTHON_FILES)
+	@ruff check infra/oci scripts/gpu_burst_smoke.py scripts/gpu_cost_report.py scripts/gpu_spike_bench.py scripts/test_gpu_burst_smoke.py scripts/test_gpu_cost_report.py scripts/test_gpu_spike_bench.py $(OCIRV1_PYTHON_FILES)
+	@ruff format --check infra/oci scripts/gpu_burst_smoke.py scripts/gpu_cost_report.py scripts/gpu_spike_bench.py scripts/test_gpu_burst_smoke.py scripts/test_gpu_cost_report.py scripts/test_gpu_spike_bench.py $(OCIRV1_PYTHON_FILES)
 
 # MAINT-FB-B-05: validate every workbay-overrides/*/overrides.lock.json
 # component upstream_digest against the materialized upstream base copy
@@ -571,7 +571,7 @@ test-scripts:
 		scripts/test_deploy_workflow_gate.py \
 		scripts/test_ocirv1_vault_readiness.py \
 		scripts/test_shell_parses_under_system_bash.py \
-		scripts/test_gpu_burst_smoke.py scripts/test_gpu_spike_bench.py; \
+		scripts/test_gpu_burst_smoke.py scripts/test_gpu_cost_report.py scripts/test_gpu_spike_bench.py; \
 	if [ -d scripts/hooks ] && [ -d .github/hooks ] && [ -d scripts/consumer-hooks/git ]; then \
 		set -- scripts/hooks .github/hooks scripts/test_php_characterization_gate.py "$$@"; \
 	fi; \
@@ -651,7 +651,7 @@ ocir-token-rotate:
 	@bash scripts/deploy/ocir-token-rotate.sh $(OCIR_ROTATE_ARGS)
 
 test-deploy-contract:
-	@python3 -m pytest scripts/test_e15_31_admin_deploy_contract.py scripts/test_e15_33_deploy_convergence.py scripts/test_e15_33_boot_smoke.py scripts/test_deploy_workflow_gate.py scripts/test_ocirv1_vault_readiness.py -q --tb=short
+	@python3 -m pytest scripts/test_e15_31_admin_deploy_contract.py scripts/test_e15_33_deploy_convergence.py scripts/test_e15_33_boot_smoke.py scripts/test_deploy_workflow_gate.py scripts/test_ocirv1_vault_readiness.py scripts/deploy/tests/test_gpu_lifecycle_contract_ownership.py scripts/deploy/tests/test_gpu_lifecycle_install.py scripts/deploy/tests/test_gpu_lifecycle_deploy_wiring.py -q --tb=short
 	@bash scripts/deploy/tests/test-smoke-gate.sh
 	@bash scripts/deploy/tests/test-ocir-auth.sh
 	@bash scripts/deploy/tests/test-ocir-rotate.sh
@@ -845,10 +845,28 @@ dev-stop:
 eval-captions:
 	@$(ROOT_MAKEFILE_DIR)/scripts/eval-captions.sh $(EVAL_ARGS)
 
-.PHONY: gpu-burst-smoke gpu-burst-smoke-live
+.PHONY: gpu-burst-smoke gpu-burst-smoke-live gpu-cost-report
 GPU_SMOKE_PYTHON ?= apps/prototype-description-service/.venv/bin/python
 gpu-burst-smoke:
 	@$(GPU_SMOKE_PYTHON) scripts/gpu_burst_smoke.py --dry-run
+
+# Reconcile one or more OCI Usage API exports with a smoke evidence report.
+# Usage: make gpu-cost-report GPU_COST_USAGE_JSON="usage-a.json usage-b.json" \
+#          GPU_COST_SMOKE_REPORT=.workbay/tmp/gpu-burst-smoke/GPUSMOKE-1-evidence-<timestamp>.json
+GPU_COST_USAGE_JSON ?=
+GPU_COST_SMOKE_REPORT ?=
+GPU_COST_REPORT_ARGS ?=
+gpu-cost-report:
+	@test -n "$(GPU_COST_USAGE_JSON)" || { \
+	  echo "GPU_COST_USAGE_JSON must name one or more OCI usage JSON exports" >&2; \
+	  exit 2; \
+	}
+	@test -n "$(GPU_COST_SMOKE_REPORT)" || { \
+	  echo "GPU_COST_SMOKE_REPORT must name a GPU smoke evidence JSON report" >&2; \
+	  exit 2; \
+	}
+	@$(GPU_SMOKE_PYTHON) scripts/gpu_cost_report.py $(GPU_COST_USAGE_JSON) \
+	  --smoke-report "$(GPU_COST_SMOKE_REPORT)" $(GPU_COST_REPORT_ARGS)
 
 # Operator-only: needs ACX_GPU_SMOKE_CONFIRM=RUN and runs on acx-backend as
 # ubuntu, since only that host has the OCI binary and vaulted key. Override

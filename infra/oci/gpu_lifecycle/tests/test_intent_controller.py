@@ -238,6 +238,108 @@ def test_start_nonce_is_honoured_once_across_cycles(tmp_path: Path) -> None:
     assert json.loads(store.path.read_text())["instances"]["ocid1.gpu"]["honoured_nonce"] == "once"
 
 
+def test_honoured_start_nonce_does_not_block_work_driven_start(tmp_path: Path) -> None:
+    store = _store(tmp_path / "running-since.json")
+    intent = _intent(IntentAction.START, nonce="once")
+    controller = GpuLifecycleController(idle_seconds=60)
+    actuator = RecordingActuator([], [])
+
+    first = run_start_cycle(
+        controller=controller,
+        instances=[_stopped()],
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
+        actuator=actuator,
+        running_since_store=store,
+        intent=intent,
+    )
+    second = run_start_cycle(
+        controller=controller,
+        instances=[_stopped()],
+        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+        actuator=actuator,
+        running_since_store=store,
+        intent=intent,
+    )
+
+    assert first.actuated == [("START", "ocid1.gpu")]
+    assert second.decided == [("START", "ocid1.gpu")]
+    assert second.actuated == [("START", "ocid1.gpu")]
+    assert actuator.started == ["ocid1.gpu", "ocid1.gpu"]
+
+
+def test_honoured_start_nonce_survives_lease_removal_and_reboot(tmp_path: Path) -> None:
+    path = tmp_path / "running-since.json"
+    store = _store(path)
+    store.record_start("ocid1.gpu", honoured_nonce="once")
+    store.remove("ocid1.gpu")
+    restarted_store = RunningSinceLeaseStore(
+        path=path,
+        now=lambda: NOW,
+        monotonic=lambda: 1000.0,
+        boot_id="new-boot",
+    )
+    actuator = RecordingActuator([], [])
+
+    result = run_start_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[_stopped()],
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
+        actuator=actuator,
+        running_since_store=restarted_store,
+        intent=_intent(IntentAction.START, nonce="once"),
+    )
+
+    assert result.decided == []
+    assert result.actuated == []
+    assert result.intent_status is IntentStatus.HONOURED
+    assert actuator.started == []
+    assert restarted_store.honoured_nonces_path.exists()
+
+
+def test_corrupt_honoured_nonce_marker_is_treated_as_already_honoured(tmp_path: Path) -> None:
+    store = _store(tmp_path / "running-since.json")
+    store.honoured_nonces_path.write_text("{not-json", encoding="utf-8")
+    actuator = RecordingActuator([], [])
+
+    result = run_start_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[_stopped()],
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
+        actuator=actuator,
+        running_since_store=store,
+        intent=_intent(IntentAction.START, nonce="once"),
+    )
+
+    assert result.decided == []
+    assert result.actuated == []
+    assert result.intent_status is IntentStatus.HONOURED
+    assert actuator.started == []
+
+
+def test_reap_does_not_honour_start_intent_without_actuation(tmp_path: Path) -> None:
+    path = tmp_path / "running-since.json"
+    store = _store(path)
+    store.record_start("ocid1.gpu")
+    actuator = RecordingActuator([], [])
+
+    result = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[_stopped()],
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
+        actuator=actuator,
+        fence_delay_seconds=0,
+        gpu_state_path=tmp_path / "gpu-state.json",
+        running_since_store=store,
+        intent=_intent(IntentAction.START, nonce="fresh"),
+    )
+
+    assert result.decided == []
+    assert result.actuated == []
+    assert result.intent_status is IntentStatus.PENDING
+    assert result.honoured_nonce is None
+    assert not store.honoured_nonces_path.exists()
+
+
 def test_start_intent_does_not_override_boot_failure_fallback() -> None:
     class FailingActuator(RecordingActuator):
         def start_instance(self, instance_id: str) -> None:

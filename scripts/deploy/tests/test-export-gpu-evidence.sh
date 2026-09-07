@@ -63,6 +63,11 @@ export OCI_CALL_LOG="${call_log}"
 export CURL_CALL_LOG="${curl_call_log}"
 export PATH="${fixture_root}:${PATH}"
 
+if ! grep -Fxq -- 'docs/evidence/' "${root}/.gitignore"; then
+    echo "FAIL: docs/evidence/ is not ignored" >&2
+    exit 1
+fi
+
 one="${fixture_root}/one"
 two="${fixture_root}/two"
 run_export() {
@@ -143,6 +148,47 @@ for name in ("instance.json", "audit-events.json", "state_history.json", "state_
 assert (one.stat().st_mode & 0o777) == 0o700
 for path in one.iterdir():
     assert (path.stat().st_mode & 0o777) == 0o600, (path, oct(path.stat().st_mode & 0o777))
+PY
+
+schema_root="${fixture_root}/schema-root"
+schema_scripts="${schema_root}/scripts"
+schema_bin="${schema_root}/bin"
+mkdir -p "${schema_scripts}" "${schema_bin}"
+cp "${root}/scripts/gpu_burst_evidence.py" "${schema_scripts}/gpu_burst_evidence.py"
+# GNU sed -i takes no argument; BSD sed -i requires one. Rewrite via a temp file so
+# this suite runs the same on the macOS dev machines and the Linux gate host.
+sed -e 's/^SCHEMA_VERSION = 1$/SCHEMA_VERSION = 9/' \
+    -e 's/^MANIFEST_FORMAT = .*/MANIFEST_FORMAT = \"oci-gpu-burst-evidence-v9\"/' \
+    "${schema_scripts}/gpu_burst_evidence.py" >"${schema_scripts}/gpu_burst_evidence.py.tmp"
+mv "${schema_scripts}/gpu_burst_evidence.py.tmp" "${schema_scripts}/gpu_burst_evidence.py"
+cat >"${schema_bin}/git" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "$#" -eq 2 ] && [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
+    printf '%s\n' "${SCHEMA_ROOT}"
+    exit 0
+fi
+exit 2
+EOF
+chmod +x "${schema_bin}/git"
+schema_bundle="${fixture_root}/schema-bundle"
+schema_call_log="${fixture_root}/schema-oci-calls.log"
+SCHEMA_ROOT="${schema_root}" PATH="${schema_bin}:${PATH}" OCI_BIN="${fake_oci}" \
+    OCI_CALL_LOG="${schema_call_log}" \
+    "${exporter}" \
+    --instance-id ocid1.instance.example \
+    --compartment-id ocid1.compartment.example \
+    --since 2026-09-01T00:00:00Z \
+    --until 2026-09-01T01:00:00Z \
+    --out "${schema_bundle}"
+"$resolved_python" - "${schema_bundle}/manifest.json" <<'PY'
+import json
+import sys
+
+
+manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+assert manifest["schema_version"] == 9
+assert manifest["format"] == "oci-gpu-burst-evidence-v9"
 PY
 
 unknown_oci="${fixture_root}/unknown-oci"
@@ -263,6 +309,86 @@ if [ -e "${atomic_bundle}.lock" ] || compgen -G "${atomic_bundle%/*}/.${atomic_b
     exit 1
 fi
 
+crash_bundle="${fixture_root}/crash"
+run_export "${crash_bundle}"
+crash_old_manifest_sha="$(sha256sum "${crash_bundle}/manifest.json" | awk '{print $1}')"
+crash_mv_dir="${fixture_root}/crash-mv-bin"
+mkdir -p "${crash_mv_dir}"
+real_mv="$(command -v mv)"
+cat >"${crash_mv_dir}/mv" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+first_arg=""
+for arg in "$@"; do
+    case "$arg" in
+        --)
+            continue
+            ;;
+        *)
+            first_arg="$arg"
+            break
+            ;;
+    esac
+done
+"${REAL_MV}" "$@"
+if [ "$first_arg" = "${CRASH_OUT}" ]; then
+    kill -KILL "$PPID"
+fi
+EOF
+chmod +x "${crash_mv_dir}/mv"
+crash_rc=0
+REAL_MV="${real_mv}" CRASH_OUT="${crash_bundle}" PATH="${crash_mv_dir}:${PATH}" \
+    OCI_BIN="${fake_oci}" "${exporter}" \
+    --instance-id ocid1.instance.example \
+    --compartment-id ocid1.compartment.example \
+    --since 2026-09-01T00:00:00Z --until 2026-09-01T01:00:00Z \
+    --out "${crash_bundle}" >"${fixture_root}/crash.out" 2>&1 || crash_rc=$?
+if [ "${crash_rc}" -ne 137 ]; then
+    echo "FAIL: SIGKILL publish simulation exited ${crash_rc}, expected 137" >&2
+    exit 1
+fi
+if [ -e "${crash_bundle}" ]; then
+    echo "FAIL: SIGKILL publish simulation unexpectedly left the destination present" >&2
+    exit 1
+fi
+crash_transaction=""
+for candidate in "${crash_bundle%/*}/.${crash_bundle##*/}.tmp."*; do
+    if [ -d "${candidate}" ]; then
+        crash_transaction="${candidate}"
+        break
+    fi
+done
+if [ -z "${crash_transaction}" ] || [ ! -f "${crash_transaction}/.publish-intent" ] \
+    || [ ! -d "${crash_transaction}/previous" ]; then
+    echo "FAIL: SIGKILL publish simulation did not leave a recoverable intent and backup" >&2
+    exit 1
+fi
+if ! grep -Eq '^pid=[1-9][0-9]*$' "${crash_bundle}.lock/owner" \
+    || ! grep -Eq '^host=.+$' "${crash_bundle}.lock/owner" \
+    || ! grep -Eq '^start_time=[1-9][0-9]*$' "${crash_bundle}.lock/owner"; then
+    echo "FAIL: evidence lock did not persist owner metadata" >&2
+    exit 1
+fi
+recovery_rc=0
+EVIDENCE_LOCK_MAX_TIME=1 OCI_BIN="${failing_oci}" "${exporter}" \
+    --instance-id ocid1.instance.example \
+    --compartment-id ocid1.compartment.example \
+    --since 2026-09-01T00:00:00Z --until 2026-09-01T01:00:00Z \
+    --out "${crash_bundle}" >"${fixture_root}/crash-recovery.out" 2>&1 || recovery_rc=$?
+if [ "${recovery_rc}" -ne 73 ]; then
+    echo "FAIL: recovery run exited ${recovery_rc}, expected the deliberate OCI failure 73" >&2
+    exit 1
+fi
+if [ "$(sha256sum "${crash_bundle}/manifest.json" | awk '{print $1}')" != "${crash_old_manifest_sha}" ]; then
+    echo "FAIL: stale-lock recovery did not restore the previous bundle before retry" >&2
+    exit 1
+fi
+if ! grep -Fq -- 'restoring the previous evidence bundle' "${fixture_root}/crash-recovery.out"; then
+    echo "FAIL: stale-lock recovery was not logged" >&2
+    exit 1
+fi
+run_export "${crash_bundle}"
+
 slow_oci="${fixture_root}/slow-oci"
 slow_active="${fixture_root}/slow-active"
 slow_overlap="${fixture_root}/slow-overlap"
@@ -361,6 +487,31 @@ update_rc=0
     --out "${fixture_root}/update" >"${fixture_root}/update.out" 2>&1 || update_rc=$?
 if [ "$update_rc" -ne 3 ]; then
     echo "FAIL: update verb was not rejected with exit 3 (got ${update_rc})" >&2
+    exit 1
+fi
+
+slow_cp_dir="${fixture_root}/slow-cp-bin"
+mkdir -p "${slow_cp_dir}"
+cat >"${slow_cp_dir}/cp" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+sleep 5
+EOF
+chmod +x "${slow_cp_dir}/cp"
+copy_timeout_rc=0
+EVIDENCE_COPY_MAX_TIME=1 PATH="${slow_cp_dir}:${PATH}" OCI_BIN="${fake_oci}" \
+    "${exporter}" \
+    --instance-id ocid1.instance.example \
+    --compartment-id ocid1.compartment.example \
+    --since 2026-09-01T00:00:00Z --until 2026-09-01T01:00:00Z \
+    --out "${fixture_root}/copy-timeout" \
+    --state-snapshot "${snapshot}" >"${fixture_root}/copy-timeout.out" 2>&1 || copy_timeout_rc=$?
+if [ "${copy_timeout_rc}" -ne 124 ]; then
+    echo "FAIL: bounded copy exited ${copy_timeout_rc}, expected timeout status 124" >&2
+    exit 1
+fi
+if [ -e "${fixture_root}/copy-timeout" ]; then
+    echo "FAIL: bounded copy timeout left a published bundle" >&2
     exit 1
 fi
 

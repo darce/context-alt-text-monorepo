@@ -172,6 +172,7 @@ oci_connection_timeout="${OCI_CONNECTION_TIMEOUT:-15}"
 oci_read_timeout="${OCI_READ_TIMEOUT:-60}"
 curl_connection_timeout="${EVIDENCE_CURL_CONNECTION_TIMEOUT:-10}"
 curl_max_time="${EVIDENCE_CURL_MAX_TIME:-60}"
+copy_max_time="${EVIDENCE_COPY_MAX_TIME:-$curl_max_time}"
 lock_max_time="${EVIDENCE_LOCK_MAX_TIME:-60}"
 
 for timeout_value in \
@@ -179,6 +180,7 @@ for timeout_value in \
     "$oci_read_timeout" \
     "$curl_connection_timeout" \
     "$curl_max_time" \
+    "$copy_max_time" \
     "$lock_max_time"; do
     case "$timeout_value" in
         ''|*[!0-9]*) fail_usage "timeouts must be positive integer seconds" ;;
@@ -188,6 +190,50 @@ for timeout_value in \
         *) fail_usage "timeouts must be positive integer seconds" ;;
     esac
 done
+
+# The checker is the source of truth for the manifest contract.  Keep the
+# shell boundary free of a second copy of these values so a checker upgrade
+# cannot silently make every newly exported bundle unverifiable.
+checker_dir="${lane_root}/scripts"
+schema_values="$("$resolved_python" - "$checker_dir" <<'PY'
+import sys
+
+
+sys.path.insert(0, sys.argv[1])
+from gpu_burst_evidence import MANIFEST_FORMAT, SCHEMA_VERSION
+
+
+print(SCHEMA_VERSION)
+print(MANIFEST_FORMAT)
+PY
+)" || {
+    echo "ERROR: could not read the evidence schema from gpu_burst_evidence.py" >&2
+    exit 1
+}
+schema_version="$(printf '%s\n' "$schema_values" | sed -n '1p')"
+manifest_format="$(printf '%s\n' "$schema_values" | sed -n '2p')"
+[ -n "$schema_version" ] && [ -n "$manifest_format" ] || {
+    echo "ERROR: gpu_burst_evidence.py returned an empty evidence schema" >&2
+    exit 1
+}
+
+sync_paths() {
+    "$resolved_python" - "$@" <<'PY'
+import os
+import sys
+
+
+for raw_path in sys.argv[1:]:
+    flags = os.O_RDONLY
+    if os.path.isdir(raw_path):
+        flags |= getattr(os, "O_DIRECTORY", 0)
+    descriptor = os.open(raw_path, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+PY
+}
 
 mkdir -p "$out_parent"
 [ -d "$out_parent" ] || {
@@ -208,6 +254,11 @@ work_dir=""
 backup_dir=""
 previous_moved=0
 lock_acquired=0
+lock_host="$(hostname 2>/dev/null || printf 'unknown')"
+lock_owner_file=""
+lock_owner_pid=""
+lock_owner_host=""
+lock_owner_start_time=""
 
 cleanup() {
     local exit_status=$?
@@ -217,15 +268,20 @@ cleanup() {
     # removing the transaction directory. A failed capture must never leave
     # callers with an empty or half-written destination.
     if [ "$previous_moved" -eq 1 ] && [ ! -e "$out_dir" ] && [ -e "$backup_dir" ]; then
-        if ! mv "$backup_dir" "$out_dir"; then
+        if ! mv -- "$backup_dir" "$out_dir"; then
             echo "ERROR: could not restore the previous evidence bundle: $out_dir" >&2
             exit_status=1
+        else
+            sync_paths "$out_parent" || exit_status=1
         fi
     fi
     if [ -n "$transaction_dir" ] && [ -d "$transaction_dir" ]; then
         rm -rf -- "$transaction_dir" || true
     fi
     if [ "$lock_acquired" -eq 1 ]; then
+        if [ -n "$lock_owner_file" ]; then
+            rm -f -- "$lock_owner_file" || true
+        fi
         rmdir -- "$lock_dir" 2>/dev/null || true
     fi
     exit "$exit_status"
@@ -235,12 +291,116 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+read_lock_owner() {
+    lock_owner_pid=""
+    lock_owner_host=""
+    lock_owner_start_time=""
+    if [ ! -f "$lock_dir/owner" ]; then
+        return 1
+    fi
+    while IFS='=' read -r owner_key owner_value; do
+        case "$owner_key" in
+            pid)
+                lock_owner_pid="$owner_value"
+                ;;
+            host)
+                lock_owner_host="$owner_value"
+                ;;
+            start_time)
+                lock_owner_start_time="$owner_value"
+                ;;
+        esac
+    done <"$lock_dir/owner"
+    case "$lock_owner_pid" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    case "$lock_owner_start_time" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    [ "$lock_owner_pid" -gt 0 ] || return 1
+    [ -n "$lock_owner_host" ] || return 1
+}
+
+stale_lock_candidate() {
+    if ! read_lock_owner; then
+        if [ "$lock_attempt" -ge "$lock_attempts" ]; then
+            echo "INFO: breaking evidence lock with missing or invalid owner metadata: $lock_dir" >&2
+            return 0
+        fi
+        return 1
+    fi
+
+    if [ "$lock_owner_host" = "$lock_host" ]; then
+        if kill -0 "$lock_owner_pid" 2>/dev/null; then
+            return 1
+        fi
+        echo "INFO: breaking stale evidence lock owned by pid $lock_owner_pid on $lock_owner_host: $lock_dir" >&2
+        return 0
+    fi
+
+    now_epoch="$(date +%s)"
+    if [ "$now_epoch" -ge "$lock_owner_start_time" ] \
+        && [ $((now_epoch - lock_owner_start_time)) -ge "$lock_max_time" ]; then
+        echo "INFO: breaking stale evidence lock from host $lock_owner_host (age ${lock_max_time}s+): $lock_dir" >&2
+        return 0
+    fi
+    return 1
+}
+
+recover_pending_publishes() {
+    for candidate in "${out_parent}/.${out_name}.tmp."*; do
+        [ -d "$candidate" ] || continue
+        intent_file="${candidate}/.publish-intent"
+        if [ ! -f "$intent_file" ]; then
+            echo "INFO: removing abandoned evidence transaction without a publish intent: $candidate" >&2
+            rm -rf -- "$candidate"
+            continue
+        fi
+        intent_value="$(sed -n '1p' "$intent_file")"
+        if [ "$intent_value" != "publish-intent-v1" ]; then
+            echo "ERROR: refusing to recover an invalid evidence publish intent: $intent_file" >&2
+            return 1
+        fi
+
+        candidate_backup="${candidate}/previous"
+        if [ -e "$out_dir" ] || [ -L "$out_dir" ]; then
+            echo "INFO: completing cleanup of an already-published evidence transaction: $candidate" >&2
+            rm -rf -- "$candidate"
+            continue
+        fi
+
+        if [ -d "$candidate_backup" ] && [ ! -L "$candidate_backup" ]; then
+            echo "INFO: restoring the previous evidence bundle from an interrupted publish: $out_dir" >&2
+            mv -- "$candidate_backup" "$out_dir"
+            sync_paths "$out_parent"
+        else
+            echo "INFO: discarding an interrupted first publish with no previous bundle: $candidate" >&2
+        fi
+        rm -rf -- "$candidate"
+        sync_paths "$out_parent"
+    done
+}
+
 # Serialise same-destination captures. Atomic replacement protects readers
 # from partial files, while this bounded lock also prevents two OCI captures
 # from racing and publishing an arbitrary last-writer result.
 lock_attempts=$((lock_max_time * 10))
 lock_attempt=0
+if [ -L "$lock_dir" ]; then
+    fail_usage "lock path must not be a symlink: $lock_dir"
+fi
+if [ -e "$lock_dir" ] && [ ! -d "$lock_dir" ]; then
+    fail_usage "lock path is not a directory: $lock_dir"
+fi
 while ! mkdir "$lock_dir" 2>/dev/null; do
+    if stale_lock_candidate; then
+        stale_lock_dir="${lock_dir}.stale.$$.$lock_attempt"
+        if mv -- "$lock_dir" "$stale_lock_dir" 2>/dev/null; then
+            echo "INFO: removed stale evidence lock: $stale_lock_dir" >&2
+            rm -rf -- "$stale_lock_dir"
+            continue
+        fi
+    fi
     if [ "$lock_attempt" -ge "$lock_attempts" ]; then
         echo "ERROR: timed out waiting for evidence bundle lock: $out_dir" >&2
         exit 1
@@ -249,6 +409,15 @@ while ! mkdir "$lock_dir" 2>/dev/null; do
     sleep 0.1
 done
 lock_acquired=1
+lock_owner_file="${lock_dir}/owner"
+lock_owner_pid="$$"
+lock_owner_host="$lock_host"
+lock_owner_start_time="$(date +%s)"
+printf 'pid=%s\nhost=%s\nstart_time=%s\n' \
+    "$lock_owner_pid" "$lock_owner_host" "$lock_owner_start_time" >"$lock_owner_file"
+chmod 600 "$lock_owner_file"
+sync_paths "$lock_owner_file" "$lock_dir"
+recover_pending_publishes
 
 # Re-exporting into an existing bundle is supported, but only generated
 # artifacts may be replaced. Rejecting unknown entries keeps a hand-edited
@@ -370,6 +539,37 @@ strip_url_query_for_manifest() {
     esac
 }
 
+bounded_copy() {
+    local source="$1"
+    local destination="$2"
+    local copy_pid=""
+    local elapsed=0
+
+    if command -v timeout >/dev/null 2>&1; then
+        timeout "$copy_max_time" cp -- "$source" "$destination"
+        return $?
+    fi
+
+    # Keep a bounded fallback for hosts without coreutils timeout.  A
+    # stubborn filesystem may outlive the TERM/KILL request, but the
+    # exporter itself does not wait indefinitely for an ordinary cp process.
+    cp -- "$source" "$destination" &
+    copy_pid="$!"
+    while kill -0 "$copy_pid" 2>/dev/null; do
+        if [ "$elapsed" -ge "$copy_max_time" ]; then
+            echo "ERROR: timed out copying evidence input: $source" >&2
+            kill "$copy_pid" 2>/dev/null || true
+            sleep 1
+            kill -KILL "$copy_pid" 2>/dev/null || true
+            wait "$copy_pid" 2>/dev/null || true
+            return 124
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    wait "$copy_pid"
+}
+
 instance_file="${work_dir}/instance.json"
 audit_file="${work_dir}/audit-events.json"
 history_file="${work_dir}/state_history.json"
@@ -393,7 +593,6 @@ run_oci audit event list \
 # transitions with observed current states and explicit prior-state fields are
 # copied; no window boundary or post-window current-state observation is
 # fabricated.
-checker_dir="${lane_root}/scripts"
 "$resolved_python" - "$audit_file" "$history_file" "$instance_id" "$since" "$until" "$checker_dir" <<'PY'
 import json
 import sys
@@ -438,7 +637,7 @@ if [ -n "$state_snapshot_source" ]; then
             snapshot_command="curl --fail --silent --show-error --location --connect-timeout ${curl_connection_timeout} --max-time ${curl_max_time} --output state_snapshot.json ${snapshot_url_without_query}"
             ;;
         *)
-            cp "$state_snapshot_source" "$snapshot_file"
+            bounded_copy "$state_snapshot_source" "$snapshot_file"
             snapshot_command="cp $(quote_for_manifest "$state_snapshot_source") state_snapshot.json"
             ;;
     esac
@@ -446,7 +645,7 @@ fi
 
 receipts_command=""
 if [ -n "$wp_receipts_source" ]; then
-    cp "$wp_receipts_source" "$receipts_file"
+    bounded_copy "$wp_receipts_source" "$receipts_file"
     receipts_command="cp $(quote_for_manifest "$wp_receipts_source") wp_describe_receipts.json"
 fi
 
@@ -464,7 +663,7 @@ fi
 chmod 700 "$work_dir"
 
 capture_time="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-"$resolved_python" - "$work_dir" "$instance_id" "$compartment_id" "$since" "$until" "$capture_time" \
+"$resolved_python" - "$work_dir" "$schema_version" "$manifest_format" "$instance_id" "$compartment_id" "$since" "$until" "$capture_time" \
     "$instance_command" "$audit_command" "$history_command" "$snapshot_command" "$receipts_command" <<'PY'
 from __future__ import annotations
 
@@ -475,7 +674,25 @@ import sys
 from pathlib import Path
 
 
-out_dir, instance_id, compartment_id, since, until, capture_time, instance_command, audit_command, history_command, snapshot_command, receipts_command = sys.argv[1:]
+(
+    out_dir,
+    schema_version_text,
+    manifest_format,
+    instance_id,
+    compartment_id,
+    since,
+    until,
+    capture_time,
+    instance_command,
+    audit_command,
+    history_command,
+    snapshot_command,
+    receipts_command,
+) = sys.argv[1:]
+try:
+    schema_version = int(schema_version_text)
+except ValueError:
+    raise SystemExit("manifest generation: checker schema version is not an integer") from None
 root = Path(out_dir)
 artifacts = [
     ("instance.json", instance_command),
@@ -503,8 +720,8 @@ for relative, command in artifacts:
     )
 
 manifest = {
-    "schema_version": 1,
-    "format": "oci-gpu-burst-evidence-v1",
+    "schema_version": schema_version,
+    "format": manifest_format,
     "instance_id": instance_id,
     "compartment_id": compartment_id,
     "since": since,
@@ -521,20 +738,26 @@ PY
 
 chmod 600 "$work_dir/manifest.json"
 
-# A directory rename cannot replace a non-empty directory in place. Move the
-# previous complete bundle into the transaction directory only after all new
-# receipts and the manifest have succeeded, then move the prepared bundle to
-# the destination. The EXIT trap restores the old bundle if the second move
-# fails.
+# A directory rename cannot replace a non-empty directory in place. Write and
+# fsync a durable intent before moving the old bundle, then fsync each parent
+# after the two renames. A later invocation can use the intent to restore the
+# previous bundle if this process dies between the moves.
+publish_intent="${transaction_dir}/.publish-intent"
+printf '%s\n' 'publish-intent-v1' >"$publish_intent"
+chmod 600 "$publish_intent"
+sync_paths "$publish_intent" "$transaction_dir" "$out_parent"
 if [ -e "$out_dir" ]; then
     backup_dir="${transaction_dir}/previous"
-    mv "$out_dir" "$backup_dir"
+    mv -- "$out_dir" "$backup_dir"
     previous_moved=1
+    sync_paths "$out_parent" "$transaction_dir"
 fi
-mv "$work_dir" "$out_dir"
+mv -- "$work_dir" "$out_dir"
+sync_paths "$out_parent"
 work_dir=""
 if [ -n "$transaction_dir" ]; then
     rm -rf -- "$transaction_dir" || true
+    sync_paths "$out_parent"
     transaction_dir=""
 fi
 

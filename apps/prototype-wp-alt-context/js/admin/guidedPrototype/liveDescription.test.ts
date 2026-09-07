@@ -2,16 +2,24 @@ import { describe, expect, it } from 'vitest';
 
 import {
   GUIDED_LIVE_BLOCKED_REASON,
+  GUIDED_LIVE_DEADLINE_CEILING_SECONDS,
+  GUIDED_LIVE_DEADLINE_FLOOR_SECONDS,
+  GUIDED_LIVE_DEADLINE_SLACK_MS,
+  GUIDED_LIVE_GPU_WARMUP_CEILING_SECONDS,
+  GUIDED_LIVE_KEEP_WAITING_SECONDS,
   GUIDED_LIVE_REASON,
   GUIDED_LIVE_STATUS,
   GUIDED_LIVE_WAIT_CEILING_SECONDS,
   guidedLiveNamingDisclosure,
+  isGuidedLiveDeadlineDisclosed,
   guidedLiveRequestPayload,
   guidedLivePollDelayMs,
   guidedLiveReducer,
   guidedLiveRunMayBeLive,
   initialGuidedLiveState,
+  resolveGuidedLiveDeadlineMs,
 } from './liveDescription';
+import { GUIDED_LIVE_WARM_CEILING_SECONDS } from './useGuidedLiveDescription';
 import type { GuidedLiveState } from './liveDescription';
 import { GUIDED_IDENTITY_STATUS, confirmGuidedIdentity, createGuidedScenario } from './state';
 
@@ -48,14 +56,14 @@ describe('guided live description gate', () => {
 });
 
 describe('guided live description bounds', () => {
-  it('clamps an over-long server deadline to the client ceiling', () => {
+  it('clamps an over-long local fallback deadline to the client ceiling', () => {
     let state = decided(initialGuidedLiveState());
     state = guidedLiveReducer(state, { kind: 'requested', atMs: T0 });
     state = guidedLiveReducer(state, { kind: 'accepted', runId: 'run-1', deadlineSeconds: 9999, atMs: T0 });
     expect(state.deadlineMs).toBe(GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000);
   });
 
-  it('keeps a server deadline shorter than the ceiling', () => {
+  it('keeps a local fallback deadline shorter than the ceiling', () => {
     const state = started();
     expect(state.deadlineMs).toBe(300_000);
   });
@@ -670,5 +678,316 @@ describe('degraded detection comes from the result tier', () => {
       text: 'A full description.',
     });
     expect(state.status).toBe(GUIDED_LIVE_STATUS.READY);
+  });
+});
+
+describe('resolveGuidedLiveDeadlineMs: the server budget the client is willing to trust', () => {
+  const WARM_CEILING_MS = GUIDED_LIVE_WARM_CEILING_SECONDS * 1000;
+  const COLD_CEILING_MS = GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000;
+
+  it('adopts a disclosed budget that is inside the warm ceiling, plus slack', () => {
+    expect(resolveGuidedLiveDeadlineMs(WARM_CEILING_MS, 60, 'ready')).toBe(60_000 + GUIDED_LIVE_DEADLINE_SLACK_MS);
+    expect(resolveGuidedLiveDeadlineMs(WARM_CEILING_MS, 60, 'ready')).toBe(75_000);
+  });
+
+  it('lets a warm run honor a disclosed generation budget above the local ceiling', () => {
+    expect(resolveGuidedLiveDeadlineMs(WARM_CEILING_MS, 240, 'ready')).toBe(
+      240_000 + GUIDED_LIVE_DEADLINE_SLACK_MS,
+    );
+    expect(resolveGuidedLiveDeadlineMs(WARM_CEILING_MS, 240, 'ready')).not.toBe(WARM_CEILING_MS);
+  });
+
+  // Replaces an assertion that pinned the bug: the old formula ran the same
+  // min() for the cold branch as for the warm one, so a cold run whose server
+  // disclosed its 180s GENERATION budget waited 195s -- while the scale-to-zero
+  // pod is still allowed 510s just to load weights. `deadline_seconds` excludes
+  // warm-up by contract, so the client owes that leg itself.
+  it('cold start: adds the warm-up leg the disclosed budget explicitly excludes', () => {
+    expect(resolveGuidedLiveDeadlineMs(COLD_CEILING_MS, 60, 'stopped')).toBe(
+      (60 + GUIDED_LIVE_GPU_WARMUP_CEILING_SECONDS) * 1000 + GUIDED_LIVE_DEADLINE_SLACK_MS,
+    );
+    expect(resolveGuidedLiveDeadlineMs(COLD_CEILING_MS, 60, 'stopped')).toBe(585_000);
+  });
+
+  it('does not time a cold run out at 3:15 on the service default budget', () => {
+    // The reported run: cold GPU, `deadline_seconds: 180`. The old formula gave
+    // 195_000 and flipped the panel to TIMED_OUT at 3:15 while the run was
+    // healthy and finished minutes later. The disclosed generation budget now
+    // remains authoritative, with the cold warm-up leg added back.
+    const resolved = resolveGuidedLiveDeadlineMs(COLD_CEILING_MS, 180, 'stopped');
+
+    expect(resolved).toBeGreaterThan(195_000);
+    expect(resolved).toBe(180_000 + GUIDED_LIVE_GPU_WARMUP_CEILING_SECONDS * 1000 + GUIDED_LIVE_DEADLINE_SLACK_MS);
+  });
+
+  it('adds the warm-up leg to a disclosed 240-second budget on unknown GPU state', () => {
+    expect(resolveGuidedLiveDeadlineMs(COLD_CEILING_MS, 240, 'unknown')).toBe(
+      (240 + GUIDED_LIVE_GPU_WARMUP_CEILING_SECONDS) * 1000 + GUIDED_LIVE_DEADLINE_SLACK_MS,
+    );
+  });
+
+  it('owes the warm-up leg on every gpu state except ready', () => {
+    for (const gpu of ['unknown', 'stopped', 'starting', 'warming', 'degraded'] as const) {
+      expect(resolveGuidedLiveDeadlineMs(COLD_CEILING_MS, 60, gpu), gpu).toBe(585_000);
+    }
+    expect(resolveGuidedLiveDeadlineMs(COLD_CEILING_MS, 60, 'ready')).toBe(75_000);
+  });
+
+  it('stays consistent with the proxy: warm-up plus generation is the whole ceiling', () => {
+    // src/api/class-public-demo-describe-controller.php::public_deadline_seconds()
+    // returns $warmup + $inference. The client's cold ceiling is the same sum.
+    expect(GUIDED_LIVE_WAIT_CEILING_SECONDS).toBe(
+      GUIDED_LIVE_GPU_WARMUP_CEILING_SECONDS + GUIDED_LIVE_WARM_CEILING_SECONDS,
+    );
+  });
+
+  it('falls back to the local ceiling when the server discloses nothing', () => {
+    expect(resolveGuidedLiveDeadlineMs(WARM_CEILING_MS, null, 'ready')).toBe(WARM_CEILING_MS);
+    expect(resolveGuidedLiveDeadlineMs(WARM_CEILING_MS, undefined, 'ready')).toBe(WARM_CEILING_MS);
+    expect(resolveGuidedLiveDeadlineMs(COLD_CEILING_MS, null, 'stopped')).toBe(COLD_CEILING_MS);
+  });
+
+  it('falls back to the local ceiling on a disclosed value that is not usable', () => {
+    expect(resolveGuidedLiveDeadlineMs(WARM_CEILING_MS, Number.NaN, 'ready')).toBe(WARM_CEILING_MS);
+    expect(resolveGuidedLiveDeadlineMs(WARM_CEILING_MS, -1, 'ready')).toBe(WARM_CEILING_MS);
+    expect(resolveGuidedLiveDeadlineMs(WARM_CEILING_MS, 0, 'ready')).toBe(WARM_CEILING_MS);
+    expect(resolveGuidedLiveDeadlineMs(WARM_CEILING_MS, Number.POSITIVE_INFINITY, 'ready')).toBe(WARM_CEILING_MS);
+    expect(resolveGuidedLiveDeadlineMs(WARM_CEILING_MS, '60' as unknown as number, 'ready')).toBe(WARM_CEILING_MS);
+  });
+
+  it('refuses a budget below the trust floor rather than declaring a healthy run timed out', () => {
+    // A misconfigured ACX_DESCRIPTION_TIMEOUT_SECONDS=1, or a truncated number
+    // in a proxied body, used to resolve to 16s and time the panel out sixteen
+    // seconds into a healthy run with no path back up.
+    expect(resolveGuidedLiveDeadlineMs(COLD_CEILING_MS, 1, 'ready')).toBe(COLD_CEILING_MS);
+    expect(resolveGuidedLiveDeadlineMs(COLD_CEILING_MS, 29, 'ready')).toBe(COLD_CEILING_MS);
+    expect(resolveGuidedLiveDeadlineMs(COLD_CEILING_MS, 0.5, 'ready')).toBe(COLD_CEILING_MS);
+  });
+
+  it('refuses a budget just above the generation trust ceiling', () => {
+    expect(resolveGuidedLiveDeadlineMs(WARM_CEILING_MS, GUIDED_LIVE_DEADLINE_CEILING_SECONDS + 1, 'ready')).toBe(
+      WARM_CEILING_MS,
+    );
+  });
+
+  it('accepts a budget exactly at the floor, so the band has a boundary and not a gap', () => {
+    expect(GUIDED_LIVE_DEADLINE_FLOOR_SECONDS).toBe(30);
+    expect(resolveGuidedLiveDeadlineMs(COLD_CEILING_MS, GUIDED_LIVE_DEADLINE_FLOOR_SECONDS, 'ready')).toBe(
+      GUIDED_LIVE_DEADLINE_FLOOR_SECONDS * 1000 + GUIDED_LIVE_DEADLINE_SLACK_MS,
+    );
+  });
+
+  it('names the same band from the predicate the resolver uses', () => {
+    expect(isGuidedLiveDeadlineDisclosed(180)).toBe(true);
+    expect(isGuidedLiveDeadlineDisclosed(GUIDED_LIVE_DEADLINE_CEILING_SECONDS)).toBe(true);
+    expect(isGuidedLiveDeadlineDisclosed(1)).toBe(false);
+    expect(isGuidedLiveDeadlineDisclosed(null)).toBe(false);
+    expect(isGuidedLiveDeadlineDisclosed('180')).toBe(false);
+    expect(isGuidedLiveDeadlineDisclosed(GUIDED_LIVE_DEADLINE_CEILING_SECONDS + 1)).toBe(false);
+  });
+});
+
+describe('the reducer adopts the server-disclosed deadline once, at accept', () => {
+  const acceptedWith = (over: {
+    deadlineSeconds?: number;
+    gpu?: 'ready' | 'stopped' | 'starting';
+    disclosedDeadlineSeconds?: number | null;
+  } = {}): GuidedLiveState => {
+    let state = decided(initialGuidedLiveState());
+    state = guidedLiveReducer(state, { kind: 'requested', atMs: T0 });
+    return guidedLiveReducer(state, {
+      kind: 'accepted',
+      runId: 'run-1',
+      deadlineSeconds: over.deadlineSeconds ?? GUIDED_LIVE_WARM_CEILING_SECONDS,
+      gpu: over.gpu ?? 'ready',
+      disclosedDeadlineSeconds: over.disclosedDeadlineSeconds,
+      atMs: T0,
+    });
+  };
+
+  it('sets deadlineMs from the disclosed budget on accept', () => {
+    expect(acceptedWith({ disclosedDeadlineSeconds: 60 }).deadlineMs).toBe(75_000);
+  });
+
+  it('ignores a different deadline_seconds carried on a later poll -- a server bug, not a resize', () => {
+    let state = acceptedWith({ disclosedDeadlineSeconds: 60 });
+    expect(state.deadlineMs).toBe(75_000);
+
+    state = guidedLiveReducer(state, {
+      kind: 'polled',
+      phase: 'warming',
+      gpu: 'ready',
+      atMs: T0 + 1000,
+      disclosedDeadlineSeconds: 900,
+    });
+    expect(state.deadlineMs).toBe(75_000);
+    expect(state.disclosedDeadlineSeconds).toBe(60);
+  });
+
+  it('keeps the local ceiling when the server discloses nothing on accept', () => {
+    expect(acceptedWith().deadlineMs).toBe(GUIDED_LIVE_WARM_CEILING_SECONDS * 1000);
+    expect(acceptedWith().disclosedDeadlineSeconds).toBeNull();
+  });
+
+  it('keeps the disclosed budget verbatim, not folded into the deadline it produced', () => {
+    // The number itself is what makes a later re-derivation with a newly owed
+    // warm-up leg possible; a boolean "something was disclosed" latch could not.
+    expect(acceptedWith({ disclosedDeadlineSeconds: 400 }).disclosedDeadlineSeconds).toBe(400);
+  });
+
+  it('lets a first disclosure arrive on a poll when the accept carried none', () => {
+    let state = acceptedWith({ deadlineSeconds: GUIDED_LIVE_WAIT_CEILING_SECONDS, gpu: 'stopped' });
+    expect(state.disclosedDeadlineSeconds).toBeNull();
+
+    state = guidedLiveReducer(state, {
+      kind: 'polled',
+      phase: 'warming',
+      gpu: 'starting',
+      atMs: T0 + 1000,
+      disclosedDeadlineSeconds: 60,
+    });
+
+    expect(state.disclosedDeadlineSeconds).toBe(60);
+  });
+});
+
+describe('a legitimate extension stays reachable for the whole run', () => {
+  const acceptedWarmThenCold = (disclosed: number | null): GuidedLiveState => {
+    let state = decided(initialGuidedLiveState());
+    state = guidedLiveReducer(state, { kind: 'requested', atMs: T0 });
+    // The submit read gpu_state 'ready', so the warm pin was chosen.
+    state = guidedLiveReducer(state, {
+      kind: 'accepted',
+      runId: 'run-1',
+      deadlineSeconds: GUIDED_LIVE_WARM_CEILING_SECONDS,
+      gpu: 'ready',
+      disclosedDeadlineSeconds: disclosed,
+      atMs: T0,
+    });
+    // ...then the pod was reaped, or the read raced, and poll #2 says cold.
+    return guidedLiveReducer(state, {
+      kind: 'deadline_raised',
+      deadlineSeconds: GUIDED_LIVE_WAIT_CEILING_SECONDS,
+      gpu: 'stopped',
+    });
+  };
+
+  it('lifts a warm-pinned deadline when a poll reveals a cold GPU', () => {
+    // Regression: a one-way "the server disclosed something" latch suppressed
+    // every later deadline_raised, so this run timed out at 3:00 against a
+    // server budget of 400s plus a 510s warm-up it had not yet begun.
+    const state = acceptedWarmThenCold(400);
+
+    expect(state.deadlineMs).toBeGreaterThan(GUIDED_LIVE_WARM_CEILING_SECONDS * 1000);
+    expect(state.deadlineMs).toBe(
+      400_000 + GUIDED_LIVE_GPU_WARMUP_CEILING_SECONDS * 1000 + GUIDED_LIVE_DEADLINE_SLACK_MS,
+    );
+  });
+
+  it('re-derives the raise from the disclosed budget, not from the raw ceiling', () => {
+    // Disclosed 60s of generation plus the 510s warm-up now owed. The disclosure
+    // still governs, and is measured against the leg the run actually has to
+    // pay without being capped by the local whole-wait ceiling.
+    const state = acceptedWarmThenCold(60);
+
+    expect(state.deadlineMs).toBe(585_000);
+  });
+
+  it('never shrinks the wait, however the raise resolves', () => {
+    let state = decided(initialGuidedLiveState());
+    state = guidedLiveReducer(state, { kind: 'requested', atMs: T0 });
+    state = guidedLiveReducer(state, {
+      kind: 'accepted',
+      runId: 'run-1',
+      deadlineSeconds: GUIDED_LIVE_WAIT_CEILING_SECONDS,
+      gpu: 'stopped',
+      atMs: T0,
+    });
+    const wide = state.deadlineMs;
+
+    state = guidedLiveReducer(state, {
+      kind: 'deadline_raised',
+      deadlineSeconds: GUIDED_LIVE_WARM_CEILING_SECONDS,
+      gpu: 'ready',
+    });
+
+    expect(state.deadlineMs).toBe(wide);
+  });
+
+  it('is idempotent: the same raise applied twice changes nothing', () => {
+    const once = acceptedWarmThenCold(60);
+    const twice = guidedLiveReducer(once, {
+      kind: 'deadline_raised',
+      deadlineSeconds: GUIDED_LIVE_WAIT_CEILING_SECONDS,
+      gpu: 'stopped',
+    });
+
+    expect(twice.deadlineMs).toBe(once.deadlineMs);
+  });
+});
+
+describe('keeping the wait is offered instead of only a restart', () => {
+  const timedOut = (): GuidedLiveState => {
+    let state = decided(initialGuidedLiveState());
+    state = guidedLiveReducer(state, { kind: 'requested', atMs: T0 });
+    state = guidedLiveReducer(state, {
+      kind: 'accepted',
+      runId: 'run-1',
+      deadlineSeconds: GUIDED_LIVE_WARM_CEILING_SECONDS,
+      gpu: 'ready',
+      atMs: T0,
+    });
+    state = guidedLiveReducer(state, { kind: 'polled', phase: 'describing', gpu: 'ready', atMs: T0 + 1000 });
+    return guidedLiveReducer(state, { kind: 'tick', atMs: T0 + GUIDED_LIVE_WARM_CEILING_SECONDS * 1000 + 1 });
+  };
+
+  it('times out holding the run id, so there is something to keep waiting on', () => {
+    const state = timedOut();
+    expect(state.status).toBe(GUIDED_LIVE_STATUS.TIMED_OUT);
+    expect(state.runId).toBe('run-1');
+    expect(guidedLiveRunMayBeLive(state)).toBe(true);
+  });
+
+  it('resumes the same run under a fresh window rather than starting a second burst', () => {
+    const state = timedOut();
+    const resumed = guidedLiveReducer(state, { kind: 'wait_resumed', atMs: T0 });
+
+    expect(resumed.runId).toBe('run-1');
+    expect(resumed.reason).toBeNull();
+    expect(resumed.deadlineMs).toBe(state.elapsedMs + GUIDED_LIVE_KEEP_WAITING_SECONDS * 1000);
+    expect(resumed.deadlineMs).toBeGreaterThan(state.elapsedMs);
+  });
+
+  it('resumes at the phase the run had actually reached, not back at queued', () => {
+    const resumed = guidedLiveReducer(timedOut(), { kind: 'wait_resumed', atMs: T0 });
+
+    expect(resumed.status).toBe(GUIDED_LIVE_STATUS.DESCRIBING);
+  });
+
+  it('polls again once resumed instead of staying stopped', () => {
+    let state = guidedLiveReducer(timedOut(), { kind: 'wait_resumed', atMs: T0 });
+    const at = state.elapsedMs + 1000;
+    state = guidedLiveReducer(state, {
+      kind: 'polled',
+      phase: 'complete',
+      gpu: 'ready',
+      tier: 'final_gpu',
+      atMs: T0 + at,
+      text: 'It finished after all.',
+    });
+
+    expect(state.status).toBe(GUIDED_LIVE_STATUS.READY);
+    expect(state.text).toBe('It finished after all.');
+  });
+
+  it('refuses to resume a state that is not a timed-out run', () => {
+    const blocked = initialGuidedLiveState();
+    expect(guidedLiveReducer(blocked, { kind: 'wait_resumed', atMs: T0 })).toBe(blocked);
+
+    const waiting = started();
+    expect(guidedLiveReducer(waiting, { kind: 'wait_resumed', atMs: T0 })).toBe(waiting);
+
+    const withoutRun = { ...timedOut(), runId: null };
+    expect(guidedLiveReducer(withoutRun, { kind: 'wait_resumed', atMs: T0 })).toBe(withoutRun);
   });
 });

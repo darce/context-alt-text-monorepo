@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
@@ -20,7 +21,18 @@ logger = logging.getLogger(__name__)
 
 INTENT_SCHEMA_VERSION = 1
 MAX_INTENT_TTL_SECONDS = 7200.0
-MAX_INTENT_REQUESTED_AT_FUTURE_SKEW_SECONDS = 5.0
+MAX_INTENT_REQUESTED_AT_FUTURE_SKEW_SECONDS = 120.0
+_INTENT_FIELDS = frozenset(
+    {
+        "schema_version",
+        "action",
+        "requested_at",
+        "expires_at",
+        "ttl_seconds",
+        "requested_by",
+        "nonce",
+    }
+)
 
 
 class IntentAction(StrEnum):
@@ -49,10 +61,11 @@ class OperatorIntent:
     requested_at: datetime
     expires_at: datetime
     nonce: str
-    requested_by: str | None = None
-    ttl_seconds: float | None = None
+    requested_by: str
+    ttl_seconds: int
     schema_version: int = INTENT_SCHEMA_VERSION
     source: Path | None = None
+    reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -66,6 +79,7 @@ class EffectiveIntent:
     requested_by: str | None = None
     source: Path | None = None
     status: IntentStatus = IntentStatus.NONE
+    reason: str | None = None
 
     @property
     def intent(self) -> IntentAction:
@@ -100,77 +114,101 @@ def _parse_timestamp(value: object, *, field: str) -> datetime:
     return parsed.astimezone(UTC)
 
 
-def _invalid(path: Path, error: object) -> None:
-    logger.warning("operator intent invalid file %s: %s", path, error)
+def _invalid(path: Path, error: object, *, reason_sink: list[str] | None = None) -> None:
+    message = str(error)
+    if reason_sink is not None and not reason_sink:
+        reason_sink.append(message)
+    logger.warning("operator intent invalid file %s: %s", path, message)
 
 
-def _read_one(path: Path, *, read_time: datetime | None = None) -> OperatorIntent | None:
+def _read_one(
+    path: Path,
+    *,
+    read_time: datetime | None = None,
+    reason_sink: list[str] | None = None,
+) -> OperatorIntent | None:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        _invalid(path, exc)
+        _invalid(path, exc, reason_sink=reason_sink)
         return None
     if not isinstance(payload, dict):
-        _invalid(path, "payload must be a JSON object")
+        _invalid(path, "payload must be a JSON object", reason_sink=reason_sink)
         return None
 
     schema_version = payload.get("schema_version")
     if isinstance(schema_version, bool) or not isinstance(schema_version, int) or schema_version != INTENT_SCHEMA_VERSION:
-        _invalid(path, f"schema_version must be {INTENT_SCHEMA_VERSION}")
+        _invalid(path, f"schema_version must be {INTENT_SCHEMA_VERSION}", reason_sink=reason_sink)
         return None
 
     raw_action = payload.get("action")
     try:
         action = IntentAction(raw_action)
     except (TypeError, ValueError) as exc:
-        _invalid(path, f"action must be one of {[item.value for item in IntentAction]} ({exc})")
+        _invalid(
+            path,
+            f"action must be one of {[item.value for item in IntentAction]} ({exc})",
+            reason_sink=reason_sink,
+        )
         return None
 
     try:
         requested_at = _parse_timestamp(payload.get("requested_at"), field="requested_at")
         expires_at = _parse_timestamp(payload.get("expires_at"), field="expires_at")
     except ValueError as exc:
-        _invalid(path, exc)
+        _invalid(path, exc, reason_sink=reason_sink)
         return None
     if expires_at <= requested_at:
-        _invalid(path, "expires_at must be later than requested_at")
+        _invalid(path, "expires_at must be later than requested_at", reason_sink=reason_sink)
+        return None
+
+    ttl_seconds = payload.get("ttl_seconds")
+    if isinstance(ttl_seconds, bool) or not isinstance(ttl_seconds, int) or ttl_seconds <= 0:
+        _invalid(path, "ttl_seconds must be a positive integer", reason_sink=reason_sink)
+        return None
+
+    requested_by = payload.get("requested_by")
+    if not isinstance(requested_by, str) or not requested_by.strip():
+        _invalid(path, "requested_by must be a non-blank string", reason_sink=reason_sink)
+        return None
+
+    nonce = payload.get("nonce")
+    if not isinstance(nonce, str) or not nonce.strip():
+        _invalid(path, "nonce must be a UUID4", reason_sink=reason_sink)
+        return None
+    normalized_nonce = nonce.strip()
+    try:
+        parsed_nonce = uuid.UUID(normalized_nonce)
+    except (AttributeError, ValueError) as exc:
+        _invalid(path, f"nonce must be a UUID4 ({exc})", reason_sink=reason_sink)
+        return None
+    if parsed_nonce.variant != uuid.RFC_4122 or parsed_nonce.version != 4:
+        _invalid(path, "nonce must be a UUID4", reason_sink=reason_sink)
+        return None
+
+    unexpected_fields = sorted(set(payload) - _INTENT_FIELDS)
+    if unexpected_fields:
+        _invalid(path, f"unexpected field {unexpected_fields[0]!r}", reason_sink=reason_sink)
         return None
 
     expiry_anchor = requested_at
+    parse_reasons: list[str] = []
     if read_time is not None:
+        read_time = _coerce_now(read_time)
         future_skew = (requested_at - read_time).total_seconds()
         if future_skew > MAX_INTENT_REQUESTED_AT_FUTURE_SKEW_SECONDS:
             _invalid(
                 path,
                 "requested_at is future-dated by "
                 f"{future_skew:.1f}s (allowance={MAX_INTENT_REQUESTED_AT_FUTURE_SKEW_SECONDS:.1f}s)",
+                reason_sink=reason_sink,
             )
             return None
         # A small clock skew is tolerated, but its TTL must still be measured
         # from the reader's clock rather than allowing a writer to extend it.
         expiry_anchor = min(requested_at, read_time)
-
-    nonce = payload.get("nonce")
-    if not isinstance(nonce, str) or not nonce.strip():
-        _invalid(path, "nonce must be a non-blank string")
-        return None
-
-    requested_by = payload.get("requested_by")
-    if requested_by is not None and (not isinstance(requested_by, str) or not requested_by.strip()):
-        _invalid(path, "requested_by must be a non-blank string when present")
-        return None
-
-    ttl_seconds = payload.get("ttl_seconds")
-    if ttl_seconds is not None:
-        if (
-            isinstance(ttl_seconds, bool)
-            or not isinstance(ttl_seconds, (int, float))
-            or not math.isfinite(ttl_seconds)
-            or ttl_seconds <= 0
-        ):
-            _invalid(path, "ttl_seconds must be a positive finite number when present")
-            return None
-        ttl_seconds = float(ttl_seconds)
+        if requested_at > read_time:
+            parse_reasons.append("requested_at within clock-skew tolerance")
 
     # Treat an overlong expiry as a bounded operator request rather than
     # allowing a malformed writer to pin the machine indefinitely.
@@ -183,16 +221,18 @@ def _read_one(path: Path, *, read_time: datetime | None = None) -> OperatorInten
             expires_at.isoformat(),
         )
         expires_at = maximum_expiry
+        parse_reasons.append(f"expires_at clamped to {MAX_INTENT_TTL_SECONDS:.0f} seconds")
 
     return OperatorIntent(
         action=action,
         requested_at=requested_at,
         expires_at=expires_at,
-        nonce=nonce,
+        nonce=normalized_nonce,
         requested_by=requested_by,
         ttl_seconds=ttl_seconds,
         schema_version=schema_version,
         source=path,
+        reason=("; ".join(parse_reasons) if parse_reasons else None),
     )
 
 
@@ -231,8 +271,9 @@ def read_effective_intent(
     root = Path(intent_dir)
     valid: list[OperatorIntent] = []
     expired = False
+    parse_reasons: list[str] = []
     for path in _candidate_paths(root):
-        intent = _read_one(path, read_time=current_time)
+        intent = _read_one(path, read_time=current_time, reason_sink=parse_reasons)
         if intent is None:
             continue
         if intent.expires_at <= current_time:
@@ -242,7 +283,14 @@ def read_effective_intent(
         valid.append(intent)
 
     if not valid:
-        return EffectiveIntent(status=IntentStatus.EXPIRED if expired else IntentStatus.NONE)
+        return EffectiveIntent(
+            status=IntentStatus.EXPIRED if expired else IntentStatus.NONE,
+            reason=(
+                parse_reasons[0]
+                if parse_reasons
+                else ("intent expired" if expired else None)
+            ),
+        )
 
     winner = max(
         valid,
@@ -260,4 +308,5 @@ def read_effective_intent(
         requested_by=winner.requested_by,
         source=winner.source,
         status=IntentStatus.NONE,
+        reason=winner.reason,
     )

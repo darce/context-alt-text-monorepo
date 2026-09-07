@@ -17,7 +17,7 @@ import math
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any
 
 UTC = dt.UTC
 SCHEMA_VERSION = 1
@@ -44,7 +44,10 @@ def _parse_time(value: Any) -> float | None:
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
-        numeric = float(value)
+        try:
+            numeric = float(value)
+        except (OverflowError, ValueError):
+            return None
         return numeric if math.isfinite(numeric) else None
     if not isinstance(value, str) or not value.strip():
         return None
@@ -76,7 +79,7 @@ def _format_time(value: float | None) -> str:
     try:
         return dt.datetime.fromtimestamp(value, UTC).isoformat().replace("+00:00", "Z")
     except (OverflowError, OSError, ValueError):
-        return f"invalid ({value!r})"
+        return "invalid timestamp"
 
 
 def _as_text(value: Any) -> str | None:
@@ -371,9 +374,9 @@ def _action_from_value(value: Any) -> str | None:
         return None
     text = re.sub(r"[._ -]+(?:BEGIN|END)$", "", text, flags=re.IGNORECASE)
     action = re.sub(r"[._ -]+", "", text).upper()
-    if action in {"START", "STARTINSTANCE"}:
+    if action in {ACTION_START, "STARTINSTANCE"}:
         return ACTION_START
-    if action in {"STOP", "STOPINSTANCE"}:
+    if action in {ACTION_STOP, "STOPINSTANCE"}:
         return ACTION_STOP
     return None
 
@@ -495,65 +498,56 @@ def _status_success(value: Any) -> bool:
     return match is not None and 200 <= int(match.group(1)) < 300
 
 
-class AuditAction(NamedTuple):
-    """One deduplicated, successful, in-window audit action for the target instance."""
-
-    timestamp: float
-    position: int
-    action: str
-    event: Mapping[str, Any]
-    observed_state: str | None
-
-    @property
-    def state_confirmed(self) -> bool:
-        return self.observed_state == ACTION_RESULT_STATE[self.action]
-
-    @property
-    def state_contradicted(self) -> bool:
-        return self.observed_state is not None and not self.state_confirmed
+def _audit_event_groups(payload: Any, *, instance_id: str | None) -> dict[tuple[str, str], list[Mapping[str, Any]]]:
+    if instance_id is None:
+        return {}
+    grouped: dict[tuple[str, str], list[Mapping[str, Any]]] = {}
+    for occurrence, event in enumerate(_audit_items(payload)):
+        if _event_resource_id(event) != instance_id:
+            continue
+        for action in _event_actions(event):
+            grouped.setdefault((action, _event_identity(event, action, occurrence)), []).append(event)
+    return grouped
 
 
-def _audit_action_records(
+def _event_timestamp_key(event: Mapping[str, Any]) -> float:
+    timestamp = _event_time(event)
+    return timestamp if timestamp is not None else float("-inf")
+
+
+def _representative_audit_event(events: Sequence[Mapping[str, Any]]) -> Mapping[str, Any] | None:
+    completed = [event for event in events if _event_phase(event) == "end"]
+    candidates = completed or [event for event in events if _event_phase(event) is None]
+    return max(candidates, key=_event_timestamp_key) if candidates else None
+
+
+def _audit_operation_events(
     payload: Any,
     *,
     instance_id: str | None,
     since: float,
     until: float,
-) -> list[AuditAction]:
-    """Return every successful audit action for one instance, ordered by event time.
+    require_current_state: bool,
+) -> list[tuple[str, Mapping[str, Any], float]]:
+    """Return one successful Audit record per logical action for one instance."""
 
-    The resulting lifecycle state is reported rather than used as a filter: an
-    extra StartInstance that OCI accepted but never annotated with a
-    ``stateChange`` must still be visible to the exactly-one-start rule.
-    """
-
-    if instance_id is None:
-        return []
-    grouped: dict[tuple[str, str], list[tuple[int, Mapping[str, Any]]]] = {}
-    for occurrence, event in enumerate(_audit_items(payload)):
-        if _event_resource_id(event) != instance_id:
+    operations: list[tuple[str, Mapping[str, Any], float]] = []
+    for (action, _identity), events in _audit_event_groups(payload, instance_id=instance_id).items():
+        event = _representative_audit_event(events)
+        if event is None:
             continue
-        for action in _event_actions(event):
-            key = (action, _event_identity(event, action, occurrence))
-            grouped.setdefault(key, []).append((occurrence, event))
-
-    def event_sort_key(item: tuple[int, Mapping[str, Any]]) -> float:
-        timestamp = _event_time(item[1])
-        return timestamp if timestamp is not None else float("-inf")
-
-    records: list[AuditAction] = []
-    for (action, _identity), items in grouped.items():
-        completed = [item for item in items if _event_phase(item[1]) == "end"]
-        candidates = completed or [item for item in items if _event_phase(item[1]) is None]
-        if not candidates:
-            continue
-        position, event = max(candidates, key=event_sort_key)
         timestamp = _event_time(event)
-        if timestamp is None or not since <= timestamp <= until or not _status_success(_event_status(event)):
+        expected_state = STATE_RUNNING if action == ACTION_START else STATE_STOPPED
+        if (
+            timestamp is None
+            or not since <= timestamp <= until
+            or not _status_success(_event_status(event))
+            or (require_current_state and _event_state_change(event, "current") != expected_state)
+        ):
             continue
-        records.append(AuditAction(timestamp, position, action, event, _event_state_change(event, "current")))
-    records.sort(key=lambda record: (record.timestamp, record.position))
-    return records
+        operations.append((action, event, timestamp))
+    operations.sort(key=lambda item: item[2])
+    return operations
 
 
 def _authoritative_audit_events(
@@ -563,23 +557,36 @@ def _authoritative_audit_events(
     since: float,
     until: float,
 ) -> list[tuple[str, Mapping[str, Any], float]]:
-    """Return successful, completed audit transitions for exactly one instance."""
+    """Return successful, state-backed audit transitions for exactly one instance."""
+
+    return _audit_operation_events(
+        payload,
+        instance_id=instance_id,
+        since=since,
+        until=until,
+        require_current_state=True,
+    )
+
+
+def _successful_audit_action_sequence(
+    payload: Any,
+    *,
+    instance_id: str | None,
+    since: float,
+    until: float,
+) -> list[str]:
+    """Read successful logical actions before checking their lifecycle order."""
 
     return [
-        (record.action, record.event, record.timestamp)
-        for record in _audit_action_records(payload, instance_id=instance_id, since=since, until=until)
-        if record.state_confirmed
+        action
+        for action, _event, _timestamp in _audit_operation_events(
+            payload,
+            instance_id=instance_id,
+            since=since,
+            until=until,
+            require_current_state=False,
+        )
     ]
-
-
-def _audit_action_order_is_valid(actions: Sequence[str]) -> bool:
-    """Require one StartInstance followed only by StopInstance actions."""
-
-    if not actions or actions[0] != ACTION_START:
-        return False
-    if any(action == ACTION_START for action in actions[1:]):
-        return False
-    return any(action == ACTION_STOP for action in actions[1:])
 
 
 def _principal_values(event: Mapping[str, Any]) -> set[str]:
@@ -787,6 +794,44 @@ def _manifest_schema_check(manifest: Mapping[str, Any]) -> dict[str, Any]:
     )
 
 
+def _manifest_checks(
+    bundle: Path,
+) -> tuple[Mapping[str, Any] | None, list[dict[str, Any]], list[dict[str, Any]]]:
+    """Load and validate the manifest before interpreting any listed artifact."""
+
+    try:
+        manifest = _safe_json(bundle / "manifest.json")
+        if not isinstance(manifest, Mapping):
+            raise EvidenceError("manifest.json must contain an object")
+    except EvidenceError as exc:
+        return None, [], [_result("manifest_sha256", False, str(exc))]
+
+    schema_check = _manifest_schema_check(manifest)
+    if not schema_check["passed"]:
+        return None, [], [schema_check]
+    entries, manifest_failures = _verify_manifest(bundle, manifest)
+    manifest_check = _result(
+        "manifest_sha256",
+        not manifest_failures,
+        "all listed files match their sha256" if not manifest_failures else "; ".join(manifest_failures),
+    )
+    return manifest, entries, [schema_check, manifest_check]
+
+
+def _window_checks(
+    manifest: Mapping[str, Any], since: str | None, until: str | None
+) -> tuple[float | None, float | None, str | None, str | None, list[dict[str, Any]]]:
+    """Parse the capture window and return its check result."""
+
+    since_epoch, until_epoch, since_text, until_text, window_error = _window_from_args(manifest, since, until)
+    check = _result(
+        "capture_window",
+        window_error is None,
+        f"{since_text} .. {until_text}" if window_error is None else window_error,
+    )
+    return since_epoch, until_epoch, since_text, until_text, [check]
+
+
 def _receipt_paths(entries: Sequence[Mapping[str, Any]]) -> dict[str, Path | None]:
     return {
         "instance": _entry_path(
@@ -896,9 +941,7 @@ def _state_checks(
         if history_id is None
         else f"state history identifies {history_id}, expected {expected_instance_id}"
     )
-    passed = (
-        identity_ok and raw_order_ok and action_order_ok and sequence == [STATE_STOPPED, STATE_RUNNING, STATE_STOPPED]
-    )
+    passed = identity_ok and raw_order_ok and action_order_ok and sequence == [STATE_STOPPED, STATE_RUNNING, STATE_STOPPED]
     detail = (
         "observed STOPPED -> RUNNING -> STOPPED inside capture window"
         if passed
@@ -919,6 +962,70 @@ def _state_checks(
     )
 
 
+def _artifact_checks(
+    entries: Sequence[Mapping[str, Any]],
+    *,
+    manifest_instance_id: str | None,
+    since: float,
+    until: float,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Load required artifacts and prepare context for the sequence checks."""
+
+    paths = _receipt_paths(entries)
+    instance_payload, payload_instance_id, instance_checks = _instance_checks(paths["instance"], manifest_instance_id)
+    target_instance_id = (
+        manifest_instance_id if manifest_instance_id and payload_instance_id == manifest_instance_id else None
+    )
+    _history_payload, observations, history_checks = _state_checks(
+        paths["history"],
+        since=since,
+        until=until,
+        expected_instance_id=target_instance_id,
+    )
+    final_state = _instance_state(instance_payload)
+    final_state_check = _result(
+        "oci_final_state",
+        final_state == STATE_STOPPED,
+        "final OCI lifecycle state is STOPPED"
+        if final_state == STATE_STOPPED
+        else f"final OCI lifecycle state is {final_state or 'missing'}",
+    )
+    context = {
+        "final_state": final_state,
+        "final_state_check": final_state_check,
+        "instance_id": target_instance_id,
+        "observations": observations,
+        "paths": paths,
+    }
+    return [*instance_checks, *history_checks], context
+
+
+def _audit_transition_order_check(
+    events: Sequence[tuple[str, Mapping[str, Any], float]],
+    matching_stops: Sequence[tuple[Mapping[str, Any], float]],
+) -> dict[str, Any]:
+    """Require the ordered authoritative transitions to be START then STOP."""
+
+    ordered_actions = [action for action, _event, _timestamp in events]
+    start_timestamps = [timestamp for action, _event, timestamp in events if action == ACTION_START]
+    start_timestamp = start_timestamps[0] if len(start_timestamps) == 1 else None
+    has_later_matching_stop = start_timestamp is not None and any(
+        timestamp > start_timestamp for _event, timestamp in matching_stops
+    )
+    order_ok = (
+        ordered_actions[:1] == [ACTION_START]
+        and any(action == ACTION_STOP for action in ordered_actions[1:])
+        and has_later_matching_stop
+    )
+    return _result(
+        "audit_transition_order",
+        order_ok,
+        "successful StartInstance precedes the matching reaper StopInstance"
+        if order_ok
+        else "audit transition order requires StartInstance before the matching reaper StopInstance",
+    )
+
+
 def _audit_checks(
     path: Path | None,
     *,
@@ -926,22 +1033,36 @@ def _audit_checks(
     since: float,
     until: float,
     expected_stop_principal: str,
-) -> tuple[list[tuple[str, Mapping[str, Any], float]], list[dict[str, Any]]]:
+) -> list[dict[str, Any]]:
     payload, receipt_check = _load_required(path, "audit_receipt")
-    records = (
-        _audit_action_records(payload, instance_id=instance_id, since=since, until=until) if payload is not None else []
+    events = (
+        _authoritative_audit_events(payload, instance_id=instance_id, since=since, until=until)
+        if payload is not None
+        else []
     )
-    events = [(record.action, record.event, record.timestamp) for record in records if record.state_confirmed]
-    starts = [record for record in records if record.action == ACTION_START and not record.state_contradicted]
-    stops = [record for record in records if record.action == ACTION_STOP and record.state_confirmed]
+    stops = [(event, timestamp) for action, event, timestamp in events if action == ACTION_STOP]
+    authoritative_start_count = sum(action == ACTION_START for action, _event, _timestamp in events)
+    actions = _successful_audit_action_sequence(
+        payload,
+        instance_id=instance_id,
+        since=since,
+        until=until,
+    )
+    start_count = actions.count(ACTION_START)
+    if start_count == 1 and authoritative_start_count == 0:
+        start_detail = "observed 0 StartInstance audit events with the expected RUNNING state"
+    elif start_count == 1:
+        start_detail = "exactly one StartInstance audit event"
+    else:
+        start_detail = f"observed {start_count} StartInstance audit events"
     start_check = _result(
         "exactly_one_start_instance",
-        len(starts) == 1,
-        "exactly one StartInstance audit event"
-        if len(starts) == 1
-        else f"observed {len(starts)} StartInstance audit events",
+        start_count == 1 and authoritative_start_count == 1,
+        start_detail,
     )
-    matching_stops = [record for record in stops if expected_stop_principal in _principal_values(record.event)]
+    matching_stops = [
+        (event, timestamp) for event, timestamp in stops if expected_stop_principal in _principal_values(event)
+    ]
     principal_check = _result(
         "expected_stop_principal",
         bool(matching_stops),
@@ -949,17 +1070,8 @@ def _audit_checks(
         if matching_stops
         else f"no StopInstance audit event matched principal {expected_stop_principal!r} (observed {len(stops)})",
     )
-    actions = [record.action for record in records]
-    order_ok = _audit_action_order_is_valid(actions)
-    order_check = _result(
-        "audit_transition_order",
-        order_ok,
-        "successful StartInstance precedes a successful StopInstance"
-        if order_ok
-        else "audit transition order must begin with one StartInstance, "
-        "include a later StopInstance, and contain no further StartInstance",
-    )
-    return events, [receipt_check, start_check, principal_check, order_check]
+    order_check = _audit_transition_order_check(events, matching_stops)
+    return [receipt_check, start_check, principal_check, order_check]
 
 
 def _snapshot_check(
@@ -1028,6 +1140,35 @@ def _receipts_check(
     )
 
 
+def _snapshot_checks(
+    path: Path | None,
+    *,
+    since: float,
+    until: float,
+    final_state: str | None,
+    expected_instance_id: str | None,
+) -> list[dict[str, Any]]:
+    """Return the optional snapshot check as a list for bundle composition."""
+
+    return [
+        _snapshot_check(
+            path,
+            since=since,
+            until=until,
+            final_state=final_state,
+            expected_instance_id=expected_instance_id,
+        )
+    ]
+
+
+def _receipt_checks(
+    path: Path | None, *, intervals: Sequence[tuple[float, float]], min_descriptions: int
+) -> list[dict[str, Any]]:
+    """Return WordPress receipt checks as a list for bundle composition."""
+
+    return [_receipts_check(path, intervals=intervals, min_descriptions=min_descriptions)]
+
+
 def check_bundle(
     bundle: str | Path,
     *,
@@ -1043,80 +1184,57 @@ def check_bundle(
         return _verdict(
             bundle_path, [_result("bundle_directory", False, f"bundle directory is missing: {bundle_path}")]
         )
-    try:
-        manifest = _safe_json(bundle_path / "manifest.json")
-        if not isinstance(manifest, Mapping):
-            raise EvidenceError("manifest.json must contain an object")
-    except EvidenceError as exc:
-        return _verdict(bundle_path, [_result("manifest_sha256", False, str(exc))])
+    manifest, entries, checks = _manifest_checks(bundle_path)
+    if manifest is None:
+        return _verdict(bundle_path, checks)
 
-    entries, manifest_failures = _verify_manifest(bundle_path, manifest)
-    checks: list[dict[str, Any]] = [
-        _manifest_schema_check(manifest),
-        _result(
-            "manifest_sha256",
-            not manifest_failures,
-            "all listed files match their sha256" if not manifest_failures else "; ".join(manifest_failures),
-        ),
-    ]
-    since_epoch, until_epoch, since_text, until_text, window_error = _window_from_args(manifest, since, until)
-    checks.append(
-        _result(
-            "capture_window",
-            window_error is None,
-            f"{since_text} .. {until_text}" if window_error is None else window_error,
-        )
-    )
-    if window_error is not None or since_epoch is None or until_epoch is None:
+    since_epoch, until_epoch, since_text, until_text, window_checks = _window_checks(manifest, since, until)
+    checks.extend(window_checks)
+    window_invalid = window_checks[0]["passed"] is False
+    if window_invalid or since_epoch is None or until_epoch is None:
         return _verdict(bundle_path, checks, since=since_text, until=until_text)
 
-    paths = _receipt_paths(entries)
     manifest_instance_id = _as_text(manifest.get("instance_id", manifest.get("instanceId")))
-    instance_payload, payload_instance_id, instance_checks = _instance_checks(paths["instance"], manifest_instance_id)
-    checks.extend(instance_checks)
-    target_instance_id = (
-        manifest_instance_id if manifest_instance_id and payload_instance_id == manifest_instance_id else None
-    )
-    _history_payload, observations, history_checks = _state_checks(
-        paths["history"],
+    artifact_checks, context = _artifact_checks(
+        entries,
+        manifest_instance_id=manifest_instance_id,
         since=since_epoch,
         until=until_epoch,
-        expected_instance_id=target_instance_id,
     )
-    checks.extend(history_checks)
-    _audit_events, audit_checks = _audit_checks(
-        paths["audit"],
-        instance_id=target_instance_id,
-        since=since_epoch,
-        until=until_epoch,
-        expected_stop_principal=expected_stop_principal,
-    )
-    checks.extend(audit_checks)
-    final_state = _instance_state(instance_payload)
-    checks.append(
-        _result(
-            "oci_final_state",
-            final_state == STATE_STOPPED,
-            "final OCI lifecycle state is STOPPED"
-            if final_state == STATE_STOPPED
-            else f"final OCI lifecycle state is {final_state or 'missing'}",
-        )
-    )
-    checks.append(
-        _snapshot_check(
-            paths["snapshot"],
+    checks.extend(artifact_checks)
+    checks.extend(
+        _audit_checks(
+            context["paths"]["audit"],
+            instance_id=context["instance_id"],
             since=since_epoch,
             until=until_epoch,
-            final_state=final_state,
-            expected_instance_id=target_instance_id,
+            expected_stop_principal=expected_stop_principal,
         )
     )
-    checks.append(
-        _receipts_check(
-            paths["receipts"], intervals=_running_intervals(observations), min_descriptions=min_descriptions
+    checks.append(context["final_state_check"])
+    checks.extend(
+        _snapshot_checks(
+            context["paths"]["snapshot"],
+            since=since_epoch,
+            until=until_epoch,
+            final_state=context["final_state"],
+            expected_instance_id=context["instance_id"],
         )
     )
-    return _verdict(bundle_path, checks, since=since_text, until=until_text, instance_id=target_instance_id)
+    checks.extend(
+        _receipt_checks(
+            context["paths"]["receipts"],
+            intervals=_running_intervals(context["observations"]),
+            min_descriptions=min_descriptions,
+        )
+    )
+    return _verdict(
+        bundle_path,
+        checks,
+        since=since_text,
+        until=until_text,
+        instance_id=context["instance_id"],
+    )
 
 
 def build_state_history_document(
@@ -1142,7 +1260,7 @@ def build_state_history_document(
         current = _event_state_change(event, "current")
         if current is None:
             continue
-        if action == "START":
+        if action == ACTION_START:
             previous = _event_state_change(event, "previous")
             if previous is not None:
                 observations.append(
@@ -1161,7 +1279,7 @@ def build_state_history_document(
                 "state": state,
                 "timestamp": event.get("eventTime", event.get("event_time", timestamp)),
                 "source": "oci_audit_transition",
-                "action": "StartInstance" if action == "START" else "StopInstance",
+                "action": "StartInstance" if action == ACTION_START else "StopInstance",
                 "event_id": _first_value(
                     event, ("eventId", "eventID", "event_id", "eventGroupingId", "requestId", "request_id")
                 ),

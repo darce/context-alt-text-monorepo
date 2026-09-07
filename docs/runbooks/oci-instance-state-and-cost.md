@@ -25,16 +25,19 @@ want both:
 | Instance | Shape | Expected state | Notes |
 | --- | --- | --- | --- |
 | `acx-backend` | `VM.Standard.A1.Flex` (4 OCPU / 24 GB, ARM, no GPU) | **RUNNING** | Always-Free; serves dev/staging/prod recognition |
-| `acx-gpu-burst` | `VM.GPU.A10.1` (1× A10 24 GB VRAM, 30 OCPU / 240 GB host) | **STOPPED** | ~$2.00/GPU-hour **while running**. Created RUNNING so cloud-init finishes, then stopped. Two-layer cost cap (backend reaper + guest self-stop) — verify both, see below |
+| `acx-gpu-burst` | `VM.GPU.A10.1` (1× A10 24 GB VRAM, 30 OCPU / 240 GB host) | **STOPPED** | ~$2.00/GPU-hour **while running**. Created RUNNING so cloud-init finishes, then stopped. Live backend idle reaper plus guest self-stop cap — verify both, see below |
 
 Anything else non-terminated in the tenancy is unexpected — investigate.
 
 > **The GPU cost cap has two layers. Verify both before trusting either.**
 >
-> **Layer 1 — backend-side reaper (`acx-backend`).**
+> **Layer 1 — live backend-side idle reaper (`acx-backend`).**
 > `scripts/deploy/gpu-lifecycle-install.sh` installs `acx-gpu-reap.timer` /
-> `.service` on `acx-backend`. It runs every 2 min and STOPs the pinned
-> `acx-gpu-burst` when the describe queue drains or the max lease expires. It
+> `.service` on `acx-backend`. With the installer's defaults it runs every 2 min,
+> STOPs the pinned `acx-gpu-burst` after the 300-second (5-minute) idle
+> threshold, and forcibly STOPs it when the default max lease expires at 3600 seconds (60-minute cap).
+> `--idle-seconds` and `--max-lease-seconds` can override those defaults;
+> verify the installed values in `/etc/acx/gpu-lifecycle.env`. It
 > reads the current per-environment load snapshots under `/run/acx-write/`
 > and **fails closed** — if the snapshot is missing or stale it logs `load
 > snapshot untrustworthy; refusing STOP`, exits `1`, and stops nothing. A

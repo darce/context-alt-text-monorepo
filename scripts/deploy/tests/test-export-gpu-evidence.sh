@@ -155,9 +155,12 @@ schema_scripts="${schema_root}/scripts"
 schema_bin="${schema_root}/bin"
 mkdir -p "${schema_scripts}" "${schema_bin}"
 cp "${root}/scripts/gpu_burst_evidence.py" "${schema_scripts}/gpu_burst_evidence.py"
-sed -i 's/^SCHEMA_VERSION = 1$/SCHEMA_VERSION = 9/' "${schema_scripts}/gpu_burst_evidence.py"
-sed -i 's/^MANIFEST_FORMAT = .*/MANIFEST_FORMAT = \"oci-gpu-burst-evidence-v9\"/' \
-    "${schema_scripts}/gpu_burst_evidence.py"
+# GNU sed -i takes no argument; BSD sed -i requires one. Rewrite via a temp file so
+# this suite runs the same on the macOS dev machines and the Linux gate host.
+sed -e 's/^SCHEMA_VERSION = 1$/SCHEMA_VERSION = 9/' \
+    -e 's/^MANIFEST_FORMAT = .*/MANIFEST_FORMAT = \"oci-gpu-burst-evidence-v9\"/' \
+    "${schema_scripts}/gpu_burst_evidence.py" >"${schema_scripts}/gpu_burst_evidence.py.tmp"
+mv "${schema_scripts}/gpu_burst_evidence.py.tmp" "${schema_scripts}/gpu_burst_evidence.py"
 cat >"${schema_bin}/git" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail

@@ -174,6 +174,10 @@ class DescribeRunResponse(BaseModel):
     # HARM-F1: snapshot of recognition_enabled at submit. Default True so
     # omitted payloads keep today's naming-on behaviour.
     recognition_enabled: bool = True
+    # GUIDEDFIX-2 [RES-02]: the generation budget the server itself enforces,
+    # snapshotted at accept. The client must not invent its own ceiling. Null
+    # only for runs created outside the submit route (never via POST).
+    deadline_seconds: float | None = None
 
 
 class DescribeRunItemResponse(BaseModel):

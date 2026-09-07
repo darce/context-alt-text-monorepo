@@ -1494,6 +1494,9 @@ def ensure_tables(op) -> None:
         sa.Column("skipped_items", sa.Integer(), nullable=False, server_default=sa.text("0")),
         sa.Column("cancel_requested", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         sa.Column("recognition_enabled", sa.Boolean(), nullable=False, server_default=sa.text("true")),
+        # GUIDEDFIX-2: caller retry token + the generation budget disclosed at accept.
+        sa.Column("idempotency_key", sa.String(length=128), nullable=True),
+        sa.Column("deadline_seconds", sa.Float(), nullable=True),
         sa.Column("error_message", sa.Text(), nullable=True),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("started_at", sa.TIMESTAMP(timezone=True), nullable=True),
@@ -1508,6 +1511,9 @@ def ensure_tables(op) -> None:
             name="valid_describe_run_phase",
         ),
         sa.CheckConstraint("run_kind IN ('bulk', 'single')", name="valid_describe_run_kind"),
+        # GUIDEDFIX-2: the describe-run accept reservation. NULLs are distinct, so
+        # only token-carrying submits are deduped.
+        sa.UniqueConstraint("tenant_id", "idempotency_key", name="uq_image_description_runs_idempotency_key"),
     )
     _ensure_index(op, "idx_image_description_runs_tenant", "image_description_runs", ["tenant_id"])
     _ensure_index(

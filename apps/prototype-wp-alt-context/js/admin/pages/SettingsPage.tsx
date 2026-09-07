@@ -21,6 +21,7 @@ import { RetentionSection } from './RetentionPage';
 import { SettingsForm } from './settings/SettingsForm';
 import { SettingsRoutingBanner } from './settings/SettingsRoutingBanner';
 import { TestConnectionBannerView } from './settings/TestConnectionBannerView';
+import { GpuControlCard } from './settings/GpuControlCard';
 import { isReadOnly } from './settings/settingsConstants';
 import { TONE_CLASS } from './settings/testConnectionBanner';
 import { useSettingsPageState } from './settings/useSettingsPageState';
@@ -288,6 +289,8 @@ export const SettingsPage = (): React.JSX.Element => {
           },
         }}
       />
+
+      <GpuControlCard />
 
       {state.saveMessage ? (
         <div

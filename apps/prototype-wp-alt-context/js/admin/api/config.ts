@@ -12,7 +12,6 @@ import { createLogger, type Logger } from '../utils/logger';
  */
 export { isNonceRefreshAuthRejection, NonceRefreshFailedError } from '../utils/errorTaxonomy';
 
-
 let log: Logger | undefined;
 const configLog = (): Logger => {
   log ??= createLogger('api.config');
@@ -36,6 +35,7 @@ export interface ApiConfig {
   devMode?: boolean | string | number; // wp_localize_script may convert to "1" or ""
   recognitionSource?: 'service' | 'local';
   effectiveTargetUrl?: string;
+  guided_live_media_id?: unknown; // wp_localize_script stringifies numbers
 }
 
 export interface NormalizedConfig {
@@ -49,6 +49,8 @@ export interface NormalizedConfig {
   devMode: boolean;
   recognitionSource: 'service' | 'local';
   effectiveTargetUrl: string;
+  /** Attachment the guided prototype describes live; null when unconfigured. */
+  guidedLiveMediaId: number | null;
 }
 
 // NOTE: Batch limits removed for MVP. Previously 50, now set high to disable chunking.
@@ -65,6 +67,36 @@ const NONCE_BODY_PATTERN = /^[a-f0-9]{8,20}$/i;
  */
 export const NONCE_REFRESH_TIMEOUT_MS = 10_000;
 
+/**
+ * An attachment id is a positive integer. Anything else — an unset option, a
+ * float, a stray string — means the guided live run has no subject, and saying
+ * so is better than submitting a run for media 0 ([RLSE-05] silent failure is
+ * the worst failure).
+ *
+ * This must agree with the PHP side that publishes the value
+ * (`Admin::get_guided_live_media_id`, `FILTER_VALIDATE_INT`), or the two ends
+ * disagree about whether the demo has a subject at all. `Number()` is the wrong
+ * tool for that: it reads `'0x1a'` as 26 and `'1e10'` as ten billion, both of
+ * which PHP rejects outright. A decimal-digits test with PHP's surrounding-
+ * whitespace tolerance is the same predicate on both sides (rg-005).
+ */
+const DECIMAL_INT_PATTERN = /^[+-]?\d+$/;
+
+const normalizeAttachmentId = (value: unknown): number | null => {
+  if (typeof value === 'number') {
+    return Number.isInteger(value) && value > 0 ? value : null;
+  }
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!DECIMAL_INT_PATTERN.test(trimmed)) {
+    return null;
+  }
+  const parsed = Number(trimmed);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+};
+
 const normalizeOptionalString = (value: unknown): string | undefined =>
   typeof value === 'string' && value.trim() !== '' ? value : undefined;
 
@@ -75,10 +107,9 @@ const normalizeOptionalString = (value: unknown): string | undefined =>
  */
 const softNonEmptyString = (value: unknown, field: string, requestLog: Logger): string => {
   if (typeof value !== 'string' || value.trim() === '') {
-    requestLog.warn(
-      `AltContextAdmin configuration field "${field}" is missing or empty; dependent features degrade.`,
-      { field },
-    );
+    requestLog.warn(`AltContextAdmin configuration field "${field}" is missing or empty; dependent features degrade.`, {
+      field,
+    });
     return '';
   }
   return value;
@@ -111,9 +142,8 @@ export const normalizeConfig = (raw: ApiConfig): NormalizedConfig => {
     // RECOG-1: hosted service is the canonical target; do not fall back to a local
     // default. An unconfigured install reports an empty effective target.
     effectiveTargetUrl:
-      typeof raw.effectiveTargetUrl === 'string' && raw.effectiveTargetUrl.trim() !== ''
-        ? raw.effectiveTargetUrl
-        : '',
+      typeof raw.effectiveTargetUrl === 'string' && raw.effectiveTargetUrl.trim() !== '' ? raw.effectiveTargetUrl : '',
+    guidedLiveMediaId: normalizeAttachmentId(raw.guided_live_media_id),
   };
 };
 
@@ -141,6 +171,21 @@ export const getConfig = (): NormalizedConfig => {
 
   cachedConfig = normalizeConfig(config);
   return cachedConfig;
+};
+
+/**
+ * Attachment the guided prototype describes live, or null when there is none.
+ *
+ * The guided screen is the one admin surface that renders without the SPA
+ * bootstrap (its entrance card, and component tests in isolation). No bootstrap
+ * means no live run to offer, which is a disabled button and a sentence — not
+ * an exception that takes the lesson down with it.
+ */
+export const getGuidedLiveMediaId = (): number | null => {
+  if (!cachedConfig && !window.AltContextAdmin) {
+    return null;
+  }
+  return getConfig().guidedLiveMediaId;
 };
 
 /**
@@ -206,13 +251,7 @@ export const refreshRestNonce = (): Promise<string> => {
       clearTimeout(timer);
     }
 
-    if (
-      ok &&
-      body !== '' &&
-      body !== '0' &&
-      body !== '-1' &&
-      NONCE_BODY_PATTERN.test(body)
-    ) {
+    if (ok && body !== '' && body !== '0' && body !== '-1' && NONCE_BODY_PATTERN.test(body)) {
       setNonce(body);
       return body;
     }

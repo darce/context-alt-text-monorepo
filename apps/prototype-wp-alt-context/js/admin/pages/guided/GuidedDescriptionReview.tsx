@@ -7,9 +7,12 @@ import {
   getLastGuidedApplication,
 } from '../../guidedPrototype/state';
 import type { GuidedCandidateStatus, GuidedScenario } from '../../guidedPrototype/state';
+import { GuidedLiveDescriptionPanel } from './GuidedLiveDescriptionPanel';
 
 export interface GuidedDescriptionReviewProps {
   scenario: GuidedScenario;
+  /** Attachment the optional live run describes; null when the demo has none. */
+  liveMediaId: number | null;
   resetVersion: number;
   onSaveEdit: (text: string) => string | undefined;
   onReject: () => void;
@@ -50,6 +53,7 @@ const descriptionExplanation = (scenario: GuidedScenario): string => {
 
 export const GuidedDescriptionReview = ({
   scenario,
+  liveMediaId,
   resetVersion,
   onSaveEdit,
   onReject,
@@ -192,6 +196,11 @@ export const GuidedDescriptionReview = ({
           </div>
         </div>
       </section>
+
+      {/* Reset practice must clear the live run too: `resetVersion` as a key
+          remounts the panel, where passing it as a prop left a finished run's
+          sentence on screen after the lesson restarted (S1-B-09). */}
+      <GuidedLiveDescriptionPanel key={resetVersion} scenario={scenario} mediaId={liveMediaId} />
 
       <section
         id="guided-section-apply"

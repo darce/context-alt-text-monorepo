@@ -411,4 +411,200 @@ class AdminTest extends TestCase
         $method = $reflection->getMethod($methodName);
         return $method->invokeArgs($object, $args);
     }
+
+    /**
+     * Registers a post of the given type so get_post_type() resolves it.
+     */
+    private function registerPost(int $id, string $postType): void
+    {
+        $post = new \stdClass();
+        $post->ID = $id;
+        $post->post_type = $postType;
+        $GLOBALS['__ac_posts'][$id] = $post;
+    }
+
+    /**
+     * The guided prototype's live run needs one real attachment id, and the
+     * only way it reaches the browser is this payload. An unset option must
+     * publish null so the panel can say "not configured" rather than submit 0.
+     *
+     * The value is asserted as a string because wp_localize_script casts every
+     * scalar on the way out; that string is the shape the browser parses.
+     */
+    public function testLocalizeSpaConfigPublishesTheGuidedLiveMediaId(): void
+    {
+        $this->registerPost(4211, 'attachment');
+        $this->setOption('acx_guided_live_media_id', 4211);
+
+        $this->invokePrivateMethod($this->admin, 'localize_spa_config', ['test-handle']);
+
+        $localized = $GLOBALS['__ac_localized_scripts']['test-handle']['AltContextAdmin'] ?? null;
+
+        $this->assertIsArray($localized);
+        $this->assertSame('4211', $localized['guided_live_media_id']);
+    }
+
+    /**
+     * @return array<string, array{0: mixed}>
+     */
+    public static function unstorableGuidedLiveMediaIdProvider(): array
+    {
+        return [
+            // filter_var(true) is 1, so without the boolean rejection a boolean
+            // option publishes attachment 1 -- whatever that happens to be.
+            'boolean true' => [true],
+            'boolean false' => [false],
+            'array' => [[4211]],
+            // A float is scalar and not boolean, so the old deny-list waved it
+            // through to filter_var, which truncates it to a real id. The JS
+            // mirror rejects the string '4211.0'; the two ends must agree.
+            'float' => [4211.0],
+            'float with a fraction' => [4211.7],
+        ];
+    }
+
+    /**
+     * @dataProvider unstorableGuidedLiveMediaIdProvider
+     *
+     * @param mixed $raw
+     */
+    public function testLocalizeSpaConfigRejectsOptionTypesThatAreNotAStringOrAnInt($raw): void
+    {
+        $this->registerPost(1, 'attachment');
+        $this->registerPost(4211, 'attachment');
+        $this->setOption('acx_guided_live_media_id', $raw);
+
+        $this->invokePrivateMethod($this->admin, 'localize_spa_config', ['test-handle']);
+
+        $localized = $GLOBALS['__ac_localized_scripts']['test-handle']['AltContextAdmin'] ?? null;
+
+        $this->assertIsArray($localized);
+        $this->assertNull($localized['guided_live_media_id']);
+    }
+
+    /**
+     * @return array<string, array{0: string|false}>
+     */
+    public static function nonAttachmentGuidedLiveMediaIdProvider(): array
+    {
+        return [
+            'plain post' => ['post'],
+            'page' => ['page'],
+            'missing post' => [false],
+        ];
+    }
+
+    /**
+     * A well-formed id is not a subject. Publishing one that is not an
+     * attachment enables a live run that can only fail, in place of the
+     * blocked line the panel has for exactly this misconfiguration.
+     *
+     * @dataProvider nonAttachmentGuidedLiveMediaIdProvider
+     *
+     * @param string|false $postType
+     */
+    public function testLocalizeSpaConfigRejectsAnIdThatIsNotAnAttachment($postType): void
+    {
+        if (false !== $postType) {
+            $this->registerPost(4211, $postType);
+        }
+        $this->setOption('acx_guided_live_media_id', 4211);
+
+        $this->invokePrivateMethod($this->admin, 'localize_spa_config', ['test-handle']);
+
+        $localized = $GLOBALS['__ac_localized_scripts']['test-handle']['AltContextAdmin'] ?? null;
+
+        $this->assertIsArray($localized);
+        $this->assertNull($localized['guided_live_media_id']);
+    }
+
+    public function testLocalizeSpaConfigPublishesNullGuidedLiveMediaIdWhenUnset(): void
+    {
+        $this->invokePrivateMethod($this->admin, 'localize_spa_config', ['test-handle']);
+
+        $localized = $GLOBALS['__ac_localized_scripts']['test-handle']['AltContextAdmin'] ?? null;
+
+        $this->assertIsArray($localized);
+        $this->assertArrayHasKey('guided_live_media_id', $localized);
+        $this->assertNull($localized['guided_live_media_id']);
+    }
+
+    public function testLocalizeSpaConfigRejectsANonPositiveGuidedLiveMediaId(): void
+    {
+        $this->setOption('acx_guided_live_media_id', '-3');
+
+        $this->invokePrivateMethod($this->admin, 'localize_spa_config', ['test-handle']);
+
+        $localized = $GLOBALS['__ac_localized_scripts']['test-handle']['AltContextAdmin'] ?? null;
+
+        $this->assertIsArray($localized);
+        $this->assertArrayHasKey('guided_live_media_id', $localized);
+        $this->assertNull($localized['guided_live_media_id']);
+    }
+
+    /**
+     * @return array<string, array{0: string}>
+     */
+    public static function nonIntegerGuidedLiveMediaIdProvider(): array
+    {
+        return [
+            'hex notation' => ['0x1a'],
+            'exponent notation' => ['1e10'],
+            'trailing decimal' => ['4211.0'],
+            'digit separators' => ['1_000'],
+            'blank' => [' '],
+            'sign alone' => ['+'],
+            'non-ascii digits' => ["\u{0664}\u{0662}"],
+        ];
+    }
+
+    /**
+     * Parity pin for js/admin/api/config.ts `normalizeAttachmentId`. The JS side
+     * used `Number()`, which reads hex and exponent notation as valid ids that
+     * this method has already refused -- so the browser could believe the demo
+     * had a subject the server said it did not (rg-005). Both ends now run the
+     * same decimal-digits predicate, and both ends pin the same table.
+     *
+     * @dataProvider nonIntegerGuidedLiveMediaIdProvider
+     */
+    public function testLocalizeSpaConfigRejectsIdsFilterValidateIntRejects(string $raw): void
+    {
+        $this->setOption('acx_guided_live_media_id', $raw);
+
+        $this->invokePrivateMethod($this->admin, 'localize_spa_config', ['test-handle']);
+
+        $localized = $GLOBALS['__ac_localized_scripts']['test-handle']['AltContextAdmin'] ?? null;
+
+        $this->assertIsArray($localized);
+        $this->assertNull($localized['guided_live_media_id'], sprintf('%s must not publish an id', $raw));
+    }
+
+    /**
+     * @return array<string, array{0: string}>
+     */
+    public static function whitespacePaddedGuidedLiveMediaIdProvider(): array
+    {
+        return [
+            'leading space' => [' 4211'],
+            'trailing space' => ['4211 '],
+            'both sides' => [' 4211 '],
+            'explicit plus' => ['+4211'],
+        ];
+    }
+
+    /**
+     * @dataProvider whitespacePaddedGuidedLiveMediaIdProvider
+     */
+    public function testLocalizeSpaConfigAcceptsIdsFilterValidateIntAccepts(string $raw): void
+    {
+        $this->registerPost(4211, 'attachment');
+        $this->setOption('acx_guided_live_media_id', $raw);
+
+        $this->invokePrivateMethod($this->admin, 'localize_spa_config', ['test-handle']);
+
+        $localized = $GLOBALS['__ac_localized_scripts']['test-handle']['AltContextAdmin'] ?? null;
+
+        $this->assertIsArray($localized);
+        $this->assertSame('4211', $localized['guided_live_media_id'], sprintf('%s must publish 4211', $raw));
+    }
 }

@@ -142,6 +142,49 @@ def test_overlong_expiry_is_clamped_to_two_hours(tmp_path: Path, caplog: pytest.
     assert "clamped" in caplog.text
 
 
+def test_far_future_requested_at_is_ignored_so_it_cannot_pin_newer_intents(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _write_intent(
+        tmp_path,
+        "skewed",
+        action="start",
+        requested_at=NOW + timedelta(days=7),
+        expires_at=NOW + timedelta(days=7, minutes=30),
+        nonce="skewed",
+    )
+    _write_intent(
+        tmp_path,
+        "prod",
+        action="stop",
+        requested_at=NOW,
+        expires_at=NOW + timedelta(minutes=5),
+        nonce="operator-stop",
+    )
+
+    effective = read_effective_intent(tmp_path, NOW)
+
+    assert effective.action is IntentAction.STOP
+    assert effective.nonce == "operator-stop"
+    assert "future" in caplog.text
+
+
+def test_near_future_expiry_clamp_is_anchored_to_read_time(tmp_path: Path) -> None:
+    requested_at = NOW + timedelta(seconds=1)
+    _write_intent(
+        tmp_path,
+        "prod",
+        requested_at=requested_at,
+        expires_at=requested_at + timedelta(hours=10),
+    )
+
+    effective = read_effective_intent(tmp_path, NOW)
+
+    assert effective.action is IntentAction.START
+    assert effective.expires_at == NOW + timedelta(hours=2)
+
+
 def test_missing_or_disabled_intent_is_silent_auto(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     assert read_effective_intent(None, NOW).action is IntentAction.AUTO
 

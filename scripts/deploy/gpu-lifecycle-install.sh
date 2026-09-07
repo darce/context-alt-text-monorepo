@@ -213,7 +213,7 @@ ensure_acx_api_group() {
     # dies at status=216/GROUP with "Failed to determine supplementary groups:
     # No such process" -- before a single line of lifecycle code runs. Print the
     # name the units must use on stdout; diagnostics go to stderr.
-    local gid=$1 name=$2 existing
+    local gid=$1 name=$2 existing fallback_name
     existing=$(getent group "$gid" | cut -d: -f1)
     if [ -n "$existing" ]; then
         if [ "$existing" != "$name" ]; then
@@ -222,13 +222,16 @@ ensure_acx_api_group() {
         printf '%s\n' "$existing"
         return 0
     fi
-    if getent group "$name" >/dev/null 2>&1; then
-        echo "error: group '$name' exists with a gid other than $gid; refusing to renumber it" >&2
-        return 1
+    if ! sudo groupadd -r -g "$gid" "$name" >&2; then
+        fallback_name="acxgid${gid}"
+        sudo groupadd -r -g "$gid" "$fallback_name" >&2 || {
+            echo "error: could not provision a resolvable group for gid $gid" >&2
+            return 1
+        }
+        name="$fallback_name"
     fi
-    sudo groupadd --system --gid "$gid" "$name" >&2
     getent group "$gid" >/dev/null || {
-        echo "error: created group '$name' but gid $gid is still unresolvable via NSS" >&2
+        echo "error: created group '$name' but NSS does not resolve GID $gid" >&2
         return 1
     }
     printf '%s\n' "$name"
@@ -451,20 +454,54 @@ SSH_USER_EXPLICIT=0
 GPU_INSTANCE_NAME="${GPU_INSTANCE_NAME:-acx-gpu-burst}"
 GPU_INSTANCE_ID="${GPU_INSTANCE_ID:-}"
 MAX_LEASE_SECONDS="${MAX_LEASE_SECONDS:-3600}"
-IDLE_SECONDS="${IDLE_SECONDS:-300}"
-START_INTERVAL="${START_INTERVAL:-30s}"
-REAP_INTERVAL="${REAP_INTERVAL:-2min}"
+# Only unset operator overrides receive defaults. An explicitly empty value
+# remains invalid and reaches the fail-closed validation below.
+IDLE_SECONDS="${IDLE_SECONDS-300}"
+START_INTERVAL="${START_INTERVAL-30s}"
+REAP_INTERVAL="${REAP_INTERVAL-2min}"
 READY_URL="${READY_URL-}"
 LOAD_STALE_GRACE_SECONDS="${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS:-600}"
 REMOTE_COMMAND_TIMEOUT_SECONDS="${REMOTE_COMMAND_TIMEOUT_SECONDS:-180}"
-# The API container publishes load and intent dumps as uid/gid 10001. The host
-# lifecycle units need that gid as a supplementary group to read them. systemd
+# The API container publishes load and intent dumps as its pinned uid/gid. The
+# host lifecycle units need that gid as a supplementary group to read them. systemd
 # resolves SupplementaryGroups through NSS, so the gid must also have a *name*.
 ACX_API_GID="${ACX_API_GID:-10001}"
 ACX_API_GROUP="${ACX_API_GROUP:-acxapi}"
 DRY_RUN=0
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 DEPLOYMENTS_FILE="${ACX_GPU_DEPLOYMENTS_FILE:-${repo_root}/scripts/deploy/gpu-snapshot-deployments.conf}"
+
+resolve_api_image_gid() {
+    local dockerfile=$1 candidates candidate_count
+    [ -r "$dockerfile" ] || {
+        echo "error: api image Dockerfile is missing or unreadable: $dockerfile" >&2
+        return 1
+    }
+    candidates=$(sed -nE \
+        's/^[[:space:]]*RUN[[:space:]]+groupadd[[:space:]]+-r[[:space:]]+-g[[:space:]]+([0-9]+)([[:space:]]|$).*/\1/p' \
+        "$dockerfile")
+    candidate_count=$(printf '%s\n' "$candidates" | awk 'NF {count++} END {print count + 0}')
+    [ "$candidate_count" -eq 1 ] || {
+        echo "error: api image Dockerfile must pin exactly one runtime gid with groupadd -r -g; found ${candidate_count}" >&2
+        return 1
+    }
+    [[ "$candidates" =~ ^[0-9]+$ ]] || {
+        echo "error: api image Dockerfile runtime gid is not a decimal number: $candidates" >&2
+        return 1
+    }
+    printf '%s\n' "$candidates"
+}
+
+ACX_API_IMAGE_GID=$(resolve_api_image_gid "${repo_root}/apps/prototype-description-service/Dockerfile") || exit 2
+if [[ ! "$ACX_API_GID" =~ ^[0-9]+$ ]]; then
+    echo "error: ACX_API_GID must be a decimal gid matching the api image pinned gid ${ACX_API_IMAGE_GID}; received '${ACX_API_GID}'" >&2
+    exit 2
+fi
+if [ "$ACX_API_GID" != "$ACX_API_IMAGE_GID" ]; then
+    echo "error: ACX_API_GID=${ACX_API_GID} disagrees with api image pinned gid=${ACX_API_IMAGE_GID}; refusing deploy" >&2
+    exit 2
+fi
+
 LOAD_ENVIRONMENTS=""
 LOAD_ENVIRONMENT_DIRS=""
 TMPFILES_ENVIRONMENT_ENTRIES=""
@@ -928,19 +965,19 @@ UNIT
 # atomically in the separate load directory. SupplementaryGroups lets the
 # ubuntu units read the API-owned load dump without granting the API host-side
 # write access to lifecycle state.
-# systemd resolves SupplementaryGroups=10001 through NSS before ExecStart. A bare
-# numeric chown creates no group entry, so both lifecycle units died at
-# status=216/GROUP and the burst GPU lost its only stop path. What the units need
-# is a resolvable GID, not a particular name, so fall back to a second name when
-# the preferred one is already taken at another GID, then assert the postcondition
-# under set -e. Asserting on groupadd exit status instead would wedge the install
-# permanently on a name collision.
+# systemd resolves the group name in SupplementaryGroups through NSS before
+# ExecStart. A bare numeric chown creates no group entry, so both lifecycle
+# units died at status=216/GROUP and the burst GPU lost its only stop path. What
+# the units need is a resolvable GID, not a particular name, so fall back to a
+# second name when the preferred one is already taken at another GID, then
+# assert the postcondition under set -e. Asserting on groupadd exit status
+# instead would wedge the install permanently on a name collision.
 # Editing note: this block is spliced into a double-quoted ssh payload, so a
 # literal double quote, dollar sign, backtick or backslash here does not survive
 # transport. Parentheses are safe.
-if ! getent group 10001 >/dev/null 2>&1; then
-    sudo groupadd -r -g 10001 acxapi || sudo groupadd -r -g 10001 acxgid10001 || true
-    getent group 10001 >/dev/null 2>&1 || { echo 'ERROR gpu-lifecycle: groupadd exited 0 but NSS still does not resolve GID 10001; both lifecycle units would die at 216/GROUP before ExecStart. Check nsswitch group sources on the host, then re-run.' >&2; exit 1; }
+if ! getent group ${ACX_API_GID} >/dev/null 2>&1; then
+    sudo groupadd -r -g ${ACX_API_GID} acxapi || sudo groupadd -r -g ${ACX_API_GID} acxgid${ACX_API_GID} || true
+    getent group ${ACX_API_GID} >/dev/null 2>&1 || { echo 'ERROR gpu-lifecycle: groupadd exited 0 but NSS still does not resolve GID ${ACX_API_GID}; both lifecycle units would die at 216/GROUP before ExecStart. Check nsswitch group sources on the host, then re-run.' >&2; exit 1; }
 fi
 sudo mkdir -p /run/acx /run/acx-write ${LOAD_ENVIRONMENT_DIRS}
 sudo chown ubuntu:ubuntu /run/acx

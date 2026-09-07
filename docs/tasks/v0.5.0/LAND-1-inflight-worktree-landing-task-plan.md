@@ -230,7 +230,7 @@ Lanes are dispatched under their **owning** task_ref (findings and gate audit st
 1. Slice 1 reap (no merge; deletions only) ∥ Slice 2 hygiene ∥ N3 healthobs ∥ N4 demogate ∥ N5 evid lanes ∥ N6 gpuops B/D/F ∥ N2 wiring lane.
 2. N2 lands → N7 reconcile → A, C, E.
 3. N9 gpuops review → land.
-4. Slice 5 (`feature/land-1`) lands last so its `make context` warning sees the converged state.
+4. Slice 5 (`feature/land-1`) lands last so `worktree-reap-check` runs against the converged state.
 
 ### Manifest
 

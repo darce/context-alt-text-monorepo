@@ -13,16 +13,35 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from collections.abc import Collection
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Literal
 
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - supported CI/production hosts are POSIX.
+    fcntl = None
+
 WorktreeStatus = Literal["REDUNDANT", "LIVE", "DIRTY", "ROOT", "UNKNOWN"]
+
+# These are build products that may be recreated from tracked source.  The
+# allowlist is deliberately path-shaped: a broad "ignored means disposable"
+# rule would also remove models, dependency trees, and local infrastructure.
+_REGENERABLE_IGNORED_DIRS = frozenset(
+    {".pytest_cache", "__pycache__", ".ruff_cache", ".mypy_cache"}
+)
+_REGENERABLE_IGNORED_PATHS = frozenset({".task-state/.heartbeat"})
 
 
 class GitError(RuntimeError):
     """A Git command could not be run or returned an unexpected failure."""
+
+
+class ReapLockError(RuntimeError):
+    """Another reaper owns the repository mutation lock."""
 
 
 @dataclass(frozen=True)
@@ -67,6 +86,60 @@ def _git(
     return result
 
 
+def _common_git_dir(repo: Path) -> Path:
+    """Return the shared Git directory used by every linked worktree."""
+    result = _git(repo, "rev-parse", "--git-common-dir")
+    if result.returncode != 0 or not result.stdout.strip():
+        raise GitError(_failure(result, "git rev-parse --git-common-dir"))
+    common_dir = Path(result.stdout.strip())
+    if not common_dir.is_absolute():
+        common_dir = (repo / common_dir).resolve()
+    return common_dir
+
+
+@contextmanager
+def _repository_lock(repo: Path | str):
+    """Hold a non-blocking shared-repository lock for a mutation run."""
+    repo_path = Path(repo).resolve()
+    if fcntl is None:
+        raise ReapLockError("cannot acquire repository lock: POSIX flock is unavailable")
+    try:
+        lock_path = _common_git_dir(repo_path) / "worktree-reap.lock"
+    except (GitError, OSError, ValueError) as exc:
+        raise ReapLockError(f"cannot resolve repository lock: {exc}") from exc
+    try:
+        handle = lock_path.open("a+")
+    except OSError as exc:
+        raise ReapLockError(f"cannot open repository lock {lock_path}: {exc}") from exc
+    try:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise ReapLockError(f"another worktree reaper holds {lock_path}") from exc
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    finally:
+        handle.close()
+
+
+@contextmanager
+def _locked_repositories(records: Collection[WorktreeRecord]):
+    """Acquire all candidate repository locks in a stable order."""
+    repositories = sorted(
+        {
+            _record_repo(record)
+            for record in records
+        },
+        key=str,
+    )
+    with ExitStack() as stack:
+        for repo in repositories:
+            stack.enter_context(_repository_lock(repo))
+        yield
+
+
 def _worktree_entries(output: str) -> list[dict[str, object]]:
     """Parse Git's porcelain worktree listing into simple dictionaries."""
     entries: list[dict[str, object]] = []
@@ -87,6 +160,8 @@ def _worktree_entries(output: str) -> list[dict[str, object]]:
             current = {"path": Path(line.removeprefix("worktree "))}
         elif current is None:
             continue
+        elif line.startswith("HEAD "):
+            current["head"] = line.removeprefix("HEAD ").strip()
         elif line.startswith("branch "):
             branch = line.removeprefix("branch ")
             current["branch"] = branch.removeprefix("refs/heads/")
@@ -194,8 +269,22 @@ def is_merged(repo: Path | str, branch: str, parent: str) -> bool:
     return merged is True
 
 
-def _worktree_status(path: Path | str) -> tuple[bool, bool]:
-    """Return ``(has_real_changes, has_ignored_changes)`` for a worktree."""
+def _is_regenerable_ignored(relative_path: str) -> bool:
+    """Return whether one ignored path is an explicitly disposable product."""
+    normalized = relative_path.replace("\\", "/").rstrip("/")
+    if normalized in _REGENERABLE_IGNORED_PATHS:
+        return True
+    parts = PurePosixPath(normalized).parts
+    if any(part in _REGENERABLE_IGNORED_DIRS for part in parts):
+        return True
+    return any(
+        parts[index : index + 2] == (".task-state", ".heartbeat")
+        for index in range(max(0, len(parts) - 1))
+    )
+
+
+def _worktree_status(path: Path | str) -> tuple[bool, tuple[str, ...]]:
+    """Return real dirtiness and every ignored path found in a worktree."""
     path_obj = Path(path).resolve()
     result = _git(
         path_obj,
@@ -203,14 +292,23 @@ def _worktree_status(path: Path | str) -> tuple[bool, bool]:
         "--porcelain=v1",
         "--untracked-files=all",
         "--ignored",
+        "-z",
     )
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()
         raise GitError(detail or f"cannot inspect worktree {path_obj}")
-    lines = [line for line in result.stdout.splitlines() if line]
-    ignored = any(line.startswith("!!") for line in lines)
-    dirty = any(not line.startswith("!!") for line in lines)
-    return dirty, ignored
+    ignored: list[str] = []
+    dirty = False
+    for entry in result.stdout.split("\0"):
+        if not entry:
+            continue
+        status = entry[:2]
+        entry_path = entry[3:] if len(entry) > 3 and entry[2] == " " else entry[2:]
+        if status == "!!":
+            ignored.append(entry_path)
+        else:
+            dirty = True
+    return dirty, tuple(ignored)
 
 
 def is_dirty(path: Path | str) -> bool:
@@ -388,7 +486,7 @@ def _classify_observed(
     parent: str,
     branch_oid: str,
     dirty: bool,
-    ignored: bool,
+    ignored_paths: Collection[str],
     protected: bool,
     allow_ignored: bool,
 ) -> WorktreeRecord:
@@ -415,14 +513,19 @@ def _classify_observed(
             branch_oid=branch_oid,
             allow_ignored=allow_ignored,
         )
-    if ignored and not allow_ignored:
+    unsafe_ignored = tuple(
+        path for path in ignored_paths if not _is_regenerable_ignored(path)
+    )
+    if unsafe_ignored and not allow_ignored:
         return _state_record(
             repo,
             path,
             branch,
             parent,
             "DIRTY",
-            "worktree has ignored changes; pass --allow-ignored to opt in",
+            "worktree has non-regenerable ignored changes: "
+            + ", ".join(unsafe_ignored)
+            + "; pass --allow-ignored to opt in",
             branch_oid=branch_oid,
             allow_ignored=allow_ignored,
         )
@@ -450,7 +553,7 @@ def _classify_linked(
         return _unknown_record(repo, path, branch, parent, "branch ref cannot be inspected")
 
     try:
-        dirty, ignored = _worktree_status(path)
+        dirty, ignored_paths = _worktree_status(path)
     except (GitError, OSError, ValueError) as exc:
         return _unknown_record(repo, path, branch, parent, f"cannot inspect worktree: {exc}")
 
@@ -461,10 +564,21 @@ def _classify_linked(
         parent,
         branch_oid,
         dirty,
-        ignored,
+        ignored_paths,
         _is_protected(repo, path, branch, protected),
         allow_ignored,
     )
+
+
+def _missing_feature_parent(branch: str, branches: Collection[str]) -> str | None:
+    """Return an absent feature parent when the branch name implies one."""
+    if not branch.startswith("feature/"):
+        return None
+    value = branch.removeprefix("feature/")
+    candidates = _candidate_prefixes("feature/", value, include_full=False)
+    if not candidates or any(candidate in branches for candidate in candidates):
+        return None
+    return candidates[0]
 
 
 def _classify_entry(
@@ -486,6 +600,15 @@ def _classify_entry(
             status="ROOT",
             reason="repository root worktree",
             repo=root_path,
+        )
+    missing_parent = _missing_feature_parent(branch, branches)
+    if missing_parent is not None and not _is_protected(repo, path, branch, protected):
+        return _unknown_record(
+            root_path,
+            path,
+            branch,
+            missing_parent,
+            f"expected parent branch is missing: {missing_parent}",
         )
     if not branch:
         return _unknown_record(
@@ -571,6 +694,173 @@ def _repository_root(repo: Path) -> Path:
 def _failure(result: subprocess.CompletedProcess[str], command: str) -> str:
     detail = (result.stderr or result.stdout).strip()
     return detail or f"{command} exited {result.returncode}"
+
+
+def _intent_path(repo: Path) -> Path:
+    return _common_git_dir(repo) / "worktree-reap.intent.json"
+
+
+def _fsync_directory(directory: Path) -> None:
+    file_descriptor = os.open(str(directory), os.O_RDONLY)
+    try:
+        os.fsync(file_descriptor)
+    finally:
+        os.close(file_descriptor)
+
+
+def _write_intent(
+    repo: Path,
+    record: WorktreeRecord,
+    target: Path,
+    phase: str,
+) -> str | None:
+    """Durably record the identity authorized for the next mutation."""
+    intent_path: Path | None = None
+    temporary_path: Path | None = None
+    try:
+        intent_path = _intent_path(repo)
+        payload = {
+            "repo": str(repo.resolve()),
+            "target": str(target.resolve()),
+            "branch": record.branch,
+            "parent": record.parent,
+            "branch_oid": record.branch_oid,
+            "proof_parent": record.proof_parent,
+            "proof_oid": record.proof_oid,
+            "phase": phase,
+            "allow_ignored": record.allow_ignored,
+        }
+        file_descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{intent_path.name}.",
+            dir=str(intent_path.parent),
+        )
+        temporary_path = Path(temporary_name)
+        with os.fdopen(file_descriptor, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, intent_path)
+        temporary_path = None
+        _fsync_directory(intent_path.parent)
+    except (OSError, TypeError, ValueError) as exc:
+        return f"cannot durably record reaper intent: {exc}"
+    finally:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink()
+            except OSError:
+                pass
+    return None
+
+
+def _read_intent(repo: Path) -> tuple[dict[str, object] | None, str | None]:
+    """Read a prior intent, refusing malformed state instead of ignoring it."""
+    try:
+        intent_path = _intent_path(repo)
+        if not intent_path.exists():
+            return None, None
+        value = json.loads(intent_path.read_text(encoding="utf-8"))
+    except (GitError, OSError, TypeError, ValueError) as exc:
+        return None, f"cannot inspect reaper intent: {exc}"
+    if not isinstance(value, dict):
+        return None, "cannot inspect reaper intent: expected a JSON object"
+    return value, None
+
+
+def _intent_matches(
+    intent: dict[str, object],
+    repo: Path,
+    record: WorktreeRecord,
+    target: Path,
+) -> bool:
+    required = {
+        "repo": str(repo.resolve()),
+        "target": str(target.resolve()),
+        "branch": record.branch,
+    }
+    if any(intent.get(key) != value for key, value in required.items()):
+        return False
+    for key in ("branch_oid", "proof_parent", "proof_oid"):
+        expected = getattr(record, key)
+        if expected is not None and intent.get(key) != expected:
+            return False
+    return True
+
+
+def _record_from_intent(
+    repo: Path,
+    intent: dict[str, object],
+) -> tuple[WorktreeRecord | None, str | None]:
+    """Build a recovery record only from a complete, local intent snapshot."""
+    required = ("repo", "target", "branch", "parent", "branch_oid", "proof_parent", "proof_oid")
+    if any(not isinstance(intent.get(key), str) for key in required):
+        return None, "cannot recover reaper intent: incomplete identity snapshot"
+    if intent["repo"] != str(repo.resolve()):
+        return None, "cannot recover reaper intent: repository identity changed"
+    target = Path(intent["target"])
+    if not target.is_absolute():
+        return None, "cannot recover reaper intent: target path is not absolute"
+    phase = intent.get("phase")
+    if phase not in {"prepared", "worktree-removed"}:
+        return None, "cannot recover reaper intent: unknown phase"
+    allow_ignored = intent.get("allow_ignored", False)
+    if not isinstance(allow_ignored, bool):
+        return None, "cannot recover reaper intent: invalid allow-ignored flag"
+    return (
+        WorktreeRecord(
+            path=target,
+            branch=str(intent["branch"]),
+            parent=str(intent["parent"]),
+            status="REDUNDANT",
+            reason="recovered from durable reaper intent",
+            repo=repo,
+            branch_oid=str(intent["branch_oid"]),
+            proof_parent=str(intent["proof_parent"]),
+            proof_oid=str(intent["proof_oid"]),
+            allow_ignored=allow_ignored,
+        ),
+        None,
+    )
+
+
+def _recover_intent_records(
+    records: list[WorktreeRecord],
+) -> tuple[list[WorktreeRecord], list[str]]:
+    """Add an interrupted mutation to a fresh classification for safe retry."""
+    recovered = list(records)
+    errors: list[str] = []
+    repositories = {_record_repo(record) for record in records}
+    for repo in repositories:
+        intent, intent_error = _read_intent(repo)
+        if intent_error is not None:
+            errors.append(f"{repo}: {intent_error}")
+            continue
+        if intent is None:
+            continue
+        recovery, recovery_error = _record_from_intent(repo, intent)
+        if recovery_error is not None:
+            errors.append(f"{repo}: {recovery_error}")
+            continue
+        assert recovery is not None
+        if not any(
+            _intent_matches(intent, repo, record, Path(record.path).resolve())
+            for record in recovered
+        ):
+            recovered.append(recovery)
+    return recovered, errors
+
+
+def _clear_intent(repo: Path) -> str | None:
+    try:
+        intent_path = _intent_path(repo)
+        if not intent_path.exists():
+            return None
+        intent_path.unlink()
+        _fsync_directory(intent_path.parent)
+    except (GitError, OSError, ValueError) as exc:
+        return f"cannot clear reaper intent: {exc}"
+    return None
 
 
 def _branch_is_checked_out(repo: Path, branch: str) -> bool:
@@ -691,7 +981,12 @@ def _validate_target(record: WorktreeRecord, repo: Path, current_path: Path) -> 
         raise RuntimeError(f"refusing to reap the root worktree: {target}")
 
 
-def _binding_error(repo: Path, target: Path, branch: str) -> str | None:
+def _binding_error(
+    repo: Path,
+    target: Path,
+    branch: str,
+    expected_oid: str | None = None,
+) -> str | None:
     """Ensure a live path still belongs to the classified branch."""
     try:
         listing = _git(repo, "worktree", "list", "--porcelain")
@@ -711,6 +1006,8 @@ def _binding_error(repo: Path, target: Path, branch: str) -> str | None:
     actual_branch = str(matches[0].get("branch", ""))
     if actual_branch != branch:
         return f"worktree path now maps to {actual_branch or 'a detached worktree'}"
+    if expected_oid is not None and matches[0].get("head") != expected_oid:
+        return "worktree HEAD changed since classification"
     if matches[0].get("locked") or matches[0].get("prunable"):
         return "worktree is locked or prunable"
     return None
@@ -722,6 +1019,7 @@ class _CandidatePlan:
     repo: Path
     target: Path
     stale: bool = False
+    worktree_removed: bool = False
 
 
 def _plan_candidate(
@@ -741,23 +1039,47 @@ def _plan_candidate(
         # A retry after a successful reap is intentionally idempotent.  A
         # missing path plus a missing branch is the only stale state accepted.
         if not target_exists:
+            intent, intent_error = _read_intent(repo)
+            if intent_error is not None:
+                return None, intent_error
+            if intent is not None and _intent_matches(intent, repo, record, target):
+                clear_error = _clear_intent(repo)
+                if clear_error is not None:
+                    return None, clear_error
             return _CandidatePlan(record, repo, target, stale=True), None
         return None, "branch ref cannot be inspected while worktree still exists"
 
-    binding_error = _binding_error(repo, target, record.branch)
+    if not target_exists:
+        intent, intent_error = _read_intent(repo)
+        if intent_error is not None:
+            return None, intent_error
+        if intent is None or not _intent_matches(intent, repo, record, target):
+            return None, "worktree path disappeared since classification"
+        proof_error, proof_parent, proof_oid = _proof_for_delete(repo, record)
+        if proof_error is not None or proof_parent is None or proof_oid is None:
+            return None, proof_error or "landing proof cannot be inspected"
+        return _CandidatePlan(record, repo, target, worktree_removed=True), None
+
+    binding_error = _binding_error(repo, target, record.branch, expected_oid)
     if binding_error is not None:
         return None, binding_error
-    if not target_exists:
-        return None, "worktree path disappeared since classification"
 
     try:
-        dirty, ignored = _worktree_status(target)
+        dirty, ignored_paths = _worktree_status(target)
     except (GitError, OSError, ValueError) as exc:
         return None, f"cannot inspect worktree before removal: {exc}"
     if dirty:
         return None, "worktree became dirty since classification"
-    if ignored and not record.allow_ignored:
-        return None, "worktree gained ignored changes; refusing removal"
+    unsafe_ignored = tuple(
+        path for path in ignored_paths if not _is_regenerable_ignored(path)
+    )
+    if unsafe_ignored and not record.allow_ignored:
+        return (
+            None,
+            "worktree gained non-regenerable ignored changes: "
+            + ", ".join(unsafe_ignored)
+            + "; refusing removal",
+        )
 
     proof_error, proof_parent, proof_oid = _proof_for_delete(repo, record)
     if proof_error is not None or proof_parent is None or proof_oid is None:
@@ -769,17 +1091,78 @@ def _remove_worktree(
     record: WorktreeRecord,
     repo: Path,
     current_path: Path,
-) -> tuple[str | None, bool]:
+) -> tuple[str | None, bool, _CandidatePlan | None]:
     """Remove one candidate without force and retain it for ref cleanup."""
     plan, error = _plan_candidate(record, repo, current_path)
     if error is not None:
-        return error, False
+        return error, False, plan
     if plan is None or plan.stale:
-        return None, False
+        return None, False, plan
+    if plan.worktree_removed:
+        return None, True, plan
+    intent_error = _write_intent(repo, record, plan.target, "prepared")
+    if intent_error is not None:
+        return intent_error, False, plan
+    branch_error, expected_oid = _branch_snapshot_for_delete(repo, record)
+    if branch_error is not None or expected_oid is None:
+        error = branch_error or "branch ref cannot be inspected immediately before removal"
+        clear_error = _clear_intent(repo)
+        if clear_error is not None:
+            error += f"; {clear_error}"
+        return error, False, plan
+    binding_error = _binding_error(repo, plan.target, record.branch, expected_oid)
+    if binding_error is not None:
+        clear_error = _clear_intent(repo)
+        error = f"{binding_error} immediately before removal"
+        if clear_error is not None:
+            error += f"; {clear_error}"
+        return error, False, plan
+    proof_error, proof_parent, proof_oid = _proof_for_delete(repo, record)
+    if proof_error is not None or proof_parent is None or proof_oid is None:
+        error = proof_error or "landing proof cannot be inspected immediately before removal"
+        clear_error = _clear_intent(repo)
+        if clear_error is not None:
+            error += f"; {clear_error}"
+        return error, False, plan
+    try:
+        dirty, ignored_paths = _worktree_status(plan.target)
+    except (GitError, OSError, ValueError) as exc:
+        clear_error = _clear_intent(repo)
+        error = f"cannot inspect worktree immediately before removal: {exc}"
+        if clear_error is not None:
+            error += f"; {clear_error}"
+        return error, False, plan
+    unsafe_ignored = tuple(
+        path for path in ignored_paths if not _is_regenerable_ignored(path)
+    )
+    if dirty or (unsafe_ignored and not record.allow_ignored):
+        if dirty:
+            error = "worktree became dirty immediately before removal"
+        else:
+            error = (
+                "worktree gained non-regenerable ignored changes immediately "
+                "before removal: "
+                + ", ".join(unsafe_ignored)
+            )
+        clear_error = _clear_intent(repo)
+        if clear_error is not None:
+            error += f"; {clear_error}"
+        return error, False, plan
     removed = _git(repo, "worktree", "remove", "--", str(plan.target))
     if removed.returncode != 0:
-        return _failure(removed, "git worktree remove"), False
-    return None, True
+        clear_error = _clear_intent(repo)
+        error = _failure(removed, "git worktree remove")
+        if clear_error is not None:
+            error += f"; {clear_error}"
+        return error, False, plan
+    intent_error = _write_intent(repo, record, plan.target, "worktree-removed")
+    if intent_error is not None:
+        return (
+            f"worktree removed but {intent_error}; branch deletion deferred",
+            True,
+            plan,
+        )
+    return None, True, plan
 
 
 def _dependency_depth(
@@ -809,12 +1192,17 @@ def _ordered_pending(
     )
 
 
-def apply(records: list[WorktreeRecord], *, dry_run: bool = True) -> dict[str, list[str]]:
+def _apply_unlocked(
+    records: list[WorktreeRecord],
+    *,
+    dry_run: bool = True,
+    initial_errors: Collection[str] = (),
+) -> dict[str, list[str]]:
     """Remove redundant worktrees after a complete, non-mutating preflight."""
     result: dict[str, list[str]] = {"removed": [], "skipped": [], "errors": []}
     current_path = Path.cwd().resolve()
     candidates: list[tuple[WorktreeRecord, Path, Path]] = []
-    preflight_errors: list[str] = []
+    preflight_errors: list[str] = list(initial_errors)
 
     for record in records:
         target = Path(record.path).resolve()
@@ -848,27 +1236,76 @@ def apply(records: list[WorktreeRecord], *, dry_run: bool = True) -> dict[str, l
         result["skipped"].extend(str(target) for _record, _repo, target in candidates)
         return result
 
-    pending: list[tuple[WorktreeRecord, Path]] = []
+    ordered_candidates = _ordered_pending(
+        [(record, repo) for record, repo, _target in candidates]
+    )
     removed_worktrees: set[str] = set()
 
-    for record, repo, target in candidates:
-        error, did_remove = _remove_worktree(record, repo, current_path)
-        if error is not None:
-            result["errors"].append(f"{target}: {error}")
-            continue
-        if did_remove:
-            removed_worktrees.add(str(target))
-        pending.append((record, repo))
-
-    for record, repo in _ordered_pending(pending):
-        error, did_delete = _delete_branch(repo, record)
+    for index, (record, repo) in enumerate(ordered_candidates):
         target = str(Path(record.path).resolve())
+        error, did_remove, _plan = _remove_worktree(record, repo, current_path)
         if error is not None:
             result["errors"].append(f"{target}: {error}")
-            continue
+            result["skipped"].extend(
+                str(Path(remaining.path).resolve())
+                for remaining, _remaining_repo in ordered_candidates[index + 1 :]
+            )
+            break
+        if did_remove:
+            removed_worktrees.add(target)
+        error, did_delete = _delete_branch(repo, record)
+        if error is not None:
+            result["errors"].append(f"{target}: {error}")
+            result["skipped"].extend(
+                str(Path(remaining.path).resolve())
+                for remaining, _remaining_repo in ordered_candidates[index + 1 :]
+            )
+            break
+        intent_error = _clear_intent(repo)
+        if intent_error is not None:
+            result["errors"].append(f"{target}: {intent_error}")
+            result["skipped"].extend(
+                str(Path(remaining.path).resolve())
+                for remaining, _remaining_repo in ordered_candidates[index + 1 :]
+            )
+            break
         if did_delete or target in removed_worktrees:
             result["removed"].append(target)
     return result
+
+
+def apply(
+    records: list[WorktreeRecord],
+    *,
+    dry_run: bool = True,
+    _lock_held: bool = False,
+) -> dict[str, list[str]]:
+    """Apply a classification while serializing all Git mutations."""
+    if dry_run or _lock_held:
+        recovered, recovery_errors = _recover_intent_records(records) if not dry_run else (records, [])
+        return _apply_unlocked(
+            recovered,
+            dry_run=dry_run,
+            initial_errors=recovery_errors,
+        )
+    try:
+        with _locked_repositories(records):
+            recovered, recovery_errors = _recover_intent_records(records)
+            return _apply_unlocked(
+                recovered,
+                dry_run=False,
+                initial_errors=recovery_errors,
+            )
+    except (GitError, OSError, ReapLockError, ValueError) as exc:
+        return {
+            "removed": [],
+            "skipped": [
+                str(Path(record.path).resolve())
+                for record in records
+                if record.status != "REDUNDANT" or record.protected
+            ],
+            "errors": [str(exc)],
+        }
 
 
 def _record_json(record: WorktreeRecord) -> dict[str, str]:
@@ -972,7 +1409,7 @@ def main(argv: list[str] | None = None) -> int:
     unknown = any(record.status == "UNKNOWN" for record in records)
     strict = args.strict or _strict_check()
     if args.check:
-        if strict and unknown:
+        if unknown:
             return 4
         return 3 if redundant and strict else 0
     if strict and unknown:

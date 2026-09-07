@@ -8,10 +8,12 @@ POST_INTAKE_CHECK_CMD ?= $(MAKE) --no-print-directory check-all
 REAP_PROTECT ?=
 REAP_STRICT ?= 0
 
+# REAP_PROTECT is one branch or path value. Keep it as one quoted shell
+# argument so a worktree directory containing spaces remains protected.
 worktree-reap: ## Dry-run: list linked worktrees whose branch is already landed in its parent (REAP_ARGS=--apply to remove)
 	@REAP_STRICT="$(REAP_STRICT)" $(PYTHON) scripts/worktree_reap.py --repo "$(CURDIR)" $(REAP_ARGS) $(if $(strip $(REAP_PROTECT)),--protect "$(REAP_PROTECT)")
 
-worktree-reap-check: ## Check for redundant worktrees (REAP_STRICT=1 makes it fail; wired into check-all)
+worktree-reap-check: ## Check for redundant worktrees (REAP_STRICT=1 fails on redundancy; inspection errors always fail)
 	@REAP_STRICT="$(REAP_STRICT)" $(PYTHON) scripts/worktree_reap.py --repo "$(CURDIR)" --check $(if $(strip $(REAP_PROTECT)),--protect "$(REAP_PROTECT)")
 
 check-all: worktree-reap-check

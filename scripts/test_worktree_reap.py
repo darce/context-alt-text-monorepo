@@ -248,6 +248,40 @@ def test_ignored_only_content_requires_explicit_opt_in(
     assert not ignored_path.exists()
 
 
+def test_regenerable_ignored_content_does_not_make_landed_worktree_dirty(
+    fixture_repo: dict[str, Any],
+) -> None:
+    repo = fixture_repo["repo"]
+    target = fixture_repo["paths"]["ancestor"]
+    exclude = repo / ".git" / "info" / "exclude"
+    exclude.write_text(
+        exclude.read_text()
+        + "\n.pytest_cache/\n__pycache__/\n.ruff_cache/\n.mypy_cache/\n"
+        + ".task-state/\n"
+    )
+    for relative in (
+        ".pytest_cache/state",
+        "src/__pycache__/module.pyc",
+        ".ruff_cache/state",
+        ".mypy_cache/state",
+        ".task-state/.heartbeat/pulse",
+    ):
+        path = target / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("regenerable\n")
+
+    record = next(
+        item for item in reaper.classify(repo) if item.branch == "feature/parent-ancestor"
+    )
+
+    assert record.status == "REDUNDANT"
+    result = reaper.apply([record], dry_run=False)
+
+    assert result["errors"] == []
+    assert result["removed"] == [str(target.resolve())]
+    assert not target.exists()
+
+
 def test_apply_rechecks_ignored_content_created_after_classification(
     fixture_repo: dict[str, Any],
 ) -> None:
@@ -271,6 +305,81 @@ def test_apply_rechecks_ignored_content_created_after_classification(
     ).returncode == 0
 
 
+def test_apply_rechecks_cleanliness_after_recording_intent(
+    fixture_repo: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = fixture_repo["repo"]
+    target = fixture_repo["paths"]["ancestor"]
+    record = next(item for item in reaper.classify(repo) if item.branch == "feature/parent-ancestor")
+    original_write_intent = reaper._write_intent
+    created = False
+
+    def create_ignored_after_intent(
+        git_repo: Path,
+        intent_record: reaper.WorktreeRecord,
+        intent_target: Path,
+        phase: str,
+    ) -> str | None:
+        nonlocal created
+        error = original_write_intent(git_repo, intent_record, intent_target, phase)
+        if not created and phase == "prepared":
+            created = True
+            (target / ".venv").mkdir()
+            (target / ".venv" / "late-marker").write_text("keep me\n")
+        return error
+
+    monkeypatch.setattr(reaper, "_write_intent", create_ignored_after_intent)
+    result = reaper.apply([record], dry_run=False)
+
+    assert result["removed"] == []
+    assert result["errors"]
+    assert target.exists()
+    assert _git(
+        repo,
+        "show-ref",
+        "--verify",
+        "refs/heads/feature/parent-ancestor",
+        check=False,
+    ).returncode == 0
+
+
+def test_apply_rechecks_branch_binding_after_recording_intent(
+    fixture_repo: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = fixture_repo["repo"]
+    target = fixture_repo["paths"]["ancestor"]
+    record = next(item for item in reaper.classify(repo) if item.branch == "feature/parent-ancestor")
+    original_write_intent = reaper._write_intent
+    advanced = False
+
+    def advance_branch_after_intent(
+        git_repo: Path,
+        intent_record: reaper.WorktreeRecord,
+        intent_target: Path,
+        phase: str,
+    ) -> str | None:
+        nonlocal advanced
+        error = original_write_intent(git_repo, intent_record, intent_target, phase)
+        if not advanced and phase == "prepared":
+            advanced = True
+            _commit(target, "advance branch after intent", "late.txt", "late\n")
+        return error
+
+    monkeypatch.setattr(reaper, "_write_intent", advance_branch_after_intent)
+    result = reaper.apply([record], dry_run=False)
+
+    assert result["removed"] == []
+    assert result["errors"]
+    assert target.exists()
+    assert _git(
+        repo,
+        "show-ref",
+        "--verify",
+        "refs/heads/feature/parent-ancestor",
+        check=False,
+    ).returncode == 0
+
+
 def test_apply_refuses_parent_tip_change_before_removing_worktree(
     fixture_repo: dict[str, Any],
 ) -> None:
@@ -278,6 +387,28 @@ def test_apply_refuses_parent_tip_change_before_removing_worktree(
     target = fixture_repo["paths"]["ancestor"]
     record = next(item for item in reaper.classify(repo) if item.branch == "feature/parent-ancestor")
     _commit(repo, "move landing parent", "parent-moved.txt", "moved\n")
+
+    result = reaper.apply([record], dry_run=False)
+
+    assert result["removed"] == []
+    assert result["errors"]
+    assert target.exists()
+    assert _git(
+        repo,
+        "show-ref",
+        "--verify",
+        "refs/heads/feature/parent-ancestor",
+        check=False,
+    ).returncode == 0
+
+
+def test_apply_refuses_when_branch_tip_advances_between_classify_and_apply(
+    fixture_repo: dict[str, Any],
+) -> None:
+    repo = fixture_repo["repo"]
+    target = fixture_repo["paths"]["ancestor"]
+    record = next(item for item in reaper.classify(repo) if item.branch == "feature/parent-ancestor")
+    _commit(target, "advance classified branch", "advanced.txt", "advanced\n")
 
     result = reaper.apply([record], dry_run=False)
 
@@ -352,6 +483,121 @@ def test_apply_preflights_all_targets_before_mutating(
     ).returncode == 0
 
 
+def test_apply_does_not_delete_branch_when_worktree_removal_fails(
+    fixture_repo: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = fixture_repo["repo"]
+    target = fixture_repo["paths"]["ancestor"]
+    record = next(item for item in reaper.classify(repo) if item.branch == "feature/parent-ancestor")
+    original_git = reaper._git
+    failed = False
+
+    def fail_remove(
+        git_repo: Path,
+        *args: str,
+        **kwargs: Any,
+    ) -> subprocess.CompletedProcess[str]:
+        nonlocal failed
+        if not failed and args[:3] == ("worktree", "remove", "--"):
+            failed = True
+            return subprocess.CompletedProcess(
+                ["git", *args],
+                1,
+                "",
+                "simulated worktree removal failure",
+            )
+        return original_git(git_repo, *args, **kwargs)
+
+    monkeypatch.setattr(reaper, "_git", fail_remove)
+    result = reaper.apply([record], dry_run=False)
+
+    assert result["removed"] == []
+    assert result["errors"]
+    assert target.exists()
+    assert _git(
+        repo,
+        "show-ref",
+        "--verify",
+        "refs/heads/feature/parent-ancestor",
+        check=False,
+    ).returncode == 0
+
+
+def test_apply_recovers_after_worktree_removal_before_branch_delete(
+    fixture_repo: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = fixture_repo["repo"]
+    target = fixture_repo["paths"]["ancestor"]
+    record = next(item for item in reaper.classify(repo) if item.branch == "feature/parent-ancestor")
+    original_git = reaper._git
+    failed = False
+
+    def fail_delete_once(
+        git_repo: Path,
+        *args: str,
+        **kwargs: Any,
+    ) -> subprocess.CompletedProcess[str]:
+        nonlocal failed
+        if not failed and args[:2] == ("update-ref", "--stdin"):
+            failed = True
+            return subprocess.CompletedProcess(
+                ["git", *args],
+                1,
+                "",
+                "simulated branch deletion failure",
+            )
+        return original_git(git_repo, *args, **kwargs)
+
+    monkeypatch.setattr(reaper, "_git", fail_delete_once)
+    first = reaper.apply([record], dry_run=False)
+
+    assert first["removed"] == []
+    assert first["errors"]
+    assert not target.exists()
+    assert _git(
+        repo,
+        "show-ref",
+        "--verify",
+        "refs/heads/feature/parent-ancestor",
+        check=False,
+    ).returncode == 0
+
+    second = reaper.apply(reaper.classify(repo), dry_run=False)
+
+    assert second["errors"] == []
+    assert str(target.resolve()) in second["removed"]
+    assert not (repo / ".git" / "worktree-reap.intent.json").exists()
+    assert _git(
+        repo,
+        "show-ref",
+        "--verify",
+        "refs/heads/feature/parent-ancestor",
+        check=False,
+    ).returncode != 0
+
+
+def test_apply_refuses_when_another_reaper_holds_the_repository_lock(
+    fixture_repo: dict[str, Any],
+) -> None:
+    repo = fixture_repo["repo"]
+    target = fixture_repo["paths"]["ancestor"]
+    record = next(item for item in reaper.classify(repo) if item.branch == "feature/parent-ancestor")
+
+    with reaper._repository_lock(repo):
+        result = reaper.apply([record], dry_run=False)
+
+    assert result["removed"] == []
+    assert result["errors"]
+    assert target.exists()
+    assert _git(
+        repo,
+        "show-ref",
+        "--verify",
+        "refs/heads/feature/parent-ancestor",
+        check=False,
+    ).returncode == 0
+
+
 def test_protected_path_with_spaces_is_not_reaped(
     fixture_repo: dict[str, Any],
 ) -> None:
@@ -405,6 +651,7 @@ def test_merge_base_failure_is_unknown_and_strict_fails(
     assert record.status == "UNKNOWN"
     monkeypatch.delenv("REAP_STRICT", raising=False)
     assert reaper.main(["--repo", str(repo), "--strict"]) == 4
+    assert reaper.main(["--repo", str(repo), "--check"]) == 4
     monkeypatch.setenv("REAP_STRICT", "1")
     assert reaper.main(["--repo", str(repo), "--check"]) == 4
 
@@ -434,6 +681,50 @@ def test_landed_directly_in_main_is_redundant(tmp_path: Path) -> None:
     assert result["errors"] == []
     assert result["removed"] == [str(child_path.resolve())]
     assert not child_path.exists()
+
+
+def test_missing_parent_is_unknown_and_not_reaped(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.email", "worktree-reap@example.test")
+    _git(repo, "config", "user.name", "Worktree Reap Test")
+    _commit(repo, "initial", "README", "initial\n")
+    _git(repo, "branch", "feature/missing")
+    _git(repo, "branch", "feature/missing-child", "main")
+    child_path = repo.parent / "missing-parent-child"
+    _git(repo, "worktree", "add", str(child_path), "feature/missing-child")
+    _git(repo, "update-ref", "-d", "refs/heads/feature/missing")
+
+    record = next(
+        item for item in reaper.classify(repo) if item.branch == "feature/missing-child"
+    )
+
+    assert record.status == "UNKNOWN"
+    assert record.parent == "feature/missing"
+    assert "missing" in record.reason
+    result = reaper.apply([record], dry_run=False)
+    assert result["removed"] == []
+    assert result["errors"] == []
+    assert child_path.exists()
+
+
+def test_branch_only_refs_are_not_classified_or_reaped(fixture_repo: dict[str, Any]) -> None:
+    repo = fixture_repo["repo"]
+    _git(repo, "branch", "feature/parent-branch-only", "feature/parent")
+
+    records = reaper.classify(repo)
+
+    assert all(record.branch != "feature/parent-branch-only" for record in records)
+    result = reaper.apply(records, dry_run=False)
+    assert result["errors"] == []
+    assert _git(
+        repo,
+        "show-ref",
+        "--verify",
+        "refs/heads/feature/parent-branch-only",
+        check=False,
+    ).returncode == 0
 
 
 def test_apply_deletes_child_branch_when_parent_is_a_linked_worktree(tmp_path: Path) -> None:
@@ -520,6 +811,41 @@ def test_apply_deletes_redundant_children_before_redundant_parents(tmp_path: Pat
         "refs/heads/feature/parent-child",
         check=False,
     ).returncode != 0
+
+
+def test_delete_ref_rechecks_landing_parent_in_same_transaction(
+    fixture_repo: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = fixture_repo["repo"]
+    target = fixture_repo["paths"]["ancestor"]
+    record = next(item for item in reaper.classify(repo) if item.branch == "feature/parent-ancestor")
+    original_git = reaper._git
+    changed = False
+
+    def advance_parent_before_delete(
+        git_repo: Path,
+        *args: str,
+        **kwargs: Any,
+    ) -> subprocess.CompletedProcess[str]:
+        nonlocal changed
+        if not changed and args[:2] == ("update-ref", "--stdin"):
+            changed = True
+            _commit(repo, "advance landing parent during delete", "race.txt", "race\n")
+        return original_git(git_repo, *args, **kwargs)
+
+    monkeypatch.setattr(reaper, "_git", advance_parent_before_delete)
+    result = reaper.apply([record], dry_run=False)
+
+    assert result["removed"] == []
+    assert result["errors"]
+    assert not target.exists()
+    assert _git(
+        repo,
+        "show-ref",
+        "--verify",
+        "refs/heads/feature/parent-ancestor",
+        check=False,
+    ).returncode == 0
 
 
 def test_check_exit_honours_reap_strict(

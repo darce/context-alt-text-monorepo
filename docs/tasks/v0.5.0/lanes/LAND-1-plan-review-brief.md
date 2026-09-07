@@ -1,7 +1,21 @@
 # LAND-1 lane brief — `land-1-plan-review` (adversarial planning review, remote pass 2 of 2)
 
-Task: LAND-1 · Branch: `review/land-1` (read-only review; commit nothing but a findings report is fine) · Subject: `docs/tasks/v0.5.0/LAND-1-inflight-worktree-landing-task-plan.md`.
-Finding-id range reserved for this lane: `LAND-1-PR-10..PR-30`. Record findings with `review_findings` (`batch_record` when ≥3) on `task_ref=LAND-1`, `file_path` = the plan path, `details.line_start/line_end/fix` nested. If no MCP write path is available in the sandbox, print the findings as a fenced JSON block titled `FINDINGS` with the same fields.
+Task: LAND-1 · Branch: `feature/rev-land-1-plan-r2` (read-only review; commit nothing but a findings report is fine; the branch-review naming rule rejects `review/*` branches) · Subject: `docs/tasks/v0.5.0/LAND-1-inflight-worktree-landing-task-plan.md`.
+Finding-id range reserved for this lane: `LAND-1-PR-10..PR-30`. Record findings with `review_findings` (`batch_record` when ≥3) on `task_ref=LAND-1`, `file_path` = the plan path, `details.line_start/line_end/fix` nested. Use the fallback sequence below if the MCP write path is unavailable.
+
+If the MCP write path is unavailable, first use the repo-local Python API from the review checkout, not a hand-transcribed fallback:
+
+```python
+from workbay_handoff_mcp import review_findings
+
+review_findings(review={
+    "operation": "batch_record",
+    "task_ref": "LAND-1",
+    "findings": findings,
+})
+```
+
+If that import or API call also fails, stop and report the concrete blocker. Only then may the reviewer print a fenced JSON block titled `UNRECORDED FINDINGS` (never plain `FINDINGS`), preserving the same fields so the coordinator can record it without implying that the DB write succeeded.
 
 ## What the plan does
 
@@ -18,7 +32,7 @@ Lands or retires 28 worktrees / 50 branches: reaps ancestor sub-lane worktrees (
 
 ## Output
 
-- Findings via MCP or the `FINDINGS` JSON block (`finding_id`, `severity` high|medium|low, `category` ANTIPATTERN|DEAD_CODE|COMPLEXITY|GAP, `file_path`, `description`, `details{line_start,line_end,fix}`).
+- Findings via MCP using the required API fallback sequence above (`finding_id`, `severity` high|medium|low, `category` ANTIPATTERN|DEAD_CODE|COMPLEXITY|GAP, `file_path`, `description`, `details{line_start,line_end,fix}`); only an API failure permits the explicitly marked `UNRECORDED FINDINGS` block.
 - One line verdict: `VERDICT: pass | pass_with_findings | conditional_pass | fail` with a one-sentence reason.
 - Do not edit the plan. Do not run `--apply` of anything. Do not touch `scripts/workbay_lifecycle/**`, `Makefile.d/**`, `config/lane-orchestration/**`.
 

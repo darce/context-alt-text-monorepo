@@ -396,7 +396,15 @@ def register_metrics_route(app: FastAPI) -> None:
 
 
 def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None) -> None:
-    """Attach root /health (liveness) + /ready (deps) to the given app.
+    """Attach root /health (bounded DB pool check) + /ready (deps) to the given app.
+
+    /health is NOT a liveness probe (HEALTHOBS-1-BR-07): it does a bounded
+    database-pool check (``check_database`` under ``health_db_timeout_seconds``)
+    and returns HTTP 503 when that check fails. No restart-on-failure consumer
+    (e.g. a container orchestrator's liveness/restart probe) should point at
+    this route, because a transient database blip would then trigger container
+    restarts instead of just failing the health payload. Point restart-on-failure
+    checks at a probe that reflects process liveness only, not DB reachability.
 
     Extracted from create_app so tests can mount the probes onto a bare
     FastAPI instance without spinning up every subsystem router.
@@ -466,12 +474,15 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
             return disk_headroom_probe_failure(f"probe_failed: {type(exc).__name__}")
 
     @app.get("/health", summary="Database-backed health probe")
-    async def liveness(
+    async def health_pool_check(
         response: Response,
         session: AsyncSession | None = Depends(http_deps.get_observability_session),
     ) -> dict[str, object]:
         # Deploy smoke, verify, status, and uptime checks use /health, so the
-        # pool probe is bounded and reflects database availability.
+        # pool probe is bounded and reflects database availability. This is a
+        # dependency check, not process liveness (HEALTHOBS-1-BR-07): do not
+        # wire a restart-on-failure consumer to this route, or a transient DB
+        # blip will restart a healthy process instead of just failing the check.
         # commit_sha / image_variant are static identity strings resolved at
         # registration time from bake artifact + env (rg-015).
         try:

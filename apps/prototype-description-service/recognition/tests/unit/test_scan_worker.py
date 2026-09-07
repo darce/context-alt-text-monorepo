@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -308,6 +308,54 @@ async def test_refresh_mv_skip_does_not_advance_last_refresh_time(monkeypatch: p
 
     assert committed == []
     assert worker._last_mv_refresh_time == previous_refresh_time
+
+    await worker.__aexit__(None, None, None)
+
+
+@pytest.mark.asyncio
+async def test_refresh_mv_skip_backs_off_before_next_interval(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """HEALTHOBS-1-BR-06: repeated SKIPPED_HEADROOM outcomes must not re-run the guard every tick."""
+    monkeypatch.setattr(
+        scan_worker_module,
+        "get_recognition_settings",
+        lambda: SimpleNamespace(runtime_mode="test", blob_root=tmp_path / "blobs"),
+    )
+    from recognition.infrastructure.repositories import cluster_repository
+
+    attempt_count = 0
+
+    class _FakeClusterRepository:
+        def __init__(self, _session) -> None:
+            pass
+
+        async def refresh_centroids_view_concurrent(self):
+            nonlocal attempt_count
+            attempt_count += 1
+            return cluster_repository.MvRefreshOutcome.SKIPPED_HEADROOM
+
+    monkeypatch.setattr(cluster_repository, "SqlAlchemyClusterRepository", _FakeClusterRepository)
+
+    worker = scan_worker_module.ScanWorker(
+        scan_worker_module.ScanWorkerConfig(
+            postgres_dsn="sqlite+aiosqlite:///:memory:", mv_refresh_interval_seconds=60
+        )
+    )
+    worker._last_mv_refresh_time = datetime.min.replace(tzinfo=UTC)
+
+    class _FakeSession:
+        async def commit(self) -> None:
+            pass
+
+    first_tick = datetime.now(tz=UTC)
+    await worker._refresh_mv_if_needed(_FakeSession(), first_tick)
+    assert attempt_count == 1, "first tick must attempt the guarded refresh"
+
+    second_tick = first_tick + timedelta(seconds=1)
+    await worker._refresh_mv_if_needed(_FakeSession(), second_tick)
+    assert attempt_count == 1, (
+        "a SKIPPED_HEADROOM outcome must back off for mv_refresh_interval_seconds, "
+        "not re-run the guard on the very next tick"
+    )
 
     await worker.__aexit__(None, None, None)
 

@@ -174,6 +174,21 @@ verify_gpu_intent_path() {
     echo "acx-gpu-intent.path enabled active"
 }
 
+fence_gpu_intent_path() {
+    local load_state
+
+    # The path watcher can launch START from an operator intent write. Disable
+    # and stop it before replacing any release or effective unit, and tolerate
+    # fresh hosts where the watcher has not been installed yet.
+    sudo systemctl disable --now acx-gpu-intent.path || {
+        if ! load_state=$(systemctl show acx-gpu-intent.path --property=LoadState --value) \
+            || [ "$load_state" != not-found ]; then
+            echo 'error: failed to disable acx-gpu-intent.path' >&2
+            return 1
+        fi
+    }
+}
+
 purge_stale_gpu_reaper_units() {
     local unit load_state
     # cloud-init used these units before the installer became the sole owner.
@@ -356,6 +371,9 @@ cleanup_gpu_lifecycle_transaction() {
     fi
     if [ "$status" -ne 0 ] && [ "$lifecycle_transaction_complete" -eq 0 ]; then
         echo 'error: lifecycle transaction failed; running fail-safe STOP path' >&2
+        if ! fence_gpu_intent_path; then
+            echo 'error: could not fence intent path during cleanup; watcher may remain active' >&2
+        fi
         if ! fence_gpu_lifecycle_start; then
             echo 'error: could not fence START during cleanup; reaper not invoked concurrently' >&2
         elif ! sudo systemctl start acx-gpu-reap.service; then
@@ -386,6 +404,7 @@ if [ "${1:-}" = "--activate-systemd-only" ]; then
     [ "$#" -eq 1 ] || { echo "error: --activate-systemd-only accepts no arguments" >&2; exit 2; }
     expected_unit_dir="${ACX_EXPECTED_SYSTEMD_DIR:-/etc/systemd/system}"
     trap cleanup_gpu_lifecycle_transaction ERR EXIT
+    fence_gpu_intent_path
     fence_gpu_lifecycle_start
     activate_gpu_lifecycle_timers \
         "$(sha256_file "${expected_unit_dir}/acx-gpu-start.service" | awk '{print $1}')" \
@@ -418,6 +437,9 @@ LOAD_ENVIRONMENTS=""
 LOAD_ENVIRONMENT_DIRS=""
 TMPFILES_ENVIRONMENT_ENTRIES=""
 INTENT_PATH_ENTRIES=""
+# The operator-intent contract names exactly these environments. Other
+# registered deployments still get load directories, but never path triggers.
+GPU_INTENT_ENVIRONMENTS="dev staging prod"
 
 append_deployment() {
     local environment=$1 source=$2
@@ -435,8 +457,12 @@ append_deployment() {
     LOAD_ENVIRONMENT_DIRS="${LOAD_ENVIRONMENT_DIRS:+${LOAD_ENVIRONMENT_DIRS} }/run/acx-write/${environment}"
     TMPFILES_ENVIRONMENT_ENTRIES="${TMPFILES_ENVIRONMENT_ENTRIES:+${TMPFILES_ENVIRONMENT_ENTRIES}
 }d /run/acx-write/${environment} 0775 root 10001 -"
-    INTENT_PATH_ENTRIES="${INTENT_PATH_ENTRIES:+${INTENT_PATH_ENTRIES}
+    case " $GPU_INTENT_ENVIRONMENTS " in
+        *" $environment "*)
+            INTENT_PATH_ENTRIES="${INTENT_PATH_ENTRIES:+${INTENT_PATH_ENTRIES}
 }PathChanged=/run/acx-write/${environment}/gpu-intent.json"
+            ;;
+    esac
 }
 
 load_deployments() {
@@ -720,6 +746,7 @@ sha256_function=$(declare -f sha256_file)
 verification_function=$(declare -f verify_gpu_lifecycle_timers)
 start_verification_function=$(declare -f verify_gpu_lifecycle_start_timer)
 intent_path_verification_function=$(declare -f verify_gpu_intent_path)
+intent_path_fence_function=$(declare -f fence_gpu_intent_path)
 activation_function=$(declare -f activate_gpu_lifecycle_timers)
 start_fence_function=$(declare -f fence_gpu_lifecycle_start)
 stale_reaper_purge_function=$(declare -f purge_stale_gpu_reaper_units)
@@ -732,6 +759,7 @@ ${sha256_function}
 ${verification_function}
 ${start_verification_function}
 ${intent_path_verification_function}
+${intent_path_fence_function}
 ${activation_function}
 ${start_fence_function}
 ${stale_reaper_purge_function}
@@ -745,6 +773,7 @@ trap cleanup_gpu_lifecycle_transaction ERR EXIT
 # ARCH-13/COST-04: establish the fail-safe before changing the live release or
 # any effective lifecycle artifact. The trap remains armed until the reaper is
 # proved and START is re-enabled and verified.
+fence_gpu_intent_path
 fence_gpu_lifecycle_start
 purge_stale_gpu_reaper_units
 previous_release=\$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' /opt/acx-gpu/current)

@@ -9,7 +9,6 @@ import uuid
 from collections import defaultdict
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
-from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -27,7 +26,7 @@ from db.tenant_context import enable_rls_bypass
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity as DomainIdentity
 from recognition.domain.maturity import ClusterMaturityInfo, compute_maturity_adjustment, compute_maturity_level
-from recognition.domain.repositories import ClusterRepository
+from recognition.domain.repositories import ClusterRepository, MvRefreshOutcome
 from recognition.domain.repositories import IdentityMember as DomainMember
 from recognition.domain.representative import ClusterRepresentative
 from recognition.infrastructure.repositories._helpers import coerce_uuid as _coerce_uuid
@@ -169,13 +168,6 @@ _MV_CENTROIDS = "mv_identity_cluster_centroids"
 _UNGUARDED_REFRESH_WARNING_LOGGED = False
 
 
-class MvRefreshOutcome(StrEnum):
-    """Outcome of a concurrent materialized-view refresh attempt."""
-
-    REFRESHED = "refreshed"
-    SKIPPED_HEADROOM = "skipped_headroom"
-
-
 async def _refresh_mv_concurrent_with_bypass(conn: AsyncConnection) -> MvRefreshOutcome:
     """Execute a concurrent MV refresh on an AUTOCOMMIT connection with RLS bypass.
 
@@ -197,10 +189,10 @@ async def _refresh_mv_concurrent_with_bypass(conn: AsyncConnection) -> MvRefresh
             )
             _UNGUARDED_REFRESH_WARNING_LOGGED = True
 
-        mv_size_result = await conn.execute(text(f"SELECT pg_total_relation_size('{_MV_CENTROIDS}')"))
-        mv_bytes = int(mv_size_result.scalar_one() or 0)
-        required_bytes = max(settings.min_bytes, 2 * mv_bytes)
         if settings.probe_path is not None:
+            mv_size_result = await conn.execute(text(f"SELECT pg_total_relation_size('{_MV_CENTROIDS}')"))
+            mv_bytes = int(mv_size_result.scalar_one() or 0)
+            required_bytes = max(settings.min_bytes, 2 * mv_bytes)
             probe = probe_disk_headroom(settings.probe_path)
             if not has_headroom(probe, required_bytes):
                 logger.warning(
@@ -651,34 +643,32 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             count_result.scalar_one(),
         )
 
-    async def refresh_centroids_view_concurrent(self) -> bool:
+    async def refresh_centroids_view_concurrent(self) -> MvRefreshOutcome:
         """Refresh the materialized view concurrently.
 
         This allows reads to continue during the refresh and avoids locking the table.
         It requires a unique index on the MV, which is created in the migration.
 
-        Returns True on success, False when the refresh fails (after logging).
+        Returns the concrete refresh outcome after logging failures.
         """
         try:
             if is_sqlite(self._session):
                 await self.refresh_centroids_view()
-                return True
+                return MvRefreshOutcome.REFRESHED
 
             # Use CONCURRENTLY for background scheduled refreshes
             # This is critical to avoid locking the MV during updates
             bind = self._session.bind
             if isinstance(bind, AsyncConnection):
                 conn = await bind.execution_options(isolation_level="AUTOCOMMIT")
-                await _refresh_mv_concurrent_with_bypass(conn)
-                return True
+                return await _refresh_mv_concurrent_with_bypass(conn)
 
             async with bind.connect() as conn:
                 conn = await conn.execution_options(isolation_level="AUTOCOMMIT")
-                await _refresh_mv_concurrent_with_bypass(conn)
-            return True
+                return await _refresh_mv_concurrent_with_bypass(conn)
         except Exception:
             logger.warning("Failed to refresh centroid materialized view concurrently", exc_info=True)
-            return False
+            return MvRefreshOutcome.FAILED
 
     async def get_unclustered(self, tenant_id: str):
         """Return media identities not yet assigned to any cluster.
@@ -1299,7 +1289,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             .order_by(ClusterModel.created_at.desc())
         )
         result = await self._session.execute(stmt)
-        raw: list[tuple[MediaIdentity, uuid.UUID | None]] = list(result.all())
+        raw: list[tuple[MediaIdentity, uuid.UUID]] = list(result.tuples().all())
         models = _filter_rows_to_single_embedding_model([m for m, _ in raw])
         kept_ids = {id(m) for m in models}
         identities: list[DomainIdentity] = []

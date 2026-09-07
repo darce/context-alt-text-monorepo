@@ -274,6 +274,44 @@ async def test_refresh_mv_proceeds_when_next_job_differs_from_suppressed_id(
     await worker.__aexit__(None, None, None)
 
 
+@pytest.mark.asyncio
+async def test_refresh_mv_skip_does_not_advance_last_refresh_time(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """A headroom skip must remain eligible for the next worker cycle."""
+    monkeypatch.setattr(
+        scan_worker_module,
+        "get_recognition_settings",
+        lambda: SimpleNamespace(runtime_mode="test", blob_root=tmp_path / "blobs"),
+    )
+    from recognition.infrastructure.repositories import cluster_repository
+
+    class _FakeClusterRepository:
+        def __init__(self, _session) -> None:
+            pass
+
+        async def refresh_centroids_view_concurrent(self):
+            return cluster_repository.MvRefreshOutcome.SKIPPED_HEADROOM
+
+    monkeypatch.setattr(cluster_repository, "SqlAlchemyClusterRepository", _FakeClusterRepository)
+
+    worker = scan_worker_module.ScanWorker(
+        scan_worker_module.ScanWorkerConfig(postgres_dsn="sqlite+aiosqlite:///:memory:")
+    )
+    previous_refresh_time = datetime(2020, 1, 1, tzinfo=UTC)
+    worker._last_mv_refresh_time = previous_refresh_time
+    committed: list[bool] = []
+
+    class _FakeSession:
+        async def commit(self) -> None:
+            committed.append(True)
+
+    await worker._refresh_mv_if_needed(_FakeSession(), datetime.now(tz=UTC))
+
+    assert committed == []
+    assert worker._last_mv_refresh_time == previous_refresh_time
+
+    await worker.__aexit__(None, None, None)
+
+
 # ---------------------------------------------------------------------------
 # E15-11-BR-11 regression: factory must survive _ensure_embedding_runtime
 # ---------------------------------------------------------------------------

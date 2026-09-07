@@ -67,6 +67,8 @@ from infra.oci.gpu_lifecycle.intent import (
     IntentStatus,
     read_effective_intent,
     copy_intents_to_durable_dir,
+    _atomic_write_json,
+    _durable_unlink,
 )
 from infra.oci.gpu_lifecycle.load_source import AggregateJobLoadSource
 from infra.oci.gpu_lifecycle.probe import (
@@ -105,6 +107,7 @@ _DEFAULT_RUNNING_SINCE_PATH = Path("/var/lib/acx-gpu/running-since.json")
 _RUNNING_SINCE_READ_FAILURE_RECOVERY_CYCLES = 3
 _RUNNING_SINCE_FUTURE_SKEW_SECONDS = 5.0
 _HONOURED_NONCES_SCHEMA_VERSION = 1
+_PENDING_START_SCHEMA_VERSION = 1
 # A deferred STOP is re-armed for a bounded interval on every blocked cycle.
 # Repeated lifecycle cycles therefore preserve the instruction for arbitrarily
 # long work, while a single stale record never pins the machine forever.
@@ -462,6 +465,17 @@ class RunningSinceRecord:
     honoured_nonce: str | None = None
 
 
+@dataclass(frozen=True)
+class PendingStartRecord:
+    """Write-ahead authority for an OCI START that has not committed yet."""
+
+    instance_id: str
+    since: datetime
+    monotonic_since: float
+    boot_id: str
+    honoured_nonce: str | None = None
+
+
 class CorruptRunningSinceLeaseError(ValueError):
     """Persisted lease metadata is unsafe to use as a duration origin."""
 
@@ -559,6 +573,121 @@ class RunningSinceLeaseStore:
         """Durable START nonce ledger kept independently from lease lifetimes."""
         return self.path.with_name(f".{self.path.name}.honoured-nonces.json")
 
+    @property
+    def pending_starts_path(self) -> Path:
+        """Durable write-ahead records for STARTs between prepare and commit."""
+        return self.path.with_name(f".{self.path.name}.pending.json")
+
+    @staticmethod
+    def _validate_instance_id(instance_id: str) -> None:
+        if not isinstance(instance_id, str) or not instance_id.strip():
+            raise ValueError("instance_id must be a non-blank string")
+
+    @staticmethod
+    def _validate_nonce(nonce: str | None) -> None:
+        if nonce is not None and (not isinstance(nonce, str) or not nonce.strip()):
+            raise ValueError("honoured_nonce must be a non-blank string or None")
+
+    def _write_instances_locked(self, instances: dict[str, dict[str, object]]) -> None:
+        _atomic_write_json(
+            self.path,
+            {
+                "schema_version": self._SCHEMA_VERSION,
+                "instances": instances,
+            },
+        )
+
+    def _read_pending_starts(self) -> dict[str, dict[str, object]]:
+        try:
+            payload = json.loads(self.pending_starts_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {}
+        except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            raise CorruptRunningSinceLeaseError(
+                f"pending START authority is unreadable: {self.pending_starts_path}: {exc}"
+            ) from exc
+        if (
+            not isinstance(payload, dict)
+            or payload.get("schema_version") != _PENDING_START_SCHEMA_VERSION
+            or not isinstance(payload.get("instances"), dict)
+        ):
+            raise CorruptRunningSinceLeaseError(
+                f"pending START authority is invalid: {self.pending_starts_path}"
+            )
+        pending: dict[str, dict[str, object]] = {}
+        for instance_id, raw_record in payload["instances"].items():
+            if not isinstance(instance_id, str) or not instance_id.strip() or not isinstance(raw_record, dict):
+                raise CorruptRunningSinceLeaseError(
+                    f"pending START authority is invalid: {self.pending_starts_path}"
+                )
+            if raw_record.get("state") != "pending":
+                raise CorruptRunningSinceLeaseError(
+                    f"pending START authority is invalid: {self.pending_starts_path}"
+                )
+            since = raw_record.get("since")
+            try:
+                parsed_since = datetime.fromisoformat(since) if isinstance(since, str) else None
+            except ValueError as exc:
+                raise CorruptRunningSinceLeaseError(
+                    f"pending START timestamp is invalid: {self.pending_starts_path}"
+                ) from exc
+            monotonic_since = raw_record.get("monotonic_since")
+            boot_id = raw_record.get("boot_id")
+            nonce = raw_record.get("honoured_nonce")
+            if (
+                parsed_since is None
+                or parsed_since.tzinfo is None
+                or parsed_since.utcoffset() is None
+                or isinstance(monotonic_since, bool)
+                or not isinstance(monotonic_since, (int, float))
+                or not math.isfinite(monotonic_since)
+                or monotonic_since < 0
+                or not isinstance(boot_id, str)
+                or not boot_id.strip()
+                or (nonce is not None and (not isinstance(nonce, str) or not nonce.strip()))
+            ):
+                raise CorruptRunningSinceLeaseError(
+                    f"pending START authority is invalid: {self.pending_starts_path}"
+                )
+            pending[instance_id] = {
+                "state": "pending",
+                "since": parsed_since.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+                "monotonic_since": float(monotonic_since),
+                "boot_id": boot_id,
+                "honoured_nonce": nonce,
+            }
+        return pending
+
+    def _write_pending_starts_locked(self, pending: dict[str, dict[str, object]]) -> None:
+        if not pending:
+            _durable_unlink(self.pending_starts_path)
+            return
+        _atomic_write_json(
+            self.pending_starts_path,
+            {
+                "schema_version": _PENDING_START_SCHEMA_VERSION,
+                "instances": pending,
+            },
+        )
+
+    @staticmethod
+    def _pending_record_to_origin(
+        instance_id: str,
+        raw_record: dict[str, object],
+    ) -> PendingStartRecord:
+        parsed_since = datetime.fromisoformat(str(raw_record["since"])).astimezone(UTC)
+        return PendingStartRecord(
+            instance_id=instance_id,
+            since=parsed_since,
+            monotonic_since=float(raw_record["monotonic_since"]),
+            boot_id=str(raw_record["boot_id"]),
+            honoured_nonce=(
+                raw_record["honoured_nonce"]
+                if isinstance(raw_record.get("honoured_nonce"), str)
+                else None
+            ),
+        )
+
     def read(self, instance_id: str) -> RunningSinceRecord | None:
         try:
             payload = json.loads(self.path.read_text())
@@ -638,8 +767,8 @@ class RunningSinceLeaseStore:
     ) -> RunningSinceRecord:
         if source not in self._SOURCES:
             raise ValueError(f"unsupported running-since source: {source}")
-        if honoured_nonce is not None and (not isinstance(honoured_nonce, str) or not honoured_nonce.strip()):
-            raise ValueError("honoured_nonce must be a non-blank string or None")
+        self._validate_instance_id(instance_id)
+        self._validate_nonce(honoured_nonce)
         now = self._utc_now()
         monotonic_now = self._monotonic_now()
         with self._locked_for_update():
@@ -661,13 +790,7 @@ class RunningSinceLeaseStore:
                 if isinstance(previous_nonce, str) and previous_nonce.strip():
                     record_payload["honoured_nonce"] = previous_nonce
             instances[instance_id] = record_payload
-            payload = {
-                "schema_version": self._SCHEMA_VERSION,
-                "instances": instances,
-            }
-            temporary = self.path.with_name(f".{self.path.name}.tmp")
-            temporary.write_text(json.dumps(payload, sort_keys=True) + "\n")
-            temporary.replace(self.path)
+            self._write_instances_locked(instances)
         return RunningSinceRecord(
             instance_id=instance_id,
             since=now,
@@ -677,10 +800,150 @@ class RunningSinceLeaseStore:
             honoured_nonce=honoured_nonce,
         )
 
+    def prepare_start(self, instance_id: str, *, honoured_nonce: str | None = None) -> PendingStartRecord:
+        """Durably record the lease authority before issuing OCI START."""
+        self._validate_instance_id(instance_id)
+        self._validate_nonce(honoured_nonce)
+        origin = PendingStartRecord(
+            instance_id=instance_id,
+            since=self._utc_now(),
+            monotonic_since=self._monotonic_now(),
+            boot_id=self._boot_id,
+            honoured_nonce=honoured_nonce,
+        )
+        with self._locked_for_update():
+            pending = self._read_pending_starts()
+            existing = pending.get(instance_id)
+            if existing is not None:
+                existing_origin = self._pending_record_to_origin(instance_id, existing)
+                if existing_origin.honoured_nonce != honoured_nonce:
+                    raise CorruptRunningSinceLeaseError(
+                        f"pending START authority for {instance_id} has a different nonce"
+                    )
+                return existing_origin
+            pending[instance_id] = {
+                "state": "pending",
+                "since": origin.since.isoformat().replace("+00:00", "Z"),
+                "monotonic_since": origin.monotonic_since,
+                "boot_id": origin.boot_id,
+                "honoured_nonce": origin.honoured_nonce,
+            }
+            self._write_pending_starts_locked(pending)
+        return origin
+
+    def _write_honoured_nonce_locked(self, instance_id: str, nonce: str) -> None:
+        instances = self._read_honoured_nonces()
+        nonces = instances.setdefault(instance_id, set())
+        if nonce in nonces:
+            return
+        nonces.add(nonce)
+        _atomic_write_json(
+            self.honoured_nonces_path,
+            {
+                "schema_version": _HONOURED_NONCES_SCHEMA_VERSION,
+                "instances": {key: sorted(values) for key, values in instances.items()},
+            },
+        )
+
+    def _commit_start_locked(
+        self,
+        instance_id: str,
+        *,
+        origin: PendingStartRecord,
+    ) -> RunningSinceRecord:
+        instances = self._read_instances_for_update()
+        previous_record = instances.get(instance_id)
+        record_payload: dict[str, object] = {
+            "since": origin.since.isoformat().replace("+00:00", "Z"),
+            "source": "start_actuator",
+            "monotonic_since": origin.monotonic_since,
+            "boot_id": origin.boot_id,
+        }
+        if origin.honoured_nonce is not None:
+            self._write_honoured_nonce_locked(instance_id, origin.honoured_nonce)
+            record_payload["honoured_nonce"] = origin.honoured_nonce
+        elif isinstance(previous_record, dict):
+            previous_nonce = previous_record.get("honoured_nonce")
+            if isinstance(previous_nonce, str) and previous_nonce.strip():
+                record_payload["honoured_nonce"] = previous_nonce
+        instances[instance_id] = record_payload
+        self._write_instances_locked(instances)
+        return RunningSinceRecord(
+            instance_id=instance_id,
+            since=origin.since,
+            source="start_actuator",
+            monotonic_since=origin.monotonic_since,
+            boot_id=origin.boot_id,
+            honoured_nonce=origin.honoured_nonce,
+        )
+
+    def commit_start(self, instance_id: str, *, honoured_nonce: str | None = None) -> RunningSinceRecord:
+        """Commit a prepared START, retaining the write-ahead record on failure."""
+        self._validate_instance_id(instance_id)
+        self._validate_nonce(honoured_nonce)
+        with self._locked_for_update():
+            pending = self._read_pending_starts()
+            raw_origin = pending.get(instance_id)
+            if raw_origin is None:
+                origin = PendingStartRecord(
+                    instance_id=instance_id,
+                    since=self._utc_now(),
+                    monotonic_since=self._monotonic_now(),
+                    boot_id=self._boot_id,
+                    honoured_nonce=honoured_nonce,
+                )
+            else:
+                origin = self._pending_record_to_origin(instance_id, raw_origin)
+                if honoured_nonce is not None and origin.honoured_nonce != honoured_nonce:
+                    raise CorruptRunningSinceLeaseError(
+                        f"pending START authority for {instance_id} has a different nonce"
+                    )
+            record = self._commit_start_locked(instance_id, origin=origin)
+            if raw_origin is not None:
+                del pending[instance_id]
+                self._write_pending_starts_locked(pending)
+            return record
+
+    def reconcile_pending_start(self, instance_id: str, observed_state: str) -> bool:
+        """Recover a START left between OCI mutation and durable commit.
+
+        RUNNING/STARTING proves the mutation is in flight or complete, so the
+        pre-recorded lease is committed. STOPPED proves the mutation did not
+        take effect, so the pending record is discarded. Other states remain
+        ambiguous and block further actuation.
+        """
+        self._validate_instance_id(instance_id)
+        if observed_state not in {"RUNNING", "STARTING", "STOPPED", "STOPPING", "UNKNOWN"}:
+            raise ValueError(f"unsupported instance state for pending START: {observed_state}")
+        with self._locked_for_update():
+            pending = self._read_pending_starts()
+            raw_origin = pending.get(instance_id)
+            if raw_origin is None:
+                return False
+            if observed_state in {"RUNNING", "STARTING"}:
+                origin = self._pending_record_to_origin(instance_id, raw_origin)
+                self._commit_start_locked(instance_id, origin=origin)
+                del pending[instance_id]
+                self._write_pending_starts_locked(pending)
+                logger.warning(
+                    "reconciled pending START for %s from observed %s",
+                    instance_id,
+                    observed_state,
+                )
+                return True
+            if observed_state == "STOPPED":
+                del pending[instance_id]
+                self._write_pending_starts_locked(pending)
+                logger.info("discarded pending START for %s after observed STOPPED", instance_id)
+                return False
+            raise CorruptRunningSinceLeaseError(
+                f"pending START outcome is ambiguous for {instance_id}: observed {observed_state}"
+            )
+
     def record_start(self, instance_id: str, *, honoured_nonce: str | None = None) -> RunningSinceRecord:
         if honoured_nonce is not None:
-            self.record_honoured_nonce(instance_id, honoured_nonce)
-        return self.write(instance_id, source="start_actuator", honoured_nonce=honoured_nonce)
+            self.prepare_start(instance_id, honoured_nonce=honoured_nonce)
+        return self.commit_start(instance_id, honoured_nonce=honoured_nonce)
 
     def has_honoured_nonce(self, instance_id: str, nonce: str) -> bool:
         """Return whether this instance has already honoured ``nonce``.
@@ -699,23 +962,11 @@ class RunningSinceLeaseStore:
 
     def record_honoured_nonce(self, instance_id: str, nonce: str) -> None:
         """Persist a successful operator START nonce independently of leases."""
-        if not isinstance(instance_id, str) or not instance_id.strip():
-            raise ValueError("instance_id must be a non-blank string")
+        self._validate_instance_id(instance_id)
         if not isinstance(nonce, str) or not nonce.strip():
             raise ValueError("nonce must be a non-blank string")
         with self._locked_for_update():
-            instances = self._read_honoured_nonces()
-            nonces = instances.setdefault(instance_id, set())
-            if nonce in nonces:
-                return
-            nonces.add(nonce)
-            payload = {
-                "schema_version": _HONOURED_NONCES_SCHEMA_VERSION,
-                "instances": {key: sorted(values) for key, values in instances.items()},
-            }
-            temporary = self.honoured_nonces_path.with_name(f".{self.honoured_nonces_path.name}.tmp")
-            temporary.write_text(json.dumps(payload, sort_keys=True) + "\n")
-            temporary.replace(self.honoured_nonces_path)
+            self._write_honoured_nonce_locked(instance_id, nonce)
 
     def _read_honoured_nonces(self) -> dict[str, set[str]]:
         try:
@@ -808,15 +1059,13 @@ class RunningSinceLeaseStore:
 
     def _write_failure_counts(self, failures: dict[str, int]) -> None:
         if not failures:
-            self._read_failures_path.unlink(missing_ok=True)
+            _durable_unlink(self._read_failures_path)
             return
         payload = {
             "schema_version": self._FAILURE_SCHEMA_VERSION,
             "instances": failures,
         }
-        temporary = self._read_failures_path.with_name(f".{self._read_failures_path.name}.tmp")
-        temporary.write_text(json.dumps(payload, sort_keys=True) + "\n")
-        temporary.replace(self._read_failures_path)
+        _atomic_write_json(self._read_failures_path, payload)
 
     def remove(self, instance_id: str) -> None:
         with self._locked_for_update():
@@ -825,15 +1074,9 @@ class RunningSinceLeaseStore:
                 return
             del instances[instance_id]
             if not instances:
-                self.path.unlink(missing_ok=True)
+                _durable_unlink(self.path)
                 return
-            payload = {
-                "schema_version": self._SCHEMA_VERSION,
-                "instances": instances,
-            }
-            temporary = self.path.with_name(f".{self.path.name}.tmp")
-            temporary.write_text(json.dumps(payload, sort_keys=True) + "\n")
-            temporary.replace(self.path)
+            self._write_instances_locked(instances)
 
     def _read_instances_for_update(self) -> dict[str, dict[str, object]]:
         try:
@@ -1093,28 +1336,179 @@ def _rearm_deferred_record(
     return rearmed
 
 
+def _blocked_deferred_intent(
+    effective_intent: EffectiveIntent,
+    record: DeferredStopRecord,
+    *,
+    reason: str,
+    error: Exception,
+    decision_log_store: DecisionLogStore | None,
+) -> EffectiveIntent:
+    """Retain a failed deferred decision as a fail-closed STOP sentinel."""
+    error_text = f"{type(error).__name__}: {error}"
+    message = (
+        f"deferred STOP {reason} failed; automatic actuation blocked for "
+        f"nonce={record.nonce} sequence={record.sequence}: {error_text}"
+    )
+    audit = {
+        "event": "dropped",
+        "reason": reason,
+        "action": IntentAction.STOP.value,
+        "nonce": record.nonce,
+        "sequence": record.sequence,
+        "requested_by": record.requested_by,
+        "error": error_text,
+        "deferred_reason": record.deferred_reason,
+    }
+    if decision_log_store is not None:
+        try:
+            decision_log_store.append(audit)
+        except Exception as audit_error:  # noqa: BLE001 - preserve the fail-closed sentinel
+            message = f"{message}; deferred audit append failed: {type(audit_error).__name__}: {audit_error}"
+            logger.error(message)
+    logger.error(message)
+    return EffectiveIntent(
+        action=IntentAction.STOP,
+        requested_at=record.requested_at,
+        expires_at=record.deferred_until,
+        nonce=record.nonce,
+        requested_by=record.requested_by,
+        sequence=record.sequence,
+        source=effective_intent.source,
+        status=IntentStatus.BLOCKED_WORK_IN_FLIGHT,
+        reason=message,
+        deferred_until=record.deferred_until,
+        deferred_reason=record.deferred_reason,
+        deferred_rearm_failed=True,
+    )
+
+
+def _audit_deferred_fenced(
+    record: DeferredStopRecord,
+    *,
+    high_water: int,
+    decision_log_store: DecisionLogStore | None,
+) -> None:
+    """Record that a deferred STOP was dropped by the durable fencing mark."""
+    logger.warning(
+        "dropped deferred STOP fenced by authority high-water mark: "
+        "nonce=%s sequence=%s highest=%s",
+        record.nonce,
+        record.sequence,
+        high_water,
+    )
+    if decision_log_store is None:
+        return
+    try:
+        decision_log_store.append(
+            {
+                "event": "dropped",
+                "reason": "fenced_by_authority_sequence",
+                "action": IntentAction.STOP.value,
+                "nonce": record.nonce,
+                "sequence": record.sequence,
+                "highest_sequence": high_water,
+                "requested_by": record.requested_by,
+                "deferred_reason": record.deferred_reason,
+            }
+        )
+    except Exception as audit_error:  # noqa: BLE001 - the drop itself is safe
+        logger.error(
+            "deferred fenced audit append failed: %s: %s",
+            type(audit_error).__name__,
+            audit_error,
+        )
+
+
 def _apply_deferred_stop(
     effective_intent: EffectiveIntent,
     *,
     store: DeferredStopStore | None,
     now: datetime,
+    decision_log_store: DecisionLogStore | None = None,
+    authority_store: IntentAuthorityStore | None = None,
 ) -> EffectiveIntent:
     if store is None:
         return effective_intent
+    if decision_log_store is None:
+        decision_log_store = DecisionLogStore(store.path.with_name("decision-log.jsonl"))
     record = store.read()
     if record is None:
         return effective_intent
-    if effective_intent.sequence is not None and effective_intent.sequence > record.sequence:
+    if (
+        isinstance(effective_intent.sequence, int)
+        and not isinstance(effective_intent.sequence, bool)
+        and isinstance(effective_intent.nonce, str)
+        and effective_intent.nonce.strip()
+        and (
+            effective_intent.sequence > record.sequence
+            or (
+                effective_intent.sequence == record.sequence
+                and effective_intent.nonce != record.nonce
+            )
+        )
+    ):
         try:
-            store.clear(sequence=effective_intent.sequence)
-        except OSError as exc:
-            logger.error("could not clear superseded deferred STOP: %s", exc)
-        return effective_intent
+            if store.supersede_if_newer(
+                sequence=effective_intent.sequence,
+                nonce=effective_intent.nonce,
+            ):
+                return effective_intent
+            refreshed = store.read()
+            if refreshed is None:
+                return effective_intent
+            record = refreshed
+        except (OSError, ValueError) as exc:
+            return _blocked_deferred_intent(
+                effective_intent,
+                record,
+                reason="supersession_failed",
+                error=exc,
+                decision_log_store=decision_log_store,
+            )
+    # The live intent's own sequence is absent once it expires, so the check
+    # above cannot see a supersession whose publication has already elapsed.
+    # The durable high-water mark still carries it: fence on that before the
+    # record is re-armed, or an expired newer intent silently reinstates the
+    # STOP it superseded.
+    if authority_store is not None:
+        try:
+            high_water = authority_store.highest_sequence()
+        except (IntentAuthorityError, OSError, ValueError) as exc:
+            return _blocked_deferred_intent(
+                effective_intent,
+                record,
+                reason="authority_read_failed",
+                error=exc,
+                decision_log_store=decision_log_store,
+            )
+        if high_water > record.sequence:
+            try:
+                store.clear(sequence=record.sequence)
+            except (OSError, ValueError) as exc:
+                return _blocked_deferred_intent(
+                    effective_intent,
+                    record,
+                    reason="fenced_clear_failed",
+                    error=exc,
+                    decision_log_store=decision_log_store,
+                )
+            _audit_deferred_fenced(
+                record,
+                high_water=high_water,
+                decision_log_store=decision_log_store,
+            )
+            return effective_intent
     try:
         record = _rearm_deferred_record(store, record, now=now)
     except (OSError, ValueError) as exc:
-        logger.error("could not re-arm deferred STOP %s: %s", record.nonce, exc)
-        return effective_intent
+        return _blocked_deferred_intent(
+            effective_intent,
+            record,
+            reason="rearm_failed",
+            error=exc,
+            decision_log_store=decision_log_store,
+        )
     return record.to_effective_intent(source=effective_intent.source)
 
 
@@ -1126,18 +1520,37 @@ def _resolve_effective_intent(
     durable_intent_dir: str | Path | None = None,
     authority_store: IntentAuthorityStore | None = None,
     deferred_stop_store: DeferredStopStore | None = None,
+    decision_log_store: DecisionLogStore | None = None,
 ) -> EffectiveIntent:
     if isinstance(intent, EffectiveIntent):
-        return _apply_deferred_stop(intent, store=deferred_stop_store, now=_coerce_cycle_time(now))
+        return _apply_deferred_stop(
+            intent,
+            store=deferred_stop_store,
+            now=_coerce_cycle_time(now),
+            decision_log_store=decision_log_store,
+            authority_store=authority_store,
+        )
     if intent is not None:
-        return EffectiveIntent(action=IntentAction(intent))
+        return _apply_deferred_stop(
+            EffectiveIntent(action=IntentAction(intent)),
+            store=deferred_stop_store,
+            now=_coerce_cycle_time(now),
+            decision_log_store=decision_log_store,
+            authority_store=authority_store,
+        )
     source_dir = _intent_source_dir(
         intent_dir=intent_dir,
         durable_intent_dir=durable_intent_dir,
         durable_state_dir=None,
     )
     if source_dir is None:
-        return EffectiveIntent()
+        return _apply_deferred_stop(
+            EffectiveIntent(),
+            store=deferred_stop_store,
+            now=_coerce_cycle_time(now),
+            decision_log_store=decision_log_store,
+            authority_store=authority_store,
+        )
     current_time = _coerce_cycle_time(now)
     durable_dir = (
         Path(durable_intent_dir)
@@ -1170,7 +1583,13 @@ def _resolve_effective_intent(
         # making the authority failure visible in the cycle result/log.
         logger.error("operator intent authority unavailable; using auto: %s", exc)
         effective = EffectiveIntent(reason=f"intent authority unavailable: {exc}")
-    return _apply_deferred_stop(effective, store=deferred_stop_store, now=current_time)
+    return _apply_deferred_stop(
+        effective,
+        store=deferred_stop_store,
+        now=current_time,
+        decision_log_store=decision_log_store,
+        authority_store=authority_store,
+    )
 
 
 def _honoured_instance_ids(
@@ -1708,6 +2127,20 @@ def _run_reap_cycle(
     if honoured_ids and effective_intent.action is IntentAction.START:
         intent_status = IntentStatus.HONOURED
 
+    if effective_intent.deferred_rearm_failed:
+        message = effective_intent.reason or "deferred STOP rearm failed; automatic actuation blocked"
+        logger.error(message)
+        return ReapCycleResult(
+            decided=[],
+            actuated=[],
+            fenced_off=True,
+            errors=[*lease_errors, message],
+            lease_expired=lease_expired,
+            intent=effective_intent,
+            intent_status=IntentStatus.BLOCKED_WORK_IN_FLIGHT,
+            last_transition_reason=last_transition_reason,
+        )
+
     if not load_trustworthy:
         msg = "load snapshot untrustworthy; refusing STOP (fail closed)"
         logger.error(msg)
@@ -1942,6 +2375,7 @@ def run_reap_cycle(
         durable_intent_dir=resolved_durable_dir,
         authority_store=resolved_authority,
         deferred_stop_store=resolved_deferred,
+        decision_log_store=resolved_log,
     )
     if dry_run:
         result = _run_reap_cycle(
@@ -2051,8 +2485,41 @@ def _run_start_cycle(
     When a readiness probe is supplied, wait is bounded; timeout/stall is loud.
     """
     effective_intent = effective_intent or EffectiveIntent()
-    load = load_source.snapshot()
     errors: list[str] = []
+    if effective_intent.deferred_rearm_failed:
+        message = effective_intent.reason or "deferred STOP rearm failed; automatic actuation blocked"
+        logger.error(message)
+        return StartCycleResult(
+            decided=[],
+            actuated=[],
+            errors=[message],
+            intent=effective_intent,
+            intent_status=IntentStatus.BLOCKED_WORK_IN_FLIGHT,
+        )
+    reconcile_pending = getattr(running_since_store, "reconcile_pending_start", None)
+    if callable(reconcile_pending) and not dry_run:
+        for instance in instances:
+            try:
+                reconcile_pending(instance.instance_id, instance.state)
+            except (OSError, ValueError) as exc:
+                msg = (
+                    f"{instance.instance_id}: pending START recovery failed; refusing START: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+                logger.error(msg)
+                errors.append(msg)
+    if errors:
+        intent_status = effective_intent.status
+        if intent_status is IntentStatus.NONE and effective_intent.action is not IntentAction.AUTO:
+            intent_status = IntentStatus.PENDING
+        return StartCycleResult(
+            decided=[],
+            actuated=[],
+            errors=errors,
+            intent=effective_intent,
+            intent_status=intent_status,
+        )
+    load = load_source.snapshot()
     honoured_ids = _honoured_instance_ids(instances, running_since_store, effective_intent.nonce)
     if not isinstance(load, JobLoadSnapshot) or load.untrustworthy:
         msg = "load snapshot untrustworthy; refusing START"
@@ -2130,9 +2597,33 @@ def _run_start_cycle(
 
     actuated: list[tuple[str, str]] = []
     start_failed: list[str] = []
+    prepare_start = getattr(running_since_store, "prepare_start", None)
+    commit_start = getattr(running_since_store, "commit_start", None)
+    use_write_ahead_start = callable(prepare_start) and callable(commit_start)
     for action, instance_id in decided:
         if action != LifecycleAction.START:
             continue
+        prepared = False
+        if running_since_store is not None and not dry_run and use_write_ahead_start:
+            try:
+                prepare_start(
+                    instance_id,
+                    honoured_nonce=(
+                        effective_intent.nonce
+                        if effective_intent.action is IntentAction.START
+                        else None
+                    ),
+                )
+                prepared = True
+            except (OSError, ValueError) as exc:
+                msg = (
+                    f"{instance_id}: durable START authority prepare failed; refusing OCI START: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+                logger.error(msg)
+                errors.append(msg)
+                start_failed.append(instance_id)
+                continue
         try:
             actuator.start_instance(instance_id)
         except subprocess.SubprocessError as exc:
@@ -2162,7 +2653,17 @@ def _run_start_cycle(
                 )
                 continue
             try:
-                if effective_intent.action is IntentAction.START:
+                if use_write_ahead_start and prepared:
+                    record = commit_start(
+                        instance_id,
+                        honoured_nonce=(
+                            effective_intent.nonce
+                            if effective_intent.action is IntentAction.START
+                            else None
+                        ),
+                    )
+                elif effective_intent.action is IntentAction.START:
+                    # Compatibility path for injected stores from older callers.
                     record = running_since_store.record_start(
                         instance_id,
                         honoured_nonce=effective_intent.nonce,
@@ -2172,7 +2673,7 @@ def _run_start_cycle(
                     record = running_since_store.record_start(instance_id)
             except (OSError, ValueError) as exc:
                 msg = (
-                    f"{instance_id}: START issued but running-since write failed; lease cap disabled: "
+                    f"{instance_id}: START issued but durable lease commit failed; pending authority retained: "
                     f"{type(exc).__name__}: {exc}"
                 )
                 logger.error(msg)
@@ -2272,6 +2773,7 @@ def run_start_cycle(
         durable_intent_dir=resolved_durable_dir,
         authority_store=resolved_authority,
         deferred_stop_store=resolved_deferred,
+        decision_log_store=resolved_log,
     )
     if dry_run:
         result = _run_start_cycle(

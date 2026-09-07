@@ -196,6 +196,78 @@ def test_intent_authority_does_not_rearm_an_expired_sequence_after_ntp_rollback(
     assert after_rollback.status is IntentStatus.EXPIRED
 
 
+def test_intent_authority_rejects_nonce_republication_at_a_higher_sequence(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    authority = IntentAuthorityStore(
+        tmp_path / "intent-authority.json",
+        monotonic=lambda: 100.0,
+        boot_id="boot-a",
+    )
+    _write_intent(
+        tmp_path,
+        "prod",
+        action="start",
+        requested_at=NOW,
+        expires_at=NOW + timedelta(minutes=5),
+        nonce=VALID_NONCE,
+        sequence=1,
+    )
+
+    first = read_effective_intent(tmp_path, NOW, authority_store=authority)
+    _write_intent(
+        tmp_path,
+        "prod",
+        action="stop",
+        requested_at=NOW + timedelta(seconds=1),
+        expires_at=NOW + timedelta(minutes=6),
+        nonce=VALID_NONCE,
+        sequence=2,
+    )
+    replay = read_effective_intent(tmp_path, NOW + timedelta(seconds=2), authority_store=authority)
+
+    assert first.action is IntentAction.START
+    assert replay.action is IntentAction.AUTO
+    assert replay.status is IntentStatus.EXPIRED
+    assert "nonce reuse" in caplog.text
+
+
+def test_intent_authority_rejects_a_new_nonce_at_a_duplicate_sequence(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    authority = IntentAuthorityStore(
+        tmp_path / "intent-authority.json",
+        monotonic=lambda: 100.0,
+        boot_id="boot-a",
+    )
+    _write_intent(
+        tmp_path,
+        "dev",
+        action="start",
+        requested_at=NOW,
+        expires_at=NOW + timedelta(minutes=5),
+        nonce=VALID_NONCE,
+        sequence=4,
+    )
+    _write_intent(
+        tmp_path,
+        "staging",
+        action="stop",
+        requested_at=NOW + timedelta(seconds=1),
+        expires_at=NOW + timedelta(minutes=6),
+        nonce=NEW_NONCE,
+        sequence=4,
+    )
+
+    effective = read_effective_intent(tmp_path, NOW, authority_store=authority)
+
+    assert effective.action is IntentAction.AUTO
+    assert effective.status is IntentStatus.EXPIRED
+    assert "sequence" in caplog.text
+
+
 def test_equal_requested_at_tie_resolves_to_stop(tmp_path: Path) -> None:
     _write_intent(tmp_path, "dev", action="start", requested_at=NOW, nonce=VALID_NONCE)
     _write_intent(tmp_path, "staging", action="stop", requested_at=NOW, nonce=NEW_NONCE)

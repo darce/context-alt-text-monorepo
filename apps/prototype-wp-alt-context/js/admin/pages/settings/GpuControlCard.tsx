@@ -1,7 +1,7 @@
 import React from 'react';
 import { __ } from '@wordpress/i18n';
 
-import { GPU_STATE, GpuIntentAction, GpuIntentStatus, type GpuIntentAction as GpuIntentActionValue, type GpuStatusResponse } from '../../api/gpuApi';
+import { GPU_STATE, GpuIntentAction, GpuIntentStatus, type GpuStatusResponse } from '../../api/gpuApi';
 import { toWorkbench } from '../../navigation/appLinks';
 import {
   GPU_STATE_ICON,
@@ -9,9 +9,9 @@ import {
   GPU_STATE_VOCABULARY,
   gpuStatePresentation,
 } from '../workbench/gpuStatePresentation';
-import { useGpuControl } from './useGpuControl';
+import { getGpuControlPollInterval, useGpuControl } from './useGpuControl';
 
-type ConfirmationAction = GpuIntentActionValue.START | GpuIntentActionValue.STOP;
+type ConfirmationAction = typeof GpuIntentAction.START | typeof GpuIntentAction.STOP;
 
 const GPU_STATE_GLYPHS: Record<(typeof GPU_STATE_ICON)[keyof typeof GPU_STATE_ICON], string> = {
   [GPU_STATE_ICON.HELP]: '?',
@@ -80,7 +80,8 @@ const formatClock = (value: string | null): string | null => {
 const formatWarmupEta = (data: GpuStatusResponse): string => {
   const elapsed = secondsSinceServerTime(data.server_time, data.gpu_state.since);
   const remaining = elapsed === null ? 120 : Math.max(0, 120 - elapsed);
-  return `Warming… about ${formatDuration(remaining)} left`;
+  const pollSeconds = Math.round(getGpuControlPollInterval(data) / 1000);
+  return `Warming… about ${formatDuration(remaining)} left · polling every ${pollSeconds} s`;
 };
 
 const intentLabel = (data: GpuStatusResponse): string => {

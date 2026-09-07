@@ -1,6 +1,6 @@
 import { fetchRequiredApi } from '../utils/http';
 import { getConfig, getEndpoint } from './config';
-import { GPU_STATE, type GpuState } from './describeApi';
+import { GPU_STATE, isGpuState, type GpuState } from './describeApi';
 
 /** Wire actions accepted by the operator intent endpoint (C1). */
 export const GpuIntentAction = {
@@ -82,18 +82,72 @@ export interface PostGpuIntentPayload {
 
 export type { GpuState };
 
+/**
+ * Thrown when the GPU status wire payload does not satisfy the C2 contract.
+ * The control card renders its error state instead of the operator seeing a
+ * blank Settings page: a malformed subordinate payload must not take the host
+ * screen down with it.
+ */
+export class MalformedGpuStatusError extends Error {
+  constructor(field: string) {
+    super(`GPU status response is missing or malformed: ${field}`);
+    this.name = 'MalformedGpuStatusError';
+  }
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null;
+
+const isIntentAction = (value: unknown): value is GpuIntentAction =>
+  Object.values(GpuIntentAction).includes(value as GpuIntentAction);
+
+/**
+ * Validate the wire payload before any consumer dereferences it. `fetchRequiredApi`
+ * only casts, so without this every field below is an unchecked assumption.
+ */
+export const parseGpuStatusResponse = (payload: unknown): GpuStatusResponse => {
+  if (!isRecord(payload)) {
+    throw new MalformedGpuStatusError('response body');
+  }
+  const gpuState = payload.gpu_state;
+  if (!isRecord(gpuState)) {
+    throw new MalformedGpuStatusError('gpu_state');
+  }
+  if (!isGpuState(gpuState.state)) {
+    throw new MalformedGpuStatusError('gpu_state.state');
+  }
+  if (!isIntentAction(gpuState.intent)) {
+    throw new MalformedGpuStatusError('gpu_state.intent');
+  }
+  const load = payload.load;
+  if (!isRecord(load) || typeof load.has_work !== 'boolean') {
+    throw new MalformedGpuStatusError('load.has_work');
+  }
+  if (typeof payload.snapshot_fresh !== 'boolean') {
+    throw new MalformedGpuStatusError('snapshot_fresh');
+  }
+  if (typeof payload.server_time !== 'string') {
+    throw new MalformedGpuStatusError('server_time');
+  }
+  return payload as unknown as GpuStatusResponse;
+};
+
 export const fetchGpuStatus = async (): Promise<GpuStatusResponse> =>
-  fetchRequiredApi<GpuStatusResponse>(getEndpoint('recognitionGpuStatus'), {
-    method: 'GET',
-    restNonce: getConfig().nonce,
-  });
+  parseGpuStatusResponse(
+    await fetchRequiredApi<unknown>(getEndpoint('recognitionGpuStatus'), {
+      method: 'GET',
+      restNonce: getConfig().nonce,
+    }),
+  );
 
 export const postGpuIntent = async (payload: PostGpuIntentPayload): Promise<GpuStatusResponse> =>
-  fetchRequiredApi<GpuStatusResponse>(getEndpoint('recognitionGpuIntent'), {
-    method: 'POST',
-    restNonce: getConfig().nonce,
-    body: payload,
-  });
+  parseGpuStatusResponse(
+    await fetchRequiredApi<unknown>(getEndpoint('recognitionGpuIntent'), {
+      method: 'POST',
+      restNonce: getConfig().nonce,
+      body: payload,
+    }),
+  );
 
 // Keep the imported state object in this module's public surface for callers that
 // only need the GPU control API, without inventing a second state vocabulary.

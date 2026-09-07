@@ -22,10 +22,11 @@
 | `gpu-stop-confirm` | overlay | `#/settings (inline strip; no dedicated route)` | Confirm Stop GPU |
 | `exit-workbench` | exit | `#/workbench` | Workbench |
 
-
 ### Settings › Burst GPU (`settings-burst-gpu`)
 
 Purpose: Card on the Settings page showing GPU state, intent, lease and load, with Start / Stop / Return to automatic controls. Domain vocabulary behind the canonical states: stopped and ready = default; starting and warming = loading; snapshot missing = empty; service unreachable = error; lifecycle degraded or intent blocked = degraded.
+
+Action states: stopped, unknown, starting, warming, ready, degraded
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
@@ -50,11 +51,32 @@ Purpose: Card on the Settings page showing GPU state, intent, lease and load, wi
 |   - Start GPU / Stop GPU / Return to automatic (form) sta… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
-|   [PRIMARY] Start GPU -> gpu-start-confirm (costly,previe… |
-|   [secondary] Go to Workbench -> exit-workbench            |
-|   [secondary] Return to automatic -> POST recognition/gpu… |
-|   [secondary] Stop GPU -> gpu-stop-confirm (preview)       |
-|   [tertiary] Refresh status -> GET recognition/gpu/status  |
+| when stopped                                               |
+|   [PRIMARY] Start GPU                                      |
+|   [secondary] Return to automatic                          |
+|   [tertiary] Refresh status                                |
+| when unknown                                               |
+|   [PRIMARY] Start GPU                                      |
+|   [secondary] Return to automatic                          |
+|   [tertiary] Refresh status                                |
+| when starting                                              |
+|   [secondary] Stop GPU                                     |
+|   [secondary] Return to automatic                          |
+|   [tertiary] Refresh status                                |
+| when warming                                               |
+|   [secondary] Stop GPU                                     |
+|   [secondary] Return to automatic                          |
+|   [tertiary] Refresh status                                |
+| when ready                                                 |
+|   [secondary] Stop GPU                                     |
+|   [secondary] Return to automatic                          |
+|   [tertiary] Refresh status                                |
+|   [secondary] Go to Workbench                              |
+| when degraded                                              |
+|   [PRIMARY] Start GPU                                      |
+|   [secondary] Stop GPU                                     |
+|   [secondary] Return to automatic                          |
+|   [tertiary] Refresh status                                |
 +------------------------------------------------------------+
 | states: default | loading | empty | error | degraded       |
 +------------------------------------------------------------+
@@ -137,14 +159,14 @@ url_params: `run_id`
 
 | id | verb | target | hierarchy | costly | irreversible | preview required | screen id | when (recovery state) |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `act-gpu-start` | Start GPU | `gpu-start-confirm` | primary | yes | no | yes | `settings-burst-gpu` | state in stopped\|unknown\|degraded, intent != start |
+| `act-gpu-start` | Start GPU | `gpu-start-confirm` | primary | yes | no | yes | `settings-burst-gpu` | stopped, unknown, degraded |
 | `act-gpu-confirm-start` | Confirm start | `POST recognition/gpu/intent {action: start}` | primary | yes | no | no | `gpu-start-confirm` | always |
-| `act-gpu-stop` | Stop GPU | `gpu-stop-confirm` | secondary | no | no | yes | `settings-burst-gpu` | state in starting\|warming\|ready\|degraded, disabled with reason while load.has_work |
+| `act-gpu-stop` | Stop GPU | `gpu-stop-confirm` | secondary | no | no | yes | `settings-burst-gpu` | starting, warming, ready, degraded |
 | `act-gpu-confirm-stop` | Confirm stop | `POST recognition/gpu/intent {action: stop}` | primary | no | no | no | `gpu-stop-confirm` | always |
-| `act-gpu-auto` | Return to automatic | `POST recognition/gpu/intent {action: auto}` | secondary | no | no | no | `settings-burst-gpu` | intent != auto |
+| `act-gpu-auto` | Return to automatic | `POST recognition/gpu/intent {action: auto}` | secondary | no | no | no | `settings-burst-gpu` | always |
 | `act-gpu-refresh` | Refresh status | `GET recognition/gpu/status` | tertiary | no | no | no | `settings-burst-gpu` | always |
 | `act-cancel-confirm` | Cancel | `settings-burst-gpu` | secondary | no | no | no | `gpu-start-confirm` | always |
-| `act-goto-workbench` | Go to Workbench | `exit-workbench` | secondary | no | no | no | `settings-burst-gpu` | state == ready |
+| `act-goto-workbench` | Go to Workbench | `exit-workbench` | secondary | no | no | no | `settings-burst-gpu` | ready |
 
 ## Flows
 ### Pre-warm before a demo (`flow-prewarm`)

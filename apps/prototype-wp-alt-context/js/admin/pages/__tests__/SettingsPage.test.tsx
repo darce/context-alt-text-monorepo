@@ -31,12 +31,72 @@ interface CapturedMutationOptions {
   onError?: (err: unknown) => void;
 }
 
-const { mockUseQuery, mockUseMutation, mockInvalidateQueries, mockFetchQuery, mockToDashboard } = vi.hoisted(() => ({
+const {
+  mockUseQuery,
+  mockUseMutation,
+  mockInvalidateQueries,
+  mockFetchQuery,
+  mockToDashboard,
+  gpuStatusQueryResult,
+} = vi.hoisted(() => ({
   mockUseQuery: vi.fn<() => QueryHookResult>(),
   mockUseMutation: vi.fn<(options?: CapturedMutationOptions) => MutationHookResult>(),
   mockInvalidateQueries: vi.fn(),
   mockFetchQuery: vi.fn(),
   mockToDashboard: vi.fn(() => '#/owned-dashboard-route'),
+  // SettingsPage hosts GpuControlCard, whose own useQuery/useMutation would
+  // otherwise be answered by the blanket settings mocks below — the card would
+  // read gpu_state off a SettingsResponse and shift every captured mutation
+  // index. The card keeps its own coverage in settings/__tests__; here it just
+  // needs a contract-shaped hook result.
+  gpuStatusQueryResult: {
+    data: {
+      gpu_state: {
+        state: 'stopped',
+        instance_id: null,
+        written_at: 0,
+        reason: null,
+        since: null,
+        intent: 'auto',
+        intent_expires_at: null,
+        intent_status: 'none',
+        honoured_nonce: null,
+        lease_expires_at: null,
+        instance_running_since: null,
+        last_transition_reason: 'idle',
+      },
+      snapshot_age_seconds: 3,
+      snapshot_fresh: true,
+      intent: null,
+      load: { has_work: false, written_at: 0, fresh: true },
+      server_time: '2026-01-01T00:00:00Z',
+    },
+    isLoading: false,
+    isError: false,
+    isSuccess: true,
+    isPending: false,
+    isFetching: false,
+    status: 'success',
+    error: null,
+    refetch: vi.fn(),
+  },
+}));
+
+vi.mock('../settings/useGpuControl', () => ({
+  useGpuControl: () => ({
+    ...gpuStatusQueryResult,
+    canStart: true,
+    canStop: false,
+    stopBlockedReason: null,
+    canReturnToAuto: false,
+    requestIntent: vi.fn(),
+    requestIntentAsync: vi.fn(),
+    isIntentPending: false,
+    intentError: null,
+  }),
+  getGpuControlPollInterval: () => 15_000,
+  GPU_STATUS_POLL_INTERVAL_MS: 15_000,
+  GPU_WARMUP_POLL_INTERVAL_MS: 5_000,
 }));
 
 vi.mock('@wordpress/i18n', () => ({

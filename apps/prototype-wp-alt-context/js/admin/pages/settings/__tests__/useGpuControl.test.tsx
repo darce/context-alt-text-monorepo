@@ -76,10 +76,10 @@ describe('useGpuControl', () => {
   it('uses a 15 second poll normally and a 5 second poll while starting or warming', () => {
     expect(getGpuControlPollInterval(undefined)).toBe(GPU_STATUS_POLL_INTERVAL_MS);
     expect(getGpuControlPollInterval(statusResponse())).toBe(GPU_STATUS_POLL_INTERVAL_MS);
-    expect(getGpuControlPollInterval(statusResponse({ state: 'starting' }))).toBe(
+    expect(getGpuControlPollInterval(statusResponse({ gpu_state: { state: 'starting' } }))).toBe(
       GPU_WARMUP_POLL_INTERVAL_MS,
     );
-    expect(getGpuControlPollInterval(statusResponse({ state: 'warming' }))).toBe(
+    expect(getGpuControlPollInterval(statusResponse({ gpu_state: { state: 'warming' } }))).toBe(
       GPU_WARMUP_POLL_INTERVAL_MS,
     );
   });
@@ -112,7 +112,7 @@ describe('useGpuControl', () => {
   });
 
   it('optimistically marks an intent pending and restores the snapshot on error', async () => {
-    const initial = statusResponse({ state: 'ready' });
+    const initial = statusResponse({ gpu_state: { state: 'ready' } });
     fetchGpuStatusMock.mockResolvedValue(initial);
     let rejectIntent: ((error: Error) => void) | undefined;
     postGpuIntentMock.mockReturnValue(
@@ -138,7 +138,7 @@ describe('useGpuControl', () => {
   });
 
   it('enables Return to automatic only when the effective intent is not automatic', async () => {
-    fetchGpuStatusMock.mockResolvedValue(statusResponse({ intent: GPU_INTENT_ACTION.START }));
+    fetchGpuStatusMock.mockResolvedValue(statusResponse({ gpu_state: { intent: GPU_INTENT_ACTION.START } }));
 
     const { result } = renderHook(() => useGpuControl(), { wrapper });
     await waitFor(() => expect(result.current.data).toBeDefined());

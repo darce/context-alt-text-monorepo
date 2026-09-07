@@ -225,6 +225,97 @@ describe('useGuidedLiveDescription', () => {
       expect(coldResult.current.state.deadlineMs).toBe(GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000);
     });
 
+    it('waits out a cold start the disclosed budget does not cover', async () => {
+      // The reported run: a scale-to-zero pod, `gpu_state: "cold"` at accept and
+      // the service's default 180s GENERATION budget disclosed. Reading that as
+      // the whole wait timed the panel out at 3:15 while the pod was still
+      // loading weights and the run finished minutes later.
+      const client = stubClient({
+        submit: vi.fn<GuidedLiveDescriptionClient['submit']>(() =>
+          Promise.resolve({ ...runResponse({ gpu_state: 'stopped' }), deadline_seconds: 180 }),
+        ),
+      });
+      const { result } = mount(client);
+
+      await press(() => result.current.request());
+
+      expect(result.current.state.deadlineMs).toBeGreaterThan(195_000);
+      expect(result.current.state.deadlineMs).toBe(GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000);
+
+      await settle(200_000);
+      expect(result.current.state.status).not.toBe(GUIDED_LIVE_STATUS.TIMED_OUT);
+    });
+
+    it('lifts a warm-pinned deadline when the first poll reveals the GPU is cold', async () => {
+      // Accept raced a stale `gpu_state` read (or the pod was reaped straight
+      // after), so the warm 180s pin was chosen against a 400s server budget. A
+      // one-way "something was disclosed" latch used to suppress every later
+      // widening and time this run out at 3:00.
+      const client = stubClient({
+        submit: vi.fn<GuidedLiveDescriptionClient['submit']>(() =>
+          Promise.resolve({ ...runResponse({ gpu_state: 'ready' }), deadline_seconds: 400 }),
+        ),
+        poll: vi.fn<GuidedLiveDescriptionClient['poll']>(() =>
+          Promise.resolve({
+            ...runResponse({ phase: 'warming', gpu_state: 'stopped' }),
+            deadline_seconds: 400,
+          }),
+        ),
+      });
+      const { result } = mount(client);
+
+      await press(() => result.current.request());
+      expect(result.current.state.deadlineMs).toBe(GUIDED_LIVE_WARM_CEILING_SECONDS * 1000);
+
+      await settle(1000);
+
+      expect(result.current.state.deadlineMs).toBeGreaterThan(GUIDED_LIVE_WARM_CEILING_SECONDS * 1000);
+      expect(result.current.state.deadlineMs).toBe(GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000);
+    });
+
+    it('ignores a budget below the trust floor instead of timing out sixteen seconds in', async () => {
+      const client = stubClient({
+        submit: vi.fn<GuidedLiveDescriptionClient['submit']>(() =>
+          Promise.resolve({ ...runResponse({ gpu_state: 'ready' }), deadline_seconds: 1 }),
+        ),
+        poll: vi.fn<GuidedLiveDescriptionClient['poll']>(() =>
+          Promise.resolve(runResponse({ phase: 'warming', gpu_state: 'ready' })),
+        ),
+      });
+      const { result } = mount(client);
+
+      await press(() => result.current.request());
+      expect(result.current.state.deadlineMs).toBe(GUIDED_LIVE_WARM_CEILING_SECONDS * 1000);
+
+      await settle(20_000);
+      expect(result.current.state.status).not.toBe(GUIDED_LIVE_STATUS.TIMED_OUT);
+    });
+
+    it('carries the polled deadline_seconds through to the state, not only the submit one', async () => {
+      // The `polled` action's disclosure field used to be settable only by a
+      // test: production never populated it, so a run whose submit disclosed
+      // nothing stayed on a locally invented ceiling for its whole life.
+      const client = stubClient({
+        submit: vi.fn<GuidedLiveDescriptionClient['submit']>(() =>
+          Promise.resolve(runResponse({ gpu_state: 'stopped' })),
+        ),
+        poll: vi.fn<GuidedLiveDescriptionClient['poll']>(() =>
+          Promise.resolve({
+            ...runResponse({ phase: 'warming', gpu_state: 'starting' }),
+            deadline_seconds: 120,
+          }),
+        ),
+      });
+      const { result } = mount(client);
+
+      await press(() => result.current.request());
+      expect(result.current.state.disclosedDeadlineSeconds).toBeNull();
+
+      await settle(1000);
+
+      expect(result.current.state.disclosedDeadlineSeconds).toBe(120);
+    });
+
     it('adopts a server-disclosed deadline_seconds on submit and times out just after it', async () => {
       const client = stubClient({
         submit: vi.fn<GuidedLiveDescriptionClient['submit']>(() =>
@@ -273,6 +364,40 @@ describe('useGuidedLiveDescription', () => {
 
       expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.TIMED_OUT);
       expect(client.submit).toHaveBeenCalledTimes(1);
+    });
+
+    it('offers to keep waiting and resumes the same run without a second submit', async () => {
+      const client = stubClient();
+      const { result } = mount(client);
+
+      await press(() => result.current.request());
+      await settle(GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000 + 2000);
+      expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.TIMED_OUT);
+      expect(result.current.canKeepWaiting).toBe(true);
+      const pollsAtTimeout = client.poll.mock.calls.length;
+
+      await press(() => result.current.keepWaiting());
+
+      expect(result.current.state.status).not.toBe(GUIDED_LIVE_STATUS.TIMED_OUT);
+      expect(result.current.state.runId).toBe('run-1');
+
+      await settle(2000);
+
+      // The same run, still polled -- no second submit and no second burst.
+      expect(client.submit).toHaveBeenCalledTimes(1);
+      expect(client.cancel).not.toHaveBeenCalled();
+      expect(client.poll.mock.calls.length).toBeGreaterThan(pollsAtTimeout);
+    });
+
+    it('does not offer to keep waiting when there is no run that could still finish', async () => {
+      const client = stubClient({
+        submit: vi.fn<GuidedLiveDescriptionClient['submit']>(() => Promise.reject(new Error('backend unreachable'))),
+      });
+      const { result } = mount(client);
+
+      expect(result.current.canKeepWaiting).toBe(false);
+      await press(() => result.current.request());
+      expect(result.current.canKeepWaiting).toBe(false);
     });
 
     it('stops polling once the wait is over', async () => {

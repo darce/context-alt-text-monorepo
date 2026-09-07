@@ -13,6 +13,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[3]
 INSTALLER = REPO_ROOT / "scripts/deploy/gpu-lifecycle-install.sh"
 DEPLOYMENTS = REPO_ROOT / "scripts/deploy/gpu-snapshot-deployments.conf"
+CONTRACT = REPO_ROOT / "docs/workbay/contracts/gpu-lifecycle.md"
 FAKE_GPU_INSTANCE_ID = (
     "ocid1.instance.oc1.phx."
     "anyhqljtestfakegpu000000000000000000000000000000000000000000"
@@ -108,7 +109,22 @@ def test_lifecycle_units_pass_the_operator_intent_directory() -> None:
         assert "--intent-dir /run/acx-write" in service
 
 
-def test_intent_path_unit_watches_every_registered_environment_and_starts_gpu() -> None:
+def test_intent_allowlist_matches_contract_environments() -> None:
+    script = INSTALLER.read_text(encoding="utf-8")
+    contract = CONTRACT.read_text(encoding="utf-8")
+
+    allowlist = re.search(r'^GPU_INTENT_ENVIRONMENTS="([^"]+)"$', script, flags=re.MULTILINE)
+    contract_environments = re.search(
+        r"`ACX_ENV`\s+is\s+`([^`]+)`,\s*`([^`]+)`,\s+or\s+`([^`]+)`",
+        contract,
+    )
+
+    assert allowlist is not None
+    assert contract_environments is not None
+    assert allowlist.group(1).split() == list(contract_environments.groups())
+
+
+def test_intent_path_unit_watches_only_contract_environments_and_starts_gpu() -> None:
     script = INSTALLER.read_text(encoding="utf-8")
     path_unit = re.search(
         r"sudo tee [^\n]*/acx-gpu-intent\.path.*?<<UNIT\n(.*?)\nUNIT",
@@ -120,12 +136,30 @@ def test_intent_path_unit_watches_every_registered_environment_and_starts_gpu() 
     content = path_unit.group(1)
     assert "${INTENT_PATH_ENTRIES}" in content
     append_deployment = script[script.index("append_deployment()") : script.index("load_deployments()")]
+    assert "GPU_INTENT_ENVIRONMENTS" in append_deployment
     assert "PathChanged=/run/acx-write/${environment}/gpu-intent.json" in append_deployment
     registered_environments = set(DEPLOYMENTS.read_text(encoding="utf-8").split())
     assert {"dev", "staging", "prod"} <= registered_environments
+    assert "dev-fir" in registered_environments
     assert "Unit=acx-gpu-start.service" in content
     assert "acx-gpu-intent.path" in script
     assert "systemctl enable --now acx-gpu-intent.path" in script
+
+
+def test_intent_path_is_fenced_before_release_mutation_and_on_failure() -> None:
+    script = INSTALLER.read_text(encoding="utf-8")
+    transaction = script[script.index('run_with_deadline "systemd unit installation"') :]
+
+    assert "sudo systemctl disable --now acx-gpu-intent.path" in script
+    assert transaction.index("fence_gpu_intent_path") < transaction.index(
+        "previous_release=\\$(python3 -c"
+    )
+    assert transaction.index("fence_gpu_intent_path") < transaction.index("activate_gpu_lifecycle_timers \\")
+    cleanup = script[script.index("cleanup_gpu_lifecycle_transaction()") : script.index("# Hermetic verification")]
+    assert cleanup.index("fence_gpu_intent_path") < cleanup.index("fence_gpu_lifecycle_start")
+    assert script.index("sudo systemctl enable --now acx-gpu-intent.path") > script.index(
+        "verify_gpu_lifecycle_start_timer"
+    )
 
 
 def test_installer_purges_cloud_init_idle_reaper_units() -> None:

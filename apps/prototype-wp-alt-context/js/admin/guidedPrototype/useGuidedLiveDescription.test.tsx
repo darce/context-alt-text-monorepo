@@ -470,4 +470,101 @@ describe('useGuidedLiveDescription', () => {
       expect(client.cancel).not.toHaveBeenCalled();
     });
   });
+
+  describe('a run outlives no panel that owns it', () => {
+    it('cancels an in-flight run when the panel unmounts', async () => {
+      const client = stubClient();
+      const { result, unmount } = mount(client);
+
+      await press(() => result.current.request());
+      expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.QUEUED);
+
+      await act(async () => {
+        unmount();
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      // Reset practice remounts the panel under a new key, so unmount -- not a
+      // prop change -- is the only signal the burst has lost its owner.
+      expect(client.cancel).toHaveBeenCalledWith('run-1');
+    });
+
+    it('cancels a run whose submit resolves after the panel is gone', async () => {
+      let release: (run: DescribeRunResponse) => void = () => undefined;
+      const client = stubClient({
+        submit: vi.fn<GuidedLiveDescriptionClient['submit']>(
+          () =>
+            new Promise<DescribeRunResponse>((resolve) => {
+              release = resolve;
+            }),
+        ),
+      });
+      const { result, unmount } = mount(client);
+
+      await press(() => result.current.request());
+      expect(client.submit).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        unmount();
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      await act(async () => {
+        release(runResponse({ run_id: 'run-late' }));
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      // The run exists on the server the moment submit resolves, whether or not
+      // anything is left on screen to show it.
+      expect(client.cancel).toHaveBeenCalledWith('run-late');
+    });
+
+    it('does not cancel anything when a panel with no run in flight unmounts', async () => {
+      const client = stubClient();
+      const { unmount } = mount(client);
+
+      await act(async () => {
+        unmount();
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      expect(client.cancel).not.toHaveBeenCalled();
+    });
+
+    it('does not cancel a run the server already finished when the learner asks for another', async () => {
+      const client = stubClient({
+        poll: vi.fn<GuidedLiveDescriptionClient['poll']>(() =>
+          Promise.resolve(runResponse({ status: 'completed', phase: 'complete', gpu_state: 'ready', completed: 1 })),
+        ),
+      });
+      const { result } = mount(client);
+
+      await press(() => result.current.request());
+      await settle(2000);
+      expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.READY);
+
+      await press(() => result.current.request());
+
+      // Cancelling a finished run buys nothing and costs a request; only a run
+      // the server may still be working on is worth stopping.
+      expect(client.cancel).not.toHaveBeenCalled();
+      expect(client.submit).toHaveBeenCalledTimes(2);
+    });
+
+    it('cancels the timed-out run before a retry starts a second one', async () => {
+      const client = stubClient();
+      const { result } = mount(client);
+
+      await press(() => result.current.request());
+      await settle(GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000 + 1000);
+      expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.TIMED_OUT);
+
+      await press(() => result.current.request());
+
+      // Timing out stops the screen, not the burst. Starting a second run while
+      // the first may still be on a GPU is the one-live-run rule breaking.
+      expect(client.cancel).toHaveBeenCalledWith('run-1');
+      expect(client.submit).toHaveBeenCalledTimes(2);
+    });
+  });
 });

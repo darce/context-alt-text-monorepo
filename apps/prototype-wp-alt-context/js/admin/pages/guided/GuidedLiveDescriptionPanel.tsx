@@ -1,12 +1,18 @@
 import React from 'react';
 
-import { GUIDED_LIVE_STATUS, isGuidedLiveWaiting } from '../../guidedPrototype/liveDescription';
-import type { GuidedLiveState, GuidedLiveStatus } from '../../guidedPrototype/liveDescription';
-import { useGuidedLiveDescription } from '../../guidedPrototype/useGuidedLiveDescription';
+import {
+  GUIDED_LIVE_BLOCKED_REASON,
+  GUIDED_LIVE_REASON,
+  GUIDED_LIVE_STATUS,
+  isGuidedLiveWaiting,
+} from '../../guidedPrototype/liveDescription';
 import type {
   GuidedLiveBlockedReason,
-  GuidedLiveDescriptionClient,
-} from '../../guidedPrototype/useGuidedLiveDescription';
+  GuidedLiveState,
+  GuidedLiveStatus,
+} from '../../guidedPrototype/liveDescription';
+import { useGuidedLiveDescription } from '../../guidedPrototype/useGuidedLiveDescription';
+import type { GuidedLiveDescriptionClient } from '../../guidedPrototype/useGuidedLiveDescription';
 import type { GuidedScenario } from '../../guidedPrototype/state';
 
 export interface GuidedLiveDescriptionPanelProps {
@@ -34,6 +40,10 @@ const STATUS_ICON: Record<GuidedLiveStatus, string> = {
 /** Stable target for the disabled button's aria-describedby. */
 const STATUS_LINE_ID = 'guided-live-status-line';
 
+const assertNever = (value: never): never => {
+  throw new Error(`Unhandled guided live status: ${String(value)}`);
+};
+
 const clock = (ms: number): string => {
   const total = Math.max(0, Math.floor(ms / 1000));
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
@@ -47,21 +57,21 @@ const clock = (ms: number): string => {
  * needs, so the line names the real reason it is closed (rg-003).
  */
 const blockedLine = (reason: GuidedLiveBlockedReason): string =>
-  reason === 'no_media'
+  reason === GUIDED_LIVE_BLOCKED_REASON.NO_MEDIA
     ? 'No live photo is configured for this demo, so the live run is off.'
     : "Decide each face match first, then you can describe this photo live. That is the lesson's order, not something the run needs.";
 
 /**
- * Blocked copy outranks a run status only because a blocked panel shows no
- * result: the reducer clears the sentence on the way into BLOCKED, so the two
- * can never disagree on screen (S1-B-09).
+ * One source: the reason the gate is shut travels inside the state, so blocked
+ * copy and blocked status cannot describe different moments. The switch is
+ * exhaustive for the same reason -- a default that answered "Ready when you
+ * are." for an unhandled status paired the idle sentence with a disabled
+ * button and called that ready (S1-B-09).
  */
-const statusLine = (state: GuidedLiveState, blockedReason: GuidedLiveBlockedReason | null): string => {
-  if (blockedReason !== null) {
-    return blockedLine(blockedReason);
-  }
-
+const statusLine = (state: GuidedLiveState): string => {
   switch (state.status) {
+    case GUIDED_LIVE_STATUS.BLOCKED:
+      return blockedLine(state.blockedReason ?? GUIDED_LIVE_BLOCKED_REASON.NO_FACES_DECIDED);
     case GUIDED_LIVE_STATUS.IDLE:
       return 'Ready when you are.';
     case GUIDED_LIVE_STATUS.QUEUED:
@@ -76,7 +86,7 @@ const statusLine = (state: GuidedLiveState, blockedReason: GuidedLiveBlockedReas
     case GUIDED_LIVE_STATUS.DEGRADED:
       // Naming the CPU is itself a claim about who wrote the sentence, so it
       // is only made when the run reported the CPU tier.
-      return state.reason === 'cpu_fallback'
+      return state.reason === GUIDED_LIVE_REASON.CPU_FALLBACK
         ? 'Done, but the GPU was not available, so the CPU wrote this. It is rougher than a GPU description.'
         : 'Done, but the run did not say whether the GPU wrote this.';
     case GUIDED_LIVE_STATUS.TIMED_OUT:
@@ -84,11 +94,11 @@ const statusLine = (state: GuidedLiveState, blockedReason: GuidedLiveBlockedReas
     case GUIDED_LIVE_STATUS.CANCELLED:
       return 'You stopped the wait. Nothing was applied.';
     case GUIDED_LIVE_STATUS.UNAVAILABLE:
-      return state.reason === 'empty_description'
+      return state.reason === GUIDED_LIVE_REASON.EMPTY_DESCRIPTION
         ? 'The run finished with nothing to show. Nothing was applied.'
         : 'The live run could not finish. Nothing was applied.';
     default:
-      return 'Ready when you are.';
+      return assertNever(state.status);
   }
 };
 
@@ -103,7 +113,7 @@ export const GuidedLiveDescriptionPanel = ({
   mediaId,
   client,
 }: GuidedLiveDescriptionPanelProps): React.JSX.Element => {
-  const { state, disclosure, blockedReason, canRequest, canCancel, request, cancel } = useGuidedLiveDescription({
+  const { state, disclosure, canRequest, canCancel, request, cancel } = useGuidedLiveDescription({
     scenario,
     mediaId,
     client,
@@ -140,7 +150,7 @@ export const GuidedLiveDescriptionPanel = ({
           <span className="acx-guided-live__icon" aria-hidden="true" data-testid="guided-live-icon">
             {STATUS_ICON[state.status]}
           </span>{' '}
-          {statusLine(state, blockedReason)}
+          {statusLine(state)}
         </p>
 
         {waiting ? (

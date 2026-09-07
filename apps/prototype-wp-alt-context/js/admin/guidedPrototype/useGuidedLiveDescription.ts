@@ -6,7 +6,7 @@
  * bounds are testable without a network and the network is testable without
  * re-deriving the state machine.
  */
-import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef } from 'react';
 
 import {
   cancelBulkDescribeRun,
@@ -26,11 +26,15 @@ import {
   guidedLiveNamingDisclosure,
   guidedLivePollDelayMs,
   guidedLiveRequestPayload,
+  GUIDED_LIVE_BLOCKED_REASON,
+  GUIDED_LIVE_REASON,
   guidedLiveReducer,
+  guidedLiveRunMayBeLive,
   initialGuidedLiveState,
   isGuidedLiveWaiting,
 } from './liveDescription';
 import type {
+  GuidedLiveBlockedReason,
   GuidedLiveGpuState,
   GuidedLiveNamingDisclosure,
   GuidedLivePhase,
@@ -61,7 +65,7 @@ const defaultClient: GuidedLiveDescriptionClient = {
   cancel: cancelBulkDescribeRun,
 };
 
-export type GuidedLiveBlockedReason = 'no_faces_decided' | 'no_media';
+export type { GuidedLiveBlockedReason };
 
 export interface UseGuidedLiveDescriptionOptions {
   scenario: GuidedScenario;
@@ -104,7 +108,13 @@ const terminalPhaseFor = (status: DescribeRunResponse['status']): GuidedLivePhas
   }
 };
 
-const phaseOf = (run: DescribeRunResponse): GuidedLivePhase => {
+/**
+ * Null means the service named a phase this client does not know. `phase` is
+ * external JSON, so that is reachable; treating it as queued polled a finished
+ * run to its deadline and reported a timeout that never happened. Boundary data
+ * gets an explicit answer rather than a lenient default (sr-005).
+ */
+const phaseOf = (run: DescribeRunResponse): GuidedLivePhase | null => {
   switch (run.phase) {
     case DESCRIBE_RUN_PHASE.COMPLETE:
     case DESCRIBE_RUN_PHASE.FAILED:
@@ -115,7 +125,7 @@ const phaseOf = (run: DescribeRunResponse): GuidedLivePhase => {
     case DESCRIBE_RUN_PHASE.QUEUED:
       return isDescribeRunTerminal(run.status) ? terminalPhaseFor(run.status) : run.phase;
     default:
-      return DESCRIBE_RUN_PHASE.QUEUED;
+      return null;
   }
 };
 
@@ -140,7 +150,7 @@ export const useGuidedLiveDescription = ({
   mediaId,
   client = defaultClient,
 }: UseGuidedLiveDescriptionOptions): UseGuidedLiveDescriptionResult => {
-  const [state, dispatch] = useReducer(guidedLiveReducer, undefined, initialGuidedLiveState);
+
 
   // A run generation fences every in-flight promise: a poll resolving after a
   // cancel or a new request must not write into the run that replaced it.
@@ -155,10 +165,16 @@ export const useGuidedLiveDescription = ({
     (identity) => identity.status !== GUIDED_IDENTITY_STATUS.UNCONFIRMED,
   );
   const blockedReason: GuidedLiveBlockedReason | null = !facesDecided
-    ? 'no_faces_decided'
+    ? GUIDED_LIVE_BLOCKED_REASON.NO_FACES_DECIDED
     : mediaId === null
-      ? 'no_media'
+      ? GUIDED_LIVE_BLOCKED_REASON.NO_MEDIA
       : null;
+
+  // Seeded from the same prop the effect below reconciles it to, so the very
+  // first commit already agrees with itself. Starting unconditionally blocked
+  // meant a fully-decided scenario painted a disabled button beside the idle
+  // sentence until a passive effect caught up.
+  const [state, dispatch] = useReducer(guidedLiveReducer, blockedReason, initialGuidedLiveState);
 
   const waiting = isGuidedLiveWaiting(state.status);
   const runId = state.runId;
@@ -166,24 +182,51 @@ export const useGuidedLiveDescription = ({
   // Re-opening a face while a run is in flight invalidates that run. The
   // reducer stops the screen; the burst it started keeps costing money until
   // the server hears about it, so fence the generation and cancel the run id.
-  const waitingRef = useRef<{ waiting: boolean; runId: string | null }>({ waiting, runId });
-  waitingRef.current = { waiting, runId };
+  const mayBeLive = guidedLiveRunMayBeLive(state);
+  const waitingRef = useRef<{ mayBeLive: boolean; runId: string | null }>({ mayBeLive, runId });
+  waitingRef.current = { mayBeLive, runId };
 
-  useEffect(() => {
-    const decided = blockedReason === null;
-    if (!decided && waitingRef.current.waiting) {
+  // Layout, not passive: the gate closing is a fact about this render, and a
+  // passive effect would let the browser paint one frame of the old run's
+  // glyph and sentence underneath the new blocked copy.
+  useLayoutEffect(() => {
+    if (blockedReason !== null && waitingRef.current.mayBeLive) {
       generationRef.current += 1;
       const inFlight = waitingRef.current.runId;
       if (inFlight !== null) {
         void client.cancel(inFlight).catch(() => undefined);
       }
     }
-    dispatch({ kind: 'faces_decided', decided });
+    dispatch({ kind: 'gate_changed', blockedReason });
   }, [blockedReason, client]);
+
+  // Reset practice remounts this panel under a new key rather than changing its
+  // props, so a prop-driven cancel never runs for the burst the old panel left
+  // behind. Unmount is the only signal that the run has lost its owner, and the
+  // generation bump is what makes a submit still in flight cancel itself
+  // instead of accepting into a panel that no longer exists.
+  const clientRef = useRef(client);
+  clientRef.current = client;
+  useEffect(
+    () => () => {
+      generationRef.current += 1;
+      const { mayBeLive: stillLive, runId: inFlight } = waitingRef.current;
+      if (stillLive && inFlight !== null) {
+        void clientRef.current.cancel(inFlight).catch(() => undefined);
+      }
+    },
+    [],
+  );
 
   const request = useCallback(() => {
     if (blockedReason !== null || waiting || mediaId === null) {
       return;
+    }
+    // A timed-out run is stopped on screen only; the server may still be
+    // burning GPU on it. Retrying without cancelling first is how one learner
+    // gesture ends up paying for two live runs.
+    if (mayBeLive && runId !== null) {
+      void client.cancel(runId).catch(() => undefined);
     }
     const generation = generationRef.current + 1;
     generationRef.current = generation;
@@ -209,10 +252,10 @@ export const useGuidedLiveDescription = ({
       })
       .catch(() => {
         if (generationRef.current === generation) {
-          dispatch({ kind: 'failed', reason: 'submit_failed' });
+          dispatch({ kind: 'failed', reason: GUIDED_LIVE_REASON.SUBMIT_FAILED });
         }
       });
-  }, [blockedReason, client, mediaId, waiting]);
+  }, [blockedReason, client, mayBeLive, mediaId, runId, waiting]);
 
   const cancel = useCallback(() => {
     if (!waiting) {
@@ -261,6 +304,10 @@ export const useGuidedLiveDescription = ({
           return;
         }
         const phase = phaseOf(run);
+        if (phase === null) {
+          dispatch({ kind: 'failed', reason: GUIDED_LIVE_REASON.UNKNOWN_PHASE });
+          return;
+        }
         const gpu = gpuStateOf(run.gpu_state);
 
         if (phase !== DESCRIBE_RUN_PHASE.COMPLETE) {
@@ -280,7 +327,7 @@ export const useGuidedLiveDescription = ({
           return;
         }
         if (draft === null) {
-          dispatch({ kind: 'polled', phase, gpu, atMs: Date.now(), reason: 'item_missing' });
+          dispatch({ kind: 'polled', phase, gpu, atMs: Date.now(), reason: GUIDED_LIVE_REASON.ITEM_MISSING });
           return;
         }
         dispatch({ kind: 'polled', phase, gpu, atMs: Date.now(), ...draft });
@@ -291,7 +338,7 @@ export const useGuidedLiveDescription = ({
         if (!isFrozenPollFailure(error)) {
           // A hard failure will not heal by waiting. Say so now rather than
           // spending the learner's whole deadline on a dead channel.
-          dispatch({ kind: 'failed', reason: 'poll_failed' });
+          dispatch({ kind: 'failed', reason: GUIDED_LIVE_REASON.POLL_FAILED });
           return;
         }
         // Abort/timeout is transient: back off and retry inside the deadline the
@@ -316,8 +363,8 @@ export const useGuidedLiveDescription = ({
   return {
     state,
     disclosure,
-    blockedReason,
-    canRequest: blockedReason === null && state.status !== GUIDED_LIVE_STATUS.BLOCKED && !waiting,
+    blockedReason: state.blockedReason,
+    canRequest: state.status !== GUIDED_LIVE_STATUS.BLOCKED && !waiting,
     canCancel: waiting,
     request,
     cancel,

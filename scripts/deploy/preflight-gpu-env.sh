@@ -583,6 +583,15 @@ preflight_gpu_reaper() {
         exit 1
     }
 
+    # A timer is enabled and active whether or not its service can start. Both
+    # lifecycle units pin SupplementaryGroups=10001, which systemd resolves
+    # through NSS before ExecStart, so a host with no group entry for that GID
+    # passes every check below and still dies at 216/GROUP with no reaper.
+    getent group 10001 >/dev/null 2>&1 || {
+        echo "ERROR [11] no group entry resolves GID 10001; both lifecycle units would fail at 216/GROUP before ExecStart, leaving the burst GPU with no stop path. Re-run the gpu-lifecycle installer." >&2
+        exit 1
+    }
+
     for timer in acx-gpu-reap.timer acx-gpu-start.timer; do
         systemctl is-enabled --quiet "$timer" \
             && systemctl is-active --quiet "$timer" || {

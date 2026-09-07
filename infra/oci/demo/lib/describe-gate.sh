@@ -47,9 +47,16 @@ classify_describe_block_cause() {
     local profile="$1"
     local trimmed
     # Word-splitting collapses whitespace-only input to the empty string.
-    # shellcheck disable=SC2086
-    set -- $profile
-    trimmed="${1:-}"
+    # Runs under `set -f` in a subshell, same guard as
+    # classify_claimed_adapter_matches_probe: without it the split is also a
+    # pathname expansion, so a profile of `*` would match cwd and be reported
+    # TRUSTED while the gate itself BLOCKs it.
+    trimmed=$(
+        set -f
+        # shellcheck disable=SC2086
+        set -- $profile
+        printf '%s' "${1:-}"
+    )
     if [ -z "$trimmed" ]; then
         echo PROBE_FAILED
         return

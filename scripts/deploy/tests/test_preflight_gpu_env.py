@@ -57,18 +57,27 @@ def test_lease_store_requires_available_boot_identity(tmp_path: Path, monkeypatc
 
 
 def install_probe_python(fake_bin: Path) -> None:
-    """Intercept ExecStart probes in every shared-harness subprocess.
+    """Intercept ExecStart probes with a distinct fake system interpreter.
 
     Keep production's unit/interpreter validation intact, but execute tests
     with pytest's interpreter and a synthetic boot identity on non-Linux hosts.
+    The distinct path prevents a system Python at ``/usr/bin/python3`` from
+    being mistaken for the test interpreter when the suite itself runs there.
     """
+    system_python = fake_bin / "system-python3"
+    system_python.write_text(
+        f'#!/bin/sh\nexec {shlex.quote(sys.executable)} "$@"\n',
+        encoding="utf-8",
+    )
+    system_python.chmod(0o755)
     bootstrap = fake_bin / "probe-python.py"
     bootstrap.write_text("""import subprocess
 import sys
+system_python = __SYSTEM_PYTHON__
 original_run = subprocess.run
 def run(command, **kwargs):
     if command[0] == "/usr/bin/python3":
-        command = [sys.executable, *command[1:]]
+        command = [system_python, *command[1:]]
         if "store = RunningSinceLeaseStore(" in command[2]:
             command.append("preflight-test-boot")
     return original_run(command, **kwargs)
@@ -83,7 +92,7 @@ elif args[0] == "-":
 else:
     raise RuntimeError("unexpected preflight Python invocation")
 exec(compile(code, "<preflight-test>", "exec"), {"__name__": "__main__"})
-""")
+""".replace("__SYSTEM_PYTHON__", repr(str(system_python))))
     wrapper = fake_bin / "python3"
     wrapper.write_text(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(str(bootstrap))} "$@"\n')
     wrapper.chmod(0o755)
@@ -92,6 +101,9 @@ exec(compile(code, "<preflight-test>", "exec"), {"__name__": "__main__"})
 def test_probe_harness_handles_old_system_python_and_missing_proc(tmp_path: Path) -> None:
     install_probe_python(tmp_path)
     bootstrap = tmp_path / "probe-python.py"
+    system_python = tmp_path / "system-python3"
+    assert system_python != Path(sys.executable)
+    assert str(system_python) in bootstrap.read_text()
     bootstrap.write_text(
         bootstrap.read_text().replace(
             "original_run = subprocess.run",
@@ -210,6 +222,7 @@ if [ "${1:-}" = group ]; then
   fi
   exit 2
 fi
+[ "${1:-}" = ahosts ] || exit 2
 host="${2:-}"
 case "$host" in
   localhost) echo '127.0.0.1 STREAM localhost' ;;
@@ -226,6 +239,7 @@ esac
         getent.write_text(
             "#!/usr/bin/env bash\n"
             'if [ "${1:-}" = group ]; then echo \'acxapi:x:10001:\'; exit 0; fi\n'
+            '[ "${1:-}" = ahosts ] || exit 2\n'
             "printf '%s STREAM fake\\n' " + '"$FAKE_DNS_ADDRESS"\n'
         )
     getent.chmod(0o755)
@@ -1106,16 +1120,19 @@ esac
 
 
 def test_11_reaper_preflight_rejects_an_unresolvable_supplementary_gid(tmp_path: Path) -> None:
-    """Both lifecycle units pin SupplementaryGroups=10001, which systemd resolves
-    through NSS before ExecStart. A host missing that group entry reports both
-    timers enabled and active while every activation dies at 216/GROUP -- the
-    burst GPU runs with no reaper. Preflight is the last gate before the flip,
-    so it has to check the GID itself, not just the timers that front it."""
+    """The fixture reports both timers enabled and active despite a missing GID.
+
+    Systemd resolves ``SupplementaryGroups=10001`` through NSS before
+    ``ExecStart``; the real host can therefore appear healthy while every
+    activation dies at 216/GROUP. Preflight is the last gate before the flip,
+    so it has to check the GID itself, not just the timers that front it.
+    """
     reaper_env = tmp_path / "gpu-lifecycle.env"
     reaper_env.write_text("GPU_INSTANCE_ID=ocid1.instance.oc1.iad.fakeinstance\nMAX_LEASE_SECONDS=3600\n")
     unit = reaper_systemctl_script(reaper_env)
 
     healthy = run_preflight(tmp_path, check_reaper=True, systemctl_script=unit)
+    assert healthy.returncode == 0, healthy.stdout + healthy.stderr
     assert "216/GROUP" not in healthy.stderr
 
     result = run_preflight(

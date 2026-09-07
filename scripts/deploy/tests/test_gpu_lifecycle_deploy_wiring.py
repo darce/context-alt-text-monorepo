@@ -775,9 +775,12 @@ def test_reaper_is_proved_before_start_timer_is_enabled(tmp_path: Path) -> None:
 def test_fresh_host_gets_the_supplementary_group_before_the_reaper_is_proved(
     tmp_path: Path,
 ) -> None:
-    """Both units carry SupplementaryGroups=10001, which systemd resolves through NSS
-    before ExecStart. A numeric chown alone leaves no group entry, so the units die at
-    status=216/GROUP and the burst GPU is left with no working stop path."""
+    """A fresh host gets the NSS group before either lifecycle unit is activated.
+
+    The fixture deliberately starts without GID 10001. A numeric chown would
+    leave the units at status=216/GROUP, so the executed payload must create the
+    resolvable GID, verify it, and only then prove the reaper.
+    """
     result, calls = _run_lifecycle(
         tmp_path,
         enabled=True,
@@ -787,8 +790,13 @@ def test_fresh_host_gets_the_supplementary_group_before_the_reaper_is_proved(
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "groupadd <-r> <-g> <10001> <acxapi>" in calls
-    assert calls.index("groupadd <-r> <-g> <10001> <acxapi>") < calls.index(
+    groupadd = "groupadd <-r> <-g> <10001> <acxapi>"
+    getent = "getent <group> <10001>"
+    assert groupadd in calls
+    assert calls.count(getent) >= 2
+    assert calls.index(getent) < calls.index(groupadd) < calls.rindex(getent)
+    assert calls.rindex(getent) < calls.index("systemctl <start> <acx-gpu-reap.service>")
+    assert calls.index(groupadd) < calls.index(
         "systemctl <start> <acx-gpu-reap.service>"
     )
 
@@ -867,6 +875,7 @@ def test_install_fails_closed_when_the_gid_is_unresolvable_after_groupadd(
     )
 
     assert result.returncode != 0
+    assert calls.count("getent <group> <10001>") >= 2
     assert "systemctl <enable> <--now> <acx-gpu-start.timer>" not in calls
 
 

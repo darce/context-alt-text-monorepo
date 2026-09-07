@@ -56,10 +56,17 @@ from infra.oci.gpu_lifecycle.controller import (
     LifecycleAction,
 )
 from infra.oci.gpu_lifecycle.intent import (
+    DEFAULT_GPU_STATE_DIR,
+    DeferredStopRecord,
+    DeferredStopStore,
+    DecisionLogStore,
     EffectiveIntent,
     IntentAction,
+    IntentAuthorityError,
+    IntentAuthorityStore,
     IntentStatus,
     read_effective_intent,
+    copy_intents_to_durable_dir,
 )
 from infra.oci.gpu_lifecycle.load_source import AggregateJobLoadSource
 from infra.oci.gpu_lifecycle.probe import (
@@ -98,6 +105,11 @@ _DEFAULT_RUNNING_SINCE_PATH = Path("/var/lib/acx-gpu/running-since.json")
 _RUNNING_SINCE_READ_FAILURE_RECOVERY_CYCLES = 3
 _RUNNING_SINCE_FUTURE_SKEW_SECONDS = 5.0
 _HONOURED_NONCES_SCHEMA_VERSION = 1
+# A deferred STOP is re-armed for a bounded interval on every blocked cycle.
+# Repeated lifecycle cycles therefore preserve the instruction for arbitrarily
+# long work, while a single stale record never pins the machine forever.
+_MIN_DEFERRED_STOP_EXTENSION_SECONDS = 60
+_MAX_DEFERRED_STOP_EXTENSION_SECONDS = 7200
 # Live describe dumps omit batch_in_progress; warn once per process, not per poll.
 _ABSENT_BATCH_KEY_WARNED = False
 
@@ -933,17 +945,232 @@ class StartCycleResult:
     last_transition_reason: LastTransitionReason = LastTransitionReason.UNKNOWN
 
 
+def _intent_store_paths(
+    durable_state_dir: str | Path | None,
+) -> tuple[Path, Path, Path, Path]:
+    """Return the persistent intent paths, keeping the production defaults centralized."""
+    root = DEFAULT_GPU_STATE_DIR if durable_state_dir is None else Path(durable_state_dir)
+    return (
+        root / "intents",
+        root / "intent-authority.json",
+        root / "deferred-stop.json",
+        root / "decision-log.jsonl",
+    )
+
+
+def _intent_source_dir(
+    *,
+    intent_dir: str | Path | None,
+    durable_intent_dir: str | Path | None,
+    durable_state_dir: str | Path | None,
+) -> Path | None:
+    if intent_dir is not None:
+        return Path(intent_dir)
+    if durable_intent_dir is not None:
+        return Path(durable_intent_dir)
+    if durable_state_dir is not None:
+        return _intent_store_paths(durable_state_dir)[0]
+    return None
+
+
+def _intent_stores(
+    *,
+    intent_dir: str | Path | None,
+    durable_intent_dir: str | Path | None,
+    durable_state_dir: str | Path | None,
+    authority_store: IntentAuthorityStore | None,
+    deferred_stop_store: DeferredStopStore | None,
+    decision_log_store: DecisionLogStore | None,
+) -> tuple[
+    Path | None,
+    IntentAuthorityStore | None,
+    DeferredStopStore | None,
+    DecisionLogStore | None,
+]:
+    """Build stores only when the caller opted into operator intent handling.
+
+    Existing callers that omit ``intent_dir`` retain the legacy in-memory
+    behavior. Production and call-site tests that provide an intent directory
+    get the durable stores automatically, with the state root override making
+    the same wiring testable without touching ``/var/lib``.
+    """
+    source_dir = _intent_source_dir(
+        intent_dir=intent_dir,
+        durable_intent_dir=durable_intent_dir,
+        durable_state_dir=durable_state_dir,
+    )
+    if source_dir is None and not any(
+        store is not None for store in (authority_store, deferred_stop_store, decision_log_store)
+    ):
+        return None, authority_store, deferred_stop_store, decision_log_store
+    if source_dir is None:
+        # A caller may inject one store for a focused test or an alternate
+        # deployment without implicitly creating the other production stores.
+        return None, authority_store, deferred_stop_store, decision_log_store
+    durable_default, authority_default, deferred_default, decision_default = _intent_store_paths(
+        durable_state_dir
+    )
+    durable_dir = Path(durable_intent_dir) if durable_intent_dir is not None else durable_default
+    return (
+        durable_dir,
+        authority_store or IntentAuthorityStore(authority_default),
+        deferred_stop_store or DeferredStopStore(deferred_default),
+        decision_log_store or DecisionLogStore(decision_default),
+    )
+
+
+def _coerce_cycle_time(now: datetime | float | int | None) -> datetime:
+    if now is None:
+        return datetime.now(UTC)
+    if isinstance(now, datetime):
+        if now.tzinfo is None or now.utcoffset() is None:
+            raise ValueError("now must be timezone-aware")
+        return now.astimezone(UTC)
+    if isinstance(now, bool) or not isinstance(now, (int, float)) or not math.isfinite(now):
+        raise ValueError("now must be a finite epoch timestamp or timezone-aware datetime")
+    return datetime.fromtimestamp(float(now), tz=UTC)
+
+
+def _deferred_extension_seconds(ttl_seconds: int) -> int:
+    return max(
+        _MIN_DEFERRED_STOP_EXTENSION_SECONDS,
+        min(_MAX_DEFERRED_STOP_EXTENSION_SECONDS, int(ttl_seconds)),
+    )
+
+
+def _deferred_record_for_intent(
+    effective_intent: EffectiveIntent,
+    *,
+    now: datetime,
+) -> DeferredStopRecord | None:
+    if effective_intent.action is not IntentAction.STOP:
+        return None
+    if (
+        not isinstance(effective_intent.requested_at, datetime)
+        or not isinstance(effective_intent.expires_at, datetime)
+        or not isinstance(effective_intent.nonce, str)
+        or not effective_intent.nonce.strip()
+        or isinstance(effective_intent.sequence, bool)
+        or not isinstance(effective_intent.sequence, int)
+        or effective_intent.sequence < 1
+    ):
+        return None
+    requested_at = effective_intent.requested_at.astimezone(UTC)
+    expires_at = effective_intent.expires_at.astimezone(UTC)
+    ttl_seconds = max(1, int((expires_at - requested_at).total_seconds()))
+    extension = _deferred_extension_seconds(ttl_seconds)
+    deferred_until = max(now, expires_at) + timedelta(seconds=extension)
+    return DeferredStopRecord(
+        action=IntentAction.STOP,
+        requested_at=requested_at,
+        expires_at=expires_at,
+        nonce=effective_intent.nonce.strip(),
+        requested_by=(effective_intent.requested_by or "unknown").strip() or "unknown",
+        ttl_seconds=ttl_seconds,
+        sequence=effective_intent.sequence,
+        deferred_until=deferred_until,
+        deferred_reason="STOP deferred while work is in flight",
+    )
+
+
+def _rearm_deferred_record(
+    store: DeferredStopStore,
+    record: DeferredStopRecord,
+    *,
+    now: datetime,
+) -> DeferredStopRecord:
+    if record.deferred_until > now:
+        return record
+    extension = _deferred_extension_seconds(record.ttl_seconds)
+    rearmed = replace(record, deferred_until=now + timedelta(seconds=extension))
+    store.write(rearmed)
+    logger.warning(
+        "re-armed expired deferred STOP nonce=%s sequence=%s until=%s",
+        rearmed.nonce,
+        rearmed.sequence,
+        rearmed.deferred_until.isoformat(),
+    )
+    return rearmed
+
+
+def _apply_deferred_stop(
+    effective_intent: EffectiveIntent,
+    *,
+    store: DeferredStopStore | None,
+    now: datetime,
+) -> EffectiveIntent:
+    if store is None:
+        return effective_intent
+    record = store.read()
+    if record is None:
+        return effective_intent
+    if effective_intent.sequence is not None and effective_intent.sequence > record.sequence:
+        try:
+            store.clear(sequence=effective_intent.sequence)
+        except OSError as exc:
+            logger.error("could not clear superseded deferred STOP: %s", exc)
+        return effective_intent
+    try:
+        record = _rearm_deferred_record(store, record, now=now)
+    except (OSError, ValueError) as exc:
+        logger.error("could not re-arm deferred STOP %s: %s", record.nonce, exc)
+        return effective_intent
+    return record.to_effective_intent(source=effective_intent.source)
+
+
 def _resolve_effective_intent(
     *,
     intent_dir: str | Path | None,
     intent: EffectiveIntent | IntentAction | str | None,
     now: datetime | float | int | None,
+    durable_intent_dir: str | Path | None = None,
+    authority_store: IntentAuthorityStore | None = None,
+    deferred_stop_store: DeferredStopStore | None = None,
 ) -> EffectiveIntent:
     if isinstance(intent, EffectiveIntent):
-        return intent
-    if intent is None:
-        return read_effective_intent(intent_dir, now)
-    return EffectiveIntent(action=IntentAction(intent))
+        return _apply_deferred_stop(intent, store=deferred_stop_store, now=_coerce_cycle_time(now))
+    if intent is not None:
+        return EffectiveIntent(action=IntentAction(intent))
+    source_dir = _intent_source_dir(
+        intent_dir=intent_dir,
+        durable_intent_dir=durable_intent_dir,
+        durable_state_dir=None,
+    )
+    if source_dir is None:
+        return EffectiveIntent()
+    current_time = _coerce_cycle_time(now)
+    durable_dir = (
+        Path(durable_intent_dir)
+        if durable_intent_dir is not None
+        else _intent_store_paths(None)[0]
+    )
+    read_dir = source_dir
+    if durable_dir != source_dir:
+        try:
+            copy_intents_to_durable_dir(source_dir, durable_dir)
+        except OSError as exc:
+            # A first boot can legitimately lack the provisioned durable
+            # directory.  Use the runtime publication until it is available;
+            # once a durable directory exists it remains authoritative.
+            logger.warning("could not copy runtime intents to durable storage: %s", exc)
+        try:
+            if durable_dir.is_dir():
+                read_dir = durable_dir
+        except OSError as exc:
+            logger.warning("could not inspect durable intent directory %s: %s", durable_dir, exc)
+    try:
+        effective = read_effective_intent(
+            read_dir,
+            current_time,
+            authority_store=authority_store,
+        )
+    except (IntentAuthorityError, OSError, ValueError) as exc:
+        # Never honour an intent when its durable authority cannot be read.
+        # Returning AUTO preserves the existing lifecycle safety policy while
+        # making the authority failure visible in the cycle result/log.
+        logger.error("operator intent authority unavailable; using auto: %s", exc)
+        effective = EffectiveIntent(reason=f"intent authority unavailable: {exc}")
+    return _apply_deferred_stop(effective, store=deferred_stop_store, now=current_time)
 
 
 def _honoured_instance_ids(
@@ -1181,6 +1408,69 @@ def _state_reason(
     return "readiness_failure"
 
 
+def _decision_action_pairs(pairs: list[tuple[str, str]]) -> list[dict[str, str]]:
+    return [
+        {
+            "action": getattr(action, "value", str(action)),
+            "instance_id": instance_id,
+        }
+        for action, instance_id in pairs
+    ]
+
+
+def _record_decision(
+    result: ReapCycleResult | StartCycleResult,
+    *,
+    mode: str,
+    now: datetime | float | int | None,
+    store: DecisionLogStore | None,
+) -> ReapCycleResult | StartCycleResult:
+    """Append one durable record for every cycle that made a spend decision."""
+    if store is None:
+        return result
+    lease_expired = getattr(result, "lease_expired", [])
+    blocked = result.intent_status is IntentStatus.BLOCKED_WORK_IN_FLIGHT
+    if not (result.decided or result.actuated or lease_expired or blocked):
+        return result
+    if result.actuated:
+        outcome = "honoured" if not result.errors else "partial"
+    elif blocked:
+        outcome = "deferred"
+    elif result.errors:
+        outcome = "failed"
+    elif getattr(result, "fenced_off", False):
+        outcome = "fenced_off"
+    else:
+        outcome = "not_actuated"
+    intent = result.intent
+    record = {
+        "timestamp": _coerce_cycle_time(now).isoformat().replace("+00:00", "Z"),
+        "mode": mode,
+        "requested_by": intent.requested_by,
+        "nonce": intent.nonce,
+        "sequence": intent.sequence,
+        "effective_intent": intent.action.value,
+        "intent_status": result.intent_status.value,
+        "intent_expires_at": (
+            intent.expires_at.isoformat().replace("+00:00", "Z")
+            if intent.expires_at is not None
+            else None
+        ),
+        "decided": _decision_action_pairs(result.decided),
+        "lease_expired": _decision_action_pairs(lease_expired),
+        "actuated": _decision_action_pairs(result.actuated),
+        "actuation_outcome": outcome,
+        "errors": list(result.errors),
+    }
+    try:
+        store.append(record)
+    except Exception as exc:  # noqa: BLE001 - audit failure must surface in result
+        message = f"decision log append failed: {type(exc).__name__}: {exc}"
+        logger.error(message)
+        return replace(result, errors=[*result.errors, message])
+    return result
+
+
 def _apply_running_since_leases(
     instances: list[GpuInstance],
     store: RunningSinceLeaseStore,
@@ -1333,6 +1623,8 @@ def _run_reap_cycle(
     use_recorded_lease_age: bool = True,
     dry_run: bool = False,
     effective_intent: EffectiveIntent | None = None,
+    deferred_stop_store: DeferredStopStore | None = None,
+    now: datetime | float | int | None = None,
 ) -> ReapCycleResult:
     """Decision → fence delay → re-sample → STOP only if still idle.
 
@@ -1343,6 +1635,7 @@ def _run_reap_cycle(
     idle-STOP path remains fail-closed and refuses STOP on untrustworthy load.
     """
     effective_intent = effective_intent or EffectiveIntent()
+    cycle_time = _coerce_cycle_time(now)
     intent_status = effective_intent.status
     if intent_status is IntentStatus.NONE and effective_intent.action is not IntentAction.AUTO:
         intent_status = IntentStatus.PENDING
@@ -1398,6 +1691,11 @@ def _run_reap_cycle(
             msg = f"{instance_id}: {type(exc).__name__}: {exc}"
             logger.error("lease-expiry STOP failed: %s", msg)
             lease_errors.append(msg)
+    if lease_expired and effective_intent.action is IntentAction.STOP and deferred_stop_store is not None:
+        try:
+            deferred_stop_store.clear(sequence=effective_intent.sequence)
+        except OSError as exc:
+            lease_errors.append(f"deferred STOP clear failed: {type(exc).__name__}: {exc}")
     # Anything already stopped by the cap must not be considered again below.
     forced_ids = {instance_id for _, instance_id in lease_expired}
     if forced_ids:
@@ -1433,11 +1731,36 @@ def _run_reap_cycle(
         intent=effective_intent.action,
     )
     if effective_intent.action is IntentAction.STOP and load.has_work:
+        blocked_errors = list(lease_errors)
+        if deferred_stop_store is not None:
+            deferred_record = _deferred_record_for_intent(effective_intent, now=cycle_time)
+            if deferred_record is None:
+                blocked_errors.append(
+                    "deferred STOP could not be persisted: intent is missing requested_at, nonce, or sequence"
+                )
+                logger.error(blocked_errors[-1])
+            else:
+                try:
+                    deferred_stop_store.write(deferred_record)
+                except (OSError, ValueError) as exc:
+                    blocked_errors.append(
+                        f"deferred STOP write failed: {type(exc).__name__}: {exc}"
+                    )
+                    logger.error(blocked_errors[-1])
+                else:
+                    effective_intent = replace(
+                        effective_intent,
+                        expires_at=deferred_record.deferred_until,
+                        status=IntentStatus.BLOCKED_WORK_IN_FLIGHT,
+                        reason="STOP re-armed while work is in flight",
+                        deferred_until=deferred_record.deferred_until,
+                        deferred_reason=deferred_record.deferred_reason,
+                    )
         return ReapCycleResult(
             decided=[],
             actuated=[],
             fenced_off=False,
-            errors=lease_errors,
+            errors=blocked_errors,
             lease_expired=lease_expired,
             intent=effective_intent,
             intent_status=IntentStatus.BLOCKED_WORK_IN_FLIGHT,
@@ -1563,6 +1886,11 @@ def _run_reap_cycle(
     if actuated and effective_intent.action is IntentAction.STOP:
         intent_status = IntentStatus.HONOURED
         last_transition_reason = LastTransitionReason.OPERATOR
+        if deferred_stop_store is not None:
+            try:
+                deferred_stop_store.clear(sequence=effective_intent.sequence)
+            except OSError as exc:
+                errors.append(f"deferred STOP clear failed: {type(exc).__name__}: {exc}")
     elif actuated:
         last_transition_reason = LastTransitionReason.IDLE
     return ReapCycleResult(
@@ -1592,11 +1920,31 @@ def run_reap_cycle(
     intent_dir: str | Path | None = None,
     intent: EffectiveIntent | IntentAction | str | None = None,
     now: datetime | float | int | None = None,
+    durable_state_dir: str | Path | None = None,
+    durable_intent_dir: str | Path | None = None,
+    authority_store: IntentAuthorityStore | None = None,
+    deferred_stop_store: DeferredStopStore | None = None,
+    decision_log_store: DecisionLogStore | None = None,
 ) -> ReapCycleResult:
     """Serialize observe/decide/actuate/publish as one lifecycle transition."""
-    effective_intent = _resolve_effective_intent(intent_dir=intent_dir, intent=intent, now=now)
+    resolved_durable_dir, resolved_authority, resolved_deferred, resolved_log = _intent_stores(
+        intent_dir=intent_dir,
+        durable_intent_dir=durable_intent_dir,
+        durable_state_dir=durable_state_dir,
+        authority_store=authority_store,
+        deferred_stop_store=deferred_stop_store,
+        decision_log_store=decision_log_store,
+    )
+    effective_intent = _resolve_effective_intent(
+        intent_dir=intent_dir,
+        intent=intent,
+        now=now,
+        durable_intent_dir=resolved_durable_dir,
+        authority_store=resolved_authority,
+        deferred_stop_store=resolved_deferred,
+    )
     if dry_run:
-        return _run_reap_cycle(
+        result = _run_reap_cycle(
             controller=controller,
             instances=instances,
             load_source=load_source,
@@ -1607,7 +1955,10 @@ def run_reap_cycle(
             use_recorded_lease_age=use_recorded_lease_age,
             dry_run=True,
             effective_intent=effective_intent,
+            deferred_stop_store=resolved_deferred,
+            now=now,
         )
+        return _record_decision(result, mode="reap", now=now, store=resolved_log)
     with _serialized_gpu_state_publish(gpu_state_path):
         result = _run_reap_cycle(
             controller=controller,
@@ -1620,7 +1971,10 @@ def run_reap_cycle(
             use_recorded_lease_age=use_recorded_lease_age,
             dry_run=False,
             effective_intent=effective_intent,
+            deferred_stop_store=resolved_deferred,
+            now=now,
         )
+        result = _record_decision(result, mode="reap", now=now, store=resolved_log)
         stopped_instance_ids = {
             instance_id for action, instance_id in [*result.actuated, *result.lease_expired] if action == "STOP"
         }
@@ -1896,11 +2250,31 @@ def run_start_cycle(
     intent_dir: str | Path | None = None,
     intent: EffectiveIntent | IntentAction | str | None = None,
     now: datetime | float | int | None = None,
+    durable_state_dir: str | Path | None = None,
+    durable_intent_dir: str | Path | None = None,
+    authority_store: IntentAuthorityStore | None = None,
+    deferred_stop_store: DeferredStopStore | None = None,
+    decision_log_store: DecisionLogStore | None = None,
 ) -> StartCycleResult:
     """Serialize observe/decide/actuate/publish as one lifecycle transition."""
-    effective_intent = _resolve_effective_intent(intent_dir=intent_dir, intent=intent, now=now)
+    resolved_durable_dir, resolved_authority, resolved_deferred, resolved_log = _intent_stores(
+        intent_dir=intent_dir,
+        durable_intent_dir=durable_intent_dir,
+        durable_state_dir=durable_state_dir,
+        authority_store=authority_store,
+        deferred_stop_store=deferred_stop_store,
+        decision_log_store=decision_log_store,
+    )
+    effective_intent = _resolve_effective_intent(
+        intent_dir=intent_dir,
+        intent=intent,
+        now=now,
+        durable_intent_dir=resolved_durable_dir,
+        authority_store=resolved_authority,
+        deferred_stop_store=resolved_deferred,
+    )
     if dry_run:
-        return _run_start_cycle(
+        result = _run_start_cycle(
             controller=controller,
             instances=instances,
             load_source=load_source,
@@ -1911,6 +2285,7 @@ def run_start_cycle(
             dry_run=True,
             effective_intent=effective_intent,
         )
+        return _record_decision(result, mode="start", now=now, store=resolved_log)
     with _serialized_gpu_state_publish(gpu_state_path):
         result = _run_start_cycle(
             controller=controller,
@@ -1923,6 +2298,7 @@ def run_start_cycle(
             dry_run=False,
             effective_intent=effective_intent,
         )
+        result = _record_decision(result, mode="start", now=now, store=resolved_log)
         snapshot_instance_id = _snapshot_instance_id(instances)
         if result.fallbacks:
             state = GpuLifecycleState.DEGRADED

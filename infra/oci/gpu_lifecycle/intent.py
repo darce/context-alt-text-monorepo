@@ -102,6 +102,7 @@ class EffectiveIntent:
     reason: str | None = None
     deferred_until: datetime | None = None
     deferred_reason: str | None = None
+    deferred_rearm_failed: bool = False
 
     @property
     def intent(self) -> IntentAction:
@@ -206,6 +207,16 @@ def _atomic_write_json(path: Path, payload: object, *, mode: int = 0o660) -> Non
                 logger.warning("could not remove temporary intent file %s", temporary)
 
 
+def _durable_unlink(path: Path) -> None:
+    """Remove a durable record and persist the directory entry update."""
+    path.unlink(missing_ok=True)
+    directory_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
 @contextmanager
 def _intent_file_lock(path: Path) -> Iterator[None]:
     """Coordinate durable intent metadata writers with a bounded flock."""
@@ -298,6 +309,29 @@ class IntentAuthorityStore:
             or payload.get("highest_sequence") < 0
         ):
             raise IntentAuthorityError(f"intent authority ledger is invalid: {self.path}")
+        raw_sequences = payload.get("sequences", {})
+        if not isinstance(raw_sequences, dict):
+            raise IntentAuthorityError(f"intent authority ledger is invalid: {self.path}")
+        for sequence, nonce in raw_sequences.items():
+            if (
+                not isinstance(sequence, str)
+                or not sequence.isdecimal()
+                or int(sequence) < MIN_INTENT_SEQUENCE
+                or not isinstance(nonce, str)
+                or not nonce.strip()
+            ):
+                raise IntentAuthorityError(f"intent authority ledger is invalid: {self.path}")
+        raw_rejected_sequences = payload.get("rejected_sequences", [])
+        if (
+            not isinstance(raw_rejected_sequences, list)
+            or any(
+                isinstance(sequence, bool)
+                or not isinstance(sequence, int)
+                or sequence < MIN_INTENT_SEQUENCE
+                for sequence in raw_rejected_sequences
+            )
+        ):
+            raise IntentAuthorityError(f"intent authority ledger is invalid: {self.path}")
         last_wall_time = payload.get("last_wall_time")
         if last_wall_time is not None:
             try:
@@ -316,6 +350,28 @@ class IntentAuthorityStore:
                 raise IntentAuthorityError(f"intent authority ledger is invalid: {self.path}: {exc}") from exc
             if not isinstance(record.get("expired"), bool):
                 raise IntentAuthorityError(f"intent authority ledger is invalid: {self.path}")
+            publication = record.get("publication")
+            if publication is not None:
+                if (
+                    not isinstance(publication, dict)
+                    or publication.get("action") not in {item.value for item in IntentAction}
+                    or not isinstance(publication.get("requested_at"), str)
+                    or not isinstance(publication.get("expires_at"), str)
+                    or isinstance(publication.get("ttl_seconds"), bool)
+                    or not isinstance(publication.get("ttl_seconds"), int)
+                    or publication.get("ttl_seconds") <= 0
+                    or not isinstance(publication.get("requested_by"), str)
+                    or not publication.get("requested_by").strip()
+                    or isinstance(publication.get("sequence"), bool)
+                    or not isinstance(publication.get("sequence"), int)
+                    or publication.get("sequence") < MIN_INTENT_SEQUENCE
+                ):
+                    raise IntentAuthorityError(f"intent authority ledger is invalid: {self.path}")
+                try:
+                    _parse_timestamp(publication["requested_at"], field="requested_at")
+                    _parse_timestamp(publication["expires_at"], field="expires_at")
+                except ValueError as exc:
+                    raise IntentAuthorityError(f"intent authority ledger is invalid: {self.path}: {exc}") from exc
             monotonic_expiry = record.get("monotonic_expires_at")
             if monotonic_expiry is not None and (
                 isinstance(monotonic_expiry, bool)
@@ -324,6 +380,17 @@ class IntentAuthorityStore:
             ):
                 raise IntentAuthorityError(f"intent authority ledger is invalid: {self.path}")
         return payload
+
+    @staticmethod
+    def _publication(intent: OperatorIntent) -> dict[str, object]:
+        return {
+            "action": intent.action.value,
+            "requested_at": intent.requested_at.isoformat().replace("+00:00", "Z"),
+            "expires_at": intent.expires_at.isoformat().replace("+00:00", "Z"),
+            "ttl_seconds": intent.ttl_seconds,
+            "requested_by": intent.requested_by,
+            "sequence": intent.sequence,
+        }
 
     def filter_valid(
         self,
@@ -347,6 +414,8 @@ class IntentAuthorityStore:
             logical_now = current_time if last_wall is None else max(current_time, last_wall)
             highest_sequence = int(state["highest_sequence"])
             records = dict(state["intents"])
+            sequence_owners = dict(state.get("sequences", {}))
+            rejected_sequences = set(state.get("rejected_sequences", []))
             survivors: list[OperatorIntent] = []
             expired_nonces: set[str] = set()
             changed = logical_now != last_wall or False
@@ -365,7 +434,60 @@ class IntentAuthorityStore:
                         highest_sequence,
                     )
                     continue
-                if record is None or int(record.get("sequence", 0)) < intent.sequence:
+                sequence_key = str(intent.sequence)
+                if intent.sequence in rejected_sequences:
+                    expired_nonces.add(intent.nonce)
+                    logger.warning(
+                        "operator intent rejected at previously conflicting sequence: nonce=%s sequence=%s",
+                        intent.nonce,
+                        intent.sequence,
+                    )
+                    continue
+                if record is not None:
+                    publication = record.get("publication")
+                    if publication != self._publication(intent):
+                        expired_nonces.add(intent.nonce)
+                        logger.warning(
+                            "operator intent nonce reuse rejected: nonce=%s original_sequence=%s replay_sequence=%s",
+                            intent.nonce,
+                            record.get("sequence"),
+                            intent.sequence,
+                        )
+                        continue
+                    owner = sequence_owners.get(sequence_key)
+                    if owner is not None and owner != intent.nonce:
+                        rejected_sequences.add(intent.sequence)
+                        expired_nonces.add(intent.nonce)
+                        previous = [item for item in survivors if item.sequence == intent.sequence]
+                        survivors = [item for item in survivors if item.sequence != intent.sequence]
+                        expired_nonces.update(item.nonce for item in previous)
+                        logger.warning(
+                            "operator intent duplicate sequence rejected: sequence=%s nonce=%s owner=%s",
+                            intent.sequence,
+                            intent.nonce,
+                            owner,
+                        )
+                        changed = True
+                        continue
+                    if owner is None:
+                        sequence_owners[sequence_key] = intent.nonce
+                        changed = True
+                owner = sequence_owners.get(sequence_key)
+                if owner is not None and owner != intent.nonce:
+                    rejected_sequences.add(intent.sequence)
+                    expired_nonces.add(intent.nonce)
+                    previous = [item for item in survivors if item.sequence == intent.sequence]
+                    survivors = [item for item in survivors if item.sequence != intent.sequence]
+                    expired_nonces.update(item.nonce for item in previous)
+                    logger.warning(
+                        "operator intent duplicate sequence rejected: sequence=%s nonce=%s owner=%s",
+                        intent.sequence,
+                        intent.nonce,
+                        owner,
+                    )
+                    changed = True
+                    continue
+                if record is None:
                     remaining = max(0.0, (intent.expires_at - current_time).total_seconds())
                     records[intent.nonce] = {
                         "sequence": intent.sequence,
@@ -373,9 +495,22 @@ class IntentAuthorityStore:
                         "boot_id": self._boot_id,
                         "monotonic_expires_at": monotonic_now + remaining,
                         "expired": False,
+                        "publication": self._publication(intent),
                     }
                     record = records[intent.nonce]
+                    sequence_owners[sequence_key] = intent.nonce
                     changed = True
+                elif int(record.get("sequence", 0)) != intent.sequence:
+                    # The immutable publication check above should make this
+                    # unreachable for a valid record.  Keep the fail-closed
+                    # branch explicit for hand-edited/corrupt ledgers.
+                    expired_nonces.add(intent.nonce)
+                    logger.warning(
+                        "operator intent nonce ledger sequence mismatch rejected: nonce=%s sequence=%s",
+                        intent.nonce,
+                        intent.sequence,
+                    )
+                    continue
                 highest_sequence = max(highest_sequence, intent.sequence)
                 record_expiry = _parse_timestamp(record["expires_at"], field="expires_at")
                 expired = bool(record.get("expired")) or logical_now >= record_expiry
@@ -408,6 +543,14 @@ class IntentAuthorityStore:
                 changed = True
             if state.get("intents") != records:
                 state["intents"] = records
+                changed = True
+            serialized_sequences = {str(key): value for key, value in sequence_owners.items()}
+            if state.get("sequences") != serialized_sequences:
+                state["sequences"] = serialized_sequences
+                changed = True
+            serialized_rejected = sorted(rejected_sequences)
+            if state.get("rejected_sequences") != serialized_rejected:
+                state["rejected_sequences"] = serialized_rejected
                 changed = True
             if changed:
                 _atomic_write_json(self.path, state)
@@ -483,11 +626,28 @@ class DeferredStopStore:
         with _intent_file_lock(self.path):
             _atomic_write_json(self.path, payload)
 
+    def supersede_if_newer(self, *, sequence: int, nonce: str) -> bool:
+        """Atomically clear a deferred STOP superseded by a fencing token."""
+        if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < MIN_INTENT_SEQUENCE:
+            raise ValueError("sequence must be a positive integer")
+        if not isinstance(nonce, str) or not nonce.strip():
+            raise ValueError("nonce must be a non-blank string")
+        with _intent_file_lock(self.path):
+            record = self.read()
+            if record is None:
+                return False
+            superseded = sequence > record.sequence or (
+                sequence == record.sequence and nonce != record.nonce
+            )
+            if superseded:
+                _durable_unlink(self.path)
+            return superseded
+
     def clear(self, *, sequence: int | None = None) -> None:
         with _intent_file_lock(self.path):
             record = self.read()
             if record is None or sequence is None or record.sequence <= sequence:
-                self.path.unlink(missing_ok=True)
+                _durable_unlink(self.path)
 
 
 class DecisionLogStore:
@@ -512,6 +672,11 @@ class DecisionLogStore:
             os.fsync(fd)
         finally:
             os.close(fd)
+        directory_fd = os.open(self.path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
 
 
 def _intent_order(intent: OperatorIntent) -> tuple[int, datetime, bool, str]:
@@ -534,34 +699,10 @@ def copy_intents_to_durable_dir(source_dir: str | Path, durable_dir: str | Path)
         if existing is not None and _intent_order(existing) >= _intent_order(parsed):
             continue
         try:
-            payload = source_path.read_bytes()
-        except (OSError, UnicodeError) as exc:
+            payload = json.loads(source_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
             raise OSError(f"could not read runtime intent {source_path}: {exc}") from exc
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary: Path | None = None
-        try:
-            with tempfile.NamedTemporaryFile(
-                mode="wb",
-                dir=target_path.parent,
-                prefix=f".{target_path.name}.",
-                suffix=".tmp",
-                delete=False,
-            ) as handle:
-                temporary = Path(handle.name)
-                handle.write(payload)
-                handle.flush()
-                os.fsync(handle.fileno())
-            temporary.chmod(0o660)
-            os.replace(temporary, target_path)
-            temporary = None
-            directory_fd = os.open(target_path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
-            try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
-        finally:
-            if temporary is not None:
-                temporary.unlink(missing_ok=True)
+        _atomic_write_json(target_path, payload)
 
 
 def _invalid(path: Path, error: object, *, reason_sink: list[str] | None = None) -> None:

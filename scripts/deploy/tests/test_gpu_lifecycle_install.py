@@ -262,14 +262,30 @@ def test_installer_provisions_every_supplementary_group_it_references() -> None:
     `Failed to determine supplementary groups: No such process`
     (status=216/GROUP), leaving the burst GPU with no working stop path.
     """
-    script = INSTALLER.read_text(encoding="utf-8")
-    referenced = set(re.findall(r"^SupplementaryGroups=(\d+)$", script, flags=re.MULTILINE))
+    raw = INSTALLER.read_text(encoding="utf-8")
+    referenced = set(re.findall(r"^SupplementaryGroups=(\d+)$", raw, flags=re.MULTILINE))
+    # The WHY comment above the guard narrates getent, groupadd and the GID, so
+    # matching raw text would keep this test green against a commented-out guard.
+    # Verified by mutation: without this strip, deleting the block and leaving the
+    # comment still passes.
+    executable = "\n".join(
+        line for line in raw.splitlines() if not line.lstrip().startswith("#")
+    )
 
     assert referenced, "installer no longer pins a numeric supplementary group"
     for gid in sorted(referenced):
-        assert re.search(rf"getent group {gid}\b", script), (
-            f"group {gid} provisioning must be idempotent via getent"
+        guard = re.search(
+            rf"if ! getent group {gid} [^\n]*\n(?P<body>.*?)\nfi$",
+            executable,
+            flags=re.MULTILINE | re.DOTALL,
         )
-        assert re.search(rf"groupadd[^\n]*-g {gid}\b", script), (
+        assert guard, f"group {gid} provisioning must be guarded by an idempotent getent"
+        body = guard.group("body")
+        assert re.search(rf"groupadd[^\n]*-g {gid}\b", body), (
             f"installer references SupplementaryGroups={gid} but never creates that group"
+        )
+        assert re.search(rf"getent group {gid}\b", body), (
+            f"group {gid} creation must assert the postcondition that the GID resolves, "
+            "not that groupadd exited zero: a name collision makes groupadd fail on a "
+            "host where the GID is provisionable under another name"
         )

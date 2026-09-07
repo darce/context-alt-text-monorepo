@@ -760,6 +760,20 @@ UNIT
 # atomically in the separate load directory. SupplementaryGroups=10001 lets the
 # ubuntu units read the API-owned load dump without granting the API host-side
 # write access to lifecycle state.
+# systemd resolves SupplementaryGroups=10001 through NSS before ExecStart. A bare
+# numeric chown creates no group entry, so both lifecycle units died at
+# status=216/GROUP and the burst GPU lost its only stop path. What the units need
+# is a resolvable GID, not a particular name, so fall back to a second name when
+# the preferred one is already taken at another GID, then assert the postcondition
+# under set -e. Asserting on groupadd exit status instead would wedge the install
+# permanently on a name collision.
+# Editing note: this block is spliced into a double-quoted ssh payload, so a
+# literal double quote, dollar sign, backtick or backslash here does not survive
+# transport. Parentheses are safe.
+if ! getent group 10001 >/dev/null 2>&1; then
+    sudo groupadd -r -g 10001 acxapi || sudo groupadd -r -g 10001 acxgid10001 || true
+    getent group 10001 >/dev/null 2>&1 || { echo 'ERROR gpu-lifecycle: groupadd exited 0 but NSS still does not resolve GID 10001; both lifecycle units would die at 216/GROUP before ExecStart. Check nsswitch group sources on the host, then re-run.' >&2; exit 1; }
+fi
 sudo mkdir -p /run/acx /run/acx-write ${LOAD_ENVIRONMENT_DIRS}
 sudo chown ubuntu:ubuntu /run/acx
 sudo chmod 0755 /run/acx

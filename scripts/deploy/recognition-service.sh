@@ -75,10 +75,10 @@
 #                              reload/recreate the prod-serving edge).
 #   ACX_BUILD_TARGET         optional docker build --target (e.g. runtime-vlm). Empty = last stage
 #                              (runtime). Charset-validated: ^[A-Za-z0-9_.-]+$ (empty allowed). Rejected
-#                              values never reach ssh/shell interpolation (D1). Remote build REFUSES any
-#                              target matching *vlm* (runtime-vlm, builder-vlm, …) — multi-GB torch
-#                              builds must run on a workstation/CI runner under a distinct image name,
-#                              never on the serving VM. Also selects the image repository name (RA-07):
+#                              values never reach ssh/shell interpolation (D1). Remote builds select a
+#                              larger free-space floor for any target matching *vlm* (runtime-vlm,
+#                              builder-vlm, …) before multi-GB torch layers are downloaded. Also selects
+#                              the image repository name (RA-07):
 #                              empty/runtime → IMAGE_NAME (default acx-backend); runtime-vlm →
 #                              IMAGE_NAME-vlm. That same name is exported as ACX_IMAGE_REPO for compose.
 #   ACX_IMAGE_VARIANT        optional variant label (recognition|vlm). Folded into resolve_image_repo_name
@@ -137,11 +137,11 @@ REMOTE_BUILD_DIR="${ACX_REMOTE_BUILD_DIR:-/tmp/acx-build}"
 # Optional docker build --target. Empty means BuildKit's default (last stage = runtime).
 # This is the plumbing the script would pass as `docker build --target ...`; there was no
 # prior target notion in this file — introduce it only as the explicit opt-in for VLM/etc.
-# Case-normalised at ingestion (D8); Docker --target match is case-insensitive so we refuse
-# mixed-case evasion of the *vlm* remote-build guard.
+# Case-normalised at ingestion (D8); Docker --target match is case-insensitive so mixed-case targets
+# take the same variant-aware remote free-space gate.
 ACX_BUILD_TARGET="${ACX_BUILD_TARGET:-}"
 ACX_IMAGE_VARIANT="${ACX_IMAGE_VARIANT:-}"
-# Lower-case once at ingestion so enum + D8 + refuse_remote_vlm_build see a single form.
+# Lower-case once at ingestion so enum + D8 + remote free-space selection see a single form.
 ACX_BUILD_TARGET="$(printf '%s' "${ACX_BUILD_TARGET}" | tr '[:upper:]' '[:lower:]')"
 ACX_IMAGE_VARIANT="$(printf '%s' "${ACX_IMAGE_VARIANT}" | tr '[:upper:]' '[:lower:]')"
 
@@ -149,9 +149,10 @@ ACX_IMAGE_VARIANT="$(printf '%s' "${ACX_IMAGE_VARIANT}" | tr '[:upper:]' '[:lowe
 # Justification (not a round guess): torch-free recognition image is ~1.1GB today; a single
 # remote build leaves multi-GB BuildKit intermediate layers; README/OPS-1 already document
 # disk fill on the Always Free A1. Budget = ~2× image + ~4GB cache headroom + ~2GB for
-# concurrent container layers/logs ≈ 8GB. VLM multi-GB builds are refused entirely on the
-# remote path (see refuse_remote_vlm_build) rather than raising this further.
+# concurrent container layers/logs ≈ 8GB.
 REMOTE_BUILD_MIN_FREE_GB=8
+# Measured runtime-vlm build: 3.56GB image + ~12.9GB BuildKit cache + ~7.5GB headroom = 24GB.
+REMOTE_VLM_BUILD_MIN_FREE_GB=24
 
 # Boot-smoke Gate 2 /health budget defaults (seconds). Recognition keeps the historical
 # 24s (12 × 2s polls) sized for the ~1.1GB torch-free image on 4-core Ampere A1.
@@ -414,21 +415,21 @@ resolve_smoke_timeout() {
   printf '%s\n' "${raw}"
 }
 
-# Remote-build hard refuse for ANY target that pulls the vlm extra (RA-03 / sr-001).
-# Match *vlm* not just the literal runtime-vlm — builder-vlm is the stage that runs
-# `uv sync --extra vlm` (full torch/CUDA download) and was a trivial bypass.
-# No override env — multi-GB builds must not run on the production-serving VM.
-refuse_remote_vlm_build() {
-  local target="${ACX_BUILD_TARGET:-}"
-  if [[ "${target}" == *vlm* ]]; then
-    fail "Remote build refuses ACX_BUILD_TARGET=${target} (matches *vlm*). Build and push torch-bearing VLM images from a workstation or CI runner under a distinct image name — never on the production-serving VM."
+# Select the remote docker data-root floor from the normalized build target. Match *vlm* rather
+# than only runtime-vlm because builder-vlm also downloads the torch-bearing extra.
+remote_build_min_free_gb() {
+  if [[ "${ACX_BUILD_TARGET:-}" == *vlm* ]]; then
+    printf '%s\n' "${REMOTE_VLM_BUILD_MIN_FREE_GB}"
+  else
+    printf '%s\n' "${REMOTE_BUILD_MIN_FREE_GB}"
   fi
 }
 
-# Assert the remote docker data root has enough free space for a recognition build.
+# Assert the remote docker data root has enough free space for the selected build variant.
 assert_remote_build_free_space() {
-  local min_gb avail_gb timeout rc=0
-  min_gb="${REMOTE_BUILD_MIN_FREE_GB}"
+  local target min_gb avail_gb observed_gb timeout rc=0
+  target="${ACX_BUILD_TARGET:-empty}"
+  min_gb="$(remote_build_min_free_gb)"
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
   # df -BG prints e.g. "12G"; strip the unit. DockerRootDir is the volume that fills
   # with BuildKit cache (OPS-1), not the rsync temp dir.
@@ -436,10 +437,11 @@ assert_remote_build_free_space() {
     ssh -o BatchMode=yes -o ConnectTimeout=5 -l "${OCI_USER}" -- "${OCI_HOST}" \
       'root="$(docker info -f "{{.DockerRootDir}}" 2>/dev/null || echo /var/lib/docker)"; df -BG "$root" | awk "NR==2 {gsub(/G/,\"\",\$4); print \$4}"')" || rc=$?
   if (( rc != 0 )) || ! [[ "${avail_gb}" =~ ^[0-9]+$ ]]; then
-    fail "Could not determine free space on ${SSH_TARGET} docker data root (got: ${avail_gb})"
+    observed_gb="${avail_gb:-unknown}"
+    fail "Remote build target ${target} needs at least ${min_gb}GB free on ${SSH_TARGET} docker data root; observed ${observed_gb} (free-space probe failed)"
   fi
   if (( avail_gb < min_gb )); then
-    fail "Remote docker data root has ${avail_gb}GB free; need at least ${min_gb}GB before build (prune BuildKit cache or free disk on ${SSH_TARGET})"
+    fail "Remote build target ${target} needs at least ${min_gb}GB free on ${SSH_TARGET} docker data root; observed ${avail_gb}GB (prune BuildKit cache or free disk)"
   fi
   log "Remote free space OK: ${avail_gb}GB available (need ${min_gb}GB)"
 }
@@ -790,8 +792,6 @@ do_build_remote() {
   preflight_ssh
   preflight_remote_docker
   preflight_rsync
-  # RA-03: never run the multi-GB torch VLM build on the production-serving VM.
-  refuse_remote_vlm_build
   local sha tag target_args build_dir build_timeout command_timeout build_rc=0
   sha="$(git -C "${REPO_ROOT}" rev-parse "${GIT_REF}")"
   tag="${1:-dev}"

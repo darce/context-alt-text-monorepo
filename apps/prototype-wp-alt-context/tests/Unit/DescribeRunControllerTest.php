@@ -374,6 +374,190 @@ class DescribeRunControllerTest extends TestCase
         $this->assertSame([], $this->getHttpCalls());
     }
 
+    /**
+     * GUIDEDFIX-2: a valid idempotency_key must be forwarded verbatim as the
+     * multipart `idempotency_key` field alongside `tenant_id`.
+     */
+    public function testSubmitForwardsValidIdempotencyKeyInMultipartBody(): void
+    {
+        $this->plantAttachment(101, "\xff\xd8\xff\xe0jpeg-101", 'jpg');
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 202, 'message' => 'Accepted'],
+            'body' => '{"run_id":"11111111-1111-1111-1111-111111111111","status":"pending","phase":"queued","completed":0,"failed":0,"skipped":0,"total":1,"cancel_requested":false,"gpu_state":null,"deadline_seconds":null}',
+        ]);
+
+        $key = 'client-retry-key-0001';
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
+        $request->set_param('media_ids', [101]);
+        $request->set_param('idempotency_key', $key);
+
+        $response = $this->controller->submit_describe_run($request);
+
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $body = (string) $this->getHttpCalls()[0]['args']['body'];
+        $this->assertMatchesRegularExpression(
+            '/name="idempotency_key"\r\n\r\n' . preg_quote($key, '/') . '\r\n/',
+            $body
+        );
+    }
+
+    /**
+     * GUIDEDFIX-2: an absent idempotency_key must not add the field at all —
+     * absent stays legal (no-dedupe), never a fabricated value.
+     */
+    public function testSubmitOmitsIdempotencyKeyFieldWhenAbsent(): void
+    {
+        $this->plantAttachment(101, "\xff\xd8\xff\xe0jpeg-101", 'jpg');
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 202, 'message' => 'Accepted'],
+            'body' => '{"run_id":"11111111-1111-1111-1111-111111111111","status":"pending","phase":"queued","completed":0,"failed":0,"skipped":0,"total":1,"cancel_requested":false,"gpu_state":null}',
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
+        $request->set_param('media_ids', [101]);
+
+        $response = $this->controller->submit_describe_run($request);
+
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $body = (string) $this->getHttpCalls()[0]['args']['body'];
+        $this->assertStringNotContainsString('name="idempotency_key"', $body);
+    }
+
+    /**
+     * GUIDEDFIX-2: present-but-invalid idempotency_key is a 400 returned before
+     * any backend call. Mutation check (must go red when the forwarding line is
+     * deleted): see testSubmitForwardsValidIdempotencyKeyInMultipartBody.
+     *
+     * @dataProvider invalidIdempotencyKeyProvider
+     */
+    public function testSubmitRejectsInvalidIdempotencyKeyBeforeAnyBackendCall(string $key): void
+    {
+        $this->plantAttachment(101, "\xff\xd8\xff\xe0jpeg-101", 'jpg');
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
+        $request->set_param('media_ids', [101]);
+        $request->set_param('idempotency_key', $key);
+
+        $response = $this->controller->submit_describe_run($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('invalid_idempotency_key', $response->get_error_code());
+        $this->assertSame(400, $response->get_error_data()['status'] ?? null);
+        $this->assertSame([], $this->getHttpCalls());
+    }
+
+    /**
+     * @return array<string, array{0: string}>
+     */
+    public static function invalidIdempotencyKeyProvider(): array
+    {
+        return [
+            'too short (15 chars)' => [str_repeat('a', 15)],
+            'too long (129 chars)' => [str_repeat('a', 129)],
+            'disallowed charset (dot)' => [str_repeat('a', 20) . '.' . str_repeat('a', 5)],
+        ];
+    }
+
+    /**
+     * GUIDEDFIX-2: a 409 from the backend (idempotency_key/media mismatch) must
+     * surface to the caller as a 409 carrying the backend's own error code, not
+     * be laundered into a generic 502 — and the local media_id membership write
+     * must never happen for a rejected submit.
+     */
+    public function testSubmitSurfacesBackendConflictAs409WithoutStoringMediaIds(): void
+    {
+        $this->plantAttachment(101, "\xff\xd8\xff\xe0jpeg-101", 'jpg');
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 409, 'message' => 'Conflict'],
+            'body' => '{"code":"idempotency_key_conflict","message":"idempotency_key already bound to a different media set"}',
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
+        $request->set_param('media_ids', [101]);
+        $request->set_param('idempotency_key', 'client-retry-key-0002');
+
+        $response = $this->controller->submit_describe_run($request);
+
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $this->assertSame(409, $response->get_status());
+        $this->assertSame('idempotency_key_conflict', $response->get_data()['code'] ?? null);
+
+        // No membership option was written for a rejected submit.
+        $optionCalls = $GLOBALS['__ac_update_option_calls'] ?? [];
+        foreach (array_keys($optionCalls) as $optionKey) {
+            $this->assertStringNotContainsString('acx_describe_run_media_ids_', (string) $optionKey);
+        }
+    }
+
+    /**
+     * GUIDEDFIX-2: a replayed 202 (same idempotency_key, same run_id, from a
+     * lost-ack retry) must not turn the local membership write into an error —
+     * the second store_run_media_ids() write for the same run_id/media_ids is a
+     * no-op success, not a storage failure.
+     */
+    public function testSubmitTreatsReplayedSameRunIdAcceptAsIdempotentLocalWrite(): void
+    {
+        $this->plantAttachment(101, "\xff\xd8\xff\xe0jpeg-101", 'jpg');
+        $runId = '11111111-1111-1111-1111-111111111111';
+        $key = 'client-retry-key-replay-01';
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 202, 'message' => 'Accepted'],
+            'body' => '{"run_id":"' . $runId . '","status":"pending","phase":"queued","completed":0,"failed":0,"skipped":0,"total":1,"cancel_requested":false,"gpu_state":null}',
+        ]);
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
+        $request->set_param('media_ids', [101]);
+        $request->set_param('idempotency_key', $key);
+        $first = $this->controller->submit_describe_run($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $first);
+        $this->assertSame(202, $first->get_status());
+
+        // Simulated retry: backend replays the same run_id for the same key.
+        $this->queueHttpResponse([
+            'response' => ['code' => 202, 'message' => 'Accepted'],
+            'body' => '{"run_id":"' . $runId . '","status":"pending","phase":"queued","completed":0,"failed":0,"skipped":0,"total":1,"cancel_requested":false,"gpu_state":null}',
+        ]);
+        $retryRequest = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
+        $retryRequest->set_param('media_ids', [101]);
+        $retryRequest->set_param('idempotency_key', $key);
+        $second = $this->controller->submit_describe_run($retryRequest);
+
+        $this->assertNotInstanceOf(\WP_Error::class, $second);
+        $this->assertSame(202, $second->get_status());
+
+        $stored = get_option('acx_describe_run_media_ids_' . $runId);
+        $this->assertIsArray($stored);
+        $this->assertSame([101], $stored['media_ids'] ?? null);
+    }
+
+    /**
+     * GUIDEDFIX-2: the backend's `deadline_seconds` must pass through the WP
+     * response envelope unchanged — no allow-list in this file may strip it,
+     * and submit must never invent a value when the backend omits it.
+     */
+    public function testSubmitPassesBackendDeadlineSecondsThroughUnchanged(): void
+    {
+        $this->plantAttachment(101, "\xff\xd8\xff\xe0jpeg-101", 'jpg');
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 202, 'message' => 'Accepted'],
+            'body' => '{"run_id":"11111111-1111-1111-1111-111111111111","status":"pending","phase":"queued","completed":0,"failed":0,"skipped":0,"total":1,"cancel_requested":false,"gpu_state":null,"deadline_seconds":180.0}',
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
+        $request->set_param('media_ids', [101]);
+
+        $response = $this->controller->submit_describe_run($request);
+
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $data = $response->get_data();
+        $this->assertArrayHasKey('deadline_seconds', $data);
+        $this->assertSame(180.0, $data['deadline_seconds']);
+    }
+
     public function testGetDescribeRunItemsProxiesAndAnnotatesExistingAlt(): void
     {
         // WBUX-4 INT-01b: media 70 already has operator alt text; 71 does not.

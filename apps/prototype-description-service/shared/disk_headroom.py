@@ -37,13 +37,9 @@ class DiskHeadroomSettings:
             try:
                 min_bytes = int(raw_min_bytes, 10)
             except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    f"Invalid {_MIN_BYTES_ENV}={raw_min_bytes!r}; must be a non-negative integer"
-                ) from exc
+                raise ValueError(f"Invalid {_MIN_BYTES_ENV}={raw_min_bytes!r}; must be a non-negative integer") from exc
             if min_bytes < 0:
-                raise ValueError(
-                    f"Invalid {_MIN_BYTES_ENV}={raw_min_bytes!r}; must be a non-negative integer"
-                )
+                raise ValueError(f"Invalid {_MIN_BYTES_ENV}={raw_min_bytes!r}; must be a non-negative integer")
 
         return cls(probe_path=probe_path, min_bytes=min_bytes)
 
@@ -76,14 +72,14 @@ def probe_disk_headroom(path: str | PathLike[str]) -> DiskHeadroom:
         block_size = int(getattr(stat, "f_frsize", 0) or getattr(stat, "f_bsize", 0))
         available_blocks = getattr(stat, "f_bavail", None)
         if available_blocks is None:
-            available_blocks = getattr(stat, "f_bfree")
+            available_blocks = stat.f_bfree
         free_bytes = int(available_blocks) * block_size
-        total_bytes = int(getattr(stat, "f_blocks")) * block_size
+        total_bytes = int(stat.f_blocks) * block_size
         if free_bytes >= settings.min_bytes:
             status = HealthStatus.OK
             reason = f"free bytes meet minimum headroom ({settings.min_bytes})"
         else:
-            status = HealthStatus.UNHEALTHY
+            status = HealthStatus.DEGRADED
             reason = f"free bytes below minimum headroom ({settings.min_bytes})"
         return DiskHeadroom(
             probe_path=probe_path,

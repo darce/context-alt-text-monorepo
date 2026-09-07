@@ -34,6 +34,21 @@ class MvRefreshOutcome(StrEnum):
     FAILED = "failed"
 
 
+def require_mv_refresh_outcome(value: object, *, source: str) -> MvRefreshOutcome:
+    """Return ``value`` as an ``MvRefreshOutcome`` or raise naming the violator.
+
+    The refresh contract used to be a bare bool. A stale implementation that still
+    returns one otherwise reaches the response builder and dies on ``.value``, an
+    error that names neither the contract nor the offending implementation.
+    """
+    if isinstance(value, MvRefreshOutcome):
+        return value
+    raise TypeError(
+        f"{source} must return an MvRefreshOutcome, got {type(value).__name__}: {value!r}. "
+        f"Valid outcomes: {', '.join(o.value for o in MvRefreshOutcome)}."
+    )
+
+
 @dataclass(frozen=True)
 class IdentityMember:
     """Domain representation of a cluster member."""

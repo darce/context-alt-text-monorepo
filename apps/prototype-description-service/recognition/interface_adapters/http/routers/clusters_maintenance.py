@@ -71,11 +71,14 @@ async def trigger_centroid_mv_refresh(
     This is the dedicated maintenance path for MV refresh, independent of the
     scan worker's polling loop.  Returns ``ok: true`` on success.
     """
-    from recognition.domain.repositories import MvRefreshOutcome
+    from recognition.domain.repositories import MvRefreshOutcome, require_mv_refresh_outcome
     from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
 
     repo = SqlAlchemyClusterRepository(session)
-    outcome = await repo.refresh_centroids_view_concurrent()
+    outcome = require_mv_refresh_outcome(
+        await repo.refresh_centroids_view_concurrent(),
+        source=f"{type(repo).__name__}.refresh_centroids_view_concurrent",
+    )
     reasons = {
         MvRefreshOutcome.REFRESHED: "refresh_completed",
         MvRefreshOutcome.SKIPPED_HEADROOM: "insufficient_disk_headroom",

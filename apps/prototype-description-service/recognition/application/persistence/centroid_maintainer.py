@@ -12,7 +12,11 @@ from typing import cast
 
 import numpy as np
 
-from recognition.domain.repositories import ClusterRepository, MvRefreshOutcome
+from recognition.domain.repositories import (
+    ClusterRepository,
+    MvRefreshOutcome,
+    require_mv_refresh_outcome,
+)
 
 
 class CentroidMaintainer:
@@ -60,5 +64,8 @@ class CentroidMaintainer:
         """Trigger a concurrent refresh of the centroids view."""
         refresh = getattr(self._clusters, "refresh_centroids_view_concurrent", None)
         if callable(refresh):
-            return cast(MvRefreshOutcome, await refresh())
+            return require_mv_refresh_outcome(
+                await refresh(),
+                source=f"{type(self._clusters).__name__}.refresh_centroids_view_concurrent",
+            )
         return MvRefreshOutcome.FAILED

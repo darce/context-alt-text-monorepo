@@ -276,6 +276,9 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 					'idempotency_key' => array(
 						'type'        => 'string',
 						'required'    => false,
+						'minLength'   => self::IDEMPOTENCY_KEY_MIN_LENGTH,
+						'maxLength'   => self::IDEMPOTENCY_KEY_MAX_LENGTH,
+						'pattern'     => '^[A-Za-z0-9_-]+$',
 						'description' => 'Client-generated retry key (16-128 chars, [A-Za-z0-9_-]) forwarded to the backend for run dedupe.',
 					),
 				),
@@ -1475,37 +1478,65 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 
 	/**
 	 * GUIDEDFIX-2: validate the optional client-supplied `idempotency_key`.
-	 * Absent (null or empty string) is legal and returns '' (forward nothing —
-	 * server treats absent as no-dedupe). Present-but-invalid returns a 400
-	 * WP_Error naming the constraint; this must run before any backend call.
 	 *
-	 * @return string|WP_Error Validated key ('' when absent), or a 400 WP_Error.
+	 * Mirrors `scene/domain/describe_run.py::normalize_idempotency_key` exactly:
+	 * absent (the field was not sent) is legal and returns '' (forward nothing —
+	 * the backend treats absent as no-dedupe), while a present-but-empty or
+	 * malformed token fails closed. Silently dropping a bad token would
+	 * downgrade a dedupe request into a non-deduped accept, which is the exact
+	 * double-spend the field exists to prevent.
+	 *
+	 * The key is trimmed before every check so a padded token is the same token
+	 * through the proxy as it is direct to the backend; the route schema
+	 * declares the same 16..128 / [A-Za-z0-9_-] constraint so generated docs and
+	 * schema-driven consumers see it, and this helper owns the trim/empty
+	 * semantics plus the error envelope for direct in-process callers.
+	 *
+	 * @return string|WP_Error Validated key ('' when absent), or a 422 WP_Error.
 	 */
 	private function validate_idempotency_key( WP_REST_Request $request ): string|WP_Error {
 		$raw = $request->get_param( 'idempotency_key' );
-		if ( null === $raw || '' === $raw ) {
+		if ( null === $raw ) {
 			return '';
 		}
 
-		$key    = is_string( $raw ) ? $raw : (string) $raw;
+		if ( ! is_string( $raw ) ) {
+			return $this->invalid_idempotency_key_error( 'idempotency_key must be a string.' );
+		}
+
+		$key    = trim( $raw );
 		$length = strlen( $key );
-		if (
-			$length < self::IDEMPOTENCY_KEY_MIN_LENGTH
-			|| $length > self::IDEMPOTENCY_KEY_MAX_LENGTH
-			|| 1 !== preg_match( '/^[A-Za-z0-9_-]+$/', $key )
-		) {
-			return new WP_Error(
-				'invalid_idempotency_key',
+		if ( $length < self::IDEMPOTENCY_KEY_MIN_LENGTH || $length > self::IDEMPOTENCY_KEY_MAX_LENGTH ) {
+			return $this->invalid_idempotency_key_error(
 				sprintf(
-					'idempotency_key must be %d-%d characters using only letters, digits, underscore, or hyphen.',
+					'idempotency_key must be %d-%d characters.',
 					self::IDEMPOTENCY_KEY_MIN_LENGTH,
 					self::IDEMPOTENCY_KEY_MAX_LENGTH
-				),
-				array( 'status' => 400 )
+				)
 			);
+		}
+		if ( 1 !== preg_match( '/^[A-Za-z0-9_-]+$/', $key ) ) {
+			return $this->invalid_idempotency_key_error( 'idempotency_key allows only [A-Za-z0-9_-].' );
 		}
 
 		return $key;
+	}
+
+	/**
+	 * GUIDEDFIX-2: one error envelope for a malformed retry key, matching the
+	 * backend's `{code, message, field}` 422 (rg-005). A caller that branches on
+	 * the status or attaches `field` to a form input must behave identically
+	 * whichever door it came through.
+	 */
+	private function invalid_idempotency_key_error( string $message ): WP_Error {
+		return new WP_Error(
+			'invalid_idempotency_key',
+			$message,
+			array(
+				'status' => 422,
+				'field'  => 'idempotency_key',
+			)
+		);
 	}
 
 	/**

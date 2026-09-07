@@ -426,9 +426,16 @@ class DescribeRunControllerTest extends TestCase
     }
 
     /**
-     * GUIDEDFIX-2: present-but-invalid idempotency_key is a 400 returned before
-     * any backend call. Mutation check (must go red when the forwarding line is
-     * deleted): see testSubmitForwardsValidIdempotencyKeyInMultipartBody.
+     * GUIDEDFIX-2 [P05]: present-but-invalid idempotency_key is a 422 carrying
+     * the backend's own `{code, message, field}` shape, returned before any
+     * backend call. `_parse_idempotency_key` in
+     * scene/interface_adapters/http/routers/describe_run.py raises
+     * HTTPException(422, {code, message, field}); a caller that branches on the
+     * status or reads `field` to attach the error to a form input must not see
+     * a different answer through the proxy door (rg-005).
+     *
+     * Mutation check (must go red when the forwarding line is deleted): see
+     * testSubmitForwardsValidIdempotencyKeyInMultipartBody.
      *
      * @dataProvider invalidIdempotencyKeyProvider
      */
@@ -444,27 +451,117 @@ class DescribeRunControllerTest extends TestCase
 
         $this->assertInstanceOf(\WP_Error::class, $response);
         $this->assertSame('invalid_idempotency_key', $response->get_error_code());
-        $this->assertSame(400, $response->get_error_data()['status'] ?? null);
+        $this->assertSame(422, $response->get_error_data()['status'] ?? null);
+        $this->assertSame('idempotency_key', $response->get_error_data()['field'] ?? null);
+        $this->assertNotSame('', $response->get_error_message());
         $this->assertSame([], $this->getHttpCalls());
     }
 
     /**
+     * Mirrors scene/domain/describe_run.py::normalize_idempotency_key. The
+     * present-but-empty cases are the [P04] double-spend: silently dropping a
+     * blank token (a `crypto.randomUUID()` shim returning '') would downgrade a
+     * dedupe request into a non-deduped accept, so a lost 202 plus a client
+     * retry becomes two paid GPU generations.
+     *
      * @return array<string, array{0: string}>
      */
     public static function invalidIdempotencyKeyProvider(): array
     {
         return [
+            'present but empty' => [''],
+            'present but whitespace only' => ['   '],
             'too short (15 chars)' => [str_repeat('a', 15)],
+            'too short after trim (15 chars padded)' => [' ' . str_repeat('a', 15) . ' '],
             'too long (129 chars)' => [str_repeat('a', 129)],
             'disallowed charset (dot)' => [str_repeat('a', 20) . '.' . str_repeat('a', 5)],
         ];
     }
 
     /**
-     * GUIDEDFIX-2: a 409 from the backend (idempotency_key/media mismatch) must
-     * surface to the caller as a 409 carrying the backend's own error code, not
-     * be laundered into a generic 502 — and the local media_id membership write
-     * must never happen for a rejected submit.
+     * GUIDEDFIX-2 [P07c]: the accept side of the boundary. Exactly
+     * IDEMPOTENCY_KEY_MIN_LENGTH and exactly IDEMPOTENCY_KEY_MAX_LENGTH are
+     * valid, so flipping `<`/`>` to `<=`/`>=` in validate_idempotency_key goes
+     * red here instead of passing unnoticed.
+     *
+     * @dataProvider boundaryLengthIdempotencyKeyProvider
+     */
+    public function testSubmitAcceptsIdempotencyKeyAtExactLengthBoundaries(string $key): void
+    {
+        $this->plantAttachment(101, "\xff\xd8\xff\xe0jpeg-101", 'jpg');
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 202, 'message' => 'Accepted'],
+            'body' => '{"run_id":"11111111-1111-1111-1111-111111111111","status":"pending","phase":"queued","completed":0,"failed":0,"skipped":0,"total":1,"cancel_requested":false,"gpu_state":null}',
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
+        $request->set_param('media_ids', [101]);
+        $request->set_param('idempotency_key', $key);
+
+        $response = $this->controller->submit_describe_run($request);
+
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $this->assertSame(202, $response->get_status());
+        $body = (string) $this->getHttpCalls()[0]['args']['body'];
+        $this->assertMatchesRegularExpression(
+            '/name="idempotency_key"\r\n\r\n' . preg_quote($key, '/') . '\r\n/',
+            $body
+        );
+    }
+
+    /**
+     * @return array<string, array{0: string}>
+     */
+    public static function boundaryLengthIdempotencyKeyProvider(): array
+    {
+        return [
+            'exactly 16 chars' => [str_repeat('a', 16)],
+            'exactly 128 chars' => [str_repeat('a', 128)],
+        ];
+    }
+
+    /**
+     * GUIDEDFIX-2 [P04]: the key is trimmed before validation and forwarded
+     * trimmed, so a padded token is the same token through the proxy as it is
+     * direct to the backend (`normalize_idempotency_key` strips first). Without
+     * the trim this input is a charset rejection here and a valid accept there.
+     */
+    public function testSubmitTrimsIdempotencyKeyBeforeValidatingAndForwarding(): void
+    {
+        $this->plantAttachment(101, "\xff\xd8\xff\xe0jpeg-101", 'jpg');
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 202, 'message' => 'Accepted'],
+            'body' => '{"run_id":"11111111-1111-1111-1111-111111111111","status":"pending","phase":"queued","completed":0,"failed":0,"skipped":0,"total":1,"cancel_requested":false,"gpu_state":null}',
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
+        $request->set_param('media_ids', [101]);
+        $request->set_param('idempotency_key', "  ABCDEFGHIJKLMNOP \n");
+
+        $response = $this->controller->submit_describe_run($request);
+
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $body = (string) $this->getHttpCalls()[0]['args']['body'];
+        $this->assertMatchesRegularExpression(
+            '/name="idempotency_key"\r\n\r\nABCDEFGHIJKLMNOP\r\n/',
+            $body
+        );
+    }
+
+    /**
+     * GUIDEDFIX-2 [P07a]: a 409 from the backend (idempotency_key/media
+     * mismatch) must surface to the caller as a 409 carrying the backend's own
+     * error code, not be laundered into a generic 502 — and the local media_id
+     * membership write must never happen for a rejected submit.
+     *
+     * The mocked body is the shape the producer actually emits: FastAPI wraps
+     * `HTTPException(409, {...})` under `detail`, and the code is
+     * `DescribeRunErrorCode.IDEMPOTENCY_CONFLICT` = 'idempotency_conflict'
+     * (see scene/interface_adapters/http/routers/describe_run.py
+     * ::_replay_or_conflict). A fixture specced against a shape nothing
+     * produces cannot catch the passthrough breaking.
      */
     public function testSubmitSurfacesBackendConflictAs409WithoutStoringMediaIds(): void
     {
@@ -472,7 +569,7 @@ class DescribeRunControllerTest extends TestCase
 
         $this->queueHttpResponse([
             'response' => ['code' => 409, 'message' => 'Conflict'],
-            'body' => '{"code":"idempotency_key_conflict","message":"idempotency_key already bound to a different media set"}',
+            'body' => '{"detail":{"code":"idempotency_conflict","message":"this \'idempotency_key\' is already bound to a describe run submitted with a different payload","field":"idempotency_key","run_id":"22222222-2222-2222-2222-222222222222","media_ids":[999]}}',
         ]);
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
@@ -483,7 +580,11 @@ class DescribeRunControllerTest extends TestCase
 
         $this->assertNotInstanceOf(\WP_Error::class, $response);
         $this->assertSame(409, $response->get_status());
-        $this->assertSame('idempotency_key_conflict', $response->get_data()['code'] ?? null);
+        $detail = $response->get_data()['detail'] ?? null;
+        $this->assertIsArray($detail);
+        $this->assertSame('idempotency_conflict', $detail['code'] ?? null);
+        $this->assertSame('idempotency_key', $detail['field'] ?? null);
+        $this->assertSame('22222222-2222-2222-2222-222222222222', $detail['run_id'] ?? null);
 
         // No membership option was written for a rejected submit.
         $optionCalls = $GLOBALS['__ac_update_option_calls'] ?? [];
@@ -527,6 +628,20 @@ class DescribeRunControllerTest extends TestCase
 
         $this->assertNotInstanceOf(\WP_Error::class, $second);
         $this->assertSame(202, $second->get_status());
+
+        // The dedupe only exists if the key actually reached the backend on
+        // BOTH attempts. Without these assertions, deleting the forwarding in
+        // submit_describe_run leaves this test green while every retry becomes
+        // a second paid run.
+        $calls = $this->getHttpCalls();
+        $this->assertCount(2, $calls);
+        foreach ($calls as $index => $call) {
+            $this->assertMatchesRegularExpression(
+                '/name="idempotency_key"\r\n\r\n' . preg_quote($key, '/') . '\r\n/',
+                (string) $call['args']['body'],
+                "attempt {$index} did not forward the client's idempotency_key"
+            );
+        }
 
         $stored = get_option('acx_describe_run_media_ids_' . $runId);
         $this->assertIsArray($stored);

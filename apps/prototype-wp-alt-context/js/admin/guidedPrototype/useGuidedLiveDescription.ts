@@ -29,6 +29,7 @@ import {
   GUIDED_LIVE_BLOCKED_REASON,
   GUIDED_LIVE_REASON,
   guidedLiveReducer,
+  guidedLiveOwnsRunAttempt,
   guidedLiveRunMayBeLive,
   initialGuidedLiveState,
   isGuidedLiveWaiting,
@@ -183,14 +184,19 @@ export const useGuidedLiveDescription = ({
   // reducer stops the screen; the burst it started keeps costing money until
   // the server hears about it, so fence the generation and cancel the run id.
   const mayBeLive = guidedLiveRunMayBeLive(state);
-  const waitingRef = useRef<{ mayBeLive: boolean; runId: string | null }>({ mayBeLive, runId });
-  waitingRef.current = { mayBeLive, runId };
+  const ownsAttempt = guidedLiveOwnsRunAttempt(state);
+  const waitingRef = useRef<{ mayBeLive: boolean; ownsAttempt: boolean; runId: string | null }>({
+    mayBeLive,
+    ownsAttempt,
+    runId,
+  });
+  waitingRef.current = { mayBeLive, ownsAttempt, runId };
 
   // Layout, not passive: the gate closing is a fact about this render, and a
   // passive effect would let the browser paint one frame of the old run's
   // glyph and sentence underneath the new blocked copy.
   useLayoutEffect(() => {
-    if (blockedReason !== null && waitingRef.current.mayBeLive) {
+    if (blockedReason !== null && waitingRef.current.ownsAttempt) {
       generationRef.current += 1;
       const inFlight = waitingRef.current.runId;
       if (inFlight !== null) {

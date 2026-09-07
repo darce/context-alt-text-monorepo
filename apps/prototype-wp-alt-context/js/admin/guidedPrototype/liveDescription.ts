@@ -157,6 +157,18 @@ export const guidedLiveRunMayBeLive = (state: GuidedLiveState): boolean =>
   state.runId !== null &&
   (isGuidedLiveWaiting(state.status) || state.status === GUIDED_LIVE_STATUS.TIMED_OUT);
 
+/**
+ * Whether the panel still owns a run attempt.
+ *
+ * Wider than `guidedLiveRunMayBeLive` by exactly one window: the submit is on
+ * the wire and the server has not handed back a run id yet. There is nothing
+ * to cancel in that window, but the attempt is still this panel's, so anything
+ * that ends the panel's ownership must fence the attempt -- otherwise the run
+ * id lands after the fence and buys a burst nobody is watching.
+ */
+export const guidedLiveOwnsRunAttempt = (state: GuidedLiveState): boolean =>
+  isGuidedLiveWaiting(state.status) || guidedLiveRunMayBeLive(state);
+
 export const guidedLivePollDelayMs = (attempt: number): number =>
   Math.min(POLL_BASE_MS * 2 ** Math.max(0, attempt), POLL_CEILING_MS);
 

@@ -355,7 +355,13 @@ def test_every_supplementary_group_is_a_name_the_installer_resolves() -> None:
     assert re.search(r"getent group .*\bgid\b|getent group \"\$gid\"", installer), (
         "group creation must be getent-guarded so a rerun is idempotent"
     )
-    assert re.search(r"groupadd .*--gid", installer), (
+    # Spelling-tolerant on purpose: the installer uses groupadd's short flags to
+    # match the api image's own `RUN groupadd -r -g`, which the gid resolver parses.
+    # Pinning this assertion to one spelling made it fail on a refactor that kept
+    # the behaviour intact. The executable guard is
+    # scripts/deploy/tests/test_gpu_lifecycle_install.py, which runs the installer
+    # and resolves the group through a fake NSS database.
+    assert re.search(r"groupadd\s+[^\n]*(--gid|-g)\s", installer), (
         "the installer must create the gid it chowns to"
     )
     # The resolver runs before any unit file is staged, so a failure to resolve

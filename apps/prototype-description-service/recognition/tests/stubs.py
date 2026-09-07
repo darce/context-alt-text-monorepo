@@ -10,7 +10,7 @@ import numpy as np
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.maturity import ClusterMaturityInfo
-from recognition.domain.repositories import ClusterRepository, IdentityMember
+from recognition.domain.repositories import ClusterRepository, IdentityMember, MvRefreshOutcome
 from recognition.domain.representative import ClusterRepresentative
 
 
@@ -92,8 +92,8 @@ class NullClusterRepository(ClusterRepository):
     async def refresh_centroids_view(self) -> None:
         return None
 
-    async def refresh_centroids_view_concurrent(self) -> bool:
-        return True
+    async def refresh_centroids_view_concurrent(self) -> MvRefreshOutcome:
+        return MvRefreshOutcome.REFRESHED
 
     async def get_unclustered(self, tenant_id: str) -> Sequence[MediaIdentity]:
         return []

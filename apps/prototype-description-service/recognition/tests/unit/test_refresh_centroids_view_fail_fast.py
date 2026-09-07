@@ -3,9 +3,9 @@
 `refresh_centroids_view` previously wrapped the whole refresh in
 `try/except Exception: logger.warning(...)` and returned ``None`` regardless of
 outcome, so callers could not tell a failed REFRESH from a successful one and
-would proceed to read/generate suggestions off stale centroids.  Fail-fast over
-silent fallback: the error now propagates.  The one `_concurrent` caller that
-ignored its bool result (`TenantPurgeService`) now logs when the refresh fails.
+would proceed to read/generate suggestions off stale centroids. The concurrent
+path reports a typed failure outcome, and `TenantPurgeService` logs when the
+refresh does not complete.
 """
 
 from __future__ import annotations
@@ -15,6 +15,8 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
+
+from recognition.domain.repositories import MvRefreshOutcome
 
 pytestmark = pytest.mark.asyncio
 
@@ -84,15 +86,16 @@ async def test_refresh_centroids_view_postgres_happy_path(monkeypatch) -> None:
     assert "execute" in order
 
 
-async def test_purge_rows_warns_when_mv_refresh_fails(monkeypatch, caplog) -> None:
-    """When the concurrent refresh returns False the purge logs it (no longer silent)."""
+@pytest.mark.parametrize("outcome", [MvRefreshOutcome.SKIPPED_HEADROOM, MvRefreshOutcome.FAILED])
+async def test_purge_rows_warns_when_mv_refresh_does_not_complete(monkeypatch, caplog, outcome) -> None:
+    """Purge treats both a skip and a failure as a not-refreshed outcome."""
     from recognition.application.services.purge_service import TenantPurgeService
 
     service = TenantPurgeService(session=MagicMock())
     monkeypatch.setattr(service, "_collect_scope_ids", AsyncMock(return_value=MagicMock()))
     monkeypatch.setattr(service, "_delete_jobs_for_scope", AsyncMock(return_value={}))
     monkeypatch.setattr(service, "_delete_dependency_rows", AsyncMock(return_value={}))
-    service._cluster_repository.refresh_centroids_view_concurrent = AsyncMock(return_value=False)
+    service._cluster_repository.refresh_centroids_view_concurrent = AsyncMock(return_value=outcome)
 
     with caplog.at_level(logging.WARNING, logger="recognition.application.services.purge_service"):
         await service._purge_rows(uuid4(), "all")

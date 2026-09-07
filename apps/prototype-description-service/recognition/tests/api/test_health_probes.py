@@ -1,15 +1,19 @@
-"""Slice 2a + 2-ready: root /health is liveness-only; /ready runs dep probes.
+"""Health probe contracts for the recognition service.
 
 Tests cover:
-- GET /health returns 200 with {"status": HealthStatus.OK, "timestamp": ...}.
-- GET /health performs no I/O (never enters a DB session factory).
+- GET /health probes the observability database pool with a bounded timeout.
+- GET /health returns 503 and preserves identity when the pool is unavailable.
+- GET /health keeps only the database dependency projection.
+- Invalid database timeout configuration fails app creation.
 - HealthStatus is a StrEnum in shared.health with OK/DEGRADED/UNHEALTHY.
 - GET /ready runs DB + breaker + model-cache probes and aggregates status.
 """
 
 from __future__ import annotations
 
+import asyncio
 from enum import StrEnum
+from time import perf_counter
 
 import pytest
 from fastapi.testclient import TestClient
@@ -29,15 +33,15 @@ def test_health_status_enum_exposes_canonical_members() -> None:
     assert HealthStatus.UNHEALTHY.value == "unhealthy"
 
 
-def test_root_health_is_liveness_only() -> None:
-    """GET / health returns {status: ok, timestamp: ...} with 200 and performs
-    zero I/O. PR-01: the Caddy active probe at 10s must never touch the DB,
-    breaker state, or disk. Liveness answers only 'can this process respond'.
+def test_root_health_is_healthy_when_observability_pool_is_available() -> None:
+    """A reachable pool makes /health return 200 with one database check.
+
+    Deploy smoke, ``verify``, ``status``, and uptime checks use this endpoint,
+    so its success signal must include the same pool probe used by readiness.
     """
-    from api.main import create_app
     from shared.health import HealthStatus
 
-    app = create_app()
+    app = _build_ready_app(db_ok=True)
     client = TestClient(app)
 
     resp = client.get("/health")
@@ -45,40 +49,120 @@ def test_root_health_is_liveness_only() -> None:
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["status"] == HealthStatus.OK.value
+    assert body["database"]["status"] == HealthStatus.OK.value
     assert "timestamp" in body
-    # Liveness must not include dependency projections: no DB, breaker, or cache.
-    # description_adapter is deployment config and stays on /health/detailed.
+
+
+def test_root_health_reports_unhealthy_when_observability_session_is_unavailable() -> None:
+    """A missing observability session is a 503 database health failure."""
+    from shared.health import HealthStatus
+
+    app = _build_ready_app(db_ok=False)
+    client = TestClient(app)
+
+    resp = client.get("/health")
+
+    assert resp.status_code == 503, resp.text
+    body = resp.json()
+    assert body["status"] == HealthStatus.UNHEALTHY.value
+    assert body["database"]["status"] == HealthStatus.UNHEALTHY.value
+    assert body["database"]["detail"] == "connection_unavailable"
+
+
+def test_root_health_timeout_is_bounded(monkeypatch) -> None:
+    """A slow database probe returns 503 within the configured bound."""
+    from api import main as main_module
+    from shared.health import HealthStatus
+
+    monkeypatch.setenv("ACX_HEALTH_DB_TIMEOUT_SECONDS", "0.05")
+
+    async def _slow_database_probe(_session):
+        await asyncio.sleep(1)
+
+    monkeypatch.setattr(main_module, "check_database", _slow_database_probe)
+    app = _build_ready_app(db_ok=True)
+    client = TestClient(app)
+
+    started = perf_counter()
+    resp = client.get("/health")
+    elapsed = perf_counter() - started
+
+    assert elapsed < 1, f"/health exceeded its bound: {elapsed:.3f}s"
+    assert resp.status_code == 503, resp.text
+    body = resp.json()
+    assert body["status"] == HealthStatus.UNHEALTHY.value
+    assert body["database"]["status"] == HealthStatus.UNHEALTHY.value
+    assert body["database"]["reason"] == "timeout"
+
+
+def test_root_health_preserves_identity_when_database_unhealthy(monkeypatch) -> None:
+    """A database outage response still identifies the deployed image."""
+    monkeypatch.setenv("APP_GIT_COMMIT_SHA", "af9d6504deadbeefcafebabe1234567890abcdef")
+
+    app = _build_ready_app(db_ok=False)
+    client = TestClient(app)
+
+    resp = client.get("/health")
+
+    assert resp.status_code == 503, resp.text
+    body = resp.json()
+    assert body["commit_sha"] == "af9d6504deadbeefcafebabe1234567890abcdef"
+    assert isinstance(body["image_variant"], str) and body["image_variant"]
+
+
+def test_root_health_excludes_non_database_dependency_projections() -> None:
+    """The root probe exposes only identity plus its database check."""
+    app = _build_ready_app(db_ok=True)
+    client = TestClient(app)
+
+    resp = client.get("/health")
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
     forbidden_keys = {
-        "database",
         "breaker_state",
         "pool_stats",
         "checks",
         "model_cache",
         "description_adapter",
     }
-    assert not (forbidden_keys & body.keys()), (
-        f"/health leaked dependency fields {forbidden_keys & body.keys()}; liveness must stay minimal (PR-01)."
-    )
+    assert not (forbidden_keys & body.keys()), f"/health leaked dependency fields {forbidden_keys & body.keys()}"
 
 
-def test_root_health_does_not_open_db_session(monkeypatch) -> None:
-    """The liveness handler must not call any session factory. Monkeypatch the
-    observability and business factories to raise; a passing response proves
-    the handler never entered them.
-    """
+@pytest.mark.parametrize("raw_timeout", ["abc", "0"])
+def test_create_app_rejects_invalid_health_db_timeout(monkeypatch, raw_timeout: str) -> None:
+    """Malformed and non-positive health timeouts fail before serving."""
     from api.main import create_app
-    from recognition.interface_adapters.http import deps as dependencies
 
-    def _boom():  # pragma: no cover - should never execute
-        raise AssertionError("/health must not open a DB session (liveness only)")
+    monkeypatch.setenv("ACX_HEALTH_DB_TIMEOUT_SECONDS", raw_timeout)
 
-    app = create_app()
-    app.dependency_overrides[dependencies.get_optional_session] = _boom
-    app.dependency_overrides[dependencies.get_observability_session] = _boom
-    client = TestClient(app)
+    with pytest.raises(ValueError, match="ACX_HEALTH_DB_TIMEOUT_SECONDS"):
+        create_app()
 
-    resp = client.get("/health")
-    assert resp.status_code == 200
+
+def test_root_health_route_is_not_named_or_documented_as_liveness() -> None:
+    """HEALTHOBS-1-BR-07: /health is a pool-backed dependency check, not liveness.
+
+    The route handler must not be named ``liveness`` (it does a bounded DB
+    pool check and can return 503 on a transient DB blip), and the
+    registration docstring must warn operators not to wire a
+    restart-on-failure consumer to this route.
+    """
+    import inspect
+
+    from api.main import register_health_probes
+
+    app = _build_ready_app(db_ok=True)
+    health_route = next(route for route in app.routes if getattr(route, "path", None) == "/health")
+    endpoint_name = health_route.endpoint.__name__
+
+    assert endpoint_name != "liveness", "route handler must not be misnamed 'liveness'"
+
+    docstring = inspect.getdoc(register_health_probes) or ""
+    assert "restart-on-failure" in docstring, (
+        "register_health_probes docstring must warn that /health is not a "
+        "restart-on-failure liveness contract"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +225,161 @@ def _build_ready_app(
     return app
 
 
+@pytest.fixture(autouse=True)
+def _clear_disk_headroom_settings_cache():
+    """Keep cached headroom settings isolated from env-mutating probe tests."""
+    from shared.disk_headroom import get_disk_headroom_settings
+
+    get_disk_headroom_settings.cache_clear()
+    yield
+    get_disk_headroom_settings.cache_clear()
+
+
+def _stub_disk_headroom_probe(monkeypatch, *, free_bytes: int, total_bytes: int, status, reason: str):
+    from shared.disk_headroom import DiskHeadroom
+
+    def _probe(path: str) -> DiskHeadroom:
+        return DiskHeadroom(
+            probe_path=path,
+            free_bytes=free_bytes,
+            total_bytes=total_bytes,
+            status=status,
+            reason=reason,
+        )
+
+    # The alias is added by the readiness implementation; allowing this
+    # pre-implementation keeps the test's RED result about the missing check.
+    monkeypatch.setattr("recognition.application.health.probe_disk_headroom", _probe, raising=False)
+
+
+def test_ready_disk_headroom_below_threshold_is_degraded_without_503(monkeypatch, tmp_path) -> None:
+    """Disk pressure degrades readiness but never removes the pod from service."""
+    from shared.disk_headroom import get_disk_headroom_settings
+    from shared.health import HealthStatus
+
+    monkeypatch.setenv("ACX_PG_HEADROOM_PROBE_PATH", str(tmp_path))
+    monkeypatch.setenv("ACX_PG_HEADROOM_MIN_BYTES", "100")
+    get_disk_headroom_settings.cache_clear()
+    _stub_disk_headroom_probe(
+        monkeypatch,
+        free_bytes=99,
+        total_bytes=1000,
+        status=HealthStatus.UNHEALTHY,
+        reason="free bytes below minimum headroom (100)",
+    )
+
+    bundle = tmp_path / "buffalo_l"
+    bundle.mkdir()
+    (bundle / "det_10g.onnx").write_bytes(b"stub")
+    app = _build_ready_app(model_cache_dir=tmp_path)
+
+    resp = TestClient(app).get("/ready")
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == HealthStatus.DEGRADED.value
+    disk = next(check for check in body["checks"] if check["name"] == "disk_headroom")
+    assert disk["status"] == HealthStatus.DEGRADED.value
+    assert "free bytes below minimum headroom" in disk["detail"]
+    assert "free_bytes=99" in disk["detail"]
+    assert "min_bytes=100" in disk["detail"]
+    assert f"probe_path={tmp_path}" in disk["detail"]
+
+
+def test_ready_disk_headroom_probe_error_is_degraded_without_503(monkeypatch, tmp_path) -> None:
+    """A headroom probe error is diagnostic degradation, not liveness failure."""
+    from shared.disk_headroom import get_disk_headroom_settings
+    from shared.health import HealthStatus
+
+    monkeypatch.setenv("ACX_PG_HEADROOM_PROBE_PATH", str(tmp_path / "missing"))
+    get_disk_headroom_settings.cache_clear()
+    _stub_disk_headroom_probe(
+        monkeypatch,
+        free_bytes=0,
+        total_bytes=0,
+        status=HealthStatus.UNHEALTHY,
+        reason="unable to probe disk headroom: permission denied",
+    )
+
+    bundle = tmp_path / "buffalo_l"
+    bundle.mkdir()
+    (bundle / "det_10g.onnx").write_bytes(b"stub")
+    app = _build_ready_app(model_cache_dir=tmp_path)
+
+    resp = TestClient(app).get("/ready")
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == HealthStatus.DEGRADED.value
+    disk = next(check for check in body["checks"] if check["name"] == "disk_headroom")
+    assert disk["status"] == HealthStatus.DEGRADED.value
+    assert "permission denied" in disk["detail"]
+    assert "free_bytes=0" in disk["detail"]
+    assert f"probe_path={tmp_path / 'missing'}" in disk["detail"]
+
+
+def test_ready_disk_headroom_disabled_is_explicitly_ok(monkeypatch, tmp_path) -> None:
+    """Unset probe path disables the optional guard without silent success."""
+    from shared.disk_headroom import get_disk_headroom_settings
+    from shared.health import HealthStatus
+
+    monkeypatch.delenv("ACX_PG_HEADROOM_PROBE_PATH", raising=False)
+    get_disk_headroom_settings.cache_clear()
+
+    bundle = tmp_path / "buffalo_l"
+    bundle.mkdir()
+    (bundle / "det_10g.onnx").write_bytes(b"stub")
+    app = _build_ready_app(model_cache_dir=tmp_path)
+
+    resp = TestClient(app).get("/ready")
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == HealthStatus.OK.value
+    disk = next(check for check in body["checks"] if check["name"] == "disk_headroom")
+    assert disk["status"] == HealthStatus.OK.value
+    assert disk["detail"] == "disabled: ACX_PG_HEADROOM_PROBE_PATH unset"
+
+
+def test_health_detailed_includes_disk_headroom_payload(monkeypatch, tmp_path) -> None:
+    """The operator payload exposes every headroom measurement and reason."""
+    from recognition.interface_adapters.http.deps.auth import AuthContext, require_auth
+    from shared.disk_headroom import get_disk_headroom_settings
+    from shared.health import HealthStatus
+
+    monkeypatch.setenv("ACX_PG_HEADROOM_PROBE_PATH", str(tmp_path))
+    monkeypatch.setenv("ACX_PG_HEADROOM_MIN_BYTES", "100")
+    get_disk_headroom_settings.cache_clear()
+    _stub_disk_headroom_probe(
+        monkeypatch,
+        free_bytes=99,
+        total_bytes=1000,
+        status=HealthStatus.UNHEALTHY,
+        reason="free bytes below minimum headroom (100)",
+    )
+
+    bundle = tmp_path / "buffalo_l"
+    bundle.mkdir()
+    (bundle / "det_10g.onnx").write_bytes(b"stub")
+    app = _build_ready_app(model_cache_dir=tmp_path)
+
+    async def _auth_ok() -> AuthContext:
+        return AuthContext(token=None, tenant_claim=None, enabled=False)
+
+    app.dependency_overrides[require_auth] = _auth_ok
+    body = TestClient(app).get("/health/detailed").json()
+
+    assert body["status"] == HealthStatus.DEGRADED.value
+    assert body["disk_headroom"] == {
+        "probe_path": str(tmp_path),
+        "free_bytes": 99,
+        "total_bytes": 1000,
+        "min_bytes": 100,
+        "status": HealthStatus.DEGRADED.value,
+        "reason": "free bytes below minimum headroom (100)",
+    }
+
+
 def test_ready_healthy_when_all_deps_up(tmp_path) -> None:
     """/ready returns 200 with status=ok and per-dep check entries when DB,
     breaker, and model-cache bundle are all healthy.
@@ -161,7 +400,7 @@ def test_ready_healthy_when_all_deps_up(tmp_path) -> None:
     assert body["status"] == HealthStatus.OK.value
     names = {check["name"] for check in body["checks"]}
     # FIR23-01: embedding_model readiness is fail-closed with the other deps.
-    assert names == {"database", "breaker", "model_cache", "embedding_model"}
+    assert names == {"database", "breaker", "model_cache", "embedding_model", "disk_headroom"}
     for check in body["checks"]:
         assert check["status"] == HealthStatus.OK.value, check
 
@@ -423,25 +662,18 @@ def test_version_endpoint_falls_back_to_unknown_when_env_missing(monkeypatch) ->
 
 
 def test_root_health_includes_commit_sha(monkeypatch) -> None:
-    """E15-3a-BR-03: the liveness probe grows a commit_sha field so operators
-    diagnosing a stale deploy can read the SHA from the same endpoint Caddy
-    already hits. Liveness discipline (no DB/breaker/disk) is preserved —
-    commit_sha is a static identity string resolved once at import time.
-    """
+    """E15-3a-BR-03: unhealthy health responses preserve commit identity."""
     monkeypatch.setenv("APP_GIT_COMMIT_SHA", "af9d6504deadbeefcafebabe1234567890abcdef")
 
-    from api.main import create_app
-
-    app = create_app()
+    app = _build_ready_app(db_ok=False)
     client = TestClient(app)
 
     resp = client.get("/health")
-    assert resp.status_code == 200, resp.text
+    assert resp.status_code == 503, resp.text
     body = resp.json()
     assert body["commit_sha"] == "af9d6504deadbeefcafebabe1234567890abcdef"
-    # Dep-projection keys still forbidden (PR-01 liveness contract).
+    assert body["database"]["status"] == "unhealthy"
     forbidden_keys = {
-        "database",
         "breaker_state",
         "pool_stats",
         "checks",
@@ -517,7 +749,8 @@ def test_health_and_version_report_baked_image_variant(tmp_path, monkeypatch) ->
     """D8: /health and /version report image_variant from /app/.image-variant.
 
     ENV alone is not build-immutable (compose env_file overrides image ENV).
-    The bake wins even when ACX_IMAGE_VARIANT is unset or matches.
+    The bake wins even when ACX_IMAGE_VARIANT is unset or matches; /health
+    remains attributable when the database session is unavailable.
     """
     artifact = tmp_path / ".image-variant"
     artifact.write_text("vlm\n", encoding="utf-8")
@@ -527,10 +760,16 @@ def test_health_and_version_report_baked_image_variant(tmp_path, monkeypatch) ->
     from api.main import create_app
 
     app = create_app()
+    from recognition.interface_adapters.http import deps as dependencies
+
+    async def _no_observability_session():
+        yield None
+
+    app.dependency_overrides[dependencies.get_observability_session] = _no_observability_session
     client = TestClient(app)
 
     health = client.get("/health")
-    assert health.status_code == 200, health.text
+    assert health.status_code == 503, health.text
     assert health.json()["image_variant"] == "vlm"
 
     version = client.get("/version")

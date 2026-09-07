@@ -454,6 +454,44 @@ describe('useGuidedLiveDescription', () => {
       expect(client.cancel).toHaveBeenCalledWith('run-1');
     });
 
+    it('cancels a run whose id only arrives after the gate closed', async () => {
+      // The gate can close while the submit is still on the wire. There is no
+      // run id to cancel at that instant, but the server is about to hand one
+      // back for a burst no panel owns any more.
+      let handBackRunId: (run: DescribeRunResponse) => void = () => undefined;
+      const client = stubClient({
+        submit: vi.fn<GuidedLiveDescriptionClient['submit']>(
+          () =>
+            new Promise<DescribeRunResponse>((resolve) => {
+              handBackRunId = resolve;
+            }),
+        ),
+      });
+      const { result, rerender } = renderHook(
+        ({ scenario }: { scenario: GuidedScenario }) =>
+          useGuidedLiveDescription({ scenario, mediaId: MEDIA_ID, client }),
+        { initialProps: { scenario: decidedScenario() } },
+      );
+
+      await press(() => result.current.request());
+      expect(client.submit).toHaveBeenCalledTimes(1);
+      expect(result.current.state.runId).toBeNull();
+
+      await act(async () => {
+        rerender({ scenario: halfDecidedScenario() });
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.BLOCKED);
+
+      await act(async () => {
+        handBackRunId(runResponse({ run_id: 'run-orphan' }));
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      expect(client.cancel).toHaveBeenCalledWith('run-orphan');
+      expect(result.current.state.runId).toBeNull();
+    });
+
     it('does not cancel anything when the gate closes with no run in flight', async () => {
       const client = stubClient();
       const { rerender } = renderHook(

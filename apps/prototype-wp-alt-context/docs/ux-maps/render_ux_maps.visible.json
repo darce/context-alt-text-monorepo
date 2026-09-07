@@ -13,8 +13,8 @@
       "source_sha256": "dea5305316cdcf6386a1bbf8afe5ae636902ee3391ef995b1a8fa54564612d23"
     },
     "gpu-operator-control": {
-      "projection_sha256": "25621936670bdb06142663715354f9b113aa87bd2351085046e7e2684825d74a",
-      "source_sha256": "e6f8c54eaed1f0f181213fe83bb48400892a83ed97273ccf838fc151e2f48f7e"
+      "projection_sha256": "28e176487294f2842628b6492a02a78718ed95285d591f478a695f1bcbc31926",
+      "source_sha256": "1f6743c1276ec031e35b4c78ea14d133fe288ce3f42921cde99a56ac32a99f1d"
     },
     "roster-people": {
       "projection_sha256": "c3674e305d16520943172b3699073d3603c30a7195d7170114bdbaa78e92206c",

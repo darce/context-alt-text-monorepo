@@ -22,6 +22,7 @@ def _write_bundle(bundle: Path) -> None:
     bundle.mkdir()
     files = {
         "state_history.json": {
+            "schema_version": 1,
             "instance_id": "ocid1.instance.example",
             "observations": [
                 {"state": "STOPPED", "timestamp": SINCE},
@@ -144,10 +145,13 @@ def _custom_bundle(
 ) -> Path:
     bundle = tmp_path / "bundle"
     bundle.mkdir()
+    if isinstance(history, dict) and history is not _OMITTED and "schema_version" not in history:
+        history = {"schema_version": 1, **history}
     payloads = {
         "state_history.json": history
         if history is not _OMITTED
         else {
+            "schema_version": 1,
             "instance_id": INSTANCE_ID,
             "observations": [
                 {"state": "STOPPED", "timestamp": SINCE},
@@ -717,7 +721,7 @@ def test_wp_receipts_minimum_is_enforced(tmp_path: Path) -> None:
 def test_receipt_generated_at_is_accepted(tmp_path: Path) -> None:
     bundle = _custom_bundle(
         tmp_path,
-        receipts={"items": [{"description": "one", "generatedAt": RUNNING_AT}]},
+        receipts={"items": [{"description": "one", "generatedAt": "2026-09-01T00:20:00Z"}]},
     )
 
     result = _run_checker(bundle)
@@ -728,7 +732,7 @@ def test_receipt_generated_at_is_accepted(tmp_path: Path) -> None:
 def test_receipt_generated_at_snake_case_is_accepted(tmp_path: Path) -> None:
     bundle = _custom_bundle(
         tmp_path,
-        receipts={"items": [{"description": "one", "generated_at": RUNNING_AT}]},
+        receipts={"items": [{"description": "one", "generated_at": "2026-09-01T00:20:00Z"}]},
     )
 
     result = _run_checker(bundle)
@@ -1591,13 +1595,16 @@ def test_golden_oci_audit_with_a_second_start_fails_closed(tmp_path: Path) -> No
     }
     bundle = _custom_bundle(tmp_path, audit=audit)
 
-    result = _run_checker(bundle)
+    result = _run_checker(bundle, "--json")
 
     assert result.returncode == 1
-    assert "observed 2 StartInstance audit events" in result.stdout
-    # audit_transition_order still passes: the extra event carries no stateChange, so it is
-    # not an authoritative transition. exactly_one_start_instance is what fails closed.
-    assert "audit_transition_order" in result.stdout
+    verdict = json.loads(result.stdout)
+    checks = {check["name"]: check["passed"] for check in verdict["checks"]}
+    assert checks["exactly_one_start_instance"] is False
+    # The extra event carries no stateChange, so it is not an authoritative
+    # transition; the exact-cardinality check rejects it while temporal order
+    # remains true.
+    assert checks["audit_transition_order"] is True
 
 
 def test_history_start_after_the_recorded_stop_cannot_prove_burst(tmp_path: Path) -> None:
@@ -1632,3 +1639,329 @@ def test_history_transition_order_uses_observed_time_not_document_order(tmp_path
 
     assert result.returncode == 1
     assert "state history transition order" in result.stdout
+
+
+def _audit_transition_event(
+    action: str,
+    event_id: str,
+    event_time: str,
+    *,
+    principal: str | None = None,
+    previous: str = "STOPPED",
+    current: str = "RUNNING",
+) -> dict[str, object]:
+    data: dict[str, object] = {
+        "resourceId": INSTANCE_ID,
+        "stateChange": {
+            "previous": {"lifecycleState": previous},
+            "current": {"lifecycleState": current},
+        },
+    }
+    if principal is not None:
+        data["identity"] = {"principalName": principal}
+    return {
+        "eventName": f"{action}Instance",
+        "eventTime": event_time,
+        "eventId": event_id,
+        "responseStatus": 200,
+        "data": data,
+    }
+
+
+def _valid_audit() -> dict[str, list[dict[str, object]]]:
+    return {
+        "data": [
+            _audit_transition_event("Start", "start-1", RUNNING_AT),
+            _audit_transition_event(
+                "Stop", "stop-1", STOPPED_AT, principal="gpu-reaper", previous="RUNNING", current="STOPPED"
+            ),
+        ]
+    }
+
+
+def _json_checks(result: subprocess.CompletedProcess[str]) -> dict[str, bool]:
+    assert result.returncode == 1, result.stdout + result.stderr
+    verdict = json.loads(result.stdout)
+    return {check["name"]: check["passed"] for check in verdict["checks"]}
+
+
+def test_principal_extraction_ignores_nested_request_principal(tmp_path: Path) -> None:
+    audit = _valid_audit()
+    stop = audit["data"][1]
+    stop["identity"] = {"principalName": "attacker"}
+    stop_data = stop["data"]
+    assert isinstance(stop_data, dict)
+    stop_data["request"] = {"parameters": {"principalName": "gpu-reaper"}}
+
+    checks = _json_checks(_run_checker(_custom_bundle(tmp_path, audit=audit), "--json"))
+
+    assert checks["expected_stop_principal"] is False
+    assert checks["authoritative_stop_cardinality"] is False
+
+
+def test_action_extraction_rejects_nested_metadata_action_conflict(tmp_path: Path) -> None:
+    audit = _valid_audit()
+    start = audit["data"][0]
+    start["eventName"] = "GetInstance"
+    start_data = start["data"]
+    assert isinstance(start_data, dict)
+    start_data["metadata"] = {"action": "StartInstance"}
+
+    checks = _json_checks(_run_checker(_custom_bundle(tmp_path, audit=audit), "--json"))
+
+    assert checks["audit_payload_contract"] is False
+    assert checks["exactly_one_start_instance"] is False
+
+
+def test_instance_id_alias_conflict_fails_closed(tmp_path: Path) -> None:
+    instance = {"id": INSTANCE_ID, "data": {"id": "ocid1.instance.other", "lifecycle-state": "STOPPED"}}
+
+    checks = _json_checks(_run_checker(_custom_bundle(tmp_path, instance=instance), "--json"))
+
+    assert checks["instance_id_extraction"] is False
+    assert checks["instance_identity"] is False
+
+
+def test_unrelated_nested_data_id_does_not_collapse_distinct_starts(tmp_path: Path) -> None:
+    audit = _valid_audit()
+    first_start = audit["data"][0]
+    assert isinstance(first_start, dict)
+    first_start.pop("eventId")
+    first_data = first_start["data"]
+    assert isinstance(first_data, dict)
+    first_data["id"] = "shared-unrelated-id"
+    second_start = _audit_transition_event("Start", "unused", "2026-09-01T00:11:00Z")
+    second_start.pop("eventId")
+    second_data = second_start["data"]
+    assert isinstance(second_data, dict)
+    second_data["id"] = "shared-unrelated-id"
+    audit["data"].insert(1, second_start)
+
+    checks = _json_checks(_run_checker(_custom_bundle(tmp_path, audit=audit), "--json"))
+
+    assert checks["exactly_one_start_instance"] is False
+    assert checks["audit_action_sequence"] is False
+
+
+def test_multiple_completed_records_for_one_group_fail_closed(tmp_path: Path) -> None:
+    first_start = _audit_transition_event("Start", "start-end-1", RUNNING_AT)
+    second_start = _audit_transition_event("Start", "start-end-2", "2026-09-01T00:11:00Z")
+    for event in (first_start, second_start):
+        event["eventType"] = "com.oraclecloud.computeapi.StartInstance.end"
+        event["eventGroupingId"] = "same-start-group"
+    audit = {
+        "data": [
+            first_start,
+            second_start,
+            _audit_transition_event(
+                "Stop", "stop-end-1", STOPPED_AT, principal="gpu-reaper", previous="RUNNING", current="STOPPED"
+            ),
+        ]
+    }
+
+    result = _run_checker(_custom_bundle(tmp_path, audit=audit), "--json")
+    checks = _json_checks(result)
+    verdict = json.loads(result.stdout)
+    details = " ".join(check["detail"] for check in verdict["checks"] if check["name"] == "audit_payload_contract")
+
+    assert checks["audit_payload_contract"] is False
+    assert "completed records" in details
+
+
+def test_status_text_with_code_and_error_word_is_not_success(tmp_path: Path) -> None:
+    audit = _valid_audit()
+    start = audit["data"][0]
+    start["responseStatus"] = "error 200"
+
+    checks = _json_checks(_run_checker(_custom_bundle(tmp_path, audit=audit), "--json"))
+
+    assert checks["audit_payload_contract"] is False
+    assert checks["exactly_one_start_instance"] is False
+
+
+def test_two_authoritative_reaper_stops_fail_cardinality(tmp_path: Path) -> None:
+    audit = _valid_audit()
+    audit["data"].append(
+        _audit_transition_event(
+            "Stop", "stop-2", "2026-09-01T00:40:00Z", principal="gpu-reaper", previous="RUNNING", current="STOPPED"
+        )
+    )
+
+    checks = _json_checks(_run_checker(_custom_bundle(tmp_path, audit=audit), "--json"))
+
+    assert checks["authoritative_stop_cardinality"] is False
+    assert checks["audit_action_sequence"] is False
+
+
+def test_successful_stop_with_contradictory_current_state_fails_before_filtering(tmp_path: Path) -> None:
+    audit = _valid_audit()
+    audit["data"].insert(
+        1,
+        _audit_transition_event(
+            "Stop",
+            "stop-contradictory",
+            "2026-09-01T00:20:00Z",
+            principal="gpu-reaper",
+            previous="RUNNING",
+            current="RUNNING",
+        ),
+    )
+
+    checks = _json_checks(_run_checker(_custom_bundle(tmp_path, audit=audit), "--json"))
+
+    assert checks["audit_current_state_consistency"] is False
+    assert checks["audit_action_sequence"] is False
+
+
+def test_stop_previous_state_must_be_running(tmp_path: Path) -> None:
+    audit = _valid_audit()
+    bad_stop = audit["data"][1]
+    bad_data = bad_stop["data"]
+    assert isinstance(bad_data, dict)
+    bad_change = bad_data["stateChange"]
+    assert isinstance(bad_change, dict)
+    bad_change["previous"] = {"lifecycleState": "STOPPED"}
+
+    checks = _json_checks(_run_checker(_custom_bundle(tmp_path, audit=audit), "--json"))
+
+    assert checks["audit_transition_states"] is False
+
+
+def test_state_history_envelope_version_is_checked_before_observations(tmp_path: Path) -> None:
+    history = {
+        "schema_version": 99,
+        "state": "unknown",
+        "instance_id": INSTANCE_ID,
+        "observations": [
+            {"state": "STOPPED", "timestamp": SINCE},
+            {"state": "RUNNING", "timestamp": RUNNING_AT},
+            {"state": "STOPPED", "timestamp": STOPPED_AT},
+        ],
+    }
+
+    checks = _json_checks(_run_checker(_custom_bundle(tmp_path, history=history), "--json"))
+
+    assert checks["state_history_schema"] is False
+    assert checks["state_history_burst"] is False
+
+
+def test_unknown_state_history_lifecycle_value_is_named_failure(tmp_path: Path) -> None:
+    history = {
+        "schema_version": 1,
+        "instance_id": INSTANCE_ID,
+        "observations": [
+            {"state": "STOPPED", "timestamp": SINCE},
+            {"state": "unknown", "timestamp": RUNNING_AT},
+            {"state": "STOPPED", "timestamp": STOPPED_AT},
+        ],
+    }
+
+    checks = _json_checks(_run_checker(_custom_bundle(tmp_path, history=history), "--json"))
+
+    assert checks["state_history_lifecycle"] is False
+    assert checks["state_history_burst"] is False
+
+
+def test_state_action_without_timestamp_is_not_silently_dropped(tmp_path: Path) -> None:
+    history = {
+        "schema_version": 1,
+        "instance_id": INSTANCE_ID,
+        "observations": [
+            {"state": "STOPPED", "timestamp": SINCE},
+            {"state": "RUNNING", "generated_at": RUNNING_AT, "action": "StartInstance"},
+            {"state": "STOPPED", "written_at": STOPPED_AT, "action": "StopInstance"},
+            {"state": "STOPPED", "action": "StopInstance"},
+        ],
+    }
+
+    result = _run_checker(_custom_bundle(tmp_path, history=history), "--json")
+    checks = _json_checks(result)
+    verdict = json.loads(result.stdout)
+    action_detail = next(check["detail"] for check in verdict["checks"] if check["name"] == "state_history_actions")
+
+    assert checks["state_history_actions"] is False
+    assert "invalid or missing timestamp" in action_detail
+
+
+def test_state_action_time_aliases_are_shared_and_supported(tmp_path: Path) -> None:
+    history = {
+        "schema_version": 1,
+        "instance_id": INSTANCE_ID,
+        "observations": [
+            {"state": "STOPPED", "generated_at": SINCE},
+            {"state": "RUNNING", "generated_at": RUNNING_AT, "action": "StartInstance"},
+            {"state": "STOPPED", "written_at": STOPPED_AT, "action": "StopInstance"},
+        ],
+    }
+
+    result = _run_checker(_custom_bundle(tmp_path, history=history), "--json")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    verdict = json.loads(result.stdout)
+    checks = {check["name"]: check["passed"] for check in verdict["checks"]}
+    assert checks["state_history_actions"] is True
+
+
+def test_state_action_sequence_rejects_trailing_start(tmp_path: Path) -> None:
+    history = {
+        "schema_version": 1,
+        "instance_id": INSTANCE_ID,
+        "observations": [
+            {"state": "STOPPED", "timestamp": SINCE},
+            {"state": "RUNNING", "timestamp": RUNNING_AT, "action": "StartInstance"},
+            {"state": "STOPPED", "timestamp": STOPPED_AT, "action": "StopInstance"},
+            {"state": "STOPPED", "timestamp": "2026-09-01T00:40:00Z", "action": "StartInstance"},
+        ],
+    }
+
+    checks = _json_checks(_run_checker(_custom_bundle(tmp_path, history=history), "--json"))
+
+    assert checks["state_history_actions"] is False
+    assert checks["state_history_burst"] is False
+
+
+@pytest.mark.parametrize("receipt_time", [RUNNING_AT, STOPPED_AT])
+def test_wp_receipt_at_running_interval_boundary_is_not_work(tmp_path: Path, receipt_time: str) -> None:
+    bundle = _custom_bundle(
+        tmp_path,
+        receipts={"items": [{"description": "boundary", "timestamp": receipt_time}]},
+    )
+
+    checks = _json_checks(_run_checker(bundle, "--json"))
+
+    assert checks["wp_descriptions"] is False
+
+
+def test_deeply_nested_state_history_fails_without_recursion_crash(tmp_path: Path) -> None:
+    nested: object = [
+        {"state": "STOPPED", "timestamp": SINCE},
+        {"state": "RUNNING", "timestamp": RUNNING_AT},
+        {"state": "STOPPED", "timestamp": STOPPED_AT},
+    ]
+    for _ in range(80):
+        nested = {"observations": nested}
+    history = {"schema_version": 1, "instance_id": INSTANCE_ID, "observations": nested}
+
+    result = _run_checker(_custom_bundle(tmp_path, history=history), "--json")
+
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    verdict = json.loads(result.stdout)
+    checks = {check["name"]: check for check in verdict["checks"]}
+    assert checks["state_history_burst"]["passed"] is False
+    assert "maximum nested depth" in checks["state_history_burst"]["detail"]
+
+
+def test_history_builder_does_not_derive_stop_from_wrong_previous_state(tmp_path: Path) -> None:
+    checker = _load_checker_module()
+    audit = _valid_audit()
+    bad_stop = audit["data"][1]
+    bad_data = bad_stop["data"]
+    assert isinstance(bad_data, dict)
+    bad_change = bad_data["stateChange"]
+    assert isinstance(bad_change, dict)
+    bad_change["previous"] = {"lifecycleState": "STOPPED"}
+
+    history = checker.build_state_history_document(audit, instance_id=INSTANCE_ID, since=SINCE, until=UNTIL)
+
+    assert [observation["state"] for observation in history["observations"]] == ["STOPPED", "RUNNING"]

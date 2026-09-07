@@ -43,7 +43,7 @@ Sub-lane worktrees are integrated into their parent branch but never torn down; 
 - [FLOW-06] Derived state heals from the log: worktree/row inventory is re-derived from git on every run, never remembered.
 - [RES-12]/[PERF-14] Batch the chatty path: `plan-done`, finding dispositions and archive tags go through batch operations, not 60 single writes.
 - [PERF-04] Amdahl: the serial fraction is the `wiring → gpuops-1` cut vertex; everything else is scheduled in parallel.
-- [OBS-01]/[OBS-05] Expose state: `make context` reports the redundant-worktree count; thresholds live in the Makefile, not the handler.
+- [OBS-01]/[OBS-05] Expose state: `make worktree-reap` prints the full redundant list (never just a count) and `check-all` fails on it; thresholds live in `mk/lane-maintenance.mk`, not the script.
 
 ## Terminology
 
@@ -90,13 +90,14 @@ The `wiring — gpuops-1` edge is semantic, not just textual: both branches inde
 - Every branch in the redundant class deleted; every parked branch has an `archive/` tag.
 - Five live components landed on `main` with gate evidence, rows `done` + archived.
 - `make task-reap` reports 0 `ambiguous`; `manage_worktree_lane(list)` returns no `planned` rows for landed branches.
-- `make worktree-reap` exists, is tested, and `make context` warns when redundant worktrees exist.
+- `make worktree-reap` exists, is tested, and `make check-all` fails while redundant worktrees exist.
 
 ## Context Loading
 
 - `docs/workbay/rules/graph-theory-heuristics.md` — GRPH-01/05/06.
 - `docs/workbay/rules/development-workflow.md` § Pre-Merge Gate, § Dirty Worktree Teardown.
-- `scripts/workbay_lifecycle/handlers/task_finish.py:689-710` — existing `is-ancestor` check to reuse.
+- `scripts/workbay_lifecycle/handlers/task_finish.py:_branch_is_merged` — ancestor-then-`git cherry` merged check whose semantics `scripts/worktree_reap.py` copies (plugin file, not importable from tracked code).
+- `~/Development/agentic-protocol-monorepo/scripts/worktree_reachability.py` — prior art: blob-reachability instead of `status --short` as the reap-safety predicate.
 - Prior art (semantic search `find_related_prior_work`): `MAINT-worktree-close-wave-20260816`, `MAINT-inflight-board-clearing-20260710`, VLM-5 landing decision #2081 (ff-merge after `handoff_close_check(enforce=True)`).
 - GPUOPS-1 continuation `cont-20260907T141614730082Z-e38702a0` — groups A–F, lane test commands, API gotchas.
 - Lane test commands: from `manage_worktree_lane(list, task_ref=…)` rows (copied into the manifest section).
@@ -105,7 +106,7 @@ The `wiring — gpuops-1` edge is semantic, not just textual: both branches inde
 
 - No service/schema/MCP contract changes from LAND-1 itself.
 - `docs/workbay/contracts/gpu-lifecycle.md` is edited by both wiring and gpuops-1 group A; the reconcile node merges them into one contract text.
-- New make target + lifecycle handler (`worktree-reap`) is repo-local (`scripts/workbay_lifecycle/handlers/`); it must not import orchestration internals (rg-013 spirit).
+- New make target + script (`worktree-reap`) is repo-local (`scripts/worktree_reap.py`, `mk/lane-maintenance.mk`); it shells out to git only and imports no workbay internals.
 
 ## Proposed Solution
 
@@ -151,23 +152,24 @@ Colouring ([GRPH-09]): lanes touching `gpu-lifecycle-install.sh` / `gpu-lifecycl
 
 ## Files and Surfaces to Change
 
-- `scripts/workbay_lifecycle/handlers/worktree_reap.py` (new) — classify + apply.
-- `scripts/workbay_lifecycle/cli.py` — register `worktree-reap`.
-- `scripts/workbay_lifecycle/tests/test_worktree_reap.py` (new).
-- `Makefile.d/lifecycle.mk` — `worktree-reap` target; `context` gains the redundant-worktree warning.
+`scripts/workbay_lifecycle/` and `Makefile.d/` are workbay-plugin output (gitignored, `.gitignore:135`, `:138`); nothing added there lands on `main`. The reaper lives on tracked surfaces:
+
+- `scripts/worktree_reap.py` (new) — `classify(repo) -> list[WorktreeRecord]`, `apply(records, *, dry_run)`; classification contract = `task_finish._branch_is_merged` semantics (`git merge-base --is-ancestor <branch> <parent>` OR every `git cherry <parent> <branch>` line is `-`), dirtiness = `git status --porcelain` non-empty (a dirty record is never reaped; blob-reachability scoring per `agentic-protocol-monorepo/scripts/worktree_reachability.py` is a stretch goal).
+- `scripts/test_worktree_reap.py` (new) — added to the `test-scripts` list in `Makefile`.
+- `mk/lane-maintenance.mk` — `worktree-reap` (dry run, JSON + table) and `worktree-reap-check` (exit 1 when redundant worktrees exist, wired into `check-all`). `make context` is plugin-owned; a warning there is filed as an upstream request, not implemented here.
 - `docs/workbay/rules/development-workflow.md` — § Landing Protocol (the 8 steps above).
-- `docs/workbay/constitution.md` + `CLAUDE.md` — new guard rg-019 (sub-lane worktrees are reaped at integration, same slice).
+- `docs/workbay/constitution.md` + `CLAUDE.md` — new guard rg-019 (sub-lane worktrees are reaped in the same slice that integrates them).
 - `docs/tasks/v0.5.0/lanes/*` — the 5 orphan briefs, committed on `feature/land-1`.
 
 ## Related Files
 
-- `scripts/workbay_lifecycle/handlers/task_finish.py` — ancestry + teardown primitives to reuse.
+- `scripts/workbay_lifecycle/handlers/task_finish.py` — `_branch_is_merged`, worktree-remove/branch-delete ordering (read-only reference).
 - `config/lane-orchestration/GPUOPS-1.json`, `EVID-1.json`, `GPULIFE-1.json` — owned_paths for the fix lanes (owned_paths override in the brief is inert; edit the manifest).
 - `scripts/vm/reap-lane.sh` — VMREAP-3 follow-up target (unstarted; not in this plan's DAG).
 
 ## Verification Strategy
 
-- Tool: `pytest scripts/workbay_lifecycle/tests/test_worktree_reap.py` — fixtures build a temp repo with (a) ancestor sub-lane, (b) sub-lane with unique commit, (c) dirty ancestor, (d) review branch == main; assert classification and that `--apply` removes only (a)/(d) and refuses (b)/(c). Mutation check: remove the `is-ancestor` call → tests fail.
+- Tool: `pytest scripts/test_worktree_reap.py` — fixtures build a temp repo with (a) ancestor sub-lane, (b) sub-lane with one unique commit, (c) dirty ancestor, (d) review branch == main, (e) sub-lane rebased onto parent (SHAs differ, `git cherry` all `-`); assert `classify` returns REDUNDANT for (a)/(d)/(e), LIVE for (b), DIRTY for (c), and that `apply` removes only REDUNDANT. Mutation check: drop the `git cherry` fallback → (e) fails.
 - Landing: per component, `merge-base --is-ancestor <branch> main` == 0 and `git worktree list | grep -c <path>` == 0; `handoff_close_check(enforce=True)` JSON archived as test evidence.
 - Hygiene: `make task-reap` → `ambiguous (0)`; `git worktree list | wc -l` ≤ 2 + live lanes.
 - Reviews: adversarial `/wb-review-slice` on gpuops-1 (7 lenses: state-machine, failure-modes, boundary-contract, operator-ux, naming-truth, test-integrity, canon) — 1 local + 6 remote; on evid-1 (3 lenses: failure-modes, test-integrity, boundary-contract).
@@ -198,8 +200,8 @@ Colouring ([GRPH-09]): lanes touching `gpu-lifecycle-install.sh` / `gpu-lifecycl
 
 ### Slice 5: Make it not recur
 
-**Goal**: `make context` warns on redundant worktrees; landing protocol documented; guard recorded.
-**Proof**: `make context` output includes `worktree_reap: redundant=<n>` and the JSON field; § Landing Protocol in development-workflow.md; rg-019 in constitution + CLAUDE.md sync in the same commit; `make check-all` green.
+**Goal**: `check-all` fails on redundant worktrees; landing protocol documented; guard recorded.
+**Proof**: `make worktree-reap-check` exits 1 against a fixture repo with one redundant worktree and 0 on the converged repo; § Landing Protocol in development-workflow.md; rg-019 in constitution + CLAUDE.md sync in the same commit; `make check-all` green; upstream request filed for a `make context` warning.
 
 ## Lane Decomposition (Multi-Agent)
 
@@ -214,13 +216,13 @@ Lanes are dispatched under their **owning** task_ref (findings and gate audit st
 | evid-1-sh | EVID-1 | feature/evid-1-sh | scripts/deploy/lib/export-gpu-evidence.sh, scripts/deploy/tests/test_export_gpu_evidence_shell.py, scripts/deploy/tests/test-export-gpu-evidence.sh | codex-remote luna/max | `python3 -m pytest scripts/deploy/tests/test_export_gpu_evidence_shell.py -q` |
 | evid-1-mk | EVID-1 | feature/evid-1-mk | mk/gpu-evidence.mk, docs/runbooks/gpu-evidence-capture.md | codex-remote luna/max | `make -n gpu-evidence-export` + shell test |
 | gpuops-1-b-intent | GPUOPS-1 | feature/gpuops-1-b-intent | infra/oci/gpu_lifecycle/intent.py, infra/oci/gpu_lifecycle/tests/test_intent*.py | codex-remote luna/max | `python3 -m pytest infra/oci/gpu_lifecycle/tests/test_intent.py infra/oci/gpu_lifecycle/tests/test_intent_controller.py -q` |
-| gpuops-1-d-observe | GPUOPS-1 | feature/gpuops-1-d-observe | infra/oci/gpu_lifecycle/reaper.py, apps/prototype-description-service/scene/gpu_*.py, scene/tests/test_gpu_router.py | codex-remote luna/max | `python3 -m pytest infra/oci/gpu_lifecycle/tests -q && cd apps/prototype-description-service && python -m pytest scene/tests/test_gpu_router.py -q` |
+| gpuops-1-d-observe | GPUOPS-1 | feature/gpuops-1-d-observe | infra/oci/gpu_lifecycle/reaper.py, apps/prototype-description-service/scene/application/gpu_intent.py, scene/application/gpu_state.py, scene/interface_adapters/http/routers/gpu.py, scene/infrastructure/vlm/gpu_remote_adapter.py, scene/tests/test_gpu_router.py | codex-remote luna/max | `python3 -m pytest infra/oci/gpu_lifecycle/tests -q && cd apps/prototype-description-service && python -m pytest scene/tests/test_gpu_router.py -q` |
 | gpuops-1-f-process | GPUOPS-1 | feature/gpuops-1-f-process | scripts/deploy/tests/test_gpu_cost_runbook_matches_verified_state.py, docs/runbooks/oci-instance-state-and-cost.md, docs/tasks/v0.5.0/lanes/GPUOPS-1-_common.md, config/lane-orchestration/GPUOPS-1.json | codex-remote luna/max | `LC_ALL=C python3 -m pytest scripts/deploy/tests/test_gpu_cost_runbook_matches_verified_state.py -q` |
 | gpuops-1-e-durability | GPUOPS-1 | feature/gpuops-1-e-durability | intent.py (after B), docs/workbay/contracts/gpu-lifecycle.md | codex-remote luna/max | intent + reaper suites |
 | gpuops-1-reconcile | GPUOPS-1 | feature/gpuops-1 | gpu-lifecycle-install.sh, test_gpu_lifecycle_install.py | codex-remote luna/max | installer suites + shellcheck |
 | gpuops-1-a-contract | GPUOPS-1 | feature/gpuops-1-a-contract | docs/workbay/contracts/gpu-lifecycle.md | codex-remote luna/max | `make lint-task-plans` |
 | gpuops-1-c-installer | GPUOPS-1 | feature/gpuops-1-c-installer | gpu-lifecycle-install.sh, infra/oci/cloud-init.yaml, single-reaper-owner test | codex-remote luna/max | installer + cloud-init suites |
-| land-1-reap-tool | LAND-1 | feature/land-1 | scripts/workbay_lifecycle/**, Makefile.d/lifecycle.mk | local /wb-tdd | `pytest scripts/workbay_lifecycle/tests/test_worktree_reap.py -q` |
+| land-1-reap-tool | LAND-1 | feature/land-1 | scripts/worktree_reap.py, scripts/test_worktree_reap.py, mk/lane-maintenance.mk, Makefile (test-scripts list) | codex-remote luna/max (/wb-tdd brief) | `python3 -m pytest scripts/test_worktree_reap.py -q` |
 | land-1-hygiene | LAND-1 | feature/land-1 | handoff DB only | local + junior subagent | `make task-reap` |
 
 ### Merge Order
@@ -232,7 +234,11 @@ Lanes are dispatched under their **owning** task_ref (findings and gate audit st
 
 ### Manifest
 
-`config/lane-orchestration/LAND-1.json` for the two local lanes; fix lanes append to the existing `GPUOPS-1.json` / `EVID-1.json` / `GPULIFE-1.json` (`owned_paths` + `depends_on` edges: `e-durability → b-intent`, `a-contract → reconcile`, `c-installer → reconcile`). Validate with `load_manifest`.
+`config/lane-orchestration/` is gitignored workspace-local state (`.gitignore:189`), not a versioned surface. Each manifest is `{task_ref, lanes: {lane_id: {...}}, depends_on, merge_order, downstream, routing, default_done_definition}`. Existing lane ids: GPUOPS-1 `gpuops-1-r1-intent-reader/r2-service-parity/r3-installer-fencing/r4-reaper-start` (landed, rows still `planned`); EVID-1 `evid-1-evidence` (→ `feature/evid-1`), `evid-1-rev`; GPULIFE-1 `gpulife-1-rev-a/rev-d/fix/r3-wiring/r3-preflight`.
+
+Per new lane, in order: (1) close the stale rows above (`manage_worktree_lane close`); (2) `git worktree add ../context-alt-text-monorepo-<lane> -b feature/<lane> feature/<parent>`; (3) `manage_worktree_lane upsert` with `task_ref`, `lane_id`, `branch`, `worktree_path`, `owned_paths`, `test_command`; (4) add `lanes[lane_id]` + `depends_on` edges (`gpuops-1-e-durability → gpuops-1-b-intent`, `gpuops-1-a-contract → gpuops-1-reconcile`, `gpuops-1-c-installer → gpuops-1-reconcile`) to the manifest and validate with `load_manifest`; (5) post the brief via `dispatch_lane_work(brief=…)`. Manifest alone is not a lane; a brief payload `owned_paths_override` is inert.
+
+LAND-1's own two lanes run locally on `feature/land-1` and need no manifest.
 
 ### Orchestration Mode
 
@@ -241,15 +247,53 @@ Lanes are dispatched under their **owning** task_ref (findings and gate audit st
 ## Consolidated Checklist
 
 - [ ] S1 reaper tool tests red → green; 20 worktrees / 27 branches removed; orphan briefs committed
-- [ ] S2 45 `plan-done`; 18 ambiguous classified + closed; 12 archive tags; 6 rows parked; 143 findings deferred
+- [ ] S2 45 `plan-done`; 18 ambiguous classified + closed; 12 archive tags; 6 rows parked; open findings on parked refs deferred with rationale
 - [ ] S3 GPULIFE-1, HEALTHOBS-1, DEMOGATE-2, EVID-1 landed with gate evidence and rows archived
-- [ ] S4 GPUOPS-1 reconciled, 10 findings closed, 7-lens review, landed
-- [ ] S5 `make context` warning + Landing Protocol doc + rg-019 synced; `make check-all` green
+- [ ] S4 GPUOPS-1 reconciled, findings closed, 7-lens review, landed
+- [ ] S5 `worktree-reap-check` in `check-all` + Landing Protocol doc + rg-019 synced; `make check-all` green
 - [ ] Every landing decision recorded in handoff; dashboard re-rendered after each
+
+## Context and Ownership
+
+- [ ] Loaded development-workflow.md § Pre-Merge Gate / § Dirty Worktree Teardown, graph-theory-heuristics.md, and the GPUOPS-1 continuation packet before editing.
+- [ ] Contract touched: `docs/workbay/contracts/gpu-lifecycle.md` (owner GPUOPS-1; reconcile lane merges the wiring edit). No other boundary changes.
+
+### Checklist for Slice 1: Redundancy reaper tool (TDD) and first reap
+
+- [ ] `scripts/test_worktree_reap.py` fixtures (a)–(e) written first and red
+- [ ] `scripts/worktree_reap.py` classify/apply green; `mk/lane-maintenance.mk` targets; `test-scripts` entry
+- [ ] Dry run matches the inventory table; apply removes the redundant class; lane rows closed before removal
+- [ ] `guidedfix-2-*` briefs landed as docs; those worktrees/branches removed
+
+### Checklist for Slice 2: Handoff-row hygiene and August parking
+
+- [ ] Ambiguous rows classified (MERGED / BRANCH_GONE / BRANCH_EXISTS / PLANNING_ONLY) and closed per class
+- [ ] Main-target rows `plan-done` in one batch
+- [ ] `archive/<branch>-20260907` tags; parked rows `blocked` + archived; findings deferred with `verification_evidence`
+- [ ] `make task-reap` shows `ambiguous (0)`
+
+### Checklist for Slice 3: Land the four small components
+
+- [ ] GPULIFE-1: R2L-01 lane green, ff to wiring, gate, ship, finish
+- [ ] HEALTHOBS-1: ff to dedupe, gate, ship, finish
+- [ ] DEMOGATE-2: gate, ship, finish
+- [ ] EVID-1: refresh from main, three fix lanes, 3-lens review, gate, ship, finish
+
+### Checklist for Slice 4: GPUOPS-1 reconcile, fix, review, land
+
+- [ ] `feature/gpuops-1` merged with main after GPULIFE-1 lands; reconcile lane leaves one group-provisioning path
+- [ ] Lanes B, D, F (now) and A, C, E (after reconcile) green with fenced finding-id ranges
+- [ ] 7-lens adversarial review (1 local + 6 remote) with codemap/prior-art packets; fixes; gate; ship; finish
+
+### Checklist for Slice 5: Make it not recur
+
+- [ ] `worktree-reap-check` in `check-all`; upstream request filed for a `make context` warning
+- [ ] § Landing Protocol in development-workflow.md; rg-019 in constitution + CLAUDE.md same commit
+- [ ] `make check-all` green; LAND-1 gate; ship; finish
 
 ## Review Readiness
 
-- `/wb-review-plan` on this document before Slice 3 dispatch (planning review, 2 passes: 1 local, 1 remote against canon).
+- `/wb-review-plan` on this document before Slice 3 dispatch (planning review, 2 passes: 1 local, 1 remote against canon). `make plan-analyze` is broken in this workspace (`skill 'plan-draft' has no live command_id in portable_commands.json` — upstream workbay-plugin defect); triage ran through the planning-review skill directly.
 - Each landed component: branch review already recorded on its ref; LAND-1 adds only gate evidence.
 
 ## Stretch Goals
@@ -262,4 +306,4 @@ Lanes are dispatched under their **owning** task_ref (findings and gate audit st
 - `git worktree list | wc -l` ≤ 2 + live dispatches; no branch is an ancestor of its parent with a worktree.
 - `make task-reap` → `ambiguous (0)`; no `planned` lane rows for landed branches.
 - Five components on `main`, each with `handoff_close_check(enforce=True)` evidence and `check-remote` green at the shipped SHA.
-- `make worktree-reap` exists with tests; `make context` reports redundant worktree count.
+- `make worktree-reap` exists with tests; `make check-all` includes `worktree-reap-check`.

@@ -709,6 +709,17 @@ def test_receipt_generated_at_is_accepted(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_receipt_generated_at_snake_case_is_accepted(tmp_path: Path) -> None:
+    bundle = _custom_bundle(
+        tmp_path,
+        receipts={"items": [{"description": "one", "generated_at": RUNNING_AT}]},
+    )
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_manifest_schema_version_is_validated(tmp_path: Path) -> None:
     bundle = _custom_bundle(tmp_path)
     manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
@@ -733,6 +744,23 @@ def test_manifest_format_is_validated(tmp_path: Path) -> None:
     assert result.returncode == 1
     assert "manifest_schema" in result.stdout
     assert "unsupported format" in result.stdout
+
+
+def test_unsupported_manifest_schema_fails_before_artifact_interpretation(tmp_path: Path) -> None:
+    bundle = _custom_bundle(tmp_path)
+    manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
+    manifest["schema_version"] = 99
+    (bundle / "manifest.json").write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+
+    result = _run_checker(bundle, "--json")
+
+    assert result.returncode == 1
+    verdict = json.loads(result.stdout)
+    assert any(check["name"] == "manifest_schema" and not check["passed"] for check in verdict["checks"])
+    assert all(
+        check["name"] not in {"oci_instance_receipt", "state_history_receipt", "audit_receipt"}
+        for check in verdict["checks"]
+    )
 
 
 def test_audit_event_without_resource_id_cannot_match_instance(tmp_path: Path) -> None:
@@ -1086,6 +1114,47 @@ def test_stop_before_start_cannot_prove_burst(tmp_path: Path) -> None:
     assert "audit transition order" in result.stdout
 
 
+def test_only_reaper_stop_before_start_cannot_prove_burst(tmp_path: Path) -> None:
+    audit = {
+        "data": [
+            {
+                "eventName": "StopInstance",
+                "eventTime": "2026-09-01T00:05:00Z",
+                "eventId": "stop-before-start",
+                "responseStatus": 200,
+                "data": {
+                    "resourceId": INSTANCE_ID,
+                    "identity": {"principalName": "gpu-reaper"},
+                    "stateChange": {
+                        "previous": {"lifecycleState": "RUNNING"},
+                        "current": {"lifecycleState": "STOPPED"},
+                    },
+                },
+            },
+            {
+                "eventName": "StartInstance",
+                "eventTime": RUNNING_AT,
+                "eventId": "start-after-stop",
+                "responseStatus": 200,
+                "data": {
+                    "resourceId": INSTANCE_ID,
+                    "stateChange": {
+                        "previous": {"lifecycleState": "STOPPED"},
+                        "current": {"lifecycleState": "RUNNING"},
+                    },
+                },
+            },
+        ]
+    }
+    bundle = _custom_bundle(tmp_path, audit=audit)
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 1
+    assert "audit transition order" in result.stdout
+    assert "matching reaper StopInstance" in result.stdout
+
+
 def test_raw_state_transition_order_is_checked_before_collapsing_states(tmp_path: Path) -> None:
     history = {
         "observations": [
@@ -1155,6 +1224,70 @@ def test_nested_oci_audit_event_fields_are_supported(tmp_path: Path) -> None:
                 "eventTime": STOPPED_AT,
                 "eventId": "stop-end",
                 "eventGroupingId": "stop-group",
+                "identity": {"principalName": "gpu-reaper"},
+                "data": {
+                    "resourceId": INSTANCE_ID,
+                    "request": {"parameters": {"action": "STOP"}},
+                    "response": {"status": "200"},
+                    "stateChange": {
+                        "previous": {"lifecycleState": "RUNNING"},
+                        "current": {"lifecycleState": "STOPPED"},
+                    },
+                },
+            },
+        ]
+    }
+    bundle = _custom_bundle(tmp_path, audit=audit)
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_canonical_oci_audit_cloudevents_payload_passes(tmp_path: Path) -> None:
+    audit = {
+        "data": [
+            {
+                "eventType": "com.oraclecloud.computeapi.StartInstance.begin",
+                "eventTime": "2026-09-01T00:09:59Z",
+                "eventGroupingId": "canonical-start",
+                "identity": {"principalName": "burst-start"},
+                "data": {
+                    "resourceId": INSTANCE_ID,
+                    "request": {"parameters": {"action": "START"}},
+                    "response": {"status": "200"},
+                },
+            },
+            {
+                "eventType": "com.oraclecloud.computeapi.StartInstance.end",
+                "eventTime": RUNNING_AT,
+                "eventGroupingId": "canonical-start",
+                "identity": {"principalName": "burst-start"},
+                "data": {
+                    "resourceId": INSTANCE_ID,
+                    "request": {"parameters": {"action": "START"}},
+                    "response": {"status": "200"},
+                    "stateChange": {
+                        "previous": {"lifecycleState": "STOPPED"},
+                        "current": {"lifecycleState": "RUNNING"},
+                    },
+                },
+            },
+            {
+                "eventType": "com.oraclecloud.computeapi.StopInstance.begin",
+                "eventTime": "2026-09-01T00:29:59Z",
+                "eventGroupingId": "canonical-stop",
+                "identity": {"principalName": "gpu-reaper"},
+                "data": {
+                    "resourceId": INSTANCE_ID,
+                    "request": {"parameters": {"action": "STOP"}},
+                    "response": {"status": "200"},
+                },
+            },
+            {
+                "eventType": "com.oraclecloud.computeapi.StopInstance.end",
+                "eventTime": STOPPED_AT,
+                "eventGroupingId": "canonical-stop",
                 "identity": {"principalName": "gpu-reaper"},
                 "data": {
                     "resourceId": INSTANCE_ID,

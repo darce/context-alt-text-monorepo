@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Api;
 
 require_once __DIR__ . '/class-media-detail-controller.php';
+require_once __DIR__ . '/class-gpu-control-controller.php';
 require_once __DIR__ . '/class-public-demo-describe-controller.php';
 require_once __DIR__ . '/class-recognition-data-source.php';
 require_once __DIR__ . '/class-tenant-identity.php';
@@ -82,6 +83,7 @@ class Api {
 	use RunsTransactional;
 
 	private RecognitionController $recognitionController;
+	private GpuControlController $gpuControlController;
 	private PublicDemoDescribeController $publicDemoDescribeController;
 	private MediaDetailController $mediaDetailController;
 	private SettingsController $settingsController;
@@ -92,6 +94,7 @@ class Api {
 
 	public function __construct( ?XmpEmbedController $xmp_embed_controller = null, ?OutboxDrain $outbox_drain = null, ?SplitTopologyCommandDrain $split_topology_command_drain = null, ?SyncPullJobInterface $bootstrap_sync_pull_job = null, ?PublicDemoDescribeController $public_demo_describe_controller = null ) {
 		$this->recognitionController = new RecognitionController();
+		$this->gpuControlController = new GpuControlController();
 		$this->publicDemoDescribeController = $public_demo_describe_controller ?? new PublicDemoDescribeController();
 		$this->mediaDetailController = new MediaDetailController();
 		$this->settingsController = new SettingsController();
@@ -308,6 +311,7 @@ class Api {
 		);
 
 		$this->recognitionController->register_routes();
+		$this->gpuControlController->register_routes();
 		$this->publicDemoDescribeController->register_routes();
 		$this->settingsController->register_routes();
 		if ( $this->xmpEmbedController instanceof XmpEmbedController ) {

@@ -2,8 +2,8 @@
  * Image Description API (E19-1 S12)
  *
  * Single-image describe: POST acx/v1/recognition/describe { media_id }. The WP
- * proxy forwards the backend `VisualFactsResponse` verbatim (15 provenance
- * fields). A deferred/stub backend profile (florence_large, gpu_phi4) or a
+ * proxy forwards the backend `VisualFactsResponse` verbatim (17 core provenance
+ * fields plus additive preview fields). A deferred/stub backend profile (florence_large, gpu_phi4) or a
  * missing [vlm] extra surfaces as a 503 whose FastAPI `detail` we extract for
  * the UI; a malformed upstream envelope is a WP_Error 502 (`message`).
  */
@@ -38,6 +38,75 @@ export interface NamingProvenance {
   names_applied: string[];
 }
 
+/** One identity name surfaced by the single-image named-caption preview. */
+export interface InjectedName {
+  name: string;
+  cluster_id: string;
+  roster_id: string | null;
+  detection_confidence: number;
+}
+
+/** E19-4a skip reasons for the single-image named-caption preview. */
+export type NamingProvenanceReason =
+  | 'agreement_disabled'
+  | 'db_unavailable'
+  | 'image_unreadable'
+  | 'no_confirmed_identities'
+  | 'no_eligible_identities'
+  | 'ambiguous_grounding'
+  | 'merge_error';
+
+/** E19-4a realization modes for the single-image named-caption preview. */
+export type NamingProvenanceMode = 'grounded' | 'positional';
+
+/** E19-4a single-image naming preview provenance. */
+export interface NamedCaptionProvenance {
+  injected_names: InjectedName[];
+  naming_allowed: boolean;
+  reason: NamingProvenanceReason | null;
+  mode: NamingProvenanceMode | null;
+}
+
+export interface AttachmentFactProvenance {
+  fact_id: string;
+  fact_source: string;
+  fact_label: string;
+  decision: 'object' | 'caption' | 'dropped';
+  altitude: 'object' | 'caption' | 'none';
+  target_evidence: string | null;
+  review_reason: string | null;
+  visible: boolean;
+}
+
+export interface AttachmentProvenance {
+  facts: AttachmentFactProvenance[];
+}
+
+export const DESCRIPTION_ADAPTER = {
+  SEEDED: 'seeded',
+  LOCAL_CPU: 'local_cpu',
+  GPU: 'gpu',
+  HOSTED_PROVIDER: 'hosted_provider',
+} as const;
+
+export type DescriptionAdapter = (typeof DESCRIPTION_ADAPTER)[keyof typeof DESCRIPTION_ADAPTER];
+
+export const RETENTION_CLASS = {
+  RETAIN_ALL: 'retain_all',
+  DISPOSE_AFTER_ACK: 'dispose_after_ack',
+  PURGE_ON_DEMAND: 'purge_on_demand',
+} as const;
+
+export type RetentionClass = (typeof RETENTION_CLASS)[keyof typeof RETENTION_CLASS];
+
+export const PROVIDER_MODE = {
+  NONE: 'none',
+  LOCAL: 'local',
+  HOSTED: 'hosted',
+} as const;
+
+export type ProviderMode = (typeof PROVIDER_MODE)[keyof typeof PROVIDER_MODE];
+
 export interface VisualFacts {
   caption: string;
   objects: string[];
@@ -49,17 +118,27 @@ export interface VisualFactsResponse {
   media_id: number;
   image_hash: string;
   context_hash: string;
-  adapter: string;
+  adapter: DescriptionAdapter;
   model_id: string;
   model_version: string;
   prompt_or_task_version: string;
   visual_facts: VisualFacts;
   alt_text_draft: string;
   context_used: { sources: string[]; applied: boolean };
-  provider_disclosure: { provider: string; left_service_boundary: boolean };
+  provider_disclosure: { provider: ProviderMode; left_service_boundary: boolean };
   cached: boolean;
   duration_ms: number;
-  retention_class: string;
+  retention_class: RetentionClass;
+  tier: DescribeResultTier;
+  result_generation: number;
+  /** E19-4a additive preview fields, omitted by older adapters. */
+  generic_draft?: string | null;
+  named_draft?: string | null;
+  naming_provenance?: NamedCaptionProvenance | null;
+  /** E20-FUSION additive per-fact provenance, omitted when unavailable. */
+  attachment_provenance?: AttachmentProvenance | null;
+  /** ALTQ-1 additive long-form description, omitted by short-only adapters. */
+  alt_text_long?: string | null;
   alt_text_write?: AltTextWriteResult;
 }
 
@@ -107,6 +186,403 @@ export interface AltTextWriteResult {
   /** Present only under alt_plus_description; omitted for alt_only. */
   description_write?: DescriptionWriteStatus;
 }
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const hasOwn = (value: Record<string, unknown>, key: string): boolean =>
+  Object.prototype.hasOwnProperty.call(value, key);
+
+const firstContractKeyError = (
+  value: Record<string, unknown>,
+  expectedKeys: readonly string[],
+  path: string,
+): string | null => {
+  const missingKey = expectedKeys.find((key) => !hasOwn(value, key));
+  if (missingKey) {
+    return `${path}.${missingKey}`;
+  }
+
+  const unexpectedKey = Object.keys(value).find((key) => !expectedKeys.includes(key));
+  return unexpectedKey ? `${path}.${unexpectedKey}` : null;
+};
+
+const isStringArray = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.every((item) => typeof item === 'string');
+
+const isFiniteNumber = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value);
+
+const isInteger = (value: unknown): value is number =>
+  isFiniteNumber(value) && Number.isInteger(value);
+
+const DESCRIPTION_ADAPTERS = new Set(Object.values(DESCRIPTION_ADAPTER));
+const PROVIDER_MODES = new Set(Object.values(PROVIDER_MODE));
+const RETENTION_CLASSES = new Set(Object.values(RETENTION_CLASS));
+const NAMING_PREVIEW_REASONS = new Set([
+  'agreement_disabled',
+  'db_unavailable',
+  'image_unreadable',
+  'no_confirmed_identities',
+  'no_eligible_identities',
+  'ambiguous_grounding',
+  'merge_error',
+]);
+const NAMING_PREVIEW_MODES = new Set([NAMING_REALIZER.GROUNDED, 'positional']);
+const ATTACHMENT_DECISIONS = new Set(['object', 'caption', 'dropped']);
+const ATTACHMENT_ALTITUDES = new Set(['object', 'caption', 'none']);
+const ALT_TEXT_WRITE_STATUSES = new Set([
+  'written',
+  'skipped_existing_alt',
+  'skipped_empty_alt_text',
+  'forced_overwrite',
+  'provenance_healed',
+  'partial',
+  'failed',
+]);
+const ALT_TEXT_WRITE_PARTIAL_REASONS = new Set([
+  'provenance_write_failed',
+  'description_write_failed',
+]);
+const DESCRIPTION_WRITE_STATUSES = new Set([
+  'written',
+  'forced_overwrite',
+  'skipped_no_long_text',
+  'skipped_existing_description',
+  'failed',
+]);
+
+const VISUAL_FACTS_RESPONSE_REQUIRED_KEYS = [
+  'tenant_id',
+  'media_id',
+  'image_hash',
+  'context_hash',
+  'adapter',
+  'model_id',
+  'model_version',
+  'prompt_or_task_version',
+  'visual_facts',
+  'alt_text_draft',
+  'context_used',
+  'provider_disclosure',
+  'cached',
+  'duration_ms',
+  'retention_class',
+  'tier',
+  'result_generation',
+] as const;
+
+const VISUAL_FACTS_RESPONSE_OPTIONAL_KEYS = [
+  'alt_text_long',
+  'generic_draft',
+  'named_draft',
+  'naming_provenance',
+  'attachment_provenance',
+  'alt_text_write',
+] as const;
+
+const VISUAL_FACTS_RESPONSE_KEYS = [
+  ...VISUAL_FACTS_RESPONSE_REQUIRED_KEYS,
+  ...VISUAL_FACTS_RESPONSE_OPTIONAL_KEYS,
+] as const;
+
+const VISUAL_FACTS_KEYS = ['caption', 'objects', 'ocr_text'] as const;
+const CONTEXT_USED_KEYS = ['sources', 'applied'] as const;
+const PROVIDER_DISCLOSURE_KEYS = ['provider', 'left_service_boundary'] as const;
+const NAMING_PREVIEW_KEYS = ['injected_names', 'naming_allowed', 'reason', 'mode'] as const;
+const INJECTED_NAME_KEYS = ['name', 'cluster_id', 'roster_id', 'detection_confidence'] as const;
+const ATTACHMENT_PROVENANCE_KEYS = ['facts'] as const;
+const ATTACHMENT_FACT_KEYS = [
+  'fact_id',
+  'fact_source',
+  'fact_label',
+  'decision',
+  'altitude',
+  'target_evidence',
+  'review_reason',
+  'visible',
+] as const;
+const ALT_TEXT_WRITE_KEYS = ['status', 'existing_alt_present', 'reason', 'description_write'] as const;
+const ALT_TEXT_WRITE_REQUIRED_KEYS = ['status', 'existing_alt_present'] as const;
+
+const validateNamedCaptionProvenance = (value: unknown, path: string): string | null => {
+  if (!isRecord(value)) {
+    return path;
+  }
+  const keyError = firstContractKeyError(value, NAMING_PREVIEW_KEYS, path);
+  if (keyError) {
+    return keyError;
+  }
+  if (!Array.isArray(value.injected_names)) {
+    return `${path}.injected_names`;
+  }
+  for (const [index, injectedName] of value.injected_names.entries()) {
+    if (!isRecord(injectedName)) {
+      return `${path}.injected_names[${index}]`;
+    }
+    const injectedNameKeyError = firstContractKeyError(
+      injectedName,
+      INJECTED_NAME_KEYS,
+      `${path}.injected_names[${index}]`,
+    );
+    if (injectedNameKeyError) {
+      return injectedNameKeyError;
+    }
+    if (typeof injectedName.name !== 'string') {
+      return `${path}.injected_names[${index}].name`;
+    }
+    if (typeof injectedName.cluster_id !== 'string') {
+      return `${path}.injected_names[${index}].cluster_id`;
+    }
+    if (injectedName.roster_id !== null && typeof injectedName.roster_id !== 'string') {
+      return `${path}.injected_names[${index}].roster_id`;
+    }
+    if (!isFiniteNumber(injectedName.detection_confidence)) {
+      return `${path}.injected_names[${index}].detection_confidence`;
+    }
+  }
+  if (typeof value.naming_allowed !== 'boolean') {
+    return `${path}.naming_allowed`;
+  }
+  if (
+    value.reason !== null &&
+    (typeof value.reason !== 'string' || !NAMING_PREVIEW_REASONS.has(value.reason))
+  ) {
+    return `${path}.reason`;
+  }
+  if (
+    value.mode !== null &&
+    (typeof value.mode !== 'string' || !NAMING_PREVIEW_MODES.has(value.mode))
+  ) {
+    return `${path}.mode`;
+  }
+  return null;
+};
+
+const validateAttachmentProvenance = (value: unknown, path: string): string | null => {
+  if (!isRecord(value)) {
+    return path;
+  }
+  const keyError = firstContractKeyError(value, ATTACHMENT_PROVENANCE_KEYS, path);
+  if (keyError) {
+    return keyError;
+  }
+  if (!Array.isArray(value.facts)) {
+    return `${path}.facts`;
+  }
+  for (const [index, fact] of value.facts.entries()) {
+    const factPath = `${path}.facts[${index}]`;
+    if (!isRecord(fact)) {
+      return factPath;
+    }
+    const factKeyError = firstContractKeyError(fact, ATTACHMENT_FACT_KEYS, factPath);
+    if (factKeyError) {
+      return factKeyError;
+    }
+    if (typeof fact.fact_id !== 'string') {
+      return `${factPath}.fact_id`;
+    }
+    if (typeof fact.fact_source !== 'string') {
+      return `${factPath}.fact_source`;
+    }
+    if (typeof fact.fact_label !== 'string') {
+      return `${factPath}.fact_label`;
+    }
+    if (typeof fact.decision !== 'string' || !ATTACHMENT_DECISIONS.has(fact.decision)) {
+      return `${factPath}.decision`;
+    }
+    if (typeof fact.altitude !== 'string' || !ATTACHMENT_ALTITUDES.has(fact.altitude)) {
+      return `${factPath}.altitude`;
+    }
+    if (fact.target_evidence !== null && typeof fact.target_evidence !== 'string') {
+      return `${factPath}.target_evidence`;
+    }
+    if (fact.review_reason !== null && typeof fact.review_reason !== 'string') {
+      return `${factPath}.review_reason`;
+    }
+    if (typeof fact.visible !== 'boolean') {
+      return `${factPath}.visible`;
+    }
+  }
+  return null;
+};
+
+const validateAltTextWrite = (value: unknown, path: string): string | null => {
+  if (!isRecord(value)) {
+    return path;
+  }
+  const missingRequiredKey = ALT_TEXT_WRITE_REQUIRED_KEYS.find((key) => !hasOwn(value, key));
+  if (missingRequiredKey) {
+    return `${path}.${missingRequiredKey}`;
+  }
+  const unexpectedKey = Object.keys(value).find((key) => !ALT_TEXT_WRITE_KEYS.includes(key));
+  if (unexpectedKey) {
+    return `${path}.${unexpectedKey}`;
+  }
+  if (typeof value.status !== 'string' || !ALT_TEXT_WRITE_STATUSES.has(value.status)) {
+    return `${path}.status`;
+  }
+  if (typeof value.existing_alt_present !== 'boolean') {
+    return `${path}.existing_alt_present`;
+  }
+  if (
+    hasOwn(value, 'reason') &&
+    (typeof value.reason !== 'string' || !ALT_TEXT_WRITE_PARTIAL_REASONS.has(value.reason))
+  ) {
+    return `${path}.reason`;
+  }
+  if (
+    hasOwn(value, 'description_write') &&
+    (typeof value.description_write !== 'string' || !DESCRIPTION_WRITE_STATUSES.has(value.description_write))
+  ) {
+    return `${path}.description_write`;
+  }
+  return null;
+};
+
+const validateVisualFactsResponse = (payload: unknown): string | null => {
+  if (!isRecord(payload)) {
+    return 'response body';
+  }
+  const missingRequiredKey = VISUAL_FACTS_RESPONSE_REQUIRED_KEYS.find((key) => !hasOwn(payload, key));
+  if (missingRequiredKey) {
+    return `response.${missingRequiredKey}`;
+  }
+  const unexpectedTopLevelKey = Object.keys(payload).find(
+    (key) => !VISUAL_FACTS_RESPONSE_KEYS.includes(key),
+  );
+  if (unexpectedTopLevelKey) {
+    return `response.${unexpectedTopLevelKey}`;
+  }
+
+  for (const key of ['tenant_id', 'image_hash', 'context_hash', 'model_id', 'model_version', 'prompt_or_task_version'] as const) {
+    if (typeof payload[key] !== 'string') {
+      return `response.${key}`;
+    }
+  }
+  if (!isInteger(payload.media_id)) {
+    return 'response.media_id';
+  }
+  if (typeof payload.adapter !== 'string' || !DESCRIPTION_ADAPTERS.has(payload.adapter)) {
+    return 'response.adapter';
+  }
+  if (!isRecord(payload.visual_facts)) {
+    return 'response.visual_facts';
+  }
+  const visualFactsKeyError = firstContractKeyError(payload.visual_facts, VISUAL_FACTS_KEYS, 'response.visual_facts');
+  if (visualFactsKeyError) {
+    return visualFactsKeyError;
+  }
+  if (typeof payload.visual_facts.caption !== 'string') {
+    return 'response.visual_facts.caption';
+  }
+  if (!isStringArray(payload.visual_facts.objects)) {
+    return 'response.visual_facts.objects';
+  }
+  if (payload.visual_facts.ocr_text !== null && typeof payload.visual_facts.ocr_text !== 'string') {
+    return 'response.visual_facts.ocr_text';
+  }
+  if (typeof payload.alt_text_draft !== 'string') {
+    return 'response.alt_text_draft';
+  }
+  if (!isRecord(payload.context_used)) {
+    return 'response.context_used';
+  }
+  const contextKeyError = firstContractKeyError(payload.context_used, CONTEXT_USED_KEYS, 'response.context_used');
+  if (contextKeyError) {
+    return contextKeyError;
+  }
+  if (!isStringArray(payload.context_used.sources)) {
+    return 'response.context_used.sources';
+  }
+  if (typeof payload.context_used.applied !== 'boolean') {
+    return 'response.context_used.applied';
+  }
+  if (!isRecord(payload.provider_disclosure)) {
+    return 'response.provider_disclosure';
+  }
+  const providerKeyError = firstContractKeyError(
+    payload.provider_disclosure,
+    PROVIDER_DISCLOSURE_KEYS,
+    'response.provider_disclosure',
+  );
+  if (providerKeyError) {
+    return providerKeyError;
+  }
+  if (
+    typeof payload.provider_disclosure.provider !== 'string' ||
+    !PROVIDER_MODES.has(payload.provider_disclosure.provider)
+  ) {
+    return 'response.provider_disclosure.provider';
+  }
+  if (typeof payload.provider_disclosure.left_service_boundary !== 'boolean') {
+    return 'response.provider_disclosure.left_service_boundary';
+  }
+  if (typeof payload.cached !== 'boolean') {
+    return 'response.cached';
+  }
+  if (!isInteger(payload.duration_ms) || payload.duration_ms < 0) {
+    return 'response.duration_ms';
+  }
+  if (typeof payload.retention_class !== 'string' || !RETENTION_CLASSES.has(payload.retention_class)) {
+    return 'response.retention_class';
+  }
+  if (typeof payload.tier !== 'string' || !new Set(Object.values(DESCRIBE_RESULT_TIER)).has(payload.tier)) {
+    return 'response.tier';
+  }
+  if (!isInteger(payload.result_generation) || payload.result_generation < 1) {
+    return 'response.result_generation';
+  }
+
+  for (const key of ['alt_text_long', 'generic_draft', 'named_draft'] as const) {
+    if (hasOwn(payload, key) && payload[key] !== null && typeof payload[key] !== 'string') {
+      return `response.${key}`;
+    }
+  }
+  if (hasOwn(payload, 'naming_provenance') && payload.naming_provenance !== null) {
+    const namingError = validateNamedCaptionProvenance(payload.naming_provenance, 'response.naming_provenance');
+    if (namingError) {
+      return namingError;
+    }
+  }
+  if (hasOwn(payload, 'attachment_provenance') && payload.attachment_provenance !== null) {
+    const attachmentError = validateAttachmentProvenance(
+      payload.attachment_provenance,
+      'response.attachment_provenance',
+    );
+    if (attachmentError) {
+      return attachmentError;
+    }
+  }
+  if (hasOwn(payload, 'alt_text_write')) {
+    const altTextWriteError = validateAltTextWrite(payload.alt_text_write, 'response.alt_text_write');
+    if (altTextWriteError) {
+      return altTextWriteError;
+    }
+  }
+  return null;
+};
+
+/** Thrown when the describe response violates the backend envelope contract. */
+export class MalformedVisualFactsResponseError extends Error {
+  constructor(field: string) {
+    super(`Describe response is missing or malformed: ${field}`);
+    this.name = 'MalformedVisualFactsResponseError';
+  }
+}
+
+const assertVisualFactsResponse: (payload: unknown) => asserts payload is VisualFactsResponse = (payload) => {
+  const malformedField = validateVisualFactsResponse(payload);
+  if (malformedField) {
+    throw new MalformedVisualFactsResponseError(malformedField);
+  }
+};
+
+/** Validate the wire payload before exposing it to describe result consumers. */
+export const parseVisualFactsResponse = (payload: unknown): VisualFactsResponse => {
+  assertVisualFactsResponse(payload);
+  return payload;
+};
 
 export interface DescribeMediaWriteOptions {
   writeAlt?: boolean;
@@ -442,14 +918,16 @@ export const describeMedia = async (
     body.force = options.force;
   }
 
-  return fetchRequiredApi<VisualFactsResponse>(getEndpoint('recognitionDescribe'), {
-    method: 'POST',
-    body,
-    restNonce: getConfig().nonce,
-    // Generous: florence_small is ~14s on the OCI A1, and the cold model load on
-    // the first request can push the wall time higher.
-    signal: createRecognitionTimeoutSignal(180_000),
-  });
+  return parseVisualFactsResponse(
+    await fetchRequiredApi<unknown>(getEndpoint('recognitionDescribe'), {
+      method: 'POST',
+      body,
+      restNonce: getConfig().nonce,
+      // Generous: florence_small is ~14s on the OCI A1, and the cold model load on
+      // the first request can push the wall time higher.
+      signal: createRecognitionTimeoutSignal(180_000),
+    }),
+  );
 };
 
 export const fetchDescriptionCandidates = async ({

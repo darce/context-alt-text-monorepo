@@ -97,6 +97,7 @@ _LOCK_RETRY_SECONDS = 0.05
 _DEFAULT_RUNNING_SINCE_PATH = Path("/var/lib/acx-gpu/running-since.json")
 _RUNNING_SINCE_READ_FAILURE_RECOVERY_CYCLES = 3
 _RUNNING_SINCE_FUTURE_SKEW_SECONDS = 5.0
+_HONOURED_NONCES_SCHEMA_VERSION = 1
 # Live describe dumps omit batch_in_progress; warn once per process, not per poll.
 _ABSENT_BATCH_KEY_WARNED = False
 
@@ -453,6 +454,10 @@ class CorruptRunningSinceLeaseError(ValueError):
     """Persisted lease metadata is unsafe to use as a duration origin."""
 
 
+class CorruptHonouredNonceError(ValueError):
+    """Persisted START idempotency metadata is unreadable or invalid."""
+
+
 class BootIdentityUnavailableError(RuntimeError):
     """The host cannot supply a boot identity for monotonic lease records."""
 
@@ -536,6 +541,11 @@ class RunningSinceLeaseStore:
                 yield
             finally:
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+    @property
+    def honoured_nonces_path(self) -> Path:
+        """Durable START nonce ledger kept independently from lease lifetimes."""
+        return self.path.with_name(f".{self.path.name}.honoured-nonces.json")
 
     def read(self, instance_id: str) -> RunningSinceRecord | None:
         try:
@@ -656,7 +666,75 @@ class RunningSinceLeaseStore:
         )
 
     def record_start(self, instance_id: str, *, honoured_nonce: str | None = None) -> RunningSinceRecord:
+        if honoured_nonce is not None:
+            self.record_honoured_nonce(instance_id, honoured_nonce)
         return self.write(instance_id, source="start_actuator", honoured_nonce=honoured_nonce)
+
+    def has_honoured_nonce(self, instance_id: str, nonce: str) -> bool:
+        """Return whether this instance has already honoured ``nonce``.
+
+        A missing ledger is the normal pre-first-START state.  Once a ledger
+        exists, any unreadable or malformed contents are unsafe to interpret;
+        callers deliberately handle ``CorruptHonouredNonceError`` as already
+        honoured so a storage fault cannot cause a duplicate billable START.
+        """
+        if not isinstance(instance_id, str) or not instance_id.strip():
+            raise ValueError("instance_id must be a non-blank string")
+        if not isinstance(nonce, str) or not nonce.strip():
+            raise ValueError("nonce must be a non-blank string")
+        instances = self._read_honoured_nonces()
+        return nonce in instances.get(instance_id, set())
+
+    def record_honoured_nonce(self, instance_id: str, nonce: str) -> None:
+        """Persist a successful operator START nonce independently of leases."""
+        if not isinstance(instance_id, str) or not instance_id.strip():
+            raise ValueError("instance_id must be a non-blank string")
+        if not isinstance(nonce, str) or not nonce.strip():
+            raise ValueError("nonce must be a non-blank string")
+        with self._locked_for_update():
+            instances = self._read_honoured_nonces()
+            nonces = instances.setdefault(instance_id, set())
+            if nonce in nonces:
+                return
+            nonces.add(nonce)
+            payload = {
+                "schema_version": _HONOURED_NONCES_SCHEMA_VERSION,
+                "instances": {key: sorted(values) for key, values in instances.items()},
+            }
+            temporary = self.honoured_nonces_path.with_name(f".{self.honoured_nonces_path.name}.tmp")
+            temporary.write_text(json.dumps(payload, sort_keys=True) + "\n")
+            temporary.replace(self.honoured_nonces_path)
+
+    def _read_honoured_nonces(self) -> dict[str, set[str]]:
+        try:
+            payload = json.loads(self.honoured_nonces_path.read_text())
+        except FileNotFoundError:
+            return {}
+        except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            raise CorruptHonouredNonceError(
+                f"honoured nonce marker is unreadable: {self.honoured_nonces_path}: {exc}"
+            ) from exc
+        if (
+            not isinstance(payload, dict)
+            or payload.get("schema_version") != _HONOURED_NONCES_SCHEMA_VERSION
+            or not isinstance(payload.get("instances"), dict)
+        ):
+            raise CorruptHonouredNonceError(
+                f"honoured nonce marker is invalid: {self.honoured_nonces_path}"
+            )
+        instances: dict[str, set[str]] = {}
+        for instance_id, raw_nonces in payload["instances"].items():
+            if (
+                not isinstance(instance_id, str)
+                or not instance_id.strip()
+                or not isinstance(raw_nonces, list)
+                or any(not isinstance(nonce, str) or not nonce.strip() for nonce in raw_nonces)
+            ):
+                raise CorruptHonouredNonceError(
+                    f"honoured nonce marker is invalid: {self.honoured_nonces_path}"
+                )
+            instances[instance_id] = set(raw_nonces)
+        return instances
 
     def observe_running(self, instance_id: str) -> RunningSinceRecord:
         record = self.read(instance_id)
@@ -728,27 +806,10 @@ class RunningSinceLeaseStore:
         temporary.write_text(json.dumps(payload, sort_keys=True) + "\n")
         temporary.replace(self._read_failures_path)
 
-    def remove(self, instance_id: str, *, preserve_honoured_nonce: str | None = None) -> None:
-        if preserve_honoured_nonce is not None and (
-            not isinstance(preserve_honoured_nonce, str) or not preserve_honoured_nonce.strip()
-        ):
-            raise ValueError("preserve_honoured_nonce must be a non-blank string or None")
+    def remove(self, instance_id: str) -> None:
         with self._locked_for_update():
             instances = self._read_instances_for_update()
             if instance_id not in instances:
-                return
-            if preserve_honoured_nonce is not None:
-                record = instances[instance_id]
-                if isinstance(record, dict):
-                    record["honoured_nonce"] = preserve_honoured_nonce
-                    instances[instance_id] = record
-                    payload = {
-                        "schema_version": self._SCHEMA_VERSION,
-                        "instances": instances,
-                    }
-                    temporary = self.path.with_name(f".{self.path.name}.tmp")
-                    temporary.write_text(json.dumps(payload, sort_keys=True) + "\n")
-                    temporary.replace(self.path)
                 return
             del instances[instance_id]
             if not instances:
@@ -893,10 +954,28 @@ def _honoured_instance_ids(
     if store is None or nonce is None:
         return set()
     read_record = getattr(store, "read", None)
-    if not callable(read_record):
+    has_honoured_nonce = getattr(store, "has_honoured_nonce", None)
+    if not callable(read_record) and not callable(has_honoured_nonce):
         return set()
     honoured: set[str] = set()
     for instance in instances:
+        if callable(has_honoured_nonce):
+            try:
+                if has_honoured_nonce(instance.instance_id, nonce):
+                    honoured.add(instance.instance_id)
+                    continue
+            except (AttributeError, OSError, ValueError) as exc:
+                logger.warning(
+                    "could not read honoured operator nonce for %s: %s",
+                    instance.instance_id,
+                    exc,
+                )
+                # A corrupt idempotency marker is safer as a deny-all result
+                # for the current nonce than as an empty ledger.
+                honoured.add(instance.instance_id)
+                continue
+        if not callable(read_record):
+            continue
         try:
             record = read_record(instance.instance_id)
         except (AttributeError, OSError, ValueError) as exc:
@@ -1108,7 +1187,6 @@ def _apply_running_since_leases(
     *,
     use_recorded_age: bool,
     dry_run: bool,
-    preserve_honoured_nonce: str | None = None,
 ) -> tuple[list[GpuInstance], list[str]]:
     observed: list[GpuInstance] = []
     errors: list[str] = []
@@ -1119,13 +1197,7 @@ def _apply_running_since_leases(
                 observed.append(instance)
                 continue
             try:
-                if preserve_honoured_nonce is None:
-                    store.remove(instance.instance_id)
-                else:
-                    store.remove(
-                        instance.instance_id,
-                        preserve_honoured_nonce=preserve_honoured_nonce,
-                    )
+                store.remove(instance.instance_id)
                 store.clear_read_failures(instance.instance_id)
             except (OSError, ValueError) as exc:
                 msg = (
@@ -1282,9 +1354,6 @@ def _run_reap_cycle(
             running_since_store,
             use_recorded_age=use_recorded_lease_age,
             dry_run=dry_run,
-            preserve_honoured_nonce=(
-                effective_intent.nonce if effective_intent.action is IntentAction.START else None
-            ),
         )
     try:
         load = load_source.snapshot()

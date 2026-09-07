@@ -10,10 +10,20 @@ import pytest
 from infra.oci.gpu_lifecycle.intent import (
     IntentAction,
     IntentStatus,
+    MAX_INTENT_REQUESTED_AT_FUTURE_SKEW_SECONDS,
     read_effective_intent,
 )
 
 NOW = datetime(2026, 9, 6, 22, 30, tzinfo=UTC)
+VALID_NONCE = "123e4567-e89b-42d3-a456-426614174000"
+NEW_NONCE = "123e4567-e89b-42d3-a456-426614174001"
+
+
+def _write_payload(root: Path, environment: str, payload: dict[str, object]) -> Path:
+    path = root / environment / "gpu-intent.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
 
 
 def _write_intent(
@@ -23,11 +33,9 @@ def _write_intent(
     action: str = "start",
     requested_at: datetime = NOW - timedelta(minutes=5),
     expires_at: datetime = NOW + timedelta(minutes=5),
-    nonce: str = "nonce-1",
+    nonce: str = VALID_NONCE,
     **extra: object,
 ) -> Path:
-    path = root / environment / "gpu-intent.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
     payload: dict[str, object] = {
         "schema_version": 1,
         "action": action,
@@ -38,17 +46,30 @@ def _write_intent(
         "nonce": nonce,
     }
     payload.update(extra)
-    path.write_text(json.dumps(payload), encoding="utf-8")
-    return path
+    return _write_payload(root, environment, payload)
+
+
+def _assert_malformed(
+    effective: object,
+    caplog: pytest.LogCaptureFixture,
+    path: Path,
+    field: str,
+) -> None:
+    assert effective.action is IntentAction.AUTO
+    assert effective.status is IntentStatus.NONE
+    warnings = [record for record in caplog.records if record.levelname == "WARNING"]
+    assert len(warnings) == 1
+    assert str(path) in warnings[0].message
+    assert field in warnings[0].message
 
 
 def test_reads_a_valid_intent_file_from_each_environment(tmp_path: Path) -> None:
-    path = _write_intent(tmp_path, "prod", action="start", nonce="abc")
+    path = _write_intent(tmp_path, "prod", action="start", nonce=VALID_NONCE)
 
     effective = read_effective_intent(tmp_path, NOW)
 
     assert effective.action is IntentAction.START
-    assert effective.nonce == "abc"
+    assert effective.nonce == VALID_NONCE
     assert effective.source == path
     assert effective.expires_at == NOW + timedelta(minutes=5)
 
@@ -59,30 +80,30 @@ def test_newest_unexpired_intent_wins(tmp_path: Path) -> None:
         "dev",
         action="start",
         requested_at=NOW - timedelta(minutes=10),
-        nonce="old",
+        nonce=VALID_NONCE,
     )
     _write_intent(
         tmp_path,
         "prod",
         action="stop",
         requested_at=NOW - timedelta(minutes=1),
-        nonce="new",
+        nonce=NEW_NONCE,
     )
 
     effective = read_effective_intent(tmp_path, NOW)
 
     assert effective.action is IntentAction.STOP
-    assert effective.nonce == "new"
+    assert effective.nonce == NEW_NONCE
 
 
 def test_equal_requested_at_tie_resolves_to_stop(tmp_path: Path) -> None:
-    _write_intent(tmp_path, "dev", action="start", requested_at=NOW, nonce="start")
-    _write_intent(tmp_path, "staging", action="stop", requested_at=NOW, nonce="stop")
+    _write_intent(tmp_path, "dev", action="start", requested_at=NOW, nonce=VALID_NONCE)
+    _write_intent(tmp_path, "staging", action="stop", requested_at=NOW, nonce=NEW_NONCE)
 
     effective = read_effective_intent(tmp_path, NOW)
 
     assert effective.action is IntentAction.STOP
-    assert effective.nonce == "stop"
+    assert effective.nonce == NEW_NONCE
 
 
 def test_expired_intent_is_auto_and_logs_warning(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
@@ -126,6 +147,67 @@ def test_malformed_intent_is_auto_and_warns(
     assert "operator intent invalid file" in caplog.text
 
 
+def test_missing_ttl_seconds_is_auto_and_names_the_field(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    path = _write_intent(tmp_path, "prod")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    del payload["ttl_seconds"]
+    _write_payload(tmp_path, "prod", payload)
+
+    effective = read_effective_intent(tmp_path, NOW)
+
+    _assert_malformed(effective, caplog, path, "ttl_seconds")
+
+
+def test_bad_nonce_is_auto_and_names_the_field(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    path = _write_intent(tmp_path, "prod", nonce="not-a-uuid")
+
+    effective = read_effective_intent(tmp_path, NOW)
+
+    _assert_malformed(effective, caplog, path, "nonce")
+
+
+def test_missing_requested_by_is_auto_and_names_the_field(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    path = _write_intent(tmp_path, "prod")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    del payload["requested_by"]
+    _write_payload(tmp_path, "prod", payload)
+
+    effective = read_effective_intent(tmp_path, NOW)
+
+    _assert_malformed(effective, caplog, path, "requested_by")
+
+
+def test_bad_action_is_auto_and_names_the_field(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    path = _write_intent(tmp_path, "prod", action="restart")
+
+    effective = read_effective_intent(tmp_path, NOW)
+
+    _assert_malformed(effective, caplog, path, "action")
+
+
+def test_wrong_schema_version_is_auto_and_names_the_field(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    path = _write_intent(tmp_path, "prod", schema_version=2)
+
+    effective = read_effective_intent(tmp_path, NOW)
+
+    _assert_malformed(effective, caplog, path, "schema_version")
+
+
 def test_overlong_expiry_is_clamped_to_two_hours(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     path = _write_intent(
         tmp_path,
@@ -152,7 +234,7 @@ def test_far_future_requested_at_is_ignored_so_it_cannot_pin_newer_intents(
         action="start",
         requested_at=NOW + timedelta(days=7),
         expires_at=NOW + timedelta(days=7, minutes=30),
-        nonce="skewed",
+        nonce=VALID_NONCE,
     )
     _write_intent(
         tmp_path,
@@ -160,14 +242,31 @@ def test_far_future_requested_at_is_ignored_so_it_cannot_pin_newer_intents(
         action="stop",
         requested_at=NOW,
         expires_at=NOW + timedelta(minutes=5),
-        nonce="operator-stop",
+        nonce=NEW_NONCE,
     )
 
     effective = read_effective_intent(tmp_path, NOW)
 
     assert effective.action is IntentAction.STOP
-    assert effective.nonce == "operator-stop"
+    assert effective.nonce == NEW_NONCE
     assert "future" in caplog.text
+    assert effective.reason is None
+
+
+def test_requested_at_at_skew_tolerance_is_still_honoured(tmp_path: Path) -> None:
+    requested_at = NOW + timedelta(seconds=MAX_INTENT_REQUESTED_AT_FUTURE_SKEW_SECONDS)
+    _write_intent(
+        tmp_path,
+        "prod",
+        requested_at=requested_at,
+        expires_at=requested_at + timedelta(minutes=5),
+    )
+
+    effective = read_effective_intent(tmp_path, NOW)
+
+    assert effective.action is IntentAction.START
+    assert effective.requested_at == requested_at
+    assert effective.reason == "requested_at within clock-skew tolerance"
 
 
 def test_near_future_expiry_clamp_is_anchored_to_read_time(tmp_path: Path) -> None:

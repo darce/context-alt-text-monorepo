@@ -10,9 +10,14 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, StrictBool
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.tenant_context import get_tenant_record, tenant_not_provisioned_detail, set_tenant_context
+from db.tenant_context import get_tenant_record, set_tenant_context, tenant_not_provisioned_detail
 from recognition.infrastructure.repositories.tenant_repository import SqlAlchemyTenantRepository
-from recognition.interface_adapters.http.deps import get_optional_session, require_auth, require_auth_key_only, require_write_access
+from recognition.interface_adapters.http.deps import (
+    get_optional_session,
+    require_auth,
+    require_auth_key_only,
+    require_write_access,
+)
 from recognition.interface_adapters.http.deps.auth import AuthContext
 from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
 from recognition.shared.db.dialect import is_postgres
@@ -90,7 +95,10 @@ async def tenant_whoami(
     if session is None or not hasattr(session, "execute"):
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Database unavailable")
 
-    tenant_uuid = uuid.UUID(str(auth.tenant_claim))
+    try:
+        tenant_uuid = uuid.UUID(str(auth.tenant_claim))
+    except (ValueError, TypeError, AttributeError, OverflowError) as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid tenant claim") from exc
     tenant = await get_tenant_record(session, tenant_uuid)
     if tenant is None:
         raise HTTPException(

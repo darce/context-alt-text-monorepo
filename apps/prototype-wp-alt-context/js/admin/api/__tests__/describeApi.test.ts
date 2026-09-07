@@ -9,6 +9,7 @@ import {
   GPU_STATE,
   NAMING_PROVENANCE_STATUS,
   NAMING_REALIZER,
+  type NamingProvenance,
   fetchDescribeRunItems,
   fetchDescriptionCandidates,
   fetchDescriptionHistory,
@@ -253,7 +254,7 @@ describe('describeApi', () => {
       status: NAMING_PROVENANCE_STATUS.APPLIED,
       realizer: NAMING_REALIZER.GROUNDED,
       names_applied: ['Ada'],
-    } as const;
+    } satisfies NamingProvenance;
     const itemsResponse = {
       run_id: 'run-naming',
       items: [

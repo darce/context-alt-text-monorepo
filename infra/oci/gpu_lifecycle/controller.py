@@ -89,10 +89,11 @@ class GpuLifecycleController:
             return []
         if not has_work and effective_intent is not IntentAction.START:
             return []
+        honoured_ids = honoured_instance_ids if not has_work else ()
         return [
             (LifecycleAction.START, instance.instance_id)
             for instance in instances
-            if instance.state == GpuInstanceState.STOPPED and instance.instance_id not in honoured_instance_ids
+            if instance.state == GpuInstanceState.STOPPED and instance.instance_id not in honoured_ids
         ]
 
     def instances_waiting_on_boot(self, instances: list[GpuInstance]) -> list[str]:

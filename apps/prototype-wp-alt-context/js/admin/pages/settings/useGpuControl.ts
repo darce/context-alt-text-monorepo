@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import {
+  GPU_STATE,
   fetchGpuStatus,
   GpuIntentAction,
   GpuIntentStatus,
@@ -15,7 +16,7 @@ export const GPU_WARMUP_POLL_INTERVAL_MS = 5_000;
 
 export const getGpuControlPollInterval = (data: GpuStatusResponse | undefined): number => {
   const state = data?.gpu_state.state;
-  return state === 'starting' || state === 'warming'
+  return state === GPU_STATE.STARTING || state === GPU_STATE.WARMING
     ? GPU_WARMUP_POLL_INTERVAL_MS
     : GPU_STATUS_POLL_INTERVAL_MS;
 };
@@ -24,13 +25,31 @@ const getQueryPollInterval = (query: { state: { data: unknown } }): number =>
   getGpuControlPollInterval(query.state.data as GpuStatusResponse | undefined);
 
 const stateCanStart = (state: GpuStatusResponse['gpu_state']['state']): boolean =>
-  state === 'stopped' || state === 'unknown' || state === 'degraded';
+  state === GPU_STATE.STOPPED || state === GPU_STATE.DEGRADED;
 
 const stateCanStop = (state: GpuStatusResponse['gpu_state']['state']): boolean =>
-  state === 'starting' || state === 'warming' || state === 'ready' || state === 'degraded';
+  state === GPU_STATE.STARTING ||
+  state === GPU_STATE.WARMING ||
+  state === GPU_STATE.READY ||
+  state === GPU_STATE.DEGRADED;
+
+const GPU_START_BLOCKED_REASON = {
+  STALE_SNAPSHOT: 'Lifecycle telemetry is stale — refresh before starting the GPU.',
+  UNKNOWN_STATE: 'GPU state is unknown — refresh before starting the GPU.',
+} as const;
+
+const getGpuStartBlockedReason = (data: GpuStatusResponse): string | null => {
+  if (!data.snapshot_fresh) {
+    return GPU_START_BLOCKED_REASON.STALE_SNAPSHOT;
+  }
+  if (data.gpu_state.state === GPU_STATE.UNKNOWN) {
+    return GPU_START_BLOCKED_REASON.UNKNOWN_STATE;
+  }
+  return null;
+};
 
 const stateStopReason = (data: GpuStatusResponse): string | null => {
-  if (data.gpu_state.state === 'stopped') {
+  if (data.gpu_state.state === GPU_STATE.STOPPED) {
     return 'already stopped';
   }
   if (!stateCanStop(data.gpu_state.state)) {
@@ -89,9 +108,9 @@ export const useGpuControl = () => {
   });
 
   const data = statusQuery.data;
-  const effectiveState = data && data.snapshot_fresh ? data.gpu_state.state : data ? 'unknown' : undefined;
+  const effectiveState = data?.snapshot_fresh ? data.gpu_state.state : undefined;
   const canStart = data
-    ? stateCanStart(effectiveState ?? 'unknown') && data.gpu_state.intent !== GpuIntentAction.START
+    ? effectiveState !== undefined && stateCanStart(effectiveState) && data.gpu_state.intent !== GpuIntentAction.START
     : false;
   const canStop = data
     ? stateCanStop(data.gpu_state.state) && !data.load.has_work && data.gpu_state.intent !== GpuIntentAction.STOP
@@ -102,6 +121,7 @@ export const useGpuControl = () => {
     data,
     canStart,
     canStop,
+    startBlockedReason: data ? getGpuStartBlockedReason(data) : null,
     stopBlockedReason: data ? stateStopReason(data) : null,
     canReturnToAuto: data?.gpu_state.intent !== undefined && data.gpu_state.intent !== GpuIntentAction.AUTO,
     requestIntent: intentMutation.mutate,

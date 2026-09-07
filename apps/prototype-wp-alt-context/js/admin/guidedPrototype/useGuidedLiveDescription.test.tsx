@@ -240,10 +240,27 @@ describe('useGuidedLiveDescription', () => {
       await press(() => result.current.request());
 
       expect(result.current.state.deadlineMs).toBeGreaterThan(195_000);
-      expect(result.current.state.deadlineMs).toBe(GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000);
+      expect(result.current.state.deadlineMs).toBe(705_000);
 
       await settle(200_000);
       expect(result.current.state.status).not.toBe(GUIDED_LIVE_STATUS.TIMED_OUT);
+    });
+
+    it('honors a warm 240-second server generation budget instead of the 180-second local ceiling', async () => {
+      const client = stubClient({
+        submit: vi.fn<GuidedLiveDescriptionClient['submit']>(() =>
+          Promise.resolve({ ...runResponse({ gpu_state: 'ready' }), deadline_seconds: 240 }),
+        ),
+        poll: vi.fn<GuidedLiveDescriptionClient['poll']>(() =>
+          Promise.resolve(runResponse({ phase: 'warming', gpu_state: 'ready' })),
+        ),
+      });
+      const { result } = mount(client);
+
+      await press(() => result.current.request());
+
+      expect(result.current.state.deadlineMs).toBe(255_000);
+      expect(result.current.state.deadlineMs).not.toBe(GUIDED_LIVE_WARM_CEILING_SECONDS * 1000);
     });
 
     it('lifts a warm-pinned deadline when the first poll reveals the GPU is cold', async () => {
@@ -265,12 +282,12 @@ describe('useGuidedLiveDescription', () => {
       const { result } = mount(client);
 
       await press(() => result.current.request());
-      expect(result.current.state.deadlineMs).toBe(GUIDED_LIVE_WARM_CEILING_SECONDS * 1000);
+      expect(result.current.state.deadlineMs).toBe(415_000);
 
       await settle(1000);
 
       expect(result.current.state.deadlineMs).toBeGreaterThan(GUIDED_LIVE_WARM_CEILING_SECONDS * 1000);
-      expect(result.current.state.deadlineMs).toBe(GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000);
+      expect(result.current.state.deadlineMs).toBe(925_000);
     });
 
     it('ignores a budget below the trust floor instead of timing out sixteen seconds in', async () => {

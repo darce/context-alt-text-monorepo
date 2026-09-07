@@ -50,6 +50,7 @@ use function is_string;
 use function is_wp_error;
 use function max;
 use function pathinfo;
+use function preg_match;
 use function register_rest_route;
 use function sanitize_text_field;
 use function sprintf;
@@ -88,6 +89,14 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 	 * checked incrementally before each read).
 	 */
 	private const DESCRIBE_RUN_MULTIPART_MAX_BYTES_DEFAULT = 200 * 1024 * 1024;
+
+	/**
+	 * GUIDEDFIX-2: wire-locked bounds for the optional client-supplied
+	 * `idempotency_key` on a bulk describe-run submit. Mirrors the constraint
+	 * named in the 400 error message — do not change independently of it.
+	 */
+	private const IDEMPOTENCY_KEY_MIN_LENGTH = 16;
+	private const IDEMPOTENCY_KEY_MAX_LENGTH = 128;
 
 	/**
 	 * BR-129 / BR-134: locally recorded media_id set for a describe run, keyed by
@@ -264,6 +273,11 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 						'items'       => array( 'type' => 'integer' ),
 						'description' => 'Attachment ids to describe in bulk.',
 					),
+					'idempotency_key' => array(
+						'type'        => 'string',
+						'required'    => false,
+						'description' => 'Client-generated retry key (16-128 chars, [A-Za-z0-9_-]) forwarded to the backend for run dedupe.',
+					),
 				),
 			)
 		);
@@ -358,6 +372,14 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 	}
 
 	public function submit_describe_run( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		// GUIDEDFIX-2: validate the optional idempotency key at the boundary,
+		// before any backend call. Absent stays legal (no-dedupe); present-but-
+		// invalid is a hard 400 naming the constraint.
+		$idempotency_key = $this->validate_idempotency_key( $request );
+		if ( is_wp_error( $idempotency_key ) ) {
+			return $idempotency_key;
+		}
+
 		$media_ids = $this->normalize_media_ids( $request->get_param( 'media_ids' ) );
 		if ( is_wp_error( $media_ids ) ) {
 			return $media_ids;
@@ -378,6 +400,11 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			'media_ids'           => wp_json_encode( array_values( $media_ids ) ),
 			'recognition_enabled' => RecognitionPolicy::enabled() ? 'true' : 'false',
 		);
+		// GUIDEDFIX-2: forward the validated key so the backend can dedupe on
+		// (tenant_id, idempotency_key). Absent stays absent — never invent one.
+		if ( '' !== $idempotency_key ) {
+			$multipart_body['idempotency_key'] = $idempotency_key;
+		}
 
 		// PHP-01: bound aggregate raw bytes BEFORE loading them. Stat each file
 		// and reject on a single-file or running-total overflow so a large run
@@ -1444,6 +1471,41 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			: DescriptionHistoryService::empty_recovered_from();
 
 		return $provenance;
+	}
+
+	/**
+	 * GUIDEDFIX-2: validate the optional client-supplied `idempotency_key`.
+	 * Absent (null or empty string) is legal and returns '' (forward nothing —
+	 * server treats absent as no-dedupe). Present-but-invalid returns a 400
+	 * WP_Error naming the constraint; this must run before any backend call.
+	 *
+	 * @return string|WP_Error Validated key ('' when absent), or a 400 WP_Error.
+	 */
+	private function validate_idempotency_key( WP_REST_Request $request ): string|WP_Error {
+		$raw = $request->get_param( 'idempotency_key' );
+		if ( null === $raw || '' === $raw ) {
+			return '';
+		}
+
+		$key    = is_string( $raw ) ? $raw : (string) $raw;
+		$length = strlen( $key );
+		if (
+			$length < self::IDEMPOTENCY_KEY_MIN_LENGTH
+			|| $length > self::IDEMPOTENCY_KEY_MAX_LENGTH
+			|| 1 !== preg_match( '/^[A-Za-z0-9_-]+$/', $key )
+		) {
+			return new WP_Error(
+				'invalid_idempotency_key',
+				sprintf(
+					'idempotency_key must be %d-%d characters using only letters, digits, underscore, or hyphen.',
+					self::IDEMPOTENCY_KEY_MIN_LENGTH,
+					self::IDEMPOTENCY_KEY_MAX_LENGTH
+				),
+				array( 'status' => 400 )
+			);
+		}
+
+		return $key;
 	}
 
 	/**

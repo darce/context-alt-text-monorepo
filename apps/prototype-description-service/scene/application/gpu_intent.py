@@ -146,7 +146,7 @@ def read_gpu_intent(path: str | Path) -> OperatorIntent | None:
     try:
         payload = json.loads(raw)
         return _intent_from_payload(payload)
-    except (KeyError, TypeError, ValueError) as exc:
+    except (KeyError, TypeError, ValueError, OverflowError) as exc:
         _logger.warning("malformed GPU intent path=%s: %s", target, exc)
         return None
 
@@ -218,8 +218,8 @@ def _parse_timestamp(value: Any, *, field_name: str) -> datetime:
         raise ValueError(f"{field_name} must be an ISO-8601 string")
     normalized = value[:-1] + "+00:00" if value.endswith(("Z", "z")) else value
     parsed = datetime.fromisoformat(normalized)
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError(f"{field_name} must include a timezone")
     return parsed.astimezone(UTC)
 
 

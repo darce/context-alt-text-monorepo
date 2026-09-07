@@ -49,9 +49,18 @@ def _run_lifecycle(
     empty_rollback_artifact: str | None = None,
     damaged_rollback_unit: str | None = None,
     partial_reaper_write: bool = False,
+    group_present: bool = False,
+    groupadd_rc: int = 0,
+    groupadd_noop: bool = False,
+    existing_groups: tuple[str, ...] = (),
 ) -> tuple[subprocess.CompletedProcess[str], str]:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir(exist_ok=True)
+    group_db = tmp_path / "fake-etc-group"
+    seeded = list(existing_groups)
+    if group_present:
+        seeded.append("acxapi:x:10001:")
+    group_db.write_text("".join(f"{line}\n" for line in seeded), encoding="utf-8")
     transport_log = tmp_path / "transport.log"
     expected_systemd = tmp_path / "expected-systemd"
     effective_systemd = tmp_path / "effective-systemd"
@@ -263,6 +272,68 @@ printf '\n' >>"$FAKE_TRANSPORT_LOG"
 exit "${FAKE_FLOCK_RC:-0}"
 """,
     )
+    # macOS has neither binary, but the units resolve SupplementaryGroups=10001
+    # through NSS, so the fake host has to model group lookup and creation. Both
+    # shims read and write $FAKE_GROUP_DB, a stand-in /etc/group, so a groupadd
+    # in the payload is observable by a later getent -- the installer's guard and
+    # its postcondition assertion are only meaningful against shared state.
+    _write_executable(
+        fake_bin / "getent",
+        """#!/usr/bin/env bash
+set -euo pipefail
+printf 'getent' >>"$FAKE_TRANSPORT_LOG"
+printf ' <%s>' "$@" >>"$FAKE_TRANSPORT_LOG"
+printf '\n' >>"$FAKE_TRANSPORT_LOG"
+# Only the group database is modelled. Answering any other database with a group
+# record would let a future `getent ahosts` silently parse `acxapi:x:10001:` as a
+# hostname instead of failing loudly.
+if [ "${1:-}" != group ]; then
+  exit 2
+fi
+key="${2:-}"
+while IFS=: read -r gname _ ggid _; do
+  if [ "$gname" = "$key" ] || [ "$ggid" = "$key" ]; then
+    printf '%s:x:%s:\n' "$gname" "$ggid"
+    exit 0
+  fi
+done <"$FAKE_GROUP_DB"
+exit 2
+""",
+    )
+    _write_executable(
+        fake_bin / "groupadd",
+        """#!/usr/bin/env bash
+set -euo pipefail
+printf 'groupadd' >>"$FAKE_TRANSPORT_LOG"
+printf ' <%s>' "$@" >>"$FAKE_TRANSPORT_LOG"
+printf '\n' >>"$FAKE_TRANSPORT_LOG"
+if [ "${FAKE_GROUPADD_RC:-0}" != 0 ]; then
+  exit "${FAKE_GROUPADD_RC}"
+fi
+want_gid=''
+want_name=''
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -g) want_gid="$2"; shift 2 ;;
+    -r) shift ;;
+    *) want_name="$1"; shift ;;
+  esac
+done
+# A successful but ineffective groupadd is distinct from the normal collision
+# behavior below. This lets the postcondition test exercise the installer's
+# `getent group 10001` check after groupadd exits 0.
+if [ "${FAKE_GROUPADD_NOOP:-0}" = 1 ]; then
+  exit 0
+fi
+# shadow-utils exit codes: 9 = name already in use, 4 = GID already in use.
+while IFS=: read -r gname _ ggid _; do
+  [ "$gname" = "$want_name" ] && exit 9
+  [ "$ggid" = "$want_gid" ] && exit 4
+done <"$FAKE_GROUP_DB"
+printf '%s:x:%s:\n' "$want_name" "$want_gid" >>"$FAKE_GROUP_DB"
+exit 0
+""",
+    )
     _write_executable(
         fake_bin / "delete-activation-call",
         """#!/usr/bin/env python3
@@ -317,6 +388,9 @@ printf '\n' >>"$FAKE_TRANSPORT_LOG"
             "FAKE_VERIFY_RC": str(verify_rc),
             "FAKE_REAPER_RC": str(reaper_rc),
             "FAKE_FLOCK_RC": str(flock_rc),
+            "FAKE_GROUP_DB": str(group_db),
+            "FAKE_GROUPADD_RC": str(groupadd_rc),
+            "FAKE_GROUPADD_NOOP": "1" if groupadd_noop else "0",
             "FAKE_DROP_IN_PATHS": drop_in_paths,
             "FAKE_MISMATCHED_UNIT": mismatched_unit or "",
             "FAKE_REAP_EXEC_START": reap_exec_start,
@@ -704,6 +778,126 @@ def test_reaper_is_proved_before_start_timer_is_enabled(tmp_path: Path) -> None:
     assert disable < stop_start < lock_quiesced < reap_proof < start_timer_enable
     assert "systemctl <start> <acx-gpu-start" not in calls
     assert calls.index("systemctl <show> <acx-gpu-reap.service>") < start_timer_enable
+
+
+def test_fresh_host_gets_the_supplementary_group_before_the_reaper_is_proved(
+    tmp_path: Path,
+) -> None:
+    """A fresh host gets the NSS group before either lifecycle unit is activated.
+
+    The fixture deliberately starts without GID 10001. A numeric chown would
+    leave the units at status=216/GROUP, so the executed payload must create the
+    resolvable GID, verify it, and only then prove the reaper.
+    """
+    result, calls = _run_lifecycle(
+        tmp_path,
+        enabled=True,
+        ready_url="http://10.0.1.36:8000/health",
+        dry_run=False,
+        group_present=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    groupadd = "groupadd <-r> <-g> <10001> <acxapi>"
+    getent = "getent <group> <10001>"
+    assert groupadd in calls
+    assert calls.count(getent) >= 2
+    assert calls.index(getent) < calls.index(groupadd) < calls.rindex(getent)
+    assert calls.rindex(getent) < calls.index("systemctl <start> <acx-gpu-reap.service>")
+    assert calls.index(groupadd) < calls.index(
+        "systemctl <start> <acx-gpu-reap.service>"
+    )
+
+
+def test_reinstall_does_not_recreate_an_existing_supplementary_group(
+    tmp_path: Path,
+) -> None:
+    result, calls = _run_lifecycle(
+        tmp_path,
+        enabled=True,
+        ready_url="http://10.0.1.36:8000/health",
+        dry_run=False,
+        group_present=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "getent <group> <10001>" in calls
+    assert "groupadd" not in calls
+
+
+def test_unprovisionable_supplementary_group_never_enables_the_start_timer(
+    tmp_path: Path,
+) -> None:
+    """A GID that cannot be created is the 216/GROUP failure in advance: both units
+    would refuse to start. Arming the start timer then buys a GPU nothing can stop."""
+    result, calls = _run_lifecycle(
+        tmp_path,
+        enabled=True,
+        ready_url="http://10.0.1.36:8000/health",
+        dry_run=False,
+        group_present=False,
+        groupadd_rc=1,
+    )
+
+    assert result.returncode != 0
+    assert "systemctl <enable> <--now> <acx-gpu-start.timer>" not in calls
+
+
+def test_group_name_collision_still_provisions_the_gid_the_units_resolve(
+    tmp_path: Path,
+) -> None:
+    """The guard keys on the GID, the creation keys on the name. An operator who
+    pre-created `acxapi` at some other GID must not wedge the install: what
+    SupplementaryGroups=10001 needs is a resolvable GID, not a particular name."""
+    result, calls = _run_lifecycle(
+        tmp_path,
+        enabled=True,
+        ready_url="http://10.0.1.36:8000/health",
+        dry_run=False,
+        existing_groups=("acxapi:x:5000:",),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "systemctl <enable> <--now> <acx-gpu-start.timer>" in calls
+    preferred = "groupadd <-r> <-g> <10001> <acxapi>"
+    fallback = "groupadd <-r> <-g> <10001> <acxgid10001>"
+    assert calls.count(preferred) == 1
+    assert calls.count(fallback) == 1, (
+        "the pre-existing acxapi name must take the installer's fallback groupadd path"
+    )
+    assert calls.index(preferred) < calls.index(fallback)
+    group_db = (tmp_path / "fake-etc-group").read_text(encoding="utf-8")
+    assert ":10001:" in group_db, (
+        "the collision path must fall back to another name and still create GID 10001, "
+        f"got: {group_db!r}"
+    )
+
+
+def test_install_fails_closed_when_the_gid_is_unresolvable_after_groupadd(
+    tmp_path: Path,
+) -> None:
+    """groupadd exiting 0 is not the postcondition; a resolvable GID 10001 is.
+
+    The fixture forces groupadd to report success without writing an NSS entry.
+    If the group database still cannot answer for 10001, arming the start timer
+    buys a burst GPU whose reaper will die at 216/GROUP.
+    """
+    result, calls = _run_lifecycle(
+        tmp_path,
+        enabled=True,
+        ready_url="http://10.0.1.36:8000/health",
+        dry_run=False,
+        # groupadd reports success but writes nothing the group DB can resolve.
+        groupadd_noop=True,
+        existing_groups=("acxapi:x:5000:", "acxgid10001:x:5001:"),
+    )
+
+    assert result.returncode != 0
+    assert calls.count("groupadd <-r> <-g> <10001> <acxapi>") == 1
+    assert "groupadd <-r> <-g> <10001> <acxgid10001>" not in calls
+    assert calls.count("getent <group> <10001>") >= 2
+    assert "systemctl <enable> <--now> <acx-gpu-start.timer>" not in calls
+    assert "does not resolve GID 10001" in result.stderr
 
 
 def test_rendered_remote_body_avoids_nonportable_shell_constructs(tmp_path: Path) -> None:

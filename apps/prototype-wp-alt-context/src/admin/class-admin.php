@@ -408,7 +408,11 @@ class Admin {
 
 		$id = filter_var( $raw, FILTER_VALIDATE_INT );
 
-		if ( false === $id || $id <= 0 ) {
+		// PHP counts to PHP_INT_MAX; the browser that reads this config stops
+		// being exact at 2^53-1, so anything above it arrives in JS as a
+		// neighbouring number and addresses the wrong attachment. Refuse here
+		// rather than publish an id the consumer cannot hold.
+		if ( false === $id || $id <= 0 || $id > 9007199254740991 ) {
 			return null;
 		}
 

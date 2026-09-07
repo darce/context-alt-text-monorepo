@@ -79,17 +79,29 @@ export const NONCE_REFRESH_TIMEOUT_MS = 10_000;
  * tool for that: it reads `'0x1a'` as 26 and `'1e10'` as ten billion, both of
  * which PHP rejects outright. A decimal-digits test with PHP's surrounding-
  * whitespace tolerance is the same predicate on both sides (rg-005).
+ *
+ * Two spellings still slipped through and had to be spelled out. PHP refuses a
+ * leading zero (`'0001'` is not 1 to `filter_var`), and its whitespace set is
+ * the ASCII run below -- `String.prototype.trim` is wider, stripping U+000C,
+ * NBSP and the BOM, so a padded id JS read as configured was one the publisher
+ * had already refused. U+000B is in PHP's set and stays accepted here.
  */
-const DECIMAL_INT_PATTERN = /^[+-]?\d+$/;
+const DECIMAL_INT_PATTERN = /^[+-]?(?:0|[1-9]\d*)$/;
+
+/** Exactly the run `filter_var` strips: space, tab, newline, CR, vertical tab. */
+const PHP_INT_PADDING = /^[ \t\n\r\v]+|[ \t\n\r\v]+$/g;
 
 const normalizeAttachmentId = (value: unknown): number | null => {
   if (typeof value === 'number') {
-    return Number.isInteger(value) && value > 0 ? value : null;
+    // Bounded like the string branch below. Without this an id above 2^53 was
+    // accepted or refused depending only on which JSON type it arrived as,
+    // and past that point the number is no longer the id that was sent.
+    return Number.isSafeInteger(value) && value > 0 ? value : null;
   }
   if (typeof value !== 'string') {
     return null;
   }
-  const trimmed = value.trim();
+  const trimmed = value.replace(PHP_INT_PADDING, '');
   if (!DECIMAL_INT_PATTERN.test(trimmed)) {
     return null;
   }

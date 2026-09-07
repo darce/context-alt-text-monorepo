@@ -74,6 +74,13 @@ case "${OCIR_TEST_OCI_MODE:-ok}" in
                 ;;
         esac
         ;;
+    generation_stderr)
+        case " $* " in
+            *" --secret-name OCIR_CREDENTIAL_GENERATION "*)
+                printf '%s\n' 'warning: generation read completed with notices' >&2
+                ;;
+        esac
+        ;;
     generation_timeout)
         case " $* " in
             *" --secret-name OCIR_CREDENTIAL_GENERATION "*) exec sleep 10 ;;
@@ -83,13 +90,16 @@ esac
 case " $* " in
     *" --secret-name OCIR_CREDENTIAL_GENERATION "*)
         generation=STABLE:test-generation
-        if [ "${OCIR_TEST_OCI_MODE:-}" = generation_change ]; then
+        if [ "${OCIR_TEST_OCI_MODE:-}" = generation_change ] || \
+            [ "${OCIR_TEST_OCI_MODE:-}" = generation_stderr ]; then
             generation_file="${OCIR_TEST_RECORD_DIR}/generation.count"
             generation_count=0
             [ ! -f "$generation_file" ] || generation_count=$(cat "$generation_file")
             generation_count=$((generation_count + 1))
             printf '%s' "$generation_count" >"$generation_file"
-            generation="STABLE:generation-${generation_count}"
+            if [ "${OCIR_TEST_OCI_MODE:-}" = generation_change ]; then
+                generation="STABLE:generation-${generation_count}"
+            fi
         fi
         printf '%s' "$generation" | base64
         ;;
@@ -251,6 +261,19 @@ for docker_mode in ok fail; do
         fail "${docker_mode}: token survived in ${remaining_leak}"
     fi
 done
+
+reset_records
+generation_stderr_rc=0
+OCIR_TEST_OCI_MODE=generation_stderr run_snippet c "$behavior_login" \
+    "${record_dir}/generation-stderr.stderr" "${record_dir}/generation-stderr.trace" || generation_stderr_rc=$?
+assert_eq "generation stderr does not corrupt a stable marker" 0 "$generation_stderr_rc"
+assert_eq "stable generation with stderr uses the versioned recheck" 2 \
+    "$(cat "${record_dir}/generation.count")"
+if [ -e "${record_dir}/docker.argv" ]; then
+    pass "stable generation with stderr reaches the versioned Docker path"
+else
+    fail "stable generation with stderr did not reach Docker"
+fi
 
 reset_records
 generation_rc=0

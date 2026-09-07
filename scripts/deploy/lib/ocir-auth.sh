@@ -104,8 +104,10 @@ ocir_login_snippet() {
     'fi' \
     'export DOCKER_CONFIG="$ACX_OCIR_DOCKER_CONFIG"' \
     'acx_active_pid=' \
+    'acx_ocir_generation_stderr_file=' \
     'acx_cleanup() {' \
     '  if [ -n "${acx_active_pid:-}" ]; then kill "$acx_active_pid" 2>/dev/null || true; wait "$acx_active_pid" 2>/dev/null || true; fi' \
+    '  if [ -n "${acx_ocir_generation_stderr_file:-}" ]; then rm -f -- "$acx_ocir_generation_stderr_file"; fi' \
     '  if [ "$acx_owns_docker_config" -eq 1 ]; then rm -rf -- "$ACX_OCIR_DOCKER_CONFIG"; fi' \
     '}' \
     'trap acx_cleanup EXIT' \
@@ -140,12 +142,14 @@ ocir_login_snippet() {
     '  awk '\''BEGIN { ORS="" } { seen=1; print } END { if (!seen) { print "Vault secret was empty" > "/dev/stderr"; exit 65 } }'\''' \
     '}'
 
+  printf '%s\n' 'acx_ocir_generation_stderr_file="$(mktemp "${TMPDIR:-/tmp}/acx-ocir-generation.XXXXXX")"'
   printf 'ACX_OCIR_SECRET_NAME="$ACX_OCIR_GENERATION_SECRET"\n'
   printf '%s\n' \
     'set +e'
-  printf 'acx_ocir_generation_raw="$(%s 2>&1)"\n' "$(ocir_vault_fetch_raw_snippet)"
+  printf 'acx_ocir_generation_raw="$(%s 2>"$acx_ocir_generation_stderr_file")"\n' "$(ocir_vault_fetch_raw_snippet)"
   printf '%s\n' \
     'acx_ocir_generation_fetch_rc=$?' \
+    'acx_ocir_generation_stderr_raw="$(cat "$acx_ocir_generation_stderr_file")"' \
     'set -e' \
     'case "$acx_ocir_generation_fetch_rc" in' \
     '  124) printf '\''acx-timeout:vault after %ss\n'\'' "$ACX_VAULT_FETCH_TIMEOUT" >&2; exit 124 ;;' \
@@ -169,7 +173,7 @@ ocir_login_snippet() {
     '    esac' \
     '    ;;' \
     '  *)' \
-    '    case "$acx_ocir_generation_raw" in' \
+    '    case "$acx_ocir_generation_stderr_raw" in' \
     '      *NotAuthorizedOrNotFound*|*NotFound*|*[Nn][Oo]" "[Aa][Cc][Tt][Ii][Vv][Ee]*|"")' \
     '        # One-release migration path for pre-generation Vault fixtures.' \
     '        printf '\''acx-credential-generation:absent-legacy\n'\'' >&2' \

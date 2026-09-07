@@ -46,9 +46,13 @@ describe('GuidedPrototypePage shell', () => {
         'Follow one photo from start to finish. AltContext finds two faces, matches each one to a person you already named, and puts their names in the image description. You choose what gets saved.',
       ),
     ).toBeInTheDocument();
-    expect(screen.getByText('This demo uses one saved run. It does not run recognition live.')).toBeInTheDocument();
+    expect(
+      screen.getByText('This demo uses one saved face-match run. Descriptions can run live on the real GPU.'),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Start the demo' }));
-    expect(screen.getByRole('status')).toHaveTextContent('The steps are open. Start with the photo.');
+    expect(screen.getByTestId('guided-page-feedback')).toHaveTextContent(
+      'The steps are open. Start with the photo.',
+    );
     expect(document.activeElement).toHaveAttribute('data-guided-focus-target', 'true');
 
     const nav = screen.getByRole('navigation', { name: 'Guided review steps' });
@@ -98,14 +102,16 @@ describe('GuidedPrototypePage shell', () => {
 
     await user.click(screen.getByRole('button', { name: 'Start the demo' }));
     await user.click(screen.getByRole('button', { name: /^Find the faces/ }));
-    expect(screen.getByRole('status')).toHaveTextContent('Now on: Find the faces.');
+    expect(screen.getByTestId('guided-page-feedback')).toHaveTextContent('Now on: Find the faces.');
     expect(document.activeElement).toHaveAttribute('id', 'guided-section-face');
 
     await user.click(screen.getByRole('button', { name: /^Confirm each match/ }));
     expect(document.activeElement).toHaveAttribute('id', 'guided-section-identity');
 
     await user.click(screen.getByRole('button', { name: 'Close the steps' }));
-    expect(screen.getByRole('status')).toHaveTextContent('Steps closed. You can keep practising.');
+    expect(screen.getByTestId('guided-page-feedback')).toHaveTextContent(
+      'Steps closed. You can keep practising.',
+    );
     expect(document.activeElement).toHaveAttribute('id', 'guided-section-understand');
   });
 
@@ -139,7 +145,9 @@ describe('GuidedPrototypePage shell', () => {
       }),
     );
     expect(screen.getByRole('textbox', { name: 'Description draft' })).toHaveValue(INITIAL_SCENARIO.drafts.none);
-    expect(screen.getByRole('status')).toHaveTextContent('Practice reset. The original text is back.');
+    expect(screen.getByTestId('guided-page-feedback')).toHaveTextContent(
+      'Practice reset. The original text is back.',
+    );
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(screen.getAllByText('You have not decided yet.')).toHaveLength(2);
     expect(flowStages()[3]).toHaveTextContent('now');
@@ -217,13 +225,13 @@ describe('GuidedPrototypePage journey', () => {
     );
 
     fireEvent.click(confirmButton('Justin Trudeau'));
-    expect(screen.getByRole('status')).toHaveTextContent(
+    expect(screen.getByTestId('guided-page-feedback')).toHaveTextContent(
       'Match confirmed. Justin Trudeau is in the draft. Nothing is applied yet.',
     );
     expect(screen.getByRole('textbox', { name: 'Description draft' })).toHaveValue(JUSTIN_DRAFT);
 
     fireEvent.click(confirmButton('Katy Perry'));
-    expect(screen.getByRole('status')).toHaveTextContent(
+    expect(screen.getByTestId('guided-page-feedback')).toHaveTextContent(
       'Match confirmed. Katy Perry is in the draft. Nothing is applied yet.',
     );
     expect(screen.getByRole('textbox', { name: 'Description draft' })).toHaveValue(BOTH_NAMES_DRAFT);
@@ -261,7 +269,7 @@ describe('GuidedPrototypePage journey', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
-    expect(screen.getByRole('status')).toHaveTextContent('Apply undone.');
+    expect(screen.getByTestId('guided-page-feedback')).toHaveTextContent('Apply undone.');
     expect(screen.getByText('You undid the apply.')).toBeInTheDocument();
     expect(document.activeElement).toHaveAttribute('id', 'guided-section-apply');
     expect(screen.getByRole('navigation', { name: 'Guided review steps' })).toHaveTextContent('Apply it yourself');
@@ -276,7 +284,7 @@ describe('GuidedPrototypePage journey', () => {
     fireEvent.click(confirmButton('Justin Trudeau'));
     fireEvent.click(unnamedButton('right'));
 
-    expect(screen.getByRole('status')).toHaveTextContent(
+    expect(screen.getByTestId('guided-page-feedback')).toHaveTextContent(
       'The person on the right stays unnamed. You can still check the description.',
     );
     expect(screen.getByText('You kept the person on the right unnamed.', { selector: 'li' })).toBeInTheDocument();
@@ -305,7 +313,7 @@ describe('GuidedPrototypePage journey', () => {
     fireEvent.click(unnamedButton('left'));
     fireEvent.click(unnamedButton('right'));
 
-    expect(screen.getByRole('status')).toHaveTextContent(
+    expect(screen.getByTestId('guided-page-feedback')).toHaveTextContent(
       'The person on the right stays unnamed. You can still check the description.',
     );
     expect(screen.getByText('You kept the person on the left unnamed.', { selector: 'li' })).toBeInTheDocument();
@@ -331,7 +339,9 @@ describe('GuidedPrototypePage journey', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Start the demo' }));
     fireEvent.click(screen.getByRole('button', { name: 'Reject this draft' }));
 
-    expect(screen.getByRole('status')).toHaveTextContent('Draft rejected. The saved text did not change.');
+    expect(screen.getByTestId('guided-page-feedback')).toHaveTextContent(
+      'Draft rejected. The saved text did not change.',
+    );
     expect(screen.getByText('Rejected. The saved text did not change')).toBeInTheDocument();
     expect(document.activeElement).toBe(reviewSection());
     expect(document.activeElement).not.toBe(document.body);
@@ -380,7 +390,7 @@ describe('GuidedPrototypePage journey', () => {
   it('disables undo before an application and leaves feedback unchanged when clicked', () => {
     render(<GuidedPrototypePage />);
 
-    const feedback = screen.getByRole('status');
+    const feedback = screen.getByTestId('guided-page-feedback');
     const undoButton = screen.getByRole('button', { name: 'Undo' });
     expect(undoButton).toBeDisabled();
     fireEvent.click(undoButton);
@@ -400,7 +410,9 @@ describe('GuidedPrototypePage journey', () => {
       'You can only use the name Katy Perry after you confirm that face match.',
     );
     expect(document.activeElement).toBe(editor);
-    expect(screen.getByRole('status')).not.toHaveTextContent('You can only use the name');
+    expect(screen.getByTestId('guided-page-feedback')).not.toHaveTextContent(
+      'You can only use the name',
+    );
   });
 
   it('keeps the latest undo available across two applied drafts and restores focus after each undo', async () => {

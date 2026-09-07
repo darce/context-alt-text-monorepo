@@ -202,3 +202,14 @@ Rules:
     container bind-mounts only its own `/run/acx-write/${ACX_ENV}` read-write
     and publishes `describe-load.json` there; the lifecycle units aggregate the
     `/run/acx-write` parent (`--load-dir /run/acx-write`).
+  - **Host obligation:** a group entry must resolve for GID 10001. The chowns
+    above are numeric and succeed without one, but both units pin
+    `SupplementaryGroups=10001`, which systemd resolves through NSS *before*
+    `ExecStart` — with no entry, each unit dies at `status=216/GROUP` and the
+    burst GPU loses its stop path. The installer creates it (`acxapi`, or
+    `acxgid10001` if that name is already taken at another GID) and
+    `preflight-gpu-env.sh --check-reaper` asserts it before the flip. The name
+    is arbitrary and deliberately not part of this contract; only the GID is.
+    Note the API image pins the same GID as `acx`
+    (`apps/prototype-description-service/Dockerfile`) — a separate namespace
+    from the host, and every chown on both sides is numeric.

@@ -36,6 +36,38 @@ is_trusted_describe_profile() {
     return 1
 }
 
+# classify_describe_block_cause <profile>
+#   -> PROBE_FAILED | UNTRUSTED_PROFILE | TRUSTED
+# WHY: is_trusted_describe_profile returns 1 for both an empty profile and an
+# unrecognized one, so a caller that branches on it alone reports a failed
+# /health/detailed probe as a bad producer profile and sends the operator to
+# fix the wrong system. Empty (or whitespace-only) means the probe never
+# yielded a value; a non-empty miss means the producer really is untrusted.
+classify_describe_block_cause() {
+    local profile="$1"
+    local trimmed
+    # Word-splitting collapses whitespace-only input to the empty string.
+    # Runs under `set -f` in a subshell, same guard as
+    # classify_claimed_adapter_matches_probe: without it the split is also a
+    # pathname expansion, so a profile of `*` would match cwd and be reported
+    # TRUSTED while the gate itself BLOCKs it.
+    trimmed=$(
+        set -f
+        # shellcheck disable=SC2086
+        set -- $profile
+        printf '%s' "${1:-}"
+    )
+    if [ -z "$trimmed" ]; then
+        echo PROBE_FAILED
+        return
+    fi
+    if is_trusted_describe_profile "$trimmed"; then
+        echo TRUSTED
+        return
+    fi
+    echo UNTRUSTED_PROFILE
+}
+
 # php_define_value <constant_name> <wordpress_config_extra>
 # Extracts define('NAME','value') / define("NAME","value") from the already-
 # loaded WORDPRESS_CONFIG_EXTRA string. Reuses secrets/.env material the

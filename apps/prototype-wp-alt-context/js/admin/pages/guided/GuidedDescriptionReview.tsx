@@ -7,9 +7,13 @@ import {
   getLastGuidedApplication,
 } from '../../guidedPrototype/state';
 import type { GuidedCandidateStatus, GuidedScenario } from '../../guidedPrototype/state';
+import { ErrorBoundary } from '../../../components/ErrorBoundary';
+import { GuidedLiveDescriptionPanel } from './GuidedLiveDescriptionPanel';
 
 export interface GuidedDescriptionReviewProps {
   scenario: GuidedScenario;
+  /** Attachment the optional live run describes; null when the demo has none. */
+  liveMediaId: number | null;
   resetVersion: number;
   onSaveEdit: (text: string) => string | undefined;
   onReject: () => void;
@@ -50,6 +54,7 @@ const descriptionExplanation = (scenario: GuidedScenario): string => {
 
 export const GuidedDescriptionReview = ({
   scenario,
+  liveMediaId,
   resetVersion,
   onSaveEdit,
   onReject,
@@ -192,6 +197,24 @@ export const GuidedDescriptionReview = ({
           </div>
         </div>
       </section>
+
+      {/* Reset practice must clear the live run too: `resetVersion` as a key
+          remounts the panel, where passing it as a prop left a finished run's
+          sentence on screen after the lesson restarted (S1-B-09). */}
+      {/* The live run is enrichment; the description, the editor and Apply are
+          the lesson. Unwrapped, one unreachable status or one unexpected
+          payload takes all three down over a feature nobody asked for
+          (LOCAL-A-07). The fallback names what was lost and nothing else --
+          the rest of the step below keeps working. */}
+      <ErrorBoundary
+        fallback={
+          <p className="acx-guided-live__fallback" role="alert">
+            The live description could not run. The rest of this step still works.
+          </p>
+        }
+      >
+        <GuidedLiveDescriptionPanel key={resetVersion} scenario={scenario} mediaId={liveMediaId} />
+      </ErrorBoundary>
 
       <section
         id="guided-section-apply"

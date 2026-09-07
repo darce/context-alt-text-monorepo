@@ -775,14 +775,19 @@ if (!function_exists('get_post_type')) {
             return (string) $post->post_type;
         }
 
-        $postId = 0;
-        if (is_numeric($post)) {
-            $postId = (int) $post;
-        } elseif ($post === null && isset($GLOBALS['post']) && is_object($GLOBALS['post'])) {
+        // WordPress resolves an *empty* $post -- null, false, 0, '' -- from the
+        // global post before it ever reads the argument as an id, and it does
+        // so first. Matching only null made get_post_type(false) answer false
+        // here while real WP can answer 'attachment' on any admin screen that
+        // has a global post, which hid whether callers' own
+        // false/non-positive guards were load-bearing at all.
+        if (empty($post) && isset($GLOBALS['post']) && is_object($GLOBALS['post'])) {
             return isset($GLOBALS['post']->post_type)
                 ? (string) $GLOBALS['post']->post_type
                 : false;
         }
+
+        $postId = is_numeric($post) ? (int) $post : 0;
 
         if ($postId <= 0) {
             return false;
@@ -2307,8 +2312,26 @@ if (!function_exists('wp_enqueue_style')) {
 }
 
 if (!function_exists('wp_localize_script')) {
+    /**
+     * Reproduces WP_Scripts::localize()'s scalar-to-string cast.
+     *
+     * Core runs html_entity_decode((string) $value) over every scalar member
+     * before printing, so an int published here reaches the browser as a
+     * string. A stub that stores the PHP array verbatim lets a test assert an
+     * int wire shape production never emits, which is the wrong side of the
+     * boundary to pin (rg-005). Non-scalars are passed through untouched, as
+     * core does.
+     */
     function wp_localize_script($handle, $object_name, $l10n): void
     {
+        if (is_array($l10n)) {
+            foreach ($l10n as $key => $value) {
+                if (is_scalar($value)) {
+                    $l10n[$key] = html_entity_decode((string) $value, ENT_QUOTES, 'UTF-8');
+                }
+            }
+        }
+
         $GLOBALS['__ac_localized_scripts'][$handle][$object_name] = $l10n;
     }
 }

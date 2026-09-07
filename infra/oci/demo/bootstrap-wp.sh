@@ -345,11 +345,21 @@ echo "==> Describe-apply gate (fail-closed; seeded captions are worse than empty
 # WORDPRESS_CONFIG_EXTRA defines this script already loads — never from
 # ACX_DESCRIPTION_ADAPTER in secrets/.env (that name is not wired into the
 # producer). Probe failure / non-2xx / missing field -> empty -> BLOCK.
+PROBED_BASE_URL_FILE="$(mktemp)"
+trap 'rm -f "$PROBED_BASE_URL_FILE"' EXIT
+
 probe_live_description_adapter() {
   local base_url api_key tenant_id body_file code body
   base_url="$(php_define_value ACX_RECOGNITION_URL "$WORDPRESS_CONFIG_EXTRA")"
   api_key="$(php_define_value ACX_RECOGNITION_API_KEY "$WORDPRESS_CONFIG_EXTRA")"
   tenant_id="$(php_define_value ACX_RECOGNITION_TENANT_ID "$WORDPRESS_CONFIG_EXTRA")"
+  # Named for the BLOCK message so a probe failure can quote the endpoint it
+  # actually tried. Runs in a subshell, so write it to a file, not a variable.
+  # Store the normalized form: curl requests "${base_url%/}/health/detailed",
+  # so printing the raw value would hand the operator a doubled-slash URL that
+  # was never requested.
+  printf '%s' "${base_url:+${base_url%/}}" > "$PROBED_BASE_URL_FILE"
+  [ -n "$base_url" ] || printf '%s' "<ACX_RECOGNITION_URL unset>" > "$PROBED_BASE_URL_FILE"
   if [[ -z "$base_url" || -z "$api_key" ]]; then
     echo ""
     return 0
@@ -482,6 +492,8 @@ case "$DESCRIBE_VERDICT" in
       else
         echo "==> BLOCKED: cannot verify description provenance (got '${PROVENANCE}') for adapter '${ADAPTER_PROFILE}' (coverage=${MEDIA_WITH_ALT}/${TOTAL_MEDIA}). Fail closed; this is an environment fault, not a config fault. Describe pass skipped." >&2
       fi
+    elif [[ "$(classify_describe_block_cause "$ADAPTER_PROFILE")" == "PROBE_FAILED" ]]; then
+      echo "==> BLOCKED: could not read the live description service adapter — GET $(cat "$PROBED_BASE_URL_FILE" 2>/dev/null)/health/detailed returned no usable description_adapter (non-2xx, timeout, missing/blank ACX_RECOGNITION_URL or ACX_RECOGNITION_API_KEY, or an unparseable body). This is a probe fault on the demo host — check the URL and credentials in the demo secrets/.env and that the service is reachable from this host. Do NOT change the producer's profile; nothing was read from it. (coverage=${MEDIA_WITH_ALT}/${TOTAL_MEDIA})" >&2
     else
       echo "==> BLOCKED: refusing to publish descriptions — live description service adapter='${ADAPTER_PROFILE}' produces canned fixture captions, which is worse for accessibility than empty alt text. Change the description SERVICE profile (the running producer's ACX_DESCRIPTION_ADAPTER), not the demo host secrets/.env. Trusted service profiles: ${ACX_TRUSTED_DESCRIBE_PROFILES}. (coverage=${MEDIA_WITH_ALT}/${TOTAL_MEDIA})" >&2
     fi

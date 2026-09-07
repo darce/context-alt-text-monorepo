@@ -28,7 +28,16 @@ vi.mock('../../../api/gpuApi', async (importOriginal) => {
 const fetchGpuStatusMock = vi.mocked(gpuApi.fetchGpuStatus);
 const postGpuIntentMock = vi.mocked(gpuApi.postGpuIntent);
 
-const statusResponse = (overrides: Partial<GpuStatusResponse['gpu_state']> = {}): GpuStatusResponse => ({
+type StatusResponseOverrides = Partial<Omit<GpuStatusResponse, 'gpu_state' | 'load'>> & {
+  gpu_state?: Partial<GpuStatusResponse['gpu_state']>;
+  load?: Partial<GpuStatusResponse['load']>;
+};
+
+const statusResponse = ({
+  gpu_state: gpuStateOverrides = {},
+  load: loadOverrides = {},
+  ...overrides
+}: StatusResponseOverrides = {}): GpuStatusResponse => ({
   gpu_state: {
     state: 'stopped',
     instance_id: null,
@@ -42,13 +51,14 @@ const statusResponse = (overrides: Partial<GpuStatusResponse['gpu_state']> = {})
     lease_expires_at: null,
     instance_running_since: null,
     last_transition_reason: 'unknown',
-    ...overrides,
+    ...gpuStateOverrides,
   },
   snapshot_age_seconds: 12,
   snapshot_fresh: true,
   intent: null,
-  load: { has_work: false, written_at: 1_700_000_004, fresh: true },
+  load: { has_work: false, written_at: 1_700_000_004, fresh: true, ...loadOverrides },
   server_time: '2026-09-07T12:00:00Z',
+  ...overrides,
 });
 
 const wrapper = ({ children }: React.PropsWithChildren): React.JSX.Element => {
@@ -88,7 +98,10 @@ describe('useGpuControl', () => {
 
   it('blocks stop with an explicit in-flight-work reason', async () => {
     fetchGpuStatusMock.mockResolvedValue(
-      statusResponse({ state: 'ready', instance_running_since: '2026-09-07T11:00:00Z' }),
+      statusResponse({
+        gpu_state: { state: 'ready', instance_running_since: '2026-09-07T11:00:00Z' },
+        load: { has_work: true },
+      }),
     );
 
     const { result } = renderHook(() => useGpuControl(), { wrapper });

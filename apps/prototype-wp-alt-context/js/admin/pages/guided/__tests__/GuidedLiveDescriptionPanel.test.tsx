@@ -350,4 +350,24 @@ describe('GuidedLiveDescriptionPanel', () => {
       expect(naming).toHaveTextContent('Katy Perry');
     });
   });
+
+  describe('who stopped the run', () => {
+    it('does not blame the learner when the service cancelled the run', async () => {
+      // RUN_CANCELLED and STOPPED_BY_OPERATOR are separate reasons for a reason:
+      // another tab, an operator, or the service itself can end a run. Telling
+      // this learner "You stopped the wait" is a false account of what happened.
+      const client = stubClient({
+        poll: vi.fn<GuidedLiveDescriptionClient['poll']>(() =>
+          Promise.resolve(runResponse({ status: 'cancelled', phase: 'cancelled' })),
+        ),
+      });
+      mount(client);
+      await press(runButton());
+      await settle(2000);
+
+      const line = screen.getByTestId('guided-live-status').textContent ?? '';
+      expect(line).toContain('The run was cancelled');
+      expect(line).not.toContain('You stopped');
+    });
+  });
 });

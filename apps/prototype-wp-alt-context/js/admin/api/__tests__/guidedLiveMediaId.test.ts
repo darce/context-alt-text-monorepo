@@ -122,3 +122,28 @@ describe('reading the guided live media id without a bootstrap', () => {
     expect(getGuidedLiveMediaId()).toBe(4211);
   });
 });
+
+describe('the guard that production actually runs through', () => {
+  beforeEach(() => {
+    resetConfigCache();
+  });
+
+  // wp_localize_script stringifies every scalar, so the id reaches the browser
+  // as '4211', not 4211. The safe-integer bound was asserted only on the number
+  // branch, which production never takes: deleting it from the string branch
+  // left the whole suite green while '9007199254740993' silently became
+  // 9007199254740992 -- a different attachment.
+  it('refuses a stringified id past the safe-integer bound', () => {
+    registerConfig({ nonce: 'n', ajaxUrl: '/a', endpoints: {}, guided_live_media_id: '9007199254740993' });
+    expect(getGuidedLiveMediaId()).toBeNull();
+
+    resetConfigCache();
+    registerConfig({ nonce: 'n', ajaxUrl: '/a', endpoints: {}, guided_live_media_id: '9007199254740992' });
+    expect(getGuidedLiveMediaId()).toBeNull();
+  });
+
+  it('accepts the largest stringified id it can represent exactly', () => {
+    registerConfig({ nonce: 'n', ajaxUrl: '/a', endpoints: {}, guided_live_media_id: '9007199254740991' });
+    expect(getGuidedLiveMediaId()).toBe(9007199254740991);
+  });
+});

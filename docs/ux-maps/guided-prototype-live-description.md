@@ -131,12 +131,19 @@ A run that completes with no draft for this photo lands on the same state with i
 
 ```text
   blocked <- a face re-opened, from any state; a live run is cancelled --+
+     |  ^                                                                |
+     |  | still blocked: every face answered but no live photo           |
+     |  +-- (blocked_reason no_media; the gate holds, the sentence        |
+     |       on screen names the photo, not the faces)                    |
      |                                                                   |
-     | every face answered                                               |
+     | every face answered AND a live photo is configured                |
      v                                                                   |
-   idle --requested--> queued --polled--> warming --polled--> describing |
-     ^                    \                  |                 /         |
-     |                     +-----------------+----------------+          |
+   idle --requested--+                                                   |
+                     |                                                   |
+                     v                                                   |
+                  queued --polled--> warming --polled--> describing      |
+     ^               \                  |                 /              |
+     |                +-----------------+----------------+               |
      |                                  |                                |
      |            polled(complete, tier final_gpu) -> ready -------------+
      |            polled(complete, any other tier) -> degraded ----------+
@@ -146,8 +153,14 @@ A run that completes with no draft for this photo lands on the same state with i
      |            tick past the deadline           -> timed_out ---------+
      |            Stop waiting                     -> cancelled ---------+
      |                                                                   |
-     +------- requested, from any terminal state ------------------------+
+     +--- requested, from any terminal state, straight to queued --------+
 ```
+
+Two edges in that diagram are easy to draw wrong, and both were.
+
+`blocked` clears to `idle` only when the gate has *nothing* left holding it. Answering every face is one condition, not the condition: with no live photo configured the panel recomputes a `no_media` reason and stays blocked, showing the no-photo sentence rather than a Describe button that could not work. The reducer expresses this as a single rule — any non-null `blocked_reason` keeps the panel blocked — which is why a new reason can be added without revisiting this edge.
+
+Retrying from a terminal state goes to `queued`, not back through `idle`. `idle` is the pre-run resting state; a learner who presses the button again after a timeout sees the waiting phase immediately, because `startRun` sets `queued` in the same tick as the request. Drawing the retry through `idle` predicted a blank moment that never happens and left the terminal-to-queued transition undesigned.
 
 `ready` and `degraded` are mutually exclusive outcomes of the same completion: the item's `tier` alone decides which one, and there is no edge between them. Terminal states ignore `polled` and `cancelled` actions entirely, so a late poll cannot reanimate a finished run. Within the wait the status only moves forward — `queued` → `warming` → `describing` — so an out-of-order poll cannot walk the screen backwards.
 

@@ -20,6 +20,7 @@ import {
 } from '../api/describeApi';
 import type { DescribeRunItemsResponse, DescribeRunResponse } from '../api/describeApi';
 import { isFrozenPollFailure } from '../hooks/useDescribeRunProgress';
+import { createLogger } from '../utils/logger';
 import {
   GUIDED_LIVE_STATUS,
   GUIDED_LIVE_WAIT_CEILING_SECONDS,
@@ -49,6 +50,35 @@ import type { GuidedScenario } from './state';
 export const GUIDED_LIVE_WARM_CEILING_SECONDS = 180;
 
 const TICK_MS = 1000;
+
+const liveLog = createLogger('guided.live');
+
+/**
+ * Hand a run back to the server and say so when that fails.
+ *
+ * Cancellation here is a REQUEST -- the route records cancel_requested and a
+ * worker observes it later -- so the only thing the browser can know is whether
+ * the request was accepted. Swallowing the rejection made the two states
+ * indistinguishable: an expired nonce answering 403 looked exactly like a
+ * clean stop, while the run kept the single GPU. Logging is the whole fix; the
+ * screen deliberately stops either way, because a learner who pressed Stop
+ * should not be left watching a spinner nobody owns.
+ */
+const releaseRun = (
+  client: GuidedLiveDescriptionClient,
+  runId: string,
+  because: string,
+): Promise<void> =>
+  client
+    .cancel(runId)
+    .then(() => undefined)
+    .catch((error: unknown) => {
+      liveLog.warn('describe run cancel was not accepted; the run may still hold the GPU', {
+        runId,
+        because,
+        error,
+      });
+    });
 
 export interface GuidedLiveDescriptionClient {
   submit: (mediaId: number) => Promise<DescribeRunResponse>;
@@ -200,7 +230,7 @@ export const useGuidedLiveDescription = ({
       generationRef.current += 1;
       const inFlight = waitingRef.current.runId;
       if (inFlight !== null) {
-        void client.cancel(inFlight).catch(() => undefined);
+        void releaseRun(client, inFlight, 'gate_closed');
       }
     }
     dispatch({ kind: 'gate_changed', blockedReason });
@@ -218,7 +248,7 @@ export const useGuidedLiveDescription = ({
       generationRef.current += 1;
       const { mayBeLive: stillLive, runId: inFlight } = waitingRef.current;
       if (stillLive && inFlight !== null) {
-        void clientRef.current.cancel(inFlight).catch(() => undefined);
+        void releaseRun(clientRef.current, inFlight, 'panel_unmounted');
       }
     },
     [],
@@ -231,22 +261,39 @@ export const useGuidedLiveDescription = ({
     // A timed-out run is stopped on screen only; the server may still be
     // burning GPU on it. Retrying without cancelling first is how one learner
     // gesture ends up paying for two live runs.
-    if (mayBeLive && runId !== null) {
-      void client.cancel(runId).catch(() => undefined);
-    }
+    //
+    // Bump the generation first, so a gate close during the cancel round trip
+    // still fences this attempt, and only then wait: cancellation is a request
+    // the worker observes later, so issuing it in the same tick as the submit
+    // guarantees nothing about ordering on a pool with room for one run. If the
+    // server refuses the cancel we submit anyway -- stranding the learner with
+    // a dead panel is the worse failure, and the rejection is now logged rather
+    // than lost.
+    const previous = mayBeLive && runId !== null ? runId : null;
     const generation = generationRef.current + 1;
     generationRef.current = generation;
     attemptRef.current = 0;
     dispatch({ kind: 'requested', atMs: Date.now() });
 
-    void client
-      .submit(mediaId)
+    void (previous === null ? Promise.resolve() : releaseRun(client, previous, 'superseded_by_retry'))
+      .then(() => {
+        if (generationRef.current !== generation) {
+          // The learner left while we were handing the old run back. Starting a
+          // new burst for a panel that has moved on is exactly the spend this
+          // whole path exists to prevent.
+          return undefined;
+        }
+        return client.submit(mediaId);
+      })
       .then((run) => {
+        if (run === undefined) {
+          return;
+        }
         if (generationRef.current !== generation) {
           // The learner stopped waiting while the submit was in flight. The run
           // exists on the server now, so a burst it started keeps costing money
           // unless we cancel the run id we only just learned.
-          void client.cancel(run.run_id).catch(() => undefined);
+          void releaseRun(client, run.run_id, 'accepted_after_fence');
           return;
         }
         dispatch({
@@ -272,7 +319,7 @@ export const useGuidedLiveDescription = ({
     // the learner with a stopped wait rather than a spinner nobody owns.
     dispatch({ kind: 'cancelled' });
     if (runId !== null) {
-      void client.cancel(runId).catch(() => undefined);
+      void releaseRun(client, runId, 'stopped_by_operator');
     }
   }, [client, runId, waiting]);
 
@@ -311,6 +358,10 @@ export const useGuidedLiveDescription = ({
         }
         const phase = phaseOf(run);
         if (phase === null) {
+          // We cannot read this run any more, which is not the same as the run
+          // being over. Stop polling AND hand it back, or the burst keeps the
+          // pool with nobody watching it.
+          void releaseRun(client, runId, 'unknown_phase');
           dispatch({ kind: 'failed', reason: GUIDED_LIVE_REASON.UNKNOWN_PHASE });
           return;
         }
@@ -343,7 +394,9 @@ export const useGuidedLiveDescription = ({
         }
         if (!isFrozenPollFailure(error)) {
           // A hard failure will not heal by waiting. Say so now rather than
-          // spending the learner's whole deadline on a dead channel.
+          // spending the learner's whole deadline on a dead channel -- but the
+          // dead channel is the poll, not the run, so give the run back too.
+          void releaseRun(client, runId, 'poll_failed');
           dispatch({ kind: 'failed', reason: GUIDED_LIVE_REASON.POLL_FAILED });
           return;
         }

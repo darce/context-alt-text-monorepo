@@ -92,7 +92,14 @@ const statusLine = (state: GuidedLiveState): string => {
     case GUIDED_LIVE_STATUS.TIMED_OUT:
       return 'Stopped waiting. The run may still finish on its own; nothing was applied here.';
     case GUIDED_LIVE_STATUS.CANCELLED:
-      return 'You stopped the wait. Nothing was applied.';
+      // Two different events land here. STOPPED_BY_OPERATOR is this learner
+      // pressing Stop; RUN_CANCELLED is the service (or another tab, or an
+      // operator) ending the run underneath them. Attributing the second to
+      // the first tells someone who did nothing that they did something, and
+      // sends them looking for a mistake they did not make.
+      return state.reason === GUIDED_LIVE_REASON.RUN_CANCELLED
+        ? 'The run was cancelled before it finished. Nothing was applied.'
+        : 'You stopped the wait. Nothing was applied.';
     case GUIDED_LIVE_STATUS.UNAVAILABLE:
       return state.reason === GUIDED_LIVE_REASON.EMPTY_DESCRIPTION
         ? 'The run finished with nothing to show. Nothing was applied.'
@@ -155,7 +162,16 @@ export const GuidedLiveDescriptionPanel = ({
 
         {waiting ? (
           <p className="acx-guided-live__elapsed" data-testid="guided-live-elapsed">
-            {clock(state.elapsedMs)} of up to {clock(state.deadlineMs)}
+            {/*
+              Before the server accepts the run there is no negotiated ceiling,
+              only the client's cold-path placeholder. Printing that as "of up
+              to 8:30" and then revising it down to 3:00 a second later shrinks
+              a promise under someone already waiting. Advertise nothing until
+              there is something to advertise.
+            */}
+            {state.runId === null
+              ? clock(state.elapsedMs)
+              : `${clock(state.elapsedMs)} of up to ${clock(state.deadlineMs)}`}
           </p>
         ) : null}
 

@@ -273,9 +273,15 @@ export const guidedLiveReducer = (state: GuidedLiveState, action: GuidedLiveActi
           reason: null,
         };
       }
-      return state.status === GUIDED_LIVE_STATUS.BLOCKED
-        ? { ...state, status: GUIDED_LIVE_STATUS.IDLE, blockedReason: null }
-        : state;
+      // status and blockedReason are separate fields, so a stale reason can ride
+      // out of BLOCKED on any path that forgets to clear it. The panel reads
+      // the reason with a fallback, so a stale one names the wrong obstacle.
+      // Clearing it whenever the gate is open makes that unreachable by
+      // construction rather than by everyone remembering.
+      if (state.status === GUIDED_LIVE_STATUS.BLOCKED) {
+        return { ...state, status: GUIDED_LIVE_STATUS.IDLE, blockedReason: null };
+      }
+      return state.blockedReason === null ? state : { ...state, blockedReason: null };
     }
 
     case 'requested': {
@@ -292,7 +298,19 @@ export const guidedLiveReducer = (state: GuidedLiveState, action: GuidedLiveActi
         return state;
       }
       const capped = Math.min(action.deadlineSeconds, GUIDED_LIVE_WAIT_CEILING_SECONDS);
-      return { ...state, runId: action.runId, deadlineMs: Math.max(0, capped) * 1000 };
+      // The server is the authority on how long its own work takes, so this
+      // figure replaces the client's pre-acceptance placeholder outright --
+      // including downward. What the learner must never see is that
+      // placeholder presented as a promise and then revised; the panel
+      // therefore advertises no ceiling until this action has negotiated one
+      // (see GuidedLiveDescriptionPanel: waiting without a runId shows
+      // elapsed only).
+      //
+      // Record the run id before advancing the clock: a run the server has
+      // just confirmed is precisely the one that still needs cancelling if
+      // acceptance itself lands past the deadline.
+      const accepted = { ...state, runId: action.runId, deadlineMs: Math.max(0, capped) * 1000 };
+      return advanceClock(accepted, action.atMs);
     }
 
     case 'deadline_raised': {
@@ -318,15 +336,23 @@ export const guidedLiveReducer = (state: GuidedLiveState, action: GuidedLiveActi
         return state;
       }
       const next = advanceClock(state, action.atMs);
-      if (next.status === GUIDED_LIVE_STATUS.TIMED_OUT) {
-        // The response is later than the wait it belongs to. Reading it would
-        // hand the learner a result at 5:01 under a promise that the wait ends
-        // at 5:00 -- a bound a run can outlive between two ticks is no bound.
-        return next;
-      }
 
       if (action.phase === DESCRIBE_RUN_PHASE.COMPLETE) {
+        // Deliberately ahead of the timeout check. The deadline is there to
+        // bound an unbounded wait, not to throw away a sentence that is
+        // already in the browser -- and the clock it is measured against
+        // includes the items round trip that fetched this very payload, so
+        // the late one is often the answer itself. Saying "the run may still
+        // finish on its own" while holding its result is simply untrue.
         return completion(next, action);
+      }
+
+      if (next.status === GUIDED_LIVE_STATUS.TIMED_OUT) {
+        // No answer in hand: the response is later than the wait it belongs
+        // to. Reading it would hand the learner a result at 5:01 under a
+        // promise that the wait ends at 5:00 -- a bound a run can outlive
+        // between two ticks is no bound.
+        return next;
       }
       if (action.phase === DESCRIBE_RUN_PHASE.FAILED) {
         return terminal(next, GUIDED_LIVE_STATUS.UNAVAILABLE, { reason: action.reason ?? GUIDED_LIVE_REASON.RUN_FAILED });

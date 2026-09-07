@@ -264,6 +264,60 @@ describe('GuidedLiveDescriptionPanel', () => {
       expect(status).not.toHaveTextContent(/cpu/i);
     });
 
+    it('says a run that finished with nothing to show finished with nothing to show', async () => {
+      const client = stubClient({
+        poll: vi.fn<GuidedLiveDescriptionClient['poll']>(() =>
+          Promise.resolve(runResponse({ status: 'completed', phase: 'complete', gpu_state: 'ready' })),
+        ),
+        items: vi.fn<GuidedLiveDescriptionClient['items']>(() => Promise.resolve(itemsResponse('   '))),
+      });
+      mount(client);
+
+      await press(runButton());
+      await settle(1000);
+
+      // An empty draft is the silent failure this panel exists to name; the
+      // generic could-not-finish line would hide which of the two happened.
+      const status = screen.getByTestId('guided-live-status');
+      expect(status).toHaveTextContent('The run finished with nothing to show. Nothing was applied.');
+      expect(status).not.toHaveTextContent('The live run could not finish.');
+      expect(screen.queryByTestId('guided-live-text')).toBeNull();
+    });
+
+    it('says the run could not finish when it failed for any other reason', async () => {
+      const client = stubClient({
+        poll: vi.fn<GuidedLiveDescriptionClient['poll']>(() =>
+          Promise.resolve(runResponse({ status: 'failed', phase: 'failed' })),
+        ),
+      });
+      mount(client);
+
+      await press(runButton());
+      await settle(1000);
+
+      const status = screen.getByTestId('guided-live-status');
+      expect(status).toHaveTextContent('The live run could not finish. Nothing was applied.');
+      expect(status).not.toHaveTextContent('nothing to show');
+    });
+
+    it('stops rather than polls on a phase this client does not know', async () => {
+      const client = stubClient({
+        poll: vi.fn<GuidedLiveDescriptionClient['poll']>(() =>
+          Promise.resolve(runResponse({ phase: 'reticulating' as DescribeRunResponse['phase'] })),
+        ),
+      });
+      mount(client);
+
+      await press(runButton());
+      await settle(2000);
+
+      // Reading an unknown phase as queued polled a finished run all the way to
+      // its deadline and then reported a timeout that never happened.
+      expect(screen.getByTestId('guided-live-status')).toHaveTextContent(
+        'The live run could not finish. Nothing was applied.',
+      );
+    });
+
     it('pairs every status with an icon, never colour alone', async () => {
       const client = stubClient({
         poll: vi.fn<GuidedLiveDescriptionClient['poll']>(() =>
@@ -294,6 +348,26 @@ describe('GuidedLiveDescriptionPanel', () => {
       const naming = screen.getByTestId('guided-live-naming');
       expect(naming).toHaveTextContent(/roster/i);
       expect(naming).toHaveTextContent('Katy Perry');
+    });
+  });
+
+  describe('who stopped the run', () => {
+    it('does not blame the learner when the service cancelled the run', async () => {
+      // RUN_CANCELLED and STOPPED_BY_OPERATOR are separate reasons for a reason:
+      // another tab, an operator, or the service itself can end a run. Telling
+      // this learner "You stopped the wait" is a false account of what happened.
+      const client = stubClient({
+        poll: vi.fn<GuidedLiveDescriptionClient['poll']>(() =>
+          Promise.resolve(runResponse({ status: 'cancelled', phase: 'cancelled' })),
+        ),
+      });
+      mount(client);
+      await press(runButton());
+      await settle(2000);
+
+      const line = screen.getByTestId('guided-live-status').textContent ?? '';
+      expect(line).toContain('The run was cancelled');
+      expect(line).not.toContain('You stopped');
     });
   });
 });

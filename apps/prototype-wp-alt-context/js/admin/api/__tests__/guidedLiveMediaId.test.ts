@@ -56,6 +56,48 @@ describe('guided live media id at the config boundary', () => {
   it.each([' 4211', '4211 ', ' 4211 ', '+4211'])('accepts %p, which FILTER_VALIDATE_INT also accepts', (value) => {
     expect(normalize(value)).toBe(4211);
   });
+
+  /**
+   * The parity table above only listed rows where the two ends already agreed,
+   * so it could not fail when they diverged. These are the rows a probe of the
+   * real `filter_var` disagreed on: PHP refuses a leading-zero spelling, and
+   * its whitespace tolerance is the ASCII set `" \t\n\r\v"` -- not
+   * `String.prototype.trim`, which also strips U+000C, NBSP and the BOM. Each
+   * one let JS report a configured subject the publisher had already refused.
+   */
+  it.each(['0001', '+0001', '\f4211', '\u00A04211', '\uFEFF4211'])(
+    'rejects %j, which FILTER_VALIDATE_INT also rejects',
+    (value) => {
+      expect(normalize(value)).toBeNull();
+    },
+  );
+
+  // U+000B is the one control character PHP's trim set does include, so
+  // rejecting it here would invent a divergence rather than close one.
+  it('accepts a vertical-tab-padded id, which FILTER_VALIDATE_INT also accepts', () => {
+    expect(normalize('\v4211')).toBe(4211);
+  });
+
+  /**
+   * The string branch bounds itself with `Number.isSafeInteger`; the number
+   * branch did not, so the same id was accepted or refused depending only on
+   * which JSON type it arrived as. Above 2^53 the value is not the id anymore.
+   */
+  it('rejects a number above the safe-integer range, where the value is no longer exact', () => {
+    expect(normalize(2 ** 53)).toBeNull();
+  });
+
+  /**
+   * JS has no integer/float distinction, so a whole-valued number is
+   * indistinguishable from an int and is accepted. PHP refuses the float
+   * outright (its allow-list takes string and int only). Pinned, not fixed:
+   * the localized wire always carries a string, so this branch is reachable
+   * only from a hand-built payload, and reading 4211.0 as 4211 is the honest
+   * answer there.
+   */
+  it('accepts a whole-valued number, the one shape JS cannot tell from an int', () => {
+    expect(normalize(4211.0)).toBe(4211);
+  });
 });
 
 /**
@@ -78,5 +120,30 @@ describe('reading the guided live media id without a bootstrap', () => {
     registerConfig({ nonce: 'abc', ajaxUrl: '/ajax', endpoints: {}, guided_live_media_id: '4211' });
 
     expect(getGuidedLiveMediaId()).toBe(4211);
+  });
+});
+
+describe('the guard that production actually runs through', () => {
+  beforeEach(() => {
+    resetConfigCache();
+  });
+
+  // wp_localize_script stringifies every scalar, so the id reaches the browser
+  // as '4211', not 4211. The safe-integer bound was asserted only on the number
+  // branch, which production never takes: deleting it from the string branch
+  // left the whole suite green while '9007199254740993' silently became
+  // 9007199254740992 -- a different attachment.
+  it('refuses a stringified id past the safe-integer bound', () => {
+    registerConfig({ nonce: 'n', ajaxUrl: '/a', endpoints: {}, guided_live_media_id: '9007199254740993' });
+    expect(getGuidedLiveMediaId()).toBeNull();
+
+    resetConfigCache();
+    registerConfig({ nonce: 'n', ajaxUrl: '/a', endpoints: {}, guided_live_media_id: '9007199254740992' });
+    expect(getGuidedLiveMediaId()).toBeNull();
+  });
+
+  it('accepts the largest stringified id it can represent exactly', () => {
+    registerConfig({ nonce: 'n', ajaxUrl: '/a', endpoints: {}, guided_live_media_id: '9007199254740991' });
+    expect(getGuidedLiveMediaId()).toBe(9007199254740991);
   });
 });

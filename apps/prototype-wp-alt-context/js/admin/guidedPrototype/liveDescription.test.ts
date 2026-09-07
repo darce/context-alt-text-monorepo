@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  GUIDED_LIVE_BLOCKED_REASON,
+  GUIDED_LIVE_REASON,
   GUIDED_LIVE_STATUS,
   GUIDED_LIVE_WAIT_CEILING_SECONDS,
   guidedLiveNamingDisclosure,
   guidedLiveRequestPayload,
   guidedLivePollDelayMs,
   guidedLiveReducer,
+  guidedLiveRunMayBeLive,
   initialGuidedLiveState,
 } from './liveDescription';
 import type { GuidedLiveState } from './liveDescription';
@@ -15,7 +18,7 @@ import { GUIDED_IDENTITY_STATUS, confirmGuidedIdentity, createGuidedScenario } f
 const T0 = 1_000_000;
 
 const decided = (state: GuidedLiveState): GuidedLiveState =>
-  guidedLiveReducer(state, { kind: 'faces_decided', decided: true });
+  guidedLiveReducer(state, { kind: 'gate_changed', blockedReason: null });
 
 const started = (): GuidedLiveState => {
   let state = decided(initialGuidedLiveState());
@@ -25,12 +28,12 @@ const started = (): GuidedLiveState => {
 
 describe('guided live description gate', () => {
   it('blocks a live run until every face has been decided', () => {
-    const state = guidedLiveReducer(initialGuidedLiveState(), { kind: 'faces_decided', decided: false });
+    const state = guidedLiveReducer(initialGuidedLiveState(), { kind: 'gate_changed', blockedReason: GUIDED_LIVE_BLOCKED_REASON.NO_FACES_DECIDED });
     expect(state.status).toBe(GUIDED_LIVE_STATUS.BLOCKED);
   });
 
   it('refuses a request while blocked so the model text cannot precede the human decision', () => {
-    const blocked = guidedLiveReducer(initialGuidedLiveState(), { kind: 'faces_decided', decided: false });
+    const blocked = guidedLiveReducer(initialGuidedLiveState(), { kind: 'gate_changed', blockedReason: GUIDED_LIVE_BLOCKED_REASON.NO_FACES_DECIDED });
     const after = guidedLiveReducer(blocked, { kind: 'requested', atMs: T0 });
     expect(after.status).toBe(GUIDED_LIVE_STATUS.BLOCKED);
     expect(after.runId).toBeNull();
@@ -178,7 +181,7 @@ describe('guided live description terminal states', () => {
     state = guidedLiveReducer(state, { kind: 'accepted', runId: 'run-1', deadlineSeconds: 510, atMs: T0 + 100 });
     expect(state.runId).toBe('run-1');
 
-    state = guidedLiveReducer(state, { kind: 'faces_decided', decided: false });
+    state = guidedLiveReducer(state, { kind: 'gate_changed', blockedReason: GUIDED_LIVE_BLOCKED_REASON.NO_FACES_DECIDED });
 
     expect(state.status).toBe(GUIDED_LIVE_STATUS.BLOCKED);
     expect(state.runId).toBeNull();
@@ -188,7 +191,7 @@ describe('guided live description terminal states', () => {
 
   it('ignores a poll that lands after the gate closed', () => {
     let state = started();
-    state = guidedLiveReducer(state, { kind: 'faces_decided', decided: false });
+    state = guidedLiveReducer(state, { kind: 'gate_changed', blockedReason: GUIDED_LIVE_BLOCKED_REASON.NO_FACES_DECIDED });
     state = guidedLiveReducer(state, {
       kind: 'polled',
       phase: 'complete',
@@ -260,7 +263,7 @@ describe('guided live description terminal states', () => {
     expect(ready().text).not.toBeNull();
 
     const reachers: Record<string, () => GuidedLiveState> = {
-      [GUIDED_LIVE_STATUS.BLOCKED]: () => guidedLiveReducer(ready(), { kind: 'faces_decided', decided: false }),
+      [GUIDED_LIVE_STATUS.BLOCKED]: () => guidedLiveReducer(ready(), { kind: 'gate_changed', blockedReason: GUIDED_LIVE_BLOCKED_REASON.NO_FACES_DECIDED }),
       [GUIDED_LIVE_STATUS.QUEUED]: () => guidedLiveReducer(ready(), { kind: 'requested', atMs: T0 + 60_000 }),
       [GUIDED_LIVE_STATUS.WARMING]: () =>
         guidedLiveReducer(started(), { kind: 'polled', phase: 'warming', gpu: 'starting', atMs: T0 + 1000 }),
@@ -272,7 +275,7 @@ describe('guided live description terminal states', () => {
         guidedLiveReducer(started(), { kind: 'failed', reason: 'submit_failed' }),
       [GUIDED_LIVE_STATUS.CANCELLED]: () => guidedLiveReducer(started(), { kind: 'cancelled' }),
       [GUIDED_LIVE_STATUS.IDLE]: () =>
-        decided(guidedLiveReducer(ready(), { kind: 'faces_decided', decided: false })),
+        decided(guidedLiveReducer(ready(), { kind: 'gate_changed', blockedReason: GUIDED_LIVE_BLOCKED_REASON.NO_FACES_DECIDED })),
     };
 
     for (const [status, reach] of Object.entries(reachers)) {
@@ -280,6 +283,346 @@ describe('guided live description terminal states', () => {
       expect(state.status).toBe(status);
       expect(state.text).toBeNull();
     }
+  });
+});
+
+describe('blocked is one fact, not two that have to be kept in step', () => {
+  it('seeds the reason it is blocked for, so the first paint already agrees with itself', () => {
+    const state = initialGuidedLiveState(GUIDED_LIVE_BLOCKED_REASON.NO_MEDIA);
+    expect(state.status).toBe(GUIDED_LIVE_STATUS.BLOCKED);
+    expect(state.blockedReason).toBe(GUIDED_LIVE_BLOCKED_REASON.NO_MEDIA);
+  });
+
+  it('opens with no reason to be blocked when the gate is already clear', () => {
+    const state = initialGuidedLiveState(null);
+    expect(state.status).toBe(GUIDED_LIVE_STATUS.IDLE);
+    expect(state.blockedReason).toBeNull();
+  });
+
+  it('carries the closing reason into the state rather than beside it', () => {
+    const state = guidedLiveReducer(started(), {
+      kind: 'gate_changed',
+      blockedReason: GUIDED_LIVE_BLOCKED_REASON.NO_FACES_DECIDED,
+    });
+    expect(state.status).toBe(GUIDED_LIVE_STATUS.BLOCKED);
+    expect(state.blockedReason).toBe(GUIDED_LIVE_BLOCKED_REASON.NO_FACES_DECIDED);
+    expect(state.text).toBeNull();
+    expect(state.runId).toBeNull();
+  });
+
+  it('holds a reason in exactly the blocked status and in no other', () => {
+    const seen: GuidedLiveState[] = [];
+    let state = guidedLiveReducer(initialGuidedLiveState(), {
+      kind: 'gate_changed',
+      blockedReason: null,
+    });
+    seen.push(state);
+    state = guidedLiveReducer(state, { kind: 'requested', atMs: T0 });
+    seen.push(state);
+    state = guidedLiveReducer(state, { kind: 'accepted', runId: 'run-1', deadlineSeconds: 300, atMs: T0 });
+    seen.push(state);
+    state = guidedLiveReducer(state, { kind: 'polled', phase: 'warming', gpu: 'starting', atMs: T0 + 1 });
+    seen.push(state);
+    state = guidedLiveReducer(state, { kind: 'tick', atMs: T0 + 300_001 });
+    seen.push(state);
+    state = guidedLiveReducer(state, {
+      kind: 'gate_changed',
+      blockedReason: GUIDED_LIVE_BLOCKED_REASON.NO_MEDIA,
+    });
+    seen.push(state);
+
+    // The comment the panel used to carry as a promise, asserted instead: the
+    // two cannot disagree because there is only one of them.
+    for (const step of seen) {
+      expect(step.blockedReason === null).toBe(step.status !== GUIDED_LIVE_STATUS.BLOCKED);
+    }
+  });
+
+  it('names every non-success reason from one vocabulary', () => {
+    const timedOut = guidedLiveReducer(started(), { kind: 'tick', atMs: T0 + 300_001 });
+    expect(timedOut.reason).toBe(GUIDED_LIVE_REASON.CLIENT_DEADLINE);
+
+    const stopped = guidedLiveReducer(started(), { kind: 'cancelled' });
+    expect(stopped.reason).toBe(GUIDED_LIVE_REASON.STOPPED_BY_OPERATOR);
+
+    const empty = guidedLiveReducer(started(), {
+      kind: 'polled',
+      phase: 'complete',
+      gpu: 'ready',
+      atMs: T0 + 1,
+      tier: 'final_gpu',
+      text: '   ',
+    });
+    expect(empty.reason).toBe(GUIDED_LIVE_REASON.EMPTY_DESCRIPTION);
+  });
+});
+
+describe('which runs the server may still be paying for', () => {
+  it('counts every waiting phase, because the burst is running throughout', () => {
+    let state = started();
+    expect(guidedLiveRunMayBeLive(state)).toBe(true);
+    state = guidedLiveReducer(state, { kind: 'polled', phase: 'warming', gpu: 'starting', atMs: T0 + 1000 });
+    expect(guidedLiveRunMayBeLive(state)).toBe(true);
+    state = guidedLiveReducer(state, { kind: 'polled', phase: 'describing', gpu: 'ready', atMs: T0 + 2000 });
+    expect(guidedLiveRunMayBeLive(state)).toBe(true);
+  });
+
+  it('counts a timed-out run, because giving up on screen stops no GPU', () => {
+    const state = guidedLiveReducer(started(), { kind: 'tick', atMs: T0 + 300_001 });
+    expect(state.status).toBe(GUIDED_LIVE_STATUS.TIMED_OUT);
+    expect(guidedLiveRunMayBeLive(state)).toBe(true);
+  });
+
+  it('counts no state the server has already reported finished or stopped', () => {
+    const finished = guidedLiveReducer(started(), {
+      kind: 'polled',
+      phase: 'complete',
+      gpu: 'ready',
+      atMs: T0 + 1000,
+      tier: 'final_gpu',
+      text: 'Done.',
+    });
+    expect(finished.status).toBe(GUIDED_LIVE_STATUS.READY);
+    expect(guidedLiveRunMayBeLive(finished)).toBe(false);
+
+    const stopped = guidedLiveReducer(started(), { kind: 'cancelled' });
+    expect(guidedLiveRunMayBeLive(stopped)).toBe(false);
+
+    const failed = guidedLiveReducer(started(), { kind: 'failed', reason: 'poll_failed' });
+    expect(guidedLiveRunMayBeLive(failed)).toBe(false);
+  });
+
+  it('counts nothing before the server has named a run', () => {
+    expect(guidedLiveRunMayBeLive(initialGuidedLiveState())).toBe(false);
+    const requested = guidedLiveReducer(decided(initialGuidedLiveState()), { kind: 'requested', atMs: T0 });
+    expect(requested.runId).toBeNull();
+    expect(guidedLiveRunMayBeLive(requested)).toBe(false);
+  });
+});
+
+describe('the deadline only ever moves in the learner\'s favour', () => {
+  it('lets the server set the wait it will actually honour, including downward', () => {
+    // The server is the authority on its own work, so acceptance replaces the
+    // client's cold placeholder outright. The learner is protected from seeing
+    // that placeholder revised by the panel, which advertises no ceiling until
+    // a run id exists -- not by freezing the client's guess in the reducer.
+    const queued = guidedLiveReducer(decided(initialGuidedLiveState()), { kind: 'requested', atMs: T0 });
+    expect(queued.runId).toBeNull();
+    expect(queued.deadlineMs).toBe(GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000);
+
+    const accepted = guidedLiveReducer(queued, { kind: 'accepted', runId: 'run-warm', deadlineSeconds: 180, atMs: T0 + 3_000 });
+
+    expect(accepted.runId).toBe('run-warm');
+    expect(accepted.deadlineMs).toBe(180_000);
+  });
+
+  it('keeps the run id when acceptance itself lands past the deadline', () => {
+    // Timing out is right here, but dropping the id is not: a run the server
+    // just confirmed is exactly the one that still needs cancelling.
+    const queued = guidedLiveReducer(decided(initialGuidedLiveState()), { kind: 'requested', atMs: T0 });
+    const accepted = guidedLiveReducer(queued, {
+      kind: 'accepted',
+      runId: 'run-late',
+      deadlineSeconds: 180,
+      atMs: T0 + GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000 + 1,
+    });
+
+    expect(accepted.status).toBe(GUIDED_LIVE_STATUS.TIMED_OUT);
+    expect(accepted.runId).toBe('run-late');
+    expect(guidedLiveRunMayBeLive(accepted)).toBe(true);
+  });
+});
+
+describe('a description already in the browser is not thrown away', () => {
+  it('shows a completed sentence that arrives with the poll that times out', () => {
+    // The deadline exists to bound an unbounded wait, not to discard an answer
+    // the client is holding. Telling the learner "the run may still finish on
+    // its own" while the sentence sits in the same payload is a lie.
+    const state = guidedLiveReducer(started(), {
+      kind: 'polled',
+      phase: 'complete',
+      gpu: 'ready',
+      tier: 'final_gpu',
+      text: 'A real GPU sentence.',
+      atMs: T0 + 300_001,
+    });
+
+    expect(state.status).toBe(GUIDED_LIVE_STATUS.READY);
+    expect(state.text).toBe('A real GPU sentence.');
+  });
+
+  it('still times out when the late poll carries no answer', () => {
+    const state = guidedLiveReducer(started(), {
+      kind: 'polled',
+      phase: 'describing',
+      gpu: 'ready',
+      atMs: T0 + 300_001,
+    });
+
+    expect(state.status).toBe(GUIDED_LIVE_STATUS.TIMED_OUT);
+    expect(state.reason).toBe(GUIDED_LIVE_REASON.CLIENT_DEADLINE);
+  });
+});
+
+describe('blocked reason never outlives the block', () => {
+  it('clears the reason when the gate re-opens from a non-blocked state', () => {
+    // status and blockedReason are independent fields, so nothing structural
+    // stops a stale reason riding out of BLOCKED. The panel reads the reason
+    // with a fallback that would then name the wrong obstacle.
+    const stale = { ...started(), blockedReason: GUIDED_LIVE_BLOCKED_REASON.NO_MEDIA };
+    const reopened = guidedLiveReducer(stale, { kind: 'gate_changed', blockedReason: null });
+
+    expect(reopened.blockedReason).toBeNull();
+  });
+});
+
+describe('the deadline bounds every action, not just the clock', () => {
+  it('shows a completion that arrives just after the deadline rather than discarding it', () => {
+    const state = guidedLiveReducer(started(), {
+      kind: 'polled',
+      phase: 'complete',
+      gpu: 'ready',
+      atMs: T0 + 300_001,
+      tier: 'final_gpu',
+      text: 'A sentence the GPU already paid for.',
+    });
+
+    // This reverses the earlier rule that a late completion is refused. That
+    // rule bounded the wrong thing: the deadline exists so a learner is never
+    // left waiting indefinitely, and once the sentence is in the browser there
+    // is no wait left to bound. Refusing it here threw away work the burst had
+    // already been billed for and told the learner "the run may still finish
+    // on its own" while holding its result -- a false statement.
+    //
+    // The bound still binds everywhere it means something: `tick` and every
+    // non-complete poll below still time out at 5:00. Note too that atMs is
+    // sampled after the items round trip that carried this payload, so the
+    // millisecond that pushes a completion over is often fetch latency rather
+    // than the run.
+    expect(state.status).toBe(GUIDED_LIVE_STATUS.READY);
+    expect(state.text).toBe('A sentence the GPU already paid for.');
+  });
+
+  it('honours a completion that lands one millisecond inside the deadline', () => {
+    const state = guidedLiveReducer(started(), {
+      kind: 'polled',
+      phase: 'complete',
+      gpu: 'ready',
+      atMs: T0 + 299_999,
+      tier: 'final_gpu',
+      text: 'In time.',
+    });
+
+    expect(state.status).toBe(GUIDED_LIVE_STATUS.READY);
+    expect(state.text).toBe('In time.');
+  });
+
+  it('times out a progress poll that lands after the deadline instead of extending the wait', () => {
+    const state = guidedLiveReducer(started(), {
+      kind: 'polled',
+      phase: 'describing',
+      gpu: 'ready',
+      atMs: T0 + 300_001,
+    });
+
+    expect(state.status).toBe(GUIDED_LIVE_STATUS.TIMED_OUT);
+    expect(state.reason).toBe('client_deadline');
+  });
+});
+
+describe('every guard earns its place', () => {
+  const terminalStates = (): readonly (readonly [string, GuidedLiveState])[] => [
+    [
+      'ready',
+      guidedLiveReducer(started(), {
+        kind: 'polled',
+        phase: 'complete',
+        gpu: 'ready',
+        atMs: T0 + 1,
+        tier: 'final_gpu',
+        text: 'Done.',
+      }),
+    ],
+    [
+      'degraded',
+      guidedLiveReducer(started(), {
+        kind: 'polled',
+        phase: 'complete',
+        gpu: 'ready',
+        atMs: T0 + 1,
+        tier: 'provisional_cpu',
+        text: 'Rougher.',
+      }),
+    ],
+    ['timed_out', guidedLiveReducer(started(), { kind: 'tick', atMs: T0 + 300_001 })],
+    ['cancelled', guidedLiveReducer(started(), { kind: 'cancelled' })],
+    ['unavailable', guidedLiveReducer(started(), { kind: 'failed', reason: GUIDED_LIVE_REASON.POLL_FAILED })],
+  ];
+
+  it('closes the gate from every terminal state, not only from a waiting one', () => {
+    for (const [label, state] of terminalStates()) {
+      const closed = guidedLiveReducer(state, {
+        kind: 'gate_changed',
+        blockedReason: GUIDED_LIVE_BLOCKED_REASON.NO_FACES_DECIDED,
+      });
+      expect(closed.status, label).toBe(GUIDED_LIVE_STATUS.BLOCKED);
+      expect(closed.text, label).toBeNull();
+      expect(closed.runId, label).toBeNull();
+    }
+    const fromIdle = guidedLiveReducer(decided(initialGuidedLiveState()), {
+      kind: 'gate_changed',
+      blockedReason: GUIDED_LIVE_BLOCKED_REASON.NO_MEDIA,
+    });
+    expect(fromIdle.status).toBe(GUIDED_LIVE_STATUS.BLOCKED);
+  });
+
+  it('leaves a run alone when the gate opens on a state that was never blocked', () => {
+    for (const [label, state] of terminalStates()) {
+      expect(guidedLiveReducer(state, { kind: 'gate_changed', blockedReason: null }), label).toBe(state);
+    }
+  });
+
+  it('refuses a second request while a run is already waiting', () => {
+    const waiting = started();
+    expect(guidedLiveReducer(waiting, { kind: 'requested', atMs: T0 + 5000 })).toBe(waiting);
+  });
+
+  it('ignores an acceptance or a widened deadline once the run is no longer waiting', () => {
+    for (const [label, state] of terminalStates()) {
+      expect(
+        guidedLiveReducer(state, { kind: 'accepted', runId: 'run-2', deadlineSeconds: 60, atMs: T0 }),
+        label,
+      ).toBe(state);
+      expect(guidedLiveReducer(state, { kind: 'deadline_raised', deadlineSeconds: 510 }), label).toBe(state);
+    }
+  });
+
+  it('ignores a tick with no run to time', () => {
+    const blocked = initialGuidedLiveState();
+    expect(guidedLiveReducer(blocked, { kind: 'tick', atMs: T0 })).toBe(blocked);
+    const requestedWithoutStart = { ...started(), startedAtMs: null };
+    expect(guidedLiveReducer(requestedWithoutStart, { kind: 'tick', atMs: T0 })).toBe(requestedWithoutStart);
+  });
+
+  it('ignores every late action once a run has ended', () => {
+    for (const [label, state] of terminalStates()) {
+      expect(
+        guidedLiveReducer(state, { kind: 'polled', phase: 'complete', gpu: 'ready', atMs: T0 + 2, text: 'Late.' }),
+        label,
+      ).toBe(state);
+      expect(guidedLiveReducer(state, { kind: 'cancelled' }), label).toBe(state);
+      expect(guidedLiveReducer(state, { kind: 'failed', reason: GUIDED_LIVE_REASON.RUN_FAILED }), label).toBe(state);
+      expect(guidedLiveReducer(state, { kind: 'tick', atMs: T0 + 2 }), label).toBe(state);
+    }
+  });
+
+  it('refuses to absorb an action it does not handle', () => {
+    // A silent `return state` default is how a new action ships doing nothing.
+    expect(() =>
+      guidedLiveReducer(started(), { kind: 'not_a_real_action' } as unknown as Parameters<
+        typeof guidedLiveReducer
+      >[1]),
+    ).toThrow(/Unhandled guided live action/);
   });
 });
 

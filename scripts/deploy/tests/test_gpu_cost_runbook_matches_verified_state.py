@@ -25,6 +25,18 @@ def _mentions(text: str) -> list[str]:
     return [block for block in re.split(r"\n\s*\n", text) if _REAPER in block]
 
 
+def _shell_default(installer: str, name: str) -> str:
+    """Extract a shell parameter default without pinning ``:-`` vs ``-`` syntax."""
+
+    match = re.search(
+        rf'^{re.escape(name)}="\$\{{{re.escape(name)}:?-([^}}]+)\}}"$',
+        installer,
+        flags=re.MULTILINE,
+    )
+    assert match is not None, f"{name} default is missing from {INSTALLER.name}"
+    return match.group(1)
+
+
 def test_runbook_presents_the_installer_reaper_as_an_active_cost_cap() -> None:
     runbook = RUNBOOK.read_text(encoding="utf-8")
     blocks = _mentions(runbook)
@@ -40,29 +52,9 @@ def test_runbook_reaper_numbers_match_installer_defaults() -> None:
     runbook = RUNBOOK.read_text(encoding="utf-8").lower()
     installer = INSTALLER.read_text(encoding="utf-8")
 
-    max_lease = re.search(
-        r'^MAX_LEASE_SECONDS="\$\{MAX_LEASE_SECONDS:-([0-9]+)\}"$',
-        installer,
-        flags=re.MULTILINE,
-    )
-    idle_seconds = re.search(
-        r'^IDLE_SECONDS="\$\{IDLE_SECONDS-([0-9]+)\}"$',
-        installer,
-        flags=re.MULTILINE,
-    )
-    reap_interval = re.search(
-        r'^REAP_INTERVAL="\$\{REAP_INTERVAL-([^}]+)\}"$',
-        installer,
-        flags=re.MULTILINE,
-    )
-
-    assert max_lease is not None
-    assert idle_seconds is not None
-    assert reap_interval is not None
-
-    max_lease_seconds = int(max_lease.group(1))
-    idle_threshold_seconds = int(idle_seconds.group(1))
-    interval = reap_interval.group(1).replace("min", " min")
+    max_lease_seconds = int(_shell_default(installer, "MAX_LEASE_SECONDS"))
+    idle_threshold_seconds = int(_shell_default(installer, "IDLE_SECONDS"))
+    interval = _shell_default(installer, "REAP_INTERVAL").replace("min", " min")
     assert f"every {interval}" in runbook
     assert f"{idle_threshold_seconds}-second" in runbook
     assert f"{idle_threshold_seconds // 60}-minute" in runbook

@@ -26,6 +26,7 @@
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx",
       "primary_action_id": "act-gpu-start",
       "states": ["default", "loading", "empty", "error", "degraded"],
+      "action_states": ["stopped", "unknown", "starting", "warming", "ready", "degraded"],
       "zones": [
         { "id": "z-gpu-state-chip", "label": "GPU state chip — reuses gpuStatePresentation vocabulary (unknown / stopped / starting / warming / ready / degraded) with snapshot age", "role": "status", "evidence_linked": true, "states": ["default", "loading", "empty", "error", "degraded"] },
         { "id": "z-gpu-intent", "label": "Effective intent and expiry — automatic / start until HH:MM / stop (pending, blocked: describe run in flight)", "role": "status", "states": ["default", "loading", "degraded"] },
@@ -80,14 +81,14 @@
     }
   ],
   "actions": [
-    { "id": "act-gpu-start", "verb": "Start GPU", "target": "gpu-start-confirm", "hierarchy": "primary", "costly": true, "irreversible": false, "preview_required": true, "screen_id": "settings-burst-gpu", "when": ["state in stopped|unknown|degraded", "intent != start"] },
+    { "id": "act-gpu-start", "verb": "Start GPU", "target": "gpu-start-confirm", "hierarchy": "primary", "costly": true, "irreversible": false, "preview_required": true, "screen_id": "settings-burst-gpu", "when": ["stopped", "unknown", "degraded"] },
     { "id": "act-gpu-confirm-start", "verb": "Confirm start", "target": "POST recognition/gpu/intent {action: start}", "hierarchy": "primary", "costly": true, "irreversible": false, "preview_required": false, "screen_id": "gpu-start-confirm" },
-    { "id": "act-gpu-stop", "verb": "Stop GPU", "target": "gpu-stop-confirm", "hierarchy": "secondary", "costly": false, "irreversible": false, "preview_required": true, "screen_id": "settings-burst-gpu", "when": ["state in starting|warming|ready|degraded", "disabled with reason while load.has_work"] },
+    { "id": "act-gpu-stop", "verb": "Stop GPU", "target": "gpu-stop-confirm", "hierarchy": "secondary", "costly": false, "irreversible": false, "preview_required": true, "screen_id": "settings-burst-gpu", "when": ["starting", "warming", "ready", "degraded"] },
     { "id": "act-gpu-confirm-stop", "verb": "Confirm stop", "target": "POST recognition/gpu/intent {action: stop}", "hierarchy": "primary", "costly": false, "irreversible": false, "preview_required": false, "screen_id": "gpu-stop-confirm" },
-    { "id": "act-gpu-auto", "verb": "Return to automatic", "target": "POST recognition/gpu/intent {action: auto}", "hierarchy": "secondary", "costly": false, "irreversible": false, "preview_required": false, "screen_id": "settings-burst-gpu", "when": ["intent != auto"] },
+    { "id": "act-gpu-auto", "verb": "Return to automatic", "target": "POST recognition/gpu/intent {action: auto}", "hierarchy": "secondary", "costly": false, "irreversible": false, "preview_required": false, "screen_id": "settings-burst-gpu" },
     { "id": "act-gpu-refresh", "verb": "Refresh status", "target": "GET recognition/gpu/status", "hierarchy": "tertiary", "costly": false, "irreversible": false, "preview_required": false, "screen_id": "settings-burst-gpu" },
     { "id": "act-cancel-confirm", "verb": "Cancel", "target": "settings-burst-gpu", "hierarchy": "secondary", "costly": false, "irreversible": false, "preview_required": false, "screen_id": "gpu-start-confirm" },
-    { "id": "act-goto-workbench", "verb": "Go to Workbench", "target": "exit-workbench", "hierarchy": "secondary", "costly": false, "irreversible": false, "preview_required": false, "screen_id": "settings-burst-gpu", "when": ["state == ready"] }
+    { "id": "act-goto-workbench", "verb": "Go to Workbench", "target": "exit-workbench", "hierarchy": "secondary", "costly": false, "irreversible": false, "preview_required": false, "screen_id": "settings-burst-gpu", "when": ["ready"] }
   ],
   "flows": [
     {

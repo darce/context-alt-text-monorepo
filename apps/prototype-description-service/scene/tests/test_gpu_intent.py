@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -79,6 +80,75 @@ def test_malformed_intent_returns_none_and_warns(tmp_path: Path, caplog: pytest.
         assert read_gpu_intent(target) is None
 
     assert any("malformed GPU intent" in record.getMessage() for record in caplog.records)
+
+
+def test_parseable_timestamp_overflow_is_malformed(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    target = tmp_path / "gpu-intent.json"
+    target.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "action": "start",
+                "requested_at": "9999-12-31T23:59:59Z",
+                "expires_at": "9999-12-31T23:59:59Z",
+                "ttl_seconds": 60,
+                "requested_by": "operator",
+                "nonce": "8f8d2f40-39c0-4a91-8e4b-7e4d1e7b7d6a",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with caplog.at_level(logging.WARNING, logger="scene.application.gpu_intent"):
+        assert read_gpu_intent(target) is None
+
+    assert any("malformed GPU intent" in record.getMessage() for record in caplog.records)
+
+
+def test_timezone_naive_timestamps_are_malformed(tmp_path: Path) -> None:
+    target = tmp_path / "gpu-intent.json"
+    target.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "action": "start",
+                "requested_at": "2026-09-06T22:00:00",
+                "expires_at": "2026-09-06T22:30:00",
+                "ttl_seconds": 1800,
+                "requested_by": "operator",
+                "nonce": "8f8d2f40-39c0-4a91-8e4b-7e4d1e7b7d6a",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert read_gpu_intent(target) is None
+
+
+def test_service_and_lifecycle_readers_agree_on_naive_timestamp_payload(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[4]
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+    from infra.oci.gpu_lifecycle.intent import read_effective_intent
+
+    payload = {
+        "schema_version": 1,
+        "action": "start",
+        "requested_at": "2026-09-06T22:00:00",
+        "expires_at": "2026-09-06T22:30:00",
+        "ttl_seconds": 1800,
+        "requested_by": "operator",
+        "nonce": "parity-test",
+    }
+    target = tmp_path / "prod" / "gpu-intent.json"
+    target.parent.mkdir()
+    target.write_text(json.dumps(payload), encoding="utf-8")
+
+    service_intent = read_gpu_intent(target)
+    lifecycle_intent = read_effective_intent(tmp_path, NOW)
+
+    assert service_intent is None
+    assert lifecycle_intent.action.value == "auto"
 
 
 def test_intent_path_defaults_to_load_path_sibling(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

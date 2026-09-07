@@ -166,8 +166,9 @@ def _status_response(*, now: float) -> GpuStatusResponse:
     snapshot_age = _snapshot_age(state_payload, now=now)
     snapshot_fresh = _is_fresh(state_payload, now=now)
     state = read_gpu_state(now=now)
-    if not snapshot_fresh:
+    if not snapshot_fresh or state is GpuState.UNKNOWN:
         state = GpuState.UNKNOWN
+        state_payload = None
     gpu_state = _gpu_state_response(state_payload, state=state)
     load = _load_response(Path(resolve_load_path()), now=now)
     intent = read_gpu_intent(resolve_gpu_intent_path())
@@ -190,11 +191,11 @@ def _gpu_state_response(payload: dict[str, Any] | None, *, state: GpuState) -> G
         reason=_optional_string(payload.get("reason")),
         since=_finite_number(payload.get("since")),
         intent=_enum_value(payload.get("intent"), IntentAction, IntentAction.AUTO),
-        intent_expires_at=_optional_string(payload.get("intent_expires_at")),
+        intent_expires_at=_optional_timestamp(payload.get("intent_expires_at")),
         intent_status=_enum_value(payload.get("intent_status"), GpuIntentStatus, GpuIntentStatus.NONE),
         honoured_nonce=_optional_string(payload.get("honoured_nonce")),
-        lease_expires_at=_optional_string(payload.get("lease_expires_at")),
-        instance_running_since=_optional_string(payload.get("instance_running_since")),
+        lease_expires_at=_optional_timestamp(payload.get("lease_expires_at")),
+        instance_running_since=_optional_timestamp(payload.get("instance_running_since")),
         last_transition_reason=_enum_value(
             payload.get("last_transition_reason"),
             GpuTransitionReason,
@@ -261,6 +262,21 @@ def _positive_number(value: Any) -> bool:
 
 def _optional_string(value: Any) -> str | None:
     return value if isinstance(value, str) else None
+
+
+def _optional_timestamp(value: Any) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    normalized = value.strip()
+    if normalized.endswith(("Z", "z")):
+        normalized = f"{normalized[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            return None
+        return parsed.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    except (ValueError, OverflowError):
+        return None
 
 
 def _enum_value(value: Any, enum_type, default):

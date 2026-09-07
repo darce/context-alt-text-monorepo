@@ -31,8 +31,12 @@ Instance states:
 The description service is the single writer for
 `/run/acx-write/<ACX_ENV>/gpu-intent.json`, where `ACX_ENV` is `dev`,
 `staging`, or `prod`. The lifecycle controller is read-only. With
-`--intent-dir /run/acx-write`, it aggregates `*/gpu-intent.json`; the newest
-unexpired `requested_at` wins, and equal timestamps resolve to `stop`.
+`--intent-dir /run/acx-write`, it aggregates `*/gpu-intent.json`. Precedence is
+by `sequence` first (a monotonically increasing publication counter, minimum
+`1`), then by `requested_at`, and `stop` wins a remaining tie. `requested_at` is
+an interoperability field and a tiebreak only: it can never move an expiry
+later or re-arm a fenced publication (RES-10). A `requested_at` more than 120
+seconds in the future is rejected.
 
 ```json
 {
@@ -42,7 +46,8 @@ unexpired `requested_at` wins, and equal timestamps resolve to `stop`.
   "expires_at": "2026-09-06T22:40:00Z",
   "ttl_seconds": 1800,
   "requested_by": "opaque operator label",
-  "nonce": "uuid4"
+  "nonce": "uuid4",
+  "sequence": 7
 }
 ```
 
@@ -76,6 +81,75 @@ cycle:
 | `lease_expires_at` | iso8601 or null | `running_since + max_lease_seconds` |
 | `instance_running_since` | iso8601 or null | from the running-since lease |
 | `last_transition_reason` | `work\|operator\|idle\|lease_cap\|start_failed\|unknown` | why the last actuation happened |
+
+### Durable intent state
+
+`/run/acx-write` is tmpfs: it does not survive a reboot. An operator intent is a
+write-ahead record for a durable external mutation that spends money, so the
+controller keeps its own state under `/var/lib/acx-gpu` (systemd
+`StateDirectory=acx-gpu`, `StateDirectoryMode=0700`), which both timer units
+already mount (RES-17).
+
+| path | purpose |
+| --- | --- |
+| `/var/lib/acx-gpu/intents/` | durable copy of the runtime publications |
+| `/var/lib/acx-gpu/intent-authority.json` | fencing ledger: high-water wall clock, highest sequence, per-nonce expiry |
+| `/var/lib/acx-gpu/deferred-stop.json` | a STOP that is waiting on in-flight work |
+| `/var/lib/acx-gpu/decision-log.jsonl` | append-only audit trail of spend decisions |
+
+Passing `--intent-dir` enables all four; omitting it disables the reader and all
+durable intent state, retaining the legacy in-memory behavior. Every file is
+written to a temporary inode, `fsync`ed, and renamed into place under a bounded
+10-second `flock`; a lock that cannot be taken is an error, not a bypass.
+
+**Copy before evaluate.** Each cycle copies the valid runtime publications from
+the tmpfs intent dir into `/var/lib/acx-gpu/intents/` and then evaluates from the
+durable dir. A failed copy is logged at WARNING and evaluation continues from
+whatever the durable dir already holds.
+
+**Fencing.** Before an intent is eligible, the authority ledger checks it:
+
+- A `sequence` below the persisted `highest_sequence` is fenced, even for a
+  nonce that was previously honoured. This is what stops an old publication from
+  being reintroduced after a newer one superseded it.
+- Expiry is evaluated against `max(now, last_wall_time)`, so a backwards NTP
+  correction cannot extend a grant, and additionally against a per-boot
+  monotonic deadline recorded when the nonce was first seen.
+- Once expired, the nonce's ledger record is written `expired: true` and that
+  state is terminal. No later reading of any clock re-arms a spent grant.
+- Across a reboot the monotonic deadline no longer applies (its `boot_id` no
+  longer matches) and fencing falls back to the logical wall high-water mark.
+- If the ledger cannot be read or the monotonic clock is unavailable, the cycle
+  logs at ERROR and uses `auto`. An unreadable authority never honours an
+  intent.
+
+**Deferred STOP.** When a `stop` intent arrives while work is in flight, the
+STOP is not dropped. It is persisted to `deferred-stop.json` with its
+`requested_at`, `nonce`, `sequence`, and a `deferred_until` extension of
+`ttl_seconds` clamped to 60-7200 seconds, and the cycle publishes
+`intent_status = blocked_work_in_flight` (FLOW-08). Later cycles rehydrate the
+record and re-arm it - the deferral, not the original `expires_at`, is the
+authority for the effective expiry, so a STOP that waited out its own TTL is
+still honoured when the work drains. A record whose intent lacks `requested_at`,
+`nonce`, or `sequence` cannot be persisted; that is reported as a cycle error, not
+silently deferred. A higher `sequence` clears the deferral.
+
+**Decision log.** Every cycle that decides, actuates, hits the lease cap, or
+blocks a STOP appends one JSON object to `decision-log.jsonl` (HAI-06):
+
+| field | meaning |
+| --- | --- |
+| `timestamp` | cycle time, iso8601 Z |
+| `mode` | `reap` or `start` |
+| `requested_by`, `nonce`, `sequence` | provenance of the effective intent |
+| `effective_intent`, `intent_status`, `intent_expires_at` | what the controller resolved |
+| `decided`, `lease_expired`, `actuated` | `(action, instance_id)` pairs |
+| `actuation_outcome` | `honoured\|partial\|deferred\|failed\|fenced_off\|not_actuated` |
+| `errors` | cycle errors, verbatim |
+
+An append failure is logged at ERROR **and** added to the cycle's `errors`. The
+audit trail is not best-effort: a cycle that spent money without being able to
+record that it did so reports itself as failed.
 
 ## Actuators
 

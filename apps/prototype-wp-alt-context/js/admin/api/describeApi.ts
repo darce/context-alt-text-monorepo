@@ -306,6 +306,22 @@ export interface DescribeRunResponse {
   // GATE: scene-describe-run.schema.json `required` must equal the keys of this
   // interface. See js/admin/api/__tests__/describeRunResponseContract.test.ts.
   recognition_enabled: boolean;
+  /**
+   * The server's own GENERATION budget (ACX_DESCRIPTION_TIMEOUT_SECONDS) as it
+   * stood when the run was accepted, so a client waits on a disclosed bound
+   * instead of a locally invented ceiling. It does NOT include GPU warm-up:
+   * a cold run also pays ACX_GPU_WARMUP_TIMEOUT_SECONDS before generation
+   * starts, and a client that treats this figure as the whole wait times a
+   * healthy cold run out (see guidedPrototype/liveDescription.ts).
+   *
+   * Optional in scene-describe-run.schema.json (declared, but not in
+   * `required`): null or absent for runs not created through
+   * POST /scene/describe/run. Declared HERE rather than bolted on with a local
+   * intersection at each call site, so a rename or type change in the schema
+   * fails the contract test instead of silently falling through to a client
+   * default (rg-005, rg-015).
+   */
+  deadline_seconds?: number | null;
 }
 
 /** One describe-run item as the operator reviews it before write-back (INT-01d).

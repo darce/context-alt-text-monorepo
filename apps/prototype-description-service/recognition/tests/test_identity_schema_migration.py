@@ -312,3 +312,175 @@ def test_existing_constraint_names_contract_on_real_postgres(pg_empty_engine) ->
 
         ghost = identity_schema._existing_constraint_names(op, "no_such_table_b01")
         assert uq_a not in ghost and ck_a not in ghost and uq_b not in ghost
+
+
+# ---------------------------------------------------------------------------
+# GUIDEDFIX-2 [S02]: a newly declared UNIQUE constraint must land on an
+# already-provisioned table instead of hard-failing every subsequent migrate.
+# ---------------------------------------------------------------------------
+
+
+class _ProvisionedTableOp:
+    """Catalog reports the table exists with every declared column present.
+
+    ``constraints`` is the set of constraint names already on the table; the
+    idempotency-key unique constraint is absent, which is exactly the state of
+    any database provisioned before it was declared.
+    """
+
+    def __init__(self, *, columns: set[str], constraints: set[str], dialect: str = "postgresql") -> None:
+        self.columns = columns
+        self.constraints = constraints
+        self.dialect = dialect
+        self.executed: list[str] = []
+        self.added_columns: list[str] = []
+
+    def execute(self, sql, *args, **kwargs) -> None:  # noqa: ANN001, ANN002, ANN003
+        self.executed.append(str(sql))
+
+    def add_column(self, table_name: str, column) -> None:  # noqa: ANN001
+        self.added_columns.append(column.name)
+        self.columns.add(column.name)
+
+    def create_table(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+        raise AssertionError("create_table must not run against a provisioned table")
+
+    def get_bind(self):
+        parent = self
+
+        class _Result:
+            def __init__(self, rows):
+                self._rows = rows
+
+            def scalar(self):
+                return self._rows[0][0] if self._rows else None
+
+            def __iter__(self):
+                return iter(self._rows)
+
+        class _Bind:
+            dialect = type("_Dialect", (), {"name": parent.dialect})()
+
+            def execute(self, stmt, params=None):  # noqa: ANN001
+                sql = str(stmt).lower()
+                if "relkind" in sql:
+                    return _Result([("r",)])
+                if "column_name" in sql:
+                    return _Result([(name,) for name in sorted(parent.columns)])
+                if "pg_constraint" in sql:
+                    return _Result([(name,) for name in sorted(parent.constraints)])
+                return _Result([])
+
+        return _Bind()
+
+
+def _describe_run_table_declaration(monkeypatch) -> tuple[tuple, dict]:
+    """The real ``image_description_runs`` args, captured from the migration itself.
+
+    Read from the call site rather than restated here, so this test cannot drift
+    from the declaration it is asserting about.
+    """
+    captured: dict[str, tuple[tuple, dict]] = {}
+
+    def _capture(op_arg, table_name, *columns, **kw):  # noqa: ANN001, ANN002, ANN003
+        captured[table_name] = (columns, kw)
+
+    monkeypatch.setattr(identity_schema, "op", _RecordingOp())
+    monkeypatch.setattr(identity_schema, "_ensure_table", _capture)
+    identity_schema.ensure_tables(identity_schema.op)
+    # Undo before returning: the caller invokes the REAL ``_ensure_table`` next,
+    # and leaving the capture stub in place would silently assert nothing.
+    monkeypatch.undo()
+    assert identity_schema._ensure_table is not _capture
+    assert "image_description_runs" in captured
+    return captured["image_description_runs"]
+
+
+def _split_declaration(columns):
+    import sqlalchemy as sa
+
+    declared_columns = {c.name for c in columns if isinstance(c, sa.Column)}
+    declared_constraints = {
+        c.name
+        for c in columns
+        if isinstance(c, (sa.UniqueConstraint, sa.CheckConstraint, sa.ForeignKeyConstraint)) and c.name
+    }
+    return declared_columns, declared_constraints
+
+
+def test_migration_declares_the_idempotency_unique_constraint_as_heal_additive(monkeypatch) -> None:
+    """The call site must opt the new constraint into additive healing by name."""
+    _columns, kw = _describe_run_table_declaration(monkeypatch)
+    assert "uq_image_description_runs_idempotency_key" in tuple(kw.get("heal_constraints", ()))
+
+
+def test_new_unique_constraint_is_added_to_an_already_provisioned_table(monkeypatch) -> None:
+    """[S02] RED before the fix: this raised RuntimeError on every migrate.
+
+    The branch added ``UniqueConstraint('tenant_id', 'idempotency_key')`` to
+    ``image_description_runs``. ``_ensure_table`` no-ops ``create_table`` when
+    the table exists, so on every already-provisioned database the constraint
+    could never land and ``_ensure_table_constraints`` refused the mismatch -
+    turning a purely additive change into a hard migration failure. The fix must
+    emit the ALTER instead.
+    """
+    columns, kw = _describe_run_table_declaration(monkeypatch)
+    declared_columns, declared_constraints = _split_declaration(columns)
+    target = "uq_image_description_runs_idempotency_key"
+    assert target in declared_constraints
+
+    op = _ProvisionedTableOp(
+        columns=set(declared_columns),
+        constraints=declared_constraints - {target},
+    )
+    identity_schema._ensure_table(op, "image_description_runs", *columns, **kw)
+
+    alters = [sql for sql in op.executed if "add constraint" in sql.lower()]
+    assert len(alters) == 1, f"expected exactly one ALTER ... ADD CONSTRAINT; got {op.executed}"
+    sql = alters[0].lower()
+    assert "image_description_runs" in sql
+    assert target in sql
+    assert "unique" in sql
+    assert "tenant_id" in sql and "idempotency_key" in sql
+    assert op.added_columns == []
+
+
+def test_unlisted_missing_constraint_still_fails_loudly(monkeypatch) -> None:
+    """The heal is opt-in by name: it must not become a blanket relaxation."""
+    columns, kw = _describe_run_table_declaration(monkeypatch)
+    declared_columns, declared_constraints = _split_declaration(columns)
+    op = _ProvisionedTableOp(
+        columns=set(declared_columns),
+        constraints=declared_constraints - {"valid_describe_run_status"},
+    )
+    with pytest.raises(RuntimeError, match="missing table-level constraints"):
+        identity_schema._ensure_table(op, "image_description_runs", *columns, **kw)
+    assert not [sql for sql in op.executed if "add constraint" in sql.lower()]
+
+
+def test_heal_constraints_naming_an_undeclared_constraint_is_rejected() -> None:
+    """rg-008: a typo in the opt-in list must fail loudly, not silently no-op."""
+    import sqlalchemy as sa
+
+    op = _ProvisionedTableOp(columns={"id", "run_id"}, constraints=set())
+    with pytest.raises(RuntimeError, match="heal_constraints names"):
+        identity_schema._ensure_table_constraints(
+            op,
+            "identity_atlas_points",
+            sa.Column("id", sa.Integer, primary_key=True),
+            sa.UniqueConstraint("id", "run_id", name="uq_identity_atlas_points_id_run"),
+            heal_constraints=("uq_typo_that_is_not_declared",),
+        )
+
+
+def test_non_postgres_dialects_emit_no_alter_and_do_not_raise(monkeypatch) -> None:
+    """SQLite has no ``ALTER TABLE ... ADD CONSTRAINT``; it gets the UNIQUE inline."""
+    columns, kw = _describe_run_table_declaration(monkeypatch)
+    declared_columns, declared_constraints = _split_declaration(columns)
+    op = _ProvisionedTableOp(
+        columns=set(declared_columns),
+        constraints=declared_constraints - {"uq_image_description_runs_idempotency_key"},
+        dialect="sqlite",
+    )
+    identity_schema._ensure_table(op, "image_description_runs", *columns, **kw)
+    assert not [sql for sql in op.executed if "add constraint" in sql.lower()]

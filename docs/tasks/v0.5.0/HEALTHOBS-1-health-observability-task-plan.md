@@ -106,10 +106,10 @@ Three independent gaps let a four-day outage pass unnoticed:
       `ACX_PG_HEADROOM_PROBE_PATH=/run/acx/pg-headroom`.
 - [ ] `apps/prototype-description-service/.env.prod.example`: document the
       three new variables.
-- [ ] Tests: `shared/tests/test_disk_headroom.py` (statvfs stub, thresholds,
+- [ ] Tests: `recognition/tests/unit/test_disk_headroom.py` (statvfs stub, thresholds,
       missing path fails closed) and a repository test proving the refresh is
       skipped and the outcome returned when headroom is short.
-- Test: `cd apps/prototype-description-service && python -m pytest shared/tests/test_disk_headroom.py recognition/tests -q -p no:cacheprovider -k "headroom or refresh_mv or cluster_repository"`
+- Test: `cd apps/prototype-description-service && python -m pytest recognition/tests/unit/test_disk_headroom.py recognition/tests -q -p no:cacheprovider -k "headroom or refresh_mv or cluster_repository"`
 
 ### Slice 3 — readiness surfaces headroom (integration branch, after Slices 1 and 2 merge)
 

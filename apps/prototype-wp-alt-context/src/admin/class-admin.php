@@ -387,6 +387,25 @@ class Admin {
 		echo '</p></div>';
 	}
 
+	/**
+	 * Attachment the guided prototype describes on a live run.
+	 *
+	 * Operator-set and optional: the guided flow works from its saved draft
+	 * without it, so an unset or invalid option publishes null rather than
+	 * degrading the page.
+	 */
+	private function get_guided_live_media_id(): ?int {
+		$raw = get_option( 'acx_guided_live_media_id', null );
+
+		if ( ! is_scalar( $raw ) || is_bool( $raw ) ) {
+			return null;
+		}
+
+		$id = filter_var( $raw, FILTER_VALIDATE_INT );
+
+		return ( false === $id || $id <= 0 ) ? null : $id;
+	}
+
 	private function localize_spa_config( string $handle ): void {
 		$is_dev_mode = wp_get_environment_type() === 'development';
 
@@ -404,6 +423,7 @@ class Admin {
 					'recognitionSource' => $this->get_recognition_source(),
 					'effectiveTargetUrl' => $this->get_effective_target_url(),
 					'max_media_per_batch' => $this->get_tier_batch_limit_for( $tier ),
+					'guided_live_media_id' => $this->get_guided_live_media_id(),
 					'adminUrls' => array(
 					'mediaEditBase' => admin_url( 'post.php' ),
 					'roster' => admin_url( 'admin.php?page=alt-context-roster' ),

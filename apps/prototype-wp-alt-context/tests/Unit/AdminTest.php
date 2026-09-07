@@ -411,4 +411,45 @@ class AdminTest extends TestCase
         $method = $reflection->getMethod($methodName);
         return $method->invokeArgs($object, $args);
     }
+
+    /**
+     * The guided prototype's live run needs one real attachment id, and the
+     * only way it reaches the browser is this payload. An unset option must
+     * publish null so the panel can say "not configured" rather than submit 0.
+     */
+    public function testLocalizeSpaConfigPublishesTheGuidedLiveMediaId(): void
+    {
+        $this->setOption('acx_guided_live_media_id', 4211);
+
+        $this->invokePrivateMethod($this->admin, 'localize_spa_config', ['test-handle']);
+
+        $localized = $GLOBALS['__ac_localized_scripts']['test-handle']['AltContextAdmin'] ?? null;
+
+        $this->assertIsArray($localized);
+        $this->assertSame(4211, $localized['guided_live_media_id']);
+    }
+
+    public function testLocalizeSpaConfigPublishesNullGuidedLiveMediaIdWhenUnset(): void
+    {
+        $this->invokePrivateMethod($this->admin, 'localize_spa_config', ['test-handle']);
+
+        $localized = $GLOBALS['__ac_localized_scripts']['test-handle']['AltContextAdmin'] ?? null;
+
+        $this->assertIsArray($localized);
+        $this->assertArrayHasKey('guided_live_media_id', $localized);
+        $this->assertNull($localized['guided_live_media_id']);
+    }
+
+    public function testLocalizeSpaConfigRejectsANonPositiveGuidedLiveMediaId(): void
+    {
+        $this->setOption('acx_guided_live_media_id', '-3');
+
+        $this->invokePrivateMethod($this->admin, 'localize_spa_config', ['test-handle']);
+
+        $localized = $GLOBALS['__ac_localized_scripts']['test-handle']['AltContextAdmin'] ?? null;
+
+        $this->assertIsArray($localized);
+        $this->assertArrayHasKey('guided_live_media_id', $localized);
+        $this->assertNull($localized['guided_live_media_id']);
+    }
 }

@@ -241,7 +241,7 @@
         },
         {
           "id": "live-2",
-          "label": "Live run status, colour always paired with a glyph (• waiting, … working, ✓ done, ! degraded or timed out, × stopped): Ready when you are. / Queued. Waiting for the service to pick it up. / Starting the GPU. A cold start can take several minutes. / Describing the photo now. / Done. The GPU wrote this. / Done, but the GPU was not available, so the CPU wrote this. It is rougher than a GPU description. / Stopped waiting. The run may still finish on its own; nothing was applied here. / You stopped the wait. Nothing was applied. / The live run could not finish. Nothing was applied. Elapsed while waiting: 1:05 of up to 8:30.",
+          "label": "Live run status, colour always paired with a glyph (• not started, … waiting on the service, ✓ done, ! degraded or timed out, × stopped or could not finish): Ready when you are. / Queued. Waiting for the service to pick it up. / Starting the GPU. A cold start can take several minutes. / Describing the photo now. / Done. The GPU wrote this. / Done, but the GPU was not available, so the CPU wrote this. It is rougher than a GPU description. / Done, but the run did not say whether the GPU wrote this. / Stopped waiting. The run may still finish on its own; nothing was applied here. / You stopped the wait. Nothing was applied. / The live run could not finish. Nothing was applied. / The run finished with nothing to show. Nothing was applied. Elapsed while waiting: 1:05 of up to 8:30.",
           "role": "status",
           "states": [
             "default",

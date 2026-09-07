@@ -130,7 +130,7 @@ A run that completes with no draft for this photo lands on the same state with i
 ## State machine
 
 ```text
-  blocked <---- a face re-opened, from any state that is not waiting ----+
+  blocked <- a face re-opened, from any state; a live run is cancelled --+
      |                                                                   |
      | every face answered                                               |
      v                                                                   |

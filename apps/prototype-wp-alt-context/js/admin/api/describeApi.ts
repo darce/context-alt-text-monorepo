@@ -13,6 +13,31 @@ import { getEndpoint, getConfig } from './config';
 import { createRecognitionTimeoutSignal } from './recognition/requestTimeout';
 import { parseWpErrorPayload, resolveWpErrorMessage } from './wpErrorMessage';
 
+/** Canonical naming provenance statuses emitted for describe-run items (sr-007). */
+export const NAMING_PROVENANCE_STATUS = {
+  APPLIED: 'applied',
+  DISABLED: 'disabled',
+  SKIPPED_BUDGET: 'skipped_budget',
+  NO_FACES: 'no_faces',
+} as const;
+
+/** Canonical naming realizer vocabulary emitted for applied names (sr-007). */
+export const NAMING_REALIZER = {
+  GROUNDED: 'grounded',
+  POSITIONAL_FALLBACK: 'positional_fallback',
+} as const;
+
+export type NamingProvenanceStatus =
+  (typeof NAMING_PROVENANCE_STATUS)[keyof typeof NAMING_PROVENANCE_STATUS];
+export type NamingRealizer = (typeof NAMING_REALIZER)[keyof typeof NAMING_REALIZER];
+
+/** C7 per-item naming provenance. Older run items may omit this field entirely. */
+export interface NamingProvenance {
+  status: NamingProvenanceStatus;
+  realizer: NamingRealizer | null;
+  names_applied: string[];
+}
+
 export interface VisualFacts {
   caption: string;
   objects: string[];
@@ -173,6 +198,7 @@ export interface DescriptionHistoryProvenance {
   run_id?: string;
   applied_at?: string;
   recovered_from?: ProvenanceRecoveredFrom;
+  naming?: NamingProvenance;
 }
 
 export interface DescriptionHistoryItem {
@@ -237,6 +263,50 @@ export const GPU_STATE = {
 
 export const isGpuState = (value: unknown): value is GpuState =>
   typeof value === 'string' && (Object.values(GPU_STATE) as string[]).includes(value);
+
+export const isNamingProvenanceStatus = (value: unknown): value is NamingProvenanceStatus =>
+  typeof value === 'string' &&
+  (Object.values(NAMING_PROVENANCE_STATUS) as string[]).includes(value);
+
+export const isNamingRealizer = (value: unknown): value is NamingRealizer =>
+  typeof value === 'string' && (Object.values(NAMING_REALIZER) as string[]).includes(value);
+
+/**
+ * Validate the additive C7 field before it reaches presentation code. Invalid
+ * naming metadata is treated like an older item with no naming field so the UI
+ * never renders an untrusted status, realizer, or name.
+ */
+export const parseNamingProvenance = (value: unknown): NamingProvenance | undefined => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  if (!isNamingProvenanceStatus(record.status)) {
+    return undefined;
+  }
+
+  const realizer = record.realizer;
+  if (realizer !== null && !isNamingRealizer(realizer)) {
+    return undefined;
+  }
+
+  if (!Array.isArray(record.names_applied)) {
+    return undefined;
+  }
+  const namesApplied = record.names_applied.filter(
+    (name): name is string => typeof name === 'string',
+  );
+  if (namesApplied.length !== record.names_applied.length) {
+    return undefined;
+  }
+
+  return {
+    status: record.status,
+    realizer,
+    names_applied: namesApplied,
+  };
+};
 
 /**
  * Canonical correction rejection codes from the history correction endpoint.
@@ -476,7 +546,28 @@ export const fetchDescribeRunItems = async (runId: string): Promise<DescribeRunI
       restNonce: getConfig().nonce,
       signal: createRecognitionTimeoutSignal(10_000),
     },
-  );
+  ).then((response) => ({
+    ...response,
+    items: response.items.map((item) => {
+      const provenance = item.provenance;
+      if (
+        !provenance ||
+        typeof provenance !== 'object' ||
+        !('naming' in provenance)
+      ) {
+        return item;
+      }
+
+      const naming = parseNamingProvenance(provenance.naming);
+      if (naming === undefined) {
+        const provenanceWithoutNaming = { ...provenance };
+        delete provenanceWithoutNaming.naming;
+        return { ...item, provenance: provenanceWithoutNaming };
+      }
+
+      return { ...item, provenance: { ...provenance, naming } };
+    }),
+  }));
 
 /**
  * Apply a completed run's drafts to attachment alt text (INT-01d → INT-01c).

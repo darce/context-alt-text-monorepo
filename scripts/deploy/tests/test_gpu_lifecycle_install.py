@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from scripts.deploy.tests.test_gpu_lifecycle_deploy_wiring import _run_lifecycle
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 INSTALLER = REPO_ROOT / "scripts/deploy/gpu-lifecycle-install.sh"
 DEPLOYMENTS = REPO_ROOT / "scripts/deploy/gpu-snapshot-deployments.conf"
@@ -250,3 +252,34 @@ def test_mid_sequence_copy_failure_never_switches_the_live_release(tmp_path: Pat
     assert "/opt/acx-gpu/current" not in calls, (
         "the live release was switched despite a failed module copy"
     )
+
+
+def test_installer_provisions_every_supplementary_group_it_references(tmp_path: Path) -> None:
+    """The remote installer payload must provision the NSS group before activation.
+
+    A fresh host starts without GID 10001. Execute the rendered payload through
+    the shared remote shim so this test observes the real ``getent``/``groupadd``
+    sequence rather than proving that those words occur in the installer source.
+    """
+    result, calls = _run_lifecycle(
+        tmp_path,
+        enabled=True,
+        ready_url="http://10.0.1.36:8000/health",
+        dry_run=False,
+        group_present=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    groupadd = "groupadd <-r> <-g> <10001> <acxapi>"
+    getent = "getent <group> <10001>"
+    assert groupadd in calls
+    assert calls.count(getent) >= 2, "the payload must verify the GID before and after groupadd"
+    assert calls.index(getent) < calls.index(groupadd) < calls.rindex(getent)
+    assert calls.rindex(getent) < calls.index("systemctl <start> <acx-gpu-reap.service>")
+    group_db = (tmp_path / "fake-etc-group").read_text(encoding="utf-8")
+    assert "acxapi:x:10001:" in group_db, (
+        "the executed installer must leave a resolvable GID 10001 in the fake NSS database"
+    )
+    for unit in ("acx-gpu-start.service", "acx-gpu-reap.service"):
+        rendered = (tmp_path / "effective-systemd" / unit).read_text(encoding="utf-8")
+        assert "SupplementaryGroups=10001" in rendered

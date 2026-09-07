@@ -355,7 +355,11 @@ probe_live_description_adapter() {
   tenant_id="$(php_define_value ACX_RECOGNITION_TENANT_ID "$WORDPRESS_CONFIG_EXTRA")"
   # Named for the BLOCK message so a probe failure can quote the endpoint it
   # actually tried. Runs in a subshell, so write it to a file, not a variable.
-  printf '%s' "${base_url:-<ACX_RECOGNITION_URL unset>}" > "$PROBED_BASE_URL_FILE"
+  # Store the normalized form: curl requests "${base_url%/}/health/detailed",
+  # so printing the raw value would hand the operator a doubled-slash URL that
+  # was never requested.
+  printf '%s' "${base_url:+${base_url%/}}" > "$PROBED_BASE_URL_FILE"
+  [ -n "$base_url" ] || printf '%s' "<ACX_RECOGNITION_URL unset>" > "$PROBED_BASE_URL_FILE"
   if [[ -z "$base_url" || -z "$api_key" ]]; then
     echo ""
     return 0

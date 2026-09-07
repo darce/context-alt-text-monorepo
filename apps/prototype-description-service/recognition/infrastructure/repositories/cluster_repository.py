@@ -4,7 +4,9 @@ SQLAlchemy-backed implementation of ClusterRepository.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import threading
 import uuid
 from collections import defaultdict
 from collections.abc import Sequence
@@ -26,12 +28,13 @@ from db.tenant_context import enable_rls_bypass
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity as DomainIdentity
 from recognition.domain.maturity import ClusterMaturityInfo, compute_maturity_adjustment, compute_maturity_level
-from recognition.domain.repositories import ClusterRepository
+from recognition.domain.repositories import ClusterRepository, MvRefreshOutcome
 from recognition.domain.repositories import IdentityMember as DomainMember
 from recognition.domain.representative import ClusterRepresentative
 from recognition.infrastructure.repositories._helpers import coerce_uuid as _coerce_uuid
 from recognition.shared.db.dialect import is_sqlite
 from recognition.shared.db.helpers import execute_dml, get_rowcount
+from shared.disk_headroom import get_disk_headroom_settings, has_headroom, probe_disk_headroom
 
 _DB_SETTINGS = get_database_settings()
 logger = logging.getLogger(__name__)
@@ -164,9 +167,11 @@ def _datetime_to_snapshot_version(value: datetime | None) -> int:
 
 
 _MV_CENTROIDS = "mv_identity_cluster_centroids"
+_UNGUARDED_REFRESH_WARNING_LOGGED = False
+_UNGUARDED_REFRESH_WARNING_LOCK = threading.Lock()
 
 
-async def _refresh_mv_concurrent_with_bypass(conn: AsyncConnection) -> None:
+async def _refresh_mv_concurrent_with_bypass(conn: AsyncConnection) -> MvRefreshOutcome:
     """Execute a concurrent MV refresh on an AUTOCOMMIT connection with RLS bypass.
 
     SET app.bypass_rls is session-scoped (not SET LOCAL) because AUTOCOMMIT mode
@@ -174,8 +179,42 @@ async def _refresh_mv_concurrent_with_bypass(conn: AsyncConnection) -> None:
     All 18 MV source tables carry relforcerowsecurity=true; without bypass even
     the table owner sees zero rows.
     """
+    global _UNGUARDED_REFRESH_WARNING_LOGGED
+
     await conn.execute(text("SET app.bypass_rls = 'true'"))
     try:
+        settings = get_disk_headroom_settings()
+        if settings.probe_path is None:
+            should_warn = False
+            with _UNGUARDED_REFRESH_WARNING_LOCK:
+                if not _UNGUARDED_REFRESH_WARNING_LOGGED:
+                    _UNGUARDED_REFRESH_WARNING_LOGGED = True
+                    should_warn = True
+            if should_warn:
+                logger.warning(
+                    "Refreshing %s without a disk-headroom guard; %s is unset",
+                    _MV_CENTROIDS,
+                    "ACX_PG_HEADROOM_PROBE_PATH",
+                )
+
+        if settings.probe_path is not None:
+            mv_size_result = await conn.execute(text(f"SELECT pg_total_relation_size('{_MV_CENTROIDS}')"))
+            mv_bytes = int(mv_size_result.scalar_one() or 0)
+            required_bytes = max(settings.min_bytes, 2 * mv_bytes)
+            probe = await asyncio.to_thread(probe_disk_headroom, settings.probe_path)
+            if not has_headroom(probe, required_bytes):
+                logger.warning(
+                    "Skipping refresh of %s due to insufficient disk headroom: "
+                    "free_bytes=%d required_bytes=%d mv_bytes=%d probe_path=%s reason=%s",
+                    _MV_CENTROIDS,
+                    probe.free_bytes,
+                    required_bytes,
+                    mv_bytes,
+                    probe.probe_path,
+                    probe.reason,
+                )
+                return MvRefreshOutcome.SKIPPED_HEADROOM
+
         before_result = await conn.execute(text(f"SELECT COUNT(*) FROM {_MV_CENTROIDS}"))
         before_count: int = before_result.scalar_one()
         started_at = datetime.now(tz=UTC)
@@ -190,6 +229,7 @@ async def _refresh_mv_concurrent_with_bypass(conn: AsyncConnection) -> None:
             after_count,
             duration_ms,
         )
+        return MvRefreshOutcome.REFRESHED
     finally:
         await conn.execute(text("RESET app.bypass_rls"))
 
@@ -611,34 +651,32 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             count_result.scalar_one(),
         )
 
-    async def refresh_centroids_view_concurrent(self) -> bool:
+    async def refresh_centroids_view_concurrent(self) -> MvRefreshOutcome:
         """Refresh the materialized view concurrently.
 
         This allows reads to continue during the refresh and avoids locking the table.
         It requires a unique index on the MV, which is created in the migration.
 
-        Returns True on success, False when the refresh fails (after logging).
+        Returns the concrete refresh outcome after logging failures.
         """
         try:
             if is_sqlite(self._session):
                 await self.refresh_centroids_view()
-                return True
+                return MvRefreshOutcome.REFRESHED
 
             # Use CONCURRENTLY for background scheduled refreshes
             # This is critical to avoid locking the MV during updates
             bind = self._session.bind
             if isinstance(bind, AsyncConnection):
                 conn = await bind.execution_options(isolation_level="AUTOCOMMIT")
-                await _refresh_mv_concurrent_with_bypass(conn)
-                return True
+                return await _refresh_mv_concurrent_with_bypass(conn)
 
             async with bind.connect() as conn:
                 conn = await conn.execution_options(isolation_level="AUTOCOMMIT")
-                await _refresh_mv_concurrent_with_bypass(conn)
-            return True
+                return await _refresh_mv_concurrent_with_bypass(conn)
         except Exception:
             logger.warning("Failed to refresh centroid materialized view concurrently", exc_info=True)
-            return False
+            return MvRefreshOutcome.FAILED
 
     async def get_unclustered(self, tenant_id: str):
         """Return media identities not yet assigned to any cluster.
@@ -1259,7 +1297,8 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             .order_by(ClusterModel.created_at.desc())
         )
         result = await self._session.execute(stmt)
-        raw: list[tuple[MediaIdentity, uuid.UUID | None]] = list(result.all())
+        # WHY: the two INNER JOINs reject a NULL membership key before it reaches this result.
+        raw: list[tuple[MediaIdentity, uuid.UUID]] = list(result.tuples().all())
         models = _filter_rows_to_single_embedding_model([m for m, _ in raw])
         kept_ids = {id(m) for m in models}
         identities: list[DomainIdentity] = []

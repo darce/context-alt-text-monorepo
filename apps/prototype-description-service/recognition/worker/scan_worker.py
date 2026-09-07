@@ -39,6 +39,7 @@ from recognition.application.scan.queue_repository import ScanQueueItem
 from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.config import get_settings as get_recognition_settings
 from recognition.domain.job import CLUSTERING_JOB_TYPES, JobStatus
+from recognition.domain.repositories import MvRefreshOutcome
 from recognition.infrastructure.embeddings.runtime_factory import build_embedding_runtime
 from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
 from recognition.observability.face_pipeline_metrics import FacePipelineMetrics
@@ -226,6 +227,11 @@ class ScanWorker:
         self._runtime_mode = settings.runtime_mode
 
         self._last_mv_refresh_time: datetime = datetime.min.replace(tzinfo=UTC)
+        # Separate "last attempt" clock (HEALTHOBS-1-BR-06): advanced on every
+        # _refresh_mv_if_needed attempt regardless of outcome, so a run of
+        # SKIPPED_HEADROOM/FAILED outcomes still respects mv_refresh_interval_seconds
+        # instead of re-running the guard every worker tick.
+        self._last_mv_refresh_attempt_time: datetime = datetime.min.replace(tzinfo=UTC)
         # Store the ID of a clustering job that was just re-queued for retry so
         # the MV refresh can be skipped on the cycle where that exact job runs
         # again. Using the job ID (rather than a boolean) makes the suppression
@@ -656,9 +662,17 @@ class ScanWorker:
             if suppressed:
                 logger.debug("[worker] Skipping MV refresh for retried job %s", next_job_id)
                 return
-        elapsed = (now - self._last_mv_refresh_time).total_seconds()
+        # Gate on whichever is more recent: the last *successful* refresh, or
+        # the last *attempt* (including SKIPPED_HEADROOM/FAILED outcomes).
+        # Keying the gate off success alone (HEALTHOBS-1-BR-06) let a sustained
+        # low-headroom or failure condition re-run the guard (a DB size query
+        # plus a statvfs probe) on every worker tick, hammering an
+        # already-stressed filesystem/database instead of backing off.
+        most_recent_activity = max(self._last_mv_refresh_time, self._last_mv_refresh_attempt_time)
+        elapsed = (now - most_recent_activity).total_seconds()
         if elapsed < self._config.mv_refresh_interval_seconds:
             return
+        self._last_mv_refresh_attempt_time = now
 
         logger.info("[worker] Refreshing centroids MV (elapsed=%.1fs)", elapsed)
         try:
@@ -667,8 +681,15 @@ class ScanWorker:
             from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
 
             cluster_repo = SqlAlchemyClusterRepository(session)
-            succeeded = await cluster_repo.refresh_centroids_view_concurrent()
-            if succeeded:
+            outcome = await cluster_repo.refresh_centroids_view_concurrent()
+            if outcome is MvRefreshOutcome.SKIPPED_HEADROOM:
+                logger.warning(
+                    "[worker] Skipped centroids MV refresh due to insufficient disk headroom "
+                    "(free/min bytes guard); retrying on the next cycle"
+                )
+            elif outcome is MvRefreshOutcome.FAILED:
+                logger.warning("[worker] Centroids MV refresh failed; retrying on the next cycle")
+            elif outcome is MvRefreshOutcome.REFRESHED:
                 await session.commit()
                 # Stamp completion time AFTER commit so the interval is measured
                 # from the actual end of the refresh, not the start.  If commit

@@ -15,6 +15,7 @@ import uuid
 import pytest
 
 import scene.application.describe_run_repository as repo_mod
+from recognition.tests.support.health_session import install_healthy_observability_session
 from scene.application.describe_run_repository import (
     DescribeRunRepository,
     run_startup_reclaim,
@@ -238,6 +239,7 @@ def test_startup_reclaim_failure_does_not_block_boot_and_is_wired(monkeypatch):
     monkeypatch.setattr(load_mod, "run_startup_load_snapshot", track_snapshot)
 
     app = create_app()
+    install_healthy_observability_session(app)
     with TestClient(app) as client:  # __enter__ runs the lifespan startup
         resp = client.get("/health")
         assert resp.status_code == 200, resp.text
@@ -273,6 +275,7 @@ def test_startup_boot_order_reclaim_then_purge_then_snapshot(monkeypatch):
     monkeypatch.setattr(load_mod, "run_startup_load_snapshot", snapshot_ok)
 
     app = create_app()
+    install_healthy_observability_session(app)
     with TestClient(app) as client:
         assert client.get("/health").status_code == 200
     assert order == ["reclaim", "purge", "snapshot"]
@@ -304,6 +307,7 @@ def test_startup_purge_or_snapshot_failure_does_not_block_boot(monkeypatch):
     monkeypatch.setattr(load_mod, "run_startup_load_snapshot", snapshot_boom)
 
     app = create_app()
+    install_healthy_observability_session(app)
     with TestClient(app) as client:
         assert client.get("/health").status_code == 200
     # Snapshot still runs after purge failure; both failures are swallowed.

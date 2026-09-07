@@ -195,6 +195,8 @@ const defaultSettings: SettingsResponse = {
   tenant_paired: false,
   alt_style: 'alt_only',
   recognition_enabled: true,
+  allow_person_names: true,
+  allow_person_names_error: null,
   description_budget: {
     max_attempts: -1,
     usage: {
@@ -343,6 +345,16 @@ describe('SettingsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }));
 
     expect(saveMutate).toHaveBeenCalledWith({ url: 'https://new-api.example.com' });
+  });
+
+  it('saves the naming agreement toggle through the page payload (H-02)', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPageWithRouter />);
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Include named people in descriptions' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }));
+
+    expect(saveMutate).toHaveBeenCalledWith({ allow_person_names: false });
   });
 
   it('renders the people recognition checkbox checked when GET recognition_enabled is true', () => {

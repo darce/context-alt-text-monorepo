@@ -47,7 +47,7 @@ export const SettingsPage = (): React.JSX.Element => {
   const location = useLocation();
 
   const settingsQuery = useQuery<SettingsResponse>({
-    queryKey: ['settings'],
+    queryKey: queryKeys.settings.all,
     queryFn: fetchSettings,
   });
 
@@ -91,9 +91,9 @@ export const SettingsPage = (): React.JSX.Element => {
           tone: 'error',
         });
         // Refresh so the form reflects what actually landed (partial success).
-        await queryClient.invalidateQueries({ queryKey: ['settings'] });
+        await queryClient.invalidateQueries({ queryKey: queryKeys.settings.all });
         const refreshedOnFail = await queryClient.fetchQuery({
-          queryKey: ['settings'],
+          queryKey: queryKeys.settings.all,
           queryFn: fetchSettings,
         });
         syncLocalizedRouting(refreshedOnFail);
@@ -102,12 +102,12 @@ export const SettingsPage = (): React.JSX.Element => {
 
       dispatch({ type: 'setSaveMessage', message: __('Settings saved.', 'alt-context'), tone: 'success' });
       dispatch({ type: 'setApiKey', value: '' });
-      await queryClient.invalidateQueries({ queryKey: ['settings'] });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.settings.all });
       // A saved URL/key may repair the recognition breaker; refetch sync health
       // so the degraded/offline banner clears without waiting for its 15s poll.
       await queryClient.invalidateQueries({ queryKey: queryKeys.sync.health() });
       const refreshed = await queryClient.fetchQuery({
-        queryKey: ['settings'],
+        queryKey: queryKeys.settings.all,
         queryFn: fetchSettings,
       });
       syncLocalizedRouting(refreshed);
@@ -167,6 +167,13 @@ export const SettingsPage = (): React.JSX.Element => {
     }
     if (state.recognitionEnabled !== data.recognition_enabled) {
       payload.recognition_enabled = state.recognitionEnabled;
+    }
+    if (
+      typeof data.allow_person_names === 'boolean' &&
+      state.allowPersonNames !== null &&
+      state.allowPersonNames !== data.allow_person_names
+    ) {
+      payload.allow_person_names = state.allowPersonNames;
     }
 
     if (Object.keys(payload).length === 0) {
@@ -267,6 +274,7 @@ export const SettingsPage = (): React.JSX.Element => {
           apiKey: state.apiKey,
           descriptionBudgetMaxAttempts: state.descriptionBudgetMaxAttempts,
           recognitionEnabled: state.recognitionEnabled,
+          allowPersonNames: state.allowPersonNames,
           urlReadOnly,
           keyReadOnly,
         }}
@@ -282,6 +290,7 @@ export const SettingsPage = (): React.JSX.Element => {
           onDescriptionBudgetMaxAttemptsChange: (value) =>
             dispatch({ type: 'setDescriptionBudgetMaxAttempts', value }),
           onRecognitionEnabledChange: (value) => dispatch({ type: 'setRecognitionEnabled', value }),
+          onAllowPersonNamesChange: (value) => dispatch({ type: 'setAllowPersonNames', value }),
           onSave: handleSave,
           onTest: handleTest,
           onFocusServiceUrl: () => {

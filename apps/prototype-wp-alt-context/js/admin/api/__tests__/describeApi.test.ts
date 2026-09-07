@@ -7,8 +7,10 @@ import {
   describeMedia,
   DESCRIPTION_CORRECTION_CODE,
   GPU_STATE,
+  MalformedVisualFactsResponseError,
   NAMING_PROVENANCE_STATUS,
   NAMING_REALIZER,
+  parseVisualFactsResponse,
   type NamingProvenance,
   fetchDescribeRunItems,
   fetchDescriptionCandidates,
@@ -68,6 +70,23 @@ const sampleResponse = {
   cached: false,
   duration_ms: 13800,
   retention_class: 'retain_all',
+  tier: 'provisional_cpu',
+  result_generation: 1,
+  generic_draft: 'A red flower.',
+  named_draft: 'A red flower near Ada.',
+  naming_provenance: {
+    injected_names: [
+      {
+        name: 'Ada',
+        cluster_id: 'cluster-ada',
+        roster_id: 'roster-ada',
+        detection_confidence: 0.97,
+      },
+    ],
+    naming_allowed: true,
+    reason: null,
+    mode: 'grounded',
+  },
 };
 
 describe('describeApi', () => {
@@ -156,6 +175,44 @@ describe('describeApi', () => {
       body: { media_id: 42, write_alt: true, force: true },
       restNonce: 'nonce-xyz',
     });
+  });
+
+  it('rejects a describe response that omits a required contract field', async () => {
+    const payload: Record<string, unknown> = { ...sampleResponse };
+    delete payload.tier;
+    fetchApiMock.mockResolvedValue(payload);
+
+    await expect(describeMedia(42)).rejects.toThrow(
+      new MalformedVisualFactsResponseError('response.tier'),
+    );
+  });
+
+  it('rejects wrong types at the describe response boundary', async () => {
+    fetchApiMock.mockResolvedValue({
+      ...sampleResponse,
+      result_generation: '1',
+    });
+
+    await expect(describeMedia(42)).rejects.toThrow(/response\.result_generation/);
+  });
+
+  it('rejects invalid enum values in tier and named-caption provenance', () => {
+    expect(() =>
+      parseVisualFactsResponse({
+        ...sampleResponse,
+        tier: 'gpu',
+      }),
+    ).toThrow(/response\.tier/);
+
+    expect(() =>
+      parseVisualFactsResponse({
+        ...sampleResponse,
+        naming_provenance: {
+          ...sampleResponse.naming_provenance,
+          mode: 'untrusted-mode',
+        },
+      }),
+    ).toThrow(/response\.naming_provenance\.mode/);
   });
 
   it('fetches dry-run description candidates without posting to the backend describe action', async () => {

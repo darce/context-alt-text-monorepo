@@ -109,9 +109,24 @@ class DescribeRun(Base):
     # GUIDEDFIX-2 [RES-01]/[COST-10]: caller-supplied retry token. The unique
     # index below is the dedupe mechanism — a lost 202 plus a blind retry must
     # collide here rather than spend a second paid run. NULL keys stay distinct,
-    # so submits without a token keep today's non-deduped behaviour. The key
-    # lives on the run row, so it expires with the run's retention (no second TTL).
+    # so submits without a token keep today's non-deduped behaviour.
+    #
+    # Lifetime (GUIDEDFIX-2 [S06], corrected): there is no TTL. Bulk runs are
+    # never purged (``purge_expired_single_runs`` scans ``run_kind='single'``
+    # only), so a key reserved by a bulk run is held for as long as that row
+    # lives. The one release is barren-terminal: the repository nulls this column
+    # when the run reaches a terminal status with zero completed items (FAILED,
+    # CANCELLED, or the COMPLETED_WITH_ERRORS a restart reclaim derives when
+    # every item failed), because a key naming a dead run would otherwise make
+    # every later retry replay a 202 pointing at zero results, permanently. A run
+    # with at least one completed item keeps its key: partial output is still
+    # output, and replaying it is correct.
     idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # GUIDEDFIX-2 [S03]: sha256 of the canonical submit payload the key is bound
+    # to (sorted unique media_ids + recognition_enabled). Persisted rather than
+    # re-derived from ``media_ids`` so replay/conflict is order-insensitive on
+    # both sides. NULL for runs created outside the keyed submit route.
+    request_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # GUIDEDFIX-2 [RES-02]: generation budget in force at accept, snapshotted so
     # every poll discloses one stable bound instead of a re-read of settings.
     deadline_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)

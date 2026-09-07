@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 from collections.abc import Sequence
@@ -118,6 +120,45 @@ def normalize_idempotency_key(raw: object) -> str | None:
     if not _IDEMPOTENCY_KEY_CHARSET.match(key):
         raise InvalidIdempotencyKeyError("form field 'idempotency_key' allows only [A-Za-z0-9_-]")
     return key
+
+
+# GUIDEDFIX-2 [S03/S04]: what one idempotency_key binds itself to.
+#
+# The digest covers the SEMANTIC request only: the *set* of media ids plus the
+# recognition switch. Two things follow, and both are wire contract:
+#
+#   * Order is not payload. The WP client builds media_ids from a query with no
+#     pinned ORDER BY, so [70, 71] and [71, 70] are the same submission and a
+#     blind retry that reshuffles them must replay, not 409. Duplicates are not
+#     payload either — create_run already dedupes them before any inference.
+#   * Image bytes are NOT covered. Binding the bytes would force every replay to
+#     read and hash up to max_description_image_bytes per media id (200 items
+#     max) purely to discover it has nothing to do, which is exactly the cost the
+#     replay-before-bytes ordering exists to avoid. The key therefore binds
+#     (media_ids, recognition_enabled) and the caller owns byte stability: reusing
+#     one key for a different image under the same media id is caller error, and
+#     the caller must mint a new key when an asset's bytes change.
+REQUEST_DIGEST_LENGTH = 64
+_REQUEST_DIGEST_VERSION = "v1"
+
+
+def compute_request_digest(*, media_ids: Sequence[int], recognition_enabled: bool) -> str:
+    """Stable digest of the normalized submit payload an idempotency_key binds.
+
+    Canonical form is version-tagged so a future contract change (e.g. folding in
+    an image-bytes hash) is a different digest rather than a silent redefinition
+    of what an already-reserved key promised.
+    """
+    canonical = json.dumps(
+        {
+            "v": _REQUEST_DIGEST_VERSION,
+            "media_ids": sorted({int(media_id) for media_id in media_ids}),
+            "recognition_enabled": bool(recognition_enabled),
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def describe_run_max_items() -> int:

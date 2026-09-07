@@ -90,7 +90,10 @@ const statusLine = (state: GuidedLiveState): string => {
         ? 'Done, but the GPU was not available, so the CPU wrote this. It is rougher than a GPU description.'
         : 'Done, but the run did not say whether the GPU wrote this.';
     case GUIDED_LIVE_STATUS.TIMED_OUT:
-      return 'Stopped waiting. The run may still finish on its own; nothing was applied here.';
+      // The offer is named in the sentence as well as on the buttons, so the
+      // recovery is announced to the live region rather than only rendered
+      // beside it (INT-08: the way out has to be findable, not just present).
+      return 'Stopped waiting. The run may still finish on its own; nothing was applied here. Keep waiting, or start over.';
     case GUIDED_LIVE_STATUS.CANCELLED:
       // Two different events land here. STOPPED_BY_OPERATOR is this learner
       // pressing Stop; RUN_CANCELLED is the service (or another tab, or an
@@ -120,11 +123,8 @@ export const GuidedLiveDescriptionPanel = ({
   mediaId,
   client,
 }: GuidedLiveDescriptionPanelProps): React.JSX.Element => {
-  const { state, disclosure, canRequest, canCancel, request, cancel } = useGuidedLiveDescription({
-    scenario,
-    mediaId,
-    client,
-  });
+  const { state, disclosure, canRequest, canCancel, canKeepWaiting, request, cancel, keepWaiting } =
+    useGuidedLiveDescription({ scenario, mediaId, client });
 
   const waiting = isGuidedLiveWaiting(state.status);
   const names = disclosure.confirmedHere;
@@ -175,6 +175,20 @@ export const GuidedLiveDescriptionPanel = ({
           </p>
         ) : null}
 
+        {/*
+          Whose number the "of up to" is. A locally invented ceiling and a
+          budget the server actually promised are different claims, and showing
+          the second when only the first is true overstates what is known
+          ([HAI-12] never overstate the machine).
+        */}
+        {waiting && state.runId !== null ? (
+          <p className="acx-guided-live__budget" data-testid="guided-live-budget">
+            {state.disclosedDeadlineSeconds === null
+              ? 'No server budget disclosed, so this is how long this page is willing to wait.'
+              : 'That is the budget the service disclosed when it accepted the run.'}
+          </p>
+        ) : null}
+
         {state.text !== null ? (
           <blockquote className="acx-guided-live__text" data-testid="guided-live-text">
             {state.text}
@@ -183,16 +197,27 @@ export const GuidedLiveDescriptionPanel = ({
       </div>
 
       <div className="acx-guided-live__actions">
+        {/*
+          Keeping the wait is offered first and is the cheaper of the two: the
+          run is still the server's, and starting over would discard work that
+          may be seconds from finishing while paying for a second burst
+          (INT-11 refine over restart).
+        */}
+        {canKeepWaiting ? (
+          <button type="button" className="acx-button acx-button--secondary" onClick={keepWaiting}>
+            Keep waiting
+          </button>
+        ) : null}
         <button
           type="button"
-          className="acx-button acx-button--secondary"
+          className={`acx-button ${canKeepWaiting ? 'acx-button--tertiary' : 'acx-button--secondary'}`}
           onClick={request}
           disabled={!canRequest}
           // A disabled control with no stated reason is a dead end for anyone
           // who cannot see the sentence next to it (S1-B-08).
           aria-describedby={canRequest ? undefined : STATUS_LINE_ID}
         >
-          Describe it live
+          {canKeepWaiting ? 'Start over' : 'Describe it live'}
         </button>
         {canCancel ? (
           <button type="button" className="acx-button acx-button--tertiary" onClick={cancel}>

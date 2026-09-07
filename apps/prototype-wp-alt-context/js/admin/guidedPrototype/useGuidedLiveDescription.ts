@@ -23,7 +23,8 @@ import { isFrozenPollFailure } from '../hooks/useDescribeRunProgress';
 import { createLogger } from '../utils/logger';
 import {
   GUIDED_LIVE_STATUS,
-  GUIDED_LIVE_WAIT_CEILING_SECONDS,
+  GUIDED_LIVE_WARM_CEILING_SECONDS,
+  guidedLiveCeilingSecondsFor,
   guidedLiveNamingDisclosure,
   guidedLivePollDelayMs,
   guidedLiveRequestPayload,
@@ -46,8 +47,10 @@ import type {
 import { GUIDED_IDENTITY_STATUS } from './state';
 import type { GuidedScenario } from './state';
 
-/** Warm-GPU ceiling: the backend's own describe budget with no burst to pay for. */
-export const GUIDED_LIVE_WARM_CEILING_SECONDS = 180;
+// The warm/cold ceilings and the warm-up leg they are built from live beside
+// the reducer that enforces them; re-exported here because this hook is where
+// every consumer already imports the ceiling from.
+export { GUIDED_LIVE_WARM_CEILING_SECONDS };
 
 const TICK_MS = 1000;
 
@@ -81,6 +84,9 @@ const releaseRun = (
     });
 
 export interface GuidedLiveDescriptionClient {
+  // Both the submit response and every status poll carry `deadline_seconds` on
+  // the shared contract, so both are typed by it rather than by a local
+  // intersection that a schema rename could not break (rg-015).
   submit: (mediaId: number) => Promise<DescribeRunResponse>;
   poll: (runId: string) => Promise<DescribeRunResponse>;
   items: (runId: string) => Promise<DescribeRunItemsResponse>;
@@ -111,14 +117,18 @@ export interface UseGuidedLiveDescriptionResult {
   blockedReason: GuidedLiveBlockedReason | null;
   canRequest: boolean;
   canCancel: boolean;
+  /**
+   * True exactly when the client stopped waiting on a run the server may still
+   * be finishing. The only state in which "keep waiting" is a real offer
+   * rather than a second burst (INT-08).
+   */
+  canKeepWaiting: boolean;
   request: () => void;
   cancel: () => void;
+  keepWaiting: () => void;
 }
 
 const gpuStateOf = (value: unknown): GuidedLiveGpuState => (isGpuState(value) ? value : 'unknown');
-
-const ceilingSecondsFor = (gpu: GuidedLiveGpuState): number =>
-  gpu === 'ready' ? GUIDED_LIVE_WARM_CEILING_SECONDS : GUIDED_LIVE_WAIT_CEILING_SECONDS;
 
 /**
  * The run's own terminal statuses outrank `phase`. A run can settle
@@ -296,10 +306,16 @@ export const useGuidedLiveDescription = ({
           void releaseRun(client, run.run_id, 'accepted_after_fence');
           return;
         }
+        // The disclosed budget and the GPU state it was measured against
+        // travel together: the reducer needs both to decide whether the
+        // warm-up leg is still owed on top of the generation budget.
+        const acceptedGpu = gpuStateOf(run.gpu_state);
         dispatch({
           kind: 'accepted',
           runId: run.run_id,
-          deadlineSeconds: ceilingSecondsFor(gpuStateOf(run.gpu_state)),
+          deadlineSeconds: guidedLiveCeilingSecondsFor(acceptedGpu),
+          gpu: acceptedGpu,
+          disclosedDeadlineSeconds: run.deadline_seconds,
           atMs: Date.now(),
         });
       })
@@ -370,9 +386,19 @@ export const useGuidedLiveDescription = ({
         if (phase !== DESCRIBE_RUN_PHASE.COMPLETE) {
           attemptRef.current += 1;
           // A submit-time warm pin can be wrong. If the run reports a colder GPU
-          // than the pin assumed, give the wait back its cold budget.
-          dispatch({ kind: 'deadline_raised', deadlineSeconds: ceilingSecondsFor(gpu) });
-          dispatch({ kind: 'polled', phase, gpu, atMs: Date.now() });
+          // than the pin assumed, give the wait back the warm-up leg it now
+          // owes. This fires on every poll, disclosure or not: the reducer
+          // re-derives the deadline from the same disclosed budget with the
+          // newly owed warm-up leg and keeps the larger of the two, so it is
+          // idempotent while a stale `gpu_state` at submit stays recoverable.
+          dispatch({ kind: 'deadline_raised', deadlineSeconds: guidedLiveCeilingSecondsFor(gpu), gpu });
+          dispatch({
+            kind: 'polled',
+            phase,
+            gpu,
+            atMs: Date.now(),
+            disclosedDeadlineSeconds: run.deadline_seconds,
+          });
           if (live()) {
             schedule();
           }
@@ -384,10 +410,24 @@ export const useGuidedLiveDescription = ({
           return;
         }
         if (draft === null) {
-          dispatch({ kind: 'polled', phase, gpu, atMs: Date.now(), reason: GUIDED_LIVE_REASON.ITEM_MISSING });
+          dispatch({
+            kind: 'polled',
+            phase,
+            gpu,
+            atMs: Date.now(),
+            reason: GUIDED_LIVE_REASON.ITEM_MISSING,
+            disclosedDeadlineSeconds: run.deadline_seconds,
+          });
           return;
         }
-        dispatch({ kind: 'polled', phase, gpu, atMs: Date.now(), ...draft });
+        dispatch({
+          kind: 'polled',
+          phase,
+          gpu,
+          atMs: Date.now(),
+          disclosedDeadlineSeconds: run.deadline_seconds,
+          ...draft,
+        });
       } catch (error) {
         if (!live()) {
           return;
@@ -417,6 +457,14 @@ export const useGuidedLiveDescription = ({
     };
   }, [client, mediaId, runId, waiting]);
 
+  const keepWaiting = useCallback(() => {
+    // No generation bump and no new submit: this is the same run, and the only
+    // thing that stopped was this panel. Resetting the backoff makes the first
+    // resumed poll immediate rather than five seconds late.
+    attemptRef.current = 0;
+    dispatch({ kind: 'wait_resumed', atMs: Date.now() });
+  }, []);
+
   const disclosure = useMemo(() => guidedLiveNamingDisclosure(scenario), [scenario]);
 
   return {
@@ -425,7 +473,9 @@ export const useGuidedLiveDescription = ({
     blockedReason: state.blockedReason,
     canRequest: state.status !== GUIDED_LIVE_STATUS.BLOCKED && !waiting,
     canCancel: waiting,
+    canKeepWaiting: state.status === GUIDED_LIVE_STATUS.TIMED_OUT && state.runId !== null,
     request,
     cancel,
+    keepWaiting,
   };
 };

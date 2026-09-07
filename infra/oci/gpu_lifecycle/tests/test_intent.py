@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from infra.oci.gpu_lifecycle.controller import GpuInstance, GpuLifecycleController
 from infra.oci.gpu_lifecycle.intent import (
     IntentAuthorityStore,
     IntentAction,
@@ -15,6 +16,7 @@ from infra.oci.gpu_lifecycle.intent import (
     MAX_INTENT_REQUESTED_AT_FUTURE_SKEW_SECONDS,
     read_effective_intent,
 )
+from infra.oci.gpu_lifecycle.reaper import StaticJobLoadSource, run_reap_cycle
 
 NOW = datetime(2026, 9, 6, 22, 30, tzinfo=UTC)
 VALID_NONCE = "123e4567-e89b-42d3-a456-426614174000"
@@ -390,3 +392,50 @@ def test_missing_or_disabled_intent_is_silent_auto(tmp_path: Path, caplog: pytes
     assert effective.action is IntentAction.AUTO
     assert effective.status is IntentStatus.NONE
     assert "gpu-intent.json" in caplog.text
+
+
+def test_reaper_call_site_uses_sequence_precedence(tmp_path: Path) -> None:
+    _write_intent(
+        tmp_path,
+        "dev",
+        action="start",
+        requested_at=NOW - timedelta(minutes=10),
+        expires_at=NOW + timedelta(minutes=5),
+        nonce=VALID_NONCE,
+        sequence=2,
+    )
+    _write_intent(
+        tmp_path,
+        "prod",
+        action="stop",
+        requested_at=NOW,
+        expires_at=NOW + timedelta(minutes=5),
+        nonce=NEW_NONCE,
+        sequence=1,
+    )
+
+    class Recorder:
+        stopped: list[str]
+
+        def __init__(self) -> None:
+            self.stopped = []
+
+        def stop_instance(self, instance_id: str) -> None:
+            self.stopped.append(instance_id)
+
+    actuator = Recorder()
+    result = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[GpuInstance(instance_id="ocid1.gpu", state="RUNNING", idle_for_seconds=90)],
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
+        actuator=actuator,
+        fence_delay_seconds=0,
+        intent_dir=tmp_path,
+        durable_state_dir=tmp_path / "durable",
+        now=NOW,
+    )
+
+    assert result.intent.action is IntentAction.START
+    assert result.intent.sequence == 2
+    assert result.decided == []
+    assert actuator.stopped == []

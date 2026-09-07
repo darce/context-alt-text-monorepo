@@ -33,10 +33,12 @@ import {
   guidedLiveOwnsRunAttempt,
   guidedLiveRunMayBeLive,
   initialGuidedLiveState,
+  isGuidedLiveDeadlineDisclosed,
   isGuidedLiveWaiting,
 } from './liveDescription';
 import type {
   GuidedLiveBlockedReason,
+  GuidedLiveDescribeRunResponse,
   GuidedLiveGpuState,
   GuidedLiveNamingDisclosure,
   GuidedLivePhase,
@@ -81,7 +83,10 @@ const releaseRun = (
     });
 
 export interface GuidedLiveDescriptionClient {
-  submit: (mediaId: number) => Promise<DescribeRunResponse>;
+  // The submit response is the one place `deadline_seconds` is read; typed
+  // with the local intersection until the coordinator hoists the field onto
+  // the shared `DescribeRunResponse` contract (see liveDescription.ts).
+  submit: (mediaId: number) => Promise<GuidedLiveDescribeRunResponse>;
   poll: (runId: string) => Promise<DescribeRunResponse>;
   items: (runId: string) => Promise<DescribeRunItemsResponse>;
   cancel: (runId: string) => Promise<unknown>;
@@ -187,6 +192,13 @@ export const useGuidedLiveDescription = ({
   // cancel or a new request must not write into the run that replaced it.
   const generationRef = useRef(0);
   const attemptRef = useRef(0);
+  // Whether the current run's accept carried a usable `deadline_seconds`. Once
+  // the server has disclosed a real budget, the local warm/cold re-guess that
+  // `deadline_raised` performs on every poll must not run at all -- the value
+  // was taken once, at accept, and a poll disagreeing with it is a server bug,
+  // not grounds to widen it back toward a local ceiling (see liveDescription.ts
+  // `resolveGuidedLiveDeadlineMs`).
+  const disclosedDeadlineRef = useRef(false);
 
   // "Decided" means every face has an answer -- confirmed OR marked
   // unidentified. Counting only confirmations let a learner who marked every
@@ -273,6 +285,7 @@ export const useGuidedLiveDescription = ({
     const generation = generationRef.current + 1;
     generationRef.current = generation;
     attemptRef.current = 0;
+    disclosedDeadlineRef.current = false;
     dispatch({ kind: 'requested', atMs: Date.now() });
 
     void (previous === null ? Promise.resolve() : releaseRun(client, previous, 'superseded_by_retry'))
@@ -296,10 +309,16 @@ export const useGuidedLiveDescription = ({
           void releaseRun(client, run.run_id, 'accepted_after_fence');
           return;
         }
+        // Taken once, here, at submit accept: the poll loop below consults
+        // this ref to skip its own local-ceiling regrowth once a real
+        // disclosure is in effect. The reducer never re-derives the value
+        // itself from a later poll either way (see liveDescription.ts).
+        disclosedDeadlineRef.current = isGuidedLiveDeadlineDisclosed(run.deadline_seconds);
         dispatch({
           kind: 'accepted',
           runId: run.run_id,
           deadlineSeconds: ceilingSecondsFor(gpuStateOf(run.gpu_state)),
+          disclosedDeadlineSeconds: run.deadline_seconds,
           atMs: Date.now(),
         });
       })
@@ -370,8 +389,12 @@ export const useGuidedLiveDescription = ({
         if (phase !== DESCRIBE_RUN_PHASE.COMPLETE) {
           attemptRef.current += 1;
           // A submit-time warm pin can be wrong. If the run reports a colder GPU
-          // than the pin assumed, give the wait back its cold budget.
-          dispatch({ kind: 'deadline_raised', deadlineSeconds: ceilingSecondsFor(gpu) });
+          // than the pin assumed, give the wait back its cold budget -- but only
+          // when the server never disclosed a real budget of its own. Once it
+          // has, that figure governs and this local re-guess must stay silent.
+          if (!disclosedDeadlineRef.current) {
+            dispatch({ kind: 'deadline_raised', deadlineSeconds: ceilingSecondsFor(gpu) });
+          }
           dispatch({ kind: 'polled', phase, gpu, atMs: Date.now() });
           if (live()) {
             schedule();

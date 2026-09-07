@@ -4,8 +4,6 @@ import path from 'path';
 
 export default defineConfig(({ mode }) => ({
   plugins: [react()],
-  // WordPress installs the plugin below a variable URL, not the site root.
-  base: './',
   publicDir: false,
   build: {
     sourcemap: mode === 'development' ? 'inline' : false,

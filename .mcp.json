@@ -29,7 +29,6 @@
       "env": {
         "WORKBAY_REMOTE_GATE_HOST": "gate@acx-backend.tail1a44b8.ts.net",
         "WORKBAY_GROK_MODEL": "grok-4.6",
-        "WORKBAY_CODEX_MODEL": "gpt-6-astra",
         "WORKBAY_HANDOFF_DEFAULT_AGENT": "workbay-orchestrator-mcp",
         "WORKBAY_TOOL_ROSTER_POLICY": "all"
       }

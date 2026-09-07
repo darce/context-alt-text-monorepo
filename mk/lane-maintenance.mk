@@ -5,12 +5,14 @@
 .PHONY: lane-reset lane-refresh lane-clean lane-close lane-prune lane-path lane-commits lane-intake worktree-reap worktree-reap-check
 
 POST_INTAKE_CHECK_CMD ?= $(MAKE) --no-print-directory check-all
+REAP_PROTECT ?=
+REAP_STRICT ?= 0
 
 worktree-reap: ## Dry-run: list linked worktrees whose branch is already landed in its parent (REAP_ARGS=--apply to remove)
-	@$(PYTHON) scripts/worktree_reap.py --repo "$(CURDIR)" $(REAP_ARGS)
+	@REAP_STRICT="$(REAP_STRICT)" $(PYTHON) scripts/worktree_reap.py --repo "$(CURDIR)" $(REAP_ARGS) $(foreach p,$(REAP_PROTECT),--protect "$(p)")
 
-worktree-reap-check: ## Fail when redundant worktrees exist (wired into check-all)
-	@$(PYTHON) scripts/worktree_reap.py --repo "$(CURDIR)"
+worktree-reap-check: ## Check for redundant worktrees (REAP_STRICT=1 makes it fail; wired into check-all)
+	@REAP_STRICT="$(REAP_STRICT)" $(PYTHON) scripts/worktree_reap.py --repo "$(CURDIR)" --check $(foreach p,$(REAP_PROTECT),--protect "$(p)")
 
 check-all: worktree-reap-check
 

@@ -30,7 +30,6 @@ MIN_INTENT_TTL_SECONDS = 60
 MAX_INTENT_TTL_SECONDS = 7200
 INTENT_SCHEMA_VERSION = 1
 INTENT_FILE_MODE = 0o660
-DEFAULT_GPU_INTENT_DURABLE_DIR = Path("/var/lib/acx-gpu/intents")
 RUNTIME_GPU_INTENT_DIR = Path("/run/acx-write")
 GPU_INTENT_LOCK_TIMEOUT_SECONDS = 5.0
 GPU_INTENT_LOCK_RETRY_SECONDS = 0.01
@@ -81,15 +80,24 @@ def resolve_gpu_intent_path() -> str:
     return str(Path(resolve_load_path()).with_name(DEFAULT_GPU_INTENT_FILENAME))
 
 
-def resolve_gpu_intent_durable_path(path: str | Path) -> Path:
+def resolve_gpu_intent_durable_path(path: str | Path) -> Path | None:
     """Resolve the durable publication path corresponding to ``path``.
 
-    The API normally publishes into the per-environment ``/run/acx-write``
-    mount.  That mount is a runtime cache, so mirror those publications into
-    the lifecycle state directory before reporting success.  A path that is
-    already outside the runtime mount is treated as its own durable target;
-    this keeps local/test deployments and explicitly provisioned persistent
-    paths useful without a second copy.
+    Returns ``None`` when the deployment gives the API no durable target of its
+    own, which is the production default. The API container runs as ``acx``
+    (uid/gid 10001) and its only writable host bind mount is
+    ``/run/acx-write/<env>``; ``/var/lib`` inside the container is root-owned
+    image layer that is discarded on redeploy. Defaulting a runtime-mount
+    publication to a ``/var/lib`` sibling therefore does not produce a durable
+    record -- it either raises ``PermissionError`` and turns every operator
+    intent into a 503, or it writes a file no reader on the host can see.
+    Durability for the controller is the lifecycle reader's own copy-before-
+    evaluate step into its ``StateDirectory``, which the API must not write to.
+
+    Set ``ACX_GPU_INTENT_DURABLE_PATH`` to opt a deployment into a service-side
+    write-ahead copy once it provisions an API-writable persistent mount. A
+    target that already lives outside the runtime mount is its own durable
+    target, which is what local runs and tests use.
     """
     configured_path = os.environ.get(GPU_INTENT_DURABLE_PATH_ENV)
     if configured_path is not None and configured_path.strip():
@@ -97,10 +105,10 @@ def resolve_gpu_intent_durable_path(path: str | Path) -> Path:
 
     target = Path(path)
     try:
-        relative = target.relative_to(RUNTIME_GPU_INTENT_DIR)
+        target.relative_to(RUNTIME_GPU_INTENT_DIR)
     except ValueError:
         return target
-    return DEFAULT_GPU_INTENT_DURABLE_DIR / relative
+    return None
 
 
 def write_gpu_intent(
@@ -149,9 +157,9 @@ def write_gpu_intent(
             # cache used by the lifecycle path watcher; the durable copy is
             # the write-ahead record that makes an accepted intent survive a
             # restart or power loss.
-            _publish_atomic_json(durable_target, payload)
-            if durable_target != target:
-                _publish_atomic_json(target, payload)
+            if durable_target is not None and durable_target != target:
+                _publish_atomic_json(durable_target, payload)
+            _publish_atomic_json(target, payload)
         finally:
             if locked:
                 try:
@@ -198,10 +206,17 @@ def _gpu_intent_lock_timeout_seconds() -> float:
     return min(value, GPU_INTENT_LOCK_TIMEOUT_SECONDS)
 
 
-def _allocate_sequence(target: Path, durable_target: Path) -> int:
+def _publication_candidates(target: Path, durable_target: Path | None) -> tuple[Path, ...]:
+    """Every path a publication may live at, runtime copy first."""
+    if durable_target is None or durable_target == target:
+        return (target,)
+    return (target, durable_target)
+
+
+def _allocate_sequence(target: Path, durable_target: Path | None) -> int:
     """Allocate the next sequence from the highest persisted publication."""
     highest = 0
-    candidates = (target,) if target == durable_target else (target, durable_target)
+    candidates = _publication_candidates(target, durable_target)
     for candidate in candidates:
         highest = max(highest, _read_persisted_sequence(candidate))
     return highest + 1
@@ -267,8 +282,7 @@ def _publish_atomic_json(path: Path, payload: str) -> None:
 def read_gpu_intent(path: str | Path) -> OperatorIntent | None:
     """Read and validate an intent, returning ``None`` on malformed input."""
     target = Path(path)
-    durable_target = resolve_gpu_intent_durable_path(target)
-    candidates = (target,) if target == durable_target else (target, durable_target)
+    candidates = _publication_candidates(target, resolve_gpu_intent_durable_path(target))
     last_error: Exception | None = None
     for candidate in candidates:
         try:
@@ -409,7 +423,6 @@ def _intent_from_payload(payload: Any) -> OperatorIntent:
 
 
 __all__ = [
-    "DEFAULT_GPU_INTENT_DURABLE_DIR",
     "DEFAULT_GPU_INTENT_FILENAME",
     "DEFAULT_INTENT_TTL_SECONDS",
     "GPU_INTENT_DURABLE_PATH_ENV",

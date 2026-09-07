@@ -4,7 +4,7 @@ import type { Mock } from 'vitest';
 
 import type { DescribeRunItemsResponse, DescribeRunResponse } from '../api/describeApi';
 import { GUIDED_LIVE_STATUS, GUIDED_LIVE_WAIT_CEILING_SECONDS } from './liveDescription';
-import { confirmGuidedIdentity, createGuidedScenario } from './state';
+import { confirmGuidedIdentity, createGuidedScenario, leaveGuidedIdentityUnidentified } from './state';
 import type { GuidedScenario } from './state';
 import { GUIDED_LIVE_WARM_CEILING_SECONDS, useGuidedLiveDescription } from './useGuidedLiveDescription';
 import type { GuidedLiveDescriptionClient } from './useGuidedLiveDescription';
@@ -64,7 +64,19 @@ const stubClient = (over: Partial<StubClient> = {}): StubClient => ({
   ...over,
 });
 
-const decidedScenario = (): GuidedScenario => confirmGuidedIdentity(createGuidedScenario(), 'katy-perry');
+/** Every face answered: one confirmed, one deliberately left unidentified. */
+const decidedScenario = (): GuidedScenario =>
+  leaveGuidedIdentityUnidentified(confirmGuidedIdentity(createGuidedScenario(), 'katy-perry'), 'justin-trudeau');
+
+/** One face answered, one still open -- the gate must stay shut. */
+const halfDecidedScenario = (): GuidedScenario => confirmGuidedIdentity(createGuidedScenario(), 'katy-perry');
+
+/** No confirmations at all, but nothing left open either. */
+const allUnidentifiedScenario = (): GuidedScenario =>
+  leaveGuidedIdentityUnidentified(
+    leaveGuidedIdentityUnidentified(createGuidedScenario(), 'katy-perry'),
+    'justin-trudeau',
+  );
 
 const mount = (client: StubClient, over: { scenario?: GuidedScenario; mediaId?: number | null } = {}) =>
   renderHook(() =>
@@ -119,6 +131,21 @@ describe('useGuidedLiveDescription', () => {
       expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.BLOCKED);
       expect(result.current.canRequest).toBe(false);
       expect(result.current.blockedReason).toBe('no_media');
+    });
+
+    it('stays blocked while one of two faces is still unanswered', () => {
+      const { result } = mount(stubClient(), { scenario: halfDecidedScenario() });
+
+      expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.BLOCKED);
+      expect(result.current.blockedReason).toBe('no_faces_decided');
+    });
+
+    it('unblocks when every face is answered, even if none was confirmed', () => {
+      const { result } = mount(stubClient(), { scenario: allUnidentifiedScenario() });
+
+      expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.IDLE);
+      expect(result.current.blockedReason).toBeNull();
+      expect(result.current.canRequest).toBe(true);
     });
 
     it('unblocks once a face is decided and a media id exists', () => {
@@ -258,6 +285,138 @@ describe('useGuidedLiveDescription', () => {
       await press(() => result.current.cancel());
 
       expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.CANCELLED);
+    });
+  });
+
+  describe('the poll chain', () => {
+    it('keeps polling after the backoff grows past the tick interval', async () => {
+      // Regression: the poll timer used to be keyed on elapsed time, so the 1s
+      // tick cleared and re-armed it every second. Once the backoff exceeded
+      // 1000ms the poll simply never fired and the run hung until the deadline.
+      const client = stubClient();
+      const { result } = mount(client);
+
+      await press(() => result.current.request());
+      await settle(60_000);
+
+      // 500 + 1000 + 2000 + 4000 + 5000... -- far more than the ~1 poll the
+      // torn-down timer managed before it stalled for good.
+      expect(client.poll.mock.calls.length).toBeGreaterThan(8);
+      expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.WARMING);
+    });
+
+    it('stops on a terminal run status even when the phase still reads running', async () => {
+      const client = stubClient({
+        poll: vi.fn<GuidedLiveDescriptionClient['poll']>(() =>
+          Promise.resolve(runResponse({ status: 'completed_with_errors', phase: 'describing', gpu_state: 'ready' })),
+        ),
+      });
+      const { result } = mount(client);
+
+      await press(() => result.current.request());
+      await settle(1000);
+
+      expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.READY);
+      expect(result.current.state.text).toBe('Katy Perry waves from the red carpet.');
+    });
+
+    it('gives the wait its cold budget back when a poll reveals a cold GPU', async () => {
+      const client = stubClient({
+        submit: vi.fn<GuidedLiveDescriptionClient['submit']>(() =>
+          Promise.resolve(runResponse({ gpu_state: 'ready' })),
+        ),
+      });
+      const { result } = mount(client);
+
+      await press(() => result.current.request());
+      expect(result.current.state.deadlineMs).toBe(GUIDED_LIVE_WARM_CEILING_SECONDS * 1000);
+
+      await settle(1000);
+      expect(result.current.state.deadlineMs).toBe(GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000);
+    });
+
+    it('never shrinks the deadline once a poll has widened it', async () => {
+      const client = stubClient();
+      const { result } = mount(client);
+
+      await press(() => result.current.request());
+      client.poll.mockResolvedValue(runResponse({ phase: 'describing', gpu_state: 'ready' }));
+      await settle(2000);
+
+      expect(result.current.state.deadlineMs).toBe(GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000);
+    });
+
+    it('says nothing rather than describing the wrong photo when the item is missing', async () => {
+      const client = stubClient({
+        poll: vi.fn<GuidedLiveDescriptionClient['poll']>(() =>
+          Promise.resolve(runResponse({ status: 'completed', phase: 'complete', gpu_state: 'ready' })),
+        ),
+        items: vi.fn<GuidedLiveDescriptionClient['items']>(() =>
+          Promise.resolve({
+            run_id: 'run-1',
+            items: [{ ...itemsResponse('Someone else entirely.').items[0], media_id: MEDIA_ID + 1 }],
+          }),
+        ),
+      });
+      const { result } = mount(client);
+
+      await press(() => result.current.request());
+      await settle(1000);
+
+      expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.UNAVAILABLE);
+      expect(result.current.state.reason).toBe('item_missing');
+      expect(result.current.state.text).toBeNull();
+    });
+
+    it('retries a timeout but gives up on a hard poll failure', async () => {
+      const transient = stubClient({
+        poll: vi.fn<GuidedLiveDescriptionClient['poll']>(() =>
+          Promise.reject(Object.assign(new Error('slow'), { name: 'TimeoutError' })),
+        ),
+      });
+      const { result: transientResult } = mount(transient);
+      await press(() => transientResult.current.request());
+      await settle(4000);
+
+      expect(transient.poll.mock.calls.length).toBeGreaterThan(1);
+      expect(transientResult.current.state.status).toBe(GUIDED_LIVE_STATUS.QUEUED);
+
+      const hard = stubClient({
+        poll: vi.fn<GuidedLiveDescriptionClient['poll']>(() => Promise.reject(new Error('500 from the route'))),
+      });
+      const { result: hardResult } = mount(hard);
+      await press(() => hardResult.current.request());
+      await settle(1000);
+
+      expect(hard.poll).toHaveBeenCalledTimes(1);
+      expect(hardResult.current.state.status).toBe(GUIDED_LIVE_STATUS.UNAVAILABLE);
+      expect(hardResult.current.state.reason).toBe('poll_failed');
+    });
+
+    it('cancels a run the learner stopped waiting for while the submit was in flight', async () => {
+      let release: (run: DescribeRunResponse) => void = () => undefined;
+      const client = stubClient({
+        submit: vi.fn<GuidedLiveDescriptionClient['submit']>(
+          () =>
+            new Promise<DescribeRunResponse>((resolve) => {
+              release = resolve;
+            }),
+        ),
+      });
+      const { result } = mount(client);
+
+      await press(() => result.current.request());
+      await press(() => result.current.cancel());
+      expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.CANCELLED);
+
+      await act(async () => {
+        release(runResponse({ run_id: 'run-late' }));
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      // The burst is already running on the server; a cancel that never leaves
+      // the browser leaves the GPU billing for a wait nobody is watching.
+      expect(client.cancel).toHaveBeenCalledWith('run-late');
     });
   });
 

@@ -31,6 +31,9 @@ const STATUS_ICON: Record<GuidedLiveStatus, string> = {
   [GUIDED_LIVE_STATUS.CANCELLED]: '×',
 };
 
+/** Stable target for the disabled button's aria-describedby. */
+const STATUS_LINE_ID = 'guided-live-status-line';
+
 const clock = (ms: number): string => {
   const total = Math.max(0, Math.floor(ms / 1000));
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
@@ -41,6 +44,11 @@ const blockedLine = (reason: GuidedLiveBlockedReason): string =>
     ? 'No live photo is configured for this demo, so the live run is off.'
     : 'Decide each face match first. Then you can describe this photo live.';
 
+/**
+ * Blocked copy outranks a run status only because a blocked panel shows no
+ * result: the reducer clears the sentence on the way into BLOCKED, so the two
+ * can never disagree on screen (S1-B-09).
+ */
 const statusLine = (state: GuidedLiveState, blockedReason: GuidedLiveBlockedReason | null): string => {
   if (blockedReason !== null) {
     return blockedLine(blockedReason);
@@ -106,27 +114,47 @@ export const GuidedLiveDescriptionPanel = ({
         {names.length > 0 ? `Confirmed here: ${names.join(', ')}.` : 'You have not confirmed anyone here yet.'}
       </p>
 
-      <p
-        role="status"
-        aria-live="polite"
-        aria-label="Live run status"
-        className={`acx-guided-live__status acx-guided-live__status--${state.status}`}
-        data-testid="guided-live-status"
-      >
-        <span className="acx-guided-live__icon" aria-hidden="true" data-testid="guided-live-icon">
-          {STATUS_ICON[state.status]}
-        </span>{' '}
-        {statusLine(state, blockedReason)}
-      </p>
-
-      {waiting ? (
-        <p className="acx-guided-live__elapsed" data-testid="guided-live-elapsed">
-          {clock(state.elapsedMs)} of up to {clock(state.deadlineMs)}
+      {/*
+        One region, mounted for the panel's whole life, holding both the status
+        and the sentence. A blockquote that appears with its own aria-live is
+        announced by nothing: a live region has to already exist before its
+        contents change, so the result used to be silent for AT users (S1-B-07).
+      */}
+      <div role="status" aria-live="polite" aria-label="Live run status" className="acx-guided-live__live">
+        <p
+          id={STATUS_LINE_ID}
+          className={`acx-guided-live__status acx-guided-live__status--${state.status}`}
+          data-testid="guided-live-status"
+        >
+          <span className="acx-guided-live__icon" aria-hidden="true" data-testid="guided-live-icon">
+            {STATUS_ICON[state.status]}
+          </span>{' '}
+          {statusLine(state, blockedReason)}
         </p>
-      ) : null}
+
+        {waiting ? (
+          <p className="acx-guided-live__elapsed" data-testid="guided-live-elapsed">
+            {clock(state.elapsedMs)} of up to {clock(state.deadlineMs)}
+          </p>
+        ) : null}
+
+        {state.text !== null ? (
+          <blockquote className="acx-guided-live__text" data-testid="guided-live-text">
+            {state.text}
+          </blockquote>
+        ) : null}
+      </div>
 
       <div className="acx-guided-live__actions">
-        <button type="button" className="acx-button acx-button--secondary" onClick={request} disabled={!canRequest}>
+        <button
+          type="button"
+          className="acx-button acx-button--secondary"
+          onClick={request}
+          disabled={!canRequest}
+          // A disabled control with no stated reason is a dead end for anyone
+          // who cannot see the sentence next to it (S1-B-08).
+          aria-describedby={canRequest ? undefined : STATUS_LINE_ID}
+        >
           Describe it live
         </button>
         {canCancel ? (
@@ -136,11 +164,6 @@ export const GuidedLiveDescriptionPanel = ({
         ) : null}
       </div>
 
-      {state.text !== null ? (
-        <blockquote className="acx-guided-live__text" data-testid="guided-live-text">
-          {state.text}
-        </blockquote>
-      ) : null}
     </section>
   );
 };

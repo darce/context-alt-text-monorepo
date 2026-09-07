@@ -174,22 +174,43 @@ describe('guided live description terminal states', () => {
   });
 
   it('holds no live text in any state that is not ready or degraded', () => {
-    const nonTextStatuses = [
-      GUIDED_LIVE_STATUS.IDLE,
-      GUIDED_LIVE_STATUS.BLOCKED,
-      GUIDED_LIVE_STATUS.QUEUED,
-      GUIDED_LIVE_STATUS.WARMING,
-      GUIDED_LIVE_STATUS.DESCRIBING,
-      GUIDED_LIVE_STATUS.TIMED_OUT,
-      GUIDED_LIVE_STATUS.UNAVAILABLE,
-      GUIDED_LIVE_STATUS.CANCELLED,
-    ];
-    let state = started();
-    state = guidedLiveReducer(state, { kind: 'polled', phase: 'warming', gpu: 'starting', atMs: T0 + 1000 });
-    for (const status of nonTextStatuses) {
-      expect(status).not.toBe(GUIDED_LIVE_STATUS.READY);
+    // The old version of this test asserted that a hand-written list of status
+    // constants did not contain READY, which is true of the literal and says
+    // nothing about the reducer. Drive the machine into each state instead --
+    // every one of them reached from a READY state that DOES hold text, so a
+    // reducer that forgot to clear it fails here (S1-B-10).
+    const ready = (): GuidedLiveState =>
+      guidedLiveReducer(started(), {
+        kind: 'polled',
+        phase: 'complete',
+        gpu: 'ready',
+        atMs: T0 + 1000,
+        tier: 'final_gpu',
+        text: 'A live sentence that must not survive the next state.',
+      });
+    expect(ready().text).not.toBeNull();
+
+    const reachers: Record<string, () => GuidedLiveState> = {
+      [GUIDED_LIVE_STATUS.BLOCKED]: () => guidedLiveReducer(ready(), { kind: 'faces_decided', decided: false }),
+      [GUIDED_LIVE_STATUS.QUEUED]: () => guidedLiveReducer(ready(), { kind: 'requested', atMs: T0 + 60_000 }),
+      [GUIDED_LIVE_STATUS.WARMING]: () =>
+        guidedLiveReducer(started(), { kind: 'polled', phase: 'warming', gpu: 'starting', atMs: T0 + 1000 }),
+      [GUIDED_LIVE_STATUS.DESCRIBING]: () =>
+        guidedLiveReducer(started(), { kind: 'polled', phase: 'describing', gpu: 'ready', atMs: T0 + 1000 }),
+      [GUIDED_LIVE_STATUS.TIMED_OUT]: () =>
+        guidedLiveReducer(started(), { kind: 'tick', atMs: T0 + GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000 }),
+      [GUIDED_LIVE_STATUS.UNAVAILABLE]: () =>
+        guidedLiveReducer(started(), { kind: 'failed', reason: 'submit_failed' }),
+      [GUIDED_LIVE_STATUS.CANCELLED]: () => guidedLiveReducer(started(), { kind: 'cancelled' }),
+      [GUIDED_LIVE_STATUS.IDLE]: () =>
+        decided(guidedLiveReducer(ready(), { kind: 'faces_decided', decided: false })),
+    };
+
+    for (const [status, reach] of Object.entries(reachers)) {
+      const state = reach();
+      expect(state.status).toBe(status);
+      expect(state.text).toBeNull();
     }
-    expect(state.text).toBeNull();
   });
 });
 

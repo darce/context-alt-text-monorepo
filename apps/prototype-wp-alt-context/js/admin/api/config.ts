@@ -72,13 +72,29 @@ export const NONCE_REFRESH_TIMEOUT_MS = 10_000;
  * float, a stray string — means the guided live run has no subject, and saying
  * so is better than submitting a run for media 0 ([RLSE-05] silent failure is
  * the worst failure).
+ *
+ * This must agree with the PHP side that publishes the value
+ * (`Admin::get_guided_live_media_id`, `FILTER_VALIDATE_INT`), or the two ends
+ * disagree about whether the demo has a subject at all. `Number()` is the wrong
+ * tool for that: it reads `'0x1a'` as 26 and `'1e10'` as ten billion, both of
+ * which PHP rejects outright. A decimal-digits test with PHP's surrounding-
+ * whitespace tolerance is the same predicate on both sides (rg-005).
  */
+const DECIMAL_INT_PATTERN = /^[+-]?\d+$/;
+
 const normalizeAttachmentId = (value: unknown): number | null => {
-  if (typeof value !== 'number' && typeof value !== 'string') {
+  if (typeof value === 'number') {
+    return Number.isInteger(value) && value > 0 ? value : null;
+  }
+  if (typeof value !== 'string') {
     return null;
   }
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+  const trimmed = value.trim();
+  if (!DECIMAL_INT_PATTERN.test(trimmed)) {
+    return null;
+  }
+  const parsed = Number(trimmed);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 };
 
 const normalizeOptionalString = (value: unknown): string | undefined =>

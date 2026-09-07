@@ -197,7 +197,10 @@ export const GuidedDescriptionReview = ({
         </div>
       </section>
 
-      <GuidedLiveDescriptionPanel scenario={scenario} mediaId={liveMediaId} />
+      {/* Reset practice must clear the live run too: `resetVersion` as a key
+          remounts the panel, where passing it as a prop left a finished run's
+          sentence on screen after the lesson restarted (S1-B-09). */}
+      <GuidedLiveDescriptionPanel key={resetVersion} scenario={scenario} mediaId={liveMediaId} />
 
       <section
         id="guided-section-apply"

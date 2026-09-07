@@ -6,6 +6,7 @@
  * state here leaves that draft and the Apply button untouched, so a cold GPU
  * can never block the lesson.
  */
+import type { DescribeResultTier, DescribeRunPhase, GpuState } from '../api/describeApi';
 import { confirmedPersonKeys, getGuidedPerson } from './state';
 import type { GuidedScenario } from './state';
 
@@ -49,9 +50,12 @@ const PHASE_RANK: Record<GuidedLiveStatus, number> = {
   [GUIDED_LIVE_STATUS.CANCELLED]: 4,
 };
 
-export type GuidedLivePhase = 'queued' | 'warming' | 'describing' | 'complete' | 'failed' | 'cancelled';
-export type GuidedLiveGpuState = 'unknown' | 'stopped' | 'starting' | 'warming' | 'ready' | 'degraded';
-export type GuidedLiveTier = 'provisional_cpu' | 'final_gpu';
+// The guided screen reads the same wire contract as every other describe
+// surface. Aliasing rather than restating keeps a backend phase or tier added
+// in describeApi from silently type-checking as unreachable here (sr-007).
+export type GuidedLivePhase = DescribeRunPhase;
+export type GuidedLiveGpuState = GpuState;
+export type GuidedLiveTier = DescribeResultTier;
 
 export interface GuidedLiveState {
   status: GuidedLiveStatus;
@@ -78,6 +82,7 @@ export type GuidedLiveAction =
       text?: string | null;
       reason?: string | null;
     }
+  | { kind: 'deadline_raised'; deadlineSeconds: number }
   | { kind: 'tick'; atMs: number }
   | { kind: 'cancelled' }
   | { kind: 'failed'; reason: string };
@@ -136,8 +141,10 @@ const completion = (state: GuidedLiveState, action: Extract<GuidedLiveAction, { 
   const text = (action.text ?? '').trim();
   if (text === '') {
     // A completed run with nothing to show is a failure. Reporting it as a
-    // success would hand the learner an empty box and no reason.
-    return terminal(state, GUIDED_LIVE_STATUS.UNAVAILABLE, { reason: 'empty_description' });
+    // success would hand the learner an empty box and no reason. The caller may
+    // name a more precise reason (e.g. the run returned no item for this image
+    // at all, which is not the same as an empty draft).
+    return terminal(state, GUIDED_LIVE_STATUS.UNAVAILABLE, { reason: action.reason ?? 'empty_description' });
   }
 
   const ranWithoutGpu = action.tier === 'provisional_cpu' || (action.tier == null && action.gpu === 'degraded');
@@ -153,7 +160,13 @@ export const guidedLiveReducer = (state: GuidedLiveState, action: GuidedLiveActi
   switch (action.kind) {
     case 'faces_decided': {
       if (!action.decided) {
-        return isGuidedLiveWaiting(state.status) ? state : { ...state, status: GUIDED_LIVE_STATUS.BLOCKED };
+        // Re-opening a face invalidates the sentence the last run produced: it
+        // was written against an identity answer that no longer holds. Keeping
+        // it on screen under blocked copy would show two contradictory truths
+        // at once (S1-B-09).
+        return isGuidedLiveWaiting(state.status)
+          ? state
+          : { ...state, status: GUIDED_LIVE_STATUS.BLOCKED, text: null, reason: null };
       }
       return state.status === GUIDED_LIVE_STATUS.BLOCKED ? { ...state, status: GUIDED_LIVE_STATUS.IDLE } : state;
     }
@@ -173,6 +186,17 @@ export const guidedLiveReducer = (state: GuidedLiveState, action: GuidedLiveActi
       }
       const capped = Math.min(action.deadlineSeconds, GUIDED_LIVE_WAIT_CEILING_SECONDS);
       return { ...state, runId: action.runId, deadlineMs: Math.max(0, capped) * 1000 };
+    }
+
+    case 'deadline_raised': {
+      // A submit-time warm pin is a guess. If a later poll reveals the GPU is
+      // colder than that, the wait must be allowed to grow back toward the
+      // cold ceiling -- but never to shrink under a learner mid-wait.
+      if (!isGuidedLiveWaiting(state.status)) {
+        return state;
+      }
+      const capped = Math.min(action.deadlineSeconds, GUIDED_LIVE_WAIT_CEILING_SECONDS);
+      return { ...state, deadlineMs: Math.max(state.deadlineMs, Math.max(0, capped) * 1000) };
     }
 
     case 'tick': {

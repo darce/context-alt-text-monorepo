@@ -24,7 +24,7 @@ from recognition.application.orchestration import ClusterService
 from recognition.application.persistence.assignment_writer import AssignmentWriter
 from recognition.application.settings import ClusteringSettings
 from recognition.domain.identity import MediaIdentity
-from recognition.domain.repositories import ClusterRepository, MemberRepository
+from recognition.domain.repositories import ClusterRepository, MemberRepository, MvRefreshOutcome
 from recognition.observability import ClusteringLogger, DecisionType
 from recognition.shared.ids import generate_id
 
@@ -106,6 +106,9 @@ class WriterStub(AssignmentWriter):
 
     async def refresh_centroids_view(self) -> None:
         self.refresh_called = True
+
+    async def refresh_centroids_view_concurrent(self) -> MvRefreshOutcome:
+        return MvRefreshOutcome.REFRESHED
 
 
 class SuggestionStub:

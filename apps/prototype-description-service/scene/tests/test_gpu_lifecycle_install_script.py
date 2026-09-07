@@ -272,23 +272,28 @@ def test_cloud_init_does_not_contradict_installer_ownership_of_run_acx() -> None
         )
 
 
-def test_cloud_init_reaper_reads_the_directory_compose_publishes_to() -> None:
+def test_installer_reaper_units_read_the_directory_compose_publishes_to() -> None:
     """The reaper must read a path something actually writes.
 
-    cloud-init pointed the reaper at `--load-json /run/acx/describe-load.json`.
+    cloud-init used to point the reaper at `--load-json /run/acx/describe-load.json`.
     GPUUX-1 moved publication to `/run/acx-write/<env>/describe-load.json` and
-    replaced the flag with `--load-dir`; cloud-init was never updated, so the
-    unit named a flag the CLI no longer accepts, pointing at a file nothing
-    writes.
+    replaced the flag with `--load-dir`. GPUOPS-1 then made the installer the
+    single declarative owner of the reaper (cloud-init no longer writes the unit
+    at all -- that ownership split is guarded by
+    scripts/deploy/tests/test_gpu_lifecycle_single_reaper_owner.py), so the
+    flag-correctness guard has to follow the units into the installer.
     """
-    reaper_units = [
+    cloud_init_gpu_units = [
         item
         for item in _cloud_init_write_files()
         if isinstance(item.get("path"), str)
         and "gpu" in str(item["path"])
         and str(item["path"]).endswith(".service")
     ]
-    assert reaper_units, "cloud-init must define the GPU reaper unit"
+    assert not cloud_init_gpu_units, (
+        "the installer is the single reaper owner; cloud-init must not define a "
+        f"GPU unit, but it defines {[u['path'] for u in cloud_init_gpu_units]!r}"
+    )
 
     installer = SCRIPT.read_text(encoding="utf-8")
     installer_load_dirs = set(re.findall(r"--load-dir\s+(\S+)", installer))
@@ -297,17 +302,18 @@ def test_cloud_init_reaper_reads_the_directory_compose_publishes_to() -> None:
     )
     expected_load_dir = installer_load_dirs.pop()
 
-    for unit in reaper_units:
-        content = unit.get("content")
-        assert isinstance(content, str)
-        for exec_start in re.findall(r"^ExecStart=.*$", content, re.MULTILINE):
-            if "gpu_lifecycle" not in exec_start:
-                continue
-            assert "--load-json" not in exec_start, (
-                f"--load-json is not a gpu_lifecycle flag any more: {exec_start!r}"
-            )
-            load_dirs = re.findall(r"--load-dir\s+(\S+)", exec_start)
-            assert load_dirs == [expected_load_dir], (
-                f"cloud-init reaper must read {expected_load_dir!r} like the "
-                f"installer units do; got {load_dirs!r} in {exec_start!r}"
-            )
+    exec_starts = [
+        line
+        for line in re.findall(r"^ExecStart=.*$", installer, re.MULTILINE)
+        if "gpu_lifecycle" in line and "--mode" in line
+    ]
+    assert exec_starts, "installer must define gpu_lifecycle ExecStart units"
+    for exec_start in exec_starts:
+        assert "--load-json" not in exec_start, (
+            f"--load-json is not a gpu_lifecycle flag any more: {exec_start!r}"
+        )
+        load_dirs = re.findall(r"--load-dir\s+(\S+)", exec_start)
+        assert load_dirs == [expected_load_dir], (
+            f"every installer reaper unit must read {expected_load_dir!r}; "
+            f"got {load_dirs!r} in {exec_start!r}"
+        )

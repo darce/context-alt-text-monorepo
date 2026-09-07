@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from scripts.deploy.tests.test_gpu_lifecycle_deploy_wiring import _run_lifecycle
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 INSTALLER = REPO_ROOT / "scripts/deploy/gpu-lifecycle-install.sh"
 DEPLOYMENTS = REPO_ROOT / "scripts/deploy/gpu-snapshot-deployments.conf"
@@ -252,40 +254,28 @@ def test_mid_sequence_copy_failure_never_switches_the_live_release(tmp_path: Pat
     )
 
 
-def test_installer_provisions_every_supplementary_group_it_references() -> None:
-    """216/GROUP regression: systemd resolves SupplementaryGroups through NSS.
+def test_installer_provisions_every_supplementary_group_it_references(tmp_path: Path) -> None:
+    """The remote installer payload must provision the NSS group before activation.
 
-    The installer chowns the load directories to GID 10001 numerically, which
-    succeeds without a group entry, but systemd refuses to start a unit whose
-    SupplementaryGroups GID cannot be resolved. On acx-backend both lifecycle
-    units died before ExecStart with
-    `Failed to determine supplementary groups: No such process`
-    (status=216/GROUP), leaving the burst GPU with no working stop path.
+    A fresh host starts without GID 10001. Execute the rendered payload through
+    the shared remote shim so this test observes the real ``getent``/``groupadd``
+    sequence rather than proving that those words occur in the installer source.
     """
-    raw = INSTALLER.read_text(encoding="utf-8")
-    referenced = set(re.findall(r"^SupplementaryGroups=(\d+)$", raw, flags=re.MULTILINE))
-    # The WHY comment above the guard narrates getent, groupadd and the GID, so
-    # matching raw text would keep this test green against a commented-out guard.
-    # Verified by mutation: without this strip, deleting the block and leaving the
-    # comment still passes.
-    executable = "\n".join(
-        line for line in raw.splitlines() if not line.lstrip().startswith("#")
+    result, calls = _run_lifecycle(
+        tmp_path,
+        enabled=True,
+        ready_url="http://10.0.1.36:8000/health",
+        dry_run=False,
+        group_present=False,
     )
 
-    assert referenced, "installer no longer pins a numeric supplementary group"
-    for gid in sorted(referenced):
-        guard = re.search(
-            rf"if ! getent group {gid} [^\n]*\n(?P<body>.*?)\nfi$",
-            executable,
-            flags=re.MULTILINE | re.DOTALL,
-        )
-        assert guard, f"group {gid} provisioning must be guarded by an idempotent getent"
-        body = guard.group("body")
-        assert re.search(rf"groupadd[^\n]*-g {gid}\b", body), (
-            f"installer references SupplementaryGroups={gid} but never creates that group"
-        )
-        assert re.search(rf"getent group {gid}\b", body), (
-            f"group {gid} creation must assert the postcondition that the GID resolves, "
-            "not that groupadd exited zero: a name collision makes groupadd fail on a "
-            "host where the GID is provisionable under another name"
-        )
+    assert result.returncode == 0, result.stdout + result.stderr
+    groupadd = "groupadd <-r> <-g> <10001> <acxapi>"
+    getent = "getent <group> <10001>"
+    assert groupadd in calls
+    assert calls.count(getent) >= 2, "the payload must verify the GID before and after groupadd"
+    assert calls.index(getent) < calls.index(groupadd) < calls.rindex(getent)
+    assert calls.rindex(getent) < calls.index("systemctl <start> <acx-gpu-reap.service>")
+    for unit in ("acx-gpu-start.service", "acx-gpu-reap.service"):
+        rendered = (tmp_path / "effective-systemd" / unit).read_text(encoding="utf-8")
+        assert "SupplementaryGroups=10001" in rendered

@@ -209,6 +209,8 @@ def test_make_target_keeps_credential_suites() -> None:
     assert result.returncode == 0, output
     assert "test_ocirv1_vault_readiness.py" in output
     assert "test-ocir-auth.sh" in output
+    assert "scripts/deploy/tests/test_gpu_lifecycle_install.py" in output
+    assert "scripts/deploy/tests/test_gpu_lifecycle_deploy_wiring.py" in output
 
 
 def _rollback_prose() -> str:

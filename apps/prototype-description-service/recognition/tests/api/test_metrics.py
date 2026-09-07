@@ -11,6 +11,8 @@ from fastapi.testclient import TestClient
 from prometheus_client import CollectorRegistry
 from prometheus_client.parser import text_string_to_metric_families
 
+from recognition.tests.support.health_session import install_healthy_observability_session
+
 
 def _build_app_with_metrics(registry: CollectorRegistry):
     """Build an isolated FastAPI app with MetricsMiddleware bound to a fresh registry."""
@@ -181,6 +183,7 @@ def test_production_app_exposes_metrics_endpoint(monkeypatch) -> None:
     from recognition.interface_adapters.http.deps.auth import AuthContext, require_auth
 
     app = create_app()
+    install_healthy_observability_session(app)
     client = TestClient(app)
 
     # Anonymous: 401 from require_auth.

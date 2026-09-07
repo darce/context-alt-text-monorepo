@@ -2373,7 +2373,7 @@ verify_live_gpu_snapshots() {
 
 do_verify() {
   local env="$1"
-  local url expected_sha actual_sha body attempt max_attempts sleep_s
+  local url expected_sha actual_sha body attempt max_attempts sleep_s http_code curl_rc health_response
   local actual_variant expected_variant remote_for_variant remote_repo_rc
   url="$(env_to_health_url "$env")"
   # Use GIT_REF (defaults to HEAD) so verify after `GIT_REF=v0.4.1 deploy ...`
@@ -2393,12 +2393,20 @@ do_verify() {
 
   for attempt in $(seq 1 "$max_attempts"); do
     log "GET ${url} (attempt ${attempt}/${max_attempts})"
-    if ! body="$(curl --fail --silent --show-error --max-time 10 "$url" 2>&1)"; then
-      warn "Health check fetch failed: ${body}"
+    health_response=""
+    curl_rc=0
+    health_response="$(curl --silent --show-error --max-time 10 --write-out $'\n%{http_code}' "$url" 2>&1)" || curl_rc=$?
+    http_code="${health_response##*$'\n'}"
+    body="${health_response%$'\n'*}"
+    if (( curl_rc != 0 )) || [[ "${http_code}" == "000" || -z "${body}" ]]; then
+      warn "Health check fetch failed: ${body:-no health response}"
       verify_retry_sleep "$attempt" "$max_attempts" "$sleep_s"
       continue
     fi
     echo "$body"
+    if [[ "${http_code}" == "503" ]]; then
+      warn "UNHEALTHY: ${env} /health reports unhealthy (database) (HTTP 503)"
+    fi
 
     # /health surfaces commit SHA for E15-3a-BR-03 deploy-lag detection.
     actual_sha="$(printf '%s' "$body" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("commit_sha") or d.get("git_commit_sha") or d.get("version") or "")' 2>/dev/null || true)"
@@ -2479,15 +2487,25 @@ do_verify() {
 
 #---------------------------------------------------------------- status
 do_status() {
-  local env url body sha
+  local env url body sha http_code curl_rc health_response health_status
   for env in dev dev-fir staging prod; do
     url="$(env_to_health_url "$env")"
-    if body="$(curl -fsS --max-time 5 "$url" 2>/dev/null)"; then
-      sha="$(printf '%s' "$body" | python3 -c 'import json,sys;d=json.load(sys.stdin);print((d.get("commit_sha") or d.get("git_commit_sha") or "?")[:8])' 2>/dev/null || echo '?')"
-      printf '%-8s %s   %s\n' "$env" "$sha" "$url"
-    else
+    health_response=""
+    curl_rc=0
+    health_response="$(curl -sS --max-time 5 --write-out $'\n%{http_code}' "$url" 2>/dev/null)" || curl_rc=$?
+    http_code="${health_response##*$'\n'}"
+    body="${health_response%$'\n'*}"
+    if (( curl_rc != 0 )) || [[ "${http_code}" == "000" || -z "${body}" ]]; then
       printf '%-8s %s   %s\n' "$env" "unreachable" "$url"
+      continue
     fi
+    sha="$(printf '%s' "$body" | python3 -c 'import json,sys;d=json.load(sys.stdin);print((d.get("commit_sha") or d.get("git_commit_sha") or "?")[:8])' 2>/dev/null || echo '?')"
+    health_status="$(printf '%s' "$body" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("status") or "")' 2>/dev/null || true)"
+    case "${health_status}" in
+      ok|unhealthy) ;;
+      *) health_status="unreachable" ;;
+    esac
+    printf '%-8s %s   %-10s %s\n' "$env" "$sha" "$health_status" "$url"
   done
 }
 

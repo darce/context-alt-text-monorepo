@@ -27,7 +27,13 @@ from recognition.application.settings.clustering import ClusteringSettings
 from recognition.domain.cluster import IdentityCluster, ReservedClusterLabelError, is_reserved_label_shape
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.locator import IdentityLocator
-from recognition.domain.repositories import ClusterNotFoundError, ClusterRepository, MemberData, MemberRepository
+from recognition.domain.repositories import (
+    ClusterNotFoundError,
+    ClusterRepository,
+    MemberData,
+    MemberRepository,
+    MvRefreshOutcome,
+)
 from recognition.domain.representative import ClusterRepresentative
 from recognition.observability import ClusteringLogger
 from recognition.observability.recognition_runs import RecognitionRunContext
@@ -538,8 +544,8 @@ class AssignmentWriter:
         """Trigger a refresh of the cluster centroids view."""
         await self._centroids.refresh_centroids_view()
 
-    async def refresh_centroids_view_concurrent(self) -> bool:
-        """Trigger a concurrent refresh of the cluster centroids view. Returns True on success."""
+    async def refresh_centroids_view_concurrent(self) -> MvRefreshOutcome:
+        """Trigger a concurrent refresh of the cluster centroids view."""
         return await self._centroids.refresh_centroids_view_concurrent()
 
     async def _should_add_representative(self, decision: AssignmentDecision, batch_mode: bool = False) -> RepAdmission:
@@ -854,13 +860,13 @@ class AssignmentWriter:
                         break
 
             if is_diverse:
-                rep = await self._create_and_add_representative(
+                new_rep = await self._create_and_add_representative(
                     cluster_id=cluster_id,
                     identity=identity,
                     reason="diverse_addition",
                     existing_rep_count=current_count,
                 )
-                if rep is None:
+                if new_rep is None:
                     logger.debug(
                         "[enrollment_gate] assign_to_existing_cluster skipped rep for %s",
                         identity.id,

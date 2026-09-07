@@ -14,9 +14,10 @@ import os
 import subprocess
 import sys
 import tempfile
-from collections.abc import Collection
+import warnings
+from collections.abc import Callable, Collection, Mapping
 from contextlib import ExitStack, contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from typing import Literal
 
@@ -34,6 +35,22 @@ _REGENERABLE_IGNORED_DIRS = frozenset(
     {".pytest_cache", "__pycache__", ".ruff_cache", ".mypy_cache"}
 )
 _REGENERABLE_IGNORED_PATHS = frozenset({".task-state/.heartbeat"})
+# The harness owns .task-state/ and writes its own bookkeeping there.  Naming
+# each file one at a time rots on the next stamp the harness adds, so the rule
+# is provenance-shaped: a lock, a heartbeat, or a sweep stamp under the
+# harness's own directory is regenerable by construction.
+_HARNESS_SCRATCH_ROOT = ".task-state"
+_HARNESS_SCRATCH_DIRS = frozenset({".heartbeat", ".locks"})
+_HARNESS_SCRATCH_SUFFIXES = (".stamp", ".lock", ".pid")
+
+# A lane row in any non-terminal state still owns its worktree.  Containment
+# and cleanliness cannot distinguish a finished lane from a freshly
+# re-dispatched one: both are landed, clean, and about to be written to.
+_TERMINAL_LANE_STATUSES = frozenset({"closed", "merged"})
+
+# The registry paginates.  A truncated page would silently under-report
+# ownership, so the reader demands the whole set or fails closed.
+_LANE_PAGE_LIMIT = 5000
 
 
 class GitError(RuntimeError):
@@ -42,6 +59,10 @@ class GitError(RuntimeError):
 
 class ReapLockError(RuntimeError):
     """Another reaper owns the repository mutation lock."""
+
+
+class LaneStateError(RuntimeError):
+    """Live lane ownership could not be determined."""
 
 
 @dataclass(frozen=True)
@@ -61,6 +82,9 @@ class WorktreeRecord:
     proof_oid: str | None = field(default=None, repr=False, compare=False)
     protected: bool = field(default=False, repr=False, compare=False)
     allow_ignored: bool = field(default=False, repr=False, compare=False)
+    # A reclaim receipt must distinguish "ownership checked, none found" from
+    # "ownership never checked".  A bare status cannot say which.
+    lane_verified: bool = field(default=True, repr=False, compare=False)
 
 
 def _git(
@@ -269,6 +293,78 @@ def is_merged(repo: Path | str, branch: str, parent: str) -> bool:
     return merged is True
 
 
+def _lane_owners_from_rows(rows: Collection[object]) -> dict[Path, str]:
+    """Reduce lane registry rows to the worktrees they still own."""
+    owners: dict[Path, str] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            raise LaneStateError("lane registry returned a malformed row")
+        status = str(row.get("status") or "").strip().lower()
+        if not status:
+            raise LaneStateError(f"lane {row.get('lane_id')!r} has no status")
+        if status in _TERMINAL_LANE_STATUSES:
+            continue
+        worktree_path = row.get("worktree_path")
+        if not worktree_path:
+            continue
+        try:
+            resolved = Path(str(worktree_path)).expanduser().resolve()
+        except (OSError, RuntimeError, ValueError):
+            continue
+        owners.setdefault(resolved, str(row.get("lane_id") or "unnamed lane"))
+    return owners
+
+
+def active_lane_paths(repo: Path | str) -> dict[Path, str]:
+    """Return ``{worktree path: lane id}`` for every lane that still owns a tree.
+
+    The lane registry is the authority on liveness.  Heartbeats and locks are
+    corroborating signals at best: a lane that has not yet written its first
+    byte has neither, and its worktree is indistinguishable from a reclaimable
+    one by branch containment alone.
+
+    Raises ``LaneStateError`` when ownership cannot be read, so the caller can
+    fail closed instead of reclaiming a tree it cannot account for.
+    """
+    try:
+        from workbay_handoff_mcp import RuntimeConfig, configure_runtime
+        from workbay_handoff_mcp.lanes_recording import list_lanes
+    except ImportError as exc:  # pragma: no cover - exercised via injection
+        raise LaneStateError(f"lane registry is unavailable: {exc}") from exc
+
+    repo_path = Path(repo).resolve()
+    try:
+        configure_runtime(RuntimeConfig.for_repo(repo_path))
+        response = list_lanes(all_tasks=True, limit=_LANE_PAGE_LIMIT)
+    except Exception as exc:  # noqa: BLE001 - any failure must fail closed
+        raise LaneStateError(f"cannot read lane registry: {exc}") from exc
+
+    rows = (response or {}).get("data", {}).get("lanes")
+    if not isinstance(rows, list):
+        raise LaneStateError("lane registry returned no lane list")
+    if (response or {}).get("data", {}).get("has_more"):
+        raise LaneStateError("lane registry response was truncated")
+
+    return _lane_owners_from_rows(rows)
+
+
+def _is_harness_scratch(parts: tuple[str, ...]) -> bool:
+    """Return whether one path is harness bookkeeping under .task-state/."""
+    for index, part in enumerate(parts):
+        if part != _HARNESS_SCRATCH_ROOT:
+            continue
+        remainder = parts[index + 1 :]
+        if not remainder:
+            continue
+        if remainder[0] in _HARNESS_SCRATCH_DIRS:
+            return True
+        # Only the leaf is checked: a stamp is a file the harness rewrites,
+        # never a directory whose contents someone else may own.
+        if len(remainder) == 1 and remainder[0].endswith(_HARNESS_SCRATCH_SUFFIXES):
+            return True
+    return False
+
+
 def _is_regenerable_ignored(relative_path: str) -> bool:
     """Return whether one ignored path is an explicitly disposable product."""
     normalized = relative_path.replace("\\", "/").rstrip("/")
@@ -277,10 +373,7 @@ def _is_regenerable_ignored(relative_path: str) -> bool:
     parts = PurePosixPath(normalized).parts
     if any(part in _REGENERABLE_IGNORED_DIRS for part in parts):
         return True
-    return any(
-        parts[index : index + 2] == (".task-state", ".heartbeat")
-        for index in range(max(0, len(parts) - 1))
-    )
+    return _is_harness_scratch(parts)
 
 
 def _worktree_status(path: Path | str) -> tuple[bool, tuple[str, ...]]:
@@ -321,12 +414,26 @@ def is_dirty(path: Path | str) -> bool:
     return dirty
 
 
+def _env_protected_values() -> tuple[str, ...]:
+    """Read protection values from REAP_PROTECT, one per line.
+
+    Make cannot pass a repeatable option without word-splitting, which turns a
+    worktree path containing a space into two useless fragments and silently
+    drops the fence.  A newline-delimited environment variable survives intact.
+    """
+    raw = os.environ.get("REAP_PROTECT", "")
+    return tuple(value for value in (line.strip() for line in raw.splitlines()) if value)
+
+
 def _protected_values(protected: Collection[str | Path] | str | Path | None) -> tuple[str, ...]:
+    explicit: tuple[str, ...]
     if protected is None:
-        return ()
-    if isinstance(protected, (str, Path)):
-        return (str(protected),)
-    return tuple(str(value) for value in protected)
+        explicit = ()
+    elif isinstance(protected, (str, Path)):
+        explicit = (str(protected),)
+    else:
+        explicit = tuple(str(value) for value in protected)
+    return explicit + _env_protected_values()
 
 
 def _is_protected(
@@ -379,6 +486,7 @@ def _state_record(
     proof_oid: str | None = None,
     protected: bool = False,
     allow_ignored: bool = False,
+    lane_verified: bool = True,
 ) -> WorktreeRecord:
     return WorktreeRecord(
         path=path,
@@ -392,6 +500,7 @@ def _state_record(
         proof_oid=proof_oid,
         protected=protected,
         allow_ignored=allow_ignored,
+        lane_verified=lane_verified,
     )
 
 
@@ -588,6 +697,8 @@ def _classify_entry(
     branches: set[str],
     protected: tuple[str, ...],
     allow_ignored: bool,
+    lane_owners: Mapping[Path, str],
+    lane_error: str | None,
 ) -> WorktreeRecord:
     path = Path(entry["path"]).resolve()
     branch = str(entry.get("branch", ""))
@@ -600,6 +711,24 @@ def _classify_entry(
             status="ROOT",
             reason="repository root worktree",
             repo=root_path,
+        )
+    # Ownership outranks every observation below it.  A lane may be mid-write
+    # in a tree that is clean and landed at this instant.
+    if lane_error is not None:
+        return _unknown_record(
+            root_path, path, branch, parent, f"lane state unreadable: {lane_error}"
+        )
+    lane_id = lane_owners.get(path)
+    if lane_id is not None:
+        return _state_record(
+            root_path,
+            path,
+            branch,
+            parent,
+            "LIVE",
+            f"active lane {lane_id}",
+            protected=True,
+            allow_ignored=allow_ignored,
         )
     missing_parent = _missing_feature_parent(branch, branches)
     if missing_parent is not None and not _is_protected(repo, path, branch, protected):
@@ -634,6 +763,8 @@ def classify(
     *,
     protected: Collection[str | Path] | str | Path | None = None,
     allow_ignored: bool = False,
+    lane_lookup: Callable[[Path], Mapping[Path, str]] | None = None,
+    require_lane_state: bool = True,
 ) -> list[WorktreeRecord]:
     """Enumerate and classify every worktree Git reports for ``repo``."""
     repo_path = Path(repo).resolve()
@@ -654,7 +785,26 @@ def classify(
             if entry.get("branch")
         }
     protected_values = _protected_values(protected)
-    return [
+
+    lane_owners: Mapping[Path, str] = {}
+    lane_error: str | None = None
+    lane_verified = True
+    try:
+        lane_owners = (lane_lookup or active_lane_paths)(repo_path)
+    except LaneStateError as exc:
+        # Fail closed by default: an unreadable registry means every linked
+        # worktree might be owned, and reclaiming one would be unrecoverable.
+        if require_lane_state:
+            lane_error = str(exc)
+        else:
+            lane_verified = False
+            warnings.warn(
+                f"reaping without lane-state verification: {exc}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+
+    records = [
         _classify_entry(
             repo_path,
             root_path,
@@ -662,9 +812,17 @@ def classify(
             branches,
             protected_values,
             allow_ignored,
+            lane_owners,
+            lane_error,
         )
         for entry in entries
     ]
+    if lane_verified:
+        return records
+    # Carry the unexamined state on every record rather than dropping it: a
+    # status that looks identical either way is how a reclaimer reports
+    # success at the moment it is failing.
+    return [replace(record, lane_verified=False) for record in records]
 
 
 def _record_repo(record: WorktreeRecord) -> Path:
@@ -1308,13 +1466,14 @@ def apply(
         }
 
 
-def _record_json(record: WorktreeRecord) -> dict[str, str]:
+def _record_json(record: WorktreeRecord) -> dict[str, object]:
     return {
         "path": str(record.path),
         "branch": record.branch,
         "parent": record.parent,
         "status": record.status,
         "reason": record.reason,
+        "lane_verified": record.lane_verified,
     }
 
 
@@ -1369,6 +1528,11 @@ def _parser() -> argparse.ArgumentParser:
         help="protect a worktree path or branch (repeatable)",
     )
     parser.add_argument(
+        "--allow-missing-lane-state",
+        action="store_true",
+        help="classify even when the lane registry cannot be read (unsafe)",
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         dest="as_json",
@@ -1391,6 +1555,7 @@ def main(argv: list[str] | None = None) -> int:
             args.repo,
             protected=args.protect,
             allow_ignored=args.allow_ignored,
+            require_lane_state=not args.allow_missing_lane_state,
         )
     except (GitError, OSError, ValueError) as exc:
         print(f"worktree-reap: {exc}", file=sys.stderr)
@@ -1404,12 +1569,22 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
         _print_table(records)
+    if any(not record.lane_verified for record in records):
+        print(
+            "worktree-reap: lane ownership was NOT verified; "
+            "classifications below cannot distinguish a reclaimable worktree "
+            "from a live lane",
+            file=sys.stderr,
+        )
 
     redundant = any(record.status == "REDUNDANT" for record in records)
     unknown = any(record.status == "UNKNOWN" for record in records)
     strict = args.strict or _strict_check()
     if args.check:
-        if unknown:
+        # UNKNOWN means the reaper declined to decide, not that the repository
+        # is broken.  An advisory gate must not fail for being correctly
+        # cautious ([RES-10]); strict mode is where that becomes a hard signal.
+        if unknown and strict:
             return 4
         return 3 if redundant and strict else 0
     if strict and unknown:

@@ -2,21 +2,33 @@
 # Lane Maintenance (reset, refresh, clean, close, prune, path, commits, intake)
 # =============================================================================
 
-.PHONY: lane-reset lane-refresh lane-clean lane-close lane-prune lane-path lane-commits lane-intake worktree-reap worktree-reap-check
+.PHONY: lane-reset lane-refresh lane-clean lane-close lane-prune lane-path lane-commits lane-intake worktree-reap worktree-reap-check worktree-reap-advise
 
 POST_INTAKE_CHECK_CMD ?= $(MAKE) --no-print-directory check-all
 REAP_PROTECT ?=
 REAP_STRICT ?= 0
 
-# REAP_PROTECT is one branch or path value. Keep it as one quoted shell
-# argument so a worktree directory containing spaces remains protected.
+# REAP_PROTECT holds newline-separated branch or path values and is passed
+# through the environment, never as make words. Word-splitting a path that
+# contains a space turns the safety fence into two useless fragments.
 worktree-reap: ## Dry-run: list linked worktrees whose branch is already landed in its parent (REAP_ARGS=--apply to remove)
-	@REAP_STRICT="$(REAP_STRICT)" $(PYTHON) scripts/worktree_reap.py --repo "$(CURDIR)" $(REAP_ARGS) $(if $(strip $(REAP_PROTECT)),--protect "$(REAP_PROTECT)")
+	@REAP_STRICT="$(REAP_STRICT)" REAP_PROTECT="$(REAP_PROTECT)" $(PYTHON) scripts/worktree_reap.py --repo "$(CURDIR)" $(REAP_ARGS)
 
 worktree-reap-check: ## Check for redundant worktrees (REAP_STRICT=1 fails on redundancy; inspection errors always fail)
-	@REAP_STRICT="$(REAP_STRICT)" $(PYTHON) scripts/worktree_reap.py --repo "$(CURDIR)" --check $(if $(strip $(REAP_PROTECT)),--protect "$(REAP_PROTECT)")
+	@REAP_STRICT="$(REAP_STRICT)" REAP_PROTECT="$(REAP_PROTECT)" $(PYTHON) scripts/worktree_reap.py --repo "$(CURDIR)" --check
 
-check-all: worktree-reap-check
+# Advisory inside check-all. lane-intake runs check-all straight after merging
+# a sub-lane, at which point that lane's worktree is REDUNDANT by definition:
+# a hard gate here fails the very flow the reclaimer exists to clean up after.
+# REAP_STRICT=1 restores the blocking behaviour.
+worktree-reap-advise: ## Print the worktree reap table without failing the build
+	@REAP_STRICT="$(REAP_STRICT)" REAP_PROTECT="$(REAP_PROTECT)" $(PYTHON) scripts/worktree_reap.py --repo "$(CURDIR)" --check; \
+	status=$$?; \
+	if [ "$$status" -eq 0 ]; then exit 0; fi; \
+	if [ "$(REAP_STRICT)" = "1" ]; then exit "$$status"; fi; \
+	echo "worktree-reap: advisory only (exit $$status; set REAP_STRICT=1 to fail)"
+
+check-all: worktree-reap-advise
 
 lane-reset: lane-guard
 	@if [ -z "$(REF)" ]; then \

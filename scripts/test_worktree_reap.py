@@ -28,6 +28,16 @@ def _load_reaper() -> Any:
 reaper = _load_reaper()
 
 
+@pytest.fixture(autouse=True)
+def _no_active_lanes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No lane owns a throwaway fixture repo unless a test says otherwise.
+
+    Without this the default probe reads the real lane registry, which makes
+    every classification depend on the developer's live handoff database.
+    """
+    monkeypatch.setattr(reaper, "active_lane_paths", lambda repo: {})
+
+
 def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", "-C", str(repo), *args],
@@ -651,7 +661,10 @@ def test_merge_base_failure_is_unknown_and_strict_fails(
     assert record.status == "UNKNOWN"
     monkeypatch.delenv("REAP_STRICT", raising=False)
     assert reaper.main(["--repo", str(repo), "--strict"]) == 4
-    assert reaper.main(["--repo", str(repo), "--check"]) == 4
+    # UNKNOWN is the reaper declining to decide.  An advisory --check must not
+    # fail for that; strict mode is where indecision becomes a hard signal.
+    assert reaper.main(["--repo", str(repo), "--check"]) == 0
+    assert reaper.main(["--repo", str(repo), "--check", "--strict"]) == 4
     monkeypatch.setenv("REAP_STRICT", "1")
     assert reaper.main(["--repo", str(repo), "--check"]) == 4
 
@@ -920,3 +933,179 @@ def test_json_cli_on_root_only_repo_is_an_empty_list(tmp_path: Path) -> None:
 
     assert result.returncode == 0
     assert json.loads(result.stdout) == []
+
+
+def test_active_lane_worktree_is_live_even_when_landed_and_clean(
+    fixture_repo: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R4-01: a re-dispatched lane is landed and clean, exactly like a reap target."""
+    repo = fixture_repo["repo"]
+    ancestor = fixture_repo["paths"]["ancestor"].resolve()
+
+    baseline = next(
+        item for item in reaper.classify(repo) if item.path == ancestor
+    )
+    assert baseline.status == "REDUNDANT"
+
+    monkeypatch.setattr(
+        reaper, "active_lane_paths", lambda _repo: {ancestor: "parent-ancestor-lane"}
+    )
+    record = next(item for item in reaper.classify(repo) if item.path == ancestor)
+    assert record.status == "LIVE"
+    assert record.reason == "active lane parent-ancestor-lane"
+    assert record.protected is True
+
+
+def test_active_lane_worktree_survives_apply(
+    fixture_repo: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = fixture_repo["repo"]
+    ancestor = fixture_repo["paths"]["ancestor"].resolve()
+    monkeypatch.setattr(
+        reaper, "active_lane_paths", lambda _repo: {ancestor: "parent-ancestor-lane"}
+    )
+    assert reaper.main(["--repo", str(repo), "--apply"]) == 0
+    assert ancestor.exists()
+    assert _git(
+        repo, "rev-parse", "--verify", "refs/heads/feature/parent-ancestor", check=False
+    ).returncode == 0
+
+
+def test_unreadable_lane_state_fails_closed(
+    fixture_repo: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unreadable registry must not license a removal."""
+    repo = fixture_repo["repo"]
+
+    def unreadable(_repo: Path) -> dict[Path, str]:
+        raise reaper.LaneStateError("registry offline")
+
+    monkeypatch.setattr(reaper, "active_lane_paths", unreadable)
+    records = reaper.classify(repo)
+    linked = [item for item in records if item.status != "ROOT"]
+    assert linked
+    assert {item.status for item in linked} == {"UNKNOWN"}
+    assert all("registry offline" in item.reason for item in linked)
+
+    monkeypatch.delenv("REAP_STRICT", raising=False)
+    assert reaper.main(["--repo", str(repo), "--apply"]) == 0
+    assert fixture_repo["paths"]["ancestor"].exists()
+
+
+def test_missing_lane_state_can_be_overridden_explicitly(
+    fixture_repo: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = fixture_repo["repo"]
+
+    def unreadable(_repo: Path) -> dict[Path, str]:
+        raise reaper.LaneStateError("registry offline")
+
+    monkeypatch.setattr(reaper, "active_lane_paths", unreadable)
+    with pytest.warns(RuntimeWarning, match="without lane-state verification"):
+        records = reaper.classify(repo, require_lane_state=False)
+    assert any(item.status == "REDUNDANT" for item in records)
+    # A zero in a reclaim receipt must distinguish "examined, none eligible"
+    # from "never examined"; the status alone reads the same either way.
+    assert all(item.lane_verified is False for item in records)
+    assert all(
+        reaper._record_json(item)["lane_verified"] is False
+        for item in records
+        if item.status != "ROOT"
+    )
+
+
+def test_verified_lane_state_marks_records_verified(
+    fixture_repo: dict[str, Any],
+) -> None:
+    records = reaper.classify(fixture_repo["repo"])
+    assert all(item.lane_verified is True for item in records)
+
+
+def test_terminal_lane_rows_do_not_protect_a_worktree() -> None:
+    rows = [
+        {"lane_id": "done", "status": "merged", "worktree_path": "/tmp/reap-a"},
+        {"lane_id": "shut", "status": "closed", "worktree_path": "/tmp/reap-b"},
+        {"lane_id": "busy", "status": "blocked", "worktree_path": "/tmp/reap-c"},
+        {"lane_id": "stale", "status": "closed_stale", "worktree_path": "/tmp/reap-d"},
+    ]
+    owners = reaper._lane_owners_from_rows(rows)
+    assert set(owners) == {Path("/tmp/reap-c").resolve(), Path("/tmp/reap-d").resolve()}
+
+
+def test_a_lane_row_without_a_status_fails_closed() -> None:
+    with pytest.raises(reaper.LaneStateError):
+        reaper._lane_owners_from_rows([{"lane_id": "x", "worktree_path": "/tmp/reap-a"}])
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        ".task-state/.heartbeat/1__a.json",
+        ".task-state/.locks/reap.lock",
+        ".task-state/auto-reap-stale-maint.stamp",
+        ".task-state/a-stamp-nobody-enumerated-yet.stamp",
+        ".task-state/daemon.pid",
+        "nested/.task-state/.heartbeat",
+    ],
+)
+def test_harness_scratch_is_regenerable(relative_path: str) -> None:
+    """R4-02: the allowlist is provenance-shaped, not a list of filenames."""
+    assert reaper._is_regenerable_ignored(relative_path) is True
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        ".task-state/remote-exec-lane/turn.patch",
+        ".task-state/coord/briefs/one.md",
+        ".task-state/evidence.json",
+        "models/weights.bin",
+        ".venv/bin/python",
+    ],
+)
+def test_unowned_content_is_not_regenerable(relative_path: str) -> None:
+    """The provenance rule must not collapse into 'ignored means disposable'."""
+    assert reaper._is_regenerable_ignored(relative_path) is False
+
+
+def test_a_newly_named_harness_stamp_does_not_block_a_reap(
+    fixture_repo: dict[str, Any],
+) -> None:
+    repo = fixture_repo["repo"]
+    ancestor = fixture_repo["paths"]["ancestor"].resolve()
+    scratch = ancestor / ".task-state"
+    scratch.mkdir()
+    (scratch / "a-stamp-nobody-enumerated-yet.stamp").write_text("swept\n")
+    (ancestor / ".gitignore").write_text(".task-state/\n")
+    _git(ancestor, "add", ".gitignore")
+    _git(ancestor, "commit", "-m", "ignore harness scratch")
+    _git(repo, "merge", "--ff-only", "feature/parent-ancestor")
+
+    record = next(item for item in reaper.classify(repo) if item.path == ancestor)
+    assert record.status == "REDUNDANT", record.reason
+
+
+def test_env_protect_preserves_a_path_containing_spaces(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M-06: make cannot pass a repeatable option without word-splitting it."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.email", "worktree-reap@example.test")
+    _git(repo, "config", "user.name", "Worktree Reap Test")
+    _commit(repo, "initial", "README", "initial\n")
+    _git(repo, "branch", "feature/landed")
+    spaced = tmp_path / "a lane with spaces"
+    _git(repo, "worktree", "add", str(spaced), "feature/landed")
+
+    monkeypatch.delenv("REAP_PROTECT", raising=False)
+    unprotected = next(
+        item for item in reaper.classify(repo) if item.path == spaced.resolve()
+    )
+    assert unprotected.status == "REDUNDANT"
+
+    monkeypatch.setenv("REAP_PROTECT", f"{spaced}\nfeature/other")
+    record = next(item for item in reaper.classify(repo) if item.path == spaced.resolve())
+    assert record.status == "LIVE"
+    assert record.protected is True

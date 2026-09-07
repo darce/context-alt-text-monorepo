@@ -15,7 +15,7 @@ review_findings(review={
 })
 ```
 
-If that import or API call also fails, stop and report the concrete blocker. Only then may the reviewer print a fenced JSON block titled `UNRECORDED FINDINGS` (never plain `FINDINGS`), preserving the same fields so the coordinator can record it without implying that the DB write succeeded.
+If that import or API call also fails, stop and report the concrete blocker — the import error, the exception, the path you ran it from. Do not print findings that were never recorded, in any format or under any heading. A finding that exists only in a report has no stable id, is invisible to `handoff_close_check`, and cannot be closed, deferred, or re-scoped; surfacing one creates the appearance of a completed review pass that the pre-merge gate can never audit. An unwritable handoff is a blocker to escalate, not a format to work around.
 
 ## What the plan does
 
@@ -32,7 +32,7 @@ Lands or retires 28 worktrees / 50 branches: reaps ancestor sub-lane worktrees (
 
 ## Output
 
-- Findings via MCP using the required API fallback sequence above (`finding_id`, `severity` high|medium|low, `category` ANTIPATTERN|DEAD_CODE|COMPLEXITY|GAP, `file_path`, `description`, `details{line_start,line_end,fix}`); only an API failure permits the explicitly marked `UNRECORDED FINDINGS` block.
+- Findings via MCP using the required API fallback sequence above (`finding_id`, `severity` high|medium|low, `category` ANTIPATTERN|DEAD_CODE|COMPLEXITY|GAP, `file_path`, `description`, `details{line_start,line_end,fix}`). An API failure is a blocker to report, not a licence to print unrecorded findings.
 - One line verdict: `VERDICT: pass | pass_with_findings | conditional_pass | fail` with a one-sentence reason.
 - Do not edit the plan. Do not run `--apply` of anything. Do not touch `scripts/workbay_lifecycle/**`, `Makefile.d/**`, `config/lane-orchestration/**`.
 

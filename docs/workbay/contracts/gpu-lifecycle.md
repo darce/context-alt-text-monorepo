@@ -26,6 +26,57 @@ Instance states:
   FALLBACK on bound breach.
 - `STOPPING` / `UNKNOWN` + work → fail closed (no START), loud error log.
 
+## Operator intent
+
+The description service is the single writer for
+`/run/acx-write/<ACX_ENV>/gpu-intent.json`, where `ACX_ENV` is `dev`,
+`staging`, or `prod`. The lifecycle controller is read-only. With
+`--intent-dir /run/acx-write`, it aggregates `*/gpu-intent.json`; the newest
+unexpired `requested_at` wins, and equal timestamps resolve to `stop`.
+
+```json
+{
+  "schema_version": 1,
+  "action": "start | stop | auto",
+  "requested_at": "2026-09-06T22:10:00Z",
+  "expires_at": "2026-09-06T22:40:00Z",
+  "ttl_seconds": 1800,
+  "requested_by": "opaque operator label",
+  "nonce": "uuid4"
+}
+```
+
+Lifecycle semantics:
+
+| intent | START arm | STOP arm |
+| --- | --- | --- |
+| absent / expired / malformed / `auto` | unchanged: start when `has_work` | unchanged: idle reap, lease cap, boot-failure fallback |
+| `start` (unexpired) | START allowed with no work; honoured at most once per nonce (RES-01) | idle reap suppressed; **lease cap still stops** (RES-10); boot-failure fallback unchanged |
+| `stop` (unexpired) | START suppressed even with work | STOP when `has_work` is false; when work is in flight publish `intent_status = blocked_work_in_flight` and re-evaluate next cycle |
+
+Malformed intent is logged at WARNING with the parse error and treated as
+`auto` (AGT-10, CAL-02). A valid intent whose `expires_at` is more than 7200
+seconds after `requested_at` is clamped to 7200 seconds. The service normally
+enforces the default 1800-second TTL and the 60–7200-second service bounds;
+the lifecycle clamp is a defensive backstop. Omitting `--intent-dir` disables
+the optional reader and retains automatic lifecycle behavior.
+
+### `gpu-state.json` additive intent fields
+
+The existing writer and reader contract remains additive; existing readers
+ignore unknown keys. The lifecycle publishes these fields on a single-instance
+cycle:
+
+| field | type | meaning |
+| --- | --- | --- |
+| `intent` | `start\|stop\|auto` | effective intent this cycle |
+| `intent_expires_at` | iso8601 or null | from the winning intent |
+| `intent_status` | `none\|pending\|honoured\|blocked_work_in_flight\|expired` | what the controller did with it |
+| `honoured_nonce` | string or null | idempotency marker for START |
+| `lease_expires_at` | iso8601 or null | `running_since + max_lease_seconds` |
+| `instance_running_since` | iso8601 or null | from the running-since lease |
+| `last_transition_reason` | `work\|operator\|idle\|lease_cap\|start_failed\|unknown` | why the last actuation happened |
+
 ## Actuators
 
 `OciCliStartActuator` / `OciCliStopActuator` are twins: same `oci compute

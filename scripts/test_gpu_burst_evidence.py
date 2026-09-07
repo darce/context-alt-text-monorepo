@@ -519,6 +519,47 @@ def test_successful_start_without_current_state_is_still_counted(tmp_path: Path)
     assert "observed 2 StartInstance audit events" in result.stdout
 
 
+def test_successful_start_after_stop_is_not_ignored_without_state_change(tmp_path: Path) -> None:
+    audit = {
+        "data": [
+            {
+                "eventName": "StartInstance",
+                "eventTime": RUNNING_AT,
+                "eventId": "start-1",
+                "responseStatus": 200,
+                "data": {
+                    "resourceId": INSTANCE_ID,
+                    "stateChange": {"current": {"lifecycleState": "RUNNING"}},
+                },
+            },
+            {
+                "eventName": "StopInstance",
+                "eventTime": STOPPED_AT,
+                "eventId": "stop-1",
+                "responseStatus": 200,
+                "data": {
+                    "resourceId": INSTANCE_ID,
+                    "identity": {"principalName": "gpu-reaper"},
+                    "stateChange": {"current": {"lifecycleState": "STOPPED"}},
+                },
+            },
+            {
+                "eventName": "StartInstance",
+                "eventTime": "2026-09-01T00:45:00Z",
+                "eventId": "start-after-stop",
+                "responseStatus": 200,
+                "data": {"resourceId": INSTANCE_ID},
+            },
+        ]
+    }
+    bundle = _custom_bundle(tmp_path, audit=audit)
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 1
+    assert "observed 2 StartInstance audit events" in result.stdout
+
+
 def test_duplicate_start_records_without_event_ids_fail_closed(tmp_path: Path) -> None:
     audit = {
         "data": [

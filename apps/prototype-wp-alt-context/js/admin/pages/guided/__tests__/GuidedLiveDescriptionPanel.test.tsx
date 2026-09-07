@@ -230,6 +230,28 @@ describe('GuidedLiveDescriptionPanel', () => {
       expect(screen.getByTestId('guided-live-status')).toHaveTextContent(/cpu/i);
     });
 
+    it('will not name an engine the run did not report, and still shows the text', async () => {
+      const client = stubClient({
+        poll: vi.fn<GuidedLiveDescriptionClient['poll']>(() =>
+          // A ready gpu_state is a lifecycle snapshot, not proof of authorship.
+          Promise.resolve(runResponse({ status: 'completed', phase: 'complete', gpu_state: 'ready' })),
+        ),
+        items: vi.fn<GuidedLiveDescriptionClient['items']>(() =>
+          Promise.resolve(itemsResponse('A person on a red carpet.', null)),
+        ),
+      });
+      mount(client);
+
+      await press(runButton());
+      await settle(1000);
+
+      const status = screen.getByTestId('guided-live-status');
+      expect(screen.getByTestId('guided-live-text')).toHaveTextContent('A person on a red carpet.');
+      expect(status).toHaveTextContent('Done, but the run did not say whether the GPU wrote this.');
+      expect(status).not.toHaveTextContent('The GPU wrote this.');
+      expect(status).not.toHaveTextContent(/cpu/i);
+    });
+
     it('pairs every status with an icon, never colour alone', async () => {
       const client = stubClient({
         poll: vi.fn<GuidedLiveDescriptionClient['poll']>(() =>

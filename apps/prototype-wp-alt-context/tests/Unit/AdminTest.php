@@ -447,23 +447,28 @@ class AdminTest extends TestCase
     /**
      * @return array<string, array{0: mixed}>
      */
-    public static function nonScalarGuidedLiveMediaIdProvider(): array
+    public static function unstorableGuidedLiveMediaIdProvider(): array
     {
         return [
-            // filter_var(true) is 1, so without the is_bool guard a boolean
+            // filter_var(true) is 1, so without the boolean rejection a boolean
             // option publishes attachment 1 -- whatever that happens to be.
             'boolean true' => [true],
             'boolean false' => [false],
             'array' => [[4211]],
+            // A float is scalar and not boolean, so the old deny-list waved it
+            // through to filter_var, which truncates it to a real id. The JS
+            // mirror rejects the string '4211.0'; the two ends must agree.
+            'float' => [4211.0],
+            'float with a fraction' => [4211.7],
         ];
     }
 
     /**
-     * @dataProvider nonScalarGuidedLiveMediaIdProvider
+     * @dataProvider unstorableGuidedLiveMediaIdProvider
      *
      * @param mixed $raw
      */
-    public function testLocalizeSpaConfigRejectsANonScalarGuidedLiveMediaId($raw): void
+    public function testLocalizeSpaConfigRejectsOptionTypesThatAreNotAStringOrAnInt($raw): void
     {
         $this->registerPost(1, 'attachment');
         $this->registerPost(4211, 'attachment');

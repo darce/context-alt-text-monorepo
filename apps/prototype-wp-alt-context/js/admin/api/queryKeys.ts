@@ -87,6 +87,10 @@ export const queryKeys = {
     all: ['dashboard'] as const,
     stats: () => [...queryKeys.dashboard.all, 'stats'] as const,
   },
+  gpu: {
+    all: ['gpu'] as const,
+    status: () => [...queryKeys.gpu.all, 'status'] as const,
+  },
 } as const;
 
 /**

@@ -42,6 +42,31 @@ const loadPair = (stem: string): { json: UxMap; render: string } => {
 };
 
 describe('ux-map render parity (UXW2-3-R3-23)', () => {
+  it('gpu-operator-control render documents every zone, state, and action id', () => {
+    const { json, render } = loadPair('gpu-operator-control');
+    const missing: string[] = [];
+
+    for (const screen of json.screens ?? []) {
+      for (const zone of screen.zones ?? []) {
+        if (!render.includes(zone.id)) {
+          missing.push(`zone ${zone.id}`);
+        }
+        for (const state of zone.states ?? []) {
+          if (!render.includes(state)) {
+            missing.push(`expected ux-map render to document state '${state}' (zone ${zone.id})`);
+          }
+        }
+      }
+    }
+    for (const action of json.actions ?? []) {
+      if (!render.includes(action.id)) {
+        missing.push(`action ${action.id}`);
+      }
+    }
+
+    expect(missing, missing.join('; ')).toEqual([]);
+  });
+
   it('workbench-2pane render documents every zone id, state, and action id', () => {
     const { json, render } = loadPair('workbench-2pane');
     const missing: string[] = [];

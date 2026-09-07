@@ -9,6 +9,7 @@ import uuid
 from collections import defaultdict
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -32,6 +33,7 @@ from recognition.domain.representative import ClusterRepresentative
 from recognition.infrastructure.repositories._helpers import coerce_uuid as _coerce_uuid
 from recognition.shared.db.dialect import is_sqlite
 from recognition.shared.db.helpers import execute_dml, get_rowcount
+from shared.disk_headroom import get_disk_headroom_settings, has_headroom, probe_disk_headroom
 
 _DB_SETTINGS = get_database_settings()
 logger = logging.getLogger(__name__)
@@ -164,9 +166,17 @@ def _datetime_to_snapshot_version(value: datetime | None) -> int:
 
 
 _MV_CENTROIDS = "mv_identity_cluster_centroids"
+_UNGUARDED_REFRESH_WARNING_LOGGED = False
 
 
-async def _refresh_mv_concurrent_with_bypass(conn: AsyncConnection) -> None:
+class MvRefreshOutcome(StrEnum):
+    """Outcome of a concurrent materialized-view refresh attempt."""
+
+    REFRESHED = "refreshed"
+    SKIPPED_HEADROOM = "skipped_headroom"
+
+
+async def _refresh_mv_concurrent_with_bypass(conn: AsyncConnection) -> MvRefreshOutcome:
     """Execute a concurrent MV refresh on an AUTOCOMMIT connection with RLS bypass.
 
     SET app.bypass_rls is session-scoped (not SET LOCAL) because AUTOCOMMIT mode
@@ -174,8 +184,37 @@ async def _refresh_mv_concurrent_with_bypass(conn: AsyncConnection) -> None:
     All 18 MV source tables carry relforcerowsecurity=true; without bypass even
     the table owner sees zero rows.
     """
+    global _UNGUARDED_REFRESH_WARNING_LOGGED
+
     await conn.execute(text("SET app.bypass_rls = 'true'"))
     try:
+        settings = get_disk_headroom_settings()
+        if settings.probe_path is None and not _UNGUARDED_REFRESH_WARNING_LOGGED:
+            logger.warning(
+                "Refreshing %s without a disk-headroom guard; %s is unset",
+                _MV_CENTROIDS,
+                "ACX_PG_HEADROOM_PROBE_PATH",
+            )
+            _UNGUARDED_REFRESH_WARNING_LOGGED = True
+
+        mv_size_result = await conn.execute(text(f"SELECT pg_total_relation_size('{_MV_CENTROIDS}')"))
+        mv_bytes = int(mv_size_result.scalar_one() or 0)
+        required_bytes = max(settings.min_bytes, 2 * mv_bytes)
+        if settings.probe_path is not None:
+            probe = probe_disk_headroom(settings.probe_path)
+            if not has_headroom(probe, required_bytes):
+                logger.warning(
+                    "Skipping refresh of %s due to insufficient disk headroom: "
+                    "free_bytes=%d required_bytes=%d mv_bytes=%d probe_path=%s reason=%s",
+                    _MV_CENTROIDS,
+                    probe.free_bytes,
+                    required_bytes,
+                    mv_bytes,
+                    probe.probe_path,
+                    probe.reason,
+                )
+                return MvRefreshOutcome.SKIPPED_HEADROOM
+
         before_result = await conn.execute(text(f"SELECT COUNT(*) FROM {_MV_CENTROIDS}"))
         before_count: int = before_result.scalar_one()
         started_at = datetime.now(tz=UTC)
@@ -190,6 +229,7 @@ async def _refresh_mv_concurrent_with_bypass(conn: AsyncConnection) -> None:
             after_count,
             duration_ms,
         )
+        return MvRefreshOutcome.REFRESHED
     finally:
         await conn.execute(text("RESET app.bypass_rls"))
 

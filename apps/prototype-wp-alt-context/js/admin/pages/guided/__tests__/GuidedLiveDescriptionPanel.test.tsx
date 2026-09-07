@@ -115,6 +115,18 @@ describe('GuidedLiveDescriptionPanel', () => {
       expect(screen.getByTestId('guided-live-status')).toHaveTextContent(/decide each face match first/i);
     });
 
+    // rg-003: the run does not need the face decisions -- the panel says so two
+    // lines up ("Names come from your roster on the server, not from this
+    // page"). A gate whose copy reads as a data dependency teaches the wrong
+    // model of what the server requires, so the line names the real reason.
+    it("says the decision order is the lesson's, not something the run needs", () => {
+      mount(stubClient(), { scenario: createGuidedScenario() });
+
+      expect(screen.getByTestId('guided-live-status')).toHaveTextContent(
+        "Decide each face match first, then you can describe this photo live. That is the lesson's order, not something the run needs.",
+      );
+    });
+
     it('names the missing configuration when the demo has no live photo', () => {
       mount(stubClient(), { mediaId: null });
 

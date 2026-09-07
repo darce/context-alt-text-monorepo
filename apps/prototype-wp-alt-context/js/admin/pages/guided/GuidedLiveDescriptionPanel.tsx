@@ -39,10 +39,17 @@ const clock = (ms: number): string => {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
 };
 
+/**
+ * The face gate is the lesson's sequencing, not a data dependency: the panel
+ * says two lines up that names come from the roster on the server, so a run
+ * submitted with every face still open would return the same sentence. Copy
+ * that reads as a requirement teaches the wrong model of what the service
+ * needs, so the line names the real reason it is closed (rg-003).
+ */
 const blockedLine = (reason: GuidedLiveBlockedReason): string =>
   reason === 'no_media'
     ? 'No live photo is configured for this demo, so the live run is off.'
-    : 'Decide each face match first. Then you can describe this photo live.';
+    : "Decide each face match first, then you can describe this photo live. That is the lesson's order, not something the run needs.";
 
 /**
  * Blocked copy outranks a run status only because a blocked panel shows no

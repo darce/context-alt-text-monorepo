@@ -113,8 +113,9 @@ A run that completes with no draft for this photo lands on the same state with i
 ### The button before the faces are decided
 
 ```text
-|  • Decide each face match first. Then you can describe this    BLOCKED    |
-|    photo live.                                                            |
+|  • Decide each face match first, then you can describe this    BLOCKED    |
+|    photo live. That is the lesson's order, not something the run          |
+|    needs.                                                                 |
 |  [ Describe it live ] (disabled)                                          |
 ```
 

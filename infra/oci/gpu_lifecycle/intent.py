@@ -9,19 +9,36 @@ existing safety policy.
 from __future__ import annotations
 
 import json
+import fcntl
 import logging
 import math
+import os
+import tempfile
+import time
 import uuid
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 INTENT_SCHEMA_VERSION = 1
+MIN_INTENT_SEQUENCE = 1
 MAX_INTENT_TTL_SECONDS = 7200.0
 MAX_INTENT_REQUESTED_AT_FUTURE_SKEW_SECONDS = 120.0
+DEFAULT_GPU_STATE_DIR = Path("/var/lib/acx-gpu")
+DEFAULT_INTENT_DIR = DEFAULT_GPU_STATE_DIR / "intents"
+DEFAULT_INTENT_AUTHORITY_PATH = DEFAULT_GPU_STATE_DIR / "intent-authority.json"
+DEFAULT_DEFERRED_STOP_PATH = DEFAULT_GPU_STATE_DIR / "deferred-stop.json"
+DEFAULT_DECISION_LOG_PATH = DEFAULT_GPU_STATE_DIR / "decision-log.jsonl"
+_INTENT_AUTHORITY_SCHEMA_VERSION = 1
+_DEFERRED_STOP_SCHEMA_VERSION = 1
+_INTENT_LOCK_TIMEOUT_SECONDS = 10.0
+_INTENT_LOCK_RETRY_SECONDS = 0.05
 _INTENT_FIELDS = frozenset(
     {
         "schema_version",
@@ -31,6 +48,7 @@ _INTENT_FIELDS = frozenset(
         "ttl_seconds",
         "requested_by",
         "nonce",
+        "sequence",
     }
 )
 
@@ -63,6 +81,7 @@ class OperatorIntent:
     nonce: str
     requested_by: str
     ttl_seconds: int
+    sequence: int
     schema_version: int = INTENT_SCHEMA_VERSION
     source: Path | None = None
     reason: str | None = None
@@ -77,14 +96,49 @@ class EffectiveIntent:
     expires_at: datetime | None = None
     nonce: str | None = None
     requested_by: str | None = None
+    sequence: int | None = None
     source: Path | None = None
     status: IntentStatus = IntentStatus.NONE
     reason: str | None = None
+    deferred_until: datetime | None = None
+    deferred_reason: str | None = None
 
     @property
     def intent(self) -> IntentAction:
         """Alias used by snapshot consumers for the C2 field name."""
         return self.action
+
+
+@dataclass(frozen=True)
+class DeferredStopRecord:
+    """Durable write-ahead marker for a STOP waiting on in-flight work."""
+
+    action: IntentAction
+    requested_at: datetime
+    expires_at: datetime
+    nonce: str
+    requested_by: str
+    ttl_seconds: int
+    sequence: int
+    deferred_until: datetime
+    deferred_reason: str
+    schema_version: int = _DEFERRED_STOP_SCHEMA_VERSION
+
+    def to_effective_intent(self, *, source: Path | None = None) -> EffectiveIntent:
+        """Rehydrate the deferred STOP while its extension remains active."""
+        return EffectiveIntent(
+            action=self.action,
+            requested_at=self.requested_at,
+            expires_at=self.expires_at,
+            nonce=self.nonce,
+            requested_by=self.requested_by,
+            sequence=self.sequence,
+            source=source,
+            status=IntentStatus.BLOCKED_WORK_IN_FLIGHT,
+            reason="deferred stop re-armed from durable state",
+            deferred_until=self.deferred_until,
+            deferred_reason=self.deferred_reason,
+        )
 
 
 def _coerce_now(now: datetime | float | int | None) -> datetime:
@@ -112,6 +166,396 @@ def _parse_timestamp(value: object, *, field: str) -> datetime:
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise ValueError(f"{field} must include a timezone")
     return parsed.astimezone(UTC)
+
+
+def _atomic_write_json(path: Path, payload: object, *, mode: int = 0o660) -> None:
+    """Write JSON durably before publishing its replacement inode."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
+            json.dump(payload, handle, separators=(",", ":"), sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.chmod(mode)
+        os.replace(temporary, path)
+        temporary = None
+        directory_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                logger.warning("could not remove temporary intent file %s", temporary)
+
+
+@contextmanager
+def _intent_file_lock(path: Path) -> Iterator[None]:
+    """Coordinate durable intent metadata writers with a bounded flock."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_name(f".{path.name}.lock")
+    created = False
+    try:
+        lock_fd = os.open(
+            lock_path,
+            os.O_RDONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC,
+            0o660,
+        )
+        created = True
+    except FileExistsError:
+        lock_fd = os.open(lock_path, os.O_RDONLY | os.O_CLOEXEC)
+    try:
+        if created:
+            os.fchmod(lock_fd, 0o660)
+        deadline = time.monotonic() + _INTENT_LOCK_TIMEOUT_SECONDS
+        while True:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(
+                        f"timed out after {_INTENT_LOCK_TIMEOUT_SECONDS:.1f}s waiting for intent lock"
+                    ) from None
+                time.sleep(min(_INTENT_LOCK_RETRY_SECONDS, remaining))
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+    finally:
+        os.close(lock_fd)
+
+
+class IntentAuthorityError(RuntimeError):
+    """The durable authority ledger cannot safely be interpreted."""
+
+
+class IntentAuthorityStore:
+    """Persist sequence and monotonic-expiry observations for intent fencing.
+
+    The intent file's wall-clock timestamps remain useful for interoperability,
+    but they are not allowed to move expiry backwards.  This ledger records a
+    high-water wall clock, the highest sequence observed, and a per-nonce
+    monotonic expiry for the current boot.  Once a nonce is expired it remains
+    fenced even if NTP moves the wall clock backwards or the host reboots.
+    """
+
+    def __init__(
+        self,
+        path: str | Path = DEFAULT_INTENT_AUTHORITY_PATH,
+        *,
+        monotonic: Callable[[], float] | None = None,
+        boot_id: str | None = None,
+    ) -> None:
+        self.path = Path(path)
+        self._monotonic = monotonic or time.monotonic
+        self._boot_id = boot_id if boot_id is not None else self._read_boot_id()
+
+    @staticmethod
+    def _read_boot_id() -> str | None:
+        try:
+            value = Path("/proc/sys/kernel/random/boot_id").read_text(encoding="utf-8").strip()
+        except OSError:
+            return None
+        return value or None
+
+    def _read_state(self) -> dict[str, Any]:
+        try:
+            payload = json.loads(self.path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {
+                "schema_version": _INTENT_AUTHORITY_SCHEMA_VERSION,
+                "last_wall_time": None,
+                "highest_sequence": 0,
+                "intents": {},
+            }
+        except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            raise IntentAuthorityError(f"intent authority ledger is unreadable: {self.path}: {exc}") from exc
+        if (
+            not isinstance(payload, dict)
+            or payload.get("schema_version") != _INTENT_AUTHORITY_SCHEMA_VERSION
+            or not isinstance(payload.get("intents"), dict)
+            or isinstance(payload.get("highest_sequence"), bool)
+            or not isinstance(payload.get("highest_sequence"), int)
+            or payload.get("highest_sequence") < 0
+        ):
+            raise IntentAuthorityError(f"intent authority ledger is invalid: {self.path}")
+        last_wall_time = payload.get("last_wall_time")
+        if last_wall_time is not None:
+            try:
+                _parse_timestamp(last_wall_time, field="last_wall_time")
+            except ValueError as exc:
+                raise IntentAuthorityError(f"intent authority ledger is invalid: {self.path}: {exc}") from exc
+        for nonce, record in payload["intents"].items():
+            if not isinstance(nonce, str) or not nonce.strip() or not isinstance(record, dict):
+                raise IntentAuthorityError(f"intent authority ledger is invalid: {self.path}")
+            sequence = record.get("sequence")
+            if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < MIN_INTENT_SEQUENCE:
+                raise IntentAuthorityError(f"intent authority ledger is invalid: {self.path}")
+            try:
+                _parse_timestamp(record.get("expires_at"), field="expires_at")
+            except ValueError as exc:
+                raise IntentAuthorityError(f"intent authority ledger is invalid: {self.path}: {exc}") from exc
+            if not isinstance(record.get("expired"), bool):
+                raise IntentAuthorityError(f"intent authority ledger is invalid: {self.path}")
+            monotonic_expiry = record.get("monotonic_expires_at")
+            if monotonic_expiry is not None and (
+                isinstance(monotonic_expiry, bool)
+                or not isinstance(monotonic_expiry, (int, float))
+                or not math.isfinite(monotonic_expiry)
+            ):
+                raise IntentAuthorityError(f"intent authority ledger is invalid: {self.path}")
+        return payload
+
+    def filter_valid(
+        self,
+        intents: list[OperatorIntent],
+        *,
+        now: datetime,
+    ) -> tuple[list[OperatorIntent], set[str]]:
+        """Return intents not expired by logical wall or current-boot monotonic time."""
+        current_time = _coerce_now(now)
+        try:
+            monotonic_now = float(self._monotonic())
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise IntentAuthorityError(f"intent monotonic clock unavailable: {exc}") from exc
+        if not math.isfinite(monotonic_now) or monotonic_now < 0:
+            raise IntentAuthorityError("intent monotonic clock must be finite and non-negative")
+
+        with _intent_file_lock(self.path):
+            state = self._read_state()
+            raw_last_wall = state.get("last_wall_time")
+            last_wall = _parse_timestamp(raw_last_wall, field="last_wall_time") if raw_last_wall else None
+            logical_now = current_time if last_wall is None else max(current_time, last_wall)
+            highest_sequence = int(state["highest_sequence"])
+            records = dict(state["intents"])
+            survivors: list[OperatorIntent] = []
+            expired_nonces: set[str] = set()
+            changed = logical_now != last_wall or False
+            for intent in intents:
+                record = records.get(intent.nonce)
+                if intent.sequence < highest_sequence and (
+                    record is None or int(record.get("sequence", 0)) != intent.sequence
+                ):
+                    expired_nonces.add(intent.nonce)
+                    logger.warning(
+                        "operator intent fenced by higher sequence: nonce=%s sequence=%s highest=%s",
+                        intent.nonce,
+                        intent.sequence,
+                        highest_sequence,
+                    )
+                    continue
+                if record is None or int(record.get("sequence", 0)) < intent.sequence:
+                    remaining = max(0.0, (intent.expires_at - current_time).total_seconds())
+                    records[intent.nonce] = {
+                        "sequence": intent.sequence,
+                        "expires_at": intent.expires_at.isoformat().replace("+00:00", "Z"),
+                        "boot_id": self._boot_id,
+                        "monotonic_expires_at": monotonic_now + remaining,
+                        "expired": False,
+                    }
+                    record = records[intent.nonce]
+                    changed = True
+                highest_sequence = max(highest_sequence, intent.sequence)
+                record_expiry = _parse_timestamp(record["expires_at"], field="expires_at")
+                expired = bool(record.get("expired")) or logical_now >= record_expiry
+                if (
+                    not expired
+                    and record.get("boot_id") == self._boot_id
+                    and record.get("monotonic_expires_at") is not None
+                    and monotonic_now >= float(record["monotonic_expires_at"])
+                ):
+                    expired = True
+                if expired:
+                    expired_nonces.add(intent.nonce)
+                    if not record.get("expired"):
+                        record["expired"] = True
+                        changed = True
+                    logger.warning(
+                        "operator intent expired/fenced: nonce=%s sequence=%s expires_at=%s",
+                        intent.nonce,
+                        intent.sequence,
+                        record_expiry.isoformat(),
+                    )
+                    continue
+                survivors.append(intent)
+            if highest_sequence != state["highest_sequence"]:
+                state["highest_sequence"] = highest_sequence
+                changed = True
+            logical_wall_text = logical_now.isoformat().replace("+00:00", "Z")
+            if state.get("last_wall_time") != logical_wall_text:
+                state["last_wall_time"] = logical_wall_text
+                changed = True
+            if state.get("intents") != records:
+                state["intents"] = records
+                changed = True
+            if changed:
+                _atomic_write_json(self.path, state)
+        return survivors, expired_nonces
+
+
+class DeferredStopStore:
+    """Durably retain a STOP intent that was waiting on in-flight work."""
+
+    def __init__(self, path: str | Path = DEFAULT_DEFERRED_STOP_PATH) -> None:
+        self.path = Path(path)
+
+    def read(self) -> DeferredStopRecord | None:
+        try:
+            payload = json.loads(self.path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return None
+        except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            logger.error("deferred STOP record unreadable; ignoring it: %s (%s)", self.path, exc)
+            return None
+        try:
+            if (
+                not isinstance(payload, dict)
+                or payload.get("schema_version") != _DEFERRED_STOP_SCHEMA_VERSION
+                or payload.get("action") != IntentAction.STOP.value
+            ):
+                raise ValueError("invalid schema or action")
+            sequence = payload.get("sequence")
+            if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < MIN_INTENT_SEQUENCE:
+                raise ValueError("sequence must be a positive integer")
+            requested_by = payload.get("requested_by")
+            nonce = payload.get("nonce")
+            if not isinstance(requested_by, str) or not requested_by.strip():
+                raise ValueError("requested_by must be a non-blank string")
+            if not isinstance(nonce, str) or not nonce.strip():
+                raise ValueError("nonce must be a non-blank string")
+            deferred_reason = payload.get("deferred_reason")
+            if not isinstance(deferred_reason, str) or not deferred_reason.strip():
+                raise ValueError("deferred_reason must be a non-blank string")
+            ttl_seconds = payload.get("ttl_seconds")
+            if isinstance(ttl_seconds, bool) or not isinstance(ttl_seconds, int) or ttl_seconds <= 0:
+                raise ValueError("ttl_seconds must be a positive integer")
+            return DeferredStopRecord(
+                action=IntentAction.STOP,
+                requested_at=_parse_timestamp(payload.get("requested_at"), field="requested_at"),
+                expires_at=_parse_timestamp(payload.get("expires_at"), field="expires_at"),
+                nonce=nonce,
+                requested_by=requested_by,
+                ttl_seconds=ttl_seconds,
+                sequence=sequence,
+                deferred_until=_parse_timestamp(payload.get("deferred_until"), field="deferred_until"),
+                deferred_reason=deferred_reason,
+            )
+        except (TypeError, ValueError, OverflowError) as exc:
+            logger.error("deferred STOP record invalid; ignoring it: %s (%s)", self.path, exc)
+            return None
+
+    def write(self, record: DeferredStopRecord) -> None:
+        if record.action is not IntentAction.STOP:
+            raise ValueError("only STOP intents may be deferred")
+        payload = {
+            "schema_version": _DEFERRED_STOP_SCHEMA_VERSION,
+            "action": record.action.value,
+            "requested_at": record.requested_at.isoformat().replace("+00:00", "Z"),
+            "expires_at": record.expires_at.isoformat().replace("+00:00", "Z"),
+            "ttl_seconds": record.ttl_seconds,
+            "requested_by": record.requested_by,
+            "nonce": record.nonce,
+            "sequence": record.sequence,
+            "deferred_until": record.deferred_until.isoformat().replace("+00:00", "Z"),
+            "deferred_reason": record.deferred_reason,
+        }
+        with _intent_file_lock(self.path):
+            _atomic_write_json(self.path, payload)
+
+    def clear(self, *, sequence: int | None = None) -> None:
+        with _intent_file_lock(self.path):
+            record = self.read()
+            if record is None or sequence is None or record.sequence <= sequence:
+                self.path.unlink(missing_ok=True)
+
+
+class DecisionLogStore:
+    """Append-only durable JSONL audit trail for lifecycle decisions."""
+
+    def __init__(self, path: str | Path = DEFAULT_DECISION_LOG_PATH) -> None:
+        self.path = Path(path)
+
+    def append(self, record: dict[str, Any]) -> None:
+        encoded = (json.dumps(record, separators=(",", ":"), sort_keys=True) + "\n").encode("utf-8")
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(
+            self.path,
+            os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_CLOEXEC,
+            0o660,
+        )
+        try:
+            os.fchmod(fd, 0o660)
+            written = 0
+            while written < len(encoded):
+                written += os.write(fd, encoded[written:])
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
+
+def _intent_order(intent: OperatorIntent) -> tuple[int, datetime, bool, str]:
+    """Sort intents by authority first, with wall-clock compatibility ties."""
+    return (intent.sequence, intent.requested_at, intent.action is IntentAction.STOP, str(intent.source or ""))
+
+
+def copy_intents_to_durable_dir(source_dir: str | Path, durable_dir: str | Path) -> None:
+    """Migrate valid runtime publications to the persistent intent directory."""
+    source = Path(source_dir)
+    target_root = Path(durable_dir)
+    if not source.exists() or not source.is_dir():
+        return
+    for source_path in sorted(source.glob("*/gpu-intent.json")):
+        parsed = _read_one(source_path)
+        if parsed is None:
+            continue
+        target_path = target_root / source_path.parent.name / source_path.name
+        existing = _read_one(target_path) if target_path.exists() else None
+        if existing is not None and _intent_order(existing) >= _intent_order(parsed):
+            continue
+        try:
+            payload = source_path.read_bytes()
+        except (OSError, UnicodeError) as exc:
+            raise OSError(f"could not read runtime intent {source_path}: {exc}") from exc
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="wb",
+                dir=target_path.parent,
+                prefix=f".{target_path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as handle:
+                temporary = Path(handle.name)
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+            temporary.chmod(0o660)
+            os.replace(temporary, target_path)
+            temporary = None
+            directory_fd = os.open(target_path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
 
 
 def _invalid(path: Path, error: object, *, reason_sink: list[str] | None = None) -> None:
@@ -172,6 +616,15 @@ def _read_one(
         _invalid(path, "requested_by must be a non-blank string", reason_sink=reason_sink)
         return None
 
+    sequence = payload.get("sequence")
+    if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < MIN_INTENT_SEQUENCE:
+        _invalid(
+            path,
+            f"sequence must be an integer >= {MIN_INTENT_SEQUENCE}",
+            reason_sink=reason_sink,
+        )
+        return None
+
     nonce = payload.get("nonce")
     if not isinstance(nonce, str) or not nonce.strip():
         _invalid(path, "nonce must be a UUID4", reason_sink=reason_sink)
@@ -230,6 +683,7 @@ def _read_one(
         nonce=normalized_nonce,
         requested_by=requested_by,
         ttl_seconds=ttl_seconds,
+        sequence=sequence,
         schema_version=schema_version,
         source=path,
         reason=("; ".join(parse_reasons) if parse_reasons else None),
@@ -256,11 +710,16 @@ def _candidate_paths(intent_dir: Path) -> list[Path]:
 def read_effective_intent(
     intent_dir: str | Path | None,
     now: datetime | float | int | None = None,
+    *,
+    additional_intent_dirs: Iterable[str | Path] = (),
+    authority_store: IntentAuthorityStore | None = None,
 ) -> EffectiveIntent:
-    """Aggregate ``*/gpu-intent.json`` and choose the effective publication.
+    """Aggregate intent publications and choose the effective publication.
 
-    The newest unexpired ``requested_at`` wins.  Publications with equal
-    timestamps resolve to STOP, which is the conservative tie-breaker.  A
+    The highest monotonic ``sequence`` wins.  Wall-clock ``requested_at`` is
+    only a tie-breaker for publications that carry the same sequence;
+    publications with equal timestamps resolve to STOP, which is the
+    conservative tie-breaker.  A
     ``None`` directory means the optional feature is disabled and is silent,
     preserving the legacy lifecycle behavior exactly.
     """
@@ -268,19 +727,32 @@ def read_effective_intent(
         return EffectiveIntent()
 
     current_time = _coerce_now(now)
-    root = Path(intent_dir)
+    roots = [Path(intent_dir), *(Path(directory) for directory in additional_intent_dirs)]
+    unique_roots: list[Path] = []
+    for root in roots:
+        if root not in unique_roots:
+            unique_roots.append(root)
     valid: list[OperatorIntent] = []
     expired = False
     parse_reasons: list[str] = []
-    for path in _candidate_paths(root):
-        intent = _read_one(path, read_time=current_time, reason_sink=parse_reasons)
-        if intent is None:
-            continue
-        if intent.expires_at <= current_time:
-            expired = True
-            _invalid(path, f"intent expired at {intent.expires_at.isoformat()}")
-            continue
-        valid.append(intent)
+    for root in unique_roots:
+        for path in _candidate_paths(root):
+            intent = _read_one(path, read_time=current_time, reason_sink=parse_reasons)
+            if intent is not None:
+                valid.append(intent)
+
+    if authority_store is not None:
+        valid, authority_expired = authority_store.filter_valid(valid, now=current_time)
+        expired = bool(authority_expired)
+    else:
+        unexpired: list[OperatorIntent] = []
+        for intent in valid:
+            if intent.expires_at <= current_time:
+                expired = True
+                _invalid(intent.source or Path("<intent>"), f"intent expired at {intent.expires_at.isoformat()}")
+                continue
+            unexpired.append(intent)
+        valid = unexpired
 
     if not valid:
         return EffectiveIntent(
@@ -295,6 +767,7 @@ def read_effective_intent(
     winner = max(
         valid,
         key=lambda item: (
+            item.sequence,
             item.requested_at,
             item.action is IntentAction.STOP,
             str(item.source or ""),
@@ -306,7 +779,28 @@ def read_effective_intent(
         expires_at=winner.expires_at,
         nonce=winner.nonce,
         requested_by=winner.requested_by,
+        sequence=winner.sequence,
         source=winner.source,
         status=IntentStatus.NONE,
         reason=winner.reason,
     )
+
+
+__all__ = [
+    "DEFAULT_DECISION_LOG_PATH",
+    "DEFAULT_DEFERRED_STOP_PATH",
+    "DEFAULT_GPU_STATE_DIR",
+    "DEFAULT_INTENT_AUTHORITY_PATH",
+    "DEFAULT_INTENT_DIR",
+    "DeferredStopRecord",
+    "DecisionLogStore",
+    "EffectiveIntent",
+    "IntentAction",
+    "IntentAuthorityError",
+    "IntentAuthorityStore",
+    "IntentStatus",
+    "MIN_INTENT_SEQUENCE",
+    "OperatorIntent",
+    "copy_intents_to_durable_dir",
+    "read_effective_intent",
+]

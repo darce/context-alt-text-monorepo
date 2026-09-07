@@ -38,7 +38,10 @@ def _parse_time(value: Any) -> float | None:
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
-        numeric = float(value)
+        try:
+            numeric = float(value)
+        except (OverflowError, ValueError):
+            return None
         return numeric if math.isfinite(numeric) else None
     if not isinstance(value, str) or not value.strip():
         return None
@@ -58,13 +61,19 @@ def _parse_time(value: Any) -> float | None:
         return None
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         return None
-    return parsed.timestamp()
+    try:
+        return parsed.timestamp()
+    except (OverflowError, OSError, ValueError):
+        return None
 
 
 def _format_time(value: float | None) -> str:
     if value is None:
         return "unavailable"
-    return dt.datetime.fromtimestamp(value, UTC).isoformat().replace("+00:00", "Z")
+    try:
+        return dt.datetime.fromtimestamp(value, UTC).isoformat().replace("+00:00", "Z")
+    except (OverflowError, OSError, ValueError):
+        return "invalid timestamp"
 
 
 def _as_text(value: Any) -> str | None:
@@ -483,6 +492,58 @@ def _status_success(value: Any) -> bool:
     return match is not None and 200 <= int(match.group(1)) < 300
 
 
+def _audit_event_groups(payload: Any, *, instance_id: str | None) -> dict[tuple[str, str], list[Mapping[str, Any]]]:
+    if instance_id is None:
+        return {}
+    grouped: dict[tuple[str, str], list[Mapping[str, Any]]] = {}
+    for occurrence, event in enumerate(_audit_items(payload)):
+        if _event_resource_id(event) != instance_id:
+            continue
+        for action in _event_actions(event):
+            grouped.setdefault((action, _event_identity(event, action, occurrence)), []).append(event)
+    return grouped
+
+
+def _event_timestamp_key(event: Mapping[str, Any]) -> float:
+    timestamp = _event_time(event)
+    return timestamp if timestamp is not None else float("-inf")
+
+
+def _representative_audit_event(events: Sequence[Mapping[str, Any]]) -> Mapping[str, Any] | None:
+    completed = [event for event in events if _event_phase(event) == "end"]
+    candidates = completed or [event for event in events if _event_phase(event) is None]
+    return max(candidates, key=_event_timestamp_key) if candidates else None
+
+
+def _audit_operation_events(
+    payload: Any,
+    *,
+    instance_id: str | None,
+    since: float,
+    until: float,
+    require_current_state: bool,
+) -> list[tuple[str, Mapping[str, Any], float]]:
+    """Return one successful Audit record per logical action for one instance."""
+
+    operations: list[tuple[str, Mapping[str, Any], float]] = []
+    for (action, _identity), events in _audit_event_groups(payload, instance_id=instance_id).items():
+        event = _representative_audit_event(events)
+        if event is None:
+            continue
+        timestamp = _event_time(event)
+        expected_state = "RUNNING" if action == "START" else "STOPPED"
+        if (
+            timestamp is None
+            or not since <= timestamp <= until
+            or not _status_success(_event_status(event))
+            or (require_current_state and _event_state_change(event, "current") != expected_state)
+        ):
+            continue
+        operations.append((action, event, timestamp))
+    operations.sort(key=lambda item: item[2])
+    return operations
+
+
 def _authoritative_audit_events(
     payload: Any,
     *,
@@ -490,41 +551,15 @@ def _authoritative_audit_events(
     since: float,
     until: float,
 ) -> list[tuple[str, Mapping[str, Any], float]]:
-    """Return successful, completed audit transitions for exactly one instance."""
+    """Return successful, state-backed audit transitions for exactly one instance."""
 
-    if instance_id is None:
-        return []
-    grouped: dict[tuple[str, str], list[Mapping[str, Any]]] = {}
-    for occurrence, event in enumerate(_audit_items(payload)):
-        if _event_resource_id(event) != instance_id:
-            continue
-        for action in _event_actions(event):
-            grouped.setdefault((action, _event_identity(event, action, occurrence)), []).append(event)
-
-    authoritative: list[tuple[str, Mapping[str, Any], float]] = []
-    for (action, _identity), events in grouped.items():
-        completed = [event for event in events if _event_phase(event) == "end"]
-        candidates = completed or [event for event in events if _event_phase(event) is None]
-        if not candidates:
-            continue
-
-        def event_sort_key(item: Mapping[str, Any]) -> float:
-            timestamp = _event_time(item)
-            return timestamp if timestamp is not None else float("-inf")
-
-        event = max(candidates, key=event_sort_key)
-        timestamp = _event_time(event)
-        expected_state = "RUNNING" if action == "START" else "STOPPED"
-        if (
-            timestamp is None
-            or not since <= timestamp <= until
-            or not _status_success(_event_status(event))
-            or _event_state_change(event, "current") != expected_state
-        ):
-            continue
-        authoritative.append((action, event, timestamp))
-    authoritative.sort(key=lambda item: item[2])
-    return authoritative
+    return _audit_operation_events(
+        payload,
+        instance_id=instance_id,
+        since=since,
+        until=until,
+        require_current_state=True,
+    )
 
 
 def _successful_audit_action_sequence(
@@ -534,21 +569,18 @@ def _successful_audit_action_sequence(
     since: float,
     until: float,
 ) -> list[str]:
-    """Read the raw successful action order before event identities are collapsed."""
+    """Read successful logical actions before checking their lifecycle order."""
 
-    if instance_id is None:
-        return []
-    ordered: list[tuple[float, int, str]] = []
-    for position, event in enumerate(_audit_items(payload)):
-        if _event_resource_id(event) != instance_id:
-            continue
-        timestamp = _event_time(event)
-        if timestamp is None or not since <= timestamp <= until or not _status_success(_event_status(event)):
-            continue
-        for action in sorted(_event_actions(event)):
-            ordered.append((timestamp, position, action))
-    ordered.sort(key=lambda item: (item[0], item[1]))
-    return [action for _timestamp, _position, action in ordered]
+    return [
+        action
+        for action, _event, _timestamp in _audit_operation_events(
+            payload,
+            instance_id=instance_id,
+            since=since,
+            until=until,
+            require_current_state=False,
+        )
+    ]
 
 
 def _principal_values(event: Mapping[str, Any]) -> set[str]:
@@ -884,14 +916,25 @@ def _audit_checks(
         if payload is not None
         else []
     )
-    starts = [(event, timestamp) for action, event, timestamp in events if action == "START"]
     stops = [(event, timestamp) for action, event, timestamp in events if action == "STOP"]
+    authoritative_start_count = sum(action == "START" for action, _event, _timestamp in events)
+    actions = _successful_audit_action_sequence(
+        payload,
+        instance_id=instance_id,
+        since=since,
+        until=until,
+    )
+    start_count = actions.count("START")
+    if start_count == 1 and authoritative_start_count == 0:
+        start_detail = "observed 0 StartInstance audit events with the expected RUNNING state"
+    elif start_count == 1:
+        start_detail = "exactly one StartInstance audit event"
+    else:
+        start_detail = f"observed {start_count} StartInstance audit events"
     start_check = _result(
         "exactly_one_start_instance",
-        len(starts) == 1,
-        "exactly one StartInstance audit event"
-        if len(starts) == 1
-        else f"observed {len(starts)} StartInstance audit events",
+        start_count == 1 and authoritative_start_count == 1,
+        start_detail,
     )
     matching_stops = [
         (event, timestamp) for event, timestamp in stops if expected_stop_principal in _principal_values(event)
@@ -903,13 +946,11 @@ def _audit_checks(
         if matching_stops
         else f"no StopInstance audit event matched principal {expected_stop_principal!r} (observed {len(stops)})",
     )
-    actions = _successful_audit_action_sequence(
-        payload,
-        instance_id=instance_id,
-        since=since,
-        until=until,
-    )
-    order_ok = bool(actions) and actions[0] == "START" and any(action == "STOP" for action in actions[1:])
+    logical_actions: list[str] = []
+    for action in actions:
+        if not logical_actions or logical_actions[-1] != action:
+            logical_actions.append(action)
+    order_ok = logical_actions == ["START", "STOP"]
     order_check = _result(
         "audit_transition_order",
         order_ok,

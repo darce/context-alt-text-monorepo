@@ -14,6 +14,7 @@ trap 'rm -rf "$fixture_root"' EXIT
 
 fake_oci="${fixture_root}/oci"
 call_log="${fixture_root}/oci-calls.log"
+curl_call_log="${fixture_root}/curl-calls.log"
 cat >"${fake_oci}" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -36,6 +37,7 @@ fake_curl="${fixture_root}/curl"
 cat >"${fake_curl}" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+printf '%s\n' "$*" >>"${CURL_CALL_LOG}"
 output=""
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -58,6 +60,7 @@ printf '%s\n' '{"state":"stopped","instance_id":"ocid1.instance.example","writte
 printf '%s\n' '{"items":[{"description":"A red bicycle","timestamp":"2026-09-01T00:20:00Z"}]}' >"${receipts}"
 export OCI_BIN="${fake_oci}"
 export OCI_CALL_LOG="${call_log}"
+export CURL_CALL_LOG="${curl_call_log}"
 export PATH="${fixture_root}:${PATH}"
 
 one="${fixture_root}/one"
@@ -140,6 +143,41 @@ for name in ("instance.json", "audit-events.json", "state_history.json", "state_
 assert (one.stat().st_mode & 0o777) == 0o700
 for path in one.iterdir():
     assert (path.stat().st_mode & 0o777) == 0o600, (path, oct(path.stat().st_mode & 0o777))
+PY
+
+unknown_oci="${fixture_root}/unknown-oci"
+cat >"${unknown_oci}" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case " $* " in
+    *" compute instance get "*)
+        printf '%s\n' '{"data":{"id":"ocid1.instance.example","lifecycle-state":"STOPPED"}}'
+        ;;
+    *" audit event list "*)
+        printf '%s\n' '{"data":[]}'
+        ;;
+    *)
+        echo "unexpected OCI argv: $*" >&2
+        exit 41
+        ;;
+esac
+EOF
+chmod +x "${unknown_oci}"
+unknown_bundle="${fixture_root}/unknown-bundle"
+OCI_BIN="${unknown_oci}" "$exporter" \
+    --instance-id ocid1.instance.example \
+    --compartment-id ocid1.compartment.example \
+    --since 2026-09-01T00:00:00Z \
+    --until 2026-09-01T01:00:00Z \
+    --out "$unknown_bundle"
+"$resolved_python" - "$unknown_bundle/state_history.json" <<'PY'
+import json
+import sys
+
+history = json.load(open(sys.argv[1], encoding="utf-8"))
+assert history["observations"] == []
+assert history["state"] == "unknown"
+assert isinstance(history["reason"], str) and history["reason"].strip()
 PY
 
 "$resolved_python" "${root}/scripts/gpu_burst_evidence.py" \
@@ -339,12 +377,20 @@ if grep -Fq -- 'do-not-persist' "${url_bundle}/manifest.json"; then
     echo "FAIL: snapshot URL query token was persisted in manifest" >&2
     exit 1
 fi
-if ! grep -Fq -- '<redacted-url>' "${url_bundle}/manifest.json"; then
-    echo "FAIL: snapshot manifest command was not redacted" >&2
+if grep -Fq -- '<redacted-url>' "${url_bundle}/manifest.json"; then
+    echo "FAIL: snapshot manifest command retained a redaction placeholder" >&2
     exit 1
 fi
-if ! grep -Fq -- 'https://snapshot.example.test/gpu-state.json?<redacted-url>' "${url_bundle}/manifest.json"; then
+if ! grep -Fq -- 'https://snapshot.example.test/gpu-state.json' "${url_bundle}/manifest.json"; then
     echo "FAIL: snapshot manifest command did not retain the object path" >&2
+    exit 1
+fi
+if grep -Fq -- 'gpu-state.json?' "${url_bundle}/manifest.json"; then
+    echo "FAIL: snapshot manifest command retained a query delimiter" >&2
+    exit 1
+fi
+if ! grep -Fq -- '--connect-timeout 10' "${curl_call_log}" || ! grep -Fq -- '--max-time 60' "${curl_call_log}"; then
+    echo "FAIL: snapshot retrieval did not carry explicit curl timeouts" >&2
     exit 1
 fi
 

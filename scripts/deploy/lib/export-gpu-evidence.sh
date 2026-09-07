@@ -8,6 +8,11 @@
 
 set -euo pipefail
 
+# Evidence receipts include raw Audit identity/request metadata. Keep the
+# transaction directory and every generated file private regardless of the
+# caller's umask.
+umask 077
+
 usage() {
     cat >&2 <<'EOF'
 Usage: export-gpu-evidence.sh --instance-id <ocid> --compartment-id <ocid> \
@@ -83,6 +88,27 @@ done
 [ -n "$until" ] || fail_usage "--until is required"
 [ -n "$out_dir" ] || fail_usage "--out is required"
 
+# Keep the transaction sibling to the final bundle so the final move stays on
+# one filesystem. Normalising the path also prevents a user-supplied basename
+# beginning with '-' from being interpreted as an option by filesystem tools.
+while [ "${out_dir%/}" != "$out_dir" ]; do
+    out_dir="${out_dir%/}"
+done
+[ -n "$out_dir" ] || fail_usage "--out must name a bundle directory"
+out_parent="${out_dir%/*}"
+out_name="${out_dir##*/}"
+if [ "$out_parent" = "$out_dir" ]; then
+    out_parent="."
+fi
+case "$out_parent" in
+    .|..|./*|../*|/*)
+        ;;
+    *)
+        out_parent="./$out_parent"
+        ;;
+esac
+out_dir="${out_parent}/${out_name}"
+
 if [ -n "$state_snapshot_source" ]; then
     case "$state_snapshot_source" in
         *://*)
@@ -141,17 +167,93 @@ if start > end:
     raise SystemExit("ERROR: --since must not be later than --until")
 PY
 
-mkdir -p "$out_dir"
-[ -d "$out_dir" ] || {
+oci_bin="${OCI_BIN:-oci}"
+oci_connection_timeout="${OCI_CONNECTION_TIMEOUT:-15}"
+oci_read_timeout="${OCI_READ_TIMEOUT:-60}"
+curl_connection_timeout="${EVIDENCE_CURL_CONNECTION_TIMEOUT:-10}"
+curl_max_time="${EVIDENCE_CURL_MAX_TIME:-60}"
+lock_max_time="${EVIDENCE_LOCK_MAX_TIME:-60}"
+
+for timeout_value in \
+    "$oci_connection_timeout" \
+    "$oci_read_timeout" \
+    "$curl_connection_timeout" \
+    "$curl_max_time" \
+    "$lock_max_time"; do
+    case "$timeout_value" in
+        ''|*[!0-9]*) fail_usage "timeouts must be positive integer seconds" ;;
+    esac
+    case "$timeout_value" in
+        *[1-9]*) ;;
+        *) fail_usage "timeouts must be positive integer seconds" ;;
+    esac
+done
+
+mkdir -p "$out_parent"
+[ -d "$out_parent" ] || {
     echo "ERROR: output path is not a directory: $out_dir" >&2
     exit 1
 }
 
+if [ -L "$out_dir" ]; then
+    fail_usage "output path must not be a symlink: $out_dir"
+fi
+if [ -e "$out_dir" ] && [ ! -d "$out_dir" ]; then
+    fail_usage "output path is not a directory: $out_dir"
+fi
+
+lock_dir="${out_dir}.lock"
+transaction_dir=""
+work_dir=""
+backup_dir=""
+previous_moved=0
+lock_acquired=0
+
+cleanup() {
+    local exit_status=$?
+    trap - EXIT HUP INT TERM
+
+    # If the second commit move failed, put the old bundle back before
+    # removing the transaction directory. A failed capture must never leave
+    # callers with an empty or half-written destination.
+    if [ "$previous_moved" -eq 1 ] && [ ! -e "$out_dir" ] && [ -e "$backup_dir" ]; then
+        if ! mv "$backup_dir" "$out_dir"; then
+            echo "ERROR: could not restore the previous evidence bundle: $out_dir" >&2
+            exit_status=1
+        fi
+    fi
+    if [ -n "$transaction_dir" ] && [ -d "$transaction_dir" ]; then
+        rm -rf -- "$transaction_dir" || true
+    fi
+    if [ "$lock_acquired" -eq 1 ]; then
+        rmdir -- "$lock_dir" 2>/dev/null || true
+    fi
+    exit "$exit_status"
+}
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# Serialise same-destination captures. Atomic replacement protects readers
+# from partial files, while this bounded lock also prevents two OCI captures
+# from racing and publishing an arbitrary last-writer result.
+lock_attempts=$((lock_max_time * 10))
+lock_attempt=0
+while ! mkdir "$lock_dir" 2>/dev/null; do
+    if [ "$lock_attempt" -ge "$lock_attempts" ]; then
+        echo "ERROR: timed out waiting for evidence bundle lock: $out_dir" >&2
+        exit 1
+    fi
+    lock_attempt=$((lock_attempt + 1))
+    sleep 0.1
+done
+lock_acquired=1
+
 # Re-exporting into an existing bundle is supported, but only generated
-# artifacts may be replaced. Rejecting unknown entries keeps an interrupted or
-# hand-edited directory from silently producing a manifest that cannot be
-# checked, while removing known optional artifacts prevents stale receipts
-# from surviving a run that omits those inputs.
+# artifacts may be replaced. Rejecting unknown entries keeps a hand-edited
+# directory from silently producing a manifest that cannot be checked. The
+# old directory itself is not modified; it is moved aside only at commit time.
 for existing in "$out_dir"/* "$out_dir"/.[!.]* "$out_dir"/..?*; do
     if [ ! -e "$existing" ] && [ ! -L "$existing" ]; then
         continue
@@ -169,25 +271,14 @@ for artifact in instance.json audit-events.json state_history.json state_snapsho
     artifact_path="${out_dir}/${artifact}"
     if [ -e "$artifact_path" ] || [ -L "$artifact_path" ]; then
         [ -f "$artifact_path" ] || fail_usage "output artifact is not a regular file: $artifact"
-        rm -f "$artifact_path"
     fi
 done
 
-oci_bin="${OCI_BIN:-oci}"
-oci_connection_timeout="${OCI_CONNECTION_TIMEOUT:-15}"
-oci_read_timeout="${OCI_READ_TIMEOUT:-60}"
-curl_connection_timeout="${EVIDENCE_CURL_CONNECTION_TIMEOUT:-10}"
-curl_max_time="${EVIDENCE_CURL_MAX_TIME:-60}"
-
-for timeout_value in "$oci_connection_timeout" "$oci_read_timeout" "$curl_connection_timeout" "$curl_max_time"; do
-    case "$timeout_value" in
-        ''|*[!0-9]*) fail_usage "timeouts must be positive integer seconds" ;;
-    esac
-    case "$timeout_value" in
-        *[1-9]*) ;;
-        *) fail_usage "timeouts must be positive integer seconds" ;;
-    esac
-done
+transaction_dir="$(mktemp -d "${out_parent}/.${out_name}.tmp.XXXXXXXXXX")"
+chmod 700 "$transaction_dir"
+work_dir="${transaction_dir}/bundle"
+mkdir "$work_dir"
+chmod 700 "$work_dir"
 
 # OCI Audit's --end-time is exclusive. Extend the API query by one
 # microsecond while retaining the operator's original inclusive bound in the
@@ -222,21 +313,20 @@ PY
 is_allowed_oci_read() {
     [ "$#" -ge 3 ] || return 1
     case "$1:$2:$3" in
-        compute:instance:get|audit:event:list) ;;
+        compute:instance:get)
+            [ "$#" -eq 5 ] && [ "$4" = "--instance-id" ]
+            ;;
+        audit:event:list)
+            [ "$#" -eq 10 ] \
+                && [ "$4" = "--compartment-id" ] \
+                && [ "$6" = "--start-time" ] \
+                && [ "$8" = "--end-time" ] \
+                && [ "${10}" = "--all" ]
+            ;;
         *)
             return 1
             ;;
     esac
-    shift 3
-    local arg
-    for arg in "$@"; do
-        case "$arg" in
-            start|stop|terminate|action|--start|--stop|--terminate|--action)
-                return 1
-                ;;
-        esac
-    done
-    return 0
 }
 
 run_oci() {
@@ -266,13 +356,13 @@ quote_for_manifest() {
     esac
 }
 
-redact_url_for_manifest() {
+strip_url_query_for_manifest() {
     local url="$1"
     case "$url" in
         *\?*)
-            # Keep the object URL identifiable while never persisting query
-            # credentials or presigned expiry/signature parameters.
-            printf '%s?<redacted-url>' "${url%%\?*}"
+            # Keep only the object path. Query credentials, expiry, and
+            # signature parameters must never enter a persisted manifest.
+            printf '%s' "${url%%\?*}"
             ;;
         *)
             printf '%s' "$url"
@@ -280,11 +370,11 @@ redact_url_for_manifest() {
     esac
 }
 
-instance_file="${out_dir}/instance.json"
-audit_file="${out_dir}/audit-events.json"
-history_file="${out_dir}/state_history.json"
-snapshot_file="${out_dir}/state_snapshot.json"
-receipts_file="${out_dir}/wp_describe_receipts.json"
+instance_file="${work_dir}/instance.json"
+audit_file="${work_dir}/audit-events.json"
+history_file="${work_dir}/state_history.json"
+snapshot_file="${work_dir}/state_snapshot.json"
+receipts_file="${work_dir}/wp_describe_receipts.json"
 
 oci_timeout_command="--connection-timeout ${oci_connection_timeout} --read-timeout ${oci_read_timeout}"
 instance_command="$(quote_for_manifest "$oci_bin") compute instance get --instance-id $(quote_for_manifest "$instance_id") ${oci_timeout_command} --output json"
@@ -318,6 +408,17 @@ from gpu_burst_evidence import build_state_history_document
 with Path(audit_path).open(encoding="utf-8") as handle:
     audit = json.load(handle)
 document = build_state_history_document(audit, instance_id=instance_id, since=since, until=until)
+states = [item.get("state") for item in document.get("observations", [])]
+if states != ["STOPPED", "RUNNING", "STOPPED"]:
+    document["state"] = "unknown"
+    if not states:
+        document["reason"] = "no authoritative lifecycle transition was observed in the capture window"
+    elif states[0] != "STOPPED":
+        document["reason"] = "the initial lifecycle state was not independently observed in the capture window"
+    elif states[-1] != "STOPPED":
+        document["reason"] = "the final lifecycle state was not independently observed in the capture window"
+    else:
+        document["reason"] = "the capture window does not contain a complete authoritative lifecycle history"
 with Path(output_path).open("w", encoding="utf-8") as handle:
     json.dump(document, handle, indent=2, sort_keys=True)
     handle.write("\n")
@@ -333,8 +434,8 @@ if [ -n "$state_snapshot_source" ]; then
                 --connect-timeout "$curl_connection_timeout" \
                 --max-time "$curl_max_time" \
                 --output "$snapshot_file" "$state_snapshot_source"
-            redacted_snapshot_url="$(redact_url_for_manifest "$state_snapshot_source")"
-            snapshot_command="curl --fail --silent --show-error --location --connect-timeout ${curl_connection_timeout} --max-time ${curl_max_time} --output state_snapshot.json ${redacted_snapshot_url}"
+            snapshot_url_without_query="$(strip_url_query_for_manifest "$state_snapshot_source")"
+            snapshot_command="curl --fail --silent --show-error --location --connect-timeout ${curl_connection_timeout} --max-time ${curl_max_time} --output state_snapshot.json ${snapshot_url_without_query}"
             ;;
         *)
             cp "$state_snapshot_source" "$snapshot_file"
@@ -349,8 +450,21 @@ if [ -n "$wp_receipts_source" ]; then
     receipts_command="cp $(quote_for_manifest "$wp_receipts_source") wp_describe_receipts.json"
 fi
 
+# `cp` can retain a permissive source mode even under a restrictive umask;
+# explicitly enforce the bundle's private receipt modes before hashing them.
+for artifact_path in "$instance_file" "$audit_file" "$history_file"; do
+    chmod 600 "$artifact_path"
+done
+if [ -n "$state_snapshot_source" ]; then
+    chmod 600 "$snapshot_file"
+fi
+if [ -n "$wp_receipts_source" ]; then
+    chmod 600 "$receipts_file"
+fi
+chmod 700 "$work_dir"
+
 capture_time="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-"$resolved_python" - "$out_dir" "$instance_id" "$compartment_id" "$since" "$until" "$capture_time" \
+"$resolved_python" - "$work_dir" "$instance_id" "$compartment_id" "$since" "$until" "$capture_time" \
     "$instance_command" "$audit_command" "$history_command" "$snapshot_command" "$receipts_command" <<'PY'
 from __future__ import annotations
 
@@ -404,5 +518,24 @@ with temporary.open("w", encoding="utf-8") as handle:
     handle.write("\n")
 os.replace(temporary, root / "manifest.json")
 PY
+
+chmod 600 "$work_dir/manifest.json"
+
+# A directory rename cannot replace a non-empty directory in place. Move the
+# previous complete bundle into the transaction directory only after all new
+# receipts and the manifest have succeeded, then move the prepared bundle to
+# the destination. The EXIT trap restores the old bundle if the second move
+# fails.
+if [ -e "$out_dir" ]; then
+    backup_dir="${transaction_dir}/previous"
+    mv "$out_dir" "$backup_dir"
+    previous_moved=1
+fi
+mv "$work_dir" "$out_dir"
+work_dir=""
+if [ -n "$transaction_dir" ]; then
+    rm -rf -- "$transaction_dir" || true
+    transaction_dir=""
+fi
 
 echo "GPU evidence bundle: $out_dir"

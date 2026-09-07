@@ -23,6 +23,39 @@ from scene.domain.describe_run import DescribeItemStatus, DescribeRunStatus
 from scene.tests.test_describe_run_repository import _sessionmaker
 
 
+def _install_healthy_observability_session(app) -> None:
+    """Pin startup health assertions to the pool-aware liveness contract."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from db.settings import get_database_settings
+    from recognition.interface_adapters.http import deps as dependencies
+
+    dim = int(get_database_settings().pgvector_dimension)
+    rows = [
+        ("media_identities", "embedding", dim),
+        ("identity_cluster_representatives", "embedding", dim),
+        ("mv_identity_cluster_centroids", "centroid", dim),
+    ]
+    result = MagicMock()
+    result.all = MagicMock(return_value=rows)
+    session = MagicMock()
+    session.execute = AsyncMock(return_value=result)
+
+    class _NestedTransaction:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+    session.begin_nested = MagicMock(return_value=_NestedTransaction())
+
+    async def _session_yielder():
+        yield session
+
+    app.dependency_overrides[dependencies.get_observability_session] = _session_yielder
+
+
 def test_reclaim_derives_terminal_status_and_preserves_completed_items():
     async def body():
         engine, sf = await _sessionmaker()
@@ -238,6 +271,7 @@ def test_startup_reclaim_failure_does_not_block_boot_and_is_wired(monkeypatch):
     monkeypatch.setattr(load_mod, "run_startup_load_snapshot", track_snapshot)
 
     app = create_app()
+    _install_healthy_observability_session(app)
     with TestClient(app) as client:  # __enter__ runs the lifespan startup
         resp = client.get("/health")
         assert resp.status_code == 200, resp.text
@@ -273,6 +307,7 @@ def test_startup_boot_order_reclaim_then_purge_then_snapshot(monkeypatch):
     monkeypatch.setattr(load_mod, "run_startup_load_snapshot", snapshot_ok)
 
     app = create_app()
+    _install_healthy_observability_session(app)
     with TestClient(app) as client:
         assert client.get("/health").status_code == 200
     assert order == ["reclaim", "purge", "snapshot"]
@@ -304,6 +339,7 @@ def test_startup_purge_or_snapshot_failure_does_not_block_boot(monkeypatch):
     monkeypatch.setattr(load_mod, "run_startup_load_snapshot", snapshot_boom)
 
     app = create_app()
+    _install_healthy_observability_session(app)
     with TestClient(app) as client:
         assert client.get("/health").status_code == 200
     # Snapshot still runs after purge failure; both failures are swallowed.

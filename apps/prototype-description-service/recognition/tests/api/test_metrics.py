@@ -12,6 +12,39 @@ from prometheus_client import CollectorRegistry
 from prometheus_client.parser import text_string_to_metric_families
 
 
+def _install_healthy_observability_session(app) -> None:
+    """Keep integration metrics assertions independent of a live database."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from db.settings import get_database_settings
+    from recognition.interface_adapters.http import deps as dependencies
+
+    dim = int(get_database_settings().pgvector_dimension)
+    rows = [
+        ("media_identities", "embedding", dim),
+        ("identity_cluster_representatives", "embedding", dim),
+        ("mv_identity_cluster_centroids", "centroid", dim),
+    ]
+    result = MagicMock()
+    result.all = MagicMock(return_value=rows)
+    session = MagicMock()
+    session.execute = AsyncMock(return_value=result)
+
+    class _NestedTransaction:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+    session.begin_nested = MagicMock(return_value=_NestedTransaction())
+
+    async def _session_yielder():
+        yield session
+
+    app.dependency_overrides[dependencies.get_observability_session] = _session_yielder
+
+
 def _build_app_with_metrics(registry: CollectorRegistry):
     """Build an isolated FastAPI app with MetricsMiddleware bound to a fresh registry."""
     from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
@@ -181,6 +214,7 @@ def test_production_app_exposes_metrics_endpoint(monkeypatch) -> None:
     from recognition.interface_adapters.http.deps.auth import AuthContext, require_auth
 
     app = create_app()
+    _install_healthy_observability_session(app)
     client = TestClient(app)
 
     # Anonymous: 401 from require_auth.

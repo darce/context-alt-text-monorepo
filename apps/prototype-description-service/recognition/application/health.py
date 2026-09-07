@@ -7,6 +7,7 @@ functions — the HTTP layer owns wiring them to FastAPI dependencies.
 
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import hashlib
 import logging
@@ -28,6 +29,7 @@ from recognition.interface_adapters.http.deps.circuit_breaker import (
     BreakerState,
     SessionDependencyCircuitBreaker,
 )
+from shared.disk_headroom import DiskHeadroom, get_disk_headroom_settings, probe_disk_headroom
 from shared.health import HealthReport, HealthStatus
 
 logger = logging.getLogger(__name__)
@@ -100,6 +102,7 @@ class CheckResult:
     name: str
     status: HealthStatus
     detail: str
+    payload: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {"name": self.name, "status": self.status.value, "detail": self.detail}
@@ -108,6 +111,108 @@ class CheckResult:
 def check_health() -> HealthReport:
     """Return a static health signal for the recognition service."""
     return HealthReport.ok("recognition")
+
+
+def _disk_headroom_result(
+    *,
+    status: HealthStatus,
+    probe_path: str | None,
+    free_bytes: int,
+    total_bytes: int,
+    min_bytes: int,
+    reason: str,
+    detail: str | None = None,
+) -> CheckResult:
+    """Build the readiness result and the structured operator payload together."""
+    payload = {
+        "probe_path": probe_path,
+        "free_bytes": int(free_bytes),
+        "total_bytes": int(total_bytes),
+        "min_bytes": int(min_bytes),
+        "status": status.value,
+        "reason": reason,
+    }
+    return CheckResult(
+        "disk_headroom",
+        status,
+        detail
+        or (
+            f"reason={reason}; free_bytes={free_bytes}; min_bytes={min_bytes}; "
+            f"probe_path={probe_path}"
+        ),
+        payload=payload,
+    )
+
+
+def disk_headroom_probe_failure(reason: str) -> CheckResult:
+    """Return a degraded result for a bounded probe failure.
+
+    Disk pressure is advisory for readiness: failures must remain visible but
+    can never become the UNHEALTHY/503 path owned by the database probe.
+    """
+    try:
+        settings = get_disk_headroom_settings()
+        probe_path = settings.probe_path
+        min_bytes = settings.min_bytes
+    except Exception as exc:  # noqa: BLE001 - health must never raise
+        probe_path = None
+        min_bytes = 0
+        reason = f"{reason}; settings unavailable: {type(exc).__name__}"
+    return _disk_headroom_result(
+        status=HealthStatus.DEGRADED,
+        probe_path=probe_path,
+        free_bytes=0,
+        total_bytes=0,
+        min_bytes=min_bytes,
+        reason=reason,
+    )
+
+
+async def check_disk_headroom() -> CheckResult:
+    """Probe optional Postgres filesystem headroom without blocking the loop.
+
+    ``probe_disk_headroom`` retains the raw probe status (including
+    ``UNHEALTHY`` for low space or errors). Readiness deliberately projects
+    every non-OK result to ``DEGRADED`` so only database liveness can return
+    HTTP 503. The synchronous ``statvfs`` call runs in a worker thread.
+    """
+    try:
+        settings = get_disk_headroom_settings()
+    except Exception as exc:  # noqa: BLE001 - health must never raise
+        return disk_headroom_probe_failure(f"settings_error: {type(exc).__name__}")
+
+    if settings.probe_path is None:
+        return _disk_headroom_result(
+            status=HealthStatus.OK,
+            probe_path=None,
+            free_bytes=0,
+            total_bytes=0,
+            min_bytes=settings.min_bytes,
+            reason="disabled: ACX_PG_HEADROOM_PROBE_PATH unset",
+            detail="disabled: ACX_PG_HEADROOM_PROBE_PATH unset",
+        )
+
+    try:
+        probe: DiskHeadroom = await asyncio.to_thread(probe_disk_headroom, settings.probe_path)
+    except Exception as exc:  # noqa: BLE001 - health must never raise
+        return _disk_headroom_result(
+            status=HealthStatus.DEGRADED,
+            probe_path=settings.probe_path,
+            free_bytes=0,
+            total_bytes=0,
+            min_bytes=settings.min_bytes,
+            reason=f"unable to probe disk headroom: {type(exc).__name__}",
+        )
+
+    status = HealthStatus.OK if probe.status is HealthStatus.OK else HealthStatus.DEGRADED
+    return _disk_headroom_result(
+        status=status,
+        probe_path=probe.probe_path,
+        free_bytes=probe.free_bytes,
+        total_bytes=probe.total_bytes,
+        min_bytes=settings.min_bytes,
+        reason=probe.reason,
+    )
 
 
 def _row_triple(row: Any) -> tuple[str, str, Any]:

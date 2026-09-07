@@ -45,8 +45,14 @@ const mockControl = (data: GpuStatusResponse, overrides: Partial<ReturnType<type
     error: null,
     refetch: vi.fn(),
     canStart: data.gpu_state.state === 'stopped',
+    startBlockedReason: null,
     canStop: data.gpu_state.state !== 'stopped' && !data.load.has_work,
-    stopBlockedReason: data.gpu_state.state === 'stopped' ? 'already stopped' : data.load.has_work ? 'a describe run is in flight — stops once it finishes' : null,
+    stopBlockedReason:
+      data.gpu_state.state === 'stopped'
+        ? 'already stopped'
+        : data.load.has_work
+          ? 'a describe run is in flight — stops once it finishes'
+          : null,
     canReturnToAuto: data.gpu_state.intent !== GPU_INTENT_ACTION.AUTO,
     requestIntent: vi.fn(),
     isIntentPending: false,
@@ -89,7 +95,11 @@ describe('GpuControlCard', () => {
 
   it('renders warm-up ETA and the faster polling note', () => {
     mockControl(
-      statusResponse({ state: 'warming', intent: GPU_INTENT_ACTION.START, instance_running_since: '2026-09-07T11:59:00Z' }),
+      statusResponse({
+        state: 'warming',
+        intent: GPU_INTENT_ACTION.START,
+        instance_running_since: '2026-09-07T11:59:00Z',
+      }),
     );
     render(<GpuControlCard />);
 
@@ -99,7 +109,10 @@ describe('GpuControlCard', () => {
   });
 
   it('disables Stop with the work-in-flight reason', () => {
-    mockControl(statusResponse({ state: 'ready' }), { canStop: false, stopBlockedReason: 'a describe run is in flight — stops once it finishes' });
+    mockControl(statusResponse({ state: 'ready' }), {
+      canStop: false,
+      stopBlockedReason: 'a describe run is in flight — stops once it finishes',
+    });
     render(<GpuControlCard />);
 
     expect(screen.getByRole('button', { name: /Stop GPU/ })).toBeDisabled();
@@ -107,21 +120,35 @@ describe('GpuControlCard', () => {
   });
 
   it('renders a pending stop notice for blocked work', () => {
-    mockControl(statusResponse({ state: 'degraded', intent: GPU_INTENT_ACTION.STOP, intent_status: GPU_INTENT_STATUS.BLOCKED_WORK_IN_FLIGHT }));
+    mockControl(
+      statusResponse({
+        state: 'degraded',
+        intent: GPU_INTENT_ACTION.STOP,
+        intent_status: GPU_INTENT_STATUS.BLOCKED_WORK_IN_FLIGHT,
+      }),
+    );
     render(<GpuControlCard />);
 
     expect(screen.getByText(/Stop pending/)).toBeInTheDocument();
     expect(screen.getByText(/stops when it ends/)).toBeInTheDocument();
   });
 
-  it('renders stale telemetry as not reported with its age', () => {
-    mockControl({ ...statusResponse({ state: 'ready' }), snapshot_age_seconds: 240, snapshot_fresh: false }, { canStart: true });
+  it('renders stale telemetry as not reported and disables Start with its age', () => {
+    mockControl(
+      { ...statusResponse({ state: 'ready' }), snapshot_age_seconds: 240, snapshot_fresh: false },
+      {
+        canStart: false,
+        startBlockedReason: 'Lifecycle telemetry is stale — refresh before starting the GPU.',
+      },
+    );
     render(<GpuControlCard />);
 
-    expect(screen.getByText(`${GPU_STATE_VOCABULARY.tierPrefix} ${GPU_STATE_VOCABULARY.notReported}`)).toBeInTheDocument();
+    expect(
+      screen.getByText(`${GPU_STATE_VOCABULARY.tierPrefix} ${GPU_STATE_VOCABULARY.notReported}`),
+    ).toBeInTheDocument();
     expect(screen.getByText(/last snapshot 4 min ago \(stale\)/)).toBeInTheDocument();
     expect(screen.getByText(/Lifecycle telemetry is stale/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Start GPU' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Start GPU' })).toBeDisabled();
   });
 
   it('renders a 502 error with a retry control', () => {

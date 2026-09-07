@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from db.tenant_context import get_tenant_record, set_tenant_context
 from scene.application.describe_load import dump_load_snapshot
 from scene.application.describe_run_repository import DescribeRunRepository
+from scene.application.identity_merge import NamingRealizer, NamingStatus
 from scene.application.naming_preview_service import (
     faces_for_naming_preview,
     load_fusion_naming_inputs,
@@ -49,6 +50,7 @@ class FusionNamingInputs(NamedTuple):
 
 
 EMPTY_NAMING_INPUTS = FusionNamingInputs(confirmed_faces=[], naming_policy=None)
+_NAMING_BUDGET_EXCEEDED = object()
 
 
 class MissingNamingSnapshotError(RuntimeError):
@@ -310,20 +312,61 @@ async def _naming_lookup_for_item(
                 timeout=NAMING_BUDGET_SECONDS,
             )
             return FusionNamingInputs(*loaded)
+    except asyncio.TimeoutError:
+        logger.warning("naming budget exceeded during lookup media_id=%s; continuing without names", media_id)
+        return _NAMING_BUDGET_EXCEEDED
     except Exception:  # noqa: BLE001 - naming lookup must not fail the item
         logger.exception("naming lookup failed media_id=%s; describing without names", media_id)
         return None
 
 
-def _naming_provenance_payload(provenance) -> dict:
+def _naming_provenance_payload(
+    provenance,
+    *,
+    status: NamingStatus | None = None,
+    realizer: NamingRealizer | None = None,
+    names_applied: list[str] | None = None,
+) -> dict:
+    """Return the additive C7 naming payload while retaining legacy fields."""
     dump = getattr(provenance, "model_dump", None)
     if callable(dump):
         payload = dump()
-        if isinstance(payload, dict):
-            return payload
-    if isinstance(provenance, dict):
-        return provenance
-    return {}
+    elif isinstance(provenance, dict):
+        payload = dict(provenance)
+    else:
+        payload = {}
+
+    if not isinstance(payload, dict):
+        payload = {}
+    injected_names = payload.get("injected_names") or []
+    if names_applied is None:
+        names_applied = payload.get("names_applied")
+    if names_applied is None:
+        names_applied = [
+            item.get("name")
+            for item in injected_names
+            if isinstance(item, dict) and isinstance(item.get("name"), str)
+        ]
+    names_applied = list(names_applied)
+
+    existing_status = payload.get("status")
+    if status is None:
+        status = existing_status or (NamingStatus.APPLIED if names_applied else NamingStatus.NO_FACES)
+    status_value = getattr(status, "value", status)
+    payload["status"] = status_value
+
+    existing_realizer = payload.get("realizer")
+    if realizer is None:
+        realizer = existing_realizer
+    if realizer is None:
+        mode = payload.get("mode")
+        if mode == "grounded":
+            realizer = NamingRealizer.GROUNDED
+        elif mode == "positional":
+            realizer = NamingRealizer.POSITIONAL_FALLBACK
+    payload["realizer"] = getattr(realizer, "value", realizer) if realizer is not None else None
+    payload["names_applied"] = names_applied
+    return payload
 
 
 async def _apply_naming_preview(
@@ -338,20 +381,32 @@ async def _apply_naming_preview(
     naming_inputs: FusionNamingInputs | None,
     item_started: float,
     item_envelope: float,
+    naming_budget_exceeded: bool = False,
 ) -> DescribeItemOutcome:
     """Fuse names into alt_text_draft (the same generic_draft field the router uses).
 
     Preview wait_for is ``min(NAMING_BUDGET_SECONDS, remaining_envelope)``. Remaining
     <= 0 skips preview and keeps the generic draft (same path as a lookup timeout).
     """
-    if not enabled or tenant is None or not image_bytes or naming_inputs is None:
-        return outcome
+    def with_naming_payload(payload: dict) -> DescribeItemOutcome:
+        merged = dict(outcome.provenance or {})
+        merged["naming"] = payload
+        return replace(outcome, provenance=merged)
+
+    if naming_budget_exceeded:
+        logger.warning("naming budget exceeded media_id=%s; keeping generic draft", media_id)
+        return with_naming_payload(_naming_provenance_payload(None, status=NamingStatus.SKIPPED_BUDGET))
+    if not enabled:
+        return with_naming_payload(_naming_provenance_payload(None, status=NamingStatus.DISABLED))
+    if tenant is None or not image_bytes or naming_inputs is None or naming_inputs is _NAMING_BUDGET_EXCEEDED:
+        return with_naming_payload(_naming_provenance_payload(None, status=NamingStatus.NO_FACES))
     faces, policy = naming_inputs
-    if policy is None:
-        return outcome
+    if policy is None or not faces:
+        return with_naming_payload(_naming_provenance_payload(None, status=NamingStatus.NO_FACES))
     remaining = item_envelope - (time.monotonic() - item_started)
     if remaining <= 0:
-        return outcome
+        logger.warning("naming budget exceeded before preview media_id=%s; keeping generic draft", media_id)
+        return with_naming_payload(_naming_provenance_payload(None, status=NamingStatus.SKIPPED_BUDGET))
     preview_timeout = min(NAMING_BUDGET_SECONDS, remaining)
     try:
         phrase_boxes = outcome.phrase_boxes or ()
@@ -370,12 +425,18 @@ async def _apply_naming_preview(
             ),
             timeout=preview_timeout,
         )
-        merged = dict(outcome.provenance or {})
-        merged["naming"] = _naming_provenance_payload(provenance)
-        return replace(outcome, alt_text_draft=named, provenance=merged)
+        payload = _naming_provenance_payload(provenance)
+        return replace(
+            outcome,
+            alt_text_draft=named,
+            provenance={**dict(outcome.provenance or {}), "naming": payload},
+        )
+    except asyncio.TimeoutError:
+        logger.warning("naming budget exceeded during preview media_id=%s; keeping generic draft", media_id)
+        return with_naming_payload(_naming_provenance_payload(None, status=NamingStatus.SKIPPED_BUDGET))
     except Exception:  # noqa: BLE001 - a naming fault must not fail the described item
         logger.exception("naming preview failed media_id=%s; continuing without names", media_id)
-        return outcome
+        return with_naming_payload(_naming_provenance_payload(None, status=NamingStatus.NO_FACES))
 
 
 async def run_describe_job(
@@ -483,7 +544,8 @@ async def run_describe_job(
                         media_id=item.media_id,
                         image_bytes=image_bytes,
                     )
-                    if naming_inputs is not None:
+                    naming_budget_exceeded = naming_inputs is _NAMING_BUDGET_EXCEEDED
+                    if naming_inputs is not None and not naming_budget_exceeded:
                         describe_naming_inputs: FusionNamingInputs | None = naming_inputs
                     elif run is not None and run.recognition_enabled:
                         describe_naming_inputs = EMPTY_NAMING_INPUTS
@@ -510,6 +572,7 @@ async def run_describe_job(
                         naming_inputs=naming_inputs,
                         item_started=item_started,
                         item_envelope=item_envelope,
+                        naming_budget_exceeded=naming_budget_exceeded,
                     )
                 except _RunCancelledError:
                     await repo.mark_item(

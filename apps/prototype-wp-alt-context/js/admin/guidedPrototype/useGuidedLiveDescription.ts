@@ -388,9 +388,9 @@ export const useGuidedLiveDescription = ({
           // A submit-time warm pin can be wrong. If the run reports a colder GPU
           // than the pin assumed, give the wait back the warm-up leg it now
           // owes. This fires on every poll, disclosure or not: the reducer
-          // re-derives the deadline from the same disclosed budget against the
-          // wider ceiling and keeps the larger of the two, so it is idempotent
-          // while a stale `gpu_state` at submit stays recoverable.
+          // re-derives the deadline from the same disclosed budget with the
+          // newly owed warm-up leg and keeps the larger of the two, so it is
+          // idempotent while a stale `gpu_state` at submit stays recoverable.
           dispatch({ kind: 'deadline_raised', deadlineSeconds: guidedLiveCeilingSecondsFor(gpu), gpu });
           dispatch({
             kind: 'polled',

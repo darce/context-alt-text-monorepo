@@ -115,10 +115,13 @@ def _first_value(value: Any, keys: Sequence[str]) -> Any:
     return next((candidate for candidate in _nested_values(value, keys) if candidate is not None), None)
 
 
-def _manifest_entries(manifest: Mapping[str, Any]) -> list[dict[str, Any]]:
+def _raw_manifest_entries(manifest: Mapping[str, Any]) -> Any:
     raw = manifest.get("files")
-    if raw is None:
-        raw = manifest.get("artifacts", manifest.get("entries"))
+    return raw if raw is not None else manifest.get("artifacts", manifest.get("entries"))
+
+
+def _manifest_entries(manifest: Mapping[str, Any]) -> list[dict[str, Any]]:
+    raw = _raw_manifest_entries(manifest)
     if isinstance(raw, Mapping):
         return [
             {"path": path, **metadata} if isinstance(metadata, Mapping) else {"path": path, "sha256": metadata}
@@ -130,6 +133,8 @@ def _manifest_entries(manifest: Mapping[str, Any]) -> list[dict[str, Any]]:
 
 
 def _resolve_manifest_path(bundle: Path, relative: str) -> Path:
+    if "\x00" in relative:
+        raise EvidenceError(f"manifest path contains NUL byte: {relative!r}")
     path = Path(relative)
     if path.is_absolute() or relative in {"", "."} or ".." in path.parts:
         raise EvidenceError(f"manifest path is not a safe relative file: {relative!r}")
@@ -141,59 +146,87 @@ def _resolve_manifest_path(bundle: Path, relative: str) -> Path:
     return candidate
 
 
-def _verify_manifest(bundle: Path, manifest: Mapping[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
-    entries = _manifest_entries(manifest)
+def _manifest_entry_shape_failures(raw_entries: Any) -> list[str]:
+    if not isinstance(raw_entries, list):
+        return []
+    return [
+        f"manifest file entry {index} must be an object"
+        for index, entry in enumerate(raw_entries)
+        if not isinstance(entry, Mapping)
+    ]
+
+
+def _manifest_entry_digest(entry: Mapping[str, Any]) -> str | None:
+    digest = entry.get("sha256", entry.get("digest"))
+    if not isinstance(digest, str) or len(digest) != 64 or any(char not in "0123456789abcdefABCDEF" for char in digest):
+        return None
+    return digest
+
+
+def _verify_manifest_entry(
+    bundle: Path, entry: Mapping[str, Any], listed: set[str]
+) -> tuple[dict[str, Any] | None, str | None]:
+    relative = entry.get("path")
+    if not isinstance(relative, str) or not relative:
+        return None, "manifest contains an entry without a path"
+    if relative in listed:
+        return None, f"manifest lists {relative!r} more than once"
+    listed.add(relative)
+    digest = _manifest_entry_digest(entry)
+    if digest is None:
+        return None, f"manifest has invalid sha256 for {relative}"
+    try:
+        target = _resolve_manifest_path(bundle, relative)
+        actual = hashlib.sha256(target.read_bytes()).hexdigest()
+    except (EvidenceError, OSError, ValueError) as exc:
+        return None, str(exc)
+    failure = None
+    if actual.lower() != digest.lower():
+        failure = f"sha256 mismatch for {relative}: expected {digest}, got {actual}"
+    return {"path": relative, "file": target, **entry}, failure
+
+
+def _verify_manifest_entries(
+    bundle: Path, entries: Sequence[Mapping[str, Any]]
+) -> tuple[list[dict[str, Any]], set[str], list[str]]:
+    listed: set[str] = set()
+    verified: list[dict[str, Any]] = []
     failures: list[str] = []
-    raw_entries = manifest.get("files")
-    if raw_entries is None:
-        raw_entries = manifest.get("artifacts", manifest.get("entries"))
-    if isinstance(raw_entries, list):
-        failures.extend(
-            f"manifest file entry {index} must be an object"
-            for index, entry in enumerate(raw_entries)
-            if not isinstance(entry, Mapping)
+    for entry in entries:
+        verified_entry, failure = _verify_manifest_entry(bundle, entry, listed)
+        if verified_entry is not None:
+            verified.append(verified_entry)
+        if failure is not None:
+            failures.append(failure)
+    return verified, listed, failures
+
+
+def _bundle_files(bundle: Path) -> tuple[set[str], str | None]:
+    try:
+        return (
+            {
+                str(path.relative_to(bundle.resolve()))
+                for path in bundle.resolve().rglob("*")
+                if path.is_file() and path.name != "manifest.json"
+            },
+            None,
         )
+    except OSError as exc:
+        return set(), f"cannot enumerate bundle files: {exc}"
+
+
+def _verify_manifest(bundle: Path, manifest: Mapping[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
+    raw_entries = _raw_manifest_entries(manifest)
+    entries = _manifest_entries(manifest)
+    failures = _manifest_entry_shape_failures(raw_entries)
     if not entries:
         return [], failures + ["manifest has no file entries"]
 
-    listed: set[str] = set()
-    verified: list[dict[str, Any]] = []
-    for entry in entries:
-        relative = entry.get("path")
-        digest = entry.get("sha256", entry.get("digest"))
-        if not isinstance(relative, str) or not relative:
-            failures.append("manifest contains an entry without a path")
-            continue
-        if relative in listed:
-            failures.append(f"manifest lists {relative!r} more than once")
-            continue
-        listed.add(relative)
-        if (
-            not isinstance(digest, str)
-            or len(digest) != 64
-            or any(char not in "0123456789abcdefABCDEF" for char in digest)
-        ):
-            failures.append(f"manifest has invalid sha256 for {relative}")
-            continue
-        try:
-            target = _resolve_manifest_path(bundle, relative)
-            actual = hashlib.sha256(target.read_bytes()).hexdigest()
-        except (EvidenceError, OSError) as exc:
-            failures.append(str(exc))
-            continue
-        if actual.lower() != digest.lower():
-            failures.append(f"sha256 mismatch for {relative}: expected {digest}, got {actual}")
-        verified.append({"path": relative, "file": target, **entry})
-
-    try:
-        actual_files = {
-            str(path.relative_to(bundle.resolve()))
-            for path in bundle.resolve().rglob("*")
-            if path.is_file() and path.name != "manifest.json"
-        }
-    except OSError as exc:
-        failures.append(f"cannot enumerate bundle files: {exc}")
-        actual_files = set()
+    verified, listed, entry_failures = _verify_manifest_entries(bundle, entries)
+    failures.extend(entry_failures)
+    actual_files, enumeration_failure = _bundle_files(bundle)
+    if enumeration_failure is not None:
+        failures.append(enumeration_failure)
     unlisted = sorted(actual_files - listed)
     if unlisted:
         failures.append("unlisted bundle file(s): " + ", ".join(unlisted))
@@ -275,47 +308,100 @@ def _instance_state(payload: Any) -> str | None:
     return None
 
 
-def _state_observations(payload: Any) -> list[tuple[float, str, str]]:
-    """Read ``(timestamp, state, source)`` triples from state history JSON."""
+_STATE_HISTORY_CONTAINER_KEYS = ("observations", "states", "state_history", "state-history", "history", "transitions")
+_STATE_OBSERVATION_TIME_KEYS = (
+    "timestamp",
+    "time",
+    "observed_at",
+    "observedAt",
+    "eventTime",
+    "event_time",
+    "at",
+    "written_at",
+    "writtenAt",
+    "generated_at",
+    "generatedAt",
+)
 
-    if isinstance(payload, Mapping):
-        for key in ("observations", "states", "state_history", "state-history", "history", "transitions"):
-            value = payload.get(key)
-            if isinstance(value, (Mapping, list)):
-                observations = _state_observations(value)
-                if observations:
-                    return observations
-        data = payload.get("data")
-        if isinstance(data, list):
-            return _state_observations(data)
-        if _observation_is_inferred(payload):
-            return []
-        state = _state_from_mapping(payload)
-        timestamp = _parse_time(
-            _first_value(
-                payload,
-                (
-                    "timestamp",
-                    "time",
-                    "observed_at",
-                    "observedAt",
-                    "eventTime",
-                    "event_time",
-                    "at",
-                    "written_at",
-                    "writtenAt",
-                    "generated_at",
-                    "generatedAt",
-                ),
-            )
-        )
-        return [(timestamp, state, "state-history")] if state is not None and timestamp is not None else []
+
+def _state_observation_time(value: Mapping[str, Any]) -> float | None:
+    return _parse_time(_first_value(value, _STATE_OBSERVATION_TIME_KEYS))
+
+
+def _validate_state_observation(value: Any, label: str) -> tuple[tuple[float, str, str] | None, str | None]:
+    if not isinstance(value, Mapping):
+        return None, f"{label} must be an object"
+    if _observation_is_inferred(value):
+        return None, None
+    state = _state_from_mapping(value)
+    if state is None:
+        return None, f"{label} is missing a state"
+    timestamp = _state_observation_time(value)
+    if timestamp is None:
+        return None, f"{label} has invalid or missing timestamp"
+    return (timestamp, state, "state-history"), None
+
+
+def _parse_state_observation_collection(
+    payload: list[Any], label: str
+) -> tuple[list[tuple[float, str, str]], list[str]]:
+    observations: list[tuple[float, str, str]] = []
+    failures: list[str] = []
+    for index, item in enumerate(payload):
+        observation, failure = _validate_state_observation(item, f"{label} observation {index}")
+        if observation is not None:
+            observations.append(observation)
+        if failure is not None:
+            failures.append(failure)
+    return observations, failures
+
+
+def _parse_state_observation_container(
+    payload: Mapping[str, Any],
+) -> tuple[list[tuple[float, str, str]], list[str]] | None:
+    for key in _STATE_HISTORY_CONTAINER_KEYS:
+        value = payload.get(key)
+        if isinstance(value, (Mapping, list)):
+            if isinstance(value, list):
+                observations, failures = _parse_state_observation_collection(value, key)
+            else:
+                observations, failures = _parse_state_observations(value, label=key)
+            if observations or failures:
+                return observations, failures
+    data = payload.get("data")
+    if isinstance(data, list):
+        return _parse_state_observation_collection(data, "data")
+    return None
+
+
+def _parse_state_observation_mapping(
+    payload: Mapping[str, Any], label: str
+) -> tuple[list[tuple[float, str, str]], list[str]]:
+    if _observation_is_inferred(payload) or _state_from_mapping(payload) is None:
+        return [], []
+    observation, failure = _validate_state_observation(payload, label)
+    return ([observation] if observation is not None else []), ([failure] if failure is not None else [])
+
+
+def _parse_state_observations(
+    payload: Any, *, label: str = "state history"
+) -> tuple[list[tuple[float, str, str]], list[str]]:
     if isinstance(payload, list):
-        result: list[tuple[float, str, str]] = []
-        for item in payload:
-            result.extend(_state_observations(item))
-        return result
-    return []
+        return _parse_state_observation_collection(payload, label)
+    if not isinstance(payload, Mapping):
+        return [], []
+    nested = _parse_state_observation_container(payload)
+    return nested if nested is not None else _parse_state_observation_mapping(payload, label)
+
+
+def _state_observation_report(payload: Any) -> tuple[list[tuple[float, str, str]], list[str]]:
+    """Read valid state observations and report malformed non-inferred entries."""
+
+    return _parse_state_observations(payload)
+
+
+def _state_observations(payload: Any) -> list[tuple[float, str, str]]:
+    return _state_observation_report(payload)[0]
 
 
 def _observation_is_inferred(value: Mapping[str, Any]) -> bool:
@@ -899,45 +985,63 @@ def _history_instance_id(payload: Any) -> str | None:
     return None
 
 
-def _state_checks(
-    path: Path | None, *, since: float, until: float, expected_instance_id: str | None
-) -> tuple[Any, list[tuple[float, str, str]], list[dict[str, Any]]]:
-    payload, receipt_check = _load_required(path, "state_history_receipt")
-    observations = _state_observations(payload)
-    in_window = [item for item in observations if since <= item[0] <= until]
-    raw_order_ok = _state_order_is_valid(in_window)
-    sequence = _state_sequence(in_window)
+def _state_action_order_is_valid(payload: Any, *, since: float, until: float) -> bool:
     history_actions = [action for timestamp, action in _state_action_sequence(payload) if since <= timestamp <= until]
-    action_order_ok = not history_actions or (
+    return not history_actions or (
         history_actions[0] == "START" and any(action == "STOP" for action in history_actions[1:])
     )
-    inferred_count = _inferred_observation_count(payload)
-    history_id = _history_instance_id(payload)
+
+
+def _state_history_identity_check(history_id: str | None, expected_instance_id: str | None) -> dict[str, Any]:
     identity_ok = expected_instance_id is not None and history_id == expected_instance_id
-    identity_detail = (
+    detail = (
         f"state history is missing instance_id; expected {expected_instance_id or 'selected instance'}"
         if history_id is None
         else f"state history identifies {history_id}, expected {expected_instance_id}"
     )
-    passed = identity_ok and raw_order_ok and action_order_ok and sequence == ["STOPPED", "RUNNING", "STOPPED"]
-    detail = (
-        "observed STOPPED -> RUNNING -> STOPPED inside capture window"
-        if passed
-        else (
-            f"observed state sequence {sequence or ['none']}; expected STOPPED -> RUNNING -> STOPPED"
-            + (f"; ignored {inferred_count} inferred observation(s)" if inferred_count else "")
-            + ("; state history transition order is invalid" if not action_order_ok else "")
-        )
+    return _result("state_history_identity", identity_ok, detail)
+
+
+def _state_history_burst_check(
+    observations: Sequence[tuple[float, str, str]],
+    *,
+    raw_order_ok: bool,
+    action_order_ok: bool,
+    observation_errors: Sequence[str],
+    inferred_count: int,
+) -> dict[str, Any]:
+    sequence = _state_sequence(observations)
+    passed = (
+        not observation_errors and raw_order_ok and action_order_ok and sequence == ["STOPPED", "RUNNING", "STOPPED"]
     )
-    return (
-        payload,
+    if passed:
+        detail = "observed STOPPED -> RUNNING -> STOPPED inside capture window"
+    else:
+        detail = f"observed state sequence {sequence or ['none']}; expected STOPPED -> RUNNING -> STOPPED"
+        if observation_errors:
+            detail += "; invalid observation(s): " + "; ".join(observation_errors)
+        if inferred_count:
+            detail += f"; ignored {inferred_count} inferred observation(s)"
+        if not action_order_ok:
+            detail += "; state history transition order is invalid"
+    return _result("state_history_burst", passed, detail)
+
+
+def _state_checks(
+    path: Path | None, *, since: float, until: float, expected_instance_id: str | None
+) -> tuple[Any, list[tuple[float, str, str]], list[dict[str, Any]]]:
+    payload, receipt_check = _load_required(path, "state_history_receipt")
+    observations, observation_errors = _state_observation_report(payload)
+    in_window = [item for item in observations if since <= item[0] <= until]
+    identity_check = _state_history_identity_check(_history_instance_id(payload), expected_instance_id)
+    burst_check = _state_history_burst_check(
         in_window,
-        [
-            receipt_check,
-            _result("state_history_identity", identity_ok, identity_detail),
-            _result("state_history_burst", passed, detail),
-        ],
+        raw_order_ok=_state_order_is_valid(in_window),
+        action_order_ok=_state_action_order_is_valid(payload, since=since, until=until),
+        observation_errors=observation_errors,
+        inferred_count=_inferred_observation_count(payload),
     )
+    return payload, in_window, [receipt_check, identity_check, burst_check]
 
 
 def _artifact_checks(
@@ -982,7 +1086,7 @@ def _audit_transition_order_check(
     events: Sequence[tuple[str, Mapping[str, Any], float]],
     matching_stops: Sequence[tuple[Mapping[str, Any], float]],
 ) -> dict[str, Any]:
-    """Require the ordered authoritative transitions to be START then STOP."""
+    """Require all successful logical actions to start before a matching stop."""
 
     ordered_actions = [action for action, _event, _timestamp in events]
     start_timestamps = [timestamp for action, _event, timestamp in events if action == "START"]
@@ -1013,6 +1117,17 @@ def _audit_checks(
     expected_stop_principal: str,
 ) -> list[dict[str, Any]]:
     payload, receipt_check = _load_required(path, "audit_receipt")
+    successful_events = (
+        _audit_operation_events(
+            payload,
+            instance_id=instance_id,
+            since=since,
+            until=until,
+            require_current_state=False,
+        )
+        if payload is not None
+        else []
+    )
     events = (
         _authoritative_audit_events(payload, instance_id=instance_id, since=since, until=until)
         if payload is not None
@@ -1048,7 +1163,7 @@ def _audit_checks(
         if matching_stops
         else f"no StopInstance audit event matched principal {expected_stop_principal!r} (observed {len(stops)})",
     )
-    order_check = _audit_transition_order_check(events, matching_stops)
+    order_check = _audit_transition_order_check(successful_events, matching_stops)
     return [receipt_check, start_check, principal_check, order_check]
 
 

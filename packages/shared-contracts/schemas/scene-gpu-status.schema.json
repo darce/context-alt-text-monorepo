@@ -1,0 +1,98 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://context-alt-text.dev/schemas/scene-gpu-status.schema.json",
+  "title": "Scene GPU Status",
+  "description": "GPU lifecycle status and operator intent returned by GET /scene/gpu/status and POST /scene/gpu/intent.",
+  "type": "object",
+  "required": [
+    "gpu_state",
+    "snapshot_age_seconds",
+    "snapshot_fresh",
+    "intent",
+    "load",
+    "server_time"
+  ],
+  "properties": {
+    "gpu_state": {
+      "type": "object",
+      "required": [
+        "state",
+        "instance_id",
+        "written_at",
+        "reason",
+        "since",
+        "intent",
+        "intent_expires_at",
+        "intent_status",
+        "honoured_nonce",
+        "lease_expires_at",
+        "instance_running_since",
+        "last_transition_reason"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": ["unknown", "stopped", "starting", "warming", "ready", "degraded"],
+          "description": "Vocabulary shared with scene-describe-run.schema.json. Unknown is used when the lifecycle snapshot is missing, unreadable, corrupt, or stale."
+        },
+        "instance_id": {"type": ["string", "null"]},
+        "written_at": {"type": ["number", "null"]},
+        "reason": {"type": ["string", "null"]},
+        "since": {"type": ["number", "null"]},
+        "intent": {"type": "string", "enum": ["start", "stop", "auto"]},
+        "intent_expires_at": {"type": ["string", "null"], "format": "date-time"},
+        "intent_status": {
+          "type": "string",
+          "enum": ["none", "pending", "honoured", "blocked_work_in_flight", "expired"]
+        },
+        "honoured_nonce": {"type": ["string", "null"]},
+        "lease_expires_at": {"type": ["string", "null"], "format": "date-time"},
+        "instance_running_since": {"type": ["string", "null"], "format": "date-time"},
+        "last_transition_reason": {
+          "type": "string",
+          "enum": ["work", "operator", "idle", "lease_cap", "start_failed", "unknown"]
+        }
+      }
+    },
+    "snapshot_age_seconds": {
+      "type": ["number", "null"],
+      "minimum": 0
+    },
+    "snapshot_fresh": {"type": "boolean"},
+    "intent": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "action",
+        "requested_at",
+        "expires_at",
+        "ttl_seconds",
+        "requested_by",
+        "nonce"
+      ],
+      "properties": {
+        "schema_version": {"const": 1},
+        "action": {"type": "string", "enum": ["start", "stop", "auto"]},
+        "requested_at": {"type": "string", "format": "date-time"},
+        "expires_at": {"type": "string", "format": "date-time"},
+        "ttl_seconds": {"type": "integer", "minimum": 60, "maximum": 7200},
+        "requested_by": {"type": "string"},
+        "nonce": {"type": "string", "format": "uuid"}
+      }
+    },
+    "load": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["has_work", "written_at", "fresh"],
+      "properties": {
+        "has_work": {"type": "boolean"},
+        "written_at": {"type": ["number", "null"]},
+        "fresh": {"type": "boolean"}
+      }
+    },
+    "server_time": {"type": "string", "format": "date-time"}
+  },
+  "additionalProperties": false
+}

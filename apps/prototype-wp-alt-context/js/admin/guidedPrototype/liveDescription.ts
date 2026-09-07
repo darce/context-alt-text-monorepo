@@ -7,7 +7,7 @@
  * can never block the lesson.
  */
 import { DESCRIBE_RESULT_TIER, DESCRIBE_RUN_PHASE } from '../api/describeApi';
-import type { DescribeResultTier, DescribeRunPhase, GpuState } from '../api/describeApi';
+import type { DescribeResultTier, DescribeRunPhase, DescribeRunResponse, GpuState } from '../api/describeApi';
 import { confirmedPersonKeys, getGuidedPerson } from './state';
 import type { GuidedScenario } from './state';
 
@@ -66,6 +66,61 @@ export const GUIDED_LIVE_WAIT_CEILING_SECONDS = 510;
 const POLL_BASE_MS = 500;
 const POLL_CEILING_MS = 5000;
 
+/**
+ * Slack layered on top of the server's disclosed generation budget so the
+ * client times out just after the server, never before it: one poll cadence
+ * plus round-trip transport, not a guess at how late the server usually runs.
+ */
+export const GUIDED_LIVE_DEADLINE_SLACK_MS = 15_000;
+
+/**
+ * `deadline_seconds` is sibling-lane work landing on the wire contract this
+ * module reads (submit response and every status poll). Extending
+ * `DescribeRunResponse` itself lives in `../api/describeApi`, outside this
+ * lane's owned paths, so it is carried here as a local intersection until the
+ * coordinator hoists it onto the shared type.
+ */
+export type GuidedLiveDescribeRunResponse = DescribeRunResponse & {
+  deadline_seconds?: number | null;
+};
+
+/**
+ * Boundary check for `deadline_seconds`: it is untrusted API data, so it earns
+ * an explicit predicate rather than an assertion helper (sr-005). Anything
+ * that is not a finite positive number means "the server did not disclose a
+ * budget" and must fall back to the client's own ceiling.
+ *
+ * Exported so the hook can decide, once at accept, whether a disclosed
+ * deadline is in effect for this run -- the single source of truth for what
+ * counts as a real disclosure, so the poll loop's "ignore it on polls" rule
+ * (see the `polled` action) and this resolver never drift apart on the
+ * definition of "disclosed".
+ */
+export const isGuidedLiveDeadlineDisclosed = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value) && value > 0;
+
+/**
+ * The one place the server's disclosed budget is turned into a client
+ * deadline. `localCeilingMs` is whatever the warm/cold selection already
+ * decided (unchanged by this function); the disclosed budget can only pull
+ * that ceiling in, never push it out, so an operator's generous local
+ * patience bound is never extended by a server that discloses a longer one.
+ * The same formula runs whether the local ceiling came from the warm or the
+ * cold branch -- a disclosed budget is a statement about generation time, and
+ * this function does not layer extra warm-up allowance on top of it even in
+ * the cold case; the cold ceiling still wins as the outer cap when the
+ * disclosed budget would exceed it.
+ */
+export const resolveGuidedLiveDeadlineMs = (
+  localCeilingMs: number,
+  deadlineSeconds: number | null | undefined,
+): number => {
+  if (!isGuidedLiveDeadlineDisclosed(deadlineSeconds)) {
+    return localCeilingMs;
+  }
+  return Math.min(localCeilingMs, deadlineSeconds * 1000 + GUIDED_LIVE_DEADLINE_SLACK_MS);
+};
+
 const WAITING_STATUSES: readonly GuidedLiveStatus[] = [
   GUIDED_LIVE_STATUS.QUEUED,
   GUIDED_LIVE_STATUS.WARMING,
@@ -114,7 +169,19 @@ export interface GuidedLiveState {
 export type GuidedLiveAction =
   | { kind: 'gate_changed'; blockedReason: GuidedLiveBlockedReason | null }
   | { kind: 'requested'; atMs: number }
-  | { kind: 'accepted'; runId: string; deadlineSeconds: number; atMs: number }
+  | {
+      kind: 'accepted';
+      runId: string;
+      deadlineSeconds: number;
+      atMs: number;
+      /**
+       * The server's disclosed generation budget from the submit response
+       * (wire field `deadline_seconds`), taken once here and never re-derived
+       * on a later poll. `null`/`undefined` means the server did not disclose
+       * one; `resolveGuidedLiveDeadlineMs` decides what that is worth.
+       */
+      disclosedDeadlineSeconds?: number | null;
+    }
   | {
       kind: 'polled';
       phase: GuidedLivePhase;
@@ -124,6 +191,13 @@ export type GuidedLiveAction =
       text?: string | null;
       /** Passed through from the service, so not drawn from the closed set. */
       reason?: string | null;
+      /**
+       * A poll may carry its own `deadline_seconds` (same wire contract as the
+       * submit response). The deadline is taken once, at accept, so this is
+       * typed for wire fidelity but the reducer never reads it: a poll
+       * disagreeing with the submit is a server bug, not a resize.
+       */
+      disclosedDeadlineSeconds?: number | null;
     }
   | { kind: 'deadline_raised'; deadlineSeconds: number }
   | { kind: 'tick'; atMs: number }
@@ -305,11 +379,15 @@ export const guidedLiveReducer = (state: GuidedLiveState, action: GuidedLiveActi
       // therefore advertises no ceiling until this action has negotiated one
       // (see GuidedLiveDescriptionPanel: waiting without a runId shows
       // elapsed only).
+      const localCeilingMs = Math.max(0, capped) * 1000;
+      // The server's disclosed generation budget (if any) can only pull that
+      // ceiling in, taken once here -- never re-derived on a later poll.
+      const deadlineMs = resolveGuidedLiveDeadlineMs(localCeilingMs, action.disclosedDeadlineSeconds);
       //
       // Record the run id before advancing the clock: a run the server has
       // just confirmed is precisely the one that still needs cancelling if
       // acceptance itself lands past the deadline.
-      const accepted = { ...state, runId: action.runId, deadlineMs: Math.max(0, capped) * 1000 };
+      const accepted = { ...state, runId: action.runId, deadlineMs };
       return advanceClock(accepted, action.atMs);
     }
 

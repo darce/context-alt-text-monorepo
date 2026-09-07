@@ -224,6 +224,31 @@ describe('useGuidedLiveDescription', () => {
       await press(() => coldResult.current.request());
       expect(coldResult.current.state.deadlineMs).toBe(GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000);
     });
+
+    it('adopts a server-disclosed deadline_seconds on submit and times out just after it', async () => {
+      const client = stubClient({
+        submit: vi.fn<GuidedLiveDescriptionClient['submit']>(() =>
+          Promise.resolve({ ...runResponse({ gpu_state: 'ready' }), deadline_seconds: 30 }),
+        ),
+        // Keep the polled gpu_state warm too, so the unrelated cold-GPU-revealed
+        // widening (`deadline_raised`) never fires and this test isolates the
+        // disclosed-budget path alone.
+        poll: vi.fn<GuidedLiveDescriptionClient['poll']>(() =>
+          Promise.resolve(runResponse({ phase: 'warming', gpu_state: 'ready' })),
+        ),
+      });
+      const { result } = mount(client);
+
+      await press(() => result.current.request());
+      // resolveGuidedLiveDeadlineMs(warmCeilingMs=180_000, 30) = 30_000 + 15_000 slack = 45_000.
+      expect(result.current.state.deadlineMs).toBe(45_000);
+
+      await settle(40_000);
+      expect(result.current.state.status).not.toBe(GUIDED_LIVE_STATUS.TIMED_OUT);
+
+      await settle(6_000);
+      expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.TIMED_OUT);
+    });
   });
 
   describe('a run that does not', () => {

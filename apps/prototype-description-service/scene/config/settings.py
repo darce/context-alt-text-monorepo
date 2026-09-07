@@ -39,6 +39,30 @@ def _parse_gpu_warmup_timeout(raw: str | None) -> float:
     return seconds
 
 
+DEFAULT_GENERATION_TIMEOUT_SECONDS = 180.0
+
+
+def _parse_generation_timeout(raw: str | None) -> float:
+    """Fail fast at settings load on a non-positive generation timeout (rg-008).
+
+    GUIDEDFIX-2 [S10]: this value is the per-item leg of the run deadline the
+    submit route discloses, and the published contract declares
+    ``deadline_seconds.exclusiveMinimum: 0``. Without a floor,
+    ``ACX_DESCRIPTION_TIMEOUT_SECONDS=0`` would emit a payload that fails the
+    schema this service publishes, and every item would be born already timed
+    out. Refuse the value here rather than at the first describe.
+    """
+    if raw is None or raw == "":
+        return DEFAULT_GENERATION_TIMEOUT_SECONDS
+    try:
+        seconds = float(raw)
+    except ValueError as exc:
+        raise ValueError(f"ACX_DESCRIPTION_TIMEOUT_SECONDS={raw!r} is not a number") from exc
+    if not math.isfinite(seconds) or seconds <= 0:
+        raise ValueError(f"ACX_DESCRIPTION_TIMEOUT_SECONDS={raw!r} must be a finite value greater than 0 seconds")
+    return seconds
+
+
 def _parse_allowlist(raw: str | None) -> tuple[str, ...]:
     if not raw:
         return ()
@@ -64,7 +88,7 @@ class DescriptionSettings(BaseModel):
     # Generous default so the slow local_cpu (Florence) inline POC is not prematurely
     # 504'd (~30-95s incl. cold load); seeded never approaches it. Tune via env for prod.
     generation_timeout_seconds: float = Field(
-        default_factory=lambda: float(os.environ.get("ACX_DESCRIPTION_TIMEOUT_SECONDS", "180"))
+        default_factory=lambda: _parse_generation_timeout(os.environ.get("ACX_DESCRIPTION_TIMEOUT_SECONDS"))
     )
     gpu_connect_timeout_seconds: float = Field(
         default_factory=lambda: float(os.environ.get("ACX_GPU_CONNECT_TIMEOUT_SECONDS", "5"))

@@ -174,9 +174,13 @@ class DescribeRunResponse(BaseModel):
     # HARM-F1: snapshot of recognition_enabled at submit. Default True so
     # omitted payloads keep today's naming-on behaviour.
     recognition_enabled: bool = True
-    # GUIDEDFIX-2 [RES-02]: the generation budget the server itself enforces,
-    # snapshotted at accept. The client must not invent its own ceiling. Null
-    # only for runs created outside the submit route (never via POST).
+    # GUIDEDFIX-2 [RES-02] / [S01]: the server's own end-to-end GENERATION budget
+    # for this whole accepted run — the budget the worker actually enforces,
+    # summed across the run's items. It explicitly does NOT include GPU warm-up /
+    # cold-start; the client adds that leg itself. Derived at accept from the
+    # per-item timeout the worker is handed times the run's item count, and
+    # snapshotted, so a later config change never moves an accepted run's number.
+    # Null only for runs created outside the submit route (never via POST).
     deadline_seconds: float | None = None
 
 

@@ -23,6 +23,7 @@ from scene.domain.describe_run import (
     DescribeRunStatus,
     RunKind,
     async_job_retention_hours,
+    compute_request_digest,
     describe_run_max_items,
     phase_for_status,
     terminal_run_status,
@@ -32,6 +33,29 @@ from scene.domain.description import DescriptionResultTier
 _TRUTHY_PG_SETTINGS = {"true", "on", "1", "yes"}
 _RECLAIM_INTERRUPT_ERROR = "interrupted by service restart"
 logger = logging.getLogger(__name__)
+
+
+def _run_is_barren(run: DescribeRun) -> bool:
+    """Terminal with nothing to show: it will never produce output."""
+    return DescribeRunStatus(run.status) in TERMINAL_RUN_STATUSES and not run.completed_items
+
+
+def _release_idempotency_key_if_barren(run: DescribeRun) -> None:
+    """Free the caller's retry token when ``run`` died without producing anything.
+
+    GUIDEDFIX-2 [S06]. A key is a reservation on a run that can still produce
+    output. FAILED, CANCELLED, and the COMPLETED_WITH_ERRORS a restart reclaim
+    derives when every item failed are all terminal with zero completed items —
+    holding the key on one of those would (a) make every later retry of that key
+    replay a 202 naming a dead run, permanently, and (b) block re-reserving the
+    key, because the unique index still sees the dead row. A partially
+    successful run keeps its key: partial output is still output, and replaying
+    it is the correct answer.
+    """
+    if run.idempotency_key is None:
+        return
+    if _run_is_barren(run):
+        run.idempotency_key = None
 
 
 class DescribeRunRepository:
@@ -48,6 +72,7 @@ class DescribeRunRepository:
         images: Mapping[int, tuple[bytes, str | None]] | None = None,
         recognition_enabled: bool = True,
         idempotency_key: str | None = None,
+        request_digest: str | None = None,
         deadline_seconds: float | None = None,
     ) -> uuid.UUID:
         # PHP-04: dedup while preserving first-seen order so a caller cannot
@@ -74,6 +99,16 @@ class DescribeRunRepository:
             created_by_user_id=created_by_user_id,
             recognition_enabled=request.recognition_enabled,
             idempotency_key=idempotency_key,
+            # [S03] Derive from the same normalized inputs that were validated,
+            # never from the caller's argument order, so a reordered resubmit of
+            # one key replays instead of 409'ing.
+            request_digest=(
+                request_digest
+                if request_digest is not None
+                else compute_request_digest(
+                    media_ids=media_ids, recognition_enabled=request.recognition_enabled
+                )
+            ),
             deadline_seconds=deadline_seconds,
         )
         run.items = [
@@ -418,6 +453,7 @@ class DescribeRunRepository:
             run.completed_at = now
         if error_message:
             run.error_message = error_message
+        _release_idempotency_key_if_barren(run)
         await self._session.flush()
         return True
 
@@ -427,11 +463,23 @@ class DescribeRunRepository:
         Read-only companion to the ``uq_image_description_runs_idempotency_key``
         constraint: it serves the common replay, while the constraint — not this
         lookup — is what makes two concurrent accepts converge on one run.
+
+        [S06] Barren terminal runs are excluded: replaying one would hand the
+        caller a 202 naming a run that will never produce output. Those rows also
+        release the key at the moment they go terminal
+        (:func:`_release_idempotency_key_if_barren`), so this filter and the
+        unique index agree — the key is free to be re-reserved by the next
+        submit. The filter is belt-and-braces for any row that reached a barren
+        terminal state through a path that did not release.
         """
         result = await self._session.execute(
             select(DescribeRun).where(
                 DescribeRun.tenant_id == tenant_id,
                 DescribeRun.idempotency_key == idempotency_key,
+                or_(
+                    DescribeRun.status.notin_(list(TERMINAL_RUN_STATUSES)),
+                    DescribeRun.completed_items > 0,
+                ),
             )
         )
         return result.scalar_one_or_none()
@@ -459,6 +507,7 @@ class DescribeRunRepository:
             run.status = DescribeRunStatus.CANCELLED
             run.phase = DescribeRunPhase.CANCELLED
             run.completed_at = datetime.now(tz=UTC)
+            _release_idempotency_key_if_barren(run)
         await self._session.flush()
         return True
 
@@ -599,6 +648,9 @@ class DescribeRunRepository:
             run.completed_at = now
             if status in {DescribeRunStatus.FAILED, DescribeRunStatus.COMPLETED_WITH_ERRORS}:
                 run.error_message = run.error_message or _RECLAIM_INTERRUPT_ERROR
+            # [S06] A restart-orphaned run driven to FAILED/CANCELLED must not
+            # keep the caller's key: the retry has to be able to buy a live run.
+            _release_idempotency_key_if_barren(run)
         await self._session.flush()
         return len(runs)
 
@@ -646,6 +698,7 @@ class DescribeRunRepository:
             run.status = status
             run.phase = phase_for_status(status)
             run.completed_at = now
+            _release_idempotency_key_if_barren(run)
         elif running:
             run.status = DescribeRunStatus.RUNNING
             run.phase = DescribeRunPhase.DESCRIBING

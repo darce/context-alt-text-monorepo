@@ -3,18 +3,24 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from collections.abc import Mapping
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.datastructures import UploadFile
 
+from db.models import DemoInstance
 from db.tenant_context import require_tenant_record, set_tenant_context
 from recognition.infrastructure.repositories.audit_repository import AuditRepository
 from recognition.interface_adapters.http.deps import get_optional_session, require_write_access
-from recognition.interface_adapters.http.deps.demo_quota import maybe_consume_demo_quota
+from recognition.interface_adapters.http.deps.demo_quota import (
+    hash_api_key_for_quota,
+    maybe_consume_demo_quota,
+)
 from scene.application.describe_load import dump_load_snapshot
 from scene.application.describe_run_repository import DescribeRunRepository
 from scene.application.describe_run_worker import (
@@ -22,6 +28,7 @@ from scene.application.describe_run_worker import (
     FusionNamingInputs,
     MissingNamingSnapshotError,
     gpu_run_policy,
+    item_envelope_seconds,
     run_describe_job,
 )
 from scene.application.description_repository import ImageDescriptionRepository
@@ -33,6 +40,7 @@ from scene.domain.describe_run import (
     InvalidIdempotencyKeyError,
     RunKind,
     compute_eta_seconds,
+    compute_request_digest,
     normalize_idempotency_key,
 )
 from scene.interface_adapters.http.deps import get_description_adapter
@@ -50,7 +58,75 @@ from scene.interface_adapters.http.schemas.responses import (
 
 router = APIRouter(tags=["describe-runs"])
 
+logger = logging.getLogger(__name__)
+
 _IMAGE_KEY_PREFIX = "image_"
+# GUIDEDFIX-2 [S05]: the one constraint whose violation means "this key is
+# already reserved". Every other IntegrityError is a real, permanent failure.
+_IDEMPOTENCY_CONSTRAINT = "uq_image_description_runs_idempotency_key"
+_IDEMPOTENCY_SQLITE_COLUMNS = ("image_description_runs.tenant_id", "image_description_runs.idempotency_key")
+
+
+def _is_idempotency_reservation_conflict(exc: IntegrityError) -> bool:
+    """True only when ``exc`` is the idempotency-key unique violation.
+
+    psycopg exposes the constraint name on ``exc.orig.diag``; when the driver
+    does not (or the diagnostic is empty) fall back to SQLSTATE 23505 plus the
+    constraint name in the message. SQLite names no constraints at all — its
+    UNIQUE violations list the columns instead — so match those explicitly
+    rather than treating any SQLite IntegrityError as a collision.
+    """
+    orig = getattr(exc, "orig", None)
+    diag = getattr(orig, "diag", None)
+    constraint_name = getattr(diag, "constraint_name", None)
+    if constraint_name:
+        return str(constraint_name) == _IDEMPOTENCY_CONSTRAINT
+    message = str(orig) if orig is not None else str(exc)
+    sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    if sqlstate is not None:
+        return str(sqlstate) == "23505" and _IDEMPOTENCY_CONSTRAINT in message
+    lowered = message.lower()
+    if "unique constraint failed" in lowered:
+        return all(column in lowered for column in _IDEMPOTENCY_SQLITE_COLUMNS)
+    return _IDEMPOTENCY_CONSTRAINT in message
+
+
+async def _reject_when_demo_quota_is_already_spent(auth, session, *, units: int) -> None:
+    """Cheap read-only 429 for an over-quota demo key, ahead of any insert.
+
+    Mirrors ``consume_demo_quota_units``'s reject shape without consuming: it is
+    an optimisation, not the enforcement point. The atomic guarded UPDATE in
+    ``try_consume_demo_quota`` (called after the reservation lands) remains the
+    only authority on the balance, so a concurrent charge between this read and
+    that update still yields the correct 429 — just later, and after the insert.
+    """
+    if session is None or not getattr(auth, "enabled", False):
+        return
+    token = getattr(auth, "token", None)
+    if not token:
+        return
+    key_hash = hash_api_key_for_quota(token)
+    row = (
+        await session.execute(
+            select(DemoInstance.recognition_quota, DemoInstance.recognition_used, DemoInstance.revoked)
+            .where(DemoInstance.api_key_ref == key_hash)
+            .limit(1)
+        )
+    ).first()
+    if row is None:
+        # Not a demo registry key: no metering applies (main-compatible).
+        return
+    quota, used, revoked = int(row[0]), int(row[1]), bool(row[2])
+    remaining = 0 if revoked else max(0, quota - used)
+    if units > remaining:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            {
+                "code": "demo_quota_exceeded",
+                "message": "demo recognition quota exceeded",
+                "quota_remaining": remaining,
+            },
+        )
 
 
 def _run_response(run) -> DescribeRunResponse:
@@ -246,15 +322,41 @@ def _parse_idempotency_key(raw: object) -> str | None:
         ) from exc
 
 
+def _stored_request_digest(run) -> str:
+    """The digest ``run`` was reserved under, recomputed only when absent.
+
+    Runs created before ``request_digest`` existed (or outside the keyed submit
+    path) carry NULL; derive the same canonical form from the stored columns so
+    the comparison below is digest-to-digest in every case.
+    """
+    stored = getattr(run, "request_digest", None)
+    if stored:
+        return str(stored)
+    return compute_request_digest(
+        media_ids=list(run.media_ids or []),
+        recognition_enabled=bool(run.recognition_enabled),
+    )
+
+
 def _replay_or_conflict(run, *, media_ids: list[int], recognition_enabled: bool) -> DescribeRunResponse:
     """Return the reserved run, or 409 when the token names a different payload.
 
     The replay is deliberately indistinguishable from a first accept (202, same
     body): a caller must never be able to tell a retry succeeded twice.
+
+    [S03] The comparison is a digest of the CANONICAL request (sorted unique
+    media ids + recognition_enabled), not a positional list compare. The WP
+    client builds media_ids from a query with no pinned ordering, so [70, 71]
+    and [71, 70] are one submission — 409'ing the reshuffle would reject exactly
+    the blind retry this feature exists to serve and force the caller to mint a
+    new key, spending the second paid run the key was added to prevent.
+
+    [S04] Image bytes are outside the binding by design; see
+    ``compute_request_digest`` for why, and the published schema says so.
     """
-    stored_media_ids = list(run.media_ids or [])
-    submitted_media_ids = list(dict.fromkeys(media_ids))
-    if stored_media_ids != submitted_media_ids or bool(run.recognition_enabled) != recognition_enabled:
+    if _stored_request_digest(run) != compute_request_digest(
+        media_ids=media_ids, recognition_enabled=recognition_enabled
+    ):
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             {
@@ -263,8 +365,11 @@ def _replay_or_conflict(run, *, media_ids: list[int], recognition_enabled: bool)
                     "this 'idempotency_key' is already bound to a describe run submitted with a different payload"
                 ),
                 "field": "idempotency_key",
-                "run_id": str(run.id),
-                "media_ids": stored_media_ids,
+                # [S09] Never echo the reserved run's id or media ids. This
+                # lookup runs before require_tenant_record and POST only binds
+                # the tenant when the caller carries a claim, so a write-capable
+                # caller with no claim could otherwise name any tenant_id, guess
+                # a key, and read back that tenant's run id and media id list.
             },
         )
     return _run_response(run)
@@ -364,9 +469,31 @@ async def create_describe_run(
     adapter = get_description_adapter()
     run_gpu_policy = gpu_run_policy(adapter_kind=adapter.kind, settings=settings)
 
+    # Charge unique media ids only (order-preserving dedupe); durable at dispatch.
+    unique_media_ids = list(dict.fromkeys(media_ids))
+    # [S01] ONE number, derived from the value the worker is actually handed
+    # below, so disclosure and enforcement cannot drift on either axis:
+    #   * per item: _generation_timeout_seconds(settings, adapter) is what
+    #     run_describe_job receives; settings.generation_timeout_seconds alone is
+    #     wrong for LOCAL_CPU, which enforces VlmSettings().inference_timeout_seconds.
+    #   * per run: the worker's real per-item bound is item_envelope_seconds()
+    #     (naming budget + describe timeout) and it processes items serially, so
+    #     the run's budget is that envelope times the item count.
+    # Warm-up is deliberately excluded — see the DescribeRunResponse contract.
+    item_timeout_seconds = _generation_timeout_seconds(settings, adapter)
+    run_deadline_seconds = float(item_envelope_seconds(item_timeout_seconds) * len(unique_media_ids))
+
     await set_tenant_context(session, tenant_id)
     await require_tenant_record(session, tenant_id)
     repo = DescribeRunRepository(session)
+    # [S07] Reject an over-quota demo key BEFORE create_run. The durable charge
+    # stays behind the reservation (below), but create_run flushes the run row
+    # plus one item per media id with image bytes inline (up to
+    # max_description_image_bytes each, up to 200 items) — so a 429 raised only
+    # after the insert costs ~N x image-size of write-then-rollback IO per
+    # rejected request. This pre-check reads and mutates nothing.
+    await _reject_when_demo_quota_is_already_spent(auth, session, units=len(unique_media_ids))
+    await set_tenant_context(session, tenant_id)
     # Reserve before charging: the insert is the reservation, and the unique
     # (tenant_id, idempotency_key) index — not the read above — is what makes two
     # concurrent retries converge on one run. The loser rolls back before it can
@@ -379,10 +506,24 @@ async def create_describe_run(
             images=images,
             recognition_enabled=recognition_enabled,
             idempotency_key=idempotency_key,
-            deadline_seconds=float(settings.generation_timeout_seconds),
+            request_digest=compute_request_digest(
+                media_ids=media_ids, recognition_enabled=recognition_enabled
+            ),
+            deadline_seconds=run_deadline_seconds,
         )
     except IntegrityError as exc:
-        if idempotency_key is None:
+        # [S05] Only the idempotency reservation may be reinterpreted as a
+        # collision. A blanket except turns every permanent IntegrityError —
+        # e.g. the tenant row cascade-deleted between require_tenant_record and
+        # this flush — into a 503 telling the client to retry a deterministically
+        # failing insert forever, with the real cause buried in the __cause__
+        # chain and no log line.
+        if idempotency_key is None or not _is_idempotency_reservation_conflict(exc):
+            logger.error(
+                "describe run insert failed for tenant %s (not an idempotency collision)",
+                tenant_id,
+                exc_info=exc,
+            )
             raise
         await session.rollback()
         await set_tenant_context(session, tenant_id)
@@ -390,6 +531,12 @@ async def create_describe_run(
         if winner is None:
             # The key is taken but unreadable from here: fail closed rather than
             # create a second run under an uncertain reservation.
+            logger.error(
+                "describe run reservation uncertain for tenant %s: the idempotency key collided but no "
+                "live run holds it",
+                tenant_id,
+                exc_info=exc,
+            )
             raise HTTPException(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 "describe run reservation is uncertain; retry with the same idempotency_key",
@@ -397,8 +544,10 @@ async def create_describe_run(
         return _replay_or_conflict(winner, media_ids=media_ids, recognition_enabled=recognition_enabled)
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
-    # Charge unique media ids only (order-preserving dedupe); durable at dispatch.
-    unique_media_ids = list(dict.fromkeys(media_ids))
+    # Durable charge. NOTE: for a demo key maybe_consume_demo_quota ->
+    # consume_demo_quota_units commits internally (no-refund metering), so the
+    # reservation above is made durable by the quota dep; for a non-demo key the
+    # session.commit() below is the only commit and the sole durability point.
     await maybe_consume_demo_quota(auth, session, units=len(unique_media_ids))
     await set_tenant_context(session, tenant_id)
     await session.commit()
@@ -420,7 +569,8 @@ async def create_describe_run(
             settings=settings,
             recognition_enabled=recognition_enabled,
         ),
-        timeout_seconds=_generation_timeout_seconds(settings, adapter),
+        # [S01] The same value run_deadline_seconds was derived from.
+        timeout_seconds=item_timeout_seconds,
         gpu_policy=run_gpu_policy,
     )
 

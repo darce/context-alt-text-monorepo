@@ -47,7 +47,7 @@ def test_probe_reports_ok_and_has_headroom_above_threshold(monkeypatch: pytest.M
     assert has_headroom(probe, 16_384)
 
 
-def test_probe_reports_unhealthy_and_fails_closed_below_threshold(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_probe_reports_degraded_and_fails_closed_below_threshold(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ACX_PG_HEADROOM_MIN_BYTES", "16_384")
     get_disk_headroom_settings.cache_clear()
     monkeypatch.setattr(os, "statvfs", lambda _path: _statvfs(free_blocks=3, total_blocks=8))
@@ -55,9 +55,21 @@ def test_probe_reports_unhealthy_and_fails_closed_below_threshold(monkeypatch: p
     probe = probe_disk_headroom("/postgres-data")
 
     assert probe.free_bytes == 12_288
-    assert probe.status is HealthStatus.UNHEALTHY
-    assert "below" in probe.reason
+    assert probe.status is HealthStatus.DEGRADED
+    assert "below minimum headroom (16384)" in probe.reason
     assert not has_headroom(probe, 1)
+
+
+def test_probe_reports_ok_at_threshold(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ACX_PG_HEADROOM_MIN_BYTES", "16_384")
+    get_disk_headroom_settings.cache_clear()
+    monkeypatch.setattr(os, "statvfs", lambda _path: _statvfs(free_blocks=4, total_blocks=8))
+
+    probe = probe_disk_headroom("/postgres-data")
+
+    assert probe.free_bytes == 16_384
+    assert probe.status is HealthStatus.OK
+    assert has_headroom(probe, 16_384)
 
 
 def test_missing_probe_path_is_unhealthy_and_never_raises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -71,6 +83,7 @@ def test_missing_probe_path_is_unhealthy_and_never_raises(monkeypatch: pytest.Mo
     assert probe.free_bytes == 0
     assert probe.total_bytes == 0
     assert probe.status is HealthStatus.UNHEALTHY
+    assert "unable to probe" in probe.reason
     assert "missing probe path" in probe.reason
     assert not has_headroom(probe, 0)
 

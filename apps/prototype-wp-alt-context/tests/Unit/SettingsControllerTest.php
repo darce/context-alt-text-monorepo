@@ -76,6 +76,44 @@ class SettingsControllerTest extends TestCase
         $this->assertFalse($data['tenant_paired']);
     }
 
+    public function testGetSettingsReadsAllowPersonNamesFromRecognitionService(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $this->setOption('acx_recognition_url', 'https://api.example.com');
+        $this->setOption('acx_recognition_api_key', 'test-key');
+        $this->setOption('acx_recognition_tenant_id', '11111111-1111-4111-8111-111111111111');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{"enabled":true}',
+        ]);
+
+        $response = $this->controller->get_settings(new WP_REST_Request('GET', '/acx/v1/settings'));
+        $data = $response->get_data();
+
+        $this->assertTrue($data['allow_person_names']);
+        $this->assertNull($data['allow_person_names_error']);
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertSame('https://api.example.com/recognition/tenant/naming-agreement', $calls[0]['url']);
+        $this->assertSame('GET', $calls[0]['method']);
+        $this->assertSame('test-key', $calls[0]['args']['headers']['X-API-Key']);
+    }
+
+    public function testGetSettingsUsesNullAndErrorWhenNamingAgreementServiceFails(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $this->setOption('acx_recognition_url', 'https://api.example.com');
+        $this->setOption('acx_recognition_api_key', 'test-key');
+        $this->queueHttpResponse(new \WP_Error('http_request_failed', 'Connection refused'));
+
+        $data = $this->controller
+            ->get_settings(new WP_REST_Request('GET', '/acx/v1/settings'))
+            ->get_data();
+
+        $this->assertNull($data['allow_person_names']);
+        $this->assertSame('Connection refused', $data['allow_person_names_error']);
+    }
+
     /**
      * BR-138: rejected option URL is exposed on the REST response (renamed
      * service_url_rejection_* → url_rejection_*), not collapsed to unconfigured.
@@ -384,6 +422,57 @@ class SettingsControllerTest extends TestCase
         $this->assertFalse(get_option('acx_recognition_source', false));
         $this->assertSame('https://new-api.example.com', get_option('acx_recognition_url'));
         $this->assertSame('new-key-12345678', get_option('acx_recognition_api_key'));
+    }
+
+    public function testSaveSettingsSynchronizesAllowPersonNamesWithRecognitionService(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $this->setOption('acx_recognition_url', 'https://api.example.com');
+        $this->setOption('acx_recognition_api_key', 'test-key');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{"enabled":false}',
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params(['allow_person_names' => false]);
+        $response = $this->controller->save_settings($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(['allow_person_names'], $response->get_data()['saved']);
+        $this->assertArrayNotHasKey('acx_description_allow_person_names', $GLOBALS['__ac_options'] ?? []);
+        $calls = $this->getHttpCalls();
+        $this->assertSame('PUT', $calls[0]['method']);
+        $this->assertSame('{"enabled":false}', $calls[0]['args']['body']);
+    }
+
+    public function testSaveSettingsRejectsNonBooleanAllowPersonNames(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params(['allow_person_names' => 'false']);
+
+        $response = $this->controller->save_settings($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('invalid_allow_person_names', $response->get_error_code());
+        $this->assertSame([], $this->getHttpCalls());
+    }
+
+    public function testSaveSettingsReportsNamingSyncFailureAs502(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $this->setOption('acx_recognition_url', 'https://api.example.com');
+        $this->setOption('acx_recognition_api_key', 'test-key');
+        $this->queueHttpResponse(new \WP_Error('http_request_failed', 'Connection refused'));
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params(['allow_person_names' => true]);
+        $response = $this->controller->save_settings($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('allow_person_names_sync_failed', $response->get_error_code());
+        $this->assertSame(502, $response->get_error_data()['status']);
     }
 
     public function testSaveSettingsRr07PreservesCodeManagedSelectorContract(): void

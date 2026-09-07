@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { normalizeConfig, resetConfigCache } from '../config';
+import { getGuidedLiveMediaId, normalizeConfig, registerConfig, resetConfigCache } from '../config';
 
 /**
  * The guided prototype's live run needs one real attachment. The id arrives
@@ -36,5 +36,28 @@ describe('guided live media id at the config boundary', () => {
 
   it.each([0, '0', -3, '-3', 1.5, 'abc', '', null, true])('rejects %p, which is not an attachment id', (value) => {
     expect(normalize(value)).toBeNull();
+  });
+});
+
+/**
+ * The guided prototype is the one admin screen that renders without the SPA
+ * bootstrap (the entrance card, and component tests in isolation). A missing
+ * bootstrap means there is no live run to offer — not a crash that takes the
+ * lesson down with it.
+ */
+describe('reading the guided live media id without a bootstrap', () => {
+  beforeEach(() => {
+    resetConfigCache();
+    delete window.AltContextAdmin;
+  });
+
+  it('reports no configured media when AltContextAdmin is absent', () => {
+    expect(getGuidedLiveMediaId()).toBeNull();
+  });
+
+  it('reports the configured id once the bootstrap is registered', () => {
+    registerConfig({ nonce: 'abc', ajaxUrl: '/ajax', endpoints: {}, guided_live_media_id: '4211' });
+
+    expect(getGuidedLiveMediaId()).toBe(4211);
   });
 });

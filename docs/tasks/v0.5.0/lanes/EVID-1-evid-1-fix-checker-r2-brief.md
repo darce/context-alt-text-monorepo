@@ -46,10 +46,7 @@ Tests never exercise the canonical OCI Audit CloudEvents shape: begin/end event 
 `SCHEMA_VERSION`, manifest `schema_version` and manifest `format` are unvalidated, so a foreign manifest reads as v1. Reject unsupported values explicitly ([RES-06] fail fast).
 
 ### Lint-only (fix here; they never block a merge)
-- EVID1E-L-08 — `ruff format --check` would reformat the snapshot `identity_detail` expression.
-- EVID-1-R1-07 — `lint(mypy)` assignment type error near the top of the module.
-- EVID-1-R1-06 — `lint(ruff)` F401 unused import, UP035 deprecated typing import, UP017 `datetime.UTC`.
-- EVID-1-R1-05 — `lint(ruff)` I001 unsorted imports in `scripts/gpu_burst_evidence.py` and `scripts/test_gpu_burst_evidence.py` only (the third file named in that finding belongs to another lane — leave it).
+Lint ids in scope for this lane: `EVID1E-L-08`, `EVID-1-R1-05`, `EVID-1-R1-06`, `EVID-1-R1-07`. Read each body with `review_findings(review={"operation":"get","task_ref":"EVID-1","finding_id":"<id>"})` — the bodies are not duplicated here. For `EVID-1-R1-05`, fix only the two files this lane owns; the third file it names belongs to another lane.
 
 ## Verification
 

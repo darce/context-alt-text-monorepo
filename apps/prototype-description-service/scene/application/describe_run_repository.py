@@ -47,6 +47,8 @@ class DescribeRunRepository:
         created_by_user_id: int | None = None,
         images: Mapping[int, tuple[bytes, str | None]] | None = None,
         recognition_enabled: bool = True,
+        idempotency_key: str | None = None,
+        deadline_seconds: float | None = None,
     ) -> uuid.UUID:
         # PHP-04: dedup while preserving first-seen order so a caller cannot
         # trigger redundant VLM inference by repeating a media_id.
@@ -71,6 +73,8 @@ class DescribeRunRepository:
             skipped_items=0,
             created_by_user_id=created_by_user_id,
             recognition_enabled=request.recognition_enabled,
+            idempotency_key=idempotency_key,
+            deadline_seconds=deadline_seconds,
         )
         run.items = [
             DescribeRunItem(
@@ -416,6 +420,21 @@ class DescribeRunRepository:
             run.error_message = error_message
         await self._session.flush()
         return True
+
+    async def get_run_by_idempotency_key(self, *, tenant_id: uuid.UUID, idempotency_key: str) -> DescribeRun | None:
+        """Resolve the run a retry token already reserved, within one tenant.
+
+        Read-only companion to the ``uq_image_description_runs_idempotency_key``
+        constraint: it serves the common replay, while the constraint — not this
+        lookup — is what makes two concurrent accepts converge on one run.
+        """
+        result = await self._session.execute(
+            select(DescribeRun).where(
+                DescribeRun.tenant_id == tenant_id,
+                DescribeRun.idempotency_key == idempotency_key,
+            )
+        )
+        return result.scalar_one_or_none()
 
     async def get_run(self, *, tenant_id: uuid.UUID, run_id: uuid.UUID) -> DescribeRun | None:
         result = await self._session.execute(

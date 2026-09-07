@@ -165,7 +165,14 @@ def test_default_warmup_budget_covers_start_detection_boot_and_read_timeout(
         sys.path.remove(str(repo_root))
 
     installer = (repo_root / "scripts/deploy/gpu-lifecycle-install.sh").read_text(encoding="utf-8")
-    start_interval_match = re.search(r'^START_INTERVAL="\$\{START_INTERVAL:-(\d+)s\}"$', installer, re.MULTILINE)
+    # The installer deliberately uses the unset-only form ${START_INTERVAL-30s}
+    # rather than ${START_INTERVAL:-30s}: an explicitly empty START_INTERVAL must
+    # reach the timespan validator and fail loudly instead of being silently
+    # replaced by the default. Accept either form so this budget coupling keeps
+    # measuring the default value, not the substitution operator.
+    start_interval_match = re.search(
+        r'^START_INTERVAL="\$\{START_INTERVAL:?-(\d+)s\}"$', installer, re.MULTILINE
+    )
     assert start_interval_match is not None, "installer START_INTERVAL default is missing"
     start_interval = int(start_interval_match.group(1))
     load_max_age = JsonFileJobLoadSource.__dataclass_fields__["max_age_seconds"].default

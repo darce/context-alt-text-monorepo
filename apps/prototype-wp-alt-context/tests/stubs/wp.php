@@ -2307,8 +2307,26 @@ if (!function_exists('wp_enqueue_style')) {
 }
 
 if (!function_exists('wp_localize_script')) {
+    /**
+     * Reproduces WP_Scripts::localize()'s scalar-to-string cast.
+     *
+     * Core runs html_entity_decode((string) $value) over every scalar member
+     * before printing, so an int published here reaches the browser as a
+     * string. A stub that stores the PHP array verbatim lets a test assert an
+     * int wire shape production never emits, which is the wrong side of the
+     * boundary to pin (rg-005). Non-scalars are passed through untouched, as
+     * core does.
+     */
     function wp_localize_script($handle, $object_name, $l10n): void
     {
+        if (is_array($l10n)) {
+            foreach ($l10n as $key => $value) {
+                if (is_scalar($value)) {
+                    $l10n[$key] = html_entity_decode((string) $value, ENT_QUOTES, 'UTF-8');
+                }
+            }
+        }
+
         $GLOBALS['__ac_localized_scripts'][$handle][$object_name] = $l10n;
     }
 }

@@ -113,10 +113,12 @@ describe('guided live description terminal states', () => {
       kind: 'polled',
       phase: 'complete',
       gpu: 'ready',
+      tier: 'final_gpu',
       atMs: T0 + 5000,
       text: 'Two people shake hands at a podium.',
     });
     expect(state.status).toBe(GUIDED_LIVE_STATUS.READY);
+    expect(state.reason).toBeNull();
     expect(state.text).toBe('Two people shake hands at a podium.');
   });
 
@@ -126,11 +128,78 @@ describe('guided live description terminal states', () => {
       kind: 'polled',
       phase: 'complete',
       gpu: 'degraded',
+      tier: 'provisional_cpu',
       atMs: T0 + 5000,
       text: 'A shorter description.',
     });
     expect(state.status).toBe(GUIDED_LIVE_STATUS.DEGRADED);
+    expect(state.reason).toBe('cpu_fallback');
     expect(state.text).toBe('A shorter description.');
+  });
+
+  // gpu_state is a lifecycle snapshot that may be stale by the time the item
+  // lands, so it can never stand in for the tier as proof of authorship.
+  it.each(['ready', 'unknown', 'stopped', 'degraded'] as const)(
+    'refuses to claim a tierless completion for the GPU when gpu_state is %s',
+    (gpu) => {
+      let state = started();
+      state = guidedLiveReducer(state, {
+        kind: 'polled',
+        phase: 'complete',
+        gpu,
+        atMs: T0 + 5000,
+        text: 'A description of unknown origin.',
+      });
+      expect(state.status).toBe(GUIDED_LIVE_STATUS.DEGRADED);
+      expect(state.reason).toBe('tier_unreported');
+      expect(state.text).toBe('A description of unknown origin.');
+    },
+  );
+
+  it('does not let a ready gpu_state override a cpu tier', () => {
+    let state = started();
+    state = guidedLiveReducer(state, {
+      kind: 'polled',
+      phase: 'complete',
+      gpu: 'ready',
+      tier: 'provisional_cpu',
+      atMs: T0 + 5000,
+      text: 'A shorter description.',
+    });
+    expect(state.status).toBe(GUIDED_LIVE_STATUS.DEGRADED);
+    expect(state.reason).toBe('cpu_fallback');
+  });
+
+  // A run in flight was started against an identity answer that no longer
+  // holds, so re-opening a face must stop the wait rather than let a poll land
+  // a sentence into a blocked panel.
+  it('fences a run still in flight when a face is re-opened', () => {
+    let state = started();
+    state = guidedLiveReducer(state, { kind: 'accepted', runId: 'run-1', deadlineSeconds: 510, atMs: T0 + 100 });
+    expect(state.runId).toBe('run-1');
+
+    state = guidedLiveReducer(state, { kind: 'faces_decided', decided: false });
+
+    expect(state.status).toBe(GUIDED_LIVE_STATUS.BLOCKED);
+    expect(state.runId).toBeNull();
+    expect(state.text).toBeNull();
+    expect(state.reason).toBeNull();
+  });
+
+  it('ignores a poll that lands after the gate closed', () => {
+    let state = started();
+    state = guidedLiveReducer(state, { kind: 'faces_decided', decided: false });
+    state = guidedLiveReducer(state, {
+      kind: 'polled',
+      phase: 'complete',
+      gpu: 'ready',
+      tier: 'final_gpu',
+      atMs: T0 + 5000,
+      text: 'A sentence written against a stale answer.',
+    });
+
+    expect(state.status).toBe(GUIDED_LIVE_STATUS.BLOCKED);
+    expect(state.text).toBeNull();
   });
 
   it('treats a completion with no description as a failure rather than an empty success', () => {

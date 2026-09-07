@@ -413,12 +413,27 @@ class AdminTest extends TestCase
     }
 
     /**
+     * Registers a post of the given type so get_post_type() resolves it.
+     */
+    private function registerPost(int $id, string $postType): void
+    {
+        $post = new \stdClass();
+        $post->ID = $id;
+        $post->post_type = $postType;
+        $GLOBALS['__ac_posts'][$id] = $post;
+    }
+
+    /**
      * The guided prototype's live run needs one real attachment id, and the
      * only way it reaches the browser is this payload. An unset option must
      * publish null so the panel can say "not configured" rather than submit 0.
+     *
+     * The value is asserted as a string because wp_localize_script casts every
+     * scalar on the way out; that string is the shape the browser parses.
      */
     public function testLocalizeSpaConfigPublishesTheGuidedLiveMediaId(): void
     {
+        $this->registerPost(4211, 'attachment');
         $this->setOption('acx_guided_live_media_id', 4211);
 
         $this->invokePrivateMethod($this->admin, 'localize_spa_config', ['test-handle']);
@@ -426,7 +441,76 @@ class AdminTest extends TestCase
         $localized = $GLOBALS['__ac_localized_scripts']['test-handle']['AltContextAdmin'] ?? null;
 
         $this->assertIsArray($localized);
-        $this->assertSame(4211, $localized['guided_live_media_id']);
+        $this->assertSame('4211', $localized['guided_live_media_id']);
+    }
+
+    /**
+     * @return array<string, array{0: mixed}>
+     */
+    public static function nonScalarGuidedLiveMediaIdProvider(): array
+    {
+        return [
+            // filter_var(true) is 1, so without the is_bool guard a boolean
+            // option publishes attachment 1 -- whatever that happens to be.
+            'boolean true' => [true],
+            'boolean false' => [false],
+            'array' => [[4211]],
+        ];
+    }
+
+    /**
+     * @dataProvider nonScalarGuidedLiveMediaIdProvider
+     *
+     * @param mixed $raw
+     */
+    public function testLocalizeSpaConfigRejectsANonScalarGuidedLiveMediaId($raw): void
+    {
+        $this->registerPost(1, 'attachment');
+        $this->registerPost(4211, 'attachment');
+        $this->setOption('acx_guided_live_media_id', $raw);
+
+        $this->invokePrivateMethod($this->admin, 'localize_spa_config', ['test-handle']);
+
+        $localized = $GLOBALS['__ac_localized_scripts']['test-handle']['AltContextAdmin'] ?? null;
+
+        $this->assertIsArray($localized);
+        $this->assertNull($localized['guided_live_media_id']);
+    }
+
+    /**
+     * @return array<string, array{0: string|false}>
+     */
+    public static function nonAttachmentGuidedLiveMediaIdProvider(): array
+    {
+        return [
+            'plain post' => ['post'],
+            'page' => ['page'],
+            'missing post' => [false],
+        ];
+    }
+
+    /**
+     * A well-formed id is not a subject. Publishing one that is not an
+     * attachment enables a live run that can only fail, in place of the
+     * blocked line the panel has for exactly this misconfiguration.
+     *
+     * @dataProvider nonAttachmentGuidedLiveMediaIdProvider
+     *
+     * @param string|false $postType
+     */
+    public function testLocalizeSpaConfigRejectsAnIdThatIsNotAnAttachment($postType): void
+    {
+        if (false !== $postType) {
+            $this->registerPost(4211, $postType);
+        }
+        $this->setOption('acx_guided_live_media_id', 4211);
+
+        $this->invokePrivateMethod($this->admin, 'localize_spa_config', ['test-handle']);
+
+        $localized = $GLOBALS['__ac_localized_scripts']['test-handle']['AltContextAdmin'] ?? null;
+
+        $this->assertIsArray($localized);
+        $this->assertNull($localized['guided_live_media_id']);
     }
 
     public function testLocalizeSpaConfigPublishesNullGuidedLiveMediaIdWhenUnset(): void
@@ -508,6 +592,7 @@ class AdminTest extends TestCase
      */
     public function testLocalizeSpaConfigAcceptsIdsFilterValidateIntAccepts(string $raw): void
     {
+        $this->registerPost(4211, 'attachment');
         $this->setOption('acx_guided_live_media_id', $raw);
 
         $this->invokePrivateMethod($this->admin, 'localize_spa_config', ['test-handle']);
@@ -515,6 +600,6 @@ class AdminTest extends TestCase
         $localized = $GLOBALS['__ac_localized_scripts']['test-handle']['AltContextAdmin'] ?? null;
 
         $this->assertIsArray($localized);
-        $this->assertSame(4211, $localized['guided_live_media_id'], sprintf('%s must publish 4211', $raw));
+        $this->assertSame('4211', $localized['guided_live_media_id'], sprintf('%s must publish 4211', $raw));
     }
 }

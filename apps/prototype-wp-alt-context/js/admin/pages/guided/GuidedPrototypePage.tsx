@@ -20,6 +20,7 @@ import {
   type GuidedScenario,
 } from '../../guidedPrototype/state';
 import { GuidedPrototypeEntrance } from '../GuidedPrototypeEntrance';
+import { getGuidedLiveMediaId } from '../../api/config';
 import { GuidedDescriptionReview } from './GuidedDescriptionReview';
 import { GuidedFacesPanel } from './GuidedFacesPanel';
 import {
@@ -353,12 +354,13 @@ export const GuidedPrototypePage = (): React.JSX.Element => {
           onLeaveUnnamed={handleLeaveUnidentified}
         />
 
-        <p className="acx-guided-page__feedback" role="status" aria-live="polite">
+        <p className="acx-guided-page__feedback" role="status" aria-live="polite" aria-label="Practice feedback">
           {feedback}
         </p>
 
         <GuidedDescriptionReview
           scenario={scenario}
+          liveMediaId={getGuidedLiveMediaId()}
           resetVersion={resetVersion}
           onSaveEdit={handleSaveEdit}
           onReject={handleReject}

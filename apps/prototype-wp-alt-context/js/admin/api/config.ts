@@ -158,6 +158,21 @@ export const getConfig = (): NormalizedConfig => {
 };
 
 /**
+ * Attachment the guided prototype describes live, or null when there is none.
+ *
+ * The guided screen is the one admin surface that renders without the SPA
+ * bootstrap (its entrance card, and component tests in isolation). No bootstrap
+ * means no live run to offer, which is a disabled button and a sentence — not
+ * an exception that takes the lesson down with it.
+ */
+export const getGuidedLiveMediaId = (): number | null => {
+  if (!cachedConfig && !window.AltContextAdmin) {
+    return null;
+  }
+  return getConfig().guidedLiveMediaId;
+};
+
+/**
  * Live nonce from the cached config. After setNonce / refreshRestNonce, existing
  * getConfig().nonce call sites stay correct because the cached object is mutated.
  */

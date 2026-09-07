@@ -46,7 +46,7 @@ export type GuidedLiveBlockedReason =
  * the learner is told without the type checker or a test noticing (sr-007).
  */
 export const GUIDED_LIVE_REASON = {
-  CPU_FALLBACK: 'cpu_fallback',
+  CPU_TIER: 'cpu_tier',
   TIER_UNREPORTED: 'tier_unreported',
   EMPTY_DESCRIPTION: 'empty_description',
   CLIENT_DEADLINE: 'client_deadline',
@@ -426,7 +426,10 @@ const completion = (state: GuidedLiveState, action: Extract<GuidedLiveAction, { 
     ...state,
     status: GUIDED_LIVE_STATUS.DEGRADED,
     text,
-    reason: action.tier === DESCRIBE_RESULT_TIER.PROVISIONAL_CPU ? GUIDED_LIVE_REASON.CPU_FALLBACK : GUIDED_LIVE_REASON.TIER_UNREPORTED,
+    reason:
+      action.tier === DESCRIBE_RESULT_TIER.PROVISIONAL_CPU
+        ? GUIDED_LIVE_REASON.CPU_TIER
+        : GUIDED_LIVE_REASON.TIER_UNREPORTED,
   };
 };
 

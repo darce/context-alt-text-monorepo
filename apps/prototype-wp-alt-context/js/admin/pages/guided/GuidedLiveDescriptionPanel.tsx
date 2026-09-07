@@ -86,8 +86,8 @@ const statusLine = (state: GuidedLiveState): string => {
     case GUIDED_LIVE_STATUS.DEGRADED:
       // Naming the CPU is itself a claim about who wrote the sentence, so it
       // is only made when the run reported the CPU tier.
-      return state.reason === GUIDED_LIVE_REASON.CPU_FALLBACK
-        ? 'Done, but the GPU was not available, so the CPU wrote this. It is rougher than a GPU description.'
+      return state.reason === GUIDED_LIVE_REASON.CPU_TIER
+        ? 'Done. This ran on the slower CPU option, which writes rougher text than the GPU.'
         : 'Done, but the run did not say whether the GPU wrote this.';
     case GUIDED_LIVE_STATUS.TIMED_OUT:
       // The offer is named in the sentence as well as on the buttons, so the

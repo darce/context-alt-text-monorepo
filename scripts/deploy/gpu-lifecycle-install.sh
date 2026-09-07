@@ -207,6 +207,33 @@ purge_stale_gpu_reaper_units() {
     sudo systemctl daemon-reload
 }
 
+ensure_acx_api_group() {
+    # systemd resolves SupplementaryGroups through NSS before it forks ExecStart.
+    # A bare numeric gid with no /etc/group entry is not resolvable, so the unit
+    # dies at status=216/GROUP with "Failed to determine supplementary groups:
+    # No such process" -- before a single line of lifecycle code runs. Print the
+    # name the units must use on stdout; diagnostics go to stderr.
+    local gid=$1 name=$2 existing
+    existing=$(getent group "$gid" | cut -d: -f1)
+    if [ -n "$existing" ]; then
+        if [ "$existing" != "$name" ]; then
+            echo "gpu-lifecycle: gid $gid is already named '$existing'; units will use that name" >&2
+        fi
+        printf '%s\n' "$existing"
+        return 0
+    fi
+    if getent group "$name" >/dev/null 2>&1; then
+        echo "error: group '$name' exists with a gid other than $gid; refusing to renumber it" >&2
+        return 1
+    fi
+    sudo groupadd --system --gid "$gid" "$name" >&2
+    getent group "$gid" >/dev/null || {
+        echo "error: created group '$name' but gid $gid is still unresolvable via NSS" >&2
+        return 1
+    }
+    printf '%s\n' "$name"
+}
+
 activate_gpu_lifecycle_timers() {
     [ "$#" -eq 6 ] || {
         echo "error: lifecycle activation requires four expected hashes, max lease, and intent-path hash" >&2
@@ -430,6 +457,11 @@ REAP_INTERVAL="${REAP_INTERVAL:-2min}"
 READY_URL="${READY_URL-}"
 LOAD_STALE_GRACE_SECONDS="${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS:-600}"
 REMOTE_COMMAND_TIMEOUT_SECONDS="${REMOTE_COMMAND_TIMEOUT_SECONDS:-180}"
+# The API container publishes load and intent dumps as uid/gid 10001. The host
+# lifecycle units need that gid as a supplementary group to read them. systemd
+# resolves SupplementaryGroups through NSS, so the gid must also have a *name*.
+ACX_API_GID="${ACX_API_GID:-10001}"
+ACX_API_GROUP="${ACX_API_GROUP:-acxapi}"
 DRY_RUN=0
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 DEPLOYMENTS_FILE="${ACX_GPU_DEPLOYMENTS_FILE:-${repo_root}/scripts/deploy/gpu-snapshot-deployments.conf}"
@@ -456,7 +488,7 @@ append_deployment() {
     LOAD_ENVIRONMENTS="${LOAD_ENVIRONMENTS:+${LOAD_ENVIRONMENTS} }${environment}"
     LOAD_ENVIRONMENT_DIRS="${LOAD_ENVIRONMENT_DIRS:+${LOAD_ENVIRONMENT_DIRS} }/run/acx-write/${environment}"
     TMPFILES_ENVIRONMENT_ENTRIES="${TMPFILES_ENVIRONMENT_ENTRIES:+${TMPFILES_ENVIRONMENT_ENTRIES}
-}d /run/acx-write/${environment} 0775 root 10001 -"
+}d /run/acx-write/${environment} 0775 root ${ACX_API_GID} -"
     case " $GPU_INTENT_ENVIRONMENTS " in
         *" $environment "*)
             INTENT_PATH_ENTRIES="${INTENT_PATH_ENTRIES:+${INTENT_PATH_ENTRIES}
@@ -750,6 +782,7 @@ intent_path_fence_function=$(declare -f fence_gpu_intent_path)
 activation_function=$(declare -f activate_gpu_lifecycle_timers)
 start_fence_function=$(declare -f fence_gpu_lifecycle_start)
 stale_reaper_purge_function=$(declare -f purge_stale_gpu_reaper_units)
+api_group_function=$(declare -f ensure_acx_api_group)
 cleanup_function=$(declare -f cleanup_gpu_lifecycle_transaction)
 snapshot_function=$(declare -f snapshot_gpu_lifecycle_release)
 snapshot_validation_function=$(declare -f validate_gpu_lifecycle_snapshot)
@@ -763,6 +796,7 @@ ${intent_path_fence_function}
 ${activation_function}
 ${start_fence_function}
 ${stale_reaper_purge_function}
+${api_group_function}
 ${cleanup_function}
 ${snapshot_function}
 ${snapshot_validation_function}
@@ -776,6 +810,9 @@ trap cleanup_gpu_lifecycle_transaction ERR EXIT
 fence_gpu_intent_path
 fence_gpu_lifecycle_start
 purge_stale_gpu_reaper_units
+# The units below name this group; resolve it (creating it if absent) before any
+# unit file is written, so no unit can be installed referencing an unresolvable gid.
+ACX_API_GROUP_NAME=\$(ensure_acx_api_group '${ACX_API_GID}' '${ACX_API_GROUP}')
 previous_release=\$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' /opt/acx-gpu/current)
 if [ -n \"\$previous_release\" ] && [ \"\$previous_release\" != '${remote_release}' ] \
     && [ -d \"\$previous_release\" ]; then
@@ -812,7 +849,7 @@ Type=oneshot
 TimeoutStartSec=1200s
 RuntimeMaxSec=1200s
 User=ubuntu
-SupplementaryGroups=10001
+SupplementaryGroups=\${ACX_API_GROUP_NAME}
 StateDirectory=acx-gpu
 StateDirectoryMode=0700
 # instance_principal: the VM carries no API key. Requires a dynamic-group grant
@@ -862,7 +899,7 @@ Type=oneshot
 TimeoutStartSec=1200s
 RuntimeMaxSec=1200s
 User=ubuntu
-SupplementaryGroups=10001
+SupplementaryGroups=\${ACX_API_GROUP_NAME}
 StateDirectory=acx-gpu
 StateDirectoryMode=0700
 Environment=OCI_CLI_AUTH=instance_principal
@@ -887,16 +924,16 @@ WantedBy=timers.target
 UNIT
 
 # The host lifecycle units exclusively own the state directory. The API gets
-# only a read-only bind mount of it, while uid/gid 10001 can publish load dumps
-# atomically in the separate load directory. SupplementaryGroups=10001 lets the
+# only a read-only bind mount of it, while the API uid/gid can publish load dumps
+# atomically in the separate load directory. SupplementaryGroups lets the
 # ubuntu units read the API-owned load dump without granting the API host-side
 # write access to lifecycle state.
 sudo mkdir -p /run/acx /run/acx-write ${LOAD_ENVIRONMENT_DIRS}
 sudo chown ubuntu:ubuntu /run/acx
 sudo chmod 0755 /run/acx
-sudo chown root:10001 /run/acx-write
+sudo chown root:${ACX_API_GID} /run/acx-write
 sudo chmod 0775 /run/acx-write
-sudo chown root:10001 ${LOAD_ENVIRONMENT_DIRS}
+sudo chown root:${ACX_API_GID} ${LOAD_ENVIRONMENT_DIRS}
 sudo chmod 0775 ${LOAD_ENVIRONMENT_DIRS}
 sudo touch /run/acx/gpu-state.json.lock
 sudo chown ubuntu:ubuntu /run/acx/gpu-state.json.lock
@@ -906,7 +943,7 @@ sudo chmod 0600 /run/acx/gpu-state.json.lock
 # state lock too, so no process umask decides its ownership or mode.
 sudo tee \"\$unit_stage/acx-gpu.conf\" >/dev/null <<'TMPF'
 d /run/acx 0755 ubuntu ubuntu -
-d /run/acx-write 0775 root 10001 -
+d /run/acx-write 0775 root ${ACX_API_GID} -
 ${TMPFILES_ENVIRONMENT_ENTRIES}
 f /run/acx/gpu-state.json.lock 0600 ubuntu ubuntu -
 TMPF

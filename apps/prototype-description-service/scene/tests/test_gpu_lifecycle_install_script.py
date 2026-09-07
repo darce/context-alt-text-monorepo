@@ -122,16 +122,23 @@ def test_gpu_lifecycle_install_keeps_the_api_load_dir_group_writable() -> None:
     text = SCRIPT.read_text(encoding="utf-8")
     commands = _non_comment_command_lines(text)
 
-    # The load dir the API writes into must carry group 10001 and group-write.
-    assert any("chown root:10001 ${LOAD_ENVIRONMENT_DIRS}" in line for line in commands), (
-        "installer must give every registered load directory group 10001"
+    # OPSGPU-R4-02 made the gid a single named variable instead of a literal
+    # repeated at four sites, so the assertion follows it -- and additionally
+    # pins the default, which the bare literal never did.
+    assert 'ACX_API_GID="${ACX_API_GID:-10001}"' in text, (
+        "the API gid must stay 10001 by default; the container writer is uid/gid 10001"
+    )
+
+    # The load dir the API writes into must carry that gid and be group-writable.
+    assert any("chown root:${ACX_API_GID} ${LOAD_ENVIRONMENT_DIRS}" in line for line in commands), (
+        "installer must give every registered load directory the API gid"
     )
     assert any("chmod 0775 ${LOAD_ENVIRONMENT_DIRS}" in line for line in commands), (
         "installer must keep every registered load directory group-writable"
     )
-    assert "d /run/acx-write/${environment} 0775 root 10001 -" in text, (
+    assert "d /run/acx-write/${environment} 0775 root ${ACX_API_GID} -" in text, (
         "the per-environment tmpfiles template must re-create the load dir "
-        "group-writable by 10001 after a tmpfs reboot"
+        "group-writable by the API gid after a tmpfs reboot"
     )
 
     # The lifecycle state dir is host-owned; the API only gets it read-only.
@@ -317,3 +324,44 @@ def test_installer_reaper_units_read_the_directory_compose_publishes_to() -> Non
             f"every installer reaper unit must read {expected_load_dir!r}; "
             f"got {load_dirs!r} in {exec_start!r}"
         )
+
+
+def test_every_supplementary_group_is_a_name_the_installer_resolves() -> None:
+    """A unit may not name a group NSS cannot resolve.
+
+    systemd resolves SupplementaryGroups through NSS before it forks ExecStart.
+    The installer used to write a bare `SupplementaryGroups=10001` while only
+    ever chowning to that gid numerically -- no /etc/group entry was ever
+    created. Every acx-gpu-*.service on acx-backend therefore died at
+    status=216/GROUP with "(flock): Failed to determine supplementary groups:
+    No such process", before a single line of lifecycle code ran, which is what
+    took the cost backstop offline in D1 (OPSGPU-R4-02).
+    """
+    installer = SCRIPT.read_text(encoding="utf-8")
+
+    groups = re.findall(r"^SupplementaryGroups=(.+)$", installer, re.MULTILINE)
+    assert groups, "installer must define SupplementaryGroups on the lifecycle units"
+    for value in groups:
+        for entry in value.strip().split():
+            assert not entry.strip().isdigit(), (
+                "SupplementaryGroups must name a group, not a bare gid: "
+                f"{entry!r} is unresolvable via NSS and fails the unit at 216/GROUP"
+            )
+
+    assert "ensure_acx_api_group" in installer, (
+        "the installer must own group creation; SupplementaryGroups cannot depend "
+        "on a group some other provisioning step may or may not have made"
+    )
+    assert re.search(r"getent group .*\bgid\b|getent group \"\$gid\"", installer), (
+        "group creation must be getent-guarded so a rerun is idempotent"
+    )
+    assert re.search(r"groupadd .*--gid", installer), (
+        "the installer must create the gid it chowns to"
+    )
+    # The resolver runs before any unit file is staged, so a failure to resolve
+    # aborts the transaction instead of installing a unit that cannot start.
+    resolve_at = installer.index("ACX_API_GROUP_NAME=")
+    first_unit_at = installer.index('$unit_stage/acx-gpu-start.service')
+    assert resolve_at < first_unit_at, (
+        "resolve the group before staging units, or a bad gid ships anyway"
+    )

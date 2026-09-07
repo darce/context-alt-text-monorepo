@@ -8,6 +8,7 @@ import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol
 
 import numpy as np
@@ -23,6 +24,29 @@ from recognition.domain.suggestion_details import MergeSuggestionDetails, Sugges
 
 if TYPE_CHECKING:
     from recognition.application.settings.clustering import MaturitySettings
+
+
+class MvRefreshOutcome(StrEnum):
+    """Outcome of a concurrent materialized-view refresh attempt."""
+
+    REFRESHED = "refreshed"
+    SKIPPED_HEADROOM = "skipped_headroom"
+    FAILED = "failed"
+
+
+def require_mv_refresh_outcome(value: object, *, source: str) -> MvRefreshOutcome:
+    """Return ``value`` as an ``MvRefreshOutcome`` or raise naming the violator.
+
+    The refresh contract used to be a bare bool. A stale implementation that still
+    returns one otherwise reaches the response builder and dies on ``.value``, an
+    error that names neither the contract nor the offending implementation.
+    """
+    if isinstance(value, MvRefreshOutcome):
+        return value
+    raise TypeError(
+        f"{source} must return an MvRefreshOutcome, got {type(value).__name__}: {value!r}. "
+        f"Valid outcomes: {', '.join(o.value for o in MvRefreshOutcome)}."
+    )
 
 
 @dataclass(frozen=True)
@@ -83,8 +107,8 @@ class ClusterRepository(Protocol):
         """Refresh the materialized view for cluster centroids."""
         ...
 
-    async def refresh_centroids_view_concurrent(self) -> bool:
-        """Refresh the materialized view concurrently. Returns True on success, False on failure."""
+    async def refresh_centroids_view_concurrent(self) -> MvRefreshOutcome:
+        """Refresh the materialized view concurrently and report its outcome."""
         ...
 
     # Clustering helpers

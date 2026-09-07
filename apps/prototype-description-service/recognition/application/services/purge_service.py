@@ -38,6 +38,7 @@ from db.models import (
     Tenant,
 )
 from recognition.application.services.audit_service import AuditService
+from recognition.domain.repositories import MvRefreshOutcome
 from recognition.infrastructure.repositories._helpers import coerce_uuid
 from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
 
@@ -128,10 +129,12 @@ class TenantPurgeService:
         scope_ids = await self._collect_scope_ids(tenant_id, scope)
         deleted_counts = await self._delete_jobs_for_scope(tenant_id, scope)
         deleted_counts.update(await self._delete_dependency_rows(tenant_id, scope, scope_ids))
-        if not await self._cluster_repository.refresh_centroids_view_concurrent():
+        refresh_outcome = await self._cluster_repository.refresh_centroids_view_concurrent()
+        if refresh_outcome is not MvRefreshOutcome.REFRESHED:
             logger.warning(
-                "[purge] centroid MV refresh failed after purge (tenant_id=%s scope=%s); "
-                "centroids may be stale until the next refresh",
+                "[purge] centroid MV refresh did not complete after purge "
+                "(outcome=%s tenant_id=%s scope=%s); centroids may be stale until the next refresh",
+                refresh_outcome.value,
                 tenant_id,
                 scope,
             )

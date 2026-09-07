@@ -1289,6 +1289,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             .order_by(ClusterModel.created_at.desc())
         )
         result = await self._session.execute(stmt)
+        # WHY: the two INNER JOINs reject a NULL membership key before it reaches this result.
         raw: list[tuple[MediaIdentity, uuid.UUID]] = list(result.tuples().all())
         models = _filter_rows_to_single_embedding_model([m for m, _ in raw])
         kept_ids = {id(m) for m in models}

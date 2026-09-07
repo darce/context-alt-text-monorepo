@@ -9,6 +9,7 @@ parent branch, either by reachability or by Git's patch-equivalence check.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import subprocess
@@ -905,10 +906,8 @@ def _write_intent(
         return f"cannot durably record reaper intent: {exc}"
     finally:
         if temporary_path is not None:
-            try:
+            with contextlib.suppress(OSError):
                 temporary_path.unlink()
-            except OSError:
-                pass
     return None
 
 

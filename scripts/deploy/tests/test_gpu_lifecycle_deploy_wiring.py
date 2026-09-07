@@ -51,6 +51,7 @@ def _run_lifecycle(
     partial_reaper_write: bool = False,
     group_present: bool = False,
     groupadd_rc: int = 0,
+    groupadd_noop: bool = False,
     existing_groups: tuple[str, ...] = (),
 ) -> tuple[subprocess.CompletedProcess[str], str]:
     fake_bin = tmp_path / "bin"
@@ -318,6 +319,12 @@ while [ "$#" -gt 0 ]; do
     *) want_name="$1"; shift ;;
   esac
 done
+# A successful but ineffective groupadd is distinct from the normal collision
+# behavior below. This lets the postcondition test exercise the installer's
+# `getent group 10001` check after groupadd exits 0.
+if [ "${FAKE_GROUPADD_NOOP:-0}" = 1 ]; then
+  exit 0
+fi
 # shadow-utils exit codes: 9 = name already in use, 4 = GID already in use.
 while IFS=: read -r gname _ ggid _; do
   [ "$gname" = "$want_name" ] && exit 9
@@ -383,6 +390,7 @@ printf '\n' >>"$FAKE_TRANSPORT_LOG"
             "FAKE_FLOCK_RC": str(flock_rc),
             "FAKE_GROUP_DB": str(group_db),
             "FAKE_GROUPADD_RC": str(groupadd_rc),
+            "FAKE_GROUPADD_NOOP": "1" if groupadd_noop else "0",
             "FAKE_DROP_IN_PATHS": drop_in_paths,
             "FAKE_MISMATCHED_UNIT": mismatched_unit or "",
             "FAKE_REAP_EXEC_START": reap_exec_start,
@@ -851,6 +859,13 @@ def test_group_name_collision_still_provisions_the_gid_the_units_resolve(
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "systemctl <enable> <--now> <acx-gpu-start.timer>" in calls
+    preferred = "groupadd <-r> <-g> <10001> <acxapi>"
+    fallback = "groupadd <-r> <-g> <10001> <acxgid10001>"
+    assert calls.count(preferred) == 1
+    assert calls.count(fallback) == 1, (
+        "the pre-existing acxapi name must take the installer's fallback groupadd path"
+    )
+    assert calls.index(preferred) < calls.index(fallback)
     group_db = (tmp_path / "fake-etc-group").read_text(encoding="utf-8")
     assert ":10001:" in group_db, (
         "the collision path must fall back to another name and still create GID 10001, "
@@ -862,19 +877,24 @@ def test_install_fails_closed_when_the_gid_is_unresolvable_after_groupadd(
     tmp_path: Path,
 ) -> None:
     """groupadd exiting 0 is not the postcondition; a resolvable GID 10001 is.
+
+    The fixture forces groupadd to report success without writing an NSS entry.
     If the group database still cannot answer for 10001, arming the start timer
-    buys a burst GPU whose reaper will die at 216/GROUP."""
+    buys a burst GPU whose reaper will die at 216/GROUP.
+    """
     result, calls = _run_lifecycle(
         tmp_path,
         enabled=True,
         ready_url="http://10.0.1.36:8000/health",
         dry_run=False,
         # groupadd reports success but writes nothing the group DB can resolve.
-        groupadd_rc=0,
+        groupadd_noop=True,
         existing_groups=("acxapi:x:5000:", "acxgid10001:x:5001:"),
     )
 
     assert result.returncode != 0
+    assert calls.count("groupadd <-r> <-g> <10001> <acxapi>") == 1
+    assert "groupadd <-r> <-g> <10001> <acxgid10001>" not in calls
     assert calls.count("getent <group> <10001>") >= 2
     assert "systemctl <enable> <--now> <acx-gpu-start.timer>" not in calls
 

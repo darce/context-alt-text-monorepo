@@ -9,11 +9,12 @@ import os
 import tempfile
 import time
 from contextlib import suppress
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 
 from infra.oci.gpu_lifecycle.controller import GpuInstanceState
+from infra.oci.gpu_lifecycle.intent import IntentAction, IntentStatus
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,20 @@ class GpuLifecycleState(StrEnum):
     WARMING = "warming"
     READY = "ready"
     DEGRADED = "degraded"
+
+
+class LastTransitionReason(StrEnum):
+    """Why the lifecycle last actuated a GPU instance."""
+
+    WORK = "work"
+    OPERATOR = "operator"
+    IDLE = "idle"
+    LEASE_CAP = "lease_cap"
+    START_FAILED = "start_failed"
+    UNKNOWN = "unknown"
+
+
+_SNAPSHOT_FIELD_UNSET = object()
 
 
 # Every OCI state has one conservative state before cycle-specific evidence is
@@ -170,6 +185,27 @@ def state_for_instances(
     raise RuntimeError("unreachable GPU lifecycle state reduction")
 
 
+def _serialize_snapshot_time(value: datetime | str | None | object, *, field: str) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError(f"{field} must be timezone-aware")
+        return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    if isinstance(value, str) and value.strip():
+        normalized = value.strip()
+        if normalized.endswith("Z"):
+            normalized = f"{normalized[:-1]}+00:00"
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError as exc:
+            raise ValueError(f"{field} must be an ISO-8601 timestamp") from exc
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise ValueError(f"{field} must include a timezone")
+        return parsed.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    raise ValueError(f"{field} must be a timezone-aware datetime, ISO-8601 string, or None")
+
+
 def write_gpu_state_snapshot(
     state: GpuLifecycleState | str,
     *,
@@ -177,6 +213,13 @@ def write_gpu_state_snapshot(
     reason: str | None = None,
     now: float | None = None,
     path: str | Path | None = None,
+    intent: IntentAction | str | None | object = _SNAPSHOT_FIELD_UNSET,
+    intent_expires_at: datetime | str | None | object = _SNAPSHOT_FIELD_UNSET,
+    intent_status: IntentStatus | str | None | object = _SNAPSHOT_FIELD_UNSET,
+    honoured_nonce: str | None | object = _SNAPSHOT_FIELD_UNSET,
+    lease_expires_at: datetime | str | None | object = _SNAPSHOT_FIELD_UNSET,
+    instance_running_since: datetime | str | None | object = _SNAPSHOT_FIELD_UNSET,
+    last_transition_reason: LastTransitionReason | str | None | object = _SNAPSHOT_FIELD_UNSET,
 ) -> bool:
     """Atomically publish a fresh snapshot; telemetry failures never escape."""
     try:
@@ -196,6 +239,64 @@ def write_gpu_state_snapshot(
             raise ValueError("degraded GPU lifecycle snapshots require a reason")
     elif reason is not None:
         raise ValueError("reason is only valid for degraded GPU lifecycle snapshots")
+
+    include_intent_fields = any(
+        value is not _SNAPSHOT_FIELD_UNSET
+        for value in (
+            intent,
+            intent_expires_at,
+            intent_status,
+            honoured_nonce,
+            lease_expires_at,
+            instance_running_since,
+            last_transition_reason,
+        )
+    )
+    c2_payload: dict[str, object] = {}
+    if include_intent_fields:
+        try:
+            effective_intent = IntentAction.AUTO if intent is _SNAPSHOT_FIELD_UNSET or intent is None else IntentAction(intent)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"invalid intent snapshot value: {intent!r}") from exc
+        try:
+            effective_status = (
+                IntentStatus.NONE
+                if intent_status is _SNAPSHOT_FIELD_UNSET or intent_status is None
+                else IntentStatus(intent_status)
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"invalid intent_status snapshot value: {intent_status!r}") from exc
+        try:
+            transition_reason = (
+                LastTransitionReason.UNKNOWN
+                if last_transition_reason is _SNAPSHOT_FIELD_UNSET or last_transition_reason is None
+                else LastTransitionReason(last_transition_reason)
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"invalid last_transition_reason snapshot value: {last_transition_reason!r}") from exc
+
+        nonce = None if honoured_nonce is _SNAPSHOT_FIELD_UNSET else honoured_nonce
+        if nonce is not None and (not isinstance(nonce, str) or not nonce.strip()):
+            raise ValueError("honoured_nonce must be a non-blank string or None")
+
+        c2_payload = {
+            "intent": effective_intent.value,
+            "intent_expires_at": _serialize_snapshot_time(
+                None if intent_expires_at is _SNAPSHOT_FIELD_UNSET else intent_expires_at,
+                field="intent_expires_at",
+            ),
+            "intent_status": effective_status.value,
+            "honoured_nonce": nonce,
+            "lease_expires_at": _serialize_snapshot_time(
+                None if lease_expires_at is _SNAPSHOT_FIELD_UNSET else lease_expires_at,
+                field="lease_expires_at",
+            ),
+            "instance_running_since": _serialize_snapshot_time(
+                None if instance_running_since is _SNAPSHOT_FIELD_UNSET else instance_running_since,
+                field="instance_running_since",
+            ),
+            "last_transition_reason": transition_reason.value,
+        }
 
     target = resolve_gpu_state_path() if path is None else Path(path)
     temporary: Path | None = None
@@ -227,6 +328,7 @@ def write_gpu_state_snapshot(
             "reason": reason,
             "since": since,
         }
+        payload.update(c2_payload)
         with tempfile.NamedTemporaryFile(
             mode="w",
             encoding="utf-8",

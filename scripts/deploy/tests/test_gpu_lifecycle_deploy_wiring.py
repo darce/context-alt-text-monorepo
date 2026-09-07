@@ -897,6 +897,7 @@ def test_install_fails_closed_when_the_gid_is_unresolvable_after_groupadd(
     assert "groupadd <-r> <-g> <10001> <acxgid10001>" not in calls
     assert calls.count("getent <group> <10001>") >= 2
     assert "systemctl <enable> <--now> <acx-gpu-start.timer>" not in calls
+    assert "does not resolve GID 10001" in result.stderr
 
 
 def test_rendered_remote_body_avoids_nonportable_shell_constructs(tmp_path: Path) -> None:

@@ -118,10 +118,9 @@ def _contract_gate(workflow: dict) -> tuple[str, dict]:
 def _contract_lifecycle_suites() -> tuple[str, ...]:
     """Discover every on-disk GPU lifecycle suite that the contract gate owns."""
     lifecycle_dir = REPO_ROOT / "scripts" / "deploy" / "tests"
-    return tuple(
-        path.relative_to(REPO_ROOT).as_posix()
-        for path in sorted(lifecycle_dir.glob("test_gpu_lifecycle_*.py"))
-    )
+    suites = sorted(lifecycle_dir.glob("test_gpu_lifecycle_*.py"))
+    assert suites, "lifecycle suites vanished from scripts/deploy/tests"
+    return tuple(path.relative_to(REPO_ROOT).as_posix() for path in suites)
 
 
 def test_deploy_needs_contract_gate() -> None:

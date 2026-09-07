@@ -174,6 +174,80 @@ purpose to hit the 90 s warm-start target.
 (40 GB) or `VM.GPU.A10.2` (48 GB) at higher $/hr — each needs its **own** service-limit
 increase request; an A10 grant does not cover them.
 
+## GPU burst smoke proof and cost reconciliation
+
+Run the offline proof before an operator considers a live run. The live command is
+deliberately gated and must run on `acx-backend`; it is never a substitute for the
+compensating STOP or the host reaper.
+
+The smoke records four independent checks:
+
+Before the WordPress POST it captures a fresh, identity-pinned idle load
+snapshot (`queue_depth=0`, `in_flight=0`, and `batch_in_progress=false`). It
+then anchors the post-submit observation at the accepted enqueue/trigger and
+requires a fresh snapshot with pending work. This prevents work that was
+already present, or a stale wrapped-client response, from being credited to
+this run.
+
+1. **STOP attribution.** After the instance is `STOPPED`, it queries the OCI Audit
+   event window for the first completed `STOP`/`StopInstance` event for that OCID and
+   records its `principalName` (or `principalId`) as `stop_principal`, together with
+   `stop_event_time`. The default allow-list principal is **`gpu_lifecycle`**, the
+   dedicated lifecycle reaper identity. A human console principal fails the smoke.
+   Override or add an accepted name/OCID with repeatable
+   `--expected-stop-principal PRINCIPAL` options.
+2. **Second-burst idempotence.** Once the first run and reaper have completed, the
+   smoke submits the same fixture sample a second time, requires the same run/tenant
+   envelope in the response, then polls the same `/items` endpoint once more. It
+   compares persisted item IDs (falling back to `created_at`). Dry mode also records
+   replay POST and follow-up poll transport counters; live HTTP transports do not
+   expose those client-side counters, so the unchanged run/tenant envelope and
+   unchanged persisted-item identities are the live proof. The report check is named
+   `second_burst_no_enqueue`.
+3. **Shared GPU-state timeline.** Dry mode feeds the same state snapshot vocabulary
+   used by `gpu_lifecycle` through the live transition recorder. Its report therefore
+   has the same transition shape,
+   `STOPPED→STARTING→RUNNING→STOPPING→STOPPED`, with monotonic elapsed timestamps.
+4. **Usage reconciliation.** `scripts/gpu_cost_report.py` is stdlib-only and never
+   calls the network. It multiplies each burst's RUNNING seconds by the hourly rate
+   (default **$2.00/GPU-hour**, matching the [OCI instance state and cost runbook](../../docs/runbooks/oci-instance-state-and-cost.md), rate line 175)
+   and compares that estimate with the OCI Usage API's `computedAmount` for the same
+   resource/time window. The default disagreement tolerance is 25%; a larger
+   disagreement exits 2.
+
+Export the Usage API JSON with the OCI CLI, then reconcile it with the smoke report:
+
+```bash
+cat > usage-request.json <<'JSON'
+{
+  "tenantId": "<tenancy-ocid>",
+  "timeFrom": "2026-01-01T00:00:00Z",
+  "timeTo": "2026-01-01T01:00:00Z",
+  "granularity": "HOURLY",
+  "queryType": "COST",
+  "groupBy": ["resourceId", "resourceName", "service"]
+}
+JSON
+oci usage-api usage-summary request-summarized-usages \
+  --request-summarized-usages-details file://usage-request.json \
+  --output json > usage.json
+SMOKE_EVIDENCE="$(find .workbay/tmp/gpu-burst-smoke -maxdepth 1 -type f \
+  -name 'GPUSMOKE-1-evidence-*.json' -print -quit)"
+test -n "$SMOKE_EVIDENCE"
+python3 scripts/gpu_cost_report.py usage.json --smoke-report "$SMOKE_EVIDENCE"
+```
+
+Multiple exports may be supplied by repeating `--usage-json` (or by passing
+multiple positional paths). The equivalent Make target is:
+
+```bash
+SMOKE_EVIDENCE="$(find .workbay/tmp/gpu-burst-smoke -maxdepth 1 -type f \
+  -name 'GPUSMOKE-1-evidence-*.json' -print -quit)"
+test -n "$SMOKE_EVIDENCE"
+make gpu-cost-report GPU_COST_USAGE_JSON="usage.json" \
+  GPU_COST_SMOKE_REPORT="$SMOKE_EVIDENCE"
+```
+
 ## Sources
 
 - [Oracle Cloud price list](https://www.oracle.com/cloud/price-list/) — GPU compute + Block Volume (source of truth)

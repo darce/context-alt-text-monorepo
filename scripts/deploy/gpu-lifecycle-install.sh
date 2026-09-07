@@ -857,7 +857,7 @@ StateDirectoryMode=0700
 Environment=OCI_CLI_AUTH=instance_principal
 EnvironmentFile=/etc/acx/gpu-lifecycle.env
 WorkingDirectory=/opt/acx-gpu/current
-ExecStart=/usr/bin/flock --wait 120 /var/lib/acx-gpu/lifecycle.lock /usr/bin/python3 -m infra.oci.gpu_lifecycle --mode start --instance-id \\\${GPU_INSTANCE_ID} --load-dir /run/acx-write --intent-dir /run/acx-write --load-stale-grace-seconds \\\${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS} --gpu-state-json /run/acx/gpu-state.json --running-since-path /var/lib/acx-gpu/running-since.json --probe-oci --oci-bin /home/ubuntu/.oci-venv/bin/oci --ready-url \\\${READY_URL}
+ExecStart=/usr/bin/flock --wait 120 /var/lib/acx-gpu/lifecycle.lock /usr/bin/python3 -m infra.oci.gpu_lifecycle --mode start --instance-id \\\${GPU_INSTANCE_ID} --load-dir /run/acx-write --intent-dir /run/acx-write --load-stale-grace-seconds \\\${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS} --gpu-state-json /run/acx/gpu-state.json --running-since-path /var/lib/acx-gpu/running-since.json --intent-journal-path /var/lib/acx-gpu/intent-journal.jsonl --probe-oci --oci-bin /home/ubuntu/.oci-venv/bin/oci --ready-url \\\${READY_URL}
 UNIT
 
 sudo tee \"\$unit_stage/acx-gpu-start.timer\" >/dev/null <<UNIT
@@ -905,7 +905,7 @@ StateDirectoryMode=0700
 Environment=OCI_CLI_AUTH=instance_principal
 EnvironmentFile=/etc/acx/gpu-lifecycle.env
 WorkingDirectory=/opt/acx-gpu/current
-ExecStart=/usr/bin/flock --wait 120 /var/lib/acx-gpu/lifecycle.lock /usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap --instance-id \\\${GPU_INSTANCE_ID} --load-dir /run/acx-write --intent-dir /run/acx-write --load-stale-grace-seconds \\\${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS} --gpu-state-json /run/acx/gpu-state.json --running-since-path /var/lib/acx-gpu/running-since.json --idle-seconds \\\${IDLE_SECONDS} --max-lease-seconds \\\${MAX_LEASE_SECONDS} --fence-delay-seconds 2 --probe-oci --oci-bin /home/ubuntu/.oci-venv/bin/oci
+ExecStart=/usr/bin/flock --wait 120 /var/lib/acx-gpu/lifecycle.lock /usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap --instance-id \\\${GPU_INSTANCE_ID} --load-dir /run/acx-write --intent-dir /run/acx-write --load-stale-grace-seconds \\\${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS} --gpu-state-json /run/acx/gpu-state.json --running-since-path /var/lib/acx-gpu/running-since.json --intent-journal-path /var/lib/acx-gpu/intent-journal.jsonl --idle-seconds \\\${IDLE_SECONDS} --max-lease-seconds \\\${MAX_LEASE_SECONDS} --fence-delay-seconds 2 --probe-oci --oci-bin /home/ubuntu/.oci-venv/bin/oci
 UNIT
 
 sudo tee \"\$unit_stage/acx-gpu-reap.timer\" >/dev/null <<UNIT

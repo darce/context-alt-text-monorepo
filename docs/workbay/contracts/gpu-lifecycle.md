@@ -52,7 +52,7 @@ Lifecycle semantics:
 | --- | --- | --- |
 | absent / expired / malformed / `auto` | unchanged: start when `has_work` | unchanged: idle reap, lease cap, boot-failure fallback |
 | `start` (unexpired) | START allowed with no work; honoured at most once per nonce (RES-01) | idle reap suppressed; **lease cap still stops** (RES-10); boot-failure fallback unchanged |
-| `stop` (unexpired) | START suppressed even with work | STOP when `has_work` is false; when work is in flight publish `intent_status = blocked_work_in_flight` and re-evaluate next cycle |
+| `stop` (unexpired) | START suppressed even with work | STOP when `has_work` is false; when work is in flight publish `intent_status = blocked_work_in_flight`, journal the deferral, and re-evaluate next cycle (see [Durable intent journal](#durable-intent-journal)) |
 
 Malformed intent is logged at WARNING with the parse error and treated as
 `auto` (AGT-10, CAL-02). A valid intent whose `expires_at` is more than 7200
@@ -60,6 +60,62 @@ seconds after `requested_at` is clamped to 7200 seconds. The service normally
 enforces the default 1800-second TTL and the 60–7200-second service bounds;
 the lifecycle clamp is a defensive backstop. Omitting `--intent-dir` disables
 the optional reader and retains automatic lifecycle behavior.
+
+### Durable intent journal
+
+`/run/acx-write/<ACX_ENV>/gpu-intent.json` is tmpfs. The instance it starts is
+not. A grant that spends money therefore cannot be a tmpfs-only fact (RES-17),
+and its expiry cannot be a wall-clock fact on a host that takes NTP
+corrections (RES-10). Both are settled by an append-only journal on the unit's
+`StateDirectory`:
+
+`--intent-journal-path` (default `/var/lib/acx-gpu/intent-journal.jsonl`,
+`infra/oci/gpu_lifecycle/intent_journal.py`). It is enabled whenever
+`--intent-dir` is; without `--intent-dir` there is no intent to journal. One
+JSON object per line, `schema_version: 1`, required keys `schema_version`,
+`kind`, `nonce`, `recorded_at`; optional `boot_id`, `monotonic`, `action`,
+`requested_by`, `ttl_seconds`, `reason`. Appends take the same-file `flock`,
+`fsync` before returning, and the file is truncated newest-first at 2000
+records so an unattended host cannot fill its state directory (rg-007).
+
+`kind` ∈ `observed | deferred | rearmed | dropped | burned | cycle`:
+
+| kind | written when | consequence |
+| --- | --- | --- |
+| `observed` | first sight of a nonce, **before** it can be honoured | fixes the monotonic origin and `boot_id` for that grant (write-ahead) |
+| `deferred` | a `stop` was blocked by work in flight | marks the grant eligible for re-arm past its wall-clock expiry |
+| `rearmed` | a deferred `stop` outlived `expires_at` inside the re-arm budget | the STOP survives; logged at WARNING |
+| `dropped` | a deferred `stop` exhausted the re-arm budget (default 3600 s past TTL) | terminal; logged at WARNING naming `requested_by` (FLOW-08) |
+| `burned` | the grant is spent: monotonic TTL elapsed, clock ran backwards, or the host rebooted | terminal; no later clock value can re-arm it (RES-10) |
+| `cycle` | end of every reap/start cycle that had a nonce | records effective intent, `intent_status`, actuations, lease expiry, `last_transition_reason`, errors (HAI-06) |
+
+Expiry rules, in order:
+
+- A nonce with a terminal record (`burned` / `dropped`) is spent. It is never
+  honoured again regardless of what the intent file says.
+- Elapsed time for a grant is `monotonic(now) - monotonic(observed)`, not
+  `now - requested_at`. **Monotonic expiry wins even while the wall clock still
+  says unexpired, and a backwards wall-clock correction cannot resurrect a
+  grant whose monotonic TTL has elapsed.** A negative elapsed value is
+  impossible on a working clock, so it burns the grant rather than trusting it.
+- Wall-clock expiry alone refuses the grant for this cycle but does **not**
+  burn it, so a `deferred` `stop` can still be re-armed.
+- `boot_id` (`/proc/sys/kernel/random/boot_id`) mismatch means the monotonic
+  origin is gone. The grant is burned and the revocation is logged at ERROR
+  naming the original `requested_by` and the reboot. A reboot silently
+  reverting the instance to `auto` is exactly the untraceable transition this
+  journal exists to prevent (OBS-08, RLSE-05).
+- A journal that cannot be read (structurally corrupt, unwritable, no boot
+  identity) refuses the grant and says why; it never defaults open (rg-008,
+  AGT-10). A torn trailing line — the one partial write a crash can leave — is
+  tolerated and dropped.
+
+The journal is the reconstructable record of every automated decision that
+spends money: for any nonce, `requested_by`, the effective intent, the
+`intent_status`, and the actuation outcome are replayable from durable storage
+after the tmpfs intent file is gone (HAI-06). A journal append that fails is
+logged and never aborts the cycle — the cost cap outranks its own audit trail
+(rg-007).
 
 ### `gpu-state.json` additive intent fields
 

@@ -12,10 +12,11 @@ import json
 import logging
 import math
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
+from typing import Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,34 @@ class OperatorIntent:
     schema_version: int = INTENT_SCHEMA_VERSION
     source: Path | None = None
     reason: str | None = None
+
+
+@dataclass(frozen=True)
+class IntentFenceVerdict:
+    """The fence's ruling on one candidate publication.
+
+    ``expired`` is authoritative: it may expire a publication the wall clock
+    still considers live (the resurrection case RES-10 exists to stop), and it
+    may keep one alive past its wall-clock expiry when a declared late-event
+    policy says so (FLOW-08).
+    """
+
+    expired: bool
+    reason: str | None = None
+
+
+@runtime_checkable
+class IntentFence(Protocol):
+    """Durable authority check layered over the writer-supplied timestamps."""
+
+    def evaluate(
+        self,
+        intent: OperatorIntent,
+        *,
+        wall_clock_expired: bool,
+        now: datetime,
+    ) -> IntentFenceVerdict:
+        """Rule on one publication. Raising means "refuse the grant"."""
 
 
 @dataclass(frozen=True)
@@ -253,9 +282,41 @@ def _candidate_paths(intent_dir: Path) -> list[Path]:
     return paths
 
 
+def _fence_verdict(
+    fence: IntentFence | None,
+    intent: OperatorIntent,
+    *,
+    wall_clock_expired: bool,
+    now: datetime,
+) -> IntentFenceVerdict:
+    """Apply the durable fence, failing closed when it cannot answer.
+
+    Without a fence the wall clock is the only authority available, which is
+    the legacy behavior.  With one, a fence that raises must revoke the grant
+    rather than be skipped: the arm this gates is the one that suppresses the
+    idle reaper and disables the cost governor (RLSE-05, OBS-08).
+    """
+    if fence is None:
+        return IntentFenceVerdict(expired=wall_clock_expired)
+    try:
+        verdict = fence.evaluate(intent, wall_clock_expired=wall_clock_expired, now=now)
+    except Exception as exc:  # noqa: BLE001 - an unusable fence revokes the grant
+        logger.error("operator intent fence failed; refusing the grant: %s", exc)
+        return IntentFenceVerdict(
+            expired=True,
+            reason=f"intent fence unavailable; grant refused ({type(exc).__name__}: {exc})",
+        )
+    if not isinstance(verdict, IntentFenceVerdict):
+        logger.error("operator intent fence returned %r; refusing the grant", verdict)
+        return IntentFenceVerdict(expired=True, reason="intent fence returned an unusable verdict")
+    return verdict
+
+
 def read_effective_intent(
     intent_dir: str | Path | None,
     now: datetime | float | int | None = None,
+    *,
+    fence: IntentFence | None = None,
 ) -> EffectiveIntent:
     """Aggregate ``*/gpu-intent.json`` and choose the effective publication.
 
@@ -263,6 +324,12 @@ def read_effective_intent(
     timestamps resolve to STOP, which is the conservative tie-breaker.  A
     ``None`` directory means the optional feature is disabled and is silent,
     preserving the legacy lifecycle behavior exactly.
+
+    ``fence`` is the durable authority check.  ``expires_at`` and
+    ``requested_at`` are both wall-clock values supplied by the writer, so on
+    their own they cannot survive a backwards NTP correction: an already-dead
+    ``start`` grant would silently re-arm.  The fence owns the monotonic
+    origin and the burned-nonce ledger that make the grant one-shot (RES-10).
     """
     if intent_dir is None:
         return EffectiveIntent()
@@ -272,23 +339,46 @@ def read_effective_intent(
     valid: list[OperatorIntent] = []
     expired = False
     parse_reasons: list[str] = []
+    fence_reasons: list[str] = []
     for path in _candidate_paths(root):
         intent = _read_one(path, read_time=current_time, reason_sink=parse_reasons)
         if intent is None:
             continue
-        if intent.expires_at <= current_time:
+        wall_clock_expired = intent.expires_at <= current_time
+        verdict = _fence_verdict(
+            fence,
+            intent,
+            wall_clock_expired=wall_clock_expired,
+            now=current_time,
+        )
+        if verdict.expired:
             expired = True
-            _invalid(path, f"intent expired at {intent.expires_at.isoformat()}")
+            reason = verdict.reason or f"intent expired at {intent.expires_at.isoformat()}"
+            fence_reasons.append(reason)
+            _invalid(path, reason)
             continue
+        if verdict.reason:
+            intent = replace(
+                intent,
+                reason="; ".join(part for part in (intent.reason, verdict.reason) if part),
+            )
         valid.append(intent)
 
     if not valid:
+        # A parse failure names a broken writer; a fence revocation names a
+        # grant the controller deliberately refused. Both must reach the
+        # operator, and the parse error is reported first because it is the
+        # one that says the publication never became an intent at all.
         return EffectiveIntent(
             status=IntentStatus.EXPIRED if expired else IntentStatus.NONE,
             reason=(
                 parse_reasons[0]
                 if parse_reasons
-                else ("intent expired" if expired else None)
+                else (
+                    fence_reasons[0]
+                    if fence_reasons
+                    else ("intent expired" if expired else None)
+                )
             ),
         )
 

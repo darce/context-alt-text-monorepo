@@ -820,3 +820,87 @@
     }
   }
 }
+
+.acx-guided-live {
+  margin-bottom: var(--acx-space-24);
+  padding: var(--acx-space-24);
+  border: 1px solid var(--acx-color-border);
+  border-radius: var(--acx-radius-md);
+  background: var(--acx-color-surface);
+
+  h3 {
+    margin-top: 0;
+  }
+}
+
+.acx-guided-live__additive,
+.acx-guided-live__naming {
+  margin: 0 0 var(--acx-space-8);
+  color: var(--acx-color-text-muted);
+  font-size: var(--acx-text-sm);
+}
+
+.acx-guided-live__status {
+  display: flex;
+  gap: var(--acx-space-8);
+  align-items: baseline;
+  margin: var(--acx-space-16) 0 var(--acx-space-8);
+  font-weight: var(--acx-font-weight-medium);
+}
+
+/**
+ * The glyph is the second channel the colour rules depend on ([A11Y-06]), so it
+ * is sized and aligned explicitly rather than inheriting the baseline row.
+ */
+.acx-guided-live__icon {
+  flex: 0 0 auto;
+  width: var(--acx-space-16);
+  font-size: var(--acx-text-sm);
+  line-height: 1;
+  text-align: center;
+}
+
+/**
+ * One rule per GUIDED_LIVE_STATUS member. The waiting and pre-run states are
+ * muted rather than unstyled, so a new status added to the enum without a rule
+ * here is visible as body-coloured text instead of passing for a calm state.
+ */
+.acx-guided-live__status--blocked,
+.acx-guided-live__status--idle,
+.acx-guided-live__status--queued,
+.acx-guided-live__status--warming,
+.acx-guided-live__status--describing {
+  color: var(--acx-color-text-muted);
+}
+
+.acx-guided-live__status--ready {
+  color: var(--acx-color-success-text);
+}
+
+.acx-guided-live__status--degraded,
+.acx-guided-live__status--timed_out {
+  color: var(--acx-color-warning-pill-text);
+}
+
+.acx-guided-live__status--unavailable,
+.acx-guided-live__status--cancelled {
+  color: var(--acx-color-danger);
+}
+
+.acx-guided-live__elapsed {
+  margin: 0 0 var(--acx-space-16);
+  color: var(--acx-color-text-muted);
+  font-size: var(--acx-text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.acx-guided-live__actions {
+  display: flex;
+  gap: var(--acx-space-8);
+}
+
+.acx-guided-live__text {
+  margin: var(--acx-space-16) 0 0;
+  padding-left: var(--acx-space-16);
+  border-left: var(--acx-space-4) solid var(--acx-color-accent);
+}

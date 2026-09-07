@@ -187,3 +187,4 @@ local/*-worktrees.txt
 # Offload lane manifests — regenerated per task by materialize_offload_lane_manifest;
 # embed absolute local worktree paths, so machine-specific (never in repo)
 /config/lane-orchestration/
+docs/evidence/

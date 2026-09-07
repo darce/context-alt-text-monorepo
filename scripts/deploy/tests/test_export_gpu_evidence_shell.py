@@ -19,7 +19,9 @@ def test_export_gpu_evidence_shell_suite() -> None:
         env=environment,
         text=True,
         capture_output=True,
-        timeout=30,
+        # The suite forks a real exporter per scenario and includes a SIGKILL crash case;
+        # it takes ~90s on macOS. 30s was sized for the pre-hardening suite.
+        timeout=300,
         check=False,
     )
     output = result.stdout + result.stderr

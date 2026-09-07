@@ -4,7 +4,9 @@ SQLAlchemy-backed implementation of ClusterRepository.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import threading
 import uuid
 from collections import defaultdict
 from collections.abc import Sequence
@@ -166,6 +168,7 @@ def _datetime_to_snapshot_version(value: datetime | None) -> int:
 
 _MV_CENTROIDS = "mv_identity_cluster_centroids"
 _UNGUARDED_REFRESH_WARNING_LOGGED = False
+_UNGUARDED_REFRESH_WARNING_LOCK = threading.Lock()
 
 
 async def _refresh_mv_concurrent_with_bypass(conn: AsyncConnection) -> MvRefreshOutcome:
@@ -181,19 +184,24 @@ async def _refresh_mv_concurrent_with_bypass(conn: AsyncConnection) -> MvRefresh
     await conn.execute(text("SET app.bypass_rls = 'true'"))
     try:
         settings = get_disk_headroom_settings()
-        if settings.probe_path is None and not _UNGUARDED_REFRESH_WARNING_LOGGED:
-            logger.warning(
-                "Refreshing %s without a disk-headroom guard; %s is unset",
-                _MV_CENTROIDS,
-                "ACX_PG_HEADROOM_PROBE_PATH",
-            )
-            _UNGUARDED_REFRESH_WARNING_LOGGED = True
+        if settings.probe_path is None:
+            should_warn = False
+            with _UNGUARDED_REFRESH_WARNING_LOCK:
+                if not _UNGUARDED_REFRESH_WARNING_LOGGED:
+                    _UNGUARDED_REFRESH_WARNING_LOGGED = True
+                    should_warn = True
+            if should_warn:
+                logger.warning(
+                    "Refreshing %s without a disk-headroom guard; %s is unset",
+                    _MV_CENTROIDS,
+                    "ACX_PG_HEADROOM_PROBE_PATH",
+                )
 
         if settings.probe_path is not None:
             mv_size_result = await conn.execute(text(f"SELECT pg_total_relation_size('{_MV_CENTROIDS}')"))
             mv_bytes = int(mv_size_result.scalar_one() or 0)
             required_bytes = max(settings.min_bytes, 2 * mv_bytes)
-            probe = probe_disk_headroom(settings.probe_path)
+            probe = await asyncio.to_thread(probe_disk_headroom, settings.probe_path)
             if not has_headroom(probe, required_bytes):
                 logger.warning(
                     "Skipping refresh of %s due to insufficient disk headroom: "

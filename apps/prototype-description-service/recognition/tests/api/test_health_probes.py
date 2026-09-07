@@ -140,6 +140,31 @@ def test_create_app_rejects_invalid_health_db_timeout(monkeypatch, raw_timeout: 
         create_app()
 
 
+def test_root_health_route_is_not_named_or_documented_as_liveness() -> None:
+    """HEALTHOBS-1-BR-07: /health is a pool-backed dependency check, not liveness.
+
+    The route handler must not be named ``liveness`` (it does a bounded DB
+    pool check and can return 503 on a transient DB blip), and the
+    registration docstring must warn operators not to wire a
+    restart-on-failure consumer to this route.
+    """
+    import inspect
+
+    from api.main import register_health_probes
+
+    app = _build_ready_app(db_ok=True)
+    health_route = next(route for route in app.routes if getattr(route, "path", None) == "/health")
+    endpoint_name = health_route.endpoint.__name__
+
+    assert endpoint_name != "liveness", "route handler must not be misnamed 'liveness'"
+
+    docstring = inspect.getdoc(register_health_probes) or ""
+    assert "restart-on-failure" in docstring, (
+        "register_health_probes docstring must warn that /health is not a "
+        "restart-on-failure liveness contract"
+    )
+
+
 # ---------------------------------------------------------------------------
 # /ready probes (Slice 2-ready): DB + breaker + model-cache
 # ---------------------------------------------------------------------------

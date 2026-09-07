@@ -1451,7 +1451,15 @@ if (!function_exists('wp_generate_uuid4')) {
 
         $GLOBALS['__ac_uuid_counter']++;
 
-        return 'uuid-' . $GLOBALS['__ac_uuid_counter'];
+        // Real wp_generate_uuid4() returns a 36-character RFC 4122 v4 string.
+        // Callers that feed it to a length- or charset-validated field (the
+        // describe-run idempotency key) need that shape, so keep the counter
+        // for determinism but emit the full canonical layout.
+        return sprintf(
+            '%08x-0000-4000-8000-%012x',
+            $GLOBALS['__ac_uuid_counter'],
+            $GLOBALS['__ac_uuid_counter']
+        );
     }
 }
 

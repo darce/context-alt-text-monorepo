@@ -311,6 +311,20 @@ def test_manifest_hash_mismatch_fails(tmp_path: Path) -> None:
     assert "sha256 mismatch" in result.stdout
 
 
+def test_manifest_path_with_nul_fails_without_traceback(tmp_path: Path) -> None:
+    bundle = _custom_bundle(tmp_path)
+    manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
+    manifest["files"][0]["path"] = "instance.json\u0000hidden"
+    (bundle / "manifest.json").write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 1
+    assert "manifest_sha256" in result.stdout
+    assert "NUL" in result.stdout or "null" in result.stdout.casefold()
+    assert "Traceback" not in result.stderr
+
+
 def test_manifest_rejects_non_mapping_file_entry(tmp_path: Path) -> None:
     bundle = _custom_bundle(tmp_path)
     manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
@@ -1157,6 +1171,50 @@ def test_only_reaper_stop_before_start_cannot_prove_burst(tmp_path: Path) -> Non
     assert "matching reaper StopInstance" in result.stdout
 
 
+def test_state_less_stop_before_state_backed_start_cannot_prove_burst(tmp_path: Path) -> None:
+    audit = {
+        "data": [
+            {
+                "eventName": "StopInstance",
+                "eventTime": "2026-09-01T00:05:00Z",
+                "eventId": "stop-before-start-no-state",
+                "responseStatus": 200,
+                "data": {
+                    "resourceId": INSTANCE_ID,
+                    "identity": {"principalName": "gpu-reaper"},
+                },
+            },
+            {
+                "eventName": "StartInstance",
+                "eventTime": RUNNING_AT,
+                "eventId": "start-after-state-less-stop",
+                "responseStatus": 200,
+                "data": {
+                    "resourceId": INSTANCE_ID,
+                    "stateChange": {"current": {"lifecycleState": "RUNNING"}},
+                },
+            },
+            {
+                "eventName": "StopInstance",
+                "eventTime": STOPPED_AT,
+                "eventId": "stop-after-start",
+                "responseStatus": 200,
+                "data": {
+                    "resourceId": INSTANCE_ID,
+                    "identity": {"principalName": "gpu-reaper"},
+                    "stateChange": {"current": {"lifecycleState": "STOPPED"}},
+                },
+            },
+        ]
+    }
+    bundle = _custom_bundle(tmp_path, audit=audit)
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 1
+    assert "audit transition order" in result.stdout
+
+
 def test_raw_state_transition_order_is_checked_before_collapsing_states(tmp_path: Path) -> None:
     history = {
         "observations": [
@@ -1176,6 +1234,25 @@ def test_raw_state_transition_order_is_checked_before_collapsing_states(tmp_path
 
     assert result.returncode == 1
     assert "state history transition order" in result.stdout
+
+
+def test_malformed_extra_state_observation_cannot_be_ignored(tmp_path: Path) -> None:
+    history = {
+        "instance_id": INSTANCE_ID,
+        "observations": [
+            {"state": "STOPPED", "timestamp": SINCE},
+            {"state": "RUNNING", "timestamp": RUNNING_AT},
+            {"state": "STOPPED", "timestamp": STOPPED_AT},
+            {"state": "STOPPED"},
+        ],
+    }
+    bundle = _custom_bundle(tmp_path, history=history)
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 1
+    assert "state_history_burst" in result.stdout
+    assert "invalid or missing timestamp" in result.stdout
 
 
 def test_nested_oci_audit_event_fields_are_supported(tmp_path: Path) -> None:

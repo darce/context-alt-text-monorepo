@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import subprocess
 import sys
 from hashlib import sha256
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -1132,6 +1134,208 @@ def test_nested_oci_audit_event_fields_are_supported(tmp_path: Path) -> None:
     result = _run_checker(bundle)
 
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_history_transition_order_uses_observed_time_not_document_order(tmp_path: Path) -> None:
+    history = {
+        "instance_id": INSTANCE_ID,
+        "observations": [
+            {"state": "RUNNING", "timestamp": "2026-09-01T00:20:00Z", "action": "StartInstance"},
+            {"state": "STOPPED", "timestamp": RUNNING_AT, "action": "StopInstance"},
+            {"state": "STOPPED", "timestamp": STOPPED_AT},
+        ],
+    }
+    bundle = _custom_bundle(tmp_path, history=history)
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 1
+    assert "state history transition order" in result.stdout
+
+
+def test_history_start_after_the_recorded_stop_cannot_prove_burst(tmp_path: Path) -> None:
+    history = {
+        "instance_id": INSTANCE_ID,
+        "observations": [
+            {"state": "STOPPED", "timestamp": SINCE, "action": "StopInstance"},
+            {"state": "RUNNING", "timestamp": RUNNING_AT, "action": "StartInstance"},
+            {"state": "STOPPED", "timestamp": STOPPED_AT, "action": "StopInstance"},
+        ],
+    }
+    bundle = _custom_bundle(tmp_path, history=history)
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 1
+    assert "state history transition order" in result.stdout
+
+
+def _load_checker_module() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("gpu_burst_evidence_under_test", CHECKER)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load the evidence checker module from {CHECKER}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _golden_oci_audit_event(
+    *,
+    action: str,
+    phase: str,
+    event_time: str,
+    event_id: str,
+    grouping_id: str,
+    principal: str,
+    state_change: dict[str, object] | None,
+) -> dict[str, object]:
+    """Build one OCI Audit CloudEvents record in the shape the service really emits."""
+
+    data: dict[str, object] = {
+        "compartmentId": "ocid1.compartment.example",
+        "compartmentName": "gpu-burst",
+        "resourceId": INSTANCE_ID,
+        "resourceName": "gpu-burst-worker",
+        "identity": {
+            "principalName": principal,
+            "principalId": f"ocid1.user.example.{principal}",
+            "authType": "natv",
+        },
+        "request": {
+            "id": f"{event_id}-request",
+            "action": "POST",
+            "path": f"/20160918/instances/{INSTANCE_ID}",
+            "parameters": {"action": [action]},
+        },
+        "response": {"status": "200", "responseTime": event_time},
+    }
+    if state_change is not None:
+        data["stateChange"] = state_change
+    return {
+        "cloudEventsVersion": "0.1",
+        "eventType": f"com.oraclecloud.computeapi.{action.title()}Instance.{phase}",
+        "source": "ComputeApi",
+        "eventTime": event_time,
+        "eventId": event_id,
+        "eventGroupingId": grouping_id,
+        "contentType": "application/json",
+        "data": data,
+    }
+
+
+GOLDEN_OCI_AUDIT: dict[str, list[dict[str, object]]] = {
+    "data": [
+        _golden_oci_audit_event(
+            action="START",
+            phase="begin",
+            event_time="2026-09-01T00:09:59Z",
+            event_id="golden-start-begin",
+            grouping_id="golden-start",
+            principal="burst-start",
+            state_change=None,
+        ),
+        _golden_oci_audit_event(
+            action="START",
+            phase="end",
+            event_time=RUNNING_AT,
+            event_id="golden-start-end",
+            grouping_id="golden-start",
+            principal="burst-start",
+            state_change={
+                "previous": {"lifecycleState": "STOPPED"},
+                "current": {"lifecycleState": "RUNNING"},
+            },
+        ),
+        _golden_oci_audit_event(
+            action="STOP",
+            phase="begin",
+            event_time="2026-09-01T00:29:59Z",
+            event_id="golden-stop-begin",
+            grouping_id="golden-stop",
+            principal="gpu-reaper",
+            state_change=None,
+        ),
+        _golden_oci_audit_event(
+            action="STOP",
+            phase="end",
+            event_time=STOPPED_AT,
+            event_id="golden-stop-end",
+            grouping_id="golden-stop",
+            principal="gpu-reaper",
+            state_change={
+                "previous": {"lifecycleState": "RUNNING"},
+                "current": {"lifecycleState": "STOPPED"},
+            },
+        ),
+    ]
+}
+
+
+def _golden_audit_without(event_id: str) -> dict[str, list[dict[str, object]]]:
+    return {"data": [event for event in GOLDEN_OCI_AUDIT["data"] if event["eventId"] != event_id]}
+
+
+def test_golden_oci_audit_payload_survives_export_and_check(tmp_path: Path) -> None:
+    checker = _load_checker_module()
+
+    history = checker.build_state_history_document(GOLDEN_OCI_AUDIT, instance_id=INSTANCE_ID, since=SINCE, until=UNTIL)
+
+    assert history["instance_id"] == INSTANCE_ID
+    assert [observation["state"] for observation in history["observations"]] == [
+        "STOPPED",
+        "RUNNING",
+        "STOPPED",
+    ]
+    assert {observation["source"] for observation in history["observations"]} == {
+        "oci_audit_previous_state",
+        "oci_audit_transition",
+    }
+
+    bundle = _custom_bundle(tmp_path, history=history, audit=GOLDEN_OCI_AUDIT)
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_golden_oci_audit_without_stop_end_phase_cannot_prove_burst(tmp_path: Path) -> None:
+    checker = _load_checker_module()
+    audit = _golden_audit_without("golden-stop-end")
+
+    history = checker.build_state_history_document(audit, instance_id=INSTANCE_ID, since=SINCE, until=UNTIL)
+
+    assert [observation["state"] for observation in history["observations"]] == ["STOPPED", "RUNNING"]
+
+    bundle = _custom_bundle(tmp_path, history=history, audit=audit)
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 1
+    assert "expected STOPPED -> RUNNING -> STOPPED" in result.stdout
+
+
+def test_golden_oci_audit_with_a_second_start_fails_closed(tmp_path: Path) -> None:
+    audit = {
+        "data": [
+            *GOLDEN_OCI_AUDIT["data"],
+            _golden_oci_audit_event(
+                action="START",
+                phase="end",
+                event_time="2026-09-01T00:40:00Z",
+                event_id="golden-restart-end",
+                grouping_id="golden-restart",
+                principal="burst-start",
+                state_change=None,
+            ),
+        ]
+    }
+    bundle = _custom_bundle(tmp_path, audit=audit)
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 1
+    assert "observed 2 StartInstance audit events" in result.stdout
+    assert "audit transition order" in result.stdout
 
 
 def test_gpu_evidence_make_target_does_not_duplicate_deploy_shell_suite() -> None:

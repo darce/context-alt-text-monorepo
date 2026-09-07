@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   GUIDED_LIVE_BLOCKED_REASON,
+  GUIDED_LIVE_DEADLINE_SLACK_MS,
   GUIDED_LIVE_REASON,
   GUIDED_LIVE_STATUS,
   GUIDED_LIVE_WAIT_CEILING_SECONDS,
@@ -11,7 +12,9 @@ import {
   guidedLiveReducer,
   guidedLiveRunMayBeLive,
   initialGuidedLiveState,
+  resolveGuidedLiveDeadlineMs,
 } from './liveDescription';
+import { GUIDED_LIVE_WARM_CEILING_SECONDS } from './useGuidedLiveDescription';
 import type { GuidedLiveState } from './liveDescription';
 import { GUIDED_IDENTITY_STATUS, confirmGuidedIdentity, createGuidedScenario } from './state';
 
@@ -670,5 +673,92 @@ describe('degraded detection comes from the result tier', () => {
       text: 'A full description.',
     });
     expect(state.status).toBe(GUIDED_LIVE_STATUS.READY);
+  });
+});
+
+describe('resolveGuidedLiveDeadlineMs: the server budget the client is willing to trust', () => {
+  const WARM_CEILING_MS = GUIDED_LIVE_WARM_CEILING_SECONDS * 1000;
+  const COLD_CEILING_MS = GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000;
+
+  it('adopts a disclosed budget that is inside the warm ceiling, plus slack', () => {
+    expect(resolveGuidedLiveDeadlineMs(WARM_CEILING_MS, 60)).toBe(60_000 + GUIDED_LIVE_DEADLINE_SLACK_MS);
+    expect(resolveGuidedLiveDeadlineMs(WARM_CEILING_MS, 60)).toBe(75_000);
+  });
+
+  it('lets the warm local ceiling win upward when the disclosed budget would exceed it', () => {
+    expect(resolveGuidedLiveDeadlineMs(WARM_CEILING_MS, 400)).toBe(WARM_CEILING_MS);
+    expect(resolveGuidedLiveDeadlineMs(WARM_CEILING_MS, 400)).toBe(180_000);
+  });
+
+  it('cold start + disclosed 60s: does not layer warm-up time on top of the disclosed budget', () => {
+    // The disclosed figure is a statement about generation time alone. This
+    // client does not add the cold ceiling's warm-up allowance to it -- the
+    // same min() formula runs for the cold branch as for the warm one, so a
+    // small disclosed budget still governs even while the GPU may still be
+    // starting.
+    expect(resolveGuidedLiveDeadlineMs(COLD_CEILING_MS, 60)).toBe(60_000 + GUIDED_LIVE_DEADLINE_SLACK_MS);
+    expect(resolveGuidedLiveDeadlineMs(COLD_CEILING_MS, 60)).toBe(75_000);
+  });
+
+  it('falls back to the local ceiling when the server discloses nothing', () => {
+    expect(resolveGuidedLiveDeadlineMs(WARM_CEILING_MS, null)).toBe(WARM_CEILING_MS);
+    expect(resolveGuidedLiveDeadlineMs(WARM_CEILING_MS, undefined)).toBe(WARM_CEILING_MS);
+    expect(resolveGuidedLiveDeadlineMs(COLD_CEILING_MS, null)).toBe(COLD_CEILING_MS);
+  });
+
+  it('falls back to the local ceiling on a disclosed value that is not usable', () => {
+    expect(resolveGuidedLiveDeadlineMs(WARM_CEILING_MS, Number.NaN)).toBe(WARM_CEILING_MS);
+    expect(resolveGuidedLiveDeadlineMs(WARM_CEILING_MS, -1)).toBe(WARM_CEILING_MS);
+    expect(resolveGuidedLiveDeadlineMs(WARM_CEILING_MS, 0)).toBe(WARM_CEILING_MS);
+    expect(resolveGuidedLiveDeadlineMs(WARM_CEILING_MS, Number.POSITIVE_INFINITY)).toBe(WARM_CEILING_MS);
+  });
+});
+
+describe('the reducer adopts the server-disclosed deadline once, at accept', () => {
+  it('sets deadlineMs from the disclosed budget on accept', () => {
+    let state = decided(initialGuidedLiveState());
+    state = guidedLiveReducer(state, { kind: 'requested', atMs: T0 });
+    state = guidedLiveReducer(state, {
+      kind: 'accepted',
+      runId: 'run-1',
+      deadlineSeconds: GUIDED_LIVE_WARM_CEILING_SECONDS,
+      disclosedDeadlineSeconds: 60,
+      atMs: T0,
+    });
+    expect(state.deadlineMs).toBe(75_000);
+  });
+
+  it('ignores a different deadline_seconds carried on a later poll -- a server bug, not a resize', () => {
+    let state = decided(initialGuidedLiveState());
+    state = guidedLiveReducer(state, { kind: 'requested', atMs: T0 });
+    state = guidedLiveReducer(state, {
+      kind: 'accepted',
+      runId: 'run-1',
+      deadlineSeconds: GUIDED_LIVE_WARM_CEILING_SECONDS,
+      disclosedDeadlineSeconds: 60,
+      atMs: T0,
+    });
+    expect(state.deadlineMs).toBe(75_000);
+
+    state = guidedLiveReducer(state, {
+      kind: 'polled',
+      phase: 'warming',
+      gpu: 'starting',
+      atMs: T0 + 1000,
+      disclosedDeadlineSeconds: 900,
+    });
+    expect(state.deadlineMs).toBe(75_000);
+  });
+
+  it('keeps the local ceiling when the server discloses nothing on accept', () => {
+    let state = decided(initialGuidedLiveState());
+    state = guidedLiveReducer(state, { kind: 'requested', atMs: T0 });
+    state = guidedLiveReducer(state, {
+      kind: 'accepted',
+      runId: 'run-1',
+      deadlineSeconds: GUIDED_LIVE_WARM_CEILING_SECONDS,
+      atMs: T0,
+    });
+    expect(state.deadlineMs).toBe(GUIDED_LIVE_WARM_CEILING_SECONDS * 1000);
   });
 });

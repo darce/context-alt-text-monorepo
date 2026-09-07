@@ -772,7 +772,7 @@ UNIT
 # transport. Parentheses are safe.
 if ! getent group 10001 >/dev/null 2>&1; then
     sudo groupadd -r -g 10001 acxapi || sudo groupadd -r -g 10001 acxgid10001 || true
-    getent group 10001 >/dev/null 2>&1
+    getent group 10001 >/dev/null 2>&1 || { echo 'ERROR gpu-lifecycle: groupadd exited 0 but NSS still does not resolve GID 10001; both lifecycle units would die at 216/GROUP before ExecStart. Check nsswitch group sources on the host, then re-run.' >&2; exit 1; }
 fi
 sudo mkdir -p /run/acx /run/acx-write ${LOAD_ENVIRONMENT_DIRS}
 sudo chown ubuntu:ubuntu /run/acx

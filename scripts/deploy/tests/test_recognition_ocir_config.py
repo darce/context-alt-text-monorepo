@@ -569,3 +569,47 @@ def test_single_attempt_verify_does_not_sleep_after_terminal_failure(tmp_path: P
     assert result.returncode == 1
     assert "immediate-401" in result.stderr
     assert not sleep_record.exists()
+
+
+def test_verify_accepts_unhealthy_health_body_and_compares_identity() -> None:
+    expected_sha = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"],
+        cwd=SCRIPT.parents[2],
+        text=True,
+    ).strip()
+    body = (
+        '{"status":"unhealthy","commit_sha":"'
+        f"{expected_sha}"
+        '","image_variant":"recognition","database":{"status":"unhealthy"}}'
+    )
+    command = f'''
+source "{SCRIPT}"
+ACX_VERIFY_ATTEMPTS=1
+ACX_VERIFY_SLEEP=0
+ACX_VERIFY_EXPECT_LOCAL=1
+curl() {{ printf '%s\\n503' '{body}'; }}
+verify_running_image_matches_deployed() {{ :; }}
+verify_live_gpu_snapshots() {{ :; }}
+do_verify dev
+'''
+    result = subprocess.run(["/bin/bash", "-c", command], text=True, capture_output=True, check=False)
+
+    assert result.returncode == 0, result.stderr
+    assert "reports unhealthy (database)" in result.stderr
+    assert "Verified: dev runs" in result.stdout
+
+
+def test_status_prints_unhealthy_for_reachable_503_health_body() -> None:
+    body = '{"status":"unhealthy","commit_sha":"deadbeef","image_variant":"recognition"}'
+    command = f'''
+source "{SCRIPT}"
+curl() {{ printf '%s\\n503' '{body}'; }}
+do_status
+'''
+    result = subprocess.run(["/bin/bash", "-c", command], text=True, capture_output=True, check=False)
+
+    assert result.returncode == 0, result.stderr
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    assert len(lines) == 4
+    assert all("unhealthy" in line for line in lines)
+    assert all("unreachable" not in line for line in lines)

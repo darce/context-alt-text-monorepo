@@ -87,7 +87,7 @@ async def test_tenant_repository_updates_naming_agreement() -> None:
 
     updated = await SqlAlchemyTenantRepository(session).update_naming_agreement_enabled(tenant_id, False)
 
-    assert updated is tenant
+    assert updated is False
     assert tenant.naming_agreement_enabled is False
     assert session.flush_calls == 1
 

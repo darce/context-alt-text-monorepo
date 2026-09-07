@@ -454,8 +454,10 @@ SSH_USER_EXPLICIT=0
 GPU_INSTANCE_NAME="${GPU_INSTANCE_NAME:-acx-gpu-burst}"
 GPU_INSTANCE_ID="${GPU_INSTANCE_ID:-}"
 MAX_LEASE_SECONDS="${MAX_LEASE_SECONDS:-3600}"
+# Only unset operator overrides receive defaults. An explicitly empty value
+# remains invalid and reaches the fail-closed validation below.
 IDLE_SECONDS="${IDLE_SECONDS-300}"
-START_INTERVAL="${START_INTERVAL:-30s}"
+START_INTERVAL="${START_INTERVAL-30s}"
 REAP_INTERVAL="${REAP_INTERVAL-2min}"
 READY_URL="${READY_URL-}"
 LOAD_STALE_GRACE_SECONDS="${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS:-600}"
@@ -963,13 +965,13 @@ UNIT
 # atomically in the separate load directory. SupplementaryGroups lets the
 # ubuntu units read the API-owned load dump without granting the API host-side
 # write access to lifecycle state.
-# systemd resolves SupplementaryGroups=${ACX_API_GID} through NSS before ExecStart. A bare
-# numeric chown creates no group entry, so both lifecycle units died at
-# status=216/GROUP and the burst GPU lost its only stop path. What the units need
-# is a resolvable GID, not a particular name, so fall back to a second name when
-# the preferred one is already taken at another GID, then assert the postcondition
-# under set -e. Asserting on groupadd exit status instead would wedge the install
-# permanently on a name collision.
+# systemd resolves the group name in SupplementaryGroups through NSS before
+# ExecStart. A bare numeric chown creates no group entry, so both lifecycle
+# units died at status=216/GROUP and the burst GPU lost its only stop path. What
+# the units need is a resolvable GID, not a particular name, so fall back to a
+# second name when the preferred one is already taken at another GID, then
+# assert the postcondition under set -e. Asserting on groupadd exit status
+# instead would wedge the install permanently on a name collision.
 # Editing note: this block is spliced into a double-quoted ssh payload, so a
 # literal double quote, dollar sign, backtick or backslash here does not survive
 # transport. Parentheses are safe.

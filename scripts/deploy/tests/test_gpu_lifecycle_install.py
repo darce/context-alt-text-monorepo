@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts.deploy.tests.test_gpu_lifecycle_contract_ownership import _api_runtime_ids
 from scripts.deploy.tests.test_gpu_lifecycle_deploy_wiring import _run_lifecycle
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -334,7 +335,7 @@ def test_mid_sequence_copy_failure_never_switches_the_live_release(tmp_path: Pat
 def test_installer_provisions_every_supplementary_group_it_references(tmp_path: Path) -> None:
     """The remote installer payload must provision the NSS group before activation.
 
-    A fresh host starts without GID 10001. Execute the rendered payload through
+    A fresh host starts without the image-pinned runtime GID. Execute the rendered payload through
     the shared remote shim so this test observes the real ``getent``/``groupadd``
     sequence rather than proving that those words occur in the installer source.
     """
@@ -354,9 +355,25 @@ def test_installer_provisions_every_supplementary_group_it_references(tmp_path: 
     assert calls.index(getent) < calls.index(groupadd) < calls.rindex(getent)
     assert calls.rindex(getent) < calls.index("systemctl <start> <acx-gpu-reap.service>")
     group_db = (tmp_path / "fake-etc-group").read_text(encoding="utf-8")
-    assert "acxapi:x:10001:" in group_db, (
-        "the executed installer must leave a resolvable GID 10001 in the fake NSS database"
+    _, image_gid = _api_runtime_ids()
+    groups_by_name = {
+        fields[0]: fields[2]
+        for line in group_db.splitlines()
+        if (fields := line.split(":")) and len(fields) >= 3
+    }
+    assert image_gid in groups_by_name.values(), (
+        "the executed installer must leave the image-pinned GID resolvable in the fake NSS database"
     )
     for unit in ("acx-gpu-start.service", "acx-gpu-reap.service"):
         rendered = (tmp_path / "effective-systemd" / unit).read_text(encoding="utf-8")
-        assert "SupplementaryGroups=10001" in rendered
+        match = re.search(r"^SupplementaryGroups=(?P<group>\S+)$", rendered, flags=re.MULTILINE)
+        assert match is not None, f"{unit} must name its supplementary group"
+        group_name = match["group"]
+        assert group_name in groups_by_name, (
+            f"{unit} names supplementary group {group_name!r}, but the fake NSS database "
+            f"does not contain that group: {group_db!r}"
+        )
+        assert groups_by_name[group_name] == image_gid, (
+            f"{unit} names supplementary group {group_name!r}, which resolves to "
+            f"GID {groups_by_name[group_name]}, not image-pinned GID {image_gid}"
+        )

@@ -392,7 +392,10 @@ if bash -n "$bootstrap_file" 2>/dev/null; then
     echo "ok   bootstrap-wp.sh parses under bash -n"
 else
     echo "FAIL bootstrap-wp.sh has a shell syntax error:"
-    bash -n "$bootstrap_file" 2>&1 | sed 's/^/     /'
+    # `|| true`: this pipeline is expected to fail (that is the whole point),
+    # and under the file's `set -euo pipefail` an unguarded failure kills the
+    # suite before the counter below, silently skipping every later assertion.
+    { bash -n "$bootstrap_file" 2>&1 | sed 's/^/     /'; } || true
     failures=$((failures + 1))
 fi
 
@@ -412,8 +415,35 @@ assert_file_grep "bootstrap branches on classify_describe_block_cause" \
     "$bootstrap_file" 'classify_describe_block_cause'
 assert_file_grep "probe-failure BLOCK names the probe, not the profile" \
     "$bootstrap_file" 'could not read the live description service adapter'
-assert_file_grep "probe-failure BLOCK names the probed endpoint" \
-    "$bootstrap_file" 'health/detailed'
+# The bare string 'health/detailed' already appears twice in the pre-change
+# file, so grepping for it proves nothing. Pin the arm itself: the guard must
+# compare against PROBE_FAILED (inverting it to UNTRUSTED_PROFILE restores the
+# original bug and misroutes the untrusted case), and the probe message must
+# live in that arm — i.e. between the guard and the untrusted fallback.
+assert_file_grep "probe-failure arm guards on PROBE_FAILED, not its inverse" \
+    "$bootstrap_file" 'classify_describe_block_cause "\$ADAPTER_PROFILE"\)" == "PROBE_FAILED"'
+
+guard_line=$(grep -n 'classify_describe_block_cause "\$ADAPTER_PROFILE"' "$bootstrap_file" | sed -n '1s/:.*//p')
+probe_msg_line=$(grep -n 'could not read the live description service adapter' "$bootstrap_file" | sed -n '1s/:.*//p')
+untrusted_msg_line=$(grep -n 'produces canned fixture captions' "$bootstrap_file" | sed -n '1s/:.*//p')
+if [ -n "$guard_line" ] && [ -n "$probe_msg_line" ] && [ -n "$untrusted_msg_line" ] \
+    && [ "$guard_line" -lt "$probe_msg_line" ] && [ "$probe_msg_line" -lt "$untrusted_msg_line" ]; then
+    echo "ok   probe message sits inside the PROBE_FAILED arm, untrusted message after it"
+else
+    echo "FAIL probe/untrusted messages are not ordered as guard(${guard_line:-?}) < probe(${probe_msg_line:-?}) < untrusted(${untrusted_msg_line:-?})"
+    failures=$((failures + 1))
+fi
+assert_file_grep "probe-failure message names the probed endpoint" \
+    "$bootstrap_file" 'could not read the live description service adapter.*health/detailed'
+
+# BR-03: the word-split trim must run under `set -f`, matching the guard the
+# sibling classify_claimed_adapter_matches_probe already carries. Without it a
+# profile of `*` glob-expands against cwd.
+glob_probe_dir=$(mktemp -d)
+glob_cause=$(cd "$glob_probe_dir" && : > florence_small && classify_describe_block_cause '*')
+rm -rf "$glob_probe_dir"
+assert_eq "block cause: a glob profile does not expand against cwd" \
+    UNTRUSTED_PROFILE "$glob_cause"
 
 # --- bootstrap-wp.sh wiring (R1-05 / R1-04 / RLSE-08) ---
 health_file="${script_dir}/../../../../apps/prototype-description-service/api/main.py"

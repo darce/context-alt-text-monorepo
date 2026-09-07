@@ -1,6 +1,6 @@
 # GPUOPS-1 lane brief: the API-side intent writer
 
-Lane: `gpuops-1-intent` · Owned paths: `apps/prototype-description-service/scene/application/gpu_intent.py` and its tests under `apps/prototype-description-service/scene/tests/`.
+Lane: `gpuops-1-svcintent` · Owned paths: `apps/prototype-description-service/scene/application/gpu_intent.py` and its tests under `apps/prototype-description-service/scene/tests/`.
 Self-verify: `python3 -m pytest apps/prototype-description-service/scene/tests -q`
 
 Three open high findings, all in one file. Read their full text and evidence
@@ -20,8 +20,9 @@ this path is silently dropped.
 
 Fix by conforming the writer to the reader. Allocate the sequence from **one**
 authoritative monotonic allocator, held under the same writer lock that guards
-the intent file, and carry it through the shared dataclass, the response
-payload and the JSON schema. Sequence values must not regress across a service
+the intent file, and carry it through the shared dataclass and the response
+payload. There is no JSON schema for this document and you must not create one
+under `docs/workbay/contracts/**`; the reader is the contract. Sequence values must not regress across a service
 restart, so the allocator's state has to be durable and derived from what is
 already on disk rather than from process memory. If allocation fails, return
 503 — do not publish a sequence-less intent.
@@ -30,8 +31,12 @@ Add a positive end-to-end test: POST an intent, then read it back through
 `infra.oci.gpu_lifecycle.intent._read_one()` and assert it is accepted and
 effective. The absence of that test is why this shipped broken.
 
-**Do not modify `infra/oci/gpu_lifecycle/**`.** A separate lane owns it in this
-same wave and the reader's contract is the fixed point you are conforming to.
+**Do not modify `infra/oci/gpu_lifecycle/**`.** A separate session owns it in
+this same wave. Its reader contract has been confirmed unchanged as of
+`2da918d93`: `MIN_INTENT_SEQUENCE = 1` at `intent.py:30`, and `_read_one` still
+rejects anything that is not an int at or above that floor. That floor is the
+fixed point you are conforming to. Read `intent.py` to learn the contract; do
+not edit it.
 
 ## Blocking flock on the event loop (GR-02)
 

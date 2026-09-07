@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -72,8 +73,51 @@ TERMINAL_RUN_STATUSES = {
     DescribeRunStatus.CANCELLED,
 }
 
+
+class DescribeRunErrorCode(StrEnum):
+    """Wire error codes for describe-run submit failures (sr-007).
+
+    ``IDEMPOTENCY_CONFLICT`` mirrors the public demo controller's code of the
+    same name: one retry token may only ever name one accepted payload.
+    """
+
+    INVALID_IDEMPOTENCY_KEY = "invalid_idempotency_key"
+    IDEMPOTENCY_CONFLICT = "idempotency_conflict"
+
+
 # Default retention for terminal single-run async jobs (design (d)).
 DEFAULT_ASYNC_JOB_RETENTION_HOURS = 24
+
+# GUIDEDFIX-2 pinned wire contract for the multipart ``idempotency_key`` field.
+IDEMPOTENCY_KEY_MIN_LENGTH = 16
+IDEMPOTENCY_KEY_MAX_LENGTH = 128
+_IDEMPOTENCY_KEY_CHARSET = re.compile(r"\A[A-Za-z0-9_-]+\Z")
+
+
+class InvalidIdempotencyKeyError(ValueError):
+    """A present-but-malformed ``idempotency_key``. Absence is never an error."""
+
+
+def normalize_idempotency_key(raw: object) -> str | None:
+    """Validate the caller's retry token; ``None`` means the field was absent.
+
+    A present-but-empty or malformed token fails closed rather than degrading to
+    a non-deduped accept: silently dropping a bad token is exactly the
+    double-spend this field exists to prevent ([COST-10]).
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        raise InvalidIdempotencyKeyError("form field 'idempotency_key' must be a string")
+    key = raw.strip()
+    if not IDEMPOTENCY_KEY_MIN_LENGTH <= len(key) <= IDEMPOTENCY_KEY_MAX_LENGTH:
+        raise InvalidIdempotencyKeyError(
+            f"form field 'idempotency_key' must be {IDEMPOTENCY_KEY_MIN_LENGTH}..{IDEMPOTENCY_KEY_MAX_LENGTH} "
+            "characters"
+        )
+    if not _IDEMPOTENCY_KEY_CHARSET.match(key):
+        raise InvalidIdempotencyKeyError("form field 'idempotency_key' allows only [A-Za-z0-9_-]")
+    return key
 
 
 def describe_run_max_items() -> int:

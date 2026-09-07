@@ -7,6 +7,7 @@ import uuid
 from collections.abc import Mapping
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.datastructures import UploadFile
 
@@ -28,8 +29,11 @@ from scene.application.gpu_state import read_gpu_state
 from scene.application.visual_facts_service import VisualFactsService
 from scene.config.settings import DescriptionSettings
 from scene.domain.describe_run import (
+    DescribeRunErrorCode,
+    InvalidIdempotencyKeyError,
     RunKind,
     compute_eta_seconds,
+    normalize_idempotency_key,
 )
 from scene.interface_adapters.http.deps import get_description_adapter
 from scene.interface_adapters.http.routers.describe import (
@@ -63,6 +67,7 @@ def _run_response(run) -> DescribeRunResponse:
         eta_seconds=compute_eta_seconds(run),
         gpu_state=read_gpu_state(),
         recognition_enabled=bool(run.recognition_enabled),
+        deadline_seconds=run.deadline_seconds,
     )
 
 
@@ -217,15 +222,52 @@ def _parse_recognition_enabled(raw: object) -> bool:
     if isinstance(raw, bool):
         return raw
     if not isinstance(raw, str):
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT, "form field 'recognition_enabled' must be a boolean"
-        )
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "form field 'recognition_enabled' must be a boolean")
     value = raw.strip().lower()
     if value == "true":
         return True
     if value == "false":
         return False
     raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "form field 'recognition_enabled' must be a boolean")
+
+
+def _parse_idempotency_key(raw: object) -> str | None:
+    """Caller retry token; omitted → None (today's non-deduped accept)."""
+    try:
+        return normalize_idempotency_key(raw)
+    except InvalidIdempotencyKeyError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            {
+                "code": DescribeRunErrorCode.INVALID_IDEMPOTENCY_KEY.value,
+                "message": str(exc),
+                "field": "idempotency_key",
+            },
+        ) from exc
+
+
+def _replay_or_conflict(run, *, media_ids: list[int], recognition_enabled: bool) -> DescribeRunResponse:
+    """Return the reserved run, or 409 when the token names a different payload.
+
+    The replay is deliberately indistinguishable from a first accept (202, same
+    body): a caller must never be able to tell a retry succeeded twice.
+    """
+    stored_media_ids = list(run.media_ids or [])
+    submitted_media_ids = list(dict.fromkeys(media_ids))
+    if stored_media_ids != submitted_media_ids or bool(run.recognition_enabled) != recognition_enabled:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {
+                "code": DescribeRunErrorCode.IDEMPOTENCY_CONFLICT.value,
+                "message": (
+                    "this 'idempotency_key' is already bound to a describe run submitted with a different payload"
+                ),
+                "field": "idempotency_key",
+                "run_id": str(run.id),
+                "media_ids": stored_media_ids,
+            },
+        )
+    return _run_response(run)
 
 
 async def _read_image_parts(form, settings: DescriptionSettings) -> Mapping[int, tuple[bytes, str | None]]:
@@ -291,7 +333,19 @@ async def create_describe_run(
 
     media_ids = _parse_media_ids(form.get("media_ids"))
     recognition_enabled = _parse_recognition_enabled(form.get("recognition_enabled"))
+    idempotency_key = _parse_idempotency_key(form.get("idempotency_key"))
     settings = DescriptionSettings()
+
+    if idempotency_key is not None:
+        # Resolve a replay before any paid or expensive work: no image bytes
+        # read, no quota charged, no run created, no background task queued.
+        await set_tenant_context(session, tenant_id)
+        reserved = await DescribeRunRepository(session).get_run_by_idempotency_key(
+            tenant_id=tenant_id, idempotency_key=idempotency_key
+        )
+        if reserved is not None:
+            return _replay_or_conflict(reserved, media_ids=media_ids, recognition_enabled=recognition_enabled)
+
     images = await _read_image_parts(form, settings)
     missing = [m for m in media_ids if m not in images]
     if missing:
@@ -312,11 +366,11 @@ async def create_describe_run(
 
     await set_tenant_context(session, tenant_id)
     await require_tenant_record(session, tenant_id)
-    # Charge unique media ids only (order-preserving dedupe); durable at dispatch.
-    unique_media_ids = list(dict.fromkeys(media_ids))
-    await maybe_consume_demo_quota(auth, session, units=len(unique_media_ids))
-    await set_tenant_context(session, tenant_id)
     repo = DescribeRunRepository(session)
+    # Reserve before charging: the insert is the reservation, and the unique
+    # (tenant_id, idempotency_key) index — not the read above — is what makes two
+    # concurrent retries converge on one run. The loser rolls back before it can
+    # spend quota, so a network fault cannot buy a second run ([COST-10]).
     try:
         run_id = await repo.create_run(
             tenant_id=tenant_id,
@@ -324,9 +378,29 @@ async def create_describe_run(
             created_by_user_id=getattr(auth, "user_id", None),
             images=images,
             recognition_enabled=recognition_enabled,
+            idempotency_key=idempotency_key,
+            deadline_seconds=float(settings.generation_timeout_seconds),
         )
+    except IntegrityError as exc:
+        if idempotency_key is None:
+            raise
+        await session.rollback()
+        await set_tenant_context(session, tenant_id)
+        winner = await repo.get_run_by_idempotency_key(tenant_id=tenant_id, idempotency_key=idempotency_key)
+        if winner is None:
+            # The key is taken but unreadable from here: fail closed rather than
+            # create a second run under an uncertain reservation.
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "describe run reservation is uncertain; retry with the same idempotency_key",
+            ) from exc
+        return _replay_or_conflict(winner, media_ids=media_ids, recognition_enabled=recognition_enabled)
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+    # Charge unique media ids only (order-preserving dedupe); durable at dispatch.
+    unique_media_ids = list(dict.fromkeys(media_ids))
+    await maybe_consume_demo_quota(auth, session, units=len(unique_media_ids))
+    await set_tenant_context(session, tenant_id)
     await session.commit()
 
     session_factory = worker_session_factory(session)

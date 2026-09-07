@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://context-alt-text.dev/schemas/scene-describe-run.schema.json",
   "title": "Scene Describe Run",
-  "description": "Async scene describe-run status payload. Submitted via POST /scene/describe/run as multipart/form-data: form fields 'tenant_id' (uuid), 'media_ids' (JSON int array), and optional 'recognition_enabled' (boolean, default true). Plus one file part 'image_<media_id>' (raw bytes) per media id. When recognition_enabled is false, the run writes alt text without identity fusion.",
+  "description": "Async scene describe-run status payload. Submitted via POST /scene/describe/run as multipart/form-data: form fields 'tenant_id' (uuid), 'media_ids' (JSON int array), optional 'recognition_enabled' (boolean, default true), and optional 'idempotency_key' (16..128 chars of [A-Za-z0-9_-]). Plus one file part 'image_<media_id>' (raw bytes) per media id. When recognition_enabled is false, the run writes alt text without identity fusion. An idempotency_key is deduped per (tenant_id, key): a replay returns 202 with the original run_id and starts no new work, while the same key with a different payload returns 409 'idempotency_conflict'. A present-but-malformed key returns 422.",
   "type": "object",
   "required": [
     "tenant_id",
@@ -91,6 +91,14 @@
     "recognition_enabled": {
       "type": "boolean",
       "description": "Snapshot of WP acx_recognition_enabled at submit. When false, Describe writes alt text without identities. Defaults to true when omitted on submit."
+    },
+    "deadline_seconds": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "exclusiveMinimum": 0,
+      "description": "Additive optional. The server's own generation budget (ACX_DESCRIPTION_TIMEOUT_SECONDS) as it stood when the run was accepted, so the client waits on a disclosed bound instead of a locally invented ceiling. Snapshotted per run: a later config change does not move an accepted run's deadline. Null only for runs not created through POST /scene/describe/run."
     }
   },
   "additionalProperties": false

@@ -1992,8 +1992,30 @@ def ensure_triggers(op) -> None:
     )
 
 
+def _matview_centroid_typmod(op) -> int | None:
+    return (
+        op.get_bind()
+        .execute(
+            sa.text(
+                "SELECT a.atttypmod FROM pg_attribute a "
+                "JOIN pg_class c ON c.oid = a.attrelid "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE n.nspname = current_schema() "
+                "AND c.relname = 'mv_identity_cluster_centroids' "
+                "AND a.attname = 'centroid' AND NOT a.attisdropped"
+            )
+        )
+        .scalar()
+    )
+
+
 def ensure_matview(op) -> None:
-    """Create the centroid materialized view + indexes; fail loudly on a plain-table impostor."""
+    """Create the centroid materialized view + indexes; fail loudly on a plain-table impostor.
+
+    A matview whose ``centroid`` column lost its vector typmod (built before the
+    outer cast existed) is derived data with no owner but the refresh queue, so
+    it is dropped and rebuilt here instead of waiting on an operator.
+    """
     relkind = _relkind(op, "mv_identity_cluster_centroids")
     if relkind not in (None, "m"):
         raise RuntimeError(
@@ -2001,6 +2023,8 @@ def ensure_matview(op) -> None:
             f"{relkind!r} (expected materialized view); drop the impostor relation "
             "before healing (operator action, see E15-33-BR2-04)"
         )
+    if relkind == "m" and _matview_centroid_typmod(op) != EMBEDDING_DIMENSION:
+        op.execute("DROP MATERIALIZED VIEW mv_identity_cluster_centroids")
     op.execute(
         f"""
         CREATE MATERIALIZED VIEW IF NOT EXISTS mv_identity_cluster_centroids AS
@@ -2060,11 +2084,14 @@ def ensure_matview(op) -> None:
             cluster_id,
             tenant_id,
             identity_count,
-            CASE
+            -- The outer cast is load-bearing: CASE with an untyped NULL arm
+            -- drops the vector typmod, and /health + /ready fail closed on a
+            -- matview column whose pg_attribute.atttypmod is -1.
+            (CASE
                 WHEN identity_count > 0 AND avg_embedding IS NOT NULL THEN
                     l2_normalize(avg_embedding)::vector({EMBEDDING_DIMENSION})
                 ELSE NULL
-            END AS centroid,
+            END)::vector({EMBEDDING_DIMENSION}) AS centroid,
             refreshed_at
         FROM cluster_embeddings
         WHERE identity_count >= 1;

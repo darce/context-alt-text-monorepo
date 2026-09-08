@@ -303,11 +303,12 @@ def _verify_manifest_entries(
 
 def _bundle_files(bundle: Path) -> tuple[set[str], str | None]:
     try:
+        root = bundle.resolve()
         return (
             {
-                str(path.relative_to(bundle.resolve()))
-                for path in bundle.resolve().rglob("*")
-                if path.is_file() and path.name != "manifest.json"
+                str(path.relative_to(root))
+                for path in root.rglob("*")
+                if path.is_file() and path.relative_to(root).as_posix() != "manifest.json"
             },
             None,
         )

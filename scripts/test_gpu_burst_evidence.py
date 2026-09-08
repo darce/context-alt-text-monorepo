@@ -350,6 +350,21 @@ def test_unlisted_file_fails_closed(tmp_path: Path) -> None:
     assert "unlisted bundle file" in result.stdout
 
 
+def test_unlisted_nested_manifest_json_fails_closed(tmp_path: Path) -> None:
+    # Enumeration must skip only the root verification manifest. A nested
+    # unlisted manifest.json is extra evidence content and must fail closed.
+    bundle = _custom_bundle(tmp_path)
+    nested = bundle / "subdir" / "manifest.json"
+    nested.parent.mkdir()
+    nested.write_text("{}\n", encoding="utf-8")
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 1
+    assert "unlisted bundle file" in result.stdout
+    assert "subdir/manifest.json" in result.stdout
+
+
 def test_invalid_window_fails(tmp_path: Path) -> None:
     bundle = _custom_bundle(tmp_path)
     result = subprocess.run(

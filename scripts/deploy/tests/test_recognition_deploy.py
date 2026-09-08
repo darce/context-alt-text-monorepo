@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import signal
 import stat
 import subprocess
@@ -25,14 +26,60 @@ printf '%s\n' "$cmd $*" >>"${state}/docker.log"
 mkdir -p "${state}/containers"
 case "$cmd" in
   network)
-    sub="${1:-}"
-    if [[ "$sub" == "inspect" ]]; then
-      if [[ "${FAKE_NET_EXISTS:-1}" == "1" ]]; then
+    sub="${1:-}"; shift || true
+    net_name=""
+    for a in "$@"; do
+      net_name="$a"
+    done
+    case "$sub" in
+      inspect)
+        format=0
+        prev=""
+        for a in "$@"; do
+          if [[ "$prev" == "--format" ]]; then
+            format=1
+          fi
+          prev="$a"
+        done
+        if [[ -n "$net_name" && -d "${state}/networks/${net_name}" ]]; then
+          if (( format )); then
+            cat "${state}/networks/${net_name}/owner" 2>/dev/null || true
+          fi
+          exit 0
+        fi
+        if [[ "${FAKE_NET_EXISTS:-1}" == "1" ]]; then
+          if (( format )); then
+            printf '%s\n' "${FAKE_NET_OWNER:-}"
+          fi
+          exit 0
+        fi
+        exit 1
+        ;;
+      create)
+        owner=""
+        prev=""
+        for a in "$@"; do
+          if [[ "$prev" == "--label" && "$a" == acx.smoke.owner=* ]]; then
+            owner="${a#acx.smoke.owner=}"
+          fi
+          prev="$a"
+        done
+        mkdir -p "${state}/networks/${net_name}"
+        printf '%s\n' "$owner" >"${state}/networks/${net_name}/owner"
+        if [[ -n "${FAKE_NET_CREATE_SLEEP:-}" ]]; then
+          sleep "${FAKE_NET_CREATE_SLEEP}"
+        fi
         exit 0
-      fi
-      exit 1
-    fi
-    exit 0
+        ;;
+      rm)
+        rm -rf "${state}/networks/${net_name}"
+        printf '%s\n' "$net_name" >>"${state}/network_rm"
+        exit 0
+        ;;
+      *)
+        exit 0
+        ;;
+    esac
     ;;
   run)
     name=""
@@ -85,6 +132,7 @@ case "$cmd" in
     exit 0
     ;;
   logs)
+    date +%s.%N >"${state}/logs_started"
     if [[ -n "${FAKE_LOGS_SLEEP:-}" ]]; then
       sleep "${FAKE_LOGS_SLEEP}"
     fi
@@ -105,6 +153,9 @@ case "$cmd" in
     exit 0
     ;;
   rm)
+    if [[ ! -f "${state}/first_rm" ]]; then
+      date +%s.%N >"${state}/first_rm"
+    fi
     name=""
     for a in "$@"; do
       [[ "$a" == -* ]] && continue
@@ -170,7 +221,16 @@ if [[ "$url" == *"/ready"* ]]; then
   exit 0
 fi
 if [[ -n "${FAKE_HEALTH_SLEEP:-}" ]]; then
-  sleep "${FAKE_HEALTH_SLEEP}"
+  sleep_s="${FAKE_HEALTH_SLEEP}"
+  if awk -v s="$sleep_s" -v m="$max_time" 'BEGIN { exit !(s+0 > m+0) }'; then
+    sleep "$max_time"
+    echo "curl: (28) Operation timed out" >&2
+    printf '\n000'
+    exit 28
+  fi
+  if [[ "$sleep_s" != "0" ]]; then
+    sleep "$sleep_s"
+  fi
 fi
 code="${FAKE_HEALTH_CODE:-000}"
 body="${FAKE_HEALTH_BODY-}"
@@ -228,7 +288,67 @@ def _write_executable(path: Path, body: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IEXEC)
 
 
-def _prepare_smoke_env(tmp_path: Path, extra: dict[str, str] | None = None) -> tuple[Path, Path, dict[str, str]]:
+def _path_without_timeout(prepend: Path, tmp_path: Path) -> str:
+    """PATH with stubs plus essential bins, but no `timeout` binary."""
+    stripped = tmp_path / "path-no-timeout"
+    stripped.mkdir(exist_ok=True)
+    needed = (
+        "bash",
+        "sleep",
+        "rm",
+        "cat",
+        "mkdir",
+        "mktemp",
+        "grep",
+        "cut",
+        "tr",
+        "head",
+        "sed",
+        "awk",
+        "mv",
+        "cp",
+        "ls",
+        "chmod",
+        "kill",
+        "ps",
+        "date",
+        "env",
+        "true",
+        "false",
+        "uname",
+        "sort",
+        "basename",
+        "dirname",
+        "touch",
+        "wc",
+        "tee",
+        "id",
+        "printf",
+        "echo",
+        "ln",
+        "od",
+        "tail",
+        "xargs",
+        "locale",
+        "getconf",
+        "which",
+    )
+    for name in needed:
+        found = shutil.which(name)
+        if found is None:
+            continue
+        dest = stripped / name
+        if not dest.exists():
+            dest.symlink_to(found)
+    return f"{prepend}{os.pathsep}{stripped}"
+
+
+def _prepare_smoke_env(
+    tmp_path: Path,
+    extra: dict[str, str] | None = None,
+    *,
+    hide_timeout: bool = False,
+) -> tuple[Path, Path, dict[str, str]]:
     state = tmp_path / "fake-state"
     state.mkdir()
     fake_bin = tmp_path / "bin"
@@ -252,6 +372,8 @@ def _prepare_smoke_env(tmp_path: Path, extra: dict[str, str] | None = None) -> t
     )
     if extra:
         env.update(extra)
+    if hide_timeout:
+        env["PATH"] = _path_without_timeout(fake_bin, tmp_path)
     return state, remote, env
 
 
@@ -289,16 +411,21 @@ def _run_bash_with_unread_fifo(
 def _run_boot_smoke(
     tmp_path: Path,
     *,
-    budget_s: int = 2,
-    poll_s: int = 1,
+    budget_s: int | str = 2,
+    poll_s: int | str = 1,
     attempts: int = 1,
-    vlm_budget: int = 0,
-    pg_budget: int = 30,
+    vlm_budget: int | str = 0,
+    pg_budget: int | str = 30,
+    setup_slack: int | str = 30,
+    net_create_cap: int | str = 10,
+    port_cap: int | str = 5,
+    trap_docker_s: int | str = 10,
     extra_env: dict[str, str] | None = None,
     wrap_deadline: int | None = None,
+    hide_timeout: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     del attempts  # LR-04: wrapper/body no longer take a dead attempts positional.
-    state, remote, env = _prepare_smoke_env(tmp_path, extra_env)
+    state, remote, env = _prepare_smoke_env(tmp_path, extra_env, hide_timeout=hide_timeout)
     smoke = tmp_path / "boot-smoke.sh"
     smoke.write_text(_boot_smoke_heredoc())
     args = [
@@ -309,6 +436,10 @@ def _run_boot_smoke(
         str(poll_s),
         str(vlm_budget),
         str(pg_budget),
+        str(setup_slack),
+        str(net_create_cap),
+        str(port_cap),
+        str(trap_docker_s),
     ]
     if wrap_deadline is None:
         result = subprocess.run(
@@ -1931,4 +2062,247 @@ def test_do_boot_smoke_import_and_prepull_ssh_use_n_flag(tmp_path: Path) -> None
     assert non_payload, lines
     for line in non_payload:
         assert " -n " in f" {line} " or line.split()[0:2] == ["-n"] or "-n" in line.split()
+
+
+def _curl_max_times(result: subprocess.CompletedProcess[str]) -> list[int]:
+    state = Path(result._fake_state)  # type: ignore[attr-defined]
+    log = state.joinpath("curl.log")
+    if not log.exists():
+        return []
+    values: list[int] = []
+    for line in log.read_text().splitlines():
+        parts = line.split()
+        for i, part in enumerate(parts):
+            if part == "--max-time" and i + 1 < len(parts):
+                values.append(int(parts[i + 1]))
+    return values
+
+
+def test_boot_smoke_composite_deadline_covers_inner_caps(tmp_path: Path) -> None:
+    """H2E-01: outer deadline must not fire before an explicit inner failure."""
+    setup_slack = 1
+    pg_ready = 1
+    smoke_timeout = 2
+    poll_interval = 2
+    net_create_cap = 10
+    port_cap = 5
+    trap_docker_s = 10
+    margin = 5
+    inner_sum = (
+        net_create_cap
+        + setup_slack
+        + pg_ready
+        + setup_slack
+        + port_cap
+        + smoke_timeout
+        + trap_docker_s
+        + poll_interval
+    )
+    expected_deadline = inner_sum + margin
+    old_composite = pg_ready + smoke_timeout + setup_slack
+    fake_sleep = old_composite + 2
+    image = "iad.ocir.io/idu2kqqe2jxy/acx-backend@sha256:" + ("a" * 64)
+    driver = tmp_path / "composite-driver.sh"
+    driver.write_text(
+        f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+SMOKE_SETUP_SLACK={setup_slack}
+SMOKE_PG_READY_TIMEOUT={pg_ready}
+ACX_SMOKE_TIMEOUT={smoke_timeout}
+preflight_remote_ocir_auth() {{ return 0; }}
+assert_remote_disk_headroom_for_pull() {{ return 0; }}
+_pull_ref_remote() {{ return 0; }}
+remote_image_digest_ref() {{ printf '%s\\n' "$1"; }}
+eval "$(declare -f run_with_deadline | sed '1s/run_with_deadline/run_with_deadline_impl/')"
+run_with_deadline() {{
+  local deadline="$1" label="$2"
+  if [[ "$label" == *"health gate"* ]]; then
+    printf 'CAPTURED_COMPOSITE_DEADLINE=%s\\n' "$deadline" >&2
+  fi
+  run_with_deadline_impl "$@"
+}}
+ssh() {{
+  if [[ "$*" == *"bash -s"* ]]; then
+    cat >/dev/null
+    sleep {fake_sleep}
+    echo "smoke setup timed out" >&2
+    return 1
+  fi
+  return 0
+}}
+do_boot_smoke dev "{image}"
+'''
+    )
+    result = subprocess.run(
+        ["bash", str(driver)],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=dict(os.environ),
+        cwd=SCRIPT.parents[2],
+        timeout=expected_deadline + 10,
+    )
+    combined = result.stdout + result.stderr
+    captured = re.search(r"CAPTURED_COMPOSITE_DEADLINE=(\d+)", combined)
+    assert captured, combined
+    assert int(captured.group(1)) >= expected_deadline, combined
+    assert result.returncode != 124, combined
+    assert "smoke setup timed out" in combined, combined
+    assert "phase unknown" not in combined, combined
+
+
+def test_boot_smoke_owned_net_rm_on_create_timeout(tmp_path: Path) -> None:
+    """GR-81 / A10: timed-out network create still rms a net labeled with this run's nonce."""
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=2,
+        poll_s=1,
+        pg_budget=1,
+        extra_env={
+            "FAKE_NET_EXISTS": "0",
+            "FAKE_NET_CREATE_SLEEP": "12",
+            "FAKE_HEALTH_CODE": "000",
+        },
+    )
+    combined = result.stdout + result.stderr
+    log = _docker_log(result)
+    assert result.returncode != 0, combined
+    assert "network create" in log, log
+    assert "acx.smoke.owner=" in log, log
+    assert "network rm acx-dev-net" in log, log
+    state = Path(result._fake_state)  # type: ignore[attr-defined]
+    assert (state / "network_rm").read_text().strip() == "acx-dev-net"
+
+
+def test_boot_smoke_foreign_net_not_removed(tmp_path: Path) -> None:
+    """GR-81: trap must not rm a net whose ownership label is absent or foreign."""
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=2,
+        poll_s=1,
+        pg_budget=1,
+        extra_env={
+            "FAKE_NET_EXISTS": "1",
+            "FAKE_NET_OWNER": "compose-owned",
+            "FAKE_HEALTH_CODE": "000",
+        },
+    )
+    combined = result.stdout + result.stderr
+    log = _docker_log(result)
+    assert result.returncode != 0, combined
+    assert "network rm" not in log, log
+    state = Path(result._fake_state)  # type: ignore[attr-defined]
+    assert not (state / "network_rm").exists()
+
+
+def test_boot_smoke_first_probe_max_time_capped_by_remaining(tmp_path: Path) -> None:
+    """GR-82 / A5: first health curl --max-time is remaining budget, not a full poll_s."""
+    budget_s = 5
+    poll_s = 2
+    trap_docker_s = 10
+    health_budget = max(1, budget_s - (trap_docker_s + poll_s))
+    started = time.monotonic()
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=budget_s,
+        poll_s=poll_s,
+        pg_budget=1,
+        extra_env={"FAKE_HEALTH_CODE": "000", "FAKE_HEALTH_SLEEP": str(poll_s)},
+    )
+    elapsed = time.monotonic() - started
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    max_times = _curl_max_times(result)
+    assert max_times, combined
+    assert all(mt <= health_budget for mt in max_times), max_times
+    assert elapsed < budget_s + 4
+
+
+def test_boot_smoke_timeout_fallback_bounds_logs_then_rms(tmp_path: Path) -> None:
+    """GR-83 / A13: without GNU timeout, hung logs must not delay rm past the 2s bound."""
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=2,
+        poll_s=1,
+        pg_budget=1,
+        extra_env={"FAKE_LOGS_SLEEP": "5", "FAKE_HEALTH_CODE": "000"},
+        hide_timeout=True,
+    )
+    combined = result.stdout + result.stderr
+    log = _docker_log(result)
+    state = Path(result._fake_state)  # type: ignore[attr-defined]
+    assert result.returncode != 0, combined
+    assert re.search(r"rm -f acx-smoke-dev-\d+", log), log
+    logs_started = float((state / "logs_started").read_text().strip())
+    first_rm = float((state / "first_rm").read_text().strip())
+    assert first_rm - logs_started < 2.8, first_rm - logs_started
+    logs_at = log.index("logs ")
+    rm_at = log.index("rm -f")
+    assert logs_at < rm_at, log
+
+
+def test_boot_smoke_logs_still_emitted_after_bounded_cleanup(tmp_path: Path) -> None:
+    """GR-83: a normal logs stub's output still appears in stderr after cleanup."""
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=2,
+        poll_s=1,
+        pg_budget=1,
+        hide_timeout=True,
+    )
+    combined = result.stdout + result.stderr
+    log = _docker_log(result)
+    assert result.returncode != 0, combined
+    assert CRASH_LOG in combined
+    assert "smoke container logs unavailable" not in combined
+    assert log.index("logs ") < log.index("rm -f"), log
+
+
+def test_boot_smoke_invalid_setup_slack_fails_closed(tmp_path: Path) -> None:
+    """GR-84: $8=abc fails with smoke setup_slack invalid (rc 2) before any docker call."""
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=2,
+        poll_s=1,
+        pg_budget=1,
+        setup_slack="abc",
+        extra_env={"FAKE_HEALTH_CODE": "200"},
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode == 2, combined
+    assert "smoke setup_slack invalid" in combined, combined
+    state = Path(result._fake_state)  # type: ignore[attr-defined]
+    docker_log = state / "docker.log"
+    assert (not docker_log.exists()) or docker_log.read_text() == ""
+
+
+def test_boot_smoke_vlm_flag_zero_is_not_a_budget(tmp_path: Path) -> None:
+    """GR-84: $6 is the vlm flag (0/1), not a positive-integer budget."""
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=2,
+        poll_s=1,
+        pg_budget=1,
+        vlm_budget=0,
+        extra_env={"FAKE_HEALTH_CODE": "200"},
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+    assert "invalid" not in combined
+
+
+def test_boot_smoke_health_302_is_not_success(tmp_path: Path) -> None:
+    """VLMHEA-L-06: 3xx must not set smoke_passed; stderr names the code."""
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=2,
+        poll_s=1,
+        pg_budget=1,
+        extra_env={"FAKE_HEALTH_CODE": "302", "FAKE_HEALTH_BODY": '{"status":"redir"}'},
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    assert "smoke health OK" not in combined, combined
+    assert "302" in combined, combined
 

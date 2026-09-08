@@ -198,7 +198,7 @@ def _validate_stage_path(
     try:
         dest_resolved = dest_dir.resolve()
         stage_resolved = stage.resolve()
-    except OSError as exc:
+    except (OSError, RuntimeError) as exc:
         raise PromoteError(
             f"promote journal at {journal_path} stage path unresolvable: {stage_raw!r} "
             f"(generator={ns.generator!r} dest={dest_dir}); refuse to proceed "
@@ -408,7 +408,7 @@ def _load_journal(journal_path: Path, *, dest_dir: Path, ns: PromoteNamespace) -
     try:
         raw = journal_path.read_text()
         journal = json.loads(raw)
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise PromoteError(
             f"unparseable promote journal at {journal_path} for generator={ns.generator!r} "
             f"dest={dest_dir}; refuse to proceed — reconcile by hand (do not delete evidence). "
@@ -463,13 +463,21 @@ def _recover_promote_unlocked(dest_dir: Path, ns: PromoteNamespace) -> None:
     journal = _load_journal(journal_path, dest_dir=dest_dir, ns=ns)
     # Journal fields are untrusted recovery input (RC-01/02/04): validate before
     # any install or delete.
-    if not journal.get("stage") or not journal.get("names"):
+    raw_stage = journal.get("stage")
+    raw_names = journal.get("names")
+    if not raw_stage or not raw_names:
         raise PromoteError(
             f"promote journal at {journal_path} missing stage/names "
             f"(generator={ns.generator!r} dest={dest_dir}); refuse to proceed"
         )
+    if not isinstance(raw_names, list):
+        raise PromoteError(
+            f"promote journal at {journal_path} names must be a list, "
+            f"got {type(raw_names).__name__} "
+            f"(generator={ns.generator!r} dest={dest_dir}); refuse to proceed"
+        )
     names = _validate_promote_names(
-        list(journal.get("names") or []),
+        raw_names,
         dest_dir=dest_dir,
         ns=ns,
         context=f"promote journal at {journal_path}",
@@ -637,21 +645,32 @@ def _scavenge_orphan_stages_unlocked(
     """Scavenge under an already-held namespace lock."""
     journal_path = _journal_path(dest_dir, ns)
     protected: set[Path] = set()
+
+    def _protect_all_stages() -> None:
+        for candidate in dest_dir.glob(f"{ns.stage_prefix}*"):
+            if candidate.is_dir():
+                try:
+                    protected.add(candidate.resolve())
+                except (OSError, RuntimeError):
+                    # Even resolution failure is recovery evidence; retain the
+                    # candidate itself so scavenging cannot delete it.
+                    protected.add(candidate)
+
     if journal_path.is_file():
         try:
             journal = json.loads(journal_path.read_text())
-            if isinstance(journal, dict) and journal.get("stage"):
-                protected.add(Path(journal["stage"]).resolve())
+            stage_raw = journal.get("stage") if isinstance(journal, dict) else None
+            if isinstance(stage_raw, str) and stage_raw:
+                try:
+                    protected.add(Path(stage_raw).resolve())
+                except (OSError, RuntimeError):
+                    _protect_all_stages()
             else:
                 # Unknown shape: protect all stages for this namespace.
-                for p in dest_dir.glob(f"{ns.stage_prefix}*"):
-                    if p.is_dir():
-                        protected.add(p.resolve())
-        except (OSError, json.JSONDecodeError):
+                _protect_all_stages()
+        except (OSError, UnicodeError, TypeError, json.JSONDecodeError):
             # Corrupt journal: never scavenge — operator must reconcile (RV2-01).
-            for p in dest_dir.glob(f"{ns.stage_prefix}*"):
-                if p.is_dir():
-                    protected.add(p.resolve())
+            _protect_all_stages()
 
     # If a legacy journal is present, protect everything — refuse silent reclaim
     # that could destroy the only recovery evidence for a pre-split crash.

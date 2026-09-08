@@ -1062,6 +1062,57 @@ def test_rc02_unhashable_phase_is_promote_error(tmp_path: Path) -> None:
     assert stage.is_dir()
 
 
+def test_rc04_journal_names_must_remain_a_list(tmp_path: Path) -> None:
+    """RC-04: a scalar names field must not be coerced into character names."""
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    stage = dest / f"{CAPTION_PROMOTE.stage_prefix}scalar-names"
+    stage.mkdir()
+    # Before the shape check, ``list(\"abc\")`` was accepted and each character
+    # could be installed as an artifact name.
+    for name in "abc":
+        (stage / name).write_text(f"NEW_{name}")
+    _write_journal(
+        dest,
+        CAPTION_PROMOTE,
+        {"stage": str(stage), "names": "abc", "phase": "installing"},
+    )
+    with pytest.raises(PromoteError, match="names must be a list"):
+        recover_promote(dest, CAPTION_PROMOTE)
+    assert (dest / CAPTION_PROMOTE.journal_name).is_file()
+    assert stage.is_dir()
+
+
+def test_unreadable_journal_is_promote_error_and_preserves_evidence(tmp_path: Path) -> None:
+    """RV2-01: undecodable journal bytes must fail closed as PromoteError."""
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    journal = dest / CAPTION_PROMOTE.journal_name
+    journal.write_bytes(b"{\xff\n")
+    with pytest.raises(PromoteError, match="unparseable promote journal"):
+        recover_promote(dest, CAPTION_PROMOTE)
+    assert journal.read_bytes() == b"{\xff\n"
+
+
+def test_scavenge_malformed_stage_shape_protects_all_orphans(tmp_path: Path) -> None:
+    """RV2-07: a typed-but-invalid stage field must never crash or delete evidence."""
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    orphan = dest / f"{CAPTION_PROMOTE.stage_prefix}malformed-journal"
+    orphan.mkdir()
+    (orphan / "evidence.json").write_text("keep")
+    old_mtime = 1_000_000.0
+    os.utime(orphan, (old_mtime, old_mtime))
+    (dest / CAPTION_PROMOTE.journal_name).write_text(
+        json.dumps({"stage": 123, "names": ["evidence.json"], "phase": "staged", "generator": "caption"})
+    )
+    reclaimed = scavenge_orphan_stages(
+        dest, CAPTION_PROMOTE, max_age_sec=1.0, now=old_mtime + 10_000.0
+    )
+    assert reclaimed == []
+    assert orphan.is_dir()
+
+
 def test_rc03_legacy_message_names_real_clear_path(tmp_path: Path) -> None:
     """RC-03: legacy refuse must name a real clearable path, not a fake recover API."""
     dest = tmp_path / "dest"
@@ -1334,5 +1385,4 @@ def test_wf3_caption_face_generators_same_stem_refuse(tmp_path: Path) -> None:
     # Caption run-record bytes preserved; no silent face clobber.
     assert (out / f"{stem}.json").read_text() == caption_run
     assert not (out / f"{stem}-face-report.json").is_file()
-
 

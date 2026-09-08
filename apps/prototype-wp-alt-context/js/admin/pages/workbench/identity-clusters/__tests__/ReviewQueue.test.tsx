@@ -2731,6 +2731,137 @@ describe('ReviewQueue', () => {
     expect(screen.getByText(MODEL_OUTPUT_DISCLOSURE)).toBeInTheDocument();
   });
 
+  it('HAI-15 review: the actual NAME bulk trigger stays blocked while hidden', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'name-bulk',
+          cluster_id: 'cluster-name-bulk',
+          suggested_name: 'Morgan',
+          confidence_score: 0.91,
+          source: 'test',
+          created_at: '2026-01-01T00:00:00Z',
+          expires_at: null,
+        },
+      ],
+      limit: 25,
+      offset: 0,
+    });
+    vi.mocked(acceptNameSuggestion).mockResolvedValue({
+      suggestion_id: 'name-bulk',
+      resolution: 'accepted',
+      identity_id: 'identity-name-bulk',
+      cluster_id: 'cluster-name-bulk',
+      message: 'ok',
+    });
+
+    const user = userEvent.setup();
+    renderQueue();
+
+    await user.type(
+      await screen.findByRole('textbox', { name: 'Independent name judgment' }),
+      'Alex',
+    );
+    await user.click(screen.getByRole('button', { name: 'Record judgment' }));
+    await user.click(screen.getByTestId('acx-review-select'));
+    await user.click(screen.getByRole('button', { name: 'Review selection' }));
+
+    const bulkCommit = await screen.findByTestId('acx-bulk-commit');
+    await waitFor(() => expect(bulkCommit).not.toBeDisabled());
+    expect(bulkCommit).toHaveAttribute('aria-disabled', 'true');
+    expect(screen.getByText(
+      'Record an independent judgment and reveal every selected name suggestion before accepting.',
+    )).toBeInTheDocument();
+
+    await user.click(bulkCommit);
+    expect(acceptNameSuggestion).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: 'Show suggestion' }));
+    await user.click(screen.getByRole('button', { name: 'Hide suggestion' }));
+    await user.click(bulkCommit);
+    expect(acceptNameSuggestion).not.toHaveBeenCalled();
+  });
+
+  it('HAI-15: a mixed selection is blocked atomically instead of dropping an unready NAME item', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'assignment-mixed',
+          identity_id: 'identity-mixed',
+          suggested_cluster_id: 'cluster-mixed',
+          representative_similarity: 0.95,
+          avg_member_similarity: 0.9,
+          cluster_label: 'Alex',
+          cluster_identity_count: 1,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'name-mixed',
+          cluster_id: 'cluster-name-mixed',
+          suggested_name: 'Morgan',
+          confidence_score: 0.91,
+          source: 'test',
+          created_at: '2026-01-01T00:00:00Z',
+          expires_at: null,
+        },
+      ],
+      limit: 25,
+      offset: 0,
+    });
+    vi.mocked(acceptSuggestion).mockResolvedValue({
+      suggestion_id: 'assignment-mixed',
+      resolution: 'accepted',
+      identity_id: 'identity-mixed',
+      cluster_id: 'cluster-mixed',
+      message: 'ok',
+    });
+
+    const user = userEvent.setup();
+    renderQueue();
+
+    await user.click(await screen.findByTestId('acx-review-select'));
+    await user.click(screen.getByRole('button', { name: 'Next review item' }));
+    await user.type(
+      await screen.findByRole('textbox', { name: 'Independent name judgment' }),
+      'Alex',
+    );
+    await user.click(screen.getByRole('button', { name: 'Record judgment' }));
+    await user.click(screen.getByTestId('acx-review-select'));
+    await user.click(screen.getByRole('button', { name: 'Review selection' }));
+
+    const bulkCommit = await screen.findByTestId('acx-bulk-commit');
+    await waitFor(() => expect(bulkCommit).not.toBeDisabled());
+    expect(bulkCommit).toHaveAttribute('aria-disabled', 'true');
+    expect(screen.getByText(
+      'Record an independent judgment and reveal every selected name suggestion before accepting.',
+    )).toBeInTheDocument();
+
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      await act(async () => {
+        bulkCommit.click();
+        vi.advanceTimersByTime(UNDO_HOLD_MS);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(acceptSuggestion).not.toHaveBeenCalled();
+    expect(acceptNameSuggestion).not.toHaveBeenCalled();
+  });
+
   it('DUX-L7-RV-02: exposes the model-output disclosure as an inline gettext literal', () => {
     const source = readFileSync(
       path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../personCommitCopy.ts'),
@@ -2778,10 +2909,12 @@ describe('ReviewQueue', () => {
     await user.type(screen.getByRole('textbox', { name: 'Independent name judgment' }), 'Alex');
     await user.click(screen.getByRole('button', { name: 'Record judgment' }));
     expect(screen.getByText(/Your independent judgment:/)).toHaveTextContent('Your independent judgment: Alex');
-    for (let tabs = 0; tabs < 20 && document.activeElement !== showSuggestion; tabs += 1) {
-      await user.tab();
-    }
     expect(showSuggestion).toHaveFocus();
+    await waitFor(() => {
+      expect(container.querySelector('.acx-review-queue__live')).toHaveTextContent(
+        'Independent judgment recorded. You can now show the suggestion.',
+      );
+    });
     await user.keyboard('{Enter}');
 
     expect(screen.getByText(/Suggested name:/)).toHaveTextContent('Suggested name: Morgan');
@@ -2802,6 +2935,42 @@ describe('ReviewQueue', () => {
     expect(showSuggestion).toHaveAttribute('aria-expanded', 'false');
     expect(showSuggestion).toHaveAccessibleName('Show suggestion');
     expect(showSuggestion).toHaveFocus();
+  });
+
+  it('HAI-15: unknown-person judgment also focuses and announces Show suggestion', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'name-unknown-focus',
+          cluster_id: 'cluster-unknown-focus',
+          suggested_name: 'Morgan',
+          confidence_score: 0.91,
+          source: 'test',
+          created_at: '2026-01-01T00:00:00Z',
+          expires_at: null,
+        },
+      ],
+      limit: 25,
+      offset: 0,
+    });
+
+    const user = userEvent.setup();
+    const { container } = renderQueue();
+    const showSuggestion = await screen.findByRole('button', { name: 'Show suggestion' });
+
+    await user.click(screen.getByRole('button', { name: 'I cannot identify this person' }));
+
+    expect(showSuggestion).toHaveFocus();
+    await waitFor(() => {
+      expect(container.querySelector('.acx-review-queue__live')).toHaveTextContent(
+        'Independent judgment recorded. You can now show the suggestion.',
+      );
+    });
   });
 
   it('DUX-L7-RV-04: NAME person-commit drain moves focus to the empty-state anchor', async () => {

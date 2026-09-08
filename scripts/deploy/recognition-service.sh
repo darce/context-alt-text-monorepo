@@ -1745,8 +1745,37 @@ run_args=( -d --rm --name "$name" --env-file "${env_file}" --network "$net" -P
   --tmpfs /var/cache/acx/hf_modules:mode=0700,uid=10001,gid=10001,size=32m,noexec )
 docker run "${run_args[@]}" "$image" >/dev/null
 port="$(docker port "$name" 8000/tcp | head -1 | sed 's/.*://')"
+last_health_code="000"
+last_health_body=""
 for _ in $(seq 1 "${attempts}"); do
-  if curl -fsS --max-time "${poll_s}" "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then echo "smoke health OK"; exit 0; fi
+  health_response=""
+  health_curl_rc=0
+  health_response="$(curl -sS --max-time "${poll_s}" --write-out $'\n%{http_code}' "http://127.0.0.1:${port}/health")" || health_curl_rc=$?
+  if [[ "${health_response}" == *$'\n'* ]]; then
+    last_health_code="${health_response##*$'\n'}"
+    last_health_body="${health_response%$'\n'*}"
+  else
+    last_health_code="000"
+    last_health_body="${health_response}"
+  fi
+  [[ "${last_health_code}" =~ ^[0-9]{3}$ ]] || last_health_code="000"
+  if (( health_curl_rc == 0 )) && [[ "${last_health_code}" =~ ^[23][0-9][0-9]$ ]]; then
+    echo "smoke health OK (HTTP ${last_health_code})"
+    ready_response=""
+    ready_curl_rc=0
+    ready_response="$(curl -sS --max-time "${poll_s}" --write-out $'\n%{http_code}' "http://127.0.0.1:${port}/ready")" || ready_curl_rc=$?
+    if [[ "${ready_response}" == *$'\n'* ]]; then
+      ready_code="${ready_response##*$'\n'}"
+      ready_body="${ready_response%$'\n'*}"
+    else
+      ready_code="000"
+      ready_body="${ready_response}"
+    fi
+    [[ "${ready_code}" =~ ^[0-9]{3}$ ]] || ready_code="000"
+    echo "smoke ready (HTTP ${ready_code}; non-gating)"
+    printf '%s\n' "${ready_body:0:2000}"
+    exit 0
+  fi
   sleep "${poll_s}"
 done
 if [[ "${vlm_budget}" == "1" ]]; then
@@ -1754,6 +1783,11 @@ if [[ "${vlm_budget}" == "1" ]]; then
 else
   echo "smoke health FAILED after ${budget_s}s" >&2
 fi
+echo "smoke health LAST HTTP code: ${last_health_code}" >&2
+echo "smoke health LAST body (up to 2000 bytes):" >&2
+printf '%s\n' "${last_health_body:0:2000}" >&2
+echo "smoke container logs (last 80 lines):" >&2
+docker logs --tail 80 "$name" >&2 || echo "smoke container logs unavailable" >&2
 exit 1
 SMOKE
   if (( smoke_rc != 0 )); then
@@ -2008,6 +2042,65 @@ do_rollback() {
   # commit, so a current-GIT_REF do_verify here would reject a healthy rollback.
 }
 
+# Capture the live failure state before automatic rollback replaces the serving
+# container. All probes target loopback Caddy (host port 443) so the request is
+# made from the OCI VM while preserving the environment-specific Host/SNI.
+# Evidence is diagnostic only: every remote call is deadline-bounded and a
+# failed probe is warned about without blocking the rollback that follows.
+capture_failure_evidence() {
+  local env="$1" remote_dir compose_files remote_dir_q health_url ready_url
+  local health_host health_url_q ready_url_q health_host_q timeout
+  remote_dir="$(env_to_remote_dir "${env}")"
+  compose_files="$(env_to_compose_files "${env}")"
+  remote_dir_q="$(remote_quote "${remote_dir}")"
+  health_url="$(env_to_health_url "${env}")"
+  ready_url="$(env_to_ready_url "${env}")"
+  health_host="${health_url#https://}"
+  health_host="${health_host%%/*}"
+  health_url_q="$(remote_quote "${health_url}")"
+  ready_url_q="$(remote_quote "${ready_url}")"
+  health_host_q="$(remote_quote "${health_host}")"
+  timeout="${ACX_REMOTE_COMMAND_TIMEOUT:-120}"
+  if [[ ! "${timeout}" =~ ^[1-9][0-9]*$ ]]; then
+    warn "failure evidence skipped for ${env}; ACX_REMOTE_COMMAND_TIMEOUT must be a positive integer (got: ${timeout})"
+    return 0
+  fi
+
+  printf '%s\n' "--- evidence: /health ---" >&2
+  printf 'environment: %s\n' "${env}" >&2
+  if ! run_with_deadline "${timeout}" "failure evidence /health for ${env}" \
+    ssh -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
+      -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+      -l "${OCI_USER}" -- "${OCI_HOST}" \
+      "curl -sS --max-time 10 --resolve ${health_host_q}:443:127.0.0.1 --write-out '\\nHTTP_CODE=%{http_code}' ${health_url_q}" >&2; then
+    warn "failure evidence /health probe failed for ${env}; continuing with rollback"
+  fi
+
+  printf '%s\n' "--- evidence: /ready ---" >&2
+  printf 'environment: %s\n' "${env}" >&2
+  if ! run_with_deadline "${timeout}" "failure evidence /ready for ${env}" \
+    ssh -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
+      -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+      -l "${OCI_USER}" -- "${OCI_HOST}" \
+      "curl -sS --max-time 10 --resolve ${health_host_q}:443:127.0.0.1 --write-out '\\nHTTP_CODE=%{http_code}' ${ready_url_q}" >&2; then
+    warn "failure evidence /ready probe failed for ${env}; continuing with rollback"
+  fi
+
+  printf '%s\n' "--- evidence: api container logs ---" >&2
+  printf 'environment: %s\n' "${env}" >&2
+  # shellcheck disable=SC2086 # compose_files is intentionally word-split (-f a -f b).
+  if ! run_with_deadline "${timeout}" "failure evidence api logs for ${env}" \
+    ssh -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
+      -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+      -l "${OCI_USER}" -- "${OCI_HOST}" \
+      "cd ${remote_dir_q} && cid=\$(docker compose ${compose_files} ps -q api 2>/dev/null | head -1); \
+       if [ -n \"\$cid\" ]; then docker logs --tail 80 \"\$cid\"; \
+       else echo 'api container not found' >&2; exit 1; fi" >&2; then
+    warn "failure evidence api log capture failed for ${env}; continuing with rollback"
+  fi
+  return 0
+}
+
 #---------------------------------------------------------------- deploy
 do_deploy() {
   local env="$1"; shift || true
@@ -2055,6 +2148,7 @@ do_deploy() {
   promote_gate "$env" "${ACX_CANDIDATE_DIGEST_REF}"
   # S2-A-06: if tag promotion fails after ship, restore prior sticky repo.
   if ! do_push_tag "$tag" "${ACX_CANDIDATE_DIGEST_REF}"; then
+    capture_failure_evidence "$env" || warn "automatic failure evidence capture failed; continuing with rollback"
     if restore_env_tag_to_rollback "$env" 0; then
       restore_prior_image_repo_env || warn "env tag restored but prior sticky repository restore failed"
     else
@@ -2064,6 +2158,7 @@ do_deploy() {
   fi
 
   if ! do_restart "$env" "${ACX_CANDIDATE_DIGEST_REF}"; then
+    capture_failure_evidence "$env" || warn "automatic failure evidence capture failed; continuing with rollback"
     if restore_env_tag_to_rollback "$env" 0; then
       restore_prior_image_repo_env || warn "env tag restored but prior sticky repository restore failed"
     else
@@ -2076,6 +2171,7 @@ do_deploy() {
   # S2-A-04: deploy path uses local resolve as authority (not the remote .env
   # we just wrote — that comparison would be tautological).
   if ! ACX_VERIFY_EXPECT_LOCAL=1 do_verify "$env"; then
+    capture_failure_evidence "$env" || warn "automatic failure evidence capture failed; continuing with rollback"
     restore_env_tag_to_rollback "$env" 1 || warn "automatic runtime rollback failed; run: $(rollback_command_hint "$env")"
     if [[ "${ACX_VERIFY_OPTIONAL:-0}" == "1" ]]; then
       warn "Verify failed but ACX_VERIFY_OPTIONAL=1; previous image restored. Recovery: $(rollback_command_hint "$env")"
@@ -2137,6 +2233,7 @@ do_promote() {
   promote_gate "$to_env" "${ACX_CANDIDATE_DIGEST_REF}"
 
   if ! do_push_tag "$to_tag" "${ACX_CANDIDATE_DIGEST_REF}"; then
+    capture_failure_evidence "$to_env" || warn "automatic failure evidence capture failed; continuing with rollback"
     if restore_env_tag_to_rollback "$to_env" 0; then
       restore_prior_image_repo_env || warn "env tag restored but prior sticky repository restore failed"
     else
@@ -2146,6 +2243,7 @@ do_promote() {
   fi
 
   if ! do_restart "$to_env" "${ACX_CANDIDATE_DIGEST_REF}"; then
+    capture_failure_evidence "$to_env" || warn "automatic failure evidence capture failed; continuing with rollback"
     if restore_env_tag_to_rollback "$to_env" 0; then
       restore_prior_image_repo_env || warn "env tag restored but prior sticky repository restore failed"
     else
@@ -2156,6 +2254,7 @@ do_promote() {
 
   log "Promotion submitted. Verifying..."
   if ! ACX_VERIFY_EXPECT_LOCAL=1 do_verify "$to_env"; then
+    capture_failure_evidence "$to_env" || warn "automatic failure evidence capture failed; continuing with rollback"
     restore_env_tag_to_rollback "$to_env" 1 || warn "automatic runtime rollback failed; run: $(rollback_command_hint "$to_env")"
     if [[ "${ACX_VERIFY_OPTIONAL:-0}" == "1" ]]; then
       warn "Verify failed but ACX_VERIFY_OPTIONAL=1; previous image restored. Recovery: $(rollback_command_hint "$to_env")"
@@ -2373,9 +2472,11 @@ verify_live_gpu_snapshots() {
 
 do_verify() {
   local env="$1"
-  local url expected_sha actual_sha body attempt max_attempts sleep_s http_code curl_rc health_response
+  local url ready_url expected_sha actual_sha body attempt max_attempts sleep_s http_code curl_rc health_response
+  local ready_response ready_body ready_code ready_curl_rc
   local actual_variant expected_variant remote_for_variant remote_repo_rc
   url="$(env_to_health_url "$env")"
+  ready_url="$(env_to_ready_url "$env")"
   # Use GIT_REF (defaults to HEAD) so verify after `GIT_REF=v0.4.1 deploy ...`
   # checks against the same ref the build/push paths used.
   expected_sha="$(git -C "${REPO_ROOT}" rev-parse "${GIT_REF}")"
@@ -2406,6 +2507,27 @@ do_verify() {
     echo "$body"
     if [[ "${http_code}" == "503" ]]; then
       warn "UNHEALTHY: ${env} /health reports unhealthy (database) (HTTP 503)"
+    fi
+
+    # /ready is diagnostic only here: unlike reset, deploy verification keeps
+    # its existing /health + identity/image pass/fail contract. Surface the
+    # readiness code and body so a DB/model failure is visible before rollback.
+    ready_response=""
+    ready_curl_rc=0
+    ready_response="$(curl --silent --show-error --max-time 10 --write-out $'\n%{http_code}' "$ready_url" 2>&1)" || ready_curl_rc=$?
+    if [[ "${ready_response}" == *$'\n'* ]]; then
+      ready_code="${ready_response##*$'\n'}"
+      ready_body="${ready_response%$'\n'*}"
+    else
+      ready_code="000"
+      ready_body="${ready_response}"
+    fi
+    [[ "${ready_code}" =~ ^[0-9]{3}$ ]] || ready_code="000"
+    printf 'GET %s -> HTTP %s (non-gating)\n' "$ready_url" "$ready_code"
+    if (( ready_curl_rc != 0 )); then
+      printf '%s\n' "${ready_body:-no readiness response}"
+    else
+      printf '%s\n' "$ready_body"
     fi
 
     # /health surfaces commit SHA for E15-3a-BR-03 deploy-lag detection.

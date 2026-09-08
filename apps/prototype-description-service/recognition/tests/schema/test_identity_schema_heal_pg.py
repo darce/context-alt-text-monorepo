@@ -165,7 +165,7 @@ def _matview_nonowner_grantees(engine) -> set[str]:
                 "ELSE pg_get_userbyid(acl.grantee) END "
                 "FROM pg_class c "
                 "JOIN pg_namespace n ON n.oid = c.relnamespace "
-                "LEFT JOIN LATERAL aclexplode(c.relacl) AS acl ON c.relacl IS NOT NULL "
+                "CROSS JOIN LATERAL aclexplode(c.relacl) AS acl "
                 "WHERE n.nspname = current_schema() "
                 "AND c.relname = 'mv_identity_cluster_centroids' "
                 "AND c.relkind = 'm' "
@@ -574,6 +574,9 @@ def test_ensure_table_vector_typmods_refuses_wrong_table_typmod(monkeypatch: pyt
     message = str(exc_info.value)
     assert "media_identities.embedding" in message
     assert "operator" in message.lower()
+    assert "re-embed" in message.lower()
+    assert "null" in message.lower()
+    assert f"USING embedding::vector({MIGRATION.EMBEDDING_DIMENSION})" not in message
     assert not any("DROP TABLE media_identities" in sql for sql in op.statements)
 
 
@@ -584,6 +587,20 @@ def test_identity_vector_columns_agree_with_health_ready_probe() -> None:
     from recognition.application.health import IDENTITY_VECTOR_COLUMNS as HEALTH_COLS
 
     assert MIGRATION.IDENTITY_VECTOR_COLUMNS == HEALTH_COLS
+
+
+@pytest.mark.pg
+def test_heal_refuses_wrong_table_vector_typmod(pg_empty_engine) -> None:
+    with pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+        conn.execute(text("ALTER TABLE media_identities ALTER COLUMN embedding TYPE vector"))
+    with pytest.raises(RuntimeError) as exc_info, pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+    message = str(exc_info.value)
+    assert "media_identities.embedding" in message
+    assert "re-embed" in message.lower()
+    assert "null" in message.lower()
+    assert f"USING embedding::vector({MIGRATION.EMBEDDING_DIMENSION})" not in message
 
 
 @pytest.mark.pg

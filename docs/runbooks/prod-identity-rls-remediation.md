@@ -148,3 +148,11 @@ raises for operator remediation instead of guessing a backfill (non-additive dri
 - **Revision mismatch** (`verify` exit 2 with `actual_revision`): the DB is not
   stamped at `001_identity_schema` — investigate before healing; do not stamp
   blindly.
+- **Table vector typmod gap** (`verify` exit 2 naming `media_identities.embedding`
+  or `identity_cluster_representatives.embedding`): a `vector(N)` column does not
+  match `PGVECTOR_DIM`. Do **not** paste
+  `ALTER ... TYPE vector(N) USING embedding::vector(N)` — a vector-to-vector(N)
+  cast cannot change dimension and Postgres rejects it. Re-embed the rows (or
+  NULL them), then `ALTER TABLE <t> ALTER COLUMN embedding TYPE vector(N);`,
+  then re-run §2. Derived matview centroid drift is heal-rebuildable; table
+  embeddings are not.

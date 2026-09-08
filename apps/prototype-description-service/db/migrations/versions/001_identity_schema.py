@@ -2071,6 +2071,19 @@ def _matview_centroid_typmod(op) -> int | None:
     )
 
 
+def table_vector_typmod_operator_action(table_name: str, column_name: str, observed: int | None) -> str:
+    """Named operator action for a non-rebuildable table vector typmod gap."""
+    return (
+        f"cannot repair {table_name}.{column_name}: observed vector typmod "
+        f"{observed!r} (expected {EMBEDDING_DIMENSION} and pg_type.typname='vector'). "
+        "Table columns cannot be dropped and rebuilt like derived matview data. "
+        "A vector-to-vector(N) cast cannot change dimension. "
+        "Operator action: re-embed or NULL existing rows, then "
+        f"ALTER TABLE {table_name} ALTER COLUMN {column_name} "
+        f"TYPE vector({EMBEDDING_DIMENSION});"
+    )
+
+
 def ensure_identity_vector_typmods(op) -> None:
     """Fail closed on a wrong-typmod *table* vector column (not rebuildable)."""
     for table_name, column_name in IDENTITY_VECTOR_COLUMNS:
@@ -2081,14 +2094,8 @@ def ensure_identity_vector_typmods(op) -> None:
         observed = _vector_column_typmod(op, table_name, column_name)
         if observed != EMBEDDING_DIMENSION:
             raise RuntimeError(
-                f"cannot repair {table_name}.{column_name}: observed vector typmod "
-                f"{observed!r} (expected {EMBEDDING_DIMENSION} and pg_type.typname='vector'). "
-                "Table columns cannot be dropped and rebuilt like derived matview data. "
-                "Operator action: "
-                f"ALTER TABLE {table_name} ALTER COLUMN {column_name} "
-                f"TYPE vector({EMBEDDING_DIMENSION}) "
-                f"USING {column_name}::vector({EMBEDDING_DIMENSION}); "
-                "then re-run python -m scripts.sync_identity_schema."
+                table_vector_typmod_operator_action(table_name, column_name, observed)
+                + " then re-run python -m scripts.sync_identity_schema."
             )
 
 
@@ -2129,15 +2136,20 @@ def _matview_owner_and_can_drop(op) -> tuple[str, bool]:
 
 def _matview_create_privilege_gaps(op) -> list[str]:
     # WHY: must match FROM/JOIN tables + functions in ensure_matview's CREATE MATERIALIZED VIEW body (C-01 ratchet).
+    # to_regclass short-circuits has_table_privilege so a missing source table
+    # stays heal-repairable instead of raising undefined_table (EXIT_INFRA).
     row = (
         op.get_bind()
         .execute(
             sa.text(
                 "SELECT current_schema(), "
                 "has_schema_privilege(current_user, current_schema(), 'CREATE'), "
-                "has_table_privilege(current_user, 'identity_clusters', 'SELECT'), "
-                "has_table_privilege(current_user, 'identity_members', 'SELECT'), "
-                "has_table_privilege(current_user, 'media_identities', 'SELECT'), "
+                "CASE WHEN to_regclass('identity_clusters') IS NULL THEN TRUE "
+                "     ELSE has_table_privilege(current_user, 'identity_clusters', 'SELECT') END, "
+                "CASE WHEN to_regclass('identity_members') IS NULL THEN TRUE "
+                "     ELSE has_table_privilege(current_user, 'identity_members', 'SELECT') END, "
+                "CASE WHEN to_regclass('media_identities') IS NULL THEN TRUE "
+                "     ELSE has_table_privilege(current_user, 'media_identities', 'SELECT') END, "
                 "EXISTS ("
                 "  SELECT 1 FROM pg_proc p "
                 "  WHERE p.proname = 'l2_normalize' "
@@ -2163,9 +2175,8 @@ def _matview_create_privilege_gaps(op) -> list[str]:
 
 
 def _matview_nonowner_grants(op) -> tuple[tuple[str, str, bool], ...]:
-    # NULL relacl is the default ACL (owner only). aclexplode rejects NULL and
-    # also rejects a zero-dimensional empty aclitem array, so the LATERAL join
-    # is gated on relacl IS NOT NULL and does not substitute an empty array.
+    # NULL relacl is the default ACL (owner only). aclexplode is a strict SRF:
+    # aclexplode(NULL) returns zero rows, so CROSS JOIN LATERAL is safe.
     rows = (
         op.get_bind()
         .execute(
@@ -2177,7 +2188,7 @@ def _matview_nonowner_grants(op) -> tuple[tuple[str, str, bool], ...]:
                 "acl.is_grantable "
                 "FROM pg_class c "
                 "JOIN pg_namespace n ON n.oid = c.relnamespace "
-                "LEFT JOIN LATERAL aclexplode(c.relacl) AS acl ON c.relacl IS NOT NULL "
+                "CROSS JOIN LATERAL aclexplode(c.relacl) AS acl "
                 "WHERE n.nspname = current_schema() "
                 "AND c.relname = 'mv_identity_cluster_centroids' "
                 "AND c.relkind = 'm' "
@@ -2208,6 +2219,37 @@ def _missing_matview_grant_roles(op, grants: tuple[tuple[str, str, bool], ...]) 
     return tuple(missing)
 
 
+def _matview_owner_restore_blockers(op, *, owner: str, current_role: str) -> list[str]:
+    """Preflight ALTER OWNER TO *owner* (role exists and has CREATE on schema)."""
+    if owner == current_role:
+        return []
+    blockers: list[str] = []
+    exists = op.get_bind().execute(
+        sa.text("SELECT 1 FROM pg_roles WHERE rolname = :name"),
+        {"name": owner},
+    ).scalar()
+    if not exists:
+        blockers.append(f"owner role {owner} does not exist in pg_roles")
+        return blockers
+    row = op.get_bind().execute(
+        sa.text(
+            "SELECT current_schema(), has_schema_privilege(:owner, current_schema(), 'CREATE')"
+        ),
+        {"owner": owner},
+    ).one()
+    schema_name, owner_create = row
+    if not owner_create:
+        blockers.append(f"CREATE on schema {schema_name} for owner {owner}")
+    return blockers
+
+
+def _grant_target(op, grantee: str) -> str:
+    # quote_ident('public') yields "public", a role name, not the PUBLIC pseudo-role.
+    if grantee == "public":
+        return "PUBLIC"
+    return _quote_ident(op, grantee)
+
+
 def _restore_matview_owner_and_grants(
     op,
     *,
@@ -2218,7 +2260,7 @@ def _restore_matview_owner_and_grants(
     for grantee, privilege, grantable in grants:
         option = " WITH GRANT OPTION" if grantable else ""
         try:
-            quoted_grantee = _quote_ident(op, grantee)
+            quoted_grantee = _grant_target(op, grantee)
             op.execute(f"GRANT {privilege} ON mv_identity_cluster_centroids TO {quoted_grantee}{option}")
         except sa.exc.DBAPIError as exc:
             raise RuntimeError(
@@ -2233,8 +2275,9 @@ def _restore_matview_owner_and_grants(
         except sa.exc.DBAPIError as exc:
             raise RuntimeError(
                 f"cannot restore OWNER TO {owner} on mv_identity_cluster_centroids: "
-                f"the materialized view was rebuilt but ownership could not be restored to {owner}; "
-                "re-run python -m scripts.sync_identity_schema"
+                "ownership could not be restored; the DROP+CREATE was not committed. "
+                "Operator action: recreate the owner role with CREATE on the schema "
+                "or REASSIGN OWNED."
             ) from exc
 
 
@@ -2287,8 +2330,26 @@ def ensure_matview(op) -> None:
                     f"{', '.join(missing_roles)} that cannot receive GRANT. "
                     "Operator action: REVOKE the stale grants or DROP the view as its owner."
                 )
+            owner_blockers = _matview_owner_restore_blockers(op, owner=owner, current_role=current_role)
+            if owner_blockers:
+                raise RuntimeError(
+                    "cannot rebuild mv_identity_cluster_centroids: "
+                    f"observed centroid typmod {observed_typmod!r}; "
+                    f"{'; '.join(owner_blockers)}. "
+                    "Operator action: recreate the owner role with CREATE on the schema "
+                    "or REASSIGN OWNED."
+                )
             restore = (current_role, owner, grants)
             op.execute("DROP MATERIALIZED VIEW mv_identity_cluster_centroids")
+    else:
+        gaps = _matview_create_privilege_gaps(op)
+        if gaps:
+            raise RuntimeError(
+                "cannot create mv_identity_cluster_centroids: "
+                "current role lacks privileges required to create the view: "
+                f"{', '.join(gaps)}. Grant these privileges then re-run "
+                "python -m scripts.sync_identity_schema."
+            )
     # WHY: FROM/JOIN tables + functions here are preflighted by _matview_create_privilege_gaps (C-01 ratchet).
     op.execute(
         f"""
@@ -2402,6 +2463,7 @@ def heal(connection) -> None:
     ops = Operations(MigrationContext.configure(connection))
     connection.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
     ensure_tables(ops)
+    ensure_identity_vector_typmods(ops)
     ensure_rls(ops)
     ensure_refresh_queue(ops)
     ensure_triggers(ops)
@@ -2414,6 +2476,7 @@ def upgrade() -> None:
     # got corrupted. Use scripts/reset_dev_db.sh explicitly if you need a clean slate.
     # The migration is the baseline - if tables already exist, alembic won't re-run this.
     ensure_tables(op)
+    ensure_identity_vector_typmods(op)
     ensure_rls(op)
     ensure_refresh_queue(op)
     ensure_triggers(op)

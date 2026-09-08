@@ -865,7 +865,18 @@ def _contains_path_expression(
         "path",
     }:
         return True
-    if isinstance(node, ast.Call) and _call_name(node.func) == "_printable_path":
+    if isinstance(node, ast.Call):
+        if _call_name(node.func) == "_printable_path":
+            return any(
+                _contains_path_expression(argument, aliases) for argument in node.args
+            ) or any(
+                _contains_path_expression(keyword.value, aliases)
+                for keyword in node.keywords
+            )
+        # Do not descend through a file/serialization helper's receiver
+        # (``json.loads(path.read_text())`` carries data, not the path text).
+        # Formatting arguments remain visible, including dicts and generator
+        # expressions passed to join/template helpers.
         return any(
             _contains_path_expression(argument, aliases) for argument in node.args
         ) or any(
@@ -892,7 +903,62 @@ def _is_path_like_unwrapped(
         "_format_validation_error",
     }:
         return _contains_path_expression(node, aliases)
-    if isinstance(node, (ast.BinOp, ast.Call, ast.JoinedStr, ast.List, ast.Tuple, ast.Set)):
+    if isinstance(node, ast.Call):
+        call_name = _call_name(node.func)
+        if call_name in {
+            "format",
+            "format_map",
+            "join",
+            "safe_substitute",
+            "substitute",
+            "_printable_message",
+            "_format_validation_error",
+        }:
+            # A named/mutable join receiver can be populated by append or by
+            # a helper outside this function. Keep that shape unaudited even
+            # when its current assignment happens to be an empty literal.
+            if call_name == "join" and any(
+                isinstance(argument, ast.Name) for argument in node.args
+            ):
+                return True
+            return _contains_path_expression(node, aliases)
+        if call_name in {
+            "get",
+            "len",
+            "str",
+            "repr",
+            "type",
+            "int",
+            "float",
+            "bool",
+            "ScoreInvariant",
+            "inventory_corpus_fields",
+        }:
+            return _contains_path_expression(node, aliases)
+        if isinstance(node.func, ast.Attribute) and call_name in {
+            "fspath",
+            "loads",
+            "sha256",
+            "hexdigest",
+            "read_text",
+            "read_bytes",
+            "_resolve_image",
+            "is_file",
+            "is_dir",
+        }:
+            # Qualified data/path helpers are traversed for explicit path
+            # arguments; their receiver is never treated as emitted text.
+            return _contains_path_expression(node, aliases)
+        if isinstance(node.func, ast.Attribute):
+            # An unknown qualified helper may construct a path internally.
+            # Keep it unaudited rather than silently accepting the wrapper.
+            return True
+        # A helper's implementation may construct the path without exposing a
+        # path-shaped argument at this call site. Treat unknown wrappers as
+        # unaudited so a future helper indirection cannot silently pass.
+        return True
+    if isinstance(node, (ast.BinOp, ast.JoinedStr, ast.List, ast.ListComp, ast.Set,
+                         ast.SetComp, ast.GeneratorExp, ast.Tuple)):
         return _contains_path_expression(node, aliases)
     if isinstance(node, ast.Starred):
         return _contains_path_expression(node.value, aliases)
@@ -1007,6 +1073,7 @@ def _operator_unwrapped_path_slots(
     """
     tree = ast.parse(path.read_text(encoding="utf-8"))
     hits: list[tuple[int, str, str]] = []
+    non_path_exprs = _AUDITED_NON_PATH_EXPRS_BY_MODULE.get(path, frozenset())
 
     class Walker(ast.NodeVisitor):
         def __init__(self) -> None:
@@ -1054,7 +1121,8 @@ def _operator_unwrapped_path_slots(
                 expressions.extend(
                     keyword.value
                     for keyword in node.keywords
-                    if keyword.arg in {None, "message", "msg"}
+                    if keyword.arg
+                    not in {"invariant", "entry_index", "entry_path", "stacklevel"}
                 )
                 for expression in expressions:
                     self._inspect_sink_expression(expression, set())
@@ -1064,19 +1132,16 @@ def _operator_unwrapped_path_slots(
         def _binding_can_carry_operator_path(node: ast.AST) -> bool:
             if isinstance(node, (ast.JoinedStr, ast.BinOp)):
                 return True
-            return isinstance(node, ast.Call) and _call_name(node.func) in {
-                "format",
-                "format_map",
-                "join",
-                "safe_substitute",
-                "substitute",
-                "_printable_message",
-                "_format_validation_error",
-            }
+            # Resolve every local binding. Unknown wrappers are inspected and
+            # then fail closed in _is_path_like_unwrapped, while literals are
+            # harmlessly traversed and do not produce a hit.
+            return isinstance(node, ast.AST)
 
         def _inspect_sink_expression(
             self, node: ast.AST, resolving: set[str]
         ) -> None:
+            if ast.unparse(node) in non_path_exprs:
+                return
             if _formatted_is_wrapped(node, self.aliases):
                 return
             if (
@@ -1105,8 +1170,15 @@ def _operator_unwrapped_path_slots(
                     if isinstance(value, ast.FormattedValue):
                         self._inspect_sink_expression(value, resolving)
                 return
-            if _is_path_like_unwrapped(node, self.aliases):
+            if _is_path_like_unwrapped(node, self.aliases, non_path_exprs):
                 hits.append((node.lineno, self.func, ast.unparse(node)))
+                return
+            if isinstance(node, ast.Call):
+                # Qualified data/IO calls can contain a path as an input to
+                # the call without emitting that path (e.g. read_text before
+                # json.loads). Their direct arguments were checked above;
+                # descending into the receiver would reclassify that input as
+                # an operator string.
                 return
             for child in ast.iter_child_nodes(node):
                 self._inspect_sink_expression(child, resolving)
@@ -1133,7 +1205,7 @@ def test_operator_path_census_every_slot_is_audited() -> None:
         if conversion != -1 and _contains_path_expression(node, aliases):
             unwrapped_paths.append(loc + f" (conversion={conversion})")
             continue
-        if _is_path_like_unwrapped(node, aliases):
+        if _is_path_like_unwrapped(node, aliases, allowlist):
             unwrapped_paths.append(loc)
             continue
         if _formatted_is_wrapped(node, aliases, conversion=conversion):
@@ -1242,6 +1314,60 @@ def test_operator_path_census_resolves_assignment_and_binop_sinks(
     hits = _operator_unwrapped_path_slots(path)
     assert any(func == "emit" for _line, func, _expr in hits)
     assert any(func == "emit_concat" for _line, func, _expr in hits)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        (
+            "def _raw(value):\n"
+            "    return value\n"
+            "def emit(entry_path):\n"
+            "    raise ManifestError(_raw(entry_path))\n"
+        ),
+        (
+            "def emit(entry_path):\n"
+            "    fmt = '{}'; raise ManifestError(fmt.format(entry_path))\n"
+        ),
+        (
+            "def emit(entry_path):\n"
+            "    parts = [entry_path]; raise ManifestError(' '.join(parts))\n"
+        ),
+        (
+            "def emit(entry_path):\n"
+            "    parts = []; parts.append(entry_path); raise ManifestError(' '.join(parts))\n"
+        ),
+        (
+            "def emit(entry_path):\n"
+            "    fmt = '{path}'; raise ManifestError(fmt.format_map({'path': entry_path}))\n"
+        ),
+        (
+            "class Helpers:\n"
+            "    @staticmethod\n"
+            "    def raw(entry):\n"
+            "        return entry.path\n"
+            "helper = Helpers()\n"
+            "def emit(entry):\n"
+            "    raise ManifestError(helper.raw(entry))\n"
+        ),
+    ],
+    ids=[
+        "helper",
+        "named-template",
+        "named-join",
+        "append-join",
+        "named-format-map",
+        "qualified-helper",
+    ],
+)
+def test_operator_path_census_fails_closed_on_indirect_wrappers(
+    tmp_path: Path, body: str
+) -> None:
+    path = tmp_path / "indirect_manifest.py"
+    path.write_text(
+        "from scripts.eval_harness.manifest import ManifestError\n" + body
+    )
+    assert _operator_unwrapped_path_slots(path)
 
 
 def test_missing_provenance_loop_calls_printable_path() -> None:

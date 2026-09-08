@@ -81,6 +81,9 @@ dev = [
     "pytest-asyncio>=0.21.0,<2.0.0",
     "aiosqlite>=0.19.0,<1.0.0",  # Test-only: in-memory SQLite for async tests
     "fastmcp>=3.1.1,<4.0.0",  # MCP server for agent tooling (v3 decorator semantics)
+    # Revision-pin verification for the bake-off candidate registry: makes the
+    # opt-in ACX_BAKEOFF_VERIFY_REVISIONS check installable rather than skipped.
+    "huggingface_hub>=0.36.0,<1.0.0",
     # Type stubs for mypy
     "types-PyYAML",
     "types-Pillow",

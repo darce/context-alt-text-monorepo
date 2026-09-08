@@ -730,3 +730,46 @@ This is a **curation-time tag choice**, not a loader transform of
    Distinct from the caption path's pre-score `_filter_for_public_audience` /
    `Audience.PUBLIC`.
 
+
+## Depiction-lexicon A/B arm (VLM6-LEX)
+
+`bakeoff --depiction-lexicon <canon>` appends the heuristics-canon depiction
+rules (families `ATTRIB` + `BOUND`) to the prose-writing system prompt. Every
+bake-off candidate is meant to run **twice against the same served instance** —
+once without the flag, once with it — so the quality delta is attributable to
+the lexicon rather than to weights, quant, or serving config.
+
+```bash
+# lexicon OFF — byte-identical to the historical baseline prompt
+python -m scripts.eval_harness.bakeoff ... --prompt-variant v3 --two-pass \
+  --out out/run-bakeoff-<label>-lexoff.json
+# lexicon ON
+python -m scripts.eval_harness.bakeoff ... --prompt-variant v3 --two-pass \
+  --depiction-lexicon ~/Development/heuristics-canon \
+  --out out/run-bakeoff-<label>-lexon.json
+```
+
+The canon is a **separate private checkout** and its lexicons are never
+vendored here — the loader reads `lexicons/depiction.md` at run time and stamps
+`provenance.depiction_lexicon` with the canon tag, the file sha256, and the
+exact rule ids injected, so a leg is reproducible without the rule text
+entering this repo. `--depiction-lexicon` accepts either the checkout root or
+the `.md` file.
+
+Narrowing knobs (all require `--depiction-lexicon`, and are rejected without
+it rather than silently ignored): `--lexicon-families`, `--lexicon-tiers`
+(`B`locker / `S`hould / `J`udgment), `--lexicon-detail full|brief` (brief drops
+each rule's consequence clause, ~20% fewer prompt tokens), `--lexicon-version`.
+
+Injection is scoped to the pass that makes claims. Pass-1 of `--two-pass` emits
+objective JSON facts and asserts nothing about who is depicted, so it is left
+untouched; the lexicon reaches the single-pass caption call and the pass-2
+weave. At full detail the block is ~1.9k tokens, which matters against
+`--ctx-size 8192` with 1536 image tokens — use `--lexicon-detail brief` or a
+tier filter on tight-context candidates.
+
+Any shape change in the canon table (missing rows, wrong column count, a rule
+cell that has lost its `condition -> action -> consequence` contract, an
+unknown tier letter) is a hard `LexiconError`, never a degraded empty
+addendum: an empty block would make the lexicon-on leg a second baseline and
+report a delta of zero as though it were a measurement.

@@ -4688,6 +4688,22 @@ def test_cli_compare_rejects_pass_ungated_baseline(tmp_path):
     assert "pass_ungated" in str(exc.value) or "adoption" in str(exc.value).lower()
 
 
+def test_cli_compare_rejects_failed_candidate(tmp_path):
+    """VLM6-A-02: a failed candidate cannot be presented as an adoption PASS."""
+    baseline = _adoption_compare_report()
+    candidate = _adoption_compare_report(verdict={"verdict": ScoreVerdict.FAIL.value, "rubric_gate": "enforce"})
+    base_path = tmp_path / "baseline.json"
+    cand_path = tmp_path / "candidate.json"
+    base_path.write_text(json.dumps(baseline))
+    cand_path.write_text(json.dumps(candidate))
+
+    with pytest.raises(SystemExit) as exc:
+        main(["compare", "--baseline", str(base_path), "--candidate", str(cand_path)])
+    assert exc.value.code != 0
+    assert "candidate" in str(exc.value).lower()
+    assert "fail" in str(exc.value).lower()
+
+
 def test_cli_compare_rejects_manifest_digest_mismatch(tmp_path):
     """VLM6-A-02 / EVAL-13: different score_manifest_sha256 is not same-corpus."""
     baseline = _adoption_compare_report()
@@ -4701,6 +4717,49 @@ def test_cli_compare_rejects_manifest_digest_mismatch(tmp_path):
         main(["compare", "--baseline", str(base_path), "--candidate", str(cand_path)])
     assert exc.value.code != 0
     assert "score_manifest_sha256" in str(exc.value) or "manifest" in str(exc.value).lower()
+
+
+def test_cli_compare_rejects_corpus_count_mismatch_and_requires_explicit_scored_delta(tmp_path, capsys):
+    """VLM6-A-02 / EVAL-13: metric values cannot hide a population mismatch."""
+    baseline = _adoption_compare_report()
+    truncated = _adoption_compare_report(
+        counts={"total": 99, "scored": 99, "failed": 0},
+        corpus={"manifest_entries": 99, "media_id_missing": 0, "media_id_extra": 0},
+    )
+    partial = _adoption_compare_report(counts={"total": 100, "scored": 99, "failed": 0})
+    base_path = tmp_path / "baseline.json"
+    truncated_path = tmp_path / "truncated.json"
+    partial_path = tmp_path / "partial.json"
+    base_path.write_text(json.dumps(baseline))
+    truncated_path.write_text(json.dumps(truncated))
+    partial_path.write_text(json.dumps(partial))
+
+    with pytest.raises(SystemExit) as total_exc:
+        main(["compare", "--baseline", str(base_path), "--candidate", str(truncated_path)])
+    assert total_exc.value.code != 0
+    assert "counts.total mismatch" in str(total_exc.value)
+
+    with pytest.raises(SystemExit) as scored_exc:
+        main(["compare", "--baseline", str(base_path), "--candidate", str(partial_path)])
+    assert scored_exc.value.code != 0
+    assert "counts.scored mismatch" in str(scored_exc.value)
+    assert "allow-scored-delta=0" in str(scored_exc.value)
+
+    assert (
+        main(
+            [
+                "compare",
+                "--baseline",
+                str(base_path),
+                "--candidate",
+                str(partial_path),
+                "--allow-scored-delta",
+                "1",
+            ]
+        )
+        is None
+    )
+    assert "compare meet-or-beat: PASS" in capsys.readouterr().out
 
 
 def test_cli_compare_vacuous_category_blocks_adoption(tmp_path):
@@ -4781,6 +4840,34 @@ def test_cli_compare_meet_or_beat_all_categories_pass(tmp_path, capsys):
         "fabricated_fact_rate",
     ):
         assert token in out, f"missing adoption metric surface: {token}"
+
+
+@pytest.mark.parametrize(
+    ("override", "metric"),
+    [
+        ({"faces": {"detection": {"precision": 0.10}}}, "detection.precision"),
+        ({"faces": {"detection": {"recall": 0.10}}}, "detection.recall"),
+        (
+            {"faces": {"identification": {"positional": {"position_accuracy": 0.10}}}},
+            "position_accuracy",
+        ),
+        ({"placement": {"accuracy": 0.10}}, "placement.accuracy"),
+        ({"hallucination": {"fabricated_fact_rate": 0.90}}, "fabricated_fact_rate"),
+    ],
+)
+def test_cli_compare_rejects_regression_in_each_adoption_category(tmp_path, override, metric):
+    """VLM6-A-03 / EVAL-23: every safety-critical comparison axis can fail the gate."""
+    baseline = _adoption_compare_report()
+    candidate = _adoption_compare_report(**override)
+    base_path = tmp_path / "baseline.json"
+    cand_path = tmp_path / "candidate.json"
+    base_path.write_text(json.dumps(baseline))
+    cand_path.write_text(json.dumps(candidate))
+
+    with pytest.raises(SystemExit) as exc:
+        main(["compare", "--baseline", str(base_path), "--candidate", str(cand_path)])
+    assert exc.value.code != 0
+    assert metric in str(exc.value)
 
 
 def test_cmd_run_scores_all_records_despite_gate_failure(tmp_path, monkeypatch, capsys):

@@ -381,6 +381,14 @@ def _keep_arg(raw: str) -> int:
     return value
 
 
+def _nonnegative_int_arg(raw: str) -> int:
+    """argparse type for explicit comparison tolerances."""
+    value = int(raw)
+    if value < 0:
+        raise argparse.ArgumentTypeError("must be >= 0")
+    return value
+
+
 def _limit_arg(raw: str) -> int:
     """argparse type for ``--limit``: positive int; reject 0/negative (S8-03 / S6-02).
 
@@ -2500,6 +2508,13 @@ def _compare_require_caption_report(doc: Mapping[str, Any], *, role: str) -> lis
         errors.append(f"{role}: caption missing or not an object")
     if not isinstance(doc.get("faces"), Mapping):
         errors.append(f"{role}: faces missing or not an object")
+    corpus = doc.get("corpus")
+    if not isinstance(corpus, Mapping):
+        errors.append(f"{role}: corpus missing or not an object")
+    else:
+        for key in ("manifest_entries", "media_id_missing", "media_id_extra"):
+            if not isinstance(corpus.get(key), int) or isinstance(corpus.get(key), bool):
+                errors.append(f"{role}: corpus.{key} missing or not an int")
     return errors
 
 
@@ -2524,6 +2539,57 @@ def _compare_non_degenerate_corpus(doc: Mapping[str, Any], *, role: str) -> list
             errors.append(f"{role}: corpus.media_id_missing={missing} (truncated / partial record)")
         if isinstance(extra, int) and extra > 0:
             errors.append(f"{role}: corpus.media_id_extra={extra} (record not on manifest)")
+    return errors
+
+
+def _compare_corpus_counts(
+    baseline: Mapping[str, Any],
+    candidate: Mapping[str, Any],
+    *,
+    allow_scored_delta: int,
+) -> list[str]:
+    """Require comparable report populations before comparing quality numbers.
+
+    ``counts.total`` and the manifest entry count identify the judging frame and
+    must match exactly.  A caller may explicitly permit a small scored-count
+    difference for a documented partial-observation comparison; the default is
+    zero so a truncated candidate cannot silently win on a smaller denominator.
+    """
+    errors: list[str] = []
+    b_counts = baseline.get("counts") if isinstance(baseline.get("counts"), Mapping) else {}
+    c_counts = candidate.get("counts") if isinstance(candidate.get("counts"), Mapping) else {}
+    b_corpus = baseline.get("corpus") if isinstance(baseline.get("corpus"), Mapping) else {}
+    c_corpus = candidate.get("corpus") if isinstance(candidate.get("corpus"), Mapping) else {}
+
+    b_total = b_counts.get("total")
+    c_total = c_counts.get("total")
+    if b_total != c_total:
+        errors.append(f"counts.total mismatch: baseline={b_total!r} candidate={c_total!r}")
+
+    b_manifest_entries = b_corpus.get("manifest_entries")
+    c_manifest_entries = c_corpus.get("manifest_entries")
+    if b_manifest_entries != c_manifest_entries:
+        errors.append(
+            "corpus.manifest_entries mismatch: "
+            f"baseline={b_manifest_entries!r} candidate={c_manifest_entries!r}"
+        )
+    if b_total != b_manifest_entries or c_total != c_manifest_entries:
+        errors.append(
+            "corpus/counts mismatch: "
+            f"baseline total={b_total!r} manifest_entries={b_manifest_entries!r}; "
+            f"candidate total={c_total!r} manifest_entries={c_manifest_entries!r}"
+        )
+
+    b_scored = b_counts.get("scored")
+    c_scored = c_counts.get("scored")
+    if isinstance(b_scored, int) and isinstance(c_scored, int):
+        delta = abs(b_scored - c_scored)
+        if delta > allow_scored_delta:
+            errors.append(
+                "counts.scored mismatch: "
+                f"baseline={b_scored} candidate={c_scored} delta={delta} "
+                f"exceeds --allow-scored-delta={allow_scored_delta}"
+            )
     return errors
 
 
@@ -2614,6 +2680,13 @@ def _cmd_compare(args: argparse.Namespace) -> None:
 
     structural.extend(_compare_non_degenerate_corpus(baseline, role="baseline"))
     structural.extend(_compare_non_degenerate_corpus(candidate, role="candidate"))
+    structural.extend(
+        _compare_corpus_counts(
+            baseline,
+            candidate,
+            allow_scored_delta=int(getattr(args, "allow_scored_delta", 0) or 0),
+        )
+    )
     if structural:
         sys.exit("compare same-corpus gate: " + "; ".join(structural))
 
@@ -2621,22 +2694,14 @@ def _cmd_compare(args: argparse.Namespace) -> None:
     if protocol:
         sys.exit("compare same-corpus gate: " + "; ".join(protocol))
 
-    b_verdict = (baseline.get("verdict") or {}).get("verdict")
-    if b_verdict not in _COMPARE_ADOPTION_ELIGIBLE_VERDICTS:
-        sys.exit(
-            f"compare adoption gate: baseline verdict={b_verdict!r} is not adoption-eligible "
-            f"(require one of {sorted(_COMPARE_ADOPTION_ELIGIBLE_VERDICTS)}; "
-            f"pass_ungated / non_comparable / fail baselines cannot certify a candidate)"
-        )
-    c_verdict = (candidate.get("verdict") or {}).get("verdict")
-    if c_verdict == ScoreVerdict.NON_COMPARABLE.value:
-        sys.exit(
-            f"compare adoption gate: candidate verdict={ScoreVerdict.NON_COMPARABLE.value} "
-            f"(archival relabel; not adoption-comparable)"
-        )
-    # fail is still comparable for regression reporting; other statuses block.
-    if c_verdict not in _COMPARE_ADOPTION_ELIGIBLE_VERDICTS and c_verdict != ScoreVerdict.FAIL.value:
-        sys.exit(f"compare adoption gate: candidate verdict={c_verdict!r} is not adoption-comparable")
+    for role, report in (("baseline", baseline), ("candidate", candidate)):
+        verdict = (report.get("verdict") or {}).get("verdict")
+        if verdict not in _COMPARE_ADOPTION_ELIGIBLE_VERDICTS:
+            sys.exit(
+                f"compare adoption gate: {role} verdict={verdict!r} is not adoption-eligible "
+                f"(require one of {sorted(_COMPARE_ADOPTION_ELIGIBLE_VERDICTS)}; "
+                "fail/pass_ungated/non_comparable reports cannot certify an adoption decision)"
+            )
 
     # --- harness-37 / Golden-100 readiness (VLM6-A-03 / EVAL-04) ---
     if _compare_harness_anchor_size(baseline) or _compare_harness_anchor_size(candidate):
@@ -3176,6 +3241,16 @@ def main(argv: list[str] | None = None) -> None:
         required=True,
         metavar="PATH",
         help="candidate score report JSON to check against baseline",
+    )
+    compare_p.add_argument(
+        "--allow-scored-delta",
+        type=_nonnegative_int_arg,
+        default=0,
+        metavar="N",
+        help=(
+            "explicitly permit up to N fewer or more scored items while comparing "
+            "the same total corpus; default 0 keeps scored counts exact"
+        ),
     )
     compare_p.set_defaults(func=_cmd_compare)
 

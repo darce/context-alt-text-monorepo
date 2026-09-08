@@ -1357,6 +1357,10 @@ def test_canonical_oci_audit_cloudevents_payload_passes(tmp_path: Path) -> None:
                     "resourceId": INSTANCE_ID,
                     "request": {"parameters": {"action": "START"}},
                     "response": {"status": "200"},
+                    "stateChange": {
+                        "previous": {"lifecycleState": "STOPPED"},
+                        "current": {"lifecycleState": "STARTING"},
+                    },
                 },
             },
             {
@@ -1369,7 +1373,7 @@ def test_canonical_oci_audit_cloudevents_payload_passes(tmp_path: Path) -> None:
                     "request": {"parameters": {"action": "START"}},
                     "response": {"status": "200"},
                     "stateChange": {
-                        "previous": {"lifecycleState": "STOPPED"},
+                        "previous": {"lifecycleState": "STARTING"},
                         "current": {"lifecycleState": "RUNNING"},
                     },
                 },
@@ -1383,6 +1387,10 @@ def test_canonical_oci_audit_cloudevents_payload_passes(tmp_path: Path) -> None:
                     "resourceId": INSTANCE_ID,
                     "request": {"parameters": {"action": "STOP"}},
                     "response": {"status": "200"},
+                    "stateChange": {
+                        "previous": {"lifecycleState": "RUNNING"},
+                        "current": {"lifecycleState": "STOPPING"},
+                    },
                 },
             },
             {
@@ -1395,7 +1403,7 @@ def test_canonical_oci_audit_cloudevents_payload_passes(tmp_path: Path) -> None:
                     "request": {"parameters": {"action": "STOP"}},
                     "response": {"status": "200"},
                     "stateChange": {
-                        "previous": {"lifecycleState": "RUNNING"},
+                        "previous": {"lifecycleState": "STOPPING"},
                         "current": {"lifecycleState": "STOPPED"},
                     },
                 },
@@ -1514,7 +1522,10 @@ GOLDEN_OCI_AUDIT: dict[str, list[dict[str, object]]] = {
             event_id="golden-start-begin",
             grouping_id="golden-start",
             principal="burst-start",
-            state_change=None,
+            state_change={
+                "previous": {"lifecycleState": "STOPPED"},
+                "current": {"lifecycleState": "STARTING"},
+            },
         ),
         _golden_oci_audit_event(
             action="START",
@@ -1524,7 +1535,7 @@ GOLDEN_OCI_AUDIT: dict[str, list[dict[str, object]]] = {
             grouping_id="golden-start",
             principal="burst-start",
             state_change={
-                "previous": {"lifecycleState": "STOPPED"},
+                "previous": {"lifecycleState": "STARTING"},
                 "current": {"lifecycleState": "RUNNING"},
             },
         ),
@@ -1535,7 +1546,10 @@ GOLDEN_OCI_AUDIT: dict[str, list[dict[str, object]]] = {
             event_id="golden-stop-begin",
             grouping_id="golden-stop",
             principal="gpu-reaper",
-            state_change=None,
+            state_change={
+                "previous": {"lifecycleState": "RUNNING"},
+                "current": {"lifecycleState": "STOPPING"},
+            },
         ),
         _golden_oci_audit_event(
             action="STOP",
@@ -1545,7 +1559,7 @@ GOLDEN_OCI_AUDIT: dict[str, list[dict[str, object]]] = {
             grouping_id="golden-stop",
             principal="gpu-reaper",
             state_change={
-                "previous": {"lifecycleState": "RUNNING"},
+                "previous": {"lifecycleState": "STOPPING"},
                 "current": {"lifecycleState": "STOPPED"},
             },
         ),
@@ -2136,6 +2150,8 @@ def _oci_cli_hyphen_audit_payload() -> tuple[dict[str, list[dict[str, Any]]], st
         event_id="cli-start-begin",
         grouping_id="cli-start",
         principal="burst-start",
+        previous="STOPPED",
+        current="STARTING",
     )
     start_end, _origin = _oci_cli_hyphen_audit_event(
         action="START",
@@ -2144,7 +2160,7 @@ def _oci_cli_hyphen_audit_payload() -> tuple[dict[str, list[dict[str, Any]]], st
         event_id="cli-start-end",
         grouping_id="cli-start",
         principal="burst-start",
-        previous="STOPPED",
+        previous="STARTING",
         current="RUNNING",
     )
     stop_begin, _origin = _oci_cli_hyphen_audit_event(
@@ -2154,6 +2170,8 @@ def _oci_cli_hyphen_audit_payload() -> tuple[dict[str, list[dict[str, Any]]], st
         event_id="cli-stop-begin",
         grouping_id="cli-stop",
         principal="gpu-reaper",
+        previous="RUNNING",
+        current="STOPPING",
     )
     stop_end, _origin = _oci_cli_hyphen_audit_event(
         action="STOP",
@@ -2162,7 +2180,7 @@ def _oci_cli_hyphen_audit_payload() -> tuple[dict[str, list[dict[str, Any]]], st
         event_id="cli-stop-end",
         grouping_id="cli-stop",
         principal="gpu-reaper",
-        previous="RUNNING",
+        previous="STOPPING",
         current="STOPPED",
     )
     return {"data": [start_begin, start_end, stop_begin, stop_end]}, origin
@@ -2368,3 +2386,332 @@ def test_duplicate_hyphen_grouping_completed_records_fail_closed(tmp_path: Path)
 
     assert checks["audit_payload_contract"] is False
     assert "completed records" in details
+
+
+def _real_state_change(*, previous: str, current: str) -> dict[str, object]:
+    return {
+        "previous": {"lifecycleState": previous},
+        "current": {"lifecycleState": current},
+    }
+
+
+def _cli_kebab_lifecycle_event(
+    *,
+    action: str,
+    phase: str,
+    event_time: str,
+    event_id: str,
+    grouping_id: str,
+    principal: str,
+    previous: str,
+    current: str,
+) -> dict[str, object]:
+    """OCI CLI `--output json` kebab-case Audit event with real begin/end states."""
+
+    return {
+        "cloud-events-version": "0.1",
+        "content-type": "application/json",
+        "event-id": event_id,
+        "event-time": event_time,
+        "event-type": f"com.oraclecloud.computeapi.{action.title()}Instance.{phase}",
+        "event-grouping-id": grouping_id,
+        "source": "ComputeApi",
+        "data": {
+            "event-grouping-id": grouping_id,
+            "event-name": f"{action.title()}Instance",
+            "resource-id": INSTANCE_ID,
+            "identity": {"principal-name": principal},
+            "request": {
+                "id": f"{event_id}-request",
+                "action": "POST",
+                "parameters": {"action": [action]},
+            },
+            "response": {"status": "200"},
+            "state-change": _real_state_change(previous=previous, current=current),
+        },
+    }
+
+
+def _real_cli_kebab_audit_payload() -> dict[str, list[dict[str, object]]]:
+    return {
+        "data": [
+            _cli_kebab_lifecycle_event(
+                action="START",
+                phase="begin",
+                event_time="2026-09-01T00:09:59Z",
+                event_id="cli-start-begin",
+                grouping_id="cli-start",
+                principal="burst-start",
+                previous="STOPPED",
+                current="STARTING",
+            ),
+            _cli_kebab_lifecycle_event(
+                action="START",
+                phase="end",
+                event_time=RUNNING_AT,
+                event_id="cli-start-end",
+                grouping_id="cli-start",
+                principal="burst-start",
+                previous="STARTING",
+                current="RUNNING",
+            ),
+            _cli_kebab_lifecycle_event(
+                action="STOP",
+                phase="begin",
+                event_time="2026-09-01T00:29:59Z",
+                event_id="cli-stop-begin",
+                grouping_id="cli-stop",
+                principal="gpu-reaper",
+                previous="RUNNING",
+                current="STOPPING",
+            ),
+            _cli_kebab_lifecycle_event(
+                action="STOP",
+                phase="end",
+                event_time=STOPPED_AT,
+                event_id="cli-stop-end",
+                grouping_id="cli-stop",
+                principal="gpu-reaper",
+                previous="STOPPING",
+                current="STOPPED",
+            ),
+        ]
+    }
+
+
+def test_cli_kebab_begin_end_intermediate_states_prove_burst(tmp_path: Path) -> None:
+    audit = _real_cli_kebab_audit_payload()
+    checker = _load_checker_module()
+    history = checker.build_state_history_document(audit, instance_id=INSTANCE_ID, since=SINCE, until=UNTIL)
+
+    assert [observation["state"] for observation in history["observations"]] == [
+        "STOPPED",
+        "RUNNING",
+        "STOPPED",
+    ]
+    assert history.get("state") != "unknown"
+    assert history.get("proof_status") != "unknown"
+
+    result = _run_checker(_custom_bundle(tmp_path, history=history, audit=audit))
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_mixed_envelope_kebab_and_camel_audit_proves_burst(tmp_path: Path) -> None:
+    audit = {
+        "data": [
+            {
+                "eventType": "com.oraclecloud.computeapi.StartInstance.begin",
+                "event-time": "2026-09-01T00:09:59Z",
+                "eventGroupingId": "mixed-start",
+                "identity": {"principalName": "burst-start"},
+                "data": {
+                    "resource-id": INSTANCE_ID,
+                    "request": {"parameters": {"action": "START"}},
+                    "response": {"status": "200"},
+                    "state-change": _real_state_change(previous="STOPPED", current="STARTING"),
+                },
+            },
+            {
+                "event-type": "com.oraclecloud.computeapi.StartInstance.end",
+                "eventTime": RUNNING_AT,
+                "event-id": "mixed-start-end",
+                "event-grouping-id": "mixed-start",
+                "data": {
+                    "resourceId": INSTANCE_ID,
+                    "identity": {"principal-name": "burst-start"},
+                    "request": {"parameters": {"action": "START"}},
+                    "response": {"status": "200"},
+                    "stateChange": _real_state_change(previous="STARTING", current="RUNNING"),
+                },
+            },
+            {
+                "eventType": "com.oraclecloud.computeapi.StopInstance.begin",
+                "event-time": "2026-09-01T00:29:59Z",
+                "eventGroupingId": "mixed-stop",
+                "identity": {"principal-name": "gpu-reaper"},
+                "data": {
+                    "resource-id": INSTANCE_ID,
+                    "request": {"parameters": {"action": "STOP"}},
+                    "response": {"status": "200"},
+                    "state-change": _real_state_change(previous="RUNNING", current="STOPPING"),
+                },
+            },
+            {
+                "event-type": "com.oraclecloud.computeapi.StopInstance.end",
+                "eventTime": STOPPED_AT,
+                "eventId": "mixed-stop-end",
+                "event-grouping-id": "mixed-stop",
+                "data": {
+                    "resourceId": INSTANCE_ID,
+                    "identity": {"principalName": "gpu-reaper"},
+                    "request": {"parameters": {"action": "STOP"}},
+                    "response": {"status": "200"},
+                    "stateChange": _real_state_change(previous="STOPPING", current="STOPPED"),
+                },
+            },
+        ]
+    }
+
+    result = _run_checker(_custom_bundle(tmp_path, audit=audit))
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_real_cloudevents_begin_end_intermediate_states_prove_burst(tmp_path: Path) -> None:
+    audit = {
+        "data": [
+            _golden_oci_audit_event(
+                action="START",
+                phase="begin",
+                event_time="2026-09-01T00:09:59Z",
+                event_id="real-start-begin",
+                grouping_id="real-start",
+                principal="burst-start",
+                state_change=_real_state_change(previous="STOPPED", current="STARTING"),
+            ),
+            _golden_oci_audit_event(
+                action="START",
+                phase="end",
+                event_time=RUNNING_AT,
+                event_id="real-start-end",
+                grouping_id="real-start",
+                principal="burst-start",
+                state_change=_real_state_change(previous="STARTING", current="RUNNING"),
+            ),
+            _golden_oci_audit_event(
+                action="STOP",
+                phase="begin",
+                event_time="2026-09-01T00:29:59Z",
+                event_id="real-stop-begin",
+                grouping_id="real-stop",
+                principal="gpu-reaper",
+                state_change=_real_state_change(previous="RUNNING", current="STOPPING"),
+            ),
+            _golden_oci_audit_event(
+                action="STOP",
+                phase="end",
+                event_time=STOPPED_AT,
+                event_id="real-stop-end",
+                grouping_id="real-stop",
+                principal="gpu-reaper",
+                state_change=_real_state_change(previous="STOPPING", current="STOPPED"),
+            ),
+        ]
+    }
+    checker = _load_checker_module()
+    history = checker.build_state_history_document(audit, instance_id=INSTANCE_ID, since=SINCE, until=UNTIL)
+
+    assert [observation["state"] for observation in history["observations"]] == [
+        "STOPPED",
+        "RUNNING",
+        "STOPPED",
+    ]
+
+    result = _run_checker(_custom_bundle(tmp_path, history=history, audit=audit))
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_end_current_starting_is_not_a_completed_start(tmp_path: Path) -> None:
+    audit = {
+        "data": [
+            _golden_oci_audit_event(
+                action="START",
+                phase="begin",
+                event_time="2026-09-01T00:09:59Z",
+                event_id="starting-begin",
+                grouping_id="starting-start",
+                principal="burst-start",
+                state_change=_real_state_change(previous="STOPPED", current="STARTING"),
+            ),
+            _golden_oci_audit_event(
+                action="START",
+                phase="end",
+                event_time=RUNNING_AT,
+                event_id="starting-end",
+                grouping_id="starting-start",
+                principal="burst-start",
+                state_change=_real_state_change(previous="STARTING", current="STARTING"),
+            ),
+            _golden_oci_audit_event(
+                action="STOP",
+                phase="begin",
+                event_time="2026-09-01T00:29:59Z",
+                event_id="starting-stop-begin",
+                grouping_id="starting-stop",
+                principal="gpu-reaper",
+                state_change=_real_state_change(previous="RUNNING", current="STOPPING"),
+            ),
+            _golden_oci_audit_event(
+                action="STOP",
+                phase="end",
+                event_time=STOPPED_AT,
+                event_id="starting-stop-end",
+                grouping_id="starting-stop",
+                principal="gpu-reaper",
+                state_change=_real_state_change(previous="STOPPING", current="STOPPED"),
+            ),
+        ]
+    }
+
+    result = _run_checker(_custom_bundle(tmp_path, audit=audit), "--json")
+    checks = _json_checks(result)
+    verdict = json.loads(result.stdout)
+    details = " ".join(check["detail"] for check in verdict["checks"])
+
+    assert checks["exactly_one_start_instance"] is False
+    assert "STARTING" in details or "observed 0 StartInstance" in result.stdout
+
+
+def test_envelope_unknown_state_does_not_discard_nested_observations(tmp_path: Path) -> None:
+    history = {
+        "schema_version": 1,
+        "instance_id": INSTANCE_ID,
+        "state": "unknown",
+        "reason": "the capture window does not contain a complete authoritative lifecycle history",
+        "observations": [
+            {"state": "STOPPED", "timestamp": SINCE},
+            {"state": "RUNNING", "timestamp": RUNNING_AT},
+        ],
+    }
+
+    result = _run_checker(_custom_bundle(tmp_path, history=history), "--json")
+    verdict = json.loads(result.stdout)
+    checks = {check["name"]: check for check in verdict["checks"]}
+
+    assert checks["state_history_schema"]["passed"] is True
+    assert "unsupported lifecycle state" not in checks["state_history_schema"]["detail"]
+    assert checks["state_history_burst"]["passed"] is False
+    assert "STOPPED" in checks["state_history_burst"]["detail"]
+    assert "RUNNING" in checks["state_history_burst"]["detail"]
+
+
+def test_proof_status_unknown_still_reads_nested_observations(tmp_path: Path) -> None:
+    history = {
+        "schema_version": 1,
+        "instance_id": INSTANCE_ID,
+        "proof_status": "unknown",
+        "reason": "the capture window does not contain a complete authoritative lifecycle history",
+        "observations": [
+            {"state": "STOPPED", "timestamp": SINCE},
+            {"state": "RUNNING", "timestamp": RUNNING_AT},
+            {"state": "STOPPED", "timestamp": STOPPED_AT},
+        ],
+    }
+
+    result = _run_checker(_custom_bundle(tmp_path, history=history))
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_build_state_history_uses_proof_status_not_lifecycle_state() -> None:
+    checker = _load_checker_module()
+    history = checker.build_state_history_document(
+        {"data": []}, instance_id=INSTANCE_ID, since=SINCE, until=UNTIL
+    )
+
+    assert history["observations"] == []
+    assert history.get("state") != "unknown"
+    assert history["proof_status"] == "unknown"
+    assert isinstance(history.get("reason"), str) and history["reason"].strip()

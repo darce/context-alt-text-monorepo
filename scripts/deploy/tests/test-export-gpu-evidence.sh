@@ -24,7 +24,7 @@ case " $* " in
         printf '%s\n' '{"data":{"id":"ocid1.instance.example","compartment-id":"ocid1.compartment.example","lifecycle-state":"STOPPED"}}'
         ;;
     *" audit event list "*)
-        printf '%s\n' '{"data":[{"eventType":"com.oraclecloud.computeapi.StartInstance.end","eventTime":"2026-09-01T00:10:00Z","eventId":"start-1","identity":{"principalName":"burst-start"},"data":{"resourceId":"ocid1.instance.example","request":{"parameters":{"action":"START"}},"response":{"status":"200"},"stateChange":{"previous":{"lifecycleState":"STOPPED"},"current":{"lifecycleState":"RUNNING"}}}},{"eventType":"com.oraclecloud.computeapi.StopInstance.end","eventTime":"2026-09-01T00:30:00Z","eventId":"stop-1","identity":{"principalName":"gpu-reaper"},"data":{"resourceId":"ocid1.instance.example","request":{"parameters":{"action":"STOP"}},"response":{"status":"200"},"stateChange":{"previous":{"lifecycleState":"RUNNING"},"current":{"lifecycleState":"STOPPED"}}}}]}'
+        printf '%s\n' '{"data":[{"event-type":"com.oraclecloud.computeapi.StartInstance.begin","event-time":"2026-09-01T00:09:59Z","event-id":"start-begin","event-grouping-id":"start-1","data":{"resource-id":"ocid1.instance.example","identity":{"principal-name":"burst-start"},"request":{"parameters":{"action":"START"}},"response":{"status":"200"},"state-change":{"previous":{"lifecycleState":"STOPPED"},"current":{"lifecycleState":"STARTING"}}}},{"event-type":"com.oraclecloud.computeapi.StartInstance.end","event-time":"2026-09-01T00:10:00Z","event-id":"start-1","event-grouping-id":"start-1","data":{"resource-id":"ocid1.instance.example","identity":{"principal-name":"burst-start"},"request":{"parameters":{"action":"START"}},"response":{"status":"200"},"state-change":{"previous":{"lifecycleState":"STARTING"},"current":{"lifecycleState":"RUNNING"}}}},{"event-type":"com.oraclecloud.computeapi.StopInstance.begin","event-time":"2026-09-01T00:29:59Z","event-id":"stop-begin","event-grouping-id":"stop-1","data":{"resource-id":"ocid1.instance.example","identity":{"principal-name":"gpu-reaper"},"request":{"parameters":{"action":"STOP"}},"response":{"status":"200"},"state-change":{"previous":{"lifecycleState":"RUNNING"},"current":{"lifecycleState":"STOPPING"}}}},{"event-type":"com.oraclecloud.computeapi.StopInstance.end","event-time":"2026-09-01T00:30:00Z","event-id":"stop-1","event-grouping-id":"stop-1","data":{"resource-id":"ocid1.instance.example","identity":{"principal-name":"gpu-reaper"},"request":{"parameters":{"action":"STOP"}},"response":{"status":"200"},"state-change":{"previous":{"lifecycleState":"STOPPING"},"current":{"lifecycleState":"STOPPED"}}}}]}'
         ;;
     *)
         echo "unexpected OCI argv: $*" >&2
@@ -276,7 +276,8 @@ import sys
 
 history = json.load(open(sys.argv[1], encoding="utf-8"))
 assert history["observations"] == []
-assert history["state"] == "unknown"
+assert history["proof_status"] == "unknown"
+assert "state" not in history
 assert isinstance(history["reason"], str) and history["reason"].strip()
 PY
 

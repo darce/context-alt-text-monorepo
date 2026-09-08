@@ -354,7 +354,7 @@ stale_lock_candidate() {
 
     now_epoch="$(date +%s)"
     if [ "$now_epoch" -ge "$lock_owner_start_time" ] \
-        && [ $((now_epoch - lock_owner_start_time)) -ge "$lock_max_time" ]; then
+        && [ $((now_epoch - lock_owner_start_time)) -ge "$((10#$lock_max_time))" ]; then
         echo "INFO: breaking stale evidence lock from host $lock_owner_host (age ${lock_max_time}s+): $lock_dir" >&2
         return 0
     fi
@@ -398,7 +398,7 @@ recover_pending_publishes() {
 # Serialise same-destination captures. Atomic replacement protects readers
 # from partial files, while this bounded lock also prevents two OCI captures
 # from racing and publishing an arbitrary last-writer result.
-lock_attempts=$((lock_max_time * 10))
+lock_attempts=$((10#$lock_max_time * 10))
 lock_attempt=0
 if [ -L "$lock_dir" ]; then
     fail_usage "lock path must not be a symlink: $lock_dir"
@@ -621,17 +621,6 @@ from gpu_burst_evidence import build_state_history_document
 with Path(audit_path).open(encoding="utf-8") as handle:
     audit = json.load(handle)
 document = build_state_history_document(audit, instance_id=instance_id, since=since, until=until)
-states = [item.get("state") for item in document.get("observations", [])]
-if states != ["STOPPED", "RUNNING", "STOPPED"]:
-    document["state"] = "unknown"
-    if not states:
-        document["reason"] = "no authoritative lifecycle transition was observed in the capture window"
-    elif states[0] != "STOPPED":
-        document["reason"] = "the initial lifecycle state was not independently observed in the capture window"
-    elif states[-1] != "STOPPED":
-        document["reason"] = "the final lifecycle state was not independently observed in the capture window"
-    else:
-        document["reason"] = "the capture window does not contain a complete authoritative lifecycle history"
 with Path(output_path).open("w", encoding="utf-8") as handle:
     json.dump(document, handle, indent=2, sort_keys=True)
     handle.write("\n")

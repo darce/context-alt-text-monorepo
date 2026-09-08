@@ -254,9 +254,11 @@ def collect_and_validate(connection) -> SchemaStateReport:
             "SELECT a.atttypmod FROM pg_attribute a "
             "JOIN pg_class c ON c.oid = a.attrelid "
             "JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "JOIN pg_type t ON t.oid = a.atttypid "
             "WHERE n.nspname = current_schema() "
             "AND c.relname = :name "
-            "AND a.attname = 'centroid' AND NOT a.attisdropped"
+            "AND a.attname = 'centroid' AND NOT a.attisdropped "
+            "AND t.typname = 'vector'"
         ),
         {"name": MATVIEW_NAME},
     ).scalar()

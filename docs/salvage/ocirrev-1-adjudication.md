@@ -1,6 +1,46 @@
 # OCIRREV-1 stranded rev-ops adjudication
 
-## Result
+## Superseding landing review (2026-09-08)
+
+The initial assessment below is retained as historical evidence, not the current
+landing verdict. Luna MAX review of all 87 stranded hunks against the recovered
+implementation rejected its “no novel work” conclusion. Dropping an unsafe old
+implementation does not discharge a valid requirement (REF-13/REF-14, RES-02).
+
+The source branch was ancestry-consolidated into `feature/ocir-landing-1` without
+reapplying its obsolete runtime. Five current defects were recorded on
+`OCIR-LANDING-1` as `OCIR-LUNA-20260908-01` through `05`:
+
+- Remote builds must publish only the immutable SHA tag until push/verification.
+  Commit `79747d8da` removes premature local environment-tag publication.
+- A failed restart after cutover has ambiguous runtime state. The same commit
+  restores the prior runtime for post-restart failures; pre-restart failures
+  retain the lighter rollback. Executable phase tests cover deploy and promote.
+- An accepted Vault mutation followed by failed readback is outcome UNKNOWN,
+  including deadline exhaustion. Commit `d874e59ef` returns exit 75 and verifies
+  that rotation does not compensate an accepted username write blindly.
+- Pending Vault updates need stable identity and paged reconciliation. The same
+  commit uses deterministic version names and follows version-list pagination
+  before an ETag-fenced update. The explicit zero-readback mode remains intact.
+- Serialization and elapsed-time bounds do not limit build memory or CPU.
+  Finding `05` requires a resource-limited BuildKit container while retaining
+  the existing generation directories, global lock and whole-operation budget.
+  Its implementation and final review are tracked on the consolidated feature;
+  the initial rejection of the unsafe old helper is not a waiver of this gate.
+
+The Vault fixes passed 27 readiness tests, 21 helper tests and the shell rotation
+harness (MCP test receipts 1920–1922). Deployment publication/rollback fixes
+passed 17 focused tests (receipt 1916). These are slice receipts, not a claim
+that a live deployment or Vault rotation was performed. The final feature
+verdict requires the remaining capacity fix and Astra MEDIUM harmonization.
+
+Applicable canon: `CARD-09`/`RES-02` resource isolation, `RES-03` whole-operation
+budgets, `CARD-15`/`DATA-13` durable mutation identity, `API-02`/`API-04` outcome
+ambiguity, and `TEST-15` executable regressions. The recovery coordinator read
+the local heuristics-canon-research corpus; the historical worker's missing
+checkout below is not the evidence boundary of this superseding review.
+
+## Initial result (superseded)
 
 The source of record is `rev-ops-stranded.patch`, with commit subjects and
 scope cross-checked against `rev-ops-commits.txt` and

@@ -250,8 +250,11 @@ def _catalog_connection(
     vector_typmods: dict[tuple[str, str], int | None] | None = None,
     acl_grant_rows: list[tuple[str, str, bool]] | None = None,
     vanished_roles: set[str] | None = None,
+    matview_present: bool = True,
+    missing_relations: set[str] | None = None,
 ):
     quoted = current_user_quoted if current_user_quoted is not None else current_user
+    missing = set(missing_relations or ())
 
     class _Connection:
         def __init__(self) -> None:
@@ -271,7 +274,11 @@ def _catalog_connection(
                 return _Result(rows=[(name, f"tenant_isolation_{name}") for name in script.TENANT_TABLES])
             if "select c.relname, c.relkind" in sql:
                 return _Result(
-                    rows=[(name, "m" if name == script.MATVIEW_NAME else "r") for name in script.EXPECTED_TABLES]
+                    rows=[
+                        (name, "m" if name == script.MATVIEW_NAME else "r")
+                        for name in script.EXPECTED_TABLES
+                        if name not in missing
+                    ]
                 )
             if "from pg_attribute" in sql:
                 self.centroid_probe_sql = sql
@@ -290,11 +297,15 @@ def _catalog_connection(
                     return _Result(scalar_value=script.EMBEDDING_DIMENSION)
                 return _Result(scalar_value=centroid_typmod)
             if "pg_has_role" in sql:
+                if not matview_present:
+                    return _Result(rows=[], scalar_value=None)
                 return _Result(
                     rows=[("m", "foreign_owner" if not matview_can_drop else current_user, matview_can_drop, quoted)],
                     scalar_value="m",
                 )
             if "has_schema_privilege" in sql or "has_table_privilege" in sql:
+                if missing and "has_table_privilege" in sql and "to_regclass" not in sql:
+                    _undefined_table_error(sql, sorted(missing)[0])
                 return _Result(rows=[("public", create_ok, create_ok, create_ok, create_ok, create_ok)])
             if "aclexplode" in sql:
                 return _Result(rows=list(acl_grant_rows or ()))
@@ -304,10 +315,16 @@ def _catalog_connection(
                     return _Result(scalar_value=None)
                 return _Result(scalar_value=1)
             if "select c.relkind from" in sql:
-                return _Result(scalar_value="m")
+                return _Result(scalar_value="m" if matview_present else None)
             raise AssertionError(f"unexpected SQL: {sql}")
 
     return _Connection()
+
+
+def _undefined_table_error(sql: str, rel: str):
+    from sqlalchemy.exc import DBAPIError
+
+    raise DBAPIError(sql, {}, Exception(f'relation "{rel}" does not exist'))
 
 
 def test_collect_and_validate_rejects_non_vector_centroid_with_matching_typmod(monkeypatch) -> None:
@@ -494,8 +511,10 @@ def test_wrong_typmod_table_column_requires_named_operator_action() -> None:
     assert report["exit_code"] == script.EXIT_OPERATOR_REQUIRED
     joined = " ".join(report["operator_actions"])
     assert "media_identities.embedding" in joined
-    assert "ALTER TABLE media_identities ALTER COLUMN embedding TYPE vector(" in joined
+    assert "re-embed" in joined.lower()
+    assert "null" in joined.lower()
     assert f"vector({script.EMBEDDING_DIMENSION})" in joined
+    assert f"USING embedding::vector({script.EMBEDDING_DIMENSION})" not in joined
     assert "DROP TABLE" not in joined
 
 
@@ -537,7 +556,9 @@ def test_collect_and_validate_wrong_table_typmod_requires_operator(monkeypatch) 
     assert report["exit_code"] == script.EXIT_OPERATOR_REQUIRED
     joined = " ".join(report["operator_actions"])
     assert "media_identities.embedding" in joined
-    assert "ALTER TABLE media_identities" in joined
+    assert "re-embed" in joined.lower()
+    assert "null" in joined.lower()
+    assert f"USING embedding::vector({script.EMBEDDING_DIMENSION})" not in joined
 
 
 def test_empty_column_gaps_is_ok() -> None:
@@ -551,6 +572,69 @@ def test_empty_column_gaps_is_ok() -> None:
     assert report["ok"] is True
     assert report["column_gaps"] == {}
     assert report["exit_code"] == script.EXIT_OK
+
+
+def test_missing_matview_with_create_gaps_and_vanished_grantees_requires_operator() -> None:
+    script = _import_script()
+    kwargs = _complete_kwargs(script)
+    kwargs["matview_relkind"] = None
+    _set_centroid_typmod(script, kwargs, None)
+    kwargs["matview_create_privilege_gaps"] = [
+        "CREATE on schema public",
+        "SELECT on identity_clusters",
+    ]
+    kwargs["matview_vanished_grantees"] = ["vanished_reader"]
+
+    report = script._validate_schema_state(**kwargs)
+
+    assert report["ok"] is False
+    assert report["exit_code"] == script.EXIT_OPERATOR_REQUIRED
+    joined = " ".join(report["operator_actions"])
+    assert "CREATE on schema public" in joined
+    assert "SELECT on identity_clusters" in joined
+    assert "vanished_reader" in joined
+    assert "cannot receive GRANT" in joined
+
+
+def test_collect_and_validate_missing_matview_collects_create_gaps(monkeypatch) -> None:
+    script = _import_script()
+    connection = _catalog_connection(
+        script,
+        centroid_typmod=None,
+        matview_present=False,
+        create_ok=False,
+    )
+    monkeypatch.setattr(script, "inspect", lambda _connection: _Inspector(script))
+    monkeypatch.setattr(script, "_expected_columns", lambda: {})
+
+    report = script.collect_and_validate(connection)
+
+    assert any("has_schema_privilege" in sql or "has_table_privilege" in sql for sql in connection.sql_log)
+    assert report["matview_relkind"] is None
+    assert report["exit_code"] == script.EXIT_OPERATOR_REQUIRED
+    joined = " ".join(report["operator_actions"])
+    assert "CREATE on schema public" in joined
+
+
+def test_collect_and_validate_missing_source_table_is_heal_repairable_not_infra(monkeypatch) -> None:
+    script = _import_script()
+
+    class _MissingInspector:
+        def get_table_names(self):
+            return [name for name in [*script.EXPECTED_TABLES, "alembic_version"] if name != "identity_clusters"]
+
+    connection = _catalog_connection(
+        script,
+        centroid_typmod=script.EMBEDDING_DIMENSION,
+        missing_relations={"identity_clusters"},
+    )
+    monkeypatch.setattr(script, "inspect", lambda _connection: _MissingInspector())
+    monkeypatch.setattr(script, "_expected_columns", lambda: {})
+
+    report = script.collect_and_validate(connection)
+
+    assert report["exit_code"] == script.EXIT_HEAL_REPAIRABLE
+    assert "identity_clusters" in report["missing_tables"]
 
 
 def test_collect_matview_create_privilege_gaps_sql_matches_migration() -> None:

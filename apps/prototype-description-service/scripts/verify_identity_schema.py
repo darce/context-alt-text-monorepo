@@ -153,15 +153,16 @@ def _validate_schema_state(
     # always supplies the catalog boolean (VLMHEAL-1-REV-A-05).
     can_drop = True if matview_can_drop is None else bool(matview_can_drop)
     operator_actions: list[str] = []
+    matview_rebuild_needed = matview_missing or matview_centroid_typmod_gap
     matview_typmod_unrepairable = False
     if matview_centroid_typmod_gap and not can_drop:
         matview_typmod_unrepairable = True
         quoted_role = current_role_quoted if current_role_quoted else "current_user"
         operator_actions.append(f"ALTER MATERIALIZED VIEW {MATVIEW_NAME} OWNER TO {quoted_role};")
-    elif matview_centroid_typmod_gap and create_gaps:
+    if matview_rebuild_needed and create_gaps:
         matview_typmod_unrepairable = True
         operator_actions.extend(create_gaps)
-    elif matview_centroid_typmod_gap and vanished_grantees:
+    if matview_rebuild_needed and vanished_grantees:
         matview_typmod_unrepairable = True
         operator_actions.append(
             "cannot rebuild mv_identity_cluster_centroids: relacl names vanished roles "
@@ -181,13 +182,7 @@ def _validate_schema_state(
         named = f"{table_name}.{column_name}"
         table_vector_gaps.append(named)
         operator_actions.append(
-            f"cannot repair {named}: observed vector typmod {observed!r} "
-            f"(expected {EMBEDDING_DIMENSION} and pg_type.typname='vector'). "
-            "Table columns cannot be dropped and rebuilt like derived matview data. "
-            "Operator action: "
-            f"ALTER TABLE {table_name} ALTER COLUMN {column_name} "
-            f"TYPE vector({EMBEDDING_DIMENSION}) "
-            f"USING {column_name}::vector({EMBEDDING_DIMENSION});"
+            identity_schema.table_vector_typmod_operator_action(table_name, column_name, observed)
         )
 
     if (
@@ -367,13 +362,13 @@ def collect_and_validate(connection) -> SchemaStateReport:
         matview_relkind = None
         matview_can_drop = None
         current_role_quoted = None
-        create_gaps: list[str] = []
         vanished_grantees: list[str] = []
+        create_gaps = _collect_matview_create_privilege_gaps(connection)
     else:
         matview_relkind, _owner, can_drop, current_role_quoted = matview_row
         # NULL from pg_has_role means the owner role is gone — fail closed (P3).
         matview_can_drop = bool(can_drop) if can_drop is not None else False
-        create_gaps = _collect_matview_create_privilege_gaps(connection) if matview_relkind == "m" else []
+        create_gaps = _collect_matview_create_privilege_gaps(connection) if matview_relkind in (None, "m") else []
         vanished_grantees = _collect_matview_vanished_grantees(connection) if matview_relkind == "m" else []
     vector_typmods = _collect_vector_typmods(connection)
     matview_centroid_typmod = vector_typmods.get((MATVIEW_NAME, "centroid"))

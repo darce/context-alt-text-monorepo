@@ -696,3 +696,61 @@ def test_sanitize_deploy_diagnostic_s2b09_authorization_signature_digest() -> No
         assert secret not in out, out
     assert "[REDACTED]" in out
     assert out.count("\n") == 4
+
+
+def test_sanitize_deploy_diagnostic_ra01_ipv6_url_userinfo() -> None:
+    """RA-01: IPv6 bracketed hosts must still redact URL userinfo passwords."""
+    raw = (
+        "POSTGRES_DSN=postgresql://acx:LEAKV6DSN@[::1]:5432/identity\n"
+        "DATABASE_URL=postgres://acx:LEAKV6DB@[2001:db8::1]/app\n"
+    )
+    out = _run_sanitizer(raw)
+    assert "LEAKV6DSN" not in out, out
+    assert "LEAKV6DB" not in out, out
+    assert "[REDACTED]" in out
+    assert "[::1]" in out
+    assert "[2001:db8::1]" in out
+    assert out.count("\n") == 2
+
+
+def test_sanitize_deploy_diagnostic_ra02_unquoted_hash_rocket() -> None:
+    """RA-02: unquoted password => value must consume => and redact the secret."""
+    raw = (
+        "password => hunter2secretHR\n"
+        ':password => "hunter2secretRB"\n'
+    )
+    out = _run_sanitizer(raw)
+    assert "hunter2secretHR" not in out, out
+    assert "hunter2secretRB" not in out, out
+    assert "[REDACTED]" in out
+    assert out.count("\n") == 2
+
+
+def test_sanitize_deploy_diagnostic_ra03_oneline_pem_private_key() -> None:
+    """RA-03: one-line PEM and same-line-body PEM must redact key material."""
+    raw = (
+        "-----BEGIN RSA PRIVATE KEY----- MIIELEAKONE -----END RSA PRIVATE KEY-----\n"
+        "-----BEGIN RSA PRIVATE KEY----- LEAKSAMELINEBODY\n"
+        "-----END RSA PRIVATE KEY-----\n"
+    )
+    out = _run_sanitizer(raw)
+    assert "MIIELEAKONE" not in out, out
+    assert "LEAKSAMELINEBODY" not in out, out
+    assert "[REDACTED]" in out
+    assert "BEGIN RSA PRIVATE KEY" in out
+    assert "END RSA PRIVATE KEY" in out
+    assert out.count("\n") == 3
+
+
+def test_sanitize_deploy_diagnostic_ra04_space_separated_cli_password() -> None:
+    """RA-04: space-separated --password/--passwd/--secret/--key values must redact."""
+    raw = (
+        "--password hunter2secretSPACE\n"
+        "--passwd hunter2secretSPACE\n"
+        "--secret hunter2secretSPACE\n"
+        "--key hunter2secretSPACE\n"
+    )
+    out = _run_sanitizer(raw)
+    assert "hunter2secretSPACE" not in out, out
+    assert "[REDACTED]" in out
+    assert out.count("\n") == 4

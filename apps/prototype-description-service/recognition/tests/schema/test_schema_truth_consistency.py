@@ -335,3 +335,13 @@ def test_matview_create_privilege_gaps_match_create_body_relations_and_functions
         "extend _SQL_NON_CATALOG_FUNCS only for pg_catalog builtins; user functions need a preflight probe"
         f": create={sorted(body_funcs)} preflight={sorted(preflight_functions)}"
     )
+
+
+def test_verifier_reuses_migration_matview_create_privilege_gaps() -> None:
+    # Duplicate SQL in verify vs heal makes collect_and_validate return
+    # EXIT_HEAL_REPAIRABLE while heal() raises — docker-entrypoint crash-loop.
+    verifier = _load_verifier()
+    src = inspect.getsource(verifier._collect_matview_create_privilege_gaps)
+    assert "_matview_create_privilege_gaps" in src
+    assert "has_table_privilege" not in src
+    assert verifier._collect_matview_create_privilege_gaps.__doc__

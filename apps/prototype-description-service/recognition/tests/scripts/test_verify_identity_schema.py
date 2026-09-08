@@ -182,6 +182,24 @@ def test_mismatched_matview_centroid_typmod_without_create_privilege_requires_op
     assert "CREATE on schema public" in " ".join(report["operator_actions"])
 
 
+def test_mismatched_matview_centroid_typmod_with_vanished_grantee_requires_operator() -> None:
+    script = _import_script()
+    kwargs = _complete_kwargs(script)
+    _set_centroid_typmod(script, kwargs, -1)
+    kwargs["matview_can_drop"] = True
+    kwargs["matview_vanished_grantees"] = ["vanished_reader"]
+
+    report = script._validate_schema_state(**kwargs)
+
+    assert report["ok"] is False
+    assert report["exit_code"] == script.EXIT_OPERATOR_REQUIRED
+    joined = " ".join(report["operator_actions"])
+    assert "vanished_reader" in joined
+    assert "cannot receive GRANT" in joined
+    assert "python -m scripts.sync_identity_schema" not in joined
+    assert report["matview_vanished_grantees"] == ["vanished_reader"]
+
+
 class _Result:
     def __init__(self, rows=(), scalar_value=None):
         self._rows = rows
@@ -229,6 +247,8 @@ def _catalog_connection(
     current_user_quoted: str | None = None,
     create_ok: bool = True,
     vector_typmods: dict[tuple[str, str], int | None] | None = None,
+    acl_grant_rows: list[tuple[str, str, bool]] | None = None,
+    vanished_roles: set[str] | None = None,
 ):
     quoted = current_user_quoted if current_user_quoted is not None else current_user
 
@@ -275,6 +295,13 @@ def _catalog_connection(
                 )
             if "has_schema_privilege" in sql or "has_table_privilege" in sql:
                 return _Result(rows=[("public", create_ok, create_ok, create_ok, create_ok, create_ok)])
+            if "aclexplode" in sql:
+                return _Result(rows=list(acl_grant_rows or ()))
+            if "from pg_roles" in sql:
+                name = (_params or {}).get("name")
+                if name in (vanished_roles or set()):
+                    return _Result(scalar_value=None)
+                return _Result(scalar_value=1)
             if "select c.relkind from" in sql:
                 return _Result(scalar_value="m")
             raise AssertionError(f"unexpected SQL: {sql}")
@@ -342,6 +369,28 @@ def test_collect_and_validate_typmod_gap_when_role_can_drop_is_heal_repairable(m
 
     assert any("pg_has_role" in sql for sql in connection.sql_log)
     assert report["exit_code"] == script.EXIT_HEAL_REPAIRABLE
+
+
+def test_collect_and_validate_typmod_gap_with_vanished_grantee_requires_operator(monkeypatch) -> None:
+    script = _import_script()
+    connection = _catalog_connection(
+        script,
+        centroid_typmod=-1,
+        matview_can_drop=True,
+        acl_grant_rows=[("vanished_reader", "SELECT", False)],
+        vanished_roles={"vanished_reader"},
+    )
+    monkeypatch.setattr(script, "inspect", lambda _connection: _Inspector(script))
+    monkeypatch.setattr(script, "_expected_columns", lambda: {})
+
+    report = script.collect_and_validate(connection)
+
+    assert any("aclexplode" in sql for sql in connection.sql_log)
+    assert report["exit_code"] == script.EXIT_OPERATOR_REQUIRED
+    joined = " ".join(report["operator_actions"])
+    assert "vanished_reader" in joined
+    assert "cannot receive GRANT" in joined
+    assert report["matview_vanished_grantees"] == ["vanished_reader"]
 
 
 def test_revision_mismatch_requires_operator() -> None:

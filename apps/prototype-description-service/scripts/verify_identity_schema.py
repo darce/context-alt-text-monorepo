@@ -59,6 +59,7 @@ class SchemaStateReport(TypedDict):
     matview_centroid_typmod: int | None
     matview_can_drop: bool | None
     matview_create_privilege_gaps: list[str]
+    matview_vanished_grantees: list[str]
     operator_actions: list[str]
 
 
@@ -78,6 +79,7 @@ def _validate_schema_state(
     matview_centroid_typmod: int | None,
     matview_can_drop: bool | None = None,
     matview_create_privilege_gaps: Iterable[str] | None = None,
+    matview_vanished_grantees: Iterable[str] | None = None,
     current_role_quoted: str | None = None,
     vector_typmods: Mapping[tuple[str, str], int | None],
 ) -> SchemaStateReport:
@@ -145,6 +147,7 @@ def _validate_schema_state(
         matview_centroid_typmod = vector_typmods[(MATVIEW_NAME, "centroid")]
     matview_centroid_typmod_gap = matview_relkind == "m" and matview_centroid_typmod != EMBEDDING_DIMENSION
     create_gaps = [gap for gap in (matview_create_privilege_gaps or ()) if gap]
+    vanished_grantees = [str(grantee) for grantee in (matview_vanished_grantees or ()) if grantee]
     # Legacy callers omit ownership facts; treat that as DROP-capable so the
     # existing heal-repairable typmod tests keep their meaning. collect_and_validate
     # always supplies the catalog boolean (VLMHEAL-1-REV-A-05).
@@ -158,6 +161,12 @@ def _validate_schema_state(
     elif matview_centroid_typmod_gap and create_gaps:
         matview_typmod_unrepairable = True
         operator_actions.extend(create_gaps)
+    elif matview_centroid_typmod_gap and vanished_grantees:
+        matview_typmod_unrepairable = True
+        operator_actions.append(
+            "cannot rebuild mv_identity_cluster_centroids: relacl names vanished roles "
+            f"{', '.join(vanished_grantees)} that cannot receive GRANT"
+        )
     matview_typmod_repairable = matview_centroid_typmod_gap and not matview_typmod_unrepairable
 
     table_vector_gaps: list[str] = []
@@ -211,6 +220,7 @@ def _validate_schema_state(
         "matview_centroid_typmod": matview_centroid_typmod,
         "matview_can_drop": None if matview_can_drop is None else can_drop,
         "matview_create_privilege_gaps": create_gaps,
+        "matview_vanished_grantees": vanished_grantees,
         "operator_actions": operator_actions,
     }
 
@@ -286,35 +296,26 @@ def _collect_vector_typmods(connection) -> dict[tuple[str, str], int | None]:
     return found
 
 
+class _BindOp:
+    """Alembic Operations lookalike so verify reuses heal's catalog SQL."""
+
+    def __init__(self, bind) -> None:
+        self._bind = bind
+
+    def get_bind(self):
+        return self._bind
+
+
 def _collect_matview_create_privilege_gaps(connection) -> list[str]:
     """Create-side privileges required to DROP+rebuild the centroid matview."""
-    row = connection.execute(
-        text(
-            "SELECT current_schema(), "
-            "has_schema_privilege(current_user, current_schema(), 'CREATE'), "
-            "has_table_privilege(current_user, 'identity_clusters', 'SELECT'), "
-            "has_table_privilege(current_user, 'identity_members', 'SELECT'), "
-            "has_table_privilege(current_user, 'media_identities', 'SELECT'), "
-            "EXISTS ("
-            "  SELECT 1 FROM pg_proc p "
-            "  WHERE p.proname = 'l2_normalize' "
-            "    AND has_function_privilege(current_user, p.oid, 'EXECUTE')"
-            ")"
-        )
-    ).one()
-    schema_name, schema_create, sel_clusters, sel_members, sel_media, exec_l2 = row
-    gaps: list[str] = []
-    if not schema_create:
-        gaps.append(f"CREATE on schema {schema_name}")
-    if not sel_clusters:
-        gaps.append("SELECT on identity_clusters")
-    if not sel_members:
-        gaps.append("SELECT on identity_members")
-    if not sel_media:
-        gaps.append("SELECT on media_identities")
-    if not exec_l2:
-        gaps.append("EXECUTE on l2_normalize")
-    return gaps
+    return identity_schema._matview_create_privilege_gaps(_BindOp(connection))
+
+
+def _collect_matview_vanished_grantees(connection) -> list[str]:
+    """relacl grantees that no longer exist in pg_roles (GRANT would fail)."""
+    op = _BindOp(connection)
+    grants = identity_schema._matview_nonowner_grants(op)
+    return list(identity_schema._missing_matview_grant_roles(op, grants))
 
 
 def collect_and_validate(connection) -> SchemaStateReport:
@@ -367,11 +368,13 @@ def collect_and_validate(connection) -> SchemaStateReport:
         matview_can_drop = None
         current_role_quoted = None
         create_gaps: list[str] = []
+        vanished_grantees: list[str] = []
     else:
         matview_relkind, _owner, can_drop, current_role_quoted = matview_row
         # NULL from pg_has_role means the owner role is gone — fail closed (P3).
         matview_can_drop = bool(can_drop) if can_drop is not None else False
         create_gaps = _collect_matview_create_privilege_gaps(connection) if matview_relkind == "m" else []
+        vanished_grantees = _collect_matview_vanished_grantees(connection) if matview_relkind == "m" else []
     vector_typmods = _collect_vector_typmods(connection)
     matview_centroid_typmod = vector_typmods.get((MATVIEW_NAME, "centroid"))
 
@@ -389,6 +392,7 @@ def collect_and_validate(connection) -> SchemaStateReport:
         matview_centroid_typmod=matview_centroid_typmod,
         matview_can_drop=matview_can_drop,
         matview_create_privilege_gaps=create_gaps,
+        matview_vanished_grantees=vanished_grantees,
         current_role_quoted=None if current_role_quoted is None else str(current_role_quoted),
         vector_typmods=vector_typmods,
     )

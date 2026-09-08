@@ -19,9 +19,12 @@ from urllib.parse import urlsplit
 import pytest
 from sqlalchemy import create_engine, text
 
-MIGRATION = importlib.import_module("db.migrations.versions.001_identity_schema")
+from recognition.tests.schema.test_identity_schema_heal_fakeop import (
+    _FakeOp,
+    _issued_drop,
+)
 
-pytestmark = pytest.mark.pg
+MIGRATION = importlib.import_module("db.migrations.versions.001_identity_schema")
 
 
 def _table_names(engine) -> set[str]:
@@ -42,6 +45,7 @@ def _rls_state(engine) -> dict[str, tuple[bool, bool]]:
     return {name: (enabled, forced) for name, enabled, forced in rows}
 
 
+@pytest.mark.pg
 def test_heal_from_empty_db_converges_to_full_schema_with_rls(pg_empty_engine) -> None:
     # BR2-01 + BR2-02: from a bare database heal creates every expected table
     # (including the raw-SQL refresh queue) and tenant tables get enabled+forced RLS.
@@ -67,6 +71,7 @@ def test_heal_from_empty_db_converges_to_full_schema_with_rls(pg_empty_engine) -
     assert relkind == "m"
 
 
+@pytest.mark.pg
 def test_heal_twice_is_a_noop(pg_empty_engine) -> None:
     with pg_empty_engine.begin() as conn:
         MIGRATION.heal(conn)
@@ -76,6 +81,7 @@ def test_heal_twice_is_a_noop(pg_empty_engine) -> None:
     assert _table_names(pg_empty_engine) == before
 
 
+@pytest.mark.pg
 def test_heal_recreates_dropped_refresh_queue(pg_empty_engine) -> None:
     # BR2-01 regression: the exact E15-29 drift shape — stamped DB missing the
     # raw-SQL table — must be repaired by heal.
@@ -101,6 +107,7 @@ def _centroid_typmod(engine) -> int | None:
         ).scalar()
 
 
+@pytest.mark.pg
 def test_heal_rebuilds_matview_that_lost_its_vector_typmod(pg_empty_engine) -> None:
     # Every stack deployed before the outer cast carries a centroid column with
     # atttypmod -1, which /health and /ready reject. Boot heal must rebuild it
@@ -138,6 +145,149 @@ def test_heal_rebuilds_matview_that_lost_its_vector_typmod(pg_empty_engine) -> N
     } <= indexes
 
 
+def _matview_relacl(engine):
+    with engine.connect() as conn:
+        return conn.execute(
+            text(
+                "SELECT c.relacl FROM pg_class c "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE n.nspname = current_schema() "
+                "AND c.relname = 'mv_identity_cluster_centroids' AND c.relkind = 'm'"
+            )
+        ).scalar()
+
+
+def _matview_nonowner_grantees(engine) -> set[str]:
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT CASE WHEN acl.grantee = 0 THEN 'public' "
+                "ELSE pg_get_userbyid(acl.grantee) END "
+                "FROM pg_class c "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "LEFT JOIN LATERAL aclexplode(c.relacl) AS acl ON c.relacl IS NOT NULL "
+                "WHERE n.nspname = current_schema() "
+                "AND c.relname = 'mv_identity_cluster_centroids' "
+                "AND c.relkind = 'm' "
+                "AND acl.grantee IS NOT NULL "
+                "AND acl.grantee IS DISTINCT FROM c.relowner"
+            )
+        ).fetchall()
+    return {str(row[0]) for row in rows}
+
+
+@pytest.mark.pg
+def test_heal_rebuilds_typmod_less_matview_with_null_relacl(pg_empty_engine) -> None:
+    # VLMHEAL-1-PG-ACL-01: default ACL (relacl NULL) must not trip aclexplode.
+    # This test uses pg_empty_engine; it must pytest.fail (never skip) when the
+    # fixture connected. Do not add pytest.skip based on IDENTITY_PG_URL.
+    with pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+        conn.execute(text("DROP MATERIALIZED VIEW mv_identity_cluster_centroids"))
+        conn.execute(
+            text(
+                "CREATE MATERIALIZED VIEW mv_identity_cluster_centroids AS "
+                "SELECT c.id AS cluster_id, c.tenant_id, 0 AS identity_count, "
+                "NULL::vector AS centroid, c.updated_at AS refreshed_at "
+                "FROM identity_clusters c"
+            )
+        )
+        conn.execute(text("REVOKE ALL ON mv_identity_cluster_centroids FROM PUBLIC"))
+    if _matview_relacl(pg_empty_engine) is not None:
+        pytest.fail(
+            "typmod-less matview still has explicit relacl after CREATE+REVOKE PUBLIC; "
+            "PG-ACL-01 needs relacl IS NULL (default ACL, owner only)"
+        )
+    assert _centroid_typmod(pg_empty_engine) == -1
+
+    with pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+
+    assert _centroid_typmod(pg_empty_engine) == MIGRATION.EMBEDDING_DIMENSION
+    assert _matview_nonowner_grantees(pg_empty_engine) == set()
+    assert _matview_relacl(pg_empty_engine) is None
+
+
+def _insert_describe_run(conn, *, tenant_id: str, run_id: str, idempotency_key: str | None) -> None:
+    conn.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+    conn.execute(
+        text(
+            "INSERT INTO image_description_runs "
+            "(id, tenant_id, media_ids, total_items, idempotency_key) "
+            "VALUES (:id, :tenant, CAST(:media AS jsonb), 1, :key)"
+        ),
+        {"id": run_id, "tenant": tenant_id, "media": "[]", "key": idempotency_key},
+    )
+
+
+def _unique_constraint_exists(engine, name: str) -> bool:
+    with engine.connect() as conn:
+        return (
+            conn.execute(
+                text(
+                    "SELECT 1 FROM pg_constraint c "
+                    "JOIN pg_class t ON c.conrelid = t.oid "
+                    "JOIN pg_namespace n ON t.relnamespace = n.oid "
+                    "WHERE n.nspname = current_schema() "
+                    "AND t.relname = 'image_description_runs' AND c.conname = :name"
+                ),
+                {"name": name},
+            ).scalar()
+            is not None
+        )
+
+
+@pytest.mark.pg
+def test_heal_raises_named_action_when_unique_constraint_has_duplicate_rows(pg_empty_engine) -> None:
+    constraint = "uq_image_description_runs_idempotency_key"
+    tenant_id = str(uuid.uuid4())
+    with pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+    with pg_empty_engine.begin() as conn:
+        conn.execute(text(f'ALTER TABLE image_description_runs DROP CONSTRAINT "{constraint}"'))
+        conn.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+        conn.execute(
+            text("INSERT INTO tenants (id, site_url) VALUES (:id, :url)"),
+            {"id": tenant_id, "url": f"https://{tenant_id}.example"},
+        )
+        _insert_describe_run(conn, tenant_id=tenant_id, run_id=str(uuid.uuid4()), idempotency_key="same-token")
+        _insert_describe_run(conn, tenant_id=tenant_id, run_id=str(uuid.uuid4()), idempotency_key="same-token")
+
+    with pytest.raises(RuntimeError) as exc_info, pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+    message = str(exc_info.value)
+    assert constraint in message
+    assert "23505" in message
+    assert "image_description_runs" in message
+    assert "operator" in message.lower()
+    assert not _unique_constraint_exists(pg_empty_engine, constraint)
+
+
+@pytest.mark.pg
+def test_heal_adds_unique_constraint_when_rows_are_distinct_or_null(pg_empty_engine) -> None:
+    constraint = "uq_image_description_runs_idempotency_key"
+    tenant_id = str(uuid.uuid4())
+    with pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+    with pg_empty_engine.begin() as conn:
+        conn.execute(text(f'ALTER TABLE image_description_runs DROP CONSTRAINT "{constraint}"'))
+        conn.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+        conn.execute(
+            text("INSERT INTO tenants (id, site_url) VALUES (:id, :url)"),
+            {"id": tenant_id, "url": f"https://{tenant_id}.example"},
+        )
+        _insert_describe_run(conn, tenant_id=tenant_id, run_id=str(uuid.uuid4()), idempotency_key=None)
+        _insert_describe_run(conn, tenant_id=tenant_id, run_id=str(uuid.uuid4()), idempotency_key=None)
+        _insert_describe_run(conn, tenant_id=tenant_id, run_id=str(uuid.uuid4()), idempotency_key="distinct-a")
+        _insert_describe_run(conn, tenant_id=tenant_id, run_id=str(uuid.uuid4()), idempotency_key="distinct-b")
+    assert not _unique_constraint_exists(pg_empty_engine, constraint)
+
+    with pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+
+    assert _unique_constraint_exists(pg_empty_engine, constraint)
+
+
 def _admin_engine_for_scratch(app_engine):
     """Connect IDENTITY_PG_ADMIN_URL (or the conftest default) to app_engine's DB.
 
@@ -153,6 +303,7 @@ def _admin_engine_for_scratch(app_engine):
     return create_engine(admin_url.rsplit("/", 1)[0] + f"/{scratch_db}", isolation_level="AUTOCOMMIT")
 
 
+@pytest.mark.pg
 def test_heal_refuses_typmod_rebuild_when_matview_has_foreign_owner(pg_empty_engine) -> None:
     # A role-owned matview cannot be dropped by the app role. The refusal must
     # leave the drifted relation in place and give an operator copy/pasteable
@@ -223,6 +374,7 @@ def test_foreign_owner_scratch_role_setup_does_not_skip_without_createrole() -> 
     assert "_createrole_denied" not in src
 
 
+@pytest.mark.pg
 def test_heal_does_not_rebuild_matview_when_vector_typmod_matches(pg_empty_engine) -> None:
     with pg_empty_engine.begin() as conn:
         MIGRATION.heal(conn)
@@ -248,70 +400,6 @@ def test_heal_does_not_rebuild_matview_when_vector_typmod_matches(pg_empty_engin
             )
         ).scalar()
     assert after_oid == before_oid
-
-
-class _FakeScalarResult:
-    def __init__(self, value: object) -> None:
-        self._value = value
-
-    def scalar(self) -> object:
-        return self._value[0] if isinstance(self._value, tuple) else self._value
-
-    def one(self):
-        return self._value
-
-    def one_or_none(self):
-        return self._value
-
-    def all(self):
-        if self._value is None:
-            return []
-        if isinstance(self._value, list):
-            return self._value
-        return [self._value]
-
-
-def _fake_quote_ident(ident: str) -> str:
-    if ident.isidentifier() and ident.lower() == ident and not ident.startswith("_"):
-        # Postgres quote_ident leaves [a-z_][a-z0-9_]* unquoted; leading
-        # underscore is still unquoted. Hyphens/mixed case need quotes.
-        return ident
-    if ident.replace("_", "").isalnum() and ident == ident.lower():
-        return ident
-    return '"' + ident.replace('"', '""') + '"'
-
-
-class _FakeOp:
-    """Minimal alembic Operations stand-in for owner-safe ensure_matview branches."""
-
-    def __init__(self, current_user: str = "app_role") -> None:
-        self.statements: list[str] = []
-        self.current_user = current_user
-
-    def get_bind(self):
-        op = self
-
-        class _Bind:
-            def execute(self, stmt, params=None):  # noqa: ANN001
-                sql = str(stmt).lower()
-                if "quote_ident(current_user)" in sql:
-                    return _FakeScalarResult((op.current_user, _fake_quote_ident(op.current_user)))
-                if "select quote_ident(" in sql:
-                    ident = (params or {}).get("ident", op.current_user)
-                    return _FakeScalarResult(_fake_quote_ident(str(ident)))
-                if "select current_user" in sql:
-                    return _FakeScalarResult(op.current_user)
-                raise AssertionError(f"unexpected bind SQL: {stmt}")
-
-        return _Bind()
-
-    def execute(self, sql) -> None:  # noqa: ANN001
-        self.statements.append(str(sql))
-
-
-def _issued_drop(op: _FakeOp) -> bool:
-    needle = "DROP MATERIALIZED VIEW mv_identity_cluster_centroids"
-    return any(needle in sql.replace("\n", " ") for sql in op.statements)
 
 
 def test_ensure_matview_rebuilds_when_current_role_can_drop(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -502,6 +590,7 @@ def test_identity_vector_columns_agree_with_health_ready_probe() -> None:
     assert MIGRATION.IDENTITY_VECTOR_COLUMNS == HEALTH_COLS
 
 
+@pytest.mark.pg
 def test_heal_restores_dropped_rls_policy(pg_empty_engine) -> None:
     # BR2-02 drift direction: a tenant table that lost its policy is re-covered.
     with pg_empty_engine.begin() as conn:
@@ -536,6 +625,7 @@ def _table_columns(engine, table_name: str) -> set[str]:
         }
 
 
+@pytest.mark.pg
 def test_heal_restores_dropped_column(pg_empty_engine) -> None:
     # MAINT-TPR-01 / PA-03: an existing table missing an expand-first column is
     # the exact prod drift — `_ensure_table` no-ops on the existing table, so
@@ -553,6 +643,7 @@ def test_heal_restores_dropped_column(pg_empty_engine) -> None:
     assert "naming_agreement_enabled" in _table_columns(pg_empty_engine, "tenants")
 
 
+@pytest.mark.pg
 def test_heal_creates_every_orm_declared_column(pg_empty_engine) -> None:
     # MAINT-TPR-BR-05 ratchet: verify_identity_schema derives expected columns
     # from ORM Base.metadata while heal adds them from the migration's
@@ -579,6 +670,7 @@ def test_heal_creates_every_orm_declared_column(pg_empty_engine) -> None:
     assert not gaps, f"ORM columns not created by heal (ensure_tables drift): {gaps}"
 
 
+@pytest.mark.pg
 def test_verifier_detects_dropped_column_then_heal_repairs(pg_empty_engine) -> None:
     # Slice 3 E2E: a dropped column -> verifier exit 1 naming table+column;
     # heal -> verifier OK. Stamp alembic_version so the revision check passes
@@ -607,6 +699,7 @@ def test_verifier_detects_dropped_column_then_heal_repairs(pg_empty_engine) -> N
         assert collect_and_validate(conn)["ok"] is True
 
 
+@pytest.mark.pg
 def test_concurrent_sync_entrypoints_serialize_on_advisory_lock(pg_empty_engine) -> None:
     # BR2-10: two concurrent sync_schema() runs against the same empty DB must
     # both succeed (the loser waits on pg_advisory_xact_lock, then no-ops).
@@ -622,6 +715,7 @@ def test_concurrent_sync_entrypoints_serialize_on_advisory_lock(pg_empty_engine)
     assert not missing, f"concurrent heal left tables missing: {sorted(missing)}"
 
 
+@pytest.mark.pg
 def test_verifier_detects_dropped_policy_then_heal_repairs(pg_empty_engine) -> None:
     # Slice 4 E2E: dropped policy -> verifier exit 1 naming the table; heal ->
     # verifier OK. (Revision check passes because heal-only DBs have no
@@ -650,6 +744,7 @@ def test_verifier_detects_dropped_policy_then_heal_repairs(pg_empty_engine) -> N
         assert collect_and_validate(conn)["ok"] is True
 
 
+@pytest.mark.pg
 def test_adopted_observability_tables_isolate_tenants(pg_empty_engine) -> None:
     # Slice 5: assignment_decisions / clustering_job_reports are migration-owned
     # tenant tables now — tenant B must not read (or write over) tenant A rows,

@@ -7,12 +7,15 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 from infra.oci.gpu_lifecycle.controller import GpuInstance, GpuLifecycleController
 from infra.oci.gpu_lifecycle.intent import (
     DeferredStopRecord,
     DeferredStopStore,
     EffectiveIntent,
     IntentAction,
+    IntentAuthorityStore,
     IntentStatus,
 )
 from infra.oci.gpu_lifecycle.reaper import (
@@ -26,6 +29,12 @@ NOW = datetime(2026, 9, 6, 22, 30, tzinfo=UTC)
 BOOT_ID = "intent-test-boot"
 VALID_NONCE = "123e4567-e89b-42d3-a456-426614174000"
 SECOND_NONCE = "123e4567-e89b-42d3-a456-426614174001"
+
+
+@pytest.fixture(autouse=True)
+def _known_host_boot(monkeypatch):
+    # These controller tests model a Linux boot even on a non-Linux test host.
+    monkeypatch.setattr(IntentAuthorityStore, "_read_boot_id", staticmethod(lambda: BOOT_ID))
 
 
 @dataclass

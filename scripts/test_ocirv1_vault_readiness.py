@@ -380,6 +380,8 @@ class _FakeVaultStore:
         self.update_calls = []
         self.read_history = []
         self.list_calls = []
+        self.version_pages = None
+        self.version_calls = []
         # OCI hands back an ETag on every get/create/update and requires the
         # current one as an update precondition, so the double carries it too:
         # a fixture that returns bare payloads cannot catch a lost precondition.
@@ -411,6 +413,7 @@ class _FakeVaultStore:
             lifecycle_state="ACTIVE",
         )
         self._stage(self._decode(details))
+        self.version_pages = None
         self._rotate_etag()
         return self.existing
 
@@ -422,6 +425,7 @@ class _FakeVaultStore:
         if if_match != self.etag:
             raise _ServiceError(409, "NoEtagMatch")
         self._stage(self._decode(details))
+        self.version_pages = None
         self._rotate_etag()
         return self.existing
 
@@ -505,8 +509,9 @@ def _install_fake_oci(
     secrets_clients = []
 
     class _Vaults:
-        def __init__(self, config):
-            pass
+        def __init__(self, config, **kwargs):
+            self.init_kwargs = kwargs
+            self.base_client = types.SimpleNamespace(timeout=kwargs.get("timeout"))
 
         def list_secrets(
             self,
@@ -542,6 +547,18 @@ def _install_fake_oci(
             secret = store.update(secret_id, details, if_match)
             return types.SimpleNamespace(data=secret, headers={"etag": store.etag})
 
+        def list_secret_versions(self, secret_id, page=None, **kwargs):
+            del secret_id
+            store.version_calls.append({"page": page, **kwargs})
+            if store.version_pages is None:
+                return types.SimpleNamespace(data=[], headers={})
+            page_index = 0 if page is None else int(page.rsplit("-", 1)[-1]) - 1
+            versions = store.version_pages[page_index]
+            headers = {}
+            if page_index + 1 < len(store.version_pages):
+                headers["opc-next-page"] = f"page-{page_index + 2}"
+            return types.SimpleNamespace(data=versions, headers=headers)
+
     class _Kms:
         def __init__(self, config):
             pass
@@ -550,8 +567,8 @@ def _install_fake_oci(
             return types.SimpleNamespace(data=types.SimpleNamespace(compartment_id="ocid1.compartment.oc1..c"))
 
     models = types.SimpleNamespace(
-        Base64SecretContentDetails=lambda content_type, content: types.SimpleNamespace(
-            content_type=content_type, content=content
+        Base64SecretContentDetails=lambda content_type, content, name=None, stage=None: types.SimpleNamespace(
+            content_type=content_type, content=content, name=name, stage=stage
         ),
         CreateSecretDetails=lambda **kw: types.SimpleNamespace(**kw),
         UpdateSecretDetails=lambda **kw: types.SimpleNamespace(**kw),
@@ -670,6 +687,47 @@ def test_main_rotation_waits_for_the_new_submitted_version(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "new version" in out
     assert f"write_etag: {store.etag}" in out
+
+
+def test_accepted_write_readback_timeout_is_an_unknown_mutation(monkeypatch):
+    old = b"old-token-value-00000"
+    new = b"new-token-value-11111"
+
+    with pytest.raises(vps.MutationOutcomeUnknownError, match="accepted"):
+        _run_main(
+            monkeypatch,
+            new,
+            not_ready_reads=200,
+            existing_value=old,
+            extra_args=("--readable-timeout", "1"),
+        )
+
+
+def test_lost_update_response_reuses_paginated_pending_version(monkeypatch, capsys):
+    old = b"old-active-token"
+    new = b"accepted-pending-token"
+    store, secrets_clients, _ = _install_fake_oci(monkeypatch, not_ready_reads=2, existing_value=old)
+    store.pending_value = new
+    store.remaining = 2
+    store.version_pages = [
+        [types.SimpleNamespace(name="unrelated-version", stages=["DEPRECATED"])],
+        [types.SimpleNamespace(name=f"acx-{_digest(new)[:32]}", stages=["CURRENT", "LATEST"])],
+    ]
+    _install_fake_clock(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["_vault_put_secret.py", "--secret-name", "OCIR_AUTH_TOKEN"])
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        types.SimpleNamespace(isatty=lambda: False, buffer=io.BytesIO(new)),
+    )
+
+    assert vps.main() == 0
+    assert store.update_calls == []
+    assert secrets_clients[0].reads == 3
+    assert [call["page"] for call in store.version_calls] == [None, "page-2"]
+    assert all(call["sort_by"] == "VERSION_NUMBER" for call in store.version_calls)
+    assert all(call["sort_order"] == "DESC" for call in store.version_calls)
+    assert "existing version pending" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(

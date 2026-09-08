@@ -440,10 +440,7 @@ const resolveSample = (
   scenario: GuidedScenario,
   choices: GuidedChoices,
 ): Pick<GuidedDemoState, 'draftText' | 'draftOrigin' | 'draftStatus'> => {
-  if (
-    choices.left === GUIDED_NAME_CHOICE.UNDECIDED ||
-    choices.right === GUIDED_NAME_CHOICE.UNDECIDED
-  ) {
+  if (choices.left === GUIDED_NAME_CHOICE.UNDECIDED || choices.right === GUIDED_NAME_CHOICE.UNDECIDED) {
     return {
       draftText: null,
       draftOrigin: GUIDED_DRAFT_ORIGIN.NONE,
@@ -551,7 +548,7 @@ export const chooseGuidedName = (
       : choice === GUIDED_NAME_CHOICE.INCLUDE
         ? 'names.included'
         : 'names.pending';
-  const summaryValues =
+  const summaryValues: Record<string, string | number> =
     choice === GUIDED_NAME_CHOICE.INCLUDE ? { name: personNameForPosition(scenario, position) } : {};
 
   return withLocalAction(
@@ -569,10 +566,7 @@ export const chooseGuidedName = (
   );
 };
 
-export const confirmGuidedChoiceReplacement = (
-  state: GuidedDemoState,
-  scenario: GuidedScenario,
-): GuidedDemoState => {
+export const confirmGuidedChoiceReplacement = (state: GuidedDemoState, scenario: GuidedScenario): GuidedDemoState => {
   if (state.pendingChoiceChange === null) {
     return state;
   }

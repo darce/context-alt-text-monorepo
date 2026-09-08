@@ -306,6 +306,7 @@ def ruff_format_config_guard(pyproject: Path | None = None) -> dict[str, object]
 
 _RUFF_FORMAT_LOCATION = re.compile(r"^\s*-->\s+(.+):\d+:\d+\s*$")
 _RUFF_FORMAT_LEGACY_PREFIX = "Would reformat: "
+_ANSI_ESCAPE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 
 
 def _ruff_format_reported_paths(output: str) -> set[str]:
@@ -317,7 +318,8 @@ def _ruff_format_reported_paths(output: str) -> set[str]:
     JSON serializer.
     """
     paths: set[str] = set()
-    for line in output.splitlines():
+    for raw_line in output.splitlines():
+        line = _ANSI_ESCAPE.sub("", raw_line)
         location = _RUFF_FORMAT_LOCATION.match(line)
         if location:
             path = location.group(1)

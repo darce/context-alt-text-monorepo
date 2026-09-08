@@ -1,13 +1,8 @@
 import { render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createGuidedScenario } from '../../../guidedPrototype/state';
+import { guidedCopy } from '../../../guidedPrototype/copy';
 
-// The live panel is optional enrichment sitting inside the lesson's own tree.
-// It calls assertNever on an unreachable status, and a hook of its own can
-// throw on a shape the service was never supposed to send. Unwrapped, either
-// unmounts the entire review step -- the learner loses the description, the
-// edit box and Apply, over a feature they did not ask for.
 vi.mock('../GuidedLiveDescriptionPanel', () => ({
   GuidedLiveDescriptionPanel: (): never => {
     throw new Error('unreachable guided live status');
@@ -19,24 +14,15 @@ afterEach(() => {
 });
 
 describe('a failing live panel does not take the lesson with it', () => {
-  it('keeps the description, the editor and Apply on screen', async () => {
-    // React logs the caught error; the boundary is the behaviour under test.
+  it('keeps the draft, apply controls and demo copy on screen', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const { GuidedDescriptionReview } = await import('../GuidedDescriptionReview');
+    const { GuidedPrototypePage } = await import('../GuidedPrototypePage');
 
-    render(
-      <GuidedDescriptionReview
-        scenario={createGuidedScenario()}
-        liveMediaId={4211}
-        resetVersion={0}
-        onSaveEdit={() => undefined}
-        onReject={() => undefined}
-        onApply={() => undefined}
-        onUndo={() => undefined}
-      />,
-    );
+    render(<GuidedPrototypePage />);
 
-    expect(screen.getByRole('alert')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Apply it yourself' })).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent(guidedCopy('live.failed'));
+    expect(screen.getByRole('heading', { name: guidedCopy('step.apply') })).toBeInTheDocument();
+    expect(screen.getByTestId('demo-apply')).toBeInTheDocument();
+    expect(screen.getByTestId('demo-applied-image')).toBeInTheDocument();
   });
 });

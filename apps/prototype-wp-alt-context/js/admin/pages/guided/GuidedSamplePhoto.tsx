@@ -1,20 +1,21 @@
 import React, { useState } from 'react';
 
+import { guidedCopy } from '../../guidedPrototype/copy';
+
 export interface GuidedSamplePhotoProps {
   src: string;
-  altText: string;
+  evidenceAlt: string;
   currentAltText: string;
   credit: string;
 }
 
 export const GuidedSamplePhoto = ({
   src,
-  altText,
+  evidenceAlt,
   currentAltText,
   credit,
 }: GuidedSamplePhotoProps): React.JSX.Element => {
   const [imageFailed, setImageFailed] = useState(false);
-  const fallbackLabel = `Sample photo unavailable. ${altText}`;
 
   return (
     <figure className="acx-guided-page__media-card">
@@ -22,19 +23,18 @@ export const GuidedSamplePhoto = ({
         <div
           className="acx-guided-page__image-placeholder acx-guided-page__image-placeholder--fallback"
           role="img"
-          aria-label={fallbackLabel}
+          aria-label={evidenceAlt}
         >
-          <strong>Sample photo unavailable.</strong>
-          <span>{altText}</span>
+          <span>{evidenceAlt}</span>
         </div>
       ) : (
-        <img className="acx-guided-page__image" src={src} alt={altText} onError={() => setImageFailed(true)} />
+        <img className="acx-guided-page__image" src={src} alt={evidenceAlt} onError={() => setImageFailed(true)} />
       )}
       <figcaption>
-        <strong>The photo</strong>
-        <span>Alt text on the page right now: {currentAltText}</span>
-        <span>Photo credit: {credit}.</span>
-        <span>AltContext found two faces in this photo. The next step shows the matches.</span>
+        <span>
+          {guidedCopy('context.current_label')}: {currentAltText}
+        </span>
+        <span>{credit}</span>
       </figcaption>
     </figure>
   );

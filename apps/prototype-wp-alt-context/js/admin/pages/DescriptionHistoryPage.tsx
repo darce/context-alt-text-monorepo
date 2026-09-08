@@ -1,10 +1,11 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { __, sprintf } from '@wordpress/i18n';
 import { RotateCcw } from 'lucide-react';
 
 import {
+  DESCRIBE_RUN_STATUS,
   DESCRIPTION_CORRECTION_CODE,
   fetchDescriptionHistory,
   RECOVERY_KIND,
@@ -15,16 +16,38 @@ import {
   type DescriptionHistoryItem,
   type DescriptionHistoryProvenance,
   type DescriptionHistoryResponse,
+  type DescribeRunStatus,
   type ProvenanceRecoveredFrom,
 } from '../api/describeApi';
+import { UserFacingErrorNotice } from '../components/ui/UserFacingErrorNotice';
 import { useCorrectMediaAlt } from '../hooks/useCorrectMediaAlt';
-import { APP_LINK_PARAMS, parseRunParam } from '../navigation/appLinks';
+import { APP_LINK_PARAMS, parseRunParam, toWorkbench } from '../navigation/appLinks';
 import { decodeHtmlEntities } from '../utils/decodeHtmlEntities';
 import { DescribeRunApplyView } from './DescribeRunApplyView';
 
 const HISTORY_QUERY_KEY = ['description-history'] as const;
 
 const CORRECTION_ERROR_FALLBACK = __('Could not save the alt text. Please try again.', 'alt-context');
+const HISTORY_ERROR_FALLBACK = __('Could not load description history.', 'alt-context');
+
+export const HISTORY_STATUS_FILTER_VALUE = {
+  ALL: 'all',
+} as const;
+
+/** Plain-language labels for the canonical describe-run statuses [sr-007]. */
+const HISTORY_STATUS_LABEL = {
+  [DESCRIBE_RUN_STATUS.PENDING]: __('Pending', 'alt-context'),
+  [DESCRIBE_RUN_STATUS.RUNNING]: __('Describing', 'alt-context'),
+  [DESCRIBE_RUN_STATUS.COMPLETED]: __('Completed', 'alt-context'),
+  [DESCRIBE_RUN_STATUS.COMPLETED_WITH_ERRORS]: __('Completed with errors', 'alt-context'),
+  [DESCRIBE_RUN_STATUS.FAILED]: __('Failed', 'alt-context'),
+  [DESCRIBE_RUN_STATUS.CANCELLED]: __('Cancelled', 'alt-context'),
+} as const satisfies Record<DescribeRunStatus, string>;
+
+const getStatusOptionLabel = (status: string): string =>
+  status in HISTORY_STATUS_LABEL
+    ? HISTORY_STATUS_LABEL[status as DescribeRunStatus]
+    : status;
 
 /** Surface owner labels for recovery origin — centralised [sr-007]. */
 const RECOVERY_SURFACE_LABEL = {
@@ -158,7 +181,7 @@ const DescriptionHistoryList = (): React.JSX.Element => {
   // the moment another row starts saving [RLSE-05].
   const [correctionErrors, setCorrectionErrors] = useState<Record<number, string>>({});
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState<string>(HISTORY_STATUS_FILTER_VALUE.ALL);
 
   const clearSavingId = (mediaId: number): void => {
     savingIdsRef.current = clearMediaIdEntry(savingIdsRef.current, mediaId);
@@ -188,10 +211,57 @@ const DescriptionHistoryList = (): React.JSX.Element => {
   const filteredItems = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     return items.filter((item) => {
-      const matchesStatus = statusFilter === 'all' || getRunStatusLabel(item) === statusFilter;
+      const matchesStatus =
+        statusFilter === HISTORY_STATUS_FILTER_VALUE.ALL || getRunStatusLabel(item) === statusFilter;
       return matchesStatus && itemMatchesSearch(item, query);
     });
   }, [items, searchQuery, statusFilter]);
+
+  const retainedData = historyQuery.data;
+  const showLoading = historyQuery.isLoading && retainedData === undefined;
+  const showInitialError = historyQuery.isError && retainedData === undefined;
+  const showMain = retainedData !== undefined;
+  const nextHistoryStatus = showLoading
+    ? __('Loading description history...', 'alt-context')
+    : historyQuery.isError && retainedData !== undefined
+      ? __('Refresh failed; previously loaded history remains shown.', 'alt-context')
+      : showInitialError
+        ? __('History could not be loaded.', 'alt-context')
+        : showMain
+          ? __('Description history ready.', 'alt-context')
+          : '';
+  const historyStatusRef = useRef<HTMLDivElement>(null);
+  const nextHistoryStatusRef = useRef(nextHistoryStatus);
+  const liveRegionsMountedRef = useRef(false);
+  nextHistoryStatusRef.current = nextHistoryStatus;
+  const historyStatus = liveRegionsMountedRef.current ? nextHistoryStatus : '';
+  const historyError =
+    liveRegionsMountedRef.current && historyQuery.isError ? historyQuery.error : null;
+
+  // Both live regions exist empty on the first render. The initial status swap
+  // is deferred so assistive technology observes content arriving in the same
+  // node. Later query transitions re-render into those persistent nodes.
+  useEffect(() => {
+    liveRegionsMountedRef.current = true;
+    const timeoutId = window.setTimeout(() => {
+      if (historyStatusRef.current) {
+        historyStatusRef.current.textContent = nextHistoryStatusRef.current;
+      }
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, []);
+
+  const header = (
+    <header className="acx-history__hero">
+      <p className="acx-dashboard__eyebrow">{__('Review', 'alt-context')}</p>
+      <h1 id="acx-history-title" className="acx-dashboard__title">
+        {__('Description Runs', 'alt-context')}
+      </h1>
+      <p className="acx-dashboard__subtitle">
+        {__('Review generated alt text, provenance, and human corrections in one workspace.', 'alt-context')}
+      </p>
+    </header>
+  );
 
   const saveCorrection = (item: DescriptionHistoryItem): void => {
     const mediaId = item.media_id;
@@ -284,57 +354,34 @@ const DescriptionHistoryList = (): React.JSX.Element => {
     );
   };
 
-  if (historyQuery.isLoading) {
-    return (
-      <section className="acx-history" aria-labelledby="acx-history-title">
-        <h1 id="acx-history-title" className="acx-dashboard__title">
-          {__('Description Review History', 'alt-context')}
-        </h1>
-        <p>{__('Loading description history...', 'alt-context')}</p>
-      </section>
-    );
-  }
-
-  if (historyQuery.isError) {
-    return (
-      <section className="acx-history" aria-labelledby="acx-history-title">
-        <header className="acx-history__hero">
-          <p className="acx-dashboard__eyebrow">{__('Review', 'alt-context')}</p>
-          <h1 id="acx-history-title" className="acx-dashboard__title">
-            {__('Description Review History', 'alt-context')}
-          </h1>
-        </header>
-        <section className="acx-dashboard__panel acx-history__panel">
-          <h2>{__('Could not load description history.', 'alt-context')}</h2>
-          <button
-            type="button"
-            className="acx-button acx-button--secondary"
-            onClick={() => void historyQuery.refetch()}
-          >
-            {__('Retry', 'alt-context')}
-          </button>
-        </section>
-      </section>
-    );
-  }
-
   return (
-    <section className="acx-history" aria-labelledby="acx-history-title">
-      <header className="acx-history__hero">
-        <p className="acx-dashboard__eyebrow">{__('Review', 'alt-context')}</p>
-        <h1 id="acx-history-title" className="acx-dashboard__title">
-          {__('Description Review History', 'alt-context')}
-        </h1>
-        <p className="acx-dashboard__subtitle">
-          {__('Review generated alt text, provenance, and human corrections in one workspace.', 'alt-context')}
-        </p>
-      </header>
+    <section
+      className="acx-history"
+      aria-labelledby="acx-history-title"
+      aria-busy={showLoading || undefined}
+    >
+      {header}
 
-      {items.length === 0 ? (
+      <div
+        ref={historyStatusRef}
+        role="status"
+        aria-live="polite"
+        data-testid="acx-description-history-status"
+      >
+        {historyStatus}
+      </div>
+
+      {showLoading ? <p>{__('Loading description history...', 'alt-context')}</p> : null}
+
+      {showMain && items.length === 0 ? (
         <section className="acx-dashboard__panel acx-history__panel">
           <h2>{__('No generated descriptions yet.', 'alt-context')}</h2>
+          <p>{__('Select images in Review Queue, then describe them to create drafts.', 'alt-context')}</p>
+          <a className="acx-button acx-button--secondary" href={toWorkbench({ tab: 'scan' })}>
+            {__('Open Review Queue', 'alt-context')}
+          </a>
         </section>
-      ) : (
+      ) : showMain ? (
         <>
           <section className="acx-dashboard__panel acx-history__filters" aria-label={__('History filters', 'alt-context')}>
             <label>
@@ -348,10 +395,10 @@ const DescriptionHistoryList = (): React.JSX.Element => {
             <label>
               <span>{__('Run status filter', 'alt-context')}</span>
               <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-                <option value="all">{__('All statuses', 'alt-context')}</option>
+                <option value={HISTORY_STATUS_FILTER_VALUE.ALL}>{__('All statuses', 'alt-context')}</option>
                 {statusOptions.map((status) => (
                   <option key={status} value={status}>
-                    {status}
+                    {getStatusOptionLabel(status)}
                   </option>
                 ))}
               </select>
@@ -360,6 +407,16 @@ const DescriptionHistoryList = (): React.JSX.Element => {
           {filteredItems.length === 0 ? (
             <section className="acx-dashboard__panel acx-history__panel">
               <h2>{__('No history items match the current filters.', 'alt-context')}</h2>
+              <button
+                type="button"
+                className="acx-button acx-button--secondary"
+                onClick={() => {
+                  setSearchQuery('');
+                  setStatusFilter(HISTORY_STATUS_FILTER_VALUE.ALL);
+                }}
+              >
+                {__('Clear filters', 'alt-context')}
+              </button>
             </section>
           ) : null}
           <div className="acx-history__list">
@@ -459,7 +516,31 @@ const DescriptionHistoryList = (): React.JSX.Element => {
             })}
           </div>
         </>
-      )}
+      ) : null}
+
+      <div
+        role="alert"
+        data-testid="acx-description-history-error"
+        hidden={historyError === null}
+        className={historyError !== null ? 'acx-dashboard__panel acx-history__panel' : undefined}
+      >
+        {historyError !== null ? (
+          <>
+            <UserFacingErrorNotice
+              error={historyError}
+              fallback={HISTORY_ERROR_FALLBACK}
+              announce={false}
+            />
+            <button
+              type="button"
+              className="acx-button acx-button--secondary"
+              onClick={() => void historyQuery.refetch()}
+            >
+              {__('Retry', 'alt-context')}
+            </button>
+          </>
+        ) : null}
+      </div>
     </section>
   );
 };

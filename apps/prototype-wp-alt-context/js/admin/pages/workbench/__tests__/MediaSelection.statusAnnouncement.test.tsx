@@ -44,6 +44,7 @@ vi.mock('../WorkbenchMediaContext', () => ({
       currentPage: 1,
       perPage: 10,
       handleSearchChange: vi.fn(),
+      clearSearch: vi.fn(),
       handleStatusChange: vi.fn(),
       setCurrentPage: vi.fn(),
       setPerPage: vi.fn(),
@@ -155,10 +156,6 @@ vi.mock('../../../hooks/useRecognitionCooldown', () => ({
     remainingSeconds: 0,
     remainingMs: 0,
   }),
-}));
-
-vi.mock('../MediaAnalyzeCta', () => ({
-  MediaAnalyzeCta: () => null,
 }));
 
 vi.mock('../BulkDescribeReviewLink', () => ({

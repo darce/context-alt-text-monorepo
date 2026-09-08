@@ -139,7 +139,7 @@ const PaneHost = ({
 
   return (
     <section
-      ref={hostRef as RefObject<HTMLElement>}
+      ref={hostRef}
       className={`acx-workbench__two-pane-${kind}`}
       data-testid={`workbench-two-pane-${kind}`}
       data-dominant={dominant ? 'true' : 'false'}

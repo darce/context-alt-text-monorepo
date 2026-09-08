@@ -40,11 +40,12 @@ deploy-help:
 	@echo "    make deploy-dev-fir                        Same image (:dev tag), restart acx-dev-fir (isolated FIR stack), verify"
 	@echo "    make deploy-staging                        Remote build on VM, push :staging + :SHA, restart acx-staging, verify"
 	@echo "    make deploy-prod CONFIRM=PROMOTE           Remote build on VM, push :latest + :SHA, restart acx-prod, verify"
-	@echo "    ACX_BUILD_TARGET=runtime-vlm make deploy-dev REMOTE_BUILD=0   Local VLM image build+deploy (never remote)"
-	@echo "  VLM notes (rg-006): remote build of *vlm* targets is refused (refuse_remote_vlm_build)."
-	@echo "    Required: REMOTE_BUILD=0, ACX_BUILD_TARGET=runtime-vlm, seed weights into \$$ACX_MODELS_PATH/huggingface_cache"
+	@echo "    ACX_BUILD_TARGET=runtime-vlm make deploy-dev                    Remote VLM image build+deploy (default; free-space gated)"
+	@echo "    ACX_BUILD_TARGET=runtime-vlm make deploy-dev REMOTE_BUILD=0    Local VLM image build+deploy (optional)"
+	@echo "  VLM notes (rg-006): remote build of *vlm* targets is the default and is gated on REMOTE_VLM_BUILD_MIN_FREE_GB of free space in the remote docker data-root."
+	@echo "    REMOTE_BUILD=0 remains available for a local build but is no longer required; seed weights into \$$ACX_MODELS_PATH/huggingface_cache"
 	@echo "    on the VM first. Compose selects the -vlm repo via sticky ACX_IMAGE_REPO shipped by the deploy script."
-	@echo "    Free-space floor (REMOTE_BUILD_MIN_FREE_GB) still applies on the VM pull/smoke path for VLM."
+	@echo "    The regular REMOTE_BUILD_MIN_FREE_GB floor applies to non-VLM remote builds."
 	@echo ""
 	@echo "  Promote / rollback (retag existing image — remote ssh by default):"
 	@echo "    make deploy-promote-staging                Retag :dev -> :staging, restart, verify"
@@ -80,6 +81,8 @@ deploy-help:
 	@echo ""
 	@echo "  Demo WordPress stack (compose + Caddy edge; recreates Caddy to join acx-demo-net):"
 	@echo "    make deploy-demo                           Sync demo stack + bootstrap + Caddy config"
+	@echo "    ACX_DEMO_GPU_PREFLIGHT=1 make deploy-demo  Fail closed on GPU/reaper env drift before stack up"
+	@echo "    ACX_DEMO_DESCRIBE_CHUNK=10 ACX_DEMO_DESCRIBE_MAX=100 make deploy-demo  Bound first describe burst"
 	@echo "    PLUGIN_ZIP=dist/alt-context-x.y.z.zip make deploy-demo   Pin plugin artifact explicitly"
 	@echo ""
 	@echo "  Demo walkthrough proof (Playwright evidence — screenshots + smoke-log fragment):"
@@ -158,16 +161,20 @@ deploy-rollback-dev-fir:
 # Verify a deployed environment matches local HEAD.
 # Reads remote ACX_IMAGE_REPO when present so VLM deploys verify without re-exporting
 # ACX_BUILD_TARGET. Bounded retries via ACX_VERIFY_ATTEMPTS / ACX_VERIFY_SLEEP.
-deploy-verify:
+deploy-verify: GPU_SNAPSHOT_ENV := $(ENV)
+deploy-verify: check-gpu-snapshots-live
 	@"$(DEPLOY_SCRIPT)" verify $(ENV)
 
-deploy-verify-dev:
+deploy-verify-dev: GPU_SNAPSHOT_ENV := dev
+deploy-verify-dev: check-gpu-snapshots-live
 	@"$(DEPLOY_SCRIPT)" verify dev
 
-deploy-verify-staging:
+deploy-verify-staging: GPU_SNAPSHOT_ENV := staging
+deploy-verify-staging: check-gpu-snapshots-live
 	@"$(DEPLOY_SCRIPT)" verify staging
 
-deploy-verify-prod:
+deploy-verify-prod: GPU_SNAPSHOT_ENV := prod
+deploy-verify-prod: check-gpu-snapshots-live
 	@"$(DEPLOY_SCRIPT)" verify prod
 
 # Cross-env health snapshot. Cheap triage tool.
@@ -223,7 +230,10 @@ deploy-compose-prod:
 	@ENV=prod CONFIRM="$(CONFIRM)" "$(DEPLOY_COMPOSE_SCRIPT)"
 
 deploy-demo:
-	@"$(DEPLOY_DEMO_SCRIPT)"
+	@ACX_DEMO_GPU_PREFLIGHT="$(ACX_DEMO_GPU_PREFLIGHT)" \
+		ACX_DEMO_DESCRIBE_CHUNK="$(ACX_DEMO_DESCRIBE_CHUNK)" \
+		ACX_DEMO_DESCRIBE_MAX="$(ACX_DEMO_DESCRIBE_MAX)" \
+		"$(DEPLOY_DEMO_SCRIPT)"
 
 # Demo walkthrough proof: runs the Playwright `evidence` project's demo-walkthrough
 # spec against WP_BASE_URL (default https://demo.altcontext.com), emitting screenshots,

@@ -42,3 +42,45 @@ def test_run_response_matches_shared_schema_via_actual_builder():
         await engine.dispose()
 
     asyncio.run(body())
+
+
+def test_describe_run_response_round_trips_recognition_enabled():
+    from scene.application.gpu_state import GpuState
+    from scene.domain.describe_run import DescribeRunPhase, DescribeRunStatus
+    from scene.interface_adapters.http.schemas.responses import DescribeRunResponse
+
+    payload = DescribeRunResponse(
+        tenant_id=TENANT_ID,
+        run_id=str(uuid.uuid4()),
+        status=DescribeRunStatus.PENDING,
+        phase=DescribeRunPhase.QUEUED,
+        completed=0,
+        failed=0,
+        skipped=0,
+        total=1,
+        cancel_requested=False,
+        eta_seconds=None,
+        gpu_state=GpuState.UNKNOWN,
+        recognition_enabled=False,
+    )
+    dumped = payload.model_dump(mode="json")
+    assert dumped["recognition_enabled"] is False
+    restored = DescribeRunResponse.model_validate(dumped)
+    assert restored.recognition_enabled is False
+    _validate(dumped, "scene-describe-run.schema.json")
+
+    omitted = DescribeRunResponse(
+        tenant_id=TENANT_ID,
+        run_id=str(uuid.uuid4()),
+        status=DescribeRunStatus.PENDING,
+        phase=DescribeRunPhase.QUEUED,
+        completed=0,
+        failed=0,
+        skipped=0,
+        total=1,
+        cancel_requested=False,
+        eta_seconds=None,
+        gpu_state=GpuState.UNKNOWN,
+    )
+    assert omitted.recognition_enabled is True
+    _validate(omitted.model_dump(mode="json"), "scene-describe-run.schema.json")

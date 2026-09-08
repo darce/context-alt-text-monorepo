@@ -1,3 +1,18 @@
+.acx-roster__title {
+  margin: 0 0 var(--acx-space-12) 0;
+  font-size: var(--acx-text-3xl);
+  font-weight: var(--acx-font-weight-bold);
+  line-height: var(--acx-leading-tight);
+}
+
+.acx-roster-field-label {
+  display: block;
+  margin-bottom: var(--acx-space-4);
+  color: var(--acx-color-text-secondary);
+  font-size: var(--acx-text-sm);
+  font-weight: var(--acx-font-weight-semibold);
+}
+
 .acx-roster-section {
   &__header {
     display: flex;
@@ -226,6 +241,31 @@
     &:hover {
       background: var(--acx-color-surface);
     }
+  }
+
+  &--tertiary {
+    background: transparent;
+    border-color: transparent;
+    color: var(--acx-color-text);
+    text-decoration: underline;
+    text-underline-offset: var(--acx-space-2);
+    &:hover {
+      background: var(--acx-color-surface-alt);
+    }
+  }
+
+  &--danger {
+    background: var(--acx-color-danger);
+    border-color: var(--acx-color-danger);
+    color: var(--acx-color-accent-contrast);
+    &:hover {
+      background: var(--acx-color-danger-hover);
+    }
+  }
+
+  &:focus-visible {
+    outline: var(--acx-space-2) solid var(--acx-color-accent);
+    outline-offset: var(--acx-space-2);
   }
 
   &:disabled {

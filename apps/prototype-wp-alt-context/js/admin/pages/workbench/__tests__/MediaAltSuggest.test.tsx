@@ -78,6 +78,8 @@ const sampleResponse = (altTextDraft = draft): VisualFactsResponse => ({
   cached: false,
   duration_ms: 13800,
   retention_class: 'retain_all',
+  tier: 'provisional_cpu',
+  result_generation: 1,
 });
 
 const buildClient = () =>
@@ -186,6 +188,27 @@ describe('MediaAltSuggest', () => {
     renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     expect(screen.getByRole('button', { name: /suggest alt text/i })).toBeInTheDocument();
+  });
+
+  it('W3-C-04 Accept is secondary; Save alt text is the single primary', async () => {
+    describeMock.mockResolvedValue(sampleResponse());
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    const accept = await screen.findByRole('button', { name: /^accept$/i });
+    expect(accept).toHaveClass('button-secondary');
+    expect(accept).not.toHaveClass('button-primary');
+
+    fireEvent.click(screen.getByRole('button', { name: /^edit draft$/i }));
+    const save = await screen.findByRole('button', { name: /^save alt text$/i });
+    expect(save).toHaveClass('button-primary');
+    const primaries = screen
+      .getAllByRole('button')
+      .filter(
+        (button) =>
+          button.classList.contains('button-primary') || button.classList.contains('acx-button--primary'),
+      );
+    expect(primaries).toHaveLength(1);
+    expect(primaries[0]).toBe(save);
   });
 
   it('generates a draft for the row id and shows a pending state', async () => {

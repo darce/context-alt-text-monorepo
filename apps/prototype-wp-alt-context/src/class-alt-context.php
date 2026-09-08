@@ -4,12 +4,15 @@ declare(strict_types=1);
 
 namespace AltContext;
 
+require_once __DIR__ . '/public/class-public-demo-shortcode.php';
+
 use AltContext\Admin\Admin;
 use AltContext\Admin\AttachmentFields;
 use AltContext\Api\Api;
 use AltContext\Admin\Menu;
 use AltContext\Media\AttachmentXmpMetricsPersistor;
 use AltContext\Support\LifecycleManager;
+use AltContext\PublicSite\PublicDemoShortcode;
 
 class AltContext {
 
@@ -38,6 +41,7 @@ class AltContext {
 		( new AttachmentFields() )->init();
 		$this->menu->init();
 		$this->api->init();
+		( new PublicDemoShortcode() )->init();
 		if ( $this->attachmentXmpMetricsPersistor instanceof AttachmentXmpMetricsPersistor ) {
 			$this->attachmentXmpMetricsPersistor->init();
 		}

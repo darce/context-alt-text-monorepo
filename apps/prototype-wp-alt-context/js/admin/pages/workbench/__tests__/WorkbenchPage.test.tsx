@@ -135,6 +135,16 @@ vi.mock('../../../hooks/useSyncTrigger', () => ({
   useSyncTrigger: vi.fn(),
 }));
 
+// These workbench unit cases exercise the online scan pipeline. Unknown-health
+// gating is covered by useSyncOffline and the integration-lite degraded case.
+vi.mock('../../../hooks/useSyncOffline', () => ({
+  useSyncOffline: () => false,
+}));
+
+vi.mock('../../../api/settingsApi', () => ({
+  fetchSettings: vi.fn(() => Promise.resolve({ recognition_enabled: true })),
+}));
+
 vi.mock('../identity-clusters/useWorkbenchFindings', async () => {
   const actual = await vi.importActual<typeof import('../identity-clusters/useWorkbenchFindings')>(
     '../identity-clusters/useWorkbenchFindings',
@@ -215,6 +225,7 @@ describe('WorkbenchPage', () => {
     setCurrentPage,
     setPerPage,
     handleSearchChange: vi.fn(),
+    clearSearch: vi.fn(),
     handleStatusChange: vi.fn(),
     queueState: { kind: 'all' as const, band: 'all' as const, index: 0 },
     dispatchQueue: vi.fn(),
@@ -468,7 +479,8 @@ describe('WorkbenchPage', () => {
     setupScanMutation('error');
     const { queryClient } = renderWorkbench();
 
-    fireEvent.click(screen.getByRole('button', { name: /Analyze selected media/i }));
+    await screen.findByText(/Identifies people first \(AI\)/);
+    fireEvent.click(screen.getByRole('button', { name: /Describe 1 selected/i }));
     // E15-30 BR-11 sanitizes scan errors: a non-JSON error message ('Scan failed') is replaced by
     // the localized fallback. Assert the sanitized text surfaces and the raw message does NOT leak.
     expect(await screen.findByText('Recognition job failed. Please try again.')).toBeInTheDocument();
@@ -477,13 +489,14 @@ describe('WorkbenchPage', () => {
     expect(queryClient.getQueryCache().findAll({ queryKey: queryKeys.media.identities() })).toHaveLength(0);
   });
 
-  it('records successful scans and invalidates identity queries', () => {
+  it('records successful scans and invalidates identity queries', async () => {
     setupScanMutation('success');
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
 
     renderWorkbench(queryClient);
-    fireEvent.click(screen.getByRole('button', { name: /Analyze selected media/i }));
+    await screen.findByText(/Identifies people first \(AI\)/);
+    fireEvent.click(screen.getByRole('button', { name: /Describe 1 selected/i }));
 
     expect(rememberJob).toHaveBeenCalledWith('job-123');
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.media.identities() });
@@ -554,14 +567,14 @@ describe('WorkbenchPage', () => {
     );
   });
 
-  it('renders one media-region footer with pagination and analyze CTA', () => {
+  it('renders one media-region footer with pagination and describe CTA', async () => {
     const { container } = renderWorkbench();
 
     const mediaRegion = container.querySelector('.acx-media-selection');
     expect(mediaRegion).not.toBeNull();
     expect(screen.getAllByRole('navigation', { name: 'Media pagination' })).toHaveLength(1);
     expect(screen.getAllByLabelText('Images per page')).toHaveLength(1);
-    expect(mediaRegion).toContainElement(screen.getByRole('button', { name: 'Analyze selected media' }));
+    expect(mediaRegion).toContainElement(await screen.findByRole('button', { name: 'Describe 1 selected' }));
   });
 
   it('keeps the media table rendered while findings are active', () => {
@@ -685,7 +698,7 @@ describe('WorkbenchPage', () => {
     expect(within(control).getByRole('heading', { name: 'Scan Media Queue' })).toBeInTheDocument();
   });
 
-  it('shows "Clustering identities…" button text when backend-driven clustering is active', () => {
+  it('keeps the Describe footer CTA while backend-driven clustering is active', async () => {
     mockUseCombinedScanStatus.mockReturnValue({
       scanStatusQuery: createMockQuery({
         data: {
@@ -704,8 +717,8 @@ describe('WorkbenchPage', () => {
 
     renderWorkbench();
 
-    expect(screen.getByRole('button', { name: 'Clustering identities…' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Clustering identities…' })).toBeDisabled();
+    expect(await screen.findByRole('button', { name: 'Describe 1 selected' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Clustering identities…' })).not.toBeInTheDocument();
   });
 
   it('shows identity-based progress label during backend-driven clustering', () => {

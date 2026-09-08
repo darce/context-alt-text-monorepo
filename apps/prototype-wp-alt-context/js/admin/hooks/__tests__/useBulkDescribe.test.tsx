@@ -1,11 +1,19 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { formatBulkDescribeErrorMessage, useBulkDescribe } from '../useBulkDescribe';
+import { mediaStatsMissingQueryKey, mediaStatsTotalQueryKey } from '../useMediaStats';
+import { MEDIA_PAGE_SIZE_OPTIONS } from '../useWorkbenchFilters';
 import * as describeApi from '../../api/describeApi';
 import type { DescribeRunResponse } from '../../api/describeApi';
+import { queryKeys } from '../../api/queryKeys';
+import type { WorkbenchMediaResponse } from '../../api/workbenchMediaApi';
 
 vi.mock('../../api/describeApi', async (importOriginal) => {
   const actual = await importOriginal<typeof describeApi>();
@@ -33,8 +41,56 @@ const runResponse = (overrides: Partial<DescribeRunResponse> = {}): DescribeRunR
   cancel_requested: false,
   eta_seconds: null,
   gpu_state: null,
+  // Snapshot of the site's recognition setting at submit (schema default true); this test's world is recognition-on.
+  recognition_enabled: true,
   ...overrides,
 });
+
+const defaultPerPage = MEDIA_PAGE_SIZE_OPTIONS[0];
+const largePerPage = MEDIA_PAGE_SIZE_OPTIONS[MEDIA_PAGE_SIZE_OPTIONS.length - 1];
+
+const workbenchListPageKeys = [
+  ...MEDIA_PAGE_SIZE_OPTIONS.map((perPage) =>
+    queryKeys.media.workbenchPage({ page: 1, perPage, status: 'all' }),
+  ),
+  queryKeys.media.workbenchPage({
+    page: 1,
+    perPage: defaultPerPage,
+    status: 'all',
+    search: 'ada',
+  }),
+  queryKeys.media.workbenchPage({
+    page: 1,
+    perPage: largePerPage,
+    status: 'all',
+    search: '',
+  }),
+];
+
+const emptyPage: WorkbenchMediaResponse = { items: [], total: 0, totalPages: 0 };
+
+const seedWorkbenchCache = (client: QueryClient): void => {
+  for (const key of workbenchListPageKeys) {
+    client.setQueryData(key, emptyPage);
+  }
+  client.setQueryData(mediaStatsTotalQueryKey, { items: [], total: 10, totalPages: 10 });
+  client.setQueryData(mediaStatsMissingQueryKey, { items: [], total: 3, totalPages: 3 });
+};
+
+const resetCachedQueries = (client: QueryClient): void => {
+  for (const key of workbenchListPageKeys) {
+    client.removeQueries({ queryKey: key });
+  }
+  client.removeQueries({ queryKey: mediaStatsTotalQueryKey });
+  client.removeQueries({ queryKey: mediaStatsMissingQueryKey });
+  seedWorkbenchCache(client);
+};
+
+const expectListPagesInvalidated = (client: QueryClient, invalidated: boolean): void => {
+  for (const key of workbenchListPageKeys) {
+    expect(client.getQueryState(key)?.isInvalidated).toBe(invalidated);
+  }
+};
 
 const wrapper = ({ children }: React.PropsWithChildren): React.JSX.Element => {
   const client = new QueryClient({
@@ -43,11 +99,34 @@ const wrapper = ({ children }: React.PropsWithChildren): React.JSX.Element => {
   return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 };
 
+const createWrapper = (): { wrapper: typeof wrapper; queryClient: QueryClient } => {
+  const queryClient = new QueryClient({
+    defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
+  });
+  seedWorkbenchCache(queryClient);
+  const scopedWrapper = ({ children }: React.PropsWithChildren): React.JSX.Element => (
+    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  );
+  return { wrapper: scopedWrapper, queryClient };
+};
+
 describe('useBulkDescribe', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // Default: a terminal poll response so no test leaves the interval polling.
     fetchBulkDescribeRunMock.mockResolvedValue(runResponse({ status: 'completed' }));
+  });
+
+  it('does not duplicate the describe-run phase table or terminal set (WBUX-6 F7 / sr-007)', () => {
+    // The terminal predicate lives in describeApi (isDescribeRunTerminal) and reaches
+    // this hook as progress.isTerminal via useDescribeRunProgress (S7 / harm-terminal-predicate).
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../useBulkDescribe.ts'), 'utf8');
+    // S5R2-F1: a renamed local table (`const PHASE = { QUEUED: 'queued', ... }`)
+    // stayed GREEN under the old DESCRIBE_RUN_PHASE identifier check. Strip
+    // import blocks, then forbid any phase string literal in the rest.
+    const rest = source.replace(/import(?:[\s\S]*?)from\s+['"][^'"]+['"];?/g, '');
+    expect(rest).not.toMatch(/['"](queued|warming|describing|complete|failed|cancelled)['"]/);
+    expect(rest).not.toMatch(/TERMINAL_DESCRIBE_RUN_PHASES|new Set<?[^(]*\(\s*\[\s*DESCRIBE_RUN_PHASE/);
   });
 
   it('submits media ids and captures the run id', async () => {
@@ -139,6 +218,367 @@ describe('useBulkDescribe', () => {
     // Never the raw HTTPError envelope.
     expect(result.current.errorMessage).not.toContain('Request to /acx/v1/describe/runs failed');
   });
+
+  it('does not invalidate workbench rows while the run is still describing', async () => {
+    submitBulkDescribeRunMock.mockResolvedValue(
+      runResponse({ run_id: 'run-live', status: 'pending', phase: 'queued' }),
+    );
+    fetchBulkDescribeRunMock.mockResolvedValue(
+      runResponse({
+        run_id: 'run-live',
+        status: 'running',
+        phase: 'describing',
+        completed: 1,
+        total: 4,
+        eta_seconds: 42,
+      }),
+    );
+
+    const { wrapper: scopedWrapper, queryClient } = createWrapper();
+    const { result } = renderHook(() => useBulkDescribe(), { wrapper: scopedWrapper });
+    result.current.submit.mutate([1, 2, 3, 4]);
+
+    await waitFor(() => expect(result.current.progress.run?.phase).toBe('describing'));
+    expect(result.current.progress.isTerminal).toBe(false);
+    expectListPagesInvalidated(queryClient, false);
+    expect(queryClient.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).toBe(false);
+    queryClient.clear();
+  });
+
+  it('invalidates workbench list pages exactly once when the run reaches a terminal phase [S6-F1]', async () => {
+    submitBulkDescribeRunMock.mockResolvedValue(
+      runResponse({ run_id: 'run-term', status: 'pending', phase: 'queued' }),
+    );
+    fetchBulkDescribeRunMock.mockResolvedValue(
+      runResponse({
+        run_id: 'run-term',
+        status: 'running',
+        phase: 'describing',
+        completed: 1,
+        total: 4,
+      }),
+    );
+
+    const { wrapper: scopedWrapper, queryClient } = createWrapper();
+    const { result, rerender } = renderHook(() => useBulkDescribe(), { wrapper: scopedWrapper });
+    result.current.submit.mutate([1, 2, 3, 4]);
+
+    await waitFor(() => expect(result.current.progress.run?.phase).toBe('describing'));
+    expectListPagesInvalidated(queryClient, false);
+
+    fetchBulkDescribeRunMock.mockResolvedValue(
+      runResponse({
+        run_id: 'run-term',
+        status: 'completed',
+        phase: 'complete',
+        completed: 4,
+        total: 4,
+        eta_seconds: 0,
+      }),
+    );
+    result.current.progress.retry();
+    await waitFor(() => expect(result.current.progress.run?.phase).toBe('complete'));
+    expect(result.current.progress.isTerminal).toBe(true);
+    expectListPagesInvalidated(queryClient, true);
+    expect(queryClient.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).toBe(false);
+    expect(queryClient.getQueryState(mediaStatsMissingQueryKey)?.isInvalidated).toBe(false);
+
+    // Subsequent polls / renders at the same terminal phase must not refetch again.
+    resetCachedQueries(queryClient);
+    expectListPagesInvalidated(queryClient, false);
+    result.current.progress.retry();
+    rerender();
+    await waitFor(() => expect(result.current.progress.run?.phase).toBe('complete'));
+    expectListPagesInvalidated(queryClient, false);
+    queryClient.clear();
+  });
+
+  it('invalidates list pages once per successive terminal run id [S6-F2]', async () => {
+    const { wrapper: scopedWrapper, queryClient } = createWrapper();
+    const { result } = renderHook(() => useBulkDescribe(), { wrapper: scopedWrapper });
+
+    submitBulkDescribeRunMock.mockResolvedValueOnce(
+      runResponse({ run_id: 'run-a', status: 'pending', phase: 'queued' }),
+    );
+    fetchBulkDescribeRunMock.mockResolvedValue(
+      runResponse({
+        run_id: 'run-a',
+        status: 'completed',
+        phase: 'complete',
+        completed: 2,
+        total: 2,
+        eta_seconds: 0,
+      }),
+    );
+    result.current.submit.mutate([1, 2]);
+    await waitFor(() => expect(result.current.runId).toBe('run-a'));
+    await waitFor(() => expect(result.current.progress.run?.phase).toBe('complete'));
+    expectListPagesInvalidated(queryClient, true);
+    expect(queryClient.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).toBe(false);
+
+    resetCachedQueries(queryClient);
+    expectListPagesInvalidated(queryClient, false);
+
+    submitBulkDescribeRunMock.mockResolvedValueOnce(
+      runResponse({ run_id: 'run-b', status: 'pending', phase: 'queued' }),
+    );
+    fetchBulkDescribeRunMock.mockResolvedValue(
+      runResponse({
+        run_id: 'run-b',
+        status: 'completed',
+        phase: 'complete',
+        completed: 2,
+        total: 2,
+        eta_seconds: 0,
+      }),
+    );
+    result.current.submit.mutate([3, 4]);
+    await waitFor(() => expect(result.current.runId).toBe('run-b'));
+    await waitFor(() => expect(result.current.progress.run?.phase).toBe('complete'));
+    expectListPagesInvalidated(queryClient, true);
+    expect(queryClient.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).toBe(false);
+    queryClient.clear();
+  });
+
+  it('invalidates workbench list pages once when status is terminal even if phase is stale [HARM-F4]', async () => {
+    submitBulkDescribeRunMock.mockResolvedValue(
+      runResponse({ run_id: 'run-stale-phase', status: 'pending', phase: 'queued' }),
+    );
+    fetchBulkDescribeRunMock.mockResolvedValue(
+      runResponse({
+        run_id: 'run-stale-phase',
+        status: 'completed',
+        phase: 'describing',
+        completed: 4,
+        total: 4,
+        eta_seconds: 0,
+      }),
+    );
+
+    const { wrapper: scopedWrapper, queryClient } = createWrapper();
+    const { result, rerender } = renderHook(() => useBulkDescribe(), { wrapper: scopedWrapper });
+    result.current.submit.mutate([1, 2, 3, 4]);
+
+    await waitFor(() => expect(result.current.progress.isTerminal).toBe(true));
+    expect(result.current.progress.status).toBe('completed');
+    expect(result.current.progress.run?.phase).toBe('describing');
+    expectListPagesInvalidated(queryClient, true);
+    expect(queryClient.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).toBe(false);
+    expect(queryClient.getQueryState(mediaStatsMissingQueryKey)?.isInvalidated).toBe(false);
+
+    resetCachedQueries(queryClient);
+    expectListPagesInvalidated(queryClient, false);
+    result.current.progress.retry();
+    rerender();
+    await waitFor(() => expect(result.current.progress.isTerminal).toBe(true));
+    expectListPagesInvalidated(queryClient, false);
+    queryClient.clear();
+  });
+
+  it('does not invalidate workbench list pages when status is non-terminal [HARM-F4]', async () => {
+    submitBulkDescribeRunMock.mockResolvedValue(
+      runResponse({ run_id: 'run-live-status', status: 'pending', phase: 'queued' }),
+    );
+    fetchBulkDescribeRunMock.mockResolvedValue(
+      runResponse({
+        run_id: 'run-live-status',
+        status: 'running',
+        phase: 'complete',
+        completed: 1,
+        total: 4,
+        eta_seconds: 42,
+      }),
+    );
+
+    const { wrapper: scopedWrapper, queryClient } = createWrapper();
+    const { result } = renderHook(() => useBulkDescribe(), { wrapper: scopedWrapper });
+    result.current.submit.mutate([1, 2, 3, 4]);
+
+    await waitFor(() => expect(result.current.progress.status).toBe('running'));
+    expect(result.current.progress.isTerminal).toBe(false);
+    expect(result.current.progress.run?.phase).toBe('complete');
+    expectListPagesInvalidated(queryClient, false);
+    expect(queryClient.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).toBe(false);
+    queryClient.clear();
+  });
+
+  it('does not invalidate again when the same runId changes complete → failed [S6-F2]', async () => {
+    submitBulkDescribeRunMock.mockResolvedValue(
+      runResponse({ run_id: 'run-same', status: 'pending', phase: 'queued' }),
+    );
+    fetchBulkDescribeRunMock.mockResolvedValue(
+      runResponse({
+        run_id: 'run-same',
+        status: 'completed',
+        phase: 'complete',
+        completed: 2,
+        total: 2,
+        eta_seconds: 0,
+      }),
+    );
+
+    const { wrapper: scopedWrapper, queryClient } = createWrapper();
+    const { result } = renderHook(() => useBulkDescribe(), { wrapper: scopedWrapper });
+    result.current.submit.mutate([1, 2]);
+
+    await waitFor(() => expect(result.current.progress.run?.phase).toBe('complete'));
+    expectListPagesInvalidated(queryClient, true);
+
+    resetCachedQueries(queryClient);
+    fetchBulkDescribeRunMock.mockResolvedValue(
+      runResponse({
+        run_id: 'run-same',
+        status: 'failed',
+        phase: 'failed',
+        completed: 0,
+        failed: 2,
+        total: 2,
+        eta_seconds: 0,
+      }),
+    );
+    result.current.progress.retry();
+    await waitFor(() => expect(result.current.progress.run?.phase).toBe('failed'));
+    expectListPagesInvalidated(queryClient, false);
+    expect(queryClient.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).toBe(false);
+    queryClient.clear();
+  });
+
+  it.each([
+    { status: 'failed', phase: 'failed' },
+    { status: 'cancelled', phase: 'cancelled' },
+    { status: 'completed_with_errors', phase: 'complete' },
+  ] as const)(
+    'invalidates workbench list pages once for terminal $status / $phase [S6-F3]',
+    async ({ status, phase }) => {
+      submitBulkDescribeRunMock.mockResolvedValue(
+        runResponse({ run_id: `run-${phase}`, status: 'pending', phase: 'queued' }),
+      );
+      fetchBulkDescribeRunMock.mockResolvedValue(
+        runResponse({
+          run_id: `run-${phase}`,
+          status,
+          phase,
+          completed: status === 'failed' ? 0 : 3,
+          failed: status === 'completed_with_errors' ? 1 : status === 'failed' ? 2 : 0,
+          skipped: status === 'cancelled' ? 2 : 0,
+          total: 4,
+          eta_seconds: 0,
+          cancel_requested: status === 'cancelled',
+        }),
+      );
+
+      const { wrapper: scopedWrapper, queryClient } = createWrapper();
+      const { result } = renderHook(() => useBulkDescribe(), { wrapper: scopedWrapper });
+      result.current.submit.mutate([1, 2, 3, 4]);
+
+      await waitFor(() => expect(result.current.progress.run?.phase).toBe(phase));
+      expect(result.current.progress.isTerminal).toBe(true);
+      expectListPagesInvalidated(queryClient, true);
+      expect(queryClient.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).toBe(false);
+
+      resetCachedQueries(queryClient);
+      result.current.progress.retry();
+      await waitFor(() => expect(result.current.progress.run?.phase).toBe(phase));
+      expectListPagesInvalidated(queryClient, false);
+      queryClient.clear();
+    },
+  );
+
+  it('invalidates workbench list pages once across a same-runId terminal → live → terminal flip [S7-F1]', async () => {
+    submitBulkDescribeRunMock.mockResolvedValue(
+      runResponse({ run_id: 'run-flip', status: 'pending', phase: 'queued' }),
+    );
+    fetchBulkDescribeRunMock.mockResolvedValue(
+      runResponse({
+        run_id: 'run-flip',
+        status: 'completed',
+        phase: 'complete',
+        completed: 4,
+        total: 4,
+        eta_seconds: 0,
+      }),
+    );
+
+    const { wrapper: scopedWrapper, queryClient } = createWrapper();
+    const { result, rerender } = renderHook(() => useBulkDescribe(), { wrapper: scopedWrapper });
+    result.current.submit.mutate([1, 2, 3, 4]);
+
+    await waitFor(() => expect(result.current.progress.isTerminal).toBe(true));
+    expect(result.current.progress.status).toBe('completed');
+    expectListPagesInvalidated(queryClient, true);
+
+    // Flip isTerminal true → false so the effect re-runs, then back to true.
+    // The once-per-run ref — not the dep array — must suppress the second write.
+    resetCachedQueries(queryClient);
+    expectListPagesInvalidated(queryClient, false);
+    fetchBulkDescribeRunMock.mockResolvedValue(
+      runResponse({
+        run_id: 'run-flip',
+        status: 'running',
+        phase: 'describing',
+        completed: 2,
+        total: 4,
+        eta_seconds: 20,
+      }),
+    );
+    result.current.progress.retry();
+    rerender();
+    await waitFor(() => expect(result.current.progress.isTerminal).toBe(false));
+    expect(result.current.progress.status).toBe('running');
+    expectListPagesInvalidated(queryClient, false);
+
+    fetchBulkDescribeRunMock.mockResolvedValue(
+      runResponse({
+        run_id: 'run-flip',
+        status: 'completed',
+        phase: 'complete',
+        completed: 4,
+        total: 4,
+        eta_seconds: 0,
+      }),
+    );
+    result.current.progress.retry();
+    rerender();
+    await waitFor(() => expect(result.current.progress.isTerminal).toBe(true));
+    expect(result.current.progress.status).toBe('completed');
+    expectListPagesInvalidated(queryClient, false);
+    queryClient.clear();
+  });
+
+  it.each([
+    { status: 'failed' as const, phase: 'failed' as const },
+    { status: 'cancelled' as const, phase: 'cancelled' as const },
+  ])(
+    'invalidates workbench list pages once when terminal status is $status [S7-F1]',
+    async ({ status, phase }) => {
+      submitBulkDescribeRunMock.mockResolvedValue(
+        runResponse({ run_id: `run-s7-${status}`, status: 'pending', phase: 'queued' }),
+      );
+      fetchBulkDescribeRunMock.mockResolvedValue(
+        runResponse({
+          run_id: `run-s7-${status}`,
+          status,
+          phase,
+          completed: status === 'failed' ? 0 : 2,
+          failed: status === 'failed' ? 2 : 0,
+          skipped: status === 'cancelled' ? 2 : 0,
+          total: 2,
+          eta_seconds: 0,
+          cancel_requested: status === 'cancelled',
+        }),
+      );
+
+      const { wrapper: scopedWrapper, queryClient } = createWrapper();
+      const { result } = renderHook(() => useBulkDescribe(), { wrapper: scopedWrapper });
+      result.current.submit.mutate([1, 2]);
+
+      await waitFor(() => expect(result.current.progress.isTerminal).toBe(true));
+      expect(result.current.progress.status).toBe(status);
+      expectListPagesInvalidated(queryClient, true);
+      expect(queryClient.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).toBe(false);
+      queryClient.clear();
+    },
+  );
 });
 
 describe('formatBulkDescribeErrorMessage', () => {

@@ -2,6 +2,7 @@ import { __ } from '@wordpress/i18n';
 
 import { fetchRecentBatchRuns, fetchScanStatus } from '../api/recognition';
 import type { JobStatusResponse, RecentBatchRunActivity } from '../api/recognition/types/scan';
+import { isHttpStatus } from '../utils/appError';
 
 const JOB_HISTORY_KEY = 'acx-recognition-jobs';
 export const MAX_JOB_HISTORY = 5;
@@ -151,12 +152,11 @@ export const fetchRecognitionStatusEntries = async (jobHistory: string[]): Promi
         const response = await fetchScanStatus(id);
         return { id, status: response.status, detail: response, notFound: false };
       } catch (error) {
-        const message = error instanceof Error ? error.message : '';
         return {
           id,
           status: __('Unknown', 'alt-context'),
           detail: null,
-          notFound: message.includes('(404)'),
+          notFound: isHttpStatus(error, 404),
         };
       }
     }),

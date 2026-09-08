@@ -2,18 +2,24 @@ import React, { useMemo } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { DashboardPage } from './pages/DashboardPage';
-import { RetentionPage } from './pages/RetentionPage';
 import { WorkbenchPage } from './pages/WorkbenchPage';
 import { RosterPage } from './pages/RosterPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { DescriptionHistoryPage } from './pages/DescriptionHistoryPage';
+import { GuidedPrototypePage } from './pages/guided/GuidedPrototypePage';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { ToastProvider } from './context/ToastContext';
 import { DegradedModeBanner } from './pages/workbench/DegradedModeBanner';
 import { extractRouteFromHash, ensureHashInitialized, type RoutePath, DEFAULT_ROUTE } from './utils/routeHelpers';
 import { createAppQueryClient } from './utils/appQueryClient';
+import { useGpuStateToasts } from './hooks/useGpuStateToasts';
 
 const queryClient = createAppQueryClient();
+
+const GpuStateToastObserver = (): null => {
+  useGpuStateToasts();
+  return null;
+};
 
 export const App = (): React.JSX.Element => {
   const initialRoute = useMemo(() => determineInitialRoute(), []);
@@ -23,6 +29,7 @@ export const App = (): React.JSX.Element => {
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
         <HashRouter>
+          <GpuStateToastObserver />
           <DegradedModeBanner />
           <Routes>
             <Route
@@ -51,11 +58,7 @@ export const App = (): React.JSX.Element => {
             />
             <Route
               path="/retention"
-              element={
-                <ErrorBoundary>
-                  <RetentionPage />
-                </ErrorBoundary>
-              }
+              element={<Navigate to="/settings?section=retention" replace />}
             />
             <Route
               path="/settings"
@@ -70,6 +73,14 @@ export const App = (): React.JSX.Element => {
               element={
                 <ErrorBoundary>
                   <DescriptionHistoryPage />
+                </ErrorBoundary>
+              }
+            />
+            <Route
+              path="/guided-prototype"
+              element={
+                <ErrorBoundary>
+                  <GuidedPrototypePage />
                 </ErrorBoundary>
               }
             />

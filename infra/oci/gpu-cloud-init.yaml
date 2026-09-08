@@ -2,7 +2,8 @@
 # ACX GPU burst bootstrap.
 # Golden image assumptions: NVIDIA driver, Docker, nvidia-container-toolkit,
 # the llama.cpp CUDA server image, and Qwen3-VL-30B-A3B-Instruct Q4 GGUF
-# weights + mmproj are already baked.
+# weights + mmproj are already baked. The watchdog contract also requires
+# /usr/bin/curl, /usr/bin/python3, /usr/bin/oci (OCI CLI), and systemd.
 
 package_update: false
 package_upgrade: false
@@ -17,15 +18,17 @@ write_files:
       Model path: /opt/acx-gpu/models/qwen3-vl-30b-a3b-instruct-q4.gguf
       Projector path: /opt/acx-gpu/models/qwen3-vl-30b-a3b-instruct-mmproj.gguf
       Required baked runtime: Docker + nvidia-container-toolkit + ghcr.io/ggerganov/llama.cpp:server-cuda.
+      Required watchdog runtime: /usr/bin/curl + /usr/bin/python3 + /usr/bin/oci (OCI CLI) + systemd.
 
   - path: /opt/acx-gpu/models/SHA256SUMS
     owner: ubuntu:ubuntu
     permissions: "0644"
     content: |
       # Populate at bake time with `sha256sum qwen3-vl-30b-a3b-instruct-q4.gguf`.
-      # Placeholder forces operators to pin the quant; runtime-check verifies.
-      # REPLACE_WITH_SHA256_OF_qwen3-vl-30b-a3b-instruct-q4.gguf  qwen3-vl-30b-a3b-instruct-q4.gguf
-      # REPLACE_WITH_SHA256_OF_qwen3-vl-30b-a3b-instruct-mmproj.gguf  qwen3-vl-30b-a3b-instruct-mmproj.gguf
+      # Digests are pinned; bake must match or runtime-check fails closed.
+      # pinned from unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF@0af19e7479857aa7f3246466a4ad16c7e7299639 (hub Qwen3-VL-30B-A3B-Instruct-Q4_K_M.gguf, mmproj-F16.gguf; lfs.oid sha256)
+      7ea0a652b4bda1c1911a93a79a7cd98b92011dfea078e87328285294b2b4ab44  qwen3-vl-30b-a3b-instruct-q4.gguf
+      9f248089357599a08a23af40cb5ce0030de14a2e119b7ef57f66cb339bd20819  qwen3-vl-30b-a3b-instruct-mmproj.gguf
 
   - path: /usr/local/bin/acx-gpu-runtime-check.sh
     permissions: "0755"
@@ -44,6 +47,210 @@ write_files:
       command -v nvidia-smi >/dev/null
       dpkg -s nvidia-container-toolkit >/dev/null
       docker image inspect ghcr.io/ggerganov/llama.cpp:server-cuda >/dev/null
+      # The self-stop service must fail closed when the golden image contract
+      # is broken; never silently skip its OCI action because PATH is sparse.
+      test -x /usr/bin/curl
+      test -x /usr/bin/python3
+      test -x /usr/bin/oci
+
+  # The watchdog is rendered by Terraform so the timer and its audit context
+  # use the same MAX_UPTIME_SECONDS value.
+  - path: /etc/acx-gpu-self-stop.env
+    owner: root:root
+    permissions: "0644"
+    content: |
+      MAX_UPTIME_SECONDS=${max_uptime_seconds}
+      ACX_SELF_STOP_ENABLED=${self_stop_enabled}
+      # OCI STOP remains the preferred path; guest poweroff is the bounded
+      # recovery path when metadata, IAM, or OCI CLI calls cannot converge.
+      # It still transitions the instance to STOPPED instead of leaving a
+      # failed watchdog billing indefinitely (audit state: STOPPED-by-guest).
+      ACX_SELF_STOP_FALLBACK_POWEROFF=1
+
+  - path: /usr/local/bin/acx-gpu-self-stop.sh
+    owner: root:root
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      readonly CURL_BIN=/usr/bin/curl
+      readonly PYTHON_BIN=/usr/bin/python3
+      readonly OCI_BIN=/usr/bin/oci
+      readonly METADATA_URL=http://169.254.169.254/opc/v2/instance/
+      readonly METADATA_CONNECT_TIMEOUT_SECONDS=5
+      readonly METADATA_MAX_TIME_SECONDS=10
+      readonly METADATA_ATTEMPTS=3
+      readonly METADATA_RETRY_DELAY_SECONDS=2
+      readonly OCI_CONNECT_TIMEOUT_SECONDS=5
+      readonly OCI_READ_TIMEOUT_SECONDS=15
+      readonly STOP_ATTEMPTS=3
+      readonly STOP_RETRY_DELAY_SECONDS=5
+      readonly STOP_MAX_WAIT_SECONDS=60
+      readonly STOP_WAIT_INTERVAL_SECONDS=5
+
+      log() {
+        logger -t acx-gpu-self-stop -- "$*"
+      }
+
+      poweroff_or_fail() {
+        local reason="$1"
+        log "$reason"
+        if [[ "$${ACX_SELF_STOP_FALLBACK_POWEROFF:-0}" == "1" ]]; then
+          log "using guest poweroff fallback (audit state is STOPPED-by-guest)"
+          exec systemctl poweroff
+        fi
+        log "self-stop failed and guest poweroff fallback is disabled"
+        exit 1
+      }
+
+      # Keep the script safe to invoke manually as well as through systemd.
+      if [[ -r /etc/acx-gpu-self-stop.env ]]; then
+        # shellcheck disable=SC1091
+        source /etc/acx-gpu-self-stop.env
+      fi
+
+      # A disabled watchdog must be a no-op, including no metadata or OCI call.
+      if [[ "$${ACX_SELF_STOP_ENABLED:-0}" != "1" ]]; then
+        log "self-stop disabled (ACX_SELF_STOP_ENABLED != 1)"
+        exit 0
+      fi
+
+      if ! [[ "$${MAX_UPTIME_SECONDS:-}" =~ ^[1-9][0-9]*$ ]]; then
+        poweroff_or_fail "refusing self-stop: invalid MAX_UPTIME_SECONDS"
+      fi
+
+      # A missing CLI or interpreter is a broken golden-image contract, not a
+      # reason to turn the cost guard into a no-op.
+      if [[ ! -x "$OCI_BIN" ]]; then
+        poweroff_or_fail "refusing self-stop: OCI CLI missing at $OCI_BIN"
+      fi
+      if [[ ! -x "$CURL_BIN" || ! -x "$PYTHON_BIN" ]]; then
+        poweroff_or_fail "refusing self-stop: curl/python3 dependency missing"
+      fi
+
+      # OCI exposes the instance OCID only through the v2 metadata endpoint.
+      # The Bearer header is required for the protected endpoint. Every request
+      # is bounded and retried so a transient metadata failure is observable.
+      read_instance_id() {
+        local attempt instance_id
+        for ((attempt = 1; attempt <= METADATA_ATTEMPTS; attempt++)); do
+          if instance_id="$(
+            "$CURL_BIN" --fail --silent --show-error \
+              --connect-timeout "$METADATA_CONNECT_TIMEOUT_SECONDS" \
+              --max-time "$METADATA_MAX_TIME_SECONDS" \
+              -H 'Authorization: Bearer Oracle' \
+              "$METADATA_URL" |
+              "$PYTHON_BIN" -c 'import json, sys; value=json.load(sys.stdin).get("id"); print(value) if value else sys.exit(1)'
+          )" && [[ "$instance_id" =~ ^ocid1\.instance\. ]]; then
+            printf '%s\n' "$instance_id"
+            return 0
+          fi
+          log "metadata request failed (attempt $attempt/$METADATA_ATTEMPTS)"
+          if (( attempt < METADATA_ATTEMPTS )); then
+            sleep "$METADATA_RETRY_DELAY_SECONDS"
+          fi
+        done
+        return 1
+      }
+
+      verify_instance_stopped() {
+        local state
+        if ! state="$(
+          "$OCI_BIN" compute instance get \
+            --instance-id "$instance_id" \
+            --auth instance_principal \
+            --query 'data."lifecycle-state"' \
+            --raw-output \
+            --connection-timeout "$OCI_CONNECT_TIMEOUT_SECONDS" \
+            --read-timeout "$OCI_READ_TIMEOUT_SECONDS" \
+            --max-retries 0
+        )"; then
+          log "terminal-state verification request failed"
+          return 1
+        fi
+        if [[ "$state" != "STOPPED" ]]; then
+          log "terminal-state verification observed $state, expected STOPPED"
+          return 1
+        fi
+        return 0
+      }
+
+      request_stop() {
+        local attempt
+        for ((attempt = 1; attempt <= STOP_ATTEMPTS; attempt++)); do
+          log "requesting OCI STOP for instance $instance_id (attempt $attempt/$STOP_ATTEMPTS)"
+          # Invoke the fixed `/usr/bin/oci compute instance action` command;
+          # never resolve OCI CLI from the service's PATH.
+          if "$OCI_BIN" compute instance action \
+            --instance-id "$instance_id" \
+            --action STOP \
+            --auth instance_principal \
+            --wait-for-state STOPPED \
+            --max-wait-seconds "$STOP_MAX_WAIT_SECONDS" \
+            --wait-interval-seconds "$STOP_WAIT_INTERVAL_SECONDS" \
+            --connection-timeout "$OCI_CONNECT_TIMEOUT_SECONDS" \
+            --read-timeout "$OCI_READ_TIMEOUT_SECONDS" \
+            --max-retries 0; then
+            if verify_instance_stopped; then
+              log "verified OCI STOP for instance $instance_id"
+              return 0
+            fi
+          else
+            log "OCI STOP request failed (attempt $attempt/$STOP_ATTEMPTS)"
+          fi
+          if (( attempt < STOP_ATTEMPTS )); then
+            sleep "$STOP_RETRY_DELAY_SECONDS"
+          fi
+        done
+        return 1
+      }
+
+      if ! instance_id="$(read_instance_id)"; then
+        poweroff_or_fail "refusing self-stop: unable to read instance OCID from metadata"
+      fi
+
+      if request_stop; then
+        exit 0
+      fi
+
+      poweroff_or_fail "OCI instance-principal STOP did not converge after $STOP_ATTEMPTS attempts"
+
+  - path: /etc/systemd/system/acx-gpu-self-stop.service
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=ACX GPU maximum-uptime self-stop
+      Wants=network-online.target
+      After=network-online.target
+      StartLimitIntervalSec=900
+      StartLimitBurst=3
+
+      [Service]
+      Type=oneshot
+      EnvironmentFile=-/etc/acx-gpu-self-stop.env
+      ExecStart=/usr/local/bin/acx-gpu-self-stop.sh
+      Restart=on-failure
+      RestartSec=15s
+      TimeoutStartSec=300s
+
+  - path: /etc/systemd/system/acx-gpu-self-stop.timer
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Stop ACX GPU instance after its maximum uptime
+
+      [Timer]
+      OnBootSec=${max_uptime_seconds}
+      OnUnitActiveSec=${max_uptime_seconds}
+      AccuracySec=30s
+      Persistent=false
+      Unit=acx-gpu-self-stop.service
+
+      [Install]
+      WantedBy=timers.target
 
   - path: /etc/systemd/system/acx-gpu-vlm.service
     permissions: "0644"
@@ -84,6 +291,9 @@ runcmd:
   - mkdir -p /opt/acx-gpu/models /opt/acx-gpu/results
   - chown -R ubuntu:ubuntu /opt/acx-gpu
   - systemctl daemon-reload
+  - systemctl enable acx-gpu-self-stop.timer
+  - systemctl start acx-gpu-self-stop.timer
+  - systemctl is-active --quiet acx-gpu-self-stop.timer
   - systemctl enable acx-gpu-vlm.service
   - systemctl start acx-gpu-vlm.service
   - echo "ACX GPU cloud-init bootstrap complete"

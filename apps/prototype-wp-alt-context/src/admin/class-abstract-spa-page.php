@@ -48,12 +48,20 @@ abstract class AbstractSpaPage {
 	 * Outputs the WordPress admin page wrapper with a React mount point
 	 * and loading state. The actual content is rendered by JavaScript.
 	 *
+	 * Every React view now renders its own real, visible <h1> (ORCH-UX-UI
+	 * BR-37/BR-38): the SPA shell mounts once per PHP request but the app is a
+	 * single HashRouter, so a shell-owned title would go stale across in-app
+	 * hash navigations with no page reload. This shell heading is therefore
+	 * unconditionally visually hidden and stays in the DOM only as the first
+	 * child of `.wrap` so WordPress can anchor admin-notice injection there,
+	 * and for a11y-tree presence before the React bundle mounts.
+	 *
 	 * @return void
 	 */
 	public function render(): void {
 		?>
 		<div class="wrap alt-context-admin">
-			<h1><?php echo esc_html( $this->getPageTitle() ); ?></h1>
+			<h1 id="acx-page-title" class="screen-reader-text" aria-hidden="true"><?php echo esc_html( $this->getPageTitle() ); ?></h1>
 			<div id="<?php echo esc_attr( $this->getRootId() ); ?>" class="<?php echo esc_attr( $this->getRootClass() ); ?>">
 				<p class="description">
 					<?php echo esc_html( $this->getLoadingMessage() ); ?>

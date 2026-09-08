@@ -1,32 +1,75 @@
 import { ChangeEvent, useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import * as Select from '@radix-ui/react-select';
-import { AlertTriangle, Check, CheckCircle2, ChevronDown, Clock, Loader2, XCircle } from 'lucide-react';
-import { __, sprintf } from '@wordpress/i18n';
+import {
+  AlertTriangle,
+  Check,
+  CheckCircle2,
+  ChevronDown,
+  CircleHelp,
+  CircleStop,
+  Clock,
+  Flame,
+  Loader2,
+  Zap,
+  XCircle,
+} from 'lucide-react';
+import { __, _n, sprintf } from '@wordpress/i18n';
 import type { WorkbenchMediaItem } from '../../hooks/useWorkbenchMedia';
 import type { WorkbenchMediaStatus } from '../../api/workbenchMediaApi';
+import { fetchSettings, type SettingsResponse } from '../../api/settingsApi';
+import { queryKeys } from '../../api/queryKeys';
+import { toSettings } from '../../navigation/appLinks';
 import { MediaSelectionTableBody } from './MediaSelectionTableBody';
-import { MediaAnalyzeCta } from './MediaAnalyzeCta';
 import { BulkDescribeReviewLink } from './BulkDescribeReviewLink';
+import { useJobPipeline } from './JobPipelineContext';
 
 import { Checkbox } from '../../../components/ui/checkbox';
 import { useBulkDescribe } from '../../hooks/useBulkDescribe';
+import { setDescribeProgressMounted } from '../../hooks/activeDescribeRun';
 import type { DescribeRunProgress } from '../../hooks/useDescribeRunProgress';
 import { useRecognitionCooldown } from '../../hooks/useRecognitionCooldown';
 import { useRemoteActionGate } from '../../hooks/useRemoteActionGate';
 import { useSyncOffline } from '../../hooks/useSyncOffline';
-import { DESCRIBE_RUN_STATUS, type DescribeRunStatus } from '../../api/describeApi';
+import {
+  DESCRIBE_RUN_PHASE,
+  DESCRIBE_RUN_STATUS,
+  GPU_STATE,
+  type DescribeRunStatus,
+  type GpuState,
+} from '../../api/describeApi';
+import { toDescriptionHistoryRun } from '../../navigation/appLinks';
 import { isCooldownSignal } from '../../utils/retryPolicy';
 import { formatUserFacingError, isAuthExpiredError } from '../../utils/userFacingError';
 import { UserFacingErrorNotice } from '../../components/ui/UserFacingErrorNotice';
 import { useWorkbenchMediaContext } from './WorkbenchMediaContext';
 import { SYNC_VOCABULARY } from './syncPresentation';
-import { ACCENT_PRIMARY_ATTR, FOOTER_ACCENT_OWNER, selectMediaFooterCtaState } from './mediaFooterCtaState';
+import {
+  ACCENT_PRIMARY_ATTR,
+  FOOTER_ACCENT_OWNER,
+  DESCRIBE_SUBMIT_ACTION,
+  RECOGNITION_POLICY,
+  deriveRecognitionPolicy,
+  isRecognitionPolicyHolding,
+  resolveDescribeSubmitAction,
+  selectMediaFooterCtaState,
+  type RecognitionPolicy,
+} from './mediaFooterCtaState';
 import { deriveIdentitiesPresentationSource } from './deriveIdentitiesPresentationSource';
+import {
+  GPU_STATE_ICON,
+  GPU_STATE_TONE,
+  GPU_STATE_VOCABULARY,
+  gpuStateNotice,
+  gpuStatePresentation,
+  type GpuStateIcon,
+  type GpuStateTone,
+} from './gpuStatePresentation';
 
 interface MediaSelectionProps {
   /**
    * §7: a review card / label / review panel primary is on screen. When true the
-   * card owns the single viewport accent primary, so both footer CTAs step down.
+   * card owns the single viewport accent primary, so the footer Describe CTA steps down.
    */
   reviewActive?: boolean;
 }
@@ -40,6 +83,7 @@ export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): R
   const {
     searchQuery,
     handleSearchChange: onSearchChange,
+    clearSearch,
     statusFilter,
     handleStatusChange: onStatusFilterChange,
     currentPage,
@@ -60,6 +104,26 @@ export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): R
   const identityQuery = mediaQuery.identitiesQuery;
   const detailQuery = mediaQuery.detailQuery;
   const bulkDescribe = useBulkDescribe();
+  const pipeline = useJobPipeline();
+  const [identify, setIdentify] = useState<{ pending: boolean; error: string | null }>({ pending: false, error: null });
+  const startDescribe = (ids: number[]) => {
+    setDismissedRunId(null);
+    bulkDescribe.submit.mutate(ids);
+  };
+  // Share SettingsPage's factory key so a save updates this footer.
+  const settingsQuery = useQuery<SettingsResponse>({
+    queryKey: queryKeys.settings.all,
+    queryFn: fetchSettings,
+    retry: false,
+  });
+  // WBUX6-MRG-05: `retry: false` means one failed fetch is terminal, so the error path
+  // needs its own state. `undefined` no longer doubles as "loading" and "failed"; the
+  // failed probe degrades (recognition treated off) instead of holding the primary
+  // forever [RES-13 lexicons/engineering.md:124][RLSE-04 :695][A11Y-24 accessibility.md:154].
+  const recognitionPolicy = deriveRecognitionPolicy({
+    isError: settingsQuery.isError,
+    recognitionEnabled: settingsQuery.data?.recognition_enabled,
+  });
   const selectedMediaIds = Object.entries(selection)
     .filter(([, selected]) => selected)
     .map(([id]) => Number(id))
@@ -139,6 +203,10 @@ export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): R
                 identityQuery.data,
               )}
               onRetryIdentities={() => void identityQuery.refetch()}
+              searchQuery={searchQuery}
+              statusFilter={statusFilter}
+              onClearSearch={clearSearch}
+              onClearStatusFilter={() => onStatusFilterChange('all')}
             />
           </tbody>
         </table>
@@ -160,18 +228,49 @@ export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): R
             runId={activeDescribeRunId}
             progress={describeProgress}
             isPanelVisible={isDescribePanelVisible}
-            errorMessage={bulkDescribe.errorMessage}
+            errorMessage={identify.error ?? bulkDescribe.errorMessage}
             remoteActionTitle={remoteGate.title}
             remoteActionAriaDisabled={remoteGate['aria-disabled']}
             accentPrimary={footerCta.accentOwner === FOOTER_ACCENT_OWNER.DESCRIBE}
+            recognitionPolicy={recognitionPolicy}
+            isIdentifying={identify.pending}
             onSubmit={() => {
-              if (offline) {
+              // WBUX6-W4-R-01: the container's own guard, named and unit-testable, so
+              // it is no longer a belt that only the presentational buckle can reach.
+              const action = resolveDescribeSubmitAction({
+                offline,
+                isIdentifying: identify.pending,
+                recognitionPolicy,
+                selectedCount: selectedMediaIds.length,
+              });
+              if (action === DESCRIBE_SUBMIT_ACTION.HOLD) return;
+              const ids = selectedMediaIds;
+              // OFF and UNAVAILABLE both skip the identify pass. UNAVAILABLE is the
+              // degraded path: describe still runs, recognition is simply not applied.
+              if (action === DESCRIBE_SUBMIT_ACTION.DESCRIBE) {
+                startDescribe(ids);
                 return;
               }
-              setDismissedRunId(null);
-              bulkDescribe.submit.mutate(selectedMediaIds);
+              setIdentify({ pending: true, error: null });
+              void pipeline.scanAndWait(ids).then(
+                () => {
+                  setIdentify({ pending: false, error: null });
+                  startDescribe(ids);
+                },
+                (error: unknown) => {
+                  const message =
+                    error instanceof Error && error.message
+                      ? error.message
+                      : __('People identification failed. Nothing was described.', 'alt-context');
+                  setIdentify({ pending: false, error: message });
+                },
+              );
             }}
             onCancel={() => {
+              if (identify.pending) {
+                pipeline.cancelScan(pipeline.history.activeJobIds);
+                return;
+              }
               if (activeDescribeRunId) {
                 bulkDescribe.cancel.mutate(activeDescribeRunId);
               }
@@ -179,7 +278,6 @@ export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): R
             onDismiss={() => setDismissedRunId(activeDescribeRunId)}
             onRetryPolling={() => describeProgress.retry()}
           />
-          <MediaAnalyzeCta accentPrimary={footerCta.accentOwner === FOOTER_ACCENT_OWNER.ANALYZE} />
         </div>
       </div>
       {detailAuthExpired ? (
@@ -239,7 +337,7 @@ interface MediaSelectionToolbarProps {
 /** Coalesce rapid settled-status changes (search keystroke storms) [B-01]. */
 const TOOLBAR_STATUS_ANNOUNCE_DEBOUNCE_MS = 1000;
 
-const MediaSelectionToolbar = ({
+export const MediaSelectionToolbar = ({
   searchQuery,
   onSearchChange,
   statusFilter,
@@ -329,6 +427,14 @@ const MediaSelectionToolbar = ({
             {announcedStatus}
           </span>
         </span>
+        {isStatusPending ? (
+          <p data-testid="acx-zone-z-filters-loading">{__('Loading media…', 'alt-context')}</p>
+        ) : null}
+        {isError ? (
+          <p role="alert" data-testid="acx-zone-z-filters-error">
+            {__('Unable to load media.', 'alt-context')}
+          </p>
+        ) : null}
         {isError && onRetry && (
           <button type="button" className="acx-media-selection__retry" onClick={onRetry}>
             {__('Retry', 'alt-context')}
@@ -341,6 +447,16 @@ const MediaSelectionToolbar = ({
 
 /** aria-describedby target for the §7 offline reason on the describe submit CTA. */
 const DESCRIBE_OFFLINE_REASON_ID = 'acx-describe-offline-reason';
+/** aria-describedby target for the zero-selection hold reason on the describe submit CTA. */
+const DESCRIBE_EMPTY_SELECTION_REASON_ID = 'acx-describe-empty-selection-reason';
+/** aria-describedby target for the HAI-05 recognition disclosure under the primary. */
+const DESCRIBE_RECOGNITION_DISCLOSURE_ID = 'acx-describe-recognition-disclosure';
+
+/** Join the reason ids that currently apply; `undefined` when none do. */
+const joinDescribedBy = (...ids: (string | undefined)[]): string | undefined => {
+  const present = ids.filter((id): id is string => typeof id === 'string' && id.length > 0);
+  return present.length > 0 ? present.join(' ') : undefined;
+};
 
 interface BulkDescribeCtaProps {
   selectedCount: number;
@@ -359,9 +475,17 @@ interface BulkDescribeCtaProps {
   remoteActionAriaDisabled?: true;
   /** §7 accent ownership: mark the describe surface as the single accent primary. */
   accentPrimary?: boolean;
+  /**
+   * Explicit recognition-policy state derived from GET /acx/v1/settings. `LOADING`
+   * holds the primary and does not claim recognition is off (HAI-05 / FORM-04);
+   * `UNAVAILABLE` is a designed degraded STATE that releases the hold (WBUX6-MRG-05).
+   */
+  recognitionPolicy?: RecognitionPolicy;
+  isIdentifying: boolean;
   onSubmit: () => void;
   onCancel: () => void;
   onDismiss: () => void;
+  onReviewDrafts?: () => void;
   onRetryPolling: () => void;
 }
 
@@ -378,52 +502,151 @@ export const BulkDescribeCta = ({
   remoteActionTitle,
   remoteActionAriaDisabled,
   accentPrimary = false,
+  recognitionPolicy = RECOGNITION_POLICY.LOADING,
+  isIdentifying = false,
   onSubmit,
   onCancel,
   onDismiss,
+  onReviewDrafts,
   onRetryPolling,
 }: BulkDescribeCtaProps) => {
-  const canCancel = isRunning && runId !== null && !progress.isTerminal && !progress.isError;
+  const progressPhase = progress.run?.phase;
+  const progressOwnsCancel =
+    isPanelVisible &&
+    (progressPhase === DESCRIBE_RUN_PHASE.QUEUED ||
+      progressPhase === DESCRIBE_RUN_PHASE.WARMING ||
+      progressPhase === DESCRIBE_RUN_PHASE.DESCRIBING);
+  const canCancelDescribe =
+    isRunning && runId !== null && !progress.isTerminal && !progress.isError && !progressOwnsCancel;
+  // Identifying is a cancellable wait of its own: the footer owns Cancel while the
+  // describe progress panel is not yet mounted to own it.
+  const canCancel = isIdentifying || canCancelDescribe;
   // Cannot cancel an errored/finished run — offer to clear the panel instead so a
-  // new run can start from the terminal state (FE-01, rg-003).
-  const canDismiss = isPanelVisible && (progress.isTerminal || progress.isError);
+  // new run can start from the terminal state (FE-01, rg-003). Complete-phase
+  // dismiss lives on the named done-state in BulkDescribeProgress.
+  const canDismiss =
+    isPanelVisible &&
+    (progress.isTerminal || progress.isError) &&
+    progress.run?.phase !== DESCRIBE_RUN_PHASE.COMPLETE;
   const offlineGated = Boolean(remoteActionAriaDisabled);
+  // rg-003: an empty selection HOLDS the primary (aria-disabled + no-op click) but
+  // never removes it from the tab order, so the control and its reason stay
+  // discoverable from the zero state (A11Y-11 keyboard walk, A11Y-24 empty state).
+  const emptySelectionHeld = selectedCount === 0;
+  // WBUX6-MRG-05: only an UNRESOLVED policy holds. A FAILED settings probe does not —
+  // holding on a terminal failure (`retry: false`) is an unbounded wait with no
+  // degradation path [RES-13 lexicons/engineering.md:124]. The write-guard/probe
+  // asymmetry: a guard on a write fails closed; a probe that would strand the
+  // operator's primary fails open to the cheaper path [COST-10 ml-systems.md:553].
+  const isSettingsPending = isRecognitionPolicyHolding(recognitionPolicy);
+  // WBUX6-W4-B-02: ONE string, rendered on TWO surfaces with different jobs — the
+  // disclosure node DESCRIBES (aria-describedby target, reachable only on focus) and a
+  // separate polite region ANNOUNCES (reaches an operator whose focus is elsewhere when
+  // the probe settles). Never the same node doing both [A11Y-21]. Deriving it once here
+  // is what stops the two surfaces drifting apart; the copy is pinned verbatim in
+  // docs/ux-maps/workbench-2pane.uxmap.json (z-lib-actions).
+  const recognitionUnavailableNotice =
+    recognitionPolicy === RECOGNITION_POLICY.UNAVAILABLE
+      ? sprintf(
+          __(
+            'Recognition settings unavailable — describing without identifying people · ~%d credits',
+            'alt-context',
+          ),
+          selectedCount,
+        )
+      : '';
+  // In-flight identification and an unresolved recognition policy hold the primary for
+  // the same reason: acting now would either double-submit or act on an unknown policy.
+  const submitHeld = offlineGated || emptySelectionHeld || isIdentifying || isSettingsPending;
+  const gpuState = progress.gpuState ?? null;
 
   return (
     <div className="acx-media-selection__bulk-describe">
+      <GpuTierStatus
+        gpuState={gpuState}
+        cpuDraftCount={progress.run?.completed ?? 0}
+        isRunRelevant={runId !== null || isRunning}
+      />
       <div className="acx-media-selection__bulk-describe-actions">
         <button
           type="button"
           // BR-73: the accent marker + accent chrome live on the submit button (the
           // actually-accent-styled primary), never on the neutral wrapper div.
           className={accentPrimary ? 'button acx-accent-primary-action' : 'button'}
-          // BR-74: offline never HTML-disables — the aria-describedby reason must stay
-          // reachable on a focusable control. Offline is gated by aria-disabled + the
-          // onClick guard; zero-selection/submitting/running still disable when online.
-          disabled={!offlineGated && (selectedCount === 0 || isSubmitting || isRunning)}
-          aria-disabled={remoteActionAriaDisabled}
-          aria-describedby={offlineGated ? DESCRIBE_OFFLINE_REASON_ID : undefined}
+          // BR-74 / rg-003: offline, identifying, settings-pending, and zero-selection
+          // never HTML-disable — that drops the control from the tab order and strands
+          // its aria-describedby reason on an unfocusable element. All are held by
+          // aria-disabled + the onClick guard. In-flight submit/run still HTML-disable
+          // when online (double-submit guard).
+          disabled={!offlineGated && (isSubmitting || isRunning)}
+          aria-disabled={submitHeld ? true : undefined}
+          aria-describedby={joinDescribedBy(
+            DESCRIBE_RECOGNITION_DISCLOSURE_ID,
+            offlineGated ? DESCRIBE_OFFLINE_REASON_ID : undefined,
+            emptySelectionHeld ? DESCRIBE_EMPTY_SELECTION_REASON_ID : undefined,
+          )}
           title={remoteActionTitle}
           onClick={() => {
-            // BR-76: presentational offline guard mirrors MediaAnalyzeCta — activation is
-            // a no-op while offline-gated (the container onSubmit also fail-fasts offline).
-            if (offlineGated) {
+            // BR-76: presentational hold guard — activation is a no-op while held (the
+            // container onSubmit also fail-fasts offline and while identifying).
+            if (submitHeld) {
               return;
             }
             onSubmit();
           }}
           {...(accentPrimary ? { [ACCENT_PRIMARY_ATTR]: true } : {})}
         >
-          {isSubmitting ? SYNC_VOCABULARY.describeStarting : __('Describe selected', 'alt-context')}
+          {isIdentifying
+            ? __('Identifying people…', 'alt-context')
+            : isSettingsPending
+              ? __('Loading settings…', 'alt-context')
+              : isSubmitting
+                ? SYNC_VOCABULARY.describeStarting
+                : // A11Y-04 (2.5.3): the visible text IS the accessible name, so at zero
+                  // selection it must not read "Describe 0 selected".
+                  emptySelectionHeld
+                  ? __('Describe selected', 'alt-context')
+                  : sprintf(__('Describe %d selected', 'alt-context'), selectedCount)}
         </button>
+        {/*
+          INT-08: the submit POST is a >1s wait whose control is natively disabled, so the
+          wait itself must be announced. It is NOT interruptible — `submitBulkDescribeRun`
+          takes no abort signal and the upstream run is created server-side, so a client
+          "Cancel" here would strand a paid run (the BR-143 hazard) rather than being the
+          side-effect-free Cancel INT-08 asks for. Progress is honoured; abort is not
+          offered, because an unsafe abort is worse than none.
+        */}
+        <span role="status" aria-live="polite" className="screen-reader-text">
+          {isIdentifying
+            ? __('Identifying people…', 'alt-context')
+            : isSubmitting
+              ? SYNC_VOCABULARY.describeStarting
+              : ''}
+        </span>
         {offlineGated && remoteActionTitle ? (
           <span id={DESCRIBE_OFFLINE_REASON_ID} className="screen-reader-text">
             {remoteActionTitle}
           </span>
         ) : null}
+        {emptySelectionHeld ? (
+          <span id={DESCRIBE_EMPTY_SELECTION_REASON_ID} className="screen-reader-text">
+            {__('Select at least one media item to describe.', 'alt-context')}
+          </span>
+        ) : null}
         {canCancel ? (
+          // WBUX6-W4-R-02: ONE Cancel control spans both waits, but its label names the
+          // operation actually in flight — identification and the describe run are
+          // different objects with different consequences, and while identifying this
+          // button aborts the scan, never a describe run (there is none yet). A label
+          // that names the wrong operation makes the user act on the wrong object
+          // [INT-06 lexicons/interaction-ux.md:163] and gives voice-control users a
+          // phrase for something that is not happening [A11Y-04 accessibility.md:72].
           <button type="button" className="button button-link" disabled={isCancelling} onClick={onCancel}>
-            {isCancelling ? __('Cancelling…', 'alt-context') : __('Cancel describe run', 'alt-context')}
+            {isCancelling
+              ? __('Cancelling…', 'alt-context')
+              : isIdentifying
+                ? __('Cancel people identification', 'alt-context')
+                : __('Cancel describe run', 'alt-context')}
           </button>
         ) : null}
         {canDismiss ? (
@@ -431,19 +654,164 @@ export const BulkDescribeCta = ({
             {__('Dismiss', 'alt-context')}
           </button>
         ) : null}
-        <BulkDescribeReviewLink
-          runId={runId}
-          isTerminal={progress.isTerminal}
-          appliedCount={progress.run ? progress.run.completed : 0}
-        />
+        {progress.run?.phase === DESCRIBE_RUN_PHASE.COMPLETE ? null : (
+          <BulkDescribeReviewLink
+            runId={runId}
+            isTerminal={progress.isTerminal}
+            appliedCount={progress.run ? progress.run.completed : 0}
+          />
+        )}
       </div>
-      {isPanelVisible ? <BulkDescribeProgress progress={progress} onRetry={onRetryPolling} /> : null}
+      <p id={DESCRIBE_RECOGNITION_DISCLOSURE_ID} className="acx-media-selection__bulk-describe-disclosure">
+        {/* sr-007: exhaustive switch over the centralized policy — no bare string compares. */}
+        {((): React.ReactNode => {
+          switch (recognitionPolicy) {
+            case RECOGNITION_POLICY.ON:
+              return (
+                <>
+                  {sprintf(
+                    __('Identifies people first (AI) · ~%d credits · Turn off in', 'alt-context'),
+                    selectedCount,
+                  )}{' '}
+                  <a href={toSettings()}>{__('Settings', 'alt-context')}</a>
+                </>
+              );
+            case RECOGNITION_POLICY.OFF:
+              return sprintf(
+                __('People are not identified (recognition off) · ~%d credits', 'alt-context'),
+                selectedCount,
+              );
+            case RECOGNITION_POLICY.UNAVAILABLE:
+              // Non-blocking degradation notice: Describe stays actionable. [sr-004] the
+              // state is carried by text + an icon, never colour alone [A11Y-24]. This
+              // node DESCRIBES only — the announcement lives in its own region below.
+              return (
+                <>
+                  <AlertTriangle aria-hidden="true" size={16} />{' '}
+                  {recognitionUnavailableNotice}
+                </>
+              );
+            case RECOGNITION_POLICY.LOADING:
+              return __('Checking recognition settings…', 'alt-context');
+            default: {
+              const unreachable: never = recognitionPolicy;
+              return unreachable;
+            }
+          }
+        })()}
+      </p>
+      {/*
+        WBUX6-W4-B-02 announcement surface. Deliberately a SEPARATE node from the
+        disclosure <p> above: that one is the aria-describedby target (describes on
+        focus), this one announces to an operator whose focus is elsewhere when the
+        settings probe settles. Collapsing them — putting aria-live on the describedby
+        node — would make one node do both jobs and re-announce the description every
+        time focus lands on it [A11Y-21]. It carries NO id and is never referenced by
+        aria-describedby. Kept mounted and empty in every other state so the transition
+        into the degraded state is what gets announced.
+      */}
+      <span role="status" aria-live="polite" className="screen-reader-text">
+        {recognitionUnavailableNotice}
+      </span>
+      {isPanelVisible ? (
+        <BulkDescribeProgress
+          progress={progress}
+          onRetry={onRetryPolling}
+          onCancel={onCancel}
+          onDismiss={onDismiss}
+          onReviewDrafts={onReviewDrafts}
+          isCancelling={isCancelling}
+        />
+      ) : null}
       {errorMessage ? (
         // [A11Y-21][A11Y-24][sr-004]: error is text + role=alert, never colour alone.
         <div className="acx-media-selection__bulk-describe-error" role="alert">
           {errorMessage}
         </div>
       ) : null}
+    </div>
+  );
+};
+
+const GPU_STATE_ICON_COMPONENT = {
+  [GPU_STATE_ICON.HELP]: CircleHelp,
+  [GPU_STATE_ICON.STOPPED]: CircleStop,
+  [GPU_STATE_ICON.STARTING]: Loader2,
+  [GPU_STATE_ICON.WARMING]: Flame,
+  [GPU_STATE_ICON.READY]: Zap,
+  [GPU_STATE_ICON.DEGRADED]: AlertTriangle,
+} satisfies Record<GpuStateIcon, typeof Clock>;
+
+const gpuStateToneClass = (tone: GpuStateTone): string => {
+  switch (tone) {
+    case GPU_STATE_TONE.SUCCESS:
+      return ' acx-sync-status--success';
+    case GPU_STATE_TONE.WARNING:
+      return ' acx-sync-status--warning';
+    case GPU_STATE_TONE.PENDING:
+    case GPU_STATE_TONE.RUNNING:
+      return ' acx-sync-status--info';
+    case GPU_STATE_TONE.MUTED:
+      return '';
+  }
+};
+
+/** GPU tier never gates the primary action; it only reports tier consequences. */
+export const GpuTierStatus = ({
+  gpuState,
+  cpuDraftCount,
+  isRunRelevant = true,
+}: {
+  gpuState: GpuState | null;
+  cpuDraftCount: number;
+  /** Unknown telemetry is meaningful only while a describe run exists or starts. */
+  isRunRelevant?: boolean;
+}): React.JSX.Element | null => {
+  if (!isRunRelevant) {
+    return null;
+  }
+
+  // Keep the live region mounted for every state of a relevant run. Null is a
+  // legacy direct-call input; the hook otherwise normalizes missing, malformed,
+  // and stale telemetry to UNKNOWN before it reaches this boundary.
+  const displayedState: GpuState = (() => {
+    switch (gpuState) {
+      case null:
+      case GPU_STATE.UNKNOWN:
+        return GPU_STATE.UNKNOWN;
+      case GPU_STATE.STOPPED:
+      case GPU_STATE.STARTING:
+      case GPU_STATE.WARMING:
+      case GPU_STATE.READY:
+      case GPU_STATE.DEGRADED:
+        return gpuState;
+      default: {
+        const unreachable: never = gpuState;
+        return unreachable;
+      }
+    }
+  })();
+
+  const presentation = gpuStatePresentation(displayedState);
+  const Icon = GPU_STATE_ICON_COMPONENT[presentation.icon];
+  const spin = presentation.icon === GPU_STATE_ICON.STARTING;
+  const accessibleName = `${GPU_STATE_VOCABULARY.tierPrefix} ${presentation.label}`;
+
+  return (
+    <div
+      className={`acx-sync-status acx-media-selection__gpu-tier-status${gpuStateToneClass(presentation.tone)}`}
+      role="status"
+      aria-label={accessibleName}
+      aria-live="polite"
+      aria-atomic="true"
+      data-gpu-state={displayedState}
+      data-gpu-terminal={presentation.terminal}
+    >
+      <span className="acx-media-selection__detail-chip">
+        <Icon className={spin ? 'acx-media-selection__bulk-describe-spin' : undefined} aria-hidden="true" size={16} />
+        {GPU_STATE_VOCABULARY.tierPrefix} {presentation.label}
+      </span>
+      <span className="acx-sync-status__label">{gpuStateNotice(displayedState, cpuDraftCount)}</span>
     </div>
   );
 };
@@ -490,9 +858,28 @@ const formatEtaLabel = (etaSeconds: number | null): string => {
   return sprintf(__('~%1$dm %2$ds remaining', 'alt-context'), minutes, seconds);
 };
 
-export const BulkDescribeProgress = ({ progress, onRetry }: { progress: DescribeRunProgress; onRetry: () => void }) => {
+export const BulkDescribeProgress = ({
+  progress,
+  onRetry,
+  onCancel,
+  onDismiss,
+  isCancelling = false,
+}: {
+  progress: DescribeRunProgress;
+  onRetry: () => void;
+  onCancel?: () => void;
+  onDismiss?: () => void;
+  /** Accepted so a no-op mutant cannot replace the history-link effector (WBUX-6 F1). */
+  onReviewDrafts?: () => void;
+  isCancelling?: boolean;
+}) => {
   const { run, status, progressFraction, etaSeconds, stalledForSeconds, isTerminal, isError, isFrozen } = progress;
   const cooldown = useRecognitionCooldown();
+
+  useEffect(() => {
+    setDescribeProgressMounted(true);
+    return () => setDescribeProgressMounted(false);
+  }, []);
 
   // A hard error whose cause IS the armed cooldown (429/503-with-Retry-After)
   // is the same signal as the waiting state, not a dead run: prefer the calm
@@ -554,11 +941,103 @@ export const BulkDescribeProgress = ({ progress, onRetry }: { progress: Describe
     );
   }
 
+  const cancelControl =
+    onCancel && !isTerminal ? (
+      <button type="button" className="button button-link" disabled={isCancelling} onClick={onCancel}>
+        {isCancelling ? __('Cancelling…', 'alt-context') : __('Cancel describe run', 'alt-context')}
+      </button>
+    ) : null;
+
+  if (run.phase === DESCRIBE_RUN_PHASE.QUEUED) {
+    return (
+      <div className="acx-media-selection__bulk-describe-progress" role="status" aria-live="polite">
+        <span className="acx-media-selection__bulk-describe-status acx-media-selection__bulk-describe-status--pending">
+          <Clock aria-hidden="true" size={16} />
+          {__('Queued…', 'alt-context')}
+        </span>
+        {cancelControl}
+        {waitingNotice}
+      </div>
+    );
+  }
+
+  if (run.phase === DESCRIBE_RUN_PHASE.WARMING) {
+    return (
+      <div className="acx-media-selection__bulk-describe-progress" role="status" aria-live="polite">
+        <span className="acx-media-selection__bulk-describe-status acx-media-selection__bulk-describe-status--running">
+          <Loader2 className="acx-media-selection__bulk-describe-spin" aria-hidden="true" size={16} />
+          {__('Warming GPU (about 2 min, first run only)…', 'alt-context')}
+        </span>
+        {cancelControl}
+        {waitingNotice}
+      </div>
+    );
+  }
+
+  const processed = run.completed + run.failed + run.skipped;
+
+  if (run.phase === DESCRIBE_RUN_PHASE.DESCRIBING) {
+    const describingLabel = sprintf(__('Describing… %1$d/%2$d', 'alt-context'), processed, run.total);
+    return (
+      <div className="acx-media-selection__bulk-describe-progress" role="status" aria-live="polite">
+        <span className="acx-media-selection__bulk-describe-status acx-media-selection__bulk-describe-status--running">
+          <Loader2 className="acx-media-selection__bulk-describe-spin" aria-hidden="true" size={16} />
+          {describingLabel}
+        </span>
+        <progress
+          className="acx-media-selection__bulk-describe-bar"
+          max={run.total > 0 ? run.total : 1}
+          value={processed}
+          aria-label={describingLabel}
+        />
+        {cancelControl}
+        {waitingNotice}
+        {stalledForSeconds !== null ? (
+          <span className="acx-media-selection__bulk-describe-stall">
+            <AlertTriangle aria-hidden="true" size={16} />
+            {sprintf(__('No progress for %ds — the run may be stalled.', 'alt-context'), stalledForSeconds)}
+          </span>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (run.phase === DESCRIBE_RUN_PHASE.COMPLETE) {
+    const draftsReady = sprintf(
+      _n(
+        '✔ %1$d draft ready to review',
+        '✔ %1$d drafts ready to review',
+        run.completed,
+        'alt-context',
+      ),
+      run.completed,
+    );
+    const failedSegment =
+      run.failed > 0
+        ? sprintf(_n(' · %1$d failed', ' · %1$d failed', run.failed, 'alt-context'), run.failed)
+        : '';
+    return (
+      <div className="acx-media-selection__bulk-describe-progress" role="status" aria-live="polite">
+        <span className="acx-media-selection__bulk-describe-status acx-media-selection__bulk-describe-status--success">
+          <CheckCircle2 aria-hidden="true" size={16} />
+          {`${draftsReady}${failedSegment}`}
+        </span>
+        <a className="button button-secondary" href={toDescriptionHistoryRun(run.run_id)}>
+          {__('Review drafts', 'alt-context')}
+        </a>
+        {onDismiss ? (
+          <button type="button" className="button button-link" onClick={onDismiss}>
+            {__('Dismiss', 'alt-context')}
+          </button>
+        ) : null}
+      </div>
+    );
+  }
+
   const meta = describeRunStatusMeta(status);
   const percent = progressFraction === null ? null : Math.round(progressFraction * 100);
   // Processed = every terminal item (completed + failed + skipped) so the bar
   // and count reflect true progress, not just successes.
-  const processed = run.completed + run.failed + run.skipped;
   const countsLabel = sprintf(__('%1$d of %2$d processed', 'alt-context'), processed, run.total);
 
   return (

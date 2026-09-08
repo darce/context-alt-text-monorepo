@@ -11,6 +11,7 @@ use AltContext\Api\Services\DescriptionBudgetService;
 use AltContext\Sovereign\ProjectionQueryException;
 use AltContext\Tests\Stubs\NullIdentityMembersRepository;
 use AltContext\Tests\TestCase;
+use PHPUnit\Framework\Attributes\DataProvider;
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
@@ -102,7 +103,9 @@ class DescribeMediaServiceTest extends TestCase
      */
     private function describeEnvelopeWithIdentityRows(array $identityRows, bool $allowPersonNames): array
     {
-        $this->setOption('acx_description_allow_person_names', $allowPersonNames);
+        // The legacy local option is intentionally ignored. The recognition
+        // service owns the tenant naming agreement and applies the final gate.
+        $this->setOption('acx_legacy_naming_fixture', $allowPersonNames);
         $this->plantAttachment(42, "\xff\xd8\xff\xe0fake-jpeg-bytes", 'jpg');
 
         $host = new DescribeMediaServiceTestHost(self::currentTenantId(), $this->validBackendBody(42));
@@ -478,6 +481,77 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertSame(502, $result->get_error_data()['status'] ?? null);
         $this->assertStringContainsString('alt_text_draft', $result->get_error_message());
         $this->assertSame('', get_post_meta(42, '_wp_attachment_image_alt', true));
+    }
+
+    /**
+     * DEMOLIVE-9-R1-03C: unusable adapter is a 502, not an identity-less stamp.
+     *
+     * @param mixed $adapter
+     */
+    #[DataProvider('unusableAdapterProvider')]
+    public function testUnusableAdapterReturns502(mixed $adapter, bool $omitKey): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+        $body = $this->validBackendBody(42);
+        if ($omitKey) {
+            unset($body['adapter']);
+        } else {
+            $body['adapter'] = $adapter;
+        }
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($body),
+        ));
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $req->set_param('media_id', 42);
+        $req->set_param('write_alt', true);
+        $result = $this->controller->describe_media($req);
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('invalid_description_envelope', $result->get_error_code());
+        $this->assertSame(502, $result->get_error_data()['status'] ?? null);
+        $this->assertStringContainsString('adapter', $result->get_error_message());
+        $this->assertSame('', get_post_meta(42, '_wp_attachment_image_alt', true));
+        $this->assertSame('', get_post_meta(42, '_acx_description_provenance', true));
+    }
+
+    /**
+     * @return array<string, array{0: mixed, 1: bool}>
+     */
+    public static function unusableAdapterProvider(): array
+    {
+        return array(
+            'missing' => array(null, true),
+            'empty' => array('', false),
+            'whitespace' => array(' ', false),
+            'int' => array(42, false),
+            'array' => array(array('nope'), false),
+            'null' => array(null, false),
+        );
+    }
+
+    public function testValidAdapterPassesThroughUnchanged(): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+        $body = $this->validBackendBody(42);
+        $body['adapter'] = 'florence_small';
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($body),
+        ));
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $req->set_param('media_id', 42);
+        $req->set_param('write_alt', true);
+        $result = $this->controller->describe_media($req);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $this->assertSame('written', $result->get_data()['alt_text_write']['status'] ?? null);
+        $provenance = get_post_meta(42, '_acx_description_provenance', true);
+        $this->assertIsArray($provenance);
+        $this->assertSame('florence_small', $provenance['adapter']);
+        $this->assertSame('A photo.', get_post_meta(42, '_wp_attachment_image_alt', true));
     }
 
     public function testForceWriteOverwritesExistingAltTextAndStoresProvenance(): void
@@ -1112,7 +1186,7 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertStringContainsString('identity_unconfirmed', $envelopeJson);
     }
 
-    public function testRosterDescriptionContextSuppressesNamesWhenPolicyDisabled(): void
+    public function testRosterDescriptionContextAlwaysSendsConfirmedNamesToService(): void
     {
         $envelopeJson = json_encode(
             $this->describeEnvelopeWithIdentityRows(
@@ -1130,8 +1204,8 @@ class DescribeMediaServiceTest extends TestCase
         );
 
         $this->assertIsString($envelopeJson);
-        $this->assertStringNotContainsString('Ada Lovelace', $envelopeJson);
-        $this->assertStringContainsString('person_naming_policy_disabled', $envelopeJson);
+        $this->assertStringContainsString('Ada Lovelace', $envelopeJson);
+        $this->assertStringNotContainsString('person_naming_policy_disabled', $envelopeJson);
     }
 
     public function testRosterDescriptionContextRepresentsAmbiguousMachineOnlyState(): void

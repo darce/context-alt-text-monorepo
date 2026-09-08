@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace AltContext\Api;
 
 require_once __DIR__ . '/class-media-detail-controller.php';
+require_once __DIR__ . '/class-gpu-control-controller.php';
+require_once __DIR__ . '/class-public-demo-describe-controller.php';
 require_once __DIR__ . '/class-recognition-data-source.php';
 require_once __DIR__ . '/class-tenant-identity.php';
 require_once __DIR__ . '/services/class-person-resolution-service.php';
@@ -63,6 +65,7 @@ use function is_object;
 use function is_wp_error;
 use function md5;
 use function method_exists;
+use function register_rest_field;
 use function register_rest_route;
 use function rest_ensure_response;
 use function sanitize_text_field;
@@ -80,6 +83,8 @@ class Api {
 	use RunsTransactional;
 
 	private RecognitionController $recognitionController;
+	private GpuControlController $gpuControlController;
+	private PublicDemoDescribeController $publicDemoDescribeController;
 	private MediaDetailController $mediaDetailController;
 	private SettingsController $settingsController;
 	private ?XmpEmbedController $xmpEmbedController;
@@ -87,8 +92,10 @@ class Api {
 	private SplitTopologyCommandDrain $splitTopologyCommandDrain;
 	private ?SyncPullJobInterface $bootstrapSyncPullJob;
 
-	public function __construct( ?XmpEmbedController $xmp_embed_controller = null, ?OutboxDrain $outbox_drain = null, ?SplitTopologyCommandDrain $split_topology_command_drain = null, ?SyncPullJobInterface $bootstrap_sync_pull_job = null ) {
+	public function __construct( ?XmpEmbedController $xmp_embed_controller = null, ?OutboxDrain $outbox_drain = null, ?SplitTopologyCommandDrain $split_topology_command_drain = null, ?SyncPullJobInterface $bootstrap_sync_pull_job = null, ?PublicDemoDescribeController $public_demo_describe_controller = null ) {
 		$this->recognitionController = new RecognitionController();
+		$this->gpuControlController = new GpuControlController();
+		$this->publicDemoDescribeController = $public_demo_describe_controller ?? new PublicDemoDescribeController();
 		$this->mediaDetailController = new MediaDetailController();
 		$this->settingsController = new SettingsController();
 		$this->xmpEmbedController = $xmp_embed_controller;
@@ -173,6 +180,35 @@ class Api {
 	}
 
 	public function register_routes(): void {
+		register_rest_field(
+			'attachment',
+			'acx_alt_provenance',
+			array(
+				'get_callback' => array( $this, 'get_attachment_alt_provenance' ),
+				'schema'       => array(
+					'description'          => 'Read-only adapter identity for generated alt text. Null when this attachment was never described by Alt Context.',
+					'type'                 => array( 'object', 'null' ),
+					'context'              => array( 'view', 'embed', 'edit' ),
+					'readonly'             => true,
+					'additionalProperties' => false,
+					'properties'           => array(
+						'adapter'  => array(
+							'description' => 'Description adapter identity.',
+							'type'        => 'string',
+							'context'     => array( 'view', 'embed', 'edit' ),
+							'readonly'    => true,
+						),
+						'model_id' => array(
+							'description' => 'Model identifier used to generate alt text.',
+							'type'        => array( 'string', 'null' ),
+							'context'     => array( 'view', 'embed', 'edit' ),
+							'readonly'    => true,
+						),
+					),
+				),
+			)
+		);
+
 		register_rest_route(
 			'acx/v1',
 			'/workbench/media',
@@ -275,10 +311,91 @@ class Api {
 		);
 
 		$this->recognitionController->register_routes();
+		$this->gpuControlController->register_routes();
+		$this->publicDemoDescribeController->register_routes();
 		$this->settingsController->register_routes();
 		if ( $this->xmpEmbedController instanceof XmpEmbedController ) {
 			$this->xmpEmbedController->register_routes();
 		}
+	}
+
+	/**
+	 * Project adapter identity from stored `_acx_description_provenance`.
+	 *
+	 * Anonymous `/wp/v2/media` consumers need who produced the alt text, not the
+	 * full envelope (image/context hashes, draft text, backend ids).
+	 *
+	 * @param array<string,mixed>|object $object Prepared REST item or post-like object.
+	 * @return array{adapter: string, model_id: string|null}|null
+	 */
+	public function get_attachment_alt_provenance( mixed $object ): ?array {
+		$media_id   = $this->resolve_attachment_id( $object );
+		$provenance = $this->read_description_provenance( $media_id );
+		if ( null === $provenance ) {
+			return null;
+		}
+
+		$adapter = isset( $provenance['adapter'] ) && is_string( $provenance['adapter'] )
+			? trim( $provenance['adapter'] )
+			: '';
+		if ( '' === $adapter ) {
+			return null;
+		}
+
+		$model_id = null;
+		if ( isset( $provenance['model_id'] ) && is_string( $provenance['model_id'] ) ) {
+			$model_id = $provenance['model_id'];
+		}
+
+		return array(
+			'adapter'  => $adapter,
+			'model_id' => $model_id,
+		);
+	}
+
+	/**
+	 * @param array<string,mixed>|object $object
+	 */
+	private function resolve_attachment_id( mixed $object ): int {
+		if ( is_array( $object ) ) {
+			if ( isset( $object['id'] ) ) {
+				return absint( $object['id'] );
+			}
+			if ( isset( $object['ID'] ) ) {
+				return absint( $object['ID'] );
+			}
+
+			return 0;
+		}
+
+		if ( is_object( $object ) ) {
+			if ( isset( $object->id ) ) {
+				return absint( $object->id );
+			}
+			if ( isset( $object->ID ) ) {
+				return absint( $object->ID );
+			}
+		}
+
+		return 0;
+	}
+
+	/**
+	 * Decode stored provenance the same way DescriptionCandidateService::read_provenance does.
+	 *
+	 * @return array<string,mixed>|null
+	 */
+	private function read_description_provenance( int $media_id ): ?array {
+		$raw = get_post_meta( $media_id, '_acx_description_provenance', true );
+		if ( is_array( $raw ) ) {
+			return $raw;
+		}
+		if ( is_string( $raw ) && '' !== trim( $raw ) ) {
+			$decoded = json_decode( $raw, true );
+			return is_array( $decoded ) ? $decoded : null;
+		}
+
+		return null;
 	}
 
 	public function can_view_media_queue(): bool {

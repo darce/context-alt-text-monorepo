@@ -148,6 +148,13 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 				'methods'             => 'POST',
 				'callback'            => array( $this, 'accept_merge_suggestion' ),
 				'permission_callback' => array( $this, 'can_manage_recognition' ),
+				'args'                => array(
+					'target_cluster_id' => array(
+						'type'        => 'string',
+						'required'    => false,
+						'description' => "Optional operator-chosen survivor. Must be one of the suggestion's two clusters; the service rejects anything else.",
+					),
+				),
 			)
 		);
 
@@ -659,6 +666,17 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 		$payload = array(
 			'tenant_id' => $this->get_tenant_id(),
 		);
+
+		// Optional operator-chosen survivor. Forwarded only when supplied so the
+		// service keeps its own ranking by default; membership in the suggestion's
+		// pair is the service's call, not this proxy's guess.
+		$target_cluster_id = $request->get_param( 'target_cluster_id' );
+		if ( is_string( $target_cluster_id ) ) {
+			$target_cluster_id = sanitize_text_field( $target_cluster_id );
+			if ( '' !== $target_cluster_id ) {
+				$payload['target_cluster_id'] = $target_cluster_id;
+			}
+		}
 
 		return $this->proxy_request(
 			'POST',

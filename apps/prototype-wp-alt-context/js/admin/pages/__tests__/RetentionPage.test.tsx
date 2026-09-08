@@ -1,7 +1,8 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-import { RetentionPage } from '../RetentionPage';
+import { RetentionSection } from '../RetentionPage';
+import { retentionReducer, type RetentionDialogState } from '../retention/useRetentionPageState';
 import {
   useApplyRetentionPreset,
   useAuditEvents,
@@ -51,7 +52,7 @@ vi.mock('../../context/ToastContext', () => ({
   }),
 }));
 
-describe('RetentionPage', () => {
+describe('RetentionSection', () => {
   const ActualBlob = globalThis.Blob;
   const mockedUseRetentionStatus = vi.mocked(useRetentionStatus);
   const mockedUseUpdateRetentionPolicy = vi.mocked(useUpdateRetentionPolicy);
@@ -174,25 +175,28 @@ describe('RetentionPage', () => {
   });
 
   it('pairs the purge danger note with an icon second channel', () => {
-    render(<RetentionPage />);
+    render(<RetentionSection />);
 
     expect(screen.getByText(/This action is irreversible/i)).toBeInTheDocument();
     expect(screen.getByTestId('acx-retention-danger-icon')).toBeInTheDocument();
     expect(document.querySelector('.acx-retention__note--danger')).toBeTruthy();
   });
 
-  it('renders policy state and audit history', () => {
-    render(<RetentionPage />);
+  it('renders policy state and links to description-run history instead of a second audit home', () => {
+    render(<RetentionSection />);
 
-    expect(screen.getByText('Retention & Audit Controls')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Data & retention', level: 3 })).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: /Dispose after confirmation/ })).toBeChecked();
-    expect(screen.getByText('Showing the five most recent audit events.')).toBeInTheDocument();
-    expect(screen.getByText('policy_updated')).toBeInTheDocument();
-    expect(screen.getByText('retention_mode: dispose_after_ack · previous: retain_all')).toBeInTheDocument();
+    expect(screen.queryByText('Showing the five most recent audit events.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Full audit log' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'See description run history' })).toHaveAttribute(
+      'href',
+      '#/description-history',
+    );
   });
 
   it('updates the retention policy', async () => {
-    render(<RetentionPage />);
+    render(<RetentionSection />);
 
     fireEvent.click(screen.getByRole('radio', { name: /Purge on demand/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Save policy' }));
@@ -203,7 +207,7 @@ describe('RetentionPage', () => {
   });
 
   it('exports tenant data: start export starts the async job', async () => {
-    render(<RetentionPage />);
+    render(<RetentionSection />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Export data' }));
     const startButton = screen.getByRole('button', { name: 'Start export' });
@@ -223,7 +227,7 @@ describe('RetentionPage', () => {
       }),
     );
 
-    render(<RetentionPage />);
+    render(<RetentionSection />);
 
     // Open dialog and start the export
     fireEvent.click(screen.getByRole('button', { name: 'Export data' }));
@@ -255,8 +259,90 @@ describe('RetentionPage', () => {
     });
   });
 
+  it('keeps an unsupported export job observable after the dialog closes', async () => {
+    mockedUseExportJobStatus.mockReturnValue(
+      createMockQuery({
+        data: { job_id: 'job-1', status: 'processing', file_size: null, error_message: null },
+      }),
+    );
+
+    render(<RetentionSection />);
+
+    const exportPanel = screen.getByRole('heading', { name: 'Export controls' }).closest('section');
+    expect(exportPanel).toBeTruthy();
+    const statusRegion = within(exportPanel!).getByRole('status');
+    expect(statusRegion).toBeEmptyDOMElement();
+    expect(statusRegion).toHaveAttribute('aria-live', 'polite');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Export data' }));
+    expect(within(exportPanel!).getByRole('status')).toBe(statusRegion);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Start export' }));
+      await Promise.resolve();
+    });
+
+    expect(statusRegion).toHaveTextContent('Export in progress…');
+    expect(statusRegion).toHaveTextContent('Job ID: job-1');
+    expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(mockedUseExportJobStatus).toHaveBeenLastCalledWith('job-1');
+    expect(within(exportPanel!).getByRole('status')).toBe(statusRegion);
+    expect(statusRegion).toHaveTextContent('Export in progress…');
+    expect(statusRegion).toHaveTextContent('Job ID: job-1');
+  });
+
+  it('preserves the retained export job when the export dialog closes', () => {
+    const state: RetentionDialogState = {
+      draftMode: null,
+      isExportDialogOpen: true,
+      exportJobId: 'job-1',
+      isPurgeDialogOpen: false,
+      purgeScope: 'disposed',
+      purgeConfirmation: '',
+      isImportDialogOpen: false,
+      importFile: null,
+      auditPage: 0,
+    };
+
+    expect(retentionReducer(state, { type: 'CLOSE_EXPORT_DIALOG' })).toEqual({
+      ...state,
+      isExportDialogOpen: false,
+    });
+  });
+
+  it('uses a separate persistent assertive region when an export fails', async () => {
+    const { rerender } = render(<RetentionSection />);
+    const exportPanel = screen.getByRole('heading', { name: 'Export controls' }).closest('section');
+    expect(exportPanel).toBeTruthy();
+    const statusRegion = within(exportPanel!).getByRole('status');
+    const errorRegion = within(exportPanel!).getByRole('alert');
+    expect(errorRegion).toBeEmptyDOMElement();
+    expect(errorRegion).toHaveAttribute('aria-live', 'assertive');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Export data' }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Start export' }));
+      await Promise.resolve();
+    });
+
+    mockedUseExportJobStatus.mockReturnValue(
+      createMockQuery({
+        data: { job_id: 'job-1', status: 'failed', file_size: null, error_message: 'Export failed' },
+      }),
+    );
+    rerender(<RetentionSection />);
+
+    expect(within(exportPanel!).getByRole('status')).toBe(statusRegion);
+    expect(statusRegion).toBeEmptyDOMElement();
+    expect(within(exportPanel!).getByRole('alert')).toBe(errorRegion);
+    expect(errorRegion).toHaveTextContent('Export failed. Please try again. Job ID: job-1');
+  });
+
   it('requires typed confirmation before purge', async () => {
-    render(<RetentionPage />);
+    render(<RetentionSection />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Purge data' }));
 
@@ -284,7 +370,7 @@ describe('RetentionPage', () => {
       }),
     );
 
-    render(<RetentionPage />);
+    render(<RetentionSection />);
 
     expect(screen.getByText('Backend unavailable — retention status cannot be loaded.')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
@@ -294,7 +380,7 @@ describe('RetentionPage', () => {
   it('opens import dialog and calls importMutateAsync on confirm', async () => {
     const fileContent = JSON.stringify({ schema_version: 2, clusters: [] });
     const user = userEvent.setup();
-    render(<RetentionPage />);
+    render(<RetentionSection />);
 
     await user.click(screen.getByRole('button', { name: 'Import data' }));
     expect(await screen.findByText('Import tenant data')).toBeInTheDocument();
@@ -323,57 +409,14 @@ describe('RetentionPage', () => {
     expect(toastSuccess).toHaveBeenCalledWith('Import completed.');
   });
 
-  it('full audit log shows events returned by useAuditEvents', () => {
-    mockedUseAuditEvents.mockReturnValue(
-      createMockQuery({
-        data: {
-          items: [
-            {
-              id: 'evt-audit-1',
-              event_type: 'import_completed',
-              actor: 'api_key:test',
-              scope: 'tenant',
-              payload: { schema_version: 2 },
-              result_status: 'success',
-              created_at: '2026-03-23T10:00:00Z',
-            },
-          ],
-          total: 1,
-          limit: 20,
-          offset: 0,
-        },
-      }),
-    );
-
-    render(<RetentionPage />);
-
-    const auditLogSection = screen.getByRole('heading', { name: 'Full audit log' }).closest('section');
-    expect(auditLogSection).toBeInTheDocument();
-    expect(auditLogSection).toHaveTextContent('import_completed');
-    expect(auditLogSection).toHaveTextContent('Actor: api_key:test · Result: success');
-  });
-
-  it('audit log shows Next button and advances page when total exceeds page size', () => {
-    mockedUseAuditEvents.mockReturnValue(
-      createMockQuery({
-        data: { items: [], total: 25, limit: 20, offset: 0 },
-      }),
-    );
-
-    render(<RetentionPage />);
-
-    const nextButton = screen.getByRole('button', { name: 'Next' });
-    expect(nextButton).not.toBeDisabled();
-
-    act(() => {
-      fireEvent.click(nextButton);
-    });
-
-    expect(mockedUseAuditEvents).toHaveBeenLastCalledWith({ limit: 20, offset: 20 });
+  it('does not mount a full audit log on Data Retention', () => {
+    render(<RetentionSection />);
+    expect(screen.queryByRole('heading', { name: 'Full audit log' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Next' })).not.toBeInTheDocument();
   });
 
   it('applies GDPR preset when Apply GDPR preset button is clicked', async () => {
-    render(<RetentionPage />);
+    render(<RetentionSection />);
 
     const presetButton = screen.getByRole('button', { name: 'Apply GDPR preset' });
     expect(presetButton).not.toBeDisabled();

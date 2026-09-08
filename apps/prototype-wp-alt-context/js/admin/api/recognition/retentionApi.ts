@@ -38,30 +38,81 @@ const requireRetentionEndpoint = (...keys: string[]): string => {
   return endpoint;
 };
 
+/**
+ * Top-level collection keys carried by a recognition tenant-export snapshot.
+ *
+ * rg-005 (schema/contract parity): this list is the single canonical copy for
+ * the frontend. It mirrors `IMPORT_COLLECTION_KEYS` in
+ * `recognition/application/services/import_service.py`, which mirrors the keys
+ * emitted by `TenantExportService.export_tenant_data`.
+ */
+export const EXPORT_COLLECTION_KEYS = [
+  'clusters',
+  'media_identities',
+  'identity_suggestions',
+  'name_suggestions',
+  'cluster_merge_suggestions',
+  'scan_jobs',
+] as const;
+
+/** Locally authored, safe-to-display boundary rejection (never carries remote text). */
+export class RetentionExportResponseError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RetentionExportResponseError';
+  }
+}
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/**
+ * Parse the export-download response into the shape the UI writes to disk.
+ *
+ * rg-015: `GET /retention/export/{job_id}/data` returns `ExportJob.data_json`
+ * verbatim — the bare snapshot produced by `TenantExportService.export_tenant_data`
+ * (`recognition/interface_adapters/http/routers/retention.py:208-211`), proxied
+ * through unchanged by `RetentionController::get_export_job_data`. There is no
+ * `data`/`payload` wrapper and no `counts`/`summary` field on the wire, so
+ * accepting either wrapper shape or defaulting to `{}` invents contract
+ * metadata. Exactly the documented shape is supported; anything else is an
+ * explicit error (RLSE-05: a malformed response that yields an empty-looking
+ * successful download is a silent data loss the user discovers on a later
+ * import).
+ *
+ * `summary` is derived from the snapshot's own collection lengths — the same
+ * derivation the backend performs in `_validate_collections` — not fabricated
+ * from an absent upstream field.
+ */
 const normalizeExportResponse = (payload: unknown): RetentionExportResponse => {
-  if (!payload || typeof payload !== 'object') {
-    return { payload: {}, summary: {} };
+  if (!isPlainObject(payload)) {
+    throw new RetentionExportResponseError('Export data response was malformed.');
   }
 
-  const response = payload as Record<string, unknown>;
-  const rawPayload =
-    response.data && typeof response.data === 'object'
-      ? (response.data as Record<string, unknown>)
-      : response.payload && typeof response.payload === 'object'
-        ? (response.payload as Record<string, unknown>)
-        : response;
-  const summary =
-    response.counts && typeof response.counts === 'object'
-      ? (response.counts as Record<string, number>)
-      : response.summary && typeof response.summary === 'object'
-        ? (response.summary as Record<string, number>)
-        : {};
+  const schemaVersion = payload.schema_version;
+  if (typeof schemaVersion !== 'number' || !Number.isInteger(schemaVersion)) {
+    throw new RetentionExportResponseError('Export data response was malformed: missing schema_version.');
+  }
+
+  const presentKeys = EXPORT_COLLECTION_KEYS.filter((key) => key in payload);
+  if (presentKeys.length === 0) {
+    throw new RetentionExportResponseError('Export data response was malformed: no exported collections.');
+  }
+
+  const summary: Record<string, number> = {};
+  for (const key of presentKeys) {
+    const collection = payload[key];
+    if (!Array.isArray(collection)) {
+      throw new RetentionExportResponseError('Export data response was malformed: collections must be arrays.');
+    }
+    summary[key] = collection.length;
+  }
 
   return {
-    tenant_id: typeof response.tenant_id === 'string' ? response.tenant_id : undefined,
-    exported_at: typeof response.exported_at === 'string' ? response.exported_at : undefined,
-    schema_version: typeof response.schema_version === 'number' ? response.schema_version : undefined,
-    payload: rawPayload,
+    tenant_id: typeof payload.tenant_id === 'string' ? payload.tenant_id : undefined,
+    exported_at: typeof payload.exported_at === 'string' ? payload.exported_at : undefined,
+    schema_version: schemaVersion,
+    payload,
     summary,
   };
 };

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import sqlalchemy as sa
 from alembic import op
 from pgvector.sqlalchemy import Vector
@@ -212,7 +214,52 @@ def _existing_constraint_names(op, table_name: str) -> set[str]:
     }
 
 
-def _ensure_table_constraints(op, table_name: str, *elements) -> None:
+def _constraint_column_names(constraint) -> list[str]:
+    """Column names of a UniqueConstraint, attached or still detached.
+
+    A constraint built as ``sa.UniqueConstraint("a", "b", name=...)`` and passed
+    straight to ``_ensure_table`` was never bound to a Table, so ``.columns`` is
+    empty and the names live in ``_pending_colargs``. Read both so the DDL is
+    generated from the declaration either way.
+    """
+    names = [str(column.name) for column in constraint.columns]
+    if names:
+        return names
+    return [str(arg) for arg in getattr(constraint, "_pending_colargs", []) or []]
+
+
+def _ensure_unique_constraint(op, table_name: str, constraint) -> bool:
+    """Additively add one missing UNIQUE constraint to an already-existing table.
+
+    GUIDEDFIX-2 [S02]: a UniqueConstraint newly declared on a table that already
+    exists in a provisioned database can never land through ``create_table``,
+    and ``_ensure_table_constraints`` would raise on every subsequent migrate.
+    UNIQUE is the one table-level constraint that is genuinely additive: Postgres
+    builds the backing index and fails loudly (23505) if live rows already
+    violate it, so there is no value to guess and no silent half-heal.
+
+    Returns True when the constraint is present after the call (or the dialect
+    makes it a non-issue), False when the caller must report it as drift.
+    """
+    columns = _constraint_column_names(constraint)
+    if not columns:
+        return False
+    bind = op.get_bind()
+    dialect = str(getattr(getattr(bind, "dialect", None), "name", "") or "")
+    if dialect and dialect != "postgresql":
+        # SQLite has no ``ALTER TABLE ... ADD CONSTRAINT``. It also only ever
+        # gets these tables from create_table / Base.metadata.create_all, which
+        # emit the UNIQUE inline — so on SQLite the constraint is present by
+        # construction and there is nothing to heal.
+        return True
+    quoted_table = f'"{table_name}"'
+    quoted_name = f'"{constraint.name}"'
+    quoted_columns = ", ".join(f'"{column}"' for column in columns)
+    op.execute(f"ALTER TABLE {quoted_table} ADD CONSTRAINT {quoted_name} UNIQUE ({quoted_columns})")
+    return True
+
+
+def _ensure_table_constraints(op, table_name: str, *elements, heal_constraints: Sequence[str] = ()) -> None:
     """Fail loudly when an existing table is missing declared table-level constraints.
 
     ``_ensure_table`` cannot add UniqueConstraint / ForeignKeyConstraint /
@@ -221,26 +268,42 @@ def _ensure_table_constraints(op, table_name: str, *elements) -> None:
     and unique targets do not). Greenfield: refuse the mismatch so operators
     recreate or apply the constraints rather than running with a half-healed
     schema (FL30-B-01).
+
+    ``heal_constraints`` opts named UNIQUE constraints out of that refusal: they
+    are added additively via ``_ensure_unique_constraint`` instead. Opt-in by
+    name so adding a constraint to an already-provisioned table is a deliberate
+    declaration at the call site, not a blanket relaxation of the guard.
     """
-    declared: list[str] = []
+    healable = {str(name) for name in heal_constraints}
+    declared: dict[str, object] = {}
     for element in elements:
         if isinstance(element, (sa.UniqueConstraint, sa.ForeignKeyConstraint, sa.CheckConstraint)):
             name = getattr(element, "name", None)
             if name:
-                declared.append(str(name))
+                declared[str(name)] = element
     if not declared:
         return
+    unknown = sorted(healable - set(declared))
+    if unknown:
+        raise RuntimeError(f"{table_name}: heal_constraints names {unknown} that the table does not declare")
     existing = _existing_constraint_names(op, table_name)
     missing = sorted(name for name in declared if name not in existing)
-    if missing:
+    unhealed: list[str] = []
+    for name in missing:
+        element = declared[name]
+        if name in healable and isinstance(element, sa.UniqueConstraint) and _ensure_unique_constraint(op, table_name, element):
+            continue
+        unhealed.append(name)
+    if unhealed:
         raise RuntimeError(
-            f"{table_name} exists but is missing table-level constraints {missing}; "
+            f"{table_name} exists but is missing table-level constraints {unhealed}; "
             "silent partial healing is forbidden — drop and recreate the table or "
             "apply the constraints manually (operator action)"
         )
 
 
 def _ensure_table(op, table_name: str, *columns, **kw) -> None:
+    heal_constraints: Sequence[str] = kw.pop("heal_constraints", ())
     relkind = _relkind(op, table_name)
     if relkind is None:
         op.create_table(table_name, *columns, **kw)
@@ -256,8 +319,9 @@ def _ensure_table(op, table_name: str, *columns, **kw) -> None:
         # column added after first creation still lands (MAINT-TPR-01 / PA-03).
         _ensure_columns(op, table_name, *columns)
         # Table-level constraints are not additive via create_table; detect
-        # and refuse silent partial heals (FL30-B-01 / FIR-9 composite FK).
-        _ensure_table_constraints(op, table_name, *columns)
+        # and refuse silent partial heals (FL30-B-01 / FIR-9 composite FK),
+        # except for UNIQUE constraints explicitly declared heal-additive.
+        _ensure_table_constraints(op, table_name, *columns, heal_constraints=heal_constraints)
 
 
 def _ensure_index(op, index_name: str, table_name: str, columns, **kw) -> None:
@@ -839,6 +903,12 @@ def ensure_tables(op) -> None:
             sa.ForeignKey("identity_clusters.id", ondelete="CASCADE"),
             nullable=False,
         ),
+        sa.Column(
+            "survivor_cluster_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("identity_clusters.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
         sa.Column("similarity", sa.Float(), nullable=False),
         sa.Column("confidence_score", sa.Float(), nullable=True),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
@@ -871,6 +941,11 @@ def ensure_tables(op) -> None:
             name="cluster_merge_valid_resolution",
         ),
         sa.CheckConstraint("cluster_a_id < cluster_b_id", name="cluster_merge_canonical_order"),
+        sa.CheckConstraint(
+            "survivor_cluster_id IS NULL OR survivor_cluster_id = cluster_a_id"
+            " OR survivor_cluster_id = cluster_b_id",
+            name="cluster_merge_survivor_in_pair",
+        ),
         sa.UniqueConstraint(
             "cluster_a_id",
             "cluster_b_id",
@@ -1453,6 +1528,7 @@ def ensure_tables(op) -> None:
             "tenant_id",
             "image_hash",
             "adapter",
+            "model_id",
             "model_version",
             "prompt_or_task_version",
             "context_hash",
@@ -1481,6 +1557,12 @@ def ensure_tables(op) -> None:
         sa.Column("failed_items", sa.Integer(), nullable=False, server_default=sa.text("0")),
         sa.Column("skipped_items", sa.Integer(), nullable=False, server_default=sa.text("0")),
         sa.Column("cancel_requested", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+        sa.Column("recognition_enabled", sa.Boolean(), nullable=False, server_default=sa.text("true")),
+        # GUIDEDFIX-2: caller retry token, the canonical digest of the payload it
+        # binds, and the generation budget disclosed at accept.
+        sa.Column("idempotency_key", sa.String(length=128), nullable=True),
+        sa.Column("request_digest", sa.String(length=64), nullable=True),
+        sa.Column("deadline_seconds", sa.Float(), nullable=True),
         sa.Column("error_message", sa.Text(), nullable=True),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("started_at", sa.TIMESTAMP(timezone=True), nullable=True),
@@ -1491,10 +1573,18 @@ def ensure_tables(op) -> None:
             name="valid_describe_run_status",
         ),
         sa.CheckConstraint(
-            "phase IN ('queued', 'describing', 'complete', 'failed', 'cancelled')",
+            "phase IN ('queued', 'warming', 'describing', 'complete', 'failed', 'cancelled')",
             name="valid_describe_run_phase",
         ),
         sa.CheckConstraint("run_kind IN ('bulk', 'single')", name="valid_describe_run_kind"),
+        # GUIDEDFIX-2: the describe-run accept reservation. NULLs are distinct, so
+        # only token-carrying submits are deduped.
+        sa.UniqueConstraint("tenant_id", "idempotency_key", name="uq_image_description_runs_idempotency_key"),
+        # [S02] image_description_runs predates this constraint, so every
+        # already-provisioned database reaches the table-exists branch with the
+        # constraint absent. Declare it heal-additive: ALTER TABLE ... ADD
+        # CONSTRAINT UNIQUE instead of a RuntimeError on every migrate.
+        heal_constraints=("uq_image_description_runs_idempotency_key",),
     )
     _ensure_index(op, "idx_image_description_runs_tenant", "image_description_runs", ["tenant_id"])
     _ensure_index(
@@ -1902,8 +1992,30 @@ def ensure_triggers(op) -> None:
     )
 
 
+def _matview_centroid_typmod(op) -> int | None:
+    return (
+        op.get_bind()
+        .execute(
+            sa.text(
+                "SELECT a.atttypmod FROM pg_attribute a "
+                "JOIN pg_class c ON c.oid = a.attrelid "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE n.nspname = current_schema() "
+                "AND c.relname = 'mv_identity_cluster_centroids' "
+                "AND a.attname = 'centroid' AND NOT a.attisdropped"
+            )
+        )
+        .scalar()
+    )
+
+
 def ensure_matview(op) -> None:
-    """Create the centroid materialized view + indexes; fail loudly on a plain-table impostor."""
+    """Create the centroid materialized view + indexes; fail loudly on a plain-table impostor.
+
+    A matview whose ``centroid`` column lost its vector typmod (built before the
+    outer cast existed) is derived data with no owner but the refresh queue, so
+    it is dropped and rebuilt here instead of waiting on an operator.
+    """
     relkind = _relkind(op, "mv_identity_cluster_centroids")
     if relkind not in (None, "m"):
         raise RuntimeError(
@@ -1911,6 +2023,8 @@ def ensure_matview(op) -> None:
             f"{relkind!r} (expected materialized view); drop the impostor relation "
             "before healing (operator action, see E15-33-BR2-04)"
         )
+    if relkind == "m" and _matview_centroid_typmod(op) != EMBEDDING_DIMENSION:
+        op.execute("DROP MATERIALIZED VIEW mv_identity_cluster_centroids")
     op.execute(
         f"""
         CREATE MATERIALIZED VIEW IF NOT EXISTS mv_identity_cluster_centroids AS
@@ -1970,11 +2084,14 @@ def ensure_matview(op) -> None:
             cluster_id,
             tenant_id,
             identity_count,
-            CASE
+            -- The outer cast is load-bearing: CASE with an untyped NULL arm
+            -- drops the vector typmod, and /health + /ready fail closed on a
+            -- matview column whose pg_attribute.atttypmod is -1.
+            (CASE
                 WHEN identity_count > 0 AND avg_embedding IS NOT NULL THEN
                     l2_normalize(avg_embedding)::vector({EMBEDDING_DIMENSION})
                 ELSE NULL
-            END AS centroid,
+            END)::vector({EMBEDDING_DIMENSION}) AS centroid,
             refreshed_at
         FROM cluster_embeddings
         WHERE identity_count >= 1;

@@ -6,6 +6,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { queryKeys } from '../../../../api/queryKeys';
 import type { JobStatusResponse } from '../../../../api/recognition';
 import * as recognitionApi from '../../../../api/recognition';
+import { RequestTimeoutError } from '../../../../utils/errorTaxonomy';
+import { HTTPError } from '../../../../utils/http';
+import { CLUSTER_LABELING_OPERATION } from '../clusterLabelingBudget';
+import { CLUSTER_MUTATION_ERROR_COPY, createClusterMutationTimeoutError } from '../clusterMutationUtils';
 import { useClusterActionMutations } from '../useClusterActionMutations';
 import type { SuggestionReviewPage } from '../useSuggestionReviewQueries';
 
@@ -13,15 +17,25 @@ vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
 }));
 
-vi.mock('../../../../api/recognition', () => ({
-  acceptSuggestion: vi.fn(),
-  createClusterForIdentity: vi.fn(),
-  fetchScanStatus: vi.fn(),
-  pinRepresentative: vi.fn(),
-  reassignClusterIdentity: vi.fn(),
-  rejectSuggestion: vi.fn(),
-  splitCluster: vi.fn(),
-}));
+// Spread the real module (WBUX6-W3-L6-01): an exhaustive factory silently blanks every
+// export this test does not name, so one new render-path dependency wipes the whole file
+// with a failure unrelated to the behaviour under test. Only the network surfaces
+// useClusterActionMutations itself calls are replaced.
+vi.mock('../../../../api/recognition', async () => {
+  const actual = await vi.importActual<typeof import('../../../../api/recognition')>(
+    '../../../../api/recognition',
+  );
+  return {
+    ...actual,
+    acceptSuggestion: vi.fn(),
+    createClusterForIdentity: vi.fn(),
+    fetchScanStatus: vi.fn(),
+    pinRepresentative: vi.fn(),
+    reassignClusterIdentity: vi.fn(),
+    rejectSuggestion: vi.fn(),
+    splitCluster: vi.fn(),
+  };
+});
 
 let offline = false;
 
@@ -75,7 +89,12 @@ describe('useClusterActionMutations pollSplitJob (BND-1-AUDIT-1)', () => {
 
     await waitFor(() => expect(invalidateQueries).toHaveBeenCalled());
     expect(onError).not.toHaveBeenCalled();
-    expect(recognitionApi.fetchScanStatus).toHaveBeenCalledWith('split-job-1');
+    // RES-13 / TEST-15: the async poll remains owned by the original split,
+    // including terminal partial success (heuristics-canon-research/lexicons/engineering.md:124,396).
+    const splitSignal = vi.mocked(recognitionApi.splitCluster).mock.calls[0][2];
+    expect(splitSignal).toBeInstanceOf(AbortSignal);
+    expect(splitSignal?.aborted).toBe(false);
+    expect(recognitionApi.fetchScanStatus).toHaveBeenCalledExactlyOnceWith('split-job-1', splitSignal);
   });
 
   it('resolves an async split when the job finishes completed', async () => {
@@ -107,9 +126,7 @@ describe('useClusterActionMutations pollSplitJob (BND-1-AUDIT-1)', () => {
     expect(result.current.splitGate['aria-disabled']).toBe(true);
 
     result.current.split('c1', 2);
-    await waitFor(() =>
-      expect(onError).toHaveBeenCalledWith('Unavailable while the recognition service is offline'),
-    );
+    await waitFor(() => expect(onError).toHaveBeenCalledWith('Unavailable while the recognition service is offline'));
     expect(recognitionApi.splitCluster).not.toHaveBeenCalled();
   });
 
@@ -263,9 +280,14 @@ describe('useClusterActionMutations create-for-identity roster bind (UXW2-3-R7B-
 
   it('on acx_cluster_created_bind_failed surfaces bind error and still invalidates', async () => {
     vi.mocked(recognitionApi.createClusterForIdentity).mockRejectedValue(
-      new Error(
-        'Request to /create-for-identity failed (409): {"code":"acx_cluster_created_bind_failed","data":{"cluster_id":"c-new"}}',
-      ),
+      new HTTPError({
+        status: 409,
+        retryAfterSeconds: undefined,
+        endpoint: '/create-for-identity',
+        bodyPreview: '{"code":"acx_cluster_created_bind_failed","data":{"cluster_id":"c-new"}}',
+        message:
+          'Request to /create-for-identity failed (409): {"code":"acx_cluster_created_bind_failed","data":{"cluster_id":"c-new"}}',
+      }),
     );
     const { result, onError, invalidateQueries } = renderCreate();
 
@@ -274,5 +296,149 @@ describe('useClusterActionMutations create-for-identity roster bind (UXW2-3-R7B-
     await waitFor(() => expect(onError).toHaveBeenCalled());
     expect(onError).toHaveBeenCalledWith('The group was created but the person was not bound.');
     expect(invalidateQueries).toHaveBeenCalled();
+  });
+});
+
+describe('recognition mock surface drift guard (WBUX6-W3-L6-01)', () => {
+  // Fixes the mock at the drift-resistant idiom. An exhaustive factory (no
+  // importActual spread) silently blanks every export this file does not name,
+  // so the next render-path dependency fails the whole file with a module-load
+  // throw reported as N unrelated assertion failures. These two assertions turn
+  // that regression into one honest, self-describing failure here.
+  const CONTROLLED = new Set([
+    'acceptSuggestion',
+    'createClusterForIdentity',
+    'fetchScanStatus',
+    'pinRepresentative',
+    'reassignClusterIdentity',
+    'rejectSuggestion',
+    'splitCluster',
+  ]);
+
+  it('keeps every real export reachable and untouched except the network surfaces under test', async () => {
+    const actual = await vi.importActual<typeof import('../../../../api/recognition')>(
+      '../../../../api/recognition',
+    );
+    const actualKeys = Object.keys(actual);
+    expect(actualKeys.length).toBeGreaterThan(CONTROLLED.size);
+
+    const missing = actualKeys.filter((key) => !(key in recognitionApi));
+    expect(missing).toEqual([]);
+
+    const passthrough = actualKeys.filter((key) => !CONTROLLED.has(key));
+    const rebound = passthrough.filter(
+      (key) => (recognitionApi as Record<string, unknown>)[key] !== (actual as Record<string, unknown>)[key],
+    );
+    expect(rebound).toEqual([]);
+  });
+
+  it('still replaces exactly the network surfaces this file drives', () => {
+    for (const key of CONTROLLED) {
+      expect(vi.isMockFunction((recognitionApi as Record<string, unknown>)[key])).toBe(true);
+    }
+  });
+});
+
+describe('useClusterActionMutations deadline vs cancel (FEBT2-LD2-NEW-01 / RLSE-05)', () => {
+  const renderActions = () => {
+    const onError = vi.fn();
+    const onAbort = vi.fn();
+    const invalidateQueries = vi.fn();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(
+      () => useClusterActionMutations({ clusterId: 'c1', onError, onAbort, invalidateQueries }),
+      { wrapper },
+    );
+    return { result, onError, onAbort };
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    offline = false;
+  });
+
+  /**
+   * The exact value `utils/http.createTimeoutSignal` aborts with, after
+   * `toBoundaryError` normalises it: `_tag: 'timeout'`, `name: 'TimeoutError'`.
+   * Built here rather than imported so the test pins the wire shape, not the
+   * constructor the hook happens to be compiled against.
+   */
+  const transportDeadline = (): Error => new RequestTimeoutError(null, 'The operation timed out.');
+
+  it('shows copy when a transport deadline elapses on assign, instead of silently cancelling', async () => {
+    // Predicted first failure if the gate regresses to `isAbortError`: onAbort fires
+    // (IdentityClusterItem wires it to resetSaveStatus) and onError is never called, so
+    // the operator's write elapses with no notice at all.
+    vi.mocked(recognitionApi.reassignClusterIdentity).mockRejectedValue(transportDeadline());
+    const { result, onError, onAbort } = renderActions();
+
+    result.current.assignToCluster('id-1', 'target-c');
+
+    await waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
+    expect(onError).toHaveBeenCalledWith(CLUSTER_MUTATION_ERROR_COPY.timeout);
+    expect(onAbort).not.toHaveBeenCalled();
+  });
+
+  it('shows copy when the branded interactive-budget sentinel reaches a mutation onError', async () => {
+    // The budget sentinel is deliberately not abort-like; if a future edit makes it
+    // abort-like, or the hook drops the explicit brand check, this goes silent.
+    vi.mocked(recognitionApi.createClusterForIdentity).mockRejectedValue(
+      createClusterMutationTimeoutError(CLUSTER_LABELING_OPERATION.SAVE),
+    );
+    const { result, onError, onAbort } = renderActions();
+
+    result.current.createClusterForIdentity('anchor-1', 'Alex');
+
+    await waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
+    expect(onError).toHaveBeenCalledWith(CLUSTER_MUTATION_ERROR_COPY.timeout);
+    // The sentinel message is a machine token; it must never reach the operator.
+    expect(onError).not.toHaveBeenCalledWith(expect.stringContaining('cluster_mutation_budget_expired'));
+    expect(onAbort).not.toHaveBeenCalled();
+  });
+
+  it('shows copy when a transport deadline elapses on pin and split', async () => {
+    vi.mocked(recognitionApi.pinRepresentative).mockRejectedValue(transportDeadline());
+    const { result, onError, onAbort } = renderActions();
+
+    result.current.pinRepresentative('rep-1', true);
+
+    await waitFor(() => expect(onError).toHaveBeenCalledWith(CLUSTER_MUTATION_ERROR_COPY.timeout));
+    expect(onAbort).not.toHaveBeenCalled();
+
+    onError.mockClear();
+    vi.mocked(recognitionApi.splitCluster).mockRejectedValue(transportDeadline());
+    result.current.split('c1', 2);
+
+    await waitFor(() => expect(onError).toHaveBeenCalledWith(CLUSTER_MUTATION_ERROR_COPY.timeout));
+    expect(onAbort).not.toHaveBeenCalled();
+  });
+
+  it('still stays silent for a deliberate operator cancel', async () => {
+    // The other half of the split: a cancel is the operator's own action, so telling
+    // them the system is slow answers a question they did not ask (DOM-03).
+    vi.mocked(recognitionApi.reassignClusterIdentity).mockRejectedValue(
+      new DOMException('The user aborted a request.', 'AbortError'),
+    );
+    const { result, onError, onAbort } = renderActions();
+
+    result.current.assignToCluster('id-1', 'target-c');
+
+    await waitFor(() => expect(onAbort).toHaveBeenCalledTimes(1));
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('leaves non-abort failures on their existing raw-message path', async () => {
+    // Regression fence: the deadline fix must not re-route ordinary server failures
+    // through the timeout copy.
+    vi.mocked(recognitionApi.reassignClusterIdentity).mockRejectedValue(new Error('boom'));
+    const { result, onError, onAbort } = renderActions();
+
+    result.current.assignToCluster('id-1', 'target-c');
+
+    await waitFor(() => expect(onError).toHaveBeenCalledWith('boom'));
+    expect(onAbort).not.toHaveBeenCalled();
   });
 });

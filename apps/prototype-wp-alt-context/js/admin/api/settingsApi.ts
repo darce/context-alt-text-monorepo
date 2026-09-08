@@ -43,6 +43,13 @@ export interface SettingsResponse {
   // (class-alt-style.php) bit-for-bit; invalid stored values are normalized
   // to 'alt_only' server-side before reaching this payload.
   alt_style: AltStyleValue;
+  // WBUX-6 L1: global recognition policy. GET always includes the boolean;
+  // default ON for this recognition-plugin install (RecognitionPolicy::DEFAULT).
+  recognition_enabled: boolean;
+  // C6: the recognition service is the sole authority for person names. A
+  // null value means the service could not be read and must not be defaulted.
+  allow_person_names?: boolean | null;
+  allow_person_names_error?: string | null;
   description_budget: DescriptionBudget;
 }
 
@@ -85,6 +92,8 @@ export interface SaveSettingsPayload {
   url?: string;
   api_key?: string;
   alt_style?: AltStyleValue;
+  recognition_enabled?: boolean;
+  allow_person_names?: boolean;
   description_budget?: {
     max_attempts: number;
   };
@@ -105,7 +114,7 @@ export type SettingsSaveResultValue =
 
 export interface SaveSettingsResponse {
   saved: string[];
-  result: SettingsSaveResultValue | string;
+  result: SettingsSaveResultValue;
   /** Present when result is partial/error — fields that did not persist. */
   failed?: string[];
 }
@@ -155,12 +164,23 @@ export interface TestConnectionResponse {
   rekey_updated_rows?: number;
 }
 
+const hasRecognitionEnabledBoolean = (payload: unknown): payload is SettingsResponse =>
+  payload !== null &&
+  typeof payload === 'object' &&
+  typeof (payload as { recognition_enabled?: unknown }).recognition_enabled === 'boolean';
+
 export const fetchSettings = async (): Promise<SettingsResponse> => {
   const endpoint = getEndpoint('settings');
-  return fetchRequiredApi<SettingsResponse>(endpoint, {
+  const payload = await fetchRequiredApi<unknown>(endpoint, {
     method: 'GET',
     restNonce: getConfig().nonce,
   });
+
+  if (!hasRecognitionEnabledBoolean(payload)) {
+    throw new Error('Settings response was malformed: recognition_enabled must be a boolean.');
+  }
+
+  return payload;
 };
 
 export const saveSettings = async (payload: SaveSettingsPayload): Promise<SaveSettingsResponse> => {

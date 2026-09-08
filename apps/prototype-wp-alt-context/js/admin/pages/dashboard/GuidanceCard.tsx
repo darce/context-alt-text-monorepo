@@ -3,6 +3,7 @@ import { __, _n, sprintf } from '@wordpress/i18n';
 
 import type { DashboardStats } from '../../api/dashboardApi';
 import { toRoster, toWorkbench } from '../../navigation/appLinks';
+import { EmptyState, EmptyStateVariant } from '../../components/ui/EmptyState';
 
 interface GuidanceCardProps {
   stats: DashboardStats;
@@ -20,7 +21,7 @@ export const GuidanceCard = ({ stats }: GuidanceCardProps): React.JSX.Element =>
           )}
         </p>
         <a href={toWorkbench({ advanced: true })} className="acx-link-button">
-          {__('Go to Workbench', 'alt-context')}
+          {__('Go to Review Queue', 'alt-context')}
         </a>
       </>
     );
@@ -39,8 +40,8 @@ export const GuidanceCard = ({ stats }: GuidanceCardProps): React.JSX.Element =>
           {sprintf(
             /* translators: %d: number of unassigned persons */
             _n(
-              '%d person has no assigned clusters.',
-              '%d persons have no assigned clusters.',
+              '%d person has no assigned face groups.',
+              '%d persons have no assigned face groups.',
               stats.unassigned_persons_count,
               'alt-context',
             ),
@@ -70,5 +71,13 @@ export const GuidanceCard = ({ stats }: GuidanceCardProps): React.JSX.Element =>
     );
   }
 
-  return <p>{__('All caught up. New faces will appear here for review.', 'alt-context')}</p>;
+  return (
+    <EmptyState
+      variant={EmptyStateVariant.EMPTY}
+      heading={__('All caught up. New faces will appear here for review.', 'alt-context')}
+      body={__('Open the Review Queue to check for new face groups.', 'alt-context')}
+      action={{ label: __('Open Review Queue', 'alt-context'), href: toWorkbench({ tab: 'scan' }) }}
+      headingLevel={3}
+    />
+  );
 };

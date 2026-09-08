@@ -42,6 +42,7 @@ from __future__ import annotations
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -491,7 +492,6 @@ def test_d1_remote_build_dir_quoted_at_ssh_sink(tmp_path: pathlib.Path) -> None:
         preflight_ssh() {{ :; }}
         preflight_remote_docker() {{ :; }}
         preflight_rsync() {{ :; }}
-        refuse_remote_vlm_build() {{ :; }}
         remote_builder_prune() {{ :; }}
         # assert_remote_build_free_space uses ssh; leave real so sink log captures it too,
         # but override to skip the numeric gate if parse fails.
@@ -509,10 +509,24 @@ def test_d1_remote_build_dir_quoted_at_ssh_sink(tmp_path: pathlib.Path) -> None:
     )
     assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
     payloads = ssh_log.read_text()
-    assert f"mkdir -p -- '{safe_dir}'" in payloads, payloads
-    assert f"cd -- '{safe_dir}'" in payloads, payloads
-    # Unquoted form must not appear as the remote command (regression of the original sink).
-    assert f"mkdir -p {safe_dir}" not in payloads.replace(f"mkdir -p -- '{safe_dir}'", "")
+    # OCIRV-1 fences each deploy into its own generation directory
+    # (`${REMOTE_BUILD_DIR}-<sha12>-<epoch>-<pid>-<random>`) so one coordinator's
+    # `rsync --delete` cannot rewrite another's build context. D1's contract is the
+    # *quoting at the ssh sink*, not the literal directory name, so pin the quoted
+    # form and tolerate the generation suffix.
+    gen_dir = re.escape(safe_dir) + r"[A-Za-z0-9._/-]*"
+    assert re.search(rf"mkdir -p -- '{gen_dir}'", payloads), payloads
+    assert re.search(rf"cd -- '{gen_dir}'", payloads), payloads
+    assert re.search(rf"rm -rf -- '{gen_dir}'", payloads), payloads
+    # Every occurrence of the build dir (generation dir, and the `.lock` sibling
+    # derived from REMOTE_BUILD_DIR) must be single-quoted at the sink; an unquoted
+    # occurrence is the original injection regression.
+    occurrences = [m.start() for m in re.finditer(re.escape(safe_dir), payloads)]
+    assert occurrences, payloads
+    for start in occurrences:
+        assert start > 0 and payloads[start - 1] == "'", payloads
+        token = payloads[start : payloads.index("'", start)]
+        assert re.fullmatch(rf"{gen_dir}", token), token
 
 
 def test_d8_variant_vlm_without_vlm_target_fails_closed() -> None:
@@ -540,11 +554,11 @@ def test_d8_case_and_enum_fail_closed() -> None:
 
     Executes the real script (not a source grep). Reviewer proof vectors:
     - ACX_IMAGE_VARIANT=VLM ACX_BUILD_TARGET=runtime  (case bypass → was exit 0)
-    - ACX_BUILD_TARGET=Runtime-Vlm  (evades *vlm* lowercase match + remote refuse)
+    - ACX_BUILD_TARGET=Runtime-Vlm  (must fold before the VLM-sized remote gate)
     - ACX_IMAGE_VARIANT=vlm2 / ACX_BUILD_TARGET=bogus  (no enum → was accepted)
     """
     # Fail-closed vectors (ingestion / help). Runtime-Vlm alone folds to runtime-vlm and
-    # is a valid enum member for help — its remote-build refusal is covered separately.
+    # is a valid enum member for help — its remote-build gate is covered separately.
     fail_cases = [
         {"ACX_IMAGE_VARIANT": "VLM", "ACX_BUILD_TARGET": "runtime"},
         {"ACX_IMAGE_VARIANT": "vlm2"},
@@ -582,7 +596,6 @@ def test_d8_case_and_enum_fail_closed() -> None:
     assert proc_ok.returncode == 0, proc_ok.stderr
 
     # Uppercase VLM + Runtime-Vlm: both fold lower → vlm + runtime-vlm → OK at ingestion.
-    # (Remote build still refuses via refuse_remote_vlm_build — see sibling test.)
     env_vlm = os.environ.copy()
     env_vlm["ACX_IMAGE_VARIANT"] = "VLM"
     env_vlm["ACX_BUILD_TARGET"] = "Runtime-Vlm"
@@ -597,12 +610,116 @@ def test_d8_case_and_enum_fail_closed() -> None:
     assert proc_vlm.returncode == 0, proc_vlm.stderr
 
 
-def test_d8_remote_build_refuses_case_evasion_runtime_vlm(tmp_path: pathlib.Path) -> None:
-    """S2-A-03: ACX_BUILD_TARGET=Runtime-Vlm must refuse remote build after case fold."""
+def _script_constant(name: str) -> int:
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    match = re.search(rf"^{re.escape(name)}=([0-9]+)$", script, re.MULTILINE)
+    assert match, f"{name} must be a numeric shell constant"
+    return int(match.group(1))
+
+
+def _run_remote_space_gate(
+    target: str,
+    probe_output: str,
+    probe_rc: int = 0,
+) -> subprocess.CompletedProcess[str]:
+    """Run the real free-space selector with a deterministic probe result."""
+    env = os.environ.copy()
+    env.update(
+        {
+            "ACX_BUILD_TARGET": target,
+            "ACX_IMAGE_VARIANT": "",
+            "TEST_REMOTE_PROBE_OUTPUT": probe_output,
+            "TEST_REMOTE_PROBE_RC": str(probe_rc),
+        }
+    )
+    script = textwrap.dedent(
+        f"""\
+        source "{DEPLOY_SCRIPT}"
+        run_with_deadline() {{
+            printf '%s' "${{TEST_REMOTE_PROBE_OUTPUT}}"
+            return "${{TEST_REMOTE_PROBE_RC}}"
+        }}
+        assert_remote_build_free_space
+        """
+    )
+    return subprocess.run(
+        ["bash", "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=15,
+    )
+
+
+def test_remote_vlm_build_is_permitted_at_vlm_free_space_floor() -> None:
+    """VLM remote builds pass when the measured VLM-sized floor is available."""
+    vlm_floor = _script_constant("REMOTE_VLM_BUILD_MIN_FREE_GB")
+    assert vlm_floor == 24
+    proc = _run_remote_space_gate("runtime-vlm", str(vlm_floor))
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    assert f"need {vlm_floor}GB" in (proc.stdout or "")
+
+
+def test_remote_vlm_build_refuses_space_between_recognition_and_vlm_floors() -> None:
+    """A VLM target must not fall back to the smaller recognition floor."""
+    recognition_floor = _script_constant("REMOTE_BUILD_MIN_FREE_GB")
+    vlm_floor = _script_constant("REMOTE_VLM_BUILD_MIN_FREE_GB")
+    assert vlm_floor > recognition_floor
+    observed = vlm_floor - 1
+    proc = _run_remote_space_gate("runtime-vlm", str(observed))
+    assert proc.returncode != 0
+    combined = (proc.stdout or "") + (proc.stderr or "")
+    assert f"target runtime-vlm" in combined
+    assert f"at least {vlm_floor}GB" in combined
+    assert f"observed {observed}GB" in combined
+
+
+def test_remote_non_vlm_build_stays_at_recognition_free_space_floor() -> None:
+    """Non-VLM targets retain the recognition floor rather than the VLM budget."""
+    recognition_floor = _script_constant("REMOTE_BUILD_MIN_FREE_GB")
+    proc = _run_remote_space_gate("runtime", str(recognition_floor - 1))
+    assert proc.returncode != 0
+    combined = (proc.stdout or "") + (proc.stderr or "")
+    assert f"target runtime" in combined
+    assert f"at least {recognition_floor}GB" in combined
+    assert f"observed {recognition_floor - 1}GB" in combined
+
+
+def test_remote_free_space_probe_failure_is_fail_closed() -> None:
+    """Failed and unparseable remote probes must not allow a build to proceed."""
+    vlm_floor = _script_constant("REMOTE_VLM_BUILD_MIN_FREE_GB")
+    for probe_output, probe_rc in (("not-a-number", 0), ("", 255)):
+        proc = _run_remote_space_gate("runtime-vlm", probe_output, probe_rc)
+        assert proc.returncode != 0
+        combined = (proc.stdout or "") + (proc.stderr or "")
+        assert "target runtime-vlm" in combined
+        assert f"at least {vlm_floor}GB" in combined
+        assert "free-space probe failed" in combined
+        assert "observed" in combined
+
+
+def test_d8_remote_build_uses_vlm_gate_after_case_fold(tmp_path: pathlib.Path) -> None:
+    """Runtime-Vlm must take the VLM-sized gate after ingestion case folding."""
     bindir = tmp_path / "bin"
     bindir.mkdir()
-    (bindir / "ssh").write_text("#!/bin/sh\nexit 0\n")
+    ssh_log = tmp_path / "ssh.log"
+    (bindir / "ssh").write_text(
+        textwrap.dedent(
+            f"""\
+            #!/bin/sh
+            for a in "$@"; do last="$a"; done
+            printf '%s\\n' "$last" >> "{ssh_log}"
+            case "$last" in
+              *df*) echo {_script_constant("REMOTE_VLM_BUILD_MIN_FREE_GB")} ;;
+            esac
+            exit 0
+            """
+        )
+    )
     (bindir / "ssh").chmod(0o755)
+    (bindir / "rsync").write_text("#!/bin/sh\nexit 0\n")
+    (bindir / "rsync").chmod(0o755)
     env = os.environ.copy()
     env["PATH"] = f"{bindir}:{env['PATH']}"
     env["ACX_BUILD_TARGET"] = "Runtime-Vlm"
@@ -624,10 +741,13 @@ def test_d8_remote_build_refuses_case_evasion_runtime_vlm(tmp_path: pathlib.Path
         env=env,
         timeout=15,
     )
-    assert proc.returncode != 0
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
     combined = (proc.stdout or "") + (proc.stderr or "")
-    assert "vlm" in combined.lower()
-    assert "refuse" in combined.lower() or "refuses" in combined.lower()
+    vlm_floor = _script_constant("REMOTE_VLM_BUILD_MIN_FREE_GB")
+    assert f"need {vlm_floor}GB" in combined
+    assert "target=runtime-vlm" in combined
+    payloads = ssh_log.read_text()
+    assert payloads.index("docker builder prune") < payloads.index("df -BG")
 
 
 def _assert_safe_image_repo_body() -> str:
@@ -704,6 +824,12 @@ def test_d4_boot_smoke_emits_real_entrypoint_and_cache_mount(
     bindir.mkdir()
     ssh_log = tmp_path / "ssh.log"
     ssh_log.write_text("")
+    # OCIRV-1: the boot smoke only accepts an immutable, digest-pinned candidate
+    # (`IMAGE_BASE@sha256:<64 hex>`); a mutable tag is refused before Gate 1. Pin
+    # OCIR_NAMESPACE so IMAGE_BASE matches the fixture ref exactly.
+    smoke_digest = "sha256:" + ("ab" * 32)
+    assert len(smoke_digest.split(":", 1)[1]) == 64
+    smoke_image = f"iad.ocir.io/ns/acx-backend@{smoke_digest}"
     # Log argv + drain stdin (heredoc body) into the same capture file.
     (bindir / "ssh").write_text(
         textwrap.dedent(
@@ -715,6 +841,11 @@ def test_d4_boot_smoke_emits_real_entrypoint_and_cache_mount(
               cat >> "{ssh_log}"
               printf '\\n' >> "{ssh_log}"
             fi
+            # The remote RepoDigests probe must echo the pinned digest back, else
+            # do_boot_smoke fails closed on "pulled ref != requested digest".
+            case "$*" in
+              *"image inspect"*) echo "{smoke_image}" ;;
+            esac
             # Gate 1 import smoke must succeed so Gate 2 heredoc is sent.
             exit 0
             """
@@ -724,12 +855,13 @@ def test_d4_boot_smoke_emits_real_entrypoint_and_cache_mount(
 
     env = os.environ.copy()
     env["PATH"] = f"{bindir}:{env['PATH']}"
+    env["OCIR_NAMESPACE"] = "ns"
     # Real function under test.
     script = textwrap.dedent(
         f"""\
         source "{DEPLOY_SCRIPT}"
         preflight_ssh() {{ :; }}
-        do_boot_smoke dev "iad.ocir.io/ns/acx-backend:deadbeef"
+        do_boot_smoke dev "{smoke_image}"
         """
     )
     proc = subprocess.run(
@@ -980,6 +1112,54 @@ def test_dev_fir_env_example_pins_sface_128d_contract() -> None:
         for a in assignments
     )
     assert "RECOGNITION_SECRET_BACKEND=env" in text
+
+
+def _run_with_deadline_stdin_probe(script_text: str, tmp_path: pathlib.Path) -> subprocess.CompletedProcess:
+    """Feed a heredoc through run_with_deadline and capture what the child read."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    script = tmp_path / "recognition-service.sh"
+    script.write_text(script_text)
+    script.chmod(0o755)
+    # The script sources lib/*.sh relative to its own directory.
+    shutil.copytree(DEPLOY_SCRIPT.parent / "lib", tmp_path / "lib", dirs_exist_ok=True)
+    return subprocess.run(
+        [
+            "bash",
+            "-c",
+            f'source "{script}"; run_with_deadline 20 "stdin probe" cat <<\'PAYLOAD\'\n'
+            "gate-line-one\ngate-line-two\nPAYLOAD\n",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+
+def test_run_with_deadline_forwards_stdin_to_the_bounded_command(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A bounding wrapper may add a deadline; it may not change what the child reads.
+
+    run_with_deadline backgrounds its child, and a non-interactive shell gives a
+    backgrounded job /dev/null on stdin. Before the fd-3 passthrough, every
+    heredoc attached to a wrapped call was silently discarded -- including
+    do_boot_smoke's SMOKE script piped to `ssh ... bash -s`, where the remote
+    shell read EOF, ran zero gates and exited 0. That is a fail-open pre-promote
+    gate, so this contract is pinned directly rather than only through D4.
+    """
+    original = DEPLOY_SCRIPT.read_text()
+
+    good = _run_with_deadline_stdin_probe(original, tmp_path / "good")
+    assert good.returncode == 0, good.stderr
+    assert "gate-line-one" in good.stdout
+    assert "gate-line-two" in good.stdout
+
+    # Mutation control: strip the passthrough and the payload must vanish.
+    # Without this the assertions above could pass for the wrong reason.
+    mutated = original.replace('exec 3<&0\n  "$@" <&3 &', '"$@" &', 1)
+    assert mutated != original, "stdin passthrough anchor not found"
+    bad = _run_with_deadline_stdin_probe(mutated, tmp_path / "bad")
+    assert "gate-line-one" not in bad.stdout
 
 
 if __name__ == "__main__":

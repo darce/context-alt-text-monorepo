@@ -1,0 +1,33 @@
+{
+  "maps": {
+    "dashboard": {
+      "projection_sha256": "6e65af9fb7d71cd0d5396af87ca4e2be53c64aca48a388cf51bb650fb59c189d",
+      "source_sha256": "4de444cbf7c7283ec6761a07344bd70b436f82b4553c8044243cbc9cce25f29f"
+    },
+    "describe-gpu-tier": {
+      "projection_sha256": "165b834a71e36e1cbec1078de68424ed5560d41d2902a3eeea01ba43d3638ffc",
+      "source_sha256": "e4bff1c5be5f358450f4bea802a11d1f9d413c90cc8fa30861c31988dfb92661"
+    },
+    "febt-1-job-error-states": {
+      "projection_sha256": "3d179180800c5d1293240477022f00165164b5ffc238221a5d0b53b8932ea415",
+      "source_sha256": "dea5305316cdcf6386a1bbf8afe5ae636902ee3391ef995b1a8fa54564612d23"
+    },
+    "gpu-operator-control": {
+      "projection_sha256": "28e176487294f2842628b6492a02a78718ed95285d591f478a695f1bcbc31926",
+      "source_sha256": "1f6743c1276ec031e35b4c78ea14d133fe288ce3f42921cde99a56ac32a99f1d"
+    },
+    "roster-people": {
+      "projection_sha256": "c3674e305d16520943172b3699073d3603c30a7195d7170114bdbaa78e92206c",
+      "source_sha256": "efe7921ce053f3f8a671a8f28b23aedd0076a1bffc32fef4ae96e8698a9ec8c0"
+    },
+    "workbench-2pane": {
+      "projection_sha256": "1e4b27e6b40e976ca3fad27623e9b88626fb79cab3d520a68bcb32b4d673fc6c",
+      "source_sha256": "41ea3a91f0c157b70e15b3efcfb2259d42453eb931f8e51fc69a3b41ce518dfc"
+    },
+    "workbench-operator-loop": {
+      "projection_sha256": "7fec3c6b231ce9b1f96d0200db2233abd8669f8991cff1688c76fc6333118c56",
+      "source_sha256": "c9be508cd57e47977bdf4500619ded36aac0b879c234b4fada3b27f262ac3414"
+    }
+  },
+  "version": 1
+}

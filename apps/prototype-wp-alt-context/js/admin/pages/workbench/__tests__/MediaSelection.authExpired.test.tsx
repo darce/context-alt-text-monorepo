@@ -39,7 +39,7 @@ const baseItem: WorkbenchMediaItem = {
   identities: [],
 };
 
-type QuerySurface = {
+interface QuerySurface {
   data?: { identities_by_media: Record<string, DetectedIdentity[]>; data_source?: string } | undefined;
   isLoading: boolean;
   isError: boolean;
@@ -48,7 +48,7 @@ type QuerySurface = {
   isPending?: boolean;
   error?: unknown;
   refetch: () => void;
-};
+}
 
 let identitiesSurface: QuerySurface;
 let detailSurface: QuerySurface;
@@ -69,6 +69,7 @@ vi.mock('../WorkbenchMediaContext', () => ({
       currentPage: 1,
       perPage: 10,
       handleSearchChange: vi.fn(),
+      clearSearch: vi.fn(),
       handleStatusChange: vi.fn(),
       setCurrentPage: vi.fn(),
       setPerPage: vi.fn(),
@@ -128,10 +129,6 @@ vi.mock('../../../hooks/useRecognitionCooldown', () => ({
     remainingSeconds: 0,
     remainingMs: 0,
   }),
-}));
-
-vi.mock('../MediaAnalyzeCta', () => ({
-  MediaAnalyzeCta: () => null,
 }));
 
 vi.mock('../BulkDescribeReviewLink', () => ({

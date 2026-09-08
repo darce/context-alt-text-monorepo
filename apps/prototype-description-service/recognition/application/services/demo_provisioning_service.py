@@ -8,16 +8,19 @@ is returned to the caller once and is never written to the registry.
 
 from __future__ import annotations
 
+import hashlib
+import re
 import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 
-from sqlalchemy import select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import Select, func, select, update
+from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import DemoInstance, Tenant
+from db.models import DemoInstance, IdentityCluster, MediaIdentity, Tenant
 from recognition.application.services.api_key_admin_service import mint_api_key
 from recognition.config.security import RateLimitTier
 from recognition.infrastructure.repositories.api_key_repository import SqlAlchemyApiKeyRepository
@@ -28,9 +31,63 @@ DEFAULT_SLUG_LENGTH = 7
 DEFAULT_TTL_DAYS = 30
 DEFAULT_RECOGNITION_QUOTA = 200
 DEMO_URL_TEMPLATE = "https://demo.altcontext.com/x/{slug}"
+DEFAULT_SESSION_TTL_SECONDS = 15 * 60
+DEMO_SESSION_COOKIE = "acx_demo_session"
+DEMO_SESSION_HEADER = "X-Demo-Session"
 
+@dataclass(frozen=True)
+class PreScanState:
+    """Pre-scan contract encoded in a seed bundle (AUTH-04).
+
+    A provisioned tenant must start with seeded media present, zero scanned
+    faces, and people_count == 0. The bundle is the source of truth — not an
+    out-of-band reset script.
+    """
+
+    seeded_media_ids: tuple[str, ...]
+    scanned_faces: int
+    people_count: int
+
+    @property
+    def seeded_media_present(self) -> bool:
+        return len(self.seeded_media_ids) > 0
+
+    def as_public_dict(self) -> dict[str, bool | int]:
+        return {
+            "seeded_media_present": self.seeded_media_present,
+            "scanned_faces": self.scanned_faces,
+            "people_count": self.people_count,
+        }
+
+
+@dataclass(frozen=True)
+class SeedBundleContract:
+    """Named seed bundle plus the pre-scan state it is required to produce."""
+
+    name: str
+    pre_scan: PreScanState
+
+
+SEED_BUNDLES: dict[str, SeedBundleContract] = {
+    "default": SeedBundleContract(
+        name="default",
+        pre_scan=PreScanState(
+            seeded_media_ids=("seed-library-1", "seed-library-2", "seed-library-3"),
+            scanned_faces=0,
+            people_count=0,
+        ),
+    ),
+    "acme": SeedBundleContract(
+        name="acme",
+        pre_scan=PreScanState(
+            seeded_media_ids=("acme-gallery-1", "acme-gallery-2"),
+            scanned_faces=0,
+            people_count=0,
+        ),
+    ),
+}
 # Named seed bundles only — real per-prospect image ingestion is out of scope.
-KNOWN_SEED_BUNDLES: frozenset[str] = frozenset({"default", "acme"})
+KNOWN_SEED_BUNDLES: frozenset[str] = frozenset(SEED_BUNDLES)
 
 _MAX_SLUG_ATTEMPTS = 8
 
@@ -43,6 +100,10 @@ class DemoInstanceNotFoundError(LookupError):
     """Raised when expire targets an unknown slug."""
 
 
+class PreScanStateError(RuntimeError):
+    """Seed-bundle pre-scan contract violated; provision must not proceed."""
+
+
 @dataclass(frozen=True)
 class ProvisionResult:
     """Outcome of a successful provision; raw_key is one-time only."""
@@ -50,6 +111,7 @@ class ProvisionResult:
     instance: DemoInstance
     raw_api_key: str
     demo_url: str
+    pre_scan: PreScanState
 
 
 def generate_slug(length: int = DEFAULT_SLUG_LENGTH) -> str:
@@ -67,10 +129,122 @@ def resolve_seed_bundle(seed: str) -> str:
     name = (seed or "").strip()
     if not name:
         raise UnknownSeedBundleError("seed bundle name is required")
-    if name not in KNOWN_SEED_BUNDLES:
-        known = ", ".join(sorted(KNOWN_SEED_BUNDLES))
+    if name not in SEED_BUNDLES:
+        known = ", ".join(sorted(SEED_BUNDLES))
         raise UnknownSeedBundleError(f"unknown seed bundle {name!r}; known: {known}")
     return name
+
+
+def load_seed_bundle(seed: str) -> SeedBundleContract:
+    name = resolve_seed_bundle(seed)
+    return SEED_BUNDLES[name]
+
+
+def assert_pre_scan_state(state: PreScanState) -> PreScanState:
+    """Fail loudly when a seed bundle or tenant is not in the pre-scan contract."""
+    if not state.seeded_media_present:
+        raise PreScanStateError("seeded media must be present in the seed bundle")
+    if state.scanned_faces != 0:
+        raise PreScanStateError(f"scanned_faces must be 0, got {state.scanned_faces}")
+    if state.people_count != 0:
+        raise PreScanStateError(f"people_count must be 0, got {state.people_count}")
+    return state
+
+
+_MISSING_TABLE_SQLITE = re.compile(r"no such table:\s+([a-z_][a-z0-9_]*)")
+_MISSING_TABLE_POSTGRES = re.compile(r'relation ["\']([a-z_][a-z0-9_]*)["\'] does not exist')
+_IDENTITY_RELATIONS = frozenset({"media_identities", "identity_clusters"})
+
+
+def _missing_relation_name(exc: BaseException) -> str | None:
+    """Return the missing table name, or None for missing columns / other errors."""
+    msg = str(exc).lower()
+    if "no such column" in msg:
+        return None
+    if "column " in msg and "does not exist" in msg:
+        return None
+    sqlite_match = _MISSING_TABLE_SQLITE.search(msg)
+    if sqlite_match:
+        return sqlite_match.group(1)
+    pg_match = _MISSING_TABLE_POSTGRES.search(msg)
+    if pg_match:
+        return pg_match.group(1)
+    return None
+
+
+async def _count_or_missing(
+    session: AsyncSession,
+    stmt: Select[tuple[int]],
+    *,
+    relation: str,
+) -> int | None:
+    """Return the scalar count, or None when ``relation`` itself is missing."""
+    try:
+        return int(await session.scalar(stmt) or 0)
+    except (OperationalError, ProgrammingError) as exc:
+        if _missing_relation_name(exc) == relation:
+            return None
+        raise
+
+
+async def observe_pre_scan_state(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    bundle: SeedBundleContract,
+) -> PreScanState:
+    """Read tenant face/people counts and pair them with the bundle's media list.
+
+    Zero counts are allowed only when both identity relations exist and are
+    empty, or when *both* relations are confirmed missing (fresh fixture). A
+    missing column or a half-present schema fails closed.
+    """
+    media_stmt = select(func.count(func.distinct(MediaIdentity.media_id))).where(
+        MediaIdentity.tenant_id == tenant_id
+    )
+    faces_stmt = select(func.count()).select_from(MediaIdentity).where(MediaIdentity.tenant_id == tenant_id)
+    people_stmt = (
+        select(func.count())
+        .select_from(IdentityCluster)
+        .where(
+            IdentityCluster.tenant_id == tenant_id,
+            IdentityCluster.label.is_not(None),
+        )
+    )
+    tenant_media = await _count_or_missing(session, media_stmt, relation="media_identities")
+    scanned_faces = await _count_or_missing(session, faces_stmt, relation="media_identities")
+    people_count = await _count_or_missing(session, people_stmt, relation="identity_clusters")
+    missing = {
+        name
+        for name, value in (
+            ("media_identities", scanned_faces if scanned_faces is not None else tenant_media),
+            ("identity_clusters", people_count),
+        )
+        if value is None
+    }
+    if missing:
+        if missing != _IDENTITY_RELATIONS:
+            raise PreScanStateError(
+                "identity schema is incomplete: both media_identities and "
+                "identity_clusters must exist, or both must be absent"
+            )
+        tenant_media = 0
+        scanned_faces = 0
+        people_count = 0
+    faces = int(scanned_faces or 0)
+    people = int(people_count or 0)
+    media_present = int(tenant_media or 0)
+    if media_present != 0 or faces != 0 or people != 0:
+        raise PreScanStateError(
+            f"tenant is not pre-scan: media_ids={media_present}, scanned_faces={faces}, people_count={people}"
+        )
+    return assert_pre_scan_state(
+        PreScanState(
+            seeded_media_ids=bundle.pre_scan.seeded_media_ids,
+            scanned_faces=faces,
+            people_count=people,
+        )
+    )
 
 
 async def provision_demo(
@@ -88,7 +262,9 @@ async def provision_demo(
     commit; this helper flushes inserts. Retries on the vanishingly rare slug
     primary-key collision.
     """
-    seed_bundle = resolve_seed_bundle(seed)
+    bundle = load_seed_bundle(seed)
+    assert_pre_scan_state(bundle.pre_scan)
+    seed_bundle = bundle.name
     if recognition_quota < 1:
         raise ValueError("recognition_quota must be >= 1")
     if ttl_days < 1:
@@ -136,7 +312,14 @@ async def provision_demo(
             last_error = exc
             continue
 
-        return ProvisionResult(instance=instance, raw_api_key=raw, demo_url=demo_url_for(slug))
+        observed = await observe_pre_scan_state(session, tenant_id=tenant_id, bundle=bundle)
+        assert_pre_scan_state(observed)
+        return ProvisionResult(
+            instance=instance,
+            raw_api_key=raw,
+            demo_url=demo_url_for(slug),
+            pre_scan=observed,
+        )
 
     raise RuntimeError(f"failed to allocate unique demo slug after {_MAX_SLUG_ATTEMPTS} attempts") from last_error
 
@@ -170,6 +353,7 @@ class DemoResolveContext:
     branding_json: dict | None
     expires_at: datetime
     quota_remaining: int
+    pre_scan: PreScanState
 
 
 class DemoEndedError(LookupError):
@@ -182,6 +366,107 @@ class DemoQuotaExceededError(RuntimeError):
     def __init__(self, message: str = "demo_quota_exceeded", *, remaining: int = 0) -> None:
         super().__init__(message)
         self.remaining = remaining
+
+
+class DemoSessionFailure(StrEnum):
+    """Canonical demo-session failure codes (HTTP 401 detail)."""
+
+    REQUIRED = "session_required"
+    INVALID = "session_invalid"
+    EXPIRED = "session_expired"
+
+
+class DemoSessionError(Exception):
+    """Base class for demo session failures. Always HTTP 401, never tenant data."""
+
+    code: DemoSessionFailure
+
+    def __init__(self, code: DemoSessionFailure) -> None:
+        super().__init__(code.value)
+        self.code = code
+
+
+class DemoSessionRequiredError(DemoSessionError):
+    def __init__(self) -> None:
+        super().__init__(DemoSessionFailure.REQUIRED)
+
+
+class DemoSessionInvalidError(DemoSessionError):
+    def __init__(self) -> None:
+        super().__init__(DemoSessionFailure.INVALID)
+
+
+class DemoSessionExpiredError(DemoSessionError):
+    def __init__(self) -> None:
+        super().__init__(DemoSessionFailure.EXPIRED)
+
+
+@dataclass(frozen=True)
+class DemoSession:
+    """Short-lived capability minted by exchanging a demo slug."""
+
+    token: str
+    slug: str
+    expires_at: datetime
+
+
+# token_hash -> (slug, expires_at). In-process; single-worker like the IP limiter.
+_sessions: dict[str, tuple[str, datetime]] = {}
+
+
+def _token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def reset_demo_sessions_for_tests() -> None:
+    """Testing seam: drop in-memory demo sessions between tests."""
+    _sessions.clear()
+
+
+def mint_demo_session(
+    slug: str,
+    *,
+    ttl_seconds: int = DEFAULT_SESSION_TTL_SECONDS,
+    now: datetime | None = None,
+) -> DemoSession:
+    """Mint a high-entropy session bound to ``slug``. Raw token returned once."""
+    cleaned = (slug or "").strip()
+    if not cleaned:
+        raise ValueError("slug is required")
+    if ttl_seconds < 1:
+        raise ValueError("ttl_seconds must be >= 1")
+    issued = _as_utc(now) if now is not None else datetime.now(tz=UTC)
+    expires_at = issued + timedelta(seconds=ttl_seconds)
+    token = secrets.token_urlsafe(32)
+    _sessions[_token_hash(token)] = (cleaned, expires_at)
+    return DemoSession(token=token, slug=cleaned, expires_at=expires_at)
+
+
+def resolve_demo_session(
+    token: str | None,
+    *,
+    slug: str,
+    now: datetime | None = None,
+) -> DemoSession:
+    """Bind ``token`` to ``slug`` or raise a 401-class session error.
+
+    Does not load tenant data — callers must still ``resolve_demo`` after this
+    succeeds. Expired/invalid tokens never return a session record.
+    """
+    cleaned_token = (token or "").strip()
+    if not cleaned_token:
+        raise DemoSessionRequiredError()
+    record = _sessions.get(_token_hash(cleaned_token))
+    if record is None:
+        raise DemoSessionInvalidError()
+    bound_slug, expires_at = record
+    cutoff = _as_utc(now) if now is not None else datetime.now(tz=UTC)
+    if _as_utc(expires_at) < cutoff:
+        _sessions.pop(_token_hash(cleaned_token), None)
+        raise DemoSessionExpiredError()
+    if bound_slug != (slug or "").strip():
+        raise DemoSessionInvalidError()
+    return DemoSession(token=cleaned_token, slug=bound_slug, expires_at=_as_utc(expires_at))
 
 
 DEFAULT_SWEEP_STALL_LIMIT = 5
@@ -213,12 +498,14 @@ async def resolve_demo(session: AsyncSession, *, slug: str) -> DemoResolveContex
         raise DemoEndedError("demo_ended")
 
     remaining = max(0, int(instance.recognition_quota) - int(instance.recognition_used))
+    bundle = load_seed_bundle(instance.seed_bundle)
     return DemoResolveContext(
         tenant_id=str(instance.tenant_id),
         seed_bundle=instance.seed_bundle,
         branding_json=instance.branding_json,
         expires_at=expires_at,
         quota_remaining=remaining,
+        pre_scan=bundle.pre_scan,
     )
 
 
@@ -365,24 +652,43 @@ async def sweep_expired_demos(
 __all__ = [
     "BASE58_ALPHABET",
     "DEFAULT_RECOGNITION_QUOTA",
+    "DEFAULT_SESSION_TTL_SECONDS",
     "DEFAULT_SLUG_LENGTH",
     "DEFAULT_SWEEP_STALL_LIMIT",
     "DEFAULT_TTL_DAYS",
+    "DEMO_SESSION_COOKIE",
+    "DEMO_SESSION_HEADER",
     "DEMO_URL_TEMPLATE",
     "KNOWN_SEED_BUNDLES",
+    "SEED_BUNDLES",
     "DemoEndedError",
     "DemoInstanceNotFoundError",
     "DemoQuotaExceededError",
+    "DemoSession",
+    "DemoSessionError",
+    "DemoSessionExpiredError",
+    "DemoSessionFailure",
+    "DemoSessionInvalidError",
+    "DemoSessionRequiredError",
     "MAX_DEMO_QUOTA_UNITS",
     "DemoResolveContext",
+    "PreScanState",
+    "PreScanStateError",
     "ProvisionResult",
+    "SeedBundleContract",
     "SweepResult",
     "UnknownSeedBundleError",
+    "assert_pre_scan_state",
     "demo_url_for",
     "expire_demo",
     "generate_slug",
+    "load_seed_bundle",
+    "mint_demo_session",
+    "observe_pre_scan_state",
     "provision_demo",
+    "reset_demo_sessions_for_tests",
     "resolve_demo",
+    "resolve_demo_session",
     "resolve_seed_bundle",
     "sweep_expired_demos",
     "try_consume_demo_quota",

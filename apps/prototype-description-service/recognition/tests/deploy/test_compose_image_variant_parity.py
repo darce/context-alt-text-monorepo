@@ -1,7 +1,7 @@
 """ORCH-LAUNCH-01 wave3: image-variant parity through compose + deploy guards.
 
-Guards the silent VLM no-op (compose hardcoding acx-backend), the builder-vlm
-remote-build bypass, and the writable /data/cache RCE surface.
+Guards the silent VLM no-op (compose hardcoding acx-backend), the remote-build
+free-space floor selector, and the writable /data/cache RCE surface.
 
 TEST-15: each assertion is proven red via a synthetic mutation in this module
 (and documented mutations against the real sources during the implementation
@@ -11,12 +11,15 @@ pass — see lane report).
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 import tempfile
 import textwrap
 from pathlib import Path
+from typing import Mapping
 
 import pytest
+import yaml
 
 # recognition/tests/deploy/<this> → parents[3] = service root;
 # parents[5] = monorepo root.
@@ -25,16 +28,16 @@ REPO_ROOT = Path(__file__).resolve().parents[5]
 DEPLOY_SCRIPT = REPO_ROOT / "scripts" / "deploy" / "recognition-service.sh"
 COMPOSE_ENV = SERVICE_ROOT / "docker-compose.env.yml"
 COMPOSE_PROD = SERVICE_ROOT / "docker-compose.prod.yml"
+COMPOSE_VLM = SERVICE_ROOT / "docker-compose.vlm.yml"
 
 _DEFAULT_REPO = "iad.ocir.io/idu2kqqe2jxy/acx-backend"
+_VLM_REPO = "iad.ocir.io/idu2kqqe2jxy/acx-backend-vlm"
 # image: ${ACX_IMAGE_REPO:-iad.ocir.io/idu2kqqe2jxy/acx-backend}:TAG
 _IMAGE_LINE_RE = re.compile(
     r"^\s*image:\s*(?P<value>.+?)\s*$",
     re.MULTILINE,
 )
-_ACX_IMAGE_REPO_SUB_RE = re.compile(
-    r"\$\{ACX_IMAGE_REPO:-" + re.escape(_DEFAULT_REPO) + r"\}"
-)
+_ACX_IMAGE_REPO_SUB_RE = re.compile(r"\$\{ACX_IMAGE_REPO:-" + re.escape(_DEFAULT_REPO) + r"\}")
 # Bare hardcoded acx-backend without ACX_IMAGE_REPO substitution.
 _BARE_ACX_BACKEND_RE = re.compile(
     r"image:\s*iad\.ocir\.io/idu2kqqe2jxy/acx-backend(?![-:])"
@@ -52,6 +55,96 @@ def _service_image_lines(compose_text: str) -> list[str]:
             continue
         values.append(value)
     return values
+
+
+def compose_image_default_repos(compose_text: str) -> set[str]:
+    """ACX_IMAGE_REPO default values on app image lines (rg-015: parsed, not guessed)."""
+    found: set[str] = set()
+    for value in _service_image_lines(compose_text):
+        match = re.search(r"\$\{ACX_IMAGE_REPO:-([^}]+)\}", value)
+        if match:
+            found.add(match.group(1))
+    return found
+
+
+def compose_defaults_to_vlm_image_repo(compose_text: str) -> bool:
+    """True when every app image line defaults ACX_IMAGE_REPO to the VLM repo."""
+    repos = compose_image_default_repos(compose_text)
+    return bool(repos) and repos == {_VLM_REPO}
+
+
+_VLM_OVERLAY_SERVICES = ("api", "worker", "fix-blob-ownership")
+_COMPOSE_INTERPOLATION_RE = re.compile(r"\$\{([^}:]+)(?::-([^}]*))?\}")
+
+
+def _compose_app_service_images(compose_text: str) -> dict[str, str]:
+    """Map service name -> raw image value, skipping postgres/caddy infra."""
+    data = yaml.safe_load(compose_text) or {}
+    services = data.get("services") or {}
+    if not isinstance(services, dict):
+        return {}
+    images: dict[str, str] = {}
+    for name, spec in services.items():
+        if not isinstance(spec, dict):
+            continue
+        image = spec.get("image")
+        if not isinstance(image, str):
+            continue
+        if "pgvector" in image or "caddy:" in image:
+            continue
+        images[str(name)] = image
+    return images
+
+
+def _strip_image_tag(image: str) -> str:
+    """Repo token of an image line (interpolation default or hardcoded registry/repo)."""
+    value = image.strip()
+    match = re.match(r"^\$\{ACX_IMAGE_REPO:-([^}]+)\}(?::.*)?$", value)
+    if match:
+        return match.group(1)
+    last_slash = value.rfind("/")
+    colon = value.find(":", last_slash)
+    return value[:colon] if colon != -1 else value
+
+
+def compose_vlm_overlay_pins_named_services(compose_text: str) -> bool:
+    """True when named api/worker/fix-blob-ownership hard-pin the VLM repo.
+
+    Sticky ``ACX_IMAGE_REPO`` (env.yml / remote .env) must not be interpolated:
+    compose substitutes after merge, so a slim default would silently win.
+    A dropped named service or a slim/hardcoded-wrong line fails closed.
+    """
+    images = _compose_app_service_images(compose_text)
+    for name in _VLM_OVERLAY_SERVICES:
+        if name not in images:
+            return False
+        value = images[name]
+        if "ACX_IMAGE_REPO" in value:
+            return False
+        if _strip_image_tag(value) != _VLM_REPO:
+            return False
+    return True
+
+
+def _interpolate_compose_value(value: str, env: Mapping[str, str]) -> str:
+    def repl(match: re.Match[str]) -> str:
+        name, default = match.group(1), match.group(2)
+        if name in env:
+            return env[name]
+        return default if default is not None else ""
+
+    return _COMPOSE_INTERPOLATION_RE.sub(repl, value)
+
+
+def merged_app_service_images(*compose_texts: str, env: Mapping[str, str]) -> dict[str, str]:
+    """Compose-style merge of app ``image:`` lines, then ${VAR:-default} interpolation.
+
+    Later files win per service name (overlay replaces env.yml image keys).
+    """
+    merged: dict[str, str] = {}
+    for text in compose_texts:
+        merged.update(_compose_app_service_images(text))
+    return {name: _interpolate_compose_value(image, env) for name, image in merged.items()}
 
 
 def compose_api_worker_images_use_image_repo(compose_text: str) -> bool:
@@ -99,62 +192,55 @@ def script_threads_resolve_to_acx_image_repo(script_text: str) -> bool:
     return True
 
 
-def script_refuses_any_vlm_remote_target(script_text: str) -> bool:
-    """refuse_remote_vlm_build must match *vlm*, not only the literal runtime-vlm."""
-    # Extract the function body roughly.
+def script_selects_remote_build_min_free_gb(script_text: str) -> bool:
+    """The remote floor selector must cover every ``*vlm*`` target."""
     m = re.search(
-        r"refuse_remote_vlm_build\(\)\s*\{(?P<body>.*?)\n\}",
+        r"^remote_build_min_free_gb\(\)\s*\{(?P<body>.*?)^\}",
         script_text,
-        re.DOTALL,
+        re.DOTALL | re.MULTILINE,
     )
     if not m:
         return False
     body = m.group("body")
-    # Must not be literal-only equality on runtime-vlm.
-    if re.search(r'==\s*"runtime-vlm"', body) and "*vlm*" not in body:
+    # A literal-only runtime-vlm branch misses builder-vlm and future VLM targets.
+    if re.search(r'''==\s*["']runtime-vlm["']''', body):
         return False
-    # Pattern form: [[ ... == *vlm* ]]
-    if not re.search(r"==\s*\*vlm\*", body):
+    if not re.search(r"ACX_BUILD_TARGET[^\n]*==\s*\*vlm\*", body):
         return False
-    # Error message must state the refused value (use $target or ${target}).
-    if "ACX_BUILD_TARGET=" not in body and "ACX_BUILD_TARGET=${" not in body:
-        # fail "… ACX_BUILD_TARGET=${target} …"
-        if not re.search(r"ACX_BUILD_TARGET=\$\{?target", body):
-            return False
-    return True
-
-
-def _run_refuse_probe(target: str) -> subprocess.CompletedProcess[str]:
-    """Source refuse_remote_vlm_build from the real script and invoke it under a target."""
-    # Extract only what we need without executing the whole deploy script.
-    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
-    # Minimal harness: redefine fail to exit 1 with message; call the real function body.
-    m = re.search(
-        r"refuse_remote_vlm_build\(\)\s*\{(?P<body>.*?)\n\}",
-        script,
-        re.DOTALL,
+    return all(
+        re.search(rf"\$\{{{name}\}}", body)
+        for name in ("REMOTE_VLM_BUILD_MIN_FREE_GB", "REMOTE_BUILD_MIN_FREE_GB")
     )
-    assert m, "refuse_remote_vlm_build not found in deploy script"
-    body = m.group("body")
+
+
+def _script_constant_value(script_text: str, name: str) -> str:
+    """Read a numeric shell constant from the real deploy script."""
+    m = re.search(rf"^{re.escape(name)}=(?P<value>[0-9]+)$", script_text, re.MULTILINE)
+    assert m, f"{name} constant not found in deploy script"
+    return m.group("value")
+
+
+def _run_remote_build_min_free_gb_probe(target: str) -> str:
+    """Source the real script and return its remote floor for ``target``."""
     probe = textwrap.dedent(
         f"""\
         #!/usr/bin/env bash
         set -euo pipefail
-        fail() {{ printf '%s\\n' "$*" >&2; exit 1; }}
+        ACX_BUILD_TARGET=
+        source "{DEPLOY_SCRIPT}"
         ACX_BUILD_TARGET={target!r}
-        refuse_remote_vlm_build() {{
-        {body}
-        }}
-        refuse_remote_vlm_build
-        echo ACCEPTED
+        remote_build_min_free_gb
         """
     )
-    return subprocess.run(
+    result = subprocess.run(
         ["bash", "-c", probe],
         check=False,
         capture_output=True,
         text=True,
+        timeout=15,
     )
+    assert result.returncode == 0, f"floor probe failed for {target!r}: {result.stderr}"
+    return (result.stdout or "").strip()
 
 
 # ---- positive: real tree -------------------------------------------------
@@ -163,8 +249,7 @@ def _run_refuse_probe(target: str) -> subprocess.CompletedProcess[str]:
 def test_compose_env_uses_acx_image_repo_substitution() -> None:
     text = COMPOSE_ENV.read_text(encoding="utf-8")
     assert compose_api_worker_images_use_image_repo(text), (
-        "docker-compose.env.yml api/worker must use "
-        "${ACX_IMAGE_REPO:-iad.ocir.io/idu2kqqe2jxy/acx-backend}:…"
+        "docker-compose.env.yml api/worker must use ${ACX_IMAGE_REPO:-iad.ocir.io/idu2kqqe2jxy/acx-backend}:…"
     )
     # Explicit negative: no bare hardcoded image lines for the app services.
     for value in _service_image_lines(text):
@@ -174,12 +259,52 @@ def test_compose_env_uses_acx_image_repo_substitution() -> None:
 def test_compose_prod_uses_acx_image_repo_substitution() -> None:
     text = COMPOSE_PROD.read_text(encoding="utf-8")
     assert compose_api_worker_images_use_image_repo(text), (
-        "docker-compose.prod.yml api/worker must use "
-        "${ACX_IMAGE_REPO:-iad.ocir.io/idu2kqqe2jxy/acx-backend}:latest"
+        "docker-compose.prod.yml api/worker must use ${ACX_IMAGE_REPO:-iad.ocir.io/idu2kqqe2jxy/acx-backend}:latest"
     )
     for value in _service_image_lines(text):
         assert "ACX_IMAGE_REPO" in value, f"hardcoded image without substitution: {value}"
         assert value.endswith(":latest") or ":latest" in value
+
+
+def test_compose_env_default_repo_stays_recognition_slim() -> None:
+    """Default compose stays torch-free; VLM is the overlay, not the default."""
+    assert compose_image_default_repos(COMPOSE_ENV.read_text()) == {_DEFAULT_REPO}
+    assert compose_image_default_repos(COMPOSE_PROD.read_text()) == {_DEFAULT_REPO}
+    assert not compose_defaults_to_vlm_image_repo(COMPOSE_ENV.read_text())
+
+
+def test_compose_vlm_overlay_defaults_to_vlm_repo() -> None:
+    """PROV-01b / W3-E-01: overlay hard-pins acx-backend-vlm on named services."""
+    assert COMPOSE_VLM.is_file(), "docker-compose.vlm.yml overlay missing"
+    text = COMPOSE_VLM.read_text(encoding="utf-8")
+    assert compose_vlm_overlay_pins_named_services(text), (
+        "docker-compose.vlm.yml must hard-pin api/worker/fix-blob-ownership "
+        f"to {_VLM_REPO} without interpolating ACX_IMAGE_REPO"
+    )
+    assert _VLM_REPO in text
+    active_env = [
+        line
+        for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#") and "ACX_DESCRIPTION_ADAPTER" in line
+    ]
+    assert not active_env, f"VLM overlay must not flip ACX_DESCRIPTION_ADAPTER; default stays seeded; got {active_env}"
+
+
+def test_compose_vlm_overlay_wins_over_sticky_slim_image_repo() -> None:
+    """W3-E-01: env.yml + overlay with ACX_IMAGE_REPO=slim still resolves *-vlm."""
+    env = {"ACX_IMAGE_REPO": _DEFAULT_REPO, "ACX_IMAGE_TAG": "latest"}
+    images = merged_app_service_images(
+        COMPOSE_ENV.read_text(encoding="utf-8"),
+        COMPOSE_VLM.read_text(encoding="utf-8"),
+        env=env,
+    )
+    for name in _VLM_OVERLAY_SERVICES:
+        assert name in images, f"merged overlay dropped named service {name}"
+        resolved = images[name]
+        assert _strip_image_tag(resolved) == _VLM_REPO, (
+            f"{name} resolved {resolved!r} under sticky ACX_IMAGE_REPO={_DEFAULT_REPO}; "
+            "overlay must hard-pin acx-backend-vlm"
+        )
 
 
 def test_data_cache_bind_mounts_are_readonly_in_both_compose_files() -> None:
@@ -224,23 +349,17 @@ def test_deploy_script_threads_image_repo_from_resolve() -> None:
     )
 
 
-def test_refuse_remote_vlm_build_rejects_builder_vlm_and_runtime_vlm() -> None:
+def test_remote_build_min_free_gb_selects_vlm_targets() -> None:
     script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
-    assert script_refuses_any_vlm_remote_target(script)
+    assert script_selects_remote_build_min_free_gb(script)
+    vlm_floor = _script_constant_value(script, "REMOTE_VLM_BUILD_MIN_FREE_GB")
+    recognition_floor = _script_constant_value(script, "REMOTE_BUILD_MIN_FREE_GB")
 
     for target in ("builder-vlm", "runtime-vlm", "foo-vlm-bar"):
-        result = _run_refuse_probe(target)
-        assert result.returncode != 0, f"expected refuse for {target!r}, got ACCEPTED"
-        combined = (result.stdout or "") + (result.stderr or "")
-        assert target in combined, f"error must state refused value {target!r}: {combined}"
+        assert _run_remote_build_min_free_gb_probe(target) == vlm_floor
 
-    # Legitimate non-vlm targets must still be accepted.
     for target in ("", "runtime", "builder"):
-        result = _run_refuse_probe(target)
-        assert result.returncode == 0, (
-            f"legitimate target {target!r} must not be refused: {result.stderr}"
-        )
-        assert "ACCEPTED" in (result.stdout or "")
+        assert _run_remote_build_min_free_gb_probe(target) == recognition_floor
 
 
 def test_smoke_timeout_failure_names_unvalidated_vlm_budget() -> None:
@@ -256,6 +375,66 @@ def test_smoke_timeout_failure_names_unvalidated_vlm_budget() -> None:
 
 
 # ---- parsers / TEST-15 synthetic mutations -------------------------------
+
+
+def test_mutation_vlm_overlay_without_vlm_repo_fails_guard() -> None:
+    """TEST-15: slim default, dropped worker, or sticky ACX_IMAGE_REPO interpolation fail."""
+    good = textwrap.dedent(
+        f"""\
+        services:
+          api:
+            image: {_VLM_REPO}:${{ACX_IMAGE_TAG:-latest}}
+          worker:
+            image: {_VLM_REPO}:${{ACX_IMAGE_TAG:-latest}}
+          fix-blob-ownership:
+            image: {_VLM_REPO}:${{ACX_IMAGE_TAG:-latest}}
+        """
+    )
+    slim = textwrap.dedent(
+        f"""\
+        services:
+          api:
+            image: {_DEFAULT_REPO}:${{ACX_IMAGE_TAG:-latest}}
+          worker:
+            image: {_DEFAULT_REPO}:${{ACX_IMAGE_TAG:-latest}}
+          fix-blob-ownership:
+            image: {_DEFAULT_REPO}:${{ACX_IMAGE_TAG:-latest}}
+        """
+    )
+    api_only = textwrap.dedent(
+        f"""\
+        services:
+          api:
+            image: {_VLM_REPO}:${{ACX_IMAGE_TAG:-latest}}
+        """
+    )
+    interpolating = textwrap.dedent(
+        f"""\
+        services:
+          api:
+            image: ${{ACX_IMAGE_REPO:-{_VLM_REPO}}}:${{ACX_IMAGE_TAG:-latest}}
+          worker:
+            image: ${{ACX_IMAGE_REPO:-{_VLM_REPO}}}:${{ACX_IMAGE_TAG:-latest}}
+          fix-blob-ownership:
+            image: ${{ACX_IMAGE_REPO:-{_VLM_REPO}}}:${{ACX_IMAGE_TAG:-latest}}
+        """
+    )
+    one_slim = textwrap.dedent(
+        f"""\
+        services:
+          api:
+            image: {_VLM_REPO}:${{ACX_IMAGE_TAG:-latest}}
+          worker:
+            image: {_DEFAULT_REPO}:${{ACX_IMAGE_TAG:-latest}}
+          fix-blob-ownership:
+            image: {_VLM_REPO}:${{ACX_IMAGE_TAG:-latest}}
+        """
+    )
+    assert compose_vlm_overlay_pins_named_services(good)
+    assert not compose_vlm_overlay_pins_named_services(slim)
+    assert not compose_vlm_overlay_pins_named_services(api_only)
+    assert not compose_vlm_overlay_pins_named_services(interpolating)
+    assert not compose_vlm_overlay_pins_named_services(one_slim)
 
 
 def test_mutation_bare_image_fails_compose_guard() -> None:
@@ -291,29 +470,32 @@ def test_mutation_rw_cache_mount_fails_ro_guard() -> None:
     assert not compose_data_cache_mounts_are_readonly(bad)
 
 
-def test_mutation_literal_only_refuse_fails_guard() -> None:
-    """TEST-15: refuse that only matches runtime-vlm (not *vlm*) goes red."""
+def test_mutation_literal_only_remote_floor_selector_fails_guard() -> None:
+    """TEST-15: a runtime-vlm-only floor selector (not *vlm*) goes red."""
     good = textwrap.dedent(
         """\
-        refuse_remote_vlm_build() {
-          local target="${ACX_BUILD_TARGET:-}"
-          if [[ "${target}" == *vlm* ]]; then
-            fail "Remote build refuses ACX_BUILD_TARGET=${target} (matches *vlm*)."
+        remote_build_min_free_gb() {
+          if [[ "${ACX_BUILD_TARGET:-}" == *vlm* ]]; then
+            printf '%s\\n' "${REMOTE_VLM_BUILD_MIN_FREE_GB}"
+          else
+            printf '%s\\n' "${REMOTE_BUILD_MIN_FREE_GB}"
           fi
         }
         """
     )
     bad = textwrap.dedent(
         """\
-        refuse_remote_vlm_build() {
+        remote_build_min_free_gb() {
           if [[ "${ACX_BUILD_TARGET:-}" == "runtime-vlm" ]]; then
-            fail "Remote build refuses ACX_BUILD_TARGET=runtime-vlm."
+            printf '%s\\n' "${REMOTE_VLM_BUILD_MIN_FREE_GB}"
+          else
+            printf '%s\\n' "${REMOTE_BUILD_MIN_FREE_GB}"
           fi
         }
         """
     )
-    assert script_refuses_any_vlm_remote_target(good)
-    assert not script_refuses_any_vlm_remote_target(bad)
+    assert script_selects_remote_build_min_free_gb(good)
+    assert not script_selects_remote_build_min_free_gb(bad)
 
 
 def test_mutation_missing_acx_image_repo_thread_fails_guard() -> None:
@@ -357,9 +539,7 @@ def _probe_resolve_repo_name(target: str) -> str:
         text=True,
         timeout=15,
     )
-    assert result.returncode == 0, (
-        f"resolve_image_repo_name failed for {target!r}: {result.stderr}"
-    )
+    assert result.returncode == 0, f"resolve_image_repo_name failed for {target!r}: {result.stderr}"
     return (result.stdout or "").strip()
 
 
@@ -387,6 +567,8 @@ def _probe_ship_invocations(script_text: str | None = None) -> list[str]:
         if script_text is not None:
             source = Path(tmp) / "recognition-service.sh"
             source.write_text(script_text, encoding="utf-8")
+            # The script sources lib/*.sh relative to its own directory.
+            shutil.copytree(DEPLOY_SCRIPT.parent / "lib", Path(tmp) / "lib")
         probe = textwrap.dedent(
             f"""\
             #!/usr/bin/env bash
@@ -404,8 +586,11 @@ def _probe_ship_invocations(script_text: str | None = None) -> list[str]:
             assert_remote_disk_headroom_for_pull() {{ :; }}
             repair_blob_volume_ownership() {{ echo "repair $*" >> "$LOG"; }}
             ssh() {{ echo "ssh $*" >> "$LOG"; }}
-            promote_gate prod "acx/acx-backend:deadbeef"
-            do_restart prod
+            # do_restart re-resolves the pulled digest against the registry;
+            # the fake ssh has no docker behind it, so answer it directly.
+            remote_image_digest_ref() {{ printf '%s\\n' "${{IMAGE_BASE}}@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"; }}
+            promote_gate prod "${{IMAGE_BASE}}@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+            do_restart prod "${{IMAGE_BASE}}@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
             """
         )
         result = subprocess.run(
@@ -415,9 +600,7 @@ def _probe_ship_invocations(script_text: str | None = None) -> list[str]:
             text=True,
             timeout=30,
         )
-        assert result.returncode == 0, (
-            f"probe failed: rc={result.returncode} err={result.stderr}"
-        )
+        assert result.returncode == 0, f"probe failed: rc={result.returncode} err={result.stderr}"
         return log.read_text(encoding="utf-8").splitlines() if log.exists() else []
 
 
@@ -425,21 +608,21 @@ def test_deploy_path_ships_image_repo_exactly_once_before_restart() -> None:
     """S2-A-06 behavioural: one ship, and it precedes the systemctl restart."""
     calls = _probe_ship_invocations()
     ships = [i for i, line in enumerate(calls) if line.startswith("ship ")]
-    assert len(ships) == 1, (
-        f"remote ACX_IMAGE_REPO must be shipped exactly once per deploy; got {calls}"
-    )
+    assert len(ships) == 1, f"remote ACX_IMAGE_REPO must be shipped exactly once per deploy; got {calls}"
     restarts = [i for i, line in enumerate(calls) if "systemctl restart" in line]
     assert restarts, f"deploy path must restart the unit; got {calls}"
     assert ships[0] < restarts[0], (
-        f"ship must precede the unit restart, else the unit boots on a stale "
-        f"ACX_IMAGE_REPO; got {calls}"
+        f"ship must precede the unit restart, else the unit boots on a stale ACX_IMAGE_REPO; got {calls}"
     )
 
 
 def test_mutation_removing_ship_call_fails_behavioural_gate() -> None:
     """TEST-15: delete the real ship call site and the gate must go red."""
     script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
-    mutated = script.replace('  ship_remote_image_repo_env "${remote_dir}"\n', "", 1)
+    # Neutralise the call in place rather than deleting the line: the call site
+    # sits inside an `if ! ...; then` compensation block, so deleting it would
+    # produce a syntax error instead of a behavioural control.
+    mutated = script.replace('ship_remote_image_repo_env "${remote_dir}"', "true", 1)
     assert mutated != script, "mutation anchor not found"
     calls = _probe_ship_invocations(mutated)
     assert not [line for line in calls if line.startswith("ship ")], (
@@ -452,6 +635,4 @@ def test_mutation_ship_after_restart_fails_ordering_gate() -> None:
     calls = ["ssh sudo systemctl restart acx-prod", "ship /opt/acx-backend/prod"]
     ships = [i for i, line in enumerate(calls) if line.startswith("ship ")]
     restarts = [i for i, line in enumerate(calls) if "systemctl restart" in line]
-    assert not (ships[0] < restarts[0]), (
-        "ordering assertion must reject ship-after-restart"
-    )
+    assert not (ships[0] < restarts[0]), "ordering assertion must reject ship-after-restart"

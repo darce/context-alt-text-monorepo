@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -46,6 +46,110 @@ describe('MergeSuggestionCard', () => {
     expect(screen.getByText('87% match')).toBeInTheDocument();
     expect(screen.getByText('Alex (3)')).toBeInTheDocument();
     expect(screen.getByText('Jordan (4)')).toBeInTheDocument();
+  });
+
+  it('names the labeled side as the survivor when exactly one side is labeled', () => {
+    render(
+      <MergeSuggestionCard
+        suggestion={baseSuggestion}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        isPending={false}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Yes' })).toBeInTheDocument();
+
+    cleanup();
+    render(
+      <MergeSuggestionCard
+        suggestion={{
+          ...baseSuggestion,
+          cluster_a_label: 'Ada Lovelace',
+          cluster_b_label: null,
+        }}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        isPending={false}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Merge into Ada Lovelace' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Yes' })).not.toBeInTheDocument();
+  });
+
+  it('uses stamped survivor_label when both cluster labels are human-shaped (S4R2-F1)', () => {
+    render(
+      <MergeSuggestionCard
+        suggestion={{
+          ...baseSuggestion,
+          cluster_a_label: 'Ada Lovelace',
+          cluster_b_label: 'Ada',
+          survivor_cluster_id: 'cluster-a',
+          survivor_label: 'Ada Lovelace',
+        }}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        isPending={false}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Merge into Ada Lovelace' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Yes' })).not.toBeInTheDocument();
+  });
+
+  it('uses the full stamped survivor_label on accept copy (S4R2-F4)', () => {
+    render(
+      <MergeSuggestionCard
+        suggestion={{
+          ...baseSuggestion,
+          cluster_a_label: 'MJ',
+          cluster_b_label: 'MJ Twin',
+          survivor_cluster_id: 'cluster-a',
+          survivor_label: 'Mary Jane Watson',
+        }}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        isPending={false}
+      />,
+    );
+    const accept = screen.getByRole('button', { name: 'Merge into Mary Jane Watson' });
+    expect(accept).toHaveTextContent('Merge into Mary Jane Watson');
+    expect(screen.queryByRole('button', { name: 'Merge into MJ' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Yes' })).not.toBeInTheDocument();
+  });
+
+  it('uses stamped survivor_cluster_id = B when both labels are human-shaped (S4-F7)', () => {
+    render(
+      <MergeSuggestionCard
+        suggestion={{
+          ...baseSuggestion,
+          cluster_a_label: 'Ada',
+          cluster_b_label: 'Grace Hopper',
+          survivor_cluster_id: 'cluster-b',
+          survivor_label: 'Grace Hopper',
+        }}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        isPending={false}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Merge into Grace Hopper' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Merge into Ada' })).not.toBeInTheDocument();
+  });
+
+  it('does not guess positionally when only cluster_b is labeled', () => {
+    render(
+      <MergeSuggestionCard
+        suggestion={{
+          ...baseSuggestion,
+          cluster_a_label: null,
+          cluster_b_label: 'Grace Hopper',
+        }}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        isPending={false}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Merge into Grace Hopper' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Merge into Unnamed face group' })).not.toBeInTheDocument();
   });
 
   it('disables actions while pending and calls handlers when active', async () => {
@@ -98,7 +202,7 @@ describe('MergeSuggestionCard', () => {
     expect(screen.getByText('Unnamed face group (5)')).toBeInTheDocument();
   });
 
-  // Discriminates isHumanLabeledTarget (trims) from isMeaningfulMergeLabel (no trim).
+  // DATA-14: isMeaningfulMergeLabel trims and treats cluster-/cluster_ as reserved.
   it('gates whitespace-padded cluster-* the same as bare auto-labels', () => {
     const { container } = render(
       <MergeSuggestionCard
@@ -121,6 +225,27 @@ describe('MergeSuggestionCard', () => {
     expect(alts).toHaveLength(2);
     expect(alts.every((alt) => alt.includes('Detected face'))).toBe(true);
     expect(screen.getByText('Unnamed face group (3)')).toBeInTheDocument();
+  });
+
+  it('treats Cluster-Dad as unnamed on both display and accept copy (DATA-14)', () => {
+    const { container } = render(
+      <MergeSuggestionCard
+        suggestion={withFaces({
+          cluster_a_label: 'Cluster-Dad',
+          cluster_b_label: null,
+          cluster_a_identity_count: 2,
+          cluster_b_identity_count: 1,
+        })}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        isPending={false}
+      />,
+    );
+
+    expect(container.textContent).not.toContain('Cluster-Dad');
+    expect(screen.getByText('Unnamed face group (2)')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Yes' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Merge into Cluster-Dad/ })).not.toBeInTheDocument();
   });
 
   it('keeps human labels as visible text and crop alt with identity count', () => {

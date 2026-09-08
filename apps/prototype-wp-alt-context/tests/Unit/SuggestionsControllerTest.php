@@ -616,6 +616,131 @@ class SuggestionsControllerTest extends TestCase
         $this->assertSame($clusterB, $data['cluster_b_id'] ?? null);
     }
 
+    /**
+     * FEBT1-LD-01: the accept route must declare the optional operator-chosen survivor,
+     * otherwise WordPress drops the param before the callback ever sees it.
+     */
+    public function testRegisterRoutesDeclaresOptionalTargetClusterIdOnAcceptMerge(): void
+    {
+        $this->controller->register_routes();
+
+        $definitions = array_values(array_filter(
+            $GLOBALS['__ac_rest_routes'],
+            static fn (array $definition): bool =>
+                '/recognition/suggestions/merge/(?P<suggestion_id>[a-f0-9-]+)/accept' === $definition['route']
+        ));
+
+        $this->assertCount(1, $definitions);
+        $args = $definitions[0]['args']['args'] ?? [];
+        $this->assertSame('string', $args['target_cluster_id']['type'] ?? null);
+        $this->assertFalse($args['target_cluster_id']['required'] ?? true);
+    }
+
+    /**
+     * FEBT1-LD-01: an operator-chosen survivor must reach the service verbatim.
+     */
+    public function testAcceptMergeSuggestionForwardsOperatorChosenTargetClusterId(): void
+    {
+        $suggestionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+        $targetId = '22222222-2222-2222-2222-222222222222';
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'id' => $suggestionId,
+                'cluster_a_id' => '11111111-1111-1111-1111-111111111111',
+                'cluster_b_id' => $targetId,
+                'similarity' => 0.91,
+                'status' => 'accepted',
+                'moved_identity_ids' => [],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request(
+            'POST',
+            '/acx/v1/recognition/suggestions/merge/' . $suggestionId . '/accept'
+        );
+        $request->set_param('suggestion_id', $suggestionId);
+        $request->set_param('target_cluster_id', $targetId);
+        $this->controller->accept_merge_suggestion($request);
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $sent = json_decode((string) $calls[0]['args']['body'], true);
+        $this->assertIsArray($sent);
+        $this->assertSame($targetId, $sent['target_cluster_id'] ?? null);
+    }
+
+    /**
+     * FEBT1-LD-01: with no operator choice the key must be absent, so the service
+     * keeps its own ranking instead of receiving an empty-string survivor.
+     */
+    public function testAcceptMergeSuggestionOmitsTargetClusterIdWhenNotChosen(): void
+    {
+        $suggestionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'id' => $suggestionId,
+                'cluster_a_id' => '11111111-1111-1111-1111-111111111111',
+                'cluster_b_id' => '22222222-2222-2222-2222-222222222222',
+                'similarity' => 0.91,
+                'status' => 'accepted',
+                'moved_identity_ids' => [],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request(
+            'POST',
+            '/acx/v1/recognition/suggestions/merge/' . $suggestionId . '/accept'
+        );
+        $request->set_param('suggestion_id', $suggestionId);
+        $request->set_param('target_cluster_id', '');
+        $this->controller->accept_merge_suggestion($request);
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $sent = json_decode((string) $calls[0]['args']['body'], true);
+        $this->assertIsArray($sent);
+        $this->assertArrayNotHasKey('target_cluster_id', $sent);
+    }
+
+    /**
+     * FEBT1-LD-01: the revert set must survive the proxy hop unchanged.
+     */
+    public function testAcceptMergeSuggestionPassesThroughMovedIdentityIds(): void
+    {
+        $suggestionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+        $moved = [
+            '33333333-3333-3333-3333-333333333333',
+            '44444444-4444-4444-4444-444444444444',
+        ];
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'id' => $suggestionId,
+                'cluster_a_id' => '11111111-1111-1111-1111-111111111111',
+                'cluster_b_id' => '22222222-2222-2222-2222-222222222222',
+                'similarity' => 0.91,
+                'status' => 'accepted',
+                'source_cluster_id' => '11111111-1111-1111-1111-111111111111',
+                'target_cluster_id' => '22222222-2222-2222-2222-222222222222',
+                'moved_identity_ids' => $moved,
+            ]),
+        ]);
+
+        $request = new WP_REST_Request(
+            'POST',
+            '/acx/v1/recognition/suggestions/merge/' . $suggestionId . '/accept'
+        );
+        $request->set_param('suggestion_id', $suggestionId);
+        $response = $this->controller->accept_merge_suggestion($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertIsArray($data);
+        $this->assertSame($moved, $data['moved_identity_ids'] ?? null);
+    }
+
     public function testRegisterRoutesIncludesNameSuggestionEndpoints(): void
     {
         $this->controller->register_routes();

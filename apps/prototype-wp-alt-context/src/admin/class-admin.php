@@ -387,6 +387,43 @@ class Admin {
 		echo '</p></div>';
 	}
 
+	/**
+	 * Attachment the guided prototype describes on a live run.
+	 *
+	 * Operator-set and optional: the guided flow works from its saved draft
+	 * without it, so an unset or invalid option publishes null rather than
+	 * degrading the page.
+	 */
+	private function get_guided_live_media_id(): ?int {
+		$raw = get_option( 'acx_guided_live_media_id', null );
+
+		// Allow-list, not deny-list. `! is_scalar( $raw )` was dead -- every
+		// non-scalar it caught is also refused by filter_var below -- and the
+		// surviving `is_bool` half let floats through, which filter_var
+		// truncates into a real id. Naming the two types an option can legally
+		// hold gives one reachable, testable branch per input.
+		if ( ! is_string( $raw ) && ! is_int( $raw ) ) {
+			return null;
+		}
+
+		$id = filter_var( $raw, FILTER_VALIDATE_INT );
+
+		// PHP counts to PHP_INT_MAX; the browser that reads this config stops
+		// being exact at 2^53-1, so anything above it arrives in JS as a
+		// neighbouring number and addresses the wrong attachment. Refuse here
+		// rather than publish an id the consumer cannot hold.
+		if ( false === $id || $id <= 0 || $id > 9007199254740991 ) {
+			return null;
+		}
+
+		// A well-formed id is not a subject. A deleted attachment, a plain post
+		// id, or a stale id copied from another environment all pass the
+		// integer test and would enable a live run that can only fail. Publish
+		// null so the panel shows the blocked line the feature designed for
+		// this exact case.
+		return 'attachment' === get_post_type( $id ) ? $id : null;
+	}
+
 	private function localize_spa_config( string $handle ): void {
 		$is_dev_mode = wp_get_environment_type() === 'development';
 
@@ -404,9 +441,11 @@ class Admin {
 					'recognitionSource' => $this->get_recognition_source(),
 					'effectiveTargetUrl' => $this->get_effective_target_url(),
 					'max_media_per_batch' => $this->get_tier_batch_limit_for( $tier ),
+					'guided_live_media_id' => $this->get_guided_live_media_id(),
 					'adminUrls' => array(
 					'mediaEditBase' => admin_url( 'post.php' ),
 					'roster' => admin_url( 'admin.php?page=alt-context-roster' ),
+					'mediaLibrary' => admin_url( 'upload.php' ),
 				),
 				'endpoints' => array(
 					'workbenchMedia'                 => rest_url( 'acx/v1/workbench/media' ),

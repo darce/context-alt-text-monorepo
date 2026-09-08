@@ -198,6 +198,7 @@ class VisualFactsService:
                 tenant_id=tenant_id,
                 image_hash=image_hash,
                 adapter=self._adapter.kind.value,
+                model_id=self._adapter.model_id,
                 model_version=self._adapter.model_version,
                 prompt_or_task_version=self._adapter.prompt_or_task_version,
                 context_hash=context_hash,

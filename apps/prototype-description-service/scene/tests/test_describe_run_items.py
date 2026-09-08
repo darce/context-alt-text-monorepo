@@ -12,6 +12,7 @@ import uuid
 import scene.interface_adapters.http.routers.describe_run as describe_run_mod
 from scene.application.describe_run_repository import DescribeRunRepository
 from scene.domain.describe_run import DescribeItemStatus
+from scene.domain.description import DescriptionResultTier
 from scene.tests.test_describe_run_worker import TENANT_ID, _client, _submit
 
 
@@ -85,6 +86,46 @@ def test_items_route_orders_by_media_id(monkeypatch):
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert [i["media_id"] for i in body["items"]] == sorted(media_ids)
+
+
+def test_items_route_returns_persisted_gpu_and_provisional_tiers(monkeypatch):
+    _no_worker(monkeypatch)
+    with _client() as (client, sf):
+        run_id = _submit(client, [80, 81]).json()["run_id"]
+
+        async def seed():
+            async with sf() as s:
+                repo = DescribeRunRepository(s)
+                for media_id, tier in (
+                    (80, DescriptionResultTier.FINAL_GPU),
+                    (81, DescriptionResultTier.PROVISIONAL_CPU),
+                ):
+                    await repo.record_item_result(
+                        tenant_id=TENANT_ID,
+                        run_id=uuid.UUID(run_id),
+                        media_id=media_id,
+                        alt_text_draft=f"draft {media_id}",
+                        caption=f"caption {media_id}",
+                        provenance={"adapter": "gpu", "model_id": "org/model@revision"},
+                        tier=tier,
+                    )
+                    await repo.mark_item(
+                        tenant_id=TENANT_ID,
+                        run_id=uuid.UUID(run_id),
+                        media_id=media_id,
+                        status=DescribeItemStatus.COMPLETED,
+                    )
+                await s.commit()
+
+        asyncio.run(seed())
+
+        resp = client.get(f"/scene/describe/run/{run_id}/items")
+        assert resp.status_code == 200, resp.text
+        items = {item["media_id"]: item for item in resp.json()["items"]}
+        assert items[80]["tier"] == "final_gpu"
+        assert items[81]["tier"] == "provisional_cpu"
+        assert items[80]["result_generation"] == 1
+        assert items[81]["result_generation"] == 1
 
 
 def test_items_route_404_for_unknown_run(monkeypatch):

@@ -41,6 +41,12 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # GitHub's bash default enables `-e` but not pipefail. Without pipefail, a
+    # runner startup failure hidden behind a diagnostic `tail`/`head` reports
+    # the formatter's zero status and turns a suite that ran no tests green.
+    defaults:
+      run:
+        shell: bash --noprofile --norc -eo pipefail {0}
     # One hung network step must not hold the serialized deploy-demo lane for
     # GitHub's 6h default — this job is the cut vertex of the deploy chain.
     timeout-minutes: 30
@@ -53,6 +59,9 @@ jobs:
       # redact every URL in Playwright failure output, blinding the smoke's own
       # diagnostics. Fallback keeps the workflow runnable before vars are set.
       WP_BASE_URL: ${{ vars.WP_BASE_URL || 'https://demo.altcontext.com' }}
+      # Opt-in only: an unset repository variable keeps the historical deploy
+      # path unchanged; setting it to 1 enables the remote GPU/reaper preflight.
+      ACX_DEMO_GPU_PREFLIGHT: ${{ vars.ACX_DEMO_GPU_PREFLIGHT || '' }}
     steps:
       # Env indirection on purpose (here and on every dispatch-controlled value,
       # including ref names — $(), backticks and quotes are legal in git refs):
@@ -178,7 +187,24 @@ jobs:
       # dist/alt-context-*.zip from the repo root. A command-prefix glob
       # assignment would pass the literal string and break scp mid-deploy.
       - name: Deploy demo stack + plugin
-        run: bash scripts/deploy/sync-demo.sh
+        run: |
+          set -o pipefail
+          bash scripts/deploy/sync-demo.sh 2>&1 | tee "$RUNNER_TEMP/deploy-demo.log"
+
+      - name: Report GPU environment preflight
+        if: always()
+        run: |
+          {
+            echo "## GPU environment preflight"
+            if [ -f "$RUNNER_TEMP/deploy-demo.log" ]; then
+              echo '```text'
+              grep -E 'GPU environment preflight|MANUAL STOP fallback:|^OK: GPU env preflight|^ERROR' \
+                "$RUNNER_TEMP/deploy-demo.log" || echo "No preflight output (ACX_DEMO_GPU_PREFLIGHT is unset or the deploy failed earlier)."
+              echo '```'
+            else
+              echo "No deploy log found (deploy step did not start)."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # sync-demo.sh's smoke runs ON the VM (its own network namespace); this
       # probe traverses the public path (DNS, 443 ingress, security lists) the
@@ -211,6 +237,34 @@ jobs:
           # guaranteed on ubuntu-latest across image updates.
           bash scripts/playwright-cli.sh install --with-deps chromium
 
+      # AUTH-03: CI smoke uses a dedicated least-privilege WP user, never the
+      # demo viewer/admin login. Playwright still reads ACX_E2E_WP_ADMIN_* env
+      # names (auth.setup.ts); the *values* come from ACX_E2E_WP_CI_* secrets.
+      # The VM template names the same values WP_CI_USER/WP_CI_PASSWORD; the
+      # GitHub names are intentionally annotated in infra/oci/demo/.env.example.
+      # ACX_E2E_WP_CI_USER must equal the VM secrets/.env WP_CI_USER (same
+      # principal bootstrap converges), not merely avoid two denylist literals.
+      - name: Refuse demo-admin identity for CI smoke
+        env:
+          CI_USER: ${{ secrets.ACX_E2E_WP_CI_USER }}
+          CI_PASS: ${{ secrets.ACX_E2E_WP_CI_PASS }}
+        run: |
+          if [ -z "$CI_USER" ]; then
+            echo "::error::ACX_E2E_WP_CI_USER must be set and must equal the VM WP_CI_USER (dedicated CI WP user, not the demo admin)."
+            exit 1
+          fi
+          if [ -z "$CI_PASS" ]; then
+            echo "::error::ACX_E2E_WP_CI_PASS must be set (dedicated CI WP password; empty is not a skip)."
+            exit 1
+          fi
+          lowered=$(printf '%s' "$CI_USER" | tr '[:upper:]' '[:lower:]')
+          case "$lowered" in
+            acx-demo-admin|admin)
+              echo "::error::ACX_E2E_WP_CI_USER is the demo admin/viewer login. Use the dedicated CI account that equals VM WP_CI_USER."
+              exit 1
+              ;;
+          esac
+
       # File-scoped on purpose: bare `--project=evidence` sweeps all six evidence
       # specs (including recognition-exercising scan-runtime), which would gate
       # the deploy on recognition health. No separate e2e:auth step: the
@@ -225,8 +279,8 @@ jobs:
         working-directory: apps/prototype-wp-alt-context
         env:
           WP_BASE_URL: ${{ env.WP_BASE_URL }}
-          ACX_E2E_WP_ADMIN_USER: ${{ secrets.ACX_E2E_WP_ADMIN_USER }}
-          ACX_E2E_WP_ADMIN_PASS: ${{ secrets.ACX_E2E_WP_ADMIN_PASS }}
+          ACX_E2E_WP_ADMIN_USER: ${{ secrets.ACX_E2E_WP_CI_USER }}
+          ACX_E2E_WP_ADMIN_PASS: ${{ secrets.ACX_E2E_WP_CI_PASS }}
           ACX_E2E_RECOGNITION_URL: ${{ vars.ACX_E2E_RECOGNITION_URL || 'https://api.altcontext.com' }}
           ACX_E2E_REQUIRE_CONSTANT_PROVENANCE: "1"
           ACX_E2E_REQUIRE_SERVICE_TARGET: "1"

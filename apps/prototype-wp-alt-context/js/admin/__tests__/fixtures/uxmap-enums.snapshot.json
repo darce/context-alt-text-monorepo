@@ -1,0 +1,23 @@
+{
+  "mapStates": [
+    "default",
+    "loading",
+    "empty",
+    "error",
+    "offline",
+    "first_time",
+    "edge_input",
+    "degraded"
+  ],
+  "zoneRoles": [
+    "content",
+    "nav",
+    "status",
+    "queue",
+    "job",
+    "ai_review",
+    "forced_choice",
+    "form",
+    "other"
+  ]
+}

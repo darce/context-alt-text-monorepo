@@ -61,6 +61,8 @@ if (!class_exists('WP_REST_Request')) {
         private $params;
         /** @var array<string,mixed> */
         private $bodyParams;
+        /** @var array<string,string> */
+        private $headers;
 
         /**
          * @param string|array<string,mixed> $method HTTP method or params array (backward compatible)
@@ -80,12 +82,24 @@ if (!class_exists('WP_REST_Request')) {
                 $this->route = '';
                 $this->params = $method;
                 $this->bodyParams = [];
+                $this->headers = [];
             } else {
                 $this->method = $method;
                 $this->route = $route;
                 $this->params = $params;
                 $this->bodyParams = [];
+                $this->headers = [];
             }
+        }
+
+        public function set_header(string $key, string $value): void
+        {
+            $this->headers[strtolower($key)] = $value;
+        }
+
+        public function get_header(string $key): string
+        {
+            return $this->headers[strtolower($key)] ?? '';
         }
 
         public function get_param(string $key)
@@ -424,6 +438,13 @@ if (!function_exists('add_action')) {
     }
 }
 
+if (!function_exists('add_shortcode')) {
+    function add_shortcode($tag, $callback): void
+    {
+        $GLOBALS['__ac_shortcodes'][(string) $tag] = $callback;
+    }
+}
+
 if (!function_exists('add_filter')) {
     function add_filter($hook, $callback, $priority = 10, $accepted_args = 1): bool
     {
@@ -444,6 +465,22 @@ if (!function_exists('admin_url')) {
     function admin_url(string $path = ''): string
     {
         return '/wp-admin/' . ltrim($path, '/');
+    }
+}
+
+if (!function_exists('wp_safe_redirect')) {
+    /**
+     * @return bool
+     */
+    function wp_safe_redirect($location, $status = 302, $x_redirect_by = 'WordPress')
+    {
+        $GLOBALS['__ac_safe_redirect'] = array(
+            'location' => (string) $location,
+            'status' => (int) $status,
+            'x_redirect_by' => (string) $x_redirect_by,
+        );
+
+        return true;
     }
 }
 
@@ -518,6 +555,19 @@ if (!function_exists('register_rest_route')) {
             'route' => $route,
             'args' => $args,
             'override' => $override,
+        ];
+
+        return true;
+    }
+}
+
+if (!function_exists('register_rest_field')) {
+    function register_rest_field($object_type, $attribute, $args = []): bool
+    {
+        $GLOBALS['__ac_rest_fields'][] = [
+            'object_type' => $object_type,
+            'attribute' => $attribute,
+            'args' => $args,
         ];
 
         return true;
@@ -725,14 +775,19 @@ if (!function_exists('get_post_type')) {
             return (string) $post->post_type;
         }
 
-        $postId = 0;
-        if (is_numeric($post)) {
-            $postId = (int) $post;
-        } elseif ($post === null && isset($GLOBALS['post']) && is_object($GLOBALS['post'])) {
+        // WordPress resolves an *empty* $post -- null, false, 0, '' -- from the
+        // global post before it ever reads the argument as an id, and it does
+        // so first. Matching only null made get_post_type(false) answer false
+        // here while real WP can answer 'attachment' on any admin screen that
+        // has a global post, which hid whether callers' own
+        // false/non-positive guards were load-bearing at all.
+        if (empty($post) && isset($GLOBALS['post']) && is_object($GLOBALS['post'])) {
             return isset($GLOBALS['post']->post_type)
                 ? (string) $GLOBALS['post']->post_type
                 : false;
         }
+
+        $postId = is_numeric($post) ? (int) $post : 0;
 
         if ($postId <= 0) {
             return false;
@@ -773,6 +828,25 @@ if (!function_exists('wp_get_attachment_image_src')) {
         $height = is_array($meta) ? (int) ($meta['height'] ?? 0) : 0;
 
         return [$url, $width, $height];
+    }
+}
+
+if (!function_exists('wp_get_attachment_image_url')) {
+    function wp_get_attachment_image_url($attachment_id, $size = 'thumbnail', $icon = false)
+    {
+        $source = wp_get_attachment_image_src($attachment_id, $size, $icon);
+        return is_array($source) ? (string) ($source[0] ?? '') : false;
+    }
+}
+
+if (!function_exists('get_the_title')) {
+    function get_the_title($post = 0): string
+    {
+        $id = is_object($post) ? (int) ($post->ID ?? 0) : (int) $post;
+        if (isset($GLOBALS['__ac_posts'][$id]) && is_object($GLOBALS['__ac_posts'][$id])) {
+            return (string) ($GLOBALS['__ac_posts'][$id]->post_title ?? '');
+        }
+        return (string) ($GLOBALS['__ac_attachment_titles'][$id] ?? '');
     }
 }
 
@@ -1377,7 +1451,30 @@ if (!function_exists('wp_generate_uuid4')) {
 
         $GLOBALS['__ac_uuid_counter']++;
 
-        return 'uuid-' . $GLOBALS['__ac_uuid_counter'];
+        // Real wp_generate_uuid4() returns a 36-character RFC 4122 v4 string.
+        // Keep that canonical layout so values flowing into uuid-shaped route
+        // patterns (the describe-run `[a-f0-9-]+` run_id segment) still match,
+        // but substitute a monotonic counter for the random bits so fixtures
+        // stay reproducible.
+        //
+        // Two limits are deliberate, not oversights:
+        //  1. No test feeds this value to the describe-run idempotency_key.
+        //     After GUIDEDFIX-2 the public demo never mints a key for the wire
+        //     (rg-015); the only uuid it still mints is a purely local replay
+        //     bucket that is hashed, never length- or charset-validated. The
+        //     validated path is covered with explicit client-supplied keys —
+        //     see PublicDemoDescribeControllerTest
+        //     ::testPublicSubmitForwardsTheClientKeyVerbatimAndOmitsItWhenAbsent
+        //     and ::testMalformedIdempotencyKeyIsRejectedBeforeAnySharedBudgetIsSpent,
+        //     which drive the real DescribeController::submit_describe_run.
+        //  2. A monotonic counter satisfies any uniqueness assertion by
+        //     construction. Passing such an assertion against this stub is not
+        //     evidence that production uuid generation is collision-resistant.
+        return sprintf(
+            '%08x-0000-4000-8000-%012x',
+            $GLOBALS['__ac_uuid_counter'],
+            $GLOBALS['__ac_uuid_counter']
+        );
     }
 }
 
@@ -1631,18 +1728,60 @@ if (!function_exists('update_option')) {
             return false;
         }
 
-        // Core returns false when the value is unchanged (failure and no-op share
-        // the same return — production recovery branches must re-read).
+        // Core compares against get_option($option) whose default is false
+        // (Trac r56788). A missing option therefore cannot be created by
+        // update_option(..., false): false === false → no-op, no row inserted.
+        // Failure and no-op share the same return — recovery must re-read.
+        $old = get_option($key);
+        $beforeUpdate = $GLOBALS['__ac_option_before_update'][$key] ?? null;
+        if (is_callable($beforeUpdate)) {
+            $beforeUpdate();
+        }
+        if ($old === $value) {
+            return false;
+        }
+        // Mirror core's maybe_serialize equality for array/object shapes that
+        // are value-equal but not the same zval (e.g. re-built arrays).
+        if (serialize($old) === serialize($value)) {
+            return false;
+        }
+
+        if (!isset($GLOBALS['__ac_options']) || !is_array($GLOBALS['__ac_options'])) {
+            $GLOBALS['__ac_options'] = [];
+        }
+        $GLOBALS['__ac_options'][$key] = $value;
+        return true;
+    }
+}
+
+if (!function_exists('add_option')) {
+    /**
+     * Insert a missing option. Honors the same opt-in failure map as
+     * update_option so RecognitionPolicy::set() can be the single writer.
+     *
+     * @param string           $key
+     * @param mixed            $value
+     * @param string           $deprecated
+     * @param string|bool|null $autoload
+     */
+    function add_option($key, $value = '', $deprecated = '', $autoload = null)
+    {
+        if (!isset($GLOBALS['__ac_update_option_calls']) || !is_array($GLOBALS['__ac_update_option_calls'])) {
+            $GLOBALS['__ac_update_option_calls'] = [];
+        }
+        $GLOBALS['__ac_update_option_calls'][$key] = ($GLOBALS['__ac_update_option_calls'][$key] ?? 0) + 1;
+
+        if (!isset($GLOBALS['__ac_option_autoload']) || !is_array($GLOBALS['__ac_option_autoload'])) {
+            $GLOBALS['__ac_option_autoload'] = [];
+        }
+        $GLOBALS['__ac_option_autoload'][$key] = null === $autoload ? true : $autoload;
+
+        if (!empty($GLOBALS['__ac_update_option_fail'][$key])) {
+            return false;
+        }
+
         if (isset($GLOBALS['__ac_options']) && array_key_exists($key, $GLOBALS['__ac_options'])) {
-            $old = $GLOBALS['__ac_options'][$key];
-            if ($old === $value) {
-                return false;
-            }
-            // Mirror core's maybe_serialize equality for array/object shapes that
-            // are value-equal but not the same zval (e.g. re-built arrays).
-            if (serialize($old) === serialize($value)) {
-                return false;
-            }
+            return false;
         }
 
         if (!isset($GLOBALS['__ac_options']) || !is_array($GLOBALS['__ac_options'])) {
@@ -1656,13 +1795,30 @@ if (!function_exists('update_option')) {
 if (!function_exists('get_option')) {
     function get_option($key, $default = false)
     {
+        $beforeRead = $GLOBALS['__ac_get_option_before_read'][$key] ?? null;
+        if (is_callable($beforeRead)) {
+            $GLOBALS['__ac_get_option_read_calls'][$key] = ($GLOBALS['__ac_get_option_read_calls'][$key] ?? 0) + 1;
+            $beforeRead($key, $GLOBALS['__ac_get_option_read_calls'][$key]);
+        }
         return $GLOBALS['__ac_options'][$key] ?? $default;
+    }
+}
+
+if (!function_exists('wp_cache_delete')) {
+    function wp_cache_delete($key, $group = ''): bool
+    {
+        $GLOBALS['__ac_cache_deletions'][] = [$key, $group];
+        return true;
     }
 }
 
 if (!function_exists('delete_option')) {
     function delete_option($key): void
     {
+        $beforeDelete = $GLOBALS['__ac_option_before_delete'][$key] ?? null;
+        if (is_callable($beforeDelete)) {
+            $beforeDelete();
+        }
         unset($GLOBALS['__ac_options'][$key]);
     }
 }
@@ -2179,8 +2335,26 @@ if (!function_exists('wp_enqueue_style')) {
 }
 
 if (!function_exists('wp_localize_script')) {
+    /**
+     * Reproduces WP_Scripts::localize()'s scalar-to-string cast.
+     *
+     * Core runs html_entity_decode((string) $value) over every scalar member
+     * before printing, so an int published here reaches the browser as a
+     * string. A stub that stores the PHP array verbatim lets a test assert an
+     * int wire shape production never emits, which is the wrong side of the
+     * boundary to pin (rg-005). Non-scalars are passed through untouched, as
+     * core does.
+     */
     function wp_localize_script($handle, $object_name, $l10n): void
     {
+        if (is_array($l10n)) {
+            foreach ($l10n as $key => $value) {
+                if (is_scalar($value)) {
+                    $l10n[$key] = html_entity_decode((string) $value, ENT_QUOTES, 'UTF-8');
+                }
+            }
+        }
+
         $GLOBALS['__ac_localized_scripts'][$handle][$object_name] = $l10n;
     }
 }
@@ -2236,6 +2410,7 @@ if (!isset($GLOBALS['wpdb'])) {
         /** @var mixed */
         public $defaultQueryResult = true;
         public string $prefix = 'wp_';
+        public string $options = 'wp_options';
         public string $postmeta = 'wp_postmeta';
         public string $term_relationships = 'wp_term_relationships';
         /** @var array<int,array<string,mixed>> */
@@ -2336,6 +2511,39 @@ if (!isset($GLOBALS['wpdb'])) {
             if ($result === false || $result === null) {
                 $this->rows_affected = 0;
                 return $result;
+            }
+
+            if (preg_match("/^DELETE FROM " . preg_quote($this->options, '/') . " WHERE option_name = '((?:\\\\.|[^'])*)' AND BINARY option_value = '((?:\\\\.|[^'])*)'$/s", $normalizedSql, $matches)) {
+                $key = stripslashes($matches[1]);
+                $expected = stripslashes($matches[2]);
+                $beforeDelete = $GLOBALS['__ac_option_before_delete'][$key] ?? null;
+                if (is_callable($beforeDelete)) {
+                    $beforeDelete();
+                }
+                $matchesOwner = array_key_exists($key, $GLOBALS['__ac_options'])
+                    && serialize($GLOBALS['__ac_options'][$key]) === $expected;
+                if ($matchesOwner) {
+                    unset($GLOBALS['__ac_options'][$key]);
+                }
+                $this->rows_affected = $matchesOwner ? 1 : 0;
+                return $this->rows_affected;
+            }
+
+            if (preg_match("/^UPDATE " . preg_quote($this->options, '/') . " SET option_value = '((?:\\\\.|[^'])*)' WHERE option_name = '((?:\\\\.|[^'])*)' AND BINARY option_value = '((?:\\\\.|[^'])*)'$/s", $normalizedSql, $matches)) {
+                $value = stripslashes($matches[1]);
+                $key = stripslashes($matches[2]);
+                $expected = stripslashes($matches[3]);
+                $beforeUpdate = $GLOBALS['__ac_option_before_update'][$key] ?? null;
+                if (is_callable($beforeUpdate)) {
+                    $beforeUpdate();
+                }
+                $matchesOwner = array_key_exists($key, $GLOBALS['__ac_options'])
+                    && serialize($GLOBALS['__ac_options'][$key]) === $expected;
+                if ($matchesOwner) {
+                    $GLOBALS['__ac_options'][$key] = unserialize($value, ['allowed_classes' => false]);
+                }
+                $this->rows_affected = $matchesOwner ? 1 : 0;
+                return $this->rows_affected;
             }
 
             $applied = $this->applyRawQueryToRows($normalizedSql);

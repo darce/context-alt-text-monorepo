@@ -1,0 +1,3 @@
+// Intentionally empty. The shipped stepper is `.acx-guided-guide`
+// (GuidedPrototypeGuide). `index.scss` still `@use`s this partial; keep the
+// file so the bundle does not ship the retired `.acx-guided-flow` strip.

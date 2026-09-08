@@ -40,6 +40,11 @@ abstract class TestCase extends PHPUnitTestCase
         $GLOBALS['__ac_actions'] = [];
         $GLOBALS['__ac_filters'] = [];
         $GLOBALS['__ac_options'] = [];
+        $GLOBALS['__ac_get_option_before_read'] = [];
+        $GLOBALS['__ac_get_option_read_calls'] = [];
+        $GLOBALS['__ac_option_before_delete'] = [];
+        $GLOBALS['__ac_option_before_update'] = [];
+        $GLOBALS['__ac_cache_deletions'] = [];
         $GLOBALS['__ac_post_meta'] = [];
         $GLOBALS['__ac_update_post_meta_fail'] = [];
         $GLOBALS['__ac_update_post_meta_mutate'] = [];
@@ -56,8 +61,10 @@ abstract class TestCase extends PHPUnitTestCase
         $GLOBALS['__ac_terms'] = [];
         $GLOBALS['__ac_object_terms'] = [];
         $GLOBALS['__ac_rest_routes'] = [];
+        $GLOBALS['__ac_rest_fields'] = [];
         $GLOBALS['__ac_scripts'] = [];
         $GLOBALS['__ac_styles'] = [];
+        $GLOBALS['__ac_shortcodes'] = [];
         $GLOBALS['__ac_menu_pages'] = [];
         $GLOBALS['__ac_submenu_pages'] = [];
         $GLOBALS['__ac_localized_scripts'] = [];
@@ -65,6 +72,7 @@ abstract class TestCase extends PHPUnitTestCase
         $GLOBALS['__ac_current_user_capabilities'] = [];
         $GLOBALS['__ac_attachment_metadata'] = [];
         $GLOBALS['__ac_attachment_urls'] = [];
+        $GLOBALS['__ac_attachment_titles'] = [];
         $GLOBALS['__ac_attachment_mimes'] = [];
         $GLOBALS['__ac_attachment_image_src'] = [];
         $GLOBALS['__ac_attached_file'] = [];

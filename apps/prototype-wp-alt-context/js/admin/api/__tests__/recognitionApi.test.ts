@@ -23,9 +23,15 @@ import {
   triggerSync,
   updateRetentionPolicy,
   updateClusterLabel,
+  acceptMergeSuggestion,
+  EXPORT_COLLECTION_KEYS,
+  RetentionExportResponseError,
+  type AcceptedMergeSuggestion,
+  type AcceptMergeSuggestionRequest,
   type BulkAcceptRequest,
   type BulkAcceptResponse,
   type PendingNameSuggestion,
+  type RetentionExportResponse,
 } from '../recognition';
 import { DATA_SOURCE, PROJECTION_STATUS } from '../recognition/types';
 
@@ -363,7 +369,66 @@ describe('recognitionApi', () => {
     );
   });
 
-  it('normalizes retention export payloads from backend data/counts fields', async () => {
+  it('normalizes the flat retention export snapshot the service actually returns', async () => {
+    // rg-015: `GET /retention/export/{job_id}/data` returns `ExportJob.data_json`
+    // verbatim (retention.py:208-211), i.e. the bare snapshot from
+    // `TenantExportService.export_tenant_data`, proxied through unchanged. There
+    // is no `data`/`payload` wrapper and no `counts`/`summary` field on the wire.
+    fetchApiMock.mockResolvedValue({
+      tenant_id: 'tenant-1',
+      exported_at: '2026-03-12T12:00:00Z',
+      schema_version: 3,
+      clusters: [{ id: 'cluster-1' }],
+      media_identities: [],
+    });
+
+    const result = await downloadExportJobData('export-job-1');
+
+    expect(result.tenant_id).toBe('tenant-1');
+    expect(result.exported_at).toBe('2026-03-12T12:00:00Z');
+    expect(result.schema_version).toBe(3);
+    expect(result.payload).toEqual({
+      tenant_id: 'tenant-1',
+      exported_at: '2026-03-12T12:00:00Z',
+      schema_version: 3,
+      clusters: [{ id: 'cluster-1' }],
+      media_identities: [],
+    });
+    // Counts are derived from the snapshot's own arrays, never read from an
+    // upstream field that does not exist.
+    expect(result.summary).toEqual({ clusters: 1, media_identities: 0 });
+    expect(fetchApiMock).toHaveBeenCalledWith(
+      expect.stringContaining('/retentionExport/export-job-1/data'),
+      expect.objectContaining({ method: 'GET', restNonce: 'nonce-123' }),
+    );
+  });
+
+  it('derives counts from the arrays even when the response also carries a counts field [rg-015]', async () => {
+    // A valid flat snapshot that additionally carries a stray `counts`. rg-015:
+    // the adapter must not prefer upstream-supplied metadata it does not have a
+    // contract for — the arrays are the only truth about what was exported.
+    fetchApiMock.mockResolvedValue({
+      schema_version: 3,
+      clusters: [{ id: 'cluster-1' }, { id: 'cluster-2' }],
+      media_identities: [{ id: 'identity-1' }],
+      counts: { clusters: 99, media_identities: 0 },
+      summary: { clusters: 0 },
+    });
+
+    const result = await downloadExportJobData('export-job-1');
+
+    expect(result.summary).toEqual({ clusters: 2, media_identities: 1 });
+    expect(fetchApiMock).toHaveBeenCalledWith(
+      expect.stringContaining('/retentionExport/export-job-1/data'),
+      expect.objectContaining({ method: 'GET', restNonce: 'nonce-123' }),
+    );
+  });
+
+  it('rejects the fabricated {counts, data} envelope instead of silently accepting it [FEBT1-LG-01][rg-015]', async () => {
+    // The shape this test used to assert as correct. The service never emits it,
+    // so accepting it meant an adapter supporting two upstream shapes and
+    // inventing `summary` from a field that is not on the wire. `members` is not
+    // even an export collection — proof the old expectation was fabricated.
     fetchApiMock.mockResolvedValue({
       tenant_id: 'tenant-1',
       exported_at: '2026-03-12T12:00:00Z',
@@ -374,21 +439,114 @@ describe('recognitionApi', () => {
       },
     });
 
-    const result = await downloadExportJobData('export-job-1');
-
-    expect(result).toEqual({
-      tenant_id: 'tenant-1',
-      exported_at: '2026-03-12T12:00:00Z',
-      schema_version: 1,
-      summary: { clusters: 2, members: 3 },
-      payload: {
-        clusters: [{ id: 'cluster-1' }],
-      },
-    });
+    await expect(downloadExportJobData('export-job-1')).rejects.toThrow(RetentionExportResponseError);
+    // The request is still issued to the documented endpoint; the rejection is
+    // in the adapter, not a short-circuit before the call.
     expect(fetchApiMock).toHaveBeenCalledWith(
       expect.stringContaining('/retentionExport/export-job-1/data'),
       expect.objectContaining({ method: 'GET', restNonce: 'nonce-123' }),
     );
+  });
+
+  it('rejects a `payload`-wrapped envelope and an empty response [FEBT1-LG-01][rg-015]', async () => {
+    fetchApiMock.mockResolvedValue({ schema_version: 3, payload: { clusters: [] }, summary: { clusters: 0 } });
+    await expect(downloadExportJobData('export-job-1')).rejects.toThrow(RetentionExportResponseError);
+
+    fetchApiMock.mockResolvedValue({ schema_version: 3, data: { clusters: [] }, counts: { clusters: 0 } });
+    await expect(downloadExportJobData('export-job-1')).rejects.toThrow(RetentionExportResponseError);
+
+    // The pre-fix adapter returned `{ payload: {}, summary: {} }` here, which the
+    // caller wrote to disk as a successful, empty export (RLSE-05).
+    fetchApiMock.mockResolvedValue({});
+    await expect(downloadExportJobData('export-job-1')).rejects.toThrow('Export data response was malformed');
+  });
+
+  /**
+   * FEBT2-LD2-NEW-03 / FEBT2-LE-NEW-06: the barrel exported the functions but not
+   * the types and error class those functions traffic in, so every consumer had
+   * to deep-import or lose type safety. These are discrimination guards: the
+   * value imports at the top of this file resolve through `../recognition`, so
+   * dropping any of them from the barrel turns this file red at import time.
+   */
+  it('narrows the export-download rejection through the barrel-exported error class [FEBT2-LE-NEW-06]', async () => {
+    fetchApiMock.mockResolvedValue({ schema_version: 1, counts: { clusters: 2 }, data: { clusters: [] } });
+
+    await expect(downloadExportJobData('export-job-1')).rejects.toBeInstanceOf(RetentionExportResponseError);
+    // Not merely "some Error": the barrel must carry the narrowable subclass, or
+    // the fail-loud contract degrades to a generic catch at the barrel callers.
+    expect(RetentionExportResponseError.prototype).toBeInstanceOf(Error);
+    expect(Object.getPrototypeOf(RetentionExportResponseError.prototype)).toBe(Error.prototype);
+  });
+
+  it('exports the canonical export-collection key list through the barrel [rg-015]', () => {
+    // The single frontend copy of the wire contract's collection keys. A barrel
+    // consumer must be able to reach it without a deep import, otherwise it
+    // re-derives the key list and drifts from the backend (rg-005).
+    expect([...EXPORT_COLLECTION_KEYS]).toEqual([
+      'clusters',
+      'media_identities',
+      'identity_suggestions',
+      'name_suggestions',
+      'cluster_merge_suggestions',
+      'scan_jobs',
+    ]);
+  });
+
+  it('keeps the bare-string mutationFn inference on the barrel-exported acceptMergeSuggestion [FEBT2-LD2-NEW-03]', async () => {
+    // The bare-`string` overload is declared LAST so `mutationFn: acceptMergeSuggestion`
+    // infers `string`. A conditional `infer` resolves an overloaded function
+    // against its LAST signature, so reordering the overloads flips this to
+    // `AcceptMergeSuggestionRequest` and fails the type-check gate.
+    type InferMutationVariables<T> = T extends (variables: infer V) => Promise<unknown> ? V : never;
+    expectTypeOf<InferMutationVariables<typeof acceptMergeSuggestion>>().toEqualTypeOf<string>();
+
+    const mergePayload = {
+      id: 'merge-suggestion-1',
+      cluster_a_id: 'cluster-a',
+      cluster_b_id: 'cluster-b',
+      similarity: 0.91,
+      status: 'accepted',
+      source_cluster_id: 'cluster-a',
+      target_cluster_id: 'cluster-b',
+      moved_identity_ids: ['identity-1'],
+    };
+    fetchApiMock.mockResolvedValue(mergePayload);
+
+    // Both overloads are reachable through the barrel, and the request object
+    // still carries the optional survivor pin to the wire.
+    const pinned: AcceptMergeSuggestionRequest = { suggestionId: 'merge-suggestion-1', targetClusterId: 'cluster-b' };
+    const accepted: AcceptedMergeSuggestion = await acceptMergeSuggestion(pinned);
+
+    expect(accepted.source_cluster_id).toBe('cluster-a');
+    expect(accepted.target_cluster_id).toBe('cluster-b');
+    expect(accepted.moved_identity_ids).toEqual(['identity-1']);
+    expect(fetchApiMock).toHaveBeenCalledWith(
+      expect.stringContaining('/merge-suggestion-1/accept'),
+      expect.objectContaining({ method: 'POST', body: { target_cluster_id: 'cluster-b' } }),
+    );
+
+    fetchApiMock.mockClear();
+    const bare: AcceptedMergeSuggestion = await acceptMergeSuggestion('merge-suggestion-1');
+    expect(bare.moved_identity_ids).toEqual(['identity-1']);
+    // No survivor pinned => no body, so the server keeps its own ordering.
+    expect(fetchApiMock).toHaveBeenCalledWith(
+      expect.stringContaining('/merge-suggestion-1/accept'),
+      expect.objectContaining({ method: 'POST', body: undefined }),
+    );
+  });
+
+  it('types schema_version as always present on a normalized export response [FEBT2-LE-NEW-05]', async () => {
+    fetchApiMock.mockResolvedValue({ schema_version: 3, clusters: [{ id: 'cluster-1' }] });
+
+    const result: RetentionExportResponse = await downloadExportJobData('export-job-1');
+
+    // Required, not optional: the adapter throws on a missing/non-integer
+    // schema_version, so `number | undefined` would force a null-guard on a case
+    // the boundary makes unrepresentable.
+    expectTypeOf<RetentionExportResponse['schema_version']>().toEqualTypeOf<number>();
+    expectTypeOf<RetentionExportResponse['tenant_id']>().toEqualTypeOf<string | undefined>();
+    const schemaVersion: number = result.schema_version;
+    expect(schemaVersion).toBe(3);
   });
 
   it('exports the phase-0 suggestion stub types through the recognition barrel', () => {

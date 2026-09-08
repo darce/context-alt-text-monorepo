@@ -18,7 +18,7 @@ import {
   type WorkbenchQueueState,
 } from './workbenchQueueUrl';
 
-const MEDIA_PAGE_SIZE_OPTIONS = [10, 50, 100] as const;
+export const MEDIA_PAGE_SIZE_OPTIONS = [10, 50, 100] as const;
 const DEFAULT_MEDIA_PAGE_SIZE = MEDIA_PAGE_SIZE_OPTIONS[0];
 const WORKBENCH_MEDIA_STATUS_SET: ReadonlySet<string> = new Set(WORKBENCH_MEDIA_STATUSES);
 
@@ -131,9 +131,8 @@ export const useWorkbenchFilters = () => {
     [searchParams, setSearchParams],
   );
 
-  const handleSearchChange = useCallback(
-    (event: ChangeEvent<HTMLInputElement>) => {
-      const s = event.target.value;
+  const setSearch = useCallback(
+    (s: string): void => {
       queuePendingPage(1, searchParams.get('p'));
       commitSearchParams(setSearchParams, (next) => {
         if (s) {
@@ -146,6 +145,13 @@ export const useWorkbenchFilters = () => {
     },
     [searchParams, setSearchParams],
   );
+
+  const handleSearchChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>): void => setSearch(event.target.value),
+    [setSearch],
+  );
+
+  const clearSearch = useCallback((): void => setSearch(''), [setSearch]);
 
   const handleStatusChange = useCallback(
     (status: WorkbenchMediaStatus) => {
@@ -212,6 +218,7 @@ export const useWorkbenchFilters = () => {
     setCurrentPage,
     setPerPage,
     handleSearchChange,
+    clearSearch,
     handleStatusChange,
     normalizedSearch,
     queueState,

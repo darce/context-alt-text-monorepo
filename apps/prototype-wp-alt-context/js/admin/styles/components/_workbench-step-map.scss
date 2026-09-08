@@ -1,0 +1,111 @@
+/**
+ * Scan/Confirm/Review step map (NAV-09). Current-vs-remaining is signalled by
+ * more than colour: the current step also gets bold text plus a "Current"
+ * label, and completed steps get a checkmark marker (sr-004).
+ */
+
+.acx-workbench-steps {
+  margin-block-end: var(--acx-space-16);
+}
+
+.acx-workbench-steps__position {
+  margin-block-end: var(--acx-space-8);
+  color: var(--acx-color-text-secondary);
+  font-size: var(--acx-text-sm);
+  font-weight: var(--acx-font-weight-semibold);
+}
+
+.acx-workbench-steps__list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--acx-space-8);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.acx-workbench-steps__item {
+  display: flex;
+  align-items: center;
+}
+
+.acx-workbench-steps__item:not(:last-child)::after {
+  content: '';
+  display: inline-block;
+  width: var(--acx-space-24);
+  height: 1px;
+  margin-inline-start: var(--acx-space-8);
+  background: var(--acx-color-border);
+}
+
+.acx-workbench-steps__control {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--acx-space-6);
+  padding: var(--acx-space-4) var(--acx-space-8);
+  border: none;
+  border-radius: var(--acx-radius-md);
+  background: transparent;
+  color: var(--acx-color-text-muted);
+  font-size: var(--acx-text-sm);
+}
+
+button.acx-workbench-steps__control {
+  cursor: pointer;
+}
+
+button.acx-workbench-steps__control:hover {
+  background: var(--acx-color-panel);
+}
+
+.acx-workbench-steps__marker {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--acx-space-24);
+  height: var(--acx-space-24);
+  border-radius: var(--acx-radius-circle);
+  background: var(--acx-gray-200);
+  color: var(--acx-color-text-muted);
+  font-size: var(--acx-text-xs);
+  font-weight: var(--acx-font-weight-semibold);
+}
+
+.acx-workbench-steps__status {
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--acx-text-xs);
+}
+
+.acx-workbench-steps__status--current {
+  color: var(--acx-color-accent);
+  font-weight: var(--acx-font-weight-semibold);
+}
+
+.acx-workbench-steps__status--complete {
+  color: var(--acx-color-success-text);
+}
+
+.acx-workbench-steps__status--remaining {
+  color: var(--acx-color-text-muted);
+}
+
+.acx-workbench-steps__item--current .acx-workbench-steps__marker {
+  background: var(--acx-color-accent);
+  color: var(--acx-color-accent-contrast);
+}
+
+.acx-workbench-steps__item--current .acx-workbench-steps__label {
+  color: var(--acx-color-text);
+  font-weight: var(--acx-font-weight-semibold);
+}
+
+.acx-workbench-steps__item--complete .acx-workbench-steps__marker {
+  background: var(--acx-color-success-bg);
+  color: var(--acx-color-success-text);
+}
+
+.acx-workbench-steps__item--complete .acx-workbench-steps__label {
+  color: var(--acx-color-text-secondary);
+}

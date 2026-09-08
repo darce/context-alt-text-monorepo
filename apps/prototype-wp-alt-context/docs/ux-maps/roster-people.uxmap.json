@@ -1,16 +1,14 @@
 {
   "map_ref": "roster-people",
   "product": "prototype-wp-alt-context",
-  "source_fixture": "packages/mcp-workbay-canvas/tests/fixtures/ux_maps/roster-people.uxmap.json",
+  "source_fixture": "apps/prototype-wp-alt-context/js/admin/pages/RosterPage.tsx",
   "goals": [
-    "Operator assigns unassigned faces and manages person workspace without losing roster place",
+    "Six ACX submenus are MECE and frequency-ordered (NAV-05/NAV-06): Overview orients; Review Queue is the one home to name a person from a photo (highest-frequency demo task); People manages named people only; Description Runs is the one home to see what the describer did; Data Retention is keep/delete/export policy (not description history); Settings configures the service (rare, last). WordPress parent slug stays Overview.",
+    "One primary action per screen (NAV-01), reachable from zero state (rg-003); other CTAs are secondary.",
+    "Operator manages named people and person workspace without losing roster place",
     "Decompose Roster UI tasks from screens/zones/states/flows (people-first surface; clusters tab retired)"
   ],
   "jobs": [
-    {
-      "id": "job-assign-faces",
-      "label": "Assign unassigned faces to people"
-    },
     {
       "id": "job-manage-person",
       "label": "Open person workspace / manage entry"
@@ -30,76 +28,40 @@
       "wp_page": "alt-context-roster",
       "job_entry": true,
       "deep_link": true,
-      "url_params": [
-        "person",
-        "personFilter",
-        "queue",
-        "face",
-        "cluster"
-      ],
+      "url_params": ["person", "personFilter", "queue", "face", "cluster"],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/RosterPage.tsx",
-      "primary_action_id": "act-filter-unassigned",
-      "states": [
-        "default",
-        "loading",
-        "empty",
-        "error",
-        "degraded",
-        "first_time"
-      ],
+      "primary_action_id": "act-add-person",
+      "states": ["default", "loading", "empty", "error", "degraded", "first_time"],
       "zones": [
         {
           "id": "z-entries",
           "label": "Roster entries table",
           "role": "content",
-          "states": [
-            "default",
-            "loading",
-            "empty",
-            "error"
-          ]
+          "states": ["default", "loading", "empty", "error"]
         },
         {
           "id": "z-review-cta",
           "label": "Unnamed faces CTA → Workbench review queue",
           "role": "content",
-          "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/RosterPage.tsx:215-244",
-          "states": [
-            "default",
-            "loading",
-            "empty"
-          ]
+          "states": ["default", "loading", "empty"]
         },
         {
           "id": "z-projection-gate",
           "label": "Projection status gate notices",
           "role": "status",
-          "states": [
-            "default",
-            "loading",
-            "error",
-            "degraded"
-          ]
+          "states": ["default", "loading", "error", "degraded"]
         },
         {
           "id": "z-person-host",
           "label": "Person workspace host",
           "role": "other",
-          "states": [
-            "default",
-            "empty"
-          ]
+          "states": ["default", "empty"]
         },
         {
           "id": "z-cluster-host",
           "label": "Face-group drawer host (cluster= shim)",
           "role": "other",
-          "states": [
-            "default",
-            "empty",
-            "loading",
-            "error"
-          ]
+          "states": ["default", "empty", "loading", "error"]
         }
       ]
     },
@@ -111,62 +73,36 @@
       "route": "#/roster?person=",
       "job_entry": true,
       "deep_link": true,
-      "url_params": [
-        "person",
-        "queue",
-        "face"
-      ],
+      "url_params": ["person", "queue", "face"],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/roster/PersonWorkspacePanel.tsx",
       "primary_action_id": "act-save-person",
-      "states": [
-        "default",
-        "loading",
-        "empty",
-        "error",
-        "degraded"
-      ],
+      "states": ["default", "loading", "empty", "error", "degraded"],
       "zones": [
         {
           "id": "z-person-header",
           "label": "Person header",
           "role": "content",
-          "states": [
-            "default",
-            "loading"
-          ]
+          "states": ["default", "loading"]
         },
         {
           "id": "z-person-identities",
           "label": "Linked faces",
           "role": "ai_review",
           "evidence_linked": true,
-          "states": [
-            "default",
-            "empty",
-            "loading"
-          ]
+          "states": ["default", "loading", "empty", "error", "degraded"]
         },
         {
           "id": "z-person-evidence",
           "label": "Cluster evidence thumbnails (cropped face crop; raw media fallback for uncroppable bbox; labelled visible no-image state)",
           "role": "ai_review",
           "evidence_linked": true,
-          "states": [
-            "default",
-            "loading",
-            "empty",
-            "error",
-            "degraded"
-          ]
+          "states": ["default", "loading", "empty", "error", "degraded"]
         },
         {
           "id": "z-person-actions",
           "label": "Save / assign / open queue",
           "role": "form",
-          "states": [
-            "default",
-            "error"
-          ]
+          "states": ["default", "loading", "empty", "error", "degraded"]
         }
       ]
     },
@@ -178,17 +114,10 @@
       "route": "#/roster?cluster=",
       "job_entry": false,
       "deep_link": true,
-      "url_params": [
-        "cluster"
-      ],
+      "url_params": ["cluster"],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/roster/ClusterDrawerPanel.tsx",
       "primary_action_id": "act-assign-cluster",
-      "states": [
-        "default",
-        "loading",
-        "empty",
-        "error"
-      ],
+      "states": ["default", "loading", "empty", "error"],
       "zones": [
         {
           "id": "z-cluster-samples",
@@ -196,20 +125,13 @@
           "role": "forced_choice",
           "evidence_linked": true,
           "max_candidates": 8,
-          "states": [
-            "default",
-            "loading",
-            "empty",
-            "error"
-          ]
+          "states": ["default", "loading", "empty", "error"]
         },
         {
           "id": "z-cluster-actions",
           "label": "Assign / dismiss drawer",
           "role": "form",
-          "states": [
-            "default"
-          ]
+          "states": ["default", "loading", "empty", "error"]
         }
       ]
     },
@@ -222,28 +144,20 @@
       "deep_link": false,
       "code_ref": "apps/prototype-wp-alt-context/js/components/ui/FaceLightbox.tsx",
       "primary_action_id": "act-close-lightbox",
-      "states": [
-        "default",
-        "error"
-      ],
+      "states": ["default", "error"],
       "zones": [
         {
           "id": "z-lightbox-media",
           "label": "Enlarged evidence media with accessible ordinal name",
           "role": "ai_review",
           "evidence_linked": true,
-          "states": [
-            "default",
-            "error"
-          ]
+          "states": ["default", "error"]
         },
         {
           "id": "z-lightbox-controls",
           "label": "Close affordance",
           "role": "form",
-          "states": [
-            "default"
-          ]
+          "states": ["default", "error"]
         }
       ],
       "route": "#/roster?person= (in-panel dialog; no dedicated route)"
@@ -257,34 +171,24 @@
       "wp_page": "alt-context-workbench",
       "job_entry": false,
       "deep_link": true,
-      "url_params": [
-        "tab",
-        "panel",
-        "media"
-      ],
+      "url_params": ["tab", "panel", "media"],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx",
-      "states": [
-        "default",
-        "loading",
-        "error"
-      ],
+      "states": ["default", "loading", "error"],
       "zones": [
         {
           "id": "z-wb-entry",
           "label": "Workbench entry",
           "role": "nav",
-          "states": [
-            "default"
-          ]
+          "states": ["default"]
         }
       ]
     }
   ],
   "actions": [
     {
-      "id": "act-filter-unassigned",
-      "verb": "Filter unassigned",
-      "target": "personFilter=unassigned",
+      "id": "act-add-person",
+      "verb": "Add Person",
+      "target": "roster-shell",
       "hierarchy": "primary",
       "costly": false,
       "irreversible": false,
@@ -295,7 +199,7 @@
       "id": "act-open-person",
       "verb": "Open person workspace",
       "target": "roster-person-workspace",
-      "hierarchy": "primary",
+      "hierarchy": "secondary",
       "costly": false,
       "irreversible": false,
       "preview_required": false,
@@ -355,7 +259,7 @@
       "id": "act-close-lightbox",
       "verb": "Close lightbox",
       "target": "roster-person-workspace",
-      "hierarchy": "secondary",
+      "hierarchy": "primary",
       "costly": false,
       "irreversible": false,
       "preview_required": false,
@@ -363,29 +267,6 @@
     }
   ],
   "flows": [
-    {
-      "id": "flow-assign-unassigned",
-      "job": "job-assign-faces",
-      "label": "Filter unassigned → open person → save assignment",
-      "steps": [
-        {
-          "screen_id": "roster-shell",
-          "branch_label": "enter roster"
-        },
-        {
-          "screen_id": "roster-shell",
-          "branch_label": "personFilter=unassigned"
-        },
-        {
-          "screen_id": "roster-person-workspace",
-          "branch_label": "open person"
-        },
-        {
-          "screen_id": "roster-shell",
-          "branch_label": "save / return"
-        }
-      ]
-    },
     {
       "id": "flow-cluster-to-person",
       "job": "job-cluster-review",

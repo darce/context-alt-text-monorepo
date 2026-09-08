@@ -60,6 +60,8 @@ const sampleResponse = (altTextDraft = draft): VisualFactsResponse => ({
   cached: false,
   duration_ms: 13800,
   retention_class: 'retain_all',
+  tier: 'provisional_cpu',
+  result_generation: 1,
 });
 
 const mediaItem: WorkbenchMediaItem = {
@@ -94,6 +96,7 @@ const renderMediaRow = () =>
     <table>
       <tbody>
         <MediaSelectionTableBody
+          onClearSearch={vi.fn()}
           items={[mediaItem]}
           isLoading={false}
           detailIsLoading={false}

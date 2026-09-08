@@ -232,18 +232,63 @@ resource "oci_core_instance" "acx_backend" {
   }
 }
 
+# A metadata.user_data change is ForceNew in the OCI provider. Query capacity
+# before Terraform attempts to replace the only GPU host so a plan/apply cannot
+# destroy a running cost-center and then fail to launch its replacement.
+# Provider reference (v7.32.0):
+# https://raw.githubusercontent.com/oracle/terraform-provider-oci/v7.32.0/internal/service/core/core_instance_resource.go
+resource "oci_core_compute_capacity_report" "acx_gpu_replacement" {
+  availability_domain = var.availability_domain
+  # OCI requires the capacity report compartment to be the tenancy root.
+  compartment_id = var.tenancy_ocid
+
+  shape_availabilities {
+    instance_shape = var.gpu_shape
+  }
+}
+
 resource "oci_core_instance" "acx_gpu_burst" {
   compartment_id      = var.compartment_ocid
   availability_domain = var.availability_domain
   display_name        = "acx-gpu-burst"
   shape               = var.gpu_shape
 
-  # First-boot must complete cloud-init (enable acx-gpu-vlm.service) before any
-  # STOP. OCI "state=STOPPED" at create still boots to RUNNING then STOPs, which
-  # races runcmd (VLMFIX-S2-05). Safer path: create RUNNING so cloud-init finishes;
+  # First-boot must complete cloud-init (which starts the watchdog before
+  # acx-gpu-vlm.service) before the operator's first STOP. OCI
+  # "state=STOPPED" at create still boots to RUNNING then STOPs, which races
+  # runcmd (VLMFIX-S2-05). Safer path: create RUNNING so cloud-init finishes;
   # operator stops after first boot (see infra/oci/README.md). Idle reaper then
   # keeps cost controlled.
   state = "RUNNING"
+
+  # The OCI provider marks metadata.user_data changes ForceNew. This is an
+  # explicit controlled migration: capacity is checked above and Terraform
+  # creates the replacement before destroying the old host. The old boot
+  # volume is retained for operator inspection/recovery instead of being
+  # deleted implicitly. Before applying a user_data change, the operator must
+  # review the plan, confirm AVAILABLE capacity, and verify the new host's
+  # cloud-init watchdog before retiring the old instance/volume.
+  preserve_boot_volume = true
+
+  lifecycle {
+    create_before_destroy = true
+    # Preserve first boot for cloud-init, then allow the idle reaper to keep the
+    # instance STOPPED without a later terraform apply restarting it.
+    ignore_changes = [state]
+
+    precondition {
+      condition = anytrue([
+        for availability in oci_core_compute_capacity_report.acx_gpu_replacement.shape_availabilities :
+        try(
+          availability.instance_shape == var.gpu_shape &&
+          availability.availability_status == "AVAILABLE" &&
+          availability.available_count >= 1,
+          false
+        )
+      ])
+      error_message = "OCI capacity report must show at least one AVAILABLE ${var.gpu_shape} slot before creating or replacing the GPU instance."
+    }
+  }
 
   source_details {
     source_type             = "image"
@@ -255,12 +300,18 @@ resource "oci_core_instance" "acx_gpu_burst" {
     subnet_id        = oci_core_subnet.acx_private_subnet.id
     assign_public_ip = false
     display_name     = "acx-gpu-burst-vnic"
-    hostname_label   = "acx-gpu-burst"
+    # Leave hostname_label unset so create_before_destroy can place the
+    # replacement beside the old VNIC; OCI requires labels to be unique within
+    # a subnet. The endpoint is consumed through the Terraform private_ip
+    # output, not a hostname label.
   }
 
   metadata = {
     ssh_authorized_keys = file(pathexpand(var.ssh_public_key_path))
-    user_data           = base64encode(file("${path.module}/gpu-cloud-init.yaml"))
+    user_data           = base64encode(templatefile("${path.module}/gpu-cloud-init.yaml", {
+      max_uptime_seconds = var.gpu_max_uptime_seconds
+      self_stop_enabled  = var.gpu_self_stop_enabled ? 1 : 0
+    }))
   }
 
   freeform_tags = {
@@ -268,5 +319,6 @@ resource "oci_core_instance" "acx_gpu_burst" {
     "env"           = "production"
     "role"          = "gpu-burst"
     "scale_to_zero" = "true"
+    "purpose"       = "gpu-spike-bench"
   }
 }

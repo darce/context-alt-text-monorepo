@@ -1,4 +1,4 @@
-.PHONY: help gate-preflight test test-integration lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready dev-setup dev-mint-key logs-tail logs-rotate logs-clean logs-archive worker-daemon db-reset reset admin-dev admin-test admin-open admin-token admin-status admin-down admin-oci-serve admin-oci admin-oci-mint provision-customer FORCE
+.PHONY: help gate-preflight test test-gpu-lifecycle test-integration lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready dev-setup dev-mint-key logs-tail logs-rotate logs-clean logs-archive worker-daemon db-reset reset admin-dev admin-test admin-open admin-token admin-status admin-down admin-oci-serve admin-oci admin-oci-mint provision-customer FORCE
 
 PYTEST_WORKERS ?= 4
 
@@ -270,9 +270,24 @@ check: lint typecheck test test-integration
 
 # Lint only
 lint:
-	@echo "Running Ruff checks..."
-	@$(UV_RUN) ruff check .
-	@$(UV_RUN) ruff format --check .
+	@echo "Running Ruff checks (via the repo-wide lint ratchet)..."
+	@# LINTGATE-1: `ruff check .` fails here (93 of the repo's 244 known
+	@# violations live under this app), so it could never gate a merge.
+	@# The ratchet gates the same rules against a frozen baseline: any new
+	@# violation or raised count in these files still fails. See the
+	@# `lint-ratchet` target in the root Makefile. Use `ruff check .` directly
+	@# for the raw list, or `make lint-ratchet-accept TOOL=ruff` after a fix.
+	@python3 ../../scripts/lint_ratchet.py --tool ruff
+	@# LINTGATE1-NEW-03: `ruff format --check .` reports 128 unformatted files
+	@# under this app, so this line failed on every invocation and the whole
+	@# target could never pass (sr-002). Same ratchet treatment: the frozen set
+	@# lives in config/lint-baseline/ruff-format.json and any NEWLY unformatted
+	@# file fails. Run from the repo root it covers 296 files -- a strict
+	@# superset of this app's 128, because ruff resolves each file against the
+	@# nearest pyproject.toml, so app files keep this app's format config.
+	@# Pay debt down with `ruff format <paths>` then
+	@# `make lint-ratchet-accept TOOL=ruff-format`.
+	@python3 ../../scripts/lint_ratchet.py --tool ruff-format
 
 # Type check only
 typecheck:
@@ -299,6 +314,15 @@ gate-preflight:
 test:
 	@echo "Running tests..."
 	@$(UV_RUN) pytest $(if $(filter-out 0,$(PYTEST_WORKERS)),-n $(PYTEST_WORKERS),) -m "not integration and not pg and not timing" --durations=25
+
+# Burst-GPU lifecycle controller (GPUW-1). The suite lives at the repo root, but
+# the root .venv on the gate host carries no pytest -- only this workdir's does,
+# so the remote gate can reach it from here and nowhere else. Its conftest puts
+# the repo root on sys.path for exactly this invocation. Without this target the
+# cost backstop ships guarded by tests nothing ever collects.
+test-gpu-lifecycle:
+	@echo "Running gpu-lifecycle tests..."
+	@$(UV_RUN) pytest ../../infra/oci/gpu_lifecycle/tests -q --tb=short
 
 # Integration/pg/timing tests (serial — shared DB fixtures; wall-clock-sensitive
 # timing tests stay out of the parallel lane so worker contention cannot flake them)

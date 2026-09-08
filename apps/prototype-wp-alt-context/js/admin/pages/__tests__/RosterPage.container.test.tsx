@@ -531,7 +531,7 @@ describe('RosterPage route container (E21-9 single surface)', () => {
 
     expect(screen.queryByText(/No other face groups available/i)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Move to/i })).not.toBeInTheDocument();
-    expect(screen.getByText('Face moves happen in the Workbench review queue.')).toBeInTheDocument();
+    expect(screen.getByText('Face moves happen in the Review Queue.')).toBeInTheDocument();
     expect(screen.queryAllByRole('button', { name: /Move to/i })).toHaveLength(0);
   });
 
@@ -548,7 +548,7 @@ describe('RosterPage route container (E21-9 single surface)', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText('Face moves happen in the Workbench review queue.')).toBeInTheDocument();
+    expect(screen.getByText('Face moves happen in the Review Queue.')).toBeInTheDocument();
 
     const face = screen.getByRole('figure', { name: /Face from media 10/i });
     fireEvent.dragStart(face);

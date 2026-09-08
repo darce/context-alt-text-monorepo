@@ -1,20 +1,8 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 
 import { App, determineInitialRoute } from '../App';
-import {
-  useApplyRetentionPreset,
-  useAuditEvents,
-  useDownloadExportJobData,
-  useExportJobStatus,
-  useExportTenantData,
-  useImportTenantData,
-  usePurgeTenantData,
-  useRetentionStatus,
-  useUpdateRetentionPolicy,
-} from '../hooks/useRetentionStatus';
-import { createMockMutation, createMockQuery } from '../test-utils/mockHooks';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -49,16 +37,8 @@ vi.mock('../pages/DescriptionHistoryPage', () => ({
   DescriptionHistoryPage: () => <div>Description History</div>,
 }));
 
-vi.mock('../hooks/useRetentionStatus', () => ({
-  useRetentionStatus: vi.fn(),
-  useUpdateRetentionPolicy: vi.fn(),
-  useExportTenantData: vi.fn(),
-  useExportJobStatus: vi.fn(),
-  useDownloadExportJobData: vi.fn(),
-  usePurgeTenantData: vi.fn(),
-  useImportTenantData: vi.fn(),
-  useAuditEvents: vi.fn(),
-  useApplyRetentionPreset: vi.fn(),
+vi.mock('../pages/guided/GuidedPrototypePage', () => ({
+  GuidedPrototypePage: () => <div>Guided Prototype</div>,
 }));
 
 vi.mock('../context/ToastContext', () => ({
@@ -70,16 +50,6 @@ vi.mock('../context/ToastContext', () => ({
 }));
 
 describe('App route boot', () => {
-  const mockedUseRetentionStatus = vi.mocked(useRetentionStatus);
-  const mockedUseUpdateRetentionPolicy = vi.mocked(useUpdateRetentionPolicy);
-  const mockedUseExportTenantData = vi.mocked(useExportTenantData);
-  const mockedUseExportJobStatus = vi.mocked(useExportJobStatus);
-  const mockedUseDownloadExportJobData = vi.mocked(useDownloadExportJobData);
-  const mockedUsePurgeTenantData = vi.mocked(usePurgeTenantData);
-  const mockedUseImportTenantData = vi.mocked(useImportTenantData);
-  const mockedUseAuditEvents = vi.mocked(useAuditEvents);
-  const mockedUseApplyRetentionPreset = vi.mocked(useApplyRetentionPreset);
-  const updateMutateAsync = vi.fn();
   const originalHash = window.location.hash;
   const originalHref = window.location.href;
 
@@ -87,43 +57,6 @@ describe('App route boot', () => {
     vi.clearAllMocks();
     window.history.replaceState({}, '', '/');
     window.location.hash = '';
-
-    mockedUseRetentionStatus.mockReturnValue(
-      createMockQuery({
-        data: {
-          available: true,
-          policy: {
-            retention_mode: 'dispose_after_ack',
-            last_export_at: '2026-03-10T10:00:00Z',
-            last_purge_at: null,
-            retention_updated_at: '2026-03-09T12:00:00Z',
-          },
-          recent_audit_events: [
-            {
-              id: 'audit-1',
-              event_type: 'policy_updated',
-              actor: 'api_key:abc123',
-              scope: 'tenant',
-              payload: { retention_mode: 'dispose_after_ack', previous: 'retain_all' },
-              result_status: 'success',
-              created_at: '2026-03-10T10:00:00Z',
-            },
-          ],
-        },
-      }),
-    );
-    mockedUseUpdateRetentionPolicy.mockReturnValue(
-      createMockMutation({
-        mutateAsync: updateMutateAsync,
-      }),
-    );
-    mockedUseExportTenantData.mockReturnValue(createMockMutation());
-    mockedUseExportJobStatus.mockReturnValue(createMockQuery());
-    mockedUseDownloadExportJobData.mockReturnValue(createMockMutation());
-    mockedUsePurgeTenantData.mockReturnValue(createMockMutation());
-    mockedUseImportTenantData.mockReturnValue(createMockMutation());
-    mockedUseAuditEvents.mockReturnValue(createMockQuery({ data: { items: [], total: 0, limit: 20, offset: 0 } }));
-    mockedUseApplyRetentionPreset.mockReturnValue(createMockMutation());
   });
 
   afterEach(() => {
@@ -135,6 +68,17 @@ describe('App route boot', () => {
     window.history.replaceState({}, '', '/wp-admin/admin.php?page=alt-context-retention');
 
     expect(determineInitialRoute()).toBe('/retention');
+  });
+
+  it('redirects the /retention hash route to settings with the retention section', () => {
+    window.history.replaceState({}, '', '/wp-admin/admin.php?page=alt-context-settings');
+    window.location.hash = '#/retention';
+
+    render(<App />);
+
+    expect(window.location.hash).toBe('#/settings?section=retention');
+    expect(screen.getByText('Settings')).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Data Retention' })).not.toBeInTheDocument();
   });
 
   it('maps the settings admin page query arg to the settings route', () => {
@@ -167,19 +111,22 @@ describe('App route boot', () => {
     expect(screen.getByText('Description History')).toBeInTheDocument();
   });
 
-  it('boots the retention page from the WordPress admin query arg and saves policy changes', async () => {
+  it('boots settings from the retention admin page query arg via the /retention redirect', () => {
     window.history.replaceState({}, '', '/wp-admin/admin.php?page=alt-context-retention');
 
     render(<App />);
 
-    expect(window.location.hash).toBe('#/retention');
-    expect(screen.getByRole('heading', { name: 'Retention & Audit Controls' })).toBeInTheDocument();
+    expect(window.location.hash).toBe('#/settings?section=retention');
+    expect(screen.getByText('Settings')).toBeInTheDocument();
+  });
 
-    fireEvent.click(screen.getByRole('radio', { name: /Purge on demand/ }));
-    fireEvent.click(screen.getByRole('button', { name: 'Save policy' }));
+  it('boots the guided prototype from its authenticated plugin hash route', () => {
+    window.history.replaceState({}, '', '/wp-admin/admin.php?page=alt-context-dashboard');
+    window.location.hash = '#/guided-prototype';
 
-    await waitFor(() => {
-      expect(updateMutateAsync).toHaveBeenCalledWith({ retention_mode: 'purge_on_demand' });
-    });
+    render(<App />);
+
+    expect(window.location.hash).toBe('#/guided-prototype');
+    expect(screen.getByText('Guided Prototype')).toBeInTheDocument();
   });
 });

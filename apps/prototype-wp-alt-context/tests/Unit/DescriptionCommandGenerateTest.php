@@ -9,6 +9,7 @@ use AltContext\Api\Services\DescriptionCandidateService;
 use AltContext\Api\Services\DescribeMediaService;
 use AltContext\Cli\DescriptionCommand;
 use AltContext\Tests\TestCase;
+use PHPUnit\Framework\Attributes\DataProvider;
 use RuntimeException;
 use WP_Error;
 use WP_REST_Request;
@@ -108,11 +109,149 @@ class DescriptionCommandGenerateTest extends TestCase
         $this->assertEmpty(\WP_CLI::$messages['success']);
     }
 
+    /**
+     * DEMOLIVE-9-R1-03C: CLI must refuse identity-less adapter instead of stamping ''.
+     *
+     * @param mixed $adapter
+     */
+    #[DataProvider('unusableAdapterProvider')]
+    public function testGenerateWriteRejectsUnusableAdapter(mixed $adapter, bool $omitKey): void
+    {
+        $body = array(
+            'media_id' => 411,
+            'alt_text_draft' => 'A black dog sitting by a window.',
+            'adapter' => $adapter,
+            'model_id' => 'local-v1',
+            'model_version' => '2026-07-04',
+            'prompt_or_task_version' => 'describe-v1',
+        );
+        if ($omitKey) {
+            unset($body['adapter']);
+        }
+        $service = new RecordingDescribeService([
+            411 => new WP_REST_Response($body),
+        ]);
+        $command = new DescriptionCommand(null, $service);
+
+        $caught = null;
+        try {
+            $command->__invoke(['generate'], ['media-id' => '411', 'write' => true, 'format' => 'json']);
+        } catch (RuntimeException $e) {
+            $caught = $e;
+        }
+
+        $this->assertInstanceOf(RuntimeException::class, $caught);
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+
+        $this->assertSame('failed', $payload['rows'][0]['status']);
+        $this->assertStringContainsString('adapter', $payload['rows'][0]['error'] ?? '');
+        $this->assertSame(1, $payload['failed'] ?? null);
+        $this->assertSame('', get_post_meta(411, '_wp_attachment_image_alt', true));
+        $this->assertSame('', get_post_meta(411, '_acx_description_provenance', true));
+    }
+
+    /**
+     * @return array<string, array{0: mixed, 1: bool}>
+     */
+    public static function unusableAdapterProvider(): array
+    {
+        return array(
+            'missing' => array(null, true),
+            'empty' => array('', false),
+            'whitespace' => array(' ', false),
+            'int' => array(42, false),
+            'array' => array(array('nope'), false),
+            'null' => array(null, false),
+        );
+    }
+
+    public function testGenerateWritePassesAdapterThroughUnchanged(): void
+    {
+        $service = new RecordingDescribeService([
+            412 => new WP_REST_Response(
+                [
+                    'media_id' => 412,
+                    'alt_text_draft' => 'A black dog sitting by a window.',
+                    'adapter' => 'florence_small',
+                    'model_id' => 'local-v1',
+                    'model_version' => '2026-07-04',
+                    'prompt_or_task_version' => 'describe-v1',
+                ]
+            ),
+        ]);
+        $command = new DescriptionCommand(null, $service);
+
+        $command->__invoke(['generate'], ['media-id' => '412', 'write' => true, 'format' => 'json']);
+
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+        $provenance = get_post_meta(412, '_acx_description_provenance', true);
+
+        $this->assertSame('written', $payload['rows'][0]['status']);
+        $this->assertIsArray($provenance);
+        $this->assertSame('florence_small', $provenance['adapter']);
+        $this->assertSame('A black dog sitting by a window.', get_post_meta(412, '_wp_attachment_image_alt', true));
+    }
+
+    /**
+     * [rg-007] one rejected item must not abort the rest of a --limit batch.
+     */
+    public function testGenerateWriteRejectedAdapterDoesNotAbortBatch(): void
+    {
+        $candidates = new FixedCandidateService([801, 802]);
+        $describe = new RecordingDescribeService([
+            801 => new WP_REST_Response([
+                'media_id' => 801,
+                'alt_text_draft' => 'empty adapter item',
+                'adapter' => '',
+                'model_id' => 'local-v1',
+                'model_version' => '1',
+                'prompt_or_task_version' => 'describe-v1',
+            ]),
+            802 => new WP_REST_Response([
+                'media_id' => 802,
+                'alt_text_draft' => 'valid adapter item',
+                'adapter' => 'florence_small',
+                'model_id' => 'local-v1',
+                'model_version' => '1',
+                'prompt_or_task_version' => 'describe-v1',
+            ]),
+        ]);
+        $command = new DescriptionCommand($candidates, $describe);
+
+        $caught = null;
+        try {
+            $command->__invoke(['generate'], ['limit' => '2', 'write' => true, 'format' => 'json']);
+        } catch (RuntimeException $e) {
+            $caught = $e;
+        }
+
+        $this->assertInstanceOf(RuntimeException::class, $caught);
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+
+        $this->assertSame([801, 802], $describe->requestedMediaIds);
+        $this->assertSame(2, $payload['count'] ?? null);
+        $this->assertSame(1, $payload['failed'] ?? null);
+        $this->assertSame(1, $payload['written'] ?? null);
+        $this->assertSame('failed', $payload['rows'][0]['status']);
+        $this->assertStringContainsString('adapter', $payload['rows'][0]['error'] ?? '');
+        $this->assertSame('written', $payload['rows'][1]['status']);
+        $this->assertSame('', get_post_meta(801, '_wp_attachment_image_alt', true));
+        $this->assertSame('', get_post_meta(801, '_acx_description_provenance', true));
+        $this->assertSame('valid adapter item', get_post_meta(802, '_wp_attachment_image_alt', true));
+        $secondProvenance = get_post_meta(802, '_acx_description_provenance', true);
+        $this->assertIsArray($secondProvenance);
+        $this->assertSame('florence_small', $secondProvenance['adapter']);
+    }
+
     public function testGenerateWriteSkipsExistingAltUnlessForced(): void
     {
         $this->setPostMeta(501, '_wp_attachment_image_alt', 'Existing editorial alt.');
         $service = new RecordingDescribeService([
-            501 => new WP_REST_Response(['media_id' => 501, 'alt_text_draft' => 'Generated replacement alt.']),
+            501 => new WP_REST_Response([
+                'media_id' => 501,
+                'alt_text_draft' => 'Generated replacement alt.',
+                'adapter' => 'seeded',
+            ]),
         ]);
         $command = new DescriptionCommand(null, $service);
 
@@ -1832,7 +1971,11 @@ class RecordingDescribeService extends DescribeMediaService
         $this->requestedMediaIds[] = $mediaId;
 
         return $this->responses[$mediaId] ?? new WP_REST_Response(
-            ['media_id' => $mediaId, 'alt_text_draft' => 'Generated alt text.']
+            [
+                'media_id' => $mediaId,
+                'alt_text_draft' => 'Generated alt text.',
+                'adapter' => 'seeded',
+            ]
         );
     }
 }

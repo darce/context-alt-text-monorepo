@@ -187,6 +187,7 @@ class SuggestionExtensionService:
                 status=SuggestionStatus(row.resolution),
                 confidence_score=float(row.confidence_score) if row.confidence_score is not None else None,
                 expires_at=row.expires_at,
+                survivor_cluster_id=str(row.survivor_cluster_id) if row.survivor_cluster_id is not None else None,
             )
             for row in rows
         ]

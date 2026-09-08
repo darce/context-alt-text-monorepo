@@ -17,12 +17,12 @@ class RetentionPage extends AbstractSpaPage {
 	}
 
 	protected function getPageTitle(): string {
-		return __( 'Alt Context Retention', 'alt-context' );
+		return __( 'Alt Context Data Retention', 'alt-context' );
 	}
 
 	protected function getLoadingMessage(): string {
 		return __(
-			'Loading Alt Context retention. Please wait while the application initializes.',
+			'Loading Alt Context Data Retention. Please wait while the application initializes.',
 			'alt-context'
 		);
 	}

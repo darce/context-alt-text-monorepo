@@ -52,14 +52,14 @@ const labeledIdentity: DetectedIdentity = {
   similarity: 0.85,
 };
 
-type IdentitiesSurface = {
+interface IdentitiesSurface {
   data?: { identities_by_media: Record<string, DetectedIdentity[]>; data_source?: string };
   isLoading: boolean;
   isError: boolean;
   isPlaceholderData?: boolean;
   isFetching?: boolean;
   refetch: () => void;
-};
+}
 
 let identitiesSurface: IdentitiesSurface;
 let itemsWithIdentities: WorkbenchMediaItem[];
@@ -79,6 +79,7 @@ vi.mock('../WorkbenchMediaContext', () => ({
       currentPage: 1,
       perPage: 10,
       handleSearchChange: vi.fn(),
+      clearSearch: vi.fn(),
       handleStatusChange: vi.fn(),
       setCurrentPage: vi.fn(),
       setPerPage: vi.fn(),
@@ -145,10 +146,6 @@ vi.mock('../../../hooks/useRecognitionCooldown', () => ({
     remainingSeconds: 0,
     remainingMs: 0,
   }),
-}));
-
-vi.mock('../MediaAnalyzeCta', () => ({
-  MediaAnalyzeCta: () => null,
 }));
 
 vi.mock('../BulkDescribeReviewLink', () => ({

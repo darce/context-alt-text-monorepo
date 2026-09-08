@@ -1,14 +1,15 @@
 # UX Map — roster-people
 
 **Product:** `prototype-wp-alt-context`
-**Source fixture:** `packages/mcp-workbay-canvas/tests/fixtures/ux_maps/roster-people.uxmap.json`
+**Source fixture:** `apps/prototype-wp-alt-context/js/admin/pages/RosterPage.tsx`
 
 ## Goals
-- Operator assigns unassigned faces and manages person workspace without losing roster place
+- Six ACX submenus are MECE and frequency-ordered (NAV-05/NAV-06): Overview orients; Review Queue is the one home to name a person from a photo (highest-frequency demo task); People manages named people only; Description Runs is the one home to see what the describer did; Data Retention is keep/delete/export policy (not description history); Settings configures the service (rare, last). WordPress parent slug stays Overview.
+- One primary action per screen (NAV-01), reachable from zero state (rg-003); other CTAs are secondary.
+- Operator manages named people and person workspace without losing roster place
 - Decompose Roster UI tasks from screens/zones/states/flows (people-first surface; clusters tab retired)
 
 ## Jobs
-- `job-assign-faces` — Assign unassigned faces to people
 - `job-manage-person` — Open person workspace / manage entry
 - `job-cluster-review` — Review face-group deep-link (shim)
 
@@ -62,12 +63,13 @@ url_params: `person`, `personFilter`, `queue`, `face`, `cluster`
 |   - Face-group drawer host (cluster= shim) (other)         |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
-|   [PRIMARY] Filter unassigned -> personFilter=unassigned   |
-|   [PRIMARY] Open person workspace -> roster-person-worksp… |
+|   [PRIMARY] Add Person -> roster-shell                     |
+|   [secondary] Open person workspace -> roster-person-works…|
 |   [secondary] Go to Workbench -> exit-workbench            |
 |   [secondary] Open face-group drawer -> roster-cluster-dr… |
 +------------------------------------------------------------+
-| states: default | loading | empty | error | degraded | first_time |
+| states: default | loading | empty | error | degraded       |
+| states+: first_time                                        |
 +------------------------------------------------------------+
 ```
 
@@ -80,9 +82,9 @@ url_params: `person`, `queue`, `face`
 | zone id | label | role | states |
 | --- | --- | --- | --- |
 | `z-person-header` | Person header | content | default, loading |
-| `z-person-identities` | Linked faces | ai_review | default, empty, loading |
+| `z-person-identities` | Linked faces | ai_review | default, loading, empty, error, degraded |
 | `z-person-evidence` | Cluster evidence thumbnails (cropped face crop; raw media fallback for uncroppable bbox; labelled visible no-image state) | ai_review | default, loading, empty, error, degraded |
-| `z-person-actions` | Save / assign / open queue | form | default, error |
+| `z-person-actions` | Save / assign / open queue | form | default, loading, empty, error, degraded |
 
 ```
 +------------------------------------------------------------+
@@ -115,7 +117,7 @@ url_params: `cluster`
 | zone id | label | role | states |
 | --- | --- | --- | --- |
 | `z-cluster-samples` | Sample faces | forced_choice | default, loading, empty, error |
-| `z-cluster-actions` | Assign / dismiss drawer | form | default |
+| `z-cluster-actions` | Assign / dismiss drawer | form | default, loading, empty, error |
 
 ```
 +------------------------------------------------------------+
@@ -142,7 +144,7 @@ Purpose: Full-size face/media evidence dialog opened from workspace evidence thu
 | zone id | label | role | states |
 | --- | --- | --- | --- |
 | `z-lightbox-media` | Enlarged evidence media with accessible ordinal name | ai_review | default, error |
-| `z-lightbox-controls` | Close affordance | form | default |
+| `z-lightbox-controls` | Close affordance | form | default, error |
 
 ```
 +------------------------------------------------------------+
@@ -182,25 +184,26 @@ url_params: `tab`, `panel`, `media`
 +------------------------------------------------------------+
 ```
 
+## Actions
+
+| id | verb | target | hierarchy | costly | irreversible | preview required | screen id |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `act-add-person` | Add Person | `roster-shell` | primary | no | no | no | `roster-shell` |
+| `act-open-person` | Open person workspace | `roster-person-workspace` | secondary | no | no | no | `roster-shell` |
+| `act-save-person` | Save person changes | `roster-person-workspace` | primary | yes | no | yes | `roster-person-workspace` |
+| `act-open-cluster` | Open face-group drawer | `roster-cluster-drawer` | secondary | no | no | no | `roster-shell` |
+| `act-assign-cluster` | Assign face group to person | `person` | primary | yes | no | yes | `roster-cluster-drawer` |
+| `act-goto-workbench` | Go to Workbench | `exit-workbench` | secondary | no | no | no | `roster-shell` |
+| `act-open-lightbox` | Open evidence lightbox | `roster-face-lightbox` | secondary | no | no | no | `roster-person-workspace` |
+| `act-close-lightbox` | Close lightbox | `roster-person-workspace` | primary | no | no | no | `roster-face-lightbox` |
+
 ## Flows
-### Filter unassigned → open person → save assignment (`flow-assign-unassigned`)
-
-```mermaid
-flowchart TD
-  %% flow: Filter unassigned → open person → save assignment job=job-assign-faces
-  n_roster_shell["Roster (People) (screen)"]
-  n_roster_person_workspace["Person workspace (screen)"]
-  n_roster_shell -->|enter roster| n_roster_shell
-  n_roster_shell -->|personFilter=unassigned| n_roster_shell
-  n_roster_shell -->|open person| n_roster_person_workspace
-  n_roster_person_workspace -->|save / return| n_roster_shell
-```
-
 ### Open face-group drawer → assign → person workspace (`flow-cluster-to-person`)
 
 ```mermaid
 flowchart TD
   %% flow: Open face-group drawer → assign → person workspace job=job-cluster-review
+  %% steps: [{"screen_id":"roster-shell","branch_label":"from entries/clusters"},{"screen_id":"roster-cluster-drawer","branch_label":"cluster= drawer"},{"screen_id":"roster-person-workspace","branch_label":"assign identity"}]
   n_roster_shell["Roster (People) (screen)"]
   n_roster_cluster_drawer["Face-group drawer (deep-link shim) (overlay)"]
   n_roster_shell -->|from entries/clusters| n_roster_cluster_drawer
@@ -214,6 +217,7 @@ flowchart TD
 ```mermaid
 flowchart TD
   %% flow: Roster → Workbench continue scan job=job-manage-person
+  %% steps: [{"screen_id":"roster-person-workspace","branch_label":"done assigning"},{"screen_id":"exit-workbench","branch_label":"continue media queue"}]
   n_roster_person_workspace["Person workspace (screen)"]
   n_exit_workbench["Workbench (exit)"]
   n_roster_person_workspace -->|done assigning| n_exit_workbench
@@ -222,6 +226,37 @@ flowchart TD
 ## Open questions
 - Is person workspace a route-owned screen or always an in-page panel? (modeled as deep-linkable screen with person=)
 - Face-group drawer max_candidates=8 — confirm product top-k policy
+
+## Parity index
+
+Machine-checked by `js/admin/__tests__/uxmap-parity.test.ts` and
+`js/admin/__tests__/uxmap-render-parity.test.ts`: every id, state, and verbatim label
+below must exist in the sibling `.uxmap.json`, and no `z-*`/`act-*` id may appear here
+that the JSON does not define. Regenerate with `docs/ux-maps/render_ux_maps.py` — never
+hand-edit one side.
+
+Zone ids: z-entries z-review-cta z-projection-gate z-person-host z-cluster-host z-person-header z-person-identities z-person-evidence z-person-actions z-cluster-samples z-cluster-actions z-lightbox-media z-lightbox-controls z-wb-entry
+
+Action ids: act-add-person act-open-person act-save-person act-open-cluster act-assign-cluster act-goto-workbench act-open-lightbox act-close-lightbox
+
+Zone labels (verbatim; the tables above escape `|` for markdown, this list does not):
+
+- Roster entries table
+- Unnamed faces CTA → Workbench review queue
+- Projection status gate notices
+- Person workspace host
+- Face-group drawer host (cluster= shim)
+- Person header
+- Linked faces
+- Cluster evidence thumbnails (cropped face crop; raw media fallback for uncroppable bbox; labelled visible no-image state)
+- Save / assign / open queue
+- Sample faces
+- Assign / dismiss drawer
+- Enlarged evidence media with accessible ordinal name
+- Close affordance
+- Workbench entry
+
+States (all zones and screens): default loading empty error degraded first_time
 
 ## Not doing
 - Resurrect Clusters tab surface (retired; cluster= drawer only)

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 
 import { DashboardPage } from '../DashboardPage';
 import type { DashboardStats } from '../../api/dashboardApi';
@@ -127,6 +127,53 @@ describe('DashboardPage', () => {
     );
   });
 
+  it('renders a landing summary describing what the product does, not operator chores', () => {
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({
+        data: {
+          people_count: 10,
+          assigned_clusters_count: 7,
+          pending_clusters_count: 3,
+          media_with_faces_count: 22,
+          unassigned_persons_count: 0,
+        },
+        refetch: vi.fn(),
+      }),
+    );
+
+    render(<DashboardPage />);
+
+    expect(
+      screen.getByText('It finds the people in your media library and writes alt text that names them.'),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText('Monitor your library coverage and manage identity recognition jobs.'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('renders the page heading as "Overview", matching the renamed admin menu label', () => {
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({
+        data: {
+          people_count: 10,
+          assigned_clusters_count: 7,
+          pending_clusters_count: 3,
+          media_with_faces_count: 22,
+          unassigned_persons_count: 0,
+        },
+        refetch: vi.fn(),
+      }),
+    );
+
+    render(<DashboardPage />);
+
+    // The visible hero title is now a <p> (WordPress shell owns the page's only
+    // <h1>, ORCH-UX-UI-BR-23); assert via the section's accessible name so the
+    // test still fails if the preserved id/aria-labelledby link is broken.
+    expect(screen.getByRole('region', { name: 'Overview' })).toBeInTheDocument();
+    expect(screen.queryByText('Alt Context Dashboard')).not.toBeInTheDocument();
+  });
+
   it('renders identity stats and pending-review guidance', () => {
     mockedUseIdentityStats.mockReturnValue(
       createMockQuery<DashboardStats>({
@@ -149,7 +196,10 @@ describe('DashboardPage', () => {
     expect(screen.getByText('22')).toBeInTheDocument();
     expect(screen.getByText('Media with faces')).toBeInTheDocument();
     expect(screen.getByText('3 faces are waiting for names.')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Go to Workbench' })).toHaveAttribute('href', '#/workbench?advanced=open');
+    expect(screen.getByRole('link', { name: 'Go to Review Queue' })).toHaveAttribute(
+      'href',
+      '#/workbench?advanced=open',
+    );
   });
 
   it('shows first-use guidance when roster is empty and nothing pending', () => {
@@ -343,7 +393,7 @@ describe('DashboardPage', () => {
 
     render(<DashboardPage />);
 
-    expect(screen.getByText('3 persons have no assigned clusters.')).toBeInTheDocument();
+    expect(screen.getByText('3 persons have no assigned face groups.')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Review 3 unassigned persons' })).toHaveAttribute(
       'href',
       '#/roster?personFilter=unassigned',
@@ -391,10 +441,7 @@ describe('DashboardPage', () => {
 
     expect(screen.getByText(RETENTION_CARD_HEADING)).toBeInTheDocument();
     expect(screen.getByText('Dispose after ack')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Open Retention Controls/ })).toHaveAttribute(
-      'href',
-      RETENTION_CARD_LINK_HREF,
-    );
+    expect(screen.getByRole('link', { name: /Open Data Retention/ })).toHaveAttribute('href', RETENTION_CARD_LINK_HREF);
   });
 
   it('does not render the Batch Operations panel', () => {
@@ -438,14 +485,14 @@ describe('DashboardPage', () => {
     expect(screen.queryByRole('link', { name: /Analysis Queue/ })).not.toBeInTheDocument();
   });
 
-  it('shows orientation card only when people_count is zero', () => {
+  it('keeps orientation above telemetry for a pre-seeded viewer until a person is named', () => {
     mockedUseIdentityStats.mockReturnValue(
       createMockQuery<DashboardStats>({
         data: {
-          people_count: 0,
+          people_count: 3,
           assigned_clusters_count: 0,
-          pending_clusters_count: 0,
-          media_with_faces_count: 0,
+          pending_clusters_count: 3,
+          media_with_faces_count: 5,
           unassigned_persons_count: 0,
         },
         refetch: vi.fn(),
@@ -454,14 +501,19 @@ describe('DashboardPage', () => {
 
     const { unmount } = render(<DashboardPage />);
 
-    expect(screen.getByRole('heading', { name: 'Getting Started with Identity Recognition' })).toBeInTheDocument();
+    const orientationHeading = screen.getByRole('heading', { name: 'Getting Started with Identity Recognition' });
+    expect(orientationHeading).toBeInTheDocument();
+    expectBefore(
+      orientationHeading.closest('section')!,
+      screen.getByRole('heading', { name: 'Sync Health' }).closest('section')!,
+    );
     unmount();
 
     mockedUseIdentityStats.mockReturnValue(
       createMockQuery<DashboardStats>({
         data: {
           people_count: 3,
-          assigned_clusters_count: 2,
+          assigned_clusters_count: 1,
           pending_clusters_count: 0,
           media_with_faces_count: 5,
           unassigned_persons_count: 0,
@@ -472,7 +524,25 @@ describe('DashboardPage', () => {
 
     render(<DashboardPage />);
 
-    expect(screen.queryByRole('heading', { name: 'Getting Started with Identity Recognition' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('heading', { name: 'Getting Started with Identity Recognition' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('gives an absent identity response a named unknown state with retry without promoting it', () => {
+    const refetch = vi.fn();
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({ status: 'success', data: undefined, refetch }),
+    );
+
+    render(<DashboardPage />);
+
+    const syncHeading = screen.getByRole('heading', { name: 'Sync Health' });
+    const identityHeading = screen.getByRole('heading', { name: 'Identity Recognition' });
+    expectBefore(syncHeading.closest('section')!, identityHeading.closest('section')!);
+    expect(screen.getByText('Identity stats are unavailable.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry identity stats' }));
+    expect(refetch).toHaveBeenCalledTimes(1);
   });
 
   it('links Library Coverage to workbench missing-status filter', () => {
@@ -495,6 +565,35 @@ describe('DashboardPage', () => {
       'href',
       '#/workbench?status=missing',
     );
+  });
+
+  it('D-22: populated Overview styles competing CTAs as secondary (one primary per screen)', () => {
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({
+        data: {
+          people_count: 4,
+          assigned_clusters_count: 4,
+          pending_clusters_count: 0,
+          media_with_faces_count: 10,
+          unassigned_persons_count: 0,
+        },
+        refetch: vi.fn(),
+      }),
+    );
+
+    render(<DashboardPage />);
+
+    const fix = screen.getByRole('link', { name: 'Fix missing descriptions' });
+    expect(fix).toHaveClass('acx-button--secondary');
+    expect(fix).not.toHaveClass('acx-button--primary');
+
+    const syncSection = screen.getByRole('heading', { name: 'Sync Health' }).closest('section');
+    expect(syncSection).not.toBeNull();
+    const openQueue = within(syncSection!).getByRole('link', { name: /Open Review Queue/ });
+    expect(openQueue).toHaveClass('acx-dashboard__action-card--secondary');
+    expect(openQueue).not.toHaveClass('acx-dashboard__action-card--primary');
+
+    expect(screen.queryByRole('link', { name: 'Start your first scan' })).not.toBeInTheDocument();
   });
 
   it('does not render the DescribePanel hero on the dashboard', () => {
@@ -543,7 +642,7 @@ describe('DashboardPage', () => {
 
     expect(screen.queryByText(RETENTION_CARD_HEADING)).not.toBeInTheDocument();
     expect(screen.queryByText(RETENTION_CARD_ERROR_BODY)).not.toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: /Open Retention Controls/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Open Data Retention/ })).not.toBeInTheDocument();
   });
 
   it('shows remediation copy and retention link when retention status fails to load', () => {
@@ -571,10 +670,7 @@ describe('DashboardPage', () => {
 
     expect(screen.getByText(RETENTION_CARD_HEADING)).toBeInTheDocument();
     expect(screen.getByText(RETENTION_CARD_ERROR_BODY)).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Open Retention Controls/ })).toHaveAttribute(
-      'href',
-      RETENTION_CARD_LINK_HREF,
-    );
+    expect(screen.getByRole('link', { name: /Open Data Retention/ })).toHaveAttribute('href', RETENTION_CARD_LINK_HREF);
   });
 
   it('does not render the retention panel while retention status is loading', () => {
@@ -838,7 +934,9 @@ describe('DashboardPage', () => {
       screen.getByRole('heading', { name: 'Sync Health' }),
       screen.getByRole('heading', { name: 'Identity Recognition' }),
     );
-    expect(screen.queryByRole('heading', { name: 'Getting Started with Identity Recognition' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('heading', { name: 'Getting Started with Identity Recognition' }),
+    ).not.toBeInTheDocument();
   });
 
   it('renders review work before sync health when sync is healthy', () => {
@@ -962,7 +1060,7 @@ describe('DashboardPage', () => {
     render(<DashboardPage />);
 
     expect(
-      screen.getByText('Mirror is out of sync with the backend — 7 stale clusters, 2 failed sync events.'),
+      screen.getByText('Mirror is out of sync with the backend — 7 stale face groups, 2 failed sync events.'),
     ).toBeInTheDocument();
   });
 
@@ -1002,12 +1100,16 @@ describe('DashboardPage', () => {
 
     render(<DashboardPage />);
 
-    const banner = screen.getByRole('status');
+    const banner = screen.getByText(/Mirror is out of sync with the backend/).closest('[role="status"]');
+    expect(banner).toBeTruthy();
     expect(banner).toHaveClass('acx-dashboard__mirror-warning');
 
     const resetButton = screen.getByRole('button', { name: 'Reset mirror' });
     fireEvent.click(resetButton);
-
+    expect(mutate).not.toHaveBeenCalled();
+    fireEvent.click(
+      within(screen.getByRole('dialog')).getByRole('button', { name: 'Reset mirror' }),
+    );
     expect(mutate).toHaveBeenCalledTimes(1);
   });
 

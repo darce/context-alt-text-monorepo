@@ -2,7 +2,7 @@
 
 Date: 2026-07-08
 Task: VLM-3
-Status: provisional implementation decision, pending live OCI bake-off
+Status: provisional; license verdict pending; measured JSON reports not regenerated
 
 ## Decision
 
@@ -47,6 +47,10 @@ Provisional pass for private in-tenancy evaluation. Final license verdict is blo
 
 ## Activation preconditions
 
+Activation status: activated on the spike host on 2026-07-14; production
+activation is pending GPUSMOKE-1 S4, including the production reaper timer
+install and backend deploy.
+
 Do not treat `terraform apply` alone as tier activation. Before setting the service to the GPU detailed tier, all of the following must hold:
 
 1. **Infra-produced endpoint URL.** After apply, read:
@@ -60,16 +64,24 @@ Do not treat `terraform apply` alone as tier activation. Before setting the serv
    - **Private/loopback IP literals** (e.g. `http://10.0.x.x:8000`) are accepted without hostname allowlisting.
    - **Allowlisted hostnames** (`acx-gpu-burst`, `localhost`, or `*.oraclevcn.com` FQDNs) are accepted only when DNS resolves **entirely** to private or loopback addresses — public resolution fails closed.
    - Prefer the terraform private-IP URL or the `acx-gpu-burst` alias (with VCN DNS/`/etc/hosts`) over hand-typed FQDNs. OCI VCN FQDNs ending in `.oraclevcn.com` work when they resolve privately inside the tenancy; they are not a substitute for verifying the resolved addresses stay in-boundary.
-4. **GPU instance start.** Terraform provisions `acx_gpu_burst` in `state = "STOPPED"` (no A10 compute bill at apply). Start on demand (`oci compute instance action --action START` or console) before serving; the idle reaper STOPs when the describe job store reports `queue_depth=0` and `in_flight=0` for the configured idle window.
+4. **GPU first boot and verified STOP.** The first Terraform apply provisions
+   `acx_gpu_burst` in `state = "RUNNING"` so cloud-init can finish. Terraform's
+   `lifecycle.ignore_changes = [state]` then prevents later applies from undoing
+   scale-to-zero state. Immediately after cloud-init is verified, the operator must
+   issue `oci compute instance action --instance-id <instance_ocid> --action STOP`
+   and poll `oci compute instance get --instance-id <instance_ocid>` until the
+   lifecycle state is `STOPPED`. Start on demand before serving; the idle reaper
+   STOPs when the describe job store reports `queue_depth=0` and `in_flight=0` for
+   the configured idle window.
 5. **Idle reaper wired.** Run the out-of-band actuator periodically (cron/systemd timer on the backend host or operator workstation with OCI CLI):
 
    ```bash
    python -m infra.oci.gpu_lifecycle \
      --instance-id "$(terraform -chdir=infra/oci output -raw gpu_instance_id)" \
      --idle-seconds 300 \
-     --load-json /run/acx/describe-load.json \
+     --load-dir /run/acx-write \
      --fence-delay-seconds 1
    ```
 
-   Load JSON must mirror `scene/application/describe_load.py::load_snapshot`: `{"queue_depth": N, "in_flight": M, "written_at": ...}`. The reaper re-samples after a fence delay and cancels STOP if work appeared (decision→STOP fencing).
+   `--load-dir` is a directory of per-environment snapshots (`<load-dir>/<environment>/describe-load.json`), not a single file: WBUX6-MRG-02 moved publication off the one-writer `/run/acx/describe-load.json` so multiple environments can publish concurrently. Each snapshot must mirror `scene/application/describe_load.py::load_snapshot`: `{"queue_depth": N, "in_flight": M, "batch_in_progress": bool, "written_at": ...}`. Fresh snapshots are aggregated; stale or invalid inputs fail closed. The reaper re-samples after a fence delay and cancels STOP if work appeared (decision→STOP fencing).
 6. **Bake-off evidence.** Live OCI bake-off replaces pending REPORT stubs (`kind=pending_report`) with measured `kind=report` artifacts and updates the spike artifact before promoting this memo from provisional to final (see Decision above).

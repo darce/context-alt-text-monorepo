@@ -21,13 +21,13 @@ const SCOPED_FILES = [
 
 const GETTEXT_CALLEES = new Set(['__', '_n', '_x']);
 
-type Offender = {
+interface Offender {
   file: string;
   line: number;
   column: number;
   callee: string;
   preview: string;
-};
+}
 
 const collectOffenders = (filePath: string): { callCount: number; offenders: Offender[] } => {
   const source = readFileSync(filePath, 'utf8');

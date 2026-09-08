@@ -25,6 +25,7 @@ vi.mock('../../api/describeApi', async () => {
 
 const fetchItemsMock = vi.mocked(fetchDescribeRunItems);
 const applyMock = vi.mocked(applyDescribeRunDrafts);
+const runItemContract = { tier: 'final_gpu', result_generation: 1 } as const;
 
 const mixedItems = {
   run_id: 'run-abc',
@@ -33,7 +34,7 @@ const mixedItems = {
     { media_id: 90, status: 'completed', alt_text_draft: 'A blue car.', caption: 'A car.', provenance: null, existing_alt: false },
     { media_id: 70, status: 'completed', alt_text_draft: 'A stone bridge.', caption: 'A bridge.', provenance: null, existing_alt: true },
     { media_id: 72, status: 'failed', alt_text_draft: null, caption: null, provenance: null, existing_alt: false },
-  ],
+  ].map((item) => ({ ...item, ...runItemContract })),
 };
 
 /** Post-partial refetch: alt landed so existing_alt is true for the written rows. */
@@ -44,7 +45,7 @@ const afterPartialItems = {
     { media_id: 90, status: 'completed', alt_text_draft: 'A blue car.', caption: 'A car.', provenance: null, existing_alt: true },
     { media_id: 70, status: 'completed', alt_text_draft: 'A stone bridge.', caption: 'A bridge.', provenance: null, existing_alt: true },
     { media_id: 72, status: 'failed', alt_text_draft: null, caption: null, provenance: null, existing_alt: false },
-  ],
+  ].map((item) => ({ ...item, ...runItemContract })),
 };
 
 const renderView = (runId = 'run-abc') => {
@@ -83,6 +84,99 @@ describe('DescribeRunApplyView', () => {
     // The existing-alt draft is bucketed separately behind an overwrite opt-in.
     expect(screen.getByText('A stone bridge.')).toBeInTheDocument();
     expect(screen.getByLabelText(/Overwrite existing alt text for media 70/)).toBeInTheDocument();
+  });
+
+  it('renders each supported naming provenance status and hides absent naming metadata', async () => {
+    fetchItemsMock.mockResolvedValue({
+      run_id: 'run-naming',
+      items: [
+        {
+          media_id: 81,
+          status: 'completed',
+          alt_text_draft: 'Ada and Bea stand by a window.',
+          caption: 'Two people by a window.',
+          provenance: {
+            naming: {
+              status: 'applied',
+              realizer: 'positional_fallback',
+              names_applied: ['Ada', 'Bea'],
+            },
+          },
+          ...runItemContract,
+          existing_alt: false,
+        },
+        {
+          media_id: 82,
+          status: 'completed',
+          alt_text_draft: 'A person by a window.',
+          caption: 'A person by a window.',
+          provenance: {
+            naming: { status: 'disabled', realizer: null, names_applied: [] },
+          },
+          ...runItemContract,
+          existing_alt: false,
+        },
+        {
+          media_id: 83,
+          status: 'completed',
+          alt_text_draft: 'A person by a window.',
+          caption: 'Another person by a window.',
+          provenance: {
+            naming: { status: 'skipped_budget', realizer: null, names_applied: [] },
+          },
+          ...runItemContract,
+          existing_alt: false,
+        },
+        {
+          media_id: 84,
+          status: 'completed',
+          alt_text_draft: null,
+          caption: null,
+          provenance: {
+            naming: { status: 'no_faces', realizer: null, names_applied: [] },
+          },
+          ...runItemContract,
+          existing_alt: false,
+        },
+        {
+          media_id: 85,
+          status: 'completed',
+          alt_text_draft: 'A landscape.',
+          caption: 'A landscape.',
+          provenance: null,
+          ...runItemContract,
+          existing_alt: false,
+        },
+        {
+          media_id: 86,
+          status: 'completed',
+          alt_text_draft: 'Ada stands by a window.',
+          caption: 'A person by a window.',
+          provenance: {
+            naming: { status: 'applied', realizer: 'grounded', names_applied: ['Ada'] },
+          },
+          ...runItemContract,
+          existing_alt: false,
+        },
+      ],
+    });
+
+    renderView('run-naming');
+
+    expect(await screen.findByText('Ada and Bea stand by a window.')).toBeInTheDocument();
+    expect(screen.getByText('Names: Ada, Bea · positional')).toBeInTheDocument();
+    expect(screen.getByText('No names (disabled)')).toBeInTheDocument();
+    expect(screen.getByText('Names skipped (time budget)')).toBeInTheDocument();
+    expect(screen.getByText('No faces')).toBeInTheDocument();
+    expect(screen.getByText('Names: Ada · grounded')).toBeInTheDocument();
+    expect(screen.queryByTestId('acx-run-apply-naming-85')).not.toBeInTheDocument();
+
+    const positionalBadge = screen.getByTestId('acx-run-apply-naming-81');
+    expect(positionalBadge).toHaveAttribute(
+      'aria-label',
+      'Names were applied using positional fallback.',
+    );
+    expect(positionalBadge).toHaveAttribute('title', 'Names were applied using positional fallback.');
   });
 
   it('applies the safe bucket with no overwrites by default', async () => {
@@ -354,6 +448,7 @@ describe('DescribeRunApplyView', () => {
         alt_text_draft: `Draft ${id}`,
         caption: `Caption ${id}`,
         provenance: null,
+        ...runItemContract,
         existing_alt: false,
       })),
     };
@@ -365,6 +460,7 @@ describe('DescribeRunApplyView', () => {
         alt_text_draft: `Draft ${id}`,
         caption: `Caption ${id}`,
         provenance: null,
+        ...runItemContract,
         existing_alt: true,
       })),
     };
@@ -398,7 +494,7 @@ describe('DescribeRunApplyView', () => {
         { media_id: 11, status: 'completed' as const, alt_text_draft: 'Draft A', caption: 'Untitled', provenance: null, existing_alt: false },
         { media_id: 12, status: 'completed' as const, alt_text_draft: 'Draft B', caption: 'Untitled', provenance: null, existing_alt: false },
         { media_id: 13, status: 'completed' as const, alt_text_draft: 'Draft C', caption: 'Untitled', provenance: null, existing_alt: false },
-      ],
+      ].map((item) => ({ ...item, ...runItemContract })),
     };
     const afterCollide = {
       run_id: 'run-collide',
@@ -444,6 +540,7 @@ describe('DescribeRunApplyView', () => {
           alt_text_draft: 'A stone bridge.',
           caption: 'A bridge.',
           provenance: null,
+          ...runItemContract,
           existing_alt: true,
         },
       ],
@@ -486,7 +583,7 @@ describe('DescribeRunApplyView', () => {
           { media_id: 90, status: 'completed', alt_text_draft: 'A blue car.', caption: 'A car.', provenance: null, existing_alt: true },
           { media_id: 70, status: 'completed', alt_text_draft: 'A stone bridge.', caption: 'A bridge.', provenance: null, existing_alt: true },
           { media_id: 72, status: 'failed', alt_text_draft: null, caption: null, provenance: null, existing_alt: false },
-        ],
+        ].map((item) => ({ ...item, ...runItemContract })),
       });
     renderView();
     await screen.findByText('A red flower.');
@@ -606,13 +703,17 @@ describe('DescribeRunApplyView', () => {
   it('shows a zero state when the run has no applicable drafts', async () => {
     fetchItemsMock.mockResolvedValue({
       run_id: 'run-empty',
-      items: [{ media_id: 5, status: 'failed', alt_text_draft: null, caption: null, provenance: null, existing_alt: false }],
+      items: [{ media_id: 5, status: 'failed', alt_text_draft: null, caption: null, provenance: null, ...runItemContract, existing_alt: false }],
     });
 
     renderView('run-empty');
 
     expect(await screen.findByText('No drafts from this run can be applied.')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Apply all/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Back to Description Runs' })).toHaveAttribute(
+      'href',
+      '#/description-history',
+    );
   });
 
   it('shows an error state with retry when items fail to load', async () => {

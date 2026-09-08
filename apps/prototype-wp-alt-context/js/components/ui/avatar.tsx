@@ -54,11 +54,11 @@ export interface AvatarProps {
   onError?: () => void;
 }
 
-function hasAvatarSrc(src: string | undefined): src is string {
+const hasAvatarSrc = (src: string | undefined): src is string => {
   return typeof src === 'string' && src.trim() !== '';
-}
+};
 
-function resolveAvatarState(src: string | undefined, loadStatus: ImageLoadingStatus): AvatarState {
+const resolveAvatarState = (src: string | undefined, loadStatus: ImageLoadingStatus): AvatarState => {
   if (!hasAvatarSrc(src)) {
     return AVATAR_STATE.missing;
   }
@@ -69,20 +69,20 @@ function resolveAvatarState(src: string | undefined, loadStatus: ImageLoadingSta
     return AVATAR_STATES.error;
   }
   return AVATAR_STATES.loading;
-}
+};
 
 /**
  * Swap-frame resolver: a new src must not inherit the previous identity's
  * loaded/error status for even one render.
  */
-export function resolveAvatarRenderState(
+export const resolveAvatarRenderState = (
   src: string | undefined,
   previousSrc: string | undefined,
   loadStatus: ImageLoadingStatus,
-): AvatarState {
+): AvatarState => {
   const effectiveStatus = src !== previousSrc ? 'idle' : loadStatus;
   return resolveAvatarState(src, effectiveStatus);
-}
+};
 
 export const Avatar = ({
   src,

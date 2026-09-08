@@ -1,0 +1,528 @@
+import { act, render, screen } from '@testing-library/react';
+import React from 'react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Mock } from 'vitest';
+
+import type { DescribeRunItemsResponse, DescribeRunResponse } from '../../../api/describeApi';
+import { guidedCopy } from '../../../guidedPrototype/copy';
+import {
+  GUIDED_LIVE_DEADLINE_SLACK_MS,
+  GUIDED_LIVE_GPU_WARMUP_CEILING_SECONDS,
+  GUIDED_LIVE_KEEP_WAITING_SECONDS,
+  GUIDED_LIVE_WAIT_CEILING_SECONDS,
+} from '../../../guidedPrototype/liveDescription';
+import type { GuidedLiveDescriptionClient } from '../../../guidedPrototype/useGuidedLiveDescription';
+import { GuidedLiveDescriptionPanel } from '../GuidedLiveDescriptionPanel';
+
+const MEDIA_ID = 4211;
+
+const runResponse = (over: Partial<DescribeRunResponse> = {}): DescribeRunResponse => ({
+  tenant_id: 'demo',
+  run_id: 'run-1',
+  status: 'running',
+  phase: 'queued',
+  completed: 0,
+  failed: 0,
+  skipped: 0,
+  total: 1,
+  cancel_requested: false,
+  eta_seconds: null,
+  gpu_state: 'stopped',
+  recognition_enabled: true,
+  ...over,
+});
+
+const itemsResponse = (
+  draft: string | null,
+  tier: DescribeRunItemsResponse['items'][number]['tier'] = 'final_gpu',
+): DescribeRunItemsResponse => ({
+  run_id: 'run-1',
+  items: [
+    {
+      media_id: MEDIA_ID,
+      status: 'completed',
+      alt_text_draft: draft,
+      caption: null,
+      provenance: null,
+      tier,
+      result_generation: 1,
+      existing_alt: false,
+    },
+  ],
+});
+
+type ClientOp = keyof GuidedLiveDescriptionClient;
+
+type RecordingClient = {
+  [K in ClientOp]: Mock<GuidedLiveDescriptionClient[K]>;
+} & {
+  calls: Array<{ op: ClientOp; args: unknown[] }>;
+};
+
+const stubClient = (over: Partial<GuidedLiveDescriptionClient> = {}): RecordingClient => {
+  const calls: RecordingClient['calls'] = [];
+  const submitImpl: GuidedLiveDescriptionClient['submit'] = over.submit ?? (() => Promise.resolve(runResponse()));
+  const pollImpl: GuidedLiveDescriptionClient['poll'] =
+    over.poll ?? (() => Promise.resolve(runResponse({ phase: 'warming', gpu_state: 'starting' })));
+  const itemsImpl: GuidedLiveDescriptionClient['items'] =
+    over.items ?? (() => Promise.resolve(itemsResponse('Katy Perry waves from the red carpet.')));
+  const cancelImpl: GuidedLiveDescriptionClient['cancel'] =
+    over.cancel ?? (() => Promise.resolve(runResponse({ status: 'cancelled', phase: 'cancelled' })));
+
+  return {
+    calls,
+    submit: vi.fn<GuidedLiveDescriptionClient['submit']>((mediaId) => {
+      calls.push({ op: 'submit', args: [mediaId] });
+      return submitImpl(mediaId);
+    }),
+    poll: vi.fn<GuidedLiveDescriptionClient['poll']>((runId) => {
+      calls.push({ op: 'poll', args: [runId] });
+      return pollImpl(runId);
+    }),
+    items: vi.fn<GuidedLiveDescriptionClient['items']>((runId) => {
+      calls.push({ op: 'items', args: [runId] });
+      return itemsImpl(runId);
+    }),
+    cancel: vi.fn<GuidedLiveDescriptionClient['cancel']>((runId) => {
+      calls.push({ op: 'cancel', args: [runId] });
+      return cancelImpl(runId);
+    }),
+  };
+};
+
+const mount = (
+  client: RecordingClient,
+  over: {
+    mediaId?: number | null;
+    onWaitingChange?: (waiting: boolean) => void;
+    key?: React.Key;
+  } = {},
+) =>
+  render(
+    <GuidedLiveDescriptionPanel
+      key={over.key}
+      mediaId={over.mediaId === undefined ? MEDIA_ID : over.mediaId}
+      client={client}
+      onWaitingChange={over.onWaitingChange}
+    />,
+  );
+
+const submitButton = () => screen.getByRole('button', { name: guidedCopy('live.submit') });
+const retryButton = () => screen.getByRole('button', { name: guidedCopy('live.retry') });
+const keepWaitingButton = () => screen.getByRole('button', { name: guidedCopy('live.keep_waiting') });
+
+const clock = (ms: number): string => {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+};
+
+const timedOutStatus = (): string =>
+  guidedCopy('live.timed_out', {
+    keepWaiting: guidedCopy('live.keep_waiting'),
+    retry: guidedCopy('live.retry'),
+  });
+
+const press = async (button: HTMLElement) => {
+  await act(async () => {
+    button.click();
+    await vi.advanceTimersByTimeAsync(0);
+  });
+};
+
+const settle = async (ms: number) => {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ms);
+  });
+};
+
+describe('GuidedLiveDescriptionPanel', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.clearAllMocks();
+  });
+
+  describe('T14 live panel is optional and inert when opened', () => {
+    it('is a closed details disclosure and starts no request until the action is pressed', async () => {
+      const client = stubClient();
+      mount(client);
+
+      const panel = screen.getByTestId('guided-live');
+      expect(panel.tagName).toBe('DETAILS');
+      expect(panel).not.toHaveAttribute('open');
+      expect(screen.getByText(guidedCopy('live.title'))).toBeInTheDocument();
+      expect(screen.getAllByText(guidedCopy('live.intro')).length).toBeGreaterThan(0);
+      expect(screen.getByTestId('guided-live-naming')).toHaveTextContent(guidedCopy('live.names'));
+
+      await act(async () => {
+        screen.getByText(guidedCopy('live.title')).click();
+      });
+
+      expect(client.submit).not.toHaveBeenCalled();
+      expect(client.calls).toEqual([]);
+      expect(submitButton()).toBeEnabled();
+    });
+
+    it('does not gate availability on face choices', () => {
+      mount(stubClient());
+
+      expect(submitButton()).toBeEnabled();
+      expect(screen.getByTestId('guided-live-status')).not.toHaveTextContent(/decide each face match first/i);
+    });
+  });
+
+  describe('T23 live network contract gate', () => {
+    it('renders live.request_unverified and disables the action when not verified', () => {
+      const client = stubClient();
+      mount(client, { mediaId: null });
+
+      expect(submitButton()).toBeDisabled();
+      expect(screen.getByTestId('guided-live-status')).toHaveTextContent(guidedCopy('live.request_unverified'));
+      expect(submitButton().getAttribute('aria-describedby')).toBe(screen.getByTestId('guided-live-status').id);
+    });
+  });
+
+  describe('T15 T18 live request is isolated', () => {
+    it('sends the media id only and never calls apply or a roster write', async () => {
+      const client = stubClient({
+        poll: () => Promise.resolve(runResponse({ status: 'completed', phase: 'complete', gpu_state: 'ready' })),
+      });
+      mount(client);
+
+      expect(screen.getAllByText(guidedCopy('live.request_confirmed')).length).toBeGreaterThan(0);
+      expect(screen.getByText(guidedCopy('live.details'))).toBeInTheDocument();
+      expect(screen.getByTestId('guided-live-payload')).toHaveTextContent(String(MEDIA_ID));
+
+      await press(submitButton());
+      await settle(1000);
+
+      expect(client.submit).toHaveBeenCalledTimes(1);
+      expect(client.submit).toHaveBeenCalledWith(MEDIA_ID);
+      expect(client.submit.mock.calls[0]).toEqual([MEDIA_ID]);
+      expect(client.calls.map((entry) => entry.op)).toEqual(expect.arrayContaining(['submit', 'poll', 'items']));
+      expect(client.calls.every((entry) => entry.op === 'submit' || entry.op === 'poll' || entry.op === 'items')).toBe(
+        true,
+      );
+      expect(screen.getByTestId('guided-live-text')).toHaveTextContent('Katy Perry waves from the red carpet.');
+      expect(screen.getAllByText(guidedCopy('live.output_label')).length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('T16 pending, failure, empty, timeout, stop-waiting, retry', () => {
+    it('announces pending from guidedCopy and disables a duplicate request', async () => {
+      const client = stubClient();
+      mount(client);
+
+      const region = screen.getByRole('status', { name: guidedCopy('live.status_label') });
+      expect(region).toHaveAttribute('aria-live', 'polite');
+
+      await press(submitButton());
+      await settle(600);
+
+      expect(screen.getByTestId('guided-live-status')).toHaveTextContent(guidedCopy('live.pending'));
+      expect(submitButton()).toBeDisabled();
+      expect(screen.getByRole('button', { name: guidedCopy('live.stop_waiting') })).toBeEnabled();
+    });
+
+    it('shows elapsed time against the ceiling it will not exceed', async () => {
+      mount(stubClient());
+
+      await press(submitButton());
+      await settle(65_000);
+
+      expect(screen.getByTestId('guided-live-elapsed')).toHaveTextContent(
+        guidedCopy('live.elapsed_of_up_to', {
+          elapsed: '1:05',
+          deadline: clock(GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000),
+        }),
+      );
+    });
+
+    it('says whose budget the ceiling is when the server disclosed none', async () => {
+      mount(stubClient());
+
+      await press(submitButton());
+      await settle(1000);
+
+      expect(screen.getByTestId('guided-live-budget')).toHaveTextContent(guidedCopy('live.budget_local'));
+    });
+
+    it('names disclosed generation separately from the client wait ceiling', async () => {
+      const client = stubClient({
+        submit: () => Promise.resolve({ ...runResponse({ gpu_state: 'ready' }), deadline_seconds: 120 }),
+        poll: () => Promise.resolve(runResponse({ phase: 'warming', gpu_state: 'ready' })),
+      });
+      mount(client);
+
+      await press(submitButton());
+      await settle(1000);
+
+      expect(screen.getByTestId('guided-live-budget')).toHaveTextContent(
+        guidedCopy('live.budget_disclosed', {
+          generation: clock(120_000),
+          deadline: clock(120_000 + GUIDED_LIVE_DEADLINE_SLACK_MS),
+        }),
+      );
+    });
+
+    it('does not credit a cold wait ceiling to the disclosed generation budget', async () => {
+      const client = stubClient({
+        submit: () => Promise.resolve({ ...runResponse({ gpu_state: 'stopped' }), deadline_seconds: 180 }),
+        poll: () => Promise.resolve(runResponse({ phase: 'warming', gpu_state: 'stopped' })),
+      });
+      mount(client);
+
+      await press(submitButton());
+      await settle(1000);
+
+      const waitMs = (180 + GUIDED_LIVE_GPU_WARMUP_CEILING_SECONDS) * 1000 + GUIDED_LIVE_DEADLINE_SLACK_MS;
+      expect(screen.getByTestId('guided-live-budget')).toHaveTextContent(
+        guidedCopy('live.budget_disclosed', {
+          generation: clock(180_000),
+          deadline: clock(waitMs),
+        }),
+      );
+      expect(screen.getByTestId('guided-live-elapsed')).toHaveTextContent(
+        guidedCopy('live.elapsed_of_up_to', {
+          elapsed: clock(1000),
+          deadline: clock(waitMs),
+        }),
+      );
+    });
+
+    it('stops waiting with live.stopped and does not claim the server job stopped', async () => {
+      const client = stubClient();
+      mount(client);
+
+      await press(submitButton());
+      await settle(600);
+      await press(screen.getByRole('button', { name: guidedCopy('live.stop_waiting') }));
+
+      expect(client.cancel).toHaveBeenCalledWith('run-1');
+      expect(screen.getByTestId('guided-live-status')).toHaveTextContent(guidedCopy('live.stopped'));
+    });
+
+    it('names a timeout without implying server cancellation', async () => {
+      mount(stubClient());
+
+      await press(submitButton());
+      await settle(GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000 + 2000);
+
+      const status = screen.getByTestId('guided-live-status');
+      expect(status).toHaveTextContent(timedOutStatus());
+      expect(status).toHaveTextContent(guidedCopy('live.keep_waiting'));
+      expect(status).toHaveTextContent(guidedCopy('live.retry'));
+      expect(status).not.toHaveTextContent(/cancelled/i);
+
+      const region = screen.getByRole('status', { name: guidedCopy('live.status_label') });
+      expect(region).not.toContainElement(keepWaitingButton());
+      expect(region).not.toContainElement(retryButton());
+    });
+
+    it('keeps waiting on the same run rather than submitting a second one', async () => {
+      const client = stubClient();
+      mount(client);
+      await press(submitButton());
+      await settle(GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000 + 2000);
+
+      expect(keepWaitingButton()).toBeEnabled();
+      await press(keepWaitingButton());
+      await settle(2000);
+
+      expect(client.submit).toHaveBeenCalledTimes(1);
+      expect(client.cancel).not.toHaveBeenCalled();
+      expect(screen.getByTestId('guided-live-elapsed')).toBeInTheDocument();
+    });
+
+    it('still waits after the learner reads the timeout copy before keeping waiting', async () => {
+      const client = stubClient();
+      mount(client);
+      await press(submitButton());
+      await settle(GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000 + 2000);
+      expect(screen.getByTestId('guided-live-status')).toHaveTextContent(timedOutStatus());
+
+      await settle(GUIDED_LIVE_KEEP_WAITING_SECONDS * 1000 + 1000);
+      await press(keepWaitingButton());
+      await settle(2000);
+
+      expect(screen.getByTestId('guided-live-status')).toHaveTextContent(guidedCopy('live.pending'));
+      expect(screen.getByTestId('guided-live-elapsed')).toBeInTheDocument();
+      expect(client.submit).toHaveBeenCalledTimes(1);
+    });
+
+    it('retries after failure with a new request token', async () => {
+      const client = stubClient({
+        poll: () => Promise.resolve(runResponse({ status: 'failed', phase: 'failed' })),
+      });
+      mount(client);
+
+      await press(submitButton());
+      await settle(1000);
+
+      expect(screen.getByTestId('guided-live-status')).toHaveTextContent(guidedCopy('live.failed'));
+      expect(retryButton()).toBeEnabled();
+
+      await press(retryButton());
+      expect(client.submit).toHaveBeenCalledTimes(2);
+    });
+
+    it('names an empty description with live.no_result', async () => {
+      const client = stubClient({
+        poll: () => Promise.resolve(runResponse({ status: 'completed', phase: 'complete', gpu_state: 'ready' })),
+        items: () => Promise.resolve(itemsResponse('   ')),
+      });
+      mount(client);
+
+      await press(submitButton());
+      await settle(1000);
+
+      expect(screen.getByTestId('guided-live-status')).toHaveTextContent(guidedCopy('live.no_result'));
+      expect(screen.queryByTestId('guided-live-text')).toBeNull();
+    });
+
+    it('does not invent a percentage while pending', async () => {
+      mount(stubClient());
+      await press(submitButton());
+      await settle(600);
+      expect(screen.getByTestId('guided-live')).not.toHaveTextContent(/%/);
+    });
+  });
+
+  describe('T17 reset and stale results', () => {
+    it('ignores a stale poll after remount', async () => {
+      let releaseItems: (items: DescribeRunItemsResponse) => void = () => undefined;
+      const client = stubClient({
+        poll: () => Promise.resolve(runResponse({ status: 'completed', phase: 'complete', gpu_state: 'ready' })),
+        items: () =>
+          new Promise<DescribeRunItemsResponse>((resolve) => {
+            releaseItems = resolve;
+          }),
+      });
+      const first = mount(client, { key: 'one' });
+
+      await press(submitButton());
+      await settle(600);
+      first.unmount();
+
+      mount(client, { key: 'two' });
+      expect(screen.queryByTestId('guided-live-text')).toBeNull();
+      expect(screen.getByTestId('guided-live-status')).toHaveTextContent(guidedCopy('live.request_confirmed'));
+
+      await act(async () => {
+        releaseItems(itemsResponse('A stale sentence from the previous panel.'));
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      expect(screen.queryByTestId('guided-live-text')).toBeNull();
+      expect(screen.getByTestId('guided-live-status')).not.toHaveTextContent(
+        'A stale sentence from the previous panel.',
+      );
+    });
+  });
+
+  describe('onWaitingChange', () => {
+    it('fires true then false as the wait starts and ends', async () => {
+      const seen: boolean[] = [];
+      const client = stubClient({
+        poll: () => Promise.resolve(runResponse({ status: 'completed', phase: 'complete', gpu_state: 'ready' })),
+      });
+      mount(client, { onWaitingChange: (waiting) => seen.push(waiting) });
+
+      await press(submitButton());
+      await settle(1000);
+
+      expect(seen).toContain(true);
+      expect(seen).toContain(false);
+      expect(seen.indexOf(true)).toBeLessThan(seen.lastIndexOf(false));
+    });
+
+    it('clears waiting on unmount so a crashed panel does not leave the reset note latched', async () => {
+      const seen: boolean[] = [];
+      const view = mount(stubClient(), { onWaitingChange: (waiting) => seen.push(waiting) });
+
+      await press(submitButton());
+      await settle(600);
+      expect(seen).toContain(true);
+
+      view.unmount();
+      expect(seen.at(-1)).toBe(false);
+    });
+  });
+
+  describe('the result', () => {
+    it('shows the live sentence as read-only output', async () => {
+      const client = stubClient({
+        poll: () => Promise.resolve(runResponse({ status: 'completed', phase: 'complete', gpu_state: 'ready' })),
+      });
+      mount(client);
+
+      await press(submitButton());
+      await settle(1000);
+
+      expect(screen.getByTestId('guided-live-text')).toHaveTextContent('Katy Perry waves from the red carpet.');
+      expect(screen.getByTestId('guided-live-status')).toHaveTextContent(guidedCopy('live.complete'));
+    });
+
+    it('keeps elapsed time, budget, result text, and recovery actions outside the polite live region', async () => {
+      const client = stubClient({
+        poll: () => Promise.resolve(runResponse({ status: 'completed', phase: 'complete', gpu_state: 'ready' })),
+      });
+      mount(client);
+
+      await press(submitButton());
+      await settle(1000);
+
+      const region = screen.getByRole('status', { name: guidedCopy('live.status_label') });
+      expect(region).toHaveTextContent(guidedCopy('live.complete'));
+      expect(region).not.toContainElement(screen.getByTestId('guided-live-text'));
+      expect(region).not.toHaveTextContent('Katy Perry waves from the red carpet.');
+    });
+
+    it('does not announce elapsed ticks inside the polite live region', async () => {
+      mount(stubClient());
+
+      await press(submitButton());
+      await settle(1000);
+
+      const region = screen.getByRole('status', { name: guidedCopy('live.status_label') });
+      expect(screen.getByTestId('guided-live-elapsed')).toBeInTheDocument();
+      expect(screen.getByTestId('guided-live-budget')).toBeInTheDocument();
+      expect(region).not.toContainElement(screen.getByTestId('guided-live-elapsed'));
+      expect(region).not.toContainElement(screen.getByTestId('guided-live-budget'));
+    });
+
+    it('still shows CPU-tier text without claiming a GPU result', async () => {
+      const client = stubClient({
+        poll: () => Promise.resolve(runResponse({ status: 'completed', phase: 'complete', gpu_state: 'degraded' })),
+        items: () => Promise.resolve(itemsResponse('A person on a red carpet.', 'provisional_cpu')),
+      });
+      mount(client);
+
+      await press(submitButton());
+      await settle(1000);
+
+      expect(screen.getByTestId('guided-live-text')).toHaveTextContent('A person on a red carpet.');
+      expect(screen.getByTestId('guided-live-status')).toHaveTextContent(guidedCopy('live.complete'));
+      expect(screen.getByTestId('guided-live-status')).not.toHaveTextContent(
+        /florence|microsoft|local vlm|\b\d+(?:\.\d+)?\s*(?:m|b|million|billion)\b/i,
+      );
+    });
+
+    it('pairs every status with an icon, never colour alone', async () => {
+      const client = stubClient({
+        poll: () => Promise.resolve(runResponse({ status: 'completed', phase: 'complete', gpu_state: 'ready' })),
+      });
+      mount(client);
+
+      await press(submitButton());
+      await settle(1000);
+
+      const icon = screen.getByTestId('guided-live-icon');
+      expect(icon).toHaveAttribute('aria-hidden', 'true');
+      expect(icon.textContent?.trim()).not.toBe('');
+    });
+  });
+});

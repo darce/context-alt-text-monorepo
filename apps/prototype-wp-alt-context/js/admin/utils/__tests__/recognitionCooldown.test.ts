@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { classifyError } from '../appError';
 import { HTTPError } from '../http';
+import { RETRY_AFTER_MAX_MS } from '../retryAfter';
 import {
   _resetCooldownForTests,
   cooldownRemainingMs,
@@ -97,6 +99,69 @@ describe('recognitionCooldown', () => {
       expect(isCoolingDown()).toBe(false);
     });
 
+    // FEBT1-LE-03: a 429 whose Retry-After names no wait must still arm a real
+    // window. The old path read `retryAfterMs !== undefined`, passed 0 seconds
+    // through clampRetryAfterMs, and (with the old zero floor) armed a
+    // zero-length cooldown — a gate that gates nothing, so every one of the
+    // seven gated pollers kept hammering a service that had just said stop.
+    it('a Retry-After of 0 arms the default window, never a zero-length one', () => {
+      openCooldownFromError(httpError(429, 0));
+      expect(cooldownRemainingMs()).toBe(DEFAULT_COOLDOWN_SECONDS * 1000);
+      expect(isCoolingDown()).toBe(true);
+    });
+
+    it('a 503 whose Retry-After names no wait is not an ask-again-later [FEBT1-LE-03]', () => {
+      openCooldownFromError(httpError(503, 0));
+      expect(isCoolingDown()).toBe(false);
+    });
+
+    it('clamps Retry-After: 3600 to the shared ceiling at the cooldown call site [E-01]', () => {
+      openCooldownFromError(httpError(429, 3600));
+      expect(cooldownRemainingMs()).toBe(RETRY_AFTER_MAX_MS);
+    });
+
+    it('clamps overflow-scale Retry-After below the 32-bit setTimeout bound [E-01]', () => {
+      openCooldownFromError(httpError(429, 2_678_400));
+      expect(cooldownRemainingMs()).toBe(RETRY_AFTER_MAX_MS);
+      expect(cooldownRemainingMs()).toBeLessThan(2 ** 31 - 1);
+    });
+
+    it('falls back to DEFAULT_COOLDOWN_SECONDS for negative/NaN/Infinity Retry-After [E-01]', () => {
+      openCooldownFromError(httpError(429, Number.NaN));
+      expect(cooldownRemainingMs()).toBe(DEFAULT_COOLDOWN_SECONDS * 1000);
+      _resetCooldownForTests();
+
+      openCooldownFromError(httpError(429, Number.POSITIVE_INFINITY));
+      expect(cooldownRemainingMs()).toBe(DEFAULT_COOLDOWN_SECONDS * 1000);
+      _resetCooldownForTests();
+
+      openCooldownFromError(httpError(429, -12));
+      expect(cooldownRemainingMs()).toBe(DEFAULT_COOLDOWN_SECONDS * 1000);
+    });
+
+    it('honors retryAfterMs on a pre-classified AppError [W1-L1-09]', () => {
+      openCooldownFromError(classifyError(httpError(429, 5)));
+      expect(cooldownRemainingMs()).toBe(5_000);
+    });
+
+    it('HTTPError 429 Retry-After matches classifyError.retryAfterMs [W2-L5]', () => {
+      const error = httpError(429, 8);
+      const classified = classifyError(error);
+      expect(classified._tag).toBe('http');
+      if (classified._tag !== 'http') {
+        return;
+      }
+      openCooldownFromError(error);
+      expect(cooldownRemainingMs()).toBe(classified.retryAfterMs);
+    });
+
+    it('does not branch on instanceof HTTPError — classifier owns the class check [W2-L5][TEST-15]', async () => {
+      const fs = await import('node:fs/promises');
+      const path = await import('node:path');
+      const src = await fs.readFile(path.join(process.cwd(), 'js/admin/utils/recognitionCooldown.ts'), 'utf8');
+      expect(src).not.toMatch(/instanceof\s+HTTPError/);
+    });
+
     it('never arms from abort-like errors — a local timeout must not freeze all six pollers', () => {
       // The slice-1 HIGH was exactly this class: 'TimeoutError' (AbortSignal.timeout)
       // treated differently from 'AbortError'. A client-side timeout is not a server
@@ -187,6 +252,31 @@ describe('recognitionCooldown', () => {
 
       vi.advanceTimersByTime(1);
       expect(fn).toHaveBeenCalledTimes(2);
+    });
+
+    it('re-checks on wake when the window was extended mid-flight [FEBT1G-M-09][RES-06]', () => {
+      const fn = vi.fn();
+
+      openCooldown(5);
+      runAfterCooldown(fn);
+
+      // A second cooldown signal arrives before the armed timer fires.
+      vi.advanceTimersByTime(2000);
+      openCooldown(10);
+      expect(cooldownRemainingMs()).toBe(10_000);
+
+      // The original 5s deadline passes: the callback must NOT fire inside the
+      // still-active window (that was the refetch burst).
+      vi.advanceTimersByTime(3000);
+      expect(isCoolingDown()).toBe(true);
+      expect(fn).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(6999);
+      expect(fn).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(1);
+      expect(isCoolingDown()).toBe(false);
+      expect(fn).toHaveBeenCalledTimes(1);
     });
   });
 });

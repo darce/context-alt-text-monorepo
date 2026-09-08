@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { onlineManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -64,6 +64,10 @@ vi.mock('../../../hooks/useRecognitionHooks', async (importOriginal) => {
     }),
   };
 });
+
+vi.mock('../../../api/settingsApi', () => ({
+  fetchSettings: vi.fn(() => Promise.resolve({ recognition_enabled: true })),
+}));
 
 vi.mock('../../../api/recognition', async () => {
   const actual = await vi.importActual<typeof import('../../../api/recognition')>('../../../api/recognition');
@@ -142,6 +146,7 @@ describe('WorkbenchPage (integration-lite)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     scanStatusRef.data = null;
+    vi.mocked(recognitionApi.fetchSyncHealth).mockResolvedValue(syncHealthEnvelope('closed'));
     vi.mocked(recognitionApi.fetchPendingMergeSuggestions).mockResolvedValue({
       suggestions: [],
       limit: 10,
@@ -181,6 +186,7 @@ describe('WorkbenchPage (integration-lite)', () => {
         recognitionFailedOutbox: '/wp-json/acx/v1/recognition/outbox/failed',
         recognitionSyncStatus: '/wp-json/acx/v1/recognition/sync-status',
         recognitionSyncTrigger: '/wp-json/acx/v1/recognition/sync/trigger',
+        recognitionSyncHealth: '/wp-json/acx/v1/recognition/sync/health',
       },
       tenant_id: 'test-tenant',
     };
@@ -195,6 +201,8 @@ describe('WorkbenchPage (integration-lite)', () => {
       queryClient = null;
     }
     cleanup();
+    onlineManager.setOnline(true);
+    vi.useRealTimers();
     if (originalFetch) {
       globalThis.fetch = originalFetch;
     } else {
@@ -299,9 +307,10 @@ describe('WorkbenchPage (integration-lite)', () => {
     const rowCheckbox = await screen.findByRole('checkbox', { name: /Select media item Photo Name/i });
     await user.click(rowCheckbox);
 
-    const scanButton = screen.getByRole('button', { name: /Analyze selected media/i });
-    await waitFor(() => expect(scanButton).toBeEnabled());
-    await user.click(scanButton);
+    await screen.findByText(/Identifies people first \(AI\)/);
+    const describeButton = screen.getByRole('button', { name: /Describe 1 selected/i });
+    await waitFor(() => expect(describeButton).toBeEnabled());
+    await user.click(describeButton);
 
     await waitFor(() => {
       expect(recognitionApi.scanFacesBatched).toHaveBeenCalledWith({ mediaIds: [11] });
@@ -617,6 +626,46 @@ describe('WorkbenchPage (integration-lite)', () => {
     ).toEqual(baseMediaResponse);
   });
 
+  it('renders its own accessible page heading, matching class-workbench-page.php getPageTitle() (BR-37/BR-38)', async () => {
+    // Before this fix, Workbench's accessible name reached into the PHP shell
+    // (aria-labelledby="acx-page-title") and was unverifiable from a
+    // component-level test: the shell heading only exists on a real
+    // server-rendered request. This mounts the REAL, un-mocked WorkbenchPage
+    // (not a `vi.mock`-stubbed div, cf. App.test.tsx) and proves the section's
+    // accessible name now resolves entirely from its own rendered <h1>.
+    vi.mocked(recognitionApi.fetchMediaIdentities).mockResolvedValue({
+      identities_by_media: { '11': [] },
+    });
+    vi.mocked(recognitionApi.fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+          staleTime: Infinity,
+          refetchOnMount: false,
+          refetchOnWindowFocus: false,
+          refetchOnReconnect: false,
+        },
+      },
+    });
+    client.setQueryData(
+      queryKeys.media.workbenchPage({ page: 1, perPage: 10, search: '', status: 'all' }),
+      baseMediaResponse,
+    );
+    client.setQueryData(queryKeys.media.identitiesByIds([11]), {
+      identities_by_media: { '11': [] },
+    });
+
+    renderWithClient(client);
+
+    expect(await screen.findByRole('region', { name: 'Review Queue' })).toBeInTheDocument();
+  });
+
   it('paints new findings after projection-ready without reload or remount (E15-23 / E15-24 gate)', async () => {
     vi.mocked(recognitionApi.fetchMediaIdentities).mockResolvedValue({
       identities_by_media: { '11': [] },
@@ -733,9 +782,9 @@ describe('WorkbenchPage (integration-lite)', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('re-enables gated analyze CTA reactively when sync-health breaker heals (no remount)', async () => {
-    // Auto-heal reactivity (E21-13 risk): breaker open → disabled+reason → 15s-poll
-    // envelope flip to closed → CTA re-enabled without remounting WorkbenchPage.
+  it('refetches sync health after reconnect and re-enables the gated analyze CTA', async () => {
+    vi.useFakeTimers();
+
     vi.mocked(recognitionApi.fetchMediaIdentities).mockResolvedValue({
       identities_by_media: { '11': [] },
     });
@@ -744,7 +793,7 @@ describe('WorkbenchPage (integration-lite)', () => {
       limit: 10,
       offset: 0,
     });
-    vi.mocked(recognitionApi.fetchSyncHealth).mockResolvedValue(syncHealthEnvelope('open'));
+    vi.mocked(recognitionApi.fetchSyncHealth).mockResolvedValue(syncHealthEnvelope('closed'));
 
     const client = new QueryClient({
       defaultOptions: {
@@ -753,7 +802,6 @@ describe('WorkbenchPage (integration-lite)', () => {
           staleTime: Infinity,
           refetchOnMount: false,
           refetchOnWindowFocus: false,
-          refetchOnReconnect: false,
         },
       },
     });
@@ -765,35 +813,47 @@ describe('WorkbenchPage (integration-lite)', () => {
       identities_by_media: { '11': [] },
     });
     client.setQueryData(queryKeys.sync.health(), syncHealthEnvelope('open'));
+    client.setQueryData(queryKeys.settings.all, { recognition_enabled: true });
 
+    onlineManager.setOnline(false);
     renderWithClient(client);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
 
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
 
     // Banner lives in App.tsx (unit-tested with aria-live); this page-level test
-    // proves the gated analyze CTA reacts to the sync-health envelope flip.
+    // proves the gated Describe CTA reacts to the sync-health envelope flip.
     const rowCheckbox = await screen.findByRole('checkbox', { name: /Select media item Photo Name/i });
     await user.click(rowCheckbox);
 
-    const scanButton = await screen.findByRole('button', { name: /Analyze selected media/i });
+    const describeButton = await screen.findByRole('button', { name: /Describe 1 selected/i });
     // Selection present so the gate is from the breaker, not zero-selection.
-    expect(await screen.findByText(/Ready to analyze 1 media item/i)).toBeInTheDocument();
     await waitFor(() => {
       // §7 offline row: aria-disabled + reason, NEVER HTML disabled (still focusable).
-      expect(scanButton).not.toBeDisabled();
-      expect(scanButton).toHaveAttribute('aria-disabled', 'true');
-      expect(scanButton).toHaveAttribute('title', 'Unavailable while the recognition service is offline');
-      expect(scanButton).toHaveAttribute('aria-describedby');
+      expect(describeButton).not.toBeDisabled();
+      expect(describeButton).toHaveAttribute('aria-disabled', 'true');
+      expect(describeButton).toHaveAttribute('title', 'Unavailable while the recognition service is offline');
+      expect(describeButton).toHaveAttribute('aria-describedby');
     });
 
-    // Simulate the 15s health poll delivering a healed envelope (same QueryClient /
-    // mounted tree — no remount, no navigation).
-    client.setQueryData(queryKeys.sync.health(), syncHealthEnvelope('closed'));
-
-    await waitFor(() => {
-      expect(scanButton).toBeEnabled();
-      expect(scanButton).not.toHaveAttribute('title');
-      expect(scanButton).not.toHaveAttribute('aria-disabled');
+    // Reconnect must trigger a real health request without waiting for the next
+    // interval. No cache mutation or remount is allowed to heal it.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
     });
+    expect(recognitionApi.fetchSyncHealth).not.toHaveBeenCalled();
+
+    await act(async () => {
+      onlineManager.setOnline(true);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(recognitionApi.fetchSyncHealth).toHaveBeenCalled();
+
+    expect(describeButton).toBeEnabled();
+    expect(describeButton).not.toHaveAttribute('title');
+    expect(describeButton).not.toHaveAttribute('aria-disabled');
   });
 });

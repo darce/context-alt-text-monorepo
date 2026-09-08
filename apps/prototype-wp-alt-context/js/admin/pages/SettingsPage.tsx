@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { __ } from '@wordpress/i18n';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useLocation } from 'react-router-dom';
 
 import {
   fetchSettings,
@@ -15,20 +16,51 @@ import {
 import { resetConfigCache } from '../api/config';
 import { queryKeys } from '../api/queryKeys';
 import { resolveWpErrorMessage } from '../api/wpErrorMessage';
+import { toDashboard } from '../navigation/appLinks';
+import { RetentionSection } from './RetentionPage';
 import { SettingsForm } from './settings/SettingsForm';
 import { SettingsRoutingBanner } from './settings/SettingsRoutingBanner';
 import { TestConnectionBannerView } from './settings/TestConnectionBannerView';
+import { GpuControlCard } from './settings/GpuControlCard';
 import { isReadOnly } from './settings/settingsConstants';
 import { TONE_CLASS } from './settings/testConnectionBanner';
 import { useSettingsPageState } from './settings/useSettingsPageState';
 
+const SETTINGS_SECTION_RETENTION_ID = 'acx-settings-section-retention';
+const SETTINGS_SECTION_RETENTION_HEADING_ID = 'acx-retention-title';
+
+const sectionFromLocation = (search: string, hash: string): string | null => {
+  const fromSearch = new URLSearchParams(search).get('section');
+  if (fromSearch) {
+    return fromSearch;
+  }
+  const hashQuery = hash.includes('?') ? hash.slice(hash.indexOf('?') + 1) : '';
+  const fromHash = new URLSearchParams(hashQuery).get('section');
+  if (fromHash) {
+    return fromHash;
+  }
+  return new URLSearchParams(window.location.search).get('section');
+};
+
 export const SettingsPage = (): React.JSX.Element => {
   const queryClient = useQueryClient();
+  const location = useLocation();
 
   const settingsQuery = useQuery<SettingsResponse>({
-    queryKey: ['settings'],
+    queryKey: queryKeys.settings.all,
     queryFn: fetchSettings,
   });
+
+  useEffect(() => {
+    if (settingsQuery.isLoading || settingsQuery.isLoadingError) {
+      return;
+    }
+    if (sectionFromLocation(location.search, location.hash) !== 'retention') {
+      return;
+    }
+    document.getElementById(SETTINGS_SECTION_RETENTION_ID)?.scrollIntoView();
+    document.getElementById(SETTINGS_SECTION_RETENTION_HEADING_ID)?.focus();
+  }, [location.search, location.hash, settingsQuery.isLoading, settingsQuery.isLoadingError]);
 
   const { state, dispatch } = useSettingsPageState(settingsQuery.data);
 
@@ -59,9 +91,9 @@ export const SettingsPage = (): React.JSX.Element => {
           tone: 'error',
         });
         // Refresh so the form reflects what actually landed (partial success).
-        await queryClient.invalidateQueries({ queryKey: ['settings'] });
+        await queryClient.invalidateQueries({ queryKey: queryKeys.settings.all });
         const refreshedOnFail = await queryClient.fetchQuery({
-          queryKey: ['settings'],
+          queryKey: queryKeys.settings.all,
           queryFn: fetchSettings,
         });
         syncLocalizedRouting(refreshedOnFail);
@@ -70,12 +102,12 @@ export const SettingsPage = (): React.JSX.Element => {
 
       dispatch({ type: 'setSaveMessage', message: __('Settings saved.', 'alt-context'), tone: 'success' });
       dispatch({ type: 'setApiKey', value: '' });
-      await queryClient.invalidateQueries({ queryKey: ['settings'] });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.settings.all });
       // A saved URL/key may repair the recognition breaker; refetch sync health
       // so the degraded/offline banner clears without waiting for its 15s poll.
       await queryClient.invalidateQueries({ queryKey: queryKeys.sync.health() });
       const refreshed = await queryClient.fetchQuery({
-        queryKey: ['settings'],
+        queryKey: queryKeys.settings.all,
         queryFn: fetchSettings,
       });
       syncLocalizedRouting(refreshed);
@@ -133,6 +165,16 @@ export const SettingsPage = (): React.JSX.Element => {
     ) {
       payload.description_budget = { max_attempts: descriptionBudgetMaxAttempts };
     }
+    if (state.recognitionEnabled !== data.recognition_enabled) {
+      payload.recognition_enabled = state.recognitionEnabled;
+    }
+    if (
+      typeof data.allow_person_names === 'boolean' &&
+      state.allowPersonNames !== null &&
+      state.allowPersonNames !== data.allow_person_names
+    ) {
+      payload.allow_person_names = state.allowPersonNames;
+    }
 
     if (Object.keys(payload).length === 0) {
       dispatch({
@@ -155,20 +197,55 @@ export const SettingsPage = (): React.JSX.Element => {
     testMutation.mutate({ confirm_tenant_pairing: true });
   };
 
+  const settingsErrorMessage = settingsQuery.isLoadingError
+    ? __('Failed to load settings.', 'alt-context')
+    : settingsQuery.isRefetchError
+      ? __('Failed to refresh settings.', 'alt-context')
+      : '';
+  const errorLiveRegion = (
+    <div
+      className={settingsErrorMessage ? 'notice inline notice-error' : undefined}
+      role="alert"
+      aria-live="assertive"
+      data-testid="acx-settings-query-error"
+    >
+      {settingsErrorMessage ? <p>{settingsErrorMessage}</p> : null}
+    </div>
+  );
+
   if (settingsQuery.isLoading) {
     return (
-      <section className="acx-settings" aria-labelledby="acx-settings-title">
+      <section className="acx-settings" aria-labelledby="acx-settings-page-title">
+        <h1 id="acx-settings-page-title" className="acx-dashboard__title">
+          {__('Settings', 'alt-context')}
+        </h1>
         <h2 id="acx-settings-title">{__('Recognition API Settings', 'alt-context')}</h2>
+        {errorLiveRegion}
         <p>{__('Loading settings…', 'alt-context')}</p>
       </section>
     );
   }
 
-  if (settingsQuery.isError) {
+  if (settingsQuery.isLoadingError) {
     return (
-      <section className="acx-settings" aria-labelledby="acx-settings-title">
+      <section className="acx-settings" aria-labelledby="acx-settings-page-title">
+        <h1 id="acx-settings-page-title" className="acx-dashboard__title">
+          {__('Settings', 'alt-context')}
+        </h1>
         <h2 id="acx-settings-title">{__('Recognition API Settings', 'alt-context')}</h2>
-        <p>{__('Failed to load settings.', 'alt-context')}</p>
+        {errorLiveRegion}
+        <div className="acx-dashboard__actions">
+          <button
+            type="button"
+            className="acx-button acx-button--secondary"
+            onClick={() => void settingsQuery.refetch()}
+          >
+            {__('Retry', 'alt-context')}
+          </button>
+          <a className="acx-button acx-button--secondary" href={toDashboard()}>
+            {__('Back to Dashboard', 'alt-context')}
+          </a>
+        </div>
       </section>
     );
   }
@@ -178,8 +255,12 @@ export const SettingsPage = (): React.JSX.Element => {
   const keyReadOnly = isReadOnly(data.key_source);
   const hasUnsavedRoutingChanges = state.url !== data.url;
   return (
-    <section className="acx-settings" aria-labelledby="acx-settings-title">
+    <section className="acx-settings" aria-labelledby="acx-settings-page-title">
+      <h1 id="acx-settings-page-title" className="acx-dashboard__title">
+        {__('Settings', 'alt-context')}
+      </h1>
       <h2 id="acx-settings-title">{__('Recognition API Settings', 'alt-context')}</h2>
+      {errorLiveRegion}
       <p className="description">
         {__('Configure the connection to the Alt Context recognition service.', 'alt-context')}
       </p>
@@ -187,27 +268,38 @@ export const SettingsPage = (): React.JSX.Element => {
       <SettingsRoutingBanner />
 
       <SettingsForm
-        data={data}
-        url={state.url}
-        apiKey={state.apiKey}
-        descriptionBudgetMaxAttempts={state.descriptionBudgetMaxAttempts}
-        urlReadOnly={urlReadOnly}
-        keyReadOnly={keyReadOnly}
-        savePending={saveMutation.isPending}
-        testPending={testMutation.isPending}
-        hasUnsavedRoutingChanges={hasUnsavedRoutingChanges}
-        testResult={state.testResult}
-        onUrlChange={(value) => dispatch({ type: 'setUrl', value })}
-        onApiKeyChange={(value) => dispatch({ type: 'setApiKey', value })}
-        onDescriptionBudgetMaxAttemptsChange={(value) =>
-          dispatch({ type: 'setDescriptionBudgetMaxAttempts', value })
-        }
-        onSave={handleSave}
-        onTest={handleTest}
-        onFocusServiceUrl={() => {
-          document.getElementById('acx-settings-url')?.focus();
+        values={{
+          data,
+          url: state.url,
+          apiKey: state.apiKey,
+          descriptionBudgetMaxAttempts: state.descriptionBudgetMaxAttempts,
+          recognitionEnabled: state.recognitionEnabled,
+          allowPersonNames: state.allowPersonNames,
+          urlReadOnly,
+          keyReadOnly,
+        }}
+        status={{
+          savePending: saveMutation.isPending,
+          testPending: testMutation.isPending,
+          hasUnsavedRoutingChanges,
+          testResult: state.testResult,
+        }}
+        actions={{
+          onUrlChange: (value) => dispatch({ type: 'setUrl', value }),
+          onApiKeyChange: (value) => dispatch({ type: 'setApiKey', value }),
+          onDescriptionBudgetMaxAttemptsChange: (value) =>
+            dispatch({ type: 'setDescriptionBudgetMaxAttempts', value }),
+          onRecognitionEnabledChange: (value) => dispatch({ type: 'setRecognitionEnabled', value }),
+          onAllowPersonNamesChange: (value) => dispatch({ type: 'setAllowPersonNames', value }),
+          onSave: handleSave,
+          onTest: handleTest,
+          onFocusServiceUrl: () => {
+            document.getElementById('acx-settings-url')?.focus();
+          },
         }}
       />
+
+      <GpuControlCard />
 
       {state.saveMessage ? (
         <div
@@ -227,6 +319,10 @@ export const SettingsPage = (): React.JSX.Element => {
           confirmPending={testMutation.isPending}
         />
       ) : null}
+
+      <section id={SETTINGS_SECTION_RETENTION_ID} className="acx-settings__retention">
+        <RetentionSection />
+      </section>
     </section>
   );
 };

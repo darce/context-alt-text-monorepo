@@ -1269,6 +1269,70 @@ def test_sanitize_deploy_diagnostic_redacts_unquoted_mapping_values() -> None:
     assert '"HF_TOKEN": [REDACTED]' in out2
 
 
+# GR-101..107: one _run_sanitizer canary per adjudicated input (positive and negative).
+_GR101_107_CASES: list[tuple[str, str]] = [
+    ('{"password": nul}', 'diagnostic: {"password": [REDACTED]}\n'),
+    ('{"password": tru}', 'diagnostic: {"password": [REDACTED]}\n'),
+    ('{"password": fals}', 'diagnostic: {"password": [REDACTED]}\n'),
+    ('{"password":n}', 'diagnostic: {"password": [REDACTED]}\n'),
+    ('{"password": NUL}', 'diagnostic: {"password": [REDACTED]}\n'),
+    ('{"password": null}', 'diagnostic: {"password": null}\n'),
+    ('{"password": true}', 'diagnostic: {"password": true}\n'),
+    ('{"password": false}', 'diagnostic: {"password": false}\n'),
+    ('{"api_key": null}', 'diagnostic: {"api_key": null}\n'),
+    ('{"password": "abc\\', 'diagnostic: {"password": "[REDACTED]\n'),
+    ('{"password": "abc\\\\\\', 'diagnostic: {"password": "[REDACTED]\n'),
+    ('{"password": "o\'reilly"}', 'diagnostic: {"password": "[REDACTED]"}\n'),
+    ('{"password": "hello\'world and more"}', 'diagnostic: {"password": "[REDACTED]"}\n'),
+    ('{"password": "abc\'def', 'diagnostic: {"password": "[REDACTED]\n'),
+    ("Basic us@r:hunter2", "diagnostic: Basic [REDACTED]\n"),
+    ("Basic user@example.com:hunter2", "diagnostic: Basic [REDACTED]\n"),
+    ("Basic user!hunter2", "diagnostic: Basic [REDACTED]\n"),
+    ("Bearer abcdefg?xyz", "diagnostic: Bearer [REDACTED]\n"),
+    ("Basic user:hunt,er2xxxxxxx", "diagnostic: Basic [REDACTED]\n"),
+    ("Bearer abc1234", "diagnostic: Bearer abc1234\n"),
+    ("token expired", "diagnostic: token expired\n"),
+    ('{"password"="LEAKS"}', 'diagnostic: {"password": "[REDACTED]"}\n'),
+    ('{"password" = "LEAKS"}', 'diagnostic: {"password": "[REDACTED]"}\n'),
+    ("{'password'='LEAKJ'}", 'diagnostic: {"password": "[REDACTED]"}\n'),
+    ('"password"=="LEAKS"', 'diagnostic: "password": "[REDACTED]"\n'),
+]
+_GR101_107_IDS = [
+    "GR-101-prefix-nul",
+    "GR-101-prefix-tru",
+    "GR-101-prefix-fals",
+    "GR-101-prefix-n",
+    "GR-101-prefix-NUL",
+    "GR-101-literal-null",
+    "GR-101-literal-true",
+    "GR-101-literal-false",
+    "GR-101-literal-api_key-null",
+    "GR-102-dangling-backslash-1",
+    "GR-102-dangling-backslash-3",
+    "GR-103-apostrophe-oreilly",
+    "GR-103-apostrophe-hello-world",
+    "GR-103-unterminated-apostrophe",
+    "GR-104-basic-at",
+    "GR-104-basic-email",
+    "GR-104-basic-bang",
+    "GR-105-bearer-question",
+    "GR-105-basic-comma",
+    "GR-104-bearer-7char-floor",
+    "GR-104-token-expired-prose",
+    "GR-106-quoted-equals",
+    "GR-106-quoted-spaced-equals",
+    "GR-106-single-quoted-equals",
+    "GR-106-double-equals",
+]
+
+
+@pytest.mark.parametrize("raw,expected", _GR101_107_CASES, ids=_GR101_107_IDS)
+def test_sanitize_deploy_diagnostic_gr101_107_canaries(raw: str, expected: str) -> None:
+    """GR-107: byte-exact canaries for sentinel literals, quotes, dangling \\, bare class, [=:]+."""
+    out = _run_sanitizer(raw + "\n")
+    assert out == expected
+
+
 def test_sanitize_deploy_diagnostic_preserves_benign_token_shapes() -> None:
     """Existing canaries: token_count and ready detail stay intact."""
     raw = (
@@ -1291,7 +1355,7 @@ def test_sanitizer_sed_defined_once() -> None:
         capture_output=True,
         text=True,
     )
-    assert result.stdout.strip() == "2"
+    assert result.stdout.strip() == "1"
     source = SCRIPT.read_text()
     assert source.count("sanitize_deploy_diagnostic() {") == 1
     heredoc = _boot_smoke_heredoc()

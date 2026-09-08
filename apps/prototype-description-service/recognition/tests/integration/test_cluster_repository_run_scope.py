@@ -179,8 +179,9 @@ async def test_get_top_unlabeled_falls_back_to_members_when_representatives_miss
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("representative_hex", [None, "1" * 32, "1" * 15 + "e" + "0" * 15 + "2"])
 async def test_get_top_unlabeled_tops_up_partial_representatives_to_four(
-    db_session, tenant, seed_media_identity
+    db_session, tenant, seed_media_identity, representative_hex
 ) -> None:
     """Clusters with fewer than 4 representatives should be topped up from members for thumbnail grids."""
     cluster_repo = SqlAlchemyClusterRepository(db_session)
@@ -211,10 +212,10 @@ async def test_get_top_unlabeled_tops_up_partial_representatives_to_four(
         await member_repo.add_member(cluster.id, identity_id=identity_id, similarity=similarity)
 
     # Persist only 3 representatives to reproduce the 3/4 thumbnail mismatch.
-    for identity_id, similarity in identities_by_similarity[:3]:
+    for index, (identity_id, similarity) in enumerate(identities_by_similarity[:3]):
         await cluster_repo.add_representative(
             ClusterRepresentative(
-                id=str(uuid.uuid4()),
+                id=str(uuid.UUID(hex=representative_hex)) if index == 0 and representative_hex else str(uuid.uuid4()),
                 cluster_id=cluster.id,
                 identity_id=identity_id,
                 tenant_id=tenant_id,

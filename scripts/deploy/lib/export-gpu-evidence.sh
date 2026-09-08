@@ -318,6 +318,7 @@ lock_owner_start_time=""
 
 cleanup() {
     local exit_status=$?
+    local preserve_transaction=0
     trap - EXIT HUP INT TERM
 
     # If the second commit move failed, put the old bundle back before
@@ -325,13 +326,14 @@ cleanup() {
     # callers with an empty or half-written destination.
     if [ "$previous_moved" -eq 1 ] && [ ! -e "$out_dir" ] && [ -e "$backup_dir" ]; then
         if ! mv -- "$backup_dir" "$out_dir"; then
-            echo "ERROR: could not restore the previous evidence bundle: $out_dir" >&2
+            echo "ERROR: could not restore the previous evidence bundle: $out_dir; recovery transaction retained: $transaction_dir" >&2
+            preserve_transaction=1
             exit_status=1
         else
             sync_paths "$out_parent" || exit_status=1
         fi
     fi
-    if [ -n "$transaction_dir" ] && [ -d "$transaction_dir" ]; then
+    if [ "$preserve_transaction" -eq 0 ] && [ -n "$transaction_dir" ] && [ -d "$transaction_dir" ]; then
         rm -rf -- "$transaction_dir" || true
     fi
     if [ "$lock_acquired" -eq 1 ]; then
@@ -732,8 +734,10 @@ chmod 600 "$publish_intent"
 sync_paths "$publish_intent" "$transaction_dir" "$out_parent"
 if [ -e "$out_dir" ]; then
     backup_dir="${transaction_dir}/previous"
-    mv -- "$out_dir" "$backup_dir"
+    # A signal trap may run as soon as mv completes, before the next command.
+    # Arm cleanup first; it also checks that the backup actually exists.
     previous_moved=1
+    mv -- "$out_dir" "$backup_dir"
     sync_paths "$out_parent" "$transaction_dir"
 fi
 mv -- "$work_dir" "$out_dir"

@@ -70,6 +70,7 @@ from .bench_capture import (
     collect_item_latencies,
     summarize_latencies,
 )
+from ._pathtext import _printable_message, _printable_path
 from .cli import (
     DEFAULT_KEEP,
     DEFAULT_STALL_LIMIT,
@@ -78,6 +79,7 @@ from .cli import (
     _keep_arg,
     _limit_arg,
     _manifest_sha,
+    _printable_exc,
     fetch_run_record,
     prune_out_dir,
 )
@@ -901,27 +903,38 @@ def _load_weave_bench_source(path: Path) -> tuple[dict[str, Any], str]:
         raw_bytes = path.read_bytes()
         record = json.loads(raw_bytes)
     except (OSError, json.JSONDecodeError) as exc:
-        raise WeaveBenchRecordError(f"--weave-bench source {path} is not readable JSON: {exc}") from exc
+        raise WeaveBenchRecordError(
+            f"--weave-bench source {_printable_path(path)} is not readable JSON: {_printable_exc(exc)}"
+        ) from exc
     if not isinstance(record, dict):
-        raise WeaveBenchRecordError(f"--weave-bench source {path} must contain a JSON object")
+        raise WeaveBenchRecordError(
+            f"--weave-bench source {_printable_path(path)} must contain a JSON object"
+        )
     kind = record.get("kind")
     if kind is not None and kind != DocKind.RUN_RECORD.value:
         raise WeaveBenchRecordError(
-            f"--weave-bench source {path} has kind={kind!r}, expected {DocKind.RUN_RECORD.value!r} "
+            f"--weave-bench source {_printable_path(path)} has kind={kind!r}, expected {DocKind.RUN_RECORD.value!r} "
             "(did you pass a report file?)"
         )
     if not isinstance(record.get("provenance"), dict):
-        raise WeaveBenchRecordError(f"--weave-bench source {path} has no provenance block")
+        raise WeaveBenchRecordError(
+            f"--weave-bench source {_printable_path(path)} has no provenance block"
+        )
     items = record.get("items")
     if not isinstance(items, list) or not items:
-        raise WeaveBenchRecordError(f"--weave-bench source {path} carries no items to replay")
+        raise WeaveBenchRecordError(
+            f"--weave-bench source {_printable_path(path)} carries no items to replay"
+        )
     return record, hashlib.sha256(raw_bytes).hexdigest()
 
 
 def _weave_bench_facts(item: dict[str, Any]) -> str:
     """Pass-1 facts from a source item's ``describe.passes[0]`` (the ``describe_facts`` pass)."""
     if item.get("error"):
-        raise WeaveBenchSourceError(f"source item recorded a fetch error, nothing to replay: {item['error']}")
+        raise WeaveBenchSourceError(
+            "source item recorded a fetch error, nothing to replay: "
+            f"{_printable_message(str(item['error']))}"
+        )
     describe = item.get("describe")
     passes = describe.get("passes") if isinstance(describe, dict) else None
     first = passes[0] if isinstance(passes, list) and passes else None
@@ -934,6 +947,34 @@ def _weave_bench_facts(item: dict[str, Any]) -> str:
     if not isinstance(raw, str) or not raw.strip():
         raise WeaveBenchSourceError("source item's pass-1 facts are empty (describe.passes[0].raw)")
     return raw
+
+
+def _weave_bench_source_item_excerpt(source_item: object) -> str:
+    """Bound malformed-source diagnostics without leaking a manifest path.
+
+    ``str(dict)`` turns a PEP 383 surrogate into the literal six-character
+    ``\\udce9`` sequence before a message encoder can recover its original
+    byte. Encode the path field at construction, then encode any remaining
+    message text as a final boundary check.
+    """
+    if not isinstance(source_item, Mapping):
+        return str(_printable_message(repr(source_item)[:200]))
+    safe_item = dict(source_item)
+    raw_path = safe_item.get("path")
+    path_text: str | None = None
+    if isinstance(raw_path, (str, Path)):
+        path_text = str(_printable_path(raw_path))
+    elif raw_path is not None:
+        path_text = str(_printable_message(str(raw_path)))
+    if path_text is not None:
+        safe_item["path"] = None
+    rendered = []
+    for key, value in safe_item.items():
+        if key == "path" and path_text is not None:
+            rendered.append(f"{key}={path_text}")
+        else:
+            rendered.append(f"{key}={value!r}")
+    return str(_printable_message("{" + ", ".join(rendered) + "}")[:200])
 
 
 def weave_bench_run_record(
@@ -970,7 +1011,7 @@ def weave_bench_run_record(
             "started_at": started_at,
             "weave_bench": True,
             "weave_bench_source": {
-                "path": source_path,
+                "path": str(_printable_path(source_path)),
                 "sha256": source_sha256,
                 "manifest_sha256": source_prov.get("manifest_sha256"),
                 "head_sha": source_prov.get("head_sha"),
@@ -994,11 +1035,19 @@ def weave_bench_run_record(
             # No usable media_id => the OUTPUT record would be unscoreable; that is
             # a malformed source (whole-run abort), not a per-item degrade.
             raise WeaveBenchRecordError(
-                f"--weave-bench source item without a usable media_id: {str(source_item)[:200]}"
+                "--weave-bench source item without a usable media_id: "
+                f"{_weave_bench_source_item_excerpt(source_item)}"
             ) from exc
+        raw_path = source_item.get("path")
+        if isinstance(raw_path, (str, Path)):
+            item_path = str(_printable_path(raw_path))
+        elif raw_path is None:
+            item_path = f"media_id:{media_id}"
+        else:
+            item_path = str(_printable_path(str(raw_path)))
         item: dict[str, Any] = {
             "media_id": media_id,
-            "path": source_item.get("path", f"media_id:{media_id}"),
+            "path": item_path,
             "describe": None,
             "identities": [],
             "face_count": 0,
@@ -1017,13 +1066,13 @@ def weave_bench_run_record(
                 context_pack=entry.context_pack.model_dump(exclude_none=True),
             )
         except Exception as exc:  # noqa: BLE001 — per-item isolation is the contract (rg-007)
-            item["error"] = f"{type(exc).__name__}: {exc}"
+            item["error"] = f"{type(exc).__name__}: {_printable_exc(exc)}"
             item["latency_s"] = round(time.monotonic() - started, 3)
             consecutive_failures += 1
             if consecutive_failures >= stall_limit:
                 items.append(item)
                 raise BoundedStallError(
-                    f"{consecutive_failures} consecutive item failures (last: {item['path']}); "
+                    f"{consecutive_failures} consecutive item failures (last: {_printable_path(item['path'])}); "
                     "aborting weave-bench run",
                     partial_record=_record(aborted=True),
                 ) from exc
@@ -1504,7 +1553,7 @@ def main(argv: list[str] | None = None) -> None:
                 version=args.lexicon_version,
             )
         except LexiconError as exc:
-            sys.exit(f"LexiconError: {exc}")
+            sys.exit(f"LexiconError: {_printable_exc(exc)}")
         print(
             f"depiction lexicon: {depiction_lexicon.version} "
             f"({depiction_lexicon.rule_count_summary()}, {len(depiction_lexicon.render())} chars)",
@@ -1520,7 +1569,7 @@ def main(argv: list[str] | None = None) -> None:
         try:
             source_record, source_sha256 = _load_weave_bench_source(Path(args.weave_bench))
         except WeaveBenchRecordError as exc:
-            sys.exit(f"WeaveBenchRecordError: {exc}")
+            sys.exit(f"WeaveBenchRecordError: {_printable_exc(exc)}")
         # Text-only weave-bench: weave_bench_run_record reads roster/media_id/face_boxes
         # pins only — never opens image files (GOLDEN_IMAGES_DIR not required).
         images_dir = ""
@@ -1580,7 +1629,10 @@ def main(argv: list[str] | None = None) -> None:
     try:
         record_path.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
-        sys.exit(f"run-record parent directory is not writable ({record_path.parent}): {exc}")
+        sys.exit(
+            "run-record parent directory is not writable "
+            f"({_printable_path(record_path.parent)}): {_printable_exc(exc)}"
+        )
 
     sampler: VramSampler | None = None
     gpu_block: dict[str, Any] | None
@@ -1618,7 +1670,7 @@ def main(argv: list[str] | None = None) -> None:
                 started_at=started_at,
             )
     except WeaveBenchRecordError as exc:
-        sys.exit(f"WeaveBenchRecordError: {exc}")
+        sys.exit(f"WeaveBenchRecordError: {_printable_exc(exc)}")
     except BoundedStallError as exc:
         aborted_path = record_path.with_name(record_path.stem + "-aborted.json")
         _stamp_pipeline_provenance(
@@ -1641,7 +1693,10 @@ def main(argv: list[str] | None = None) -> None:
             gpu=gpu_block or _gpu_sampling_disabled(),
         )
         aborted_path.write_text(json.dumps(exc.partial_record, indent=2, sort_keys=True) + "\n")
-        sys.exit(f"BoundedStallError: {exc} — partial record saved to {aborted_path}")
+        sys.exit(
+            "BoundedStallError: "
+            f"{_printable_exc(exc)} — partial record saved to {_printable_path(aborted_path)}"
+        )
     finally:
         client.close()
         if sampler is not None and gpu_block is None:
@@ -1669,11 +1724,11 @@ def main(argv: list[str] | None = None) -> None:
     )
     record_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
     prune_out_dir(str(out_dir), keep=args.keep)
-    print(record_path)
+    print(_printable_path(record_path))
 
 
 if __name__ == "__main__":
     try:
         main()
     except (ManifestError, RemoteClientError) as exc:
-        sys.exit(f"{type(exc).__name__}: {exc}")
+        sys.exit(f"{type(exc).__name__}: {_printable_exc(exc)}")

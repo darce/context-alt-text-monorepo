@@ -611,6 +611,27 @@ def test_remote_build_is_generation_isolated_locked_and_deadlined() -> None:
     assert body.count("run_with_deadline") >= 3
 
 
+def test_remote_build_does_not_stage_mutable_environment_tag(tmp_path: Path) -> None:
+    calls = tmp_path / "commands.txt"
+    driver = f'''
+source "{SCRIPT}"
+preflight_ssh() {{ :; }}
+preflight_remote_docker() {{ :; }}
+preflight_rsync() {{ :; }}
+remote_builder_prune() {{ :; }}
+assert_remote_build_free_space() {{ :; }}
+run_with_deadline() {{ printf '%s\\n' "$@" >> "{calls}"; }}
+do_build_remote dev
+'''
+    result = subprocess.run(["bash", "-c", driver], text=True, capture_output=True,
+                            cwd=SCRIPT.parents[2], env=dict(os.environ), timeout=10)
+    assert result.returncode == 0, result.stdout + result.stderr
+    commands = calls.read_text()
+    assert "docker build" in commands
+    assert re.search(r"-t [^\s]+:[a-f0-9]{40}", commands)
+    assert not re.search(r"-t [^\s]+:dev(?:\s|$)", commands)
+
+
 def test_boot_smoke_has_outer_deadlines_and_curl_request_timeout() -> None:
     body = _function_body("do_boot_smoke")
     assert body.count("run_with_deadline") >= 2
@@ -2375,6 +2396,7 @@ def _run_verify_optional_after_verify_failure(
     *,
     invoke: str,
     rollback_rc: int,
+    restart_failure_phase: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Source recognition-service.sh and reach the post-verify rollback branch."""
     fail_log = tmp_path / "fail.log"
@@ -2399,7 +2421,10 @@ do_build() {{ return 0; }}
 do_build_remote() {{ return 0; }}
 do_push_sha() {{ return 0; }}
 do_push_tag() {{ return 0; }}
-do_restart() {{ return 0; }}
+do_restart() {{
+  ACX_RESTART_EVIDENCE_PHASE={restart_failure_phase or 'pre_candidate'}
+  return {1 if restart_failure_phase else 0}
+}}
 promote_gate() {{ return 0; }}
 _pull_ref() {{ return 0; }}
 image_digest_ref() {{
@@ -2407,7 +2432,7 @@ image_digest_ref() {{
 }}
 do_verify() {{ return 1; }}
 capture_failure_evidence() {{ return 0; }}
-restore_env_tag_to_rollback() {{ return {rollback_rc}; }}
+restore_env_tag_to_rollback() {{ printf 'rollback-runtime=%s\\n' "$2"; return {rollback_rc}; }}
 fail() {{
   printf 'xx %s\\n' "$*" >&2
   printf '%s\\n' "$*" >>"{fail_log}"
@@ -2425,6 +2450,17 @@ fail() {{
         cwd=SCRIPT.parents[2],
         timeout=30,
     )
+
+
+@pytest.mark.parametrize("invoke", ["do_deploy dev", "do_promote dev prod"])
+@pytest.mark.parametrize("phase,runtime", [("pre_candidate", "0"), ("post_restart", "1")])
+def test_restart_failure_recovers_runtime_only_after_restart_begins(tmp_path, monkeypatch, invoke, phase, runtime):
+    monkeypatch.setenv("CONFIRM", "PROMOTE")
+    result = _run_verify_optional_after_verify_failure(
+        tmp_path, invoke=invoke, rollback_rc=0, restart_failure_phase=phase,
+    )
+    assert result.returncode != 0
+    assert f"rollback-runtime={runtime}" in result.stdout, result.stdout + result.stderr
 
 
 @pytest.mark.parametrize(
@@ -2461,4 +2497,3 @@ def test_acx_verify_optional_downgrades_when_rollback_succeeds(
     assert result.returncode == 0, combined
     assert "previous image restored" in combined, combined
     assert not (tmp_path / "fail.log").exists()
-

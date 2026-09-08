@@ -350,7 +350,8 @@ def test_rollback_is_captured_before_remote_build_and_used_on_failures() -> None
     ]
     assert deploy.index('preserve_rollback_tag "$env"') < deploy.index('do_build_remote "$tag"')
     assert 'restore_env_tag_to_rollback "$env" 0' in deploy
-    assert 'restore_env_tag_to_rollback "$env" 1' in deploy
+    # Executable phase tests pin when runtime recovery is required.
+    assert 'restore_env_tag_to_rollback "$env" "${restart_runtime}"' in deploy
     assert 'promote_gate "$env" "${ACX_CANDIDATE_DIGEST_REF}"' in deploy
 
 

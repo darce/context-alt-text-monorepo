@@ -120,9 +120,48 @@ def test_face_counts_drive_people_and_crowds():
             (rec(path="none.jpg", xmp_face_count=0), Source.LOCALWP_UPLOADS),
         ]
     )
-    assert {c.path for c in report.offline[Domain.PEOPLE].candidates} == {"solo.jpg", "crowd.jpg"}
-    assert [c.path for c in report.offline[Domain.CROWDS].candidates] == ["crowd.jpg"]
-    assert [c.path for c in report.offline[Domain.FACES].candidates] == ["solo.jpg"]
+    # Face counts rank a conservative frame; they do not define it. A detector
+    # returning zero (or no row at all) cannot remove an image before curation.
+    assert {c.path for c in report.offline[Domain.PEOPLE].candidates} == {
+        "solo.jpg",
+        "crowd.jpg",
+        "none.jpg",
+    }
+    assert report.offline[Domain.CROWDS].candidates[0].path == "crowd.jpg"
+    assert {c.path for c in report.offline[Domain.FACES].candidates} == {
+        "solo.jpg",
+        "crowd.jpg",
+        "none.jpg",
+    }
+
+
+def test_face_dependent_strata_keep_the_frame_when_detector_output_is_partial():
+    rows = [
+        (rec(path="missed.jpg"), Source.LOCALWP_UPLOADS),
+        (rec(path="zero.jpg"), Source.LOCALWP_UPLOADS),
+        (rec(path="hit.jpg"), Source.LOCALWP_UPLOADS),
+    ]
+    # The absent row models a detector failure; the explicit zero models a
+    # detector miss or a true no-face result. Neither is safe to use as a frame
+    # exclusion before independent operator curation.
+    report = build_report(
+        rows,
+        face_counts={"sha-zero.jpg": 0, "sha-hit.jpg": 1},
+    )
+
+    for domain in (Domain.PEOPLE, Domain.FACES, Domain.CROWDS):
+        shortlist = report.offline[domain]
+        assert shortlist.pool_size == len(rows)
+        assert {candidate.path for candidate in shortlist.candidates} == {
+            "missed.jpg",
+            "zero.jpg",
+            "hit.jpg",
+        }
+    missed = report.offline[Domain.PEOPLE].candidates[
+        next(i for i, candidate in enumerate(report.offline[Domain.PEOPLE].candidates)
+             if candidate.path == "missed.jpg")
+    ]
+    assert missed.face_count == 0 and missed.face_count_source is FaceCountSource.NONE
 
 
 def test_celebs01_images_are_faces_by_construction():
@@ -350,7 +389,9 @@ def test_tiny_crops_are_kept_out_of_every_stratum_and_the_browse_set():
     report = build_report(rows, face_counts={f"sha-crop{i}.jpg": 1 for i in range(10)})
 
     assert report.pool_size == 1
-    assert report.offline[Domain.FACES].pool_size == 0  # crops never reach a stratum
+    assert report.offline[Domain.FACES].pool_size == 1  # crops never reach a stratum
+    assert report.offline[Domain.PEOPLE].pool_size == 1
+    assert report.offline[Domain.CROWDS].pool_size == 1
     assert [c.path for c in report.operator_review.candidates] == ["photo.jpg"]
 
 
@@ -381,19 +422,20 @@ def test_a_model_count_of_zero_is_labeled_model_not_none():
 
 
 def test_model_counts_populate_the_people_and_crowds_strata():
-    # The whole point of the pass: without the overlay these uploads are invisible
-    # to people/crowds, and crowds stays stuck at its 7-image floor.
+    # The pass improves ranking evidence, but it is not allowed to define the
+    # candidate frame or turn detector misses into a corpus exclusion.
     rows = [(rec(path=f"{i}.jpg"), Source.LOCALWP_UPLOADS) for i in range(3)]
     face_counts = {"sha-0.jpg": CROWD_MIN_FACES, "sha-1.jpg": 1, "sha-2.jpg": 0}
 
     before = build_report([(r, s) for r, s in rows])
     after = build_report([(r, s) for r, s in rows], face_counts=face_counts)
 
-    assert before.offline[Domain.PEOPLE].pool_size == 0
-    assert before.offline[Domain.CROWDS].pool_size == 0
-    assert after.offline[Domain.PEOPLE].pool_size == 2
-    assert after.offline[Domain.CROWDS].pool_size == 1
-    assert after.offline[Domain.FACES].pool_size == 1  # exactly-one-face only
+    assert before.offline[Domain.PEOPLE].pool_size == 3
+    assert before.offline[Domain.CROWDS].pool_size == 3
+    assert after.offline[Domain.PEOPLE].pool_size == 3
+    assert after.offline[Domain.CROWDS].pool_size == 3
+    assert after.offline[Domain.CROWDS].candidates[0].path == "0.jpg"
+    assert after.offline[Domain.FACES].pool_size == 3
 
 
 def test_people_shortlist_ranks_on_the_effective_count():

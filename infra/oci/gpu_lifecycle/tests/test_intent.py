@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from infra.oci.gpu_lifecycle.controller import GpuInstance, GpuLifecycleController
 from infra.oci.gpu_lifecycle.intent import (
+    IntentAuthorityError,
     IntentAuthorityStore,
     IntentAction,
     IntentStatus,
@@ -564,3 +565,17 @@ def test_authority_revokes_legacy_grant_without_boot_identity(tmp_path):
     state['intents'][VALID_NONCE].pop('boot_id')
     path.write_text(json.dumps(state))
     assert read_effective_intent(tmp_path, NOW, authority_store=authority).action is IntentAction.AUTO
+
+
+@pytest.mark.parametrize("field,value", [("expires_at", "2026-09-06T23:30:00Z"), ("sequence", 2)])
+def test_authority_rejects_record_publication_mismatch(tmp_path, field, value):
+    path = tmp_path / "authority.json"
+    authority = IntentAuthorityStore(path, boot_id="boot-a", monotonic=lambda: 100.0)
+    _write_intent(tmp_path, "prod", expires_at=NOW + timedelta(seconds=1))
+    assert read_effective_intent(tmp_path, NOW, authority_store=authority).action is IntentAction.START
+    state = json.loads(path.read_text())
+    state["intents"][VALID_NONCE][field] = value
+    state["intents"][VALID_NONCE]["monotonic_expires_at"] = 10000.0
+    path.write_text(json.dumps(state), encoding="utf-8")
+    with pytest.raises(IntentAuthorityError, match="invalid"):
+        read_effective_intent(tmp_path, NOW + timedelta(seconds=2), authority_store=authority)

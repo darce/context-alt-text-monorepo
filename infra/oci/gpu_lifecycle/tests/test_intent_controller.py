@@ -232,6 +232,75 @@ def test_lease_cap_wins_over_start_intent(tmp_path: Path) -> None:
     assert result.last_transition_reason.value == "lease_cap"
 
 
+def test_malformed_authority_number_preserves_hard_lease_stop(tmp_path: Path) -> None:
+    runtime_dir = tmp_path / "runtime"
+    state_dir = tmp_path / "durable"
+    _write_persisted_intent(
+        runtime_dir, action="start", requested_at=NOW,
+        expires_at=NOW + timedelta(minutes=5), requested_by="operator",
+        sequence=1, nonce=VALID_NONCE,
+    )
+    run_start_cycle(
+        controller=GpuLifecycleController(idle_seconds=60), instances=[],
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
+        actuator=RecordingActuator([], []), intent_dir=runtime_dir,
+        durable_state_dir=state_dir, now=NOW,
+    )
+    authority_path = state_dir / "intent-authority.json"
+    state = json.loads(authority_path.read_text())
+    state["intents"][VALID_NONCE]["monotonic_expires_at"] = 10 ** 400
+    authority_path.write_text(json.dumps(state), encoding="utf-8")
+    actuator = RecordingActuator([], [])
+    result = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60), instances=[_running()],
+        load_source=StaticJobLoadSource(queue_depth=5, in_flight=1),
+        actuator=actuator, intent_dir=runtime_dir, durable_state_dir=state_dir,
+        now=NOW, fence_delay_seconds=0, max_lease_seconds=1,
+        use_recorded_lease_age=False,
+    )
+    assert result.intent.action is IntentAction.AUTO
+    assert "authority unavailable" in result.intent.reason
+    assert result.lease_expired == [("STOP", "ocid1.gpu")]
+    assert actuator.stopped == ["ocid1.gpu"]
+
+
+def test_rejected_equal_sequence_drops_deferred_stop(tmp_path: Path) -> None:
+    runtime_dir = tmp_path / "runtime"
+    state_dir = tmp_path / "durable"
+    original = _write_persisted_intent(
+        runtime_dir, action="stop", requested_at=NOW,
+        expires_at=NOW + timedelta(minutes=5), requested_by="operator",
+        sequence=7, nonce=VALID_NONCE,
+    )
+    blocked = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60), instances=[_running(age=0)],
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=1),
+        actuator=RecordingActuator([], []), intent_dir=runtime_dir,
+        durable_state_dir=state_dir, now=NOW, fence_delay_seconds=0,
+    )
+    assert blocked.intent_status is IntentStatus.BLOCKED_WORK_IN_FLIGHT
+    conflicting = json.loads(original.read_text())
+    conflicting.update(action="start", nonce=SECOND_NONCE, requested_by="other-environment")
+    other_path = runtime_dir / "dev" / "gpu-intent.json"
+    other_path.parent.mkdir()
+    other_path.write_text(json.dumps(conflicting), encoding="utf-8")
+    for seconds in (1, 2):
+        actuator = RecordingActuator([], [])
+        result = run_reap_cycle(
+            controller=GpuLifecycleController(idle_seconds=60), instances=[_running(age=0)],
+            load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
+            actuator=actuator, intent_dir=runtime_dir, durable_state_dir=state_dir,
+            now=NOW + timedelta(seconds=seconds), fence_delay_seconds=0,
+        )
+        assert result.intent.action is IntentAction.AUTO
+        assert actuator.stopped == []
+    assert not (state_dir / "deferred-stop.json").exists()
+    records = [json.loads(line) for line in (state_dir / "decision-log.jsonl").read_text().splitlines()]
+    assert any(row.get("event") == "dropped" and row.get("reason") == "rejected_by_authority_token"
+               and row.get("nonce") == VALID_NONCE and row.get("requested_by") == "operator"
+               for row in records)
+
+
 def test_stop_with_work_is_deferred_then_re_evaluated(tmp_path: Path) -> None:
     controller = GpuLifecycleController(idle_seconds=60)
     intent = _intent(IntentAction.STOP)

@@ -239,6 +239,102 @@ r211_describe=$(awk '
 assert_eq "R2-11 describe suite guards BASH_VERSION before pipefail" \
     "guard-before-pipefail" "$r211_describe"
 
+# VLMHEAL-1: boot-smoke must retain and print the last /health body before the
+# throwaway container's EXIT trap removes it, so a 503 body is not lost.
+recognition_deploy="${script_dir}/../recognition-service.sh"
+boot_smoke_heredoc=$(awk '
+    /^do_boot_smoke\(\) \{/ { in_fn=1 }
+    in_fn && /<<.*SMOKE/ { in_smoke=1; next }
+    in_smoke && /^SMOKE$/ { exit }
+    in_smoke { print }
+' "$recognition_deploy")
+assert_eq "VLMHEAL-1 boot smoke prints last /health body on failure" \
+    "1" "$(printf '%s\n' "$boot_smoke_heredoc" | grep -cF '${last_health_body:0:2000}' || true)"
+
+# GR-263: grep-only stays green if the trap string is dead. Compose sanitizer +
+# inner SMOKE, bash -n it, then bash it with stubbed docker/curl so the EXIT
+# trap actually prints the last /health body.
+sanitizer_src=$(awk '
+    /^sanitize_deploy_diagnostic\(\) \{/ { p=1 }
+    p { print }
+    p && /^}$/ { exit }
+' "$recognition_deploy")
+inner_smoke=$(awk '
+    /<<'\''SMOKE'\''/ { in_smoke=1; next }
+    in_smoke && /^SMOKE$/ { exit }
+    in_smoke { print }
+' "$recognition_deploy")
+gr263_dir=$(mktemp -d)
+gr263_wrap="${gr263_dir}/wrap.sh"
+{
+    printf '%s\n' "$sanitizer_src"
+    printf '%s\n' "$inner_smoke"
+} >"$gr263_wrap"
+gr263_n_rc=0
+bash -n "$gr263_wrap" || gr263_n_rc=$?
+assert_eq "VLMHEAL-1 composed SMOKE_WRAP bash -n" "0" "$gr263_n_rc"
+
+gr263_bin="${gr263_dir}/bin"
+gr263_state="${gr263_dir}/state"
+gr263_remote="${gr263_dir}/remote"
+mkdir -p "$gr263_bin" "$gr263_state" "$gr263_remote"
+printf '%s\n' "ACX_NETWORK_NAME=acx-dev-net" "ACX_MODELS_PATH=/tmp/models" \
+    >"${gr263_remote}/.env"
+cat >"${gr263_bin}/docker" <<'GR263_DOCKER'
+#!/usr/bin/env bash
+set -euo pipefail
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  network)
+    sub="${1:-}"
+    if [[ "$sub" == inspect ]]; then
+      exit 0
+    fi
+    exit 0
+    ;;
+  run)
+    exit 0
+    ;;
+  exec)
+    exit 0
+    ;;
+  port)
+    echo "0.0.0.0:18000"
+    exit 0
+    ;;
+  logs|rm|volume)
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+GR263_DOCKER
+cat >"${gr263_bin}/curl" <<'GR263_CURL'
+#!/usr/bin/env bash
+printf '%s\n%s' '{"status":"unhealthy","canary":"GR263-CANARY-BODY"}' '503'
+exit 0
+GR263_CURL
+chmod +x "${gr263_bin}/docker" "${gr263_bin}/curl"
+gr263_out=""
+gr263_rc=0
+gr263_out="$(
+    PATH="${gr263_bin}:${PATH}" \
+        bash "$gr263_wrap" \
+        dev \
+        iad.ocir.io/example/acx-backend@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+        "$gr263_remote" \
+        2 1 0 1 1 1 1 10 \
+        2>&1
+)" || gr263_rc=$?
+assert_eq "VLMHEAL-1 composed SMOKE_WRAP bash -s is non-zero" "1" "$gr263_rc"
+if printf '%s\n' "$gr263_out" | grep -qF 'GR263-CANARY-BODY'; then
+    assert_eq "VLMHEAL-1 EXIT trap prints last /health canary" "1" "1"
+else
+    assert_eq "VLMHEAL-1 EXIT trap prints last /health canary" "1" "0"
+fi
+rm -rf "$gr263_dir"
+
 # R2-13: printed verdict AND $? for at least one PASS and one FAIL per classifier.
 # WARN is not a failure (rc 0), matching UNKNOWN policy.
 assert_verdict_rc "R2-13 api PASS" PASS 0 classify_api_probe 200 200

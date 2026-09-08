@@ -192,12 +192,8 @@ def test_heal_rebuilds_typmod_less_matview_with_null_relacl(pg_empty_engine) -> 
                 "FROM identity_clusters c"
             )
         )
-        conn.execute(text("REVOKE ALL ON mv_identity_cluster_centroids FROM PUBLIC"))
     if _matview_relacl(pg_empty_engine) is not None:
-        pytest.fail(
-            "typmod-less matview still has explicit relacl after CREATE+REVOKE PUBLIC; "
-            "PG-ACL-01 needs relacl IS NULL (default ACL, owner only)"
-        )
+        pytest.fail("typmod-less matview has explicit relacl right after CREATE")
     assert _centroid_typmod(pg_empty_engine) == -1
 
     with pg_empty_engine.begin() as conn:

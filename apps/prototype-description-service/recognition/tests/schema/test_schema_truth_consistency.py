@@ -22,6 +22,8 @@ import inspect
 import pathlib
 import re
 
+import pytest
+
 import db.models  # noqa: F401  (registers every ORM table on Base.metadata)
 from db.base import Base
 from recognition.application.health import IDENTITY_VECTOR_COLUMNS as HEALTH_VECTOR_COLUMNS
@@ -150,13 +152,14 @@ _FROM_JOIN_STOP = re.compile(r"\b(?:WHERE|JOIN|GROUP|ORDER|ON|UNION|LIMIT)\b|\)"
 _RELATION_IDENT = re.compile(r"(?:[A-Za-z_][A-Za-z0-9_]*\.)?([A-Za-z_][A-Za-z0-9_]*)")
 _FUNC_CALL = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 _PREFLIGHT_TABLE = re.compile(
-    r"has_table_privilege\(\s*current_user\s*,\s*'([A-Za-z_][A-Za-z0-9_]*)'",
+    r"has_table_privilege\(\s*current_user\s*,\s*'(?:[A-Za-z_][A-Za-z0-9_]*\.)?([A-Za-z_][A-Za-z0-9_]*)'",
     re.IGNORECASE,
 )
 _PREFLIGHT_FUNC = re.compile(r"p\.proname\s*=\s*'([A-Za-z_][A-Za-z0-9_]*)'", re.IGNORECASE)
-_PY_COMMENT = re.compile(r"#[^\n]*")
 _ADJACENT_STRINGS = re.compile(r'"([^"]*)"\s+"([^"]*)"')
+_CREATE_MATVIEW_START = re.compile(r"CREATE MATERIALIZED VIEW", re.IGNORECASE)
 _CREATE_MATVIEW_BODY = re.compile(r"CREATE MATERIALIZED VIEW.*?(?=\"\"\")", re.IGNORECASE | re.DOTALL)
+_LATERAL_HEAD = re.compile(r"LATERAL\b", re.IGNORECASE)
 _OPERATOR_FUNCS = {
     "<=>": "vector_cosine_distance",
     "<->": "l2_distance",
@@ -191,6 +194,7 @@ _SQL_NON_CATALOG_FUNCS = {
     "exists",
     "extract",
     "false",
+    "filter",
     "from",
     "full",
     "greatest",
@@ -256,6 +260,11 @@ def _from_join_relations(sql: str) -> set[str]:
     names: set[str] = set()
     for head in _FROM_JOIN_HEAD.finditer(sql):
         rest = sql[head.end() :]
+        stripped = rest.lstrip()
+        if _LATERAL_HEAD.match(stripped):
+            raise ValueError("LATERAL unsupported")
+        if stripped.startswith("("):
+            raise ValueError("derived tables unsupported")
         stop = _FROM_JOIN_STOP.search(rest)
         clause = rest[: stop.start()] if stop else rest
         for item in clause.split(","):
@@ -271,8 +280,63 @@ def _body_funcs(sql: str) -> set[str]:
     return names
 
 
+def _strip_python_hash_comments(src: str) -> str:
+    """Strip # comments at line start or after whitespace, never inside strings or operators like <#>."""
+    out: list[str] = []
+    i = 0
+    n = len(src)
+    string_delim: str | None = None
+    while i < n:
+        if string_delim is not None:
+            if string_delim in ('"""', "'''"):
+                if src.startswith(string_delim, i):
+                    out.append(string_delim)
+                    i += 3
+                    string_delim = None
+                    continue
+                out.append(src[i])
+                i += 1
+                continue
+            ch = src[i]
+            out.append(ch)
+            if ch == "\\" and i + 1 < n:
+                out.append(src[i + 1])
+                i += 2
+                continue
+            if ch == string_delim:
+                string_delim = None
+            i += 1
+            continue
+        if src.startswith('"""', i):
+            out.append('"""')
+            i += 3
+            string_delim = '"""'
+            continue
+        if src.startswith("'''", i):
+            out.append("'''")
+            i += 3
+            string_delim = "'''"
+            continue
+        ch = src[i]
+        if ch in ("'", '"'):
+            out.append(ch)
+            string_delim = ch
+            i += 1
+            continue
+        if ch == "#":
+            at_line_start = i == 0 or src[i - 1] == "\n"
+            after_ws = i > 0 and src[i - 1] in " \t"
+            if at_line_start or after_ws:
+                while i < n and src[i] != "\n":
+                    i += 1
+                continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 def _comment_stripped_preflight_src(src: str) -> str:
-    stripped = _PY_COMMENT.sub("", src)
+    stripped = _strip_python_hash_comments(src)
     while True:
         joined, n = _ADJACENT_STRINGS.subn(r'"\1\2"', stripped)
         if n == 0:
@@ -282,7 +346,15 @@ def _comment_stripped_preflight_src(src: str) -> str:
 
 def _matview_create_sql(src: str | None = None) -> str:
     text = inspect.getsource(MIGRATION.ensure_matview) if src is None else src
-    return "\n".join(_SQL_COMMENT.sub("", match.group(0)) for match in _CREATE_MATVIEW_BODY.finditer(text))
+    starts = list(_CREATE_MATVIEW_START.finditer(text))
+    if not starts:
+        return ""
+    if len(starts) > 1:
+        raise ValueError("multiple CREATE MATERIALIZED VIEW bodies")
+    match = _CREATE_MATVIEW_BODY.search(text)
+    if match is None:
+        raise ValueError("could not bound CREATE MATERIALIZED VIEW body")
+    return _SQL_COMMENT.sub("", match.group(0))
 
 
 def test_from_join_captures_comma_joined_relations_and_operator_funcs() -> None:
@@ -292,7 +364,13 @@ def test_from_join_captures_comma_joined_relations_and_operator_funcs() -> None:
     assert _from_join_relations("SELECT 1 FROM public.identity_members im") == {"identity_members"}
 
 
-def test_matview_create_sql_joins_every_create_body() -> None:
+def test_unbounded_create_matview_body_raises_named_error() -> None:
+    src = 'op.execute("""\n        CREATE MATERIALIZED VIEW v AS SELECT 1\n'
+    with pytest.raises(ValueError, match="could not bound CREATE MATERIALIZED VIEW body"):
+        _matview_create_sql(src)
+
+
+def test_second_create_matview_body_raises_named_error() -> None:
     src = '''
     op.execute("""
         CREATE MATERIALIZED VIEW first_view AS SELECT 1
@@ -301,9 +379,45 @@ def test_matview_create_sql_joins_every_create_body() -> None:
         CREATE MATERIALIZED VIEW second_view AS SELECT 2
         """)
     '''
-    joined = _matview_create_sql(src)
-    assert "CREATE MATERIALIZED VIEW first_view" in joined
-    assert "CREATE MATERIALIZED VIEW second_view" in joined
+    with pytest.raises(ValueError, match="multiple CREATE MATERIALIZED VIEW bodies"):
+        _matview_create_sql(src)
+
+
+def test_matview_create_sql_extracts_single_bounded_body() -> None:
+    src = '''
+    op.execute("""
+        CREATE MATERIALIZED VIEW only_view AS SELECT 1
+        """)
+    '''
+    body = _matview_create_sql(src)
+    assert "CREATE MATERIALIZED VIEW only_view" in body
+    assert "SELECT 1" in body
+
+
+def test_derived_table_is_rejected_by_name() -> None:
+    with pytest.raises(ValueError, match="derived tables unsupported"):
+        _from_join_relations("SELECT 1 FROM (SELECT x FROM t) sub")
+
+
+def test_lateral_join_is_rejected_by_name() -> None:
+    with pytest.raises(ValueError, match="LATERAL unsupported"):
+        _from_join_relations("SELECT 1 FROM t CROSS JOIN LATERAL fn(t.id)")
+
+
+def test_comment_stripper_preserves_pgvector_hash_operators() -> None:
+    probe = "SELECT c.centroid <#> q FROM centroids c"
+    assert _comment_stripped_preflight_src(probe) == probe
+
+
+def test_preflight_normalises_schema_qualified_relation_names() -> None:
+    src = "has_table_privilege(current_user, 'public.identity_members', 'SELECT')"
+    assert {name.lower() for name in _PREFLIGHT_TABLE.findall(src)} == {"identity_members"}
+    assert _from_join_relations("SELECT 1 FROM public.identity_members im") == {"identity_members"}
+
+
+def test_filter_where_is_not_a_catalog_function_probe() -> None:
+    body = "SELECT COUNT(*) FILTER (WHERE x > 0) FROM t"
+    assert "filter" not in _body_funcs(body)
 
 
 def test_matview_create_privilege_gaps_match_create_body_relations_and_functions() -> None:

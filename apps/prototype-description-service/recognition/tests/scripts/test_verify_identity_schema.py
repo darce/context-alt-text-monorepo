@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import importlib.util
 import inspect
 import pathlib
@@ -550,3 +551,19 @@ def test_empty_column_gaps_is_ok() -> None:
     assert report["ok"] is True
     assert report["column_gaps"] == {}
     assert report["exit_code"] == script.EXIT_OK
+
+
+def test_collect_matview_create_privilege_gaps_sql_matches_migration() -> None:
+    # ENG-02: verifier must reuse heal's privilege-gap SQL, not a second copy.
+    script = _import_script()
+    migration = importlib.import_module("db.migrations.versions.001_identity_schema")
+    collect_src = inspect.getsource(script._collect_matview_create_privilege_gaps)
+    gap_src = inspect.getsource(migration._matview_create_privilege_gaps)
+    assert "identity_schema._matview_create_privilege_gaps" in collect_src
+    assert "has_table_privilege" not in collect_src
+    assert "p.proname" not in collect_src
+    assert "has_table_privilege(current_user, 'identity_clusters'" in gap_src
+    assert "has_table_privilege(current_user, 'identity_members'" in gap_src
+    assert "has_table_privilege(current_user, 'media_identities'" in gap_src
+    assert "p.proname = 'l2_normalize'" in gap_src
+    assert migration._matview_create_privilege_gaps is not script._collect_matview_create_privilege_gaps

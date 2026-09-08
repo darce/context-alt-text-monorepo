@@ -2103,6 +2103,7 @@ def _matview_owner_and_can_drop(op) -> tuple[str, bool]:
 
 
 def _matview_create_privilege_gaps(op) -> list[str]:
+    # WHY: must match FROM/JOIN tables + functions in ensure_matview's CREATE MATERIALIZED VIEW body (C-01 ratchet).
     row = (
         op.get_bind()
         .execute(
@@ -2171,10 +2172,24 @@ def _restore_matview_owner_and_grants(
     for grantee, privilege, grantable in grants:
         quoted_grantee = _quote_ident(op, grantee)
         option = " WITH GRANT OPTION" if grantable else ""
-        op.execute(f"GRANT {privilege} ON mv_identity_cluster_centroids TO {quoted_grantee}{option}")
+        try:
+            op.execute(f"GRANT {privilege} ON mv_identity_cluster_centroids TO {quoted_grantee}{option}")
+        except sa.exc.DBAPIError as exc:
+            raise RuntimeError(
+                f"cannot restore GRANT {privilege} ON mv_identity_cluster_centroids TO {grantee}: "
+                "the materialized view was rebuilt but the grant could not be replayed; "
+                "re-run python -m scripts.sync_identity_schema"
+            ) from exc
     if owner != current_role:
         quoted_owner = _quote_ident(op, owner)
-        op.execute(f"ALTER MATERIALIZED VIEW mv_identity_cluster_centroids OWNER TO {quoted_owner}")
+        try:
+            op.execute(f"ALTER MATERIALIZED VIEW mv_identity_cluster_centroids OWNER TO {quoted_owner}")
+        except sa.exc.DBAPIError as exc:
+            raise RuntimeError(
+                f"cannot restore OWNER TO {owner} on mv_identity_cluster_centroids: "
+                "the materialized view was rebuilt but the grant could not be replayed; "
+                "re-run python -m scripts.sync_identity_schema"
+            ) from exc
 
 
 def ensure_matview(op) -> None:
@@ -2218,6 +2233,7 @@ def ensure_matview(op) -> None:
                 )
             restore = (current_role, owner, _matview_nonowner_grants(op))
             op.execute("DROP MATERIALIZED VIEW mv_identity_cluster_centroids")
+    # WHY: FROM/JOIN tables + functions here are preflighted by _matview_create_privilege_gaps (C-01 ratchet).
     op.execute(
         f"""
         CREATE MATERIALIZED VIEW IF NOT EXISTS mv_identity_cluster_centroids AS

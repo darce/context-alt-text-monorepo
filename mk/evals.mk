@@ -13,10 +13,9 @@
 # This file adds the missing targets plus one discovery target. It does not
 # redefine the three that already exist.
 #
-# Live vs offline: `eval-captions` and `bakeoff-face` reach the remote OCI
-# service. Every target below is artifact -> artifact: no network, no tenant
-# writes, no local inference. Inference and full test suites still run
-# remotely; these are scorers over already-recorded artifacts.
+# `eval-captions` reaches the configured service. `bakeoff-face` runs local
+# inference. Artifact scorers make no service/API calls; uv may bootstrap
+# dependencies when the environment is not already prepared.
 #
 # Contract + env: apps/prototype-description-service/scripts/eval_harness/README.md
 # Pinned by: scripts/test_make_eval_targets.py (every module path and flag
@@ -41,13 +40,15 @@ eval-list:
 	@echo ""
 	@echo "  LIVE (remote OCI inference; needs ACX_EVAL_LIVE=1 + eval-tenant key)"
 	@echo "    make eval-captions                                       caption + face run, then score (exit contract 0/1/2/3)"
-	@echo "    make bakeoff-face                                        face bake-off candidate walk"
+	@echo ""
+	@echo "  LOCAL INFERENCE (needs GOLDEN_IMAGES_DIR and local YuNet/SFace models)"
+	@echo "    make bakeoff-face                                        writes a face run and prunes older outputs"
 	@echo ""
 	@echo "  OFFLINE (artifact -> artifact; no network, no tenant writes)"
 	@echo "    make eval-score          RUN_RECORD=<path>               re-score a run record, determinism-checked"
 	@echo "    make bakeoff-face-score  FACE_RUN=<path>                 score a recorded face run"
 	@echo "    make eval-face-calibrate REPORT=<path> MANIFEST=<path>   threshold calibration (canon CAL-07)"
-	@echo "    make eval-fusion                                         staged vs ad-hoc fusion eval"
+	@echo "    make eval-fusion                                         staged vs ad-hoc; writes ignored harness outputs even on refusal"
 	@echo "    make eval-report         RUN=<label=path> MANIFEST=<path> OUT=<path>  browser-openable HTML bake-off report"
 	@echo ""
 	@echo "  CORPUS SELECTION (offline, for building a new eval set)"

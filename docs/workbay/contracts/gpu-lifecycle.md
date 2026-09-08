@@ -112,6 +112,10 @@ whatever the durable dir already holds.
 - A `sequence` below the persisted `highest_sequence` is fenced, even for a
   nonce that was previously honoured. This is what stops an old publication from
   being reintroduced after a newer one superseded it.
+- Different nonces at the same sequence reject that sequence durably, including
+  any deferred STOP carrying the rejected token. The ledger's duplicated expiry
+  and sequence fields must agree with its immutable publication; malformed
+  numeric deadlines and inconsistent records make authority unavailable.
 - Expiry is evaluated against `max(now, last_wall_time)`, so a backwards NTP
   correction cannot extend a grant, and additionally against a per-boot
   monotonic deadline recorded when the nonce was first seen.
@@ -139,7 +143,9 @@ record and re-arm it - the deferral, not the original `expires_at`, is the
 authority for the effective expiry, so a STOP that waited out its own TTL is
 still honoured when the work drains. A record whose intent lacks `requested_at`,
 `nonce`, or `sequence` cannot be persisted; that is reported as a cycle error, not
-silently deferred. A higher `sequence` clears the deferral.
+silently deferred. A higher `sequence`, a rejected sequence, or another nonce
+owning its sequence clears the deferral and records the drop with the original
+requester. Rejection is checked before re-arming the deferred deadline.
 
 **Decision log.** Every cycle that decides, actuates, hits the lease cap, or
 blocks a STOP appends one JSON object to `decision-log.jsonl` (HAI-06):

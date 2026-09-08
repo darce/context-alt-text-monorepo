@@ -1388,14 +1388,16 @@ def _audit_deferred_fenced(
     *,
     high_water: int,
     decision_log_store: DecisionLogStore | None,
+    token_rejected: bool = False,
 ) -> None:
     """Record that a deferred STOP was dropped by the durable fencing mark."""
     logger.warning(
-        "dropped deferred STOP fenced by authority high-water mark: "
-        "nonce=%s sequence=%s highest=%s",
+        "dropped deferred STOP fenced by authority: "
+        "nonce=%s sequence=%s highest=%s token_rejected=%s",
         record.nonce,
         record.sequence,
         high_water,
+        token_rejected,
     )
     if decision_log_store is None:
         return
@@ -1403,7 +1405,7 @@ def _audit_deferred_fenced(
         decision_log_store.append(
             {
                 "event": "dropped",
-                "reason": "fenced_by_authority_sequence",
+                "reason": "rejected_by_authority_token" if token_rejected else "fenced_by_authority_sequence",
                 "action": IntentAction.STOP.value,
                 "nonce": record.nonce,
                 "sequence": record.sequence,
@@ -1473,7 +1475,9 @@ def _apply_deferred_stop(
     # STOP it superseded.
     if authority_store is not None:
         try:
-            high_water = authority_store.highest_sequence()
+            high_water, token_rejected = authority_store.token_fence(
+                sequence=record.sequence, nonce=record.nonce,
+            )
         except (IntentAuthorityError, OSError, ValueError) as exc:
             return _blocked_deferred_intent(
                 effective_intent,
@@ -1482,7 +1486,7 @@ def _apply_deferred_stop(
                 error=exc,
                 decision_log_store=decision_log_store,
             )
-        if high_water > record.sequence:
+        if high_water > record.sequence or token_rejected:
             try:
                 store.clear(sequence=record.sequence)
             except (OSError, ValueError) as exc:
@@ -1497,6 +1501,7 @@ def _apply_deferred_stop(
                 record,
                 high_water=high_water,
                 decision_log_store=decision_log_store,
+                token_rejected=token_rejected,
             )
             return effective_intent
     try:

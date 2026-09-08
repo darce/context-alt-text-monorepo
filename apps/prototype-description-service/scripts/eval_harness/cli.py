@@ -75,6 +75,7 @@ from .report import (
     identity_names,  # noqa: F401 — re-export for external callers; report owns it (VLM6-RH-07)
     occlusion_inputs_from_record,
     score_run_record,
+    _selection_metadata_issue,
     score_vacuous_category_labels,
 )
 from .report import (
@@ -491,6 +492,12 @@ def fetch_run_record(
             "base_url": getattr(client, "base_url", "unknown"),
             "head_sha": head_sha,
             "started_at": started_at,
+            # Prefix selection is part of the evidence identity.  A score-time
+            # gate compares these counts with the manifest/media-id multiset so
+            # ``--limit`` remains an explicit provisional smoke run.
+            "requested_limit": limit,
+            "manifest_entries": len(manifest.entries),
+            "evaluated_entries": len(items),
         }
         if provider is not None:
             provenance["provider"] = provider
@@ -572,7 +579,10 @@ def fetch_run_record(
             item["face_count"] = face_count
             item["identity_ordering"] = ordering_source
         except Exception as exc:  # noqa: BLE001 — per-item isolation is the contract (rg-007)
-            item["error"] = f"{type(exc).__name__}: {exc}"
+            # Keep per-item failures printable even when an OSError carries a
+            # PEP 383 path surrogate.  The record is later rendered in CLI
+            # output and must never retain an undecodable filename verbatim.
+            item["error"] = f"{type(exc).__name__}: {_printable_exc(exc)}"
             if item["latency_s"] is None and describe_started is not None:
                 item["latency_s"] = round(time.monotonic() - describe_started, 3)
             consecutive_failures += 1
@@ -953,8 +963,13 @@ def _cmd_fetch(args: argparse.Namespace) -> list[str]:
             )
         except (BoundedStallError, MaxCostExceededError, ProviderMismatchError) as exc:
             aborted_path = OUT_DIR / f"run-{stamp}{suffix}-aborted.json"
-            aborted_path.write_text(json.dumps(exc.partial_record, indent=2, sort_keys=True) + "\n")
-            sys.exit(f"{type(exc).__name__}: {exc} — partial record saved to {aborted_path}")
+            aborted_path.write_text(
+                json.dumps(exc.partial_record, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
+            sys.exit(
+                f"{type(exc).__name__}: {_printable_exc(exc)} - partial record saved to "
+                f"{_printable_path(aborted_path)}"
+            )
         finally:
             client.close()
         if args.cost_per_image is not None:
@@ -1158,7 +1173,7 @@ def _run_determinism_children(
             except OSError as read_exc:
                 sys.exit(
                     f"determinism check ERROR [{label}]: payload file unreadable "
-                    f"seed={hash_seed} path={_printable_path(payload_path)}: {read_exc} ({regime}); "
+                    f"seed={hash_seed} path={_printable_path(payload_path)}: {_printable_exc(read_exc)} ({regime}); "
                     f"stderr={proc.stderr!r}"
                 )
             try:
@@ -1235,7 +1250,7 @@ def _run_determinism_children(
                 artifact.write_text(body)
                 artifact_ref = str(artifact)
             except OSError as write_exc:
-                artifact_ref = f"(could not write artifact: {write_exc})"
+                artifact_ref = f"(could not write artifact: {_printable_exc(write_exc)})"
             sys.exit(
                 f"determinism check FAILED [{label}]: cross-process re-score differs "
                 f"under PYTHONHASHSEED={hash_seed} "
@@ -1311,7 +1326,7 @@ def _check_expect_report(
         expected = resolved.read_text(encoding="utf-8")
     except OSError as read_exc:
         sys.exit(
-            f"determinism check ERROR [{label}]: --expect-report unreadable path={_printable_path(resolved)}: {read_exc} ({regime})"
+            f"determinism check ERROR [{label}]: --expect-report unreadable path={_printable_path(resolved)}: {_printable_exc(read_exc)} ({regime})"
         )
     if expected == base_json:
         print(
@@ -1340,7 +1355,7 @@ def _check_expect_report(
         artifact.write_text(body)
         artifact_ref = str(artifact)
     except OSError as write_exc:
-        artifact_ref = f"(could not write artifact: {write_exc})"
+        artifact_ref = f"(could not write artifact: {_printable_exc(write_exc)})"
     sys.exit(
         f"determinism check ANCHOR_MISMATCH [{label}]: fresh re-score does not "
         f"match --expect-report {_printable_path(resolved)} ({regime}; artifact={artifact_ref}). "
@@ -1503,7 +1518,7 @@ def _serialize_score_docs(
             raise
         md_doc = (
             f"# score report\n\n"
-            f"**RENDERER ERROR** ({type(exc).__name__}: {exc}) — markdown omitted; "
+            f"**RENDERER ERROR** ({type(exc).__name__}: {_printable_exc(exc)}) - markdown omitted; "
             f"JSON verdict is authoritative. Not a green report.\n"
         )
     return json_doc, md_doc
@@ -1793,6 +1808,12 @@ def _cmd_score(args: argparse.Namespace) -> None:
             f"from manifest "
             f"(missing={media_id_missing}, extra={media_id_extra}; "
             f"record_items={record_n}, manifest_entries={manifest_n}; see {_printable_path(json_path)})"
+        )
+    selection_issue = _selection_metadata_issue(corpus, scored.get("counts") or {})
+    if selection_issue:
+        _score_gate_fail(
+            f"{SCORE_GATE_PREFIX_TRUNCATION} {selection_issue}; "
+            f"see {_printable_path(json_path)}"
         )
     # Fetch-time provenance self-consistency (record must name its own manifest).
     # Score-time vs fetch-time digest equality is the VLM6-F-03 hard gate above
@@ -2147,10 +2168,10 @@ def _cmd_face_bakeoff(args: argparse.Namespace) -> None:
         record = exc.partial_record
         OUT_DIR.mkdir(parents=True, exist_ok=True)
         path = OUT_DIR / f"face-run-{stamp}-aborted.json"
-        path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+        path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         prune_out_dir(str(OUT_DIR), keep=args.keep)
         print(_printable_path(path))
-        sys.exit(f"FaceBoundedStallError: {exc}")
+        sys.exit(f"FaceBoundedStallError: {_printable_exc(exc)}")
     # FIR5GL-01: synthetic occlusion twin pass — generate/render twins from the
     # frozen landmark cache, re-detect+embed the occluded pixels with the SAME
     # leg, and stamp document-level pair inputs (never items — EVAL-16 firewall).
@@ -2171,7 +2192,7 @@ def _cmd_face_bakeoff(args: argparse.Namespace) -> None:
     record = validate_face_run_record(record)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     path = OUT_DIR / f"face-run-{stamp}.json"
-    path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+    path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     prune_out_dir(str(OUT_DIR), keep=args.keep)
     print(_printable_path(path))
     print(
@@ -2345,7 +2366,7 @@ def _cmd_score_face(args: argparse.Namespace) -> None:
         scored = json.loads(json_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         _score_gate_fail(
-            f"{SCORE_GATE_PREFIX_FACE_REPORT_READBACK} cannot read back written face report {_printable_path(json_path)}: {exc}"
+            f"{SCORE_GATE_PREFIX_FACE_REPORT_READBACK} cannot read back written face report {_printable_path(json_path)}: {_printable_exc(exc)}"
         )
     if not isinstance(scored, dict):
         _score_gate_fail(
@@ -2808,13 +2829,20 @@ def _cmd_draw_eval_split(args: argparse.Namespace) -> None:
 def _printable_exc(exc: BaseException) -> str:
     """OBS-08: exception text for stderr must not leak PEP 383 surrogates.
 
-    OSError: reconstruct with a printable ``filename`` so ``{exc}`` tails
-    stay uniformly escaped (VLM6-RV15-Q1-02). Other exceptions: recover
-    the whole message via ``_printable_message`` (a message is not a path
-    slot — API-11 / VLM6-RV16-L-03). Idempotent on already-encoded text.
+    OSError: render the strerror and filename fields separately. Rebuilding an
+    OSError with an escaped filename makes ``repr(filename)`` escape the
+    backslashes a second time and drops ``filename2`` on two-path errors
+    (VLM6-RV15-Q1-02 / VLM6-W22-M02). Other exceptions: recover the whole
+    message via ``_printable_message`` (a message is not a path slot — API-11 /
+    VLM6-RV16-L-03). Idempotent on already-encoded text.
     """
     if isinstance(exc, OSError) and exc.filename is not None:
-        return str(OSError(exc.errno, exc.strerror, _printable_path(exc.filename)))
+        strerror = type(exc).__name__ if exc.strerror is None else str(exc.strerror)
+        rendered = f"{strerror}: {_printable_path(exc.filename)}"
+        filename2 = getattr(exc, "filename2", None)
+        if filename2 is not None:
+            rendered += f" -> {_printable_path(filename2)}"
+        return _printable_message(rendered)
     return _printable_message(str(exc))
 
 

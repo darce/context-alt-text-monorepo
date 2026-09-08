@@ -1258,6 +1258,58 @@ def test_score_face_run_record_full_corpus_and_floor_gated_rollup():
     assert keys == sorted(keys)
 
 
+def test_face_gate_proposal_blocks_unattested_evidence_seams():  # VLM-6-CAN-01 / D findings
+    """Row counts cannot promote a partial face bakeoff into a study result."""
+    face_run, manifest = _face_fixture_corpus()
+
+    scored = score_face_run_record(face_run, manifest, score_manifest_sha256="s" * 64)
+
+    assert scored["measurement_status"] == "provisional_incomplete"
+    assert scored["provenance"]["fmr_denominator_status"] == "detector_observed_only"
+    assert scored["provenance"]["occlusion_twin_pass_status"] == "unattested"
+    assert scored["provenance"]["production_aggregation_status"] == "not_measured"
+
+    headline = scored["slices"]["headline_identification"]
+    unknown = scored["slices"]["unknown_rejection"]
+    cluster = scored["slices"]["clustering"]
+    assert headline["directional"] is True
+    assert unknown["directional"] is True
+    assert any("fmr_denominator_status=detector_observed_only" in r for r in headline["reasons"])
+    assert any("fmr_denominator_status=detector_observed_only" in r for r in unknown["reasons"])
+    assert any("production_aggregation_status=not_measured" in r for r in cluster["reasons"])
+
+    for tag, block in scored["slices"]["occlusion"].items():
+        synth = block["synthetic"]
+        assert synth["directional"] is True, tag
+        assert any("real_occlusion_status=not_observed" in r for r in synth["reasons"]), tag
+        assert any("occlusion_twin_pass_status=unattested" in r for r in synth["reasons"]), tag
+
+    evidence = scored["gate_proposal"]["evidence_admission"]
+    assert evidence["detector_independent_fmr"]["admission"] == "blocked"
+    assert evidence["occlusion_twin_pass"]["admission"] == "blocked"
+    assert evidence["query_enrolled_pair_strata"]["admission"] == "blocked"
+    assert evidence["production_aggregation"]["admission"] == "blocked"
+    assert all(v["admission"] == "blocked" for v in evidence["real_occlusion"].values())
+
+
+def test_face_gate_preserves_twin_error_nonresponse_in_machine_status():  # EVALLAND-D-LUNA-20260908-NEXT-NONRESPONSE
+    """An errored twin pass cannot certify only its successful completers."""
+    face_run, manifest = _face_fixture_corpus()
+    face_run["provenance"]["occlusion_twin_pass"] = {
+        "n_twin_specs": 3,
+        "n_pairs": 2,
+        "errors": ["media-2: decoder timeout"],
+    }
+
+    scored = score_face_run_record(face_run, manifest, score_manifest_sha256="s" * 64)
+
+    assert scored["provenance"]["occlusion_twin_pass_status"] == "incomplete"
+    twin_evidence = scored["gate_proposal"]["evidence_admission"]["occlusion_twin_pass"]
+    assert twin_evidence == {"status": "incomplete", "n_errors": 1, "admission": "blocked"}
+    for block in scored["slices"]["occlusion"].values():
+        assert any("occlusion_twin_pass_status=incomplete" in r for r in block["synthetic"]["reasons"])
+
+
 def _zero_box_face_fixture(*, stamp: bool) -> tuple[dict, dict]:
     face_run = {
         "schema": "acx-eval/v1",
@@ -2551,6 +2603,60 @@ def test_score_run_record_surfaces_placement_accuracy():  # VLM6-R4-02
     assert "Alice Example left_of Bob Builder" in row["placement"]["correct"]
     _json_doc, md = build_reports(record, entries)
     assert "placement accuracy" in md.lower()
+
+
+def test_score_run_record_refuses_malformed_fact_rows():  # VLM-6-CAN-04
+    """Malformed fact labels become named failures instead of disappearing."""
+    record, entries = _run_record(), _manifest_entries()
+    entries[0]["spatial_facts"] = [
+        {
+            "subject": "Alice Example",
+            # Missing relation is a malformed ground-truth row, not an empty rubric.
+            "phrases": ["in the foreground"],
+        }
+    ]
+    record["items"] = [record["items"][0]]
+
+    scored = score_run_record(record, entries)
+
+    assert scored["counts"] == {"total": 1, "scored": 0, "failed": 1}
+    assert scored["failures"] == [
+        {
+            "path": "mock_images/alice-pool.jpg",
+            "media_id": 1,
+            "error": "malformed spatial_facts[0]",
+        }
+    ]
+    assert scored["verdict"]["verdict"] == "fail"
+
+
+def test_score_run_record_refuses_missing_successful_identity_payload():  # VLM-6-CAN-04
+    """A successful item without the identity payload is a schema failure."""
+    record, entries = _run_record(), _manifest_entries()
+    del record["items"][0]["identities"]
+    record["items"] = [record["items"][0]]
+
+    with pytest.raises(ReportError, match=r"items\[0\]\.identities is missing required key"):
+        score_run_record(record, entries)
+
+
+def test_score_run_record_validates_fetch_selection_metadata():  # FIR-12-CAN-08
+    """A stamped prefix cannot become full-corpus evidence after row edits."""
+    record, entries = _two_image_measurable_pass_pair()
+    record["provenance"].update(
+        {
+            "requested_limit": len(entries),
+            "manifest_entries": len(entries),
+            "evaluated_entries": len(entries) - 1,
+        }
+    )
+
+    scored = score_run_record(record, entries)
+
+    assert scored["corpus"]["requested_limit"] == len(entries)
+    assert scored["corpus"]["fetch_manifest_entries"] == len(entries)
+    assert scored["corpus"]["evaluated_entries"] == len(entries) - 1
+    assert any("selection metadata mismatch" in reason for reason in scored["verdict"]["reasons"])
 
 
 def test_score_run_record_surfaces_placement_wrong_claim():  # VLM6-R4-02
@@ -4357,6 +4463,8 @@ def test_face_identity_ordering_matches_caption_on_same_corpus():  # wG1
             "path": e["path"],
             "model_id": "x",
             "describe": {"alt_text_draft": "placeholder"},
+            "identities": [],
+            "face_count": e["face_count"],
             "identity_ordering": "positional",
             "image_width": 100,
             "image_height": 100,

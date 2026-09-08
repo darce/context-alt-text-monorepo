@@ -157,9 +157,10 @@ FACE_BAKEOFF_PROTOCOL_DISCLOSURES: tuple[str, ...] = (
     "impostors are pooled zero-effort strangers rather than matched non-mates (CAL-04 posture declared in FIR-6 plan)",
     "pooled decisions mix heterogeneous per-fold τ_k (subject-disjoint folds; "
     "fit galleries restricted to fit identities — CAL-07)",
-    "identification P/R runs only over §C-matched named decisions; missed "
-    "detections and unmatched faces are excluded from FN (EVAL-16); stranger "
-    "false-accepts live only in unknown-rejection (EVAL-18)",
+    "identification P/R runs over §C-matched named decisions plus attributed "
+    "detector-missed named GT folded into FN (EVAL-16); unmatched detections "
+    "remain disclosed separately; stranger false-accepts live only in "
+    "unknown-rejection (EVAL-18)",
     # IDX-01/07/11 deferred design (disclosure now; measurement later).
     "exact-vs-index separation of concerns and contender-set retrieval design "
     "are S4/S5 measurement-time items (IDX-01/07/11) — not measured here",
@@ -183,11 +184,11 @@ FACE_BAKEOFF_SAMPLING_FRAMES: dict[str, str] = {
     "headline_identification": (
         "celebs01_named_matched_probes (provenance.source==CELEB); "
         + SAMPLING_FRAME_FACE_ID
-        # FIR5RR-12: error/missing run-record items never reach assignment —
-        # their media contribute nothing to these numerators/denominators and
-        # are surfaced in `failures` (and, when celebs01, in the headline
-        # association provenance notes).
-        + "; error-item media excluded from scoring (listed in failures)"
+        # FIR5RR-12: error/missing run-record items never reach assignment.
+        # Their media contribute nothing to association decisions, while any
+        # attributable named GT misses are folded into headline FN and remain
+        # surfaced in `failures`/association notes.
+        + "; error-item media excluded from association (attributable named GT misses remain in headline FN; listed in failures)"
     ),
     "full_corpus_identification": "full_corpus_" + SAMPLING_FRAME_FACE_ID,
     "unknown_rejection": SAMPLING_FRAME_UNKNOWN_REJECTION,
@@ -374,6 +375,12 @@ _PUBLIC_PROVENANCE_ALLOW_FIELDS: frozenset[str] = frozenset(
         "k_folds",
         "tau_fit_status",
         "sampling_frames",
+        # Face evidence-admission statuses are closed enums and carry no
+        # operator paths or identity-bearing detail (VLM-6-CAN-01 / PROV-01).
+        "measurement_status",
+        "fmr_denominator_status",
+        "occlusion_twin_pass_status",
+        "production_aggregation_status",
         # RF-15: operator-facing sample-size caveat (not a gate change).
         "low_sample_warning",
         "quality_floor_caveat",
@@ -383,6 +390,25 @@ _PUBLIC_PROVENANCE_ALLOW_FIELDS: frozenset[str] = frozenset(
 # Closed enum for face tau_fit_status (RB-06 fail-closed on allow-listed free text).
 _TAU_FIT_STATUS_PUBLIC_VALUES: frozenset[str] = frozenset(
     {"fitted", "mid_grid_unfitted", "error"}
+)
+
+# Evidence-admission fields are public only as closed status tokens.  The
+# statuses deliberately distinguish an observed metric from an attested but
+# incomplete or wholly unmeasured protocol seam (VLM-6-CAN-01 / PROV-01).
+_EVIDENCE_STATUS_PUBLIC_VALUES: frozenset[str] = frozenset(
+    {
+        "provisional_incomplete",
+        "independent_complete",
+        "detector_observed_only",
+        "complete",
+        "incomplete",
+        "unattested",
+        "measured",
+        "not_measured",
+        "not_observed",
+        "under_floor",
+        "observed",
+    }
 )
 
 # Minimum length for path-basename stems considered as identity scrub targets
@@ -616,6 +642,16 @@ def _public_provenance(provenance: Mapping[str, Any]) -> dict[str, Any]:
         elif key == "tau_fit_status":
             # RB-06: closed enum only — hostile free text must not ride the allow-list.
             if isinstance(value, str) and value in _TAU_FIT_STATUS_PUBLIC_VALUES:
+                out[key] = value
+            elif value is not None:
+                out[key] = "<redacted>"
+        elif key in {
+            "measurement_status",
+            "fmr_denominator_status",
+            "occlusion_twin_pass_status",
+            "production_aggregation_status",
+        }:
+            if isinstance(value, str) and value in _EVIDENCE_STATUS_PUBLIC_VALUES:
                 out[key] = value
             elif value is not None:
                 out[key] = "<redacted>"
@@ -1152,33 +1188,57 @@ def _public_safe_path(path: str) -> str:
 
 
 def _parse_spatial_facts(raw: Any) -> list[SpatialFact]:
-    """Parse entry ``spatial_facts``; skip unparseable rows fail-open per item."""
+    """Parse entry ``spatial_facts`` for callers that only need valid rows.
+
+    Scoring uses ``_parse_spatial_facts_checked`` below so malformed ground truth
+    cannot silently turn a measured placement slice into an empty rubric.
+    """
+    facts, _errors = _parse_spatial_facts_checked(raw)
+    return facts
+
+
+def _parse_spatial_facts_checked(raw: Any) -> tuple[list[SpatialFact], list[str]]:
+    """Parse spatial facts and return stable, named schema errors."""
     if not isinstance(raw, list):
-        return []
+        return ([], [f"malformed spatial_facts: expected list, got {type(raw).__name__}"]) if raw is not None else ([], [])
     facts: list[SpatialFact] = []
-    for item in raw:
+    errors: list[str] = []
+    for index, item in enumerate(raw):
         if not isinstance(item, dict):
+            errors.append(f"malformed spatial_facts[{index}]")
             continue
         try:
             facts.append(SpatialFact.model_validate(item))
         except ValidationError:
-            continue
-    return facts
+            errors.append(f"malformed spatial_facts[{index}]")
+    return facts, errors
 
 
 def _parse_reference_facts(raw: Any) -> list[ReferenceFact]:
-    """Parse entry ``reference_facts``; skip unparseable rows fail-open per item."""
+    """Parse entry ``reference_facts`` for callers that only need valid rows.
+
+    Scoring uses ``_parse_reference_facts_checked`` below so malformed ground
+    truth cannot silently turn a fabrication slice into an empty rubric.
+    """
+    facts, _errors = _parse_reference_facts_checked(raw)
+    return facts
+
+
+def _parse_reference_facts_checked(raw: Any) -> tuple[list[ReferenceFact], list[str]]:
+    """Parse reference facts and return stable, named schema errors."""
     if not isinstance(raw, list):
-        return []
+        return ([], [f"malformed reference_facts: expected list, got {type(raw).__name__}"]) if raw is not None else ([], [])
     facts: list[ReferenceFact] = []
-    for item in raw:
+    errors: list[str] = []
+    for index, item in enumerate(raw):
         if not isinstance(item, dict):
+            errors.append(f"malformed reference_facts[{index}]")
             continue
         try:
             facts.append(ReferenceFact.model_validate(item))
         except ValidationError:
-            continue
-    return facts
+            errors.append(f"malformed reference_facts[{index}]")
+    return facts, errors
 
 
 def _redact_public_paths(
@@ -1261,7 +1321,14 @@ def _validate_record_kind(run_record: dict[str, Any]) -> None:
     for index, item in enumerate(items):
         if not isinstance(item, dict):
             raise ReportError(f"run record items[{index}] must be a dict, got {type(item).__name__}")
-        identities = item.get("identities", [])
+        if "identities" not in item:
+            raise ReportError(f"items[{index}].identities is missing required key")
+        if "face_count" not in item:
+            raise ReportError(f"items[{index}].face_count is missing required key")
+        face_count = item["face_count"]
+        if isinstance(face_count, bool) or not isinstance(face_count, int) or face_count < 0:
+            raise ReportError(f"items[{index}].face_count must be a non-negative integer")
+        identities = item["identities"]
         _validate_identities_element_types(identities, context=f"items[{index}].identities")
 
 
@@ -1282,6 +1349,79 @@ def _validate_identities_element_types(identities: Any, *, context: str) -> None
             )
         if "name" not in entry:
             raise ReportError(f"{context}[{index}] is missing required key 'name' (keys present: {sorted(entry)!r})")
+
+
+_SELECTION_METADATA_KEYS = frozenset(
+    {"requested_limit", "fetch_manifest_entries", "evaluated_entries"}
+)
+
+
+def _selection_metadata_issue(
+    corpus: Mapping[str, Any],
+    counts: Mapping[str, Any],
+) -> str | None:
+    """Validate fetch selection counts copied into the scored corpus block.
+
+    ``--limit`` is a fetch selection, not a harmless display option.  The
+    media-id multiset gate catches most prefixes, while these producer stamps
+    catch a record whose rows were later deleted or duplicated in a way that
+    happens to preserve the manifest's id set.  Old records without the stamps
+    remain readable for archival re-scoring; once any stamp is present, the
+    selection contract is fail-closed.
+    """
+    present = set(corpus) & _SELECTION_METADATA_KEYS
+    if not present:
+        return None
+    missing = sorted(_SELECTION_METADATA_KEYS - present)
+    if missing:
+        return f"selection metadata incomplete (missing={','.join(missing)})"
+
+    requested_limit = corpus.get("requested_limit")
+    fetch_manifest_entries = corpus.get("fetch_manifest_entries")
+    evaluated_entries = corpus.get("evaluated_entries")
+
+    def _non_negative_int(value: Any) -> bool:
+        return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+    if requested_limit is not None and (
+        not isinstance(requested_limit, int)
+        or isinstance(requested_limit, bool)
+        or requested_limit < 1
+    ):
+        return f"selection metadata malformed (requested_limit={requested_limit!r})"
+    if not _non_negative_int(fetch_manifest_entries) or not _non_negative_int(evaluated_entries):
+        return (
+            "selection metadata malformed "
+            f"(fetch_manifest_entries={fetch_manifest_entries!r}, "
+            f"evaluated_entries={evaluated_entries!r})"
+        )
+
+    expected_entries = (
+        fetch_manifest_entries
+        if requested_limit is None
+        else min(requested_limit, fetch_manifest_entries)
+    )
+    record_entries = counts.get("total")
+    if not _non_negative_int(record_entries):
+        return f"selection metadata cannot compare counts.total={record_entries!r}"
+    mismatches: list[str] = []
+    if fetch_manifest_entries != corpus.get("manifest_entries"):
+        mismatches.append(
+            f"fetch_manifest_entries={fetch_manifest_entries} "
+            f"score_manifest_entries={corpus.get('manifest_entries')}"
+        )
+    if evaluated_entries != expected_entries:
+        mismatches.append(f"evaluated_entries={evaluated_entries} expected={expected_entries}")
+    if evaluated_entries != record_entries:
+        mismatches.append(f"evaluated_entries={evaluated_entries} record_items={record_entries}")
+    if mismatches:
+        return "selection metadata mismatch (" + "; ".join(mismatches) + ")"
+    if requested_limit is not None and requested_limit < fetch_manifest_entries:
+        return (
+            "selection metadata identifies a partial fetch "
+            f"(requested_limit={requested_limit}, fetch_manifest_entries={fetch_manifest_entries})"
+        )
+    return None
 
 
 def _model_provenance(items: list[dict[str, Any]]) -> dict[str, list[str]]:
@@ -1720,6 +1860,9 @@ def build_score_verdict(
     media_id_extra = int(corpus.get("media_id_extra") or 0)
     if media_id_missing or media_id_extra:
         reasons.append(f"truncation: media-id multiset differs (missing={media_id_missing}, extra={media_id_extra})")
+    selection_issue = _selection_metadata_issue(corpus, counts)
+    if selection_issue:
+        reasons.append(f"truncation: {selection_issue}")
 
     fetch_manifest_sha = (scored.get("provenance") or {}).get("manifest_sha256")
     if not fetch_manifest_sha:
@@ -2022,8 +2165,21 @@ def score_run_record(
 
         # VLM6-R4-02 / VLM6-R2-02: placement + fabricated-fact hallucination are
         # scored against manifest facts and MUST surface on the report (not drop).
-        spatial_facts = _parse_spatial_facts(entry.get("spatial_facts"))
-        reference_facts = _parse_reference_facts(entry.get("reference_facts"))
+        spatial_facts, spatial_errors = _parse_spatial_facts_checked(entry.get("spatial_facts"))
+        reference_facts, reference_errors = _parse_reference_facts_checked(entry.get("reference_facts"))
+        fact_errors = [*spatial_errors, *reference_errors]
+        if fact_errors:
+            # A malformed authored row is not equivalent to an empty rubric:
+            # retain the item in the report's total and expose a named failure so
+            # the CLI failed-item gate refuses certification (VLM-6-CAN-04).
+            failures.append(
+                {
+                    "path": path,
+                    "media_id": media_id,
+                    "error": "; ".join(fact_errors),
+                }
+            )
+            continue
         place_s = score_placement(caption_text, spatial_facts=spatial_facts) if short_error is None else None
         if place_s is not None:
             placement_scores.append(place_s)
@@ -2568,6 +2724,18 @@ def score_run_record(
         "per_image": per_image,
         "failures": failures,
     }
+    # Selection metadata is additive so old records keep their exact report
+    # shape. New fetch producers stamp all three fields; preserve partial
+    # stamps so the verdict can name the missing contract field.
+    selection_fields = {
+        "requested_limit": "requested_limit",
+        "manifest_entries": "fetch_manifest_entries",
+        "evaluated_entries": "evaluated_entries",
+    }
+    for source_key, report_key in selection_fields.items():
+        if source_key in fetch_provenance:
+            result["corpus"][report_key] = fetch_provenance[source_key]
+
     # VLM6-R4-05: per-stratum caption/placement/positional floors (EVAL-04).
     result["strata"] = _stratum_blocks(
         per_image=per_image,
@@ -3385,6 +3553,12 @@ DIRECTIONAL_LABEL = "UNDER-FLOOR / DIRECTIONAL — awaiting operator demotion"
 GATING_LABEL = "gating_candidate"  # only when floor met; FIR-6 operator decides
 WILSON_Z = 1.96
 DIVERGENCE_ABS_FLOOR = 0.20
+# These evidence stamps are deliberately opt-in.  A face bakeoff run does not
+# observe an independent detector-controlled FMR denominator, production
+# aggregation parity, or ecological real-occlusion coverage by default.
+FMR_DENOMINATOR_INDEPENDENT = "independent_complete"
+FMR_DENOMINATOR_OBSERVED_ONLY = "detector_observed_only"
+PRODUCTION_AGGREGATION_MEASURED = "measured"
 
 
 def wilson_half_width(p: float, n: int, *, z: float = WILSON_Z) -> float:
@@ -4083,6 +4257,46 @@ def score_face_run_record(
             continue
         scoreable.append(item)
 
+    fetch_provenance = dict(face_run_record.get("provenance") or {})
+    # Calibration's pair-level FMR is based on detector-observed decisions.
+    # Only an explicit upstream evidence stamp can promote it to an
+    # independently complete denominator; a missing/unknown stamp stays
+    # provisional. This prevents a fitted tau from looking product-ready
+    # merely because local folds had enough rows.
+    fmr_denominator_status = str(
+        fetch_provenance.get("fmr_denominator_status") or FMR_DENOMINATOR_OBSERVED_ONLY
+    )
+    fmr_denominator_independent = fmr_denominator_status == FMR_DENOMINATOR_INDEPENDENT
+    fmr_denominator_reason = (
+        f"fmr_denominator_status={fmr_denominator_status}"
+        if not fmr_denominator_independent
+        else None
+    )
+    twin_pass = fetch_provenance.get("occlusion_twin_pass")
+    if isinstance(twin_pass, Mapping):
+        raw_twin_errors = twin_pass.get("errors")
+        if "errors" not in twin_pass:
+            # A provenance object without its error list cannot certify a
+            # completers-only twin result. Treat malformed attestations as an
+            # incomplete pass rather than silently accepting the rows present.
+            twin_errors = ["occlusion_twin_pass.errors missing"]
+            twin_pass_status = "incomplete"
+        elif isinstance(raw_twin_errors, list):
+            twin_errors = [str(error) for error in raw_twin_errors]
+            twin_pass_status = "complete" if not twin_errors else "incomplete"
+        elif raw_twin_errors:
+            twin_errors = [str(raw_twin_errors)]
+            twin_pass_status = "incomplete"
+        else:
+            twin_errors = []
+            twin_pass_status = "complete"
+    else:
+        twin_errors = []
+        twin_pass_status = "unattested"
+    production_aggregation_status = str(
+        fetch_provenance.get("production_aggregation_status") or "not_measured"
+    )
+
     # VLM6-R2-G-01 / wG1: publish ordering disclosure on the face freeze surface.
     # Caption score_run_record already publishes the same block under
     # faces.identity_ordering; face bakeoff previously never called labeled_order
@@ -4158,9 +4372,12 @@ def score_face_run_record(
             )
         if tau_unfitted:
             headline_reasons.append(tau_unfitted_reason)
+        if fmr_denominator_reason is not None:
+            headline_reasons.append(fmr_denominator_reason)
         headline_floor_met = (
             not zero_box_corpus
             and not tau_unfitted
+            and fmr_denominator_independent
             and headline_id.n_recall_eligible >= HEADLINE_ID_RECALL_ELIGIBLE_FLOOR
         )
         headline_status = _slice_status(
@@ -4175,7 +4392,14 @@ def score_face_run_record(
             unknown_reasons.append(f"n={unknown.n}<{UNKNOWN_REJECTION_N_FLOOR}")
         if tau_unfitted:
             unknown_reasons.append(tau_unfitted_reason)
-        unknown_floor_met = not zero_box_corpus and not tau_unfitted and unknown.meets_floor
+        if fmr_denominator_reason is not None:
+            unknown_reasons.append(fmr_denominator_reason)
+        unknown_floor_met = (
+            not zero_box_corpus
+            and not tau_unfitted
+            and fmr_denominator_independent
+            and unknown.meets_floor
+        )
         unknown_status = _slice_status(
             meets_floor=unknown_floor_met,
             reasons=unknown_reasons,
@@ -4231,6 +4455,19 @@ def score_face_run_record(
             _slice_status(
                 meets_floor=False,
                 reasons=[*cluster_block.get("reasons", []), tau_unfitted_reason],
+            )
+        )
+    if production_aggregation_status != PRODUCTION_AGGREGATION_MEASURED:
+        # Pair-level clustering metrics cannot certify the production
+        # clustering/aggregation path until that path has been run and its
+        # parity is measured (EVALLAND-D-LUNA-20260908-NEXT-PROD-AGG).
+        cluster_block.update(
+            _slice_status(
+                meets_floor=False,
+                reasons=[
+                    *cluster_block.get("reasons", []),
+                    f"production_aggregation_status={production_aggregation_status}",
+                ],
             )
         )
 
@@ -4343,8 +4580,40 @@ def score_face_run_record(
             real_acc.accuracy if real_acc is not None else None,
             n_real=real_acc.n_eligible if real_acc is not None else 0,
         )
-        # Auto-demote synthetic when divergence fires.
-        synth_directional = bool(synth_acc.directional) or zero_box_corpus or divergence["auto_demote"] or tau_unfitted
+        if real_acc is None:
+            real_evidence_status = "not_observed"
+        elif real_acc.n_eligible < ELIGIBLE_PAIR_FLOOR:
+            real_evidence_status = "under_floor"
+        elif real_acc.directional:
+            real_evidence_status = "incomplete"
+        else:
+            real_evidence_status = "observed"
+        real_evidence_reason = (
+            f"real_occlusion_status={real_evidence_status}"
+            if real_evidence_status != "observed"
+            else None
+        )
+        real_evidence_reasons = (
+            list(real_acc.directional_reasons) if real_acc is not None else []
+        )
+        twin_pass_reason = (
+            f"occlusion_twin_pass_status={twin_pass_status}"
+            if twin_pass_status != "complete"
+            else None
+        )
+        # Auto-demote synthetic when divergence fires or when any evidence
+        # needed to interpret it is absent. Synthetic rectangles are a
+        # directional diagnostic until real occlusion, complete twin-pass
+        # accounting, and an independent FMR denominator are present.
+        synth_directional = (
+            bool(synth_acc.directional)
+            or zero_box_corpus
+            or divergence["auto_demote"]
+            or tau_unfitted
+            or real_evidence_status != "observed"
+            or twin_pass_status != "complete"
+            or not fmr_denominator_independent
+        )
         synth_reasons = list(synth_acc.directional_reasons)
         if zero_box_corpus:
             synth_reasons.append("zero_box_corpus")
@@ -4352,6 +4621,12 @@ def score_face_run_record(
             synth_reasons.append(f"synthetic_real_divergence d={divergence['d']}>threshold={divergence['threshold']}")
         if tau_unfitted:
             synth_reasons.append(tau_unfitted_reason)
+        if real_evidence_reason is not None:
+            synth_reasons.append(real_evidence_reason)
+        if twin_pass_reason is not None:
+            synth_reasons.append(twin_pass_reason)
+        if fmr_denominator_reason is not None:
+            synth_reasons.append(fmr_denominator_reason)
         status = _slice_status(meets_floor=not synth_directional, reasons=synth_reasons)
         occlusion_out[tag] = {
             "synthetic": {
@@ -4367,6 +4642,7 @@ def score_face_run_record(
                 "rate_numerator": synth_acc.rate_numerator,
                 "rate_denominator": synth_acc.rate_denominator,
                 "n_floor": ELIGIBLE_PAIR_FLOOR,
+                "evidence_status": "provisional_incomplete" if synth_directional else "observed",
                 **status,
             },
             "real": (
@@ -4380,6 +4656,12 @@ def score_face_run_record(
                     "rate_denominator": real_acc.rate_denominator,
                     "directional": True,  # real n floors small — never gating alone here
                     "status": DIRECTIONAL_LABEL,
+                    "label": DIRECTIONAL_LABEL,
+                    "evidence_status": real_evidence_status,
+                    "reasons": [
+                        *real_evidence_reasons,
+                        *([real_evidence_reason] if real_evidence_reason else []),
+                    ],
                 }
                 if real_acc is not None
                 else None
@@ -4423,9 +4705,8 @@ def score_face_run_record(
             "unmatched_detections": headline_id.unmatched_detections,
             "sampling_frame": headline_id.sampling_frame,
             "flag": (
-                "identification recall is computed only over faces this leg detected and "
-                "§C-matched (enrolled); weak detection can inflate id-recall on the easy "
-                "detected subset — report id-recall ALONGSIDE detection-recall"
+                "identification recall includes attributed detector-missed named GT as FN; "
+                "detection recall is reported alongside for stage attribution"
             ),
         }
     else:
@@ -4485,11 +4766,62 @@ def score_face_run_record(
         synth = block.get("synthetic") or {}
         _maybe_propose(f"occlusion.{tag}", synth)
 
+    # Evidence admission is machine-readable so an operator cannot mistake a
+    # directional synthetic score for an end-to-end study result. These are
+    # explicit protocol seams, rather than prose labels for the same number
+    # (VLM-6-CAN-01, FIR-12-CAN-08, and the reopened EVALLAND-D findings).
+    real_evidence = {
+        str(tag): {
+            "status": str((block.get("real") or {}).get("evidence_status") or "not_observed"),
+            "n_eligible": int((block.get("real") or {}).get("n_eligible") or 0),
+            "admission": (
+                "eligible"
+                if (block.get("real") or {}).get("evidence_status") == "observed"
+                else "blocked"
+            ),
+        }
+        for tag, block in sorted(occlusion_out.items())
+    }
+    evidence_admission = {
+        "detector_independent_fmr": {
+            "status": fmr_denominator_status,
+            "admission": "eligible" if fmr_denominator_independent else "blocked",
+            "reason": fmr_denominator_reason,
+        },
+        "real_occlusion": real_evidence,
+        "occlusion_twin_pass": {
+            "status": twin_pass_status,
+            "n_errors": len(twin_errors),
+            "admission": "eligible" if twin_pass_status == "complete" else "blocked",
+        },
+        "query_enrolled_pair_strata": {
+            "status": "not_measured",
+            "admission": "blocked",
+            "reason": "query-regime × enrolled-regime cells are not represented by this pair-level report",
+        },
+        "production_aggregation": {
+            "status": production_aggregation_status,
+            "admission": (
+                "eligible"
+                if production_aggregation_status == PRODUCTION_AGGREGATION_MEASURED
+                else "blocked"
+            ),
+            "reason": (
+                None
+                if production_aggregation_status == PRODUCTION_AGGREGATION_MEASURED
+                else "production clustering/aggregation parity was not measured"
+            ),
+        },
+    }
+    measurement_status = "provisional_incomplete"
+
     gate_proposal = {
         "role": "proposal_only",
         # RLSE-11: explicit release-surface label — never a ship/release artifact.
         "release_surface": GATE_PROPOSAL_RELEASE_SURFACE,
         "operator_authority": "FIR-6 human operator records gate/deferral; FIR-5 cannot self-promote",
+        "measurement_status": measurement_status,
+        "evidence_admission": evidence_admission,
         "proposed_slices": proposed,
         "excluded_directional": sorted(excluded),
         "identification_detection_coupling": coupling_block,
@@ -4499,6 +4831,11 @@ def score_face_run_record(
             "A10 eval throughput deferred to named follow-up FIR-5a (NOT FIR-7 prod GPU)",
             "synthetic↔real divergence uses Wilson half-width rule (replaces scope >1/3)",
             "clustering local floor P_same≥20 ∧ P_diff≥20 and M==0 all-singletons guard",
+            "detector-independent FMR denominator is not observed by this pair-level artifact; calibration thresholds remain provisional until detector misses are included",
+            "real-occlusion evidence is not measured by synthetic rectangle twins; absent or under-floor real cells remain directional",
+            "occlusion twin-pass errors stay in provenance and cannot certify a completers-only result",
+            "query-regime × enrolled-regime pair strata are not represented by query-only strata; no cross-cell gate is proposed",
+            "production clustering/aggregation is not rerun by pair-level calibration; parity remains unmeasured and excluded from the gate proposal",
         ],
         "perf_label": "detect+embed-only (COST-04/15); not full-scan p95",
         "protocol_disclosures": list(FACE_BAKEOFF_PROTOCOL_DISCLOSURES),
@@ -4557,12 +4894,19 @@ def score_face_run_record(
         "canon_version": FACE_BAKEOFF_CANON_VERSION,
         "protocol_id": FACE_BAKEOFF_PROTOCOL_ID,
         "sampling_frames": dict(FACE_BAKEOFF_SAMPLING_FRAMES),
+        # These are explicit evidence-admission stamps; absent upstream
+        # attestations stay provisional and are never inferred from row counts.
+        "measurement_status": measurement_status,
+        "fmr_denominator_status": fmr_denominator_status,
+        "occlusion_twin_pass_status": twin_pass_status,
+        "production_aggregation_status": production_aggregation_status,
     }
 
     report: dict[str, Any] = {
         "schema": SCHEMA,
         "kind": DocKind.REPORT.value,
         "report_kind": "face_bakeoff",
+        "measurement_status": measurement_status,
         "provenance": provenance,
         "counts": {
             "total": len(items),
@@ -4588,6 +4932,7 @@ def score_face_run_record(
                     f"tau_k/folds reflect effective_k, not the requested protocol K"
                 )
             ),
+            "fmr_denominator_status": fmr_denominator_status,
             # FIR5RR-07: how tau_k were obtained; non-"fitted" forces every
             # tau-dependent slice DIRECTIONAL.
             "tau_fit_status": assignment.tau_fit_status,
@@ -5028,6 +5373,10 @@ def _markdown_face(scored: dict[str, Any]) -> str:
         f"total_gt_boxes: {_fmt_prov(prov.get('total_gt_boxes'))}",
         f"- images: {_fmt_prov(counts.get('scored'))}/{_fmt_prov(counts.get('total'))} scored, "
         f"{_fmt_prov(counts.get('failed'))} failed; matched_faces={_fmt_prov(counts.get('matched_faces'))}",
+        f"- measurement_status: `{_fmt_prov(scored.get('measurement_status'), default='provisional_incomplete')}` "
+        f"fmr_denominator=`{_fmt_prov(prov.get('fmr_denominator_status'))}` "
+        f"occlusion_twin_pass=`{_fmt_prov(prov.get('occlusion_twin_pass_status'))}` "
+        f"production_aggregation=`{_fmt_prov(prov.get('production_aggregation_status'))}`",
     ]
     if prov.get("low_sample_warning"):
         lines.append(f"- ⚠️ **low_sample_warning**: {_fmt_prov(prov.get('low_sample_warning'))}")
@@ -5159,6 +5508,18 @@ def _markdown_face(scored: dict[str, Any]) -> str:
     lines.append(
         f"- release_surface: `{_fmt_prov(gp.get('release_surface'), default=GATE_PROPOSAL_RELEASE_SURFACE)}`"
     )
+    lines.append(f"- measurement_status: `{_fmt_prov(gp.get('measurement_status'), default='provisional_incomplete')}`")
+    evidence = gp.get("evidence_admission") if isinstance(gp.get("evidence_admission"), Mapping) else {}
+    if evidence:
+        lines.append(
+            "- evidence_admission: "
+            + ", ".join(
+                f"{name}={_fmt_prov((value or {}).get('status'))}/"
+                f"{_fmt_prov((value or {}).get('admission'))}"
+                for name, value in sorted(evidence.items())
+                if isinstance(value, Mapping)
+            )
+        )
     lines.append(
         f"- canon_version: `{_fmt_prov(gp.get('canon_version'), default=FACE_BAKEOFF_CANON_VERSION)}`"
     )

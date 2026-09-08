@@ -438,7 +438,7 @@ the constants (RE-04).
 | aborted-record | `score aborted-record gate:` | Run-record has `aborted=true` (partial evidence). Shared by `score` and `score-face` (face suffix: `score-face:`). | Re-fetch the incomplete run; do not certify partial records. |
 | zero-scored | `score zero-scored gate:` | `counts.scored == 0` and no failed-items class applies (empty items only). Shared by caption/face. | Inspect run-record items; re-fetch or fix corpus paths. |
 | failed-items | `score failed-items gate:` | `counts.failed > 0` — partial corpus must not look like full-corpus evidence. **Shared by caption and face** (face message includes `score-face:` suffix). | Inspect `failures[]` in the written report; fix remote/NFC errors; re-fetch. |
-| truncation | `score truncation gate:` | Run-record media-id multiset differs from score-time manifest (`corpus.media_id_missing` / `media_id_extra`). Caption path. | Score against the same manifest used at fetch, or re-fetch full corpus (not `--limit N` archival stubs). |
+| truncation | `score truncation gate:` | Run-record media-id multiset differs from score-time manifest (`corpus.media_id_missing` / `media_id_extra`), or stamped fetch selection counts disagree (`requested_limit`, `fetch_manifest_entries`, `evaluated_entries`). Caption path. | Score against the same manifest used at fetch, or re-fetch full corpus (not `--limit N` archival stubs). |
 | manifest-mismatch | `score manifest-mismatch gate:` | Run-record provenance missing fetch-time `manifest_sha256` (record not self-consistent). **Not** a hard fail on score-time file sha vs fetch-time sha alone. | Re-fetch so the record carries fetch-time provenance. |
 | manifest-drift | `score manifest-drift gate:` | Score-time manifest digest ≠ fetch-time digest (`manifest_matches_fetch=false`) and `--allow-manifest-relabel` was **not** set. | Re-score with the fetch-time manifest, or pass `--allow-manifest-relabel` only for archival non-comparable relabel. |
 | manifest-relabel | `score manifest-relabel gate:` | Archival path: `--allow-manifest-relabel` produced `verdict=non_comparable`. Exit non-zero so it is never mistaken for adoption-ready. | Treat as archival only; `compare` rejects it. Do not promote. |
@@ -531,11 +531,12 @@ Every eval document carries `schema: acx-eval/v1` plus a `kind` discriminator
 confused; `score` rejects a report file passed as a run record.
 
 JSON sections: `provenance` (fetch-time `manifest_sha256`, `score_manifest_sha256`
-+ `manifest_matches_fetch` flag, base_url, HEAD sha, started_at, and a `model`
+`manifest_matches_fetch` flag, base_url, HEAD sha, started_at, and a `model`
 block naming the **adapter(s)/model_id(s)/model_version(s)** that produced the
 captions), `counts`, `caption` (insertion_rate, Must-Right failed + rubric-defined
 images, policy violations, mean gated score), `faces.detection`,
-`faces.identification`, `per_image`, `failures`. Deterministic sections are
+`faces.identification`, `corpus` (score-time manifest coverage and, for new
+fetches, selection metadata), `per_image`, `failures`. Deterministic sections are
 bit-identical across re-scores of the same run record.
 
 ### Face metric shapes (scored vs REFUSED)
@@ -708,6 +709,18 @@ operator demotion` and excludes those slices from the proposal.
 
 Floors (recall-eligible celebs01 n≥100; unknown-rejection n≥43; occlusion
 eligible pairs ≥90; clustering `P_same≥20 ∧ P_diff≥20` and `M≠0`).
+
+### Evidence admission
+
+Face reports expose `measurement_status` and `gate_proposal.evidence_admission`.
+The score remains `provisional_incomplete` until the report has an independent
+detector-miss FMR denominator, complete twin-pass accounting, floor-satisfying
+real-occlusion pairs, query-regime × enrolled-regime cells, and measured
+production clustering/aggregation parity. Missing or under-floor evidence is
+reported with an explicit `status` and `admission=blocked`; synthetic twin
+accuracy is directional while those seams are blocked. This preserves the
+diagnostic number without presenting it as a completed study (VLM-6-CAN-01,
+FIR-12-CAN-01, FIR-12-CAN-08, PROV-01).
 
 ### Perf leg
 

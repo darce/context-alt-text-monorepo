@@ -59,32 +59,35 @@ type RecordingClient = {
   calls: Array<{ op: ClientOp; args: unknown[] }>;
 };
 
-const stubClient = (
-  over: Partial<{ [K in ClientOp]: GuidedLiveDescriptionClient[K] }> = {},
-): RecordingClient => {
+const stubClient = (over: Partial<GuidedLiveDescriptionClient> = {}): RecordingClient => {
   const calls: RecordingClient['calls'] = [];
-  const record =
-    <K extends ClientOp>(op: K, impl: GuidedLiveDescriptionClient[K]): Mock<GuidedLiveDescriptionClient[K]> =>
-      vi.fn<GuidedLiveDescriptionClient[K]>((...args: Parameters<GuidedLiveDescriptionClient[K]>) => {
-        calls.push({ op, args: [...args] });
-        return impl(...args);
-      });
+  const submitImpl: GuidedLiveDescriptionClient['submit'] =
+    over.submit ?? (() => Promise.resolve(runResponse()));
+  const pollImpl: GuidedLiveDescriptionClient['poll'] =
+    over.poll ?? (() => Promise.resolve(runResponse({ phase: 'warming', gpu_state: 'starting' })));
+  const itemsImpl: GuidedLiveDescriptionClient['items'] =
+    over.items ?? (() => Promise.resolve(itemsResponse('Katy Perry waves from the red carpet.')));
+  const cancelImpl: GuidedLiveDescriptionClient['cancel'] =
+    over.cancel ?? (() => Promise.resolve(runResponse({ status: 'cancelled', phase: 'cancelled' })));
 
   return {
     calls,
-    submit: record('submit', over.submit ?? (() => Promise.resolve(runResponse()))),
-    poll: record(
-      'poll',
-      over.poll ?? (() => Promise.resolve(runResponse({ phase: 'warming', gpu_state: 'starting' }))),
-    ),
-    items: record(
-      'items',
-      over.items ?? (() => Promise.resolve(itemsResponse('Katy Perry waves from the red carpet.'))),
-    ),
-    cancel: record(
-      'cancel',
-      over.cancel ?? (() => Promise.resolve(runResponse({ status: 'cancelled', phase: 'cancelled' }))),
-    ),
+    submit: vi.fn<GuidedLiveDescriptionClient['submit']>((mediaId) => {
+      calls.push({ op: 'submit', args: [mediaId] });
+      return submitImpl(mediaId);
+    }),
+    poll: vi.fn<GuidedLiveDescriptionClient['poll']>((runId) => {
+      calls.push({ op: 'poll', args: [runId] });
+      return pollImpl(runId);
+    }),
+    items: vi.fn<GuidedLiveDescriptionClient['items']>((runId) => {
+      calls.push({ op: 'items', args: [runId] });
+      return itemsImpl(runId);
+    }),
+    cancel: vi.fn<GuidedLiveDescriptionClient['cancel']>((runId) => {
+      calls.push({ op: 'cancel', args: [runId] });
+      return cancelImpl(runId);
+    }),
   };
 };
 

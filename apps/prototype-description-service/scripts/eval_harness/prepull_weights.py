@@ -27,6 +27,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from scripts.eval_harness._pathtext import _printable_path
 from scripts.eval_harness.bakeoff_candidates import (
     BakeoffCandidateRegistry,
     RegistryError,
@@ -441,7 +442,10 @@ def _emit_output(
         print(json.dumps(_payload_json(jobs, skips, budget), indent=2))
         return
     for job in jobs:
-        print(f"PLAN {job.candidate_id} {job.repo}@{job.revision} {job.size_gb}GB -> {job.local_dir}")
+        print(
+            f"PLAN {job.candidate_id} {job.repo}@{job.revision} "
+            f"{job.size_gb}GB -> {_printable_path(job.local_dir)}"
+        )
     for candidate_id, reason in skips:
         print(f"SKIP {candidate_id}: {reason}")
     print(f"BUDGET required_gb={budget.required_gb} free_gb={budget.free_gb} ok={budget.ok}")

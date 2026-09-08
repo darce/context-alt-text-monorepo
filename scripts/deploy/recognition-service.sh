@@ -535,9 +535,13 @@ sanitize_deploy_diagnostic() {
       -e 's/"authorization"[[:space:]]*:[[:space:]]*"bearer[[:space:]]+[^"]*"/"Authorization": "Bearer [REDACTED]"/gI' \
       -e 's/authorization[[:space:]]*:[[:space:]]*bearer[[:space:]]+[^[:space:]"]+/Authorization: Bearer [REDACTED]/gI' \
       -e 's/(^|[^[:alnum:]])bearer[[:space:]]+[^[:space:]"]+/\1Bearer [REDACTED]/gI' \
-      -e 's/"token"[[:space:]]*:[[:space:]]*"[^"]*"/"token": "[REDACTED]"/gI' \
-      -e 's/(^|[^A-Za-z0-9_])([A-Za-z0-9_]*_(TOKEN|PASSWORD|SECRET|KEY)|PGPASSWORD|token|password)[[:space:]]*[=:][[:space:]]*"?[^[:space:]&",}]+"?/\1\2=[REDACTED]/gI' \
-      -e 's/api[-_]?key[=:][[:space:]]*[^[:space:]&"]+/api-key=[REDACTED]/gI' \
+      -e 's/"(token|access_token|refresh_token|password|passwd|secret|api[-_]?key|[A-Za-z0-9_]*_token|[A-Za-z0-9_]*_password|[A-Za-z0-9_]*_secret|[A-Za-z0-9_]*_key|pgpassword)"[[:space:]]*:[[:space:]]*"[^"]*"/"\1": "[REDACTED]"/gI' \
+      -e 's/(^|[^A-Za-z0-9_-])([A-Za-z0-9_]*_(TOKEN|PASSWORD|SECRET|KEY)|PGPASSWORD|TOKEN|PASSWORD|PASSWD|SECRET|KEY)[[:space:]]*[=:][[:space:]]*"[^"]*"/\1\2=[REDACTED]/gI' \
+      -e "s/(^|[^A-Za-z0-9_-])([A-Za-z0-9_]*_(TOKEN|PASSWORD|SECRET|KEY)|PGPASSWORD|TOKEN|PASSWORD|PASSWD|SECRET|KEY)[[:space:]]*[=:][[:space:]]*'[^']*'/\1\2=[REDACTED]/gI" \
+      -e 's/(^|[^A-Za-z0-9_-])([A-Za-z0-9_]*_(TOKEN|PASSWORD|SECRET|KEY)|PGPASSWORD|TOKEN|PASSWORD|PASSWD|SECRET|KEY)[[:space:]]*[=:][[:space:]]*[^[:space:]&",}'\'']+/\1\2=[REDACTED]/gI' \
+      -e 's/(^|[^A-Za-z0-9_])([A-Za-z0-9_-]*(api_key|api-key|apikey))[[:space:]]*:[[:space:]]*[^[:space:]"]+/\1\2: [REDACTED]/gI' \
+      -e 's/(^|[^A-Za-z0-9_])(api_key|api-key|apikey)[[:space:]]*=[[:space:]]*("[^"]*"|'\''[^'\'']*'\''|[^[:space:]&"]+)/\1\2=[REDACTED]/gI' \
+      -e 's|://([^:/@[:space:]]+):([^@/[:space:]]+)@|://\1:[REDACTED]@|g' \
     | sed 's/^/diagnostic: /'
 }
 
@@ -1692,7 +1696,9 @@ do_boot_smoke() {
   fi
   run_with_deadline "${smoke_timeout}" "boot-smoke health gate for ${image}" \
     ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
-      "bash -s ${env} ${image} ${remote_dir} ${smoke_timeout} ${poll_interval} ${attempts} ${vlm_budget}" <<'SMOKE' || smoke_rc=$?
+      "bash -s ${env} ${image} ${remote_dir} ${smoke_timeout} ${poll_interval} ${attempts} ${vlm_budget}" <<SMOKE_WRAP || smoke_rc=$?
+$(declare -f sanitize_deploy_diagnostic)
+$(cat <<'SMOKE'
 set -euo pipefail
 env="$1"; image="$2"; remote_dir="$3"; budget_s="$4"; poll_s="$5"; attempts="$6"; vlm_budget="$7"
 env_file="${remote_dir}/.env"
@@ -1802,35 +1808,25 @@ else
   echo "smoke health FAILED after ${budget_s}s" >&2
 fi
 if [[ -s "${curl_err}" ]]; then
-  cat "${curl_err}" >&2
+  if ! sanitize_deploy_diagnostic < "${curl_err}" >&2; then
+    echo "diagnostic: curl stderr unavailable" >&2
+  fi
 fi
 echo "smoke health LAST HTTP code: ${last_health_code}" >&2
 echo "smoke health LAST body (up to 2000 bytes):" >&2
-printf '%s\n' "${last_health_body:0:2000}" \
-  | LC_ALL=C tr -d '\000-\010\013-\037\177-\237' \
-  | sed -E \
-    -e 's/"authorization"[[:space:]]*:[[:space:]]*"bearer[[:space:]]+[^"]*"/"Authorization": "Bearer [REDACTED]"/gI' \
-    -e 's/authorization[[:space:]]*:[[:space:]]*bearer[[:space:]]+[^[:space:]"]+/Authorization: Bearer [REDACTED]/gI' \
-    -e 's/(^|[^[:alnum:]])bearer[[:space:]]+[^[:space:]"]+/\1Bearer [REDACTED]/gI' \
-    -e 's/"token"[[:space:]]*:[[:space:]]*"[^"]*"/"token": "[REDACTED]"/gI' \
-    -e 's/(^|[^A-Za-z0-9_])([A-Za-z0-9_]*_(TOKEN|PASSWORD|SECRET|KEY)|PGPASSWORD|token|password)[[:space:]]*[=:][[:space:]]*"?[^[:space:]&",}]+"?/\1\2=[REDACTED]/gI' \
-    -e 's/api[-_]?key[=:][[:space:]]*[^[:space:]&"]+/api-key=[REDACTED]/gI' \
-  | sed 's/^/diagnostic: /' >&2
+if ! printf '%s\n' "${last_health_body:0:2000}" \
+  | sanitize_deploy_diagnostic >&2; then
+  echo "diagnostic: smoke health LAST body unavailable" >&2
+fi
 echo "smoke container logs (last 80 lines):" >&2
 if ! docker logs --tail 80 "$name" 2>&1 \
-  | LC_ALL=C tr -d '\000-\010\013-\037\177-\237' \
-  | sed -E \
-    -e 's/"authorization"[[:space:]]*:[[:space:]]*"bearer[[:space:]]+[^"]*"/"Authorization": "Bearer [REDACTED]"/gI' \
-    -e 's/authorization[[:space:]]*:[[:space:]]*bearer[[:space:]]+[^[:space:]"]+/Authorization: Bearer [REDACTED]/gI' \
-    -e 's/(^|[^[:alnum:]])bearer[[:space:]]+[^[:space:]"]+/\1Bearer [REDACTED]/gI' \
-    -e 's/"token"[[:space:]]*:[[:space:]]*"[^"]*"/"token": "[REDACTED]"/gI' \
-    -e 's/(^|[^A-Za-z0-9_])([A-Za-z0-9_]*_(TOKEN|PASSWORD|SECRET|KEY)|PGPASSWORD|token|password)[[:space:]]*[=:][[:space:]]*"?[^[:space:]&",}]+"?/\1\2=[REDACTED]/gI' \
-    -e 's/api[-_]?key[=:][[:space:]]*[^[:space:]&"]+/api-key=[REDACTED]/gI' \
-  | sed 's/^/diagnostic: /' >&2; then
+  | sanitize_deploy_diagnostic >&2; then
   echo "smoke container logs unavailable" >&2
 fi
 exit 1
 SMOKE
+)
+SMOKE_WRAP
   if (( smoke_rc != 0 )); then
     if [[ "${vlm_budget}" == "1" ]]; then
       warn "boot smoke: /health never came up for ${image} after ${smoke_timeout}s (VLM budget is an UNVALIDATED default — set ACX_SMOKE_TIMEOUT=<seconds> to raise it)"
@@ -2100,11 +2096,11 @@ capture_failure_evidence() {
   local env="$1" phase="${2:-candidate}"
   local remote_dir compose_files remote_dir_q timeout evidence=""
   local health_url ready_url health_host health_url_q ready_url_q health_host_q
-  local project_q cid cid_q
+  local cid cid_q cid_raw
   remote_dir="$(env_to_remote_dir "${env}")"
   compose_files="$(env_to_compose_files "${env}")"
   remote_dir_q="$(remote_quote "${remote_dir}")"
-  project_q="$(remote_quote "acx-${env}")"
+  log "failure evidence compose project: grep -m1 ^COMPOSE_PROJECT_NAME= ${remote_dir}/.env (fallback acx-${env})"
   timeout="$(validated_deadline ACX_EVIDENCE_TIMEOUT 30)" || {
     warn "failure evidence skipped for ${env}; ACX_EVIDENCE_TIMEOUT must be a positive integer (got: ${ACX_EVIDENCE_TIMEOUT:-})"
     return 0
@@ -2130,7 +2126,7 @@ capture_failure_evidence() {
       ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
         -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
         -l "${OCI_USER}" -- "${OCI_HOST}" \
-        "cd ${remote_dir_q} && docker compose ${compose_files} ps; docker ps --filter label=com.docker.compose.project=${project_q} --format '{{.ID}} {{.Names}} {{.Status}}'" 2>&1)"; then
+        "cd ${remote_dir_q} && compose_project=\$(grep -m1 '^COMPOSE_PROJECT_NAME=' ${remote_dir_q}/.env | cut -d= -f2-) && compose_project=\${compose_project:-acx-${env}} && echo compose_project=\$compose_project && docker compose ${compose_files} ps; docker ps --filter label=com.docker.compose.project=\$compose_project --format '{{.ID}} {{.Names}} {{.Status}}'" 2>&1)"; then
       warn "failure evidence compose/ps capture failed for ${env}; continuing with rollback"
     fi
     emit_sanitized_evidence "${evidence}"
@@ -2182,10 +2178,10 @@ capture_failure_evidence() {
     ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
       -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
       -l "${OCI_USER}" -- "${OCI_HOST}" \
-      "cd ${remote_dir_q} && docker compose ${compose_files} ps -q api 2>/dev/null | head -1")"; then
+      "cd ${remote_dir_q} && docker compose ${compose_files} ps -q api 2>/dev/null | head -1" 2>&1)"; then
     warn "failure evidence api cid capture failed for ${env}; continuing with rollback"
-    cid=""
   fi
+  cid_raw="${cid}"
   cid="$(printf '%s' "${cid}" | tr -d '\r' | awk 'NF { id=$0 } END { print id }')"
   if [[ -n "${cid}" && "${cid}" =~ ^[a-fA-F0-9]+$ ]]; then
     cid_q="$(remote_quote "${cid}")"
@@ -2196,6 +2192,9 @@ capture_failure_evidence() {
         "docker logs --tail 80 ${cid_q}" 2>&1)"; then
       warn "failure evidence api log capture failed for ${env}; continuing with rollback"
     fi
+  elif [[ -n "${cid}" ]]; then
+    printf '%s\n' "unexpected container id output: ${cid_raw}" | sanitize_deploy_diagnostic >&2
+    evidence=""
   else
     evidence="no api container"
   fi
@@ -2585,9 +2584,9 @@ emit_verify_ready_diagnostic() {
   [[ "${ready_code}" =~ ^[0-9]{3}$ ]] || ready_code="000"
   printf 'GET %s -> HTTP %s (non-gating)\n' "$ready_url" "$ready_code"
   if (( ready_curl_rc != 0 )); then
-    printf '%s\n' "${ready_body:-no readiness response}"
+    printf '%s\n' "${ready_body:-no readiness response}" | sanitize_deploy_diagnostic
   else
-    printf '%s\n' "$ready_body"
+    printf '%s\n' "$ready_body" | sanitize_deploy_diagnostic
   fi
 }
 
@@ -2624,7 +2623,7 @@ do_verify() {
       verify_retry_sleep "$attempt" "$max_attempts" "$sleep_s"
       continue
     fi
-    echo "$body"
+    printf '%s\n' "$body" | sanitize_deploy_diagnostic
     if [[ "${http_code}" == "503" ]]; then
       warn "UNHEALTHY: ${env} /health reports unhealthy (database) (HTTP 503)"
     fi

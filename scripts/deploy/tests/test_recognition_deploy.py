@@ -7,6 +7,8 @@ import stat
 import subprocess
 from pathlib import Path
 
+import pytest
+
 SCRIPT = Path(__file__).parents[1] / "recognition-service.sh"
 
 CRASH_LOG = "ModuleNotFoundError: No module named 'scene.foo'"
@@ -127,6 +129,9 @@ for a in "$@"; do
   prev="$a"
 done
 printf '%s\n' "$*" >>"${state}/curl.log"
+if [[ -n "${FAKE_CURL_STDERR:-}" ]]; then
+  printf '%s\n' "${FAKE_CURL_STDERR}" >&2
+fi
 if [[ "$url" == *"/ready"* ]]; then
   sleep_s="${FAKE_READY_SLEEP:-0}"
   if awk -v s="$sleep_s" -v m="$max_time" 'BEGIN { exit !(s+0 > m+0) }'; then
@@ -164,12 +169,30 @@ def _function_body(name: str) -> str:
     return source[start : next_section if next_section != -1 else None]
 
 
+def _sanitize_deploy_diagnostic_src() -> str:
+    source = SCRIPT.read_text()
+    start = source.index("sanitize_deploy_diagnostic() {")
+    end = source.index("\n}\n", start)
+    return source[start : end + 2]
+
+
 def _boot_smoke_heredoc() -> str:
     source = SCRIPT.read_text()
     start = source.index("<<'SMOKE'")
     start = source.index("\n", start) + 1
     end = source.index("\nSMOKE\n", start)
-    return source[start:end]
+    return _sanitize_deploy_diagnostic_src() + "\n" + source[start:end]
+
+
+def _run_sanitizer(text: str) -> str:
+    result = subprocess.run(
+        ["bash", "-c", _sanitize_deploy_diagnostic_src() + "\nsanitize_deploy_diagnostic"],
+        input=text,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    return result.stdout
 
 
 def _write_executable(path: Path, body: str) -> None:
@@ -263,14 +286,24 @@ def _run_capture_failure_evidence(
     ssh_body: bytes = b"healthy-body\nHTTP_CODE=200",
     ssh_sleep: str = "0",
     empty_cid: bool = False,
+    cid_stdout: bytes | None = None,
+    cid_stderr: bytes = b"",
 ) -> subprocess.CompletedProcess[bytes]:
     records = tmp_path / "ssh-args"
     stdin_capture = tmp_path / "ssh-stdin"
     ssh_out = tmp_path / "ssh-out"
     ssh_out.write_bytes(ssh_body)
+    cid_out = tmp_path / "cid-out"
+    cid_err = tmp_path / "cid-err"
+    if empty_cid:
+        cid_out.write_bytes(b"")
+    elif cid_stdout is not None:
+        cid_out.write_bytes(cid_stdout)
+    else:
+        cid_out.write_bytes(b"abc123\n")
+    cid_err.write_bytes(cid_stderr)
     driver = tmp_path / "capture-driver.sh"
     phase_arg = f" {phase}" if phase else ""
-    empty_cid_flag = "1" if empty_cid else "0"
     driver.write_text(
         f'''
 source "{SCRIPT}"
@@ -298,10 +331,8 @@ ssh() {{
   fi
   remote="${{@: -1}}"
   if [[ "$remote" == *'ps -q'* ]]; then
-    if [[ "{empty_cid_flag}" == "1" ]]; then
-      return 0
-    fi
-    printf 'abc123\\n'
+    cat "{cid_out}"
+    cat "{cid_err}" >&2
     return 0
   fi
   cat "{ssh_out}"
@@ -942,3 +973,180 @@ def test_do_verify_probes_ready_only_on_terminal_failure(tmp_path: Path) -> None
     assert curl_log.count("/ready") == 1
     assert curl_log.count("/health") == 3
     assert "non-gating" in combined
+
+
+SANITIZER_CASES = [
+    ('{"access_token":"abc.DEF-123"}', "abc.DEF-123"),
+    ('{"api_key": "abc123"}', "abc123"),
+    ("SECRET=abc", "abc"),
+    ('PGPASSWORD="quoted secret"', "quoted secret"),
+    ("postgresql://acx:LEAK5@db/x", "LEAK5"),
+    ('{"token": "json-secret"}', "json-secret"),
+    ('{"refresh_token": "rt-secret"}', "rt-secret"),
+    ('{"password": "pw-secret"}', "pw-secret"),
+    ('{"passwd": "passwd-secret"}', "passwd-secret"),
+    ('{"secret": "sec-value"}', "sec-value"),
+    ('{"api-key":"hyphen-json"}', "hyphen-json"),
+    ('{"db_password": "db-pass"}', "db-pass"),
+    ('{"client_secret": "cli-sec"}', "cli-sec"),
+    ('{"service_key": "svc-key"}', "svc-key"),
+    ('{"pgpassword": "json-pg"}', "json-pg"),
+    ("TOKEN=tok-secret", "tok-secret"),
+    ("PASSWORD=pw2-secret", "pw2-secret"),
+    ("KEY=key-secret", "key-secret"),
+    ("SECRET: colon-secret", "colon-secret"),
+    ("TOKEN='quoted token'", "quoted token"),
+    ('PASSWORD="quoted pass"', "quoted pass"),
+    ("Authorization: Bearer header-secret", "header-secret"),
+    ("bearer naked-secret", "naked-secret"),
+    ("ACX_API_TOKEN=another-secret", "another-secret"),
+    ("HF_TOKEN=hf-secret", "hf-secret"),
+    ("api-key=hyphen-secret", "hyphen-secret"),
+    ("api_key=under-secret", "under-secret"),
+    ("X-Api-Key: header-key-secret", "header-key-secret"),
+    ("password=hunter2", "hunter2"),
+]
+
+
+@pytest.mark.parametrize("raw,secret", SANITIZER_CASES, ids=[secret for _, secret in SANITIZER_CASES])
+def test_sanitize_deploy_diagnostic_redacts_secret_shapes(raw: str, secret: str) -> None:
+    """W-01: every secret shape from the sanitizer contract is absent after redaction."""
+    out = _run_sanitizer(raw + "\n")
+    assert secret not in out, out
+    assert "[REDACTED]" in out
+    assert out.startswith("diagnostic: ")
+
+
+def test_sanitize_deploy_diagnostic_preserves_token_file_and_header_name() -> None:
+    """W-01 negative: TOKEN_FILE paths stay; X-Api-Key keeps its header name."""
+    raw = (
+        "RECOGNITION_ADMIN_TOKEN_FILE=/run/secrets/admin.token\n"
+        "X-Api-Key: hunter2\n"
+    )
+    out = _run_sanitizer(raw)
+    assert "RECOGNITION_ADMIN_TOKEN_FILE=/run/secrets/admin.token" in out
+    assert "X-Api-Key:" in out
+    assert "api-key=" not in out
+    assert "hunter2" not in out
+    assert "[REDACTED]" in out
+
+
+def test_sanitizer_sed_defined_once() -> None:
+    """W-05: one sanitizer definition; smoke heredoc must call it, not copy it."""
+    result = subprocess.run(
+        ["grep", "-Fc", "api[-_]?key", str(SCRIPT)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert result.stdout.strip() == "1"
+    source = SCRIPT.read_text()
+    assert source.count("sanitize_deploy_diagnostic() {") == 1
+    heredoc = _boot_smoke_heredoc()
+    assert "sanitize_deploy_diagnostic" in heredoc
+    smoke_only = heredoc[heredoc.index("set -euo pipefail") :]
+    assert "sanitize_deploy_diagnostic() {" not in smoke_only
+
+
+def test_boot_smoke_curl_stderr_is_sanitized(tmp_path: Path) -> None:
+    """W-03: last-attempt curl stderr is prefixed and redacted."""
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=2,
+        poll_s=1,
+        attempts=1,
+        extra_env={
+            "FAKE_HEALTH_CODE": "000",
+            "FAKE_CURL_STDERR": "password=hunter2",
+        },
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "hunter2" not in combined
+    assert "diagnostic: " in combined
+    assert "[REDACTED]" in combined
+
+
+def test_cid_capture_stderr_never_leaks_unprefixed(tmp_path: Path) -> None:
+    """W-02: cid-capture ssh 2>&1; hunter2 on ssh stderr never reaches the log raw."""
+    result = _run_capture_failure_evidence(
+        tmp_path,
+        cid_stdout=b"abc123\n",
+        cid_stderr=b"password=hunter2\n",
+    )
+    combined = (result.stdout + result.stderr).decode()
+    assert result.returncode == 0, combined
+    assert "hunter2" not in combined
+    body = _function_body("capture_failure_evidence")
+    cid_idx = body.index("ps -q")
+    assert "2>&1" in body[cid_idx : cid_idx + 80]
+
+
+def test_verify_health_and_ready_bodies_redact_secrets(tmp_path: Path) -> None:
+    """W-04: /health and /ready bodies printed by do_verify go through the sanitizer."""
+    curl_log = tmp_path / "curl.log"
+    driver = tmp_path / "verify-driver.sh"
+    driver.write_text(
+        f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+ACX_VERIFY_ATTEMPTS=1
+ACX_VERIFY_SLEEP=0
+ACX_VERIFY_EXPECT_LOCAL=1
+verify_running_image_matches_deployed() {{ return 0; }}
+verify_live_gpu_snapshots() {{ return 0; }}
+curl() {{
+  printf '%s\\n' "$*" >>"{curl_log}"
+  url="${{@: -1}}"
+  if [[ "$url" == *"/ready"* ]]; then
+    printf '%s\\n%s' '{{"ready":true,"token":"hunter2"}}' '200'
+    return 0
+  fi
+  printf '%s\\n%s' '{{"commit_sha":"deadbeefdeadbeef","status":"ok","image_variant":"recognition","password":"hunter2"}}' '200'
+  return 0
+}}
+do_verify dev
+'''
+    )
+    result = subprocess.run(
+        ["bash", str(driver)],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=dict(os.environ),
+        cwd=SCRIPT.parents[2],
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    assert "hunter2" not in combined
+    assert "[REDACTED]" in combined
+    assert "non-gating" in combined
+
+
+def test_unexpected_container_id_is_sanitized_not_no_api_container(tmp_path: Path) -> None:
+    """W-07: non-hex cid prints unexpected-container-id, never 'no api container'."""
+    result = _run_capture_failure_evidence(
+        tmp_path,
+        cid_stdout=b"password=hunter2\nnot-a-valid-cid\n",
+    )
+    combined = (result.stdout + result.stderr).decode()
+    assert result.returncode == 0, combined
+    assert "hunter2" not in combined
+    assert "unexpected container id output" in combined
+    assert "no api container" not in combined
+    assert "[REDACTED]" in combined
+    args = (tmp_path / "ssh-args").read_text()
+    assert "docker logs" not in args
+
+
+def test_compose_project_name_read_from_remote_env(tmp_path: Path) -> None:
+    """W-08: remote .env COMPOSE_PROJECT_NAME is grepped; fallback is acx-${env}."""
+    result = _run_capture_failure_evidence(tmp_path, phase="pre_candidate")
+    combined = (result.stdout + result.stderr).decode()
+    assert result.returncode == 0, combined
+    args = (tmp_path / "ssh-args").read_text()
+    assert "grep -m1 '^COMPOSE_PROJECT_NAME='" in args
+    assert ".env" in args
+    assert "acx-dev" in args
+    assert "COMPOSE_PROJECT_NAME" in combined
+    assert "fallback acx-dev" in combined

@@ -215,3 +215,27 @@ def test_ensure_unique_constraint_raises_named_action_on_unique_violation() -> N
     assert "image_description_runs" in message
     assert "operator" in message.lower()
     assert isinstance(exc_info.value.__cause__, IntegrityError)
+
+
+def test_ensure_unique_constraint_raises_named_action_on_dbapi_pgcode_23505() -> None:
+    class _OrigError(Exception):
+        pgcode = "23505"
+
+    class _Op(_FakeOp):
+        def execute(self, sql) -> None:  # noqa: ANN001
+            raise DBAPIError(str(sql), {}, _OrigError())
+
+    constraint = sa.UniqueConstraint(
+        "tenant_id",
+        "idempotency_key",
+        name="uq_image_description_runs_idempotency_key",
+    )
+    with pytest.raises(RuntimeError) as exc_info:
+        MIGRATION._ensure_unique_constraint(_Op(), "image_description_runs", constraint)
+
+    message = str(exc_info.value)
+    assert "uq_image_description_runs_idempotency_key" in message
+    assert "23505" in message
+    assert "image_description_runs" in message
+    assert "duplicate" in message.lower()
+    assert isinstance(exc_info.value.__cause__, DBAPIError)

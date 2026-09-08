@@ -13,7 +13,7 @@ import json
 
 import pytest
 
-from scripts.eval_harness.manifest import ScoreInvariant
+from scripts.eval_harness.manifest import ScoreInvariant, compute_corpus_coverage_gaps
 from scripts.eval_harness.report import Audience, build_reports, score_run_record
 
 _LINEAGE = {
@@ -277,6 +277,20 @@ def test_score_run_record_emits_scored_detection_arithmetic() -> None:
         scored["faces"]["detection"], tp=_DEFAULT_TP, fp=_DEFAULT_FP, fn=_DEFAULT_FN
     )
     assert scored["counts"] == {"total": 3, "scored": 2, "failed": 1}
+
+
+def test_live_score_stamps_mapping_corpus_coverage_audit() -> None:
+    """Live reports must carry honest registry counts (AUDIT-07 / EVAL-23)."""
+    entries = _manifest_entries()
+    gaps = compute_corpus_coverage_gaps(entries)
+    assert gaps["face_boxes"]["populated"] == 2
+    assert gaps["spatial_facts"]["populated"] == 0
+
+    scored = score_run_record(_run_record(), entries)
+    stamped = scored["provenance"]["coverage_gaps"]
+    assert stamped == gaps
+    assert stamped["reference_facts"]["below_threshold"] is True
+    assert stamped["demographic_cohort"]["pi_zero"] is True
 
 
 def test_markdown_renders_scored_detection_line() -> None:

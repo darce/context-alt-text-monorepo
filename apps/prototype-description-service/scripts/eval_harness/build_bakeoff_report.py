@@ -10,10 +10,10 @@ filters over media_id, filename, names, and all descriptions.
 
 Usage:
     python -m scripts.eval_harness.build_bakeoff_report \\
-        --manifest scripts/eval_harness/corpus646-interleave-manifest-20260716.json \\
+        --manifest scene/tests/seed/golden.json \\
         --images-dir /Volumes/Butter/WP/vlm/app/public/wp-content/uploads \\
-        --run "Qwen3-VL-30B=out/run-altq-646-interleave-v3.json" \\
-        --media-ids 632,626,623,650,648,642,640,651,610,584 \\
+        --run "Qwen3-VL-30B=out/run-bakeoff-qwen3-vl-30b-a3b.json" \\
+        --media-ids 1,2,3,4,5,6,7,8,9,10 \\
         --embed-images --out report.html --title "10-image bake-off"
 
 For a large corpus (hundreds of images) omit --embed-images: the report stays
@@ -35,34 +35,81 @@ import hashlib
 import html
 import io
 import json
+import math
 import sys
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from collections.abc import Mapping
 from typing import Any
 
 _THUMB_DEFAULT = 440
+EXIT_NOT_COMPARABLE = 4
+EXIT_BAKEOFF_GATE = 5
+_REQUIRED_BASELINE_LABELS = (
+    "zero_rule_context_echo",
+    "context_only_heuristic",
+    "current_production",
+    "blinded_human",
+)
 
 
 def _load_manifest(path: str) -> dict[int, dict[str, Any]]:
     raw = json.loads(Path(path).read_text())
+    if not isinstance(raw, Mapping):
+        raise ValueError(f"manifest {path} must contain a JSON object")
     entries = raw.get("entries", raw.get("items", []))
-    return {int(e["media_id"]): e for e in entries}
+    if not isinstance(entries, list):
+        raise ValueError(f"manifest {path} entries must be a JSON array")
+    out: dict[int, dict[str, Any]] = {}
+    for entry in entries:
+        if not isinstance(entry, Mapping) or "media_id" not in entry:
+            raise ValueError(f"manifest {path} contains an entry without media_id")
+        mid = int(entry["media_id"])
+        if mid in out:
+            raise ValueError(f"manifest {path} contains duplicate media_id {mid}")
+        out[mid] = dict(entry)
+    return out
 
 
 def _index_run(path: str) -> dict[int, dict[str, Any]]:
     """media_id -> {surfaces, latency_s, model_calls, tokens, error}."""
     rec = json.loads(Path(path).read_text())
+    if not isinstance(rec, Mapping):
+        raise ValueError(f"run record {path} must contain a JSON object")
+    items = rec.get("items", [])
+    if not isinstance(items, list):
+        raise ValueError(f"run record {path} items must be a JSON array")
     out: dict[int, dict[str, Any]] = {}
-    for item in rec.get("items", []):
+    for item in items:
+        if not isinstance(item, Mapping) or "media_id" not in item:
+            raise ValueError(f"run record {path} contains an item without media_id")
         mid = int(item["media_id"])
-        describe = item.get("describe") or {}
-        passes = describe.get("passes") or []
+        if mid in out:
+            raise ValueError(f"run record {path} contains duplicate media_id {mid}")
+        describe = item.get("describe")
+        if not isinstance(describe, Mapping):
+            describe = {}
+        raw_passes = describe.get("passes")
+        if raw_passes is None:
+            passes: list[Mapping[str, Any]] = []
+        elif isinstance(raw_passes, list):
+            if any(not isinstance(p, Mapping) for p in raw_passes):
+                raise ValueError(f"run record {path} media_id {mid} has a malformed pass")
+            passes = raw_passes
+        else:
+            raise ValueError(f"run record {path} media_id {mid} passes must be a JSON array")
         if passes:
-            latency = round(sum(p.get("latency_s") or 0 for p in passes), 2)
+            pass_latencies = [p.get("latency_s") for p in passes]
+            latency = (
+                round(sum(float(value) for value in pass_latencies), 2)
+                if all(_finite_number(value) for value in pass_latencies)
+                else None
+            )
             calls = len(passes)
         else:
-            latency = item.get("latency_s")
-            calls = 1
+            value = item.get("latency_s")
+            latency = float(value) if _finite_number(value) else None
+            explicit_calls = item.get("model_calls", describe.get("model_calls"))
+            calls = explicit_calls if _nonnegative_int(explicit_calls) else None
         out[mid] = {
             "title": describe.get("alt_text_title"),
             "alt": describe.get("alt_text_draft"),
@@ -73,6 +120,18 @@ def _index_run(path: str) -> dict[int, dict[str, Any]]:
             "error": item.get("error"),
         }
     return out
+
+
+def _finite_number(value: Any) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(float(value))
+    )
+
+
+def _nonnegative_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
 def render_delta_banner(delta: Mapping[str, Any] | None) -> str:
@@ -111,10 +170,10 @@ def _tokens_label(tokens: Any) -> str:
     A non-dict (the current integer-0 shape) must not crash.
     """
     if not isinstance(tokens, dict):
-        return ""
+        return " · tokens not captured"
     total = tokens.get("total_tokens")
     completion = tokens.get("completion_tokens")
-    if not isinstance(total, int) or not isinstance(completion, int):
+    if not _nonnegative_int(total) or not _nonnegative_int(completion):
         return " · tokens not captured"
     partial = "+" if not tokens.get("complete") else ""
     return f" · {total}{partial} tok ({completion} out)"
@@ -230,12 +289,14 @@ def _card_html(mid: int, entry: dict, runs: dict[str, dict], thumb: str | None, 
                 parts.append('<p class="none">empty output</p>')
             body = "".join(parts)
             lat_v = s.get("latency_s")
-            lat = f"{lat_v:.2f}s" if isinstance(lat_v, (int, float)) else "—"
+            lat = f"{lat_v:.2f}s" if _finite_number(lat_v) else "—"
             # Deterministic per-image cost = flat instance rate x inference seconds.
-            cost = (f' · ${hourly_rate * lat_v / 3600:.5f}/img'
-                    if hourly_rate is not None and isinstance(lat_v, (int, float)) else "")
+            cost = (f' · ${hourly_rate * lat_v / 3600:.5f}/exposure'
+                    if hourly_rate is not None and _finite_number(lat_v) else "")
+            calls_v = s.get("model_calls")
+            calls = str(calls_v) if _nonnegative_int(calls_v) else "not captured"
             perf = (
-                f'<span class="perf">{lat}{cost} · {s.get("model_calls", "?")} call(s)'
+                f'<span class="perf">{lat}{cost} · {calls} call(s)'
                 f'{html.escape(_tokens_label(s.get("tokens")))}</span>'
             )
         cls = "model warn" if NON_COMPARABLE_BADGE in label else "model"
@@ -345,7 +406,6 @@ def build(
 NON_COMPARABLE_BADGE = " ⚠ NOT COMPARABLE"
 # Distinct from cli.REFUSED_METRIC_EXIT_CODE / face_pass's 3: a comparability
 # refusal is not a refused metric, and callers branch on the two differently.
-EXIT_NOT_COMPARABLE = 4
 
 
 class ComparabilityError(RuntimeError):
@@ -361,32 +421,13 @@ def _manifest_sha(manifest: Any) -> str:
     return hashlib.sha256(json.dumps(manifest.model_dump(), sort_keys=True).encode()).hexdigest()
 
 
-def _fusion_manifest_sha(manifest: Any) -> str:
-    """The *other* in-tree digest recipe, from ``fusion_runner._build_record``.
-
-    Fusion run records stamp a field-subset digest with compact separators. It is
-    a different string for the same manifest, so a gate that knows only the
-    canonical recipe would refuse every native fusion record as foreign.
-    """
-    canonical = json.dumps(
-        {
-            "manifest_version": manifest.manifest_version,
-            "roster": manifest.roster,
-            "entries": [e.model_dump(mode="json") for e in manifest.entries],
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode()
-    return hashlib.sha256(canonical).hexdigest()
-
-
 def _run_provenance(path: str) -> dict[str, Any]:
     prov = json.loads(Path(path).read_text()).get("provenance")
     return prov if isinstance(prov, dict) else {}
 
 
 def _expected_shas(path: str) -> tuple[set[str], str]:
-    """Every digest a record legitimately produced from ``path`` could carry.
+    """Return the one canonical digest a v3 record must carry.
 
     Returns ``(shas, mode)``. Structurally-not-v3 manifests (ad-hoc fixtures)
     yield an empty set: the digest anchor is unavailable, and the structural
@@ -416,7 +457,7 @@ def _expected_shas(path: str) -> tuple[set[str], str]:
             f"--manifest {path} declares manifest_version 3 but does not load as one: {exc}. "
             "Fix the manifest, or report against the manifest the runs were actually made on."
         ) from exc
-    return {_manifest_sha(manifest), _fusion_manifest_sha(manifest)}, "structural + manifest digest"
+    return {_manifest_sha(manifest)}, "structural + manifest digest"
 
 
 def _check_comparability(
@@ -493,11 +534,286 @@ def _check_comparability(
     return reasons
 
 
+def _load_record_info(path: str) -> dict[str, Any]:
+    """Load one run record and retain observed, rather than inferred, counters."""
+    raw = json.loads(Path(path).read_text())
+    if not isinstance(raw, Mapping):
+        raise ValueError(f"run record {path} must contain a JSON object")
+    indexed = _index_run(path)
+    items = raw.get("items", [])
+    assert isinstance(items, list)  # _index_run validated this above
+    calls = [cell.get("model_calls") for cell in indexed.values()]
+    return {
+        "raw": dict(raw),
+        "indexed": indexed,
+        "provenance": raw.get("provenance") if isinstance(raw.get("provenance"), Mapping) else {},
+        "exposures": len(items),
+        "calls": sum(calls) if all(_nonnegative_int(value) for value in calls) else None,
+        "calls_complete": all(_nonnegative_int(value) for value in calls),
+        "errors": sum(
+            1 for item in items if isinstance(item, Mapping) and item.get("error")
+        ),
+        "monitoring": isinstance(raw.get("timing"), Mapping)
+        and isinstance(raw.get("gpu"), Mapping),
+    }
+
+
+def _parse_label_path(
+    specs: list[str],
+    *,
+    option: str,
+    known: set[str] | None = None,
+) -> dict[str, str]:
+    parsed: dict[str, str] = {}
+    for spec in specs:
+        if "=" not in spec:
+            raise ValueError(f"{option} must be LABEL=PATH, got {spec!r}")
+        label, path = spec.split("=", 1)
+        if not label or not path:
+            raise ValueError(f"{option} must have non-empty LABEL and PATH, got {spec!r}")
+        if known is not None and label not in known:
+            raise ValueError(f"{option} label {label!r} is not recognised")
+        if label in parsed:
+            raise ValueError(f"duplicate {option} label {label!r}")
+        parsed[label] = path
+    return parsed
+
+
+def _parse_labels(values: list[str], *, option: str) -> tuple[str, ...]:
+    if len(values) != len(set(values)):
+        raise ValueError(f"duplicate {option} value")
+    if any(not value for value in values):
+        raise ValueError(f"{option} values must be non-empty")
+    return tuple(values)
+
+
+def _load_serving_gate_failure(path: str, expected_id: str) -> dict[str, Any]:
+    raw = json.loads(Path(path).read_text())
+    if not isinstance(raw, Mapping):
+        raise ValueError(f"serving-gate-failed record {path} must contain a JSON object")
+    if raw.get("kind") != "serving-gate-failed" or raw.get("status") != "serving-gate-failed":
+        raise ValueError(f"serving-gate-failed record {path} has the wrong kind/status")
+    if raw.get("candidate_id") != expected_id:
+        raise ValueError(
+            f"serving-gate-failed record {path} names {raw.get('candidate_id')!r}, expected {expected_id!r}"
+        )
+    if not isinstance(raw.get("reason"), str) or not raw["reason"]:
+        raise ValueError(f"serving-gate-failed record {path} has no reason")
+    if not isinstance(raw.get("evidence"), Mapping) or not raw["evidence"]:
+        raise ValueError(f"serving-gate-failed record {path} has no evidence")
+    return dict(raw)
+
+
+def _gate_evaluation(
+    manifest: dict[int, dict[str, Any]],
+    records: Mapping[str, dict[str, Any]],
+    baselines: Mapping[str, dict[str, Any]],
+    serving_failures: Mapping[str, dict[str, Any]],
+    *,
+    expected_candidates: Sequence[str],
+    expected_incumbents: Sequence[str],
+    required_baselines: Sequence[str],
+    score_ok: Mapping[str, str],
+    foreign: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    """Evaluate the sealed bake-off readiness contract without inventing data."""
+    reasons: list[str] = []
+    axes: dict[str, str] = {}
+
+    if len(manifest) >= 100:
+        axes["data"] = "pass"
+    else:
+        axes["data"] = "not_ready"
+        reasons.append(
+            f"Golden-100 data unavailable: manifest contains {len(manifest)} entries"
+        )
+
+    missing_candidates = [
+        candidate_id
+        for candidate_id in expected_candidates
+        if candidate_id not in records and candidate_id not in serving_failures
+    ]
+    serving_ids = [candidate_id for candidate_id in expected_candidates if candidate_id in serving_failures]
+    unexpected_serving = sorted(set(serving_failures) - set(expected_candidates))
+    missing_incumbents = [
+        incumbent_id for incumbent_id in expected_incumbents if incumbent_id not in records
+    ]
+    missing_baselines = [label for label in required_baselines if label not in baselines]
+    errored = [label for label, info in (*records.items(), *baselines.items()) if info["errors"]]
+    foreign = foreign or {}
+    required_labels = {
+        *expected_candidates,
+        *expected_incumbents,
+        *required_baselines,
+    }
+    foreign_required = sorted(set(foreign) & required_labels)
+    required_records = [
+        (label, records[label])
+        for label in (*expected_candidates, *expected_incumbents)
+        if label in records
+    ] + [(label, baselines[label]) for label in required_baselines if label in baselines]
+    incomplete_media: list[str] = []
+    manifest_ids = set(manifest)
+    for label, info in required_records:
+        observed_ids = set(info["indexed"])
+        if observed_ids == manifest_ids:
+            continue
+        missing = sorted(manifest_ids - observed_ids)
+        extra = sorted(observed_ids - manifest_ids)
+        details = []
+        if missing:
+            details.append("missing " + ", ".join(str(media_id) for media_id in missing[:8]))
+        if extra:
+            details.append("unexpected " + ", ".join(str(media_id) for media_id in extra[:8]))
+        incomplete_media.append(f"{label} ({'; '.join(details)})")
+    missing_roster_contract = []
+    if not expected_candidates:
+        missing_roster_contract.append("expected candidate roster was not supplied")
+    if not expected_incumbents:
+        missing_roster_contract.append("expected incumbent roster was not supplied")
+    reasons.extend(missing_roster_contract)
+    if missing_candidates:
+        reasons.append("missing candidate run records: " + ", ".join(sorted(missing_candidates)))
+    if serving_ids:
+        reasons.append("serving gate failures: " + ", ".join(sorted(serving_ids)))
+    if unexpected_serving:
+        reasons.append("unexpected serving gate failures: " + ", ".join(unexpected_serving))
+    if missing_incumbents:
+        reasons.append("missing incumbent run records: " + ", ".join(sorted(missing_incumbents)))
+    if missing_baselines:
+        reasons.append("missing required baseline arms: " + ", ".join(sorted(missing_baselines)))
+    if incomplete_media:
+        reasons.append("incomplete media-id multiset: " + "; ".join(sorted(incomplete_media)))
+    if foreign_required:
+        reasons.append(
+            "foreign run records cannot satisfy bakeoff gate: " + ", ".join(foreign_required)
+        )
+    if errored:
+        reasons.append("run records contain item errors: " + ", ".join(sorted(errored)))
+    axes["model"] = "pass" if not (
+        missing_roster_contract
+        or missing_candidates
+        or serving_ids
+        or missing_incumbents
+        or missing_baselines
+        or incomplete_media
+        or foreign_required
+        or errored
+    ) else "not_ready"
+
+    missing_score = [
+        candidate_id
+        for candidate_id in expected_candidates
+        if candidate_id in records
+        and candidate_id not in serving_failures
+        and not Path(score_ok.get(candidate_id, "")).is_file()
+    ]
+    if missing_score:
+        reasons.append("missing successful score markers: " + ", ".join(sorted(missing_score)))
+    axes["infra"] = "pass" if not (
+        missing_roster_contract
+        or serving_ids
+        or unexpected_serving
+        or missing_candidates
+        or missing_incumbents
+        or incomplete_media
+        or foreign_required
+        or errored
+        or missing_score
+    ) else "not_ready"
+
+    monitor_labels = [
+        candidate_id for candidate_id in expected_candidates if candidate_id in records
+    ] + [incumbent_id for incumbent_id in expected_incumbents if incumbent_id in records]
+    missing_monitoring = [
+        label for label in monitor_labels if not records[label]["monitoring"]
+    ]
+    if missing_monitoring:
+        reasons.append("missing timing/gpu monitoring mappings: " + ", ".join(sorted(missing_monitoring)))
+    if (
+        not monitor_labels
+        or missing_roster_contract
+        or missing_candidates
+        or missing_incumbents
+        or serving_ids
+        or incomplete_media
+        or foreign_required
+    ):
+        axes["monitoring"] = "not_ready"
+    else:
+        axes["monitoring"] = "pass" if not missing_monitoring else "not_ready"
+
+    if any(value == "fail" for value in axes.values()):
+        status = "fail"
+    elif any(value != "pass" for value in axes.values()):
+        status = "not_ready"
+    else:
+        status = "pass"
+    return {"status": status, "axes": axes, "reasons": tuple(dict.fromkeys(reasons))}
+
+
+def _gate_html(
+    evaluation: Mapping[str, Any],
+    serving_failures: Mapping[str, Mapping[str, Any]],
+) -> str:
+    status = html.escape(str(evaluation.get("status", "not_ready")))
+    axes = evaluation.get("axes", {})
+    readiness = " ".join(
+        f"{name}={html.escape(str(axes.get(name, 'not_ready')))}"
+        for name in ("data", "model", "infra", "monitoring")
+    )
+    reasons = evaluation.get("reasons", ())
+    reason_html = "".join(f"<li>{html.escape(str(reason))}</li>" for reason in reasons)
+    failure_html = "".join(
+        f"<li>{html.escape(label)}: {html.escape(str(record.get('reason', 'unknown reason')))}</li>"
+        for label, record in sorted(serving_failures.items())
+    )
+    details = ""
+    if reason_html:
+        details += f"<ul>{reason_html}</ul>"
+    if failure_html:
+        details += f"<p>serving-gate-failed records:</p><ul>{failure_html}</ul>"
+    return (
+        '<section class="gate">'
+        f"<p><strong>bakeoff-gate: {status}</strong></p>"
+        f'<p class="sub">readiness: {readiness}</p>{details}'
+        "</section>"
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="Build a self-contained bake-off HTML report.")
     ap.add_argument("--manifest", required=True)
     ap.add_argument(
-        "--run", action="append", required=True, metavar="LABEL=PATH", help="repeatable; model label = run-record path"
+        "--run", action="append", default=[], metavar="LABEL=PATH", help="repeatable; model label = run-record path"
+    )
+    ap.add_argument(
+        "--baseline-run", action="append", default=[], metavar="LABEL=PATH",
+        help="repeatable; one of the required interpretable baseline arms = run-record path",
+    )
+    ap.add_argument(
+        "--serving-gate-failed", action="append", default=[], metavar="ID=PATH",
+        help="repeatable; candidate id = machine-readable serving-gate-failed record",
+    )
+    ap.add_argument(
+        "--expected-candidate", action="append", default=[], metavar="ID",
+        help="repeatable; sealed competing candidate id required by --bakeoff-gate",
+    )
+    ap.add_argument(
+        "--expected-incumbent", action="append", default=[], metavar="ID",
+        help="repeatable; incumbent id required by --bakeoff-gate",
+    )
+    ap.add_argument(
+        "--required-baseline", action="append", default=[], metavar="LABEL",
+        help="repeatable; assert/document one of the four baseline arms required by --bakeoff-gate",
+    )
+    ap.add_argument(
+        "--score-ok", action="append", default=[], metavar="ID=PATH",
+        help="repeatable; marker written only after a candidate score succeeds",
+    )
+    ap.add_argument(
+        "--bakeoff-gate", action="store_true",
+        help="render and enforce the sealed roster/data/infra/monitoring readiness gate",
     )
     ap.add_argument("--images-dir")
     ap.add_argument("--out", required=True)
@@ -507,7 +823,11 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--thumb-px", type=int, default=_THUMB_DEFAULT)
     ap.add_argument("--title", default="Bake-off report")
     ap.add_argument("--cost-total", type=float, default=None,
-                    help="total run cost in USD; report renders total + cost-per-image")
+                    help="total run cost in USD; pair with --cost-denominator")
+    ap.add_argument(
+        "--cost-denominator", choices=("exposure", "call"), default=None,
+        help="denominator for --cost-total: per model/image exposure or measured model call",
+    )
     ap.add_argument("--hourly-rate", type=float, default=None,
                     help="instance $/hr; renders deterministic per-image cost = rate x inference seconds")
     ap.add_argument(
@@ -527,6 +847,41 @@ def main(argv: list[str] | None = None) -> int:
     for _name, _val in (("--hourly-rate", args.hourly_rate), ("--cost-total", args.cost_total)):
         if _val is not None and _val < 0:
             ap.error(f"{_name} must be non-negative, got {_val}")
+    if args.cost_total is not None and args.cost_denominator is None:
+        ap.error("--cost-total requires --cost-denominator {exposure,call}")
+    if args.cost_total is None and args.cost_denominator is not None:
+        ap.error("--cost-denominator requires --cost-total")
+
+    try:
+        expected_candidates = _parse_labels(args.expected_candidate, option="--expected-candidate")
+        expected_incumbents = _parse_labels(args.expected_incumbent, option="--expected-incumbent")
+        requested_baselines = _parse_labels(args.required_baseline, option="--required-baseline")
+        # The four interpretable arms are a contract, not a caller-selected
+        # subset. Explicit flags may make the command self-documenting, but
+        # they cannot weaken the gate by omitting another required arm.
+        required_baselines = tuple(dict.fromkeys((*requested_baselines, *_REQUIRED_BASELINE_LABELS)))
+        unknown_baselines = set(required_baselines) - set(_REQUIRED_BASELINE_LABELS)
+        if unknown_baselines:
+            raise ValueError(
+                "unknown --required-baseline label(s): " + ", ".join(sorted(unknown_baselines))
+            )
+        run_specs = _parse_label_path(args.run, option="--run")
+        baseline_specs = _parse_label_path(
+            args.baseline_run,
+            option="--baseline-run",
+            known=set(_REQUIRED_BASELINE_LABELS),
+        )
+        overlap = set(run_specs) & set(baseline_specs)
+        if overlap:
+            raise ValueError("run and baseline labels overlap: " + ", ".join(sorted(overlap)))
+        serving_specs = _parse_label_path(args.serving_gate_failed, option="--serving-gate-failed")
+        score_specs = _parse_label_path(args.score_ok, option="--score-ok")
+        serving_failures = {
+            candidate_id: _load_serving_gate_failure(path, candidate_id)
+            for candidate_id, path in serving_specs.items()
+        }
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        ap.error(str(exc))
 
     # Resolve the digest anchor first: a declared-v3 manifest that does not load
     # must be a diagnosed refusal, not a ValueError out of _load_manifest.
@@ -536,17 +891,19 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_NOT_COMPARABLE
 
-    manifest = _load_manifest(args.manifest)
-    runs: dict[str, dict[int, dict]] = {}
-    provenances: dict[str, dict[str, Any]] = {}
-    for spec in args.run:
-        if "=" not in spec:
-            ap.error(f"--run must be LABEL=PATH, got {spec!r}")
-        label, path = spec.split("=", 1)
-        if label in runs:
-            ap.error(f"duplicate --run label {label!r}; one column would silently overwrite the other")
-        runs[label] = _index_run(path)
-        provenances[label] = _run_provenance(path)
+    try:
+        manifest = _load_manifest(args.manifest)
+        run_info = {label: _load_record_info(path) for label, path in run_specs.items()}
+        baseline_info = {label: _load_record_info(path) for label, path in baseline_specs.items()}
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        print(f"error: unable to load bake-off input: {exc}", file=sys.stderr)
+        return EXIT_NOT_COMPARABLE
+    if not run_info and not baseline_info and not serving_failures and not args.bakeoff_gate:
+        ap.error("at least one --run, --baseline-run, or --serving-gate-failed is required")
+
+    all_info = {**run_info, **baseline_info}
+    runs = {label: info["indexed"] for label, info in all_info.items()}
+    provenances = {label: info["provenance"] for label, info in all_info.items()}
 
     try:
         foreign = _check_comparability(
@@ -570,6 +927,23 @@ def main(argv: list[str] | None = None) -> int:
             return EXIT_NOT_COMPARABLE
         runs = badged
 
+    if args.bakeoff_gate:
+        gate_candidates = expected_candidates
+        gate_incumbents = expected_incumbents
+        evaluation = _gate_evaluation(
+            manifest,
+            run_info,
+            baseline_info,
+            serving_failures,
+            expected_candidates=gate_candidates,
+            expected_incumbents=gate_incumbents,
+            required_baselines=required_baselines,
+            score_ok=score_specs,
+            foreign=foreign,
+        )
+    else:
+        evaluation = None
+
     if args.media_ids:
         media_ids = [int(x) for x in args.media_ids.split(",") if x.strip()]
     else:
@@ -579,11 +953,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.embed_images and images_dir is None:
         ap.error("--embed-images requires --images-dir")
 
-    attempted_n = len(_attempted_media_ids(runs))
     subtitle = f"{len(media_ids)} images · {len(runs)} run(s): {', '.join(runs)} · manifest identity: {identity_mode} · self-contained, offline"
-    if args.cost_total is not None and attempted_n:
-        subtitle += f" · total ${args.cost_total:.2f} · ${args.cost_total / attempted_n:.4f}/image"
+    if args.cost_total is not None:
+        exposures = sum(int(info["exposures"]) for info in all_info.values())
+        if args.cost_denominator == "exposure":
+            denominator = exposures
+        else:
+            if any(not info["calls_complete"] for info in all_info.values()):
+                ap.error("--cost-denominator call requires explicit model_calls for every exposure")
+            denominator = sum(int(info["calls"] or 0) for info in all_info.values())
+        subtitle += f" · total ${args.cost_total:.2f}"
+        if denominator:
+            subtitle += f" · ${args.cost_total / denominator:.4f}/{args.cost_denominator}"
     doc = build(manifest, runs, media_ids, images_dir, args.embed_images, args.thumb_px, args.title, subtitle, args.hourly_rate)
+    if evaluation is not None:
+        doc = doc.replace("<main>", "<main>" + _gate_html(evaluation, serving_failures), 1)
     if args.delta_json:
         delta_payload = json.loads(Path(args.delta_json).read_text(encoding="utf-8"))
         banner = render_delta_banner(delta_payload)
@@ -591,6 +975,9 @@ def main(argv: list[str] | None = None) -> int:
             doc = doc.replace("<main>", "<main>" + banner, 1)
     Path(args.out).write_text(doc)
     print(f"wrote {args.out} ({len(doc) / 1024:.0f}KB, {len(media_ids)} images, {len(runs)} run(s))")
+    if evaluation is not None and evaluation["status"] != "pass":
+        print(f"bakeoff-gate: {evaluation['status']}", file=sys.stderr)
+        return EXIT_BAKEOFF_GATE
     return 0
 
 

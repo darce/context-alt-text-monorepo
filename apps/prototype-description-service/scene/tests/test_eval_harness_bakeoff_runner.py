@@ -37,6 +37,7 @@ from scripts.eval_harness.bakeoff_runner import (
     _report_argv,
     _skip_reason,
     build_plans,
+    build_serving_gate_failures,
     emit_shell,
     main,
 )
@@ -203,6 +204,47 @@ def test_vllm_stack_skipped_unless_explicitly_requested() -> None:
     assert "vllm" in str(exc_info.value)
 
 
+def test_unsupported_competing_rows_become_durable_serving_gate_failures() -> None:
+    registry = _mutate_entry(
+        _sample_registry(),
+        "bravo",
+        recipe=_recipe(stack=ServingStack.VLLM, gguf=None, mmproj=None, extra_flags=[]),
+    )
+    plans = build_plans(registry, **_PLAN_KW)
+    failures = build_serving_gate_failures(registry, plans, out_dir="out")
+    assert [failure.candidate_id for failure in failures] == ["bravo"]
+    failure = failures[0]
+    assert failure.reason == SKIP_REASON_STACK
+    assert failure.out_path == "out/serving-gate-failed-bravo.json"
+    script = emit_shell(
+        plans,
+        incumbent_runs={},
+        serving_gate_failures=failures,
+        expected_candidates=["alpha", "bravo", "charlie"],
+        bakeoff_gate=True,
+    )
+    assert "_total=$((_total + 1))" in script
+    assert "serving-gate-failed-bravo.json" in script
+    assert "--serving-gate-failed bravo=out/serving-gate-failed-bravo.json" in script
+    assert "--bakeoff-gate" in script
+
+
+def test_default_cli_shell_records_all_unsupported_competing_rows(tmp_path) -> None:
+    script_path = tmp_path / "plan.sh"
+    assert main(["--emit-shell", str(script_path)]) == 0
+    script = script_path.read_text(encoding="utf-8")
+    registry = load_bakeoff_candidates()
+    competing = {entry.id for entry in registry.entries if entry.competing}
+    planned = {plan.candidate_id for plan in build_plans(registry, **_PLAN_KW)}
+    skipped_competing = competing - planned
+    assert skipped_competing
+    assert all(f"serving-gate-failed-{candidate_id}.json" in script for candidate_id in skipped_competing)
+    assert script.count("--serving-gate-failed") == len(skipped_competing) * 2
+    assert "--bakeoff-gate" in script
+    assert "--expected-incumbent florence-2-base-ft" in script
+    assert "--required-baseline zero_rule_context_echo" in script
+
+
 def test_artifact_over_budget_raises_vram_error() -> None:
     registry = _mutate_entry(_sample_registry(), "charlie", artifact_gb=25.0)
     with pytest.raises(VramBudgetError, match="charlie") as exc_info:
@@ -241,7 +283,7 @@ def test_emit_shell_is_bash_n_clean_and_mentions_incumbents(tmp_path) -> None:
     assert "/records/florence-anchor.json" in script
     assert "/records/qwen-anchor.json" in script
     assert f"READY_TIMEOUT_S={READY_TIMEOUT_S}" in script
-    assert READY_TIMEOUT_S == 600
+    assert READY_TIMEOUT_S == 3600
     assert READY_SLEEP_S == 1
     assert f"sleep {READY_SLEEP_S}" in script
     assert "seq 1 " not in script
@@ -250,6 +292,8 @@ def test_emit_shell_is_bash_n_clean_and_mentions_incumbents(tmp_path) -> None:
     assert 'kill "${_serve_pid}" 2>/dev/null || true' in script
     assert "[ -f /records/florence-anchor.json ]" in script
     assert "[ -f /records/qwen-anchor.json ]" in script
+    for plan in plans:
+        assert f"rm -f {plan.out_path} {plan.out_path}.score.ok" in script
 
 
 def test_build_plans_is_deterministic() -> None:
@@ -357,7 +401,7 @@ def test_report_argv_round_trips_through_report_parser() -> None:
     assert argv[:3] == ["python3", "-m", "scripts.eval_harness.build_bakeoff_report"]
     parsed = build_bakeoff_report.build_parser().parse_args(argv[3:])
     assert parsed.manifest == _PLAN_KW["manifest"]
-    assert parsed.limit == 646
+    assert parsed.limit == 37
     assert parsed.run == [f"{plan.candidate_id}={plan.out_path}" for plan in plans] + [
         "florence-anchor=/records/florence-anchor.json",
         "qwen-anchor=/records/qwen-anchor.json",
@@ -494,7 +538,7 @@ def test_emit_shell_download_hint_includes_artifacts() -> None:
     script = emit_shell(plans, incumbent_runs={})
     assert "--include model.gguf" in script
     assert "--include mmproj.gguf" in script
-    assert "--limit 646" in script
+    assert "--limit 37" in script
 
 
 def test_mmproj_gb_from_recipe_not_placeholder() -> None:
@@ -649,7 +693,7 @@ def test_emit_shell_polls_every_second_and_stamps_cold_inside_ready_branch() -> 
     assert f"sleep {READY_SLEEP_S}" in script
     assert READY_SLEEP_S == 1
     assert f"READY_TIMEOUT_S={READY_TIMEOUT_S}" in script
-    assert READY_TIMEOUT_S == 600
+    assert READY_TIMEOUT_S == 3600
     assert "seq 1 " not in script
     ready_at = script.find("_ready=1")
     cold_at = script.find("_cold=$(python3 -c")
@@ -800,7 +844,7 @@ def test_emit_shell_runtime_preflight_failure_is_nonfatal_per_candidate(tmp_path
     assert ran.returncode == 1
     assert "candidate qwen38-27b: cannot parse llama-server runtime build" in combined
     assert "candidate minicpm-v-45 never became ready" in combined
-    assert "WARN: no run-records to report" in combined
+    assert "bake-off report/gate FAILED" in combined
 
 
 def test_skip_reason_returns_skip_reason_enum_members() -> None:

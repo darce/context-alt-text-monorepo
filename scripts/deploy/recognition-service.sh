@@ -91,6 +91,10 @@
 #   ACX_PUSH_TIMEOUT         positive integer wall-clock seconds for each registry push (default 900).
 #   ACX_PULL_TIMEOUT         positive integer wall-clock seconds for each registry pull (default 900).
 #   ACX_REMOTE_COMMAND_TIMEOUT positive integer wall-clock seconds for ordinary remote calls (default 120).
+#   ACX_EVIDENCE_TIMEOUT     positive integer wall-clock seconds for capture_failure_evidence
+#                              probes (default 30). Decoupled from ACX_REMOTE_COMMAND_TIMEOUT so
+#                              raising the pull/restart knob does not stretch the pre-rollback
+#                              outage window.
 #   ACX_REMOTE_BUILD_TIMEOUT positive integer wall-clock seconds for remote rsync/build work (default 1800).
 #   CONFIRM                  required for prod actions: CONFIRM=PROMOTE (applies to deploy prod and promote * prod)
 #
@@ -1729,7 +1733,9 @@ if [[ -z "${models_path}" ]]; then
   echo "smoke requires ACX_MODELS_PATH in ${env_file} (compose would fail without it)" >&2
   exit 1
 fi
-run_args=( -d --rm --name "$name" --env-file "${env_file}" --network "$net" -P
+# WHY: do not --rm the API smoke container. Entrypoint crash would delete it
+# before the failure branch can `docker logs`; the EXIT trap already rm -f's it.
+run_args=( -d --name "$name" --env-file "${env_file}" --network "$net" -P
   -e RECOGNITION_BLOB_ROOT=/var/lib/acx-blobs
   -e RECOGNITION_SECRET_BACKEND=env
   -e POSTGRES_DSN="${smoke_async_dsn}"
@@ -1761,19 +1767,8 @@ for _ in $(seq 1 "${attempts}"); do
   [[ "${last_health_code}" =~ ^[0-9]{3}$ ]] || last_health_code="000"
   if (( health_curl_rc == 0 )) && [[ "${last_health_code}" =~ ^[23][0-9][0-9]$ ]]; then
     echo "smoke health OK (HTTP ${last_health_code})"
-    ready_response=""
-    ready_curl_rc=0
-    ready_response="$(curl -sS --max-time "${poll_s}" --write-out $'\n%{http_code}' "http://127.0.0.1:${port}/ready")" || ready_curl_rc=$?
-    if [[ "${ready_response}" == *$'\n'* ]]; then
-      ready_code="${ready_response##*$'\n'}"
-      ready_body="${ready_response%$'\n'*}"
-    else
-      ready_code="000"
-      ready_body="${ready_response}"
-    fi
-    [[ "${ready_code}" =~ ^[0-9]{3}$ ]] || ready_code="000"
-    echo "smoke ready (HTTP ${ready_code}; non-gating)"
-    printf '%s\n' "${ready_body:0:2000}"
+    # Exit before any /ready probe. The outer run_with_deadline uses the same
+    # budget as this loop; a diagnostic must not turn a marginal pass into rc 124.
     exit 0
   fi
   sleep "${poll_s}"
@@ -1785,9 +1780,15 @@ else
 fi
 echo "smoke health LAST HTTP code: ${last_health_code}" >&2
 echo "smoke health LAST body (up to 2000 bytes):" >&2
-printf '%s\n' "${last_health_body:0:2000}" >&2
+printf '%s\n' "${last_health_body:0:2000}" \
+  | LC_ALL=C tr -d '\000-\010\013-\037\177-\237' \
+  | sed 's/^/diagnostic: /' >&2
 echo "smoke container logs (last 80 lines):" >&2
-docker logs --tail 80 "$name" >&2 || echo "smoke container logs unavailable" >&2
+if ! docker logs --tail 80 "$name" 2>&1 \
+  | LC_ALL=C tr -d '\000-\010\013-\037\177-\237' \
+  | sed 's/^/diagnostic: /' >&2; then
+  echo "smoke container logs unavailable" >&2
+fi
 exit 1
 SMOKE
   if (( smoke_rc != 0 )); then
@@ -2060,44 +2061,56 @@ capture_failure_evidence() {
   health_url_q="$(remote_quote "${health_url}")"
   ready_url_q="$(remote_quote "${ready_url}")"
   health_host_q="$(remote_quote "${health_host}")"
-  timeout="${ACX_REMOTE_COMMAND_TIMEOUT:-120}"
+  timeout="${ACX_EVIDENCE_TIMEOUT:-30}"
   if [[ ! "${timeout}" =~ ^[1-9][0-9]*$ ]]; then
-    warn "failure evidence skipped for ${env}; ACX_REMOTE_COMMAND_TIMEOUT must be a positive integer (got: ${timeout})"
+    warn "failure evidence skipped for ${env}; ACX_EVIDENCE_TIMEOUT must be a positive integer (got: ${timeout})"
     return 0
   fi
 
+  emit_sanitized_evidence() {
+    local blob="$1"
+    [[ -n "${blob}" ]] || return 0
+    printf '%s\n' "${blob}" | sanitize_deploy_diagnostic >&2
+  }
+
   printf '%s\n' "--- evidence: /health ---" >&2
   printf 'environment: %s\n' "${env}" >&2
-  if ! run_with_deadline "${timeout}" "failure evidence /health for ${env}" \
-    ssh -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
+  evidence=""
+  if ! evidence="$(run_with_deadline "${timeout}" "failure evidence /health for ${env}" \
+    ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
       -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
       -l "${OCI_USER}" -- "${OCI_HOST}" \
-      "curl -sS --max-time 10 --resolve ${health_host_q}:443:127.0.0.1 --write-out '\\nHTTP_CODE=%{http_code}' ${health_url_q}" >&2; then
+      "curl -sS --max-time 10 --resolve ${health_host_q}:443:127.0.0.1 --write-out '\\nHTTP_CODE=%{http_code}' ${health_url_q}" 2>&1)"; then
     warn "failure evidence /health probe failed for ${env}; continuing with rollback"
   fi
+  emit_sanitized_evidence "${evidence}"
 
   printf '%s\n' "--- evidence: /ready ---" >&2
   printf 'environment: %s\n' "${env}" >&2
-  if ! run_with_deadline "${timeout}" "failure evidence /ready for ${env}" \
-    ssh -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
+  evidence=""
+  if ! evidence="$(run_with_deadline "${timeout}" "failure evidence /ready for ${env}" \
+    ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
       -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
       -l "${OCI_USER}" -- "${OCI_HOST}" \
-      "curl -sS --max-time 10 --resolve ${health_host_q}:443:127.0.0.1 --write-out '\\nHTTP_CODE=%{http_code}' ${ready_url_q}" >&2; then
+      "curl -sS --max-time 10 --resolve ${health_host_q}:443:127.0.0.1 --write-out '\\nHTTP_CODE=%{http_code}' ${ready_url_q}" 2>&1)"; then
     warn "failure evidence /ready probe failed for ${env}; continuing with rollback"
   fi
+  emit_sanitized_evidence "${evidence}"
 
   printf '%s\n' "--- evidence: api container logs ---" >&2
   printf 'environment: %s\n' "${env}" >&2
+  evidence=""
   # shellcheck disable=SC2086 # compose_files is intentionally word-split (-f a -f b).
-  if ! run_with_deadline "${timeout}" "failure evidence api logs for ${env}" \
-    ssh -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
+  if ! evidence="$(run_with_deadline "${timeout}" "failure evidence api logs for ${env}" \
+    ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
       -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
       -l "${OCI_USER}" -- "${OCI_HOST}" \
       "cd ${remote_dir_q} && cid=\$(docker compose ${compose_files} ps -q api 2>/dev/null | head -1); \
        if [ -n \"\$cid\" ]; then docker logs --tail 80 \"\$cid\"; \
-       else echo 'api container not found' >&2; exit 1; fi" >&2; then
+       else echo 'api container not found' >&2; exit 1; fi" 2>&1)"; then
     warn "failure evidence api log capture failed for ${env}; continuing with rollback"
   fi
+  emit_sanitized_evidence "${evidence}"
   return 0
 }
 

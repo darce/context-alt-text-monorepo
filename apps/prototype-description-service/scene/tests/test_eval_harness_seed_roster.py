@@ -286,6 +286,30 @@ def test_seed_scenes_reports_detector_misses_as_unverified(tmp_path):  # VLM-2C-
     assert summary.unverified_media_ids == [2], "detector miss must be surfaced, not masked"
 
 
+def test_seed_scenes_missing_entry_path_is_printable(monkeypatch, tmp_path):  # OBS-08 / VLM6-W20V6-06
+    """A missing scene path must use the path-text wire contract before CLI output."""
+    from types import SimpleNamespace
+
+    from scripts.eval_harness import seed_roster
+    from scripts.eval_harness.manifest import ManifestError
+
+    raw_path = "mock_images/missing-" + chr(0xDCE9) + ".jpg"
+    entry = SimpleNamespace(media_id=1, face_count=1, path=raw_path)
+    monkeypatch.setattr(seed_roster, "load_manifest", lambda *_args, **_kwargs: SimpleNamespace(entries=[entry]))
+    monkeypatch.setattr(seed_roster, "_resolve_image", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(ManifestError) as exc:
+        seed_roster.seed_scenes(
+            "manifest.json",
+            str(tmp_path),
+            SimpleNamespace(media_identities=lambda _ids: []),
+        )
+    rendered = str(exc.value)
+    assert "image file missing:" in rendered
+    assert "undecodable:mock_images/missing-\\xe9.jpg" in rendered
+    assert chr(0xDCE9) not in rendered
+
+
 def test_seed_scenes_resolves_nfd_filenames(tmp_path):  # VLM-2C-R2-HARM-BR-01
     import hashlib
     import json

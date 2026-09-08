@@ -2515,6 +2515,10 @@ def _compare_require_caption_report(doc: Mapping[str, Any], *, role: str) -> lis
         for key in ("manifest_entries", "media_id_missing", "media_id_extra"):
             if not isinstance(corpus.get(key), int) or isinstance(corpus.get(key), bool):
                 errors.append(f"{role}: corpus.{key} missing or not an int")
+        if isinstance(counts, Mapping):
+            selection_issue = _selection_metadata_issue(corpus, counts)
+            if selection_issue:
+                errors.append(f"{role}: {selection_issue}")
     return errors
 
 

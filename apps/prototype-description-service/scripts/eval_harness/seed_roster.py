@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
+from ._pathtext import _printable_path
 from .manifest import ManifestError, _resolve_image, load_manifest
 from .naming import IMAGE_EXTS, display_name, entity_slug
 from .remote_client import RemoteClientError
@@ -177,7 +178,10 @@ def seed_scenes(manifest_path: str, images_dir: str, client: SceneSeedClient) ->
         for entry in to_seed:
             image_path = _resolve_image(root, entry.path)
             if image_path is None:
-                raise ManifestError(f"image file missing: {entry.path} (under {root})")
+                raise ManifestError(
+                    f"image file missing: {_printable_path(entry.path)} "
+                    f"(under {_printable_path(root)})"
+                )
             images.append((entry.media_id, image_path.name, image_path.read_bytes()))
         job_id = client.analyze(images)
         client.wait_job(job_id)

@@ -1,5 +1,13 @@
-import React from 'react';
+import React, { useState } from 'react';
 
+import {
+  DialogContent,
+  DialogDescription,
+  DialogOverlay,
+  DialogPortal,
+  DialogRoot,
+  DialogTitle,
+} from '../../../components/ui/dialog';
 import { FaceThumbnail } from '../../../components/ui/FaceThumbnail';
 import { guidedCopy } from '../../guidedPrototype/copy';
 import {
@@ -19,6 +27,10 @@ export interface GuidedFaceMatchCardProps {
   disabled: boolean;
   onChoose: (choice: GuidedNameChoice, origin: HTMLInputElement) => void;
 }
+
+const ENLARGE_COMPARISON_LABEL = 'Enlarge comparison';
+const ENLARGED_COMPARISON_TITLE = 'Enlarged comparison';
+const ENLARGED_CROP_PX = 240;
 
 const choiceStatus = (choice: GuidedNameChoice, personName: string): string => {
   switch (choice) {
@@ -40,6 +52,8 @@ const coverageCopy = (coverage: GuidedNameCoverage): string =>
     ? guidedCopy('names.coverage_all', { total: coverage.total })
     : guidedCopy('names.coverage_partial', { shown: coverage.shown, total: coverage.total });
 
+const cropAlt = (position: GuidedFace['position']): string => `Detected ${position} face`;
+
 export const GuidedFaceMatchCard = ({
   face,
   person,
@@ -49,30 +63,46 @@ export const GuidedFaceMatchCard = ({
   disabled,
   onChoose,
 }: GuidedFaceMatchCardProps): React.JSX.Element => {
+  const [comparisonOpen, setComparisonOpen] = useState(false);
   const titleId = `guided-face-${face.id}-title`;
   const groupName = `guided-name-${face.position}`;
   const includeId = `${groupName}-include`;
   const omitId = `${groupName}-omit`;
+  const enlargeId = `${groupName}-enlarge`;
+  const detectedAlt = cropAlt(face.position);
 
   const handleChange = (event: React.ChangeEvent<HTMLInputElement>, nextChoice: GuidedNameChoice): void => {
     onChoose(nextChoice, event.currentTarget);
   };
 
+  const thumbnail = (sizePx?: number): React.JSX.Element => (
+    <FaceThumbnail
+      mediaUrl={mediaUrl}
+      bbox={{
+        x: face.box.x,
+        y: face.box.y,
+        width: face.box.width,
+        height: face.box.height,
+      }}
+      size="lg"
+      sizePx={sizePx}
+      shape="square"
+      alt={detectedAlt}
+    />
+  );
+
   return (
     <article aria-labelledby={titleId} className="acx-guided-face__card">
       <div className="acx-guided-face__crop">
-        <FaceThumbnail
-          mediaUrl={mediaUrl}
-          bbox={{
-            x: face.box.x,
-            y: face.box.y,
-            width: face.box.width,
-            height: face.box.height,
-          }}
-          size="lg"
-          shape="square"
-          alt=""
-        />
+        {thumbnail()}
+        <button
+          id={enlargeId}
+          type="button"
+          className="acx-button acx-button--tertiary acx-guided-face__enlarge"
+          onClick={() => setComparisonOpen(true)}
+        >
+          {ENLARGE_COMPARISON_LABEL}
+        </button>
       </div>
       <div className="acx-guided-face__content">
         <h3 id={titleId}>{guidedCopy('names.suggestion', { name: person.name })}</h3>
@@ -120,6 +150,41 @@ export const GuidedFaceMatchCard = ({
 
         <p className="acx-guided-face__decision">{choiceStatus(choice, person.name)}</p>
       </div>
+
+      <DialogRoot open={comparisonOpen} onOpenChange={setComparisonOpen}>
+        <DialogPortal>
+          <DialogOverlay />
+          <DialogContent
+            aria-modal="true"
+            className="acx-guided-face__lightbox"
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+            }}
+          >
+            <DialogTitle>{ENLARGED_COMPARISON_TITLE}</DialogTitle>
+            <DialogDescription>{guidedCopy('names.evidence_open', { position: face.position })}</DialogDescription>
+            <div className="acx-guided-face__lightbox-crop">{thumbnail(ENLARGED_CROP_PX)}</div>
+            <ul className="acx-guided-face__lightbox-gallery" aria-label={person.name}>
+              {person.galleryPhotos.map((photo) => (
+                <li key={`enlarged-${photo.src}`}>
+                  <img src={photo.src} alt={photo.altText} />
+                  <span className="screen-reader-text">{photo.credit}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="acx-guided-face__gallery-caption">{coverageCopy(coverage)}</p>
+            <div className="acx-dialog__actions">
+              <button
+                type="button"
+                className="acx-button acx-button--secondary"
+                onClick={() => setComparisonOpen(false)}
+              >
+                {guidedCopy('names.evidence_close')}
+              </button>
+            </div>
+          </DialogContent>
+        </DialogPortal>
+      </DialogRoot>
     </article>
   );
 };

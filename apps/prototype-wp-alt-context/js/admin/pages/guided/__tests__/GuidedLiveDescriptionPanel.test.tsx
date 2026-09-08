@@ -61,8 +61,7 @@ type RecordingClient = {
 
 const stubClient = (over: Partial<GuidedLiveDescriptionClient> = {}): RecordingClient => {
   const calls: RecordingClient['calls'] = [];
-  const submitImpl: GuidedLiveDescriptionClient['submit'] =
-    over.submit ?? (() => Promise.resolve(runResponse()));
+  const submitImpl: GuidedLiveDescriptionClient['submit'] = over.submit ?? (() => Promise.resolve(runResponse()));
   const pollImpl: GuidedLiveDescriptionClient['poll'] =
     over.poll ?? (() => Promise.resolve(runResponse({ phase: 'warming', gpu_state: 'starting' })));
   const itemsImpl: GuidedLiveDescriptionClient['items'] =
@@ -279,8 +278,7 @@ describe('GuidedLiveDescriptionPanel', () => {
       await press(submitButton());
       await settle(1000);
 
-      const waitMs =
-        (180 + GUIDED_LIVE_GPU_WARMUP_CEILING_SECONDS) * 1000 + GUIDED_LIVE_DEADLINE_SLACK_MS;
+      const waitMs = (180 + GUIDED_LIVE_GPU_WARMUP_CEILING_SECONDS) * 1000 + GUIDED_LIVE_DEADLINE_SLACK_MS;
       expect(screen.getByTestId('guided-live-budget')).toHaveTextContent(
         guidedCopy('live.budget_disclosed', {
           generation: clock(180_000),
@@ -320,8 +318,8 @@ describe('GuidedLiveDescriptionPanel', () => {
       expect(status).not.toHaveTextContent(/cancelled/i);
 
       const region = screen.getByRole('status', { name: guidedCopy('live.status_label') });
-      expect(region).toContainElement(keepWaitingButton());
-      expect(region).toContainElement(retryButton());
+      expect(region).not.toContainElement(keepWaitingButton());
+      expect(region).not.toContainElement(retryButton());
     });
 
     it('keeps waiting on the same run rather than submitting a second one', async () => {
@@ -419,7 +417,9 @@ describe('GuidedLiveDescriptionPanel', () => {
       });
 
       expect(screen.queryByTestId('guided-live-text')).toBeNull();
-      expect(screen.getByTestId('guided-live-status')).not.toHaveTextContent('A stale sentence from the previous panel.');
+      expect(screen.getByTestId('guided-live-status')).not.toHaveTextContent(
+        'A stale sentence from the previous panel.',
+      );
     });
   });
 
@@ -438,6 +438,18 @@ describe('GuidedLiveDescriptionPanel', () => {
       expect(seen).toContain(false);
       expect(seen.indexOf(true)).toBeLessThan(seen.lastIndexOf(false));
     });
+
+    it('clears waiting on unmount so a crashed panel does not leave the reset note latched', async () => {
+      const seen: boolean[] = [];
+      const view = mount(stubClient(), { onWaitingChange: (waiting) => seen.push(waiting) });
+
+      await press(submitButton());
+      await settle(600);
+      expect(seen).toContain(true);
+
+      view.unmount();
+      expect(seen.at(-1)).toBe(false);
+    });
   });
 
   describe('the result', () => {
@@ -452,6 +464,34 @@ describe('GuidedLiveDescriptionPanel', () => {
 
       expect(screen.getByTestId('guided-live-text')).toHaveTextContent('Katy Perry waves from the red carpet.');
       expect(screen.getByTestId('guided-live-status')).toHaveTextContent(guidedCopy('live.complete'));
+    });
+
+    it('keeps elapsed time, budget, result text, and recovery actions outside the polite live region', async () => {
+      const client = stubClient({
+        poll: () => Promise.resolve(runResponse({ status: 'completed', phase: 'complete', gpu_state: 'ready' })),
+      });
+      mount(client);
+
+      await press(submitButton());
+      await settle(1000);
+
+      const region = screen.getByRole('status', { name: guidedCopy('live.status_label') });
+      expect(region).toHaveTextContent(guidedCopy('live.complete'));
+      expect(region).not.toContainElement(screen.getByTestId('guided-live-text'));
+      expect(region).not.toHaveTextContent('Katy Perry waves from the red carpet.');
+    });
+
+    it('does not announce elapsed ticks inside the polite live region', async () => {
+      mount(stubClient());
+
+      await press(submitButton());
+      await settle(1000);
+
+      const region = screen.getByRole('status', { name: guidedCopy('live.status_label') });
+      expect(screen.getByTestId('guided-live-elapsed')).toBeInTheDocument();
+      expect(screen.getByTestId('guided-live-budget')).toBeInTheDocument();
+      expect(region).not.toContainElement(screen.getByTestId('guided-live-elapsed'));
+      expect(region).not.toContainElement(screen.getByTestId('guided-live-budget'));
     });
 
     it('still shows CPU-tier text without claiming a GPU result', async () => {

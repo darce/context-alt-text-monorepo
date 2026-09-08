@@ -37,10 +37,11 @@ describe('GuidedPrototypePage shell', () => {
     expect(screen.getByText(guidedCopy('page.scope'))).toBeInTheDocument();
     expect(screen.getByText(guidedCopy('page.live_scope'))).toBeInTheDocument();
     expect(screen.getByRole('button', { name: guidedCopy('page.start') })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: guidedCopy('page.case_study') })).toHaveAttribute(
-      'href',
-      'https://darce.xyz/projects/altcontext/',
-    );
+    const caseStudy = screen.getByRole('link', {
+      name: new RegExp(`${guidedCopy('page.case_study')}.*opens in a new window`, 'i'),
+    });
+    expect(caseStudy).toHaveAttribute('href', 'https://darce.xyz/projects/altcontext/');
+    expect(caseStudy).toHaveAttribute('target', '_blank');
 
     const stepper = screen.getByTestId('guided-demo-stepper');
     expect(stepper).toHaveTextContent(
@@ -193,6 +194,7 @@ describe('GuidedPrototypePage journey', () => {
     expect(document.querySelector('[data-applied-text]')).toHaveTextContent(edited);
     expect(screen.getByTestId('demo-outcome')).toHaveTextContent(guidedCopy('outcome.applied'));
     expect(screen.getByTestId('guided-page-feedback')).toHaveTextContent(guidedCopy('apply.success'));
+    expect(screen.getByTestId('guided-page-feedback-icon')).toHaveAttribute('aria-hidden', 'true');
 
     await user.click(applyButton);
     expect(screen.getByTestId('demo-applied-image')).toHaveAttribute('alt', edited);
@@ -207,7 +209,7 @@ describe('GuidedPrototypePage journey', () => {
     await user.click(screen.getByTestId('demo-undo'));
     expect(screen.getByTestId('demo-applied-image')).toHaveAttribute('alt', SEED_ALT_TEXT);
     expect(screen.getByTestId('demo-undo')).toBeDisabled();
-    expect(document.activeElement).toHaveAttribute('id', 'guided-section-apply');
+    expect(document.activeElement).toBe(screen.getByTestId('demo-undo'));
   });
 
   it('asks before replacing a manual edit and keeps the previous text in draft history', async () => {

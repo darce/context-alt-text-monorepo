@@ -80,7 +80,45 @@ def test_remote_build_is_generation_isolated_locked_and_deadlined() -> None:
 def test_boot_smoke_has_outer_deadlines_and_curl_request_timeout() -> None:
     body = _function_body("do_boot_smoke")
     assert body.count("run_with_deadline") >= 2
-    assert "curl -fsS --max-time" in body
+    assert "curl -sS --max-time" in body
+    assert "--write-out" in body
+    assert "last_health_body" in body
+    assert "docker logs --tail 80" in body
+    assert "/ready" in body
+
+
+def test_automatic_rollbacks_capture_failure_evidence_first() -> None:
+    for function_name, env_expression in (("do_deploy", "\"$env\""), ("do_promote", "\"$to_env\"")):
+        body = _function_body(function_name)
+        evidence_marker = f"capture_failure_evidence {env_expression}"
+        restore_marker = f"restore_env_tag_to_rollback {env_expression}"
+        evidence_positions = [
+            index for index in range(len(body)) if body.startswith(evidence_marker, index)
+        ]
+        restore_positions = [
+            index for index in range(len(body)) if body.startswith(restore_marker, index)
+        ]
+        assert len(evidence_positions) == 3
+        assert len(restore_positions) == 3
+        assert all(evidence < restore for evidence, restore in zip(evidence_positions, restore_positions))
+
+
+def test_failure_evidence_probes_and_logs_are_deadline_bounded() -> None:
+    body = _function_body("capture_failure_evidence")
+    assert body.count("run_with_deadline") >= 3
+    assert "env_to_health_url" in body
+    assert "env_to_ready_url" in body
+    assert "docker logs --tail 80" in body
+    assert "--- evidence: /health ---" in body
+    assert "--- evidence: /ready ---" in body
+    assert "--- evidence: api container logs ---" in body
+
+
+def test_do_verify_surfaces_non_gating_readiness_code_and_body() -> None:
+    body = _function_body("do_verify")
+    assert 'ready_url="$(env_to_ready_url "$env")"' in body
+    assert "ready_response" in body
+    assert "non-gating" in body
 
 
 def test_restart_and_rollback_integration_points_are_deadlined() -> None:

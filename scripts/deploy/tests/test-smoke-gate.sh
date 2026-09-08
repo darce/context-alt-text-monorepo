@@ -239,6 +239,18 @@ r211_describe=$(awk '
 assert_eq "R2-11 describe suite guards BASH_VERSION before pipefail" \
     "guard-before-pipefail" "$r211_describe"
 
+# VLMHEAL-1: boot-smoke must retain and print the last /health body before the
+# throwaway container's EXIT trap removes it, so a 503 body is not lost.
+recognition_deploy="${script_dir}/../recognition-service.sh"
+boot_smoke_heredoc=$(awk '
+    /^do_boot_smoke\(\) \{/ { in_fn=1 }
+    in_fn && /<<.*SMOKE/ { in_smoke=1; next }
+    in_smoke && /^SMOKE$/ { exit }
+    in_smoke { print }
+' "$recognition_deploy")
+assert_eq "VLMHEAL-1 boot smoke prints last /health body on failure" \
+    "1" "$(printf '%s\n' "$boot_smoke_heredoc" | grep -cF '${last_health_body:0:2000}' || true)"
+
 # R2-13: printed verdict AND $? for at least one PASS and one FAIL per classifier.
 # WARN is not a failure (rc 0), matching UNKNOWN policy.
 assert_verdict_rc "R2-13 api PASS" PASS 0 classify_api_probe 200 200

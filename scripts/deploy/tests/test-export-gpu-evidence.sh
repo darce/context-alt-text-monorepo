@@ -181,14 +181,68 @@ SCHEMA_ROOT="${schema_root}" PATH="${schema_bin}:${PATH}" OCI_BIN="${fake_oci}" 
     --since 2026-09-01T00:00:00Z \
     --until 2026-09-01T01:00:00Z \
     --out "${schema_bundle}"
-"$resolved_python" - "${schema_bundle}/manifest.json" <<'PY'
+"$resolved_python" - "${schema_bundle}/manifest.json" "${root}/scripts" <<'PY'
 import json
 import sys
 
+sys.path.insert(0, sys.argv[2])
+from gpu_burst_evidence import MANIFEST_FORMAT, SCHEMA_VERSION
 
 manifest = json.load(open(sys.argv[1], encoding="utf-8"))
-assert manifest["schema_version"] == 9
-assert manifest["format"] == "oci-gpu-burst-evidence-v9"
+assert manifest["schema_version"] == SCHEMA_VERSION
+assert manifest["format"] == MANIFEST_FORMAT
+assert manifest["schema_version"] != 9
+assert manifest["format"] != "oci-gpu-burst-evidence-v9"
+PY
+
+# Direct execution outside a git checkout must still import the producer-adjacent
+# checker (BASH_SOURCE), not a decoy from cwd. Relative --out stays cwd-relative.
+outside_dir="${fixture_root}/outside-repo"
+mkdir -p "${outside_dir}/scripts"
+cat >"${outside_dir}/scripts/gpu_burst_evidence.py" <<'PY'
+SCHEMA_VERSION = 9
+MANIFEST_FORMAT = "decoy-from-cwd"
+
+
+def build_state_history_document(audit, instance_id=None, since=None, until=None):
+    return {"observations": [], "state": "unknown", "reason": "decoy"}
+PY
+outside_rc=0
+(
+    cd "${outside_dir}"
+    OCI_BIN="${fake_oci}" OCI_CALL_LOG="${fixture_root}/outside-oci-calls.log" \
+        "${exporter}" \
+        --instance-id ocid1.instance.example \
+        --compartment-id ocid1.compartment.example \
+        --since 2026-09-01T00:00:00Z \
+        --until 2026-09-01T01:00:00Z \
+        --out cwd-bundle
+) >"${fixture_root}/outside-repo.out" 2>&1 || outside_rc=$?
+if [ "${outside_rc}" -ne 0 ]; then
+    echo "FAIL: outside-repo export exited ${outside_rc}, expected 0" >&2
+    cat "${fixture_root}/outside-repo.out" >&2
+    exit 1
+fi
+if [ ! -d "${outside_dir}/cwd-bundle" ]; then
+    echo "FAIL: outside-repo relative --out did not create a bundle in cwd" >&2
+    exit 1
+fi
+if [ -e "${root}/cwd-bundle" ]; then
+    echo "FAIL: outside-repo relative --out was resolved against the script root" >&2
+    exit 1
+fi
+"$resolved_python" - "${outside_dir}/cwd-bundle/manifest.json" "${root}/scripts" <<'PY'
+import json
+import sys
+
+sys.path.insert(0, sys.argv[2])
+from gpu_burst_evidence import MANIFEST_FORMAT, SCHEMA_VERSION
+
+manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+assert manifest["schema_version"] == SCHEMA_VERSION
+assert manifest["format"] == MANIFEST_FORMAT
+assert manifest["schema_version"] != 9
+assert manifest["format"] != "decoy-from-cwd"
 PY
 
 unknown_oci="${fixture_root}/unknown-oci"
@@ -464,7 +518,46 @@ for zero_timeout in 00 000; do
     fi
 done
 
-mutated="${fixture_root}/mutated-exporter.sh"
+# 08 crashes Bash octal arithmetic; 010 silently becomes 8. Reject both at
+# validation so lock timeout handling stays decimal and fail-closed (RLSE-05).
+for padded_lock in 08 010; do
+    padded_lock_rc=0
+    padded_lock_out="${fixture_root}/padded-lock-${padded_lock}"
+    EVIDENCE_LOCK_MAX_TIME="$padded_lock" "$exporter" \
+        --instance-id ocid1.instance.example \
+        --compartment-id ocid1.compartment.example \
+        --since 2026-09-01T00:00:00Z --until 2026-09-01T01:00:00Z \
+        --out "${padded_lock_out}" \
+        >"${fixture_root}/padded-lock-${padded_lock}.out" 2>&1 || padded_lock_rc=$?
+    if [ "$padded_lock_rc" -ne 2 ]; then
+        echo "FAIL: zero-padded lock timeout ${padded_lock} exited ${padded_lock_rc}, expected 2" >&2
+        cat "${fixture_root}/padded-lock-${padded_lock}.out" >&2
+        exit 1
+    fi
+    if ! grep -Fq -- 'timeouts must be positive integer seconds' "${fixture_root}/padded-lock-${padded_lock}.out"; then
+        echo "FAIL: zero-padded lock timeout ${padded_lock} did not fail usage validation" >&2
+        cat "${fixture_root}/padded-lock-${padded_lock}.out" >&2
+        exit 1
+    fi
+    if [ -e "${padded_lock_out}" ]; then
+        echo "FAIL: zero-padded lock timeout ${padded_lock} left a published bundle" >&2
+        exit 1
+    fi
+done
+EVIDENCE_LOCK_MAX_TIME=8 run_export "${fixture_root}/lock-decimal-8"
+EVIDENCE_LOCK_MAX_TIME=10 run_export "${fixture_root}/lock-decimal-10"
+if [ ! -f "${fixture_root}/lock-decimal-8/manifest.json" ] \
+    || [ ! -f "${fixture_root}/lock-decimal-10/manifest.json" ]; then
+    echo "FAIL: unpadded decimal lock timeouts did not publish bundles" >&2
+    exit 1
+fi
+
+# Copies must keep scripts/deploy/lib layout so BASH_SOURCE still finds the
+# producer-adjacent checker instead of falling back to git/cwd.
+mutated_root="${fixture_root}/mutated-tree"
+mkdir -p "${mutated_root}/scripts/deploy/lib"
+cp "${root}/scripts/gpu_burst_evidence.py" "${mutated_root}/scripts/gpu_burst_evidence.py"
+mutated="${mutated_root}/scripts/deploy/lib/mutated-exporter.sh"
 sed 's/run_oci compute instance get/run_oci compute instance action/' "$exporter" >"${mutated}"
 chmod +x "${mutated}"
 action_rc=0
@@ -474,10 +567,11 @@ action_rc=0
     --out "${fixture_root}/action" >"${fixture_root}/action.out" 2>&1 || action_rc=$?
 if [ "$action_rc" -ne 3 ]; then
     echo "FAIL: action verb was not rejected with exit 3 (got ${action_rc})" >&2
+    cat "${fixture_root}/action.out" >&2
     exit 1
 fi
 
-mutated_update="${fixture_root}/mutated-update-exporter.sh"
+mutated_update="${mutated_root}/scripts/deploy/lib/mutated-update-exporter.sh"
 sed 's/run_oci compute instance get/run_oci compute instance update/' "$exporter" >"${mutated_update}"
 chmod +x "${mutated_update}"
 update_rc=0
@@ -487,6 +581,7 @@ update_rc=0
     --out "${fixture_root}/update" >"${fixture_root}/update.out" 2>&1 || update_rc=$?
 if [ "$update_rc" -ne 3 ]; then
     echo "FAIL: update verb was not rejected with exit 3 (got ${update_rc})" >&2
+    cat "${fixture_root}/update.out" >&2
     exit 1
 fi
 

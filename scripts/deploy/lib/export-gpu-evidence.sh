@@ -127,7 +127,21 @@ fi
 # Check the window before making any external call.  This keeps malformed
 # operator input from producing a partial bundle.  The Python helper is
 # stdlib-only and is selected from this execution filesystem.
-lane_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+# REF-33: checker/python root comes from this script path, not git or cwd.
+# Relative --out stays cwd-relative. RLSE-05: fail fast if the path is missing.
+script_path="${BASH_SOURCE[0]:-}"
+if [ -z "$script_path" ]; then
+    echo "ERROR: cannot resolve exporter script path" >&2
+    exit 1
+fi
+script_dir="$(cd "$(dirname "$script_path")" && pwd)" || {
+    echo "ERROR: cannot resolve exporter script directory" >&2
+    exit 1
+}
+lane_root="$(cd "${script_dir}/../../.." && pwd)" || {
+    echo "ERROR: cannot resolve repository root from exporter path" >&2
+    exit 1
+}
 if [ -x "$lane_root/.venv/bin/python" ]; then
     resolved_python="$lane_root/.venv/bin/python"
 else
@@ -183,7 +197,7 @@ for timeout_value in \
     "$copy_max_time" \
     "$lock_max_time"; do
     case "$timeout_value" in
-        ''|*[!0-9]*) fail_usage "timeouts must be positive integer seconds" ;;
+        ''|0*|*[!0-9]*) fail_usage "timeouts must be positive integer seconds" ;;
     esac
     case "$timeout_value" in
         *[1-9]*) ;;

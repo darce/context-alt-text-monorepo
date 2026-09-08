@@ -624,6 +624,27 @@ def test_pre_candidate_evidence_skips_http_probes_of_prior_image(tmp_path: Path)
     assert "--- evidence: /health ---" not in combined
 
 
+def test_pre_candidate_records_remote_commands_and_skips_http_probes(tmp_path: Path) -> None:
+    """VLMHEAL-1-REV-C-04: stub records which remote commands ran on pre_candidate.
+
+    Refute: the ssh stub returning rc 0 for all three probes hides that
+    pre_candidate still issued curl /health and /ready against the prior image.
+    """
+    result = _run_capture_failure_evidence(tmp_path, phase="pre_candidate")
+    combined = result.stderr.decode()
+    assert result.returncode == 0, combined
+    remote_commands = (tmp_path / "ssh-args").read_text().splitlines()
+    assert remote_commands, "pre_candidate must still collect compose/ps state"
+    joined = "\n".join(remote_commands)
+    assert "curl" not in joined
+    assert "/health" not in joined
+    assert "/ready" not in joined
+    assert "docker logs" not in joined
+    assert any("docker compose" in line and " ps" in line for line in remote_commands)
+    assert "candidate never started" in combined
+    assert "--- evidence: docker ps / compose ---" in combined
+
+
 def test_runtime_evidence_still_probes_health_and_ready(tmp_path: Path) -> None:
     result = _run_capture_failure_evidence(tmp_path)
     combined = result.stderr.decode()
@@ -632,3 +653,102 @@ def test_runtime_evidence_still_probes_health_and_ready(tmp_path: Path) -> None:
     assert "/health" in args
     assert "/ready" in args
     assert "--- evidence: /health ---" in combined
+
+
+def test_push_and_restart_failures_use_pre_candidate_evidence_phase() -> None:
+    """VLMHEAL-1-REV-B-06: do_push_tag / do_restart rollback is pre_candidate."""
+    for function_name, env_expression in (("do_deploy", '"$env"'), ("do_promote", '"$to_env"')):
+        body = _function_body(function_name)
+        assert f"capture_failure_evidence {env_expression} pre_candidate" in body
+        assert f"capture_failure_evidence {env_expression} candidate" in body
+        assert body.count(f"capture_failure_evidence {env_expression} pre_candidate") == 2
+        assert body.count(f"capture_failure_evidence {env_expression} candidate") == 1
+
+
+def test_run_with_deadline_does_not_dup_stdin_through_fd3() -> None:
+    """VLMHEAL-1-REV-B-04: the fd3 dup/close pair is the bash 5.2 segfault shape."""
+    source = SCRIPT.read_text()
+    start = source.index("run_with_deadline() {")
+    end = source.index("validated_deadline() {")
+    code = "\n".join(
+        line for line in source[start:end].splitlines() if not line.lstrip().startswith("#")
+    )
+    assert "exec 3<&0" not in code
+    assert '"$@" <&0 &' in code
+
+
+def test_run_with_deadline_survives_bash_s_command_substitution() -> None:
+    """VLMHEAL-1-REV-B-04: $(run_with_deadline) under bash -s must not SIGSEGV.
+
+    Refute: feeding the deploy helpers on stdin (`bash -s`) and wrapping
+    run_with_deadline in command substitution dies with rc 139 because
+    `exec 3<&0; "$@" <&3 &; exec 3<&-` segfaults bash 5.2.
+    """
+    program = f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+out="$(run_with_deadline 5 "bash-s subst" echo hello-from-deadline)"
+printf 'captured=%s\\n' "$out"
+'''
+    result = subprocess.run(
+        ["bash", "-s"],
+        input=program,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.returncode != 139
+    assert "captured=hello-from-deadline" in result.stdout
+
+
+def test_failure_evidence_redacts_bearer_and_api_token(tmp_path: Path) -> None:
+    """VLMHEAL-1-REV-B-03: bearer / API-token substrings must not reach deploy stderr.
+
+    Refute: a curl/log body containing `Authorization: Bearer x` and
+    `ACX_API_TOKEN=...` is copied onto deploy stderr after only C0 stripping.
+    """
+    result = _run_capture_failure_evidence(
+        tmp_path,
+        ssh_body=(
+            b"Authorization: Bearer supersecret-token\n"
+            b"ACX_API_TOKEN=another-secret\n"
+            b"password=hunter2\n"
+            b"HTTP_CODE=200\n"
+        ),
+    )
+    combined = result.stderr
+    assert result.returncode == 0, combined.decode()
+    assert b"supersecret-token" not in combined
+    assert b"another-secret" not in combined
+    assert b"hunter2" not in combined
+    assert b"Authorization: Bearer" in combined
+    assert b"ACX_API_TOKEN=" in combined
+    assert b"password=" in combined
+    assert b"[REDACTED]" in combined
+
+
+def test_emit_sanitized_evidence_is_hoisted_out_of_capture() -> None:
+    """VLMHEAL-1-REV-C-05: nested emit_sanitized_evidence must be a top-level helper."""
+    source = SCRIPT.read_text()
+    capture = _function_body("capture_failure_evidence")
+    # Nested `name() {` would appear inside capture_failure_evidence's body.
+    assert "emit_sanitized_evidence() {" not in capture
+    assert "\nemit_sanitized_evidence() {" in source
+    assert "emit_sanitized_evidence" in capture
+
+
+def test_evidence_timeout_is_parsed_through_validated_deadline() -> None:
+    """VLMHEAL-1-REV-B-08: ACX_EVIDENCE_TIMEOUT must use validated_deadline."""
+    body = _function_body("capture_failure_evidence")
+    assert "validated_deadline ACX_EVIDENCE_TIMEOUT" in body
+    assert "ACX_REMOTE_COMMAND_TIMEOUT" not in body
+
+
+def test_empty_api_container_id_emits_no_api_container_line() -> None:
+    """VLMHEAL-1-REV-B-11: empty compose ps -q must not run docker logs with no id."""
+    body = _function_body("capture_failure_evidence")
+    assert "no api container" in body
+    assert "docker logs --tail 80" in body
+    assert "api container not found" not in body
+    assert body.index("[ -n") < body.index("docker logs --tail 80") < body.index("no api container")

@@ -25,11 +25,13 @@ def _write_project(tmp_path: Path) -> tuple[Path, Path]:
 
 
 def _run(
-    tmp_path: Path, *selection: str, require_full: bool = True
+    tmp_path: Path, *selection: str, require_full: bool = True, strict_env: bool = False
 ) -> tuple[subprocess.CompletedProcess[str], dict]:
     config, receipt = _write_project(tmp_path)
     env = os.environ.copy()
     env["PYTHONPATH"] = str(SERVICE_ROOT)
+    if strict_env:
+        env["ACX_STRICT_GATE"] = "1"
     args = [
         sys.executable,
         "-m",
@@ -90,3 +92,12 @@ def test_full_collection_is_accepted_and_receipted(tmp_path: Path) -> None:
         "collected_count": 2,
         "scope": "full",
     }
+
+
+def test_strict_gate_rejects_narrowed_collection_without_cli_flag(tmp_path: Path) -> None:
+    """FIR-12-BR-80: the environment gate must make narrowing fail closed."""
+    result, receipt = _run(tmp_path, "tests_a", require_full=False, strict_env=True)
+
+    assert result.returncode != 0
+    assert "full collection required; collection was narrowed" in result.stderr
+    assert receipt["scope"] == "narrowed"

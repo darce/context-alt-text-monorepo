@@ -12,14 +12,14 @@ const STEP_TITLE = {
   [GUIDED_STEP.APPLY]: 'step.apply',
 } as const;
 
+export const GUIDED_FACE_SECTION_ID = 'guided-section-face';
+
 export const GUIDED_SECTION_IDS: Record<GuidedStep, string> = {
   [GUIDED_STEP.CONTEXT]: 'guided-section-understand',
-  [GUIDED_STEP.NAMES]: 'guided-section-identity',
+  [GUIDED_STEP.NAMES]: GUIDED_FACE_SECTION_ID,
   [GUIDED_STEP.DRAFT]: 'guided-section-review',
   [GUIDED_STEP.APPLY]: 'guided-section-apply',
 };
-
-export const GUIDED_FACE_SECTION_ID = 'guided-section-face';
 
 export const GUIDE_STEPS: readonly GuidedStep[] = [
   GUIDED_STEP.CONTEXT,

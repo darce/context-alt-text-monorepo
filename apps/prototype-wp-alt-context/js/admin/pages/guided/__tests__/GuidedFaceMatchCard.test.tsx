@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import type { Mock } from 'vitest';
 
 import type { FaceThumbnailProps } from '../../../../components/ui/FaceThumbnail';
 import { guidedCopy } from '../../../guidedPrototype/copy';
@@ -32,24 +33,24 @@ vi.mock('../../../../components/ui/FaceThumbnail', () => ({
 
 const scenario = createGuidedScenario();
 
+type ChooseName = (position: GuidedFacePosition, choice: GuidedNameChoice, origin: HTMLInputElement) => void;
+
 const renderPanel = (
   state = createGuidedDemoState(),
   handlers?: {
-    onChoose?: ReturnType<typeof vi.fn>;
-    onContinue?: ReturnType<typeof vi.fn>;
+    onChoose?: Mock<ChooseName>;
+    onContinue?: Mock<() => void>;
   },
 ) => {
-  const onChoose = handlers?.onChoose ?? vi.fn();
-  const onContinue = handlers?.onContinue ?? vi.fn();
-  const onConfirmReplacement = vi.fn();
-  const onCancelReplacement = vi.fn();
+  const onChoose = handlers?.onChoose ?? vi.fn<ChooseName>();
+  const onContinue = handlers?.onContinue ?? vi.fn<() => void>();
+  const onConfirmReplacement = vi.fn<() => void>();
+  const onCancelReplacement = vi.fn<() => void>();
   const view = render(
     <GuidedFacesPanel
       scenario={scenario}
       state={state}
-      onChoose={(position: GuidedFacePosition, choice: GuidedNameChoice, origin: HTMLInputElement) =>
-        onChoose(position, choice, origin)
-      }
+      onChoose={onChoose}
       onContinue={onContinue}
       onConfirmReplacement={onConfirmReplacement}
       onCancelReplacement={onCancelReplacement}
@@ -158,7 +159,7 @@ describe('GuidedFacesPanel and GuidedFaceMatchCard', () => {
         choice={GUIDED_NAME_CHOICE.UNDECIDED}
         mediaUrl={scenario.pressPhoto.src}
         disabled={false}
-        onChoose={vi.fn()}
+        onChoose={vi.fn<(choice: GuidedNameChoice, origin: HTMLInputElement) => void>()}
       />,
     );
     expect(screen.getByRole('article')).toHaveAttribute('aria-labelledby', `guided-face-${face.id}-title`);

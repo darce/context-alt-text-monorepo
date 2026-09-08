@@ -363,7 +363,7 @@ def test_adapter_publishes_raw_smax_below_kfold_tau(tmp_path: Path) -> None:
     items.append(probe)
     gt[10] = [_gt(cx, cy, w, h, "Alice")]
 
-    matched, _, _, _ = collect_matched_faces(items, gt)
+    matched, _, _, _, _ = collect_matched_faces(items, gt)
     kfold = assign_open_set_kfold(matched)
     probe_decisions = [d for d in kfold.decisions if d.media_id == 10]
     assert probe_decisions
@@ -614,7 +614,7 @@ def test_unmatched_detection_reaches_the_gallery(tmp_path: Path) -> None:
     vecs = _vecs()
     carol_item, carol_boxes = _carol_with_unmatched_alice(vecs)
     plan, items, gt = _full_plan_items_with_carol(tmp_path, carol_item, carol_boxes)
-    _, associations, _, _ = collect_matched_faces(items, gt)
+    _, associations, _, _, _ = collect_matched_faces(items, gt)
     assert associations[13].unmatched_detections == (1,)
     searches, _ = searches_from_run_records(items, gt, plan=plan)
     alice_gallery = _gallery_of(plan, "Alice")
@@ -668,7 +668,7 @@ def test_adapter_publishes_raw_foil_smax_on_both_sides_of_tau(tmp_path: Path) ->
 
     alice_gallery = _gallery_of(plan, "Alice")
     bob_gallery = _gallery_of(plan, "Bob")
-    matched, _, _, _ = collect_matched_faces(items, gt)
+    matched, _, _, _, _ = collect_matched_faces(items, gt)
     alice_proto = mean_prototype(
         [
             face.embedding_array()
@@ -726,9 +726,9 @@ def test_padded_gt_name_still_emits_mated_search(tmp_path: Path) -> None:
     items.append(_item(10, [_face(bbox, vecs["Alice"])]))
     gt[10] = [_gt(cx, cy, w, h, "Alice ")]
 
-    matched, associations, _, _ = collect_matched_faces(items, gt)
+    matched, associations, _, _, _ = collect_matched_faces(items, gt)
     probe_faces = [face for face in matched if face.media_id == 10]
-    assert [face.true_name for face in probe_faces] == ["Alice "]
+    assert [face.true_name for face in probe_faces] == ["Alice"]
     assert associations[10].unmatched_gt == ()
 
     searches, _ = searches_from_run_records(items, gt, plan=plan)
@@ -806,7 +806,7 @@ def test_group_photo_prototype_is_per_subject_not_media(tmp_path: Path) -> None:
 
     gallery = _gallery_of(plan, "Dale")
     assert _gallery_of(plan, "Eve") is gallery
-    matched, _, _, _ = collect_matched_faces(items, gt)
+    matched, _, _, _, _ = collect_matched_faces(items, gt)
     group_faces = [
         face
         for face in matched
@@ -1016,7 +1016,7 @@ def test_last_in_range_unmatched_detection_reaches_overall_nonmated(
     vecs = _vecs()
     carol_item, carol_boxes = _carol_with_last_unmatched_alice(vecs)
     plan, items, gt = _full_plan_items_with_carol(tmp_path, carol_item, carol_boxes)
-    _, associations, _, _ = collect_matched_faces(items, gt)
+    _, associations, _, _, _ = collect_matched_faces(items, gt)
     last = len(carol_item["faces"]) - 1
     assert last in associations[13].unmatched_detections
     assert last == 2

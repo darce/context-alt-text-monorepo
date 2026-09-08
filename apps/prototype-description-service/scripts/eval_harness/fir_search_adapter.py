@@ -68,7 +68,7 @@ def searches_from_run_records(
     plan: RunPlan,
 ) -> tuple[dict[str, dict[str, list[SearchResult]]], list[SearchResult]]:
     """``(searches keyed by stratum, overall_nonmated)`` — ``score_run``'s args."""
-    matched, associations, _, _ = collect_matched_faces(run_items, gt_by_media)
+    matched, associations, _, _, _ = collect_matched_faces(run_items, gt_by_media)
     # Strip identity keys once so GT/roster padding cannot drop a detected mate.
     matched = [_normalise_face(face) for face in matched]
     by_media: dict[int, list[MatchedFace]] = defaultdict(list)

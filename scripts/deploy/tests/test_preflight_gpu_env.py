@@ -2305,6 +2305,7 @@ def test_verifier_request_waits_for_stopped_gpu_through_real_run_worker(
         total_items=1,
         cancel_requested=False,
         recognition_enabled=False,
+        deadline_seconds=None,
     )
     item = SimpleNamespace(
         media_id=json.loads(data["media_ids"])[0],

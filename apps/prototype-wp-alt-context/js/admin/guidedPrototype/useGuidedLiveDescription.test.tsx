@@ -10,7 +10,7 @@ import {
   GUIDED_LIVE_WAIT_CEILING_SECONDS,
 } from './liveDescription';
 import { GUIDED_LIVE_WARM_CEILING_SECONDS, useGuidedLiveDescription } from './useGuidedLiveDescription';
-import type { GuidedLiveDescriptionClient } from './useGuidedLiveDescription';
+import type { GuidedLiveDescriptionClient, UseGuidedLiveDescriptionResult } from './useGuidedLiveDescription';
 
 const MEDIA_ID = 4211;
 
@@ -591,8 +591,8 @@ describe('useGuidedLiveDescription', () => {
   describe('withdrawing the media id mid-run', () => {
     it('stops the wait and cancels the run on the server', async () => {
       const client = stubClient();
-      const { result, rerender } = renderHook(
-        ({ mediaId }: { mediaId: number | null }) => useGuidedLiveDescription({ mediaId, client }),
+      const { result, rerender } = renderHook<UseGuidedLiveDescriptionResult, { mediaId: number | null }>(
+        ({ mediaId }) => useGuidedLiveDescription({ mediaId, client }),
         { initialProps: { mediaId: MEDIA_ID } },
       );
 
@@ -619,8 +619,8 @@ describe('useGuidedLiveDescription', () => {
             }),
         ),
       });
-      const { result, rerender } = renderHook(
-        ({ mediaId }: { mediaId: number | null }) => useGuidedLiveDescription({ mediaId, client }),
+      const { result, rerender } = renderHook<UseGuidedLiveDescriptionResult, { mediaId: number | null }>(
+        ({ mediaId }) => useGuidedLiveDescription({ mediaId, client }),
         { initialProps: { mediaId: MEDIA_ID } },
       );
 
@@ -645,8 +645,8 @@ describe('useGuidedLiveDescription', () => {
 
     it('does not cancel anything when the gate closes with no run in flight', async () => {
       const client = stubClient();
-      const { rerender } = renderHook(
-        ({ mediaId }: { mediaId: number | null }) => useGuidedLiveDescription({ mediaId, client }),
+      const { rerender } = renderHook<UseGuidedLiveDescriptionResult, { mediaId: number | null }>(
+        ({ mediaId }) => useGuidedLiveDescription({ mediaId, client }),
         { initialProps: { mediaId: MEDIA_ID } },
       );
 
@@ -756,7 +756,6 @@ describe('useGuidedLiveDescription', () => {
     });
   });
 
-
   describe('a run the panel walks away from is still cancelled', () => {
     it('cancels the run when the service reports a phase this client cannot read', () => {
       // Giving up on an unreadable phase stops only the browser's polling. The
@@ -797,7 +796,10 @@ describe('useGuidedLiveDescription', () => {
       let releaseCancel: () => void = () => undefined;
       const client = stubClient({
         cancel: vi.fn<GuidedLiveDescriptionClient['cancel']>(
-          () => new Promise((resolve) => { releaseCancel = () => resolve(runResponse({ status: 'cancelled' })); }),
+          () =>
+            new Promise((resolve) => {
+              releaseCancel = () => resolve(runResponse({ status: 'cancelled' }));
+            }),
         ),
       });
       const { result } = mount(client);
@@ -837,5 +839,4 @@ describe('useGuidedLiveDescription', () => {
       expect(client.submit).toHaveBeenCalledTimes(2);
     });
   });
-
 });

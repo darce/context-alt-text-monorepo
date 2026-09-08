@@ -1,10 +1,10 @@
 import React from 'react';
 
 import { guidedCopy } from '../../guidedPrototype/copy';
-import { GUIDED_OUTCOME, type GuidedOutcome } from '../../guidedPrototype/state';
+import { GUIDED_OUTCOME, type GuidedOutcome as GuidedOutcomeValue } from '../../guidedPrototype/state';
 
 export interface GuidedOutcomeProps {
-  outcome: GuidedOutcome;
+  outcome: GuidedOutcomeValue;
   onReturn: () => void;
 }
 

@@ -386,6 +386,25 @@ def test_main_reports_missing_tsv(tmp_path, capsys):
     assert "TSV not found" in capsys.readouterr().err
 
 
+def test_main_reports_missing_tsv_with_printable_path_text(tmp_path, capsys):
+    """VLM6-RV18-13: operator errors must encode PEP 383 path surrogates."""
+    tsv = tmp_path / "missing-\udce9.tsv"
+    rc = main(
+        [
+            "--images-dir",
+            str(tmp_path),
+            "--tsv",
+            str(tsv),
+            "--out-jsonl",
+            str(tmp_path / "out.jsonl"),
+        ]
+    )
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "undecodable:" in err
+    assert "\udce9" not in err
+
+
 # -------------------------------------------------------- baseline cost (A4)
 def test_cost_report_fields_null_when_no_rate():
     assert cost_report_fields(cost_per_image_usd=None, paid_describe_calls=10) == {

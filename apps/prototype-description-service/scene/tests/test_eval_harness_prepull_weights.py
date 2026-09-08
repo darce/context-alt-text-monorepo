@@ -30,9 +30,12 @@ from scripts.eval_harness.bakeoff_runner import (
 from scripts.eval_harness.prepull_weights import (
     DOWNLOAD_TIMEOUT_S,
     PRESENT_SIZE_RATIO,
+    DiskBudget,
     DiskBudgetError,
+    DownloadJob,
     DownloadStatus,
     SkipReason,
+    _emit_output,
     _missing_files,
     already_present,
     check_disk_budget,
@@ -386,6 +389,27 @@ def test_cli_dry_run_prints_plan_and_skip(
     assert "BUDGET " in out
     assert "required_gb=" in out
     assert "free_gb=" in out
+
+
+def test_cli_plan_prints_printable_local_path_text(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """VLM6-RV18-13: plan stdout must encode PEP 383 path surrogates."""
+    local_dir = str(tmp_path / "models-\udce9")
+    job = DownloadJob(
+        candidate_id="alpha",
+        repo="org/alpha",
+        revision=_SHA,
+        files=("model.gguf",),
+        local_dir=local_dir,
+        size_gb=1.0,
+        argv=("huggingface-cli", "download", "org/alpha", "--local-dir", local_dir),
+        file_expected_gb=(1.0,),
+    )
+    _emit_output([job], [], DiskBudget(required_gb=1.0, free_gb=2.0, ok=True), as_json=False)
+    out = capsys.readouterr().out
+    assert "undecodable:" in out
+    assert "\udce9" not in out
 
 
 _COMPETING_LLAMA_CPP_EXCLUDED_BY_ONLY = (

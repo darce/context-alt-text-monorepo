@@ -86,6 +86,33 @@ except ImportError:  # pragma: no cover — standalone single-file deploy path
         return out
 
 
+# Operator-facing path slots use the shared wire encoder in the monorepo. Keep
+# the single-file batch-VM copy runnable by providing the same byte-preserving
+# fallback when that package is unavailable.
+try:
+    from scripts.eval_harness._pathtext import _printable_path
+except ImportError:  # pragma: no cover — standalone single-file deploy path
+
+    def _standalone_printable_path(path: Path | str) -> str:
+        text = os.fspath(path)
+        try:
+            text.encode("utf-8")
+        except UnicodeEncodeError:
+            raw = os.fsencode(text)
+            try:
+                return raw.decode("utf-8")
+            except UnicodeDecodeError:
+                escaped = raw.replace(b"\\", b"\\\\").decode(
+                    "utf-8", errors="backslashreplace"
+                )
+                return f"undecodable:{escaped}"
+        if text.lstrip("\\").startswith("undecodable:"):
+            return f"\\{text}"
+        return text
+
+    _printable_path = _standalone_printable_path
+
+
 CAPTION_TASK = "<MORE_DETAILED_CAPTION>"
 DEFAULT_STALL_LIMIT = 5  # parity with scripts.eval_harness.cli.DEFAULT_STALL_LIMIT
 MAX_IMAGE_EDGE_PX = 1024
@@ -487,11 +514,11 @@ def main(argv: list[str] | None = None) -> int:
     tsv_path = Path(args.tsv).expanduser()
     out_jsonl = Path(args.out_jsonl).expanduser()
     if not tsv_path.exists():
-        print(f"TSV not found: {tsv_path}", file=sys.stderr)
+        print(f"TSV not found: {_printable_path(tsv_path)}", file=sys.stderr)
         return 1
     rows = parse_tsv(tsv_path.read_text(), images_dir)
     if not rows:
-        print(f"no parsable rows in {tsv_path}", file=sys.stderr)
+        print(f"no parsable rows in {_printable_path(tsv_path)}", file=sys.stderr)
         return 1
 
     captioner, resolved = load_captioner(spec)

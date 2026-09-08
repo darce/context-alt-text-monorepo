@@ -12,7 +12,7 @@
 #
 # Subcommands:
 #   build          [tag]              Build :SHA + :tag locally (no push). tag default = dev.
-#   build-remote   [tag]              Build :SHA + :tag on the OCI VM (no local docker).
+#   build-remote   [tag]              Build immutable :SHA on the OCI VM (no local docker).
 #   deploy <env>                      Build + push :SHA + :ENV_TAG + ssh restart + verify.
 #                                       env = dev|dev-fir|staging|prod. 'deploy prod' requires CONFIRM=PROMOTE.
 #                                       dev-fir shares the :dev image tag with dev (isolated runtime, same image).
@@ -54,6 +54,10 @@
 #   ACX_DEPLOY_PLATFORM      default linux/arm64 (matches A1 Always Free shape; ignored in remote-build)
 #   ACX_REMOTE_BUILD         set to 1 to build on the VM instead of locally
 #   ACX_REMOTE_BUILD_DIR     default /tmp/acx-build  (rsync target on the VM)
+#   ACX_REMOTE_BUILDER_NAME  default acx-deploy-builder-v1 (stable docker-container builder)
+#   ACX_REMOTE_BUILDER_NODE  default acx-deploy-builder-v1-node (single explicit node)
+#   ACX_REMOTE_BUILDER_ENDPOINT
+#                            default unix:///var/run/docker.sock; other endpoints are refused
 #   ACX_ALLOW_DIRTY          set to 1 to skip dirty-tree check (dev and dev-fir only)
 #   ACX_VERIFY_ATTEMPTS      default 5  (post-deploy verify retry count for warm-up)
 #   ACX_VERIFY_SLEEP         default 5  (seconds between verify attempts)
@@ -95,7 +99,8 @@
 #                              probes (default 30). Decoupled from ACX_REMOTE_COMMAND_TIMEOUT so
 #                              raising the pull/restart knob does not stretch the pre-rollback
 #                              outage window.
-#   ACX_REMOTE_BUILD_TIMEOUT positive integer wall-clock seconds for remote rsync/build work (default 1800).
+#   ACX_REMOTE_BUILD_TIMEOUT positive integer wall-clock seconds for remote rsync/BuildKit setup,
+#                              bootstrap, prune, and build work (default 1800; one shared budget).
 #   CONFIRM                  required for prod actions: CONFIRM=PROMOTE (applies to deploy prod and promote * prod)
 #
 # Image variants / rollback (RA-07):
@@ -138,6 +143,10 @@ GIT_REF="${GIT_REF:-HEAD}"
 PLATFORM="${ACX_DEPLOY_PLATFORM:-linux/arm64}"
 REMOTE_BUILD="${REMOTE_BUILD:-${ACX_REMOTE_BUILD:-0}}"
 REMOTE_BUILD_DIR="${ACX_REMOTE_BUILD_DIR:-/tmp/acx-build}"
+REMOTE_BUILDER_NAME="${ACX_REMOTE_BUILDER_NAME:-acx-deploy-builder-v1}"
+REMOTE_BUILDER_NODE="${ACX_REMOTE_BUILDER_NODE:-acx-deploy-builder-v1-node}"
+REMOTE_BUILDER_ENDPOINT="${ACX_REMOTE_BUILDER_ENDPOINT:-unix:///var/run/docker.sock}"
+REMOTE_BUILD_LOCK="${REMOTE_BUILD_DIR}.lock"
 # Optional docker build --target. Empty means BuildKit's default (last stage = runtime).
 # This is the plumbing the script would pass as `docker build --target ...`; there was no
 # prior target notion in this file — introduce it only as the explicit opt-in for VLM/etc.
@@ -180,6 +189,8 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 # inlined so scripts/deploy/tests/test-ocir-auth.sh can pin its invariants.
 # shellcheck source=lib/ocir-auth.sh
 source "${SCRIPT_DIR}/lib/ocir-auth.sh"
+# shellcheck source=lib/bounded-remote-build.sh
+source "${SCRIPT_DIR}/lib/bounded-remote-build.sh"
 SERVICE_DIR="${REPO_ROOT}/apps/prototype-description-service"
 # Display label only. Live ssh invocations use `-l "${OCI_USER}" -- "${OCI_HOST}"`
 # so a leading-dash identity can never be parsed as an ssh option (S2-A-12).
@@ -349,6 +360,15 @@ assert_safe_shell_token "OCIR_NAMESPACE" "${OCIR_NAMESPACE}"
 assert_safe_shell_token "OCIR_REGISTRY" "${OCIR_REGISTRY}"
 assert_safe_shell_token "ACX_BUILD_TARGET" "${ACX_BUILD_TARGET}"
 assert_safe_shell_token "ACX_IMAGE_VARIANT" "${ACX_IMAGE_VARIANT}"
+if [[ ! "${REMOTE_BUILDER_NAME}" =~ ^[A-Za-z0-9_.-]+$ || "${REMOTE_BUILDER_NAME}" == -* ]]; then
+  fail "ACX_REMOTE_BUILDER_NAME must be a non-leading-dash [A-Za-z0-9_.-] token (got: ${REMOTE_BUILDER_NAME})"
+fi
+if [[ ! "${REMOTE_BUILDER_NODE}" =~ ^[A-Za-z0-9_.-]+$ || "${REMOTE_BUILDER_NODE}" == -* ]]; then
+  fail "ACX_REMOTE_BUILDER_NODE must be a non-leading-dash [A-Za-z0-9_.-] token (got: ${REMOTE_BUILDER_NODE})"
+fi
+if [[ "${REMOTE_BUILDER_ENDPOINT}" != "unix:///var/run/docker.sock" ]]; then
+  fail "ACX_REMOTE_BUILDER_ENDPOINT must be unix:///var/run/docker.sock; refusing an unverified endpoint"
+fi
 # D1: REMOTE_BUILD_DIR is interpolated into ssh remote command strings — same sink class as
 # ACX_BUILD_TARGET. Empty is refused (operator override of "" would otherwise skip the default).
 if [[ -z "${REMOTE_BUILD_DIR}" ]]; then
@@ -444,7 +464,14 @@ assert_remote_build_free_space() {
   local target min_gb avail_gb observed_gb timeout rc=0
   target="${ACX_BUILD_TARGET:-empty}"
   min_gb="$(remote_build_min_free_gb)"
-  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  if [[ -n "${1:-}" ]]; then
+    timeout="${1}"
+    if [[ ! "${timeout}" =~ ^[1-9][0-9]*$ ]]; then
+      fail "remote free-space probe timeout must be a positive integer (got: ${timeout})"
+    fi
+  else
+    timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  fi
   # df -BG prints e.g. "12G"; strip the unit. DockerRootDir is the volume that fills
   # with BuildKit cache (OPS-1), not the rsync temp dir.
   avail_gb="$(run_with_deadline "${timeout}" "remote docker free-space probe" \
@@ -469,17 +496,6 @@ assert_remote_disk_headroom_for_pull() {
   if is_vlm_smoke_budget || [[ "${ACX_ENFORCE_DISK_ON_PULL:-0}" == "1" ]]; then
     assert_remote_build_free_space
   fi
-}
-
-# Bounded BuildKit cache reclaim on the remote host. Removes unused build-cache
-# entries older than 72h only — not a full wipe — so subsequent builds keep recent
-# layers while reclaiming the long-term disk fill documented in OPS-1 / README.
-remote_builder_prune() {
-  local timeout
-  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
-  log "Pruning remote BuildKit cache older than 72h on ${SSH_TARGET}"
-  run_with_deadline "${timeout}" "remote BuildKit cache prune" \
-    ssh -l "${OCI_USER}" -- "${OCI_HOST}" "docker builder prune --force --filter until=72h"
 }
 
 #---------------------------------------------------------------- env mapping
@@ -838,6 +854,37 @@ _build_target_args() {
   fi
 }
 
+remote_build_remaining() {
+  local phase="${1:-remote BuildKit phase}" elapsed remaining
+  elapsed=$((SECONDS - remote_build_started))
+  remaining=$((remote_build_timeout - elapsed))
+  if (( remaining < 1 )); then
+    warn "Remote build budget exhausted before ${phase}"
+    return 1
+  fi
+  printf '%s\n' "${remaining}"
+}
+
+remote_build_phase_timeout() {
+  local phase="$1" cap="$2" remaining
+  remaining="$(remote_build_remaining "${phase}")" || return
+  if (( remaining > cap )); then
+    remaining="${cap}"
+  fi
+  printf '%s\n' "${remaining}"
+}
+
+remote_build_cleanup_generation() {
+  local build_dir="$1" command_timeout="$2" cleanup_timeout
+  if cleanup_timeout="$(remote_build_phase_timeout "remote generation directory cleanup" "${command_timeout}")"; then
+    run_with_deadline "${cleanup_timeout}" "remote generation directory cleanup" \
+      ssh -l "${OCI_USER}" -- "${OCI_HOST}" "rm -rf -- '$(remote_quote "${build_dir}")'" \
+      || warn "Could not clean remote generation directory ${build_dir}"
+  else
+    warn "Remote build budget exhausted; generation directory may remain: ${build_dir}"
+  fi
+}
+
 do_build() {
   preflight_docker
   local sha tag target_args
@@ -863,29 +910,45 @@ do_build_remote() {
   preflight_ssh
   preflight_remote_docker
   preflight_rsync
-  local sha tag target_args build_dir build_timeout command_timeout build_rc=0
+  local sha tag build_dir build_timeout command_timeout build_rc=0 rsync_rc=0
+  local remote_build_started remote_build_timeout
+  local free_space_timeout mkdir_timeout rsync_timeout remaining
+  local remote_program remote_command remote_arg
   sha="$(git -C "${REPO_ROOT}" rev-parse "${GIT_REF}")"
   tag="${1:-dev}"
   assert_safe_shell_token "image tag" "${tag}"
   assert_safe_image_repo "IMAGE_BASE" "${IMAGE_BASE}"
-  target_args="$(_build_target_args)"
   build_timeout="$(validated_deadline ACX_REMOTE_BUILD_TIMEOUT 1800)"
   command_timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  remote_build_started="${SECONDS}"
+  remote_build_timeout="${build_timeout}"
   # A unique generation directory prevents one coordinator's --delete rsync
   # from rewriting another coordinator's source tree. flock additionally
-  # serializes the resource-heavy BuildKit phase on the production-serving VM.
+  # serializes builder setup, bootstrap, prune, and the resource-heavy BuildKit
+  # phase on the production-serving VM.
   build_dir="${REMOTE_BUILD_DIR%/}-${sha:0:12}-$(date +%s)-${BASHPID:-$$}-${RANDOM}"
   assert_safe_shell_token "remote generation build directory" "${build_dir}"
 
-  # Reclaim stale BuildKit cache first so the free-space gate reflects post-prune headroom.
-  remote_builder_prune
-  assert_remote_build_free_space
+  # All pre-build remote calls consume the same ACX_REMOTE_BUILD_TIMEOUT
+  # budget; command_timeout is only a per-call cap for lightweight setup.
+  if ! free_space_timeout="$(remote_build_phase_timeout "remote docker free-space probe" "${command_timeout}")"; then
+    fail "Remote build budget exhausted before the free-space probe"
+  fi
+  assert_remote_build_free_space "${free_space_timeout}"
 
   log "Syncing build context ${SERVICE_DIR}/ -> ${SSH_TARGET}:${build_dir}/"
   # D1: REMOTE_BUILD_DIR is charset-validated at ingestion; still single-quote at the sink so a
   # future allowlist slip cannot unquote into remote argv (same blast radius as ACX_BUILD_TARGET).
-  run_with_deadline "${command_timeout}" "remote generation directory creation" \
-    ssh -l "${OCI_USER}" -- "${OCI_HOST}" "mkdir -p -- '${build_dir}'"
+  if ! mkdir_timeout="$(remote_build_phase_timeout "remote generation directory creation" "${command_timeout}")"; then
+    fail "Remote build budget exhausted before generation directory creation"
+  fi
+  run_with_deadline "${mkdir_timeout}" "remote generation directory creation" \
+    ssh -l "${OCI_USER}" -- "${OCI_HOST}" "mkdir -p -- '$(remote_quote "${build_dir}")'" \
+    || build_rc=$?
+  if (( build_rc != 0 )); then
+    remote_build_cleanup_generation "${build_dir}" "${command_timeout}"
+    return "${build_rc}"
+  fi
   # Weight-artifact excludes must stay in lockstep with apps/prototype-description-service/.dockerignore
   # (see test_dockerignore_weight_exclusions.py). This list does NOT read .dockerignore.
   #
@@ -895,7 +958,8 @@ do_build_remote() {
   #   models--Qwen.../ and one ten levels down. Prefixing `**/` injects a slash and switches
   #   the rule to full-path matching; that is the opposite of Docker .dockerignore, where
   #   `*.bin` is root-anchored and `**/*.bin` is the recursive form. Never add `**/` here.
-  run_with_deadline "${build_timeout}" "remote build-context rsync" rsync -az --delete \
+  if rsync_timeout="$(remote_build_phase_timeout "remote build-context rsync" "${build_timeout}")"; then
+    run_with_deadline "${rsync_timeout}" "remote build-context rsync" rsync -az --delete \
     --exclude='.git/' \
     --exclude='__pycache__/' \
     --exclude='*.pyc' \
@@ -917,21 +981,39 @@ do_build_remote() {
     --exclude='*.gguf' \
     --exclude='*.msgpack' \
     --exclude='models--*/' \
-    "${SERVICE_DIR}/" "${SSH_TARGET}:${build_dir}/"
+    "${SERVICE_DIR}/" "${SSH_TARGET}:${build_dir}/" || rsync_rc=$?
+  else
+    rsync_rc=1
+  fi
+  if (( rsync_rc != 0 )); then
+    remote_build_cleanup_generation "${build_dir}" "${command_timeout}"
+    return "${rsync_rc}"
+  fi
 
   log "Building ${IMAGE_BASE}:${sha} on ${SSH_TARGET} for ${tag} (native arm64${ACX_BUILD_TARGET:+, target=${ACX_BUILD_TARGET}})"
   # No --platform: VM is already linux/arm64 (Ampere A1).
-  # shellcheck disable=SC2086 # target_args is intentionally word-split (empty or "--target X")
-  # D1: quote REMOTE_BUILD_DIR (validated at ingestion) so it cannot re-open the ssh injection sink.
-  run_with_deadline "${build_timeout}" "remote docker build for ${sha:0:12}" \
-    ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cd -- '${build_dir}' && flock -w ${build_timeout} '${REMOTE_BUILD_DIR}.lock' docker build \
-      --build-arg GIT_COMMIT_SHA=${sha} \
-      ${target_args} \
-      -t ${IMAGE_BASE}:${sha} \
-      ." || build_rc=$?
-  run_with_deadline "${command_timeout}" "remote generation directory cleanup" \
-    ssh -l "${OCI_USER}" -- "${OCI_HOST}" "rm -rf -- '${build_dir}'" \
-    || warn "Could not clean remote generation directory ${build_dir}"
+  # The generated program performs builder setup, bootstrap, verification,
+  # prune, and build beneath one shared lock. Its stdin is the program itself;
+  # run_with_deadline preserves that stdin while it backgrounds ssh.
+  remote_program="$(bounded_remote_build_program)"
+  if ! remaining="$(remote_build_remaining "remote BuildKit setup/bootstrap/prune/build")"; then
+    remote_build_cleanup_generation "${build_dir}" "${command_timeout}"
+    fail "Remote build budget exhausted before the locked BuildKit phase"
+  fi
+  # Establish the absolute deadline on the VM immediately before lock wait so
+  # local/remote clock skew cannot make the inner watchdog either too short or
+  # longer than the remaining local budget.
+  remote_command="command -v flock >/dev/null 2>&1 && acx_deadline_epoch=\$(date +%s) && acx_deadline_epoch=\$((acx_deadline_epoch + ${remaining})) && flock -w ${remaining} $(remote_quote "${REMOTE_BUILD_LOCK}") bash -s --"
+  for remote_arg in "${REMOTE_BUILDER_NAME}" "${REMOTE_BUILDER_NODE}" "${REMOTE_BUILDER_ENDPOINT}" \
+    "${IMAGE_BASE}" "${sha}" "${ACX_BUILD_TARGET}"; do
+    remote_command+=" $(remote_quote "${remote_arg}")"
+  done
+  remote_command+=' "$acx_deadline_epoch"'
+  remote_command+=" $(remote_quote "${build_dir}")"
+  run_with_deadline "${remaining}" "remote BuildKit setup/bootstrap/prune/build for ${sha:0:12}" \
+    ssh -l "${OCI_USER}" -- "${OCI_HOST}" "${remote_command}" \
+    <<<"${remote_program}" || build_rc=$?
+  remote_build_cleanup_generation "${build_dir}" "${command_timeout}"
   (( build_rc == 0 )) || return "${build_rc}"
   log "Built ${IMAGE_BASE}:${sha} on ${SSH_TARGET}; environment tag awaits promotion"
 }

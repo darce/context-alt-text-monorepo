@@ -618,18 +618,21 @@ source "{SCRIPT}"
 preflight_ssh() {{ :; }}
 preflight_remote_docker() {{ :; }}
 preflight_rsync() {{ :; }}
-remote_builder_prune() {{ :; }}
 assert_remote_build_free_space() {{ :; }}
-run_with_deadline() {{ printf '%s\\n' "$@" >> "{calls}"; }}
+run_with_deadline() {{
+  printf '%s\\n' "$@" >> "{calls}"
+  if [[ "$2" == *"setup/bootstrap/prune/build"* ]]; then cat >> "{calls}"; fi
+}}
 do_build_remote dev
 '''
     result = subprocess.run(["bash", "-c", driver], text=True, capture_output=True,
                             cwd=SCRIPT.parents[2], env=dict(os.environ), timeout=10)
     assert result.returncode == 0, result.stdout + result.stderr
     commands = calls.read_text()
-    assert "docker build" in commands
-    assert re.search(r"-t [^\s]+:[a-f0-9]{40}", commands)
-    assert not re.search(r"-t [^\s]+:dev(?:\s|$)", commands)
+    assert "buildx build" in commands
+    assert "--load" in commands
+    assert '-t "${acx_image}:${acx_sha}" .' in commands
+    assert ":dev" not in commands
 
 
 def test_boot_smoke_has_outer_deadlines_and_curl_request_timeout() -> None:

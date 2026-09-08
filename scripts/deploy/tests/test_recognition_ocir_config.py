@@ -591,7 +591,7 @@ def test_single_attempt_verify_does_not_sleep_after_terminal_failure(tmp_path: P
     assert not sleep_record.exists()
 
 
-def test_verify_accepts_unhealthy_health_body_and_compares_identity() -> None:
+def test_verify_rejects_unhealthy_health_even_with_matching_identity() -> None:
     expected_sha = subprocess.check_output(
         ["git", "rev-parse", "HEAD"],
         cwd=SCRIPT.parents[2],
@@ -614,9 +614,9 @@ do_verify dev
 '''
     result = subprocess.run(["/bin/bash", "-c", command], text=True, capture_output=True, check=False)
 
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 1, result.stderr
     assert "reports unhealthy (database)" in result.stderr
-    assert "Verified: dev runs" in result.stdout
+    assert "Verified: dev runs" not in result.stdout
 
 
 def test_status_prints_unhealthy_for_reachable_503_health_body() -> None:

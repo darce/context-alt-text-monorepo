@@ -23,16 +23,23 @@ reapplying its obsolete runtime. Five current defects were recorded on
   commit uses deterministic version names and follows version-list pagination
   before an ETag-fenced update. The explicit zero-readback mode remains intact.
 - Serialization and elapsed-time bounds do not limit build memory or CPU.
-  Finding `05` requires a resource-limited BuildKit container while retaining
-  the existing generation directories, global lock and whole-operation budget.
-  Its implementation and final review are tracked on the consolidated feature;
-  the initial rejection of the unsafe old helper is not a waiver of this gate.
+  Finding `05` now uses a stable docker-container BuildKit builder with 6 GiB
+  memory/total-swap and 2 CPU quota, verifies its driver/node/endpoint and actual
+  container limits, and retains generation directories, a shared lock and one
+  deadline across setup, bootstrap, prune and build. Unsupported or mismatched
+  builders fail closed; builds load only the immutable full-SHA tag. Seven
+  executable fake-host tests cover rejection, reuse, tagging and deadlines.
 
 The Vault fixes passed 27 readiness tests, 21 helper tests and the shell rotation
 harness (MCP test receipts 1920–1922). Deployment publication/rollback fixes
 passed 17 focused tests (receipt 1916). These are slice receipts, not a claim
 that a live deployment or Vault rotation was performed. The final feature
-verdict requires the remaining capacity fix and Astra MEDIUM harmonization.
+verdict requires Astra MEDIUM harmonization of the completed feature. The
+capacity slice was implemented and reviewed with Luna MAX priority. Its tests
+exercise the shell program through fake Docker/SSH commands; they do not claim
+a live BuildKit build. The read-only target capability probe reported Buildx
+v0.33.0. Parent verification also corrected a stale test that expected HTTP 503
+to pass deploy verification, preserving the existing GR-261 health gate.
 
 Applicable canon: `CARD-09`/`RES-02` resource isolation, `RES-03` whole-operation
 budgets, `CARD-15`/`DATA-13` durable mutation identity, `API-02`/`API-04` outcome

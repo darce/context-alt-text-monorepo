@@ -395,6 +395,26 @@ def test_tiny_crops_are_kept_out_of_every_stratum_and_the_browse_set():
     assert [c.path for c in report.operator_review.candidates] == ["photo.jpg"]
 
 
+def test_report_json_declares_filter_counts_and_low_resolution_slice():
+    """Excluded inputs remain auditable instead of disappearing from selection."""
+    rows = [
+        (rec(path="tiny.jpg", width=79, height=112), Source.LOCALWP_UPLOADS),
+        (rec(path="unreadable.jpg", width=None, height=None), Source.LOCALWP_UPLOADS),
+        (rec(path="photo.jpg"), Source.LOCALWP_UPLOADS),
+    ]
+
+    data = report_json(build_report(rows))
+    audit = data["filter_audit"]
+
+    assert audit["input_records"] == 3
+    assert audit["after_deduplication"] == 3
+    assert audit["eligible_records"] == 1
+    assert audit["critical_slices"]["low_resolution"] == {"pre_filter": 1, "post_filter": 0}
+    assert audit["critical_slices"]["unreadable"] == {"pre_filter": 1, "post_filter": 0}
+    assert [row["path"] for row in audit["declared_exclusions"]["low_resolution"]] == ["tiny.jpg"]
+    assert [row["path"] for row in audit["declared_exclusions"]["unreadable"]] == ["unreadable.jpg"]
+
+
 # --- model face counts (face_pass overlay) -----------------------------------
 
 

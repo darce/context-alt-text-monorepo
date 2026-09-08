@@ -560,7 +560,9 @@ sanitize_deploy_diagnostic() {
 emit_sanitized_evidence() {
   local blob="$1"
   [[ -n "${blob}" ]] || return 0
-  printf '%s\n' "${blob}" | sanitize_deploy_diagnostic >&2
+  if ! printf '%s\n' "${blob}" | sanitize_deploy_diagnostic >&2; then
+    echo "diagnostic: evidence unavailable" >&2
+  fi
 }
 
 # Release It! 5.5 (Fail Fast): verify the credential we will actually use, before
@@ -586,7 +588,9 @@ ocir_login_or_fail() {
     # The token never appears in $out -- it only ever transits a pipe -- but the
     # OCI CLI echoes request context, so keep this on stderr rather than in a
     # deploy log that gets pasted around.
-    printf '%s\n' "$out" | sanitize_deploy_diagnostic >&2
+    if ! printf '%s\n' "$out" | sanitize_deploy_diagnostic >&2; then
+      echo "diagnostic: OCIR login diagnostic unavailable" >&2
+    fi
     fail "OCIR auth unavailable (${scope}, ${class})"
   fi
   log "OCIR authenticated on ${scope} via acx-vault/${ACX_OCIR_TOKEN_SECRET}"
@@ -1660,8 +1664,8 @@ preserve_rollback_tag() {
 # with the same /data/cache + RECOGNITION_BLOB_ROOT mounts the deployed stack uses,
 # so smoke observes entrypoint + /app/.image-variant + VLM cache gates (D4).
 do_boot_smoke() {
-  local env="$1" image="$2" remote_dir smoke_timeout poll_interval attempts smoke_rc=0
-  local pg_ready_budget diag_reserve setup_slack composite_deadline
+  local env="$1" image="$2" remote_dir smoke_timeout poll_interval smoke_rc=0
+  local pg_ready_budget setup_slack composite_deadline
   remote_dir="$(env_to_remote_dir "$env")"
   if [[ ! "${image}" =~ ^${IMAGE_BASE}@sha256:[a-f0-9]{64}$ ]]; then
     warn "boot smoke refused non-digest candidate: ${image}"
@@ -1674,14 +1678,6 @@ do_boot_smoke() {
   poll_interval=2
   pg_ready_budget="${SMOKE_PG_READY_TIMEOUT}"
   setup_slack="${SMOKE_SETUP_SLACK}"
-  # Reserve one poll interval for last-body + docker logs (EXIT trap) before a
-  # deadline SIGKILL. The inner health/pg loops are SECONDS-bounded; attempts is
-  # still passed for wrapper compatibility ($6) and is unused by the loops.
-  diag_reserve="${poll_interval}"
-  attempts=$(( (smoke_timeout - diag_reserve + poll_interval) / (2 * poll_interval) ))
-  if (( attempts < 1 )); then
-    attempts=1
-  fi
   composite_deadline=$((pg_ready_budget + smoke_timeout + setup_slack))
   log "Pre-promote boot smoke: ${image} on ${SSH_TARGET} (env=${env}, health_budget=${smoke_timeout}s, pg_ready_budget=${pg_ready_budget}s, real entrypoint)"
   # A local build authenticated the workstation for its push, not the VM. The
@@ -1700,7 +1696,7 @@ do_boot_smoke() {
   if ! _pull_ref_remote "${image}" >/dev/null \
     || [[ "$(remote_image_digest_ref "${image}" || true)" != "${image}" ]] \
     || ! run_with_deadline "${smoke_timeout}" "boot-smoke import gate for ${image}" \
-      ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
+      ssh -n -o BatchMode=yes -l "${OCI_USER}" -- "${OCI_HOST}" \
         "docker run --rm -e RECOGNITION_RUNTIME_MODE=development --entrypoint python ${image} -c 'import api.main'"; then
     warn "boot smoke: 'import api.main' failed on ${image} (packaging/import error)"
     return 1
@@ -1720,32 +1716,45 @@ do_boot_smoke() {
   fi
   # Pull pgvector outside the smoke body so image fetch cannot consume pg/health budgets.
   if ! run_with_deadline "$(validated_deadline ACX_PULL_TIMEOUT 900)" "boot-smoke pgvector pull for ${image}" \
-    ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
+    ssh -n -o BatchMode=yes -l "${OCI_USER}" -- "${OCI_HOST}" \
       "docker pull pgvector/pgvector:pg17"; then
-    warn "boot smoke: pre-pull of pgvector/pgvector:pg17 failed on ${SSH_TARGET}; smoke body will retry"
+    warn "boot smoke: pre-pull of pgvector/pgvector:pg17 failed on ${SSH_TARGET}"
+    return 1
   fi
   run_with_deadline "${composite_deadline}" "boot-smoke health gate for ${image}" \
     ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
-      "bash -s ${env} ${image} ${remote_dir} ${smoke_timeout} ${poll_interval} ${attempts} ${vlm_budget} ${pg_ready_budget}" <<SMOKE_WRAP || smoke_rc=$?
+      "bash -s ${env} ${image} ${remote_dir} ${smoke_timeout} ${poll_interval} ${vlm_budget} ${pg_ready_budget} ${setup_slack}" <<SMOKE_WRAP || smoke_rc=$?
 $(declare -f sanitize_deploy_diagnostic)
 $(cat <<'SMOKE'
 set -euo pipefail
-env="$1"; image="$2"; remote_dir="$3"; budget_s="$4"; poll_s="$5"; attempts="$6"; vlm_budget="$7"
-pg_budget="${8:-30}"
+# Leading space keeps this helper off the column-0 `fn() {` parser.
+ _smoke_timeout() {
+  local secs="$1"
+  shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$secs" "$@"
+  else
+    "$@"
+  fi
+}
+ _fail_if_setup_timeout() {
+  local rc=0
+  "$@" || rc=$?
+  if (( rc == 124 )); then
+    echo "smoke setup timed out" >&2
+    exit 1
+  fi
+  if (( rc != 0 )); then
+    exit "$rc"
+  fi
+}
+env="$1"; image="$2"; remote_dir="$3"; budget_s="$4"; poll_s="$5"; vlm_budget="$6"
+pg_budget="${7:-30}"
+setup_slack="${8:-30}"
 env_file="${remote_dir}/.env"
 net="$(grep -E '^ACX_NETWORK_NAME=' "${env_file}" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d "\"' " || true)"
 net="${net:-acx-${env}-net}"
 models_path="$(grep -E '^ACX_MODELS_PATH=' "${env_file}" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d "\"'" || true)"
-# First-ever deploy of an env runs this smoke BEFORE converge_runtime's net
-# auto-create, so the env net may not exist yet (gate r0811864a A-01). Create
-# it idempotently with compose-parity labels so the later `compose up` adopts
-# it instead of refusing an unlabeled pre-existing net (A-02 pattern).
-if ! docker network inspect "$net" >/dev/null 2>&1; then
-  docker network create \
-    --label com.docker.compose.network=backend \
-    --label "com.docker.compose.project=acx-${env}" \
-    "$net"
-fi
 name="acx-smoke-${env}-$$"
 blob_vol="acx-smoke-blobs-${env}-$$"
 pg_name="acx-smoke-pg-${env}-$$"
@@ -1758,11 +1767,15 @@ smoke_sync_dsn="postgresql+psycopg://${smoke_user}:${smoke_pass}@${pg_name}:5432
 # Inline trap (no nested function) so structural parsers that stop at first \n}\n
 # still capture the full do_boot_smoke body. Print last_health_body + docker logs
 # here so a deadline SIGTERM still emits the 503 body before cleanup.
+# Install the trap before network create so a hung create still cleans up.
 curl_err="$(mktemp)"
 last_health_code="000"
 last_health_body=""
 smoke_passed=0
+net_created=0
 trap '
+  trap - EXIT
+  trap "" TERM INT
   if [[ "${smoke_passed:-0}" != "1" ]]; then
     if [[ -n "${curl_err:-}" && -s "${curl_err}" ]]; then
       if ! sanitize_deploy_diagnostic < "${curl_err}" >&2; then
@@ -1775,20 +1788,35 @@ trap '
       echo "diagnostic: smoke health LAST body unavailable" >&2
     fi
     echo "smoke container logs (last 80 lines):" >&2
-    if ! docker logs --tail 80 "$name" 2>&1 | sanitize_deploy_diagnostic >&2; then
+    if ! _smoke_timeout 2 docker logs --tail 80 "$name" 2>&1 | sanitize_deploy_diagnostic >&2; then
       echo "smoke container logs unavailable" >&2
     fi
   fi
-  docker rm -f "$name" >/dev/null 2>&1 || true
-  docker rm -f "$pg_name" >/dev/null 2>&1 || true
-  docker volume rm -f "$blob_vol" >/dev/null 2>&1 || true
+  _smoke_timeout 2 docker rm -f "$name" >/dev/null 2>&1 || true
+  _smoke_timeout 2 docker rm -f "$pg_name" >/dev/null 2>&1 || true
+  _smoke_timeout 2 docker volume rm -f "$blob_vol" >/dev/null 2>&1 || true
+  if [[ "${smoke_passed:-0}" != "1" && "${net_created:-0}" == "1" ]]; then
+    _smoke_timeout 2 docker network rm "$net" >/dev/null 2>&1 || true
+  fi
   rm -f "$curl_err"
 ' EXIT
 trap 'exit 143' TERM
 trap 'exit 130' INT
+# First-ever deploy of an env runs this smoke BEFORE converge_runtime's net
+# auto-create, so the env net may not exist yet (gate r0811864a A-01). Create
+# it idempotently with compose-parity labels so the later `compose up` adopts
+# it instead of refusing an unlabeled pre-existing net (A-02 pattern).
+if ! docker network inspect "$net" >/dev/null 2>&1; then
+  _fail_if_setup_timeout _smoke_timeout 10 docker network create \
+    --label com.docker.compose.network=backend \
+    --label "com.docker.compose.project=acx-${env}" \
+    "$net"
+  net_created=1
+fi
 # Ephemeral Postgres so entrypoint migrate/schema-verify never touch live env DB.
 # Ready-wait uses pg_budget, not the /health attempt count / ACX_SMOKE_TIMEOUT.
-docker run -d --rm --name "$pg_name" --network "$net" \
+# --pull=never: pgvector was pre-pulled fail-closed before this body ran.
+_fail_if_setup_timeout _smoke_timeout "$setup_slack" docker run -d --rm --name "$pg_name" --network "$net" --pull=never \
   -e POSTGRES_USER="$smoke_user" \
   -e POSTGRES_PASSWORD="$smoke_pass" \
   -e POSTGRES_DB="$smoke_db" \
@@ -1796,7 +1824,9 @@ docker run -d --rm --name "$pg_name" --network "$net" \
 pg_ready=0
 pg_end=$((SECONDS + pg_budget))
 while (( SECONDS < pg_end )); do
-  if docker exec "$pg_name" pg_isready -U "$smoke_user" -d "$smoke_db" >/dev/null 2>&1; then
+  pg_exec_rc=0
+  _smoke_timeout 2 docker exec "$pg_name" pg_isready -U "$smoke_user" -d "$smoke_db" >/dev/null 2>&1 || pg_exec_rc=$?
+  if (( pg_exec_rc == 0 )); then
     pg_ready=1
     break
   fi
@@ -1836,15 +1866,30 @@ run_args=( -d --name "$name" --env-file "${env_file}" --network "$net" -P
   -v "${blob_vol}:/var/lib/acx-blobs"
   -v "${models_path}:/data/cache:ro"
   --tmpfs /var/cache/acx/hf_modules:mode=0700,uid=10001,gid=10001,size=32m,noexec )
-docker run "${run_args[@]}" "$image" >/dev/null
-port="$(docker port "$name" 8000/tcp | head -1 | sed 's/.*://')"
-diag_reserve="${poll_s}"
+_fail_if_setup_timeout _smoke_timeout "$setup_slack" docker run "${run_args[@]}" "$image" >/dev/null
+port_rc=0
+port_out="$(_smoke_timeout 5 docker port "$name" 8000/tcp)" || port_rc=$?
+if (( port_rc == 124 )); then
+  echo "smoke setup timed out" >&2
+  exit 1
+fi
+if (( port_rc != 0 )); then
+  exit "$port_rc"
+fi
+port="$(printf '%s\n' "$port_out" | head -1 | sed 's/.*://')"
+# EXIT trap: timeout 2 × (logs, rm api, rm pg, volume, network) = 10s, plus one poll.
+diag_reserve=$((10 + poll_s))
 health_budget=$((budget_s - diag_reserve))
 if (( health_budget < 1 )); then
   health_budget=1
 fi
 health_end=$((SECONDS + health_budget))
 while (( SECONDS < health_end )); do
+  # Skip a curl that would eat the diag reserve, but always allow the first
+  # probe so a tiny clamped health_budget still observes /health.
+  if (( health_end - SECONDS <= poll_s && SECONDS > (health_end - health_budget) )); then
+    break
+  fi
   health_response=""
   health_curl_rc=0
   health_response="$(curl -sS --max-time "${poll_s}" --write-out $'\n%{http_code}' "http://127.0.0.1:${port}/health" 2>"${curl_err}")" || health_curl_rc=$?
@@ -2249,9 +2294,9 @@ capture_failure_evidence() {
   fi
   rm -f "${cid_err}"
   cid_raw="${cid}"
-  cid="$(printf '%s\n' "${cid}" | tr -d '\r' | awk '/^[0-9a-f]{12,64}$/ { print; exit }')"
+  cid="$(printf '%s\n' "${cid}" | awk '{ sub(/\r$/,""); gsub(/^[ \t]+|[ \t]+$/,""); } /^[0-9a-fA-F]{64}$/ { id=tolower($0) } END { if (id) print id }')"
   cid_trimmed="$(printf '%s' "${cid_raw}" | tr -d '[:space:]')"
-  if [[ -n "${cid}" && "${cid}" =~ ^[0-9a-f]{12,64}$ ]]; then
+  if [[ -n "${cid}" && "${cid}" =~ ^[0-9a-f]{64}$ ]]; then
     cid_q="$(remote_quote "${cid}")"
     if ! evidence="$(run_with_deadline "${timeout}" "failure evidence api logs for ${env}" \
       ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
@@ -2261,7 +2306,9 @@ capture_failure_evidence() {
       warn "failure evidence api log capture failed for ${env}; continuing with rollback"
     fi
   elif [[ -n "${cid_trimmed}" ]]; then
-    printf '%s\n' "unexpected container id output: ${cid_raw}" | sanitize_deploy_diagnostic >&2
+    if ! printf '%s\n' "unexpected container id output: ${cid_raw}" | sanitize_deploy_diagnostic >&2; then
+      echo "diagnostic: unexpected container id output unavailable" >&2
+    fi
     evidence=""
   else
     evidence="no api container"

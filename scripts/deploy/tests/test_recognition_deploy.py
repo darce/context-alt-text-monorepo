@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import signal
 import stat
 import subprocess
 import time
@@ -24,6 +25,13 @@ printf '%s\n' "$cmd $*" >>"${state}/docker.log"
 mkdir -p "${state}/containers"
 case "$cmd" in
   network)
+    sub="${1:-}"
+    if [[ "$sub" == "inspect" ]]; then
+      if [[ "${FAKE_NET_EXISTS:-1}" == "1" ]]; then
+        exit 0
+      fi
+      exit 1
+    fi
     exit 0
     ;;
   run)
@@ -65,6 +73,9 @@ case "$cmd" in
     exit 0
     ;;
   port)
+    if [[ -n "${FAKE_PORT_SLEEP:-}" ]]; then
+      sleep "${FAKE_PORT_SLEEP}"
+    fi
     name="${1:-}"
     if [[ ! -d "${state}/containers/${name}" ]]; then
       echo "Error: No such container: ${name}" >&2
@@ -74,6 +85,9 @@ case "$cmd" in
     exit 0
     ;;
   logs)
+    if [[ -n "${FAKE_LOGS_SLEEP:-}" ]]; then
+      sleep "${FAKE_LOGS_SLEEP}"
+    fi
     name=""
     for a in "$@"; do
       name="$a"
@@ -154,6 +168,9 @@ if [[ "$url" == *"/ready"* ]]; then
   fi
   printf '%s\n%s' "${FAKE_READY_BODY:-{\"ready\":true}}" "${FAKE_READY_CODE:-200}"
   exit 0
+fi
+if [[ -n "${FAKE_HEALTH_SLEEP:-}" ]]; then
+  sleep "${FAKE_HEALTH_SLEEP}"
 fi
 code="${FAKE_HEALTH_CODE:-000}"
 body="${FAKE_HEALTH_BODY-}"
@@ -238,6 +255,37 @@ def _prepare_smoke_env(tmp_path: Path, extra: dict[str, str] | None = None) -> t
     return state, remote, env
 
 
+def _docker_log(result: subprocess.CompletedProcess[str]) -> str:
+    state = result._fake_state  # type: ignore[attr-defined]
+    return Path(state).joinpath("docker.log").read_text()
+
+
+def _run_bash_with_unread_fifo(
+    driver: Path,
+    tmp_path: Path,
+    env: dict[str, str],
+    *,
+    alarm_s: int = 5,
+) -> subprocess.CompletedProcess[str]:
+    """Attach stdin to a FIFO nobody writes; alarm out if a child consumes it."""
+    fifo = tmp_path / "unread.fifo"
+    os.mkfifo(fifo)
+    fd = os.open(fifo, os.O_RDWR)
+    try:
+        return subprocess.run(
+            ["bash", str(driver)],
+            text=True,
+            capture_output=True,
+            check=False,
+            env=env,
+            cwd=SCRIPT.parents[2],
+            stdin=fd,
+            timeout=alarm_s,
+        )
+    finally:
+        os.close(fd)
+
+
 def _run_boot_smoke(
     tmp_path: Path,
     *,
@@ -249,6 +297,7 @@ def _run_boot_smoke(
     extra_env: dict[str, str] | None = None,
     wrap_deadline: int | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    del attempts  # LR-04: wrapper/body no longer take a dead attempts positional.
     state, remote, env = _prepare_smoke_env(tmp_path, extra_env)
     smoke = tmp_path / "boot-smoke.sh"
     smoke.write_text(_boot_smoke_heredoc())
@@ -258,7 +307,6 @@ def _run_boot_smoke(
         str(remote),
         str(budget_s),
         str(poll_s),
-        str(attempts),
         str(vlm_budget),
         str(pg_budget),
     ]
@@ -449,34 +497,28 @@ def test_boot_smoke_has_outer_deadlines_and_curl_request_timeout() -> None:
     assert re.search(r"^SMOKE_PG_READY_TIMEOUT=30$", SCRIPT.read_text(), re.M)
 
 
-@pytest.mark.parametrize("timeout", [24, 60, 120])
-def test_boot_smoke_computed_health_loop_budget(timeout: int) -> None:
-    """SB-06: executable health window is ACX_SMOKE_TIMEOUT - poll_s for 24/60/120."""
+@pytest.mark.parametrize("budget_s", [16, 24])
+def test_boot_smoke_computed_health_loop_budget(tmp_path: Path, budget_s: int) -> None:
+    """GR-37 / GR-38: health window is budget minus trap reserve plus last-curl guard."""
     poll_s = 2
-    result = subprocess.run(
-        [
-            "bash",
-            "-c",
-            f"""
-set -euo pipefail
-budget_s={timeout}
-poll_s={poll_s}
-diag_reserve="${{poll_s}}"
-health_budget=$((budget_s - diag_reserve))
-if (( health_budget < 1 )); then health_budget=1; fi
-SECONDS=0
-health_end=$((SECONDS + health_budget))
-printf '%s\\n' "$((health_end - SECONDS))"
-""",
-        ],
-        text=True,
-        capture_output=True,
-        check=True,
+    trap_docker_s = 10  # logs+rm+rm+volume+network, each timeout 2
+    diag_reserve = trap_docker_s + poll_s
+    health_budget = max(1, budget_s - diag_reserve)
+    started = time.monotonic()
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=budget_s,
+        poll_s=poll_s,
+        pg_budget=1,
+        extra_env={"FAKE_HEALTH_CODE": "000"},
     )
-    assert int(result.stdout.strip()) == timeout - poll_s
-    smoke = _boot_smoke_heredoc()
-    assert "health_end=$((SECONDS + health_budget))" in smoke
-    assert "pg_end=$((SECONDS + pg_budget))" in smoke
+    elapsed = time.monotonic() - started
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    # GR-05 stops the last curl when remaining <= poll_s, so elapsed is
+    # health_budget minus about one poll, never the full outer budget.
+    assert elapsed >= max(0, health_budget - poll_s) - 1
+    assert elapsed < budget_s + 4
 
 
 def test_automatic_rollbacks_capture_failure_evidence_first() -> None:
@@ -873,15 +915,6 @@ def test_evidence_timeout_is_parsed_through_validated_deadline() -> None:
     assert "ACX_REMOTE_COMMAND_TIMEOUT" not in body
 
 
-def test_empty_api_container_id_emits_no_api_container_line() -> None:
-    """VLMHEAL-1-REV-B-11: empty compose ps -q must not run docker logs with no id."""
-    body = _function_body("capture_failure_evidence")
-    assert "no api container" in body
-    assert "docker logs --tail 80" in body
-    assert "api container not found" not in body
-    assert body.index("ps -q") < body.index("docker logs --tail 80") < body.index("no api container")
-
-
 def test_empty_api_container_id_skips_docker_logs_ssh(tmp_path: Path) -> None:
     """D-04: empty compose ps -q must not ssh docker logs."""
     result = _run_capture_failure_evidence(tmp_path, empty_cid=True)
@@ -1269,14 +1302,6 @@ def test_function_body_does_not_overcapture_boot_smoke() -> None:
     assert "restore_env_tag_to_rollback() {" not in restart
 
 
-def test_boot_smoke_skips_sleep_after_last_health_attempt() -> None:
-    smoke = _boot_smoke_heredoc()
-    sleep_idx = smoke.index('sleep "${poll_s}"')
-    guard = smoke[max(0, sleep_idx - 180) : sleep_idx]
-    assert "SECONDS" in guard
-    assert "health_end" in guard
-
-
 def test_boot_smoke_deadline_kill_still_emits_health_body(tmp_path: Path) -> None:
     """EXIT trap must print last_health_body even when the outer deadline fires."""
     result = _run_boot_smoke(
@@ -1484,7 +1509,12 @@ do_verify dev
     assert "unavailable" in combined
 
 
-def _run_do_boot_smoke_wrapper(tmp_path: Path) -> subprocess.CompletedProcess[str]:
+def _run_do_boot_smoke_wrapper(
+    tmp_path: Path,
+    *,
+    extra_script: str = "",
+    unread_fifo: bool = False,
+) -> subprocess.CompletedProcess[str]:
     payload = tmp_path / "smoke-wrap"
     ssh_args = tmp_path / "ssh-args"
     image = "iad.ocir.io/idu2kqqe2jxy/acx-backend@sha256:" + ("a" * 64)
@@ -1503,20 +1533,27 @@ run_with_deadline() {{
 }}
 ssh() {{
   printf '%s\\n' "$*" >>"{ssh_args}"
-  cat >"{payload}"
+  if [[ "$*" == *"bash -s"* ]]; then
+    cat >"{payload}"
+  fi
   return 0
 }}
+{extra_script}
 do_boot_smoke dev "{image}"
 '''
     )
-    result = subprocess.run(
-        ["bash", str(driver)],
-        text=True,
-        capture_output=True,
-        check=False,
-        env=dict(os.environ),
-        cwd=SCRIPT.parents[2],
-    )
+    env = dict(os.environ)
+    if unread_fifo:
+        result = _run_bash_with_unread_fifo(driver, tmp_path, env)
+    else:
+        result = subprocess.run(
+            ["bash", str(driver)],
+            text=True,
+            capture_output=True,
+            check=False,
+            env=env,
+            cwd=SCRIPT.parents[2],
+        )
     result._payload = payload  # type: ignore[attr-defined]
     result._ssh_args = ssh_args  # type: ignore[attr-defined]
     return result
@@ -1524,7 +1561,7 @@ do_boot_smoke dev "{image}"
 
 def test_do_boot_smoke_wrap_payload_includes_sanitizer_and_parses(tmp_path: Path) -> None:
     """X-07: composed SMOKE_WRAP payload includes sanitizer + set -euo and bash -n."""
-    result = _run_do_boot_smoke_wrapper(tmp_path)
+    result = _run_do_boot_smoke_wrapper(tmp_path, unread_fifo=True)
     payload = (tmp_path / "smoke-wrap").read_text()
     assert result.returncode == 0, result.stderr
     assert "sanitize_deploy_diagnostic ()" in payload or "sanitize_deploy_diagnostic()" in payload
@@ -1534,22 +1571,26 @@ def test_do_boot_smoke_wrap_payload_includes_sanitizer_and_parses(tmp_path: Path
 
 
 def test_do_boot_smoke_passes_pg_ready_budget_as_eighth_arg(tmp_path: Path) -> None:
-    """SB-04: wrapper bash -s arg list carries ${pg_ready_budget}."""
-    result = _run_do_boot_smoke_wrapper(tmp_path)
+    """LR-04: wrapper bash -s arg list carries pg_ready_budget after dropping attempts."""
+    result = _run_do_boot_smoke_wrapper(tmp_path, unread_fifo=True)
     assert result.returncode == 0, result.stderr
     args_text = (tmp_path / "ssh-args").read_text()
     bash_s_line = next(line for line in args_text.splitlines() if "bash -s" in line)
-    # The remote command is the last ssh argv token; split that token.
     remote = bash_s_line.split("bash -s", 1)[1].strip()
     wrap_args = remote.split()
-    assert wrap_args[-1] == "30"
+    # env image remote_dir timeout poll vlm_budget pg_ready_budget setup_slack
+    assert wrap_args[5] == "0"
+    assert wrap_args[6] == "30"
+    assert wrap_args[7] == "30"
     assert "pgvector/pgvector:pg17" in args_text
 
 
 def test_boot_smoke_health_loop_uses_full_wall_clock(tmp_path: Path) -> None:
-    """SB-01: instant ECONNREFUSED still polls for timeout - diag_reserve seconds."""
+    """SB-01: instant ECONNREFUSED still polls for health_budget minus last-curl guard."""
     budget_s = 24
     poll_s = 2
+    trap_docker_s = 10
+    health_budget = max(1, budget_s - (trap_docker_s + poll_s))
     started = time.monotonic()
     result = _run_boot_smoke(
         tmp_path,
@@ -1562,8 +1603,8 @@ def test_boot_smoke_health_loop_uses_full_wall_clock(tmp_path: Path) -> None:
     elapsed = time.monotonic() - started
     combined = result.stdout + result.stderr
     assert result.returncode != 0, combined
-    assert elapsed >= (budget_s - poll_s) - 1
-    assert elapsed < budget_s + 8
+    assert elapsed >= max(0, health_budget - poll_s) - 1
+    assert elapsed < budget_s + 4
 
 
 def test_boot_smoke_pg_wait_is_seconds_bounded(tmp_path: Path) -> None:
@@ -1607,7 +1648,12 @@ run_with_deadline() {{
   "$@" >/dev/null
   return 0
 }}
-ssh() {{ cat >/dev/null; return 0; }}
+ssh() {{
+  if [[ "$*" == *"bash -s"* ]]; then
+    cat >/dev/null
+  fi
+  return 0
+}}
 do_boot_smoke dev "{image}"
 '''
     )
@@ -1637,11 +1683,252 @@ def test_short_hex_container_id_is_rejected(tmp_path: Path) -> None:
     assert "deadbee" not in args
 
 
-def test_boot_smoke_trap_handles_term_and_int() -> None:
-    """ENG-01: smoke body trap must handle EXIT plus TERM/INT."""
-    smoke = _boot_smoke_heredoc()
-    assert "trap '" in smoke
-    assert "' EXIT" in smoke
-    assert "trap 'exit 143' TERM" in smoke
-    assert "trap 'exit 130' INT" in smoke
+def test_boot_smoke_trap_handles_term_and_int(tmp_path: Path) -> None:
+    """GR-37: SIGTERM the smoke process group; trap still rm -f both containers."""
+    state, remote, env = _prepare_smoke_env(tmp_path, {"FAKE_HEALTH_CODE": "000"})
+    smoke = tmp_path / "boot-smoke.sh"
+    smoke.write_text(_boot_smoke_heredoc())
+    image = "iad.ocir.io/idu2kqqe2jxy/acx-backend@sha256:" + ("a" * 64)
+    proc = subprocess.Popen(
+        [
+            "bash",
+            str(smoke),
+            "dev",
+            image,
+            str(remote),
+            "30",
+            "2",
+            "0",
+            "1",
+        ],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=env,
+        start_new_session=True,
+    )
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline:
+        if (state / "docker.log").exists() and "run " in (state / "docker.log").read_text():
+            break
+        if proc.poll() is not None:
+            break
+        time.sleep(0.05)
+    time.sleep(1)
+    if proc.poll() is None:
+        os.killpg(proc.pid, signal.SIGTERM)
+    stdout, stderr = proc.communicate(timeout=10)
+    combined = (stdout or "") + (stderr or "")
+    assert proc.returncode in (143, 124), combined
+    log = (state / "docker.log").read_text()
+    assert re.search(r"rm -f acx-smoke-dev-\d+", log), log
+    assert re.search(r"rm -f acx-smoke-pg-dev-\d+", log), log
+
+
+def test_do_boot_smoke_prepull_failure_skips_health_gate(tmp_path: Path) -> None:
+    """GR-31 / GR-06: failed pgvector pre-pull must not send the smoke-body payload."""
+    extra = '''
+run_with_deadline() {
+  local label="$2"
+  shift 2
+  if [[ "$label" == *"pgvector pull"* ]]; then
+    return 1
+  fi
+  "$@"
+}
+'''
+    result = _run_do_boot_smoke_wrapper(tmp_path, extra_script=extra, unread_fifo=True)
+    combined = result.stdout + result.stderr
+    payload = tmp_path / "smoke-wrap"
+    ssh_args = (tmp_path / "ssh-args").read_text()
+    assert result.returncode == 1, combined
+    assert "pre-pull of pgvector/pgvector:pg17 failed" in combined
+    assert "will retry" not in combined
+    assert "bash -s" not in ssh_args
+    assert (not payload.exists()) or payload.read_text() == ""
+
+
+def test_boot_smoke_pg_run_uses_pull_never(tmp_path: Path) -> None:
+    """GR-31: inner pg docker run must not pull; pre-pull is fail-closed."""
+    result = _run_boot_smoke(tmp_path, budget_s=2, poll_s=1, pg_budget=1)
+    log = _docker_log(result)
+    run_lines = [line for line in log.splitlines() if line.startswith("run ")]
+    pg_run = next(line for line in run_lines if "pgvector" in line)
+    assert "--pull=never" in pg_run
+
+
+def test_boot_smoke_trap_still_rms_when_logs_hang(tmp_path: Path) -> None:
+    """GR-32 / GR-04: timeout-bounded logs must not skip rm/volume cleanup."""
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=2,
+        poll_s=1,
+        pg_budget=1,
+        extra_env={"FAKE_LOGS_SLEEP": "5", "FAKE_HEALTH_CODE": "000"},
+        wrap_deadline=2,
+    )
+    log = _docker_log(result)
+    assert re.search(r"rm -f acx-smoke-dev-\d+", log), log
+    assert re.search(r"rm -f acx-smoke-pg-dev-\d+", log), log
+    assert "volume rm -f" in log
+    assert result.returncode != 0
+
+
+def test_boot_smoke_pg_exec_per_call_timeout(tmp_path: Path) -> None:
+    """GR-33 / GR-04: hung pg_isready must not consume the whole pg budget twice."""
+    started = time.monotonic()
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=2,
+        poll_s=1,
+        pg_budget=3,
+        extra_env={"FAKE_PG_READY": "0", "FAKE_PG_EXEC_SLEEP": "30"},
+    )
+    elapsed = time.monotonic() - started
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    assert "postgres failed to become ready" in combined
+    assert elapsed < 2 * 3
+    log = _docker_log(result)
+    assert re.search(r"rm -f acx-smoke-pg-dev-\d+", log), log
+
+
+def test_boot_smoke_port_timeout_fails_setup_explicitly(tmp_path: Path) -> None:
+    """GR-39: hung docker port must fail with 'smoke setup timed out' and still clean up."""
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=2,
+        poll_s=1,
+        pg_budget=1,
+        extra_env={"FAKE_PORT_SLEEP": "10"},
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    assert "smoke setup timed out" in combined
+    log = _docker_log(result)
+    assert re.search(r"rm -f acx-smoke-dev-\d+", log), log
+    assert re.search(r"rm -f acx-smoke-pg-dev-\d+", log), log
+
+
+def test_boot_smoke_removes_network_only_on_failure(tmp_path: Path) -> None:
+    """GR-34: trap removes a smoke-created network on failure, not on success."""
+    fail_dir = tmp_path / "fail"
+    fail_dir.mkdir()
+    fail = _run_boot_smoke(
+        fail_dir,
+        budget_s=2,
+        poll_s=1,
+        pg_budget=1,
+        extra_env={"FAKE_NET_EXISTS": "0", "FAKE_HEALTH_CODE": "000"},
+    )
+    fail_log = _docker_log(fail)
+    assert "network create" in fail_log
+    assert "network rm" in fail_log
+    create_at = fail_log.index("network create")
+    rm_at = fail_log.index("network rm")
+    assert create_at < rm_at
+
+    ok_dir = tmp_path / "ok"
+    ok_dir.mkdir()
+    ok = _run_boot_smoke(
+        ok_dir,
+        budget_s=2,
+        poll_s=1,
+        pg_budget=1,
+        extra_env={"FAKE_NET_EXISTS": "0", "FAKE_HEALTH_CODE": "200"},
+    )
+    ok_log = _docker_log(ok)
+    assert ok.returncode == 0, ok.stdout + ok.stderr
+    assert "network create" in ok_log
+    assert "network rm" not in ok_log
+
+
+def test_cid_capture_uses_last_64_hex_line(tmp_path: Path) -> None:
+    """GR-35 / GR-36: last 64-hex wins; trim; lowercase; reject short hex."""
+    cid = "a" * 64
+    fixtures = [
+        f"WARNING: x\ncafebabeface\n{cid}\n".encode(),
+        f"1700000000000\n{cid}\n".encode(),
+        f"{cid} \n".encode(),
+        f"{'A' * 64}\n".encode(),
+    ]
+    for stdout in fixtures:
+        case_dir = tmp_path / str(abs(hash(stdout)))
+        case_dir.mkdir()
+        result = _run_capture_failure_evidence(case_dir, cid_stdout=stdout)
+        combined = (result.stdout + result.stderr).decode()
+        assert result.returncode == 0, combined
+        args = (case_dir / "ssh-args").read_text()
+        assert f"docker logs --tail 80 {cid}" in args, args
+
+
+def test_boot_smoke_last_curl_does_not_eat_diag_reserve(tmp_path: Path) -> None:
+    """GR-05: do not start a health curl that would overrun the diag reserve."""
+    poll_s = 2
+    budget_s = 16  # health_budget = 16 - 12 = 4; second curl would eat the reserve
+    started = time.monotonic()
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=budget_s,
+        poll_s=poll_s,
+        pg_budget=1,
+        extra_env={"FAKE_HEALTH_CODE": "000", "FAKE_HEALTH_SLEEP": str(poll_s)},
+    )
+    elapsed = time.monotonic() - started
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    assert "smoke container logs" in combined
+    # One curl of poll_s plus setup/trap, not a second curl of poll_s.
+    assert elapsed < (poll_s * 2) + 2
+
+
+def test_emit_sanitized_evidence_survives_sed_failure(tmp_path: Path) -> None:
+    """GR-03: a failing sanitizer pipeline must not abort emit_sanitized_evidence."""
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    state = tmp_path / "sed-state"
+    state.mkdir()
+    _write_executable(
+        fake_bin / "sed",
+        f"""#!/usr/bin/env bash
+if [[ ! -f "{state}/failed" ]]; then
+  touch "{state}/failed"
+  exit 1
+fi
+exec /usr/bin/sed "$@"
+""",
+    )
+    driver = tmp_path / "emit-driver.sh"
+    driver.write_text(
+        f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+emit_sanitized_evidence "password=hunter2"
+'''
+    )
+    env = dict(os.environ)
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+    result = subprocess.run(
+        ["bash", str(driver)],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+        cwd=SCRIPT.parents[2],
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+    assert "unavailable" in combined
+    assert "hunter2" not in combined
+
+
+def test_do_boot_smoke_import_and_prepull_ssh_use_n_flag(tmp_path: Path) -> None:
+    """LR-03: import-gate and pre-pull ssh must pass -n so they cannot eat stdin."""
+    result = _run_do_boot_smoke_wrapper(tmp_path, unread_fifo=True)
+    assert result.returncode == 0, result.stderr
+    lines = (tmp_path / "ssh-args").read_text().splitlines()
+    non_payload = [line for line in lines if "bash -s" not in line]
+    assert non_payload, lines
+    for line in non_payload:
+        assert " -n " in f" {line} " or line.split()[0:2] == ["-n"] or "-n" in line.split()
 

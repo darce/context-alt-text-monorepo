@@ -195,6 +195,7 @@ ACX_CANDIDATE_DIGEST_REF=""
 ACX_ROLLBACK_DIGEST_REF=""
 ACX_ROLLBACK_IMAGE_BASE=""
 ACX_ROLLBACK_TAG=""
+ACX_RESTART_EVIDENCE_PHASE=""
 
 # Quote one argument for the remote bash command string.  OpenSSH concatenates
 # argv into a command string, so passing a local argv element is not itself a
@@ -531,11 +532,12 @@ preflight_docker() {
 sanitize_deploy_diagnostic() {
   LC_ALL=C tr -d '\000-\010\013-\037\177-\237' \
     | sed -E \
-      -e 's/[Aa]uthorization:[[:space:]]*[Bb]earer[[:space:]]+[^[:space:]]+/Authorization: Bearer [REDACTED]/g' \
-      -e 's/ACX_API_TOKEN=[^[:space:]&"]+/ACX_API_TOKEN=[REDACTED]/g' \
-      -e 's/[Aa][Pp][Ii][-_]?[Kk][Ee][Yy][=:][[:space:]]*[^[:space:]&"]+/api-key=[REDACTED]/g' \
-      -e 's/[Pp]assword=[^[:space:]&"]+/password=[REDACTED]/g' \
-      -e 's/[Tt]oken=[^[:space:]&"]+/token=[REDACTED]/g' \
+      -e 's/"authorization"[[:space:]]*:[[:space:]]*"bearer[[:space:]]+[^"]*"/"Authorization": "Bearer [REDACTED]"/gI' \
+      -e 's/authorization[[:space:]]*:[[:space:]]*bearer[[:space:]]+[^[:space:]"]+/Authorization: Bearer [REDACTED]/gI' \
+      -e 's/(^|[^[:alnum:]])bearer[[:space:]]+[^[:space:]"]+/\1Bearer [REDACTED]/gI' \
+      -e 's/"token"[[:space:]]*:[[:space:]]*"[^"]*"/"token": "[REDACTED]"/gI' \
+      -e 's/(^|[^A-Za-z0-9_])([A-Za-z0-9_]*_(TOKEN|PASSWORD|SECRET|KEY)|PGPASSWORD|token|password)[[:space:]]*[=:][[:space:]]*"?[^[:space:]&",}]+"?/\1\2=[REDACTED]/gI' \
+      -e 's/api[-_]?key[=:][[:space:]]*[^[:space:]&"]+/api-key=[REDACTED]/gI' \
     | sed 's/^/diagnostic: /'
 }
 
@@ -1718,7 +1720,8 @@ smoke_async_dsn="postgresql+asyncpg://${smoke_user}:${smoke_pass}@${pg_name}:543
 smoke_sync_dsn="postgresql+psycopg://${smoke_user}:${smoke_pass}@${pg_name}:5432/${smoke_db}"
 # Inline trap (no nested function) so structural parsers that stop at first \n}\n
 # still capture the full do_boot_smoke body.
-trap 'docker rm -f "$name" >/dev/null 2>&1 || true; docker rm -f "$pg_name" >/dev/null 2>&1 || true; docker volume rm -f "$blob_vol" >/dev/null 2>&1 || true' EXIT
+curl_err="$(mktemp)"
+trap 'docker rm -f "$name" >/dev/null 2>&1 || true; docker rm -f "$pg_name" >/dev/null 2>&1 || true; docker volume rm -f "$blob_vol" >/dev/null 2>&1 || true; rm -f "$curl_err"' EXIT
 # Ephemeral Postgres so entrypoint migrate/schema-verify never touch live env DB.
 docker run -d --rm --name "$pg_name" --network "$net" \
   -e POSTGRES_USER="$smoke_user" \
@@ -1769,10 +1772,14 @@ docker run "${run_args[@]}" "$image" >/dev/null
 port="$(docker port "$name" 8000/tcp | head -1 | sed 's/.*://')"
 last_health_code="000"
 last_health_body=""
-for _ in $(seq 1 "${attempts}"); do
+for attempt in $(seq 1 "${attempts}"); do
   health_response=""
   health_curl_rc=0
-  health_response="$(curl -sS --max-time "${poll_s}" --write-out $'\n%{http_code}' "http://127.0.0.1:${port}/health")" || health_curl_rc=$?
+  if [[ "${attempt}" == "${attempts}" ]]; then
+    health_response="$(curl -sS --max-time "${poll_s}" --write-out $'\n%{http_code}' "http://127.0.0.1:${port}/health" 2>"${curl_err}")" || health_curl_rc=$?
+  else
+    health_response="$(curl -sS --max-time "${poll_s}" --write-out $'\n%{http_code}' "http://127.0.0.1:${port}/health" 2>/dev/null)" || health_curl_rc=$?
+  fi
   if [[ "${health_response}" == *$'\n'* ]]; then
     last_health_code="${health_response##*$'\n'}"
     last_health_body="${health_response%$'\n'*}"
@@ -1794,14 +1801,31 @@ if [[ "${vlm_budget}" == "1" ]]; then
 else
   echo "smoke health FAILED after ${budget_s}s" >&2
 fi
+if [[ -s "${curl_err}" ]]; then
+  cat "${curl_err}" >&2
+fi
 echo "smoke health LAST HTTP code: ${last_health_code}" >&2
 echo "smoke health LAST body (up to 2000 bytes):" >&2
 printf '%s\n' "${last_health_body:0:2000}" \
   | LC_ALL=C tr -d '\000-\010\013-\037\177-\237' \
+  | sed -E \
+    -e 's/"authorization"[[:space:]]*:[[:space:]]*"bearer[[:space:]]+[^"]*"/"Authorization": "Bearer [REDACTED]"/gI' \
+    -e 's/authorization[[:space:]]*:[[:space:]]*bearer[[:space:]]+[^[:space:]"]+/Authorization: Bearer [REDACTED]/gI' \
+    -e 's/(^|[^[:alnum:]])bearer[[:space:]]+[^[:space:]"]+/\1Bearer [REDACTED]/gI' \
+    -e 's/"token"[[:space:]]*:[[:space:]]*"[^"]*"/"token": "[REDACTED]"/gI' \
+    -e 's/(^|[^A-Za-z0-9_])([A-Za-z0-9_]*_(TOKEN|PASSWORD|SECRET|KEY)|PGPASSWORD|token|password)[[:space:]]*[=:][[:space:]]*"?[^[:space:]&",}]+"?/\1\2=[REDACTED]/gI' \
+    -e 's/api[-_]?key[=:][[:space:]]*[^[:space:]&"]+/api-key=[REDACTED]/gI' \
   | sed 's/^/diagnostic: /' >&2
 echo "smoke container logs (last 80 lines):" >&2
 if ! docker logs --tail 80 "$name" 2>&1 \
   | LC_ALL=C tr -d '\000-\010\013-\037\177-\237' \
+  | sed -E \
+    -e 's/"authorization"[[:space:]]*:[[:space:]]*"bearer[[:space:]]+[^"]*"/"Authorization": "Bearer [REDACTED]"/gI' \
+    -e 's/authorization[[:space:]]*:[[:space:]]*bearer[[:space:]]+[^[:space:]"]+/Authorization: Bearer [REDACTED]/gI' \
+    -e 's/(^|[^[:alnum:]])bearer[[:space:]]+[^[:space:]"]+/\1Bearer [REDACTED]/gI' \
+    -e 's/"token"[[:space:]]*:[[:space:]]*"[^"]*"/"token": "[REDACTED]"/gI' \
+    -e 's/(^|[^A-Za-z0-9_])([A-Za-z0-9_]*_(TOKEN|PASSWORD|SECRET|KEY)|PGPASSWORD|token|password)[[:space:]]*[=:][[:space:]]*"?[^[:space:]&",}]+"?/\1\2=[REDACTED]/gI' \
+    -e 's/api[-_]?key[=:][[:space:]]*[^[:space:]&"]+/api-key=[REDACTED]/gI' \
   | sed 's/^/diagnostic: /' >&2; then
   echo "smoke container logs unavailable" >&2
 fi
@@ -1883,6 +1907,7 @@ verify_restored_runtime() {
 do_restart() {
   local env="$1" expected_digest="${2:-${ACX_CANDIDATE_DIGEST_REF:-}}"
   local unit expected_repo env_tag pulled_digest timeout
+  ACX_RESTART_EVIDENCE_PHASE="pre_candidate"
   unit="$(env_to_unit "$env")"
   expected_repo="${expected_digest%@sha256:*}"
   env_tag="$(env_to_tag "${env}")"
@@ -1920,6 +1945,7 @@ do_restart() {
     return 1
   fi
   log "Restarting ${unit} on ${SSH_TARGET}"
+  ACX_RESTART_EVIDENCE_PHASE="post_restart"
   if ! run_with_deadline "${timeout}" "systemctl restart ${unit}" \
     ssh -l "${OCI_USER}" -- "${OCI_HOST}" "sudo systemctl restart ${unit}"; then
     warn "systemctl restart ${unit} failed"
@@ -2061,9 +2087,11 @@ do_rollback() {
 
 # Capture the live failure state before automatic rollback replaces the serving
 # container. Phase selects the probe set:
-#   pre_candidate — push/tag/restart failed before the candidate container
-#                   started. Skip HTTP probes of the PRIOR image; collect
+#   pre_candidate — push/tag failed before the candidate container started.
+#                   Skip HTTP probes of the PRIOR image; collect scoped
 #                   docker ps / compose state and a 'candidate never started' line.
+#   post_restart  — systemctl restart was issued. Keep api logs; skip /health
+#                   and /ready (those may still be the prior image).
 #   candidate     — the candidate ran (verify failed). Probe loopback Caddy
 #                   /health + /ready (host port 443, env Host/SNI) and api logs.
 # Evidence is diagnostic only: every remote call is deadline-bounded and a
@@ -2072,24 +2100,28 @@ capture_failure_evidence() {
   local env="$1" phase="${2:-candidate}"
   local remote_dir compose_files remote_dir_q timeout evidence=""
   local health_url ready_url health_host health_url_q ready_url_q health_host_q
+  local project_q cid cid_q
   remote_dir="$(env_to_remote_dir "${env}")"
   compose_files="$(env_to_compose_files "${env}")"
   remote_dir_q="$(remote_quote "${remote_dir}")"
+  project_q="$(remote_quote "acx-${env}")"
   timeout="$(validated_deadline ACX_EVIDENCE_TIMEOUT 30)" || {
     warn "failure evidence skipped for ${env}; ACX_EVIDENCE_TIMEOUT must be a positive integer (got: ${ACX_EVIDENCE_TIMEOUT:-})"
     return 0
   }
 
   case "${phase}" in
-    pre_candidate|candidate) ;;
+    pre_candidate|post_restart|candidate) ;;
     *)
       warn "failure evidence unknown phase '${phase}' for ${env}; skipping HTTP probes of the prior image"
       phase="pre_candidate"
       ;;
   esac
 
-  if [[ "${phase}" == "pre_candidate" ]]; then
-    printf '%s\n' "candidate never started" >&2
+  if [[ "${phase}" == "pre_candidate" || "${phase}" == "post_restart" ]]; then
+    if [[ "${phase}" == "pre_candidate" ]]; then
+      printf '%s\n' "candidate never started" >&2
+    fi
     printf 'environment: %s\n' "${env}" >&2
     printf '%s\n' "--- evidence: docker ps / compose ---" >&2
     evidence=""
@@ -2098,57 +2130,74 @@ capture_failure_evidence() {
       ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
         -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
         -l "${OCI_USER}" -- "${OCI_HOST}" \
-        "cd ${remote_dir_q} && docker compose ${compose_files} ps; docker ps --format '{{.ID}} {{.Names}} {{.Status}}'" 2>&1)"; then
+        "cd ${remote_dir_q} && docker compose ${compose_files} ps; docker ps --filter label=com.docker.compose.project=${project_q} --format '{{.ID}} {{.Names}} {{.Status}}'" 2>&1)"; then
       warn "failure evidence compose/ps capture failed for ${env}; continuing with rollback"
     fi
     emit_sanitized_evidence "${evidence}"
-    return 0
+    if [[ "${phase}" == "pre_candidate" ]]; then
+      return 0
+    fi
   fi
 
-  health_url="$(env_to_health_url "${env}")"
-  ready_url="$(env_to_ready_url "${env}")"
-  health_host="${health_url#https://}"
-  health_host="${health_host%%/*}"
-  health_url_q="$(remote_quote "${health_url}")"
-  ready_url_q="$(remote_quote "${ready_url}")"
-  health_host_q="$(remote_quote "${health_host}")"
+  if [[ "${phase}" == "candidate" ]]; then
+    health_url="$(env_to_health_url "${env}")"
+    ready_url="$(env_to_ready_url "${env}")"
+    health_host="${health_url#https://}"
+    health_host="${health_host%%/*}"
+    health_url_q="$(remote_quote "${health_url}")"
+    ready_url_q="$(remote_quote "${ready_url}")"
+    health_host_q="$(remote_quote "${health_host}")"
 
-  printf '%s\n' "--- evidence: /health ---" >&2
-  printf 'environment: %s\n' "${env}" >&2
-  evidence=""
-  if ! evidence="$(run_with_deadline "${timeout}" "failure evidence /health for ${env}" \
-    ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
-      -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
-      -l "${OCI_USER}" -- "${OCI_HOST}" \
-      "curl -sS --max-time 10 --resolve ${health_host_q}:443:127.0.0.1 --write-out '\\nHTTP_CODE=%{http_code}' ${health_url_q}" 2>&1)"; then
-    warn "failure evidence /health probe failed for ${env}; continuing with rollback"
-  fi
-  emit_sanitized_evidence "${evidence}"
+    printf '%s\n' "--- evidence: /health ---" >&2
+    printf 'environment: %s\n' "${env}" >&2
+    evidence=""
+    if ! evidence="$(run_with_deadline "${timeout}" "failure evidence /health for ${env}" \
+      ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
+        -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+        -l "${OCI_USER}" -- "${OCI_HOST}" \
+        "curl -sS --max-time 10 --resolve ${health_host_q}:443:127.0.0.1 --write-out '\\nHTTP_CODE=%{http_code}' ${health_url_q}" 2>&1)"; then
+      warn "failure evidence /health probe failed for ${env}; continuing with rollback"
+    fi
+    emit_sanitized_evidence "${evidence}"
 
-  printf '%s\n' "--- evidence: /ready ---" >&2
-  printf 'environment: %s\n' "${env}" >&2
-  evidence=""
-  if ! evidence="$(run_with_deadline "${timeout}" "failure evidence /ready for ${env}" \
-    ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
-      -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
-      -l "${OCI_USER}" -- "${OCI_HOST}" \
-      "curl -sS --max-time 10 --resolve ${health_host_q}:443:127.0.0.1 --write-out '\\nHTTP_CODE=%{http_code}' ${ready_url_q}" 2>&1)"; then
-    warn "failure evidence /ready probe failed for ${env}; continuing with rollback"
+    printf '%s\n' "--- evidence: /ready ---" >&2
+    printf 'environment: %s\n' "${env}" >&2
+    evidence=""
+    if ! evidence="$(run_with_deadline "${timeout}" "failure evidence /ready for ${env}" \
+      ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
+        -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+        -l "${OCI_USER}" -- "${OCI_HOST}" \
+        "curl -sS --max-time 10 --resolve ${health_host_q}:443:127.0.0.1 --write-out '\\nHTTP_CODE=%{http_code}' ${ready_url_q}" 2>&1)"; then
+      warn "failure evidence /ready probe failed for ${env}; continuing with rollback"
+    fi
+    emit_sanitized_evidence "${evidence}"
   fi
-  emit_sanitized_evidence "${evidence}"
 
   printf '%s\n' "--- evidence: api container logs ---" >&2
   printf 'environment: %s\n' "${env}" >&2
   evidence=""
+  cid=""
   # shellcheck disable=SC2086 # compose_files is intentionally word-split (-f a -f b).
-  if ! evidence="$(run_with_deadline "${timeout}" "failure evidence api logs for ${env}" \
+  if ! cid="$(run_with_deadline "${timeout}" "failure evidence api cid for ${env}" \
     ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
       -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
       -l "${OCI_USER}" -- "${OCI_HOST}" \
-      "cd ${remote_dir_q} && cid=\$(docker compose ${compose_files} ps -q api 2>/dev/null | head -1); \
-       if [ -n \"\$cid\" ]; then docker logs --tail 80 \"\$cid\"; \
-       else echo 'no api container'; fi" 2>&1)"; then
-    warn "failure evidence api log capture failed for ${env}; continuing with rollback"
+      "cd ${remote_dir_q} && docker compose ${compose_files} ps -q api 2>/dev/null | head -1")"; then
+    warn "failure evidence api cid capture failed for ${env}; continuing with rollback"
+    cid=""
+  fi
+  cid="$(printf '%s' "${cid}" | tr -d '\r' | awk 'NF { id=$0 } END { print id }')"
+  if [[ -n "${cid}" && "${cid}" =~ ^[a-fA-F0-9]+$ ]]; then
+    cid_q="$(remote_quote "${cid}")"
+    if ! evidence="$(run_with_deadline "${timeout}" "failure evidence api logs for ${env}" \
+      ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
+        -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+        -l "${OCI_USER}" -- "${OCI_HOST}" \
+        "docker logs --tail 80 ${cid_q}" 2>&1)"; then
+      warn "failure evidence api log capture failed for ${env}; continuing with rollback"
+    fi
+  else
+    evidence="no api container"
   fi
   emit_sanitized_evidence "${evidence}"
   return 0
@@ -2211,7 +2260,7 @@ do_deploy() {
   fi
 
   if ! do_restart "$env" "${ACX_CANDIDATE_DIGEST_REF}"; then
-    capture_failure_evidence "$env" pre_candidate || warn "automatic failure evidence capture failed; continuing with rollback"
+    capture_failure_evidence "$env" "${ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}" || warn "automatic failure evidence capture failed; continuing with rollback"
     if restore_env_tag_to_rollback "$env" 0; then
       restore_prior_image_repo_env || warn "env tag restored but prior sticky repository restore failed"
     else
@@ -2296,7 +2345,7 @@ do_promote() {
   fi
 
   if ! do_restart "$to_env" "${ACX_CANDIDATE_DIGEST_REF}"; then
-    capture_failure_evidence "$to_env" pre_candidate || warn "automatic failure evidence capture failed; continuing with rollback"
+    capture_failure_evidence "$to_env" "${ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}" || warn "automatic failure evidence capture failed; continuing with rollback"
     if restore_env_tag_to_rollback "$to_env" 0; then
       restore_prior_image_repo_env || warn "env tag restored but prior sticky repository restore failed"
     else
@@ -2523,10 +2572,28 @@ verify_live_gpu_snapshots() {
   return "${transport_rc}"
 }
 
+emit_verify_ready_diagnostic() {
+  local ready_url="$1" ready_response="" ready_body ready_code ready_curl_rc=0
+  ready_response="$(curl --silent --show-error --max-time 10 --write-out $'\n%{http_code}' "$ready_url" 2>&1)" || ready_curl_rc=$?
+  if [[ "${ready_response}" == *$'\n'* ]]; then
+    ready_code="${ready_response##*$'\n'}"
+    ready_body="${ready_response%$'\n'*}"
+  else
+    ready_code="000"
+    ready_body="${ready_response}"
+  fi
+  [[ "${ready_code}" =~ ^[0-9]{3}$ ]] || ready_code="000"
+  printf 'GET %s -> HTTP %s (non-gating)\n' "$ready_url" "$ready_code"
+  if (( ready_curl_rc != 0 )); then
+    printf '%s\n' "${ready_body:-no readiness response}"
+  else
+    printf '%s\n' "$ready_body"
+  fi
+}
+
 do_verify() {
   local env="$1"
   local url ready_url expected_sha actual_sha body attempt max_attempts sleep_s http_code curl_rc health_response
-  local ready_response ready_body ready_code ready_curl_rc
   local actual_variant expected_variant remote_for_variant remote_repo_rc
   url="$(env_to_health_url "$env")"
   ready_url="$(env_to_ready_url "$env")"
@@ -2562,27 +2629,6 @@ do_verify() {
       warn "UNHEALTHY: ${env} /health reports unhealthy (database) (HTTP 503)"
     fi
 
-    # /ready is diagnostic only here: unlike reset, deploy verification keeps
-    # its existing /health + identity/image pass/fail contract. Surface the
-    # readiness code and body so a DB/model failure is visible before rollback.
-    ready_response=""
-    ready_curl_rc=0
-    ready_response="$(curl --silent --show-error --max-time 10 --write-out $'\n%{http_code}' "$ready_url" 2>&1)" || ready_curl_rc=$?
-    if [[ "${ready_response}" == *$'\n'* ]]; then
-      ready_code="${ready_response##*$'\n'}"
-      ready_body="${ready_response%$'\n'*}"
-    else
-      ready_code="000"
-      ready_body="${ready_response}"
-    fi
-    [[ "${ready_code}" =~ ^[0-9]{3}$ ]] || ready_code="000"
-    printf 'GET %s -> HTTP %s (non-gating)\n' "$ready_url" "$ready_code"
-    if (( ready_curl_rc != 0 )); then
-      printf '%s\n' "${ready_body:-no readiness response}"
-    else
-      printf '%s\n' "$ready_body"
-    fi
-
     # /health surfaces commit SHA for E15-3a-BR-03 deploy-lag detection.
     actual_sha="$(printf '%s' "$body" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("commit_sha") or d.get("git_commit_sha") or d.get("version") or "")' 2>/dev/null || true)"
 
@@ -2608,10 +2654,12 @@ do_verify() {
         remote_for_variant="$(read_remote_image_repo "$env")" || remote_repo_rc=$?
         if (( remote_repo_rc != 0 )); then
           warn "VARIANT VERIFY: remote ACX_IMAGE_REPO state is unknown (read exit ${remote_repo_rc})"
+          emit_verify_ready_diagnostic "$ready_url"
           return 1
         fi
         if [[ "${remote_for_variant}" == "__INVALID_REPO__" ]]; then
           warn "VARIANT VERIFY: remote ACX_IMAGE_REPO failed charset validation"
+          emit_verify_ready_diagnostic "$ready_url"
           return 1
         fi
         if [[ -n "${remote_for_variant}" ]]; then
@@ -2626,6 +2674,7 @@ do_verify() {
           verify_retry_sleep "$attempt" "$max_attempts" "$sleep_s"
           continue
         fi
+        emit_verify_ready_diagnostic "$ready_url"
         return 1
       fi
       # Also compare the running container image (read from runtime — rg-015)
@@ -2638,6 +2687,7 @@ do_verify() {
           verify_retry_sleep "$attempt" "$max_attempts" "$sleep_s"
           continue
         fi
+        emit_verify_ready_diagnostic "$ready_url"
         return 1
       fi
       if ! verify_live_gpu_snapshots "$env"; then
@@ -2646,6 +2696,7 @@ do_verify() {
           sleep "$sleep_s"
           continue
         fi
+        emit_verify_ready_diagnostic "$ready_url"
         return 1
       fi
       log "Verified: ${env} runs ${actual_sha:0:8} (matches GIT_REF=${GIT_REF}${actual_variant:+, image_variant=${actual_variant}})"
@@ -2656,6 +2707,10 @@ do_verify() {
     fi
   done
 
+  # /ready is diagnostic only: unlike reset, deploy verification keeps its
+  # /health + identity/image pass/fail contract. Probe once on the terminal
+  # failing attempt so a DB/model failure is visible before rollback.
+  emit_verify_ready_diagnostic "$ready_url"
   warn "SKEW: ${env} did not converge to ${expected_sha:0:8} after ${max_attempts} attempts."
   return 1
 }

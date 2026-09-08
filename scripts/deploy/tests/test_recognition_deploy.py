@@ -262,6 +262,7 @@ def _run_capture_failure_evidence(
     phase: str = "",
     ssh_body: bytes = b"healthy-body\nHTTP_CODE=200",
     ssh_sleep: str = "0",
+    empty_cid: bool = False,
 ) -> subprocess.CompletedProcess[bytes]:
     records = tmp_path / "ssh-args"
     stdin_capture = tmp_path / "ssh-stdin"
@@ -269,6 +270,7 @@ def _run_capture_failure_evidence(
     ssh_out.write_bytes(ssh_body)
     driver = tmp_path / "capture-driver.sh"
     phase_arg = f" {phase}" if phase else ""
+    empty_cid_flag = "1" if empty_cid else "0"
     driver.write_text(
         f'''
 source "{SCRIPT}"
@@ -293,6 +295,14 @@ ssh() {{
   fi
   if [[ "{ssh_sleep}" != "0" ]]; then
     sleep "{ssh_sleep}"
+  fi
+  remote="${{@: -1}}"
+  if [[ "$remote" == *'ps -q'* ]]; then
+    if [[ "{empty_cid_flag}" == "1" ]]; then
+      return 0
+    fi
+    printf 'abc123\\n'
+    return 0
   fi
   cat "{ssh_out}"
   return 0
@@ -414,9 +424,10 @@ def test_failure_evidence_probes_and_logs_are_deadline_bounded() -> None:
 
 def test_do_verify_surfaces_non_gating_readiness_code_and_body() -> None:
     body = _function_body("do_verify")
+    source = SCRIPT.read_text()
     assert 'ready_url="$(env_to_ready_url "$env")"' in body
-    assert "ready_response" in body
-    assert "non-gating" in body
+    assert "emit_verify_ready_diagnostic" in body
+    assert "non-gating" in source
 
 
 def test_restart_and_rollback_integration_points_are_deadlined() -> None:
@@ -576,7 +587,7 @@ def test_failure_evidence_ssh_does_not_consume_caller_stdin(tmp_path: Path) -> N
     result = _run_capture_failure_evidence(tmp_path, stdin_data=b"POISON\n")
     assert result.returncode == 0, result.stderr.decode()
     args = (tmp_path / "ssh-args").read_text().splitlines()
-    assert len(args) == 3
+    assert len(args) == 4
     assert all("-n" in line.split() for line in args)
     stdin_capture = tmp_path / "ssh-stdin"
     assert stdin_capture.read_text() == ""
@@ -594,16 +605,16 @@ def test_failure_evidence_budget_is_decoupled_from_remote_command_timeout(tmp_pa
     )
     assert result.returncode == 0, result.stderr.decode()
     deadlines = [line.split()[0] for line in (tmp_path / "deadlines").read_text().splitlines()]
-    assert deadlines == ["deadline=30", "deadline=30", "deadline=30"]
+    assert deadlines == ["deadline=30"] * 4
 
     result = _run_capture_failure_evidence(
         tmp_path,
         extra_env={"ACX_REMOTE_COMMAND_TIMEOUT": "900", "ACX_EVIDENCE_TIMEOUT": "5"},
     )
     assert result.returncode == 0, result.stderr.decode()
-    # second run appends; last three lines are the override
+    # second run appends; last four lines are the override (health, ready, cid, logs)
     deadlines = [line.split()[0] for line in (tmp_path / "deadlines").read_text().splitlines()]
-    assert deadlines[-3:] == ["deadline=5", "deadline=5", "deadline=5"]
+    assert deadlines[-4:] == ["deadline=5"] * 4
 
 
 def test_pre_candidate_evidence_skips_http_probes_of_prior_image(tmp_path: Path) -> None:
@@ -656,12 +667,16 @@ def test_runtime_evidence_still_probes_health_and_ready(tmp_path: Path) -> None:
 
 
 def test_push_and_restart_failures_use_pre_candidate_evidence_phase() -> None:
-    """VLMHEAL-1-REV-B-06: do_push_tag / do_restart rollback is pre_candidate."""
+    """VLMHEAL-1-REV-B-06 / D-02: push is pre_candidate; restart uses post_restart phase."""
     for function_name, env_expression in (("do_deploy", '"$env"'), ("do_promote", '"$to_env"')):
         body = _function_body(function_name)
         assert f"capture_failure_evidence {env_expression} pre_candidate" in body
+        assert (
+            f'capture_failure_evidence {env_expression} "${{ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}}"'
+            in body
+        )
         assert f"capture_failure_evidence {env_expression} candidate" in body
-        assert body.count(f"capture_failure_evidence {env_expression} pre_candidate") == 2
+        assert body.count(f"capture_failure_evidence {env_expression} pre_candidate") == 1
         assert body.count(f"capture_failure_evidence {env_expression} candidate") == 1
 
 
@@ -698,7 +713,6 @@ printf 'captured=%s\\n' "$out"
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert result.returncode != 139
     assert "captured=hello-from-deadline" in result.stdout
 
 
@@ -714,17 +728,37 @@ def test_failure_evidence_redacts_bearer_and_api_token(tmp_path: Path) -> None:
             b"Authorization: Bearer supersecret-token\n"
             b"ACX_API_TOKEN=another-secret\n"
             b"password=hunter2\n"
+            b"RECOGNITION_ADMIN_TOKEN=admin-secret\n"
+            b"HF_TOKEN=hf-secret\n"
+            b"PGPASSWORD=pg-secret\n"
+            b'"token": "json-secret"\n'
+            b'"Authorization": "Bearer json-bearer"\n'
+            b"AUTHORIZATION: BEARER header-secret\n"
+            b"Bearer naked-secret\n"
             b"HTTP_CODE=200\n"
         ),
     )
     combined = result.stderr
     assert result.returncode == 0, combined.decode()
-    assert b"supersecret-token" not in combined
-    assert b"another-secret" not in combined
-    assert b"hunter2" not in combined
+    for secret in (
+        b"supersecret-token",
+        b"another-secret",
+        b"hunter2",
+        b"admin-secret",
+        b"hf-secret",
+        b"pg-secret",
+        b"json-secret",
+        b"json-bearer",
+        b"header-secret",
+        b"naked-secret",
+    ):
+        assert secret not in combined, secret
     assert b"Authorization: Bearer" in combined
     assert b"ACX_API_TOKEN=" in combined
     assert b"password=" in combined
+    assert b"RECOGNITION_ADMIN_TOKEN=" in combined
+    assert b"HF_TOKEN=" in combined
+    assert b"PGPASSWORD=" in combined
     assert b"[REDACTED]" in combined
 
 
@@ -751,4 +785,160 @@ def test_empty_api_container_id_emits_no_api_container_line() -> None:
     assert "no api container" in body
     assert "docker logs --tail 80" in body
     assert "api container not found" not in body
-    assert body.index("[ -n") < body.index("docker logs --tail 80") < body.index("no api container")
+    assert body.index("ps -q") < body.index("docker logs --tail 80") < body.index("no api container")
+
+
+def test_empty_api_container_id_skips_docker_logs_ssh(tmp_path: Path) -> None:
+    """D-04: empty compose ps -q must not ssh docker logs."""
+    result = _run_capture_failure_evidence(tmp_path, empty_cid=True)
+    combined = result.stderr.decode()
+    assert result.returncode == 0, combined
+    assert "no api container" in combined
+    args = (tmp_path / "ssh-args").read_text()
+    assert "docker logs" not in args
+    assert "ps -q" in args
+
+
+def test_post_restart_evidence_keeps_logs_and_skips_http(tmp_path: Path) -> None:
+    """D-02: after systemctl restart, evidence must not say the candidate never started."""
+    result = _run_capture_failure_evidence(tmp_path, phase="post_restart")
+    combined = result.stderr.decode()
+    assert result.returncode == 0, combined
+    assert "candidate never started" not in combined
+    args = (tmp_path / "ssh-args").read_text()
+    assert "docker logs" in args
+    assert "/health" not in args
+    assert "/ready" not in args
+    assert "--- evidence: /health ---" not in combined
+    assert "--- evidence: api container logs ---" in combined
+
+
+def test_do_restart_marks_post_restart_before_systemctl() -> None:
+    """D-02: systemctl restart failure must request post_restart evidence."""
+    body = _function_body("do_restart")
+    assert 'ACX_RESTART_EVIDENCE_PHASE="pre_candidate"' in body
+    assert 'ACX_RESTART_EVIDENCE_PHASE="post_restart"' in body
+    assert body.index('ACX_RESTART_EVIDENCE_PHASE="pre_candidate"') < body.index(
+        'ACX_RESTART_EVIDENCE_PHASE="post_restart"'
+    )
+    assert body.index('ACX_RESTART_EVIDENCE_PHASE="post_restart"') < body.index(
+        "sudo systemctl restart"
+    )
+
+
+def test_pre_candidate_docker_ps_is_compose_project_scoped(tmp_path: Path) -> None:
+    """D-06: pre_candidate docker ps must not list foreign compose projects."""
+    result = _run_capture_failure_evidence(tmp_path, phase="pre_candidate")
+    assert result.returncode == 0, result.stderr.decode()
+    args = (tmp_path / "ssh-args").read_text()
+    assert "--filter label=com.docker.compose.project=" in args
+    assert "acx-dev" in args
+
+
+def test_boot_smoke_poll_prints_curl_stderr_once(tmp_path: Path) -> None:
+    """B-09: curl: (7) must not repeat for every health poll."""
+    result = _run_boot_smoke(tmp_path, budget_s=3, poll_s=1, attempts=3)
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert combined.count("curl: (7)") == 1
+
+
+def test_boot_smoke_failure_redacts_tokens(tmp_path: Path) -> None:
+    """D-01: VM smoke failure body/logs must use the same sanitizer."""
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=2,
+        poll_s=1,
+        attempts=1,
+        extra_env={
+            "FAKE_HEALTH_CODE": "503",
+            "FAKE_HEALTH_BODY": (
+                'RECOGNITION_ADMIN_TOKEN=admin-secret HF_TOKEN=hf-secret '
+                'PGPASSWORD=pg-secret "token": "json-secret" '
+                "AUTHORIZATION: BEARER header-secret Bearer naked-secret"
+            ),
+        },
+    )
+    combined = result.stderr
+    assert result.returncode != 0
+    for secret in (
+        "admin-secret",
+        "hf-secret",
+        "pg-secret",
+        "json-secret",
+        "header-secret",
+        "naked-secret",
+    ):
+        assert secret not in combined, secret
+    assert "[REDACTED]" in combined
+
+
+def _run_do_verify(
+    tmp_path: Path,
+    *,
+    attempts: int,
+    health_sha: str,
+    health_code: str = "200",
+) -> subprocess.CompletedProcess[str]:
+    curl_log = tmp_path / "curl.log"
+    expected = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    health_body = (
+        '{"commit_sha":"' + health_sha + '","status":"ok","image_variant":"recognition"}'
+    )
+    driver = tmp_path / "verify-driver.sh"
+    driver.write_text(
+        f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+ACX_VERIFY_ATTEMPTS={attempts}
+ACX_VERIFY_SLEEP=0
+ACX_VERIFY_EXPECT_LOCAL=1
+verify_running_image_matches_deployed() {{ return 0; }}
+verify_live_gpu_snapshots() {{ return 0; }}
+curl() {{
+  printf '%s\\n' "$*" >>"{curl_log}"
+  url="${{@: -1}}"
+  if [[ "$url" == *"/ready"* ]]; then
+    printf '%s\\n%s' '{{"ready":true}}' '200'
+    return 0
+  fi
+  printf '%s\\n%s' '{health_body}' '{health_code}'
+  return 0
+}}
+do_verify dev
+'''
+    )
+    env = dict(os.environ)
+    result = subprocess.run(
+        ["bash", str(driver)],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+        cwd=SCRIPT.parents[2],
+    )
+    result._curl_log = curl_log  # type: ignore[attr-defined]
+    result._expected_sha = expected  # type: ignore[attr-defined]
+    return result
+
+
+def test_do_verify_skips_ready_on_successful_attempt(tmp_path: Path) -> None:
+    """B-10: /ready must not fire on a successful verify attempt."""
+    expected = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    result = _run_do_verify(tmp_path, attempts=3, health_sha=expected)
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+    curl_log = (tmp_path / "curl.log").read_text()
+    assert "/health" in curl_log
+    assert "/ready" not in curl_log
+
+
+def test_do_verify_probes_ready_only_on_terminal_failure(tmp_path: Path) -> None:
+    """B-10: /ready is diagnostic and only on the last failing attempt."""
+    result = _run_do_verify(tmp_path, attempts=3, health_sha="deadbeefdeadbeef")
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    curl_log = (tmp_path / "curl.log").read_text()
+    assert curl_log.count("/ready") == 1
+    assert curl_log.count("/health") == 3
+    assert "non-gating" in combined

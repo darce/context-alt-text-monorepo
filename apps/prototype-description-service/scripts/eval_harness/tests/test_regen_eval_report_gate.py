@@ -171,6 +171,7 @@ def _run_regen(
 ) -> subprocess.CompletedProcess[str]:
     merged = os.environ.copy()
     merged.pop("ACX_EVAL_PYTHON", None)
+    merged.pop("ACX_EVAL_SCORE_PYTHON", None)
     if env:
         merged.update(env)
     return subprocess.run(
@@ -393,8 +394,9 @@ def test_invalid_override_errors_and_does_not_fall_back(tmp_path: Path) -> None:
     assert not argv_log.is_file()
 
 
-def test_unset_override_missing_venv_keeps_original_error(tmp_path: Path) -> None:
+def test_unset_override_missing_venv_reports_missing_cli(tmp_path: Path) -> None:
     repo = _scratch_repo(tmp_path)
+    (repo / "apps" / "prototype-description-service").mkdir(parents=True)
     run_record, manifest, out_json, out_md = _stub_paths(repo)
     proc = _run_regen(
         [
@@ -411,10 +413,8 @@ def test_unset_override_missing_venv_keeps_original_error(tmp_path: Path) -> Non
     )
     combined = proc.stdout + proc.stderr
     assert proc.returncode == 2, combined
-    expected = (
-        repo / "apps" / "prototype-description-service" / ".venv" / "bin" / "python"
-    )
-    assert f"missing service venv python: {expected}" in combined
+    assert "CLI did not write expected reports" in combined
+    assert "environment/startup failure, not a corpus outcome" in combined
     assert "invalid ACX_EVAL_PYTHON" not in combined
 
 
@@ -1068,3 +1068,19 @@ def test_score_interpreter_honours_an_explicit_override(
     monkeypatch.setenv("ACX_EVAL_SCORE_PYTHON", str(pinned))
 
     assert mod.score_interpreter(repo) == pinned
+
+
+@pytest.mark.parametrize('value', ['', '/missing/score-python'])
+def test_score_interpreter_rejects_invalid_score_override(tmp_path, monkeypatch, value):
+    mod = _load_regen()
+    monkeypatch.delenv('ACX_EVAL_PYTHON', raising=False)
+    monkeypatch.setenv('ACX_EVAL_SCORE_PYTHON', value)
+    with pytest.raises(mod.EvalPythonError, match='invalid ACX_EVAL_SCORE_PYTHON'):
+        mod.score_interpreter(tmp_path)
+
+
+def test_score_interpreter_legacy_override_has_explicit_precedence(tmp_path, monkeypatch):
+    mod = _load_regen()
+    monkeypatch.setenv('ACX_EVAL_PYTHON', sys.executable)
+    monkeypatch.setenv('ACX_EVAL_SCORE_PYTHON', '/missing/score-python')
+    assert mod.score_interpreter(tmp_path) == Path(sys.executable)

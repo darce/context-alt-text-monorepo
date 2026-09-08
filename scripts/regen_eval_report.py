@@ -13,8 +13,9 @@ nonzero exit is unrecognized and is not swallowed.
 
 The inner interpreter is ``$ACX_EVAL_PYTHON`` when that variable is set
 (must be an executable file; a bad override is an error, not a fall-back).
-When it is unset, the service ``.venv/bin/python`` is required — this
-script does not fall back to ``sys.executable``.
+When it is unset, ``$ACX_EVAL_SCORE_PYTHON`` can pin the scoring interpreter.
+Otherwise use the service ``.venv/bin/python`` when present, then the running
+interpreter so linked worktrees can score without their own environment.
 
 This script's own exit codes (FIR-12-BR-70: distinct from the inner CLI's
 publication contract above — a code here never inherits meaning from a
@@ -25,8 +26,8 @@ subprocess return value that carried no publication outcome):
          held, not published. This is a genuine corpus-quality outcome.
     2    Resolution/environment/usage failure, never a corpus outcome:
          missing ``--run-record``/``--manifest`` input, an unresolvable
-         ``ACX_EVAL_PYTHON`` (unset with no service venv, or set to a
-         non-executable path — see ``EvalPythonError``), or the CLI
+         interpreter override (set to a non-executable path — see
+         ``EvalPythonError``), or the CLI
          produced *no report at all* regardless of its own exit code
          (crashed before writing one, or exited 0 without writing one).
          The inner subprocess return code is never passed through here —
@@ -337,11 +338,19 @@ def score_interpreter(root: Path) -> Path:
     explicit operator pin, then that venv, then the interpreter already
     running us -- which, under the repo venv, can import the CLI just fine.
     """
-    override = os.environ.get("ACX_EVAL_SCORE_PYTHON")
-    if override:
-        return Path(override)
+    if EVAL_PYTHON_ENV in os.environ:
+        return resolve_eval_python(root)
+    if "ACX_EVAL_SCORE_PYTHON" in os.environ:
+        override = Path(os.environ["ACX_EVAL_SCORE_PYTHON"])
+        if not _is_executable_file(override):
+            raise EvalPythonError(
+                f"invalid ACX_EVAL_SCORE_PYTHON: not an executable file: {override}"
+            )
+        return override
     venv_python = root / "apps" / "prototype-description-service" / ".venv" / "bin" / "python"
     if venv_python.is_file():
+        if not _is_executable_file(venv_python):
+            raise EvalPythonError(f"service venv python is not executable: {venv_python}")
         return venv_python
     return Path(sys.executable)
 
@@ -395,7 +404,7 @@ def main(argv: list[str] | None = None) -> int:
 
     service = root / "apps" / "prototype-description-service"
     try:
-        python = resolve_eval_python(root)
+        python = score_interpreter(root)
     except EvalPythonError as exc:
         print(str(exc), file=sys.stderr)
         return EXIT_RESOLUTION_OR_ENV_FAILURE
@@ -415,7 +424,11 @@ def main(argv: list[str] | None = None) -> int:
             str(manifest),
         ]
         print("REGEN:", " ".join(cmd))
-        proc = subprocess.run(cmd, cwd=service)
+        try:
+            proc = subprocess.run(cmd, cwd=service)
+        except OSError as exc:
+            print(f"CLI startup failure: {exc}; not a corpus outcome", file=sys.stderr)
+            return EXIT_RESOLUTION_OR_ENV_FAILURE
         tmp_json = tmp_dir / "run-report.json"
         tmp_md = tmp_dir / "run-report.md"
         if not tmp_json.is_file() or not tmp_md.is_file():

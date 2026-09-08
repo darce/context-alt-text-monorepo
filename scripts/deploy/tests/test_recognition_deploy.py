@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import stat
 import subprocess
 from pathlib import Path
@@ -163,10 +164,12 @@ exit 7
 
 
 def _function_body(name: str) -> str:
+    """Slice one top-level `name() {` through the next column-0 `fn() {`."""
     source = SCRIPT.read_text()
     start = source.index(f"{name}() {{")
-    next_section = source.find("\n#----------------------------------------------------------------", start)
-    return source[start : next_section if next_section != -1 else None]
+    nxt = re.search(r"\n[A-Za-z_][A-Za-z0-9_]*\(\) \{", source[start + 1 :])
+    end = start + 1 + nxt.start() if nxt else len(source)
+    return source[start:end]
 
 
 def _sanitize_deploy_diagnostic_src() -> str:
@@ -419,11 +422,26 @@ def test_remote_build_is_generation_isolated_locked_and_deadlined() -> None:
 def test_boot_smoke_has_outer_deadlines_and_curl_request_timeout() -> None:
     body = _function_body("do_boot_smoke")
     assert body.count("run_with_deadline") >= 2
-    assert "curl -sS --max-time" in body
-    assert "--write-out" in body
-    assert "last_health_body" in body
-    assert "docker logs --tail 80" in body
-    assert "/ready" in body
+    assert "$((pg_ready_budget + smoke_timeout))" in body
+    assert "repair_blob_volume_ownership() {" not in body
+    assert "do_restart() {" not in body
+    assert "capture_failure_evidence() {" not in body
+    smoke = _boot_smoke_heredoc()
+    assert "curl -sS --max-time" in smoke
+    assert "--write-out" in smoke
+    assert "last_health_body" in smoke
+    assert "docker logs --tail 80" in smoke
+    assert "sanitize_deploy_diagnostic" in smoke
+    assert not re.search(r"curl[^\n]*/ready", smoke)
+    trap = smoke[smoke.index("trap ") : smoke.index("EXIT") + 4]
+    assert "last_health_body" in trap
+    assert "docker logs --tail 80" in trap
+    assert 'if [[ "${attempt}" != "${attempts}" ]]; then' in smoke
+    assert "seq 1 \"${pg_budget}\"" in smoke
+    assert "diag_reserve" in body
+    assert "2 * poll_interval" in body
+    assert re.search(r"^SMOKE_TIMEOUT_DEFAULT=24$", SCRIPT.read_text(), re.M)
+    assert re.search(r"^SMOKE_PG_READY_TIMEOUT=30$", SCRIPT.read_text(), re.M)
 
 
 def test_automatic_rollbacks_capture_failure_evidence_first() -> None:
@@ -1068,7 +1086,7 @@ def test_boot_smoke_curl_stderr_is_sanitized(tmp_path: Path) -> None:
 
 
 def test_cid_capture_stderr_never_leaks_unprefixed(tmp_path: Path) -> None:
-    """W-02: cid-capture ssh 2>&1; hunter2 on ssh stderr never reaches the log raw."""
+    """W-02: hunter2 on ssh stderr never reaches the log raw; stdout cid stays usable."""
     result = _run_capture_failure_evidence(
         tmp_path,
         cid_stdout=b"abc123\n",
@@ -1077,9 +1095,14 @@ def test_cid_capture_stderr_never_leaks_unprefixed(tmp_path: Path) -> None:
     combined = (result.stdout + result.stderr).decode()
     assert result.returncode == 0, combined
     assert "hunter2" not in combined
+    assert "[REDACTED]" in combined
+    args = (tmp_path / "ssh-args").read_text()
+    assert "docker logs" in args
     body = _function_body("capture_failure_evidence")
     cid_idx = body.index("ps -q")
-    assert "2>&1" in body[cid_idx : cid_idx + 80]
+    snippet = body[cid_idx : cid_idx + 160]
+    assert "2>&1" not in snippet
+    assert '2>"${cid_err}"' in body
 
 
 def test_verify_health_and_ready_bodies_redact_secrets(tmp_path: Path) -> None:
@@ -1150,3 +1173,61 @@ def test_compose_project_name_read_from_remote_env(tmp_path: Path) -> None:
     assert "acx-dev" in args
     assert "COMPOSE_PROJECT_NAME" in combined
     assert "fallback acx-dev" in combined
+
+
+def test_function_body_does_not_overcapture_boot_smoke() -> None:
+    """Slice do_boot_smoke at the next top-level fn, not the next section header."""
+    body = _function_body("do_boot_smoke")
+    assert "do_boot_smoke() {" in body
+    assert "repair_blob_volume_ownership() {" not in body
+    assert "do_restart() {" not in body
+    assert "capture_failure_evidence() {" not in body
+    restart = _function_body("do_restart")
+    assert "restore_env_tag_to_rollback() {" not in restart
+
+
+def test_boot_smoke_skips_sleep_after_last_health_attempt() -> None:
+    smoke = _boot_smoke_heredoc()
+    assert 'if [[ "${attempt}" != "${attempts}" ]]; then' in smoke
+    sleep_idx = smoke.index('sleep "${poll_s}"')
+    guard_idx = smoke.rfind("if [[", 0, sleep_idx)
+    assert guard_idx != -1
+    assert "${attempt}" in smoke[guard_idx:sleep_idx]
+
+
+def test_boot_smoke_deadline_kill_still_emits_health_body(tmp_path: Path) -> None:
+    """EXIT trap must print last_health_body even when the outer deadline fires."""
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=10,
+        poll_s=2,
+        attempts=6,
+        extra_env={
+            "FAKE_HEALTH_CODE": "503",
+            "FAKE_HEALTH_BODY": '{"status":"fail","note":"deadline-kill-body","password":"hunter2"}',
+        },
+        wrap_deadline=2,
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "deadline-kill-body" in combined
+    assert "hunter2" not in combined
+    assert CRASH_LOG in combined
+    assert "smoke container logs unavailable" not in combined
+
+
+def test_cid_stdout_hex_collects_logs_when_stderr_warns(tmp_path: Path) -> None:
+    """Stderr after a valid cid must not skip docker logs."""
+    result = _run_capture_failure_evidence(
+        tmp_path,
+        cid_stdout=b"abc123\n",
+        cid_stderr=b"WARNING: password=hunter2\n",
+    )
+    combined = (result.stdout + result.stderr).decode()
+    assert result.returncode == 0, combined
+    assert "hunter2" not in combined
+    assert "unexpected container id output" not in combined
+    assert "no api container" not in combined
+    args = (tmp_path / "ssh-args").read_text()
+    assert "docker logs" in args
+    assert "abc123" in args

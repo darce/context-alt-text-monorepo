@@ -74,10 +74,12 @@ describe('GuidedPrototypePage shell', () => {
 
     await user.click(screen.getByRole('button', { name: guidedCopy('page.start') }));
     expect(document.activeElement).toHaveAttribute('id', 'guided-section-understand');
+    expect(document.activeElement).toHaveAccessibleName(guidedCopy('step.context'));
     expect(window.location.hash).toBe('#/guided-prototype');
 
     await user.click(stepButton('names'));
-    expect(document.activeElement).toHaveAttribute('id', 'guided-section-identity');
+    expect(document.activeElement).toHaveAttribute('id', 'guided-section-face');
+    expect(document.activeElement).toHaveAccessibleName(guidedCopy('step.names'));
     expect(window.location.hash).toBe('#/guided-prototype');
 
     await user.click(stepButton('draft'));
@@ -210,6 +212,27 @@ describe('GuidedPrototypePage journey', () => {
     expect(screen.getByTestId('demo-applied-image')).toHaveAttribute('alt', SEED_ALT_TEXT);
     expect(screen.getByTestId('demo-undo')).toBeDisabled();
     expect(document.activeElement).toBe(screen.getByTestId('demo-undo'));
+  });
+
+  it('asks before replacing a textarea edit that skipped Preview and keeps the typed text', async () => {
+    const user = userEvent.setup();
+    render(<GuidedPrototypePage />);
+
+    choose('left', 'include');
+    choose('right', 'omit');
+    const typed = 'Visitor-typed festival sentence without preview.';
+    const editor = screen.getByRole('textbox', { name: guidedCopy('draft.label') });
+    fireEvent.change(editor, { target: { value: typed } });
+
+    choose('right', 'include');
+    const dialog = screen.getByRole('dialog', { name: guidedCopy('names.change_title') });
+    expect(dialog).toHaveTextContent(guidedCopy('names.change_body'));
+    expect(editor).toHaveValue(typed);
+    await user.click(within(dialog).getByRole('button', { name: guidedCopy('names.change_cancel') }));
+    expect(editor).toHaveValue(typed);
+    expect(
+      within(screen.getByTestId('name-choice-right')).getByRole('radio', { name: guidedCopy('names.omit') }),
+    ).toBeChecked();
   });
 
   it('asks before replacing a manual edit and keeps the previous text in draft history', async () => {

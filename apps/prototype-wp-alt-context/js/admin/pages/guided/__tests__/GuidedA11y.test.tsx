@@ -317,20 +317,25 @@ describe('GuidedA11y (W04)', () => {
 
     await user.click(screen.getByRole('button', { name: guidedCopy('page.start') }));
     expect(document.activeElement).toHaveAttribute('id', 'guided-section-understand');
+    expect(document.activeElement).toHaveAccessibleName(guidedCopy('step.context'));
 
     await user.click(stepButton('names'));
-    expect(document.activeElement).toHaveAttribute('id', 'guided-section-identity');
+    expect(document.activeElement).toHaveAttribute('id', 'guided-section-face');
+    expect(document.activeElement).toHaveAccessibleName(guidedCopy('step.names'));
 
     await user.click(screen.getByRole('button', { name: guidedCopy('context.next') }));
-    expect(document.activeElement).toHaveAttribute('id', 'guided-section-identity');
+    expect(document.activeElement).toHaveAttribute('id', 'guided-section-face');
+    expect(document.activeElement).toHaveAccessibleName(guidedCopy('step.names'));
 
     await chooseRadio(user, 'left', 'include');
     await chooseRadio(user, 'right', 'include');
     await user.click(screen.getByRole('button', { name: guidedCopy('names.next') }));
     expect(document.activeElement).toHaveAttribute('id', 'guided-section-review');
+    expect(document.activeElement).toHaveAccessibleName(guidedCopy('step.draft'));
 
     await user.click(screen.getByRole('button', { name: guidedCopy('draft.next') }));
     expect(document.activeElement).toHaveAttribute('id', 'guided-section-apply');
+    expect(document.activeElement).toHaveAccessibleName(guidedCopy('step.apply'));
   });
 
   it('would prove the page wrong if the reset dialog lacked role=dialog, a label, Escape-to-close, or onOpenChange', async () => {
@@ -510,8 +515,18 @@ describe('GuidedA11y (W04)', () => {
     render(<GuidedPrototypePage />);
 
     await user.click(screen.getByText(guidedCopy('names.evidence_open', { position: 'left' })));
-    expect(screen.getAllByRole('button', { name: /enlarg|larger|full.?size|expand comparison/i })).toHaveLength(2);
+    const enlargeButtons = screen.getAllByRole('button', { name: /enlarg|larger|full.?size|expand comparison/i });
+    expect(enlargeButtons).toHaveLength(2);
     expect(screen.getByRole('img', { name: 'Detected left face' })).toBeInTheDocument();
     expect(screen.getByRole('img', { name: 'Detected right face' })).toBeInTheDocument();
+
+    const enlarge = enlargeButtons[0];
+    assertHtmlElement(enlarge, 'left enlarge comparison button');
+    await user.click(enlarge);
+    const comparison = screen.getByRole('dialog', { name: /enlarged comparison/i });
+    expect(comparison).toHaveAttribute('aria-modal', 'true');
+    await user.click(within(comparison).getByRole('button', { name: guidedCopy('names.evidence_close') }));
+    expect(screen.queryByRole('dialog', { name: /enlarged comparison/i })).not.toBeInTheDocument();
+    expect(document.activeElement).toBe(enlarge);
   });
 });

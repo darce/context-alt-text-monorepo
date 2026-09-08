@@ -46,6 +46,15 @@ export const GuidedPrototypePage = (): React.JSX.Element => {
   const [resetVersion, setResetVersion] = useState(0);
   const [liveWaiting, setLiveWaiting] = useState(false);
   const choiceOriginRef = useRef<HTMLInputElement | null>(null);
+  const pendingDraftRef = useRef<string | null>(null);
+
+  const flushPendingDraft = (current: GuidedDemoState): GuidedDemoState => {
+    const pending = pendingDraftRef.current;
+    if (pending === null || pending === (current.draftText ?? '')) {
+      return current;
+    }
+    return editGuidedDraft(current, pending);
+  };
 
   const commit = (next: GuidedDemoState, message?: string): void => {
     setDemo(next);
@@ -76,7 +85,7 @@ export const GuidedPrototypePage = (): React.JSX.Element => {
 
   const handleChoose = (position: GuidedFacePosition, choice: GuidedNameChoice, origin: HTMLInputElement): void => {
     choiceOriginRef.current = origin;
-    commit(chooseGuidedName(demo, scenario, position, choice));
+    commit(chooseGuidedName(flushPendingDraft(demo), scenario, position, choice));
   };
 
   const handleCancelReplacement = (): void => {
@@ -111,42 +120,48 @@ export const GuidedPrototypePage = (): React.JSX.Element => {
       />
 
       <section className="acx-guided-page__workspace" aria-labelledby="acx-guided-page-title">
-        <header className="acx-guided-page__hero">
-          <h2 id="acx-guided-page-title">{guidedCopy('step.context')}</h2>
-          <GuidedResetDialog liveWaiting={liveWaiting} onConfirm={handleReset} />
-        </header>
-
-        <section id="guided-section-understand" className="acx-guided-page__scenario" tabIndex={-1}>
-          <GuidedSamplePhoto
-            src={scenario.pressPhoto.src}
-            evidenceAlt={scenario.samples.none ?? scenario.pressPhoto.altText}
-            currentAltText={demo.appliedAltText}
-            credit={scenario.pressPhoto.credit}
-          />
-          <div className="acx-guided-page__context">
-            <p>{guidedCopy('context.intro')}</p>
-            <p>
-              <strong>{guidedCopy('context.page_label')}</strong>
-              {': '}
-              {scenario.pageContext.title}
-            </p>
-            <p>{scenario.pageContext.summary}</p>
-            <p>{guidedCopy('context.purpose')}</p>
-            <details className="acx-guided-page__provenance">
-              <summary>{guidedCopy('provenance.disclosure')}</summary>
-              <p>{guidedCopy('provenance.recorded')}</p>
-              <p>{scenario.pressPhoto.credit}</p>
-            </details>
-            <button
-              type="button"
-              className="acx-button acx-button--primary"
-              onClick={() => {
-                handleSelectStep(GUIDED_STEP.NAMES);
-                focusGuidedSection(GUIDED_STEP.NAMES);
-              }}
-            >
-              {guidedCopy('context.next')}
-            </button>
+        <section
+          id="guided-section-understand"
+          className="acx-guided-page__understand"
+          aria-labelledby="acx-guided-page-title"
+          tabIndex={-1}
+        >
+          <header className="acx-guided-page__hero">
+            <h2 id="acx-guided-page-title">{guidedCopy('step.context')}</h2>
+            <GuidedResetDialog liveWaiting={liveWaiting} onConfirm={handleReset} />
+          </header>
+          <div className="acx-guided-page__scenario">
+            <GuidedSamplePhoto
+              src={scenario.pressPhoto.src}
+              evidenceAlt={scenario.samples.none ?? scenario.pressPhoto.altText}
+              currentAltText={demo.appliedAltText}
+              credit={scenario.pressPhoto.credit}
+            />
+            <div className="acx-guided-page__context">
+              <p>{guidedCopy('context.intro')}</p>
+              <p>
+                <strong>{guidedCopy('context.page_label')}</strong>
+                {': '}
+                {scenario.pageContext.title}
+              </p>
+              <p>{scenario.pageContext.summary}</p>
+              <p>{guidedCopy('context.purpose')}</p>
+              <details className="acx-guided-page__provenance">
+                <summary>{guidedCopy('provenance.disclosure')}</summary>
+                <p>{guidedCopy('provenance.recorded')}</p>
+                <p>{scenario.pressPhoto.credit}</p>
+              </details>
+              <button
+                type="button"
+                className="acx-button acx-button--primary"
+                onClick={() => {
+                  handleSelectStep(GUIDED_STEP.NAMES);
+                  focusGuidedSection(GUIDED_STEP.NAMES);
+                }}
+              >
+                {guidedCopy('context.next')}
+              </button>
+            </div>
           </div>
         </section>
 
@@ -181,6 +196,9 @@ export const GuidedPrototypePage = (): React.JSX.Element => {
           state={demo}
           actions={{
             onEdit: (text) => commit(editGuidedDraft(demo, text)),
+            onDraftInput: (text) => {
+              pendingDraftRef.current = text;
+            },
             onPreview: handlePreview,
             onKeep: () => commit(keepGuidedCurrentAltText(demo)),
             onRetryFixture: () => commit(retryGuidedFixture(demo, scenario)),

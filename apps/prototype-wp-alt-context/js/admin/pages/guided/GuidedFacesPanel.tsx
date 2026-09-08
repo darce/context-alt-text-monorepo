@@ -43,7 +43,7 @@ export const GuidedFacesPanel = ({
   const pending = state.pendingChoiceChange !== null;
 
   return (
-    <section id={GUIDED_FACE_SECTION_ID} className="acx-guided-face" aria-labelledby="guided-faces-title">
+    <section id={GUIDED_FACE_SECTION_ID} className="acx-guided-face" aria-labelledby="guided-faces-title" tabIndex={-1}>
       <header className="acx-guided-face__header">
         <h2 id="guided-faces-title">{guidedCopy('step.names')}</h2>
         <p>{guidedCopy('names.intro')}</p>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 import {
   DialogContent,
@@ -64,12 +64,26 @@ export const GuidedFaceMatchCard = ({
   onChoose,
 }: GuidedFaceMatchCardProps): React.JSX.Element => {
   const [comparisonOpen, setComparisonOpen] = useState(false);
+  const enlargeRef = useRef<HTMLButtonElement>(null);
+  const wasComparisonOpenRef = useRef(false);
   const titleId = `guided-face-${face.id}-title`;
   const groupName = `guided-name-${face.position}`;
   const includeId = `${groupName}-include`;
   const omitId = `${groupName}-omit`;
   const enlargeId = `${groupName}-enlarge`;
   const detectedAlt = cropAlt(face.position);
+
+  useEffect(() => {
+    if (comparisonOpen) {
+      wasComparisonOpenRef.current = true;
+      return;
+    }
+    if (!wasComparisonOpenRef.current) {
+      return;
+    }
+    wasComparisonOpenRef.current = false;
+    enlargeRef.current?.focus();
+  }, [comparisonOpen]);
 
   const handleChange = (event: React.ChangeEvent<HTMLInputElement>, nextChoice: GuidedNameChoice): void => {
     onChoose(nextChoice, event.currentTarget);
@@ -96,6 +110,7 @@ export const GuidedFaceMatchCard = ({
       <div className="acx-guided-face__crop">
         {thumbnail()}
         <button
+          ref={enlargeRef}
           id={enlargeId}
           type="button"
           className="acx-button acx-button--tertiary acx-guided-face__enlarge"
@@ -159,6 +174,7 @@ export const GuidedFaceMatchCard = ({
             className="acx-guided-face__lightbox"
             onCloseAutoFocus={(event) => {
               event.preventDefault();
+              enlargeRef.current?.focus();
             }}
           >
             <DialogTitle>{ENLARGED_COMPARISON_TITLE}</DialogTitle>

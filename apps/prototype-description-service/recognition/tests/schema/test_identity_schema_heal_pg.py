@@ -127,7 +127,11 @@ def test_heal_rebuilds_matview_that_lost_its_vector_typmod(pg_empty_engine) -> N
                 text("SELECT indexname FROM pg_indexes WHERE tablename='mv_identity_cluster_centroids'")
             )
         }
-    assert {"mv_cluster_centroids_cluster_id", "mv_cluster_centroids_tenant_idx", "mv_cluster_centroids_vector_idx"} <= indexes
+    assert {
+        "mv_cluster_centroids_cluster_id",
+        "mv_cluster_centroids_tenant_idx",
+        "mv_cluster_centroids_vector_idx",
+    } <= indexes
 
 
 def test_heal_restores_dropped_rls_policy(pg_empty_engine) -> None:

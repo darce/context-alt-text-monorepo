@@ -250,6 +250,8 @@ boot_smoke_heredoc=$(awk '
 ' "$recognition_deploy")
 assert_eq "VLMHEAL-1 boot smoke prints last /health body on failure" \
     "1" "$(printf '%s\n' "$boot_smoke_heredoc" | grep -cF '${last_health_body:0:2000}' || true)"
+assert_eq "VLMHEAL-1 boot smoke prints last /health code on failure" \
+    "1" "$(printf '%s\n' "$boot_smoke_heredoc" | grep -cF 'smoke health LAST HTTP code: ${last_health_code}' || true)"
 
 # R2-13: printed verdict AND $? for at least one PASS and one FAIL per classifier.
 # WARN is not a failure (rc 0), matching UNKNOWN policy.

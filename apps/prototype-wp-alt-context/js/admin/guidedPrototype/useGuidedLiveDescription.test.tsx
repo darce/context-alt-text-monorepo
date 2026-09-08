@@ -4,8 +4,6 @@ import type { Mock } from 'vitest';
 
 import type { DescribeRunItemsResponse, DescribeRunResponse } from '../api/describeApi';
 import { GUIDED_LIVE_REASON, GUIDED_LIVE_STATUS, GUIDED_LIVE_WAIT_CEILING_SECONDS } from './liveDescription';
-import { confirmGuidedIdentity, createGuidedScenario, leaveGuidedIdentityUnidentified } from './state';
-import type { GuidedScenario } from './state';
 import { GUIDED_LIVE_WARM_CEILING_SECONDS, useGuidedLiveDescription } from './useGuidedLiveDescription';
 import type { GuidedLiveDescriptionClient } from './useGuidedLiveDescription';
 
@@ -64,24 +62,9 @@ const stubClient = (over: Partial<StubClient> = {}): StubClient => ({
   ...over,
 });
 
-/** Every face answered: one confirmed, one deliberately left unidentified. */
-const decidedScenario = (): GuidedScenario =>
-  leaveGuidedIdentityUnidentified(confirmGuidedIdentity(createGuidedScenario(), 'katy-perry'), 'justin-trudeau');
-
-/** One face answered, one still open -- the gate must stay shut. */
-const halfDecidedScenario = (): GuidedScenario => confirmGuidedIdentity(createGuidedScenario(), 'katy-perry');
-
-/** No confirmations at all, but nothing left open either. */
-const allUnidentifiedScenario = (): GuidedScenario =>
-  leaveGuidedIdentityUnidentified(
-    leaveGuidedIdentityUnidentified(createGuidedScenario(), 'katy-perry'),
-    'justin-trudeau',
-  );
-
-const mount = (client: StubClient, over: { scenario?: GuidedScenario; mediaId?: number | null } = {}) =>
+const mount = (client: StubClient, over: { mediaId?: number | null } = {}) =>
   renderHook(() =>
     useGuidedLiveDescription({
-      scenario: over.scenario ?? decidedScenario(),
       mediaId: over.mediaId === undefined ? MEDIA_ID : over.mediaId,
       client,
     }),
@@ -112,48 +95,35 @@ describe('useGuidedLiveDescription', () => {
   });
 
   describe('the gate', () => {
-    it('starts blocked while no face has been decided and refuses to submit', async () => {
+    it('starts idle with a media id and does not wait for face decisions', async () => {
       const client = stubClient();
-      const { result } = mount(client, { scenario: createGuidedScenario() });
+      const { result } = mount(client);
 
-      expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.BLOCKED);
-      expect(result.current.canRequest).toBe(false);
+      expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.IDLE);
+      expect(result.current.canRequest).toBe(true);
 
       await press(() => result.current.request());
 
-      expect(client.submit).not.toHaveBeenCalled();
-      expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.BLOCKED);
+      expect(client.submit).toHaveBeenCalledWith(MEDIA_ID);
     });
 
-    it('stays blocked without a media id, because there is nothing live to describe', () => {
-      const { result } = mount(stubClient(), { mediaId: null });
+    it('stays unavailable without a media id, because there is nothing live to describe', () => {
+      const client = stubClient();
+      const { result } = mount(client, { mediaId: null });
 
       expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.BLOCKED);
       expect(result.current.canRequest).toBe(false);
       expect(result.current.blockedReason).toBe('no_media');
     });
 
-    it('stays blocked while one of two faces is still unanswered', () => {
-      const { result } = mount(stubClient(), { scenario: halfDecidedScenario() });
+    it('refuses to submit while unavailable', async () => {
+      const client = stubClient();
+      const { result } = mount(client, { mediaId: null });
 
+      await press(() => result.current.request());
+
+      expect(client.submit).not.toHaveBeenCalled();
       expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.BLOCKED);
-      expect(result.current.blockedReason).toBe('no_faces_decided');
-    });
-
-    it('unblocks when every face is answered, even if none was confirmed', () => {
-      const { result } = mount(stubClient(), { scenario: allUnidentifiedScenario() });
-
-      expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.IDLE);
-      expect(result.current.blockedReason).toBeNull();
-      expect(result.current.canRequest).toBe(true);
-    });
-
-    it('unblocks once a face is decided and a media id exists', () => {
-      const { result } = mount(stubClient());
-
-      expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.IDLE);
-      expect(result.current.canRequest).toBe(true);
-      expect(result.current.blockedReason).toBeNull();
     });
   });
 
@@ -593,38 +563,31 @@ describe('useGuidedLiveDescription', () => {
 
       expect(result.current.disclosure.namesTravelWithTheRequest).toBe(false);
       expect(result.current.disclosure.namingSource).toBe('roster');
-      expect(result.current.disclosure.confirmedHere).toContain('Katy Perry');
     });
   });
 
-  describe('re-opening a face mid-run', () => {
+  describe('withdrawing the media id mid-run', () => {
     it('stops the wait and cancels the run on the server', async () => {
       const client = stubClient();
       const { result, rerender } = renderHook(
-        ({ scenario }: { scenario: GuidedScenario }) =>
-          useGuidedLiveDescription({ scenario, mediaId: MEDIA_ID, client }),
-        { initialProps: { scenario: decidedScenario() } },
+        ({ mediaId }: { mediaId: number | null }) => useGuidedLiveDescription({ mediaId, client }),
+        { initialProps: { mediaId: MEDIA_ID } },
       );
 
       await press(() => result.current.request());
       expect(result.current.state.runId).toBe('run-1');
 
       await act(async () => {
-        rerender({ scenario: halfDecidedScenario() });
+        rerender({ mediaId: null });
         await vi.advanceTimersByTimeAsync(0);
       });
 
       expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.BLOCKED);
       expect(result.current.canRequest).toBe(false);
-      // The burst the run started keeps costing money until the server hears
-      // about it, so the screen stopping is not enough on its own.
       expect(client.cancel).toHaveBeenCalledWith('run-1');
     });
 
     it('cancels a run whose id only arrives after the gate closed', async () => {
-      // The gate can close while the submit is still on the wire. There is no
-      // run id to cancel at that instant, but the server is about to hand one
-      // back for a burst no panel owns any more.
       let handBackRunId: (run: DescribeRunResponse) => void = () => undefined;
       const client = stubClient({
         submit: vi.fn<GuidedLiveDescriptionClient['submit']>(
@@ -635,9 +598,8 @@ describe('useGuidedLiveDescription', () => {
         ),
       });
       const { result, rerender } = renderHook(
-        ({ scenario }: { scenario: GuidedScenario }) =>
-          useGuidedLiveDescription({ scenario, mediaId: MEDIA_ID, client }),
-        { initialProps: { scenario: decidedScenario() } },
+        ({ mediaId }: { mediaId: number | null }) => useGuidedLiveDescription({ mediaId, client }),
+        { initialProps: { mediaId: MEDIA_ID } },
       );
 
       await press(() => result.current.request());
@@ -645,7 +607,7 @@ describe('useGuidedLiveDescription', () => {
       expect(result.current.state.runId).toBeNull();
 
       await act(async () => {
-        rerender({ scenario: halfDecidedScenario() });
+        rerender({ mediaId: null });
         await vi.advanceTimersByTimeAsync(0);
       });
       expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.BLOCKED);
@@ -662,13 +624,12 @@ describe('useGuidedLiveDescription', () => {
     it('does not cancel anything when the gate closes with no run in flight', async () => {
       const client = stubClient();
       const { rerender } = renderHook(
-        ({ scenario }: { scenario: GuidedScenario }) =>
-          useGuidedLiveDescription({ scenario, mediaId: MEDIA_ID, client }),
-        { initialProps: { scenario: decidedScenario() } },
+        ({ mediaId }: { mediaId: number | null }) => useGuidedLiveDescription({ mediaId, client }),
+        { initialProps: { mediaId: MEDIA_ID } },
       );
 
       await act(async () => {
-        rerender({ scenario: halfDecidedScenario() });
+        rerender({ mediaId: null });
         await vi.advanceTimersByTimeAsync(0);
       });
 

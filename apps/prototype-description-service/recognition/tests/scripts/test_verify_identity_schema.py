@@ -94,10 +94,35 @@ def test_missing_matview_is_heal_repairable() -> None:
     script = _import_script()
     kwargs = _complete_kwargs(script)
     kwargs["matview_relkind"] = None
+    kwargs["matview_centroid_typmod"] = -1
 
     report = script._validate_schema_state(**kwargs)
 
     assert report["ok"] is False
+    assert report["exit_code"] == script.EXIT_HEAL_REPAIRABLE
+    assert report["matview_centroid_typmod"] == -1
+
+
+def test_matching_matview_centroid_typmod_is_ok() -> None:
+    script = _import_script()
+    kwargs = _complete_kwargs(script)
+    kwargs["matview_centroid_typmod"] = script.EMBEDDING_DIMENSION
+
+    report = script._validate_schema_state(**kwargs)
+
+    assert report["ok"] is True
+    assert report["matview_centroid_typmod"] == script.EMBEDDING_DIMENSION
+
+
+def test_mismatched_matview_centroid_typmod_is_heal_repairable_and_named() -> None:
+    script = _import_script()
+    kwargs = _complete_kwargs(script)
+    kwargs["matview_centroid_typmod"] = -1
+
+    report = script._validate_schema_state(**kwargs)
+
+    assert report["ok"] is False
+    assert report["matview_centroid_typmod"] == -1
     assert report["exit_code"] == script.EXIT_HEAL_REPAIRABLE
 
 

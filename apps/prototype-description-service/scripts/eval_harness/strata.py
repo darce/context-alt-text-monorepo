@@ -7,8 +7,10 @@ instead of thousands.
 The strata split by what a pixel statistic can actually decide:
 
 - **Offline strata** (``Confidence.OFFLINE``) — black-and-white, low-light, charts,
-  dense-scene, faces/people/crowds. A feature decides membership, so each gets a
-  RANKED shortlist, most-confident first.
+  dense-scene, faces/people/crowds. Pixel features decide membership for the first
+  four. The face-dependent pools deliberately keep the complete eligible frame:
+  XMP and the optional face pass only rank candidates and expose evidence to the
+  operator; they never remove an image from a pool.
 - **Operator strata** (``Confidence.NEEDS_OPERATOR``) — mirrors, occlusion, art,
   abstract, animals, products, text-in-image. No offline signal exists for these:
   no pixel statistic sees a mirror. They share ONE deterministic diverse browse set
@@ -210,11 +212,11 @@ def face_count_of(record: ImageRecord, face_counts: Mapping[str, int]) -> tuple[
     model's count, so ``face_pass`` only ever looks at images whose XMP count is
     zero and the two sources never disagree over one image.
 
-    An image absent from ``face_counts`` scores 0/NONE — nothing looked at it. That
-    is deliberately indistinguishable from "zero faces" for BUCKETING (both are
-    excluded from people), but the source label keeps the distinction legible: a
-    strata report where people is full of NONE is reporting an unrun pass, not an
-    empty corpus.
+    An image absent from ``face_counts`` scores 0/NONE — nothing looked at it. The
+    source label keeps that distinction legible. Face-dependent strata are a
+    conservative shortlist frame, so this value is used for ranking metadata only;
+    an absent or zero detector result never removes an eligible image from the
+    people, faces, or crowds pool.
     """
     if record.xmp_face_count > 0:
         return record.xmp_face_count, FaceCountSource.XMP
@@ -237,14 +239,13 @@ def _domains_for(
     record: ImageRecord, source: Source, *, dense_edge_min: float | None, face_count: int
 ) -> tuple[Domain, ...]:
     domains: list[Domain] = []
-    if face_count >= 1:
-        domains.append(Domain.PEOPLE)
-    # celebs01 is a public-figure portrait set by construction; uploads need a
-    # detected/annotated face to prove a single face is present.
-    if source is Source.CELEBS01 or face_count == 1:
-        domains.append(Domain.FACES)
-    if face_count >= CROWD_MIN_FACES:
-        domains.append(Domain.CROWDS)
+    # These are candidate pools, not detector-derived ground truth. Keep every
+    # eligible row in all three face-dependent pools so a detector miss cannot
+    # shrink the frame that the operator later curates into a frozen manifest.
+    # ``face_count`` remains useful for ranking and is surfaced on each candidate;
+    # membership must stay independent of that candidate-detector signal
+    # (FIR-12-CAN-09 / MLDATA-09).
+    domains.extend((Domain.PEOPLE, Domain.FACES, Domain.CROWDS))
     if record.bw_candidate:
         domains.append(Domain.BLACK_AND_WHITE)
     if record.low_light_candidate:

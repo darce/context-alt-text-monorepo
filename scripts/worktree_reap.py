@@ -66,6 +66,10 @@ class LaneStateError(RuntimeError):
     """Live lane ownership could not be determined."""
 
 
+class RegistryBackendUnavailable(LaneStateError):
+    """The handoff registry package cannot be imported."""
+
+
 @dataclass(frozen=True)
 class WorktreeRecord:
     path: Path
@@ -306,12 +310,16 @@ def _lane_owners_from_rows(rows: Collection[object]) -> dict[Path, str]:
         if status in _TERMINAL_LANE_STATUSES:
             continue
         worktree_path = row.get("worktree_path")
-        if not worktree_path:
-            continue
+        if worktree_path is None or not str(worktree_path).strip():
+            raise LaneStateError(
+                f"lane {row.get('lane_id')!r} has no usable worktree_path"
+            )
         try:
             resolved = Path(str(worktree_path)).expanduser().resolve()
-        except (OSError, RuntimeError, ValueError):
-            continue
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise LaneStateError(
+                f"lane {row.get('lane_id')!r} has no usable worktree_path: {exc}"
+            ) from exc
         owners.setdefault(resolved, str(row.get("lane_id") or "unnamed lane"))
     return owners
 
@@ -331,7 +339,9 @@ def active_lane_paths(repo: Path | str) -> dict[Path, str]:
         from workbay_handoff_mcp import RuntimeConfig, configure_runtime
         from workbay_handoff_mcp.lanes_recording import list_lanes
     except ImportError as exc:  # pragma: no cover - exercised via injection
-        raise LaneStateError(f"lane registry is unavailable: {exc}") from exc
+        raise RegistryBackendUnavailable(
+            "registry backend unavailable; run via `make worktree-reap*`"
+        ) from exc
 
     repo_path = Path(repo).resolve()
     try:
@@ -347,6 +357,18 @@ def active_lane_paths(repo: Path | str) -> dict[Path, str]:
         raise LaneStateError("lane registry response was truncated")
 
     return _lane_owners_from_rows(rows)
+
+
+def _lane_ownership_block(repo: Path, target: Path) -> str | None:
+    """Return a fail-closed reason if mutation must not proceed."""
+    try:
+        owners = active_lane_paths(repo)
+    except LaneStateError as exc:
+        return f"lane ownership unreadable: {exc}"
+    lane_id = owners.get(Path(target).resolve())
+    if lane_id is not None:
+        return f"active lane {lane_id} owns worktree"
+    return None
 
 
 def _is_harness_scratch(parts: tuple[str, ...]) -> bool:
@@ -792,6 +814,17 @@ def classify(
     lane_verified = True
     try:
         lane_owners = (lane_lookup or active_lane_paths)(repo_path)
+    except RegistryBackendUnavailable as exc:
+        # A missing backend is not an advisory UNKNOWN pass.  Inspection may
+        # opt in with require_lane_state=False; mutation still refuses later.
+        if require_lane_state:
+            raise
+        lane_verified = False
+        warnings.warn(
+            f"reaping without lane-state verification: {exc}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
     except LaneStateError as exc:
         # Fail closed by default: an unreadable registry means every linked
         # worktree might be owned, and reclaiming one would be unrecoverable.
@@ -1000,6 +1033,12 @@ def _recover_intent_records(
             errors.append(f"{repo}: {recovery_error}")
             continue
         assert recovery is not None
+        recovery_target = Path(recovery.path).resolve()
+        ownership_error = _lane_ownership_block(repo, recovery_target)
+        if ownership_error is not None:
+            errors.append(f"{recovery_target}: {ownership_error}")
+            continue
+        recovery = replace(recovery, lane_verified=True)
         if not any(
             _intent_matches(intent, repo, record, Path(record.path).resolve())
             for record in recovered
@@ -1187,6 +1226,11 @@ def _plan_candidate(
     """Validate one candidate without mutating Git or the filesystem."""
     target = Path(record.path).resolve()
     _validate_target(record, repo, current_path)
+    if not record.lane_verified:
+        return None, "lane ownership was not verified"
+    ownership_error = _lane_ownership_block(repo, target)
+    if ownership_error is not None:
+        return None, ownership_error
 
     target_exists = target.exists()
     branch_error, expected_oid = _branch_snapshot_for_delete(repo, record)
@@ -1305,6 +1349,13 @@ def _remove_worktree(
         if clear_error is not None:
             error += f"; {clear_error}"
         return error, False, plan
+    ownership_error = _lane_ownership_block(repo, plan.target)
+    if ownership_error is not None:
+        clear_error = _clear_intent(repo)
+        error = ownership_error
+        if clear_error is not None:
+            error += f"; {clear_error}"
+        return error, False, plan
     removed = _git(repo, "worktree", "remove", "--", str(plan.target))
     if removed.returncode != 0:
         clear_error = _clear_intent(repo)
@@ -1410,6 +1461,14 @@ def _apply_unlocked(
             break
         if did_remove:
             removed_worktrees.add(target)
+        ownership_error = _lane_ownership_block(repo, Path(record.path).resolve())
+        if ownership_error is not None:
+            result["errors"].append(f"{target}: {ownership_error}")
+            result["skipped"].extend(
+                str(Path(remaining.path).resolve())
+                for remaining, _remaining_repo in ordered_candidates[index + 1 :]
+            )
+            break
         error, did_delete = _delete_branch(repo, record)
         if error is not None:
             result["errors"].append(f"{target}: {error}")
@@ -1529,7 +1588,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--allow-missing-lane-state",
         action="store_true",
-        help="classify even when the lane registry cannot be read (unsafe)",
+        help="relax lane-registry inspection for --check; never licenses --apply",
     )
     parser.add_argument(
         "--json",
@@ -1556,6 +1615,9 @@ def main(argv: list[str] | None = None) -> int:
             allow_ignored=args.allow_ignored,
             require_lane_state=not args.allow_missing_lane_state,
         )
+    except RegistryBackendUnavailable as exc:
+        print(f"worktree-reap: {exc}", file=sys.stderr)
+        return 1
     except (GitError, OSError, ValueError) as exc:
         print(f"worktree-reap: {exc}", file=sys.stderr)
         return 1
@@ -1590,6 +1652,16 @@ def main(argv: list[str] | None = None) -> int:
         return 4
     if not args.apply:
         return 3 if redundant else 0
+
+    unverified = [record for record in records if not record.lane_verified]
+    if unverified:
+        listed = ", ".join(str(Path(record.path).resolve()) for record in unverified)
+        print(
+            "worktree-reap: refusing to apply; ownership was not verified for: "
+            + listed,
+            file=sys.stderr,
+        )
+        return 1
 
     try:
         applied = apply(records, dry_run=False)

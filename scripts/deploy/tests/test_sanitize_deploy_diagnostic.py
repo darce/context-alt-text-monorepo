@@ -652,6 +652,31 @@ def test_sanitize_deploy_diagnostic_s2b08_passphrase_pwd_cookie() -> None:
     assert out.count("\n") == 9
 
 
+_REV_W01_CANARIES = [
+    ('{"access_token":"LEAKA"}', "LEAKA"),
+    ('{"api_key": "LEAKB"}', "LEAKB"),
+    ('{"password": "LEAKC"}', "LEAKC"),
+    ("SECRET=LEAKD", "LEAKD"),
+    ("KEY=LEAKE", "LEAKE"),
+    ('PGPASSWORD="quoted LEAKF tail"', "LEAKF"),
+    ("postgresql://acx:LEAKG@db/x", "LEAKG"),
+    ("postgres://u:LEAKH@h:5432/d?sslmode=require", "LEAKH"),
+]
+
+
+@pytest.mark.parametrize(
+    "raw,secret",
+    _REV_W01_CANARIES,
+    ids=[secret for _, secret in _REV_W01_CANARIES],
+)
+def test_sanitize_deploy_diagnostic_rev_w01_canaries(raw: str, secret: str) -> None:
+    """REV-W-01: exact Wave G sanitizer canaries must not survive redaction."""
+    out = _run_sanitizer(raw + "\n")
+    assert secret not in out, out
+    assert "[REDACTED]" in out
+    assert out.startswith("diagnostic: ")
+
+
 def test_sanitize_deploy_diagnostic_s2b09_authorization_signature_digest() -> None:
     """S2B-09: Signature / Digest / AWS4 / scheme-less Authorization must redact."""
     raw = (

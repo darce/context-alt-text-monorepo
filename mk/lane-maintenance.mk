@@ -20,13 +20,18 @@ worktree-reap-check: ## Check for redundant worktrees (REAP_STRICT=1 fails on re
 # Advisory inside check-all. lane-intake runs check-all straight after merging
 # a sub-lane, at which point that lane's worktree is REDUNDANT by definition:
 # a hard gate here fails the very flow the reclaimer exists to clean up after.
-# REAP_STRICT=1 restores the blocking behaviour.
-worktree-reap-advise: ## Print the worktree reap table without failing the build
+# Only status 3 (redundancy) is advisory. Git/registry failures (1) and
+# unknown-classification (4) stay failures. REAP_STRICT=1 also fails on 3.
+worktree-reap-advise: ## Print the worktree reap table; redundancy is advisory unless REAP_STRICT=1
 	@REAP_STRICT="$(REAP_STRICT)" REAP_PROTECT="$(REAP_PROTECT)" $(PYTHON) scripts/worktree_reap.py --repo "$(CURDIR)" --check; \
 	status=$$?; \
 	if [ "$$status" -eq 0 ]; then exit 0; fi; \
-	if [ "$(REAP_STRICT)" = "1" ]; then exit "$$status"; fi; \
-	echo "worktree-reap: advisory only (exit $$status; set REAP_STRICT=1 to fail)"
+	if [ "$$status" -eq 3 ]; then \
+		if [ "$(REAP_STRICT)" = "1" ]; then exit 3; fi; \
+		echo "worktree-reap: advisory only (exit $$status; set REAP_STRICT=1 to fail)"; \
+		exit 0; \
+	fi; \
+	exit "$$status"
 
 check-all: worktree-reap-advise
 

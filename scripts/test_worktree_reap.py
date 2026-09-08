@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from dataclasses import replace
@@ -26,6 +27,7 @@ def _load_reaper() -> Any:
 
 
 reaper = _load_reaper()
+_real_active_lane_paths = reaper.active_lane_paths
 
 
 @pytest.fixture(autouse=True)
@@ -901,22 +903,17 @@ def test_apply_refuses_root_and_current_worktree(
 
 
 def test_json_cli_emits_full_records_and_dry_run_exit_code(
-    fixture_repo: dict[str, Any],
+    fixture_repo: dict[str, Any], capsys: pytest.CaptureFixture[str]
 ) -> None:
-    result = subprocess.run(
-        [sys.executable, str(SCRIPT_PATH), "--repo", str(fixture_repo["repo"]), "--json"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    assert result.returncode == 3
-    payload = json.loads(result.stdout)
+    assert reaper.main(["--repo", str(fixture_repo["repo"]), "--json"]) == 3
+    payload = json.loads(capsys.readouterr().out)
     assert isinstance(payload, list)
     assert {row["status"] for row in payload} >= {"REDUNDANT", "LIVE", "DIRTY"}
 
 
-def test_json_cli_on_root_only_repo_is_an_empty_list(tmp_path: Path) -> None:
+def test_json_cli_on_root_only_repo_is_an_empty_list(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init", "-b", "main")
@@ -924,15 +921,8 @@ def test_json_cli_on_root_only_repo_is_an_empty_list(tmp_path: Path) -> None:
     _git(repo, "config", "user.name", "Worktree Reap Test")
     _commit(repo, "initial", "README", "initial\n")
 
-    result = subprocess.run(
-        [sys.executable, str(SCRIPT_PATH), "--repo", str(repo), "--json"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    assert result.returncode == 0
-    assert json.loads(result.stdout) == []
+    assert reaper.main(["--repo", str(repo), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == []
 
 
 def test_active_lane_worktree_is_live_even_when_landed_and_clean(
@@ -1130,6 +1120,111 @@ def test_apply_rejects_unverified_lane_state(
         "refs/heads/feature/parent-ancestor",
         check=False,
     ).returncode == 0
+
+
+def test_main_apply_refuses_unverified_lane_state(
+    fixture_repo: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = fixture_repo["repo"]
+    refused = fixture_repo["paths"]["ancestor"].resolve()
+
+    def unreadable(_repo: Path) -> dict[Path, str]:
+        raise reaper.LaneStateError("registry offline")
+
+    monkeypatch.setattr(reaper, "active_lane_paths", unreadable)
+    with pytest.warns(RuntimeWarning, match="without lane-state verification"):
+        assert (
+            reaper.main(
+                ["--repo", str(repo), "--allow-missing-lane-state", "--apply"]
+            )
+            != 0
+        )
+    err = capsys.readouterr().err
+    assert "not verified" in err
+    assert str(refused) in err
+    assert refused.exists()
+    assert _git(
+        repo,
+        "show-ref",
+        "--verify",
+        "refs/heads/feature/parent-ancestor",
+        check=False,
+    ).returncode == 0
+
+
+def test_active_lane_paths_without_backend_raises_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(sys.modules, "workbay_handoff_mcp", None)
+    monkeypatch.setitem(sys.modules, "workbay_handoff_mcp.lanes_recording", None)
+    with pytest.raises(reaper.LaneStateError, match="registry backend unavailable"):
+        _real_active_lane_paths(tmp_path)
+
+
+def test_documented_cli_without_registry_backend_fails_closed(
+    fixture_repo: dict[str, Any], tmp_path: Path
+) -> None:
+    """Bare python3 scripts/worktree_reap.py must not become an all-UNKNOWN pass."""
+    blocker = tmp_path / "blocked_import"
+    blocker.mkdir()
+    (blocker / "workbay_handoff_mcp").mkdir()
+    (blocker / "workbay_handoff_mcp" / "__init__.py").write_text("")
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(blocker) + os.pathsep + env.get("PYTHONPATH", "")
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--repo", str(fixture_repo["repo"]), "--json"],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    assert result.returncode != 0
+    combined = f"{result.stderr}\n{result.stdout}"
+    assert "registry backend unavailable" in combined
+    assert "make worktree-reap" in combined
+
+
+def test_worktree_reap_advise_maps_only_status_3_to_advisory_success(
+    tmp_path: Path,
+) -> None:
+    stub = tmp_path / "stub-python"
+    stub.write_text('#!/bin/sh\nexit "${STUB_REAP_STATUS}"\n')
+    stub.chmod(0o755)
+    makefile = REPO_ROOT / "mk" / "lane-maintenance.mk"
+
+    def advise(status: int, *, strict: str = "0") -> subprocess.CompletedProcess[str]:
+        env = os.environ.copy()
+        env["STUB_REAP_STATUS"] = str(status)
+        return subprocess.run(
+            [
+                "make",
+                "-f",
+                str(makefile),
+                "worktree-reap-advise",
+                f"PYTHON={stub}",
+                f"REAP_STRICT={strict}",
+            ],
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=str(REPO_ROOT),
+            check=False,
+        )
+
+    failed_one = advise(1)
+    assert failed_one.returncode != 0, failed_one.stdout + failed_one.stderr
+    assert "Error 1" in failed_one.stderr
+    failed_four = advise(4)
+    assert failed_four.returncode != 0, failed_four.stdout + failed_four.stderr
+    assert "Error 4" in failed_four.stderr
+    advisory = advise(3)
+    assert advisory.returncode == 0, advisory.stdout + advisory.stderr
+    assert "advisory only" in (advisory.stdout + advisory.stderr)
+    strict_three = advise(3, strict="1")
+    assert strict_three.returncode != 0, strict_three.stdout + strict_three.stderr
+    assert "Error 3" in strict_three.stderr
 
 
 @pytest.mark.parametrize(

@@ -301,6 +301,47 @@ def test_rejected_equal_sequence_drops_deferred_stop(tmp_path: Path) -> None:
                for row in records)
 
 
+@pytest.mark.parametrize("audit_fails", [False, True])
+def test_direct_deferred_supersession_audits_before_clear(tmp_path, monkeypatch, audit_fails):
+    from infra.oci.gpu_lifecycle.intent import DecisionLogStore
+
+    state_dir = tmp_path / "durable"
+    store = DeferredStopStore(state_dir / "deferred-stop.json")
+    store.write(DeferredStopRecord(
+        action=IntentAction.STOP, requested_at=NOW, expires_at=NOW + timedelta(minutes=5),
+        nonce=VALID_NONCE, requested_by="original-operator", ttl_seconds=300, sequence=1,
+        deferred_until=NOW + timedelta(minutes=5), deferred_reason="in-flight work",
+    ))
+    original_append = DecisionLogStore.append
+    observed = []
+
+    def append(self, row):
+        if row.get("event") == "dropped" and row.get("reason") == "fenced_by_authority_sequence":
+            observed.append(store.path.exists())
+            if audit_fails:
+                raise OSError("audit unavailable")
+        return original_append(self, row)
+
+    monkeypatch.setattr(DecisionLogStore, "append", append)
+    result = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60), instances=[_running(age=0)],
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
+        actuator=RecordingActuator([], []), durable_state_dir=state_dir,
+        intent=_intent(IntentAction.START, nonce=SECOND_NONCE, sequence=2),
+        now=NOW, fence_delay_seconds=0,
+    )
+    assert observed == [True]
+    if audit_fails:
+        assert store.path.exists()
+        assert result.fenced_off
+        assert any("audit unavailable" in error for error in result.errors)
+    else:
+        assert not store.path.exists()
+        rows = [json.loads(line) for line in (state_dir / "decision-log.jsonl").read_text().splitlines()]
+        assert any(row.get("event") == "dropped" and row.get("requested_by") == "original-operator"
+                   for row in rows)
+
+
 def test_stop_with_work_is_deferred_then_re_evaluated(tmp_path: Path) -> None:
     controller = GpuLifecycleController(idle_seconds=60)
     intent = _intent(IntentAction.STOP)

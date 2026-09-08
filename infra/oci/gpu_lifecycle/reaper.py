@@ -1390,7 +1390,7 @@ def _audit_deferred_fenced(
     decision_log_store: DecisionLogStore | None,
     token_rejected: bool = False,
 ) -> None:
-    """Record that a deferred STOP was dropped by the durable fencing mark."""
+    """Persist a fencing decision before clearing its deferred STOP record."""
     logger.warning(
         "dropped deferred STOP fenced by authority: "
         "nonce=%s sequence=%s highest=%s token_rejected=%s",
@@ -1405,6 +1405,7 @@ def _audit_deferred_fenced(
         decision_log_store.append(
             {
                 "event": "dropped",
+                "phase": "before_clear",
                 "reason": "rejected_by_authority_token" if token_rejected else "fenced_by_authority_sequence",
                 "action": IntentAction.STOP.value,
                 "nonce": record.nonce,
@@ -1414,12 +1415,8 @@ def _audit_deferred_fenced(
                 "deferred_reason": record.deferred_reason,
             }
         )
-    except Exception as audit_error:  # noqa: BLE001 - the drop itself is safe
-        logger.error(
-            "deferred fenced audit append failed: %s: %s",
-            type(audit_error).__name__,
-            audit_error,
-        )
+    except Exception as audit_error:  # noqa: BLE001 - retain the record on every audit failure
+        raise OSError(f"deferred fenced audit append failed: {audit_error}") from audit_error
 
 
 def _apply_deferred_stop(
@@ -1454,6 +1451,11 @@ def _apply_deferred_stop(
             if store.supersede_if_newer(
                 sequence=effective_intent.sequence,
                 nonce=effective_intent.nonce,
+                before_clear=lambda current: _audit_deferred_fenced(
+                    current, high_water=effective_intent.sequence,
+                    decision_log_store=decision_log_store,
+                    token_rejected=effective_intent.sequence == current.sequence,
+                ),
             ):
                 return effective_intent
             refreshed = store.read()
@@ -1488,7 +1490,14 @@ def _apply_deferred_stop(
             )
         if high_water > record.sequence or token_rejected:
             try:
-                store.clear(sequence=record.sequence)
+                store.clear(
+                    sequence=record.sequence,
+                    before_clear=lambda current: _audit_deferred_fenced(
+                        current, high_water=high_water,
+                        decision_log_store=decision_log_store,
+                        token_rejected=token_rejected,
+                    ),
+                )
             except (OSError, ValueError) as exc:
                 return _blocked_deferred_intent(
                     effective_intent,
@@ -1497,12 +1506,6 @@ def _apply_deferred_stop(
                     error=exc,
                     decision_log_store=decision_log_store,
                 )
-            _audit_deferred_fenced(
-                record,
-                high_water=high_water,
-                decision_log_store=decision_log_store,
-                token_rejected=token_rejected,
-            )
             return effective_intent
     try:
         record = _rearm_deferred_record(store, record, now=now)

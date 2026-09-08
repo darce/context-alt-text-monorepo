@@ -108,7 +108,9 @@ const hookIdsFrom = (map: UxMap): string[] => {
 describe('guided prototype ux-map contract (GUIDEDQM-1 shipped topology)', () => {
   it('would be wrong if the four step screens were missing or out of order context → names → draft → apply', () => {
     const map = loadMap();
-    const stepIds = map.screens.map((screen) => screen.id).filter((id) => (STEP_SCREEN_IDS as readonly string[]).includes(id));
+    const stepIds = map.screens
+      .map((screen) => screen.id)
+      .filter((id) => (STEP_SCREEN_IDS as readonly string[]).includes(id));
     expect(stepIds).toEqual([...STEP_SCREEN_IDS]);
   });
 
@@ -194,5 +196,19 @@ describe('guided prototype ux-map contract (GUIDEDQM-1 shipped topology)', () =>
     expect(map.screens.find((screen) => screen.id === 'names')?.title).toBe(copy['step.names']);
     expect(map.screens.find((screen) => screen.id === 'draft')?.title).toBe(copy['step.draft']);
     expect(map.screens.find((screen) => screen.id === 'apply')?.title).toBe(copy['step.apply']);
+  });
+
+  it('would be wrong if timed_out omitted Keep waiting or the keep-waiting action', () => {
+    const map = loadMap();
+    const copy = loadCopy();
+    const keep = map.actions.find((action) => action.id === 'live-keep-waiting');
+    expect(keep, 'live-keep-waiting action missing').toBeDefined();
+    expect(String(keep?.verb)).toBe(copy['live.keep_waiting']);
+    expect(keep?.when).toEqual(expect.arrayContaining(['timed_out']));
+    const serialized = JSON.stringify(map);
+    expect(serialized).toContain(copy['live.keep_waiting']);
+    expect(serialized).toContain(copy['live.budget_local']);
+    expect(serialized).toContain(copy['live.budget_disclosed']);
+    expect(JSON.stringify(map.open_questions ?? [])).not.toMatch(/hardcodes Keep waiting/i);
   });
 });

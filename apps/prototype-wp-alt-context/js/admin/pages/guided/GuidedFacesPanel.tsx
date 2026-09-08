@@ -89,6 +89,7 @@ export const GuidedFacesPanel = ({
         <DialogPortal>
           <DialogOverlay />
           <DialogContent
+            aria-modal="true"
             onCloseAutoFocus={(event) => {
               event.preventDefault();
             }}

@@ -223,8 +223,7 @@ def _first_value(value: Any, keys: Sequence[str]) -> Any:
 
 
 def _raw_manifest_entries(manifest: Mapping[str, Any]) -> Any:
-    raw = manifest.get("files")
-    return raw if raw is not None else manifest.get("artifacts", manifest.get("entries"))
+    return manifest.get("files")
 
 
 def _manifest_entries(manifest: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -341,20 +340,13 @@ def _verify_manifest(bundle: Path, manifest: Mapping[str, Any]) -> tuple[list[di
     return verified, failures
 
 
-def _entry_path(entries: Sequence[Mapping[str, Any]], *names: str, contains: Sequence[str] = ()) -> Path | None:
-    wanted = {name.casefold() for name in names}
+def _entry_path(entries: Sequence[Mapping[str, Any]], name: str) -> Path | None:
+    wanted = name.casefold()
     for entry in entries:
         path = entry.get("file")
         relative = entry.get("path")
-        if isinstance(path, Path) and isinstance(relative, str) and Path(relative).name.casefold() in wanted:
+        if isinstance(path, Path) and isinstance(relative, str) and Path(relative).name.casefold() == wanted:
             return path
-    for entry in entries:
-        path = entry.get("file")
-        relative = entry.get("path")
-        if isinstance(path, Path) and isinstance(relative, str):
-            basename = Path(relative).name.casefold()
-            if all(fragment.casefold() in basename for fragment in contains):
-                return path
     return None
 
 
@@ -390,12 +382,6 @@ _INSTANCE_ID_PATHS = (
 
 def _instance_id_report(payload: Any) -> tuple[str | None, str | None]:
     return _text_report(_path_values(payload, _INSTANCE_ID_PATHS), "instance id")
-
-
-def _instance_id_from_payload(payload: Any) -> str | None:
-    """Return the canonical instance id, or ``None`` on ambiguity."""
-
-    return _instance_id_report(payload)[0]
 
 
 _STATE_KEYS = (
@@ -450,10 +436,6 @@ def _instance_state_report(payload: Any) -> tuple[str | None, str | None]:
     if len(states) > 1:
         return None, "conflicting instance lifecycle state values"
     return next(iter(states)), None
-
-
-def _instance_state(payload: Any) -> str | None:
-    return _instance_state_report(payload)[0]
 
 
 _STATE_HISTORY_CONTAINER_KEYS = ("observations", "states", "state_history", "state-history", "history", "transitions")
@@ -593,10 +575,6 @@ def _state_observation_report(payload: Any) -> tuple[list[tuple[float, str, str]
     return _parse_state_observations(payload)
 
 
-def _state_observations(payload: Any) -> list[tuple[float, str, str]]:
-    return _state_observation_report(payload)[0]
-
-
 def _observation_is_inferred(value: Mapping[str, Any]) -> bool:
     """Return whether a state observation was synthesized rather than observed."""
 
@@ -608,10 +586,6 @@ def _observation_is_inferred(value: Mapping[str, Any]) -> bool:
             return True
     source = _as_text(value.get("source"))
     return source is not None and source.casefold() in {"inferred", "inferred_boundary", "synthetic", "synthesized"}
-
-
-def _inferred_observation_count(payload: Any) -> int:
-    return _inferred_observation_report(payload)[0]
 
 
 def _inferred_observation_report(payload: Any) -> tuple[int, str | None]:
@@ -663,10 +637,6 @@ def _event_time(event: Mapping[str, Any]) -> float | None:
 
 def _event_resource_id_report(event: Mapping[str, Any]) -> tuple[str | None, str | None]:
     return _text_report(_path_values(event, _EVENT_RESOURCE_ID_PATHS), "event resource id")
-
-
-def _event_resource_id(event: Mapping[str, Any]) -> str | None:
-    return _event_resource_id_report(event)[0]
 
 
 def _action_from_value(value: Any) -> str | None:
@@ -727,10 +697,6 @@ def _event_actions_report(event: Mapping[str, Any]) -> tuple[set[str], str | Non
     if unsupported:
         return set(), "unsupported audit action value(s): " + ", ".join(unsupported)
     return actions, None
-
-
-def _event_actions(event: Mapping[str, Any]) -> set[str]:
-    return _event_actions_report(event)[0]
 
 
 def _event_phase_report(event: Mapping[str, Any]) -> tuple[str | None, str | None]:
@@ -796,10 +762,6 @@ def _event_state_change_report(event: Mapping[str, Any], field: str) -> tuple[st
     return values[0], None
 
 
-def _event_state_change(event: Mapping[str, Any], field: str) -> str | None:
-    return _event_state_change_report(event, field)[0]
-
-
 def _event_identity_report(event: Mapping[str, Any], action: str, occurrence: int) -> tuple[str, str | None]:
     grouping, grouping_error = _text_report(
         _path_values(
@@ -847,10 +809,6 @@ def _event_identity_report(event: Mapping[str, Any], action: str, occurrence: in
     return f"fallback:{action}:{occurrence}", None
 
 
-def _event_identity(event: Mapping[str, Any], action: str, occurrence: int) -> str:
-    return _event_identity_report(event, action, occurrence)[0]
-
-
 def _response_status_values(value: Any) -> Iterable[Any]:
     """Yield status values from documented OCI response locations only."""
 
@@ -872,12 +830,6 @@ def _response_status_values(value: Any) -> Iterable[Any]:
                         yield response[status_key]
             elif response is not None:
                 yield response
-
-
-def _event_status(event: Mapping[str, Any]) -> Any:
-    """Return one unambiguous OCI response status, or ``None``."""
-
-    return _event_status_report(event)[0]
 
 
 _STATUS_SUCCESS_TOKENS = frozenset({"OK", "SUCCESS", "SUCCEEDED", "COMPLETE", "COMPLETED"})
@@ -1092,6 +1044,16 @@ def _running_intervals(observations: Sequence[tuple[float, str, str]]) -> list[t
     return intervals
 
 
+def _audit_running_intervals(
+    events: Sequence[tuple[str, Mapping[str, Any], float]],
+) -> list[tuple[float, float]]:
+    starts = [timestamp for action, _event, timestamp in events if action == ACTION_START]
+    stops = [timestamp for action, _event, timestamp in events if action == ACTION_STOP]
+    if len(starts) != 1 or len(stops) != 1 or starts[0] >= stops[0]:
+        return []
+    return [(starts[0], stops[0])]
+
+
 def _state_sequence(observations: Sequence[tuple[float, str, str]]) -> list[str]:
     sequence: list[str] = []
     for _timestamp, state, _source in sorted(observations, key=lambda item: item[0]):
@@ -1253,26 +1215,6 @@ def _receipt_items(payload: Any) -> list[Mapping[str, Any]]:
     return _receipt_items_report(payload)[0]
 
 
-def _receipt_time(item: Mapping[str, Any]) -> float | None:
-    keys = (
-        "timestamp",
-        "time",
-        "generated_at",
-        "generatedAt",
-        "created_at",
-        "createdAt",
-        "completed_at",
-        "completedAt",
-        "described_at",
-        "describedAt",
-        "updated_at",
-        "updatedAt",
-        "finished_at",
-        "finishedAt",
-    )
-    return _direct_time_report(item, keys, "receipt timestamp")[0]
-
-
 def _receipt_time_report(item: Mapping[str, Any]) -> tuple[float | None, str | None]:
     keys = (
         "timestamp",
@@ -1323,6 +1265,14 @@ def _manifest_schema_check(manifest: Mapping[str, Any]) -> dict[str, Any]:
     manifest_format = manifest.get("format")
     if manifest_format != MANIFEST_FORMAT:
         failures.append(f"unsupported format {manifest_format!r}; expected {MANIFEST_FORMAT!r}")
+    undocumented = [key for key in ("artifacts", "entries") if key in manifest]
+    if undocumented:
+        failures.append(
+            "manifest uses undocumented " + " and ".join(undocumented) + "; expected files"
+        )
+    files = manifest.get("files")
+    if not isinstance(files, list):
+        failures.append("manifest files must be a list of objects")
     return _result(
         "manifest_schema", not failures, "supported manifest schema" if not failures else "; ".join(failures)
     )
@@ -1368,44 +1318,11 @@ def _window_checks(
 
 def _receipt_paths(entries: Sequence[Mapping[str, Any]]) -> dict[str, Path | None]:
     return {
-        "instance": _entry_path(
-            entries, "instance.json", "oci-instance.json", "instance-state.json", contains=("instance",)
-        ),
-        "history": _entry_path(
-            entries,
-            "state_history.json",
-            "state-history.json",
-            "instance-state-history.json",
-            "oci-instance-state-history.json",
-            contains=("state", "history"),
-        ),
-        "audit": _entry_path(
-            entries,
-            "audit-events.json",
-            "audit_events.json",
-            "audit.json",
-            "oci-audit-events.json",
-            contains=("audit",),
-        ),
-        "snapshot": _entry_path(
-            entries,
-            "state_snapshot.json",
-            "state-snapshot.json",
-            "reaper-state-snapshot.json",
-            "reaper_snapshot.json",
-            "gpu-state.json",
-            contains=("snapshot",),
-        ),
-        "receipts": _entry_path(
-            entries,
-            "wp_describe_receipts.json",
-            "wp-describe-receipts.json",
-            "wp-receipts.json",
-            "describe-receipts.json",
-            "describe_receipts.json",
-            "receipts.json",
-            contains=("receipt",),
-        ),
+        "instance": _entry_path(entries, "instance.json"),
+        "history": _entry_path(entries, "state_history.json"),
+        "audit": _entry_path(entries, "audit-events.json"),
+        "snapshot": _entry_path(entries, "state_snapshot.json"),
+        "receipts": _entry_path(entries, "wp_describe_receipts.json"),
     }
 
 
@@ -1498,11 +1415,6 @@ def _state_history_envelope_check(payload: Any) -> dict[str, Any]:
     if not any(key in payload for key in _STATE_HISTORY_CONTAINER_KEYS) and not isinstance(payload.get("data"), list):
         return _result("state_history_schema", False, "state history envelope is missing observations")
     return _result("state_history_schema", True, "supported state history envelope")
-
-
-def _state_action_order_is_valid(payload: Any, *, since: float, until: float) -> bool:
-    history_actions = [item for item in _state_action_sequence(payload) if since <= item[0] <= until]
-    return _history_action_order_is_valid(history_actions)
 
 
 def _state_history_identity_check(history_id: str | None, expected_instance_id: str | None) -> dict[str, Any]:
@@ -1807,7 +1719,7 @@ def _audit_checks(
     since: float,
     until: float,
     expected_stop_principal: str,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[tuple[float, float]]]:
     payload, receipt_check = _load_required(path, "audit_receipt")
     groups, contract_check = (
         _audit_payload_contract_check(
@@ -1880,17 +1792,20 @@ def _audit_checks(
         else f"successful audit action sequence is {actions or ['none']}; expected exactly START then STOP",
     )
     order_check = _audit_transition_order_check(successful_events, matching_stops)
-    return [
-        receipt_check,
-        contract_check,
-        _audit_current_state_check(groups, since=since, until=until),
-        _audit_transition_states_check(groups, since=since, until=until),
-        start_check,
-        principal_check,
-        stop_cardinality_check,
-        sequence_check,
-        order_check,
-    ]
+    return (
+        [
+            receipt_check,
+            contract_check,
+            _audit_current_state_check(groups, since=since, until=until),
+            _audit_transition_states_check(groups, since=since, until=until),
+            start_check,
+            principal_check,
+            stop_cardinality_check,
+            sequence_check,
+            order_check,
+        ],
+        _audit_running_intervals(events),
+    )
 
 
 def _direct_time_report(value: Mapping[str, Any], keys: Sequence[str], label: str) -> tuple[float | None, str | None]:
@@ -1991,7 +1906,7 @@ def _receipts_check(
         if timestamp_error is not None:
             timestamp_errors.append(f"receipt {index}: {timestamp_error}")
             continue
-        in_running = timestamp is not None and any(start < timestamp < stop for start, stop in intervals)
+        in_running = timestamp is not None and any(start <= timestamp < stop for start, stop in intervals)
         if description is not None and in_running:
             valid.append(item)
     if timestamp_errors:
@@ -2075,13 +1990,26 @@ def check_bundle(
         until=until_epoch,
     )
     checks.extend(artifact_checks)
-    checks.extend(
-        _audit_checks(
-            context["paths"]["audit"],
-            instance_id=context["instance_id"],
-            since=since_epoch,
-            until=until_epoch,
-            expected_stop_principal=expected_stop_principal,
+    audit_checks, audit_intervals = _audit_checks(
+        context["paths"]["audit"],
+        instance_id=context["instance_id"],
+        since=since_epoch,
+        until=until_epoch,
+        expected_stop_principal=expected_stop_principal,
+    )
+    checks.extend(audit_checks)
+    history_intervals = _running_intervals(context["observations"])
+    interval_match = audit_intervals == history_intervals and len(audit_intervals) == 1
+    checks.append(
+        _result(
+            "history_audit_running_interval",
+            interval_match,
+            "history RUNNING interval matches Audit START/STOP"
+            if interval_match
+            else (
+                "history RUNNING intervals "
+                f"{history_intervals} do not match Audit START/STOP {audit_intervals}"
+            ),
         )
     )
     checks.append(context["final_state_check"])
@@ -2097,7 +2025,7 @@ def check_bundle(
     checks.extend(
         _receipt_checks(
             context["paths"]["receipts"],
-            intervals=_running_intervals(context["observations"]),
+            intervals=audit_intervals,
             min_descriptions=min_descriptions,
         )
     )

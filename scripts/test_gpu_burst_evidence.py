@@ -802,6 +802,94 @@ def test_unsupported_manifest_schema_fails_before_artifact_interpretation(tmp_pa
     )
 
 
+@pytest.mark.parametrize("alias_key", ["artifacts", "entries"])
+def test_manifest_alias_envelope_fails_closed(tmp_path: Path, alias_key: str) -> None:
+    bundle = _custom_bundle(tmp_path)
+    manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
+    manifest[alias_key] = manifest.pop("files")
+    (bundle / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    result = _run_checker(bundle, "--json")
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    verdict = json.loads(result.stdout)
+    schema = next(check for check in verdict["checks"] if check["name"] == "manifest_schema")
+    assert schema["passed"] is False
+    assert "files" in schema["detail"]
+    assert alias_key in schema["detail"]
+    assert all(
+        check["name"] not in {"oci_instance_receipt", "state_history_receipt", "audit_receipt"}
+        for check in verdict["checks"]
+    )
+
+
+def test_manifest_files_plus_artifacts_fails_closed(tmp_path: Path) -> None:
+    bundle = _custom_bundle(tmp_path)
+    manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
+    manifest["artifacts"] = list(manifest["files"])
+    (bundle / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    result = _run_checker(bundle, "--json")
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    verdict = json.loads(result.stdout)
+    schema = next(check for check in verdict["checks"] if check["name"] == "manifest_schema")
+    assert schema["passed"] is False
+    assert "files" in schema["detail"]
+    assert "artifacts" in schema["detail"]
+    assert all(
+        check["name"] not in {"oci_instance_receipt", "state_history_receipt", "audit_receipt"}
+        for check in verdict["checks"]
+    )
+
+
+def test_receipt_paths_reject_exporter_aliases(tmp_path: Path) -> None:
+    bundle = _custom_bundle(tmp_path)
+    (bundle / "instance.json").rename(bundle / "oci-instance.json")
+    manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
+    for entry in manifest["files"]:
+        if entry["path"] == "instance.json":
+            entry["path"] = "oci-instance.json"
+    (bundle / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    result = _run_checker(bundle, "--json")
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    verdict = json.loads(result.stdout)
+    checks = {check["name"]: check for check in verdict["checks"]}
+    assert checks["oci_instance_receipt"]["passed"] is False
+    assert "instance.json" in checks["oci_instance_receipt"]["detail"]
+
+
+def test_receipt_paths_do_not_bind_instance_state_history_as_instance(tmp_path: Path) -> None:
+    bundle = _custom_bundle(tmp_path)
+    (bundle / "instance.json").unlink()
+    decoy = bundle / "instance-state-history.json"
+    decoy.write_text(
+        json.dumps({"data": {"id": INSTANCE_ID, "lifecycle-state": "STOPPED"}}, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
+    manifest["files"] = [entry for entry in manifest["files"] if entry["path"] != "instance.json"]
+    manifest["files"].append(
+        {
+            "path": "instance-state-history.json",
+            "sha256": sha256(decoy.read_bytes()).hexdigest(),
+            "command": "fixture",
+            "capture_time": "2026-09-01T00:35:00Z",
+        }
+    )
+    (bundle / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    result = _run_checker(bundle, "--json")
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    verdict = json.loads(result.stdout)
+    checks = {check["name"]: check for check in verdict["checks"]}
+    assert checks["oci_instance_receipt"]["passed"] is False
+    assert "instance.json" in checks["oci_instance_receipt"]["detail"]
+
+
 def test_audit_event_without_resource_id_cannot_match_instance(tmp_path: Path) -> None:
     audit = {
         "data": [
@@ -2006,16 +2094,54 @@ def test_state_action_sequence_rejects_trailing_start(tmp_path: Path) -> None:
     assert checks["state_history_burst"] is False
 
 
-@pytest.mark.parametrize("receipt_time", [RUNNING_AT, STOPPED_AT])
-def test_wp_receipt_at_running_interval_boundary_is_not_work(tmp_path: Path, receipt_time: str) -> None:
+def test_wp_receipt_at_audit_running_timestamp_counts(tmp_path: Path) -> None:
     bundle = _custom_bundle(
         tmp_path,
-        receipts={"items": [{"description": "boundary", "timestamp": receipt_time}]},
+        receipts={"items": [{"description": "at-start", "timestamp": RUNNING_AT}]},
+    )
+
+    result = _run_checker(bundle, "--json")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    verdict = json.loads(result.stdout)
+    checks = {check["name"]: check["passed"] for check in verdict["checks"]}
+    assert checks["wp_descriptions"] is True
+
+
+def test_wp_receipt_at_audit_stop_timestamp_does_not_count(tmp_path: Path) -> None:
+    bundle = _custom_bundle(
+        tmp_path,
+        receipts={"items": [{"description": "at-stop", "timestamp": STOPPED_AT}]},
     )
 
     checks = _json_checks(_run_checker(bundle, "--json"))
 
     assert checks["wp_descriptions"] is False
+
+
+def test_wp_receipt_after_audit_stop_inside_wider_history_window_does_not_count(tmp_path: Path) -> None:
+    history = {
+        "schema_version": 1,
+        "instance_id": INSTANCE_ID,
+        "observations": [
+            {"state": "STOPPED", "timestamp": SINCE},
+            {"state": "RUNNING", "timestamp": RUNNING_AT},
+            {"state": "STOPPED", "timestamp": "2026-09-01T00:45:00Z"},
+        ],
+    }
+    bundle = _custom_bundle(
+        tmp_path,
+        history=history,
+        receipts={"items": [{"description": "after-stop", "timestamp": "2026-09-01T00:35:00Z"}]},
+    )
+
+    result = _run_checker(bundle, "--json")
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    verdict = json.loads(result.stdout)
+    checks = {check["name"]: check for check in verdict["checks"]}
+    assert checks["wp_descriptions"]["passed"] is False
+    assert checks["history_audit_running_interval"]["passed"] is False
 
 
 def test_deeply_nested_state_history_fails_without_recursion_crash(tmp_path: Path) -> None:

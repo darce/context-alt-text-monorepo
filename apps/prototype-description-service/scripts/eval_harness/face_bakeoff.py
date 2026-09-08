@@ -33,6 +33,7 @@ from recognition.infrastructure.face_pipeline.ort_adapters import (
     OrtYuNetDetector,
 )
 
+from ._pathtext import _printable_message, _printable_path
 from .face_assignment import associate_detections
 from .face_metrics import named_box_name
 from .face_run_record import (
@@ -48,6 +49,19 @@ from .synthetic_occlusion import KIND_TO_SLICE_TAG, generate_twin_specs, render_
 # (cli pulls remote_client / seed_roster — forbidden by the S2 negative-import gate).
 DEFAULT_STALL_LIMIT = 5
 CANDIDATE_MODEL_ID = "ort-yunet-sface"
+
+
+def _printable_exc(exc: BaseException) -> str:
+    """Encode exception text at this module's persisted-report boundary.
+
+    OSError formats its filename separately from its message. Reconstructing
+    it with the path-text encoder prevents PEP 383 surrogate escapes from
+    leaking through the filename-bearing tail; other exceptions are encoded as
+    operator messages rather than paths.
+    """
+    if isinstance(exc, OSError) and exc.filename is not None:
+        return str(OSError(exc.errno, exc.strerror, _printable_path(exc.filename)))
+    return str(_printable_message(str(exc)))
 
 
 class BoundedStallError(RuntimeError):
@@ -185,13 +199,16 @@ def walk_face_run_record(
         return build_face_run_record(items, provenance=provenance, aborted=aborted)
 
     for entry in entries:
-        image_path = _resolve_image(images_root, entry.path)
+        entry_path = _printable_path(entry.path)
         # image_size is required on every item (score-time GT normalize); use a
         # 1×1 sentinel only when decode never produced dimensions.
         image_size: list[int] = [1, 1]
         try:
+            image_path = _resolve_image(images_root, entry.path)
             if image_path is None:
-                raise FileNotFoundError(f"image file missing after NFC/NFD resolve: {entry.path}")
+                raise FileNotFoundError(
+                    f"image file missing after NFC/NFD resolve: {entry_path}"
+                )
             image_bytes = image_path.read_bytes()
             image_bgr = decode_image_bytes_bgr(image_bytes)
             image_size = [int(image_bgr.shape[1]), int(image_bgr.shape[0])]  # [W, H]
@@ -203,7 +220,7 @@ def walk_face_run_record(
             )
             item = build_face_run_item(
                 media_id=entry.media_id,
-                path=entry.path,
+                path=entry_path,
                 model_id=model_id,
                 embedding_dim=dim,
                 image_size=image_size,
@@ -213,17 +230,17 @@ def walk_face_run_record(
             consecutive_failures += 1
             item = build_face_run_item(
                 media_id=entry.media_id,
-                path=entry.path,
+                path=entry_path,
                 model_id=model_id,
                 embedding_dim=dim,
                 image_size=image_size,
-                error=f"{type(exc).__name__}: {exc}",
+                error=f"{type(exc).__name__}: {_printable_exc(exc)}",
             )
             items.append(item)
             if consecutive_failures >= stall_limit:
                 raise BoundedStallError(
                     f"{consecutive_failures} consecutive item failures "
-                    f"(last: {entry.path}); aborting run",
+                    f"(last: {entry_path}); aborting run",
                     partial_record=_record(aborted=True),
                 ) from exc
         else:
@@ -283,10 +300,13 @@ def build_occlusion_twin_pairs(
         # universe for corpora with no actually-named boxes (wE4 residual / wF2).
         if not any(named_box_name(box) for box in entry.face_boxes):
             continue  # no named GT faces → no twin universe on this entry
+        entry_path = _printable_path(entry.path)
         try:
             image_path = _resolve_image(images_root, entry.path)
             if image_path is None:
-                raise FileNotFoundError(f"image file missing after NFC/NFD resolve: {entry.path}")
+                raise FileNotFoundError(
+                    f"image file missing after NFC/NFD resolve: {entry_path}"
+                )
             image_bgr = decode_image_bytes_bgr(image_path.read_bytes())
             width, height = int(image_bgr.shape[1]), int(image_bgr.shape[0])
             cache = build_landmark_cache(
@@ -326,7 +346,7 @@ def build_occlusion_twin_pairs(
                     }
                 )
         except Exception as exc:  # noqa: BLE001 — per-entry isolation (rg-007)
-            errors.append(f"{entry.path}: {type(exc).__name__}: {exc}")
+            errors.append(f"{entry_path}: {type(exc).__name__}: {_printable_exc(exc)}")
     provenance: dict[str, Any] = {
         "seed": int(seed),
         "n_twin_specs": n_specs,

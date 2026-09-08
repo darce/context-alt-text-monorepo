@@ -20,6 +20,7 @@ from typing import Any
 import numpy as np
 import pytest
 
+import scripts.eval_harness.face_bakeoff as face_bakeoff_module
 from recognition.infrastructure.face_pipeline._common import (
     RawDetection,
     resolve_sface_embedding_dim,
@@ -282,6 +283,69 @@ def test_walker_isolates_per_item_failure(tmp_path: Path) -> None:
     assert record["items"][1]["faces"] == []
     assert record["items"][2].get("error") is None
     assert record["kind"] == DocKind.FACE_RUN_RECORD.value
+
+
+def test_walker_prints_filename_bearing_oserror_without_surrogate_leak(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Persisted per-item errors use the path-text wire form (VLM6-W22)."""
+    manifest = _tiny_manifest(1, tmp_path)
+
+    def _raise_permission(_image_bytes: bytes) -> np.ndarray:
+        raise PermissionError(13, "Permission denied", "/tmp/caf\udce9.jpg")
+
+    monkeypatch.setattr(face_bakeoff_module, "decode_image_bytes_bgr", _raise_permission)
+    record = walk_face_run_record(
+        manifest,
+        tmp_path,
+        detector=_MockDetector(),
+        embedder=_MockEmbedder(),
+        head_sha="deadbeef",
+        embedding_dim=8,
+    )
+    error = record["items"][0]["error"]
+    assert "undecodable:/tmp/caf\\\\xe9.jpg" in error
+    assert "\\udce9" not in error
+
+
+def test_twin_errors_print_filename_bearing_oserror_without_surrogate_leak(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Twin-pass per-entry errors use the same printable path boundary."""
+    raw = _tiny_manifest(1, tmp_path).model_dump(mode="python")
+    raw["entries"][0]["face_count"] = 1
+    raw["entries"][0]["face_boxes"] = [
+        {
+            "x": 0.5,
+            "y": 0.5,
+            "w": 0.25,
+            "h": 0.25,
+            "name": "Alice",
+            "source": "iptc",
+            "lineage": legacy_import_lineage(name="Alice"),
+        }
+    ]
+    manifest = GoldenManifest.model_validate(raw)
+
+    def _raise_permission(_images_root: Path, _entry_path: str) -> Path:
+        raise PermissionError(13, "Permission denied", "/tmp/twin-caf\udce9.jpg")
+
+    monkeypatch.setattr(face_bakeoff_module, "_resolve_image", _raise_permission)
+    cache_detector = _MockDetector()
+    cache_detector.landmark_cache_provenance = LandmarkCacheProvenance(
+        model_id="fixture-yunet", weights_sha256="f" * 64
+    )
+    _pairs, provenance = build_occlusion_twin_pairs(
+        manifest,
+        tmp_path,
+        detector=_MockDetector(),
+        embedder=_MockEmbedder(),
+        cache_detector=cache_detector,
+    )
+    assert len(provenance["errors"]) == 1
+    error = provenance["errors"][0]
+    assert "undecodable:/tmp/twin-caf\\\\xe9.jpg" in error
+    assert "\\udce9" not in error
 
 
 def test_walker_bounded_stall_aborts(tmp_path: Path) -> None:

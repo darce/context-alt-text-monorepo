@@ -5,9 +5,10 @@ import type { RosterEntry } from '../../api/rosterApi';
 import { RosterEntriesTable } from './RosterEntriesTable';
 import { useDebouncedValue } from './hooks/useDebouncedValue';
 import { useCreatePerson } from '../../hooks/useRosterHooks';
-import { Filter, UserPlus, Plus, Users, X } from 'lucide-react';
+import { Filter, UserPlus, Plus, X } from 'lucide-react';
 import { toWorkbench } from '../../navigation/appLinks';
 import { isHumanLabeledTarget } from '../workbench/identity-clusters/suggestionProjection';
+import { EmptyState, EmptyStateVariant } from '../../components/ui/EmptyState';
 
 const RESERVED_LABEL_MESSAGE = __(
   'This name format is reserved for automatic face group IDs. Choose a descriptive name.',
@@ -68,12 +69,12 @@ const getQueueReviewRoute = (queueFilter: QueueFilterId | null): QueueReviewRout
     case 'singleton-proposals':
       return {
         href: WORKBENCH_SCAN_ROUTE,
-        label: __('Review singleton proposals in Workbench', 'alt-context'),
+        label: __('Review singleton proposals in the Review Queue', 'alt-context'),
       };
     case 'needs-confirmation-after-merge':
       return {
         href: WORKBENCH_SCAN_ROUTE,
-        label: __('Review merge confirmations in Workbench', 'alt-context'),
+        label: __('Review merge confirmations in the Review Queue', 'alt-context'),
       };
     default:
       return null;
@@ -422,10 +423,14 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
       {isAdding && (
         <form className="acx-roster-section__add-form" onSubmit={handleAdd}>
           <div className="acx-form-group">
+            <label className="acx-roster-field-label" htmlFor="acx-roster-add-name">
+              {__('Full name', 'alt-context')}
+            </label>
             <input
+              id="acx-roster-add-name"
               type="text"
               className="acx-input"
-              placeholder={__('Full Name', 'alt-context')}
+              placeholder={__('e.g. Pat Rivera', 'alt-context')}
               value={newName}
               onChange={(e) => {
                 setNewName(e.target.value);
@@ -476,28 +481,18 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
       {!query.isLoading &&
         !query.isError &&
         (isTrueZeroState ? (
-          <div
-            className="acx-roster-section__empty"
-            data-testid="roster-zero-state"
-            role="status"
-            aria-live="polite"
-          >
-            <span className="acx-roster-section__empty-icon" aria-hidden="true">
-              <Users size={24} />
-            </span>
-            <h3 className="acx-roster-section__empty-title">{__('No people yet', 'alt-context')}</h3>
-            <p className="acx-roster-section__empty-message">
-              {__('Add someone manually or run a scan to discover faces from your media library.', 'alt-context')}
-            </p>
+          <div className="acx-roster-section__empty" data-testid="roster-zero-state">
+            <EmptyState
+              variant={EmptyStateVariant.EMPTY}
+              heading={__('No people yet', 'alt-context')}
+              body={__('Add someone manually or run a scan to discover faces from your media library.', 'alt-context')}
+              action={{ label: __('Add Person', 'alt-context'), onClick: () => setIsAdding(true) }}
+              headingLevel={3}
+              iconClassName="acx-roster-section__empty-icon"
+            />
             <div className="acx-roster-section__empty-actions">
-              {!isAdding && (
-                <button type="button" className="acx-button acx-button--primary" onClick={() => setIsAdding(true)}>
-                  <UserPlus size={16} aria-hidden="true" />
-                  {__('Add Person', 'alt-context')}
-                </button>
-              )}
               <a href={WORKBENCH_SCAN_ROUTE} className="acx-link-button">
-                {__('Run a scan in Workbench', 'alt-context')}
+                {__('Run a scan in the Review Queue', 'alt-context')}
               </a>
             </div>
           </div>

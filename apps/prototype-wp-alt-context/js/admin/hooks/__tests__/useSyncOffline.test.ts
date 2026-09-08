@@ -4,7 +4,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { SyncHealthResponse } from '../../api/recognition';
 import { createMockQuery } from '../../test-utils/mockHooks';
-import { useSyncOffline } from '../useSyncOffline';
+import {
+  getSyncHealthAvailability,
+  SYNC_HEALTH_AVAILABILITY,
+  useSyncOffline,
+} from '../useSyncOffline';
 
 const useSyncHealthMock = vi.fn((): UseQueryResult<SyncHealthResponse, Error> =>
   createMockQuery<SyncHealthResponse>({}),
@@ -28,12 +32,25 @@ describe('useSyncOffline', () => {
     useSyncHealthMock.mockReset();
   });
 
-  it('returns false while sync health is loading (data undefined)', () => {
-    useSyncHealthMock.mockReturnValue(createMockQuery<SyncHealthResponse>({}));
+  it('does not gate controls while the initial health request is loading', () => {
+    useSyncHealthMock.mockReturnValue(
+      createMockQuery<SyncHealthResponse>({ isLoading: true }),
+    );
 
     const { result } = renderHook(() => useSyncOffline());
 
     expect(result.current).toBe(false);
+  });
+
+  it('gates controls when health settles as unknown (data undefined)', () => {
+    useSyncHealthMock.mockReturnValue(
+      createMockQuery<SyncHealthResponse>({ status: 'error', isLoading: false }),
+    );
+
+    const { result } = renderHook(() => useSyncOffline());
+
+    expect(result.current).toBe(true);
+    expect(getSyncHealthAvailability(undefined)).toBe(SYNC_HEALTH_AVAILABILITY.UNKNOWN);
   });
 
   it('returns true when breaker state is open', () => {

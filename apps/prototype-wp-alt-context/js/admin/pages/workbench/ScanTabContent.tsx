@@ -23,22 +23,32 @@ import { useJobPipeline } from './JobPipelineContext';
 import { useClusterPanel } from './ClusterPanelContext';
 import { useWorkbenchMediaContext } from './WorkbenchMediaContext';
 import { useReviewSurface } from './ReviewSurfaceContext';
+import { EmptyState, EmptyStateVariant } from '../../components/ui/EmptyState';
+import { toWorkbench } from '../../navigation/appLinks';
+
+export const WORKBENCH_SCAN_HEADING_ID = 'acx-workbench-scan-heading';
+
+export const focusWorkbenchScanHeading = (): void => {
+  queueMicrotask(() => {
+    document.getElementById(WORKBENCH_SCAN_HEADING_ID)?.focus();
+  });
+};
 
 const ScanScrollRestoration = () => {
   useScrollRestoration('workbench-scan');
   return null;
 };
 
-const NoMediaPanel = () => (
-  <div className="acx-apply-panel acx-apply-panel--empty">
-    <h3>{__('Your analysis queue is empty', 'alt-context')}</h3>
-    <p>
-      {__(
-        'Search for specific media items below or adjust your filters to find images that need analysis. Once you select items, they will appear here ready to be scanned.',
-        'alt-context',
-      )}
-    </p>
-  </div>
+export const NoMediaPanel = () => (
+  <EmptyState
+    variant={EmptyStateVariant.EMPTY}
+    heading={__('Your analysis queue is empty', 'alt-context')}
+    body={__('Select or filter media, then run a scan to find faces.', 'alt-context')}
+    action={{ label: __('Go to Scan', 'alt-context'), href: toWorkbench({ tab: 'scan' }) }}
+    onActivate={focusWorkbenchScanHeading}
+    headingLevel={3}
+    className="acx-apply-panel acx-apply-panel--empty"
+  />
 );
 
 export const ScanTabContent = (): React.JSX.Element => {
@@ -50,8 +60,8 @@ export const ScanTabContent = (): React.JSX.Element => {
   const findingsDetailRef = React.useRef<HTMLDivElement>(null);
   const reviewQueueRef = React.useRef<ReviewQueueHandle>(null);
   // Open-target lifecycle announce (§11 / A11Y-21). Owned here so it survives
-  // the review panel's rebind remount and retirement unmount. BR-68: seq-keyed so
-  // two consecutive identical closes both re-announce.
+  // the review panel's rebind remount and retirement unmount. Always-mounted
+  // (no seq key): useAriaAnnounce mutates textContent for identical repeats.
   const {
     message: reviewLifecycleMessage,
     seq: reviewLifecycleSeq,
@@ -199,10 +209,10 @@ export const ScanTabContent = (): React.JSX.Element => {
       <section className="acx-workbench-control-queue" aria-labelledby="acx-workbench-queue-heading">
         <ErrorBoundary>
           <p
-            key={reviewLifecycleSeq}
             className="acx-review-lifecycle-announce"
             role="status"
             aria-live="polite"
+            data-announce-seq={reviewLifecycleSeq}
           >
             {reviewLifecycleMessage}
           </p>
@@ -271,7 +281,7 @@ export const ScanTabContent = (): React.JSX.Element => {
 
       {/* (d) Scan CTA + full timeline demoted to bottom; reachable from zero state (rg-003) */}
       <section className="acx-workbench-control-scan" aria-labelledby="acx-workbench-scan-heading">
-        <h3 id="acx-workbench-scan-heading" className="acx-workbench-control-scan__title">
+        <h3 id={WORKBENCH_SCAN_HEADING_ID} tabIndex={-1} className="acx-workbench-control-scan__title">
           {__('Scan', 'alt-context')}
         </h3>
         {/* L3R-02: while strip owns progress/cancel/timeline, demoted panel keeps unique detail only. */}

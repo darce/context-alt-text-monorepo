@@ -192,7 +192,7 @@ describe('SyncStatusIndicator', () => {
 
     render(<SyncStatusIndicator />);
 
-    expect(screen.getByRole('link', { name: 'Retention: Dispose after confirm' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Data Retention: Dispose after confirm' })).toHaveAttribute(
       'href',
       '#/retention',
     );
@@ -247,7 +247,7 @@ describe('SyncStatusIndicator', () => {
 
     render(<SyncStatusIndicator />);
 
-    expect(screen.getByRole('link', { name: 'Retention: Purge on demand' })).toHaveAttribute('href', '#/retention');
+    expect(screen.getByRole('link', { name: 'Data Retention: Purge on demand' })).toHaveAttribute('href', '#/retention');
   });
 
   it('does not show a retention badge when the policy is retain_all', () => {

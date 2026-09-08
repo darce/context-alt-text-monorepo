@@ -79,6 +79,8 @@ const sampleResponse = (altTextDraft = draft): VisualFactsResponse => ({
   cached: false,
   duration_ms: 13800,
   retention_class: 'retain_all',
+  tier: 'provisional_cpu',
+  result_generation: 1,
 });
 
 const successItem = (mediaId: number, altText: string): DescriptionHistoryItem =>
@@ -122,6 +124,7 @@ const LiveWorkbenchRow = ({ initialItem }: { initialItem: WorkbenchMediaItem }):
     <table>
       <tbody>
         <MediaSelectionTableBody
+          onClearSearch={vi.fn()}
           items={items}
           isLoading={false}
           detailIsLoading={false}

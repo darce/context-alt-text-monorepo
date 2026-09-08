@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -23,6 +26,7 @@ class DescribeRunStatus(StrEnum):
 
 class DescribeRunPhase(StrEnum):
     QUEUED = "queued"
+    WARMING = "warming"
     DESCRIBING = "describing"
     COMPLETE = "complete"
     FAILED = "failed"
@@ -71,8 +75,90 @@ TERMINAL_RUN_STATUSES = {
     DescribeRunStatus.CANCELLED,
 }
 
+
+class DescribeRunErrorCode(StrEnum):
+    """Wire error codes for describe-run submit failures (sr-007).
+
+    ``IDEMPOTENCY_CONFLICT`` mirrors the public demo controller's code of the
+    same name: one retry token may only ever name one accepted payload.
+    """
+
+    INVALID_IDEMPOTENCY_KEY = "invalid_idempotency_key"
+    IDEMPOTENCY_CONFLICT = "idempotency_conflict"
+
+
 # Default retention for terminal single-run async jobs (design (d)).
 DEFAULT_ASYNC_JOB_RETENTION_HOURS = 24
+
+# GUIDEDFIX-2 pinned wire contract for the multipart ``idempotency_key`` field.
+IDEMPOTENCY_KEY_MIN_LENGTH = 16
+IDEMPOTENCY_KEY_MAX_LENGTH = 128
+_IDEMPOTENCY_KEY_CHARSET = re.compile(r"\A[A-Za-z0-9_-]+\Z")
+
+
+class InvalidIdempotencyKeyError(ValueError):
+    """A present-but-malformed ``idempotency_key``. Absence is never an error."""
+
+
+def normalize_idempotency_key(raw: object) -> str | None:
+    """Validate the caller's retry token; ``None`` means the field was absent.
+
+    A present-but-empty or malformed token fails closed rather than degrading to
+    a non-deduped accept: silently dropping a bad token is exactly the
+    double-spend this field exists to prevent ([COST-10]).
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        raise InvalidIdempotencyKeyError("form field 'idempotency_key' must be a string")
+    key = raw.strip()
+    if not IDEMPOTENCY_KEY_MIN_LENGTH <= len(key) <= IDEMPOTENCY_KEY_MAX_LENGTH:
+        raise InvalidIdempotencyKeyError(
+            f"form field 'idempotency_key' must be {IDEMPOTENCY_KEY_MIN_LENGTH}..{IDEMPOTENCY_KEY_MAX_LENGTH} "
+            "characters"
+        )
+    if not _IDEMPOTENCY_KEY_CHARSET.match(key):
+        raise InvalidIdempotencyKeyError("form field 'idempotency_key' allows only [A-Za-z0-9_-]")
+    return key
+
+
+# GUIDEDFIX-2 [S03/S04]: what one idempotency_key binds itself to.
+#
+# The digest covers the SEMANTIC request only: the *set* of media ids plus the
+# recognition switch. Two things follow, and both are wire contract:
+#
+#   * Order is not payload. The WP client builds media_ids from a query with no
+#     pinned ORDER BY, so [70, 71] and [71, 70] are the same submission and a
+#     blind retry that reshuffles them must replay, not 409. Duplicates are not
+#     payload either — create_run already dedupes them before any inference.
+#   * Image bytes are NOT covered. Binding the bytes would force every replay to
+#     read and hash up to max_description_image_bytes per media id (200 items
+#     max) purely to discover it has nothing to do, which is exactly the cost the
+#     replay-before-bytes ordering exists to avoid. The key therefore binds
+#     (media_ids, recognition_enabled) and the caller owns byte stability: reusing
+#     one key for a different image under the same media id is caller error, and
+#     the caller must mint a new key when an asset's bytes change.
+REQUEST_DIGEST_LENGTH = 64
+_REQUEST_DIGEST_VERSION = "v1"
+
+
+def compute_request_digest(*, media_ids: Sequence[int], recognition_enabled: bool) -> str:
+    """Stable digest of the normalized submit payload an idempotency_key binds.
+
+    Canonical form is version-tagged so a future contract change (e.g. folding in
+    an image-bytes hash) is a different digest rather than a silent redefinition
+    of what an already-reserved key promised.
+    """
+    canonical = json.dumps(
+        {
+            "v": _REQUEST_DIGEST_VERSION,
+            "media_ids": sorted({int(media_id) for media_id in media_ids}),
+            "recognition_enabled": bool(recognition_enabled),
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def describe_run_max_items() -> int:
@@ -84,6 +170,9 @@ class DescribeRunRequest:
     tenant_id: object
     media_ids: Sequence[int]
     max_items: int
+    # HARM-F1: snapshot of WP acx_recognition_enabled at submit. Default True
+    # preserves today's naming-on behaviour when the field is omitted.
+    recognition_enabled: bool = True
 
     def validate(self) -> None:
         total = len(self.media_ids)

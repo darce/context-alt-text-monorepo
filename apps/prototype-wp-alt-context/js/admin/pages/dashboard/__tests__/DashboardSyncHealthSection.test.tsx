@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { DashboardSyncHealthSection } from '../DashboardSyncHealthSection';
@@ -22,6 +22,20 @@ const baseProps = {
 };
 
 describe('DashboardSyncHealthSection', () => {
+  it('offers settings when sync health is unavailable', () => {
+    render(
+      <DashboardSyncHealthSection
+        {...baseProps}
+        isError
+        syncStatus={null}
+        effectiveSyncHealth="offline"
+        syncHealthEnvelope={null}
+      />,
+    );
+
+    expect(screen.getByRole('link', { name: 'Open settings' })).toHaveAttribute('href', '#/settings');
+  });
+
   it('shows offline copy when effective health is offline despite legacy healthy status', () => {
     render(
       <DashboardSyncHealthSection
@@ -90,6 +104,27 @@ describe('DashboardSyncHealthSection', () => {
 
     expect(screen.getByTestId('acx-dashboard-mirror-warning-icon')).toBeInTheDocument();
     expect(screen.getByText(/Mirror is out of sync with the backend/i)).toBeInTheDocument();
+    expect(screen.getByText('Mirror is out of sync with the backend — 3 stale face groups, 2 failed sync events.')).toBeInTheDocument();
+  });
+
+  it('points the dashboard action card at Review Queue, not the retired Workbench name', () => {
+    render(
+      <DashboardSyncHealthSection
+        {...baseProps}
+        effectiveSyncHealth="healthy"
+        syncHealthEnvelope={{
+          breaker: { state: 'closed', base_url: 'http://localhost:8000', opened_at: null },
+          outbox: { pending: 0, failed: 0 },
+          conflicts: { open: 0 },
+          replays: { failed: null, source: 'unavailable_local' },
+          last_pull: { at: '2026-06-11T12:00:00Z', ok: true },
+          warnings: [],
+        }}
+      />,
+    );
+
+    expect(screen.getByRole('link', { name: /Open Review Queue/ })).toHaveAttribute('href', '#/workbench?tab=scan');
+    expect(screen.queryByRole('heading', { name: 'Open Workbench' })).not.toBeInTheDocument();
   });
 
   it('keeps Reset mirror enabled and firing while the breaker is open (recovery affordance)', () => {
@@ -117,6 +152,137 @@ describe('DashboardSyncHealthSection', () => {
     const resetButton = screen.getByRole('button', { name: 'Reset mirror' });
     expect(resetButton).toBeEnabled();
     fireEvent.click(resetButton);
-    expect(onResetMirror).toHaveBeenCalled();
+    expect(onResetMirror).not.toHaveBeenCalled();
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Reset mirror' }));
+    expect(onResetMirror).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not call onResetMirror when Reset mirror is clicked', () => {
+    const onResetMirror = vi.fn();
+    render(
+      <DashboardSyncHealthSection
+        {...baseProps}
+        showMirrorDivergenceBanner
+        pendingReplayCount={7}
+        onResetMirror={onResetMirror}
+        effectiveSyncHealth="stale"
+        syncHealthEnvelope={{
+          breaker: { state: 'closed', base_url: 'http://localhost:8000', opened_at: null },
+          outbox: { pending: 7, failed: 0 },
+          conflicts: { open: 0 },
+          replays: { failed: 0, source: 'local' },
+          last_pull: { at: '2026-06-11T12:00:00Z', ok: true },
+          warnings: [],
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reset mirror' }));
+    expect(onResetMirror).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('names pendingReplayCount in the confirm dialog', () => {
+    render(
+      <DashboardSyncHealthSection
+        {...baseProps}
+        showMirrorDivergenceBanner
+        pendingReplayCount={7}
+        effectiveSyncHealth="stale"
+        syncHealthEnvelope={{
+          breaker: { state: 'closed', base_url: 'http://localhost:8000', opened_at: null },
+          outbox: { pending: 7, failed: 0 },
+          conflicts: { open: 0 },
+          replays: { failed: 0, source: 'local' },
+          last_pull: { at: '2026-06-11T12:00:00Z', ok: true },
+          warnings: [],
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reset mirror' }));
+    expect(
+      screen.getByText(
+        '7 pending local changes have not reached the backend yet. Reset discards them. They cannot be recovered.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Discard 7 and reset' })).toBeInTheDocument();
+  });
+
+  it('calls onResetMirror exactly once when the confirm dialog is confirmed', () => {
+    const onResetMirror = vi.fn();
+    render(
+      <DashboardSyncHealthSection
+        {...baseProps}
+        showMirrorDivergenceBanner
+        pendingReplayCount={7}
+        onResetMirror={onResetMirror}
+        effectiveSyncHealth="stale"
+        syncHealthEnvelope={{
+          breaker: { state: 'closed', base_url: 'http://localhost:8000', opened_at: null },
+          outbox: { pending: 7, failed: 0 },
+          conflicts: { open: 0 },
+          replays: { failed: 0, source: 'local' },
+          last_pull: { at: '2026-06-11T12:00:00Z', ok: true },
+          warnings: [],
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reset mirror' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Discard 7 and reset' }));
+    expect(onResetMirror).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not call onResetMirror when the confirm dialog is cancelled', () => {
+    const onResetMirror = vi.fn();
+    render(
+      <DashboardSyncHealthSection
+        {...baseProps}
+        showMirrorDivergenceBanner
+        pendingReplayCount={7}
+        onResetMirror={onResetMirror}
+        effectiveSyncHealth="stale"
+        syncHealthEnvelope={{
+          breaker: { state: 'closed', base_url: 'http://localhost:8000', opened_at: null },
+          outbox: { pending: 7, failed: 0 },
+          conflicts: { open: 0 },
+          replays: { failed: 0, source: 'local' },
+          last_pull: { at: '2026-06-11T12:00:00Z', ok: true },
+          warnings: [],
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reset mirror' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(onResetMirror).not.toHaveBeenCalled();
+  });
+
+  it('renders the nothing-will-be-lost copy when pendingReplayCount is 0', () => {
+    const onResetMirror = vi.fn();
+    render(
+      <DashboardSyncHealthSection
+        {...baseProps}
+        showMirrorDivergenceBanner
+        pendingReplayCount={0}
+        onResetMirror={onResetMirror}
+        effectiveSyncHealth="stale"
+        syncHealthEnvelope={{
+          breaker: { state: 'closed', base_url: 'http://localhost:8000', opened_at: null },
+          outbox: { pending: 0, failed: 0 },
+          conflicts: { open: 0 },
+          replays: { failed: 0, source: 'local' },
+          last_pull: { at: '2026-06-11T12:00:00Z', ok: true },
+          warnings: [],
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reset mirror' }));
+    expect(screen.getByText('No pending local changes. Nothing will be lost.')).toBeInTheDocument();
+    expect(screen.queryByText(/pending local changes have not reached the backend/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Discard/ })).not.toBeInTheDocument();
+    expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Reset mirror' })).toBeInTheDocument();
   });
 });

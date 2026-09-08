@@ -4,7 +4,7 @@ import type { RosterEntry } from '../../api/rosterApi';
 import type { RosterEntryInstance } from '../../api/generated/roster-entry';
 import { useUpdatePerson, useDeletePerson } from '../../hooks/useRosterHooks';
 import { AlertCircle, Check, CheckCircle2, Pencil, Trash2, UserRound, X } from 'lucide-react';
-import { ConfirmDialog } from './ConfirmDialog';
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { IdentityThumbnail } from './IdentityThumbnail';
 import { derivePersonState, PERSON_STATES, type PersonState } from './personState';
 import { isHumanLabeledTarget } from '../workbench/identity-clusters/suggestionProjection';
@@ -183,11 +183,17 @@ const EditableRow = ({ entry }: EditableRowProps) => {
 
   if (isEditing) {
     const nameErrorId = `acx-roster-edit-name-error-${entry.id}`;
+    const nameInputId = `acx-roster-edit-name-${entry.id}`;
+    const tagsInputId = `acx-roster-edit-tags-${entry.id}`;
     return (
       <tr>
         <td>
+          <label className="acx-roster-field-label" htmlFor={nameInputId}>
+            {__('Person name', 'alt-context')}
+          </label>
           <DirectoryFace entry={entry} />{' '}
           <input
+            id={nameInputId}
             type="text"
             className="acx-input"
             value={name}
@@ -210,7 +216,11 @@ const EditableRow = ({ entry }: EditableRowProps) => {
         </td>
         <PersonStateCell entry={entry} />
         <td>
+          <label className="acx-roster-field-label" htmlFor={tagsInputId}>
+            {__('Tags', 'alt-context')}
+          </label>
           <input
+            id={tagsInputId}
             type="text"
             className="acx-input"
             value={tags}

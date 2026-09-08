@@ -43,25 +43,23 @@
 │  │ InsightFace :10010   ● healthy │     │▐│  ┌───────────────────────────────────────────────┐│
 │  └─────────────────────────────────┘     │ │  │□ thumb title        status  alt-text   desc   ││
 │ [ ⟳ Run recognition ]  thr ▐▐▐▐░ 0.62   │ │  │□ [▦] conf.jpg     ✓ done  "Ada at…"  "A wo…"││
-│  ┌─ Cluster map ───────────────────┐     │ │  │☑ [▦] group.jpg    ⧗ queue ✎ empty   ✎ empty  ││
-│  │   ·· ●②    ·  ●①●    ·     │     │▐│  │□ [▦] keynote.png  ⚠ fail  "Two…"    ✎ empty ││
-│  │  ·   ●●   ·    ●●    ·· ●④│     │▐│  └───────────────────────────────────────────────┘│
-│  │     ●③●        ··  ·         │     │ │ ▼ group.jpg — inline edit                         │
-│  └─────────────────────────────────┘     │ │ alt [ Two people seated at a panel… ] 63/125      │
+│  ┌─ Face-group status ─────────────┐     │ │  │☑ [▦] group.jpg    ⧗ queue ✎ empty   ✎ empty  ││
+│  │ Ready · 18 groups (status only) │     │▐│  │□ [▦] keynote.png  ⚠ fail  "Two…"    ✎ empty ││
+│  │ not a 2D scatter plot           │     │▐│  └───────────────────────────────────────────────┘│
+│  └─────────────────────────────────┘     │ │ ▼ group.jpg — inline edit                         │
+│                                          │ │ alt [ Two people seated at a panel… ] 63/125      │
 │ Clusters      sort:[ unnamed first ▼ ]   │ │ AI: "Two panelists at a table" [use][edit]        │
 │ ▸①  42  0.91  «unnamed»        [select]│ │ long[ …expandable textarea… ]                     │
 │ ▸②  31  0.88  Ada Lovelace             │▐│ ───────────────────────────────────────────────   │
-│ ▸③  17  0.55  «low conf» ⚠            │ │ 2 selected · [ Describe selected ⟳ ] est.$0.03    │
+│ ▸③  17  0.55  «low conf» ⚠            │ │ 2 selected · [ Describe 2 selected ⟳ ] est.$0.03  │
 │                                          │ │                                                   │
 │ (z-left-host → workbench-control)        │ │ (z-right-host → workbench-library)                │
 └──────────────────────────────────────────┴─┴───────────────────────────────────────────────────┘
                           (z-splitter: drag to resize · ◀ collapse left)
 ```
 
-The left pane's cluster map is the **DEP-2 / Slice-4** scatter; **day one ships the cluster
-_list_** beneath it (§2). Cluster identity is carried by **number + shape** (①◆ ②▲ ③● ④■), never
-colour alone, and selection is a marker/weight change, not a hue swap — see §2 for the redundant
-non-colour encoding `[VIZ-07]/[A11Y-06]`.
+The left pane's face-group zone is a **status region**, not a 2D scatter. Face-group list
+selection still uses **number + shape** (①◆ ②▲ ③● ④■), never colour alone `[VIZ-07]/[A11Y-06]`.
 
 ---
 
@@ -76,13 +74,9 @@ non-colour encoding `[VIZ-07]/[A11Y-06]`.
 │ last run 3m ago · 214 faces · 18 clusters · 41 unnamed   │
 │ ▸ Run recognition is COSTLY — preview: 214 faces, ~$0.02│  [preview_required]
 ├──────────────────────────────────────────────────────────┤
-│ Cluster map · faces — DEP-2 · Slice 4   [ lasso | pan ]  │  (z-cluster-umap · ai_review, evidence)
-│                                                          │
-│       · · ·        ·· ◆◆◆                             │  legend (redundant, non-colour):
-│      ·  ·  ▲②     ·   ◆①◆   ← hover ①: 42, 0.91    │   shape+hue per cluster ①◆ ②▲ ③● ④■
-│     ·       ◆◆     ·   ◆◆                            │   ⚠ low-confidence ring (not colour)
-│         ●③●            ·· ·                           │   selected = halo/size-up (additive)
-│      ·  ·  ⚠     ·  ■④  ·                             │  select region → writes ?cluster= (day-one: linked-highlight; filter=DEP-3)
+│ Face-group status                       [ Retry ]        │  (z-cluster-umap · status)
+│ Ready · last scan 3m ago · 18 groups                     │
+│ Empty: "No face groups yet."  Error: load failed+Retry   │
 ├──────────────────────────────────────────────────────────┤
 │ Clusters (day-one list)       sort:[ unnamed first ▼ ]   │  (z-cluster-list · queue)
 │ id = number + glyph (non-colour) · sel = ▶ + bold       │  [VIZ-07]/[A11Y-06]
@@ -147,7 +141,7 @@ of name/merge/split is **DEP-4**.
 │   AI suggests: "Two panelists at a table with microphones"      [ use ] [ edit ]                │ (z-lib-ai-suggest · ai_review)
 │   long desc [ A wide shot of two panelists seated behind a table… ] (expandable)                │
 ├─────────────────────────────────────────────────────────────────────────────────────────────────┤
-│ 2 selected · [ Describe selected ⟳ ]  est. $0.03  · job: idle                                   │ (z-lib-actions · job)
+│ 2 selected · [ Describe 2 selected ⟳ ]  est. $0.03  · job: idle                                 │ (z-lib-actions · job)
 └─────────────────────────────────────────────────────────────────────────────────────────────────┘
   columns are truncated + hover-expand; alt-text and long-description are SEPARATE columns so
   a scanning operator sees at a glance which rows still need each field (needs-alt ≠ needs-desc).
@@ -156,6 +150,46 @@ of name/merge/split is **DEP-4**.
 ```
 
 ---
+
+### 3b. Footer job zone — the three idle states + identifying (`z-lib-actions`)
+
+```
+┌─ idle · ON ──────────────────────────────────────────────────────────────────────────────────┐
+│ recognition ON (Settings default)                                                            │
+│   2 selected · [ Describe 2 selected ⟳ ]  est. $0.03  · job: idle                            │
+│   ▸ names people it knows while describing                        (aria-describedby, INT-04) │
+└──────────────────────────────────────────────────────────────────────────────────────────────┘
+
+┌─ idle · OFF ─────────────────────────────────────────────────────────────────────────────────┐
+│ recognition OFF                                                                              │
+│   2 selected · [ Describe 2 selected ⟳ ]  est. $0.03  · job: idle                            │
+│   ▸ descriptions only — turn people naming on in Settings         (aria-describedby)         │
+└──────────────────────────────────────────────────────────────────────────────────────────────┘
+
+┌─ idle · unknown ─────────────────────────────────────────────────────────────────────────────┐
+│ settings not loaded yet (unknown)                                                            │
+│   2 selected · [ Describe 2 selected ⟳ ]  aria-disabled="true" · focusable                   │
+│   ▸ checking recognition setting…            never starts describe on a guessed policy (F3)  │
+└──────────────────────────────────────────────────────────────────────────────────────────────┘
+
+┌─ identifying ────────────────────────────────────────────────────────────────────────────────┐
+│ recognition ON, scan running before describe                                                 │
+│   2 selected · [ Identifying people… ⟳ ]  aria-disabled="true" · focusable · [ Cancel ]      │
+│   ▸ never HTML-disabled (same invariant as offline) — RLSE-04, A11Y-21; Cancel aborts the run│
+└──────────────────────────────────────────────────────────────────────────────────────────────┘
+
+┌─ idle · zero selection ──────────────────────────────────────────────────────────────────────┐
+│ zero selection (rg-003: the primary stays reachable from the zero state)                     │
+│   0 selected · [ Describe selected ]  aria-disabled="true" · focusable · click is a no-op    │
+└──────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+One footer primary in every state (NAV-01, INT-05): recognition is a **global Settings toggle**
+disclosed under the button, never a second competing CTA (COG-03). The identifying and unknown
+states are `aria-disabled` only — HTML `disabled` would drop the sole job entry out of tab order.
+
+---
+
 
 ## 4. Coordinated selection — day-one linked-highlight · **DEP-3** filter
 

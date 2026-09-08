@@ -90,33 +90,86 @@ terraform -chdir=infra/oci output -raw gpu_instance_id    # → idle reaper
 
 ### Idle reaper (decision → fence → OCI STOP)
 
-The description service dumps load to `/run/acx/describe-load.json` (override with
-`ACX_DESCRIBE_LOAD_PATH`) on async enqueue/terminal poll and at startup; the JSON is
-produced by `scene/application/describe_load.py` (DB-derived, VLM-5). Stale dumps are
-treated as busy so a dead writer cannot STOP a working GPU.
+Each description-service environment dumps load to
+`/run/acx-write/<env>/describe-load.json` (override with
+`ACX_DESCRIBE_LOAD_PATH`) on async enqueue/terminal poll and at startup. The JSON
+is produced by `scene/application/describe_load.py` (DB-derived, VLM-5). The
+lifecycle units aggregate every environment's snapshot; stale dumps are treated
+as busy so a dead writer cannot STOP a working GPU.
+
+#### GPU lifecycle snapshots
+
+The host lifecycle systemd units and description APIs exchange atomic JSON
+snapshots through directories with separate ownership:
+
+| Path | Ownership and access | Single writer | Reader | Freshness contract |
+| --- | --- | --- | --- | --- |
+| `/run/acx/gpu-state.json` | Host-owned; mounted read-only in each API container | Host start/reap units (`ubuntu`) | Description APIs | An API treats data older than `ACX_GPU_STATE_STALE_SECONDS` (180s by default) as `unknown`. |
+| `/run/acx-write/<env>/describe-load.json` | API-owned; only the matching environment subdirectory is mounted read-write | That environment's description API (container uid 10001) | Host start/reap units aggregate `/run/acx-write/*/describe-load.json` | Refreshed every `ACX_DESCRIBE_LOAD_REFRESH_SECONDS` (45s by default); the lifecycle reader rejects stale data. |
+
+Both writers atomically replace mode-0644 files. `/run/acx` remains host-owned
+and read-only to containers. Each API receives only its own writable
+`/run/acx-write/<env>` subdirectory, preventing dual writers while allowing the
+units to aggregate load across dev, staging, and prod. `.env.prod.example` is the
+production path seam for these two directories, and `docker-compose.env.yml`
+enforces the corresponding read-only state and read-write load mounts. Pass
+`ACX_DESCRIBE_LOAD_DIR` as the `/run/acx-write` parent the units aggregate,
+not a per-environment subdirectory; the checker rejects the mismatch.
+
+Run the fail-closed check as root so it can test readability as container uid
+10001. Export the values from the deployed environment; do not source a secrets
+file into an interactive shell:
+
+```bash
+sudo env \
+  ACX_DESCRIBE_LOAD_DIR=/run/acx-write \
+  ACX_DESCRIBE_LOAD_STALE_SECONDS=120 \
+  ACX_GPU_COMPOSE_FILE=apps/prototype-description-service/docker-compose.env.yml \
+  ACX_GPU_DEPLOYMENTS_FILE=scripts/deploy/gpu-snapshot-deployments.conf \
+  ACX_GPU_INSTALL_SCRIPT=scripts/deploy/gpu-lifecycle-install.sh \
+  ACX_GPU_READER_UID=10001 \
+  ACX_GPU_SNAPSHOT_CONFIG_ONLY=0 \
+  ACX_GPU_SNAPSHOT_DIR=/run/acx \
+  ACX_GPU_STATE_PATH=/run/acx/gpu-state.json \
+  ACX_GPU_STATE_STALE_SECONDS=180 \
+  ACX_GPU_UNIT_LOAD_DIR=/run/acx-write \
+  ACX_GPU_UNIT_STATE_PATH=/run/acx/gpu-state.json \
+  ACX_NOW_EPOCH="$(date +%s)" \
+  scripts/deploy/check-gpu-snapshots.sh
+```
+
+The deployment registry is shared with the lifecycle installer, so every listed
+environment must have a writable, fresh snapshot directory. The command exits
+non-zero for a missing/unreadable/malformed/stale file, a
+non-read-only or drifted compose mount, or a configured path that differs from
+the paths installed into the systemd units. A missing snapshot never passes.
 
 ```bash
 # Production: real load file + OCI probe (not static --queue-depth 0 --in-flight 0)
-python -m infra.oci.gpu_lifecycle \
+python3 -m infra.oci.gpu_lifecycle \
+  --mode reap \
   --instance-id "$(terraform -chdir=infra/oci output -raw gpu_instance_id)" \
+  --load-dir /run/acx-write \
+  --load-max-age-seconds 120 \
+  --load-stale-grace-seconds 600 \
+  --gpu-state-json /run/acx/gpu-state.json \
+  --running-since-path /run/acx-gpu/running-since.json \
   --idle-seconds 300 \
-  --load-json /run/acx/describe-load.json \
-  --probe-oci \
-  --fence-delay-seconds 2
+  --max-lease-seconds 3600 \
+  --fence-delay-seconds 2 \
+  --probe-oci
 ```
 
 Auth: default OCI CLI API-key (`~/.oci/config`). On acx-backend with instance
 principal, pass `--oci-auth instance_principal` (requires a dynamic group policy
 granting `INSTANCE_POWER_ACTIONS` on the GPU compartment).
 
-Scheduler: cloud-init installs `acx-gpu-idle-reaper.timer` (every 2 minutes).
-Copy `/etc/acx/gpu-reaper.env.example` → `/etc/acx/gpu-reaper.env` with
-`GPU_INSTANCE_ID=…` after apply. Manual cron equivalent:
+Scheduler: `scripts/deploy/gpu-lifecycle-install.sh` installs
+`acx-gpu-reap.timer` (every 2 minutes) and writes the resolved instance and
+freshness settings to `/etc/acx/gpu-lifecycle.env`. Manual cron equivalent:
 
 ```bash
-*/2 * * * * GPU_INSTANCE_ID=ocid1... python3 -m infra.oci.gpu_lifecycle \
-  --instance-id "$GPU_INSTANCE_ID" --load-json /run/acx/describe-load.json \
-  --probe-oci --idle-seconds 300 >> /var/log/acx-gpu-reaper.log 2>&1
+*/2 * * * * cd /opt/acx-gpu && /usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap --instance-id ocid1... --load-dir /run/acx-write --load-max-age-seconds 120 --load-stale-grace-seconds 600 --gpu-state-json /run/acx/gpu-state.json --running-since-path /run/acx-gpu/running-since.json --idle-seconds 300 --max-lease-seconds 3600 --fence-delay-seconds 2 --probe-oci --oci-auth instance_principal --oci-bin /home/ubuntu/.oci-venv/bin/oci >> /var/log/acx-gpu-reaper.log 2>&1
 ```
 
 See `docs/tasks/vlm/VLM-3-gpu-detailed-tier-decision-memo.md` § Activation preconditions.
@@ -503,19 +556,19 @@ The wrapper supports two build modes:
 
 | Mode | Trigger | When to use |
 |---|---|---|
-| **Local build** (default) | `make deploy-dev` | Fast iteration on a workstation with a healthy local docker daemon. Mac users need colima or Docker Desktop. |
-| **Remote build** | `make deploy-dev REMOTE_BUILD=1` | Build runs on the OCI VM via SSH+rsync. Native arm64 (no cross-compile). No local docker required. Recommended path. |
+| **Remote build** (default) | `make deploy-dev` | Build runs on the OCI VM via SSH+rsync. Native arm64 (no cross-compile). No local docker required. |
+| **Local build** (explicit opt-out) | `make deploy-dev REMOTE_BUILD=0` | Fast iteration on a workstation with a healthy local docker daemon. Mac users need colima or Docker Desktop. |
 
 ```bash
 # See every available deploy target:
 make deploy-help
 
-# Standard dev iteration (build + push :dev + :SHA + restart acx-dev + verify):
+# Standard dev deploy: build on the VM, push :dev + :SHA, restart acx-dev, verify.
+# This consumes CPU and disk on the multi-environment serving host.
 make deploy-dev
 
-# Same, but build on the VM — no colima/Docker Desktop needed locally.
-# This is the friction-free path; pair with Tailscale for stable SSH.
-make deploy-dev REMOTE_BUILD=1
+# Explicit local-build opt-out for workstation iteration:
+make deploy-dev REMOTE_BUILD=0
 
 # Build only, no push (sanity before paying for an OCIR push):
 make deploy-build                      # local
@@ -527,8 +580,8 @@ make deploy-verify-dev                 # or: make deploy-verify ENV=dev
 # Snapshot all three envs at once:
 make deploy-status
 
-# Make remote-build the default (add to ~/.zshrc):
-export ACX_REMOTE_BUILD=1
+# Make local-build the default (add to ~/.zshrc):
+export ACX_REMOTE_BUILD=0
 
 # Override defaults via env vars:
 OCI_HOST=<other-tailnet-or-ip> make deploy-dev REMOTE_BUILD=1
@@ -536,13 +589,22 @@ ACX_ALLOW_DIRTY=1 make deploy-dev      # allow dirty tree (dev only)
 ACX_REMOTE_BUILD_DIR=/var/tmp/acx-build make deploy-dev REMOTE_BUILD=1
 ```
 
-**Remote-build prerequisites** (one-time):
+**Remote-build prerequisites:**
 
 - VM has docker installed and the `ubuntu` user is in the `docker` group
   (already true for the standard cloud-init).
-- VM has cached OCIR auth: SSH in once and run
-  `docker login iad.ocir.io -u 'idu2kqqe2jxy/<email>'`. The token is stored
-  in `~ubuntu/.docker/config.json`.
+- VM has OCI CLI installed at `~/.oci-venv/bin/oci`, and its instance principal
+  can read active `OCIR_USERNAME` and `OCIR_AUTH_TOKEN` versions from
+  `acx-vault`. The deploy creates a private, ephemeral Docker config, populates
+  it from Vault, and removes it on exit; no cached Docker login is required or
+  wanted.
+- On an authentication failure, use the deploy's classified error: verify the
+  two secrets have active versions for `secret_missing`, check dynamic group
+  `acx-backend-dg` and policy `acx-backend-secret-read` for `vault_denied`, or
+  rotate the Vault token for `ocir_rejected`. A pre-existing
+  `~ubuntu/.docker/config.json` left by the old procedure is an unrotated copy
+  outside this lifecycle; remove it after confirming it contains no unrelated
+  registry credentials.
 - Workstation has `rsync` (default on macOS).
 
 **Remote-build trade-offs:**

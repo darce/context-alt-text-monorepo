@@ -3,7 +3,10 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { DescriptionHistoryPage } from '../DescriptionHistoryPage';
+import {
+  DescriptionHistoryPage,
+  HISTORY_STATUS_FILTER_VALUE,
+} from '../DescriptionHistoryPage';
 import {
   correctDescriptionHistoryItem,
   fetchDescribeRunItems,
@@ -85,6 +88,8 @@ const historyItem: DescriptionHistoryItem = {
     cached: false,
     duration_ms: 13800,
     retention_class: 'retain_all',
+    tier: 'provisional_cpu',
+    result_generation: 1,
   },
   human_edit: null,
   run_status: {
@@ -173,13 +178,50 @@ describe('DescriptionHistoryPage', () => {
     renderPage();
 
     expect(await screen.findByText('Bridge')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Description Review History' })).toBeInTheDocument();
+    // The visible hero title is now a <p> (WordPress shell owns the page's only
+    // <h1>, ORCH-UX-UI-BR-23); assert via the section's accessible name so the
+    // test still fails if the preserved id/aria-labelledby link is broken.
+    expect(screen.getByRole('region', { name: 'Description Runs' })).toBeInTheDocument();
     expect(screen.getByText('A bridge over water.')).toBeInTheDocument();
     expect(screen.getAllByText('Bridge at dusk')).toHaveLength(2);
     expect(screen.getByText('microsoft/Florence-2-base-ft')).toBeInTheDocument();
-    expect(screen.getAllByText('completed')).toHaveLength(2);
+    expect(screen.getByText('completed', { selector: 'dd' })).toBeInTheDocument();
     // No recovery line when recovered_from is absent / none.
     expect(screen.queryByTestId('acx-history-recovery')).not.toBeInTheDocument();
+  });
+
+  it('keeps the hero and live status mounted while loading becomes ready [D-16][A11Y-21]', async () => {
+    let resolveHistory!: (value: { total: number; items: DescriptionHistoryItem[] }) => void;
+    fetchHistoryMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveHistory = resolve;
+      }),
+    );
+
+    const { container } = renderPage();
+
+    expect(container.querySelector('.acx-history__hero')).toBeInTheDocument();
+    expect(screen.getByText('Review')).toBeInTheDocument();
+    expect(screen.getByText('Review generated alt text, provenance, and human corrections in one workspace.')).toBeInTheDocument();
+    const page = screen.getByRole('region', { name: 'Description Runs' });
+    expect(page).toHaveAttribute('aria-busy', 'true');
+    const liveStatus = screen.getByTestId('acx-description-history-status');
+    expect(liveStatus).toHaveAttribute('role', 'status');
+    expect(liveStatus).toHaveAttribute('aria-live', 'polite');
+    expect(liveStatus).toBeEmptyDOMElement();
+    expect(screen.getByText('Loading description history...', { selector: 'p' })).toBeVisible();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('acx-description-history-status')).toBe(liveStatus);
+      expect(liveStatus).toHaveTextContent('Loading description history...');
+    });
+
+    resolveHistory({ total: 1, items: [historyItem] });
+
+    expect(await screen.findByText('Bridge')).toBeInTheDocument();
+    expect(screen.getByTestId('acx-description-history-status')).toBe(liveStatus);
+    expect(liveStatus).toHaveTextContent('Description history ready.');
+    expect(page).not.toHaveAttribute('aria-busy');
   });
 
   /**
@@ -361,12 +403,40 @@ describe('DescriptionHistoryPage', () => {
     expect(after?.total).toBe(2);
   });
 
-  it('shows an empty state when no generated descriptions exist', async () => {
+  it('offers context and a front door from the zero state [D-18][NAV-08]', async () => {
     fetchHistoryMock.mockResolvedValue({ total: 0, items: [] });
 
     renderPage();
 
     expect(await screen.findByText('No generated descriptions yet.')).toBeInTheDocument();
+    expect(
+      screen.getByText('Select images in Review Queue, then describe them to create drafts.'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open Review Queue' })).toHaveAttribute(
+      'href',
+      '#/workbench?tab=scan',
+    );
+  });
+
+  it('shows translated plain-language labels for status enum options [D-17][COG-01][sr-007]', async () => {
+    fetchHistoryMock.mockResolvedValue({
+      total: 1,
+      items: [
+        {
+          ...historyItem,
+          run_status: {
+            status: 'completed_with_errors',
+            updated_at: '2026-07-04 11:00:00',
+          },
+        },
+      ],
+    });
+
+    renderPage();
+
+    const option = await screen.findByRole('option', { name: 'Completed with errors' });
+    expect(option).toHaveValue('completed_with_errors');
+    expect(screen.queryByRole('option', { name: 'completed_with_errors' })).not.toBeInTheDocument();
   });
 
   it('filters history by search text and run status', async () => {
@@ -387,11 +457,106 @@ describe('DescriptionHistoryPage', () => {
     expect(screen.getByText('No history items match the current filters.')).toBeInTheDocument();
   });
 
+  it('clears search and status filters with one action from filtered-empty [D-18][NAV-08]', async () => {
+    fetchHistoryMock.mockResolvedValue({ total: 2, items: [historyItem, failedHistoryItem] });
+
+    renderPage();
+
+    expect(await screen.findByText('Bridge')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Search descriptions'), { target: { value: 'portrait' } });
+    fireEvent.change(screen.getByLabelText('Run status filter'), { target: { value: 'completed' } });
+    expect(screen.getByText('No history items match the current filters.')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+
+    expect(screen.getByLabelText('Search descriptions')).toHaveValue('');
+    expect(HISTORY_STATUS_FILTER_VALUE).toEqual({ ALL: 'all' });
+    expect(screen.getByLabelText('Run status filter')).toHaveValue(HISTORY_STATUS_FILTER_VALUE.ALL);
+    expect(screen.getByText('Bridge')).toBeInTheDocument();
+    expect(screen.getByText('Portrait')).toBeInTheDocument();
+  });
+
+  it('retains the last good list and distinguishes a failed refresh [DUX-L9-RV-02][D-19][HAI-15][RLSE-04]', async () => {
+    const queryClient = buildClient();
+    fetchHistoryMock
+      .mockResolvedValueOnce({ total: 1, items: [historyItem] })
+      .mockRejectedValueOnce(new Error('GET /description-history returned database host details'));
+
+    renderPage(['/description-history'], queryClient);
+
+    expect(await screen.findByText('Bridge')).toBeInTheDocument();
+    const errorRegion = screen.getByTestId('acx-description-history-error');
+    expect(errorRegion).toHaveAttribute('role', 'alert');
+    expect(errorRegion).toBeEmptyDOMElement();
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ['description-history'] });
+    });
+
+    expect(screen.getByText('Bridge')).toBeInTheDocument();
+    const notice = await screen.findByTestId('acx-user-facing-error');
+    expect(screen.getByTestId('acx-description-history-error')).toBe(errorRegion);
+    expect(notice).toHaveAttribute('data-error-kind', 'generic');
+    expect(notice).toHaveTextContent('Could not load description history.');
+    expect(screen.queryByText(/database host details/i)).not.toBeInTheDocument();
+    expect(screen.getByTestId('acx-description-history-status')).toHaveTextContent(
+      'Refresh failed; previously loaded history remains shown.',
+    );
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeVisible();
+  });
+
+  it('distinguishes a no-data history failure and keeps the persistent regions [DUX-L9-RV-01][DUX-L9-RV-02][DUX-L9-RV-03]', async () => {
+    fetchHistoryMock.mockRejectedValueOnce(
+      new Error('GET /description-history exposed internal endpoint detail'),
+    );
+
+    renderPage();
+
+    const statusRegion = screen.getByTestId('acx-description-history-status');
+    const errorRegion = screen.getByTestId('acx-description-history-error');
+    expect(statusRegion).toBeEmptyDOMElement();
+    expect(errorRegion).toHaveAttribute('role', 'alert');
+    expect(errorRegion).toBeEmptyDOMElement();
+    expect(screen.getByText('Loading description history...', { selector: 'p' })).toBeVisible();
+
+    const notice = await screen.findByTestId('acx-user-facing-error');
+    expect(screen.getByTestId('acx-description-history-error')).toBe(errorRegion);
+    expect(notice).toHaveTextContent('Could not load description history.');
+    expect(screen.queryByText(/internal endpoint detail/i)).not.toBeInTheDocument();
+    expect(screen.getByTestId('acx-description-history-status')).toBe(statusRegion);
+    expect(statusRegion).toHaveTextContent('History could not be loaded.');
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeVisible();
+  });
+
+  it('recovers a no-data history failure through Retry [DUX-L9-RV-02]', async () => {
+    fetchHistoryMock
+      .mockRejectedValueOnce(new Error('Initial history request failed.'))
+      .mockResolvedValueOnce({ total: 1, items: [historyItem] });
+
+    renderPage();
+
+    const statusRegion = screen.getByTestId('acx-description-history-status');
+    const errorRegion = screen.getByTestId('acx-description-history-error');
+    const retry = await screen.findByRole('button', { name: 'Retry' });
+    expect(statusRegion).toHaveTextContent('History could not be loaded.');
+
+    fireEvent.click(retry);
+
+    expect(await screen.findByText('Bridge')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByTestId('acx-description-history-status')).toBe(statusRegion);
+      expect(statusRegion).toHaveTextContent('Description history ready.');
+      expect(screen.getByTestId('acx-description-history-error')).toBe(errorRegion);
+      expect(errorRegion).toBeEmptyDOMElement();
+    });
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    expect(fetchHistoryMock).toHaveBeenCalledTimes(2);
+  });
+
   it('switches to the run-apply surface when a ?run= deep link is present', async () => {
     fetchRunItemsMock.mockResolvedValue({
       run_id: 'run-abc',
       items: [
-        { media_id: 71, status: 'completed', alt_text_draft: 'A red flower.', caption: 'A flower.', provenance: null, existing_alt: false },
+        { media_id: 71, status: 'completed', alt_text_draft: 'A red flower.', caption: 'A flower.', provenance: null, tier: 'final_gpu', result_generation: 1, existing_alt: false },
       ],
     });
 

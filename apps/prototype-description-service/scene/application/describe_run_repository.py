@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models.scene import DescribeRun, DescribeRunItem
@@ -22,6 +23,7 @@ from scene.domain.describe_run import (
     DescribeRunStatus,
     RunKind,
     async_job_retention_hours,
+    compute_request_digest,
     describe_run_max_items,
     phase_for_status,
     terminal_run_status,
@@ -30,6 +32,30 @@ from scene.domain.description import DescriptionResultTier
 
 _TRUTHY_PG_SETTINGS = {"true", "on", "1", "yes"}
 _RECLAIM_INTERRUPT_ERROR = "interrupted by service restart"
+logger = logging.getLogger(__name__)
+
+
+def _run_is_barren(run: DescribeRun) -> bool:
+    """Terminal with nothing to show: it will never produce output."""
+    return DescribeRunStatus(run.status) in TERMINAL_RUN_STATUSES and not run.completed_items
+
+
+def _release_idempotency_key_if_barren(run: DescribeRun) -> None:
+    """Free the caller's retry token when ``run`` died without producing anything.
+
+    GUIDEDFIX-2 [S06]. A key is a reservation on a run that can still produce
+    output. FAILED, CANCELLED, and the COMPLETED_WITH_ERRORS a restart reclaim
+    derives when every item failed are all terminal with zero completed items —
+    holding the key on one of those would (a) make every later retry of that key
+    replay a 202 naming a dead run, permanently, and (b) block re-reserving the
+    key, because the unique index still sees the dead row. A partially
+    successful run keeps its key: partial output is still output, and replaying
+    it is the correct answer.
+    """
+    if run.idempotency_key is None:
+        return
+    if _run_is_barren(run):
+        run.idempotency_key = None
 
 
 class DescribeRunRepository:
@@ -44,11 +70,20 @@ class DescribeRunRepository:
         media_ids: Sequence[int],
         created_by_user_id: int | None = None,
         images: Mapping[int, tuple[bytes, str | None]] | None = None,
+        recognition_enabled: bool = True,
+        idempotency_key: str | None = None,
+        request_digest: str | None = None,
+        deadline_seconds: float | None = None,
     ) -> uuid.UUID:
         # PHP-04: dedup while preserving first-seen order so a caller cannot
         # trigger redundant VLM inference by repeating a media_id.
         media_ids = list(dict.fromkeys(media_ids))
-        request = DescribeRunRequest(tenant_id=tenant_id, media_ids=media_ids, max_items=self._max_items)
+        request = DescribeRunRequest(
+            tenant_id=tenant_id,
+            media_ids=media_ids,
+            max_items=self._max_items,
+            recognition_enabled=recognition_enabled,
+        )
         request.validate()
         images = images or {}
         run = DescribeRun(
@@ -62,6 +97,19 @@ class DescribeRunRepository:
             failed_items=0,
             skipped_items=0,
             created_by_user_id=created_by_user_id,
+            recognition_enabled=request.recognition_enabled,
+            idempotency_key=idempotency_key,
+            # [S03] Derive from the same normalized inputs that were validated,
+            # never from the caller's argument order, so a reordered resubmit of
+            # one key replays instead of 409'ing.
+            request_digest=(
+                request_digest
+                if request_digest is not None
+                else compute_request_digest(
+                    media_ids=media_ids, recognition_enabled=request.recognition_enabled
+                )
+            ),
+            deadline_seconds=deadline_seconds,
         )
         run.items = [
             DescribeRunItem(
@@ -291,17 +339,63 @@ class DescribeRunRepository:
         alt_text_draft: str | None,
         caption: str | None,
         provenance: dict | None,
+        tier: DescriptionResultTier | str | None = None,
     ) -> bool:
-        """Persist the describe output for one item and clear its image bytes."""
-        item = await self._get_item(tenant_id=tenant_id, run_id=run_id, media_id=media_id)
-        if item is None:
-            return False
-        item.alt_text_draft = alt_text_draft
-        item.caption = caption
-        item.provenance = provenance
-        item.image_bytes = None
+        """Conditionally persist one result without superseding a concurrent GPU final."""
+        incoming_tier = DescriptionResultTier(tier) if tier is not None else None
+        item_identity = (
+            DescribeRunItem.tenant_id == tenant_id,
+            DescribeRunItem.run_id == run_id,
+            DescribeRunItem.media_id == media_id,
+        )
+        stored_tier = await self._session.scalar(select(DescribeRunItem.tier).where(*item_identity))
+        if stored_tier is not None:
+            try:
+                DescriptionResultTier(stored_tier)
+            except ValueError:
+                logger.warning(
+                    "treating unknown stored describe result tier as non-final "
+                    "tenant_id=%s run_id=%s media_id=%s tier=%r",
+                    tenant_id,
+                    run_id,
+                    media_id,
+                    stored_tier,
+                )
+
+        values: dict[str, Any] = {
+            "alt_text_draft": alt_text_draft,
+            "caption": caption,
+            "provenance": provenance,
+            "tier": incoming_tier,
+            "image_bytes": None,
+        }
+        if any(value is not None for value in (alt_text_draft, caption, provenance, tier)):
+            values["result_generation"] = DescribeRunItem.result_generation + 1
+
+        statement = update(DescribeRunItem).where(*item_identity).values(**values)
+        if incoming_tier is not DescriptionResultTier.FINAL_GPU:
+            statement = statement.where(
+                or_(
+                    DescribeRunItem.tier.is_(None),
+                    DescribeRunItem.tier != DescriptionResultTier.FINAL_GPU.value,
+                )
+            )
+        result = await self._session.execute(
+            statement.returning(DescribeRunItem.id).execution_options(synchronize_session="fetch")
+        )
+        written = result.scalar_one_or_none() is not None
+        if not written and stored_tier == DescriptionResultTier.FINAL_GPU.value:
+            logger.debug(
+                "ignoring non-final describe result for final item tenant_id=%s run_id=%s media_id=%s",
+                tenant_id,
+                run_id,
+                media_id,
+            )
         await self._session.flush()
-        return True
+        await self._session.scalar(
+            select(DescribeRunItem).where(*item_identity).execution_options(populate_existing=True)
+        )
+        return written
 
     async def mark_run_failed(
         self,
@@ -311,17 +405,84 @@ class DescribeRunRepository:
         error_message: str | None = None,
         now: datetime | None = None,
     ) -> bool:
-        """Force a run terminal-FAILED on an unexpected fatal worker error."""
+        """Force a run terminal-FAILED on an unexpected fatal worker error.
+
+        A run that is already terminal is left untouched: a cancel that landed
+        while the worker was failing must keep CANCELLED (HARM-01). Remaining
+        non-terminal items are driven terminal-FAILED so their stored image
+        bytes are reclaimed rather than stranded QUEUED under a FAILED run.
+        """
         run = await self.get_run(tenant_id=tenant_id, run_id=run_id)
         if run is None:
             return False
+        if DescribeRunStatus(run.status) in TERMINAL_RUN_STATUSES:
+            return False
+        now = now or datetime.now(tz=UTC)
+        for item in await self.list_run_items(tenant_id=tenant_id, run_id=run_id):
+            if DescribeItemStatus(item.status) in TERMINAL_ITEM_STATUSES:
+                continue
+            try:
+                await self.mark_item(
+                    tenant_id=tenant_id,
+                    run_id=run_id,
+                    media_id=item.media_id,
+                    status=DescribeItemStatus.FAILED,
+                    error_message=error_message or "run failed before this item was processed",
+                    now=now,
+                )
+            except Exception:  # noqa: BLE001 - byte reclamation is best-effort,
+                # but a failed flush poisons the session (pending rollback) and
+                # would abort the terminal run write below. Roll back and keep
+                # going; the run-status write is the part that must land.
+                await self._session.rollback()
+                continue
+        # The rollback above expires ORM state; re-fetch so the status check and
+        # terminal write below never touch expired attributes in async context.
+        run = await self.get_run(tenant_id=tenant_id, run_id=run_id)
+        if run is None:
+            return False
+        # The per-item recompute may already have derived a terminal status. A
+        # fatal-path write preserves only CANCELLED (cancel wins, untouched);
+        # anything else -- including a derived COMPLETED_WITH_ERRORS -- becomes
+        # FAILED, because this path only runs when the worker died fatally.
+        if DescribeRunStatus(run.status) is DescribeRunStatus.CANCELLED:
+            return False
         run.status = DescribeRunStatus.FAILED
         run.phase = DescribeRunPhase.FAILED
-        run.completed_at = now or datetime.now(tz=UTC)
+        if run.completed_at is None:
+            run.completed_at = now
         if error_message:
             run.error_message = error_message
+        _release_idempotency_key_if_barren(run)
         await self._session.flush()
         return True
+
+    async def get_run_by_idempotency_key(self, *, tenant_id: uuid.UUID, idempotency_key: str) -> DescribeRun | None:
+        """Resolve the run a retry token already reserved, within one tenant.
+
+        Read-only companion to the ``uq_image_description_runs_idempotency_key``
+        constraint: it serves the common replay, while the constraint — not this
+        lookup — is what makes two concurrent accepts converge on one run.
+
+        [S06] Barren terminal runs are excluded: replaying one would hand the
+        caller a 202 naming a run that will never produce output. Those rows also
+        release the key at the moment they go terminal
+        (:func:`_release_idempotency_key_if_barren`), so this filter and the
+        unique index agree — the key is free to be re-reserved by the next
+        submit. The filter is belt-and-braces for any row that reached a barren
+        terminal state through a path that did not release.
+        """
+        result = await self._session.execute(
+            select(DescribeRun).where(
+                DescribeRun.tenant_id == tenant_id,
+                DescribeRun.idempotency_key == idempotency_key,
+                or_(
+                    DescribeRun.status.notin_(list(TERMINAL_RUN_STATUSES)),
+                    DescribeRun.completed_items > 0,
+                ),
+            )
+        )
+        return result.scalar_one_or_none()
 
     async def get_run(self, *, tenant_id: uuid.UUID, run_id: uuid.UUID) -> DescribeRun | None:
         result = await self._session.execute(
@@ -346,6 +507,7 @@ class DescribeRunRepository:
             run.status = DescribeRunStatus.CANCELLED
             run.phase = DescribeRunPhase.CANCELLED
             run.completed_at = datetime.now(tz=UTC)
+            _release_idempotency_key_if_barren(run)
         await self._session.flush()
         return True
 
@@ -486,6 +648,9 @@ class DescribeRunRepository:
             run.completed_at = now
             if status in {DescribeRunStatus.FAILED, DescribeRunStatus.COMPLETED_WITH_ERRORS}:
                 run.error_message = run.error_message or _RECLAIM_INTERRUPT_ERROR
+            # [S06] A restart-orphaned run driven to FAILED/CANCELLED must not
+            # keep the caller's key: the retry has to be able to buy a live run.
+            _release_idempotency_key_if_barren(run)
         await self._session.flush()
         return len(runs)
 
@@ -533,6 +698,7 @@ class DescribeRunRepository:
             run.status = status
             run.phase = phase_for_status(status)
             run.completed_at = now
+            _release_idempotency_key_if_barren(run)
         elif running:
             run.status = DescribeRunStatus.RUNNING
             run.phase = DescribeRunPhase.DESCRIBING

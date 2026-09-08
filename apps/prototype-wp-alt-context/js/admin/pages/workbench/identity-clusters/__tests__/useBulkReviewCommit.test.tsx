@@ -102,6 +102,8 @@ describe('useBulkReviewCommit (PR-30 state machine)', () => {
   const resolveItems = (ids: readonly string[]): BulkCommitItem[] =>
     ids.map((id) => items[id]).filter(Boolean);
 
+  const allowAllApprovals = (): boolean => false;
+
   const renderBulk = (heldSingleSuggestionId: string | null = null) =>
     renderHook(() =>
       useBulkReviewCommit({
@@ -114,6 +116,7 @@ describe('useBulkReviewCommit (PR-30 state machine)', () => {
         setBulkActionActive,
         isBulkActiveRef,
         awaitBulkIdleOrFlushRef,
+        isApprovalBlocked: allowAllApprovals,
       }),
     );
 
@@ -359,6 +362,7 @@ describe('useBulkReviewCommit (PR-30 state machine)', () => {
         setBulkActionActive,
         isBulkActiveRef,
         awaitBulkIdleOrFlushRef,
+        isApprovalBlocked: () => false,
       }),
     );
 
@@ -421,6 +425,7 @@ describe('useBulkReviewCommit (PR-30 state machine)', () => {
         setBulkActionActive,
         isBulkActiveRef,
         awaitBulkIdleOrFlushRef,
+        isApprovalBlocked: () => false,
       }),
     );
 
@@ -493,6 +498,7 @@ describe('useBulkReviewCommit (PR-30 state machine)', () => {
         setBulkActionActive,
         isBulkActiveRef,
         awaitBulkIdleOrFlushRef,
+        isApprovalBlocked: () => false,
       }),
     );
 
@@ -518,6 +524,85 @@ describe('useBulkReviewCommit (PR-30 state machine)', () => {
     expect(liveSelection.has('c')).toBe(true);
   });
 
+  it('DUX-W2R2-RV-01: retryBulk all-or-nothing refuses when a later-selected id is approval-blocked', async () => {
+    const blockedIds = new Set<string>();
+    commitOne = (_kind, id) => {
+      commitCalls.push(id);
+      if (id === 'b') {
+        return Promise.resolve('failed' as const);
+      }
+      return Promise.resolve('committed' as const);
+    };
+
+    let liveSelection = new Set(['a', 'b']);
+    onSelectedIdsChange = (next: Set<string>) => {
+      liveSelection = next;
+    };
+
+    const { result, rerender } = renderHook(() =>
+      useBulkReviewCommit({
+        selectedIds: liveSelection,
+        onSelectedIdsChange,
+        resolveItems,
+        flushHeldSingle,
+        commitOne,
+        heldSingleSuggestionId: null,
+        setBulkActionActive,
+        isBulkActiveRef,
+        awaitBulkIdleOrFlushRef,
+        isApprovalBlocked: (suggestionId) => blockedIds.has(suggestionId),
+      }),
+    );
+
+    await act(async () => {
+      await result.current.initiateBulk();
+    });
+    await expireBulkHold();
+    rerender();
+
+    expect(commitCalls).toEqual(['a', 'b']);
+    expect(result.current.bulk.phase).toBe('partial_failed');
+
+    liveSelection = new Set(['b', 'c']);
+    blockedIds.add('c');
+    commitCalls.length = 0;
+    rerender();
+
+    await act(async () => {
+      await result.current.retryBulk();
+    });
+    await expireBulkHold();
+    rerender();
+
+    expect(commitCalls).toEqual([]);
+    expect(result.current.bulk.phase).toBe('partial_failed');
+  });
+
+  it('DUX-W2R2-RV-01: initiateBulk all-or-nothing refuses when any resolved id is approval-blocked', async () => {
+    const { result } = renderHook(() =>
+      useBulkReviewCommit({
+        selectedIds,
+        onSelectedIdsChange,
+        resolveItems,
+        flushHeldSingle,
+        commitOne,
+        heldSingleSuggestionId: null,
+        setBulkActionActive,
+        isBulkActiveRef,
+        awaitBulkIdleOrFlushRef,
+        isApprovalBlocked: (suggestionId) => suggestionId === 'b',
+      }),
+    );
+
+    await act(async () => {
+      await result.current.initiateBulk();
+    });
+    await expireBulkHold();
+
+    expect(commitCalls).toEqual([]);
+    expect(result.current.bulk.phase).toBe('idle');
+  });
+
   it('BR-50: prune during hold — pruned id not POSTed; hold count at fire uses filtered set', async () => {
     let liveSelection = new Set(['a', 'b', 'c']);
     onSelectedIdsChange = (next: Set<string>) => {
@@ -536,6 +621,7 @@ describe('useBulkReviewCommit (PR-30 state machine)', () => {
         setBulkActionActive,
         isBulkActiveRef,
         awaitBulkIdleOrFlushRef,
+        isApprovalBlocked: () => false,
       }),
     );
 
@@ -579,6 +665,7 @@ describe('useBulkReviewCommit (PR-30 state machine)', () => {
         setBulkActionActive,
         isBulkActiveRef,
         awaitBulkIdleOrFlushRef,
+        isApprovalBlocked: () => false,
       }),
     );
 
@@ -702,6 +789,7 @@ describe('useBulkReviewCommit (PR-30 state machine)', () => {
         setBulkActionActive,
         isBulkActiveRef,
         awaitBulkIdleOrFlushRef,
+        isApprovalBlocked: () => false,
       }),
     );
 
@@ -719,6 +807,254 @@ describe('useBulkReviewCommit (PR-30 state machine)', () => {
     });
     expect(result.current.bulk.phase).toBe('idle');
     expect(commitCalls).toEqual([]);
+  });
+
+  it('DUX-W2R2-RV-04: initiateBulkFromItems all-or-nothing refuses when any item is approval-blocked', async () => {
+    const { result } = renderHook(() =>
+      useBulkReviewCommit({
+        selectedIds: new Set(),
+        onSelectedIdsChange,
+        resolveItems,
+        flushHeldSingle,
+        commitOne,
+        heldSingleSuggestionId: null,
+        setBulkActionActive,
+        isBulkActiveRef,
+        awaitBulkIdleOrFlushRef,
+        isApprovalBlocked: (suggestionId) => suggestionId === 'b',
+      }),
+    );
+
+    await act(async () => {
+      await result.current.initiateBulkFromItems([items.a, items.b]);
+    });
+    await expireBulkHold();
+
+    expect(commitCalls).toEqual([]);
+    expect(result.current.bulk.phase).toBe('idle');
+  });
+
+  it('DUX-W2R2-RV-04: unmount drain POSTs nothing when the hold set became approval-blocked', async () => {
+    let blockedIds = new Set<string>();
+    const { result, unmount, rerender } = renderHook(() =>
+      useBulkReviewCommit({
+        selectedIds,
+        onSelectedIdsChange,
+        resolveItems,
+        flushHeldSingle,
+        commitOne,
+        heldSingleSuggestionId: null,
+        setBulkActionActive,
+        isBulkActiveRef,
+        awaitBulkIdleOrFlushRef,
+        isApprovalBlocked: (suggestionId) => blockedIds.has(suggestionId),
+      }),
+    );
+
+    await act(async () => {
+      await result.current.initiateBulk();
+    });
+    expect(result.current.bulk.phase).toBe('holding');
+
+    blockedIds = new Set(['a', 'b', 'c']);
+    rerender();
+
+    unmount();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(commitCalls).toEqual([]);
+  });
+
+  it('DUX-W2R2-RV-04: unknown suggestion id fails closed on initiateBulk', async () => {
+    const knownIds = new Set(['a', 'b', 'c']);
+    selectedIds = new Set(['a', 'ghost']);
+    const { result } = renderHook(() =>
+      useBulkReviewCommit({
+        selectedIds,
+        onSelectedIdsChange,
+        resolveItems: (ids) =>
+          ids.map((id) =>
+            id === 'ghost'
+              ? { suggestionId: 'ghost', commitKind: 'accept' as const, label: 'Ghost' }
+              : items[id],
+          ).filter(Boolean),
+        flushHeldSingle,
+        commitOne,
+        heldSingleSuggestionId: null,
+        setBulkActionActive,
+        isBulkActiveRef,
+        awaitBulkIdleOrFlushRef,
+        // Host fail-closed pattern: unresolvable / unknown ids are blocked.
+        isApprovalBlocked: (suggestionId) => !knownIds.has(suggestionId),
+      }),
+    );
+
+    await act(async () => {
+      await result.current.initiateBulk();
+    });
+    await expireBulkHold();
+
+    expect(commitCalls).toEqual([]);
+    expect(result.current.bulk.phase).toBe('idle');
+  });
+
+  it('DUX-W2R2-RV-04: omitted isApprovalBlocked fails closed (no silent opt-out)', async () => {
+    const { result } = renderHook(() =>
+      useBulkReviewCommit({
+        selectedIds,
+        onSelectedIdsChange,
+        resolveItems,
+        flushHeldSingle,
+        commitOne,
+        heldSingleSuggestionId: null,
+        setBulkActionActive,
+        isBulkActiveRef,
+        awaitBulkIdleOrFlushRef,
+        // Simulate a host that forgot the required gate (cast past the type).
+        isApprovalBlocked: undefined as unknown as (suggestionId: string) => boolean,
+      }),
+    );
+
+    await act(async () => {
+      await result.current.initiateBulk();
+    });
+    await expireBulkHold();
+
+    expect(commitCalls).toEqual([]);
+    expect(result.current.bulk.phase).toBe('idle');
+  });
+
+  it('DUX-W2R2-RV-04: retryBulk refuses when any resolved id is approval-blocked', async () => {
+    const blockedIds = new Set<string>(['c']);
+    selectedIds = new Set(['a', 'c']);
+    const { result } = renderHook(() =>
+      useBulkReviewCommit({
+        selectedIds,
+        onSelectedIdsChange,
+        resolveItems,
+        flushHeldSingle,
+        commitOne,
+        heldSingleSuggestionId: null,
+        setBulkActionActive,
+        isBulkActiveRef,
+        awaitBulkIdleOrFlushRef,
+        isApprovalBlocked: (suggestionId) => blockedIds.has(suggestionId),
+      }),
+    );
+
+    await act(async () => {
+      await result.current.retryBulk();
+    });
+    await expireBulkHold();
+
+    expect(commitCalls).toEqual([]);
+    expect(result.current.bulk.phase).toBe('idle');
+  });
+
+  it('DUX-W2R2-RV-06: timer-expiry fire refuses the whole set when a held item becomes approval-blocked mid-hold', async () => {
+    selectedIds = new Set(['a', 'b']);
+    let blockedIds = new Set<string>();
+    const { result, rerender } = renderHook(() =>
+      useBulkReviewCommit({
+        selectedIds,
+        onSelectedIdsChange,
+        resolveItems,
+        flushHeldSingle,
+        commitOne,
+        heldSingleSuggestionId: null,
+        setBulkActionActive,
+        isBulkActiveRef,
+        awaitBulkIdleOrFlushRef,
+        isApprovalBlocked: (suggestionId) => blockedIds.has(suggestionId),
+      }),
+    );
+
+    await act(async () => {
+      await result.current.initiateBulk();
+    });
+    expect(result.current.bulk.phase).toBe('holding');
+    expect(result.current.bulk.heldIds).toEqual(['a', 'b']);
+
+    // Background refetch flips 'b' to require an unreviewed stored-face review
+    // while the hold is still open (user can keep it open indefinitely by hovering).
+    blockedIds = new Set(['b']);
+    rerender();
+
+    await expireBulkHold();
+
+    // All-or-nothing: 'a' must NOT fire even though only 'b' became blocked.
+    expect(commitCalls).toEqual([]);
+    expect(result.current.bulk.phase).toBe('idle');
+  });
+
+  it('DUX-W2R2-RV-06: forced-flush (awaitBulkIdleOrFlush) refuses the whole set when a held item becomes approval-blocked mid-hold', async () => {
+    selectedIds = new Set(['a', 'b']);
+    let blockedIds = new Set<string>();
+    const { result, rerender } = renderHook(() =>
+      useBulkReviewCommit({
+        selectedIds,
+        onSelectedIdsChange,
+        resolveItems,
+        flushHeldSingle,
+        commitOne,
+        heldSingleSuggestionId: null,
+        setBulkActionActive,
+        isBulkActiveRef,
+        awaitBulkIdleOrFlushRef,
+        isApprovalBlocked: (suggestionId) => blockedIds.has(suggestionId),
+      }),
+    );
+
+    await act(async () => {
+      await result.current.initiateBulk();
+    });
+    expect(result.current.bulk.phase).toBe('holding');
+
+    blockedIds = new Set(['b']);
+    rerender();
+
+    await act(async () => {
+      await result.current.awaitBulkIdleOrFlush();
+    });
+
+    expect(commitCalls).toEqual([]);
+    expect(result.current.bulk.phase).toBe('idle');
+  });
+
+  it('DUX-W2R2-RV-06: pinned group-accept fire refuses the whole set when an item becomes approval-blocked mid-hold', async () => {
+    selectedIds = new Set();
+    let blockedIds = new Set<string>();
+    const { result, rerender } = renderHook(() =>
+      useBulkReviewCommit({
+        selectedIds,
+        onSelectedIdsChange,
+        resolveItems,
+        flushHeldSingle,
+        commitOne,
+        heldSingleSuggestionId: null,
+        setBulkActionActive,
+        isBulkActiveRef,
+        awaitBulkIdleOrFlushRef,
+        isApprovalBlocked: (suggestionId) => blockedIds.has(suggestionId),
+      }),
+    );
+
+    // Pinned group-accept path: skips the live selection ∩ filter re-cut entirely.
+    await act(async () => {
+      await result.current.initiateBulkFromItems([items.a, items.b]);
+    });
+    expect(result.current.bulk.phase).toBe('holding');
+
+    blockedIds = new Set(['b']);
+    rerender();
+
+    await expireBulkHold();
+
+    expect(commitCalls).toEqual([]);
+    expect(result.current.bulk.phase).toBe('idle');
   });
 });
 
@@ -822,6 +1158,7 @@ describe('matrix M1 single / review-each / bulk (BR-51)', () => {
         setBulkActionActive: () => undefined,
         isBulkActiveRef,
         awaitBulkIdleOrFlushRef,
+        isApprovalBlocked: () => false,
       }),
     );
 
@@ -908,6 +1245,7 @@ describe('BR-49 chainRef circular wait + BR-48 person-commit bulk ordering', () 
         },
         isBulkActiveRef,
         awaitBulkIdleOrFlushRef,
+        isApprovalBlocked: () => false,
       }),
     );
 
@@ -1004,6 +1342,7 @@ describe('BR-49 chainRef circular wait + BR-48 person-commit bulk ordering', () 
         },
         isBulkActiveRef,
         awaitBulkIdleOrFlushRef,
+        isApprovalBlocked: () => false,
       }),
     );
 
@@ -1092,6 +1431,7 @@ describe('BR-49 chainRef circular wait + BR-48 person-commit bulk ordering', () 
         },
         isBulkActiveRef,
         awaitBulkIdleOrFlushRef,
+        isApprovalBlocked: () => false,
       }),
     );
 

@@ -7,6 +7,8 @@ interface SettingsPageState {
   url: string;
   apiKey: string;
   descriptionBudgetMaxAttempts: string;
+  recognitionEnabled: boolean;
+  allowPersonNames: boolean | null;
   saveMessage: string;
   saveMessageTone: BannerTone;
   testResult: TestConnectionResponse | null;
@@ -17,6 +19,8 @@ type SettingsPageAction =
   | { type: 'setUrl'; value: string }
   | { type: 'setApiKey'; value: string }
   | { type: 'setDescriptionBudgetMaxAttempts'; value: string }
+  | { type: 'setRecognitionEnabled'; value: boolean }
+  | { type: 'setAllowPersonNames'; value: boolean }
   | { type: 'clearSaveMessage' }
   | { type: 'setSaveMessage'; message: string; tone: BannerTone }
   | { type: 'clearTestResult' }
@@ -26,6 +30,8 @@ const INITIAL_STATE: SettingsPageState = {
   url: '',
   apiKey: '',
   descriptionBudgetMaxAttempts: '-1',
+  recognitionEnabled: true,
+  allowPersonNames: null,
   saveMessage: '',
   saveMessageTone: 'success',
   testResult: null,
@@ -39,6 +45,8 @@ const reducer = (state: SettingsPageState, action: SettingsPageAction): Settings
         url: action.settings.url,
         apiKey: '',
         descriptionBudgetMaxAttempts: String(action.settings.description_budget.max_attempts),
+        recognitionEnabled: action.settings.recognition_enabled,
+        allowPersonNames: action.settings.allow_person_names ?? null,
       };
     case 'setUrl':
       return { ...state, url: action.value };
@@ -46,6 +54,10 @@ const reducer = (state: SettingsPageState, action: SettingsPageAction): Settings
       return { ...state, apiKey: action.value };
     case 'setDescriptionBudgetMaxAttempts':
       return { ...state, descriptionBudgetMaxAttempts: action.value };
+    case 'setRecognitionEnabled':
+      return { ...state, recognitionEnabled: action.value };
+    case 'setAllowPersonNames':
+      return { ...state, allowPersonNames: action.value };
     case 'clearSaveMessage':
       return { ...state, saveMessage: '', saveMessageTone: 'success' };
     case 'setSaveMessage':

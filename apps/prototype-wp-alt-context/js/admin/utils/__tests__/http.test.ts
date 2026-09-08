@@ -1,14 +1,25 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { registerConfig, resetConfigCache, getNonce } from '../../api/config';
+import {
+  getNonce,
+  NONCE_REFRESH_TIMEOUT_MS,
+  NonceRefreshFailedError,
+  registerConfig,
+  resetConfigCache,
+} from '../../api/config';
+import * as configApi from '../../api/config';
+import { classifyError, isAppError, isCooldown, toUserMessage } from '../appError';
 import {
   AuthExpiredError,
+  DEFAULT_FETCH_TIMEOUT_MS,
   fetchApi,
   fetchRequiredApi,
   HTTPError,
   parseRetryAfter,
   ResponseParseError,
 } from '../http';
+import { getRetryDelay, shouldRetryRequest } from '../retryPolicy';
+import { SPA_SESSION_EXPIRED_COPY } from '../sessionExpiredCopy';
 
 const REST_URL = 'http://example.test/wp-json/acx/v1/endpoint';
 const AJAX_URL = 'https://example.test/wp-admin/admin-ajax.php';
@@ -52,6 +63,24 @@ describe('fetchApi', () => {
     const result = await fetchApi<void>('http://example.test/endpoint', { method: 'POST' });
 
     expect(result).toBeUndefined();
+  });
+
+  // Narrowing the guard to `status === 204` alone left the 204 test green
+  // (FEBT1-W2C-14). A non-empty body proves the guard short-circuits before
+  // the body is ever read, rather than the body merely happening to be empty.
+  it('returns undefined for 205 responses even when a body is present', async () => {
+    // `new Response(body, { status: 205 })` is rejected by the spec (null-body
+    // status), so shadow `status` on an otherwise real 200 response.
+    const response = new Response(JSON.stringify({ ignored: true }), { status: 200 });
+    Object.defineProperty(response, 'status', { value: 205 });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(response);
+
+    const result = await fetchApi<{ ignored: boolean }>('http://example.test/endpoint', {
+      method: 'POST',
+    });
+
+    expect(result).toBeUndefined();
+    expect(response.bodyUsed).toBe(false);
   });
 
   it('returns undefined for successful empty response bodies', async () => {
@@ -194,10 +223,17 @@ describe('fetchApi HTTPError', () => {
 });
 
 describe('parseRetryAfter', () => {
-  it('parses non-negative delta-seconds', () => {
+  // FEBT1-LB-01: strengthened, not relaxed. `Retry-After: 0` used to parse to
+  // `0`, which every downstream consumer read as "the server named a wait of
+  // zero" and turned into an immediate retry. It now reports *absent* — the
+  // same answer parseRetryAfter already gave for an HTTP-date that is not in
+  // the future — so the caller falls back to its own jittered backoff. The
+  // positive delta-seconds cases are kept, so this cannot pass by returning
+  // undefined for everything.
+  it('parses positive delta-seconds; a zero wait is reported as absent', () => {
     expect(parseRetryAfter('5')).toBe(5);
-    expect(parseRetryAfter('0')).toBe(0);
     expect(parseRetryAfter('120')).toBe(120);
+    expect(parseRetryAfter('0')).toBeUndefined();
   });
 
   it('returns undefined for missing or malformed values (never NaN)', () => {
@@ -207,6 +243,161 @@ describe('parseRetryAfter', () => {
     expect(parseRetryAfter('soon')).toBeUndefined();
     expect(parseRetryAfter('-3')).toBeUndefined();
     expect(parseRetryAfter('5.5')).toBeUndefined();
+  });
+
+  it('returns undefined for a past HTTP-date (never 0)', () => {
+    expect(parseRetryAfter('Thu, 01 Jan 1970 00:00:00 GMT')).toBeUndefined();
+  });
+});
+
+describe('fetchApi HTTP-date Retry-After [FEBT1-W2C-08]', () => {
+  beforeEach(() => {
+    resetConfigCache();
+    seedConfig();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-02T12:00:00.000Z'));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    resetConfigCache();
+  });
+
+  it('parses a future HTTP-date Retry-After into retryAfterSeconds on a 503', async () => {
+    const retryAfter = new Date(Date.now() + 30_000).toUTCString();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('overloaded', { status: 503, headers: { 'Retry-After': retryAfter } }),
+    );
+
+    try {
+      await fetchApi(REST_URL);
+      throw new Error('Expected a 503 to throw.');
+    } catch (error) {
+      expect(error).toBeInstanceOf(HTTPError);
+      expect((error as HTTPError).status).toBe(503);
+      expect((error as HTTPError).retryAfterSeconds).toBe(30);
+    }
+  });
+
+  it('past HTTP-date Retry-After yields undefined, not 0 (FEBT1-W2A-03 — flips when F2 lands)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('overloaded', {
+        status: 503,
+        headers: { 'Retry-After': 'Thu, 01 Jan 1970 00:00:00 GMT' },
+      }),
+    );
+
+    try {
+      await fetchApi(REST_URL);
+      throw new Error('Expected a 503 to throw.');
+    } catch (error) {
+      expect(error).toBeInstanceOf(HTTPError);
+      expect((error as HTTPError).retryAfterSeconds).toBeUndefined();
+    }
+  });
+
+  it('429 with a past HTTP-date Retry-After falls back to exponential backoff, not 0', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('slow down', {
+        status: 429,
+        headers: { 'Retry-After': 'Thu, 01 Jan 1970 00:00:00 GMT' },
+      }),
+    );
+
+    try {
+      await fetchApi(REST_URL);
+      throw new Error('Expected a 429 to throw.');
+    } catch (error) {
+      expect(error).toBeInstanceOf(HTTPError);
+      expect((error as HTTPError).status).toBe(429);
+      expect((error as HTTPError).retryAfterSeconds).toBeUndefined();
+      const delay = getRetryDelay(0, error, () => 1);
+      expect(delay).not.toBe(0);
+      expect(delay).toBe(1_000);
+    }
+  });
+});
+
+// The HTTP-date branch had no coverage at all (FEBT1-W2C-08): deleting
+// http.ts's `Date.parse` arm left every test above green, which is exactly how
+// the past-date → 0s hot-retry bug (FEBT1-W2A-03) survived review.
+describe('parseRetryAfter HTTP-date branch', () => {
+  const FROZEN_NOW = Date.UTC(2026, 0, 1, 0, 0, 0); // Thu, 01 Jan 2026 00:00:00 GMT
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(FROZEN_NOW);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('converts a future RFC 7231 HTTP-date to delta-seconds', () => {
+    expect(parseRetryAfter('Thu, 01 Jan 2026 00:02:00 GMT')).toBe(120);
+  });
+
+  it('rounds a sub-second remainder UP so the client never retries early', () => {
+    vi.setSystemTime(FROZEN_NOW + 500); // 119.5s of wait left
+    expect(parseRetryAfter('Thu, 01 Jan 2026 00:02:00 GMT')).toBe(120);
+  });
+
+  it('treats a past HTTP-date as absent, never as 0 (retry-storm pin)', () => {
+    // 0 would mark the error a cooldown AND collapse backoff to an immediate
+    // hot loop; absent falls back to exponential backoff.
+    expect(parseRetryAfter('Thu, 01 Jan 1970 00:00:00 GMT')).toBeUndefined();
+    expect(parseRetryAfter('Wed, 21 Oct 2015 07:28:00 GMT')).toBeUndefined();
+  });
+
+  it('treats an HTTP-date equal to now as absent', () => {
+    expect(parseRetryAfter('Thu, 01 Jan 2026 00:00:00 GMT')).toBeUndefined();
+  });
+});
+
+describe('Retry-After HTTP-date reaches the classified error', () => {
+  beforeEach(() => {
+    resetConfigCache();
+    seedConfig();
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.UTC(2026, 0, 1, 0, 0, 0));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    resetConfigCache();
+  });
+
+  it('503 + future HTTP-date → retryAfterSeconds set and classified as a cooldown', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('overloaded', {
+        status: 503,
+        headers: { 'Retry-After': 'Thu, 01 Jan 2026 00:00:30 GMT' },
+      }),
+    );
+
+    await expect(fetchApi(REST_URL)).rejects.toMatchObject({ retryAfterSeconds: 30 });
+  });
+
+  it('503 + past HTTP-date → no retryAfterSeconds, so it is NOT a cooldown', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('overloaded', {
+        status: 503,
+        headers: { 'Retry-After': 'Wed, 21 Oct 2015 07:28:00 GMT' },
+      }),
+    );
+
+    const error = await fetchApi(REST_URL).then(
+      () => {
+        throw new Error('expected 503 to reject');
+      },
+      (err: unknown) => err,
+    );
+
+    expect(error).toBeInstanceOf(HTTPError);
+    expect((error as HTTPError).retryAfterSeconds).toBeUndefined();
+    expect(isCooldown(error)).toBe(false);
   });
 });
 
@@ -222,16 +413,15 @@ describe('fetchApi auth expiry seam (UXP-NET-2 slice 2)', () => {
   });
 
   it('nonce-403 → refresh → retry succeeds: 2 REST + 1 ajax; retry carries NEW header [RES-01][API-08]', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-      const url = String(input);
-      if (isAjaxCall(url)) {
-        return new Response(FRESH_NONCE, { status: 200 });
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      if (isAjaxCall(input)) {
+        return Promise.resolve(new Response(FRESH_NONCE, { status: 200 }));
       }
       const headers = (init?.headers ?? {}) as Record<string, string>;
       if (headers['X-WP-Nonce'] === FRESH_NONCE) {
-        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+        return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
       }
-      return new Response(nonce403Body, { status: 403 });
+      return Promise.resolve(new Response(nonce403Body, { status: 403 }));
     });
 
     const result = await fetchApi<{ ok: boolean }>(REST_URL, { restNonce: STALE_NONCE });
@@ -288,11 +478,11 @@ describe('fetchApi auth expiry seam (UXP-NET-2 slice 2)', () => {
   });
 
   it('second nonce-403 → AuthExpiredError, exactly 2 REST fetches', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
       if (isAjaxCall(input)) {
-        return new Response(FRESH_NONCE, { status: 200 });
+        return Promise.resolve(new Response(FRESH_NONCE, { status: 200 }));
       }
-      return new Response(nonce403Body, { status: 403 });
+      return Promise.resolve(new Response(nonce403Body, { status: 403 }));
     });
 
     await expect(fetchApi(REST_URL)).rejects.toBeInstanceOf(AuthExpiredError);
@@ -301,11 +491,11 @@ describe('fetchApi auth expiry seam (UXP-NET-2 slice 2)', () => {
   });
 
   it('refresh rejection → AuthExpiredError', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
       if (isAjaxCall(input)) {
-        return new Response('0', { status: 400 });
+        return Promise.resolve(new Response('0', { status: 400 }));
       }
-      return new Response(nonce403Body, { status: 403 });
+      return Promise.resolve(new Response(nonce403Body, { status: 403 }));
     });
 
     await expect(fetchApi(REST_URL)).rejects.toBeInstanceOf(AuthExpiredError);
@@ -409,13 +599,13 @@ describe('fetchApi review-fix discrimination pins (UXPNET2-BR-04/05)', () => {
   it('first attempt uses options.restNonce over a fresher cached nonce (BR-05) [TEST-15]', async () => {
     resetConfigCache();
     seedConfig(FRESH_NONCE); // cached getNonce() is FRESH…
-    const restHeaders: Array<Record<string, string>> = [];
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+    const restHeaders: Record<string, string>[] = [];
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((url, init) => {
       if (isAjaxCall(url)) {
-        return new Response(FRESH_NONCE, { status: 200 });
+        return Promise.resolve(new Response(FRESH_NONCE, { status: 200 }));
       }
       restHeaders.push((init?.headers ?? {}) as Record<string, string>);
-      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
     });
 
     // …but the caller explicitly passes STALE — the first wire header must be STALE.
@@ -427,10 +617,10 @@ describe('fetchApi review-fix discrimination pins (UXPNET2-BR-04/05)', () => {
   it('omitted restNonce resolves the live cached nonce at send time (BR-05) [TEST-15]', async () => {
     resetConfigCache();
     seedConfig(FRESH_NONCE);
-    const restHeaders: Array<Record<string, string>> = [];
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+    const restHeaders: Record<string, string>[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url, init) => {
       restHeaders.push((init?.headers ?? {}) as Record<string, string>);
-      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
     });
 
     await fetchApi<{ ok: boolean }>(REST_URL);
@@ -439,16 +629,404 @@ describe('fetchApi review-fix discrimination pins (UXPNET2-BR-04/05)', () => {
 
   it('abort landing during a FAILING refresh surfaces AbortError, never session expiry (BR-04) [TEST-15]', async () => {
     const controller = new AbortController();
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
       if (isAjaxCall(url)) {
         controller.abort();
-        return new Response('0', { status: 400 }); // refresh fails while abort lands
+        return Promise.resolve(new Response('0', { status: 400 })); // refresh fails while abort lands
       }
-      return new Response(nonce403Body, { status: 403 });
+      return Promise.resolve(new Response(nonce403Body, { status: 403 }));
     });
 
     await expect(
       fetchApi<{ ok: boolean }>(REST_URL, { restNonce: STALE_NONCE, signal: controller.signal }),
-    ).rejects.toSatisfy((err: unknown) => err instanceof DOMException && err.name === 'AbortError');
+    ).rejects.toSatisfy(
+      (err: unknown) =>
+        // FEBT1-W2A-01: the boundary now rejects with a *tagged* error. The
+        // AbortError name is still pinned (the BR-04 claim), and the tag pin is
+        // added on top: 'abort', never 'auth_expired', never 'timeout'.
+        isAppError(err) && err._tag === 'abort' && err instanceof Error && err.name === 'AbortError',
+    );
+  });
+});
+
+// FEBT1-W2A-02: a nonce refresh that never got an answer says nothing about the
+// session. Collapsing it into AuthExpiredError showed a logged-in user "your
+// session expired" and pinned the request non-retryable.
+describe('fetchApi nonce-refresh failure discrimination', () => {
+  beforeEach(() => {
+    resetConfigCache();
+    seedConfig();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    resetConfigCache();
+  });
+
+  const nonce403ThenRefresh = (refresh: () => Promise<Response>): void => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+      if (isAjaxCall(url)) {
+        return refresh();
+      }
+      return Promise.resolve(new Response(nonce403Body, { status: 403 }));
+    });
+  };
+
+  it('refresh transport failure → NonceRefreshFailedError, not session expiry', async () => {
+    nonce403ThenRefresh(() => Promise.reject(new TypeError('Failed to fetch')));
+
+    const error = await fetchApi(REST_URL).then(
+      () => {
+        throw new Error('expected nonce-403 flow to reject');
+      },
+      (err: unknown) => err,
+    );
+
+    expect(error).toBeInstanceOf(NonceRefreshFailedError);
+    expect(error).not.toBeInstanceOf(AuthExpiredError);
+    expect((error as NonceRefreshFailedError).causeStatus).toBeUndefined();
+    expect(classifyError(error)._tag).toBe('nonce_refresh');
+  });
+
+  it('refresh timeout → NonceRefreshFailedError, not session expiry', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.spyOn(globalThis, 'fetch').mockImplementation((url, init) => {
+        if (isAjaxCall(url)) {
+          return new Promise<Response>((_resolve, reject) => {
+            (init?.signal as AbortSignal | undefined)?.addEventListener('abort', () => {
+              reject(new DOMException('The operation was aborted.', 'AbortError'));
+            });
+          });
+        }
+        return Promise.resolve(new Response(nonce403Body, { status: 403 }));
+      });
+
+      let settled: unknown;
+      void fetchApi(REST_URL).then(
+        () => {
+          throw new Error('expected nonce-403 flow to reject');
+        },
+        (err: unknown) => {
+          settled = err;
+        },
+      );
+
+      await vi.advanceTimersByTimeAsync(NONCE_REFRESH_TIMEOUT_MS + 1);
+
+      expect(settled).toBeInstanceOf(NonceRefreshFailedError);
+      expect(settled).not.toBeInstanceOf(AuthExpiredError);
+      expect(classifyError(settled)._tag).toBe('nonce_refresh');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('refresh that DID get a verdict (WP answers 0/-1) stays AuthExpiredError', async () => {
+    nonce403ThenRefresh(() => Promise.resolve(new Response('-1', { status: 403 })));
+
+    const error = await fetchApi(REST_URL).then(
+      () => {
+        throw new Error('expected nonce-403 flow to reject');
+      },
+      (err: unknown) => err,
+    );
+
+    expect(error).toBeInstanceOf(AuthExpiredError);
+    expect((error as AuthExpiredError).status).toBe(403);
+    expect(classifyError(error)._tag).toBe('auth_expired');
+  });
+
+  it('missing ajaxUrl (deploy skew) → NonceRefreshFailedError, not session expiry', async () => {
+    resetConfigCache();
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    registerConfig({ nonce: STALE_NONCE, ajaxUrl: '', endpoints: {} });
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(nonce403Body, { status: 403 }));
+
+    await expect(fetchApi(REST_URL)).rejects.toBeInstanceOf(NonceRefreshFailedError);
+    // No ajax round-trip was even attempted.
+    expect(fetchMock.mock.calls.filter(([url]) => isAjaxCall(url))).toHaveLength(0);
+  });
+});
+
+describe('AuthExpiredError', () => {
+  it('preserves exact 401 and 403 constructor status (M4 / F2)', () => {
+    expect(new AuthExpiredError({ endpoint: REST_URL, status: 401 }).status).toBe(401);
+    expect(new AuthExpiredError({ endpoint: REST_URL, status: 403 }).status).toBe(403);
+  });
+});
+
+describe('fetchApi nonce-refresh failure is not session expiry [FEBT1-W2A-02]', () => {
+  beforeEach(() => {
+    resetConfigCache();
+    seedConfig();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    resetConfigCache();
+  });
+
+  it('transport failure during nonce refresh is nonce_refresh, not auth_expired', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      if (isAjaxCall(input)) {
+        return Promise.reject(new TypeError('Failed to fetch'));
+      }
+      return Promise.resolve(new Response(nonce403Body, { status: 403 }));
+    });
+
+    try {
+      await fetchApi(REST_URL);
+      throw new Error('expected throw');
+    } catch (error) {
+      expect(error).toBeInstanceOf(NonceRefreshFailedError);
+      expect(error).not.toBeInstanceOf(AuthExpiredError);
+      expect(classifyError(error)._tag).toBe('nonce_refresh');
+      expect(classifyError(error)._tag).not.toBe('auth_expired');
+      expect(shouldRetryRequest(0, error)).toBe(true);
+      expect(toUserMessage(error, 'safe fallback')).toBe('Network error — check your connection');
+      expect(toUserMessage(error, 'safe fallback')).not.toBe(SPA_SESSION_EXPIRED_COPY.sessionExpired);
+    }
+  });
+
+  it('abort during nonce refresh is abort, not auth_expired', async () => {
+    const abort = new DOMException('The operation was aborted.', 'AbortError');
+    vi.spyOn(configApi, 'refreshRestNonce').mockRejectedValue(abort);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(nonce403Body, { status: 403 }));
+
+    try {
+      await fetchApi(REST_URL);
+      throw new Error('expected throw');
+    } catch (error) {
+      expect(error).not.toBeInstanceOf(AuthExpiredError);
+      expect(classifyError(error)._tag).toBe('abort');
+      expect(classifyError(error)._tag).not.toBe('auth_expired');
+      expect(shouldRetryRequest(0, error)).toBe(false);
+    }
+  });
+});
+
+const hungFetch = (): void => {
+  vi.spyOn(globalThis, 'fetch').mockImplementation((_input, init) => {
+    return new Promise((_resolve, reject) => {
+      const signal = init?.signal;
+      if (!signal) {
+        return;
+      }
+      if (signal.aborted) {
+        const reason: unknown = signal.reason;
+        reject(reason instanceof Error ? reason : new DOMException('The operation was aborted.', 'AbortError'));
+        return;
+      }
+      signal.addEventListener(
+        'abort',
+        () => {
+          const reason: unknown = signal.reason;
+          if (reason instanceof DOMException) {
+            reject(reason);
+            return;
+          }
+          reject(new DOMException('The operation was aborted.', 'AbortError'));
+        },
+        { once: true },
+      );
+    });
+  });
+};
+
+describe('fetchApi default timeout [E-04]', () => {
+  beforeEach(() => {
+    resetConfigCache();
+    seedConfig();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    resetConfigCache();
+  });
+
+  // Every deadline assertion below is relative to DEFAULT_FETCH_TIMEOUT_MS, so
+  // shrinking the constant kept them all green (FEBT1-W2C-09). Pin the value.
+  it('pins the default deadline at 5 minutes', () => {
+    expect(DEFAULT_FETCH_TIMEOUT_MS).toBe(300_000);
+  });
+
+  it('rejects a hung fetch within the default deadline as a classified timeout', async () => {
+    hungFetch();
+
+    let rejected: unknown;
+    void fetchApi(REST_URL).then(
+      () => {
+        throw new Error('expected hung fetch to reject');
+      },
+      (error: unknown) => {
+        rejected = error;
+      },
+    );
+
+    // TEST-15 / FEBT1-W2C-09: pin the RES-02 backstop with a literal so a
+    // DEFAULT_FETCH_TIMEOUT_MS self-comparison cannot absorb a 300_000→60_000 mutant.
+    expect(DEFAULT_FETCH_TIMEOUT_MS).toBe(300_000);
+    await vi.advanceTimersByTimeAsync(300_000 - 1);
+    expect(rejected).toBeUndefined();
+
+    await vi.advanceTimersByTimeAsync(1);
+
+    // FEBT1-W2A-05: strengthened. The old pin asserted `_tag 'abort'` for a
+    // 300s hang — that assertion was wrong, not load-bearing: a deadline that
+    // elapsed is not a caller cancellation. It now pins 'timeout', and adds the
+    // boundary claim `isAppError(rejected)` that FEBT1-W2A-01 introduced.
+    expect(rejected).toBeInstanceOf(Error);
+    expect((rejected as Error).name).toBe('TimeoutError');
+    expect(isAppError(rejected)).toBe(true);
+    expect(classifyError(rejected)._tag).toBe('timeout');
+  });
+
+  it('lets an explicit timeoutMs override the default', async () => {
+    hungFetch();
+
+    let rejected: unknown;
+    void fetchApi(REST_URL, { timeoutMs: 50 }).then(
+      () => {
+        throw new Error('expected timeoutMs override to reject');
+      },
+      (error: unknown) => {
+        rejected = error;
+      },
+    );
+
+    await vi.advanceTimersByTimeAsync(49);
+    expect(rejected).toBeUndefined();
+
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(classifyError(rejected)._tag).toBe('timeout');
+    expect((rejected as Error).name).toBe('TimeoutError');
+  });
+
+  it('still aborts when a caller-supplied signal aborts early', async () => {
+    hungFetch();
+    const controller = new AbortController();
+
+    const pending = fetchApi(REST_URL, { signal: controller.signal, timeoutMs: 60_000 });
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('does not abort a fast successful response', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), { status: 200 }),
+    );
+
+    const result = await fetchApi<{ ok: boolean }>(REST_URL);
+    expect(result).toEqual({ ok: true });
+  });
+});
+
+/**
+ * FEBT1-W2A-01 / FEBT1-LB-03: the boundary is closed.
+ *
+ * `fetchApi` is the single seam between `fetch` and the app. Before this,
+ * whatever `fetch` or `response.json()` happened to throw escaped verbatim, so
+ * a caller could not rely on a rejection carrying a tag at all — it had to
+ * re-classify defensively, and any caller that forgot got `undefined` where it
+ * expected a tag. Every route out of `fetchApi` is enumerated here; a new
+ * throw site that skips the boundary wrapper fails this block.
+ */
+describe('fetchApi closes the error boundary [FEBT1-W2A-01]', () => {
+  beforeEach(() => {
+    resetConfigCache();
+    registerConfig({ nonce: 'a1b2c3d4e5', ajaxUrl: AJAX_URL, endpoints: {} });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    resetConfigCache();
+  });
+
+  const rejectionOf = async (run: () => Promise<unknown>): Promise<unknown> => {
+    try {
+      await run();
+    } catch (error: unknown) {
+      // Ported from `main`: a boundary that re-wraps must not lose the
+      // original capture site. An AppError with an empty stack is a
+      // debugging dead end (OBS-06).
+      expect((error as Error).stack).toEqual(expect.any(String));
+      expect((error as Error).stack?.length).toBeGreaterThan(0);
+      return error;
+    }
+    throw new Error('expected the call to reject');
+  };
+
+  it('tags an HTTP status failure', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('nope', { status: 500 }));
+    const rejected = await rejectionOf(() => fetchApi(REST_URL));
+    expect(isAppError(rejected)).toBe(true);
+    expect(rejected).toBeInstanceOf(HTTPError);
+    expect(classifyError(rejected)._tag).toBe('http');
+  });
+
+  it('tags a malformed-JSON response', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{not json', { status: 200 }));
+    const rejected = await rejectionOf(() => fetchApi(REST_URL));
+    expect(isAppError(rejected)).toBe(true);
+    expect(rejected).toBeInstanceOf(ResponseParseError);
+    expect(classifyError(rejected)._tag).toBe('parse');
+  });
+
+  it('tags an expired session', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ code: 'rest_not_logged_in' }), { status: 401 }),
+    );
+    const rejected = await rejectionOf(() => fetchApi(REST_URL));
+    expect(isAppError(rejected)).toBe(true);
+    // The instanceof contract is preserved for the ~20 existing consumers.
+    expect(rejected).toBeInstanceOf(AuthExpiredError);
+    expect(classifyError(rejected)._tag).toBe('auth_expired');
+  });
+
+  it('tags a genuine fetch network failure as transport, by provenance [FEBT-1-W1-E-05]', async () => {
+    // This is what a real network drop looks like: fetch rejects with a
+    // TypeError. It must stay 'transport' (and therefore retryable) even though
+    // classifyError no longer trusts the TypeError constructor alone.
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('Failed to fetch'));
+    const rejected = await rejectionOf(() => fetchApi(REST_URL));
+    expect(isAppError(rejected)).toBe(true);
+    expect(classifyError(rejected)._tag).toBe('transport');
+  });
+
+  it('tags a transport failure even when the browser wording is unknown to the classifier', async () => {
+    // Provenance, not message-sniffing: fetch rejected, so it is transport
+    // whatever the engine called it.
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('some future wording'));
+    const rejected = await rejectionOf(() => fetchApi(REST_URL));
+    expect(classifyError(rejected)._tag).toBe('transport');
+  });
+
+  it('tags a non-Error throw as unknown rather than letting it escape raw', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(() => {
+      // WHY the disable: throwing a non-Error IS the condition under test. This case proves fetchApi
+      // wraps a bare-string throw into an AppError instead of letting it escape raw, so replacing it
+      // with `throw new Error(...)` would delete the behaviour the assertions below verify (TEST-15).
+      // eslint-disable-next-line @typescript-eslint/only-throw-error
+      throw 'a bare string';
+    });
+    const rejected = await rejectionOf(() => fetchApi(REST_URL));
+    expect(isAppError(rejected)).toBe(true);
+    expect(rejected).toBeInstanceOf(Error);
+    expect(classifyError(rejected)._tag).toBe('unknown');
+  });
+
+  it('tags the empty-required-body failure of fetchRequiredApi', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 204 }));
+    const rejected = await rejectionOf(() => fetchRequiredApi(REST_URL));
+    expect(isAppError(rejected)).toBe(true);
+    expect(classifyError(rejected)._tag).toBe('unknown');
   });
 });

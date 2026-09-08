@@ -1,20 +1,19 @@
-"""Scene-suite pytest bootstrap.
+"""Hermetic environment for the scene suite.
 
-``validate_required_secrets`` defaults ``RECOGNITION_RUNTIME_MODE`` to
-``production`` when the variable is unset, so a test process that boots the app
-without declaring a mode is validated as if it were serving traffic and dies on
-``InsecureProductionConfigError: PGPASSWORD is unset`` (VLM6-INT-02).
-``recognition/tests/conftest.py`` already pins the mode for its own directory,
-but a conftest only applies below its own package — the scene suite never sees
-it, and fails whether run alone or as part of the whole suite.
+`recognition.config.security` defaults `RECOGNITION_RUNTIME_MODE` to
+`production` when the variable is unset, which is the correct fail-closed
+default for a server but means any test that boots the app inherits the
+production credential guard. The root worktree happened to satisfy that guard
+through an untracked `.env`; linked lane worktrees do not have one and must not
+receive a copy, so those tests failed in every lane and turned the offload
+self-verify gate into noise.
 
-Pinning the mode here does not weaken the production guard: its red-capable
-coverage lives in ``recognition/tests/config/test_required_secrets.py``, which
-sets ``RECOGNITION_RUNTIME_MODE=production`` explicitly and asserts the raise.
+Pin the mode here, the way `recognition/tests/conftest.py` already does, so the
+suite depends on the fixture rather than on the invoking shell.
 """
 
 from __future__ import annotations
 
 import os
 
-os.environ.setdefault("RECOGNITION_RUNTIME_MODE", "test")
+os.environ["RECOGNITION_RUNTIME_MODE"] = "test"

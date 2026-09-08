@@ -263,6 +263,15 @@ class DescribeMediaService {
 			return $this->invalid_envelope_error( $media_id, "field 'alt_text_draft' must be a string" );
 		}
 
+		// Empty adapter stamps an identity-less envelope (projects as null
+		// identity; smoke gate FAILs closed). Refuse, do not coerce [rg-015].
+		// Missing keys never reach here (REQUIRED_RESPONSE_FIELDS). Present
+		// values keep their JSON-decoded type: null/int/array stay non-string;
+		// '' and whitespace-only stay strings and fail the trim check.
+		if ( ! is_string( $data['adapter'] ) || '' === trim( $data['adapter'] ) ) {
+			return $this->invalid_envelope_error( $media_id, "field 'adapter' must be a non-empty string" );
+		}
+
 		return $response;
 	}
 
@@ -978,9 +987,8 @@ class DescribeMediaService {
 
 	private function build_identity_context( int $media_id ): array {
 		$tenant_id           = $this->host->get_tenant_id();
-		$person_naming       = $this->person_naming_policy_allows() ? 'allowed' : 'disabled';
 		$confirmed_identities = array();
-		$machine_only_count  = 0;
+		$machine_only_count   = 0;
 
 		try {
 			$rows = $this->identity_members_repository->list_for_media_ids( $tenant_id, array( $media_id ) );
@@ -994,7 +1002,7 @@ class DescribeMediaService {
 				)
 			);
 			return array(
-				'policy'         => array( 'person_naming' => $person_naming ),
+				'policy'         => array( 'person_naming' => 'allowed' ),
 				'identities'     => array(),
 				'review_reasons' => array(),
 			);
@@ -1031,24 +1039,17 @@ class DescribeMediaService {
 		// identity is also present: a confirmed person can share an image with
 		// unconfirmed/machine-only faces that still need review.
 		$review_reasons = array();
-		if ( 'disabled' === $person_naming && ( array() !== $confirmed_identities || $machine_only_count > 0 ) ) {
-			$review_reasons[] = 'person_naming_policy_disabled';
-			$confirmed_identities = array();
-		} elseif ( $machine_only_count > 1 ) {
+		if ( $machine_only_count > 1 ) {
 			$review_reasons[] = 'identity_ambiguous';
 		} elseif ( 1 === $machine_only_count ) {
 			$review_reasons[] = 'identity_unconfirmed';
 		}
 
 		return array(
-			'policy'         => array( 'person_naming' => $person_naming ),
+			'policy'         => array( 'person_naming' => 'allowed' ),
 			'identities'     => $confirmed_identities,
 			'review_reasons' => $review_reasons,
 		);
-	}
-
-	private function person_naming_policy_allows(): bool {
-		return $this->is_truthy_flag( get_option( 'acx_description_allow_person_names', false ) );
 	}
 
 	private function is_truthy_flag( mixed $value ): bool {

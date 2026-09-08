@@ -17,6 +17,8 @@ import {
   TENANT_PAIRING_ICONS,
   TENANT_PAIRING_LABELS,
   TenantPairing,
+  NAMING_AGREEMENT_HELP,
+  NAMING_AGREEMENT_LABEL,
 } from './settingsConstants';
 import { healthStatusForService } from './healthStatus';
 
@@ -62,43 +64,67 @@ const urlRejectionStatusText = (data: SettingsResponse): string => {
   );
 };
 
-interface SettingsFormProps {
+interface SettingsFormValues {
   data: SettingsResponse;
   url: string;
   apiKey: string;
   descriptionBudgetMaxAttempts: string;
+  recognitionEnabled: boolean;
+  allowPersonNames?: boolean | null;
   urlReadOnly: boolean;
   keyReadOnly: boolean;
+}
+
+interface SettingsFormStatus {
   savePending: boolean;
   testPending: boolean;
   hasUnsavedRoutingChanges: boolean;
   testResult: TestConnectionResponse | null;
+}
+
+interface SettingsFormActions {
   onUrlChange: (value: string) => void;
   onApiKeyChange: (value: string) => void;
   onDescriptionBudgetMaxAttemptsChange: (value: string) => void;
+  onRecognitionEnabledChange: (value: boolean) => void;
+  onAllowPersonNamesChange?: (value: boolean) => void;
   onSave: (e: React.FormEvent) => void;
   onTest: () => void;
   onFocusServiceUrl?: () => void;
 }
 
+interface SettingsFormProps {
+  values: SettingsFormValues;
+  status: SettingsFormStatus;
+  actions: SettingsFormActions;
+}
+
 export const SettingsForm = ({
-  data,
-  url,
-  apiKey,
-  descriptionBudgetMaxAttempts,
-  urlReadOnly,
-  keyReadOnly,
-  savePending,
-  testPending,
-  hasUnsavedRoutingChanges,
-  testResult,
-  onUrlChange,
-  onApiKeyChange,
-  onDescriptionBudgetMaxAttemptsChange,
-  onSave,
-  onTest,
-  onFocusServiceUrl,
+  values,
+  status,
+  actions,
 }: SettingsFormProps): React.JSX.Element => {
+  const {
+    data,
+    url,
+    apiKey,
+    descriptionBudgetMaxAttempts,
+    recognitionEnabled,
+    allowPersonNames: suppliedAllowPersonNames,
+    urlReadOnly,
+    keyReadOnly,
+  } = values;
+  const { savePending, testPending, hasUnsavedRoutingChanges, testResult } = status;
+  const {
+    onUrlChange,
+    onApiKeyChange,
+    onDescriptionBudgetMaxAttemptsChange,
+    onRecognitionEnabledChange,
+    onAllowPersonNamesChange,
+    onSave,
+    onTest,
+    onFocusServiceUrl,
+  } = actions;
   // R19-BR-04: one derived state drives empty CTA + source chip; do not re-check
   // url emptiness (resolver blanks url on rejection for security).
   const cardState = deriveServiceUrlCardState(data);
@@ -109,6 +135,14 @@ export const SettingsForm = ({
   const devHatchActive = data.recognition_source === RecognitionSource.LOCAL;
   const healthStatus = healthStatusForService(testResult);
   const pairingStatus = data.tenant_paired ? TenantPairing.PAIRED : TenantPairing.UNPAIRED;
+  // Undefined is treated as unavailable as well as null so older/malformed
+  // payloads never fabricate a naming default in the browser.
+  const allowPersonNames = suppliedAllowPersonNames !== undefined
+    ? suppliedAllowPersonNames
+    : data.allow_person_names;
+  const namingAgreementUnavailable =
+    allowPersonNames === null || typeof allowPersonNames !== 'boolean';
+  const namingAgreementError = data.allow_person_names_error ?? '';
   // Rejected installs report url_source=default; surface the tier that held the
   // rejected value so the chip does not claim "Not configured".
   const urlSourceLabel =
@@ -328,6 +362,54 @@ export const SettingsForm = ({
           </tbody>
         </table>
       ) : null}
+
+      <h3 className="acx-settings__section-title">{__('People & recognition', 'alt-context')}</h3>
+      <div className="acx-settings__recognition">
+        <label
+          htmlFor="acx-settings-recognition-enabled"
+          className="acx-settings__recognition-option"
+        >
+          <input
+            id="acx-settings-recognition-enabled"
+            type="checkbox"
+            checked={recognitionEnabled}
+            onChange={(e) => onRecognitionEnabledChange(e.target.checked)}
+            aria-describedby="acx-settings-recognition-enabled-help"
+          />
+          {__('Identify people in photos', 'alt-context')}
+        </label>
+        <p id="acx-settings-recognition-enabled-help" className="description">
+          {__(
+            'Uses facial recognition to name people in descriptions. When off, Describe writes alt text without identities. Applies to every run.',
+            'alt-context',
+          )}
+        </p>
+        <label
+          htmlFor="acx-settings-allow-person-names"
+          className="acx-settings__recognition-option"
+        >
+          <input
+            id="acx-settings-allow-person-names"
+            type="checkbox"
+            checked={allowPersonNames === true}
+            onChange={(e) => onAllowPersonNamesChange?.(e.target.checked)}
+            disabled={namingAgreementUnavailable}
+            aria-describedby="acx-settings-allow-person-names-help"
+          />
+          {NAMING_AGREEMENT_LABEL}
+        </label>
+        <p id="acx-settings-allow-person-names-help" className="description">
+          {NAMING_AGREEMENT_HELP}
+          {namingAgreementError ? (
+            <>
+              {' '}
+              <span role="alert" data-testid="acx-settings-allow-person-names-error">
+                {namingAgreementError}
+              </span>
+            </>
+          ) : null}
+        </p>
+      </div>
 
       <p className="submit">
         <button

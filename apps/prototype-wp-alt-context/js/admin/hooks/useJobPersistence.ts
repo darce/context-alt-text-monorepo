@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 
+import { createLogger, newRequestId, withRequestId } from '../utils/logger';
+
 /**
  * Job type discriminator for scan vs clustering jobs.
  */
@@ -33,6 +35,7 @@ export interface JobPersistence {
   removeJob: (id: string) => void;
 }
 
+const log = createLogger('jobPersistence');
 const STORAGE_KEY = 'acx_active_jobs';
 const ACTIVE_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
 const TERMINAL_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
@@ -63,8 +66,13 @@ const isFreshPersistedJob = (job: PersistedJob, now: number): boolean => {
  */
 export const useJobPersistence = (): JobPersistence => {
   const [activeJobs, setActiveJobs] = useState<PersistedJob[]>(() => {
+    // Rehydrating from localStorage is a unit of work: it decides which jobs the tab will
+    // resume streaming. One wide event per outcome (OBS-02) — before this, a hydrate that
+    // silently purged every entry produced no log line at all and looked like "no jobs".
+    const hydrateLog = withRequestId(log, newRequestId());
     const stored = localStorage.getItem(STORAGE_KEY);
     if (!stored) {
+      hydrateLog.debug('jobs.hydrate', { outcome: 'empty', stored: 0, restored: 0, purged: 0 });
       return [];
     }
 
@@ -80,9 +88,16 @@ export const useJobPersistence = (): JobPersistence => {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(freshJobs));
       }
 
+      hydrateLog.info('jobs.hydrate', {
+        outcome: 'restored',
+        stored: jobs.length,
+        restored: freshJobs.length,
+        purged: jobs.length - freshJobs.length,
+        jobIds: freshJobs.map((job) => job.id),
+      });
       return freshJobs;
-    } catch (e) {
-      console.error('Failed to parse persisted jobs', e);
+    } catch (error) {
+      hydrateLog.error('jobs.hydrate', { outcome: 'parse_failed', stored: 0, restored: 0, purged: 0, error });
       return [];
     }
   });

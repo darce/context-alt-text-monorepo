@@ -122,6 +122,7 @@ def test_first_call_generates_persists_audits_then_cache_hit_skips_adapter():
                 tenant_id=tenant,
                 image_hash=r1.image_hash,
                 adapter="seeded",
+                model_id=r1.model_id,
                 model_version=r1.model_version,
                 prompt_or_task_version=r1.prompt_or_task_version,
                 context_hash=r1.context_hash,
@@ -142,6 +143,65 @@ def test_first_call_generates_persists_audits_then_cache_hit_skips_adapter():
             assert metrics.cache_hits == ["seeded"]
             assert metrics.requests[-1] == ("seeded", "cache_hit")
             assert r2.alt_text_draft == r1.alt_text_draft
+        await engine.dispose()
+
+    asyncio.run(body())
+
+
+class PinRevisionAdapter:
+    """Two instances that differ only in model_id (hub pin / model_revision)."""
+
+    kind = DescriptionAdapterKind.GPU
+    model_version = "Q4_K_M"
+    prompt_or_task_version = "3"
+
+    def __init__(self, *, model_id: str, caption: str) -> None:
+        self.model_id = model_id
+        self._caption = caption
+        self.calls = 0
+
+    def describe(self, *, image_bytes, context):
+        self.calls += 1
+        return AdapterResult(
+            caption=self._caption,
+            objects=(),
+            ocr_text=None,
+            alt_text_draft=self._caption,
+            context_sources=(),
+            context_applied=False,
+        )
+
+
+def test_model_revision_pin_bump_misses_cache():
+    """W3-E-04: adapters that differ only in hub pin must not share a cache row."""
+
+    async def body():
+        engine, sf = await _sessionmaker()
+        tenant = uuid.uuid4()
+        pin_a = "unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF@" + ("a" * 40)
+        pin_b = "unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF@" + ("b" * 40)
+        adapter_a = PinRevisionAdapter(model_id=pin_a, caption="caption A")
+        adapter_b = PinRevisionAdapter(model_id=pin_b, caption="caption B")
+        async with sf() as s:
+            r1 = await VisualFactsService(
+                adapter=adapter_a,
+                repository=ImageDescriptionRepository(s),
+            ).describe(tenant_id=tenant, media_id=7, image_bytes=IMG, context=CTX)
+            await s.commit()
+        async with sf() as s:
+            r2 = await VisualFactsService(
+                adapter=adapter_b,
+                repository=ImageDescriptionRepository(s),
+            ).describe(tenant_id=tenant, media_id=8, image_bytes=IMG, context=CTX)
+            await s.commit()
+        assert r1.cached is False
+        assert r2.cached is False, "pin bump must miss-cache, not reuse the prior caption"
+        assert adapter_a.calls == 1
+        assert adapter_b.calls == 1
+        assert r1.model_id == pin_a
+        assert r2.model_id == pin_b
+        assert r1.alt_text_draft == "caption A"
+        assert r2.alt_text_draft == "caption B"
         await engine.dispose()
 
     asyncio.run(body())

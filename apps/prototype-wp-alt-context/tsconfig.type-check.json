@@ -1,3 +1,29 @@
+// FEBT2-W2-P-02 — what this gate does NOT check.
+//
+// `tsc --noEmit` checks the TYPE graph, which is order-free. It cannot see a
+// load-time ESM cycle: `api/config -> utils/logger -> utils/appError ->
+// utils/http -> api/config` type-checked green for its entire lifetime while a
+// top-level `class NonceRefreshError extends NonceRefreshFailedError` threw
+// `TypeError: Class extends value undefined` at module-evaluation time and took
+// down every suite that transitively imported `utils/http`. A green run here is
+// NOT evidence of module-graph health (TEST-15, lexicons/engineering.md:396 —
+// a check that cannot go red on the regression certifies nothing).
+//
+// The module-graph gate is two other checks, and both must stay wired
+// (ARCH-13, lexicons/engineering.md:563 — structure, not vigilance):
+//   1. `eslint .` — `import-x/no-cycle` (maxDepth: Infinity,
+//      allowUnsafeDynamicCyclicDependency: false) over `js/admin/utils/**` and
+//      `js/admin/api/**`; see eslint.config.mjs. The cycle's closing edge left
+//      `utils/`, so both scopes are required (GRPH-02,
+//      lexicons/graph-theory.md:72 — you cannot lint half a cycle).
+//   2. `vitest run` — `js/admin/utils/__tests__/httpModuleGraph.test.ts`
+//      (static acyclicity DFS over all of `js/admin`) and
+//      `js/admin/utils/__tests__/moduleLoadOrder.test.ts` (runtime: evaluates
+//      the graph from every entry order and asserts each exported base class is
+//      a real, extendable constructor).
+//
+// If a reviewer is ever offered "typecheck passes" as evidence that an import
+// cycle is gone, that is the wrong artifact — ask for 1 and 2.
 {
   "extends": "./tsconfig.json",
   "include": ["js/**/*.ts", "js/**/*.tsx", "tests/e2e/**/*.ts", "playwright.config.ts", "vitest.setup.ts"],

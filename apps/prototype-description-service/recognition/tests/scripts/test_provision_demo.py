@@ -11,13 +11,20 @@ import sys
 from types import ModuleType
 
 import pytest
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import DemoInstance
+from db.models import ApiKey, DemoInstance
 from recognition.application.services.demo_provisioning_service import BASE58_ALPHABET, DEFAULT_SLUG_LENGTH
 from recognition.infrastructure.repositories import SqlAlchemyApiKeyRepository
 
 _BASE58_RE = re.compile(f"^[{re.escape(BASE58_ALPHABET)}]{{{DEFAULT_SLUG_LENGTH}}}$")
+
+
+async def _persisted_demo_and_key_counts(session: AsyncSession) -> tuple[int, int]:
+    demos = (await session.execute(select(func.count()).select_from(DemoInstance))).scalar_one()
+    keys = (await session.execute(select(func.count()).select_from(ApiKey))).scalar_one()
+    return int(demos or 0), int(keys or 0)
 
 
 def _import_cli() -> ModuleType:
@@ -106,3 +113,104 @@ async def test_cli_provision_unknown_seed(db_session: AsyncSession, capsys) -> N
     assert exit_code == 1
     captured = capsys.readouterr()
     assert "error:" in captured.err
+
+
+def test_cli_help_documents_account_kinds() -> None:
+    app_root = pathlib.Path(__file__).resolve().parents[3]
+    result = subprocess.run(
+        [sys.executable, "-m", "scripts.provision_demo", "provision", "--help"],
+        cwd=app_root,
+        capture_output=True,
+        text=True,
+        env={**os.environ},
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "--account" in result.stdout
+    assert "ci" in result.stdout
+    assert "--admin-user" in result.stdout
+
+
+@pytest.mark.asyncio
+async def test_cli_provision_ci_requires_admin_user(db_session: AsyncSession, capsys) -> None:
+    cli = _import_cli()
+    exit_code = await cli.run(
+        argv=["--env", "local", "provision", "--label", "ACX CI", "--account", "ci"],
+        session=db_session,
+    )
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "error:" in captured.err
+    assert "admin-user" in captured.err
+    demos, keys = await _persisted_demo_and_key_counts(db_session)
+    assert demos == 0
+    assert keys == 0
+
+
+@pytest.mark.asyncio
+async def test_cli_provision_ci_rejects_admin_collision(db_session: AsyncSession, capsys) -> None:
+    cli = _import_cli()
+    exit_code = await cli.run(
+        argv=[
+            "--env",
+            "local",
+            "provision",
+            "--label",
+            "acx-demo-admin",
+            "--account",
+            "ci",
+            "--admin-user",
+            "acx-demo-admin",
+        ],
+        session=db_session,
+    )
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "error:" in captured.err
+    assert "differ" in captured.err
+    demos, keys = await _persisted_demo_and_key_counts(db_session)
+    assert demos == 0
+    assert keys == 0
+
+
+@pytest.mark.asyncio
+async def test_cli_provision_ci_uses_reduced_quota(db_session: AsyncSession, capsys) -> None:
+    cli = _import_cli()
+    exit_code = await cli.run(
+        argv=[
+            "--env",
+            "local",
+            "provision",
+            "--label",
+            "ACX CI",
+            "--seed",
+            "default",
+            "--account",
+            "ci",
+            "--admin-user",
+            "acx-demo-admin",
+        ],
+        session=db_session,
+    )
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "account=ci" in captured.err
+    assert "api_key=" in captured.out
+    url_line = next(line for line in captured.out.splitlines() if line.startswith("demo_url="))
+    slug = url_line.removeprefix("demo_url=https://demo.altcontext.com/x/")
+    instance = await db_session.get(DemoInstance, slug)
+    assert instance is not None
+    assert instance.recognition_quota == cli.CI_RECOGNITION_QUOTA
+    assert instance.recognition_quota < 200
+    assert "acx-demo-admin" not in captured.out
+
+
+def test_makefile_d_issue_demo_ci_account_wraps_cli() -> None:
+    repo_root = pathlib.Path(__file__).resolve().parents[5]
+    mk = repo_root / "Makefile.d" / "demo-auth.mk"
+    text = mk.read_text(encoding="utf-8")
+    assert "issue-demo-ci-account:" in text
+    assert "python -m scripts.provision_demo" in text
+    assert "--account ci" in text
+    assert "--admin-user" in text
+    assert "Co-Authored-By" not in text

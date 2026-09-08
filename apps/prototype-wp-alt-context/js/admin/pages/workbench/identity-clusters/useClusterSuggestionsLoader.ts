@@ -18,11 +18,11 @@ import {
 } from '../../../api/recognition';
 import { useRosterEntries } from '../../../hooks/useRosterHooks';
 import { buildNamingOptions, type NamingOption } from './buildNamingOptions';
+import { lookupClusterByLabel, unwrapClusterLabelLookup } from './clusterLabelLookup';
 import {
   IDENTITY_BATCH_STALE_MS,
   PROJECTION_TOP_K,
   identityBatchIdsKey,
-  isHumanLabeledTarget,
   projectIdentityWindow,
   readIdentityBatchUpdatedAt,
   readIdentityFromBatchCache,
@@ -56,7 +56,12 @@ export interface ClusterSuggestionsLoaderResult {
   isLoading: boolean;
   /** Roster query failed — consumers degrade to cluster-only options */
   rosterError: boolean;
-  /** Find cluster ID by label (case-insensitive); remote search only; BR-17 gated */
+  /**
+   * Find cluster ID by label (case-insensitive); remote search only; BR-17 gated.
+   * `null` means the lookup ran and found nothing. A lookup that could not run throws
+   * `ClusterLabelLookupError` so write callers fail CLOSED (FEBT1G-H-04). Callers that
+   * want the outcome as a value import `lookupClusterByLabel` from `clusterLabelLookup`.
+   */
   findClusterByLabel: (label: string, signal?: AbortSignal) => Promise<ClusterLabelMatch | null>;
   /** Envelope total from the at-rest labelled-cluster page (never derived from clusters.length). */
   atRestTotal: number;
@@ -178,41 +183,8 @@ export const useClusterSuggestionsLoader = ({
   }, [rosterEntries, rosterError, labelMatches, atRestLabeledClusters, debouncedValue, editableClusterId, isAtRestMode]);
 
   const findClusterByLabel = React.useCallback(
-    async (label: string, signal?: AbortSignal): Promise<ClusterLabelMatch | null> => {
-      const normalizedLabel = label.toLowerCase().trim();
-      if (!normalizedLabel) {
-        return null;
-      }
-
-      try {
-        const results = await listRecognitionClusters({ search: label, limit: 10, labeled_only: true }, signal);
-        const match = results.clusters.find(
-          (cluster) =>
-            cluster.id !== editableClusterId &&
-            typeof cluster.label === 'string' &&
-            cluster.label.toLowerCase() === normalizedLabel &&
-            // BR-17: auto cluster-* labels are never merge/assign targets (FIX-2).
-            isHumanLabeledTarget(cluster.label),
-        );
-        if (match?.id && match.label) {
-          return {
-            id: match.id,
-            label: match.label,
-            identityCount: typeof match.identity_count === 'number' ? match.identity_count : undefined,
-          };
-        }
-      } catch (err) {
-        if (err instanceof DOMException && err.name === 'AbortError') {
-          return null;
-        }
-        if (err instanceof Error && err.name === 'AbortError') {
-          return null;
-        }
-        console.warn('Failed to find cluster by label:', err);
-      }
-
-      return null;
-    },
+    async (label: string, signal?: AbortSignal): Promise<ClusterLabelMatch | null> =>
+      unwrapClusterLabelLookup(await lookupClusterByLabel({ label, editableClusterId, signal })),
     [editableClusterId],
   );
 

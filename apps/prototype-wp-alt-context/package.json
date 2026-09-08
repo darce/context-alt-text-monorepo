@@ -1,6 +1,6 @@
 {
   "name": "prototype-wp-alt-context",
-  "version": "0.0.4",
+  "version": "0.0.7",
   "description": "WordPress plugin configuration",
   "packageManager": "npm@11.14.1",
   "scripts": {
@@ -22,7 +22,8 @@
     "build:dev": "vite build --mode development",
     "release:package": "bash scripts/release/package-plugin.sh",
     "preview": "vite preview",
-    "lint": "eslint .",
+    "lint": "python3 ../../scripts/lint_ratchet.py --tool eslint",
+    "lint:raw": "eslint .",
     "lint:fix": "eslint . --fix",
     "format:fix": "prettier --write \"**/*.{ts,tsx,js,jsx,json,css,scss,md}\"",
     "format": "prettier --check \"**/*.{ts,tsx,js,jsx,json,css,scss,md}\"",
@@ -30,7 +31,7 @@
     "arch:tips": "node scripts/check-architecture-compliance.js --tips",
     "arch:verbose": "node scripts/check-architecture-compliance.js --tips --verbose",
     "check": "npm run lint && npm run typecheck && npm run arch && npm run test -- --run",
-    "check:all": "npm run lint:fix && npm run format:fix && npm run typecheck && npm run arch:verbose && npm run test",
+    "check:all": "npm run lint && npm run typecheck && npm run arch:verbose && npm run test",
     "typecheck": "tsc --noEmit --project tsconfig.type-check.json",
     "generate:contracts": "json2ts -i ../../packages/shared-contracts/schemas/ -o js/admin/api/generated",
     "nuke": "rm -rf node_modules public && npm ci && npm run build"
@@ -48,6 +49,7 @@
     "ajv": "^6.15.0",
     "dotenv": "^17.2.3",
     "eslint": "^9.39.1",
+    "eslint-plugin-import-x": "^4.6.1",
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.0.1",
     "jsdom": "^22.1.0",

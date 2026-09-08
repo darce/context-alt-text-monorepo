@@ -5,11 +5,13 @@ declare(strict_types=1);
 namespace AltContext\Api;
 
 require_once __DIR__ . '/class-abstract-recognition-proxy-controller.php';
+require_once __DIR__ . '/../settings/class-recognition-policy.php';
 require_once __DIR__ . '/../support/trait-batch-limits.php';
 require_once __DIR__ . '/interface-analysis-jobs-host.php';
 require_once __DIR__ . '/services/class-batch-run-service.php';
 require_once __DIR__ . '/services/class-projection-sync-service.php';
 require_once __DIR__ . '/services/class-job-status-service.php';
+require_once __DIR__ . '/services/class-job-stream-error-code.php';
 require_once __DIR__ . '/services/class-job-progress-stream-service.php';
 require_once __DIR__ . '/services/class-analyze-media-service.php';
 require_once __DIR__ . '/../sovereign/repositories/interface-sync-state-repository.php';
@@ -25,6 +27,7 @@ use AltContext\Api\Services\BatchRunService;
 use AltContext\Api\Services\JobProgressStreamService;
 use AltContext\Api\Services\JobStatusService;
 use AltContext\Api\Services\ProjectionSyncService;
+use AltContext\Settings\RecognitionPolicy;
 use AltContext\Sovereign\Repositories\BatchRunRepository;
 use AltContext\Sovereign\Repositories\SyncStateRepository;
 use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
@@ -35,6 +38,7 @@ use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
 
+use function __;
 use function absint;
 use function count;
 use function is_array;
@@ -213,6 +217,14 @@ class AnalysisJobsController extends AbstractRecognitionProxyController implemen
 	}
 
 	public function analyze_media( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		if ( ! RecognitionPolicy::enabled() ) {
+			return new WP_Error(
+				'recognition_disabled',
+				__( 'People identification is turned off in Settings.', 'alt-context' ),
+				array( 'status' => 409 )
+			);
+		}
+
 		return $this->analyze_media_service->analyze_media( $request, array( $this, 'validate_media_ids' ) );
 	}
 

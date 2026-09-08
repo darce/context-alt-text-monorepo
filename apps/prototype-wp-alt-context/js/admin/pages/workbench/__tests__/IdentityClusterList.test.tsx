@@ -126,16 +126,38 @@ vi.mock('../../../hooks/useSyncOffline', () => ({
   useSyncOffline: () => false,
 }));
 
-vi.mock('../../../api/recognition', () => ({
-  mergeCluster: vi.fn(),
-  updateClusterLabel: vi.fn(),
-  fetchIdentitiesSuggestions: vi.fn(),
-  listRecognitionClusters: vi.fn(),
-  revertMergeCluster: vi.fn(),
-  reassignClusterIdentity: vi.fn(),
-  splitCluster: vi.fn(),
-  pinRepresentative: vi.fn(),
-}));
+// Spread the real module rather than enumerating exports: an exhaustive factory
+// throws "No <x> export is defined on the mock" the moment the component graph
+// grows a new api/recognition dependency (that is how acceptSuggestion, pulled in
+// via usePendingMergeTwins -> useSuggestionReviewMutations, broke this file).
+// Every network-touching export the render path can reach is still stubbed
+// explicitly so no test can escape to a real fetch.
+vi.mock('../../../api/recognition', async () => {
+  const actual =
+    await vi.importActual<typeof import('../../../api/recognition')>('../../../api/recognition');
+  return {
+    ...actual,
+    mergeCluster: vi.fn(),
+    updateClusterLabel: vi.fn(),
+    fetchIdentitiesSuggestions: vi.fn(),
+    listRecognitionClusters: vi.fn(),
+    revertMergeCluster: vi.fn(),
+    reassignClusterIdentity: vi.fn(),
+    splitCluster: vi.fn(),
+    pinRepresentative: vi.fn(),
+    fetchPendingSuggestions: vi.fn(),
+    fetchPendingMergeSuggestions: vi.fn(),
+    fetchPendingNameSuggestions: vi.fn(),
+    fetchTopUnlabeledClusters: vi.fn(),
+    acceptSuggestion: vi.fn(),
+    rejectSuggestion: vi.fn(),
+    acceptMergeSuggestion: vi.fn(),
+    rejectMergeSuggestion: vi.fn(),
+    acceptNameSuggestion: vi.fn(),
+    rejectNameSuggestion: vi.fn(),
+    bulkAcceptSuggestions: vi.fn(),
+  };
+});
 
 // Track active query client for cleanup
 let activeQueryClient: QueryClient | null = null;
@@ -261,9 +283,23 @@ describe('IdentityClusterList', () => {
       total: 0,
       truncated: false,
     });
+    // usePendingMergeTwins queries this on every list render; the twin-chip
+    // surface is covered by IdentityClusterList.twinChip.test.tsx, so this file
+    // pins the "no pending twins" baseline.
+    vi.mocked(api.fetchPendingMergeSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 50,
+      offset: 0,
+    });
   });
 
   afterEach(async () => {
+    // FEBT1-GATE05-RC-02: unmount FIRST. A test that timed out inside waitFor leaves a live
+    // act()/effect chain; settling its pending promises while the tree is still mounted is
+    // what poisoned every subsequent test in this file. Nothing may be rendered while the
+    // leftover deferreds resolve.
+    cleanup();
+
     // Cancel in-flight queries to prevent async leaks between tests
     if (activeQueryClient) {
       await activeQueryClient.cancelQueries();
@@ -278,13 +314,15 @@ describe('IdentityClusterList', () => {
       await vi.runAllTimersAsync();
       await Promise.resolve();
     });
+    // No deferred may survive into the next test even if the drain above threw.
+    findClusterDeferreds = [];
     vi.useRealTimers();
-    cleanup();
   });
 
   it('renders placeholder when no identities exist', async () => {
     await renderWithClient(<IdentityClusterList identities={[]} />);
-    expect(screen.getByText(/No identities detected yet/i)).toBeInTheDocument();
+    expect(screen.getByText('No identities detected yet.')).toBeInTheDocument();
+    expect(screen.getByText('Scan media to find faces in this item.')).toBeInTheDocument();
     expect(MockEventSource.instances).toBe(0);
   });
 
@@ -433,18 +471,14 @@ describe('IdentityClusterList', () => {
       setMediaIdentitiesCache(client, cacheData);
     });
 
-    await actFlow(async () => {
-      await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })));
-    });
+    await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })));
     const input = screen.getByPlaceholderText(/enter a name/i);
-    await actFlow(async () => {
-      await user.clear(input);
-      fireEvent.change(input, { target: { value: 'New Label' } });
-    });
+    await user.clear(input);
+    fireEvent.change(input, { target: { value: 'New Label' } });
     expect(input).toHaveValue('New Label');
 
+    await runWithTimers(() => user.click(getSaveButton()));
     await actFlow(async () => {
-      await runWithTimers(() => user.click(getSaveButton()));
       await resolveFindClusterDeferreds(null);
       await resolveSaveDeferred(updateDeferred, {});
     });
@@ -486,18 +520,14 @@ describe('IdentityClusterList', () => {
       setMediaIdentitiesCache(client, cacheData);
     });
 
-    await actFlow(async () => {
-      await runWithTimers(() => user.click(screen.getByRole('button', { name: /Name this person/i })));
-    });
+    await runWithTimers(() => user.click(screen.getByRole('button', { name: /Name this person/i })));
     const input = screen.getByPlaceholderText(/enter a name/i);
-    await actFlow(async () => {
-      await user.clear(input);
-      fireEvent.change(input, { target: { value: 'Person A' } });
-    });
+    await user.clear(input);
+    fireEvent.change(input, { target: { value: 'Person A' } });
     expect(input).toHaveValue('Person A');
 
+    await runWithTimers(() => user.click(getSaveButton()));
     await actFlow(async () => {
-      await runWithTimers(() => user.click(getSaveButton()));
       await resolveFindClusterDeferreds(null);
       await resolveSaveDeferred(updateDeferred, {});
     });
@@ -531,21 +561,17 @@ describe('IdentityClusterList', () => {
 
     const { user } = await renderWithClient(<IdentityClusterList identities={[baseIdentity]} />);
 
-    await actFlow(async () => {
-      await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })));
-    });
+    await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })));
     const input = screen.getByRole('combobox');
+    await runWithTimers(() => {
+      fireEvent.change(input, { target: { value: 'Ada' } });
+    });
     await actFlow(async () => {
-      await runWithTimers(() => {
-        fireEvent.change(input, { target: { value: 'Ada' } });
-      });
       await resolveFindClusterDeferreds(null);
     });
 
     expect(screen.getByRole('option', { name: /Ada Lovelace \(Group\)/ })).toBeInTheDocument();
-    await actFlow(async () => {
-      await user.click(screen.getByRole('button', { name: /cancel/i }));
-    });
+    await user.click(screen.getByRole('button', { name: /cancel/i }));
     await waitForEditClosed();
   });
 
@@ -586,13 +612,9 @@ describe('IdentityClusterList', () => {
       setMediaIdentitiesCache(client, cacheData);
     });
 
-    await actFlow(async () => {
-      await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })));
-    });
+    await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })));
     const input = screen.getByPlaceholderText(/enter a name/i);
-    await actFlow(async () => {
-      fireEvent.change(input, { target: { value: 'Hazel McCleod' } });
-    });
+    fireEvent.change(input, { target: { value: 'Hazel McCleod' } });
     expect(input).toHaveValue('Hazel McCleod');
 
     await actFlow(async () => {
@@ -613,8 +635,8 @@ describe('IdentityClusterList', () => {
       });
     });
 
+    await runWithTimers(() => user.click(getSaveButton()));
     await actFlow(async () => {
-      await runWithTimers(() => user.click(getSaveButton()));
       await resolveSaveDeferred(mergeDeferred, mergeResult);
     });
     await waitFor(() => expect(findClusterByLabelRemote).toHaveBeenCalled());
@@ -654,14 +676,10 @@ describe('IdentityClusterList', () => {
       setMediaIdentitiesCache(client, cacheData);
     });
 
-    await actFlow(async () => {
-      await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })));
-    });
+    await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })));
     const input = screen.getByPlaceholderText(/enter a name/i);
-    await actFlow(async () => {
-      await user.clear(input);
-      fireEvent.change(input, { target: { value: 'Saffron Cypress' } });
-    });
+    await user.clear(input);
+    fireEvent.change(input, { target: { value: 'Saffron Cypress' } });
 
     await actFlow(async () => {
       await flushTimers(MATCH_DEBOUNCE_MS);
@@ -677,9 +695,7 @@ describe('IdentityClusterList', () => {
       await resolveDeferred(matchDeferred, { id: 'cluster-1', label: 'Saffron Cypress' });
     });
 
-    await actFlow(async () => {
-      await runWithTimers(() => user.click(getSaveButton()));
-    });
+    await runWithTimers(() => user.click(getSaveButton()));
     await waitFor(() => expect(findClusterByLabelRemote).toHaveBeenCalledTimes(2));
 
     const saveMatchDeferred = matchDeferreds[1];
@@ -746,18 +762,14 @@ describe('IdentityClusterList', () => {
       expect(screen.getByRole('button', { name: /edit label/i })).toBeInTheDocument();
     });
 
-    await actFlow(async () => {
-      await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })));
-    });
+    await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })));
     const input = screen.getByPlaceholderText(/enter a name/i);
-    await actFlow(async () => {
-      await user.clear(input);
-      fireEvent.change(input, { target: { value: 'Existing Label' } });
-    });
+    await user.clear(input);
+    fireEvent.change(input, { target: { value: 'Existing Label' } });
     expect(input).toHaveValue('Existing Label');
 
+    await runWithTimers(() => user.click(getSaveButton()));
     await actFlow(async () => {
-      await runWithTimers(() => user.click(getSaveButton()));
       await resolveSaveDeferred(mergeDeferred, mergeResult);
     });
     await waitForEditClosed();
@@ -770,6 +782,14 @@ describe('IdentityClusterList', () => {
   });
 
   it('shows a friendly inline message when merge rejects a self-target request', async () => {
+    // FEBT1G-M-12: resolve the label lookup inside the test. Depending on the shared
+    // never-resolved default deferred made this test time out and, via the leaked
+    // act() chain, contaminate every test after it.
+    const findClusterByLabel = vi.fn<FindClusterByLabel>(async () => ({
+      id: 'target-cluster',
+      label: 'Existing Label',
+      identityCount: 1,
+    }));
     (api.mergeCluster as Mock).mockRejectedValueOnce(
       new Error(
         'Request to /recognition/clusters/cluster-1/merge failed (400): {"code":"invalid_target_cluster_id","message":"Source and target cluster IDs must differ."}',
@@ -788,7 +808,7 @@ describe('IdentityClusterList', () => {
     useClusterSuggestionsLoaderMock.mockReturnValue(
       loaderResultFrom({
         labelMatches: existingClusters,
-        findClusterByLabel: defaultFindClusterByLabel,
+        findClusterByLabel,
       }),
     );
 
@@ -806,24 +826,26 @@ describe('IdentityClusterList', () => {
       expect(screen.getByRole('button', { name: /edit label/i })).toBeInTheDocument();
     });
 
-    await actFlow(async () => {
-      await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })));
-    });
+    await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })));
     const input = screen.getByPlaceholderText(/enter a name/i);
-    await actFlow(async () => {
-      await user.clear(input);
-      fireEvent.change(input, { target: { value: 'Existing Label' } });
-    });
+    await user.clear(input);
+    fireEvent.change(input, { target: { value: 'Existing Label' } });
 
-    await actFlow(async () => {
-      await runWithTimers(() => user.click(getSaveButton()));
-    });
+    await runWithTimers(() => user.click(getSaveButton()));
 
+    // The rejected merge must actually have been attempted — otherwise the alert below
+    // could come from any other failure path.
+    await waitFor(() =>
+      expect(api.mergeCluster).toHaveBeenCalledWith('cluster-1', 'target-cluster', 'Existing Label', expect.anything()),
+    );
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(
         'That group is already named Existing Label - nothing to merge.',
       );
     });
+    // FEBT1-GATE05-RC-02: this test must own its async completion, not hand an
+    // unresolved promise to afterEach.
+    expect(findClusterDeferreds).toHaveLength(0);
   });
 
   it('shows undo when merge completes and reverts on request', async () => {
@@ -864,7 +886,7 @@ describe('IdentityClusterList', () => {
       }),
     );
 
-    const { client, user } = await renderWithClient(<IdentityClusterList identities={[baseIdentity]} />);
+    const { client, user, unmount } = await renderWithClient(<IdentityClusterList identities={[baseIdentity]} />);
     const cacheData: MediaIdentitiesResponse = {
       identities_by_media: {
         '1': [baseIdentity],
@@ -879,18 +901,14 @@ describe('IdentityClusterList', () => {
       expect(screen.getByRole('button', { name: /edit label/i })).toBeInTheDocument();
     });
 
-    await actFlow(async () => {
-      await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })));
-    });
+    await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })));
     const input = screen.getByPlaceholderText(/enter a name/i);
-    await actFlow(async () => {
-      await user.clear(input);
-      fireEvent.change(input, { target: { value: 'Existing Label' } });
-    });
+    await user.clear(input);
+    fireEvent.change(input, { target: { value: 'Existing Label' } });
     expect(input).toHaveValue('Existing Label');
 
+    await runWithTimers(() => user.click(getSaveButton()));
     await actFlow(async () => {
-      await runWithTimers(() => user.click(getSaveButton()));
       await resolveSaveDeferred(mergeDeferred, mergeResult);
     });
     await waitForEditClosed();
@@ -902,21 +920,36 @@ describe('IdentityClusterList', () => {
     );
 
     const undoButton = screen.getByRole('button', { name: /Undo merge/i });
+    await user.click(undoButton);
     await actFlow(async () => {
-      await user.click(undoButton);
       await resolveDeferred(revertDeferred, revertResult);
     });
 
     await waitFor(() =>
-      expect(api.revertMergeCluster).toHaveBeenCalledWith({
-        targetClusterId: 'target-cluster',
-        movedIdentityIds: ['identity-1'],
-        sourceLabel: 'Cluster 1',
-      }),
+      // FEBT2-W2-LANE-04: the undo now owns an AbortController, so a superseded revert can
+      // actually be abandoned (RES-10). Asserted as a live AbortSignal rather than
+      // `expect.anything()` so re-dropping the argument turns this red.
+      expect(api.revertMergeCluster).toHaveBeenCalledWith(
+        {
+          targetClusterId: 'target-cluster',
+          movedIdentityIds: ['identity-1'],
+          sourceLabel: 'Cluster 1',
+        },
+        expect.any(AbortSignal),
+      ),
     );
     await waitFor(() => expect(screen.queryByRole('button', { name: /undo merge/i })).not.toBeInTheDocument(), {
       timeout: 2000,
     });
+
+    // FEBT2-W2-LANE-04: the forwarded signal has to be a *live* controller at dispatch and
+    // has to abort when the card unmounts. Without both halves the argument is decoration:
+    // a pre-aborted signal would cancel every undo, and a never-aborted one lets a revert
+    // outlive the surface that asked for it (RES-10, lexicons/engineering.md:121).
+    const revertSignal = (api.revertMergeCluster as Mock).mock.calls[0][1] as AbortSignal;
+    expect(revertSignal.aborted).toBe(false);
+    unmount();
+    expect(revertSignal.aborted).toBe(true);
   });
 
   it('renders face thumbnail when media_url is provided', async () => {
@@ -962,13 +995,9 @@ describe('IdentityClusterList', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /Unnamed person/i })).toBeInTheDocument();
     });
-    await actFlow(async () => {
-      await runWithTimers(() => user.click(screen.getByRole('button', { name: /Unnamed person/i })));
-    });
+    await runWithTimers(() => user.click(screen.getByRole('button', { name: /Unnamed person/i })));
     expect(screen.getByRole('combobox')).toBeInTheDocument();
-    await actFlow(async () => {
-      await user.click(screen.getByRole('button', { name: /cancel/i }));
-    });
+    await user.click(screen.getByRole('button', { name: /cancel/i }));
     await waitForEditClosed();
   });
 
@@ -993,15 +1022,11 @@ describe('IdentityClusterList', () => {
     });
 
     const wrongPersonButton = screen.getByText('Remove from group', { selector: 'button' });
-    await actFlow(async () => {
-      await user.click(wrongPersonButton);
-    });
+    await user.click(wrongPersonButton);
 
     await screen.findByRole('dialog');
 
-    await actFlow(async () => {
-      await user.click(screen.getByRole('button', { name: /remove member/i }));
-    });
+    await user.click(screen.getByRole('button', { name: /remove member/i }));
 
     await actFlow(async () => {
       await resolveDeferred(reassignDeferred, {});
@@ -1026,7 +1051,20 @@ describe('IdentityClusterList', () => {
 
   it('allows splitting a cluster', async () => {
     const splitDeferred = createDeferred<unknown>();
-    (api.splitCluster as Mock).mockReturnValue(splitDeferred.promise);
+    let splitSignalAtCall: AbortSignal | undefined;
+    // Pin the transport contract itself (TEST-15, lexicons/engineering.md:396):
+    // the live signal bounds the client wait (RES-02,
+    // docs/reviews/uxp-2/lexicons/engineering.md:36; Release It! ch-5,
+    // literature/extracted/refactoring/distilled/release-it.md:188) without
+    // claiming the write did not land (DDIA ch-8,
+    // literature/extracted/refactoring/distilled/designing-data-intensive-applications.md:305).
+    (api.splitCluster as Mock).mockImplementation(
+      (_clusterId: string, _request: unknown, signal: AbortSignal) => {
+        splitSignalAtCall = signal;
+        expect(signal.aborted).toBe(false);
+        return splitDeferred.promise;
+      },
+    );
 
     const secondIdentity = {
       ...baseIdentity,
@@ -1051,26 +1089,29 @@ describe('IdentityClusterList', () => {
       expect(screen.getByRole('button', { name: /split group/i })).toBeInTheDocument();
     });
 
-    await actFlow(async () => {
-      await runWithTimers(() => user.click(screen.getByRole('button', { name: /split group/i })));
-    });
+    await runWithTimers(() => user.click(screen.getByRole('button', { name: /split group/i })));
 
     await screen.findByRole('dialog');
+    await runWithTimers(() => user.click(screen.getByRole('button', { name: /use face from media #1/i })));
     await actFlow(async () => {
-      await runWithTimers(() => user.click(screen.getByRole('button', { name: /use face from media #1/i })));
       await resolveDeferred(splitDeferred, { moved_count: 5 });
     });
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
 
     // Split always forces 2 clusters to guarantee a split happens
     await waitFor(() =>
-      expect(api.splitCluster).toHaveBeenCalledWith('cluster-1', {
-        nClusters: 2,
-        anchorIdentityId: 'identity-1',
-        splitMode: 'forced',
-        mode: 'sync',
-      }),
+      expect(api.splitCluster).toHaveBeenCalledWith(
+        'cluster-1',
+        {
+          nClusters: 2,
+          anchorIdentityId: 'identity-1',
+          splitMode: 'forced',
+          mode: 'sync',
+        },
+        expect.any(AbortSignal),
+      ),
     );
+    expect(splitSignalAtCall).toBeInstanceOf(AbortSignal);
   });
 
   describe('inline suggestion batching', () => {
@@ -1122,7 +1163,13 @@ describe('IdentityClusterList', () => {
       // First (server-ranked) match is the one shown, even where >=2 rows exist.
       expect(screen.getByText('Person 0')).toBeInTheDocument();
       expect(screen.queryByText('Person 0 alt')).not.toBeInTheDocument();
-    });
+      // FEBT2-W2-LANE-06: the explicit budget below is a *render-throughput* allowance for
+      // mounting 60 cards under jsdom, not a latency claim about the product. This test
+      // asserts fan-out correctness (one batched fetch, 60 resolved prompts, first-ranked
+      // row wins); leaving it on the 5s default made its verdict depend on host load, so a
+      // green run certified nothing and a red run named nothing (TEST-15,
+      // lexicons/engineering.md:396). The card count is the assertion and must not shrink.
+    }, 30_000);
 
     it('renders nothing for an identity absent from the keyed envelope (empty-match)', async () => {
       const identities = makeUnlabeled(2);

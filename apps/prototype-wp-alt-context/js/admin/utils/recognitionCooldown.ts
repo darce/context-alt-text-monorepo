@@ -11,6 +11,8 @@
  * state only and are deliberately not gated.
  */
 
+import { classifyError } from './appError';
+import { clampRetryAfterMs, hasRetryAfterWait } from './retryAfter';
 import { isCooldownSignal } from './retryPolicy';
 
 /** Window applied when the server sends 429 without a usable Retry-After. */
@@ -45,12 +47,25 @@ export const openCooldown = (seconds: number): void => {
 };
 
 /**
+ * FEBT1-LE-03: gate on `hasRetryAfterWait`, not on `!== undefined`. A
+ * `Retry-After` that names no wait is not a window — falling through to
+ * DEFAULT_COOLDOWN_SECONDS is the same rule `getRetryDelay` and `isCooldown`
+ * apply (REF-19, one owner for "this Retry-After carries a wait instruction").
+ */
+const cooldownSecondsFromError = (error: unknown): number => {
+  const classified = classifyError(error);
+  const retryAfterMs = classified._tag === 'http' ? classified.retryAfterMs : undefined;
+  const seconds = hasRetryAfterWait(retryAfterMs) ? retryAfterMs / 1000 : undefined;
+  return clampRetryAfterMs(seconds, DEFAULT_COOLDOWN_SECONDS * 1000) / 1000;
+};
+
+/**
  * Arm the cooldown from a request error when — and only when — it is the
  * server's explicit "ask again later" (429, or 503 with Retry-After).
  */
 export const openCooldownFromError = (error: unknown): void => {
   if (isCooldownSignal(error)) {
-    openCooldown(error.retryAfterSeconds ?? DEFAULT_COOLDOWN_SECONDS);
+    openCooldown(cooldownSecondsFromError(error));
   }
 };
 
@@ -117,7 +132,12 @@ export const runAfterCooldown = (fn: () => void): void => {
     fn();
     return;
   }
-  setTimeout(fn, cooldownRemainingMs());
+  // Re-check on wake instead of firing blind: openCooldown can extend expiresAtMs
+  // after this timer is armed, and running at the stale deadline would put a
+  // refetch burst back inside the active window (FEBT1G-M-09, RES-06).
+  setTimeout(() => {
+    runAfterCooldown(fn);
+  }, cooldownRemainingMs());
 };
 
 /** Test-only: clear module state between tests. */

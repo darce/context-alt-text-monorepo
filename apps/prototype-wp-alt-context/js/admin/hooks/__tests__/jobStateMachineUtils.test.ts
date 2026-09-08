@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import type { JobStatusResponse } from '../../api/recognition';
 import { buildScanProgress } from '../jobStateMachineProgress';
-import { derivePipelinePhase, isScanSuccessStatus, isScanTerminalStatus } from '../jobStateMachineUtils';
+import {
+  derivePipelinePhase,
+  isScanActiveStatus,
+  isScanSuccessStatus,
+  isScanTerminalStatus,
+} from '../jobStateMachineUtils';
 import type { PersistedJob } from '../useJobPersistence';
 
 const scanJob = (overrides: Partial<PersistedJob> = {}): PersistedJob => ({
@@ -66,6 +71,15 @@ describe('scan status helpers (BND-1)', () => {
     expect(isScanTerminalStatus('completed_with_errors')).toBe(true);
     expect(isScanTerminalStatus('failed')).toBe(true);
     expect(isScanTerminalStatus('running')).toBe(false);
+  });
+
+  it('derives active recognition statuses from the canonical terminal predicate', () => {
+    expect(isScanActiveStatus('running')).toBe(true);
+    expect(isScanActiveStatus('cancelled')).toBe(true);
+    expect(isScanActiveStatus('completed')).toBe(false);
+    expect(isScanActiveStatus('completed_with_errors')).toBe(false);
+    expect(isScanActiveStatus('failed')).toBe(false);
+    expect(isScanActiveStatus(undefined)).toBe(false);
   });
 });
 

@@ -213,6 +213,8 @@ vi.mock('../api/settingsApi', async () => {
       tenant_id: '',
       tenant_id_source: 'option',
       tenant_paired: false,
+      alt_style: 'alt_only',
+      recognition_enabled: true,
       description_budget: {
         max_attempts: -1,
         usage: { used: 0, remaining: null, reset_at: null },
@@ -393,6 +395,7 @@ vi.mock('../pages/workbench/WorkbenchMediaContext', () => {
       // MEDIA_PAGE_SIZE_OPTIONS is [10, 50, 100]; 20 was never a selectable value.
       perPage: 10,
       handleSearchChange: vi.fn(),
+      clearSearch: vi.fn(),
       handleStatusChange: vi.fn(),
       setCurrentPage: vi.fn(),
       setPerPage: vi.fn(),
@@ -1079,7 +1082,7 @@ describe('banned vocabulary across js/admin pages', () => {
         (button) => button.textContent === 'Remove from group',
       );
       expect(remove, 'identity-cluster-item fixture must render the remove control').toBeTruthy();
-      fireEvent.click(remove as HTMLButtonElement);
+      fireEvent.click(remove!);
     }
     if (state === 'queue-empty') {
       await waitFor(() => {

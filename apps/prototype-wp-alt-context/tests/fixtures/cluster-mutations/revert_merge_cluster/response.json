@@ -1,1 +1,1 @@
-{"type":"response","status":200,"data":{"restored_cluster_id":"uuid-1","restored_label":"Restored Cluster","restored_identity_count":2,"target_cluster_id":"cluster-target","target_identity_count":0,"synced":false,"status":"pending"}}
+{"type":"response","status":200,"data":{"restored_cluster_id":"00000001-0000-4000-8000-000000000001","restored_label":"Restored Cluster","restored_identity_count":2,"target_cluster_id":"cluster-target","target_identity_count":0,"synced":false,"status":"pending"}}

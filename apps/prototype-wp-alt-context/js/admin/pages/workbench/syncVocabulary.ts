@@ -105,9 +105,12 @@ export const SYNC_VOCABULARY = {
   updateStatus: __('Update status: %s', 'alt-context'),
   lastUpdated: __('Last updated: %s', 'alt-context'),
   afterNextRefresh: __('after the next refresh', 'alt-context'),
-  retentionDispose: __('Retention: Dispose after confirm', 'alt-context'),
-  retentionPurge: __('Retention: Purge on demand', 'alt-context'),
-  retentionRetain: __('Retention: Retain all', 'alt-context'),
+  // Visible label of the SyncStatusIndicator link to Data Retention — Rule 2
+  // cross-reference, not phase/status text, so the Rule 4 file carve-out does
+  // not exempt these three (BR-33).
+  retentionDispose: __('Data Retention: Dispose after confirm', 'alt-context'),
+  retentionPurge: __('Data Retention: Purge on demand', 'alt-context'),
+  retentionRetain: __('Data Retention: Retain all', 'alt-context'),
   attentionSummary: __('Sync attention needed.', 'alt-context'),
   offlineSummary: __('The recognition backend is currently unreachable.', 'alt-context'),
   // E15-35 Slice 3: aggregate backend-regression signal (degraded mode).

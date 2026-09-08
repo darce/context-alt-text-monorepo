@@ -1,0 +1,470 @@
+#!/usr/bin/env bash
+# Characterization test for the demo bootstrap describe-apply gate
+# (infra/oci/demo/lib/describe-gate.sh). Pins RUN/SKIP/BLOCK so a fail-open
+# regression (especially allowing the canned `seeded` adapter) is caught
+# without a live WordPress. Run: bash infra/oci/demo/tests/test-describe-gate.sh
+
+# R2-11: refuse non-bash before `set -o pipefail`. dash/sh reject pipefail
+# with exit 2 and print no assertions, which a caller can misread as green.
+if [ -z "${BASH_VERSION:-}" ]; then
+    echo "FAIL $0 must run under bash, not sh/dash. Example: bash $0" >&2
+    exit 2
+fi
+
+set -euo pipefail
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=../lib/describe-gate.sh
+source "${script_dir}/../lib/describe-gate.sh"
+
+bootstrap_file="${script_dir}/../bootstrap-wp.sh"
+cli_file="${script_dir}/../../../../apps/prototype-wp-alt-context/src/cli/class-description-command.php"
+
+failures=0
+
+assert_eq() {
+    local label="$1" expected="$2" actual="$3"
+    if [ "$expected" = "$actual" ]; then
+        echo "ok   ${label}"
+    else
+        echo "FAIL ${label}: expected ${expected}, got ${actual}"
+        failures=$((failures + 1))
+    fi
+}
+
+assert_file_grep() {
+    local label="$1" file="$2" pattern="$3"
+    if grep -qE "$pattern" "$file"; then
+        echo "ok   ${label}"
+    else
+        echo "FAIL ${label}: expected ${file} to match /${pattern}/"
+        failures=$((failures + 1))
+    fi
+}
+
+assert_file_not_grep() {
+    local label="$1" file="$2" pattern="$3"
+    if grep -qE "$pattern" "$file"; then
+        echo "FAIL ${label}: expected ${file} NOT to match /${pattern}/"
+        failures=$((failures + 1))
+    else
+        echo "ok   ${label}"
+    fi
+}
+
+# R2-11: this suite must refuse non-bash before `set -o pipefail`. Pin the
+# guard so deleting it goes red under bash, not only as an early sh abort.
+r211_self=$(awk '
+    /BASH_VERSION/ && !seen_pf { g=1 }
+    /set -euo pipefail/ { seen_pf=1 }
+    END { if (g) print "guard-before-pipefail"; else print "missing-guard" }
+' "$0")
+assert_eq "R2-11 describe suite guards BASH_VERSION before pipefail" \
+    "guard-before-pipefail" "$r211_self"
+
+# --- classify_describe_gate <adapter_profile> <total_media> <media_with_alt> ---
+# Adapter allowlist is the first gate. Anything other than the three trusted
+# live adapters BLOCKs — including today's production `seeded` profile.
+assert_eq "seeded 100 0 (live situation)" BLOCK "$(classify_describe_gate seeded 100 0)"
+assert_eq "empty profile 100 0"          BLOCK "$(classify_describe_gate '' 100 0)"
+assert_eq "unknown_profile 100 0"        BLOCK "$(classify_describe_gate unknown_profile 100 0)"
+assert_eq "hosted_gpt4o 100 0 (stub)"    BLOCK "$(classify_describe_gate hosted_gpt4o 100 0)"
+assert_eq "gpu_phi4 100 0 (stub)"        BLOCK "$(classify_describe_gate gpu_phi4 100 0)"
+assert_eq "florence_large 100 0 (stub)"  BLOCK "$(classify_describe_gate florence_large 100 0)"
+assert_eq "SEEDED 100 0 (case hole)"     BLOCK "$(classify_describe_gate SEEDED 100 0)"
+# Profile check precedes measurement: a bad profile with a broken probe still
+# BLOCKs instead of crashing or skipping.
+assert_eq "seeded empty empty (profile first)" BLOCK "$(classify_describe_gate seeded '' '')"
+
+# Trusted adapters + missing alt -> RUN.
+assert_eq "florence_small 100 0"               RUN "$(classify_describe_gate florence_small 100 0)"
+assert_eq "gpu_qwen30b 100 40 (partial)"        RUN "$(classify_describe_gate gpu_qwen30b 100 40)"
+assert_eq "florence_small 100 99 (one missing)" RUN "$(classify_describe_gate florence_small 100 99)"
+
+# Idempotent full coverage / no media -> SKIP.
+# Full coverage SKIPs only when provenance is an explicit PASS (R1-04).
+assert_eq "gpu_qwen30b_ensemble 100 100 (full)" SKIP "$(classify_describe_gate gpu_qwen30b_ensemble 100 100 PASS)"
+assert_eq "florence_small 0 0 (no media)"       SKIP "$(classify_describe_gate florence_small 0 0)"
+assert_eq "florence_small 10 10 (full)"         SKIP "$(classify_describe_gate florence_small 10 10 PASS)"
+
+# Broken probe -> BLOCK (never guess).
+assert_eq "florence_small empty total" BLOCK "$(classify_describe_gate florence_small '' 0)"
+assert_eq "florence_small non-numeric alt" BLOCK "$(classify_describe_gate florence_small 100 abc)"
+assert_eq "florence_small alt > total" BLOCK "$(classify_describe_gate florence_small 100 200)"
+assert_eq "florence_small 0 1 (alt > total)" BLOCK "$(classify_describe_gate florence_small 0 1)"
+
+# --- is_trusted_describe_profile: exit 0 trusted, 1 otherwise ---
+assert_exit() {
+    local label="$1" expected="$2"
+    shift 2
+    local actual=0
+    "$@" || actual=$?
+    assert_eq "$label" "$expected" "$actual"
+}
+
+assert_exit "is_trusted florence_small" 0 is_trusted_describe_profile florence_small
+assert_exit "is_trusted gpu_qwen30b" 0 is_trusted_describe_profile gpu_qwen30b
+assert_exit "is_trusted gpu_qwen30b_ensemble" 0 is_trusted_describe_profile gpu_qwen30b_ensemble
+assert_exit "is_trusted seeded" 1 is_trusted_describe_profile seeded
+assert_exit "is_trusted empty" 1 is_trusted_describe_profile ''
+assert_exit "is_trusted SEEDED (case hole)" 1 is_trusted_describe_profile SEEDED
+assert_exit "is_trusted florence (not prefix)" 1 is_trusted_describe_profile florence
+assert_exit "is_trusted small (not suffix)" 1 is_trusted_describe_profile small
+
+# Predicate and classifier must not drift: trusted -> RUN at 100/0, else BLOCK.
+assert_predicate_matches_classifier() {
+    local profile="$1"
+    local expected
+    if is_trusted_describe_profile "$profile"; then
+        expected=RUN
+    else
+        expected=BLOCK
+    fi
+    assert_eq "predicate/classifier agree '${profile}' 100 0" \
+        "$expected" "$(classify_describe_gate "$profile" 100 0)"
+}
+
+for p in $ACX_TRUSTED_DESCRIBE_PROFILES; do
+    assert_predicate_matches_classifier "$p"
+done
+assert_predicate_matches_classifier seeded
+assert_predicate_matches_classifier ''
+assert_predicate_matches_classifier SEEDED
+assert_predicate_matches_classifier florence
+assert_predicate_matches_classifier small
+assert_predicate_matches_classifier unknown_profile
+assert_predicate_matches_classifier hosted_gpt4o
+assert_predicate_matches_classifier gpu_phi4
+assert_predicate_matches_classifier florence_large
+
+# --- R1-04: 4th arg provenance (PASS|FAIL|UNKNOWN) ---
+# Full coverage + canned alts must not SKIP (that freezes the lie).
+assert_eq "florence_small 10 10 FAIL -> RUN_FORCE" RUN_FORCE "$(classify_describe_gate florence_small 10 10 FAIL)"
+assert_eq "gpu_qwen30b_ensemble 100 100 FAIL -> RUN_FORCE" RUN_FORCE "$(classify_describe_gate gpu_qwen30b_ensemble 100 100 FAIL)"
+assert_eq "florence_small 10 10 UNKNOWN -> BLOCK" BLOCK "$(classify_describe_gate florence_small 10 10 UNKNOWN)"
+assert_eq "florence_small 10 10 omitted provenance -> BLOCK" BLOCK "$(classify_describe_gate florence_small 10 10)"
+assert_eq "florence_small 10 10 garbage provenance -> BLOCK" BLOCK "$(classify_describe_gate florence_small 10 10 MAYBE)"
+# Partial coverage stays RUN even when published alts are canned (fill missing first).
+assert_eq "florence_small 100 40 FAIL still RUN" RUN "$(classify_describe_gate florence_small 100 40 FAIL)"
+assert_eq "florence_small 100 40 UNKNOWN still RUN" RUN "$(classify_describe_gate florence_small 100 40 UNKNOWN)"
+# No media still SKIP regardless of provenance.
+assert_eq "florence_small 0 0 FAIL still SKIP" SKIP "$(classify_describe_gate florence_small 0 0 FAIL)"
+
+# --- R1-05: probe the live producer JSON, never a disconnected env var ---
+assert_eq "probe 200 quoted adapter" florence_small "$(extract_probed_description_adapter 200 '{"status":"ok","description_adapter":"florence_small"}')"
+assert_eq "probe 200 seeded adapter" seeded "$(extract_probed_description_adapter 200 '{"description_adapter":"seeded","status":"ok"}')"
+assert_eq "probe 200 spaced json" gpu_qwen30b "$(extract_probed_description_adapter 200 '{
+  "status": "ok",
+  "description_adapter": "gpu_qwen30b"
+}')"
+assert_eq "probe 500 with field still empty (fail closed)" "" "$(extract_probed_description_adapter 500 '{"description_adapter":"florence_small"}')"
+assert_eq "probe 401 with field still empty" "" "$(extract_probed_description_adapter 401 '{"description_adapter":"florence_small"}')"
+assert_eq "probe 000 curl-fail empty" "" "$(extract_probed_description_adapter 000 '')"
+assert_eq "probe 200 missing field empty" "" "$(extract_probed_description_adapter 200 '{"status":"ok"}')"
+assert_eq "probe 200 null field empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":null}')"
+assert_eq "probe 200 object field empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":{"name":"florence_small"}}')"
+assert_eq "probe 200 unparseable body empty" "" "$(extract_probed_description_adapter 200 'not-json')"
+assert_eq "probe 200 empty body empty" "" "$(extract_probed_description_adapter 200 '')"
+assert_eq "probe 301 without -L empty" "" "$(extract_probed_description_adapter 301 '{"description_adapter":"florence_small"}')"
+assert_eq "probe 000 timeout with body empty" "" "$(extract_probed_description_adapter 000 '{"description_adapter":"florence_small"}')"
+assert_eq "probe 200 boolean field empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":true}')"
+assert_eq "probe 200 array of objects empty" "" "$(extract_probed_description_adapter 200 '[{"description_adapter":"florence_small"}]')"
+assert_eq "probe 200 HTML page empty" "" "$(extract_probed_description_adapter 200 '<html>"description_adapter": "florence_small"</html>')"
+assert_eq "probe 200 HTML page classify BLOCK" BLOCK "$(classify_describe_gate "$(extract_probed_description_adapter 200 '<html>"description_adapter": "florence_small"</html>')" 100 0)"
+assert_eq "probe 200 nested key keeps top-level seeded" seeded "$(extract_probed_description_adapter 200 '{"description_adapter":"seeded","meta":{"description_adapter":"florence_small"}}')"
+assert_eq "probe 200 nested key classify BLOCK" BLOCK "$(classify_describe_gate "$(extract_probed_description_adapter 200 '{"description_adapter":"seeded","meta":{"description_adapter":"florence_small"}}')" 100 0)"
+assert_eq "probe 200 nested-only key empty" "" "$(extract_probed_description_adapter 200 '{"meta":{"description_adapter":"florence_small"}}')"
+assert_eq "probe 200 substring in non-json empty" "" "$(extract_probed_description_adapter 200 'not json but "description_adapter": "florence_small" appears')"
+assert_eq "probe 200 genuine health-like payload" florence_small "$(extract_probed_description_adapter 200 '{"status":"ok","embedding_runtime":{"available":false},"description_adapter":"florence_small"}')"
+
+# --- R2-07: claimed WP adapter vs independently probed producer ---
+# classify_claimed_adapter_matches_probe <probed> <claimed_blob>
+assert_eq "claimed exact single match" PASS "$(classify_claimed_adapter_matches_probe florence_small florence_small)"
+assert_eq "claimed exact repeated match" PASS "$(classify_claimed_adapter_matches_probe florence_small 'florence_small florence_small')"
+assert_eq "claimed one mismatch among matches" FAIL "$(classify_claimed_adapter_matches_probe florence_small 'florence_small seeded florence_small')"
+assert_eq "claimed seeded vs probed florence_small" FAIL "$(classify_claimed_adapter_matches_probe florence_small seeded)"
+assert_eq "claimed florence_small vs probed seeded" FAIL "$(classify_claimed_adapter_matches_probe seeded florence_small)"
+assert_eq "empty probe UNKNOWN" UNKNOWN "$(classify_claimed_adapter_matches_probe '' florence_small)"
+assert_eq "empty claim UNKNOWN" UNKNOWN "$(classify_claimed_adapter_matches_probe florence_small '')"
+assert_eq "both empty UNKNOWN" UNKNOWN "$(classify_claimed_adapter_matches_probe '' '')"
+assert_eq "claimed token with embedded space" FAIL "$(classify_claimed_adapter_matches_probe florence_small 'florence small')"
+assert_eq "claimed bare glob star" FAIL "$(classify_claimed_adapter_matches_probe florence_small '*')"
+assert_eq "claimed Florence_Small vs probed florence_small (case)" FAIL "$(classify_claimed_adapter_matches_probe florence_small Florence_Small)"
+
+# php_define_value reads WORDPRESS_CONFIG_EXTRA; no new secret name.
+_extra="define('ACX_RECOGNITION_URL','https://api.altcontext.com'); define('ACX_RECOGNITION_API_KEY','secret-key'); define('ACX_RECOGNITION_TENANT_ID','00000000-0000-4000-8000-000000000001');"
+assert_eq "php define URL" "https://api.altcontext.com" "$(php_define_value ACX_RECOGNITION_URL "$_extra")"
+assert_eq "php define API key" "secret-key" "$(php_define_value ACX_RECOGNITION_API_KEY "$_extra")"
+assert_eq "php define tenant" "00000000-0000-4000-8000-000000000001" "$(php_define_value ACX_RECOGNITION_TENANT_ID "$_extra")"
+assert_eq "php define missing is empty (no ACX_DESCRIPTION_ADAPTER fallback)" "" "$(php_define_value ACX_DESCRIPTION_ADAPTER "$_extra")"
+
+# Fixture-caption provenance classifier (same canned pool as smoke-gate).
+assert_eq "alt provenance empty sample UNKNOWN" UNKNOWN "$(classify_describe_provenance '')"
+assert_eq "alt provenance real caption PASS" PASS "$(classify_describe_provenance 'A woman in a red coat speaks at a podium in front of a blue backdrop.')"
+assert_eq "alt provenance fixture FAIL" FAIL "$(classify_describe_provenance 'A close-up of a small object on a neutral background.')"
+
+# --- XLANE-01: shared evasion corpus (describe-gate + smoke-gate) ---
+# Both classifiers must agree on every non-empty row. Empty sample is the
+# one intentional difference: smoke fails closed, describe reports UNKNOWN
+# because nothing was measured.
+smoke_gate_file="${script_dir}/../../../../scripts/deploy/lib/smoke-gate.sh"
+fixture_denylist_file="${script_dir}/../../../../scripts/deploy/lib/fixture-denylist.sh"
+if [ ! -f "$fixture_denylist_file" ]; then
+    echo "FAIL fixture-denylist.sh missing: ${fixture_denylist_file}"
+    exit 1
+fi
+# shellcheck source=../../../../scripts/deploy/lib/fixture-denylist.sh
+source "$fixture_denylist_file"
+# shellcheck source=../../../../scripts/deploy/lib/smoke-gate.sh
+source "$smoke_gate_file"
+
+# XLANE-02: this pin sits outside assert_corpus_row so restoring the old
+# deferral hatch cannot print ok and exit 0 on a case-sensitive smoke-gate.
+# R3V-01 moved the denylist decision out of classify_alt_provenance and into
+# the per-caption loop, so the pin asserts the matcher verdict first: without
+# it, passing sample text where denied_count now belongs would still print
+# FAIL (non-numeric -> FAIL) and the pin would pass for the wrong reason.
+xlane02_sample='a close-up of a small object on a neutral background'
+xlane02_denied=0
+if fixture_sample_is_denied "$xlane02_sample"; then xlane02_denied=1; fi
+assert_eq "XLANE-02 shared matcher denies lowercased close-up" \
+    "1" "$xlane02_denied"
+assert_eq "XLANE-02 live-smoke lowercased close-up is FAIL" \
+    FAIL "$(classify_alt_provenance "$xlane02_denied" florence_small 1 1)"
+hatch_pat="lacks DEMOLIVE-6"
+hatch_pat="${hatch_pat} normalizer"
+assert_eq "XLANE-02 live-smoke bind has no deferral hatch" \
+    "0" "$(grep -c "${hatch_pat}" "$0" || true)"
+
+# Specified smoke semantics (empty -> FAIL) using the shared matcher when
+# present, else the live smoke-gate function. describe-gate must match the
+# specified column regardless.
+expected_smoke_from_shared() {
+    local sample="$1"
+    if [ -z "$sample" ]; then
+        echo FAIL
+        return
+    fi
+    if type fixture_sample_is_denied >/dev/null 2>&1; then
+        if fixture_sample_is_denied "$sample"; then
+            echo FAIL
+        else
+            echo PASS
+        fi
+        return
+    fi
+    # Unreachable: fixture-denylist.sh is sourced above and its absence exits 1.
+    # Substituting another classifier here would silently change the semantics
+    # this column exists to pin, so emit a value that can never assert equal.
+    echo "shared matcher fixture_sample_is_denied is not defined" >&2
+    echo SHARED-MATCHER-MISSING
+}
+
+assert_corpus_row() {
+    local label="$1"
+    local sample="$2"
+    local smoke_exp="$3"
+    local describe_exp="$4"
+    local describe_got smoke_sem smoke_live row_denied row_normalized
+
+    describe_got=$(classify_describe_provenance "$sample")
+    assert_eq "corpus describe ${label}" "$describe_exp" "$describe_got"
+
+    smoke_sem=$(expected_smoke_from_shared "$sample")
+    assert_eq "corpus smoke-sem ${label}" "$smoke_exp" "$smoke_sem"
+
+    # Trusted identity so this pins Gate B, not fail-closed Gate A. Since
+    # R3V-01 the denylist runs per caption in load_alt_counts_from_media_body
+    # and classify_alt_provenance consumes the counts, so this column pins the
+    # aggregator contract (honours denied_count, fails closed on zero
+    # measurable captions) rather than re-deriving the string verdict.
+    row_denied=0
+    if fixture_sample_is_denied "$sample"; then row_denied=1; fi
+    row_normalized=0
+    if [ -n "$(normalize_fixture_sample "$sample")" ]; then row_normalized=1; fi
+    # FAIL paths return 1 (R2-13); this suite runs under set -e.
+    smoke_live=$(classify_alt_provenance "$row_denied" florence_small 1 "$row_normalized") || true
+    assert_eq "corpus live-smoke aggregate ${label}" "$smoke_exp" "$smoke_live"
+}
+
+assert_corpus_row "punctuated fixture" \
+    "A close-up of a small object on a neutral background." FAIL FAIL
+assert_corpus_row "no period" \
+    "A close-up of a small object on a neutral background" FAIL FAIL
+assert_corpus_row "lowercased" \
+    "a close-up of a small object on a neutral background." FAIL FAIL
+assert_corpus_row "case + padding" \
+    " A Close-Up Of A Small Object On A Neutral Background " FAIL FAIL
+assert_corpus_row "double space + bang" \
+    "A close-up of a small object on a  neutral background!" FAIL FAIL
+assert_corpus_row "bang only" \
+    "A close-up of a small object on a neutral background!" FAIL FAIL
+assert_corpus_row "genuine caption" \
+    "A woman in a red coat crossing Charing Cross Road." PASS PASS
+assert_corpus_row "empty sample (documented difference)" \
+    "" FAIL UNKNOWN
+
+# TEST-15 (DEMOLIVE-9-R2-01): substring evasions must still classify FAIL.
+# UTF-8 bytes, not $'\u....', so macOS bash 3.2 can construct the samples.
+nbsp=$'\xc2\xa0'
+emsp=$'\xe2\x80\x83'
+assert_corpus_row "person comma evasion" \
+    "a person, standing outdoors near greenery" FAIL FAIL
+assert_corpus_row "person nbsp evasion" \
+    "a person${nbsp}standing outdoors near greenery" FAIL FAIL
+assert_corpus_row "person em-space evasion" \
+    "a person${emsp}standing outdoors near greenery" FAIL FAIL
+assert_corpus_row "person uppercase trailing-bang evasion" \
+    "A PERSON STANDING OUTDOORS NEAR GREENERY!!" FAIL FAIL
+assert_corpus_row "plate comma evasion" \
+    "a plate of food, on a wooden table" FAIL FAIL
+assert_corpus_row "plate nbsp evasion" \
+    "a plate of food${nbsp}on a wooden table" FAIL FAIL
+assert_corpus_row "plate em-space evasion" \
+    "a plate of food${emsp}on a wooden table" FAIL FAIL
+assert_corpus_row "plate uppercase trailing-bang evasion" \
+    "A PLATE OF FOOD ON A WOODEN TABLE!!" FAIL FAIL
+assert_corpus_row "close-up comma evasion" \
+    "a close-up of a small object, on a neutral background" FAIL FAIL
+assert_corpus_row "close-up nbsp evasion" \
+    "a close-up of a small object${nbsp}on a neutral background" FAIL FAIL
+assert_corpus_row "close-up em-space evasion" \
+    "a close-up of a small object${emsp}on a neutral background" FAIL FAIL
+assert_corpus_row "close-up uppercase trailing-bang evasion" \
+    "A CLOSE-UP OF A SMALL OBJECT ON A NEUTRAL BACKGROUND!!" FAIL FAIL
+# Negative: shares wooden/table (arm 2) and person (arm 1) but not every
+# content token of any arm, so the looser matcher must not swallow it.
+assert_corpus_row "partial-overlap real caption stays PASS" \
+    "A person seated at a wooden table beside a window." PASS PASS
+
+# Shared denylist file must exist and agree with describe-gate on the corpus.
+if [ ! -f "$fixture_denylist_file" ]; then
+    echo "FAIL shared fixture-denylist.sh missing: ${fixture_denylist_file}"
+    failures=$((failures + 1))
+else
+    assert_shared_denied() {
+        local label="$1" sample="$2" expect_rc="$3"
+        local describe_rc=0 shared_rc
+        if type fixture_sample_is_denied >/dev/null 2>&1; then
+            fixture_sample_is_denied "$sample" || describe_rc=$?
+            assert_eq "describe denied ${label}" "$expect_rc" "$describe_rc"
+        else
+            echo "FAIL describe denied ${label}: fixture_sample_is_denied missing"
+            failures=$((failures + 1))
+        fi
+        shared_rc=$(bash -c '
+            # shellcheck disable=SC1090
+            source "$1"
+            if fixture_sample_is_denied "$2"; then echo 0; else echo 1; fi
+        ' _ "$fixture_denylist_file" "$sample")
+        assert_eq "shared denied ${label}" "$expect_rc" "$shared_rc"
+    }
+    assert_shared_denied "punctuated" "A close-up of a small object on a neutral background." 0
+    assert_shared_denied "no period" "A close-up of a small object on a neutral background" 0
+    assert_shared_denied "lowercased" "a close-up of a small object on a neutral background." 0
+    assert_shared_denied "padding" " A Close-Up Of A Small Object On A Neutral Background " 0
+    assert_shared_denied "bang" "A close-up of a small object on a  neutral background!" 0
+    assert_shared_denied "genuine" "A woman in a red coat crossing Charing Cross Road." 1
+    assert_shared_denied "empty" "" 1
+
+    extract_fn() {
+        local file="$1" name="$2"
+        awk -v n="$name" '
+            $0 ~ "^" n "\\(\\) \\{" {grab=1}
+            grab {print}
+            grab && $0 == "}" {exit}
+        ' "$file"
+    }
+    describe_gate_file="${script_dir}/../lib/describe-gate.sh"
+    for fn in normalize_fixture_sample _fixture_tokens_all_present fixture_sample_is_denied; do
+        if [ "$(extract_fn "$describe_gate_file" "$fn")" = "$(extract_fn "$fixture_denylist_file" "$fn")" ]; then
+            echo "ok   ${fn} bodies identical across copies"
+        else
+            echo "FAIL ${fn} bodies drifted between describe-gate.sh and fixture-denylist.sh"
+            failures=$((failures + 1))
+        fi
+    done
+fi
+
+# Every assertion below greps bootstrap-wp.sh as text, so a shell syntax error
+# introduced while editing those branches would go unnoticed. Parse it.
+if bash -n "$bootstrap_file" 2>/dev/null; then
+    echo "ok   bootstrap-wp.sh parses under bash -n"
+else
+    echo "FAIL bootstrap-wp.sh has a shell syntax error:"
+    # `|| true`: this pipeline is expected to fail (that is the whole point),
+    # and under the file's `set -euo pipefail` an unguarded failure kills the
+    # suite before the counter below, silently skipping every later assertion.
+    { bash -n "$bootstrap_file" 2>&1 | sed 's/^/     /'; } || true
+    failures=$((failures + 1))
+fi
+
+# --- DEMOGATE-1: probe failure must not be reported as an untrusted profile ---
+# An empty adapter means the /health/detailed probe failed (non-2xx, timeout,
+# missing constant, unparseable body). Telling the operator to "change the
+# description SERVICE profile" in that case routes them at the wrong system.
+assert_eq "block cause: empty adapter is a failed probe" \
+    PROBE_FAILED "$(classify_describe_block_cause "")"
+assert_eq "block cause: unknown adapter is an untrusted profile" \
+    UNTRUSTED_PROFILE "$(classify_describe_block_cause seeded)"
+assert_eq "block cause: allowlisted adapter is trusted" \
+    TRUSTED "$(classify_describe_block_cause gpu_qwen30b)"
+assert_eq "block cause: whitespace-only adapter is a failed probe" \
+    PROBE_FAILED "$(classify_describe_block_cause "   ")"
+assert_file_grep "bootstrap branches on classify_describe_block_cause" \
+    "$bootstrap_file" 'classify_describe_block_cause'
+assert_file_grep "probe-failure BLOCK names the probe, not the profile" \
+    "$bootstrap_file" 'could not read the live description service adapter'
+# The bare string 'health/detailed' already appears twice in the pre-change
+# file, so grepping for it proves nothing. Pin the arm itself: the guard must
+# compare against PROBE_FAILED (inverting it to UNTRUSTED_PROFILE restores the
+# original bug and misroutes the untrusted case), and the probe message must
+# live in that arm — i.e. between the guard and the untrusted fallback.
+assert_file_grep "probe-failure arm guards on PROBE_FAILED, not its inverse" \
+    "$bootstrap_file" 'classify_describe_block_cause "\$ADAPTER_PROFILE"\)" == "PROBE_FAILED"'
+
+guard_line=$(grep -n 'classify_describe_block_cause "\$ADAPTER_PROFILE"' "$bootstrap_file" | sed -n '1s/:.*//p')
+probe_msg_line=$(grep -n 'could not read the live description service adapter' "$bootstrap_file" | sed -n '1s/:.*//p')
+untrusted_msg_line=$(grep -n 'produces canned fixture captions' "$bootstrap_file" | sed -n '1s/:.*//p')
+if [ -n "$guard_line" ] && [ -n "$probe_msg_line" ] && [ -n "$untrusted_msg_line" ] \
+    && [ "$guard_line" -lt "$probe_msg_line" ] && [ "$probe_msg_line" -lt "$untrusted_msg_line" ]; then
+    echo "ok   probe message sits inside the PROBE_FAILED arm, untrusted message after it"
+else
+    echo "FAIL probe/untrusted messages are not ordered as guard(${guard_line:-?}) < probe(${probe_msg_line:-?}) < untrusted(${untrusted_msg_line:-?})"
+    failures=$((failures + 1))
+fi
+assert_file_grep "probe-failure message names the probed endpoint" \
+    "$bootstrap_file" 'could not read the live description service adapter.*health/detailed'
+
+# BR-03: the word-split trim must run under `set -f`, matching the guard the
+# sibling classify_claimed_adapter_matches_probe already carries. Without it a
+# profile of `*` glob-expands against cwd.
+glob_probe_dir=$(mktemp -d)
+glob_cause=$(cd "$glob_probe_dir" && : > florence_small && classify_describe_block_cause '*')
+rm -rf "$glob_probe_dir"
+assert_eq "block cause: a glob profile does not expand against cwd" \
+    UNTRUSTED_PROFILE "$glob_cause"
+
+# --- bootstrap-wp.sh wiring (R1-05 / R1-04 / RLSE-08) ---
+health_file="${script_dir}/../../../../apps/prototype-description-service/api/main.py"
+assert_file_grep "service /health/detailed payload includes description_adapter" \
+    "$health_file" '"description_adapter": description_adapter'
+assert_file_grep "bootstrap probes /health/detailed" "$bootstrap_file" '/health/detailed'
+assert_file_grep "bootstrap reads description_adapter field" "$bootstrap_file" 'description_adapter'
+assert_file_not_grep "bootstrap does not env_get ACX_DESCRIPTION_ADAPTER" "$bootstrap_file" 'env_get ACX_DESCRIPTION_ADAPTER'
+assert_file_grep "bootstrap reuses ACX_RECOGNITION_URL" "$bootstrap_file" 'ACX_RECOGNITION_URL'
+assert_file_grep "bootstrap reuses ACX_RECOGNITION_API_KEY" "$bootstrap_file" 'ACX_RECOGNITION_API_KEY'
+assert_file_not_grep "BLOCK message does not tell operator to set demo env adapter" "$bootstrap_file" 'Set ACX_DESCRIPTION_ADAPTER to one of'
+assert_file_grep "BLOCK message names the live service producer" "$bootstrap_file" 'description SERVICE'
+assert_file_grep "config-fault BLOCK exits 1" "$bootstrap_file" 'exit 1'
+assert_file_grep "environment-fault message kept distinct" "$bootstrap_file" 'environment fault, not a config fault'
+assert_file_grep "bootstrap handles RUN_FORCE" "$bootstrap_file" 'RUN_FORCE'
+assert_file_grep "RUN_FORCE invokes --write --force --limit=100" "$bootstrap_file" 'describe generate --write --force --limit=100'
+assert_file_grep "CLI --force flag exists before wiring" "$cli_file" '\[--force\]'
+
+echo
+if [ "$failures" -gt 0 ]; then
+    echo "${failures} assertion(s) failed"
+    exit 1
+fi
+echo "all assertions passed"

@@ -57,6 +57,11 @@ from recognition.shared.db.dialect import is_postgres
 
 logger = logging.getLogger(__name__)
 
+# SEC-01 / API-05: fixed client-facing text for server faults. The exception body
+# stays server-side in the log record; 501 would tell the caller the endpoint does
+# not exist and change its retry/caching decision (API-08).
+INTERNAL_ERROR_DETAIL = "internal server error"
+
 router = APIRouter(tags=["analyze"], dependencies=[Depends(require_auth), Depends(enforce_rate_limit)])
 
 
@@ -317,14 +322,14 @@ async def analyze_media(
         outcome = "programming_error"
         if _is_insufficient_privilege(exc):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="insufficient privileges") from exc
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=INTERNAL_ERROR_DETAIL) from exc
     except HTTPException:
         outcome = "http_exception"
         raise
     except Exception as exc:  # pragma: no cover - stub fallback
         outcome = "unexpected_exception"
         logger.exception("Unexpected error in analyze_media: %s", exc)
-        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=INTERNAL_ERROR_DETAIL) from exc
     finally:
         logger.info(
             "analyze_media_timing tenant_id=%s outcome=%s inline_processing=%s media_items=%d elapsed_ms=%.2f",

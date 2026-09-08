@@ -11,12 +11,16 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.suggestion import SuggestionStatus
 from recognition.interface_adapters.http.routers.suggestions import (
+    AcceptMergeSuggestionResponse,
     _is_meaningful_label,
+    _resolve_merge_pair,
     _select_merge_target,
+    _to_accept_merge_response,
     _to_merge_response,
 )
 from recognition.interface_adapters.http.schemas.responses import MergeSuggestionResponse
@@ -141,6 +145,79 @@ def test_select_merge_target_user_confirmed_flips_survivor_over_larger_count() -
     assert target_label == "Bob"
 
 
+def test_select_merge_target_uses_durable_survivor_over_ranking() -> None:
+    """S3-F1 mutant (b): ranking loser still survives when survivor_cluster_id is set."""
+    ranking_winner = _cluster(
+        cluster_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        user_confirmed=True,
+        label="Alice",
+        identity_count=50,
+    )
+    durable_survivor = _cluster(
+        cluster_id="ffffffff-ffff-ffff-ffff-ffffffffffff",
+        user_confirmed=False,
+        label=None,
+        identity_count=1,
+    )
+
+    source_id, target_id, target_label = _select_merge_target(
+        ranking_winner,
+        durable_survivor,
+        survivor_cluster_id=durable_survivor.id,
+    )
+
+    assert target_id == durable_survivor.id
+    assert source_id == ranking_winner.id
+    assert target_label is None
+
+
+def test_select_merge_target_labeled_sorts_after_unlabeled_merges_into_labeled() -> None:
+    """S3-F1: accept merges INTO the labeled cluster even when its UUID sorts last."""
+    unlabeled = _cluster(
+        cluster_id="00000000-0000-0000-0000-000000000001",
+        user_confirmed=False,
+        label=None,
+        identity_count=50,
+    )
+    labeled = _cluster(
+        cluster_id="ffffffff-ffff-ffff-ffff-ffffffffffff",
+        user_confirmed=True,
+        label="Ada Lovelace",
+        identity_count=1,
+    )
+
+    source_id, target_id, target_label = _select_merge_target(
+        unlabeled,
+        labeled,
+        survivor_cluster_id=labeled.id,
+    )
+
+    assert target_id == labeled.id
+    assert source_id == unlabeled.id
+    assert target_label == "Ada Lovelace"
+
+
+def test_select_merge_target_null_survivor_falls_back_to_ranking() -> None:
+    ranking_winner = _cluster(
+        cluster_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        user_confirmed=True,
+        label="Alice",
+        identity_count=50,
+    )
+    ranking_loser = _cluster(
+        cluster_id="ffffffff-ffff-ffff-ffff-ffffffffffff",
+        user_confirmed=False,
+        label=None,
+        identity_count=1,
+    )
+
+    source_id, target_id, target_label = _select_merge_target(ranking_winner, ranking_loser)
+
+    assert target_id == ranking_winner.id
+    assert source_id == ranking_loser.id
+    assert target_label == "Alice"
+
+
 def test_select_merge_target_user_confirmed_flip_when_confirmed_is_cluster_a() -> None:
     """Same ranking with sides swapped — confirmed still survives as sole flip."""
     confirmed_a = _cluster(
@@ -242,3 +319,102 @@ async def test_resolve_accepted_merge_ids_via_existence() -> None:
     source_id, target_id = await _resolve_accepted_merge_ids(suggestion, _Repo())
     assert source_id == cluster_a_id
     assert target_id == cluster_b_id
+
+
+def test_resolve_merge_pair_without_choice_falls_back_to_ranking() -> None:
+    """FEBT1-LD-01: omitting target_cluster_id keeps the server-ranked survivor."""
+    a = _cluster(cluster_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", label=None, identity_count=50)
+    b = _cluster(cluster_id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", label="Named", identity_count=2)
+
+    assert _resolve_merge_pair(a, b, requested_target_cluster_id=None) == _select_merge_target(a, b)
+
+
+def test_resolve_merge_pair_honours_operator_choice_against_ranking() -> None:
+    """FEBT1-LD-01: an explicit survivor must win over _select_merge_target's pick."""
+    a = _cluster(cluster_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", label=None, identity_count=50)
+    b = _cluster(cluster_id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", label="Named", identity_count=2)
+    # Ranking prefers the labelled B; the operator pins the unlabelled A instead.
+    assert _select_merge_target(a, b)[1] == b.id
+
+    source_id, target_id, target_label = _resolve_merge_pair(a, b, requested_target_cluster_id=a.id)
+
+    assert target_id == a.id
+    assert source_id == b.id
+    assert target_label is None
+
+
+def test_resolve_merge_pair_operator_choice_is_case_insensitive() -> None:
+    """Cluster ids are stored lowercase; an upper-case operator id is the same cluster."""
+    a = _cluster(cluster_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", label="Alice", identity_count=3)
+    b = _cluster(cluster_id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", label="Bob", identity_count=9)
+
+    source_id, target_id, target_label = _resolve_merge_pair(
+        a, b, requested_target_cluster_id="AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"
+    )
+
+    assert target_id == a.id
+    assert source_id == b.id
+    assert target_label == "Alice"
+
+
+def test_resolve_merge_pair_preserves_meaningful_operator_label() -> None:
+    """The chosen survivor's meaningful label must survive, not be dropped to None."""
+    a = _cluster(cluster_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", label="Alice", identity_count=1)
+    b = _cluster(cluster_id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", label="cluster-bbb", identity_count=90)
+
+    _, _, target_label = _resolve_merge_pair(a, b, requested_target_cluster_id=b.id)
+    assert target_label is None
+
+    _, _, target_label_a = _resolve_merge_pair(a, b, requested_target_cluster_id=a.id)
+    assert target_label_a == "Alice"
+
+
+def test_resolve_merge_pair_rejects_target_outside_the_pair() -> None:
+    """FEBT1-LD-01: an unrelated survivor id must 422, never silently auto-select."""
+    a = _cluster(cluster_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", label="Alice", identity_count=3)
+    b = _cluster(cluster_id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", label="Bob", identity_count=9)
+
+    with pytest.raises(HTTPException) as excinfo:
+        _resolve_merge_pair(a, b, requested_target_cluster_id="cccccccc-cccc-cccc-cccc-cccccccccccc")
+
+    assert excinfo.value.status_code == 422
+    assert "target_cluster_id" in str(excinfo.value.detail)
+
+
+def test_accept_merge_response_defaults_moved_identity_ids_to_empty_list() -> None:
+    """The revert set is always present and never null on the accept envelope."""
+    suggestion = SimpleNamespace(
+        id=str(uuid4()),
+        cluster_a_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        cluster_b_id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        similarity=0.5,
+        status=SuggestionStatus.ACCEPTED,
+        confidence_score=0.5,
+        expires_at=None,
+        source_job_id=None,
+    )
+
+    widened = _to_accept_merge_response(_to_merge_response(suggestion))
+
+    assert isinstance(widened, AcceptMergeSuggestionResponse)
+    assert widened.moved_identity_ids == []
+    assert "moved_identity_ids" in widened.model_dump()
+
+
+def test_accept_merge_response_carries_moved_identity_ids() -> None:
+    """The widened envelope must forward the moved set verbatim."""
+    moved = [str(uuid4()), str(uuid4())]
+    suggestion = SimpleNamespace(
+        id=str(uuid4()),
+        cluster_a_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        cluster_b_id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        similarity=0.5,
+        status=SuggestionStatus.ACCEPTED,
+        confidence_score=0.5,
+        expires_at=None,
+        source_job_id=None,
+    )
+
+    widened = _to_accept_merge_response(_to_merge_response(suggestion), moved_identity_ids=moved)
+
+    assert widened.moved_identity_ids == moved

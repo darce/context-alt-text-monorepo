@@ -19,8 +19,13 @@ import {
 import { commitClusterToRosterEntry } from '../../../../api/rosterApi';
 import { DATA_SOURCE } from '../../../../api/recognition/types';
 import type { TopUnlabeledClustersResponse } from '../../../../api/recognition/types/cluster';
+import { SAVE_TIMEOUT_MS } from '../clusterLabelingBudget';
+import { isClusterMutationTimeoutError } from '../clusterMutationUtils';
 import { useRosterEntries } from '../../../../hooks/useRosterHooks';
 import { createMockQuery } from '../../../../test-utils/mockHooks';
+import { classifyError } from '../../../../utils/appError';
+import { HTTPError } from '../../../../utils/http';
+import { CLUSTER_MUTATION_ERROR_COPY } from '../clusterMutationUtils';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -169,6 +174,20 @@ describe('ClusterLabelingPanel', () => {
     );
   });
 
+  it('offers a way back when the face group has no members', async () => {
+    const onClose = vi.fn();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ClusterLabelingPanel clusterId="empty-group" onClose={onClose} onLabel={vi.fn()} />
+      </QueryClientProvider>,
+    );
+
+    const action = await screen.findByRole('button', { name: 'Back to review suggestions' });
+    await userEvent.click(action);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   // UXW2-3: the panel uses the inline NameFaceControl — type straight into the field.
   const typePanelName = async (name: string) => {
     const user = userEvent.setup();
@@ -201,10 +220,55 @@ describe('ClusterLabelingPanel', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Merge into group "Slate Willow"' }));
 
     await waitFor(() => {
-      expect(mergeCluster).toHaveBeenCalledWith('panel-cluster-id', 'target-cluster-id', 'Slate Willow');
+      expect(mergeCluster).toHaveBeenCalledWith(
+        'panel-cluster-id',
+        'target-cluster-id',
+        'Slate Willow',
+        expect.any(AbortSignal),
+      );
     });
     expect(await screen.findByText(/Merged into/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Undo merge' })).toBeInTheDocument();
+  });
+
+  it('FEBT2-W2-R-01: the merge undo runs under the same interactive budget as its siblings', async () => {
+    // The hook's docstring claims a shared interactive budget for all four of its writes.
+    // The undo was the one exception, falling through to the global fetch timeout (RES-02,
+    // lexicons/engineering.md:113). This pins the claim: a live signal at dispatch, aborted
+    // by the deadline with the branded sentinel, so no `onError` can read an expired budget
+    // as a user cancel and go silent (RLSE-05, lexicons/engineering.md:696).
+    vi.mocked(listRecognitionClusters).mockResolvedValue(makeClusterListResponse());
+    let revertSignal: AbortSignal | undefined;
+    vi.mocked(revertMergeCluster).mockImplementation((_payload, signal) => {
+      revertSignal = signal;
+      return new Promise(() => undefined);
+    });
+
+    vi.useFakeTimers();
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTimeAsync });
+      renderPanel();
+
+      const input = await screen.findByRole('combobox', { name: 'Name' });
+      await user.clear(input);
+      await user.type(input, 'Slate Willow');
+      await user.click(await screen.findByRole('option', { name: /confirm match/i }));
+      await user.click(await screen.findByRole('button', { name: 'Merge into group "Slate Willow"' }));
+      await user.click(await screen.findByRole('button', { name: 'Undo merge' }));
+
+      await waitFor(() => expect(revertMergeCluster).toHaveBeenCalled());
+      expect(revertSignal).toBeInstanceOf(AbortSignal);
+      expect(revertSignal?.aborted).toBe(false);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(SAVE_TIMEOUT_MS);
+      });
+
+      expect(revertSignal?.aborted).toBe(true);
+      expect(isClusterMutationTimeoutError(revertSignal?.reason)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('moves focus to the first duplicate-guard action when the guard opens (UXW2-3-R6-06)', async () => {
@@ -318,7 +382,7 @@ describe('ClusterLabelingPanel', () => {
       expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
         clusterId: 'panel-cluster-id',
         rosterEntryId: 11,
-      });
+      }, expect.any(AbortSignal));
     });
     expect(updateClusterLabel).not.toHaveBeenCalled();
     expect(screen.queryByText(/already exists/)).not.toBeInTheDocument();
@@ -429,6 +493,42 @@ describe('ClusterLabelingPanel', () => {
     expect(container.querySelector('.acx-face-thumbnail')).toBeNull();
   });
 
+  // UXB-01 / A11Y-02: face evidence needs distinct comparison labels in visual order.
+  it('labels faces from the same media by their left-to-right bbox position', async () => {
+    vi.mocked(fetchClusterMembers).mockResolvedValue(
+      makeClusterMembersResponse([
+        {
+          identity_id: 'identity-right',
+          media_id: 101,
+          similarity: 0.97,
+          confidence: 0.99,
+          thumb_url: 'http://example.test/uploads/group.jpg',
+          media_url: 'http://example.test/media/group.jpg',
+          bbox: { x: 80, y: 2, width: 20, height: 20 },
+        },
+        {
+          identity_id: 'identity-left',
+          media_id: 101,
+          similarity: 0.96,
+          confidence: 0.98,
+          thumb_url: 'http://example.test/uploads/group.jpg',
+          media_url: 'http://example.test/media/group.jpg',
+          bbox: { x: 10, y: 2, width: 20, height: 20 },
+        },
+      ]),
+    );
+
+    renderPanel();
+
+    const [rightHandFace, leftHandFace] = await screen.findAllByRole('img', { name: /Face \d in media 101/ });
+
+    expect(rightHandFace).toHaveAccessibleName('Face 2 in media 101');
+    expect(rightHandFace).toHaveStyle({ transform: 'translate(-256px, -6.4px) scale(3.2)' });
+    expect(leftHandFace).toHaveAccessibleName('Face 1 in media 101');
+    expect(leftHandFace).toHaveStyle({ transform: 'translate(-32px, -6.4px) scale(3.2)' });
+    expect(screen.queryByRole('img', { name: 'Face to label' })).not.toBeInTheDocument();
+  });
+
   it('pages through show-all when the members envelope is truncated', async () => {
     const fetchMock = vi.mocked(fetchClusterMembers);
     fetchMock.mockImplementation((_clusterId, params = {}): Promise<ClusterMembersResponse> => {
@@ -510,7 +610,7 @@ describe('ClusterLabelingPanel', () => {
 
     expect(container.querySelector('.acx-face-thumbnail')).not.toBeNull();
     expect(container.querySelector('.acx-avatar')).toBeNull();
-    expect(screen.getByRole('img', { name: 'Face to label' })).toHaveAttribute(
+    expect(screen.getByRole('img', { name: 'Face 1 in media 102' })).toHaveAttribute(
       'src',
       'http://example.test/media/source-102.jpg',
     );
@@ -540,7 +640,7 @@ describe('ClusterLabelingPanel', () => {
 
     expect(container.querySelector('.acx-face-thumbnail')).toBeNull();
     expect(screen.getByText('No image')).toBeInTheDocument();
-    const unavailable = screen.getByRole('img', { name: 'Face to label — image unavailable' });
+    const unavailable = screen.getByRole('img', { name: 'Face 1 in media 200 — image unavailable' });
     expect(unavailable).toBeInTheDocument();
     expect(unavailable).toHaveClass('acx-cluster-labeling-panel__face-unavailable');
   });
@@ -568,7 +668,7 @@ describe('ClusterLabelingPanel', () => {
 
     expect(container.querySelector('.acx-face-thumbnail')).not.toBeNull();
     expect(screen.queryByText('No image')).not.toBeInTheDocument();
-    expect(screen.getByRole('img', { name: 'Face to label' })).toHaveAttribute(
+    expect(screen.getByRole('img', { name: 'Face 1 in media 201' })).toHaveAttribute(
       'src',
       'http://example.test/media/label-positive.jpg',
     );
@@ -588,7 +688,7 @@ describe('ClusterLabelingPanel', () => {
   });
 
   it('shows timeout error inline with alert role', async () => {
-    vi.mocked(updateClusterLabel).mockRejectedValueOnce(new Error('save request timed out'));
+    vi.mocked(updateClusterLabel).mockRejectedValueOnce(new DOMException('The operation timed out.', 'TimeoutError'));
 
     renderPanel();
 
@@ -596,11 +696,51 @@ describe('ClusterLabelingPanel', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Save name' }));
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('Save is taking too long. Please try again.');
+    expect(alert).toHaveTextContent(CLUSTER_MUTATION_ERROR_COPY.timeout);
+  });
+
+  it('maps DOMException AbortError from save to the timeout copy', async () => {
+    vi.mocked(updateClusterLabel).mockRejectedValueOnce(new DOMException('The operation was aborted.', 'AbortError'));
+
+    renderPanel();
+
+    await typePanelName('Pewter Hollow');
+    await userEvent.click(screen.getByRole('button', { name: 'Save name' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(CLUSTER_MUTATION_ERROR_COPY.timeout);
+  });
+
+  it('maps pre-classified abort AppError from save to the timeout copy [CARD-24]', async () => {
+    vi.mocked(updateClusterLabel).mockRejectedValueOnce(
+      classifyError(new DOMException('The operation was aborted.', 'AbortError')),
+    );
+
+    renderPanel();
+
+    await typePanelName('Pewter Hollow');
+    await userEvent.click(screen.getByRole('button', { name: 'Save name' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(CLUSTER_MUTATION_ERROR_COPY.timeout);
+  });
+
+  it('maps non-DOMException TimeoutError abort from save to the timeout copy [CARD-24]', async () => {
+    const timeoutErr = new Error('signal cancelled');
+    timeoutErr.name = 'TimeoutError';
+    vi.mocked(updateClusterLabel).mockRejectedValueOnce(timeoutErr);
+
+    renderPanel();
+
+    await typePanelName('Pewter Hollow');
+    await userEvent.click(screen.getByRole('button', { name: 'Save name' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(CLUSTER_MUTATION_ERROR_COPY.timeout);
   });
 
   it('shows network error inline with alert role', async () => {
-    vi.mocked(updateClusterLabel).mockRejectedValueOnce(new Error('Failed to fetch'));
+    vi.mocked(updateClusterLabel).mockRejectedValueOnce(new TypeError('Failed to fetch'));
 
     renderPanel();
 
@@ -608,14 +748,20 @@ describe('ClusterLabelingPanel', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Save name' }));
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('Network error. Please check your connection and try again.');
+    expect(alert).toHaveTextContent(CLUSTER_MUTATION_ERROR_COPY.transport);
   });
 
   it('shows projection-not-ready error inline with alert role', async () => {
     vi.mocked(updateClusterLabel).mockRejectedValueOnce(
-      new Error(
-        'Request to /recognition/clusters/panel-cluster-id failed (409): {"code":"projection_not_ready","message":"Local projection is not ready for curation yet. Retry sync and try again."}',
-      ),
+      new HTTPError({
+        status: 409,
+        retryAfterSeconds: undefined,
+        endpoint: '/recognition/clusters/panel-cluster-id',
+        bodyPreview:
+          '{"code":"projection_not_ready","message":"Local projection is not ready for curation yet. Retry sync and try again."}',
+        message:
+          'Request to /recognition/clusters/panel-cluster-id failed (409): {"code":"projection_not_ready","message":"Local projection is not ready for curation yet. Retry sync and try again."}',
+      }),
     );
 
     renderPanel();
@@ -625,6 +771,29 @@ describe('ClusterLabelingPanel', () => {
 
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('Local sync is still catching up. Retry sync before editing labels.');
+  });
+
+  it('409 stale conflict shows reload affordance and never leaks the endpoint [FEBT1-W2A-04]', async () => {
+    vi.mocked(updateClusterLabel).mockRejectedValueOnce(
+      new HTTPError({
+        status: 409,
+        retryAfterSeconds: undefined,
+        endpoint: '/acx/v1/recognition/clusters/panel-cluster-id',
+        bodyPreview: '{"code":"cluster_version_conflict"}',
+        message:
+          'Request to /acx/v1/recognition/clusters/panel-cluster-id failed (409): {"code":"cluster_version_conflict"}',
+      }),
+    );
+
+    renderPanel();
+
+    await typePanelName('Pewter Hollow');
+    await userEvent.click(screen.getByRole('button', { name: 'Save name' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(CLUSTER_MUTATION_ERROR_COPY.staleConflict);
+    expect(alert).not.toHaveTextContent('/acx/v1/recognition/clusters/panel-cluster-id');
+    expect(screen.getByRole('button', { name: 'Reload page' })).toBeInTheDocument();
   });
 
   it('dismisses duplicate guard on Cancel and keeps editing available', async () => {
@@ -698,18 +867,16 @@ describe('ClusterLabelingPanel', () => {
   it('announces roster loading and empty states (A11Y-24 / FIX-7)', async () => {
     // Predicted first failure: loading/empty strings not announced in live region
     // Cast: createMockQuery's success-shaped defaults disagree with loading flags.
-    vi.mocked(useRosterEntries).mockReturnValue(
-      {
-        data: [],
-        isLoading: true,
-        isError: false,
-        isSuccess: false,
-        isPending: true,
-        status: 'pending',
-        fetchStatus: 'fetching',
-        refetch: vi.fn(),
-      } as unknown as ReturnType<typeof useRosterEntries>,
-    );
+    vi.mocked(useRosterEntries).mockReturnValue({
+      data: [],
+      isLoading: true,
+      isError: false,
+      isSuccess: false,
+      isPending: true,
+      status: 'pending',
+      fetchStatus: 'fetching',
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useRosterEntries>);
 
     const { rerender, queryClient } = renderPanel();
 
@@ -811,17 +978,13 @@ describe('ClusterLabelingPanel', () => {
     const user = await typePanelName('cluster-auto-1');
     await user.click(screen.getByRole('button', { name: 'Save name' }));
 
-    expect(
-      await screen.findByRole('alert'),
-    ).toHaveTextContent(
+    expect(await screen.findByRole('alert')).toHaveTextContent(
       'This label format is reserved for automatic group IDs. Choose a descriptive name.',
     );
     expect(screen.queryByText(/already exists/)).not.toBeInTheDocument();
     expect(updateClusterLabel).not.toHaveBeenCalled();
     expect(mergeCluster).not.toHaveBeenCalled();
-    expect(
-      vi.mocked(listRecognitionClusters).mock.calls.some((call) => call[0]?.limit === 10),
-    ).toBe(false);
+    expect(vi.mocked(listRecognitionClusters).mock.calls.some((call) => call[0]?.limit === 10)).toBe(false);
   });
 
   it('remote guard collides on machine-shaped label via case-insensitive raw equality (BR-50 / BR-42)', async () => {
@@ -895,7 +1058,12 @@ describe('ClusterLabelingPanel', () => {
 
     await user.click(mergeButton);
     await waitFor(() => {
-      expect(mergeCluster).toHaveBeenCalledWith('panel-cluster-id', 'real-match-id', 'Pat Rivera');
+      expect(mergeCluster).toHaveBeenCalledWith(
+        'panel-cluster-id',
+        'real-match-id',
+        'Pat Rivera',
+        expect.any(AbortSignal),
+      );
     });
   });
 
@@ -922,14 +1090,8 @@ describe('ClusterLabelingPanel', () => {
     await user.click(screen.getByRole('button', { name: 'Save name' }));
 
     await waitFor(() => {
-      expect(listMock.mock.calls.some((call) => call[0]?.limit === 10 && call[0]?.labeled_only === true)).toBe(
-        true,
-      );
-      expect(updateClusterLabel).toHaveBeenCalledWith(
-        'panel-cluster-id',
-        'Unique Name Zq',
-        expect.any(AbortSignal),
-      );
+      expect(listMock.mock.calls.some((call) => call[0]?.limit === 10 && call[0]?.labeled_only === true)).toBe(true);
+      expect(updateClusterLabel).toHaveBeenCalledWith('panel-cluster-id', 'Unique Name Zq', expect.any(AbortSignal));
     });
     expect(screen.queryByText(/already exists/)).not.toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
@@ -953,16 +1115,12 @@ describe('ClusterLabelingPanel', () => {
 
     await user.click(screen.getByRole('button', { name: 'Save name' }));
 
-    expect(
-      await screen.findByRole('alert'),
-    ).toHaveTextContent(
+    expect(await screen.findByRole('alert')).toHaveTextContent(
       'This label format is reserved for automatic group IDs. Choose a descriptive name.',
     );
     expect(updateClusterLabel).not.toHaveBeenCalled();
     expect(mergeCluster).not.toHaveBeenCalled();
-    expect(listMock.mock.calls.filter((call) => call[0]?.limit === 10).length).toBe(
-      remoteGuardCallsBefore,
-    );
+    expect(listMock.mock.calls.filter((call) => call[0]?.limit === 10).length).toBe(remoteGuardCallsBefore);
   });
 
   it('BR-46: human label Cluster-Dad proceeds past reserved validation to save', async () => {
@@ -974,11 +1132,7 @@ describe('ClusterLabelingPanel', () => {
     await user.click(screen.getByRole('button', { name: 'Save name' }));
 
     await waitFor(() => {
-      expect(updateClusterLabel).toHaveBeenCalledWith(
-        'panel-cluster-id',
-        'Cluster-Dad',
-        expect.any(AbortSignal),
-      );
+      expect(updateClusterLabel).toHaveBeenCalledWith('panel-cluster-id', 'Cluster-Dad', expect.any(AbortSignal));
     });
     expect(screen.queryByText(/reserved for automatic group IDs/i)).not.toBeInTheDocument();
   });
@@ -1118,7 +1272,7 @@ describe('ClusterLabelingPanel', () => {
       expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
         clusterId: 'panel-cluster-id',
         rosterEntryId: 42,
-      });
+      }, expect.any(AbortSignal));
     });
     expect(updateClusterLabel).not.toHaveBeenCalled();
     expect(screen.queryByText(/already exists/)).not.toBeInTheDocument();
@@ -1191,7 +1345,7 @@ describe('ClusterLabelingPanel', () => {
       expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
         clusterId: 'source-cluster-id',
         rosterEntryId: 42,
-      });
+      }, expect.any(AbortSignal));
     });
     expect(updateClusterLabel).not.toHaveBeenCalled();
     expect(mergeCluster).not.toHaveBeenCalled();
@@ -1228,7 +1382,7 @@ describe('ClusterLabelingPanel', () => {
       expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
         clusterId: 'panel-cluster-id',
         rosterEntryId: 42,
-      });
+      }, expect.any(AbortSignal));
     });
     expect(updateClusterLabel).not.toHaveBeenCalled();
     expect(mergeCluster).not.toHaveBeenCalled();
@@ -1321,12 +1475,12 @@ describe('ClusterLabelingPanel', () => {
       expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
         clusterId: 'panel-cluster-id',
         rosterEntryId: 2,
-      });
+      }, expect.any(AbortSignal));
     });
     expect(commitClusterToRosterEntry).not.toHaveBeenCalledWith({
       clusterId: 'panel-cluster-id',
       rosterEntryId: 1,
-    });
+    }, expect.any(AbortSignal));
     expect(updateClusterLabel).not.toHaveBeenCalled();
   });
 
@@ -1384,7 +1538,7 @@ describe('ClusterLabelingPanel', () => {
     expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
       clusterId: 'panel-cluster-id',
       rosterEntryId: 42,
-    });
+    }, expect.any(AbortSignal));
     expect(updateClusterLabel).not.toHaveBeenCalled();
     release?.();
   });
@@ -1421,11 +1575,7 @@ describe('ClusterLabelingPanel', () => {
     await waitFor(() => {
       expect(updateClusterLabel).toHaveBeenCalledTimes(1);
     });
-    expect(updateClusterLabel).toHaveBeenCalledWith(
-      'panel-cluster-id',
-      'Pat Rivera',
-      expect.any(AbortSignal),
-    );
+    expect(updateClusterLabel).toHaveBeenCalledWith('panel-cluster-id', 'Pat Rivera', expect.any(AbortSignal));
     expect(commitClusterToRosterEntry).not.toHaveBeenCalled();
   });
 
@@ -1459,11 +1609,7 @@ describe('ClusterLabelingPanel', () => {
     await waitFor(() => {
       expect(updateClusterLabel).toHaveBeenCalledTimes(1);
     });
-    expect(updateClusterLabel).toHaveBeenCalledWith(
-      'panel-cluster-id',
-      'Slate Willow',
-      expect.any(AbortSignal),
-    );
+    expect(updateClusterLabel).toHaveBeenCalledWith('panel-cluster-id', 'Slate Willow', expect.any(AbortSignal));
   });
 
   it('Save name after a settled submit fires again (UXW2-3-R3-21)', async () => {
@@ -1481,12 +1627,7 @@ describe('ClusterLabelingPanel', () => {
     await waitFor(() => {
       expect(updateClusterLabel).toHaveBeenCalledTimes(2);
     });
-    expect(updateClusterLabel).toHaveBeenNthCalledWith(
-      2,
-      'panel-cluster-id',
-      'Sam Rivera',
-      expect.any(AbortSignal),
-    );
+    expect(updateClusterLabel).toHaveBeenNthCalledWith(2, 'panel-cluster-id', 'Sam Rivera', expect.any(AbortSignal));
   });
 
   it('two rapid Enter presses fire the mutation once (UXW2-3-R1-04 / R2-02)', async () => {
@@ -1637,7 +1778,7 @@ describe('ClusterLabelingPanel', () => {
       expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
         clusterId: 'panel-cluster-id',
         rosterEntryId: 42,
-      });
+      }, expect.any(AbortSignal));
     });
     expect(updateClusterLabel).not.toHaveBeenCalled();
   });
@@ -1655,7 +1796,7 @@ describe('ClusterLabelingPanel', () => {
       expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
         clusterId: 'panel-cluster-id',
         rosterEntryId: target.id,
-      });
+      }, expect.any(AbortSignal));
     });
     expect(updateClusterLabel).not.toHaveBeenCalled();
   });

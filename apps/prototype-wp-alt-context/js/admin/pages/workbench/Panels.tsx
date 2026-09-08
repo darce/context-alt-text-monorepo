@@ -8,6 +8,8 @@ import type { ScanRunViewModel } from './JobPipelineContext';
 import { JOB_PHASE_PRESENTATION } from './phasePresentation';
 import { formatSyncJobPhase } from './syncPresentation';
 import { SYNC_VOCABULARY } from './syncVocabulary';
+import { EmptyState, EmptyStateVariant } from '../../components/ui/EmptyState';
+import { toWorkbench } from '../../navigation/appLinks';
 export { mediaEditUrl, rosterUrl } from '../../utils/adminUrls';
 
 export const isClusteringActive = (phase?: string | null): boolean => phase === 'clustering' || phase === 'retrying';
@@ -443,11 +445,22 @@ export const RecentJobsPanel = ({
     {historySource === 'browser_local_fallback' ? (
       <p>{__('Showing jobs remembered in this browser only.', 'alt-context')}</p>
     ) : null}
-    {historySource === 'unavailable' && jobs.length === 0 ? (
-      <p>{__('Durable recent activity is unavailable right now.', 'alt-context')}</p>
-    ) : null}
-    {jobs.length === 0 ? (
-      <p>{__('No previous jobs yet.', 'alt-context')}</p>
+    {jobs.length === 0 ? historySource === 'unavailable' ? (
+      <EmptyState
+        variant={EmptyStateVariant.UNAVAILABLE}
+        heading={__('Recent jobs are unavailable', 'alt-context')}
+        body={__('Recent activity could not be loaded. Run a scan to start a new job.', 'alt-context')}
+        action={{ label: __('Run a scan', 'alt-context'), href: toWorkbench({ tab: 'scan' }) }}
+        headingLevel={3}
+      />
+    ) : (
+      <EmptyState
+        variant={EmptyStateVariant.EMPTY}
+        heading={__('No previous jobs yet.', 'alt-context')}
+        body={__('Run a scan to find faces in your media library.', 'alt-context')}
+        action={{ label: __('Run a scan', 'alt-context'), href: toWorkbench({ tab: 'scan' }) }}
+        headingLevel={3}
+      />
     ) : (
       <ul className="acx-job-history">
         {jobs.map((id) => (

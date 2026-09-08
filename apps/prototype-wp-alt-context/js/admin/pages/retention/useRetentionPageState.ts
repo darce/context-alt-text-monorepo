@@ -1,8 +1,15 @@
 import { useReducer, useRef } from 'react';
 import { __ } from '@wordpress/i18n';
 
-import type { RetentionExportResponse, RetentionMode, StartExportJobResponse } from '../../api/recognition';
+import {
+  EXPORT_COLLECTION_KEYS,
+  RetentionExportResponseError,
+  type RetentionExportResponse,
+  type RetentionMode,
+  type StartExportJobResponse,
+} from '../../api/recognition';
 import { useToast } from '../../context/ToastContext';
+import { toUserMessage } from '../../utils/appError';
 import { useRetentionPageMutations } from './useRetentionPageMutations';
 import { useRetentionPageQueries } from './useRetentionPageQueries';
 
@@ -83,7 +90,7 @@ export const retentionReducer = (state: RetentionDialogState, action: RetentionA
     case 'OPEN_EXPORT_DIALOG':
       return { ...state, isExportDialogOpen: true };
     case 'CLOSE_EXPORT_DIALOG':
-      return { ...state, isExportDialogOpen: false, exportJobId: null };
+      return { ...state, isExportDialogOpen: false };
     case 'SET_EXPORT_JOB_ID':
       return { ...state, exportJobId: action.jobId };
     case 'OPEN_PURGE_DIALOG':
@@ -109,23 +116,120 @@ export const retentionReducer = (state: RetentionDialogState, action: RetentionA
 /*  Utilities                                                          */
 /* ------------------------------------------------------------------ */
 
-const downloadExportPayload = (response: RetentionExportResponse): void => {
-  const exportDocument = {
-    ...(response.tenant_id ? { tenant_id: response.tenant_id } : {}),
-    ...(response.exported_at ? { exported_at: response.exported_at } : {}),
-    ...(typeof response.schema_version === 'number' ? { schema_version: response.schema_version } : {}),
-    counts: response.summary,
-    data: response.payload,
-  };
+/**
+ * Top-level collection keys carried by a recognition tenant-export snapshot.
+ *
+ * sr-007/rg-005: the canonical definition lives next to the boundary adapter
+ * that also validates them (`api/recognition/retentionApi.ts`), which mirrors
+ * `IMPORT_COLLECTION_KEYS` in
+ * `recognition/application/services/import_service.py`. Re-exported here for
+ * the existing consumers of this module; do not fork a second copy.
+ */
+export { EXPORT_COLLECTION_KEYS };
+
+/** Locally authored, safe-to-display boundary rejection (never carries remote text). */
+export class RetentionImportValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RetentionImportValidationError';
+  }
+}
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/**
+ * Validate a user-supplied export file and return the snapshot the backend expects.
+ *
+ * Boundary data, so it is validated explicitly rather than with a TS assertion
+ * helper (sr-005). Fail Fast ("Release It!"): a malformed snapshot is rejected
+ * here, before a request is issued, instead of being accepted as an empty import.
+ *
+ * `downloadExportPayload` writes `{ tenant_id, exported_at, schema_version,
+ * counts, data: <snapshot> }`. The import contract is `{ data: <snapshot> }`, so
+ * the envelope must be unwrapped; a bare snapshot (no `data` key) is also accepted.
+ */
+export const extractImportSnapshot = (parsed: unknown): Record<string, unknown> => {
+  if (Array.isArray(parsed)) {
+    throw new RetentionImportValidationError(
+      __('Invalid export file: expected a JSON object, not an array.', 'alt-context'),
+    );
+  }
+  if (!isPlainObject(parsed)) {
+    throw new RetentionImportValidationError(
+      __('Invalid export file: expected a JSON object.', 'alt-context'),
+    );
+  }
+
+  const snapshot = isPlainObject(parsed.data) ? parsed.data : parsed;
+
+  if (!Number.isInteger(snapshot.schema_version)) {
+    throw new RetentionImportValidationError(
+      __('Invalid export file: missing or non-integer schema_version.', 'alt-context'),
+    );
+  }
+
+  const presentKeys = EXPORT_COLLECTION_KEYS.filter((key) => key in snapshot);
+  if (presentKeys.length === 0) {
+    throw new RetentionImportValidationError(
+      __('Invalid export file: no exported collections found.', 'alt-context'),
+    );
+  }
+  for (const key of presentKeys) {
+    if (!Array.isArray(snapshot[key])) {
+      throw new RetentionImportValidationError(
+        __('Invalid export file: exported collections must be arrays.', 'alt-context'),
+      );
+    }
+  }
+
+  return snapshot;
+};
+
+/**
+ * The envelope written to disk by `downloadExport`; the snapshot lives under `data`.
+ *
+ * `schema_version` is written unconditionally: `downloadExportJobData` rejects any
+ * snapshot without an integer `schema_version`, so a `RetentionExportResponse`
+ * always carries one. The former `typeof … === 'number'` guard was dead code that
+ * read as if the field were optional and quietly allowed a schema-less file to be
+ * written to disk — one an operator could only discover on a later import.
+ * `tenant_id` / `exported_at` keep their guards: those are genuinely optional.
+ */
+export const buildExportDocument = (response: RetentionExportResponse): Record<string, unknown> => ({
+  ...(response.tenant_id ? { tenant_id: response.tenant_id } : {}),
+  ...(response.exported_at ? { exported_at: response.exported_at } : {}),
+  schema_version: response.schema_version,
+  counts: response.summary,
+  data: response.payload,
+});
+
+/**
+ * Write the export document to disk via a transient object URL.
+ *
+ * RES-04/RES-20: the scope that acquires the object URL and the detached
+ * anchor releases both on every path, including when `click()` throws — an
+ * object URL that is never revoked pins its blob for the lifetime of the
+ * document. Exported so the release path is directly testable (jsdom does not
+ * implement `URL.createObjectURL`, so the test stubs it).
+ */
+export const downloadExportPayload = (response: RetentionExportResponse): void => {
+  const exportDocument = buildExportDocument(response);
   const blob = new Blob([JSON.stringify(exportDocument, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = `alt-context-retention-export-${new Date().toISOString()}.json`;
-  document.body.append(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
+  try {
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `alt-context-retention-export-${new Date().toISOString()}.json`;
+    document.body.append(anchor);
+    try {
+      anchor.click();
+    } finally {
+      anchor.remove();
+    }
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 };
 
 /* ------------------------------------------------------------------ */
@@ -136,11 +240,7 @@ export const useRetentionPageState = () => {
   const { success, error: showError } = useToast();
   const [state, dispatch] = useReducer(retentionReducer, initialState);
   const importFileRef = useRef<HTMLInputElement>(null);
-  const { retentionQuery, exportJobStatusQuery, auditQuery } = useRetentionPageQueries(
-    state.exportJobId,
-    state.auditPage,
-    AUDIT_PAGE_SIZE,
-  );
+  const { retentionQuery, exportJobStatusQuery } = useRetentionPageQueries(state.exportJobId);
   const { updatePolicy, exportMutation, purgeMutation, importMutation, applyPreset, downloadJobData } =
     useRetentionPageMutations();
 
@@ -161,7 +261,7 @@ export const useRetentionPageState = () => {
       dispatch({ type: 'SET_DRAFT_MODE', mode: null });
       success(__('Retention policy updated.', 'alt-context'));
     } catch (error) {
-      showError(error instanceof Error ? error.message : __('Unable to update retention policy.', 'alt-context'));
+      showError(toUserMessage(error, __('Unable to update retention policy.', 'alt-context')));
     }
   };
 
@@ -170,7 +270,7 @@ export const useRetentionPageState = () => {
       const result: StartExportJobResponse = await exportMutation.mutateAsync();
       dispatch({ type: 'SET_EXPORT_JOB_ID', jobId: result.job_id });
     } catch (error) {
-      showError(error instanceof Error ? error.message : __('Unable to start export.', 'alt-context'));
+      showError(toUserMessage(error, __('Unable to start export.', 'alt-context')));
     }
   };
 
@@ -184,7 +284,11 @@ export const useRetentionPageState = () => {
       dispatch({ type: 'CLOSE_EXPORT_DIALOG' });
       success(__('Tenant export downloaded.', 'alt-context'));
     } catch (error) {
-      showError(error instanceof Error ? error.message : __('Unable to download export data.', 'alt-context'));
+      if (error instanceof RetentionExportResponseError) {
+        showError(__('The export data returned by the server was malformed; nothing was downloaded.', 'alt-context'));
+        return;
+      }
+      showError(toUserMessage(error, __('Unable to download export data.', 'alt-context')));
     }
   };
 
@@ -194,7 +298,7 @@ export const useRetentionPageState = () => {
       dispatch({ type: 'CLOSE_PURGE_DIALOG' });
       success(__('Tenant purge completed.', 'alt-context'));
     } catch (error) {
-      showError(error instanceof Error ? error.message : __('Unable to purge tenant data.', 'alt-context'));
+      showError(toUserMessage(error, __('Unable to purge tenant data.', 'alt-context')));
     }
   };
 
@@ -205,10 +309,7 @@ export const useRetentionPageState = () => {
     try {
       const text = await state.importFile.text();
       const parsed: unknown = JSON.parse(text);
-      if (!parsed || typeof parsed !== 'object') {
-        throw new Error(__('Invalid export file: expected a JSON object.', 'alt-context'));
-      }
-      const data = parsed as Record<string, unknown>;
+      const data = extractImportSnapshot(parsed);
       await importMutation.mutateAsync({ data });
       dispatch({ type: 'CLOSE_IMPORT_DIALOG' });
       if (importFileRef.current) {
@@ -216,7 +317,11 @@ export const useRetentionPageState = () => {
       }
       success(__('Import completed.', 'alt-context'));
     } catch (error) {
-      showError(error instanceof Error ? error.message : __('Unable to import data.', 'alt-context'));
+      if (error instanceof RetentionImportValidationError) {
+        showError(error.message);
+        return;
+      }
+      showError(toUserMessage(error, __('Unable to import data.', 'alt-context')));
     }
   };
 
@@ -226,7 +331,7 @@ export const useRetentionPageState = () => {
       dispatch({ type: 'SET_DRAFT_MODE', mode: null });
       success(__('GDPR preset applied.', 'alt-context'));
     } catch (error) {
-      showError(error instanceof Error ? error.message : __('Unable to apply preset.', 'alt-context'));
+      showError(toUserMessage(error, __('Unable to apply preset.', 'alt-context')));
     }
   };
 
@@ -235,7 +340,6 @@ export const useRetentionPageState = () => {
     dispatch,
     importFileRef,
     retentionQuery,
-    auditQuery,
     exportJobStatus,
     status,
     policy,

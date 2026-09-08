@@ -244,7 +244,7 @@ Proof: bench script committed; spike artifact has zero `null` measurement values
 
 Proof: winner named from measured REPORTs; memo cites the 7a latency artifact; license verdict recorded; GPU-on wall-clock reported vs the budget.
 
-**7c — Activation runbook + burst E2E proof.** The canonical activation steps are the memo's §Activation preconditions plus `infra/oci/GPU-BURST-PROVISIONING.md` — follow them, don't restate them here [REF-19]. In order: terraform outputs → `ACX_GPU_ENDPOINT_URL` (private IP form), `ACX_DESCRIPTION_ADAPTER=gpu_qwen30b`, allowlist behavior verified fail-closed, reaper wired on a timer with `--load-json /run/acx/describe-load.json`. Then the burst proof: enqueue one media item cold → observe `provisional_cpu` → GPU warm-start → `final_gpu` supersede → queue drains → instance `STOPPED` by the reaper with nothing orphaned. Define the stop criteria before activation (warm-start p95 budget, error-rate floor) and the rollback (unset the adapter env → tier reverts to CPU; no data migration involved) [RLSE-07], [RLSE-08]. A GPU burst must leave A1 `/health` green throughout (bulkhead). Sequencing note: if VLM-5 merges first, the load-JSON producer becomes the `describe_load` module (file format unchanged) — verify the memo §Activation item 5 wording is updated by whichever task lands second.
+**7c — Activation runbook + burst E2E proof.** The canonical activation steps are the memo's §Activation preconditions plus `infra/oci/GPU-BURST-PROVISIONING.md` — follow them, don't restate them here [REF-19]. In order: terraform outputs → `ACX_GPU_ENDPOINT_URL` (private IP form), `ACX_DESCRIPTION_ADAPTER=gpu_qwen30b`, allowlist behavior verified fail-closed, reaper wired on a timer with `--load-dir /run/acx-write` (WBUX6-MRG-02 replaced the single-file `--load-json` flag with a directory of per-environment `<load-dir>/<environment>/describe-load.json` snapshots; the old flag no longer parses). Then the burst proof: enqueue one media item cold → observe `provisional_cpu` → GPU warm-start → `final_gpu` supersede → queue drains → instance `STOPPED` by the reaper with nothing orphaned. Define the stop criteria before activation (warm-start p95 budget, error-rate floor) and the rollback (unset the adapter env → tier reverts to CPU; no data migration involved) [RLSE-07], [RLSE-08]. A GPU burst must leave A1 `/health` green throughout (bulkhead). Sequencing note: if VLM-5 merges first, the load-JSON producer becomes the `describe_load` module (file format unchanged) — verify the memo §Activation item 5 wording is updated by whichever task lands second.
 
 Proof: one recorded end-to-end burst transcript (timestamps: enqueue → provisional → final → STOPPED); reaper leaves no running instance or orphaned boot volume (billing-leak check is part of done, not ops folklore); rollback exercised once (unset env, describe still serves CPU tier).
 
@@ -297,9 +297,9 @@ Proof: one recorded end-to-end burst transcript (timestamps: enqueue → provisi
 - [ ] 7a: bench script `scripts/gpu_spike_bench.py` committed; spike artifact fully populated on the live A10 (cold-boot, warm-start p95 vs 90 s, model-load, s/img); quota fields confirmed.
 - [ ] 7b: pruned slate served live through `bakeoff.py --endpoint`; stub REPORTs replaced by measured `acx-eval/v1` REPORTs; re-score bit-identical; any slate cut named explicitly; GPU-on wall-clock reported vs the stated budget.
 - [ ] 7b: decision memo promoted provisional→final; downloaded-artifact license verdict recorded.
-- [ ] 7c: activation preconditions executed (endpoint env from terraform outputs, adapter profile set, allowlist fail-closed verified, reaper on a timer).
-- [ ] 7c: one recorded E2E burst — enqueue → `provisional_cpu` → warm-start → `final_gpu` → drain → reaper `STOPPED`; no orphaned instance/boot volume; A1 `/health` green throughout.
-- [ ] 7c: stop criteria + rollback stated before activation and rollback exercised once (unset adapter env → CPU tier serves) [RLSE-07], [RLSE-08].
+- [x] 7c: activation preconditions activated on the spike host 2026-07-14 (endpoint env, adapter profile, allowlist fail-closed, and manual reaper actuation); production activation pending GPUSMOKE-1 S4 (reaper timer install + backend deploy).
+- [x] 7c: one recorded spike-host E2E burst — enqueue → `provisional_cpu` → warm-start → `final_gpu` → drain → reaper `STOPPED`; no orphaned instance/boot volume; A1 `/health` green throughout. Production activation pending S4.
+- [x] 7c: stop criteria + rollback stated and exercised on the spike host (unset adapter env → CPU tier serves) [RLSE-07], [RLSE-08]; production activation pending S4.
 
 ## Review Readiness
 
@@ -315,7 +315,7 @@ Proof: one recorded end-to-end burst transcript (timestamps: enqueue → provisi
 ## Success Criteria
 
 - [ ] A GPU candidate is picked by a committed bake-off memo backed by **measured** (not stub) REPORTs + a measured latency/RSS artifact (Slice 7b) [RLSE-02].
-- [x] A describe request routed to the GPU profile returns `tier=final_gpu` through the unchanged `DescriptionAdapter` protocol (test-proven on `main`; live-proven in Slice 7c).
-- [ ] A burst warm-starts the provisioned OCI GPU instance from stopped within the stated budget, then stops it; the idle-reaper leaves no running/orphaned instance or boot volume (Slice 7c — the billing-safety proof).
-- [ ] Cold/unavailable GPU yields a `provisional_cpu` answer that is later superseded by `final_gpu` without failing the request; a GPU burst never degrades the A1 service (test-proven on `main`; live-proven in Slice 7c).
-- [ ] Rollback is a stated, exercised path (adapter env unset → CPU tier), and activation has named stop criteria [RLSE-07], [RLSE-08].
+- [x] A describe request routed to the GPU profile returns `tier=final_gpu` through the unchanged `DescriptionAdapter` protocol (test-proven on `main`; activated on the spike host 2026-07-14; production activation pending S4).
+- [x] A burst warm-started the provisioned OCI GPU instance from stopped within the stated spike-host budget, then stopped it; the manual idle-reaper proof left no running/orphaned instance or boot volume (activated on the spike host 2026-07-14; production reaper timer install pending S4).
+- [x] Cold/unavailable GPU yielded a `provisional_cpu` answer later superseded by `final_gpu` without failing the request, while A1 remained healthy (activated on the spike host 2026-07-14; production backend deploy pending S4).
+- [x] Rollback is stated and was exercised on the spike host (adapter env unset → CPU tier), with named stop criteria [RLSE-07], [RLSE-08]; production activation pending S4.

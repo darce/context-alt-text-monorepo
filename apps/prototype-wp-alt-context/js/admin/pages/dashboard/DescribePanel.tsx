@@ -14,6 +14,7 @@ import { resolveDescribeErrorMessage } from '../../api/describeApi';
  */
 export const DescribePanel = (): React.JSX.Element => {
   const inputId = useId();
+  const unavailableReasonId = `${inputId}-unavailable-reason`;
   const [mediaIdInput, setMediaIdInput] = useState('');
   const mutation = useDescribeMedia();
   // RES-15/RES-03: fold offline into canSubmit + handleSubmit so Enter cannot bypass.
@@ -69,10 +70,16 @@ export const DescribePanel = (): React.JSX.Element => {
           className="acx-button acx-button--primary"
           disabled={!canSubmit}
           aria-disabled={remoteGate['aria-disabled']}
+          aria-describedby={offline ? unavailableReasonId : undefined}
           title={remoteGate.title}
         >
           {mutation.isPending ? __('Describing…', 'alt-context') : __('Describe with AI', 'alt-context')}
         </button>
+        {offline && remoteGate.title ? (
+          <span id={unavailableReasonId} className="screen-reader-text">
+            {remoteGate.title}
+          </span>
+        ) : null}
       </form>
 
       {errorMessage ? (

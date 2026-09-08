@@ -17,12 +17,12 @@ class RosterPage extends AbstractSpaPage {
 	}
 
 	protected function getPageTitle(): string {
-		return __( 'Alt Context Roster', 'alt-context' );
+		return __( 'Alt Context People', 'alt-context' );
 	}
 
 	protected function getLoadingMessage(): string {
 		return __(
-			'Loading the Alt Context roster. Please wait while the application initializes.',
+			'Loading Alt Context People. Please wait while the application initializes.',
 			'alt-context'
 		);
 	}

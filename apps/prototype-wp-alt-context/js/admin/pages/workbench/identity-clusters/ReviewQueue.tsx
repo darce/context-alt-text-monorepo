@@ -30,7 +30,7 @@ import { EmptyStateWarning } from './EmptyStateWarning';
 import { QUERY_RETRY_COPY, QueryRetryButton, settledRefetchFailed } from './queryRetry';
 import { MergeSuggestionCard } from './MergeSuggestionCard';
 import { PersonCommitControl } from './PersonCommitControl';
-import { viewInRosterHref } from './personCommitCopy';
+import { MODEL_OUTPUT_DISCLOSURE, viewInRosterHref } from './personCommitCopy';
 import { shouldShowPersonCommit, isPersonCommitPrimaryKind } from './personCommitVisibility';
 import {
   CloseMatchAcceptOffer,
@@ -56,6 +56,7 @@ import {
 import { gatedClusterCopy, repairGatedCount } from './representativeVocabulary';
 import { SuggestionCard, type FaceOriginalTarget, type ReviewSuggestion } from './SuggestionCards';
 import { ReviewCardGroupShell } from './reviewCardGroupAccname';
+import { isStoredFaceApprovalBlocked } from './storedFaceReviewGate';
 import { TopClusterCard } from './TopClusterCard';
 import {
   BULK_COMMIT_PHASE,
@@ -300,10 +301,40 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     } | null>(null);
     const closeMatchAnnounceRef = React.useRef<{ count: number; omitted: number } | null>(null);
     const closeMatchBulkPhaseRef = React.useRef<string>(BULK_COMMIT_PHASE.IDLE);
-    // [REF-19] single AT-announce module; [A11Y-06] status second channel — BR-68/HARM-02
-    // seq-keyed sink so repeat-identical strings still re-fire (plain useState Object.is bail-out).
+    // [REF-19] single AT-announce module; [A11Y-06] status second channel — BR-68/HARM-02.
+    // The hook clears then restores repeated copy in one persistent live node.
+    //
+    // FEBT1-LD-02: two independently owned polite regions, not one shared slot.
+    // `setLiveMessage` carries *outcomes* (saved / failed / accepted / target
+    // retired); `setLivePositionMessage` carries *where you are and what is here*
+    // (queue position, empty / filtered / repair copy, selection count). They used
+    // to share one `useAriaAnnounce` slot, so any extra re-render — e.g. a hook
+    // subscribing to a query success transition — let the positional announcement
+    // silently overwrite "Saved. Moving to next review item." before AT ever saw
+    // it, and the operator lost their save confirmation (A11Y-24, RLSE-04).
+    // Two sibling regions each with their own stable node is the in-repo idiom:
+    // ScanTabContent.tsx:209 already mounts `.acx-review-lifecycle-announce`
+    // alongside this one from its own useAriaAnnounce instance.
     const { message: liveMessage, seq: liveSeq, announce: setLiveMessage } = useAriaAnnounce();
+    const {
+      message: livePositionMessage,
+      seq: livePositionSeq,
+      announce: setLivePositionMessage,
+    } = useAriaAnnounce();
     const [selectionOpen, setSelectionOpen] = React.useState(false);
+    const [reviewedStoredFaceSuggestionIds, setReviewedStoredFaceSuggestionIds] = React.useState<Set<string>>(
+      () => new Set(),
+    );
+    const markStoredFaceReviewPresented = React.useCallback((suggestionId: string): void => {
+      setReviewedStoredFaceSuggestionIds((current) => {
+        if (current.has(suggestionId)) {
+          return current;
+        }
+        const next = new Set(current);
+        next.add(suggestionId);
+        return next;
+      });
+    }, []);
     /** User confirmed bulk while truncation-gated (UI-06 total-N confirm). */
     const [truncationConfirmed, setTruncationConfirmed] = React.useState(false);
     // REV4-02: RQ v5 isLoading stays false while an already-errored query
@@ -333,6 +364,11 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       }
       return map;
     }, [findings.queue]);
+
+    const assignmentById = React.useMemo(
+      () => flattenAssignmentSuggestions(data.reviewItems),
+      [data.reviewItems],
+    );
 
     /**
      * M2: bulk preview/commit resolves only selection ∩ active filters.
@@ -371,7 +407,12 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
         }
         return items;
       },
-      [queueBySuggestionId, findings.queue, filter, activeBand],
+      [
+        queueBySuggestionId,
+        findings.queue,
+        filter,
+        activeBand,
+      ],
     );
 
     const bulk = useBulkReviewCommit({
@@ -388,6 +429,13 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       },
       isBulkActiveRef: data.isBulkActiveRef,
       awaitBulkIdleOrFlushRef: data.awaitBulkIdleOrFlushRef,
+      isApprovalBlocked: (suggestionId) => {
+        const suggestion = assignmentById.get(suggestionId);
+        // DUX-W2R2-RV-04: unknown/unresolvable ids fail closed (block), never open.
+        return suggestion
+          ? isStoredFaceApprovalBlocked(suggestion, reviewedStoredFaceSuggestionIds)
+          : true;
+      },
     });
 
     React.useEffect(() => {
@@ -483,8 +531,8 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       if (prev === selectionCountMessage) {
         return;
       }
-      setLiveMessage(selectionCountMessage);
-    }, [selectionCountMessage, setLiveMessage]);
+      setLivePositionMessage(selectionCountMessage);
+    }, [selectionCountMessage, setLivePositionMessage]);
 
     // Reset truncation confirm when selection or gate changes.
     React.useEffect(() => {
@@ -526,10 +574,6 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       onClose: undefined,
     });
 
-    const assignmentById = React.useMemo(
-      () => flattenAssignmentSuggestions(data.reviewItems),
-      [data.reviewItems],
-    );
     const mergeById = React.useMemo(() => {
       const map = new Map<string, PendingMergeSuggestion>();
       for (const suggestion of data.mergeSuggestions) {
@@ -612,7 +656,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       prevFilteredEmptyRef.current = filteredEmptyWithWork;
       if (currentKey && currentKey !== previousItemKeyRef.current) {
         if (previousItemKeyRef.current !== null || recoveredFromFilteredEmpty) {
-          setLiveMessage(
+          setLivePositionMessage(
             sprintf(
               /* translators: 1: current 1-based position, 2: total */
               __('Review item %1$d of %2$d', 'alt-context'),
@@ -667,20 +711,20 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
             const nextEmptyMessage = filteredEmptyWithWork
               ? `${errorCopy} ${__('No items match the current filters.', 'alt-context')}`
               : errorCopy;
-            setLiveMessage(nextEmptyMessage);
+            setLivePositionMessage(nextEmptyMessage);
             repairAnnouncedRef.current = findings.repairPending;
             repairAnnouncedMessageRef.current = nextEmptyMessage;
           } else if (filteredEmptyWithWork) {
             const nextEmptyMessage = __('No items match the current filters.', 'alt-context');
-            setLiveMessage(nextEmptyMessage);
+            setLivePositionMessage(nextEmptyMessage);
             repairAnnouncedRef.current = findings.repairPending;
             repairAnnouncedMessageRef.current = nextEmptyMessage;
           } else if (findings.repairPending && repairCopy) {
-            setLiveMessage(repairCopy);
+            setLivePositionMessage(repairCopy);
             repairAnnouncedRef.current = true;
             repairAnnouncedMessageRef.current = repairCopy;
           } else {
-            setLiveMessage(__('All caught up — no items need review', 'alt-context'));
+            setLivePositionMessage(__('All caught up — no items need review', 'alt-context'));
             repairAnnouncedRef.current = false;
             repairAnnouncedMessageRef.current = null;
           }
@@ -704,7 +748,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       focusPrimaryInCard,
       length,
       safeIndex,
-      setLiveMessage,
+      setLivePositionMessage,
       topUnlabeledClusters.length,
     ]);
 
@@ -905,6 +949,44 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     const isInitialFailureBranch =
       data.hasInitialFailure && !data.isError && !isErrorBranch;
     const isLoadingBranch = data.isLoading || findings.isLoading;
+    // Outcome channel. Never carries positional copy, so a save confirmation
+    // cannot be replaced by "Review item 1 of 1".
+    const liveRegion = (
+      <div
+        className="acx-review-queue__live"
+        role="status"
+        aria-live="polite"
+        data-announce-seq={liveSeq}
+      >
+        {isErrorBranch ? (
+          <p id="acx-review-queue-error" className="acx-review-queue__status">
+            {retrying ? null : (
+              <>
+                <AlertTriangle aria-hidden="true" className="acx-review-queue__status-icon" size={16} />
+                {retryFailed
+                  ? QUERY_RETRY_COPY.RETRY_FAILED_SUGGESTIONS
+                  : QUERY_RETRY_COPY.LOAD_FAILED_SUGGESTIONS}
+              </>
+            )}
+          </p>
+        ) : (
+          liveMessage
+        )}
+      </div>
+    );
+
+    // Position / inventory channel — independently owned so it can never clobber
+    // the outcome region above (FEBT1-LD-02).
+    const livePositionRegion = (
+      <div
+        className="acx-review-queue__live-position"
+        role="status"
+        aria-live="polite"
+        data-announce-seq={livePositionSeq}
+      >
+        {livePositionMessage}
+      </div>
+    );
 
     // The current queue item resolves to a real card (its suggestion/cluster is in
     // the by-id map) — guards the rare projection race where an item is queued but
@@ -938,6 +1020,22 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       (data.personCommit.clusterId === null ||
         data.personCommit.clusterId === currentClusterId);
 
+    const storedFaceSelectionBlocksCommit = filteredSelectedIds.some((suggestionId) => {
+      const suggestion = assignmentById.get(suggestionId);
+      // DUX-W2R2-RV-04: unknown/unresolvable ids fail closed (block), never open.
+      return suggestion
+        ? isStoredFaceApprovalBlocked(suggestion, reviewedStoredFaceSuggestionIds)
+        : true;
+    });
+    const storedFaceSelectionReasonId = 'acx-review-queue-stored-face-review-reason';
+    const truncationReasonId = 'acx-review-queue-truncation-reason';
+    const bulkCommitNativeDisabled =
+      filteredSelectedIds.length === 0 ||
+      bulk.isBulkActive ||
+      bulk.bulkInitiatePending ||
+      truncationBlocksCommit ||
+      truncation.isLoading;
+
     // BR-75: a single accent-primary card action is on screen iff CurrentCard's real
     // branch renders its marked primary. This is the SAME condition that mounts the
     // marker, so the footer demotion it drives cannot disagree with the card marker.
@@ -959,7 +1057,10 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     // truncation-ambiguous the bulk commit is never the accent (COL-03 / UI-06 §7.7),
     // so the card keeps it. Guarded so exactly one element carries the accent.
     const bulkCommitOwnsAccent =
-      selectionOpen && filteredSelectedIds.length > 0 && !truncationBlocksCommit;
+      selectionOpen &&
+      filteredSelectedIds.length > 0 &&
+      !truncationBlocksCommit &&
+      !storedFaceSelectionBlocksCommit;
     const closeMatchOfferOwnsAccent = closeMatchOffer !== null;
 
     // The queue owns the viewport's single accent primary when either the card marker
@@ -988,18 +1089,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     if (isErrorBranch) {
       return (
         <div className="acx-review-queue acx-review-queue--error">
-          <div role="status" aria-live="polite">
-            <p id="acx-review-queue-error" className="acx-review-queue__status">
-              {retrying ? null : (
-                <>
-                  <AlertTriangle aria-hidden="true" className="acx-review-queue__status-icon" size={16} />
-                  {retryFailed
-                    ? QUERY_RETRY_COPY.RETRY_FAILED_SUGGESTIONS
-                    : QUERY_RETRY_COPY.LOAD_FAILED_SUGGESTIONS}
-                </>
-              )}
-            </p>
-          </div>
+          {liveRegion}
           <QueryRetryButton
             describedBy="acx-review-queue-error"
             retrying={retrying}
@@ -1014,12 +1104,13 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     }
 
     if (isInitialFailureBranch) {
-      return null;
+      return <div className="acx-review-queue">{liveRegion}</div>;
     }
 
     if (isLoadingBranch) {
       return (
-        <div className="acx-review-queue acx-review-queue--loading" role="status" aria-live="polite">
+        <div className="acx-review-queue acx-review-queue--loading">
+          {liveRegion}
           <p>{__('Loading review queue…', 'alt-context')}</p>
         </div>
       );
@@ -1027,7 +1118,15 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
 
     return (
       <div className="acx-review-queue" data-live-target-status={headLiveStatus}>
-        {headLiveStatus === 'auth_expired' ? (
+        {liveRegion}
+        {livePositionRegion}
+        {/*
+          `unverified` covers both "the probe has not settled yet" and "the probe
+          failed", so status alone cannot gate an alert — an in-flight probe would
+          shout at every operator on first paint. The reason channel disambiguates:
+          announce only once there is something to announce (RLSE-05 / AGT-10).
+        */}
+        {headLiveStatus === 'auth_expired' || (headLiveStatus === 'unverified' && headLiveError !== null) ? (
           <UserFacingErrorNotice
             className="acx-review-queue__auth-expired"
             error={headLiveError}
@@ -1164,6 +1263,18 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           </div>
         </div>
 
+        {storedFaceSelectionBlocksCommit ? (
+          <p
+            id={storedFaceSelectionReasonId}
+            className="acx-review-queue__stored-face-review-reason"
+          >
+            {__(
+              'Review the stored faces for every selected suggestion before accepting.',
+              'alt-context',
+            )}
+          </p>
+        ) : null}
+
         {selectionOpen && selectedIds.size > 0 ? (
           <div
             className="acx-review-queue__selection-panel"
@@ -1178,7 +1289,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
             </ul>
 
             {truncationReason ? (
-              <p className="acx-review-queue__truncation-reason" role="status">
+              <p id={truncationReasonId} className="acx-review-queue__truncation-reason">
                 {truncationReason}
               </p>
             ) : null}
@@ -1220,16 +1331,24 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                   : 'button acx-review-queue__bulk-commit'
               }
               data-testid="acx-bulk-commit"
-              disabled={
-                filteredSelectedIds.length === 0 ||
-                bulk.isBulkActive ||
-                bulk.bulkInitiatePending ||
-                truncationBlocksCommit ||
-                truncation.isLoading
+              // BR-74: stored-face gate uses aria-disabled + onClick, never HTML
+              // disabled — that would drop the describedby reason from tab order.
+              disabled={bulkCommitNativeDisabled}
+              aria-disabled={
+                bulkCommitNativeDisabled || storedFaceSelectionBlocksCommit ? true : undefined
               }
-              title={truncationBlocksCommit ? (truncationReason ?? undefined) : undefined}
+              aria-describedby={
+                storedFaceSelectionBlocksCommit
+                  ? storedFaceSelectionReasonId
+                  : truncationBlocksCommit
+                    ? truncationReasonId
+                    : undefined
+              }
               {...(bulkCommitOwnsAccent ? { [ACCENT_PRIMARY_ATTR]: true } : {})}
               onClick={() => {
+                if (storedFaceSelectionBlocksCommit) {
+                  return;
+                }
                 void bulk.initiateBulk();
               }}
             >
@@ -1277,7 +1396,14 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
             <button
               type="button"
               className="button acx-review-queue__retry"
+              aria-disabled={storedFaceSelectionBlocksCommit ? true : undefined}
+              aria-describedby={
+                storedFaceSelectionBlocksCommit ? storedFaceSelectionReasonId : undefined
+              }
               onClick={() => {
+                if (storedFaceSelectionBlocksCommit) {
+                  return;
+                }
                 void bulk.retryBulk();
               }}
             >
@@ -1285,16 +1411,6 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
             </button>
           </div>
         ) : null}
-
-        <div
-          key={liveSeq}
-          className="acx-review-queue__live"
-          role="status"
-          aria-live="polite"
-          data-announce-seq={liveSeq}
-        >
-          {liveMessage}
-        </div>
 
         {showQueuePersonCommitFallback && data.personCommit.phase === PERSON_COMMIT_PHASE.FAILED ? (
           <div
@@ -1493,6 +1609,8 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               personCommitPending={data.personCommitPending}
               isBulkActive={bulk.isBulkActive || bulk.bulkInitiatePending}
               onReview={onReview}
+              reviewedStoredFaceSuggestionIds={reviewedStoredFaceSuggestionIds}
+              onStoredFaceReviewPresented={markStoredFaceReviewPresented}
               onLabel={onLabel}
               onOpenOriginal={(target) => {
                 setLightboxNaming(false);
@@ -1699,6 +1817,8 @@ interface CurrentCardProps {
   /** BR-48: disable person-commit while bulk hold/sequence is active. */
   isBulkActive: boolean;
   onReview?: (clusterId: string) => void;
+  reviewedStoredFaceSuggestionIds: ReadonlySet<string>;
+  onStoredFaceReviewPresented: (suggestionId: string) => void;
   onLabel?: (clusterId: string) => void;
   onOpenOriginal: (target: FaceOriginalTarget) => void;
   markAdvanceFocus: () => void;
@@ -1846,6 +1966,8 @@ const CurrentCard = ({
   personCommitPending,
   isBulkActive,
   onReview,
+  reviewedStoredFaceSuggestionIds,
+  onStoredFaceReviewPresented,
   onLabel,
   onOpenOriginal,
   markAdvanceFocus,
@@ -1868,6 +1990,9 @@ const CurrentCard = ({
   reviewQueueItems,
   onCloseMatchOffer,
 }: CurrentCardProps): React.JSX.Element | null => {
+  const [revealedNameSuggestionIds, setRevealedNameSuggestionIds] = React.useState<Set<string>>(
+    () => new Set(),
+  );
   // Arm focus before the POST so removal→key-change can place it; clear on
   // undo/failure (BR-13) so a later key change does not surprise-focus.
   const runScheduled = (schedule: () => Promise<ScheduleCommitResult>): void => {
@@ -1954,20 +2079,24 @@ const CurrentCard = ({
         committedPersonUuid={personCommit.personUuid}
         onCurateGroup={onLabel}
         onCommit={(request) => {
-          // BR-27: person-commit success may remove the NAME card — arm advance focus.
+          // BR-27: the successful mutation removes NAME before its promise resolves,
+          // so arm focus before starting it and disarm only when no removal occurred.
+          markAdvanceFocus();
           void schedulePersonCommit(request).then((result) => {
-            if (result.outcome === 'committed') {
-              markAdvanceFocus();
-            } else if (result.outcome === 'not_attempted_prior_failed') {
+            if (result.outcome !== 'committed') {
+              clearAdvanceFocus();
+            }
+            if (result.outcome === 'not_attempted_prior_failed') {
               // C-05: refused because an accept/reject failure is unresolved.
               announce(__('Retry the item that failed to save before assigning a person.', 'alt-context'));
             }
           });
         }}
         onRetry={() => {
+          markAdvanceFocus();
           void retryPersonCommit()?.then((result) => {
-            if (result?.outcome === 'committed') {
-              markAdvanceFocus();
+            if (result?.outcome !== 'committed') {
+              clearAdvanceFocus();
             }
           });
         }}
@@ -2006,6 +2135,10 @@ const CurrentCard = ({
           />
           <SuggestionCard
             suggestion={suggestion}
+            isStoredFaceReviewComplete={reviewedStoredFaceSuggestionIds.has(
+              suggestion.suggestionId,
+            )}
+            onStoredFaceReviewPresented={onStoredFaceReviewPresented}
             accentPrimary={accentPrimary}
             // BR-41: pass ordinal only when both are defined (position chrome available).
             queuePosition={queuePosition}
@@ -2105,6 +2238,8 @@ const CurrentCard = ({
         personCommit.phase === PERSON_COMMIT_PHASE.SUCCEEDED && personCommit.clusterId === item.clusterId;
       const namePending =
         isCardPending(suggestion.id, nameKinds) || namePersonCommitDone || personCommitPending;
+      const isNameSuggestionRevealed = revealedNameSuggestionIds.has(suggestion.id);
+      const suggestionDisclosureId = `acx-name-suggestion-${suggestion.id}`;
       return (
         <ReviewCardGroupShell
           kind="name"
@@ -2115,6 +2250,7 @@ const CurrentCard = ({
           className="acx-suggestion-card acx-name-suggestion-card"
           data-testid="acx-review-card"
           data-review-kind="name"
+          data-suggestion-consulted={isNameSuggestionRevealed || undefined}
         >
           <SelectToggle
             selected={isSelected}
@@ -2122,22 +2258,54 @@ const CurrentCard = ({
             onToggle={onToggleSelect}
           />
           <div className="acx-suggestion-card__content">
-            <p className="acx-suggestion-card__question">
-              {__('Suggested name:', 'alt-context')} <strong>{suggestion.suggested_name}</strong>
-            </p>
-            {suggestion.confidence_score !== null && suggestion.confidence_score !== undefined ? (
-              <p className="acx-suggestion-card__match">
-                <span
-                  className={`acx-suggestion-confidence${isLow ? ' acx-suggestion-confidence--low' : ''}`}
-                >
-                  {Math.round(suggestion.confidence_score * 100)}%
-                </span>
-              </p>
+            <button
+              type="button"
+              className="button button-link"
+              aria-expanded={isNameSuggestionRevealed}
+              aria-controls={suggestionDisclosureId}
+              onClick={() => {
+                setRevealedNameSuggestionIds((current) => {
+                  const next = new Set(current);
+                  if (next.has(suggestion.id)) {
+                    next.delete(suggestion.id);
+                  } else {
+                    next.add(suggestion.id);
+                  }
+                  return next;
+                });
+                announce(
+                  isNameSuggestionRevealed
+                    ? __('Suggestion hidden.', 'alt-context')
+                    : __('Suggestion revealed.', 'alt-context'),
+                );
+              }}
+            >
+              {isNameSuggestionRevealed
+                ? __('Hide suggestion', 'alt-context')
+                : __('Show suggestion', 'alt-context')}
+            </button>
+            {isNameSuggestionRevealed ? (
+              <div id={suggestionDisclosureId}>
+                <p className="acx-suggestion-card__question">
+                  {__('Suggested name:', 'alt-context')}{' '}
+                  <strong>{suggestion.suggested_name}</strong>
+                </p>
+                {suggestion.confidence_score !== null && suggestion.confidence_score !== undefined ? (
+                  <p className="acx-suggestion-card__match">
+                    <span
+                      className={`acx-suggestion-confidence${isLow ? ' acx-suggestion-confidence--low' : ''}`}
+                    >
+                      {Math.round(suggestion.confidence_score * 100)}%
+                    </span>
+                  </p>
+                ) : null}
+                <p className="acx-person-commit__disclosure">
+                  {MODEL_OUTPUT_DISCLOSURE}
+                </p>
+              </div>
             ) : null}
           </div>
-          {personCommitFor(item.clusterId, NEXT_ACTION_KIND.NAME, {
-            suggestedCreateName: suggestion.suggested_name,
-          })}
+          {personCommitFor(item.clusterId, NEXT_ACTION_KIND.NAME)}
           <div className="acx-name-suggestion-card__actions acx-suggestion-card__actions">
             <button
               type="button"

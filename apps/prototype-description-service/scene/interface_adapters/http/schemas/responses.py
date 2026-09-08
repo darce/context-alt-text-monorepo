@@ -11,6 +11,9 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from scene.application.gpu_state import GpuState
+from scene.application.identity_merge import NamingRealizer
+from scene.application.identity_merge import NamingStatus as NamingProvenanceStatus
 from scene.domain.describe_run import DescribeItemStatus, DescribeRunPhase, DescribeRunStatus
 from scene.domain.description import DescriptionAdapterKind, DescriptionResultTier, ProviderMode, RetentionClass
 
@@ -71,6 +74,10 @@ class NamingProvenance(BaseModel):
     # "grounded" (phrase-box span replacement) or "positional" (appended
     # left-to-right sentence); null when no naming occurred.
     mode: str | None = None
+    # C7 fields: typed, contract-locked naming outcome and realization.
+    status: NamingProvenanceStatus = NamingProvenanceStatus.NO_FACES
+    realizer: NamingRealizer | None = None
+    names_applied: list[str] = Field(default_factory=list)
 
 
 class AttachmentFactProvenance(BaseModel):
@@ -169,7 +176,18 @@ class DescribeRunResponse(BaseModel):
     # WBUX-3 (S7-01): honest remaining-time estimate; null unless the run is
     # in-flight with measured progress.
     eta_seconds: float | None = None
-    gpu_state: None = None
+    gpu_state: GpuState = GpuState.UNKNOWN
+    # HARM-F1: snapshot of recognition_enabled at submit. Default True so
+    # omitted payloads keep today's naming-on behaviour.
+    recognition_enabled: bool = True
+    # GUIDEDFIX-2 [RES-02] / [S01]: the server's own end-to-end GENERATION budget
+    # for this whole accepted run — the budget the worker actually enforces,
+    # summed across the run's items. It explicitly does NOT include GPU warm-up /
+    # cold-start; the client adds that leg itself. Derived at accept from the
+    # per-item timeout the worker is handed times the run's item count, and
+    # snapshotted, so a later config change never moves an accepted run's number.
+    # Null only for runs created outside the submit route (never via POST).
+    deadline_seconds: float | None = None
 
 
 class DescribeRunItemResponse(BaseModel):
@@ -184,6 +202,8 @@ class DescribeRunItemResponse(BaseModel):
     alt_text_draft: str | None = None
     caption: str | None = None
     provenance: dict | None = None
+    tier: DescriptionResultTier | None = None
+    result_generation: int = Field(default=0, ge=0)
 
 
 class DescribeRunItemsResponse(BaseModel):

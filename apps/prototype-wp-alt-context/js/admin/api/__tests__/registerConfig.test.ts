@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as httpModule from '../../utils/http';
+import { createLogger, setLogSink, type LogRecord } from '../../utils/logger';
 import {
   getConfig,
   getEndpoint,
@@ -30,6 +31,7 @@ describe('registerConfig seam (UXP-5 slice 3)', () => {
   afterEach(() => {
     resetConfigCache();
     delete window.AltContextAdmin;
+    setLogSink(null);
   });
 
   it('lets fetchMediaIdentities resolve endpoint + nonce with no AltContextAdmin global', async () => {
@@ -67,6 +69,34 @@ describe('registerConfig seam (UXP-5 slice 3)', () => {
   it('throws the SPA missing-config error when registerConfig is skipped [TEST-15]', () => {
     expect(window.AltContextAdmin).toBeUndefined();
     expect(() => getConfig()).toThrow('AltContextAdmin configuration is missing.');
+  });
+
+  it('missing nonce/ajaxUrl warn through a scoped logger, not console.warn [O-06][W2-L5]', () => {
+    const records: LogRecord[] = [];
+    setLogSink((record) => {
+      records.push(record);
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    registerConfig({
+      nonce: '',
+      ajaxUrl: '   ',
+      endpoints: {},
+    });
+
+    const messages = records.map((record) => record.message);
+    expect(messages).toContain(
+      'AltContextAdmin configuration field "nonce" is missing or empty; dependent features degrade.',
+    );
+    expect(messages).toContain(
+      'AltContextAdmin configuration field "ajaxUrl" is missing or empty; dependent features degrade.',
+    );
+    expect(records.every((record) => record.level === 'warn' && record.scope === 'api.config')).toBe(true);
+    expect(warn).not.toHaveBeenCalled();
+    expect(getConfig().nonce).toBe('');
+    expect(getConfig().ajaxUrl).toBe('');
+    // Keep createLogger reachable so a missing import fails this test, not typecheck.
+    expect(typeof createLogger).toBe('function');
   });
 
   it('SPA path still reads window.AltContextAdmin when nothing is registered', () => {

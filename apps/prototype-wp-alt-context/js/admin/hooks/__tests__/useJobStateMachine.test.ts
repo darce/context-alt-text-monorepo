@@ -6,6 +6,24 @@ import { useJobProgressStream } from '../useJobProgressStream';
 import { useCombinedScanStatus } from '../useRecognitionHooks';
 import { useSyncTrigger } from '../useSyncTrigger';
 import { useQueryClient } from '@tanstack/react-query';
+import { HTTPError } from '../../utils/http';
+
+const notFoundHttpError = (jobId: string): HTTPError =>
+  new HTTPError({
+    status: 404,
+    retryAfterSeconds: undefined,
+    endpoint: `/recognition/jobs/${jobId}`,
+    bodyPreview: 'not-found-body',
+    message: 'Not found',
+  });
+
+const notFoundAppError = (jobId: string) => ({
+  _tag: 'http' as const,
+  status: 404,
+  endpoint: `/recognition/jobs/${jobId}`,
+  message: 'Not found',
+  cause: null,
+});
 
 const createDeferred = <T>() => {
   let resolve!: (value: T) => void;
@@ -127,7 +145,7 @@ describe('useJobStateMachine', () => {
     });
     (useCombinedScanStatus as Mock).mockReturnValue({
       scanStatusQuery: { data: null, error: null },
-      multiScanStatus: [{ data: null, error: new Error('Request failed (404): Not found') }],
+      multiScanStatus: [{ data: null, error: notFoundHttpError('missing-job') }],
       batchRunStatusQuery: { data: null },
     });
 
@@ -450,7 +468,7 @@ describe('useJobStateMachine', () => {
     (useCombinedScanStatus as Mock).mockReturnValue({
       scanStatusQuery: {
         data: null,
-        error: new Error('Request failed (404)'),
+        error: notFoundAppError('stale-job'),
       },
       multiScanStatus: [],
       batchRunStatusQuery: { data: null },
@@ -637,5 +655,114 @@ describe('useJobStateMachine', () => {
 
     expect(result.current.currentPhase).toBe('idle');
     expect(result.current.latestJobId).toBeNull();
+  });
+
+  describe('the scan-submit -> SSE correlation seam [FEBT2-LB-NEW-03][OBS-03]', () => {
+    interface StreamOptions {
+      resolveRequestId?: (jobId: string) => string | null;
+    }
+
+    const lastStreamCall = (): [string | null, StreamOptions | undefined] => {
+      const calls = (useJobProgressStream as Mock).mock.calls;
+      return calls[calls.length - 1] as [string | null, StreamOptions | undefined];
+    };
+
+    it('hands the stream a resolver that claims the submitted job and disclaims every other', async () => {
+      const { useScanIdentities } = await import('../useRecognitionHooks');
+      let scanOptions: Parameters<typeof useScanIdentities>[0];
+      (useScanIdentities as Mock).mockImplementation((options: Parameters<typeof useScanIdentities>[0]) => {
+        scanOptions = options;
+        return { mutate: vi.fn(), isPending: false };
+      });
+      (useJobPersistence as Mock).mockReturnValue({
+        activeJobs: [{ id: 'job-1', type: 'scan' }],
+        addJob: vi.fn(),
+        removeJob: vi.fn(),
+      });
+
+      renderHook(() => useJobStateMachine());
+
+      act(() => {
+        scanOptions?.onMutate?.([1], {} as never);
+        scanOptions?.onSuccess?.(
+          {
+            batchRunId: 'run-1',
+            jobs: [
+              {
+                id: 'job-1',
+                type: 'analyze',
+                status: 'pending',
+                progress: { completed: 0, total: 3 },
+                started_at: '2026-01-01T00:00:00Z',
+                finished_at: null,
+              },
+            ],
+          } as never,
+          [1],
+          undefined,
+          {} as never,
+        );
+      });
+
+      const [, options] = lastStreamCall();
+      const resolve = options?.resolveRequestId;
+      expect(resolve).toBeTypeOf('function');
+      // This hook is the ONLY place that sees both the submit unit and the stream, so if the
+      // resolver is not threaded here no grep can span scan.submit -> stream.done (OBS-03).
+      expect(resolve?.('job-1')).toEqual(expect.any(String));
+      // ...and it must disclaim jobs the submit did not create, or the join is a false trail.
+      expect(resolve?.('job-elsewhere')).toBeNull();
+    });
+
+    it('[FEBT2-LB-NEW-02] stops streaming once the active job list empties, as a cancel leaves it', () => {
+      // A fresh array identity per store update, as useJobPersistence really produces.
+      let activeJobs: { id: string; type: string }[] = [{ id: 'job-cancel-me', type: 'scan' }];
+      (useJobPersistence as Mock).mockImplementation(() => ({
+        activeJobs,
+        addJob: vi.fn(),
+        removeJob: vi.fn(),
+      }));
+
+      const { rerender } = renderHook(() => useJobStateMachine());
+      expect(lastStreamCall()[0]).toBe('job-cancel-me');
+
+      // What cancelMutation.onSuccess does: clearActiveJobs() removes every active job id.
+      activeJobs = [];
+      rerender();
+
+      // Null jobId is what tears the EventSource down (pinned in useJobProgressStream's own
+      // suite). Without this link the operator keeps receiving frames for cancelled work.
+      expect(lastStreamCall()[0]).toBeNull();
+    });
+
+    it('[FEBT2-LB-NEW-02][RES-20] releases the transport on cancel even when the id comes from the backend fallback', async () => {
+      const { useCancelScanJobs } = await import('../useRecognitionHooks');
+      let cancelOptions: Parameters<typeof useCancelScanJobs>[0];
+      (useCancelScanJobs as Mock).mockImplementation((options: Parameters<typeof useCancelScanJobs>[0]) => {
+        cancelOptions = options;
+        return { mutate: vi.fn() };
+      });
+      // The backend auto-chained a clustering job, so deriveLatestJobId takes the
+      // `scanStatus.id` fallback rather than a locally persisted job. Emptying activeJobs
+      // cannot null this id — which is exactly the hole clearActiveJobs alone leaves.
+      (useCombinedScanStatus as Mock).mockReturnValue({
+        scanStatusQuery: { data: { id: 'backend-chained-job', type: 'clustering', status: 'running' } },
+        multiScanStatus: [],
+        batchRunStatusQuery: { data: null },
+      });
+
+      const onCancelComplete = vi.fn();
+      renderHook(() => useJobStateMachine({ onCancelComplete }));
+      expect(lastStreamCall()[0]).toBe('backend-chained-job');
+
+      act(() => {
+        cancelOptions?.onSuccess?.([], [], undefined, {} as never);
+      });
+
+      expect(lastStreamCall()[0]).toBeNull();
+      // The caller's own callback still runs: the release is layered onto the seam, not
+      // swapped in for it.
+      expect(onCancelComplete).toHaveBeenCalledTimes(1);
+    });
   });
 });

@@ -78,32 +78,50 @@ Choose your domain to load targeted context. Always load the matching testing gu
 
 If a user prompt begins with a registered `/command_id`, treat that prefix as a portable workflow command routed through `config/agent-workflows/portable_commands.json`.
 
-Current managed ids: `/scope`, `/refactor`, `/auto-fix`, `/branch-lifecycle`, `/branch-review`, `/handoff-lifecycle`, `/investigate`, `/incremental-implementation`, `/plan-analyze`, `/planning-review`, `/review-parallel`, `/tdd`, `/offload`, `/workbay`, `/ux-map`.
+Current managed ids: `/wb-scope`, `/wb-refactor`, `/wb-auto-fix`, `/wb-land`, `/wb-review-code`, `/wb-handoff`, `/wb-investigate`, `/wb-implement`, `/wb-draft`, `/wb-review-plan`, `/wb-review-slice`, `/wb-tdd`, `/wb-offload`, `/wb-harness`, `/wb-ux-map`.
 
 Routing rules:
 
 - Strip the leading `/command_id` token before normal intent analysis.
 - Load the mapped skill from the manifest and use its `makefile_target` as the primary entry point when one exists.
 - Interpret the remainder of the user message using the manifest-defined argument names.
-- If generated adapters drift from the manifest, run `make generate-agent-workflows`; `make check-agent-workflows` verifies Claude, VS Code, and Codex outputs together.
+- If generated adapters drift from the manifest, run `make generate-agent-workflows`; `make check-agent-workflows` verifies Claude, VS Code, and Codex outputs together. Regenerate from `scripts/generate_agent_workflows.py`.
 
 Command map:
 
-- `/scope` (guide) -> skill `scope` -> `(in-session intake; no standalone make target)`
-- `/refactor` (guide) -> skill `refactor` -> `(in-session advisory skill; no standalone make target)`
-- `/auto-fix` (write) -> skill `auto-fix` -> `(in-session bounded-loop skill; no standalone make target)`
-- `/branch-lifecycle` (write) -> skill `branch-lifecycle` -> `make task-start TASK=<task-ref> OBJECTIVE="..."`
-- `/branch-review` (verify) -> skill `branch-review` -> `make review-run`
-- `/handoff-lifecycle` (guide) -> skill `handoff-lifecycle` -> `make context`
-- `/investigate` (write) -> skill `investigate` -> `(in-session root-cause skill; no standalone make target)`
-- `/incremental-implementation` (write) -> skill `incremental-implementation` -> `make slice-start TASK=<task-ref> TEST_CMD="<command>"`
-- `/plan-analyze` (verify) -> skill `plan-analyze` -> `make plan-analyze DOC=<path>`
-- `/planning-review` (verify) -> skill `planning-review` -> `make plan-review DOC=<path>`
-- `/review-parallel` (verify) -> skill `review-parallel` -> `(in-session coordinator skill; no standalone make target)`
-- `/tdd` (write) -> skill `tdd` -> `make slice-start TASK=<task-ref> TEST_CMD="<command>"`
-- `/offload` (write) -> skill `offload` -> `(in-session cross-harness offload skill; no standalone make target)`
-- `/workbay` (guide) -> skill `workbay` -> `(in-session harness control; no standalone make target)`
-- `/ux-map` (guide) -> skill `ux-map` -> `(in-session advisory skill; no standalone make target)`
+- `/wb-scope` (guide) -> skill `scope` -> `(in-session intake; no standalone make target)`
+- `/wb-refactor` (guide) -> skill `refactor` -> `(in-session advisory skill; no standalone make target)`
+- `/wb-auto-fix` (write) -> skill `auto-fix` -> `(in-session bounded-loop skill; no standalone make target)`
+- `/wb-land` (write) -> skill `branch-lifecycle` -> `make task-start TASK=<task-ref> OBJECTIVE="..."`
+- `/wb-review-code` (verify) -> skill `branch-review` -> `make review-run`
+- `/wb-handoff` (guide) -> skill `handoff-lifecycle` -> `make context`
+- `/wb-investigate` (write) -> skill `investigate` -> `(in-session root-cause skill; no standalone make target)`
+- `/wb-implement` (write) -> skill `incremental-implementation` -> `make slice-start TASK=<task-ref> TEST_CMD="<command>"`
+- `/wb-draft` (verify) -> skill `plan-draft` -> `make plan-analyze DOC=<path>`
+- `/wb-review-plan` (verify) -> skill `planning-review` -> `make plan-review DOC=<path>`
+- `/wb-review-slice` (verify) -> skill `review-parallel` -> `(in-session coordinator skill; no standalone make target)`
+- `/wb-tdd` (write) -> skill `tdd` -> `make slice-start TASK=<task-ref> TEST_CMD="<command>"`
+- `/wb-offload` (write) -> skill `offload` -> `(in-session cross-harness offload skill; no standalone make target)`
+- `/wb-harness` (guide) -> skill `workbay` -> `(in-session harness control; no standalone make target)`
+- `/wb-ux-map` (guide) -> skill `ux-map` -> `(in-session advisory skill; no standalone make target)`
+
+Retired ids are fail-closed discovery metadata, never resolvable commands. Do not execute them, do not substitute a live workflow, and do not publish `/wb-tombstone` as a slash command. Redirect from the `replaces` field:
+
+- `/scope` → use `/wb-scope`
+- `/refactor` → use `/wb-refactor`
+- `/auto-fix` → use `/wb-auto-fix`
+- `/branch-lifecycle` → use `/wb-land`
+- `/branch-review` → use `/wb-review-code`
+- `/handoff-lifecycle` → use `/wb-handoff`
+- `/investigate` → use `/wb-investigate`
+- `/incremental-implementation` → use `/wb-implement`
+- `/plan-analyze` → use `/wb-draft`
+- `/planning-review` → use `/wb-review-plan`
+- `/review-parallel` → use `/wb-review-slice`
+- `/tdd` → use `/wb-tdd`
+- `/offload` → use `/wb-offload`
+- `/workbay` → use `/wb-harness`
+- `/ux-map` → use `/wb-ux-map`
 
 <!-- END GENERATED: codex-command-router -->
 

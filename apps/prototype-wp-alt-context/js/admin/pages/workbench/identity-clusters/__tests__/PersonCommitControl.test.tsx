@@ -189,7 +189,7 @@ describe('PersonCommitControl single-gesture naming (UXW2-3)', () => {
       rosterEntryId: 42,
     });
     expect(onCommit).not.toHaveBeenCalledWith(
-      expect.objectContaining({ newEntryName: expect.anything() }),
+      expect.objectContaining({ newEntryName: expect.anything() as unknown }),
     );
   });
 
@@ -210,7 +210,7 @@ describe('PersonCommitControl single-gesture naming (UXW2-3)', () => {
       rosterEntryId: 42,
     });
     expect(onCommit).not.toHaveBeenCalledWith(
-      expect.objectContaining({ newEntryName: expect.anything() }),
+      expect.objectContaining({ newEntryName: expect.anything() as unknown }),
     );
   });
 
@@ -381,5 +381,21 @@ describe('PersonCommitControl roster query states (UXW2-3-R1-02)', () => {
       'href',
       '#/roster?person=person-uuid-42',
     );
+  });
+
+  it('W3-C-14 accentPrimary=true renders accent chrome on secondary name-commit', () => {
+    renderControl({ isPrimary: true, accentPrimary: true });
+    const save = screen.getByRole('button', { name: 'Save name' });
+    expect(save).toHaveClass('button-secondary');
+    expect(save).toHaveClass('acx-accent-primary-action');
+    expect(save).not.toHaveClass('button-primary');
+  });
+
+  it('W3-C-14 accentPrimary=false renders no accent and no button-primary', () => {
+    renderControl({ isPrimary: true, accentPrimary: false });
+    const save = screen.getByRole('button', { name: 'Save name' });
+    expect(save).toHaveClass('button-secondary');
+    expect(save).not.toHaveClass('acx-accent-primary-action');
+    expect(save).not.toHaveClass('button-primary');
   });
 });

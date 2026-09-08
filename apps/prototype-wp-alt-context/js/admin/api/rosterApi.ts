@@ -43,11 +43,16 @@ export const deletePerson = async (id: number): Promise<void> => {
   });
 };
 
-export const commitClusterToRosterEntry = async ({
-  clusterId,
-  rosterEntryId,
-  newEntryName,
-}: CommitClusterRequest): Promise<RosterClusterCommitResponse> => {
+/**
+ * FEBT1-LC-01 / RES-04: the caller's interactive budget is enforced by a race, but a
+ * deadline that only abandons the caller still leaks the server-side write. The signal
+ * is threaded to the transport so an expired budget actually cancels the POST.
+ * Trailing-`signal` shape matches the recognition mutations (clusterApiMutations.ts:16).
+ */
+export const commitClusterToRosterEntry = async (
+  { clusterId, rosterEntryId, newEntryName }: CommitClusterRequest,
+  signal?: AbortSignal,
+): Promise<RosterClusterCommitResponse> => {
   let base: string;
   try {
     base = getEndpoint('rosterClusters');
@@ -63,5 +68,6 @@ export const commitClusterToRosterEntry = async ({
       new_entry_name: newEntryName ?? null,
     },
     restNonce: getConfig().nonce,
+    signal,
   });
 };

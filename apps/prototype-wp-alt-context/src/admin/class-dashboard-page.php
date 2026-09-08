@@ -17,12 +17,12 @@ class DashboardPage extends AbstractSpaPage {
 	}
 
 	protected function getPageTitle(): string {
-		return __( 'Alt Context Dashboard', 'alt-context' );
+		return __( 'Alt Context Overview', 'alt-context' );
 	}
 
 	protected function getLoadingMessage(): string {
 		return __(
-			'Loading the Alt Context dashboard. Please wait while the application initializes.',
+			'Loading Alt Context Overview. Please wait while the application initializes.',
 			'alt-context'
 		);
 	}

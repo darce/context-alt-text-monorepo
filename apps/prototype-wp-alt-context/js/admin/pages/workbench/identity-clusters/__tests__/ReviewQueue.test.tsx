@@ -99,11 +99,23 @@ const typePersonName = async (
 const wholeHoldText = (el: HTMLElement): string =>
   (el.textContent ?? '').replace(/\s+/g, ' ').trim();
 
+/** Satisfy HAI-17 in legacy interaction tests whose fixture has a multi-face target. */
+const reviewCurrentStoredFaces = async (): Promise<void> => {
+  const review = screen.queryByRole('button', { name: 'Review details' });
+  const approve = screen.queryByRole('button', { name: 'Yes' });
+  if (review && approve?.hasAttribute('disabled')) {
+    await userEvent.click(review);
+  }
+};
+
 /**
  * Click an accept/reject control under fake setTimeout so the Slice-2 hold can
  * expire deterministically without 5s wall-clock waits (promises stay real).
  */
 const clickAndCommitHold = async (button: HTMLElement): Promise<void> => {
+  if (button.getAttribute('aria-describedby')?.startsWith('acx-suggestion-review-reason-')) {
+    await reviewCurrentStoredFaces();
+  }
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   try {
     act(() => {
@@ -646,6 +658,7 @@ describe('ReviewQueue', () => {
     renderQueue();
 
     const yes = await screen.findByRole('button', { name: 'Yes' });
+    await reviewCurrentStoredFaces();
     yes.focus();
     expect(yes).toHaveFocus();
 
@@ -1172,6 +1185,7 @@ describe('ReviewQueue', () => {
 
     renderQueue();
     await screen.findByRole('button', { name: 'Yes' });
+    await reviewCurrentStoredFaces();
 
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
@@ -1236,6 +1250,7 @@ describe('ReviewQueue', () => {
 
     renderQueue();
     await screen.findByRole('button', { name: 'Yes' });
+    await reviewCurrentStoredFaces();
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
       act(() => {
@@ -1245,14 +1260,109 @@ describe('ReviewQueue', () => {
 
       await act(async () => {
         screen.getByRole('button', { name: 'Next review item' }).click();
-        await Promise.resolve();
-        await Promise.resolve();
-        await Promise.resolve();
+        for (let tick = 0; tick < 8; tick += 1) {
+          await Promise.resolve();
+        }
       });
 
       expect(acceptSuggestion).toHaveBeenCalledTimes(1);
       expect(acceptSuggestion).toHaveBeenCalledWith('sugg-1');
       expect(screen.getByText('Saved. Moving to next review item.')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('FEBT1-LD-02: an extra re-render cannot overwrite the save confirmation with the queue position', async () => {
+    // The save confirmation and the queue-position line are announced in the same
+    // commit: flush resolves → "Saved. Moving to next review item." → navigate()
+    // → the card-transition effect announces "Review item N of M". On the old
+    // single-slot channel the survivor was whichever setState landed last, so one
+    // extra re-render from any unrelated subscriber silently dropped the operator's
+    // save confirmation (A11Y-24: every state announced; RLSE-04). The two regions
+    // are now independently owned, so BOTH must be observable at once.
+    let pendingRows = [
+      {
+        id: 'sugg-1',
+        identity_id: 'identity-1',
+        suggested_cluster_id: 'cluster-1',
+        representative_similarity: 0.95,
+        avg_member_similarity: 0.9,
+        cluster_label: 'Alex',
+        cluster_identity_count: 3,
+      },
+      {
+        id: 'sugg-2',
+        identity_id: 'identity-2',
+        suggested_cluster_id: 'cluster-2',
+        representative_similarity: 0.7,
+        avg_member_similarity: 0.65,
+        cluster_label: 'Jordan',
+        cluster_identity_count: 2,
+      },
+    ];
+    vi.mocked(fetchPendingSuggestions).mockImplementation(() =>
+      Promise.resolve({
+        suggestions: pendingRows.map((row) => ({ ...row })),
+        limit: 10,
+        offset: 0,
+      }),
+    );
+    vi.mocked(acceptSuggestion).mockImplementation((id: string) => {
+      pendingRows = pendingRows.filter((row) => row.id !== id);
+      return Promise.resolve({
+        suggestion_id: id,
+        resolution: 'accepted' as const,
+        identity_id: 'identity-1',
+        cluster_id: 'cluster-1',
+        message: 'ok',
+      });
+    });
+
+    const { queryClient } = renderQueue();
+    await screen.findByRole('button', { name: 'Yes' });
+    await reviewCurrentStoredFaces();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      act(() => {
+        screen.getByRole('button', { name: 'Yes' }).click();
+      });
+
+      await act(async () => {
+        screen.getByRole('button', { name: 'Next review item' }).click();
+        for (let tick = 0; tick < 8; tick += 1) {
+          await Promise.resolve();
+        }
+      });
+
+      const outcomeRegion = document.querySelector('.acx-review-queue__live');
+      const positionRegion = document.querySelector('.acx-review-queue__live-position');
+      expect(outcomeRegion).toHaveTextContent('Saved. Moving to next review item.');
+      // The position announcement really did fire in the same commit — without
+      // this the test would pass on a channel that simply never announced.
+      expect(positionRegion).toHaveTextContent(/Review item \d+ of \d+/);
+      // ...and it did not land in, or clear, the outcome region.
+      expect(outcomeRegion).not.toHaveTextContent(/Review item/);
+
+      // Now force the extra re-render that FEBT1-LD-02 identifies as the trigger:
+      // a subscriber waking on an unrelated query transition. The confirmation
+      // must survive it.
+      await act(async () => {
+        queryClient.setQueryData(queryKeys.clusters.topUnlabeled('test-tenant-id'), {
+          clusters: [],
+          limit: 20,
+          total: 0,
+          truncated: false,
+          repair_pending: false,
+          singleton_count: 0,
+          data_source: DATA_SOURCE.LOCAL_PROJECTION,
+        });
+        await Promise.resolve();
+      });
+
+      expect(document.querySelector('.acx-review-queue__live')).toHaveTextContent(
+        'Saved. Moving to next review item.',
+      );
     } finally {
       vi.useRealTimers();
     }
@@ -1301,6 +1411,7 @@ describe('ReviewQueue', () => {
 
     renderQueue();
     const yes = await screen.findByRole('button', { name: 'Yes' });
+    await reviewCurrentStoredFaces();
 
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     act(() => {
@@ -1329,6 +1440,7 @@ describe('ReviewQueue', () => {
       expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Jordan/);
     });
 
+    await reviewCurrentStoredFaces();
     await clickAndCommitHold(screen.getByRole('button', { name: 'Yes' }));
 
     await waitFor(() => {
@@ -1358,6 +1470,7 @@ describe('ReviewQueue', () => {
     renderQueue({ queueRef });
 
     await screen.findByRole('button', { name: 'Yes' });
+    await reviewCurrentStoredFaces();
     act(() => {
       queueRef.current?.focusCurrentCard();
     });
@@ -1805,16 +1918,27 @@ describe('ReviewQueue', () => {
     });
   });
 
-  it('re-announces identical live copy via seq-keyed region (HARM-02 / BR-68)', async () => {
+  it('DUX-L7-RV-03: re-announces identical copy through one persistent live node', async () => {
     // Capture announce so we can fire the SAME string twice consecutively —
     // plain useState would Object.is-bail; useAriaAnnounce must bump seq.
+    // FEBT1-LD-02: ReviewQueue now owns TWO independent announce channels, so the
+    // spy must address one deliberately. `announce` is a stable useCallback per
+    // hook instance, so the first distinct one captured is the outcome channel
+    // (`.acx-review-queue__live`) — the region this test asserts on.
     const original = useAriaAnnounceMod.useAriaAnnounce;
-    let latestAnnounce: ((message: string) => void) | null = null;
+    const capturedAnnounces: ((message: string) => void)[] = [];
     const spy = vi.spyOn(useAriaAnnounceMod, 'useAriaAnnounce').mockImplementation(() => {
       const result = original();
-      latestAnnounce = result.announce;
+      if (!capturedAnnounces.includes(result.announce)) {
+        capturedAnnounces.push(result.announce);
+      }
       return result;
     });
+    const latestAnnounce = (message: string): void => {
+      const outcomeAnnounce = capturedAnnounces[0];
+      expect(outcomeAnnounce).toBeDefined();
+      outcomeAnnounce(message);
+    };
 
     try {
       vi.mocked(fetchPendingSuggestions).mockResolvedValue({
@@ -1836,26 +1960,139 @@ describe('ReviewQueue', () => {
       renderQueue();
       await screen.findByRole('button', { name: 'Yes' });
       await waitFor(() => {
-        expect(latestAnnounce).not.toBeNull();
+        expect(capturedAnnounces.length).toBeGreaterThan(0);
       });
+
+      const persistentLive = document.querySelector('.acx-review-queue__live');
+      expect(persistentLive).toBeInTheDocument();
+      expect(persistentLive).toBeEmptyDOMElement();
 
       const repeatCopy = LIVE_TARGET_CLOSE_ANNOUNCE;
       act(() => {
-        latestAnnounce?.(repeatCopy);
+        latestAnnounce(repeatCopy);
       });
-      const live1 = document.querySelector('.acx-review-queue__live');
-      expect(live1).toHaveTextContent(repeatCopy);
-      const seq1 = live1?.getAttribute('data-announce-seq');
+      await waitFor(() => {
+        expect(persistentLive).toHaveTextContent(repeatCopy);
+      });
+      expect(document.querySelector('.acx-review-queue__live')).toBe(persistentLive);
+      const seq1 = persistentLive?.getAttribute('data-announce-seq');
       expect(seq1).toBeTruthy();
 
       act(() => {
-        latestAnnounce?.(repeatCopy);
+        latestAnnounce(repeatCopy);
       });
       await waitFor(() => {
         const live2 = document.querySelector('.acx-review-queue__live');
         expect(live2).toHaveTextContent(repeatCopy);
+        expect(live2).toBe(persistentLive);
         expect(live2?.getAttribute('data-announce-seq')).not.toBe(seq1);
       });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('DUX-W2R1-RV-04: repeat announcement mutates the persistent node text (AT-observable), not just data-announce-seq', async () => {
+    // BR-68's clear-then-set arm exists so a screen reader on this NON-keyed,
+    // NO-remount `role="status"` node actually hears a second identical
+    // announcement. `data-announce-seq` is the hook's own bookkeeping — a
+    // mutant that publishes the repeat immediately (`setState((prev) =>
+    // ({ message, seq: prev.seq + 1 }))`, skipping the null clear phase) also
+    // bumps seq and lands on the same final text, so asserting seq or final
+    // text alone certifies nothing (TEST-15). Because the text value is
+    // unchanged (Object.is-equal), that mutant never touches the Text node at
+    // all: no DOM mutation occurs, so a screen reader stays silent. Assert on
+    // the actual DOM mutation sequence via MutationObserver instead.
+    // FEBT1-LD-02: ReviewQueue now owns TWO independent announce channels, so the
+    // spy must address one deliberately. `announce` is a stable useCallback per
+    // hook instance, so the first distinct one captured is the outcome channel
+    // (`.acx-review-queue__live`) — the region this test asserts on.
+    const original = useAriaAnnounceMod.useAriaAnnounce;
+    const capturedAnnounces: ((message: string) => void)[] = [];
+    const spy = vi.spyOn(useAriaAnnounceMod, 'useAriaAnnounce').mockImplementation(() => {
+      const result = original();
+      if (!capturedAnnounces.includes(result.announce)) {
+        capturedAnnounces.push(result.announce);
+      }
+      return result;
+    });
+    const latestAnnounce = (message: string): void => {
+      const outcomeAnnounce = capturedAnnounces[0];
+      expect(outcomeAnnounce).toBeDefined();
+      outcomeAnnounce(message);
+    };
+
+    try {
+      vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+        suggestions: [
+          {
+            id: 'sugg-1',
+            identity_id: 'identity-1',
+            suggested_cluster_id: 'cluster-1',
+            representative_similarity: 0.9,
+            avg_member_similarity: 0.85,
+            cluster_label: 'Alex',
+            cluster_identity_count: 1,
+          },
+        ],
+        limit: 10,
+        offset: 0,
+      });
+
+      renderQueue();
+      await screen.findByRole('button', { name: 'Yes' });
+      await waitFor(() => {
+        expect(capturedAnnounces.length).toBeGreaterThan(0);
+      });
+
+      const persistentLive = document.querySelector<HTMLElement>('.acx-review-queue__live')!;
+      expect(persistentLive).toBeInTheDocument();
+
+      const repeatCopy = LIVE_TARGET_CLOSE_ANNOUNCE;
+
+      // First announce: establishes the baseline text on the persistent node.
+      act(() => {
+        latestAnnounce(repeatCopy);
+      });
+      await waitFor(() => {
+        expect(persistentLive).toHaveTextContent(repeatCopy);
+      });
+
+      // Observe ONLY the second, identical announce — the arm under test.
+      const textSequence: (string | null)[] = [];
+      const recordMutations = (records: MutationRecord[]): void => {
+        records.forEach((record) => {
+          if (record.type !== 'childList') {
+            return;
+          }
+          if (record.addedNodes.length > 0) {
+            textSequence.push(record.addedNodes[record.addedNodes.length - 1].textContent);
+          } else if (record.removedNodes.length > 0) {
+            textSequence.push(null);
+          }
+        });
+      };
+      const observer = new MutationObserver(recordMutations);
+      observer.observe(persistentLive, { childList: true });
+
+      act(() => {
+        latestAnnounce(repeatCopy);
+      });
+      await waitFor(() => {
+        expect(persistentLive).toHaveTextContent(repeatCopy);
+      });
+      // Drain any records not yet delivered to the async callback.
+      recordMutations(observer.takeRecords());
+      observer.disconnect();
+
+      // AT-observable proof: the node's text content was actually removed
+      // (a `null`/empty frame) and THEN restored to the repeat copy. A
+      // screen reader on this persistent node only re-announces because this
+      // real DOM mutation occurred — an unchanged Text node is silent no
+      // matter what `data-announce-seq` says.
+      const emptyIndex = textSequence.indexOf(null);
+      expect(emptyIndex).toBeGreaterThan(-1);
+      expect(textSequence.slice(emptyIndex + 1)).toContain(repeatCopy);
     } finally {
       spy.mockRestore();
     }
@@ -1910,10 +2147,12 @@ describe('ReviewQueue', () => {
       expect(screen.getByTestId('acx-review-card')).toBeInTheDocument();
     });
     await waitFor(() => {
-      expect(document.querySelector('.acx-review-queue__live')).toHaveTextContent('Review item 1 of 1');
+      expect(document.querySelector('.acx-review-queue__live-position')).toHaveTextContent(
+        'Review item 1 of 1',
+      );
     });
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Yes' })).toHaveFocus();
+      expect(screen.getByTestId('acx-review-select')).toHaveFocus();
     });
   });
 
@@ -2131,7 +2370,7 @@ describe('ReviewQueue', () => {
 
     renderQueue();
 
-    await screen.findByText(/Suggested name:/);
+    await screen.findByRole('button', { name: 'Show suggestion' });
     expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
     const card = screen.getByTestId('acx-review-card');
     expect(card).toHaveAccessibleName(/Name suggestion 1 of 2/);
@@ -2456,7 +2695,7 @@ describe('ReviewQueue', () => {
     const onLabel = vi.fn();
     renderQueue({ onLabel });
 
-    await screen.findByText(/Suggested name:/);
+    await screen.findByRole('button', { name: 'Show suggestion' });
     await userEvent.setup().click(screen.getByRole('button', { name: 'Merge or split this group' }));
     expect(onLabel).toHaveBeenCalledWith('cluster-name-1');
   });
@@ -2485,10 +2724,128 @@ describe('ReviewQueue', () => {
 
     renderQueue();
 
-    await screen.findByText(/Suggested name:/);
+    await userEvent.setup().click(await screen.findByRole('button', { name: 'Show suggestion' }));
     const commit = screen.getByTestId('acx-person-commit');
     expect(commit).toHaveAttribute('data-person-commit-primary', 'true');
     expect(screen.getByText(MODEL_OUTPUT_DISCLOSURE)).toBeInTheDocument();
+  });
+
+  it('DUX-L7-RV-02: exposes the model-output disclosure as an inline gettext literal', () => {
+    const source = readFileSync(
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../personCommitCopy.ts'),
+      'utf8',
+    );
+    expect(source).toMatch(
+      /__\(\s*'Suggested by face matching based on similarity — confirm before treating it as fact\.'\s*,\s*'alt-context'\s*\)/,
+    );
+  });
+
+  it('DUX-L7-RV-01 DUX-L7-RV-04: Tab-reachable disclosure toggles closed on second keyboard activation', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'name-1',
+          cluster_id: 'cluster-name-1',
+          suggested_name: 'Morgan',
+          confidence_score: 0.91,
+          source: 'test',
+          created_at: '2026-01-01T00:00:00Z',
+          expires_at: null,
+        },
+      ],
+      limit: 25,
+      offset: 0,
+    });
+
+    const user = userEvent.setup();
+    const { container } = renderQueue();
+    const commit = await screen.findByTestId('acx-person-commit');
+    const input = within(commit).getByRole('combobox', { name: PERSON_COMMIT_COMBOBOX_ARIA });
+
+    expect(input).toHaveValue('');
+    expect(screen.queryByText(/Suggested name:/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Morgan')).not.toBeInTheDocument();
+
+    const showSuggestion = screen.getByRole('button', { name: 'Show suggestion' });
+    for (let tabs = 0; tabs < 20 && document.activeElement !== showSuggestion; tabs += 1) {
+      await user.tab();
+    }
+    expect(showSuggestion).toHaveFocus();
+    await user.keyboard('{Enter}');
+
+    expect(screen.getByText(/Suggested name:/)).toHaveTextContent('Suggested name: Morgan');
+    expect(screen.getByText(MODEL_OUTPUT_DISCLOSURE)).toBeInTheDocument();
+    expect(input).toHaveValue('');
+    expect(showSuggestion).toHaveAttribute('aria-expanded', 'true');
+    expect(showSuggestion).toHaveFocus();
+    expect(screen.getByTestId('acx-review-card')).toHaveAttribute('data-suggestion-consulted', 'true');
+    await waitFor(() => {
+      expect(container.querySelector('.acx-review-queue__live')).toHaveTextContent(
+        'Suggestion revealed.',
+      );
+    });
+
+    await user.keyboard('{Enter}');
+    expect(screen.queryByText(/Suggested name:/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Morgan')).not.toBeInTheDocument();
+    expect(showSuggestion).toHaveAttribute('aria-expanded', 'false');
+    expect(showSuggestion).toHaveAccessibleName('Show suggestion');
+    expect(showSuggestion).toHaveFocus();
+  });
+
+  it('DUX-L7-RV-04: NAME person-commit drain moves focus to the empty-state anchor', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({ suggestions: [], limit: 10, offset: 0 });
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'name-only',
+          cluster_id: 'cluster-name-only',
+          suggested_name: 'Morgan',
+          confidence_score: 0.91,
+          source: 'test',
+          created_at: '2026-01-01T00:00:00Z',
+          expires_at: null,
+        },
+      ],
+      limit: 25,
+      offset: 0,
+    });
+    vi.mocked(commitClusterToRosterEntry).mockResolvedValue(
+      rosterCommitFixture({ cluster_id: 'cluster-name-only', person_name: 'Alex' }),
+    );
+
+    const anchorRef = React.createRef<HTMLDivElement>();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MergeSurvivorProvider>
+          <div ref={anchorRef} className="acx-findings-detail-anchor" tabIndex={-1}>
+            <ReviewQueueHarness emptyStateAnchorRef={anchorRef} />
+          </div>
+        </MergeSurvivorProvider>
+      </QueryClientProvider>,
+    );
+
+    const user = userEvent.setup();
+    await typePersonName(user, 'Alex');
+    await waitFor(() => {
+      expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
+        clusterId: 'cluster-name-only',
+        rosterEntryId: 7,
+        newEntryName: undefined,
+      });
+    });
+    await waitFor(() => {
+      expect(screen.getAllByText('All caught up — no items need review').length).toBeGreaterThan(0);
+      expect(document.activeElement).toBe(anchorRef.current);
+    });
   });
 
   it('shows person-commit as primary on CLUSTER cards', async () => {
@@ -2712,6 +3069,7 @@ describe('ReviewQueue', () => {
     renderQueue();
 
     const yes = await screen.findByRole('button', { name: 'Yes' });
+    await reviewCurrentStoredFaces();
     // Open hold without expiring it.
     await user.click(yes);
     expect(screen.getByText(HOLD_STATUS_COPY)).toBeInTheDocument();
@@ -2876,6 +3234,7 @@ describe('ReviewQueue', () => {
     renderQueue();
 
     const yes = await screen.findByRole('button', { name: 'Yes' });
+    await reviewCurrentStoredFaces();
     // Hold accept open, then person-commit flushes it.
     await user.click(yes);
     expect(screen.getByText(HOLD_STATUS_COPY)).toBeInTheDocument();
@@ -3090,7 +3449,7 @@ describe('ReviewQueue', () => {
 
     // The live region must announce the outage AND the filtered-empty hint.
     await waitFor(() => {
-      const live = document.querySelector('.acx-review-queue__live');
+      const live = document.querySelector('.acx-review-queue__live-position');
       expect(live).toHaveTextContent('Unable to load unlabeled faces.');
       expect(live).toHaveTextContent('No items match the current filters.');
     });
@@ -3284,9 +3643,15 @@ describe('ReviewQueue', () => {
     expect(await screen.findByRole('button', { name: /^Resync review queue$/ })).toBeInTheDocument();
     expect(screen.queryByTestId('acx-review-card')).not.toBeInTheDocument();
     expect(screen.queryByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeNull();
-    const live = screen.getByRole('status');
-    expect(live.textContent).not.toBe(REVIEW_QUEUE_DRAIN_MESSAGE);
-    expect(live.textContent).not.toContain('All caught up');
+    // Both polite regions must be free of a false drain claim (FEBT1-LD-02 split
+    // the outcome and position channels; a drain sentence could only ever be in
+    // the position one, but neither may claim it).
+    const liveRegions = screen.getAllByRole('status');
+    expect(liveRegions.length).toBeGreaterThanOrEqual(2);
+    for (const live of liveRegions) {
+      expect(live.textContent).not.toBe(REVIEW_QUEUE_DRAIN_MESSAGE);
+      expect(live.textContent).not.toContain('All caught up');
+    }
   });
 
   it('R5-09: findings Resync and queue Resync have distinct accessible names', async () => {
@@ -3395,7 +3760,7 @@ describe('ReviewQueue', () => {
       expect(document.getElementById('acx-findings-panel-repair-copy')).toHaveTextContent(
         '3 groups missing face data',
       );
-      expect(container.querySelector('.acx-review-queue__live')).toHaveTextContent(
+      expect(container.querySelector('.acx-review-queue__live-position')).toHaveTextContent(
         '3 groups missing face data',
       );
     });
@@ -3403,7 +3768,9 @@ describe('ReviewQueue', () => {
     const panelClaim = (document.getElementById('acx-findings-panel-repair-copy')?.textContent ?? '')
       .replace(/\s+/g, ' ')
       .trim();
-    const queueLiveClaim = (container.querySelector('.acx-review-queue__live')?.textContent ?? '').trim();
+    const queueLiveClaim = (
+      container.querySelector('.acx-review-queue__live-position')?.textContent ?? ''
+    ).trim();
     const queueVisualClaim = (document.getElementById('acx-review-queue-repair-copy')?.textContent ?? '')
       .replace(/\s+/g, ' ')
       .trim();
@@ -3480,7 +3847,7 @@ describe('ReviewQueue', () => {
 
     const { container } = renderQueue();
     await screen.findByTestId('acx-review-queue-repair');
-    const liveRegion = container.querySelector('.acx-review-queue__live');
+    const liveRegion = container.querySelector('.acx-review-queue__live-position');
     expect(liveRegion).toBeTruthy();
     expect(within(liveRegion as HTMLElement).getByText(/missing face data/i)).toBeInTheDocument();
   });
@@ -3503,7 +3870,7 @@ describe('ReviewQueue', () => {
 
     const { container, queryClient } = renderQueue();
     await screen.findByTestId('acx-review-queue-repair');
-    const liveRegion = () => container.querySelector('.acx-review-queue__live');
+    const liveRegion = () => container.querySelector('.acx-review-queue__live-position');
     expect(within(liveRegion() as HTMLElement).getByText(/missing face data/i)).toBeInTheDocument();
     const seq = liveRegion()?.getAttribute('data-announce-seq');
 
@@ -3543,7 +3910,7 @@ describe('ReviewQueue', () => {
 
     const { container, queryClient } = renderQueue();
     await screen.findByTestId('acx-review-queue-repair');
-    const liveRegion = () => container.querySelector('.acx-review-queue__live');
+    const liveRegion = () => container.querySelector('.acx-review-queue__live-position');
     await waitFor(() => {
       expect(liveRegion()).toHaveTextContent('7 groups elsewhere are missing face data');
     });
@@ -3602,7 +3969,7 @@ describe('ReviewQueue', () => {
 
     const { container, queryClient } = renderQueue();
     await screen.findByTestId('acx-review-queue-repair');
-    const liveRegion = () => container.querySelector('.acx-review-queue__live');
+    const liveRegion = () => container.querySelector('.acx-review-queue__live-position');
     expect(within(liveRegion() as HTMLElement).getByText(/missing face data/i)).toBeInTheDocument();
 
     queryClient.setQueryData(queryKeys.clusters.topUnlabeled('test-tenant-id'), {
@@ -3675,7 +4042,9 @@ describe('ReviewQueue', () => {
         ).length;
 
       expect(filteredAnnounceCount()).toBe(1);
-      const seqAfterFirst = document.querySelector('.acx-review-queue__live')?.getAttribute('data-announce-seq');
+      const seqAfterFirst = document
+        .querySelector('.acx-review-queue__live-position')
+        ?.getAttribute('data-announce-seq');
       expect(seqAfterFirst).toBeTruthy();
 
       const topKey = queryKeys.clusters.topUnlabeled('test-tenant-id');
@@ -3695,9 +4064,9 @@ describe('ReviewQueue', () => {
       }
 
       expect(filteredAnnounceCount()).toBe(1);
-      expect(document.querySelector('.acx-review-queue__live')?.getAttribute('data-announce-seq')).toBe(
-        seqAfterFirst,
-      );
+      expect(
+        document.querySelector('.acx-review-queue__live-position')?.getAttribute('data-announce-seq'),
+      ).toBe(seqAfterFirst);
     } finally {
       spy.mockRestore();
     }
@@ -3733,7 +4102,7 @@ describe('ReviewQueue', () => {
       limit: 25,
       offset: 0,
     });
-    vi.mocked(acceptNameSuggestion).mockImplementation(async (suggestionId) => ({
+    vi.mocked(acceptNameSuggestion).mockImplementation((suggestionId) => Promise.resolve({
       suggestion_id: suggestionId,
       resolution: 'accepted',
       identity_id: `identity-${suggestionId}`,
@@ -4241,6 +4610,7 @@ describe('ReviewQueue', () => {
       renderQueue();
 
       await screen.findByRole('button', { name: 'Yes' });
+      await reviewCurrentStoredFaces();
       expect(screen.getByTestId('acx-review-selection-tray')).toHaveTextContent('0 selected');
       expect(screen.getAllByTestId('acx-review-card')).toHaveLength(1);
 
@@ -4251,6 +4621,7 @@ describe('ReviewQueue', () => {
       await waitFor(() => {
         expect(screen.getByTestId('acx-review-select')).toBeInTheDocument();
       });
+      await reviewCurrentStoredFaces();
       await user.click(screen.getByTestId('acx-review-select'));
       expect(screen.getByTestId('acx-review-selection-tray')).toHaveTextContent('2 selected');
 
@@ -4298,6 +4669,7 @@ describe('ReviewQueue', () => {
       renderQueue();
 
       const yes = await screen.findByRole('button', { name: 'Yes' });
+      await reviewCurrentStoredFaces();
       const no = screen.getByRole('button', { name: 'No' });
       expect(yes).not.toBeDisabled();
       expect(no).not.toBeDisabled();
@@ -4305,18 +4677,321 @@ describe('ReviewQueue', () => {
       await user.click(screen.getByTestId('acx-review-select'));
       expect(yes).toBeDisabled();
       expect(no).toBeDisabled();
-      expect(yes).toHaveAttribute(
-        'title',
+      const selectedReason = screen.getByText(
         'Deselect this item to accept or reject it individually.',
       );
-      expect(no).toHaveAttribute(
-        'title',
-        'Deselect this item to accept or reject it individually.',
-      );
+      expect(yes).toHaveAttribute('aria-describedby', selectedReason.id);
+      expect(no).toHaveAttribute('aria-describedby', selectedReason.id);
 
       await user.click(screen.getByTestId('acx-review-select'));
       expect(yes).not.toBeDisabled();
       expect(no).not.toBeDisabled();
+    });
+
+    it('DUX-L8-RV-02: blocks selection acceptance until every gated suggestion was disclosed', async () => {
+      seedMariaGroup();
+      vi.mocked(fetchClusterMembers).mockResolvedValue({
+        members: [],
+        limit: 25,
+        total: 2,
+        truncated: false,
+      });
+      const user = userEvent.setup();
+      renderQueue();
+
+      await screen.findByRole('button', { name: 'Yes' });
+      await user.click(screen.getByTestId('acx-review-select'));
+      await user.click(screen.getByRole('button', { name: 'Review selection' }));
+
+      const commit = screen.getByTestId('acx-bulk-commit');
+      const reason = screen.getByText(
+        'Review the stored faces for every selected suggestion before accepting.',
+      );
+      // BR-74 / DUX-W2R2-RV-02: stored-face gate keeps the control focusable
+      // (aria-disabled + describedby), never HTML-disabled.
+      expect(commit).not.toBeDisabled();
+      expect(commit).toHaveAttribute('aria-disabled', 'true');
+      expect(commit).toHaveAttribute('aria-describedby', reason.id);
+      commit.focus();
+      expect(commit).toHaveFocus();
+      expect(commit).toHaveTextContent('Accept 1 for Maria');
+      await user.click(commit);
+      expect(acceptSuggestion).not.toHaveBeenCalled();
+
+      await reviewCurrentStoredFaces();
+      await waitFor(() => {
+        expect(commit).not.toBeDisabled();
+        expect(commit).not.toHaveAttribute('aria-disabled', 'true');
+      });
+      expect(acceptSuggestion).not.toHaveBeenCalled();
+    });
+
+    it('DUX-W2R2-RV-01: Retry after partial fail does not commit a later-selected gated card', async () => {
+      vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+        suggestions: [
+          {
+            id: 'sugg-u1',
+            identity_id: 'identity-u1',
+            suggested_cluster_id: 'cluster-u1',
+            representative_similarity: 0.95,
+            avg_member_similarity: 0.9,
+            cluster_label: 'Maria',
+            cluster_identity_count: 1,
+          },
+          {
+            id: 'sugg-u2',
+            identity_id: 'identity-u2',
+            suggested_cluster_id: 'cluster-u2',
+            representative_similarity: 0.9,
+            avg_member_similarity: 0.85,
+            cluster_label: 'Maria',
+            cluster_identity_count: 1,
+          },
+          {
+            id: 'sugg-g',
+            identity_id: 'identity-g',
+            suggested_cluster_id: 'cluster-g',
+            representative_similarity: 0.85,
+            avg_member_similarity: 0.8,
+            cluster_label: 'Maria',
+            cluster_identity_count: 5,
+          },
+        ],
+        limit: 10,
+        offset: 0,
+      });
+      vi.mocked(fetchClusterMembers).mockResolvedValue({
+        members: [],
+        limit: 25,
+        total: 2,
+        truncated: false,
+      });
+      vi.mocked(acceptSuggestion).mockImplementation((id: string) => {
+        if (id === 'sugg-u2') {
+          return Promise.reject(new Error('nope'));
+        }
+        return Promise.resolve({
+          suggestion_id: id,
+          resolution: 'accepted' as const,
+          identity_id: `identity-${id}`,
+          cluster_id: `cluster-${id}`,
+          message: 'ok',
+        });
+      });
+
+      const user = userEvent.setup();
+      renderQueue();
+
+      await screen.findByRole('button', { name: 'Yes' });
+      await user.click(screen.getByTestId('acx-review-select'));
+      await user.click(screen.getByRole('button', { name: 'Next review item' }));
+      await waitFor(() => {
+        expect(screen.getByTestId('acx-review-select')).toBeInTheDocument();
+      });
+      await user.click(screen.getByTestId('acx-review-select'));
+      await user.click(screen.getByRole('button', { name: 'Review selection' }));
+      await waitFor(() => {
+        expect(screen.getByTestId('acx-bulk-commit')).not.toBeDisabled();
+        expect(screen.getByTestId('acx-bulk-commit')).not.toHaveAttribute('aria-disabled', 'true');
+      });
+
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        await act(async () => {
+          screen.getByTestId('acx-bulk-commit').click();
+          await Promise.resolve();
+        });
+        await act(async () => {
+          vi.advanceTimersByTime(UNDO_HOLD_MS);
+          await Promise.resolve();
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+
+      const failure = await screen.findByTestId('acx-bulk-partial-failure');
+      vi.mocked(acceptSuggestion).mockClear();
+
+      await user.click(screen.getByRole('button', { name: 'Next review item' }));
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Review details' })).toBeInTheDocument();
+      });
+      await user.click(screen.getByTestId('acx-review-select'));
+
+      const reason = screen.getByText(
+        'Review the stored faces for every selected suggestion before accepting.',
+      );
+      expect(reason).toBeInTheDocument();
+
+      const retry = within(failure).getByRole('button', { name: 'Retry' });
+      expect(retry).toHaveAttribute('aria-describedby', reason.id);
+
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        await act(async () => {
+          retry.click();
+          await Promise.resolve();
+        });
+        await act(async () => {
+          vi.advanceTimersByTime(UNDO_HOLD_MS);
+          await Promise.resolve();
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+
+      expect(acceptSuggestion).not.toHaveBeenCalled();
+      expect(
+        screen.getByText('Review the stored faces for every selected suggestion before accepting.'),
+      ).toBeInTheDocument();
+    });
+
+    it('DUX-W2R2-RV-05: Retry onClick is a no-op while stored-face gated and reason stays resolvable when tray collapses', async () => {
+      vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+        suggestions: [
+          {
+            id: 'sugg-u1',
+            identity_id: 'identity-u1',
+            suggested_cluster_id: 'cluster-u1',
+            representative_similarity: 0.95,
+            avg_member_similarity: 0.9,
+            cluster_label: 'Maria',
+            cluster_identity_count: 1,
+          },
+          {
+            id: 'sugg-u2',
+            identity_id: 'identity-u2',
+            suggested_cluster_id: 'cluster-u2',
+            representative_similarity: 0.9,
+            avg_member_similarity: 0.85,
+            cluster_label: 'Maria',
+            cluster_identity_count: 1,
+          },
+          {
+            id: 'sugg-g',
+            identity_id: 'identity-g',
+            suggested_cluster_id: 'cluster-g',
+            representative_similarity: 0.85,
+            avg_member_similarity: 0.8,
+            cluster_label: 'Maria',
+            cluster_identity_count: 5,
+          },
+        ],
+        limit: 10,
+        offset: 0,
+      });
+      vi.mocked(fetchClusterMembers).mockResolvedValue({
+        members: [],
+        limit: 25,
+        total: 2,
+        truncated: false,
+      });
+      vi.mocked(acceptSuggestion).mockImplementation((id: string) => {
+        if (id === 'sugg-u2') {
+          return Promise.reject(new Error('nope'));
+        }
+        return Promise.resolve({
+          suggestion_id: id,
+          resolution: 'accepted' as const,
+          identity_id: `identity-${id}`,
+          cluster_id: `cluster-${id}`,
+          message: 'ok',
+        });
+      });
+
+      const user = userEvent.setup();
+      renderQueue();
+
+      await screen.findByRole('button', { name: 'Yes' });
+      await user.click(screen.getByTestId('acx-review-select'));
+      await user.click(screen.getByRole('button', { name: 'Next review item' }));
+      await waitFor(() => {
+        expect(screen.getByTestId('acx-review-select')).toBeInTheDocument();
+      });
+      await user.click(screen.getByTestId('acx-review-select'));
+      await user.click(screen.getByRole('button', { name: 'Review selection' }));
+      await waitFor(() => {
+        expect(screen.getByTestId('acx-bulk-commit')).not.toBeDisabled();
+        expect(screen.getByTestId('acx-bulk-commit')).not.toHaveAttribute('aria-disabled', 'true');
+      });
+
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        await act(async () => {
+          screen.getByTestId('acx-bulk-commit').click();
+          await Promise.resolve();
+        });
+        await act(async () => {
+          vi.advanceTimersByTime(UNDO_HOLD_MS);
+          await Promise.resolve();
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+
+      const failure = await screen.findByTestId('acx-bulk-partial-failure');
+      vi.mocked(acceptSuggestion).mockClear();
+
+      await user.click(screen.getByRole('button', { name: 'Next review item' }));
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Review details' })).toBeInTheDocument();
+      });
+      await user.click(screen.getByTestId('acx-review-select'));
+
+      // Ensure the tray is expanded so we can assert Retry ↔ reason wiring, then collapse.
+      if (!screen.queryByTestId('acx-review-selection-panel')) {
+        await user.click(screen.getByRole('button', { name: 'Review selection' }));
+        await waitFor(() => {
+          expect(screen.getByTestId('acx-review-selection-panel')).toBeInTheDocument();
+        });
+      }
+
+      const reasonExpanded = screen.getByText(
+        'Review the stored faces for every selected suggestion before accepting.',
+      );
+      const retry = within(failure).getByRole('button', { name: 'Retry' });
+      expect(retry).toHaveAttribute('aria-disabled', 'true');
+      expect(retry).toHaveAttribute('aria-describedby', reasonExpanded.id);
+      expect(document.getElementById(reasonExpanded.id)).toBe(reasonExpanded);
+
+      // Collapse the tray — describedby target must remain mounted (BR-74).
+      await user.click(screen.getByRole('button', { name: 'Review selection' }));
+      await waitFor(() => {
+        expect(screen.queryByTestId('acx-review-selection-panel')).not.toBeInTheDocument();
+      });
+
+      const reasonId = retry.getAttribute('aria-describedby');
+      expect(reasonId).toBeTruthy();
+      const reasonCollapsed = document.getElementById(reasonId!);
+      expect(reasonCollapsed).not.toBeNull();
+      expect(reasonCollapsed).toHaveTextContent(
+        'Review the stored faces for every selected suggestion before accepting.',
+      );
+
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        await act(async () => {
+          retry.click();
+          await Promise.resolve();
+        });
+        await act(async () => {
+          vi.advanceTimersByTime(UNDO_HOLD_MS);
+          await Promise.resolve();
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+
+      expect(acceptSuggestion).not.toHaveBeenCalled();
+      expect(screen.queryByTestId('acx-bulk-hold')).not.toBeInTheDocument();
     });
 
     it('BR-54: tray count changes announced via polite live region on select/deselect', async () => {
@@ -4328,18 +5003,22 @@ describe('ReviewQueue', () => {
       // HARM-02: the live region is now seq-keyed (useAriaAnnounce), so it REMOUNTS
       // on each announce — re-query the current node inside waitFor rather than
       // holding a stale reference to the mount-time node.
-      const liveRegion = container.querySelector('.acx-review-queue__live');
+      const liveRegion = container.querySelector('.acx-review-queue__live-position');
       expect(liveRegion).not.toBeNull();
       expect(liveRegion).toHaveAttribute('aria-live', 'polite');
 
       await user.click(screen.getByTestId('acx-review-select'));
       await waitFor(() => {
-        expect(container.querySelector('.acx-review-queue__live')).toHaveTextContent('1 selected');
+        expect(container.querySelector('.acx-review-queue__live-position')).toHaveTextContent(
+          '1 selected',
+        );
       });
 
       await user.click(screen.getByTestId('acx-review-select'));
       await waitFor(() => {
-        expect(container.querySelector('.acx-review-queue__live')).toHaveTextContent('0 selected');
+        expect(container.querySelector('.acx-review-queue__live-position')).toHaveTextContent(
+          '0 selected',
+        );
       });
     });
 
@@ -4355,6 +5034,7 @@ describe('ReviewQueue', () => {
       const user = userEvent.setup();
       renderQueue();
       await screen.findByRole('button', { name: 'Yes' });
+      await reviewCurrentStoredFaces();
       await user.click(screen.getByTestId('acx-review-select'));
       await user.click(screen.getByRole('button', { name: 'Review selection' }));
       await waitFor(() => {
@@ -4402,6 +5082,7 @@ describe('ReviewQueue', () => {
       const user = userEvent.setup();
       renderQueue();
       await screen.findByRole('button', { name: 'Yes' });
+      await reviewCurrentStoredFaces();
       await user.click(screen.getByTestId('acx-review-select'));
       await user.click(screen.getByRole('button', { name: 'Review selection' }));
 
@@ -4487,7 +5168,7 @@ describe('ReviewQueue', () => {
             suggested_cluster_id: 'c-weak',
             representative_similarity: 0.4,
             cluster_label: 'Alex',
-            cluster_identity_count: 2,
+            cluster_identity_count: 1,
           },
         ],
         limit: 10,
@@ -4567,7 +5248,7 @@ describe('ReviewQueue', () => {
             suggested_cluster_id: 'c1',
             representative_similarity: 0.5,
             cluster_label: 'Maria',
-            cluster_identity_count: 2,
+            cluster_identity_count: 1,
           },
           {
             id: 's-weak',
@@ -4575,7 +5256,7 @@ describe('ReviewQueue', () => {
             suggested_cluster_id: 'c2',
             representative_similarity: 0.4,
             cluster_label: 'Alex',
-            cluster_identity_count: 2,
+            cluster_identity_count: 1,
           },
         ],
         limit: 10,
@@ -4709,7 +5390,7 @@ describe('ReviewQueue', () => {
             suggested_cluster_id: 'c-ok',
             representative_similarity: 0.5,
             cluster_label: 'Maria',
-            cluster_identity_count: 2,
+            cluster_identity_count: 1,
           },
           {
             id: 's-weak',
@@ -4717,7 +5398,7 @@ describe('ReviewQueue', () => {
             suggested_cluster_id: 'c-trunc',
             representative_similarity: 0.4,
             cluster_label: 'Alex',
-            cluster_identity_count: 12,
+            cluster_identity_count: 1,
           },
         ],
         limit: 10,
@@ -4912,7 +5593,14 @@ describe('ReviewQueue', () => {
       await waitFor(() => {
         expect(screen.getByTestId('acx-review-queue-retired-head')).toBeInTheDocument();
       });
-      expect(screen.getByRole('status')).toHaveTextContent(LIVE_TARGET_CLOSE_ANNOUNCE);
+      // Retirement is an outcome, so it must land in the outcome region — and the
+      // position region must not have absorbed it (FEBT1-LD-02).
+      expect(document.querySelector('.acx-review-queue__live')).toHaveTextContent(
+        LIVE_TARGET_CLOSE_ANNOUNCE,
+      );
+      expect(document.querySelector('.acx-review-queue__live-position')).not.toHaveTextContent(
+        LIVE_TARGET_CLOSE_ANNOUNCE,
+      );
       // Criterion 4: no stale card body for the retired head cluster.
       expect(screen.queryByTestId('acx-review-card')).not.toBeInTheDocument();
     });
@@ -4957,6 +5645,7 @@ describe('ReviewQueue', () => {
 
     renderQueue();
     const yes = await screen.findByRole('button', { name: 'Yes' });
+    await reviewCurrentStoredFaces();
 
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
@@ -4999,7 +5688,7 @@ describe('ReviewQueue', () => {
     }
   });
 
-  const loadLightboxImage = (alt = 'Candidate face'): void => {
+  const loadLightboxImage = (alt = 'Candidate face, position 1 of 1'): void => {
     const frame = document.querySelector('.acx-review-card-lightbox__frame');
     expect(frame).toBeInstanceOf(HTMLElement);
     Object.defineProperty(frame, 'clientWidth', { configurable: true, value: 400 });
@@ -5106,7 +5795,14 @@ describe('ReviewQueue', () => {
     });
 
     const seedSameClusterAssignments = (
-      rows: Array<{ id: string; similarity: number; clusterId?: string; label?: string }>,
+      rows: {
+        id: string;
+        similarity: number;
+        clusterId?: string;
+        label?: string;
+        /** Defaults to 1 so close-match sequencer tests are not HAI-17 gated. */
+        identityCount?: number;
+      }[],
     ): void => {
       vi.mocked(fetchPendingSuggestions).mockResolvedValue({
         suggestions: rows.map((row) => ({
@@ -5116,7 +5812,7 @@ describe('ReviewQueue', () => {
           representative_similarity: row.similarity,
           avg_member_similarity: row.similarity,
           cluster_label: row.label ?? 'Alex',
-          cluster_identity_count: rows.length,
+          cluster_identity_count: row.identityCount ?? 1,
         })),
         limit: 40,
         offset: 0,
@@ -5127,6 +5823,8 @@ describe('ReviewQueue', () => {
       seedSameClusterAssignments([{ id: 'sugg-1', similarity: 0.9, clusterId: 'cluster-solo' }]);
       const user = userEvent.setup();
       renderQueue();
+      await screen.findByRole('button', { name: 'Yes' });
+      await reviewCurrentStoredFaces();
       await user.click(await screen.findByRole('button', { name: 'Yes' }));
       expect(screen.queryByRole('dialog', { name: 'Accept close matches?' })).not.toBeInTheDocument();
       expect(screen.queryByText(/0 close match/)).not.toBeInTheDocument();
@@ -5134,10 +5832,11 @@ describe('ReviewQueue', () => {
     });
 
     it('offers the close-match count before any write and confirms through the bulk sequencer', async () => {
+      // identityCount: 1 — HAI-17 does not gate; exercises the close-match sequencer path.
       seedSameClusterAssignments([
-        { id: 'sugg-1', similarity: 0.9 },
-        { id: 'sugg-2', similarity: 0.8 },
-        { id: 'sugg-3', similarity: 0.7 },
+        { id: 'sugg-1', similarity: 0.9, identityCount: 1 },
+        { id: 'sugg-2', similarity: 0.8, identityCount: 1 },
+        { id: 'sugg-3', similarity: 0.7, identityCount: 1 },
       ]);
       vi.mocked(acceptSuggestion).mockImplementation((id: string) =>
         Promise.resolve({
@@ -5151,6 +5850,7 @@ describe('ReviewQueue', () => {
 
       const user = userEvent.setup();
       renderQueue();
+      await screen.findByRole('button', { name: 'Yes' });
       await user.click(await screen.findByRole('button', { name: 'Yes' }));
 
       const offer = await screen.findByRole('dialog', { name: 'Accept close matches?' });
@@ -5197,6 +5897,53 @@ describe('ReviewQueue', () => {
       });
     });
 
+    it('DUX-W2R2-RV-04: Close Match Confirm does not commit unreviewed stored-face siblings', async () => {
+      seedSameClusterAssignments([
+        { id: 'sugg-1', similarity: 0.9, identityCount: 5 },
+        { id: 'sugg-2', similarity: 0.8, identityCount: 5 },
+        { id: 'sugg-3', similarity: 0.7, identityCount: 5 },
+      ]);
+      vi.mocked(acceptSuggestion).mockImplementation((id: string) =>
+        Promise.resolve({
+          suggestion_id: id,
+          resolution: 'accepted' as const,
+          identity_id: `identity-${id}`,
+          cluster_id: 'cluster-1',
+          message: 'ok',
+        }),
+      );
+
+      const user = userEvent.setup();
+      renderQueue();
+      await screen.findByRole('button', { name: 'Yes' });
+      // Only the current card is reviewed — siblings remain HAI-17 gated.
+      await reviewCurrentStoredFaces();
+      await user.click(await screen.findByRole('button', { name: 'Yes' }));
+
+      const offer = await screen.findByRole('dialog', { name: 'Accept close matches?' });
+      expect(offer).toHaveTextContent('Also accept 2 close matches?');
+
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        await act(async () => {
+          screen.getByRole('button', { name: 'Accept close matches' }).click();
+          await Promise.resolve();
+        });
+        await act(async () => {
+          vi.advanceTimersByTime(UNDO_HOLD_MS);
+          await Promise.resolve();
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+
+      expect(acceptSuggestion).not.toHaveBeenCalled();
+      expect(bulkAcceptSuggestions).not.toHaveBeenCalled();
+      expect(screen.queryByTestId('acx-bulk-hold')).not.toBeInTheDocument();
+    });
+
     it('Just this one accepts only the current suggestion', async () => {
       seedSameClusterAssignments([
         { id: 'sugg-1', similarity: 0.9 },
@@ -5214,6 +5961,8 @@ describe('ReviewQueue', () => {
 
       const user = userEvent.setup();
       renderQueue();
+      await screen.findByRole('button', { name: 'Yes' });
+      await reviewCurrentStoredFaces();
       await user.click(await screen.findByRole('button', { name: 'Yes' }));
       await screen.findByRole('dialog', { name: 'Accept close matches?' });
 
@@ -5252,6 +6001,8 @@ describe('ReviewQueue', () => {
 
       const user = userEvent.setup();
       renderQueue();
+      await screen.findByRole('button', { name: 'Yes' });
+      await reviewCurrentStoredFaces();
       await user.click(await screen.findByRole('button', { name: 'Yes' }));
       const offer = await screen.findByRole('dialog', { name: 'Accept close matches?' });
       expect(offer).toHaveTextContent('Also accept 1 close match?');
@@ -5268,6 +6019,8 @@ describe('ReviewQueue', () => {
 
       const user = userEvent.setup();
       renderQueue();
+      await screen.findByRole('button', { name: 'Yes' });
+      await reviewCurrentStoredFaces();
       await user.click(await screen.findByRole('button', { name: 'Yes' }));
       const offer = await screen.findByRole('dialog', { name: 'Accept close matches?' });
       expect(offer).toHaveTextContent('Also accept 25 close matches?');
@@ -5297,6 +6050,8 @@ describe('ReviewQueue', () => {
 
       const user = userEvent.setup();
       renderQueue();
+      await screen.findByRole('button', { name: 'Yes' });
+      await reviewCurrentStoredFaces();
       await user.click(await screen.findByRole('button', { name: 'Yes' }));
       await screen.findByRole('dialog', { name: 'Accept close matches?' });
 

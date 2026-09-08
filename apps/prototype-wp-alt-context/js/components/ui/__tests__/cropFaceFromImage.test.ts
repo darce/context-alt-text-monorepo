@@ -39,12 +39,13 @@ const expectedSourceRect = (
 };
 
 describe('cropFaceFromImage [TEST-15]', () => {
-  const originalGetContext = HTMLCanvasElement.prototype.getContext;
-  const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
   const drawImage = vi.fn();
   const clearRect = vi.fn();
   const toDataURL = vi.fn(() => 'data:image/jpeg;base64,crop-record');
-  type FakeContext = { clearRect: typeof clearRect; drawImage: typeof drawImage };
+  interface FakeContext {
+    clearRect: typeof clearRect;
+    drawImage: typeof drawImage;
+  }
   const getContext = vi.fn((): FakeContext | null => ({ clearRect, drawImage }));
 
   beforeEach(() => {
@@ -53,13 +54,14 @@ describe('cropFaceFromImage [TEST-15]', () => {
     toDataURL.mockClear();
     getContext.mockClear();
     getContext.mockImplementation(() => ({ clearRect, drawImage }));
-    HTMLCanvasElement.prototype.getContext = getContext as unknown as typeof HTMLCanvasElement.prototype.getContext;
-    HTMLCanvasElement.prototype.toDataURL = toDataURL as unknown as typeof HTMLCanvasElement.prototype.toDataURL;
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(
+      getContext as unknown as typeof HTMLCanvasElement.prototype.getContext,
+    );
+    vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockImplementation(toDataURL);
   });
 
   afterEach(() => {
-    HTMLCanvasElement.prototype.getContext = originalGetContext;
-    HTMLCanvasElement.prototype.toDataURL = originalToDataURL;
+    vi.restoreAllMocks();
   });
 
   it('returns null for a non-positive size without touching canvas', () => {

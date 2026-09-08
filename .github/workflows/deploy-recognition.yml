@@ -2,21 +2,30 @@ name: Deploy recognition service
 
 # Repeatable OCI VM deploy. Reuses the single source of truth for deploy logic —
 # scripts/deploy/recognition-service.sh (build -> OCIR push -> systemd restart ->
-# /health verify) — in REMOTE_BUILD mode so the VM builds/pushes with its own
-# cached OCIR credential; CI needs NO Docker and NO OCIR secrets, only tailnet
-# reachability + an SSH deploy key.
+# /health verify) — in REMOTE_BUILD mode so the VM builds/pushes after fetching
+# its OCIR credential from acx-vault via instance principal; CI needs NO Docker
+# and NO OCIR secrets, only tailnet reachability + an SSH deploy key.
 #
 # Trigger policy: push to main auto-deploys DEV; staging/prod are manual
-# workflow_dispatch and run under a GitHub Environment (configure prod with a
-# required reviewer). prod additionally requires CONFIRM=PROMOTE (enforced by the
-# script). See docs/runbooks/deploy-recognition-cicd.md for one-time setup.
+# workflow_dispatch and run under a GitHub Environment. prod additionally
+# requires CONFIRM=PROMOTE (enforced by the script). See
+# docs/runbooks/deploy-recognition-cicd.md for one-time setup.
 
 on:
   push:
     branches: [main]
     paths:
       - "apps/prototype-description-service/**"
+      # WBUX6-W4-F-04: the gate job runs the deploy contract tests, and those
+      # read infra/oci (cloud-init ownership, the gpu_lifecycle CLI flags the
+      # runbooks document). Editing them without this entry would ship an
+      # unverified contract change.
+      - "infra/oci/**"
       - "scripts/deploy/**"
+      - "scripts/test_deploy_workflow_gate.py"
+      - "scripts/test_ocirv1_vault_readiness.py"
+      - "scripts/deploy/tests/**"
+      - "Makefile"
       - ".github/workflows/deploy-recognition.yml"
   workflow_dispatch:
     inputs:
@@ -29,6 +38,10 @@ on:
         description: "Type PROMOTE to authorize a prod deploy (required only for prod)"
         type: string
         default: ""
+      gpu_lifecycle:
+        description: "Install and verify the GPU start/reap timers after deploy"
+        type: boolean
+        default: false
 
 # One in-flight deploy per environment; never cancel a deploy mid-flight.
 concurrency:
@@ -38,14 +51,37 @@ concurrency:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -eo pipefail {0}
+
 jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deploy-contract test dependencies
+        run: python -m pip install pytest pyyaml
+
+      - name: Run deploy-contract tests
+        run: make test-deploy-contract
+
   deploy:
+    needs: gate
     runs-on: ubuntu-latest
     # One hung step must not hold the serialized per-env lane for GitHub's 6h
     # default (REMOTE_BUILD deploys take longer than the demo's).
     timeout-minutes: 45
-    # push -> 'dev'; dispatch -> chosen env. The GitHub Environment is where prod
-    # gets its required-reviewer gate (Settings -> Environments -> prod).
+    # push -> 'dev'; dispatch -> chosen env. The environments retain deployment
+    # history; private Free-plan repos cannot configure required reviewers.
     environment: ${{ github.event.inputs.environment || 'dev' }}
     env:
       OCI_HOST: acx-backend.tail1a44b8.ts.net
@@ -121,6 +157,14 @@ jobs:
           CONFIRM: ${{ steps.target.outputs.env == 'prod' && 'PROMOTE' || '' }}
         run: |
           bash scripts/deploy/recognition-service.sh deploy "${{ steps.target.outputs.env }}"
+
+      - name: Install GPU lifecycle timers
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.gpu_lifecycle == 'true'
+        env:
+          ACX_DEPLOY_GPU_LIFECYCLE: "1"
+          ACX_GPU_READY_URL: ${{ vars.ACX_GPU_READY_URL }}
+          GPU_INSTANCE_ID: ${{ vars.ACX_GPU_INSTANCE_ID }}
+        run: bash scripts/deploy/recognition-service.sh gpu-lifecycle
 
       - name: Post-deploy status
         if: always()

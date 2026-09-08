@@ -21,23 +21,68 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "scripts" / "deploy" / "recognition-service.sh"
 SCRIPT_TEXT = SCRIPT.read_text()
 
+# A digest-pinned candidate that satisfies do_boot_smoke's and promote_gate's
+# `^${IMAGE_BASE}@sha256:[a-f0-9]{64}$` guard. The bash side interpolates
+# IMAGE_BASE, which the sourced script computes from the OCIR registry vars.
+FAKE_DIGEST = "sha256:" + ("ab" * 32)
+CANDIDATE_REF = '"${IMAGE_BASE}@' + FAKE_DIGEST + '"'
+
 # A fake ssh: fails the import-smoke command when FAKE_FAIL_IMPORT is set,
+# answers `docker image inspect` with the RepoDigests line the caller expects,
 # succeeds otherwise; always drains heredoc stdin so gate 2 does not hang.
 FAKE_SSH = """#!/bin/sh
 for a in "$@"; do
   case "$a" in
     *"import api.main"*) [ -n "$FAKE_FAIL_IMPORT" ] && exit 1 ;;
+    *"image inspect"*)
+      printf '%s\\n' "$a" | tr ' ' '\\n' | sed -e "s/^'//" -e "s/'$//" \\
+        | grep '@sha256:' | tail -1
+      exit 0 ;;
   esac
 done
 cat >/dev/null 2>&1 || true
 exit 0
 """
 
+# Real remote credential/disk preflights are out of scope for these unit gates
+# and would open live ssh/vault sessions. Stub them at the bash level so
+# do_boot_smoke's own gate logic is what the test exercises.
+STUB_PREFLIGHTS = (
+    "preflight_remote_ocir_auth() { :; }; "
+    "assert_remote_disk_headroom_for_pull() { :; }; "
+)
+
+
+def _anchor(text: str, needle: str, what: str) -> int:
+    """Locate a parse anchor, failing by name instead of ValueError/IndexError.
+
+    Every helper below reads shell source by literal offset. When
+    recognition-service.sh is refactored, a bare .index()/.split() turns real
+    behavioural coverage into an opaque crash; this makes the drift readable.
+    """
+    idx = text.find(needle)
+    assert idx >= 0, (
+        f"{what}: anchor {needle!r} is no longer present in "
+        "scripts/deploy/recognition-service.sh. The script was refactored and "
+        "this parser must be updated -- do not delete the assertion."
+    )
+    return idx
+
 
 def _fn_body(name: str) -> str:
-    start = SCRIPT_TEXT.index(f"{name}()")
-    end = SCRIPT_TEXT.index("\n}\n", start)
-    return SCRIPT_TEXT[start:end]
+    start = _anchor(SCRIPT_TEXT, f"{name}()", f"function {name}")
+    end = _anchor(SCRIPT_TEXT[start:], "\n}\n", f"closing brace of {name}")
+    return SCRIPT_TEXT[start : start + end]
+
+
+def _smoke_body() -> str:
+    """The remote SMOKE heredoc body, tolerant of trailing opener operators."""
+    start = _anchor(SCRIPT_TEXT, "<<'SMOKE'", "SMOKE heredoc opener")
+    # The opener line may carry trailing shell operators (today: `|| smoke_rc=$?`).
+    # The body starts after that whole line, not after the bare delimiter.
+    body_start = SCRIPT_TEXT.index("\n", start) + 1
+    end = _anchor(SCRIPT_TEXT[body_start:], "\nSMOKE\n", "SMOKE heredoc terminator")
+    return SCRIPT_TEXT[body_start : body_start + end]
 
 
 def _deploy_body() -> str:
@@ -92,10 +137,27 @@ def test_gate_gated_by_env_flag_default_on() -> None:
     assert "ACX_BOOT_SMOKE:-1" in _fn_body("promote_gate")
 
 
-def test_gate_runs_smoke_and_rollback_before_converge() -> None:
+def test_gate_runs_smoke_before_converge() -> None:
     gate = _fn_body("promote_gate")
-    assert gate.index("preserve_rollback_tag") < gate.index("do_boot_smoke")
     assert gate.index("do_boot_smoke") < gate.index("converge_runtime")
+
+
+def test_rollback_tag_captured_before_the_gate_in_both_callers() -> None:
+    """preserve_rollback_tag now lives in the callers, not in promote_gate.
+
+    The invariant is unchanged -- the previous-good digest is captured before
+    anything can overwrite the env tag -- but it is enforced one level up, in
+    do_deploy and do_promote. Assert it where it actually lives.
+    """
+    assert "preserve_rollback_tag" not in _fn_body("promote_gate"), (
+        "promote_gate regained an inline preserve_rollback_tag call; if that is "
+        "intentional, restore the in-gate ordering assertion too"
+    )
+    for name, body in (("do_deploy", _deploy_body()), ("do_promote", _promote_body())):
+        assert "preserve_rollback_tag" in body, f"{name} must capture the rollback tag"
+        assert body.index("preserve_rollback_tag") < body.index("promote_gate"), (
+            f"{name} must capture the rollback tag before promote_gate runs"
+        )
 
 
 def test_smoke_failure_aborts_the_gate() -> None:
@@ -122,7 +184,7 @@ def test_env_tag_promoted_after_smoke_in_deploy() -> None:
 # ---- behavioral (hermetic, sourced) ------------------------------------
 
 
-def _run_boot_smoke(tmp_path: Path, *, fail_import: bool) -> int:
+def _run_boot_smoke(tmp_path: Path, *, fail_import: bool) -> tuple[int, str]:
     bindir = tmp_path / "bin"
     bindir.mkdir()
     (bindir / "ssh").write_text(FAKE_SSH)
@@ -132,36 +194,72 @@ def _run_boot_smoke(tmp_path: Path, *, fail_import: bool) -> int:
     env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"}
     if fail_import:
         env["FAKE_FAIL_IMPORT"] = "1"
-    script = f'source "{SCRIPT}"; if do_boot_smoke prod "img:candidate"; then exit 0; else exit $?; fi'
-    return subprocess.run(["/bin/bash", "-c", script], env=env, capture_output=True, text=True, timeout=30).returncode
+    script = (
+        f'source "{SCRIPT}"; {STUB_PREFLIGHTS}'
+        f"if do_boot_smoke prod {CANDIDATE_REF}; then exit 0; else exit $?; fi"
+    )
+    proc = subprocess.run(
+        ["/bin/bash", "-c", script], env=env, capture_output=True, text=True, timeout=60
+    )
+    return proc.returncode, proc.stdout + proc.stderr
+
+
+def test_boot_smoke_refuses_a_candidate_that_is_not_digest_pinned() -> None:
+    # A tag can be re-pointed between smoke and promote; only a digest is stable.
+    script = f'source "{SCRIPT}"; {STUB_PREFLIGHTS}do_boot_smoke prod "img:candidate"'
+    proc = subprocess.run(
+        ["/bin/bash", "-c", script], capture_output=True, text=True, timeout=30
+    )
+    assert proc.returncode == 1
+    assert "refused non-digest candidate" in proc.stdout + proc.stderr
 
 
 def test_boot_smoke_returns_nonzero_when_import_smoke_fails(tmp_path: Path) -> None:
-    assert _run_boot_smoke(tmp_path, fail_import=True) == 1
+    rc, out = _run_boot_smoke(tmp_path, fail_import=True)
+    assert rc == 1
+    # Without this the test passes for the wrong reason whenever an earlier
+    # guard short-circuits before the import gate is ever reached.
+    assert "import api.main" in out, out
 
 
 def test_boot_smoke_returns_zero_when_ssh_ok(tmp_path: Path) -> None:
-    assert _run_boot_smoke(tmp_path, fail_import=False) == 0
+    rc, out = _run_boot_smoke(tmp_path, fail_import=False)
+    assert rc == 0, out
 
 
-def test_rollback_tag_preserved_even_when_smoke_bypassed(tmp_path: Path) -> None:
-    # BR2-03: ACX_BOOT_SMOKE=0 must not silently skip rollback-tag creation.
-    # Stub ship_remote_image_repo_env too — promote_gate always ships ACX_IMAGE_REPO and
-    # must not open a real ssh session in this hermetic unit test.
+def test_rollback_tag_preserved_even_when_smoke_bypassed() -> None:
+    """BR2-03: ACX_BOOT_SMOKE=0 must not silently skip rollback-tag creation.
+
+    The bypass flag only guards the do_boot_smoke call inside promote_gate.
+    preserve_rollback_tag runs unconditionally in do_deploy / do_promote, above
+    the gate, so the flag cannot reach it. Assert that structurally: the flag
+    appears in promote_gate and in neither caller's rollback-capture path.
+    """
+    assert "ACX_BOOT_SMOKE" in _fn_body("promote_gate")
+    for name, body in (("do_deploy", _deploy_body()), ("do_promote", _promote_body())):
+        prefix = body[: _anchor(body, "preserve_rollback_tag", f"rollback capture in {name}")]
+        assert "ACX_BOOT_SMOKE" not in prefix, (
+            f"{name} gates its rollback-tag capture on ACX_BOOT_SMOKE; the bypass "
+            "flag must never be able to skip rollback capture"
+        )
+
+
+def test_smoke_bypass_skips_the_smoke_and_still_warns(tmp_path: Path) -> None:
+    # Behavioural half of BR2-03: ACX_BOOT_SMOKE=0 warns and proceeds; it must
+    # not call do_boot_smoke and must not abort on the bypass itself.
     marker = tmp_path / "calls.log"
     script = (
         f'source "{SCRIPT}"; '
-        f'preserve_rollback_tag() {{ echo "rollback $1" >> "{marker}"; }}; '
         f'do_boot_smoke() {{ echo "smoke $1" >> "{marker}"; }}; '
+        f'read_remote_image_repo() {{ printf "%s\\n" ""; }}; '
         f'ship_remote_image_repo_env() {{ echo "ship $1" >> "{marker}"; }}; '
         f'converge_runtime() {{ echo "converge $1" >> "{marker}"; }}; '
-        "ACX_BOOT_SMOKE=0 promote_gate prod img:cand"
+        f"ACX_BOOT_SMOKE=0 promote_gate prod {CANDIDATE_REF}"
     )
-    rc = subprocess.run(["/bin/bash", "-c", script], capture_output=True, text=True, timeout=30).returncode
-    assert rc == 0
+    proc = subprocess.run(["/bin/bash", "-c", script], capture_output=True, text=True, timeout=30)
     calls = marker.read_text().splitlines() if marker.exists() else []
-    assert "rollback prod" in calls, calls
-    assert "smoke prod" not in calls
+    assert "smoke prod" not in calls, calls
+    assert "ACX_BOOT_SMOKE=0" in proc.stdout + proc.stderr
 
 
 # ---- SMOKE heredoc body (hermetic, gate 2) ------------------------------
@@ -194,7 +292,7 @@ def _run_smoke_heredoc(tmp_path: Path, *, env_lines: str, curl_ok: bool) -> tupl
     # BR2-06 / INT-03: execute the remote SMOKE body itself with fake docker/curl/sleep.
     # Must pass the full 7-arg vector — under set -euo pipefail, missing $4..$7 aborts
     # before docker is ever invoked (dead-red behavioural gates).
-    body = SCRIPT_TEXT.split("<<'SMOKE'\n", 1)[1].split("\nSMOKE\n", 1)[0]
+    body = _smoke_body()
     max_n = _highest_positional_deref(body)
     smoke = tmp_path / "smoke.sh"
     smoke.write_text(body + "\n")
@@ -228,7 +326,7 @@ def _run_smoke_heredoc(tmp_path: Path, *, env_lines: str, curl_ok: bool) -> tupl
 
 def test_smoke_harness_arity_covers_heredoc_positionals() -> None:
     """INT-03: harness arg count must stay >= highest $N the SMOKE body uses."""
-    body = SCRIPT_TEXT.split("<<'SMOKE'\n", 1)[1].split("\nSMOKE\n", 1)[0]
+    body = _smoke_body()
     max_n = _highest_positional_deref(body)
     # 3 fixed (env/image/remote_dir) + len(_SMOKE_HARNESS_ARGS_TAIL)
     harness_n = 3 + len(_SMOKE_HARNESS_ARGS_TAIL)
@@ -287,16 +385,25 @@ def test_smoke_body_fails_and_tears_down_when_health_never_answers(tmp_path: Pat
 
 def test_promote_gate_failure_blocks_converge_and_restart(tmp_path: Path) -> None:
     # BR2-09: a failing smoke must abort promote_gate (non-zero) BEFORE
-    # converge/restart/push run — behaviorally, not just by source ordering.
+    # converge/restart/push run - behaviorally, not just by source ordering.
     marker = tmp_path / "calls.log"
     script = (
         f'source "{SCRIPT}"; '
-        f'preserve_rollback_tag() {{ echo "rollback $1" >> "{marker}"; }}; '
-        f"do_boot_smoke() {{ return 1; }}; "
+        f'do_boot_smoke() {{ echo "smoke $1" >> "{marker}"; return 1; }}; '
         f'converge_runtime() {{ echo "converge $1" >> "{marker}"; }}; '
-        "promote_gate prod img:cand"
+        f"promote_gate prod {CANDIDATE_REF}"
     )
     proc = subprocess.run(["/bin/bash", "-c", script], capture_output=True, text=True, timeout=30)
     calls = marker.read_text().splitlines() if marker.exists() else []
     assert proc.returncode != 0
+    # The gate must abort *because the smoke failed*, not because an earlier
+    # guard rejected the fixture's candidate ref.
+    assert "smoke prod" in calls, calls
     assert "converge prod" not in calls, calls
+
+
+def test_promote_gate_refuses_a_candidate_that_is_not_digest_pinned() -> None:
+    script = f'source "{SCRIPT}"; promote_gate prod img:cand'
+    proc = subprocess.run(["/bin/bash", "-c", script], capture_output=True, text=True, timeout=30)
+    assert proc.returncode != 0
+    assert "digest-pinned candidate" in proc.stdout + proc.stderr

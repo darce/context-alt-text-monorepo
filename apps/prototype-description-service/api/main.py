@@ -1,8 +1,9 @@
 import asyncio
 import logging
+import math
 import os
 import subprocess
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -18,8 +19,10 @@ from recognition.application.health import (
     check_active_embedding_model,
     check_breaker,
     check_database,
+    check_disk_headroom,
     check_face_pipeline_models,
     check_model_cache,
+    disk_headroom_probe_failure,
 )
 from recognition.application.scan.capability import (
     embedding_runtime_health_payload,
@@ -51,7 +54,9 @@ from recognition.interface_adapters.http.middleware.metrics import (
 from recognition.interface_adapters.http.middleware.upload_size import UploadSizeLimitMiddleware
 from recognition.observability.curation_refresh_metrics import get_default_curation_refresh_metrics
 from roster.interface_adapters.http.curation_router import router as roster_curation_router
+from scene.config.settings import DescriptionSettings
 from scene.interface_adapters.http.router import router as scene_router
+from scene.interface_adapters.http.routers.gpu import router as gpu_router
 from shared.health import HealthStatus
 from shared.image_variant import (
     IMAGE_VARIANT_ARTIFACT,
@@ -64,6 +69,48 @@ from shared.secrets import validate_oci_vault_boot
 configure_logging("INFO")
 
 logger = logging.getLogger(__name__)
+
+_LOAD_SNAPSHOT_REFRESH_REARM_SECONDS = 1.0
+
+
+_LOAD_SNAPSHOT_REFRESH_REARM_MAX_SECONDS = 60.0
+
+_DEFAULT_HEALTH_DB_TIMEOUT_SECONDS = 2.0
+
+
+def _resolve_health_db_timeout_seconds() -> float:
+    """Parse the pool probe timeout once while registering health routes."""
+    raw = os.environ.get("ACX_HEALTH_DB_TIMEOUT_SECONDS")
+    if raw is None:
+        return _DEFAULT_HEALTH_DB_TIMEOUT_SECONDS
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"ACX_HEALTH_DB_TIMEOUT_SECONDS must be a positive number (got {raw!r})") from exc
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"ACX_HEALTH_DB_TIMEOUT_SECONDS must be a positive number (got {raw!r})")
+    return value
+
+
+async def _supervise_load_snapshot_refresher(session_factory) -> None:
+    """Re-arm an unexpectedly stopped refresher while the API remains live."""
+    rearm_seconds = _LOAD_SNAPSHOT_REFRESH_REARM_SECONDS
+    while True:
+        try:
+            from scene.application.describe_load import refresh_load_snapshot_loop
+
+            await refresh_load_snapshot_loop(session_factory)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - keep freshness armed after a crash
+            logger.error("describe load snapshot refresher crashed; re-arming", exc_info=True)
+        else:
+            logger.error("describe load snapshot refresher stopped unexpectedly; re-arming")
+        # Avoid a tight restart loop if an import or implementation regression
+        # makes the refresher fail immediately, and back off so a permanent
+        # failure does not emit one traceback per second forever.
+        await asyncio.sleep(rearm_seconds)
+        rearm_seconds = min(rearm_seconds * 2, _LOAD_SNAPSHOT_REFRESH_REARM_MAX_SECONDS)
 
 
 def _get_git_info() -> tuple[str, str]:
@@ -127,19 +174,14 @@ def _resolve_image_variant() -> str:
         if _IMAGE_VARIANT_ARTIFACT.is_file():
             baked = _IMAGE_VARIANT_ARTIFACT.read_text(encoding="utf-8").strip()
     except OSError as exc:
-        raise RuntimeError(
-            f"cannot read baked image variant at {_IMAGE_VARIANT_ARTIFACT}: {exc}"
-        ) from exc
+        raise RuntimeError(f"cannot read baked image variant at {_IMAGE_VARIANT_ARTIFACT}: {exc}") from exc
     if baked:
         valid = {member.value for member in ImageVariant}
         if baked not in valid:
-            raise RuntimeError(
-                f"invalid baked image variant {baked!r} at {_IMAGE_VARIANT_ARTIFACT}"
-            )
+            raise RuntimeError(f"invalid baked image variant {baked!r} at {_IMAGE_VARIANT_ARTIFACT}")
         if env_claim and env_claim != baked:
             raise RuntimeError(
-                f"ACX_IMAGE_VARIANT={env_claim!r} disagrees with baked "
-                f"{baked!r} at {_IMAGE_VARIANT_ARTIFACT}"
+                f"ACX_IMAGE_VARIANT={env_claim!r} disagrees with baked {baked!r} at {_IMAGE_VARIANT_ARTIFACT}"
             )
         return baked
     return env_claim or ImageVariant.RECOGNITION.value
@@ -204,7 +246,28 @@ async def _lifespan(app: FastAPI):
         await run_startup_load_snapshot(async_session_factory)
     except Exception:  # noqa: BLE001 - startup load snapshot is best-effort
         logging.getLogger("db.startup").warning("describe load snapshot write failed at startup", exc_info=True)
-    yield
+
+    # GPUW-1: enqueue/terminal writes leave the dump stale while work is quiet.
+    # Refresh well inside the reaper's 120s stale guard so an empty snapshot can
+    # remain authoritative long enough for stop-on-drain to fire.
+    refresh_task: asyncio.Task[None] | None = None
+    try:
+        from db.session import async_session_factory
+
+        refresh_task = asyncio.create_task(_supervise_load_snapshot_refresher(async_session_factory))
+    except Exception:  # noqa: BLE001 - the API must still boot if task setup fails
+        logging.getLogger("db.startup").warning("describe load snapshot refresher failed to start", exc_info=True)
+
+    try:
+        yield
+    finally:
+        if refresh_task is not None:
+            refresh_task.cancel()
+            # Refresher failures are handled inside the supervisor and must not
+            # turn an otherwise-clean application shutdown into a lifespan
+            # failure.
+            with suppress(asyncio.CancelledError, Exception):
+                await refresh_task
 
 
 def create_app() -> FastAPI:
@@ -258,6 +321,7 @@ def create_app() -> FastAPI:
     app.include_router(recognition_router, prefix="/recognition")
     app.include_router(roster_curation_router, prefix="/roster")
     app.include_router(scene_router, prefix="/scene")
+    app.include_router(gpu_router, prefix="/scene")
 
     # DS-2: public demo slug resolve at root (GET /x/{slug}). Not under
     # /recognition — that surface carries require_auth on analyze children.
@@ -334,7 +398,15 @@ def register_metrics_route(app: FastAPI) -> None:
 
 
 def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None) -> None:
-    """Attach root /health (liveness) + /ready (deps) to the given app.
+    """Attach root /health (bounded DB pool check) + /ready (deps) to the given app.
+
+    /health is NOT a liveness probe (HEALTHOBS-1-BR-07): it does a bounded
+    database-pool check (``check_database`` under ``health_db_timeout_seconds``)
+    and returns HTTP 503 when that check fails. No restart-on-failure consumer
+    (e.g. a container orchestrator's liveness/restart probe) should point at
+    this route, because a transient database blip would then trigger container
+    restarts instead of just failing the health payload. Point restart-on-failure
+    checks at a probe that reflects process liveness only, not DB reachability.
 
     Extracted from create_app so tests can mount the probes onto a bare
     FastAPI instance without spinning up every subsystem router.
@@ -350,8 +422,11 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
     commit_sha = _resolve_version_commit_sha() or "unknown"
     # Baked at image build (/app/.image-variant); resolve once like commit_sha.
     image_variant = _resolve_image_variant()
+    health_db_timeout_seconds = _resolve_health_db_timeout_seconds()
     # Hoist full settings parse once; close over cache/model paths (S3CR-06).
     settings = RecognitionSettings()
+    description_settings = DescriptionSettings()
+    description_adapter = description_settings.profile.value
     insightface_cache_dir = model_cache_dir or settings.insightface.model_cache_dir
     insightface_model_name = settings.insightface.model_name
     face_pipeline_models_dir = settings.face_pipeline.resolved_models_dir
@@ -388,17 +463,57 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
             insightface_model_name,
         )
 
-    @app.get("/health", summary="Liveness probe (PR-01)")
-    def liveness() -> dict[str, str]:
-        # Liveness is process-up only: no DB, breaker, or disk I/O. The Caddy
-        # active probe hits this at 10s so it must never block on a dependency.
+    async def _disk_headroom_probe() -> CheckResult:
+        """Run the synchronous filesystem probe under the liveness timeout."""
+        try:
+            return await asyncio.wait_for(
+                check_disk_headroom(),
+                timeout=health_db_timeout_seconds,
+            )
+        except TimeoutError:
+            return disk_headroom_probe_failure("probe_timeout")
+        except Exception as exc:  # noqa: BLE001 - health must fail degraded, never raise
+            return disk_headroom_probe_failure(f"probe_failed: {type(exc).__name__}")
+
+    @app.get("/health", summary="Database-backed health probe")
+    async def health_pool_check(
+        response: Response,
+        session: AsyncSession | None = Depends(http_deps.get_observability_session),
+    ) -> dict[str, object]:
+        # Deploy smoke, verify, status, and uptime checks use /health, so the
+        # pool probe is bounded and reflects database availability. This is a
+        # dependency check, not process liveness (HEALTHOBS-1-BR-07): do not
+        # wire a restart-on-failure consumer to this route, or a transient DB
+        # blip will restart a healthy process instead of just failing the check.
         # commit_sha / image_variant are static identity strings resolved at
         # registration time from bake artifact + env (rg-015).
+        try:
+            database_check = await asyncio.wait_for(
+                check_database(session),
+                timeout=health_db_timeout_seconds,
+            )
+            database_payload = database_check.to_dict()
+            status = HealthStatus.UNHEALTHY if database_check.status is HealthStatus.UNHEALTHY else HealthStatus.OK
+        except TimeoutError:
+            database_check = CheckResult("database", HealthStatus.UNHEALTHY, "probe_timeout")
+            database_payload = {**database_check.to_dict(), "reason": "timeout"}
+            status = HealthStatus.UNHEALTHY
+        except Exception as exc:  # noqa: BLE001 - health must fail closed, never raise
+            database_check = CheckResult(
+                "database",
+                HealthStatus.UNHEALTHY,
+                f"probe_failed: {type(exc).__name__}",
+            )
+            database_payload = {**database_check.to_dict(), "reason": "probe_error"}
+            status = HealthStatus.UNHEALTHY
+
+        response.status_code = 503 if status is HealthStatus.UNHEALTHY else 200
         return {
-            "status": HealthStatus.OK.value,
+            "status": status.value,
             "timestamp": datetime.now(UTC).isoformat(),
             "commit_sha": commit_sha,
             "image_variant": image_variant,
+            "database": database_payload,
         }
 
     @app.get("/ready", summary="Readiness probe (PR-01)")
@@ -413,6 +528,7 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
             check_breaker(breaker),
             mc_check,
             check_active_embedding_model(),
+            await _disk_headroom_probe(),
         ]
         status = aggregate_status(checks)
         # UNHEALTHY flips the HTTP code so load balancers pull the pod.
@@ -434,6 +550,11 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
         Contract expansion (S3CR-07): ``model_cache.profile`` is additive so
         operators can see the active face_pipeline profile without a second
         settings parse (reuses registration-time paths + cheap env profile).
+
+        ``description_adapter`` is the active caption producer
+        (``DescriptionSettings.profile``), not the face_pipeline profile.
+        Resolved once at registration from the settings object; not re-read
+        from the environment per request.
         """
         # Returns pool stats + breaker state + model-cache inventory for
         # operators; never hit by load-balancer probes. Shares aggregator +
@@ -443,7 +564,8 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
         breaker_check = check_breaker(breaker)
         mc_check, cache_dir, model_name = await _model_probe()
         embedding_model_check = check_active_embedding_model(verbose=True)
-        status = aggregate_status([db_check, breaker_check, mc_check, embedding_model_check])
+        disk_headroom_check = await _disk_headroom_probe()
+        status = aggregate_status([db_check, breaker_check, mc_check, embedding_model_check, disk_headroom_check])
         profile = _current_profile()
         if profile == "face_pipeline":
             bundle_files = sum(
@@ -481,6 +603,8 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
                 "profile": profile,
             },
             "embedding_runtime": embedding_runtime,
+            "description_adapter": description_adapter,
+            "disk_headroom": disk_headroom_check.payload or {},
         }
 
 

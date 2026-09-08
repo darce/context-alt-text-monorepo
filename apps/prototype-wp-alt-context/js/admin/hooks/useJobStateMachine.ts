@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 
 import { queryKeys } from '../api/queryKeys';
 import type { ClusterResponse } from '../api/recognition';
+import { isHttpStatus } from '../utils/appError';
 import { useSyncTrigger } from './useSyncTrigger';
 import { derivePipelinePhase, deriveLatestJobId, getLatestJobByType, type PipelinePhase } from './jobStateMachineUtils';
 import { useJobStateMachineDerivedState } from './useJobStateMachineDerivedState';
@@ -25,8 +26,6 @@ export interface JobStateMachineOptions {
   onJobNotFound?: (jobId: string) => void;
 }
 
-const isNotFoundError = (error: unknown): boolean => error instanceof Error && error.message.includes('(404)');
-
 export const useJobStateMachine = ({
   onScanStart,
   onScanComplete,
@@ -48,6 +47,30 @@ export const useJobStateMachine = ({
   const [projectionError, setProjectionError] = useState<string | null>(null);
   const [projectionSyncNonce, setProjectionSyncNonce] = useState(0);
 
+  // The job the SSE transport is currently attached to. Mirrored on a ref so the cancel
+  // handler below — which runs from a mutation callback, after the commit — can name it
+  // without re-creating the mutation on every render.
+  const streamJobIdRef = useRef<string | null>(null);
+  // One slot, not a set: a cancel applies to the run that is streaming right now, and the next
+  // scan clears it. A growing collection of cancelled ids would be an accumulator with no
+  // purge (RES-07, lexicons/engineering.md:118).
+  const [cancelledStreamJobId, setCancelledStreamJobId] = useState<string | null>(null);
+
+  /**
+   * Release the SSE transport when a cancel succeeds (FEBT2-LB-NEW-02, RES-20 at
+   * lexicons/engineering.md:131).
+   *
+   * `clearActiveJobs()` alone is not enough. It nulls the stream id only on the path where
+   * `latestJobId` comes from `latestScanJob`; when the backend has auto-chained a clustering
+   * job, `deriveLatestJobId` falls back to `scanStatus.id` (jobStateMachineUtils.ts:74-78) and
+   * the transport stays open on a run the operator stopped — frames for cancelled work, and a
+   * connection held by a scope that never releases it.
+   */
+  const handleCancelComplete = useCallback(() => {
+    setCancelledStreamJobId(streamJobIdRef.current);
+    onCancelComplete?.();
+  }, [onCancelComplete]);
+
   const invalidateIdentities = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
   }, [queryClient]);
@@ -60,6 +83,7 @@ export const useJobStateMachine = ({
     retryClustering,
     clusterQueuedSeconds,
     canRetryClustering,
+    resolveScanRequestId,
   } = useJobStateMachineMutations({
     activeJobIds,
     addJob,
@@ -73,7 +97,7 @@ export const useJobStateMachine = ({
     onScanError,
     onClusterComplete,
     onClusterError,
-    onCancelComplete,
+    onCancelComplete: handleCancelComplete,
   });
 
   // Track jobs by type
@@ -92,7 +116,7 @@ export const useJobStateMachine = ({
     if (!jobId) {
       return;
     }
-    if (isNotFoundError(scanStatusQuery.error)) {
+    if (isHttpStatus(scanStatusQuery.error, 404)) {
       onJobNotFound?.(jobId);
     }
   }, [jobId, onJobNotFound, scanStatusQuery.error]);
@@ -104,7 +128,7 @@ export const useJobStateMachine = ({
 
     multiScanStatus.forEach((statusQuery, index) => {
       const staleJobId = activeJobIds[index];
-      if (staleJobId && isNotFoundError(statusQuery.error)) {
+      if (staleJobId && isHttpStatus(statusQuery.error, 404)) {
         removeJob(staleJobId);
       }
     });
@@ -122,6 +146,19 @@ export const useJobStateMachine = ({
     [currentPhase, latestScanJob, latestClusterJob, scanStatusQuery.data],
   );
 
+  useEffect(() => {
+    streamJobIdRef.current = latestJobId;
+  });
+
+  // A cancelled run gets no transport, whichever derivation produced its id. Null is the
+  // teardown signal the stream hook already honours (pinned in its own suite), so the release
+  // path has one implementation rather than a second close() API on the hook.
+  const streamJobId = latestJobId === cancelledStreamJobId ? null : latestJobId;
+
+  // The scan-submit -> SSE correlation seam (FEBT2-LB-NEW-03). This hook is the only place
+  // that sees both the submit unit and the stream, so it is the only place the join can be
+  // made. The resolver answers `null` for a job no submit in this session created, so a
+  // rehydrated or auto-chained clustering job mints its own id rather than inheriting one.
   const {
     progress: sseProgress,
     status: sseStatus,
@@ -130,7 +167,7 @@ export const useJobStateMachine = ({
     isPrimary,
     stalledForSeconds,
     retry: retryScanStream,
-  } = useJobProgressStream(latestJobId);
+  } = useJobProgressStream(streamJobId, { resolveRequestId: resolveScanRequestId });
   const syncTrigger = useSyncTrigger(false);
 
   useJobStateMachineEffects({
@@ -176,6 +213,9 @@ export const useJobStateMachine = ({
       setProjectionSyncState('idle');
       setProjectionError(null);
       setProjectionSyncNonce(0);
+      // A new run reclaims the cancel latch; leaving it set would suppress the stream for a
+      // job id the backend legitimately re-issued.
+      setCancelledStreamJobId(null);
       scanMutation.mutate(mediaIds);
     },
     [scanMutation],

@@ -6,8 +6,9 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from pydantic import BaseModel, ConfigDict, ValidationError
 
-from recognition.application.services.export_service import run_export_to_file
+from recognition.application.services.export_service import EXPORT_SCHEMA_VERSION, run_export_to_file
 from recognition.interface_adapters.http.deps import (
     AuditRepositoryProtocol,
     AuthContext,
@@ -43,6 +44,11 @@ from recognition.interface_adapters.http.schemas.responses import (
 
 logger = logging.getLogger(__name__)
 
+# SEC-01 / API-05: the client sits on the untrusted side of this boundary. Server
+# faults are logged in full server-side and reported outward as this fixed string;
+# driver text, file paths, and internal identifiers never cross.
+INTERNAL_ERROR_DETAIL = "internal server error"
+
 router = APIRouter(
     prefix="/retention",
     tags=["retention"],
@@ -51,6 +57,36 @@ router = APIRouter(
 
 RETENTION_MODES = {"retain_all", "dispose_after_ack", "purge_on_demand"}
 PURGE_SCOPES = {"disposed", "all"}
+
+
+class ExportSnapshotResponse(BaseModel):
+    """Server-side contract for the export-download envelope.
+
+    Before this model existed the route returned a bare ``dict`` with no
+    ``response_model``, so nothing on the server pinned the wire shape and the
+    admin client was free to invent envelopes that the exporter never emits
+    (FEBT1-LG-01). The snapshot is the exporter's own top-level object -- the
+    collections sit at the root, never nested under a ``data`` key -- and this
+    model is the single place that says so (rg-015).
+
+    ``extra="allow"`` is deliberate: FastAPI filters a response through its
+    ``response_model``, so a closed model would silently drop any key the
+    exporter adds before this file is updated. Allowing extras keeps the
+    download lossless while still requiring every field the contract promises.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    tenant_id: str
+    retention_mode: str
+    exported_at: str
+    schema_version: int
+    clusters: list[dict[str, Any]]
+    media_identities: list[dict[str, Any]]
+    identity_suggestions: list[dict[str, Any]]
+    name_suggestions: list[dict[str, Any]]
+    cluster_merge_suggestions: list[dict[str, Any]]
+    scan_jobs: list[dict[str, Any]]
 
 
 def _actor_from_auth(auth: AuthContext) -> str:
@@ -91,7 +127,7 @@ async def get_retention_policy(
         raise
     except Exception as exc:  # pragma: no cover - fallback path
         logger.exception("Failed to load retention policy for tenant %s", tenant_id)
-        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=INTERNAL_ERROR_DETAIL) from exc
     return RetentionPolicyResponse.model_validate(payload)
 
 
@@ -114,7 +150,7 @@ async def update_retention_policy(
         raise
     except Exception as exc:  # pragma: no cover - fallback path
         logger.exception("Failed to update retention policy for tenant %s", tenant_id)
-        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=INTERNAL_ERROR_DETAIL) from exc
     return RetentionPolicyResponse.model_validate(payload)
 
 
@@ -135,7 +171,7 @@ async def apply_policy_preset(
         raise
     except Exception as exc:  # pragma: no cover - fallback path
         logger.exception("Failed to apply retention preset for tenant %s", tenant_id)
-        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=INTERNAL_ERROR_DETAIL) from exc
     return RetentionPolicyResponse.model_validate(payload)
 
 
@@ -154,7 +190,7 @@ async def trigger_export(
         raise
     except Exception as exc:  # pragma: no cover - fallback path
         logger.exception("Failed to start export job for tenant %s", tenant_id)
-        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=INTERNAL_ERROR_DETAIL) from exc
 
     job_id = str(result["job_id"])
     background_tasks.add_task(run_export_to_file, job_id, tenant_id, _actor_from_auth(auth))
@@ -174,7 +210,7 @@ async def get_export_job_status(
         raise
     except Exception as exc:  # pragma: no cover - fallback path
         logger.exception("Failed to get export status for job %s", job_id)
-        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=INTERNAL_ERROR_DETAIL) from exc
 
     if result.get("error") == "not_found":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="export job not found")
@@ -186,12 +222,12 @@ async def get_export_job_status(
     )
 
 
-@router.get("/export/{job_id}/data")
+@router.get("/export/{job_id}/data", response_model=ExportSnapshotResponse)
 async def get_export_job_data(
     job_id: str,
     tenant_id: str = Depends(get_authenticated_tenant_id),
     service: RetentionExportServiceProtocol = Depends(get_retention_export_service),
-) -> dict[str, Any]:
+) -> ExportSnapshotResponse:
     """Return the stored export payload when the job is completed."""
     try:
         result = await service.get_export_status(job_id, tenant_id)
@@ -199,7 +235,7 @@ async def get_export_job_data(
         raise
     except Exception as exc:  # pragma: no cover - fallback path
         logger.exception("Failed to retrieve export data for job %s", job_id)
-        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=INTERNAL_ERROR_DETAIL) from exc
 
     if result.get("error") == "not_found":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="export job not found")
@@ -208,7 +244,22 @@ async def get_export_job_data(
     data = result.get("data_json")
     if not data:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="export data not available")
-    return data  # type: ignore[return-value]
+    try:
+        return ExportSnapshotResponse.model_validate(data)
+    except ValidationError as exc:
+        # rg-015: a stored snapshot that violates the export contract is an
+        # explicit server fault, not a shape the download quietly supports.
+        logger.error(
+            "Stored export snapshot for job %s (tenant %s) violates schema_version %s contract: %s",
+            job_id,
+            tenant_id,
+            EXPORT_SCHEMA_VERSION,
+            exc.errors(include_url=False),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="stored export snapshot does not match the export contract",
+        ) from exc
 
 
 @router.post("/purge", response_model=PurgeResponse)
@@ -232,7 +283,7 @@ async def trigger_purge(
         raise
     except Exception as exc:  # pragma: no cover - fallback path
         logger.exception("Failed to purge tenant data for tenant %s", tenant_id)
-        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=INTERNAL_ERROR_DETAIL) from exc
     return _coerce_purge_response(payload, tenant_id, request.scope)
 
 
@@ -252,7 +303,7 @@ async def list_audit_events(
         raise
     except Exception as exc:  # pragma: no cover - fallback path
         logger.exception("Failed to list retention audit events for tenant %s", tenant_id)
-        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=INTERNAL_ERROR_DETAIL) from exc
 
     return AuditEventListResponse(
         items=[AuditEventResponse.model_validate(item) for item in items],
@@ -279,5 +330,5 @@ async def trigger_import(
         raise
     except Exception as exc:  # pragma: no cover - fallback path
         logger.exception("Failed to import tenant data for tenant %s", tenant_id)
-        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=INTERNAL_ERROR_DETAIL) from exc
     return ImportResponse.model_validate(result)

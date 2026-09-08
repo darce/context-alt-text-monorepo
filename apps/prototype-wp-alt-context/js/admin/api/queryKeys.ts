@@ -13,6 +13,9 @@ export interface WorkbenchMediaParams {
 }
 
 export const queryKeys = {
+  settings: {
+    all: ['settings'] as const,
+  },
   media: {
     all: ['media'] as const,
     identities: () => [...queryKeys.media.all, 'identities'] as const,

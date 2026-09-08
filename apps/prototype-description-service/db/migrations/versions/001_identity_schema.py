@@ -291,7 +291,11 @@ def _ensure_table_constraints(op, table_name: str, *elements, heal_constraints: 
     unhealed: list[str] = []
     for name in missing:
         element = declared[name]
-        if name in healable and isinstance(element, sa.UniqueConstraint) and _ensure_unique_constraint(op, table_name, element):
+        if (
+            name in healable
+            and isinstance(element, sa.UniqueConstraint)
+            and _ensure_unique_constraint(op, table_name, element)
+        ):
             continue
         unhealed.append(name)
     if unhealed:
@@ -942,8 +946,7 @@ def ensure_tables(op) -> None:
         ),
         sa.CheckConstraint("cluster_a_id < cluster_b_id", name="cluster_merge_canonical_order"),
         sa.CheckConstraint(
-            "survivor_cluster_id IS NULL OR survivor_cluster_id = cluster_a_id"
-            " OR survivor_cluster_id = cluster_b_id",
+            "survivor_cluster_id IS NULL OR survivor_cluster_id = cluster_a_id OR survivor_cluster_id = cluster_b_id",
             name="cluster_merge_survivor_in_pair",
         ),
         sa.UniqueConstraint(
@@ -2009,12 +2012,32 @@ def _matview_centroid_typmod(op) -> int | None:
     )
 
 
+def _matview_owner_and_can_drop(op) -> tuple[str, bool]:
+    owner, can_drop = (
+        op.get_bind()
+        .execute(
+            sa.text(
+                "SELECT pg_get_userbyid(c.relowner), "
+                "pg_has_role(current_user, c.relowner, 'USAGE') "
+                "FROM pg_class c "
+                "JOIN pg_namespace n ON n.oid=c.relnamespace "
+                "WHERE n.nspname=current_schema() "
+                "AND c.relname='mv_identity_cluster_centroids' "
+                "AND c.relkind='m'"
+            )
+        )
+        .one()
+    )
+    return str(owner), bool(can_drop)
+
+
 def ensure_matview(op) -> None:
     """Create the centroid materialized view + indexes; fail loudly on a plain-table impostor.
 
     A matview whose ``centroid`` column lost its vector typmod (built before the
-    outer cast existed) is derived data with no owner but the refresh queue, so
-    it is dropped and rebuilt here instead of waiting on an operator.
+    outer cast existed) is derived data, so it is dropped and rebuilt here when
+    the current role can drop it. Otherwise the heal raises a named operator
+    action before making any destructive change.
     """
     relkind = _relkind(op, "mv_identity_cluster_centroids")
     if relkind not in (None, "m"):
@@ -2023,8 +2046,20 @@ def ensure_matview(op) -> None:
             f"{relkind!r} (expected materialized view); drop the impostor relation "
             "before healing (operator action, see E15-33-BR2-04)"
         )
-    if relkind == "m" and _matview_centroid_typmod(op) != EMBEDDING_DIMENSION:
-        op.execute("DROP MATERIALIZED VIEW mv_identity_cluster_centroids")
+    if relkind == "m":
+        observed_typmod = _matview_centroid_typmod(op)
+        if observed_typmod != EMBEDDING_DIMENSION:
+            owner, can_drop = _matview_owner_and_can_drop(op)
+            if not can_drop:
+                current_role = str(op.get_bind().execute(sa.text("SELECT current_user")).scalar())
+                operator_sql = f"ALTER MATERIALIZED VIEW mv_identity_cluster_centroids OWNER TO {current_role};"
+                raise RuntimeError(
+                    "cannot rebuild mv_identity_cluster_centroids: "
+                    f"observed centroid typmod {observed_typmod!r}; owner role is {owner!r}; "
+                    f"current role is {current_role!r} and cannot DROP the relation. "
+                    f"Run {operator_sql} then re-run python -m scripts.sync_identity_schema."
+                )
+            op.execute("DROP MATERIALIZED VIEW mv_identity_cluster_centroids")
     op.execute(
         f"""
         CREATE MATERIALIZED VIEW IF NOT EXISTS mv_identity_cluster_centroids AS

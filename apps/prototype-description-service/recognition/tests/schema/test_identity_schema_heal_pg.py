@@ -11,9 +11,11 @@ against real Postgres).
 from __future__ import annotations
 
 import importlib
+import uuid
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 
 MIGRATION = importlib.import_module("db.migrations.versions.001_identity_schema")
 
@@ -132,6 +134,101 @@ def test_heal_rebuilds_matview_that_lost_its_vector_typmod(pg_empty_engine) -> N
         "mv_cluster_centroids_tenant_idx",
         "mv_cluster_centroids_vector_idx",
     } <= indexes
+
+
+def _createrole_denied(exc: DBAPIError) -> bool:
+    original = exc.orig
+    sqlstate = getattr(original, "sqlstate", None) or getattr(original, "pgcode", None)
+    return sqlstate == "42501" and "create role" in str(original).lower()
+
+
+def test_heal_refuses_typmod_rebuild_when_matview_has_foreign_owner(pg_empty_engine) -> None:
+    # A role-owned matview cannot be dropped by the app role. The refusal must
+    # leave the drifted relation in place and give an operator copy/pasteable
+    # remediation rather than attempting a partial rebuild.
+    owner_role = f"identity_mv_owner_{uuid.uuid4().hex[:12]}"
+    with pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+        conn.execute(text("DROP MATERIALIZED VIEW mv_identity_cluster_centroids"))
+        conn.execute(
+            text(
+                "CREATE MATERIALIZED VIEW mv_identity_cluster_centroids AS "
+                "SELECT c.id AS cluster_id, c.tenant_id, 0 AS identity_count, "
+                "NULL::vector AS centroid, c.updated_at AS refreshed_at "
+                "FROM identity_clusters c"
+            )
+        )
+        app_role = str(conn.execute(text("SELECT current_user")).scalar())
+
+        try:
+            conn.execute(text(f'CREATE ROLE "{owner_role}"'))
+        except DBAPIError as exc:
+            if _createrole_denied(exc):
+                pytest.skip("scratch role test skipped: test role lacks CREATEROLE")
+            raise
+
+        # The temporary membership permits the ownership transfer; revoking it
+        # makes pg_has_role(..., 'USAGE') false for the actual heal.
+        conn.execute(text(f'GRANT "{owner_role}" TO CURRENT_USER'))
+        conn.execute(text(f'ALTER MATERIALIZED VIEW mv_identity_cluster_centroids OWNER TO "{owner_role}"'))
+        conn.execute(text(f'REVOKE "{owner_role}" FROM CURRENT_USER'))
+
+        with pytest.raises(RuntimeError) as exc_info, conn.begin_nested():
+            MIGRATION.heal(conn)
+
+        message = str(exc_info.value)
+        operator_sql = f"ALTER MATERIALIZED VIEW mv_identity_cluster_centroids OWNER TO {app_role};"
+        assert "mv_identity_cluster_centroids" in message
+        assert "-1" in message
+        assert owner_role in message
+        assert app_role in message
+        assert operator_sql in message
+        assert "python -m scripts.sync_identity_schema" in message
+        assert (
+            conn.execute(
+                text(
+                    "SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+                    "WHERE n.nspname=current_schema() "
+                    "AND c.relname='mv_identity_cluster_centroids' AND c.relkind='m'"
+                )
+            ).scalar()
+            == 1
+        )
+
+        # Restore ownership and remove the scratch role before the enclosing
+        # transaction commits; the app role cannot clean up a foreign-owned
+        # matview while it is intentionally not a member of owner_role.
+        conn.execute(text(f'GRANT "{owner_role}" TO CURRENT_USER'))
+        conn.execute(text("ALTER MATERIALIZED VIEW mv_identity_cluster_centroids OWNER TO CURRENT_USER"))
+        conn.execute(text(f'REVOKE "{owner_role}" FROM CURRENT_USER'))
+        conn.execute(text(f'DROP ROLE "{owner_role}"'))
+
+
+def test_heal_does_not_rebuild_matview_when_vector_typmod_matches(pg_empty_engine) -> None:
+    with pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+    with pg_empty_engine.connect() as conn:
+        before_oid = conn.execute(
+            text(
+                "SELECT c.oid FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+                "WHERE n.nspname=current_schema() AND c.relname='mv_identity_cluster_centroids' "
+                "AND c.relkind='m'"
+            )
+        ).scalar()
+    assert _centroid_typmod(pg_empty_engine) == MIGRATION.EMBEDDING_DIMENSION
+
+    with pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+
+    with pg_empty_engine.connect() as conn:
+        after_oid = conn.execute(
+            text(
+                "SELECT c.oid FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+                "WHERE n.nspname=current_schema() AND c.relname='mv_identity_cluster_centroids' "
+                "AND c.relkind='m'"
+            )
+        ).scalar()
+    assert after_oid == before_oid
 
 
 def test_heal_restores_dropped_rls_policy(pg_empty_engine) -> None:

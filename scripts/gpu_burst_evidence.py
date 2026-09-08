@@ -27,7 +27,14 @@ ACTION_START = "START"
 ACTION_STOP = "STOP"
 STATE_RUNNING = "RUNNING"
 STATE_STOPPED = "STOPPED"
+STATE_STARTING = "STARTING"
+STATE_STOPPING = "STOPPING"
 ACTION_RESULT_STATE = {ACTION_START: STATE_RUNNING, ACTION_STOP: STATE_STOPPED}
+ACTION_INTERMEDIATE_STATE = {ACTION_START: STATE_STARTING, ACTION_STOP: STATE_STOPPING}
+ACTION_PREVIOUS_STATE = {ACTION_START: STATE_STOPPED, ACTION_STOP: STATE_RUNNING}
+PROOF_STATUS_KEY = "proof_status"
+PROOF_STATUS_COMPLETE = "complete"
+PROOF_STATUS_UNKNOWN = "unknown"
 
 # The checker only needs these lifecycle values to distinguish the two states
 # that prove a burst from the other documented OCI lifecycle states.  UNKNOWN
@@ -36,8 +43,8 @@ KNOWN_LIFECYCLE_STATES = frozenset(
     {
         STATE_RUNNING,
         STATE_STOPPED,
-        "STARTING",
-        "STOPPING",
+        STATE_STARTING,
+        STATE_STOPPING,
         "CREATING",
         "TERMINATING",
         "TERMINATED",
@@ -488,6 +495,12 @@ def _has_state_field(value: Mapping[str, Any]) -> bool:
     return any(key in value for key in _STATE_KEYS)
 
 
+def _mapping_has_state_history_containers(value: Mapping[str, Any]) -> bool:
+    if isinstance(value.get("data"), list):
+        return True
+    return any(isinstance(value.get(key), (list, Mapping)) for key in _STATE_HISTORY_CONTAINER_KEYS)
+
+
 def _validate_state_observation(value: Any, label: str) -> tuple[tuple[float, str, str] | None, str | None]:
     if not isinstance(value, Mapping):
         return None, f"{label} must be an object"
@@ -542,13 +555,6 @@ def _parse_state_observations(
             if depth == 0:
                 failures.append(f"{current_label} must be an object or list")
             continue
-        if _has_state_field(current):
-            observation, failure = _validate_state_observation(current, current_label)
-            if observation is not None:
-                observations.append(observation)
-            if failure is not None:
-                failures.append(failure)
-            continue
 
         queued = False
         for key in _STATE_HISTORY_CONTAINER_KEYS:
@@ -571,6 +577,13 @@ def _parse_state_observations(
             nested_observations, nested_failures = _parse_state_observation_collection(data, "data")
             observations.extend(nested_observations)
             failures.extend(nested_failures)
+            continue
+        if _has_state_field(current):
+            observation, failure = _validate_state_observation(current, current_label)
+            if observation is not None:
+                observations.append(observation)
+            if failure is not None:
+                failures.append(failure)
     return observations, failures
 
 
@@ -760,7 +773,11 @@ def _event_state_change_report(event: Mapping[str, Any], field: str) -> tuple[st
     for state_change in state_changes:
         if not isinstance(state_change, Mapping):
             return None, "stateChange must be an object"
-        field_values = [state_change[key] for key in (field, f"{field}State", f"{field}_state") if key in state_change]
+        field_values = [
+            state_change[key]
+            for key in (field, f"{field}State", f"{field}_state", f"{field}-state")
+            if key in state_change
+        ]
         for raw in field_values:
             if isinstance(raw, Mapping):
                 state, state_error = _state_from_mapping_report(raw)
@@ -1126,9 +1143,6 @@ def _state_action_records(payload: Any) -> tuple[list[tuple[Mapping[str, Any], s
             continue
         if not isinstance(current, Mapping):
             continue
-        if _has_state_field(current):
-            records.append((current, label))
-            continue
         queued = False
         for key in _STATE_HISTORY_CONTAINER_KEYS:
             nested = current.get(key)
@@ -1146,6 +1160,9 @@ def _state_action_records(payload: Any) -> tuple[list[tuple[Mapping[str, Any], s
                 queued = True
                 break
         if queued:
+            continue
+        if _has_state_field(current):
+            records.append((current, label))
             continue
         data = current.get("data")
         if isinstance(data, list):
@@ -1461,7 +1478,7 @@ def _history_instance_id(payload: Any) -> str | None:
 def _state_history_envelope_check(payload: Any) -> dict[str, Any]:
     if not isinstance(payload, Mapping):
         return _result("state_history_schema", False, "state history envelope must be an object")
-    if _has_state_field(payload):
+    if _has_state_field(payload) and not _mapping_has_state_history_containers(payload):
         envelope_state, state_error = _state_from_mapping_report(payload)
         if state_error is not None:
             return _result("state_history_schema", False, state_error)
@@ -1719,10 +1736,15 @@ def _audit_current_state_check(
             current, current_error = _event_state_change_report(event, "current")
             if current_error is not None:
                 failures.append(f"{action} {identity}: current state: {current_error}")
-            elif current is not None and current != ACTION_RESULT_STATE[action]:
-                failures.append(
-                    f"{action} {identity}: current state {current!r} contradicts expected {ACTION_RESULT_STATE[action]!r}"
-                )
+            elif current is not None:
+                expected = ACTION_RESULT_STATE[action]
+                intermediate = ACTION_INTERMEDIATE_STATE[action]
+                phase = _event_phase(event)
+                allowed = {expected, intermediate} if phase == "begin" else {expected}
+                if current not in allowed:
+                    failures.append(
+                        f"{action} {identity}: current state {current!r} contradicts expected {expected!r}"
+                    )
     return _result(
         "audit_current_state_consistency",
         not failures,
@@ -1734,7 +1756,6 @@ def _audit_transition_states_check(
     groups: Mapping[tuple[str, str], Sequence[Mapping[str, Any]]], *, since: float, until: float
 ) -> dict[str, Any]:
     failures: list[str] = []
-    previous_states = {ACTION_START: STATE_STOPPED, ACTION_STOP: STATE_RUNNING}
     for (action, identity), events in groups.items():
         event, representative_error = _representative_audit_event_report(events)
         if representative_error is not None or event is None:
@@ -1752,12 +1773,23 @@ def _audit_transition_states_check(
         current, current_error = _event_state_change_report(event, "current")
         if current_error is not None or current != ACTION_RESULT_STATE[action]:
             continue
+        expected_previous = ACTION_PREVIOUS_STATE[action]
+        intermediate = ACTION_INTERMEDIATE_STATE[action]
+        begin = next((item for item in events if _event_phase(item) == "begin"), None)
+        if begin is not None:
+            begin_previous, begin_previous_error = _event_state_change_report(begin, "previous")
+            if begin_previous_error is not None:
+                failures.append(f"{action} {identity}: previous state: {begin_previous_error}")
+            elif begin_previous is not None and begin_previous != expected_previous:
+                failures.append(
+                    f"{action} {identity}: previous state {begin_previous!r} contradicts expected {expected_previous!r}"
+                )
         previous, previous_error = _event_state_change_report(event, "previous")
         if previous_error is not None:
             failures.append(f"{action} {identity}: previous state: {previous_error}")
-        elif previous != previous_states[action]:
+        elif previous is not None and previous not in {expected_previous, intermediate}:
             failures.append(
-                f"{action} {identity}: previous state {previous!r} contradicts expected {previous_states[action]!r}"
+                f"{action} {identity}: previous state {previous!r} contradicts expected {expected_previous!r}"
             )
     return _result(
         "audit_transition_states",
@@ -2078,6 +2110,25 @@ def check_bundle(
     )
 
 
+def _event_time_value(event: Mapping[str, Any], timestamp: float) -> Any:
+    return event.get("eventTime", event.get("event_time", event.get("event-time", timestamp)))
+
+
+def _proof_status_for_observations(observations: Sequence[Mapping[str, Any]]) -> tuple[str, str | None]:
+    states = [item.get("state") for item in observations]
+    if states == [STATE_STOPPED, STATE_RUNNING, STATE_STOPPED]:
+        return PROOF_STATUS_COMPLETE, None
+    if not states:
+        reason = "no authoritative lifecycle transition was observed in the capture window"
+    elif states[0] != STATE_STOPPED:
+        reason = "the initial lifecycle state was not independently observed in the capture window"
+    elif states[-1] != STATE_STOPPED:
+        reason = "the final lifecycle state was not independently observed in the capture window"
+    else:
+        reason = "the capture window does not contain a complete authoritative lifecycle history"
+    return PROOF_STATUS_UNKNOWN, reason
+
+
 def build_state_history_document(
     audit_payload: Any,
     *,
@@ -2092,51 +2143,66 @@ def build_state_history_document(
     if start is None or end is None or start > end:
         raise EvidenceError("evidence history generation received an invalid window")
     observations: list[dict[str, Any]] = []
-    for action, event, timestamp in _authoritative_audit_events(
-        audit_payload,
-        instance_id=instance_id,
-        since=start,
-        until=end,
-    ):
-        current, current_error = _event_state_change_report(event, "current")
-        if current_error is not None or current is None:
+    groups, _group_failures = _audit_event_group_report(audit_payload, instance_id=instance_id)
+    for (action, _identity), events in groups.items():
+        event, representative_error = _representative_audit_event_report(events)
+        if representative_error is not None or event is None:
             continue
-        expected_previous = STATE_STOPPED if action == ACTION_START else STATE_RUNNING
-        previous, previous_error = _event_state_change_report(event, "previous")
+        timestamp, time_error = _event_time_report(event)
+        status, status_error = _event_status_report(event)
+        current, current_error = _event_state_change_report(event, "current")
+        if (
+            timestamp is None
+            or time_error is not None
+            or not start <= timestamp <= end
+            or status_error is not None
+            or not _status_success(status)
+            or current_error is not None
+            or current != ACTION_RESULT_STATE[action]
+        ):
+            continue
+        expected_previous = ACTION_PREVIOUS_STATE[action]
+        begin = next((item for item in events if _event_phase(item) == "begin"), None)
+        previous_event = begin if begin is not None else event
+        previous, previous_error = _event_state_change_report(previous_event, "previous")
+        if previous_error is not None or previous != expected_previous:
+            previous_event = event
+            previous, previous_error = _event_state_change_report(event, "previous")
         if previous_error is not None or previous != expected_previous:
             continue
         if action == ACTION_START:
             observations.append(
                 {
                     "state": previous,
-                    "timestamp": event.get(
-                        "eventTime", event.get("event_time", event.get("event-time", timestamp))
-                    ),
+                    "timestamp": _event_time_value(previous_event, timestamp),
                     "source": "oci_audit_previous_state",
                 }
             )
-        state = current
         event_id, _event_id_error = _text_report(
             [event[key] for key in ("eventId", "eventID", "event_id", "event-id") if key in event], "event id"
         )
         observations.append(
             {
-                "state": state,
-                "timestamp": event.get(
-                    "eventTime", event.get("event_time", event.get("event-time", timestamp))
-                ),
+                "state": current,
+                "timestamp": _event_time_value(event, timestamp),
                 "source": "oci_audit_transition",
                 "action": "StartInstance" if action == ACTION_START else "StopInstance",
                 "event_id": event_id,
             }
         )
-    return {
+    observations.sort(key=lambda item: _parse_time(item.get("timestamp")) or 0)
+    proof_status, reason = _proof_status_for_observations(observations)
+    document: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "instance_id": instance_id,
         "since": since,
         "until": until,
         "observations": observations,
+        PROOF_STATUS_KEY: proof_status,
     }
+    if reason is not None:
+        document["reason"] = reason
+    return document
 
 
 def _verdict(

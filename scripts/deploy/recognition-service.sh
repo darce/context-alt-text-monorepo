@@ -1666,6 +1666,7 @@ preserve_rollback_tag() {
 do_boot_smoke() {
   local env="$1" image="$2" remote_dir smoke_timeout poll_interval smoke_rc=0
   local pg_ready_budget setup_slack composite_deadline
+  local net_create_cap port_cap trap_docker_s smoke_margin trap_reserve
   remote_dir="$(env_to_remote_dir "$env")"
   if [[ ! "${image}" =~ ^${IMAGE_BASE}@sha256:[a-f0-9]{64}$ ]]; then
     warn "boot smoke refused non-digest candidate: ${image}"
@@ -1674,11 +1675,18 @@ do_boot_smoke() {
   # Image-aware health budget: recognition default 24s; VLM uses the unmeasured
   # longer default. ACX_SMOKE_TIMEOUT overrides either, validated as a positive
   # integer. Postgres ready-wait is a separate budget (SMOKE_PG_READY_TIMEOUT).
+  # Inner caps live here once; wrapper deadline and the remote body share them
+  # as positionals so the outer run_with_deadline cannot fire first (H2E-01).
   smoke_timeout="$(resolve_smoke_timeout)"
   poll_interval=2
   pg_ready_budget="${SMOKE_PG_READY_TIMEOUT}"
   setup_slack="${SMOKE_SETUP_SLACK}"
-  composite_deadline=$((pg_ready_budget + smoke_timeout + setup_slack))
+  net_create_cap=10
+  port_cap=5
+  trap_docker_s=10
+  smoke_margin=5
+  trap_reserve=$((trap_docker_s + poll_interval))
+  composite_deadline=$((net_create_cap + setup_slack + pg_ready_budget + setup_slack + port_cap + smoke_timeout + trap_reserve + smoke_margin))
   log "Pre-promote boot smoke: ${image} on ${SSH_TARGET} (env=${env}, health_budget=${smoke_timeout}s, pg_ready_budget=${pg_ready_budget}s, real entrypoint)"
   # A local build authenticated the workstation for its push, not the VM. The
   # smoke pull is a separate remote process and needs the remote half of this
@@ -1723,19 +1731,31 @@ do_boot_smoke() {
   fi
   run_with_deadline "${composite_deadline}" "boot-smoke health gate for ${image}" \
     ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
-      "bash -s ${env} ${image} ${remote_dir} ${smoke_timeout} ${poll_interval} ${vlm_budget} ${pg_ready_budget} ${setup_slack}" <<SMOKE_WRAP || smoke_rc=$?
+      "bash -s ${env} ${image} ${remote_dir} ${smoke_timeout} ${poll_interval} ${vlm_budget} ${pg_ready_budget} ${setup_slack} ${net_create_cap} ${port_cap} ${trap_docker_s}" <<SMOKE_WRAP || smoke_rc=$?
 $(declare -f sanitize_deploy_diagnostic)
 $(cat <<'SMOKE'
 set -euo pipefail
 # Leading space keeps this helper off the column-0 `fn() {` parser.
  _smoke_timeout() {
-  local secs="$1"
+  local secs="$1" pid watcher rc=0
   shift
   if command -v timeout >/dev/null 2>&1; then
-    timeout "$secs" "$@"
-  else
-    "$@"
+    timeout -k 1 "$secs" "$@"
+    return
   fi
+  # Cleanup trap ignores TERM/INT/HUP (inherited by children). SIGKILL cannot
+  # be ignored, so the no-timeout reaper always bounds the command.
+  "$@" &
+  pid=$!
+  ( sleep "$secs"; kill -s KILL "$pid" 2>/dev/null || true ) &
+  watcher=$!
+  wait "$pid" || rc=$?
+  kill -s KILL "$watcher" 2>/dev/null || true
+  wait "$watcher" 2>/dev/null || true
+  if (( rc == 143 || rc == 137 )); then
+    return 124
+  fi
+  return "$rc"
 }
  _fail_if_setup_timeout() {
   local rc=0
@@ -1751,6 +1771,21 @@ set -euo pipefail
 env="$1"; image="$2"; remote_dir="$3"; budget_s="$4"; poll_s="$5"; vlm_budget="$6"
 pg_budget="${7:-30}"
 setup_slack="${8:-30}"
+net_create_cap="${9:-10}"
+port_cap="${10:-5}"
+trap_docker_s="${11:-10}"
+if ! [[ "${vlm_budget}" =~ ^[01]$ ]]; then
+  echo "smoke vlm_budget invalid" >&2
+  exit 2
+fi
+for _smoke_pair in "budget_s=${budget_s}" "poll_s=${poll_s}" "pg_budget=${pg_budget}" "setup_slack=${setup_slack}"; do
+  _smoke_var="${_smoke_pair%%=*}"
+  _smoke_val="${_smoke_pair#*=}"
+  if ! [[ "${_smoke_val}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "smoke ${_smoke_var} invalid" >&2
+    exit 2
+  fi
+done
 env_file="${remote_dir}/.env"
 net="$(grep -E '^ACX_NETWORK_NAME=' "${env_file}" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d "\"' " || true)"
 net="${net:-acx-${env}-net}"
@@ -1758,6 +1793,7 @@ models_path="$(grep -E '^ACX_MODELS_PATH=' "${env_file}" 2>/dev/null | tail -1 |
 name="acx-smoke-${env}-$$"
 blob_vol="acx-smoke-blobs-${env}-$$"
 pg_name="acx-smoke-pg-${env}-$$"
+smoke_owner="${pg_name}"
 smoke_user="acx_smoke"
 smoke_pass="acx_smoke_not_prod"
 smoke_db="acx_smoke"
@@ -1769,13 +1805,13 @@ smoke_sync_dsn="postgresql+psycopg://${smoke_user}:${smoke_pass}@${pg_name}:5432
 # here so a deadline SIGTERM still emits the 503 body before cleanup.
 # Install the trap before network create so a hung create still cleans up.
 curl_err="$(mktemp)"
+log_cap="$(mktemp)"
 last_health_code="000"
 last_health_body=""
 smoke_passed=0
-net_created=0
 trap '
   trap - EXIT
-  trap "" TERM INT
+  trap "" TERM INT HUP
   if [[ "${smoke_passed:-0}" != "1" ]]; then
     if [[ -n "${curl_err:-}" && -s "${curl_err}" ]]; then
       if ! sanitize_deploy_diagnostic < "${curl_err}" >&2; then
@@ -1787,18 +1823,26 @@ trap '
     if ! printf "%s\n" "${last_health_body:0:2000}" | sanitize_deploy_diagnostic >&2; then
       echo "diagnostic: smoke health LAST body unavailable" >&2
     fi
-    echo "smoke container logs (last 80 lines):" >&2
-    if ! _smoke_timeout 2 docker logs --tail 80 "$name" 2>&1 | sanitize_deploy_diagnostic >&2; then
-      echo "smoke container logs unavailable" >&2
-    fi
+    _smoke_timeout 2 docker logs --tail 80 "$name" >"$log_cap" 2>&1 || true
   fi
   _smoke_timeout 2 docker rm -f "$name" >/dev/null 2>&1 || true
   _smoke_timeout 2 docker rm -f "$pg_name" >/dev/null 2>&1 || true
   _smoke_timeout 2 docker volume rm -f "$blob_vol" >/dev/null 2>&1 || true
-  if [[ "${smoke_passed:-0}" != "1" && "${net_created:-0}" == "1" ]]; then
-    _smoke_timeout 2 docker network rm "$net" >/dev/null 2>&1 || true
+  if [[ "${smoke_passed:-0}" != "1" ]]; then
+    _smoke_net_owner="$(_smoke_timeout 2 docker network inspect --format "{{index .Labels \"acx.smoke.owner\"}}" "$net" 2>/dev/null || true)"
+    if [[ -n "${_smoke_net_owner}" && "${_smoke_net_owner}" == "${smoke_owner}" ]]; then
+      _smoke_timeout 2 docker network rm "$net" >/dev/null 2>&1 || true
+    fi
+    echo "smoke container logs (last 80 lines):" >&2
+    if [[ -s "${log_cap}" ]]; then
+      if ! sanitize_deploy_diagnostic < "${log_cap}" >&2; then
+        echo "smoke container logs unavailable" >&2
+      fi
+    else
+      echo "smoke container logs unavailable" >&2
+    fi
   fi
-  rm -f "$curl_err"
+  rm -f "$curl_err" "$log_cap"
 ' EXIT
 trap 'exit 143' TERM
 trap 'exit 130' INT
@@ -1806,12 +1850,14 @@ trap 'exit 130' INT
 # auto-create, so the env net may not exist yet (gate r0811864a A-01). Create
 # it idempotently with compose-parity labels so the later `compose up` adopts
 # it instead of refusing an unlabeled pre-existing net (A-02 pattern).
+# Ownership label lets the trap rm a net whose create timed out after the
+# daemon already created it, without touching a compose-owned or foreign net.
 if ! docker network inspect "$net" >/dev/null 2>&1; then
-  _fail_if_setup_timeout _smoke_timeout 10 docker network create \
+  _fail_if_setup_timeout _smoke_timeout "$net_create_cap" docker network create \
     --label com.docker.compose.network=backend \
     --label "com.docker.compose.project=acx-${env}" \
+    --label "acx.smoke.owner=${smoke_owner}" \
     "$net"
-  net_created=1
 fi
 # Ephemeral Postgres so entrypoint migrate/schema-verify never touch live env DB.
 # Ready-wait uses pg_budget, not the /health attempt count / ACX_SMOKE_TIMEOUT.
@@ -1868,7 +1914,7 @@ run_args=( -d --name "$name" --env-file "${env_file}" --network "$net" -P
   --tmpfs /var/cache/acx/hf_modules:mode=0700,uid=10001,gid=10001,size=32m,noexec )
 _fail_if_setup_timeout _smoke_timeout "$setup_slack" docker run "${run_args[@]}" "$image" >/dev/null
 port_rc=0
-port_out="$(_smoke_timeout 5 docker port "$name" 8000/tcp)" || port_rc=$?
+port_out="$(_smoke_timeout "$port_cap" docker port "$name" 8000/tcp)" || port_rc=$?
 if (( port_rc == 124 )); then
   echo "smoke setup timed out" >&2
   exit 1
@@ -1877,22 +1923,24 @@ if (( port_rc != 0 )); then
   exit "$port_rc"
 fi
 port="$(printf '%s\n' "$port_out" | head -1 | sed 's/.*://')"
-# EXIT trap: timeout 2 × (logs, rm api, rm pg, volume, network) = 10s, plus one poll.
-diag_reserve=$((10 + poll_s))
+# EXIT trap: timeout 2 × (logs, rm api, rm pg, volume, network) = trap_docker_s, plus one poll.
+diag_reserve=$((trap_docker_s + poll_s))
 health_budget=$((budget_s - diag_reserve))
 if (( health_budget < 1 )); then
   health_budget=1
 fi
 health_end=$((SECONDS + health_budget))
+probe_n=0
 while (( SECONDS < health_end )); do
   # Skip a curl that would eat the diag reserve, but always allow the first
   # probe so a tiny clamped health_budget still observes /health.
-  if (( health_end - SECONDS <= poll_s && SECONDS > (health_end - health_budget) )); then
+  if (( probe_n > 0 && health_end - SECONDS <= poll_s )); then
     break
   fi
   health_response=""
   health_curl_rc=0
-  health_response="$(curl -sS --max-time "${poll_s}" --write-out $'\n%{http_code}' "http://127.0.0.1:${port}/health" 2>"${curl_err}")" || health_curl_rc=$?
+  health_response="$(curl -sS --max-time $(( health_end - SECONDS > 0 ? health_end - SECONDS : 1 )) --write-out $'\n%{http_code}' "http://127.0.0.1:${port}/health" 2>"${curl_err}")" || health_curl_rc=$?
+  probe_n=$((probe_n + 1))
   if [[ "${health_response}" == *$'\n'* ]]; then
     last_health_code="${health_response##*$'\n'}"
     last_health_body="${health_response%$'\n'*}"
@@ -1901,7 +1949,7 @@ while (( SECONDS < health_end )); do
     last_health_body="${health_response}"
   fi
   [[ "${last_health_code}" =~ ^[0-9]{3}$ ]] || last_health_code="000"
-  if (( health_curl_rc == 0 )) && [[ "${last_health_code}" =~ ^[23][0-9][0-9]$ ]]; then
+  if (( health_curl_rc == 0 )) && [[ "${last_health_code}" =~ ^2[0-9][0-9]$ ]]; then
     # Exit before any /ready probe. The outer run_with_deadline uses the same
     # budget as this loop; a diagnostic must not turn a marginal pass into rc 124.
     if ! printf '%s\n' "smoke health OK (HTTP ${last_health_code})" | sanitize_deploy_diagnostic; then

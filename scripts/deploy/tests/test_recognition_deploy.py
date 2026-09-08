@@ -656,6 +656,12 @@ def test_boot_smoke_computed_health_loop_budget(tmp_path: Path, budget_s: int) -
 
 
 def test_automatic_rollbacks_capture_failure_evidence_first() -> None:
+    helper = _function_body("handle_failed_verification")
+    helper_evidence = 'capture_failure_evidence "$env"'
+    helper_restore = 'restore_env_tag_to_rollback "$env"'
+    assert helper_evidence in helper
+    assert helper_restore in helper
+    assert helper.index(helper_evidence) < helper.index(helper_restore)
     for function_name, env_expression in (("do_deploy", "\"$env\""), ("do_promote", "\"$to_env\"")):
         body = _function_body(function_name)
         evidence_marker = f"capture_failure_evidence {env_expression}"
@@ -666,9 +672,10 @@ def test_automatic_rollbacks_capture_failure_evidence_first() -> None:
         restore_positions = [
             index for index in range(len(body)) if body.startswith(restore_marker, index)
         ]
-        assert len(evidence_positions) == 3
-        assert len(restore_positions) == 3
+        assert len(evidence_positions) == 2
+        assert len(restore_positions) == 2
         assert all(evidence < restore for evidence, restore in zip(evidence_positions, restore_positions))
+        assert f"handle_failed_verification {env_expression}" in body
 
 
 def test_failure_evidence_probes_and_logs_are_deadline_bounded() -> None:
@@ -938,6 +945,8 @@ def test_runtime_evidence_still_probes_health_and_ready(tmp_path: Path) -> None:
 
 def test_push_and_restart_failures_use_pre_candidate_evidence_phase() -> None:
     """VLMHEAL-1-REV-B-06 / D-02: push is pre_candidate; restart uses post_restart phase."""
+    helper = _function_body("handle_failed_verification")
+    assert 'capture_failure_evidence "$env" candidate' in helper
     for function_name, env_expression in (("do_deploy", '"$env"'), ("do_promote", '"$to_env"')):
         body = _function_body(function_name)
         assert f"capture_failure_evidence {env_expression} pre_candidate" in body
@@ -945,9 +954,9 @@ def test_push_and_restart_failures_use_pre_candidate_evidence_phase() -> None:
             f'capture_failure_evidence {env_expression} "${{ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}}"'
             in body
         )
-        assert f"capture_failure_evidence {env_expression} candidate" in body
+        assert f"handle_failed_verification {env_expression}" in body
+        assert f"capture_failure_evidence {env_expression} candidate" not in body
         assert body.count(f"capture_failure_evidence {env_expression} pre_candidate") == 1
-        assert body.count(f"capture_failure_evidence {env_expression} candidate") == 1
 
 
 def test_run_with_deadline_does_not_dup_stdin_through_fd3() -> None:
@@ -2359,4 +2368,97 @@ def test_boot_smoke_empty_docker_port_fails_setup(tmp_path: Path) -> None:
     assert "logs --tail" in log, log
     assert "127.0.0.1:/health" not in curl_text, curl_text
     assert re.search(r"rm -f acx-smoke-dev-\d+", log), log
+
+
+def _run_verify_optional_after_verify_failure(
+    tmp_path: Path,
+    *,
+    invoke: str,
+    rollback_rc: int,
+) -> subprocess.CompletedProcess[str]:
+    """Source recognition-service.sh and reach the post-verify rollback branch."""
+    fail_log = tmp_path / "fail.log"
+    driver = tmp_path / "verify-optional-driver.sh"
+    driver.write_text(
+        f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+ACX_VERIFY_OPTIONAL=1
+init_deploy_ocir_docker_config() {{ return 0; }}
+preflight_ssh() {{ return 0; }}
+preflight_remote_face_pipeline_models() {{ return 0; }}
+preflight_git_clean() {{ return 0; }}
+preflight_branch_synced() {{ return 0; }}
+preflight_remote_ocir_auth() {{ return 0; }}
+preflight_remote_docker() {{ return 0; }}
+preflight_docker() {{ return 0; }}
+preflight_ocir_auth() {{ return 0; }}
+assert_remote_disk_headroom_for_pull() {{ return 0; }}
+preserve_rollback_tag() {{ return 0; }}
+do_build() {{ return 0; }}
+do_build_remote() {{ return 0; }}
+do_push_sha() {{ return 0; }}
+do_push_tag() {{ return 0; }}
+do_restart() {{ return 0; }}
+promote_gate() {{ return 0; }}
+_pull_ref() {{ return 0; }}
+image_digest_ref() {{
+  printf '%s\\n' "$IMAGE_BASE@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}}
+do_verify() {{ return 1; }}
+capture_failure_evidence() {{ return 0; }}
+restore_env_tag_to_rollback() {{ return {rollback_rc}; }}
+fail() {{
+  printf 'xx %s\\n' "$*" >&2
+  printf '%s\\n' "$*" >>"{fail_log}"
+  exit 1
+}}
+{invoke}
+'''
+    )
+    return subprocess.run(
+        ["bash", str(driver)],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=dict(os.environ),
+        cwd=SCRIPT.parents[2],
+        timeout=30,
+    )
+
+
+@pytest.mark.parametrize(
+    "invoke",
+    ("do_deploy dev", "do_promote dev staging"),
+    ids=("do_deploy", "do_promote"),
+)
+def test_acx_verify_optional_fails_closed_when_rollback_fails(
+    tmp_path: Path, invoke: str
+) -> None:
+    """VLMHEAL-1-HARM-01: ACX_VERIFY_OPTIONAL=1 must not exit 0 after a failed rollback."""
+    result = _run_verify_optional_after_verify_failure(
+        tmp_path, invoke=invoke, rollback_rc=1
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    assert "rollback failed" in combined, combined
+    assert "previous image restored" not in combined, combined
+
+
+@pytest.mark.parametrize(
+    "invoke",
+    ("do_deploy dev", "do_promote dev staging"),
+    ids=("do_deploy", "do_promote"),
+)
+def test_acx_verify_optional_downgrades_when_rollback_succeeds(
+    tmp_path: Path, invoke: str
+) -> None:
+    """VLMHEAL-1-HARM-01: a verified rollback may still warn-and-exit-0 under ACX_VERIFY_OPTIONAL=1."""
+    result = _run_verify_optional_after_verify_failure(
+        tmp_path, invoke=invoke, rollback_rc=0
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+    assert "previous image restored" in combined, combined
+    assert not (tmp_path / "fail.log").exists()
 

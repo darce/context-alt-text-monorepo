@@ -44,3 +44,44 @@ artifacts under `.task-state/landing-20260908/` preserve the initial references,
 consolidation ancestry, review scopes, and full remote gate logs. Continuations
 identify completed work and remaining obligations so a crash does not turn
 historical green results into claims about a newer HEAD.
+
+
+## Recovered reference disposition
+
+The initial inventory contained 22 local feature/review references. Their exact
+SHAs and ancestry checks are retained in `consolidation.json` under the recovery
+artifact directory. EVID absorbed eight references, LAND three, EVAL eight,
+and DEVGUARD three. GPUOPS and OCIR then received their surviving requirements;
+DEMO reconciled the historical user-interface slices. Ancestry-only merges
+preserve provenance while explicit fixes carry the accepted behavior.
+
+The remote inventory also contained rewritten and sparse historical references.
+MCP decision `9998` and `remote-ref-audit.json` retain the commit-level audit.
+These histories must not be blindly merged merely to make every remote tip an
+ancestor: that would reintroduce deliberately removed artifacts or obsolete
+runtime code.
+
+| Historical references | Disposition |
+|---|---|
+| `origin/feature/5.0.1-fe-ux` | 774 of 775 commits have exact patch equivalents; the remaining merge and tip have verified equivalent trees. No new implementation remains. |
+| `origin/feature/slr-003-suppress-cleanup` | Substantive patch is equivalent to integrated `77b4`; the other commit is merge bookkeeping. |
+| `origin/refactor/14-mcp-rewrite` | All four commits have integrated patch equivalents. |
+| Three `n16` lane references | Current EVAL preserves method-form/Kish estimators and table/tilde-fence guards; fresh Luna review verified these requirements. |
+| Seven `r4int/dux` references | Ancestry-consolidated in DEMO `37f2ed14b`; current HAI, sync and vocabulary gaps were implemented and reviewed. Current contracts refute the conditional authentication/GPU claims. |
+| `vmlic3/lic3` | Sparse unrelated history: 103 of 106 patches equivalent; remaining baseline/import shims and ignore setup do not warrant merging the sparse repository. |
+| `vmbundle/vlm-6` | Rewritten VLM history includes deliberately purged private artifact paths. Prior decision `5581` governs exclusion; retain surviving code through current EVAL, never reattach that history. |
+
+## Boundaries that remain explicit
+
+The historical Grok transport findings remain upstream records under authority
+`4398`; fresh Codex review inputs and exact destination-SHA receipts replace
+them as landing evidence. The audit in decision `10023` distinguishes observed
+upstream corrections from independently verified end-to-end behavior. It does
+not claim every upstream defect is fixed.
+
+`VLM6-GATE-PRIV-05` concerns a tracked manifest whose blob is identical in main
+and the EVAL feature. It remains an unresolved preexisting main/release privacy
+risk; the earlier feature-history rewrite did not remediate main. No separate
+maintenance task was found, so no such task or remediation is implied. This
+landing neither changes that manifest nor claims a privacy-sensitive release
+is cleared.

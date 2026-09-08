@@ -125,3 +125,21 @@ payload should contain at least:
 
 Keep the bundle directory and the recorded manifest digest together when
 handing off so a reviewer can rerun the checker and verify every listed file.
+
+
+## Interrupted capture and lock recovery
+
+Captures serialize by output path. A contender waits at most
+`EVIDENCE_LOCK_MAX_TIME` seconds and then fails without changing the existing
+lock, bundle, or pending transaction. It never takes over automatically:
+lock age, a page-count estimate, or a prior PID check cannot prevent a paused
+writer from resuming. `EVIDENCE_LOCK_EXPECTED_PAGES` no longer authorizes
+lock takeover.
+
+After a crash, use a different output path to capture fresh evidence immediately.
+To recover the original destination, first stop and confirm termination of all
+exporters and their child processes on every host using that destination. Only
+then remove its `.lock/owner` file and empty `.lock` directory. Preserve the
+sibling `.tmp.*` transaction directories: the next exporter acquires ownership
+and restores an interrupted previous bundle before capturing again. If you
+cannot establish that all writers stopped, leave the lock in place.

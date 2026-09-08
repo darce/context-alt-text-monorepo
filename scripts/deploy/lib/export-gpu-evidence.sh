@@ -231,7 +231,6 @@ curl_connection_timeout="${EVIDENCE_CURL_CONNECTION_TIMEOUT:-10}"
 curl_max_time="${EVIDENCE_CURL_MAX_TIME:-60}"
 copy_max_time="${EVIDENCE_COPY_MAX_TIME:-$curl_max_time}"
 lock_max_time="${EVIDENCE_LOCK_MAX_TIME:-60}"
-evidence_lock_expected_pages="${EVIDENCE_LOCK_EXPECTED_PAGES:-5}"
 
 for timeout_value in \
     "$oci_connection_timeout" \
@@ -248,19 +247,6 @@ for timeout_value in \
         *) fail_usage "timeouts must be positive integer seconds" ;;
     esac
 done
-case "$evidence_lock_expected_pages" in
-    ''|0*|*[!0-9]*) fail_usage "EVIDENCE_LOCK_EXPECTED_PAGES must be a positive integer" ;;
-esac
-case "$evidence_lock_expected_pages" in
-    *[1-9]*) ;;
-    *) fail_usage "EVIDENCE_LOCK_EXPECTED_PAGES must be a positive integer" ;;
-esac
-# Remote age is not a lock-wait kill timer. A live capture can still be inside
-# `oci audit event list --all`, which paginates under the per-request read
-# timeout. Only break a well-formed remote lock after lock wait plus that
-# timeout times the expected page count.
-lock_capture_budget=$((10#$lock_max_time + 10#$oci_read_timeout * 10#$evidence_lock_expected_pages))
-
 # The checker is the source of truth for the manifest contract.  Keep the
 # shell boundary free of a second copy of these values so a checker upgrade
 # cannot silently make every newly exported bundle unverifiable.
@@ -361,62 +347,6 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-read_lock_owner() {
-    lock_owner_pid=""
-    lock_owner_host=""
-    lock_owner_start_time=""
-    if [ ! -f "$lock_dir/owner" ]; then
-        return 1
-    fi
-    while IFS='=' read -r owner_key owner_value; do
-        case "$owner_key" in
-            pid)
-                lock_owner_pid="$owner_value"
-                ;;
-            host)
-                lock_owner_host="$owner_value"
-                ;;
-            start_time)
-                lock_owner_start_time="$owner_value"
-                ;;
-        esac
-    done <"$lock_dir/owner"
-    case "$lock_owner_pid" in
-        ''|*[!0-9]*) return 1 ;;
-    esac
-    case "$lock_owner_start_time" in
-        ''|*[!0-9]*) return 1 ;;
-    esac
-    [ "$lock_owner_pid" -gt 0 ] || return 1
-    [ -n "$lock_owner_host" ] || return 1
-}
-
-stale_lock_candidate() {
-    if ! read_lock_owner; then
-        if [ "$lock_attempt" -ge "$lock_attempts" ]; then
-            echo "INFO: breaking evidence lock with missing or invalid owner metadata: $lock_dir" >&2
-            return 0
-        fi
-        return 1
-    fi
-
-    if [ "$lock_owner_host" = "$lock_host" ]; then
-        if kill -0 "$lock_owner_pid" 2>/dev/null; then
-            return 1
-        fi
-        echo "INFO: breaking stale evidence lock owned by pid $lock_owner_pid on $lock_owner_host: $lock_dir" >&2
-        return 0
-    fi
-
-    now_epoch="$(date +%s)"
-    if [ "$now_epoch" -ge "$lock_owner_start_time" ] \
-        && [ $((now_epoch - lock_owner_start_time)) -ge "$lock_capture_budget" ]; then
-        echo "INFO: breaking stale evidence lock from host $lock_owner_host (age ${lock_capture_budget}s+): $lock_dir" >&2
-        return 0
-    fi
-    return 1
-}
-
 recover_pending_publishes() {
     for candidate in "${out_parent}/.${out_name}.tmp."*; do
         [ -d "$candidate" ] || continue
@@ -453,7 +383,10 @@ recover_pending_publishes() {
 
 # Serialise same-destination captures. Atomic replacement protects readers
 # from partial files, while this bounded lock also prevents two OCI captures
-# from racing and publishing an arbitrary last-writer result.
+# from racing and publishing an arbitrary last-writer result. Never steal an
+# existing lock: age and a prior PID observation cannot fence a paused writer
+# or atomically identify the directory being removed. Crash recovery requires
+# operator confirmation that all writers stopped before clearing the lock.
 lock_attempts=$((10#$lock_max_time * 10))
 lock_attempt=0
 if [ -L "$lock_dir" ]; then
@@ -463,16 +396,8 @@ if [ -e "$lock_dir" ] && [ ! -d "$lock_dir" ]; then
     fail_usage "lock path is not a directory: $lock_dir"
 fi
 while ! mkdir "$lock_dir" 2>/dev/null; do
-    if stale_lock_candidate; then
-        stale_lock_dir="${lock_dir}.stale.$$.$lock_attempt"
-        if mv -- "$lock_dir" "$stale_lock_dir" 2>/dev/null; then
-            echo "INFO: removed stale evidence lock: $stale_lock_dir" >&2
-            rm -rf -- "$stale_lock_dir"
-            continue
-        fi
-    fi
     if [ "$lock_attempt" -ge "$lock_attempts" ]; then
-        echo "ERROR: timed out waiting for evidence bundle lock: $out_dir" >&2
+        echo "ERROR: timed out waiting for evidence bundle lock: $out_dir; lock retained. Stop all writers before operator recovery, or choose another output path." >&2
         exit 1
     fi
     lock_attempt=$((lock_attempt + 1))

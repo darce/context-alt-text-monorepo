@@ -674,7 +674,10 @@ class DeferredStopStore:
         with _intent_file_lock(self.path):
             _atomic_write_json(self.path, payload)
 
-    def supersede_if_newer(self, *, sequence: int, nonce: str) -> bool:
+    def supersede_if_newer(
+        self, *, sequence: int, nonce: str,
+        before_clear: Callable[[DeferredStopRecord], None] | None = None,
+    ) -> bool:
         """Atomically clear a deferred STOP superseded by a fencing token."""
         if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < MIN_INTENT_SEQUENCE:
             raise ValueError("sequence must be a positive integer")
@@ -688,13 +691,20 @@ class DeferredStopStore:
                 sequence == record.sequence and nonce != record.nonce
             )
             if superseded:
+                if before_clear is not None:
+                    before_clear(record)
                 _durable_unlink(self.path)
             return superseded
 
-    def clear(self, *, sequence: int | None = None) -> None:
+    def clear(
+        self, *, sequence: int | None = None,
+        before_clear: Callable[[DeferredStopRecord], None] | None = None,
+    ) -> None:
         with _intent_file_lock(self.path):
             record = self.read()
             if record is None or sequence is None or record.sequence <= sequence:
+                if record is not None and before_clear is not None:
+                    before_clear(record)
                 _durable_unlink(self.path)
 
 

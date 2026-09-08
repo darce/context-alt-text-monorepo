@@ -146,6 +146,12 @@ still honoured when the work drains. A record whose intent lacks `requested_at`,
 silently deferred. A higher `sequence`, a rejected sequence, or another nonce
 owning its sequence clears the deferral and records the drop with the original
 requester. Rejection is checked before re-arming the deferred deadline.
+The fencing decision is appended with `phase = before_clear` under the deferred
+record lock before removing that record. If audit persistence fails, the record
+remains and the cycle reports an error and blocks automatic intent actuation;
+the hard lease cap remains active. A crash between append and removal can leave
+the fenced record for the next cycle to clear, so this phase is not proof that
+the file was removed.
 
 **Decision log.** Every cycle that decides, actuates, hits the lease cap, or
 blocks a STOP appends one JSON object to `decision-log.jsonl` (HAI-06):

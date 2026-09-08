@@ -1694,7 +1694,8 @@ preserve_rollback_tag() {
 do_boot_smoke() {
   local env="$1" image="$2" remote_dir smoke_timeout poll_interval smoke_rc=0
   local pg_ready_budget setup_slack composite_deadline
-  local net_create_cap port_cap trap_docker_s smoke_margin trap_reserve
+  local net_create_cap port_cap trap_docker_s smoke_margin
+  local kill_grace trap_op_s trap_op_count trap_wall setup_kill_grace
   remote_dir="$(env_to_remote_dir "$env")"
   if [[ ! "${image}" =~ ^${IMAGE_BASE}@sha256:[a-f0-9]{64}$ ]]; then
     warn "boot smoke refused non-digest candidate: ${image}"
@@ -1713,8 +1714,15 @@ do_boot_smoke() {
   port_cap=5
   trap_docker_s=10
   smoke_margin=5
-  trap_reserve=$((trap_docker_s + poll_interval))
-  composite_deadline=$((net_create_cap + setup_slack + pg_ready_budget + setup_slack + port_cap + smoke_timeout + trap_reserve + smoke_margin))
+  # GR-262: timeout -k 1 makes a hung docker child last secs+1. Failure EXIT
+  # trap runs 6 sequential _smoke_timeout 2 ops (logs, rm api, rm pg, volume,
+  # inspect, network rm). Four setup caps have the same kill-grace.
+  kill_grace=1
+  trap_op_s=2
+  trap_op_count=6
+  trap_wall=$((trap_op_count * (trap_op_s + kill_grace)))
+  setup_kill_grace=$((4 * kill_grace))
+  composite_deadline=$((net_create_cap + setup_slack + pg_ready_budget + setup_slack + port_cap + smoke_timeout + trap_wall + poll_interval + smoke_margin + setup_kill_grace))
   log "Pre-promote boot smoke: ${image} on ${SSH_TARGET} (env=${env}, health_budget=${smoke_timeout}s, pg_ready_budget=${pg_ready_budget}s, real entrypoint)"
   # A local build authenticated the workstation for its push, not the VM. The
   # smoke pull is a separate remote process and needs the remote half of this
@@ -1951,7 +1959,8 @@ if (( port_rc != 0 )); then
   exit "$port_rc"
 fi
 port="$(printf '%s\n' "$port_out" | head -1 | sed 's/.*://')"
-# EXIT trap: timeout 2 × (logs, rm api, rm pg, volume, network) = trap_docker_s, plus one poll.
+# EXIT trap: timeout 2 × 6 docker ops; trap_docker_s reserves health-loop tail.
+# Outer composite adds +1s kill-grace per op (GR-262).
 diag_reserve=$((trap_docker_s + poll_s))
 health_budget=$((budget_s - diag_reserve))
 if (( health_budget < 1 )); then
@@ -2824,8 +2833,16 @@ do_verify() {
     if ! printf '%s\n' "$body" | sanitize_deploy_diagnostic; then
       echo "diagnostic: health body unavailable"
     fi
-    if [[ "${http_code}" == "503" ]]; then
-      warn "UNHEALTHY: ${env} /health reports unhealthy (database) (HTTP 503)"
+    # GR-261: commit_sha is present on unhealthy 503 bodies; identity match
+    # must not verify. Gate on 2xx, then SHA. /ready stays non-gating.
+    if [[ ! "${http_code}" =~ ^2[0-9][0-9]$ ]]; then
+      if [[ "${http_code}" == "503" ]]; then
+        warn "UNHEALTHY: ${env} /health reports unhealthy (database) (HTTP 503)"
+      else
+        warn "UNHEALTHY: ${env} /health HTTP ${http_code}"
+      fi
+      verify_retry_sleep "$attempt" "$max_attempts" "$sleep_s"
+      continue
     fi
 
     # /health surfaces commit SHA for E15-3a-BR-03 deploy-lag detection.

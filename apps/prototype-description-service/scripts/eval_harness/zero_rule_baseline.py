@@ -4,7 +4,7 @@ Rule (stated so the baseline is inspectable): for each golden entry, emit
 ``alt_text_draft`` as the concatenation of non-empty ``context_pack`` fields
 ``title``, ``caption``, ``description`` in that order, joined by a single
 space. An empty pack yields an empty caption. The arm asserts no identities
-and no face_count. It consumes the L3 held-out ``golden.json`` as-is and
+and no face_count. It consumes the L3 held-out ``held_out_golden.json`` as-is and
 never re-runs ``assign_split``.
 
 The run record uses the same ``acx-eval/v1`` / ``run_record`` shape as a
@@ -28,7 +28,7 @@ from scripts.eval_harness.report import build_reports
 from scripts.eval_harness.schema import SCHEMA, DocKind
 
 HERE = Path(__file__).resolve().parent
-GOLDEN_MANIFEST_PATH = HERE.parents[1] / "scene" / "tests" / "seed" / "golden.json"
+GOLDEN_MANIFEST_PATH = HERE.parents[1] / "scene" / "tests" / "seed" / "held_out_golden.json"
 CONTEXT_FIELD_ORDER = ("title", "caption", "description")
 BASELINE_ARM = "zero_rule_context_echo"
 BASELINE_RULE = (
@@ -50,7 +50,7 @@ def zero_rule_caption(context_pack: Mapping[str, Any] | None) -> str:
 
 
 def load_held_out_manifest(path: Path | None = None) -> GoldenManifest:
-    """Load the L3 held-out golden.json. Does not re-draw the split."""
+    """Load the L3 held-out held_out_golden.json. Does not re-draw the split."""
     manifest_path = path if path is not None else GOLDEN_MANIFEST_PATH
     return load_manifest(
         str(manifest_path),

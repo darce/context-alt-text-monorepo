@@ -66,3 +66,51 @@ def test_existing_lock_is_never_taken_over(tmp_path: Path, owner: str) -> None:
     assert (owner_file.read_bytes() if owner_file.exists() else None) == before_owner
     assert (bundle / "manifest.json").read_bytes() == b"previous evidence"
     assert (transaction / "payload").read_bytes() == b"in-progress evidence"
+
+
+@pytest.mark.parametrize("restore_fails", [False, True])
+def test_term_during_publication_preserves_previous_bundle(tmp_path: Path, restore_fails: bool) -> None:
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (bundle / "manifest.json").write_bytes(b"previous evidence")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_oci = fake_bin / "oci"
+    fake_oci.write_text("#!/bin/bash\ncase \" $* \" in\n*' compute instance get '*) printf '%s\\n' '{\"data\":{\"id\":\"ocid1.instance.example\",\"compartment-id\":\"ocid1.compartment.example\",\"lifecycle-state\":\"STOPPED\"}}';;\n*) printf '%s\\n' '{\"data\":[]}' ;;\nesac\n")
+    fake_oci.chmod(0o755)
+    fake_mv = fake_bin / "mv"
+    fake_mv.write_text(r"""#!/bin/bash
+set -eu
+[[ "${1:-}" != -- ]] || shift
+if [[ "$1" == */previous && "$RESTORE_FAILS" == 1 ]]; then
+    exit 74
+fi
+/bin/mv "$@"
+if [[ "$1" == "$SIGNAL_BUNDLE" ]]; then
+    kill -TERM "$PPID"
+fi
+""")
+    fake_mv.chmod(0o755)
+    environment = os.environ.copy()
+    environment.update({
+        "PATH": str(fake_bin) + os.pathsep + str(Path(sys.executable).parent) + os.pathsep + environment["PATH"],
+        "OCI_BIN": str(fake_oci), "SIGNAL_BUNDLE": str(bundle),
+        "RESTORE_FAILS": "1" if restore_fails else "0",
+    })
+    args = ["bash", str(SUITE.parent.parent / "lib/export-gpu-evidence.sh"),
+            "--instance-id", "ocid1.instance.example", "--compartment-id", "ocid1.compartment.example",
+            "--since", "2026-09-01T00:00:00Z", "--until", "2026-09-01T01:00:00Z", "--out", str(bundle)]
+    result = subprocess.run(args, env=environment, capture_output=True, text=True, timeout=20, check=False)
+    assert result.returncode != 0, result.stdout + result.stderr
+    if restore_fails:
+        transactions = list(tmp_path.glob(".bundle.tmp.*"))
+        assert len(transactions) == 1, result.stderr
+        assert (transactions[0] / "previous/manifest.json").read_bytes() == b"previous evidence"
+        assert (transactions[0] / ".publish-intent").is_file()
+        # A subsequent writer restores the preserved backup before its OCI failure.
+        environment["PATH"] = str(Path(sys.executable).parent) + os.pathsep + os.environ["PATH"]
+        environment["OCI_BIN"] = "/usr/bin/false"
+        recovered = subprocess.run(args, env=environment, capture_output=True, text=True, timeout=20, check=False)
+        assert recovered.returncode != 0
+    assert (bundle / "manifest.json").read_bytes() == b"previous evidence"
+    assert not list(tmp_path.glob(".bundle.tmp.*"))

@@ -8,10 +8,7 @@ import {
   guidedLiveBriefStatus,
   isGuidedLiveWaiting,
 } from '../../guidedPrototype/liveDescription';
-import type {
-  GuidedLiveBriefStatus,
-  GuidedLiveState,
-} from '../../guidedPrototype/liveDescription';
+import type { GuidedLiveBriefStatus, GuidedLiveState } from '../../guidedPrototype/liveDescription';
 import { useGuidedLiveDescription } from '../../guidedPrototype/useGuidedLiveDescription';
 import type { GuidedLiveDescriptionClient } from '../../guidedPrototype/useGuidedLiveDescription';
 
@@ -109,8 +106,10 @@ export const GuidedLiveDescriptionPanel = ({
   client,
   onWaitingChange,
 }: GuidedLiveDescriptionPanelProps): React.JSX.Element => {
-  const { state, canRequest, canCancel, canKeepWaiting, request, cancel, keepWaiting } =
-    useGuidedLiveDescription({ mediaId, client });
+  const { state, canRequest, canCancel, canKeepWaiting, request, cancel, keepWaiting } = useGuidedLiveDescription({
+    mediaId,
+    client,
+  });
 
   const waiting = isGuidedLiveWaiting(state.status);
   const brief = guidedLiveBriefStatus(state);
@@ -121,6 +120,13 @@ export const GuidedLiveDescriptionPanel = ({
   useEffect(() => {
     onWaitingChangeRef.current?.(waiting);
   }, [waiting]);
+
+  useEffect(
+    () => () => {
+      onWaitingChangeRef.current?.(false);
+    },
+    [],
+  );
 
   return (
     <details className="acx-guided-live" data-testid="guided-live">
@@ -159,45 +165,45 @@ export const GuidedLiveDescriptionPanel = ({
           </span>{' '}
           {statusLine(state)}
         </p>
-
-        {waiting ? (
-          <p className="acx-guided-live__elapsed" data-testid="guided-live-elapsed">
-            {elapsedLine(state)}
-          </p>
-        ) : null}
-
-        {waiting && state.runId !== null ? (
-          <p className="acx-guided-live__budget" data-testid="guided-live-budget">
-            {budgetLine(state)}
-          </p>
-        ) : null}
-
-        {state.text !== null ? (
-          <figure className="acx-guided-live__result">
-            <figcaption>{guidedCopy('live.output_label')}</figcaption>
-            <blockquote className="acx-guided-live__text" data-testid="guided-live-text">
-              {state.text}
-            </blockquote>
-          </figure>
-        ) : null}
-
-        {canKeepWaiting ? (
-          <div className="acx-guided-live__recovery">
-            <button type="button" className="acx-button acx-button--secondary" onClick={keepWaiting}>
-              {guidedCopy('live.keep_waiting')}
-            </button>
-            <button
-              type="button"
-              className="acx-button acx-button--tertiary"
-              onClick={request}
-              disabled={!canRequest}
-              aria-describedby={STATUS_LINE_ID}
-            >
-              {guidedCopy('live.retry')}
-            </button>
-          </div>
-        ) : null}
       </div>
+
+      {waiting ? (
+        <p className="acx-guided-live__elapsed" data-testid="guided-live-elapsed">
+          {elapsedLine(state)}
+        </p>
+      ) : null}
+
+      {waiting && state.runId !== null ? (
+        <p className="acx-guided-live__budget" data-testid="guided-live-budget">
+          {budgetLine(state)}
+        </p>
+      ) : null}
+
+      {state.text !== null ? (
+        <figure className="acx-guided-live__result">
+          <figcaption>{guidedCopy('live.output_label')}</figcaption>
+          <blockquote className="acx-guided-live__text" data-testid="guided-live-text">
+            {state.text}
+          </blockquote>
+        </figure>
+      ) : null}
+
+      {canKeepWaiting ? (
+        <div className="acx-guided-live__recovery">
+          <button type="button" className="acx-button acx-button--secondary" onClick={keepWaiting}>
+            {guidedCopy('live.keep_waiting')}
+          </button>
+          <button
+            type="button"
+            className="acx-button acx-button--tertiary"
+            onClick={request}
+            disabled={!canRequest}
+            aria-describedby={STATUS_LINE_ID}
+          >
+            {guidedCopy('live.retry')}
+          </button>
+        </div>
+      ) : null}
 
       <div className="acx-guided-live__actions">
         {canKeepWaiting ? null : (

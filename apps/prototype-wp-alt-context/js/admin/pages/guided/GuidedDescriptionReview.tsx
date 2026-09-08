@@ -232,7 +232,11 @@ export const GuidedDescriptionReview = ({
         </div>
         <figure className="acx-guided-review__demo-preview">
           <figcaption>{guidedCopy('apply.preview_title')}</figcaption>
-          <img data-testid="demo-applied-image" src={scenario.pressPhoto.src} alt={state.appliedAltText} />
+          <img
+            data-testid="demo-applied-image"
+            src={`${scenario.pressPhoto.src}#demo-applied-preview`}
+            alt={state.appliedAltText}
+          />
         </figure>
         <div className="acx-guided-review__actions">
           <button

@@ -151,6 +151,13 @@ export const GuidedPrototypePage = (): React.JSX.Element => {
         </section>
 
         <p className="acx-guided-page__feedback" data-testid="guided-page-feedback" role="status" aria-live="polite">
+          {feedback ? (
+            <span
+              className="acx-guided-page__feedback-icon"
+              aria-hidden="true"
+              data-testid="guided-page-feedback-icon"
+            />
+          ) : null}
           {feedback}
         </p>
 
@@ -188,7 +195,6 @@ export const GuidedPrototypePage = (): React.JSX.Element => {
             },
             onUndo: () => {
               commit(undoGuidedApplication(demo));
-              focusGuidedSection(GUIDED_STEP.APPLY);
             },
           }}
         />

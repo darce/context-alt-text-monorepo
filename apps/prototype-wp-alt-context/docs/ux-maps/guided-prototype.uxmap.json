@@ -378,13 +378,13 @@
       "zones": [
         {
           "id": "guided-live",
-          "label": "Optional: test live description generation (closed details by default). Generate a separate description of this photo on the server. It will not replace your draft or change the demo copy. The server uses its own saved people. Your name choices in the walkthrough do not change this live test. Request details. Live server result (read-only).",
+          "label": "Optional: test live description generation (closed details by default). Generate a separate description of this photo on the server. It will not replace your draft or change the demo copy. The server uses its own saved people. Your name choices in the walkthrough do not change this live test. Request details. Live server result (read-only). Keep waiting continues a timed-out run. No server budget disclosed, so this is how long this page is willing to wait. The service disclosed {generation} of generation time. This page will wait up to {deadline}, which may add GPU warm-up and a short local slack.",
           "role": "content",
           "states": ["default"]
         },
         {
           "id": "guided-live-status",
-          "label": "closed: disclosure collapsed, no request. unavailable-unverified: Live generation is unavailable in this build. The recorded walkthrough still works. idle: This sends a live description request for the example photo to the configured AltContext service. See Request details before starting. pending: Waiting for the live description. Your demo copy is unchanged. complete: Live description received. Review it separately from the demo draft. failed: The live description could not be completed. Your demo copy is unchanged. timed_out: The wait limit was reached. The server job may still be running. Your demo copy is unchanged. stopped: Stopped waiting for this request. This does not confirm that the server job stopped. no_result: The server returned no description. Your demo copy is unchanged. Status colour is paired with a glyph.",
+          "label": "closed: disclosure collapsed, no request. unavailable-unverified: Live generation is unavailable in this build. The recorded walkthrough still works. idle: This sends a live description request for the example photo to the configured AltContext service. See Request details before starting. pending: Waiting for the live description. Your demo copy is unchanged. complete: Live description received. Review it separately from the demo draft. failed: The live description could not be completed. Your demo copy is unchanged. timed_out: The wait limit was reached. The server job may still be running. Keep waiting continues this run; Try live generation again starts a new one. Your demo copy is unchanged. stopped: Stopped waiting for this request. This does not confirm that the server job stopped. no_result: The server returned no description. Your demo copy is unchanged. Status colour is paired with a glyph.",
           "role": "status",
           "states": ["default", "loading", "empty", "error", "offline", "degraded"]
         }
@@ -692,6 +692,16 @@
       "when": ["pending"]
     },
     {
+      "id": "live-keep-waiting",
+      "screen_id": "live",
+      "verb": "Keep waiting",
+      "target": "live",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "when": ["timed_out"]
+    },
+    {
       "id": "live-retry",
       "screen_id": "live",
       "verb": "Try live generation again",
@@ -895,7 +905,20 @@
   ],
   "domain_state_mappings": [
     {
-      "domain_states": ["both_undecided", "closed", "idle", "applied", "kept", "preview_valid", "include_include", "include_omit", "omit_include", "omit_omit", "idle_reset", "complete"],
+      "domain_states": [
+        "both_undecided",
+        "closed",
+        "idle",
+        "applied",
+        "kept",
+        "preview_valid",
+        "include_include",
+        "include_omit",
+        "omit_include",
+        "omit_omit",
+        "idle_reset",
+        "complete"
+      ],
       "canonical_state": "default"
     },
     {
@@ -919,7 +942,13 @@
       "canonical_state": "offline"
     },
     {
-      "domain_states": ["timed_out", "stopped", "live_waiting", "apply_disabled_undo_empty", "apply_disabled_undo_nonempty"],
+      "domain_states": [
+        "timed_out",
+        "stopped",
+        "live_waiting",
+        "apply_disabled_undo_empty",
+        "apply_disabled_undo_nonempty"
+      ],
       "canonical_state": "degraded"
     }
   ],
@@ -935,7 +964,7 @@
     "Saved-run provenance (notes only, never screen copy): recognition engine InsightFace buffalo_l on the AltContext recognition service (dev build); saved run 2026-09-06; threshold 0.6; Tribeca press photo similarities Justin Trudeau left 0.686 and Katy Perry right 0.742.",
     "Cluster ids from the dev tenant (notes only): Katy Perry 68adc97c-f81f-42c3-9e5c-061f16770361 and Justin Trudeau fd0d2b5d-108a-42b7-af25-f028e40d5778.",
     "The bundled scenario currently ships all four sample keys (none, katy-perry, justin-trudeau, both), so fixture_missing is implemented and mapped but not reachable with the seed.",
-    "Shipped live panel hardcodes Keep waiting and two budget sentences that are not in copy.en.json; they are omitted from screen copy here and recorded as a DOM divergence.",
+    "Keep waiting and the two budget sentences are catalog copy (live.keep_waiting, live.budget_local, live.budget_disclosed). timed_out recovery offers Keep waiting on the same run plus Try live generation again.",
     "ascii-screens.md places live under Apply on S4; the shipped page mounts the live disclosure last after design notes. This map follows the DOM.",
     "guided-section-face still wraps the names step in the DOM even though the numbered guide has four steps and focuses guided-section-identity for names."
   ],

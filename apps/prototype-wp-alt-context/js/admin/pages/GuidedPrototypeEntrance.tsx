@@ -23,6 +23,7 @@ export const GuidedPrototypeEntrance = ({ onBegin }: GuidedPrototypeEntranceProp
     <p className="acx-guided-entrance__boundary">
       <a className="acx-guided-entrance__case-study" href={CASE_STUDY_HREF} target="_blank" rel="noreferrer">
         {guidedCopy('page.case_study')}
+        <span className="screen-reader-text"> (opens in a new window)</span>
       </a>
     </p>
   </section>

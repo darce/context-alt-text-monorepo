@@ -1,6 +1,5 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import type { Mock } from 'vitest';
 
 import type { FaceThumbnailProps } from '../../../../components/ui/FaceThumbnail';
 import { guidedCopy } from '../../../guidedPrototype/copy';
@@ -38,14 +37,14 @@ type ChooseName = (position: GuidedFacePosition, choice: GuidedNameChoice, origi
 const renderPanel = (
   state = createGuidedDemoState(),
   handlers?: {
-    onChoose?: Mock<ChooseName>;
-    onContinue?: Mock<() => void>;
+    onChoose?: ChooseName;
+    onContinue?: () => void;
   },
 ) => {
-  const onChoose = handlers?.onChoose ?? vi.fn<ChooseName>();
-  const onContinue = handlers?.onContinue ?? vi.fn<() => void>();
-  const onConfirmReplacement = vi.fn<() => void>();
-  const onCancelReplacement = vi.fn<() => void>();
+  const onChoose = handlers?.onChoose ?? vi.fn();
+  const onContinue = handlers?.onContinue ?? vi.fn();
+  const onConfirmReplacement = vi.fn();
+  const onCancelReplacement = vi.fn();
   const view = render(
     <GuidedFacesPanel
       scenario={scenario}
@@ -119,6 +118,8 @@ describe('GuidedFacesPanel and GuidedFaceMatchCard', () => {
     expect(thumbnails.every((thumbnail) => thumbnail.getAttribute('data-media-url') === scenario.pressPhoto.src)).toBe(
       true,
     );
+    expect(thumbnails[0]).toHaveAttribute('data-alt', 'Detected left face');
+    expect(thumbnails[1]).toHaveAttribute('data-alt', 'Detected right face');
   });
 
   it('reflects include and omit as ordinary selected states', () => {
@@ -159,11 +160,12 @@ describe('GuidedFacesPanel and GuidedFaceMatchCard', () => {
         choice={GUIDED_NAME_CHOICE.UNDECIDED}
         mediaUrl={scenario.pressPhoto.src}
         disabled={false}
-        onChoose={vi.fn<(choice: GuidedNameChoice, origin: HTMLInputElement) => void>()}
+        onChoose={vi.fn()}
       />,
     );
     expect(screen.getByRole('article')).toHaveAttribute('aria-labelledby', `guided-face-${face.id}-title`);
     expect(screen.getByTestId('name-choice-left')).toBeInTheDocument();
-    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /enlarge comparison/i })).toBeInTheDocument();
+    expect(screen.getByTestId('face-thumbnail')).toHaveAttribute('data-alt', 'Detected left face');
   });
 });

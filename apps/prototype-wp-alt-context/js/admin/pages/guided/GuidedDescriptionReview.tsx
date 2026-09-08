@@ -15,6 +15,7 @@ import {
 
 export interface GuidedDescriptionReviewActions {
   onEdit: (text: string) => void;
+  onDraftInput: (text: string) => void;
   onPreview: (text: string) => void;
   onKeep: () => void;
   onRetryFixture: () => void;
@@ -74,10 +75,14 @@ export const GuidedDescriptionReview = ({
   const [editValue, setEditValue] = useState(state.draftText ?? '');
   const [emptyError, setEmptyError] = useState(false);
   const editorRef = useRef<HTMLTextAreaElement>(null);
+  const onDraftInputRef = useRef(actions.onDraftInput);
+  onDraftInputRef.current = actions.onDraftInput;
 
   useEffect(() => {
-    setEditValue(state.draftText ?? '');
+    const text = state.draftText ?? '';
+    setEditValue(text);
     setEmptyError(false);
+    onDraftInputRef.current(text);
   }, [state.draftText, state.draftVersion]);
 
   const ready = state.draftStatus === GUIDED_DRAFT_STATUS.READY;
@@ -136,8 +141,10 @@ export const GuidedDescriptionReview = ({
               value={editValue}
               rows={4}
               onChange={(event) => {
-                setEditValue(event.target.value);
+                const text = event.target.value;
+                setEditValue(text);
                 setEmptyError(false);
+                onDraftInputRef.current(text);
               }}
             />
             {emptyError ? (

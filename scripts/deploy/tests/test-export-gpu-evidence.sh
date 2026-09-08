@@ -424,6 +424,11 @@ if ! grep -Eq '^pid=[1-9][0-9]*$' "${crash_bundle}.lock/owner" \
     echo "FAIL: evidence lock did not persist owner metadata" >&2
     exit 1
 fi
+# This foreground crash process has exited with SIGKILL and no other writer
+# exists in this fixture. Simulate explicit operator lock release; the exporter
+# must preserve and recover the transaction, never steal ownership on its own.
+rm -- "${crash_bundle}.lock/owner"
+rmdir -- "${crash_bundle}.lock"
 recovery_rc=0
 EVIDENCE_LOCK_MAX_TIME=1 OCI_BIN="${failing_oci}" "${exporter}" \
     --instance-id ocid1.instance.example \

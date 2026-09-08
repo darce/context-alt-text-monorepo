@@ -263,8 +263,33 @@ def _ensure_unique_constraint(op, table_name: str, constraint) -> bool:
     quoted_table = f'"{table_name}"'
     quoted_name = f'"{constraint.name}"'
     quoted_columns = ", ".join(f'"{column}"' for column in columns)
-    op.execute(f"ALTER TABLE {quoted_table} ADD CONSTRAINT {quoted_name} UNIQUE ({quoted_columns})")
+    try:
+        op.execute(f"ALTER TABLE {quoted_table} ADD CONSTRAINT {quoted_name} UNIQUE ({quoted_columns})")
+    except sa.exc.DBAPIError as exc:
+        if not _is_unique_violation(exc):
+            raise
+        raise RuntimeError(
+            f"cannot add unique constraint {constraint.name} on {table_name} "
+            f"({', '.join(columns)}): live rows violate uniqueness (SQLSTATE 23505). "
+            "Operator action: delete or merge the duplicate rows, then re-run "
+            "python -m scripts.sync_identity_schema."
+        ) from exc
     return True
+
+
+def _is_unique_violation(exc: BaseException) -> bool:
+    """True when *exc* (or its ``orig``) is PostgreSQL SQLSTATE 23505."""
+    candidates: list[BaseException] = [exc]
+    orig = getattr(exc, "orig", None)
+    if isinstance(orig, BaseException):
+        candidates.append(orig)
+    for candidate in candidates:
+        sqlstate = getattr(candidate, "sqlstate", None) or getattr(candidate, "pgcode", None)
+        if sqlstate is not None and str(sqlstate) == "23505":
+            return True
+        if type(candidate).__name__ in {"UniqueViolation", "UniqueViolationError"}:
+            return True
+    return False
 
 
 def _ensure_table_constraints(op, table_name: str, *elements, heal_constraints: Sequence[str] = ()) -> None:
@@ -2138,6 +2163,9 @@ def _matview_create_privilege_gaps(op) -> list[str]:
 
 
 def _matview_nonowner_grants(op) -> tuple[tuple[str, str, bool], ...]:
+    # NULL relacl is the default ACL (owner only). aclexplode rejects NULL and
+    # also rejects a zero-dimensional empty aclitem array, so the LATERAL join
+    # is gated on relacl IS NOT NULL and does not substitute an empty array.
     rows = (
         op.get_bind()
         .execute(
@@ -2149,17 +2177,35 @@ def _matview_nonowner_grants(op) -> tuple[tuple[str, str, bool], ...]:
                 "acl.is_grantable "
                 "FROM pg_class c "
                 "JOIN pg_namespace n ON n.oid = c.relnamespace "
-                "CROSS JOIN LATERAL aclexplode(c.relacl) AS acl "
-                "WHERE c.relacl IS NOT NULL "
-                "AND n.nspname = current_schema() "
+                "LEFT JOIN LATERAL aclexplode(c.relacl) AS acl ON c.relacl IS NOT NULL "
+                "WHERE n.nspname = current_schema() "
                 "AND c.relname = 'mv_identity_cluster_centroids' "
                 "AND c.relkind = 'm' "
+                "AND acl.grantee IS NOT NULL "
                 "AND acl.grantee IS DISTINCT FROM c.relowner"
             )
         )
         .all()
     )
     return tuple((str(grantee), str(privilege), bool(grantable)) for grantee, privilege, grantable in rows)
+
+
+def _missing_matview_grant_roles(op, grants: tuple[tuple[str, str, bool], ...]) -> tuple[str, ...]:
+    """Role names in *grants* that no longer exist in pg_roles (not ``public``)."""
+    missing: list[str] = []
+    seen: set[str] = set()
+    bind = op.get_bind()
+    for grantee, _privilege, _grantable in grants:
+        if grantee in seen or grantee == "public":
+            continue
+        seen.add(grantee)
+        exists = bind.execute(
+            sa.text("SELECT 1 FROM pg_roles WHERE rolname = :name"),
+            {"name": grantee},
+        ).scalar()
+        if not exists:
+            missing.append(grantee)
+    return tuple(missing)
 
 
 def _restore_matview_owner_and_grants(
@@ -2177,8 +2223,8 @@ def _restore_matview_owner_and_grants(
         except sa.exc.DBAPIError as exc:
             raise RuntimeError(
                 f"cannot restore GRANT {privilege} ON mv_identity_cluster_centroids TO {grantee}: "
-                "the materialized view was rebuilt but the grant could not be replayed; "
-                "re-run python -m scripts.sync_identity_schema"
+                "the grant could not be replayed; the DROP+CREATE was not committed. "
+                "Operator action: remove stale relacl or recreate the role."
             ) from exc
     if owner != current_role:
         try:
@@ -2231,7 +2277,17 @@ def ensure_matview(op) -> None:
                     f"{', '.join(gaps)}. Grant these privileges then re-run "
                     "python -m scripts.sync_identity_schema."
                 )
-            restore = (current_role, owner, _matview_nonowner_grants(op))
+            grants = _matview_nonowner_grants(op)
+            missing_roles = _missing_matview_grant_roles(op, grants)
+            if missing_roles:
+                raise RuntimeError(
+                    "cannot rebuild mv_identity_cluster_centroids: "
+                    f"observed centroid typmod {observed_typmod!r}; "
+                    "relacl names vanished roles "
+                    f"{', '.join(missing_roles)} that cannot receive GRANT. "
+                    "Operator action: REVOKE the stale grants or DROP the view as its owner."
+                )
+            restore = (current_role, owner, grants)
             op.execute("DROP MATERIALIZED VIEW mv_identity_cluster_centroids")
     # WHY: FROM/JOIN tables + functions here are preflighted by _matview_create_privilege_gaps (C-01 ratchet).
     op.execute(

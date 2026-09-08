@@ -82,6 +82,7 @@ from .manifest import (
     ScoreInvariant,
     SliceTag,
     SpatialFact,
+    compute_corpus_coverage_gaps,
     parse_annotation_mode,
     refusal_explanation,
 )
@@ -2492,6 +2493,10 @@ def score_run_record(
             None if score_manifest_sha256 is None else score_manifest_sha256 == fetch_provenance.get("manifest_sha256")
         ),
         "model": _model_provenance(run_record["items"]),
+        # Recompute against the manifest actually scored. Fetch-time metadata
+        # may describe a different revision; live reports must expose the
+        # observed metric backing for this score (AUDIT-07 / EVAL-23).
+        "coverage_gaps": compute_corpus_coverage_gaps(manifest_entries),
         # RF-15: surface sample-size / chance-floor caveats in operator-facing
         # provenance (constants unchanged — disclosure only, not an sr-001 loosen).
         "quality_floor_caveat": (

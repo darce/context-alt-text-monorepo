@@ -1180,7 +1180,15 @@ def compute_corpus_coverage_gaps(
                 if _entry_field_is_populated(entry, field):
                     populated += 1
             else:
-                value = getattr(entry, field, None)
+                # Score-time callers pass JSON-shaped mappings rather than
+                # validated GoldenEntry objects. Read the same field from
+                # either representation so live provenance cannot undercount
+                # authored metric backing (AUDIT-07).
+                value = (
+                    entry.get(field)
+                    if isinstance(entry, Mapping)
+                    else getattr(entry, field, None)
+                )
                 if value is None:
                     continue
                 if isinstance(value, list) and len(value) == 0:

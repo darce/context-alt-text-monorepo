@@ -1333,6 +1333,102 @@ def test_sanitize_deploy_diagnostic_gr101_107_canaries(raw: str, expected: str) 
     assert out == expected
 
 
+# GR-108/141..144: one _run_sanitizer canary per adjudicated input (positive and negative).
+_GR108_144_CASES: list[tuple[str, str]] = [
+    ('{"password": =hunter2secret}', 'diagnostic: {"password": [REDACTED]}\n'),
+    ('{"password": :hunter2secret}', 'diagnostic: {"password": [REDACTED]}\n'),
+    ('{"password": = "LEAKS"}', 'diagnostic: {"password": "[REDACTED]"}\n'),
+    ('{"password" = = "LEAKS"}', 'diagnostic: {"password": "[REDACTED]"}\n'),
+    ('{"password" : : "xsecret"}', 'diagnostic: {"password": "[REDACTED]"}\n'),
+    ('{"password": ["hunter2secret"]}', 'diagnostic: {"password": [REDACTED]\n'),
+    ('{"password": {"hash": "deadbeefdeadbeef"}}', 'diagnostic: {"password": [REDACTED]\n'),
+    ('{"password": NULL}', 'diagnostic: {"password": [REDACTED]}\n'),
+    ('{"password": TRUE}', 'diagnostic: {"password": [REDACTED]}\n'),
+    ('{"password": True}', 'diagnostic: {"password": [REDACTED]}\n'),
+    ("{'password': False}", 'diagnostic: {"password": [REDACTED]}\n'),
+    ('{"password": nulL}', 'diagnostic: {"password": [REDACTED]}\n'),
+    ('{"password": null}', 'diagnostic: {"password": null}\n'),
+    ('{"password": true}', 'diagnostic: {"password": true}\n'),
+    ('{"password": false}', 'diagnostic: {"password": false}\n'),
+    ("AWS_ACCESS_KEY_ID=AKIATESTLEAK123", "diagnostic: AWS_ACCESS_KEY_ID=[REDACTED]\n"),
+    ("OCI_CLI_KEY_CONTENT=ociclicontent", "diagnostic: OCI_CLI_KEY_CONTENT=[REDACTED]\n"),
+    ("SECRET_KEY_BASE=rails-secret-value", "diagnostic: SECRET_KEY_BASE=[REDACTED]\n"),
+    ('{"aws_access_key_id": "AKIATESTJSON"}', 'diagnostic: {"aws_access_key_id": "[REDACTED]"}\n'),
+    ("x-amz-security-token: amz-token-leak-value", "diagnostic: x-amz-security-token: [REDACTED]\n"),
+    ("X-Auth-Token: abcdefghij", "diagnostic: X-Auth-Token: [REDACTED]\n"),
+    ('{"api_key_id": "x"}', 'diagnostic: {"api_key_id": "[REDACTED]"}\n'),
+    ("TOKEN_FILE=/run/secrets/tok", "diagnostic: TOKEN_FILE=/run/secrets/tok\n"),
+    ("AWS_KEY_FILE=/x", "diagnostic: AWS_KEY_FILE=/x\n"),
+    ("token_count: 5", "diagnostic: token_count: 5\n"),
+]
+_GR108_144_IDS = [
+    "GR-141-leftover-eq-unquoted",
+    "GR-141-leftover-colon-unquoted",
+    "GR-141-leftover-eq-quoted",
+    "GR-141-double-eq-quoted",
+    "GR-141-double-colon-quoted",
+    "GR-142-json-array-value",
+    "GR-142-json-object-value",
+    "GR-143-NULL",
+    "GR-143-TRUE",
+    "GR-143-True",
+    "GR-143-False",
+    "GR-143-nulL",
+    "GR-143-literal-null",
+    "GR-143-literal-true",
+    "GR-143-literal-false",
+    "GR-108-aws-access-key-id",
+    "GR-108-oci-cli-key-content",
+    "GR-108-secret-key-base",
+    "GR-108-json-aws-access-key-id",
+    "GR-108-amz-security-token",
+    "GR-108-x-auth-token",
+    "GR-108-api-key-id-contract-change",
+    "GR-108-token-file-preserved",
+    "GR-108-aws-key-file-preserved",
+    "GR-108-token-count-preserved",
+]
+
+
+@pytest.mark.parametrize("raw,expected", _GR108_144_CASES, ids=_GR108_144_IDS)
+def test_sanitize_deploy_diagnostic_gr108_141_144_canaries(raw: str, expected: str) -> None:
+    """GR-144: byte-exact canaries for leftover separators, composites, case-exact literals, cloud keys."""
+    out = _run_sanitizer(raw + "\n")
+    assert out == expected
+
+
+def test_sanitize_deploy_diagnostic_gr109_smoke_wrap_sentinel() -> None:
+    """GR-109: SMOKE_WRAP unquoted heredoc + declare -f keeps sentinel semantics; no SOH byte."""
+    driver = f"""
+source "{SCRIPT}"
+cat <<SMOKE_WRAP
+$(declare -f sanitize_deploy_diagnostic)
+$(cat <<'SMOKE'
+printf '%s\\n' "$1" | sanitize_deploy_diagnostic
+SMOKE
+)
+SMOKE_WRAP
+"""
+    rendered = subprocess.run(["bash", "-c", driver], capture_output=True, check=True)
+    assert rendered.stdout, rendered.stderr
+
+    def _run_wrap(raw: str) -> bytes:
+        result = subprocess.run(
+            ["bash", "-s", raw],
+            input=rendered.stdout,
+            capture_output=True,
+            check=True,
+        )
+        return result.stdout
+
+    nul_out = _run_wrap('{"password": nul}')
+    null_out = _run_wrap('{"password": null}')
+    assert nul_out == b'diagnostic: {"password": [REDACTED]}\n', nul_out
+    assert null_out == b'diagnostic: {"password": null}\n', null_out
+    assert b"\001" not in nul_out
+    assert b"\001" not in null_out
+
+
 def test_sanitize_deploy_diagnostic_preserves_benign_token_shapes() -> None:
     """Existing canaries: token_count and ready detail stay intact."""
     raw = (

@@ -2501,17 +2501,17 @@ do_verify() {
     body="${health_response%$'\n'*}"
     if (( curl_rc != 0 )) || [[ "${http_code}" == "000" || -z "${body}" ]]; then
       warn "Health check fetch failed: ${body:-no health response}"
-      verify_retry_sleep "$attempt" "$max_attempts" "$sleep_s"
-      continue
-    fi
-    echo "$body"
-    if [[ "${http_code}" == "503" ]]; then
-      warn "UNHEALTHY: ${env} /health reports unhealthy (database) (HTTP 503)"
+    else
+      echo "$body"
+      if [[ "${http_code}" == "503" ]]; then
+        warn "UNHEALTHY: ${env} /health reports unhealthy (database) (HTTP 503)"
+      fi
     fi
 
     # /ready is diagnostic only here: unlike reset, deploy verification keeps
     # its existing /health + identity/image pass/fail contract. Surface the
-    # readiness code and body so a DB/model failure is visible before rollback.
+    # readiness code and body even when /health itself could not be fetched,
+    # so a DB/model or routing failure is visible before rollback.
     ready_response=""
     ready_curl_rc=0
     ready_response="$(curl --silent --show-error --max-time 10 --write-out $'\n%{http_code}' "$ready_url" 2>&1)" || ready_curl_rc=$?
@@ -2528,6 +2528,11 @@ do_verify() {
       printf '%s\n' "${ready_body:-no readiness response}"
     else
       printf '%s\n' "$ready_body"
+    fi
+
+    if (( curl_rc != 0 )) || [[ "${http_code}" == "000" || -z "${body}" ]]; then
+      verify_retry_sleep "$attempt" "$max_attempts" "$sleep_s"
+      continue
     fi
 
     # /health surfaces commit SHA for E15-3a-BR-03 deploy-lag detection.

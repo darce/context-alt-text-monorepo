@@ -82,7 +82,9 @@ def test_boot_smoke_has_outer_deadlines_and_curl_request_timeout() -> None:
     assert body.count("run_with_deadline") >= 2
     assert "curl -sS --max-time" in body
     assert "--write-out" in body
+    assert "last_health_code" in body
     assert "last_health_body" in body
+    assert "smoke health LAST HTTP code:" in body
     assert "docker logs --tail 80" in body
     assert "/ready" in body
 
@@ -109,6 +111,7 @@ def test_failure_evidence_probes_and_logs_are_deadline_bounded() -> None:
     assert "env_to_health_url" in body
     assert "env_to_ready_url" in body
     assert "docker logs --tail 80" in body
+    assert "HTTP_CODE=%{http_code}" in body
     assert "--- evidence: /health ---" in body
     assert "--- evidence: /ready ---" in body
     assert "--- evidence: api container logs ---" in body
@@ -119,6 +122,14 @@ def test_do_verify_surfaces_non_gating_readiness_code_and_body() -> None:
     assert 'ready_url="$(env_to_ready_url "$env")"' in body
     assert "ready_response" in body
     assert "non-gating" in body
+
+
+def test_do_verify_probes_readiness_when_health_transport_fails() -> None:
+    body = _function_body("do_verify")
+    health_failure_guard = 'if (( curl_rc != 0 )) || [[ "${http_code}" == "000" || -z "${body}" ]]; then'
+    readiness_probe = 'ready_response="$(curl --silent --show-error --max-time 10'
+    assert body.index(readiness_probe) < body.index(health_failure_guard, body.index(readiness_probe))
+    assert body.count(readiness_probe) == 1
 
 
 def test_restart_and_rollback_integration_points_are_deadlined() -> None:

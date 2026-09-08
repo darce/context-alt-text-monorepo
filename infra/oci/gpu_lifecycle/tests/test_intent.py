@@ -526,6 +526,8 @@ def test_authority_revokes_prior_boot_grant_and_preserves_requester(tmp_path, ca
     assert revoked.status is IntentStatus.EXPIRED
     record = json.loads(path.read_text())['intents'][VALID_NONCE]
     assert record['expired'] is True
+    assert record['revocation_reason'] == 'boot_changed_or_unknown'
+    assert record['revoked_in_boot_id'] == 'boot-b'
     assert record['publication']['requested_by'] == 'original-operator'
     assert 'original-operator' in caplog.text
     assert 'boot' in caplog.text.lower()
@@ -543,9 +545,10 @@ def test_authority_same_boot_process_restart_preserves_grant(tmp_path):
     assert read_effective_intent(tmp_path, NOW + timedelta(seconds=10), authority_store=restarted).action is IntentAction.START
 
 
-@pytest.mark.parametrize('boot_id', ['', '   '])
-def test_authority_refuses_unknown_boot_identity(tmp_path, boot_id):
+@pytest.mark.parametrize('boot_id', [None, '', '   '])
+def test_authority_refuses_unknown_boot_identity(tmp_path, boot_id, monkeypatch):
     from infra.oci.gpu_lifecycle.intent import IntentAuthorityError
+    monkeypatch.setattr(IntentAuthorityStore, '_read_boot_id', staticmethod(lambda: boot_id))
     _write_intent(tmp_path, 'prod', requested_at=NOW)
     authority = IntentAuthorityStore(tmp_path / 'authority.json', boot_id=boot_id)
     with pytest.raises(IntentAuthorityError, match='boot identity'):

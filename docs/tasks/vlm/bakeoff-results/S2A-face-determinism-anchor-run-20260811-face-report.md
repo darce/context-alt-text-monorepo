@@ -9,6 +9,7 @@
 - canon_version: `0.11.0` protocol_id: `fir-5-face-bakeoff-v0.11.0`
 - zero_box_corpus: false total_gt_boxes: 12
 - images: 11/11 scored, 0 failed; matched_faces=6
+- measurement_status: `provisional_incomplete` fmr_denominator=`detector_observed_only` occlusion_twin_pass=`unattested` production_aggregation=`not_measured`
 
 ## Detection
 
@@ -24,7 +25,7 @@
 
 ## Floor-gated slices
 
-- **headline_identification**: status=`UNDER-FLOOR / DIRECTIONAL — awaiting operator demotion` directional=true precision=0.800 (4/5) recall=0.571 (4/7) n_recall_eligible=5/100 frame=`celebs01_named_matched_probes (provenance.source==CELEB); named_matched_probes_pooled_kfold_decisions_plus_missed_gt: precision over accept/confusion; recall denominator = TP + decision-FN + missed_gt (EVAL-16: detector-missed named GT is an identification FN); unmatched_detections disclosed via detection_recall_coupling_flag; error-item media excluded from scoring (listed in failures)`
+- **headline_identification**: status=`UNDER-FLOOR / DIRECTIONAL — awaiting operator demotion` directional=true precision=0.800 (4/5) recall=0.571 (4/7) n_recall_eligible=5/100 frame=`celebs01_named_matched_probes (provenance.source==CELEB); named_matched_probes_pooled_kfold_decisions_plus_missed_gt: precision over accept/confusion; recall denominator = TP + decision-FN + missed_gt (EVAL-16: detector-missed named GT is an identification FN); unmatched_detections disclosed via detection_recall_coupling_flag; error-item media excluded from association (attributable named GT misses remain in headline FN; listed in failures)`
 - **unknown_rejection**: status=`UNDER-FLOOR / DIRECTIONAL — awaiting operator demotion` directional=true rate=0.333 (1/3) n=3/43 missed_stranger_gt=2 frame=`stranger_probes_matched_plus_missed_gt: correct_reject=decision=reject; false_accept=decision=accept; missed_stranger_gt counted as failure in denominator (EVAL-16 / AUDIT-07); caller must pass missed_stranger_gt scoped to the same frame as decisions`
 - **clustering**: status=`UNDER-FLOOR / DIRECTIONAL — awaiting operator demotion` directional=true purity=0.800 false_merge=0.500 false_split=0.500 P_same=4 P_diff=6 M=4 frame=`named_matched_faces_pairwise: P_same/P_diff pair floors; M==0 all-singletons guard; single-linkage diagnostic (GRPH-18)`
 
@@ -38,15 +39,22 @@
 
 - role: proposal_only
 - release_surface: `proposal_only_not_release`
+- measurement_status: `provisional_incomplete`
+- evidence_admission: detector_independent_fmr=detector_observed_only/blocked, occlusion_twin_pass=unattested/blocked, production_aggregation=not_measured/blocked, query_enrolled_pair_strata=not_measured/blocked, real_occlusion.masked=not_observed/blocked, real_occlusion.occlusion_other=not_observed/blocked, real_occlusion.sunglasses=not_observed/blocked
 - canon_version: `0.11.0`
 - proposed_slices: []
 - excluded_directional: ['clustering', 'headline_identification', 'occlusion.masked', 'occlusion.occlusion_other', 'occlusion.sunglasses', 'unknown_rejection']
-- id-recall: 0.571 alongside detection-recall: 0.545 (coupling_flag=true, missed_gt=2, unmatched_det=0) — identification recall is computed only over faces this leg detected and §C-matched (enrolled); weak detection can inflate id-recall on the easy detected subset — report id-recall ALONGSIDE detection-recall
+- id-recall: 0.571 alongside detection-recall: 0.545 (coupling_flag=true, missed_gt=2, unmatched_det=0) — identification recall includes attributed detector-missed named GT as FN; detection recall is reported alongside for stage attribution
 - p95 scan latency: FIR-6-owned; not measured here.
 - scope amendments (operator ack required):
   - A10 eval throughput deferred to named follow-up FIR-5a (NOT FIR-7 prod GPU)
   - clustering local floor P_same≥20 ∧ P_diff≥20 and M==0 all-singletons guard
+  - detector-independent FMR denominator is not observed by this pair-level artifact; calibration thresholds remain provisional until detector misses are included
+  - occlusion twin-pass errors stay in provenance and cannot certify a completers-only result
   - p95 full-scan latency deferred to FIR-6 (not measured in FIR-5)
+  - production clustering/aggregation is not rerun by pair-level calibration; parity remains unmeasured and excluded from the gate proposal
+  - query-regime × enrolled-regime pair strata are not represented by query-only strata; no cross-cell gate is proposed
+  - real-occlusion evidence is not measured by synthetic rectangle twins; absent or under-floor real cells remain directional
   - synthetic↔real divergence uses Wilson half-width rule (replaces scope >1/3)
 
 ## Failures

@@ -119,6 +119,45 @@
   "failures": [],
   "gate_proposal": {
     "canon_version": "0.11.0",
+    "evidence_admission": {
+      "detector_independent_fmr": {
+        "admission": "blocked",
+        "reason": "fmr_denominator_status=detector_observed_only",
+        "status": "detector_observed_only"
+      },
+      "occlusion_twin_pass": {
+        "admission": "blocked",
+        "n_errors": 0,
+        "status": "unattested"
+      },
+      "production_aggregation": {
+        "admission": "blocked",
+        "reason": "production clustering/aggregation parity was not measured",
+        "status": "not_measured"
+      },
+      "query_enrolled_pair_strata": {
+        "admission": "blocked",
+        "reason": "query-regime × enrolled-regime cells are not represented by this pair-level report",
+        "status": "not_measured"
+      },
+      "real_occlusion": {
+        "masked": {
+          "admission": "blocked",
+          "n_eligible": 0,
+          "status": "not_observed"
+        },
+        "occlusion_other": {
+          "admission": "blocked",
+          "n_eligible": 0,
+          "status": "not_observed"
+        },
+        "sunglasses": {
+          "admission": "blocked",
+          "n_eligible": 0,
+          "status": "not_observed"
+        }
+      }
+    },
     "excluded_directional": [
       "clustering",
       "headline_identification",
@@ -130,12 +169,13 @@
     "identification_detection_coupling": {
       "detection_recall": 0.5454545454545454,
       "detection_recall_coupling_flag": true,
-      "flag": "identification recall is computed only over faces this leg detected and §C-matched (enrolled); weak detection can inflate id-recall on the easy detected subset — report id-recall ALONGSIDE detection-recall",
+      "flag": "identification recall includes attributed detector-missed named GT as FN; detection recall is reported alongside for stage attribution",
       "identification_recall": 0.5714285714285714,
       "missed_gt": 2,
-      "sampling_frame": "celebs01_named_matched_probes (provenance.source==CELEB); named_matched_probes_pooled_kfold_decisions_plus_missed_gt: precision over accept/confusion; recall denominator = TP + decision-FN + missed_gt (EVAL-16: detector-missed named GT is an identification FN); unmatched_detections disclosed via detection_recall_coupling_flag; error-item media excluded from scoring (listed in failures)",
+      "sampling_frame": "celebs01_named_matched_probes (provenance.source==CELEB); named_matched_probes_pooled_kfold_decisions_plus_missed_gt: precision over accept/confusion; recall denominator = TP + decision-FN + missed_gt (EVAL-16: detector-missed named GT is an identification FN); unmatched_detections disclosed via detection_recall_coupling_flag; error-item media excluded from association (attributable named GT misses remain in headline FN; listed in failures)",
       "unmatched_detections": 0
     },
+    "measurement_status": "provisional_incomplete",
     "operator_authority": "FIR-6 human operator records gate/deferral; FIR-5 cannot self-promote",
     "p95_scan_latency": "FIR-6-owned; not measured here.",
     "perf_label": "detect+embed-only (COST-04/15); not full-scan p95",
@@ -144,7 +184,7 @@
       "exact-vs-index separation of concerns and contender-set retrieval design are S4/S5 measurement-time items (IDX-01/07/11) — not measured here",
       "filter_headline_probes is fail-closed: occluded_probe_keys is required",
       "fit-phase galleries are restricted to fit-fold identities (CAL-07) while read-phase LOO galleries span the full matched corpus — τ_k is selected against a lower-cardinality gallery than the one held-out probes are read against, so read-time argmax competition is harder than fit-time",
-      "identification P/R runs only over §C-matched named decisions; missed detections and unmatched faces are excluded from FN (EVAL-16); stranger false-accepts live only in unknown-rejection (EVAL-18)",
+      "identification P/R runs over §C-matched named decisions plus attributed detector-missed named GT folded into FN (EVAL-16); unmatched detections remain disclosed separately; stranger false-accepts live only in unknown-rejection (EVAL-18)",
       "impostors are pooled zero-effort strangers rather than matched non-mates (CAL-04 posture declared in FIR-6 plan)",
       "k-fold splits are subject-disjoint but not media-disjoint — a stranger face co-resident on a held-out identity's image can enter that identity's fit fold, so fit and read phases share image context (contextual dependency)",
       "mean_prototype is an unweighted raw mean — one blurred face moves the identity centroid (EMB-02); weighted/medoid prototypes are FIR-6-owned",
@@ -164,7 +204,12 @@
     "scope_amendments_for_operator_ack": [
       "A10 eval throughput deferred to named follow-up FIR-5a (NOT FIR-7 prod GPU)",
       "clustering local floor P_same≥20 ∧ P_diff≥20 and M==0 all-singletons guard",
+      "detector-independent FMR denominator is not observed by this pair-level artifact; calibration thresholds remain provisional until detector misses are included",
+      "occlusion twin-pass errors stay in provenance and cannot certify a completers-only result",
       "p95 full-scan latency deferred to FIR-6 (not measured in FIR-5)",
+      "production clustering/aggregation is not rerun by pair-level calibration; parity remains unmeasured and excluded from the gate proposal",
+      "query-regime × enrolled-regime pair strata are not represented by query-only strata; no cross-cell gate is proposed",
+      "real-occlusion evidence is not measured by synthetic rectangle twins; absent or under-floor real cells remain directional",
       "synthetic↔real divergence uses Wilson half-width rule (replaces scope >1/3)"
     ]
   },
@@ -179,11 +224,12 @@
     "positional_images": 0
   },
   "kind": "report",
+  "measurement_status": "provisional_incomplete",
   "protocol_disclosures": [
     "exact-vs-index separation of concerns and contender-set retrieval design are S4/S5 measurement-time items (IDX-01/07/11) — not measured here",
     "filter_headline_probes is fail-closed: occluded_probe_keys is required",
     "fit-phase galleries are restricted to fit-fold identities (CAL-07) while read-phase LOO galleries span the full matched corpus — τ_k is selected against a lower-cardinality gallery than the one held-out probes are read against, so read-time argmax competition is harder than fit-time",
-    "identification P/R runs only over §C-matched named decisions; missed detections and unmatched faces are excluded from FN (EVAL-16); stranger false-accepts live only in unknown-rejection (EVAL-18)",
+    "identification P/R runs over §C-matched named decisions plus attributed detector-missed named GT folded into FN (EVAL-16); unmatched detections remain disclosed separately; stranger false-accepts live only in unknown-rejection (EVAL-18)",
     "impostors are pooled zero-effort strangers rather than matched non-mates (CAL-04 posture declared in FIR-6 plan)",
     "k-fold splits are subject-disjoint but not media-disjoint — a stranger face co-resident on a held-out identity's image can enter that identity's fit fold, so fit and read phases share image context (contextual dependency)",
     "mean_prototype is an unweighted raw mean — one blurred face moves the identity centroid (EMB-02); weighted/medoid prototypes are FIR-6-owned",
@@ -241,6 +287,7 @@
     ],
     "embedding_dim": 8,
     "fixture_revision": "0000000000000000000000000000000000000000",
+    "fmr_denominator_status": "detector_observed_only",
     "generator": "scripts.eval_harness.generate_face_determinism_anchor",
     "head_sha": null,
     "k_folds": {
@@ -251,6 +298,7 @@
     "leg": "candidate",
     "manifest_matches_fetch": true,
     "manifest_sha256": "3c5223fce7f2e85e6fa4c5295f74f8fb372aa12b4996a585078b2dff8abb60db",
+    "measurement_status": "provisional_incomplete",
     "model": {
       "embedding_dims": [
         8
@@ -262,12 +310,14 @@
     },
     "model_id": "synthetic-face-anchor",
     "note": "synthetic dim=8 unit vectors; no real image/embedding (PROV-01); fixture_revision/canonical_timestamp are byte-stability sentinels (not git/wall-clock provenance); F7 multi-regime corpus (2 identities, FP/FN, wrong-name, occlusion twin, 2 cohorts; HARM-05 unmatched stranger GT + mixed named/anonymous miss; VLM6-R2-G-01 mixed-y order_degraded trap (media 11); failures[] declared gap — score-face hard-exits on counts.failed>0); see provenance.corpus_traps",
+    "occlusion_twin_pass_status": "unattested",
+    "production_aggregation_status": "not_measured",
     "protocol_id": "fir-5-face-bakeoff-v0.11.0",
     "sampling_frames": {
       "clustering": "named_matched_faces_pairwise: P_same/P_diff pair floors; M==0 all-singletons guard; single-linkage diagnostic (GRPH-18)",
       "detection": "all_gt_boxes_on_scoreable_media_via_association: named and anonymous GT share one population (HARM-01 / EVAL-16); TP=IoU-matched pairs; FN=unmatched complete GT (named missed_gt + missed_stranger_gt); FP=unmatched detections; geometry_incomplete_gt = GT boxes excluded from IoU (null/invalid centre-y; not detector FN); tp+fn+geometry_incomplete_gt equals GT boxes that reached association; association_complete=false when geometry_incomplete_gt>0; error-item media excluded from association (listed in failures)",
       "full_corpus_identification": "full_corpus_named_matched_probes_pooled_kfold_decisions_plus_missed_gt: precision over accept/confusion; recall denominator = TP + decision-FN + missed_gt (EVAL-16: detector-missed named GT is an identification FN); unmatched_detections disclosed via detection_recall_coupling_flag",
-      "headline_identification": "celebs01_named_matched_probes (provenance.source==CELEB); named_matched_probes_pooled_kfold_decisions_plus_missed_gt: precision over accept/confusion; recall denominator = TP + decision-FN + missed_gt (EVAL-16: detector-missed named GT is an identification FN); unmatched_detections disclosed via detection_recall_coupling_flag; error-item media excluded from scoring (listed in failures)",
+      "headline_identification": "celebs01_named_matched_probes (provenance.source==CELEB); named_matched_probes_pooled_kfold_decisions_plus_missed_gt: precision over accept/confusion; recall denominator = TP + decision-FN + missed_gt (EVAL-16: detector-missed named GT is an identification FN); unmatched_detections disclosed via detection_recall_coupling_flag; error-item media excluded from association (attributable named GT misses remain in headline FN; listed in failures)",
       "occlusion_recovery": "eligible_twin_pairs: distinct_image_min_gallery AND gallery_n_identities>=2; re_detect_miss counts as incorrect only inside that frame",
       "unknown_rejection": "stranger_probes_matched_plus_missed_gt: correct_reject=decision=reject; false_accept=decision=accept; missed_stranger_gt counted as failure in denominator (EVAL-16 / AUDIT-07); caller must pass missed_stranger_gt scoped to the same frame as decisions"
     },
@@ -301,7 +351,8 @@
       "purity": 0.8,
       "reasons": [
         "p_diff<20",
-        "p_same<20"
+        "p_same<20",
+        "production_aggregation_status=not_measured"
       ],
       "sampling_frame": "named_matched_faces_pairwise: P_same/P_diff pair floors; M==0 all-singletons guard; single-linkage diagnostic (GRPH-18)",
       "status": "UNDER-FLOOR / DIRECTIONAL — awaiting operator demotion"
@@ -402,12 +453,13 @@
       "precision_denominator": 5,
       "precision_numerator": 4,
       "reasons": [
+        "fmr_denominator_status=detector_observed_only",
         "n_recall_eligible=5<100"
       ],
       "recall": 0.5714285714285714,
       "recall_denominator": 7,
       "recall_numerator": 4,
-      "sampling_frame": "celebs01_named_matched_probes (provenance.source==CELEB); named_matched_probes_pooled_kfold_decisions_plus_missed_gt: precision over accept/confusion; recall denominator = TP + decision-FN + missed_gt (EVAL-16: detector-missed named GT is an identification FN); unmatched_detections disclosed via detection_recall_coupling_flag; error-item media excluded from scoring (listed in failures)",
+      "sampling_frame": "celebs01_named_matched_probes (provenance.source==CELEB); named_matched_probes_pooled_kfold_decisions_plus_missed_gt: precision over accept/confusion; recall denominator = TP + decision-FN + missed_gt (EVAL-16: detector-missed named GT is an identification FN); unmatched_detections disclosed via detection_recall_coupling_flag; error-item media excluded from association (attributable named GT misses remain in headline FN; listed in failures)",
       "status": "UNDER-FLOOR / DIRECTIONAL — awaiting operator demotion",
       "tp": 4,
       "unmatched_detections": 0,
@@ -435,6 +487,7 @@
         "synthetic": {
           "accuracy": 1.0,
           "directional": true,
+          "evidence_status": "provisional_incomplete",
           "label": "UNDER-FLOOR / DIRECTIONAL — awaiting operator demotion",
           "n_correct": 1,
           "n_eligible": 1,
@@ -445,6 +498,9 @@
           "rate_numerator": 1,
           "reasons": [
             "eligible_pairs=1<floor=90",
+            "fmr_denominator_status=detector_observed_only",
+            "occlusion_twin_pass_status=unattested",
+            "real_occlusion_status=not_observed",
             "walk_stability_not_asserted"
           ],
           "sampling_frame": "eligible_twin_pairs: distinct_image_min_gallery AND gallery_n_identities>=2; re_detect_miss counts as incorrect only inside that frame",
@@ -467,6 +523,7 @@
         "synthetic": {
           "accuracy": null,
           "directional": true,
+          "evidence_status": "provisional_incomplete",
           "label": "UNDER-FLOOR / DIRECTIONAL — awaiting operator demotion",
           "n_correct": 0,
           "n_eligible": 0,
@@ -477,6 +534,9 @@
           "rate_numerator": 0,
           "reasons": [
             "eligible_pairs=0<floor=90",
+            "fmr_denominator_status=detector_observed_only",
+            "occlusion_twin_pass_status=unattested",
+            "real_occlusion_status=not_observed",
             "walk_stability_not_asserted"
           ],
           "sampling_frame": "eligible_twin_pairs: distinct_image_min_gallery AND gallery_n_identities>=2; re_detect_miss counts as incorrect only inside that frame",
@@ -499,6 +559,7 @@
         "synthetic": {
           "accuracy": null,
           "directional": true,
+          "evidence_status": "provisional_incomplete",
           "label": "UNDER-FLOOR / DIRECTIONAL — awaiting operator demotion",
           "n_correct": 0,
           "n_eligible": 0,
@@ -509,6 +570,9 @@
           "rate_numerator": 0,
           "reasons": [
             "eligible_pairs=0<floor=90",
+            "fmr_denominator_status=detector_observed_only",
+            "occlusion_twin_pass_status=unattested",
+            "real_occlusion_status=not_observed",
             "walk_stability_not_asserted"
           ],
           "sampling_frame": "eligible_twin_pairs: distinct_image_min_gallery AND gallery_n_identities>=2; re_detect_miss counts as incorrect only inside that frame",
@@ -531,6 +595,7 @@
       "rate_denominator": 3,
       "rate_numerator": 1,
       "reasons": [
+        "fmr_denominator_status=detector_observed_only",
         "n=3<43"
       ],
       "sampling_frame": "stranger_probes_matched_plus_missed_gt: correct_reject=decision=reject; false_accept=decision=accept; missed_stranger_gt counted as failure in denominator (EVAL-16 / AUDIT-07); caller must pass missed_stranger_gt scoped to the same frame as decisions",
@@ -539,6 +604,7 @@
   },
   "tau": {
     "effective_k": 3,
+    "fmr_denominator_status": "detector_observed_only",
     "k_clamp_disclosure": "requested_k=5 clamped to effective_k=3 by the subject count — tau_k/folds reflect effective_k, not the requested protocol K",
     "note": "PROVISIONAL — not product defaults (FIR-6 owns calibration)",
     "requested_k": 5,

@@ -67,6 +67,9 @@ _REPORT_JSON = _ANCHOR_DIR / f"{_STEM}-face-report.json"
 _REPORT_MD = _ANCHOR_DIR / f"{_STEM}-face-report.md"
 
 # File digests of the committed face quadruple — update only when intentionally regenerating.
+# Regenerated 2026-09-08 after 5ffa5d3cc/fa3e624f4: provisional evidence admission
+# and corrected missed-GT disclosure. Manifest/run bytes and existing numeric
+# metrics are unchanged; only report JSON/Markdown and their digest pins move.
 # Regenerated for VLM6-R2-06: the face markdown carried no fetch-manifest provenance at
 # all, so corpus drift was undisclosed on the identity path. Only the .md digest moved —
 # manifest, run-record and report JSON are byte-identical, which is the evidence that
@@ -101,8 +104,8 @@ _FROZEN_DIGESTS = {
     # legacy_import_lineage unknown-occasion sentinel, S2R6-01).
     _MANIFEST.name: "4877a9124972471ab186896a56a66ca0b7a292645aa69c54b65bb91d0a1b7087",
     _RUN.name: "fc999079cd523f2d84736a55de6dc1c4161ec310e04b6f735acab7f5d1f5306e",
-    _REPORT_JSON.name: "594a62a6437eb48d9a53667dce9582bed62a85d8b627cf71dafce69f91dc6609",
-    _REPORT_MD.name: "c5da764bb619839617630b62e3a1a54ba4f1843fe92dab3a1bdb43b71668d1e1",
+    _REPORT_JSON.name: "51f7c397dc7c53b7f5745a961623897b08aa89cdfc9d3ca531a6022509db91de",
+    _REPORT_MD.name: "b89146d6aae686b42d12d51c8d6c552645ac4373f468c2463473d46401b4badc",
 }
 
 

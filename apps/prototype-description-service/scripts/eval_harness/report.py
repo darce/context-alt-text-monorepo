@@ -5511,14 +5511,26 @@ def _markdown_face(scored: dict[str, Any]) -> str:
     lines.append(f"- measurement_status: `{_fmt_prov(gp.get('measurement_status'), default='provisional_incomplete')}`")
     evidence = gp.get("evidence_admission") if isinstance(gp.get("evidence_admission"), Mapping) else {}
     if evidence:
+        admission_parts: list[str] = []
+        for name, value in sorted(evidence.items()):
+            # ``real_occlusion`` is a regime map, unlike the other admission
+            # rows. Keep each regime visible so a nested ``{status, admission}``
+            # object cannot be flattened into the misleading ``null/null``.
+            if name == "real_occlusion" and isinstance(value, Mapping):
+                for regime, regime_value in sorted(value.items()):
+                    if isinstance(regime_value, Mapping):
+                        admission_parts.append(
+                            f"real_occlusion.{regime}="
+                            f"{_fmt_prov(regime_value.get('status'))}/"
+                            f"{_fmt_prov(regime_value.get('admission'))}"
+                        )
+                continue
+            if isinstance(value, Mapping):
+                admission_parts.append(
+                    f"{name}={_fmt_prov(value.get('status'))}/{_fmt_prov(value.get('admission'))}"
+                )
         lines.append(
-            "- evidence_admission: "
-            + ", ".join(
-                f"{name}={_fmt_prov((value or {}).get('status'))}/"
-                f"{_fmt_prov((value or {}).get('admission'))}"
-                for name, value in sorted(evidence.items())
-                if isinstance(value, Mapping)
-            )
+            "- evidence_admission: " + ", ".join(admission_parts)
         )
     lines.append(
         f"- canon_version: `{_fmt_prov(gp.get('canon_version'), default=FACE_BAKEOFF_CANON_VERSION)}`"

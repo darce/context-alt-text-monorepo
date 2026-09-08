@@ -112,14 +112,25 @@ whatever the durable dir already holds.
 - A `sequence` below the persisted `highest_sequence` is fenced, even for a
   nonce that was previously honoured. This is what stops an old publication from
   being reintroduced after a newer one superseded it.
+- Different nonces at the same sequence reject that sequence durably, including
+  any deferred STOP carrying the rejected token. The ledger's duplicated expiry
+  and sequence fields must agree with its immutable publication; malformed
+  numeric deadlines and inconsistent records make authority unavailable.
 - Expiry is evaluated against `max(now, last_wall_time)`, so a backwards NTP
   correction cannot extend a grant, and additionally against a per-boot
   monotonic deadline recorded when the nonce was first seen.
 - Once expired, the nonce's ledger record is written `expired: true` and that
   state is terminal. No later reading of any clock re-arms a spent grant.
-- Across a reboot the monotonic deadline no longer applies (its `boot_id` no
-  longer matches) and fencing falls back to the logical wall high-water mark.
-- If the ledger cannot be read or the monotonic clock is unavailable, the cycle
+- Across a host reboot, an existing grant is revoked rather than falling back
+  to wall-clock expiry: its monotonic deadline cannot be compared across boots.
+  The ledger persists `expired: true`, `revocation_reason`, and
+  `revoked_in_boot_id`, retaining the original publication and `requested_by`;
+  an ERROR log identifies that requester and both boot identities. A new
+  operator publication is required. A process restart within the same boot
+  preserves the original deadline. Legacy grants without a boot identity are
+  also revoked when next observed; this deliberately replaces the previous
+  logical-wall fallback policy (GPUOPS-LANDING-1).
+- If the ledger cannot be read or the monotonic clock or boot identity is unavailable, the cycle
   logs at ERROR and uses `auto`. An unreadable authority never honours an
   intent.
 
@@ -132,7 +143,15 @@ record and re-arm it - the deferral, not the original `expires_at`, is the
 authority for the effective expiry, so a STOP that waited out its own TTL is
 still honoured when the work drains. A record whose intent lacks `requested_at`,
 `nonce`, or `sequence` cannot be persisted; that is reported as a cycle error, not
-silently deferred. A higher `sequence` clears the deferral.
+silently deferred. A higher `sequence`, a rejected sequence, or another nonce
+owning its sequence clears the deferral and records the drop with the original
+requester. Rejection is checked before re-arming the deferred deadline.
+The fencing decision is appended with `phase = before_clear` under the deferred
+record lock before removing that record. If audit persistence fails, the record
+remains and the cycle reports an error and blocks automatic intent actuation;
+the hard lease cap remains active. A crash between append and removal can leave
+the fenced record for the next cycle to clear, so this phase is not proof that
+the file was removed.
 
 **Decision log.** Every cycle that decides, actuates, hits the lease cap, or
 blocks a STOP appends one JSON object to `decision-log.jsonl` (HAI-06):

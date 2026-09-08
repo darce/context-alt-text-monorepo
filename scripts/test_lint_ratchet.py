@@ -370,6 +370,21 @@ def test_ruff_format_uses_stable_check_output_and_collects_paths(monkeypatch):
     }
 
 
+def test_ruff_format_collects_paths_from_ansi_colored_diagnostics(monkeypatch):
+    """Forced color must not hide a formatter location from the ratchet."""
+    path = lint_ratchet.REPO_ROOT / "colored.py"
+    colored = f"\x1b[1m\x1b[94m--> \x1b[0m{path}:1:1\n"
+
+    monkeypatch.setattr(
+        lint_ratchet,
+        "_run",
+        lambda cmd, cwd: subprocess.CompletedProcess(cmd, 1, stdout=colored, stderr=""),
+    )
+    current = lint_ratchet.collect_ruff_format()
+
+    assert current.counts == {"colored.py": {"unformatted": 1}}
+
+
 def test_ruff_format_drift_without_named_files_is_an_error(monkeypatch):
     """Exit 1 with an empty file list means the output contract changed; that
     must fail loudly rather than bless an empty baseline."""

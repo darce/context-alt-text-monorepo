@@ -84,6 +84,52 @@ def test_heal_recreates_dropped_refresh_queue(pg_empty_engine) -> None:
     assert "identity_cluster_refresh_queue" in _table_names(pg_empty_engine)
 
 
+def _centroid_typmod(engine) -> int | None:
+    with engine.connect() as conn:
+        return conn.execute(
+            text(
+                "SELECT a.atttypmod FROM pg_attribute a "
+                "JOIN pg_class c ON c.oid = a.attrelid "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE n.nspname='public' AND c.relname='mv_identity_cluster_centroids' "
+                "AND a.attname='centroid'"
+            )
+        ).scalar()
+
+
+def test_heal_rebuilds_matview_that_lost_its_vector_typmod(pg_empty_engine) -> None:
+    # Every stack deployed before the outer cast carries a centroid column with
+    # atttypmod -1, which /health and /ready reject. Boot heal must rebuild it
+    # (indexes included) rather than leave the 503 to an operator.
+    with pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+    assert _centroid_typmod(pg_empty_engine) == MIGRATION.EMBEDDING_DIMENSION
+    with pg_empty_engine.begin() as conn:
+        conn.execute(text("DROP MATERIALIZED VIEW mv_identity_cluster_centroids"))
+        conn.execute(
+            text(
+                "CREATE MATERIALIZED VIEW mv_identity_cluster_centroids AS "
+                "SELECT c.id AS cluster_id, c.tenant_id, 0 AS identity_count, "
+                "NULL::vector AS centroid, c.updated_at AS refreshed_at "
+                "FROM identity_clusters c"
+            )
+        )
+    assert _centroid_typmod(pg_empty_engine) == -1
+
+    with pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+
+    assert _centroid_typmod(pg_empty_engine) == MIGRATION.EMBEDDING_DIMENSION
+    with pg_empty_engine.connect() as conn:
+        indexes = {
+            row[0]
+            for row in conn.execute(
+                text("SELECT indexname FROM pg_indexes WHERE tablename='mv_identity_cluster_centroids'")
+            )
+        }
+    assert {"mv_cluster_centroids_cluster_id", "mv_cluster_centroids_tenant_idx", "mv_cluster_centroids_vector_idx"} <= indexes
+
+
 def test_heal_restores_dropped_rls_policy(pg_empty_engine) -> None:
     # BR2-02 drift direction: a tenant table that lost its policy is re-covered.
     with pg_empty_engine.begin() as conn:

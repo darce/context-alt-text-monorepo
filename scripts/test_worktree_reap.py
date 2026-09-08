@@ -978,8 +978,38 @@ def test_unreadable_lane_state_fails_closed(
     assert all("registry offline" in item.reason for item in linked)
 
     monkeypatch.delenv("REAP_STRICT", raising=False)
-    assert reaper.main(["--repo", str(repo), "--apply"]) == 0
+    assert reaper.main(["--repo", str(repo), "--apply"]) == 1
     assert fixture_repo["paths"]["ancestor"].exists()
+
+
+def test_lane_state_error_marks_records_unverified(
+    fixture_repo: dict[str, Any],
+) -> None:
+    def unreadable(_repo: Path) -> dict[Path, str]:
+        raise reaper.LaneStateError("registry offline")
+
+    records = reaper.classify(
+        fixture_repo["repo"], lane_lookup=unreadable, require_lane_state=True
+    )
+    linked = [item for item in records if item.status != "ROOT"]
+
+    assert linked
+    assert all(item.lane_verified is False for item in records)
+    assert all("lane state unreadable" in item.reason for item in linked)
+
+
+def test_check_fails_when_ownership_was_never_verified(
+    fixture_repo: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def unreadable(_repo: Path) -> dict[Path, str]:
+        raise reaper.LaneStateError("registry offline")
+
+    monkeypatch.setattr(reaper, "active_lane_paths", unreadable)
+    monkeypatch.delenv("REAP_STRICT", raising=False)
+    assert reaper.main(["--repo", str(fixture_repo["repo"]), "--check"]) == 1
+
+    monkeypatch.setenv("REAP_STRICT", "1")
+    assert reaper.main(["--repo", str(fixture_repo["repo"]), "--check"]) == 1
 
 
 def test_missing_lane_state_can_be_overridden_explicitly(

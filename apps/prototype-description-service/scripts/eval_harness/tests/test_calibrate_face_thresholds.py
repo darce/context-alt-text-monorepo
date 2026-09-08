@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts.eval_harness.accept_predicate import accepts, is_fpi
 from scripts.eval_harness.calibrate_face_thresholds import (
     DEFAULT_FMR_TARGET,
     REPORT_DOC_KIND,
@@ -49,17 +50,19 @@ MODULE = "scripts.eval_harness.calibrate_face_thresholds"
 
 # Numeric golden pins from the committed fixture (guards median/mean, walk dir,
 # abstain-vs-fail-open, rank-1-miss FNMR, single-count strangers).
-GOLDEN_GLOBAL_TAU = 0.66
-GOLDEN_GLOBAL_FNMR = 2.0 / 3.0
+# Candidate taus are midpoints, keeping the selected operating point off the
+# observed scores so JANUS FPI and operational acceptance cannot disagree.
+GOLDEN_GLOBAL_TAU = 0.62
+GOLDEN_GLOBAL_FNMR = 15.0 / 24.0
 GOLDEN_GLOBAL_FMR = 0.0
 GOLDEN_GLOBAL_N_GENUINE = 24
 GOLDEN_GLOBAL_N_IMPOSTOR = 13
-GOLDEN_OCCLUSION_TAU = 0.45
+GOLDEN_OCCLUSION_TAU = 0.415
 GOLDEN_SIMILAR_FNMR = 1.0
 GOLDEN_N_EXCLUDED = 1
 GOLDEN_N_STRANGERS = 4
 # Non-tautological OACT positive control at coefficient 0.3 (people stratum).
-GOLDEN_PEOPLE_OACT_TAX_03 = 0.5238095238095238  # 11/21
+GOLDEN_PEOPLE_OACT_TAX_03 = 3.0 / 7.0
 
 
 @pytest.fixture(scope="module")
@@ -246,27 +249,62 @@ def test_select_threshold_unit_behavior() -> None:
     assert tau is not None
     assert fmr_at(impostors, tau) is not None
     assert fmr_at(impostors, tau) <= 0.01 + 1e-12
-    # Candidate just below max impostor would fail; tau must be > max impostor or
-    # at a point where none of the 5 pass when target is tight.
-    assert tau > max(impostors) or fmr_at(impostors, tau) == 0.0
-    # Prefer lower of equal-FMR candidates: all impostors 0.1 → need tau > 0.1.
+    # Tight target needs FMR=0; select the first midpoint above the maximum
+    # impostor rather than tying that observed score.
+    assert tau == pytest.approx((max(impostors) + 0.7) / 2.0)
+    assert fmr_at(impostors, tau) == 0.0
+    # With only two unique scores, their midpoint is the interior candidate.
     imp2 = [0.1, 0.1, 0.1]
     tau2 = select_threshold([0.9], imp2, fmr_target=0.0)
-    assert tau2 is not None and tau2 > 0.1
-    # No candidate meets target at fmr_target=0 with impostor at 1.0 → fail-closed >= 1.0.
+    assert tau2 == pytest.approx(0.5)
+    # Impostor at 1.0 is not FPI at tau=1.0, so FMR=0 meets a zero target.
     tau3 = select_threshold([0.5], [1.0], fmr_target=0.0)
-    assert tau3 is not None and tau3 >= 1.0
+    assert tau3 == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize(
+    ("genuine", "impostor"),
+    [
+        ([0.9, 0.8], [0.2, 0.1]),
+        ([0.9, 0.9], [0.2, 0.2, 0.1]),
+        ([0.5801, 0.7], [0.58, 0.3]),
+    ],
+)
+def test_selected_tau_is_not_an_observed_score(
+    genuine: list[float], impostor: list[float]
+) -> None:
+    tau = select_threshold(genuine, impostor, fmr_target=0.0)
+    assert tau is not None
+    assert tau not in genuine + impostor
+
+
+def test_midpoint_removes_old_fixture_tie_disagreement() -> None:
+    genuine = [0.66, 0.72]
+    impostor = [0.58, 0.31]
+    tau = select_threshold(genuine, impostor, fmr_target=0.0)
+    assert tau == pytest.approx((0.58 + 0.66) / 2.0)
+    assert all(is_fpi(score, tau) == accepts(score, tau) for score in genuine + impostor)
+
+
+def test_select_threshold_abstain_and_fail_closed_paths() -> None:
+    assert select_threshold([0.8], [], fmr_target=0.0) is None
+    assert select_threshold([0.8], [float("-inf")], fmr_target=0.0) is None
+    # No candidate can reject both scores, so preserve the peak-score fallback.
+    assert select_threshold([], [2.0, 3.0], fmr_target=0.0) == pytest.approx(3.0)
 
 
 def test_fmr_at_and_fnmr_at_direct() -> None:
     assert fmr_at([], 0.5) is None
     assert fnmr_at([], 0.5) is None
-    # FMR: fraction of impostors with score >= tau.
-    assert fmr_at([0.9, 0.4, 0.1], 0.4) == pytest.approx(2.0 / 3.0)
+    # JANUS 2.3.4 FPI: accepted iff score > tau. Tie at 0.4 is not an FPI, so
+    # only 0.9 of {0.9, 0.4, 0.1} is accepted (1/3), not 2/3.
+    assert fmr_at([0.9, 0.4, 0.1], 0.4) == pytest.approx(1.0 / 3.0)
+    assert fmr_at([0.4], 0.4) == pytest.approx(0.0)
     assert fmr_at([0.9, 0.4, 0.1], 0.95) == pytest.approx(0.0)
     assert fmr_at([float("-inf"), float("-inf")], 0.0) == pytest.approx(0.0)
-    # FNMR: fraction of genuines with score < tau.
+    # JANUS 2.3.4 FNIR: miss iff score < tau. Tie at tau is a mate hit.
     assert fnmr_at([0.9, 0.4, 0.1], 0.5) == pytest.approx(2.0 / 3.0)
+    assert fnmr_at([0.4], 0.4) == pytest.approx(0.0)
     assert fnmr_at([0.9, 0.8], 0.5) == pytest.approx(0.0)
     assert fnmr_at([float("-inf")], 0.0) == pytest.approx(1.0)
 

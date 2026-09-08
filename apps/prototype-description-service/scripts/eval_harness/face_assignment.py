@@ -27,6 +27,9 @@ from scipy.optimize import linear_sum_assignment
 
 from .face_metrics import named_box_name
 
+
+from scripts.eval_harness.accept_predicate import accepts
+
 # §C
 IOU_MATCH_THRESHOLD = 0.5
 
@@ -472,7 +475,7 @@ def open_set_counts_at_tau(
     for probe in probes:
         gallery = build_loo_gallery(probe, by_identity)
         s_max, name_star = argmax_gallery(probe.embedding_array(), gallery)
-        accept = name_star is not None and s_max >= tau
+        accept = name_star is not None and accepts(s_max, tau)
         enrolled = is_enrolled_for_probe(probe.true_name, identity_counts)
 
         if probe.true_name is None:
@@ -792,7 +795,7 @@ def assign_open_set_kfold(
         tau = tau_ks[fold]
         gallery = build_loo_gallery(probe, by_identity)
         s_max, name_star = argmax_gallery(probe.embedding_array(), gallery)
-        accept = name_star is not None and s_max >= tau
+        accept = name_star is not None and accepts(s_max, tau)
         enrolled = is_enrolled_for_probe(probe.true_name, identity_counts)
         single_face_excl = (
             probe.true_name is not None and identity_counts.get(probe.true_name, 0) == 1
@@ -968,7 +971,7 @@ def similar_people_hungarian(
         enrolled = is_enrolled_for_probe(probe.true_name, identity_counts)
         if i in assigned_name:
             name_star, s = assigned_name[i]
-            accept = s >= tau
+            accept = accepts(s, tau)
         else:
             name_star, s = None, float("-inf")
             accept = False

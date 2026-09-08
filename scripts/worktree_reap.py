@@ -829,6 +829,7 @@ def classify(
         # Fail closed by default: an unreadable registry means every linked
         # worktree might be owned, and reclaiming one would be unrecoverable.
         if require_lane_state:
+            lane_verified = False
             lane_error = str(exc)
         else:
             lane_verified = False
@@ -1638,6 +1639,17 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
 
+    unverified = [record for record in records if not record.lane_verified]
+    if unverified:
+        if args.apply:
+            listed = ", ".join(str(Path(record.path).resolve()) for record in unverified)
+            print(
+                "worktree-reap: refusing to apply; ownership was not verified for: "
+                + listed,
+                file=sys.stderr,
+            )
+        return 1
+
     redundant = any(record.status == "REDUNDANT" for record in records)
     unknown = any(record.status == "UNKNOWN" for record in records)
     strict = args.strict or _strict_check()
@@ -1652,16 +1664,6 @@ def main(argv: list[str] | None = None) -> int:
         return 4
     if not args.apply:
         return 3 if redundant else 0
-
-    unverified = [record for record in records if not record.lane_verified]
-    if unverified:
-        listed = ", ".join(str(Path(record.path).resolve()) for record in unverified)
-        print(
-            "worktree-reap: refusing to apply; ownership was not verified for: "
-            + listed,
-            file=sys.stderr,
-        )
-        return 1
 
     try:
         applied = apply(records, dry_run=False)

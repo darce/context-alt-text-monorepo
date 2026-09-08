@@ -754,3 +754,19 @@ def test_sanitize_deploy_diagnostic_ra04_space_separated_cli_password() -> None:
     assert "hunter2secretSPACE" not in out, out
     assert "[REDACTED]" in out
     assert out.count("\n") == 4
+
+
+def test_sanitize_deploy_diagnostic_san_h01_compound_space_separated_cli_secret() -> None:
+    """SAN-H-01: compound space-separated CLI secret flags must redact values."""
+    raw = "docker run --db-password LEAKH1 --hf-token LEAKH2 --api-key LEAKH3 --pg-secret LEAKH4 image\n"
+    out = _run_sanitizer(raw)
+    assert "LEAKH1" not in out, out
+    assert "LEAKH2" not in out, out
+    assert "LEAKH3" not in out, out
+    assert "LEAKH4" not in out, out
+    assert "--db-password" in out
+    assert "--hf-token" in out
+    assert "--api-key" in out
+    assert "--pg-secret" in out
+    assert "[REDACTED]" in out
+    assert out.startswith("diagnostic: ")

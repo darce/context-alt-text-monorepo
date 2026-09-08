@@ -2,14 +2,22 @@
 
 from __future__ import annotations
 
+import json
 import os
+import re
+import shutil
+import signal
 import stat
 import subprocess
+import time
 from pathlib import Path
+
+import pytest
 
 SCRIPT = Path(__file__).parents[1] / "recognition-service.sh"
 
 CRASH_LOG = "ModuleNotFoundError: No module named 'scene.foo'"
+VALID_CID = "ab" * 32
 
 DOCKER_STUB = r"""#!/usr/bin/env bash
 set -euo pipefail
@@ -19,7 +27,60 @@ printf '%s\n' "$cmd $*" >>"${state}/docker.log"
 mkdir -p "${state}/containers"
 case "$cmd" in
   network)
-    exit 0
+    sub="${1:-}"; shift || true
+    net_name=""
+    for a in "$@"; do
+      net_name="$a"
+    done
+    case "$sub" in
+      inspect)
+        format=0
+        prev=""
+        for a in "$@"; do
+          if [[ "$prev" == "--format" ]]; then
+            format=1
+          fi
+          prev="$a"
+        done
+        if [[ -n "$net_name" && -d "${state}/networks/${net_name}" ]]; then
+          if (( format )); then
+            cat "${state}/networks/${net_name}/owner" 2>/dev/null || true
+          fi
+          exit 0
+        fi
+        if [[ "${FAKE_NET_EXISTS:-1}" == "1" ]]; then
+          if (( format )); then
+            printf '%s\n' "${FAKE_NET_OWNER:-}"
+          fi
+          exit 0
+        fi
+        exit 1
+        ;;
+      create)
+        owner=""
+        prev=""
+        for a in "$@"; do
+          if [[ "$prev" == "--label" && "$a" == acx.smoke.owner=* ]]; then
+            owner="${a#acx.smoke.owner=}"
+          fi
+          prev="$a"
+        done
+        mkdir -p "${state}/networks/${net_name}"
+        printf '%s\n' "$owner" >"${state}/networks/${net_name}/owner"
+        if [[ -n "${FAKE_NET_CREATE_SLEEP:-}" ]]; then
+          sleep "${FAKE_NET_CREATE_SLEEP}"
+        fi
+        exit 0
+        ;;
+      rm)
+        rm -rf "${state}/networks/${net_name}"
+        printf '%s\n' "$net_name" >>"${state}/network_rm"
+        exit 0
+        ;;
+      *)
+        exit 0
+        ;;
+    esac
     ;;
   run)
     name=""
@@ -51,9 +112,18 @@ case "$cmd" in
     exit 0
     ;;
   exec)
+    if [[ -n "${FAKE_PG_EXEC_SLEEP:-}" ]]; then
+      sleep "${FAKE_PG_EXEC_SLEEP}"
+    fi
+    if [[ "${FAKE_PG_READY:-1}" != "1" ]]; then
+      exit 1
+    fi
     exit 0
     ;;
   port)
+    if [[ -n "${FAKE_PORT_SLEEP:-}" ]]; then
+      sleep "${FAKE_PORT_SLEEP}"
+    fi
     name="${1:-}"
     if [[ ! -d "${state}/containers/${name}" ]]; then
       echo "Error: No such container: ${name}" >&2
@@ -63,6 +133,10 @@ case "$cmd" in
     exit 0
     ;;
   logs)
+    date +%s.%N >"${state}/logs_started"
+    if [[ -n "${FAKE_LOGS_SLEEP:-}" ]]; then
+      sleep "${FAKE_LOGS_SLEEP}"
+    fi
     name=""
     for a in "$@"; do
       name="$a"
@@ -80,6 +154,9 @@ case "$cmd" in
     exit 0
     ;;
   rm)
+    if [[ ! -f "${state}/first_rm" ]]; then
+      date +%s.%N >"${state}/first_rm"
+    fi
     name=""
     for a in "$@"; do
       [[ "$a" == -* ]] && continue
@@ -127,6 +204,9 @@ for a in "$@"; do
   prev="$a"
 done
 printf '%s\n' "$*" >>"${state}/curl.log"
+if [[ -n "${FAKE_CURL_STDERR:-}" ]]; then
+  printf '%s\n' "${FAKE_CURL_STDERR}" >&2
+fi
 if [[ "$url" == *"/ready"* ]]; then
   sleep_s="${FAKE_READY_SLEEP:-0}"
   if awk -v s="$sleep_s" -v m="$max_time" 'BEGIN { exit !(s+0 > m+0) }'; then
@@ -140,6 +220,18 @@ if [[ "$url" == *"/ready"* ]]; then
   fi
   printf '%s\n%s' "${FAKE_READY_BODY:-{\"ready\":true}}" "${FAKE_READY_CODE:-200}"
   exit 0
+fi
+if [[ -n "${FAKE_HEALTH_SLEEP:-}" ]]; then
+  sleep_s="${FAKE_HEALTH_SLEEP}"
+  if awk -v s="$sleep_s" -v m="$max_time" 'BEGIN { exit !(s+0 > m+0) }'; then
+    sleep "$max_time"
+    echo "curl: (28) Operation timed out" >&2
+    printf '\n000'
+    exit 28
+  fi
+  if [[ "$sleep_s" != "0" ]]; then
+    sleep "$sleep_s"
+  fi
 fi
 code="${FAKE_HEALTH_CODE:-000}"
 body="${FAKE_HEALTH_BODY-}"
@@ -158,10 +250,19 @@ exit 7
 
 
 def _function_body(name: str) -> str:
+    """Slice one top-level `name() {` through the next column-0 `fn() {`."""
     source = SCRIPT.read_text()
     start = source.index(f"{name}() {{")
-    next_section = source.find("\n#----------------------------------------------------------------", start)
-    return source[start : next_section if next_section != -1 else None]
+    nxt = re.search(r"\n[A-Za-z_][A-Za-z0-9_]*\(\) \{", source[start + 1 :])
+    end = start + 1 + nxt.start() if nxt else len(source)
+    return source[start:end]
+
+
+def _sanitize_deploy_diagnostic_src() -> str:
+    source = SCRIPT.read_text()
+    start = source.index("sanitize_deploy_diagnostic() {")
+    end = source.index("\n}\n", start)
+    return source[start : end + 2]
 
 
 def _boot_smoke_heredoc() -> str:
@@ -169,7 +270,18 @@ def _boot_smoke_heredoc() -> str:
     start = source.index("<<'SMOKE'")
     start = source.index("\n", start) + 1
     end = source.index("\nSMOKE\n", start)
-    return source[start:end]
+    return _sanitize_deploy_diagnostic_src() + "\n" + source[start:end]
+
+
+def _run_sanitizer(text: str) -> str:
+    result = subprocess.run(
+        ["bash", "-c", _sanitize_deploy_diagnostic_src() + "\nsanitize_deploy_diagnostic"],
+        input=text,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    return result.stdout
 
 
 def _write_executable(path: Path, body: str) -> None:
@@ -177,7 +289,67 @@ def _write_executable(path: Path, body: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IEXEC)
 
 
-def _prepare_smoke_env(tmp_path: Path, extra: dict[str, str] | None = None) -> tuple[Path, Path, dict[str, str]]:
+def _path_without_timeout(prepend: Path, tmp_path: Path) -> str:
+    """PATH with stubs plus essential bins, but no `timeout` binary."""
+    stripped = tmp_path / "path-no-timeout"
+    stripped.mkdir(exist_ok=True)
+    needed = (
+        "bash",
+        "sleep",
+        "rm",
+        "cat",
+        "mkdir",
+        "mktemp",
+        "grep",
+        "cut",
+        "tr",
+        "head",
+        "sed",
+        "awk",
+        "mv",
+        "cp",
+        "ls",
+        "chmod",
+        "kill",
+        "ps",
+        "date",
+        "env",
+        "true",
+        "false",
+        "uname",
+        "sort",
+        "basename",
+        "dirname",
+        "touch",
+        "wc",
+        "tee",
+        "id",
+        "printf",
+        "echo",
+        "ln",
+        "od",
+        "tail",
+        "xargs",
+        "locale",
+        "getconf",
+        "which",
+    )
+    for name in needed:
+        found = shutil.which(name)
+        if found is None:
+            continue
+        dest = stripped / name
+        if not dest.exists():
+            dest.symlink_to(found)
+    return f"{prepend}{os.pathsep}{stripped}"
+
+
+def _prepare_smoke_env(
+    tmp_path: Path,
+    extra: dict[str, str] | None = None,
+    *,
+    hide_timeout: bool = False,
+) -> tuple[Path, Path, dict[str, str]]:
     state = tmp_path / "fake-state"
     state.mkdir()
     fake_bin = tmp_path / "bin"
@@ -201,20 +373,60 @@ def _prepare_smoke_env(tmp_path: Path, extra: dict[str, str] | None = None) -> t
     )
     if extra:
         env.update(extra)
+    if hide_timeout:
+        env["PATH"] = _path_without_timeout(fake_bin, tmp_path)
     return state, remote, env
+
+
+def _docker_log(result: subprocess.CompletedProcess[str]) -> str:
+    state = result._fake_state  # type: ignore[attr-defined]
+    return Path(state).joinpath("docker.log").read_text()
+
+
+def _run_bash_with_unread_fifo(
+    driver: Path,
+    tmp_path: Path,
+    env: dict[str, str],
+    *,
+    alarm_s: int = 5,
+) -> subprocess.CompletedProcess[str]:
+    """Attach stdin to a FIFO nobody writes; alarm out if a child consumes it."""
+    fifo = tmp_path / "unread.fifo"
+    os.mkfifo(fifo)
+    fd = os.open(fifo, os.O_RDWR)
+    try:
+        return subprocess.run(
+            ["bash", str(driver)],
+            text=True,
+            capture_output=True,
+            check=False,
+            env=env,
+            cwd=SCRIPT.parents[2],
+            stdin=fd,
+            timeout=alarm_s,
+        )
+    finally:
+        os.close(fd)
 
 
 def _run_boot_smoke(
     tmp_path: Path,
     *,
-    budget_s: int = 2,
-    poll_s: int = 1,
+    budget_s: int | str = 2,
+    poll_s: int | str = 1,
     attempts: int = 1,
-    vlm_budget: int = 0,
+    vlm_budget: int | str = 0,
+    pg_budget: int | str = 30,
+    setup_slack: int | str = 30,
+    net_create_cap: int | str = 10,
+    port_cap: int | str = 5,
+    trap_docker_s: int | str = 10,
     extra_env: dict[str, str] | None = None,
     wrap_deadline: int | None = None,
+    hide_timeout: bool = False,
 ) -> subprocess.CompletedProcess[str]:
-    state, remote, env = _prepare_smoke_env(tmp_path, extra_env)
+    del attempts  # LR-04: wrapper/body no longer take a dead attempts positional.
+    state, remote, env = _prepare_smoke_env(tmp_path, extra_env, hide_timeout=hide_timeout)
     smoke = tmp_path / "boot-smoke.sh"
     smoke.write_text(_boot_smoke_heredoc())
     args = [
@@ -223,8 +435,12 @@ def _run_boot_smoke(
         str(remote),
         str(budget_s),
         str(poll_s),
-        str(attempts),
         str(vlm_budget),
+        str(pg_budget),
+        str(setup_slack),
+        str(net_create_cap),
+        str(port_cap),
+        str(trap_docker_s),
     ]
     if wrap_deadline is None:
         result = subprocess.run(
@@ -262,11 +478,23 @@ def _run_capture_failure_evidence(
     phase: str = "",
     ssh_body: bytes = b"healthy-body\nHTTP_CODE=200",
     ssh_sleep: str = "0",
+    empty_cid: bool = False,
+    cid_stdout: bytes | None = None,
+    cid_stderr: bytes = b"",
 ) -> subprocess.CompletedProcess[bytes]:
     records = tmp_path / "ssh-args"
     stdin_capture = tmp_path / "ssh-stdin"
     ssh_out = tmp_path / "ssh-out"
     ssh_out.write_bytes(ssh_body)
+    cid_out = tmp_path / "cid-out"
+    cid_err = tmp_path / "cid-err"
+    if empty_cid:
+        cid_out.write_bytes(b"")
+    elif cid_stdout is not None:
+        cid_out.write_bytes(cid_stdout)
+    else:
+        cid_out.write_bytes((VALID_CID + "\n").encode())
+    cid_err.write_bytes(cid_stderr)
     driver = tmp_path / "capture-driver.sh"
     phase_arg = f" {phase}" if phase else ""
     driver.write_text(
@@ -293,6 +521,12 @@ ssh() {{
   fi
   if [[ "{ssh_sleep}" != "0" ]]; then
     sleep "{ssh_sleep}"
+  fi
+  remote="${{@: -1}}"
+  if [[ "$remote" == *'ps -q'* ]]; then
+    cat "{cid_out}"
+    cat "{cid_err}" >&2
+    return 0
   fi
   cat "{ssh_out}"
   return 0
@@ -378,11 +612,45 @@ def test_remote_build_is_generation_isolated_locked_and_deadlined() -> None:
 def test_boot_smoke_has_outer_deadlines_and_curl_request_timeout() -> None:
     body = _function_body("do_boot_smoke")
     assert body.count("run_with_deadline") >= 2
-    assert "curl -sS --max-time" in body
-    assert "--write-out" in body
-    assert "last_health_body" in body
-    assert "docker logs --tail 80" in body
-    assert "/ready" in body
+    assert "repair_blob_volume_ownership() {" not in body
+    assert "do_restart() {" not in body
+    assert "capture_failure_evidence() {" not in body
+    smoke = _boot_smoke_heredoc()
+    assert "curl -sS --max-time" in smoke
+    assert "--write-out" in smoke
+    assert "last_health_body" in smoke
+    assert "docker logs --tail 80" in smoke
+    assert "sanitize_deploy_diagnostic" in smoke
+    assert not re.search(r"curl[^\n]*/ready", smoke)
+    assert "SECONDS" in smoke
+    assert 'seq 1 "${pg_budget}"' not in smoke
+    assert 'seq 1 "${attempts}"' not in smoke
+    assert re.search(r"^SMOKE_TIMEOUT_DEFAULT=24$", SCRIPT.read_text(), re.M)
+    assert re.search(r"^SMOKE_PG_READY_TIMEOUT=30$", SCRIPT.read_text(), re.M)
+
+
+@pytest.mark.parametrize("budget_s", [16, 24])
+def test_boot_smoke_computed_health_loop_budget(tmp_path: Path, budget_s: int) -> None:
+    """GR-37 / GR-38: health window is budget minus trap reserve plus last-curl guard."""
+    poll_s = 2
+    trap_docker_s = 10  # logs+rm+rm+volume+network, each timeout 2
+    diag_reserve = trap_docker_s + poll_s
+    health_budget = max(1, budget_s - diag_reserve)
+    started = time.monotonic()
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=budget_s,
+        poll_s=poll_s,
+        pg_budget=1,
+        extra_env={"FAKE_HEALTH_CODE": "000"},
+    )
+    elapsed = time.monotonic() - started
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    # GR-05 stops the last curl when remaining <= poll_s, so elapsed is
+    # health_budget minus about one poll, never the full outer budget.
+    assert elapsed >= max(0, health_budget - poll_s) - 1
+    assert elapsed < budget_s + 4
 
 
 def test_automatic_rollbacks_capture_failure_evidence_first() -> None:
@@ -412,11 +680,22 @@ def test_failure_evidence_probes_and_logs_are_deadline_bounded() -> None:
     assert "--- evidence: api container logs ---" in body
 
 
-def test_do_verify_surfaces_non_gating_readiness_code_and_body() -> None:
-    body = _function_body("do_verify")
-    assert 'ready_url="$(env_to_ready_url "$env")"' in body
-    assert "ready_response" in body
-    assert "non-gating" in body
+def test_do_verify_surfaces_non_gating_readiness_code_and_body(tmp_path: Path) -> None:
+    """X-08: emit_verify_ready_diagnostic runs once on terminal failure, never on success."""
+    expected = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    success_dir = tmp_path / "success"
+    success_dir.mkdir()
+    success = _run_do_verify(success_dir, attempts=3, health_sha=expected)
+    assert success.returncode == 0, success.stdout + success.stderr
+    assert "/ready" not in (success_dir / "curl.log").read_text()
+
+    fail_dir = tmp_path / "fail"
+    fail_dir.mkdir()
+    failed = _run_do_verify(fail_dir, attempts=3, health_sha="deadbeefdeadbeef")
+    assert failed.returncode != 0, failed.stdout + failed.stderr
+    curl_log = (fail_dir / "curl.log").read_text()
+    assert curl_log.count("/ready") == 1
+    assert curl_log.count("/health") == 3
 
 
 def test_restart_and_rollback_integration_points_are_deadlined() -> None:
@@ -527,7 +806,7 @@ def test_boot_smoke_ready_probe_does_not_timeout_a_marginal_health_pass(tmp_path
     )
     combined = result.stdout + result.stderr
     assert result.returncode == 0, combined
-    assert "smoke health OK" in combined
+    assert "diagnostic: smoke health OK" in combined
     assert "timed out after" not in combined
 
 
@@ -576,7 +855,7 @@ def test_failure_evidence_ssh_does_not_consume_caller_stdin(tmp_path: Path) -> N
     result = _run_capture_failure_evidence(tmp_path, stdin_data=b"POISON\n")
     assert result.returncode == 0, result.stderr.decode()
     args = (tmp_path / "ssh-args").read_text().splitlines()
-    assert len(args) == 3
+    assert len(args) == 4
     assert all("-n" in line.split() for line in args)
     stdin_capture = tmp_path / "ssh-stdin"
     assert stdin_capture.read_text() == ""
@@ -594,16 +873,16 @@ def test_failure_evidence_budget_is_decoupled_from_remote_command_timeout(tmp_pa
     )
     assert result.returncode == 0, result.stderr.decode()
     deadlines = [line.split()[0] for line in (tmp_path / "deadlines").read_text().splitlines()]
-    assert deadlines == ["deadline=30", "deadline=30", "deadline=30"]
+    assert deadlines == ["deadline=30"] * 4
 
     result = _run_capture_failure_evidence(
         tmp_path,
         extra_env={"ACX_REMOTE_COMMAND_TIMEOUT": "900", "ACX_EVIDENCE_TIMEOUT": "5"},
     )
     assert result.returncode == 0, result.stderr.decode()
-    # second run appends; last three lines are the override
+    # second run appends; last four lines are the override (health, ready, cid, logs)
     deadlines = [line.split()[0] for line in (tmp_path / "deadlines").read_text().splitlines()]
-    assert deadlines[-3:] == ["deadline=5", "deadline=5", "deadline=5"]
+    assert deadlines[-4:] == ["deadline=5"] * 4
 
 
 def test_pre_candidate_evidence_skips_http_probes_of_prior_image(tmp_path: Path) -> None:
@@ -656,12 +935,16 @@ def test_runtime_evidence_still_probes_health_and_ready(tmp_path: Path) -> None:
 
 
 def test_push_and_restart_failures_use_pre_candidate_evidence_phase() -> None:
-    """VLMHEAL-1-REV-B-06: do_push_tag / do_restart rollback is pre_candidate."""
+    """VLMHEAL-1-REV-B-06 / D-02: push is pre_candidate; restart uses post_restart phase."""
     for function_name, env_expression in (("do_deploy", '"$env"'), ("do_promote", '"$to_env"')):
         body = _function_body(function_name)
         assert f"capture_failure_evidence {env_expression} pre_candidate" in body
+        assert (
+            f'capture_failure_evidence {env_expression} "${{ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}}"'
+            in body
+        )
         assert f"capture_failure_evidence {env_expression} candidate" in body
-        assert body.count(f"capture_failure_evidence {env_expression} pre_candidate") == 2
+        assert body.count(f"capture_failure_evidence {env_expression} pre_candidate") == 1
         assert body.count(f"capture_failure_evidence {env_expression} candidate") == 1
 
 
@@ -698,7 +981,6 @@ printf 'captured=%s\\n' "$out"
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert result.returncode != 139
     assert "captured=hello-from-deadline" in result.stdout
 
 
@@ -714,17 +996,37 @@ def test_failure_evidence_redacts_bearer_and_api_token(tmp_path: Path) -> None:
             b"Authorization: Bearer supersecret-token\n"
             b"ACX_API_TOKEN=another-secret\n"
             b"password=hunter2\n"
+            b"RECOGNITION_ADMIN_TOKEN=admin-secret\n"
+            b"HF_TOKEN=hf-secret\n"
+            b"PGPASSWORD=pg-secret\n"
+            b'"token": "json-secret"\n'
+            b'"Authorization": "Bearer json-bearer"\n'
+            b"AUTHORIZATION: BEARER header-secret\n"
+            b"Bearer naked-secret\n"
             b"HTTP_CODE=200\n"
         ),
     )
     combined = result.stderr
     assert result.returncode == 0, combined.decode()
-    assert b"supersecret-token" not in combined
-    assert b"another-secret" not in combined
-    assert b"hunter2" not in combined
+    for secret in (
+        b"supersecret-token",
+        b"another-secret",
+        b"hunter2",
+        b"admin-secret",
+        b"hf-secret",
+        b"pg-secret",
+        b"json-secret",
+        b"json-bearer",
+        b"header-secret",
+        b"naked-secret",
+    ):
+        assert secret not in combined, secret
     assert b"Authorization: Bearer" in combined
     assert b"ACX_API_TOKEN=" in combined
     assert b"password=" in combined
+    assert b"RECOGNITION_ADMIN_TOKEN=" in combined
+    assert b"HF_TOKEN=" in combined
+    assert b"PGPASSWORD=" in combined
     assert b"[REDACTED]" in combined
 
 
@@ -745,10 +1047,1573 @@ def test_evidence_timeout_is_parsed_through_validated_deadline() -> None:
     assert "ACX_REMOTE_COMMAND_TIMEOUT" not in body
 
 
-def test_empty_api_container_id_emits_no_api_container_line() -> None:
-    """VLMHEAL-1-REV-B-11: empty compose ps -q must not run docker logs with no id."""
+def test_empty_api_container_id_skips_docker_logs_ssh(tmp_path: Path) -> None:
+    """D-04: empty compose ps -q must not ssh docker logs."""
+    result = _run_capture_failure_evidence(tmp_path, empty_cid=True)
+    combined = result.stderr.decode()
+    assert result.returncode == 0, combined
+    assert "no api container" in combined
+    args = (tmp_path / "ssh-args").read_text()
+    assert "docker logs" not in args
+    assert "ps -q" in args
+
+
+def test_post_restart_evidence_keeps_logs_and_skips_http(tmp_path: Path) -> None:
+    """D-02: after systemctl restart, evidence must not say the candidate never started."""
+    result = _run_capture_failure_evidence(tmp_path, phase="post_restart")
+    combined = result.stderr.decode()
+    assert result.returncode == 0, combined
+    assert "candidate never started" not in combined
+    args = (tmp_path / "ssh-args").read_text()
+    assert "docker logs" in args
+    assert "/health" not in args
+    assert "/ready" not in args
+    assert "--- evidence: /health ---" not in combined
+    assert "--- evidence: api container logs ---" in combined
+
+
+def test_do_restart_marks_post_restart_before_systemctl() -> None:
+    """D-02: systemctl restart failure must request post_restart evidence."""
+    body = _function_body("do_restart")
+    assert 'ACX_RESTART_EVIDENCE_PHASE="pre_candidate"' in body
+    assert 'ACX_RESTART_EVIDENCE_PHASE="post_restart"' in body
+    assert body.index('ACX_RESTART_EVIDENCE_PHASE="pre_candidate"') < body.index(
+        'ACX_RESTART_EVIDENCE_PHASE="post_restart"'
+    )
+    assert body.index('ACX_RESTART_EVIDENCE_PHASE="post_restart"') < body.index(
+        "sudo systemctl restart"
+    )
+
+
+def test_pre_candidate_docker_ps_is_compose_project_scoped(tmp_path: Path) -> None:
+    """D-06: pre_candidate docker ps must not list foreign compose projects."""
+    result = _run_capture_failure_evidence(tmp_path, phase="pre_candidate")
+    assert result.returncode == 0, result.stderr.decode()
+    args = (tmp_path / "ssh-args").read_text()
+    assert "--filter label=com.docker.compose.project=" in args
+    assert "acx-dev" in args
+
+
+def test_boot_smoke_poll_prints_curl_stderr_once(tmp_path: Path) -> None:
+    """B-09: curl: (7) must not repeat for every health poll."""
+    result = _run_boot_smoke(tmp_path, budget_s=3, poll_s=1, attempts=3)
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert combined.count("curl: (7)") == 1
+
+
+def test_boot_smoke_failure_redacts_tokens(tmp_path: Path) -> None:
+    """D-01: VM smoke failure body/logs must use the same sanitizer."""
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=2,
+        poll_s=1,
+        attempts=1,
+        extra_env={
+            "FAKE_HEALTH_CODE": "503",
+            "FAKE_HEALTH_BODY": (
+                'RECOGNITION_ADMIN_TOKEN=admin-secret HF_TOKEN=hf-secret '
+                'PGPASSWORD=pg-secret "token": "json-secret" '
+                "AUTHORIZATION: BEARER header-secret Bearer naked-secret"
+            ),
+        },
+    )
+    combined = result.stderr
+    assert result.returncode != 0
+    for secret in (
+        "admin-secret",
+        "hf-secret",
+        "pg-secret",
+        "json-secret",
+        "header-secret",
+        "naked-secret",
+    ):
+        assert secret not in combined, secret
+    assert "[REDACTED]" in combined
+
+
+def _run_do_verify(
+    tmp_path: Path,
+    *,
+    attempts: int,
+    health_sha: str,
+    health_code: str = "200",
+) -> subprocess.CompletedProcess[str]:
+    curl_log = tmp_path / "curl.log"
+    expected = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    health_body = (
+        '{"commit_sha":"' + health_sha + '","status":"ok","image_variant":"recognition"}'
+    )
+    driver = tmp_path / "verify-driver.sh"
+    driver.write_text(
+        f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+ACX_VERIFY_ATTEMPTS={attempts}
+ACX_VERIFY_SLEEP=0
+ACX_VERIFY_EXPECT_LOCAL=1
+verify_running_image_matches_deployed() {{ return 0; }}
+verify_live_gpu_snapshots() {{ return 0; }}
+curl() {{
+  printf '%s\\n' "$*" >>"{curl_log}"
+  url="${{@: -1}}"
+  if [[ "$url" == *"/ready"* ]]; then
+    printf '%s\\n%s' '{{"ready":true}}' '200'
+    return 0
+  fi
+  printf '%s\\n%s' '{health_body}' '{health_code}'
+  return 0
+}}
+do_verify dev
+'''
+    )
+    env = dict(os.environ)
+    result = subprocess.run(
+        ["bash", str(driver)],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+        cwd=SCRIPT.parents[2],
+    )
+    result._curl_log = curl_log  # type: ignore[attr-defined]
+    result._expected_sha = expected  # type: ignore[attr-defined]
+    return result
+
+
+def test_do_verify_skips_ready_on_successful_attempt(tmp_path: Path) -> None:
+    """B-10: /ready must not fire on a successful verify attempt."""
+    expected = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    result = _run_do_verify(tmp_path, attempts=3, health_sha=expected)
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+    curl_log = (tmp_path / "curl.log").read_text()
+    assert "/health" in curl_log
+    assert "/ready" not in curl_log
+
+
+def test_do_verify_probes_ready_only_on_terminal_failure(tmp_path: Path) -> None:
+    """B-10: /ready is diagnostic and only on the last failing attempt."""
+    result = _run_do_verify(tmp_path, attempts=3, health_sha="deadbeefdeadbeef")
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    curl_log = (tmp_path / "curl.log").read_text()
+    assert curl_log.count("/ready") == 1
+    assert curl_log.count("/health") == 3
+    assert "non-gating" in combined
+
+
+SANITIZER_CASES = [
+    ('{"access_token":"abc.DEF-123"}', "abc.DEF-123"),
+    ('{"api_key": "abc123"}', "abc123"),
+    ("SECRET=abc", "abc"),
+    ('PGPASSWORD="quoted secret"', "quoted secret"),
+    ("postgresql://acx:LEAK5@db/x", "LEAK5"),
+    ('{"token": "json-secret"}', "json-secret"),
+    ('{"refresh_token": "rt-secret"}', "rt-secret"),
+    ('{"password": "pw-secret"}', "pw-secret"),
+    ('{"passwd": "passwd-secret"}', "passwd-secret"),
+    ('{"secret": "sec-value"}', "sec-value"),
+    ('{"api-key":"hyphen-json"}', "hyphen-json"),
+    ('{"db_password": "db-pass"}', "db-pass"),
+    ('{"client_secret": "cli-sec"}', "cli-sec"),
+    ('{"service_key": "svc-key"}', "svc-key"),
+    ('{"pgpassword": "json-pg"}', "json-pg"),
+    ("TOKEN=tok-secret", "tok-secret"),
+    ("PASSWORD=pw2-secret", "pw2-secret"),
+    ("KEY=key-secret", "key-secret"),
+    ("SECRET: colon-secret", "colon-secret"),
+    ("TOKEN='quoted token'", "quoted token"),
+    ('PASSWORD="quoted pass"', "quoted pass"),
+    ("Authorization: Bearer header-secret", "header-secret"),
+    ("bearer naked-secret", "naked-secret"),
+    ("ACX_API_TOKEN=another-secret", "another-secret"),
+    ("HF_TOKEN=hf-secret", "hf-secret"),
+    ("api-key=hyphen-secret", "hyphen-secret"),
+    ("api_key=under-secret", "under-secret"),
+    ("X-Api-Key: header-key-secret", "header-key-secret"),
+    ("password=hunter2", "hunter2"),
+    (json.dumps({"password": 'abc"SYNTHETIC_ESCAPED_CANARY'}), "SYNTHETIC_ESCAPED_CANARY"),
+    ('{"api_key": "x\\"y\\"LEAKM"}', "LEAKM"),
+    ('{"Authorization": "Bearer ab\\"LEAKN"}', "LEAKN"),
+    ("Bearer abcdef123456", "abcdef123456"),
+    ("Bearer ab.cd-ef_gh", "ab.cd-ef_gh"),
+    ("Authorization: Basic ZGFuOmh1bnRlcjI=", "ZGFuOmh1bnRlcjI="),
+    ("{'password': LEAKJ}", "LEAKJ"),
+    ('{"HF_TOKEN": LEAKK, "x": 1}', "LEAKK"),
+    ("Basic user:hunter2", "user:hunter2"),
+    ("Bearer eyJ.abc:def", "eyJ.abc:def"),
+    ("Basic abcdefgh:xyz", "abcdefgh:xyz"),
+    ("Bearer abcdef%2Fgh", "abcdef%2Fgh"),
+    ("authorization: token expired", "expired"),
+    ("Authorization: Basic ab:12", "ab:12"),
+    ('{"password": "supersecretvalue', "supersecretvalue"),
+    ('{"password": 12345}', "12345"),
+    ('{"password"=LEAKQ}', "LEAKQ"),
+]
+
+
+@pytest.mark.parametrize("raw,secret", SANITIZER_CASES, ids=[secret for _, secret in SANITIZER_CASES])
+def test_sanitize_deploy_diagnostic_redacts_secret_shapes(raw: str, secret: str) -> None:
+    """W-01: every secret shape from the sanitizer contract is absent after redaction."""
+    out = _run_sanitizer(raw + "\n")
+    assert secret not in out, out
+    assert "[REDACTED]" in out
+    assert out.startswith("diagnostic: ")
+
+
+def test_sanitize_deploy_diagnostic_redacts_single_quoted_mapping_keys() -> None:
+    """X-01: Python/mapping single-quoted keys must not leak token values."""
+    raw = (
+        "{'RECOGNITION_ADMIN_TOKEN': 'LEAKC', 'HF_TOKEN': 'LEAKD'}\n"
+        "ERROR config: {'password': 'LEAKE'}\n"
+    )
+    out = _run_sanitizer(raw)
+    assert "LEAKC" not in out, out
+    assert "LEAKD" not in out, out
+    assert "LEAKE" not in out, out
+    assert "[REDACTED]" in out
+    assert out.startswith("diagnostic: ")
+
+
+def test_sanitize_deploy_diagnostic_redacts_basic_authorization() -> None:
+    """X-02: Basic auth must be redacted in assignment, header, and bare forms."""
+    raw = (
+        "Authorization=Basic YWJjOmRlZg==\n"
+        "authorization: Basic YWJjOmRlZg==\n"
+        "Basic YWJjOmRlZjEyMzQ=\n"
+    )
+    out = _run_sanitizer(raw)
+    assert "YWJjOmRlZg==" not in out, out
+    assert "YWJjOmRlZjEyMzQ=" not in out, out
+    assert "[REDACTED]" in out
+    assert out.startswith("diagnostic: ")
+
+
+def test_sanitize_deploy_diagnostic_redacts_unquoted_value_through_comma_brace() -> None:
+    """X-03: unquoted SECRET/TOKEN values must not stop at comma or closing brace."""
+    raw = "SECRET=abc}def TOKEN=abc,def\n"
+    out = _run_sanitizer(raw)
+    assert "def" not in out, out
+    assert "abc" not in out, out
+    assert "[REDACTED]" in out
+    assert out.startswith("diagnostic: ")
+
+
+def test_sanitize_deploy_diagnostic_preserves_token_file_and_header_name() -> None:
+    """W-01 negative: TOKEN_FILE paths stay; X-Api-Key keeps its header name."""
+    raw = (
+        "RECOGNITION_ADMIN_TOKEN_FILE=/run/secrets/admin.token\n"
+        "X-Api-Key: hunter2\n"
+    )
+    out = _run_sanitizer(raw)
+    assert "RECOGNITION_ADMIN_TOKEN_FILE=/run/secrets/admin.token" in out
+    assert "X-Api-Key:" in out
+    assert "api-key=" not in out
+    assert "hunter2" not in out
+    assert "[REDACTED]" in out
+
+
+def test_sanitize_deploy_diagnostic_redacts_escaped_json_quotes() -> None:
+    """GR-02: escaped quote inside a JSON string value must not leak the remainder."""
+    raw = json.dumps({"password": 'abc"SYNTHETIC_ESCAPED_CANARY'})
+    out = _run_sanitizer(raw + "\n")
+    assert "SYNTHETIC_ESCAPED_CANARY" not in out, out
+    assert "[REDACTED]" in out
+    assert out.startswith("diagnostic: ")
+
+    out_key = _run_sanitizer('{"api_key": "x\\"y\\"LEAKM"}\n')
+    assert "LEAKM" not in out_key, out_key
+    assert "[REDACTED]" in out_key
+
+    out_auth = _run_sanitizer('{"Authorization": "Bearer ab\\"LEAKN"}\n')
+    assert "LEAKN" not in out_auth, out_auth
+    assert "[REDACTED]" in out_auth
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "Basic health OK",
+        "token expired",
+        "Invalid token format",
+        "Token bucket exhausted",
+        "Bearer abc1234",
+    ],
+)
+def test_sanitize_deploy_diagnostic_preserves_prose_bearer_basic_token(raw: str) -> None:
+    """LR-01/GR-08/GR-64: ordinary prose and 7-char bare tokens are not redacted."""
+    out = _run_sanitizer(raw + "\n")
+    assert out == f"diagnostic: {raw}\n"
+    assert "[REDACTED]" not in out
+
+
+def test_sanitize_deploy_diagnostic_authorization_header_redacts_short_and_expired_values() -> None:
+    """GR-62: Authorization header stays greedy; short values and 'expired' redact."""
+    out_expired = _run_sanitizer("authorization: token expired\n")
+    assert out_expired == "diagnostic: Authorization: token [REDACTED]\n"
+    assert "expired" not in out_expired
+
+    out_short = _run_sanitizer("Authorization: Basic ab:12\n")
+    assert out_short == "diagnostic: Authorization: Basic [REDACTED]\n"
+    assert "ab:12" not in out_short
+
+
+def test_sanitize_deploy_diagnostic_redacts_colon_percent_bare_credentials() -> None:
+    """GR-61: bare Bearer/Basic values may include colon and percent."""
+    cases = (
+        ("Basic user:hunter2", "user:hunter2"),
+        ("Bearer eyJ.abc:def", "eyJ.abc:def"),
+        ("Basic abcdefgh:xyz", "abcdefgh:xyz"),
+        ("Bearer abcdef%2Fgh", "abcdef%2Fgh"),
+    )
+    for raw, secret in cases:
+        out = _run_sanitizer(raw + "\n")
+        assert secret not in out, out
+        assert out == f"diagnostic: {raw.split()[0]} [REDACTED]\n", out
+
+
+def test_sanitize_deploy_diagnostic_fail_closed_unterminated_json_values() -> None:
+    """GR-63: unterminated quoted JSON values must not leak the remainder."""
+    out_escaped = _run_sanitizer('{"password": "abc\\"\n')
+    assert "abc" not in out_escaped, out_escaped
+    assert '{"password": "[REDACTED]' in out_escaped
+
+    out_open = _run_sanitizer('{"password": "supersecretvalue\n')
+    assert "supersecretvalue" not in out_open, out_open
+    assert '{"password": "[REDACTED]' in out_open
+
+    out_sibling = _run_sanitizer('{"password": "a\\\\", "x": "LEAKP"}\n')
+    assert "LEAKP" in out_sibling, out_sibling
+    assert "[REDACTED]" in out_sibling
+
+
+def test_sanitize_deploy_diagnostic_preserves_json_null_true_false_literals() -> None:
+    """GR-65: JSON null/true/false stay intact; numeric secret values still redact."""
+    for raw in (
+        '{"api_key": null}',
+        '{"password": true}',
+        '{"password": false}',
+        '{"token_count": 5}',
+    ):
+        out = _run_sanitizer(raw + "\n")
+        assert out == f"diagnostic: {raw}\n", out
+        assert "[REDACTED]" not in out
+
+    out_num = _run_sanitizer('{"password": 12345}\n')
+    assert "12345" not in out_num, out_num
+    assert '"password": [REDACTED]' in out_num
+
+    out_leak = _run_sanitizer("{'password': LEAKJ}\n")
+    assert "LEAKJ" not in out_leak, out_leak
+    assert '"password": [REDACTED]' in out_leak
+
+
+def test_sanitize_deploy_diagnostic_redacts_quoted_key_equals_unquoted_value() -> None:
+    """GR-66: quoted secret key followed by = must redact the unquoted value."""
+    out_dq = _run_sanitizer('{"password"=LEAKQ}\n')
+    assert "LEAKQ" not in out_dq, out_dq
+    assert '"password": [REDACTED]' in out_dq
+
+    out_sq = _run_sanitizer("{'password'=LEAKJ}\n")
+    assert "LEAKJ" not in out_sq, out_sq
+    assert '"password": [REDACTED]' in out_sq
+
+
+def test_sanitize_deploy_diagnostic_redacts_unquoted_mapping_values() -> None:
+    """GR-09: quoted key with unquoted value redacts the secret and keeps siblings."""
+    out = _run_sanitizer("{'password': LEAKJ}\n")
+    assert "LEAKJ" not in out, out
+    assert '"password": [REDACTED]' in out
+    assert out.startswith("diagnostic: ")
+
+    out2 = _run_sanitizer('{"HF_TOKEN": LEAKK, "x": 1}\n')
+    assert "LEAKK" not in out2, out2
+    assert '"x": 1' in out2
+    assert '"HF_TOKEN": [REDACTED]' in out2
+
+
+# GR-101..107: one _run_sanitizer canary per adjudicated input (positive and negative).
+_GR101_107_CASES: list[tuple[str, str]] = [
+    ('{"password": nul}', 'diagnostic: {"password": [REDACTED]}\n'),
+    ('{"password": tru}', 'diagnostic: {"password": [REDACTED]}\n'),
+    ('{"password": fals}', 'diagnostic: {"password": [REDACTED]}\n'),
+    ('{"password":n}', 'diagnostic: {"password": [REDACTED]}\n'),
+    ('{"password": NUL}', 'diagnostic: {"password": [REDACTED]}\n'),
+    ('{"password": null}', 'diagnostic: {"password": null}\n'),
+    ('{"password": true}', 'diagnostic: {"password": true}\n'),
+    ('{"password": false}', 'diagnostic: {"password": false}\n'),
+    ('{"api_key": null}', 'diagnostic: {"api_key": null}\n'),
+    ('{"password": "abc\\', 'diagnostic: {"password": "[REDACTED]\n'),
+    ('{"password": "abc\\\\\\', 'diagnostic: {"password": "[REDACTED]\n'),
+    ('{"password": "o\'reilly"}', 'diagnostic: {"password": "[REDACTED]"}\n'),
+    ('{"password": "hello\'world and more"}', 'diagnostic: {"password": "[REDACTED]"}\n'),
+    ('{"password": "abc\'def', 'diagnostic: {"password": "[REDACTED]\n'),
+    ("Basic us@r:hunter2", "diagnostic: Basic [REDACTED]\n"),
+    ("Basic user@example.com:hunter2", "diagnostic: Basic [REDACTED]\n"),
+    ("Basic user!hunter2", "diagnostic: Basic [REDACTED]\n"),
+    ("Bearer abcdefg?xyz", "diagnostic: Bearer [REDACTED]\n"),
+    ("Basic user:hunt,er2xxxxxxx", "diagnostic: Basic [REDACTED]\n"),
+    ("Bearer abc1234", "diagnostic: Bearer abc1234\n"),
+    ("token expired", "diagnostic: token expired\n"),
+    ('{"password"="LEAKS"}', 'diagnostic: {"password": "[REDACTED]"}\n'),
+    ('{"password" = "LEAKS"}', 'diagnostic: {"password": "[REDACTED]"}\n'),
+    ("{'password'='LEAKJ'}", 'diagnostic: {"password": "[REDACTED]"}\n'),
+    ('"password"=="LEAKS"', 'diagnostic: "password": "[REDACTED]"\n'),
+]
+_GR101_107_IDS = [
+    "GR-101-prefix-nul",
+    "GR-101-prefix-tru",
+    "GR-101-prefix-fals",
+    "GR-101-prefix-n",
+    "GR-101-prefix-NUL",
+    "GR-101-literal-null",
+    "GR-101-literal-true",
+    "GR-101-literal-false",
+    "GR-101-literal-api_key-null",
+    "GR-102-dangling-backslash-1",
+    "GR-102-dangling-backslash-3",
+    "GR-103-apostrophe-oreilly",
+    "GR-103-apostrophe-hello-world",
+    "GR-103-unterminated-apostrophe",
+    "GR-104-basic-at",
+    "GR-104-basic-email",
+    "GR-104-basic-bang",
+    "GR-105-bearer-question",
+    "GR-105-basic-comma",
+    "GR-104-bearer-7char-floor",
+    "GR-104-token-expired-prose",
+    "GR-106-quoted-equals",
+    "GR-106-quoted-spaced-equals",
+    "GR-106-single-quoted-equals",
+    "GR-106-double-equals",
+]
+
+
+@pytest.mark.parametrize("raw,expected", _GR101_107_CASES, ids=_GR101_107_IDS)
+def test_sanitize_deploy_diagnostic_gr101_107_canaries(raw: str, expected: str) -> None:
+    """GR-107: byte-exact canaries for sentinel literals, quotes, dangling \\, bare class, [=:]+."""
+    out = _run_sanitizer(raw + "\n")
+    assert out == expected
+
+
+# GR-108/141..144: one _run_sanitizer canary per adjudicated input (positive and negative).
+_GR108_144_CASES: list[tuple[str, str]] = [
+    ('{"password": =hunter2secret}', 'diagnostic: {"password": [REDACTED]}\n'),
+    ('{"password": :hunter2secret}', 'diagnostic: {"password": [REDACTED]}\n'),
+    ('{"password": = "LEAKS"}', 'diagnostic: {"password": "[REDACTED]"}\n'),
+    ('{"password" = = "LEAKS"}', 'diagnostic: {"password": "[REDACTED]"}\n'),
+    ('{"password" : : "xsecret"}', 'diagnostic: {"password": "[REDACTED]"}\n'),
+    ('{"password": ["hunter2secret"]}', 'diagnostic: {"password": [REDACTED]\n'),
+    ('{"password": {"hash": "deadbeefdeadbeef"}}', 'diagnostic: {"password": [REDACTED]\n'),
+    ('{"password": NULL}', 'diagnostic: {"password": [REDACTED]}\n'),
+    ('{"password": TRUE}', 'diagnostic: {"password": [REDACTED]}\n'),
+    ('{"password": True}', 'diagnostic: {"password": [REDACTED]}\n'),
+    ("{'password': False}", 'diagnostic: {"password": [REDACTED]}\n'),
+    ('{"password": nulL}', 'diagnostic: {"password": [REDACTED]}\n'),
+    ('{"password": null}', 'diagnostic: {"password": null}\n'),
+    ('{"password": true}', 'diagnostic: {"password": true}\n'),
+    ('{"password": false}', 'diagnostic: {"password": false}\n'),
+    ("AWS_ACCESS_KEY_ID=AKIATESTLEAK123", "diagnostic: AWS_ACCESS_KEY_ID=[REDACTED]\n"),
+    ("OCI_CLI_KEY_CONTENT=ociclicontent", "diagnostic: OCI_CLI_KEY_CONTENT=[REDACTED]\n"),
+    ("SECRET_KEY_BASE=rails-secret-value", "diagnostic: SECRET_KEY_BASE=[REDACTED]\n"),
+    ('{"aws_access_key_id": "AKIATESTJSON"}', 'diagnostic: {"aws_access_key_id": "[REDACTED]"}\n'),
+    ("x-amz-security-token: amz-token-leak-value", "diagnostic: x-amz-security-token: [REDACTED]\n"),
+    ("X-Auth-Token: abcdefghij", "diagnostic: X-Auth-Token: [REDACTED]\n"),
+    ('{"api_key_id": "x"}', 'diagnostic: {"api_key_id": "[REDACTED]"}\n'),
+    ("TOKEN_FILE=/run/secrets/tok", "diagnostic: TOKEN_FILE=/run/secrets/tok\n"),
+    ("AWS_KEY_FILE=/x", "diagnostic: AWS_KEY_FILE=/x\n"),
+    ("token_count: 5", "diagnostic: token_count: 5\n"),
+]
+_GR108_144_IDS = [
+    "GR-141-leftover-eq-unquoted",
+    "GR-141-leftover-colon-unquoted",
+    "GR-141-leftover-eq-quoted",
+    "GR-141-double-eq-quoted",
+    "GR-141-double-colon-quoted",
+    "GR-142-json-array-value",
+    "GR-142-json-object-value",
+    "GR-143-NULL",
+    "GR-143-TRUE",
+    "GR-143-True",
+    "GR-143-False",
+    "GR-143-nulL",
+    "GR-143-literal-null",
+    "GR-143-literal-true",
+    "GR-143-literal-false",
+    "GR-108-aws-access-key-id",
+    "GR-108-oci-cli-key-content",
+    "GR-108-secret-key-base",
+    "GR-108-json-aws-access-key-id",
+    "GR-108-amz-security-token",
+    "GR-108-x-auth-token",
+    "GR-108-api-key-id-contract-change",
+    "GR-108-token-file-preserved",
+    "GR-108-aws-key-file-preserved",
+    "GR-108-token-count-preserved",
+]
+
+
+@pytest.mark.parametrize("raw,expected", _GR108_144_CASES, ids=_GR108_144_IDS)
+def test_sanitize_deploy_diagnostic_gr108_141_144_canaries(raw: str, expected: str) -> None:
+    """GR-144: byte-exact canaries for leftover separators, composites, case-exact literals, cloud keys."""
+    out = _run_sanitizer(raw + "\n")
+    assert out == expected
+
+
+def test_sanitize_deploy_diagnostic_gr109_smoke_wrap_sentinel() -> None:
+    """GR-109: SMOKE_WRAP unquoted heredoc + declare -f keeps sentinel semantics; no SOH byte."""
+    driver = f"""
+source "{SCRIPT}"
+cat <<SMOKE_WRAP
+$(declare -f sanitize_deploy_diagnostic)
+$(cat <<'SMOKE'
+printf '%s\\n' "$1" | sanitize_deploy_diagnostic
+SMOKE
+)
+SMOKE_WRAP
+"""
+    rendered = subprocess.run(["bash", "-c", driver], capture_output=True, check=True)
+    assert rendered.stdout, rendered.stderr
+
+    def _run_wrap(raw: str) -> bytes:
+        result = subprocess.run(
+            ["bash", "-s", raw],
+            input=rendered.stdout,
+            capture_output=True,
+            check=True,
+        )
+        return result.stdout
+
+    nul_out = _run_wrap('{"password": nul}')
+    null_out = _run_wrap('{"password": null}')
+    assert nul_out == b'diagnostic: {"password": [REDACTED]}\n', nul_out
+    assert null_out == b'diagnostic: {"password": null}\n', null_out
+    assert b"\001" not in nul_out
+    assert b"\001" not in null_out
+
+
+def test_sanitize_deploy_diagnostic_preserves_benign_token_shapes() -> None:
+    """Existing canaries: token_count and ready detail stay intact."""
+    raw = (
+        "token_count=5\n"
+        '{"status": "ok", "token_count": 5}\n'
+        '{"detail": "ready"}\n'
+    )
+    out = _run_sanitizer(raw)
+    assert "token_count=5" in out
+    assert '"status": "ok", "token_count": 5' in out
+    assert '"detail": "ready"' in out
+    assert "[REDACTED]" not in out
+
+
+def test_sanitizer_sed_defined_once() -> None:
+    """W-05: one sanitizer definition; smoke heredoc must call it, not copy it."""
+    result = subprocess.run(
+        ["grep", "-Fc", "api[-_]?key", str(SCRIPT)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert result.stdout.strip() == "1"
+    source = SCRIPT.read_text()
+    assert source.count("sanitize_deploy_diagnostic() {") == 1
+    heredoc = _boot_smoke_heredoc()
+    assert "sanitize_deploy_diagnostic" in heredoc
+    smoke_only = heredoc[heredoc.index("set -euo pipefail") :]
+    assert "sanitize_deploy_diagnostic() {" not in smoke_only
+
+
+def test_boot_smoke_curl_stderr_is_sanitized(tmp_path: Path) -> None:
+    """W-03: last-attempt curl stderr is prefixed and redacted."""
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=2,
+        poll_s=1,
+        attempts=1,
+        extra_env={
+            "FAKE_HEALTH_CODE": "000",
+            "FAKE_CURL_STDERR": "password=hunter2",
+        },
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "hunter2" not in combined
+    assert "diagnostic: " in combined
+    assert "[REDACTED]" in combined
+
+
+def test_cid_capture_stderr_never_leaks_unprefixed(tmp_path: Path) -> None:
+    """W-02: hunter2 on ssh stderr never reaches the log raw; stdout cid stays usable."""
+    result = _run_capture_failure_evidence(
+        tmp_path,
+        cid_stdout=(VALID_CID + "\n").encode(),
+        cid_stderr=b"password=hunter2\n",
+    )
+    combined = (result.stdout + result.stderr).decode()
+    assert result.returncode == 0, combined
+    assert "hunter2" not in combined
+    assert "[REDACTED]" in combined
+    args = (tmp_path / "ssh-args").read_text()
+    assert "docker logs" in args
     body = _function_body("capture_failure_evidence")
-    assert "no api container" in body
-    assert "docker logs --tail 80" in body
-    assert "api container not found" not in body
-    assert body.index("[ -n") < body.index("docker logs --tail 80") < body.index("no api container")
+    cid_idx = body.index("ps -q")
+    snippet = body[cid_idx : cid_idx + 160]
+    assert "2>&1" not in snippet
+    assert '2>"${cid_err}"' in body
+
+
+def test_verify_health_and_ready_bodies_redact_secrets(tmp_path: Path) -> None:
+    """W-04: /health and /ready bodies printed by do_verify go through the sanitizer."""
+    curl_log = tmp_path / "curl.log"
+    driver = tmp_path / "verify-driver.sh"
+    driver.write_text(
+        f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+ACX_VERIFY_ATTEMPTS=1
+ACX_VERIFY_SLEEP=0
+ACX_VERIFY_EXPECT_LOCAL=1
+verify_running_image_matches_deployed() {{ return 0; }}
+verify_live_gpu_snapshots() {{ return 0; }}
+curl() {{
+  printf '%s\\n' "$*" >>"{curl_log}"
+  url="${{@: -1}}"
+  if [[ "$url" == *"/ready"* ]]; then
+    printf '%s\\n%s' '{{"ready":true,"token":"hunter2"}}' '200'
+    return 0
+  fi
+  printf '%s\\n%s' '{{"commit_sha":"deadbeefdeadbeef","status":"ok","image_variant":"recognition","password":"hunter2"}}' '200'
+  return 0
+}}
+do_verify dev
+'''
+    )
+    result = subprocess.run(
+        ["bash", str(driver)],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=dict(os.environ),
+        cwd=SCRIPT.parents[2],
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    assert "hunter2" not in combined
+    assert "[REDACTED]" in combined
+    assert "non-gating" in combined
+
+
+def test_unexpected_container_id_is_sanitized_not_no_api_container(tmp_path: Path) -> None:
+    """W-07: non-hex cid prints unexpected-container-id, never 'no api container'."""
+    result = _run_capture_failure_evidence(
+        tmp_path,
+        cid_stdout=b"password=hunter2\nnot-a-valid-cid\n",
+    )
+    combined = (result.stdout + result.stderr).decode()
+    assert result.returncode == 0, combined
+    assert "hunter2" not in combined
+    assert "unexpected container id output" in combined
+    assert "no api container" not in combined
+    assert "[REDACTED]" in combined
+    args = (tmp_path / "ssh-args").read_text()
+    assert "docker logs" not in args
+
+
+def test_compose_project_name_read_from_remote_env(tmp_path: Path) -> None:
+    """W-08: remote .env COMPOSE_PROJECT_NAME is grepped; fallback is acx-${env}."""
+    result = _run_capture_failure_evidence(tmp_path, phase="pre_candidate")
+    combined = (result.stdout + result.stderr).decode()
+    assert result.returncode == 0, combined
+    args = (tmp_path / "ssh-args").read_text()
+    assert "grep -m1 '^COMPOSE_PROJECT_NAME='" in args
+    assert ".env" in args
+    assert "acx-dev" in args
+    assert "COMPOSE_PROJECT_NAME" in combined
+    assert "fallback acx-dev" in combined
+
+
+def test_function_body_does_not_overcapture_boot_smoke() -> None:
+    """Slice do_boot_smoke at the next top-level fn, not the next section header."""
+    body = _function_body("do_boot_smoke")
+    assert "do_boot_smoke() {" in body
+    assert "repair_blob_volume_ownership() {" not in body
+    assert "do_restart() {" not in body
+    assert "capture_failure_evidence() {" not in body
+    restart = _function_body("do_restart")
+    assert "restore_env_tag_to_rollback() {" not in restart
+
+
+def test_boot_smoke_deadline_kill_still_emits_health_body(tmp_path: Path) -> None:
+    """EXIT trap must print last_health_body even when the outer deadline fires."""
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=10,
+        poll_s=2,
+        attempts=6,
+        extra_env={
+            "FAKE_HEALTH_CODE": "503",
+            "FAKE_HEALTH_BODY": '{"status":"fail","note":"deadline-kill-body","password":"hunter2"}',
+        },
+        wrap_deadline=2,
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "deadline-kill-body" in combined
+    assert "hunter2" not in combined
+    assert CRASH_LOG in combined
+    assert "smoke container logs unavailable" not in combined
+
+
+def test_cid_stdout_hex_collects_logs_when_stderr_warns(tmp_path: Path) -> None:
+    """Stderr after a valid cid must not skip docker logs."""
+    result = _run_capture_failure_evidence(
+        tmp_path,
+        cid_stdout=(VALID_CID + "\n").encode(),
+        cid_stderr=b"WARNING: password=hunter2\n",
+    )
+    combined = (result.stdout + result.stderr).decode()
+    assert result.returncode == 0, combined
+    assert "hunter2" not in combined
+    assert "unexpected container id output" not in combined
+    assert "no api container" not in combined
+    args = (tmp_path / "ssh-args").read_text()
+    assert "docker logs" in args
+    assert VALID_CID in args
+
+
+def test_do_verify_failure_warn_sanitizes_body(tmp_path: Path) -> None:
+    """X-04: do_verify fetch-failure warn must not leak secrets or raw C0 bytes."""
+    driver = tmp_path / "verify-fail-driver.sh"
+    driver.write_text(
+        f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+ACX_VERIFY_ATTEMPTS=1
+ACX_VERIFY_SLEEP=0
+ACX_VERIFY_EXPECT_LOCAL=1
+verify_running_image_matches_deployed() {{ return 0; }}
+verify_live_gpu_snapshots() {{ return 0; }}
+curl() {{
+  printf '%s' $'password=hunter2\\001'
+  return 7
+}}
+do_verify dev
+'''
+    )
+    result = subprocess.run(
+        ["bash", str(driver)],
+        capture_output=True,
+        check=False,
+        env=dict(os.environ),
+        cwd=SCRIPT.parents[2],
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert b"hunter2" not in combined
+    assert b"\x01" not in combined
+    assert b"diagnostic:" in combined
+    assert b"Health check fetch failed" in combined
+
+
+def test_verify_restored_runtime_warn_sanitizes_body(tmp_path: Path) -> None:
+    """X-04: rollback health warn must not leak secrets or raw C0 bytes."""
+    driver = tmp_path / "restore-driver.sh"
+    digest = "iad.ocir.io/idu2kqqe2jxy/acx-backend@sha256:" + ("a" * 64)
+    driver.write_text(
+        f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+ACX_VERIFY_ATTEMPTS=1
+ACX_VERIFY_SLEEP=0
+curl() {{
+  printf '%s' $'password=hunter2\\001'
+  return 7
+}}
+verify_running_image_digest() {{ return 1; }}
+verify_restored_runtime dev "{digest}"
+'''
+    )
+    result = subprocess.run(
+        ["bash", str(driver)],
+        capture_output=True,
+        check=False,
+        env=dict(os.environ),
+        cwd=SCRIPT.parents[2],
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert b"hunter2" not in combined
+    assert b"\x01" not in combined
+    assert b"diagnostic:" in combined
+    assert b"Rollback health/digest verification failed" in combined
+
+
+def test_compose_project_dequotes_remote_env_value(tmp_path: Path) -> None:
+    """X-05: quoted COMPOSE_PROJECT_NAME must become an unquoted docker ps filter."""
+    remote = tmp_path / "opt"
+    remote.mkdir()
+    (remote / ".env").write_text('COMPOSE_PROJECT_NAME="acx-prod"\n')
+    docker_log = tmp_path / "docker.log"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _write_executable(
+        fake_bin / "docker",
+        f"""#!/usr/bin/env bash
+printf '%s\\n' "$*" >>"{docker_log}"
+exit 0
+""",
+    )
+    driver = tmp_path / "compose-driver.sh"
+    driver.write_text(
+        f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+env_to_remote_dir() {{ printf '%s\\n' "{remote}"; }}
+run_with_deadline() {{ shift 2; "$@"; }}
+ssh() {{
+  remote_cmd="${{@: -1}}"
+  PATH="{fake_bin}:$PATH" bash -c "$remote_cmd"
+}}
+capture_failure_evidence dev pre_candidate
+'''
+    )
+    result = subprocess.run(
+        ["bash", str(driver)],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=dict(os.environ),
+        cwd=SCRIPT.parents[2],
+    )
+    assert result.returncode == 0, result.stderr
+    logged = docker_log.read_text()
+    assert "label=com.docker.compose.project=acx-prod" in logged
+    assert 'label=com.docker.compose.project="acx-prod"' not in logged
+    assert "label=com.docker.compose.project='acx-prod'" not in logged
+
+
+def test_do_verify_continues_when_sanitizer_pipeline_fails(tmp_path: Path) -> None:
+    """X-06: a failing sanitizer sed must print fallback and not abort verify."""
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    state = tmp_path / "sed-state"
+    state.mkdir()
+    _write_executable(
+        fake_bin / "sed",
+        f"""#!/usr/bin/env bash
+if [[ ! -f "{state}/failed" ]]; then
+  touch "{state}/failed"
+  exit 1
+fi
+exec /usr/bin/sed "$@"
+""",
+    )
+    expected = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    health_body = (
+        '{"commit_sha":"' + expected + '","status":"ok","image_variant":"recognition"}'
+    )
+    driver = tmp_path / "sed-fail-driver.sh"
+    driver.write_text(
+        f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+ACX_VERIFY_ATTEMPTS=1
+ACX_VERIFY_SLEEP=0
+ACX_VERIFY_EXPECT_LOCAL=1
+verify_running_image_matches_deployed() {{ return 0; }}
+verify_live_gpu_snapshots() {{ return 0; }}
+curl() {{
+  url="${{@: -1}}"
+  if [[ "$url" == *"/ready"* ]]; then
+    printf '%s\\n%s' '{{"ready":true}}' '200'
+    return 0
+  fi
+  printf '%s\\n%s' '{health_body}' '200'
+  return 0
+}}
+do_verify dev
+'''
+    )
+    env = dict(os.environ)
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+    result = subprocess.run(
+        ["bash", str(driver)],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+        cwd=SCRIPT.parents[2],
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+    assert "diagnostic:" in combined
+    assert "unavailable" in combined
+
+
+def _run_do_boot_smoke_wrapper(
+    tmp_path: Path,
+    *,
+    extra_script: str = "",
+    unread_fifo: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    payload = tmp_path / "smoke-wrap"
+    ssh_args = tmp_path / "ssh-args"
+    image = "iad.ocir.io/idu2kqqe2jxy/acx-backend@sha256:" + ("a" * 64)
+    driver = tmp_path / "wrap-driver.sh"
+    driver.write_text(
+        f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+preflight_remote_ocir_auth() {{ return 0; }}
+assert_remote_disk_headroom_for_pull() {{ return 0; }}
+_pull_ref_remote() {{ return 0; }}
+remote_image_digest_ref() {{ printf '%s\\n' "$1"; }}
+run_with_deadline() {{
+  shift 2
+  "$@"
+}}
+ssh() {{
+  printf '%s\\n' "$*" >>"{ssh_args}"
+  if [[ "$*" == *"bash -s"* ]]; then
+    cat >"{payload}"
+  fi
+  return 0
+}}
+{extra_script}
+do_boot_smoke dev "{image}"
+'''
+    )
+    env = dict(os.environ)
+    if unread_fifo:
+        result = _run_bash_with_unread_fifo(driver, tmp_path, env)
+    else:
+        result = subprocess.run(
+            ["bash", str(driver)],
+            text=True,
+            capture_output=True,
+            check=False,
+            env=env,
+            cwd=SCRIPT.parents[2],
+        )
+    result._payload = payload  # type: ignore[attr-defined]
+    result._ssh_args = ssh_args  # type: ignore[attr-defined]
+    return result
+
+
+def test_do_boot_smoke_wrap_payload_includes_sanitizer_and_parses(tmp_path: Path) -> None:
+    """X-07: composed SMOKE_WRAP payload includes sanitizer + set -euo and bash -n."""
+    result = _run_do_boot_smoke_wrapper(tmp_path, unread_fifo=True)
+    payload = (tmp_path / "smoke-wrap").read_text()
+    assert result.returncode == 0, result.stderr
+    assert "sanitize_deploy_diagnostic ()" in payload or "sanitize_deploy_diagnostic()" in payload
+    assert "set -euo pipefail" in payload
+    parsed = subprocess.run(["bash", "-n"], input=payload, text=True, capture_output=True, check=False)
+    assert parsed.returncode == 0, parsed.stderr
+
+
+def test_do_boot_smoke_passes_pg_ready_budget_as_eighth_arg(tmp_path: Path) -> None:
+    """LR-04: wrapper bash -s arg list carries pg_ready_budget after dropping attempts."""
+    result = _run_do_boot_smoke_wrapper(tmp_path, unread_fifo=True)
+    assert result.returncode == 0, result.stderr
+    args_text = (tmp_path / "ssh-args").read_text()
+    bash_s_line = next(line for line in args_text.splitlines() if "bash -s" in line)
+    remote = bash_s_line.split("bash -s", 1)[1].strip()
+    wrap_args = remote.split()
+    # env image remote_dir timeout poll vlm_budget pg_ready_budget setup_slack
+    assert wrap_args[5] == "0"
+    assert wrap_args[6] == "30"
+    assert wrap_args[7] == "30"
+    assert "pgvector/pgvector:pg17" in args_text
+
+
+def test_boot_smoke_health_loop_uses_full_wall_clock(tmp_path: Path) -> None:
+    """SB-01: instant ECONNREFUSED still polls for health_budget minus last-curl guard."""
+    budget_s = 24
+    poll_s = 2
+    trap_docker_s = 10
+    health_budget = max(1, budget_s - (trap_docker_s + poll_s))
+    started = time.monotonic()
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=budget_s,
+        poll_s=poll_s,
+        attempts=6,
+        pg_budget=1,
+        extra_env={"FAKE_HEALTH_CODE": "000"},
+    )
+    elapsed = time.monotonic() - started
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    assert elapsed >= max(0, health_budget - poll_s) - 1
+    assert elapsed < budget_s + 4
+
+
+def test_boot_smoke_pg_wait_is_seconds_bounded(tmp_path: Path) -> None:
+    """SB-02: pg ready-wait is SECONDS-bounded, not seq-iteration bounded."""
+    started = time.monotonic()
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=2,
+        poll_s=1,
+        attempts=1,
+        pg_budget=3,
+        extra_env={"FAKE_PG_READY": "0", "FAKE_PG_EXEC_SLEEP": "2"},
+    )
+    elapsed = time.monotonic() - started
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    assert "postgres failed to become ready" in combined
+    assert elapsed >= 2
+    assert elapsed < 7
+
+
+def test_boot_smoke_deadline_reports_phase_unknown(tmp_path: Path) -> None:
+    """SB-03: smoke_rc 124 reports composite deadline and phase unknown."""
+    image = "iad.ocir.io/idu2kqqe2jxy/acx-backend@sha256:" + ("a" * 64)
+    driver = tmp_path / "timeout-driver.sh"
+    driver.write_text(
+        f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+preflight_remote_ocir_auth() {{ return 0; }}
+assert_remote_disk_headroom_for_pull() {{ return 0; }}
+_pull_ref_remote() {{ return 0; }}
+remote_image_digest_ref() {{ printf '%s\\n' "$1"; }}
+run_with_deadline() {{
+  local label="$2"
+  shift 2
+  if [[ "$label" == *"health gate"* ]]; then
+    "$@" >/dev/null
+    return 124
+  fi
+  "$@" >/dev/null
+  return 0
+}}
+ssh() {{
+  if [[ "$*" == *"bash -s"* ]]; then
+    cat >/dev/null
+  fi
+  return 0
+}}
+do_boot_smoke dev "{image}"
+'''
+    )
+    result = subprocess.run(
+        ["bash", str(driver)],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=dict(os.environ),
+        cwd=SCRIPT.parents[2],
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "phase unknown" in combined
+    assert "composite deadline" in combined
+    assert "/health never came up" not in combined
+
+
+def test_short_hex_container_id_is_rejected(tmp_path: Path) -> None:
+    """SB-05: 7-hex stdout is unexpected container id output, not a usable cid."""
+    result = _run_capture_failure_evidence(tmp_path, cid_stdout=b"deadbee\n")
+    combined = (result.stdout + result.stderr).decode()
+    assert result.returncode == 0, combined
+    assert "unexpected container id output" in combined
+    args = (tmp_path / "ssh-args").read_text()
+    assert "docker logs" not in args
+    assert "deadbee" not in args
+
+
+def test_boot_smoke_trap_handles_term_and_int(tmp_path: Path) -> None:
+    """GR-37: SIGTERM the smoke process group; trap still rm -f both containers."""
+    state, remote, env = _prepare_smoke_env(tmp_path, {"FAKE_HEALTH_CODE": "000"})
+    smoke = tmp_path / "boot-smoke.sh"
+    smoke.write_text(_boot_smoke_heredoc())
+    image = "iad.ocir.io/idu2kqqe2jxy/acx-backend@sha256:" + ("a" * 64)
+    proc = subprocess.Popen(
+        [
+            "bash",
+            str(smoke),
+            "dev",
+            image,
+            str(remote),
+            "30",
+            "2",
+            "0",
+            "1",
+        ],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=env,
+        start_new_session=True,
+    )
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline:
+        if (state / "docker.log").exists() and "run " in (state / "docker.log").read_text():
+            break
+        if proc.poll() is not None:
+            break
+        time.sleep(0.05)
+    time.sleep(1)
+    if proc.poll() is None:
+        os.killpg(proc.pid, signal.SIGTERM)
+    stdout, stderr = proc.communicate(timeout=10)
+    combined = (stdout or "") + (stderr or "")
+    assert proc.returncode in (143, 124), combined
+    log = (state / "docker.log").read_text()
+    assert re.search(r"rm -f acx-smoke-dev-\d+", log), log
+    assert re.search(r"rm -f acx-smoke-pg-dev-\d+", log), log
+
+
+def test_do_boot_smoke_prepull_failure_skips_health_gate(tmp_path: Path) -> None:
+    """GR-31 / GR-06: failed pgvector pre-pull must not send the smoke-body payload."""
+    extra = '''
+run_with_deadline() {
+  local label="$2"
+  shift 2
+  if [[ "$label" == *"pgvector pull"* ]]; then
+    return 1
+  fi
+  "$@"
+}
+'''
+    result = _run_do_boot_smoke_wrapper(tmp_path, extra_script=extra, unread_fifo=True)
+    combined = result.stdout + result.stderr
+    payload = tmp_path / "smoke-wrap"
+    ssh_args = (tmp_path / "ssh-args").read_text()
+    assert result.returncode == 1, combined
+    assert "pre-pull of pgvector/pgvector:pg17 failed" in combined
+    assert "will retry" not in combined
+    assert "bash -s" not in ssh_args
+    assert (not payload.exists()) or payload.read_text() == ""
+
+
+def test_boot_smoke_pg_run_uses_pull_never(tmp_path: Path) -> None:
+    """GR-31: inner pg docker run must not pull; pre-pull is fail-closed."""
+    result = _run_boot_smoke(tmp_path, budget_s=2, poll_s=1, pg_budget=1)
+    log = _docker_log(result)
+    run_lines = [line for line in log.splitlines() if line.startswith("run ")]
+    pg_run = next(line for line in run_lines if "pgvector" in line)
+    assert "--pull=never" in pg_run
+
+
+def test_boot_smoke_trap_still_rms_when_logs_hang(tmp_path: Path) -> None:
+    """GR-32 / GR-04: timeout-bounded logs must not skip rm/volume cleanup."""
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=2,
+        poll_s=1,
+        pg_budget=1,
+        extra_env={"FAKE_LOGS_SLEEP": "5", "FAKE_HEALTH_CODE": "000"},
+        wrap_deadline=2,
+    )
+    log = _docker_log(result)
+    assert re.search(r"rm -f acx-smoke-dev-\d+", log), log
+    assert re.search(r"rm -f acx-smoke-pg-dev-\d+", log), log
+    assert "volume rm -f" in log
+    assert result.returncode != 0
+
+
+def test_boot_smoke_pg_exec_per_call_timeout(tmp_path: Path) -> None:
+    """GR-33 / GR-04: hung pg_isready must not consume the whole pg budget twice."""
+    started = time.monotonic()
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=2,
+        poll_s=1,
+        pg_budget=3,
+        extra_env={"FAKE_PG_READY": "0", "FAKE_PG_EXEC_SLEEP": "30"},
+    )
+    elapsed = time.monotonic() - started
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    assert "postgres failed to become ready" in combined
+    assert elapsed < 2 * 3
+    log = _docker_log(result)
+    assert re.search(r"rm -f acx-smoke-pg-dev-\d+", log), log
+
+
+def test_boot_smoke_port_timeout_fails_setup_explicitly(tmp_path: Path) -> None:
+    """GR-39: hung docker port must fail with 'smoke setup timed out' and still clean up."""
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=2,
+        poll_s=1,
+        pg_budget=1,
+        extra_env={"FAKE_PORT_SLEEP": "10"},
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    assert "smoke setup timed out" in combined
+    log = _docker_log(result)
+    assert re.search(r"rm -f acx-smoke-dev-\d+", log), log
+    assert re.search(r"rm -f acx-smoke-pg-dev-\d+", log), log
+
+
+def test_boot_smoke_removes_network_only_on_failure(tmp_path: Path) -> None:
+    """GR-34: trap removes a smoke-created network on failure, not on success."""
+    fail_dir = tmp_path / "fail"
+    fail_dir.mkdir()
+    fail = _run_boot_smoke(
+        fail_dir,
+        budget_s=2,
+        poll_s=1,
+        pg_budget=1,
+        extra_env={"FAKE_NET_EXISTS": "0", "FAKE_HEALTH_CODE": "000"},
+    )
+    fail_log = _docker_log(fail)
+    assert "network create" in fail_log
+    assert "network rm" in fail_log
+    create_at = fail_log.index("network create")
+    rm_at = fail_log.index("network rm")
+    assert create_at < rm_at
+
+    ok_dir = tmp_path / "ok"
+    ok_dir.mkdir()
+    ok = _run_boot_smoke(
+        ok_dir,
+        budget_s=2,
+        poll_s=1,
+        pg_budget=1,
+        extra_env={"FAKE_NET_EXISTS": "0", "FAKE_HEALTH_CODE": "200"},
+    )
+    ok_log = _docker_log(ok)
+    assert ok.returncode == 0, ok.stdout + ok.stderr
+    assert "network create" in ok_log
+    assert "network rm" not in ok_log
+
+
+def test_cid_capture_uses_last_64_hex_line(tmp_path: Path) -> None:
+    """GR-35 / GR-36: last 64-hex wins; trim; lowercase; reject short hex."""
+    cid = "a" * 64
+    fixtures = [
+        f"WARNING: x\ncafebabeface\n{cid}\n".encode(),
+        f"1700000000000\n{cid}\n".encode(),
+        f"{cid} \n".encode(),
+        f"{'A' * 64}\n".encode(),
+    ]
+    for stdout in fixtures:
+        case_dir = tmp_path / str(abs(hash(stdout)))
+        case_dir.mkdir()
+        result = _run_capture_failure_evidence(case_dir, cid_stdout=stdout)
+        combined = (result.stdout + result.stderr).decode()
+        assert result.returncode == 0, combined
+        args = (case_dir / "ssh-args").read_text()
+        assert f"docker logs --tail 80 {cid}" in args, args
+
+
+def test_boot_smoke_last_curl_does_not_eat_diag_reserve(tmp_path: Path) -> None:
+    """GR-05: do not start a health curl that would overrun the diag reserve."""
+    poll_s = 2
+    budget_s = 16  # health_budget = 16 - 12 = 4; second curl would eat the reserve
+    started = time.monotonic()
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=budget_s,
+        poll_s=poll_s,
+        pg_budget=1,
+        extra_env={"FAKE_HEALTH_CODE": "000", "FAKE_HEALTH_SLEEP": str(poll_s)},
+    )
+    elapsed = time.monotonic() - started
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    assert "smoke container logs" in combined
+    # One curl of poll_s plus setup/trap, not a second curl of poll_s.
+    assert elapsed < (poll_s * 2) + 2
+
+
+def test_emit_sanitized_evidence_survives_sed_failure(tmp_path: Path) -> None:
+    """GR-03: a failing sanitizer pipeline must not abort emit_sanitized_evidence."""
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    state = tmp_path / "sed-state"
+    state.mkdir()
+    _write_executable(
+        fake_bin / "sed",
+        f"""#!/usr/bin/env bash
+if [[ ! -f "{state}/failed" ]]; then
+  touch "{state}/failed"
+  exit 1
+fi
+exec /usr/bin/sed "$@"
+""",
+    )
+    driver = tmp_path / "emit-driver.sh"
+    driver.write_text(
+        f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+emit_sanitized_evidence "password=hunter2"
+'''
+    )
+    env = dict(os.environ)
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+    result = subprocess.run(
+        ["bash", str(driver)],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+        cwd=SCRIPT.parents[2],
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+    assert "unavailable" in combined
+    assert "hunter2" not in combined
+
+
+def test_do_boot_smoke_import_and_prepull_ssh_use_n_flag(tmp_path: Path) -> None:
+    """LR-03: import-gate and pre-pull ssh must pass -n so they cannot eat stdin."""
+    result = _run_do_boot_smoke_wrapper(tmp_path, unread_fifo=True)
+    assert result.returncode == 0, result.stderr
+    lines = (tmp_path / "ssh-args").read_text().splitlines()
+    non_payload = [line for line in lines if "bash -s" not in line]
+    assert non_payload, lines
+    for line in non_payload:
+        assert " -n " in f" {line} " or line.split()[0:2] == ["-n"] or "-n" in line.split()
+
+
+def _curl_max_times(result: subprocess.CompletedProcess[str]) -> list[int]:
+    state = Path(result._fake_state)  # type: ignore[attr-defined]
+    log = state.joinpath("curl.log")
+    if not log.exists():
+        return []
+    values: list[int] = []
+    for line in log.read_text().splitlines():
+        parts = line.split()
+        for i, part in enumerate(parts):
+            if part == "--max-time" and i + 1 < len(parts):
+                values.append(int(parts[i + 1]))
+    return values
+
+
+def test_boot_smoke_composite_deadline_covers_inner_caps(tmp_path: Path) -> None:
+    """H2E-01: outer deadline must not fire before an explicit inner failure."""
+    setup_slack = 1
+    pg_ready = 1
+    smoke_timeout = 2
+    poll_interval = 2
+    net_create_cap = 10
+    port_cap = 5
+    trap_docker_s = 10
+    margin = 5
+    inner_sum = (
+        net_create_cap
+        + setup_slack
+        + pg_ready
+        + setup_slack
+        + port_cap
+        + smoke_timeout
+        + trap_docker_s
+        + poll_interval
+    )
+    expected_deadline = inner_sum + margin
+    old_composite = pg_ready + smoke_timeout + setup_slack
+    fake_sleep = old_composite + 2
+    image = "iad.ocir.io/idu2kqqe2jxy/acx-backend@sha256:" + ("a" * 64)
+    driver = tmp_path / "composite-driver.sh"
+    driver.write_text(
+        f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+SMOKE_SETUP_SLACK={setup_slack}
+SMOKE_PG_READY_TIMEOUT={pg_ready}
+ACX_SMOKE_TIMEOUT={smoke_timeout}
+preflight_remote_ocir_auth() {{ return 0; }}
+assert_remote_disk_headroom_for_pull() {{ return 0; }}
+_pull_ref_remote() {{ return 0; }}
+remote_image_digest_ref() {{ printf '%s\\n' "$1"; }}
+eval "$(declare -f run_with_deadline | sed '1s/run_with_deadline/run_with_deadline_impl/')"
+run_with_deadline() {{
+  local deadline="$1" label="$2"
+  if [[ "$label" == *"health gate"* ]]; then
+    printf 'CAPTURED_COMPOSITE_DEADLINE=%s\\n' "$deadline" >&2
+  fi
+  run_with_deadline_impl "$@"
+}}
+ssh() {{
+  if [[ "$*" == *"bash -s"* ]]; then
+    cat >/dev/null
+    sleep {fake_sleep}
+    echo "smoke setup timed out" >&2
+    return 1
+  fi
+  return 0
+}}
+do_boot_smoke dev "{image}"
+'''
+    )
+    result = subprocess.run(
+        ["bash", str(driver)],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=dict(os.environ),
+        cwd=SCRIPT.parents[2],
+        timeout=expected_deadline + 10,
+    )
+    combined = result.stdout + result.stderr
+    captured = re.search(r"CAPTURED_COMPOSITE_DEADLINE=(\d+)", combined)
+    assert captured, combined
+    assert int(captured.group(1)) >= expected_deadline, combined
+    assert result.returncode != 124, combined
+    assert "smoke setup timed out" in combined, combined
+    assert "phase unknown" not in combined, combined
+
+
+def test_boot_smoke_owned_net_rm_on_create_timeout(tmp_path: Path) -> None:
+    """GR-81 / A10: timed-out network create still rms a net labeled with this run's nonce."""
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=2,
+        poll_s=1,
+        pg_budget=1,
+        extra_env={
+            "FAKE_NET_EXISTS": "0",
+            "FAKE_NET_CREATE_SLEEP": "12",
+            "FAKE_HEALTH_CODE": "000",
+        },
+    )
+    combined = result.stdout + result.stderr
+    log = _docker_log(result)
+    assert result.returncode != 0, combined
+    assert "network create" in log, log
+    assert "acx.smoke.owner=" in log, log
+    assert "network rm acx-dev-net" in log, log
+    state = Path(result._fake_state)  # type: ignore[attr-defined]
+    assert (state / "network_rm").read_text().strip() == "acx-dev-net"
+
+
+def test_boot_smoke_foreign_net_not_removed(tmp_path: Path) -> None:
+    """GR-81: trap must not rm a net whose ownership label is absent or foreign."""
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=2,
+        poll_s=1,
+        pg_budget=1,
+        extra_env={
+            "FAKE_NET_EXISTS": "1",
+            "FAKE_NET_OWNER": "compose-owned",
+            "FAKE_HEALTH_CODE": "000",
+        },
+    )
+    combined = result.stdout + result.stderr
+    log = _docker_log(result)
+    assert result.returncode != 0, combined
+    assert "network rm" not in log, log
+    state = Path(result._fake_state)  # type: ignore[attr-defined]
+    assert not (state / "network_rm").exists()
+
+
+def test_boot_smoke_first_probe_max_time_capped_by_remaining(tmp_path: Path) -> None:
+    """GR-82 / A5: first health curl --max-time is remaining budget, not a full poll_s."""
+    budget_s = 5
+    poll_s = 2
+    trap_docker_s = 10
+    health_budget = max(1, budget_s - (trap_docker_s + poll_s))
+    started = time.monotonic()
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=budget_s,
+        poll_s=poll_s,
+        pg_budget=1,
+        extra_env={"FAKE_HEALTH_CODE": "000", "FAKE_HEALTH_SLEEP": str(poll_s)},
+    )
+    elapsed = time.monotonic() - started
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    max_times = _curl_max_times(result)
+    assert max_times, combined
+    assert all(mt <= health_budget for mt in max_times), max_times
+    assert elapsed < budget_s + 4
+
+
+def test_boot_smoke_timeout_fallback_bounds_logs_then_rms(tmp_path: Path) -> None:
+    """GR-83 / A13: without GNU timeout, hung logs must not delay rm past the 2s bound."""
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=2,
+        poll_s=1,
+        pg_budget=1,
+        extra_env={"FAKE_LOGS_SLEEP": "5", "FAKE_HEALTH_CODE": "000"},
+        hide_timeout=True,
+    )
+    combined = result.stdout + result.stderr
+    log = _docker_log(result)
+    state = Path(result._fake_state)  # type: ignore[attr-defined]
+    assert result.returncode != 0, combined
+    assert re.search(r"rm -f acx-smoke-dev-\d+", log), log
+    logs_started = float((state / "logs_started").read_text().strip())
+    first_rm = float((state / "first_rm").read_text().strip())
+    assert first_rm - logs_started < 2.8, first_rm - logs_started
+    logs_at = log.index("logs ")
+    rm_at = log.index("rm -f")
+    assert logs_at < rm_at, log
+
+
+def test_boot_smoke_logs_still_emitted_after_bounded_cleanup(tmp_path: Path) -> None:
+    """GR-83: a normal logs stub's output still appears in stderr after cleanup."""
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=2,
+        poll_s=1,
+        pg_budget=1,
+        hide_timeout=True,
+    )
+    combined = result.stdout + result.stderr
+    log = _docker_log(result)
+    assert result.returncode != 0, combined
+    assert CRASH_LOG in combined
+    assert "smoke container logs unavailable" not in combined
+    assert log.index("logs ") < log.index("rm -f"), log
+
+
+def test_boot_smoke_invalid_setup_slack_fails_closed(tmp_path: Path) -> None:
+    """GR-84: $8=abc fails with smoke setup_slack invalid (rc 2) before any docker call."""
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=2,
+        poll_s=1,
+        pg_budget=1,
+        setup_slack="abc",
+        extra_env={"FAKE_HEALTH_CODE": "200"},
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode == 2, combined
+    assert "smoke setup_slack invalid" in combined, combined
+    state = Path(result._fake_state)  # type: ignore[attr-defined]
+    docker_log = state / "docker.log"
+    assert (not docker_log.exists()) or docker_log.read_text() == ""
+
+
+def test_boot_smoke_vlm_flag_zero_is_not_a_budget(tmp_path: Path) -> None:
+    """GR-84: $6 is the vlm flag (0/1), not a positive-integer budget."""
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=2,
+        poll_s=1,
+        pg_budget=1,
+        vlm_budget=0,
+        extra_env={"FAKE_HEALTH_CODE": "200"},
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+    assert "invalid" not in combined
+
+
+def test_boot_smoke_health_302_is_not_success(tmp_path: Path) -> None:
+    """VLMHEA-L-06: 3xx must not set smoke_passed; stderr names the code."""
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=2,
+        poll_s=1,
+        pg_budget=1,
+        extra_env={"FAKE_HEALTH_CODE": "302", "FAKE_HEALTH_BODY": '{"status":"redir"}'},
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    assert "smoke health OK" not in combined, combined
+    assert "302" in combined, combined
+

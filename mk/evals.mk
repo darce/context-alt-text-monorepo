@@ -135,7 +135,7 @@ eval-strata:
 # =============================================================================
 #
 # Rule: context-pack echo (title + caption + description). No VLM, no pixels.
-# Split: scene/tests/seed/golden.json as L3 left it (held-out reported half).
+# Split: scene/tests/seed/held_out_golden.json (frozen held-out reported half).
 # EVAL_SERVICE and ROOT_MAKEFILE_DIR are defined above / by the root Makefile.
 
 EVAL_PYTHON ?= python3

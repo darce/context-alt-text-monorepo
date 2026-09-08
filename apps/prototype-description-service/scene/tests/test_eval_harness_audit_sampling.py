@@ -395,16 +395,79 @@ def _block_has_audit_skip(block: str) -> bool:
     return _AUDIT_SKIP_TOKEN in {token.lower() for token in info.split()}
 
 
+# BR-57: CommonMark fences are 3+ ` or ~; a closer must match the opener
+# character and length. split("```") is blind to ~~~ and a second
+# split("~~~") would cut a backtick fence whose body contains tildes.
+_OPENING_FENCE = re.compile(r"^( {0,3})(`{3,}|~{3,})(.*)$")
+_CLOSING_FENCE = re.compile(r"^( {0,3})(`{3,}|~{3,})[ \t]*$")
+
+
+def _opening_fence(line: str) -> tuple[str, int, str] | None:
+    match = _OPENING_FENCE.fullmatch(line)
+    if match is None:
+        return None
+    marker, info = match.group(2), match.group(3)
+    char = marker[0]
+    if char == "`" and "`" in info:
+        return None
+    return char, len(marker), info
+
+
+def _closing_fence(line: str, char: str, length: int) -> bool:
+    match = _CLOSING_FENCE.fullmatch(line)
+    if match is None:
+        return False
+    marker = match.group(2)
+    return marker[0] == char and len(marker) >= length
+
+
 def _scope_doc_fence_blocks(text: str) -> list[str]:
-    return [block for index, block in enumerate(text.split("```")) if index % 2 == 1]
+    lines = text.splitlines(keepends=True)
+    blocks: list[str] = []
+    index = 0
+    while index < len(lines):
+        opened = _opening_fence(lines[index].rstrip("\r\n"))
+        if opened is None:
+            index += 1
+            continue
+        char, length, info = opened
+        body_parts: list[str] = []
+        index += 1
+        while index < len(lines):
+            if _closing_fence(lines[index].rstrip("\r\n"), char, length):
+                index += 1
+                break
+            body_parts.append(lines[index])
+            index += 1
+        blocks.append(info + "\n" + "".join(body_parts))
+    return blocks
 
 
 def _fence_containing(text: str, needle: str) -> str:
-    parts = text.split("```")
-    for index, block in enumerate(parts):
-        if index % 2 == 1 and needle in block:
+    for block in _scope_doc_fence_blocks(text):
+        if needle in block:
             return block.strip()
     raise AssertionError(f"no fenced block contains {needle!r}")
+
+
+def _iter_unfenced_lines(text: str) -> list[str]:
+    lines = text.splitlines()
+    out: list[str] = []
+    index = 0
+    while index < len(lines):
+        opened = _opening_fence(lines[index])
+        if opened is None:
+            out.append(lines[index])
+            index += 1
+            continue
+        char, length, _info = opened
+        index += 1
+        while index < len(lines):
+            if _closing_fence(lines[index], char, length):
+                index += 1
+                break
+            index += 1
+    return out
 
 
 def _scope_doc_executable_fences(text: str) -> list[str]:
@@ -459,9 +522,11 @@ def _eval_fence_line(line: str, namespace: dict[str, object]) -> object:
     return eval(compile(ast.Expression(value), str(_SCOPE_DOC), "eval"), namespace)
 
 
-def _assert_published_matches(computed: object, published: object, expr: str) -> None:
+def _assert_published_matches(
+    computed: object, published: object, expr: str, *, source: str = "fence"
+) -> None:
     message = (
-        f"fence publishes {published!r} for {expr!r} but eval returned {computed!r}"
+        f"{source} publishes {published!r} for {expr!r} but eval returned {computed!r}"
     )
     if isinstance(published, dict):
         actual: object = dict(computed) if isinstance(computed, Mapping) else computed
@@ -551,6 +616,319 @@ def _assert_fence_published_comments_match_eval(
     assert pinned > 0, "fence has no published trailing comments to pin"
 
 
+# BR-58: planning n/deff live in GFM tables, not only in fences. Scope to
+# the two sample-size tables (target-margin→n, and ICC/deff/n); other
+# pipe tables are ignored.
+_MARGIN_PP = re.compile(r"^±\s*(?P<pp>\d+(?:\.\d+)?)\s*pp$")
+_HEADER_A = re.compile(r"\ba\s*=\s*([0-9]+(?:\.[0-9]+)?)")
+_HEADER_POPULATION = re.compile(r"\bN\s*=\s*(\d+)")
+_HEADER_MARGIN_PP = re.compile(r"±\s*(\d+(?:\.\d+)?)\s*pp")
+_HTML_COMMENT = re.compile(r"<!--.*?-->", flags=re.DOTALL)
+
+# This scope document intentionally has four executable Python fences. Keep an
+# exact inventory so an indented/nested fence cannot silently leave a published
+# calculation outside the audit. The snippets are stable anchors, rather than
+# line numbers, because prose edits should not invalidate the guard.
+_EXPECTED_EXECUTABLE_FENCE_NEEDLES = (
+    "allocate(strata_sizes=project_strata_image_counts(strata_counts), n=84)",
+    "frame = project_frame_psu_image_counts(entries)   # 241 PSUs",
+    "sum_m_m_minus_1 = sum(m * (m - 1) for m in frame.sizes)",
+    "size_for_margin(margin=0.10, population=640, cluster_size=a, icc=0.044).n  # 114",
+)
+_EXPECTED_MARGIN_TABLE_ROWS = 4
+_EXPECTED_ICC_TABLE_ROWS = 6
+# Published ``n=...`` prose is an operator-facing quantity as well as a table
+# cell. Keep a multiset (rather than only a set) so changing one occurrence to
+# another already-known value cannot preserve a deceptively green inventory.
+_EXPECTED_PUBLISHED_N_VALUES = (
+    84,
+    84,
+    147,
+    198,
+    198,
+    198,
+    239,
+    239,
+    327,
+)
+
+
+def _split_table_row(line: str) -> list[str]:
+    stripped = line.strip()
+    if stripped.startswith("|"):
+        stripped = stripped[1:]
+    if stripped.endswith("|"):
+        stripped = stripped[:-1]
+    return [cell.strip() for cell in stripped.split("|")]
+
+
+def _is_table_row(line: str) -> bool:
+    stripped = line.strip()
+    return stripped.startswith("|") and stripped.endswith("|") and stripped.count("|") >= 2
+
+
+def _is_separator_row(line: str) -> bool:
+    if not _is_table_row(line):
+        return False
+    cells = _split_table_row(line)
+    if not cells:
+        return False
+    return all(re.fullmatch(r":?-{3,}:?", cell.replace(" ", "")) for cell in cells)
+
+
+def _markdown_tables_outside_fences(text: str) -> list[tuple[list[str], list[list[str]]]]:
+    lines = _iter_unfenced_lines(text)
+    tables: list[tuple[list[str], list[list[str]]]] = []
+    index = 0
+    while index < len(lines) - 1:
+        if not _is_table_row(lines[index]) or not _is_separator_row(lines[index + 1]):
+            index += 1
+            continue
+        header = _split_table_row(lines[index])
+        index += 2
+        rows: list[list[str]] = []
+        while (
+            index < len(lines)
+            and _is_table_row(lines[index])
+            and not _is_separator_row(lines[index])
+        ):
+            rows.append(_split_table_row(lines[index]))
+            index += 1
+        tables.append((header, rows))
+    return tables
+
+
+def _header_cell_norm(cell: str) -> str:
+    return re.sub(r"\s+", " ", cell.replace("**", "").strip().lower())
+
+
+def _is_margin_n_table(norms: list[str]) -> bool:
+    return any("target margin" in cell for cell in norms) and any(
+        cell == "n" or cell.startswith("n ") for cell in norms
+    )
+
+
+def _is_icc_deff_n_table(norms: list[str]) -> bool:
+    return any(cell == "icc" for cell in norms) and any(
+        cell == "deff" or cell.startswith("deff ") for cell in norms
+    )
+
+
+def _header_index(norms: list[str], predicate, label: str) -> int:
+    matches = [index for index, cell in enumerate(norms) if predicate(cell)]
+    if not matches:
+        raise AssertionError(f"audited table header missing {label} column: {norms}")
+    assert len(matches) == 1, (
+        f"audited table header has duplicate {label} columns: {norms}"
+    )
+    return matches[0]
+
+
+def _cell_literal(cell: str) -> object | None:
+    return _published_literal(cell.replace("**", "").strip())
+
+
+def _cell_margin(cell: str) -> float:
+    text = cell.replace("**", "").strip()
+    match = _MARGIN_PP.fullmatch(text)
+    if match is None:
+        raise AssertionError(f"table margin cell is not ±N pp: {cell!r}")
+    return float(match.group("pp")) / 100.0
+
+
+def _require_number(value: object, cell: str, label: str) -> int | float:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise AssertionError(f"table {label} cell is not a published number: {cell!r}")
+    return value
+
+
+def _eval_frame_n_and_a() -> tuple[int, float]:
+    frame = project_frame_psu_image_counts(_fir12_entries())
+    return frame.n_entries, kish_effective_cluster_size(frame.sizes)
+
+
+def _assert_header_published_frame_params(
+    header: list[str], a: float, population: int
+) -> None:
+    joined = " ".join(header)
+    a_match = _HEADER_A.search(joined)
+    if a_match is not None:
+        published_a = ast.literal_eval(a_match.group(1))
+        _assert_published_matches(
+            a,
+            published_a,
+            "kish_effective_cluster_size(frame.sizes)",
+            source="table",
+        )
+    pop_match = _HEADER_POPULATION.search(joined)
+    if pop_match is not None:
+        published_pop = int(pop_match.group(1))
+        _assert_published_matches(
+            population, published_pop, "frame.n_entries", source="table"
+        )
+
+
+def _assert_margin_n_table(
+    header: list[str], rows: list[list[str]], population: int
+) -> None:
+    norms = [_header_cell_norm(cell) for cell in header]
+    margin_i = _header_index(norms, lambda cell: "target margin" in cell, "target margin")
+    n_i = _header_index(
+        norms, lambda cell: cell == "n" or cell.startswith("n "), "n"
+    )
+    assert len(rows) == _EXPECTED_MARGIN_TABLE_ROWS, (
+        "target-margin table must contain all four published margin rows; "
+        f"found {len(rows)}"
+    )
+    for row in rows:
+        if len(row) != len(header):
+            raise AssertionError(
+                f"target-margin table row has {len(row)} cells; "
+                f"expected {len(header)}: {row!r}"
+            )
+        margin = _cell_margin(row[margin_i])
+        published_n = _require_number(_cell_literal(row[n_i]), row[n_i], "n")
+        computed = sample_size_for_margin(margin=margin, population=population)
+        _assert_published_matches(
+            computed,
+            published_n,
+            f"sample_size_for_margin(margin={margin}, population={population})",
+            source="table",
+        )
+
+
+def _assert_icc_deff_n_table(
+    header: list[str],
+    rows: list[list[str]],
+    population: int,
+    a: float,
+) -> None:
+    norms = [_header_cell_norm(cell) for cell in header]
+    icc_i = _header_index(norms, lambda cell: cell == "icc", "ICC")
+    deff_i = _header_index(
+        norms, lambda cell: cell == "deff" or cell.startswith("deff "), "deff"
+    )
+    n_i = _header_index(
+        norms, lambda cell: cell == "n" or cell.startswith("n "), "n"
+    )
+    _assert_header_published_frame_params(header, a, population)
+    joined = " ".join(header)
+    margin_match = _HEADER_MARGIN_PP.search(joined)
+    margin = float(margin_match.group(1)) / 100.0 if margin_match is not None else 0.10
+    assert len(rows) == _EXPECTED_ICC_TABLE_ROWS, (
+        "ICC/deff/n table must contain all six published ICC rows; "
+        f"found {len(rows)}"
+    )
+    for row in rows:
+        if len(row) != len(header):
+            raise AssertionError(
+                f"ICC/deff/n table row has {len(row)} cells; "
+                f"expected {len(header)}: {row!r}"
+            )
+        icc = float(
+            _require_number(_cell_literal(row[icc_i]), row[icc_i], "ICC")
+        )
+        published_deff = _require_number(
+            _cell_literal(row[deff_i]), row[deff_i], "deff"
+        )
+        published_n = _require_number(_cell_literal(row[n_i]), row[n_i], "n")
+        record = size_for_margin(
+            margin=margin, population=population, cluster_size=a, icc=icc
+        )
+        _assert_published_matches(
+            round(record.deff, 3),
+            published_deff,
+            f"round(design_effect(cluster_size=a, icc={icc}), 3)",
+            source="table",
+        )
+        _assert_published_matches(
+            record.n,
+            published_n,
+            (
+                "size_for_margin("
+                f"margin={margin}, population={population}, cluster_size=a, icc={icc}).n"
+            ),
+            source="table",
+        )
+
+
+def _assert_scope_doc_published_tables_match_eval(path: Path = _SCOPE_DOC) -> None:
+    text = _HTML_COMMENT.sub("", path.read_text())
+    population, a = _eval_frame_n_and_a()
+    audited = 0
+    for header, rows in _markdown_tables_outside_fences(text):
+        norms = [_header_cell_norm(cell) for cell in header]
+        if _is_margin_n_table(norms):
+            _assert_margin_n_table(header, rows, population)
+            audited += 1
+        elif _is_icc_deff_n_table(norms):
+            _assert_icc_deff_n_table(header, rows, population, a)
+            audited += 1
+    assert audited >= 2, (
+        "scope doc has no target-margin or ICC/deff/n tables to pin "
+        f"(found {audited} audited tables)"
+    )
+
+
+def _assert_scope_doc_fence_inventory(text: str) -> None:
+    fences = _scope_doc_executable_fences(text)
+    assert len(fences) == len(_EXPECTED_EXECUTABLE_FENCE_NEEDLES), (
+        "scope doc executable fence inventory changed: "
+        f"expected {len(_EXPECTED_EXECUTABLE_FENCE_NEEDLES)}, found {len(fences)}"
+    )
+    for needle in _EXPECTED_EXECUTABLE_FENCE_NEEDLES:
+        matches = [block for block in fences if needle in block]
+        assert len(matches) == 1, (
+            f"scope doc executable fence inventory missing or duplicated {needle!r}"
+        )
+
+
+def _assert_scope_doc_success_criteria_numbers(text: str) -> None:
+    # The tables and code fences cover calculations, while this sentence is
+    # the human-facing decision record. Strip comments so hidden HTML cannot
+    # satisfy it, then pin both planning and sensitivity n values.
+    visible = _HTML_COMMENT.sub("", text)
+    normalized = re.sub(r"\s+", " ", visible)
+    expected = re.compile(
+        r"Full-sample n is the pre-registered planning value "
+        r"\*\*n = 198\*\* at ICC=0\.20 .*?"
+        r"sensitivity \*\*n = 239\*\* at ICC=0\.30"
+    )
+    assert expected.search(normalized), (
+        "scope doc success criteria lost the published planning/sensitivity n values"
+    )
+
+
+def _assert_scope_doc_published_n_inventory(text: str) -> None:
+    """Pin every visible ``n=...`` token, including prose outside containers.
+
+    Tables and executable fences have structural checks above, but a reviewer
+    can still copy a wrong sample size into narrative text or an HTML comment
+    without touching either container. Strip comments first, then compare the
+    complete multiset for this document's explicit ``n=`` claims.
+    """
+    visible = _HTML_COMMENT.sub("", text)
+    observed = tuple(
+        sorted(int(match.group("value")) for match in re.finditer(
+            r"\bn\s*=\s*(?P<value>\d+)\b", visible
+        ))
+    )
+    assert observed == tuple(sorted(_EXPECTED_PUBLISHED_N_VALUES)), (
+        "scope doc visible n= quantity inventory changed: "
+        f"expected={sorted(_EXPECTED_PUBLISHED_N_VALUES)} observed={list(observed)}"
+    )
+
+
+def _assert_all_executable_fences_match_eval(
+    text: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fences = _scope_doc_executable_fences(text)
+    assert fences, "scope doc has no executable fences to pin"
+    for block in fences:
+        namespace = _exec_scope_fence(block, monkeypatch)
+        _assert_fence_published_comments_match_eval(block, namespace)
+
+
 def test_published_cells_regenerate_from_fir12_selection_manifest():
     # BR-30: published n must come from the frozen frame through shipped
     # projectors, not a test-module Kish-a name.
@@ -613,19 +991,18 @@ def test_every_scope_doc_executable_fence_published_comment_matches_eval(
     monkeypatch: pytest.MonkeyPatch,
 ):
     doc = _SCOPE_DOC.read_text()
+    _assert_scope_doc_fence_inventory(doc)
     fences = _scope_doc_executable_fences(doc)
-    assert fences, "scope doc has no executable fences to pin"
     raw_fences = _scope_doc_fence_blocks(doc)
     opted_out = [block for block in raw_fences if _block_has_audit_skip(block)]
     assert opted_out, "display-math fences must be explicitly opted out with audit-skip"
     assert len(fences) == len(raw_fences) - len(opted_out)
-    for block in fences:
-        namespace = _exec_scope_fence(block, monkeypatch)
-        _assert_fence_published_comments_match_eval(block, namespace)
+    _assert_all_executable_fences_match_eval(doc, monkeypatch)
 
 
 def test_scope_doc_fence_collector_count_is_all_fences_minus_opt_outs():
     doc = _SCOPE_DOC.read_text()
+    _assert_scope_doc_fence_inventory(doc)
     raw_fences = _scope_doc_fence_blocks(doc)
     opted_out = [block for block in raw_fences if _block_has_audit_skip(block)]
     collected = _scope_doc_executable_fences(doc)
@@ -673,6 +1050,180 @@ def test_psu_census_trailing_comment_is_checked():
     lie = "frame = project_frame_psu_image_counts(entries)  # 999 PSUs, Σm=640, Σm²=6942"
     with pytest.raises(AssertionError, match="999"):
         _assert_fence_published_comments_match_eval(lie, namespace)
+
+
+def test_scope_doc_published_tables_match_eval():
+    _assert_scope_doc_published_tables_match_eval(_SCOPE_DOC)
+    _assert_scope_doc_success_criteria_numbers(_SCOPE_DOC.read_text())
+    _assert_scope_doc_published_n_inventory(_SCOPE_DOC.read_text())
+
+
+def test_scope_doc_fence_inventory_catches_indented_executable_fence(
+    tmp_path: Path,
+):
+    source = _SCOPE_DOC.read_text()
+    old = "```\nimport json\nfrom pathlib import Path\nfrom scripts.eval_harness.audit_sampling import (\n    allocate,"
+    new = "    ```\nimport json\nfrom pathlib import Path\nfrom scripts.eval_harness.audit_sampling import (\n    allocate,"
+    assert old in source
+    mutated = source.replace(old, new, 1)
+    path = tmp_path / "descqual-2-fact-annotation-pilot.md"
+    path.write_text(mutated)
+    with pytest.raises(AssertionError, match="executable fence inventory"):
+        _assert_scope_doc_fence_inventory(path.read_text())
+
+
+def test_scope_doc_table_guard_rejects_blank_line_that_drops_rows(tmp_path: Path):
+    source = _SCOPE_DOC.read_text()
+    old = "| ±15 pp | 41 |\n| ±10 pp | 84 |"
+    new = "| ±15 pp | 41 |\n\n| ±10 pp | 84 |"
+    assert old in source
+    mutated = source.replace(old, new, 1)
+    path = tmp_path / "descqual-2-fact-annotation-pilot.md"
+    path.write_text(mutated)
+    with pytest.raises(AssertionError, match="all four published margin rows"):
+        _assert_scope_doc_published_tables_match_eval(path)
+
+
+def test_scope_doc_table_guard_rejects_duplicate_n_column(tmp_path: Path):
+    source = _SCOPE_DOC.read_text()
+    old = "| target margin | n |\n| --- | --- |\n| ±15 pp | 41 |"
+    new = "| target margin | n | n |\n| --- | --- | --- |\n| ±15 pp | 41 | 41 |"
+    assert old in source
+    mutated = source.replace(old, new, 1)
+    path = tmp_path / "descqual-2-fact-annotation-pilot.md"
+    path.write_text(mutated)
+    with pytest.raises(AssertionError, match="duplicate n"):
+        _assert_scope_doc_published_tables_match_eval(path)
+
+
+def test_scope_doc_success_criteria_guard_rejects_hidden_or_changed_n(tmp_path: Path):
+    source = _SCOPE_DOC.read_text()
+    old = "Full-sample n is the pre-registered planning value **n = 198** at ICC=0.20\n  (sensitivity **n = 239** at ICC=0.30)"
+    new = "Full-sample n is the pre-registered planning value **n = 199** at ICC=0.20\n  (sensitivity **n = 240** at ICC=0.30)"
+    assert old in source
+    mutated = source.replace(old, new, 1)
+    with pytest.raises(AssertionError, match="success criteria"):
+        _assert_scope_doc_success_criteria_numbers(mutated)
+
+    hidden = source.replace(
+        "Full-sample n is the pre-registered planning value **n = 198** at ICC=0.20\n"
+        "  (sensitivity **n = 239** at ICC=0.30), not a number derived from the 30-image draw.",
+        "<!-- Full-sample n is the pre-registered planning value **n = 198** at ICC=0.20\n"
+        "  (sensitivity **n = 239** at ICC=0.30), not a number derived from the 30-image draw. -->",
+        1,
+    )
+    assert hidden != source
+    path = tmp_path / "descqual-2-fact-annotation-pilot.md"
+    path.write_text(hidden)
+    with pytest.raises(AssertionError, match="success criteria"):
+        _assert_scope_doc_success_criteria_numbers(path.read_text())
+
+
+def test_scope_doc_quantity_inventory_rejects_prose_n_drift(tmp_path: Path):
+    source = _SCOPE_DOC.read_text()
+    old = "older pin `a=12.90` produced n=327"
+    new = "older pin `a=12.90` produced n=328"
+    assert old in source
+    path = tmp_path / "descqual-2-fact-annotation-pilot.md"
+    path.write_text(source.replace(old, new, 1))
+    with pytest.raises(AssertionError, match="quantity inventory"):
+        _assert_scope_doc_published_n_inventory(path.read_text())
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "match"),
+    [
+        (
+            "| **198** (planning) |",
+            "| **199** (planning) |",
+            r"table publishes 199.*eval returned 198",
+        ),
+        (
+            "| 0.05 | 1.492 | 118 |",
+            "| 0.05 | 1.493 | 118 |",
+            r"table publishes 1.493.*eval returned 1.492",
+        ),
+        (
+            "| 0.2 | 2.969 | **198** (planning) |",
+            "| 0.21 | 2.969 | **198** (planning) |",
+            r"table publishes 2.969.*eval returned 3.068",
+        ),
+        (
+            "| ±10 pp | 84 |",
+            "| ±10 pp | 85 |",
+            r"table publishes 85.*eval returned 84",
+        ),
+    ],
+)
+def test_table_only_disagreement_is_caught(tmp_path: Path, old: str, new: str, match: str):
+    source = _SCOPE_DOC.read_text()
+    assert old in source
+    mutated = source.replace(old, new, 1)
+    assert mutated != source
+    path = tmp_path / "descqual-2-fact-annotation-pilot.md"
+    path.write_text(mutated)
+    with pytest.raises(AssertionError, match=match):
+        _assert_scope_doc_published_tables_match_eval(path)
+
+
+def test_unrelated_markdown_table_is_not_audited(tmp_path: Path):
+    extra = (
+        "\n\n| annotator | gold accuracy |\n"
+        "| --- | --- |\n"
+        "| A | 999 |\n"
+        "| B | 0 |\n"
+    )
+    path = tmp_path / "descqual-2-fact-annotation-pilot.md"
+    path.write_text(_SCOPE_DOC.read_text() + extra)
+    _assert_scope_doc_published_tables_match_eval(path)
+
+
+def test_tilde_fence_published_disagreement_is_caught(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    lie = (
+        _SCOPE_DOC.read_text().rstrip()
+        + "\n\n~~~\n"
+        "from scripts.eval_harness.audit_sampling import sample_size_for_margin\n"
+        "sample_size_for_margin(margin=0.10, population=80)  # 99\n"
+        "~~~\n"
+    )
+    path = tmp_path / "descqual-2-fact-annotation-pilot.md"
+    path.write_text(lie)
+    text = path.read_text()
+    fences = _scope_doc_executable_fences(text)
+    assert any(
+        "sample_size_for_margin(margin=0.10, population=80)" in block for block in fences
+    )
+    with pytest.raises(AssertionError, match=r"publishes 99.*eval returned 44"):
+        _assert_all_executable_fences_match_eval(text, monkeypatch)
+
+
+def test_backtick_fence_body_containing_tildes_is_one_block():
+    sample = (
+        "intro\n"
+        "```\n"
+        "first  # 1\n"
+        "~~~\n"
+        "second  # 2\n"
+        "```\n"
+        "outro\n"
+        "~~~\n"
+        "third  # 3\n"
+        "```\n"
+        "fourth  # 4\n"
+        "~~~\n"
+    )
+    blocks = _scope_doc_fence_blocks(sample)
+    assert len(blocks) == 2
+    assert "first  # 1" in blocks[0]
+    assert "~~~" in blocks[0]
+    assert "second  # 2" in blocks[0]
+    assert "```" not in blocks[0]
+    assert "third  # 3" in blocks[1]
+    assert "```" in blocks[1]
+    assert "fourth  # 4" in blocks[1]
+    assert "first  # 1" not in blocks[1]
 
 
 def test_allocate_sums_to_n():

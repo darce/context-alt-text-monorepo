@@ -7,6 +7,7 @@ cli.py / _pathtext.py / README.md / test_eval_harness_cli_*.
 from __future__ import annotations
 
 import ast
+import errno
 import hashlib
 import json
 import os
@@ -181,6 +182,7 @@ _AUDITED_NON_PATH_EXPRS = frozenset(
         "pop.total",
         "gap_hint",
         "exc",
+        "_format_validation_error(exc)",
         "type(raw).__name__",
         "version",
         "SUPPORTED_MANIFEST_VERSION",
@@ -201,6 +203,9 @@ _AUDITED_NON_PATH_EXPRS = frozenset(
         "exc.strerror",
     }
 )
+_AUDITED_NON_PATH_EXPRS_BY_MODULE: dict[Path, frozenset[str]] = {
+    _MANIFEST_PY: _AUDITED_NON_PATH_EXPRS,
+}
 
 
 def _c_locale_child_env() -> dict[str, str]:
@@ -250,7 +255,15 @@ def _require_surrogate_argv() -> None:
 
 def _latin1_cafe_dir(tmp_path: Path) -> bytes:
     dir_b = os.fsencode(tmp_path) + b"/latin1-" + _CAFE_LATIN1
-    os.mkdir(dir_b)
+    try:
+        os.mkdir(dir_b)
+    except OSError as exc:
+        if exc.errno == errno.EILSEQ:
+            pytest.skip(
+                "host filesystem rejects a raw latin-1 filename even though "
+                "child argv probing is available"
+            )
+        raise
     return dir_b
 
 
@@ -352,6 +365,22 @@ def _raises_printable(tmp_path: Path, data: dict, loader_name: str) -> bytes:
     return _assert_printable_text(str(ei.value))
 
 
+def test_schema_validation_surrogate_input_is_not_repr_flattened(tmp_path: Path) -> None:
+    """Pydantic input values use the same printable-message wire contract."""
+    path = _write_json(
+        tmp_path,
+        _v3(_entry("fixtures/ada.jpg", sha256=_SURROGATE_LEAF)),
+    )
+    with pytest.raises(ManifestError) as ei:
+        load_manifest(path, skip_hash_verification=True)
+    message = str(ei.value)
+    encoded = message.encode("utf-8")
+    assert b"golden manifest schema violation:" in encoded
+    assert b"\\udce9" not in encoded
+    assert b"caf\\xe9" in encoded
+    message.encode("utf-8")
+
+
 # ---------------------------------------------------------------------------
 # Wave-16 argv oracles (latin-1 filename via C-locale child)
 # ---------------------------------------------------------------------------
@@ -413,7 +442,12 @@ def test_unreadable_golden_manifest_oserror_inprocess_surrogate_filename(
 ) -> None:
     """Same OSError construction leak without argv (explicit U+DCE9 Path)."""
     man = tmp_path / _SURROGATE_JSON
-    man.write_bytes(_FIXTURE.read_bytes())
+    try:
+        man.write_bytes(_FIXTURE.read_bytes())
+    except OSError as exc:
+        if exc.errno == errno.EILSEQ:
+            pytest.skip("host filesystem rejects surrogate-escaped filenames")
+        raise
     os.chmod(man, 0)
     try:
         with pytest.raises(ManifestError) as ei:
@@ -514,7 +548,12 @@ def test_image_file_missing_surrogate_entry_path_is_printable(tmp_path: Path) ->
 def test_image_file_missing_surrogate_images_root_is_printable(tmp_path: Path) -> None:
     """MUT image-file-missing {root} (RV18-06 / 1089 root slot). Root exists."""
     root = tmp_path / _SURROGATE_LEAF
-    root.mkdir()
+    try:
+        root.mkdir()
+    except OSError as exc:
+        if exc.errno == errno.EILSEQ:
+            pytest.skip("host filesystem rejects surrogate-escaped filenames")
+        raise
     path = _write_json(tmp_path, _v3(_entry("fixtures/ada.jpg")))
     man = load_manifest(path, skip_hash_verification=True, hash_skip_reason="probe")
     with pytest.raises(ManifestError) as ei:
@@ -528,8 +567,13 @@ def test_sha256_mismatch_surrogate_entry_path_is_printable(tmp_path: Path) -> No
     """MUT sha256-mismatch {entry.path} (RV18-06 / 1095)."""
     images = tmp_path / "images"
     images.mkdir()
-    with open(os.fsencode(images) + b"/" + _CAFE_LATIN1 + b".jpg", "wb") as fh:
-        fh.write(b"tampered bytes")
+    try:
+        with open(os.fsencode(images) + b"/" + _CAFE_LATIN1 + b".jpg", "wb") as fh:
+            fh.write(b"tampered bytes")
+    except OSError as exc:
+        if exc.errno == errno.EILSEQ:
+            pytest.skip("host filesystem rejects raw latin-1 filenames")
+        raise
     path = _write_json(tmp_path, _v3(_entry(_SURROGATE_REL)))
     man = load_manifest(path, skip_hash_verification=True, hash_skip_reason="probe")
     with pytest.raises(ManifestError) as ei:
@@ -783,20 +827,34 @@ def _is_printable_path_call(node: ast.AST) -> bool:
     return isinstance(node, ast.Call) and _call_name(node.func) == "_printable_path"
 
 
-def _formatted_is_wrapped(node: ast.AST) -> bool:
+def _formatted_is_wrapped(
+    node: ast.AST,
+    aliases: frozenset[str] = frozenset(),
+    *,
+    conversion: int = -1,
+) -> bool:
+    if conversion != -1:
+        return False
     if _is_printable_path_call(node):
         return True
     if isinstance(node, ast.IfExp):
-        return _formatted_is_wrapped(node.body)
+        return _formatted_is_wrapped(node.body, aliases)
+    if isinstance(node, ast.Name) and node.id in aliases:
+        return True
     return False
 
 
-def _is_path_like_unwrapped(node: ast.AST) -> bool:
-    if _formatted_is_wrapped(node):
-        return False
-    text = ast.unparse(node)
-    if text in _AUDITED_NON_PATH_EXPRS:
-        return False
+def _contains_path_expression(
+    node: ast.AST, aliases: frozenset[str] = frozenset()
+) -> bool:
+    """Find path data through formatting operators and wrapper calls.
+
+    A census that only visits JoinedStr nodes misses ``%``, ``.format`` and
+    ``", ".join(...)`` emissions. This recursive check is intentionally
+    limited to expressions that can carry a path into a sink.
+    """
+    if isinstance(node, ast.Name) and node.id in aliases:
+        return True
     if isinstance(node, ast.Attribute) and node.attr in {"path", "filename"}:
         return True
     if isinstance(node, ast.Name) and node.id in {
@@ -805,7 +863,47 @@ def _is_path_like_unwrapped(node: ast.AST) -> bool:
         "images_root",
         "entry_path",
         "path",
-        "label",
+    }:
+        return True
+    if isinstance(node, ast.Call) and _call_name(node.func) == "_printable_path":
+        return any(
+            _contains_path_expression(argument, aliases) for argument in node.args
+        ) or any(
+            _contains_path_expression(keyword.value, aliases)
+            for keyword in node.keywords
+        )
+    if isinstance(node, ast.Starred):
+        return _contains_path_expression(node.value, aliases)
+    return any(_contains_path_expression(child, aliases) for child in ast.iter_child_nodes(node))
+
+
+def _is_path_like_unwrapped(
+    node: ast.AST,
+    aliases: frozenset[str] = frozenset(),
+    non_path_exprs: frozenset[str] = frozenset(),
+) -> bool:
+    if _formatted_is_wrapped(node, aliases):
+        return False
+    text = ast.unparse(node)
+    if text in non_path_exprs:
+        return False
+    if isinstance(node, ast.Call) and _call_name(node.func) in {
+        "_printable_message",
+        "_format_validation_error",
+    }:
+        return _contains_path_expression(node, aliases)
+    if isinstance(node, (ast.BinOp, ast.Call, ast.JoinedStr, ast.List, ast.Tuple, ast.Set)):
+        return _contains_path_expression(node, aliases)
+    if isinstance(node, ast.Starred):
+        return _contains_path_expression(node.value, aliases)
+    if isinstance(node, ast.Attribute) and node.attr in {"path", "filename"}:
+        return True
+    if isinstance(node, ast.Name) and node.id in {
+        "root",
+        "manifest_path",
+        "images_root",
+        "entry_path",
+        "path",
     }:
         return True
     if "get('path')" in text or 'get("path")' in text:
@@ -813,26 +911,54 @@ def _is_path_like_unwrapped(node: ast.AST) -> bool:
     return False
 
 
-def _operator_joined_slots() -> list[tuple[int, str, str, ast.AST]]:
-    tree = ast.parse(_MANIFEST_PY.read_text(encoding="utf-8"))
-    hits: list[tuple[int, str, str, ast.AST]] = []
+def _operator_joined_slots(
+    path: Path = _MANIFEST_PY,
+) -> list[tuple[int, str, str, ast.AST, int, frozenset[str]]]:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    hits: list[tuple[int, str, str, ast.AST, int, frozenset[str]]] = []
 
     class Walker(ast.NodeVisitor):
         def __init__(self) -> None:
             self.stack: list[ast.AST] = []
             self.func = "<module>"
+            self.aliases: frozenset[str] = frozenset()
 
         def generic_visit(self, node: ast.AST) -> None:
             self.stack.append(node)
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 prev = self.func
+                previous_aliases = self.aliases
                 self.func = node.name
+                self.aliases = frozenset()
                 super().generic_visit(node)
                 self.func = prev
+                self.aliases = previous_aliases
                 self.stack.pop()
                 return
             super().generic_visit(node)
             self.stack.pop()
+
+        def visit_Assign(self, node: ast.Assign) -> None:
+            safe = _formatted_is_wrapped(node.value, self.aliases)
+            for target in node.targets:
+                if not isinstance(target, ast.Name):
+                    continue
+                if safe:
+                    self.aliases = self.aliases | {target.id}
+                else:
+                    self.aliases = self.aliases - {target.id}
+            self.generic_visit(node)
+
+        def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+            if isinstance(node.target, ast.Name):
+                safe = node.value is not None and _formatted_is_wrapped(
+                    node.value, self.aliases
+                )
+                if safe:
+                    self.aliases = self.aliases | {node.target.id}
+                else:
+                    self.aliases = self.aliases - {node.target.id}
+            self.generic_visit(node)
 
         def visit_JoinedStr(self, node: ast.JoinedStr) -> None:
             kind = "other"
@@ -843,18 +969,147 @@ def _operator_joined_slots() -> list[tuple[int, str, str, ast.AST]]:
                 }:
                     kind = "call:" + _call_name(parent.func)
                     break
-                if isinstance(parent, ast.Call) and _call_name(parent.func) == "append":
-                    kind = "append"
-                    break
             if kind == "other":
                 self.generic_visit(node)
                 return
             for value in node.values:
                 if isinstance(value, ast.FormattedValue):
                     hits.append(
-                        (node.lineno, self.func, ast.unparse(value.value), value.value)
+                        (
+                            node.lineno,
+                            self.func,
+                            ast.unparse(value.value),
+                            value.value,
+                            value.conversion,
+                            self.aliases,
+                        )
                     )
             self.generic_visit(node)
+
+    Walker().visit(tree)
+    return hits
+
+
+def _operator_unwrapped_path_slots(
+    path: Path = _MANIFEST_PY,
+) -> list[tuple[int, str, str]]:
+    """Find path expressions that reach an operator-error sink unwrapped.
+
+    The JoinedStr census above gives precise diagnostics for f-string slots.
+    This companion walk covers the other formatting operators that can carry a
+    path (``%``, ``.format`` and ``join``), plus keyword and starred sink
+    arguments and one-step local aliases.
+
+    This module's operator surface is deliberately scoped to ``ManifestError``
+    and ``warnings.warn``: ``manifest.py`` has no print, ``sys.exit``, or
+    logging calls. A future operator sink must be added here before it can be
+    treated as audited (W23-SINK01).
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    hits: list[tuple[int, str, str]] = []
+
+    class Walker(ast.NodeVisitor):
+        def __init__(self) -> None:
+            self.func = "<module>"
+            self.aliases: frozenset[str] = frozenset()
+            self.bindings: dict[str, ast.AST] = {}
+
+        def generic_visit(self, node: ast.AST) -> None:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                previous_func = self.func
+                previous_aliases = self.aliases
+                previous_bindings = self.bindings
+                self.func = node.name
+                self.aliases = frozenset()
+                self.bindings = {}
+                super().generic_visit(node)
+                self.func = previous_func
+                self.aliases = previous_aliases
+                self.bindings = previous_bindings
+                return
+            super().generic_visit(node)
+
+        def visit_Assign(self, node: ast.Assign) -> None:
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    self.bindings[target.id] = node.value
+                    if _formatted_is_wrapped(node.value, self.aliases):
+                        self.aliases = self.aliases | {target.id}
+                    else:
+                        self.aliases = self.aliases - {target.id}
+            self.generic_visit(node)
+
+        def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+            if isinstance(node.target, ast.Name) and node.value is not None:
+                self.bindings[node.target.id] = node.value
+                if _formatted_is_wrapped(node.value, self.aliases):
+                    self.aliases = self.aliases | {node.target.id}
+                else:
+                    self.aliases = self.aliases - {node.target.id}
+            self.generic_visit(node)
+
+        def visit_Call(self, node: ast.Call) -> None:
+            if _call_name(node.func) in {"ManifestError", "warn"}:
+                expressions = [*node.args]
+                expressions.extend(
+                    keyword.value
+                    for keyword in node.keywords
+                    if keyword.arg in {None, "message", "msg"}
+                )
+                for expression in expressions:
+                    self._inspect_sink_expression(expression, set())
+            self.generic_visit(node)
+
+        @staticmethod
+        def _binding_can_carry_operator_path(node: ast.AST) -> bool:
+            if isinstance(node, (ast.JoinedStr, ast.BinOp)):
+                return True
+            return isinstance(node, ast.Call) and _call_name(node.func) in {
+                "format",
+                "format_map",
+                "join",
+                "safe_substitute",
+                "substitute",
+                "_printable_message",
+                "_format_validation_error",
+            }
+
+        def _inspect_sink_expression(
+            self, node: ast.AST, resolving: set[str]
+        ) -> None:
+            if _formatted_is_wrapped(node, self.aliases):
+                return
+            if (
+                isinstance(node, ast.Name)
+                and node.id in self.bindings
+                and node.id
+                not in {"root", "manifest_path", "images_root", "entry_path", "path"}
+                and self._binding_can_carry_operator_path(self.bindings[node.id])
+            ):
+                if node.id in resolving:
+                    return
+                self._inspect_sink_expression(
+                    self.bindings[node.id], resolving | {node.id}
+                )
+                return
+            if isinstance(node, ast.FormattedValue):
+                if _contains_path_expression(node.value, self.aliases):
+                    if not _formatted_is_wrapped(
+                        node.value, self.aliases, conversion=node.conversion
+                    ):
+                        hits.append((node.lineno, self.func, ast.unparse(node.value)))
+                self._inspect_sink_expression(node.value, resolving)
+                return
+            if isinstance(node, ast.JoinedStr):
+                for value in node.values:
+                    if isinstance(value, ast.FormattedValue):
+                        self._inspect_sink_expression(value, resolving)
+                return
+            if _is_path_like_unwrapped(node, self.aliases):
+                hits.append((node.lineno, self.func, ast.unparse(node)))
+                return
+            for child in ast.iter_child_nodes(node):
+                self._inspect_sink_expression(child, resolving)
 
     Walker().visit(tree)
     return hits
@@ -869,17 +1124,21 @@ def test_operator_path_census_every_slot_is_audited() -> None:
     """
     slots = _operator_joined_slots()
     assert slots, "census found no operator JoinedStr slots"
+    allowlist = _AUDITED_NON_PATH_EXPRS_BY_MODULE[_MANIFEST_PY]
     unwrapped_paths: list[str] = []
     unaudited: list[str] = []
     seen_non_path: set[str] = set()
-    for lineno, func, text, node in slots:
+    for lineno, func, text, node, conversion, aliases in slots:
         loc = f"{func}:{lineno}:{text}"
-        if _is_path_like_unwrapped(node):
+        if conversion != -1 and _contains_path_expression(node, aliases):
+            unwrapped_paths.append(loc + f" (conversion={conversion})")
+            continue
+        if _is_path_like_unwrapped(node, aliases):
             unwrapped_paths.append(loc)
             continue
-        if _formatted_is_wrapped(node):
+        if _formatted_is_wrapped(node, aliases, conversion=conversion):
             continue
-        if text in _AUDITED_NON_PATH_EXPRS:
+        if text in allowlist:
             seen_non_path.add(text)
             continue
         unaudited.append(loc)
@@ -888,11 +1147,101 @@ def test_operator_path_census_every_slot_is_audited() -> None:
         f"{unwrapped_paths}"
     )
     assert not unaudited, (
-        "operator JoinedStr slot neither wrapped nor in _AUDITED_NON_PATH_EXPRS: "
+        "operator JoinedStr slot neither wrapped nor in the module allowlist: "
         f"{unaudited}"
     )
-    unused = _AUDITED_NON_PATH_EXPRS - seen_non_path
+    assert not _operator_unwrapped_path_slots(), (
+        "operator path expression reaches a sink without _printable_path: "
+        f"{_operator_unwrapped_path_slots()}"
+    )
+    unused = allowlist - seen_non_path
     assert not unused, f"stale census allowlist entries: {sorted(unused)}"
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        '"path=%s" % entry_path',
+        '"path={}".format(entry_path)',
+        '",".join([entry_path])',
+        '",".join([item.path for item in entries])',
+        '"{path}".format_map({"path": entry_path})',
+        'os.fspath(entry_path)',
+        '"{path}".replace("{path}", entry_path)',
+        'f"path={entry_path!r}"',
+        'f"path={_printable_message(entry_path)}"',
+    ],
+)
+def test_operator_path_census_catches_non_fstring_and_wrapper_bypasses(
+    tmp_path: Path, expression: str
+) -> None:
+    source = (
+        "from scripts.eval_harness.manifest import ManifestError\n"
+        "from scripts.eval_harness._pathtext import _printable_message\n"
+        "def emit(entry_path):\n"
+        f"    raise ManifestError({expression})\n"
+    )
+    path = tmp_path / "mutated_manifest.py"
+    path.write_text(source)
+    assert _operator_unwrapped_path_slots(path)
+
+
+def test_operator_path_census_warning_control_has_no_path_operand(
+    tmp_path: Path,
+) -> None:
+    """The non-path warning control exercises the sink independently.
+
+    The census has four independent walker sites (mod, format, join, and
+    sink); this control keeps the warning sink's operand neutral so a hit
+    cannot come from the path-name heuristic alone (TEST-06).
+    """
+    path = tmp_path / "warning_control.py"
+    path.write_text(
+        "import warnings\n"
+        "def emit(other):\n"
+        "    warnings.warn('skip for %s' % other)\n"
+    )
+    assert _operator_unwrapped_path_slots(path) == []
+
+
+def test_operator_path_census_tracks_printable_path_alias_and_sink_keywords(
+    tmp_path: Path,
+) -> None:
+    safe = tmp_path / "safe_manifest.py"
+    safe.write_text(
+        "from scripts.eval_harness.manifest import ManifestError\n"
+        "from scripts.eval_harness._pathtext import _printable_path\n"
+        "def emit(entry_path):\n"
+        "    path = _printable_path(entry_path)\n"
+        "    raise ManifestError(message=f'path={path}', *[])\n"
+    )
+    assert _operator_unwrapped_path_slots(safe) == []
+
+    unsafe = tmp_path / "unsafe_manifest.py"
+    unsafe.write_text(
+        "from scripts.eval_harness.manifest import ManifestError\n"
+        "def emit(entry_path):\n"
+        "    path = entry_path\n"
+        "    raise ManifestError(message=f'path={path}', *[])\n"
+    )
+    assert _operator_unwrapped_path_slots(unsafe)
+
+
+def test_operator_path_census_resolves_assignment_and_binop_sinks(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "assignment_manifest.py"
+    path.write_text(
+        "from scripts.eval_harness.manifest import ManifestError\n"
+        "def emit(entry_path):\n"
+        "    message = f'path={entry_path}'\n"
+        "    raise ManifestError(message)\n"
+        "def emit_concat(entry_path):\n"
+        "    raise ManifestError('path=' + entry_path)\n"
+    )
+    hits = _operator_unwrapped_path_slots(path)
+    assert any(func == "emit" for _line, func, _expr in hits)
+    assert any(func == "emit_concat" for _line, func, _expr in hits)
 
 
 def test_missing_provenance_loop_calls_printable_path() -> None:

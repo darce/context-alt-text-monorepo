@@ -55,6 +55,7 @@ import os
 import re
 import unicodedata
 import warnings
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -69,9 +70,62 @@ from pydantic import (
     model_validator,
 )
 
-from ._pathtext import _printable_path
+from ._pathtext import _printable_message, _printable_path
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _printable_validation_value(value: object, *, depth: int = 0) -> str:
+    """Render Pydantic error values without ``repr``-flattening surrogates.
+
+    Pydantic's default ``ValidationError.__str__`` uses ``repr(input_value)``.
+    A JSON ``\\udce9`` therefore becomes literal backslash text in an operator
+    message, which is ambiguous and violates the path-text wire contract. Keep
+    the shape of common containers while sending every string leaf through the
+    message encoder.
+    """
+    if depth > 5:
+        return "<nested value>"
+    if isinstance(value, str):
+        return str(_printable_message(value))
+    if isinstance(value, bytes):
+        return str(_printable_message(value.decode("utf-8", errors="backslashreplace")))
+    if isinstance(value, Mapping):
+        items = ", ".join(
+            f"{_printable_validation_value(key, depth=depth + 1)}: "
+            f"{_printable_validation_value(item, depth=depth + 1)}"
+            for key, item in value.items()
+        )
+        return "{" + items + "}"
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return "[" + ", ".join(
+            _printable_validation_value(item, depth=depth + 1) for item in value
+        ) + "]"
+    try:
+        rendered = str(value)
+    except Exception:
+        rendered = f"<{type(value).__name__}>"
+    return str(_printable_message(rendered))
+
+
+def _format_validation_error(error: ValidationError) -> str:
+    """Return a strict-UTF-8, deterministic summary of validation failures."""
+    details: list[str] = []
+    for item in error.errors(include_url=False):
+        location = ".".join(
+            _printable_validation_value(part) for part in item.get("loc", ())
+        ) or "<document>"
+        message = _printable_validation_value(item.get("msg", "validation error"))
+        suffix: list[str] = []
+        if "input" in item:
+            suffix.append(f"input={_printable_validation_value(item['input'])}")
+        if "ctx" in item and item["ctx"]:
+            suffix.append(f"context={_printable_validation_value(item['ctx'])}")
+        details.append(
+            f"{location}: {message}"
+            + (f" ({'; '.join(suffix)})" if suffix else "")
+        )
+    return "; ".join(details) or "validation error"
 
 SUPPORTED_MANIFEST_VERSION = 3
 LEGACY_MANIFEST_VERSION = 2
@@ -1353,7 +1407,9 @@ def load_manifest(
     except ManifestError:
         raise
     except ValidationError as exc:
-        raise ManifestError(f"golden manifest schema violation: {exc}") from exc
+        raise ManifestError(
+            f"golden manifest schema violation: {_format_validation_error(exc)}"
+        ) from exc
 
     seen_ids: set[int] = set()
     seen_paths: set[str] = set()
@@ -1537,7 +1593,9 @@ def load_legacy_manifest(path: str, images_dir: str | None = None) -> GoldenMani
     except ManifestError:
         raise
     except ValidationError as exc:
-        raise ManifestError(f"legacy manifest schema violation: {exc}") from exc
+        raise ManifestError(
+            f"legacy manifest schema violation: {_format_validation_error(exc)}"
+        ) from exc
 
     seen_ids: set[int] = set()
     seen_paths: set[str] = set()

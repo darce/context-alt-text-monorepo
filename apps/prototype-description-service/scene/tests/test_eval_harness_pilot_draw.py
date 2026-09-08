@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import ast
+import copy
 import inspect
 import itertools
 import json
 import math
 import random
 import re
+import textwrap
 from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
@@ -447,6 +449,28 @@ _PUBLIC_METHODS_BY_CLASS = {
 _DESIGN_STAT_KEYS = frozenset(
     {"icc", "rho", "deff", "design_effect", "n_eff", "msb", "msw"}
 )
+_CLUSTER_SIZE_PARAM_NAMES = frozenset(
+    {
+        "a",
+        "cluster_size",
+        "cluster_size_a",
+        "mean_cluster_size",
+        "average_cluster_size",
+        "kish_a",
+    }
+)
+_ICC_PARAM_NAMES = frozenset(
+    {
+        "icc",
+        "rho",
+        "correlation",
+        "intra_class_correlation",
+        "intra_subject_icc",
+    }
+)
+_EFFECTIVE_N_PARAM_NAMES = frozenset(
+    {"n", "n_obs", "sample_size", "population", "population_size"}
+)
 _LICENSED_PACKET_ROW_KEYS = frozenset(
     {
         "sha256",
@@ -480,6 +504,27 @@ _ICC_PROBE_GROUPS: tuple[tuple[tuple[float, ...], ...], ...] = (
 _GROUPS_PARAM_NAMES = frozenset({"groups", "clusters", "cluster", "icc_groups", "ys"})
 _UNPROBEABLE = object()
 _MISSING = object()
+_PROBE_BLOCKED_IMPORTS = frozenset(
+    {"asyncio", "http", "requests", "socket", "subprocess", "urllib"}
+)
+_PROBE_BLOCKED_CALLS = frozenset(
+    {
+        "compile",
+        "eval",
+        "exec",
+        "os.remove",
+        "os.rename",
+        "os.replace",
+        "os.system",
+        "os.unlink",
+        "shutil.move",
+        "shutil.rmtree",
+        "sys.exit",
+    }
+)
+_PROBE_BLOCKED_METHODS = frozenset(
+    {"mkdir", "move", "open", "replace", "rmdir", "touch", "unlink", "write_bytes", "write_text"}
+)
 
 
 def _owned_callables(module: object = pilot_draw_mod) -> list[tuple[str, object]]:
@@ -620,25 +665,45 @@ def _one_way_icc(groups: Sequence[Sequence[float]]) -> float:
     return (msb - msw) / (msb + (mean_size - 1) * msw)
 
 
-def _numeric_leaves(value: object, *, depth: int = 0) -> list[float]:
-    if depth > 4 or value is None or isinstance(value, bool):
+def _numeric_leaves(
+    value: object, *, depth: int = 0, seen: set[int] | None = None
+) -> list[float]:
+    if depth > 6 or value is None or isinstance(value, bool):
         return []
+    if seen is None:
+        seen = set()
+    identity = id(value)
+    if identity in seen:
+        return []
+    seen.add(identity)
     if isinstance(value, (int, float)):
         return [float(value)]
     if isinstance(value, Mapping):
         leaves: list[float] = []
         for item in value.values():
-            leaves.extend(_numeric_leaves(item, depth=depth + 1))
+            leaves.extend(_numeric_leaves(item, depth=depth + 1, seen=seen))
         return leaves
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
         leaves = []
         for item in value:
-            leaves.extend(_numeric_leaves(item, depth=depth + 1))
+            leaves.extend(_numeric_leaves(item, depth=depth + 1, seen=seen))
         return leaves
     leaves = []
+    # Dataclasses and small result objects frequently expose a neutral field
+    # such as ``score``. Looking only at design-stat names lets an estimator
+    # hide in that field (BR-60); inspect instance data before the named-field
+    # fallback used by third-party result objects.
+    try:
+        attributes = vars(value)
+    except TypeError:
+        attributes = {}
+    for item in attributes.values():
+        leaves.extend(_numeric_leaves(item, depth=depth + 1, seen=seen))
     for attr in _DESIGN_STAT_KEYS:
         if hasattr(value, attr):
-            leaves.extend(_numeric_leaves(getattr(value, attr), depth=depth + 1))
+            leaves.extend(
+                _numeric_leaves(getattr(value, attr), depth=depth + 1, seen=seen)
+            )
     return leaves
 
 
@@ -698,6 +763,14 @@ def _probe_fixture_map() -> dict[str, object]:
         "raw": StratumName.E_CLEAN.value,
         "label": "stratum",
     }
+
+
+_DESIGN_PROBE_CASES: tuple[dict[str, float], ...] = (
+    {"cluster_size": 2.75, "icc": 0.13, "n": 137.0},
+    {"cluster_size": 6.40, "icc": 0.27, "n": 113.0},
+    {"cluster_size": 11.30, "icc": 0.41, "n": 157.0},
+    {"cluster_size": 19.75, "icc": 0.07, "n": 211.0},
+)
 
 
 def _typed_fixture(
@@ -761,6 +834,12 @@ def _param_candidate_values(
     as_tuples = tuple(tuple(group) for group in groups)
     if param.name in _GROUPS_PARAM_NAMES:
         return [as_tuples]
+    if param.name in _CLUSTER_SIZE_PARAM_NAMES:
+        return [fixtures.get(param.name, 7.25)]
+    if param.name in _ICC_PARAM_NAMES:
+        return [fixtures.get(param.name, 0.37)]
+    if param.name in _EFFECTIVE_N_PARAM_NAMES:
+        return [fixtures.get(param.name, 113)]
     if param.name in fixtures:
         bound = fixtures[param.name]
         return [set(bound) if isinstance(bound, set) else bound]
@@ -829,20 +908,162 @@ def _matches_one_way_icc(got: object, groups: Sequence[Sequence[float]]) -> bool
     )
 
 
+def _kish_design_values(case: Mapping[str, float]) -> tuple[float, float]:
+    cluster_size = case["cluster_size"]
+    icc = case["icc"]
+    n = case["n"]
+    deff = 1.0 + (cluster_size - 1.0) * icc
+    return deff, n / deff
+
+
+def _matches_kish_design_stat(got: object, case: Mapping[str, float]) -> bool:
+    deff, n_eff = _kish_design_values(case)
+    return any(
+        math.isclose(number, expected, rel_tol=1e-9, abs_tol=1e-12)
+        for number in _numeric_leaves(got)
+        for expected in (deff, n_eff)
+    )
+
+
 def _returns_one_way_icc(
     fn: object, fixtures: Mapping[str, object] | None = None
 ) -> bool:
     # BR-51: a raise on one fixture (min-n) is not "not an estimator"; try the rest.
     probe_fixtures = fixtures if fixtures is not None else _probe_fixture_map()
+    successful = 0
+    matching = 0
     for groups in _ICC_PROBE_GROUPS:
+        fixture_succeeded = False
+        fixture_matched = False
         for args, kwargs in _iter_bindings(fn, groups, probe_fixtures):
             try:
                 got = fn(*args, **kwargs)  # type: ignore[operator]
             except Exception:
                 continue
+            fixture_succeeded = True
             if _matches_one_way_icc(got, groups):
-                return True
-    return False
+                fixture_matched = True
+                break
+        if fixture_succeeded:
+            successful += 1
+            matching += int(fixture_matched)
+    # A single accidental numerical collision must not turn an ordinary
+    # helper into an estimator (BR-67). Requiring agreement on every fixture
+    # that the callable accepts also keeps the min-n raise guard from hiding a
+    # real estimator (BR-51).
+    return successful >= 2 and matching == successful
+
+
+def _returns_kish_design_stat(
+    fn: object, fixtures: Mapping[str, object] | None = None
+) -> bool:
+    # BR-56/63: probe design-effect and effective-n formulas separately from
+    # the ICC oracle. A helper may use neutral parameter names, so each case
+    # supplies values by both name and annotation-independent fallback.
+    base_fixtures = dict(fixtures if fixtures is not None else _probe_fixture_map())
+    successful = 0
+    matching = 0
+    for case in _DESIGN_PROBE_CASES:
+        probe_fixtures = {**base_fixtures, **case}
+        probe_fixtures.update(
+            {
+                "a": case["cluster_size"],
+                "cluster_size_a": case["cluster_size"],
+                "mean_cluster_size": case["cluster_size"],
+                "average_cluster_size": case["cluster_size"],
+                "kish_a": case["cluster_size"],
+                "rho": case["icc"],
+                "correlation": case["icc"],
+                "intra_class_correlation": case["icc"],
+                "intra_subject_icc": case["icc"],
+                "sample_size": int(case["n"]),
+                "population": int(case["n"]),
+                "population_size": int(case["n"]),
+                "n_obs": int(case["n"]),
+            }
+        )
+        # Use a synthetic groups shape only to satisfy a neutral ``xs`` or
+        # ``groups`` argument; named design parameters get the case above.
+        groups = _ICC_PROBE_GROUPS[2]
+        case_succeeded = False
+        case_matched = False
+        for args, kwargs in _iter_bindings(fn, groups, probe_fixtures):
+            try:
+                got = fn(*args, **kwargs)  # type: ignore[operator]
+            except Exception:
+                continue
+            case_succeeded = True
+            if _matches_kish_design_stat(got, case):
+                case_matched = True
+                break
+        if case_succeeded:
+            successful += 1
+            matching += int(case_matched)
+    return successful >= 2 and matching == successful
+
+
+def _dotted_name(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        parent = _dotted_name(node.value)
+        return f"{parent}.{node.attr}" if parent else node.attr
+    return None
+
+
+def _probe_ast(fn: object) -> ast.AST | None:
+    supplied = getattr(getattr(fn, "__func__", fn), "__pilot_probe_ast__", None)
+    if isinstance(supplied, ast.AST):
+        return supplied
+    try:
+        return ast.parse(textwrap.dedent(inspect.getsource(fn)))
+    except (OSError, TypeError, IndentationError, SyntaxError):
+        return None
+
+
+def _probe_is_side_effect_free(fn: object) -> bool:
+    """Return whether a callable can safely receive fabricated probe values.
+
+    The reliability guard is a test-time static probe. Calling every owned
+    helper can otherwise write files, spawn a process, or perform network I/O
+    before its exception is swallowed. Unknown source is conservatively
+    unprobeable, so a new callable must opt into the guard with inspectable
+    source rather than silently execute.
+    """
+    tree = _probe_ast(fn)
+    if tree is None:
+        return False
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            module = node.module if isinstance(node, ast.ImportFrom) else None
+            names = [alias.name.split(".", 1)[0] for alias in node.names]
+            imported = {module.split(".", 1)[0]} if module else set(names)
+            if imported & _PROBE_BLOCKED_IMPORTS:
+                return False
+        if not isinstance(node, ast.Call):
+            continue
+        dotted = _dotted_name(node.func)
+        final = dotted.rsplit(".", 1)[-1] if dotted else None
+        if dotted in _PROBE_BLOCKED_CALLS or final in {"eval", "exec", "compile"}:
+            return False
+        if final in _PROBE_BLOCKED_METHODS:
+            # ``open`` is safe when its mode is a literal read-only mode. A
+            # dynamic mode cannot be proven safe before invocation.
+            if final == "open":
+                mode = node.args[1] if len(node.args) > 1 else None
+                for keyword in node.keywords:
+                    if keyword.arg == "mode":
+                        mode = keyword.value
+                        break
+                if mode is None:
+                    continue
+                if not isinstance(mode, ast.Constant) or not isinstance(mode.value, str):
+                    return False
+                if any(flag in mode.value for flag in "wax+"):
+                    return False
+                continue
+            return False
+    return True
 
 
 def _callable_is_unprobeable(fn: object) -> bool:
@@ -858,17 +1079,27 @@ def _reliability_estimator_violations(
     for name, obj in _owned_callables(module):
         if inspect.isclass(obj):
             continue
+        if not _probe_is_side_effect_free(obj):
+            unprobeable.append(f"unsafe:{name}")
+            continue
         if _callable_is_unprobeable(obj):
             unprobeable.append(name)
             continue
-        if _returns_one_way_icc(obj, fixtures):
+        if _returns_one_way_icc(obj, fixtures) or _returns_kish_design_stat(
+            obj, fixtures
+        ):
             icc_offenders.append(name)
     tree = ast.parse(Path(module.__file__).read_text())  # type: ignore[union-attr]
     for name, fn in _isolated_functions(tree):
+        if not _probe_is_side_effect_free(fn):
+            unprobeable.append(f"unsafe:isolated:{name}")
+            continue
         if _callable_is_unprobeable(fn):
             unprobeable.append(f"isolated:{name}")
             continue
-        if _returns_one_way_icc(fn, fixtures):
+        if _returns_one_way_icc(fn, fixtures) or _returns_kish_design_stat(
+            fn, fixtures
+        ):
             icc_offenders.append(f"isolated:{name}")
     return icc_offenders, unprobeable
 
@@ -876,8 +1107,8 @@ def _reliability_estimator_violations(
 def _assert_no_reliability_estimator(module: object = pilot_draw_mod) -> None:
     icc_offenders, unprobeable = _reliability_estimator_violations(module)
     assert unprobeable == [], (
-        "module-level callable(s) have no inspectable signature, so the ICC "
-        "probe cannot call them (AUDIT-11, TEST-15): "
+        "module-level callable(s) cannot be safely and deterministically probed "
+        "for ICC/deff (missing signature or unsafe source; AUDIT-11, TEST-15): "
         f"{unprobeable}"
     )
     assert icc_offenders == [], (
@@ -896,6 +1127,10 @@ def _inject_module_callable(source: str, name: str):
         injected = getattr(pilot_draw_mod, name, None)
         if not callable(injected):
             raise RuntimeError(f"exec did not define callable {name}")
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+                setattr(injected, "__pilot_probe_ast__", node)
+                break
         yield injected
     finally:
         if hasattr(pilot_draw_mod, name):
@@ -904,29 +1139,91 @@ def _inject_module_callable(source: str, name: str):
 
 def _isolated_functions(tree: ast.AST) -> list[tuple[str, object]]:
     found: list[tuple[str, object]] = []
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            module = ast.Module(body=[node], type_ignores=[])
-            ast.fix_missing_locations(module)
+
+    class _FunctionCollector(ast.NodeVisitor):
+        def __init__(self) -> None:
+            self.class_stack: list[str] = []
+            self.functions: list[tuple[str, ast.AST, tuple[str, ...]]] = []
+
+        def visit_ClassDef(self, node: ast.ClassDef) -> None:
+            self.class_stack.append(node.name)
+            self.generic_visit(node)
+            self.class_stack.pop()
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            owner = tuple(self.class_stack)
+            prefix = ".".join((*owner, node.name)) if owner else node.name
+            self.functions.append((prefix, node, owner))
+            self.generic_visit(node)
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            owner = tuple(self.class_stack)
+            prefix = ".".join((*owner, node.name)) if owner else node.name
+            self.functions.append((prefix, node, owner))
+            self.generic_visit(node)
+
+    collector = _FunctionCollector()
+    collector.visit(tree)
+
+    def synthetic_module(body: list[ast.stmt]) -> ast.Module:
+        future = ast.ImportFrom(
+            module="__future__",
+            names=[ast.alias(name="annotations", asname=None)],
+            level=0,
+        )
+        module = ast.Module(body=[future, *body], type_ignores=[])
+        ast.fix_missing_locations(module)
+        return module
+
+    for name, node, owner in collector.functions:
+        if owner:
+            # Compile methods inside a fresh class and retrieve a bound method
+            # so ``self`` is supplied. This also visits private methods,
+            # __call__, and methods on nested classes (BR-55/62).
+            method = copy.deepcopy(node)
+            wrapper = ast.ClassDef(
+                name="_Probe",
+                bases=[],
+                keywords=[],
+                body=[method],
+                decorator_list=[],
+            )
+            module = synthetic_module([wrapper])
             namespace: dict[str, object] = {}
             try:
                 exec(compile(module, "<pilot-icc-probe>", "exec"), namespace)
+                instance = namespace["_Probe"]()
+                fn = getattr(instance, node.name)
             except Exception:
                 continue
-            fn = namespace.get(node.name)
             if callable(fn):
-                found.append((node.name, fn))
+                setattr(getattr(fn, "__func__", fn), "__pilot_probe_ast__", method)
+                found.append((name, fn))
             continue
+
+        module = synthetic_module([copy.deepcopy(node)])
+        namespace = {}
+        try:
+            exec(compile(module, "<pilot-icc-probe>", "exec"), namespace)
+        except Exception:
+            continue
+        fn = namespace.get(node.name)
+        if callable(fn):
+            setattr(fn, "__pilot_probe_ast__", node)
+            found.append((name, fn))
+
+    for node in ast.walk(tree):
         if not (isinstance(node, ast.Assign) and isinstance(node.value, ast.Lambda)):
             continue
         labels = [target.id for target in node.targets if isinstance(target, ast.Name)]
-        expr = ast.Expression(body=node.value)
+        expr = ast.Expression(body=copy.deepcopy(node.value))
         ast.fix_missing_locations(expr)
         try:
             fn = eval(compile(expr, "<pilot-icc-lambda>", "eval"), {})
         except Exception:
             continue
         if callable(fn):
+            setattr(fn, "__pilot_probe_ast__", node.value)
             found.append((labels[0] if labels else "<lambda>", fn))
     return found
 
@@ -1430,6 +1727,81 @@ def test_estimator_with_neutral_extra_parameter_names_is_rejected():
         icc_offenders, unprobeable = _reliability_estimator_violations()
         assert "_item_overlap" not in unprobeable
         assert "_item_overlap" in icc_offenders
+
+
+def test_neutral_design_effect_and_effective_n_helpers_are_rejected():
+    design_source = """\
+def _neutral_design_stat(cluster_size, icc):
+    return {"value": 1.0 + (cluster_size - 1.0) * icc}
+"""
+    effective_source = """\
+
+def _neutral_effective_size(n, cluster_size, icc):
+    return n / (1.0 + (cluster_size - 1.0) * icc)
+"""
+    with _inject_module_callable(design_source, "_neutral_design_stat"):
+        icc_offenders, unprobeable = _reliability_estimator_violations()
+        assert unprobeable == []
+        assert "_neutral_design_stat" in icc_offenders
+    with _inject_module_callable(effective_source, "_neutral_effective_size"):
+        icc_offenders, unprobeable = _reliability_estimator_violations()
+        assert unprobeable == []
+        assert "_neutral_effective_size" in icc_offenders
+
+
+def test_reliability_probe_requires_agreement_across_distinct_icc_fixtures():
+    # 2/3 is the first fixture's ICC. A constant helper must not pass merely
+    # because it collides with one oracle value (BR-67).
+    source = """\
+def _constant_share(groups):
+    return 2.0 / 3.0
+"""
+    with _inject_module_callable(source, "_constant_share") as fn:
+        assert _returns_one_way_icc(fn) is False
+        icc_offenders, unprobeable = _reliability_estimator_violations()
+        assert unprobeable == []
+        assert "_constant_share" not in icc_offenders
+
+
+def test_reliability_probe_does_not_execute_unsafe_callable(tmp_path: Path):
+    marker = tmp_path / "probe-side-effect.txt"
+    source = f"""\
+def _unsafe_probe(groups):
+    Path({str(marker)!r}).write_text("executed")
+    return 0.0
+"""
+    with _inject_module_callable(source, "_unsafe_probe"):
+        icc_offenders, unprobeable = _reliability_estimator_violations()
+        assert not marker.exists()
+        assert "unsafe:_unsafe_probe" in unprobeable
+        assert "_unsafe_probe" not in icc_offenders
+
+
+def test_design_stat_in_neutral_object_field_is_rejected():
+    source = """\
+def _neutral_object(cluster_size, icc):
+    class _NeutralResult:
+        def __init__(self, score):
+            self.score = score
+    return _NeutralResult(1.0 + (cluster_size - 1.0) * icc)
+"""
+    with _inject_module_callable(source, "_neutral_object"):
+        icc_offenders, unprobeable = _reliability_estimator_violations()
+        assert unprobeable == []
+        assert "_neutral_object" in icc_offenders
+
+
+def test_private_nested_call_method_is_bound_and_rejected():
+    source = """\
+class _NestedContainer:
+    class _Estimator:
+        def __call__(self, cluster_size, icc):
+            return 1.0 + (cluster_size - 1.0) * icc
+    """
+    with _inject_module_callable(source, "_NestedContainer"):
+        isolated = dict(_isolated_functions(ast.parse(source)))
+        fn = isolated["_NestedContainer._Estimator.__call__"]
+        assert _returns_kish_design_stat(fn)
 
 
 @pytest.mark.parametrize(

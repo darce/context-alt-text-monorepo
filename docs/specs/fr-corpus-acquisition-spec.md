@@ -48,10 +48,13 @@ Selector limits, from `recognition/application/settings/clustering.py`
 | `representative_diversity_threshold` | 0.85 |
 | `pose_bucket_size` | 30.0° |
 
-These two tables together fix the acquisition ceiling: beyond
-`max_representatives_per_cluster + pose_diversity_bonus` = **13** representatives,
-`RepresentativeSelector.should_add_representative` can only *replace* an existing
-same-pose-bucket representative of lower quality. It can never admit new evidence.
+These settings describe the selector's representative budget, not an acquisition
+ceiling. An identity may need more than **13 acquired images** to cover independent
+capture sessions and pose buckets, and one acquired image may never become a stored
+representative. The acquisition report must therefore publish acquired images,
+eligible independent captures, and admitted representatives as separate quantities.
+If batch mode can admit more than 13 representatives, that exception must be
+enforced or measured explicitly; it must not be silently treated as a hard cap.
 
 ---
 
@@ -62,14 +65,17 @@ same-pose-bucket representative of lower quality. It can never admit new evidenc
 **Trace:** [EMB-07] fuse the retained observations; selector cap at 13
 **Priority:** P0
 
-Raise the 77 mate-capable identities from ~2–4 images to **10–13**. Below 10, the
-representative set never fills and exemplar pooling has too few atoms to differ
-from nearest-neighbour. Above 13, the marginal image is provably inert under the
-current selector.
+Raise the 77 mate-capable identities from ~2–4 images to **at least 10 eligible
+captures**. Below 10, the representative set never fills and exemplar pooling has
+too few atoms to differ from nearest-neighbour. Additional acquisitions can be
+needed for the three-session and four-pose requirements even after a selector's
+representative budget is full; their admission and replacement decisions must be
+reported rather than called inert.
 
-**Done when:** ≥60 of the 77 mate-capable identities hold ≥10 images in the
-manifest, and no identity is acquired past 13 unless CORP-005 pose coverage is
-still unmet.
+**Done when:** ≥60 of the 77 mate-capable identities hold ≥10 eligible captures in
+the manifest, and the report gives acquired, eligible, and admitted counts for
+each identity. Extra captures are permitted when CORP-003 or CORP-005 remains
+unmet, with that reason recorded.
 
 **Non-goal:** raising the total image count as such. Total count is not the
 binding quantity and must not be reported as progress against this item.
@@ -178,9 +184,10 @@ headline metric is printed without its claim class.
 
 `SimilaritySearch.find_all_matches` scores a cluster by `np.max()` over its
 representatives — a single best-matching exemplar. Under max-pooling a
-low-quality representative is inert: it can only fail to win. Under any
-evidence-accumulating pooling (sparse-code energy, sum, weighted mean) the same
-representative becomes actively harmful.
+low-quality representative is not inert: an accidental high similarity can win
+the maximum and create a false match. Under any evidence-accumulating pooling
+(sparse-code energy, sum, weighted mean) the same representative can also be
+harmful.
 
 Required order:
 
@@ -192,8 +199,9 @@ Required order:
 2. Grow the corpus per CORP-001..005.
 3. Only then change pooling.
 
-Growing the corpus first is safe but shows no gain under `np.max()`. Changing
-pooling first, before the gate is trusted, can regress.
+Growing the corpus before the quality gate is trusted can add false-match
+surfaces under `np.max()`. Changing pooling first, before the gate is trusted,
+can regress in a second way.
 
 **Done when:** the ordering is reflected in the task plan and no pooling change
 merges before a recorded validation of the quality proxy.

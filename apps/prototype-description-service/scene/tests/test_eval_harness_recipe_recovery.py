@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageChops, ImageDraw
 
 from scripts.eval_harness.recipe_recovery import (
     Recipe,
@@ -25,6 +25,7 @@ from scripts.eval_harness.recipe_recovery import (
     default_grid,
     evaluate,
     load_entries,
+    main,
     sweep,
     upscale_violations,
 )
@@ -34,7 +35,19 @@ SHRINK_FLOOR = Recipe(name="shrink_floor", cap=1280, rounding="floor")
 
 def _write_image(path: Path, size: tuple[int, int], colour: tuple[int, int, int] = (10, 120, 200)) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    Image.new("RGB", size, colour).save(path, format="JPEG", quality=95)
+    # A constant field cannot distinguish resampling filters or survive a lossy
+    # round trip as a meaningful oracle. Keep the fixture cheap but include
+    # broad edges in every channel; the resulting source is still deterministic.
+    base = sum(colour) // len(colour)
+    image = Image.new("RGB", size, (base, base, base))
+    draw = ImageDraw.Draw(image)
+    for x in range(0, size[0], 160):
+        value = max(0, min(255, base + (50 if (x // 160) % 2 else -50)))
+        draw.rectangle((x, 0, min(size[0] - 1, x + 80), size[1] - 1), fill=(value,) * 3)
+    for y in range(0, size[1], 180):
+        value = max(0, min(255, base + (25 if (y // 180) % 2 else -25)))
+        draw.rectangle((0, y, size[0] - 1, min(size[1] - 1, y + 70)), fill=(value,) * 3)
+    image.save(path, format="JPEG", quality=95)
     return path
 
 
@@ -177,7 +190,44 @@ def test_bytes_oracle_round_trips_and_rejects_a_wrong_filter(tmp_path: Path) -> 
 
     assert evaluate(truth, [e], sources, Tier.BYTES).matched == 1
     other = Recipe(name="other", cap=1280, rounding="floor", resample="nearest", quality=85)
+    assert truth.encode(src) != other.encode(src), "fixture must distinguish filters at the byte tier"
     assert evaluate(other, [e], sources, Tier.BYTES).mismatched == 1
+
+
+def test_bytes_oracle_refuses_a_mixed_container_manifest(tmp_path: Path) -> None:
+    truth = Recipe(name="truth", cap=1280, rounding="floor")
+    src = _write_image(tmp_path / "mixed-source.jpg", (2600, 1733))
+    jpeg = _entry(1, src, truth, path="1.jpg")
+    png = {**jpeg, "media_id": 2, "path": "2.png"}
+    sources = {jpeg["sha256_source"]: src}
+
+    with pytest.raises(RecipeError, match="one JPEG container/producer class"):
+        evaluate(truth, [jpeg, png], sources, Tier.BYTES)
+
+    jpeg_alias = {**jpeg, "media_id": 2, "path": "2.jpeg"}
+    with pytest.raises(RecipeError, match="one JPEG container/producer class"):
+        evaluate(truth, [jpeg, jpeg_alias], sources, Tier.BYTES)
+
+
+def test_main_refuses_tied_complete_recipe_candidates(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # An under-cap source makes every shrink-only cap/rounding variant agree.
+    # The CLI must not publish the alphabetically first equivalent candidate as
+    # recovered provenance without a stronger oracle or an explicit class.
+    truth = Recipe(name="truth", cap=1280, rounding="floor")
+    src = _write_image(tmp_path / "under-cap.jpg", (400, 300))
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps({"manifest_version": 3, "entries": [_entry(1, src, truth)]})
+    )
+
+    status = main(
+        ["--manifest", str(manifest), "--source-root", str(tmp_path), "--tier", "dims"]
+    )
+
+    assert status == 1
+    assert "multiple complete candidate recipes" in capsys.readouterr().err
 
 
 # --- the pixels oracle is honest about being unavailable ------------------
@@ -210,6 +260,7 @@ def test_pixels_tier_is_exact_against_a_lossless_mirror(tmp_path: Path) -> None:
     # No encoder on either side, so tolerance 0 is the right contract here.
     assert evaluate(truth, [e], sources, Tier.PIXELS, mirror_root=mirror).matched == 1
     wrong = Recipe(name="wrong", cap=1280, rounding="floor", resample="nearest")
+    assert max(hi for _lo, hi in ImageChops.difference(truth.render(src), wrong.render(src)).getextrema()) > 0
     assert evaluate(wrong, [e], sources, Tier.PIXELS, mirror_root=mirror).mismatched == 1
 
 
@@ -227,6 +278,11 @@ def test_pixels_tier_needs_tolerance_against_a_lossy_mirror(tmp_path: Path) -> N
     truth.render(src).save(mirror / "1.jpg", format="JPEG", quality=85)
     e = _entry(1, src, truth)
     sources = {e["sha256_source"]: src}
+    reference = Image.open(mirror / "1.jpg").convert("RGB")
+    truth_image = truth.render(src)
+    wrong_image = Recipe(name="wrong", cap=1280, rounding="floor", resample="nearest").render(src)
+    assert max(hi for _lo, hi in ImageChops.difference(truth_image, wrong_image).getextrema()) > 24
+    assert max(hi for _lo, hi in ImageChops.difference(truth_image, reference).getextrema()) <= 24
 
     assert evaluate(truth, [e], sources, Tier.PIXELS, mirror_root=mirror, pixel_tolerance=0).mismatched == 1
     assert evaluate(truth, [e], sources, Tier.PIXELS, mirror_root=mirror, pixel_tolerance=24).matched == 1
@@ -259,7 +315,7 @@ def test_a_corrupt_source_is_counted_not_fatal(tmp_path: Path) -> None:
     bad = tmp_path / "bad.jpg"
     bad.write_bytes(b"not an image")
     e_good = _entry(1, good, SHRINK_FLOOR)
-    e_bad = {**e_good, "media_id": 2, "sha256_source": "b" * 64}
+    e_bad = {**e_good, "media_id": 2, "path": "2.jpg", "sha256_source": "b" * 64}
     sources = {e_good["sha256_source"]: good, "b" * 64: bad}
 
     result = evaluate(SHRINK_FLOOR, [e_good, e_bad], sources, Tier.DIMS)
@@ -273,6 +329,33 @@ def test_an_unresolved_source_is_unavailable_not_a_mismatch(tmp_path: Path) -> N
     e = _entry(1, src, SHRINK_FLOOR)
     result = evaluate(SHRINK_FLOOR, [e], {}, Tier.DIMS)  # empty index
     assert result.unavailable == 1 and result.mismatched == 0
+
+
+def test_pixels_tier_rejects_uninformative_tolerance(tmp_path: Path) -> None:
+    src = _write_image(tmp_path / "tolerance.jpg", (2000, 1500))
+    e = _entry(1, src, SHRINK_FLOOR)
+    with pytest.raises(RecipeError, match=r"pixel_tolerance.*\[0, 254\]"):
+        evaluate(
+            SHRINK_FLOOR,
+            [e],
+            {e["sha256_source"]: src},
+            Tier.PIXELS,
+            mirror_root=tmp_path,
+            pixel_tolerance=255,
+        )
+
+
+def test_no_upscale_guard_refuses_unresolved_or_corrupt_sources(tmp_path: Path) -> None:
+    src = _write_image(tmp_path / "known.jpg", (400, 300))
+    entry = _entry(1, src, SHRINK_FLOOR)
+    with pytest.raises(RecipeError, match="source.*unavailable"):
+        upscale_violations(SHRINK_FLOOR, [entry], {})
+
+    corrupt = tmp_path / "corrupt.jpg"
+    corrupt.write_bytes(b"not an image")
+    corrupt_entry = {**entry, "media_id": 2, "sha256_source": "b" * 64}
+    with pytest.raises(RecipeError, match="no-upscale guard"):
+        upscale_violations(SHRINK_FLOOR, [corrupt_entry], {"b" * 64: corrupt})
 
 
 # --- the source index -----------------------------------------------------
@@ -330,6 +413,18 @@ def test_load_entries_refuses_an_empty_manifest(tmp_path: Path) -> None:
     empty.write_text(json.dumps({"manifest_version": 3, "entries": []}))
     with pytest.raises(RecipeError, match="no entries"):
         load_entries(empty)
+
+
+def test_load_entries_validates_manifest_version_and_entry_shape(tmp_path: Path) -> None:
+    bad_version = tmp_path / "bad-version.json"
+    bad_version.write_text(json.dumps({"manifest_version": 2, "entries": []}))
+    with pytest.raises(RecipeError, match="manifest_version must be 3"):
+        load_entries(bad_version)
+
+    malformed = tmp_path / "malformed.json"
+    malformed.write_text(json.dumps({"manifest_version": 3, "entries": [{"media_id": "one"}]}))
+    with pytest.raises(RecipeError, match="missing required field 'path'"):
+        load_entries(malformed)
 
 
 def test_tier_result_rate_is_none_when_nothing_was_decidable() -> None:

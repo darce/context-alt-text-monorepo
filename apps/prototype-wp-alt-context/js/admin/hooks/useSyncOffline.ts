@@ -31,5 +31,5 @@ export const getSyncHealthAvailability = (
  */
 export const useSyncOffline = (): boolean => {
   const { data, isLoading } = useSyncHealth();
-  return !isLoading && getSyncHealthAvailability(data) !== SYNC_HEALTH_AVAILABILITY.ONLINE;
+  return isLoading || getSyncHealthAvailability(data) !== SYNC_HEALTH_AVAILABILITY.ONLINE;
 };

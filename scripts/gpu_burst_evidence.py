@@ -618,12 +618,14 @@ def _audit_items(payload: Any) -> list[Mapping[str, Any]]:
     ]
 
 
-_EVENT_TIME_KEYS = ("eventTime", "event_time", "timestamp", "time", "created_at", "createdAt")
+_EVENT_TIME_KEYS = ("eventTime", "event_time", "event-time", "timestamp", "time", "created_at", "createdAt")
 _EVENT_RESOURCE_ID_PATHS = (
     ("resourceId",),
     ("resource_id",),
+    ("resource-id",),
     ("data", "resourceId"),
     ("data", "resource_id"),
+    ("data", "resource-id"),
 )
 
 
@@ -677,7 +679,7 @@ def _event_actions_report(event: Mapping[str, Any]) -> tuple[set[str], str | Non
     sources: list[tuple[str, Any, str | None]] = []
     unsupported: list[str] = []
 
-    for key in ("eventName", "event_name", "action", "operation"):
+    for key in ("eventName", "event_name", "event-name", "action", "operation"):
         if key not in event:
             continue
         for value in _flatten_values([event[key]]):
@@ -686,7 +688,7 @@ def _event_actions_report(event: Mapping[str, Any]) -> tuple[set[str], str | Non
             if action is None and _as_text(value) is not None:
                 unsupported.append(f"{key}={_as_text(value)!r}")
 
-    for key in ("eventType", "event_type"):
+    for key in ("eventType", "event_type", "event-type"):
         if key not in event:
             continue
         for value in _flatten_values([event[key]]):
@@ -719,7 +721,9 @@ def _event_actions(event: Mapping[str, Any]) -> set[str]:
 
 
 def _event_phase_report(event: Mapping[str, Any]) -> tuple[str | None, str | None]:
-    text, error = _text_report([event[key] for key in ("eventType", "event_type") if key in event], "event type")
+    text, error = _text_report(
+        [event[key] for key in ("eventType", "event_type", "event-type") if key in event], "event type"
+    )
     if error is not None:
         return None, error
     if text is None:
@@ -741,7 +745,14 @@ def _event_state_change_report(event: Mapping[str, Any], field: str) -> tuple[st
 
     state_changes = _path_values(
         event,
-        (("stateChange",), ("state_change",), ("data", "stateChange"), ("data", "state_change")),
+        (
+            ("stateChange",),
+            ("state_change",),
+            ("state-change",),
+            ("data", "stateChange"),
+            ("data", "state_change"),
+            ("data", "state-change"),
+        ),
     )
     if not state_changes:
         return None, None
@@ -774,7 +785,17 @@ def _event_state_change(event: Mapping[str, Any], field: str) -> str | None:
 
 def _event_identity_report(event: Mapping[str, Any], action: str, occurrence: int) -> tuple[str, str | None]:
     grouping, grouping_error = _text_report(
-        [event[key] for key in ("eventGroupingId", "event_grouping_id") if key in event],
+        _path_values(
+            event,
+            (
+                ("eventGroupingId",),
+                ("event_grouping_id",),
+                ("event-grouping-id",),
+                ("data", "eventGroupingId"),
+                ("data", "event_grouping_id"),
+                ("data", "event-grouping-id"),
+            ),
+        ),
         "event grouping id",
     )
     if grouping_error is not None:
@@ -796,7 +817,7 @@ def _event_identity_report(event: Mapping[str, Any], action: str, occurrence: in
     if request_error is not None:
         return f"fallback:{action}:{occurrence}", request_error
     event_id, event_error = _text_report(
-        [event[key] for key in ("eventId", "eventID", "event_id") if key in event], "event id"
+        [event[key] for key in ("eventId", "eventID", "event_id", "event-id") if key in event], "event id"
     )
     if event_error is not None:
         return f"fallback:{action}:{occurrence}", event_error
@@ -1026,8 +1047,10 @@ def _successful_audit_action_sequence(
 _PRINCIPAL_PATHS = (
     ("identity", "principalName"),
     ("identity", "principal_name"),
+    ("identity", "principal-name"),
     ("data", "identity", "principalName"),
     ("data", "identity", "principal_name"),
+    ("data", "identity", "principal-name"),
 )
 
 
@@ -2086,18 +2109,22 @@ def build_state_history_document(
             observations.append(
                 {
                     "state": previous,
-                    "timestamp": event.get("eventTime", event.get("event_time", timestamp)),
+                    "timestamp": event.get(
+                        "eventTime", event.get("event_time", event.get("event-time", timestamp))
+                    ),
                     "source": "oci_audit_previous_state",
                 }
             )
         state = current
         event_id, _event_id_error = _text_report(
-            [event[key] for key in ("eventId", "eventID", "event_id") if key in event], "event id"
+            [event[key] for key in ("eventId", "eventID", "event_id", "event-id") if key in event], "event id"
         )
         observations.append(
             {
                 "state": state,
-                "timestamp": event.get("eventTime", event.get("event_time", timestamp)),
+                "timestamp": event.get(
+                    "eventTime", event.get("event_time", event.get("event-time", timestamp))
+                ),
                 "source": "oci_audit_transition",
                 "action": "StartInstance" if action == ACTION_START else "StopInstance",
                 "event_id": event_id,

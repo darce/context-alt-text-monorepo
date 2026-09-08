@@ -2414,6 +2414,27 @@ capture_failure_evidence() {
   return 0
 }
 
+# Shared by do_deploy / do_promote. ACX_VERIFY_OPTIONAL may warn only after a
+# successful runtime rollback; a failed rollback stays fail-closed.
+handle_failed_verification() {
+  local env="$1" label="$2"
+  local rollback_ok=0
+  capture_failure_evidence "$env" candidate || warn "automatic failure evidence capture failed; continuing with rollback"
+  if restore_env_tag_to_rollback "$env" 1; then
+    rollback_ok=1
+  else
+    rollback_ok=0
+    warn "automatic runtime rollback failed; run: $(rollback_command_hint "$env")"
+  fi
+  if [[ "$rollback_ok" == "1" && "${ACX_VERIFY_OPTIONAL:-0}" == "1" ]]; then
+    warn "Verify failed but ACX_VERIFY_OPTIONAL=1; previous image restored. Recovery: $(rollback_command_hint "$env")"
+  elif [[ "$rollback_ok" == "1" ]]; then
+    fail "${label} verification failed; previous image restored where possible. Recovery: $(rollback_command_hint "$env")"
+  else
+    fail "${label} verification failed AND automatic rollback failed; runtime state unknown. Recovery: $(rollback_command_hint "$env")"
+  fi
+}
+
 #---------------------------------------------------------------- deploy
 do_deploy() {
   local env="$1"; shift || true
@@ -2484,13 +2505,7 @@ do_deploy() {
   # S2-A-04: deploy path uses local resolve as authority (not the remote .env
   # we just wrote — that comparison would be tautological).
   if ! ACX_VERIFY_EXPECT_LOCAL=1 do_verify "$env"; then
-    capture_failure_evidence "$env" candidate || warn "automatic failure evidence capture failed; continuing with rollback"
-    restore_env_tag_to_rollback "$env" 1 || warn "automatic runtime rollback failed; run: $(rollback_command_hint "$env")"
-    if [[ "${ACX_VERIFY_OPTIONAL:-0}" == "1" ]]; then
-      warn "Verify failed but ACX_VERIFY_OPTIONAL=1; previous image restored. Recovery: $(rollback_command_hint "$env")"
-    else
-      fail "Deploy verification failed; previous image restored where possible. Recovery: $(rollback_command_hint "$env")"
-    fi
+    handle_failed_verification "$env" "Deploy"
   fi
 }
 
@@ -2567,13 +2582,7 @@ do_promote() {
 
   log "Promotion submitted. Verifying..."
   if ! ACX_VERIFY_EXPECT_LOCAL=1 do_verify "$to_env"; then
-    capture_failure_evidence "$to_env" candidate || warn "automatic failure evidence capture failed; continuing with rollback"
-    restore_env_tag_to_rollback "$to_env" 1 || warn "automatic runtime rollback failed; run: $(rollback_command_hint "$to_env")"
-    if [[ "${ACX_VERIFY_OPTIONAL:-0}" == "1" ]]; then
-      warn "Verify failed but ACX_VERIFY_OPTIONAL=1; previous image restored. Recovery: $(rollback_command_hint "$to_env")"
-    else
-      fail "Promotion verification failed; previous image restored where possible. Recovery: $(rollback_command_hint "$to_env")"
-    fi
+    handle_failed_verification "$to_env" "Promotion"
   fi
 }
 

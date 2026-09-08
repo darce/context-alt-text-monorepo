@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from infra.oci.gpu_lifecycle.controller import GpuInstance, GpuLifecycleController
 from infra.oci.gpu_lifecycle.intent import (
+    IntentAuthorityError,
     IntentAuthorityStore,
     IntentAction,
     IntentStatus,
@@ -504,6 +505,7 @@ def test_reaper_call_site_uses_sequence_precedence(tmp_path: Path) -> None:
         fence_delay_seconds=0,
         intent_dir=tmp_path,
         durable_state_dir=tmp_path / "durable",
+        authority_store=IntentAuthorityStore(tmp_path / "authority.json", boot_id="test-boot"),
         now=NOW,
     )
 
@@ -511,3 +513,69 @@ def test_reaper_call_site_uses_sequence_precedence(tmp_path: Path) -> None:
     assert result.intent.sequence == 2
     assert result.decided == []
     assert actuator.stopped == []
+
+
+def test_authority_revokes_prior_boot_grant_and_preserves_requester(tmp_path, caplog):
+    path = tmp_path / 'authority.json'
+    _write_intent(tmp_path, 'prod', requested_at=NOW,
+                  expires_at=NOW + timedelta(seconds=60), requested_by='original-operator')
+    first = IntentAuthorityStore(path, boot_id='boot-a', monotonic=lambda: 100.0)
+    assert read_effective_intent(tmp_path, NOW, authority_store=first).action is IntentAction.START
+    restarted = IntentAuthorityStore(path, boot_id='boot-b', monotonic=lambda: 1.0)
+    revoked = read_effective_intent(tmp_path, NOW, authority_store=restarted)
+    assert revoked.action is IntentAction.AUTO
+    assert revoked.status is IntentStatus.EXPIRED
+    record = json.loads(path.read_text())['intents'][VALID_NONCE]
+    assert record['expired'] is True
+    assert record['revocation_reason'] == 'boot_changed_or_unknown'
+    assert record['revoked_in_boot_id'] == 'boot-b'
+    assert record['publication']['requested_by'] == 'original-operator'
+    assert 'original-operator' in caplog.text
+    assert 'boot' in caplog.text.lower()
+    # Neither a clock rollback nor a later process can revive a revoked nonce.
+    later = IntentAuthorityStore(path, boot_id='boot-b', monotonic=lambda: 2.0)
+    assert read_effective_intent(tmp_path, NOW - timedelta(seconds=20), authority_store=later).action is IntentAction.AUTO
+
+
+def test_authority_same_boot_process_restart_preserves_grant(tmp_path):
+    path = tmp_path / 'authority.json'
+    _write_intent(tmp_path, 'prod', requested_at=NOW, expires_at=NOW + timedelta(seconds=60))
+    first = IntentAuthorityStore(path, boot_id='boot-a', monotonic=lambda: 100.0)
+    read_effective_intent(tmp_path, NOW, authority_store=first)
+    restarted = IntentAuthorityStore(path, boot_id='boot-a', monotonic=lambda: 110.0)
+    assert read_effective_intent(tmp_path, NOW + timedelta(seconds=10), authority_store=restarted).action is IntentAction.START
+
+
+@pytest.mark.parametrize('boot_id', [None, '', '   '])
+def test_authority_refuses_unknown_boot_identity(tmp_path, boot_id, monkeypatch):
+    from infra.oci.gpu_lifecycle.intent import IntentAuthorityError
+    monkeypatch.setattr(IntentAuthorityStore, '_read_boot_id', staticmethod(lambda: boot_id))
+    _write_intent(tmp_path, 'prod', requested_at=NOW)
+    authority = IntentAuthorityStore(tmp_path / 'authority.json', boot_id=boot_id)
+    with pytest.raises(IntentAuthorityError, match='boot identity'):
+        read_effective_intent(tmp_path, NOW, authority_store=authority)
+
+
+def test_authority_revokes_legacy_grant_without_boot_identity(tmp_path):
+    path = tmp_path / 'authority.json'
+    _write_intent(tmp_path, 'prod', requested_at=NOW)
+    authority = IntentAuthorityStore(path, boot_id='boot-a', monotonic=lambda: 100.0)
+    read_effective_intent(tmp_path, NOW, authority_store=authority)
+    state = json.loads(path.read_text())
+    state['intents'][VALID_NONCE].pop('boot_id')
+    path.write_text(json.dumps(state))
+    assert read_effective_intent(tmp_path, NOW, authority_store=authority).action is IntentAction.AUTO
+
+
+@pytest.mark.parametrize("field,value", [("expires_at", "2026-09-06T23:30:00Z"), ("sequence", 2)])
+def test_authority_rejects_record_publication_mismatch(tmp_path, field, value):
+    path = tmp_path / "authority.json"
+    authority = IntentAuthorityStore(path, boot_id="boot-a", monotonic=lambda: 100.0)
+    _write_intent(tmp_path, "prod", expires_at=NOW + timedelta(seconds=1))
+    assert read_effective_intent(tmp_path, NOW, authority_store=authority).action is IntentAction.START
+    state = json.loads(path.read_text())
+    state["intents"][VALID_NONCE][field] = value
+    state["intents"][VALID_NONCE]["monotonic_expires_at"] = 10000.0
+    path.write_text(json.dumps(state), encoding="utf-8")
+    with pytest.raises(IntentAuthorityError, match="invalid"):
+        read_effective_intent(tmp_path, NOW + timedelta(seconds=2), authority_store=authority)

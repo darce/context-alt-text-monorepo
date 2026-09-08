@@ -231,6 +231,95 @@ def test_heal_does_not_rebuild_matview_when_vector_typmod_matches(pg_empty_engin
     assert after_oid == before_oid
 
 
+class _FakeScalarResult:
+    def __init__(self, value: object) -> None:
+        self._value = value
+
+    def scalar(self) -> object:
+        return self._value
+
+
+class _FakeOp:
+    """Minimal alembic Operations stand-in for owner-safe ensure_matview branches."""
+
+    def __init__(self, current_user: str = "app_role") -> None:
+        self.statements: list[str] = []
+        self.current_user = current_user
+
+    def get_bind(self):
+        op = self
+
+        class _Bind:
+            def execute(self, stmt):  # noqa: ANN001
+                sql = str(stmt).lower()
+                if "select current_user" in sql:
+                    return _FakeScalarResult(op.current_user)
+                raise AssertionError(f"unexpected bind SQL: {stmt}")
+
+        return _Bind()
+
+    def execute(self, sql) -> None:  # noqa: ANN001
+        self.statements.append(str(sql))
+
+
+def _issued_drop(op: _FakeOp) -> bool:
+    needle = "DROP MATERIALIZED VIEW mv_identity_cluster_centroids"
+    return any(needle in sql.replace("\n", " ") for sql in op.statements)
+
+
+def test_ensure_matview_rebuilds_when_current_role_can_drop(monkeypatch: pytest.MonkeyPatch) -> None:
+    op = _FakeOp()
+    monkeypatch.setattr(MIGRATION, "_relkind", lambda _op, _name: "m")
+    monkeypatch.setattr(MIGRATION, "_matview_centroid_typmod", lambda _op: -1)
+    monkeypatch.setattr(MIGRATION, "_matview_owner_and_can_drop", lambda _op: ("app_role", True))
+
+    MIGRATION.ensure_matview(op)
+
+    assert _issued_drop(op)
+    assert any("CREATE MATERIALIZED VIEW" in sql for sql in op.statements)
+
+
+def test_ensure_matview_refuses_rebuild_with_named_owner_and_operator_sql(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner_role = "identity_mv_owner_abc123"
+    app_role = "context"
+    op = _FakeOp(current_user=app_role)
+    monkeypatch.setattr(MIGRATION, "_relkind", lambda _op, _name: "m")
+    monkeypatch.setattr(MIGRATION, "_matview_centroid_typmod", lambda _op: -1)
+    monkeypatch.setattr(MIGRATION, "_matview_owner_and_can_drop", lambda _op: (owner_role, False))
+
+    with pytest.raises(RuntimeError) as exc_info:
+        MIGRATION.ensure_matview(op)
+
+    message = str(exc_info.value)
+    operator_sql = f"ALTER MATERIALIZED VIEW mv_identity_cluster_centroids OWNER TO {app_role};"
+    assert "mv_identity_cluster_centroids" in message
+    assert "-1" in message
+    assert owner_role in message
+    assert app_role in message
+    assert operator_sql in message
+    assert "python -m scripts.sync_identity_schema" in message
+    assert not _issued_drop(op)
+    assert not any("CREATE MATERIALIZED VIEW" in sql for sql in op.statements)
+
+
+def test_ensure_matview_skips_drop_when_vector_typmod_matches(monkeypatch: pytest.MonkeyPatch) -> None:
+    op = _FakeOp()
+
+    def _ownership_must_not_run(_op) -> tuple[str, bool]:
+        raise AssertionError("ownership check must not run when typmod already matches")
+
+    monkeypatch.setattr(MIGRATION, "_relkind", lambda _op, _name: "m")
+    monkeypatch.setattr(MIGRATION, "_matview_centroid_typmod", lambda _op: MIGRATION.EMBEDDING_DIMENSION)
+    monkeypatch.setattr(MIGRATION, "_matview_owner_and_can_drop", _ownership_must_not_run)
+
+    MIGRATION.ensure_matview(op)
+
+    assert not _issued_drop(op)
+    assert any("CREATE MATERIALIZED VIEW IF NOT EXISTS" in sql for sql in op.statements)
+
+
 def test_heal_restores_dropped_rls_policy(pg_empty_engine) -> None:
     # BR2-02 drift direction: a tenant table that lost its policy is re-covered.
     with pg_empty_engine.begin() as conn:

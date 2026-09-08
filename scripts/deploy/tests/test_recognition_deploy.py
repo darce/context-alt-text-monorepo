@@ -1191,6 +1191,39 @@ def test_do_verify_probes_ready_only_on_terminal_failure(tmp_path: Path) -> None
     assert "non-gating" in combined
 
 
+@pytest.mark.parametrize("health_code", ["302", "404", "500", "503"])
+def test_do_verify_non_2xx_matching_sha_fails_and_probes_ready(
+    tmp_path: Path, health_code: str
+) -> None:
+    """GR-261: matching commit_sha on non-2xx /health must not verify; /ready is non-gating."""
+    expected = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    result = _run_do_verify(
+        tmp_path, attempts=1, health_sha=expected, health_code=health_code
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    assert "Verified:" not in combined
+    curl_log = (tmp_path / "curl.log").read_text()
+    assert "/health" in curl_log
+    assert "/ready" in curl_log
+    assert curl_log.count("/ready") == 1
+
+
+def test_do_verify_non_2xx_matching_sha_retries_then_probes_ready(tmp_path: Path) -> None:
+    """GR-261: a baked SHA on HTTP 503 must not skip warm-up retries."""
+    expected = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    result = _run_do_verify(
+        tmp_path, attempts=3, health_sha=expected, health_code="503"
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    assert "Verified:" not in combined
+    curl_log = (tmp_path / "curl.log").read_text()
+    assert curl_log.count("/health") == 3
+    assert curl_log.count("/ready") == 1
+    assert "non-gating" in combined
+
+
 def test_sanitizer_sed_defined_once() -> None:
     """W-05: one sanitizer definition; smoke heredoc must call it, not copy it."""
     result = subprocess.run(
@@ -1791,7 +1824,8 @@ def test_boot_smoke_trap_still_rms_when_logs_hang(tmp_path: Path) -> None:
         poll_s=1,
         pg_budget=1,
         extra_env={"FAKE_LOGS_SLEEP": "5", "FAKE_HEALTH_CODE": "000"},
-        wrap_deadline=2,
+        # GR-262: outer KILL grace is 1s; timeout -k 1 on logs needs wrap > health+2+1.
+        wrap_deadline=12,
     )
     log = _docker_log(result)
     assert re.search(r"rm -f acx-smoke-dev-\d+", log), log
@@ -2045,6 +2079,80 @@ do_boot_smoke dev "{image}"
     assert result.returncode != 124, combined
     assert "smoke setup timed out" in combined, combined
     assert "phase unknown" not in combined, combined
+
+
+def test_boot_smoke_composite_deadline_covers_trap_kill_grace(tmp_path: Path) -> None:
+    """GR-262: hung docker ignoring TERM lasts timeout+1s; 6 trap ops plus setup grace."""
+    setup_slack = 1
+    pg_ready = 1
+    smoke_timeout = 2
+    poll_interval = 2
+    net_create_cap = 10
+    port_cap = 5
+    kill_grace = 1
+    trap_op_s = 2
+    trap_op_count = 6  # logs, rm api, rm pg, volume, inspect, network rm
+    margin = 5
+    trap_wall = trap_op_count * (trap_op_s + kill_grace)
+    setup_kill_grace = 4 * kill_grace
+    expected_deadline = (
+        net_create_cap
+        + setup_slack
+        + pg_ready
+        + setup_slack
+        + port_cap
+        + smoke_timeout
+        + trap_wall
+        + poll_interval
+        + margin
+        + setup_kill_grace
+    )
+    image = "iad.ocir.io/idu2kqqe2jxy/acx-backend@sha256:" + ("a" * 64)
+    driver = tmp_path / "kill-grace-driver.sh"
+    driver.write_text(
+        f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+SMOKE_SETUP_SLACK={setup_slack}
+SMOKE_PG_READY_TIMEOUT={pg_ready}
+ACX_SMOKE_TIMEOUT={smoke_timeout}
+preflight_remote_ocir_auth() {{ return 0; }}
+assert_remote_disk_headroom_for_pull() {{ return 0; }}
+_pull_ref_remote() {{ return 0; }}
+remote_image_digest_ref() {{ printf '%s\\n' "$1"; }}
+eval "$(declare -f run_with_deadline | sed '1s/run_with_deadline/run_with_deadline_impl/')"
+run_with_deadline() {{
+  local deadline="$1" label="$2"
+  if [[ "$label" == *"health gate"* ]]; then
+    printf 'CAPTURED_COMPOSITE_DEADLINE=%s\\n' "$deadline" >&2
+  fi
+  run_with_deadline_impl "$@"
+}}
+ssh() {{
+  if [[ "$*" == *"bash -s"* ]]; then
+    cat >/dev/null
+    return 1
+  fi
+  return 0
+}}
+do_boot_smoke dev "{image}"
+'''
+    )
+    result = subprocess.run(
+        ["bash", str(driver)],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=dict(os.environ),
+        cwd=SCRIPT.parents[2],
+        timeout=30,
+    )
+    combined = result.stdout + result.stderr
+    captured = re.search(r"CAPTURED_COMPOSITE_DEADLINE=(\d+)", combined)
+    assert captured, combined
+    assert int(captured.group(1)) >= expected_deadline, (
+        f"composite {captured.group(1)} < hung-daemon budget {expected_deadline}: {combined}"
+    )
 
 
 def test_boot_smoke_owned_net_rm_on_create_timeout(tmp_path: Path) -> None:

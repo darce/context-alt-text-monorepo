@@ -17,9 +17,13 @@ in that list IS the heal-creatable contract, no longer a proxy.
 from __future__ import annotations
 
 import importlib
+import importlib.util
+import inspect
+import pathlib
 
 import db.models  # noqa: F401  (registers every ORM table on Base.metadata)
 from db.base import Base
+from recognition.application.health import IDENTITY_VECTOR_COLUMNS as HEALTH_VECTOR_COLUMNS
 
 MIGRATION = importlib.import_module("db.migrations.versions.001_identity_schema")
 
@@ -99,6 +103,36 @@ def test_every_orm_table_is_in_the_verifier_contract_or_exempt() -> None:
         f"ORM tables outside the verifier contract (add to EXPECTED_SCHEMA_TABLES "
         f"+ ensure_tables, or exempt with rationale): {sorted(offenders)}"
     )
+
+
+def _load_verifier():
+    path = pathlib.Path(__file__).resolve().parents[3] / "scripts" / "verify_identity_schema.py"
+    spec = importlib.util.spec_from_file_location("verify_identity_schema_truth", path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_identity_vector_column_contract_is_shared_across_heal_verify_health() -> None:
+    # VLMHEAL-1-REV-A-08: ensure_matview's centroid probe, the verifier column
+    # contract, and health.IDENTITY_VECTOR_COLUMNS must stay equal. Observation
+    # that would refute the finding: any of the three drifts from the others.
+    verifier = _load_verifier()
+    assert tuple(MIGRATION.IDENTITY_VECTOR_COLUMNS) == tuple(HEALTH_VECTOR_COLUMNS)
+    assert tuple(verifier.IDENTITY_VECTOR_COLUMNS) == tuple(HEALTH_VECTOR_COLUMNS)
+    assert verifier.IDENTITY_VECTOR_COLUMNS is HEALTH_VECTOR_COLUMNS
+
+    centroid_pair = ("mv_identity_cluster_centroids", "centroid")
+    assert centroid_pair in HEALTH_VECTOR_COLUMNS
+    probe_src = inspect.getsource(MIGRATION._matview_centroid_typmod)
+    assert "mv_identity_cluster_centroids" in probe_src
+    assert "centroid" in probe_src
+    assert "typname" in probe_src
+    assert "vector" in probe_src
+    verifier_src = inspect.getsource(verifier._collect_vector_typmods)
+    assert "IDENTITY_VECTOR_COLUMNS" in verifier_src
 
 
 def test_tenant_and_raw_sql_tables_are_subsets_of_expected() -> None:

@@ -191,6 +191,13 @@ export const useGuidedLiveDescription = ({
   // cancel or a new request must not write into the run that replaced it.
   const generationRef = useRef(0);
   const attemptRef = useRef(0);
+  // Set by the tick that crosses the client deadline. Distinct from `waiting`
+  // so an in-flight submit that resolves before the queued re-render is not
+  // mistaken for a timed-out wait (GR-201).
+  const deadlineElapsedRef = useRef(false);
+  // Holds the 1s tick while items() is in flight so a deadline tick cannot
+  // tear the poll effect down and drop a sentence already paid for (GR-202).
+  const completionInFlightRef = useRef(false);
 
   // Face choices are not a prerequisite. Contract B freezes the hook
   // signature without a verified flag, so a missing media id is the
@@ -208,12 +215,26 @@ export const useGuidedLiveDescription = ({
   // the server hears about it, so fence the generation and cancel the run id.
   const mayBeLive = guidedLiveRunMayBeLive(state);
   const ownsAttempt = guidedLiveOwnsRunAttempt(state);
-  const waitingRef = useRef<{ mayBeLive: boolean; ownsAttempt: boolean; runId: string | null }>({
+  const waitingRef = useRef<{
+    mayBeLive: boolean;
+    ownsAttempt: boolean;
+    runId: string | null;
+    startedAtMs: number | null;
+    deadlineMs: number;
+  }>({
     mayBeLive,
     ownsAttempt,
     runId,
+    startedAtMs: state.startedAtMs,
+    deadlineMs: state.deadlineMs,
   });
-  waitingRef.current = { mayBeLive, ownsAttempt, runId };
+  waitingRef.current = {
+    mayBeLive,
+    ownsAttempt,
+    runId,
+    startedAtMs: state.startedAtMs,
+    deadlineMs: state.deadlineMs,
+  };
 
   // Layout, not passive: the gate closing is a fact about this render, and a
   // passive effect would let the browser paint one frame of the old run's
@@ -266,6 +287,8 @@ export const useGuidedLiveDescription = ({
     const generation = generationRef.current + 1;
     generationRef.current = generation;
     attemptRef.current = 0;
+    deadlineElapsedRef.current = false;
+    completionInFlightRef.current = false;
     dispatch({ kind: 'requested', atMs: Date.now() });
 
     void (previous === null ? Promise.resolve() : releaseRun(client, previous, 'superseded_by_retry'))
@@ -287,6 +310,17 @@ export const useGuidedLiveDescription = ({
           // exists on the server now, so a burst it started keeps costing money
           // unless we cancel the run id we only just learned.
           void releaseRun(client, run.run_id, 'accepted_after_fence');
+          return;
+        }
+        if (deadlineElapsedRef.current) {
+          // Client deadline elapsed while submit was still on the wire (GR-201).
+          // The reducer no-ops `accepted` once the wait is over, so adopting
+          // here would never record the run id and skipping cancel would leak
+          // it. Uncancelled-run risk is client-side; the server GPU lease cap
+          // is a separate control and is not this lane. Cancel rather than
+          // adopt: there is no keep-waiting offer without a run the learner
+          // already saw.
+          void releaseRun(client, run.run_id, 'accepted_after_deadline');
           return;
         }
         // The disclosed budget and the GPU state it was measured against
@@ -326,7 +360,17 @@ export const useGuidedLiveDescription = ({
     if (!waiting) {
       return undefined;
     }
-    const interval = setInterval(() => dispatch({ kind: 'tick', atMs: Date.now() }), TICK_MS);
+    const interval = setInterval(() => {
+      if (completionInFlightRef.current) {
+        return;
+      }
+      const atMs = Date.now();
+      const snap = waitingRef.current;
+      dispatch({ kind: 'tick', atMs });
+      if (snap.startedAtMs !== null && atMs - snap.startedAtMs >= snap.deadlineMs) {
+        deadlineElapsedRef.current = true;
+      }
+    }, TICK_MS);
     return () => clearInterval(interval);
   }, [waiting]);
 
@@ -388,29 +432,34 @@ export const useGuidedLiveDescription = ({
           return;
         }
 
-        const draft = draftOf(await client.items(runId), mediaId);
-        if (!live()) {
-          return;
-        }
-        if (draft === null) {
+        completionInFlightRef.current = true;
+        try {
+          const draft = draftOf(await client.items(runId), mediaId);
+          if (!live()) {
+            return;
+          }
+          if (draft === null) {
+            dispatch({
+              kind: 'polled',
+              phase,
+              gpu,
+              atMs: Date.now(),
+              reason: GUIDED_LIVE_REASON.ITEM_MISSING,
+              disclosedDeadlineSeconds: run.deadline_seconds,
+            });
+            return;
+          }
           dispatch({
             kind: 'polled',
             phase,
             gpu,
             atMs: Date.now(),
-            reason: GUIDED_LIVE_REASON.ITEM_MISSING,
             disclosedDeadlineSeconds: run.deadline_seconds,
+            ...draft,
           });
-          return;
+        } finally {
+          completionInFlightRef.current = false;
         }
-        dispatch({
-          kind: 'polled',
-          phase,
-          gpu,
-          atMs: Date.now(),
-          disclosedDeadlineSeconds: run.deadline_seconds,
-          ...draft,
-        });
       } catch (error) {
         if (!live()) {
           return;
@@ -445,6 +494,7 @@ export const useGuidedLiveDescription = ({
     // thing that stopped was this panel. Resetting the backoff makes the first
     // resumed poll immediate rather than five seconds late.
     attemptRef.current = 0;
+    deadlineElapsedRef.current = false;
     dispatch({ kind: 'wait_resumed', atMs: Date.now() });
   }, []);
 

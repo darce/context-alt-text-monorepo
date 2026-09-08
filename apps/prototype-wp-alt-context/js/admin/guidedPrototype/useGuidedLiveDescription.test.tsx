@@ -552,6 +552,122 @@ describe('useGuidedLiveDescription', () => {
       expect(hardResult.current.state.reason).toBe('poll_failed');
     });
 
+    it('cancels a submit that resolves after the client deadline rather than leaking the run id', async () => {
+      // GR-201: request() leaves submit unresolved; a tick past the client
+      // ceiling times the wait out with runId still null. The reducer then
+      // no-ops `accepted` (not waiting), so the hook must cancel the run id
+      // it just learned. This is the client uncancelled-run risk; the server
+      // GPU lease cap is a separate control and is not this lane.
+      //
+      // The hook cancels the late run rather than adopting it into timed_out
+      // state: adopting would offer keep-waiting on a burst nobody asked to
+      // resume, and skipping cancel would leave the run live with no owner.
+      let release: (run: DescribeRunResponse) => void = () => undefined;
+      const client = stubClient({
+        submit: vi.fn<GuidedLiveDescriptionClient['submit']>(
+          () =>
+            new Promise<DescribeRunResponse>((resolve) => {
+              release = resolve;
+            }),
+        ),
+      });
+      const { result } = mount(client);
+
+      await press(() => result.current.request());
+      expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.QUEUED);
+      expect(result.current.state.runId).toBeNull();
+
+      await settle(GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000 + 2000);
+      expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.TIMED_OUT);
+      expect(result.current.state.runId).toBeNull();
+
+      await act(async () => {
+        release(runResponse({ run_id: 'run-late-deadline' }));
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      expect(client.cancel).toHaveBeenCalledWith('run-late-deadline');
+      expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.TIMED_OUT);
+      expect(result.current.state.runId).toBeNull();
+    });
+
+    it('cancels the late first submit when the learner retries after the deadline', async () => {
+      // Same uncancelled-run risk on the retry path: the first submit is still
+      // on the wire when the wait times out (runId null), so retry has nothing
+      // to cancel yet. When that first submit lands, it belongs to the fenced
+      // generation and must be cancelled; the retry's own run id is adopted.
+      let releaseFirst: (run: DescribeRunResponse) => void = () => undefined;
+      const client = stubClient({
+        submit: vi
+          .fn<GuidedLiveDescriptionClient['submit']>()
+          .mockImplementationOnce(
+            () =>
+              new Promise<DescribeRunResponse>((resolve) => {
+                releaseFirst = resolve;
+              }),
+          )
+          .mockResolvedValueOnce(runResponse({ run_id: 'run-retry' })),
+      });
+      const { result } = mount(client);
+
+      await press(() => result.current.request());
+      await settle(GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000 + 2000);
+      expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.TIMED_OUT);
+
+      await press(() => result.current.request());
+      expect(client.submit).toHaveBeenCalledTimes(2);
+      expect(result.current.state.runId).toBe('run-retry');
+
+      await act(async () => {
+        releaseFirst(runResponse({ run_id: 'run-late-first' }));
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      expect(client.cancel).toHaveBeenCalledWith('run-late-first');
+      expect(result.current.state.runId).toBe('run-retry');
+    });
+
+    it('keeps a completed live sentence when items() resolve after a tick timeout', async () => {
+      // GR-202: poll returns complete while items() is still pending. The 1s
+      // tick can time the wait out first, the poll-effect teardown sets
+      // cancelled=true, and the hook used to drop the sentence even though
+      // the reducer would keep a completion already in the action.
+      let releaseItems: (items: DescribeRunItemsResponse) => void = () => undefined;
+      const client = stubClient({
+        submit: vi.fn<GuidedLiveDescriptionClient['submit']>(() =>
+          Promise.resolve({ ...runResponse({ gpu_state: 'ready' }), deadline_seconds: 30 }),
+        ),
+        poll: vi.fn<GuidedLiveDescriptionClient['poll']>(() =>
+          Promise.resolve(runResponse({ status: 'completed', phase: 'complete', gpu_state: 'ready' })),
+        ),
+        items: vi.fn<GuidedLiveDescriptionClient['items']>(
+          () =>
+            new Promise<DescribeRunItemsResponse>((resolve) => {
+              releaseItems = resolve;
+            }),
+        ),
+      });
+      const { result } = mount(client);
+
+      await press(() => result.current.request());
+      await settle(1000);
+      expect(client.items).toHaveBeenCalledWith('run-1');
+      expect(result.current.state.status).not.toBe(GUIDED_LIVE_STATUS.READY);
+
+      await settle(50_000);
+      // The tick is held while items() is in flight, so the wait does not
+      // tear down and drop a sentence the burst already paid for.
+      expect(result.current.state.status).not.toBe(GUIDED_LIVE_STATUS.TIMED_OUT);
+
+      await act(async () => {
+        releaseItems(itemsResponse('The live sentence the tick almost dropped.'));
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.READY);
+      expect(result.current.state.text).toBe('The live sentence the tick almost dropped.');
+    });
+
     it('cancels a run the learner stopped waiting for while the submit was in flight', async () => {
       let release: (run: DescribeRunResponse) => void = () => undefined;
       const client = stubClient({

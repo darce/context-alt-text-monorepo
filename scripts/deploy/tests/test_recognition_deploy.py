@@ -6,6 +6,7 @@ import os
 import re
 import stat
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ import pytest
 SCRIPT = Path(__file__).parents[1] / "recognition-service.sh"
 
 CRASH_LOG = "ModuleNotFoundError: No module named 'scene.foo'"
+VALID_CID = "ab" * 32
 
 DOCKER_STUB = r"""#!/usr/bin/env bash
 set -euo pipefail
@@ -54,6 +56,12 @@ case "$cmd" in
     exit 0
     ;;
   exec)
+    if [[ -n "${FAKE_PG_EXEC_SLEEP:-}" ]]; then
+      sleep "${FAKE_PG_EXEC_SLEEP}"
+    fi
+    if [[ "${FAKE_PG_READY:-1}" != "1" ]]; then
+      exit 1
+    fi
     exit 0
     ;;
   port)
@@ -237,6 +245,7 @@ def _run_boot_smoke(
     poll_s: int = 1,
     attempts: int = 1,
     vlm_budget: int = 0,
+    pg_budget: int = 30,
     extra_env: dict[str, str] | None = None,
     wrap_deadline: int | None = None,
 ) -> subprocess.CompletedProcess[str]:
@@ -251,6 +260,7 @@ def _run_boot_smoke(
         str(poll_s),
         str(attempts),
         str(vlm_budget),
+        str(pg_budget),
     ]
     if wrap_deadline is None:
         result = subprocess.run(
@@ -303,7 +313,7 @@ def _run_capture_failure_evidence(
     elif cid_stdout is not None:
         cid_out.write_bytes(cid_stdout)
     else:
-        cid_out.write_bytes(b"abc123\n")
+        cid_out.write_bytes((VALID_CID + "\n").encode())
     cid_err.write_bytes(cid_stderr)
     driver = tmp_path / "capture-driver.sh"
     phase_arg = f" {phase}" if phase else ""
@@ -422,7 +432,6 @@ def test_remote_build_is_generation_isolated_locked_and_deadlined() -> None:
 def test_boot_smoke_has_outer_deadlines_and_curl_request_timeout() -> None:
     body = _function_body("do_boot_smoke")
     assert body.count("run_with_deadline") >= 2
-    assert "$((pg_ready_budget + smoke_timeout))" in body
     assert "repair_blob_volume_ownership() {" not in body
     assert "do_restart() {" not in body
     assert "capture_failure_evidence() {" not in body
@@ -433,15 +442,41 @@ def test_boot_smoke_has_outer_deadlines_and_curl_request_timeout() -> None:
     assert "docker logs --tail 80" in smoke
     assert "sanitize_deploy_diagnostic" in smoke
     assert not re.search(r"curl[^\n]*/ready", smoke)
-    trap = smoke[smoke.index("trap ") : smoke.index("EXIT") + 4]
-    assert "last_health_body" in trap
-    assert "docker logs --tail 80" in trap
-    assert 'if [[ "${attempt}" != "${attempts}" ]]; then' in smoke
-    assert "seq 1 \"${pg_budget}\"" in smoke
-    assert "diag_reserve" in body
-    assert "2 * poll_interval" in body
+    assert "SECONDS" in smoke
+    assert 'seq 1 "${pg_budget}"' not in smoke
+    assert 'seq 1 "${attempts}"' not in smoke
     assert re.search(r"^SMOKE_TIMEOUT_DEFAULT=24$", SCRIPT.read_text(), re.M)
     assert re.search(r"^SMOKE_PG_READY_TIMEOUT=30$", SCRIPT.read_text(), re.M)
+
+
+@pytest.mark.parametrize("timeout", [24, 60, 120])
+def test_boot_smoke_computed_health_loop_budget(timeout: int) -> None:
+    """SB-06: executable health window is ACX_SMOKE_TIMEOUT - poll_s for 24/60/120."""
+    poll_s = 2
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f"""
+set -euo pipefail
+budget_s={timeout}
+poll_s={poll_s}
+diag_reserve="${{poll_s}}"
+health_budget=$((budget_s - diag_reserve))
+if (( health_budget < 1 )); then health_budget=1; fi
+SECONDS=0
+health_end=$((SECONDS + health_budget))
+printf '%s\\n' "$((health_end - SECONDS))"
+""",
+        ],
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    assert int(result.stdout.strip()) == timeout - poll_s
+    smoke = _boot_smoke_heredoc()
+    assert "health_end=$((SECONDS + health_budget))" in smoke
+    assert "pg_end=$((SECONDS + pg_budget))" in smoke
 
 
 def test_automatic_rollbacks_capture_failure_evidence_first() -> None:
@@ -471,12 +506,22 @@ def test_failure_evidence_probes_and_logs_are_deadline_bounded() -> None:
     assert "--- evidence: api container logs ---" in body
 
 
-def test_do_verify_surfaces_non_gating_readiness_code_and_body() -> None:
-    body = _function_body("do_verify")
-    source = SCRIPT.read_text()
-    assert 'ready_url="$(env_to_ready_url "$env")"' in body
-    assert "emit_verify_ready_diagnostic" in body
-    assert "non-gating" in source
+def test_do_verify_surfaces_non_gating_readiness_code_and_body(tmp_path: Path) -> None:
+    """X-08: emit_verify_ready_diagnostic runs once on terminal failure, never on success."""
+    expected = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    success_dir = tmp_path / "success"
+    success_dir.mkdir()
+    success = _run_do_verify(success_dir, attempts=3, health_sha=expected)
+    assert success.returncode == 0, success.stdout + success.stderr
+    assert "/ready" not in (success_dir / "curl.log").read_text()
+
+    fail_dir = tmp_path / "fail"
+    fail_dir.mkdir()
+    failed = _run_do_verify(fail_dir, attempts=3, health_sha="deadbeefdeadbeef")
+    assert failed.returncode != 0, failed.stdout + failed.stderr
+    curl_log = (fail_dir / "curl.log").read_text()
+    assert curl_log.count("/ready") == 1
+    assert curl_log.count("/health") == 3
 
 
 def test_restart_and_rollback_integration_points_are_deadlined() -> None:
@@ -587,7 +632,7 @@ def test_boot_smoke_ready_probe_does_not_timeout_a_marginal_health_pass(tmp_path
     )
     combined = result.stdout + result.stderr
     assert result.returncode == 0, combined
-    assert "smoke health OK" in combined
+    assert "diagnostic: smoke health OK" in combined
     assert "timed out after" not in combined
 
 
@@ -1035,6 +1080,44 @@ def test_sanitize_deploy_diagnostic_redacts_secret_shapes(raw: str, secret: str)
     assert out.startswith("diagnostic: ")
 
 
+def test_sanitize_deploy_diagnostic_redacts_single_quoted_mapping_keys() -> None:
+    """X-01: Python/mapping single-quoted keys must not leak token values."""
+    raw = (
+        "{'RECOGNITION_ADMIN_TOKEN': 'LEAKC', 'HF_TOKEN': 'LEAKD'}\n"
+        "ERROR config: {'password': 'LEAKE'}\n"
+    )
+    out = _run_sanitizer(raw)
+    assert "LEAKC" not in out, out
+    assert "LEAKD" not in out, out
+    assert "LEAKE" not in out, out
+    assert "[REDACTED]" in out
+    assert out.startswith("diagnostic: ")
+
+
+def test_sanitize_deploy_diagnostic_redacts_basic_authorization() -> None:
+    """X-02: Basic auth must be redacted in assignment, header, and bare forms."""
+    raw = (
+        "Authorization=Basic YWJjOmRlZg==\n"
+        "authorization: Basic YWJjOmRlZg==\n"
+        "Basic YWJjOmRlZjEyMzQ=\n"
+    )
+    out = _run_sanitizer(raw)
+    assert "YWJjOmRlZg==" not in out, out
+    assert "YWJjOmRlZjEyMzQ=" not in out, out
+    assert "[REDACTED]" in out
+    assert out.startswith("diagnostic: ")
+
+
+def test_sanitize_deploy_diagnostic_redacts_unquoted_value_through_comma_brace() -> None:
+    """X-03: unquoted SECRET/TOKEN values must not stop at comma or closing brace."""
+    raw = "SECRET=abc}def TOKEN=abc,def\n"
+    out = _run_sanitizer(raw)
+    assert "def" not in out, out
+    assert "abc" not in out, out
+    assert "[REDACTED]" in out
+    assert out.startswith("diagnostic: ")
+
+
 def test_sanitize_deploy_diagnostic_preserves_token_file_and_header_name() -> None:
     """W-01 negative: TOKEN_FILE paths stay; X-Api-Key keeps its header name."""
     raw = (
@@ -1089,7 +1172,7 @@ def test_cid_capture_stderr_never_leaks_unprefixed(tmp_path: Path) -> None:
     """W-02: hunter2 on ssh stderr never reaches the log raw; stdout cid stays usable."""
     result = _run_capture_failure_evidence(
         tmp_path,
-        cid_stdout=b"abc123\n",
+        cid_stdout=(VALID_CID + "\n").encode(),
         cid_stderr=b"password=hunter2\n",
     )
     combined = (result.stdout + result.stderr).decode()
@@ -1188,11 +1271,10 @@ def test_function_body_does_not_overcapture_boot_smoke() -> None:
 
 def test_boot_smoke_skips_sleep_after_last_health_attempt() -> None:
     smoke = _boot_smoke_heredoc()
-    assert 'if [[ "${attempt}" != "${attempts}" ]]; then' in smoke
     sleep_idx = smoke.index('sleep "${poll_s}"')
-    guard_idx = smoke.rfind("if [[", 0, sleep_idx)
-    assert guard_idx != -1
-    assert "${attempt}" in smoke[guard_idx:sleep_idx]
+    guard = smoke[max(0, sleep_idx - 180) : sleep_idx]
+    assert "SECONDS" in guard
+    assert "health_end" in guard
 
 
 def test_boot_smoke_deadline_kill_still_emits_health_body(tmp_path: Path) -> None:
@@ -1220,7 +1302,7 @@ def test_cid_stdout_hex_collects_logs_when_stderr_warns(tmp_path: Path) -> None:
     """Stderr after a valid cid must not skip docker logs."""
     result = _run_capture_failure_evidence(
         tmp_path,
-        cid_stdout=b"abc123\n",
+        cid_stdout=(VALID_CID + "\n").encode(),
         cid_stderr=b"WARNING: password=hunter2\n",
     )
     combined = (result.stdout + result.stderr).decode()
@@ -1230,4 +1312,336 @@ def test_cid_stdout_hex_collects_logs_when_stderr_warns(tmp_path: Path) -> None:
     assert "no api container" not in combined
     args = (tmp_path / "ssh-args").read_text()
     assert "docker logs" in args
-    assert "abc123" in args
+    assert VALID_CID in args
+
+
+def test_do_verify_failure_warn_sanitizes_body(tmp_path: Path) -> None:
+    """X-04: do_verify fetch-failure warn must not leak secrets or raw C0 bytes."""
+    driver = tmp_path / "verify-fail-driver.sh"
+    driver.write_text(
+        f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+ACX_VERIFY_ATTEMPTS=1
+ACX_VERIFY_SLEEP=0
+ACX_VERIFY_EXPECT_LOCAL=1
+verify_running_image_matches_deployed() {{ return 0; }}
+verify_live_gpu_snapshots() {{ return 0; }}
+curl() {{
+  printf '%s' $'password=hunter2\\001'
+  return 7
+}}
+do_verify dev
+'''
+    )
+    result = subprocess.run(
+        ["bash", str(driver)],
+        capture_output=True,
+        check=False,
+        env=dict(os.environ),
+        cwd=SCRIPT.parents[2],
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert b"hunter2" not in combined
+    assert b"\x01" not in combined
+    assert b"diagnostic:" in combined
+    assert b"Health check fetch failed" in combined
+
+
+def test_verify_restored_runtime_warn_sanitizes_body(tmp_path: Path) -> None:
+    """X-04: rollback health warn must not leak secrets or raw C0 bytes."""
+    driver = tmp_path / "restore-driver.sh"
+    digest = "iad.ocir.io/idu2kqqe2jxy/acx-backend@sha256:" + ("a" * 64)
+    driver.write_text(
+        f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+ACX_VERIFY_ATTEMPTS=1
+ACX_VERIFY_SLEEP=0
+curl() {{
+  printf '%s' $'password=hunter2\\001'
+  return 7
+}}
+verify_running_image_digest() {{ return 1; }}
+verify_restored_runtime dev "{digest}"
+'''
+    )
+    result = subprocess.run(
+        ["bash", str(driver)],
+        capture_output=True,
+        check=False,
+        env=dict(os.environ),
+        cwd=SCRIPT.parents[2],
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert b"hunter2" not in combined
+    assert b"\x01" not in combined
+    assert b"diagnostic:" in combined
+    assert b"Rollback health/digest verification failed" in combined
+
+
+def test_compose_project_dequotes_remote_env_value(tmp_path: Path) -> None:
+    """X-05: quoted COMPOSE_PROJECT_NAME must become an unquoted docker ps filter."""
+    remote = tmp_path / "opt"
+    remote.mkdir()
+    (remote / ".env").write_text('COMPOSE_PROJECT_NAME="acx-prod"\n')
+    docker_log = tmp_path / "docker.log"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _write_executable(
+        fake_bin / "docker",
+        f"""#!/usr/bin/env bash
+printf '%s\\n' "$*" >>"{docker_log}"
+exit 0
+""",
+    )
+    driver = tmp_path / "compose-driver.sh"
+    driver.write_text(
+        f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+env_to_remote_dir() {{ printf '%s\\n' "{remote}"; }}
+run_with_deadline() {{ shift 2; "$@"; }}
+ssh() {{
+  remote_cmd="${{@: -1}}"
+  PATH="{fake_bin}:$PATH" bash -c "$remote_cmd"
+}}
+capture_failure_evidence dev pre_candidate
+'''
+    )
+    result = subprocess.run(
+        ["bash", str(driver)],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=dict(os.environ),
+        cwd=SCRIPT.parents[2],
+    )
+    assert result.returncode == 0, result.stderr
+    logged = docker_log.read_text()
+    assert "label=com.docker.compose.project=acx-prod" in logged
+    assert 'label=com.docker.compose.project="acx-prod"' not in logged
+    assert "label=com.docker.compose.project='acx-prod'" not in logged
+
+
+def test_do_verify_continues_when_sanitizer_pipeline_fails(tmp_path: Path) -> None:
+    """X-06: a failing sanitizer sed must print fallback and not abort verify."""
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    state = tmp_path / "sed-state"
+    state.mkdir()
+    _write_executable(
+        fake_bin / "sed",
+        f"""#!/usr/bin/env bash
+if [[ ! -f "{state}/failed" ]]; then
+  touch "{state}/failed"
+  exit 1
+fi
+exec /usr/bin/sed "$@"
+""",
+    )
+    expected = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    health_body = (
+        '{"commit_sha":"' + expected + '","status":"ok","image_variant":"recognition"}'
+    )
+    driver = tmp_path / "sed-fail-driver.sh"
+    driver.write_text(
+        f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+ACX_VERIFY_ATTEMPTS=1
+ACX_VERIFY_SLEEP=0
+ACX_VERIFY_EXPECT_LOCAL=1
+verify_running_image_matches_deployed() {{ return 0; }}
+verify_live_gpu_snapshots() {{ return 0; }}
+curl() {{
+  url="${{@: -1}}"
+  if [[ "$url" == *"/ready"* ]]; then
+    printf '%s\\n%s' '{{"ready":true}}' '200'
+    return 0
+  fi
+  printf '%s\\n%s' '{health_body}' '200'
+  return 0
+}}
+do_verify dev
+'''
+    )
+    env = dict(os.environ)
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+    result = subprocess.run(
+        ["bash", str(driver)],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+        cwd=SCRIPT.parents[2],
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+    assert "diagnostic:" in combined
+    assert "unavailable" in combined
+
+
+def _run_do_boot_smoke_wrapper(tmp_path: Path) -> subprocess.CompletedProcess[str]:
+    payload = tmp_path / "smoke-wrap"
+    ssh_args = tmp_path / "ssh-args"
+    image = "iad.ocir.io/idu2kqqe2jxy/acx-backend@sha256:" + ("a" * 64)
+    driver = tmp_path / "wrap-driver.sh"
+    driver.write_text(
+        f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+preflight_remote_ocir_auth() {{ return 0; }}
+assert_remote_disk_headroom_for_pull() {{ return 0; }}
+_pull_ref_remote() {{ return 0; }}
+remote_image_digest_ref() {{ printf '%s\\n' "$1"; }}
+run_with_deadline() {{
+  shift 2
+  "$@"
+}}
+ssh() {{
+  printf '%s\\n' "$*" >>"{ssh_args}"
+  cat >"{payload}"
+  return 0
+}}
+do_boot_smoke dev "{image}"
+'''
+    )
+    result = subprocess.run(
+        ["bash", str(driver)],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=dict(os.environ),
+        cwd=SCRIPT.parents[2],
+    )
+    result._payload = payload  # type: ignore[attr-defined]
+    result._ssh_args = ssh_args  # type: ignore[attr-defined]
+    return result
+
+
+def test_do_boot_smoke_wrap_payload_includes_sanitizer_and_parses(tmp_path: Path) -> None:
+    """X-07: composed SMOKE_WRAP payload includes sanitizer + set -euo and bash -n."""
+    result = _run_do_boot_smoke_wrapper(tmp_path)
+    payload = (tmp_path / "smoke-wrap").read_text()
+    assert result.returncode == 0, result.stderr
+    assert "sanitize_deploy_diagnostic ()" in payload or "sanitize_deploy_diagnostic()" in payload
+    assert "set -euo pipefail" in payload
+    parsed = subprocess.run(["bash", "-n"], input=payload, text=True, capture_output=True, check=False)
+    assert parsed.returncode == 0, parsed.stderr
+
+
+def test_do_boot_smoke_passes_pg_ready_budget_as_eighth_arg(tmp_path: Path) -> None:
+    """SB-04: wrapper bash -s arg list carries ${pg_ready_budget}."""
+    result = _run_do_boot_smoke_wrapper(tmp_path)
+    assert result.returncode == 0, result.stderr
+    args_text = (tmp_path / "ssh-args").read_text()
+    bash_s_line = next(line for line in args_text.splitlines() if "bash -s" in line)
+    # The remote command is the last ssh argv token; split that token.
+    remote = bash_s_line.split("bash -s", 1)[1].strip()
+    wrap_args = remote.split()
+    assert wrap_args[-1] == "30"
+    assert "pgvector/pgvector:pg17" in args_text
+
+
+def test_boot_smoke_health_loop_uses_full_wall_clock(tmp_path: Path) -> None:
+    """SB-01: instant ECONNREFUSED still polls for timeout - diag_reserve seconds."""
+    budget_s = 24
+    poll_s = 2
+    started = time.monotonic()
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=budget_s,
+        poll_s=poll_s,
+        attempts=6,
+        pg_budget=1,
+        extra_env={"FAKE_HEALTH_CODE": "000"},
+    )
+    elapsed = time.monotonic() - started
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    assert elapsed >= (budget_s - poll_s) - 1
+    assert elapsed < budget_s + 8
+
+
+def test_boot_smoke_pg_wait_is_seconds_bounded(tmp_path: Path) -> None:
+    """SB-02: pg ready-wait is SECONDS-bounded, not seq-iteration bounded."""
+    started = time.monotonic()
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=2,
+        poll_s=1,
+        attempts=1,
+        pg_budget=3,
+        extra_env={"FAKE_PG_READY": "0", "FAKE_PG_EXEC_SLEEP": "2"},
+    )
+    elapsed = time.monotonic() - started
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    assert "postgres failed to become ready" in combined
+    assert elapsed >= 2
+    assert elapsed < 7
+
+
+def test_boot_smoke_deadline_reports_phase_unknown(tmp_path: Path) -> None:
+    """SB-03: smoke_rc 124 reports composite deadline and phase unknown."""
+    image = "iad.ocir.io/idu2kqqe2jxy/acx-backend@sha256:" + ("a" * 64)
+    driver = tmp_path / "timeout-driver.sh"
+    driver.write_text(
+        f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+preflight_remote_ocir_auth() {{ return 0; }}
+assert_remote_disk_headroom_for_pull() {{ return 0; }}
+_pull_ref_remote() {{ return 0; }}
+remote_image_digest_ref() {{ printf '%s\\n' "$1"; }}
+run_with_deadline() {{
+  local label="$2"
+  shift 2
+  if [[ "$label" == *"health gate"* ]]; then
+    "$@" >/dev/null
+    return 124
+  fi
+  "$@" >/dev/null
+  return 0
+}}
+ssh() {{ cat >/dev/null; return 0; }}
+do_boot_smoke dev "{image}"
+'''
+    )
+    result = subprocess.run(
+        ["bash", str(driver)],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=dict(os.environ),
+        cwd=SCRIPT.parents[2],
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "phase unknown" in combined
+    assert "composite deadline" in combined
+    assert "/health never came up" not in combined
+
+
+def test_short_hex_container_id_is_rejected(tmp_path: Path) -> None:
+    """SB-05: 7-hex stdout is unexpected container id output, not a usable cid."""
+    result = _run_capture_failure_evidence(tmp_path, cid_stdout=b"deadbee\n")
+    combined = (result.stdout + result.stderr).decode()
+    assert result.returncode == 0, combined
+    assert "unexpected container id output" in combined
+    args = (tmp_path / "ssh-args").read_text()
+    assert "docker logs" not in args
+    assert "deadbee" not in args
+
+
+def test_boot_smoke_trap_handles_term_and_int() -> None:
+    """ENG-01: smoke body trap must handle EXIT plus TERM/INT."""
+    smoke = _boot_smoke_heredoc()
+    assert "trap '" in smoke
+    assert "' EXIT" in smoke
+    assert "trap 'exit 143' TERM" in smoke
+    assert "trap 'exit 130' INT" in smoke
+

@@ -118,7 +118,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/guard_codemap_first.py\""
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/guard_codemap_first.py\"",
+            "timeout": 5
           }
         ]
       }

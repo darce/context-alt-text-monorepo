@@ -18,6 +18,7 @@ import { __, _n, sprintf } from '@wordpress/i18n';
 import type { WorkbenchMediaItem } from '../../hooks/useWorkbenchMedia';
 import type { WorkbenchMediaStatus } from '../../api/workbenchMediaApi';
 import { fetchSettings, type SettingsResponse } from '../../api/settingsApi';
+import { queryKeys } from '../../api/queryKeys';
 import { toSettings } from '../../navigation/appLinks';
 import { MediaSelectionTableBody } from './MediaSelectionTableBody';
 import { BulkDescribeReviewLink } from './BulkDescribeReviewLink';
@@ -109,9 +110,9 @@ export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): R
     setDismissedRunId(null);
     bulkDescribe.submit.mutate(ids);
   };
-  // L1 settings query: share SettingsPage's ['settings'] key so a save updates this footer.
+  // Share SettingsPage's factory key so a save updates this footer.
   const settingsQuery = useQuery<SettingsResponse>({
-    queryKey: ['settings'],
+    queryKey: queryKeys.settings.all,
     queryFn: fetchSettings,
     retry: false,
   });

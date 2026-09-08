@@ -492,7 +492,6 @@ def test_d1_remote_build_dir_quoted_at_ssh_sink(tmp_path: pathlib.Path) -> None:
         preflight_ssh() {{ :; }}
         preflight_remote_docker() {{ :; }}
         preflight_rsync() {{ :; }}
-        refuse_remote_vlm_build() {{ :; }}
         remote_builder_prune() {{ :; }}
         # assert_remote_build_free_space uses ssh; leave real so sink log captures it too,
         # but override to skip the numeric gate if parse fails.
@@ -555,11 +554,11 @@ def test_d8_case_and_enum_fail_closed() -> None:
 
     Executes the real script (not a source grep). Reviewer proof vectors:
     - ACX_IMAGE_VARIANT=VLM ACX_BUILD_TARGET=runtime  (case bypass → was exit 0)
-    - ACX_BUILD_TARGET=Runtime-Vlm  (evades *vlm* lowercase match + remote refuse)
+    - ACX_BUILD_TARGET=Runtime-Vlm  (must fold before the VLM-sized remote gate)
     - ACX_IMAGE_VARIANT=vlm2 / ACX_BUILD_TARGET=bogus  (no enum → was accepted)
     """
     # Fail-closed vectors (ingestion / help). Runtime-Vlm alone folds to runtime-vlm and
-    # is a valid enum member for help — its remote-build refusal is covered separately.
+    # is a valid enum member for help — its remote-build gate is covered separately.
     fail_cases = [
         {"ACX_IMAGE_VARIANT": "VLM", "ACX_BUILD_TARGET": "runtime"},
         {"ACX_IMAGE_VARIANT": "vlm2"},
@@ -597,7 +596,6 @@ def test_d8_case_and_enum_fail_closed() -> None:
     assert proc_ok.returncode == 0, proc_ok.stderr
 
     # Uppercase VLM + Runtime-Vlm: both fold lower → vlm + runtime-vlm → OK at ingestion.
-    # (Remote build still refuses via refuse_remote_vlm_build — see sibling test.)
     env_vlm = os.environ.copy()
     env_vlm["ACX_IMAGE_VARIANT"] = "VLM"
     env_vlm["ACX_BUILD_TARGET"] = "Runtime-Vlm"
@@ -612,12 +610,116 @@ def test_d8_case_and_enum_fail_closed() -> None:
     assert proc_vlm.returncode == 0, proc_vlm.stderr
 
 
-def test_d8_remote_build_refuses_case_evasion_runtime_vlm(tmp_path: pathlib.Path) -> None:
-    """S2-A-03: ACX_BUILD_TARGET=Runtime-Vlm must refuse remote build after case fold."""
+def _script_constant(name: str) -> int:
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    match = re.search(rf"^{re.escape(name)}=([0-9]+)$", script, re.MULTILINE)
+    assert match, f"{name} must be a numeric shell constant"
+    return int(match.group(1))
+
+
+def _run_remote_space_gate(
+    target: str,
+    probe_output: str,
+    probe_rc: int = 0,
+) -> subprocess.CompletedProcess[str]:
+    """Run the real free-space selector with a deterministic probe result."""
+    env = os.environ.copy()
+    env.update(
+        {
+            "ACX_BUILD_TARGET": target,
+            "ACX_IMAGE_VARIANT": "",
+            "TEST_REMOTE_PROBE_OUTPUT": probe_output,
+            "TEST_REMOTE_PROBE_RC": str(probe_rc),
+        }
+    )
+    script = textwrap.dedent(
+        f"""\
+        source "{DEPLOY_SCRIPT}"
+        run_with_deadline() {{
+            printf '%s' "${{TEST_REMOTE_PROBE_OUTPUT}}"
+            return "${{TEST_REMOTE_PROBE_RC}}"
+        }}
+        assert_remote_build_free_space
+        """
+    )
+    return subprocess.run(
+        ["bash", "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=15,
+    )
+
+
+def test_remote_vlm_build_is_permitted_at_vlm_free_space_floor() -> None:
+    """VLM remote builds pass when the measured VLM-sized floor is available."""
+    vlm_floor = _script_constant("REMOTE_VLM_BUILD_MIN_FREE_GB")
+    assert vlm_floor == 24
+    proc = _run_remote_space_gate("runtime-vlm", str(vlm_floor))
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    assert f"need {vlm_floor}GB" in (proc.stdout or "")
+
+
+def test_remote_vlm_build_refuses_space_between_recognition_and_vlm_floors() -> None:
+    """A VLM target must not fall back to the smaller recognition floor."""
+    recognition_floor = _script_constant("REMOTE_BUILD_MIN_FREE_GB")
+    vlm_floor = _script_constant("REMOTE_VLM_BUILD_MIN_FREE_GB")
+    assert vlm_floor > recognition_floor
+    observed = vlm_floor - 1
+    proc = _run_remote_space_gate("runtime-vlm", str(observed))
+    assert proc.returncode != 0
+    combined = (proc.stdout or "") + (proc.stderr or "")
+    assert f"target runtime-vlm" in combined
+    assert f"at least {vlm_floor}GB" in combined
+    assert f"observed {observed}GB" in combined
+
+
+def test_remote_non_vlm_build_stays_at_recognition_free_space_floor() -> None:
+    """Non-VLM targets retain the recognition floor rather than the VLM budget."""
+    recognition_floor = _script_constant("REMOTE_BUILD_MIN_FREE_GB")
+    proc = _run_remote_space_gate("runtime", str(recognition_floor - 1))
+    assert proc.returncode != 0
+    combined = (proc.stdout or "") + (proc.stderr or "")
+    assert f"target runtime" in combined
+    assert f"at least {recognition_floor}GB" in combined
+    assert f"observed {recognition_floor - 1}GB" in combined
+
+
+def test_remote_free_space_probe_failure_is_fail_closed() -> None:
+    """Failed and unparseable remote probes must not allow a build to proceed."""
+    vlm_floor = _script_constant("REMOTE_VLM_BUILD_MIN_FREE_GB")
+    for probe_output, probe_rc in (("not-a-number", 0), ("", 255)):
+        proc = _run_remote_space_gate("runtime-vlm", probe_output, probe_rc)
+        assert proc.returncode != 0
+        combined = (proc.stdout or "") + (proc.stderr or "")
+        assert "target runtime-vlm" in combined
+        assert f"at least {vlm_floor}GB" in combined
+        assert "free-space probe failed" in combined
+        assert "observed" in combined
+
+
+def test_d8_remote_build_uses_vlm_gate_after_case_fold(tmp_path: pathlib.Path) -> None:
+    """Runtime-Vlm must take the VLM-sized gate after ingestion case folding."""
     bindir = tmp_path / "bin"
     bindir.mkdir()
-    (bindir / "ssh").write_text("#!/bin/sh\nexit 0\n")
+    ssh_log = tmp_path / "ssh.log"
+    (bindir / "ssh").write_text(
+        textwrap.dedent(
+            f"""\
+            #!/bin/sh
+            for a in "$@"; do last="$a"; done
+            printf '%s\\n' "$last" >> "{ssh_log}"
+            case "$last" in
+              *df*) echo {_script_constant("REMOTE_VLM_BUILD_MIN_FREE_GB")} ;;
+            esac
+            exit 0
+            """
+        )
+    )
     (bindir / "ssh").chmod(0o755)
+    (bindir / "rsync").write_text("#!/bin/sh\nexit 0\n")
+    (bindir / "rsync").chmod(0o755)
     env = os.environ.copy()
     env["PATH"] = f"{bindir}:{env['PATH']}"
     env["ACX_BUILD_TARGET"] = "Runtime-Vlm"
@@ -639,10 +741,13 @@ def test_d8_remote_build_refuses_case_evasion_runtime_vlm(tmp_path: pathlib.Path
         env=env,
         timeout=15,
     )
-    assert proc.returncode != 0
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
     combined = (proc.stdout or "") + (proc.stderr or "")
-    assert "vlm" in combined.lower()
-    assert "refuse" in combined.lower() or "refuses" in combined.lower()
+    vlm_floor = _script_constant("REMOTE_VLM_BUILD_MIN_FREE_GB")
+    assert f"need {vlm_floor}GB" in combined
+    assert "target=runtime-vlm" in combined
+    payloads = ssh_log.read_text()
+    assert payloads.index("docker builder prune") < payloads.index("df -BG")
 
 
 def _assert_safe_image_repo_body() -> str:

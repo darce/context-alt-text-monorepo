@@ -13,6 +13,9 @@ export interface WorkbenchMediaParams {
 }
 
 export const queryKeys = {
+  settings: {
+    all: ['settings'] as const,
+  },
   media: {
     all: ['media'] as const,
     identities: () => [...queryKeys.media.all, 'identities'] as const,
@@ -86,6 +89,10 @@ export const queryKeys = {
   dashboard: {
     all: ['dashboard'] as const,
     stats: () => [...queryKeys.dashboard.all, 'stats'] as const,
+  },
+  gpu: {
+    all: ['gpu'] as const,
+    status: () => [...queryKeys.gpu.all, 'status'] as const,
   },
 } as const;
 

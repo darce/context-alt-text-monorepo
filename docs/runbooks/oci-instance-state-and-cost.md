@@ -25,26 +25,30 @@ want both:
 | Instance | Shape | Expected state | Notes |
 | --- | --- | --- | --- |
 | `acx-backend` | `VM.Standard.A1.Flex` (4 OCPU / 24 GB, ARM, no GPU) | **RUNNING** | Always-Free; serves dev/staging/prod recognition |
-| `acx-gpu-burst` | `VM.GPU.A10.1` (1× A10 24 GB VRAM, 30 OCPU / 240 GB host) | **STOPPED** | ~$2.00/GPU-hour **while running**. Created RUNNING so cloud-init finishes, then stopped. Two-layer cost cap (backend reaper + guest self-stop) — verify both, see below |
+| `acx-gpu-burst` | `VM.GPU.A10.1` (1× A10 24 GB VRAM, 30 OCPU / 240 GB host) | **STOPPED** | ~$2.00/GPU-hour **while running**. Created RUNNING so cloud-init finishes, then stopped. Live backend idle reaper plus guest self-stop cap — verify both, see below |
 
 Anything else non-terminated in the tenancy is unexpected — investigate.
 
 > **The GPU cost cap has two layers. Verify both before trusting either.**
 >
-> **Layer 1 — backend-side reaper (`acx-backend`).**
+> **Layer 1 — live backend-side idle reaper (`acx-backend`).**
 > `scripts/deploy/gpu-lifecycle-install.sh` installs `acx-gpu-reap.timer` /
-> `.service` on `acx-backend`. It runs every 2 min and STOPs `acx-gpu-burst`
-> when the describe queue drains or the max lease expires. It reads
-> `/run/acx/describe-load.json` and **fails closed** — if that snapshot is
-> missing or stale it logs `load snapshot untrustworthy; refusing STOP`, exits
-> `1`, and stops nothing. A failing `acx-gpu-reap.service` therefore means
-> **no backend-side cap is in effect**, even though the timer looks healthy.
-> Check both units, not just the timer:
+> `.service` on `acx-backend`. With the installer's defaults it runs every 2 min,
+> STOPs the pinned `acx-gpu-burst` after the 300-second (5-minute) idle
+> threshold, and forcibly STOPs it when the default max lease expires at 3600 seconds (60-minute cap).
+> `--idle-seconds` and `--max-lease-seconds` can override those defaults;
+> verify the installed values in `/etc/acx/gpu-lifecycle.env`. It
+> reads the current per-environment load snapshots under `/run/acx-write/`
+> and **fails closed** — if the snapshot is missing or stale it logs `load
+> snapshot untrustworthy; refusing STOP`, exits `1`, and stops nothing. A
+> failing `acx-gpu-reap.service` therefore means **no backend-side cap is in
+> effect**, even though the timer looks healthy. Check both units, not just the
+> timer:
 >
 > ```bash
 > ssh ubuntu@acx-backend 'systemctl status acx-gpu-reap.timer acx-gpu-reap.service --no-pager | head -20'
 > ssh ubuntu@acx-backend 'journalctl -u acx-gpu-reap.service -n 20 --no-pager'
-> ssh ubuntu@acx-backend 'ls -l /run/acx/describe-load.json'
+> ssh ubuntu@acx-backend 'find /run/acx-write -type f \( -name "*.json" \) -ls'
 > ```
 >
 > **Layer 2 — guest-side self-stop watchdog (`acx-gpu-burst`).**
@@ -56,10 +60,12 @@ Anything else non-terminated in the tenancy is unexpected — investigate.
 > **inside the guest**, so a guest kernel hang or broken systemd defeats it;
 > it is a backstop for layer 1, not a replacement.
 >
-> **Neither layer covers instances outside the pinned OCID** — the dynamic
-> group and the reaper both target `acx-gpu-burst` by id. Hand-created smoke
-> and one-off GPUs are unreaped by construction. Always answer from the full
-> instance list plus Cost Analysis, and keep the Budget alert below.
+> **The backend reaper covers only the pinned OCID** — it targets
+> `acx-gpu-burst` by id and never stops hand-created smoke or one-off GPUs.
+> It also refuses to stop on missing/stale load evidence; the guest watchdog
+> is the second layer, not a substitute for checking the backend service.
+> Always answer from the full instance list plus Cost Analysis, and keep the
+> Budget alert below.
 
 > **Observed 2026-08-04.** The unreaped-instance risk is not theoretical. The
 > tenancy held a *second* A10, `acx-gpu-smoke-20260728-0218`
@@ -136,8 +142,9 @@ want to be told rather than having to remember to look.
 ## If the GPU is unexpectedly RUNNING
 
 1. Confirm nothing is legitimately using it (a bake or eval in flight) — check
-   `acx-gpu-vlm.service` on the host before stopping. **This is a manual check:
-   no reaper is running, so nothing else is protecting an in-flight job either.**
+   `acx-gpu-vlm.service` on the host before stopping. The backend reaper
+   refuses to stop while load evidence is missing or stale, but it is scoped to
+   the pinned burst instance and is not a substitute for this manual check.
 2. Stop it (billing halts on OCPU/GPU immediately):
 
    ```sh
@@ -145,13 +152,12 @@ want to be told rather than having to remember to look.
      --instance-id "$(terraform -chdir=infra/oci output -raw gpu_instance_id)"
    ```
 
-3. Do **not** wait for a reaper to catch it — there is none installed. If a
-   future OCIGOV-1 supervisor is running by the time you read this, confirm it
-   first with `systemctl list-timers 'acx-gpu*'` on the host and only then look
-   at `/etc/acx/gpu-reaper.env` (`GPU_INSTANCE_ID=…`, copied from
-   `gpu-reaper.env.example` after apply) and `/var/log/acx-gpu-reaper.log`. If
-   that `list-timers` output is empty, the units do not exist and those two
-   paths will not either.
+3. The backend reaper is not a tenancy-wide safety net: it can stop only the
+   pinned `acx-gpu-burst` instance. Confirm its state with
+   `systemctl list-timers 'acx-gpu*'` and inspect
+   `/etc/acx/gpu-lifecycle.env` (`GPU_INSTANCE_ID=…`) before relying on it for
+   that instance. Hand-created or differently pinned GPUs still require this
+   explicit operator stop path.
 
 See [`infra/oci/README.md` § GPU burst host](../../infra/oci/README.md#gpu-burst-host-acx_gpu_burst)
 for the lifecycle design and

@@ -5,34 +5,45 @@ import guidedKatyPerryPhoto2019 from '../assets/guided/guided-katy-perry-2019.jp
 import guidedKatyPerryPhoto2016 from '../assets/guided/guided-katy-perry-2016.jpg';
 import guidedPressPhoto from '../assets/guided/guided-press-tribeca-2026.jpg';
 
-export const GUIDED_CANDIDATE_STATUS = {
-  READY: 'ready',
-  EDITED: 'edited',
-  REJECTED: 'rejected',
+import { guidedCopy, type GuidedCopyKey } from './copy';
+
+export const GUIDED_STEP = {
+  CONTEXT: 'context',
+  NAMES: 'names',
+  DRAFT: 'draft',
+  APPLY: 'apply',
 } as const;
 
-export const GUIDED_IDENTITY_STATUS = {
-  UNCONFIRMED: 'unconfirmed',
-  CONFIRMED: 'confirmed',
-  UNIDENTIFIED: 'unidentified',
+export const GUIDED_NAME_CHOICE = {
+  UNDECIDED: 'undecided',
+  INCLUDE: 'include',
+  OMIT: 'omit',
 } as const;
 
-export const GUIDED_IDENTITY_SOURCE = {
-  FACE_MATCH: 'face-match',
+export const GUIDED_DRAFT_ORIGIN = {
   NONE: 'none',
+  RECORDED_SAMPLE: 'recorded_sample',
+  VISITOR_EDIT: 'visitor_edit',
 } as const;
 
-export const GUIDED_HISTORY_KIND = {
-  IDENTITY_CONFIRMED: 'identity-confirmed',
-  IDENTITY_UNIDENTIFIED: 'identity-unidentified',
-  EDIT_SAVED: 'edit-saved',
-  REJECTED: 'rejected',
+export const GUIDED_DRAFT_STATUS = {
+  BLOCKED: 'blocked',
+  READY: 'ready',
+  FIXTURE_MISSING: 'fixture_missing',
+} as const;
+
+export const GUIDED_OUTCOME = {
+  NOT_FINISHED: 'not_finished',
   APPLIED: 'applied',
-  APPLICATION_UNDONE: 'application-undone',
+  KEPT: 'kept',
 } as const;
 
-export type GuidedCandidateStatus = 'ready' | 'edited' | 'rejected';
-export type GuidedIdentityStatus = 'unconfirmed' | 'confirmed' | 'unidentified';
+export type GuidedStep = (typeof GUIDED_STEP)[keyof typeof GUIDED_STEP];
+export type GuidedNameChoice = (typeof GUIDED_NAME_CHOICE)[keyof typeof GUIDED_NAME_CHOICE];
+export type GuidedDraftOrigin = (typeof GUIDED_DRAFT_ORIGIN)[keyof typeof GUIDED_DRAFT_ORIGIN];
+export type GuidedDraftStatus = (typeof GUIDED_DRAFT_STATUS)[keyof typeof GUIDED_DRAFT_STATUS];
+export type GuidedOutcome = (typeof GUIDED_OUTCOME)[keyof typeof GUIDED_OUTCOME];
+export type GuidedRestoreMode = 'full' | 'copy_only';
 export type GuidedMatchStrength = 'strong' | 'weak';
 export type GuidedPersonKey = 'katy-perry' | 'justin-trudeau';
 export const GUIDED_PERSON_KEYS: readonly GuidedPersonKey[] = ['katy-perry', 'justin-trudeau'];
@@ -71,20 +82,6 @@ export interface GuidedFace {
   source: 'saved-run';
 }
 
-export interface GuidedIdentity {
-  faceId: GuidedPersonKey;
-  status: GuidedIdentityStatus;
-  name?: string;
-  source: 'face-match' | 'none';
-}
-
-export interface GuidedHistoryEvent {
-  kind: 'identity-confirmed' | 'identity-unidentified' | 'edit-saved' | 'rejected' | 'applied' | 'application-undone';
-  faceId?: GuidedPersonKey;
-  text?: string;
-  previousAppliedText?: string;
-}
-
 export interface GuidedProvenance {
   service: string;
   model: string;
@@ -113,35 +110,83 @@ export interface GuidedScenario {
   pageContext: {
     title: string;
     summary: string;
+    runDate: string;
   };
   people: GuidedLabeledPerson[];
   faces: GuidedFace[];
-  identities: GuidedIdentity[];
   visualFacts: string[];
-  drafts: Record<GuidedDraftKey, string>;
+  samples: Record<GuidedDraftKey, string | null>;
   provenance: GuidedProvenance;
-  candidate: {
-    text: string;
-    status: GuidedCandidateStatus;
-  };
-  appliedText: string;
-  history: GuidedHistoryEvent[];
 }
 
-type GuidedSeed = Omit<GuidedScenario, 'identities' | 'candidate' | 'appliedText' | 'history'>;
+export interface GuidedChoices {
+  left: GuidedNameChoice;
+  right: GuidedNameChoice;
+}
 
-const GUIDED_SCENARIO_SEED: GuidedSeed = {
+export interface GuidedPendingChoiceChange {
+  position: GuidedFacePosition;
+  choice: GuidedNameChoice;
+}
+
+export interface GuidedDraftRevision {
+  revisionId: string;
+  text: string;
+  origin: GuidedDraftOrigin;
+  choices: GuidedChoices;
+  draftVersion: number;
+}
+
+export interface GuidedApplicationRecord {
+  previousAltText: string;
+  appliedDraftVersion: number;
+  sequence: number;
+}
+
+export interface GuidedActionHistoryEntry {
+  event: string;
+  sequence: number;
+  scope: 'local';
+  summary: string;
+}
+
+export interface GuidedNameCoverage {
+  key: GuidedPersonKey;
+  shown: number;
+  total: number;
+}
+
+export interface GuidedDemoState {
+  activeStep: GuidedStep;
+  choices: GuidedChoices;
+  draftText: string | null;
+  draftOrigin: GuidedDraftOrigin;
+  draftStatus: GuidedDraftStatus;
+  draftVersion: number;
+  previewedVersion: number | null;
+  draftHistory: GuidedDraftRevision[];
+  pendingChoiceChange: GuidedPendingChoiceChange | null;
+  appliedAltText: string;
+  applicationUndoStack: GuidedApplicationRecord[];
+  outcome: GuidedOutcome;
+  actionHistory: GuidedActionHistoryEntry[];
+}
+
+const INITIAL_APPLIED_ALT_TEXT = 'Two people at a film festival.';
+
+const GUIDED_SCENARIO_SEED: GuidedScenario = {
   origin: 'saved-build',
   scenarioVersion: 'guided-people-v3',
   pressPhoto: {
     src: guidedPressPhoto,
-    altText: 'Two people at a film festival.',
+    altText: INITIAL_APPLIED_ALT_TEXT,
     credit: 'Colleen Sturtevant, CC BY-SA 4.0, resized',
     event: 'Tribeca Festival, New York, June 2026',
   },
   pageContext: {
     title: 'Tribeca Festival 2026: red carpet photos',
     summary: 'A photo gallery from the opening nights of the Tribeca Festival in New York, June 2026.',
+    runDate: '2026-09-06',
   },
   people: [
     {
@@ -214,7 +259,7 @@ const GUIDED_SCENARIO_SEED: GuidedSeed = {
     'The woman on the right wears a white draped gown with her dark hair pinned up.',
     'Her hand rests on his chest.',
   ],
-  drafts: {
+  samples: {
     none: 'A man in a black tuxedo and a woman in a white draped gown pose side by side at the Tribeca Festival. Her hand rests on his chest.',
     'katy-perry':
       'Katy Perry, in a white draped gown with her dark hair pinned up, poses with a man in a black tuxedo at the Tribeca Festival. Her hand rests on his chest.',
@@ -233,20 +278,6 @@ const GUIDED_SCENARIO_SEED: GuidedSeed = {
   },
 };
 
-const cloneScenarioSeed = (): GuidedSeed => ({
-  ...GUIDED_SCENARIO_SEED,
-  pressPhoto: { ...GUIDED_SCENARIO_SEED.pressPhoto },
-  pageContext: { ...GUIDED_SCENARIO_SEED.pageContext },
-  people: GUIDED_SCENARIO_SEED.people.map((person) => ({
-    ...person,
-    galleryPhotos: person.galleryPhotos.map((photo) => ({ ...photo })),
-  })),
-  faces: GUIDED_SCENARIO_SEED.faces.map((face) => ({ ...face, box: { ...face.box } })),
-  visualFacts: [...GUIDED_SCENARIO_SEED.visualFacts],
-  drafts: { ...GUIDED_SCENARIO_SEED.drafts },
-  provenance: { ...GUIDED_SCENARIO_SEED.provenance },
-});
-
 const cloneScenario = (scenario: GuidedScenario): GuidedScenario => ({
   ...scenario,
   pressPhoto: { ...scenario.pressPhoto },
@@ -256,12 +287,9 @@ const cloneScenario = (scenario: GuidedScenario): GuidedScenario => ({
     galleryPhotos: person.galleryPhotos.map((photo) => ({ ...photo })),
   })),
   faces: scenario.faces.map((face) => ({ ...face, box: { ...face.box } })),
-  identities: scenario.identities.map((identity) => ({ ...identity })),
   visualFacts: [...scenario.visualFacts],
-  drafts: { ...scenario.drafts },
+  samples: { ...scenario.samples },
   provenance: { ...scenario.provenance },
-  candidate: { ...scenario.candidate },
-  history: scenario.history.map((event) => ({ ...event })),
 });
 
 const assertPresent: <T>(value: T | undefined, description: string) => asserts value is T = (value, description) => {
@@ -282,191 +310,450 @@ export const getGuidedFace = (scenario: GuidedScenario, faceId: GuidedPersonKey)
   return face;
 };
 
-export const getGuidedIdentity = (scenario: GuidedScenario, faceId: GuidedPersonKey): GuidedIdentity => {
-  const identity = scenario.identities.find((candidate) => candidate.faceId === faceId);
-  assertPresent(identity, `identity: ${faceId}`);
-  return identity;
+export const createGuidedScenario = (): GuidedScenario => cloneScenario(GUIDED_SCENARIO_SEED);
+
+const cloneChoices = (choices: GuidedChoices): GuidedChoices => ({
+  left: choices.left,
+  right: choices.right,
+});
+
+const cloneState = (state: GuidedDemoState): GuidedDemoState => ({
+  ...state,
+  choices: cloneChoices(state.choices),
+  draftHistory: state.draftHistory.map((revision) => ({
+    ...revision,
+    choices: cloneChoices(revision.choices),
+  })),
+  pendingChoiceChange: state.pendingChoiceChange === null ? null : { ...state.pendingChoiceChange },
+  applicationUndoStack: state.applicationUndoStack.map((record) => ({ ...record })),
+  actionHistory: state.actionHistory.map((entry) => ({ ...entry })),
+});
+
+const nextSequence = (state: GuidedDemoState): number => {
+  const last = state.actionHistory.at(-1);
+  return (last?.sequence ?? 0) + 1;
 };
 
-export const createGuidedScenario = (): GuidedScenario => {
-  const seed = cloneScenarioSeed();
-  return {
-    ...seed,
-    identities: seed.faces.map((face) => ({
-      faceId: face.id,
-      status: GUIDED_IDENTITY_STATUS.UNCONFIRMED,
-      source: GUIDED_IDENTITY_SOURCE.NONE,
-    })),
-    candidate: { text: seed.drafts.none, status: GUIDED_CANDIDATE_STATUS.READY },
-    appliedText: seed.pressPhoto.altText,
-    history: [],
-  };
+const withLocalAction = (
+  state: GuidedDemoState,
+  event: string,
+  summaryKey: GuidedCopyKey,
+  values: Record<string, string | number> = {},
+): GuidedDemoState => ({
+  ...state,
+  actionHistory: [
+    ...state.actionHistory,
+    {
+      event,
+      sequence: nextSequence(state),
+      scope: 'local',
+      summary: guidedCopy(summaryKey, values),
+    },
+  ],
+});
+
+const personNameForPosition = (scenario: GuidedScenario, position: GuidedFacePosition): string => {
+  const face = scenario.faces.find((candidate) => candidate.position === position);
+  assertPresent(face, `face at ${position}`);
+  return getGuidedPerson(scenario, face.matchedPersonKey).name;
 };
 
-export const resetGuidedScenario = (): GuidedScenario => createGuidedScenario();
+const choicesMatch = (left: GuidedChoices, right: GuidedChoices): boolean =>
+  left.left === right.left && left.right === right.right;
 
-export const confirmedPersonKeys = (scenario: GuidedScenario): GuidedPersonKey[] =>
-  scenario.people
-    .filter((person) => {
-      const identity = getGuidedIdentity(scenario, person.key);
-      return (
-        identity.status === GUIDED_IDENTITY_STATUS.CONFIRMED && identity.source === GUIDED_IDENTITY_SOURCE.FACE_MATCH
-      );
-    })
-    .map((person) => person.key);
+export const namesDecided = (state: GuidedDemoState): boolean =>
+  state.choices.left !== GUIDED_NAME_CHOICE.UNDECIDED && state.choices.right !== GUIDED_NAME_CHOICE.UNDECIDED;
 
-export const draftKeyFor = (scenario: GuidedScenario): GuidedDraftKey => {
-  const confirmed = confirmedPersonKeys(scenario);
-  const katyConfirmed = confirmed.includes('katy-perry');
-  const justinConfirmed = confirmed.includes('justin-trudeau');
+export const canPreview = (state: GuidedDemoState): boolean =>
+  namesDecided(state) &&
+  state.draftStatus === GUIDED_DRAFT_STATUS.READY &&
+  state.draftText !== null &&
+  state.draftText.trim().length > 0;
 
-  if (katyConfirmed && justinConfirmed) {
+export const canApply = (state: GuidedDemoState): boolean =>
+  canPreview(state) &&
+  state.previewedVersion === state.draftVersion &&
+  state.draftText !== state.appliedAltText &&
+  state.pendingChoiceChange === null;
+
+export const canUndo = (state: GuidedDemoState): boolean => state.applicationUndoStack.length > 0;
+
+export const canRestoreRevision = (state: GuidedDemoState, revisionId: string): boolean => {
+  const revision = state.draftHistory.find((entry) => entry.revisionId === revisionId);
+  if (revision === undefined) {
+    return false;
+  }
+  return choicesMatch(revision.choices, state.choices);
+};
+
+export const guidedDraftKeyFor = (choices: GuidedChoices): GuidedDraftKey | null => {
+  if (choices.left === GUIDED_NAME_CHOICE.UNDECIDED || choices.right === GUIDED_NAME_CHOICE.UNDECIDED) {
+    return null;
+  }
+  const leftIncluded = choices.left === GUIDED_NAME_CHOICE.INCLUDE;
+  const rightIncluded = choices.right === GUIDED_NAME_CHOICE.INCLUDE;
+  if (leftIncluded && rightIncluded) {
     return 'both';
   }
-  if (katyConfirmed) {
-    return 'katy-perry';
-  }
-  if (justinConfirmed) {
+  if (leftIncluded) {
     return 'justin-trudeau';
+  }
+  if (rightIncluded) {
+    return 'katy-perry';
   }
   return 'none';
 };
 
-export const draftFor = (scenario: GuidedScenario): string => scenario.drafts[draftKeyFor(scenario)];
-
-const replaceIdentity = (scenario: GuidedScenario, faceId: GuidedPersonKey, replacement: GuidedIdentity): void => {
-  const currentIdentity = getGuidedIdentity(scenario, faceId);
-  scenario.identities = scenario.identities.map((identity) => (identity === currentIdentity ? replacement : identity));
+export const guidedSampleFor = (scenario: GuidedScenario, choices: GuidedChoices): string | null => {
+  const key = guidedDraftKeyFor(choices);
+  if (key === null) {
+    return null;
+  }
+  return scenario.samples[key];
 };
 
-const refreshCandidate = (scenario: GuidedScenario): void => {
-  scenario.candidate = { text: draftFor(scenario), status: GUIDED_CANDIDATE_STATUS.READY };
+export const guidedNameCoverage = (scenario: GuidedScenario): GuidedNameCoverage[] =>
+  scenario.people.map((person) => ({
+    key: person.key,
+    shown: person.galleryPhotos.length,
+    total: person.savedPhotoCount,
+  }));
+
+export const guidedStepIndex = (step: GuidedStep): number => {
+  switch (step) {
+    case GUIDED_STEP.CONTEXT:
+      return 0;
+    case GUIDED_STEP.NAMES:
+      return 1;
+    case GUIDED_STEP.DRAFT:
+      return 2;
+    case GUIDED_STEP.APPLY:
+      return 3;
+    default: {
+      const exhaustive: never = step;
+      return exhaustive;
+    }
+  }
 };
 
-const withHistory = (scenario: GuidedScenario, event: GuidedHistoryEvent): GuidedScenario => {
-  const next = cloneScenario(scenario);
-  next.history = [...next.history, { ...event }];
+const resolveSample = (
+  scenario: GuidedScenario,
+  choices: GuidedChoices,
+): Pick<GuidedDemoState, 'draftText' | 'draftOrigin' | 'draftStatus'> => {
+  if (choices.left === GUIDED_NAME_CHOICE.UNDECIDED || choices.right === GUIDED_NAME_CHOICE.UNDECIDED) {
+    return {
+      draftText: null,
+      draftOrigin: GUIDED_DRAFT_ORIGIN.NONE,
+      draftStatus: GUIDED_DRAFT_STATUS.BLOCKED,
+    };
+  }
+  const sample = guidedSampleFor(scenario, choices);
+  if (sample === null) {
+    return {
+      draftText: null,
+      draftOrigin: GUIDED_DRAFT_ORIGIN.NONE,
+      draftStatus: GUIDED_DRAFT_STATUS.FIXTURE_MISSING,
+    };
+  }
+  return {
+    draftText: sample,
+    draftOrigin: GUIDED_DRAFT_ORIGIN.RECORDED_SAMPLE,
+    draftStatus: GUIDED_DRAFT_STATUS.READY,
+  };
+};
+
+const archiveCurrentDraft = (state: GuidedDemoState): GuidedDraftRevision[] => {
+  if (state.draftText === null) {
+    return state.draftHistory;
+  }
+  return [
+    ...state.draftHistory,
+    {
+      revisionId: `rev-${state.draftHistory.length + 1}`,
+      text: state.draftText,
+      origin: state.draftOrigin,
+      choices: cloneChoices(state.choices),
+      draftVersion: state.draftVersion,
+    },
+  ];
+};
+
+const archiveManualDraft = (state: GuidedDemoState): GuidedDraftRevision[] => {
+  if (state.draftOrigin !== GUIDED_DRAFT_ORIGIN.VISITOR_EDIT) {
+    return state.draftHistory;
+  }
+  return archiveCurrentDraft(state);
+};
+
+export const createGuidedDemoState = (): GuidedDemoState => ({
+  activeStep: GUIDED_STEP.CONTEXT,
+  choices: {
+    left: GUIDED_NAME_CHOICE.UNDECIDED,
+    right: GUIDED_NAME_CHOICE.UNDECIDED,
+  },
+  draftText: null,
+  draftOrigin: GUIDED_DRAFT_ORIGIN.NONE,
+  draftStatus: GUIDED_DRAFT_STATUS.BLOCKED,
+  draftVersion: 0,
+  previewedVersion: null,
+  draftHistory: [],
+  pendingChoiceChange: null,
+  appliedAltText: INITIAL_APPLIED_ALT_TEXT,
+  applicationUndoStack: [],
+  outcome: GUIDED_OUTCOME.NOT_FINISHED,
+  actionHistory: [],
+});
+
+export const selectGuidedStep = (state: GuidedDemoState, step: GuidedStep): GuidedDemoState => {
+  if (state.activeStep === step) {
+    return state;
+  }
+  const next = cloneState(state);
+  next.activeStep = step;
   return next;
 };
 
-export const confirmGuidedIdentity = (scenario: GuidedScenario, faceId: GuidedPersonKey): GuidedScenario => {
-  const next = cloneScenario(scenario);
-  const face = getGuidedFace(next, faceId);
-  const person = getGuidedPerson(next, face.matchedPersonKey);
-  replaceIdentity(next, faceId, {
-    faceId,
-    status: GUIDED_IDENTITY_STATUS.CONFIRMED,
-    name: person.name,
-    source: GUIDED_IDENTITY_SOURCE.FACE_MATCH,
-  });
-  refreshCandidate(next);
-  return withHistory(next, { kind: GUIDED_HISTORY_KIND.IDENTITY_CONFIRMED, faceId });
-};
-
-export const leaveGuidedIdentityUnidentified = (scenario: GuidedScenario, faceId: GuidedPersonKey): GuidedScenario => {
-  const next = cloneScenario(scenario);
-  getGuidedFace(next, faceId);
-  replaceIdentity(next, faceId, {
-    faceId,
-    status: GUIDED_IDENTITY_STATUS.UNIDENTIFIED,
-    source: GUIDED_IDENTITY_SOURCE.NONE,
-  });
-  refreshCandidate(next);
-  return withHistory(next, { kind: GUIDED_HISTORY_KIND.IDENTITY_UNIDENTIFIED, faceId });
-};
-
-const containsPersonName = (text: string, name: string): boolean => {
-  const trimmedName = name.trim();
-  if (trimmedName === '') {
-    return false;
+export const chooseGuidedName = (
+  state: GuidedDemoState,
+  scenario: GuidedScenario,
+  position: GuidedFacePosition,
+  choice: GuidedNameChoice,
+): GuidedDemoState => {
+  if (state.pendingChoiceChange !== null) {
+    return state;
+  }
+  if (state.choices[position] === choice) {
+    return state;
+  }
+  if (state.draftOrigin === GUIDED_DRAFT_ORIGIN.VISITOR_EDIT) {
+    return withLocalAction(
+      {
+        ...cloneState(state),
+        pendingChoiceChange: { position, choice },
+        outcome: GUIDED_OUTCOME.NOT_FINISHED,
+      },
+      'choose_name_option',
+      'names.change_title',
+    );
   }
 
-  const escapedName = trimmedName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`\\b${escapedName}\\b`, 'i').test(text.trim());
+  const choices = cloneChoices(state.choices);
+  choices[position] = choice;
+  const resolved = resolveSample(scenario, choices);
+  const namesAreDecided =
+    choices.left !== GUIDED_NAME_CHOICE.UNDECIDED && choices.right !== GUIDED_NAME_CHOICE.UNDECIDED;
+  const summaryKey: GuidedCopyKey =
+    choice === GUIDED_NAME_CHOICE.OMIT
+      ? 'names.omitted'
+      : choice === GUIDED_NAME_CHOICE.INCLUDE
+        ? 'names.included'
+        : 'names.pending';
+  const summaryValues: Record<string, string | number> =
+    choice === GUIDED_NAME_CHOICE.INCLUDE ? { name: personNameForPosition(scenario, position) } : {};
+
+  return withLocalAction(
+    {
+      ...cloneState(state),
+      choices,
+      ...resolved,
+      draftVersion: namesAreDecided ? state.draftVersion + 1 : state.draftVersion,
+      previewedVersion: namesAreDecided ? null : state.previewedVersion,
+      outcome: GUIDED_OUTCOME.NOT_FINISHED,
+    },
+    'choose_name_option',
+    summaryKey,
+    summaryValues,
+  );
 };
 
-export const nameGuardError = (name: string): string =>
-  `You can only use the name ${name} after you confirm that face match.`;
-
-const assertCandidateIdentity = (scenario: GuidedScenario): void => {
-  for (const person of scenario.people) {
-    const name = person.name.trim();
-    if (!containsPersonName(scenario.candidate.text, name)) {
-      continue;
-    }
-
-    const identity = getGuidedIdentity(scenario, person.key);
-    const isConfirmed =
-      identity.status === GUIDED_IDENTITY_STATUS.CONFIRMED && identity.source === GUIDED_IDENTITY_SOURCE.FACE_MATCH;
-    if (!isConfirmed) {
-      throw new Error(nameGuardError(name));
-    }
+export const confirmGuidedChoiceReplacement = (state: GuidedDemoState, scenario: GuidedScenario): GuidedDemoState => {
+  if (state.pendingChoiceChange === null) {
+    return state;
   }
+  const pending = state.pendingChoiceChange;
+  const choices = cloneChoices(state.choices);
+  choices[pending.position] = pending.choice;
+  const resolved = resolveSample(scenario, choices);
+  return withLocalAction(
+    {
+      ...cloneState(state),
+      choices,
+      ...resolved,
+      draftHistory: archiveCurrentDraft(state),
+      pendingChoiceChange: null,
+      draftVersion: state.draftVersion + 1,
+      previewedVersion: null,
+      outcome: GUIDED_OUTCOME.NOT_FINISHED,
+    },
+    'confirm_choice_replacement',
+    'names.change_status',
+  );
 };
 
-export const saveGuidedEdit = (scenario: GuidedScenario, text: string): GuidedScenario => {
-  const trimmedText = text.trim();
-  if (trimmedText === '') {
-    throw new Error('A description cannot be empty.');
+export const cancelGuidedChoiceReplacement = (state: GuidedDemoState): GuidedDemoState => {
+  if (state.pendingChoiceChange === null) {
+    return state;
   }
-
-  const next = cloneScenario(scenario);
-  next.candidate = { text: trimmedText, status: GUIDED_CANDIDATE_STATUS.EDITED };
-  assertCandidateIdentity(next);
-  return withHistory(next, { kind: GUIDED_HISTORY_KIND.EDIT_SAVED, text: trimmedText });
+  return withLocalAction(
+    {
+      ...cloneState(state),
+      pendingChoiceChange: null,
+    },
+    'cancel_choice_replacement',
+    'names.change_cancel',
+  );
 };
 
-export const rejectGuidedCandidate = (scenario: GuidedScenario): GuidedScenario => {
-  const next = cloneScenario(scenario);
-  next.candidate = { ...next.candidate, status: GUIDED_CANDIDATE_STATUS.REJECTED };
-  return withHistory(next, { kind: GUIDED_HISTORY_KIND.REJECTED });
+export const editGuidedDraft = (state: GuidedDemoState, text: string): GuidedDemoState => {
+  if (!namesDecided(state) || state.draftStatus !== GUIDED_DRAFT_STATUS.READY) {
+    return state;
+  }
+  return withLocalAction(
+    {
+      ...cloneState(state),
+      draftText: text,
+      draftOrigin: GUIDED_DRAFT_ORIGIN.VISITOR_EDIT,
+      draftVersion: state.draftVersion + 1,
+      previewedVersion: null,
+      outcome: GUIDED_OUTCOME.NOT_FINISHED,
+    },
+    'edit_draft',
+    'draft.origin_edited',
+  );
 };
 
-const availableGuidedApplications = (history: readonly GuidedHistoryEvent[]): GuidedHistoryEvent[] => {
-  const availableApplications: GuidedHistoryEvent[] = [];
-  for (const event of history) {
-    if (event.kind === GUIDED_HISTORY_KIND.APPLIED) {
-      availableApplications.push(event);
-    } else if (event.kind === GUIDED_HISTORY_KIND.APPLICATION_UNDONE) {
-      availableApplications.pop();
-    }
+export const previewGuidedDraft = (state: GuidedDemoState): GuidedDemoState => {
+  if (!canPreview(state)) {
+    return state;
   }
-  return availableApplications;
+  return withLocalAction(
+    {
+      ...cloneState(state),
+      previewedVersion: state.draftVersion,
+      activeStep: GUIDED_STEP.APPLY,
+    },
+    'preview_draft',
+    'draft.next',
+  );
 };
 
-export const getLastGuidedApplication = (history: readonly GuidedHistoryEvent[]): GuidedHistoryEvent | undefined =>
-  availableGuidedApplications(history).at(-1);
-
-export const applyGuidedCandidate = (scenario: GuidedScenario): GuidedScenario => {
-  if (scenario.candidate.status === GUIDED_CANDIDATE_STATUS.REJECTED) {
-    throw new Error('Cannot apply a rejected description.');
-  }
-
-  assertCandidateIdentity(scenario);
-  if (scenario.candidate.text === scenario.appliedText) {
-    return cloneScenario(scenario);
-  }
-
-  const next = cloneScenario(scenario);
-  const previousAppliedText = next.appliedText;
-  next.appliedText = next.candidate.text;
-  return withHistory(next, {
-    kind: GUIDED_HISTORY_KIND.APPLIED,
-    text: next.candidate.text,
-    previousAppliedText,
-  });
+export const keepGuidedCurrentAltText = (state: GuidedDemoState): GuidedDemoState => {
+  // KEPT means "the demo copy is unchanged". After apply, the current alt is
+  // the draft; restore the original so the outcome and the copy agree.
+  const originalAlt = state.applicationUndoStack[0]?.previousAltText ?? state.appliedAltText;
+  return withLocalAction(
+    {
+      ...cloneState(state),
+      outcome: GUIDED_OUTCOME.KEPT,
+      appliedAltText: originalAlt,
+      applicationUndoStack: [],
+    },
+    'keep_current_alt_text',
+    'outcome.kept',
+  );
 };
 
-export const undoGuidedApplication = (scenario: GuidedScenario): GuidedScenario => {
-  const lastApplication = getLastGuidedApplication(scenario.history);
-  if (lastApplication?.previousAppliedText === undefined) {
-    return cloneScenario(scenario);
+export const applyGuidedDraft = (state: GuidedDemoState): GuidedDemoState => {
+  if (!canApply(state) || state.draftText === null) {
+    return state;
   }
+  const sequence = nextSequence(state);
+  return {
+    ...cloneState(state),
+    appliedAltText: state.draftText,
+    outcome: GUIDED_OUTCOME.APPLIED,
+    applicationUndoStack: [
+      ...state.applicationUndoStack,
+      {
+        previousAltText: state.appliedAltText,
+        appliedDraftVersion: state.draftVersion,
+        sequence,
+      },
+    ],
+    actionHistory: [
+      ...state.actionHistory,
+      {
+        event: 'apply_draft',
+        sequence,
+        scope: 'local',
+        summary: guidedCopy('apply.success'),
+      },
+    ],
+  };
+};
 
-  const next = cloneScenario(scenario);
-  next.appliedText = lastApplication.previousAppliedText;
-  return withHistory(next, {
-    kind: GUIDED_HISTORY_KIND.APPLICATION_UNDONE,
-    text: next.appliedText,
-  });
+export const undoGuidedApplication = (state: GuidedDemoState): GuidedDemoState => {
+  if (!canUndo(state)) {
+    return state;
+  }
+  const stack = state.applicationUndoStack.map((record) => ({ ...record }));
+  const restored = stack.pop();
+  if (restored === undefined) {
+    return state;
+  }
+  return withLocalAction(
+    {
+      ...cloneState(state),
+      appliedAltText: restored.previousAltText,
+      applicationUndoStack: stack,
+      outcome: stack.length === 0 ? GUIDED_OUTCOME.NOT_FINISHED : GUIDED_OUTCOME.APPLIED,
+    },
+    'undo_application',
+    'apply.undone',
+  );
+};
+
+export const restoreGuidedRevision = (
+  state: GuidedDemoState,
+  revisionId: string,
+  mode: GuidedRestoreMode,
+): GuidedDemoState => {
+  const revision = state.draftHistory.find((entry) => entry.revisionId === revisionId);
+  if (revision === undefined) {
+    return state;
+  }
+  if (mode === 'full' && !canRestoreRevision(state, revisionId)) {
+    return state;
+  }
+  const summaryKey = mode === 'copy_only' ? 'draft.copy_revision' : 'draft.restore_revision';
+  return withLocalAction(
+    {
+      ...cloneState(state),
+      draftHistory: archiveManualDraft(state),
+      draftText: revision.text,
+      draftOrigin: GUIDED_DRAFT_ORIGIN.VISITOR_EDIT,
+      draftStatus: namesDecided(state) ? GUIDED_DRAFT_STATUS.READY : state.draftStatus,
+      draftVersion: state.draftVersion + 1,
+      previewedVersion: null,
+      outcome: GUIDED_OUTCOME.NOT_FINISHED,
+    },
+    'restore_draft_revision',
+    summaryKey,
+  );
+};
+
+export const resetGuidedDemoState = (state: GuidedDemoState): GuidedDemoState => {
+  void state;
+  return createGuidedDemoState();
+};
+
+export const retryGuidedFixture = (state: GuidedDemoState, scenario: GuidedScenario): GuidedDemoState => {
+  if (state.draftStatus !== GUIDED_DRAFT_STATUS.FIXTURE_MISSING) {
+    return state;
+  }
+  const resolved = resolveSample(scenario, state.choices);
+  if (resolved.draftStatus === GUIDED_DRAFT_STATUS.FIXTURE_MISSING) {
+    return state;
+  }
+  return withLocalAction(
+    {
+      ...cloneState(state),
+      ...resolved,
+      draftVersion: state.draftVersion + 1,
+      previewedVersion: null,
+      outcome: GUIDED_OUTCOME.NOT_FINISHED,
+    },
+    'retry_fixture',
+    'draft.fixture_retry',
+  );
 };

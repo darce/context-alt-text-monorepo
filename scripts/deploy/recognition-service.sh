@@ -539,21 +539,32 @@ preflight_docker() {
 # Keep ordinary text useful for diagnosis, but strip C0/C1 controls and prefix
 # every line so captured output cannot masquerade as a deploy decision.
 sanitize_deploy_diagnostic() {
+  # WHY: SOH is inserted after tr so the literal-sentinel survives C0/C1 stripping.
+  local _soh=$'\001'
+  local _sk='token|access_token|refresh_token|password|passwd|secret|api[-_]?key|[A-Za-z0-9_]*_token|[A-Za-z0-9_]*_password|[A-Za-z0-9_]*_secret|[A-Za-z0-9_]*_key_id|[A-Za-z0-9_]*_key_content|[A-Za-z0-9_]*_access_key|secret_key_base|[A-Za-z0-9_]*_key|pgpassword'
+  local _ek='[A-Za-z0-9_]*_(TOKEN|PASSWORD|SECRET|KEY)|[A-Za-z0-9_]*_key_id|[A-Za-z0-9_]*_key_content|[A-Za-z0-9_]*_access_key|secret_key_base|PGPASSWORD|TOKEN|PASSWORD|PASSWD|SECRET|KEY'
   LC_ALL=C tr -d '\000-\010\013-\037\177-\237' \
     | sed -E \
-      -e 's/["'"'"']authorization["'"'"'][[:space:]]*:[[:space:]]*["'"'"'](bearer|basic|token)[[:space:]]+(\\.|[^\\"'"'"'])*["'"'"']/"Authorization": "\1 [REDACTED]"/gI' \
+      -e 's/["'"'"']authorization["'"'"'][[:space:]]*:[[:space:]]*"(bearer|basic|token)[[:space:]]+(\\.|[^"\\])*"/"Authorization": "\1 [REDACTED]"/gI' \
+      -e "s/[\"']authorization[\"'][[:space:]]*:[[:space:]]*'(bearer|basic|token)[[:space:]]+(\\\\.|[^'\\\\])*'/\"Authorization\": \"\\1 [REDACTED]\"/gI" \
       -e 's/authorization[[:space:]]*[=:][[:space:]]*(bearer|basic|token)[[:space:]]+[^[:space:]"]+/Authorization: \1 [REDACTED]/gI' \
-      -e 's/(^|[^[:alnum:]])(bearer|basic|token)[[:space:]]+[A-Za-z0-9._~+/=%:-]{8,}/\1\2 [REDACTED]/gI' \
-      -e 's/["'"'"'](token|access_token|refresh_token|password|passwd|secret|api[-_]?key|[A-Za-z0-9_]*_token|[A-Za-z0-9_]*_password|[A-Za-z0-9_]*_secret|[A-Za-z0-9_]*_key|pgpassword)["'"'"'][[:space:]]*:[[:space:]]*["'"'"'](\\.|[^\\"'"'"'])*["'"'"']/"\1": "[REDACTED]"/gI' \
-      -e 's/["'"'"'](token|access_token|refresh_token|password|passwd|secret|api[_-]?key|[A-Za-z0-9_]*_token|[A-Za-z0-9_]*_password|[A-Za-z0-9_]*_secret|[A-Za-z0-9_]*_key|pgpassword)["'"'"'][[:space:]]*:[[:space:]]*"(\\.|[^"\\])*$/"\1": "[REDACTED]/gI' \
-      -e "s/[\"'](token|access_token|refresh_token|password|passwd|secret|api[_-]?key|[A-Za-z0-9_]*_token|[A-Za-z0-9_]*_password|[A-Za-z0-9_]*_secret|[A-Za-z0-9_]*_key|pgpassword)[\"'][[:space:]]*:[[:space:]]*'(\\\\.|[^'\\\\])*\$/\"\\1\": \"[REDACTED]/gI" \
-      -e 's/["'"'"'](token|access_token|refresh_token|password|passwd|secret|api[-_]?key|[A-Za-z0-9_]*_token|[A-Za-z0-9_]*_password|[A-Za-z0-9_]*_secret|[A-Za-z0-9_]*_key|pgpassword)["'"'"'][[:space:]]*[=:][[:space:]]*([^ntfNTF,}"'"'"'[:space:]][^,}"'"'"'[:space:]]*|n([^uU,}"'"'"'[:space:]][^,}"'"'"'[:space:]]*|[uU]([^lL,}"'"'"'[:space:]][^,}"'"'"'[:space:]]*|[lL]([^lL,}"'"'"'[:space:]][^,}"'"'"'[:space:]]*|[lL][^,}"'"'"'[:space:]]+)))|t([^rR,}"'"'"'[:space:]][^,}"'"'"'[:space:]]*|[rR]([^uU,}"'"'"'[:space:]][^,}"'"'"'[:space:]]*|[uU]([^eE,}"'"'"'[:space:]][^,}"'"'"'[:space:]]*|[eE][^,}"'"'"'[:space:]]+)))|f([^aA,}"'"'"'[:space:]][^,}"'"'"'[:space:]]*|[aA]([^lL,}"'"'"'[:space:]][^,}"'"'"'[:space:]]*|[lL]([^sS,}"'"'"'[:space:]][^,}"'"'"'[:space:]]*|[sS]([^eE,}"'"'"'[:space:]][^,}"'"'"'[:space:]]*|[eE][^,}"'"'"'[:space:]]+)))))/"\1": [REDACTED]/gI' \
-      -e 's/(^|[^A-Za-z0-9_-])([A-Za-z0-9_]*_(TOKEN|PASSWORD|SECRET|KEY)|PGPASSWORD|TOKEN|PASSWORD|PASSWD|SECRET|KEY)[[:space:]]*[=:][[:space:]]*"[^"]*"/\1\2=[REDACTED]/gI' \
-      -e "s/(^|[^A-Za-z0-9_-])([A-Za-z0-9_]*_(TOKEN|PASSWORD|SECRET|KEY)|PGPASSWORD|TOKEN|PASSWORD|PASSWD|SECRET|KEY)[[:space:]]*[=:][[:space:]]*'[^']*'/\1\2=[REDACTED]/gI" \
-      -e 's/(^|[^A-Za-z0-9_-])([A-Za-z0-9_]*_(TOKEN|PASSWORD|SECRET|KEY)|PGPASSWORD|TOKEN|PASSWORD|PASSWD|SECRET|KEY)[[:space:]]*[=:][[:space:]]*[^[:space:]]+/\1\2=[REDACTED]/gI' \
+      -e 's/(^|[^[:alnum:]])(bearer|basic|token)[[:space:]]+[^[:space:]"'"'"']{8,}/\1\2 [REDACTED]/gI' \
+      -e 's/["'"'"']('"${_sk}"')["'"'"'][[:space:]]*([=:]+[[:space:]]*)+"(\\.|[^"\\])*"/"\1": "[REDACTED]"/gI' \
+      -e 's/["'"'"']('"${_sk}"')["'"'"'][[:space:]]*([=:]+[[:space:]]*)+'"'"'(\\.|[^'"'"'\\])*'"'"'/"\1": "[REDACTED]"/gI' \
+      -e 's/["'"'"']('"${_sk}"')["'"'"'][[:space:]]*([=:]+[[:space:]]*)+"(\\.|[^"\\])*\\?$/"\1": "[REDACTED]/gI' \
+      -e 's/["'"'"']('"${_sk}"')["'"'"'][[:space:]]*([=:]+[[:space:]]*)+'"'"'(\\.|[^'"'"'\\])*\\?$/"\1": "[REDACTED]/gI' \
+      -e 's/["'"'"']('"${_sk}"')["'"'"'][[:space:]]*([=:]+[[:space:]]*)+(null|true|false)([,}[:space:]]|$)/"\1": '"${_soh}"'\3\4/gI' \
+      -e 's/'"${_soh}"'([A-Za-z]*[A-Z][A-Za-z]*)/\1/g' \
+      -e 's/["'"'"']('"${_sk}"')["'"'"'][[:space:]]*([=:]+[[:space:]]*)+[\[{].*$/"\1": [REDACTED]/gI' \
+      -e 's/["'"'"']('"${_sk}"')["'"'"'][[:space:]]*([=:]+[[:space:]]*)+([^[:space:],}"'"'"''"${_soh}"'][^[:space:],}"'"'"']*)/"\1": [REDACTED]/gI' \
+      -e 's/(^|[^A-Za-z0-9_-])('"${_ek}"')[[:space:]]*[=:][[:space:]]*"[^"]*"/\1\2=[REDACTED]/gI' \
+      -e "s/(^|[^A-Za-z0-9_-])(${_ek})[[:space:]]*[=:][[:space:]]*'[^']*'/\1\2=[REDACTED]/gI" \
+      -e 's/(^|[^A-Za-z0-9_-])('"${_ek}"')[[:space:]]*[=:][[:space:]]*[^[:space:]]+/\1\2=[REDACTED]/gI' \
+      -e 's/(^|[^[:alnum:]])([A-Za-z0-9-]*-(token|secret|key))[[:space:]]*:[[:space:]]*[^[:space:]]+/\1\2: [REDACTED]/gI' \
       -e 's/(^|[^A-Za-z0-9_])([A-Za-z0-9_-]*(api_key|api-key|apikey))[[:space:]]*:[[:space:]]*[^[:space:]"]+/\1\2: [REDACTED]/gI' \
       -e 's/(^|[^A-Za-z0-9_])(api_key|api-key|apikey)[[:space:]]*=[[:space:]]*("[^"]*"|'\''[^'\'']*'\''|[^[:space:]&"]+)/\1\2=[REDACTED]/gI' \
       -e 's|://([^:/@[:space:]]+):([^@/[:space:]]+)@|://\1:[REDACTED]@|g' \
+      -e 's/'"${_soh}"'//g' \
     | sed 's/^/diagnostic: /'
 }
 

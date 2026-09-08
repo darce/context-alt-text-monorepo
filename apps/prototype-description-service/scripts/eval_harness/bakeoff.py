@@ -1193,10 +1193,12 @@ def _clone_bakeoff_client(client: BakeoffClient) -> BakeoffClient:
         entry_traits=client.entry_traits,
         roster=client.roster,
         prompt_variant=client.prompt_variant,
+        caption_length=client.caption_length,
         two_pass=client.two_pass,
         dual_length=client.dual_length,
         face_gate=client.face_gate,
         face_fixtures=client.face_fixtures,
+        depiction_lexicon=client.depiction_lexicon,
     )
 
 

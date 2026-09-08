@@ -20,15 +20,16 @@ from pathlib import Path
 import httpx
 import pytest
 
-from scripts.eval_harness.bakeoff import BakeoffClient, _extract_caption
+from scripts.eval_harness.bakeoff import BakeoffClient, _clone_bakeoff_client, _extract_caption
 from scripts.eval_harness.cli import BoundedStallError, fetch_run_record
+from scripts.eval_harness.depiction_lexicon import DepictionLexicon
 from scripts.eval_harness.manifest import GoldenEntry, GoldenManifest, load_manifest
 from scripts.eval_harness.remote_client import RemoteClientError
 from scripts.eval_harness.report import build_reports
 from scripts.eval_harness.strata import SplitHalf, assign_split
 
 BAKEOFF_MANIFEST = Path(__file__).parent / "seed" / "bakeoff_golden.json"
-GOLDEN_MANIFEST = Path(__file__).parent / "seed" / "golden.json"
+GOLDEN_MANIFEST = Path(__file__).parent / "seed" / "held_out_golden.json"
 SPLIT_SEED = "vlm6-s1-sealed-eval-split-20260818"
 HELD_OUT_FRACTION = 0.5
 
@@ -94,6 +95,38 @@ def test_no_context_degradation_entry_exists(manifest: GoldenManifest) -> None:
 
 def test_rubrics_are_not_vacuous(manifest: GoldenManifest) -> None:
     assert any(e.must_right or e.easy_wrong for e in manifest.entries)
+
+
+def test_warmup_clone_preserves_caption_and_lexicon_configuration() -> None:
+    """Warm-up requests use the same prompt treatment as scored requests."""
+    transport = httpx.MockTransport(lambda request: httpx.Response(200))
+    lexicon = DepictionLexicon(
+        version="test",
+        source_path="/canon/lexicons/depiction.md",
+        sha256="a" * 64,
+        families=("ATTRIB",),
+        tiers=("B",),
+        detail="full",
+        rules=(),
+    )
+    client = BakeoffClient(
+        base_url="http://candidate.test:8080",
+        model_id="m",
+        transport=transport,
+        prompt_variant="v3",
+        caption_length="long",
+        two_pass=True,
+        depiction_lexicon=lexicon,
+    )
+    clone = _clone_bakeoff_client(client)
+    try:
+        assert clone.prompt_variant == client.prompt_variant
+        assert clone.caption_length == client.caption_length
+        assert clone.two_pass is client.two_pass
+        assert clone.depiction_lexicon is client.depiction_lexicon
+    finally:
+        clone.close()
+        client.close()
 
 
 # This is a metadata-only split invariant: reading pixels would add an unrelated

@@ -58,6 +58,18 @@ TENANT_TABLES = [
     "identity_atlas_queue_dispositions",
 ]
 
+# UNIQUE constraints heal may additively CREATE on an already-provisioned table.
+# (table, constraint name, columns) is the public column list so
+# _ensure_unique_constraint does not read SQLAlchemy-private
+# UniqueConstraint._pending_colargs.
+HEAL_UNIQUE_CONSTRAINTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    (
+        "image_description_runs",
+        "uq_image_description_runs_idempotency_key",
+        ("tenant_id", "idempotency_key"),
+    ),
+)
+
 # Tables this migration creates via raw SQL only — no ORM model exists for
 # them, so any ORM-metadata-based mechanism (create_all heals, model-driven
 # tooling) can never produce them. Consumed by the truth-consistency ratchet.
@@ -227,13 +239,18 @@ def _constraint_column_names(constraint) -> list[str]:
 
     A constraint built as ``sa.UniqueConstraint("a", "b", name=...)`` and passed
     straight to ``_ensure_table`` was never bound to a Table, so ``.columns`` is
-    empty and the names live in ``_pending_colargs``. Read both so the DDL is
-    generated from the declaration either way.
+    empty. Look up opted-in ``HEAL_UNIQUE_CONSTRAINTS`` by name instead of
+    reading SQLAlchemy-private ``UniqueConstraint._pending_colargs``.
     """
     names = [str(column.name) for column in constraint.columns]
     if names:
         return names
-    return [str(arg) for arg in getattr(constraint, "_pending_colargs", []) or []]
+    constraint_name = getattr(constraint, "name", None)
+    if constraint_name:
+        for _table, name, cols in HEAL_UNIQUE_CONSTRAINTS:
+            if name == constraint_name:
+                return list(cols)
+    return []
 
 
 def _ensure_unique_constraint(op, table_name: str, constraint) -> bool:
@@ -1620,7 +1637,9 @@ def ensure_tables(op) -> None:
         # already-provisioned database reaches the table-exists branch with the
         # constraint absent. Declare it heal-additive: ALTER TABLE ... ADD
         # CONSTRAINT UNIQUE instead of a RuntimeError on every migrate.
-        heal_constraints=("uq_image_description_runs_idempotency_key",),
+        heal_constraints=tuple(
+            name for table, name, _cols in HEAL_UNIQUE_CONSTRAINTS if table == "image_description_runs"
+        ),
     )
     _ensure_index(op, "idx_image_description_runs_tenant", "image_description_runs", ["tenant_id"])
     _ensure_index(

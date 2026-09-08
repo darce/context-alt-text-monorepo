@@ -32,13 +32,18 @@ describe('useSyncOffline', () => {
     useSyncHealthMock.mockReset();
   });
 
-  it('does not gate controls while the initial health request is loading', () => {
+  it('gates controls until the initial health request proves online', () => {
     useSyncHealthMock.mockReturnValue(
       createMockQuery<SyncHealthResponse>({ isLoading: true }),
     );
 
-    const { result } = renderHook(() => useSyncOffline());
+    const { result, rerender } = renderHook(() => useSyncOffline());
 
+    expect(result.current).toBe(true);
+    useSyncHealthMock.mockReturnValue(
+      createMockQuery<SyncHealthResponse>({ data: baseHealth('closed'), isLoading: false }),
+    );
+    rerender();
     expect(result.current).toBe(false);
   });
 

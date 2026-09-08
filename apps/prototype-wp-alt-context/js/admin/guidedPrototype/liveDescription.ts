@@ -32,7 +32,6 @@ export type GuidedLiveStatus = (typeof GUIDED_LIVE_STATUS)[keyof typeof GUIDED_L
  */
 export const GUIDED_LIVE_BLOCKED_REASON = {
   NO_MEDIA: 'no_media',
-  CONTRACT_UNVERIFIED: 'contract_unverified',
 } as const;
 
 export type GuidedLiveBlockedReason =
@@ -477,9 +476,9 @@ export const guidedLiveReducer = (state: GuidedLiveState, action: GuidedLiveActi
   switch (action.kind) {
     case 'gate_changed': {
       if (action.blockedReason !== null) {
-        // Losing the media id or verified contract invalidates any in-flight
-        // run. The hook cancels the server side; the reducer stops the wait
-        // so a late poll cannot land a sentence into an unavailable panel.
+        // Losing the media id invalidates any in-flight run. The hook cancels
+        // the server side; the reducer stops the wait so a late poll cannot
+        // land a sentence into an unavailable panel.
         return {
           ...state,
           status: GUIDED_LIVE_STATUS.BLOCKED,
@@ -579,9 +578,11 @@ export const guidedLiveReducer = (state: GuidedLiveState, action: GuidedLiveActi
         status: state.resumeStatus ?? GUIDED_LIVE_STATUS.QUEUED,
         reason: null,
         resumeStatus: null,
-        // A fresh window measured from where the wait actually stands, so the
-        // panel's "of up to" line moves forward instead of re-arming a bound
-        // the clock has already passed.
+        // Exclude time spent on the timed-out screen. advanceClock measures
+        // elapsed as atMs - startedAtMs, so leaving the original request time
+        // in place would charge that pause against the fresh window and
+        // immediately re-enter timed_out (INT-08, INT-11).
+        startedAtMs: action.atMs - state.elapsedMs,
         deadlineMs: state.elapsedMs + GUIDED_LIVE_KEEP_WAITING_SECONDS * 1000,
       };
     }

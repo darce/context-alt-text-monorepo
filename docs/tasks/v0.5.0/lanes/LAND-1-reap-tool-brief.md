@@ -23,14 +23,14 @@ Sub-lane worktrees are merged into their parent branch and never torn down. Toda
    - `apply(dry_run=False)` removes only `REDUNDANT` worktrees and deletes their branches; (b)/(c)/(f) untouched; running it twice is a no-op ([RES-01] idempotent retry).
    - `apply` refuses (raises / non-zero) when the target is the root worktree or the current worktree.
    - Mutation check to include as a test comment: removing the `git cherry` fallback must make (e) fail.
-2. `scripts/worktree_reap.py` — `#!/usr/bin/env python3`, stdlib only.
+2. `scripts/worktree_reap.py` — `#!/usr/bin/env python3`, using the standard library for Git and classification logic. Ownership is authoritative registry data, so the reaper requires the `workbay_handoff_mcp` package; `--json`, `--check`, and `--apply` require it as well. The supported entry points are `make worktree-reap`, `make worktree-reap-check`, and `make worktree-reap-advise`.
    - `WorktreeRecord(path, branch, parent, status: Literal["REDUNDANT","LIVE","DIRTY","ROOT","UNKNOWN"], reason)`.
    - `parent_of(branch)`: `feature/<task>-<sub>` → `feature/<task>` when that branch exists; `review/<task>-…` → `feature/<task>` if it exists else `main`; otherwise `main`. Keep this a single pure function; tests cover it.
    - `is_merged(repo, branch, parent)`: `git merge-base --is-ancestor branch parent` OR every line of `git cherry parent branch` starts with `-`. Any git error → `False` (safe default). This mirrors `task_finish._branch_is_merged` in the workbay plugin; copy the semantics, do not import it.
    - `is_dirty(path)`: `git -C path status --porcelain --untracked-files=all` non-empty.
    - `classify(repo) -> list[WorktreeRecord]` from `git worktree list --porcelain`. Root worktree → `ROOT`. A worktree that cannot be inspected → `UNKNOWN`, never a neighbouring status ([GRPH-27] closed vocabulary).
    - `apply(records, *, dry_run=True) -> dict` — for each `REDUNDANT`: `git worktree remove <path>` (no `--force`, ever — rg-017), then `git branch -d <branch>`. Returns `{"removed": [...], "skipped": [...], "errors": [...]}`.
-   - CLI: `python3 scripts/worktree_reap.py [--repo PATH] [--apply] [--json]`. Default is a dry run that prints a table of every record (full list, never just a count — [OBS-05]). Exit codes: `0` nothing redundant, `3` redundant worktrees exist (dry run), `1` error.
+   - CLI: `python3 scripts/worktree_reap.py [--repo PATH] [--apply] [--check] [--json]`. Default is a dry run that prints a table of every record (full list, never just a count — [OBS-05]). `--check` exits `0` when nothing is redundant, `3` when redundant worktrees exist, and `1` on an inspection or mutation error; redundancy is reported as `3` regardless of `REAP_STRICT`. `worktree-reap-advise` maps only that `3` to advisory success unless `REAP_STRICT=1`.
 3. `mk/lane-maintenance.mk` — add:
    ```make
    worktree-reap: ## Dry-run: list linked worktrees whose branch is already landed in its parent (REAP_ARGS=--apply to remove)
@@ -44,7 +44,8 @@ Sub-lane worktrees are merged into their parent branch and never torn down. Toda
 ## Verification
 
 - `python3 -m pytest scripts/test_worktree_reap.py -q` green.
-- `python3 scripts/worktree_reap.py --repo . --json` on this repo runs without error (the sandbox may have no linked worktrees; that is fine — output must still be valid JSON with an empty list).
+- `make worktree-reap REAP_ARGS=--json` on this repo runs without error (the sandbox may have no linked worktrees; that is fine — output must still be valid JSON with an empty list). The make target supplies the required registry-backed runtime.
+- `make worktree-reap-check` returns `3` when redundant worktrees exist and `0` otherwise; registry and Git inspection errors return non-zero.
 - `make -n worktree-reap worktree-reap-check` resolves.
 - Do not run `--apply` against the real repo in this lane.
 

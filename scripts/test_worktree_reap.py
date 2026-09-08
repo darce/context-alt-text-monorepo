@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+import types
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -229,7 +230,7 @@ def test_protect_accepts_branch_and_path_forms(
         assert record.protected is True
         assert (
             reaper.main(["--repo", str(repo), "--check", "--protect", value])
-            == 0
+            == 3
         )
 
 
@@ -642,11 +643,9 @@ def test_merge_base_failure_is_unknown_and_strict_fails(
         *args: str,
         **kwargs: Any,
     ) -> subprocess.CompletedProcess[str]:
-        if args == (
-            "merge-base",
-            "--is-ancestor",
-            "feature/parent-ancestor",
-            "feature/parent",
+        if (
+            args[:3] == ("merge-base", "--is-ancestor", "feature/parent-ancestor")
+            and len(args) == 4
         ):
             return subprocess.CompletedProcess(
                 ["git", *args],
@@ -665,7 +664,7 @@ def test_merge_base_failure_is_unknown_and_strict_fails(
     assert reaper.main(["--repo", str(repo), "--strict"]) == 4
     # UNKNOWN is the reaper declining to decide.  An advisory --check must not
     # fail for that; strict mode is where indecision becomes a hard signal.
-    assert reaper.main(["--repo", str(repo), "--check"]) == 0
+    assert reaper.main(["--repo", str(repo), "--check"]) == 3
     assert reaper.main(["--repo", str(repo), "--check", "--strict"]) == 4
     monkeypatch.setenv("REAP_STRICT", "1")
     assert reaper.main(["--repo", str(repo), "--check"]) == 4
@@ -868,10 +867,17 @@ def test_check_exit_honours_reap_strict(
 ) -> None:
     repo = fixture_repo["repo"]
     monkeypatch.delenv("REAP_STRICT", raising=False)
-    assert reaper.main(["--repo", str(repo), "--check"]) == 0
+    assert reaper.main(["--repo", str(repo), "--check"]) == 3
 
     monkeypatch.setenv("REAP_STRICT", "1")
     assert reaper.main(["--repo", str(repo), "--check"]) == 3
+
+
+def test_check_reports_redundancy_without_strict(
+    fixture_repo: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("REAP_STRICT", raising=False)
+    assert reaper.main(["--repo", str(fixture_repo["repo"]), "--check"]) == 3
 
 
 def test_apply_refuses_root_and_current_worktree(
@@ -1049,7 +1055,34 @@ def test_terminal_lane_rows_do_not_protect_a_worktree() -> None:
         {"lane_id": "stale", "status": "closed_stale", "worktree_path": "/tmp/reap-d"},
     ]
     owners = reaper._lane_owners_from_rows(rows)
-    assert set(owners) == {Path("/tmp/reap-c").resolve(), Path("/tmp/reap-d").resolve()}
+    assert set(owners) == {Path("/tmp/reap-c").resolve()}
+
+
+def test_closed_stale_lane_does_not_own_its_worktree() -> None:
+    owners = reaper._lane_owners_from_rows(
+        [{"lane_id": "stale", "status": "closed_stale", "worktree_path": "/tmp/reap-d"}]
+    )
+    assert owners == {}
+
+
+@pytest.mark.parametrize(
+    ("status", "owns_worktree"),
+    [
+        ("planned", True),
+        ("active", True),
+        ("in_progress", True),
+        ("blocked", True),
+        ("review", True),
+        ("merged", False),
+        ("closed", False),
+        ("closed_stale", False),
+    ],
+)
+def test_lane_status_ownership_contract(status: str, owns_worktree: bool) -> None:
+    owners = reaper._lane_owners_from_rows(
+        [{"lane_id": "lane", "status": status, "worktree_path": "/tmp/reap-status"}]
+    )
+    assert (Path("/tmp/reap-status").resolve() in owners) is owns_worktree
 
 
 def test_a_lane_row_without_a_status_fails_closed() -> None:
@@ -1095,6 +1128,81 @@ def test_apply_rechecks_lane_ownership_after_classification(
         check=False,
     ).returncode == 0
     assert calls >= 2
+
+
+def test_lane_registered_during_removal_is_restored(
+    fixture_repo: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = fixture_repo["repo"]
+    target = fixture_repo["paths"]["ancestor"].resolve()
+    branch = "feature/parent-ancestor"
+    removal_finished = False
+    original_git = reaper._git
+
+    def observe_removal(
+        git_repo: Path,
+        *args: str,
+        **kwargs: Any,
+    ) -> subprocess.CompletedProcess[str]:
+        nonlocal removal_finished
+        result = original_git(git_repo, *args, **kwargs)
+        if args[:3] == ("worktree", "remove", "--") and result.returncode == 0:
+            removal_finished = True
+        return result
+
+    def ownership(_repo: Path) -> dict[Path, str]:
+        return {target: "late-lane"} if removal_finished else {}
+
+    monkeypatch.setattr(reaper, "_git", observe_removal)
+    monkeypatch.setattr(reaper, "active_lane_paths", ownership)
+    record = next(item for item in reaper.classify(repo) if item.path == target)
+
+    result = reaper.apply([record], dry_run=False)
+
+    assert removal_finished
+    assert result["removed"] == []
+    assert result["errors"]
+    assert target.exists()
+    assert _git(repo, "show-ref", "--verify", f"refs/heads/{branch}", check=False).returncode == 0
+
+
+def test_registry_unreadable_after_removal_restores_and_fails(
+    fixture_repo: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = fixture_repo["repo"]
+    target = fixture_repo["paths"]["ancestor"].resolve()
+    branch = "feature/parent-ancestor"
+    removal_finished = False
+    original_git = reaper._git
+
+    def observe_removal(
+        git_repo: Path,
+        *args: str,
+        **kwargs: Any,
+    ) -> subprocess.CompletedProcess[str]:
+        nonlocal removal_finished
+        result = original_git(git_repo, *args, **kwargs)
+        if args[:3] == ("worktree", "remove", "--") and result.returncode == 0:
+            removal_finished = True
+        return result
+
+    def ownership(_repo: Path) -> dict[Path, str]:
+        if removal_finished:
+            raise reaper.LaneStateError("registry offline after removal")
+        return {}
+
+    monkeypatch.setattr(reaper, "_git", observe_removal)
+    monkeypatch.setattr(reaper, "active_lane_paths", ownership)
+    record = next(item for item in reaper.classify(repo) if item.path == target)
+
+    result = reaper.apply([record], dry_run=False)
+
+    assert removal_finished
+    assert result["removed"] == []
+    assert result["errors"]
+    assert any("registry offline after removal" in error for error in result["errors"])
+    assert target.exists()
+    assert _git(repo, "show-ref", "--verify", f"refs/heads/{branch}", check=False).returncode == 0
 
 
 def test_apply_rechecks_lane_ownership_before_recovered_intent(
@@ -1191,6 +1299,66 @@ def test_active_lane_paths_without_backend_raises_unavailable(
     monkeypatch.setitem(sys.modules, "workbay_handoff_mcp.lanes_recording", None)
     with pytest.raises(reaper.LaneStateError, match="registry backend unavailable"):
         _real_active_lane_paths(tmp_path)
+
+
+def _install_registry_response(
+    monkeypatch: pytest.MonkeyPatch, response: object
+) -> None:
+    backend = types.ModuleType("workbay_handoff_mcp")
+    recording = types.ModuleType("workbay_handoff_mcp.lanes_recording")
+
+    class RuntimeConfig:
+        @classmethod
+        def for_repo(cls, repo: Path) -> Path:
+            return repo
+
+    backend.RuntimeConfig = RuntimeConfig  # type: ignore[attr-defined]
+    backend.configure_runtime = lambda _config: None  # type: ignore[attr-defined]
+    recording.list_lanes = lambda **_kwargs: response  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "workbay_handoff_mcp", backend)
+    monkeypatch.setitem(sys.modules, "workbay_handoff_mcp.lanes_recording", recording)
+
+
+def test_registry_error_envelope_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_registry_response(monkeypatch, {"ok": False, "data": {"lanes": []}})
+
+    with pytest.raises(reaper.LaneStateError, match="ok"):
+        _real_active_lane_paths(tmp_path)
+
+
+def test_registry_non_mapping_data_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_registry_response(monkeypatch, {"ok": True, "data": []})
+
+    with pytest.raises(reaper.LaneStateError, match="data"):
+        _real_active_lane_paths(tmp_path)
+
+
+def test_parent_rewritten_between_proof_and_oid_is_not_redundant(
+    fixture_repo: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = fixture_repo["repo"]
+    target = fixture_repo["paths"]["ancestor"]
+    original_ref_oid = reaper._ref_oid
+    rewritten = False
+
+    def rewrite_parent_before_oid(repo_path: Path, ref: str) -> str | None:
+        nonlocal rewritten
+        if ref == "feature/parent" and not rewritten:
+            rewritten = True
+            main_oid = original_ref_oid(repo_path, "main")
+            assert main_oid is not None
+            _git(repo_path, "update-ref", "refs/heads/feature/parent", main_oid)
+        return original_ref_oid(repo_path, ref)
+
+    monkeypatch.setattr(reaper, "_ref_oid", rewrite_parent_before_oid)
+    record = next(item for item in reaper.classify(repo) if item.path == target)
+
+    assert rewritten
+    assert record.status in {"LIVE", "UNKNOWN"}
 
 
 def test_documented_cli_without_registry_backend_fails_closed(

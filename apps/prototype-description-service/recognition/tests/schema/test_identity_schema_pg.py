@@ -53,3 +53,21 @@ def test_matview_has_materialized_relkind(pg_migrated_engine) -> None:
             )
         ).scalar()
     assert relkind == "m", f"mv_identity_cluster_centroids relkind={relkind!r}, expected 'm'"
+
+
+def test_matview_centroid_carries_vector_typmod(pg_migrated_engine) -> None:
+    # /health and /ready read pg_attribute.atttypmod for this column and fail
+    # closed on -1; a CASE with an untyped NULL arm silently produced exactly that.
+    with pg_migrated_engine.connect() as conn:
+        typmod = conn.execute(
+            text(
+                "SELECT a.atttypmod FROM pg_attribute a "
+                "JOIN pg_class c ON c.oid = a.attrelid "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE n.nspname='public' AND c.relname='mv_identity_cluster_centroids' "
+                "AND a.attname='centroid'"
+            )
+        ).scalar()
+    assert typmod == MIGRATION.EMBEDDING_DIMENSION, (
+        f"centroid typmod={typmod!r}, expected vector({MIGRATION.EMBEDDING_DIMENSION})"
+    )

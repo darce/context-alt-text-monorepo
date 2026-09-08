@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from collections.abc import Iterable, Mapping
@@ -1458,6 +1459,59 @@ def test_gpu_evidence_make_rejects_shell_metacharacters(variable: str, target: s
     assert result.returncode != 0, result.stdout + result.stderr
     assert "unsafe" in result.stderr
     assert not marker.exists()
+
+
+@pytest.mark.parametrize(
+    ("variable", "target"),
+    [
+        ("OCI_BIN", "gpu-evidence-export"),
+        ("GPU_INSTANCE_ID", "gpu-evidence-export"),
+        ("GPU_COMPARTMENT_ID", "gpu-evidence-export"),
+    ],
+)
+def test_gpu_evidence_alias_env_values_are_not_expanded(variable: str, target: str) -> None:
+    marker = ROOT / "scripts" / f".gpu-evidence-alias-env-{variable}"
+    if marker.exists():
+        marker.unlink()
+    values = {
+        "GPU_EVIDENCE_SINCE": SINCE,
+        "GPU_EVIDENCE_UNTIL": UNTIL,
+        "GPU_EVIDENCE_BUNDLE": str(ROOT / ".git" / "gpu-evidence" / "test-bundle"),
+        "GPU_EVIDENCE_STATE_SNAPSHOT": str(ROOT / "snapshot.json"),
+        "GPU_EVIDENCE_PYTHON": "python3",
+        "GPU_EVIDENCE_EXPECTED_STOP_PRINCIPAL": "gpu-reaper",
+    }
+    if variable != "GPU_INSTANCE_ID":
+        values["GPU_EVIDENCE_INSTANCE_ID"] = INSTANCE_ID
+    if variable != "GPU_COMPARTMENT_ID":
+        values["GPU_EVIDENCE_COMPARTMENT_ID"] = "ocid1.compartment.example"
+    if variable != "OCI_BIN":
+        values["GPU_EVIDENCE_OCI_BIN"] = "oci"
+    environment = os.environ.copy()
+    environment[variable] = f"safe$(shell touch {marker})"
+    command = ["make", "-n", target, *[f"{key}={value}" for key, value in values.items()]]
+
+    result = subprocess.run(
+        command,
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=environment,
+    )
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "unsafe GPU evidence value" in result.stderr
+    assert not marker.exists()
+
+
+def test_gpu_evidence_makefile_resolves_alias_names_lazily() -> None:
+    fragment = (ROOT / "mk" / "gpu-evidence.mk").read_text(encoding="utf-8")
+
+    assert "gpu_evidence_alias =" in fragment
+    assert "GPU_EVIDENCE_INSTANCE_ID ?= $(GPU_INSTANCE_ID)" not in fragment
+    assert "GPU_EVIDENCE_COMPARTMENT_ID ?= $(GPU_COMPARTMENT_ID)" not in fragment
+    assert "GPU_EVIDENCE_OCI_BIN ?= $(if $(OCI_BIN)" not in fragment
 
 
 def _load_checker_module() -> ModuleType:

@@ -142,13 +142,56 @@ lane_root="$(cd "${script_dir}/../../.." && pwd)" || {
     echo "ERROR: cannot resolve repository root from exporter path" >&2
     exit 1
 }
-if [ -x "$lane_root/.venv/bin/python" ]; then
-    resolved_python="$lane_root/.venv/bin/python"
-else
-    resolved_python="$(command -v python3)" || {
-        echo "ERROR: python3 is required to validate the evidence window" >&2
+required_python_major=3
+required_python_minor=12
+resolved_python=""
+found_python=""
+found_python_version=""
+
+python_meets_floor() {
+    "$1" -c "import sys; raise SystemExit(0 if sys.version_info >= (${required_python_major}, ${required_python_minor}) else 1)" >/dev/null 2>&1
+}
+
+python_version_text() {
+    local reported
+    reported="$("$1" -c "import sys; print('%d.%d.%d' % (sys.version_info.major, sys.version_info.minor, sys.version_info.micro))" 2>/dev/null)" || reported=""
+    if [ -n "$reported" ]; then
+        printf '%s\n' "$reported"
+    else
+        printf 'unknown\n'
+    fi
+}
+
+consider_python() {
+    local candidate="$1"
+    [ -n "$candidate" ] || return 1
+    [ -x "$candidate" ] || return 1
+    if python_meets_floor "$candidate"; then
+        resolved_python="$candidate"
+        return 0
+    fi
+    if [ -z "$found_python" ]; then
+        found_python="$candidate"
+        found_python_version="$(python_version_text "$candidate")"
+    fi
+    return 1
+}
+
+if ! consider_python "$lane_root/.venv/bin/python"; then
+    for python_name in python3.13 python3.12 python3; do
+        python_candidate="$(command -v "$python_name" || true)"
+        if consider_python "$python_candidate"; then
+            break
+        fi
+    done
+fi
+if [ -z "$resolved_python" ]; then
+    if [ -n "$found_python" ]; then
+        echo "ERROR: $found_python is Python ${found_python_version}; gpu evidence requires >= ${required_python_major}.${required_python_minor}" >&2
         exit 1
-    }
+    fi
+    echo "ERROR: python3 is required to validate the evidence window" >&2
+    exit 1
 fi
 "$resolved_python" - "$since" "$until" <<'PY'
 import datetime as dt
@@ -188,6 +231,7 @@ curl_connection_timeout="${EVIDENCE_CURL_CONNECTION_TIMEOUT:-10}"
 curl_max_time="${EVIDENCE_CURL_MAX_TIME:-60}"
 copy_max_time="${EVIDENCE_COPY_MAX_TIME:-$curl_max_time}"
 lock_max_time="${EVIDENCE_LOCK_MAX_TIME:-60}"
+evidence_lock_expected_pages="${EVIDENCE_LOCK_EXPECTED_PAGES:-5}"
 
 for timeout_value in \
     "$oci_connection_timeout" \
@@ -204,6 +248,18 @@ for timeout_value in \
         *) fail_usage "timeouts must be positive integer seconds" ;;
     esac
 done
+case "$evidence_lock_expected_pages" in
+    ''|0*|*[!0-9]*) fail_usage "EVIDENCE_LOCK_EXPECTED_PAGES must be a positive integer" ;;
+esac
+case "$evidence_lock_expected_pages" in
+    *[1-9]*) ;;
+    *) fail_usage "EVIDENCE_LOCK_EXPECTED_PAGES must be a positive integer" ;;
+esac
+# Remote age is not a lock-wait kill timer. A live capture can still be inside
+# `oci audit event list --all`, which paginates under the per-request read
+# timeout. Only break a well-formed remote lock after lock wait plus that
+# timeout times the expected page count.
+lock_capture_budget=$((10#$lock_max_time + 10#$oci_read_timeout * 10#$evidence_lock_expected_pages))
 
 # The checker is the source of truth for the manifest contract.  Keep the
 # shell boundary free of a second copy of these values so a checker upgrade
@@ -354,8 +410,8 @@ stale_lock_candidate() {
 
     now_epoch="$(date +%s)"
     if [ "$now_epoch" -ge "$lock_owner_start_time" ] \
-        && [ $((now_epoch - lock_owner_start_time)) -ge "$((10#$lock_max_time))" ]; then
-        echo "INFO: breaking stale evidence lock from host $lock_owner_host (age ${lock_max_time}s+): $lock_dir" >&2
+        && [ $((now_epoch - lock_owner_start_time)) -ge "$lock_capture_budget" ]; then
+        echo "INFO: breaking stale evidence lock from host $lock_owner_host (age ${lock_capture_budget}s+): $lock_dir" >&2
         return 0
     fi
     return 1

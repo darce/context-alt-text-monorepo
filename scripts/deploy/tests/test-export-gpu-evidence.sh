@@ -496,6 +496,47 @@ if [ -e "${slow_overlap}" ]; then
     exit 1
 fi
 
+# A live remote capture can outlive the lock-wait cap: `oci audit event list
+# --all` paginates under the per-request read timeout. A well-formed remote
+# owner older than the wait cap but still inside the capture budget must not
+# be stolen.
+remote_lock_bundle="${fixture_root}/remote-lock"
+mkdir -p "${remote_lock_bundle}.lock"
+remote_lock_start="$(($(date +%s) - 2))"
+printf 'pid=%s\nhost=%s\nstart_time=%s\n' "1" "remote-evidence-host" "${remote_lock_start}" \
+    >"${remote_lock_bundle}.lock/owner"
+chmod 600 "${remote_lock_bundle}.lock/owner"
+remote_lock_rc=0
+EVIDENCE_LOCK_MAX_TIME=1 OCI_BIN="${fake_oci}" "${exporter}" \
+    --instance-id ocid1.instance.example \
+    --compartment-id ocid1.compartment.example \
+    --since 2026-09-01T00:00:00Z --until 2026-09-01T01:00:00Z \
+    --out "${remote_lock_bundle}" \
+    >"${fixture_root}/remote-lock.out" 2>&1 || remote_lock_rc=$?
+if [ "${remote_lock_rc}" -eq 0 ]; then
+    echo "FAIL: remote lock within capture budget was stolen" >&2
+    cat "${fixture_root}/remote-lock.out" >&2
+    exit 1
+fi
+if [ -e "${remote_lock_bundle}" ]; then
+    echo "FAIL: remote lock steal published a concurrent bundle" >&2
+    exit 1
+fi
+if [ ! -f "${remote_lock_bundle}.lock/owner" ]; then
+    echo "FAIL: remote lock within capture budget was removed" >&2
+    exit 1
+fi
+if grep -Fq -- 'breaking stale evidence lock from host' "${fixture_root}/remote-lock.out"; then
+    echo "FAIL: remote lock within capture budget was treated as stale" >&2
+    cat "${fixture_root}/remote-lock.out" >&2
+    exit 1
+fi
+if ! grep -Fq -- 'timed out waiting for evidence bundle lock' "${fixture_root}/remote-lock.out"; then
+    echo "FAIL: remote lock wait did not time out" >&2
+    cat "${fixture_root}/remote-lock.out" >&2
+    exit 1
+fi
+
 missing_rc=0
 "$exporter" --compartment-id ocid1.compartment.example \
     --since 2026-09-01T00:00:00Z --until 2026-09-01T01:00:00Z \
@@ -638,6 +679,61 @@ if grep -Fq -- 'gpu-state.json?' "${url_bundle}/manifest.json"; then
 fi
 if ! grep -Fq -- '--connect-timeout 10' "${curl_call_log}" || ! grep -Fq -- '--max-time 60' "${curl_call_log}"; then
     echo "FAIL: snapshot retrieval did not carry explicit curl timeouts" >&2
+    exit 1
+fi
+
+old_python_root="${fixture_root}/old-python-root"
+old_python_bin="${old_python_root}/bin"
+mkdir -p "${old_python_root}/scripts/deploy/lib" "${old_python_root}/scripts" "${old_python_bin}"
+cp "${exporter}" "${old_python_root}/scripts/deploy/lib/export-gpu-evidence.sh"
+cp "${root}/scripts/gpu_burst_evidence.py" "${old_python_root}/scripts/gpu_burst_evidence.py"
+chmod +x "${old_python_root}/scripts/deploy/lib/export-gpu-evidence.sh"
+cat >"${old_python_bin}/python3" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "${1:-}" = "-c" ]; then
+    case "${2:-}" in
+        *"sys.version_info >= (3, 12)"*)
+            exit 1
+            ;;
+        *"sys.version_info"*)
+            printf '%s\n' '3.9.6'
+            exit 0
+            ;;
+    esac
+fi
+echo "ERROR: unexpected python3 invocation: $*" >&2
+exit 1
+EOF
+chmod +x "${old_python_bin}/python3"
+cp "${old_python_bin}/python3" "${old_python_bin}/python3.12"
+cp "${old_python_bin}/python3" "${old_python_bin}/python3.13"
+old_python_rc=0
+PATH="${old_python_bin}:${PATH}" OCI_BIN="${fake_oci}" \
+    "${old_python_root}/scripts/deploy/lib/export-gpu-evidence.sh" \
+    --instance-id ocid1.instance.example \
+    --compartment-id ocid1.compartment.example \
+    --since 2026-09-01T00:00:00Z --until 2026-09-01T01:00:00Z \
+    --out "${fixture_root}/old-python-bundle" \
+    >"${fixture_root}/old-python.out" 2>&1 || old_python_rc=$?
+if [ "${old_python_rc}" -eq 0 ]; then
+    echo "FAIL: python 3.9 stub was accepted" >&2
+    cat "${fixture_root}/old-python.out" >&2
+    exit 1
+fi
+if grep -Fq -- 'could not read the evidence schema' "${fixture_root}/old-python.out"; then
+    echo "FAIL: python 3.9 failure was masked as a schema read error" >&2
+    cat "${fixture_root}/old-python.out" >&2
+    exit 1
+fi
+if ! grep -Fq -- '3.9.6' "${fixture_root}/old-python.out" \
+    || ! grep -Fq -- '3.12' "${fixture_root}/old-python.out"; then
+    echo "FAIL: python 3.9 rejection did not name the found and required versions" >&2
+    cat "${fixture_root}/old-python.out" >&2
+    exit 1
+fi
+if [ -e "${fixture_root}/old-python-bundle" ]; then
+    echo "FAIL: python 3.9 stub left a published bundle" >&2
     exit 1
 fi
 

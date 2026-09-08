@@ -20,6 +20,14 @@ EMBEDDING_DIMENSION = int(get_database_settings().pgvector_dimension)
 SAFE_TENANT_EXPR = "NULLIF(current_setting('app.current_tenant', true), '')::uuid"
 BYPASS_RLS_EXPR = "COALESCE(NULLIF(current_setting('app.bypass_rls', true), ''), 'false')::boolean"
 
+# Must stay equal to recognition.application.health.IDENTITY_VECTOR_COLUMNS.
+# /ready fails closed on every member; heal/verify must probe the same set.
+IDENTITY_VECTOR_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("media_identities", "embedding"),
+    ("identity_cluster_representatives", "embedding"),
+    ("mv_identity_cluster_centroids", "centroid"),
+)
+
 TENANT_TABLES = [
     "media_identities",
     "identity_clusters",
@@ -1847,6 +1855,7 @@ def ensure_tables(op) -> None:
         "identity_atlas_queue_dispositions",
         ["point_id"],
     )
+    ensure_identity_vector_typmods(op)
 
 
 def ensure_rls(op) -> None:
@@ -1995,7 +2004,8 @@ def ensure_triggers(op) -> None:
     )
 
 
-def _matview_centroid_typmod(op) -> int | None:
+def _vector_column_typmod(op, table_name: str, column_name: str) -> int | None:
+    """Return atttypmod only when the column's pg_type.typname is vector."""
     return (
         op.get_bind()
         .execute(
@@ -2003,17 +2013,72 @@ def _matview_centroid_typmod(op) -> int | None:
                 "SELECT a.atttypmod FROM pg_attribute a "
                 "JOIN pg_class c ON c.oid = a.attrelid "
                 "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "JOIN pg_type t ON t.oid = a.atttypid "
+                "WHERE n.nspname = current_schema() "
+                "AND c.relname = :table_name "
+                "AND a.attname = :column_name AND NOT a.attisdropped "
+                "AND t.typname = 'vector'"
+            ),
+            {"table_name": table_name, "column_name": column_name},
+        )
+        .scalar()
+    )
+
+
+def _matview_centroid_typmod(op) -> int | None:
+    # INT-01: join pg_type and require typname='vector'. A non-vector column
+    # with a coincidental atttypmod must not look healthy.
+    return (
+        op.get_bind()
+        .execute(
+            sa.text(
+                "SELECT a.atttypmod FROM pg_attribute a "
+                "JOIN pg_class c ON c.oid = a.attrelid "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "JOIN pg_type t ON t.oid = a.atttypid "
                 "WHERE n.nspname = current_schema() "
                 "AND c.relname = 'mv_identity_cluster_centroids' "
-                "AND a.attname = 'centroid' AND NOT a.attisdropped"
+                "AND a.attname = 'centroid' AND NOT a.attisdropped "
+                "AND t.typname = 'vector'"
             )
         )
         .scalar()
     )
 
 
+def ensure_identity_vector_typmods(op) -> None:
+    """Fail closed on a wrong-typmod *table* vector column (not rebuildable)."""
+    for table_name, column_name in IDENTITY_VECTOR_COLUMNS:
+        if table_name == "mv_identity_cluster_centroids":
+            continue
+        if _relkind(op, table_name) not in ("r", "p"):
+            continue
+        observed = _vector_column_typmod(op, table_name, column_name)
+        if observed != EMBEDDING_DIMENSION:
+            raise RuntimeError(
+                f"cannot repair {table_name}.{column_name}: observed vector typmod "
+                f"{observed!r} (expected {EMBEDDING_DIMENSION} and pg_type.typname='vector'). "
+                "Table columns cannot be dropped and rebuilt like derived matview data. "
+                "Operator action: "
+                f"ALTER TABLE {table_name} ALTER COLUMN {column_name} "
+                f"TYPE vector({EMBEDDING_DIMENSION}) "
+                f"USING {column_name}::vector({EMBEDDING_DIMENSION}); "
+                "then re-run python -m scripts.sync_identity_schema."
+            )
+
+
+def _current_user_quoted(op) -> tuple[str, str]:
+    row = op.get_bind().execute(sa.text("SELECT current_user, quote_ident(current_user)")).one()
+    return str(row[0]), str(row[1])
+
+
+def _quote_ident(op, ident: str) -> str:
+    quoted = op.get_bind().execute(sa.text("SELECT quote_ident(:ident)"), {"ident": ident}).scalar()
+    return str(quoted)
+
+
 def _matview_owner_and_can_drop(op) -> tuple[str, bool]:
-    owner, can_drop = (
+    row = (
         op.get_bind()
         .execute(
             sa.text(
@@ -2026,9 +2091,89 @@ def _matview_owner_and_can_drop(op) -> tuple[str, bool]:
                 "AND c.relkind='m'"
             )
         )
+        .one_or_none()
+    )
+    if row is None:
+        raise RuntimeError(
+            "cannot rebuild mv_identity_cluster_centroids: "
+            "relation vanished mid-heal; re-run python -m scripts.sync_identity_schema"
+        )
+    owner, can_drop = row
+    return str(owner), bool(can_drop)
+
+
+def _matview_create_privilege_gaps(op) -> list[str]:
+    row = (
+        op.get_bind()
+        .execute(
+            sa.text(
+                "SELECT current_schema(), "
+                "has_schema_privilege(current_user, current_schema(), 'CREATE'), "
+                "has_table_privilege(current_user, 'identity_clusters', 'SELECT'), "
+                "has_table_privilege(current_user, 'identity_members', 'SELECT'), "
+                "has_table_privilege(current_user, 'media_identities', 'SELECT'), "
+                "EXISTS ("
+                "  SELECT 1 FROM pg_proc p "
+                "  WHERE p.proname = 'l2_normalize' "
+                "    AND has_function_privilege(current_user, p.oid, 'EXECUTE')"
+                ")"
+            )
+        )
         .one()
     )
-    return str(owner), bool(can_drop)
+    schema_name, schema_create, sel_clusters, sel_members, sel_media, exec_l2 = row
+    gaps: list[str] = []
+    if not schema_create:
+        gaps.append(f"CREATE on schema {schema_name}")
+    if not sel_clusters:
+        gaps.append("SELECT on identity_clusters")
+    if not sel_members:
+        gaps.append("SELECT on identity_members")
+    if not sel_media:
+        gaps.append("SELECT on media_identities")
+    if not exec_l2:
+        gaps.append("EXECUTE on l2_normalize")
+    return gaps
+
+
+def _matview_nonowner_grants(op) -> tuple[tuple[str, str, bool], ...]:
+    rows = (
+        op.get_bind()
+        .execute(
+            sa.text(
+                "SELECT "
+                "CASE WHEN acl.grantee = 0 THEN 'public' "
+                "ELSE pg_get_userbyid(acl.grantee) END AS grantee, "
+                "acl.privilege_type, "
+                "acl.is_grantable "
+                "FROM pg_class c "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, '{}'::aclitem[])) AS acl "
+                "WHERE n.nspname = current_schema() "
+                "AND c.relname = 'mv_identity_cluster_centroids' "
+                "AND c.relkind = 'm' "
+                "AND acl.grantee IS DISTINCT FROM c.relowner"
+            )
+        )
+        .all()
+    )
+    return tuple((str(grantee), str(privilege), bool(grantable)) for grantee, privilege, grantable in rows)
+
+
+def _restore_matview_owner_and_grants(
+    op,
+    *,
+    current_role: str,
+    owner: str,
+    grants: tuple[tuple[str, str, bool], ...],
+) -> None:
+    for grantee, privilege, grantable in grants:
+        quoted_grantee = _quote_ident(op, grantee)
+        option = " WITH GRANT OPTION" if grantable else ""
+        op.execute(f"GRANT {privilege} ON mv_identity_cluster_centroids TO {quoted_grantee}{option}")
+    if owner != current_role:
+        quoted_owner = _quote_ident(op, owner)
+        op.execute(f"ALTER MATERIALIZED VIEW mv_identity_cluster_centroids OWNER TO {quoted_owner}")
 
 
 def ensure_matview(op) -> None:
@@ -2036,8 +2181,9 @@ def ensure_matview(op) -> None:
 
     A matview whose ``centroid`` column lost its vector typmod (built before the
     outer cast existed) is derived data, so it is dropped and rebuilt here when
-    the current role can drop it. Otherwise the heal raises a named operator
-    action before making any destructive change.
+    the current role can drop it *and* recreate it with owner+grants restored.
+    Otherwise the heal raises a named operator action before making any
+    destructive change.
     """
     relkind = _relkind(op, "mv_identity_cluster_centroids")
     if relkind not in (None, "m"):
@@ -2046,19 +2192,30 @@ def ensure_matview(op) -> None:
             f"{relkind!r} (expected materialized view); drop the impostor relation "
             "before healing (operator action, see E15-33-BR2-04)"
         )
+    restore: tuple[str, str, tuple[tuple[str, str, bool], ...]] | None = None
     if relkind == "m":
         observed_typmod = _matview_centroid_typmod(op)
         if observed_typmod != EMBEDDING_DIMENSION:
             owner, can_drop = _matview_owner_and_can_drop(op)
+            current_role, quoted_role = _current_user_quoted(op)
             if not can_drop:
-                current_role = str(op.get_bind().execute(sa.text("SELECT current_user")).scalar())
-                operator_sql = f"ALTER MATERIALIZED VIEW mv_identity_cluster_centroids OWNER TO {current_role};"
+                operator_sql = f"ALTER MATERIALIZED VIEW mv_identity_cluster_centroids OWNER TO {quoted_role};"
                 raise RuntimeError(
                     "cannot rebuild mv_identity_cluster_centroids: "
                     f"observed centroid typmod {observed_typmod!r}; owner role is {owner!r}; "
                     f"current role is {current_role!r} and cannot DROP the relation. "
                     f"Run {operator_sql} then re-run python -m scripts.sync_identity_schema."
                 )
+            gaps = _matview_create_privilege_gaps(op)
+            if gaps:
+                raise RuntimeError(
+                    "cannot rebuild mv_identity_cluster_centroids: "
+                    f"observed centroid typmod {observed_typmod!r}; "
+                    "current role lacks privileges required to recreate the view: "
+                    f"{', '.join(gaps)}. Grant these privileges then re-run "
+                    "python -m scripts.sync_identity_schema."
+                )
+            restore = (current_role, owner, _matview_nonowner_grants(op))
             op.execute("DROP MATERIALIZED VIEW mv_identity_cluster_centroids")
     op.execute(
         f"""
@@ -2155,6 +2312,9 @@ def ensure_matview(op) -> None:
         WHERE centroid IS NOT NULL;
         """
     )
+    if restore is not None:
+        current_role, owner, grants = restore
+        _restore_matview_owner_and_grants(op, current_role=current_role, owner=owner, grants=grants)
 
 
 def heal(connection) -> None:

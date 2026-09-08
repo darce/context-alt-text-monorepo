@@ -1,7 +1,7 @@
 """ORCH-LAUNCH-01 wave3: image-variant parity through compose + deploy guards.
 
-Guards the silent VLM no-op (compose hardcoding acx-backend), the builder-vlm
-remote-build bypass, and the writable /data/cache RCE surface.
+Guards the silent VLM no-op (compose hardcoding acx-backend), the remote-build
+free-space floor selector, and the writable /data/cache RCE surface.
 
 TEST-15: each assertion is proven red via a synthetic mutation in this module
 (and documented mutations against the real sources during the implementation
@@ -192,62 +192,55 @@ def script_threads_resolve_to_acx_image_repo(script_text: str) -> bool:
     return True
 
 
-def script_refuses_any_vlm_remote_target(script_text: str) -> bool:
-    """refuse_remote_vlm_build must match *vlm*, not only the literal runtime-vlm."""
-    # Extract the function body roughly.
+def script_selects_remote_build_min_free_gb(script_text: str) -> bool:
+    """The remote floor selector must cover every ``*vlm*`` target."""
     m = re.search(
-        r"refuse_remote_vlm_build\(\)\s*\{(?P<body>.*?)\n\}",
+        r"^remote_build_min_free_gb\(\)\s*\{(?P<body>.*?)^\}",
         script_text,
-        re.DOTALL,
+        re.DOTALL | re.MULTILINE,
     )
     if not m:
         return False
     body = m.group("body")
-    # Must not be literal-only equality on runtime-vlm.
-    if re.search(r'==\s*"runtime-vlm"', body) and "*vlm*" not in body:
+    # A literal-only runtime-vlm branch misses builder-vlm and future VLM targets.
+    if re.search(r'''==\s*["']runtime-vlm["']''', body):
         return False
-    # Pattern form: [[ ... == *vlm* ]]
-    if not re.search(r"==\s*\*vlm\*", body):
+    if not re.search(r"ACX_BUILD_TARGET[^\n]*==\s*\*vlm\*", body):
         return False
-    # Error message must state the refused value (use $target or ${target}).
-    if "ACX_BUILD_TARGET=" not in body and "ACX_BUILD_TARGET=${" not in body:
-        # fail "… ACX_BUILD_TARGET=${target} …"
-        if not re.search(r"ACX_BUILD_TARGET=\$\{?target", body):
-            return False
-    return True
-
-
-def _run_refuse_probe(target: str) -> subprocess.CompletedProcess[str]:
-    """Source refuse_remote_vlm_build from the real script and invoke it under a target."""
-    # Extract only what we need without executing the whole deploy script.
-    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
-    # Minimal harness: redefine fail to exit 1 with message; call the real function body.
-    m = re.search(
-        r"refuse_remote_vlm_build\(\)\s*\{(?P<body>.*?)\n\}",
-        script,
-        re.DOTALL,
+    return all(
+        re.search(rf"\$\{{{name}\}}", body)
+        for name in ("REMOTE_VLM_BUILD_MIN_FREE_GB", "REMOTE_BUILD_MIN_FREE_GB")
     )
-    assert m, "refuse_remote_vlm_build not found in deploy script"
-    body = m.group("body")
+
+
+def _script_constant_value(script_text: str, name: str) -> str:
+    """Read a numeric shell constant from the real deploy script."""
+    m = re.search(rf"^{re.escape(name)}=(?P<value>[0-9]+)$", script_text, re.MULTILINE)
+    assert m, f"{name} constant not found in deploy script"
+    return m.group("value")
+
+
+def _run_remote_build_min_free_gb_probe(target: str) -> str:
+    """Source the real script and return its remote floor for ``target``."""
     probe = textwrap.dedent(
         f"""\
         #!/usr/bin/env bash
         set -euo pipefail
-        fail() {{ printf '%s\\n' "$*" >&2; exit 1; }}
+        ACX_BUILD_TARGET=
+        source "{DEPLOY_SCRIPT}"
         ACX_BUILD_TARGET={target!r}
-        refuse_remote_vlm_build() {{
-        {body}
-        }}
-        refuse_remote_vlm_build
-        echo ACCEPTED
+        remote_build_min_free_gb
         """
     )
-    return subprocess.run(
+    result = subprocess.run(
         ["bash", "-c", probe],
         check=False,
         capture_output=True,
         text=True,
+        timeout=15,
     )
+    assert result.returncode == 0, f"floor probe failed for {target!r}: {result.stderr}"
+    return (result.stdout or "").strip()
 
 
 # ---- positive: real tree -------------------------------------------------
@@ -356,21 +349,17 @@ def test_deploy_script_threads_image_repo_from_resolve() -> None:
     )
 
 
-def test_refuse_remote_vlm_build_rejects_builder_vlm_and_runtime_vlm() -> None:
+def test_remote_build_min_free_gb_selects_vlm_targets() -> None:
     script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
-    assert script_refuses_any_vlm_remote_target(script)
+    assert script_selects_remote_build_min_free_gb(script)
+    vlm_floor = _script_constant_value(script, "REMOTE_VLM_BUILD_MIN_FREE_GB")
+    recognition_floor = _script_constant_value(script, "REMOTE_BUILD_MIN_FREE_GB")
 
     for target in ("builder-vlm", "runtime-vlm", "foo-vlm-bar"):
-        result = _run_refuse_probe(target)
-        assert result.returncode != 0, f"expected refuse for {target!r}, got ACCEPTED"
-        combined = (result.stdout or "") + (result.stderr or "")
-        assert target in combined, f"error must state refused value {target!r}: {combined}"
+        assert _run_remote_build_min_free_gb_probe(target) == vlm_floor
 
-    # Legitimate non-vlm targets must still be accepted.
     for target in ("", "runtime", "builder"):
-        result = _run_refuse_probe(target)
-        assert result.returncode == 0, f"legitimate target {target!r} must not be refused: {result.stderr}"
-        assert "ACCEPTED" in (result.stdout or "")
+        assert _run_remote_build_min_free_gb_probe(target) == recognition_floor
 
 
 def test_smoke_timeout_failure_names_unvalidated_vlm_budget() -> None:
@@ -481,29 +470,32 @@ def test_mutation_rw_cache_mount_fails_ro_guard() -> None:
     assert not compose_data_cache_mounts_are_readonly(bad)
 
 
-def test_mutation_literal_only_refuse_fails_guard() -> None:
-    """TEST-15: refuse that only matches runtime-vlm (not *vlm*) goes red."""
+def test_mutation_literal_only_remote_floor_selector_fails_guard() -> None:
+    """TEST-15: a runtime-vlm-only floor selector (not *vlm*) goes red."""
     good = textwrap.dedent(
         """\
-        refuse_remote_vlm_build() {
-          local target="${ACX_BUILD_TARGET:-}"
-          if [[ "${target}" == *vlm* ]]; then
-            fail "Remote build refuses ACX_BUILD_TARGET=${target} (matches *vlm*)."
+        remote_build_min_free_gb() {
+          if [[ "${ACX_BUILD_TARGET:-}" == *vlm* ]]; then
+            printf '%s\\n' "${REMOTE_VLM_BUILD_MIN_FREE_GB}"
+          else
+            printf '%s\\n' "${REMOTE_BUILD_MIN_FREE_GB}"
           fi
         }
         """
     )
     bad = textwrap.dedent(
         """\
-        refuse_remote_vlm_build() {
+        remote_build_min_free_gb() {
           if [[ "${ACX_BUILD_TARGET:-}" == "runtime-vlm" ]]; then
-            fail "Remote build refuses ACX_BUILD_TARGET=runtime-vlm."
+            printf '%s\\n' "${REMOTE_VLM_BUILD_MIN_FREE_GB}"
+          else
+            printf '%s\\n' "${REMOTE_BUILD_MIN_FREE_GB}"
           fi
         }
         """
     )
-    assert script_refuses_any_vlm_remote_target(good)
-    assert not script_refuses_any_vlm_remote_target(bad)
+    assert script_selects_remote_build_min_free_gb(good)
+    assert not script_selects_remote_build_min_free_gb(bad)
 
 
 def test_mutation_missing_acx_image_repo_thread_fails_guard() -> None:

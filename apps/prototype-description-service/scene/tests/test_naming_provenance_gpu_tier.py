@@ -9,7 +9,9 @@ import uuid
 from io import BytesIO
 from typing import cast
 
+import httpx
 import pytest
+from fastapi import FastAPI
 from PIL import Image
 from sqlalchemy import Table
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -29,6 +31,14 @@ from scene.application.identity_merge import (
 )
 from scene.domain.describe_run import DescribeItemStatus
 from scene.domain.description import DescriptionResultTier
+from scene.interface_adapters.http.schemas.responses import (
+    InjectedName,
+    NamingProvenance,
+    NamingProvenanceStatus,
+    NamingRealizer,
+    VisualFacts,
+    VisualFactsResponse,
+)
 
 TENANT_ID = uuid.UUID("00000000-0000-0000-0000-00000000f701")
 GENERIC_DRAFT = "Two people stand by the window."
@@ -279,3 +289,65 @@ def test_invalid_phrase_spans_are_not_used_for_gpu_provenance():
 
     assert result.named_draft == caption
     assert result.provenance.injected_names == ()
+
+
+@pytest.mark.asyncio
+async def test_c7_naming_provenance_survives_fastapi_wire_serialization():
+    app = FastAPI()
+
+    @app.get("/response", response_model=VisualFactsResponse)
+    async def response() -> VisualFactsResponse:
+        return VisualFactsResponse(
+            tenant_id=str(TENANT_ID),
+            media_id=1,
+            image_hash="a" * 64,
+            context_hash="b" * 64,
+            adapter="seeded",
+            model_id="seeded-fixtures",
+            model_version="1",
+            prompt_or_task_version="1",
+            visual_facts=VisualFacts(caption="A person waves."),
+            alt_text_draft="Ada waves.",
+            context_used={"sources": [], "applied": False},
+            provider_disclosure={"provider": "none", "left_service_boundary": False},
+            cached=False,
+            duration_ms=1,
+            retention_class="retain_all",
+            naming_provenance=NamingProvenance(
+                injected_names=[
+                    InjectedName(
+                        name="Ada",
+                        cluster_id="cluster-1",
+                        roster_id="roster-1",
+                        detection_confidence=0.97,
+                    )
+                ],
+                naming_allowed=True,
+                mode="grounded",
+                status=NamingProvenanceStatus.APPLIED,
+                realizer=NamingRealizer.GROUNDED,
+                names_applied=["Ada"],
+            ),
+        )
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/response")
+
+    assert response.status_code == 200
+    assert response.json()["naming_provenance"] == {
+        "injected_names": [
+            {
+                "name": "Ada",
+                "cluster_id": "cluster-1",
+                "roster_id": "roster-1",
+                "detection_confidence": 0.97,
+            }
+        ],
+        "naming_allowed": True,
+        "reason": None,
+        "mode": "grounded",
+        "status": "applied",
+        "realizer": "grounded",
+        "names_applied": ["Ada"],
+    }

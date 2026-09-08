@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -431,3 +432,242 @@ def test_sanitize_deploy_diagnostic_preserves_benign_token_shapes() -> None:
     assert '"status": "ok", "token_count": 5' in out
     assert '"detail": "ready"' in out
     assert "[REDACTED]" not in out
+
+
+def test_sanitize_deploy_diagnostic_gr231_docker_auth_identitytoken() -> None:
+    """GR-231: docker config.json auth / identitytoken values must not leak."""
+    raw = (
+        '{"auths":{"iad.ocir.io":{"auth":"dXNlcjpodW50ZXIy","identitytoken":"LEAKID"}}}\n'
+        '{"auth":"b2Npci11c2VyOnBhc3N3b3JkLEAK"}\n'
+        '{"identitytoken":"eyJleGFtcGxlIjoiaWRlbnRpdHktbGVhayJ9"}\n'
+        'DOCKER_AUTH_CONFIG={"auth":"b2Npci11c2VyOnBhc3N3b3JkLEAK"}\n'
+    )
+    out = _run_sanitizer(raw)
+    for secret in (
+        "dXNlcjpodW50ZXIy",
+        "LEAKID",
+        "b2Npci11c2VyOnBhc3N3b3JkLEAK",
+        "eyJleGFtcGxlIjoiaWRlbnRpdHktbGVhayJ9",
+    ):
+        assert secret not in out, out
+    assert "[REDACTED]" in out
+    assert out.startswith("diagnostic: ")
+    assert out.count("\n") == 4
+
+
+def test_sanitize_deploy_diagnostic_gr232_pretty_printed_json_composites() -> None:
+    """GR-232: pretty-printed password array/object continuation lines must redact."""
+    raw = (
+        '{"password": [\n'
+        '  "hunter2secret"\n'
+        "]}\n"
+        '{"password": {\n'
+        '  "hash": "deadbeefdeadbeef"\n'
+        "}}\n"
+        '"password": [\n'
+        '  "LEAKA",\n'
+        '  "LEAKB"\n'
+        "]\n"
+    )
+    out = _run_sanitizer(raw)
+    for secret in ("hunter2secret", "deadbeefdeadbeef", "LEAKA", "LEAKB"):
+        assert secret not in out, out
+    assert "[REDACTED]" in out
+    assert out.count("\n") == 10
+
+
+def test_sanitize_deploy_diagnostic_gr233_pem_private_key_body() -> None:
+    """GR-233: PEM private-key body lines between BEGIN/END must redact."""
+    raw = (
+        "-----BEGIN RSA PRIVATE KEY-----\n"
+        "MIIEvgIBADANBgkqhkiGLEAKPEM\n"
+        "-----END RSA PRIVATE KEY-----\n"
+        '{"private_key": "-----BEGIN PRIVATE KEY-----"}\n'
+    )
+    out = _run_sanitizer(raw)
+    assert "LEAKPEM" not in out, out
+    assert "MIIEvgIBADANBgkqhkiG" not in out, out
+    assert "[REDACTED]" in out
+    assert "BEGIN RSA PRIVATE KEY" in out
+    assert "END RSA PRIVATE KEY" in out
+    assert out.count("\n") == 4
+
+
+def test_sanitize_deploy_diagnostic_s2b01_utf8_locale_pipeline() -> None:
+    """S2B-01: UTF-8 canaries survive LC_ALL=C pipeline; later PASSWORD still redacts."""
+    raw = (
+        "Loading checkpoint shards: 1 ━━━━━━━━━ 100% — done 🚀\n"
+        "PASSWORD=hunter2secret\n"
+    )
+    env = os.environ.copy()
+    env["LC_ALL"] = "en_US.utf8"
+    env["LANG"] = "en_US.utf8"
+    env["LC_CTYPE"] = "en_US.utf8"
+    result = subprocess.run(
+        ["bash", "-c", _sanitize_deploy_diagnostic_src() + "\nsanitize_deploy_diagnostic"],
+        input=raw,
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        check=True,
+        env=env,
+    )
+    out = result.stdout
+    assert "hunter2secret" not in out, out
+    assert "[REDACTED]" in out
+    assert out.count("\n") == 2
+    assert "—" in out, out
+    assert "━" in out, out
+    assert "🚀" in out, out
+    assert out.startswith("diagnostic: ")
+
+
+def test_sanitize_deploy_diagnostic_gr234_url_userinfo() -> None:
+    """GR-234: empty-user and @-in-password URL userinfo must redact."""
+    raw = "https://:hunter2secret@ghcr.io/v2/\nhttps://user:p@ssword@host/path\n"
+    out = _run_sanitizer(raw)
+    assert "hunter2secret" not in out, out
+    assert "p@ssword" not in out, out
+    assert "@ssword@" not in out, out
+    assert "[REDACTED]" in out
+    assert "ghcr.io" in out
+    assert "host/path" in out
+    assert out.count("\n") == 2
+
+
+def test_sanitize_deploy_diagnostic_gr235_npmrc_auth_tokens() -> None:
+    """GR-235: .npmrc _authToken / _auth assignments must redact."""
+    raw = (
+        "//registry.npmjs.org/:_authToken=npm_LEAKTOKEN\n"
+        "//registry.npmjs.org/:_auth=dXNlcjpwYXNzLEAK\n"
+    )
+    out = _run_sanitizer(raw)
+    assert "npm_LEAKTOKEN" not in out, out
+    assert "dXNlcjpwYXNzLEAK" not in out, out
+    assert "[REDACTED]" in out
+    assert out.count("\n") == 2
+
+
+def test_sanitize_deploy_diagnostic_gr236_authorization_apikey() -> None:
+    """GR-236: Authorization ApiKey / api-key schemes must redact."""
+    raw = (
+        "Authorization: ApiKey hf_LEAKAPIKEYVALUE\n"
+        "Authorization: api-key hf_LEAKAPIKEYVALUE\n"
+    )
+    out = _run_sanitizer(raw)
+    assert "hf_LEAKAPIKEYVALUE" not in out, out
+    assert "[REDACTED]" in out
+    assert out.count("\n") == 2
+
+
+def test_sanitize_deploy_diagnostic_gr238_prefix_only_cloud_tokens() -> None:
+    """GR-238: prefix-only ghp_ / github_pat_ / AKIA tokens must redact."""
+    raw = (
+        "ghp_abcdefghijklmnopqrstuvwxyz0123456789\n"
+        "github_pat_11AAAALEAKTOKENVALUE\n"
+        "AKIAIOSFODNN7EXAMPLE\n"
+    )
+    out = _run_sanitizer(raw)
+    assert "ghp_abcdefghijklmnopqrstuvwxyz0123456789" not in out, out
+    assert "github_pat_11AAAALEAKTOKENVALUE" not in out, out
+    assert "AKIAIOSFODNN7EXAMPLE" not in out, out
+    assert "LEAKTOKENVALUE" not in out, out
+    assert "[REDACTED]" in out
+    assert out.count("\n") == 3
+
+
+def test_sanitize_deploy_diagnostic_s2b02_double_separator_and_hash_rocket() -> None:
+    """S2B-02: leftover separators and => hash rockets must not leak the value."""
+    raw = (
+        "PASSWORD == hunter2secret\n"
+        "PASSWORD := hunter2secret\n"
+        "PASSWORD = = hunter2secret\n"
+        "PASSWORD:= hunter2secret\n"
+        '"password" => "hunter2secret"\n'
+    )
+    out = _run_sanitizer(raw)
+    assert "hunter2secret" not in out, out
+    assert "[REDACTED]" in out
+    assert out.count("\n") == 5
+
+
+def test_sanitize_deploy_diagnostic_s2b03_hyphen_cli_flags() -> None:
+    """S2B-03: --password= / --token= / --db-password= flags must redact."""
+    raw = (
+        "--password=hunter2secret\n"
+        "--token=hunter2secret\n"
+        "--secret=hunter2secret\n"
+        "--db-password=hunter2secret\n"
+        "unknown flag: --password=hunter2secret\n"
+    )
+    out = _run_sanitizer(raw)
+    assert "hunter2secret" not in out, out
+    assert "[REDACTED]" in out
+    assert out.count("\n") == 5
+
+
+def test_sanitize_deploy_diagnostic_s2b04_quoted_bearer_header() -> None:
+    """S2B-04: quoted Bearer values in Authorization headers must redact."""
+    raw = 'authorization: Bearer "hunter2secret"\nAuthorization: Bearer \'hunter2secret\'\n'
+    out = _run_sanitizer(raw)
+    assert "hunter2secret" not in out, out
+    assert "[REDACTED]" in out
+    assert out.count("\n") == 2
+
+
+def test_sanitize_deploy_diagnostic_s2b05_escaped_quotes_in_env() -> None:
+    """S2B-05: escaped quotes inside env values must not leak the remainder."""
+    raw = 'PASSWORD="hunter2\\" secret"\n'
+    out = _run_sanitizer(raw)
+    assert "hunter2" not in out, out
+    assert "secret" not in out, out
+    assert "[REDACTED]" in out
+    assert out.startswith("diagnostic: ")
+
+
+def test_sanitize_deploy_diagnostic_gr239_declare_f_has_no_soh_byte() -> None:
+    """GR-239: declare -f of the sanitizer must not materialize a raw SOH byte."""
+    driver = f'source "{SCRIPT}"; declare -f sanitize_deploy_diagnostic'
+    rendered = subprocess.run(["bash", "-c", driver], capture_output=True, check=True)
+    assert rendered.stdout, rendered.stderr
+    assert b"\001" not in rendered.stdout
+
+
+def test_sanitize_deploy_diagnostic_s2b08_passphrase_pwd_cookie() -> None:
+    """S2B-08: MYSQL_PWD / PASSPHRASE / AUTH / Cookie session values must redact."""
+    raw = (
+        "MYSQL_PWD=hunter2secret\n"
+        "PASSPHRASE=hunter2secret\n"
+        "OCI_CLI_PASSPHRASE=hunter2secret\n"
+        "pass_phrase=hunter2secret\n"
+        "REDISCLI_AUTH=hunter2secret\n"
+        "AUTH=hunter2secret\n"
+        "PASS=hunter2secret\n"
+        "CREDENTIALS=hunter2secret\n"
+        "Cookie: session=hunter2secret\n"
+    )
+    out = _run_sanitizer(raw)
+    assert "hunter2secret" not in out, out
+    assert "[REDACTED]" in out
+    assert out.count("\n") == 9
+
+
+def test_sanitize_deploy_diagnostic_s2b09_authorization_signature_digest() -> None:
+    """S2B-09: Signature / Digest / AWS4 / scheme-less Authorization must redact."""
+    raw = (
+        'Authorization: Signature version="1",keyId="ocid1.tenancy...",'
+        'algorithm="rsa-sha256",signature="LEAKSIGNATUREBASE64=="\n'
+        "Authorization: hunter2secretrawtoken\n"
+        'Authorization: Digest username="u", response="leakleak"\n'
+        "Authorization: AWS4-HMAC-SHA256 Credential=AKIAEXAMPLE, Signature=leakleak\n"
+    )
+    out = _run_sanitizer(raw)
+    for secret in (
+        "LEAKSIGNATUREBASE64==",
+        "hunter2secretrawtoken",
+        "leakleak",
+        "AKIAEXAMPLE",
+    ):
+        assert secret not in out, out
+    assert "[REDACTED]" in out
+    assert out.count("\n") == 4

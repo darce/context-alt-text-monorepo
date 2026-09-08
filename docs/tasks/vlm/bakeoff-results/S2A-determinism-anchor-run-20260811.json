@@ -26,16 +26,15 @@
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "A plate of food on a wooden table.",
+        "alt_text_draft": "Two people seated indoors in conversation.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "A plate of food on a wooden table.",
+          "caption": "Two people seated indoors in conversation.",
           "objects": [
-            "food",
-            "plate",
-            "table"
+            "person",
+            "chair"
           ],
           "ocr_text": null
         }
@@ -49,7 +48,7 @@
         }
       ],
       "media_id": 2,
-      "path": "mock_images/bea-nye.jpg"
+      "path": "mock_images/quiet-nye.jpg"
     },
     {
       "describe": {
@@ -107,15 +106,14 @@
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "A scenic landscape with mountains under a clear sky.",
+        "alt_text_draft": "A pet animal resting on a soft surface.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "A scenic landscape with mountains under a clear sky.",
+          "caption": "A pet animal resting on a soft surface.",
           "objects": [
-            "mountain",
-            "sky"
+            "animal"
           ],
           "ocr_text": null
         }
@@ -133,7 +131,7 @@
         }
       ],
       "media_id": 5,
-      "path": "mock_images/ccqw-erika.jpg"
+      "path": "mock_images/ccqw-candid.jpg"
     },
     {
       "describe": {
@@ -425,16 +423,17 @@
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "A printed document with several lines of text.",
+        "alt_text_draft": "A scenic landscape with mountains under a clear sky.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "A printed document with several lines of text.",
+          "caption": "A scenic landscape with mountains under a clear sky.",
           "objects": [
-            "document"
+            "mountain",
+            "sky"
           ],
-          "ocr_text": "Sample text"
+          "ocr_text": null
         }
       },
       "error": null,
@@ -446,7 +445,7 @@
         }
       ],
       "media_id": 17,
-      "path": "mock_images/cristina-1.jpg"
+      "path": "mock_images/tidal-1.jpg"
     },
     {
       "describe": {
@@ -472,7 +471,7 @@
         }
       ],
       "media_id": 18,
-      "path": "mock_images/example-ellynheald-goldleaf.jpeg"
+      "path": "mock_images/example-gildedcypress-goldleaf.jpeg"
     },
     {
       "describe": {
@@ -508,16 +507,16 @@
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "A printed document with several lines of text.",
+        "alt_text_draft": "A close-up of a small object on a neutral background.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "A printed document with several lines of text.",
+          "caption": "A close-up of a small object on a neutral background.",
           "objects": [
-            "document"
+            "object"
           ],
-          "ocr_text": "Sample text"
+          "ocr_text": null
         }
       },
       "error": null,
@@ -529,20 +528,21 @@
         }
       ],
       "media_id": 20,
-      "path": "mock_images/kirstie-1.jpeg"
+      "path": "mock_images/auburn-1.jpeg"
     },
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Two people seated indoors in conversation.",
+        "alt_text_draft": "A person standing outdoors near greenery.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Two people seated indoors in conversation.",
+          "caption": "A person standing outdoors near greenery.",
           "objects": [
             "person",
-            "chair"
+            "plant",
+            "sky"
           ],
           "ocr_text": null
         }
@@ -551,20 +551,19 @@
       "face_count": 3,
       "identities": [],
       "media_id": 21,
-      "path": "mock_images/kirstie-boat.jpg"
+      "path": "mock_images/auburn-boat.jpg"
     },
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Two people seated indoors in conversation.",
+        "alt_text_draft": "A close-up of a small object on a neutral background.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Two people seated indoors in conversation.",
+          "caption": "A close-up of a small object on a neutral background.",
           "objects": [
-            "person",
-            "chair"
+            "object"
           ],
           "ocr_text": null
         }
@@ -582,21 +581,22 @@
         }
       ],
       "media_id": 23,
-      "path": "mock_images/kirstie-daniel-sunglasses.jpg"
+      "path": "mock_images/auburn-daniel-sunglasses.jpg"
     },
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "A printed document with several lines of text.",
+        "alt_text_draft": "Two people seated indoors in conversation.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "A printed document with several lines of text.",
+          "caption": "Two people seated indoors in conversation.",
           "objects": [
-            "document"
+            "person",
+            "chair"
           ],
-          "ocr_text": "Sample text"
+          "ocr_text": null
         }
       },
       "error": null,
@@ -608,21 +608,22 @@
         }
       ],
       "media_id": 24,
-      "path": "mock_images/kirstie-pool.jpg"
+      "path": "mock_images/auburn-pool.jpg"
     },
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "A printed document with several lines of text.",
+        "alt_text_draft": "Two people seated indoors in conversation.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "A printed document with several lines of text.",
+          "caption": "Two people seated indoors in conversation.",
           "objects": [
-            "document"
+            "person",
+            "chair"
           ],
-          "ocr_text": "Sample text"
+          "ocr_text": null
         }
       },
       "error": null,
@@ -634,7 +635,7 @@
         }
       ],
       "media_id": 25,
-      "path": "mock_images/liam-maloney-2.jpg"
+      "path": "mock_images/linen-kestrel-2.jpg"
     },
     {
       "describe": {
@@ -661,42 +662,42 @@
         }
       ],
       "media_id": 26,
-      "path": "mock_images/liam-maloney-home.jpg"
+      "path": "mock_images/linen-kestrel-home.jpg"
     },
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "A printed document with several lines of text.",
+        "alt_text_draft": "A close-up of a small object on a neutral background.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "A printed document with several lines of text.",
+          "caption": "A close-up of a small object on a neutral background.",
           "objects": [
-            "document"
+            "object"
           ],
-          "ocr_text": "Sample text"
+          "ocr_text": null
         }
       },
       "error": null,
       "face_count": 0,
       "identities": [],
       "media_id": 27,
-      "path": "mock_images/liam-maloney-painting.jpg"
+      "path": "mock_images/linen-kestrel-painting.jpg"
     },
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "A printed document with several lines of text.",
+        "alt_text_draft": "A pet animal resting on a soft surface.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "A printed document with several lines of text.",
+          "caption": "A pet animal resting on a soft surface.",
           "objects": [
-            "document"
+            "animal"
           ],
-          "ocr_text": "Sample text"
+          "ocr_text": null
         }
       },
       "error": null,
@@ -708,7 +709,39 @@
         }
       ],
       "media_id": 28,
-      "path": "mock_images/maria-cocktail.jpg"
+      "path": "mock_images/slate-cocktail.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A person standing outdoors near greenery.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A person standing outdoors near greenery.",
+          "objects": [
+            "person",
+            "plant",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 3,
+      "identities": [
+        {
+          "name": "Slate Willow",
+          "unpositioned": true
+        },
+        {
+          "name": "Fixture-Wrong-27",
+          "unpositioned": true
+        }
+      ],
+      "media_id": 29,
+      "path": "mock_images/slate-party.jpg"
     },
     {
       "describe": {
@@ -728,36 +761,6 @@
         }
       },
       "error": null,
-      "face_count": 3,
-      "identities": [
-        {
-          "name": "Slate Willow",
-          "unpositioned": true
-        },
-        {
-          "name": "Fixture-Wrong-27",
-          "unpositioned": true
-        }
-      ],
-      "media_id": 29,
-      "path": "mock_images/maria-party.jpg"
-    },
-    {
-      "describe": {
-        "adapter": "seeded",
-        "alt_text_draft": "A pet animal resting on a soft surface.",
-        "cached": false,
-        "model_id": "seeded-fixtures",
-        "model_version": "1",
-        "visual_facts": {
-          "caption": "A pet animal resting on a soft surface.",
-          "objects": [
-            "animal"
-          ],
-          "ocr_text": null
-        }
-      },
-      "error": null,
       "face_count": 0,
       "identities": [
         {
@@ -766,7 +769,7 @@
         }
       ],
       "media_id": 30,
-      "path": "mock_images/maria-pool.jpg"
+      "path": "mock_images/slate-pool.jpg"
     },
     {
       "describe": {
@@ -888,14 +891,15 @@
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "A scenic landscape with mountains under a clear sky.",
+        "alt_text_draft": "A person standing outdoors near greenery.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "A scenic landscape with mountains under a clear sky.",
+          "caption": "A person standing outdoors near greenery.",
           "objects": [
-            "mountain",
+            "person",
+            "plant",
             "sky"
           ],
           "ocr_text": null
@@ -910,7 +914,7 @@
         }
       ],
       "media_id": 36,
-      "path": "mock_images/ryann-bar.jpg"
+      "path": "mock_images/muted-bar.jpg"
     },
     {
       "describe": {
@@ -931,19 +935,20 @@
       "face_count": 5,
       "identities": [],
       "media_id": 37,
-      "path": "mock_images/ryann-group-party.jpg"
+      "path": "mock_images/muted-group-party.jpg"
     },
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "A pet animal resting on a soft surface.",
+        "alt_text_draft": "A building exterior seen from the street.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "A pet animal resting on a soft surface.",
+          "caption": "A building exterior seen from the street.",
           "objects": [
-            "animal"
+            "building",
+            "sky"
           ],
           "ocr_text": null
         }
@@ -961,7 +966,7 @@
         }
       ],
       "media_id": 38,
-      "path": "mock_images/ryann-party.jpg"
+      "path": "mock_images/muted-party.jpg"
     },
     {
       "describe": {
@@ -1092,7 +1097,7 @@
     "fixture_revision": "0000000000000000000000000000000000000000",
     "generator": "scripts.eval_harness.generate_determinism_anchor",
     "head_sha": null,
-    "manifest_sha256": "51e9456b4f8c91ade5f8d5da42fc948631e7b285ea4a4d71d63e0e1bfdcf72b7",
+    "manifest_sha256": "18d7fc6f3b0ef568da93df91694859ed3f2dc4e87cb237fb26375b077edc6eb3",
     "metric_backing_refusals": {
       "demographic_cohort": "cannot certify metric backed by 'demographic_cohort': 0/39 entries populate that field (vacuous corpus-wide; per-stratum gate would collapse to a single bucket). Declared coverage gap: owner=FIR-5; action=label roster_cohorts / demographic_cohort after operator cohort definitions land — no labelled source exists yet.",
       "reference_facts": "cannot certify metric backed by 'reference_facts': 0/39 entries populate that field (vacuous corpus-wide; per-stratum gate would collapse to a single bucket). Declared coverage gap: owner=VLM-6-operator; action=author polarity-tagged reference_facts per image after a visual pass — cannot be derived from filename/face_count alone.",

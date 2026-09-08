@@ -25,16 +25,35 @@ def _fake_tools(tmp_path: Path) -> tuple[Path, Path]:
         bin_dir / "oci",
         """#!/usr/bin/env bash
 set -euo pipefail
-count_file="${OCIR_TEST_RECORD_DIR}/oci.count"
-count=0
-[[ ! -f "$count_file" ]] || count="$(<"$count_file")"
-count=$((count + 1))
-printf '%s' "$count" >"$count_file"
-if [[ "$count" -eq 1 ]]; then
-  printf '%s' 'tenant/user@example.test' | base64
-else
-  printf '%s%s' 'deploy-token-' 'byte-exact' | base64
-fi
+secret_name=
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    --secret-name)
+      [[ "$#" -ge 2 ]] || { printf '%s\n' 'missing value for --secret-name' >&2; exit 64; }
+      secret_name="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+case "$secret_name" in
+  OCIR_USERNAME)
+    printf '%s' 'tenant/user@example.test' | base64
+    ;;
+  OCIR_AUTH_TOKEN)
+    printf '%s%s' 'deploy-token-' 'byte-exact' | base64
+    ;;
+  OCIR_CREDENTIAL_GENERATION)
+    printf '%s\n' 'ServiceError: NotAuthorizedOrNotFound' >&2
+    exit 1
+    ;;
+  *)
+    printf '%s\n' 'unexpected OCI secret name' >&2
+    exit 64
+    ;;
+esac
 """,
     )
     _executable(

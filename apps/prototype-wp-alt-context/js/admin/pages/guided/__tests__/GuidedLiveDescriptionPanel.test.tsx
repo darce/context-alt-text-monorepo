@@ -307,7 +307,7 @@ describe('GuidedLiveDescriptionPanel', () => {
       expect(screen.getByTestId('guided-live-status')).toHaveTextContent(/gpu/i);
     });
 
-    it('shows a CPU result as the rougher thing it is, and still shows it', async () => {
+    it('labels a CPU-tier result as the slower option without naming its model or vendor', async () => {
       const client = stubClient({
         poll: vi.fn<GuidedLiveDescriptionClient['poll']>(() =>
           Promise.resolve(runResponse({ status: 'completed', phase: 'complete', gpu_state: 'degraded' })),
@@ -322,7 +322,11 @@ describe('GuidedLiveDescriptionPanel', () => {
       await settle(1000);
 
       expect(screen.getByTestId('guided-live-text')).toHaveTextContent('A person on a red carpet.');
-      expect(screen.getByTestId('guided-live-status')).toHaveTextContent(/cpu/i);
+      const status = screen.getByTestId('guided-live-status');
+      expect(status).toHaveTextContent(
+        'Done. This ran on the slower CPU option, which writes rougher text than the GPU.',
+      );
+      expect(status).not.toHaveTextContent(/florence|microsoft|local vlm|\b\d+(?:\.\d+)?\s*(?:m|b|million|billion)\b/i);
     });
 
     it('will not name an engine the run did not report, and still shows the text', async () => {

@@ -12,6 +12,8 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field
 
 from scene.application.gpu_state import GpuState
+from scene.application.identity_merge import NamingRealizer
+from scene.application.identity_merge import NamingStatus as NamingProvenanceStatus
 from scene.domain.describe_run import DescribeItemStatus, DescribeRunPhase, DescribeRunStatus
 from scene.domain.description import DescriptionAdapterKind, DescriptionResultTier, ProviderMode, RetentionClass
 
@@ -72,6 +74,10 @@ class NamingProvenance(BaseModel):
     # "grounded" (phrase-box span replacement) or "positional" (appended
     # left-to-right sentence); null when no naming occurred.
     mode: str | None = None
+    # C7 fields: typed, contract-locked naming outcome and realization.
+    status: NamingProvenanceStatus = NamingProvenanceStatus.NO_FACES
+    realizer: NamingRealizer | None = None
+    names_applied: list[str] = Field(default_factory=list)
 
 
 class AttachmentFactProvenance(BaseModel):

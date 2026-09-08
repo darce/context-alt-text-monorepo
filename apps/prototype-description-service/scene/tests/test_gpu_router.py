@@ -34,7 +34,12 @@ async def _client(
 
     app = FastAPI()
     app.include_router(gpu_routes.router, prefix="/scene")
-    resolved_auth = auth or AuthContext(token="key", tenant_claim="tenant", enabled=True)
+    resolved_auth = auth or AuthContext(
+        token="key",
+        tenant_claim="tenant",
+        api_key_id="key-1",
+        enabled=True,
+    )
 
     async def _auth_override() -> AuthContext:
         return resolved_auth
@@ -92,7 +97,7 @@ async def test_get_status_missing_snapshot_is_unknown_but_successful(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("age", "fresh"), [(121.0, False), (30.0, True)])
+@pytest.mark.parametrize(("age", "fresh"), [(181.0, False), (30.0, True)])
 async def test_get_status_reports_snapshot_age_and_freshness(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, age: float, fresh: bool
 ) -> None:
@@ -108,6 +113,53 @@ async def test_get_status_reports_snapshot_age_and_freshness(
     assert body["gpu_state"]["state"] == ("ready" if fresh else "unknown")
     assert body["load"]["has_work"] is True
     assert body["load"]["fresh"] is fresh
+
+
+@pytest.mark.asyncio
+async def test_get_status_uses_configured_reader_freshness_window(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import scene.application.gpu_state as gpu_state
+
+    monkeypatch.setattr(gpu_state, "_GPU_STATE_SETTINGS", gpu_state.GpuStateSettings(stale_seconds=240.0))
+    async with _client(monkeypatch, tmp_path) as (client, state_path, load_path, _intent):
+        _write_snapshot(state_path, age=150.0)
+        _write_load(load_path, age=150.0)
+        response = await client.get("/scene/gpu/status")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["snapshot_age_seconds"] == 150.0
+    assert body["snapshot_fresh"] is True
+    assert body["gpu_state"]["state"] == "ready"
+    assert body["load"]["fresh"] is True
+
+
+@pytest.mark.asyncio
+async def test_get_status_fails_closed_for_unknown_snapshot_enums(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    async with _client(monkeypatch, tmp_path) as (client, state_path, _load, _intent):
+        _write_snapshot(state_path, age=30.0)
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+        payload.update(
+            {
+                "intent": "future-intent",
+                "intent_status": "future-status",
+                "last_transition_reason": "future-reason",
+            }
+        )
+        state_path.write_text(json.dumps(payload), encoding="utf-8")
+
+        response = await client.get("/scene/gpu/status")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["snapshot_fresh"] is False
+    assert body["gpu_state"]["state"] == "unknown"
+    assert body["gpu_state"]["intent"] == "auto"
+    assert body["gpu_state"]["intent_status"] == "none"
+    assert body["gpu_state"]["last_transition_reason"] == "unknown"
 
 
 @pytest.mark.asyncio
@@ -141,7 +193,7 @@ async def test_get_status_drops_stale_snapshot_fields(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     async with _client(monkeypatch, tmp_path) as (client, state_path, _load, _intent):
-        _write_snapshot(state_path, age=121.0)
+        _write_snapshot(state_path, age=181.0)
         payload = json.loads(state_path.read_text(encoding="utf-8"))
         payload.update(
             {
@@ -211,15 +263,29 @@ async def test_post_intent_writes_file_and_returns_accepted_status(
     async with _client(monkeypatch, tmp_path) as (client, _state, _load, intent_path):
         response = await client.post(
             "/scene/gpu/intent",
-            json={"action": action, "ttl_seconds": 90, "requested_by": "operator"},
+            json={"action": action, "ttl_seconds": 90},
         )
 
     assert response.status_code == 202
     body = response.json()
     assert body["intent"]["action"] == action
     assert body["intent"]["ttl_seconds"] == 90
-    assert body["intent"]["requested_by"] == "operator"
+    assert body["intent"]["requested_by"] == "key-1"
     assert json.loads(intent_path.read_text(encoding="utf-8"))["action"] == action
+
+
+@pytest.mark.asyncio
+async def test_post_intent_rejects_caller_supplied_actor(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    async with _client(monkeypatch, tmp_path) as (client, _state, _load, intent_path):
+        response = await client.post(
+            "/scene/gpu/intent",
+            json={"action": "start", "requested_by": "forged-operator"},
+        )
+
+    assert response.status_code == 422
+    assert not intent_path.exists()
 
 
 @pytest.mark.asyncio

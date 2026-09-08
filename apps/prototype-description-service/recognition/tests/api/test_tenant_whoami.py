@@ -12,6 +12,7 @@ from db.models import Tenant
 from recognition.interface_adapters.http import deps as dependencies
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.interface_adapters.http.deps.auth import AuthContext, require_auth_key_only
+from recognition.interface_adapters.http.routers import tenant as tenant_router
 from recognition.tests.api.conftest import FakeSession
 
 
@@ -107,6 +108,23 @@ def test_whoami_missing_tenant_row_returns_404() -> None:
     detail = resp.json()["detail"]
     assert detail["code"] == "tenant_not_found"
     assert detail["tenant_id"] == str(tenant_id)
+
+
+@pytest.mark.asyncio
+async def test_whoami_malformed_tenant_claim_returns_403() -> None:
+    auth = AuthContext(
+        token="key",
+        tenant_claim="not-a-uuid",
+        api_key_id="key-1",
+        rate_limit_tier="default",
+        is_admin=False,
+        enabled=True,
+    )
+    with pytest.raises(HTTPException) as caught:
+        await tenant_router.tenant_whoami(auth=auth, session=FakeSession())
+
+    assert caught.value.status_code == 403
+    assert caught.value.detail == "invalid tenant claim"
 
 
 def test_whoami_admin_without_claim_returns_404() -> None:

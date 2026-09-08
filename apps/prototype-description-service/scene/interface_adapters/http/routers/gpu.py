@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr
+from pydantic import BaseModel, ConfigDict, StrictInt, ValidationError
 
 from recognition.interface_adapters.http.deps import require_auth, require_write_access
 from scene.application.describe_load import resolve_load_path
@@ -23,13 +23,16 @@ from scene.application.gpu_intent import (
     resolve_gpu_intent_path,
     write_gpu_intent,
 )
-from scene.application.gpu_state import GpuState, read_gpu_state, resolve_gpu_state_path
+from scene.application.gpu_state import (
+    GPU_STATE_FUTURE_SKEW_SECONDS,
+    GpuState,
+    resolve_gpu_state_path,
+    resolve_gpu_state_stale_seconds,
+)
 
 _logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["gpu"])
-
-SNAPSHOT_FRESH_SECONDS = 120.0
 
 
 class GpuIntentStatus(StrEnum):
@@ -53,6 +56,25 @@ class GpuTransitionReason(StrEnum):
     UNKNOWN = "unknown"
 
 
+class _GpuSnapshot(BaseModel):
+    """One validated lifecycle snapshot read from the controller boundary."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    state: GpuState
+    instance_id: str | None = None
+    written_at: float
+    reason: str | None = None
+    since: float | None = None
+    intent: IntentAction = IntentAction.AUTO
+    intent_expires_at: str | None = None
+    intent_status: GpuIntentStatus = GpuIntentStatus.NONE
+    honoured_nonce: str | None = None
+    lease_expires_at: str | None = None
+    instance_running_since: str | None = None
+    last_transition_reason: GpuTransitionReason = GpuTransitionReason.UNKNOWN
+
+
 class GpuIntentRequest(BaseModel):
     """Validated POST /gpu/intent body."""
 
@@ -60,7 +82,6 @@ class GpuIntentRequest(BaseModel):
 
     action: IntentAction
     ttl_seconds: StrictInt | None = None
-    requested_by: StrictStr | None = None
 
 
 class OperatorIntentResponse(BaseModel):
@@ -145,7 +166,7 @@ async def post_gpu_intent(
             intent_path,
             action=request.action,
             ttl_seconds=request.ttl_seconds,
-            requested_by=request.requested_by,
+            requested_by=_authenticated_principal(auth),
             now=now,
         )
     except OSError as exc:
@@ -164,12 +185,11 @@ def _now() -> float:
 def _status_response(*, now: float) -> GpuStatusResponse:
     state_payload = _read_json_object(Path(resolve_gpu_state_path()))
     snapshot_age = _snapshot_age(state_payload, now=now)
-    snapshot_fresh = _is_fresh(state_payload, now=now)
-    state = read_gpu_state(now=now)
-    if not snapshot_fresh or state is GpuState.UNKNOWN:
-        state = GpuState.UNKNOWN
-        state_payload = None
-    gpu_state = _gpu_state_response(state_payload, state=state)
+    snapshot = _validated_snapshot(state_payload)
+    snapshot_fresh = snapshot is not None and _is_fresh(state_payload, now=now)
+    if not snapshot_fresh:
+        snapshot = None
+    gpu_state = _gpu_state_response(snapshot)
     load = _load_response(Path(resolve_load_path()), now=now)
     intent = read_gpu_intent(resolve_gpu_intent_path())
     return GpuStatusResponse(
@@ -182,25 +202,22 @@ def _status_response(*, now: float) -> GpuStatusResponse:
     )
 
 
-def _gpu_state_response(payload: dict[str, Any] | None, *, state: GpuState) -> GpuStateResponse:
-    payload = payload or {}
+def _gpu_state_response(snapshot: _GpuSnapshot | None) -> GpuStateResponse:
+    if snapshot is None:
+        return GpuStateResponse()
     return GpuStateResponse(
-        state=state,
-        instance_id=_optional_string(payload.get("instance_id")),
-        written_at=_finite_number(payload.get("written_at")),
-        reason=_optional_string(payload.get("reason")),
-        since=_finite_number(payload.get("since")),
-        intent=_enum_value(payload.get("intent"), IntentAction, IntentAction.AUTO),
-        intent_expires_at=_optional_timestamp(payload.get("intent_expires_at")),
-        intent_status=_enum_value(payload.get("intent_status"), GpuIntentStatus, GpuIntentStatus.NONE),
-        honoured_nonce=_optional_string(payload.get("honoured_nonce")),
-        lease_expires_at=_optional_timestamp(payload.get("lease_expires_at")),
-        instance_running_since=_optional_timestamp(payload.get("instance_running_since")),
-        last_transition_reason=_enum_value(
-            payload.get("last_transition_reason"),
-            GpuTransitionReason,
-            GpuTransitionReason.UNKNOWN,
-        ),
+        state=snapshot.state,
+        instance_id=snapshot.instance_id,
+        written_at=snapshot.written_at,
+        reason=snapshot.reason,
+        since=snapshot.since,
+        intent=snapshot.intent,
+        intent_expires_at=_optional_timestamp(snapshot.intent_expires_at),
+        intent_status=snapshot.intent_status,
+        honoured_nonce=snapshot.honoured_nonce,
+        lease_expires_at=_optional_timestamp(snapshot.lease_expires_at),
+        instance_running_since=_optional_timestamp(snapshot.instance_running_since),
+        last_transition_reason=snapshot.last_transition_reason,
     )
 
 
@@ -244,7 +261,44 @@ def _is_fresh(payload: dict[str, Any] | None, *, now: float) -> bool:
 
 
 def _is_fresh_timestamp(written_at: float, *, now: float) -> bool:
-    return written_at - now <= 5.0 and now - written_at <= SNAPSHOT_FRESH_SECONDS
+    return (
+        written_at - now <= GPU_STATE_FUTURE_SKEW_SECONDS
+        and now - written_at <= resolve_gpu_state_stale_seconds()
+    )
+
+
+def _validated_snapshot(payload: dict[str, Any] | None) -> _GpuSnapshot | None:
+    """Validate one controller payload before exposing any of its fields.
+
+    The lifecycle reader and this public adapter are separate deployables. Keep
+    the base-state invariants aligned here, while Pydantic strictly validates
+    every additive enum so an unknown future value cannot become an actionable
+    default such as ``auto`` or ``none``.
+    """
+    if payload is None:
+        return None
+    if _finite_number(payload.get("written_at")) is None:
+        return None
+    if "since" in payload and payload["since"] is not None and _finite_number(payload["since"]) is None:
+        return None
+    try:
+        snapshot = _GpuSnapshot.model_validate(payload)
+    except ValidationError as exc:
+        _logger.warning("GPU snapshot failed contract validation: %s", exc)
+        return None
+
+    if snapshot.state is GpuState.UNKNOWN:
+        return None
+    if snapshot.instance_id is not None and not snapshot.instance_id.strip():
+        return None
+    if snapshot.state is GpuState.DEGRADED:
+        if snapshot.reason is None or not snapshot.reason.strip():
+            return None
+    elif snapshot.reason is not None:
+        return None
+    if snapshot.since is not None and snapshot.since > snapshot.written_at:
+        return None
+    return snapshot
 
 
 def _finite_number(value: Any) -> float | None:
@@ -279,13 +333,6 @@ def _optional_timestamp(value: Any) -> str | None:
         return None
 
 
-def _enum_value(value: Any, enum_type, default):
-    try:
-        return enum_type(value)
-    except (TypeError, ValueError):
-        return default
-
-
 def _intent_response(intent: OperatorIntent | None) -> OperatorIntentResponse | None:
     if intent is None:
         return None
@@ -302,6 +349,14 @@ def _intent_response(intent: OperatorIntent | None) -> OperatorIntentResponse | 
 
 def _format_server_time(timestamp: float) -> str:
     return datetime.fromtimestamp(timestamp, tz=UTC).isoformat().replace("+00:00", "Z")
+
+
+def _authenticated_principal(auth: Any) -> str | None:
+    """Return only the verified API-key principal, never caller body data."""
+    principal = getattr(auth, "api_key_id", None)
+    if isinstance(principal, str) and principal.strip():
+        return principal.strip()
+    return None
 
 
 def _is_demo_tier(auth: Any) -> bool:

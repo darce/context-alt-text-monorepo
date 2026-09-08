@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 import uuid
 
+from pydantic import ConfigDict, Field
+
 from scene.application.fusion.reconcile import (
     Attachment,
     AttachmentDecision,
@@ -13,7 +15,9 @@ from scene.application.fusion.reconcile import (
 from scene.application.identity_merge import (
     NamingPolicy,
     NamingProvenance,
+    NamingRealizer,
     NamingSkipReason,
+    NamingStatus,
     load_confirmed_faces,
     load_suppressed_roster_ids,
     merge_identities,
@@ -40,8 +44,33 @@ def _image_dimensions(image_bytes: bytes) -> tuple[int, int] | None:
         return None
 
 
+class _NamingProvenancePayload(NamingProvenanceModel):
+    """Legacy response model plus the additive C7 worker provenance fields."""
+
+    model_config = ConfigDict(extra="allow")
+
+    status: NamingStatus = NamingStatus.NO_FACES
+    realizer: NamingRealizer | None = None
+    names_applied: list[str] = Field(default_factory=list)
+
+
 def _provenance_model(provenance) -> NamingProvenanceModel:
-    return NamingProvenanceModel(
+    names_applied = [n.name for n in provenance.injected_names]
+    status = provenance.status
+    if status is None:
+        if provenance.naming_allowed and names_applied:
+            status = NamingStatus.APPLIED
+        elif provenance.reason is NamingSkipReason.AGREEMENT_DISABLED:
+            status = NamingStatus.DISABLED
+        else:
+            status = NamingStatus.NO_FACES
+    realizer = provenance.realizer
+    if realizer is None:
+        if provenance.mode is not None and str(provenance.mode) == "grounded":
+            realizer = NamingRealizer.GROUNDED
+        elif provenance.mode is not None and str(provenance.mode) == "positional":
+            realizer = NamingRealizer.POSITIONAL_FALLBACK
+    return _NamingProvenancePayload(
         injected_names=[
             InjectedNameModel(
                 name=n.name,
@@ -54,6 +83,9 @@ def _provenance_model(provenance) -> NamingProvenanceModel:
         naming_allowed=provenance.naming_allowed,
         reason=str(provenance.reason) if provenance.reason is not None else None,
         mode=str(provenance.mode) if provenance.mode is not None else None,
+        status=status,
+        realizer=realizer,
+        names_applied=names_applied,
     )
 
 

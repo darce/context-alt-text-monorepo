@@ -223,7 +223,19 @@ def test_worker_completes_items_persists_drafts_and_clears_bytes():
             assert item.started_at is not None
             assert item.alt_text_draft == f"alt {item.media_id}"
             assert item.caption == f"cap {item.media_id}"
-            assert item.provenance == {"adapter": "fake", "media_id": item.media_id}
+            # GPUOPS-1: the roster-naming realizer stamps a `naming` block on every
+            # item. These fixtures carry no faces, so it must report the no_faces
+            # terminal shape rather than being absent -- keep the exact-equality
+            # check so a silently dropped or malformed naming block still fails.
+            assert item.provenance == {
+                "adapter": "fake",
+                "media_id": item.media_id,
+                "naming": {
+                    "names_applied": [],
+                    "realizer": None,
+                    "status": "no_faces",
+                },
+            }
             # bytes reclaimed
             assert item.image_bytes is None
         await engine.dispose()

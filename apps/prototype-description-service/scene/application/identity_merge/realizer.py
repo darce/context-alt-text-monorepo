@@ -77,7 +77,7 @@ class DeterministicNlgRealizer:
         confirmed_faces: Sequence[ConfirmedFace],
     ) -> str:
         ordered = sorted(associations, key=lambda a: a.phrase_box.span_start)
-        seen_labels: set[str] = set()
+        seen_people: set[tuple[str, str]] = set()
         replacements: list[tuple[int, int, str]] = []
         last_end = 0
         for assoc in ordered:
@@ -87,14 +87,15 @@ class DeterministicNlgRealizer:
                 continue  # stale/degenerate span: never replace text we cannot verify
             if start < last_end:
                 continue  # overlapping span: replacing both would corrupt the text
-            if assoc.face.label in seen_labels:
+            person_key = _person_key(assoc.face)
+            if person_key in seen_people:
                 coref = self._coreference(caption, end, capitalize=phrase[:1].isupper())  # R4
                 if coref is None:
                     text = self._name_phrase(phrase, assoc.face.label)  # no confident pronoun: keep the name
                 else:
                     text, end = coref
             else:
-                seen_labels.add(assoc.face.label)
+                seen_people.add(person_key)
                 text = self._name_phrase(phrase, assoc.face.label)  # R1/R2
             replacements.append((start, end, text))
             last_end = end
@@ -194,7 +195,7 @@ class PositionalFallbackRealizer:
     ) -> str:
         if not confirmed_faces:
             return caption
-        ordered = sorted(confirmed_faces, key=lambda f: f.box.center[0])
+        ordered = sorted(_distinct_people(confirmed_faces), key=lambda f: f.box.center[0])
         names = DeterministicNlgRealizer.aggregate_names([f.label for f in ordered])
         base = caption.rstrip()
         if not base:
@@ -202,3 +203,21 @@ class PositionalFallbackRealizer:
         if base[-1] not in ".!?":
             base += "."
         return f"{base} Pictured from left: {names}."
+
+
+def _person_key(face: ConfirmedFace) -> tuple[str, str]:
+    if face.cluster_id is not None:
+        return "cluster", str(face.cluster_id)
+    return "identity", str(face.identity_id)
+
+
+def _distinct_people(confirmed_faces: Sequence[ConfirmedFace]) -> list[ConfirmedFace]:
+    seen: set[tuple[str, str]] = set()
+    distinct: list[ConfirmedFace] = []
+    for face in confirmed_faces:
+        key = _person_key(face)
+        if key in seen:
+            continue
+        seen.add(key)
+        distinct.append(face)
+    return distinct

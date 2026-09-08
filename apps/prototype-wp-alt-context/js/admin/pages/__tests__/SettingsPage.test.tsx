@@ -31,12 +31,72 @@ interface CapturedMutationOptions {
   onError?: (err: unknown) => void;
 }
 
-const { mockUseQuery, mockUseMutation, mockInvalidateQueries, mockFetchQuery, mockToDashboard } = vi.hoisted(() => ({
+const {
+  mockUseQuery,
+  mockUseMutation,
+  mockInvalidateQueries,
+  mockFetchQuery,
+  mockToDashboard,
+  gpuStatusQueryResult,
+} = vi.hoisted(() => ({
   mockUseQuery: vi.fn<() => QueryHookResult>(),
   mockUseMutation: vi.fn<(options?: CapturedMutationOptions) => MutationHookResult>(),
   mockInvalidateQueries: vi.fn(),
   mockFetchQuery: vi.fn(),
   mockToDashboard: vi.fn(() => '#/owned-dashboard-route'),
+  // SettingsPage hosts GpuControlCard, whose own useQuery/useMutation would
+  // otherwise be answered by the blanket settings mocks below — the card would
+  // read gpu_state off a SettingsResponse and shift every captured mutation
+  // index. The card keeps its own coverage in settings/__tests__; here it just
+  // needs a contract-shaped hook result.
+  gpuStatusQueryResult: {
+    data: {
+      gpu_state: {
+        state: 'stopped',
+        instance_id: null,
+        written_at: 0,
+        reason: null,
+        since: null,
+        intent: 'auto',
+        intent_expires_at: null,
+        intent_status: 'none',
+        honoured_nonce: null,
+        lease_expires_at: null,
+        instance_running_since: null,
+        last_transition_reason: 'idle',
+      },
+      snapshot_age_seconds: 3,
+      snapshot_fresh: true,
+      intent: null,
+      load: { has_work: false, written_at: 0, fresh: true },
+      server_time: '2026-01-01T00:00:00Z',
+    },
+    isLoading: false,
+    isError: false,
+    isSuccess: true,
+    isPending: false,
+    isFetching: false,
+    status: 'success',
+    error: null,
+    refetch: vi.fn(),
+  },
+}));
+
+vi.mock('../settings/useGpuControl', () => ({
+  useGpuControl: () => ({
+    ...gpuStatusQueryResult,
+    canStart: true,
+    canStop: false,
+    stopBlockedReason: null,
+    canReturnToAuto: false,
+    requestIntent: vi.fn(),
+    requestIntentAsync: vi.fn(),
+    isIntentPending: false,
+    intentError: null,
+  }),
+  getGpuControlPollInterval: () => 15_000,
+  GPU_STATUS_POLL_INTERVAL_MS: 15_000,
+  GPU_WARMUP_POLL_INTERVAL_MS: 5_000,
 }));
 
 vi.mock('@wordpress/i18n', () => ({
@@ -135,6 +195,8 @@ const defaultSettings: SettingsResponse = {
   tenant_paired: false,
   alt_style: 'alt_only',
   recognition_enabled: true,
+  allow_person_names: true,
+  allow_person_names_error: null,
   description_budget: {
     max_attempts: -1,
     usage: {
@@ -283,6 +345,16 @@ describe('SettingsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }));
 
     expect(saveMutate).toHaveBeenCalledWith({ url: 'https://new-api.example.com' });
+  });
+
+  it('saves the naming agreement toggle through the page payload (H-02)', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPageWithRouter />);
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Include named people in descriptions' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }));
+
+    expect(saveMutate).toHaveBeenCalledWith({ allow_person_names: false });
   });
 
   it('renders the people recognition checkbox checked when GET recognition_enabled is true', () => {

@@ -56,6 +56,7 @@ from recognition.observability.curation_refresh_metrics import get_default_curat
 from roster.interface_adapters.http.curation_router import router as roster_curation_router
 from scene.config.settings import DescriptionSettings
 from scene.interface_adapters.http.router import router as scene_router
+from scene.interface_adapters.http.routers.gpu import router as gpu_router
 from shared.health import HealthStatus
 from shared.image_variant import (
     IMAGE_VARIANT_ARTIFACT,
@@ -320,6 +321,7 @@ def create_app() -> FastAPI:
     app.include_router(recognition_router, prefix="/recognition")
     app.include_router(roster_curation_router, prefix="/roster")
     app.include_router(scene_router, prefix="/scene")
+    app.include_router(gpu_router, prefix="/scene")
 
     # DS-2: public demo slug resolve at root (GET /x/{slug}). Not under
     # /recognition — that surface carries require_auth on analyze children.

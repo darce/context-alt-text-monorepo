@@ -362,7 +362,12 @@ _NOT_COMPARABLE = 4
 def _load_v3():
     from scripts.eval_harness.manifest import load_manifest
 
-    return load_manifest(_V3_MANIFEST)
+    return load_manifest(
+        _V3_MANIFEST,
+        metadata_only=True,
+        skip_hash_verification=True,
+        hash_skip_reason="report comparability tests do not read image bytes",
+    )
 
 
 def _v3_sha() -> str:

@@ -3,7 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Mock } from 'vitest';
 
 import type { DescribeRunItemsResponse, DescribeRunResponse } from '../api/describeApi';
-import { GUIDED_LIVE_REASON, GUIDED_LIVE_STATUS, GUIDED_LIVE_WAIT_CEILING_SECONDS } from './liveDescription';
+import {
+  GUIDED_LIVE_KEEP_WAITING_SECONDS,
+  GUIDED_LIVE_REASON,
+  GUIDED_LIVE_STATUS,
+  GUIDED_LIVE_WAIT_CEILING_SECONDS,
+} from './liveDescription';
 import { GUIDED_LIVE_WARM_CEILING_SECONDS, useGuidedLiveDescription } from './useGuidedLiveDescription';
 import type { GuidedLiveDescriptionClient } from './useGuidedLiveDescription';
 
@@ -374,6 +379,23 @@ describe('useGuidedLiveDescription', () => {
       expect(client.submit).toHaveBeenCalledTimes(1);
       expect(client.cancel).not.toHaveBeenCalled();
       expect(client.poll.mock.calls.length).toBeGreaterThan(pollsAtTimeout);
+    });
+
+    it('does not time out immediately when keep waiting is pressed after reading the timeout copy', async () => {
+      const client = stubClient();
+      const { result } = mount(client);
+
+      await press(() => result.current.request());
+      await settle(GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000 + 2000);
+      expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.TIMED_OUT);
+
+      await settle(GUIDED_LIVE_KEEP_WAITING_SECONDS * 1000 + 1000);
+      await press(() => result.current.keepWaiting());
+      await settle(2000);
+
+      expect(result.current.state.status).not.toBe(GUIDED_LIVE_STATUS.TIMED_OUT);
+      expect(result.current.canKeepWaiting).toBe(false);
+      expect(client.submit).toHaveBeenCalledTimes(1);
     });
 
     it('does not offer to keep waiting when there is no run that could still finish', async () => {

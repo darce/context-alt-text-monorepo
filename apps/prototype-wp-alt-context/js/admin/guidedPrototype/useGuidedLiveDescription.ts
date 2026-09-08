@@ -192,10 +192,9 @@ export const useGuidedLiveDescription = ({
   const generationRef = useRef(0);
   const attemptRef = useRef(0);
 
-  // Face choices are not a prerequisite. Unavailable only when there is no
-  // media id (the verified adapter has nothing to describe) or the endpoint
-  // contract is not verified. Contract B freezes the hook signature without a
-  // separate verified flag, so a missing media id is the unverified signal.
+  // Face choices are not a prerequisite. Contract B freezes the hook
+  // signature without a verified flag, so a missing media id is the
+  // unavailable signal for both "no photo" and "endpoint not verified".
   const blockedReason: GuidedLiveBlockedReason | null =
     mediaId === null ? GUIDED_LIVE_BLOCKED_REASON.NO_MEDIA : null;
 

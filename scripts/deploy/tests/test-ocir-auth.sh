@@ -58,6 +58,12 @@ case "${OCIR_TEST_OCI_MODE:-ok}" in
     fail) echo 'ServiceError: forced OCI failure' >&2; exit 42 ;;
     empty) exit 0 ;;
     sleep) exec sleep 10 ;;
+    stdin_drain)
+        # The real Python OCI CLI holds an open stdin and may read from it;
+        # a child that drains whatever stdin it is handed exercises the same
+        # descriptor plumbing as `docker login --password-stdin`.
+        cat >/dev/null 2>/dev/null || true
+        ;;
     generation_absent)
         case " $* " in
             *" --secret-name OCIR_CREDENTIAL_GENERATION "*)
@@ -195,6 +201,53 @@ assert_absent "snippet does not silently depend on timeout(1)" 'command -v timeo
 snippet_syntax=0
 printf '%s' "$login" | /bin/bash -n 2>/dev/null || snippet_syntax=$?
 assert_eq "emitted login snippet is valid Bash" 0 "$snippet_syntax"
+
+# --- production transport: the program arrives on the shell's stdin ---------
+#
+# preflight_remote_ocir_auth delivers this program to the remote shell as
+# `bash -s` on stdin. acx_bounded backgrounds its child while keeping the
+# caller's stdin so `docker login --password-stdin` receives the token. The
+# original `exec 3<&0; cmd <&3 &; exec 3<&-` form did that, but bash 5.2 dies
+# with rc 139 (no diagnostic) when that dup/close pair runs inside a command
+# substitution whose stdin is the script being read. Every `$(acx_bounded ...)`
+# vault fetch then returned nothing, which surfaced as `secret_missing` and
+# sent operators to rotate a credential that was never broken. Every other
+# behavioural case below runs over `bash -c`, which cannot reproduce this --
+# so this case must use `s`. (bash 3.2 on macOS does not reproduce it either;
+# the VM gate is the run that counts.)
+reset_records
+stdin_drain_stderr="${record_dir}/stdin-drain.stderr"
+stdin_drain_trace="${record_dir}/stdin-drain.trace"
+stdin_drain_rc=0
+OCIR_TEST_OCI_MODE=stdin_drain \
+    run_snippet s "$behavior_login" "$stdin_drain_stderr" "$stdin_drain_trace" \
+    || stdin_drain_rc=$?
+if [ "$stdin_drain_rc" -eq 0 ]; then
+    pass "stdin transport survives an OCI CLI that drains stdin"
+else
+    fail "stdin transport broke with a draining OCI CLI (rc=${stdin_drain_rc}): $(tr '\n' ' ' <"$stdin_drain_stderr")"
+fi
+# A consumed program truncates rather than errors: the shell reaches EOF early
+# and exits 0 having skipped the login entirely. Status alone cannot see that,
+# so require the evidence that the program actually ran to completion.
+if [ -f "${record_dir}/docker.argv" ]; then
+    pass "stdin transport still reaches the Docker login"
+else
+    fail "program was truncated before the Docker login (silent exit 0)"
+fi
+# Trace lines echo the program text, which contains this literal string; only
+# real emitted diagnostics count.
+assert_absent "draining OCI CLI does not masquerade as an absent secret" \
+    'Vault secret was empty' "$(grep -v '^+' "$stdin_drain_stderr" || true)"
+assert_contains "vault reads complete over the stdin transport" \
+    'acx-vault-read-ok' "$(cat "$stdin_drain_stderr")"
+
+assert_contains "vault fetches are insulated from the caller's stdin" \
+    '--raw-output < /dev/null' "$login"
+assert_contains "acx_bounded keeps the caller's stdin with an explicit redirect" \
+    '"$@" <&0 &' "$login"
+assert_absent "acx_bounded no longer dups stdin through fd 3 (bash 5.2 rc 139 under bash -s)" \
+    'exec 3<&0' "$login"
 
 # --- credential confinement and cleanup -------------------------------------
 

@@ -42,7 +42,16 @@ HELD_OUT_FRACTION = 0.5
 
 @pytest.fixture(scope="module")
 def manifest() -> GoldenManifest:
-    return load_manifest(str(BAKEOFF_MANIFEST))
+    # These invariants inspect only manifest metadata; they never resolve an
+    # image path or read pixels. Keep the no-image test path explicit so a
+    # missing GOLDEN_IMAGES_DIR cannot turn metadata coverage into collection
+    # errors (OBS-04).
+    return load_manifest(
+        str(BAKEOFF_MANIFEST),
+        metadata_only=True,
+        skip_hash_verification=True,
+        hash_skip_reason="bakeoff manifest invariants inspect metadata only",
+    )
 
 
 def _context_text(entry: GoldenEntry) -> str:

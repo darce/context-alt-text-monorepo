@@ -2829,6 +2829,40 @@ def test_score_guard_fetch_limit_truncation_fails_coverage_gate(tmp_path, monkey
     assert "wrong-name" not in msg.lower()
 
 
+def test_score_guard_selection_metadata_mismatch_fails_even_with_full_media_ids(tmp_path, monkeypatch):
+    """FIR-12-CAN-08: stale selection counts cannot certify a complete row set."""
+    roster, entries = _corpus_entries(6, with_rubric=True)
+    manifest_path, manifest_sha = _write_score_manifest(
+        tmp_path,
+        entries,
+        roster,
+        annotation_mode="exhaustive",
+    )
+    record = _score_run_record(
+        entries,
+        caption_fn=lambda e: f"{e['present_identities'][0]} in the foreground outdoors smiling.",
+        identity_fn=lambda e: [_score_identity(e["present_identities"][0])],
+        manifest_sha=manifest_sha,
+    )
+    # Keep every media id present so the independent multiset check is clean;
+    # corrupt only the producer's evaluated-row count.
+    record["provenance"].update(
+        {"requested_limit": len(entries), "manifest_entries": len(entries), "evaluated_entries": len(entries) - 1}
+    )
+    record_path = tmp_path / "run-selection-metadata.json"
+    record_path.write_text(json.dumps(record))
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path)])
+
+    assert excinfo.value.code != 0
+    assert "truncation" in str(excinfo.value).lower()
+    assert "selection metadata mismatch" in str(excinfo.value).lower()
+    report = json.loads(record_path.with_name("run-selection-metadata-report.json").read_text())
+    assert any("selection metadata mismatch" in reason for reason in report["verdict"]["reasons"])
+
+
 # --- VLM-6 S2A F1-4: hard-key three gate inputs (schema drift must not fail open) ---
 
 

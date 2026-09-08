@@ -19,6 +19,7 @@ import pytest
 from scene.tests.test_eval_harness_cli import (
     _assert_child_ascii_locale,
     _c_locale_child_env,
+    _manifest,
 )
 from scene.tests.test_eval_harness_cli_stdio import (
     _enforce_surrogate_argv_marker,
@@ -30,6 +31,7 @@ from scripts.eval_harness.cli import (
     SCORE_GATE_PREFIX_RUN_RECORD,
     SCORE_GATE_PREFIX_RUN_SUMMARY,
     ScoreGateError,
+    fetch_run_record,
     _printable_exc,
     _printable_message,
     _printable_path,
@@ -220,6 +222,34 @@ def test_printable_exc_does_not_reescape_already_marked_gate_message() -> None:
     assert not out.startswith("\\undecodable:"), out
 
 
+def test_printable_exc_oserror_preserves_both_path_fields_once() -> None:
+    """OSError tails encode source and destination without repr double-escaping."""
+    source = "/tmp/source-" + chr(0xDCE9) + ".bin"
+    destination = "/tmp/destination-" + chr(0xDCE9) + ".bin"
+    out = _printable_exc(OSError(18, "Invalid cross-device link", source, None, destination))
+    assert "Invalid cross-device link: undecodable:/tmp/source-\\xe9.bin" in out
+    assert " -> undecodable:/tmp/destination-\\xe9.bin" in out
+    assert not any(0xDC00 <= ord(char) <= 0xDFFF for char in out)
+    assert "\\\\xe9" not in out
+
+
+def test_fetch_item_oserror_tail_uses_printable_exception_encoder(tmp_path: Path) -> None:
+    """CLI item isolation must apply the same path-text boundary as stderr."""
+    images = tmp_path / "mock_images"
+    images.mkdir()
+    (images / "img-1.jpg").write_bytes(b"x")
+
+    class _PathErrorClient:
+        def describe(self, **kwargs: Any) -> dict[str, Any]:
+            raise PermissionError(13, "Permission denied", "/tmp/item-" + chr(0xDCE9) + ".jpg")
+
+    record = fetch_run_record(_manifest(1), str(tmp_path), _PathErrorClient(), head_sha="f" * 40)
+    error = record["items"][0]["error"]
+    assert "PermissionError: Permission denied: undecodable:/tmp/item-\\xe9.jpg" in error
+    assert not any(0xDC00 <= ord(char) <= 0xDFFF for char in error)
+    assert "\\\\xe9" not in error
+
+
 def test_standalone_score_gate_error_exit_pins_absolute_latin1_wire() -> None:
     """MUT cli.py:3197 ``sys.exit(_printable_exc(exc))`` -> ``str(exc)`` (VLM6-RV18-01).
 
@@ -292,6 +322,33 @@ _cli.prune_out_dir = lambda *a, **k: []
 _cli.main(["fetch", "--manifest", "unused.json", "--keep", "1"])
 """
 
+_FETCH_ABORT_CHILD = b"""
+import sys
+from pathlib import Path
+from scripts.eval_harness import cli as _cli
+
+_cli.OUT_DIR = Path(sys.argv[1])
+_cli._require_live_env = lambda: ("http://x", "k", "t")
+_cli._images_dir = lambda: "/tmp"
+_cli.load_manifest = lambda *a, **k: object()
+
+class _FakeClient:
+    def close(self) -> None:
+        return None
+
+_cli.RemoteSceneClient = lambda **k: _FakeClient()
+
+def _abort(*a, **k):
+    raise _cli.BoundedStallError(
+        "stall /tmp/fetch-caf\\udce9.jpg",
+        {"schema": "acx-eval/v1", "items": [], "provenance": {}, "aborted": True},
+    )
+
+_cli.fetch_run_record = _abort
+_cli.prune_out_dir = lambda *a, **k: []
+_cli.main(["fetch", "--manifest", "unused.json", "--keep", "1"])
+"""
+
 _FACE_LEG = b"""
 import sys
 from pathlib import Path
@@ -321,6 +378,13 @@ _cli.main(["face-bakeoff", "--manifest", "unused.json", "--keep", "1"])
 _FACE_ABORT_CHILD = _FACE_LEG + b"""
 def _stall(*a, **k):
     raise _cli.FaceBoundedStallError("stall", {"aborted": True, "items": []})
+_cli.walk_face_run_record = _stall
+_cli.main(["face-bakeoff", "--manifest", "unused.json", "--keep", "1"])
+"""
+
+_FACE_ABORT_EXCEPTION_CHILD = _FACE_LEG + b"""
+def _stall(*a, **k):
+    raise _cli.FaceBoundedStallError("stall /tmp/face-caf\\udce9.jpg", {"aborted": True, "items": []})
 _cli.walk_face_run_record = _stall
 _cli.main(["face-bakeoff", "--manifest", "unused.json", "--keep", "1"])
 """
@@ -356,6 +420,15 @@ def test_fetch_record_path_stdout_prints_latin1_via_printable_path(tmp_path: Pat
     _assert_latin1_path_line(path_lines[0])
 
 
+def test_fetch_abort_exception_tail_is_printable(tmp_path: Path) -> None:
+    """Fetch stall errors encode free-text paths before SystemExit renders them."""
+    proc = _run_python_bytes(_FETCH_ABORT_CHILD, [os.fsencode(tmp_path / "out")])
+    assert proc.returncode != 0
+    assert b"BoundedStallError: stall /tmp/fetch-caf\\xe9.jpg" in proc.stderr
+    assert _SURROGATE_LEAK not in proc.stderr
+    assert b"\\\\xe9" not in proc.stderr
+
+
 def test_face_bakeoff_abort_path_stdout_prints_latin1_via_printable_path(tmp_path: Path) -> None:
     """MUT cli.py face-run aborted print(path) — unwrap _printable_path -> red."""
     out_dir = _latin1_named(tmp_path, b"face-abort", suffix=b"")
@@ -365,6 +438,15 @@ def test_face_bakeoff_abort_path_stdout_prints_latin1_via_printable_path(tmp_pat
     path_lines = [ln for ln in proc.stdout.splitlines() if ln]
     assert path_lines, proc.stdout
     _assert_latin1_path_line(path_lines[0])
+
+
+def test_face_bakeoff_abort_exception_tail_is_printable(tmp_path: Path) -> None:
+    """Face stall errors encode free-text paths before SystemExit renders them."""
+    proc = _run_python_bytes(_FACE_ABORT_EXCEPTION_CHILD, [os.fsencode(tmp_path / "out")])
+    assert proc.returncode != 0
+    assert b"FaceBoundedStallError: stall /tmp/face-caf\\xe9.jpg" in proc.stderr
+    assert _SURROGATE_LEAK not in proc.stderr
+    assert b"\\\\xe9" not in proc.stderr
 
 
 def test_face_bakeoff_success_path_stdout_prints_latin1_via_printable_path(tmp_path: Path) -> None:

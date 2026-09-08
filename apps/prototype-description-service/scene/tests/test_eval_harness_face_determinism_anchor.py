@@ -338,6 +338,8 @@ def test_labeled_y_missing_constant_zero_goes_red_on_extended_corpus(
             "path": e["path"],
             "model_id": "synthetic-face-anchor",
             "describe": {"alt_text_draft": "placeholder"},
+            "identities": [],
+            "face_count": e["face_count"],
             "identity_ordering": "positional",
             "image_width": 100,
             "image_height": 100,

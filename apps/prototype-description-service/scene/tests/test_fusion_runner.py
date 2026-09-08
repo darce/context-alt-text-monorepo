@@ -65,6 +65,29 @@ def test_staged_run_record_is_acx_eval_v1(manifest):
         assert "attachment_provenance" in describe
 
 
+def test_fusion_provenance_uses_canonical_manifest_digest_and_counts(manifest):
+    """VLM-6-CAN-03 / FIR-12-CAN-08: fetch identity is canonical and complete."""
+    from scripts.eval_harness.cli import _manifest_sha
+
+    record = run_fusion_eval(
+        manifest,
+        mode="staged",
+        head_sha="a" * 40,
+        started_at="2026-07-09T00:00:00Z",
+        limit=2,
+    )
+    provenance = record["provenance"]
+    assert provenance["manifest_sha256"] == _manifest_sha(manifest)
+    assert provenance["requested_limit"] == 2
+    assert provenance["manifest_entries"] == len(manifest.entries)
+    assert provenance["evaluated_entries"] == 2
+
+
+def test_fusion_limit_zero_is_rejected_instead_of_running_full_corpus(manifest):
+    with pytest.raises(ValueError, match="limit must be >= 1"):
+        run_fusion_eval(manifest, mode="staged", head_sha="a" * 40, limit=0)
+
+
 def test_build_reports_deterministic_on_fusion_records(manifest):
     record = run_fusion_eval(manifest, mode="staged", head_sha="b" * 40, started_at="2026-07-09T12:00:00Z")
     entries = manifest_entries_as_dicts(manifest)
@@ -245,6 +268,11 @@ def test_cli_writes_reports(tmp_path, manifest):
     adhoc_mis = json.loads((tmp_path / "E20-FUSION-adhoc-misattachment.json").read_text())
     assert staged_mis["misattachments"] == 0
     assert adhoc_mis["misattachments"] > 0
+    report = json.loads((tmp_path / "E20-FUSION-staged-report.json").read_text())
+    from scripts.eval_harness.cli import _manifest_sha
+
+    assert report["provenance"]["score_manifest_sha256"] == _manifest_sha(manifest)
+    assert report["provenance"]["manifest_matches_fetch"] is True
 
 
 def test_fusion_main_ignores_empty_golden_images_dir(tmp_path, monkeypatch):

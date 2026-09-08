@@ -117,9 +117,16 @@ whatever the durable dir already holds.
   monotonic deadline recorded when the nonce was first seen.
 - Once expired, the nonce's ledger record is written `expired: true` and that
   state is terminal. No later reading of any clock re-arms a spent grant.
-- Across a reboot the monotonic deadline no longer applies (its `boot_id` no
-  longer matches) and fencing falls back to the logical wall high-water mark.
-- If the ledger cannot be read or the monotonic clock is unavailable, the cycle
+- Across a host reboot, an existing grant is revoked rather than falling back
+  to wall-clock expiry: its monotonic deadline cannot be compared across boots.
+  The ledger persists `expired: true`, `revocation_reason`, and
+  `revoked_in_boot_id`, retaining the original publication and `requested_by`;
+  an ERROR log identifies that requester and both boot identities. A new
+  operator publication is required. A process restart within the same boot
+  preserves the original deadline. Legacy grants without a boot identity are
+  also revoked when next observed; this deliberately replaces the previous
+  logical-wall fallback policy (GPUOPS-LANDING-1).
+- If the ledger cannot be read or the monotonic clock or boot identity is unavailable, the cycle
   logs at ERROR and uses `auto`. An unreadable authority never honours an
   intent.
 

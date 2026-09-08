@@ -409,6 +409,8 @@ class IntentAuthorityStore:
         now: datetime,
     ) -> tuple[list[OperatorIntent], set[str]]:
         """Return intents not expired by logical wall or current-boot monotonic time."""
+        if not isinstance(self._boot_id, str) or not self._boot_id.strip():
+            raise IntentAuthorityError("intent boot identity is unavailable")
         current_time = _coerce_now(now)
         try:
             monotonic_now = float(self._monotonic())
@@ -524,6 +526,18 @@ class IntentAuthorityStore:
                 highest_sequence = max(highest_sequence, intent.sequence)
                 record_expiry = _parse_timestamp(record["expires_at"], field="expires_at")
                 expired = bool(record.get("expired")) or logical_now >= record_expiry
+                if not expired and record.get("boot_id") != self._boot_id:
+                    expired = True
+                    record["revocation_reason"] = "boot_changed_or_unknown"
+                    record["revoked_in_boot_id"] = self._boot_id
+                    publication = record.get("publication") or {}
+                    logger.error(
+                        "operator intent revoked across boot: nonce=%s requested_by=%r previous_boot=%r current_boot=%r",
+                        intent.nonce,
+                        publication.get("requested_by", intent.requested_by),
+                        record.get("boot_id"),
+                        self._boot_id,
+                    )
                 if (
                     not expired
                     and record.get("boot_id") == self._boot_id

@@ -239,6 +239,7 @@ ignore_missing_imports = true
 ignore_errors = true
 
 [tool.pytest.ini_options]
+collection_scope_receipt = "/tmp/prototype-description-service-pytest-collection-scope.json"
 markers = [
     "integration: marks tests as integration tests (require database)",
     "pg: marks tests requiring a local PostgreSQL (schema/RLS/matview behavior; skip when unreachable)",
@@ -250,6 +251,18 @@ norecursedirs = [
     "apps/prototype-description-service/archived-recognition.4.2.3",
     "scripts",
 ]
+# FIR-12-BR-67: this is the FULL declared collection (~300 tests live under
+# the two scripts/eval_harness/tests entries alone). A gate/CI invocation
+# that passes an explicit positional path (e.g. `pytest scene/tests`)
+# SILENTLY OVERRIDES testpaths -- pytest collects only what was given on the
+# command line, not this list plus it. That gap ran undetected across five
+# review rounds and excluded every test for the eval-harness modules under
+# change (RLSE-12: pipeline scope must equal the deployable unit; OBS-08:
+# a narrowed gate reading green is silence, not proof). The correct gate
+# invocation never repeats or narrows this list -- run bare `pytest` (or
+# `make test` / `make check`, which do the same) from
+# apps/prototype-description-service and let this declaration alone drive
+# collection. See docs/workbay/rules/testing-python.md#commands.
 testpaths = [
     "recognition/tests",
     "apps/prototype-description-service/recognition/tests",

@@ -265,7 +265,9 @@ norecursedirs = [
 # invocation never repeats or narrows this list -- run bare `pytest` (or
 # `make test` / `make check`, which do the same) from
 # apps/prototype-description-service and let this declaration alone drive
-# collection. See docs/workbay/rules/testing-python.md#commands.
+# collection. CI can additionally set ACX_STRICT_GATE=1; the conftest hook
+# then fails a narrowed positional invocation after writing its receipt.
+# See docs/workbay/rules/testing-python.md#commands.
 testpaths = [
     "recognition/tests",
     "apps/prototype-description-service/recognition/tests",

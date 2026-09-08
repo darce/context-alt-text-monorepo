@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -67,11 +68,15 @@ def pytest_collection_finish(session: pytest.Session) -> None:
 
     config._collection_scope_receipt = receipt  # type: ignore[attr-defined]
     config._collection_scope_receipt_path = receipt_path  # type: ignore[attr-defined]
-    if config.getoption("--require-full-collection") and scope != "full":
+    strict_gate = os.environ.get("ACX_STRICT_GATE", "").strip() == "1"
+    require_full = config.getoption("--require-full-collection")
+    if (require_full or strict_gate) and scope != "full":
+        source = "--require-full-collection" if require_full else "ACX_STRICT_GATE=1"
         missing = sorted(expected - collected)
         raise pytest.UsageError(
             "full collection required; collection was narrowed; "
-            f"missing roots: {', '.join(missing) or '(none declared/existing)'}"
+            f"missing roots: {', '.join(missing) or '(none declared/existing)'}; "
+            f"enforced by {source}"
         )
 
 

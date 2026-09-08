@@ -12,6 +12,10 @@
       "projection_sha256": "3d179180800c5d1293240477022f00165164b5ffc238221a5d0b53b8932ea415",
       "source_sha256": "dea5305316cdcf6386a1bbf8afe5ae636902ee3391ef995b1a8fa54564612d23"
     },
+    "gpu-operator-control": {
+      "projection_sha256": "28e176487294f2842628b6492a02a78718ed95285d591f478a695f1bcbc31926",
+      "source_sha256": "1f6743c1276ec031e35b4c78ea14d133fe288ce3f42921cde99a56ac32a99f1d"
+    },
     "roster-people": {
       "projection_sha256": "c3674e305d16520943172b3699073d3603c30a7195d7170114bdbaa78e92206c",
       "source_sha256": "efe7921ce053f3f8a671a8f28b23aedd0076a1bffc32fef4ae96e8698a9ec8c0"

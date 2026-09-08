@@ -26,6 +26,17 @@ interface DescribeRunSchema {
   additionalProperties?: boolean;
 }
 
+/**
+ * Declared in the schema but deliberately NOT in `required`: additive, and
+ * null for runs not created through POST /scene/describe/run. It is mirrored
+ * on the TS interface all the same, because the alternative -- each consumer
+ * bolting it on with `DescribeRunResponse & { deadline_seconds?: number }` --
+ * means a rename in the schema produces no compile error anywhere, only a
+ * silent fall-through to whatever local default that consumer invented
+ * (rg-005, rg-015).
+ */
+const DESCRIBE_RUN_RESPONSE_OPTIONAL_KEYS = ['deadline_seconds'] as const;
+
 /** Single canonical key list for the envelope (sr-007), mirrored against the schema. */
 const DESCRIBE_RUN_RESPONSE_KEYS = [
   'tenant_id',
@@ -91,6 +102,31 @@ describe('DescribeRunResponse contract', () => {
     expect([...(schema.required ?? [])].sort()).toEqual([...DESCRIBE_RUN_RESPONSE_KEYS].sort());
     expect(Object.keys(fixture).sort()).toEqual([...DESCRIBE_RUN_RESPONSE_KEYS].sort());
     expectTypeOf(fixture).toMatchTypeOf<DescribeRunResponse>();
+  });
+
+  it('mirrors the optional deadline_seconds field instead of leaving it to local intersections', () => {
+    const declared = Object.keys(schema.properties ?? {});
+
+    for (const key of DESCRIBE_RUN_RESPONSE_OPTIONAL_KEYS) {
+      expect(declared, key).toContain(key);
+      expect(schema.required ?? [], key).not.toContain(key);
+    }
+    // Optional AND nullable on the wire, so the TS field has to admit both.
+    expect(schema.properties?.deadline_seconds?.type).toEqual(['number', 'null']);
+    expectTypeOf<DescribeRunResponse['deadline_seconds']>().toEqualTypeOf<number | null | undefined>();
+
+    // The envelope is still exactly required + the optional keys, so a new
+    // schema property added without a TS field fails here rather than silently.
+    expect([...declared].sort()).toEqual(
+      [...DESCRIBE_RUN_RESPONSE_KEYS, ...DESCRIBE_RUN_RESPONSE_OPTIONAL_KEYS].sort(),
+    );
+  });
+
+  it('accepts a disclosed budget without disturbing the required envelope', () => {
+    const disclosed: DescribeRunResponse = { ...fixture, deadline_seconds: 180 };
+
+    expect(disclosed.deadline_seconds).toBe(180);
+    expectTypeOf(disclosed).toMatchTypeOf<DescribeRunResponse>();
   });
 
   it('requires recognition_enabled as a plain boolean, never null and never absent', () => {

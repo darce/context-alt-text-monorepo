@@ -1,255 +1,284 @@
 import React, { useEffect, useRef, useState } from 'react';
 
+import { guidedCopy } from '../../guidedPrototype/copy';
 import {
-  GUIDED_CANDIDATE_STATUS,
-  GUIDED_IDENTITY_STATUS,
-  confirmedPersonKeys,
-  getLastGuidedApplication,
+  GUIDED_DRAFT_ORIGIN,
+  GUIDED_DRAFT_STATUS,
+  canApply,
+  canPreview,
+  canRestoreRevision,
+  canUndo,
+  type GuidedDemoState,
+  type GuidedRestoreMode,
+  type GuidedScenario,
 } from '../../guidedPrototype/state';
-import type { GuidedCandidateStatus, GuidedScenario } from '../../guidedPrototype/state';
-import { ErrorBoundary } from '../../../components/ErrorBoundary';
-import { GuidedLiveDescriptionPanel } from './GuidedLiveDescriptionPanel';
 
-export interface GuidedDescriptionReviewProps {
-  scenario: GuidedScenario;
-  /** Attachment the optional live run describes; null when the demo has none. */
-  liveMediaId: number | null;
-  resetVersion: number;
-  onSaveEdit: (text: string) => string | undefined;
-  onReject: () => void;
-  onApply: () => void;
+export interface GuidedDescriptionReviewActions {
+  onEdit: (text: string) => void;
+  onDraftInput: (text: string) => void;
+  onPreview: (text: string) => void;
+  onKeep: () => void;
+  onRetryFixture: () => void;
+  onRestore: (revisionId: string, mode: GuidedRestoreMode) => void;
+  onApply: (text: string) => void;
   onUndo: () => void;
 }
 
-const candidateStatusLabel = (status: GuidedCandidateStatus): string => {
-  if (status === GUIDED_CANDIDATE_STATUS.EDITED) {
-    return 'Edited by you';
+export interface GuidedDescriptionReviewProps {
+  scenario: GuidedScenario;
+  state: GuidedDemoState;
+  actions: GuidedDescriptionReviewActions;
+}
+
+const originLabel = (state: GuidedDemoState): string => {
+  switch (state.draftOrigin) {
+    case GUIDED_DRAFT_ORIGIN.VISITOR_EDIT:
+      return guidedCopy('draft.origin_edited');
+    case GUIDED_DRAFT_ORIGIN.RECORDED_SAMPLE:
+      return guidedCopy('draft.origin_saved');
+    case GUIDED_DRAFT_ORIGIN.NONE:
+      return '';
+    default: {
+      const exhaustive: never = state.draftOrigin;
+      return exhaustive;
+    }
   }
-  if (status === GUIDED_CANDIDATE_STATUS.REJECTED) {
-    return 'Rejected. The saved text did not change';
-  }
-  return 'Ready for you to check';
 };
 
-const descriptionExplanation = (scenario: GuidedScenario): string => {
-  const confirmedKeys = confirmedPersonKeys(scenario);
-  const allMatchesDecided = scenario.identities.every(
-    (identity) => identity.status !== GUIDED_IDENTITY_STATUS.UNCONFIRMED,
-  );
-
-  if (confirmedKeys.length === 2) {
-    return 'You confirmed both matches, so both names are in the draft. The visual details and page context stay the same.';
+const applyReason = (state: GuidedDemoState, localText: string): string | null => {
+  if (state.draftStatus === GUIDED_DRAFT_STATUS.BLOCKED) {
+    return guidedCopy('draft.blocked');
   }
-
-  if (confirmedKeys.length === 1) {
-    return 'You confirmed one match, so one name is in the draft. The other person is described, not named.';
+  if (state.draftStatus === GUIDED_DRAFT_STATUS.FIXTURE_MISSING) {
+    return guidedCopy('draft.fixture_missing');
   }
-
-  if (allMatchesDecided) {
-    return 'You kept both people unnamed, so the draft only says what is visible.';
+  if (localText.trim() === '') {
+    return guidedCopy('draft.empty_error');
   }
-
-  return 'Decide each face match first: confirm it, or keep the person unnamed. Until then the draft only says what is visible.';
+  if (localText !== (state.draftText ?? '')) {
+    return guidedCopy('apply.stale');
+  }
+  if (state.previewedVersion !== state.draftVersion) {
+    return guidedCopy('apply.stale');
+  }
+  if (state.draftText === state.appliedAltText) {
+    return guidedCopy('apply.no_change');
+  }
+  return null;
 };
 
 export const GuidedDescriptionReview = ({
   scenario,
-  liveMediaId,
-  resetVersion,
-  onSaveEdit,
-  onReject,
-  onApply,
-  onUndo,
+  state,
+  actions,
 }: GuidedDescriptionReviewProps): React.JSX.Element => {
-  const [editValue, setEditValue] = useState(scenario.candidate.text);
-  const [editError, setEditError] = useState('');
+  const [editValue, setEditValue] = useState(state.draftText ?? '');
+  const [emptyError, setEmptyError] = useState(false);
   const editorRef = useRef<HTMLTextAreaElement>(null);
+  const onDraftInputRef = useRef(actions.onDraftInput);
+  onDraftInputRef.current = actions.onDraftInput;
 
   useEffect(() => {
-    setEditValue(scenario.candidate.text);
-    setEditError('');
-  }, [scenario.candidate.text, resetVersion]);
+    const text = state.draftText ?? '';
+    setEditValue(text);
+    setEmptyError(false);
+    onDraftInputRef.current(text);
+  }, [state.draftText, state.draftVersion]);
 
-  const appliedEvent = getLastGuidedApplication(scenario.history);
-  const hasUnsavedEdit = editValue !== scenario.candidate.text;
-  const unsavedEditReasonId = 'guided-description-unsaved-reason';
+  const ready = state.draftStatus === GUIDED_DRAFT_STATUS.READY;
+  const missing = state.draftStatus === GUIDED_DRAFT_STATUS.FIXTURE_MISSING;
+  const blocked = state.draftStatus === GUIDED_DRAFT_STATUS.BLOCKED;
+  const localMatches = editValue === (state.draftText ?? '');
+  const previewEnabled = ready && editValue.trim().length > 0;
+  const applyEnabled = canApply(state) && localMatches;
+  const undoEnabled = canUndo(state);
+  const reason = applyReason(state, editValue);
+  const previewBlocked = !canPreview(state) && localMatches ? reason : null;
 
-  const handleSaveEdit = (): void => {
+  const handlePreview = (): void => {
     if (editValue.trim() === '') {
-      setEditError('A description cannot be empty.');
+      setEmptyError(true);
       editorRef.current?.focus();
       return;
     }
-
-    const saveError = onSaveEdit(editValue);
-    if (saveError) {
-      setEditError(saveError);
-      editorRef.current?.focus();
-      return;
-    }
-
-    setEditError('');
-  };
-
-  const handleDiscardEdit = (): void => {
-    setEditValue(scenario.candidate.text);
-    setEditError('');
-    editorRef.current?.focus();
+    setEmptyError(false);
+    actions.onPreview(editValue);
   };
 
   return (
-    <section className="acx-guided-review" aria-labelledby="acx-guided-review-title">
-      <header className="acx-guided-review__header">
-        <div>
-          <p className="acx-guided-review__eyebrow">The description</p>
-          <h2 id="acx-guided-review-title">Check the description before anything changes</h2>
-        </div>
-        <span className={`acx-guided-review__status acx-guided-review__status--${scenario.candidate.status}`}>
-          {candidateStatusLabel(scenario.candidate.status)}
-        </span>
-      </header>
-
-      <div className="acx-guided-review__context-grid">
-        <div className="acx-guided-review__context-card">
-          <h3 id="guided-visual-description-title">What the photo shows</h3>
-          <ul>
-            {scenario.visualFacts.map((fact) => (
-              <li key={fact}>{fact}</li>
-            ))}
-          </ul>
-          <p>
-            Draft without names: <span>{scenario.drafts.none}</span>
-          </p>
-          <p>
-            Alt text on the page right now: <span data-current-applied-text>{scenario.appliedText}</span>
-          </p>
-        </div>
-        <div className="acx-guided-review__context-card">
-          <h3 id="guided-page-context-title">The page</h3>
-          <p>
-            <strong>{scenario.pageContext.title}</strong>
-          </p>
-          <p>{scenario.pageContext.summary}</p>
-        </div>
-      </div>
-
+    <>
       <section
         id="guided-section-review"
-        className="acx-guided-review__comparison"
-        aria-label="Review the description"
+        className="acx-guided-review"
+        aria-labelledby="acx-guided-review-title"
         data-testid="guided-candidate"
         tabIndex={-1}
       >
-        <p className="acx-guided-review__explanation">{descriptionExplanation(scenario)}</p>
-        <div>
-          <h3>Without the names</h3>
-          <p>{scenario.drafts.none}</p>
-        </div>
-        <div>
-          <h3>Draft for you to check</h3>
-          <p className="acx-guided-review__origin">This draft comes from a saved run, not a live one.</p>
-          <label htmlFor="guided-description-draft">Description draft</label>
-          <textarea
-            ref={editorRef}
-            id="guided-description-draft"
-            aria-describedby={editError ? 'guided-description-draft-error' : undefined}
-            aria-invalid={editError ? 'true' : undefined}
-            value={editValue}
-            rows={4}
-            onChange={(event) => {
-              setEditValue(event.target.value);
-              setEditError('');
-            }}
-          />
-          {editError ? (
-            <p id="guided-description-draft-error" className="acx-guided-review__field-error" role="alert">
-              {editError}
-            </p>
-          ) : null}
-          {scenario.candidate.status === GUIDED_CANDIDATE_STATUS.REJECTED && !hasUnsavedEdit ? (
-            <p className="acx-guided-review__rejected-notice">
-              You rejected this draft, so Apply is off. Edit and save the text, or change an answer about a face, to get
-              a new draft.
-            </p>
-          ) : null}
-          {hasUnsavedEdit ? (
-            <p id={unsavedEditReasonId} className="acx-guided-review__unsaved-notice">
-              Unsaved edit. Save it before you apply, or discard it to go back to the saved draft.
-            </p>
-          ) : null}
-          <div className="acx-guided-review__actions">
-            <button type="button" className="acx-button acx-button--secondary" onClick={handleSaveEdit}>
-              Save my edit
-            </button>
-            {hasUnsavedEdit ? (
-              <button type="button" className="acx-button acx-button--tertiary" onClick={handleDiscardEdit}>
-                Discard my edit
-              </button>
-            ) : null}
-            <button
-              type="button"
-              className="acx-button acx-button--tertiary"
-              onClick={onReject}
-              disabled={scenario.candidate.status === GUIDED_CANDIDATE_STATUS.REJECTED}
-            >
-              Reject this draft
+        <header className="acx-guided-review__header">
+          <h2 id="acx-guided-review-title">{guidedCopy('step.draft')}</h2>
+          <p>{guidedCopy('draft.intro')}</p>
+        </header>
+
+        {blocked ? <p>{guidedCopy('draft.blocked')}</p> : null}
+        {missing ? (
+          <div>
+            <p>{guidedCopy('draft.fixture_missing')}</p>
+            <button type="button" className="acx-button acx-button--secondary" onClick={actions.onRetryFixture}>
+              {guidedCopy('draft.fixture_retry')}
             </button>
           </div>
-        </div>
-      </section>
+        ) : null}
 
-      {/* Reset practice must clear the live run too: `resetVersion` as a key
-          remounts the panel, where passing it as a prop left a finished run's
-          sentence on screen after the lesson restarted (S1-B-09). */}
-      {/* The live run is enrichment; the description, the editor and Apply are
-          the lesson. Unwrapped, one unreachable status or one unexpected
-          payload takes all three down over a feature nobody asked for
-          (LOCAL-A-07). The fallback names what was lost and nothing else --
-          the rest of the step below keeps working. */}
-      <ErrorBoundary
-        fallback={
-          <p className="acx-guided-live__fallback" role="alert">
-            The live description could not run. The rest of this step still works.
-          </p>
-        }
-      >
-        <GuidedLiveDescriptionPanel key={resetVersion} scenario={scenario} mediaId={liveMediaId} />
-      </ErrorBoundary>
+        {ready ? (
+          <div className="acx-guided-review__comparison">
+            <p className="acx-guided-review__origin">{originLabel(state)}</p>
+            <label htmlFor="guided-description-draft">{guidedCopy('draft.label')}</label>
+            <textarea
+              ref={editorRef}
+              id="guided-description-draft"
+              aria-invalid={emptyError ? 'true' : undefined}
+              aria-describedby={emptyError ? 'guided-description-draft-error' : undefined}
+              value={editValue}
+              rows={4}
+              onChange={(event) => {
+                const text = event.target.value;
+                setEditValue(text);
+                setEmptyError(false);
+                onDraftInputRef.current(text);
+              }}
+            />
+            {emptyError ? (
+              <p id="guided-description-draft-error" className="acx-guided-review__field-error" role="alert">
+                {guidedCopy('draft.empty_error')}
+              </p>
+            ) : null}
+            <p>{guidedCopy('draft.effect')}</p>
+            <div className="acx-guided-review__actions">
+              <button
+                type="button"
+                className="acx-button acx-button--primary"
+                onClick={handlePreview}
+                disabled={!previewEnabled}
+                aria-describedby={previewBlocked ? 'guided-preview-reason' : undefined}
+              >
+                {guidedCopy('draft.next')}
+              </button>
+              <button type="button" className="acx-button acx-button--tertiary" onClick={actions.onKeep}>
+                {guidedCopy('draft.keep')}
+              </button>
+            </div>
+            {previewBlocked ? (
+              <p id="guided-preview-reason" className="acx-guided-review__apply-reason">
+                {previewBlocked}
+              </p>
+            ) : null}
+          </div>
+        ) : (
+          <div className="acx-guided-review__actions">
+            <button type="button" className="acx-button acx-button--tertiary" onClick={actions.onKeep}>
+              {guidedCopy('draft.keep')}
+            </button>
+          </div>
+        )}
+
+        {state.draftHistory.length > 0 ? (
+          <details className="acx-guided-review__history">
+            <summary>{guidedCopy('draft.history')}</summary>
+            <p>{guidedCopy('draft.history_note')}</p>
+            <ul>
+              {state.draftHistory.map((revision) => {
+                const matching = canRestoreRevision(state, revision.revisionId);
+                return (
+                  <li key={revision.revisionId}>
+                    <p>{revision.text}</p>
+                    {matching ? (
+                      <button
+                        type="button"
+                        className="acx-button acx-button--tertiary"
+                        onClick={() => actions.onRestore(revision.revisionId, 'full')}
+                      >
+                        {guidedCopy('draft.restore_revision')}
+                      </button>
+                    ) : (
+                      <>
+                        <p>{guidedCopy('draft.restore_guard')}</p>
+                        <button
+                          type="button"
+                          className="acx-button acx-button--tertiary"
+                          onClick={() => actions.onRestore(revision.revisionId, 'copy_only')}
+                        >
+                          {guidedCopy('draft.copy_revision')}
+                        </button>
+                      </>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </details>
+        ) : null}
+      </section>
 
       <section
         id="guided-section-apply"
-        className="acx-guided-review__apply"
-        aria-label="Apply the description"
+        className="acx-guided-review acx-guided-review__apply"
+        aria-labelledby="acx-guided-apply-title"
         tabIndex={-1}
       >
-        <div>
-          <h3>Apply it yourself</h3>
-          <p>
-            The practice copy says <strong data-applied-text>{scenario.appliedText}</strong>. Pressing Apply writes the
-            saved draft to this practice copy only.
-          </p>
-          {hasUnsavedEdit ? (
-            <p className="acx-guided-review__apply-reason" id="guided-apply-reason">
-              Apply is off while your edit is unsaved. Save or discard it first.
-            </p>
-          ) : null}
+        <h2 id="acx-guided-apply-title">{guidedCopy('step.apply')}</h2>
+        <p>{guidedCopy('apply.intro')}</p>
+        <div className="acx-guided-review__preview-grid">
+          <div>
+            <h3>{guidedCopy('apply.before')}</h3>
+            <p data-applied-text>{state.appliedAltText}</p>
+          </div>
+          <div>
+            <h3>{guidedCopy('apply.after')}</h3>
+            <p>{localMatches ? (state.draftText ?? '') : editValue}</p>
+          </div>
         </div>
+        <figure className="acx-guided-review__demo-preview">
+          <figcaption>{guidedCopy('apply.preview_title')}</figcaption>
+          <img
+            data-testid="demo-applied-image"
+            src={`${scenario.pressPhoto.src}#demo-applied-preview`}
+            alt={state.appliedAltText}
+          />
+        </figure>
         <div className="acx-guided-review__actions">
           <button
             type="button"
             className="acx-button acx-button--primary"
-            onClick={onApply}
-            disabled={scenario.candidate.status === GUIDED_CANDIDATE_STATUS.REJECTED || hasUnsavedEdit}
-            aria-describedby={hasUnsavedEdit ? 'guided-apply-reason' : undefined}
+            data-testid="demo-apply"
+            onClick={() => actions.onApply(editValue)}
+            disabled={!applyEnabled}
+            aria-describedby={!applyEnabled && reason ? 'guided-apply-reason' : undefined}
           >
-            Apply to practice copy
+            {guidedCopy('apply.submit')}
           </button>
-          <button type="button" className="acx-button acx-button--tertiary" onClick={onUndo} disabled={!appliedEvent}>
-            Undo
+          <button
+            type="button"
+            className="acx-button acx-button--tertiary"
+            data-testid="demo-undo"
+            onClick={actions.onUndo}
+            disabled={!undoEnabled}
+            aria-describedby={!undoEnabled ? 'guided-undo-reason' : undefined}
+          >
+            {guidedCopy('apply.undo')}
           </button>
         </div>
+        {!applyEnabled && reason ? (
+          <p id="guided-apply-reason" className="acx-guided-review__apply-reason">
+            {reason}
+          </p>
+        ) : null}
+        {!undoEnabled ? (
+          <p id="guided-undo-reason" className="acx-guided-review__apply-reason">
+            {guidedCopy('apply.undo_unavailable')}
+          </p>
+        ) : null}
       </section>
-    </section>
+    </>
   );
 };
 

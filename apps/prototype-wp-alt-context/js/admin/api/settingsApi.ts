@@ -46,6 +46,10 @@ export interface SettingsResponse {
   // WBUX-6 L1: global recognition policy. GET always includes the boolean;
   // default ON for this recognition-plugin install (RecognitionPolicy::DEFAULT).
   recognition_enabled: boolean;
+  // C6: the recognition service is the sole authority for person names. A
+  // null value means the service could not be read and must not be defaulted.
+  allow_person_names?: boolean | null;
+  allow_person_names_error?: string | null;
   description_budget: DescriptionBudget;
 }
 
@@ -89,6 +93,7 @@ export interface SaveSettingsPayload {
   api_key?: string;
   alt_style?: AltStyleValue;
   recognition_enabled?: boolean;
+  allow_person_names?: boolean;
   description_budget?: {
     max_attempts: number;
   };

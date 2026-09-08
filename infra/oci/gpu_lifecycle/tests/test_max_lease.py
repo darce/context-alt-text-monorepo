@@ -24,6 +24,7 @@ from infra.oci.gpu_lifecycle.controller import (
     GpuLifecycleController,
     JobLoadSnapshot,
 )
+from infra.oci.gpu_lifecycle.intent import EffectiveIntent, IntentAction
 from infra.oci.gpu_lifecycle.reaper import (
     CorruptRunningSinceLeaseError,
     RunningSinceLeaseStore,
@@ -42,6 +43,14 @@ class RecordingActuator:
 
     def stop_instance(self, instance_id: str) -> None:
         self.stopped.append(instance_id)
+
+
+class RecordingStartActuator:
+    def __init__(self) -> None:
+        self.started: list[str] = []
+
+    def start_instance(self, instance_id: str) -> None:
+        self.started.append(instance_id)
 
 
 class ExplodingActuator:
@@ -767,16 +776,16 @@ def test_running_since_lock_has_a_deadline(tmp_path: Path) -> None:
             store.record_start("instance-a")
 
 
-def test_start_lease_write_failure_disables_cap_loudly(monkeypatch, caplog) -> None:
+def test_start_lease_write_failure_disables_cap_loudly(tmp_path: Path, monkeypatch, caplog) -> None:
     monkeypatch.setattr(
         "infra.oci.gpu_lifecycle.reaper.OciCliStartActuator.start_instance",
         lambda self, instance_id: None,
     )
 
-    def fail_record(self, instance_id: str):
-        raise PermissionError(f"cannot write lease for {instance_id}")
+    def fail_commit(self, instance_id: str, *, honoured_nonce: str | None = None):
+        raise PermissionError(f"cannot commit lease for {instance_id}")
 
-    monkeypatch.setattr(RunningSinceLeaseStore, "record_start", fail_record)
+    monkeypatch.setattr(RunningSinceLeaseStore, "commit_start", fail_commit)
 
     exit_code = main(
         [
@@ -790,20 +799,27 @@ def test_start_lease_write_failure_disables_cap_loudly(monkeypatch, caplog) -> N
             "1",
             "--in-flight",
             "0",
+            "--running-since-path",
+            str(tmp_path / "running-since.json"),
+            "--gpu-state-json",
+            str(tmp_path / "gpu-state.json"),
         ]
     )
 
     assert exit_code != 0
-    assert "lease cap disabled" in caplog.text
+    assert "durable lease commit failed" in caplog.text
 
 
-def test_start_cycle_records_lease_after_start_is_issued(tmp_path: Path) -> None:
+def test_start_cycle_durably_prepares_lease_before_start_is_issued(tmp_path: Path) -> None:
     path = tmp_path / "running-since.json"
+    pending_path = path.with_name(f".{path.name}.pending.json")
 
     class AssertingStartActuator:
         def start_instance(self, instance_id: str) -> None:
             assert instance_id == "instance-a"
             assert not path.exists()
+            pending = json.loads(pending_path.read_text())
+            assert pending["instances"]["instance-a"]["state"] == "pending"
 
     result = run_start_cycle(
         controller=GpuLifecycleController(idle_seconds=300),
@@ -825,6 +841,80 @@ def test_start_cycle_records_lease_after_start_is_issued(tmp_path: Path) -> None
         },
         "schema_version": 2,
     }
+    assert not pending_path.exists()
+
+
+def test_interrupted_start_is_reconciled_without_a_duplicate_oci_start(tmp_path: Path) -> None:
+    path = tmp_path / "running-since.json"
+
+    class AbortAfterOciStartStore(RunningSinceLeaseStore):
+        def commit_start(self, instance_id: str, *, honoured_nonce: str | None = None):
+            raise OSError("simulated interruption after OCI START")
+
+    first_store = AbortAfterOciStartStore(
+        path=path,
+        now=lambda: NOW,
+        monotonic=lambda: TEST_MONOTONIC,
+        boot_id=TEST_BOOT_ID,
+    )
+    first_actuator = RecordingStartActuator()
+    first = run_start_cycle(
+        controller=GpuLifecycleController(idle_seconds=300),
+        instances=[GpuInstance(instance_id="instance-a", state="STOPPED", idle_for_seconds=0)],
+        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+        actuator=first_actuator,
+        running_since_store=first_store,
+        intent=EffectiveIntent(
+            action=IntentAction.START,
+            requested_at=NOW - timedelta(minutes=1),
+            expires_at=NOW + timedelta(minutes=5),
+            nonce="123e4567-e89b-42d3-a456-426614174000",
+            sequence=1,
+        ),
+        now=NOW,
+    )
+
+    second_actuator = RecordingStartActuator()
+    second = run_start_cycle(
+        controller=GpuLifecycleController(idle_seconds=300),
+        instances=[GpuInstance(instance_id="instance-a", state="RUNNING", idle_for_seconds=0)],
+        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+        actuator=second_actuator,
+        running_since_store=_lease_store(path),
+        intent=EffectiveIntent(
+            action=IntentAction.START,
+            requested_at=NOW - timedelta(minutes=1),
+            expires_at=NOW + timedelta(minutes=5),
+            nonce="123e4567-e89b-42d3-a456-426614174000",
+            sequence=1,
+        ),
+        now=NOW + timedelta(seconds=1),
+    )
+
+    assert first.errors and "durable lease commit failed" in first.errors[0]
+    assert first_actuator.started == ["instance-a"]
+    assert second_actuator.started == []
+    assert second.intent_status.value == "honoured"
+    assert json.loads(path.read_text())["instances"]["instance-a"]["source"] == "start_actuator"
+    assert "123e4567-e89b-42d3-a456-426614174000" in json.loads(
+        path.with_name(f".{path.name}.honoured-nonces.json").read_text()
+    )["instances"]["instance-a"]
+
+
+def test_running_since_replace_failure_leaves_previous_record_durable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = tmp_path / "running-since.json"
+    _write_lease(path, since="2026-09-03T10:00:00Z")
+    before = path.read_bytes()
+
+    def fail_fsync(fd: int) -> None:
+        raise OSError("simulated power-loss write interruption")
+
+    monkeypatch.setattr("infra.oci.gpu_lifecycle.reaper.os.fsync", fail_fsync)
+
+    with pytest.raises(OSError, match="power-loss"):
+        _lease_store(path).record_start("instance-a")
+
+    assert path.read_bytes() == before
 
 
 def test_start_dry_run_leaves_existing_lease_file_byte_identical(tmp_path: Path) -> None:

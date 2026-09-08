@@ -1,37 +1,36 @@
-import React, { useEffect, useRef } from 'react';
+import React from 'react';
 
-export type GuidedGuideStep = 'understand' | 'face' | 'identity' | 'review' | 'apply';
+import { guidedCopy } from '../../guidedPrototype/copy';
+import { GUIDED_STEP, guidedStepIndex, type GuidedStep } from '../../guidedPrototype/state';
 
-interface GuidedGuideStepDefinition {
-  id: GuidedGuideStep;
-  label: string;
-  description: string;
-}
+export type GuidedGuideStep = GuidedStep;
 
-export const GUIDE_STEPS: readonly GuidedGuideStepDefinition[] = [
-  { id: 'understand', label: 'Look at the photo', description: 'See the photo and the page it sits on.' },
-  {
-    id: 'face',
-    label: 'Find the faces',
-    description: 'AltContext found two faces and matched each one to a person you named before.',
-  },
-  { id: 'identity', label: 'Confirm each match', description: 'Say yes to each match, or keep that person unnamed.' },
-  { id: 'review', label: 'Check the description', description: 'Read the draft. Edit it or reject it.' },
-  { id: 'apply', label: 'Apply it yourself', description: 'Nothing changes until you press Apply.' },
-];
+const STEP_TITLE = {
+  [GUIDED_STEP.CONTEXT]: 'step.context',
+  [GUIDED_STEP.NAMES]: 'step.names',
+  [GUIDED_STEP.DRAFT]: 'step.draft',
+  [GUIDED_STEP.APPLY]: 'step.apply',
+} as const;
 
-export const guidedStepLabel = (step: GuidedGuideStep): string =>
-  GUIDE_STEPS.find((definition) => definition.id === step)?.label ?? step;
+export const GUIDED_FACE_SECTION_ID = 'guided-section-face';
 
-export const GUIDED_SECTION_IDS: Record<GuidedGuideStep, string> = {
-  understand: 'guided-section-understand',
-  face: 'guided-section-face',
-  identity: 'guided-section-identity',
-  review: 'guided-section-review',
-  apply: 'guided-section-apply',
+export const GUIDED_SECTION_IDS: Record<GuidedStep, string> = {
+  [GUIDED_STEP.CONTEXT]: 'guided-section-understand',
+  [GUIDED_STEP.NAMES]: GUIDED_FACE_SECTION_ID,
+  [GUIDED_STEP.DRAFT]: 'guided-section-review',
+  [GUIDED_STEP.APPLY]: 'guided-section-apply',
 };
 
-export const focusGuidedSection = (step: GuidedGuideStep): void => {
+export const GUIDE_STEPS: readonly GuidedStep[] = [
+  GUIDED_STEP.CONTEXT,
+  GUIDED_STEP.NAMES,
+  GUIDED_STEP.DRAFT,
+  GUIDED_STEP.APPLY,
+];
+
+export const guidedStepLabel = (step: GuidedStep): string => guidedCopy(STEP_TITLE[step]);
+
+export const focusGuidedSection = (step: GuidedStep): void => {
   const target = document.getElementById(GUIDED_SECTION_IDS[step]);
   if (!target) {
     return;
@@ -46,11 +45,10 @@ export const focusGuidedSection = (step: GuidedGuideStep): void => {
 };
 
 export interface GuidedPrototypeGuideProps {
-  activeStep: GuidedGuideStep;
+  activeStep: GuidedStep;
   open: boolean;
   onToggle: () => void;
-  onSelect: (step: GuidedGuideStep) => void;
-  onEnd: () => void;
+  onSelect: (step: GuidedStep) => void;
 }
 
 export const GuidedPrototypeGuide = ({
@@ -58,80 +56,52 @@ export const GuidedPrototypeGuide = ({
   open,
   onToggle,
   onSelect,
-  onEnd,
 }: GuidedPrototypeGuideProps): React.JSX.Element => {
-  const activeDefinition = GUIDE_STEPS.find((step) => step.id === activeStep) ?? GUIDE_STEPS[0];
-  const focusTargetRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (open) {
-      focusTargetRef.current?.focus();
-    }
-  }, [open]);
+  const stepNumber = guidedStepIndex(activeStep) + 1;
+  const stepTitle = guidedStepLabel(activeStep);
 
   return (
-    <nav className="acx-guided-guide" aria-label="Guided review steps">
+    <nav className="acx-guided-guide" aria-label={guidedCopy('guide.label')} data-testid="guided-demo-stepper">
       <div className="acx-guided-guide__bar">
         <div>
-          <p className="acx-guided-guide__eyebrow">Step by step</p>
-          <strong>{activeDefinition.label}</strong>
+          <p className="acx-guided-guide__eyebrow">{guidedCopy('guide.label')}</p>
+          <strong>{guidedCopy('guide.current', { stepNumber, stepTitle })}</strong>
         </div>
-        <a
-          className="acx-guided-guide__skip-link"
-          href={`#${GUIDED_SECTION_IDS[activeStep]}`}
-          onClick={(event) => {
-            event.preventDefault();
-            focusGuidedSection(activeStep);
-          }}
-        >
-          Skip to this step
-        </a>
         <button
           type="button"
           className="acx-button acx-button--secondary acx-guided-guide__toggle"
           aria-expanded={open}
           onClick={onToggle}
         >
-          {open ? 'Hide steps' : 'Show steps'}
+          {open ? guidedCopy('guide.hide') : guidedCopy('guide.show')}
         </button>
-      </div>
-      <div
-        ref={focusTargetRef}
-        className="acx-guided-guide__status"
-        tabIndex={open ? -1 : undefined}
-        data-guided-focus-target={open ? 'true' : undefined}
-      >
-        {activeDefinition.description}
       </div>
       {open ? (
         <div className="acx-guided-guide__body">
           <ol>
             {GUIDE_STEPS.map((step, index) => {
-              const isCurrent = step.id === activeStep;
+              const isCurrent = step === activeStep;
+              const label = guidedStepLabel(step);
               return (
-                <li key={step.id} className={isCurrent ? 'is-current' : undefined}>
+                <li key={step} className={isCurrent ? 'is-current' : undefined}>
                   <button
                     type="button"
                     onClick={() => {
-                      onSelect(step.id);
-                      focusGuidedSection(step.id);
+                      onSelect(step);
+                      focusGuidedSection(step);
                     }}
                     aria-current={isCurrent ? 'step' : undefined}
-                    aria-controls={GUIDED_SECTION_IDS[step.id]}
+                    aria-controls={GUIDED_SECTION_IDS[step]}
                   >
                     <span aria-hidden="true">{index + 1}</span>
                     <span>
-                      <strong>{step.label}</strong>
-                      <small>{step.description}</small>
+                      <strong>{label}</strong>
                     </span>
                   </button>
                 </li>
               );
             })}
           </ol>
-          <button type="button" className="acx-button acx-button--tertiary" onClick={onEnd}>
-            Close the steps
-          </button>
         </div>
       ) : null}
     </nav>

@@ -974,14 +974,24 @@ def test_deploy_mk_clear_image_repo_requires_confirm_for_prod() -> None:
     assert "CONFIRM=PROMOTE" in ((proc2.stdout or "") + (proc2.stderr or ""))
 
 
-def test_deploy_mk_documents_vlm_remote_build_zero() -> None:
-    """R0811-X-03: deploy-help surface documents REMOTE_BUILD=0 + VLM seed path."""
+def test_deploy_mk_documents_remote_vlm_floor_policy() -> None:
+    """R0811-X-03: deploy-help documents floor-gated remote VLM builds."""
     deploy_mk = REPO_ROOT / "mk" / "deploy.mk"
     text = deploy_mk.read_text(encoding="utf-8")
     assert "ACX_BUILD_TARGET=runtime-vlm" in text
     assert "REMOTE_BUILD=0" in text
     assert "huggingface_cache" in text or "seed" in text.lower()
-    assert "refuse_remote_vlm_build" in text or "never remote" in text.lower()
+    lowered = text.lower()
+    assert "remote build of *vlm* targets is the default" in lowered
+    assert "remote_vlm_build_min_free_gb" in lowered
+    assert "remote docker data-root" in lowered
+    assert "remote_build=0 remains available for a local build" in lowered
+    assert "no longer required" in lowered
+    assert not re.search(
+        r"remote\s+build(?:s)?\s+(?:of\s+)?\*vlm\*\s+targets?\s+(?:is|are)\s+refus",
+        text,
+        re.IGNORECASE,
+    )
 
 
 def test_assert_remote_disk_headroom_vlm_calls_free_space(tmp_path: Path) -> None:
@@ -1089,25 +1099,26 @@ def test_image_variant_case_fold_and_d8_fail_closed() -> None:
     assert "must be one of" in c2 and "vlm2" in c2, c2
 
 
-def test_refuse_remote_vlm_case_folded_at_ingestion() -> None:
-    """R0811-D-11: mixed-case runtime-VLM is lowercased then refused on remote path.
-
-    After fold, refuse_remote_vlm_build must fire (not the build-target enum).
-    """
+def test_remote_build_min_free_gb_case_folded_at_ingestion() -> None:
+    """R0811-D-11: mixed-case runtime-VLM selects the VLM floor after folding."""
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    floor_match = re.search(r"^REMOTE_VLM_BUILD_MIN_FREE_GB=(?P<value>[0-9]+)$", script, re.MULTILINE)
+    assert floor_match, "REMOTE_VLM_BUILD_MIN_FREE_GB constant not found in deploy script"
+    vlm_floor = floor_match.group("value")
     proc = subprocess.run(
         [
             "bash",
             "-c",
-            f'export ACX_BUILD_TARGET=runtime-VLM; source "{DEPLOY_SCRIPT}"; refuse_remote_vlm_build; echo ACCEPTED',
+            f'export ACX_BUILD_TARGET=runtime-VLM; source "{DEPLOY_SCRIPT}"; remote_build_min_free_gb',
         ],
         capture_output=True,
         text=True,
         timeout=15,
     )
-    assert proc.returncode != 0
+    assert proc.returncode == 0, (proc.stdout or "") + (proc.stderr or "")
     combined = (proc.stdout or "") + (proc.stderr or "")
-    assert "Remote build refuses" in combined or "refuses ACX_BUILD_TARGET" in combined, combined
-    assert "ACCEPTED" not in combined
+    assert "must be one of" not in combined, combined
+    assert proc.stdout.strip() == vlm_floor
 
 
 def test_help_covers_variant_and_smoke_docs() -> None:

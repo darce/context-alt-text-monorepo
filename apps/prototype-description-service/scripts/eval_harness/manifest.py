@@ -505,6 +505,50 @@ class ExpectedAttachment(BaseModel):
     fact_id: str | None = None
 
 
+class ConfirmationSource(StrEnum):
+    """Who confirmed a reference fact (sr-007). ``operator`` is human gold;
+    ``agent`` is a machine draft that is not yet a human label.
+    """
+
+    OPERATOR = "operator"
+    AGENT = "agent"
+
+
+class AdjudicationRule(StrEnum):
+    """Written disagreement rules (MLDATA-03). Closed set; free text is not a rule.
+
+    Named in the DESCQUAL-2 scope as the code half of BR-25. Doc lane should
+    cite these tokens, not unconstrained prose.
+    """
+
+    DISAGREEMENT_ESCALATE_TO_SME = "disagreement-escalate-to-sme"
+    MAJORITY_VOTE = "majority-vote"
+    UNANIMOUS = "unanimous"
+
+
+# Allowlist, not complement-of-AGENT: any future ConfirmationSource member must
+# be named here to become human gold. Complement-of-AGENT would silently promote
+# a new non-human member (MLDATA-04).
+HUMAN_CONFIRMATION_SOURCES: frozenset[ConfirmationSource] = frozenset(
+    {ConfirmationSource.OPERATOR}
+)
+
+
+class PreAdjudicationLabel(BaseModel):
+    """A pre-adjudication annotator label (MLDATA-03).
+
+    When two annotators disagree and an SME adjudicates, both original labels
+    survive here. The adjudicated value lives on the parent ``ReferenceFact``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    annotator_id: str
+    polarity: FactPolarity
+    text: str
+    noted_at: str
+
+
 class ReferenceFact(BaseModel):
     """A ground-truth fact about an image (VLM-6 S1).
 
@@ -512,6 +556,13 @@ class ReferenceFact(BaseModel):
     facts are fabrication traps (untrue of the image). ``phrases`` are the
     deterministic word-boundary match variants the hallucination scorer checks.
     ``confirmed_by`` records whether an operator or the agent draft confirmed it.
+
+    Lineage fields (``annotator_id``, ``annotation_batch``, ``annotated_at``,
+    ``source_pool``) are optional on machine drafts. A human-confirmed fact
+    must carry all four (MLDATA-04). Pre-adjudication labels are kept, never
+    overwritten (MLDATA-03). ``adjudicated_by`` records HITL-07 SME
+    escalation and requires a named ``AdjudicationRule`` plus a non-empty
+    ``pre_adjudication`` trail so a disagreement is stored, not erased.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -520,7 +571,14 @@ class ReferenceFact(BaseModel):
     kind: FactKind
     polarity: FactPolarity = FactPolarity.TRUE
     phrases: list[str] = Field(default_factory=list)
-    confirmed_by: str | None = None  # operator | agent
+    confirmed_by: ConfirmationSource | None = None
+    annotator_id: str | None = None
+    annotation_batch: str | None = None
+    annotated_at: str | None = None
+    source_pool: str | None = None
+    pre_adjudication: list[PreAdjudicationLabel] = Field(default_factory=list)
+    adjudicated_by: str | None = None
+    adjudication_rule: AdjudicationRule | None = None
 
     @model_validator(mode="after")
     def _has_a_matchable_phrase(self) -> ReferenceFact:
@@ -529,6 +587,44 @@ class ReferenceFact(BaseModel):
         # would filter them to [""] and match nothing.
         if not any(p.strip() for p in self.phrases) and not self.text.strip():
             raise ValueError("reference_fact needs non-empty text or at least one non-blank phrase")
+        return self
+
+    @model_validator(mode="after")
+    def _human_confirmation_requires_lineage(self) -> ReferenceFact:
+        if self.confirmed_by not in HUMAN_CONFIRMATION_SOURCES:
+            return self
+        required = ("annotator_id", "annotation_batch", "annotated_at", "source_pool")
+        missing = [
+            name
+            for name in required
+            if not (getattr(self, name) and str(getattr(self, name)).strip())
+        ]
+        if missing:
+            raise ValueError(
+                "human-confirmed reference_fact requires "
+                + ", ".join(missing)
+                + f" (confirmed_by={self.confirmed_by!r}; MLDATA-04)"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _adjudication_requires_written_rule(self) -> ReferenceFact:
+        has_adjudicator = bool(self.adjudicated_by and self.adjudicated_by.strip())
+        if has_adjudicator and self.adjudication_rule is None:
+            raise ValueError(
+                "adjudicated_by requires adjudication_rule "
+                "(MLDATA-03 written disagreement rule)"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _adjudication_requires_pre_labels(self) -> ReferenceFact:
+        has_adjudicator = bool(self.adjudicated_by and self.adjudicated_by.strip())
+        if has_adjudicator and not self.pre_adjudication:
+            raise ValueError(
+                "adjudicated_by requires non-empty pre_adjudication "
+                "(HITL-07 / MLDATA-03 disagreement trail)"
+            )
         return self
 
     def match_targets(self) -> list[str]:

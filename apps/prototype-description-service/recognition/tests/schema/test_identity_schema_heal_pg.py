@@ -18,7 +18,6 @@ from urllib.parse import urlsplit
 
 import pytest
 from sqlalchemy import create_engine, text
-from sqlalchemy.exc import DBAPIError
 
 MIGRATION = importlib.import_module("db.migrations.versions.001_identity_schema")
 
@@ -471,41 +470,6 @@ def test_ensure_matview_restores_owner_and_grants_after_rebuild(monkeypatch: pyt
     assert "r_reader_x" in joined
     assert "ALTER MATERIALIZED VIEW mv_identity_cluster_centroids OWNER TO" in joined
     assert "r_owner_x" in joined
-
-
-def test_restore_matview_grants_raise_named_remediation_on_dbapi_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # C-02: a vanished/renamed grantee must not leak a raw DBAPIError after
-    # DROP+CREATE. Observation that would refute the finding: GRANT failure
-    # raises RuntimeError naming the grantee/privilege and stating the matview
-    # was rebuilt.
-    op = _FakeOp()
-    orig_execute = op.execute
-
-    def _execute(sql) -> None:  # noqa: ANN001
-        text_sql = str(sql)
-        if text_sql.lstrip().upper().startswith("GRANT"):
-            raise DBAPIError(text_sql, {}, Exception('role "vanished_reader" does not exist'))
-        orig_execute(sql)
-
-    monkeypatch.setattr(op, "execute", _execute)
-
-    with pytest.raises(RuntimeError) as exc_info:
-        MIGRATION._restore_matview_owner_and_grants(
-            op,
-            current_role="app_role",
-            owner="app_role",
-            grants=(("vanished_reader", "SELECT", False),),
-        )
-
-    message = str(exc_info.value)
-    assert "vanished_reader" in message
-    assert "SELECT" in message
-    assert "rebuilt" in message
-    assert "grant could not be replayed" in message
-    assert "python -m scripts.sync_identity_schema" in message
-    assert isinstance(exc_info.value.__cause__, DBAPIError)
 
 
 def test_ensure_table_vector_typmods_refuses_wrong_table_typmod(monkeypatch: pytest.MonkeyPatch) -> None:

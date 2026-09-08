@@ -145,13 +145,23 @@ def test_tenant_and_raw_sql_tables_are_subsets_of_expected() -> None:
 
 _SQL_COMMENT = re.compile(r"--[^\n]*")
 _CTE_NAME = re.compile(r"(?:WITH|,)\s*([A-Za-z_][A-Za-z0-9_]*)\s+AS\s*\(", re.IGNORECASE)
-_FROM_JOIN = re.compile(r"\b(?:FROM|JOIN)\s+([A-Za-z_][A-Za-z0-9_]*)", re.IGNORECASE)
+_FROM_JOIN_HEAD = re.compile(r"\b(?:FROM|JOIN)\b", re.IGNORECASE)
+_FROM_JOIN_STOP = re.compile(r"\b(?:WHERE|JOIN|GROUP|ORDER|ON|UNION|LIMIT)\b|\)", re.IGNORECASE)
+_RELATION_IDENT = re.compile(r"(?:[A-Za-z_][A-Za-z0-9_]*\.)?([A-Za-z_][A-Za-z0-9_]*)")
 _FUNC_CALL = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 _PREFLIGHT_TABLE = re.compile(
     r"has_table_privilege\(\s*current_user\s*,\s*'([A-Za-z_][A-Za-z0-9_]*)'",
     re.IGNORECASE,
 )
 _PREFLIGHT_FUNC = re.compile(r"p\.proname\s*=\s*'([A-Za-z_][A-Za-z0-9_]*)'", re.IGNORECASE)
+_PY_COMMENT = re.compile(r"#[^\n]*")
+_ADJACENT_STRINGS = re.compile(r'"([^"]*)"\s+"([^"]*)"')
+_CREATE_MATVIEW_BODY = re.compile(r"CREATE MATERIALIZED VIEW.*?(?=\"\"\")", re.IGNORECASE | re.DOTALL)
+_OPERATOR_FUNCS = {
+    "<=>": "vector_cosine_distance",
+    "<->": "l2_distance",
+    "<#>": "vector_negative_inner_product",
+}
 # SQL keywords / builtins that appear as name( in the CREATE body but are not
 # privilege-bearing catalog objects the preflight must GRANT EXECUTE on.
 _SQL_NON_CATALOG_FUNCS = {
@@ -159,6 +169,7 @@ _SQL_NON_CATALOG_FUNCS = {
     "and",
     "any",
     "array",
+    "array_agg",
     "as",
     "asc",
     "avg",
@@ -172,6 +183,7 @@ _SQL_NON_CATALOG_FUNCS = {
     "count",
     "create",
     "cross",
+    "date_trunc",
     "desc",
     "distinct",
     "else",
@@ -179,14 +191,11 @@ _SQL_NON_CATALOG_FUNCS = {
     "exists",
     "extract",
     "false",
-    "filter",
-    "first",
     "from",
     "full",
     "greatest",
     "group",
     "having",
-    "if",
     "ilike",
     "in",
     "index",
@@ -194,16 +203,18 @@ _SQL_NON_CATALOG_FUNCS = {
     "into",
     "is",
     "join",
-    "last",
     "lateral",
     "least",
     "left",
+    "length",
     "like",
+    "lower",
     "materialized",
     "max",
     "min",
     "natural",
     "not",
+    "now",
     "null",
     "nullif",
     "nulls",
@@ -213,9 +224,11 @@ _SQL_NON_CATALOG_FUNCS = {
     "order",
     "outer",
     "over",
-    "overlay",
     "position",
+    "rank",
     "right",
+    "round",
+    "row_number",
     "select",
     "set",
     "some",
@@ -227,6 +240,7 @@ _SQL_NON_CATALOG_FUNCS = {
     "true",
     "union",
     "unique",
+    "upper",
     "using",
     "values",
     "vector",
@@ -238,11 +252,58 @@ _SQL_NON_CATALOG_FUNCS = {
 }
 
 
-def _matview_create_sql() -> str:
-    src = inspect.getsource(MIGRATION.ensure_matview)
-    start = src.index("CREATE MATERIALIZED VIEW")
-    end = src.index('"""', start)
-    return _SQL_COMMENT.sub("", src[start:end])
+def _from_join_relations(sql: str) -> set[str]:
+    names: set[str] = set()
+    for head in _FROM_JOIN_HEAD.finditer(sql):
+        rest = sql[head.end() :]
+        stop = _FROM_JOIN_STOP.search(rest)
+        clause = rest[: stop.start()] if stop else rest
+        for item in clause.split(","):
+            ident = _RELATION_IDENT.search(item)
+            if ident:
+                names.add(ident.group(1).lower())
+    return names
+
+
+def _body_funcs(sql: str) -> set[str]:
+    names = {name.lower() for name in _FUNC_CALL.findall(sql) if name.lower() not in _SQL_NON_CATALOG_FUNCS}
+    names |= {func for operator, func in _OPERATOR_FUNCS.items() if operator in sql}
+    return names
+
+
+def _comment_stripped_preflight_src(src: str) -> str:
+    stripped = _PY_COMMENT.sub("", src)
+    while True:
+        joined, n = _ADJACENT_STRINGS.subn(r'"\1\2"', stripped)
+        if n == 0:
+            return joined
+        stripped = joined
+
+
+def _matview_create_sql(src: str | None = None) -> str:
+    text = inspect.getsource(MIGRATION.ensure_matview) if src is None else src
+    return "\n".join(_SQL_COMMENT.sub("", match.group(0)) for match in _CREATE_MATVIEW_BODY.finditer(text))
+
+
+def test_from_join_captures_comma_joined_relations_and_operator_funcs() -> None:
+    body = "SELECT 1 FROM a, b JOIN c ON a.id = c.id WHERE a.v <=> b.v"
+    assert _from_join_relations(body) == {"a", "b", "c"}
+    assert _body_funcs(body) == {"vector_cosine_distance"}
+    assert _from_join_relations("SELECT 1 FROM public.identity_members im") == {"identity_members"}
+
+
+def test_matview_create_sql_joins_every_create_body() -> None:
+    src = '''
+    op.execute("""
+        CREATE MATERIALIZED VIEW first_view AS SELECT 1
+        """)
+    op.execute("""
+        CREATE MATERIALIZED VIEW second_view AS SELECT 2
+        """)
+    '''
+    joined = _matview_create_sql(src)
+    assert "CREATE MATERIALIZED VIEW first_view" in joined
+    assert "CREATE MATERIALIZED VIEW second_view" in joined
 
 
 def test_matview_create_privilege_gaps_match_create_body_relations_and_functions() -> None:
@@ -252,23 +313,25 @@ def test_matview_create_privilege_gaps_match_create_body_relations_and_functions
     # body equal the has_table_privilege / proname probes in the preflight.
     create_sql = _matview_create_sql()
     cte_names = {name.lower() for name in _CTE_NAME.findall(create_sql)}
-    create_relations = {name.lower() for name in _FROM_JOIN.findall(create_sql)} - cte_names
-    create_functions = {
-        name.lower() for name in _FUNC_CALL.findall(create_sql) if name.lower() not in _SQL_NON_CATALOG_FUNCS
-    }
+    create_relations = _from_join_relations(create_sql) - cte_names
+    body_funcs = _body_funcs(create_sql)
 
-    preflight_src = inspect.getsource(MIGRATION._matview_create_privilege_gaps)
-    preflight_relations = {name.lower() for name in _PREFLIGHT_TABLE.findall(preflight_src)}
+    preflight_src = _comment_stripped_preflight_src(inspect.getsource(MIGRATION._matview_create_privilege_gaps))
+    preflight_tables = {name.lower() for name in _PREFLIGHT_TABLE.findall(preflight_src)}
     preflight_functions = {name.lower() for name in _PREFLIGHT_FUNC.findall(preflight_src)}
 
     assert create_relations, "parser found no FROM/JOIN tables in the CREATE MATERIALIZED VIEW body"
-    assert create_functions, "parser found no catalog functions in the CREATE MATERIALIZED VIEW body"
-    assert create_relations == preflight_relations, (
+    assert body_funcs, "parser found no catalog functions in the CREATE MATERIALIZED VIEW body"
+    assert preflight_tables, (
+        "_comment_stripped_preflight_src produced no has_table_privilege tables from "
+        "_matview_create_privilege_gaps; a string reflow likely split a probe"
+    )
+    assert create_relations == preflight_tables, (
         "CREATE MATERIALIZED VIEW FROM/JOIN tables must equal _matview_create_privilege_gaps "
         f"has_table_privilege probes: create={sorted(create_relations)} "
-        f"preflight={sorted(preflight_relations)}"
+        f"preflight={sorted(preflight_tables)}"
     )
-    assert create_functions == preflight_functions, (
-        "CREATE MATERIALIZED VIEW function calls must equal _matview_create_privilege_gaps "
-        f"proname probes: create={sorted(create_functions)} preflight={sorted(preflight_functions)}"
+    assert body_funcs == preflight_functions, (
+        "extend _SQL_NON_CATALOG_FUNCS only for pg_catalog builtins; user functions need a preflight probe"
+        f": create={sorted(body_funcs)} preflight={sorted(preflight_functions)}"
     )

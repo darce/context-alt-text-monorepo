@@ -2170,9 +2170,9 @@ def _restore_matview_owner_and_grants(
     grants: tuple[tuple[str, str, bool], ...],
 ) -> None:
     for grantee, privilege, grantable in grants:
-        quoted_grantee = _quote_ident(op, grantee)
         option = " WITH GRANT OPTION" if grantable else ""
         try:
+            quoted_grantee = _quote_ident(op, grantee)
             op.execute(f"GRANT {privilege} ON mv_identity_cluster_centroids TO {quoted_grantee}{option}")
         except sa.exc.DBAPIError as exc:
             raise RuntimeError(
@@ -2181,13 +2181,13 @@ def _restore_matview_owner_and_grants(
                 "re-run python -m scripts.sync_identity_schema"
             ) from exc
     if owner != current_role:
-        quoted_owner = _quote_ident(op, owner)
         try:
+            quoted_owner = _quote_ident(op, owner)
             op.execute(f"ALTER MATERIALIZED VIEW mv_identity_cluster_centroids OWNER TO {quoted_owner}")
         except sa.exc.DBAPIError as exc:
             raise RuntimeError(
                 f"cannot restore OWNER TO {owner} on mv_identity_cluster_centroids: "
-                "the materialized view was rebuilt but the grant could not be replayed; "
+                f"the materialized view was rebuilt but ownership could not be restored to {owner}; "
                 "re-run python -m scripts.sync_identity_schema"
             ) from exc
 

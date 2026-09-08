@@ -4762,6 +4762,36 @@ def test_cli_compare_rejects_corpus_count_mismatch_and_requires_explicit_scored_
     assert "compare meet-or-beat: PASS" in capsys.readouterr().out
 
 
+def test_cli_compare_rejects_partial_selection_metadata_even_when_counts_are_forged(tmp_path):
+    """FIR-12-CAN-08 / MLDATA-09: a prefix cannot self-certify as full corpus."""
+    baseline = _adoption_compare_report()
+    # Keep the report's total and media-id integrity fields looking complete while
+    # retaining the producer's explicit prefix stamp. The compare boundary must
+    # validate the selection contract itself, not trust counts recomputed from
+    # the surviving rows.
+    candidate = _adoption_compare_report(
+        corpus={
+            "manifest_entries": 100,
+            "media_id_missing": 0,
+            "media_id_extra": 0,
+            "requested_limit": 3,
+            "fetch_manifest_entries": 100,
+            "evaluated_entries": 3,
+        }
+    )
+    base_path = tmp_path / "baseline.json"
+    candidate_path = tmp_path / "candidate.json"
+    base_path.write_text(json.dumps(baseline))
+    candidate_path.write_text(json.dumps(candidate))
+
+    with pytest.raises(SystemExit) as exc:
+        main(["compare", "--baseline", str(base_path), "--candidate", str(candidate_path)])
+    assert exc.value.code != 0
+    message = str(exc.value)
+    assert "selection metadata" in message
+    assert "evaluated_entries=3" in message
+
+
 def test_cli_compare_vacuous_category_blocks_adoption(tmp_path):
     """VLM6-A-03 / EVAL-23: None/vacuous adoption categories block PASS (fail closed)."""
     baseline = _adoption_compare_report()

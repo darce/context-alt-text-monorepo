@@ -62,6 +62,7 @@ from scene.interface_adapters.http.schemas.requests import (
 from .manifest import GoldenEntry, GoldenManifest, ManifestError, load_manifest
 from .report import Audience, build_reports
 from .schema import SCHEMA, DocKind
+from .cli import _printable_exc
 
 Mode = Literal["staged", "adhoc"]
 
@@ -805,7 +806,7 @@ def main(argv: list[str] | None = None) -> int:
             hash_skip_reason="fusion runner synthesizes image bytes from pins; fixture files never opened",
         )
     except ManifestError as exc:
-        print(f"manifest error: {exc}", file=sys.stderr)
+        print(f"manifest error: {_printable_exc(exc)}", file=sys.stderr)
         return 2
 
     # Score against a separately loaded metadata snapshot.  This keeps the
@@ -819,7 +820,7 @@ def main(argv: list[str] | None = None) -> int:
             hash_skip_reason="fusion score-time identity reads metadata only; fixture files are not opened",
         )
     except ManifestError as exc:
-        print(f"score manifest error: {exc}", file=sys.stderr)
+        print(f"score manifest error: {_printable_exc(exc)}", file=sys.stderr)
         return 2
 
     out_dir = Path(args.out_dir)

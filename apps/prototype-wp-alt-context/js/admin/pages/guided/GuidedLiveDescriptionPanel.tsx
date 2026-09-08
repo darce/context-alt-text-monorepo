@@ -43,6 +43,12 @@ const clock = (ms: number): string => {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
 };
 
+const timedOutStatus = (): string =>
+  guidedCopy('live.timed_out', {
+    keepWaiting: guidedCopy('live.keep_waiting'),
+    retry: guidedCopy('live.retry'),
+  });
+
 const statusLine = (state: GuidedLiveState): string => {
   const brief = guidedLiveBriefStatus(state);
   switch (brief) {
@@ -59,13 +65,29 @@ const statusLine = (state: GuidedLiveState): string => {
         ? guidedCopy('live.no_result')
         : guidedCopy('live.failed');
     case GUIDED_LIVE_BRIEF_STATUS.TIMED_OUT:
-      return guidedCopy('live.timed_out');
+      return timedOutStatus();
     case GUIDED_LIVE_BRIEF_STATUS.STOPPED:
       return guidedCopy('live.stopped');
     default:
       return assertNever(brief);
   }
 };
+
+const elapsedLine = (state: GuidedLiveState): string =>
+  state.runId === null
+    ? clock(state.elapsedMs)
+    : guidedCopy('live.elapsed_of_up_to', {
+        elapsed: clock(state.elapsedMs),
+        deadline: clock(state.deadlineMs),
+      });
+
+const budgetLine = (state: GuidedLiveState): string =>
+  state.disclosedDeadlineSeconds === null
+    ? guidedCopy('live.budget_local')
+    : guidedCopy('live.budget_disclosed', {
+        generation: clock(state.disclosedDeadlineSeconds * 1000),
+        deadline: clock(state.deadlineMs),
+      });
 
 const actionLabel = (state: GuidedLiveState): string => {
   if (
@@ -121,7 +143,12 @@ export const GuidedLiveDescriptionPanel = ({
         </>
       ) : null}
 
-      <div role="status" aria-live="polite" aria-label="Live run status" className="acx-guided-live__live">
+      <div
+        role="status"
+        aria-live="polite"
+        aria-label={guidedCopy('live.status_label')}
+        className="acx-guided-live__live"
+      >
         <p
           id={STATUS_LINE_ID}
           className={`acx-guided-live__status acx-guided-live__status--${brief}`}
@@ -135,17 +162,13 @@ export const GuidedLiveDescriptionPanel = ({
 
         {waiting ? (
           <p className="acx-guided-live__elapsed" data-testid="guided-live-elapsed">
-            {state.runId === null
-              ? clock(state.elapsedMs)
-              : `${clock(state.elapsedMs)} of up to ${clock(state.deadlineMs)}`}
+            {elapsedLine(state)}
           </p>
         ) : null}
 
         {waiting && state.runId !== null ? (
           <p className="acx-guided-live__budget" data-testid="guided-live-budget">
-            {state.disclosedDeadlineSeconds === null
-              ? 'No server budget disclosed, so this is how long this page is willing to wait.'
-              : 'That is the budget the service disclosed when it accepted the run.'}
+            {budgetLine(state)}
           </p>
         ) : null}
 
@@ -157,23 +180,37 @@ export const GuidedLiveDescriptionPanel = ({
             </blockquote>
           </figure>
         ) : null}
+
+        {canKeepWaiting ? (
+          <div className="acx-guided-live__recovery">
+            <button type="button" className="acx-button acx-button--secondary" onClick={keepWaiting}>
+              {guidedCopy('live.keep_waiting')}
+            </button>
+            <button
+              type="button"
+              className="acx-button acx-button--tertiary"
+              onClick={request}
+              disabled={!canRequest}
+              aria-describedby={STATUS_LINE_ID}
+            >
+              {guidedCopy('live.retry')}
+            </button>
+          </div>
+        ) : null}
       </div>
 
       <div className="acx-guided-live__actions">
-        {canKeepWaiting ? (
-          <button type="button" className="acx-button acx-button--secondary" onClick={keepWaiting}>
-            Keep waiting
+        {canKeepWaiting ? null : (
+          <button
+            type="button"
+            className="acx-button acx-button--secondary"
+            onClick={request}
+            disabled={!canRequest}
+            aria-describedby={canRequest ? undefined : STATUS_LINE_ID}
+          >
+            {actionLabel(state)}
           </button>
-        ) : null}
-        <button
-          type="button"
-          className={`acx-button ${canKeepWaiting ? 'acx-button--tertiary' : 'acx-button--secondary'}`}
-          onClick={request}
-          disabled={!canRequest}
-          aria-describedby={canRequest ? undefined : STATUS_LINE_ID}
-        >
-          {actionLabel(state)}
-        </button>
+        )}
         {canCancel ? (
           <button type="button" className="acx-button acx-button--tertiary" onClick={cancel}>
             {guidedCopy('live.stop_waiting')}

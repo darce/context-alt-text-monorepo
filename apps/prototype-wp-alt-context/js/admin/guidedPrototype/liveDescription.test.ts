@@ -989,29 +989,51 @@ describe('keeping the wait is offered instead of only a restart', () => {
 
   it('resumes the same run under a fresh window rather than starting a second burst', () => {
     const state = timedOut();
-    const resumed = guidedLiveReducer(state, { kind: 'wait_resumed', atMs: T0 });
+    const resumeAt = T0 + state.elapsedMs;
+    const resumed = guidedLiveReducer(state, { kind: 'wait_resumed', atMs: resumeAt });
 
     expect(resumed.runId).toBe('run-1');
     expect(resumed.reason).toBeNull();
+    expect(resumed.startedAtMs).toBe(resumeAt - state.elapsedMs);
+    expect(resumed.elapsedMs).toBe(state.elapsedMs);
     expect(resumed.deadlineMs).toBe(state.elapsedMs + GUIDED_LIVE_KEEP_WAITING_SECONDS * 1000);
     expect(resumed.deadlineMs).toBeGreaterThan(state.elapsedMs);
   });
 
   it('resumes at the phase the run had actually reached, not back at queued', () => {
-    const resumed = guidedLiveReducer(timedOut(), { kind: 'wait_resumed', atMs: T0 });
+    const timed = timedOut();
+    const resumed = guidedLiveReducer(timed, { kind: 'wait_resumed', atMs: T0 + timed.elapsedMs });
 
     expect(resumed.status).toBe(GUIDED_LIVE_STATUS.DESCRIBING);
   });
 
+  it('excludes time spent on the timed-out screen from the fresh keep-waiting window', () => {
+    const timed = timedOut();
+    const pauseMs = GUIDED_LIVE_KEEP_WAITING_SECONDS * 1000 + 1000;
+    const resumeAt = T0 + timed.elapsedMs + pauseMs;
+    const resumed = guidedLiveReducer(timed, { kind: 'wait_resumed', atMs: resumeAt });
+
+    expect(resumed.status).toBe(GUIDED_LIVE_STATUS.DESCRIBING);
+    expect(resumed.startedAtMs).toBe(resumeAt - timed.elapsedMs);
+    expect(resumed.elapsedMs).toBe(timed.elapsedMs);
+    expect(resumed.deadlineMs).toBe(timed.elapsedMs + GUIDED_LIVE_KEEP_WAITING_SECONDS * 1000);
+
+    const shortlyAfter = guidedLiveReducer(resumed, { kind: 'tick', atMs: resumeAt + 1000 });
+    expect(shortlyAfter.status).toBe(GUIDED_LIVE_STATUS.DESCRIBING);
+    expect(shortlyAfter.elapsedMs).toBe(timed.elapsedMs + 1000);
+    expect(shortlyAfter.elapsedMs).toBeLessThan(resumed.deadlineMs);
+  });
+
   it('polls again once resumed instead of staying stopped', () => {
-    let state = guidedLiveReducer(timedOut(), { kind: 'wait_resumed', atMs: T0 });
-    const at = state.elapsedMs + 1000;
+    const timed = timedOut();
+    const resumeAt = T0 + timed.elapsedMs;
+    let state = guidedLiveReducer(timed, { kind: 'wait_resumed', atMs: resumeAt });
     state = guidedLiveReducer(state, {
       kind: 'polled',
       phase: 'complete',
       gpu: 'ready',
       tier: 'final_gpu',
-      atMs: T0 + at,
+      atMs: resumeAt + 1000,
       text: 'It finished after all.',
     });
 

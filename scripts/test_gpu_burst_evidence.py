@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import importlib.util
 import json
 import subprocess
 import sys
+from collections.abc import Iterable, Mapping
 from hashlib import sha256
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import pytest
 
@@ -1980,3 +1983,388 @@ def test_history_builder_does_not_derive_stop_from_wrong_previous_state(tmp_path
     history = checker.build_state_history_document(audit, instance_id=INSTANCE_ID, since=SINCE, until=UNTIL)
 
     assert [observation["state"] for observation in history["observations"]] == ["STOPPED", "RUNNING"]
+
+
+_MISSING_CLI_ATTR = object()
+
+
+def _cli_util_to_dict_replica(obj: Any) -> Any:
+    """Local replica of oci_cli.cli_util.to_dict hyphen conversion.
+
+    Official CLI replaces '_' with '-' on model swagger_types keys only;
+    Mapping keys are preserved. Used when oci_cli is not installed.
+    """
+
+    if isinstance(obj, str):
+        return obj
+    if isinstance(obj, (dt.datetime, dt.time)):
+        if obj.tzinfo is None:
+            obj = obj.replace(tzinfo=dt.UTC)
+        if isinstance(obj, dt.datetime):
+            return obj.isoformat(sep="T")
+        return obj.isoformat()
+    if isinstance(obj, dt.date):
+        return obj.isoformat()
+    if isinstance(obj, Mapping):
+        return {key: _cli_util_to_dict_replica(value) for key, value in obj.items()}
+    if isinstance(obj, Iterable):
+        return [_cli_util_to_dict_replica(value) for value in obj]
+    if not hasattr(obj, "swagger_types"):
+        return obj
+    as_dict: dict[str, Any] = {}
+    for key in obj.swagger_types:
+        value = getattr(obj, key, _MISSING_CLI_ATTR)
+        if value is not _MISSING_CLI_ATTR:
+            as_dict[key.replace("_", "-")] = _cli_util_to_dict_replica(value)
+    return as_dict
+
+
+def _serialize_oci_audit_event_cli_hyphens(model: Any) -> tuple[dict[str, Any], str]:
+    """Serialize an official AuditEvent model the way `oci audit` JSON output does."""
+
+    try:
+        from oci_cli.cli_util import to_dict as cli_to_dict
+        from oci_cli.version import __version__ as cli_version
+
+        payload = cli_to_dict(model)
+        if not isinstance(payload, dict):
+            raise TypeError("oci_cli.cli_util.to_dict did not return a mapping")
+        origin = f"oci_cli.cli_util.to_dict oci_cli=={cli_version}; NOT a live OCI audit capture"
+        return payload, origin
+    except ImportError:
+        payload = _cli_util_to_dict_replica(model)
+        if not isinstance(payload, dict):
+            raise TypeError("CLI to_dict replica did not return a mapping")
+        origin = (
+            "local replica of oci_cli.cli_util.to_dict "
+            "(https://raw.githubusercontent.com/oracle/oci-cli/master/src/oci_cli/cli_util.py); "
+            "oci_cli not installed; NOT a live OCI audit capture"
+        )
+        return payload, origin
+
+
+def _oci_cli_hyphen_audit_event(
+    *,
+    action: str,
+    phase: str,
+    event_time: str,
+    event_id: str,
+    grouping_id: str,
+    principal: str,
+    previous: str | None = None,
+    current: str | None = None,
+) -> tuple[dict[str, Any], str]:
+    """Build one hyphen-keyed AuditEvent dict from the installed OCI SDK when present."""
+
+    try:
+        import oci
+        from oci.audit.models import AuditEvent, Data, Identity, Request, Response, StateChange
+    except ImportError:
+        data: dict[str, Any] = {
+            "event-grouping-id": grouping_id,
+            "event-name": f"{action.title()}Instance",
+            "resource-id": INSTANCE_ID,
+            "identity": {"principal-name": principal},
+            "request": {
+                "id": f"{event_id}-request",
+                "action": "POST",
+                "parameters": {"action": [action]},
+            },
+            "response": {"status": "200"},
+        }
+        if previous is not None or current is not None:
+            data["state-change"] = {
+                "previous": {"lifecycleState": previous} if previous is not None else None,
+                "current": {"lifecycleState": current} if current is not None else None,
+            }
+        payload = {
+            "cloud-events-version": "0.1",
+            "content-type": "application/json",
+            "data": data,
+            "event-id": event_id,
+            "event-time": event_time,
+            "event-type": f"com.oraclecloud.computeapi.{action.title()}Instance.{phase}",
+            "event-type-version": "2.0",
+            "source": "ComputeApi",
+        }
+        origin = (
+            "synthetic hyphen-key contract fixture matching oci_cli.cli_util.to_dict; "
+            "oci SDK unavailable; NOT a live OCI audit capture"
+        )
+        return payload, origin
+
+    parsed_time = dt.datetime.fromisoformat(event_time.replace("Z", "+00:00"))
+    state_change = None
+    if previous is not None or current is not None:
+        state_change = StateChange(
+            previous={"lifecycleState": previous} if previous is not None else None,
+            current={"lifecycleState": current} if current is not None else None,
+        )
+    model = AuditEvent(
+        event_type=f"com.oraclecloud.computeapi.{action.title()}Instance.{phase}",
+        cloud_events_version="0.1",
+        event_type_version="2.0",
+        source="ComputeApi",
+        event_id=event_id,
+        event_time=parsed_time,
+        content_type="application/json",
+        data=Data(
+            event_grouping_id=grouping_id,
+            event_name=f"{action.title()}Instance",
+            resource_id=INSTANCE_ID,
+            identity=Identity(principal_name=principal),
+            request=Request(
+                id=f"{event_id}-request",
+                action="POST",
+                path=f"/20160918/instances/{INSTANCE_ID}",
+                parameters={"action": [action]},
+            ),
+            response=Response(status="200"),
+            state_change=state_change,
+        ),
+    )
+    payload, serializer_origin = _serialize_oci_audit_event_cli_hyphens(model)
+    origin = f"oci.audit.models.AuditEvent oci=={oci.__version__} file={oci.__file__}; {serializer_origin}"
+    return payload, origin
+
+
+def _oci_cli_hyphen_audit_payload() -> tuple[dict[str, list[dict[str, Any]]], str]:
+    start_begin, origin = _oci_cli_hyphen_audit_event(
+        action="START",
+        phase="begin",
+        event_time="2026-09-01T00:09:59Z",
+        event_id="cli-start-begin",
+        grouping_id="cli-start",
+        principal="burst-start",
+    )
+    start_end, _origin = _oci_cli_hyphen_audit_event(
+        action="START",
+        phase="end",
+        event_time=RUNNING_AT,
+        event_id="cli-start-end",
+        grouping_id="cli-start",
+        principal="burst-start",
+        previous="STOPPED",
+        current="RUNNING",
+    )
+    stop_begin, _origin = _oci_cli_hyphen_audit_event(
+        action="STOP",
+        phase="begin",
+        event_time="2026-09-01T00:29:59Z",
+        event_id="cli-stop-begin",
+        grouping_id="cli-stop",
+        principal="gpu-reaper",
+    )
+    stop_end, _origin = _oci_cli_hyphen_audit_event(
+        action="STOP",
+        phase="end",
+        event_time=STOPPED_AT,
+        event_id="cli-stop-end",
+        grouping_id="cli-stop",
+        principal="gpu-reaper",
+        previous="RUNNING",
+        current="STOPPED",
+    )
+    return {"data": [start_begin, start_end, stop_begin, stop_end]}, origin
+
+
+def test_oci_cli_serializer_fixture_uses_hyphen_model_keys_not_live_capture() -> None:
+    audit, origin = _oci_cli_hyphen_audit_payload()
+    start_end = audit["data"][1]
+    stop_end = audit["data"][3]
+
+    assert "NOT a live OCI audit capture" in origin
+    assert start_end["event-type"].endswith("StartInstance.end")
+    assert "event-time" in start_end
+    assert "event-id" in start_end
+    assert "eventType" not in start_end
+    assert "event_type" not in start_end
+    data = start_end["data"]
+    assert isinstance(data, dict)
+    assert data["resource-id"] == INSTANCE_ID
+    assert data["event-grouping-id"] == "cli-start"
+    identity = data["identity"]
+    assert isinstance(identity, dict)
+    assert identity["principal-name"] == "burst-start"
+    state_change = data["state-change"]
+    assert isinstance(state_change, dict)
+    current = state_change["current"]
+    assert isinstance(current, dict)
+    assert current["lifecycleState"] == "RUNNING"
+    assert "lifecycle-state" not in current
+    stop_identity = stop_end["data"]["identity"]
+    assert isinstance(stop_identity, dict)
+    assert stop_identity["principal-name"] == "gpu-reaper"
+
+
+def test_oci_cli_hyphen_key_audit_events_prove_burst(tmp_path: Path) -> None:
+    audit, _origin = _oci_cli_hyphen_audit_payload()
+    bundle = _custom_bundle(tmp_path, audit=audit)
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_event_time_hyphen_alias_is_read() -> None:
+    checker = _load_checker_module()
+
+    timestamp, error = checker._event_time_report({"event-time": RUNNING_AT})
+
+    assert error is None
+    assert timestamp == checker._parse_time(RUNNING_AT)
+
+
+def test_resource_id_hyphen_alias_is_read() -> None:
+    checker = _load_checker_module()
+
+    resource_id, error = checker._event_resource_id_report({"data": {"resource-id": INSTANCE_ID}})
+
+    assert error is None
+    assert resource_id == INSTANCE_ID
+
+
+def test_principal_hyphen_alias_is_read() -> None:
+    checker = _load_checker_module()
+
+    principals, error = checker._principal_report({"data": {"identity": {"principal-name": "gpu-reaper"}}})
+
+    assert error is None
+    assert principals == {"gpu-reaper"}
+
+
+def test_data_event_grouping_id_hyphen_collapses_begin_and_end() -> None:
+    checker = _load_checker_module()
+    begin = {
+        "event-type": "com.oraclecloud.computeapi.StartInstance.begin",
+        "event-time": "2026-09-01T00:09:59Z",
+        "event-id": "start-begin",
+        "data": {"event-grouping-id": "start-group", "resource-id": INSTANCE_ID},
+    }
+    end = {
+        "event-type": "com.oraclecloud.computeapi.StartInstance.end",
+        "event-time": RUNNING_AT,
+        "event-id": "start-end",
+        "data": {"event-grouping-id": "start-group", "resource-id": INSTANCE_ID},
+    }
+
+    begin_id, begin_error = checker._event_identity_report(begin, "START", 0)
+    end_id, end_error = checker._event_identity_report(end, "START", 1)
+
+    assert begin_error is None
+    assert end_error is None
+    assert begin_id == "group:start-group"
+    assert end_id == begin_id
+
+
+def test_mixed_case_hyphen_aliases_are_not_accepted() -> None:
+    checker = _load_checker_module()
+
+    timestamp, time_error = checker._event_time_report({"Event-Time": RUNNING_AT})
+    resource_id, resource_error = checker._event_resource_id_report({"data": {"Resource-Id": INSTANCE_ID}})
+    principals, principal_error = checker._principal_report(
+        {"data": {"identity": {"Principal-Name": "gpu-reaper"}}}
+    )
+    grouping, grouping_error = checker._event_identity_report(
+        {"Event-Id": "start-1", "data": {"Event-Grouping-Id": "start-group"}},
+        "START",
+        0,
+    )
+
+    assert timestamp is None and time_error is None
+    assert resource_id is None and resource_error is None
+    assert principals == set() and principal_error is None
+    assert grouping.startswith("fallback:")
+    assert grouping_error is None
+
+
+def test_conflicting_hyphen_and_camel_event_time_fails_closed() -> None:
+    checker = _load_checker_module()
+
+    timestamp, error = checker._event_time_report(
+        {"eventTime": RUNNING_AT, "event-time": STOPPED_AT, "event_time": RUNNING_AT}
+    )
+
+    assert timestamp is None
+    assert error is not None
+    assert "conflict" in error
+
+
+def test_conflicting_hyphen_and_camel_resource_id_fails_closed() -> None:
+    checker = _load_checker_module()
+
+    resource_id, error = checker._event_resource_id_report(
+        {"resourceId": INSTANCE_ID, "data": {"resource-id": "ocid1.instance.other"}}
+    )
+
+    assert resource_id is None
+    assert error is not None
+    assert "conflict" in error
+
+
+def test_conflicting_hyphen_and_camel_principal_fails_closed() -> None:
+    checker = _load_checker_module()
+
+    principals, error = checker._principal_report(
+        {
+            "identity": {"principalName": "gpu-reaper"},
+            "data": {"identity": {"principal-name": "attacker"}},
+        }
+    )
+
+    assert principals == set()
+    assert error is not None
+    assert "conflict" in error
+
+
+def test_hyphen_key_wrong_stop_principal_still_fails(tmp_path: Path) -> None:
+    audit, _origin = _oci_cli_hyphen_audit_payload()
+    stop_end = audit["data"][3]
+    stop_end["data"]["identity"]["principal-name"] = "operator"
+
+    checks = _json_checks(_run_checker(_custom_bundle(tmp_path, audit=audit), "--json"))
+
+    assert checks["exactly_one_start_instance"] is True
+    assert checks["expected_stop_principal"] is False
+
+
+def test_duplicate_hyphen_grouping_completed_records_fail_closed(tmp_path: Path) -> None:
+    first, _origin = _oci_cli_hyphen_audit_event(
+        action="START",
+        phase="end",
+        event_time=RUNNING_AT,
+        event_id="start-end-1",
+        grouping_id="same-start-group",
+        principal="burst-start",
+        previous="STOPPED",
+        current="RUNNING",
+    )
+    second, _origin = _oci_cli_hyphen_audit_event(
+        action="START",
+        phase="end",
+        event_time="2026-09-01T00:11:00Z",
+        event_id="start-end-2",
+        grouping_id="same-start-group",
+        principal="burst-start",
+        previous="STOPPED",
+        current="RUNNING",
+    )
+    stop, _origin = _oci_cli_hyphen_audit_event(
+        action="STOP",
+        phase="end",
+        event_time=STOPPED_AT,
+        event_id="stop-end-1",
+        grouping_id="stop-group",
+        principal="gpu-reaper",
+        previous="RUNNING",
+        current="STOPPED",
+    )
+    audit = {"data": [first, second, stop]}
+
+    result = _run_checker(_custom_bundle(tmp_path, audit=audit), "--json")
+    checks = _json_checks(result)
+    verdict = json.loads(result.stdout)
+    details = " ".join(check["detail"] for check in verdict["checks"] if check["name"] == "audit_payload_contract")
+
+    assert checks["audit_payload_contract"] is False
+    assert "completed records" in details

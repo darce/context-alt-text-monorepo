@@ -143,6 +143,7 @@ class StrataReport:
     operator_review: Shortlist  # one shared browse set serving OPERATOR_DOMAINS
     operator_domains: tuple[Domain, ...]
     pool_size: int
+    filter_audit: dict[str, object]
 
     def thin_domains(self) -> list[Domain]:
         return [d for d, s in self.offline.items() if s.thin]
@@ -178,6 +179,70 @@ def is_eligible(record: ImageRecord) -> bool:
     if record.width is None or record.height is None:
         return False
     return min(record.width, record.height) >= MIN_CORPUS_EDGE_PX
+
+
+def _filter_audit(
+    input_rows: list[tuple[ImageRecord, Source]],
+    after_explicit_exclusions: list[tuple[ImageRecord, Source]],
+    after_deduplication: list[tuple[ImageRecord, Source]],
+    eligible_rows: list[tuple[ImageRecord, Source]],
+) -> dict[str, object]:
+    """Keep every eligibility exclusion visible to the operator.
+
+    The shortlist intentionally excludes unreadable and below-floor records from
+    candidate pools.  That exclusion is a sampling decision, though, so a report
+    that only contains ``pool_size`` can make the resulting frame look complete.
+    This additive audit preserves the excluded rows as a named low-resolution or
+    unreadable slice and records the frame before and after each critical filter
+    (MLDATA-09 / EVAL-04).
+    """
+
+    def _row(record: ImageRecord, source: Source) -> dict[str, object]:
+        return {
+            "path": record.path,
+            "sha256": record.sha256,
+            "source": source.value,
+            "width": record.width,
+            "height": record.height,
+        }
+
+    def _low_resolution(record: ImageRecord) -> bool:
+        return (
+            record.width is not None
+            and record.height is not None
+            and min(record.width, record.height) < MIN_CORPUS_EDGE_PX
+        )
+
+    def _unreadable(record: ImageRecord) -> bool:
+        return record.width is None or record.height is None
+
+    low_resolution = [(record, source) for record, source in after_deduplication if _low_resolution(record)]
+    unreadable = [(record, source) for record, source in after_deduplication if _unreadable(record)]
+    return {
+        "input_records": len(input_rows),
+        "after_explicit_exclusions": len(after_explicit_exclusions),
+        "after_deduplication": len(after_deduplication),
+        "eligible_records": len(eligible_rows),
+        "excluded_records": len(after_deduplication) - len(eligible_rows),
+        "by_reason": {
+            "explicit_exclude_sha256": len(input_rows) - len(after_explicit_exclusions),
+            "duplicate_sha256": len(after_explicit_exclusions) - len(after_deduplication),
+            "low_resolution": len(low_resolution),
+            "unreadable": len(unreadable),
+        },
+        "critical_slices": {
+            "eligible_frame": {
+                "pre_filter": len(after_deduplication),
+                "post_filter": len(eligible_rows),
+            },
+            "low_resolution": {"pre_filter": len(low_resolution), "post_filter": 0},
+            "unreadable": {"pre_filter": len(unreadable), "post_filter": 0},
+        },
+        "declared_exclusions": {
+            "low_resolution": [_row(record, source) for record, source in low_resolution],
+            "unreadable": [_row(record, source) for record, source in unreadable],
+        },
+    }
 
 
 def celeb_label(record: ImageRecord, source: Source) -> str | None:
@@ -376,14 +441,16 @@ def build_report(
     strata see only the 2320 celebs01 + 219 uploads that happen to have embedded
     face data, and report the other ~6,400 uploads as peopleless.
     """
-    rows = [(r, s) for r, s in records if r.sha256 not in exclude_sha256 and is_eligible(r)]
+    input_rows = list(records)
+    after_explicit_exclusions = [(r, s) for r, s in input_rows if r.sha256 not in exclude_sha256]
     # Dedupe across BOTH roots at once: the same bytes can sit in either. Prefer the
     # celebs01 copy on a cross-root collision so identical bytes keep their public-figure
     # label regardless of --inventory argument order (stable sort leaves within-source
     # order untouched; the kept filter then preserves the original row order).
-    dedup_order = sorted(rows, key=lambda rs: 0 if rs[1] is Source.CELEBS01 else 1)
+    dedup_order = sorted(after_explicit_exclusions, key=lambda rs: 0 if rs[1] is Source.CELEBS01 else 1)
     kept = {id(r) for r in dedupe_by_sha256([r for r, _ in dedup_order])}
-    rows = [(r, s) for r, s in rows if id(r) in kept]
+    after_deduplication = [(r, s) for r, s in after_explicit_exclusions if id(r) in kept]
+    rows = [(r, s) for r, s in after_deduplication if is_eligible(r)]
 
     dense_edge_min = _quantile([r.edge_density for r, _ in rows if r.edge_density is not None], DENSE_EDGE_QUANTILE)
     face_count_by_record: dict[str, int] = {r.sha256: face_count_of(r, face_counts)[0] for r, _ in rows}
@@ -427,6 +494,7 @@ def build_report(
         operator_review=operator_review,
         operator_domains=OPERATOR_DOMAINS,
         pool_size=len(rows),
+        filter_audit=_filter_audit(input_rows, after_explicit_exclusions, after_deduplication, rows),
     )
 
 
@@ -447,6 +515,7 @@ def _candidate_json(candidate: Candidate) -> dict:
 def report_json(report: StrataReport) -> dict:
     return {
         "pool_size": report.pool_size,
+        "filter_audit": report.filter_audit,
         "offline": {
             str(domain): {
                 "confidence": str(shortlist.confidence),

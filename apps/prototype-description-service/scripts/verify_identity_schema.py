@@ -3,14 +3,15 @@
 Verifies the load-bearing invariant, not just names: every ``TENANT_TABLES``
 member must have RLS enabled **and** forced with its ``tenant_isolation_*``
 policy present, the centroid materialized view must actually be a matview
-(``relkind='m'``), and every ``EXPECTED_SCHEMA_TABLES`` member must exist.
+(``relkind='m'``) with the expected vector typmod, and every
+``EXPECTED_SCHEMA_TABLES`` member must exist.
 
 Exit codes distinguish who can fix the gap:
 
 - ``0``  — schema verified.
 - ``1``  — heal-repairable drift (missing table / RLS off / policy missing /
-  matview absent): re-running ``python -m scripts.sync_identity_schema``
-  converges it.
+  matview absent / centroid typmod mismatch): re-running
+  ``python -m scripts.sync_identity_schema`` converges it.
 - ``2``  — operator action required (alembic revision mismatch, or the
   matview name exists as a non-matview relation): healing cannot repair
   these; see docs/runbooks/prod-identity-rls-remediation.md.
@@ -31,6 +32,7 @@ identity_schema = importlib.import_module("db.migrations.versions.001_identity_s
 EXPECTED_REVISION = identity_schema.revision
 EXPECTED_TABLES = tuple(identity_schema.EXPECTED_SCHEMA_TABLES)
 TENANT_TABLES = tuple(identity_schema.TENANT_TABLES)
+EMBEDDING_DIMENSION = identity_schema.EMBEDDING_DIMENSION
 MATVIEW_NAME = "mv_identity_cluster_centroids"
 
 EXIT_OK = 0
@@ -52,6 +54,7 @@ class SchemaStateReport(TypedDict):
     column_gaps: dict[str, list[str]]
     non_additive_column_gaps: dict[str, list[str]]
     matview_relkind: str | None
+    matview_centroid_typmod: int | None
 
 
 def _validate_schema_state(
@@ -67,6 +70,7 @@ def _validate_schema_state(
     column_gaps: Mapping[str, Iterable[str]] | None = None,
     non_additive_column_gaps: Mapping[str, Iterable[str]] | None = None,
     matview_relkind: str | None = "m",
+    matview_centroid_typmod: int | None = EMBEDDING_DIMENSION,
 ) -> SchemaStateReport:
     """Pure classification of collected schema facts.
 
@@ -126,10 +130,11 @@ def _validate_schema_state(
 
     matview_impostor = matview_relkind not in (None, "m")
     matview_missing = matview_relkind is None
+    matview_centroid_typmod_gap = matview_relkind == "m" and matview_centroid_typmod != EMBEDDING_DIMENSION
 
     if not revision_matches or matview_impostor or table_impostors or na_col_gaps:
         exit_code = EXIT_OPERATOR_REQUIRED
-    elif missing_tables or rls_gaps or policy_gaps or matview_missing or col_gaps:
+    elif missing_tables or rls_gaps or policy_gaps or matview_missing or col_gaps or matview_centroid_typmod_gap:
         exit_code = EXIT_HEAL_REPAIRABLE
     else:
         exit_code = EXIT_OK
@@ -147,6 +152,7 @@ def _validate_schema_state(
         "column_gaps": col_gaps,
         "non_additive_column_gaps": na_col_gaps,
         "matview_relkind": matview_relkind,
+        "matview_centroid_typmod": matview_centroid_typmod,
     }
 
 
@@ -243,6 +249,17 @@ def collect_and_validate(connection) -> SchemaStateReport:
         ),
         {"name": MATVIEW_NAME},
     ).scalar()
+    matview_centroid_typmod = connection.execute(
+        text(
+            "SELECT a.atttypmod FROM pg_attribute a "
+            "JOIN pg_class c ON c.oid = a.attrelid "
+            "JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname = current_schema() "
+            "AND c.relname = :name "
+            "AND a.attname = 'centroid' AND NOT a.attisdropped"
+        ),
+        {"name": MATVIEW_NAME},
+    ).scalar()
 
     column_gaps, non_additive_column_gaps = _collect_column_gaps(connection, _expected_columns())
 
@@ -255,6 +272,7 @@ def collect_and_validate(connection) -> SchemaStateReport:
         column_gaps=column_gaps,
         non_additive_column_gaps=non_additive_column_gaps,
         matview_relkind=matview_relkind,
+        matview_centroid_typmod=matview_centroid_typmod,
     )
 
 
@@ -275,7 +293,10 @@ def main() -> int:
         print(f"warning: unexpected_tables={','.join(report['unexpected_tables'])}", file=sys.stderr)
 
     if report["ok"]:
-        print(f"identity schema verified: revision={report['actual_revision']} rls_ok={len(TENANT_TABLES)} matview=m")
+        print(
+            f"identity schema verified: revision={report['actual_revision']} "
+            f"rls_ok={len(TENANT_TABLES)} matview=m centroid_typmod={report['matview_centroid_typmod']}"
+        )
         return EXIT_OK
 
     print("identity schema verification failed", file=sys.stderr)
@@ -292,6 +313,11 @@ def main() -> int:
         print(f"column_gaps: {table_name} missing {','.join(cols)}{suffix}", file=sys.stderr)
     if report["matview_relkind"] != "m":
         print(f"matview_relkind={report['matview_relkind']}", file=sys.stderr)
+    if report["matview_relkind"] == "m" and report["matview_centroid_typmod"] != EMBEDDING_DIMENSION:
+        print(
+            f"matview_centroid_typmod={report['matview_centroid_typmod']} expected={EMBEDDING_DIMENSION}",
+            file=sys.stderr,
+        )
     if report["exit_code"] == EXIT_HEAL_REPAIRABLE:
         print(
             "heal-repairable: re-run `python -m scripts.sync_identity_schema`",

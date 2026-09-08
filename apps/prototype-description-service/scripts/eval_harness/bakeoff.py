@@ -1629,7 +1629,6 @@ def main(argv: list[str] | None = None) -> None:
             eval_mode=args.eval_mode,
             instance_shape=args.instance_shape,
             depiction_lexicon=depiction_lexicon,
-            caption_length=args.caption_length,
         )
         if sampler is not None and gpu_block is None:
             gpu_block = sampler.stop()

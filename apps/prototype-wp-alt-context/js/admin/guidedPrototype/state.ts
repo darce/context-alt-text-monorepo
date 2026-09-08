@@ -637,15 +637,21 @@ export const previewGuidedDraft = (state: GuidedDemoState): GuidedDemoState => {
   );
 };
 
-export const keepGuidedCurrentAltText = (state: GuidedDemoState): GuidedDemoState =>
-  withLocalAction(
+export const keepGuidedCurrentAltText = (state: GuidedDemoState): GuidedDemoState => {
+  // KEPT means "the demo copy is unchanged". After apply, the current alt is
+  // the draft; restore the original so the outcome and the copy agree.
+  const originalAlt = state.applicationUndoStack[0]?.previousAltText ?? state.appliedAltText;
+  return withLocalAction(
     {
       ...cloneState(state),
       outcome: GUIDED_OUTCOME.KEPT,
+      appliedAltText: originalAlt,
+      applicationUndoStack: [],
     },
     'keep_current_alt_text',
     'outcome.kept',
   );
+};
 
 export const applyGuidedDraft = (state: GuidedDemoState): GuidedDemoState => {
   if (!canApply(state) || state.draftText === null) {
@@ -690,6 +696,7 @@ export const undoGuidedApplication = (state: GuidedDemoState): GuidedDemoState =
       ...cloneState(state),
       appliedAltText: restored.previousAltText,
       applicationUndoStack: stack,
+      outcome: stack.length === 0 ? GUIDED_OUTCOME.NOT_FINISHED : GUIDED_OUTCOME.APPLIED,
     },
     'undo_application',
     'apply.undone',

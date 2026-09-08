@@ -628,6 +628,26 @@ describe('undoGuidedApplication', () => {
     expect(undoGuidedApplication(undoTwice)).toBe(undoTwice);
   });
 
+  it('clears the applied outcome when undo restores the original alt text', () => {
+    const scenario = createGuidedScenario();
+    const applied = applyGuidedDraft(previewGuidedDraft(includeBoth(scenario)));
+    expect(applied.outcome).toBe(GUIDED_OUTCOME.APPLIED);
+
+    const undone = undoGuidedApplication(applied);
+    expect(undone.appliedAltText).toBe(ORIGINAL_ALT);
+    expect(undone.outcome).toBe(GUIDED_OUTCOME.NOT_FINISHED);
+  });
+
+  it('keeps outcome applied when an earlier application remains on the stack', () => {
+    const scenario = createGuidedScenario();
+    const first = applyGuidedDraft(previewGuidedDraft(includeBoth(scenario)));
+    const second = applyGuidedDraft(previewGuidedDraft(editGuidedDraft(first, 'Draft B unique.')));
+
+    const undoOnce = undoGuidedApplication(second);
+    expect(undoOnce.appliedAltText).toBe(first.appliedAltText);
+    expect(undoOnce.outcome).toBe(GUIDED_OUTCOME.APPLIED);
+  });
+
   it('does not mutate the evidence photograph alternative on the fixture', () => {
     const scenario = createGuidedScenario();
     const applied = applyGuidedDraft(previewGuidedDraft(includeBoth(scenario)));
@@ -654,6 +674,17 @@ describe('keepGuidedCurrentAltText', () => {
     expect(kept.appliedAltText).toBe(ORIGINAL_ALT);
     expect(kept.choices).toEqual(missing.choices);
     expect(kept.draftStatus).toBe(GUIDED_DRAFT_STATUS.FIXTURE_MISSING);
+  });
+
+  it('restores the original alt when keep is chosen after apply so kept means unchanged', () => {
+    const scenario = createGuidedScenario();
+    const applied = applyGuidedDraft(previewGuidedDraft(includeBoth(scenario)));
+    expect(applied.appliedAltText).not.toBe(ORIGINAL_ALT);
+
+    const kept = keepGuidedCurrentAltText(applied);
+    expect(kept.outcome).toBe(GUIDED_OUTCOME.KEPT);
+    expect(kept.appliedAltText).toBe(ORIGINAL_ALT);
+    expect(canUndo(kept)).toBe(false);
   });
 });
 

@@ -40,7 +40,7 @@ _RUN = {
 def test_card_cost_rendered_only_when_hourly_rate_given() -> None:
     # rate 7.2 $/hr x 5.0 s / 3600 = $0.01000/img — clean closed-form value.
     with_rate = _card_html(1, _ENTRY, _RUN, None, hourly_rate=7.2)
-    assert "$0.01000/img" in with_rate
+    assert "$0.01000/exposure" in with_rate
 
     # Discrimination guard: same card, no rate => the cost token must vanish,
     # while the latency it is derived from stays. If this branch also printed a
@@ -79,8 +79,8 @@ def test_main_hourly_rate_renders_per_image_cost(tmp_path: Path) -> None:
                "--media-ids", "1,2", "--out", str(out), "--hourly-rate", "7.2"])
     assert rc == 0
     doc = out.read_text()
-    assert "$0.00800/img" in doc
-    assert "$0.01200/img" in doc
+    assert "$0.00800/exposure" in doc
+    assert "$0.01200/exposure" in doc
 
     # Discrimination guard: no --hourly-rate => the per-image cost token vanishes.
     rc = main(["--manifest", str(mpath), "--run", f"M={rpath}",
@@ -96,7 +96,7 @@ def test_main_hourly_rate_zero_is_free_not_suppressed(tmp_path: Path) -> None:
     rc = main(["--manifest", str(mpath), "--run", f"M={rpath}",
                "--media-ids", "1,2", "--out", str(out), "--hourly-rate", "0"])
     assert rc == 0
-    assert "$0.00000/img" in out.read_text()
+    assert "$0.00000/exposure" in out.read_text()
 
 
 def test_main_rejects_negative_cost_args(tmp_path: Path) -> None:
@@ -113,11 +113,12 @@ def test_subtitle_cost_total_rendered_only_with_flag(tmp_path: Path) -> None:
     out = tmp_path / "report.html"
 
     rc = main(["--manifest", str(mpath), "--run", f"M={rpath}",
-               "--media-ids", "1,2", "--out", str(out), "--cost-total", "10.0"])
+               "--media-ids", "1,2", "--out", str(out), "--cost-total", "10.0",
+               "--cost-denominator", "exposure"])
     assert rc == 0
     doc = out.read_text()
     assert "total $10.00" in doc
-    assert "$5.0000/image" in doc  # 10.0 / 2 images
+    assert "$5.0000/exposure" in doc  # 10.0 / 2 model exposures
 
     # Discrimination guard: drop --cost-total, the subtitle cost fragment goes away.
     rc = main(["--manifest", str(mpath), "--run", f"M={rpath}",
@@ -235,6 +236,29 @@ def test_index_run_forwards_describe_tokens(tmp_path: Path) -> None:
     assert indexed[7]["tokens"] == _TOKENS_COMPLETE
 
 
+def test_index_run_does_not_invent_calls_or_latency(tmp_path: Path) -> None:
+    record = {
+        "items": [
+            {"media_id": 7, "describe": {"alt_text_draft": "x", "passes": []}},
+            {"media_id": 8, "describe": {"alt_text_draft": "y", "passes": [{"raw": "z"}]}},
+        ]
+    }
+    path = tmp_path / "unmeasured.json"
+    path.write_text(json.dumps(record))
+    indexed = _index_run(str(path))
+    assert indexed[7]["model_calls"] is None
+    assert indexed[7]["latency_s"] is None
+    assert indexed[8]["model_calls"] == 1
+    assert indexed[8]["latency_s"] is None
+
+
+def test_index_run_rejects_duplicate_media_ids(tmp_path: Path) -> None:
+    path = tmp_path / "duplicate.json"
+    path.write_text(json.dumps({"items": [{"media_id": 7}, {"media_id": 7}]}))
+    with pytest.raises(ValueError, match="duplicate media_id"):
+        _index_run(str(path))
+
+
 # ---------------------------------------------------------------------------
 # BR-01 — sampling frame + cost denominator admit attempted failures
 # ---------------------------------------------------------------------------
@@ -320,15 +344,56 @@ def test_cost_denominator_is_attempted_corpus_including_errors(tmp_path: Path) -
             "1,2",
             "--out",
             str(out),
-            "--cost-total",
-            "9.0",
+                "--cost-total",
+                "9.0",
+                "--cost-denominator",
+                "exposure",
         ]
     )
     assert rc == 0
     doc = out.read_text()
     assert "total $9.00" in doc
-    assert "$3.0000/image" in doc
-    assert "$4.5000/image" not in doc
+    assert "$3.0000/exposure" in doc
+    assert "$4.5000/exposure" not in doc
+
+
+def test_cost_exposure_denominator_counts_each_run_exposure(tmp_path: Path) -> None:
+    mpath, rpath = _write_fixtures(tmp_path)
+    second = tmp_path / "second.json"
+    second.write_text(
+        json.dumps({
+            "items": [
+                {"media_id": 1, "describe": {"passes": [{"latency_s": 2.0}]}},
+                {"media_id": 2, "describe": {"passes": [{"latency_s": 3.0}]}},
+            ]
+        })
+    )
+    out = tmp_path / "report.html"
+    rc = main([
+        "--manifest", str(mpath), "--run", f"A={rpath}", "--run", f"B={second}",
+        "--media-ids", "1,2", "--out", str(out), "--cost-total", "10.0",
+        "--cost-denominator", "exposure",
+    ])
+    assert rc == 0
+    doc = out.read_text()
+    assert "$2.5000/exposure" in doc  # 10 / (2 exposures per run × 2 runs)
+    assert "$5.0000/exposure" not in doc
+
+
+def test_cost_call_denominator_refuses_unknown_calls(tmp_path: Path) -> None:
+    mpath, rpath = _write_fixtures(tmp_path)
+    rpath.write_text(json.dumps({
+        "items": [
+            {"media_id": 1, "describe": {"alt_text_draft": "a"}},
+            {"media_id": 2, "describe": {"alt_text_draft": "b"}},
+        ]
+    }))
+    out = tmp_path / "report.html"
+    with pytest.raises(SystemExit):
+        main([
+            "--manifest", str(mpath), "--run", f"M={rpath}", "--media-ids", "1,2",
+            "--out", str(out), "--cost-total", "10.0", "--cost-denominator", "call",
+        ])
 
 
 def test_auto_pick_renders_failure_card_for_errored_item(tmp_path: Path) -> None:
@@ -340,6 +405,148 @@ def test_auto_pick_renders_failure_card_for_errored_item(tmp_path: Path) -> None
     assert 'class="err"' in doc
     assert "RemoteClientError: timeout" in doc
     assert ">#3<" in doc or "#3" in doc
+
+
+def _write_gate_record(path: Path, *, n: int = 100) -> None:
+    path.write_text(json.dumps({
+        "items": [
+            {
+                "media_id": media_id,
+                "describe": {"alt_text_draft": f"d{media_id}", "passes": [{"latency_s": 1.0}]},
+                "error": None,
+            }
+            for media_id in range(1, n + 1)
+        ],
+        "timing": {"loop": "closed_serial"},
+        "gpu": {"sampling": "enabled"},
+    }))
+
+
+def _write_gate_manifest(path: Path, *, n: int = 100) -> None:
+    path.write_text(json.dumps({
+        "entries": [
+            {"media_id": media_id, "path": f"image-{media_id}.jpg", "present_identities": []}
+            for media_id in range(1, n + 1)
+        ]
+    }))
+
+
+def test_bakeoff_gate_passes_only_with_roster_baselines_and_observability(tmp_path: Path) -> None:
+    manifest = tmp_path / "golden-100.json"
+    _write_gate_manifest(manifest)
+    candidate = tmp_path / "candidate.json"
+    incumbent = tmp_path / "incumbent.json"
+    _write_gate_record(candidate)
+    _write_gate_record(incumbent)
+    baselines = {}
+    for label in ("zero_rule_context_echo", "context_only_heuristic", "current_production", "blinded_human"):
+        path = tmp_path / f"{label}.json"
+        _write_gate_record(path)
+        baselines[label] = path
+    score = tmp_path / "candidate.score.ok"
+    score.touch()
+    out = tmp_path / "gate.html"
+    argv = [
+        "--manifest", str(manifest), "--out", str(out), "--bakeoff-gate",
+        "--expected-candidate", "candidate", "--expected-incumbent", "incumbent",
+        "--run", f"candidate={candidate}", "--run", f"incumbent={incumbent}",
+        "--score-ok", f"candidate={score}", "--media-ids", "1",
+    ]
+    for label, path in baselines.items():
+        argv.extend(["--baseline-run", f"{label}={path}"])
+    assert main(argv) == 0
+    doc = out.read_text()
+    assert "bakeoff-gate: pass" in doc
+    assert "readiness: data=pass model=pass infra=pass monitoring=pass" in doc
+
+
+def test_bakeoff_gate_rejects_incomplete_media_id_multiset(tmp_path: Path) -> None:
+    manifest = tmp_path / "golden-100.json"
+    _write_gate_manifest(manifest)
+    candidate = tmp_path / "candidate.json"
+    incumbent = tmp_path / "incumbent.json"
+    _write_gate_record(candidate, n=99)
+    _write_gate_record(incumbent)
+    baselines = {}
+    for label in ("zero_rule_context_echo", "context_only_heuristic", "current_production", "blinded_human"):
+        path = tmp_path / f"{label}.json"
+        _write_gate_record(path)
+        baselines[label] = path
+    score = tmp_path / "candidate.score.ok"
+    score.touch()
+    out = tmp_path / "gate.html"
+    argv = [
+        "--manifest", str(manifest), "--out", str(out), "--bakeoff-gate",
+        "--expected-candidate", "candidate", "--expected-incumbent", "incumbent",
+        "--run", f"candidate={candidate}", "--run", f"incumbent={incumbent}",
+        "--score-ok", f"candidate={score}", "--media-ids", "1",
+    ]
+    for label, path in baselines.items():
+        argv.extend(["--baseline-run", f"{label}={path}"])
+    assert main(argv) != 0
+    doc = out.read_text()
+    assert "bakeoff-gate: not_ready" in doc
+    assert "incomplete media-id multiset" in doc
+    assert "candidate" in doc and "missing 100" in doc
+
+
+def test_bakeoff_gate_rejects_consented_foreign_required_record(tmp_path: Path) -> None:
+    manifest = tmp_path / "golden-100.json"
+    _write_gate_manifest(manifest)
+    candidate = tmp_path / "candidate.json"
+    incumbent = tmp_path / "incumbent.json"
+    _write_gate_record(candidate)
+    _write_gate_record(incumbent)
+    baselines = {}
+    for label in ("zero_rule_context_echo", "context_only_heuristic", "current_production", "blinded_human"):
+        path = tmp_path / f"{label}.json"
+        _write_gate_record(path)
+        baselines[label] = path
+    candidate_payload = json.loads(candidate.read_text())
+    candidate_payload["provenance"] = {"manifest_sha256": "foreign"}
+    candidate.write_text(json.dumps(candidate_payload))
+    for path in (incumbent, *baselines.values()):
+        payload = json.loads(path.read_text())
+        payload["provenance"] = {"manifest_sha256": "native"}
+        path.write_text(json.dumps(payload))
+    score = tmp_path / "candidate.score.ok"
+    score.touch()
+    out = tmp_path / "gate.html"
+    argv = [
+        "--manifest", str(manifest), "--out", str(out), "--bakeoff-gate",
+        "--allow-foreign-run", "candidate",
+        "--expected-candidate", "candidate", "--expected-incumbent", "incumbent",
+        "--run", f"candidate={candidate}", "--run", f"incumbent={incumbent}",
+        "--score-ok", f"candidate={score}", "--media-ids", "1",
+    ]
+    for label, path in baselines.items():
+        argv.extend(["--baseline-run", f"{label}={path}"])
+    assert main(argv) != 0
+    doc = out.read_text()
+    assert "bakeoff-gate: not_ready" in doc
+    assert "foreign run records cannot satisfy bakeoff gate" in doc
+
+
+def test_bakeoff_gate_is_not_ready_for_a_serving_skip_or_missing_baselines(tmp_path: Path) -> None:
+    manifest = tmp_path / "golden-100.json"
+    _write_gate_manifest(manifest)
+    failure = tmp_path / "skip.json"
+    failure.write_text(json.dumps({
+        "schema": "acx-eval/v1", "kind": "serving-gate-failed", "status": "serving-gate-failed",
+        "candidate_id": "candidate", "model_id": "m", "stack": "vllm",
+        "reason": "stack not supported", "evidence": {"planner": "test"},
+    }))
+    out = tmp_path / "gate.html"
+    rc = main([
+        "--manifest", str(manifest), "--out", str(out), "--bakeoff-gate",
+        "--expected-candidate", "candidate", "--expected-incumbent", "incumbent",
+        "--serving-gate-failed", f"candidate={failure}", "--media-ids", "1",
+    ])
+    assert rc != 0
+    doc = out.read_text()
+    assert "bakeoff-gate: not_ready" in doc
+    assert "serving-gate-failed records" in doc
+    assert "missing required baseline arms" in doc
 
 
 # --- VLM6-CTRL: manifest-comparability gate -------------------------------
@@ -415,14 +622,18 @@ def test_matching_manifest_sha_renders_unbadged(tmp_path: Path) -> None:
     assert "manifest identity: structural + manifest digest" in doc
 
 
-def test_fusion_runner_digest_recipe_is_accepted(tmp_path: Path) -> None:
-    """fusion_runner stamps a field-subset digest; it is native, not foreign."""
-    from scripts.eval_harness.build_bakeoff_report import _fusion_manifest_sha, _manifest_sha
+def test_noncanonical_fusion_digest_is_refused(tmp_path: Path) -> None:
+    """Fusion records must use the same canonical manifest identity recipe."""
+    from scripts.eval_harness.build_bakeoff_report import _manifest_sha
 
-    fusion_sha = _fusion_manifest_sha(_load_v3())
-    assert fusion_sha != _manifest_sha(_load_v3())  # the recipes really do differ
-    rec = _run_record(tmp_path, "fusion.json", _v3_media_ids(), fusion_sha)
+    manifest = _load_v3()
+    canonical = _manifest_sha(manifest)
+    rec = _run_record(tmp_path, "fusion.json", _v3_media_ids(), "f" * 64)
     rc, out = _build(tmp_path, [f"Fusion={rec}"])
+    assert rc == _NOT_COMPARABLE
+    assert not out.exists()
+    canonical_rec = _run_record(tmp_path, "fusion-canonical.json", _v3_media_ids(), canonical)
+    rc, out = _build(tmp_path, [f"Fusion={canonical_rec}"])
     assert rc == 0
     assert "NOT COMPARABLE" not in out.read_text()
 

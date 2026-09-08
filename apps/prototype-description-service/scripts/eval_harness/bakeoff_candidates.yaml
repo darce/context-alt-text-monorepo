@@ -9,6 +9,12 @@
 # fields (prompt_template, reasoning_tuned, min_runtime_build,
 # min_runtime_build_is_lower_bound) so the quality / speed / token-usage
 # delta is attributable to the generation, not the recipe.
+# The generated report requires four interpretable reference arms:
+# zero_rule_context_echo, context_only_heuristic, current_production, and
+# blinded_human. Their records are operator-supplied through
+# ``--baseline-run LABEL=PATH``; this registry never fabricates empirical data.
+# A missing arm, or an unavailable Golden-100 corpus, leaves the report
+# ``bakeoff-gate: not_ready`` and the runner exits non-zero.
 schema: acx-bakeoff-candidates/v1
 task_ref: VLM-6
 hardware_target:

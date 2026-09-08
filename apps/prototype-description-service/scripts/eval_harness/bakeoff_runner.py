@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shlex
 import sys
 from collections.abc import Mapping, Sequence
@@ -28,12 +29,19 @@ if TYPE_CHECKING:
     from scripts.eval_harness.prepull_weights import SkipReason
 
 DEFAULT_ENDPOINT = "http://localhost:8000"
-DEFAULT_MANIFEST = "scripts/eval_harness/corpus646-interleave-manifest-20260716.json"
+# A copy-paste invocation must land on the shared Golden corpus.  The 646-image
+# interleave is a separate, explicitly selected workload; using it here made a
+# metered burst look valid while producing numbers that could not be compared to
+# the S0/S2A anchors.
+DEFAULT_MANIFEST = "scene/tests/seed/golden.json"
 DEFAULT_OUT_DIR = "out"
 DEFAULT_MODELS_DIR = "/opt/models"
 MMPROJ_ESTIMATE_GB = 1.0
-REPORT_LIMIT = 646
-READY_TIMEOUT_S = 600
+# The shipped shared seed has 37 entries.  This is only the report auto-pick
+# ceiling; bakeoff.py still runs every entry in an explicitly supplied manifest.
+REPORT_LIMIT = 37
+# Serving gate in the VLM-6 plan is one hour per candidate, not ten minutes.
+READY_TIMEOUT_S = 3600
 READY_SLEEP_S = 1
 # Wall-clock ceiling (rg-007). Attempt-count is not a bound: each failed
 # poll also spends curl --max-time.
@@ -52,6 +60,13 @@ WARMUP_REQUESTS = 1
 SKIP_REASON_STACK = "stack not supported"
 SKIP_REASON_VRAM = "vram budget"
 SKIP_REASON_NOT_COMPETING = "not competing"
+SERVING_GATE_FAILURE_KIND = "serving-gate-failed"
+_REQUIRED_BASELINE_LABELS = (
+    "zero_rule_context_echo",
+    "context_only_heuristic",
+    "current_production",
+    "blinded_human",
+)
 
 
 class UnsupportedStackError(Exception):
@@ -74,8 +89,30 @@ class UnknownIncumbentError(Exception):
     """``--incumbent-run`` named an id that is not a registry incumbent."""
 
 
+class UnknownBaselineError(Exception):
+    """``--baseline-run`` used an unknown or repeated required arm."""
+
+
 class SkipNotesInconsistentError(Exception):
     """An unplanned entry has no skip reason; planner and notes disagree."""
+
+
+@dataclass(frozen=True)
+class ServingGateFailure:
+    """A competing candidate that the frozen planner could not serve.
+
+    The planner deliberately does not invent vLLM or Transformers command lines.
+    It therefore emits a durable, machine-readable failure record for every
+    skipped competing row so the GPU window and its report retain the roster
+    denominator.
+    """
+
+    candidate_id: str
+    model_id: str
+    stack: str
+    reason: str
+    evidence: Mapping[str, Any]
+    out_path: str
 
 
 @dataclass(frozen=True)
@@ -145,6 +182,53 @@ def build_plans(
     return plans
 
 
+def build_serving_gate_failures(
+    registry: BakeoffCandidateRegistry,
+    plans: Sequence[CandidatePlan],
+    *,
+    out_dir: str,
+    only: Sequence[str] | None = None,
+) -> tuple[ServingGateFailure, ...]:
+    """Describe every selected competing row that the planner cannot serve.
+
+    ``build_plans`` intentionally emits only the llama.cpp recipe today.  A
+    skipped vLLM/Transformers row must still be represented in the GPU-window
+    denominator; otherwise a report can look complete while silently omitting
+    part of the sealed roster.  This helper produces records for the selected
+    competing rows only.  With ``--only`` an unselected row is outside the
+    requested window and is therefore not a serving failure.
+    """
+    planned = {plan.candidate_id for plan in plans}
+    budget_gb = float(registry.hardware_target.usable_vram_budget_gb)
+    failures: list[ServingGateFailure] = []
+    for entry in _select_competing(registry, only):
+        reason = _skip_reason(entry, planned, budget_gb)
+        if reason is None:
+            continue
+        reason_text = getattr(reason, "value", str(reason))
+        total_gb = _entry_total_gb(entry)
+        evidence = {
+            "planner": "bakeoff_runner",
+            "planner_capability": "llama_cpp only",
+            "stack": entry.recipe.stack.value,
+            "usable_vram_budget_gb": budget_gb,
+            "declared_artifact_gb": float(entry.artifact_gb),
+            "declared_mmproj_gb": _mmproj_gb(entry),
+            "declared_total_gb": total_gb,
+        }
+        failures.append(
+            ServingGateFailure(
+                candidate_id=entry.id,
+                model_id=entry.model_id,
+                stack=entry.recipe.stack.value,
+                reason=reason_text,
+                evidence=evidence,
+                out_path=_serving_gate_out_path(out_dir, entry.id),
+            )
+        )
+    return tuple(failures)
+
+
 def _emit_ready_poll_lines(models_url: str) -> list[str]:
     """Bounded /v1/models poll; stamp ``_cold`` on first success (rg-015)."""
     return [
@@ -171,6 +255,7 @@ def _emit_ready_run_lines(plan: CandidatePlan) -> list[str]:
     """Lines for a ready candidate: bakeoff fetch, caption score, VRAM sanity."""
     run_base = shlex.join(plan.run_argv)
     score_base = shlex.join(_score_argv(plan))
+    score_ok_path = shlex.quote(_score_ok_path(plan))
     return [
         "  # warm-up: bakeoff --warmup runs inside the run argv; this shell does not send extra requests",
         "  _cold_flag=()",
@@ -183,6 +268,8 @@ def _emit_ready_run_lines(plan: CandidatePlan) -> list[str]:
         f"  elif ! {score_base}; then",
         f'    echo "candidate {plan.candidate_id} score FAILED" >&2',
         "    _fail=$((_fail + 1))",
+        "  else",
+        f"    : > {score_ok_path}",
         "  fi",
         "  if command -v nvidia-smi >/dev/null 2>&1; then",
         '    echo "$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits)" >&2',
@@ -194,6 +281,12 @@ def emit_shell(
     plans: Sequence[CandidatePlan],
     *,
     incumbent_runs: Mapping[str, str],
+    serving_gate_failures: Sequence[ServingGateFailure] = (),
+    baseline_runs: Mapping[str, str] | None = None,
+    expected_candidates: Sequence[str] | None = None,
+    expected_incumbents: Sequence[str] | None = None,
+    bakeoff_gate: bool = False,
+    required_baselines: Sequence[str] = _REQUIRED_BASELINE_LABELS,
     ready_timeout_s: int = READY_TIMEOUT_S,
 ) -> str:
     """Return a ``set -euo pipefail`` bash script for the planned bake-off.
@@ -203,6 +296,14 @@ def emit_shell(
     ``build_bakeoff_report`` invocation covering existing candidate and
     incumbent run-record paths.
     """
+    baseline_runs = baseline_runs or {}
+    serving_gate_failures = tuple(serving_gate_failures)
+    if expected_candidates is None:
+        expected_candidates = tuple(plan.candidate_id for plan in plans) + tuple(
+            failure.candidate_id for failure in serving_gate_failures
+        )
+    if expected_incumbents is None:
+        expected_incumbents = tuple(sorted(incumbent_runs))
     lines = [
         "#!/usr/bin/env bash",
         "set -euo pipefail",
@@ -214,8 +315,25 @@ def emit_shell(
         f"READY_TIMEOUT_S={ready_timeout_s}",
         "_fail=0",
         "_total=0",
+        "_serving_gate_failures=()",
         "",
     ]
+    for failure in serving_gate_failures:
+        record = json.dumps(_serving_gate_record(failure), sort_keys=True)
+        path = shlex.quote(failure.out_path)
+        parent = failure.out_path.rsplit("/", 1)[0] or "."
+        spec = shlex.quote(f"{failure.candidate_id}={failure.out_path}")
+        lines.extend(
+            [
+                f"mkdir -p {shlex.quote(parent)}",
+                f"printf '%s\\n' {shlex.quote(record)} > {path}",
+                "_total=$((_total + 1))",
+                "_fail=$((_fail + 1))",
+                f"_serving_gate_failures+=(--serving-gate-failed {spec})",
+                f'echo "candidate {failure.candidate_id} serving-gate-failed ({failure.reason}); record: {failure.out_path}" >&2',
+                "",
+            ]
+        )
     for plan in plans:
         local_dir = f"{plan.models_dir.rstrip('/')}/{plan.candidate_id}"
         gguf = _argv_flag(plan.serve_argv, "--model").rsplit("/", 1)[-1]
@@ -228,6 +346,12 @@ def emit_shell(
         models_url = f"{endpoint.rstrip('/')}/v1/models"
         lines.append(f"# candidate: {plan.candidate_id}")
         lines.append(f"# download: {hint}")
+        # A rerun must not inherit a prior run record or score marker.  The
+        # report gate treats both as evidence, so stale files would let a
+        # failed leg masquerade as a successful current measurement.
+        lines.append(
+            f"rm -f {shlex.quote(plan.out_path)} {shlex.quote(_score_ok_path(plan))}"
+        )
         lines.append("_total=$((_total + 1))")
         lines.append("for _candidate_once in 1; do")
         lines.extend(_emit_runtime_build_preflight(plan))
@@ -247,7 +371,18 @@ def emit_shell(
         lines.append("done")
         lines.append("")
 
-    lines.extend(_emit_report_lines(plans, incumbent_runs))
+    lines.extend(
+        _emit_report_lines(
+            plans,
+            incumbent_runs,
+            serving_gate_failures=serving_gate_failures,
+            baseline_runs=baseline_runs,
+            expected_candidates=expected_candidates,
+            expected_incumbents=expected_incumbents,
+            required_baselines=required_baselines,
+            bakeoff_gate=bakeoff_gate,
+        )
+    )
     lines.append('if [ "${_total}" -gt 0 ] && [ "${_fail}" -eq "${_total}" ]; then')
     lines.append('  echo "all ${_total} candidates failed" >&2')
     lines.append("  exit 1")
@@ -282,6 +417,13 @@ def main(argv: list[str] | None = None) -> int:
         metavar="ID=PATH",
         help="repeatable; incumbent registry id = existing run-record path",
     )
+    parser.add_argument(
+        "--baseline-run",
+        action="append",
+        default=None,
+        metavar="LABEL=PATH",
+        help="repeatable; required baseline arm label = existing run-record path",
+    )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
@@ -297,12 +439,14 @@ def main(argv: list[str] | None = None) -> int:
             models_dir=args.models_dir,
             only=only,
         )
+        baseline_runs = _parse_baseline_runs(args.baseline_run)
     except (
         UnsupportedStackError,
         VramBudgetError,
         UnknownCandidateError,
         NotCompetingError,
         UnknownIncumbentError,
+        UnknownBaselineError,
     ) as exc:
         print(str(exc), file=sys.stderr)
         return 2
@@ -311,8 +455,32 @@ def main(argv: list[str] | None = None) -> int:
         _emit_skip_notes(registry, plans)
 
     if args.emit_shell:
+        expected_candidates = tuple(
+            entry.id
+            for entry in registry.entries
+            if entry.competing and (only is None or entry.id in set(only))
+        )
+        expected_incumbents = tuple(
+            entry.id for entry in registry.entries if entry.role is CandidateRole.INCUMBENT
+        )
+        serving_gate_failures = build_serving_gate_failures(
+            registry,
+            plans,
+            out_dir=args.out_dir,
+            only=only,
+        )
         with open(args.emit_shell, "w", encoding="utf-8") as handle:
-            handle.write(emit_shell(plans, incumbent_runs=incumbent_runs))
+            handle.write(
+                emit_shell(
+                    plans,
+                    incumbent_runs=incumbent_runs,
+                    serving_gate_failures=serving_gate_failures,
+                    baseline_runs=baseline_runs,
+                    expected_candidates=expected_candidates,
+                    expected_incumbents=expected_incumbents,
+                    bakeoff_gate=True,
+                )
+            )
 
     if args.json:
         print(json.dumps([_plan_json(plan) for plan in plans], indent=2))
@@ -484,6 +652,31 @@ def _run_out_path(out_dir: str, candidate_id: str) -> str:
     return f"{out_dir.rstrip('/')}/run-bakeoff-{candidate_id}.json"
 
 
+def _safe_path_slug(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("._") or "candidate"
+
+
+def _serving_gate_out_path(out_dir: str, candidate_id: str) -> str:
+    return f"{out_dir.rstrip('/')}/serving-gate-failed-{_safe_path_slug(candidate_id)}.json"
+
+
+def _score_ok_path(plan: CandidatePlan) -> str:
+    return f"{plan.out_path}.score.ok"
+
+
+def _serving_gate_record(failure: ServingGateFailure) -> dict[str, Any]:
+    return {
+        "schema": "acx-eval/v1",
+        "kind": SERVING_GATE_FAILURE_KIND,
+        "status": SERVING_GATE_FAILURE_KIND,
+        "candidate_id": failure.candidate_id,
+        "model_id": failure.model_id,
+        "stack": failure.stack,
+        "reason": failure.reason,
+        "evidence": dict(failure.evidence),
+    }
+
+
 def _score_argv(plan: CandidatePlan) -> tuple[str, ...]:
     manifest = _argv_flag(plan.run_argv, "--manifest")
     return (
@@ -528,13 +721,20 @@ def _endpoint_bind(endpoint: str) -> tuple[str, str]:
     return host, str(port)
 
 
-def _report_base_argv(plans: Sequence[CandidatePlan]) -> list[str]:
+def _report_base_argv(
+    plans: Sequence[CandidatePlan],
+    *,
+    bakeoff_gate: bool = False,
+    expected_candidates: Sequence[str] = (),
+    expected_incumbents: Sequence[str] = (),
+    required_baselines: Sequence[str] = _REQUIRED_BASELINE_LABELS,
+) -> list[str]:
     manifest = DEFAULT_MANIFEST
     out_dir = DEFAULT_OUT_DIR
     if plans:
         manifest = _argv_flag(plans[0].run_argv, "--manifest")
         out_dir = plans[0].out_path.rsplit("/", 1)[0] or DEFAULT_OUT_DIR
-    return [
+    argv = [
         PYTHON_EXE,
         "-m",
         _REPORT_MODULE,
@@ -545,25 +745,71 @@ def _report_base_argv(plans: Sequence[CandidatePlan]) -> list[str]:
         "--limit",
         str(REPORT_LIMIT),
     ]
+    if bakeoff_gate:
+        argv.append("--bakeoff-gate")
+        for candidate_id in expected_candidates:
+            argv.extend(["--expected-candidate", candidate_id])
+        for incumbent_id in expected_incumbents:
+            argv.extend(["--expected-incumbent", incumbent_id])
+        for label in required_baselines:
+            argv.extend(["--required-baseline", label])
+    return argv
 
 
 def _report_argv(
     plans: Sequence[CandidatePlan],
     incumbent_runs: Mapping[str, str],
+    *,
+    serving_gate_failures: Sequence[ServingGateFailure] = (),
+    baseline_runs: Mapping[str, str] | None = None,
+    expected_candidates: Sequence[str] = (),
+    expected_incumbents: Sequence[str] = (),
+    required_baselines: Sequence[str] = _REQUIRED_BASELINE_LABELS,
+    score_ok: Mapping[str, str] | None = None,
+    bakeoff_gate: bool = False,
 ) -> list[str]:
-    argv = _report_base_argv(plans)
+    baseline_runs = baseline_runs or {}
+    score_ok = score_ok or {}
+    argv = _report_base_argv(
+        plans,
+        bakeoff_gate=bakeoff_gate,
+        expected_candidates=expected_candidates,
+        expected_incumbents=expected_incumbents,
+        required_baselines=required_baselines,
+    )
     for plan in plans:
         argv.extend(["--run", f"{plan.candidate_id}={plan.out_path}"])
     for incumbent_id, run_path in sorted(incumbent_runs.items()):
         argv.extend(["--run", f"{incumbent_id}={run_path}"])
+    for label, run_path in sorted(baseline_runs.items()):
+        argv.extend(["--baseline-run", f"{label}={run_path}"])
+    for failure in serving_gate_failures:
+        argv.extend(["--serving-gate-failed", f"{failure.candidate_id}={failure.out_path}"])
+    for candidate_id, marker_path in sorted(score_ok.items()):
+        argv.extend(["--score-ok", f"{candidate_id}={marker_path}"])
     return argv
 
 
 def _emit_report_lines(
     plans: Sequence[CandidatePlan],
     incumbent_runs: Mapping[str, str],
+    *,
+    serving_gate_failures: Sequence[ServingGateFailure] = (),
+    baseline_runs: Mapping[str, str] | None = None,
+    expected_candidates: Sequence[str] | None = None,
+    expected_incumbents: Sequence[str] | None = None,
+    required_baselines: Sequence[str] = _REQUIRED_BASELINE_LABELS,
+    bakeoff_gate: bool = False,
 ) -> list[str]:
-    lines = ["_runs=()"]
+    baseline_runs = baseline_runs or {}
+    serving_gate_failures = tuple(serving_gate_failures)
+    if expected_candidates is None:
+        expected_candidates = tuple(plan.candidate_id for plan in plans) + tuple(
+            failure.candidate_id for failure in serving_gate_failures
+        )
+    if expected_incumbents is None:
+        expected_incumbents = tuple(sorted(incumbent_runs))
+    lines = ["_runs=()", "_baseline_runs=()", "_serving_gate_failures=()", "_score_ok=()"]
     for plan in plans:
         quoted = shlex.quote(plan.out_path)
         run_spec = shlex.quote(f"{plan.candidate_id}={plan.out_path}")
@@ -578,11 +824,42 @@ def _emit_report_lines(
         lines.append("else")
         lines.append(f'  echo "WARN: missing incumbent run-record ({run_path})" >&2')
         lines.append("fi")
-    base = shlex.join(_report_base_argv(plans))
-    lines.append('if [ "${#_runs[@]}" -gt 0 ]; then')
-    lines.append(f'  {base} "${{_runs[@]}}"')
-    lines.append("else")
-    lines.append('  echo "WARN: no run-records to report" >&2')
+    for label, run_path in sorted(baseline_runs.items()):
+        quoted = shlex.quote(run_path)
+        spec = shlex.quote(f"{label}={run_path}")
+        lines.append(f"if [ -f {quoted} ]; then")
+        lines.append(f"  _baseline_runs+=(--baseline-run {spec})")
+        lines.append("else")
+        lines.append(f'  echo "WARN: missing baseline run-record ({run_path})" >&2')
+        lines.append("fi")
+    for failure in serving_gate_failures:
+        spec = shlex.quote(f"{failure.candidate_id}={failure.out_path}")
+        lines.append(f"_serving_gate_failures+=(--serving-gate-failed {spec})")
+    for plan in plans:
+        marker = _score_ok_path(plan)
+        spec = shlex.quote(f"{plan.candidate_id}={marker}")
+        lines.append(f"if [ -f {shlex.quote(marker)} ]; then")
+        lines.append(f"  _score_ok+=(--score-ok {spec})")
+        lines.append("fi")
+    base = shlex.join(
+        _report_base_argv(
+            plans,
+            bakeoff_gate=bakeoff_gate,
+            expected_candidates=expected_candidates,
+            expected_incumbents=expected_incumbents,
+            required_baselines=required_baselines,
+        )
+    )
+    # Bash 3 treats an explicitly empty array as unset under ``set -u``.
+    # The ``[@]+`` form expands to no arguments while remaining nounset-safe.
+    lines.append(
+        f'if ! {base} ${{_runs[@]+"${{_runs[@]}}"}} '
+        f'${{_baseline_runs[@]+"${{_baseline_runs[@]}}"}} '
+        f'${{_serving_gate_failures[@]+"${{_serving_gate_failures[@]}}"}} '
+        f'${{_score_ok[@]+"${{_score_ok[@]}}"}}; then'
+    )
+    lines.append('  echo "bake-off report/gate FAILED" >&2')
+    lines.append("  exit 1")
     lines.append("fi")
     return lines
 
@@ -612,6 +889,27 @@ def _parse_incumbent_runs(
                 f"--incumbent-run id {incumbent_id!r} is not a registry incumbent; incumbent ids: {known}"
             )
         parsed[incumbent_id] = run_path
+    return parsed
+
+
+def _parse_baseline_runs(specs: Sequence[str] | None) -> dict[str, str]:
+    if not specs:
+        return {}
+    parsed: dict[str, str] = {}
+    for spec in specs:
+        if "=" not in spec:
+            raise UnknownBaselineError(f"--baseline-run must be LABEL=PATH, got {spec!r}")
+        label, run_path = spec.split("=", 1)
+        if label not in _REQUIRED_BASELINE_LABELS:
+            known = ", ".join(_REQUIRED_BASELINE_LABELS)
+            raise UnknownBaselineError(
+                f"--baseline-run label {label!r} is not a required baseline arm; labels: {known}"
+            )
+        if not run_path:
+            raise UnknownBaselineError(f"--baseline-run path is empty for {label!r}")
+        if label in parsed:
+            raise UnknownBaselineError(f"duplicate --baseline-run label {label!r}")
+        parsed[label] = run_path
     return parsed
 
 

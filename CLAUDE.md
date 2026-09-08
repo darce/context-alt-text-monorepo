@@ -168,6 +168,16 @@ See the installed `workbay-handoff-mcp` package documentation for the full set o
 - If a write is blocked with `handoff provenance drift`, switch to the task's `target_worktree_path` and retry there. For Bash Python-API fallback writes, the command must begin with `cd <target_worktree_path> &&` and include `task_ref='<task-ref>'` so the guard can validate the target worktree.
 - Full handoff protocol: [docs/workbay/instructions.md](docs/workbay/instructions.md#mcp-handoff-contract-mandatory).
 
+### Codemap-First Code Search
+
+> **Symbol lookups in `apps/` and `packages/` go through the codemap index, not grep.**
+
+`codebase-memory-mcp` holds the symbol graph for this repo's code roots. Use `search_graph` (find a symbol), `get_code_snippet` (exact source by qualified name), `trace_path` (call chains), `search_code` (graph-augmented text). A `PreToolUse` hook (`scripts/guard_codemap_first.py`, wired into `.claude/settings.json` and `.codex/hooks.json`) blocks `Grep`/`rg`/`grep` only when the pattern is a bare identifier or a `def`/`class`/`function` definition hunt *and* the scope lands in `apps/` or `packages/`.
+
+Not indexed, so grep stays correct there: `docs/`, `scripts/`, `benchmarks/`, `Makefile.d/`, `config/`. Free-text and regex patterns, single-file reads, piped `grep`, and non-code glob/type filters are never blocked. The guard fails open when the codemap CLI is absent.
+
+Escapes: prefix the command with `CODEMAP_OK=1` when raw text search is genuinely what you need (regex sweep, string literal, comment archaeology); `CODEMAP_FIRST_DISABLE=1` in the environment is the repo-wide kill switch.
+
 ### Git Commit Rules
 
 - **NEVER add `Co-Authored-By` trailers or any AI/model attribution to git commit messages.** This is a mandatory, permanent rule. Violations require history rewrite.

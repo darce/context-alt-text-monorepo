@@ -556,7 +556,7 @@ The wrapper supports two build modes:
 
 | Mode | Trigger | When to use |
 |---|---|---|
-| **Remote build** (default) | `make deploy-dev` | Build runs on the OCI VM via SSH+rsync. Native arm64 (no cross-compile). No local docker required. |
+| **Remote build** (default) | `make deploy-dev` | Build runs in the stable, resource-limited `acx-deploy-builder-v1` Docker-container builder via SSH+rsync. Native arm64; no local docker required. |
 | **Local build** (explicit opt-out) | `make deploy-dev REMOTE_BUILD=0` | Fast iteration on a workstation with a healthy local docker daemon. Mac users need colima or Docker Desktop. |
 
 ```bash
@@ -589,6 +589,21 @@ ACX_ALLOW_DIRTY=1 make deploy-dev      # allow dirty tree (dev only)
 ACX_REMOTE_BUILD_DIR=/var/tmp/acx-build make deploy-dev REMOTE_BUILD=1
 ```
 
+Remote builds use one stable builder and do not create a new BuildKit container
+per deployment. The builder has one explicit node on the local Docker Engine
+endpoint (`unix:///var/run/docker.sock`) with these Docker container limits:
+6 GiB memory, 6 GiB memory+swap, and a 100000-period / 200000-quota CPU
+budget (two CPUs). A shared `/tmp/acx-build.lock` serializes builder setup,
+bootstrap, cache pruning, and the build; each rsync context still uses a unique
+generation directory.
+
+Before reuse, the deploy verifies the builder's `docker-container` driver,
+node, endpoint, and the generated `buildx_buildkit_<node>` container's actual
+Docker HostConfig limits. Missing Buildx/inspection capability or any mismatch
+fails closed; the deploy does not fall back to the unbounded default Docker
+driver. Remote build setup, bootstrap, prune, and build share the configured
+`ACX_REMOTE_BUILD_TIMEOUT` wall-clock budget.
+
 **Remote-build prerequisites:**
 
 - VM has docker installed and the `ubuntu` user is in the `docker` group
@@ -609,12 +624,14 @@ ACX_REMOTE_BUILD_DIR=/var/tmp/acx-build make deploy-dev REMOTE_BUILD=1
 
 **Remote-build trade-offs:**
 
-- Build consumes VM CPU (3-5 min on Always Free A1 4-core). If `acx-prod` is
-  serving traffic on the same VM, expect a momentary CPU spike.
+- The BuildKit worker is capped at two CPUs and 6 GiB memory, so serving
+  containers retain scheduling and memory headroom. Builds can still consume
+  disk and I/O on the shared VM.
 - First build on the VM is slow (no warm cache); subsequent builds reuse the
   BuildKit on-disk cache.
-- VM disk fills with build cache over time; run
-  `ssh ubuntu@<vm> 'docker buildx prune -f'` periodically.
+- The wrapper prunes only unused entries older than 72 hours from the isolated
+  builder cache. Do not manually switch the global Docker builder: a missing
+  or mismatched named builder fails closed.
 
 #### acx_blobs ownership migration (non-root runtime)
 

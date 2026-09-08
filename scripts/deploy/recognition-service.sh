@@ -549,9 +549,12 @@ sanitize_deploy_diagnostic() {
     | LC_ALL=C LANG=C LC_CTYPE=C awk -v sq="'" '
         function depth_delta(s,    i, c, in_str, esc, d) { d=0; in_str=0; esc=0; for (i=1; i<=length(s); i++) { c=substr(s,i,1); if (in_str) { if (esc) { esc=0; continue } if (c=="\\") { esc=1; continue } if (c=="\"") in_str=0; continue } if (c=="\"") { in_str=1; continue } if (c=="["||c=="{") d++; else if (c=="]"||c=="}") d-- } return d }
         function is_pretty_open(s,    t, pat) { t=tolower(s); if (t ~ /"(token|access_token|refresh_token|password|passwd|secret|apikey|api-key|api_key|[a-z0-9_]*_token|[a-z0-9_]*_password|[a-z0-9_]*_secret|[a-z0-9_]*_key_id|[a-z0-9_]*_key_content|[a-z0-9_]*_access_key|secret_key_base|[a-z0-9_]*_key|pgpassword|identitytoken|pass_phrase|auth|_auth)"[ \t]*[=:]+[ \t]*[\[{][ \t]*$/) return 1; pat=sq "(token|access_token|refresh_token|password|passwd|secret|apikey|api-key|api_key|[a-z0-9_]*_token|[a-z0-9_]*_password|[a-z0-9_]*_secret|[a-z0-9_]*_key_id|[a-z0-9_]*_key_content|[a-z0-9_]*_access_key|secret_key_base|[a-z0-9_]*_key|pgpassword|identitytoken|pass_phrase|auth|_auth)" sq "[ \t]*[=:]+[ \t]*[\[{][ \t]*$"; return (t ~ pat) }
-        function is_pem_banner(s,    t) { if (s !~ /-----BEGIN [A-Za-z0-9 ]*PRIVATE KEY-----/) return 0; if (s ~ /-----END [A-Za-z0-9 ]*PRIVATE KEY-----/) return 0; t=s; sub(/.*-----BEGIN [A-Za-z0-9 ]*PRIVATE KEY-----/, "", t); return (t ~ /^[ \t]*$/) }
+        function pem_begin_end(s) { return (s ~ /-----BEGIN [A-Za-z0-9 ]*PRIVATE KEY-----/ && s ~ /-----END [A-Za-z0-9 ]*PRIVATE KEY-----/) }
+        function pem_has_begin(s) { return (s ~ /-----BEGIN [A-Za-z0-9 ]*PRIVATE KEY-----/) }
+        function redact_pem_oneline(s,    pre, rest) { match(s, /-----BEGIN [A-Za-z0-9 ]*PRIVATE KEY-----/); pre=substr(s, 1, RSTART+RLENGTH-1); rest=substr(s, RSTART+RLENGTH); match(rest, /-----END [A-Za-z0-9 ]*PRIVATE KEY-----/); return pre " [REDACTED] " substr(rest, RSTART) }
+        function redact_pem_prefix(s,    t) { match(s, /-----BEGIN [A-Za-z0-9 ]*PRIVATE KEY-----/); t=substr(s, RSTART+RLENGTH); if (t ~ /^[ \t]*$/) return substr(s, 1, RSTART+RLENGTH-1); return substr(s, 1, RSTART+RLENGTH-1) " [REDACTED]" }
         BEGIN { pem=0; depth=0 }
-        { if (pem) { if ($0 ~ /-----END [A-Za-z0-9 ]*PRIVATE KEY-----/) { pem=0; print; next } print "[REDACTED]"; next } if (is_pem_banner($0)) { pem=1; print; next } if (depth>0) { depth+=depth_delta($0); if (depth<0) depth=0; if ($0 ~ /^[ \t]*[\]},]*[ \t]*$/) print; else print "[REDACTED]"; next } if (is_pretty_open($0)) { depth+=depth_delta($0); print; next } print }
+        { if (pem) { if ($0 ~ /-----END [A-Za-z0-9 ]*PRIVATE KEY-----/) { pem=0; print; next } print "[REDACTED]"; next } if (pem_begin_end($0)) { print redact_pem_oneline($0); next } if (pem_has_begin($0)) { print redact_pem_prefix($0); pem=1; next } if (depth>0) { depth+=depth_delta($0); if (depth<0) depth=0; if ($0 ~ /^[ \t]*[\]},]*[ \t]*$/) print; else print "[REDACTED]"; next } if (is_pretty_open($0)) { depth+=depth_delta($0); print; next } print }
       ' \
     | LC_ALL=C LANG=C LC_CTYPE=C sed -E \
       -e 's/["'"'"']authorization["'"'"'][[:space:]]*:[[:space:]]*"('"${_hdr}"')[[:space:]]+(\\.|[^"\\])*"/"Authorization": "\1 [REDACTED]"/gI' \
@@ -567,14 +570,16 @@ sanitize_deploy_diagnostic() {
       -e 's/'"${_soh}"'([A-Za-z]*[A-Z][A-Za-z]*)/\1/g' \
       -e 's/["'"'"']('"${_sk}"')["'"'"'][[:space:]]*([=:]+>?[[:space:]]*)+[\[{].*$/"\1": [REDACTED]/gI' \
       -e 's/["'"'"']('"${_sk}"')["'"'"'][[:space:]]*([=:]+>?[[:space:]]*)+([^[:space:],}"'"'"''"${_soh}"'][^[:space:],}"'"'"']*)/"\1": [REDACTED]/gI' \
-      -e 's/(^|[^A-Za-z0-9_-])('"${_ek}"')[[:space:]]*([=:]+[[:space:]]*)+"(\\.|[^"\\])*"/\1\2=[REDACTED]/gI' \
-      -e "s/(^|[^A-Za-z0-9_-])(${_ek})[[:space:]]*([=:]+[[:space:]]*)+'[^']*'/\1\2=[REDACTED]/gI" \
-      -e 's/(^|[^A-Za-z0-9_-])('"${_ek}"')[[:space:]]*([=:]+[[:space:]]*)+[^[:space:]]+/\1\2=[REDACTED]/gI' \
+      -e 's/(^|[^A-Za-z0-9_-])('"${_ek}"')[[:space:]]*([=:]+>?[[:space:]]*)+"(\\.|[^"\\])*"/\1\2=[REDACTED]/gI' \
+      -e "s/(^|[^A-Za-z0-9_-])(${_ek})[[:space:]]*([=:]+>?[[:space:]]*)+'[^']*'/\1\2=[REDACTED]/gI" \
+      -e 's/(^|[^A-Za-z0-9_-])('"${_ek}"')[[:space:]]*([=:]+>?[[:space:]]*)+[^[:space:]]+/\1\2=[REDACTED]/gI' \
       -e 's/(^|[[:space:]])--([A-Za-z0-9_-]*(password|passwd|token|secret|key))[=:][^[:space:]]+/\1--\2=[REDACTED]/gI' \
+      -e 's/(^|[[:space:]])--(password|passwd|token|secret|key)[[:space:]]+[^[:space:]]+/\1--\2 [REDACTED]/gI' \
       -e 's/(^|[^[:alnum:]])([A-Za-z0-9-]*-(token|secret|key))[[:space:]]*:[[:space:]]*[^[:space:]]+/\1\2: [REDACTED]/gI' \
       -e 's/(^|[^A-Za-z0-9_])([A-Za-z0-9_-]*(api_key|api-key|apikey))[[:space:]]*:[[:space:]]*[^[:space:]"]+/\1\2: [REDACTED]/gI' \
       -e 's/(^|[^A-Za-z0-9_])(api_key|api-key|apikey)[[:space:]]*=[[:space:]]*("[^"]*"|'\''[^'\'']*'\''|[^[:space:]&"]+)/\1\2=[REDACTED]/gI' \
       -e 's|://([^:/@[:space:]]*):([^[:space:]/]+)@([[:alnum:]._-]+)|://\1:[REDACTED]@\3|g' \
+      -e 's|://([^:/@[:space:]]*):([^[:space:]/@]+)@|://\1:[REDACTED]@|g' \
       -e 's/[Cc]ookie:[[:space:]].*/Cookie: [REDACTED]/' \
       -e 's/ghp_[A-Za-z0-9]{20,}/[REDACTED]/g' \
       -e 's/github_pat_[A-Za-z0-9_]{10,}/[REDACTED]/g' \

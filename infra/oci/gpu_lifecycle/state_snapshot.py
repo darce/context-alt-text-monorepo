@@ -78,52 +78,79 @@ def state_for_instance(instance_state: str) -> GpuLifecycleState:
     return _INSTANCE_STATE_MAP[state]
 
 
-def read_previous_gpu_state(
-    path: str | Path | None = None,
-    *,
-    expected_instance_id: str | None,
-    now: datetime | float | None = None,
-    max_age_seconds: float = DEFAULT_PREVIOUS_GPU_STATE_MAX_AGE_SECONDS,
-    max_future_skew_seconds: float = (DEFAULT_PREVIOUS_GPU_STATE_MAX_FUTURE_SKEW_SECONDS),
-) -> GpuLifecycleState | None:
-    """Read state only when it belongs to the currently reconciled instance."""
+def _validate_expected_instance_id(expected_instance_id: str | None) -> None:
+    """Own validation of the optional instance identity required for reuse."""
     if expected_instance_id is not None and (
         not isinstance(expected_instance_id, str) or not expected_instance_id.strip()
     ):
         raise ValueError("expected_instance_id must be a non-blank string or None")
-    target = resolve_gpu_state_path() if path is None else Path(path)
+
+
+def _read_snapshot_payload(target: Path) -> object | None:
+    """Own classification of unreadable or malformed snapshot files as absent."""
     try:
-        payload = json.loads(target.read_text(encoding="utf-8"))
+        return json.loads(target.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None
-    if not isinstance(payload, dict):
-        return None
 
+
+def _parse_snapshot_state(payload: dict[str, object]) -> GpuLifecycleState | None:
+    """Own parsing of the published lifecycle state field."""
     state_value = payload.get("state")
     if not isinstance(state_value, str):
         return None
     try:
-        state = GpuLifecycleState(state_value)
+        return GpuLifecycleState(state_value)
     except ValueError:
         return None
 
+
+def _snapshot_identity_matches(payload: dict[str, object], expected_instance_id: str | None) -> bool:
+    """Own validation that a prior snapshot belongs to the reconciled instance."""
     instance_id = payload.get("instance_id")
     if instance_id is not None and (not isinstance(instance_id, str) or not instance_id.strip()):
-        return None
-    if expected_instance_id is None or instance_id != expected_instance_id:
-        return None
+        return False
+    return expected_instance_id is not None and instance_id == expected_instance_id
+
+
+def _snapshot_reason_is_valid(payload: dict[str, object], state: GpuLifecycleState) -> bool:
+    """Own validation of the state-dependent reason contract."""
     reason = payload.get("reason")
     if state is GpuLifecycleState.DEGRADED:
-        if not isinstance(reason, str) or not reason.strip():
-            return None
-    elif reason is not None:
-        return None
+        return isinstance(reason, str) and bool(reason.strip())
+    return reason is None
 
+
+def _validate_previous_snapshot_schema(
+    payload: dict[str, object],
+    expected_instance_id: str | None,
+) -> GpuLifecycleState | None:
+    """Own validation of prior state, identity, and reason schema fields."""
+    state = _parse_snapshot_state(payload)
+    if state is None:
+        return None
+    if not _snapshot_identity_matches(payload, expected_instance_id):
+        return None
+    if not _snapshot_reason_is_valid(payload, state):
+        return None
+    return state
+
+
+def _read_snapshot_written_at(payload: dict[str, object]) -> int | float | None:
+    """Own validation of the numeric timestamp used for freshness checks."""
     written_at = payload.get("written_at")
     if isinstance(written_at, bool) or not isinstance(written_at, (int, float)):
         return None
     if not math.isfinite(written_at):
         return None
+    return written_at
+
+
+def _validate_previous_snapshot_limits(
+    max_age_seconds: float,
+    max_future_skew_seconds: float,
+) -> None:
+    """Own validation of the permitted prior-snapshot freshness window."""
     if (
         isinstance(max_age_seconds, bool)
         or not isinstance(max_age_seconds, (int, float))
@@ -139,6 +166,9 @@ def read_previous_gpu_state(
     ):
         raise ValueError("max_future_skew_seconds must be finite and non-negative")
 
+
+def _resolve_previous_snapshot_now(now: datetime | float | None) -> float:
+    """Own conversion and validation of the clock used for freshness checks."""
     if now is None:
         current_time = time.time()
     elif isinstance(now, datetime):
@@ -151,10 +181,51 @@ def read_previous_gpu_state(
         current_time = float(now)
     if not math.isfinite(current_time):
         raise ValueError("now must be finite")
+    return current_time
 
+
+def _previous_snapshot_is_fresh(
+    written_at: int | float,
+    current_time: float,
+    max_age_seconds: float,
+    max_future_skew_seconds: float,
+) -> bool:
+    """Own the fallback decision that bounds prior-state reuse by time."""
     if written_at - current_time > max_future_skew_seconds:
-        return None
+        return False
     if current_time - written_at > max_age_seconds:
+        return False
+    return True
+
+
+def read_previous_gpu_state(
+    path: str | Path | None = None,
+    *,
+    expected_instance_id: str | None,
+    now: datetime | float | None = None,
+    max_age_seconds: float = DEFAULT_PREVIOUS_GPU_STATE_MAX_AGE_SECONDS,
+    max_future_skew_seconds: float = (DEFAULT_PREVIOUS_GPU_STATE_MAX_FUTURE_SKEW_SECONDS),
+) -> GpuLifecycleState | None:
+    """Read state only when it belongs to the currently reconciled instance."""
+    _validate_expected_instance_id(expected_instance_id)
+    target = resolve_gpu_state_path() if path is None else Path(path)
+    payload = _read_snapshot_payload(target)
+    if not isinstance(payload, dict):
+        return None
+    state = _validate_previous_snapshot_schema(payload, expected_instance_id)
+    if state is None:
+        return None
+    written_at = _read_snapshot_written_at(payload)
+    if written_at is None:
+        return None
+    _validate_previous_snapshot_limits(max_age_seconds, max_future_skew_seconds)
+    current_time = _resolve_previous_snapshot_now(now)
+    if not _previous_snapshot_is_fresh(
+        written_at,
+        current_time,
+        max_age_seconds,
+        max_future_skew_seconds,
+    ):
         return None
     return state
 
@@ -206,41 +277,96 @@ def _serialize_snapshot_time(value: datetime | str | None | object, *, field: st
     raise ValueError(f"{field} must be a timezone-aware datetime, ISO-8601 string, or None")
 
 
-def write_gpu_state_snapshot(
-    state: GpuLifecycleState | str,
-    *,
-    instance_id: str | None = None,
-    reason: str | None = None,
-    now: float | None = None,
-    path: str | Path | None = None,
-    intent: IntentAction | str | None | object = _SNAPSHOT_FIELD_UNSET,
-    intent_expires_at: datetime | str | None | object = _SNAPSHOT_FIELD_UNSET,
-    intent_status: IntentStatus | str | None | object = _SNAPSHOT_FIELD_UNSET,
-    honoured_nonce: str | None | object = _SNAPSHOT_FIELD_UNSET,
-    lease_expires_at: datetime | str | None | object = _SNAPSHOT_FIELD_UNSET,
-    instance_running_since: datetime | str | None | object = _SNAPSHOT_FIELD_UNSET,
-    last_transition_reason: LastTransitionReason | str | None | object = _SNAPSHOT_FIELD_UNSET,
-) -> bool:
-    """Atomically publish a fresh snapshot; telemetry failures never escape."""
+def _coerce_snapshot_state(state: GpuLifecycleState | str) -> GpuLifecycleState:
+    """Own conversion and rejection of an unpublished lifecycle state value."""
     try:
-        published_state = GpuLifecycleState(state)
+        return GpuLifecycleState(state)
     except ValueError as exc:
         raise ValueError(f"refusing to publish GPU lifecycle state {state!r}") from exc
 
+
+def _resolve_snapshot_written_at(now: float | None) -> int | float:
+    """Own validation of the epoch timestamp emitted in a snapshot."""
     written_at = time.time() if now is None else now
     if isinstance(written_at, bool) or not isinstance(written_at, (int, float)):
         raise ValueError("written_at must be epoch seconds")
     if not math.isfinite(written_at):
         raise ValueError("written_at must be finite epoch seconds")
+    return written_at
+
+
+def _validate_snapshot_instance_id(instance_id: str | None) -> None:
+    """Own validation of the optional instance identity emitted in a snapshot."""
     if instance_id is not None and (not isinstance(instance_id, str) or not instance_id.strip()):
         raise ValueError("instance_id must be a non-blank string or None")
+
+
+def _validate_snapshot_reason(
+    published_state: GpuLifecycleState,
+    reason: str | None,
+) -> None:
+    """Own validation of the state-dependent reason emitted in a snapshot."""
     if published_state is GpuLifecycleState.DEGRADED:
         if not isinstance(reason, str) or not reason.strip():
             raise ValueError("degraded GPU lifecycle snapshots require a reason")
     elif reason is not None:
         raise ValueError("reason is only valid for degraded GPU lifecycle snapshots")
 
-    include_intent_fields = any(
+
+def _coerce_snapshot_intent(intent: IntentAction | str | None | object) -> IntentAction:
+    """Own conversion of the optional intent field and its error classification."""
+    try:
+        return IntentAction.AUTO if intent is _SNAPSHOT_FIELD_UNSET or intent is None else IntentAction(intent)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid intent snapshot value: {intent!r}") from exc
+
+
+def _coerce_snapshot_intent_status(intent_status: IntentStatus | str | None | object) -> IntentStatus:
+    """Own conversion of the optional intent status and its error classification."""
+    try:
+        return (
+            IntentStatus.NONE
+            if intent_status is _SNAPSHOT_FIELD_UNSET or intent_status is None
+            else IntentStatus(intent_status)
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid intent_status snapshot value: {intent_status!r}") from exc
+
+
+def _coerce_snapshot_transition_reason(
+    last_transition_reason: LastTransitionReason | str | None | object,
+) -> LastTransitionReason:
+    """Own conversion of the optional transition reason and its error classification."""
+    try:
+        return (
+            LastTransitionReason.UNKNOWN
+            if last_transition_reason is _SNAPSHOT_FIELD_UNSET or last_transition_reason is None
+            else LastTransitionReason(last_transition_reason)
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid last_transition_reason snapshot value: {last_transition_reason!r}") from exc
+
+
+def _validate_snapshot_nonce(honoured_nonce: str | None | object) -> str | None:
+    """Own validation of the optional nonce carried by an intent snapshot."""
+    nonce = None if honoured_nonce is _SNAPSHOT_FIELD_UNSET else honoured_nonce
+    if nonce is not None and (not isinstance(nonce, str) or not nonce.strip()):
+        raise ValueError("honoured_nonce must be a non-blank string or None")
+    return nonce
+
+
+def _build_intent_snapshot_fields(
+    *,
+    intent: IntentAction | str | None | object,
+    intent_expires_at: datetime | str | None | object,
+    intent_status: IntentStatus | str | None | object,
+    honoured_nonce: str | None | object,
+    lease_expires_at: datetime | str | None | object,
+    instance_running_since: datetime | str | None | object,
+    last_transition_reason: LastTransitionReason | str | None | object,
+) -> dict[str, object]:
+    """Own optional C2 field inclusion, defaults, and timestamp serialization."""
+    if not any(
         value is not _SNAPSHOT_FIELD_UNSET
         for value in (
             intent,
@@ -251,76 +377,73 @@ def write_gpu_state_snapshot(
             instance_running_since,
             last_transition_reason,
         )
-    )
-    c2_payload: dict[str, object] = {}
-    if include_intent_fields:
-        try:
-            effective_intent = IntentAction.AUTO if intent is _SNAPSHOT_FIELD_UNSET or intent is None else IntentAction(intent)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"invalid intent snapshot value: {intent!r}") from exc
-        try:
-            effective_status = (
-                IntentStatus.NONE
-                if intent_status is _SNAPSHOT_FIELD_UNSET or intent_status is None
-                else IntentStatus(intent_status)
-            )
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"invalid intent_status snapshot value: {intent_status!r}") from exc
-        try:
-            transition_reason = (
-                LastTransitionReason.UNKNOWN
-                if last_transition_reason is _SNAPSHOT_FIELD_UNSET or last_transition_reason is None
-                else LastTransitionReason(last_transition_reason)
-            )
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"invalid last_transition_reason snapshot value: {last_transition_reason!r}") from exc
+    ):
+        return {}
 
-        nonce = None if honoured_nonce is _SNAPSHOT_FIELD_UNSET else honoured_nonce
-        if nonce is not None and (not isinstance(nonce, str) or not nonce.strip()):
-            raise ValueError("honoured_nonce must be a non-blank string or None")
+    effective_intent = _coerce_snapshot_intent(intent)
+    effective_status = _coerce_snapshot_intent_status(intent_status)
+    transition_reason = _coerce_snapshot_transition_reason(last_transition_reason)
+    nonce = _validate_snapshot_nonce(honoured_nonce)
+    return {
+        "intent": effective_intent.value,
+        "intent_expires_at": _serialize_snapshot_time(
+            None if intent_expires_at is _SNAPSHOT_FIELD_UNSET else intent_expires_at,
+            field="intent_expires_at",
+        ),
+        "intent_status": effective_status.value,
+        "honoured_nonce": nonce,
+        "lease_expires_at": _serialize_snapshot_time(
+            None if lease_expires_at is _SNAPSHOT_FIELD_UNSET else lease_expires_at,
+            field="lease_expires_at",
+        ),
+        "instance_running_since": _serialize_snapshot_time(
+            None if instance_running_since is _SNAPSHOT_FIELD_UNSET else instance_running_since,
+            field="instance_running_since",
+        ),
+        "last_transition_reason": transition_reason.value,
+    }
 
-        c2_payload = {
-            "intent": effective_intent.value,
-            "intent_expires_at": _serialize_snapshot_time(
-                None if intent_expires_at is _SNAPSHOT_FIELD_UNSET else intent_expires_at,
-                field="intent_expires_at",
-            ),
-            "intent_status": effective_status.value,
-            "honoured_nonce": nonce,
-            "lease_expires_at": _serialize_snapshot_time(
-                None if lease_expires_at is _SNAPSHOT_FIELD_UNSET else lease_expires_at,
-                field="lease_expires_at",
-            ),
-            "instance_running_since": _serialize_snapshot_time(
-                None if instance_running_since is _SNAPSHOT_FIELD_UNSET else instance_running_since,
-                field="instance_running_since",
-            ),
-            "last_transition_reason": transition_reason.value,
-        }
 
-    target = resolve_gpu_state_path() if path is None else Path(path)
+def _snapshot_since(
+    previous: object,
+    instance_id: str | None,
+    published_state: GpuLifecycleState,
+    written_at: int | float,
+) -> int | float:
+    """Own fallback to the prior state-change timestamp when continuity is proven."""
+    since = written_at
+    if (
+        isinstance(previous, dict)
+        and instance_id is not None
+        and previous.get("instance_id") == instance_id
+        and previous.get("state") == published_state.value
+    ):
+        previous_since = previous.get("since")
+        if (
+            not isinstance(previous_since, bool)
+            and isinstance(previous_since, (int, float))
+            and math.isfinite(previous_since)
+            and previous_since <= written_at
+        ):
+            since = previous_since
+    return since
+
+
+def _write_snapshot_atomically(
+    target: Path,
+    *,
+    published_state: GpuLifecycleState,
+    instance_id: str | None,
+    written_at: int | float,
+    reason: str | None,
+    c2_payload: dict[str, object],
+) -> bool:
+    """Own directory setup, durable temp-file replacement, and write-error handling."""
     temporary: Path | None = None
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-        since = written_at
-        try:
-            previous = json.loads(target.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-            previous = None
-        if (
-            isinstance(previous, dict)
-            and instance_id is not None
-            and previous.get("instance_id") == instance_id
-            and previous.get("state") == published_state.value
-        ):
-            previous_since = previous.get("since")
-            if (
-                not isinstance(previous_since, bool)
-                and isinstance(previous_since, (int, float))
-                and math.isfinite(previous_since)
-                and previous_since <= written_at
-            ):
-                since = previous_since
+        previous = _read_snapshot_payload(target)
+        since = _snapshot_since(previous, instance_id, published_state, written_at)
         payload = {
             "state": published_state.value,
             "instance_id": instance_id,
@@ -351,3 +474,43 @@ def write_gpu_state_snapshot(
                 temporary.unlink(missing_ok=True)
         return False
     return True
+
+
+def write_gpu_state_snapshot(
+    state: GpuLifecycleState | str,
+    *,
+    instance_id: str | None = None,
+    reason: str | None = None,
+    now: float | None = None,
+    path: str | Path | None = None,
+    intent: IntentAction | str | None | object = _SNAPSHOT_FIELD_UNSET,
+    intent_expires_at: datetime | str | None | object = _SNAPSHOT_FIELD_UNSET,
+    intent_status: IntentStatus | str | None | object = _SNAPSHOT_FIELD_UNSET,
+    honoured_nonce: str | None | object = _SNAPSHOT_FIELD_UNSET,
+    lease_expires_at: datetime | str | None | object = _SNAPSHOT_FIELD_UNSET,
+    instance_running_since: datetime | str | None | object = _SNAPSHOT_FIELD_UNSET,
+    last_transition_reason: LastTransitionReason | str | None | object = _SNAPSHOT_FIELD_UNSET,
+) -> bool:
+    """Atomically publish a fresh snapshot; telemetry failures never escape."""
+    published_state = _coerce_snapshot_state(state)
+    written_at = _resolve_snapshot_written_at(now)
+    _validate_snapshot_instance_id(instance_id)
+    _validate_snapshot_reason(published_state, reason)
+    c2_payload = _build_intent_snapshot_fields(
+        intent=intent,
+        intent_expires_at=intent_expires_at,
+        intent_status=intent_status,
+        honoured_nonce=honoured_nonce,
+        lease_expires_at=lease_expires_at,
+        instance_running_since=instance_running_since,
+        last_transition_reason=last_transition_reason,
+    )
+    target = resolve_gpu_state_path() if path is None else Path(path)
+    return _write_snapshot_atomically(
+        target,
+        published_state=published_state,
+        instance_id=instance_id,
+        written_at=written_at,
+        reason=reason,
+        c2_payload=c2_payload,
+    )

@@ -12,6 +12,8 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from scene.tests.test_eval_harness_cli import _assert_child_ascii_locale, _c_locale_child_env
+
 from scripts.eval_harness.manifest import (
     AnnotationMode,
     GoldenEntry,
@@ -1357,12 +1359,6 @@ def test_load_manifest_empty_images_dir_raises(tmp_path, monkeypatch):
 # --- VLM6-RV10-Q1-01: UTF-8 pin + ValueError guard (EVAL-10 / AGT-21) ----------
 
 _SERVICE_ROOT = Path(__file__).resolve().parents[2]
-_ASCII_LOCALE_ENV = {
-    "LC_ALL": "C",
-    "LANG": "C",
-    "PYTHONUTF8": "0",
-    "PYTHONCOERCECLOCALE": "0",
-}
 
 
 @pytest.mark.parametrize("loader_name", ["load_manifest", "load_legacy_manifest"])
@@ -1374,10 +1370,9 @@ def test_load_manifest_utf8_under_c_locale(loader_name):
     Decode runs before the v2 version check; legacy then raises the
     version-mismatch ManifestError, not an ascii codec error.
     """
-    env = os.environ.copy()
-    env.update(_ASCII_LOCALE_ENV)
+    _assert_child_ascii_locale()
+    env = _c_locale_child_env()
     env.pop("GOLDEN_IMAGES_DIR", None)
-    env["PYTHONPATH"] = str(_SERVICE_ROOT) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     golden = "scene/tests/seed/golden.json"
     if loader_name == "load_manifest":
         snippet = (

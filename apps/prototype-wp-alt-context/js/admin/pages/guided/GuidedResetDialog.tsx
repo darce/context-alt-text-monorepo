@@ -8,13 +8,16 @@ import {
   DialogRoot,
   DialogTitle,
 } from '../../../components/ui/dialog';
+import { guidedCopy } from '../../guidedPrototype/copy';
+import { GUIDED_STEP } from '../../guidedPrototype/state';
 import { focusGuidedSection } from './GuidedPrototypeGuide';
 
 export interface GuidedResetDialogProps {
+  liveWaiting: boolean;
   onConfirm: () => void;
 }
 
-export const GuidedResetDialog = ({ onConfirm }: GuidedResetDialogProps): React.JSX.Element => {
+export const GuidedResetDialog = ({ liveWaiting, onConfirm }: GuidedResetDialogProps): React.JSX.Element => {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const focusScenarioAfterConfirmRef = useRef(false);
@@ -47,7 +50,7 @@ export const GuidedResetDialog = ({ onConfirm }: GuidedResetDialogProps): React.
     wasOpenRef.current = false;
     if (focusScenarioAfterConfirmRef.current) {
       focusScenarioAfterConfirmRef.current = false;
-      focusGuidedSection('understand');
+      focusGuidedSection(GUIDED_STEP.CONTEXT);
       return;
     }
 
@@ -68,22 +71,21 @@ export const GuidedResetDialog = ({ onConfirm }: GuidedResetDialogProps): React.
         aria-haspopup="dialog"
         aria-expanded={open}
       >
-        Reset practice
+        {guidedCopy('page.reset')}
       </button>
       <DialogRoot open={open} onOpenChange={setOpen}>
         <DialogPortal>
           <DialogOverlay />
-          <DialogContent onCloseAutoFocus={handleCloseAutoFocus}>
-            <DialogTitle>Reset this practice?</DialogTitle>
-            <DialogDescription>
-              This removes your practice changes. The real WordPress image is not touched.
-            </DialogDescription>
+          <DialogContent aria-modal="true" onCloseAutoFocus={handleCloseAutoFocus}>
+            <DialogTitle>{guidedCopy('reset.title')}</DialogTitle>
+            <DialogDescription>{guidedCopy('reset.body')}</DialogDescription>
+            {liveWaiting ? <p>{guidedCopy('reset.active_live_note')}</p> : null}
             <div className="acx-dialog__actions">
               <button type="button" className="acx-button acx-button--secondary" onClick={handleCancel} autoFocus>
-                Cancel
+                {guidedCopy('reset.cancel')}
               </button>
               <button type="button" className="acx-button acx-button--danger" onClick={handleConfirm}>
-                Reset practice
+                {guidedCopy('reset.confirm')}
               </button>
             </div>
           </DialogContent>

@@ -193,6 +193,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const hasOwn = (value: Record<string, unknown>, key: string): boolean =>
   Object.prototype.hasOwnProperty.call(value, key);
 
+const includesString = (keys: readonly string[], key: string): boolean => keys.includes(key);
+
 const firstContractKeyError = (
   value: Record<string, unknown>,
   expectedKeys: readonly string[],
@@ -203,7 +205,7 @@ const firstContractKeyError = (
     return `${path}.${missingKey}`;
   }
 
-  const unexpectedKey = Object.keys(value).find((key) => !expectedKeys.includes(key));
+  const unexpectedKey = Object.keys(value).find((key) => !includesString(expectedKeys, key));
   return unexpectedKey ? `${path}.${unexpectedKey}` : null;
 };
 
@@ -216,9 +218,9 @@ const isFiniteNumber = (value: unknown): value is number =>
 const isInteger = (value: unknown): value is number =>
   isFiniteNumber(value) && Number.isInteger(value);
 
-const DESCRIPTION_ADAPTERS = new Set(Object.values(DESCRIPTION_ADAPTER));
-const PROVIDER_MODES = new Set(Object.values(PROVIDER_MODE));
-const RETENTION_CLASSES = new Set(Object.values(RETENTION_CLASS));
+const DESCRIPTION_ADAPTERS: ReadonlySet<string> = new Set(Object.values(DESCRIPTION_ADAPTER));
+const PROVIDER_MODES: ReadonlySet<string> = new Set(Object.values(PROVIDER_MODE));
+const RETENTION_CLASSES: ReadonlySet<string> = new Set(Object.values(RETENTION_CLASS));
 const NAMING_PREVIEW_REASONS = new Set([
   'agreement_disabled',
   'db_unavailable',
@@ -415,7 +417,7 @@ const validateAltTextWrite = (value: unknown, path: string): string | null => {
   if (missingRequiredKey) {
     return `${path}.${missingRequiredKey}`;
   }
-  const unexpectedKey = Object.keys(value).find((key) => !ALT_TEXT_WRITE_KEYS.includes(key));
+  const unexpectedKey = Object.keys(value).find((key) => !includesString(ALT_TEXT_WRITE_KEYS, key));
   if (unexpectedKey) {
     return `${path}.${unexpectedKey}`;
   }
@@ -449,7 +451,7 @@ const validateVisualFactsResponse = (payload: unknown): string | null => {
     return `response.${missingRequiredKey}`;
   }
   const unexpectedTopLevelKey = Object.keys(payload).find(
-    (key) => !VISUAL_FACTS_RESPONSE_KEYS.includes(key),
+    (key) => !includesString(VISUAL_FACTS_RESPONSE_KEYS, key),
   );
   if (unexpectedTopLevelKey) {
     return `response.${unexpectedTopLevelKey}`;
@@ -527,7 +529,7 @@ const validateVisualFactsResponse = (payload: unknown): string | null => {
   if (typeof payload.retention_class !== 'string' || !RETENTION_CLASSES.has(payload.retention_class)) {
     return 'response.retention_class';
   }
-  if (typeof payload.tier !== 'string' || !new Set(Object.values(DESCRIBE_RESULT_TIER)).has(payload.tier)) {
+  if (typeof payload.tier !== 'string' || !includesString(Object.values(DESCRIBE_RESULT_TIER), payload.tier)) {
     return 'response.tier';
   }
   if (!isInteger(payload.result_generation) || payload.result_generation < 1) {

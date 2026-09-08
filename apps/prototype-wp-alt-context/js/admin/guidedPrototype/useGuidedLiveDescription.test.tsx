@@ -3,11 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Mock } from 'vitest';
 
 import type { DescribeRunItemsResponse, DescribeRunResponse } from '../api/describeApi';
-import { GUIDED_LIVE_REASON, GUIDED_LIVE_STATUS, GUIDED_LIVE_WAIT_CEILING_SECONDS } from './liveDescription';
-import { confirmGuidedIdentity, createGuidedScenario, leaveGuidedIdentityUnidentified } from './state';
-import type { GuidedScenario } from './state';
+import {
+  GUIDED_LIVE_KEEP_WAITING_SECONDS,
+  GUIDED_LIVE_REASON,
+  GUIDED_LIVE_STATUS,
+  GUIDED_LIVE_WAIT_CEILING_SECONDS,
+} from './liveDescription';
 import { GUIDED_LIVE_WARM_CEILING_SECONDS, useGuidedLiveDescription } from './useGuidedLiveDescription';
-import type { GuidedLiveDescriptionClient } from './useGuidedLiveDescription';
+import type { GuidedLiveDescriptionClient, UseGuidedLiveDescriptionResult } from './useGuidedLiveDescription';
 
 const MEDIA_ID = 4211;
 
@@ -64,24 +67,9 @@ const stubClient = (over: Partial<StubClient> = {}): StubClient => ({
   ...over,
 });
 
-/** Every face answered: one confirmed, one deliberately left unidentified. */
-const decidedScenario = (): GuidedScenario =>
-  leaveGuidedIdentityUnidentified(confirmGuidedIdentity(createGuidedScenario(), 'katy-perry'), 'justin-trudeau');
-
-/** One face answered, one still open -- the gate must stay shut. */
-const halfDecidedScenario = (): GuidedScenario => confirmGuidedIdentity(createGuidedScenario(), 'katy-perry');
-
-/** No confirmations at all, but nothing left open either. */
-const allUnidentifiedScenario = (): GuidedScenario =>
-  leaveGuidedIdentityUnidentified(
-    leaveGuidedIdentityUnidentified(createGuidedScenario(), 'katy-perry'),
-    'justin-trudeau',
-  );
-
-const mount = (client: StubClient, over: { scenario?: GuidedScenario; mediaId?: number | null } = {}) =>
+const mount = (client: StubClient, over: { mediaId?: number | null } = {}) =>
   renderHook(() =>
     useGuidedLiveDescription({
-      scenario: over.scenario ?? decidedScenario(),
       mediaId: over.mediaId === undefined ? MEDIA_ID : over.mediaId,
       client,
     }),
@@ -112,48 +100,35 @@ describe('useGuidedLiveDescription', () => {
   });
 
   describe('the gate', () => {
-    it('starts blocked while no face has been decided and refuses to submit', async () => {
+    it('starts idle with a media id and does not wait for face decisions', async () => {
       const client = stubClient();
-      const { result } = mount(client, { scenario: createGuidedScenario() });
+      const { result } = mount(client);
 
-      expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.BLOCKED);
-      expect(result.current.canRequest).toBe(false);
+      expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.IDLE);
+      expect(result.current.canRequest).toBe(true);
 
       await press(() => result.current.request());
 
-      expect(client.submit).not.toHaveBeenCalled();
-      expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.BLOCKED);
+      expect(client.submit).toHaveBeenCalledWith(MEDIA_ID);
     });
 
-    it('stays blocked without a media id, because there is nothing live to describe', () => {
-      const { result } = mount(stubClient(), { mediaId: null });
+    it('stays unavailable without a media id, because there is nothing live to describe', () => {
+      const client = stubClient();
+      const { result } = mount(client, { mediaId: null });
 
       expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.BLOCKED);
       expect(result.current.canRequest).toBe(false);
       expect(result.current.blockedReason).toBe('no_media');
     });
 
-    it('stays blocked while one of two faces is still unanswered', () => {
-      const { result } = mount(stubClient(), { scenario: halfDecidedScenario() });
+    it('refuses to submit while unavailable', async () => {
+      const client = stubClient();
+      const { result } = mount(client, { mediaId: null });
 
+      await press(() => result.current.request());
+
+      expect(client.submit).not.toHaveBeenCalled();
       expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.BLOCKED);
-      expect(result.current.blockedReason).toBe('no_faces_decided');
-    });
-
-    it('unblocks when every face is answered, even if none was confirmed', () => {
-      const { result } = mount(stubClient(), { scenario: allUnidentifiedScenario() });
-
-      expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.IDLE);
-      expect(result.current.blockedReason).toBeNull();
-      expect(result.current.canRequest).toBe(true);
-    });
-
-    it('unblocks once a face is decided and a media id exists', () => {
-      const { result } = mount(stubClient());
-
-      expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.IDLE);
-      expect(result.current.canRequest).toBe(true);
-      expect(result.current.blockedReason).toBeNull();
     });
   });
 
@@ -406,6 +381,23 @@ describe('useGuidedLiveDescription', () => {
       expect(client.poll.mock.calls.length).toBeGreaterThan(pollsAtTimeout);
     });
 
+    it('does not time out immediately when keep waiting is pressed after reading the timeout copy', async () => {
+      const client = stubClient();
+      const { result } = mount(client);
+
+      await press(() => result.current.request());
+      await settle(GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000 + 2000);
+      expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.TIMED_OUT);
+
+      await settle(GUIDED_LIVE_KEEP_WAITING_SECONDS * 1000 + 1000);
+      await press(() => result.current.keepWaiting());
+      await settle(2000);
+
+      expect(result.current.state.status).not.toBe(GUIDED_LIVE_STATUS.TIMED_OUT);
+      expect(result.current.canKeepWaiting).toBe(false);
+      expect(client.submit).toHaveBeenCalledTimes(1);
+    });
+
     it('does not offer to keep waiting when there is no run that could still finish', async () => {
       const client = stubClient({
         submit: vi.fn<GuidedLiveDescriptionClient['submit']>(() => Promise.reject(new Error('backend unreachable'))),
@@ -560,6 +552,122 @@ describe('useGuidedLiveDescription', () => {
       expect(hardResult.current.state.reason).toBe('poll_failed');
     });
 
+    it('cancels a submit that resolves after the client deadline rather than leaking the run id', async () => {
+      // GR-201: request() leaves submit unresolved; a tick past the client
+      // ceiling times the wait out with runId still null. The reducer then
+      // no-ops `accepted` (not waiting), so the hook must cancel the run id
+      // it just learned. This is the client uncancelled-run risk; the server
+      // GPU lease cap is a separate control and is not this lane.
+      //
+      // The hook cancels the late run rather than adopting it into timed_out
+      // state: adopting would offer keep-waiting on a burst nobody asked to
+      // resume, and skipping cancel would leave the run live with no owner.
+      let release: (run: DescribeRunResponse) => void = () => undefined;
+      const client = stubClient({
+        submit: vi.fn<GuidedLiveDescriptionClient['submit']>(
+          () =>
+            new Promise<DescribeRunResponse>((resolve) => {
+              release = resolve;
+            }),
+        ),
+      });
+      const { result } = mount(client);
+
+      await press(() => result.current.request());
+      expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.QUEUED);
+      expect(result.current.state.runId).toBeNull();
+
+      await settle(GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000 + 2000);
+      expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.TIMED_OUT);
+      expect(result.current.state.runId).toBeNull();
+
+      await act(async () => {
+        release(runResponse({ run_id: 'run-late-deadline' }));
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      expect(client.cancel).toHaveBeenCalledWith('run-late-deadline');
+      expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.TIMED_OUT);
+      expect(result.current.state.runId).toBeNull();
+    });
+
+    it('cancels the late first submit when the learner retries after the deadline', async () => {
+      // Same uncancelled-run risk on the retry path: the first submit is still
+      // on the wire when the wait times out (runId null), so retry has nothing
+      // to cancel yet. When that first submit lands, it belongs to the fenced
+      // generation and must be cancelled; the retry's own run id is adopted.
+      let releaseFirst: (run: DescribeRunResponse) => void = () => undefined;
+      const client = stubClient({
+        submit: vi
+          .fn<GuidedLiveDescriptionClient['submit']>()
+          .mockImplementationOnce(
+            () =>
+              new Promise<DescribeRunResponse>((resolve) => {
+                releaseFirst = resolve;
+              }),
+          )
+          .mockResolvedValueOnce(runResponse({ run_id: 'run-retry' })),
+      });
+      const { result } = mount(client);
+
+      await press(() => result.current.request());
+      await settle(GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000 + 2000);
+      expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.TIMED_OUT);
+
+      await press(() => result.current.request());
+      expect(client.submit).toHaveBeenCalledTimes(2);
+      expect(result.current.state.runId).toBe('run-retry');
+
+      await act(async () => {
+        releaseFirst(runResponse({ run_id: 'run-late-first' }));
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      expect(client.cancel).toHaveBeenCalledWith('run-late-first');
+      expect(result.current.state.runId).toBe('run-retry');
+    });
+
+    it('keeps a completed live sentence when items() resolve after a tick timeout', async () => {
+      // GR-202: poll returns complete while items() is still pending. The 1s
+      // tick can time the wait out first, the poll-effect teardown sets
+      // cancelled=true, and the hook used to drop the sentence even though
+      // the reducer would keep a completion already in the action.
+      let releaseItems: (items: DescribeRunItemsResponse) => void = () => undefined;
+      const client = stubClient({
+        submit: vi.fn<GuidedLiveDescriptionClient['submit']>(() =>
+          Promise.resolve({ ...runResponse({ gpu_state: 'ready' }), deadline_seconds: 30 }),
+        ),
+        poll: vi.fn<GuidedLiveDescriptionClient['poll']>(() =>
+          Promise.resolve(runResponse({ status: 'completed', phase: 'complete', gpu_state: 'ready' })),
+        ),
+        items: vi.fn<GuidedLiveDescriptionClient['items']>(
+          () =>
+            new Promise<DescribeRunItemsResponse>((resolve) => {
+              releaseItems = resolve;
+            }),
+        ),
+      });
+      const { result } = mount(client);
+
+      await press(() => result.current.request());
+      await settle(1000);
+      expect(client.items).toHaveBeenCalledWith('run-1');
+      expect(result.current.state.status).not.toBe(GUIDED_LIVE_STATUS.READY);
+
+      await settle(50_000);
+      // The tick is held while items() is in flight, so the wait does not
+      // tear down and drop a sentence the burst already paid for.
+      expect(result.current.state.status).not.toBe(GUIDED_LIVE_STATUS.TIMED_OUT);
+
+      await act(async () => {
+        releaseItems(itemsResponse('The live sentence the tick almost dropped.'));
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.READY);
+      expect(result.current.state.text).toBe('The live sentence the tick almost dropped.');
+    });
+
     it('cancels a run the learner stopped waiting for while the submit was in flight', async () => {
       let release: (run: DescribeRunResponse) => void = () => undefined;
       const client = stubClient({
@@ -593,38 +701,31 @@ describe('useGuidedLiveDescription', () => {
 
       expect(result.current.disclosure.namesTravelWithTheRequest).toBe(false);
       expect(result.current.disclosure.namingSource).toBe('roster');
-      expect(result.current.disclosure.confirmedHere).toContain('Katy Perry');
     });
   });
 
-  describe('re-opening a face mid-run', () => {
+  describe('withdrawing the media id mid-run', () => {
     it('stops the wait and cancels the run on the server', async () => {
       const client = stubClient();
-      const { result, rerender } = renderHook(
-        ({ scenario }: { scenario: GuidedScenario }) =>
-          useGuidedLiveDescription({ scenario, mediaId: MEDIA_ID, client }),
-        { initialProps: { scenario: decidedScenario() } },
+      const { result, rerender } = renderHook<UseGuidedLiveDescriptionResult, { mediaId: number | null }>(
+        ({ mediaId }) => useGuidedLiveDescription({ mediaId, client }),
+        { initialProps: { mediaId: MEDIA_ID } },
       );
 
       await press(() => result.current.request());
       expect(result.current.state.runId).toBe('run-1');
 
       await act(async () => {
-        rerender({ scenario: halfDecidedScenario() });
+        rerender({ mediaId: null });
         await vi.advanceTimersByTimeAsync(0);
       });
 
       expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.BLOCKED);
       expect(result.current.canRequest).toBe(false);
-      // The burst the run started keeps costing money until the server hears
-      // about it, so the screen stopping is not enough on its own.
       expect(client.cancel).toHaveBeenCalledWith('run-1');
     });
 
     it('cancels a run whose id only arrives after the gate closed', async () => {
-      // The gate can close while the submit is still on the wire. There is no
-      // run id to cancel at that instant, but the server is about to hand one
-      // back for a burst no panel owns any more.
       let handBackRunId: (run: DescribeRunResponse) => void = () => undefined;
       const client = stubClient({
         submit: vi.fn<GuidedLiveDescriptionClient['submit']>(
@@ -634,10 +735,9 @@ describe('useGuidedLiveDescription', () => {
             }),
         ),
       });
-      const { result, rerender } = renderHook(
-        ({ scenario }: { scenario: GuidedScenario }) =>
-          useGuidedLiveDescription({ scenario, mediaId: MEDIA_ID, client }),
-        { initialProps: { scenario: decidedScenario() } },
+      const { result, rerender } = renderHook<UseGuidedLiveDescriptionResult, { mediaId: number | null }>(
+        ({ mediaId }) => useGuidedLiveDescription({ mediaId, client }),
+        { initialProps: { mediaId: MEDIA_ID } },
       );
 
       await press(() => result.current.request());
@@ -645,7 +745,7 @@ describe('useGuidedLiveDescription', () => {
       expect(result.current.state.runId).toBeNull();
 
       await act(async () => {
-        rerender({ scenario: halfDecidedScenario() });
+        rerender({ mediaId: null });
         await vi.advanceTimersByTimeAsync(0);
       });
       expect(result.current.state.status).toBe(GUIDED_LIVE_STATUS.BLOCKED);
@@ -661,14 +761,13 @@ describe('useGuidedLiveDescription', () => {
 
     it('does not cancel anything when the gate closes with no run in flight', async () => {
       const client = stubClient();
-      const { rerender } = renderHook(
-        ({ scenario }: { scenario: GuidedScenario }) =>
-          useGuidedLiveDescription({ scenario, mediaId: MEDIA_ID, client }),
-        { initialProps: { scenario: decidedScenario() } },
+      const { rerender } = renderHook<UseGuidedLiveDescriptionResult, { mediaId: number | null }>(
+        ({ mediaId }) => useGuidedLiveDescription({ mediaId, client }),
+        { initialProps: { mediaId: MEDIA_ID } },
       );
 
       await act(async () => {
-        rerender({ scenario: halfDecidedScenario() });
+        rerender({ mediaId: null });
         await vi.advanceTimersByTimeAsync(0);
       });
 
@@ -773,7 +872,6 @@ describe('useGuidedLiveDescription', () => {
     });
   });
 
-
   describe('a run the panel walks away from is still cancelled', () => {
     it('cancels the run when the service reports a phase this client cannot read', () => {
       // Giving up on an unreadable phase stops only the browser's polling. The
@@ -814,7 +912,10 @@ describe('useGuidedLiveDescription', () => {
       let releaseCancel: () => void = () => undefined;
       const client = stubClient({
         cancel: vi.fn<GuidedLiveDescriptionClient['cancel']>(
-          () => new Promise((resolve) => { releaseCancel = () => resolve(runResponse({ status: 'cancelled' })); }),
+          () =>
+            new Promise((resolve) => {
+              releaseCancel = () => resolve(runResponse({ status: 'cancelled' }));
+            }),
         ),
       });
       const { result } = mount(client);
@@ -854,5 +955,4 @@ describe('useGuidedLiveDescription', () => {
       expect(client.submit).toHaveBeenCalledTimes(2);
     });
   });
-
 });

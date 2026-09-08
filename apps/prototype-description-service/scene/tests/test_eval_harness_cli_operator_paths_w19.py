@@ -13,6 +13,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from scripts.eval_harness._pathtext import (
     _UNDECODABLE_PATH_PREFIX,
     _printable_message,
@@ -24,6 +26,7 @@ from scene.tests.test_eval_harness_cli import (
     _c_locale_child_env,
     _clean_score_manifest_and_record,
 )
+from scene.tests.test_eval_harness_cli_stdio import _enforce_surrogate_argv_marker
 
 _SERVICE_ROOT = Path(__file__).resolve().parents[2]
 _CAFE_LATIN1 = b"caf\xe9"
@@ -37,6 +40,7 @@ def _run_python_bytes(
     argv: list[bytes] | None = None,
 ) -> subprocess.CompletedProcess[bytes]:
     _assert_child_ascii_locale()
+    _enforce_surrogate_argv_marker(argv)
     env = _c_locale_child_env()
     env["PYTHONWARNINGS"] = "ignore"
     return subprocess.run(
@@ -45,6 +49,12 @@ def _run_python_bytes(
         env=env,
         capture_output=True,
     )
+
+
+def test_run_python_bytes_rejects_unmarked_utf8_argv() -> None:
+    """The C-locale child helper must enforce the surrogate-argv marker contract."""
+    with pytest.raises(pytest.fail.Exception, match="requires_surrogate_argv"):
+        _run_python_bytes(b"pass", [b"caf\xc3\xa9.json"])
 
 
 def _run_cli_bytes(

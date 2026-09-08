@@ -61,7 +61,16 @@ ocir_emit_assignment() {
 # text. Keeping the watchdog separate from decoding lets the caller distinguish
 # an absent generation secret from an empty or malformed response.
 ocir_vault_fetch_raw_snippet() {
-  printf 'acx_bounded vault "$ACX_OCIR_OCI_BIN" --auth "$ACX_OCIR_AUTH_MODE" secrets secret-bundle get-secret-bundle-by-name --vault-id "$ACX_VAULT_OCID" --secret-name "$ACX_OCIR_SECRET_NAME" --query '\''data."secret-bundle-content".content'\'' --raw-output'
+  # WHY `< /dev/null`: acx_bounded forwards its own stdin to the child (exec 3<&0)
+  # because `docker login --password-stdin` is fed the token through that pipe.
+  # This program is delivered to the remote shell as `bash -s` on stdin, so
+  # without this redirect the OCI CLI inherits the unread remainder of the
+  # program text as its stdin and disturbs that shared descriptor. The first
+  # fetch then succeeds and the next returns empty, which acx_require_nonempty
+  # reports as an absent secret -- pointing operators at a credential rotation
+  # for what is a plumbing bug. The redirect binds to the acx_bounded call, so
+  # the login call site keeps its token pipe.
+  printf 'acx_bounded vault "$ACX_OCIR_OCI_BIN" --auth "$ACX_OCIR_AUTH_MODE" secrets secret-bundle get-secret-bundle-by-name --vault-id "$ACX_VAULT_OCID" --secret-name "$ACX_OCIR_SECRET_NAME" --query '\''data."secret-bundle-content".content'\'' --raw-output < /dev/null'
 }
 
 # Emit the OCI invocation used inside a generated login program, decoded and

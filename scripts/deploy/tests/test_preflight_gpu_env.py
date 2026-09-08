@@ -2293,7 +2293,53 @@ def test_verifier_request_waits_for_stopped_gpu_through_real_run_worker(
     monkeypatch.setattr(worker, "_GPU_HEALTH_POLL_INTERVAL_SECONDS", 0)
     monkeypatch.setattr(route, "get_description_adapter", lambda: SimpleNamespace(kind=DescriptionAdapterKind.GPU))
     events = []
-    run = SimpleNamespace(
+
+    def _stand_in_describe_run(**overrides: object) -> SimpleNamespace:
+        """Stand-in with every attribute describe_run.py / compute_eta_seconds reads."""
+        values: dict[str, object] = {
+            "id": None,
+            "tenant_id": None,
+            "status": "pending",
+            "phase": "queued",
+            "run_kind": "bulk",
+            "completed_items": 0,
+            "failed_items": 0,
+            "skipped_items": 0,
+            "total_items": 1,
+            "cancel_requested": False,
+            "recognition_enabled": False,
+            "deadline_seconds": None,
+            "started_at": None,
+            "completed_at": None,
+            "created_at": None,
+            "error_message": None,
+            "idempotency_key": None,
+            "request_digest": None,
+            "media_ids": [],
+            "created_by_user_id": None,
+        }
+        values.update(overrides)
+        return SimpleNamespace(**values)
+
+    def _stand_in_describe_item(**overrides: object) -> SimpleNamespace:
+        """Stand-in with every attribute _run_items_response reads."""
+        values: dict[str, object] = {
+            "media_id": 0,
+            "status": "queued",
+            "alt_text_draft": None,
+            "caption": None,
+            "provenance": None,
+            "tier": None,
+            "result_generation": 0,
+            "image_bytes": None,
+            "image_content_type": None,
+            "last_error": None,
+            "attempts": 0,
+        }
+        values.update(overrides)
+        return SimpleNamespace(**values)
+
+    run = _stand_in_describe_run(
         id=uuid.uuid4(),
         tenant_id=uuid.UUID(data["tenant_id"]),
         status="pending",
@@ -2306,8 +2352,9 @@ def test_verifier_request_waits_for_stopped_gpu_through_real_run_worker(
         cancel_requested=False,
         recognition_enabled=False,
         deadline_seconds=None,
+        started_at=None,
     )
-    item = SimpleNamespace(
+    item = _stand_in_describe_item(
         media_id=json.loads(data["media_ids"])[0],
         image_bytes=b"fake-image",
         image_content_type="image/png",

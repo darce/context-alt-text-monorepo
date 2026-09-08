@@ -530,7 +530,21 @@ preflight_docker() {
 # every line so captured output cannot masquerade as a deploy decision.
 sanitize_deploy_diagnostic() {
   LC_ALL=C tr -d '\000-\010\013-\037\177-\237' \
+    | sed -E \
+      -e 's/[Aa]uthorization:[[:space:]]*[Bb]earer[[:space:]]+[^[:space:]]+/Authorization: Bearer [REDACTED]/g' \
+      -e 's/ACX_API_TOKEN=[^[:space:]&"]+/ACX_API_TOKEN=[REDACTED]/g' \
+      -e 's/[Aa][Pp][Ii][-_]?[Kk][Ee][Yy][=:][[:space:]]*[^[:space:]&"]+/api-key=[REDACTED]/g' \
+      -e 's/[Pp]assword=[^[:space:]&"]+/password=[REDACTED]/g' \
+      -e 's/[Tt]oken=[^[:space:]&"]+/token=[REDACTED]/g' \
     | sed 's/^/diagnostic: /'
+}
+
+# Prefix-and-redact one evidence blob onto deploy stderr. Hoisted so
+# capture_failure_evidence does not redefine it on every call (C-05).
+emit_sanitized_evidence() {
+  local blob="$1"
+  [[ -n "${blob}" ]] || return 0
+  printf '%s\n' "${blob}" | sanitize_deploy_diagnostic >&2
 }
 
 # Release It! 5.5 (Fail Fast): verify the credential we will actually use, before
@@ -892,12 +906,14 @@ run_with_deadline() {
   # which silently swallows any heredoc/here-string the caller attached — e.g.
   # do_boot_smoke's SMOKE script piped to `ssh ... bash -s`, where an empty stdin
   # makes the remote shell exit 0 without running a single gate (fail-open smoke).
-  # Duplicate the caller's stdin onto fd 3 and hand it to the child so bounding a
-  # command never changes what that command reads (same pattern as acx_bounded).
-  exec 3<&0
-  "$@" <&3 &
+  # WHY `<&0`: without job control a bare `cmd &` gets /dev/null as stdin, which
+  # would starve callers that attach a heredoc (do_boot_smoke's `ssh ... bash -s`).
+  # Do NOT reintroduce `exec 3<&0; cmd <&3 &; exec 3<&-`: bash 5.2 segfaults
+  # (rc 139, no diagnostic) on that dup/close pair inside a command substitution
+  # when the program arrives over `bash -s` — the shape capture_failure_evidence
+  # uses for every `evidence="$(run_with_deadline ...)"` probe.
+  "$@" <&0 &
   pid=$!
-  exec 3<&-
   started_at="${SECONDS}"
   while kill -0 "${pid}" 2>/dev/null; do
     # kill -0 also succeeds for an exited-but-unreaped zombie. Detect that
@@ -2044,16 +2060,51 @@ do_rollback() {
 }
 
 # Capture the live failure state before automatic rollback replaces the serving
-# container. All probes target loopback Caddy (host port 443) so the request is
-# made from the OCI VM while preserving the environment-specific Host/SNI.
+# container. Phase selects the probe set:
+#   pre_candidate — push/tag/restart failed before the candidate container
+#                   started. Skip HTTP probes of the PRIOR image; collect
+#                   docker ps / compose state and a 'candidate never started' line.
+#   candidate     — the candidate ran (verify failed). Probe loopback Caddy
+#                   /health + /ready (host port 443, env Host/SNI) and api logs.
 # Evidence is diagnostic only: every remote call is deadline-bounded and a
 # failed probe is warned about without blocking the rollback that follows.
 capture_failure_evidence() {
-  local env="$1" remote_dir compose_files remote_dir_q health_url ready_url
-  local health_host health_url_q ready_url_q health_host_q timeout
+  local env="$1" phase="${2:-candidate}"
+  local remote_dir compose_files remote_dir_q timeout evidence=""
+  local health_url ready_url health_host health_url_q ready_url_q health_host_q
   remote_dir="$(env_to_remote_dir "${env}")"
   compose_files="$(env_to_compose_files "${env}")"
   remote_dir_q="$(remote_quote "${remote_dir}")"
+  timeout="$(validated_deadline ACX_EVIDENCE_TIMEOUT 30)" || {
+    warn "failure evidence skipped for ${env}; ACX_EVIDENCE_TIMEOUT must be a positive integer (got: ${ACX_EVIDENCE_TIMEOUT:-})"
+    return 0
+  }
+
+  case "${phase}" in
+    pre_candidate|candidate) ;;
+    *)
+      warn "failure evidence unknown phase '${phase}' for ${env}; skipping HTTP probes of the prior image"
+      phase="pre_candidate"
+      ;;
+  esac
+
+  if [[ "${phase}" == "pre_candidate" ]]; then
+    printf '%s\n' "candidate never started" >&2
+    printf 'environment: %s\n' "${env}" >&2
+    printf '%s\n' "--- evidence: docker ps / compose ---" >&2
+    evidence=""
+    # shellcheck disable=SC2086 # compose_files is intentionally word-split (-f a -f b).
+    if ! evidence="$(run_with_deadline "${timeout}" "failure evidence compose/ps for ${env}" \
+      ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
+        -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+        -l "${OCI_USER}" -- "${OCI_HOST}" \
+        "cd ${remote_dir_q} && docker compose ${compose_files} ps; docker ps --format '{{.ID}} {{.Names}} {{.Status}}'" 2>&1)"; then
+      warn "failure evidence compose/ps capture failed for ${env}; continuing with rollback"
+    fi
+    emit_sanitized_evidence "${evidence}"
+    return 0
+  fi
+
   health_url="$(env_to_health_url "${env}")"
   ready_url="$(env_to_ready_url "${env}")"
   health_host="${health_url#https://}"
@@ -2061,17 +2112,6 @@ capture_failure_evidence() {
   health_url_q="$(remote_quote "${health_url}")"
   ready_url_q="$(remote_quote "${ready_url}")"
   health_host_q="$(remote_quote "${health_host}")"
-  timeout="${ACX_EVIDENCE_TIMEOUT:-30}"
-  if [[ ! "${timeout}" =~ ^[1-9][0-9]*$ ]]; then
-    warn "failure evidence skipped for ${env}; ACX_EVIDENCE_TIMEOUT must be a positive integer (got: ${timeout})"
-    return 0
-  fi
-
-  emit_sanitized_evidence() {
-    local blob="$1"
-    [[ -n "${blob}" ]] || return 0
-    printf '%s\n' "${blob}" | sanitize_deploy_diagnostic >&2
-  }
 
   printf '%s\n' "--- evidence: /health ---" >&2
   printf 'environment: %s\n' "${env}" >&2
@@ -2107,7 +2147,7 @@ capture_failure_evidence() {
       -l "${OCI_USER}" -- "${OCI_HOST}" \
       "cd ${remote_dir_q} && cid=\$(docker compose ${compose_files} ps -q api 2>/dev/null | head -1); \
        if [ -n \"\$cid\" ]; then docker logs --tail 80 \"\$cid\"; \
-       else echo 'api container not found' >&2; exit 1; fi" 2>&1)"; then
+       else echo 'no api container'; fi" 2>&1)"; then
     warn "failure evidence api log capture failed for ${env}; continuing with rollback"
   fi
   emit_sanitized_evidence "${evidence}"
@@ -2161,7 +2201,7 @@ do_deploy() {
   promote_gate "$env" "${ACX_CANDIDATE_DIGEST_REF}"
   # S2-A-06: if tag promotion fails after ship, restore prior sticky repo.
   if ! do_push_tag "$tag" "${ACX_CANDIDATE_DIGEST_REF}"; then
-    capture_failure_evidence "$env" || warn "automatic failure evidence capture failed; continuing with rollback"
+    capture_failure_evidence "$env" pre_candidate || warn "automatic failure evidence capture failed; continuing with rollback"
     if restore_env_tag_to_rollback "$env" 0; then
       restore_prior_image_repo_env || warn "env tag restored but prior sticky repository restore failed"
     else
@@ -2171,7 +2211,7 @@ do_deploy() {
   fi
 
   if ! do_restart "$env" "${ACX_CANDIDATE_DIGEST_REF}"; then
-    capture_failure_evidence "$env" || warn "automatic failure evidence capture failed; continuing with rollback"
+    capture_failure_evidence "$env" pre_candidate || warn "automatic failure evidence capture failed; continuing with rollback"
     if restore_env_tag_to_rollback "$env" 0; then
       restore_prior_image_repo_env || warn "env tag restored but prior sticky repository restore failed"
     else
@@ -2184,7 +2224,7 @@ do_deploy() {
   # S2-A-04: deploy path uses local resolve as authority (not the remote .env
   # we just wrote — that comparison would be tautological).
   if ! ACX_VERIFY_EXPECT_LOCAL=1 do_verify "$env"; then
-    capture_failure_evidence "$env" || warn "automatic failure evidence capture failed; continuing with rollback"
+    capture_failure_evidence "$env" candidate || warn "automatic failure evidence capture failed; continuing with rollback"
     restore_env_tag_to_rollback "$env" 1 || warn "automatic runtime rollback failed; run: $(rollback_command_hint "$env")"
     if [[ "${ACX_VERIFY_OPTIONAL:-0}" == "1" ]]; then
       warn "Verify failed but ACX_VERIFY_OPTIONAL=1; previous image restored. Recovery: $(rollback_command_hint "$env")"
@@ -2246,7 +2286,7 @@ do_promote() {
   promote_gate "$to_env" "${ACX_CANDIDATE_DIGEST_REF}"
 
   if ! do_push_tag "$to_tag" "${ACX_CANDIDATE_DIGEST_REF}"; then
-    capture_failure_evidence "$to_env" || warn "automatic failure evidence capture failed; continuing with rollback"
+    capture_failure_evidence "$to_env" pre_candidate || warn "automatic failure evidence capture failed; continuing with rollback"
     if restore_env_tag_to_rollback "$to_env" 0; then
       restore_prior_image_repo_env || warn "env tag restored but prior sticky repository restore failed"
     else
@@ -2256,7 +2296,7 @@ do_promote() {
   fi
 
   if ! do_restart "$to_env" "${ACX_CANDIDATE_DIGEST_REF}"; then
-    capture_failure_evidence "$to_env" || warn "automatic failure evidence capture failed; continuing with rollback"
+    capture_failure_evidence "$to_env" pre_candidate || warn "automatic failure evidence capture failed; continuing with rollback"
     if restore_env_tag_to_rollback "$to_env" 0; then
       restore_prior_image_repo_env || warn "env tag restored but prior sticky repository restore failed"
     else
@@ -2267,7 +2307,7 @@ do_promote() {
 
   log "Promotion submitted. Verifying..."
   if ! ACX_VERIFY_EXPECT_LOCAL=1 do_verify "$to_env"; then
-    capture_failure_evidence "$to_env" || warn "automatic failure evidence capture failed; continuing with rollback"
+    capture_failure_evidence "$to_env" candidate || warn "automatic failure evidence capture failed; continuing with rollback"
     restore_env_tag_to_rollback "$to_env" 1 || warn "automatic runtime rollback failed; run: $(rollback_command_hint "$to_env")"
     if [[ "${ACX_VERIFY_OPTIONAL:-0}" == "1" ]]; then
       warn "Verify failed but ACX_VERIFY_OPTIONAL=1; previous image restored. Recovery: $(rollback_command_hint "$to_env")"

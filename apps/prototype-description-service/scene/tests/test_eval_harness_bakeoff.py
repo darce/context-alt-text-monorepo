@@ -20,7 +20,13 @@ from pathlib import Path
 import httpx
 import pytest
 
-from scripts.eval_harness.bakeoff import BakeoffClient, _clone_bakeoff_client, _extract_caption
+from scripts.eval_harness.bakeoff import (
+    BakeoffClient,
+    WeaveBenchRecordError,
+    _clone_bakeoff_client,
+    _extract_caption,
+    weave_bench_run_record,
+)
 from scripts.eval_harness.cli import BoundedStallError, fetch_run_record
 from scripts.eval_harness.depiction_lexicon import DepictionLexicon
 from scripts.eval_harness.manifest import GoldenEntry, GoldenManifest, load_manifest
@@ -127,6 +133,86 @@ def test_warmup_clone_preserves_caption_and_lexicon_configuration() -> None:
     finally:
         clone.close()
         client.close()
+
+
+def _weave_bench_manifest() -> GoldenManifest:
+    return GoldenManifest.model_validate(
+        {
+            "manifest_version": 3,
+            "annotation_mode": "roster_only",
+            "roster": ["Russet Fathom"],
+            "entries": [
+                {
+                    "path": "img.jpg",
+                    "sha256": "0" * 64,
+                    "media_id": 7,
+                    "face_count": 1,
+                    "present_identities": ["Russet Fathom"],
+                    "context_pack": {"caption": "Russet Fathom in Antarctica."},
+                    "must_right": ["Russet Fathom"],
+                    "easy_wrong": [],
+                    "policy": {"recognition_enabled": True},
+                    "provenance": {"source": "fixture", "license": "fixture"},
+                }
+            ],
+        }
+    )
+
+
+def test_weave_bench_stall_path_uses_path_text_wire_form() -> None:
+    """Manifest-carried paths cannot leak a PEP 383 surrogate on a stall."""
+
+    class FailingWeaveClient:
+        base_url = "http://candidate.test:8080"
+
+        @staticmethod
+        def weave_bench_describe(**_kwargs: object) -> dict[str, object]:
+            raise RuntimeError("boom")
+
+    raw_path = "caf\udce9.jpg"
+    source = {
+        "provenance": {},
+        "items": [
+            {
+                "media_id": 7,
+                "path": raw_path,
+                "describe": {"passes": [{"pass": "describe_facts", "raw": "{}"}]},
+            }
+        ],
+    }
+    with pytest.raises(BoundedStallError) as excinfo:
+        weave_bench_run_record(
+            source,
+            _weave_bench_manifest(),
+            FailingWeaveClient(),
+            source_path="source.json",
+            source_sha256="a" * 64,
+            head_sha="deadbeef",
+            stall_limit=1,
+        )
+
+    partial = excinfo.value.partial_record
+    assert partial["items"][0]["path"] == "undecodable:caf\\xe9.jpg"
+    assert "undecodable:caf\\xe9.jpg" in str(excinfo.value)
+    assert "udce9" not in json.dumps(partial)
+
+
+def test_weave_bench_malformed_item_excerpt_uses_path_text_wire_form() -> None:
+    raw_path = "caf\udce9.jpg"
+    source = {"provenance": {}, "items": [{"media_id": "bad", "path": raw_path}]}
+    with pytest.raises(WeaveBenchRecordError) as excinfo:
+        weave_bench_run_record(
+            source,
+            _weave_bench_manifest(),
+            object(),
+            source_path="source.json",
+            source_sha256="a" * 64,
+            head_sha="deadbeef",
+        )
+
+    message = str(excinfo.value)
+    assert "undecodable:caf\\xe9.jpg" in message
+    assert "udce9" not in message
 
 
 # This is a metadata-only split invariant: reading pixels would add an unrelated

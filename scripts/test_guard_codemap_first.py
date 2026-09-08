@@ -44,6 +44,7 @@ def bash(command: str) -> dict:
         grep(pattern="def resolve_runtime"),  # repo-wide sweep
         grep(pattern=r"\bOrtYuNetDetector\b", path="apps"),
         grep(pattern="OrtSFaceEmbedder", path="apps", glob="*.py"),
+        grep(pattern="OrtSFaceEmbedder", path="apps", glob="*.{py,md}"),
     ],
 )
 def test_blocks_symbol_search_over_indexed_roots(repo: Path, payload: dict) -> None:
@@ -77,6 +78,19 @@ def test_allows_single_file_operand(repo: Path) -> None:
     assert guard.decide(payload, repo) is None
 
 
+@pytest.mark.parametrize("pattern", ["foo^bar", "foo$bar", r"foo\bbar"])
+def test_internal_regex_anchors_remain_raw_text_search(repo: Path, pattern: str) -> None:
+    """Anchors inside a pattern are regex syntax, not codemap identifiers."""
+    assert guard._pattern_is_symbolic(pattern) is None
+    assert guard.decide(grep(pattern=pattern, path="apps"), repo) is None
+
+
+def test_negative_glob_does_not_exclude_indexed_code(repo: Path) -> None:
+    """Excluding prose still leaves an indexed code-root search in scope."""
+    payload = grep(pattern="ClusterRepository", path="apps", glob="!*.md")
+    assert guard.decide(payload, repo) is not None
+
+
 # --- Bash ------------------------------------------------------------------
 
 @pytest.mark.parametrize(
@@ -88,7 +102,9 @@ def test_allows_single_file_operand(repo: Path) -> None:
         "rg 'def resolve_runtime'",                     # rg recurses from cwd
         "rg -e ClusterRepository apps/",
         "CODEMAP_UNRELATED=1 rg ClusterRepository apps/",
-        "cd /tmp && rg ClusterRepository apps/",        # && starts a fresh segment
+        "cd apps && rg ClusterRepository .",
+        "rg -g '*.md' -g '*.py' ClusterRepository apps/",
+        "rg -t yaml -t py ClusterRepository apps/",
     ],
 )
 def test_blocks_bash_symbol_sweeps(repo: Path, command: str) -> None:
@@ -99,6 +115,7 @@ def test_blocks_bash_symbol_sweeps(repo: Path, command: str) -> None:
     "command",
     [
         "CODEMAP_OK=1 rg ClusterRepository apps/",      # declared escape
+        "env CODEMAP_OK=1 rg ClusterRepository apps/",  # declared escape via env
         "git log --oneline | grep ClusterRepository",   # filtering command output
         "cat foo.txt | grep -n ClusterRepository",
         "git log -p | rg ClusterRepository",            # rg on stdin, not the tree
@@ -116,6 +133,37 @@ def test_blocks_bash_symbol_sweeps(repo: Path, command: str) -> None:
 )
 def test_allows_non_symbol_bash(repo: Path, command: str) -> None:
     assert guard.decide(bash(command), repo) is None
+
+
+def test_escape_marker_must_be_an_assignment(repo: Path) -> None:
+    """Mentioning CODEMAP_OK in output must not bypass the guard."""
+    command = "echo CODEMAP_OK=1 && rg ClusterRepository apps/"
+    assert guard.decide(bash(command), repo) is not None
+
+
+def test_cd_into_indexed_root_is_guarded(repo: Path) -> None:
+    command = "cd apps && rg ClusterRepository ."
+    assert guard.decide(bash(command), repo) is not None
+
+
+def test_cd_outside_repo_does_not_infer_an_indexed_path(repo: Path) -> None:
+    command = "cd /definitely/not/this/repo && rg ClusterRepository apps/"
+    assert guard.decide(bash(command), repo) is None
+
+
+def test_failed_cd_fails_open(repo: Path) -> None:
+    command = "cd apps/missing && rg ClusterRepository ."
+    assert guard.decide(bash(command), repo) is None
+
+
+def test_claude_codemap_hook_has_timeout() -> None:
+    settings_path = GUARD.parent.parent / ".claude" / "settings.json"
+    settings = json.loads(settings_path.read_text())
+    codemap = next(
+        entry for entry in settings["hooks"]["PreToolUse"]
+        if entry.get("matcher") == "Grep|Bash"
+    )
+    assert codemap["hooks"][0]["timeout"] == 5
 
 
 # --- Fail-open guarantees --------------------------------------------------

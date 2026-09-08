@@ -69,8 +69,12 @@ sweep guidance.
    the OCI transition and Audit events, but the corresponding optional checks
    are recorded as not supplied.
 
-   Snapshot URLs are used only for retrieval; their query tokens are replaced
-   with `<redacted-url>` in the manifest command receipt.
+   Snapshot URLs are used only for retrieval. The exporter strips the query
+   string entirely before writing the manifest command receipt, so only the
+   object path remains (`https://host/object.json?token=…` becomes
+   `https://host/object.json`). Query tokens, expiry, and signature
+   parameters are omitted; they are not replaced by a `<redacted-url>`
+   placeholder ([REF-33]).
 
 4. Check the bundle. The normal reaper principal is `gpu-reaper`; confirm the
    deployment's configured principal before accepting a result. Set the

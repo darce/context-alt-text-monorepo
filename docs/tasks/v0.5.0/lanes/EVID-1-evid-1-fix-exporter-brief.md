@@ -6,7 +6,7 @@ New finding-id range reserved for this lane (only if you must file new ones): `E
 
 ## Objective
 
-Close the 6 open findings below with tests. Verification command: `LC_ALL=C bash scripts/deploy/tests/run.sh 2>/dev/null || LC_ALL=C python3 -m pytest scripts/deploy/tests -q -k evidence`.
+Close the 6 open findings below with tests. Verification command: `python3 -m pytest scripts/deploy/tests/test_export_gpu_evidence_shell.py -q -p no:randomly`. That pytest entry wraps `scripts/deploy/tests/test-export-gpu-evidence.sh` (`LC_ALL=C`) and is already collected by root `make test-scripts` via `scripts/deploy/tests`. There is no `scripts/deploy/tests/run.sh`; do not swallow a missing runner with `2>/dev/null` and a broader `-k evidence` fallback ([RLSE-05]).
 
 ## Owned paths
 
@@ -15,7 +15,7 @@ Close the 6 open findings below with tests. Verification command: `LC_ALL=C bash
 
 ## Design notes
 
-Write the new bundle into a temp sibling dir and `mv` it into place only after every step succeeds (EVID1E-H-02, [RES-01]); keep the previous bundle untouched on any failure. Never fabricate a STOPPED state at --since (EVID-1-R1-03): emit `unknown` with a `reason`. Strip query strings from snapshot URLs before persisting (EVID1E-M-10). Add `--max-time`/`--connect-timeout` to every curl (EVID-1-R1-08, [RES-02]). Replace the denylist guard with an allowlist of read-only OCI verbs (EVID1E-L-11). Add shell tests under scripts/deploy/tests/ following the existing pattern there; run them with LC_ALL=C.
+Write the new bundle into a temp sibling dir and `mv` it into place only after every step succeeds (EVID1E-H-02, [RES-01]); keep the previous bundle untouched on any failure. Never fabricate a STOPPED state at --since (EVID-1-R1-03): emit `unknown` with a `reason` so state history stays independently observed Audit lineage (DDIA). Strip query strings from snapshot URLs before persisting (EVID1E-M-10): keep the object path and omit the query entirely; do not replace it with `<redacted-url>` ([REF-33]). Add `--max-time`/`--connect-timeout` to every curl (EVID-1-R1-08, [RES-02]). Replace the denylist guard with an allowlist of read-only OCI verbs (EVID1E-L-11). Add shell tests under scripts/deploy/tests/ following the existing pattern there; run them with the verification command above, not a nonexistent `run.sh`.
 
 ## Findings to close
 
@@ -33,7 +33,7 @@ The exporter fabricates a STOPPED state at --since and labels the current state 
 
 ### EVID1E-M-10 (medium) — `scripts/deploy/lib/export-gpu-evidence.sh:428-446`
 
-[ANTIPATTERN] EVID-1-M7: A snapshot URL, including query tokens from a presigned URL, is persisted verbatim in manifest.json and may be attached to handoff.
+[ANTIPATTERN] EVID-1-M7: A snapshot URL, including query tokens from a presigned URL, is persisted verbatim in manifest.json and may be attached to handoff. The fix is to strip the query string entirely so only the object path remains; do not replace the URL with `<redacted-url>` ([REF-33]).
 
 ### EVID-1-R1-08 (low) — `scripts/deploy/lib/export-gpu-evidence.sh:432-434`
 

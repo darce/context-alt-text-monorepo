@@ -1208,6 +1208,7 @@ def test_provenance_stamps_the_band_and_the_budget_only_when_non_default() -> No
         "caption_length": "long",
         "weave_max_tokens": WEAVE_MAX_TOKENS["long"],
         "two_pass": True,
+        "roster_epoch": "post-priv1",
     }
     # Discrimination guard: the default arm's record shape is unchanged (additive
     # schema), so pre-axis records and standard-arm records stay comparable.
@@ -1220,7 +1221,11 @@ def test_provenance_stamps_the_band_and_the_budget_only_when_non_default() -> No
         face_gate=False,
         eval_mode="standard",
     )
-    assert std_prov == {"prompt_variant": "v3", "two_pass": True}
+    assert std_prov == {
+        "prompt_variant": "v3",
+        "two_pass": True,
+        "roster_epoch": "post-priv1",
+    }
 
 
 def test_describe_stamps_the_band_on_the_long_arm_only() -> None:

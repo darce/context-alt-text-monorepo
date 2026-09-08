@@ -1037,6 +1037,101 @@ def test_a_lane_row_without_a_status_fails_closed() -> None:
         reaper._lane_owners_from_rows([{"lane_id": "x", "worktree_path": "/tmp/reap-a"}])
 
 
+def test_active_lane_row_without_usable_path_fails_closed() -> None:
+    for row in (
+        {"lane_id": "missing", "status": "active"},
+        {"lane_id": "invalid", "status": "active", "worktree_path": "\x00"},
+    ):
+        with pytest.raises(reaper.LaneStateError, match="usable worktree_path"):
+            reaper._lane_owners_from_rows([row])
+
+
+def test_apply_rechecks_lane_ownership_after_classification(
+    fixture_repo: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = fixture_repo["repo"]
+    target = fixture_repo["paths"]["ancestor"].resolve()
+    calls = 0
+
+    def ownership(_repo: Path) -> dict[Path, str]:
+        nonlocal calls
+        calls += 1
+        return {} if calls == 1 else {target: "re-dispatched-lane"}
+
+    monkeypatch.setattr(reaper, "active_lane_paths", ownership)
+    record = next(item for item in reaper.classify(repo) if item.path == target)
+    assert record.status == "REDUNDANT"
+
+    result = reaper.apply([record], dry_run=False)
+
+    assert result["removed"] == []
+    assert result["errors"]
+    assert target.exists()
+    assert _git(
+        repo,
+        "show-ref",
+        "--verify",
+        "refs/heads/feature/parent-ancestor",
+        check=False,
+    ).returncode == 0
+    assert calls >= 2
+
+
+def test_apply_rechecks_lane_ownership_before_recovered_intent(
+    fixture_repo: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = fixture_repo["repo"]
+    target = fixture_repo["paths"]["ancestor"].resolve()
+    record = next(item for item in reaper.classify(repo) if item.path == target)
+    assert reaper._write_intent(repo, record, target, "worktree-removed") is None
+    _git(repo, "worktree", "remove", "--", str(target))
+    monkeypatch.setattr(
+        reaper,
+        "active_lane_paths",
+        lambda _repo: {target: "re-dispatched-lane"},
+    )
+
+    result = reaper.apply(reaper.classify(repo), dry_run=False)
+
+    assert result["removed"] == []
+    assert result["errors"]
+    assert _git(
+        repo,
+        "show-ref",
+        "--verify",
+        "refs/heads/feature/parent-ancestor",
+        check=False,
+    ).returncode == 0
+    assert (repo / ".git" / "worktree-reap.intent.json").exists()
+
+
+def test_apply_rejects_unverified_lane_state(
+    fixture_repo: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = fixture_repo["repo"]
+
+    def unreadable(_repo: Path) -> dict[Path, str]:
+        raise reaper.LaneStateError("registry offline")
+
+    monkeypatch.setattr(reaper, "active_lane_paths", unreadable)
+    with pytest.warns(RuntimeWarning, match="without lane-state verification"):
+        records = reaper.classify(repo, require_lane_state=False)
+    candidate = next(item for item in records if item.status == "REDUNDANT")
+
+    result = reaper.apply([candidate], dry_run=False)
+
+    assert result["removed"] == []
+    assert result["errors"]
+    assert candidate.path.exists()
+    assert _git(
+        repo,
+        "show-ref",
+        "--verify",
+        "refs/heads/feature/parent-ancestor",
+        check=False,
+    ).returncode == 0
+
+
 @pytest.mark.parametrize(
     "relative_path",
     [

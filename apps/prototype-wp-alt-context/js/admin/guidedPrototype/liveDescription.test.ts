@@ -144,7 +144,7 @@ describe('guided live description terminal states', () => {
       text: 'A shorter description.',
     });
     expect(state.status).toBe(GUIDED_LIVE_STATUS.DEGRADED);
-    expect(state.reason).toBe('cpu_fallback');
+    expect(state.reason).toBe(GUIDED_LIVE_REASON.CPU_TIER);
     expect(state.text).toBe('A shorter description.');
   });
 
@@ -178,7 +178,7 @@ describe('guided live description terminal states', () => {
       text: 'A shorter description.',
     });
     expect(state.status).toBe(GUIDED_LIVE_STATUS.DEGRADED);
-    expect(state.reason).toBe('cpu_fallback');
+    expect(state.reason).toBe(GUIDED_LIVE_REASON.CPU_TIER);
   });
 
   // A run in flight was started against an identity answer that no longer

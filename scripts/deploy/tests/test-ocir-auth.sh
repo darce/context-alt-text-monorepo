@@ -58,17 +58,48 @@ case "${OCIR_TEST_OCI_MODE:-ok}" in
     fail) echo 'ServiceError: forced OCI failure' >&2; exit 42 ;;
     empty) exit 0 ;;
     sleep) exec sleep 10 ;;
+    generation_absent)
+        case " $* " in
+            *" --secret-name OCIR_CREDENTIAL_GENERATION "*)
+                echo 'ServiceError: NotAuthorizedOrNotFound' >&2
+                exit 1
+                ;;
+        esac
+        ;;
+    generation_invalid)
+        case " $* " in
+            *" --secret-name OCIR_CREDENTIAL_GENERATION "*)
+                printf '%s' 'unexpected-generation' | base64
+                exit 0
+                ;;
+        esac
+        ;;
+    generation_stderr)
+        case " $* " in
+            *" --secret-name OCIR_CREDENTIAL_GENERATION "*)
+                printf '%s\n' 'warning: generation read completed with notices' >&2
+                ;;
+        esac
+        ;;
+    generation_timeout)
+        case " $* " in
+            *" --secret-name OCIR_CREDENTIAL_GENERATION "*) exec sleep 10 ;;
+        esac
+        ;;
 esac
 case " $* " in
     *" --secret-name OCIR_CREDENTIAL_GENERATION "*)
         generation=STABLE:test-generation
-        if [ "${OCIR_TEST_OCI_MODE:-}" = generation_change ]; then
+        if [ "${OCIR_TEST_OCI_MODE:-}" = generation_change ] || \
+            [ "${OCIR_TEST_OCI_MODE:-}" = generation_stderr ]; then
             generation_file="${OCIR_TEST_RECORD_DIR}/generation.count"
             generation_count=0
             [ ! -f "$generation_file" ] || generation_count=$(cat "$generation_file")
             generation_count=$((generation_count + 1))
             printf '%s' "$generation_count" >"$generation_file"
-            generation="STABLE:generation-${generation_count}"
+            if [ "${OCIR_TEST_OCI_MODE:-}" = generation_change ]; then
+                generation="STABLE:generation-${generation_count}"
+            fi
         fi
         printf '%s' "$generation" | base64
         ;;
@@ -232,6 +263,19 @@ for docker_mode in ok fail; do
 done
 
 reset_records
+generation_stderr_rc=0
+OCIR_TEST_OCI_MODE=generation_stderr run_snippet c "$behavior_login" \
+    "${record_dir}/generation-stderr.stderr" "${record_dir}/generation-stderr.trace" || generation_stderr_rc=$?
+assert_eq "generation stderr does not corrupt a stable marker" 0 "$generation_stderr_rc"
+assert_eq "stable generation with stderr uses the versioned recheck" 2 \
+    "$(cat "${record_dir}/generation.count")"
+if [ -e "${record_dir}/docker.argv" ]; then
+    pass "stable generation with stderr reaches the versioned Docker path"
+else
+    fail "stable generation with stderr did not reach Docker"
+fi
+
+reset_records
 generation_rc=0
 OCIR_TEST_OCI_MODE=generation_change run_snippet c "$behavior_login" \
     "${record_dir}/generation.stderr" "${record_dir}/generation.trace" || generation_rc=$?
@@ -240,6 +284,48 @@ if [ ! -e "${record_dir}/docker.argv" ]; then
     pass "mixed credential generation never reaches Docker"
 else
     fail "mixed credential generation reached Docker"
+fi
+
+reset_records
+legacy_rc=0
+OCIR_TEST_OCI_MODE=generation_absent run_snippet c "$behavior_login" \
+    "${record_dir}/legacy.stderr" "${record_dir}/legacy.trace" || legacy_rc=$?
+assert_eq "absent credential generation uses the legacy login path" 0 "$legacy_rc"
+assert_contains "legacy path emits its mode diagnostic" \
+    'acx-credential-generation:absent-legacy' "$(cat "${record_dir}/legacy.stderr")"
+if [ -e "${record_dir}/docker.argv" ]; then
+    pass "absent credential generation reaches Docker"
+else
+    fail "absent credential generation did not reach Docker"
+fi
+
+reset_records
+invalid_rc=0
+OCIR_TEST_OCI_MODE=generation_invalid run_snippet c "$behavior_login" \
+    "${record_dir}/generation-invalid.stderr" "${record_dir}/generation-invalid.trace" || invalid_rc=$?
+assert_eq "present but unparseable generation is rejected" 76 "$invalid_rc"
+assert_contains "unparseable generation has a dedicated diagnostic" \
+    'acx-credential-generation:invalid' "$(cat "${record_dir}/generation-invalid.stderr")"
+if [ ! -e "${record_dir}/docker.argv" ]; then
+    pass "unparseable generation never reaches Docker"
+else
+    fail "unparseable generation reached Docker"
+fi
+
+generation_timeout_login=$(ACX_VAULT_FETCH_TIMEOUT=1 ocir_login_snippet oci api_key iad.ocir.io)
+reset_records
+generation_timeout_rc=0
+OCIR_TEST_OCI_MODE=generation_timeout run_snippet c "$generation_timeout_login" \
+    "${record_dir}/generation-timeout.stderr" "${record_dir}/generation-timeout.trace" || generation_timeout_rc=$?
+assert_eq "generation fetch timeout fails closed" 124 "$generation_timeout_rc"
+assert_contains "generation timeout emits the Vault timeout marker" \
+    'acx-timeout:vault' "$(cat "${record_dir}/generation-timeout.stderr")"
+assert_absent "generation timeout does not select legacy mode" \
+    'acx-credential-generation:absent-legacy' "$(cat "${record_dir}/generation-timeout.stderr")"
+if [ ! -e "${record_dir}/docker.argv" ]; then
+    pass "generation timeout never reaches Docker"
+else
+    fail "generation timeout reached Docker"
 fi
 
 # --- failed and empty Vault reads -------------------------------------------

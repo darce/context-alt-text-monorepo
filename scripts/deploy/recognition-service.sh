@@ -539,33 +539,48 @@ preflight_docker() {
 # Keep ordinary text useful for diagnosis, but strip C0/C1 controls and prefix
 # every line so captured output cannot masquerade as a deploy decision.
 sanitize_deploy_diagnostic() {
-  # WHY: SOH is inserted after tr so the literal-sentinel survives C0/C1 stripping.
-  local _soh=$'\001'
-  local _sk='token|access_token|refresh_token|password|passwd|secret|api[-_]?key|[A-Za-z0-9_]*_token|[A-Za-z0-9_]*_password|[A-Za-z0-9_]*_secret|[A-Za-z0-9_]*_key_id|[A-Za-z0-9_]*_key_content|[A-Za-z0-9_]*_access_key|secret_key_base|[A-Za-z0-9_]*_key|pgpassword'
-  local _ek='[A-Za-z0-9_]*_(TOKEN|PASSWORD|SECRET|KEY)|[A-Za-z0-9_]*_key_id|[A-Za-z0-9_]*_key_content|[A-Za-z0-9_]*_access_key|secret_key_base|PGPASSWORD|TOKEN|PASSWORD|PASSWD|SECRET|KEY'
-  LC_ALL=C tr -d '\000-\010\013-\037\177-\237' \
-    | sed -E \
-      -e 's/["'"'"']authorization["'"'"'][[:space:]]*:[[:space:]]*"(bearer|basic|token)[[:space:]]+(\\.|[^"\\])*"/"Authorization": "\1 [REDACTED]"/gI' \
-      -e "s/[\"']authorization[\"'][[:space:]]*:[[:space:]]*'(bearer|basic|token)[[:space:]]+(\\\\.|[^'\\\\])*'/\"Authorization\": \"\\1 [REDACTED]\"/gI" \
-      -e 's/authorization[[:space:]]*[=:][[:space:]]*(bearer|basic|token)[[:space:]]+[^[:space:]"]+/Authorization: \1 [REDACTED]/gI' \
-      -e 's/(^|[^[:alnum:]])(bearer|basic|token)[[:space:]]+[^[:space:]"'"'"']{8,}/\1\2 [REDACTED]/gI' \
-      -e 's/["'"'"']('"${_sk}"')["'"'"'][[:space:]]*([=:]+[[:space:]]*)+"(\\.|[^"\\])*"/"\1": "[REDACTED]"/gI' \
-      -e 's/["'"'"']('"${_sk}"')["'"'"'][[:space:]]*([=:]+[[:space:]]*)+'"'"'(\\.|[^'"'"'\\])*'"'"'/"\1": "[REDACTED]"/gI' \
-      -e 's/["'"'"']('"${_sk}"')["'"'"'][[:space:]]*([=:]+[[:space:]]*)+"(\\.|[^"\\])*\\?$/"\1": "[REDACTED]/gI' \
-      -e 's/["'"'"']('"${_sk}"')["'"'"'][[:space:]]*([=:]+[[:space:]]*)+'"'"'(\\.|[^'"'"'\\])*\\?$/"\1": "[REDACTED]/gI' \
-      -e 's/["'"'"']('"${_sk}"')["'"'"'][[:space:]]*([=:]+[[:space:]]*)+(null|true|false)([,}[:space:]]|$)/"\1": '"${_soh}"'\3\4/gI' \
+  # WHY: printf -v keeps SOH out of declare -f; tr no longer strips UTF-8 continuation bytes.
+  local _soh _sk _ek _hdr
+  printf -v _soh '\001'
+  _sk='token|access_token|refresh_token|password|passwd|secret|api[-_]?key|[A-Za-z0-9_]*_token|[A-Za-z0-9_]*_password|[A-Za-z0-9_]*_secret|[A-Za-z0-9_]*_key_id|[A-Za-z0-9_]*_key_content|[A-Za-z0-9_]*_access_key|secret_key_base|[A-Za-z0-9_]*_key|pgpassword|identitytoken|pass_phrase|auth|_auth'
+  _ek='[A-Za-z0-9_]*_(TOKEN|PASSWORD|SECRET|KEY|AUTH|PASSPHRASE|CREDENTIALS|PWD)|[A-Za-z0-9_]*_key_id|[A-Za-z0-9_]*_key_content|[A-Za-z0-9_]*_access_key|secret_key_base|_authtoken|_auth|PGPASSWORD|PASSPHRASE|pass_phrase|CREDENTIALS|TOKEN|PASSWORD|PASSWD|SECRET|KEY|AUTH|PASS'
+  _hdr='bearer|basic|token|apikey|api-key|api_key|digest|signature|aws4-hmac-sha256'
+  LC_ALL=C LANG=C LC_CTYPE=C tr -d '\000-\010\013-\037\177' \
+    | LC_ALL=C LANG=C LC_CTYPE=C awk -v sq="'" '
+        function depth_delta(s,    i, c, in_str, esc, d) { d=0; in_str=0; esc=0; for (i=1; i<=length(s); i++) { c=substr(s,i,1); if (in_str) { if (esc) { esc=0; continue } if (c=="\\") { esc=1; continue } if (c=="\"") in_str=0; continue } if (c=="\"") { in_str=1; continue } if (c=="["||c=="{") d++; else if (c=="]"||c=="}") d-- } return d }
+        function is_pretty_open(s,    t, pat) { t=tolower(s); if (t ~ /"(token|access_token|refresh_token|password|passwd|secret|apikey|api-key|api_key|[a-z0-9_]*_token|[a-z0-9_]*_password|[a-z0-9_]*_secret|[a-z0-9_]*_key_id|[a-z0-9_]*_key_content|[a-z0-9_]*_access_key|secret_key_base|[a-z0-9_]*_key|pgpassword|identitytoken|pass_phrase|auth|_auth)"[ \t]*[=:]+[ \t]*[\[{][ \t]*$/) return 1; pat=sq "(token|access_token|refresh_token|password|passwd|secret|apikey|api-key|api_key|[a-z0-9_]*_token|[a-z0-9_]*_password|[a-z0-9_]*_secret|[a-z0-9_]*_key_id|[a-z0-9_]*_key_content|[a-z0-9_]*_access_key|secret_key_base|[a-z0-9_]*_key|pgpassword|identitytoken|pass_phrase|auth|_auth)" sq "[ \t]*[=:]+[ \t]*[\[{][ \t]*$"; return (t ~ pat) }
+        function is_pem_banner(s,    t) { if (s !~ /-----BEGIN [A-Za-z0-9 ]*PRIVATE KEY-----/) return 0; if (s ~ /-----END [A-Za-z0-9 ]*PRIVATE KEY-----/) return 0; t=s; sub(/.*-----BEGIN [A-Za-z0-9 ]*PRIVATE KEY-----/, "", t); return (t ~ /^[ \t]*$/) }
+        BEGIN { pem=0; depth=0 }
+        { if (pem) { if ($0 ~ /-----END [A-Za-z0-9 ]*PRIVATE KEY-----/) { pem=0; print; next } print "[REDACTED]"; next } if (is_pem_banner($0)) { pem=1; print; next } if (depth>0) { depth+=depth_delta($0); if (depth<0) depth=0; if ($0 ~ /^[ \t]*[\]},]*[ \t]*$/) print; else print "[REDACTED]"; next } if (is_pretty_open($0)) { depth+=depth_delta($0); print; next } print }
+      ' \
+    | LC_ALL=C LANG=C LC_CTYPE=C sed -E \
+      -e 's/["'"'"']authorization["'"'"'][[:space:]]*:[[:space:]]*"('"${_hdr}"')[[:space:]]+(\\.|[^"\\])*"/"Authorization": "\1 [REDACTED]"/gI' \
+      -e "s/[\"']authorization[\"'][[:space:]]*:[[:space:]]*'("${_hdr}")[[:space:]]+(\\\\.|[^'\\\\])*'/\"Authorization\": \"\\1 [REDACTED]\"/gI" \
+      -e 's/authorization[[:space:]]*[=:][[:space:]]*('"${_hdr}"')[[:space:]].*/Authorization: \1 [REDACTED]/gI' \
+      -e 's/authorization[[:space:]]*[=:][[:space:]]*[^[:space:]]+$/Authorization: [REDACTED]/gI' \
+      -e 's/(^|[^[:alnum:]])('"${_hdr}"')[[:space:]]+("[^"]*"|'"'"'[^'"'"']*'"'"'|[^[:space:]"'"'"']{8,})/\1\2 [REDACTED]/gI' \
+      -e 's/["'"'"']('"${_sk}"')["'"'"'][[:space:]]*([=:]+>?[[:space:]]*)+"(\\.|[^"\\])*"/"\1": "[REDACTED]"/gI' \
+      -e 's/["'"'"']('"${_sk}"')["'"'"'][[:space:]]*([=:]+>?[[:space:]]*)+'"'"'(\\.|[^'"'"'\\])*'"'"'/"\1": "[REDACTED]"/gI' \
+      -e 's/["'"'"']('"${_sk}"')["'"'"'][[:space:]]*([=:]+>?[[:space:]]*)+"(\\.|[^"\\])*\\?$/"\1": "[REDACTED]/gI' \
+      -e 's/["'"'"']('"${_sk}"')["'"'"'][[:space:]]*([=:]+>?[[:space:]]*)+'"'"'(\\.|[^'"'"'\\])*\\?$/"\1": "[REDACTED]/gI' \
+      -e 's/["'"'"']('"${_sk}"')["'"'"'][[:space:]]*([=:]+>?[[:space:]]*)+(null|true|false)([,}[:space:]]|$)/"\1": '"${_soh}"'\3\4/gI' \
       -e 's/'"${_soh}"'([A-Za-z]*[A-Z][A-Za-z]*)/\1/g' \
-      -e 's/["'"'"']('"${_sk}"')["'"'"'][[:space:]]*([=:]+[[:space:]]*)+[\[{].*$/"\1": [REDACTED]/gI' \
-      -e 's/["'"'"']('"${_sk}"')["'"'"'][[:space:]]*([=:]+[[:space:]]*)+([^[:space:],}"'"'"''"${_soh}"'][^[:space:],}"'"'"']*)/"\1": [REDACTED]/gI' \
-      -e 's/(^|[^A-Za-z0-9_-])('"${_ek}"')[[:space:]]*[=:][[:space:]]*"[^"]*"/\1\2=[REDACTED]/gI' \
-      -e "s/(^|[^A-Za-z0-9_-])(${_ek})[[:space:]]*[=:][[:space:]]*'[^']*'/\1\2=[REDACTED]/gI" \
-      -e 's/(^|[^A-Za-z0-9_-])('"${_ek}"')[[:space:]]*[=:][[:space:]]*[^[:space:]]+/\1\2=[REDACTED]/gI' \
+      -e 's/["'"'"']('"${_sk}"')["'"'"'][[:space:]]*([=:]+>?[[:space:]]*)+[\[{].*$/"\1": [REDACTED]/gI' \
+      -e 's/["'"'"']('"${_sk}"')["'"'"'][[:space:]]*([=:]+>?[[:space:]]*)+([^[:space:],}"'"'"''"${_soh}"'][^[:space:],}"'"'"']*)/"\1": [REDACTED]/gI' \
+      -e 's/(^|[^A-Za-z0-9_-])('"${_ek}"')[[:space:]]*([=:]+[[:space:]]*)+"(\\.|[^"\\])*"/\1\2=[REDACTED]/gI' \
+      -e "s/(^|[^A-Za-z0-9_-])(${_ek})[[:space:]]*([=:]+[[:space:]]*)+'[^']*'/\1\2=[REDACTED]/gI" \
+      -e 's/(^|[^A-Za-z0-9_-])('"${_ek}"')[[:space:]]*([=:]+[[:space:]]*)+[^[:space:]]+/\1\2=[REDACTED]/gI' \
+      -e 's/(^|[[:space:]])--([A-Za-z0-9_-]*(password|passwd|token|secret|key))[=:][^[:space:]]+/\1--\2=[REDACTED]/gI' \
       -e 's/(^|[^[:alnum:]])([A-Za-z0-9-]*-(token|secret|key))[[:space:]]*:[[:space:]]*[^[:space:]]+/\1\2: [REDACTED]/gI' \
       -e 's/(^|[^A-Za-z0-9_])([A-Za-z0-9_-]*(api_key|api-key|apikey))[[:space:]]*:[[:space:]]*[^[:space:]"]+/\1\2: [REDACTED]/gI' \
       -e 's/(^|[^A-Za-z0-9_])(api_key|api-key|apikey)[[:space:]]*=[[:space:]]*("[^"]*"|'\''[^'\'']*'\''|[^[:space:]&"]+)/\1\2=[REDACTED]/gI' \
-      -e 's|://([^:/@[:space:]]+):([^@/[:space:]]+)@|://\1:[REDACTED]@|g' \
+      -e 's|://([^:/@[:space:]]*):([^[:space:]/]+)@([[:alnum:]._-]+)|://\1:[REDACTED]@\3|g' \
+      -e 's/[Cc]ookie:[[:space:]].*/Cookie: [REDACTED]/' \
+      -e 's/ghp_[A-Za-z0-9]{20,}/[REDACTED]/g' \
+      -e 's/github_pat_[A-Za-z0-9_]{10,}/[REDACTED]/g' \
+      -e 's/AKIA[A-Z0-9]{16}/[REDACTED]/g' \
       -e 's/'"${_soh}"'//g' \
-    | sed 's/^/diagnostic: /'
+    | LC_ALL=C LANG=C LC_CTYPE=C sed 's/^/diagnostic: /'
 }
 
 # Prefix-and-redact one evidence blob onto deploy stderr. Hoisted so

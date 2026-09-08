@@ -53,7 +53,9 @@ def test_write_read_round_trip_clamps_ttl_and_publishes_atomic_file(tmp_path: Pa
     assert payload["sequence"] == written.sequence
 
 
-def test_sequence_is_monotonic_and_lifecycle_reader_accepts_publication(tmp_path: Path) -> None:
+def test_sequence_is_monotonic_and_lifecycle_reader_accepts_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     runtime_target = tmp_path / "runtime" / "prod" / "gpu-intent.json"
     durable_target = tmp_path / "durable" / "prod" / "gpu-intent.json"
 
@@ -72,6 +74,8 @@ def test_sequence_is_monotonic_and_lifecycle_reader_accepts_publication(tmp_path
         now=NOW,
     )
 
+    # This cross-package contract must also run from the service directory.
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[4]))
     from infra.oci.gpu_lifecycle.intent import _read_one, read_effective_intent
 
     lifecycle_intent = _read_one(runtime_target)

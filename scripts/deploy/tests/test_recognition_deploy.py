@@ -1077,6 +1077,15 @@ SANITIZER_CASES = [
     ("Authorization: Basic ZGFuOmh1bnRlcjI=", "ZGFuOmh1bnRlcjI="),
     ("{'password': LEAKJ}", "LEAKJ"),
     ('{"HF_TOKEN": LEAKK, "x": 1}', "LEAKK"),
+    ("Basic user:hunter2", "user:hunter2"),
+    ("Bearer eyJ.abc:def", "eyJ.abc:def"),
+    ("Basic abcdefgh:xyz", "abcdefgh:xyz"),
+    ("Bearer abcdef%2Fgh", "abcdef%2Fgh"),
+    ("authorization: token expired", "expired"),
+    ("Authorization: Basic ab:12", "ab:12"),
+    ('{"password": "supersecretvalue', "supersecretvalue"),
+    ('{"password": 12345}', "12345"),
+    ('{"password"=LEAKQ}', "LEAKQ"),
 ]
 
 
@@ -1165,13 +1174,86 @@ def test_sanitize_deploy_diagnostic_redacts_escaped_json_quotes() -> None:
         "token expired",
         "Invalid token format",
         "Token bucket exhausted",
+        "Bearer abc1234",
     ],
 )
 def test_sanitize_deploy_diagnostic_preserves_prose_bearer_basic_token(raw: str) -> None:
-    """LR-01/GR-08: ordinary prose mentioning bearer/basic/token is not redacted."""
+    """LR-01/GR-08/GR-64: ordinary prose and 7-char bare tokens are not redacted."""
     out = _run_sanitizer(raw + "\n")
     assert out == f"diagnostic: {raw}\n"
     assert "[REDACTED]" not in out
+
+
+def test_sanitize_deploy_diagnostic_authorization_header_redacts_short_and_expired_values() -> None:
+    """GR-62: Authorization header stays greedy; short values and 'expired' redact."""
+    out_expired = _run_sanitizer("authorization: token expired\n")
+    assert out_expired == "diagnostic: Authorization: token [REDACTED]\n"
+    assert "expired" not in out_expired
+
+    out_short = _run_sanitizer("Authorization: Basic ab:12\n")
+    assert out_short == "diagnostic: Authorization: Basic [REDACTED]\n"
+    assert "ab:12" not in out_short
+
+
+def test_sanitize_deploy_diagnostic_redacts_colon_percent_bare_credentials() -> None:
+    """GR-61: bare Bearer/Basic values may include colon and percent."""
+    cases = (
+        ("Basic user:hunter2", "user:hunter2"),
+        ("Bearer eyJ.abc:def", "eyJ.abc:def"),
+        ("Basic abcdefgh:xyz", "abcdefgh:xyz"),
+        ("Bearer abcdef%2Fgh", "abcdef%2Fgh"),
+    )
+    for raw, secret in cases:
+        out = _run_sanitizer(raw + "\n")
+        assert secret not in out, out
+        assert out == f"diagnostic: {raw.split()[0]} [REDACTED]\n", out
+
+
+def test_sanitize_deploy_diagnostic_fail_closed_unterminated_json_values() -> None:
+    """GR-63: unterminated quoted JSON values must not leak the remainder."""
+    out_escaped = _run_sanitizer('{"password": "abc\\"\n')
+    assert "abc" not in out_escaped, out_escaped
+    assert '{"password": "[REDACTED]' in out_escaped
+
+    out_open = _run_sanitizer('{"password": "supersecretvalue\n')
+    assert "supersecretvalue" not in out_open, out_open
+    assert '{"password": "[REDACTED]' in out_open
+
+    out_sibling = _run_sanitizer('{"password": "a\\\\", "x": "LEAKP"}\n')
+    assert "LEAKP" in out_sibling, out_sibling
+    assert "[REDACTED]" in out_sibling
+
+
+def test_sanitize_deploy_diagnostic_preserves_json_null_true_false_literals() -> None:
+    """GR-65: JSON null/true/false stay intact; numeric secret values still redact."""
+    for raw in (
+        '{"api_key": null}',
+        '{"password": true}',
+        '{"password": false}',
+        '{"token_count": 5}',
+    ):
+        out = _run_sanitizer(raw + "\n")
+        assert out == f"diagnostic: {raw}\n", out
+        assert "[REDACTED]" not in out
+
+    out_num = _run_sanitizer('{"password": 12345}\n')
+    assert "12345" not in out_num, out_num
+    assert '"password": [REDACTED]' in out_num
+
+    out_leak = _run_sanitizer("{'password': LEAKJ}\n")
+    assert "LEAKJ" not in out_leak, out_leak
+    assert '"password": [REDACTED]' in out_leak
+
+
+def test_sanitize_deploy_diagnostic_redacts_quoted_key_equals_unquoted_value() -> None:
+    """GR-66: quoted secret key followed by = must redact the unquoted value."""
+    out_dq = _run_sanitizer('{"password"=LEAKQ}\n')
+    assert "LEAKQ" not in out_dq, out_dq
+    assert '"password": [REDACTED]' in out_dq
+
+    out_sq = _run_sanitizer("{'password'=LEAKJ}\n")
+    assert "LEAKJ" not in out_sq, out_sq
+    assert '"password": [REDACTED]' in out_sq
 
 
 def test_sanitize_deploy_diagnostic_redacts_unquoted_mapping_values() -> None:

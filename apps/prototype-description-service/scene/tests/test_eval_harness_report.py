@@ -4028,6 +4028,20 @@ def test_face_markdown_renders_null_and_bool_json_tokens():  # HARM-04 / S4-05
     assert "coupling_flag=True" not in md
 
 
+def test_face_markdown_renders_nested_real_occlusion_admission():
+    """Each real-occlusion regime keeps its machine admission status visible."""
+    face_run, manifest = _face_fixture_corpus()
+    scored = score_face_run_record(face_run, manifest, score_manifest_sha256="s" * 64)
+    md = _markdown_face(scored)
+    real = scored["gate_proposal"]["evidence_admission"]["real_occlusion"]
+    assert real
+    for regime, admission in real.items():
+        assert (
+            f"real_occlusion.{regime}={admission['status']}/{admission['admission']}"
+        ) in md
+    assert "real_occlusion=null/null" not in md
+
+
 def test_sample_size_in_shared_vacuity_predicate_blocks_compare():  # RV1-02
     """Forged verdict=pass + scored=1 must be vacuous so compare cannot adopt.
 

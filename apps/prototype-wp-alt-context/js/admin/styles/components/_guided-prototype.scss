@@ -243,6 +243,11 @@
   gap: var(--acx-space-24);
 }
 
+.acx-guided-page__understand {
+  display: grid;
+  gap: var(--acx-space-24);
+}
+
 .acx-guided-page__hero {
   display: flex;
   align-items: flex-start;

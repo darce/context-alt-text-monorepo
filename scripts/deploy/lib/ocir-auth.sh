@@ -61,15 +61,11 @@ ocir_emit_assignment() {
 # text. Keeping the watchdog separate from decoding lets the caller distinguish
 # an absent generation secret from an empty or malformed response.
 ocir_vault_fetch_raw_snippet() {
-  # WHY `< /dev/null`: acx_bounded forwards its own stdin to the child (exec 3<&0)
-  # because `docker login --password-stdin` is fed the token through that pipe.
-  # This program is delivered to the remote shell as `bash -s` on stdin, so
-  # without this redirect the OCI CLI inherits the unread remainder of the
-  # program text as its stdin and disturbs that shared descriptor. The first
-  # fetch then succeeds and the next returns empty, which acx_require_nonempty
-  # reports as an absent secret -- pointing operators at a credential rotation
-  # for what is a plumbing bug. The redirect binds to the acx_bounded call, so
-  # the login call site keeps its token pipe.
+  # WHY `< /dev/null`: acx_bounded hands its own stdin to the child so the login
+  # call site can pipe the token to `docker login --password-stdin`. Under the
+  # `bash -s` transport that stdin is the login program itself, still being read
+  # by the shell; a fetch must not offer the OCI CLI the unread program text.
+  # The redirect binds to the acx_bounded call, so the login keeps its pipe.
   printf 'acx_bounded vault "$ACX_OCIR_OCI_BIN" --auth "$ACX_OCIR_AUTH_MODE" secrets secret-bundle get-secret-bundle-by-name --vault-id "$ACX_VAULT_OCID" --secret-name "$ACX_OCIR_SECRET_NAME" --query '\''data."secret-bundle-content".content'\'' --raw-output < /dev/null'
 }
 
@@ -99,6 +95,14 @@ ocir_login_snippet() {
   ocir_emit_assignment ACX_OCIR_GENERATION_SECRET "${ACX_OCIR_GENERATION_SECRET}"
   ocir_emit_assignment ACX_VAULT_FETCH_TIMEOUT "${ACX_VAULT_FETCH_TIMEOUT}"
   ocir_emit_assignment ACX_OCIR_DOCKER_CONFIG_DIR "${ACX_OCIR_DOCKER_CONFIG_DIR:-}"
+  # WHY acx_bounded backgrounds with an explicit `<&0`: without job control a
+  # bare `cmd &` gets /dev/null as stdin, which would starve
+  # `docker login --password-stdin` of the token; the explicit redirect keeps
+  # the caller's stdin. Do NOT reintroduce the `exec 3<&0; cmd <&3 &; exec 3<&-`
+  # form: when this program arrives over `bash -s`, bash 5.2 (the VM) segfaults
+  # (rc 139, no diagnostic) on that dup/close pair inside a command substitution,
+  # so every `$(acx_bounded ...)` vault fetch returned nothing and the login was
+  # reported as `secret_missing` against valid credentials.
   printf '%s\n' \
     'case "$ACX_OCIR_OCI_BIN" in '\''$HOME/'\''*) ACX_OCIR_OCI_BIN="${HOME}/${ACX_OCIR_OCI_BIN#\$HOME/}" ;; esac' \
     'umask 077' \
@@ -125,10 +129,8 @@ ocir_login_snippet() {
     'trap '\''exit 143'\'' TERM' \
     'acx_bounded() {' \
     '  acx_label="$1"; shift' \
-    '  exec 3<&0' \
-    '  "$@" <&3 &' \
+    '  "$@" <&0 &' \
     '  acx_active_pid=$!' \
-    '  exec 3<&-' \
     '  acx_started=$SECONDS' \
     '  while kill -0 "$acx_active_pid" 2>/dev/null; do' \
     '    if [ $((SECONDS - acx_started)) -ge "$ACX_VAULT_FETCH_TIMEOUT" ]; then' \

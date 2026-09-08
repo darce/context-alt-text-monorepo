@@ -8,8 +8,6 @@
  */
 import { DESCRIBE_RESULT_TIER, DESCRIBE_RUN_PHASE, GPU_STATE } from '../api/describeApi';
 import type { DescribeResultTier, DescribeRunPhase, GpuState } from '../api/describeApi';
-import { confirmedPersonKeys, getGuidedPerson } from './state';
-import type { GuidedScenario } from './state';
 
 export const GUIDED_LIVE_STATUS = {
   IDLE: 'idle',
@@ -33,7 +31,6 @@ export type GuidedLiveStatus = (typeof GUIDED_LIVE_STATUS)[keyof typeof GUIDED_L
  * control this screen set out to remove (sr-007).
  */
 export const GUIDED_LIVE_BLOCKED_REASON = {
-  NO_FACES_DECIDED: 'no_faces_decided',
   NO_MEDIA: 'no_media',
 } as const;
 
@@ -301,7 +298,7 @@ export type GuidedLiveAction =
   | { kind: 'failed'; reason: GuidedLiveReason };
 
 export const initialGuidedLiveState = (
-  blockedReason: GuidedLiveBlockedReason | null = GUIDED_LIVE_BLOCKED_REASON.NO_FACES_DECIDED,
+  blockedReason: GuidedLiveBlockedReason | null = null,
 ): GuidedLiveState => ({
   status: blockedReason === null ? GUIDED_LIVE_STATUS.IDLE : GUIDED_LIVE_STATUS.BLOCKED,
   blockedReason,
@@ -353,17 +350,59 @@ export const guidedLiveRequestPayload = (mediaId: number): { media_ids: number[]
 export interface GuidedLiveNamingDisclosure {
   namesTravelWithTheRequest: false;
   namingSource: 'roster';
-  confirmedHere: string[];
 }
 
-export const guidedLiveNamingDisclosure = (scenario: GuidedScenario): GuidedLiveNamingDisclosure => ({
+/** Static disclosure: live naming uses the server roster, never demo choices. */
+export const GUIDED_LIVE_NAMING_DISCLOSURE: GuidedLiveNamingDisclosure = {
   namesTravelWithTheRequest: false,
   namingSource: 'roster',
-  confirmedHere: confirmedPersonKeys(scenario).map((key) => getGuidedPerson(scenario, key).name),
-});
+};
 
 const assertNever = (value: never): never => {
   throw new Error(`Unhandled guided live action: ${JSON.stringify(value)}`);
+};
+
+/**
+ * Brief liveStatus vocabulary from the QM contract. Internal reducer statuses
+ * stay more granular (queued/warming/describing, ready/degraded) so deadline
+ * and tier tests keep their existing assertions; this is the mapping the
+ * panel and parent read.
+ */
+export const GUIDED_LIVE_BRIEF_STATUS = {
+  UNAVAILABLE: 'unavailable',
+  IDLE: 'idle',
+  PENDING: 'pending',
+  SUCCEEDED: 'succeeded',
+  FAILED: 'failed',
+  TIMED_OUT: 'timed_out',
+  STOPPED: 'stopped',
+} as const;
+
+export type GuidedLiveBriefStatus =
+  (typeof GUIDED_LIVE_BRIEF_STATUS)[keyof typeof GUIDED_LIVE_BRIEF_STATUS];
+
+export const guidedLiveBriefStatus = (state: GuidedLiveState): GuidedLiveBriefStatus => {
+  switch (state.status) {
+    case GUIDED_LIVE_STATUS.BLOCKED:
+      return GUIDED_LIVE_BRIEF_STATUS.UNAVAILABLE;
+    case GUIDED_LIVE_STATUS.IDLE:
+      return GUIDED_LIVE_BRIEF_STATUS.IDLE;
+    case GUIDED_LIVE_STATUS.QUEUED:
+    case GUIDED_LIVE_STATUS.WARMING:
+    case GUIDED_LIVE_STATUS.DESCRIBING:
+      return GUIDED_LIVE_BRIEF_STATUS.PENDING;
+    case GUIDED_LIVE_STATUS.READY:
+    case GUIDED_LIVE_STATUS.DEGRADED:
+      return GUIDED_LIVE_BRIEF_STATUS.SUCCEEDED;
+    case GUIDED_LIVE_STATUS.TIMED_OUT:
+      return GUIDED_LIVE_BRIEF_STATUS.TIMED_OUT;
+    case GUIDED_LIVE_STATUS.CANCELLED:
+      return GUIDED_LIVE_BRIEF_STATUS.STOPPED;
+    case GUIDED_LIVE_STATUS.UNAVAILABLE:
+      return GUIDED_LIVE_BRIEF_STATUS.FAILED;
+    default:
+      return assertNever(state.status);
+  }
 };
 
 const terminal = (
@@ -437,14 +476,9 @@ export const guidedLiveReducer = (state: GuidedLiveState, action: GuidedLiveActi
   switch (action.kind) {
     case 'gate_changed': {
       if (action.blockedReason !== null) {
-        // Re-opening a face invalidates the sentence the last run produced: it
-        // was written against an identity answer that no longer holds. Keeping
-        // it on screen under blocked copy would show two contradictory truths
-        // at once (S1-B-09).
-        //
-        // A run still in flight is invalidated for the same reason, so the gate
-        // closing stops the wait rather than letting a poll land a sentence
-        // into a blocked panel. The hook cancels the server side.
+        // Losing the media id invalidates any in-flight run. The hook cancels
+        // the server side; the reducer stops the wait so a late poll cannot
+        // land a sentence into an unavailable panel.
         return {
           ...state,
           status: GUIDED_LIVE_STATUS.BLOCKED,
@@ -468,8 +502,6 @@ export const guidedLiveReducer = (state: GuidedLiveState, action: GuidedLiveActi
     }
 
     case 'requested': {
-      // Commit before reveal: a live sentence must not arrive while a face
-      // match is still unanswered.
       if (state.status === GUIDED_LIVE_STATUS.BLOCKED || isGuidedLiveWaiting(state.status)) {
         return state;
       }
@@ -546,9 +578,11 @@ export const guidedLiveReducer = (state: GuidedLiveState, action: GuidedLiveActi
         status: state.resumeStatus ?? GUIDED_LIVE_STATUS.QUEUED,
         reason: null,
         resumeStatus: null,
-        // A fresh window measured from where the wait actually stands, so the
-        // panel's "of up to" line moves forward instead of re-arming a bound
-        // the clock has already passed.
+        // Exclude time spent on the timed-out screen. advanceClock measures
+        // elapsed as atMs - startedAtMs, so leaving the original request time
+        // in place would charge that pause against the fresh window and
+        // immediately re-enter timed_out (INT-08, INT-11).
+        startedAtMs: action.atMs - state.elapsedMs,
         deadlineMs: state.elapsedMs + GUIDED_LIVE_KEEP_WAITING_SECONDS * 1000,
       };
     }

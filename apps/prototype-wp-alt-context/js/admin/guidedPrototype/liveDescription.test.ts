@@ -7,10 +7,12 @@ import {
   GUIDED_LIVE_DEADLINE_SLACK_MS,
   GUIDED_LIVE_GPU_WARMUP_CEILING_SECONDS,
   GUIDED_LIVE_KEEP_WAITING_SECONDS,
+  GUIDED_LIVE_BRIEF_STATUS,
+  GUIDED_LIVE_NAMING_DISCLOSURE,
   GUIDED_LIVE_REASON,
   GUIDED_LIVE_STATUS,
   GUIDED_LIVE_WAIT_CEILING_SECONDS,
-  guidedLiveNamingDisclosure,
+  guidedLiveBriefStatus,
   isGuidedLiveDeadlineDisclosed,
   guidedLiveRequestPayload,
   guidedLivePollDelayMs,
@@ -21,7 +23,6 @@ import {
 } from './liveDescription';
 import { GUIDED_LIVE_WARM_CEILING_SECONDS } from './useGuidedLiveDescription';
 import type { GuidedLiveState } from './liveDescription';
-import { GUIDED_IDENTITY_STATUS, confirmGuidedIdentity, createGuidedScenario } from './state';
 
 const T0 = 1_000_000;
 
@@ -35,19 +36,23 @@ const started = (): GuidedLiveState => {
 };
 
 describe('guided live description gate', () => {
-  it('blocks a live run until every face has been decided', () => {
-    const state = guidedLiveReducer(initialGuidedLiveState(), { kind: 'gate_changed', blockedReason: GUIDED_LIVE_BLOCKED_REASON.NO_FACES_DECIDED });
-    expect(state.status).toBe(GUIDED_LIVE_STATUS.BLOCKED);
+  it('starts idle with no face-decision prerequisite', () => {
+    const state = initialGuidedLiveState();
+    expect(state.status).toBe(GUIDED_LIVE_STATUS.IDLE);
+    expect(state.blockedReason).toBeNull();
   });
 
-  it('refuses a request while blocked so the model text cannot precede the human decision', () => {
-    const blocked = guidedLiveReducer(initialGuidedLiveState(), { kind: 'gate_changed', blockedReason: GUIDED_LIVE_BLOCKED_REASON.NO_FACES_DECIDED });
+  it('refuses a request while unavailable because there is no media id', () => {
+    const blocked = guidedLiveReducer(initialGuidedLiveState(), {
+      kind: 'gate_changed',
+      blockedReason: GUIDED_LIVE_BLOCKED_REASON.NO_MEDIA,
+    });
     const after = guidedLiveReducer(blocked, { kind: 'requested', atMs: T0 });
     expect(after.status).toBe(GUIDED_LIVE_STATUS.BLOCKED);
     expect(after.runId).toBeNull();
   });
 
-  it('opens the run once the faces are decided', () => {
+  it('opens the run once the gate is clear', () => {
     expect(decided(initialGuidedLiveState()).status).toBe(GUIDED_LIVE_STATUS.IDLE);
     expect(guidedLiveReducer(decided(initialGuidedLiveState()), { kind: 'requested', atMs: T0 }).status).toBe(
       GUIDED_LIVE_STATUS.QUEUED,
@@ -181,15 +186,12 @@ describe('guided live description terminal states', () => {
     expect(state.reason).toBe(GUIDED_LIVE_REASON.CPU_TIER);
   });
 
-  // A run in flight was started against an identity answer that no longer
-  // holds, so re-opening a face must stop the wait rather than let a poll land
-  // a sentence into a blocked panel.
-  it('fences a run still in flight when a face is re-opened', () => {
+  it('fences a run still in flight when the media id is withdrawn', () => {
     let state = started();
     state = guidedLiveReducer(state, { kind: 'accepted', runId: 'run-1', deadlineSeconds: 510, atMs: T0 + 100 });
     expect(state.runId).toBe('run-1');
 
-    state = guidedLiveReducer(state, { kind: 'gate_changed', blockedReason: GUIDED_LIVE_BLOCKED_REASON.NO_FACES_DECIDED });
+    state = guidedLiveReducer(state, { kind: 'gate_changed', blockedReason: GUIDED_LIVE_BLOCKED_REASON.NO_MEDIA });
 
     expect(state.status).toBe(GUIDED_LIVE_STATUS.BLOCKED);
     expect(state.runId).toBeNull();
@@ -199,7 +201,7 @@ describe('guided live description terminal states', () => {
 
   it('ignores a poll that lands after the gate closed', () => {
     let state = started();
-    state = guidedLiveReducer(state, { kind: 'gate_changed', blockedReason: GUIDED_LIVE_BLOCKED_REASON.NO_FACES_DECIDED });
+    state = guidedLiveReducer(state, { kind: 'gate_changed', blockedReason: GUIDED_LIVE_BLOCKED_REASON.NO_MEDIA });
     state = guidedLiveReducer(state, {
       kind: 'polled',
       phase: 'complete',
@@ -271,7 +273,7 @@ describe('guided live description terminal states', () => {
     expect(ready().text).not.toBeNull();
 
     const reachers: Record<string, () => GuidedLiveState> = {
-      [GUIDED_LIVE_STATUS.BLOCKED]: () => guidedLiveReducer(ready(), { kind: 'gate_changed', blockedReason: GUIDED_LIVE_BLOCKED_REASON.NO_FACES_DECIDED }),
+      [GUIDED_LIVE_STATUS.BLOCKED]: () => guidedLiveReducer(ready(), { kind: 'gate_changed', blockedReason: GUIDED_LIVE_BLOCKED_REASON.NO_MEDIA }),
       [GUIDED_LIVE_STATUS.QUEUED]: () => guidedLiveReducer(ready(), { kind: 'requested', atMs: T0 + 60_000 }),
       [GUIDED_LIVE_STATUS.WARMING]: () =>
         guidedLiveReducer(started(), { kind: 'polled', phase: 'warming', gpu: 'starting', atMs: T0 + 1000 }),
@@ -283,7 +285,7 @@ describe('guided live description terminal states', () => {
         guidedLiveReducer(started(), { kind: 'failed', reason: 'submit_failed' }),
       [GUIDED_LIVE_STATUS.CANCELLED]: () => guidedLiveReducer(started(), { kind: 'cancelled' }),
       [GUIDED_LIVE_STATUS.IDLE]: () =>
-        decided(guidedLiveReducer(ready(), { kind: 'gate_changed', blockedReason: GUIDED_LIVE_BLOCKED_REASON.NO_FACES_DECIDED })),
+        decided(guidedLiveReducer(ready(), { kind: 'gate_changed', blockedReason: GUIDED_LIVE_BLOCKED_REASON.NO_MEDIA })),
     };
 
     for (const [status, reach] of Object.entries(reachers)) {
@@ -310,10 +312,10 @@ describe('blocked is one fact, not two that have to be kept in step', () => {
   it('carries the closing reason into the state rather than beside it', () => {
     const state = guidedLiveReducer(started(), {
       kind: 'gate_changed',
-      blockedReason: GUIDED_LIVE_BLOCKED_REASON.NO_FACES_DECIDED,
+      blockedReason: GUIDED_LIVE_BLOCKED_REASON.NO_MEDIA,
     });
     expect(state.status).toBe(GUIDED_LIVE_STATUS.BLOCKED);
-    expect(state.blockedReason).toBe(GUIDED_LIVE_BLOCKED_REASON.NO_FACES_DECIDED);
+    expect(state.blockedReason).toBe(GUIDED_LIVE_BLOCKED_REASON.NO_MEDIA);
     expect(state.text).toBeNull();
     expect(state.runId).toBeNull();
   });
@@ -571,7 +573,7 @@ describe('every guard earns its place', () => {
     for (const [label, state] of terminalStates()) {
       const closed = guidedLiveReducer(state, {
         kind: 'gate_changed',
-        blockedReason: GUIDED_LIVE_BLOCKED_REASON.NO_FACES_DECIDED,
+        blockedReason: GUIDED_LIVE_BLOCKED_REASON.NO_MEDIA,
       });
       expect(closed.status, label).toBe(GUIDED_LIVE_STATUS.BLOCKED);
       expect(closed.text, label).toBeNull();
@@ -640,17 +642,54 @@ describe('what a live run is allowed to send', () => {
   });
 
   it('discloses that names come from the roster and not from the practice answers', () => {
-    const scenario = confirmGuidedIdentity(createGuidedScenario(), 'katy-perry');
-    const disclosure = guidedLiveNamingDisclosure(scenario);
-    expect(disclosure.namesTravelWithTheRequest).toBe(false);
-    expect(disclosure.namingSource).toBe('roster');
-    expect(disclosure.confirmedHere).toEqual(['Katy Perry']);
+    expect(GUIDED_LIVE_NAMING_DISCLOSURE.namesTravelWithTheRequest).toBe(false);
+    expect(GUIDED_LIVE_NAMING_DISCLOSURE.namingSource).toBe('roster');
   });
+});
 
-  it('reports nothing confirmed on an untouched scenario', () => {
-    const scenario = createGuidedScenario();
-    expect(guidedLiveNamingDisclosure(scenario).confirmedHere).toEqual([]);
-    expect(scenario.identities.every((i) => i.status === GUIDED_IDENTITY_STATUS.UNCONFIRMED)).toBe(true);
+describe('brief liveStatus vocabulary', () => {
+  it('maps internal waiting phases to pending and terminals to the brief set', () => {
+    expect(guidedLiveBriefStatus(initialGuidedLiveState())).toBe(GUIDED_LIVE_BRIEF_STATUS.IDLE);
+    expect(
+      guidedLiveBriefStatus(
+        guidedLiveReducer(initialGuidedLiveState(), {
+          kind: 'gate_changed',
+          blockedReason: GUIDED_LIVE_BLOCKED_REASON.NO_MEDIA,
+        }),
+      ),
+    ).toBe(GUIDED_LIVE_BRIEF_STATUS.UNAVAILABLE);
+
+    const queued = guidedLiveReducer(initialGuidedLiveState(), { kind: 'requested', atMs: T0 });
+    expect(guidedLiveBriefStatus(queued)).toBe(GUIDED_LIVE_BRIEF_STATUS.PENDING);
+    expect(guidedLiveBriefStatus(started())).toBe(GUIDED_LIVE_BRIEF_STATUS.PENDING);
+
+    const ready = guidedLiveReducer(started(), {
+      kind: 'polled',
+      phase: 'complete',
+      gpu: 'ready',
+      atMs: T0 + 1,
+      tier: 'final_gpu',
+      text: 'Done.',
+    });
+    expect(guidedLiveBriefStatus(ready)).toBe(GUIDED_LIVE_BRIEF_STATUS.SUCCEEDED);
+
+    const failed = guidedLiveReducer(started(), { kind: 'failed', reason: GUIDED_LIVE_REASON.RUN_FAILED });
+    expect(guidedLiveBriefStatus(failed)).toBe(GUIDED_LIVE_BRIEF_STATUS.FAILED);
+
+    const empty = guidedLiveReducer(started(), {
+      kind: 'polled',
+      phase: 'complete',
+      gpu: 'ready',
+      atMs: T0 + 1,
+      text: '',
+    });
+    expect(guidedLiveBriefStatus(empty)).toBe(GUIDED_LIVE_BRIEF_STATUS.FAILED);
+
+    const timedOut = guidedLiveReducer(started(), { kind: 'tick', atMs: T0 + 300_001 });
+    expect(guidedLiveBriefStatus(timedOut)).toBe(GUIDED_LIVE_BRIEF_STATUS.TIMED_OUT);
+
+    const stopped = guidedLiveReducer(started(), { kind: 'cancelled' });
+    expect(guidedLiveBriefStatus(stopped)).toBe(GUIDED_LIVE_BRIEF_STATUS.STOPPED);
   });
 });
 describe('degraded detection comes from the result tier', () => {
@@ -950,29 +989,51 @@ describe('keeping the wait is offered instead of only a restart', () => {
 
   it('resumes the same run under a fresh window rather than starting a second burst', () => {
     const state = timedOut();
-    const resumed = guidedLiveReducer(state, { kind: 'wait_resumed', atMs: T0 });
+    const resumeAt = T0 + state.elapsedMs;
+    const resumed = guidedLiveReducer(state, { kind: 'wait_resumed', atMs: resumeAt });
 
     expect(resumed.runId).toBe('run-1');
     expect(resumed.reason).toBeNull();
+    expect(resumed.startedAtMs).toBe(resumeAt - state.elapsedMs);
+    expect(resumed.elapsedMs).toBe(state.elapsedMs);
     expect(resumed.deadlineMs).toBe(state.elapsedMs + GUIDED_LIVE_KEEP_WAITING_SECONDS * 1000);
     expect(resumed.deadlineMs).toBeGreaterThan(state.elapsedMs);
   });
 
   it('resumes at the phase the run had actually reached, not back at queued', () => {
-    const resumed = guidedLiveReducer(timedOut(), { kind: 'wait_resumed', atMs: T0 });
+    const timed = timedOut();
+    const resumed = guidedLiveReducer(timed, { kind: 'wait_resumed', atMs: T0 + timed.elapsedMs });
 
     expect(resumed.status).toBe(GUIDED_LIVE_STATUS.DESCRIBING);
   });
 
+  it('excludes time spent on the timed-out screen from the fresh keep-waiting window', () => {
+    const timed = timedOut();
+    const pauseMs = GUIDED_LIVE_KEEP_WAITING_SECONDS * 1000 + 1000;
+    const resumeAt = T0 + timed.elapsedMs + pauseMs;
+    const resumed = guidedLiveReducer(timed, { kind: 'wait_resumed', atMs: resumeAt });
+
+    expect(resumed.status).toBe(GUIDED_LIVE_STATUS.DESCRIBING);
+    expect(resumed.startedAtMs).toBe(resumeAt - timed.elapsedMs);
+    expect(resumed.elapsedMs).toBe(timed.elapsedMs);
+    expect(resumed.deadlineMs).toBe(timed.elapsedMs + GUIDED_LIVE_KEEP_WAITING_SECONDS * 1000);
+
+    const shortlyAfter = guidedLiveReducer(resumed, { kind: 'tick', atMs: resumeAt + 1000 });
+    expect(shortlyAfter.status).toBe(GUIDED_LIVE_STATUS.DESCRIBING);
+    expect(shortlyAfter.elapsedMs).toBe(timed.elapsedMs + 1000);
+    expect(shortlyAfter.elapsedMs).toBeLessThan(resumed.deadlineMs);
+  });
+
   it('polls again once resumed instead of staying stopped', () => {
-    let state = guidedLiveReducer(timedOut(), { kind: 'wait_resumed', atMs: T0 });
-    const at = state.elapsedMs + 1000;
+    const timed = timedOut();
+    const resumeAt = T0 + timed.elapsedMs;
+    let state = guidedLiveReducer(timed, { kind: 'wait_resumed', atMs: resumeAt });
     state = guidedLiveReducer(state, {
       kind: 'polled',
       phase: 'complete',
       gpu: 'ready',
       tier: 'final_gpu',
-      atMs: T0 + at,
+      atMs: resumeAt + 1000,
       text: 'It finished after all.',
     });
 

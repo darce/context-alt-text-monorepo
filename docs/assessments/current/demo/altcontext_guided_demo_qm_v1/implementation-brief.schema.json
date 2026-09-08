@@ -1,0 +1,504 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AltContext guided demo implementation brief v1",
+  "description": "Validates the handoff structure. Does not execute the proposed state machine or establish product correctness.",
+  "type": "object",
+  "properties": {
+    "audiences": {
+      "type": "object"
+    },
+    "recommendation": {
+      "type": "object"
+    },
+    "scope_and_limits": {
+      "type": "object"
+    },
+    "target_information_architecture": {
+      "type": "object"
+    },
+    "copy_catalog": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "minProperties": 1
+    },
+    "preserved_content": {
+      "type": "object"
+    },
+    "state_machine": {
+      "type": "object"
+    },
+    "formative_study": {
+      "type": "object"
+    },
+    "handoff_contract": {
+      "type": "object"
+    },
+    "implementation_execution_policy": {
+      "type": "object"
+    },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "file": {
+            "type": "string"
+          },
+          "original_filename": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "repository": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "git_blob_sha": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "canon_rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9]*-[0-9]{2}$"
+          },
+          "source_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "application": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "source_id",
+          "title",
+          "url",
+          "application"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "canon_scope_decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "rule_id": {
+            "type": "string"
+          },
+          "disposition": {
+            "type": "string"
+          },
+          "decision": {
+            "type": "string"
+          },
+          "rationale": {
+            "type": "string"
+          },
+          "allowed_claim": {
+            "type": "string"
+          },
+          "forbidden_claims": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "scope_limit": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "rule_id",
+          "disposition",
+          "decision",
+          "rationale"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "retain": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "evidence_anchors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "source_id": {
+            "type": "string"
+          },
+          "selector": {
+            "type": "string"
+          },
+          "match_count_in_snapshot": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "text_matches": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "excerpt": {
+            "type": "string"
+          },
+          "observation": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "source_id",
+          "selector",
+          "match_count_in_snapshot",
+          "text_matches"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "findings": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "priority": {
+            "enum": [
+              "P0",
+              "P1",
+              "P2"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "evidence_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "rule_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidence_kind": {
+            "enum": [
+              "observed_copy_and_structure",
+              "runtime_risk_from_markup",
+              "observed_copy",
+              "observed_structure",
+              "observed_coverage_limit",
+              "observed_copy_plus_runtime_risk",
+              "missing_evidence_in_snapshot",
+              "verification_required",
+              "editorial_opportunity",
+              "evidence_gap"
+            ]
+          },
+          "problem": {
+            "type": "string"
+          },
+          "required_change": {
+            "type": "string"
+          },
+          "acceptance_test_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "status": {
+            "const": "proposed"
+          }
+        },
+        "required": [
+          "id",
+          "priority",
+          "title",
+          "evidence_ids",
+          "rule_ids",
+          "evidence_kind",
+          "problem",
+          "required_change",
+          "acceptance_test_ids",
+          "status"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "copy_application_notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "target_test_hooks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "test_id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "test_id",
+          "state"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "work_items": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "priority": {
+            "enum": [
+              "P0",
+              "P1",
+              "P2"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "depends_on": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "finding_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "copy_keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "instructions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "acceptance_test_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "definition_of_done": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "priority",
+          "title",
+          "depends_on",
+          "finding_ids",
+          "copy_keys",
+          "instructions",
+          "acceptance_test_ids",
+          "definition_of_done"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "acceptance_tests": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "given": {
+            "type": "string"
+          },
+          "when": {
+            "type": "string"
+          },
+          "then": {
+            "type": "string"
+          },
+          "execution_status": {
+            "const": "not_run"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "mode",
+          "given",
+          "when",
+          "then",
+          "execution_status"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "quartermaster_evidence_mapping": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "role_need": {
+            "type": "string"
+          },
+          "demo_evidence": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "role_need",
+          "demo_evidence",
+          "limit"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "out_of_scope": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "$schema": {
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "altcontext-guided-demo-implementation/1.0.0"
+    },
+    "document_id": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    },
+    "prepared_date": {
+      "type": "string"
+    },
+    "timezone": {
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "proposal_not_implemented"
+      ]
+    },
+    "target_route": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "audiences",
+    "recommendation",
+    "scope_and_limits",
+    "target_information_architecture",
+    "copy_catalog",
+    "preserved_content",
+    "state_machine",
+    "formative_study",
+    "handoff_contract",
+    "implementation_execution_policy",
+    "sources",
+    "canon_rules",
+    "canon_scope_decisions",
+    "retain",
+    "evidence_anchors",
+    "findings",
+    "copy_application_notes",
+    "target_test_hooks",
+    "work_items",
+    "acceptance_tests",
+    "quartermaster_evidence_mapping",
+    "out_of_scope",
+    "$schema",
+    "schema_version",
+    "document_id",
+    "title",
+    "prepared_date",
+    "timezone",
+    "status",
+    "target_route"
+  ],
+  "additionalProperties": false
+}

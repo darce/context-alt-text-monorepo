@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+import scripts.eval_harness.calibrate_face_thresholds as calibrate_module
 from scripts.eval_harness.accept_predicate import accepts, is_fpi
 from scripts.eval_harness.calibrate_face_thresholds import (
     DEFAULT_FMR_TARGET,
@@ -253,13 +254,22 @@ def test_select_threshold_unit_behavior() -> None:
     # impostor rather than tying that observed score.
     assert tau == pytest.approx((max(impostors) + 0.7) / 2.0)
     assert fmr_at(impostors, tau) == 0.0
-    # With only two unique scores, their midpoint is the interior candidate.
+    # One unique finite impostor score is evidence-poor and must abstain.
     imp2 = [0.1, 0.1, 0.1]
     tau2 = select_threshold([0.9], imp2, fmr_target=0.0)
-    assert tau2 == pytest.approx(0.5)
-    # Impostor at 1.0 is not FPI at tau=1.0, so FMR=0 meets a zero target.
+    assert tau2 is None
+    # A single finite impostor score also abstains rather than presenting a
+    # boundary as a calibrated operating point.
     tau3 = select_threshold([0.5], [1.0], fmr_target=0.0)
-    assert tau3 == pytest.approx(1.0)
+    assert tau3 is None
+
+
+def test_all_negative_impostors_use_open_boundary() -> None:
+    tau = select_threshold([0.8], [-0.4, -0.2], fmr_target=0.0)
+    assert tau is not None
+    assert tau > -0.2
+    assert tau != 0.0
+    assert fmr_at([-0.4, -0.2], tau) == pytest.approx(0.0)
 
 
 @pytest.mark.parametrize(
@@ -289,8 +299,62 @@ def test_midpoint_removes_old_fixture_tie_disagreement() -> None:
 def test_select_threshold_abstain_and_fail_closed_paths() -> None:
     assert select_threshold([0.8], [], fmr_target=0.0) is None
     assert select_threshold([0.8], [float("-inf")], fmr_target=0.0) is None
-    # No candidate can reject both scores, so preserve the peak-score fallback.
-    assert select_threshold([], [2.0, 3.0], fmr_target=0.0) == pytest.approx(3.0)
+    # The upper open boundary rejects an observed peak without tying it.
+    tau = select_threshold([], [2.0, 3.0], fmr_target=0.0)
+    assert tau is not None and tau > 3.0
+    assert fmr_at([2.0, 3.0], tau) == pytest.approx(0.0)
+
+
+def test_oof_rates_are_rescored_at_published_median_and_keep_tie_rule(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Public OOF rates describe tau_proposed, including strict FPI ties."""
+    read_by_fold = {
+        held: [
+            ScoreTrial(
+                score=0.4,
+                probe_identity=f"P{held}",
+                gallery_identity=f"P{held}",
+                fold=held,
+                media_id=held,
+                strata=("people",),
+                is_genuine=True,
+            ),
+            ScoreTrial(
+                score=0.4,
+                probe_identity=None,
+                gallery_identity=f"P{held}",
+                fold=held,
+                media_id=100 + held,
+                strata=("people",),
+                is_genuine=False,
+            ),
+        ]
+        for held in range(3)
+    }
+    fit_taus = iter([0.2, 0.4, 0.8])
+    monkeypatch.setattr(calibrate_module, "select_fit_trials", lambda *_args: [])
+    monkeypatch.setattr(
+        calibrate_module,
+        "select_read_trials",
+        lambda _trials, _read_ids, _fit_ids, *, held_fold: read_by_fold[held_fold],
+    )
+    monkeypatch.setattr(
+        calibrate_module,
+        "select_threshold",
+        lambda *_args, **_kwargs: next(fit_taus),
+    )
+
+    raw = calibrate_module._oof_metrics_for_stratum(
+        [], {"P0": 0, "P1": 1, "P2": 2}, 3, stratum="people", fmr_target=0.0
+    )
+    assert raw["tau_proposed"] == pytest.approx(0.4)
+    # At fold taus the first fold would miss/accept and the third would miss;
+    # at the published median both score ties are hits/non-FPI.
+    assert raw["fnmr_oof"] == pytest.approx(0.0)
+    assert raw["fmr_oof"] == pytest.approx(0.0)
+    assert raw["fold_rows"][1]["fmr_oof_fold"] == pytest.approx(0.0)
+    assert raw["fold_rows"][1]["fnmr_oof_fold"] == pytest.approx(0.0)
 
 
 def test_fmr_at_and_fnmr_at_direct() -> None:

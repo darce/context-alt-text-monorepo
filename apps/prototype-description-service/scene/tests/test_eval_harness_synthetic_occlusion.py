@@ -856,8 +856,7 @@ def test_threshold_rule_disclosure_is_self_contained_published_text():
     ]
     assert len(threshold_disclosures) == 1
     assert threshold_disclosures[0] == (
-        "occlusion recovery uses open-set threshold (s_max >= tau; see "
-        "accept_predicate.accepts), not closed-set "
+        "occlusion recovery uses open-set threshold (s_max >= tau), not closed-set "
         "argmax; each twin is scored at its source identity's held-out fold tau_k "
         "(entity-disjoint — CAL-07/EVAL-07); pooled tau_op is a last-resort "
         "fallback gated behind an explicit per-identity opt-in "

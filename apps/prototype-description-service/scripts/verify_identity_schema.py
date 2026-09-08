@@ -10,11 +10,12 @@ Exit codes distinguish who can fix the gap:
 
 - ``0``  — schema verified.
 - ``1``  — heal-repairable drift (missing table / RLS off / policy missing /
-  matview absent / centroid typmod mismatch): re-running
-  ``python -m scripts.sync_identity_schema`` converges it.
-- ``2``  — operator action required (alembic revision mismatch, or the
-  matview name exists as a non-matview relation): healing cannot repair
-  these; see docs/runbooks/prod-identity-rls-remediation.md.
+  matview absent / centroid typmod mismatch the current role can drop and
+  rebuild): re-running ``python -m scripts.sync_identity_schema`` converges it.
+- ``2``  — operator action required (alembic revision mismatch, the matview
+  name exists as a non-matview relation, a centroid typmod gap the current
+  role cannot drop/rebuild, or a wrong-typmod *table* vector column): healing
+  cannot repair these; see docs/runbooks/prod-identity-rls-remediation.md.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from typing import TypedDict
 from sqlalchemy import create_engine, inspect, text
 
 from db.settings import get_database_settings
+from recognition.application.health import IDENTITY_VECTOR_COLUMNS
 
 identity_schema = importlib.import_module("db.migrations.versions.001_identity_schema")
 EXPECTED_REVISION = identity_schema.revision
@@ -55,6 +57,9 @@ class SchemaStateReport(TypedDict):
     non_additive_column_gaps: dict[str, list[str]]
     matview_relkind: str | None
     matview_centroid_typmod: int | None
+    matview_can_drop: bool | None
+    matview_create_privilege_gaps: list[str]
+    operator_actions: list[str]
 
 
 def _validate_schema_state(
@@ -70,7 +75,11 @@ def _validate_schema_state(
     column_gaps: Mapping[str, Iterable[str]] | None = None,
     non_additive_column_gaps: Mapping[str, Iterable[str]] | None = None,
     matview_relkind: str | None = "m",
-    matview_centroid_typmod: int | None = EMBEDDING_DIMENSION,
+    matview_centroid_typmod: int | None,
+    matview_can_drop: bool | None = None,
+    matview_create_privilege_gaps: Iterable[str] | None = None,
+    current_role_quoted: str | None = None,
+    vector_typmods: Mapping[tuple[str, str], int | None],
 ) -> SchemaStateReport:
     """Pure classification of collected schema facts.
 
@@ -81,8 +90,10 @@ def _validate_schema_state(
     ``non_additive_column_gaps`` is the subset of those columns ``heal()`` would
     *refuse* to add (a missing primary key, or a NOT NULL column with no server
     default) — heal RAISES on them, so they are operator-required, not
-    heal-repairable (MAINT-TPR-BR-04). Passing ``None`` for any of these skips
+    heal-repairable (MAINT-TPR-BR-04). Passing ``None`` for those mappings skips
     that check (unit-test / legacy callers); ``main()`` always collects them.
+    ``matview_centroid_typmod`` and ``vector_typmods`` are required so a default
+    equal to ``EMBEDDING_DIMENSION`` cannot hide drift (VLMHEAL-1-REV-A-08).
     """
     actual_table_set = set(actual_tables)
     expected_table_set = set(expected_tables)
@@ -130,11 +141,56 @@ def _validate_schema_state(
 
     matview_impostor = matview_relkind not in (None, "m")
     matview_missing = matview_relkind is None
+    if (MATVIEW_NAME, "centroid") in vector_typmods:
+        matview_centroid_typmod = vector_typmods[(MATVIEW_NAME, "centroid")]
     matview_centroid_typmod_gap = matview_relkind == "m" and matview_centroid_typmod != EMBEDDING_DIMENSION
+    create_gaps = [gap for gap in (matview_create_privilege_gaps or ()) if gap]
+    # Legacy callers omit ownership facts; treat that as DROP-capable so the
+    # existing heal-repairable typmod tests keep their meaning. collect_and_validate
+    # always supplies the catalog boolean (VLMHEAL-1-REV-A-05).
+    can_drop = True if matview_can_drop is None else bool(matview_can_drop)
+    operator_actions: list[str] = []
+    matview_typmod_unrepairable = False
+    if matview_centroid_typmod_gap and not can_drop:
+        matview_typmod_unrepairable = True
+        quoted_role = current_role_quoted if current_role_quoted else "current_user"
+        operator_actions.append(f"ALTER MATERIALIZED VIEW {MATVIEW_NAME} OWNER TO {quoted_role};")
+    elif matview_centroid_typmod_gap and create_gaps:
+        matview_typmod_unrepairable = True
+        operator_actions.extend(create_gaps)
+    matview_typmod_repairable = matview_centroid_typmod_gap and not matview_typmod_unrepairable
 
-    if not revision_matches or matview_impostor or table_impostors or na_col_gaps:
+    table_vector_gaps: list[str] = []
+    for table_name, column_name in IDENTITY_VECTOR_COLUMNS:
+        if table_name == MATVIEW_NAME:
+            continue
+        if table_name not in actual_table_set:
+            continue
+        observed = vector_typmods.get((table_name, column_name))
+        if observed == EMBEDDING_DIMENSION:
+            continue
+        named = f"{table_name}.{column_name}"
+        table_vector_gaps.append(named)
+        operator_actions.append(
+            f"cannot repair {named}: observed vector typmod {observed!r} "
+            f"(expected {EMBEDDING_DIMENSION} and pg_type.typname='vector'). "
+            "Table columns cannot be dropped and rebuilt like derived matview data. "
+            "Operator action: "
+            f"ALTER TABLE {table_name} ALTER COLUMN {column_name} "
+            f"TYPE vector({EMBEDDING_DIMENSION}) "
+            f"USING {column_name}::vector({EMBEDDING_DIMENSION});"
+        )
+
+    if (
+        not revision_matches
+        or matview_impostor
+        or table_impostors
+        or na_col_gaps
+        or matview_typmod_unrepairable
+        or table_vector_gaps
+    ):
         exit_code = EXIT_OPERATOR_REQUIRED
-    elif missing_tables or rls_gaps or policy_gaps or matview_missing or col_gaps or matview_centroid_typmod_gap:
+    elif missing_tables or rls_gaps or policy_gaps or matview_missing or col_gaps or matview_typmod_repairable:
         exit_code = EXIT_HEAL_REPAIRABLE
     else:
         exit_code = EXIT_OK
@@ -153,6 +209,9 @@ def _validate_schema_state(
         "non_additive_column_gaps": na_col_gaps,
         "matview_relkind": matview_relkind,
         "matview_centroid_typmod": matview_centroid_typmod,
+        "matview_can_drop": None if matview_can_drop is None else can_drop,
+        "matview_create_privilege_gaps": create_gaps,
+        "operator_actions": operator_actions,
     }
 
 
@@ -207,6 +266,57 @@ def _collect_column_gaps(connection, expected) -> tuple[dict[str, list[str]], di
     return gaps, non_additive
 
 
+def _collect_vector_typmods(connection) -> dict[tuple[str, str], int | None]:
+    """atttypmod per health.IDENTITY_VECTOR_COLUMNS, only when typname='vector'."""
+    found: dict[tuple[str, str], int | None] = {}
+    for table_name, column_name in IDENTITY_VECTOR_COLUMNS:
+        found[(table_name, column_name)] = connection.execute(
+            text(
+                "SELECT a.atttypmod FROM pg_attribute a "
+                "JOIN pg_class c ON c.oid = a.attrelid "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "JOIN pg_type t ON t.oid = a.atttypid "
+                "WHERE n.nspname = current_schema() "
+                "AND c.relname = :table_name "
+                "AND a.attname = :column_name AND NOT a.attisdropped "
+                "AND t.typname = 'vector'"
+            ),
+            {"table_name": table_name, "column_name": column_name},
+        ).scalar()
+    return found
+
+
+def _collect_matview_create_privilege_gaps(connection) -> list[str]:
+    """Create-side privileges required to DROP+rebuild the centroid matview."""
+    row = connection.execute(
+        text(
+            "SELECT current_schema(), "
+            "has_schema_privilege(current_user, current_schema(), 'CREATE'), "
+            "has_table_privilege(current_user, 'identity_clusters', 'SELECT'), "
+            "has_table_privilege(current_user, 'identity_members', 'SELECT'), "
+            "has_table_privilege(current_user, 'media_identities', 'SELECT'), "
+            "EXISTS ("
+            "  SELECT 1 FROM pg_proc p "
+            "  WHERE p.proname = 'l2_normalize' "
+            "    AND has_function_privilege(current_user, p.oid, 'EXECUTE')"
+            ")"
+        )
+    ).one()
+    schema_name, schema_create, sel_clusters, sel_members, sel_media, exec_l2 = row
+    gaps: list[str] = []
+    if not schema_create:
+        gaps.append(f"CREATE on schema {schema_name}")
+    if not sel_clusters:
+        gaps.append("SELECT on identity_clusters")
+    if not sel_members:
+        gaps.append("SELECT on identity_members")
+    if not sel_media:
+        gaps.append("SELECT on media_identities")
+    if not exec_l2:
+        gaps.append("EXECUTE on l2_normalize")
+    return gaps
+
+
 def collect_and_validate(connection) -> SchemaStateReport:
     """Collect live schema facts on ``connection`` and classify them."""
     inspector = inspect(connection)
@@ -242,26 +352,28 @@ def collect_and_validate(connection) -> SchemaStateReport:
             {"names": list(EXPECTED_TABLES)},
         ).all()
     )
-    matview_relkind = connection.execute(
+    matview_row = connection.execute(
         text(
-            "SELECT c.relkind FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "SELECT c.relkind, pg_get_userbyid(c.relowner), "
+            "pg_has_role(current_user, c.relowner, 'USAGE'), "
+            "quote_ident(current_user) "
+            "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
             "WHERE n.nspname = current_schema() AND c.relname = :name"
         ),
         {"name": MATVIEW_NAME},
-    ).scalar()
-    matview_centroid_typmod = connection.execute(
-        text(
-            "SELECT a.atttypmod FROM pg_attribute a "
-            "JOIN pg_class c ON c.oid = a.attrelid "
-            "JOIN pg_namespace n ON n.oid = c.relnamespace "
-            "JOIN pg_type t ON t.oid = a.atttypid "
-            "WHERE n.nspname = current_schema() "
-            "AND c.relname = :name "
-            "AND a.attname = 'centroid' AND NOT a.attisdropped "
-            "AND t.typname = 'vector'"
-        ),
-        {"name": MATVIEW_NAME},
-    ).scalar()
+    ).one_or_none()
+    if matview_row is None:
+        matview_relkind = None
+        matview_can_drop = None
+        current_role_quoted = None
+        create_gaps: list[str] = []
+    else:
+        matview_relkind, _owner, can_drop, current_role_quoted = matview_row
+        # NULL from pg_has_role means the owner role is gone — fail closed (P3).
+        matview_can_drop = bool(can_drop) if can_drop is not None else False
+        create_gaps = _collect_matview_create_privilege_gaps(connection) if matview_relkind == "m" else []
+    vector_typmods = _collect_vector_typmods(connection)
+    matview_centroid_typmod = vector_typmods.get((MATVIEW_NAME, "centroid"))
 
     column_gaps, non_additive_column_gaps = _collect_column_gaps(connection, _expected_columns())
 
@@ -275,6 +387,10 @@ def collect_and_validate(connection) -> SchemaStateReport:
         non_additive_column_gaps=non_additive_column_gaps,
         matview_relkind=matview_relkind,
         matview_centroid_typmod=matview_centroid_typmod,
+        matview_can_drop=matview_can_drop,
+        matview_create_privilege_gaps=create_gaps,
+        current_role_quoted=None if current_role_quoted is None else str(current_role_quoted),
+        vector_typmods=vector_typmods,
     )
 
 
@@ -320,6 +436,8 @@ def main() -> int:
             f"matview_centroid_typmod={report['matview_centroid_typmod']} expected={EMBEDDING_DIMENSION}",
             file=sys.stderr,
         )
+    for action in report["operator_actions"]:
+        print(f"operator action: {action}", file=sys.stderr)
     if report["exit_code"] == EXIT_HEAL_REPAIRABLE:
         print(
             "heal-repairable: re-run `python -m scripts.sync_identity_schema`",

@@ -14,7 +14,7 @@ REAP_STRICT ?= 0
 worktree-reap: ## Dry-run: list linked worktrees whose branch is already landed in its parent (REAP_ARGS=--apply to remove)
 	@REAP_STRICT="$(REAP_STRICT)" REAP_PROTECT="$(REAP_PROTECT)" $(PYTHON) scripts/worktree_reap.py --repo "$(CURDIR)" $(REAP_ARGS)
 
-worktree-reap-check: ## Check for redundant worktrees (REAP_STRICT=1 fails on redundancy; inspection errors always fail)
+worktree-reap-check: ## Check for redundant worktrees (exit 3 on redundancy; inspection errors always fail)
 	@REAP_STRICT="$(REAP_STRICT)" REAP_PROTECT="$(REAP_PROTECT)" $(PYTHON) scripts/worktree_reap.py --repo "$(CURDIR)" --check
 
 # Advisory inside check-all. lane-intake runs check-all straight after merging

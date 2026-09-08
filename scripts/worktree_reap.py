@@ -47,7 +47,7 @@ _HARNESS_SCRATCH_SUFFIXES = (".stamp", ".lock", ".pid")
 # A lane row in any non-terminal state still owns its worktree.  Containment
 # and cleanliness cannot distinguish a finished lane from a freshly
 # re-dispatched one: both are landed, clean, and about to be written to.
-_TERMINAL_LANE_STATUSES = frozenset({"closed", "merged"})
+_TERMINAL_LANE_STATUSES = frozenset({"closed", "closed_stale", "merged"})
 
 # The registry paginates.  A truncated page would silently under-report
 # ownership, so the reader demands the whole set or fails closed.
@@ -347,16 +347,23 @@ def active_lane_paths(repo: Path | str) -> dict[Path, str]:
     try:
         configure_runtime(RuntimeConfig.for_repo(repo_path))
         response = list_lanes(all_tasks=True, limit=_LANE_PAGE_LIMIT)
+        if not isinstance(response, Mapping):
+            raise LaneStateError("lane registry response is not a mapping")
+        if not response.get("ok"):
+            raise LaneStateError("lane registry response was not ok")
+        data = response.get("data")
+        if not isinstance(data, Mapping):
+            raise LaneStateError("lane registry response data is not a mapping")
+        rows = data.get("lanes")
+        if not isinstance(rows, list):
+            raise LaneStateError("lane registry response data.lanes is not a list")
+        if data.get("has_more"):
+            raise LaneStateError("lane registry response was truncated: data.has_more")
+        return _lane_owners_from_rows(rows)
+    except LaneStateError:
+        raise
     except Exception as exc:  # noqa: BLE001 - any failure must fail closed
         raise LaneStateError(f"cannot read lane registry: {exc}") from exc
-
-    rows = (response or {}).get("data", {}).get("lanes")
-    if not isinstance(rows, list):
-        raise LaneStateError("lane registry returned no lane list")
-    if (response or {}).get("data", {}).get("has_more"):
-        raise LaneStateError("lane registry response was truncated")
-
-    return _lane_owners_from_rows(rows)
 
 
 def _lane_ownership_block(repo: Path, target: Path) -> str | None:
@@ -558,15 +565,26 @@ def _landing_proof(
     parent: str,
 ) -> tuple[str | None, str | None, str | None]:
     """Capture the landing branch and its OID, or a safe inspection result."""
-    proof_parent, reason = _landing_status(repo, branch, parent)
-    if reason is not None:
-        return None, None, reason
-    if proof_parent is None:
-        return None, None, None
-    proof_oid = _ref_oid(repo, proof_parent)
-    if proof_oid is None:
-        return None, None, f"landing parent ref cannot be inspected: {proof_parent}"
-    return proof_parent, proof_oid, None
+    candidates = [parent] if parent == "main" else [parent, "main"]
+    captured: list[tuple[str, str]] = []
+    for candidate in candidates:
+        proof_oid = _ref_oid(repo, candidate)
+        if proof_oid is None:
+            return None, None, f"landing parent ref cannot be inspected: {candidate}"
+        captured.append((candidate, proof_oid))
+
+    unknown: list[str] = []
+    for candidate, proof_oid in captured:
+        # The parent OID is deliberately passed to Git instead of the ref
+        # name.  A ref rewrite after capture must not change the proof.
+        merged, reason = _merged_state(repo, branch, proof_oid)
+        if merged is True:
+            return candidate, proof_oid, None
+        if merged is None:
+            unknown.append(f"{candidate}: {reason or 'Git inspection failed'}")
+    if unknown:
+        return None, None, "cannot determine landing state (" + "; ".join(unknown) + ")"
+    return None, None, None
 
 
 def _classify_clean(
@@ -1289,6 +1307,55 @@ def _plan_candidate(
     return _CandidatePlan(record, repo, target), None
 
 
+def _restore_if_lane_claimed(
+    record: WorktreeRecord,
+    repo: Path,
+    target: Path,
+) -> tuple[str | None, bool]:
+    """Restore a removed worktree if ownership appeared during removal."""
+    # WHY: lane registration and Git worktree removal do not share a fence in
+    # this repository; this is detect-and-undo compensation, not a lock.
+    lane_id: str
+    try:
+        owners = active_lane_paths(repo)
+    except LaneStateError as exc:
+        lane_id = "unknown (registry unreadable)"
+        ownership_error = f"lane ownership unreadable after removal: {exc}"
+    else:
+        lane_id = owners.get(target, "")
+        if not lane_id:
+            return None, False
+        ownership_error = f"active lane {lane_id} registered during removal"
+
+    branch_oid = record.branch_oid
+    if branch_oid is None:
+        try:
+            branch_oid = _ref_oid(repo, record.branch)
+        except (GitError, OSError, ValueError):
+            branch_oid = None
+    branch_oid = branch_oid or "unknown"
+    try:
+        restored = _git(repo, "worktree", "add", "--", str(target), record.branch)
+    except (GitError, OSError, ValueError) as exc:
+        return (
+            f"{ownership_error}; failed to restore worktree {target} for lane "
+            f"{lane_id}, branch OID {branch_oid}: {exc}",
+            False,
+        )
+    if restored.returncode != 0:
+        return (
+            f"{ownership_error}; failed to restore worktree {target} for lane "
+            f"{lane_id}, branch OID {branch_oid}: "
+            f"{_failure(restored, 'git worktree add')}",
+            False,
+        )
+    return (
+        f"{ownership_error}; restored worktree {target} for lane {lane_id}, "
+        f"branch OID {branch_oid}; branch deletion refused",
+        True,
+    )
+
+
 def _remove_worktree(
     record: WorktreeRecord,
     repo: Path,
@@ -1301,6 +1368,15 @@ def _remove_worktree(
     if plan is None or plan.stale:
         return None, False, plan
     if plan.worktree_removed:
+        ownership_error, restored = _restore_if_lane_claimed(
+            record, repo, Path(record.path).resolve()
+        )
+        if ownership_error is not None:
+            if restored:
+                clear_error = _clear_intent(repo)
+                if clear_error is not None:
+                    ownership_error += f"; {clear_error}"
+            return ownership_error, True, plan
         return None, True, plan
     intent_error = _write_intent(repo, record, plan.target, "prepared")
     if intent_error is not None:
@@ -1364,6 +1440,15 @@ def _remove_worktree(
         if clear_error is not None:
             error += f"; {clear_error}"
         return error, False, plan
+    ownership_error, restored = _restore_if_lane_claimed(
+        record, repo, Path(record.path).resolve()
+    )
+    if ownership_error is not None:
+        if restored:
+            clear_error = _clear_intent(repo)
+            if clear_error is not None:
+                ownership_error += f"; {clear_error}"
+        return ownership_error, True, plan
     intent_error = _write_intent(repo, record, plan.target, "worktree-removed")
     if intent_error is not None:
         return (
@@ -1462,8 +1547,14 @@ def _apply_unlocked(
             break
         if did_remove:
             removed_worktrees.add(target)
-        ownership_error = _lane_ownership_block(repo, Path(record.path).resolve())
+        ownership_error, restored = _restore_if_lane_claimed(
+            record, repo, Path(record.path).resolve()
+        )
         if ownership_error is not None:
+            if restored:
+                clear_error = _clear_intent(repo)
+                if clear_error is not None:
+                    ownership_error += f"; {clear_error}"
             result["errors"].append(f"{target}: {ownership_error}")
             result["skipped"].extend(
                 str(Path(remaining.path).resolve())
@@ -1567,7 +1658,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--check",
         action="store_true",
-        help="report redundancy; fail when strict mode is enabled",
+        help="report redundancy; exit 3 when redundant worktrees exist",
     )
     parser.add_argument(
         "--strict",
@@ -1659,7 +1750,7 @@ def main(argv: list[str] | None = None) -> int:
         # cautious ([RES-10]); strict mode is where that becomes a hard signal.
         if unknown and strict:
             return 4
-        return 3 if redundant and strict else 0
+        return 3 if redundant else 0
     if strict and unknown:
         return 4
     if not args.apply:

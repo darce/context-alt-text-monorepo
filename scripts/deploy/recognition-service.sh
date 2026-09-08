@@ -919,7 +919,7 @@ do_build_remote() {
     --exclude='models--*/' \
     "${SERVICE_DIR}/" "${SSH_TARGET}:${build_dir}/"
 
-  log "Building ${IMAGE_BASE}:${tag} + :${sha:0:8} on ${SSH_TARGET} (native arm64${ACX_BUILD_TARGET:+, target=${ACX_BUILD_TARGET}})"
+  log "Building ${IMAGE_BASE}:${sha} on ${SSH_TARGET} for ${tag} (native arm64${ACX_BUILD_TARGET:+, target=${ACX_BUILD_TARGET}})"
   # No --platform: VM is already linux/arm64 (Ampere A1).
   # shellcheck disable=SC2086 # target_args is intentionally word-split (empty or "--target X")
   # D1: quote REMOTE_BUILD_DIR (validated at ingestion) so it cannot re-open the ssh injection sink.
@@ -927,14 +927,13 @@ do_build_remote() {
     ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cd -- '${build_dir}' && flock -w ${build_timeout} '${REMOTE_BUILD_DIR}.lock' docker build \
       --build-arg GIT_COMMIT_SHA=${sha} \
       ${target_args} \
-      -t ${IMAGE_BASE}:${tag} \
       -t ${IMAGE_BASE}:${sha} \
       ." || build_rc=$?
   run_with_deadline "${command_timeout}" "remote generation directory cleanup" \
     ssh -l "${OCI_USER}" -- "${OCI_HOST}" "rm -rf -- '${build_dir}'" \
     || warn "Could not clean remote generation directory ${build_dir}"
   (( build_rc == 0 )) || return "${build_rc}"
-  log "Built ${IMAGE_BASE}:${tag} on ${SSH_TARGET} (also tagged :${sha:0:8})"
+  log "Built ${IMAGE_BASE}:${sha} on ${SSH_TARGET}; environment tag awaits promotion"
 }
 
 #---------------------------------------------------------------- push / restart
@@ -2464,8 +2463,8 @@ do_deploy() {
   preflight_git_clean "$env"
   preflight_branch_synced "$env"
 
-  # Snapshot and publish the previous-good digest before remote build can
-  # overwrite the VM's environment tag with the candidate.
+  # Snapshot and publish the previous-good digest before building the candidate.
+  # Remote builds only tag the SHA; the environment tag changes after smoke.
   preflight_remote_ocir_auth
   preserve_rollback_tag "$env"
 
@@ -2493,7 +2492,11 @@ do_deploy() {
 
   if ! do_restart "$env" "${ACX_CANDIDATE_DIGEST_REF}"; then
     capture_failure_evidence "$env" "${ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}" || warn "automatic failure evidence capture failed; continuing with rollback"
-    if restore_env_tag_to_rollback "$env" 0; then
+    local restart_runtime=0
+    if [[ "${ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}" == "post_restart" ]]; then
+      restart_runtime=1
+    fi
+    if restore_env_tag_to_rollback "$env" "${restart_runtime}"; then
       restore_prior_image_repo_env || warn "env tag restored but prior sticky repository restore failed"
     else
       warn "automatic env-tag restore failed; refusing further unfenced compensation; run: $(rollback_command_hint "$env")"
@@ -2572,7 +2575,11 @@ do_promote() {
 
   if ! do_restart "$to_env" "${ACX_CANDIDATE_DIGEST_REF}"; then
     capture_failure_evidence "$to_env" "${ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}" || warn "automatic failure evidence capture failed; continuing with rollback"
-    if restore_env_tag_to_rollback "$to_env" 0; then
+    local restart_runtime=0
+    if [[ "${ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}" == "post_restart" ]]; then
+      restart_runtime=1
+    fi
+    if restore_env_tag_to_rollback "$to_env" "${restart_runtime}"; then
       restore_prior_image_repo_env || warn "env tag restored but prior sticky repository restore failed"
     else
       warn "automatic env-tag restore failed; refusing further unfenced compensation; run: $(rollback_command_hint "$to_env")"

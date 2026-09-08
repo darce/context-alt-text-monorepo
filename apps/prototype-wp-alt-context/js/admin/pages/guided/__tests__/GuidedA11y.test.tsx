@@ -226,7 +226,7 @@ describe('GuidedA11y (W04)', () => {
     expect(positiveTabIndex).toEqual([]);
 
     const stops: string[] = [];
-    for (let index = 0; index < 24; index += 1) {
+    for (let index = 0; index < 32; index += 1) {
       await user.tab();
       const active = document.activeElement;
       if (!(active instanceof HTMLElement) || active === document.body) {
@@ -510,6 +510,8 @@ describe('GuidedA11y (W04)', () => {
     render(<GuidedPrototypePage />);
 
     await user.click(screen.getByText(guidedCopy('names.evidence_open', { position: 'left' })));
-    expect(screen.getByRole('button', { name: /enlarg|larger|full.?size|expand comparison/i })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /enlarg|larger|full.?size|expand comparison/i })).toHaveLength(2);
+    expect(screen.getByRole('img', { name: 'Detected left face' })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Detected right face' })).toBeInTheDocument();
   });
 });

@@ -76,7 +76,7 @@ export const GuidedResetDialog = ({ liveWaiting, onConfirm }: GuidedResetDialogP
       <DialogRoot open={open} onOpenChange={setOpen}>
         <DialogPortal>
           <DialogOverlay />
-          <DialogContent onCloseAutoFocus={handleCloseAutoFocus}>
+          <DialogContent aria-modal="true" onCloseAutoFocus={handleCloseAutoFocus}>
             <DialogTitle>{guidedCopy('reset.title')}</DialogTitle>
             <DialogDescription>{guidedCopy('reset.body')}</DialogDescription>
             {liveWaiting ? <p>{guidedCopy('reset.active_live_note')}</p> : null}

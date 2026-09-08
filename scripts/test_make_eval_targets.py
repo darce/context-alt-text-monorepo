@@ -154,8 +154,19 @@ def test_eval_list_advertises_the_preexisting_root_targets() -> None:
 
 
 def test_test_scripts_collects_eval_target_contract() -> None:
+    # A recipe containing $(MAKE) executes even with -n. Query the dependency
+    # database without running the broad scripts gate, then inspect this leaf.
+    database = subprocess.run(
+        ["make", "-qp", "-C", str(REPO_ROOT), "test-scripts"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert database.returncode in (0, 1), database.stderr
+    prerequisites = re.search(r"^test-scripts:([^\n]*)$", database.stdout, re.M)
+    assert prerequisites and "test-eval-surface" in prerequisites.group(1).split()
     result = subprocess.run(
-        ["make", "-n", "-C", str(REPO_ROOT), "test-scripts"],
+        ["make", "-n", "-C", str(REPO_ROOT), "test-eval-surface"],
         capture_output=True,
         text=True,
         check=False,
@@ -185,3 +196,28 @@ def test_eval_report_requires_and_forwards_run() -> None:
 
     recipe = _recipe_line("eval-report")
     assert '--run "baseline=run.json"' in recipe, "eval-report does not forward RUN as --run"
+
+
+@pytest.mark.parametrize('target', sorted(TARGET_ARGS))
+def test_recipe_arguments_are_accepted_by_selected_parser(target, monkeypatch):
+    import argparse
+    import importlib
+    import shlex
+
+    class ParsedRecipe(Exception):
+        pass
+
+    tokens = shlex.split(_recipe_line(target))
+    index = tokens.index('-m')
+    module = importlib.import_module(tokens[index + 1])
+    arguments = tokens[index + 2:]
+    parse_args = argparse.ArgumentParser.parse_args
+
+    def validate_only(parser, args=None, namespace=None):
+        parse_args(parser, args, namespace)
+        raise ParsedRecipe
+
+    monkeypatch.setattr(argparse.ArgumentParser, 'parse_args', validate_only)
+    entrypoint = getattr(module, 'main', None) or module._main
+    with pytest.raises(ParsedRecipe):
+        entrypoint(arguments)

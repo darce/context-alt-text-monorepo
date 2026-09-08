@@ -401,7 +401,16 @@ def _expected_shas(path: str) -> tuple[set[str], str]:
     except ImportError:  # invoked by file path rather than as a module
         from .manifest import ManifestError, load_manifest  # type: ignore[no-redef]
     try:
-        manifest = load_manifest(path)
+        # Report identity is metadata-only: this module never opens manifest
+        # images while calculating the digest. Requiring GOLDEN_IMAGES_DIR here
+        # would make the advertised offline report unusable on a laptop and
+        # would prevent the comparability gate from producing its badge.
+        manifest = load_manifest(
+            path,
+            metadata_only=True,
+            skip_hash_verification=True,
+            hash_skip_reason="bake-off report identity check does not read image bytes",
+        )
     except ManifestError as exc:
         raise ComparabilityError(
             f"--manifest {path} declares manifest_version 3 but does not load as one: {exc}. "

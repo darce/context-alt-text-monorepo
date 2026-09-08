@@ -2724,6 +2724,7 @@ describe('ReviewQueue', () => {
 
     renderQueue();
 
+    await userEvent.setup().click(await screen.findByRole('button', { name: 'I cannot identify this person' }));
     await userEvent.setup().click(await screen.findByRole('button', { name: 'Show suggestion' }));
     const commit = screen.getByTestId('acx-person-commit');
     expect(commit).toHaveAttribute('data-person-commit-primary', 'true');
@@ -2772,6 +2773,11 @@ describe('ReviewQueue', () => {
     expect(screen.queryByText('Morgan')).not.toBeInTheDocument();
 
     const showSuggestion = screen.getByRole('button', { name: 'Show suggestion' });
+    expect(showSuggestion).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Accept suggestion' })).toBeDisabled();
+    await user.type(screen.getByRole('textbox', { name: 'Independent name judgment' }), 'Alex');
+    await user.click(screen.getByRole('button', { name: 'Record judgment' }));
+    expect(screen.getByText(/Your independent judgment:/)).toHaveTextContent('Your independent judgment: Alex');
     for (let tabs = 0; tabs < 20 && document.activeElement !== showSuggestion; tabs += 1) {
       await user.tab();
     }
@@ -4117,14 +4123,18 @@ describe('ReviewQueue', () => {
       );
     });
 
-    await clickAndCommitHold(await screen.findByRole('button', { name: 'Accept suggestion' }));
+    await userEvent.setup().click(await screen.findByRole('button', { name: 'I cannot identify this person' }));
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Show suggestion' }));
+    await clickAndCommitHold(screen.getByRole('button', { name: 'Accept suggestion' }));
     await waitFor(() => {
       expect(container.querySelector('.acx-review-queue__count')?.textContent).toBe(
         '1 left to review on this page',
       );
     });
 
-    await clickAndCommitHold(await screen.findByRole('button', { name: 'Accept suggestion' }));
+    await userEvent.setup().click(await screen.findByRole('button', { name: 'I cannot identify this person' }));
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Show suggestion' }));
+    await clickAndCommitHold(screen.getByRole('button', { name: 'Accept suggestion' }));
     await waitFor(() => {
       expect(container.querySelector('.acx-review-queue__count')).toBeNull();
     });

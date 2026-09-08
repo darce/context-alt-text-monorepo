@@ -322,6 +322,13 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       announce: setLivePositionMessage,
     } = useAriaAnnounce();
     const [selectionOpen, setSelectionOpen] = React.useState(false);
+    // Session-local independent judgments survive card navigation. They are not
+    // roster writes: final reconciliation remains an explicit separate action.
+    const [nameJudgments, setNameJudgments] = React.useState<ReadonlyMap<string, string>>(() => new Map());
+    const recordNameJudgment = React.useCallback((id: string, judgment: string): void => {
+      if (!judgment.trim()) return;
+      setNameJudgments((current) => current.has(id) ? current : new Map(current).set(id, judgment.trim()));
+    }, []);
     const [reviewedStoredFaceSuggestionIds, setReviewedStoredFaceSuggestionIds] = React.useState<Set<string>>(
       () => new Set(),
     );
@@ -392,7 +399,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
             continue;
           }
           const item = queueBySuggestionId.get(id);
-          if (!item) {
+          if (!item || (item.kind === NEXT_ACTION_KIND.NAME && !nameJudgments.has(id))) {
             continue;
           }
           const commitKind = itemCommitKind(item);
@@ -409,6 +416,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       },
       [
         queueBySuggestionId,
+        nameJudgments,
         findings.queue,
         filter,
         activeBand,
@@ -1570,6 +1578,8 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               ) : null}
             <CurrentCard
               item={currentItem}
+              nameJudgments={nameJudgments}
+              recordNameJudgment={recordNameJudgment}
               // BR-82: the card primary steps down to neutral while the bulk commit owns
               // the accent, so exactly one element carries the accent per viewport.
               accentPrimary={!bulkCommitOwnsAccent && !closeMatchOfferOwnsAccent}
@@ -1785,6 +1795,8 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
 
 interface CurrentCardProps {
   item: ReviewQueueItem;
+  nameJudgments: ReadonlyMap<string, string>;
+  recordNameJudgment: (id: string, judgment: string) => void;
   /**
    * §7: when true, this mounted card's single per-kind primary (accept for
    * ASSIGNMENT/MERGE, person-commit Confirm for NAME/CLUSTER) carries the
@@ -1949,6 +1961,8 @@ export const CommitHoldRegion = ({
 
 const CurrentCard = ({
   item,
+  nameJudgments,
+  recordNameJudgment,
   accentPrimary,
   queuePosition,
   queueTotal,
@@ -1990,6 +2004,9 @@ const CurrentCard = ({
   reviewQueueItems,
   onCloseMatchOffer,
 }: CurrentCardProps): React.JSX.Element | null => {
+  const [independentNameDraft, setIndependentNameDraft] = React.useState('');
+  const draftItemId = itemSuggestionId(item);
+  React.useEffect(() => setIndependentNameDraft(''), [draftItemId]);
   const [revealedNameSuggestionIds, setRevealedNameSuggestionIds] = React.useState<Set<string>>(
     () => new Set(),
   );
@@ -2238,7 +2255,8 @@ const CurrentCard = ({
         personCommit.phase === PERSON_COMMIT_PHASE.SUCCEEDED && personCommit.clusterId === item.clusterId;
       const namePending =
         isCardPending(suggestion.id, nameKinds) || namePersonCommitDone || personCommitPending;
-      const isNameSuggestionRevealed = revealedNameSuggestionIds.has(suggestion.id);
+      const independentJudgment = nameJudgments.get(suggestion.id);
+      const isNameSuggestionRevealed = independentJudgment !== undefined && revealedNameSuggestionIds.has(suggestion.id);
       const suggestionDisclosureId = `acx-name-suggestion-${suggestion.id}`;
       return (
         <ReviewCardGroupShell
@@ -2254,16 +2272,34 @@ const CurrentCard = ({
         >
           <SelectToggle
             selected={isSelected}
-            disabled={isSelectDisabled}
+            disabled={isSelectDisabled || independentJudgment === undefined}
             onToggle={onToggleSelect}
           />
+          {independentJudgment === undefined ? (
+            <div data-testid="acx-independent-judgment">
+              <p>{__('Record your own judgment before viewing the suggestion. This does not save a name.', 'alt-context')}</p>
+              <label htmlFor={`acx-independent-name-${suggestion.id}`}>{__('Independent name judgment', 'alt-context')}</label>
+              <input id={`acx-independent-name-${suggestion.id}`} value={independentNameDraft}
+                onChange={(event) => setIndependentNameDraft(event.target.value)} disabled={namePending} autoComplete="off" />
+              <button type="button" className="button" disabled={namePending || !independentNameDraft.trim()}
+                onClick={() => recordNameJudgment(suggestion.id, independentNameDraft)}>
+                {__('Record judgment', 'alt-context')}
+              </button>
+              <button type="button" className="button" disabled={namePending}
+                onClick={() => recordNameJudgment(suggestion.id, __('I cannot identify this person', 'alt-context'))}>
+                {__('I cannot identify this person', 'alt-context')}
+              </button>
+            </div>
+          ) : <p>{__('Your independent judgment:', 'alt-context')} <strong>{independentJudgment}</strong></p>}
           <div className="acx-suggestion-card__content">
             <button
               type="button"
               className="button button-link"
               aria-expanded={isNameSuggestionRevealed}
               aria-controls={suggestionDisclosureId}
+              disabled={independentJudgment === undefined}
               onClick={() => {
+                if (independentJudgment === undefined) return;
                 setRevealedNameSuggestionIds((current) => {
                   const next = new Set(current);
                   if (next.has(suggestion.id)) {
@@ -2310,9 +2346,10 @@ const CurrentCard = ({
             <button
               type="button"
               className="button acx-suggestion-card__accept"
-              disabled={namePending}
+              disabled={namePending || !isNameSuggestionRevealed}
               title={namePending && cardActionsDisabledReason ? cardActionsDisabledReason : undefined}
               onClick={() => {
+                if (!isNameSuggestionRevealed) return;
                 runScheduled(() => scheduleAcceptName(suggestion.id));
               }}
             >

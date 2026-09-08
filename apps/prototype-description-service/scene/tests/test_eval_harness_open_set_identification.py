@@ -398,10 +398,12 @@ def test_calibrated_tau_agrees_with_published_fpi_and_fnir_off_observation():
     Those two rules break ties in opposite directions, so no single predicate
     expresses both, and any tau landing exactly on an observed score makes the
     published rule and the operational apply rule (``accepts``, >=) disagree on
-    that score. ``select_threshold`` therefore draws interior candidates from
-    midpoints between consecutive unique observations: the tie is unreachable
-    by construction, and agreement is a property of the operating point rather
-    than a tie convention chosen after the fact.
+    that score. ``select_threshold`` therefore draws candidates from midpoints
+    and open boundaries around consecutive unique observations: the tie is
+    unreachable by construction for every finite fit observation, and agreement
+    is a property of the operating point rather than a tie convention chosen
+    after the fact. Held-fold observations remain an independent read
+    population.
     """
     impostor_scores = [0.6, 0.55, 0.4]
     genuine_scores = [0.9, 0.55, 0.4]

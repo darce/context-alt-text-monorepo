@@ -1845,20 +1845,13 @@ log_cap="$(mktemp)"
 last_health_code="000"
 last_health_body=""
 smoke_passed=0
+# WHY: EPIPE/closed stderr under set -e aborts a trap at the first echo; docker
+# ops must run before any diagnostic write, and every write must tolerate failure.
 trap '
+  set +e
   trap - EXIT
   trap "" TERM INT HUP
   if [[ "${smoke_passed:-0}" != "1" ]]; then
-    if [[ -n "${curl_err:-}" && -s "${curl_err}" ]]; then
-      if ! sanitize_deploy_diagnostic < "${curl_err}" >&2; then
-        echo "diagnostic: curl stderr unavailable" >&2
-      fi
-    fi
-    echo "smoke health LAST HTTP code: ${last_health_code:-000}" >&2
-    echo "smoke health LAST body (up to 2000 bytes):" >&2
-    if ! printf "%s\n" "${last_health_body:0:2000}" | sanitize_deploy_diagnostic >&2; then
-      echo "diagnostic: smoke health LAST body unavailable" >&2
-    fi
     _smoke_timeout 2 docker logs --tail 80 "$name" >"$log_cap" 2>&1 || true
   fi
   _smoke_timeout 2 docker rm -f "$name" >/dev/null 2>&1 || true
@@ -1869,13 +1862,23 @@ trap '
     if [[ -n "${_smoke_net_owner}" && "${_smoke_net_owner}" == "${smoke_owner}" ]]; then
       _smoke_timeout 2 docker network rm "$net" >/dev/null 2>&1 || true
     fi
-    echo "smoke container logs (last 80 lines):" >&2
+    if [[ -n "${curl_err:-}" && -s "${curl_err}" ]]; then
+      if ! sanitize_deploy_diagnostic < "${curl_err}" >&2; then
+        echo "diagnostic: curl stderr unavailable" >&2 || true
+      fi
+    fi
+    echo "smoke health LAST HTTP code: ${last_health_code:-000}" >&2 || true
+    echo "smoke health LAST body (up to 2000 bytes):" >&2 || true
+    if ! printf "%s\n" "${last_health_body:0:2000}" | sanitize_deploy_diagnostic >&2; then
+      echo "diagnostic: smoke health LAST body unavailable" >&2 || true
+    fi
+    echo "smoke container logs (last 80 lines):" >&2 || true
     if [[ -s "${log_cap}" ]]; then
       if ! sanitize_deploy_diagnostic < "${log_cap}" >&2; then
-        echo "smoke container logs unavailable" >&2
+        echo "smoke container logs unavailable" >&2 || true
       fi
     else
-      echo "smoke container logs unavailable" >&2
+      echo "smoke container logs unavailable" >&2 || true
     fi
   fi
   rm -f "$curl_err" "$log_cap"
@@ -1959,6 +1962,10 @@ if (( port_rc != 0 )); then
   exit "$port_rc"
 fi
 port="$(printf '%s\n' "$port_out" | head -1 | sed 's/.*://')"
+if ! [[ "${port}" =~ ^[0-9]+$ ]]; then
+  echo "smoke setup failed: no published port" >&2
+  exit 1
+fi
 # EXIT trap: timeout 2 × 6 docker ops; trap_docker_s reserves health-loop tail.
 # Outer composite adds +1s kill-grace per op (GR-262).
 diag_reserve=$((trap_docker_s + poll_s))

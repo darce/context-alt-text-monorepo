@@ -128,6 +128,9 @@ case "$cmd" in
       echo "Error: No such container: ${name}" >&2
       exit 1
     fi
+    if [[ "${FAKE_PORT_EMPTY:-0}" == "1" ]]; then
+      exit 0
+    fi
     echo "0.0.0.0:18000"
     exit 0
     ;;
@@ -412,6 +415,7 @@ def _run_boot_smoke(
     extra_env: dict[str, str] | None = None,
     wrap_deadline: int | None = None,
     hide_timeout: bool = False,
+    close_stderr: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     del attempts  # LR-04: wrapper/body no longer take a dead attempts positional.
     state, remote, env = _prepare_smoke_env(tmp_path, extra_env, hide_timeout=hide_timeout)
@@ -431,8 +435,18 @@ def _run_boot_smoke(
         str(trap_docker_s),
     ]
     if wrap_deadline is None:
+        cmd = ["bash", str(smoke), *args]
+        if close_stderr:
+            wrapper = tmp_path / "closed-stderr.sh"
+            _write_executable(
+                wrapper,
+                "#!/usr/bin/env bash\n"
+                "exec 2>&-\n"
+                f'exec bash "{smoke}" "$@"\n',
+            )
+            cmd = ["bash", str(wrapper), *args]
         result = subprocess.run(
-            ["bash", str(smoke), *args],
+            cmd,
             text=True,
             capture_output=True,
             env=env,
@@ -2308,4 +2322,41 @@ def test_boot_smoke_health_302_is_not_success(tmp_path: Path) -> None:
     assert result.returncode != 0, combined
     assert "smoke health OK" not in combined, combined
     assert "302" in combined, combined
+
+
+def test_boot_smoke_trap_cleans_up_when_stderr_closed(tmp_path: Path) -> None:
+    """S3B-01: EXIT trap still rm/volume/network when stderr is EPIPE under set -e."""
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=2,
+        poll_s=1,
+        pg_budget=1,
+        extra_env={"FAKE_HEALTH_CODE": "000", "FAKE_NET_EXISTS": "0"},
+        close_stderr=True,
+    )
+    log = _docker_log(result)
+    assert re.search(r"rm -f acx-smoke-dev-\d+", log), log
+    assert "volume rm -f" in log, log
+    assert "network rm" in log, log
+
+
+def test_boot_smoke_empty_docker_port_fails_setup(tmp_path: Path) -> None:
+    """S3B-02: empty `docker port` must not curl :80; fail setup and still collect logs."""
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=2,
+        poll_s=1,
+        pg_budget=1,
+        extra_env={"FAKE_PORT_EMPTY": "1", "FAKE_HEALTH_CODE": "200"},
+    )
+    combined = result.stdout + result.stderr
+    state = Path(result._fake_state)  # type: ignore[attr-defined]
+    curl_path = state / "curl.log"
+    curl_text = curl_path.read_text() if curl_path.exists() else ""
+    log = _docker_log(result)
+    assert result.returncode != 0, combined
+    assert "smoke setup failed: no published port" in combined, combined
+    assert "logs --tail" in log, log
+    assert "127.0.0.1:/health" not in curl_text, curl_text
+    assert re.search(r"rm -f acx-smoke-dev-\d+", log), log
 

@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
 from pathlib import Path
 
 from infra.oci.gpu_lifecycle.controller import (
     GpuInstance,
     GpuLifecycleController,
+    LifecycleAction,
 )
 from infra.oci.gpu_lifecycle.reaper import (
     JsonFileJobLoadSource,
@@ -131,6 +134,64 @@ def test_start_failure_emits_fallback_with_empty_actuated() -> None:
     assert result.fallbacks[0].reason == "start_failed"
     assert result.fallbacks[0].profile == "florence_small"
     assert result.fallbacks[0].instance_id == "ocid1.gpu"
+
+
+def test_unreconciled_subprocess_start_failure_emits_start_failed_fallback(tmp_path: Path) -> None:
+    class Unreconciled:
+        def start_instance(self, instance_id: str) -> None:
+            raise subprocess.SubprocessError("oci start failed")
+
+        def get_instance_state(self, instance_id: str) -> str:
+            return "STOPPED"
+
+    controller = GpuLifecycleController(idle_seconds=60)
+    instance = GpuInstance(instance_id="ocid1.gpu", state="STOPPED", idle_for_seconds=0)
+    gpu_state_path = tmp_path / "gpu-state.json"
+    result = run_start_cycle(
+        controller=controller,
+        instances=[instance],
+        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+        actuator=Unreconciled(),
+        gpu_state_path=gpu_state_path,
+    )
+
+    assert result.actuated == []
+    assert len(result.fallbacks) == 1
+    fallback = result.fallbacks[0]
+    assert fallback.action is LifecycleAction.FALLBACK
+    assert fallback.instance_id == "ocid1.gpu"
+    assert fallback.reason == "start_failed"
+    snapshot = json.loads(gpu_state_path.read_text())
+    assert snapshot["state"] == "degraded"
+    assert snapshot["reason"] == "start_failed"
+
+
+def test_reconciled_subprocess_start_failure_does_not_emit_start_failed_fallback(
+    tmp_path: Path,
+) -> None:
+    class Reconciled:
+        def start_instance(self, instance_id: str) -> None:
+            raise subprocess.SubprocessError("oci response lost")
+
+        def get_instance_state(self, instance_id: str) -> str:
+            return "RUNNING"
+
+    controller = GpuLifecycleController(idle_seconds=60)
+    instance = GpuInstance(instance_id="ocid1.gpu", state="STOPPED", idle_for_seconds=0)
+    gpu_state_path = tmp_path / "gpu-state.json"
+    result = run_start_cycle(
+        controller=controller,
+        instances=[instance],
+        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+        actuator=Reconciled(),
+        gpu_state_path=gpu_state_path,
+    )
+
+    assert result.actuated == [("START", "ocid1.gpu")]
+    assert result.fallbacks == ()
+    snapshot = json.loads(gpu_state_path.read_text())
+    assert snapshot["state"] == "starting"
+    assert snapshot["reason"] is None
 
 
 class RecordingStopActuator:

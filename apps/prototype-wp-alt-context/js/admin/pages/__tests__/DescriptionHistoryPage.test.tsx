@@ -88,6 +88,8 @@ const historyItem: DescriptionHistoryItem = {
     cached: false,
     duration_ms: 13800,
     retention_class: 'retain_all',
+    tier: 'provisional_cpu',
+    result_generation: 1,
   },
   human_edit: null,
   run_status: {

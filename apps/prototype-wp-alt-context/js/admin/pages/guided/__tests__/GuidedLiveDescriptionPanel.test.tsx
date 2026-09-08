@@ -5,7 +5,12 @@ import type { Mock } from 'vitest';
 
 import type { DescribeRunItemsResponse, DescribeRunResponse } from '../../../api/describeApi';
 import { guidedCopy } from '../../../guidedPrototype/copy';
-import { GUIDED_LIVE_WAIT_CEILING_SECONDS } from '../../../guidedPrototype/liveDescription';
+import {
+  GUIDED_LIVE_DEADLINE_SLACK_MS,
+  GUIDED_LIVE_GPU_WARMUP_CEILING_SECONDS,
+  GUIDED_LIVE_KEEP_WAITING_SECONDS,
+  GUIDED_LIVE_WAIT_CEILING_SECONDS,
+} from '../../../guidedPrototype/liveDescription';
 import type { GuidedLiveDescriptionClient } from '../../../guidedPrototype/useGuidedLiveDescription';
 import { GuidedLiveDescriptionPanel } from '../GuidedLiveDescriptionPanel';
 
@@ -102,6 +107,18 @@ const mount = (
 
 const submitButton = () => screen.getByRole('button', { name: guidedCopy('live.submit') });
 const retryButton = () => screen.getByRole('button', { name: guidedCopy('live.retry') });
+const keepWaitingButton = () => screen.getByRole('button', { name: guidedCopy('live.keep_waiting') });
+
+const clock = (ms: number): string => {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+};
+
+const timedOutStatus = (): string =>
+  guidedCopy('live.timed_out', {
+    keepWaiting: guidedCopy('live.keep_waiting'),
+    retry: guidedCopy('live.retry'),
+  });
 
 const press = async (button: HTMLElement) => {
   await act(async () => {
@@ -197,7 +214,7 @@ describe('GuidedLiveDescriptionPanel', () => {
       const client = stubClient();
       mount(client);
 
-      const region = screen.getByRole('status', { name: 'Live run status' });
+      const region = screen.getByRole('status', { name: guidedCopy('live.status_label') });
       expect(region).toHaveAttribute('aria-live', 'polite');
 
       await press(submitButton());
@@ -214,7 +231,12 @@ describe('GuidedLiveDescriptionPanel', () => {
       await press(submitButton());
       await settle(65_000);
 
-      expect(screen.getByTestId('guided-live-elapsed')).toHaveTextContent('1:05 of up to 11:30');
+      expect(screen.getByTestId('guided-live-elapsed')).toHaveTextContent(
+        guidedCopy('live.elapsed_of_up_to', {
+          elapsed: '1:05',
+          deadline: clock(GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000),
+        }),
+      );
     });
 
     it('says whose budget the ceiling is when the server disclosed none', async () => {
@@ -223,10 +245,10 @@ describe('GuidedLiveDescriptionPanel', () => {
       await press(submitButton());
       await settle(1000);
 
-      expect(screen.getByTestId('guided-live-budget')).toHaveTextContent(/no server budget disclosed/i);
+      expect(screen.getByTestId('guided-live-budget')).toHaveTextContent(guidedCopy('live.budget_local'));
     });
 
-    it('credits the server for the ceiling once it has disclosed one', async () => {
+    it('names disclosed generation separately from the client wait ceiling', async () => {
       const client = stubClient({
         submit: () => Promise.resolve({ ...runResponse({ gpu_state: 'ready' }), deadline_seconds: 120 }),
         poll: () => Promise.resolve(runResponse({ phase: 'warming', gpu_state: 'ready' })),
@@ -236,7 +258,38 @@ describe('GuidedLiveDescriptionPanel', () => {
       await press(submitButton());
       await settle(1000);
 
-      expect(screen.getByTestId('guided-live-budget')).toHaveTextContent(/the service disclosed/i);
+      expect(screen.getByTestId('guided-live-budget')).toHaveTextContent(
+        guidedCopy('live.budget_disclosed', {
+          generation: clock(120_000),
+          deadline: clock(120_000 + GUIDED_LIVE_DEADLINE_SLACK_MS),
+        }),
+      );
+    });
+
+    it('does not credit a cold wait ceiling to the disclosed generation budget', async () => {
+      const client = stubClient({
+        submit: () => Promise.resolve({ ...runResponse({ gpu_state: 'stopped' }), deadline_seconds: 180 }),
+        poll: () => Promise.resolve(runResponse({ phase: 'warming', gpu_state: 'stopped' })),
+      });
+      mount(client);
+
+      await press(submitButton());
+      await settle(1000);
+
+      const waitMs =
+        (180 + GUIDED_LIVE_GPU_WARMUP_CEILING_SECONDS) * 1000 + GUIDED_LIVE_DEADLINE_SLACK_MS;
+      expect(screen.getByTestId('guided-live-budget')).toHaveTextContent(
+        guidedCopy('live.budget_disclosed', {
+          generation: clock(180_000),
+          deadline: clock(waitMs),
+        }),
+      );
+      expect(screen.getByTestId('guided-live-elapsed')).toHaveTextContent(
+        guidedCopy('live.elapsed_of_up_to', {
+          elapsed: clock(1000),
+          deadline: clock(waitMs),
+        }),
+      );
     });
 
     it('stops waiting with live.stopped and does not claim the server job stopped', async () => {
@@ -257,8 +310,15 @@ describe('GuidedLiveDescriptionPanel', () => {
       await press(submitButton());
       await settle(GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000 + 2000);
 
-      expect(screen.getByTestId('guided-live-status')).toHaveTextContent(guidedCopy('live.timed_out'));
-      expect(screen.getByTestId('guided-live-status')).not.toHaveTextContent(/cancelled/i);
+      const status = screen.getByTestId('guided-live-status');
+      expect(status).toHaveTextContent(timedOutStatus());
+      expect(status).toHaveTextContent(guidedCopy('live.keep_waiting'));
+      expect(status).toHaveTextContent(guidedCopy('live.retry'));
+      expect(status).not.toHaveTextContent(/cancelled/i);
+
+      const region = screen.getByRole('status', { name: guidedCopy('live.status_label') });
+      expect(region).toContainElement(keepWaitingButton());
+      expect(region).toContainElement(retryButton());
     });
 
     it('keeps waiting on the same run rather than submitting a second one', async () => {
@@ -267,13 +327,29 @@ describe('GuidedLiveDescriptionPanel', () => {
       await press(submitButton());
       await settle(GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000 + 2000);
 
-      expect(screen.getByRole('button', { name: /keep waiting/i })).toBeEnabled();
-      await press(screen.getByRole('button', { name: /keep waiting/i }));
+      expect(keepWaitingButton()).toBeEnabled();
+      await press(keepWaitingButton());
       await settle(2000);
 
       expect(client.submit).toHaveBeenCalledTimes(1);
       expect(client.cancel).not.toHaveBeenCalled();
       expect(screen.getByTestId('guided-live-elapsed')).toBeInTheDocument();
+    });
+
+    it('still waits after the learner reads the timeout copy before keeping waiting', async () => {
+      const client = stubClient();
+      mount(client);
+      await press(submitButton());
+      await settle(GUIDED_LIVE_WAIT_CEILING_SECONDS * 1000 + 2000);
+      expect(screen.getByTestId('guided-live-status')).toHaveTextContent(timedOutStatus());
+
+      await settle(GUIDED_LIVE_KEEP_WAITING_SECONDS * 1000 + 1000);
+      await press(keepWaitingButton());
+      await settle(2000);
+
+      expect(screen.getByTestId('guided-live-status')).toHaveTextContent(guidedCopy('live.pending'));
+      expect(screen.getByTestId('guided-live-elapsed')).toBeInTheDocument();
+      expect(client.submit).toHaveBeenCalledTimes(1);
     });
 
     it('retries after failure with a new request token', async () => {

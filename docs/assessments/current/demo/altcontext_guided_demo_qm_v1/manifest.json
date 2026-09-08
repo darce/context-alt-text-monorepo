@@ -2,9 +2,9 @@
   "package": "ACX-QM-GUIDED-DEMO-01",
   "files": {
     "README.md": "1b1ceac7d3566872fce36d21d74128ec5eb7fb6df99598db8f3bca51e471dc76",
-    "copy.en.json": "3e38b7db624508f5d2cc93e6038f25d610ad89993b3a2a101c2cc6ff0d1c1b43",
+    "copy.en.json": "820ffc5fb14986a4143badd2543360e3e2b820f833f65f47368936ef1c0b815c",
     "evidence-anchors.json": "7998127e2406a7f97de4cd688e624fc8649829b0261ed4a4c9f68e1fa35272bd",
-    "implementation-brief.json": "ac8016b1ce15fd9f120e11bcdab79524bf65c72b8508e6778a50a4c1a455b556",
+    "implementation-brief.json": "996fa7457d7148d84cce2985a8d3a946935bb884ee9ed2196fe839f5d91a9559",
     "implementation-brief.schema.json": "f36c9d2d616e6aea83e59f4c21672bb181617aa25031c80f2011c1812d66a3fb",
     "source-snapshot.html": "5aad68d0d7b3b3a7b59c27f41dc112a3f04469004928f41ef82fe8d84fc90953",
     "validate_brief.py": "4a9674107f87b857c8f55c9af73b4bfd09aa29afc12c91bfdf88a4af5546f514"

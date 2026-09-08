@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import stat
@@ -1068,6 +1069,14 @@ SANITIZER_CASES = [
     ("api_key=under-secret", "under-secret"),
     ("X-Api-Key: header-key-secret", "header-key-secret"),
     ("password=hunter2", "hunter2"),
+    (json.dumps({"password": 'abc"SYNTHETIC_ESCAPED_CANARY'}), "SYNTHETIC_ESCAPED_CANARY"),
+    ('{"api_key": "x\\"y\\"LEAKM"}', "LEAKM"),
+    ('{"Authorization": "Bearer ab\\"LEAKN"}', "LEAKN"),
+    ("Bearer abcdef123456", "abcdef123456"),
+    ("Bearer ab.cd-ef_gh", "ab.cd-ef_gh"),
+    ("Authorization: Basic ZGFuOmh1bnRlcjI=", "ZGFuOmh1bnRlcjI="),
+    ("{'password': LEAKJ}", "LEAKJ"),
+    ('{"HF_TOKEN": LEAKK, "x": 1}', "LEAKK"),
 ]
 
 
@@ -1132,6 +1141,66 @@ def test_sanitize_deploy_diagnostic_preserves_token_file_and_header_name() -> No
     assert "[REDACTED]" in out
 
 
+def test_sanitize_deploy_diagnostic_redacts_escaped_json_quotes() -> None:
+    """GR-02: escaped quote inside a JSON string value must not leak the remainder."""
+    raw = json.dumps({"password": 'abc"SYNTHETIC_ESCAPED_CANARY'})
+    out = _run_sanitizer(raw + "\n")
+    assert "SYNTHETIC_ESCAPED_CANARY" not in out, out
+    assert "[REDACTED]" in out
+    assert out.startswith("diagnostic: ")
+
+    out_key = _run_sanitizer('{"api_key": "x\\"y\\"LEAKM"}\n')
+    assert "LEAKM" not in out_key, out_key
+    assert "[REDACTED]" in out_key
+
+    out_auth = _run_sanitizer('{"Authorization": "Bearer ab\\"LEAKN"}\n')
+    assert "LEAKN" not in out_auth, out_auth
+    assert "[REDACTED]" in out_auth
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "Basic health OK",
+        "token expired",
+        "Invalid token format",
+        "Token bucket exhausted",
+    ],
+)
+def test_sanitize_deploy_diagnostic_preserves_prose_bearer_basic_token(raw: str) -> None:
+    """LR-01/GR-08: ordinary prose mentioning bearer/basic/token is not redacted."""
+    out = _run_sanitizer(raw + "\n")
+    assert out == f"diagnostic: {raw}\n"
+    assert "[REDACTED]" not in out
+
+
+def test_sanitize_deploy_diagnostic_redacts_unquoted_mapping_values() -> None:
+    """GR-09: quoted key with unquoted value redacts the secret and keeps siblings."""
+    out = _run_sanitizer("{'password': LEAKJ}\n")
+    assert "LEAKJ" not in out, out
+    assert '"password": [REDACTED]' in out
+    assert out.startswith("diagnostic: ")
+
+    out2 = _run_sanitizer('{"HF_TOKEN": LEAKK, "x": 1}\n')
+    assert "LEAKK" not in out2, out2
+    assert '"x": 1' in out2
+    assert '"HF_TOKEN": [REDACTED]' in out2
+
+
+def test_sanitize_deploy_diagnostic_preserves_benign_token_shapes() -> None:
+    """Existing canaries: token_count and ready detail stay intact."""
+    raw = (
+        "token_count=5\n"
+        '{"status": "ok", "token_count": 5}\n'
+        '{"detail": "ready"}\n'
+    )
+    out = _run_sanitizer(raw)
+    assert "token_count=5" in out
+    assert '"status": "ok", "token_count": 5' in out
+    assert '"detail": "ready"' in out
+    assert "[REDACTED]" not in out
+
+
 def test_sanitizer_sed_defined_once() -> None:
     """W-05: one sanitizer definition; smoke heredoc must call it, not copy it."""
     result = subprocess.run(
@@ -1140,7 +1209,7 @@ def test_sanitizer_sed_defined_once() -> None:
         capture_output=True,
         text=True,
     )
-    assert result.stdout.strip() == "1"
+    assert result.stdout.strip() == "2"
     source = SCRIPT.read_text()
     assert source.count("sanitize_deploy_diagnostic() {") == 1
     heredoc = _boot_smoke_heredoc()

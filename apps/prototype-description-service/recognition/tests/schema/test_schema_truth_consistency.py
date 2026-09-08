@@ -20,6 +20,7 @@ import importlib
 import importlib.util
 import inspect
 import pathlib
+import re
 
 import db.models  # noqa: F401  (registers every ORM table on Base.metadata)
 from db.base import Base
@@ -140,3 +141,134 @@ def test_tenant_and_raw_sql_tables_are_subsets_of_expected() -> None:
     expected = set(MIGRATION.EXPECTED_SCHEMA_TABLES)
     assert set(MIGRATION.TENANT_TABLES) <= expected, sorted(set(MIGRATION.TENANT_TABLES) - expected)
     assert set(MIGRATION.RAW_SQL_TABLES) <= expected, sorted(set(MIGRATION.RAW_SQL_TABLES) - expected)
+
+
+_SQL_COMMENT = re.compile(r"--[^\n]*")
+_CTE_NAME = re.compile(r"(?:WITH|,)\s*([A-Za-z_][A-Za-z0-9_]*)\s+AS\s*\(", re.IGNORECASE)
+_FROM_JOIN = re.compile(r"\b(?:FROM|JOIN)\s+([A-Za-z_][A-Za-z0-9_]*)", re.IGNORECASE)
+_FUNC_CALL = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+_PREFLIGHT_TABLE = re.compile(
+    r"has_table_privilege\(\s*current_user\s*,\s*'([A-Za-z_][A-Za-z0-9_]*)'",
+    re.IGNORECASE,
+)
+_PREFLIGHT_FUNC = re.compile(r"p\.proname\s*=\s*'([A-Za-z_][A-Za-z0-9_]*)'", re.IGNORECASE)
+# SQL keywords / builtins that appear as name( in the CREATE body but are not
+# privilege-bearing catalog objects the preflight must GRANT EXECUTE on.
+_SQL_NON_CATALOG_FUNCS = {
+    "all",
+    "and",
+    "any",
+    "array",
+    "as",
+    "asc",
+    "avg",
+    "between",
+    "bool_and",
+    "bool_or",
+    "by",
+    "case",
+    "cast",
+    "coalesce",
+    "count",
+    "create",
+    "cross",
+    "desc",
+    "distinct",
+    "else",
+    "end",
+    "exists",
+    "extract",
+    "false",
+    "filter",
+    "first",
+    "from",
+    "full",
+    "greatest",
+    "group",
+    "having",
+    "if",
+    "ilike",
+    "in",
+    "index",
+    "inner",
+    "into",
+    "is",
+    "join",
+    "last",
+    "lateral",
+    "least",
+    "left",
+    "like",
+    "materialized",
+    "max",
+    "min",
+    "natural",
+    "not",
+    "null",
+    "nullif",
+    "nulls",
+    "on",
+    "only",
+    "or",
+    "order",
+    "outer",
+    "over",
+    "overlay",
+    "position",
+    "right",
+    "select",
+    "set",
+    "some",
+    "substring",
+    "sum",
+    "table",
+    "then",
+    "trim",
+    "true",
+    "union",
+    "unique",
+    "using",
+    "values",
+    "vector",
+    "view",
+    "when",
+    "where",
+    "window",
+    "with",
+}
+
+
+def _matview_create_sql() -> str:
+    src = inspect.getsource(MIGRATION.ensure_matview)
+    start = src.index("CREATE MATERIALIZED VIEW")
+    end = src.index('"""', start)
+    return _SQL_COMMENT.sub("", src[start:end])
+
+
+def test_matview_create_privilege_gaps_match_create_body_relations_and_functions() -> None:
+    # C-01: _matview_create_privilege_gaps is a curated list far from the CREATE
+    # MATERIALIZED VIEW body it must mirror. Observation that would refute the
+    # finding: FROM/JOIN relations and non-builtin function calls in the CREATE
+    # body equal the has_table_privilege / proname probes in the preflight.
+    create_sql = _matview_create_sql()
+    cte_names = {name.lower() for name in _CTE_NAME.findall(create_sql)}
+    create_relations = {name.lower() for name in _FROM_JOIN.findall(create_sql)} - cte_names
+    create_functions = {
+        name.lower() for name in _FUNC_CALL.findall(create_sql) if name.lower() not in _SQL_NON_CATALOG_FUNCS
+    }
+
+    preflight_src = inspect.getsource(MIGRATION._matview_create_privilege_gaps)
+    preflight_relations = {name.lower() for name in _PREFLIGHT_TABLE.findall(preflight_src)}
+    preflight_functions = {name.lower() for name in _PREFLIGHT_FUNC.findall(preflight_src)}
+
+    assert create_relations, "parser found no FROM/JOIN tables in the CREATE MATERIALIZED VIEW body"
+    assert create_functions, "parser found no catalog functions in the CREATE MATERIALIZED VIEW body"
+    assert create_relations == preflight_relations, (
+        "CREATE MATERIALIZED VIEW FROM/JOIN tables must equal _matview_create_privilege_gaps "
+        f"has_table_privilege probes: create={sorted(create_relations)} "
+        f"preflight={sorted(preflight_relations)}"
+    )
+    assert create_functions == preflight_functions, (
+        "CREATE MATERIALIZED VIEW function calls must equal _matview_create_privilege_gaps "
+        f"proname probes: create={sorted(create_functions)} preflight={sorted(preflight_functions)}"
+    )

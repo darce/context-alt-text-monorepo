@@ -27,26 +27,29 @@ Likely already closed by checkpoint 1 (verify, do not assume): EVID-1-R1-01 (sub
 
 ## Step 2 — close what remains
 
-### EVID1E-H-03 (high) — `scripts/gpu_burst_evidence.py` audit sequence
-Consecutive states are collapsed before the sequence check, so a StopInstance that precedes StartInstance can still read as STOPPED → RUNNING → STOPPED and PASS. Validate the ordered authoritative events and require the start time to precede the matching reaper stop. Test: a bundle whose only stop is timestamped before the start must FAIL.
+This lane's remaining checker findings are tracked in handoff under `task_ref=EVID-1`:
+EVID1E-H-03, EVID1E-M-02, EVID-1-R1-04, EVID1E-M-07, EVID1E-M-06, EVID1E-L-09,
+EVID1E-L-08, EVID-1-R1-05, EVID-1-R1-06 and EVID-1-R1-07.
 
-### EVID1E-M-02 (medium) — reaper snapshot check
-The snapshot check validates timestamp and STOPPED state but never the snapshot's `instance_id`. Pass the expected instance id into `_snapshot_check` and reject a mismatch. Test: a well-formed snapshot from a different instance ocid must not corroborate.
+Read them live rather than from a copy here:
 
-### EVID-1-R1-04 (medium) — receipt timestamps
-Receipt timestamp handling omits `generated_at` and `generatedAt`, so receipts the exporter actually writes fail verification. Accept both spellings. Test: one receipt per spelling verifies.
+```
+review_findings(review={"operation": "list", "task_ref": "EVID-1"})
+```
 
-### EVID1E-M-07 (medium) — `check_bundle` complexity
-`check_bundle` is a ~257-line radon-F function. Split it into pure per-concern checkers (manifest, window, artifacts, audit sequence, receipts) that each return a list of violations; `check_bundle` composes them and assembles the verdict. Behaviour must not change — the existing 52 tests are the contract. Do this last, after the behavioural fixes, so a wall-clock cutoff cannot cost you a correctness fix.
+Their bodies used to be pasted into this file. That duplicated the source of truth, escaped the
+pre-merge gate (`handoff_close_check` audits only MCP-stored findings), and went stale the moment
+a finding was reopened or re-classified. Findings live in handoff; a brief references them by id.
+See the Review Findings Placement rule in `CLAUDE.md`.
 
-### EVID1E-M-06 (medium) — `scripts/test_gpu_burst_evidence.py` golden payload
-Tests never exercise the canonical OCI Audit CloudEvents shape: begin/end event phases, `request.parameters.action`, `response.status`, principal, `stateChange.previous/current`. Add one golden payload in that shape and run it through the check path. If the checker only supports the flattened shape, make it reject the canonical one with a named error rather than silently mis-parsing ([rg-015] — never silently support two shapes).
+If a future lane brief genuinely needs the finding text inlined — a remote sandbox is
+history-stripped and cannot query handoff — write that brief under `.task-state/coord/briefs/`,
+which is untracked and outside the scope of the task-plan guard. The rule is about placement, not
+about whether an agent may ever read a finding body.
 
-### EVID1E-L-09 (low) — schema validation
-`SCHEMA_VERSION`, manifest `schema_version` and manifest `format` are unvalidated, so a foreign manifest reads as v1. Reject unsupported values explicitly ([RES-06] fail fast).
-
-### Lint-only (fix here; they never block a merge)
-Lint ids in scope for this lane: `EVID1E-L-08`, `EVID-1-R1-05`, `EVID-1-R1-06`, `EVID-1-R1-07`. Read each body with `review_findings(review={"operation":"get","task_ref":"EVID-1","finding_id":"<id>"})` — the bodies are not duplicated here. For `EVID-1-R1-05`, fix only the two files this lane owns; the third file it names belongs to another lane.
+Do EVID1E-M-07 last, after the behavioural fixes, so a wall-clock cutoff cannot cost a
+correctness fix. For `EVID-1-R1-05`, fix only the two files this lane owns; the third file it
+names belongs to another lane.
 
 ## Verification
 

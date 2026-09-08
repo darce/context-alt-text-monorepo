@@ -30,13 +30,10 @@
 GPU_EVIDENCE_EXPORT_SCRIPT ?= $(ROOT_MAKEFILE_DIR)/scripts/deploy/lib/export-gpu-evidence.sh
 GPU_EVIDENCE_CHECKER ?= $(ROOT_MAKEFILE_DIR)/scripts/gpu_burst_evidence.py
 GPU_EVIDENCE_BUNDLE ?= $(ROOT_MAKEFILE_DIR)/docs/evidence/gpu-burst
-GPU_EVIDENCE_INSTANCE_ID ?= $(GPU_INSTANCE_ID)
-GPU_EVIDENCE_COMPARTMENT_ID ?= $(GPU_COMPARTMENT_ID)
 GPU_EVIDENCE_SINCE ?=
 GPU_EVIDENCE_UNTIL ?=
 GPU_EVIDENCE_STATE_SNAPSHOT ?=
 GPU_EVIDENCE_WP_RECEIPTS ?=
-GPU_EVIDENCE_OCI_BIN ?= $(if $(OCI_BIN),$(OCI_BIN),oci)
 GPU_EVIDENCE_EXPECTED_STOP_PRINCIPAL ?= gpu-reaper
 GPU_EVIDENCE_MIN_DESCRIPTIONS ?= 1
 GPU_EVIDENCE_PYTHON ?= python3
@@ -47,10 +44,21 @@ GPU_EVIDENCE_PYTHON ?= python3
 # payload such as `$(touch marker)` is rejected instead of disappearing during
 # expansion.  Every accepted value is then passed as one single-quoted shell
 # argument; embedded single quotes are represented by the usual `\'` splice.
+#
+# GPU_EVIDENCE_INSTANCE_ID / COMPARTMENT_ID / OCI_BIN fall back to the operator
+# names GPU_INSTANCE_ID / GPU_COMPARTMENT_ID / OCI_BIN.  Resolve the *name*
+# that actually supplied the value before validating or expanding it; an
+# eagerly assigned `?= $(GPU_INSTANCE_ID)` alias is FILE origin and would
+# expand an environment payload under `make -n`.  `oci` is the literal
+# default only when neither OCI name is set.
 GPU_EVIDENCE_SINGLE_QUOTE := '
 gpu_evidence_value = $(if $(filter command% environment%,$(origin $(1))),$(value $(1)),$($(1)))
 gpu_evidence_shell_quote = $(GPU_EVIDENCE_SINGLE_QUOTE)$(subst $(GPU_EVIDENCE_SINGLE_QUOTE),$(GPU_EVIDENCE_SINGLE_QUOTE)\$(GPU_EVIDENCE_SINGLE_QUOTE)$(GPU_EVIDENCE_SINGLE_QUOTE),$(1))$(GPU_EVIDENCE_SINGLE_QUOTE)
 gpu_evidence_validate = $(if $(findstring $$,$(call gpu_evidence_value,$(1))),$(error unsafe GPU evidence value for $(1): dollar signs are not accepted),)
+gpu_evidence_alias = $(if $(filter undefined,$(origin $(1))),$(2),$(1))
+gpu_evidence_instance_id_name = $(call gpu_evidence_alias,GPU_EVIDENCE_INSTANCE_ID,GPU_INSTANCE_ID)
+gpu_evidence_compartment_id_name = $(call gpu_evidence_alias,GPU_EVIDENCE_COMPARTMENT_ID,GPU_COMPARTMENT_ID)
+gpu_evidence_oci_bin_name = $(call gpu_evidence_alias,GPU_EVIDENCE_OCI_BIN,OCI_BIN)
 
 # Keep the checker and its contract tests in the root script lint/format
 # inputs.  The root Makefile explicitly collects the substantive checker suite
@@ -72,15 +80,18 @@ gpu-evidence-tests:
 .PHONY: gpu-evidence-export gpu-evidence-check
 
 gpu-evidence-export:
-	$(foreach variable,GPU_EVIDENCE_INSTANCE_ID GPU_EVIDENCE_COMPARTMENT_ID GPU_EVIDENCE_SINCE GPU_EVIDENCE_UNTIL GPU_EVIDENCE_BUNDLE GPU_EVIDENCE_STATE_SNAPSHOT GPU_EVIDENCE_WP_RECEIPTS GPU_EVIDENCE_OCI_BIN GPU_EVIDENCE_EXPORT_SCRIPT,$(call gpu_evidence_validate,$(variable)))
+	$(call gpu_evidence_validate,$(gpu_evidence_instance_id_name))
+	$(call gpu_evidence_validate,$(gpu_evidence_compartment_id_name))
+	$(call gpu_evidence_validate,$(gpu_evidence_oci_bin_name))
+	$(foreach variable,GPU_EVIDENCE_SINCE GPU_EVIDENCE_UNTIL GPU_EVIDENCE_BUNDLE GPU_EVIDENCE_STATE_SNAPSHOT GPU_EVIDENCE_WP_RECEIPTS GPU_EVIDENCE_EXPORT_SCRIPT,$(call gpu_evidence_validate,$(variable)))
 	@set -eu; \
-		test -n $(call gpu_evidence_shell_quote,$(call gpu_evidence_value,GPU_EVIDENCE_INSTANCE_ID)) || { echo "GPU_EVIDENCE_INSTANCE_ID is required" >&2; exit 2; }; \
-		test -n $(call gpu_evidence_shell_quote,$(call gpu_evidence_value,GPU_EVIDENCE_COMPARTMENT_ID)) || { echo "GPU_EVIDENCE_COMPARTMENT_ID is required" >&2; exit 2; }; \
+		test -n $(call gpu_evidence_shell_quote,$(call gpu_evidence_value,$(gpu_evidence_instance_id_name))) || { echo "GPU_EVIDENCE_INSTANCE_ID is required" >&2; exit 2; }; \
+		test -n $(call gpu_evidence_shell_quote,$(call gpu_evidence_value,$(gpu_evidence_compartment_id_name))) || { echo "GPU_EVIDENCE_COMPARTMENT_ID is required" >&2; exit 2; }; \
 		test -n $(call gpu_evidence_shell_quote,$(call gpu_evidence_value,GPU_EVIDENCE_SINCE)) || { echo "GPU_EVIDENCE_SINCE is required" >&2; exit 2; }; \
 		test -n $(call gpu_evidence_shell_quote,$(call gpu_evidence_value,GPU_EVIDENCE_UNTIL)) || { echo "GPU_EVIDENCE_UNTIL is required" >&2; exit 2; }; \
-		OCI_BIN=$(call gpu_evidence_shell_quote,$(call gpu_evidence_value,GPU_EVIDENCE_OCI_BIN)) bash $(call gpu_evidence_shell_quote,$(call gpu_evidence_value,GPU_EVIDENCE_EXPORT_SCRIPT)) \
-			--instance-id $(call gpu_evidence_shell_quote,$(call gpu_evidence_value,GPU_EVIDENCE_INSTANCE_ID)) \
-			--compartment-id $(call gpu_evidence_shell_quote,$(call gpu_evidence_value,GPU_EVIDENCE_COMPARTMENT_ID)) \
+		OCI_BIN=$(call gpu_evidence_shell_quote,$(or $(call gpu_evidence_value,$(gpu_evidence_oci_bin_name)),oci)) bash $(call gpu_evidence_shell_quote,$(call gpu_evidence_value,GPU_EVIDENCE_EXPORT_SCRIPT)) \
+			--instance-id $(call gpu_evidence_shell_quote,$(call gpu_evidence_value,$(gpu_evidence_instance_id_name))) \
+			--compartment-id $(call gpu_evidence_shell_quote,$(call gpu_evidence_value,$(gpu_evidence_compartment_id_name))) \
 			--since $(call gpu_evidence_shell_quote,$(call gpu_evidence_value,GPU_EVIDENCE_SINCE)) \
 			--until $(call gpu_evidence_shell_quote,$(call gpu_evidence_value,GPU_EVIDENCE_UNTIL)) \
 			--out $(call gpu_evidence_shell_quote,$(call gpu_evidence_value,GPU_EVIDENCE_BUNDLE)) \

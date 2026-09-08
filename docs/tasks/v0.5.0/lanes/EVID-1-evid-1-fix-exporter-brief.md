@@ -19,29 +19,24 @@ Write the new bundle into a temp sibling dir and `mv` it into place only after e
 
 ## Findings to close
 
-### EVID1E-H-02 (high) — `scripts/deploy/lib/export-gpu-evidence.sh:168-174`
+This lane's scope was the six exporter findings tracked in handoff under `task_ref=EVID-1`:
+EVID1E-H-02, EVID1E-M-05, EVID-1-R1-03, EVID1E-M-10, EVID-1-R1-08 and EVID1E-L-11.
 
-[ANTIPATTERN] Re-exporting into an existing bundle deletes the prior manifest and receipts before OCI calls, history generation, optional copies, and manifest creation succeed. A transient OCI failure or interruption therefore destroys the last valid evidence and can leave a partial bundle.
+Read them live rather than from a copy here:
 
-### EVID1E-M-05 (medium) — `scripts/deploy/lib/export-gpu-evidence.sh:144-148`
+```
+review_findings(review={"operation": "list", "task_ref": "EVID-1"})
+```
 
-[GAP] The documented/default destination is docs/evidence/gpu-burst, but generated raw OCI audit and WordPress receipts are not excluded from Git and are created with the caller’s normal umask. This makes accidental commits or local disclosure of potentially sensitive identity/request metadata likely.
+Their bodies used to be pasted into this file. That duplicated the source of truth, escaped the
+pre-merge gate (`handoff_close_check` audits only MCP-stored findings), and went stale the moment
+a finding was reopened or re-classified. Findings live in handoff; a brief references them by id.
+See the Review Findings Placement rule in `CLAUDE.md`.
 
-### EVID-1-R1-03 (medium) — `scripts/deploy/lib/export-gpu-evidence.sh:393-413`
-
-The exporter fabricates a STOPPED state at --since and labels the current state as --until, so the exported state history is synthesized rather than independently observed.
-
-### EVID1E-M-10 (medium) — `scripts/deploy/lib/export-gpu-evidence.sh:428-446`
-
-[ANTIPATTERN] EVID-1-M7: A snapshot URL, including query tokens from a presigned URL, is persisted verbatim in manifest.json and may be attached to handoff. The fix is to strip the query string entirely so only the object path remains; do not replace the URL with `<redacted-url>` ([REF-33]).
-
-### EVID-1-R1-08 (low) — `scripts/deploy/lib/export-gpu-evidence.sh:432-434`
-
-The curl retrieval has no timeout, so a hung endpoint can stall evidence capture indefinitely.
-
-### EVID1E-L-11 (low) — `scripts/deploy/lib/export-gpu-evidence.sh:152-177`
-
-[ANTIPATTERN] EVID-1-L1: The read-only guard is a narrow denylist, allowing other mutating OCI verbs such as update, delete, create, launch, attach, or detach if future calls are added.
+If a future lane brief genuinely needs the finding text inlined — a remote sandbox is
+history-stripped and cannot query handoff — write that brief under `.task-state/coord/briefs/`,
+which is untracked and outside the scope of the task-plan guard. The rule is about placement, not
+about whether an agent may ever read a finding body.
 
 
 ## Rules (all lanes)

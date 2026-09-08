@@ -19,17 +19,24 @@ Pass make variables to the shell via single-quoted or `$(call ...)`-escaped argu
 
 ## Findings to close
 
-### EVID1E-M-04 (medium) — `mk/gpu-evidence.mk:63-86`
+This lane's scope was the three make-wiring findings tracked in handoff under `task_ref=EVID-1`:
+EVID1E-M-04, EVID1E-L-07 and EVID1E-M-08.
 
-[ANTIPATTERN] Make variables are interpolated directly inside double-quoted shell arguments. Values containing shell metacharacters can terminate the quote and execute commands, defeating the exporter’s read-only boundary; the same issue affects bundle paths, URLs, principals, and Python command values.
+Read them live rather than from a copy here:
 
-### EVID1E-L-07 (low) — `mk/gpu-evidence.mk:54-60`
+```
+review_findings(review={"operation": "list", "task_ref": "EVID-1"})
+```
 
-[COMPLEXITY] gpu-evidence-tests is added as a prerequisite of the root test-scripts target, but the existing root test-scripts recipe already collects scripts/deploy/tests, including test_export_gpu_evidence_shell.py. The exporter shell suite runs twice through make test-scripts.
+Their bodies used to be pasted into this file. That duplicated the source of truth, escaped the
+pre-merge gate (`handoff_close_check` audits only MCP-stored findings), and went stale the moment
+a finding was reopened or re-classified. Findings live in handoff; a brief references them by id.
+See the Review Findings Placement rule in `CLAUDE.md`.
 
-### EVID1E-M-08 (medium) — `scripts/test_gpu_burst_evidence.py:1-15`
-
-[GAP] EVID-1-M5: The substantive checker suite is absent from the explicit make test-scripts pytest list; lint-scripts and formatting also omit the new checker and tests.
+If a future lane brief genuinely needs the finding text inlined — a remote sandbox is
+history-stripped and cannot query handoff — write that brief under `.task-state/coord/briefs/`,
+which is untracked and outside the scope of the task-plan guard. The rule is about placement, not
+about whether an agent may ever read a finding body.
 
 
 ## Rules (all lanes)

@@ -11,7 +11,8 @@ Exit codes distinguish who can fix the gap:
 - ``0``  — schema verified.
 - ``1``  — heal-repairable drift (missing table / RLS off / policy missing /
   matview absent / centroid typmod mismatch the current role can drop and
-  rebuild): re-running ``python -m scripts.sync_identity_schema`` converges it.
+  rebuild / missing opted-in UNIQUE): re-running
+  ``python -m scripts.sync_identity_schema`` converges it.
 - ``2``  — operator action required (alembic revision mismatch, the matview
   name exists as a non-matview relation, a centroid typmod gap the current
   role cannot drop/rebuild, or a wrong-typmod *table* vector column): healing
@@ -34,6 +35,7 @@ identity_schema = importlib.import_module("db.migrations.versions.001_identity_s
 EXPECTED_REVISION = identity_schema.revision
 EXPECTED_TABLES = tuple(identity_schema.EXPECTED_SCHEMA_TABLES)
 TENANT_TABLES = tuple(identity_schema.TENANT_TABLES)
+HEAL_UNIQUE_CONSTRAINTS = tuple(identity_schema.HEAL_UNIQUE_CONSTRAINTS)
 EMBEDDING_DIMENSION = identity_schema.EMBEDDING_DIMENSION
 MATVIEW_NAME = "mv_identity_cluster_centroids"
 
@@ -60,6 +62,7 @@ class SchemaStateReport(TypedDict):
     matview_can_drop: bool | None
     matview_create_privilege_gaps: list[str]
     matview_vanished_grantees: list[str]
+    unique_constraint_gaps: list[str]
     operator_actions: list[str]
 
 
@@ -80,6 +83,7 @@ def _validate_schema_state(
     matview_can_drop: bool | None = None,
     matview_create_privilege_gaps: Iterable[str] | None = None,
     matview_vanished_grantees: Iterable[str] | None = None,
+    unique_constraint_gaps: Iterable[str] | None = None,
     current_role_quoted: str | None = None,
     vector_typmods: Mapping[tuple[str, str], int | None],
 ) -> SchemaStateReport:
@@ -169,6 +173,9 @@ def _validate_schema_state(
             f"{', '.join(vanished_grantees)} that cannot receive GRANT"
         )
     matview_typmod_repairable = matview_centroid_typmod_gap and not matview_typmod_unrepairable
+    unique_gaps: list[str] = []
+    if unique_constraint_gaps is not None:
+        unique_gaps = [str(gap) for gap in unique_constraint_gaps if gap]
 
     table_vector_gaps: list[str] = []
     for table_name, column_name in IDENTITY_VECTOR_COLUMNS:
@@ -194,7 +201,15 @@ def _validate_schema_state(
         or table_vector_gaps
     ):
         exit_code = EXIT_OPERATOR_REQUIRED
-    elif missing_tables or rls_gaps or policy_gaps or matview_missing or col_gaps or matview_typmod_repairable:
+    elif (
+        missing_tables
+        or rls_gaps
+        or policy_gaps
+        or matview_missing
+        or col_gaps
+        or matview_typmod_repairable
+        or unique_gaps
+    ):
         exit_code = EXIT_HEAL_REPAIRABLE
     else:
         exit_code = EXIT_OK
@@ -216,6 +231,7 @@ def _validate_schema_state(
         "matview_can_drop": None if matview_can_drop is None else can_drop,
         "matview_create_privilege_gaps": create_gaps,
         "matview_vanished_grantees": vanished_grantees,
+        "unique_constraint_gaps": unique_gaps,
         "operator_actions": operator_actions,
     }
 
@@ -313,6 +329,29 @@ def _collect_matview_vanished_grantees(connection) -> list[str]:
     return list(identity_schema._missing_matview_grant_roles(op, grants))
 
 
+def _collect_unique_constraint_gaps(connection, actual_tables: Iterable[str]) -> list[str]:
+    """Missing opted-in UNIQUE constraints on tables that already exist."""
+    present_tables = set(actual_tables)
+    gaps: list[str] = []
+    for table_name, constraint_name, _cols in HEAL_UNIQUE_CONSTRAINTS:
+        if table_name not in present_tables:
+            continue
+        exists = connection.execute(
+            text(
+                "SELECT 1 FROM pg_constraint c "
+                "JOIN pg_class t ON c.conrelid = t.oid "
+                "JOIN pg_namespace n ON t.relnamespace = n.oid "
+                "WHERE n.nspname = current_schema() "
+                "AND t.relname = :table_name "
+                "AND c.conname = :constraint_name"
+            ),
+            {"table_name": table_name, "constraint_name": constraint_name},
+        ).scalar()
+        if not exists:
+            gaps.append(f"{table_name}.{constraint_name}")
+    return gaps
+
+
 def collect_and_validate(connection) -> SchemaStateReport:
     """Collect live schema facts on ``connection`` and classify them."""
     inspector = inspect(connection)
@@ -374,6 +413,7 @@ def collect_and_validate(connection) -> SchemaStateReport:
     matview_centroid_typmod = vector_typmods.get((MATVIEW_NAME, "centroid"))
 
     column_gaps, non_additive_column_gaps = _collect_column_gaps(connection, _expected_columns())
+    unique_constraint_gaps = _collect_unique_constraint_gaps(connection, table_names)
 
     return _validate_schema_state(
         actual_tables=table_names,
@@ -388,6 +428,7 @@ def collect_and_validate(connection) -> SchemaStateReport:
         matview_can_drop=matview_can_drop,
         matview_create_privilege_gaps=create_gaps,
         matview_vanished_grantees=vanished_grantees,
+        unique_constraint_gaps=unique_constraint_gaps,
         current_role_quoted=None if current_role_quoted is None else str(current_role_quoted),
         vector_typmods=vector_typmods,
     )
@@ -421,7 +462,7 @@ def main() -> int:
         f"expected_revision={report['expected_revision']} actual_revision={report['actual_revision']}",
         file=sys.stderr,
     )
-    for key in ("missing_tables", "rls_gaps", "policy_gaps", "table_impostors"):
+    for key in ("missing_tables", "rls_gaps", "policy_gaps", "table_impostors", "unique_constraint_gaps"):
         if report[key]:
             print(f"{key}={','.join(report[key])}", file=sys.stderr)
     for table_name, cols in report["column_gaps"].items():

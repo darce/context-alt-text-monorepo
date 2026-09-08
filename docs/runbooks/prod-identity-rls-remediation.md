@@ -34,20 +34,23 @@ SELECT t.relname,
        (SELECT count(*) FROM pg_policies p
          WHERE p.schemaname = 'public' AND p.tablename = t.relname) AS policies
 FROM unnest(ARRAY[
-    'media_identities','identity_clusters','identity_members','identity_scan_jobs',
-    'identity_scan_job_items','identity_cluster_representatives','identity_clustering_jobs',
+    'media_identities','identity_clusters','identity_members','identity_name_suppressions',
+    'identity_scan_jobs','identity_scan_job_items','identity_cluster_representatives','identity_clustering_jobs',
     'identity_suggestions','cluster_merge_suggestions','name_suggestions',
     'identity_cluster_blocks','identity_constraints','recognition_runs','recognition_events',
     'clustering_feedback','audit_events','curation_replay_records','export_jobs',
-    'image_descriptions','clustering_job_reports','assignment_decisions']) AS t(relname)
+    'image_descriptions','image_description_runs','image_description_run_items',
+    'clustering_job_reports','assignment_decisions',
+    'identity_atlas_runs','identity_atlas_points','identity_atlas_queue_dispositions']) AS t(relname)
 LEFT JOIN pg_class c
   ON c.relname = t.relname
  AND c.relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')
 ORDER BY t.relname;
 ```
 
-The `LEFT JOIN` guarantees **21 rows always**: a row with NULL `rls_enabled`
-means the table itself is missing (do not read absence as success).
+The `LEFT JOIN` guarantees **one row per listed table** (`TENANT_TABLES` in
+`001_identity_schema.py`): a row with NULL `rls_enabled` means the table
+itself is missing (do not read absence as success).
 
 Save the output. Expected pre-state: `assignment_decisions` and
 `clustering_job_reports` show `rls_enabled = f` (or are missing policies);

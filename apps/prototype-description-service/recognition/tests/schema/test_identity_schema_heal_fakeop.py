@@ -355,6 +355,24 @@ def test_ensure_identity_vector_typmods_names_reembed_not_vector_cast(
     assert not any("DROP TABLE media_identities" in sql for sql in op.statements)
 
 
+def test_ensure_unique_constraint_heals_detached_named_constraint_without_column_args() -> None:
+    # A UniqueConstraint built with only a name has empty .columns (SA 2.0.52).
+    # Heal must still emit ALTER ... UNIQUE (tenant_id, idempotency_key) from a
+    # public declaration, not UniqueConstraint._pending_colargs.
+    constraint = sa.UniqueConstraint(name="uq_image_description_runs_idempotency_key")
+    assert list(constraint.columns) == []
+    op = _FakeOp()
+
+    added = MIGRATION._ensure_unique_constraint(op, "image_description_runs", constraint)
+
+    assert added is True
+    joined = " ".join(op.statements).lower()
+    assert "add constraint" in joined
+    assert "uq_image_description_runs_idempotency_key" in joined
+    assert "tenant_id" in joined
+    assert "idempotency_key" in joined
+
+
 def test_ensure_unique_constraint_raises_named_action_on_unique_violation() -> None:
     class _OrigError(Exception):
         sqlstate = "23505"

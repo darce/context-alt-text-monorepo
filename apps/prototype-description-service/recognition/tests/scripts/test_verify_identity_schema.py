@@ -250,6 +250,7 @@ def _catalog_connection(
     vector_typmods: dict[tuple[str, str], int | None] | None = None,
     acl_grant_rows: list[tuple[str, str, bool]] | None = None,
     vanished_roles: set[str] | None = None,
+    unique_constraints: set[str] | None = None,
     matview_present: bool = True,
     missing_relations: set[str] | None = None,
 ):
@@ -314,6 +315,15 @@ def _catalog_connection(
                 if name in (vanished_roles or set()):
                     return _Result(scalar_value=None)
                 return _Result(scalar_value=1)
+            if "from pg_constraint" in sql:
+                params = _params or {}
+                conname = params.get("constraint_name") or params.get("conname") or params.get("name")
+                present = (
+                    unique_constraints
+                    if unique_constraints is not None
+                    else {"uq_image_description_runs_idempotency_key"}
+                )
+                return _Result(scalar_value=conname in present)
             if "select c.relkind from" in sql:
                 return _Result(scalar_value="m" if matview_present else None)
             raise AssertionError(f"unexpected SQL: {sql}")
@@ -635,6 +645,39 @@ def test_collect_and_validate_missing_source_table_is_heal_repairable_not_infra(
 
     assert report["exit_code"] == script.EXIT_HEAL_REPAIRABLE
     assert "identity_clusters" in report["missing_tables"]
+
+
+def test_validate_schema_state_missing_unique_constraint_is_heal_repairable() -> None:
+    script = _import_script()
+    kwargs = _complete_kwargs(script)
+    kwargs["unique_constraint_gaps"] = [
+        "image_description_runs.uq_image_description_runs_idempotency_key"
+    ]
+
+    report = script._validate_schema_state(**kwargs)
+
+    assert report["ok"] is False
+    assert report["exit_code"] == script.EXIT_HEAL_REPAIRABLE
+    assert report["unique_constraint_gaps"] == [
+        "image_description_runs.uq_image_description_runs_idempotency_key"
+    ]
+
+
+def test_collect_and_validate_missing_unique_constraint_is_heal_repairable(monkeypatch) -> None:
+    script = _import_script()
+    connection = _catalog_connection(
+        script,
+        centroid_typmod=script.EMBEDDING_DIMENSION,
+        unique_constraints=set(),
+    )
+    monkeypatch.setattr(script, "inspect", lambda _connection: _Inspector(script))
+    monkeypatch.setattr(script, "_expected_columns", lambda: {})
+
+    report = script.collect_and_validate(connection)
+
+    assert report["exit_code"] == script.EXIT_HEAL_REPAIRABLE
+    assert "image_description_runs.uq_image_description_runs_idempotency_key" in report["unique_constraint_gaps"]
+    assert any("pg_constraint" in sql for sql in connection.sql_log)
 
 
 def test_collect_matview_create_privilege_gaps_sql_matches_migration() -> None:

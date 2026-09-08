@@ -451,6 +451,20 @@ def test_matview_create_privilege_gaps_match_create_body_relations_and_functions
     )
 
 
+def test_prod_rls_runbook_unnest_matches_tenant_tables() -> None:
+    runbook = pathlib.Path(__file__).resolve().parents[5] / "docs" / "runbooks" / "prod-identity-rls-remediation.md"
+    text = runbook.read_text(encoding="utf-8")
+    match = re.search(r"unnest\(ARRAY\[(.*?)\]\)", text, re.S)
+    assert match, "runbook §1 audit SQL must unnest TENANT_TABLES"
+    names = re.findall(r"'([^']+)'", match.group(1))
+    assert set(names) == set(MIGRATION.TENANT_TABLES), (
+        "runbook unnest list must equal TENANT_TABLES: "
+        f"missing={sorted(set(MIGRATION.TENANT_TABLES) - set(names))} "
+        f"extra={sorted(set(names) - set(MIGRATION.TENANT_TABLES))}"
+    )
+    assert re.search(r"\b21 rows\b", text) is None
+
+
 def test_verifier_reuses_migration_matview_create_privilege_gaps() -> None:
     # Duplicate SQL in verify vs heal makes collect_and_validate return
     # EXIT_HEAL_REPAIRABLE while heal() raises — docker-entrypoint crash-loop.

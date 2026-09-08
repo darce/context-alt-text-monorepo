@@ -94,3 +94,7 @@ entries from the train half. `held_out_golden.json` contains the existing
 20-image held-out reporting half, preserved without redrawing the split.
 Use that held-out manifest for reported candidate and zero-rule comparisons;
 do not treat full-corpus regression scores as held-out model-quality evidence.
+
+`fusion_regression.json` preserves the pre-split attachment fixtures for
+synthetic fusion regression tests, including adversarial context and
+multi-person scenes. It is not a model-selection or held-out reporting set.

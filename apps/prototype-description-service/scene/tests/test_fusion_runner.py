@@ -26,7 +26,7 @@ from scripts.eval_harness.manifest import load_manifest
 from scripts.eval_harness.report import build_reports
 from scripts.eval_harness.schema import SCHEMA, DocKind
 
-BAKEOFF = Path(__file__).parent / "seed" / "bakeoff_golden.json"
+BAKEOFF = Path(__file__).parent / "seed" / "fusion_regression.json"
 
 
 @pytest.fixture(scope="module")
@@ -269,3 +269,18 @@ def test_fusion_main_ignores_empty_golden_images_dir(tmp_path, monkeypatch):
     # roster_only bakeoff_golden refuses detection — reports still written (exit 3).
     assert code == 3
     assert (tmp_path / "E20-FUSION-staged-run-record.json").is_file()
+
+
+def test_default_outputs_do_not_overwrite_published_evidence(tmp_path, monkeypatch):
+    from scripts.eval_harness import fusion_runner
+
+    module_path = tmp_path / 'apps/service/scripts/eval_harness/fusion_runner.py'
+    module_path.parent.mkdir(parents=True)
+    monkeypatch.setattr(fusion_runner, '__file__', str(module_path))
+    evidence = tmp_path / 'docs/tasks/20.0/E20-FUSION-staged-report.json'
+    evidence.parent.mkdir(parents=True)
+    evidence.write_text('published evidence')
+    code = fusion_runner.main(['--manifest', str(BAKEOFF), '--mode', 'staged'])
+    assert code == 3
+    assert evidence.read_text() == 'published evidence'
+    assert (module_path.parent / 'out/fusion/E20-FUSION-staged-report.json').is_file()

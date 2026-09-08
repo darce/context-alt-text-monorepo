@@ -739,7 +739,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--mode", choices=("staged", "adhoc", "both"), default="both")
     # fusion_runner.py → eval_harness → scripts → service → apps → monorepo root
-    parser.add_argument("--out-dir", default=str(Path(__file__).resolve().parents[4] / "docs" / "tasks" / "20.0"))
+    parser.add_argument("--out-dir", default=str(Path(__file__).resolve().parent / "out" / "fusion"))
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument(
         "--audience",

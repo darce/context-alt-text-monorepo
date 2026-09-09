@@ -1172,6 +1172,41 @@ esac
 """
 
 
+def test_11_reaper_preflight_accepts_the_installed_flock_wrapper(tmp_path: Path) -> None:
+    reaper_env = tmp_path / "gpu-lifecycle.env"
+    reaper_env.write_text("GPU_INSTANCE_ID=ocid1.instance.oc1.iad.fakeinstance\nMAX_LEASE_SECONDS=3600\n")
+    oci = reaper_env.parent / "oci-stub"
+    lease_path = reaper_env.parent / "running-since.json"
+    exec_start = (
+        "{ path=/usr/bin/flock ; argv[]=/usr/bin/flock --wait 120 "
+        "/var/lib/acx-gpu/lifecycle.lock /usr/bin/python3 -m infra.oci.gpu_lifecycle "
+        "--mode reap --instance-id ${GPU_INSTANCE_ID} "
+        "--max-lease-seconds ${MAX_LEASE_SECONDS} "
+        f"--load-dir /run/acx-write --running-since-path {lease_path} --oci-bin {oci} "
+        "; ignore_errors=no ; }}"
+    )
+    result = run_preflight(
+        tmp_path,
+        check_reaper=True,
+        systemctl_script=reaper_systemctl_script(reaper_env, exec_start=exec_start),
+    )
+    assert result.returncode == 0, result.stderr
+    assert "MANUAL STOP fallback" in result.stdout
+
+
+def test_11_reaper_preflight_rejects_mismatched_exec_path_and_argv(tmp_path: Path) -> None:
+    reaper_env = tmp_path / "gpu-lifecycle.env"
+    reaper_env.write_text("GPU_INSTANCE_ID=ocid1.instance.oc1.iad.fakeinstance\nMAX_LEASE_SECONDS=3600\n")
+    unit = reaper_systemctl_script(reaper_env).replace(
+        "argv[]=/usr/bin/python3 -m",
+        "argv[]=/usr/bin/flock --wait 120 /var/lib/acx-gpu/lifecycle.lock /usr/bin/python3 -m",
+    )
+    result = run_preflight(tmp_path, check_reaper=True, systemctl_script=unit)
+    assert result.returncode != 0
+    assert "structurally valid GPU lifecycle reaper" in result.stderr
+    assert "MANUAL STOP" not in result.stdout
+
+
 def test_11_reaper_preflight_rejects_an_unresolvable_supplementary_gid(tmp_path: Path) -> None:
     """The fixture reports both timers enabled and active despite a missing GID.
 
@@ -1823,12 +1858,18 @@ def test_runbook_requires_reaper_fail_fast_and_checksum_bound_reviewed_artifact(
 
 def test_runbook_converges_gpu_lifecycle_before_prod_deploy() -> None:
     runbook = (ROOT / "docs/runbooks/gpu-demo-env-flip.md").read_text(encoding="utf-8")
+    ordering = runbook.split("### Green ordering", 1)[1].split("```bash\n", 1)[0]
     deploy_block = runbook.split("## 3. Deploy in producer-then-consumer order", 1)[1]
     deploy_block = deploy_block.split("```bash\n", 1)[1].split("```", 1)[0]
 
-    assert deploy_block.index("scripts/deploy/recognition-service.sh gpu-lifecycle") < deploy_block.index(
-        "CONFIRM=PROMOTE scripts/deploy/recognition-service.sh deploy prod"
-    )
+    assert "not a first-producer bootstrap" in ordering
+    assert "scoped producer-preparation operation" in ordering
+    assert "Do not use `ACX_VERIFY_OPTIONAL`" in ordering
+    assert "fabricate zero-valued snapshots" in ordering
+    lifecycle = deploy_block.index("scripts/deploy/recognition-service.sh gpu-lifecycle")
+    first_snapshot_gate = deploy_block.index("GPU_SNAPSHOT_ENV=prod make check-gpu-snapshots-live")
+    prod_deploy = deploy_block.index("CONFIRM=PROMOTE scripts/deploy/recognition-service.sh deploy prod")
+    assert lifecycle < first_snapshot_gate < prod_deploy
     assert deploy_block.index("CONFIRM=PROMOTE scripts/deploy/recognition-service.sh deploy prod") < deploy_block.index(
         "Missing describe-load snapshot"
     )
@@ -2827,6 +2868,25 @@ def test_gpu_lifecycle_preflight_rejects_empty_registered_load_dirs(tmp_path: Pa
         check_reaper=True,
         systemctl_script=reaper_systemctl_script(reaper_env),
         extra_env={"ACX_DESCRIBE_LOAD_DIR": str(load_dir)},
+    )
+    assert result.returncode != 0
+    assert "ERROR [12]" in result.stderr
+    assert "missing describe-load snapshot" in result.stderr
+
+
+def test_gpu_lifecycle_preflight_cannot_bypass_missing_load_snapshots(tmp_path: Path) -> None:
+    reaper_env = tmp_path / "gpu-lifecycle.env"
+    reaper_env.write_text("GPU_INSTANCE_ID=ocid1.instance.oc1.iad.fakeinstance\nMAX_LEASE_SECONDS=3600\n")
+    load_dir = tmp_path / "load"
+    load_dir.mkdir()
+    result = run_preflight(
+        tmp_path,
+        check_reaper=True,
+        systemctl_script=reaper_systemctl_script(reaper_env),
+        extra_env={
+            "ACX_DESCRIBE_LOAD_DIR": str(load_dir),
+            "ACX_GPU_PREFLIGHT_ALLOW_MISSING_LOAD": "1",
+        },
     )
     assert result.returncode != 0
     assert "ERROR [12]" in result.stderr

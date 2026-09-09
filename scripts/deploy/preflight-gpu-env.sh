@@ -347,12 +347,15 @@ import math
 from pathlib import Path
 
 raw = sys.argv[1].strip()
+object_path = None
 if raw.startswith("{"):
     # systemd permits @ to make argv[0] differ from the executable. Check
     # both, and reject multiple ExecStart records rather than certifying one.
-    if (raw.split(" ; ", 1)[0].strip() != "{ path=/usr/bin/python3"
+    path_prefix = raw.split(" ; ", 1)[0].strip()
+    if (path_prefix not in ("{ path=/usr/bin/python3", "{ path=/usr/bin/flock")
             or raw.count("argv[]=") != 1 or not raw.endswith("}")):
         raise SystemExit(1)
+    object_path = path_prefix.removeprefix("{ path=")
     marker = "argv[]="
     start = raw.find(marker)
     if start < 0:
@@ -364,6 +367,26 @@ else:
 try:
     argv = shlex.split(argv_text)
 except ValueError:
+    raise SystemExit(1)
+
+# The installed units serialize both lifecycle modes behind one bounded
+# process lock. The effective systemd ExecStart therefore begins with flock,
+# while older/test units may expose the Python command directly. Accept only
+# the exact installer wrapper and lock path; a different lock or extra flock
+# option would leave the START and REAP units without the shared mutex.
+flock_prefix = [
+    "/usr/bin/flock",
+    "--wait",
+    "120",
+    "/var/lib/acx-gpu/lifecycle.lock",
+]
+if object_path == "/usr/bin/flock" or (object_path is None and argv and argv[0] == "/usr/bin/flock"):
+    if argv[: len(flock_prefix)] != flock_prefix:
+        raise SystemExit(1)
+    argv = argv[len(flock_prefix):]
+elif object_path == "/usr/bin/python3" and (not argv or argv[0] != "/usr/bin/python3"):
+    raise SystemExit(1)
+elif object_path not in (None, "/usr/bin/python3"):
     raise SystemExit(1)
 if argv[:4] != ["/usr/bin/python3", "-m", "infra.oci.gpu_lifecycle", "--mode"]:
     raise SystemExit(1)
@@ -807,7 +830,6 @@ preflight_published_load_snapshots() {
     local now_epoch="${ACX_NOW_EPOCH:-$(date +%s)}"
     local environment snapshot load_environments
     local future_skew_tolerance_seconds=5
-    local allow_missing="${ACX_GPU_PREFLIGHT_ALLOW_MISSING_LOAD:-0}"
 
     if [[ ! "$stale_seconds" =~ ^[1-9][0-9]*$ ]]; then
         echo "ERROR [12] ACX_DESCRIBE_LOAD_STALE_SECONDS must be a positive integer." >&2
@@ -819,18 +841,12 @@ preflight_published_load_snapshots() {
     fi
     load_environments="$(preflight_load_deployments)" || exit 1
     if [[ ! -d "$load_dir" ]]; then
-        if [[ "$allow_missing" == 1 ]]; then
-            return 0
-        fi
         echo "ERROR [12] describe-load directory is missing: ${load_dir}." >&2
         exit 1
     fi
     for environment in $load_environments; do
         snapshot="${load_dir}/${environment}/describe-load.json"
         if [[ ! -e "$snapshot" ]]; then
-            if [[ "$allow_missing" == 1 ]]; then
-                continue
-            fi
             echo "ERROR [12] missing describe-load snapshot for registered environment ${environment}: ${snapshot}." >&2
             exit 1
         fi

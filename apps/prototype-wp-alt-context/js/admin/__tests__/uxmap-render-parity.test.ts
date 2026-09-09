@@ -171,6 +171,7 @@ const OWNED_MAPS = [
   'gpu-operator-control',
   'guided-prototype',
   'febt-1-job-error-states',
+  'public-guide',
 ] as const;
 
 /**

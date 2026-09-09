@@ -2,18 +2,27 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import random
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from scripts.bench.corpus import ItemOutcomeStore, is_detection_exhaustive
+from scripts.bench.corpus import ItemOutcomeStore, is_detection_exhaustive, load_bench_manifest
 from scripts.bench.export_map import _unwrap_rows, load_leg_exports, require_cluster_success, to_face_metric_inputs
-from scripts.bench.stack_pair import BenchError, StackPairConfig, load_stack_pair
+from scripts.bench.stack_pair import (
+    BenchError,
+    ROOT_KEYS,
+    StackPairConfig,
+    _parse_stack,
+    load_stack_pair,
+    validate_stack_pair_config,
+)
 from scripts.eval_harness.face_metrics import detection_pr, identification_pr
 from scripts.eval_harness.manifest import (
     AnnotationMode,
@@ -21,7 +30,6 @@ from scripts.eval_harness.manifest import (
     GoldenManifest,
     ScoreInvariant,
     SUPPORTED_MANIFEST_VERSION,
-    load_manifest,
     refusal_explanation,
 )
 
@@ -39,6 +47,7 @@ LABEL_MAP_PRIMARY = "label_map_primary"
 LABEL_MAP_OPTIMISTIC = "label_map_optimistic"
 
 HOLM_NOT_COMPUTED = "not_computed"
+_MANIFEST_SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 
 # Persist contract for legs/<stack_id>/preflight.json (PROV-01). Score refuses
 # a file that is missing, unreadable (including non-UTF-8 bytes), not a JSON
@@ -334,7 +343,20 @@ def _latest_by_phase(records: list[dict[str, Any]], media_id: int, phase: str) -
     return found
 
 
-def _terminal_ingest_ok(records: list[dict[str, Any]], media_id: int) -> bool:
+def _record_matches_manifest_entry(record: dict[str, Any], entry: GoldenEntry) -> bool:
+    # DATA-13: carry both the manifest path and its content pin through every
+    # phase; a media id alone is not end-to-end provenance.
+    return (
+        isinstance(record.get("manifest_path"), str)
+        and record.get("manifest_path") == entry.path
+        and isinstance(record.get("content_sha256"), str)
+        and record.get("content_sha256") == entry.sha256
+    )
+
+
+def _terminal_ingest_ok(
+    records: list[dict[str, Any]], media_id: int, *, entry: GoldenEntry | None = None
+) -> bool:
     ingest = _latest_by_phase(records, media_id, "ingest")
     analyze = _latest_by_phase(records, media_id, "analyze")
     # Condition (i) is the explicit terminal ingest field. Prefer the ingest
@@ -344,26 +366,45 @@ def _terminal_ingest_ok(records: list[dict[str, Any]], media_id: int) -> bool:
         return False
     if ingest is None and analyze is not None and analyze.get("outcome") != "ok":
         return False
+    if entry is not None and not _record_matches_manifest_entry(rec, entry):
+        return False
     outcome = rec.get("terminal_ingest_outcome")
     if outcome is None:
         return False
     return outcome == "success"
 
 
-def _ingest_roster(records: list[dict[str, Any]]) -> set[int]:
+def _ingest_roster(
+    records: list[dict[str, Any]], manifest: GoldenManifest | None = None
+) -> set[int]:
+    if manifest is None:
+        return {
+            int(r["manifest_media_id"])
+            for r in records
+            if r.get("phase") == "ingest" and "manifest_media_id" in r
+        }
     return {
-        int(r["manifest_media_id"])
-        for r in records
-        if r.get("phase") == "ingest" and "manifest_media_id" in r
+        entry.media_id
+        for entry in manifest.entries
+        if any(
+            r.get("phase") == "ingest"
+            and r.get("manifest_media_id") == entry.media_id
+            and _record_matches_manifest_entry(r, entry)
+            for r in records
+        )
     }
 
 
-def _analyze_ok(records: list[dict[str, Any]], media_id: int) -> dict[str, Any] | None:
+def _analyze_ok(
+    records: list[dict[str, Any]], media_id: int, *, entry: GoldenEntry | None = None
+) -> dict[str, Any] | None:
     rec = _latest_by_phase(records, media_id, "analyze")
     if rec is None or rec.get("outcome") != "ok":
         return None
     mid = rec.get("stack_media_id")
     if not isinstance(mid, int):
+        return None
+    if entry is not None and not _record_matches_manifest_entry(rec, entry):
         return None
     return rec
 
@@ -384,21 +425,39 @@ def _load_manifest_from_run(run_dir: Path) -> GoldenManifest:
     # Metadata-only reader: report scoring never opens image bytes, only reads
     # manifest fields (media_id/path/labels) already pinned by the run. Naming
     # the skip explicitly (VLM6-MERGE-01 / rg-015 / OBS-04) keeps every other
-    # load_bench_manifest/load_manifest caller on default hash verification.
-    for candidate in (run_dir / "manifest.json",):
-        if candidate.is_file():
-            return load_manifest(
-                str(candidate),
-                metadata_only=True,
-                skip_hash_verification=True,
-                hash_skip_reason="metadata-only scoring path; image bytes never opened",
-            )
-    run_doc = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
-    path = run_doc.get("manifest_path")
-    if not path:
-        raise BenchError("config_invalid", "run-dir has no manifest.json or manifest_path")
-    return load_manifest(
-        path,
+    # load_bench_manifest caller on default hash verification.
+    # DATA-13/API-02: the run-local snapshot is the single pinned source;
+    # scoring must not retry through a mutable external manifest path.
+    # RES-02/RES-03: malformed or missing integrity evidence fails fast.
+    pin_path = run_dir / "manifest.sha"
+    if pin_path.is_symlink() or not pin_path.is_file():
+        raise BenchError("manifest_sha_missing", "run-dir has no manifest.sha pin")
+    try:
+        pin = pin_path.read_text(encoding="ascii").strip()
+    except (OSError, UnicodeError) as exc:
+        raise BenchError("manifest_sha_invalid", "run-dir manifest.sha is unreadable") from exc
+    if not _MANIFEST_SHA_RE.fullmatch(pin):
+        raise BenchError("manifest_sha_invalid", "run-dir manifest.sha is not a sha256 digest")
+
+    candidate = run_dir / "manifest.json"
+    if candidate.is_symlink() or not candidate.is_file():
+        raise BenchError(
+            "manifest_missing",
+            "run-dir has no regular manifest.json snapshot; refusing manifest_path fallback",
+        )
+    try:
+        manifest_bytes = candidate.read_bytes()
+    except OSError as exc:
+        raise BenchError("manifest_missing", f"pinned manifest is unreadable: {candidate}") from exc
+    digest = hashlib.sha256(manifest_bytes).hexdigest()
+    if digest != pin:
+        raise BenchError(
+            "manifest_sha_mismatch",
+            f"manifest bytes do not match run-dir manifest.sha pin ({candidate})",
+        )
+    return load_bench_manifest(
+        str(candidate),
+        None,
         metadata_only=True,
         skip_hash_verification=True,
         hash_skip_reason="metadata-only scoring path; image bytes never opened",
@@ -407,21 +466,70 @@ def _load_manifest_from_run(run_dir: Path) -> GoldenManifest:
 
 def _load_pair(run_dir: Path) -> StackPairConfig:
     path = run_dir / "stack_pair.yaml"
+    if path.is_symlink():
+        raise BenchError("pair_snapshot_invalid", "run-dir stack_pair.yaml must not be a symlink")
     if path.is_file():
-        return load_stack_pair(path)
-    # Reconstruct a minimal pair from the redacted stack_pair.json
-    raw = json.loads((run_dir / "stack_pair.json").read_text(encoding="utf-8"))
-    # write a temp-compatible view: we only need fields already present
-    return StackPairConfig(
-        stacks=tuple(),  # unused by score path that reads legs by known ids
-        head_to_head_delta=float(raw["head_to_head_delta"]),
-        bootstrap_seed=int(raw["bootstrap_seed"]),
-        primary_endpoint=raw["primary_endpoint"],
-        secondary_endpoints=tuple(raw.get("secondary_endpoints") or []),
-        accepted_set_floor=raw.get("accepted_set_floor", 0.90),
-        max_differential_attrition=float(raw.get("max_differential_attrition", 0.05)),
-        baseline_manifest_path=raw.get("baseline_manifest_path"),
-    )
+        return validate_stack_pair_config(load_stack_pair(path))
+    # Reconstruct the pair from the redacted snapshot written by init_run_dir.
+    # The endpoint declarations are retained in that snapshot specifically so
+    # a later score cannot silently select arbitrary legs from the filesystem.
+    snapshot = run_dir / "stack_pair.json"
+    if snapshot.is_symlink():
+        raise BenchError("pair_snapshot_invalid", "run-dir stack_pair.json must not be a symlink")
+    try:
+        raw = json.loads(snapshot.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise BenchError("pair_snapshot_invalid", "run-dir stack_pair.json is unreadable") from exc
+    if not isinstance(raw, dict):
+        raise BenchError("pair_snapshot_invalid", "run-dir stack_pair.json must be a JSON object")
+    unknown = set(raw) - ROOT_KEYS
+    if unknown:
+        raise BenchError("pair_snapshot_invalid", f"run-dir stack_pair.json has unknown keys: {sorted(unknown)}")
+    raw_stacks = raw.get("stacks")
+    if not isinstance(raw_stacks, list) or len(raw_stacks) != 2:
+        raise BenchError("pair_snapshot_invalid", "run-dir stack_pair.json must declare exactly two stacks")
+    try:
+        stacks = tuple(_parse_stack(entry) for entry in raw_stacks)
+        pair = StackPairConfig(
+            stacks=stacks,
+            head_to_head_delta=raw.get("head_to_head_delta"),
+            bootstrap_seed=raw.get("bootstrap_seed"),
+            primary_endpoint=raw.get("primary_endpoint"),
+            secondary_endpoints=tuple(raw.get("secondary_endpoints") or []),
+            accepted_set_floor=raw.get("accepted_set_floor", 0.90),
+            max_differential_attrition=raw.get("max_differential_attrition", 0.05),
+            baseline_manifest_path=raw.get("baseline_manifest_path"),
+        )
+        return validate_stack_pair_config(pair)
+    except BenchError:
+        raise
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise BenchError("pair_snapshot_invalid", "run-dir stack_pair.json has invalid configuration values") from exc
+
+
+def _declared_stack_ids(root: Path, pair: StackPairConfig) -> list[str]:
+    validate_stack_pair_config(pair)
+    declared = [stack.stack_id for stack in pair.stacks]
+    legs_root = root / "legs"
+    if legs_root.is_symlink() or not legs_root.is_dir():
+        raise BenchError("stack_pair_mismatch", "run-dir has no legs directory")
+    try:
+        children = list(legs_root.iterdir())
+    except OSError as exc:
+        raise BenchError("stack_pair_mismatch", "run-dir legs directory is unreadable") from exc
+    if any(path.is_symlink() or not path.is_dir() for path in children):
+        raise BenchError(
+            "stack_pair_mismatch",
+            "run-dir legs must contain only regular directories for the declared pair",
+        )
+    actual = sorted(path.name for path in children)
+    expected = sorted(declared)
+    if actual != expected:
+        raise BenchError(
+            "stack_pair_mismatch",
+            f"run legs {actual} do not match declared pair {expected}",
+        )
+    return expected
 
 
 def compute_accepted_set(run_dir: Path | str) -> AcceptedSet:
@@ -431,7 +539,7 @@ def compute_accepted_set(run_dir: Path | str) -> AcceptedSet:
     from scripts.bench.corpus import assert_floor_fits_corpus
 
     assert_floor_fits_corpus(pair.accepted_set_floor, len(manifest.entries))
-    stacks = [p.name for p in (root / "legs").iterdir() if p.is_dir()]
+    stacks = _declared_stack_ids(root, pair)
     records_by: dict[str, list[dict[str, Any]]] = {}
     roster_by: dict[str, set[int]] = {}
     join_by: dict[str, dict[int, dict[str, Any]]] = {}
@@ -446,7 +554,7 @@ def compute_accepted_set(run_dir: Path | str) -> AcceptedSet:
         }
         join: dict[int, dict[str, Any]] = {}
         for entry in manifest.entries:
-            rec = _analyze_ok(recs, entry.media_id)
+            rec = _analyze_ok(recs, entry.media_id, entry=entry)
             if rec is None:
                 continue
             join[entry.media_id] = {
@@ -470,8 +578,8 @@ def compute_accepted_set(run_dir: Path | str) -> AcceptedSet:
             recs = records_by[stack_id]
             in_roster = mid in roster_by[stack_id]
             present.append(in_roster)
-            ingest_ok = _terminal_ingest_ok(recs, mid)
-            analyze = _analyze_ok(recs, mid)
+            ingest_ok = _terminal_ingest_ok(recs, mid, entry=entry)
+            analyze = _analyze_ok(recs, mid, entry=entry)
             if not ingest_ok or analyze is None:
                 ia_fail = True
                 ok_both = False
@@ -568,28 +676,32 @@ def write_accepted_set(run_dir: Path, accepted: AcceptedSet) -> Path:
 
 
 def write_attrition(run_dir: Path, accepted: AcceptedSet, manifest: GoldenManifest, records_by: dict[str, list]) -> Path:
-    dest = Path(run_dir) / "score" / "attrition.json"
+    root = Path(run_dir)
+    pair = _load_pair(root)
+    declared_stacks = _declared_stack_ids(root, pair)
+    if set(records_by) != set(declared_stacks):
+        raise BenchError(
+            "stack_pair_mismatch",
+            f"attrition records {sorted(records_by)} do not match declared pair {declared_stacks}",
+        )
+    dest = root / "score" / "attrition.json"
     dest.parent.mkdir(parents=True, exist_ok=True)
     missing = []
     accepted_ids = set(accepted.manifest_media_ids)
-    stacks = list(records_by)
+    stacks = declared_stacks
     for entry in manifest.entries:
         if entry.media_id in accepted_ids:
             continue
         phase = "analyze"
         for stack_id in stacks:
             recs = records_by[stack_id]
-            if not _terminal_ingest_ok(recs, entry.media_id):
+            if not _terminal_ingest_ok(recs, entry.media_id, entry=entry):
                 phase = "ingest"
                 break
-            if _analyze_ok(recs, entry.media_id) is None:
+            if _analyze_ok(recs, entry.media_id, entry=entry) is None:
                 phase = "analyze"
                 break
-            ingest_roster = {
-                int(r["manifest_media_id"])
-                for r in recs
-                if r.get("phase") == "ingest" and "manifest_media_id" in r
-            }
+            ingest_roster = _ingest_roster(recs, manifest)
             if entry.media_id not in ingest_roster:
                 phase = "roster"
                 break
@@ -599,9 +711,9 @@ def write_attrition(run_dir: Path, accepted: AcceptedSet, manifest: GoldenManife
         ids = []
         for entry in manifest.entries:
             if (
-                _terminal_ingest_ok(recs, entry.media_id)
-                and _analyze_ok(recs, entry.media_id) is not None
-                and entry.media_id in _ingest_roster(recs)
+                _terminal_ingest_ok(recs, entry.media_id, entry=entry)
+                and _analyze_ok(recs, entry.media_id, entry=entry) is not None
+                and entry.media_id in _ingest_roster(recs, manifest)
                 and entry.media_id not in accepted_ids
             ):
                 ids.append(entry.media_id)
@@ -746,7 +858,7 @@ def score_head_to_head(run_dir: Path | str) -> Path:
     root = Path(run_dir)
     manifest = _load_manifest_from_run(root)
     pair = _load_pair(root)
-    stacks = sorted(p.name for p in (root / "legs").iterdir() if p.is_dir())
+    stacks = _declared_stack_ids(root, pair)
     preflight_present = _require_prov01_preflights(root, stacks)
     for stack_id in stacks:
         require_cluster_success(root, stack_id)
@@ -766,9 +878,9 @@ def score_head_to_head(run_dir: Path | str) -> Path:
         n_os = 0
         for entry in manifest.entries:
             ok = (
-                _terminal_ingest_ok(recs, entry.media_id)
-                and _analyze_ok(recs, entry.media_id) is not None
-                and entry.media_id in _ingest_roster(recs)
+                _terminal_ingest_ok(recs, entry.media_id, entry=entry)
+                and _analyze_ok(recs, entry.media_id, entry=entry) is not None
+                and entry.media_id in _ingest_roster(recs, manifest)
                 and entry.media_id not in accepted.manifest_media_ids
             )
             if ok:

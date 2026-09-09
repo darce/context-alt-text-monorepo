@@ -4066,6 +4066,34 @@ verify_retry_sleep() {
   sleep "${delay}"
 }
 
+sibling_gpu_snapshots_complete() {
+  local env="$1" other timeout conf
+  env_to_unit "$env" >/dev/null
+  conf="${SCRIPT_DIR}/gpu-snapshot-deployments.conf"
+  if [[ ! -r "$conf" ]]; then
+    warn "GPU snapshot deployment registry is missing or unreadable: ${conf}"
+    return 1
+  fi
+  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  while IFS= read -r other || [[ -n "${other}" ]]; do
+    [[ -n "${other}" ]] || {
+      warn "GPU snapshot deployment registry contains an empty entry: ${conf}"
+      return 1
+    }
+    if [[ ! "${other}" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
+      warn "invalid GPU snapshot deployment '${other}' in ${conf}"
+      return 1
+    fi
+    [[ "${other}" != "${env}" ]] || continue
+    if ! run_with_deadline "${timeout}" "sibling snapshot probe ${other}" \
+      ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
+      "sudo test -f $(remote_quote "/run/acx-write/${other}/describe-load.json")"; then
+      return 1
+    fi
+  done < "${conf}"
+  return 0
+}
+
 verify_scoped_producer_snapshots() {
   local env="$1" remote_dir timeout stale now_epoch env_q remote_q stale_q now_q
   env_to_unit "$env" >/dev/null

@@ -222,6 +222,15 @@ ACX_PRIOR_RUNTIME_IDENTITY=""
 ACX_RESTART_EVIDENCE_PHASE=""
 ACX_TRAFFIC_FLIPPED=0
 ACX_LIVE_DISRUPTED=0
+# One deploy transaction owns one immutable remote topology snapshot. The
+# value is intentionally a narrow token because it is interpolated into paths
+# in remote shell commands; a caller may provide it when a higher-level retry
+# must resume the same transaction.
+ACX_DEPLOY_TRANSACTION_ID="${ACX_DEPLOY_TRANSACTION_ID:-$(date +%s)-$$}"
+if [[ ! "${ACX_DEPLOY_TRANSACTION_ID}" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+  fail "ACX_DEPLOY_TRANSACTION_ID failed charset validation; refusing unsafe remote snapshot path"
+fi
+ACX_DEPLOY_BACKUP_ROOT="/opt/acx-backend/.acx-deploy-backups"
 
 # Quote one argument for the remote bash command string.  OpenSSH concatenates
 # argv into a command string, so passing a local argv element is not itself a
@@ -1383,7 +1392,8 @@ render_unit() {
   local env="$1" compose_files
   compose_files="$(env_to_compose_files "$env")"
   sed -e "s/{{ENV}}/${env}/g" -e "s|{{COMPOSE_FILES}}|${compose_files}|g" \
-    "${SERVICE_DIR}/systemd/acx-env.service.template"
+    "${SERVICE_DIR}/systemd/acx-env.service.template" \
+    | sed -E 's|^(ExecStop=.*) stop$|\1 stop api worker|'
 }
 
 # API-only compose for the additive cutover candidate. Shares the live
@@ -1526,6 +1536,61 @@ clear_remote_image_repo_env() {
 #     the network exists idempotently before any compose up so fir-absent
 #     demo/dev deploys still succeed. Labels match the fir stack's declaring
 #     key/project so a later fir `compose up` can adopt the pre-created net.
+prepare_runtime_topology_backups() {
+  local env="$1" edge_apply_edge="${2:-0}" remote_dir unit edge_dir timeout
+  remote_dir="$(env_to_remote_dir "$env")"
+  unit="$(env_to_unit "$env")"
+  edge_dir="/opt/acx-backend"
+  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  [[ "${edge_apply_edge}" == "0" || "${edge_apply_edge}" == "1" ]] || return 1
+  log "Snapshotting compose/unit topology for ${env} before mutation"
+  run_with_deadline "${timeout}" "snapshot topology backups for ${env}" \
+    ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
+    "set -euo pipefail
+     backup_root='${ACX_DEPLOY_BACKUP_ROOT}'
+     backup_dir=\"\$backup_root/${env}/${ACX_DEPLOY_TRANSACTION_ID}\"
+     sudo install -d -m 700 -- \"\$backup_dir\" \"\$backup_dir/edge\"
+     sudo touch -- \"\$backup_dir/topology.pending\"
+     snapshot_one() {
+       live=\"\$1\"; snapshot=\"\$2\"; compatibility=\"\$3\"; absent=\"\$4\"
+       if sudo test -e \"\$live\"; then
+         sudo test -f \"\$live\" || { echo \"topology path is not a regular file: \$live\" >&2; return 1; }
+         if sudo test -e \"\$snapshot\"; then
+           sudo cmp -s -- \"\$live\" \"\$snapshot\" || { echo \"immutable topology snapshot changed: \$snapshot\" >&2; return 1; }
+         else
+           sudo cp -p -- \"\$live\" \"\$snapshot\"
+         fi
+         sudo cmp -s -- \"\$live\" \"\$snapshot\" || { echo \"topology snapshot verification failed: \$snapshot\" >&2; return 1; }
+         sudo cp -p -- \"\$live\" \"\$compatibility\"
+         sudo cmp -s -- \"\$live\" \"\$compatibility\" || { echo \"compatibility topology backup verification failed: \$compatibility\" >&2; return 1; }
+         sudo rm -f -- \"\$absent\"
+       else
+         sudo rm -f -- \"\$snapshot\" \"\$compatibility\"
+         sudo touch -- \"\$absent\"
+         sudo test -f \"\$absent\" || { echo \"prior-absence marker could not be created: \$absent\" >&2; return 1; }
+       fi
+     }
+     snapshot_one '${remote_dir}/docker-compose.env.yml' \"\$backup_dir/docker-compose.env.yml\" '${remote_dir}/docker-compose.env.yml.bak' '${remote_dir}/docker-compose.env.yml.bak.absent'
+     snapshot_one '/etc/systemd/system/${unit}.service' \"\$backup_dir/${unit}.service\" '/etc/systemd/system/${unit}.service.bak' '/etc/systemd/system/${unit}.service.bak.absent'
+     if [ '${env}' = prod ]; then
+       snapshot_one '${remote_dir}/docker-compose.admin.yml' \"\$backup_dir/docker-compose.admin.yml\" '${remote_dir}/docker-compose.admin.yml.bak' '${remote_dir}/docker-compose.admin.yml.bak.absent'
+     fi
+     if [ '${edge_apply_edge}' = 1 ]; then
+       snapshot_one '${edge_dir}/Caddyfile' \"\$backup_dir/edge/Caddyfile\" '${edge_dir}/Caddyfile.bak' '${edge_dir}/Caddyfile.bak.absent'
+       snapshot_one '${edge_dir}/docker-compose.caddy.yml' \"\$backup_dir/edge/docker-compose.caddy.yml\" '${edge_dir}/docker-compose.caddy.yml.bak' '${edge_dir}/docker-compose.caddy.yml.bak.absent'
+       if sudo test -f \"\$backup_dir/edge/Caddyfile\"; then
+         sudo cp -p -- \"\$backup_dir/edge/Caddyfile\" \"\$backup_dir/edge/Caddyfile.pre-cutover\"
+         sudo cmp -s -- \"\$backup_dir/edge/Caddyfile\" \"\$backup_dir/edge/Caddyfile.pre-cutover\" || { echo 'pre-cutover Caddyfile snapshot verification failed' >&2; exit 1; }
+       else
+         sudo touch -- \"\$backup_dir/edge/Caddyfile.pre-cutover.absent\"
+       fi
+       sudo touch -- \"\$backup_dir/edge.ready\"
+     fi
+     sudo touch -- \"\$backup_dir/topology.ready\"
+     printf '%s\\n' \"\$backup_dir\" | sudo tee \"\$backup_root/${env}/latest\" >/dev/null
+     sudo rm -f -- \"\$backup_dir/topology.pending\""
+}
+
 converge_runtime() {
   local env="$1" remote_dir unit edge_dir
   local repo_caddy_sum repo_compose_sum remote_caddy_sum remote_compose_sum
@@ -1605,11 +1670,14 @@ converge_runtime() {
   fi
 
   # ---- Env runtime mutation (only after gate decision) --------------------
-  ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cp -f '${remote_dir}/docker-compose.env.yml' '${remote_dir}/docker-compose.env.yml.bak' 2>/dev/null || true; sudo cp -f '/etc/systemd/system/${unit}.service' '/etc/systemd/system/${unit}.service.bak' 2>/dev/null || true"
+  # Every file below has a verified transaction snapshot (or an explicit
+  # prior-absence marker) before the first live topology write.
+  if ! prepare_runtime_topology_backups "$env" "$edge_apply_edge"; then
+    fail "could not create verified topology backups for ${env}; refusing to mutate runtime"
+  fi
   _ship_file "${SERVICE_DIR}/docker-compose.env.yml" "${remote_dir}/docker-compose.env.yml"
   if [[ "$env" == "prod" ]]; then
     # Back up the admin overlay too so a bad overlay is restorable from *.bak.
-    ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cp -f '${remote_dir}/docker-compose.admin.yml' '${remote_dir}/docker-compose.admin.yml.bak' 2>/dev/null || true"
     _ship_file "${SERVICE_DIR}/docker-compose.admin.yml" "${remote_dir}/docker-compose.admin.yml"
   fi
   # ACX_IMAGE_REPO is shipped once in promote_gate (S2-A-06) — not re-written here.
@@ -1626,7 +1694,6 @@ converge_runtime() {
     return 0
   fi
 
-  ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cp -f '${edge_dir}/Caddyfile' '${edge_dir}/Caddyfile.bak' 2>/dev/null || true; cp -f '${edge_dir}/docker-compose.caddy.yml' '${edge_dir}/docker-compose.caddy.yml.bak' 2>/dev/null || true"
   if (( edge_caddy_drift )); then
     _ship_file "${SERVICE_DIR}/Caddyfile" "${edge_dir}/Caddyfile"
   fi
@@ -1866,8 +1933,9 @@ read_api_runtime_evidence() {
 #
 # Automatic deploys capture a RUNNING prior container whose image was already
 # verified by preserve_rollback_tag. Manual rollback also permits a STOPPED
-# observation because systemd's ExecStop is compose stop and an operator may be
-# recovering that stopped prior generation after a failed replacement create.
+# observation because the rendered canonical unit's ExecStop is scoped to
+# api+worker; an operator may be recovering that stopped prior generation after
+# a failed replacement create.
 capture_prior_runtime_identity() {
   local env="$1" expected_image_ids="${2:-}" allow_stopped="${3:-0}"
   local evidence runtime_kind runtime_cid runtime_image_id runtime_state
@@ -2396,21 +2464,68 @@ restore_topology_backups() {
   remote_dir="$(env_to_remote_dir "$env")"
   unit="$(env_to_unit "$env")"
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
-  log "Restoring compose/unit topology for ${env} from .bak files"
+  log "Restoring compose/unit topology for ${env} from the verified transaction snapshot"
   run_with_deadline "${timeout}" "restore topology backups for ${env}" \
     ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
     "set -euo pipefail
+     backup_root='${ACX_DEPLOY_BACKUP_ROOT}'
+     transaction_dir=\"\$backup_root/${env}/${ACX_DEPLOY_TRANSACTION_ID}\"
+     latest_file=\"\$backup_root/${env}/latest\"
+     topology_dir=\"\$transaction_dir\"
+     legacy=0
+     if sudo test -f \"\$topology_dir/topology.pending\" && ! sudo test -f \"\$topology_dir/topology.ready\"; then
+       echo 'topology snapshot is incomplete; refusing restore without a complete transaction snapshot' >&2
+       exit 1
+     fi
+     if ! sudo test -f \"\$topology_dir/topology.ready\" && sudo test -f \"\$topology_dir/edge-cutover.ready\"; then
+       topology_dir=
+     elif ! sudo test -f \"\$topology_dir/topology.ready\" && sudo test -f \"\$latest_file\"; then
+       latest_dir=\$(sudo cat \"\$latest_file\")
+       case \"\$latest_dir\" in
+         \"\$backup_root/${env}/\"*) topology_dir=\"\$latest_dir\" ;;
+         *) echo 'invalid topology snapshot pointer' >&2; exit 1 ;;
+       esac
+     elif ! sudo test -f \"\$topology_dir/topology.ready\"; then
+       topology_dir=
+       if sudo test -f '${remote_dir}/docker-compose.env.yml.bak' \
+         || sudo test -f '${remote_dir}/docker-compose.env.yml.bak.absent' \
+         || sudo test -f '/etc/systemd/system/${unit}.service.bak' \
+         || sudo test -f '/etc/systemd/system/${unit}.service.bak.absent'; then
+         legacy=1
+       fi
+     fi
      restore_one() {
-       live=\"\$1\"; bak=\"\$2\"; sudo_cp=\"\$3\"
-       if [ -f \"\$bak\" ]; then
-         if [ \"\$sudo_cp\" = 1 ]; then sudo cp -f \"\$bak\" \"\$live\"; else cp -f \"\$bak\" \"\$live\"; fi
+       live=\"\$1\"; snapshot=\"\$2\"; absent=\"\$3\"
+       if sudo test -f \"\$snapshot\"; then
+         sudo cp -p -- \"\$snapshot\" \"\$live\"
+         sudo cmp -s -- \"\$snapshot\" \"\$live\" || { echo \"restored topology verification failed: \$live\" >&2; return 1; }
          echo \"restored:\$live\"
+       elif sudo test -f \"\$absent\"; then
+         sudo rm -f -- \"\$live\"
+         sudo test ! -e \"\$live\" || { echo \"prior-absence topology restore failed: \$live\" >&2; return 1; }
+         echo \"removed-prior-file:\$live\"
+       else
+         echo \"missing verified topology snapshot or prior-absence marker: \$live\" >&2
+         return 1
        fi
      }
-     restore_one '${remote_dir}/docker-compose.env.yml' '${remote_dir}/docker-compose.env.yml.bak' 0
-     restore_one '${remote_dir}/docker-compose.admin.yml' '${remote_dir}/docker-compose.admin.yml.bak' 0
-     restore_one '/etc/systemd/system/${unit}.service' '/etc/systemd/system/${unit}.service.bak' 1
-     sudo systemctl daemon-reload 2>/dev/null || true"
+     if [ -n \"\$topology_dir\" ]; then
+       restore_one '${remote_dir}/docker-compose.env.yml' \"\$topology_dir/docker-compose.env.yml\" \"\$topology_dir/docker-compose.env.yml.absent\"
+       restore_one '/etc/systemd/system/${unit}.service' \"\$topology_dir/${unit}.service\" \"\$topology_dir/${unit}.service.absent\"
+       if [ '${env}' = prod ]; then
+         restore_one '${remote_dir}/docker-compose.admin.yml' \"\$topology_dir/docker-compose.admin.yml\" \"\$topology_dir/docker-compose.admin.yml.absent\"
+       fi
+     elif [ \"\$legacy\" = 1 ]; then
+       restore_one '${remote_dir}/docker-compose.env.yml' '${remote_dir}/docker-compose.env.yml.bak' '${remote_dir}/docker-compose.env.yml.bak.absent'
+       restore_one '/etc/systemd/system/${unit}.service' '/etc/systemd/system/${unit}.service.bak' '/etc/systemd/system/${unit}.service.bak.absent'
+       if [ '${env}' = prod ]; then
+         restore_one '${remote_dir}/docker-compose.admin.yml' '${remote_dir}/docker-compose.admin.yml.bak' '${remote_dir}/docker-compose.admin.yml.bak.absent'
+       fi
+     else
+       echo 'no topology mutation snapshot recorded; leaving compose and unit files unchanged'
+       exit 0
+     fi
+     sudo systemctl daemon-reload"
 }
 
 restore_edge_backups() {
@@ -2418,53 +2533,154 @@ restore_edge_backups() {
   env_to_unit "$env" >/dev/null
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
   [[ "${ACX_TRAFFIC_FLIPPED:-0}" == "1" ]] && prefer_flip=1
-  log "Restoring Caddy edge topology for ${env} from .bak files"
-  if [[ "${prefer_flip}" == "1" ]]; then
-    if run_with_deadline "${timeout}" "restore pre-flip Caddyfile for ${env}" \
-      ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
-      "set -euo pipefail
-       edge_dir='${edge_dir}'
-       if [ ! -f \"\${edge_dir}/Caddyfile.flip.bak\" ]; then
-         echo 'missing Caddyfile.flip.bak while traffic is on next'
-         exit 1
-       fi
-       cp -f \"\${edge_dir}/Caddyfile.flip.bak\" \"\${edge_dir}/Caddyfile\"
-       echo 'restored:Caddyfile.flip.bak'
-       cd \"\${edge_dir}\"
-       docker compose -f docker-compose.caddy.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile \
-         || docker compose -f docker-compose.caddy.yml up -d"; then
-      ACX_TRAFFIC_FLIPPED=0
-    elif flip_edge_alias "$env" canonical; then
-      ACX_TRAFFIC_FLIPPED=0
-    else
-      warn "edge restore failed while traffic remains on ${env}-next; leaving candidate serving"
-      return 1
-    fi
-  fi
+  log "Restoring Caddy edge topology for ${env} from the transaction snapshot"
   run_with_deadline "${timeout}" "restore edge backups for ${env}" \
-    ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
-    "set -euo pipefail
-     edge_dir='${edge_dir}'
-     restored=0
-     if [ -f \"\${edge_dir}/Caddyfile.bak\" ]; then
-       cp -f \"\${edge_dir}/Caddyfile.bak\" \"\${edge_dir}/Caddyfile\"
-       restored=1
-       echo 'restored:Caddyfile.bak'
-     elif [ -f \"\${edge_dir}/Caddyfile.flip.bak\" ]; then
-       cp -f \"\${edge_dir}/Caddyfile.flip.bak\" \"\${edge_dir}/Caddyfile\"
-       restored=1
-       echo 'restored:Caddyfile.flip.bak'
-     fi
-     if [ -f \"\${edge_dir}/docker-compose.caddy.yml.bak\" ]; then
-       cp -f \"\${edge_dir}/docker-compose.caddy.yml.bak\" \"\${edge_dir}/docker-compose.caddy.yml\"
-       restored=1
-       echo 'restored:docker-compose.caddy.yml.bak'
-     fi
-     if [ \"\$restored\" = 1 ]; then
-       cd \"\${edge_dir}\"
-       docker compose -f docker-compose.caddy.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile \
-         || docker compose -f docker-compose.caddy.yml up -d
-     fi"
+    ssh -l "${OCI_USER}" -- "${OCI_HOST}" "bash -s" <<EDGE_RESTORE
+set -euo pipefail
+env='${env}'
+edge_dir='${edge_dir}'
+backup_root='${ACX_DEPLOY_BACKUP_ROOT}'
+transaction_dir="\$backup_root/\$env/${ACX_DEPLOY_TRANSACTION_ID}"
+latest_file="\$backup_root/\$env/latest"
+pointer_file="\$backup_root/\$env/edge-cutover.current"
+topology_dir="\$transaction_dir"
+edge_snapshot=""
+edge_transaction=0
+
+valid_transaction_dir() {
+  case "\$1" in
+    "\$backup_root/\$env/"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+if ! sudo test -f "\$topology_dir/topology.ready" && sudo test -f "\$topology_dir/edge-cutover.ready"; then
+  topology_dir=""
+  edge_transaction=1
+elif ! sudo test -f "\$topology_dir/topology.ready" && sudo test -f "\$latest_file"; then
+  latest_dir="\$(sudo cat "\$latest_file")"
+  valid_transaction_dir "\$latest_dir" || { echo 'invalid topology snapshot pointer' >&2; exit 1; }
+  topology_dir="\$latest_dir"
+fi
+
+if sudo test -f "\$topology_dir/edge.ready"; then
+  edge_transaction=1
+fi
+if sudo test -f "\$transaction_dir/edge/Caddyfile.pre-cutover"; then
+  edge_snapshot="\$transaction_dir/edge/Caddyfile.pre-cutover"
+elif sudo test -f "\$pointer_file"; then
+  pointed_snapshot="\$(sudo cat "\$pointer_file")"
+  case "\$pointed_snapshot" in
+    "\$backup_root/\$env/"*/edge/Caddyfile.pre-cutover) ;;
+    *) echo 'invalid cutover Caddyfile snapshot pointer' >&2; exit 1 ;;
+  esac
+  sudo test -f "\$pointed_snapshot" || { echo 'cutover Caddyfile snapshot pointer is missing' >&2; exit 1; }
+  edge_snapshot="\$pointed_snapshot"
+elif sudo test -f "\$topology_dir/edge/Caddyfile.pre-cutover"; then
+  edge_snapshot="\$topology_dir/edge/Caddyfile.pre-cutover"
+fi
+
+route_count() {
+  route="\$1:8000"; file="\${2:-\$edge_dir/Caddyfile}"
+  sudo awk -v expected="\$route" '\$1 == "reverse_proxy" && NF == 2 && \$2 == expected { count++ } END { print count + 0 }' "\$file"
+}
+require_canonical_route() {
+  canonical_count="\$(route_count "\$env-api")"
+  next_count="\$(route_count "\$env-api-next")"
+  [ "\$canonical_count" -eq 1 ] && [ "\$next_count" -eq 0 ] || {
+    echo 'restored Caddyfile does not contain exactly one canonical route' >&2
+    return 1
+  }
+}
+
+caddyfile_restored=0
+if [ '${prefer_flip}' = 1 ]; then
+  [ -n "\$edge_snapshot" ] && sudo test -f "\$edge_snapshot" || {
+    echo 'missing immutable pre-cutover Caddyfile snapshot while traffic is on next' >&2
+    exit 1
+  }
+  sudo cp -p -- "\$edge_snapshot" "\$edge_dir/Caddyfile"
+  sudo cmp -s -- "\$edge_snapshot" "\$edge_dir/Caddyfile" || { echo 'restored Caddyfile verification failed' >&2; exit 1; }
+  require_canonical_route
+  caddyfile_restored=1
+elif [ -n "\$edge_snapshot" ] && sudo test -f "\$edge_snapshot"; then
+  sudo cp -p -- "\$edge_snapshot" "\$edge_dir/Caddyfile"
+  sudo cmp -s -- "\$edge_snapshot" "\$edge_dir/Caddyfile" || { echo 'restored Caddyfile verification failed' >&2; exit 1; }
+  require_canonical_route
+  caddyfile_restored=1
+elif [ -n "\$edge_snapshot" ] && sudo test -f "\$edge_snapshot.absent"; then
+  sudo rm -f -- "\$edge_dir/Caddyfile"
+  sudo test ! -e "\$edge_dir/Caddyfile" || { echo 'prior-absence Caddyfile restore failed' >&2; exit 1; }
+  caddyfile_restored=1
+elif [ "\$edge_transaction" = 0 ] && [ -z "\$topology_dir" ] && sudo test -f "\$edge_dir/Caddyfile.bak"; then
+  sudo cp -p -- "\$edge_dir/Caddyfile.bak" "\$edge_dir/Caddyfile"
+  sudo cmp -s -- "\$edge_dir/Caddyfile.bak" "\$edge_dir/Caddyfile" || { echo 'legacy Caddyfile backup verification failed' >&2; exit 1; }
+  require_canonical_route
+  caddyfile_restored=1
+elif [ "\$edge_transaction" = 0 ] && [ -z "\$topology_dir" ] && sudo test -f "\$edge_dir/Caddyfile.bak.absent"; then
+  sudo rm -f -- "\$edge_dir/Caddyfile"
+  sudo test ! -e "\$edge_dir/Caddyfile" || { echo 'legacy prior-absence Caddyfile restore failed' >&2; exit 1; }
+  caddyfile_restored=1
+elif [ '${prefer_flip}' = 1 ]; then
+  echo 'no verified Caddyfile snapshot is available while traffic is on next' >&2
+  exit 1
+fi
+
+compose_restored=0
+if sudo test -f "\$topology_dir/edge.ready"; then
+  if sudo test -f "\$topology_dir/edge/docker-compose.caddy.yml"; then
+    sudo cp -p -- "\$topology_dir/edge/docker-compose.caddy.yml" "\$edge_dir/docker-compose.caddy.yml"
+    sudo cmp -s -- "\$topology_dir/edge/docker-compose.caddy.yml" "\$edge_dir/docker-compose.caddy.yml" || { echo 'restored edge compose verification failed' >&2; exit 1; }
+    compose_restored=1
+  elif sudo test -f "\$topology_dir/edge/docker-compose.caddy.yml.absent"; then
+    sudo rm -f -- "\$edge_dir/docker-compose.caddy.yml"
+    sudo test ! -e "\$edge_dir/docker-compose.caddy.yml" || { echo 'prior-absence edge compose restore failed' >&2; exit 1; }
+    compose_restored=1
+  else
+    echo 'edge topology marker exists without a compose snapshot' >&2
+    exit 1
+  fi
+elif [ "\$edge_transaction" = 0 ] && [ -z "\$topology_dir" ] && sudo test -f "\$edge_dir/docker-compose.caddy.yml.bak"; then
+  sudo cp -p -- "\$edge_dir/docker-compose.caddy.yml.bak" "\$edge_dir/docker-compose.caddy.yml"
+  sudo cmp -s -- "\$edge_dir/docker-compose.caddy.yml.bak" "\$edge_dir/docker-compose.caddy.yml" || { echo 'legacy edge compose backup verification failed' >&2; exit 1; }
+  compose_restored=1
+elif [ "\$edge_transaction" = 0 ] && [ -z "\$topology_dir" ] && sudo test -f "\$edge_dir/docker-compose.caddy.yml.bak.absent"; then
+  sudo rm -f -- "\$edge_dir/docker-compose.caddy.yml"
+  sudo test ! -e "\$edge_dir/docker-compose.caddy.yml" || { echo 'legacy prior-absence edge compose restore failed' >&2; exit 1; }
+  compose_restored=1
+fi
+
+verify_edge_networks() {
+  cid="\$(cd "\$edge_dir" && docker compose -f docker-compose.caddy.yml ps -q caddy 2>/dev/null | head -1)"
+  [ -n "\$cid" ] || { echo 'caddy container is absent after edge topology restore' >&2; return 1; }
+  networks="\$(docker inspect -f '{{json .NetworkSettings.Networks}}' "\$cid")"
+  for network in acx-prod-net acx-staging-net acx-dev-net acx-dev-fir-net acx-demo-net; do
+    printf '%s' "\$networks" | grep -q "\\\"\$network\\\"" || {
+      echo "caddy container is missing restored network \$network" >&2
+      return 1
+    }
+  done
+}
+
+if [ "\$compose_restored" = 1 ]; then
+  cd "\$edge_dir"
+  # Compose restoration changes networks/volumes/ports; reload cannot apply
+  # those fields, so recreate caddy before any route is considered restored.
+  docker compose -f docker-compose.caddy.yml up -d --force-recreate caddy
+  verify_edge_networks
+elif [ "\$caddyfile_restored" = 1 ]; then
+  cd "\$edge_dir"
+  if ! docker compose -f docker-compose.caddy.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile; then
+    docker compose -f docker-compose.caddy.yml up -d --force-recreate caddy
+  fi
+  # A reload normally preserves networks; verify that invariant anyway so a
+  # pre-existing membership drift cannot be reported as a successful rollback.
+  verify_edge_networks
+fi
+EDGE_RESTORE
+  if [[ "${prefer_flip}" == "1" ]]; then
+    ACX_TRAFFIC_FLIPPED=0
+  fi
 }
 
 abort_cutover_candidate() {
@@ -2513,10 +2729,42 @@ flip_edge_alias() {
     ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
     "set -euo pipefail
      cd /opt/acx-backend
-     cp -f Caddyfile Caddyfile.flip.bak
-     sed -i -E 's/reverse_proxy ${from}:8000/reverse_proxy ${to}:8000/' Caddyfile
-     docker compose -f docker-compose.caddy.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile \
-       || docker compose -f docker-compose.caddy.yml up -d"
+     backup_root='${ACX_DEPLOY_BACKUP_ROOT}'
+     transaction_dir=\"\$backup_root/${env}/${ACX_DEPLOY_TRANSACTION_ID}\"
+     snapshot=\"\$transaction_dir/edge/Caddyfile.pre-cutover\"
+     pointer=\"\$backup_root/${env}/edge-cutover.current\"
+     sudo install -d -m 700 -- \"\$transaction_dir/edge\"
+     route_count() {
+       route=\"\$1:8000\"; file=\"\${2:-Caddyfile}\"
+       sudo awk -v expected=\"\$route\" '\$1 == "reverse_proxy" && NF == 2 && \$2 == expected { count++ } END { print count + 0 }' \"\$file\"
+     }
+     if sudo test -e \"\$snapshot\"; then
+       sudo test -f \"\$snapshot\" || { echo 'pre-cutover Caddyfile snapshot is not a regular file' >&2; exit 1; }
+       snapshot_canonical=\$(route_count '${alias}' \"\$snapshot\")
+       snapshot_next=\$(route_count '${next_alias}' \"\$snapshot\")
+       [ \"\$snapshot_canonical\" -eq 1 ] && [ \"\$snapshot_next\" -eq 0 ] || { echo 'pre-cutover Caddyfile snapshot is not canonical' >&2; exit 1; }
+     elif sudo test -f "\$snapshot.absent"; then
+       echo 'pre-cutover Caddyfile was absent; refusing to overwrite its immutable absence marker' >&2
+       exit 1
+     else
+       sudo test -f Caddyfile || { echo 'Caddyfile is missing; refusing traffic flip' >&2; exit 1; }
+       sudo cp -p -- Caddyfile \"\$snapshot\"
+       sudo cmp -s -- Caddyfile \"\$snapshot\" || { echo 'pre-cutover Caddyfile snapshot verification failed' >&2; exit 1; }
+     fi
+     printf '%s\\n' \"\$snapshot\" | sudo tee \"\$pointer\" >/dev/null
+     sudo touch -- \"\$transaction_dir/edge-cutover.ready\"
+     source_count=\$(route_count '${from}')
+     [ \"\$source_count\" -eq 1 ] || { echo 'expected exactly one formatted Caddy reverse_proxy source route' >&2; exit 1; }
+     tmp=\$(mktemp Caddyfile.flip.XXXXXX)
+     trap 'rm -f -- \"\$tmp\"' EXIT
+     sudo sed -E 's|(^[[:space:]]*reverse_proxy[[:space:]]+)${from}:8000([[:space:]]*)$|\\1${to}:8000\\2|' Caddyfile >\"\$tmp\"
+     sudo mv -f -- \"\$tmp\" Caddyfile
+     desired_count=\$(route_count '${to}')
+     remaining_source_count=\$(route_count '${from}')
+     [ \"\$desired_count\" -eq 1 ] && [ \"\$remaining_source_count\" -eq 0 ] || { echo 'Caddy reverse_proxy replacement did not converge exactly once' >&2; exit 1; }
+     if ! docker compose -f docker-compose.caddy.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile; then
+       docker compose -f docker-compose.caddy.yml up -d
+     fi"
 }
 
 probe_cutover_api_health() {
@@ -2633,6 +2881,13 @@ do_restart() {
   if ! run_with_deadline "${timeout}" "systemctl restart ${unit}" \
     ssh -l "${OCI_USER}" -- "${OCI_HOST}" "sudo systemctl restart ${unit}"; then
     warn "systemctl restart ${unit} failed; traffic remains on ${next_unit}"
+    return 1
+  fi
+  # The canonical unit's ExecStop is deliberately scoped to api+worker so the
+  # shared postgres service remains available to the candidate. Re-gate the
+  # candidate after the canonical stack changes before moving traffic back.
+  if ! probe_cutover_api_health "$env"; then
+    warn "cutover candidate lost health after canonical api/worker restart; traffic remains on ${next_unit}"
     return 1
   fi
   if ! verify_running_image_digest "$env" "${expected_digest}"; then

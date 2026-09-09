@@ -9,9 +9,13 @@
 | `guided-justin-trudeau-2025.jpg`   | Justin Trudeau, European Commission, February 2025                   | Wikimedia Commons [`File:Justin Trudeau at the European Commission - 2025 (1) (3x4 cropped).jpg`](<https://commons.wikimedia.org/wiki/File:Justin_Trudeau_at_the_European_Commission_-_2025_(1)_(3x4_cropped).jpg>) | European Commission     | EU reuse licence (attribution required, Commission Decision 2011/833/EU) | Cropped on Commons, resized here to 700, 900 and 1400 px wide; re-encoded JPEG q82 |
 | `guided-justin-trudeau-2023.jpg` | Justin Trudeau, REM opening, Quebec, July 2023 | Wikimedia Commons [`File:Justin Trudeau (2023).jpg`](<https://commons.wikimedia.org/wiki/File:Justin_Trudeau_(2023).jpg>) | Lea-Kim Chateauneuf | CC BY-SA 4.0 | Resized by Wikimedia Commons to 960 px wide; otherwise unchanged |
 
+| `guided-justin-trudeau-2024.jpg` | Justin Trudeau, Ottawa meeting, March 2024 | Wikimedia Commons [`File:Justin Trudeau March 5 2024 (cropped).jpg`](<https://commons.wikimedia.org/wiki/File:Justin_Trudeau_March_5_2024_(cropped).jpg>) | Jonathan Miranda / Presidencia de la República del Ecuador | public domain | Cropped on Commons, resized by Commons to 960 px wide |
+
 The 2023 Trudeau portrait is licensed under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). It replaces the duplicate crop as an illustrative roster reference; saved recognition scores are unchanged.
 
-Except for that replacement, images were resized to 700, 900 and 1400 px wide and re-encoded as JPEG q82. The 2019 and 2025 (1) files were cropped on Commons, resized here. The original gallery photos are the clear representative photos that
-built each person's entity in the saved recognition run (Katy Perry: 3 of 5 shown; Justin Trudeau: 2 of 2). The Coachella press photos used as recognition evidence
+The 2024 portrait is an additional illustrative reference; the demo roster now shows three Trudeau references.
+
+Except for the 2023 and 2024 references, images were resized to 700, 900 and 1400 px wide and re-encoded as JPEG q82. The 2019 and 2025 (1) files were cropped on Commons, resized here. The original gallery photos are the clear representative photos that
+built each person's entity in the saved recognition run (Katy Perry: 3 of 5 shown; Justin Trudeau: originally 2 of 2). The Coachella press photos used as recognition evidence
 (hola.com, The Guardian) are not redistributable and are not bundled; their recognition numbers are cited in the
 scenario provenance only.

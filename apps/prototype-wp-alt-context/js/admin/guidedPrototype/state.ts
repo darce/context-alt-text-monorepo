@@ -1,3 +1,4 @@
+import guidedJustinTrudeauPhoto2024 from '../assets/guided/guided-justin-trudeau-2024.jpg';
 import guidedJustinTrudeauPhoto from '../assets/guided/guided-justin-trudeau-2025.jpg';
 import guidedJustinTrudeauPhoto2023 from '../assets/guided/guided-justin-trudeau-2023.jpg';
 import guidedKatyPerryPhoto from '../assets/guided/guided-katy-perry-2026.jpg';
@@ -217,7 +218,7 @@ const GUIDED_SCENARIO_SEED: GuidedScenario = {
       key: 'justin-trudeau',
       name: 'Justin Trudeau',
       clusterId: 'fd0d2b5d-108a-42b7-af25-f028e40d5778',
-      savedPhotoCount: 2,
+      savedPhotoCount: 3,
       galleryPhotos: [
         {
           src: guidedJustinTrudeauPhoto,
@@ -228,6 +229,11 @@ const GUIDED_SCENARIO_SEED: GuidedScenario = {
           src: guidedJustinTrudeauPhoto2023,
           altText: 'Justin Trudeau in a grey suit, blue shirt and patterned blue tie, looking slightly to the side.',
           credit: 'Lea-Kim Chateauneuf, CC BY-SA 4.0, resized',
+        },
+        {
+          src: guidedJustinTrudeauPhoto2024,
+          altText: 'Justin Trudeau speaking in a blue suit, white shirt and navy polka-dot tie.',
+          credit: 'Jonathan Miranda / Presidencia de la República del Ecuador, public domain',
         },
       ],
     },

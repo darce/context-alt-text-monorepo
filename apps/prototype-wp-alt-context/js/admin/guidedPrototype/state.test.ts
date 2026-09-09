@@ -100,7 +100,7 @@ describe('guided scenario fixture', () => {
     expect(getGuidedPerson(scenario, JUSTIN)).toMatchObject({
       name: 'Justin Trudeau',
       clusterId: 'fd0d2b5d-108a-42b7-af25-f028e40d5778',
-      savedPhotoCount: 2,
+      savedPhotoCount: 3,
     });
     expect(getGuidedPerson(scenario, KATY).galleryPhotos.map((photo) => photo.src)).toEqual([
       expect.stringContaining('guided-katy-perry-2026'),
@@ -108,16 +108,18 @@ describe('guided scenario fixture', () => {
       expect.stringContaining('guided-katy-perry-2016'),
     ]);
     const justinPhotos = getGuidedPerson(scenario, JUSTIN).galleryPhotos;
-    expect(justinPhotos).toHaveLength(2);
+    expect(justinPhotos).toHaveLength(3);
     expect(justinPhotos.map((photo) => photo.src)).toEqual([
       expect.stringContaining('guided-justin-trudeau-2025'),
       expect.stringContaining('guided-justin-trudeau-2023'),
+      expect.stringContaining('guided-justin-trudeau-2024'),
     ]);
     expect(justinPhotos.every((photo) => photo.src.trim() !== '')).toBe(true);
     expect(new Set(justinPhotos.map((photo) => photo.src)).size).toBe(justinPhotos.length);
     expect(justinPhotos.map((photo) => photo.credit)).toEqual([
       '© European Union, 2025, EU reuse licence, resized',
       'Lea-Kim Chateauneuf, CC BY-SA 4.0, resized',
+      'Jonathan Miranda / Presidencia de la República del Ecuador, public domain',
     ]);
     for (const person of scenario.people) {
       expect(person.galleryPhotos.length).toBeLessThanOrEqual(person.savedPhotoCount);
@@ -199,7 +201,7 @@ describe('guided scenario fixture', () => {
   it('counts only bundled reference photos per person', () => {
     expect(guidedNameCoverage(createGuidedScenario())).toEqual([
       { key: KATY, shown: 3, total: 5 },
-      { key: JUSTIN, shown: 2, total: 2 },
+      { key: JUSTIN, shown: 3, total: 3 },
     ]);
   });
 

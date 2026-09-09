@@ -80,6 +80,7 @@ public/assets/dist/
 storybook-static/
 vendor/
 composer.lock
+!apps/prototype-wp-alt-context/composer.lock
 .phpunit.result.cache
 
 # Vite build output
@@ -135,7 +136,8 @@ DASHBOARD.md
 /scripts/workbay_lifecycle
 /.github/hooks
 /skills
-/Makefile.d
+/Makefile.d/*
+!/Makefile.d/lifecycle.mk
 /.github/prompts/
 /.claude-plugin/
 /.agents/

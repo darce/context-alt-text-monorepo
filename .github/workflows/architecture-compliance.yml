@@ -10,6 +10,7 @@ on:
       - "apps/prototype-wp-alt-context/package.json"
       - "apps/prototype-wp-alt-context/package-lock.json"
       - "apps/prototype-wp-alt-context/eslint.config.mjs"
+      - ".github/workflows/architecture-compliance.yml"
   push:
     branches:
       - main
@@ -23,6 +24,7 @@ on:
       - "apps/prototype-wp-alt-context/package.json"
       - "apps/prototype-wp-alt-context/package-lock.json"
       - "apps/prototype-wp-alt-context/eslint.config.mjs"
+      - ".github/workflows/architecture-compliance.yml"
 
 jobs:
   architecture-compliance:
@@ -31,6 +33,7 @@ jobs:
 
     defaults:
       run:
+        shell: bash --noprofile --norc -eo pipefail {0}
         working-directory: apps/prototype-wp-alt-context
 
     steps:
@@ -84,6 +87,7 @@ jobs:
 
     defaults:
       run:
+        shell: bash --noprofile --norc -eo pipefail {0}
         working-directory: apps/prototype-wp-alt-context
 
     steps:

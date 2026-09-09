@@ -1,5 +1,7 @@
 """VLM-2A Slice 2: caption deterministic metrics (assessment §6c tiers 1-2, 5-6)."""
 
+import json
+
 import pytest
 
 from scripts.eval_harness.caption_metrics import (
@@ -11,6 +13,7 @@ from scripts.eval_harness.caption_metrics import (
     score_caption,
     wrong_name_image_rate,
 )
+from scripts.eval_harness.report import ScoreVerdict, build_reports
 
 
 def _entry(**overrides):
@@ -103,6 +106,61 @@ def test_caption_score_envelope_is_pinned_for_canonical_fixture():
         sentence_count=2,
         name_front_loaded=True,
     )
+
+
+def test_bakeoff_caption_score_reaches_report_verdict():
+    """The bake-off scoring path carries caption metrics into its verdict."""
+    entry = {
+        "path": "img.jpg",
+        "media_id": 1,
+        "face_count": 1,
+        "present_identities": ["Alice Example"],
+        "must_right": ["Alice Example"],
+        "easy_wrong": [],
+        "policy": {"recognition_enabled": True},
+        "face_boxes": [],
+    }
+    record = {
+        "schema": "acx-eval/v1",
+        "kind": "run_record",
+        "provenance": {
+            "manifest_sha256": "m" * 64,
+            "base_url": "https://candidate.example",
+            "head_sha": "0" * 40,
+            "started_at": "2026-07-06T00:00:00Z",
+        },
+        "items": [
+            {
+                "media_id": 1,
+                "path": "img.jpg",
+                "describe": {
+                    "alt_text_draft": CAPTION,
+                    "visual_facts": {"caption": "a person by a lake", "objects": ["lake"]},
+                    "adapter": "bakeoff",
+                    "model_id": "fixture",
+                    "model_version": "1",
+                    "cached": False,
+                },
+                "identities": [
+                    {
+                        "name": "Alice Example",
+                        "bbox": {"x": 0.0, "y": 0.0, "width": 1.0, "height": 1.0},
+                        "unpositioned": False,
+                    }
+                ],
+                "face_count": 1,
+                "error": None,
+            }
+        ],
+    }
+
+    report_doc, _ = build_reports(record, [entry])
+    report = json.loads(report_doc)
+    assert report["caption"]["insertion_rate"] == 1.0
+    assert report["caption"]["mean_gated_score"] == 1.0
+    assert report["per_image"][0]["inserted_identities"] == ["Alice Example"]
+    assert report["verdict"]["verdict"] == ScoreVerdict.FAIL.value
+    assert any("sample-size" in reason for reason in report["verdict"]["reasons"])
 
 
 def test_tag_coverage():

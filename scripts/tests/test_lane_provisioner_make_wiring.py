@@ -48,6 +48,7 @@ def _assert_provisioner_after_bootstrap(recipe: str, *, worktree_var: str) -> No
     command = _command_containing(recipe, PROVISIONER)
     assert "python3" in command, command
     assert f'--worktree "$({worktree_var})"' in command, command
+    assert '--primary "$(ORCHESTRATOR_ROOT)"' in command, command
     assert "||" not in command, f"provisioner exit must fail the recipe: {command}"
 
 
@@ -68,3 +69,8 @@ def test_gates_harness_workflow_runs_provisioner_wiring_test() -> None:
     assert "scripts/tests/test_lane_provisioner_make_wiring.py" in workflow
     assert "mk/lane-lifecycle.mk" in workflow
     assert "mk/lane-worker.mk" in workflow
+
+
+def test_gates_harness_workflow_runs_reap_lane_bash_suite() -> None:
+    workflow = (REPO_ROOT / ".github/workflows/gates-harness.yml").read_text(encoding="utf-8")
+    assert "bash scripts/vm/tests/test_reap_lane.sh" in workflow

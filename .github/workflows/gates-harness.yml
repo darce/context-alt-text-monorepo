@@ -62,3 +62,6 @@ jobs:
           scripts/tests/test_admin_bundle_freshness.py
           scripts/tests/test_bounded_remote_build_process_tree.py
           -q -p no:cacheprovider
+
+      - name: Run reap-lane bash suite
+        run: bash scripts/vm/tests/test_reap_lane.sh

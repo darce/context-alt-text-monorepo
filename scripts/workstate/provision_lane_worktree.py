@@ -44,9 +44,14 @@ def primary_checkout(start: Path) -> Path:
         text=True,
         check=False,
     )
-    if proc.returncode != 0:
-        return start.resolve()
-    return Path(proc.stdout.strip()).parent
+    common_dir = proc.stdout.strip()
+    if proc.returncode != 0 or not common_dir:
+        detail = (proc.stderr or proc.stdout or "no output").strip()
+        raise RuntimeError(
+            f"git rev-parse --git-common-dir failed for {start} "
+            f"(exit {proc.returncode}): {detail}; refusing to guess the primary checkout"
+        )
+    return Path(common_dir).parent
 
 
 def _remove_existing_path(path: Path) -> None:
@@ -155,21 +160,30 @@ def _rsync_overlay(src: Path, dest: Path, *, entries: list[str] | None = None) -
         dest.symlink_to(_relocated_symlink_target(src, dest))
         return
 
-    if dest.is_symlink():
+    if dest.is_symlink() or dest.is_file():
         _remove_existing_path(dest)
 
     if entries is not None:
         if not entries:
             return
-        if shutil.which("rsync"):
-            payload = b"".join(os.fsencode(entry) + b"\0" for entry in entries)
-            subprocess.run(
-                ["rsync", "-a", "--from0", "--files-from=-", f"{src}/", str(dest)],
-                input=payload,
-                check=True,
-            )
-        else:
-            _copy_overlay_entries(src, dest, entries)
+        # rsync preserves link text and, for a one-file files-from list, may
+        # replace dest with that file. Copy overlay symlinks ourselves so
+        # relative targets keep source meaning on rsync and non-rsync hosts.
+        symlink_entries = [rel for rel in entries if (src / rel).is_symlink()]
+        other_entries = [rel for rel in entries if rel not in set(symlink_entries)]
+        if other_entries:
+            dest.mkdir(parents=True, exist_ok=True)
+            if shutil.which("rsync"):
+                payload = b"".join(os.fsencode(entry) + b"\0" for entry in other_entries)
+                subprocess.run(
+                    ["rsync", "-a", "--from0", "--files-from=-", f"{src}/", str(dest)],
+                    input=payload,
+                    check=True,
+                )
+            else:
+                _copy_overlay_entries(src, dest, other_entries)
+        if symlink_entries:
+            _copy_overlay_entries(src, dest, symlink_entries)
         return
 
     if shutil.which("rsync"):
@@ -222,15 +236,6 @@ def provision_overlay(*, primary: Path, worktree: Path) -> list[str]:
     return copied
 
 
-def _same_symlink(dest: Path, src: Path) -> bool:
-    if not dest.is_symlink():
-        return False
-    try:
-        return dest.resolve() == src.resolve()
-    except OSError:
-        return False
-
-
 def _replace_with_symlink(dest: Path, src: Path) -> None:
     if dest.is_symlink() or dest.is_file():
         dest.unlink()
@@ -248,8 +253,11 @@ def provision_dependency_trees(*, primary: Path, worktree: Path) -> list[str]:
         dest = worktree / rel
         if not src.exists():
             continue
-        if _same_symlink(dest, src):
-            linked.append(rel)
+        if dest.resolve(strict=False) == src.resolve(strict=False):
+            # Same path (main checkout, or --primary omitted on a normal clone):
+            # never rmtree the live node_modules/vendor tree into a dangling link.
+            if dest.is_symlink():
+                linked.append(rel)
             continue
         if dest.exists() or dest.is_symlink():
             _replace_with_symlink(dest, src)
@@ -266,9 +274,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--primary", type=Path, default=None)
     args = parser.parse_args(argv)
     worktree = args.worktree.resolve()
-    primary = (args.primary or primary_checkout(worktree)).resolve()
-    provision_overlay(primary=primary, worktree=worktree)
-    provision_dependency_trees(primary=primary, worktree=worktree)
+    try:
+        primary = (args.primary or primary_checkout(worktree)).resolve()
+        provision_overlay(primary=primary, worktree=worktree)
+        provision_dependency_trees(primary=primary, worktree=worktree)
+    except RuntimeError as exc:
+        print(exc, file=sys.stderr)
+        return 1
     return 0
 
 

@@ -7,6 +7,14 @@ This is not evidence of production activation. Companion to the decision memo
 Status: proven on the 2026-07-14 spike host; production reaper timer install +
 backend deploy are open GPUSMOKE-1 S4 preconditions.
 
+**Production idle-reaper timer is NOT installed.** The spike proof actuated STOP
+by a one-shot CLI (`python3 -m infra.oci.gpu_lifecycle …`). Without a host
+timer (cron/systemd `acx-gpu-reap.timer` via `scripts/deploy/gpu-lifecycle-install.sh`)
+the documented scale-to-zero deployment has no automatic steady-state reclamation
+and can leave a roughly $2/hour GPU running after traffic drains. One
+timer-driven STOP on the production host is the missing activation precondition;
+do not treat this file as that proof.
+
 ## Provisioned host (operator-approved launch)
 
 - Instance `acx-gpu-burst` = `<burst-instance-ocid>`
@@ -44,7 +52,10 @@ backend deploy are open GPUSMOKE-1 S4 preconditions.
    STOPPED as the scale-to-zero start state; burst START/STOP exercised. ✅
 5. **Idle reaper spike proof**: actuated a real STOP off the DB-derived snapshot
    (fence honored). The production timer (cron/systemd on the backend host)
-   remains an open GPUSMOKE-1 S4 precondition. ☐ production
+   remains an open GPUSMOKE-1 S4 precondition — **not complete**. Required:
+   timers installed (`systemctl --user list-timers` shows `acx-gpu-start.timer`
+   + `acx-gpu-reap.timer`, else `scripts/deploy/gpu-lifecycle-install.sh`) and
+   one timer-driven STOP observed on the production host. ☐ production
 6. **Bake-off evidence**: memo remains provisional; the license verdict is
    pending and measured JSON reports were not regenerated. ☐ open
 

@@ -33,7 +33,11 @@ Goldens were re-minted under the new OpenCV 5 `FaceRecognizerSF` / `warpAffine` 
 
 ### Waiver — trigger 2 not met (open item)
 
-**Waiver (deliberate deviation from this ADR's own gate):** the CVUP-1 bump proceeded without trigger 2 (a concrete need) being met. The Triggers section still requires all conditions; this supersession records the deviation rather than rewriting the gate. No operator decision is recorded in-branch — whether the deviation stands, is ratified, or is rolled back remains an **open item**. Do not treat this note as a completed waiver.
+**Waiver (deliberate deviation from this ADR's own gate):** the CVUP-1 bump proceeded without trigger 2 (a concrete need) being met. The Triggers section still requires all conditions; this supersession records the deviation rather than rewriting the gate.
+
+This note is **not** a completed waiver and **not** an operator signature. The bump is an unsigned, operator-reserved override of the gate this ADR exists to enforce. A valid ratification must name: (1) the acceptor, (2) why the bump proceeded without a measured reference-path/CI-host gap, a 5.x-required model/API, or a 4.12–4.14 EOL, and (3) whether the live pin stays on 5.0.0.93 or rolls back. Until that lands, treat the 5.x pin as **provisional relative to this ADR**, even though the S2/S3 migration gate (trigger 3) is met.
+
+No operator decision is recorded in-branch — whether the deviation stands, is ratified, or is rolled back remains an **open item**.
 
 ### Accepted risk — incumbent InsightFace path unmeasured (CVUP1-GR-03)
 
@@ -139,6 +143,7 @@ If oracle crops or embeddings diverge, re-golden only after an explicit decision
 1. **Done by this ADR (FIR-3):** record KEEP decision; leave `opencv-python>=4.12.0,<4.15.0` unchanged at that time.
 2. **Done by CVUP-1 (2026-07-30):** migration gate re-run green under OpenCV 5; pin moved to ==5.0.0.93 for both cv2 distributions; this ADR status flipped to Superseded with supersession note above. Goldens re-minted; drift probe recorded under `docs/tasks/fir/evidence/opencv-5-embedding-drift.md`.
 3. **FIR-7 / GPU:** do not couple GPU work to this OpenCV pin; ORT/CUDA/TensorRT paths are independent.
+4. **Open (operator-reserved):** ratify or roll back the trigger-2 waiver in the supersession note. Unsigned. Not agent-closable.
 
 ## Sources
 

@@ -341,3 +341,20 @@ bash scripts/vm/tests/test_reap_lane.sh
 bash scripts/vm/tests/test_install_reap_cron.sh
 python3 -m pytest scripts/vm/tests/test_vm_script_suites.py -q
 ```
+
+## Codemap index (operator-local, not proven by this file)
+
+A 2026-09 review recorded the monorepo's shared codemap project as **absent**,
+not merely stale: `list_projects` returned the agentic-protocol checkout plus
+four ephemeral pytest tmpdir repos (`private-tmp-pytest-of-daniel-pytest-3-test_task_finish_*`),
+and `Users-daniel-Development-context-alt-text-monorepo` was gone. Every
+`search_code` / `index_status` call against it returned "project not found or
+not indexed", so local prior-art queries silently degraded to grep.
+
+Disposition (not re-verified in this sandbox): the consumer index was restored
+as a fast-mode project (handoff decision 7489). Lifecycle tests indexing
+throwaway repos into the shared store and never calling `delete_project` is a
+separate teardown defect; it lives in the test suite / MAINT follow-up, not in
+`scripts/vm/`. This evidence file does not prove the live index exists on any
+given host — if `index_status` says "project not found", believe that over this
+paragraph.

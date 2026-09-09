@@ -21,7 +21,7 @@ Stop the 429 storm at one seam: `fetchApi` gains a typed error, one shared retry
 - **Source assessment**: `docs/assessments/current/ux-ui-pass-assessment-2026-07-15.md` (**UXA-01** only)
 - **Key decisions**: UXP-1 `claude_uxp1_scope_intake_v1`; `claude_planning_review_uxp2_fail_v1` (planning-review fail + operator's scope-split decision).
 - **Not-Doing**:
-  - **Honest service status / heartbeat (UXA-02) → its own task.** The original UXP-2 carried UXA-01 and UXA-02; planning review produced six independent design blockers against the heartbeat alone. Deferred findings `UXP-2-PR-01..06,12,13,14,16,17` are its inputs.
+  - **Honest service status / heartbeat (UXA-02) → its own task.** The original UXP-2 carried UXA-01 and UXA-02; planning review produced six independent design blockers against the heartbeat alone. The successor plan is `docs/tasks/uxp/UXA-02-honest-service-status-task-plan.md`. It carries the write-gate, six-way probe, ordered-predicate, `/health/detailed` body-status, read-time freshness, LifeCycleManager cron, named-lock throttle, exhaustive banner/dashboard, `base_url` keying, pairing-exclusion, and rg-016 constraints as binding inputs (handoff IDs UXP-2-PR-01..06,12,13,14,16,17).
   - Server-side rate-limit redesign (E20-7/E20-11), SSE migration of job polling, outbox/dispatcher retry changes.
   - **`useSyncHealth` is deliberately untouched** — see *Cooldown membership* below.
 

@@ -4,5 +4,7 @@
   "task_ref": "VLM-3",
   "model_id": "MiMo-VL-7B-RL",
   "status": "pending_live_gpu_bakeoff",
-  "reason": "Requires OCI GPU endpoint and golden images."
+  "reason": "Requires OCI GPU endpoint and golden images. Canonical acx-eval/v1 kind=report regeneration is locked pending by scripts/test_vlm3_gpu_bakeoff_artifacts.py; measured markdown/run-record siblings are not a substitute for the indexed JSON.",
+  "measured_markdown": "VLM-3-bakeoff-MiMo-VL-7B-RL-report.md",
+  "measured_run_record": "VLM-3-bakeoff-MiMo-VL-7B-RL-run-record.json"
 }

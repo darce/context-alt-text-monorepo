@@ -347,7 +347,7 @@ fi
 def test_rollback_is_captured_before_remote_build_and_used_on_failures() -> None:
     source = SCRIPT.read_text()
     deploy = source[
-        source.index("do_deploy() {") : source.index(
+        source.index("_ship_selected_env() {") : source.index(
             "#---------------------------------------------------------------- promote"
         )
     ]

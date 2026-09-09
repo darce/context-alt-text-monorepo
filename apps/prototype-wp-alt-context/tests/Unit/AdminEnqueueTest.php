@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Tests\Unit;
 
 use AltContext\Admin\Admin;
+use AltContext\Support\ViteManifest;
 use AltContext\Tests\TestCase;
 use ReflectionClass;
 
@@ -23,6 +24,11 @@ class AdminEnqueueTest extends TestCase
     private function spaOnlyManifestPath(): string
     {
         return dirname(__DIR__) . '/fixtures/admin-manifest.json';
+    }
+
+    private function importedChunkManifestPath(): string
+    {
+        return dirname(__DIR__) . '/fixtures/vite-manifest/admin-with-import.json';
     }
 
     private function seedAttachmentPost(int $postId = 55): void
@@ -194,6 +200,84 @@ class AdminEnqueueTest extends TestCase
         $this->assertIsArray($attachment);
         $this->assertSame('assets/attachment-edit-test.js', $attachment['file'] ?? null);
         $this->assertNull($missing);
+    }
+
+    public function testDefaultConstructorUsesFromPluginManifestPath(): void
+    {
+        unset($_ENV['WP_ENVIRONMENT_TYPE']);
+        $admin = new Admin();
+        $reflection = new ReflectionClass($admin);
+        $method = $reflection->getMethod('vite_manifest');
+        $method->setAccessible(true);
+        $manifest = $method->invoke($admin);
+
+        $this->assertInstanceOf(ViteManifest::class, $manifest);
+        $this->assertSame(
+            ViteManifest::from_plugin()->manifest_path(),
+            $manifest->manifest_path()
+        );
+    }
+
+    public function testDefaultAdminBootstrapFailureUsesFromPluginPath(): void
+    {
+        unset($_ENV['WP_ENVIRONMENT_TYPE']);
+        $expectedPath = ViteManifest::from_plugin()->manifest_path();
+        if (is_readable($expectedPath)) {
+            $this->markTestSkipped('Default plugin manifest is present; failure path is unobservable.');
+        }
+
+        $admin = new Admin();
+        $admin->enqueue_scripts('toplevel_page_alt-context-dashboard');
+
+        $events = array_values(array_filter(
+            $GLOBALS['__ac_do_action_log'] ?? [],
+            static fn(array $event): bool => ($event['hook'] ?? '') === 'acx_admin_asset_bootstrap_failure'
+        ));
+        $this->assertNotEmpty($events);
+        $this->assertSame($expectedPath, $events[0]['args'][1]['manifest_path'] ?? null);
+        $this->assertStringContainsString($expectedPath, (string) ($events[0]['args'][0] ?? ''));
+    }
+
+    public function testInjectedManifestPathIsUsedInBootstrapFailure(): void
+    {
+        unset($_ENV['WP_ENVIRONMENT_TYPE']);
+        $path = $this->importedChunkManifestPath() . '.missing';
+
+        $admin = new Admin($path);
+        $admin->enqueue_scripts('toplevel_page_alt-context-dashboard');
+
+        $events = array_values(array_filter(
+            $GLOBALS['__ac_do_action_log'] ?? [],
+            static fn(array $event): bool => ($event['hook'] ?? '') === 'acx_admin_asset_bootstrap_failure'
+        ));
+        $this->assertNotEmpty($events);
+        $this->assertSame($path, $events[0]['args'][1]['manifest_path'] ?? null);
+        $this->assertStringContainsString($path, (string) ($events[0]['args'][0] ?? ''));
+    }
+
+    public function testAdminEnqueueIncludesImportedChunkCss(): void
+    {
+        unset($_ENV['WP_ENVIRONMENT_TYPE']);
+        $this->setUserCapability('manage_options', true);
+
+        $admin = new Admin($this->importedChunkManifestPath());
+        $admin->enqueue_scripts('toplevel_page_alt-context-dashboard');
+
+        $this->assertArrayHasKey('alt-context-admin', $GLOBALS['__ac_scripts']);
+        $this->assertSame(
+            'http://example.test/wp-content/plugins/alt-context/public/assets/dist/assets/admin-test.js',
+            $GLOBALS['__ac_scripts']['alt-context-admin']['src'] ?? null
+        );
+        $this->assertArrayHasKey('alt-context-admin-0', $GLOBALS['__ac_styles']);
+        $this->assertSame(
+            'http://example.test/wp-content/plugins/alt-context/public/assets/dist/assets/admin-shared.css',
+            $GLOBALS['__ac_styles']['alt-context-admin-0']['src'] ?? null
+        );
+        $this->assertArrayHasKey('alt-context-admin-1', $GLOBALS['__ac_styles']);
+        $this->assertSame(
+            'http://example.test/wp-content/plugins/alt-context/public/assets/dist/assets/admin-test.css',
+            $GLOBALS['__ac_styles']['alt-context-admin-1']['src'] ?? null
+        );
     }
 
     public function testModuleHandleScriptTagRendersTypeModule(): void

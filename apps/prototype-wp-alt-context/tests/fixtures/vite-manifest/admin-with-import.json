@@ -1,0 +1,12 @@
+{
+  "js/admin/main.tsx": {
+    "file": "assets/admin-test.js",
+    "isEntry": true,
+    "css": ["assets/admin-test.css"],
+    "imports": ["_admin-shared.js"]
+  },
+  "_admin-shared.js": {
+    "file": "assets/admin-shared.js",
+    "css": ["assets/admin-shared.css"]
+  }
+}

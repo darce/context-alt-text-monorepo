@@ -3,14 +3,21 @@
 Incumbent production value describes InsightFace buffalo_l @ settings dim / l2 / cosine.
 Adapters stamp ``FaceDetection.model_id`` from ``model_id``.
 
-Example model_id: ``insightface-buffalo_l@512d/l2/cosine``
+The InsightFace name folds the OpenCV runtime into a space token so a
+``cv2.warpAffine`` numeric move partitions FIR23-01 rather than silently
+re-baselining 512d vectors under a byte-identical id.
+
+Example model_id: ``insightface-buffalo_l+cv5.0.0.93@512d/l2/cosine``
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from recognition.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,8 +111,18 @@ def active_embedding_model_id() -> str:
     return str(model_id).strip()
 
 
+def try_active_embedding_model_id() -> str | None:
+    """Return the active space id, or None after logging if resolve fails."""
+    try:
+        return active_embedding_model_id()
+    except (RuntimeError, ImportError, ValueError, AttributeError, OSError) as exc:
+        logger.warning("active embedding_model unresolved (FIR23-01): %s", exc)
+        return None
+
+
 __all__ = [
     "EmbeddingModelManifest",
     "active_embedding_model_id",
     "incumbent_embedding_model_manifest",
+    "try_active_embedding_model_id",
 ]

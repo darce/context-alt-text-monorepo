@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from recognition.application.suggestions.embedding_space import (
+    choose_embedding_model,
     representative_embedding_model,
     same_space_vector,
 )
@@ -39,12 +40,7 @@ class RepresentativeCache:
                 continue
 
             embeddings: list[np.ndarray] = []
-            counts: dict[str, int] = {}
-            for rep in reps:
-                model = representative_embedding_model(rep)
-                if model:
-                    counts[model] = counts.get(model, 0) + 1
-            chosen = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[0][0] if counts else None
+            chosen = choose_embedding_model(representative_embedding_model(rep) for rep in reps)
             for rep in reps:
                 if chosen is not None:
                     rep_vec = same_space_vector(rep, chosen)

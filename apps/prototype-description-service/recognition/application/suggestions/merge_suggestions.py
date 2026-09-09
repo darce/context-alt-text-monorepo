@@ -106,15 +106,55 @@ class MergeSuggestionService:
         if len(singleton_candidates) < 2:
             return 0
 
-        if len(singleton_candidates) > hac_settings.max_scope_size:
-            singleton_candidates.sort(
+        # Partition by embedding space before HAC. Mixed 128d/512d stacks raise
+        # ValueError in ConstrainedHAC.refine_clusters; same-dim foreign spaces
+        # would contaminate linkage. Legacy both-unstamped share one bucket.
+        buckets: dict[str, list[tuple[IdentityCluster, str, np.ndarray, str | None]]] = {}
+        for candidate in singleton_candidates:
+            bucket_key = str(candidate[3]) if candidate[3] else ""
+            buckets.setdefault(bucket_key, []).append(candidate)
+
+        created = 0
+        now = datetime.now(tz=UTC)
+        for space_candidates in buckets.values():
+            created += await self._generate_singleton_hac_for_space(
+                tenant_id=tenant_id,
+                space_candidates=space_candidates,
+                constrained_hac=constrained_hac,
+                hac_settings=hac_settings,
+                now=now,
+            )
+
+        if created:
+            logger.info(
+                "[merge_suggestions] Generated %d singleton HAC suggestions (tenant_id=%s)",
+                created,
+                tenant_id,
+            )
+        return created
+
+    async def _generate_singleton_hac_for_space(
+        self,
+        *,
+        tenant_id: str,
+        space_candidates: list[tuple[IdentityCluster, str, np.ndarray, str | None]],
+        constrained_hac: ConstrainedHACProtocol,
+        hac_settings: HACSettings,
+        now: datetime,
+    ) -> int:
+        """Run HAC + upsert for one embedding-space bucket of singletons."""
+        if len(space_candidates) < 2:
+            return 0
+
+        if len(space_candidates) > hac_settings.max_scope_size:
+            space_candidates = sorted(
+                space_candidates,
                 key=lambda item: item[0].created_at.timestamp() if item[0].created_at else 0.0,
                 reverse=True,
-            )
-            singleton_candidates = singleton_candidates[: hac_settings.max_scope_size]
+            )[: hac_settings.max_scope_size]
             logger.info(
                 "[merge_suggestions] singleton_scope_trimmed=%d max_scope=%d tenant_id=%s",
-                len(singleton_candidates),
+                len(space_candidates),
                 hac_settings.max_scope_size,
                 tenant_id,
             )
@@ -122,7 +162,7 @@ class MergeSuggestionService:
         embeddings: dict[uuid.UUID, np.ndarray] = {}
         identity_to_cluster: dict[uuid.UUID, IdentityCluster] = {}
         identity_models: dict[uuid.UUID, str | None] = {}
-        for cluster, identity_id, embedding, embedding_model in singleton_candidates:
+        for cluster, identity_id, embedding, embedding_model in space_candidates:
             try:
                 identity_uuid = uuid.UUID(identity_id)
             except ValueError:
@@ -147,7 +187,6 @@ class MergeSuggestionService:
                 groups.setdefault(group_uuid, []).append(identity_uuid)
 
         created = 0
-        now = datetime.now(tz=UTC)
         for group in groups.values():
             if len(group) < 2:
                 continue
@@ -174,13 +213,6 @@ class MergeSuggestionService:
                 )
                 await self._repository.upsert_pending(tenant_id, payload)
                 created += 1
-
-        if created:
-            logger.info(
-                "[merge_suggestions] Generated %d singleton HAC suggestions (tenant_id=%s)",
-                created,
-                tenant_id,
-            )
         return created
 
     async def delete_by_cluster(self, tenant_id: str, cluster_id: str) -> int:

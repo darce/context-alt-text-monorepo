@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 
 from recognition.application.suggestions.embedding_space import (
+    choose_embedding_model,
     cluster_embedding_model,
+    filter_to_active_embedding_space,
     models_are_same_space,
 )
 from recognition.domain.cluster import IdentityCluster
@@ -78,3 +82,35 @@ def test_models_are_same_space_legacy_none_and_mismatch() -> None:
     assert models_are_same_space("a", "b") is False
     assert models_are_same_space("a", None) is False
     assert models_are_same_space(None, "a") is False
+
+
+def test_choose_embedding_model_majority_and_lex_tie() -> None:
+    assert choose_embedding_model(["b", "a", "b"]) == "b"
+    assert choose_embedding_model(["b", "a"]) == "a"
+    assert choose_embedding_model([None, ""]) is None
+
+
+def test_filter_to_active_space_fail_closed_when_unresolved() -> None:
+    rows = [
+        SimpleNamespace(embedding_model="space-a"),
+        SimpleNamespace(embedding_model="space-b"),
+    ]
+    with patch(
+        "recognition.application.embedding.manifest.try_active_embedding_model_id",
+        return_value=None,
+    ):
+        assert filter_to_active_embedding_space(rows) == []
+
+
+def test_filter_to_active_space_never_majority_falls_back() -> None:
+    rows = [
+        SimpleNamespace(embedding_model="space-a"),
+        SimpleNamespace(embedding_model="space-a"),
+        SimpleNamespace(embedding_model="space-b"),
+    ]
+    with patch(
+        "recognition.application.embedding.manifest.try_active_embedding_model_id",
+        return_value="space-b",
+    ):
+        kept = filter_to_active_embedding_space(rows)
+    assert [row.embedding_model for row in kept] == ["space-b"]

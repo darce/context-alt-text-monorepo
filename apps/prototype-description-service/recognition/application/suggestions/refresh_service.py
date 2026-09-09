@@ -30,7 +30,7 @@ from recognition.application.settings import ClusteringSettings
 from recognition.application.similarity import RepresentativeCache, SimilaritySearch
 from recognition.application.suggestions.eligibility import is_eligible_cluster
 from recognition.application.suggestions.embedding_space import (
-    cluster_embedding_model,
+    choose_embedding_model,
     models_are_same_space,
     representative_embedding_model,
     same_space_vector,
@@ -648,11 +648,15 @@ class SuggestionRefreshService:
         _total_members = sum(len(identities) for identities in identities_by_cluster.values())
         seen_identity_ids: set[str] = set()
         duplicate_identity_skips = 0
+        # Production get_by_id does not selectinload representatives, and
+        # identity_clusters has no embedding_model column, so cluster_embedding_model
+        # on that path is always None. Derive the gallery space from already-loaded
+        # representative objects (get_all_representatives majority).
         gallery_model = None
-        get_by_id = getattr(self._cluster_repository, "get_by_id", None)
-        if callable(get_by_id):
-            labeled_cluster = await get_by_id(cluster_id)
-            gallery_model = cluster_embedding_model(labeled_cluster) if labeled_cluster is not None else None
+        get_all_reps = getattr(self._cluster_repository, "get_all_representatives", None)
+        if callable(get_all_reps):
+            labeled_reps = list(await get_all_reps(cluster_id))
+            gallery_model = choose_embedding_model(representative_embedding_model(rep) for rep in labeled_reps)
         logger.info(
             "[suggestions] surface: loaded %d member identities from %d clusters in %.3fs",
             _total_members,

@@ -25,6 +25,10 @@ from db.models import IdentityMember as IdentityMemberModel
 from db.models import NameSuggestion as NameSuggestionModel
 from db.settings import get_database_settings
 from db.tenant_context import enable_rls_bypass
+from recognition.application.suggestions.embedding_space import (
+    choose_embedding_model,
+    filter_to_active_embedding_space,
+)
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity as DomainIdentity
 from recognition.domain.maturity import ClusterMaturityInfo, compute_maturity_adjustment, compute_maturity_level
@@ -45,18 +49,7 @@ if TYPE_CHECKING:
     from recognition.application.settings.clustering import MaturitySettings
 
 
-def _choose_embedding_model(models: Sequence[str | None]) -> str | None:
-    """Majority embedding_model with lex-stable tie-break (FIR23-01)."""
-    counts: dict[str, int] = {}
-    for model in models:
-        if not model:
-            continue
-        key = str(model)
-        counts[key] = counts.get(key, 0) + 1
-    if not counts:
-        return None
-    # Sort by (-count, model_id) so highest count wins; ties → lex min.
-    return sorted(counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
+_choose_embedding_model = choose_embedding_model
 
 
 def _filter_embedding_pairs_to_single_model(
@@ -126,25 +119,11 @@ def _filter_rows_to_single_embedding_model(
     """For unclustered sets: single-model no-op; mixed → active model only.
 
     Prefer the active runtime model when mixed models coexist so clustering
-    never compares across embedding spaces. If none match active, keep the
-    majority model rather than mixing (still fail-closed relative to mixing).
+    never compares across embedding spaces. If the active id cannot be
+    resolved, fail closed (empty) rather than majority-clustering a foreign
+    space.
     """
-    if not models:
-        return []
-    distinct = {str(m.embedding_model) for m in models if getattr(m, "embedding_model", None)}
-    if len(distinct) <= 1:
-        return list(models)
-    try:
-        from recognition.application.embedding.manifest import active_embedding_model_id
-
-        active = active_embedding_model_id()
-    except Exception:
-        active = None
-    if active is not None:
-        matched = [m for m in models if getattr(m, "embedding_model", None) == active]
-        if matched:
-            return matched
-    return _filter_identity_models_to_single_embedding_model(models)
+    return filter_to_active_embedding_space(models)
 
 
 def _snapshot_version_to_datetime(snapshot_version: int) -> datetime:

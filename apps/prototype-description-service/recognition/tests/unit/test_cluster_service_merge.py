@@ -3,19 +3,23 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, Mock
 
+import numpy as np
 import pytest
 
 from recognition.application.orchestration import ClusterService
 from recognition.application.persistence.assignment_writer import AssignmentWriter
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.repositories import ClusterRepository, MemberRepository
+from recognition.domain.representative import ClusterRepresentative
 
 
 @pytest.fixture
 def mock_cluster_repo() -> AsyncMock:
     repo = AsyncMock(spec=ClusterRepository)
+    repo.get_all_representatives.return_value = []
     return repo
 
 
@@ -209,3 +213,57 @@ async def test_merge_cluster_missing_validation(
     mock_cluster_repo.get_by_id.return_value = None
     result = await service.merge_cluster("s", "t", "d")
     assert result is None
+
+
+def _space_rep(cluster_id: str, model: str) -> ClusterRepresentative:
+    return ClusterRepresentative(
+        id=f"r-{model}-{cluster_id}",
+        cluster_id=cluster_id,
+        identity_id=f"i-{model}",
+        embedding=np.array([1.0, 0.0], dtype=np.float32),
+        created_at=datetime.now(tz=UTC),
+        embedding_model=model,
+    )
+
+
+@pytest.mark.asyncio
+async def test_merge_cluster_refuses_cross_space_and_moves_no_members(
+    service: ClusterService,
+    mock_cluster_repo: AsyncMock,
+    mock_member_repo: AsyncMock,
+) -> None:
+    """FIR23-01: space-a into space-b must not reassign members."""
+    tenant_id = str(uuid.uuid4())
+    source_id = str(uuid.uuid4())
+    target_id = str(uuid.uuid4())
+    source_cluster = IdentityCluster(
+        id=source_id,
+        tenant_id=tenant_id,
+        is_labeled=False,
+        identity_count=5,
+        label="Source",
+    )
+    target_cluster = IdentityCluster(
+        id=target_id,
+        tenant_id=tenant_id,
+        is_labeled=True,
+        identity_count=10,
+        label="Target",
+    )
+    mock_cluster_repo.get_by_id.side_effect = [source_cluster, target_cluster]
+
+    async def reps_for(cluster_id: str) -> list[ClusterRepresentative]:
+        model = "space-a" if cluster_id == source_id else "space-b"
+        return [_space_rep(cluster_id, model)]
+
+    mock_cluster_repo.get_all_representatives.side_effect = reps_for
+
+    merged = await service.merge_cluster(
+        source_cluster_id=source_id,
+        tenant_id=tenant_id,
+        target_cluster_id=target_id,
+    )
+
+    assert merged is None
+    mock_member_repo.move_members.assert_not_awaited()
+    mock_cluster_repo.delete.assert_not_awaited()

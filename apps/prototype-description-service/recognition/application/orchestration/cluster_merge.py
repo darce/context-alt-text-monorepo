@@ -12,10 +12,9 @@ import uuid
 from collections.abc import Sequence
 
 import numpy as np
-from sqlalchemy import Select, exists, select, update
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import IdentityMember as MemberModel
 from db.models import MediaIdentity as MediaIdentityModel
 from recognition.application.assignment import AssignmentCandidate, AssignmentGate, AssignmentOutcome, DiscoveryMethod
 from recognition.application.events.broadcaster import get_event_broadcaster
@@ -28,13 +27,31 @@ from recognition.application.suggestions.embedding_space import (
     same_space_representative_vectors,
 )
 from recognition.domain.cluster import IdentityCluster, ReservedClusterLabelError, is_reserved_label_shape
+from recognition.domain.identity import MediaIdentity
 from recognition.domain.repositories import ClusterRepository, MemberRepository
 from recognition.domain.suggestion import AssignmentSuggestion, SuggestionStatus
 from recognition.observability import ClusteringLogger
 from recognition.shared.similarity import normalize_face_embedding
-from recognition.shared.tenant import coerce_tenant_uuid
 
 logger = logging.getLogger(__name__)
+
+
+async def _cluster_gallery_model(cluster_repo: ClusterRepository, cluster_id: str) -> str | None:
+    """Resolve a cluster's gallery space from loaded representatives, not get_by_id."""
+    reps = list(await cluster_repo.get_all_representatives(cluster_id))
+    model, _vectors = same_space_representative_vectors(reps)
+    return model
+
+
+async def _same_space_merge_allowed(
+    cluster_repo: ClusterRepository,
+    source_cluster_id: str,
+    target_cluster_id: str,
+) -> bool:
+    """FIR23-01: refuse composing mixed embedding spaces via merge."""
+    source_model = await _cluster_gallery_model(cluster_repo, source_cluster_id)
+    target_model = await _cluster_gallery_model(cluster_repo, target_cluster_id)
+    return models_are_same_space(source_model, target_model)
 
 
 async def _retry_pending_suggestions(
@@ -121,7 +138,7 @@ async def _retry_pending_suggestions(
 
 async def _retry_unclustered_models(
     *,
-    models: Sequence[MediaIdentityModel],
+    identities: Sequence[MediaIdentity],
     target_cluster_id: str,
     gate: AssignmentGate,
     assignment_writer: AssignmentWriter,
@@ -136,13 +153,12 @@ async def _retry_unclustered_models(
     suggested = 0
     evaluated = 0
 
-    for model in models:
-        identity_id = str(model.id)
+    for identity in identities:
+        identity_id = str(identity.id)
         if identity_id in processed_identity_ids:
             continue
         processed_identity_ids.add(identity_id)
 
-        identity = media_identity_from_model(model)
         if not models_are_same_space(identity.embedding_model, gallery_model):
             continue
         face_vec = normalize_face_embedding(identity.embedding)
@@ -223,27 +239,14 @@ async def post_merge_retry_matching(
     )
 
     # 2) Try high-confidence matches from remaining unclustered identities.
-    try:
-        tenant_uuid = coerce_tenant_uuid(tenant_id)
-    except ValueError:
-        tenant_uuid = None
-
-    if tenant_uuid is not None and max_unclustered > 0:
-        stmt: Select[tuple[MediaIdentityModel]] = (
-            select(MediaIdentityModel)
-            .where(MediaIdentityModel.tenant_id == tenant_uuid)
-            .where(~exists(select(MemberModel.id).where(MemberModel.identity_id == MediaIdentityModel.id)))
-            .order_by(MediaIdentityModel.confidence.desc())
-            .limit(max_unclustered)
+    if max_unclustered > 0:
+        unclustered = await cluster_repo.get_unclustered_in_embedding_space(
+            tenant_id,
+            gallery_model,
+            limit=max_unclustered,
         )
-        if gallery_model is not None:
-            stmt = stmt.where(MediaIdentityModel.embedding_model == gallery_model)
-        else:
-            stmt = stmt.where(MediaIdentityModel.embedding_model.is_(None))
-        result = await session.execute(stmt)
-        unclustered_models = result.scalars().all()
         additional_accepted, additional_suggested, additional_evaluated = await _retry_unclustered_models(
-            models=unclustered_models,
+            identities=unclustered,
             target_cluster_id=target_cluster_id,
             gate=gate,
             assignment_writer=assignment_writer,
@@ -307,6 +310,14 @@ async def merge_cluster(
             assignment_writer=assignment_writer,
             clustering_logger=clustering_logger,
         )
+
+    if not await _same_space_merge_allowed(cluster_repo, source_cluster_id, target_cluster_id):
+        logger.warning(
+            "[clustering] refuse cross-space merge source=%s target=%s",
+            source_cluster_id,
+            target_cluster_id,
+        )
+        return None
 
     moved_identity_ids: list[uuid.UUID] = []
     if moved_by_merge_id and session is not None:

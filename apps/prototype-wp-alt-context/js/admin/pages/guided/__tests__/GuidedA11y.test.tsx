@@ -20,7 +20,7 @@ import { GuidedPrototypePage } from '../GuidedPrototypePage';
 const STUB_REJECT = new Error('GUIDEDQM-1 live stub reject');
 const NETWORK_BLOCKED = new Error('GUIDEDQM-1 network blocked');
 const LIVE_MEDIA_ID = 4211;
-const SEED_ALT_TEXT = 'Two people at a film festival.';
+const SEED_ALT_TEXT = 'Canadian Prime Minister Justin Trudeau and singer Katy Perry posing together on the red carpet at the Tribeca Festival.';
 const SCENARIO = createGuidedScenario();
 
 const liveClient = vi.hoisted((): { [K in keyof GuidedLiveDescriptionClient]: Mock } => {

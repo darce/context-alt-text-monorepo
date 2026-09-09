@@ -155,6 +155,14 @@ export const RecordedWalkthrough = ({ scope, livePanel, escapeHref }: RecordedWa
             <div className="acx-guided-page__context">
               <p>{guidedCopy('context.intro')}</p>
               <p>
+                The starting “before” text is the first result from{' '}
+                <a href="https://imagecaptiongenerator.com/alt-text-generator" target="_blank" rel="noreferrer">
+                  Image Caption Generator (opens in a new window)
+                </a>
+                {' '}using Gemini 3.1 Flash Lite on 9 September 2026, with no names or context supplied.
+                It already named both people. This is one recorded sample, not a benchmark; its wording is unedited.
+              </p>
+              <p>
                 <strong>{guidedCopy('context.page_label')}</strong>
                 {': '}
                 {scenario.pageContext.title}

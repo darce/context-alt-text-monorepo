@@ -9,6 +9,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "scripts/remote_agent_hygiene.sh"
+TRACKED_WRAPPER = REPO_ROOT / "scripts/remote_agent.sh"
 
 
 def _run(
@@ -29,6 +30,21 @@ def _run(
 
 def test_ping_timeout_zero_is_rejected() -> None:
     completed = _run("ping", "true", env={"PING_TIMEOUT_SEC": "0"})
+    assert completed.returncode == 2
+    assert "PING_TIMEOUT_SEC" in completed.stderr
+    assert "0 disables the bound" in completed.stderr
+
+
+def test_tracked_remote_agent_wrapper_rejects_zero_timeout() -> None:
+    assert TRACKED_WRAPPER.is_file()
+    completed = subprocess.run(
+        ["bash", str(TRACKED_WRAPPER), "ping", "true"],
+        env={**os.environ, "PING_TIMEOUT_SEC": "0"},
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
     assert completed.returncode == 2
     assert "PING_TIMEOUT_SEC" in completed.stderr
     assert "0 disables the bound" in completed.stderr

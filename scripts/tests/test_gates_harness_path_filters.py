@@ -61,14 +61,16 @@ def _path_filters(text: str) -> list[str]:
 
 def _candidates(prefix: str) -> list[str]:
     trimmed = prefix.rstrip("/")
-    return [
-        trimmed,
-        f"{trimmed}.sh",
-        f"{trimmed}.py",
-        f"{trimmed}/example.sh",
-        f"{trimmed}/example.py",
-        f"{trimmed}/gates-harness.yml",
-    ]
+    if prefix.endswith("/") or trimmed != prefix:
+        return [
+            trimmed,
+            f"{trimmed}/example.sh",
+            f"{trimmed}/example.py",
+            f"{trimmed}/example.mk",
+            f"{trimmed}/example.yml",
+            f"{trimmed}/nested/file.sh",
+        ]
+    return [trimmed]
 
 
 def test_owned_path_prefixes_are_covered_by_workflow_filters() -> None:

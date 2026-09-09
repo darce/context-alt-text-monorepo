@@ -824,7 +824,7 @@ LATE_LOCK_DU
 #!/usr/bin/env bash
 set -e
 for arg in "$@"; do
-  if [[ "$arg" == "$RECREATED_LANE" ]]; then
+  if [[ "$arg" == "$RECREATED_LANE" || "$arg" == "$RECREATED_LANE".reaping.* ]]; then
     "$REAL_RM" "$@"
     : >"$RECREATED_TRIGGER"
     attempt=0
@@ -1173,6 +1173,48 @@ FINAL_PROCESS_CHECK_DU
   final_process_pid="$(cat "$WORKDIR/final-process-check.pid")"
   kill "$final_process_pid" 2>/dev/null || true
   wait "$final_process_pid" 2>/dev/null || true
+
+  # A worker whose cwd follows the quarantine rename must still block deletion.
+  # The remaining TOCTOU is between the pre-rm probe and unlink; renaming first
+  # then re-probing the tombstone closes that window.
+  lane_quarantine_process="$HOME/w/lane-quarantine-process"
+  clone_lane "$lane_quarantine_process"
+  touch -t 200001010000 "$lane_quarantine_process" \
+    "$lane_quarantine_process/.git/index" "$lane_quarantine_process/.git/HEAD"
+  quarantine_bin="$WORKDIR/quarantine-mv-bin"
+  mkdir "$quarantine_bin"
+  cat >"$quarantine_bin/mv" <<'QUARANTINE_MV'
+#!/usr/bin/env bash
+set -e
+if [[ "$1" == "$QUARANTINE_LANE" && "$2" == "$QUARANTINE_LANE".reaping.* && ! -e "$QUARANTINE_TRIGGER" ]]; then
+  : >"$QUARANTINE_TRIGGER"
+  "$REAL_MV" "$@"
+  status=$?
+  if [[ "$status" -eq 0 ]]; then
+    (
+      cd "$2"
+      exec </dev/null >/dev/null 2>&1
+      trap 'exit 0' TERM INT
+      while :; do :; done
+    ) &
+    printf '%s\n' "$!" >"$QUARANTINE_PID"
+  fi
+  exit "$status"
+fi
+exec "$REAL_MV" "$@"
+QUARANTINE_MV
+  chmod +x "$quarantine_bin/mv"
+  QUARANTINE_LANE="$lane_quarantine_process" \
+    QUARANTINE_TRIGGER="$WORKDIR/quarantine-trigger" \
+    QUARANTINE_PID="$WORKDIR/quarantine.pid" \
+    REAL_MV="$(command -v mv)" PATH="$quarantine_bin:$PATH" \
+    REAP_MIN_AGE_SEC=0 run_reap --yes --archive-to "$ARCHIVE" \
+    "$lane_quarantine_process"
+  assert_contains "quarantine live process" "lane has a live process"
+  assert_exists "quarantine live process" "$lane_quarantine_process"
+  quarantine_pid="$(cat "$WORKDIR/quarantine.pid")"
+  kill "$quarantine_pid" 2>/dev/null || true
+  wait "$quarantine_pid" 2>/dev/null || true
 else
   skip_case "late ordinary-lane process"
 fi
@@ -1312,7 +1354,7 @@ mkdir "$rm_fail_bin"
 cat >"$rm_fail_bin/rm" <<'FAKE_RM'
 #!/usr/bin/env bash
 for arg in "$@"; do
-  if [[ "$arg" == "${FAIL_RM_PATH:-}" ]]; then
+  if [[ "$arg" == "${FAIL_RM_PATH:-}" || "$arg" == "${FAIL_RM_PATH:-}".reaping.* ]]; then
     "$REAL_RM" -rf -- "$arg/.git"
     chmod a-w "$arg"
     exit 1

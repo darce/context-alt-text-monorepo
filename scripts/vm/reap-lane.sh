@@ -1505,11 +1505,12 @@ process_one() {
     partial_intent_path="$(partial_intent_path_for "$real")"
   fi
 
-  # Archive roots do not have the sandbox materializer's lease. Re-probe the
-  # process/ownership boundary after all archive work and immediately before
-  # rm, closing the window in which a worker can enter after the earlier scan.
-  # Remove a newly written partial intent before returning so this refusal is a
-  # normal retry, not a misleading operator-review tombstone.
+  # Archive roots do not have the sandbox materializer's lease. Quarantine the
+  # checkout under a PID-keyed name so a worker that opens the original path
+  # after this point cannot land in the directory we are about to delete, then
+  # re-probe the tombstone. Remove a newly written partial intent before
+  # returning so this refusal is a normal retry, not a misleading
+  # operator-review tombstone.
   if lane_has_live_process "$real"; then
     [[ -n "$partial_intent_path" ]] && rm -f -- "$partial_intent_path"
     release_grok_lane_lock
@@ -1517,7 +1518,31 @@ process_one() {
     return 0
   fi
 
-  if ! rm -rf -- "$real" || [[ -e "$real" ]]; then
+  staging="${real}.reaping.$$"
+  if [[ -e "$staging" || -L "$staging" ]]; then
+    [[ -n "$partial_intent_path" ]] && rm -f -- "$partial_intent_path"
+    release_grok_lane_lock
+    skip "$path" "quarantine path exists"
+    return 0
+  fi
+  if ! mv "$real" "$staging"; then
+    [[ -n "$partial_intent_path" ]] && rm -f -- "$partial_intent_path"
+    release_grok_lane_lock
+    skip "$path" "could not quarantine lane for deletion"
+    return 0
+  fi
+  if lane_has_live_process "$staging"; then
+    mv "$staging" "$real" 2>/dev/null || true
+    [[ -n "$partial_intent_path" ]] && rm -f -- "$partial_intent_path"
+    release_grok_lane_lock
+    skip "$path" "lane has a live process"
+    return 0
+  fi
+
+  if ! rm -rf -- "$staging" || [[ -e "$staging" ]]; then
+    if [[ -e "$staging" || -L "$staging" ]]; then
+      mv "$staging" "$real" 2>/dev/null || true
+    fi
     release_grok_lane_lock
     if [[ -n "$archive_ref" ]]; then
       skip "$path" "rm failed after archive ${archive_ref}; lane partially removed"

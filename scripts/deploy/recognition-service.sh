@@ -2845,10 +2845,11 @@ restore_runtime_topology() {
 
 flip_edge_alias() {
   local env="$1" target="$2"
-  local alias next_alias from to timeout next_unit
+  local alias next_alias from to timeout next_unit digest
   alias="$(env_to_api_alias "$env")"
   next_alias="${alias}-next"
   next_unit="$(env_to_next_unit "$env")"
+  digest="${ACX_CANDIDATE_DIGEST_REF:-}"
   case "$target" in
     next) from="$alias"; to="$next_alias" ;;
     canonical) from="$next_alias"; to="$alias" ;;
@@ -2858,6 +2859,10 @@ flip_edge_alias() {
       ;;
   esac
   [[ "$alias" =~ ^(dev|dev-fir|staging|prod)-api$ ]] || return 1
+  if [[ "$target" == "next" && ! "${digest}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]]; then
+    warn "traffic flip marker requires a digest-pinned target (got: ${digest:-empty})"
+    return 1
+  fi
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
   log "Flipping Caddy reverse_proxy ${from}:8000 -> ${to}:8000"
   run_with_deadline "${timeout}" "caddy flip ${from} -> ${to}" \
@@ -2890,6 +2895,11 @@ printf '%s\n' "\$snapshot" | sudo tee "\$pointer" >/dev/null
 sudo touch -- "\$transaction_dir/edge-cutover.ready"
 source_count=\$(route_count '${from}')
 [ "\$source_count" -eq 1 ] || { echo 'expected exactly one formatted Caddy reverse_proxy source route' >&2; exit 1; }
+sudo install -d -m 700 -- "\$backup_root/${env}"
+if [ '${target}' = next ]; then
+  printf 'env=${env}\\ndigest=${digest}\\ntimestamp=%s\\ntransaction=${ACX_DEPLOY_TRANSACTION_ID}\\nnext_unit=${next_unit}\\nstatus=traffic_on_next\\n' "\$(date +%s)" | sudo tee "\$backup_root/${env}/cutover-inflight" >/dev/null
+  sudo grep -q '^status=traffic_on_next\$' "\$backup_root/${env}/cutover-inflight" || { echo 'cutover inflight marker write failed' >&2; exit 1; }
+fi
 tmp=\$(mktemp Caddyfile.flip.XXXXXX)
 trap 'rm -f -- "\$tmp"' EXIT
 sudo sed -E 's|(^[[:space:]]*reverse_proxy[[:space:]]+)${from}:8000([[:space:]]*)\$|\\1${to}:8000\\2|' Caddyfile >"\$tmp"
@@ -2897,11 +2907,7 @@ sudo mv -f -- "\$tmp" Caddyfile
 desired_count=\$(route_count '${to}')
 remaining_source_count=\$(route_count '${from}')
 [ "\$desired_count" -eq 1 ] && [ "\$remaining_source_count" -eq 0 ] || { echo 'Caddy reverse_proxy replacement did not converge exactly once' >&2; exit 1; }
-sudo install -d -m 700 -- "\$backup_root/${env}"
-if [ '${target}' = next ]; then
-  printf 'env=${env}\\ntransaction=${ACX_DEPLOY_TRANSACTION_ID}\\nnext_unit=${next_unit}\\nstatus=traffic_on_next\\n' | sudo tee "\$backup_root/${env}/cutover-inflight" >/dev/null
-  sudo grep -q '^status=traffic_on_next\$' "\$backup_root/${env}/cutover-inflight" || { echo 'cutover inflight marker write failed' >&2; exit 1; }
-elif [ '${target}' = canonical ]; then
+if [ '${target}' = canonical ]; then
   sudo rm -f -- "\$backup_root/${env}/cutover-inflight"
   printf 'env=${env}\\ntransaction=${ACX_DEPLOY_TRANSACTION_ID}\\nstatus=canonical\\n' | sudo tee "\$backup_root/${env}/cutover-committed" >/dev/null
   sudo grep -q '^status=canonical\$' "\$backup_root/${env}/cutover-committed" || { echo 'cutover commit marker write failed' >&2; exit 1; }
@@ -3000,6 +3006,7 @@ do_restart() {
     warn "persisted inflight cutover for ${env} could not be recovered; refusing a new candidate"
     return 1
   fi
+  ACX_CANDIDATE_DIGEST_REF="${expected_digest}"
   # ACX_IMAGE_REPO is shipped once in promote_gate (S2-A-06), including the
   # ACX_CONVERGE_RUNTIME=0 image-only path — do not rewrite .env again here.
   # A-11: pull materialises layers on the VM — free-space floor for VLM.
@@ -3302,14 +3309,16 @@ restore_registry_env_tag() {
     return 1
   fi
   if [[ -n "${ACX_CANDIDATE_DIGEST_REF:-}" ]]; then
+    # Compare-and-swap: re-read the shared env tag inside the lock immediately
+    # before retag/push so a concurrent promote cannot be silently overwritten.
     if ! _pull_ref_remote "${rollback_base}:${env_tag}" >/dev/null \
       || ! current_digest="$(remote_image_digest_ref "${rollback_base}:${env_tag}")"; then
-      warn "cannot observe current registry mapping for ${rollback_base}:${env_tag} immediately before rollback push; refusing unfenced rollback"
+      warn "cannot observe current registry mapping for ${env} (${rollback_base}:${env_tag}) immediately before rollback push; refusing unfenced rollback"
       return 1
     fi
     if [[ "${current_digest}" != "${ACX_ROLLBACK_DIGEST_REF}" \
       && "${current_digest}" != "${ACX_CANDIDATE_DIGEST_REF}" ]]; then
-      warn "STALE ROLLBACK REFUSED: ${rollback_base}:${env_tag} now maps to ${current_digest}, not this transaction's ${ACX_CANDIDATE_DIGEST_REF}"
+      warn "ROLLBACK CAS REFUSED: env ${env} observed ${current_digest} does not match planned ${ACX_CANDIDATE_DIGEST_REF}"
       return 1
     fi
   fi

@@ -17,6 +17,8 @@ never overwritten and overlay symlinks stay symlinks.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -36,6 +38,14 @@ DEPENDENCY_TREES: tuple[str, ...] = (
     "apps/prototype-wp-alt-context/vendor",
 )
 
+DEPENDENCY_LOCKFILES: dict[str, str] = {
+    "apps/prototype-wp-alt-context/node_modules": "apps/prototype-wp-alt-context/package-lock.json",
+    "apps/prototype-wp-alt-context/vendor": "apps/prototype-wp-alt-context/composer.lock",
+}
+
+SECURE_OFFLOAD_MARKER = ".acx-secure-offload"
+DEP_SOURCE_SIDECAR = ".acx-dep-source"
+
 
 def primary_checkout(start: Path) -> Path:
     proc = subprocess.run(
@@ -52,6 +62,32 @@ def primary_checkout(start: Path) -> Path:
             f"(exit {proc.returncode}): {detail}; refusing to guess the primary checkout"
         )
     return Path(common_dir).parent
+
+
+def _is_secure_offload_sandbox(worktree: Path, *, flagged: bool) -> bool:
+    """Return whether the destination is a secret-scanned untrusted sandbox."""
+    if flagged:
+        return True
+    marker = worktree / SECURE_OFFLOAD_MARKER
+    return marker.exists() or marker.is_symlink()
+
+
+def _refuse_secure_offload(worktree: Path) -> None:
+    raise RuntimeError(
+        f"refusing overlay copy and primary dependency symlinks into secure-offload "
+        f"sandbox {worktree}; never add external primary files after the secret scan"
+    )
+
+
+def _require_git_primary(primary: Path) -> None:
+    """Refuse an explicit --primary that is missing or not a Git checkout."""
+    if not primary.exists():
+        raise RuntimeError(f"explicit --primary {primary} does not exist; refusing to provision")
+    if not _git_metadata_present(primary):
+        raise RuntimeError(
+            f"explicit --primary {primary} is not a Git checkout; "
+            "pass --fixture-mode only for hermetic tests"
+        )
 
 
 def _remove_existing_path(path: Path) -> None:
@@ -197,7 +233,7 @@ def _rsync_overlay(src: Path, dest: Path, *, entries: list[str] | None = None) -
         shutil.copy2(src, dest, follow_symlinks=False)
 
 
-def provision_overlay(*, primary: Path, worktree: Path) -> list[str]:
+def provision_overlay(*, primary: Path, worktree: Path, fixture_mode: bool = False) -> list[str]:
     copied: list[str] = []
     for rel in OVERLAY_PATHS:
         src = primary / rel
@@ -219,9 +255,12 @@ def provision_overlay(*, primary: Path, worktree: Path) -> list[str]:
 
         ignored_entries = _ignored_overlay_entries(primary, rel)
         if ignored_entries is None:
-            # Unit fixtures and older callers may provide a directory without
-            # Git metadata. The real worktree path always has Git metadata;
-            # retain the historical copy behavior for those hermetic callers.
+            if not fixture_mode:
+                raise RuntimeError(
+                    f"explicit --primary {primary} has no Git metadata; "
+                    "refusing overlay copy (pass --fixture-mode only for hermetic tests)"
+                )
+            # Hermetic callers may provide a directory without Git metadata.
             _rsync_overlay(src, dest)
         elif src.is_dir():
             # In a real checkout, only ignored overlay entries are eligible.
@@ -245,26 +284,93 @@ def _replace_with_symlink(dest: Path, src: Path) -> None:
     os.symlink(src, dest)
 
 
+def _lockfile_digest(path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _sidecar_path(dest: Path) -> Path:
+    return dest.parent / DEP_SOURCE_SIDECAR
+
+
+def _read_sidecar(dest: Path) -> dict[str, object]:
+    sidecar = _sidecar_path(dest)
+    if not sidecar.is_file():
+        return {}
+    try:
+        payload = json.loads(sidecar.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _write_sidecar_entry(dest: Path, *, lockfile: str, digest: str) -> None:
+    payload = _read_sidecar(dest)
+    payload[dest.name] = {
+        "lockfile": lockfile,
+        "sha256": digest,
+        "readonly": True,
+    }
+    sidecar = _sidecar_path(dest)
+    sidecar.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _drop_sidecar_entry(dest: Path) -> None:
+    payload = _read_sidecar(dest)
+    if dest.name not in payload:
+        return
+    del payload[dest.name]
+    sidecar = _sidecar_path(dest)
+    if payload:
+        sidecar.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    elif sidecar.exists() or sidecar.is_symlink():
+        sidecar.unlink()
+
+
 def provision_dependency_trees(*, primary: Path, worktree: Path) -> list[str]:
-    """Symlink primary dependency trees. Never copy; never dereference."""
+    """Symlink primary trees only when lane and primary lockfiles match."""
     linked: list[str] = []
+    mismatches: list[str] = []
     for rel in DEPENDENCY_TREES:
         src = primary / rel
         dest = worktree / rel
-        if not src.exists():
-            continue
         if dest.resolve(strict=False) == src.resolve(strict=False):
             # Same path (main checkout, or --primary omitted on a normal clone):
             # never rmtree the live node_modules/vendor tree into a dangling link.
             if dest.is_symlink():
                 linked.append(rel)
             continue
+        if not src.exists():
+            continue
+
+        lock_rel = DEPENDENCY_LOCKFILES[rel]
+        digest = _lockfile_digest(worktree / lock_rel)
+        primary_digest = _lockfile_digest(primary / lock_rel)
+        if digest is None or primary_digest is None or digest != primary_digest:
+            if dest.is_symlink():
+                dest.unlink()
+            _drop_sidecar_entry(dest)
+            mismatches.append(rel)
+            print(
+                f"{rel}: lockfile mismatch or missing; install dependencies in the lane "
+                f"(no shared {rel} symlink). Align {lock_rel} with the primary checkout.",
+                file=sys.stderr,
+            )
+            continue
+
         if dest.exists() or dest.is_symlink():
             _replace_with_symlink(dest, src)
         else:
             dest.parent.mkdir(parents=True, exist_ok=True)
             os.symlink(src, dest)
+        _write_sidecar_entry(dest, lockfile=lock_rel, digest=digest)
         linked.append(rel)
+    if mismatches:
+        raise RuntimeError(
+            "dependency lockfile mismatch; install dependencies in the lane: "
+            + ", ".join(mismatches)
+        )
     return linked
 
 
@@ -272,11 +378,33 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--worktree", required=True, type=Path)
     parser.add_argument("--primary", type=Path, default=None)
+    parser.add_argument(
+        "--secure-offload",
+        action="store_true",
+        help="Fail closed: do not copy overlays or symlink primary trees into a sandbox",
+    )
+    parser.add_argument(
+        "--fixture-mode",
+        action="store_true",
+        help="Allow a non-Git --primary for hermetic tests only",
+    )
     args = parser.parse_args(argv)
     worktree = args.worktree.resolve()
     try:
-        primary = (args.primary or primary_checkout(worktree)).resolve()
-        provision_overlay(primary=primary, worktree=worktree)
+        if args.primary is not None:
+            primary = args.primary.expanduser()
+            if not primary.exists():
+                raise RuntimeError(
+                    f"explicit --primary {primary} does not exist; refusing to provision"
+                )
+            primary = primary.resolve()
+            if not args.fixture_mode:
+                _require_git_primary(primary)
+        else:
+            primary = primary_checkout(worktree).resolve()
+        if _is_secure_offload_sandbox(worktree, flagged=args.secure_offload):
+            _refuse_secure_offload(worktree)
+        provision_overlay(primary=primary, worktree=worktree, fixture_mode=args.fixture_mode)
         provision_dependency_trees(primary=primary, worktree=worktree)
     except RuntimeError as exc:
         print(exc, file=sys.stderr)

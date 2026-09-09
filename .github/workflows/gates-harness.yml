@@ -3,13 +3,11 @@ name: Gates harness
 on:
   pull_request:
     paths:
-      - "scripts/remote_gate.sh"
-      - "scripts/deploy/lib/bounded-remote-build.sh"
-      - "scripts/tests/**"
-      - "scripts/vm/**"
-      - "scripts/workstate/**"
-      - "mk/lane-lifecycle.mk"
-      - "mk/lane-worker.mk"
+      - "scripts/**/*.sh"
+      - "scripts/**/*.py"
+      - "mk/**"
+      - "Makefile.d/lifecycle.mk"
+      - ".gitignore"
       - "pyproject.toml"
       - "uv.lock"
       - ".github/workflows/gates-harness.yml"
@@ -17,13 +15,11 @@ on:
     branches:
       - main
     paths:
-      - "scripts/remote_gate.sh"
-      - "scripts/deploy/lib/bounded-remote-build.sh"
-      - "scripts/tests/**"
-      - "scripts/vm/**"
-      - "scripts/workstate/**"
-      - "mk/lane-lifecycle.mk"
-      - "mk/lane-worker.mk"
+      - "scripts/**/*.sh"
+      - "scripts/**/*.py"
+      - "mk/**"
+      - "Makefile.d/lifecycle.mk"
+      - ".gitignore"
       - "pyproject.toml"
       - "uv.lock"
       - ".github/workflows/gates-harness.yml"
@@ -52,16 +48,7 @@ jobs:
         run: python -m pip install pytest
 
       - name: Run gates harness tests
-        run: >-
-          python -m pytest
-          scripts/tests/test_gate_wrapper_exit_codes.py
-          scripts/tests/test_provision_lane_worktree.py
-          scripts/tests/test_lane_provisioner_make_wiring.py
-          scripts/tests/test_root_dev_group_is_light.py
-          scripts/tests/test_user_slice_tasksmax.py
-          scripts/tests/test_admin_bundle_freshness.py
-          scripts/tests/test_bounded_remote_build_process_tree.py
-          -q -p no:cacheprovider
+        run: python -m pytest scripts/tests -q -p no:cacheprovider
 
       - name: Run reap-lane bash suite
         run: bash scripts/vm/tests/test_reap_lane.sh

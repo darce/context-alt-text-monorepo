@@ -22,9 +22,19 @@ def test_provision_symlinks_binaries_instead_of_dereferencing(tmp_path: Path) ->
     (primary / "Makefile.d/lifecycle.mk").write_text("# overlay\n", encoding="utf-8")
     worktree.mkdir()
     (worktree / "apps/prototype-wp-alt-context").mkdir(parents=True)
+    _write_lockfiles(primary, '{"lock":"node"}\n', '{"lock":"vendor"}\n')
+    _write_lockfiles(worktree, '{"lock":"node"}\n', '{"lock":"vendor"}\n')
 
     completed = subprocess.run(
-        [sys.executable, str(PROVISION), "--worktree", str(worktree), "--primary", str(primary)],
+        [
+            sys.executable,
+            str(PROVISION),
+            "--worktree",
+            str(worktree),
+            "--primary",
+            str(primary),
+            "--fixture-mode",
+        ],
         check=False,
         capture_output=True,
         text=True,
@@ -47,7 +57,15 @@ def test_provision_preserves_symlinked_overlay(tmp_path: Path) -> None:
     worktree.mkdir()
 
     completed = subprocess.run(
-        [sys.executable, str(PROVISION), "--worktree", str(worktree), "--primary", str(primary)],
+        [
+            sys.executable,
+            str(PROVISION),
+            "--worktree",
+            str(worktree),
+            "--primary",
+            str(primary),
+            "--fixture-mode",
+        ],
         check=False,
         capture_output=True,
         text=True,
@@ -70,7 +88,15 @@ def test_provision_relocates_relative_overlay_symlink(tmp_path: Path) -> None:
     worktree.mkdir(parents=True)
 
     completed = subprocess.run(
-        [sys.executable, str(PROVISION), "--worktree", str(worktree), "--primary", str(primary)],
+        [
+            sys.executable,
+            str(PROVISION),
+            "--worktree",
+            str(worktree),
+            "--primary",
+            str(primary),
+            "--fixture-mode",
+        ],
         check=False,
         capture_output=True,
         text=True,
@@ -157,7 +183,15 @@ def test_provision_does_not_destroy_same_path_dependency_trees(tmp_path: Path) -
     marker.write_text("payload\n", encoding="utf-8")
 
     completed = subprocess.run(
-        [sys.executable, str(PROVISION), "--worktree", str(checkout), "--primary", str(checkout)],
+        [
+            sys.executable,
+            str(PROVISION),
+            "--worktree",
+            str(checkout),
+            "--primary",
+            str(checkout),
+            "--fixture-mode",
+        ],
         check=False,
         capture_output=True,
         text=True,
@@ -243,6 +277,122 @@ def test_provision_relocates_nested_ignored_overlay_symlink(tmp_path: Path) -> N
     assert dest.read_text(encoding="utf-8") == "# shared overlay\n"
 
 
+def test_explicit_missing_primary_fails_before_touching(tmp_path: Path) -> None:
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    overlay = worktree / "Makefile.d"
+    overlay.mkdir()
+    tracked = overlay / "demo-auth.mk"
+    tracked.write_text("# branch-owned\n", encoding="utf-8")
+    missing = tmp_path / "no-such-primary"
+
+    completed = subprocess.run(
+        [sys.executable, str(PROVISION), "--worktree", str(worktree), "--primary", str(missing)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode != 0
+    assert "does not exist" in completed.stderr
+    assert tracked.read_text(encoding="utf-8") == "# branch-owned\n"
+    assert list(overlay.iterdir()) == [tracked]
+
+
+def test_explicit_non_git_primary_fails_before_touching(tmp_path: Path) -> None:
+    primary = tmp_path / "primary"
+    worktree = tmp_path / "worktree"
+    primary.mkdir()
+    (primary / "Makefile.d").mkdir()
+    (primary / "Makefile.d" / "lifecycle.mk").write_text("# overlay\n", encoding="utf-8")
+    worktree.mkdir()
+    dest = worktree / "Makefile.d"
+    dest.mkdir()
+    tracked = dest / "demo-auth.mk"
+    tracked.write_text("# branch-owned\n", encoding="utf-8")
+
+    completed = subprocess.run(
+        [sys.executable, str(PROVISION), "--worktree", str(worktree), "--primary", str(primary)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode != 0
+    assert "not a Git checkout" in completed.stderr
+    assert tracked.read_text(encoding="utf-8") == "# branch-owned\n"
+    assert not (dest / "lifecycle.mk").exists()
+
+
+def test_provision_refuses_secure_offload_marker_without_copying(tmp_path: Path) -> None:
+    primary = tmp_path / "primary"
+    worktree = tmp_path / "worktree"
+    src = primary / "apps/prototype-wp-alt-context/node_modules"
+    src.mkdir(parents=True)
+    (src / "secret-dep").write_text("from-primary\n", encoding="utf-8")
+    overlay = primary / "Makefile.d"
+    overlay.mkdir()
+    (overlay / "lifecycle.mk").write_text("# ignored overlay\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(primary), "init", "-q"], check=True)
+    worktree.mkdir()
+    (worktree / ".acx-secure-offload").write_text("", encoding="utf-8")
+    dest_parent = worktree / "apps/prototype-wp-alt-context"
+    dest_parent.mkdir(parents=True)
+
+    completed = subprocess.run(
+        [sys.executable, str(PROVISION), "--worktree", str(worktree), "--primary", str(primary)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    dest = dest_parent / "node_modules"
+    assert completed.returncode != 0
+    assert "refusing" in completed.stderr
+    assert "secure-offload" in completed.stderr
+    assert "unrecognized arguments" not in completed.stderr
+    assert not dest.exists()
+    assert not dest.is_symlink()
+    assert not (worktree / "Makefile.d").exists()
+
+
+def test_provision_refuses_secure_offload_flag_without_marker(tmp_path: Path) -> None:
+    primary = tmp_path / "primary"
+    worktree = tmp_path / "worktree"
+    src = primary / "apps/prototype-wp-alt-context/node_modules"
+    src.mkdir(parents=True)
+    (src / "secret-dep").write_text("from-primary\n", encoding="utf-8")
+    (primary / "Makefile.d").mkdir()
+    (primary / "Makefile.d" / "lifecycle.mk").write_text("# overlay\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(primary), "init", "-q"], check=True)
+    worktree.mkdir()
+    (worktree / "apps/prototype-wp-alt-context").mkdir(parents=True)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(PROVISION),
+            "--worktree",
+            str(worktree),
+            "--primary",
+            str(primary),
+            "--secure-offload",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    dest = worktree / "apps/prototype-wp-alt-context" / "node_modules"
+    assert completed.returncode != 0
+    assert "refusing" in completed.stderr
+    assert "secure-offload" in completed.stderr
+    assert "unrecognized arguments" not in completed.stderr
+    assert not dest.exists()
+    assert not dest.is_symlink()
+    assert not (worktree / "Makefile.d").exists()
+
+
 def test_provision_replaces_a_dereferenced_copy(tmp_path: Path) -> None:
     primary = tmp_path / "primary"
     worktree = tmp_path / "worktree"
@@ -254,9 +404,19 @@ def test_provision_replaces_a_dereferenced_copy(tmp_path: Path) -> None:
     dest_root.mkdir(parents=True)
     (dest_root / ".bin").mkdir()
     (dest_root / ".bin" / "vitest").write_text("import './dist/cli.js'\n", encoding="utf-8")
+    _write_lockfiles(primary, '{"lock":"node"}\n', '{"lock":"vendor"}\n')
+    _write_lockfiles(worktree, '{"lock":"node"}\n', '{"lock":"vendor"}\n')
 
     completed = subprocess.run(
-        [sys.executable, str(PROVISION), "--worktree", str(worktree), "--primary", str(primary)],
+        [
+            sys.executable,
+            str(PROVISION),
+            "--worktree",
+            str(worktree),
+            "--primary",
+            str(primary),
+            "--fixture-mode",
+        ],
         check=False,
         capture_output=True,
         text=True,
@@ -266,3 +426,83 @@ def test_provision_replaces_a_dereferenced_copy(tmp_path: Path) -> None:
     assert dest.is_symlink()
     assert dest.resolve() == src.resolve()
     assert (dest / ".bin" / "vitest").is_symlink()
+
+
+def _write_lockfiles(root: Path, package_lock: str, composer_lock: str) -> None:
+    app = root / "apps/prototype-wp-alt-context"
+    app.mkdir(parents=True, exist_ok=True)
+    (app / "package-lock.json").write_text(package_lock, encoding="utf-8")
+    (app / "composer.lock").write_text(composer_lock, encoding="utf-8")
+
+
+def test_provision_links_when_lockfiles_match(tmp_path: Path) -> None:
+    primary = tmp_path / "primary"
+    worktree = tmp_path / "worktree"
+    src = primary / "apps/prototype-wp-alt-context/node_modules"
+    src.mkdir(parents=True)
+    (src / "pkg").write_text("from-primary\n", encoding="utf-8")
+    vendor = primary / "apps/prototype-wp-alt-context/vendor"
+    vendor.mkdir(parents=True)
+    (vendor / "pkg").write_text("from-primary-vendor\n", encoding="utf-8")
+    _write_lockfiles(primary, '{"lock":"a"}\n', '{"lock":"b"}\n')
+    worktree.mkdir()
+    _write_lockfiles(worktree, '{"lock":"a"}\n', '{"lock":"b"}\n')
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(PROVISION),
+            "--worktree",
+            str(worktree),
+            "--primary",
+            str(primary),
+            "--fixture-mode",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    dest = worktree / "apps/prototype-wp-alt-context/node_modules"
+    assert dest.is_symlink()
+    assert dest.resolve() == src.resolve()
+    sidecar = worktree / "apps/prototype-wp-alt-context/.acx-dep-source"
+    assert sidecar.is_file()
+    payload = sidecar.read_text(encoding="utf-8")
+    assert "node_modules" in payload
+    assert "vendor" in payload
+    assert (worktree / "apps/prototype-wp-alt-context/vendor").is_symlink()
+
+
+def test_provision_refuses_symlink_when_lockfiles_differ(tmp_path: Path) -> None:
+    primary = tmp_path / "primary"
+    worktree = tmp_path / "worktree"
+    src = primary / "apps/prototype-wp-alt-context/node_modules"
+    src.mkdir(parents=True)
+    (src / "pkg").write_text("from-primary\n", encoding="utf-8")
+    _write_lockfiles(primary, '{"lock":"primary"}\n', '{"lock":"vendor"}\n')
+    worktree.mkdir()
+    _write_lockfiles(worktree, '{"lock":"lane"}\n', '{"lock":"vendor"}\n')
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(PROVISION),
+            "--worktree",
+            str(worktree),
+            "--primary",
+            str(primary),
+            "--fixture-mode",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    dest = worktree / "apps/prototype-wp-alt-context/node_modules"
+    assert completed.returncode != 0
+    assert "install dependencies in the lane" in completed.stderr
+    assert not dest.exists()
+    assert not dest.is_symlink()
+    assert not (worktree / "apps/prototype-wp-alt-context/.acx-dep-source").exists()

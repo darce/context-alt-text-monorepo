@@ -50,6 +50,9 @@ def _assert_provisioner_after_bootstrap(recipe: str, *, worktree_var: str) -> No
     assert f'--worktree "$({worktree_var})"' in command, command
     assert '--primary "$(ORCHESTRATOR_ROOT)"' in command, command
     assert "||" not in command, f"provisioner exit must fail the recipe: {command}"
+    assert ".acx-secure-offload" in recipe
+    assert "--secure-offload" in recipe
+    assert "Skipping overlay/dependency provision for secure-offload sandbox" in recipe
 
 
 def test_lane_open_provisions_worktree_after_bootstrap() -> None:
@@ -66,9 +69,8 @@ def test_lane_check_provisions_worktree_after_bootstrap() -> None:
 
 def test_gates_harness_workflow_runs_provisioner_wiring_test() -> None:
     workflow = (REPO_ROOT / ".github/workflows/gates-harness.yml").read_text(encoding="utf-8")
-    assert "scripts/tests/test_lane_provisioner_make_wiring.py" in workflow
-    assert "mk/lane-lifecycle.mk" in workflow
-    assert "mk/lane-worker.mk" in workflow
+    assert "python -m pytest scripts/tests" in workflow
+    assert "mk/**" in workflow
 
 
 def test_gates_harness_workflow_runs_reap_lane_bash_suite() -> None:

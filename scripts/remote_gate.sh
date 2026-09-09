@@ -41,6 +41,15 @@
 # non-expansion is deliberate — those $vars must expand on the REMOTE side.
 set -euo pipefail
 
+# RGCLI-01: help/usage/no-args must not require a configured host and must not
+# fall through to the mutating `run` default.
+case "${1:-}" in
+""|-h|--help|help|usage)
+    sed -n '2,33p' "$0"
+    exit 0
+    ;;
+esac
+
 # Resolve the MAIN checkout root (parent of the git-common-dir), not the linked
 # worktree's toplevel — the config file and clone slug must be identical whether
 # invoked from the main checkout or a linked session worktree, and `.workbay/`
@@ -147,7 +156,7 @@ done
 SSH=(ssh -o BatchMode=yes -o ConnectTimeout=10
      -o ServerAliveInterval=30 -o ServerAliveCountMax=4 "$REMOTE_HOST")
 
-cmd="${1:-run}"
+cmd="${1:-}"
 [ "$#" -gt 0 ] && shift
 
 case "$cmd" in

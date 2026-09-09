@@ -1116,6 +1116,23 @@ run_reap --yes --archive-to "$ARCHIVE" "$lane_recent"
 assert_gone "archive aged lane" "$lane_recent"
 archive_has "archive aged lane" "refs/lanes/w/lane-recent/$recent_generation/main" "$recent_sha"
 
+# A worker still running in an aged, clean checkout must not be deleted.
+lane_inuse="$HOME/w/lane-in-use"
+clone_lane "$lane_inuse"
+touch -t 200001010000 "$lane_inuse" "$lane_inuse/.git/index" "$lane_inuse/.git/HEAD"
+inuse_pid=""
+(
+  cd "$lane_inuse"
+  sleep 30 &
+  echo $! >"$WORKDIR/inuse.pid"
+)
+inuse_pid="$(cat "$WORKDIR/inuse.pid")"
+REAP_MIN_AGE_SEC=0 run_reap --yes --archive-to "$ARCHIVE" "$lane_inuse"
+assert_contains "in-use lane" "lane has a live process"
+assert_exists "in-use lane" "$lane_inuse"
+kill "$inuse_pid" 2>/dev/null || true
+wait "$inuse_pid" 2>/dev/null || true
+
 # Remaining fixtures isolate archive behavior, independently of the age gate.
 export REAP_MIN_AGE_SEC=0
 

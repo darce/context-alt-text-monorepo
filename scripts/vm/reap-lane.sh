@@ -1152,6 +1152,30 @@ has_linked_worktrees() {
   [[ "${n:-0}" -gt 1 ]]
 }
 
+lane_has_live_process() {
+  # True when some process (other than this reaper) has cwd inside $1.
+  # Archive-mode sweeps of ~/w, ~/lanes, etc. have no lease/lock contract, so a
+  # worker that committed >1h ago and is now running a long test would otherwise
+  # lose its checkout (VMREAP-RA-06).
+  local dir="$1" cwd target pid
+  [[ -n "$dir" ]] || return 1
+  if [[ -d /proc ]]; then
+    for cwd in /proc/[0-9]*/cwd; do
+      [[ -L "$cwd" ]] || continue
+      target="$(readlink "$cwd" 2>/dev/null || true)"
+      case "$target" in
+        "$dir"|"$dir"/*)
+          pid="${cwd#/proc/}"
+          pid="${pid%/cwd}"
+          [[ "$pid" == "$$" ]] && continue
+          return 0
+          ;;
+      esac
+    done
+  fi
+  return 1
+}
+
 lane_newest_mtime() {
   local dir="$1" newest=0 candidate candidate_mtime git_item
   candidate_mtime="$(path_mtime "$dir" || true)"
@@ -1322,6 +1346,11 @@ process_one() {
     fi
   fi
   freshness_candidates=$((freshness_candidates + 1))
+
+  if lane_has_live_process "$real"; then
+    skip "$path" "lane has a live process"
+    return 0
+  fi
 
   if [[ -n "$archive_to" ]]; then
     generation="$(archive_generation "$real" || true)"

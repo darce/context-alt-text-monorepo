@@ -34,6 +34,8 @@ describe('public guide stylesheet isolation', () => {
     expect(css).toMatch(/\.acx-radio-group/);
     expect(css).toMatch(/\.acx-public-guide/);
     expect(css).toMatch(/\.acx-public-guide\s+\.acx-guided-page/);
+    expect(css).toMatch(/\.acx-public-guide\s+\.acx-button\b/);
+    expect(css).toMatch(/\.acx-public-guide\s+\.acx-button--danger\b/);
 
     for (const surface of ['dashboard', 'workbench', 'roster', 'review-queue'] as const) {
       expect(css, `guide CSS must not contain ${surface} selectors`).not.toMatch(

@@ -1,8 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+import { type Root } from 'react-dom/client';
 import { act, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { CASE_STUDY_URL, PUBLIC_GUIDE_FALLBACK, guidedCopy } from '../../admin/guidedPrototype/publicGuideCopy';
 import { mountPublicGuide } from '../main';
@@ -13,6 +14,7 @@ const viteConfig = (): string =>
 describe('public guide entry', () => {
   afterEach(() => {
     document.body.innerHTML = '';
+    vi.restoreAllMocks();
   });
 
   it('registers the third Vite input as js/guide/main.tsx', () => {
@@ -59,6 +61,7 @@ describe('public guide entry', () => {
   });
 
   it('leaves the HTML fallback visible when createRoot throws', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     document.body.innerHTML = `
       <main id="acx-public-guide">
         <p class="acx-public-guide__fallback" role="alert">${PUBLIC_GUIDE_FALLBACK}</p>
@@ -78,5 +81,39 @@ describe('public guide entry', () => {
     expect((fallback as HTMLElement).hidden).toBe(false);
     expect(fallback).toHaveTextContent(PUBLIC_GUIDE_FALLBACK);
     expect(document.body.textContent).not.toMatch(/Something went wrong/);
+    expect(errorSpy).toHaveBeenCalled();
+    expect(errorSpy.mock.calls.some((args) => args.some((arg) => String(arg).includes('createRoot failed')))).toBe(
+      true,
+    );
+  });
+
+  it('unmounts a created root and logs when render throws', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const unmount = vi.fn();
+    document.body.innerHTML = `
+      <main id="acx-public-guide">
+        <p class="acx-public-guide__fallback" role="alert">${PUBLIC_GUIDE_FALLBACK}</p>
+      </main>
+    `;
+
+    const failedRoot: Root = {
+      render: () => {
+        throw new Error('render failed');
+      },
+      unmount,
+    };
+
+    act(() => {
+      mountPublicGuide(document.getElementById('acx-public-guide'), {
+        createRoot: () => failedRoot,
+      });
+    });
+
+    const fallback = document.querySelector('.acx-public-guide__fallback');
+    expect(fallback).toBeInstanceOf(HTMLElement);
+    expect((fallback as HTMLElement).hidden).toBe(false);
+    expect(unmount).toHaveBeenCalledTimes(1);
+    expect(errorSpy).toHaveBeenCalled();
+    expect(errorSpy.mock.calls.some((args) => args.some((arg) => String(arg).includes('render failed')))).toBe(true);
   });
 });

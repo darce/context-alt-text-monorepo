@@ -5,6 +5,7 @@
 @use '../admin/styles/tokens/typography';
 
 .acx-public-guide {
+  @include meta.load-css('../admin/styles/components/button');
   @include meta.load-css('../admin/styles/components/guided-prototype');
   @include meta.load-css('../admin/styles/components/dialog');
   @include meta.load-css('../admin/styles/components/radio-group');

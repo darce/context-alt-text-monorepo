@@ -553,3 +553,77 @@ def test_provision_keyed_cache_isolates_primary_mutations(tmp_path: Path) -> Non
     (bin_dir / "vitest").write_text("dereferenced\n", encoding="utf-8")
     assert (dest / "pkg").read_text(encoding="utf-8") == "from-primary\n"
     assert (dest / ".bin" / "vitest").is_symlink()
+
+
+def test_provision_migrates_direct_primary_symlink_to_frozen_cache(tmp_path: Path) -> None:
+    primary = tmp_path / "primary"
+    worktree = tmp_path / "worktree"
+    src = primary / "apps/prototype-wp-alt-context/node_modules"
+    src.mkdir(parents=True)
+    (src / "pkg").write_text("from-primary\n", encoding="utf-8")
+    _write_lockfiles(primary, '{"lock":"node"}\n', '{"lock":"vendor"}\n')
+    worktree.mkdir()
+    dest_parent = worktree / "apps/prototype-wp-alt-context"
+    dest_parent.mkdir(parents=True)
+    dest = dest_parent / "node_modules"
+    dest.symlink_to(src)
+    _write_lockfiles(worktree, '{"lock":"node"}\n', '{"lock":"vendor"}\n')
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(PROVISION),
+            "--worktree",
+            str(worktree),
+            "--primary",
+            str(primary),
+            "--fixture-mode",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert dest.is_symlink()
+    assert dest.resolve() != src.resolve()
+    assert ".acx-dep-cache" in dest.resolve().parts
+    (src / "pkg").write_text("mutated-primary\n", encoding="utf-8")
+    assert (dest / "pkg").read_text(encoding="utf-8") == "from-primary\n"
+
+
+def test_provision_rejects_direct_primary_symlink_when_lockfiles_differ(tmp_path: Path) -> None:
+    primary = tmp_path / "primary"
+    worktree = tmp_path / "worktree"
+    src = primary / "apps/prototype-wp-alt-context/node_modules"
+    src.mkdir(parents=True)
+    (src / "pkg").write_text("from-primary\n", encoding="utf-8")
+    _write_lockfiles(primary, '{"lock":"primary"}\n', '{"lock":"vendor"}\n')
+    worktree.mkdir()
+    dest_parent = worktree / "apps/prototype-wp-alt-context"
+    dest_parent.mkdir(parents=True)
+    dest = dest_parent / "node_modules"
+    dest.symlink_to(src)
+    _write_lockfiles(worktree, '{"lock":"lane"}\n', '{"lock":"vendor"}\n')
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(PROVISION),
+            "--worktree",
+            str(worktree),
+            "--primary",
+            str(primary),
+            "--fixture-mode",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode != 0
+    assert "install dependencies in the lane" in completed.stderr
+    assert not dest.exists()
+    assert not dest.is_symlink()
+    assert src.is_dir()
+    assert (src / "pkg").read_text(encoding="utf-8") == "from-primary\n"

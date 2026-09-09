@@ -79,6 +79,12 @@ def _retired_copy_members(archive: Path) -> list[str]:
     return retired
 
 
+def test_conftest_does_not_enable_optional_bundle_bypass() -> None:
+    source = (REPO_ROOT / "scripts/tests/conftest.py").read_text(encoding="utf-8")
+    assert "setdefault" not in source
+    assert "os.environ" not in source
+
+
 def test_require_admin_dist_accepts_a_present_bundle(tmp_path: Path) -> None:
     dist = tmp_path / "dist"
     dist.mkdir()

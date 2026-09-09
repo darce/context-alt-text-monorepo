@@ -45,7 +45,7 @@ import {
 
 const KATY = 'katy-perry';
 const JUSTIN = 'justin-trudeau';
-const ORIGINAL_ALT = 'Two people at a film festival.';
+const ORIGINAL_ALT = 'Canadian Prime Minister Justin Trudeau and singer Katy Perry posing together on the red carpet at the Tribeca Festival.';
 
 const INCLUDE = GUIDED_NAME_CHOICE.INCLUDE;
 const OMIT = GUIDED_NAME_CHOICE.OMIT;

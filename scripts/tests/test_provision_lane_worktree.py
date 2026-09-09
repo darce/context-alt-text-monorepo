@@ -149,6 +149,100 @@ def test_provision_does_not_copytree_node_modules() -> None:
     assert "symlinks=True" in source
 
 
+def test_provision_does_not_destroy_same_path_dependency_trees(tmp_path: Path) -> None:
+    checkout = tmp_path / "checkout"
+    src = checkout / "apps/prototype-wp-alt-context/node_modules"
+    src.mkdir(parents=True)
+    marker = src / "keep-me"
+    marker.write_text("payload\n", encoding="utf-8")
+
+    completed = subprocess.run(
+        [sys.executable, str(PROVISION), "--worktree", str(checkout), "--primary", str(checkout)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert src.is_dir() and not src.is_symlink()
+    assert marker.read_text(encoding="utf-8") == "payload\n"
+
+
+def test_provision_skips_dependency_trees_when_worktree_is_primary_clone(tmp_path: Path) -> None:
+    worktree = tmp_path / "clone"
+    worktree.mkdir()
+    subprocess.run(["git", "-C", str(worktree), "init", "-q"], check=True)
+    src = worktree / "apps/prototype-wp-alt-context/node_modules"
+    src.mkdir(parents=True)
+    (src / "keep-me").write_text("payload\n", encoding="utf-8")
+
+    completed = subprocess.run(
+        [sys.executable, str(PROVISION), "--worktree", str(worktree)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert src.is_dir() and not src.is_symlink()
+    assert (src / "keep-me").read_text(encoding="utf-8") == "payload\n"
+
+
+def test_provision_fails_closed_when_primary_checkout_lookup_fails(tmp_path: Path) -> None:
+    worktree = tmp_path / "worktree"
+    src = worktree / "apps/prototype-wp-alt-context/node_modules"
+    src.mkdir(parents=True)
+    (src / "keep-me").write_text("payload\n", encoding="utf-8")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_git = fake_bin / "git"
+    fake_git.write_text("#!/usr/bin/env bash\necho 'simulated git failure' >&2\nexit 42\n", encoding="utf-8")
+    fake_git.chmod(0o755)
+
+    completed = subprocess.run(
+        [sys.executable, str(PROVISION), "--worktree", str(worktree)],
+        env={**os.environ, "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}"},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode != 0
+    assert "refusing to guess the primary checkout" in completed.stderr
+    assert src.is_dir() and not src.is_symlink()
+    assert (src / "keep-me").read_text(encoding="utf-8") == "payload\n"
+
+
+def test_provision_relocates_nested_ignored_overlay_symlink(tmp_path: Path) -> None:
+    primary = tmp_path / "primary"
+    worktree = tmp_path / "separate-parent" / "worktree"
+    primary.mkdir()
+    worktree.mkdir(parents=True)
+    (primary / ".gitignore").write_text("Makefile.d/*\n!Makefile.d/tracked.mk\n", encoding="utf-8")
+    overlay = primary / "Makefile.d"
+    overlay.mkdir()
+    (overlay / "tracked.mk").write_text("# tracked overlay\n", encoding="utf-8")
+    shared = primary / "shared"
+    shared.mkdir()
+    (shared / "lifecycle.mk").write_text("# shared overlay\n", encoding="utf-8")
+    (overlay / "lifecycle.mk").symlink_to("../shared/lifecycle.mk")
+    subprocess.run(["git", "-C", str(primary), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(primary), "add", ".gitignore", "Makefile.d/tracked.mk"], check=True)
+
+    completed = subprocess.run(
+        [sys.executable, str(PROVISION), "--worktree", str(worktree), "--primary", str(primary)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    dest = worktree / "Makefile.d" / "lifecycle.mk"
+    assert dest.is_symlink()
+    assert dest.resolve() == (shared / "lifecycle.mk").resolve()
+    assert dest.read_text(encoding="utf-8") == "# shared overlay\n"
+
+
 def test_provision_replaces_a_dereferenced_copy(tmp_path: Path) -> None:
     primary = tmp_path / "primary"
     worktree = tmp_path / "worktree"

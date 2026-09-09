@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import os
+import shutil
 import subprocess
 import sys
 import zipfile
@@ -22,6 +24,8 @@ ADMIN_SOURCE_ROOT_ENV = "ACX_ADMIN_SOURCE_ROOT"
 ADMIN_DIST_ROOT_ENV = "ACX_ADMIN_DIST_ROOT"
 PACKAGE_DIST_ROOT_ENV = "ACX_PACKAGE_DIST_ROOT"
 LIVE_FRESHNESS_NODE = "test_built_bundle_is_not_older_than_admin_sources"
+LIVE_ZIP_NODE = "test_packaged_zip_does_not_ship_retired_apply_copy"
+DEPLOY_ZIP_GLOB = "alt-context-*.zip"
 
 
 def _path_from_env(name: str, default: Path) -> Path:
@@ -41,7 +45,7 @@ def _package_roots() -> tuple[Path, ...]:
     raw = os.environ.get(PACKAGE_DIST_ROOT_ENV)
     if raw:
         return (Path(raw),)
-    return (PACKAGE_DIST_ROOT, LEGACY_PACKAGE_DIST_ROOT)
+    return (PACKAGE_DIST_ROOT,)
 
 
 def _using_override_roots() -> bool:
@@ -61,7 +65,21 @@ def _source_mtime(source_root: Path | None = None) -> float:
 
 
 def _package_zips() -> list[Path]:
-    return sorted(path for root in _package_roots() if root.is_dir() for path in root.glob("*.zip"))
+    """Zips package-plugin.sh writes (repo-root dist/), never the tracked legacy copy."""
+    return sorted(
+        path
+        for root in _package_roots()
+        if root.is_dir()
+        for path in root.glob(DEPLOY_ZIP_GLOB)
+        if path.is_file()
+    )
+
+
+def _deploy_zip() -> Path | None:
+    zips = _package_zips()
+    if not zips:
+        return None
+    return max(zips, key=lambda path: path.stat().st_mtime)
 
 
 def _admin_dist_present(dist_root: Path | None = None) -> bool:
@@ -85,15 +103,46 @@ def _require_admin_dist(dist_root: Path | None = None) -> None:
     )
 
 
+def _manifest_path(dist_root: Path) -> Path:
+    primary = dist_root / ".vite" / "manifest.json"
+    fallback = dist_root / "manifest.json"
+    return primary if primary.is_file() else fallback
+
+
+def _expected_generated_files(dist_root: Path) -> list[Path]:
+    manifest_path = _manifest_path(dist_root)
+    if not manifest_path.is_file():
+        raise AssertionError(f"missing vite manifest under {dist_root} (.vite/manifest.json or manifest.json)")
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or not payload:
+        raise AssertionError(f"vite manifest is empty: {manifest_path}")
+    expected = [manifest_path]
+    for chunk in payload.values():
+        if not isinstance(chunk, dict):
+            continue
+        file = chunk.get("file")
+        if isinstance(file, str) and file:
+            expected.append(dist_root / file)
+        for css in chunk.get("css") or []:
+            if isinstance(css, str) and css:
+                expected.append(dist_root / css)
+    return expected
+
+
 def _bundle_artifacts() -> list[Path]:
     dist_root = _dist_root()
     _require_admin_dist(dist_root)
-    artifacts: list[Path] = []
+    expected = _expected_generated_files(dist_root)
+    missing = [str(path) for path in expected if not path.is_file()]
+    assert missing == [], f"missing expected generated files: {missing}"
     dist_files = [path for path in dist_root.rglob("*") if path.is_file()]
     assert dist_files, f"admin bundle directory is empty: {dist_root}"
-    artifacts.extend(dist_files)
-    artifacts.extend(_package_zips())
-    return artifacts
+    deploy_zip = _deploy_zip()
+    if deploy_zip is None:
+        raise AssertionError(
+            f"missing packaged plugin zip {DEPLOY_ZIP_GLOB} under {', '.join(str(root) for root in _package_roots())}"
+        )
+    return [*dist_files, deploy_zip]
 
 
 def _stale_artifacts(artifacts: list[Path], newest_source: float) -> list[Path]:
@@ -133,7 +182,24 @@ def _run_pytest(args: list[str], *, cwd: Path, env: dict[str, str] | None = None
     )
 
 
-def _write_bundle_tree(root: Path, *, source_mtime: float, artifact_mtimes: dict[str, float]) -> tuple[Path, Path, Path]:
+def _write_zip(path: Path, *, payload: str, mtime: float) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "w") as handle:
+        handle.writestr("alt-context/assets/admin.js", payload)
+    os.utime(path, (mtime, mtime))
+    return path
+
+
+def _write_bundle_tree(
+    root: Path,
+    *,
+    source_mtime: float,
+    artifact_mtimes: dict[str, float],
+    zip_mtime: float | None = None,
+    write_zip: bool = True,
+    write_manifest: bool = True,
+    zip_payload: str = GUIDED_COPY,
+) -> tuple[Path, Path, Path]:
     source_root = root / "js"
     dist_root = root / "public-dist"
     package_root = root / "packages"
@@ -148,6 +214,30 @@ def _write_bundle_tree(root: Path, *, source_mtime: float, artifact_mtimes: dict
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("bundle\n", encoding="utf-8")
         os.utime(path, (mtime, mtime))
+    newest_artifact = max(artifact_mtimes.values()) if artifact_mtimes else source_mtime
+    if write_manifest:
+        js_files = [name for name in artifact_mtimes if name.endswith(".js")]
+        css_files = [name for name in artifact_mtimes if name.endswith(".css")]
+        manifest = dist_root / ".vite" / "manifest.json"
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text(
+            json.dumps(
+                {
+                    "js/admin/main.tsx": {
+                        "file": js_files[0] if js_files else "admin.js",
+                        "css": css_files,
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        os.utime(manifest, (newest_artifact, newest_artifact))
+    if write_zip:
+        _write_zip(
+            package_root / "alt-context-0.0.0.zip",
+            payload=zip_payload,
+            mtime=newest_artifact if zip_mtime is None else zip_mtime,
+        )
     return source_root, dist_root, package_root
 
 
@@ -162,6 +252,14 @@ def _freshness_override_env(source_root: Path, dist_root: Path, package_root: Pa
 def _run_live_freshness(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     return _run_pytest(
         [f"{Path(__file__).resolve()}::{LIVE_FRESHNESS_NODE}"],
+        cwd=REPO_ROOT,
+        env=env,
+    )
+
+
+def _run_live_zip(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return _run_pytest(
+        [f"{Path(__file__).resolve()}::{LIVE_ZIP_NODE}"],
         cwd=REPO_ROOT,
         env=env,
     )
@@ -209,13 +307,21 @@ def test_missing_admin_dist_skips_when_optional(monkeypatch: pytest.MonkeyPatch,
         _require_admin_dist(tmp_path / "missing-dist")
 
 
+def test_default_package_root_is_repo_dist_not_tracked_plugin_dist(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(PACKAGE_DIST_ROOT_ENV, raising=False)
+    assert _package_roots() == (PACKAGE_DIST_ROOT,)
+    assert LEGACY_PACKAGE_DIST_ROOT not in _package_roots()
+
+
+def test_package_zips_ignore_tracked_legacy_plugin_zip(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(PACKAGE_DIST_ROOT_ENV, raising=False)
+    legacy = LEGACY_PACKAGE_DIST_ROOT / "alt-context-0.0.4-e15-11-820752cb.zip"
+    assert legacy not in _package_zips()
+    assert all(path.parent != LEGACY_PACKAGE_DIST_ROOT for path in _package_zips())
+
+
+@pytest.mark.live_admin_bundle
 def test_built_bundle_is_not_older_than_admin_sources() -> None:
-    dist_root = _dist_root()
-    if not _using_override_roots() and not _admin_dist_present(dist_root):
-        pytest.skip(
-            f"live admin bundle {dist_root} is gitignored and absent; "
-            "missing/stale red-proof is the subprocess tests"
-        )
     artifacts = _bundle_artifacts()
     newest_source = _source_mtime()
     stale = [str(path) for path in _stale_artifacts(artifacts, newest_source)]
@@ -269,8 +375,7 @@ def test_missing_bundle_pytest_exits_nonzero(tmp_path: Path) -> None:
         source_mtime=1_700_000_200,
         artifact_mtimes={"admin.js": 1_700_000_200},
     )
-    dist_root.joinpath("admin.js").unlink()
-    dist_root.rmdir()
+    shutil.rmtree(dist_root)
     completed = _run_live_freshness(_freshness_override_env(source_root, dist_root, package_root))
     assert completed.returncode != 0, (
         "freshness gate stayed green on a missing admin bundle; "
@@ -280,9 +385,61 @@ def test_missing_bundle_pytest_exits_nonzero(tmp_path: Path) -> None:
     assert "missing admin bundle" in combined
 
 
+def test_missing_manifest_member_pytest_exits_nonzero(tmp_path: Path) -> None:
+    source_mtime = 1_700_000_200
+    source_root, dist_root, package_root = _write_bundle_tree(
+        tmp_path,
+        source_mtime=source_mtime,
+        artifact_mtimes={"admin.js": source_mtime + 60, "admin.css": source_mtime + 60},
+    )
+    (dist_root / "admin.css").unlink()
+    completed = _run_live_freshness(_freshness_override_env(source_root, dist_root, package_root))
+    assert completed.returncode != 0, (
+        "freshness gate stayed green when a manifest member was missing; "
+        f"stdout={completed.stdout!r}; stderr={completed.stderr!r}"
+    )
+    combined = f"{completed.stdout}\n{completed.stderr}"
+    assert "missing expected generated files" in combined
+
+
+def test_missing_deploy_zip_pytest_exits_nonzero(tmp_path: Path) -> None:
+    source_mtime = 1_700_000_200
+    source_root, dist_root, package_root = _write_bundle_tree(
+        tmp_path,
+        source_mtime=source_mtime,
+        artifact_mtimes={"admin.js": source_mtime + 60, "admin.css": source_mtime + 60},
+        write_zip=False,
+    )
+    completed = _run_live_freshness(_freshness_override_env(source_root, dist_root, package_root))
+    assert completed.returncode != 0, (
+        "freshness gate stayed green when the deploy zip was missing; "
+        f"stdout={completed.stdout!r}; stderr={completed.stderr!r}"
+    )
+    combined = f"{completed.stdout}\n{completed.stderr}"
+    assert "missing packaged plugin zip" in combined
+
+
+def test_stale_deploy_zip_is_not_hidden_by_fresh_dist(tmp_path: Path) -> None:
+    source_mtime = 1_700_000_200
+    source_root, dist_root, package_root = _write_bundle_tree(
+        tmp_path,
+        source_mtime=source_mtime,
+        artifact_mtimes={"admin.js": source_mtime + 60, "admin.css": source_mtime + 60},
+        zip_mtime=source_mtime - 60,
+    )
+    completed = _run_live_freshness(_freshness_override_env(source_root, dist_root, package_root))
+    assert completed.returncode != 0, (
+        "freshness gate stayed green on a stale deploy zip hidden by fresh dist files; "
+        f"stdout={completed.stdout!r}; stderr={completed.stderr!r}"
+    )
+    combined = f"{completed.stdout}\n{completed.stderr}"
+    assert "stale" in combined.lower()
+
+
+@pytest.mark.live_admin_bundle
 def test_packaged_zip_does_not_ship_retired_apply_copy() -> None:
     zips = _package_zips()
-    assert zips, f"missing packaged plugin artifact under {PACKAGE_DIST_ROOT} or {LEGACY_PACKAGE_DIST_ROOT}"
+    assert zips, f"missing packaged plugin artifact under {PACKAGE_DIST_ROOT}"
     retired = []
     for archive in zips:
         retired.extend(f"{archive.name}:{name}" for name in _retired_copy_members(archive))
@@ -295,3 +452,20 @@ def test_retired_copy_is_rejected_when_guided_copy_is_also_present(tmp_path: Pat
         handle.writestr("assets/admin.js", f"{GUIDED_COPY}; {RETIRED_COPY}")
 
     assert _retired_copy_members(archive) == ["assets/admin.js"]
+
+
+def test_deploy_zip_with_retired_copy_pytest_exits_nonzero(tmp_path: Path) -> None:
+    source_mtime = 1_700_000_200
+    source_root, dist_root, package_root = _write_bundle_tree(
+        tmp_path,
+        source_mtime=source_mtime,
+        artifact_mtimes={"admin.js": source_mtime + 60, "admin.css": source_mtime + 60},
+        zip_payload=f"{GUIDED_COPY}; {RETIRED_COPY}",
+    )
+    completed = _run_live_zip(_freshness_override_env(source_root, dist_root, package_root))
+    assert completed.returncode != 0, (
+        "retired-copy zip gate stayed green; "
+        f"stdout={completed.stdout!r}; stderr={completed.stderr!r}"
+    )
+    combined = f"{completed.stdout}\n{completed.stderr}"
+    assert "retired" in combined.lower()

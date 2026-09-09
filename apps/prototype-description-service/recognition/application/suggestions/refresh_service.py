@@ -569,21 +569,22 @@ class SuggestionRefreshService:
             return None
         live_loaded = False
         try:
-            labeled_reps = list(await self._cluster_repository.get_all_representatives(cluster_id))
-            live_loaded = True
+            get_all_representatives = self._cluster_repository.get_all_representatives
         except AttributeError:
-            # Incomplete structural doubles (e.g. batch-surfacing stubs) omit the
-            # Protocol method. Production SqlAlchemyClusterRepository implements it.
+            # Incomplete structural doubles omit the Protocol method. Scope this
+            # compatibility to lookup only; AttributeError from call/await/iteration
+            # is a live-gallery fault (TEST-15, DATA-13 / Release It ch-5).
             if any(
                 identity.embedding_model for identities in identities_by_cluster.values() for identity in identities
             ):
                 raise
             labeled_reps = []
+        else:
+            labeled_reps = list(await get_all_representatives(cluster_id))
+            live_loaded = True
         gallery_model, gallery_vectors = same_space_representative_vectors(labeled_reps)
         if gallery_vectors:
-            return gallery_model, {
-                cluster_id: [normalize_face_embedding(vector) for vector in gallery_vectors]
-            }
+            return gallery_model, {cluster_id: [normalize_face_embedding(vector) for vector in gallery_vectors]}
         if live_loaded:
             logger.info(
                 "[suggestions] surface_for_newly_labeled_cluster: no same-space representatives cluster_id=%s",

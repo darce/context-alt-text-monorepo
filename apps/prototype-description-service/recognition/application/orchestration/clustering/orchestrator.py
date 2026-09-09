@@ -290,34 +290,10 @@ class IncrementalClusteringRunner:
         )
         result = await self._session.execute(stmt)
         rows = list(result.scalars().all())
-        models = {str(row.embedding_model) for row in rows if getattr(row, "embedding_model", None)}
-        if len(models) <= 1:
-            return rows
-        try:
-            from recognition.application.embedding.manifest import active_embedding_model_id
+        from recognition.application.suggestions.embedding_space import filter_to_active_embedding_space
 
-            active = active_embedding_model_id()
-        except Exception:
-            logger.warning(
-                "[clustering] mixed embedding_model present but active model unresolved; "
-                "fail-closed empty batch (FIR23-01)"
-            )
-            return []
-        filtered = [row for row in rows if getattr(row, "embedding_model", None) == active]
-        if not filtered:
-            logger.warning(
-                "[clustering] mixed embedding_model=%s none match active=%s; fail-closed empty batch",
-                sorted(models),
-                active,
-            )
-        elif len(filtered) < len(rows):
-            logger.info(
-                "[clustering] embedding_model filter active=%s kept=%d skipped=%d",
-                active,
-                len(filtered),
-                len(rows) - len(filtered),
-            )
-        return filtered
+        # Mixed rows keep active_embedding_model_id only; unresolved → empty.
+        return filter_to_active_embedding_space(rows)
 
     async def _complete_empty_job(
         self,
@@ -389,6 +365,7 @@ class IncrementalClusteringRunner:
                 sharpness=row.sharpness,
                 embedding_norm=row.embedding_norm,
                 occlusion_severity=row.occlusion_severity,
+                embedding_model=str(row.embedding_model) if getattr(row, "embedding_model", None) else None,
             )
             for row in rows
         ]

@@ -380,7 +380,33 @@ async def test_orchestrator_fetch_keeps_only_active_model(monkeypatch: pytest.Mo
         session.execute = AsyncMock(return_value=result)
         runner = IncrementalClusteringRunner.__new__(IncrementalClusteringRunner)
         runner._session = session
-        kept = await runner._fetch_unclustered_identities(uuid4())
+        kept, skip_payload = await runner._fetch_unclustered_identities(uuid4())
         assert kept == [active]
+        assert skip_payload["active_embedding_model"] == "stub-detector@test"
+        assert skip_payload["skipped_models"] == ["legacy-seed", "unstamped"]
+        assert skip_payload["skipped_count"] == 2
+        assert skip_payload["kept_count"] == 1
+        assert skip_payload["total_count"] == 3
     finally:
         get_settings.cache_clear()
+
+
+def test_probe_space_skip_payload_shape() -> None:
+    """B-05: job payload names active model, skipped models, and counts."""
+    from recognition.application.orchestration.clustering.orchestrator import probe_space_skip_payload
+
+    active = SimpleNamespace(embedding_model="stub-detector@test")
+    foreign = SimpleNamespace(embedding_model="legacy-seed")
+    unstamped = SimpleNamespace(embedding_model=None)
+    payload = probe_space_skip_payload(
+        [unstamped, foreign, active],
+        [active],
+        active_model="stub-detector@test",
+    )
+    assert payload == {
+        "active_embedding_model": "stub-detector@test",
+        "skipped_models": ["legacy-seed", "unstamped"],
+        "skipped_count": 2,
+        "kept_count": 1,
+        "total_count": 3,
+    }

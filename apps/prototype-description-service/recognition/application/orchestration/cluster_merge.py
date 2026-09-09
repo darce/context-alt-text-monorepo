@@ -26,7 +26,12 @@ from recognition.application.suggestions.embedding_space import (
     models_are_same_space,
     same_space_representative_vectors,
 )
-from recognition.domain.cluster import IdentityCluster, ReservedClusterLabelError, is_reserved_label_shape
+from recognition.domain.cluster import (
+    CrossSpaceMergeError,
+    IdentityCluster,
+    ReservedClusterLabelError,
+    is_reserved_label_shape,
+)
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.repositories import ClusterRepository, MemberRepository
 from recognition.domain.suggestion import AssignmentSuggestion, SuggestionStatus
@@ -43,15 +48,22 @@ async def _cluster_gallery_model(cluster_repo: ClusterRepository, cluster_id: st
     return model
 
 
-async def _same_space_merge_allowed(
+async def _ensure_same_space_merge(
     cluster_repo: ClusterRepository,
     source_cluster_id: str,
     target_cluster_id: str,
-) -> bool:
+) -> None:
     """FIR23-01: refuse composing mixed embedding spaces via merge."""
     source_model = await _cluster_gallery_model(cluster_repo, source_cluster_id)
     target_model = await _cluster_gallery_model(cluster_repo, target_cluster_id)
-    return models_are_same_space(source_model, target_model)
+    if models_are_same_space(source_model, target_model):
+        return
+    raise CrossSpaceMergeError(
+        source_cluster_id=source_cluster_id,
+        target_cluster_id=target_cluster_id,
+        source_model=source_model,
+        target_model=target_model,
+    )
 
 
 async def _retry_pending_suggestions(
@@ -311,13 +323,7 @@ async def merge_cluster(
             clustering_logger=clustering_logger,
         )
 
-    if not await _same_space_merge_allowed(cluster_repo, source_cluster_id, target_cluster_id):
-        logger.warning(
-            "[clustering] refuse cross-space merge source=%s target=%s",
-            source_cluster_id,
-            target_cluster_id,
-        )
-        return None
+    await _ensure_same_space_merge(cluster_repo, source_cluster_id, target_cluster_id)
 
     moved_identity_ids: list[uuid.UUID] = []
     if moved_by_merge_id and session is not None:

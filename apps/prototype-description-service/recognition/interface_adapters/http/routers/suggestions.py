@@ -22,7 +22,12 @@ from recognition.application.suggestions.roster_candidates import (
 )
 from recognition.application.suggestions.service import SuggestionService
 from recognition.config.security import get_security_settings
-from recognition.domain.cluster import IdentityCluster, ReservedClusterLabelError, is_reserved_label_shape
+from recognition.domain.cluster import (
+    CrossSpaceMergeError,
+    IdentityCluster,
+    ReservedClusterLabelError,
+    is_reserved_label_shape,
+)
 from recognition.domain.suggestion import (
     AssignmentSuggestion,
     BulkAcceptResult,
@@ -530,13 +535,16 @@ async def accept_merge_suggestion(
         requested_target_cluster_id=request.target_cluster_id,
         survivor_cluster_id=getattr(suggestion, "survivor_cluster_id", None),
     )
-    merged = await cluster_service.merge_cluster(
-        source_cluster_id,
-        request.tenant_id,
-        target_cluster_id,
-        target_label=target_label,
-        moved_by_merge_id=str(suggestion.id),
-    )
+    try:
+        merged = await cluster_service.merge_cluster(
+            source_cluster_id,
+            request.tenant_id,
+            target_cluster_id,
+            target_label=target_label,
+            moved_by_merge_id=str(suggestion.id),
+        )
+    except CrossSpaceMergeError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     if merged is None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Merge failed")
 
@@ -799,13 +807,17 @@ async def _bulk_accept_merges(
         except HTTPException:
             skipped += 1
             continue
-        merged = await cluster_service.merge_cluster(
-            source_cluster_id,
-            tenant_id,
-            target_cluster_id,
-            target_label=target_label,
-            moved_by_merge_id=str(candidate.id),
-        )
+        try:
+            merged = await cluster_service.merge_cluster(
+                source_cluster_id,
+                tenant_id,
+                target_cluster_id,
+                target_label=target_label,
+                moved_by_merge_id=str(candidate.id),
+            )
+        except CrossSpaceMergeError:
+            skipped += 1
+            continue
         if merged is None:
             skipped += 1
             continue

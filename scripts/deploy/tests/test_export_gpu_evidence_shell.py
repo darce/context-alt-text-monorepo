@@ -116,11 +116,12 @@ fi
     assert not list(tmp_path.glob(".bundle.tmp.*"))
 
 
-@pytest.mark.parametrize("fault", ["none", "artifact", "publish_parent"])
-def test_publication_durability_barriers(tmp_path: Path, fault: str) -> None:
-    bundle = tmp_path / "bundle"
-    bundle.mkdir()
-    (bundle / "manifest.json").write_bytes(b"previous evidence")
+@pytest.mark.parametrize(("fault", "new_parent"), [("none", False), ("artifact", False), ("publish_parent", False), ("none", True)])
+def test_publication_durability_barriers(tmp_path: Path, fault: str, new_parent: bool) -> None:
+    bundle = tmp_path / "fresh" / "nested" / "bundle" if new_parent else tmp_path / "bundle"
+    if not new_parent:
+        bundle.mkdir()
+        (bundle / "manifest.json").write_bytes(b"previous evidence")
     fake_oci = tmp_path / "oci"
     fake_oci.write_text("#!/bin/bash\ncase \" $* \" in\n*' compute instance get '*) printf '%s\\n' '{\"data\":{\"id\":\"ocid1.instance.example\",\"compartment-id\":\"ocid1.compartment.example\",\"lifecycle-state\":\"STOPPED\"}}';;\n*) printf '%s\\n' '{\"data\":[]}' ;;\nesac\n")
     fake_oci.chmod(0o755)
@@ -140,6 +141,8 @@ def traced_fsync(fd):
     bundle = Path(os.environ["DURABILITY_BUNDLE"])
     with open(os.environ["DURABILITY_LOG"], "a") as log:
         log.write(path + "\n")
+        if not bundle.exists() and any(bundle.parent.glob(".bundle.tmp.*/previous")):
+            log.write("BACKUP_PHASE:" + path + "\n")
     fault = os.environ["DURABILITY_FAULT"]
     if fault == "artifact" and path.endswith("/manifest.json"):
         raise OSError("injected artifact fsync failure")
@@ -161,6 +164,14 @@ os.open, os.fsync = traced_open, traced_fsync
         synced = log.read_text().splitlines()
         intent_index = next(i for i, path in enumerate(synced) if path.endswith("/.publish-intent"))
         before_intent = synced[:intent_index]
+        backup_barriers = [path.removeprefix("BACKUP_PHASE:") for path in synced if path.startswith("BACKUP_PHASE:")]
+        # Persist the backup reference before persisting removal of the old one.
+        if not new_parent:
+            assert backup_barriers[0] == str(Path(synced[intent_index]).parent), backup_barriers
+        else:
+            # New ancestors must be durable too, not only the final bundle parent.
+            assert str(bundle.parent.parent) in before_intent, before_intent
+            assert str(tmp_path) in before_intent, before_intent
         for artifact in bundle.iterdir():
             assert any(path.endswith("/" + artifact.name) for path in before_intent), artifact.name
         assert any(Path(path).name == "bundle" for path in before_intent), before_intent

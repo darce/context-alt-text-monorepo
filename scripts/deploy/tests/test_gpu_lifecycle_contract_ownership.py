@@ -10,7 +10,9 @@ shipped. The systemd-tmpfiles lines in the installer are the authority
 from __future__ import annotations
 
 import itertools
+import os
 import re
+import subprocess
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -24,17 +26,62 @@ _TMPFILES_DIR = re.compile(
     re.MULTILINE,
 )
 _BRACE = re.compile(r"\{([^{}]+)\}")
+_DEFAULT_ASSIGNMENT = re.compile(
+    r'^(?P<name>[A-Za-z_][A-Za-z0-9_]*)="\$\{(?P=name):-'
+    r'(?P<default>[^\"]*)\}"$',
+    re.MULTILINE,
+)
+_VARIABLE_REFERENCE = re.compile(r"\$\{(?P<name>[A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def _installer_defaults(text: str) -> dict[str, str]:
+    """Extract the installer's explicit ``VAR=${VAR:-default}`` values."""
+    defaults: dict[str, str] = {}
+    for match in _DEFAULT_ASSIGNMENT.finditer(text):
+        name = match["name"]
+        default = match["default"]
+        assert name not in defaults or defaults[name] == default, (
+            f"installer assigns conflicting defaults for {name}: "
+            f"{defaults.get(name)!r} and {default!r}"
+        )
+        defaults[name] = default
+    return defaults
+
+
+def _resolve_installer_value(raw: str, defaults: dict[str, str]) -> str:
+    """Resolve installer variable references, failing on an unknown default."""
+    unresolved: list[str] = []
+
+    def replace(match: re.Match[str]) -> str:
+        name = match["name"]
+        if name not in defaults:
+            unresolved.append(name)
+            return match[0]
+        return defaults[name]
+
+    resolved = _VARIABLE_REFERENCE.sub(replace, raw)
+    assert not unresolved, (
+        f"installer tmpfiles value {raw!r} references variables without a "
+        f"${{VAR:-default}} assignment: {sorted(set(unresolved))}"
+    )
+    return resolved
 
 
 def _provisioned() -> dict[str, str]:
     """Map each provisioned /run directory to its ``user:group mode`` string."""
     text = INSTALL_SCRIPT.read_text(encoding="utf-8")
+    defaults = _installer_defaults(text)
     found = {}
     for match in _TMPFILES_DIR.finditer(text):
-        path = match["path"]
-        ownership = f"{match['user']}:{match['group']} {match['mode']}"
-        if "$" not in path:
-            found[path] = ownership
+        raw_path = match["path"]
+        if "$" in raw_path:
+            # Per-environment paths are generated at deploy time rather than
+            # being one concrete directory for this source-level contract.
+            continue
+        path = _resolve_installer_value(raw_path, defaults)
+        user = _resolve_installer_value(match["user"], defaults)
+        group = _resolve_installer_value(match["group"], defaults)
+        found[path] = f"{user}:{group} {match['mode']}"
     # A silently-empty parse would make every assertion below vacuous.
     assert {"/run/acx", "/run/acx-write"} <= set(found), (
         f"installer tmpfiles parse found only {sorted(found)}; "
@@ -105,7 +152,7 @@ def test_contract_does_not_claim_the_state_dir_is_api_owned() -> None:
 
 
 def test_each_registered_deployment_uses_api_writable_tmpfiles_template() -> None:
-    """The validated registry must drive one root:10001 0775 tmpfiles rule."""
+    """The validated registry must drive one root:image-gid 0775 tmpfiles rule."""
     deployments = DEPLOYMENTS.read_text(encoding="utf-8").splitlines()
     required_deployments = {"dev", "dev-fir", "staging", "prod"}
     assert deployments, "GPU snapshot deployment registry must not be empty"
@@ -117,7 +164,14 @@ def test_each_registered_deployment_uses_api_writable_tmpfiles_template() -> Non
     )
 
     installer = INSTALL_SCRIPT.read_text(encoding="utf-8")
-    assert "d /run/acx-write/${environment} 0775 root 10001 -" in installer
+    defaults = _installer_defaults(installer)
+    template = re.search(
+        r"d /run/acx-write/\$\{environment\} 0775 root (?P<group>\S+) -",
+        installer,
+    )
+    assert template is not None
+    _, image_gid = _api_runtime_ids()
+    assert _resolve_installer_value(template["group"], defaults) == image_gid
     assert 'done < "$DEPLOYMENTS_FILE"' in installer
 
 
@@ -197,10 +251,43 @@ def test_load_dir_group_matches_the_gid_the_api_image_pins() -> None:
 
 
 def test_installer_template_group_is_not_hardcoded_away_from_the_image() -> None:
-    """The per-environment tmpfiles template carries the same group."""
+    """The per-environment tmpfiles template carries the same resolved group."""
     _, image_gid = _api_runtime_ids()
     installer = INSTALL_SCRIPT.read_text(encoding="utf-8")
-    assert f"d /run/acx-write/${{environment}} 0775 root {image_gid} -" in installer, (
-        "the per-environment tmpfiles template must grant the gid the api "
+    defaults = _installer_defaults(installer)
+    template = re.search(
+        r"d /run/acx-write/\$\{environment\} 0775 root (?P<group>\S+) -",
+        installer,
+    )
+    assert template is not None
+    assert _resolve_installer_value(template["group"], defaults) == image_gid, (
+        "the per-environment tmpfiles template must resolve to the gid the api "
         f"image pins ({image_gid})"
     )
+
+
+def test_installer_rejects_a_gid_override_that_differs_from_the_api_image() -> None:
+    """A mismatched host grant would silently remove the api container's write access."""
+    _, image_gid = _api_runtime_ids()
+    mismatched_gid = "2000" if image_gid != "2000" else "2001"
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "ACX_API_GID": mismatched_gid,
+            "ACX_GPU_DEPLOYMENTS_FILE": str(DEPLOYMENTS),
+            "GPU_INSTANCE_ID": "ocid1.instance.oc1.phx.gpuopscontracttest",
+            "READY_URL": "https://gpu.test/health",
+        }
+    )
+    result = subprocess.run(
+        [str(INSTALL_SCRIPT), "--host", "test.invalid", "--dry-run"],
+        cwd=REPO_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert f"ACX_API_GID={mismatched_gid}" in result.stderr
+    assert f"api image pinned gid={image_gid}" in result.stderr

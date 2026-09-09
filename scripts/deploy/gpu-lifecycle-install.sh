@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Install the burst-GPU lifecycle controller on acx-backend (GPUW-1).
 #
-# Why this exists rather than cloud-init: infra/oci/cloud-init.yaml already
-# carries a reaper unit, but cloud-init runs once at first boot and acx-backend
-# is long past that -- so the units were never installed on the live host.
+# Why this exists rather than cloud-init: cloud-init runs once at first boot,
+# while this installer can converge the lifecycle units on an existing host.
 # [RLSE-11] rejects a deploy step that is a human click-path executed more than
 # once, so this is idempotent and re-runnable.
 #
@@ -133,17 +132,126 @@ verify_gpu_lifecycle_start_timer() {
     echo "acx-gpu-start.timer enabled active"
 }
 
-activate_gpu_lifecycle_timers() {
-    [ "$#" -eq 5 ] || {
-        echo "error: lifecycle activation requires four expected hashes and max lease" >&2
+verify_gpu_intent_path() {
+    [ "$#" -eq 1 ] || {
+        echo "error: intent-path verification requires one expected hash" >&2
         return 2
     }
+    local expected_hash=$1 effective_unit_dir fragment_path drop_in_paths effective_hash
+    effective_unit_dir="${ACX_EFFECTIVE_SYSTEMD_DIR:-/etc/systemd/system}"
+    fragment_path=$(systemctl show acx-gpu-intent.path --property=FragmentPath --value) || {
+        echo "error: could not resolve the effective fragment for acx-gpu-intent.path" >&2
+        return 1
+    }
+    if [ "$fragment_path" != "${effective_unit_dir}/acx-gpu-intent.path" ]; then
+        echo "error: acx-gpu-intent.path effective fragment is unexpected: ${fragment_path:-<empty>}" >&2
+        return 1
+    fi
+    drop_in_paths=$(systemctl show acx-gpu-intent.path --property=DropInPaths --value) || {
+        echo "error: could not inspect drop-ins for acx-gpu-intent.path" >&2
+        return 1
+    }
+    if [ -n "$drop_in_paths" ]; then
+        echo "error: acx-gpu-intent.path has unexpected effective drop-ins: $drop_in_paths" >&2
+        return 1
+    fi
+    effective_hash=$(sha256_file "$fragment_path" | awk '{print $1}') || {
+        echo "error: could not hash the effective fragment for acx-gpu-intent.path" >&2
+        return 1
+    }
+    if [ "$effective_hash" != "$expected_hash" ]; then
+        echo "error: acx-gpu-intent.path effective content does not match this release" >&2
+        return 1
+    fi
+    systemctl is-enabled --quiet acx-gpu-intent.path || {
+        echo "error: acx-gpu-intent.path is not enabled" >&2
+        return 1
+    }
+    systemctl is-active --quiet acx-gpu-intent.path || {
+        echo "error: acx-gpu-intent.path is not active" >&2
+        return 1
+    }
+    echo "acx-gpu-intent.path enabled active"
+}
+
+fence_gpu_intent_path() {
+    local load_state
+
+    # The path watcher can launch START from an operator intent write. Disable
+    # and stop it before replacing any release or effective unit, and tolerate
+    # fresh hosts where the watcher has not been installed yet.
+    sudo systemctl disable --now acx-gpu-intent.path || {
+        if ! load_state=$(systemctl show acx-gpu-intent.path --property=LoadState --value) \
+            || [ "$load_state" != not-found ]; then
+            echo 'error: failed to disable acx-gpu-intent.path' >&2
+            return 1
+        fi
+    }
+}
+
+purge_stale_gpu_reaper_units() {
+    local unit load_state
+    # cloud-init used these units before the installer became the sole owner.
+    # Disable both forms before removing their fragments so a provisioned host
+    # converges even when the old timer is currently active.
+    for unit in acx-gpu-idle-reaper.timer acx-gpu-idle-reaper.service; do
+        sudo systemctl disable --now "$unit" || {
+            if ! load_state=$(systemctl show "$unit" --property=LoadState --value) \
+                || [ "$load_state" != not-found ]; then
+                echo "error: failed to disable stale $unit" >&2
+                return 1
+            fi
+        }
+        sudo rm -f "/etc/systemd/system/$unit"
+    done
+    sudo systemctl daemon-reload
+}
+
+ensure_acx_api_group() {
+    # systemd resolves SupplementaryGroups through NSS before it forks ExecStart.
+    # A bare numeric gid with no /etc/group entry is not resolvable, so the unit
+    # dies at status=216/GROUP with "Failed to determine supplementary groups:
+    # No such process" -- before a single line of lifecycle code runs. Print the
+    # name the units must use on stdout; diagnostics go to stderr.
+    local gid=$1 name=$2 existing fallback_name
+    existing=$(getent group "$gid" | cut -d: -f1)
+    if [ -n "$existing" ]; then
+        if [ "$existing" != "$name" ]; then
+            echo "gpu-lifecycle: gid $gid is already named '$existing'; units will use that name" >&2
+        fi
+        printf '%s\n' "$existing"
+        return 0
+    fi
+    if ! sudo groupadd -r -g "$gid" "$name" >&2; then
+        fallback_name="acxgid${gid}"
+        sudo groupadd -r -g "$gid" "$fallback_name" >&2 || {
+            echo "error: could not provision a resolvable group for gid $gid" >&2
+            return 1
+        }
+        name="$fallback_name"
+    fi
+    getent group "$gid" >/dev/null || {
+        echo "error: created group '$name' but NSS does not resolve GID $gid" >&2
+        return 1
+    }
+    printf '%s\n' "$name"
+}
+
+activate_gpu_lifecycle_timers() {
+    [ "$#" -eq 6 ] || {
+        echo "error: lifecycle activation requires four expected hashes, max lease, and intent-path hash" >&2
+        return 2
+    }
+    local expected_intent_path_hash=$6
     sudo systemctl enable --now acx-gpu-reap.timer
     sudo systemctl start acx-gpu-reap.service
-    verify_gpu_lifecycle_timers "$@"
+    verify_gpu_lifecycle_timers "$1" "$2" "$3" "$4" "$5"
 
     sudo systemctl enable --now acx-gpu-start.timer
     verify_gpu_lifecycle_start_timer
+
+    sudo systemctl enable --now acx-gpu-intent.path
+    verify_gpu_intent_path "$expected_intent_path_hash"
 }
 
 fence_gpu_lifecycle_start() {
@@ -191,9 +299,17 @@ fence_gpu_lifecycle_start() {
 }
 
 validate_gpu_lifecycle_snapshot() {
-    local snapshot_dir=$1 artifact section key
+    local snapshot_dir=$1 allow_missing_intent_path=${2:-0} artifact section key
     for artifact in gpu-lifecycle.env acx-gpu.conf acx-gpu-start.service \
-        acx-gpu-start.timer acx-gpu-reap.service acx-gpu-reap.timer; do
+        acx-gpu-start.timer acx-gpu-reap.service acx-gpu-reap.timer \
+        acx-gpu-intent.path; do
+        if [ "$artifact" = acx-gpu-intent.path ] \
+            && [ "$allow_missing_intent_path" -eq 1 ] \
+            && [ ! -e "$snapshot_dir/$artifact" ]; then
+            # Releases created before the intent watcher are valid rollback
+            # targets; the next generation installs the watcher.
+            continue
+        fi
         if [ ! -f "$snapshot_dir/$artifact" ] \
             || [ ! -r "$snapshot_dir/$artifact" ] \
             || [ ! -s "$snapshot_dir/$artifact" ]; then
@@ -203,6 +319,7 @@ validate_gpu_lifecycle_snapshot() {
         case "$artifact" in
             *.service) section=Service; key=ExecStart ;;
             *.timer) section=Timer; key=OnUnitActiveSec ;;
+            *.path) section=Path; key=PathChanged ;;
             *) continue ;;
         esac
         # A truncated but non-empty unit cannot restore the STOP backstop.
@@ -227,6 +344,8 @@ validate_gpu_lifecycle_snapshot() {
 
 snapshot_gpu_lifecycle_release() {
     local previous_release=$1 snapshot_stage="" snapshot_dir artifact
+    local intent_path_available=0
+    [ -e /etc/systemd/system/acx-gpu-intent.path ] && intent_path_available=1
     snapshot_dir="$previous_release/systemd"
     if [ ! -d "$previous_release/systemd" ]; then
         # Only the final rename publishes a snapshot. A copy failure must not
@@ -234,7 +353,12 @@ snapshot_gpu_lifecycle_release() {
         snapshot_stage=$(sudo mktemp -d "$previous_release/.systemd.XXXXXX") || return 1
         for artifact in /etc/acx/gpu-lifecycle.env /etc/tmpfiles.d/acx-gpu.conf \
             /etc/systemd/system/acx-gpu-start.service /etc/systemd/system/acx-gpu-start.timer \
-            /etc/systemd/system/acx-gpu-reap.service /etc/systemd/system/acx-gpu-reap.timer; do
+            /etc/systemd/system/acx-gpu-reap.service /etc/systemd/system/acx-gpu-reap.timer \
+            /etc/systemd/system/acx-gpu-intent.path; do
+            if [ "$artifact" = /etc/systemd/system/acx-gpu-intent.path ] \
+                && [ "$intent_path_available" -eq 0 ]; then
+                continue
+            fi
             sudo cp "$artifact" "$snapshot_stage/${artifact##*/}" || {
                 sudo rm -rf "$snapshot_stage"
                 return 1
@@ -251,7 +375,7 @@ snapshot_gpu_lifecycle_release() {
     fi
     # Validate staged and historical snapshots before publication or updating
     # previous. Empty artifacts cannot restore the STOP backstop on rollback.
-    if ! validate_gpu_lifecycle_snapshot "$snapshot_dir"; then
+    if ! validate_gpu_lifecycle_snapshot "$snapshot_dir" "$((1 - intent_path_available))"; then
         if [ -n "$snapshot_stage" ]; then
             sudo rm -rf "$snapshot_stage"
         fi
@@ -277,6 +401,9 @@ cleanup_gpu_lifecycle_transaction() {
     fi
     if [ "$status" -ne 0 ] && [ "$lifecycle_transaction_complete" -eq 0 ]; then
         echo 'error: lifecycle transaction failed; running fail-safe STOP path' >&2
+        if ! fence_gpu_intent_path; then
+            echo 'error: could not fence intent path during cleanup; watcher may remain active' >&2
+        fi
         if ! fence_gpu_lifecycle_start; then
             echo 'error: could not fence START during cleanup; reaper not invoked concurrently' >&2
         elif ! sudo systemctl start acx-gpu-reap.service; then
@@ -297,7 +424,9 @@ if [ "${1:-}" = "--verify-systemd-only" ]; then
         "$(sha256_file "${expected_unit_dir}/acx-gpu-start.timer" | awk '{print $1}')" \
         "$(sha256_file "${expected_unit_dir}/acx-gpu-reap.service" | awk '{print $1}')" \
         "$(sha256_file "${expected_unit_dir}/acx-gpu-reap.timer" | awk '{print $1}')" \
-        "${ACX_EXPECTED_MAX_LEASE_SECONDS:?ACX_EXPECTED_MAX_LEASE_SECONDS is required}"
+        "${ACX_EXPECTED_MAX_LEASE_SECONDS:?ACX_EXPECTED_MAX_LEASE_SECONDS is required}" \
+    && verify_gpu_intent_path \
+        "$(sha256_file "${expected_unit_dir}/acx-gpu-intent.path" | awk '{print $1}')"
     exit $?
 fi
 
@@ -305,13 +434,15 @@ if [ "${1:-}" = "--activate-systemd-only" ]; then
     [ "$#" -eq 1 ] || { echo "error: --activate-systemd-only accepts no arguments" >&2; exit 2; }
     expected_unit_dir="${ACX_EXPECTED_SYSTEMD_DIR:-/etc/systemd/system}"
     trap cleanup_gpu_lifecycle_transaction ERR EXIT
+    fence_gpu_intent_path
     fence_gpu_lifecycle_start
     activate_gpu_lifecycle_timers \
         "$(sha256_file "${expected_unit_dir}/acx-gpu-start.service" | awk '{print $1}')" \
         "$(sha256_file "${expected_unit_dir}/acx-gpu-start.timer" | awk '{print $1}')" \
         "$(sha256_file "${expected_unit_dir}/acx-gpu-reap.service" | awk '{print $1}')" \
         "$(sha256_file "${expected_unit_dir}/acx-gpu-reap.timer" | awk '{print $1}')" \
-        "${ACX_EXPECTED_MAX_LEASE_SECONDS:?ACX_EXPECTED_MAX_LEASE_SECONDS is required}"
+        "${ACX_EXPECTED_MAX_LEASE_SECONDS:?ACX_EXPECTED_MAX_LEASE_SECONDS is required}" \
+        "$(sha256_file "${expected_unit_dir}/acx-gpu-intent.path" | awk '{print $1}')"
     lifecycle_transaction_complete=1
     trap - ERR EXIT
     exit $?
@@ -323,18 +454,61 @@ SSH_USER_EXPLICIT=0
 GPU_INSTANCE_NAME="${GPU_INSTANCE_NAME:-acx-gpu-burst}"
 GPU_INSTANCE_ID="${GPU_INSTANCE_ID:-}"
 MAX_LEASE_SECONDS="${MAX_LEASE_SECONDS:-3600}"
+# Only unset operator overrides receive defaults. An explicitly empty value
+# remains invalid and reaches the fail-closed validation below.
 IDLE_SECONDS="${IDLE_SECONDS-300}"
-START_INTERVAL="${START_INTERVAL:-30s}"
+START_INTERVAL="${START_INTERVAL-30s}"
 REAP_INTERVAL="${REAP_INTERVAL-2min}"
 READY_URL="${READY_URL-}"
 LOAD_STALE_GRACE_SECONDS="${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS:-600}"
 REMOTE_COMMAND_TIMEOUT_SECONDS="${REMOTE_COMMAND_TIMEOUT_SECONDS:-180}"
+# The API container publishes load and intent dumps as its pinned uid/gid. The
+# host lifecycle units need that gid as a supplementary group to read them. systemd
+# resolves SupplementaryGroups through NSS, so the gid must also have a *name*.
+ACX_API_GID="${ACX_API_GID:-10001}"
+ACX_API_GROUP="${ACX_API_GROUP:-acxapi}"
 DRY_RUN=0
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 DEPLOYMENTS_FILE="${ACX_GPU_DEPLOYMENTS_FILE:-${repo_root}/scripts/deploy/gpu-snapshot-deployments.conf}"
+
+resolve_api_image_gid() {
+    local dockerfile=$1 candidates candidate_count
+    [ -r "$dockerfile" ] || {
+        echo "error: api image Dockerfile is missing or unreadable: $dockerfile" >&2
+        return 1
+    }
+    candidates=$(sed -nE \
+        's/^[[:space:]]*RUN[[:space:]]+groupadd[[:space:]]+-r[[:space:]]+-g[[:space:]]+([0-9]+)([[:space:]]|$).*/\1/p' \
+        "$dockerfile")
+    candidate_count=$(printf '%s\n' "$candidates" | awk 'NF {count++} END {print count + 0}')
+    [ "$candidate_count" -eq 1 ] || {
+        echo "error: api image Dockerfile must pin exactly one runtime gid with groupadd -r -g; found ${candidate_count}" >&2
+        return 1
+    }
+    [[ "$candidates" =~ ^[0-9]+$ ]] || {
+        echo "error: api image Dockerfile runtime gid is not a decimal number: $candidates" >&2
+        return 1
+    }
+    printf '%s\n' "$candidates"
+}
+
+ACX_API_IMAGE_GID=$(resolve_api_image_gid "${repo_root}/apps/prototype-description-service/Dockerfile") || exit 2
+if [[ ! "$ACX_API_GID" =~ ^[0-9]+$ ]]; then
+    echo "error: ACX_API_GID must be a decimal gid matching the api image pinned gid ${ACX_API_IMAGE_GID}; received '${ACX_API_GID}'" >&2
+    exit 2
+fi
+if [ "$ACX_API_GID" != "$ACX_API_IMAGE_GID" ]; then
+    echo "error: ACX_API_GID=${ACX_API_GID} disagrees with api image pinned gid=${ACX_API_IMAGE_GID}; refusing deploy" >&2
+    exit 2
+fi
+
 LOAD_ENVIRONMENTS=""
 LOAD_ENVIRONMENT_DIRS=""
 TMPFILES_ENVIRONMENT_ENTRIES=""
+INTENT_PATH_ENTRIES=""
+# The operator-intent contract names exactly these environments. Other
+# registered deployments still get load directories, but never path triggers.
+GPU_INTENT_ENVIRONMENTS="dev staging prod"
 
 append_deployment() {
     local environment=$1 source=$2
@@ -351,7 +525,13 @@ append_deployment() {
     LOAD_ENVIRONMENTS="${LOAD_ENVIRONMENTS:+${LOAD_ENVIRONMENTS} }${environment}"
     LOAD_ENVIRONMENT_DIRS="${LOAD_ENVIRONMENT_DIRS:+${LOAD_ENVIRONMENT_DIRS} }/run/acx-write/${environment}"
     TMPFILES_ENVIRONMENT_ENTRIES="${TMPFILES_ENVIRONMENT_ENTRIES:+${TMPFILES_ENVIRONMENT_ENTRIES}
-}d /run/acx-write/${environment} 0775 root 10001 -"
+}d /run/acx-write/${environment} 0775 root ${ACX_API_GID} -"
+    case " $GPU_INTENT_ENVIRONMENTS " in
+        *" $environment "*)
+            INTENT_PATH_ENTRIES="${INTENT_PATH_ENTRIES:+${INTENT_PATH_ENTRIES}
+}PathChanged=/run/acx-write/${environment}/gpu-intent.json"
+            ;;
+    esac
 }
 
 load_deployments() {
@@ -594,10 +774,10 @@ if [ "$DRY_RUN" -eq 1 ]; then
     echo "--- dry run: would stage release ${release_id} at ${SSH_USER}@${HOST}:${remote_stage}"
     echo "--- dry run: would validate the staged package import"
     echo "--- dry run: would atomically switch /opt/acx-gpu/current -> ${remote_release}"
-    echo "--- dry run: would install acx-gpu-start.{service,timer} + acx-gpu-reap.{service,timer}"
+    echo "--- dry run: would install acx-gpu-start.{service,timer} + acx-gpu-reap.{service,timer} + acx-gpu-intent.path"
     echo "--- dry run: would create host-owned /run/acx and isolated API-writable deployment directories: ${LOAD_ENVIRONMENT_DIRS}"
     echo "ExecStart=/usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap --instance-id \${GPU_INSTANCE_ID} --idle-seconds \${IDLE_SECONDS} --max-lease-seconds \${MAX_LEASE_SECONDS} (rendered MAX_LEASE_SECONDS=${MAX_LEASE_SECONDS})"
-    echo "--- dry run: would verify systemctl is-enabled + is-active for acx-gpu-start.timer and acx-gpu-reap.timer"
+    echo "--- dry run: would verify systemctl is-enabled + is-active for lifecycle timers and acx-gpu-intent.path"
     exit 0
 fi
 
@@ -634,8 +814,12 @@ fi"
 sha256_function=$(declare -f sha256_file)
 verification_function=$(declare -f verify_gpu_lifecycle_timers)
 start_verification_function=$(declare -f verify_gpu_lifecycle_start_timer)
+intent_path_verification_function=$(declare -f verify_gpu_intent_path)
+intent_path_fence_function=$(declare -f fence_gpu_intent_path)
 activation_function=$(declare -f activate_gpu_lifecycle_timers)
 start_fence_function=$(declare -f fence_gpu_lifecycle_start)
+stale_reaper_purge_function=$(declare -f purge_stale_gpu_reaper_units)
+api_group_function=$(declare -f ensure_acx_api_group)
 cleanup_function=$(declare -f cleanup_gpu_lifecycle_transaction)
 snapshot_function=$(declare -f snapshot_gpu_lifecycle_release)
 snapshot_validation_function=$(declare -f validate_gpu_lifecycle_snapshot)
@@ -644,8 +828,12 @@ run_with_deadline "systemd unit installation" \
 ${sha256_function}
 ${verification_function}
 ${start_verification_function}
+${intent_path_verification_function}
+${intent_path_fence_function}
 ${activation_function}
 ${start_fence_function}
+${stale_reaper_purge_function}
+${api_group_function}
 ${cleanup_function}
 ${snapshot_function}
 ${snapshot_validation_function}
@@ -656,7 +844,12 @@ trap cleanup_gpu_lifecycle_transaction ERR EXIT
 # ARCH-13/COST-04: establish the fail-safe before changing the live release or
 # any effective lifecycle artifact. The trap remains armed until the reaper is
 # proved and START is re-enabled and verified.
+fence_gpu_intent_path
 fence_gpu_lifecycle_start
+purge_stale_gpu_reaper_units
+# The units below name this group; resolve it (creating it if absent) before any
+# unit file is written, so no unit can be installed referencing an unresolvable gid.
+ACX_API_GROUP_NAME=\$(ensure_acx_api_group '${ACX_API_GID}' '${ACX_API_GROUP}')
 previous_release=\$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' /opt/acx-gpu/current)
 if [ -n \"\$previous_release\" ] && [ \"\$previous_release\" != '${remote_release}' ] \
     && [ -d \"\$previous_release\" ]; then
@@ -693,7 +886,7 @@ Type=oneshot
 TimeoutStartSec=1200s
 RuntimeMaxSec=1200s
 User=ubuntu
-SupplementaryGroups=10001
+SupplementaryGroups=\${ACX_API_GROUP_NAME}
 StateDirectory=acx-gpu
 StateDirectoryMode=0700
 # instance_principal: the VM carries no API key. Requires a dynamic-group grant
@@ -701,7 +894,7 @@ StateDirectoryMode=0700
 Environment=OCI_CLI_AUTH=instance_principal
 EnvironmentFile=/etc/acx/gpu-lifecycle.env
 WorkingDirectory=/opt/acx-gpu/current
-ExecStart=/usr/bin/flock --wait 120 /var/lib/acx-gpu/lifecycle.lock /usr/bin/python3 -m infra.oci.gpu_lifecycle --mode start --instance-id \\\${GPU_INSTANCE_ID} --load-dir /run/acx-write --load-stale-grace-seconds \\\${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS} --gpu-state-json /run/acx/gpu-state.json --running-since-path /var/lib/acx-gpu/running-since.json --probe-oci --oci-bin /home/ubuntu/.oci-venv/bin/oci --ready-url \\\${READY_URL}
+ExecStart=/usr/bin/flock --wait 120 /var/lib/acx-gpu/lifecycle.lock /usr/bin/python3 -m infra.oci.gpu_lifecycle --mode start --instance-id \\\${GPU_INSTANCE_ID} --load-dir /run/acx-write --intent-dir /run/acx-write --load-stale-grace-seconds \\\${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS} --gpu-state-json /run/acx/gpu-state.json --running-since-path /var/lib/acx-gpu/running-since.json --probe-oci --oci-bin /home/ubuntu/.oci-venv/bin/oci --ready-url \\\${READY_URL}
 UNIT
 
 sudo tee \"\$unit_stage/acx-gpu-start.timer\" >/dev/null <<UNIT
@@ -720,6 +913,18 @@ AccuracySec=5s
 WantedBy=timers.target
 UNIT
 
+sudo tee \"\$unit_stage/acx-gpu-intent.path\" >/dev/null <<UNIT
+[Unit]
+Description=Start the ACX burst GPU when an operator intent changes
+
+[Path]
+${INTENT_PATH_ENTRIES}
+Unit=acx-gpu-start.service
+
+[Install]
+WantedBy=paths.target
+UNIT
+
 sudo tee \"\$unit_stage/acx-gpu-reap.service\" >/dev/null <<UNIT
 [Unit]
 Description=ACX burst GPU reaper (STOP on drain; forced STOP at the max lease)
@@ -731,13 +936,13 @@ Type=oneshot
 TimeoutStartSec=1200s
 RuntimeMaxSec=1200s
 User=ubuntu
-SupplementaryGroups=10001
+SupplementaryGroups=\${ACX_API_GROUP_NAME}
 StateDirectory=acx-gpu
 StateDirectoryMode=0700
 Environment=OCI_CLI_AUTH=instance_principal
 EnvironmentFile=/etc/acx/gpu-lifecycle.env
 WorkingDirectory=/opt/acx-gpu/current
-ExecStart=/usr/bin/flock --wait 120 /var/lib/acx-gpu/lifecycle.lock /usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap --instance-id \\\${GPU_INSTANCE_ID} --load-dir /run/acx-write --load-stale-grace-seconds \\\${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS} --gpu-state-json /run/acx/gpu-state.json --running-since-path /var/lib/acx-gpu/running-since.json --idle-seconds \\\${IDLE_SECONDS} --max-lease-seconds \\\${MAX_LEASE_SECONDS} --fence-delay-seconds 2 --probe-oci --oci-bin /home/ubuntu/.oci-venv/bin/oci
+ExecStart=/usr/bin/flock --wait 120 /var/lib/acx-gpu/lifecycle.lock /usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap --instance-id \\\${GPU_INSTANCE_ID} --load-dir /run/acx-write --intent-dir /run/acx-write --load-stale-grace-seconds \\\${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS} --gpu-state-json /run/acx/gpu-state.json --running-since-path /var/lib/acx-gpu/running-since.json --idle-seconds \\\${IDLE_SECONDS} --max-lease-seconds \\\${MAX_LEASE_SECONDS} --fence-delay-seconds 2 --probe-oci --oci-bin /home/ubuntu/.oci-venv/bin/oci
 UNIT
 
 sudo tee \"\$unit_stage/acx-gpu-reap.timer\" >/dev/null <<UNIT
@@ -756,30 +961,30 @@ WantedBy=timers.target
 UNIT
 
 # The host lifecycle units exclusively own the state directory. The API gets
-# only a read-only bind mount of it, while uid/gid 10001 can publish load dumps
-# atomically in the separate load directory. SupplementaryGroups=10001 lets the
+# only a read-only bind mount of it, while the API uid/gid can publish load dumps
+# atomically in the separate load directory. SupplementaryGroups lets the
 # ubuntu units read the API-owned load dump without granting the API host-side
 # write access to lifecycle state.
-# systemd resolves SupplementaryGroups=10001 through NSS before ExecStart. A bare
-# numeric chown creates no group entry, so both lifecycle units died at
-# status=216/GROUP and the burst GPU lost its only stop path. What the units need
-# is a resolvable GID, not a particular name, so fall back to a second name when
-# the preferred one is already taken at another GID, then assert the postcondition
-# under set -e. Asserting on groupadd exit status instead would wedge the install
-# permanently on a name collision.
+# systemd resolves the group name in SupplementaryGroups through NSS before
+# ExecStart. A bare numeric chown creates no group entry, so both lifecycle
+# units died at status=216/GROUP and the burst GPU lost its only stop path. What
+# the units need is a resolvable GID, not a particular name, so fall back to a
+# second name when the preferred one is already taken at another GID, then
+# assert the postcondition under set -e. Asserting on groupadd exit status
+# instead would wedge the install permanently on a name collision.
 # Editing note: this block is spliced into a double-quoted ssh payload, so a
 # literal double quote, dollar sign, backtick or backslash here does not survive
 # transport. Parentheses are safe.
-if ! getent group 10001 >/dev/null 2>&1; then
-    sudo groupadd -r -g 10001 acxapi || sudo groupadd -r -g 10001 acxgid10001 || true
-    getent group 10001 >/dev/null 2>&1 || { echo 'ERROR gpu-lifecycle: groupadd exited 0 but NSS still does not resolve GID 10001; both lifecycle units would die at 216/GROUP before ExecStart. Check nsswitch group sources on the host, then re-run.' >&2; exit 1; }
+if ! getent group ${ACX_API_GID} >/dev/null 2>&1; then
+    sudo groupadd -r -g ${ACX_API_GID} acxapi || sudo groupadd -r -g ${ACX_API_GID} acxgid${ACX_API_GID} || true
+    getent group ${ACX_API_GID} >/dev/null 2>&1 || { echo 'ERROR gpu-lifecycle: groupadd exited 0 but NSS still does not resolve GID ${ACX_API_GID}; both lifecycle units would die at 216/GROUP before ExecStart. Check nsswitch group sources on the host, then re-run.' >&2; exit 1; }
 fi
 sudo mkdir -p /run/acx /run/acx-write ${LOAD_ENVIRONMENT_DIRS}
 sudo chown ubuntu:ubuntu /run/acx
 sudo chmod 0755 /run/acx
-sudo chown root:10001 /run/acx-write
+sudo chown root:${ACX_API_GID} /run/acx-write
 sudo chmod 0775 /run/acx-write
-sudo chown root:10001 ${LOAD_ENVIRONMENT_DIRS}
+sudo chown root:${ACX_API_GID} ${LOAD_ENVIRONMENT_DIRS}
 sudo chmod 0775 ${LOAD_ENVIRONMENT_DIRS}
 sudo touch /run/acx/gpu-state.json.lock
 sudo chown ubuntu:ubuntu /run/acx/gpu-state.json.lock
@@ -789,7 +994,7 @@ sudo chmod 0600 /run/acx/gpu-state.json.lock
 # state lock too, so no process umask decides its ownership or mode.
 sudo tee \"\$unit_stage/acx-gpu.conf\" >/dev/null <<'TMPF'
 d /run/acx 0755 ubuntu ubuntu -
-d /run/acx-write 0775 root 10001 -
+d /run/acx-write 0775 root ${ACX_API_GID} -
 ${TMPFILES_ENVIRONMENT_ENTRIES}
 f /run/acx/gpu-state.json.lock 0600 ubuntu ubuntu -
 TMPF
@@ -808,7 +1013,7 @@ unit_stage=''
 # with independently installed files.
 sudo install -m 0644 '${remote_release}/systemd/gpu-lifecycle.env' /etc/acx/gpu-lifecycle.env
 sudo install -m 0644 '${remote_release}/systemd/acx-gpu.conf' /etc/tmpfiles.d/acx-gpu.conf
-for unit in acx-gpu-start.service acx-gpu-start.timer acx-gpu-reap.service acx-gpu-reap.timer; do
+for unit in acx-gpu-start.service acx-gpu-start.timer acx-gpu-reap.service acx-gpu-reap.timer acx-gpu-intent.path; do
     sudo install -m 0644 \"${remote_release}/systemd/\$unit\" \"/etc/systemd/system/\$unit\"
 done
 sudo chmod 0644 '${remote_release}/systemd/'*
@@ -816,12 +1021,13 @@ expected_start_service_hash=\$(sha256_file '${remote_release}/systemd/acx-gpu-st
 expected_start_timer_hash=\$(sha256_file '${remote_release}/systemd/acx-gpu-start.timer' | awk '{print \$1}')
 expected_reap_service_hash=\$(sha256_file '${remote_release}/systemd/acx-gpu-reap.service' | awk '{print \$1}')
 expected_reap_timer_hash=\$(sha256_file '${remote_release}/systemd/acx-gpu-reap.timer' | awk '{print \$1}')
+expected_intent_path_hash=\$(sha256_file '${remote_release}/systemd/acx-gpu-intent.path' | awk '{print \$1}')
 
 sudo systemctl daemon-reload
 activate_gpu_lifecycle_timers \
     \"\$expected_start_service_hash\" \"\$expected_start_timer_hash\" \
     \"\$expected_reap_service_hash\" \"\$expected_reap_timer_hash\" \
-    '${MAX_LEASE_SECONDS}'
+    '${MAX_LEASE_SECONDS}' \"\$expected_intent_path_hash\"
 lifecycle_transaction_complete=1
 trap - ERR EXIT
 echo '--- installed timers ---'

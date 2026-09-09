@@ -7,10 +7,16 @@ import {
   describeMedia,
   DESCRIPTION_CORRECTION_CODE,
   GPU_STATE,
+  MalformedVisualFactsResponseError,
+  NAMING_PROVENANCE_STATUS,
+  NAMING_REALIZER,
+  parseVisualFactsResponse,
+  type NamingProvenance,
   fetchDescribeRunItems,
   fetchDescriptionCandidates,
   fetchDescriptionHistory,
   isGpuState,
+  parseNamingProvenance,
   resolveDescribeErrorCode,
   resolveDescribeErrorDataBooleanField,
   resolveDescribeErrorDataField,
@@ -64,6 +70,23 @@ const sampleResponse = {
   cached: false,
   duration_ms: 13800,
   retention_class: 'retain_all',
+  tier: 'provisional_cpu',
+  result_generation: 1,
+  generic_draft: 'A red flower.',
+  named_draft: 'A red flower near Ada.',
+  naming_provenance: {
+    injected_names: [
+      {
+        name: 'Ada',
+        cluster_id: 'cluster-ada',
+        roster_id: 'roster-ada',
+        detection_confidence: 0.97,
+      },
+    ],
+    naming_allowed: true,
+    reason: null,
+    mode: 'grounded',
+  },
 };
 
 describe('describeApi', () => {
@@ -83,6 +106,41 @@ describe('describeApi', () => {
     for (const value of ['bogus', '', null, undefined, 42, {}]) {
       expect(isGpuState(value)).toBe(false);
     }
+  });
+
+  it('exports the exact canonical naming provenance vocabulary', () => {
+    expect(Object.values(NAMING_PROVENANCE_STATUS)).toEqual([
+      'applied',
+      'disabled',
+      'skipped_budget',
+      'no_faces',
+    ]);
+    expect(Object.values(NAMING_REALIZER)).toEqual(['grounded', 'positional_fallback']);
+  });
+
+  it('accepts a valid naming provenance shape at the API boundary', () => {
+    expect(
+      parseNamingProvenance({
+        status: NAMING_PROVENANCE_STATUS.APPLIED,
+        realizer: NAMING_REALIZER.POSITIONAL_FALLBACK,
+        names_applied: ['Ada', 'Bea'],
+      }),
+    ).toEqual({
+      status: 'applied',
+      realizer: 'positional_fallback',
+      names_applied: ['Ada', 'Bea'],
+    });
+  });
+
+  it('rejects malformed naming provenance instead of exposing unvalidated values', () => {
+    expect(
+      parseNamingProvenance({
+        status: 'applied',
+        realizer: 'untrusted-method',
+        names_applied: ['Ada', 42],
+      }),
+    ).toBeUndefined();
+    expect(parseNamingProvenance(null)).toBeUndefined();
   });
 
   it('POSTs media_id to the describe endpoint with the REST nonce and returns the envelope', async () => {
@@ -117,6 +175,44 @@ describe('describeApi', () => {
       body: { media_id: 42, write_alt: true, force: true },
       restNonce: 'nonce-xyz',
     });
+  });
+
+  it('rejects a describe response that omits a required contract field', async () => {
+    const payload: Record<string, unknown> = { ...sampleResponse };
+    delete payload.tier;
+    fetchApiMock.mockResolvedValue(payload);
+
+    await expect(describeMedia(42)).rejects.toThrow(
+      new MalformedVisualFactsResponseError('response.tier'),
+    );
+  });
+
+  it('rejects wrong types at the describe response boundary', async () => {
+    fetchApiMock.mockResolvedValue({
+      ...sampleResponse,
+      result_generation: '1',
+    });
+
+    await expect(describeMedia(42)).rejects.toThrow(/response\.result_generation/);
+  });
+
+  it('rejects invalid enum values in tier and named-caption provenance', () => {
+    expect(() =>
+      parseVisualFactsResponse({
+        ...sampleResponse,
+        tier: 'gpu',
+      }),
+    ).toThrow(/response\.tier/);
+
+    expect(() =>
+      parseVisualFactsResponse({
+        ...sampleResponse,
+        naming_provenance: {
+          ...sampleResponse.naming_provenance,
+          mode: 'untrusted-mode',
+        },
+      }),
+    ).toThrow(/response\.naming_provenance\.mode/);
   });
 
   it('fetches dry-run description candidates without posting to the backend describe action', async () => {
@@ -208,6 +304,64 @@ describe('describeApi', () => {
     expect(endpoint).toBe('https://example.com/acx/v1/recognition/describe/runs/run-abc/items');
     expect(options).toMatchObject({ method: 'GET', restNonce: 'nonce-xyz' });
     expect(options).not.toHaveProperty('body');
+  });
+
+  it('preserves valid item naming provenance while normalizing the response boundary', async () => {
+    const naming = {
+      status: NAMING_PROVENANCE_STATUS.APPLIED,
+      realizer: NAMING_REALIZER.GROUNDED,
+      names_applied: ['Ada'],
+    } satisfies NamingProvenance;
+    const itemsResponse = {
+      run_id: 'run-naming',
+      items: [
+        {
+          media_id: 73,
+          status: 'completed',
+          alt_text_draft: 'Ada stands by the window.',
+          caption: 'A person by a window.',
+          provenance: { naming },
+          tier: 'final_gpu',
+          result_generation: 1,
+          existing_alt: false,
+        },
+      ],
+    } satisfies DescribeRunItemsResponse;
+    fetchApiMock.mockResolvedValue(itemsResponse);
+
+    const result = await fetchDescribeRunItems('run-naming');
+
+    expect(result.items[0]?.provenance).toEqual({ naming });
+  });
+
+  it('drops malformed item naming provenance while preserving the rest of the item', async () => {
+    const itemsResponse = {
+      run_id: 'run-malformed-naming',
+      items: [
+        {
+          media_id: 74,
+          status: 'completed',
+          alt_text_draft: 'A person by a window.',
+          caption: 'A person by a window.',
+          provenance: {
+            naming: {
+              status: 'applied',
+              realizer: 'untrusted-method',
+              names_applied: ['Ada', 42],
+            },
+          },
+          tier: 'final_gpu',
+          result_generation: 1,
+          existing_alt: false,
+        },
+      ],
+    };
+    fetchApiMock.mockResolvedValue(itemsResponse);
+
+    const result = await fetchDescribeRunItems('run-malformed-naming');
+
+    expect(result.items[0]?.provenance).toEqual({});
+    expect(result.items[0]?.alt_text_draft).toBe('A person by a window.');
   });
 
   it('preserves a null tier for a queued run item that has not generated a result', async () => {

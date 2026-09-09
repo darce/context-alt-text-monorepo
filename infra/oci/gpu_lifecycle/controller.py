@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from dataclasses import dataclass
 from enum import StrEnum
+
+from infra.oci.gpu_lifecycle.intent import IntentAction
 
 
 class LifecycleAction(StrEnum):
@@ -72,18 +75,25 @@ class GpuLifecycleController:
         queue_depth: int,
         in_flight: int,
         batch_in_progress: bool = False,
+        intent: IntentAction | str = IntentAction.AUTO,
+        honoured_instance_ids: Collection[str] = (),
     ) -> list[tuple[str, str]]:
-        """Emit START for STOPPED burst instances when work is waiting.
+        """Emit START for STOPPED burst instances under the effective intent.
 
         STARTING is an in-flight boot: never re-START (caller must probe/wait).
         STOPPING and UNKNOWN are fail-closed: never START.
         """
-        if queue_depth <= 0 and in_flight <= 0 and not batch_in_progress:
+        effective_intent = IntentAction(intent)
+        has_work = queue_depth > 0 or in_flight > 0 or batch_in_progress
+        if effective_intent is IntentAction.STOP:
             return []
+        if not has_work and effective_intent is not IntentAction.START:
+            return []
+        honoured_ids = honoured_instance_ids if not has_work else ()
         return [
             (LifecycleAction.START, instance.instance_id)
             for instance in instances
-            if instance.state == GpuInstanceState.STOPPED
+            if instance.state == GpuInstanceState.STOPPED and instance.instance_id not in honoured_ids
         ]
 
     def instances_waiting_on_boot(self, instances: list[GpuInstance]) -> list[str]:
@@ -105,9 +115,19 @@ class GpuLifecycleController:
         queue_depth: int,
         in_flight: int,
         batch_in_progress: bool = False,
+        intent: IntentAction | str = IntentAction.AUTO,
     ) -> list[tuple[str, str]]:
+        effective_intent = IntentAction(intent)
+        if effective_intent is IntentAction.START:
+            return []
         if queue_depth > 0 or in_flight > 0 or batch_in_progress:
             return []
+        if effective_intent is IntentAction.STOP:
+            return [
+                (LifecycleAction.STOP, instance.instance_id)
+                for instance in instances
+                if instance.state == GpuInstanceState.RUNNING
+            ]
         return [
             (LifecycleAction.STOP, instance.instance_id)
             for instance in instances

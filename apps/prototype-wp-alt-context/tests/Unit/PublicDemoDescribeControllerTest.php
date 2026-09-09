@@ -174,11 +174,11 @@ final class PublicDemoDescribeControllerTest extends TestCase
         $this->enable([41]);
         $first = $this->controller->submit($this->authorizedRequest('POST', [
             'media_id' => 41,
-            'idempotency_key' => 'trigger-one',
+            'idempotency_key' => 'trigger-one-0001',
         ]));
         $retry = $this->controller->submit($this->authorizedRequest('POST', [
             'media_id' => 41,
-            'idempotency_key' => 'trigger-one',
+            'idempotency_key' => 'trigger-one-0001',
         ]));
 
         self::assertSame(202, $first->get_status());
@@ -193,12 +193,12 @@ final class PublicDemoDescribeControllerTest extends TestCase
         $this->enable([41]);
         $first = $this->controller->submit($this->authorizedRequest('POST', [
             'media_id' => 41,
-            'idempotency_key' => 'trigger-one',
+            'idempotency_key' => 'trigger-one-0001',
         ]));
         unset($GLOBALS['__ac_options']['acx_public_demo_inflight']);
         $second = $this->controller->submit($this->authorizedRequest('POST', [
             'media_id' => 41,
-            'idempotency_key' => 'trigger-two',
+            'idempotency_key' => 'trigger-two-0002',
         ]));
 
         self::assertSame(202, $first->get_status());
@@ -552,6 +552,149 @@ final class PublicDemoDescribeControllerTest extends TestCase
             self::assertArrayNotHasKey('acx_public_demo_inflight', $GLOBALS['__ac_options']);
         } finally {
             unset($GLOBALS['__ac_update_option_fail']['acx_describe_run_media_ids_accepted-1'], $GLOBALS['__ac_update_option_fail']['acx_describe_run_media_ids_accepted-2']);
+            unlink($file);
+        }
+    }
+
+    /**
+     * GUIDEDFIX-2 [P03/P07d]: the public demo is the ONLY door that puts an
+     * idempotency_key on the wire, and this test drives it through the REAL
+     * DescribeController::submit_describe_run — the class under change — rather
+     * than the suite's stub that overrides that method away.
+     *
+     * A malformed key must be rejected before any shared budget is touched. The
+     * rate token, the site-wide inflight slot and the site's daily capacity are
+     * all either non-refundable or held for minutes, so a loop of bad keys used
+     * to drain the whole demo for every visitor at zero GPU cost, while the
+     * caller was told (502 "temporarily unavailable") to keep retrying. The cap
+     * is pinned to 1 here so a single leaked unit is unmistakable.
+     */
+    public function testMalformedIdempotencyKeyIsRejectedBeforeAnySharedBudgetIsSpent(): void
+    {
+        $this->enable([41]);
+        $this->setOption('acx_public_demo_daily_cap', 1);
+        $pipeline = new class extends DescribeController {
+            public int $proxied = 0;
+            public function __construct() {}
+            public function get_tenant_id(): string { return 'public-demo-test'; }
+            public function proxy_recognition_request(
+                string $method, string $path, array $body = [], array $query = [],
+                string $request_class = 'auto', string $body_kind = 'json', ?int $max_body_bytes = null
+            ): WP_REST_Response|WP_Error {
+                ++$this->proxied;
+                return new WP_REST_Response([
+                    'run_id' => 'budget-run-' . $this->proxied,
+                    'status' => 'pending', 'phase' => 'queued', 'gpu_state' => 'ready',
+                    'completed' => 0, 'failed' => 0, 'skipped' => 0, 'total' => 1,
+                ], 202);
+            }
+        };
+        $file = tempnam(sys_get_temp_dir(), 'acx-public-p03-');
+        file_put_contents($file, "\xff\xd8\xff\xe0jpeg-test");
+        $GLOBALS['__ac_attached_file'][41] = $file;
+
+        try {
+            $controller = new PublicDemoDescribeController($pipeline);
+            // More attempts than the 3/minute rate allowance and than the cap.
+            for ($attempt = 0; $attempt < 5; ++$attempt) {
+                $rejected = $controller->submit($this->authorizedRequest('POST', [
+                    'media_id' => 41,
+                    'idempotency_key' => 'short-key',
+                ]));
+                self::assertInstanceOf(WP_Error::class, $rejected, "attempt {$attempt}");
+                self::assertSame(PublicDemoErrorCode::INVALID_IDEMPOTENCY_KEY, $rejected->get_error_code());
+                self::assertSame(422, $rejected->get_error_data()['status'] ?? null);
+                self::assertSame('idempotency_key', $rejected->get_error_data()['field'] ?? null);
+            }
+
+            self::assertSame(0, $pipeline->proxied);
+            self::assertArrayNotHasKey('acx_public_demo_daily_usage', $GLOBALS['__ac_options']);
+            self::assertArrayNotHasKey('acx_public_demo_inflight', $GLOBALS['__ac_options']);
+
+            // The site's single daily unit is still available to a real visitor.
+            $accepted = $controller->submit($this->authorizedRequest('POST', [
+                'media_id' => 41,
+                'idempotency_key' => 'valid-retry-key-01',
+            ]));
+            self::assertInstanceOf(WP_REST_Response::class, $accepted);
+            self::assertSame(202, $accepted->get_status());
+            self::assertSame(1, $pipeline->proxied);
+        } finally {
+            unlink($file);
+        }
+    }
+
+    /**
+     * GUIDEDFIX-2 [P06]: rg-015 — an over-long key is rejected, never rewritten
+     * into a sha256 digest. Rewriting made the caller's key and the stored
+     * dedupe key differ, so the client could never replay its own submission.
+     */
+    public function testOverLongIdempotencyKeyIsRejectedRatherThanRewrittenIntoADigest(): void
+    {
+        $this->enable([41]);
+        $controller = new PublicDemoDescribeController($this->pipeline);
+
+        $rejected = $controller->submit($this->authorizedRequest('POST', [
+            'media_id' => 41,
+            'idempotency_key' => str_repeat('a', 200),
+        ]));
+
+        self::assertInstanceOf(WP_Error::class, $rejected);
+        self::assertSame(PublicDemoErrorCode::INVALID_IDEMPOTENCY_KEY, $rejected->get_error_code());
+        self::assertSame(422, $rejected->get_error_data()['status'] ?? null);
+        self::assertCount(0, $this->pipeline->submissions);
+        self::assertArrayNotHasKey('acx_public_demo_daily_usage', $GLOBALS['__ac_options']);
+    }
+
+    /**
+     * GUIDEDFIX-2 [P06]: rg-015 — every idempotency_key that reaches the wire
+     * comes from the request. Exercises the real DescribeController transport
+     * so the multipart body is the actual bytes the backend would receive.
+     *
+     * A caller that sends a key gets that key forwarded verbatim; a caller that
+     * sends none gets the field omitted, not a server-minted uuid that changes
+     * on every attempt and so advertises a dedupe guarantee it cannot keep.
+     */
+    public function testPublicSubmitForwardsTheClientKeyVerbatimAndOmitsItWhenAbsent(): void
+    {
+        $this->enable([41]);
+        $this->setOption('acx_recognition_url', 'http://localhost:8000');
+        $file = tempnam(sys_get_temp_dir(), 'acx-public-p06-');
+        file_put_contents($file, "\xff\xd8\xff\xe0jpeg-test");
+        $GLOBALS['__ac_attached_file'][41] = $file;
+        $key = 'client-retry-key-0007';
+
+        try {
+            $this->queueHttpResponse([
+                'response' => ['code' => 202, 'message' => 'Accepted'],
+                'body' => '{"run_id":"public-wire-1","status":"pending","phase":"queued","completed":0,"failed":0,"skipped":0,"total":1,"cancel_requested":false,"gpu_state":"ready"}',
+            ]);
+            $withKey = new PublicDemoDescribeController(new DescribeController());
+            $first = $withKey->submit($this->authorizedRequest('POST', [
+                'media_id' => 41,
+                'idempotency_key' => $key,
+            ]));
+            self::assertInstanceOf(WP_REST_Response::class, $first);
+            self::assertSame(202, $first->get_status());
+            self::assertMatchesRegularExpression(
+                '/name="idempotency_key"\r\n\r\n' . preg_quote($key, '/') . '\r\n/',
+                (string) $this->getHttpCalls()[0]['args']['body']
+            );
+
+            unset($GLOBALS['__ac_options']['acx_public_demo_inflight']);
+            $this->queueHttpResponse([
+                'response' => ['code' => 202, 'message' => 'Accepted'],
+                'body' => '{"run_id":"public-wire-2","status":"pending","phase":"queued","completed":0,"failed":0,"skipped":0,"total":1,"cancel_requested":false,"gpu_state":"ready"}',
+            ]);
+            $withoutKey = new PublicDemoDescribeController(new DescribeController());
+            $second = $withoutKey->submit($this->authorizedRequest('POST', ['media_id' => 41]));
+            self::assertInstanceOf(WP_REST_Response::class, $second);
+            self::assertSame(202, $second->get_status());
+            self::assertStringNotContainsString(
+                'name="idempotency_key"',
+                (string) $this->getHttpCalls()[1]['args']['body']
+            );
+        } finally {
             unlink($file);
         }
     }

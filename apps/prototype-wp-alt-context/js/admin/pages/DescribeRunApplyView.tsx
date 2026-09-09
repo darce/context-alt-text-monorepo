@@ -2,7 +2,15 @@ import React, { useId, useRef, useState } from 'react';
 import { __, sprintf } from '@wordpress/i18n';
 
 import { useDescribeRunApply } from '../hooks/useDescribeRunApply';
-import type { ApplyDescribeRunResponse, DescribeRunItem } from '../api/describeApi';
+import {
+  NAMING_PROVENANCE_STATUS,
+  NAMING_REALIZER,
+  parseNamingProvenance,
+  type ApplyDescribeRunResponse,
+  type DescribeRunItem,
+  type NamingProvenance,
+  type NamingRealizer,
+} from '../api/describeApi';
 import { toDescriptionHistory } from '../navigation/appLinks';
 import { EmptyState, EmptyStateVariant } from '../components/ui/EmptyState';
 
@@ -16,6 +24,91 @@ const itemHeading = (item: DescribeRunItem): string =>
   item.caption && item.caption.trim() !== ''
     ? item.caption
     : sprintf(__('Media %d', 'alt-context'), item.media_id);
+
+interface NamingBadgeCopy {
+  label: string;
+  description: string;
+  icon: string;
+}
+
+const appliedRealizerLabel = (realizer: NamingRealizer | null): string | null => {
+  if (realizer === NAMING_REALIZER.GROUNDED) {
+    return __('grounded', 'alt-context');
+  }
+  if (realizer === NAMING_REALIZER.POSITIONAL_FALLBACK) {
+    return __('positional', 'alt-context');
+  }
+  return null;
+};
+
+const namingBadgeCopy = (naming: NamingProvenance): NamingBadgeCopy | null => {
+  switch (naming.status) {
+    case NAMING_PROVENANCE_STATUS.APPLIED: {
+      const names = naming.names_applied.join(', ');
+      const realizer = appliedRealizerLabel(naming.realizer);
+      const label = realizer
+        ? sprintf(__('Names: %1$s · %2$s', 'alt-context'), names, realizer)
+        : sprintf(__('Names: %s', 'alt-context'), names);
+      const description =
+        naming.realizer === NAMING_REALIZER.POSITIONAL_FALLBACK
+          ? __('Names were applied using positional fallback.', 'alt-context')
+          : naming.realizer === NAMING_REALIZER.GROUNDED
+            ? __('Names were applied using grounded phrase alignment.', 'alt-context')
+            : __('Names were applied, but the naming method was not reported.', 'alt-context');
+      return { label, description, icon: '✓' };
+    }
+    case NAMING_PROVENANCE_STATUS.DISABLED:
+      return {
+        label: __('No names (disabled)', 'alt-context'),
+        description: __('Names were not applied because naming is disabled.', 'alt-context'),
+        icon: '⊘',
+      };
+    case NAMING_PROVENANCE_STATUS.SKIPPED_BUDGET:
+      return {
+        label: __('Names skipped (time budget)', 'alt-context'),
+        description: __('Names were not applied because the time budget was reached.', 'alt-context'),
+        icon: '◷',
+      };
+    case NAMING_PROVENANCE_STATUS.NO_FACES:
+      return {
+        label: __('No faces', 'alt-context'),
+        description: __('Names were not applied because no faces were detected.', 'alt-context'),
+        icon: '○',
+      };
+    default:
+      return null;
+  }
+};
+
+const namingBadgeFor = (item: DescribeRunItem): React.JSX.Element | null => {
+  const provenance = item.provenance;
+  if (!provenance || typeof provenance !== 'object' || !('naming' in provenance)) {
+    return null;
+  }
+
+  const naming = parseNamingProvenance(provenance.naming);
+  if (!naming) {
+    return null;
+  }
+  const copy = namingBadgeCopy(naming);
+  if (!copy) {
+    return null;
+  }
+
+  return (
+    <span
+      className="acx-history__badge acx-history__recovery"
+      data-testid={`acx-run-apply-naming-${item.media_id}`}
+      title={copy.description}
+      aria-label={copy.description}
+    >
+      <span className="acx-history__recovery-icon" aria-hidden="true">
+        {copy.icon}
+      </span>
+      <span>{copy.label}</span>
+    </span>
+  );
+};
 
 /**
  * Label a partial media id. Always surface the media id when a non-empty caption
@@ -367,6 +460,7 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
                       <span className="acx-run-apply__item-heading">{itemHeading(item)}</span>
                       <span className="acx-run-apply__draft">{item.alt_text_draft}</span>
                       <span className="acx-run-apply__media-id">{sprintf(__('Media %d', 'alt-context'), item.media_id)}</span>
+                      {namingBadgeFor(item)}
                     </li>
                   ))}
                   {/* When safe drafts coexist with outstanding partials, list the
@@ -382,6 +476,7 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
                           item.media_id,
                         )}
                       </span>
+                      {namingBadgeFor(item)}
                     </li>
                   ))}
                 </ul>
@@ -434,6 +529,7 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
                         </label>
                         <span className="acx-run-apply__draft">{item.alt_text_draft}</span>
                         <span className="acx-run-apply__media-id">{sprintf(__('Media %d', 'alt-context'), item.media_id)}</span>
+                        {namingBadgeFor(item)}
                       </li>
                     ))}
                   </ul>
@@ -452,7 +548,8 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
               <ul className="acx-run-apply__list">
                 {noDraft.map((item) => (
                   <li key={item.media_id} className="acx-run-apply__item">
-                    {sprintf(__('Media %1$d — %2$s', 'alt-context'), item.media_id, item.status)}
+                    <span>{sprintf(__('Media %1$d — %2$s', 'alt-context'), item.media_id, item.status)}</span>
+                    {namingBadgeFor(item)}
                   </li>
                 ))}
               </ul>

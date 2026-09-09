@@ -56,10 +56,24 @@ ocir_emit_assignment() {
   printf '\n'
 }
 
-# Emit the OCI invocation used inside a generated login program. The arguments
-# are variable references rather than interpolated caller-controlled text.
+# Emit the raw OCI invocation used inside a generated login program. The
+# arguments are variable references rather than interpolated caller-controlled
+# text. Keeping the watchdog separate from decoding lets the caller distinguish
+# an absent generation secret from an empty or malformed response.
+ocir_vault_fetch_raw_snippet() {
+  # WHY `< /dev/null`: acx_bounded hands its own stdin to the child so the login
+  # call site can pipe the token to `docker login --password-stdin`. Under the
+  # `bash -s` transport that stdin is the login program itself, still being read
+  # by the shell; a fetch must not offer the OCI CLI the unread program text.
+  # The redirect binds to the acx_bounded call, so the login keeps its pipe.
+  printf 'acx_bounded vault "$ACX_OCIR_OCI_BIN" --auth "$ACX_OCIR_AUTH_MODE" secrets secret-bundle get-secret-bundle-by-name --vault-id "$ACX_VAULT_OCID" --secret-name "$ACX_OCIR_SECRET_NAME" --query '\''data."secret-bundle-content".content'\'' --raw-output < /dev/null'
+}
+
+# Emit the OCI invocation used inside a generated login program, decoded and
+# checked for content. The token path remains a pipe so token bytes never land
+# in a file or process argument.
 ocir_vault_fetch_snippet() {
-  printf 'acx_bounded vault "$ACX_OCIR_OCI_BIN" --auth "$ACX_OCIR_AUTH_MODE" secrets secret-bundle get-secret-bundle-by-name --vault-id "$ACX_VAULT_OCID" --secret-name "$ACX_OCIR_SECRET_NAME" --query '\''data."secret-bundle-content".content'\'' --raw-output | base64 -d | acx_require_nonempty'
+  printf '%s | base64 -d | acx_require_nonempty' "$(ocir_vault_fetch_raw_snippet)"
 }
 
 # Emit a fetch-and-login program for one host.
@@ -81,6 +95,14 @@ ocir_login_snippet() {
   ocir_emit_assignment ACX_OCIR_GENERATION_SECRET "${ACX_OCIR_GENERATION_SECRET}"
   ocir_emit_assignment ACX_VAULT_FETCH_TIMEOUT "${ACX_VAULT_FETCH_TIMEOUT}"
   ocir_emit_assignment ACX_OCIR_DOCKER_CONFIG_DIR "${ACX_OCIR_DOCKER_CONFIG_DIR:-}"
+  # WHY acx_bounded backgrounds with an explicit `<&0`: without job control a
+  # bare `cmd &` gets /dev/null as stdin, which would starve
+  # `docker login --password-stdin` of the token; the explicit redirect keeps
+  # the caller's stdin. Do NOT reintroduce the `exec 3<&0; cmd <&3 &; exec 3<&-`
+  # form: when this program arrives over `bash -s`, bash 5.2 (the VM) segfaults
+  # (rc 139, no diagnostic) on that dup/close pair inside a command substitution,
+  # so every `$(acx_bounded ...)` vault fetch returned nothing and the login was
+  # reported as `secret_missing` against valid credentials.
   printf '%s\n' \
     'case "$ACX_OCIR_OCI_BIN" in '\''$HOME/'\''*) ACX_OCIR_OCI_BIN="${HOME}/${ACX_OCIR_OCI_BIN#\$HOME/}" ;; esac' \
     'umask 077' \
@@ -95,8 +117,10 @@ ocir_login_snippet() {
     'fi' \
     'export DOCKER_CONFIG="$ACX_OCIR_DOCKER_CONFIG"' \
     'acx_active_pid=' \
+    'acx_ocir_generation_stderr_file=' \
     'acx_cleanup() {' \
     '  if [ -n "${acx_active_pid:-}" ]; then kill "$acx_active_pid" 2>/dev/null || true; wait "$acx_active_pid" 2>/dev/null || true; fi' \
+    '  if [ -n "${acx_ocir_generation_stderr_file:-}" ]; then rm -f -- "$acx_ocir_generation_stderr_file"; fi' \
     '  if [ "$acx_owns_docker_config" -eq 1 ]; then rm -rf -- "$ACX_OCIR_DOCKER_CONFIG"; fi' \
     '}' \
     'trap acx_cleanup EXIT' \
@@ -105,10 +129,8 @@ ocir_login_snippet() {
     'trap '\''exit 143'\'' TERM' \
     'acx_bounded() {' \
     '  acx_label="$1"; shift' \
-    '  exec 3<&0' \
-    '  "$@" <&3 &' \
+    '  "$@" <&0 &' \
     '  acx_active_pid=$!' \
-    '  exec 3<&-' \
     '  acx_started=$SECONDS' \
     '  while kill -0 "$acx_active_pid" 2>/dev/null; do' \
     '    if [ $((SECONDS - acx_started)) -ge "$ACX_VAULT_FETCH_TIMEOUT" ]; then' \
@@ -131,22 +153,48 @@ ocir_login_snippet() {
     '  awk '\''BEGIN { ORS="" } { seen=1; print } END { if (!seen) { print "Vault secret was empty" > "/dev/stderr"; exit 65 } }'\''' \
     '}'
 
+  printf '%s\n' 'acx_ocir_generation_stderr_file="$(mktemp "${TMPDIR:-/tmp}/acx-ocir-generation.XXXXXX")"'
   printf 'ACX_OCIR_SECRET_NAME="$ACX_OCIR_GENERATION_SECRET"\n'
-  printf 'acx_ocir_first="$(%s)"\n' "$(ocir_vault_fetch_snippet)"
   printf '%s\n' \
-    'case "$acx_ocir_first" in' \
-    '  STABLE:*)' \
-    '    acx_ocir_generation_before="$acx_ocir_first"' \
-    '    acx_ocir_generation_mode=versioned' \
+    'set +e'
+  printf 'acx_ocir_generation_raw="$(%s 2>"$acx_ocir_generation_stderr_file")"\n' "$(ocir_vault_fetch_raw_snippet)"
+  printf '%s\n' \
+    'acx_ocir_generation_fetch_rc=$?' \
+    'acx_ocir_generation_stderr_raw="$(cat "$acx_ocir_generation_stderr_file")"' \
+    'set -e' \
+    'case "$acx_ocir_generation_fetch_rc" in' \
+    '  124) printf '\''acx-timeout:vault after %ss\n'\'' "$ACX_VAULT_FETCH_TIMEOUT" >&2; exit 124 ;;' \
+    '  127) printf '\''acx-command-missing:vault\n'\'' >&2; exit 127 ;;' \
+    '  0)' \
+    '    set +e' \
+    '    acx_ocir_first="$(printf '\''%s'\'' "$acx_ocir_generation_raw" | base64 -d | acx_require_nonempty)"' \
+    '    acx_ocir_generation_decode_rc=$?' \
+    '    set -e' \
+    '    [ "$acx_ocir_generation_decode_rc" -eq 0 ] || exit "$acx_ocir_generation_decode_rc"' \
+    '    case "$acx_ocir_first" in' \
+    '      STABLE:*)' \
+    '        acx_ocir_generation_before="$acx_ocir_first"' \
+    '        acx_ocir_generation_mode=versioned' \
+    '        ACX_OCIR_SECRET_NAME="$ACX_OCIR_USERNAME_SECRET"'
+  printf '        acx_ocir_user="$(%s)"\n' "$(ocir_vault_fetch_snippet)"
+  printf '%s\n' \
+    '        ;;' \
+    '      UPDATING:*) printf '\''acx-credential-generation:updating\n'\'' >&2; exit 76 ;;' \
+    '      *) printf '\''acx-credential-generation:invalid\n'\'' >&2; exit 76 ;;' \
+    '    esac' \
+    '    ;;' \
+    '  *)' \
+    '    case "$acx_ocir_generation_stderr_raw" in' \
+    '      *NotAuthorizedOrNotFound*|*NotFound*|*[Nn][Oo]" "[Aa][Cc][Tt][Ii][Vv][Ee]*|"")' \
+    '        # One-release migration path for pre-generation Vault fixtures.' \
+    '        printf '\''acx-credential-generation:absent-legacy\n'\'' >&2' \
+    '        ;;' \
+    '      *) printf '\''acx-credential-generation:fetch-failed\n'\'' >&2; exit "$acx_ocir_generation_fetch_rc" ;;' \
+    '    esac' \
+    '    acx_ocir_generation_mode=legacy' \
     '    ACX_OCIR_SECRET_NAME="$ACX_OCIR_USERNAME_SECRET"'
   printf '    acx_ocir_user="$(%s)"\n' "$(ocir_vault_fetch_snippet)"
   printf '%s\n' \
-    '    ;;' \
-    '  UPDATING:*) printf '\''acx-credential-generation:updating\n'\'' >&2; exit 76 ;;' \
-    '  *)' \
-    '    # One-release migration path for pre-generation Vault fixtures.' \
-    '    acx_ocir_generation_mode=legacy' \
-    '    acx_ocir_user="$acx_ocir_first"' \
     '    ;;' \
     'esac'
   printf '%s\n' '[ -n "$acx_ocir_user" ] || { printf '\''OCIR username secret was empty\n'\'' >&2; exit 65; }'
@@ -191,7 +239,7 @@ ocir_classify_login_failure() {
       printf '%s' "$ACX_OCIR_FAILURE_OCIR_UNREACHABLE" ;;
     *acx-safe-login-error:ocir_rejected*)
       printf '%s' "$ACX_OCIR_FAILURE_OCIR_REJECTED" ;;
-    *acx-credential-generation:*)
+    *acx-credential-generation:changed*|*acx-credential-generation:updating*|*acx-credential-generation:invalid*|*acx-credential-generation:fetch-failed*)
       printf '%s' "$ACX_OCIR_FAILURE_CREDENTIAL_INCONSISTENT" ;;
     *acx-command-missing:ocir*|*"docker: command not found"*|*"docker: No such file or directory"*)
       printf '%s' "$ACX_OCIR_FAILURE_DOCKER_CLI_MISSING" ;;

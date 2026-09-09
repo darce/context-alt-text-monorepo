@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import sqlalchemy as sa
 from alembic import op
 from pgvector.sqlalchemy import Vector
@@ -17,6 +19,14 @@ depends_on = None
 EMBEDDING_DIMENSION = int(get_database_settings().pgvector_dimension)
 SAFE_TENANT_EXPR = "NULLIF(current_setting('app.current_tenant', true), '')::uuid"
 BYPASS_RLS_EXPR = "COALESCE(NULLIF(current_setting('app.bypass_rls', true), ''), 'false')::boolean"
+
+# Must stay equal to recognition.application.health.IDENTITY_VECTOR_COLUMNS.
+# /ready fails closed on every member; heal/verify must probe the same set.
+IDENTITY_VECTOR_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("media_identities", "embedding"),
+    ("identity_cluster_representatives", "embedding"),
+    ("mv_identity_cluster_centroids", "centroid"),
+)
 
 TENANT_TABLES = [
     "media_identities",
@@ -47,6 +57,18 @@ TENANT_TABLES = [
     "identity_atlas_points",
     "identity_atlas_queue_dispositions",
 ]
+
+# UNIQUE constraints heal may additively CREATE on an already-provisioned table.
+# (table, constraint name, columns) is the public column list so
+# _ensure_unique_constraint does not read SQLAlchemy-private
+# UniqueConstraint._pending_colargs.
+HEAL_UNIQUE_CONSTRAINTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    (
+        "image_description_runs",
+        "uq_image_description_runs_idempotency_key",
+        ("tenant_id", "idempotency_key"),
+    ),
+)
 
 # Tables this migration creates via raw SQL only — no ORM model exists for
 # them, so any ORM-metadata-based mechanism (create_all heals, model-driven
@@ -212,7 +234,82 @@ def _existing_constraint_names(op, table_name: str) -> set[str]:
     }
 
 
-def _ensure_table_constraints(op, table_name: str, *elements) -> None:
+def _constraint_column_names(constraint) -> list[str]:
+    """Column names of a UniqueConstraint, attached or still detached.
+
+    A constraint built as ``sa.UniqueConstraint("a", "b", name=...)`` and passed
+    straight to ``_ensure_table`` was never bound to a Table, so ``.columns`` is
+    empty. Look up opted-in ``HEAL_UNIQUE_CONSTRAINTS`` by name instead of
+    reading SQLAlchemy-private ``UniqueConstraint._pending_colargs``.
+    """
+    names = [str(column.name) for column in constraint.columns]
+    if names:
+        return names
+    constraint_name = getattr(constraint, "name", None)
+    if constraint_name:
+        for _table, name, cols in HEAL_UNIQUE_CONSTRAINTS:
+            if name == constraint_name:
+                return list(cols)
+    return []
+
+
+def _ensure_unique_constraint(op, table_name: str, constraint) -> bool:
+    """Additively add one missing UNIQUE constraint to an already-existing table.
+
+    GUIDEDFIX-2 [S02]: a UniqueConstraint newly declared on a table that already
+    exists in a provisioned database can never land through ``create_table``,
+    and ``_ensure_table_constraints`` would raise on every subsequent migrate.
+    UNIQUE is the one table-level constraint that is genuinely additive: Postgres
+    builds the backing index and fails loudly (23505) if live rows already
+    violate it, so there is no value to guess and no silent half-heal.
+
+    Returns True when the constraint is present after the call (or the dialect
+    makes it a non-issue), False when the caller must report it as drift.
+    """
+    columns = _constraint_column_names(constraint)
+    if not columns:
+        return False
+    bind = op.get_bind()
+    dialect = str(getattr(getattr(bind, "dialect", None), "name", "") or "")
+    if dialect and dialect != "postgresql":
+        # SQLite has no ``ALTER TABLE ... ADD CONSTRAINT``. It also only ever
+        # gets these tables from create_table / Base.metadata.create_all, which
+        # emit the UNIQUE inline — so on SQLite the constraint is present by
+        # construction and there is nothing to heal.
+        return True
+    quoted_table = f'"{table_name}"'
+    quoted_name = f'"{constraint.name}"'
+    quoted_columns = ", ".join(f'"{column}"' for column in columns)
+    try:
+        op.execute(f"ALTER TABLE {quoted_table} ADD CONSTRAINT {quoted_name} UNIQUE ({quoted_columns})")
+    except sa.exc.DBAPIError as exc:
+        if not _is_unique_violation(exc):
+            raise
+        raise RuntimeError(
+            f"cannot add unique constraint {constraint.name} on {table_name} "
+            f"({', '.join(columns)}): live rows violate uniqueness (SQLSTATE 23505). "
+            "Operator action: delete or merge the duplicate rows, then re-run "
+            "python -m scripts.sync_identity_schema."
+        ) from exc
+    return True
+
+
+def _is_unique_violation(exc: BaseException) -> bool:
+    """True when *exc* (or its ``orig``) is PostgreSQL SQLSTATE 23505."""
+    candidates: list[BaseException] = [exc]
+    orig = getattr(exc, "orig", None)
+    if isinstance(orig, BaseException):
+        candidates.append(orig)
+    for candidate in candidates:
+        sqlstate = getattr(candidate, "sqlstate", None) or getattr(candidate, "pgcode", None)
+        if sqlstate is not None and str(sqlstate) == "23505":
+            return True
+        if type(candidate).__name__ in {"UniqueViolation", "UniqueViolationError"}:
+            return True
+    return False
+
+
+def _ensure_table_constraints(op, table_name: str, *elements, heal_constraints: Sequence[str] = ()) -> None:
     """Fail loudly when an existing table is missing declared table-level constraints.
 
     ``_ensure_table`` cannot add UniqueConstraint / ForeignKeyConstraint /
@@ -221,26 +318,46 @@ def _ensure_table_constraints(op, table_name: str, *elements) -> None:
     and unique targets do not). Greenfield: refuse the mismatch so operators
     recreate or apply the constraints rather than running with a half-healed
     schema (FL30-B-01).
+
+    ``heal_constraints`` opts named UNIQUE constraints out of that refusal: they
+    are added additively via ``_ensure_unique_constraint`` instead. Opt-in by
+    name so adding a constraint to an already-provisioned table is a deliberate
+    declaration at the call site, not a blanket relaxation of the guard.
     """
-    declared: list[str] = []
+    healable = {str(name) for name in heal_constraints}
+    declared: dict[str, object] = {}
     for element in elements:
         if isinstance(element, (sa.UniqueConstraint, sa.ForeignKeyConstraint, sa.CheckConstraint)):
             name = getattr(element, "name", None)
             if name:
-                declared.append(str(name))
+                declared[str(name)] = element
     if not declared:
         return
+    unknown = sorted(healable - set(declared))
+    if unknown:
+        raise RuntimeError(f"{table_name}: heal_constraints names {unknown} that the table does not declare")
     existing = _existing_constraint_names(op, table_name)
     missing = sorted(name for name in declared if name not in existing)
-    if missing:
+    unhealed: list[str] = []
+    for name in missing:
+        element = declared[name]
+        if (
+            name in healable
+            and isinstance(element, sa.UniqueConstraint)
+            and _ensure_unique_constraint(op, table_name, element)
+        ):
+            continue
+        unhealed.append(name)
+    if unhealed:
         raise RuntimeError(
-            f"{table_name} exists but is missing table-level constraints {missing}; "
+            f"{table_name} exists but is missing table-level constraints {unhealed}; "
             "silent partial healing is forbidden — drop and recreate the table or "
             "apply the constraints manually (operator action)"
         )
 
 
 def _ensure_table(op, table_name: str, *columns, **kw) -> None:
+    heal_constraints: Sequence[str] = kw.pop("heal_constraints", ())
     relkind = _relkind(op, table_name)
     if relkind is None:
         op.create_table(table_name, *columns, **kw)
@@ -256,8 +373,9 @@ def _ensure_table(op, table_name: str, *columns, **kw) -> None:
         # column added after first creation still lands (MAINT-TPR-01 / PA-03).
         _ensure_columns(op, table_name, *columns)
         # Table-level constraints are not additive via create_table; detect
-        # and refuse silent partial heals (FL30-B-01 / FIR-9 composite FK).
-        _ensure_table_constraints(op, table_name, *columns)
+        # and refuse silent partial heals (FL30-B-01 / FIR-9 composite FK),
+        # except for UNIQUE constraints explicitly declared heal-additive.
+        _ensure_table_constraints(op, table_name, *columns, heal_constraints=heal_constraints)
 
 
 def _ensure_index(op, index_name: str, table_name: str, columns, **kw) -> None:
@@ -878,8 +996,7 @@ def ensure_tables(op) -> None:
         ),
         sa.CheckConstraint("cluster_a_id < cluster_b_id", name="cluster_merge_canonical_order"),
         sa.CheckConstraint(
-            "survivor_cluster_id IS NULL OR survivor_cluster_id = cluster_a_id"
-            " OR survivor_cluster_id = cluster_b_id",
+            "survivor_cluster_id IS NULL OR survivor_cluster_id = cluster_a_id OR survivor_cluster_id = cluster_b_id",
             name="cluster_merge_survivor_in_pair",
         ),
         sa.UniqueConstraint(
@@ -1494,6 +1611,11 @@ def ensure_tables(op) -> None:
         sa.Column("skipped_items", sa.Integer(), nullable=False, server_default=sa.text("0")),
         sa.Column("cancel_requested", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         sa.Column("recognition_enabled", sa.Boolean(), nullable=False, server_default=sa.text("true")),
+        # GUIDEDFIX-2: caller retry token, the canonical digest of the payload it
+        # binds, and the generation budget disclosed at accept.
+        sa.Column("idempotency_key", sa.String(length=128), nullable=True),
+        sa.Column("request_digest", sa.String(length=64), nullable=True),
+        sa.Column("deadline_seconds", sa.Float(), nullable=True),
         sa.Column("error_message", sa.Text(), nullable=True),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("started_at", sa.TIMESTAMP(timezone=True), nullable=True),
@@ -1508,6 +1630,16 @@ def ensure_tables(op) -> None:
             name="valid_describe_run_phase",
         ),
         sa.CheckConstraint("run_kind IN ('bulk', 'single')", name="valid_describe_run_kind"),
+        # GUIDEDFIX-2: the describe-run accept reservation. NULLs are distinct, so
+        # only token-carrying submits are deduped.
+        sa.UniqueConstraint("tenant_id", "idempotency_key", name="uq_image_description_runs_idempotency_key"),
+        # [S02] image_description_runs predates this constraint, so every
+        # already-provisioned database reaches the table-exists branch with the
+        # constraint absent. Declare it heal-additive: ALTER TABLE ... ADD
+        # CONSTRAINT UNIQUE instead of a RuntimeError on every migrate.
+        heal_constraints=tuple(
+            name for table, name, _cols in HEAL_UNIQUE_CONSTRAINTS if table == "image_description_runs"
+        ),
     )
     _ensure_index(op, "idx_image_description_runs_tenant", "image_description_runs", ["tenant_id"])
     _ensure_index(
@@ -1767,6 +1899,7 @@ def ensure_tables(op) -> None:
         "identity_atlas_queue_dispositions",
         ["point_id"],
     )
+    ensure_identity_vector_typmods(op)
 
 
 def ensure_rls(op) -> None:
@@ -1915,8 +2048,267 @@ def ensure_triggers(op) -> None:
     )
 
 
+def _vector_column_typmod(op, table_name: str, column_name: str) -> int | None:
+    """Return atttypmod only when the column's pg_type.typname is vector."""
+    return (
+        op.get_bind()
+        .execute(
+            sa.text(
+                "SELECT a.atttypmod FROM pg_attribute a "
+                "JOIN pg_class c ON c.oid = a.attrelid "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "JOIN pg_type t ON t.oid = a.atttypid "
+                "WHERE n.nspname = current_schema() "
+                "AND c.relname = :table_name "
+                "AND a.attname = :column_name AND NOT a.attisdropped "
+                "AND t.typname = 'vector'"
+            ),
+            {"table_name": table_name, "column_name": column_name},
+        )
+        .scalar()
+    )
+
+
+def _matview_centroid_typmod(op) -> int | None:
+    # INT-01: join pg_type and require typname='vector'. A non-vector column
+    # with a coincidental atttypmod must not look healthy.
+    return (
+        op.get_bind()
+        .execute(
+            sa.text(
+                "SELECT a.atttypmod FROM pg_attribute a "
+                "JOIN pg_class c ON c.oid = a.attrelid "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "JOIN pg_type t ON t.oid = a.atttypid "
+                "WHERE n.nspname = current_schema() "
+                "AND c.relname = 'mv_identity_cluster_centroids' "
+                "AND a.attname = 'centroid' AND NOT a.attisdropped "
+                "AND t.typname = 'vector'"
+            )
+        )
+        .scalar()
+    )
+
+
+def table_vector_typmod_operator_action(table_name: str, column_name: str, observed: int | None) -> str:
+    """Named operator action for a non-rebuildable table vector typmod gap."""
+    return (
+        f"cannot repair {table_name}.{column_name}: observed vector typmod "
+        f"{observed!r} (expected {EMBEDDING_DIMENSION} and pg_type.typname='vector'). "
+        "Table columns cannot be dropped and rebuilt like derived matview data. "
+        "A vector-to-vector(N) cast cannot change dimension. "
+        "Operator action: re-embed or NULL existing rows, then "
+        f"ALTER TABLE {table_name} ALTER COLUMN {column_name} "
+        f"TYPE vector({EMBEDDING_DIMENSION});"
+    )
+
+
+def ensure_identity_vector_typmods(op) -> None:
+    """Fail closed on a wrong-typmod *table* vector column (not rebuildable)."""
+    for table_name, column_name in IDENTITY_VECTOR_COLUMNS:
+        if table_name == "mv_identity_cluster_centroids":
+            continue
+        if _relkind(op, table_name) not in ("r", "p"):
+            continue
+        observed = _vector_column_typmod(op, table_name, column_name)
+        if observed != EMBEDDING_DIMENSION:
+            raise RuntimeError(
+                table_vector_typmod_operator_action(table_name, column_name, observed)
+                + " then re-run python -m scripts.sync_identity_schema."
+            )
+
+
+def _current_user_quoted(op) -> tuple[str, str]:
+    row = op.get_bind().execute(sa.text("SELECT current_user, quote_ident(current_user)")).one()
+    return str(row[0]), str(row[1])
+
+
+def _quote_ident(op, ident: str) -> str:
+    quoted = op.get_bind().execute(sa.text("SELECT quote_ident(:ident)"), {"ident": ident}).scalar()
+    return str(quoted)
+
+
+def _matview_owner_and_can_drop(op) -> tuple[str, bool]:
+    row = (
+        op.get_bind()
+        .execute(
+            sa.text(
+                "SELECT pg_get_userbyid(c.relowner), "
+                "pg_has_role(current_user, c.relowner, 'USAGE') "
+                "FROM pg_class c "
+                "JOIN pg_namespace n ON n.oid=c.relnamespace "
+                "WHERE n.nspname=current_schema() "
+                "AND c.relname='mv_identity_cluster_centroids' "
+                "AND c.relkind='m'"
+            )
+        )
+        .one_or_none()
+    )
+    if row is None:
+        raise RuntimeError(
+            "cannot rebuild mv_identity_cluster_centroids: "
+            "relation vanished mid-heal; re-run python -m scripts.sync_identity_schema"
+        )
+    owner, can_drop = row
+    return str(owner), bool(can_drop)
+
+
+def _matview_create_privilege_gaps(op) -> list[str]:
+    # WHY: must match FROM/JOIN tables + functions in ensure_matview's CREATE MATERIALIZED VIEW body (C-01 ratchet).
+    # to_regclass short-circuits has_table_privilege so a missing source table
+    # stays heal-repairable instead of raising undefined_table (EXIT_INFRA).
+    row = (
+        op.get_bind()
+        .execute(
+            sa.text(
+                "SELECT current_schema(), "
+                "has_schema_privilege(current_user, current_schema(), 'CREATE'), "
+                "CASE WHEN to_regclass('identity_clusters') IS NULL THEN TRUE "
+                "     ELSE has_table_privilege(current_user, 'identity_clusters', 'SELECT') END, "
+                "CASE WHEN to_regclass('identity_members') IS NULL THEN TRUE "
+                "     ELSE has_table_privilege(current_user, 'identity_members', 'SELECT') END, "
+                "CASE WHEN to_regclass('media_identities') IS NULL THEN TRUE "
+                "     ELSE has_table_privilege(current_user, 'media_identities', 'SELECT') END, "
+                "EXISTS ("
+                "  SELECT 1 FROM pg_proc p "
+                "  WHERE p.proname = 'l2_normalize' "
+                "    AND has_function_privilege(current_user, p.oid, 'EXECUTE')"
+                ")"
+            )
+        )
+        .one()
+    )
+    schema_name, schema_create, sel_clusters, sel_members, sel_media, exec_l2 = row
+    gaps: list[str] = []
+    if not schema_create:
+        gaps.append(f"CREATE on schema {schema_name}")
+    if not sel_clusters:
+        gaps.append("SELECT on identity_clusters")
+    if not sel_members:
+        gaps.append("SELECT on identity_members")
+    if not sel_media:
+        gaps.append("SELECT on media_identities")
+    if not exec_l2:
+        gaps.append("EXECUTE on l2_normalize")
+    return gaps
+
+
+def _matview_nonowner_grants(op) -> tuple[tuple[str, str, bool], ...]:
+    # NULL relacl is the default ACL (owner only). aclexplode is a strict SRF:
+    # aclexplode(NULL) returns zero rows, so CROSS JOIN LATERAL is safe.
+    rows = (
+        op.get_bind()
+        .execute(
+            sa.text(
+                "SELECT "
+                "CASE WHEN acl.grantee = 0 THEN 'public' "
+                "ELSE pg_get_userbyid(acl.grantee) END AS grantee, "
+                "acl.privilege_type, "
+                "acl.is_grantable "
+                "FROM pg_class c "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "CROSS JOIN LATERAL aclexplode(c.relacl) AS acl "
+                "WHERE n.nspname = current_schema() "
+                "AND c.relname = 'mv_identity_cluster_centroids' "
+                "AND c.relkind = 'm' "
+                "AND acl.grantee IS NOT NULL "
+                "AND acl.grantee IS DISTINCT FROM c.relowner"
+            )
+        )
+        .all()
+    )
+    return tuple((str(grantee), str(privilege), bool(grantable)) for grantee, privilege, grantable in rows)
+
+
+def _missing_matview_grant_roles(op, grants: tuple[tuple[str, str, bool], ...]) -> tuple[str, ...]:
+    """Role names in *grants* that no longer exist in pg_roles (not ``public``)."""
+    missing: list[str] = []
+    seen: set[str] = set()
+    bind = op.get_bind()
+    for grantee, _privilege, _grantable in grants:
+        if grantee in seen or grantee == "public":
+            continue
+        seen.add(grantee)
+        exists = bind.execute(
+            sa.text("SELECT 1 FROM pg_roles WHERE rolname = :name"),
+            {"name": grantee},
+        ).scalar()
+        if not exists:
+            missing.append(grantee)
+    return tuple(missing)
+
+
+def _matview_owner_restore_blockers(op, *, owner: str, current_role: str) -> list[str]:
+    """Preflight ALTER OWNER TO *owner* (role exists and has CREATE on schema)."""
+    if owner == current_role:
+        return []
+    blockers: list[str] = []
+    exists = op.get_bind().execute(
+        sa.text("SELECT 1 FROM pg_roles WHERE rolname = :name"),
+        {"name": owner},
+    ).scalar()
+    if not exists:
+        blockers.append(f"owner role {owner} does not exist in pg_roles")
+        return blockers
+    row = op.get_bind().execute(
+        sa.text(
+            "SELECT current_schema(), has_schema_privilege(:owner, current_schema(), 'CREATE')"
+        ),
+        {"owner": owner},
+    ).one()
+    schema_name, owner_create = row
+    if not owner_create:
+        blockers.append(f"CREATE on schema {schema_name} for owner {owner}")
+    return blockers
+
+
+def _grant_target(op, grantee: str) -> str:
+    # quote_ident('public') yields "public", a role name, not the PUBLIC pseudo-role.
+    if grantee == "public":
+        return "PUBLIC"
+    return _quote_ident(op, grantee)
+
+
+def _restore_matview_owner_and_grants(
+    op,
+    *,
+    current_role: str,
+    owner: str,
+    grants: tuple[tuple[str, str, bool], ...],
+) -> None:
+    for grantee, privilege, grantable in grants:
+        option = " WITH GRANT OPTION" if grantable else ""
+        try:
+            quoted_grantee = _grant_target(op, grantee)
+            op.execute(f"GRANT {privilege} ON mv_identity_cluster_centroids TO {quoted_grantee}{option}")
+        except sa.exc.DBAPIError as exc:
+            raise RuntimeError(
+                f"cannot restore GRANT {privilege} ON mv_identity_cluster_centroids TO {grantee}: "
+                "the grant could not be replayed; the DROP+CREATE was not committed. "
+                "Operator action: remove stale relacl or recreate the role."
+            ) from exc
+    if owner != current_role:
+        try:
+            quoted_owner = _quote_ident(op, owner)
+            op.execute(f"ALTER MATERIALIZED VIEW mv_identity_cluster_centroids OWNER TO {quoted_owner}")
+        except sa.exc.DBAPIError as exc:
+            raise RuntimeError(
+                f"cannot restore OWNER TO {owner} on mv_identity_cluster_centroids: "
+                "ownership could not be restored; the DROP+CREATE was not committed. "
+                "Operator action: recreate the owner role with CREATE on the schema "
+                "or REASSIGN OWNED."
+            ) from exc
+
+
 def ensure_matview(op) -> None:
-    """Create the centroid materialized view + indexes; fail loudly on a plain-table impostor."""
+    """Create the centroid materialized view + indexes; fail loudly on a plain-table impostor.
+
+    A matview whose ``centroid`` column lost its vector typmod (built before the
+    outer cast existed) is derived data, so it is dropped and rebuilt here when
+    the current role can drop it *and* recreate it with owner+grants restored.
+    Otherwise the heal raises a named operator action before making any
+    destructive change.
+    """
     relkind = _relkind(op, "mv_identity_cluster_centroids")
     if relkind not in (None, "m"):
         raise RuntimeError(
@@ -1924,6 +2316,60 @@ def ensure_matview(op) -> None:
             f"{relkind!r} (expected materialized view); drop the impostor relation "
             "before healing (operator action, see E15-33-BR2-04)"
         )
+    restore: tuple[str, str, tuple[tuple[str, str, bool], ...]] | None = None
+    if relkind == "m":
+        observed_typmod = _matview_centroid_typmod(op)
+        if observed_typmod != EMBEDDING_DIMENSION:
+            owner, can_drop = _matview_owner_and_can_drop(op)
+            current_role, quoted_role = _current_user_quoted(op)
+            if not can_drop:
+                operator_sql = f"ALTER MATERIALIZED VIEW mv_identity_cluster_centroids OWNER TO {quoted_role};"
+                raise RuntimeError(
+                    "cannot rebuild mv_identity_cluster_centroids: "
+                    f"observed centroid typmod {observed_typmod!r}; owner role is {owner!r}; "
+                    f"current role is {current_role!r} and cannot DROP the relation. "
+                    f"Run {operator_sql} then re-run python -m scripts.sync_identity_schema."
+                )
+            gaps = _matview_create_privilege_gaps(op)
+            if gaps:
+                raise RuntimeError(
+                    "cannot rebuild mv_identity_cluster_centroids: "
+                    f"observed centroid typmod {observed_typmod!r}; "
+                    "current role lacks privileges required to recreate the view: "
+                    f"{', '.join(gaps)}. Grant these privileges then re-run "
+                    "python -m scripts.sync_identity_schema."
+                )
+            grants = _matview_nonowner_grants(op)
+            missing_roles = _missing_matview_grant_roles(op, grants)
+            if missing_roles:
+                raise RuntimeError(
+                    "cannot rebuild mv_identity_cluster_centroids: "
+                    f"observed centroid typmod {observed_typmod!r}; "
+                    "relacl names vanished roles "
+                    f"{', '.join(missing_roles)} that cannot receive GRANT. "
+                    "Operator action: REVOKE the stale grants or DROP the view as its owner."
+                )
+            owner_blockers = _matview_owner_restore_blockers(op, owner=owner, current_role=current_role)
+            if owner_blockers:
+                raise RuntimeError(
+                    "cannot rebuild mv_identity_cluster_centroids: "
+                    f"observed centroid typmod {observed_typmod!r}; "
+                    f"{'; '.join(owner_blockers)}. "
+                    "Operator action: recreate the owner role with CREATE on the schema "
+                    "or REASSIGN OWNED."
+                )
+            restore = (current_role, owner, grants)
+            op.execute("DROP MATERIALIZED VIEW mv_identity_cluster_centroids")
+    else:
+        gaps = _matview_create_privilege_gaps(op)
+        if gaps:
+            raise RuntimeError(
+                "cannot create mv_identity_cluster_centroids: "
+                "current role lacks privileges required to create the view: "
+                f"{', '.join(gaps)}. Grant these privileges then re-run "
+                "python -m scripts.sync_identity_schema."
+            )
+    # WHY: FROM/JOIN tables + functions here are preflighted by _matview_create_privilege_gaps (C-01 ratchet).
     op.execute(
         f"""
         CREATE MATERIALIZED VIEW IF NOT EXISTS mv_identity_cluster_centroids AS
@@ -1983,11 +2429,14 @@ def ensure_matview(op) -> None:
             cluster_id,
             tenant_id,
             identity_count,
-            CASE
+            -- The outer cast is load-bearing: CASE with an untyped NULL arm
+            -- drops the vector typmod, and /health + /ready fail closed on a
+            -- matview column whose pg_attribute.atttypmod is -1.
+            (CASE
                 WHEN identity_count > 0 AND avg_embedding IS NOT NULL THEN
                     l2_normalize(avg_embedding)::vector({EMBEDDING_DIMENSION})
                 ELSE NULL
-            END AS centroid,
+            END)::vector({EMBEDDING_DIMENSION}) AS centroid,
             refreshed_at
         FROM cluster_embeddings
         WHERE identity_count >= 1;
@@ -2016,6 +2465,9 @@ def ensure_matview(op) -> None:
         WHERE centroid IS NOT NULL;
         """
     )
+    if restore is not None:
+        current_role, owner, grants = restore
+        _restore_matview_owner_and_grants(op, current_role=current_role, owner=owner, grants=grants)
 
 
 def heal(connection) -> None:
@@ -2030,6 +2482,7 @@ def heal(connection) -> None:
     ops = Operations(MigrationContext.configure(connection))
     connection.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
     ensure_tables(ops)
+    ensure_identity_vector_typmods(ops)
     ensure_rls(ops)
     ensure_refresh_queue(ops)
     ensure_triggers(ops)
@@ -2042,6 +2495,7 @@ def upgrade() -> None:
     # got corrupted. Use scripts/reset_dev_db.sh explicitly if you need a clean slate.
     # The migration is the baseline - if tables already exist, alembic won't re-run this.
     ensure_tables(op)
+    ensure_identity_vector_typmods(op)
     ensure_rls(op)
     ensure_refresh_queue(op)
     ensure_triggers(op)

@@ -30,6 +30,12 @@ _PY_PATH = re.compile(r"([A-Za-z0-9_./-]+/[A-Za-z0-9_-]+\.py)")
 _TEST_NAME = re.compile(r"\b(test_[a-z0-9_]+)\b")
 
 
+def test_cloud_init_does_not_define_or_enable_the_idle_reaper() -> None:
+    cloud_init = CLOUD_INIT.read_text(encoding="utf-8")
+
+    assert "acx-gpu-idle-reaper" not in cloud_init
+
+
 def _comment_prose() -> str:
     lines = []
     for line in CLOUD_INIT.read_text(encoding="utf-8").splitlines():

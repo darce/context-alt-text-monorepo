@@ -142,7 +142,12 @@ def test_snapshot_directories_enforce_distinct_writer_ownership() -> None:
     assert state_chmod_mode == state_mode
     assert int(state_mode[-3]) & 0o2, "the lifecycle owner must be able to write"
     assert (load_boot_owner, load_boot_group) == (load_owner, load_group)
-    assert load_group == "10001"
+    # OPSGPU-R4-02 replaced the repeated literal with one variable so the gid the
+    # installer chowns to and the gid it names a group for cannot drift apart.
+    assert load_group == "${ACX_API_GID}"
+    assert 'ACX_API_GID="${ACX_API_GID:-10001}"' in script, (
+        "the API gid must still default to 10001; the container writer is uid/gid 10001"
+    )
     assert load_mode == environment_load_mode == "0775"
     assert load_chmod_mode == load_mode
     assert environment_load_chmod_mode == environment_load_mode
@@ -161,7 +166,18 @@ def test_snapshot_directories_enforce_distinct_writer_ownership() -> None:
         unit_user = user_match.group(1)
         supplementary_groups = groups_match.group(1).split() if groups_match else []
         assert unit_user == state_owner or state_group in supplementary_groups
-        assert load_group in supplementary_groups
+        # systemd resolves SupplementaryGroups through NSS, so the units name the
+        # group the installer resolves from load_group -- never the bare gid,
+        # which fails the unit at 216/GROUP before ExecStart (OPSGPU-R4-02).
+        # The unit body is embedded in a double-quoted ssh argument, so the
+        # remote-expanded reference is backslash-escaped in the source.
+        assert [g.lstrip("\\") for g in supplementary_groups] == ["${ACX_API_GROUP_NAME}"]
+        assert not any(g.isdigit() for g in supplementary_groups), (
+            f"a bare gid is unresolvable via NSS: {supplementary_groups!r}"
+        )
+    assert f"ensure_acx_api_group '{load_group}'" in script, (
+        "ACX_API_GROUP_NAME must be resolved from the same gid the load dir carries"
+    )
 
 
 def test_deployed_compose_keeps_load_writable_and_gpu_state_read_only() -> None:

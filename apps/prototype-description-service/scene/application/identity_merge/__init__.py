@@ -17,7 +17,9 @@ from scene.application.identity_merge.policy import (
     NamingMode,
     NamingPolicy,
     NamingProvenance,
+    NamingRealizer,
     NamingSkipReason,
+    NamingStatus,
     resolve_naming_allowed,
 )
 from scene.application.identity_merge.realizer import (
@@ -54,7 +56,9 @@ __all__ = [
     "NamingMode",
     "NamingPolicy",
     "NamingProvenance",
+    "NamingRealizer",
     "NamingSkipReason",
+    "NamingStatus",
     "NormalizedBox",
     "PhraseBox",
     "PositionalFallbackRealizer",

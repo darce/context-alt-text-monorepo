@@ -1,112 +1,112 @@
 import React from 'react';
 
 import {
-  GUIDED_IDENTITY_STATUS,
-  getGuidedIdentity,
+  DialogContent,
+  DialogDescription,
+  DialogOverlay,
+  DialogPortal,
+  DialogRoot,
+  DialogTitle,
+} from '../../../components/ui/dialog';
+import { guidedCopy } from '../../guidedPrototype/copy';
+import {
   getGuidedPerson,
-  type GuidedPersonKey,
+  guidedNameCoverage,
+  namesDecided,
+  type GuidedDemoState,
+  type GuidedFacePosition,
+  type GuidedNameChoice,
   type GuidedScenario,
 } from '../../guidedPrototype/state';
-
+import { GUIDED_FACE_SECTION_ID } from './GuidedPrototypeGuide';
 import { GuidedFaceMatchCard } from './GuidedFaceMatchCard';
 
 export interface GuidedFacesPanelProps {
   scenario: GuidedScenario;
-  hasUnsavedEdit: boolean;
-  onConfirm: (faceId: GuidedPersonKey) => void;
-  onLeaveUnnamed: (faceId: GuidedPersonKey) => void;
+  state: GuidedDemoState;
+  onChoose: (position: GuidedFacePosition, choice: GuidedNameChoice, origin: HTMLInputElement) => void;
+  onContinue: () => void;
+  onConfirmReplacement: () => void;
+  onCancelReplacement: () => void;
 }
-
-const identityChangeReasonId = 'guided-identity-change-reason';
 
 export const GuidedFacesPanel = ({
   scenario,
-  hasUnsavedEdit,
-  onConfirm,
-  onLeaveUnnamed,
+  state,
+  onChoose,
+  onContinue,
+  onConfirmReplacement,
+  onCancelReplacement,
 }: GuidedFacesPanelProps): React.JSX.Element => {
+  const decided = namesDecided(state);
+  const coverage = guidedNameCoverage(scenario);
+  const pending = state.pendingChoiceChange !== null;
+
   return (
-    <section id="guided-section-face" tabIndex={-1} aria-labelledby="guided-faces-title" className="acx-guided-face">
+    <section id={GUIDED_FACE_SECTION_ID} className="acx-guided-face" aria-labelledby="guided-faces-title" tabIndex={-1}>
       <header className="acx-guided-face__header">
-        <h3 id="guided-faces-title">Faces found in the photo</h3>
-        <p>AltContext found 2 faces. Each one matched a person you named before.</p>
+        <h2 id="guided-faces-title">{guidedCopy('step.names')}</h2>
+        <p>{guidedCopy('names.intro')}</p>
+        <p>{guidedCopy('names.assisted')}</p>
       </header>
 
-      <div className="acx-guided-face__how-it-works">
-        <ol>
-          <li>AltContext finds every face in the photo.</li>
-          <li>It compares each face to the people you already named.</li>
-          <li>It asks you to confirm each match. Nothing is named without your OK.</li>
-        </ol>
-      </div>
-
-      <p className="acx-guided-face__disclosure">
-        These matches were saved from a real run. The demo does not run recognition live.
-      </p>
-
-      <div className="acx-guided-face__cards">
+      <div id="guided-section-identity" tabIndex={-1} className="acx-guided-face__cards">
         {scenario.faces.map((face) => {
           const person = getGuidedPerson(scenario, face.matchedPersonKey);
-          const identity = getGuidedIdentity(scenario, face.id);
+          const personCoverage = coverage.find((entry) => entry.key === person.key);
+          if (personCoverage === undefined) {
+            throw new Error(`Missing guided name coverage for ${person.key}.`);
+          }
 
           return (
             <GuidedFaceMatchCard
               key={face.id}
               face={face}
               person={person}
-              identity={identity}
+              coverage={personCoverage}
+              choice={state.choices[face.position]}
               mediaUrl={scenario.pressPhoto.src}
+              disabled={pending}
+              onChoose={(choice, origin) => onChoose(face.position, choice, origin)}
             />
           );
         })}
       </div>
 
-      <div
-        id="guided-section-identity"
-        tabIndex={-1}
-        aria-label="Confirm each match"
-        className="acx-guided-face__decisions"
-      >
-        <h4>Confirm each match</h4>
-        <p id={identityChangeReasonId} className="acx-guided-face__change-note">
-          Changing an answer swaps in a different saved draft. Save or discard your edit first.
-        </p>
-        {scenario.faces.map((face) => {
-          const person = getGuidedPerson(scenario, face.matchedPersonKey);
-          const identity = getGuidedIdentity(scenario, face.id);
-          const confirmDisabled = hasUnsavedEdit || identity.status === GUIDED_IDENTITY_STATUS.CONFIRMED;
-          const leaveUnnamedDisabled = hasUnsavedEdit || identity.status === GUIDED_IDENTITY_STATUS.UNIDENTIFIED;
-          const describedBy = hasUnsavedEdit ? identityChangeReasonId : undefined;
+      {decided ? null : <p className="acx-guided-face__next-reason">{guidedCopy('names.next_blocked')}</p>}
+      <button type="button" className="acx-button acx-button--primary" onClick={onContinue} disabled={!decided}>
+        {guidedCopy('names.next')}
+      </button>
 
-          return (
-            <div key={face.id} className="acx-guided-face__decision-row">
-              <p>
-                {person.name}, face on the {face.position}
-              </p>
-              <div className="acx-guided-face__decision-actions">
-                <button
-                  type="button"
-                  className="acx-button acx-button--secondary"
-                  onClick={() => onConfirm(face.id)}
-                  disabled={confirmDisabled}
-                  aria-describedby={describedBy}
-                >
-                  Yes, this is {person.name}
-                </button>
-                <button
-                  type="button"
-                  className="acx-button acx-button--tertiary"
-                  onClick={() => onLeaveUnnamed(face.id)}
-                  disabled={leaveUnnamedDisabled}
-                  aria-describedby={describedBy}
-                >
-                  Keep this person unnamed
-                </button>
-              </div>
+      <DialogRoot
+        open={pending}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) {
+            onCancelReplacement();
+          }
+        }}
+      >
+        <DialogPortal>
+          <DialogOverlay />
+          <DialogContent
+            aria-modal="true"
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+            }}
+          >
+            <DialogTitle>{guidedCopy('names.change_title')}</DialogTitle>
+            <DialogDescription>{guidedCopy('names.change_body')}</DialogDescription>
+            <div className="acx-dialog__actions">
+              <button type="button" className="acx-button acx-button--secondary" onClick={onCancelReplacement}>
+                {guidedCopy('names.change_cancel')}
+              </button>
+              <button type="button" className="acx-button acx-button--primary" onClick={onConfirmReplacement}>
+                {guidedCopy('names.change_confirm')}
+              </button>
             </div>
-          );
-        })}
-      </div>
+          </DialogContent>
+        </DialogPortal>
+      </DialogRoot>
     </section>
   );
 };

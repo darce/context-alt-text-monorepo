@@ -71,9 +71,16 @@ final class PublicDemoShortcode {
 			$cards .= '</label>';
 		}
 
+		$preview  = '<aside class="acx-demo__preview" data-acx-demo-preview>';
+		$preview .= '<p>' . esc_html( 'Illustrative example — not a live result' ) . '</p>';
+		$preview .= '<p>' . esc_html( 'Alex stands beside a bicycle outside a cafe.' ) . '</p>';
+		$preview .= '<p>' . esc_html( 'This example is not a description of your selected image. Your live result may differ.' ) . '</p>';
+		$preview .= '</aside>';
+
 		return '<section class="acx-demo" data-acx-demo data-state="idle" data-submit-url="'
 			. esc_attr( rest_url( 'acx/v1/public/demo/describe' ) )
 			. '" data-nonce="' . esc_attr( wp_create_nonce( 'wp_rest' ) ) . '">'
+			. $preview
 			. '<form class="acx-demo__form"><fieldset><legend>Choose an image to describe</legend><div class="acx-demo__choices">'
 			. $cards
 			. '</div></fieldset><button type="submit" class="acx-demo__submit">Describe selected image</button></form>'

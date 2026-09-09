@@ -92,6 +92,31 @@ describe('ux-map render parity (UXW2-3-R3-23)', () => {
     expect(missing, missing.join('; ')).toEqual([]);
   });
 
+  it('public-demo-describe render documents every zone, state, and action id', () => {
+    const { json, render } = loadPair('public-demo-describe');
+    const missing: string[] = [];
+
+    for (const screen of json.screens ?? []) {
+      for (const zone of screen.zones ?? []) {
+        if (!render.includes(zone.id)) {
+          missing.push(`zone ${zone.id}`);
+        }
+        for (const state of zone.states ?? []) {
+          if (!render.includes(state)) {
+            missing.push(`expected ux-map render to document state '${state}' (zone ${zone.id})`);
+          }
+        }
+      }
+    }
+    for (const action of json.actions ?? []) {
+      if (!render.includes(action.id)) {
+        missing.push(`action ${action.id}`);
+      }
+    }
+
+    expect(missing, missing.join('; ')).toEqual([]);
+  });
+
   /**
    * WBUX-6-r0902w2-S1R1-F1: `uxmap-one-primary.test.ts` only checks one primary
    * *per screen_id*, so the SSOT could keep two competing job verbs — a footer

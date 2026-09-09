@@ -21,6 +21,7 @@ export interface PublicDemoEnvelope {
   progress: { done: number; total: number };
   deadline_seconds?: number;
   description?: string;
+  description_tier?: 'provisional_cpu' | 'final_gpu' | null;
   error?: { code: string; message: string };
 }
 

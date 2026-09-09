@@ -389,6 +389,7 @@ class IncrementalClusteringRunner:
                 sharpness=row.sharpness,
                 embedding_norm=row.embedding_norm,
                 occlusion_severity=row.occlusion_severity,
+                embedding_model=str(row.embedding_model) if getattr(row, "embedding_model", None) else None,
             )
             for row in rows
         ]

@@ -240,6 +240,9 @@ async def create_cluster_for_identity(
         confidence=float(identity_model.confidence),
         bbox_width=int(identity_model.bbox_width),
         bbox_height=int(identity_model.bbox_height),
+        embedding_model=(
+            str(identity_model.embedding_model) if getattr(identity_model, "embedding_model", None) else None
+        ),
     )
 
     cluster = await assignment_writer.persist_new_cluster(

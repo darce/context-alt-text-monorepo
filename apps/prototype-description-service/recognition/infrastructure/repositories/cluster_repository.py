@@ -705,15 +705,25 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         return int(result.scalar_one() or 0)
 
     async def get_all_representatives(self, cluster_id: str) -> list[ClusterRepresentative]:
-        """Return all representative domain objects for a cluster."""
+        """Return representative domain objects for a cluster in one embedding space.
+
+        FIR23-01: stamp ``embedding_model`` from the joined identity and keep a
+        single space (majority, lex tie-break). Unstamped-only clusters are a
+        no-op so legacy rows still load.
+        """
         stmt = (
-            select(IdentityClusterRepresentative, MediaIdentity.image_phash, MediaIdentity.media_id)
+            select(
+                IdentityClusterRepresentative,
+                MediaIdentity.image_phash,
+                MediaIdentity.media_id,
+                MediaIdentity.embedding_model,
+            )
             .join(MediaIdentity, MediaIdentity.id == IdentityClusterRepresentative.identity_id)
             .where(IdentityClusterRepresentative.cluster_id == _coerce_uuid(cluster_id))
         )
         result = await self._session.execute(stmt)
         reps = []
-        for model_rep, phash, media_id in result:
+        for model_rep, phash, media_id, emb_model in result:
             reps.append(
                 ClusterRepresentative(
                     id=str(model_rep.id),
@@ -731,9 +741,13 @@ class SqlAlchemyClusterRepository(ClusterRepository):
                     pose_pitch=float(model_rep.pose_pitch) if model_rep.pose_pitch is not None else None,
                     pose_yaw=float(model_rep.pose_yaw) if model_rep.pose_yaw is not None else None,
                     pose_roll=float(model_rep.pose_roll) if model_rep.pose_roll is not None else None,
+                    embedding_model=str(emb_model) if emb_model else None,
                 )
             )
-        return reps
+        chosen = _choose_embedding_model([rep.embedding_model for rep in reps])
+        if chosen is None:
+            return reps
+        return [rep for rep in reps if rep.embedding_model == chosen]
 
     async def mark_representative_user_selected(
         self,
@@ -1503,6 +1517,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             dismissed_at=model.dismissed_at if isinstance(model.dismissed_at, datetime) else None,
             representatives=domain_reps,
             centroid=centroid,
+            embedding_model=_choose_embedding_model([rep.embedding_model for rep in domain_reps]),
         )
 
     async def get_snapshot(
@@ -1765,6 +1780,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             occlusion_severity=(float(model.occlusion_severity) if model.occlusion_severity is not None else None),
             cluster_id=cluster_id,
             moved_by_merge_id=str(model.moved_by_merge_id) if getattr(model, "moved_by_merge_id", None) else None,
+            embedding_model=str(model.embedding_model) if getattr(model, "embedding_model", None) else None,
         )
 
     def _to_model(self, cluster: IdentityCluster) -> ClusterModel:

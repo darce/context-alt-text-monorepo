@@ -22,6 +22,11 @@ from recognition.application.events.broadcaster import get_event_broadcaster
 from recognition.application.orchestration.curation import update_cluster
 from recognition.application.orchestration.protocols import MergeSuggestionServiceProtocol, SuggestionServiceProtocol
 from recognition.application.persistence.assignment_writer import AssignmentWriter
+from recognition.application.suggestions.embedding_space import (
+    models_are_same_space,
+    representative_embedding_model,
+    same_space_vector,
+)
 from recognition.domain.cluster import IdentityCluster, ReservedClusterLabelError, is_reserved_label_shape
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.repositories import ClusterRepository, MemberRepository
@@ -63,7 +68,27 @@ async def post_merge_retry_matching(
     if not reps:
         return
 
-    rep_face_vecs = [normalize_face_embedding(cast(np.ndarray, getattr(rep, "embedding", rep))) for rep in reps]
+    counts: dict[str, int] = {}
+    for rep in reps:
+        model = representative_embedding_model(rep)
+        if model:
+            counts[model] = counts.get(model, 0) + 1
+    gallery_model = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[0][0] if counts else None
+    rep_face_vecs: list[np.ndarray] = []
+    for rep in reps:
+        if gallery_model is not None:
+            vec = same_space_vector(rep, gallery_model)
+        else:
+            vec = (
+                None
+                if representative_embedding_model(rep) is not None
+                else np.asarray(getattr(rep, "embedding", rep), dtype=np.float32)
+            )
+            if vec is not None and vec.size == 0:
+                vec = None
+        if vec is None:
+            continue
+        rep_face_vecs.append(normalize_face_embedding(cast(np.ndarray, vec)))
     if not rep_face_vecs:
         return
 
@@ -116,11 +141,12 @@ async def post_merge_retry_matching(
             image_phash=model.image_phash,
             sharpness=float(model.sharpness) if model.sharpness is not None else None,
             embedding_norm=float(model.embedding_norm) if model.embedding_norm is not None else None,
-            occlusion_severity=(
-                float(model.occlusion_severity) if model.occlusion_severity is not None else None
-            ),
+            occlusion_severity=(float(model.occlusion_severity) if model.occlusion_severity is not None else None),
             moved_by_merge_id=str(model.moved_by_merge_id) if getattr(model, "moved_by_merge_id", None) else None,
+            embedding_model=str(model.embedding_model) if getattr(model, "embedding_model", None) else None,
         )
+        if not models_are_same_space(identity.embedding_model, gallery_model):
+            continue
         face_vec = normalize_face_embedding(identity.embedding)
         best_sim = max(float(np.dot(face_vec, rep_vec)) for rep_vec in rep_face_vecs)
         candidate = AssignmentCandidate(
@@ -172,6 +198,8 @@ async def post_merge_retry_matching(
             .order_by(MediaIdentityModel.confidence.desc())
             .limit(max_unclustered)
         )
+        if gallery_model is not None:
+            stmt = stmt.where(MediaIdentityModel.embedding_model == gallery_model)
         result = await session.execute(stmt)
         unclustered_models = result.scalars().all()
 
@@ -197,11 +225,12 @@ async def post_merge_retry_matching(
                 image_phash=model.image_phash,
                 sharpness=float(model.sharpness) if model.sharpness is not None else None,
                 embedding_norm=float(model.embedding_norm) if model.embedding_norm is not None else None,
-                occlusion_severity=(
-                    float(model.occlusion_severity) if model.occlusion_severity is not None else None
-                ),
+                occlusion_severity=(float(model.occlusion_severity) if model.occlusion_severity is not None else None),
                 moved_by_merge_id=str(model.moved_by_merge_id) if getattr(model, "moved_by_merge_id", None) else None,
+                embedding_model=str(model.embedding_model) if getattr(model, "embedding_model", None) else None,
             )
+            if not models_are_same_space(identity.embedding_model, gallery_model):
+                continue
             face_vec = normalize_face_embedding(identity.embedding)
             best_sim = max(float(np.dot(face_vec, rep_vec)) for rep_vec in rep_face_vecs)
             if best_sim < min_similarity_for_unclustered:

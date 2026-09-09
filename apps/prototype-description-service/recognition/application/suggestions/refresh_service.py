@@ -29,6 +29,12 @@ from recognition.application.assignment.checks import (
 from recognition.application.settings import ClusteringSettings
 from recognition.application.similarity import RepresentativeCache, SimilaritySearch
 from recognition.application.suggestions.eligibility import is_eligible_cluster
+from recognition.application.suggestions.embedding_space import (
+    cluster_embedding_model,
+    models_are_same_space,
+    representative_embedding_model,
+    same_space_vector,
+)
 from recognition.config.settings import resolve_effective_clustering_settings
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.repositories import (
@@ -50,6 +56,23 @@ def _has_reps(reps: Sequence[np.ndarray] | np.ndarray | None) -> TypeGuard[Seque
     if isinstance(reps, np.ndarray):
         return reps.size > 0
     return len(reps) > 0
+
+
+def _gallery_vector_for_probe(rep: object, probe_model: str | None) -> np.ndarray | None:
+    """Return a gallery vector only when it shares the probe's embedding space.
+
+    Stamped probe → fail-closed same_space_vector. Unstamped probe (legacy) →
+    only unstamped gallery vectors, so a cv/ort row cannot win the cosine.
+    """
+    if probe_model:
+        return same_space_vector(rep, str(probe_model))
+    if representative_embedding_model(rep) is not None:
+        return None
+    raw = getattr(rep, "embedding", rep)
+    vec = np.asarray(raw, dtype=np.float32)
+    if vec.size == 0:
+        return None
+    return vec
 
 
 class SuggestionRefreshService:
@@ -106,10 +129,9 @@ class SuggestionRefreshService:
             image_phash=str(model.image_phash) if model.image_phash is not None else None,
             sharpness=float(model.sharpness) if model.sharpness is not None else None,
             embedding_norm=float(model.embedding_norm) if model.embedding_norm is not None else None,
-            occlusion_severity=(
-                float(model.occlusion_severity) if model.occlusion_severity is not None else None
-            ),
+            occlusion_severity=(float(model.occlusion_severity) if model.occlusion_severity is not None else None),
             moved_by_merge_id=str(model.moved_by_merge_id) if getattr(model, "moved_by_merge_id", None) else None,
+            embedding_model=str(model.embedding_model) if getattr(model, "embedding_model", None) else None,
         )
 
     async def _find_best_cluster_match(
@@ -141,9 +163,15 @@ class SuggestionRefreshService:
                 if not reps:
                     continue
 
-                reps_by_cluster[cluster_id] = [
-                    np.asarray(getattr(rep, "embedding", rep), dtype=np.float32) for rep in reps
-                ]
+                probe_model = identity.embedding_model
+                same_space: list[np.ndarray] = []
+                for rep in reps:
+                    vec = _gallery_vector_for_probe(rep, probe_model)
+                    if vec is not None:
+                        same_space.append(vec)
+                if not same_space:
+                    continue
+                reps_by_cluster[cluster_id] = same_space
 
             representatives_by_cluster = reps_by_cluster
 
@@ -308,9 +336,15 @@ class SuggestionRefreshService:
             if not reps:
                 continue
 
-            representatives_by_cluster[cluster_id] = [
-                np.asarray(getattr(rep, "embedding", rep), dtype=np.float32) for rep in reps
-            ]
+            probe_model = identity.embedding_model
+            same_space: list[np.ndarray] = []
+            for rep in reps:
+                vec = _gallery_vector_for_probe(rep, probe_model)
+                if vec is not None:
+                    same_space.append(vec)
+            if not same_space:
+                continue
+            representatives_by_cluster[cluster_id] = same_space
 
         if not representatives_by_cluster:
             return []
@@ -432,13 +466,10 @@ class SuggestionRefreshService:
             logger.warning("[suggestions] refresh_for_cluster: cluster not found cluster_id=%s", cluster_id)
             return 0
 
-        rep_cache = await RepresentativeCache.load([cluster_id], self._cluster_repository)
-        rep_embeddings = rep_cache.get_representatives(cluster_id)
-        if rep_embeddings is None:
+        labeled_reps = list(await self._cluster_repository.get_all_representatives(cluster_id))
+        if not labeled_reps:
             logger.info("[suggestions] refresh_for_cluster: no representatives cluster_id=%s", cluster_id)
             return 0
-
-        representatives_by_cluster = {cluster_id: rep_embeddings}
 
         suggestions = await self._repository.get_by_cluster(self._tenant_id, cluster_id)
         pending = [s for s in suggestions if s.status == SuggestionStatus.PENDING]
@@ -458,7 +489,17 @@ class SuggestionRefreshService:
                 continue
 
             identity = self._build_identity(model)
-            match = await self._find_best_cluster_match(identity, representatives_by_cluster=representatives_by_cluster)
+            same_space = [
+                vec
+                for vec in (_gallery_vector_for_probe(rep, identity.embedding_model) for rep in labeled_reps)
+                if vec is not None
+            ]
+            if not same_space:
+                continue
+            match = await self._find_best_cluster_match(
+                identity,
+                representatives_by_cluster={cluster_id: same_space},
+            )
             if match is None:
                 continue
             _cluster_id, best_similarity = match
@@ -607,6 +648,11 @@ class SuggestionRefreshService:
         _total_members = sum(len(identities) for identities in identities_by_cluster.values())
         seen_identity_ids: set[str] = set()
         duplicate_identity_skips = 0
+        gallery_model = None
+        get_by_id = getattr(self._cluster_repository, "get_by_id", None)
+        if callable(get_by_id):
+            labeled_cluster = await get_by_id(cluster_id)
+            gallery_model = cluster_embedding_model(labeled_cluster) if labeled_cluster is not None else None
         logger.info(
             "[suggestions] surface: loaded %d member identities from %d clusters in %.3fs",
             _total_members,
@@ -635,6 +681,8 @@ class SuggestionRefreshService:
                     duplicate_identity_skips += 1
                     continue
                 seen_identity_ids.add(identity_id)
+                if not models_are_same_space(identity.embedding_model, gallery_model):
+                    continue
                 match = self._search.find_best_match(identity.face_vector, representatives_by_cluster)
                 if match is None:
                     continue

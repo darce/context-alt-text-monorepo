@@ -13,6 +13,11 @@ import numpy as np
 from recognition.application.clustering.centroid_utils import compute_similarity
 from recognition.application.settings import ClusteringSettings
 from recognition.application.settings.clustering import HACSettings
+from recognition.application.suggestions.embedding_space import (
+    cluster_embedding_model,
+    models_are_same_space,
+    representative_embedding_model,
+)
 from recognition.domain.cluster import IdentityCluster, is_reserved_label_shape
 from recognition.domain.repositories import (
     ClusterRepository,
@@ -79,7 +84,7 @@ class MergeSuggestionService:
         limit = max(limit, hac_settings.max_scope_size)
         clusters = await self._cluster_repository.get_by_tenant(tenant_id, limit=limit)
 
-        singleton_candidates: list[tuple[IdentityCluster, str, np.ndarray]] = []
+        singleton_candidates: list[tuple[IdentityCluster, str, np.ndarray, str | None]] = []
         for cluster in clusters:
             if cluster.identity_count != 1 or not _is_eligible_for_merge_suggestion(cluster, tenant_id):
                 continue
@@ -94,7 +99,9 @@ class MergeSuggestionService:
                     embedding is None,
                 )
                 continue
-            singleton_candidates.append((cluster, identity_id, embedding))
+            singleton_candidates.append(
+                (cluster, identity_id, embedding, _singleton_embedding_model(cluster, identity_id))
+            )
 
         if len(singleton_candidates) < 2:
             return 0
@@ -114,13 +121,15 @@ class MergeSuggestionService:
 
         embeddings: dict[uuid.UUID, np.ndarray] = {}
         identity_to_cluster: dict[uuid.UUID, IdentityCluster] = {}
-        for cluster, identity_id, embedding in singleton_candidates:
+        identity_models: dict[uuid.UUID, str | None] = {}
+        for cluster, identity_id, embedding, embedding_model in singleton_candidates:
             try:
                 identity_uuid = uuid.UUID(identity_id)
             except ValueError:
                 logger.debug("[merge_suggestions] singleton_skip invalid_identity_id=%s", identity_id)
                 continue
             embeddings[identity_uuid] = normalize_face_embedding(np.array(embedding, dtype=np.float32))
+            identity_models[identity_uuid] = embedding_model
             if cluster.id is not None:
                 identity_to_cluster[identity_uuid] = cluster
 
@@ -148,6 +157,8 @@ class MergeSuggestionService:
                 if cluster_a is None or cluster_b is None or cluster_a.id is None or cluster_b.id is None:
                     continue
                 if not _is_merge_pair_eligible(cluster_a, cluster_b):
+                    continue
+                if not models_are_same_space(identity_models.get(identity_a), identity_models.get(identity_b)):
                     continue
                 similarity = compute_similarity(embeddings[identity_a], embeddings[identity_b])
                 if similarity < self._settings.suggestion_floor:
@@ -219,6 +230,8 @@ async def generate_cluster_merge_suggestions(
     for idx, (cluster_a, centroid_a) in enumerate(candidates):
         for cluster_b, centroid_b in candidates[idx + 1 :]:
             if not _is_merge_pair_eligible(cluster_a, cluster_b):
+                continue
+            if not models_are_same_space(cluster_embedding_model(cluster_a), cluster_embedding_model(cluster_b)):
                 continue
             similarity = compute_similarity(centroid_a, centroid_b)
             if similarity < settings.suggestion_floor:
@@ -333,6 +346,16 @@ def _extract_singleton_identity_embedding(cluster: IdentityCluster) -> tuple[str
             return identity_id, embedding
 
     return identity_id, embedding
+
+
+def _singleton_embedding_model(cluster: IdentityCluster, identity_id: str) -> str | None:
+    """Resolve the singleton face's embedding space from loaded reps, else cluster."""
+    for rep in list(cluster.representatives or []):
+        if rep.identity_id == identity_id:
+            model = representative_embedding_model(rep)
+            if model is not None:
+                return model
+    return cluster_embedding_model(cluster)
 
 
 __all__ = ["MergeSuggestionService", "generate_cluster_merge_suggestions"]

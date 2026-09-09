@@ -2,8 +2,11 @@
 
 Use this procedure to switch the production description service and demo
 WordPress stack to the A10-backed `gpu_qwen30b` profile as one change. The
-preflight fails before deployment on an incomplete adapter, endpoint, snapshot,
-or WordPress recognition contract and never prints secret values.
+producer redeploy and backend lifecycle convergence are part of the same
+release: a green environment preflight alone does not prove that the live
+producer is publishing snapshots or that the backend STOP path is installed.
+The preflight fails before deployment on an incomplete adapter, endpoint,
+snapshot, or WordPress recognition contract and never prints secret values.
 
 ## 1. Edit the two live env files
 
@@ -95,11 +98,17 @@ Use this producer-to-consumer order for the live flip:
    `ACX_DESCRIPTION_ADAPTER` on the running producer. The producer is the
    authority; do not make a demo-only env edit stand in for this change.
 2. Redeploy the prod API and wait for its health/adapter verification to pass.
-3. Verify both env halves with `preflight-gpu-env.sh --check-reaper` after the
-   prod redeploy and before publishing any demo descriptions.
-4. Run `deploy-demo` with `ACX_DEMO_GPU_PREFLIGHT=1`, so the deploy repeats the
+3. Converge the backend lifecycle release with the producer deployed. The
+   `gpu-lifecycle` command stages the module atomically, provisions the
+   `/run/acx-write/<environment>` producer directories, installs the
+   `--load-dir /run/acx-write` units with the durable lease path and shared
+   lifecycle lock, and verifies both timers are enabled and active. Do not
+   enable an old unit by hand or copy the module directly into a live path.
+4. Verify both env halves with `preflight-gpu-env.sh --check-reaper` after the
+   lifecycle convergence and before publishing any demo descriptions.
+5. Run `deploy-demo` with `ACX_DEMO_GPU_PREFLIGHT=1`, so the deploy repeats the
    reaper/environment gate immediately before the demo stack is brought up.
-5. Confirm the bounded first-burst result (`Describe burst bounded` and
+6. Confirm the bounded first-burst result (`Describe burst bounded` and
    `PASS demo first describe burst`) and retain the preflight's `MANUAL STOP
    fallback` line as the operator's reaper-stop backstop.
 
@@ -108,6 +117,26 @@ set -euo pipefail
 # Persist the same PHP reader for bootstrap; sync-demo preserves this helper.
 ssh ubuntu@acx-backend.tail1a44b8.ts.net 'sudo install -m 644 /tmp/acx-gpu-preflight/lib/gpu-env-contract.sh /opt/acx-backend/demo/lib/gpu-env-contract.sh'
 CONFIRM=PROMOTE scripts/deploy/recognition-service.sh deploy prod
+GPU_INSTANCE_ID="${GPU_INSTANCE_ID:-$(terraform -chdir=infra/oci output -raw gpu_instance_id)}"
+GPU_READY_URL="${GPU_READY_URL:?Set GPU_READY_URL to the private GPU service /health URL}"
+ACX_DEPLOY_GPU_LIFECYCLE=1 \
+  GPU_INSTANCE_ID="$GPU_INSTANCE_ID" \
+  ACX_GPU_READY_URL="$GPU_READY_URL" \
+  scripts/deploy/recognition-service.sh gpu-lifecycle
+ssh ubuntu@acx-backend.tail1a44b8.ts.net 'set -euo pipefail
+for timer in acx-gpu-start.timer acx-gpu-reap.timer; do
+  systemctl is-enabled --quiet "$timer"
+  systemctl is-active --quiet "$timer"
+done
+exec_start="$(systemctl show acx-gpu-reap.service --property=ExecStart --value)"
+grep -F -- "--load-dir /run/acx-write" <<<"$exec_start"
+grep -F -- "--running-since-path /var/lib/acx-gpu/running-since.json" <<<"$exec_start"
+for environment in dev dev-fir staging prod; do
+  test -s "/run/acx-write/$environment/describe-load.json" || {
+    echo "Missing describe-load snapshot for $environment; redeploy that producer before continuing." >&2
+    exit 1
+  }
+done'
 PLUGIN_ZIP=dist/alt-context-reviewed.zip # Replace with the artifact named in the review record.
 PLUGIN_ZIP_SHA256=replace-with-reviewed-sha256 # Replace with that record's SHA-256.
 case "$PLUGIN_ZIP" in dist/alt-context-*.zip) ;; *) echo "Refusing unscoped plugin artifact path." >&2; exit 1 ;; esac

@@ -221,6 +221,9 @@ ACX_PRIOR_IMAGE_ID=""
 ACX_PRIOR_RUNTIME_IDENTITY=""
 ACX_RESTART_EVIDENCE_PHASE=""
 ACX_TRAFFIC_FLIPPED=0
+ACX_CUTOVER_ENV=""
+ACX_CUTOVER_COMMITTED=0
+ACX_ENV_TAG_LOCK_HELD=""
 ACX_LIVE_DISRUPTED=0
 # One deploy transaction owns one immutable remote topology snapshot. The
 # value is intentionally a narrow token because it is interpolated into paths
@@ -248,9 +251,8 @@ validate_deploy_tmpdir() {
 }
 validate_deploy_tmpdir
 
-cleanup_deploy_ocir_docker_config() {
-  local rc=$? config_dir="${ACX_DEPLOY_OCIR_CONFIG_DIR:-}" config_q
-  trap - EXIT HUP INT TERM
+_purge_deploy_ocir_docker_config() {
+  local config_dir="${ACX_DEPLOY_OCIR_CONFIG_DIR:-}" config_q
   if [[ -n "${config_dir}" ]]; then
     if [[ "${ACX_DEPLOY_OCIR_REMOTE_CONFIG:-0}" == "1" ]]; then
       config_q="$(remote_quote "${config_dir}")"
@@ -267,7 +269,27 @@ cleanup_deploy_ocir_docker_config() {
   ACX_DEPLOY_OCIR_REMOTE_CONFIG=0
   ACX_DEPLOY_OCIR_REMOTE_AUTHENTICATED=0
   unset ACX_OCIR_DOCKER_CONFIG_DIR DOCKER_CONFIG
+}
+
+cleanup_deploy_ocir_docker_config() {
+  local rc=$?
+  trap - EXIT HUP INT TERM
+  _purge_deploy_ocir_docker_config
   return "${rc}"
+}
+
+deploy_interrupt_cleanup() {
+  local requested="${1-}"
+  local rc=$?
+  trap - EXIT HUP INT TERM
+  if [[ -n "${requested}" ]]; then
+    rc="${requested}"
+  fi
+  recover_interrupted_cutover || true
+  _purge_deploy_ocir_docker_config
+  if [[ -n "${requested}" ]]; then
+    exit "${rc}"
+  fi
 }
 
 init_deploy_ocir_docker_config() {
@@ -279,10 +301,10 @@ init_deploy_ocir_docker_config() {
     || fail "Could not create the deploy-scoped Docker credential directory"
   ACX_OCIR_DOCKER_CONFIG_DIR="${ACX_DEPLOY_OCIR_CONFIG_DIR}"
   DOCKER_CONFIG="${ACX_DEPLOY_OCIR_CONFIG_DIR}"
-  trap cleanup_deploy_ocir_docker_config EXIT
-  trap 'exit 129' HUP
-  trap 'exit 130' INT
-  trap 'exit 143' TERM
+  trap deploy_interrupt_cleanup EXIT
+  trap 'deploy_interrupt_cleanup 129' HUP
+  trap 'deploy_interrupt_cleanup 130' INT
+  trap 'deploy_interrupt_cleanup 143' TERM
 }
 
 init_remote_ocir_docker_config() {
@@ -1255,7 +1277,18 @@ do_push_sha() {
 # Promote the env tag (e.g. :latest for prod). Called ONLY after the boot smoke
 # passes, so a bad image never poisons the env tag in OCIR.
 do_push_tag() {
-  local tag="$1" source_digest="${2:-${ACX_CANDIDATE_DIGEST_REF:-}}" promoted_digest
+  local tag source_digest promoted_digest
+  if [[ "${1:-}" == "--locked" ]]; then
+    shift
+  else
+    tag="$1"
+    source_digest="${2:-${ACX_CANDIDATE_DIGEST_REF:-}}"
+    assert_safe_shell_token "image tag" "${tag}"
+    with_shared_tag_lock "${tag}" do_push_tag --locked "${tag}" "${source_digest}"
+    return
+  fi
+  tag="$1"
+  source_digest="${2:-${ACX_CANDIDATE_DIGEST_REF:-}}"
   assert_safe_shell_token "image tag" "${tag}"
   assert_safe_image_repo "IMAGE_BASE" "${IMAGE_BASE}"
   if [[ ! "${source_digest}" =~ ^${IMAGE_BASE}@sha256:[a-f0-9]{64}$ ]]; then
@@ -2702,6 +2735,75 @@ abort_cutover_candidate() {
   return 0
 }
 
+enable_cutover_candidate() {
+  local env="$1" next_unit timeout
+  next_unit="$(env_to_next_unit "$env")"
+  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  log "Enabling cutover candidate ${next_unit} until canonical routing is committed"
+  run_with_deadline "${timeout}" "enable cutover candidate ${next_unit}" \
+    ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
+    "sudo systemctl enable $(remote_quote "${next_unit}")"
+}
+
+cutover_inflight_present() {
+  local env="$1" timeout inflight
+  env_to_unit "${env}" >/dev/null
+  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  inflight="${ACX_DEPLOY_BACKUP_ROOT}/${env}/cutover-inflight"
+  run_with_deadline "${timeout}" "cutover inflight probe ${env}" \
+    ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
+    "sudo test -f $(remote_quote "${inflight}")"
+}
+
+commit_cutover_state() {
+  local env="$1" timeout inflight committed
+  env_to_unit "${env}" >/dev/null
+  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  inflight="${ACX_DEPLOY_BACKUP_ROOT}/${env}/cutover-inflight"
+  committed="${ACX_DEPLOY_BACKUP_ROOT}/${env}/cutover-committed"
+  run_with_deadline "${timeout}" "commit cutover ${env}" \
+    ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
+    "sudo rm -f -- $(remote_quote "${inflight}") && printf 'status=canonical\ntransaction=%s\n' $(remote_quote "${ACX_DEPLOY_TRANSACTION_ID}") | sudo tee $(remote_quote "${committed}") >/dev/null" \
+    || return 1
+  ACX_CUTOVER_COMMITTED=1
+  ACX_TRAFFIC_FLIPPED=0
+}
+
+recover_interrupted_cutover() {
+  local env="${ACX_CUTOVER_ENV:-}"
+  [[ -n "${env}" ]] || return 0
+  if [[ "${ACX_CUTOVER_COMMITTED:-0}" == "1" && "${ACX_TRAFFIC_FLIPPED:-0}" != "1" ]]; then
+    return 0
+  fi
+  if [[ "${ACX_TRAFFIC_FLIPPED:-0}" != "1" ]]; then
+    cutover_inflight_present "${env}" || return 0
+    ACX_TRAFFIC_FLIPPED=1
+  fi
+  log "Interrupted cutover for ${env}; restoring canonical routing while keeping the candidate recoverable"
+  if restore_edge_backups "${env}"; then
+    if ! commit_cutover_state "${env}"; then
+      warn "canonical restore succeeded but commit marker failed; refusing to drain candidate"
+      enable_cutover_candidate "${env}" || true
+      return 1
+    fi
+    abort_cutover_candidate "${env}" || true
+    return 0
+  fi
+  warn "edge restore after interrupt failed; leaving candidate ${env}-next enabled and serving"
+  enable_cutover_candidate "${env}" || warn "could not enable cutover candidate after failed edge restore"
+  return 1
+}
+
+recover_persisted_cutover() {
+  local env="$1"
+  env_to_unit "${env}" >/dev/null
+  ACX_CUTOVER_ENV="${env}"
+  cutover_inflight_present "${env}" || return 0
+  ACX_TRAFFIC_FLIPPED=1
+  log "Found persisted inflight cutover for ${env}; recovering before a new candidate"
+  recover_interrupted_cutover
+}
+
 restore_runtime_topology() {
   local env="$1"
   restore_topology_backups "$env" || return 1
@@ -2711,9 +2813,10 @@ restore_runtime_topology() {
 
 flip_edge_alias() {
   local env="$1" target="$2"
-  local alias next_alias from to timeout
+  local alias next_alias from to timeout next_unit
   alias="$(env_to_api_alias "$env")"
   next_alias="${alias}-next"
+  next_unit="$(env_to_next_unit "$env")"
   case "$target" in
     next) from="$alias"; to="$next_alias" ;;
     canonical) from="$next_alias"; to="$alias" ;;
@@ -2762,6 +2865,15 @@ sudo mv -f -- "\$tmp" Caddyfile
 desired_count=\$(route_count '${to}')
 remaining_source_count=\$(route_count '${from}')
 [ "\$desired_count" -eq 1 ] && [ "\$remaining_source_count" -eq 0 ] || { echo 'Caddy reverse_proxy replacement did not converge exactly once' >&2; exit 1; }
+sudo install -d -m 700 -- "\$backup_root/${env}"
+if [ '${target}' = next ]; then
+  printf 'env=${env}\\ntransaction=${ACX_DEPLOY_TRANSACTION_ID}\\nnext_unit=${next_unit}\\nstatus=traffic_on_next\\n' | sudo tee "\$backup_root/${env}/cutover-inflight" >/dev/null
+  sudo grep -q '^status=traffic_on_next\$' "\$backup_root/${env}/cutover-inflight" || { echo 'cutover inflight marker write failed' >&2; exit 1; }
+elif [ '${target}' = canonical ]; then
+  sudo rm -f -- "\$backup_root/${env}/cutover-inflight"
+  printf 'env=${env}\\ntransaction=${ACX_DEPLOY_TRANSACTION_ID}\\nstatus=canonical\\n' | sudo tee "\$backup_root/${env}/cutover-committed" >/dev/null
+  sudo grep -q '^status=canonical\$' "\$backup_root/${env}/cutover-committed" || { echo 'cutover commit marker write failed' >&2; exit 1; }
+fi
 if ! docker compose -f docker-compose.caddy.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile; then
   docker compose -f docker-compose.caddy.yml up -d
 fi
@@ -2818,6 +2930,8 @@ do_restart() {
   local unit next_unit expected_repo env_tag pulled_digest timeout remote_dir
   ACX_RESTART_EVIDENCE_PHASE="pre_candidate"
   ACX_TRAFFIC_FLIPPED=0
+  ACX_CUTOVER_ENV="$env"
+  ACX_CUTOVER_COMMITTED=0
   ACX_LIVE_DISRUPTED=0
   unit="$(env_to_unit "$env")"
   next_unit="$(env_to_next_unit "$env")"
@@ -2828,6 +2942,10 @@ do_restart() {
   if [[ ! "${expected_digest}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ \
     || "${expected_repo}" != "${ACX_IMAGE_REPO}" ]]; then
     warn "restart requires the smoke-fenced digest for ACX_IMAGE_REPO=${ACX_IMAGE_REPO} (got: ${expected_digest:-empty})"
+    return 1
+  fi
+  if ! recover_persisted_cutover "$env"; then
+    warn "persisted inflight cutover for ${env} could not be recovered; refusing a new candidate"
     return 1
   fi
   # ACX_IMAGE_REPO is shipped once in promote_gate (S2-A-06), including the
@@ -2889,10 +3007,22 @@ do_restart() {
     return 1
   fi
   ACX_TRAFFIC_FLIPPED=1
+  if ! enable_cutover_candidate "$env"; then
+    warn "could not enable ${next_unit} after traffic flip; reverting to keep reboot-safe routing"
+    if flip_edge_alias "$env" canonical; then
+      ACX_TRAFFIC_FLIPPED=0
+      ACX_CUTOVER_COMMITTED=1
+      abort_cutover_candidate "$env" || true
+    else
+      warn "canonical flip failed; leaving candidate ${next_unit} serving"
+    fi
+    return 1
+  fi
   if ! curl --fail --silent --show-error --max-time 10 "$(env_to_health_url "$env")" >/dev/null; then
     warn "public health failed after traffic flip; reverting to ${unit}"
     if flip_edge_alias "$env" canonical; then
       ACX_TRAFFIC_FLIPPED=0
+      ACX_CUTOVER_COMMITTED=1
       abort_cutover_candidate "$env" || true
     else
       warn "canonical flip failed; leaving candidate ${next_unit} serving"
@@ -2927,6 +3057,7 @@ do_restart() {
     return 1
   fi
   ACX_TRAFFIC_FLIPPED=0
+  ACX_CUTOVER_COMMITTED=1
   abort_cutover_candidate "$env" || true
   ACX_LIVE_DISRUPTED=0
   return 0
@@ -3093,7 +3224,7 @@ assert_rollback_fence() {
 }
 
 restore_registry_env_tag() {
-  local env="$1" env_tag timeout inspect_timeout rollback_base
+  local env="$1" env_tag timeout inspect_timeout rollback_base current_digest
   if [[ ! "${ACX_ROLLBACK_DIGEST_REF:-}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]]; then
     warn "ROLLBACK REQUIRED but no previous serving digest was captured"
     return 1
@@ -3105,6 +3236,18 @@ restore_registry_env_tag() {
   if [[ ! "${timeout}" =~ ^[1-9][0-9]*$ ]]; then
     warn "ACX_PUSH_TIMEOUT must be a positive integer (got: ${timeout})"
     return 1
+  fi
+  if [[ -n "${ACX_CANDIDATE_DIGEST_REF:-}" ]]; then
+    if ! _pull_ref_remote "${rollback_base}:${env_tag}" >/dev/null \
+      || ! current_digest="$(remote_image_digest_ref "${rollback_base}:${env_tag}")"; then
+      warn "cannot observe current registry mapping for ${rollback_base}:${env_tag} immediately before rollback push; refusing unfenced rollback"
+      return 1
+    fi
+    if [[ "${current_digest}" != "${ACX_ROLLBACK_DIGEST_REF}" \
+      && "${current_digest}" != "${ACX_CANDIDATE_DIGEST_REF}" ]]; then
+      warn "STALE ROLLBACK REFUSED: ${rollback_base}:${env_tag} now maps to ${current_digest}, not this transaction's ${ACX_CANDIDATE_DIGEST_REF}"
+      return 1
+    fi
   fi
   if ! run_with_deadline "${inspect_timeout}" "rollback VM-local retag for ${env}" \
     remote_docker_with_config tag "${ACX_ROLLBACK_DIGEST_REF}" "${rollback_base}:${env_tag}"; then
@@ -3163,13 +3306,67 @@ restore_runtime_and_edge() {
 # Restore both the registry env tag and the VM's cached tag to the digest that
 # was serving before this transaction. This closes the latent-rollout window
 # when digest staging succeeds but a later repair/restart/verify step fails.
+with_shared_tag_lock() {
+  local tag="$1"; shift
+  local timeout lock_path holder_pid holder_out rc=0 waited=0
+  assert_safe_shell_token "image tag" "${tag}"
+  if [[ "${ACX_ENV_TAG_LOCK_HELD:-}" == "${tag}" ]]; then
+    "$@"
+    return
+  fi
+  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  lock_path="${ACX_DEPLOY_BACKUP_ROOT}/locks/tag-${tag}.lock"
+  holder_out="$(mktemp "${TMPDIR:-/tmp}/acx-tag-lock.XXXXXX")" || return 1
+  ssh -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
+    -o ServerAliveInterval=5 -o ServerAliveCountMax=2 \
+    -l "${OCI_USER}" -- "${OCI_HOST}" \
+    "sudo install -d -m 700 $(remote_quote "${ACX_DEPLOY_BACKUP_ROOT}/locks") && exec 9>$(remote_quote "${lock_path}") && flock -w ${timeout} 9 && printf 'LOCKED\n' && cat >/dev/null" \
+    < <(sleep "${timeout}") >"${holder_out}" 2>"${holder_out}.err" &
+  holder_pid=$!
+  while ! grep -q '^LOCKED$' "${holder_out}" 2>/dev/null; do
+    if ! kill -0 "${holder_pid}" 2>/dev/null; then
+      wait "${holder_pid}" || true
+      warn "could not acquire shared env-tag lock for ${tag}"
+      rm -f "${holder_out}" "${holder_out}.err"
+      return 1
+    fi
+    if (( waited >= timeout )); then
+      warn "timed out acquiring shared env-tag lock for ${tag}"
+      kill "${holder_pid}" 2>/dev/null || true
+      wait "${holder_pid}" 2>/dev/null || true
+      rm -f "${holder_out}" "${holder_out}.err"
+      return 1
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  ACX_ENV_TAG_LOCK_HELD="${tag}"
+  "$@" || rc=$?
+  ACX_ENV_TAG_LOCK_HELD=""
+  kill "${holder_pid}" 2>/dev/null || true
+  wait "${holder_pid}" 2>/dev/null || true
+  rm -f "${holder_out}" "${holder_out}.err"
+  return "${rc}"
+}
+
 restore_env_tag_to_rollback() {
-  local env="$1" restart_runtime="${2:-0}" rollback_base env_tag
+  local env restart_runtime rollback_base env_tag
+  if [[ "${1:-}" == "--locked" ]]; then
+    shift
+  else
+    env="$1"
+    restart_runtime="${2:-0}"
+    env_tag="$(env_to_tag "${env}")"
+    with_shared_tag_lock "${env_tag}" restore_env_tag_to_rollback --locked "${env}" "${restart_runtime}"
+    return
+  fi
+  env="$1"
+  restart_runtime="${2:-0}"
+  env_tag="$(env_to_tag "${env}")"
   assert_rollback_fence "${env}" "${restart_runtime}" || return 1
   restore_registry_env_tag "${env}" || return 1
   restore_runtime_and_edge "${env}" "${restart_runtime}" || return 1
   rollback_base="${ACX_ROLLBACK_IMAGE_BASE:-${ACX_ROLLBACK_DIGEST_REF%@sha256:*}}"
-  env_tag="$(env_to_tag "${env}")"
   log "Restored ${rollback_base}:${env_tag} to ${ACX_ROLLBACK_DIGEST_REF}"
 }
 

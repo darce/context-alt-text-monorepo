@@ -829,6 +829,7 @@ source "{SCRIPT}"
 ACX_ROLLBACK_DIGEST_REF="$IMAGE_BASE@sha256:{rollback}"
 ACX_ROLLBACK_IMAGE_BASE="$IMAGE_BASE"
 ACX_CANDIDATE_DIGEST_REF="$IMAGE_BASE@sha256:{candidate}"
+with_shared_tag_lock() {{ shift; "$@"; }}
 _pull_ref_remote() {{ :; }}
 remote_image_digest_ref() {{
   if [[ "$1" == *":dev" ]]; then printf '%s\n' "$IMAGE_BASE@sha256:{newer}"; else printf '%s\n' "$1"; fi
@@ -840,6 +841,57 @@ restore_env_tag_to_rollback dev 0
     assert result.returncode != 0
     assert "STALE ROLLBACK REFUSED" in result.stderr
     assert not records.exists()
+
+
+def test_rollback_push_cas_refuses_generation_changed_after_fence(tmp_path: Path) -> None:
+    """R-07: a newer shared-tag mapping between fence and push must not be overwritten."""
+    records = tmp_path / "docker-commands"
+    rollback = "a" * 64
+    candidate = "b" * 64
+    newer = "c" * 64
+    command = f'''
+source "{SCRIPT}"
+ACX_ROLLBACK_DIGEST_REF="$IMAGE_BASE@sha256:{rollback}"
+ACX_ROLLBACK_IMAGE_BASE="$IMAGE_BASE"
+ACX_CANDIDATE_DIGEST_REF="$IMAGE_BASE@sha256:{candidate}"
+with_shared_tag_lock() {{ shift; "$@"; }}
+_pull_ref_remote() {{ :; }}
+restore_runtime_and_edge() {{ return 0; }}
+remote_image_digest_ref() {{
+  if [[ "$1" == *":dev" ]]; then
+    printf x >>"{records}.inspects"
+    if [[ "$(wc -l < "{records}.inspects")" -eq 1 ]]; then
+      printf '%s\\n' "$IMAGE_BASE@sha256:{candidate}"
+    else
+      printf '%s\\n' "$IMAGE_BASE@sha256:{newer}"
+    fi
+  else
+    printf '%s\\n' "$1"
+  fi
+}}
+remote_docker_with_config() {{ printf '%s\\n' "$*" >>"{records}"; return 0; }}
+restore_env_tag_to_rollback dev 0
+'''
+    result = subprocess.run(["/bin/bash", "-c", command], text=True, capture_output=True, check=False)
+    logged = records.read_text() if records.exists() else ""
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "STALE ROLLBACK REFUSED" in result.stderr
+    assert "push " not in logged
+
+
+def test_restore_and_promote_serialize_on_shared_env_tag() -> None:
+    """R-07: dev and dev-fir share :dev, so rollback and promote must lock that tag."""
+    restore = _function_body("restore_env_tag_to_rollback")
+    registry = _function_body("restore_registry_env_tag")
+    promote = _function_body("do_push_tag")
+    lock = _function_body("with_shared_tag_lock")
+    assert "with_shared_tag_lock" in restore
+    assert "with_shared_tag_lock" in promote
+    assert "flock" in lock
+    assert "tag-${tag}.lock" in lock
+    assert "remote_image_digest_ref" in registry
+    assert restore.index("with_shared_tag_lock") < restore.index("assert_rollback_fence")
+    assert registry.index("remote_image_digest_ref") < registry.index("remote_docker_with_config tag")
 
 
 def test_boot_smoke_captures_crash_logs_after_entrypoint_exit(tmp_path: Path) -> None:
@@ -2719,6 +2771,17 @@ stopped_cid="__STOPPED_CID__"
 cat >/dev/null || true
 remote="${@: -1}"
 printf '%s\n' "$remote" >>"${state}/ssh.log"
+if [[ "$remote" == *"cutover-inflight"* ]]; then
+  if [[ -f "${state}/cutover-inflight" ]]; then
+    cat "${state}/cutover-inflight"
+    exit 0
+  fi
+  exit 1
+fi
+if [[ "$remote" == *"flock"* || "$remote" == *"/locks/tag-"* ]]; then
+  printf 'LOCKED\n'
+  exit 0
+fi
 if [[ "$remote" == *"systemctl start"* && "$remote" == *"-next"* ]]; then
   if [[ "$fail_at" == "next_start" ]]; then
     if [[ "$runtime_mode" == "prior" ]]; then
@@ -3078,7 +3141,7 @@ def test_flip_edge_alias_rewrites_only_allowlisted_proxy_targets() -> None:
 
 def _run_flip_edge_alias(tmp_path: Path, caddyfile: str, target: str = "next") -> subprocess.CompletedProcess[str]:
     edge = tmp_path / "edge"
-    edge.mkdir()
+    edge.mkdir(exist_ok=True)
     (edge / "Caddyfile").write_text(caddyfile)
     (edge / "docker-compose.caddy.yml").write_text("services: {}\n")
     bin_dir = tmp_path / "bin"
@@ -3121,6 +3184,141 @@ def test_flip_edge_alias_rewrites_exactly_one_source_route(tmp_path: Path) -> No
     rewritten = (tmp_path / "edge" / "Caddyfile").read_text()
     assert "reverse_proxy dev-api-next:8000" in rewritten
     assert "reverse_proxy dev-api:8000" not in rewritten
+
+
+def _cutover_state_dir(tmp_path: Path) -> Path:
+    return tmp_path / "edge" / ".acx-deploy-backups" / "dev"
+
+
+def test_flip_edge_alias_persists_inflight_cutover_marker(tmp_path: Path) -> None:
+    """R-09: traffic-on-next must be durable on the remote, not only ACX_TRAFFIC_FLIPPED."""
+    original = "dev.example {\n\treverse_proxy dev-api:8000\n}\n"
+    result = _run_flip_edge_alias(tmp_path, original, target="next")
+    combined = result.stdout + result.stderr
+    inflight = _cutover_state_dir(tmp_path) / "cutover-inflight"
+    committed = _cutover_state_dir(tmp_path) / "cutover-committed"
+    assert result.returncode == 0, combined
+    assert inflight.is_file(), combined
+    body = inflight.read_text()
+    assert "status=traffic_on_next" in body
+    assert "next_unit=acx-dev-next" in body
+    assert not committed.exists()
+
+
+def test_flip_edge_alias_canonical_writes_commit_marker(tmp_path: Path) -> None:
+    """R-09: canonical routing is committed only after the flip-back succeeds."""
+    original = "dev.example {\n\treverse_proxy dev-api-next:8000\n}\n"
+    inflight = _cutover_state_dir(tmp_path)
+    inflight.mkdir(parents=True)
+    (inflight / "cutover-inflight").write_text("status=traffic_on_next\nnext_unit=acx-dev-next\n")
+    result = _run_flip_edge_alias(tmp_path, original, target="canonical")
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+    assert not (inflight / "cutover-inflight").exists(), combined
+    committed = inflight / "cutover-committed"
+    assert committed.is_file(), combined
+    assert "status=canonical" in committed.read_text()
+
+
+def test_deploy_signal_traps_run_cutover_recovery() -> None:
+    """R-09: HUP/INT/TERM must recover inflight cutover instead of bare-exit."""
+    init = _function_body("init_deploy_ocir_docker_config")
+    assert "deploy_interrupt_cleanup" in init
+    assert "trap 'exit 129' HUP" not in init
+    assert "trap 'exit 130' INT" not in init
+    assert "trap 'exit 143' TERM" not in init
+    cleanup = _function_body("deploy_interrupt_cleanup")
+    assert "recover_interrupted_cutover" in cleanup
+    restart = _function_body("do_restart")
+    assert "enable_cutover_candidate" in restart
+    assert "recover_persisted_cutover" in restart
+    assert restart.index("flip_edge_alias") < restart.index("enable_cutover_candidate")
+
+
+def test_recover_interrupted_cutover_keeps_candidate_if_edge_restore_fails(
+    tmp_path: Path,
+) -> None:
+    """R-09: a failed flip-back must not drain the still-serving candidate."""
+    records = tmp_path / "recover.log"
+    command = f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+ACX_CUTOVER_ENV=dev
+ACX_TRAFFIC_FLIPPED=1
+cutover_inflight_present() {{ return 0; }}
+restore_edge_backups() {{ return 1; }}
+abort_cutover_candidate() {{ printf 'aborted\\n' >>"{records}"; return 0; }}
+enable_cutover_candidate() {{ printf 'enabled\\n' >>"{records}"; return 0; }}
+commit_cutover_state() {{ printf 'committed\\n' >>"{records}"; return 0; }}
+recover_interrupted_cutover
+'''
+    result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, check=False)
+    logged = records.read_text() if records.exists() else ""
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "aborted" not in logged
+    assert "committed" not in logged
+    assert "enabled" in logged
+
+
+def test_recover_interrupted_cutover_commits_after_successful_restore(tmp_path: Path) -> None:
+    """R-09: successful signal-safe restore may drain the candidate only after commit."""
+    records = tmp_path / "recover.log"
+    command = f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+ACX_CUTOVER_ENV=dev
+ACX_TRAFFIC_FLIPPED=1
+cutover_inflight_present() {{ return 0; }}
+restore_edge_backups() {{ ACX_TRAFFIC_FLIPPED=0; return 0; }}
+abort_cutover_candidate() {{ printf 'aborted\\n' >>"{records}"; return 0; }}
+enable_cutover_candidate() {{ printf 'enabled\\n' >>"{records}"; return 0; }}
+commit_cutover_state() {{ printf 'committed\\n' >>"{records}"; return 0; }}
+recover_interrupted_cutover
+'''
+    result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, check=False)
+    logged = records.read_text() if records.exists() else ""
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert logged.splitlines() == ["committed", "aborted"]
+
+
+def test_term_after_traffic_flip_invokes_cutover_recovery(tmp_path: Path) -> None:
+    """R-09: SIGTERM during an inflight cutover must run recovery before exit."""
+    marker = tmp_path / "recovered"
+    ready = tmp_path / "traps-ready"
+    driver = tmp_path / "term-recover.sh"
+    driver.write_text(
+        f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+export TMPDIR="{tmp_path}"
+recover_interrupted_cutover() {{ printf 'recovered\\n' >"{marker}"; return 0; }}
+init_deploy_ocir_docker_config
+printf 'ready\\n' >"{ready}"
+sleep 30
+'''
+    )
+    proc = subprocess.Popen(
+        ["bash", str(driver)],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            break
+        if ready.is_file():
+            time.sleep(0.05)
+            break
+        time.sleep(0.05)
+    if proc.poll() is None:
+        os.killpg(proc.pid, signal.SIGTERM)
+    stdout, stderr = proc.communicate(timeout=8)
+    combined = (stdout or "") + (stderr or "")
+    assert proc.returncode == 143, combined
+    assert marker.is_file(), combined
+    assert marker.read_text() == "recovered\n"
 
 
 def test_read_api_runtime_evidence_inspects_cutover_project() -> None:

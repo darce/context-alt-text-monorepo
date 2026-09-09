@@ -690,6 +690,14 @@ def test_remote_gate_no_args_prints_usage_and_does_not_run() -> None:
     assert "pushing" not in (completed.stdout + completed.stderr).lower()
 
 
+def test_scripts_tests_are_wired_into_test_scripts() -> None:
+    deploy_mk = (REPO_ROOT / "mk/deploy.mk").read_text(encoding="utf-8")
+    workflow = (REPO_ROOT / ".github/workflows/gates-harness.yml").read_text(encoding="utf-8")
+    assert "python3 -m pytest scripts/tests" in deploy_mk
+    assert "test-scripts: test-gates-harness" in deploy_mk
+    assert "python -m pytest scripts/tests" in workflow
+
+
 def test_remote_gate_help_does_not_require_a_host() -> None:
     env = {**os.environ}
     env.pop("WORKBAY_REMOTE_GATE_HOST", None)

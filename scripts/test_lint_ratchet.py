@@ -336,19 +336,53 @@ def test_ruff_bin_errors_when_nothing_is_resolvable(monkeypatch, tmp_path):
         lint_ratchet._ruff_bin()
 
 
-def test_ruff_format_uses_json_output_not_the_human_renderer(monkeypatch):
-    """ruff 0.16 replaced the stable "Would reformat: <path>" lines with a rich
-    diagnostic block; scraping it would have silently reported zero drift."""
+def test_ruff_format_uses_stable_check_output_and_collects_paths(monkeypatch):
+    """The formatter's JSON output is preview-only; use its stable check mode
+    while retaining the per-file inventory that makes the ratchet tighten."""
     seen: list[list[str]] = []
+    first = lint_ratchet.REPO_ROOT / "space name.py"
+    second = lint_ratchet.REPO_ROOT / "nested" / "module.py"
 
     def fake_run(cmd, cwd):
         seen.append(cmd)
-        return subprocess.CompletedProcess(cmd, 0, stdout="[]", stderr="")
+        return subprocess.CompletedProcess(
+            cmd,
+            1,
+            stdout=(
+                "unformatted: File would be reformatted\n"
+                f"  --> {first}:7:9\n"
+                "\n"
+                "unformatted: File would be reformatted\n"
+                f"  --> {second}:1:1\n"
+            ),
+            stderr="",
+        )
 
     monkeypatch.setattr(lint_ratchet, "_run", fake_run)
-    lint_ratchet.collect_ruff_format()
-    assert seen[0][1:4] == ["format", "--check", "--output-format"]
-    assert seen[0][4] == "json"
+    current = lint_ratchet.collect_ruff_format()
+
+    assert seen[0][1:] == ["format", "--check", "--quiet", "."], (
+        "ruff-format must not use the preview-only --output-format interface"
+    )
+    assert current.counts == {
+        "nested/module.py": {"unformatted": 1},
+        "space name.py": {"unformatted": 1},
+    }
+
+
+def test_ruff_format_collects_paths_from_ansi_colored_diagnostics(monkeypatch):
+    """Forced color must not hide a formatter location from the ratchet."""
+    path = lint_ratchet.REPO_ROOT / "colored.py"
+    colored = f"\x1b[1m\x1b[94m--> \x1b[0m{path}:1:1\n"
+
+    monkeypatch.setattr(
+        lint_ratchet,
+        "_run",
+        lambda cmd, cwd: subprocess.CompletedProcess(cmd, 1, stdout=colored, stderr=""),
+    )
+    current = lint_ratchet.collect_ruff_format()
+
+    assert current.counts == {"colored.py": {"unformatted": 1}}
 
 
 def test_ruff_format_drift_without_named_files_is_an_error(monkeypatch):

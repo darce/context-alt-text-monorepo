@@ -59,6 +59,13 @@ import { ReviewCardGroupShell } from './reviewCardGroupAccname';
 import { isStoredFaceApprovalBlocked } from './storedFaceReviewGate';
 import { TopClusterCard } from './TopClusterCard';
 import {
+  createEmptyHAIReviewState,
+  markStoredFaceReviewPresented as markStoredFaceReviewPresentedState,
+  recordFirstNameJudgment,
+  toggleNameSuggestionReveal,
+  type HAIReviewState,
+} from './haiReviewState';
+import {
   BULK_COMMIT_PHASE,
   useBulkReviewCommit,
   type BulkCommitItem,
@@ -157,6 +164,9 @@ export interface ReviewQueueProps {
    */
   selectedIds: ReadonlySet<string>;
   onSelectedIdsChange: (next: Set<string>) => void;
+  /** HAI-15 session state; omit this pair for isolated/local queue usage. */
+  haiReviewState?: HAIReviewState;
+  onHAIReviewStateChange?: (next: HAIReviewState) => void;
   onReview?: (clusterId: string) => void;
   /** Opens the labeling panel for merge / split / correct-group. */
   onLabel?: (clusterId: string) => void;
@@ -278,6 +288,8 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       onClearFilters,
       selectedIds,
       onSelectedIdsChange,
+      haiReviewState,
+      onHAIReviewStateChange,
       onReview,
       onLabel,
       emptyStateAnchorRef,
@@ -322,19 +334,36 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       announce: setLivePositionMessage,
     } = useAriaAnnounce();
     const [selectionOpen, setSelectionOpen] = React.useState(false);
-    const [reviewedStoredFaceSuggestionIds, setReviewedStoredFaceSuggestionIds] = React.useState<Set<string>>(
-      () => new Set(),
+    // HAI-15 state is controlled by ScanTabContent in the workbench and local for
+    // isolated queue consumers. It is browser-session state, not a roster write.
+    const [localHAIReviewState, setLocalHAIReviewState] = React.useState<HAIReviewState>(
+      () => createEmptyHAIReviewState(),
     );
-    const markStoredFaceReviewPresented = React.useCallback((suggestionId: string): void => {
-      setReviewedStoredFaceSuggestionIds((current) => {
-        if (current.has(suggestionId)) {
-          return current;
+    const effectiveHAIReviewState =
+      haiReviewState !== undefined && onHAIReviewStateChange !== undefined
+        ? haiReviewState
+        : localHAIReviewState;
+    const updateHAIReviewState = React.useCallback(
+      (next: HAIReviewState): void => {
+        if (haiReviewState !== undefined && onHAIReviewStateChange !== undefined) {
+          onHAIReviewStateChange(next);
+          return;
         }
-        const next = new Set(current);
-        next.add(suggestionId);
-        return next;
-      });
-    }, []);
+        setLocalHAIReviewState(next);
+      },
+      [haiReviewState, onHAIReviewStateChange],
+    );
+    const recordNameJudgment = React.useCallback((id: string, judgment: string): void => {
+      updateHAIReviewState(recordFirstNameJudgment(effectiveHAIReviewState, id, judgment));
+    }, [effectiveHAIReviewState, updateHAIReviewState]);
+    const markStoredFaceReviewPresented = React.useCallback((suggestionId: string): void => {
+      updateHAIReviewState(
+        markStoredFaceReviewPresentedState(effectiveHAIReviewState, suggestionId),
+      );
+    }, [effectiveHAIReviewState, updateHAIReviewState]);
+    const toggleNameSuggestion = React.useCallback((suggestionId: string): void => {
+      updateHAIReviewState(toggleNameSuggestionReveal(effectiveHAIReviewState, suggestionId));
+    }, [effectiveHAIReviewState, updateHAIReviewState]);
     /** User confirmed bulk while truncation-gated (UI-06 total-N confirm). */
     const [truncationConfirmed, setTruncationConfirmed] = React.useState(false);
     // REV4-02: RQ v5 isLoading stays false while an already-errored query
@@ -369,6 +398,20 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       () => flattenAssignmentSuggestions(data.reviewItems),
       [data.reviewItems],
     );
+    const mergeById = React.useMemo(() => {
+      const map = new Map<string, PendingMergeSuggestion>();
+      for (const suggestion of data.mergeSuggestions) {
+        map.set(suggestion.id, suggestion);
+      }
+      return map;
+    }, [data.mergeSuggestions]);
+    const nameById = React.useMemo(() => {
+      const map = new Map<string, PendingNameSuggestion>();
+      for (const suggestion of data.nameSuggestions) {
+        map.set(suggestion.id, suggestion);
+      }
+      return map;
+    }, [data.nameSuggestions]);
 
     /**
      * M2: bulk preview/commit resolves only selection ∩ active filters.
@@ -415,6 +458,47 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       ],
     );
 
+    // HAI-15 readiness is checked by the same predicate at initiation, hold
+    // fire, retry, and unmount-drain through useBulkReviewCommit. Keep every
+    // selected item in the resolved batch so a mixed selection fails closed as
+    // one unit instead of silently dropping an unready NAME item.
+    const isBulkApprovalBlocked = React.useCallback(
+      (suggestionId: string): boolean => {
+        const item = queueBySuggestionId.get(suggestionId);
+        if (!item) {
+          return true;
+        }
+        switch (item.kind) {
+          case NEXT_ACTION_KIND.ASSIGNMENT: {
+            const suggestion = assignmentById.get(suggestionId);
+            return suggestion
+              ? isStoredFaceApprovalBlocked(
+                  suggestion,
+                  effectiveHAIReviewState.reviewedStoredFaceSuggestionIds,
+                )
+              : true;
+          }
+          case NEXT_ACTION_KIND.MERGE:
+            return !mergeById.has(suggestionId);
+          case NEXT_ACTION_KIND.NAME:
+            return (
+              !nameById.has(suggestionId) ||
+              !effectiveHAIReviewState.nameJudgments.has(suggestionId) ||
+              !effectiveHAIReviewState.revealedNameSuggestionIds.has(suggestionId)
+            );
+          case NEXT_ACTION_KIND.CLUSTER:
+            return true;
+        }
+      },
+      [
+        assignmentById,
+        effectiveHAIReviewState,
+        mergeById,
+        nameById,
+        queueBySuggestionId,
+      ],
+    );
+
     const bulk = useBulkReviewCommit({
       selectedIds,
       onSelectedIdsChange,
@@ -429,13 +513,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       },
       isBulkActiveRef: data.isBulkActiveRef,
       awaitBulkIdleOrFlushRef: data.awaitBulkIdleOrFlushRef,
-      isApprovalBlocked: (suggestionId) => {
-        const suggestion = assignmentById.get(suggestionId);
-        // DUX-W2R2-RV-04: unknown/unresolvable ids fail closed (block), never open.
-        return suggestion
-          ? isStoredFaceApprovalBlocked(suggestion, reviewedStoredFaceSuggestionIds)
-          : true;
-      },
+      isApprovalBlocked: isBulkApprovalBlocked,
     });
 
     React.useEffect(() => {
@@ -574,20 +652,6 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       onClose: undefined,
     });
 
-    const mergeById = React.useMemo(() => {
-      const map = new Map<string, PendingMergeSuggestion>();
-      for (const suggestion of data.mergeSuggestions) {
-        map.set(suggestion.id, suggestion);
-      }
-      return map;
-    }, [data.mergeSuggestions]);
-    const nameById = React.useMemo(() => {
-      const map = new Map<string, PendingNameSuggestion>();
-      for (const suggestion of data.nameSuggestions) {
-        map.set(suggestion.id, suggestion);
-      }
-      return map;
-    }, [data.nameSuggestions]);
     const topClustersById = React.useMemo(() => {
       const map = new Map<string, TopUnlabeledCluster>();
       for (const cluster of topUnlabeledClusters) {
@@ -1020,14 +1084,29 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       (data.personCommit.clusterId === null ||
         data.personCommit.clusterId === currentClusterId);
 
-    const storedFaceSelectionBlocksCommit = filteredSelectedIds.some((suggestionId) => {
-      const suggestion = assignmentById.get(suggestionId);
-      // DUX-W2R2-RV-04: unknown/unresolvable ids fail closed (block), never open.
-      return suggestion
-        ? isStoredFaceApprovalBlocked(suggestion, reviewedStoredFaceSuggestionIds)
-        : true;
-    });
-    const storedFaceSelectionReasonId = 'acx-review-queue-stored-face-review-reason';
+    const blockedBulkSelectionIds = filteredSelectedIds.filter(isBulkApprovalBlocked);
+    const selectionApprovalBlocksCommit = blockedBulkSelectionIds.length > 0;
+    const blockedNameSelection = blockedBulkSelectionIds.some((suggestionId) =>
+      queueBySuggestionId.get(suggestionId)?.kind === NEXT_ACTION_KIND.NAME,
+    );
+    const blockedAssignmentSelection = blockedBulkSelectionIds.some((suggestionId) =>
+      queueBySuggestionId.get(suggestionId)?.kind === NEXT_ACTION_KIND.ASSIGNMENT,
+    );
+    const selectionApprovalReason =
+      blockedNameSelection && blockedAssignmentSelection
+        ? __(
+            'Record an independent judgment and reveal every selected name suggestion, and review the stored faces for every selected assignment, before accepting.',
+            'alt-context',
+          )
+        : blockedNameSelection
+          ? __(
+              'Record an independent judgment and reveal every selected name suggestion before accepting.',
+              'alt-context',
+            )
+          : blockedAssignmentSelection
+            ? __('Review the stored faces for every selected suggestion before accepting.', 'alt-context')
+            : __('Review every selected suggestion before accepting.', 'alt-context');
+    const selectionApprovalReasonId = 'acx-review-queue-selection-approval-reason';
     const truncationReasonId = 'acx-review-queue-truncation-reason';
     const bulkCommitNativeDisabled =
       filteredSelectedIds.length === 0 ||
@@ -1060,7 +1139,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       selectionOpen &&
       filteredSelectedIds.length > 0 &&
       !truncationBlocksCommit &&
-      !storedFaceSelectionBlocksCommit;
+      !selectionApprovalBlocksCommit;
     const closeMatchOfferOwnsAccent = closeMatchOffer !== null;
 
     // The queue owns the viewport's single accent primary when either the card marker
@@ -1263,15 +1342,12 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           </div>
         </div>
 
-        {storedFaceSelectionBlocksCommit ? (
+        {selectionApprovalBlocksCommit ? (
           <p
-            id={storedFaceSelectionReasonId}
-            className="acx-review-queue__stored-face-review-reason"
+            id={selectionApprovalReasonId}
+            className="acx-review-queue__selection-approval-reason"
           >
-            {__(
-              'Review the stored faces for every selected suggestion before accepting.',
-              'alt-context',
-            )}
+            {selectionApprovalReason}
           </p>
         ) : null}
 
@@ -1331,22 +1407,22 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                   : 'button acx-review-queue__bulk-commit'
               }
               data-testid="acx-bulk-commit"
-              // BR-74: stored-face gate uses aria-disabled + onClick, never HTML
+              // BR-74: selection approval gate uses aria-disabled + onClick, never HTML
               // disabled — that would drop the describedby reason from tab order.
               disabled={bulkCommitNativeDisabled}
               aria-disabled={
-                bulkCommitNativeDisabled || storedFaceSelectionBlocksCommit ? true : undefined
+                bulkCommitNativeDisabled || selectionApprovalBlocksCommit ? true : undefined
               }
               aria-describedby={
-                storedFaceSelectionBlocksCommit
-                  ? storedFaceSelectionReasonId
+                selectionApprovalBlocksCommit
+                  ? selectionApprovalReasonId
                   : truncationBlocksCommit
                     ? truncationReasonId
                     : undefined
               }
               {...(bulkCommitOwnsAccent ? { [ACCENT_PRIMARY_ATTR]: true } : {})}
               onClick={() => {
-                if (storedFaceSelectionBlocksCommit) {
+                if (selectionApprovalBlocksCommit) {
                   return;
                 }
                 void bulk.initiateBulk();
@@ -1396,12 +1472,12 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
             <button
               type="button"
               className="button acx-review-queue__retry"
-              aria-disabled={storedFaceSelectionBlocksCommit ? true : undefined}
+              aria-disabled={selectionApprovalBlocksCommit ? true : undefined}
               aria-describedby={
-                storedFaceSelectionBlocksCommit ? storedFaceSelectionReasonId : undefined
+                selectionApprovalBlocksCommit ? selectionApprovalReasonId : undefined
               }
               onClick={() => {
-                if (storedFaceSelectionBlocksCommit) {
+                if (selectionApprovalBlocksCommit) {
                   return;
                 }
                 void bulk.retryBulk();
@@ -1570,6 +1646,10 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               ) : null}
             <CurrentCard
               item={currentItem}
+              nameJudgments={effectiveHAIReviewState.nameJudgments}
+              recordNameJudgment={recordNameJudgment}
+              revealedNameSuggestionIds={effectiveHAIReviewState.revealedNameSuggestionIds}
+              onToggleNameSuggestion={toggleNameSuggestion}
               // BR-82: the card primary steps down to neutral while the bulk commit owns
               // the accent, so exactly one element carries the accent per viewport.
               accentPrimary={!bulkCommitOwnsAccent && !closeMatchOfferOwnsAccent}
@@ -1609,7 +1689,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               personCommitPending={data.personCommitPending}
               isBulkActive={bulk.isBulkActive || bulk.bulkInitiatePending}
               onReview={onReview}
-              reviewedStoredFaceSuggestionIds={reviewedStoredFaceSuggestionIds}
+              reviewedStoredFaceSuggestionIds={effectiveHAIReviewState.reviewedStoredFaceSuggestionIds}
               onStoredFaceReviewPresented={markStoredFaceReviewPresented}
               onLabel={onLabel}
               onOpenOriginal={(target) => {
@@ -1785,6 +1865,10 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
 
 interface CurrentCardProps {
   item: ReviewQueueItem;
+  nameJudgments: ReadonlyMap<string, string>;
+  recordNameJudgment: (id: string, judgment: string) => void;
+  revealedNameSuggestionIds: ReadonlySet<string>;
+  onToggleNameSuggestion: (suggestionId: string) => void;
   /**
    * §7: when true, this mounted card's single per-kind primary (accept for
    * ASSIGNMENT/MERGE, person-commit Confirm for NAME/CLUSTER) carries the
@@ -1949,6 +2033,10 @@ export const CommitHoldRegion = ({
 
 const CurrentCard = ({
   item,
+  nameJudgments,
+  recordNameJudgment,
+  revealedNameSuggestionIds,
+  onToggleNameSuggestion,
   accentPrimary,
   queuePosition,
   queueTotal,
@@ -1990,9 +2078,30 @@ const CurrentCard = ({
   reviewQueueItems,
   onCloseMatchOffer,
 }: CurrentCardProps): React.JSX.Element | null => {
-  const [revealedNameSuggestionIds, setRevealedNameSuggestionIds] = React.useState<Set<string>>(
-    () => new Set(),
-  );
+  const [independentNameDraft, setIndependentNameDraft] = React.useState('');
+  const draftItemId = itemSuggestionId(item);
+  React.useEffect(() => setIndependentNameDraft(''), [draftItemId]);
+  const currentNameJudgment =
+    item.kind === NEXT_ACTION_KIND.NAME ? nameJudgments.get(item.suggestionId) : undefined;
+  const showSuggestionRef = React.useRef<HTMLButtonElement>(null);
+  const observedNameJudgmentRef = React.useRef<{
+    id: string | null;
+    judgment: string | undefined;
+  }>({ id: draftItemId, judgment: currentNameJudgment });
+  React.useEffect(() => {
+    const previous = observedNameJudgmentRef.current;
+    observedNameJudgmentRef.current = { id: draftItemId, judgment: currentNameJudgment };
+    if (
+      item.kind !== NEXT_ACTION_KIND.NAME ||
+      currentNameJudgment === undefined ||
+      previous.id !== draftItemId ||
+      previous.judgment !== undefined
+    ) {
+      return;
+    }
+    announce(__('Independent judgment recorded. You can now show the suggestion.', 'alt-context'));
+    showSuggestionRef.current?.focus({ preventScroll: true });
+  }, [announce, currentNameJudgment, draftItemId, item.kind]);
   // Arm focus before the POST so removal→key-change can place it; clear on
   // undo/failure (BR-13) so a later key change does not surprise-focus.
   const runScheduled = (schedule: () => Promise<ScheduleCommitResult>): void => {
@@ -2238,7 +2347,8 @@ const CurrentCard = ({
         personCommit.phase === PERSON_COMMIT_PHASE.SUCCEEDED && personCommit.clusterId === item.clusterId;
       const namePending =
         isCardPending(suggestion.id, nameKinds) || namePersonCommitDone || personCommitPending;
-      const isNameSuggestionRevealed = revealedNameSuggestionIds.has(suggestion.id);
+      const independentJudgment = nameJudgments.get(suggestion.id);
+      const isNameSuggestionRevealed = independentJudgment !== undefined && revealedNameSuggestionIds.has(suggestion.id);
       const suggestionDisclosureId = `acx-name-suggestion-${suggestion.id}`;
       return (
         <ReviewCardGroupShell
@@ -2254,25 +2364,36 @@ const CurrentCard = ({
         >
           <SelectToggle
             selected={isSelected}
-            disabled={isSelectDisabled}
+            disabled={isSelectDisabled || independentJudgment === undefined}
             onToggle={onToggleSelect}
           />
+          {independentJudgment === undefined ? (
+            <div data-testid="acx-independent-judgment">
+              <p>{__('Record your own judgment before viewing the suggestion. This does not save a name.', 'alt-context')}</p>
+              <label htmlFor={`acx-independent-name-${suggestion.id}`}>{__('Independent name judgment', 'alt-context')}</label>
+              <input id={`acx-independent-name-${suggestion.id}`} value={independentNameDraft}
+                onChange={(event) => setIndependentNameDraft(event.target.value)} disabled={namePending} autoComplete="off" />
+              <button type="button" className="button" disabled={namePending || !independentNameDraft.trim()}
+                onClick={() => recordNameJudgment(suggestion.id, independentNameDraft)}>
+                {__('Record judgment', 'alt-context')}
+              </button>
+              <button type="button" className="button" disabled={namePending}
+                onClick={() => recordNameJudgment(suggestion.id, __('I cannot identify this person', 'alt-context'))}>
+                {__('I cannot identify this person', 'alt-context')}
+              </button>
+            </div>
+          ) : <p>{__('Your independent judgment:', 'alt-context')} <strong>{independentJudgment}</strong></p>}
           <div className="acx-suggestion-card__content">
             <button
               type="button"
               className="button button-link"
+              ref={showSuggestionRef}
               aria-expanded={isNameSuggestionRevealed}
               aria-controls={suggestionDisclosureId}
+              disabled={independentJudgment === undefined}
               onClick={() => {
-                setRevealedNameSuggestionIds((current) => {
-                  const next = new Set(current);
-                  if (next.has(suggestion.id)) {
-                    next.delete(suggestion.id);
-                  } else {
-                    next.add(suggestion.id);
-                  }
-                  return next;
-                });
+                if (independentJudgment === undefined) return;
+                onToggleNameSuggestion(suggestion.id);
                 announce(
                   isNameSuggestionRevealed
                     ? __('Suggestion hidden.', 'alt-context')
@@ -2310,9 +2431,10 @@ const CurrentCard = ({
             <button
               type="button"
               className="button acx-suggestion-card__accept"
-              disabled={namePending}
+              disabled={namePending || !isNameSuggestionRevealed}
               title={namePending && cardActionsDisabledReason ? cardActionsDisabledReason : undefined}
               onClick={() => {
+                if (!isNameSuggestionRevealed) return;
                 runScheduled(() => scheduleAcceptName(suggestion.id));
               }}
             >

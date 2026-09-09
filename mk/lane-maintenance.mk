@@ -2,9 +2,39 @@
 # Lane Maintenance (reset, refresh, clean, close, prune, path, commits, intake)
 # =============================================================================
 
-.PHONY: lane-reset lane-refresh lane-clean lane-close lane-prune lane-path lane-commits lane-intake
+.PHONY: lane-reset lane-refresh lane-clean lane-close lane-prune lane-path lane-commits lane-intake worktree-reap worktree-reap-check worktree-reap-advise
 
 POST_INTAKE_CHECK_CMD ?= $(MAKE) --no-print-directory check-all
+REAP_PROTECT ?=
+REAP_STRICT ?= 0
+
+# REAP_PROTECT holds newline-separated branch or path values and is passed
+# through the environment, never as make words. Word-splitting a path that
+# contains a space turns the safety fence into two useless fragments.
+worktree-reap: ## Dry-run: list linked worktrees whose branch is already landed in its parent (REAP_ARGS=--apply to remove)
+	@REAP_STRICT="$(REAP_STRICT)" REAP_PROTECT="$(REAP_PROTECT)" $(PYTHON) scripts/worktree_reap.py --repo "$(CURDIR)" $(REAP_ARGS)
+
+worktree-reap-check: ## Check for redundant worktrees (exit 3 on redundancy; inspection errors always fail)
+	@REAP_STRICT="$(REAP_STRICT)" REAP_PROTECT="$(REAP_PROTECT)" $(PYTHON) scripts/worktree_reap.py --repo "$(CURDIR)" --check
+
+# Advisory inside check-all. lane-intake runs check-all straight after merging
+# a sub-lane, at which point that lane's worktree is REDUNDANT by definition:
+# a hard gate here fails the very flow the reclaimer exists to clean up after.
+# Only status 3 (redundancy) is advisory. Status 1 covers Git failures and an
+# unreadable or unqueryable lane registry. Status 4 is strict
+# unknown-classification. REAP_STRICT=1 also fails on 3.
+worktree-reap-advise: ## Print the worktree reap table; redundancy is advisory unless REAP_STRICT=1
+	@REAP_STRICT="$(REAP_STRICT)" REAP_PROTECT="$(REAP_PROTECT)" $(PYTHON) scripts/worktree_reap.py --repo "$(CURDIR)" --check; \
+	status=$$?; \
+	if [ "$$status" -eq 0 ]; then exit 0; fi; \
+	if [ "$$status" -eq 3 ]; then \
+		if [ "$(REAP_STRICT)" = "1" ]; then exit 3; fi; \
+		echo "worktree-reap: advisory only (exit $$status; set REAP_STRICT=1 to fail)"; \
+		exit 0; \
+	fi; \
+	exit "$$status"
+
+check-all: worktree-reap-advise
 
 lane-reset: lane-guard
 	@if [ -z "$(REF)" ]; then \

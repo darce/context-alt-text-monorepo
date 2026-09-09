@@ -32,25 +32,38 @@
       "url_params": [],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/GuidedPrototypeEntrance.tsx",
       "primary_action_id": "start-walkthrough",
-      "states": ["default", "first_time", "error"],
+      "states": [
+        "default",
+        "first_time",
+        "error"
+      ],
       "zones": [
         {
           "id": "public-escape",
           "label": "Leave the walkthrough. Home. Case study.",
           "role": "nav",
-          "states": ["default", "first_time"]
+          "states": [
+            "default",
+            "first_time"
+          ]
         },
         {
           "id": "guided-scope",
           "label": "Try the review workflow using a recorded example. Your changes affect only the demo copy in this tab.",
           "role": "content",
-          "states": ["default", "first_time"]
+          "states": [
+            "default",
+            "first_time"
+          ]
         },
         {
           "id": "entry-cta",
           "label": "Start the walkthrough (primary). Watch the recording. Read the case study.",
           "role": "nav",
-          "states": ["default", "first_time"]
+          "states": [
+            "default",
+            "first_time"
+          ]
         }
       ]
     },
@@ -66,39 +79,58 @@
       "url_params": [],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/guidedPrototype/RecordedWalkthrough.tsx",
       "primary_action_id": "continue-walkthrough",
-      "states": ["default", "edge_input", "error"],
+      "states": [
+        "default",
+        "edge_input",
+        "error"
+      ],
       "zones": [
         {
           "id": "guided-demo-root",
           "label": "Public mount. data-scope=public. Recorded example only; changes stay in this tab.",
           "role": "content",
-          "states": ["default", "edge_input", "error"]
+          "states": [
+            "default",
+            "edge_input",
+            "error"
+          ]
         },
         {
           "id": "guided-section-understand",
           "label": "Understand the page. Festival photo, page context, current demo alt text. Review name suggestions.",
           "role": "content",
-          "states": ["default"]
+          "states": [
+            "default"
+          ]
         },
         {
           "id": "name-choice-left",
-          "label": "Left face native fieldset. Use Justin Trudeau. Leave this person unnamed. No preselection. edge_input: Choose an option for this face.",
+          "label": "Left face native fieldset. Use Justin Trudeau. Leave this person unnamed. No preselection. edge_input: Choose an option for this face. Both bundled roster reference photos are visible before a choice.",
           "role": "form",
           "evidence_linked": true,
-          "states": ["default", "edge_input"]
+          "states": [
+            "default",
+            "edge_input"
+          ]
         },
         {
           "id": "name-choice-right",
-          "label": "Right face native fieldset. Use Katy Perry. Leave this person unnamed. No preselection. edge_input: Choose an option for this face.",
+          "label": "Right face native fieldset. Use Katy Perry. Leave this person unnamed. No preselection. edge_input: Choose an option for this face. All three bundled roster reference photos are visible before a choice.",
           "role": "form",
           "evidence_linked": true,
-          "states": ["default", "edge_input"]
+          "states": [
+            "default",
+            "edge_input"
+          ]
         },
         {
           "id": "guided-candidate",
           "label": "Edit the alt text. Sample draft from the recorded example. Preview the change. error: The sample draft for these choices is unavailable.",
           "role": "form",
-          "states": ["default", "error"]
+          "states": [
+            "default",
+            "error"
+          ]
         }
       ]
     },
@@ -114,20 +146,30 @@
       "url_params": [],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedDescriptionReview.tsx",
       "primary_action_id": "demo-apply",
-      "states": ["default", "empty", "error"],
+      "states": [
+        "default",
+        "empty",
+        "error"
+      ],
       "zones": [
         {
           "id": "guided-section-apply",
           "label": "Apply and undo. Current alt text beside Will be applied. Apply to demo copy. Undo last application.",
           "role": "content",
-          "states": ["default", "empty", "error"]
+          "states": [
+            "default",
+            "empty",
+            "error"
+          ]
         },
         {
           "id": "demo-applied-image",
           "label": "Demo image preview. Distinct demo image whose alternative is the current demo copy.",
           "role": "ai_review",
           "evidence_linked": true,
-          "states": ["default"]
+          "states": [
+            "default"
+          ]
         }
       ]
     },
@@ -143,13 +185,17 @@
       "url_params": [],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedOutcome.tsx",
       "primary_action_id": "return-to-draft",
-      "states": ["default"],
+      "states": [
+        "default"
+      ],
       "zones": [
         {
           "id": "demo-outcome",
           "label": "Your demo copy is updated. Applied to the demo copy in this tab. WordPress media has not been updated. Return to the draft.",
           "role": "status",
-          "states": ["default"]
+          "states": [
+            "default"
+          ]
         }
       ]
     },
@@ -165,13 +211,17 @@
       "url_params": [],
       "code_ref": "apps/prototype-wp-alt-context/js/guide/main.tsx",
       "primary_action_id": "reload-guide",
-      "states": ["error"],
+      "states": [
+        "error"
+      ],
       "zones": [
         {
           "id": "public-guide-fallback",
           "label": "The walkthrough could not load. Reload the page, or watch the recorded video on the case study page.",
           "role": "status",
-          "states": ["error"]
+          "states": [
+            "error"
+          ]
         }
       ]
     },
@@ -187,19 +237,25 @@
       "url_params": [],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/guidedPrototype/publicGuideCopy.ts",
       "primary_action_id": "go-home",
-      "states": ["default"],
+      "states": [
+        "default"
+      ],
       "zones": [
         {
           "id": "escape-home",
           "label": "Home",
           "role": "nav",
-          "states": ["default"]
+          "states": [
+            "default"
+          ]
         },
         {
           "id": "escape-case-study",
           "label": "Case study",
           "role": "nav",
-          "states": ["default"]
+          "states": [
+            "default"
+          ]
         }
       ]
     }
@@ -332,10 +388,22 @@
       "job": "try-recorded",
       "label": "Signed-out choose → edit → preview → apply → undo",
       "steps": [
-        { "screen_id": "entry", "branch_label": "start" },
-        { "screen_id": "walkthrough", "branch_label": "choose and edit" },
-        { "screen_id": "apply", "branch_label": "preview and apply" },
-        { "screen_id": "outcome", "branch_label": "undo still in tab" }
+        {
+          "screen_id": "entry",
+          "branch_label": "start"
+        },
+        {
+          "screen_id": "walkthrough",
+          "branch_label": "choose and edit"
+        },
+        {
+          "screen_id": "apply",
+          "branch_label": "preview and apply"
+        },
+        {
+          "screen_id": "outcome",
+          "branch_label": "undo still in tab"
+        }
       ]
     },
     {
@@ -343,8 +411,14 @@
       "job": "try-recorded",
       "label": "Direct reload of /guide/ keeps the page working",
       "steps": [
-        { "screen_id": "walkthrough", "branch_label": "reload" },
-        { "screen_id": "entry", "branch_label": "first_time restored" }
+        {
+          "screen_id": "walkthrough",
+          "branch_label": "reload"
+        },
+        {
+          "screen_id": "entry",
+          "branch_label": "first_time restored"
+        }
       ]
     },
     {
@@ -352,10 +426,22 @@
       "job": "try-recorded",
       "label": "Pixel 7 keyboard-only completion",
       "steps": [
-        { "screen_id": "entry", "branch_label": "keyboard" },
-        { "screen_id": "walkthrough", "branch_label": "keyboard" },
-        { "screen_id": "apply", "branch_label": "keyboard" },
-        { "screen_id": "outcome", "branch_label": null }
+        {
+          "screen_id": "entry",
+          "branch_label": "keyboard"
+        },
+        {
+          "screen_id": "walkthrough",
+          "branch_label": "keyboard"
+        },
+        {
+          "screen_id": "apply",
+          "branch_label": "keyboard"
+        },
+        {
+          "screen_id": "outcome",
+          "branch_label": null
+        }
       ]
     },
     {
@@ -363,8 +449,14 @@
       "job": "leave-safely",
       "label": "Guide bundle aborted; fallback paragraph stays visible",
       "steps": [
-        { "screen_id": "fallback", "branch_label": "bundle_failed" },
-        { "screen_id": "escape", "branch_label": "case study" }
+        {
+          "screen_id": "fallback",
+          "branch_label": "bundle_failed"
+        },
+        {
+          "screen_id": "escape",
+          "branch_label": "case study"
+        }
       ]
     },
     {
@@ -372,17 +464,24 @@
       "job": "leave-safely",
       "label": "acx_public_guide_enabled off: theme 404, never the guide",
       "steps": [
-        { "screen_id": "entry", "branch_label": "disabled_404" }
+        {
+          "screen_id": "entry",
+          "branch_label": "disabled_404"
+        }
       ]
     }
   ],
   "domain_state_mappings": [
     {
-      "domain_states": ["disabled_404"],
+      "domain_states": [
+        "disabled_404"
+      ],
       "canonical_state": "error"
     },
     {
-      "domain_states": ["bundle_failed"],
+      "domain_states": [
+        "bundle_failed"
+      ],
       "canonical_state": "error"
     }
   ],
@@ -400,6 +499,8 @@
     "Live generation or GuidedLiveDescriptionPanel on the public route.",
     "REST calls from js/guide/** to acx/v1, including /public/demo/describe.",
     "Implicit enable of acx_public_guide_enabled from deploy-demo.",
-    "Creating AltContext\\PublicSite\\PublicGuideRoute in this lane (sibling owns src/public/class-public-guide-route.php)."
+    "Creating AltContext\\PublicSite\\PublicGuideRoute in this lane (sibling owns src/public/class-public-guide-route.php).",
+    "Public WordPress toolbar, implementation design notes, or action-history panel.",
+    "A second required full-photo exercise; independent roster reference captures support the existing name decision."
   ]
 }

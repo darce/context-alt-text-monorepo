@@ -25,9 +25,7 @@ describe('RecordedWalkthrough extraction', () => {
   });
 
   it('renders an optional live panel slot when provided', () => {
-    render(
-      <RecordedWalkthrough scope="admin" livePanel={<div data-testid="guided-live-slot">live</div>} />,
-    );
+    render(<RecordedWalkthrough scope="admin" livePanel={<div data-testid="guided-live-slot">live</div>} />);
 
     expect(screen.getByTestId('guided-live-slot')).toBeInTheDocument();
   });
@@ -41,6 +39,24 @@ describe('RecordedWalkthrough extraction', () => {
 });
 
 describe('RecordedWalkthrough public scope', () => {
+  it('keeps implementation notes and the action log out of the public walkthrough', () => {
+    const { container } = render(<RecordedWalkthrough scope="public" />);
+    expect(container.querySelector('.acx-guided-notes')).toBeNull();
+    expect(container.querySelector('.acx-guided-history')).toBeNull();
+    expect(screen.getByTestId('demo-undo')).toBeInTheDocument();
+  });
+
+  it('shows every roster reference before a visitor makes a name choice', () => {
+    const { container } = render(<RecordedWalkthrough scope="public" />);
+    const galleries = container.querySelectorAll('.acx-guided-face__gallery');
+    expect(galleries).toHaveLength(2);
+    for (const gallery of Array.from(galleries)) {
+      expect(gallery.querySelectorAll('img').length).toBeGreaterThanOrEqual(2);
+      const disclosure = gallery.closest('details');
+      expect(disclosure === null || disclosure.open).toBe(true);
+    }
+  });
+
   it('exports the case-study URL from copy', () => {
     expect(CASE_STUDY_URL).toBe(CANONICAL_CASE_STUDY_URL);
     expect(CASE_STUDY_URL).not.toContain('github.io');
@@ -141,10 +157,9 @@ describe('RecordedWalkthrough public scope', () => {
     expect(screen.queryByRole('navigation', { name: 'Leave the walkthrough' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: WATCH_RECORDING })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: READ_CASE_STUDY })).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: new RegExp(`${guidedCopy('page.case_study')}.*opens in a new window`, 'i') })).toHaveAttribute(
-      'href',
-      CANONICAL_CASE_STUDY_URL,
-    );
+    expect(
+      screen.getByRole('link', { name: new RegExp(`${guidedCopy('page.case_study')}.*opens in a new window`, 'i') }),
+    ).toHaveAttribute('href', CANONICAL_CASE_STUDY_URL);
     expect(CASE_STUDY_URL).toBe(CANONICAL_CASE_STUDY_URL);
   });
 });
@@ -159,4 +174,3 @@ describe('RecordedWalkthrough design notes', () => {
     expect(document.body.textContent ?? '').toContain('Live generation');
   });
 });
-

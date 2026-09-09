@@ -62,6 +62,20 @@ final class PublicGuideRouteTest extends TestCase
         unset($GLOBALS['wp'], $GLOBALS['wp_rewrite'], $GLOBALS['__ac_persisted_rewrite_rules']);
     }
 
+    public function testPublicGuideSuppressesToolbarOnlyOnEnabledGuideRequest(): void
+    {
+        $route = new PublicGuideRoute($this->nullResolver());
+        $this->simulateRewriteMatch();
+        $this->setOption('acx_public_guide_enabled', true);
+        self::assertFalse($route->filter_admin_bar(true));
+        self::assertFalse($route->filter_admin_bar(false));
+        unset($GLOBALS['wp']);
+        self::assertTrue($route->filter_admin_bar(true));
+        $this->simulateRewriteMatch();
+        $this->setOption('acx_public_guide_enabled', false);
+        self::assertTrue($route->filter_admin_bar(true));
+    }
+
     public function testInitDoesNotRegisterRewriteOrRequestHooksWhenDisabled(): void
     {
         $route = new PublicGuideRoute($this->nullResolver());

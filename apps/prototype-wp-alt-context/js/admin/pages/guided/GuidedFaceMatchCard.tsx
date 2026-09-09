@@ -120,7 +120,7 @@ export const GuidedFaceMatchCard = ({
       <div className="acx-guided-face__content">
         <h3 id={titleId}>{guidedCopy('names.suggestion', { name: person.name })}</h3>
 
-        <details className="acx-guided-face__evidence">
+        <details className="acx-guided-face__evidence" open>
           <summary>{guidedCopy('names.evidence_open', { position: face.position })}</summary>
           <ul className="acx-guided-face__gallery" aria-label={person.name}>
             {person.galleryPhotos.map((photo) => (

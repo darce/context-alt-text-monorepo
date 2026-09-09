@@ -45,11 +45,7 @@ export const RecordedWalkthroughLiveSlot = React.createContext<((waiting: boolea
 
 const lastSummary = (state: GuidedDemoState): string => state.actionHistory.at(-1)?.summary ?? '';
 
-export const RecordedWalkthrough = ({
-  scope,
-  livePanel,
-  escapeHref,
-}: RecordedWalkthroughProps): React.JSX.Element => {
+export const RecordedWalkthrough = ({ scope, livePanel, escapeHref }: RecordedWalkthroughProps): React.JSX.Element => {
   const scenario = useMemo(() => createGuidedScenario(), []);
   const [demo, setDemo] = useState(createGuidedDemoState);
   const [guideOpen, setGuideOpen] = useState(true);
@@ -244,21 +240,25 @@ export const RecordedWalkthrough = ({
           }}
         />
 
-        <section className="acx-guided-history" aria-labelledby="acx-guided-history-title">
-          <h2 id="acx-guided-history-title">{guidedCopy('history.title')}</h2>
-          <p>{guidedCopy('history.scope')}</p>
-          {demo.actionHistory.length === 0 ? (
-            <p>{guidedCopy('history.empty')}</p>
-          ) : (
-            <ol>
-              {demo.actionHistory.map((entry) => (
-                <li key={`${entry.event}-${entry.sequence}`}>{entry.summary}</li>
-              ))}
-            </ol>
-          )}
-        </section>
+        {scope === 'admin' ? (
+          <>
+            <section className="acx-guided-history" aria-labelledby="acx-guided-history-title">
+              <h2 id="acx-guided-history-title">{guidedCopy('history.title')}</h2>
+              <p>{guidedCopy('history.scope')}</p>
+              {demo.actionHistory.length === 0 ? (
+                <p>{guidedCopy('history.empty')}</p>
+              ) : (
+                <ol>
+                  {demo.actionHistory.map((entry) => (
+                    <li key={`${entry.event}-${entry.sequence}`}>{entry.summary}</li>
+                  ))}
+                </ol>
+              )}
+            </section>
 
-        <GuidedDesignNotes scope={scope} />
+            <GuidedDesignNotes scope={scope} />
+          </>
+        ) : null}
 
         {livePanel != null ? (
           <RecordedWalkthroughLiveSlot.Provider value={setLiveWaiting}>

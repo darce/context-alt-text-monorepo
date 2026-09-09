@@ -5,8 +5,14 @@ import { type Root } from 'react-dom/client';
 import { act, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { CASE_STUDY_URL, PUBLIC_GUIDE_FALLBACK, guidedCopy } from '../../admin/guidedPrototype/publicGuideCopy';
+import {
+  CASE_STUDY_URL,
+  PUBLIC_GUIDE_FALLBACK,
+  PUBLIC_GUIDE_LOADING,
+  guidedCopy,
+} from '../../admin/guidedPrototype/publicGuideCopy';
 import { mountPublicGuide } from '../main';
+import { attachPublicGuideLoadWatch } from '../publicGuideShell';
 
 const viteConfig = (): string =>
   readFileSync(resolve(__dirname, '../../../vite.config.ts'), 'utf8');
@@ -14,6 +20,7 @@ const viteConfig = (): string =>
 describe('public guide entry', () => {
   afterEach(() => {
     document.body.innerHTML = '';
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -24,7 +31,8 @@ describe('public guide entry', () => {
   it('hides the fallback, reads data-home-url, and mounts the public walkthrough', () => {
     document.body.innerHTML = `
       <main id="acx-public-guide" data-home-url="https://demo.example/" data-scope="recorded" data-example="bundled">
-        <p class="acx-public-guide__fallback" role="alert">The walkthrough could not load. Reload the page, or watch the recorded video on the case study page.</p>
+        <p class="acx-public-guide__loading" aria-live="polite">${PUBLIC_GUIDE_LOADING}</p>
+        <p class="acx-public-guide__fallback" role="alert" hidden>${PUBLIC_GUIDE_FALLBACK}</p>
       </main>
     `;
 
@@ -32,9 +40,13 @@ describe('public guide entry', () => {
       mountPublicGuide();
     });
 
+    const loading = document.querySelector('.acx-public-guide__loading');
     const fallback = document.querySelector('.acx-public-guide__fallback');
+    expect(loading).toBeInstanceOf(HTMLElement);
+    expect((loading as HTMLElement).hidden).toBe(true);
     expect(fallback).toBeInstanceOf(HTMLElement);
     expect((fallback as HTMLElement).hidden).toBe(true);
+    expect(document.getElementById('acx-public-guide')?.getAttribute('data-acx-mounted')).toBe('1');
     expect(document.querySelectorAll('main')).toHaveLength(1);
     expect(document.getElementById('acx-public-guide')?.tagName).toBe('MAIN');
     expect(document.getElementById('acx-public-guide')).toHaveClass('acx-public-guide');
@@ -64,7 +76,8 @@ describe('public guide entry', () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     document.body.innerHTML = `
       <main id="acx-public-guide">
-        <p class="acx-public-guide__fallback" role="alert">${PUBLIC_GUIDE_FALLBACK}</p>
+        <p class="acx-public-guide__loading" aria-live="polite">${PUBLIC_GUIDE_LOADING}</p>
+        <p class="acx-public-guide__fallback" role="alert" hidden>${PUBLIC_GUIDE_FALLBACK}</p>
       </main>
     `;
 
@@ -76,7 +89,10 @@ describe('public guide entry', () => {
       });
     });
 
+    const loading = document.querySelector('.acx-public-guide__loading');
     const fallback = document.querySelector('.acx-public-guide__fallback');
+    expect(loading).toBeInstanceOf(HTMLElement);
+    expect((loading as HTMLElement).hidden).toBe(true);
     expect(fallback).toBeInstanceOf(HTMLElement);
     expect((fallback as HTMLElement).hidden).toBe(false);
     expect(fallback).toHaveTextContent(PUBLIC_GUIDE_FALLBACK);
@@ -92,7 +108,8 @@ describe('public guide entry', () => {
     const unmount = vi.fn();
     document.body.innerHTML = `
       <main id="acx-public-guide">
-        <p class="acx-public-guide__fallback" role="alert">${PUBLIC_GUIDE_FALLBACK}</p>
+        <p class="acx-public-guide__loading" aria-live="polite">${PUBLIC_GUIDE_LOADING}</p>
+        <p class="acx-public-guide__fallback" role="alert" hidden>${PUBLIC_GUIDE_FALLBACK}</p>
       </main>
     `;
 
@@ -115,5 +132,73 @@ describe('public guide entry', () => {
     expect(unmount).toHaveBeenCalledTimes(1);
     expect(errorSpy).toHaveBeenCalled();
     expect(errorSpy.mock.calls.some((args) => args.some((arg) => String(arg).includes('render failed')))).toBe(true);
+  });
+
+  it('keeps a polite loading state until the bundle mounts, errors, or times out', () => {
+    document.body.innerHTML = `
+      <main id="acx-public-guide">
+        <p class="acx-public-guide__loading" aria-live="polite">${PUBLIC_GUIDE_LOADING}</p>
+        <p class="acx-public-guide__fallback" role="alert" hidden>${PUBLIC_GUIDE_FALLBACK}</p>
+      </main>
+    `;
+
+    const loading = document.querySelector('.acx-public-guide__loading');
+    const fallback = document.querySelector('.acx-public-guide__fallback');
+    expect(loading).toBeInstanceOf(HTMLElement);
+    expect((loading as HTMLElement).hidden).toBe(false);
+    expect(loading).toHaveAttribute('aria-live', 'polite');
+    expect(loading).toHaveTextContent(PUBLIC_GUIDE_LOADING);
+    expect(fallback).toBeInstanceOf(HTMLElement);
+    expect((fallback as HTMLElement).hidden).toBe(true);
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('swaps loading to the alert fallback after the bounded timeout', () => {
+    vi.useFakeTimers();
+    document.body.innerHTML = `
+      <main id="acx-public-guide">
+        <p class="acx-public-guide__loading" aria-live="polite">${PUBLIC_GUIDE_LOADING}</p>
+        <p class="acx-public-guide__fallback" role="alert" hidden>${PUBLIC_GUIDE_FALLBACK}</p>
+      </main>
+    `;
+    const root = document.getElementById('acx-public-guide');
+    expect(root).toBeInstanceOf(HTMLElement);
+    const stop = attachPublicGuideLoadWatch(root as HTMLElement, 1000);
+
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+
+    const loading = document.querySelector('.acx-public-guide__loading');
+    const fallback = document.querySelector('.acx-public-guide__fallback');
+    expect((loading as HTMLElement).hidden).toBe(true);
+    expect((fallback as HTMLElement).hidden).toBe(false);
+    expect(screen.getByRole('alert')).toHaveTextContent(PUBLIC_GUIDE_FALLBACK);
+    stop();
+    vi.useRealTimers();
+  });
+
+  it('swaps loading to the alert fallback when the guide bundle script errors', () => {
+    document.body.innerHTML = `
+      <main id="acx-public-guide">
+        <p class="acx-public-guide__loading" aria-live="polite">${PUBLIC_GUIDE_LOADING}</p>
+        <p class="acx-public-guide__fallback" role="alert" hidden>${PUBLIC_GUIDE_FALLBACK}</p>
+      </main>
+    `;
+    const root = document.getElementById('acx-public-guide');
+    expect(root).toBeInstanceOf(HTMLElement);
+    const stop = attachPublicGuideLoadWatch(root as HTMLElement);
+
+    const script = document.createElement('script');
+    script.id = 'acx-public-guide-js';
+    document.body.appendChild(script);
+    script.dispatchEvent(new Event('error', { bubbles: true }));
+
+    const loading = document.querySelector('.acx-public-guide__loading');
+    const fallback = document.querySelector('.acx-public-guide__fallback');
+    expect((loading as HTMLElement).hidden).toBe(true);
+    expect((fallback as HTMLElement).hidden).toBe(false);
+    expect(screen.getByRole('alert')).toHaveTextContent(PUBLIC_GUIDE_FALLBACK);
+    stop();
   });
 });

@@ -12,6 +12,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 $acx_guide_canonical = home_url( '/guide/' );
 $acx_guide_home      = home_url( '/' );
 $acx_guide_fallback  = \AltContext\PublicSite\PublicGuideRoute::fallback_copy();
+$acx_guide_loading   = \AltContext\PublicSite\PublicGuideRoute::loading_copy();
+$acx_guide_timeout   = \AltContext\PublicSite\PublicGuideRoute::LOAD_TIMEOUT_MS;
 ?><!DOCTYPE html>
 <html <?php language_attributes(); ?>>
 <head>
@@ -22,12 +24,56 @@ $acx_guide_fallback  = \AltContext\PublicSite\PublicGuideRoute::fallback_copy();
 	<?php wp_head(); ?>
 </head>
 <body <?php body_class( 'acx-public-guide' ); ?>>
-<main id="acx-public-guide" data-scope="recorded" data-example="bundled" data-home-url="<?php echo esc_url( $acx_guide_home ); ?>">
-	<p class="acx-public-guide__fallback" role="alert"><?php echo esc_html( $acx_guide_fallback ); ?></p>
+<main id="acx-public-guide" data-scope="recorded" data-example="bundled" data-home-url="<?php echo esc_url( $acx_guide_home ); ?>" data-acx-load-timeout="<?php echo esc_attr( (string) $acx_guide_timeout ); ?>">
+	<p class="acx-public-guide__loading" aria-live="polite"><?php echo esc_html( $acx_guide_loading ); ?></p>
+	<p class="acx-public-guide__fallback" role="alert" hidden><?php echo esc_html( $acx_guide_fallback ); ?></p>
 	<noscript>
+		<style>
+			.acx-public-guide__loading { display: none !important; }
+			.acx-public-guide__fallback[hidden] { display: block !important; }
+		</style>
 		<p><?php echo esc_html( $acx_guide_fallback ); ?></p>
 	</noscript>
 </main>
+<script>
+(function () {
+	var root = document.getElementById('acx-public-guide');
+	if (!root) {
+		return;
+	}
+	var timeoutMs = parseInt(root.getAttribute('data-acx-load-timeout') || '8000', 10);
+	if (isNaN(timeoutMs) || timeoutMs < 1) {
+		timeoutMs = 8000;
+	}
+	var shown = false;
+	function showFallback() {
+		if (shown || root.getAttribute('data-acx-mounted') === '1') {
+			return;
+		}
+		shown = true;
+		var loading = root.querySelector(':scope > .acx-public-guide__loading');
+		var fallback = root.querySelector(':scope > .acx-public-guide__fallback');
+		if (loading) {
+			loading.hidden = true;
+		}
+		if (fallback) {
+			fallback.hidden = false;
+		}
+	}
+	window.setTimeout(showFallback, timeoutMs);
+	document.addEventListener('error', function (event) {
+		var target = event.target;
+		if (!target || target.tagName !== 'SCRIPT') {
+			return;
+		}
+		var id = target.id || '';
+		var src = target.src || '';
+		if (id === 'acx-public-guide-js' || src.indexOf('guide') !== -1) {
+			showFallback();
+		}
+	}, true);
+})();
+</script>
 <?php wp_footer(); ?>
 </body>
 </html>

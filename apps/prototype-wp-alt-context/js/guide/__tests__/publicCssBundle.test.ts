@@ -33,6 +33,7 @@ describe('public guide stylesheet isolation', () => {
     expect(css).toMatch(/\.acx-dialog__/);
     expect(css).toMatch(/\.acx-radio-group/);
     expect(css).toMatch(/\.acx-public-guide/);
+    expect(css).toMatch(/\.acx-public-guide__loading/);
     expect(css).toMatch(/\.acx-public-guide\s+\.acx-guided-page/);
     expect(css).toMatch(/\.acx-public-guide\s+\.acx-button\b/);
     expect(css).toMatch(/\.acx-public-guide\s+\.acx-button--danger\b/);

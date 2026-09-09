@@ -8,12 +8,15 @@ require_once __DIR__ . '/../sovereign/sync/class-outbox-drain.php';
 require_once __DIR__ . '/../api/services/class-person-resolution-service.php';
 require_once __DIR__ . '/../api/services/class-person-label-backfill-service.php';
 require_once __DIR__ . '/../api/class-tenant-identity.php';
+require_once __DIR__ . '/../public/class-public-guide-route.php';
 
 use AltContext\Api\Services\PersonLabelBackfillService;
 use AltContext\Api\Services\PersonResolutionService;
 use AltContext\Api\TenantIdentity;
+use AltContext\PublicSite\PublicGuideRoute;
 use AltContext\Sovereign\Sync\OutboxDrain;
 use function array_keys;
+use function class_exists;
 use function defined;
 use function function_exists;
 use function get_debug_type;
@@ -616,6 +619,9 @@ class LifecycleManager {
 		$this->clear_curation_outbox_drain_schedule();
 		$this->clear_split_topology_drain_schedule();
 		OutboxDrain::clear_scheduled_purge();
+		if ( class_exists( PublicGuideRoute::class ) ) {
+			PublicGuideRoute::drop_rewrite_from_extra_rules_top();
+		}
 		flush_rewrite_rules( false );
 	}
 

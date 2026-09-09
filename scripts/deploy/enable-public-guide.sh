@@ -207,7 +207,7 @@ plan:
   ${_wp_prefix} rewrite flush --hard
   curl signed-out GET $GUIDE_URL expect 200 and id="acx-public-guide-js"
   print acx_public_demo_enabled; refuse unless it is off or ACX_RETAIN_PUBLIC_DEMO_DESCRIBE=1
-  on GET 4/5: option update acx_public_guide_enabled 0; rewrite flush --hard
+  on any post-enable failure: option update acx_public_guide_enabled 0; rewrite flush --hard
 EOF
 }
 
@@ -237,12 +237,8 @@ if is_truthy "$demo_enabled" && ! is_truthy "$RETAIN_PUBLIC_DEMO_DESCRIBE"; then
 fi
 
 echo "==> Enable acx_public_guide_enabled on $SITE_URL"
-run_wp option update acx_public_guide_enabled 1
-echo "==> Flush rewrites"
-run_wp rewrite flush --hard
-
-body_file="$(mktemp "${TMPDIR:-/tmp}/acx-public-guide.XXXXXX")"
-verify_exit=0
+verify_exit=1
+body_file=""
 rollback_public_guide() {
   echo "==> Verification failed (exit ${verify_exit}); rolling back acx_public_guide_enabled" >&2
   run_wp option update acx_public_guide_enabled 0 || true
@@ -250,12 +246,20 @@ rollback_public_guide() {
   echo "rolled back acx_public_guide_enabled to 0" >&2
 }
 cleanup() {
-  if [ "$verify_exit" -eq 4 ] || [ "$verify_exit" -eq 5 ]; then
+  if [ "${verify_exit:-1}" -ne 0 ]; then
     rollback_public_guide
   fi
-  rm -f "$body_file"
+  if [ -n "${body_file:-}" ]; then
+    rm -f "$body_file"
+  fi
 }
 trap cleanup EXIT
+
+run_wp option update acx_public_guide_enabled 1
+echo "==> Flush rewrites"
+run_wp rewrite flush --hard
+
+body_file="$(mktemp "${TMPDIR:-/tmp}/acx-public-guide.XXXXXX")"
 
 echo "==> Signed-out GET $GUIDE_URL"
 http_code="$(curl -sS -L --max-redirs 3 --connect-timeout 10 --max-time 15 -o "$body_file" -w '%{http_code}' "$GUIDE_URL")"
@@ -271,6 +275,8 @@ if ! grep -q 'id="acx-public-guide-js"' "$body_file"; then
   verify_exit=5
   exit 5
 fi
+
+verify_exit=0
 
 demo_enabled_after="$(run_wp option get acx_public_demo_enabled 2>/dev/null || true)"
 demo_enabled_after="$(printf '%s' "$demo_enabled_after" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"

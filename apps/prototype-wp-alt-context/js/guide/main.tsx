@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { RecordedWalkthrough } from '../admin/guidedPrototype/RecordedWalkthrough';
 import { PUBLIC_GUIDE_FALLBACK } from '../admin/guidedPrototype/publicGuideCopy';
+import { setPublicGuideShellState } from './publicGuideShell';
 import './index.css';
 
 const assertMountNode: (value: HTMLElement | null) => asserts value is HTMLElement = (value) => {
@@ -16,14 +17,6 @@ const assertMountNode: (value: HTMLElement | null) => asserts value is HTMLEleme
 const homeUrlFrom = (root: HTMLElement): string => {
   const value = root.getAttribute('data-home-url');
   return value && value.length > 0 ? value : '/';
-};
-
-const setFallbackHidden = (root: HTMLElement, hidden: boolean): void => {
-  root.querySelectorAll(':scope > .acx-public-guide__fallback').forEach((node) => {
-    if (node instanceof HTMLElement) {
-      node.hidden = hidden;
-    }
-  });
 };
 
 export interface MountPublicGuideOptions {
@@ -64,11 +57,11 @@ export const mountPublicGuide = (
       reactRoot = makeRoot(appHost);
       reactRoot.render(tree);
     });
-    setFallbackHidden(root, true);
+    setPublicGuideShellState(root, 'ready');
   } catch (error) {
     console.error('Public guide failed to mount', error);
     reactRoot?.unmount();
-    setFallbackHidden(root, false);
+    setPublicGuideShellState(root, 'error');
   }
 };
 

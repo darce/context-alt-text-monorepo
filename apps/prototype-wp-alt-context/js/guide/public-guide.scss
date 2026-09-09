@@ -26,11 +26,19 @@
     border: 0;
   }
 
+  &__loading {
+    margin: var(--acx-space-24);
+    color: var(--acx-color-text-muted);
+    font-size: var(--acx-text-base);
+    font-weight: var(--acx-font-weight-medium);
+  }
+
   &__fallback {
     margin: var(--acx-space-24);
     color: var(--acx-color-text);
   }
 
+  &__loading[hidden],
   &__fallback[hidden] {
     display: none;
   }

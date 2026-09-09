@@ -35,45 +35,6 @@ $acx_guide_timeout   = \AltContext\PublicSite\PublicGuideRoute::LOAD_TIMEOUT_MS;
 		<p><?php echo esc_html( $acx_guide_fallback ); ?></p>
 	</noscript>
 </main>
-<script>
-(function () {
-	var root = document.getElementById('acx-public-guide');
-	if (!root) {
-		return;
-	}
-	var timeoutMs = parseInt(root.getAttribute('data-acx-load-timeout') || '8000', 10);
-	if (isNaN(timeoutMs) || timeoutMs < 1) {
-		timeoutMs = 8000;
-	}
-	var shown = false;
-	function showFallback() {
-		if (shown || root.getAttribute('data-acx-mounted') === '1') {
-			return;
-		}
-		shown = true;
-		var loading = root.querySelector(':scope > .acx-public-guide__loading');
-		var fallback = root.querySelector(':scope > .acx-public-guide__fallback');
-		if (loading) {
-			loading.hidden = true;
-		}
-		if (fallback) {
-			fallback.hidden = false;
-		}
-	}
-	window.setTimeout(showFallback, timeoutMs);
-	document.addEventListener('error', function (event) {
-		var target = event.target;
-		if (!target || target.tagName !== 'SCRIPT') {
-			return;
-		}
-		var id = target.id || '';
-		var src = target.src || '';
-		if (id === 'acx-public-guide-js' || src.indexOf('guide') !== -1) {
-			showFallback();
-		}
-	}, true);
-})();
-</script>
 <?php wp_footer(); ?>
 </body>
 </html>

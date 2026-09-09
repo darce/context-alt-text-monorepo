@@ -43,6 +43,8 @@ def _wp_stub_body(
     prefix: str,
     fail_first_flush: bool = False,
     once_path: str = "",
+    demo_enabled_after: str | None = None,
+    demo_after_flag_path: str = "",
 ) -> str:
     flush_fail = ""
     if fail_first_flush:
@@ -72,11 +74,12 @@ def _wp_stub_body(
         f"if [[ \"$joined\" == *'option update acx_public_demo_enabled'* ]]; then printf 'demo_enable\\n' >> {mutations_path}; fi\n"
         + flush_fail
         + f"if [[ \"$joined\" == *'rewrite flush'* ]]; then printf 'rewrite_flush\\n' >> {mutations_path}; fi\n"
-        "if [[ \"$joined\" == *'option get acx_public_demo_enabled'* ]]; then\n"
-        f"  printf '%s\\n' {shlex.quote(demo_enabled)}\n"
-        "  exit 0\n"
-        "fi\n"
-        "exit 0\n"
+        + _demo_get_snippet(
+            demo_enabled=demo_enabled,
+            demo_enabled_after=demo_enabled_after,
+            demo_after_flag_path=demo_after_flag_path,
+        )
+        + "exit 0\n"
     )
 
 
@@ -115,6 +118,32 @@ def _docker_stub_body(*, log_path: str, mutations_path: str, demo_enabled: str) 
     )
 
 
+def _demo_get_snippet(
+    *,
+    demo_enabled: str,
+    demo_enabled_after: str | None,
+    demo_after_flag_path: str,
+) -> str:
+    if demo_enabled_after is None:
+        return (
+            "if [[ \"$joined\" == *'option get acx_public_demo_enabled'* ]]; then\n"
+            f"  printf '%s\\n' {shlex.quote(demo_enabled)}\n"
+            "  exit 0\n"
+            "fi\n"
+        )
+    return (
+        "if [[ \"$joined\" == *'option get acx_public_demo_enabled'* ]]; then\n"
+        f"  if [[ ! -f {shlex.quote(demo_after_flag_path)} ]]; then\n"
+        f"    printf '1' > {shlex.quote(demo_after_flag_path)}\n"
+        f"    printf '%s\\n' {shlex.quote(demo_enabled)}\n"
+        "  else\n"
+        f"    printf '%s\\n' {shlex.quote(demo_enabled_after)}\n"
+        "  fi\n"
+        "  exit 0\n"
+        "fi\n"
+    )
+
+
 def _run(
     tmp_path: Path,
     *,
@@ -131,6 +160,7 @@ def _run(
     compose_file: Path | None = None,
     curl_exit: int = 0,
     fail_first_flush: bool = False,
+    demo_enabled_after: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -139,6 +169,7 @@ def _run(
     mutations = tmp_path / "mutations.log"
     mutations_path = shlex.quote(str(mutations))
     once_path = str(tmp_path / "flush-failed-once")
+    demo_after_flag_path = str(tmp_path / "demo-get-count")
 
     if include_wp:
         _write_executable(
@@ -150,6 +181,8 @@ def _run(
                 prefix="wp",
                 fail_first_flush=fail_first_flush,
                 once_path=once_path,
+                demo_enabled_after=demo_enabled_after,
+                demo_after_flag_path=demo_after_flag_path,
             ),
         )
     if include_docker:
@@ -351,6 +384,15 @@ def test_rolls_back_when_pre_verification_flush_fails(tmp_path: Path) -> None:
     result = _run(tmp_path, fail_first_flush=True)
     output = result.stdout + result.stderr
     assert result.returncode != 0, output
+    _assert_rolled_back(tmp_path, output)
+
+
+def test_rolls_back_when_public_demo_describe_turns_on_after_successful_get(tmp_path: Path) -> None:
+    result = _run(tmp_path, demo_enabled="0", demo_enabled_after="1")
+    output = result.stdout + result.stderr
+    assert result.returncode == 3, output
+    assert "acx_public_demo_enabled" in output
+    assert "1" in output
     _assert_rolled_back(tmp_path, output)
 
 

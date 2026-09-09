@@ -276,8 +276,6 @@ if ! grep -q 'id="acx-public-guide-js"' "$body_file"; then
   exit 5
 fi
 
-verify_exit=0
-
 demo_enabled_after="$(run_wp option get acx_public_demo_enabled 2>/dev/null || true)"
 demo_enabled_after="$(printf '%s' "$demo_enabled_after" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
 if [ -z "$demo_enabled_after" ]; then
@@ -286,7 +284,9 @@ fi
 echo "acx_public_demo_enabled=${demo_enabled_after}"
 if is_truthy "$demo_enabled_after" && ! is_truthy "$RETAIN_PUBLIC_DEMO_DESCRIBE"; then
   echo "ERROR: acx_public_demo_enabled is on (${demo_enabled_after}) after enable; describe endpoint must stay off unless ACX_RETAIN_PUBLIC_DEMO_DESCRIBE=1." >&2
+  verify_exit=3
   exit 3
 fi
 
+verify_exit=0
 echo "public guide enabled: $GUIDE_URL"

@@ -34,7 +34,9 @@ final class PublicGuideRoute {
 	public const QUERY_VAR = 'acx_public_guide';
 	public const OPTION_ENABLED = 'acx_public_guide_enabled';
 	public const ENTRY_POINT = 'js/guide/main.tsx';
+	public const WATCH_ENTRY_POINT = 'js/guide/publicGuideWatch.ts';
 	public const SCRIPT_HANDLE = 'acx-public-guide';
+	public const WATCH_SCRIPT_HANDLE = 'acx-public-guide-watch';
 	public const REWRITE_REGEX = '^guide/?$';
 
 	private const FALLBACK_COPY = 'The walkthrough could not load. Reload the page, or watch the recorded video on the case study page.';
@@ -128,7 +130,17 @@ final class PublicGuideRoute {
 		}
 
 		$resolver = $this->assetResolver;
-		$assets   = $resolver( self::ENTRY_POINT );
+
+		$watch = $resolver( self::WATCH_ENTRY_POINT );
+		if ( is_array( $watch ) ) {
+			$watch_js = $watch['js'] ?? '';
+			if ( is_string( $watch_js ) && '' !== $watch_js ) {
+				wp_enqueue_script( self::WATCH_SCRIPT_HANDLE, $watch_js, array(), ACX_VERSION, true );
+				wp_script_add_data( self::WATCH_SCRIPT_HANDLE, 'type', 'module' );
+			}
+		}
+
+		$assets = $resolver( self::ENTRY_POINT );
 		if ( ! is_array( $assets ) ) {
 			return;
 		}

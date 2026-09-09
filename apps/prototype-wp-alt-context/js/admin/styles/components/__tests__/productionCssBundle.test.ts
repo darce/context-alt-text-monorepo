@@ -29,7 +29,12 @@ import {
   unfingerprintedManifestSources,
 } from './productionCssBundle';
 
-const ROLLUP_ENTRY_POINTS = ['js/admin/main.tsx', 'js/attachment-edit/main.tsx', 'js/guide/main.tsx'] as const;
+const ROLLUP_ENTRY_POINTS = [
+  'js/admin/main.tsx',
+  'js/attachment-edit/main.tsx',
+  'js/guide/main.tsx',
+  'js/guide/publicGuideWatch.ts',
+] as const;
 const GUIDED_ASSETS = [
   'js/admin/assets/guided/guided-justin-trudeau-2025-b.jpg',
   'js/admin/assets/guided/guided-justin-trudeau-2025.jpg',
@@ -116,7 +121,7 @@ describe('rollup agrees with the fingerprint [FEBT2-LG-NEW-02]', () => {
     expect(unfingerprintedManifestSources(bundle)).toEqual([]);
   });
 
-  it('ships all three entry points, so the post.php bundle is really built', () => {
+  it('ships all rollup entry points, so the post.php bundle is really built', () => {
     const manifest = JSON.parse(readFileSync(join(bundle.outDir, '.vite', 'manifest.json'), 'utf8')) as Record<
       string,
       { isEntry?: boolean; file?: string }

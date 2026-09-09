@@ -804,3 +804,103 @@ describe('public demo radio contract from actual PHP shortcode markup', () => {
   });
 });
 
+describe('public demo illustrative outcome preview', () => {
+  const ILLUSTRATIVE_LABEL = 'Illustrative example — not a live result';
+  const ILLUSTRATIVE_DISCLAIMER =
+    'This example is not a description of your selected image. Your live result may differ.';
+  const ILLUSTRATIVE_EXAMPLE = 'Alex stands beside a bicycle outside a cafe.';
+  const LIVE_DESCRIPTION = 'A lakeside path.';
+
+  const settle = async (predicate: () => boolean): Promise<void> => {
+    for (let tick = 0; tick < 200; tick += 1) {
+      if (predicate()) return;
+      await Promise.resolve();
+      await new Promise((resolve) => { setTimeout(resolve, 0); });
+    }
+    throw new Error('timed out waiting for the demo client to settle');
+  };
+
+  it('shows a static illustrative preview before submit in the PHP-rendered fixture', () => {
+    document.body.innerHTML = ACTUAL_SHORTCODE_TWO_INSTANCES;
+    try {
+      const roots = [...document.querySelectorAll<HTMLElement>('[data-acx-demo]')];
+      expect(roots).toHaveLength(2);
+      for (const root of roots) {
+        const preview = root.querySelector<HTMLElement>('[data-acx-demo-preview]');
+        const submit = root.querySelector<HTMLElement>('.acx-demo__submit');
+        const result = root.querySelector<HTMLElement>('[data-acx-demo-result]');
+        expect(preview, 'INT-07 outcome sample must exist beside input radios').toBeInstanceOf(HTMLElement);
+        expect(preview?.textContent).toContain(ILLUSTRATIVE_LABEL);
+        expect(preview?.textContent).toContain(ILLUSTRATIVE_DISCLAIMER);
+        expect(preview?.textContent).toContain(ILLUSTRATIVE_EXAMPLE);
+        expect(preview?.getAttribute('role')).not.toBe('status');
+        expect(preview?.getAttribute('aria-live')).toBeNull();
+        expect(submit).toBeInstanceOf(HTMLElement);
+        expect(
+          preview!.compareDocumentPosition(submit!) & Node.DOCUMENT_POSITION_FOLLOWING,
+          'illustrative preview must precede expensive submit',
+        ).toBeTruthy();
+        expect(result?.hidden).toBe(true);
+        expect(result?.textContent).toBe('');
+        expect(result?.contains(preview)).toBe(false);
+      }
+    } finally {
+      document.body.innerHTML = '';
+    }
+  });
+
+  it('initializeDemo and image selection do not POST; explicit submit still fills the live result', async () => {
+    document.body.innerHTML = ACTUAL_SHORTCODE_TWO_INSTANCES;
+    const root = document.querySelectorAll<HTMLElement>('[data-acx-demo]')[0];
+    const form = root.querySelector<HTMLFormElement>('form.acx-demo__form');
+    const lake = document.querySelector<HTMLInputElement>('#acx-demo-media-1-41');
+    const result = root.querySelector<HTMLElement>('[data-acx-demo-result]');
+    lake!.checked = true;
+
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        response(running({ status: 'pending', phase: 'queued', deadline_seconds: 120, run_id: 'run-preview-1' })),
+      )
+      .mockResolvedValueOnce(
+        response(
+          running({
+            run_id: 'run-preview-1',
+            status: 'completed',
+            phase: 'complete',
+            progress: { done: 1, total: 1 },
+            description: LIVE_DESCRIPTION,
+            description_tier: 'final_gpu',
+            gpu_state: 'ready',
+          }),
+        ),
+      );
+    vi.stubGlobal('fetch', fetchImpl);
+
+    try {
+      initializeDemo(root);
+      expect(fetchImpl, 'initializeDemo must not POST').not.toHaveBeenCalled();
+      lake?.dispatchEvent(new Event('change', { bubbles: true }));
+      lake?.dispatchEvent(new Event('input', { bubbles: true }));
+      expect(fetchImpl, 'selecting an image must not POST').not.toHaveBeenCalled();
+      expect(result?.hidden).toBe(true);
+      expect(result?.textContent).toBe('');
+
+      form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await settle(() => form?.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled === false);
+
+      expect(fetchImpl.mock.calls.some((call) => (call[1] as RequestInit | undefined)?.method === 'POST')).toBe(true);
+      expect(result?.hidden).toBe(false);
+      expect(result?.textContent).toBe(LIVE_DESCRIPTION);
+      expect(result?.textContent).not.toBe(ILLUSTRATIVE_EXAMPLE);
+      expect(root.querySelector('[data-acx-demo-message]')?.textContent).toBe('GPU description complete.');
+      const preview = root.querySelector<HTMLElement>('[data-acx-demo-preview]');
+      expect(preview, 'illustrative preview must remain after the live result lands').toBeInstanceOf(HTMLElement);
+      expect(preview?.textContent).toContain(ILLUSTRATIVE_EXAMPLE);
+      expect(preview?.textContent).not.toContain(LIVE_DESCRIPTION);
+    } finally {
+      vi.unstubAllGlobals();
+      document.body.innerHTML = '';
+    }
+  });
+});
+

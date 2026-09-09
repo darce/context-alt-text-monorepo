@@ -1,8 +1,8 @@
 # Virtual root project — exists so the remote offload sandbox's root `uv sync`
-# (scripts/remote_agent.sh) succeeds in this monorepo, whose real Python
-# projects live under apps/*. Not a build target.
+# succeeds in this monorepo, whose real Python projects live under apps/*. Not
+# a build target.
 #
-# It installs exactly one thing: pytest. remote_agent.sh runs `uv sync` and then
+# It installs exactly one thing: pytest. The remote offload runner runs `uv sync` and then
 # hands the caller's TEST_CMD a PATH of "$SBX/.venv/bin:$PATH" on the documented
 # premise that "the lane venv's bin makes a bare 'pytest' resolve". With
 # `dependencies = []` that premise is false here — the lane venv is empty, bare
@@ -22,11 +22,10 @@ dependencies = [
 [tool.uv]
 package = false
 
-# Remote lane sandboxes are provisioned by `uv sync` at this virtual root
-# (UV_PROJECT_ENVIRONMENT=<lane venv>). Without a default dependency group the
-# lane venv holds only python and every allowlisted runner (`pytest`,
-# `python3 -m pytest`) fails with rc 126/127. The `dev` group is a uv default,
-# so root sync installs the service test toolchain into each lane venv.
+# Keep this group aligned with the committed uv.lock until the root dependency
+# owner regenerates both files together. A default root sync includes the
+# service's development extra; changing that contract requires a lock update in
+# the dependency lane, not a pyproject-only edit.
 [dependency-groups]
 dev = ["prototype-description-service[dev]"]
 

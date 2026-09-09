@@ -41,6 +41,15 @@
 # non-expansion is deliberate — those $vars must expand on the REMOTE side.
 set -euo pipefail
 
+# RGCLI-01: help/usage/no-args must not require a configured host and must not
+# fall through to the mutating `run` default.
+case "${1:-}" in
+""|-h|--help|help|usage)
+    sed -n '2,33p' "$0"
+    exit 0
+    ;;
+esac
+
 # Resolve the MAIN checkout root (parent of the git-common-dir), not the linked
 # worktree's toplevel — the config file and clone slug must be identical whether
 # invoked from the main checkout or a linked session worktree, and `.workbay/`
@@ -123,31 +132,38 @@ case "$RUN_MEMORY_MAX" in *[!0-9GMK]*|"") die "MEMORY_MAX must look like 6G/512M
 case "$RUN_CPU_QUOTA" in *[!0-9%]*|"") die "CPU_QUOTA must look like 200%" ;; esac
 
 extra_env=()
+remote_extra_env=()
 # Word-split GATE_EXTRA_ENV without pathname expansion — an env value like
 # `PATTERN=*` must stay literal, not glob against the cwd (shellcheck does not
-# flag this). `set -f` is restored immediately after the split.
+# flag this). `set -f` is restored immediately after the split. Each accepted
+# assignment is shell-quoted before it is embedded in the remote command;
+# validation alone cannot make a value such as `${IFS}bash` safe.
 set -f
 # deliberate unquoted split under noglob (tokens re-validated below)
 # shellcheck disable=SC2206
 _gate_env_tokens=($GATE_EXTRA_ENV)
 set +f
 for kv in ${_gate_env_tokens[@]+"${_gate_env_tokens[@]}"}; do
-    case "$kv" in
-    [A-Za-z_]*=*)
-        case "$kv" in
-        *'`'*|*'$('*|*';'*|*'&'*|*'|'*|*'<'*|*'>'*|*'\'*)
-            die "REMOTE_GATE_ENV entry contains shell metacharacters: ${kv}" ;;
-        esac
-        extra_env+=("$kv")
-        ;;
-    *) die "REMOTE_GATE_ENV entries must be KEY=VALUE (got '${kv}')" ;;
+    case "$kv" in *=*) env_name="${kv%%=*}" ;; *)
+        die "REMOTE_GATE_ENV entries must be KEY=VALUE (got '${kv}')" ;;
     esac
+    case "$env_name" in
+    ""|[0-9]*|*[!A-Za-z0-9_]*)
+        die "REMOTE_GATE_ENV names must match [A-Za-z_][A-Za-z0-9_]* (got '${env_name}')" ;;
+    esac
+    case "$kv" in
+    *'`'*|*'$('*|*'$'*|*';'*|*'&'*|*'|'*|*'<'*|*'>'*|*'\'*)
+        die "REMOTE_GATE_ENV entry contains shell metacharacters: ${kv}" ;;
+    esac
+    extra_env+=("$kv")
+    printf -v quoted_kv '%q' "$kv"
+    remote_extra_env+=("$quoted_kv")
 done
 
 SSH=(ssh -o BatchMode=yes -o ConnectTimeout=10
      -o ServerAliveInterval=30 -o ServerAliveCountMax=4 "$REMOTE_HOST")
 
-cmd="${1:-run}"
+cmd="${1:-}"
 [ "$#" -gt 0 ] && shift
 
 case "$cmd" in
@@ -307,7 +323,7 @@ run)
             echo \"=== gate-preflight ===\"
             rc=0
             \$runner env \
-                ${extra_env[*]:-} \
+                ${remote_extra_env[*]:-} \
                 TMPDIR=/tmp \
                 WORKBAY_DISABLE_INVOKING_HOOKS=1 \
                 PATH=\"\$PWD/.venv/bin:\$HOME/.local/bin:\$PATH\" \
@@ -326,7 +342,7 @@ run)
             echo \"=== \$t ===\"
             rc=0
             \$runner env \
-                ${extra_env[*]:-} \
+                ${remote_extra_env[*]:-} \
                 TMPDIR=/tmp \
                 WORKBAY_DISABLE_INVOKING_HOOKS=1 \
                 WORKBAY_HANDOFF_DEFAULT_AGENT=\${WORKBAY_HANDOFF_DEFAULT_AGENT:-remote-gate} \

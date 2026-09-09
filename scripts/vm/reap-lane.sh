@@ -1152,6 +1152,30 @@ has_linked_worktrees() {
   [[ "${n:-0}" -gt 1 ]]
 }
 
+lane_has_live_process() {
+  # True when some process (other than this reaper) has cwd inside $1.
+  # Archive-mode sweeps of ~/w, ~/lanes, etc. have no lease/lock contract, so a
+  # worker that committed >1h ago and is now running a long test would otherwise
+  # lose its checkout (VMREAP-RA-06).
+  local dir="$1" cwd target pid
+  [[ -n "$dir" ]] || return 1
+  if [[ -d /proc ]]; then
+    for cwd in /proc/[0-9]*/cwd; do
+      [[ -L "$cwd" ]] || continue
+      target="$(readlink "$cwd" 2>/dev/null || true)"
+      case "$target" in
+        "$dir"|"$dir"/*)
+          pid="${cwd#/proc/}"
+          pid="${pid%/cwd}"
+          [[ "$pid" == "$$" ]] && continue
+          return 0
+          ;;
+      esac
+    done
+  fi
+  return 1
+}
+
 lane_newest_mtime() {
   local dir="$1" newest=0 candidate candidate_mtime git_item
   candidate_mtime="$(path_mtime "$dir" || true)"
@@ -1323,6 +1347,11 @@ process_one() {
   fi
   freshness_candidates=$((freshness_candidates + 1))
 
+  if lane_has_live_process "$real"; then
+    skip "$path" "lane has a live process"
+    return 0
+  fi
+
   if [[ -n "$archive_to" ]]; then
     generation="$(archive_generation "$real" || true)"
     if [[ -z "$generation" ]]; then
@@ -1450,9 +1479,10 @@ process_one() {
     return 0
   fi
 
-  # This is the final complete state check. There remains an unavoidable race
-  # between this comparison and rm below; callers that can mutate sandboxes
-  # must use the per-lane lock.
+  # This is the final complete state check. Sandboxes also have a materializer
+  # lock, while ordinary archive roots rely on the process/ownership probe below
+  # because they have no shared worker lease. Keep both checks immediately next
+  # to deletion so a worker entering during archive preparation is observed.
   if ! lane_matches_snapshot "$real" "$safety_ignore_ref" "$safety_snapshot"; then
     release_grok_lane_lock
     skip "$path" "lane changed after snapshot; skipped"
@@ -1473,6 +1503,18 @@ process_one() {
       return 1
     fi
     partial_intent_path="$(partial_intent_path_for "$real")"
+  fi
+
+  # Archive roots do not have the sandbox materializer's lease. Re-probe the
+  # process/ownership boundary after all archive work and immediately before
+  # rm, closing the window in which a worker can enter after the earlier scan.
+  # Remove a newly written partial intent before returning so this refusal is a
+  # normal retry, not a misleading operator-review tombstone.
+  if lane_has_live_process "$real"; then
+    [[ -n "$partial_intent_path" ]] && rm -f -- "$partial_intent_path"
+    release_grok_lane_lock
+    skip "$path" "lane has a live process"
+    return 0
   fi
 
   if ! rm -rf -- "$real" || [[ -e "$real" ]]; then

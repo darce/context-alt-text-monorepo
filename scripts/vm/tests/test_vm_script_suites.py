@@ -29,7 +29,8 @@ def _run_bash_suite(name: str) -> None:
         capture_output=True,
         text=True,
         check=False,
-        timeout=180,
+        # test_reap_lane.sh has been observed at ~206s; keep headroom above that.
+        timeout=240,
     )
     assert result.returncode == 0, (
         f"{name} exited {result.returncode}\n"

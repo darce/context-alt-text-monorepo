@@ -50,6 +50,7 @@ jobs:
     timeout-minutes: 30
     defaults:
       run:
+        shell: bash --noprofile --norc -eo pipefail {0}
         working-directory: apps/prototype-description-service
     env:
       FACE_PIPELINE_PARITY_REQUIRED: "1"

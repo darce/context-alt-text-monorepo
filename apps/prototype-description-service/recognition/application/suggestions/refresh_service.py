@@ -26,6 +26,7 @@ from recognition.application.assignment.checks import (
     ConfidenceCheck,
     ConstraintCheck,
 )
+from recognition.application.identity_mapping import media_identity_from_model
 from recognition.application.settings import ClusteringSettings
 from recognition.application.similarity import RepresentativeCache, SimilaritySearch
 from recognition.application.suggestions.eligibility import is_eligible_cluster
@@ -113,26 +114,7 @@ class SuggestionRefreshService:
 
     @staticmethod
     def _build_identity(model: MediaIdentityModel) -> MediaIdentity:
-        return MediaIdentity(
-            id=str(model.id),
-            tenant_id=str(model.tenant_id),
-            media_id=str(model.media_id),
-            embedding=np.asarray(model.embedding, dtype=np.float32),
-            confidence=float(model.confidence),
-            bbox_width=int(model.bbox_width),
-            bbox_height=int(model.bbox_height),
-            bbox_x=int(model.bbox_x),
-            bbox_y=int(model.bbox_y),
-            pose_pitch=float(model.pose_pitch) if model.pose_pitch is not None else None,
-            pose_yaw=float(model.pose_yaw) if model.pose_yaw is not None else None,
-            pose_roll=float(model.pose_roll) if model.pose_roll is not None else None,
-            image_phash=str(model.image_phash) if model.image_phash is not None else None,
-            sharpness=float(model.sharpness) if model.sharpness is not None else None,
-            embedding_norm=float(model.embedding_norm) if model.embedding_norm is not None else None,
-            occlusion_severity=(float(model.occlusion_severity) if model.occlusion_severity is not None else None),
-            moved_by_merge_id=str(model.moved_by_merge_id) if getattr(model, "moved_by_merge_id", None) else None,
-            embedding_model=str(model.embedding_model) if getattr(model, "embedding_model", None) else None,
-        )
+        return media_identity_from_model(model)
 
     async def _find_best_cluster_match(
         self,
@@ -495,6 +477,17 @@ class SuggestionRefreshService:
                 if vec is not None
             ]
             if not same_space:
+                try:
+                    await self._repository.update_status(
+                        self._tenant_id,
+                        suggestion.id,
+                        SuggestionStatus.REJECTED,
+                    )
+                except ValueError:
+                    logger.warning(
+                        "[suggestions] stale cross-space suggestion disappeared before rejection suggestion_id=%s",
+                        suggestion.id,
+                    )
                 continue
             match = await self._find_best_cluster_match(
                 identity,
@@ -650,13 +643,22 @@ class SuggestionRefreshService:
         duplicate_identity_skips = 0
         # Production get_by_id does not selectinload representatives, and
         # identity_clusters has no embedding_model column, so cluster_embedding_model
-        # on that path is always None. Derive the gallery space from already-loaded
-        # representative objects (get_all_representatives majority).
-        gallery_model = None
-        get_all_reps = getattr(self._cluster_repository, "get_all_representatives", None)
-        if callable(get_all_reps):
-            labeled_reps = list(await get_all_reps(cluster_id))
-            gallery_model = choose_embedding_model(representative_embedding_model(rep) for rep in labeled_reps)
+        # on that path is always None. Derive the gallery space from the repository's
+        # typed representative query (majority model, lex-stable tie-break).
+        try:
+            load_representatives = self._cluster_repository.get_all_representatives
+        except AttributeError:
+            # Keep legacy structural adapters usable for all-unstamped vectors;
+            # a stamped candidate must fail loudly if the protocol is violated,
+            # rather than silently skipping every candidate as cross-space.
+            if any(
+                identity.embedding_model for identities in identities_by_cluster.values() for identity in identities
+            ):
+                raise
+            labeled_reps = []
+        else:
+            labeled_reps = list(await load_representatives(cluster_id))
+        gallery_model = choose_embedding_model(representative_embedding_model(rep) for rep in labeled_reps)
         logger.info(
             "[suggestions] surface: loaded %d member identities from %d clusters in %.3fs",
             _total_members,

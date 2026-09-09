@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock
 import numpy as np
 import pytest
 
-from recognition.domain.cluster import ReservedClusterLabelError
+from recognition.domain.cluster import CrossSpaceMergeError, ReservedClusterLabelError
 from recognition.domain.representative import ClusterRepresentative
 from recognition.domain.suggestion import SuggestedLabelSource
 from recognition.infrastructure.repositories.merge_suggestion_repository import SqlAlchemyMergeSuggestionRepository
@@ -256,6 +256,104 @@ async def test_bulk_accept_assignment_skips_expired_and_performs_assignment(
     assert fake_suggestion_service.suggestions[active.id].status.value == "accepted"
     assert fake_suggestion_service.suggestions[expired.id].status.value == "pending"
     assert fake_cluster_service.identity_cluster_map[active.identity_id] == cluster_id
+
+
+@pytest.mark.asyncio
+async def test_accept_suggestion_maps_cross_space_to_409(
+    api_client, tenant_id, fake_suggestion_service, fake_cluster_service
+) -> None:
+    """SVCSRC-R-02: stale cross-space assignment must be 409, not 500."""
+    cluster_id = str(uuid.uuid4())
+    fake_cluster_service.clusters.append(
+        ClusterResponse(
+            id=cluster_id,
+            tenant_id=tenant_id,
+            label="target",
+            is_labeled=True,
+            is_auto_label=False,
+            identity_count=1,
+            representatives=[],
+        )
+    )
+    suggestion = await fake_suggestion_service.create(
+        identity_id=str(uuid.uuid4()),
+        cluster_id=cluster_id,
+        confidence_score=0.95,
+    )
+
+    async def _raise_cross_space(*_args, **_kwargs):  # noqa: ANN002, ANN003
+        raise CrossSpaceMergeError(
+            source_cluster_id=suggestion.identity_id,
+            target_cluster_id=cluster_id,
+            source_model="space-a",
+            target_model="space-b",
+        )
+
+    fake_cluster_service.assign_outlier_to_cluster = _raise_cross_space
+
+    resp = api_client.post(
+        f"/recognition/suggestions/{suggestion.id}/accept",
+        headers={"X-Tenant-ID": tenant_id},
+        json={"tenant_id": tenant_id},
+    )
+
+    assert resp.status_code == 409
+    assert "different embedding spaces" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_bulk_accept_assignment_skips_cross_space_and_continues(
+    api_client, tenant_id, fake_suggestion_service, fake_cluster_service
+) -> None:
+    """SVCSRC-R-02: one stale cross-space candidate must not abort the bulk request."""
+    cluster_id = str(uuid.uuid4())
+    fake_cluster_service.clusters.append(
+        ClusterResponse(
+            id=cluster_id,
+            tenant_id=tenant_id,
+            label="target",
+            is_labeled=True,
+            is_auto_label=False,
+            identity_count=1,
+            representatives=[],
+        )
+    )
+    stale = await fake_suggestion_service.create(
+        identity_id=str(uuid.uuid4()),
+        cluster_id=cluster_id,
+        confidence_score=0.95,
+        expires_at=datetime.now(tz=UTC) + timedelta(hours=1),
+    )
+    ok = await fake_suggestion_service.create(
+        identity_id=str(uuid.uuid4()),
+        cluster_id=cluster_id,
+        confidence_score=0.96,
+        expires_at=datetime.now(tz=UTC) + timedelta(hours=1),
+    )
+    original = fake_cluster_service.assign_outlier_to_cluster
+
+    async def _maybe_raise(identity_id: str, target_cluster_id: str, tenant_id: str, similarity: float = 0.0):
+        if identity_id == stale.identity_id:
+            raise CrossSpaceMergeError(
+                source_cluster_id=identity_id,
+                target_cluster_id=target_cluster_id,
+                source_model="space-a",
+                target_model="space-b",
+            )
+        return await original(identity_id, target_cluster_id, tenant_id, similarity)
+
+    fake_cluster_service.assign_outlier_to_cluster = _maybe_raise
+
+    resp = api_client.post(
+        "/recognition/suggestions/bulk-accept",
+        headers={"X-Tenant-ID": tenant_id},
+        json={"tenant_id": tenant_id, "suggestion_type": "assignment", "min_confidence": 0.8},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"accepted_count": 1, "skipped_count": 1}
+    assert ok.identity_id in fake_cluster_service.identity_cluster_map
+    assert stale.identity_id not in fake_cluster_service.identity_cluster_map
 
 
 @pytest.mark.asyncio

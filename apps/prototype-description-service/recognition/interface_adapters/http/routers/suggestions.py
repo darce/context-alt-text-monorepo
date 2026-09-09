@@ -336,12 +336,15 @@ async def accept_suggestion(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Suggestion not found")
 
     cluster_service = await cluster_service_builder(request.tenant_id)
-    assigned = await cluster_service.assign_outlier_to_cluster(
-        identity_id=suggestion.identity_id,
-        target_cluster_id=suggestion.cluster_id,
-        tenant_id=request.tenant_id,
-        similarity=suggestion.representative_similarity,
-    )
+    try:
+        assigned = await cluster_service.assign_outlier_to_cluster(
+            identity_id=suggestion.identity_id,
+            target_cluster_id=suggestion.cluster_id,
+            tenant_id=request.tenant_id,
+            similarity=suggestion.representative_similarity,
+        )
+    except CrossSpaceMergeError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     if assigned is None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Suggestion assignment failed")
 
@@ -756,12 +759,16 @@ async def _bulk_accept_assignments(
         if suggestion is None:
             skipped += 1
             continue
-        assigned = await cluster_service.assign_outlier_to_cluster(
-            identity_id=candidate.identity_id,
-            target_cluster_id=candidate.cluster_id,
-            tenant_id=tenant_id,
-            similarity=candidate.representative_similarity,
-        )
+        try:
+            assigned = await cluster_service.assign_outlier_to_cluster(
+                identity_id=candidate.identity_id,
+                target_cluster_id=candidate.cluster_id,
+                tenant_id=tenant_id,
+                similarity=candidate.representative_similarity,
+            )
+        except CrossSpaceMergeError:
+            skipped += 1
+            continue
         if assigned is None:
             skipped += 1
             continue

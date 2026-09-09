@@ -75,13 +75,15 @@ def test_provenance_query_unavailable_aborts() -> None:
     assert ACTIVE_MODEL in reason
 
 
-def test_unstamped_representatives_do_not_abort() -> None:
-    """Unstamped reps are the documented both-unstamped space, not an infrastructure wipe."""
+def test_unstamped_representatives_abort_when_gallery_wiped() -> None:
+    """SVCSRC-R-01: dropping unstamped reps must not fail-open into an empty gallery."""
     reason = _stats(
         representatives_excluded_unresolvable=12,
         clusters_excluded_unresolvable=5,
     ).abort_reason()
-    assert reason is None
+    assert reason is not None
+    assert "legacy unstamped gallery excluded" in reason
+    assert ACTIVE_MODEL in reason
 
 
 def test_legitimate_space_migration_does_not_abort() -> None:
@@ -131,13 +133,15 @@ def test_runner_does_not_raise_on_migration_wipe() -> None:
     runner._abort_on_unprovenanced_gallery("job-1", _stats())
 
 
-def test_runner_does_not_raise_on_unstamped_gallery_with_known_active_model() -> None:
-    """Unstamped reps + known active model must proceed, not fail the job."""
+def test_runner_raises_on_unstamped_gallery_with_known_active_model() -> None:
+    """SVCSRC-R-01: unstamped wipe + known active model must fail the job closed."""
     runner = _make_runner()
-    runner._abort_on_unprovenanced_gallery(
-        "job-1",
-        _stats(representatives_excluded_unresolvable=12, clusters_excluded_unresolvable=5),
-    )
+    with pytest.raises(GalleryProvenanceUnavailableError) as excinfo:
+        runner._abort_on_unprovenanced_gallery(
+            "job-1",
+            _stats(representatives_excluded_unresolvable=12, clusters_excluded_unresolvable=5),
+        )
+    assert "legacy unstamped gallery excluded" in str(excinfo.value)
 
 
 @pytest.mark.asyncio

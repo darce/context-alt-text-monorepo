@@ -42,3 +42,17 @@ Live verification: plugin activation required a fresh-request rewrite flush to
 restore /guide/. bootstrap-wp.sh now performs that flush after activation. The
 enabled option was preserved. Rollback copy is retained on the VM under
 /opt/acx-backend/demo/rollback-guidepolish-20260909/alt-context.
+
+Follow-up release 0.0.10: replaced the second Trudeau crop with Lea-Kim
+Chateauneuf’s July 2023 REM-opening portrait (CC BY-SA 4.0), using the Commons
+960 px thumbnail. This is an illustrative reference replacement; recognition
+was not rerun. Source and licence are recorded in the asset ledger and packaged
+as js/public/guided-image-credits.md. Removed the public entrance’s Watch the
+recording action, as requested by its nth-child(2) selector.
+
+Validation: 81 focused tests, TypeScript and production build passed. Live
+1440 px and 393 px browser checks confirmed the new image, absent recording
+action, all five loaded references, apply/undo, fonts, no overflow, no page
+errors and no recognition API requests. Version 0.0.10 is active; uploaded ZIP
+SHA-256 was verified. Version 0.0.9 backup:
+/opt/acx-backend/demo/rollback-guidepolish-0.0.9/alt-context.

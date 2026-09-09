@@ -53,7 +53,11 @@ def _roster_only_manifest() -> dict:
     return {
         "manifest_version": 3,
         "annotation_mode": "roster_only",
-        "roster": ["Alice Example"],
+        # 2nd roster member so easy_wrong can be non-empty — roster_only mode
+        # requires must_right/easy_wrong to be roster subsets, and an empty
+        # easy_wrong trips the branch-only empty-rubric gate
+        # (SCORE_GATE_PREFIX_EMPTY_RUBRIC, cli.py). VLM6-DELTA-14.
+        "roster": ["Alice Example", "Bob Distractor"],
         "entries": [
             {
                 "path": "mock_images/alice.jpg",
@@ -64,7 +68,7 @@ def _roster_only_manifest() -> dict:
                 "context_pack": {"title": "t"},
                 "base_caption": "Alice Example.",
                 "must_right": ["Alice Example"],
-                "easy_wrong": [],
+                "easy_wrong": ["Bob Distractor"],
                 "policy": {"recognition_enabled": True},
                 "provenance": {"source": "fixture", "license": "fixture"},
                 "face_boxes": [
@@ -101,7 +105,9 @@ def _overshoot_record() -> dict:
                     "alt_text_draft": "Alice Example by the pool.",
                     "visual_facts": {"objects": []},
                 },
-                "identities": ["Alice Example"],
+                # Dict identity rows (greenfield rejects bare strings —
+                # VLM6-PANEL6L-SR-01); shape mirrors fusion_runner.py::_identity_rows.
+                "identities": [{"name": "Alice Example", "unpositioned": True}],
                 "face_count": 3,
                 "error": None,
             }
@@ -139,6 +145,24 @@ def _write_json(path: Path, payload: dict) -> Path:
     return path
 
 
+def _real_manifest_sha(manifest_path: Path) -> str:
+    """Real sha256 of a manifest already on disk (VLM6-DELTA-15).
+
+    Placeholder provenance shas (``"m" * 64``) trip a branch-only
+    manifest-drift gate (cli.py: "manifest_matches_fetch=false") ahead of the
+    failed-items / refused-metrics gates these tests target. Mirrors the
+    working pattern in test_manifest_invariants.py.
+    """
+    from scripts.eval_harness.cli import _manifest_sha as _cli_manifest_sha
+    from scripts.eval_harness.manifest import load_manifest
+
+    manifest = load_manifest(str(manifest_path), skip_hash_verification=True)
+    return _cli_manifest_sha(manifest)
+
+
+_REAL_CLI_ENV = {"ACX_EVAL_PYTHON": sys.executable}
+
+
 def _run_regen(
     args: list[str],
     *,
@@ -146,6 +170,8 @@ def _run_regen(
     env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     merged = os.environ.copy()
+    merged.pop("ACX_EVAL_PYTHON", None)
+    merged.pop("ACX_EVAL_SCORE_PYTHON", None)
     if env:
         merged.update(env)
     return subprocess.run(
@@ -157,9 +183,20 @@ def _run_regen(
     )
 
 
-def _real_inputs(tmp_path: Path, record: dict) -> tuple[Path, Path, Path, Path]:
+def _real_inputs(tmp_path: Path, record: dict, *, manifest_doc: dict | None = None) -> tuple[Path, Path, Path, Path]:
+    manifest = _write_json(
+        tmp_path / "manifest.json",
+        manifest_doc if manifest_doc is not None else _roster_only_manifest(),
+    )
+    # VLM6-DELTA-15: stamp the record's provenance with the manifest's real
+    # sha256 before writing it — a stale placeholder trips the manifest-drift
+    # gate ahead of whichever gate each test actually targets.
+    record = dict(record)
+    record["provenance"] = {
+        **record["provenance"],
+        "manifest_sha256": _real_manifest_sha(manifest),
+    }
     run_record = _write_json(tmp_path / "run-record.json", record)
-    manifest = _write_json(tmp_path / "manifest.json", _roster_only_manifest())
     out_json = tmp_path / "dest-report.json"
     out_md = tmp_path / "dest-report.md"
     return run_record, manifest, out_json, out_md
@@ -184,8 +221,23 @@ def test_real_cli_refused_does_not_publish_and_exits_3(tmp_path: Path) -> None:
 
     The pre-fix script printed 'partial-corpus' and returned 0 after
     publishing. That swallow must stay red.
+
+    VLM6-DELTA-15: "both metrics refused" requires the unboxed manifest —
+    a boxed roster_only manifest leaves identification scored, so a
+    single-image corpus trips category-vacuity (undersized sample, exit 1)
+    ahead of raise_if_unconsented_refusals (exit 3). Unboxed makes
+    identification refuse too (identification_refuses_unboxed_identity_claims),
+    matching this test's own "both metrics refused" premise.
+
+    VLM6-GATE-INT-01: the category-vacuity gate only suppresses reasons that
+    restate a refused identification/detection now, so
+    ``_unboxed_roster_only_manifest``/``_unboxed_overshoot_record`` also make
+    sample_size/placement/fabricated_fact genuinely non-vacuous — exit 3 is
+    reached on its own merits, not via a blanket per-refusal skip.
     """
-    run_record, manifest, out_json, out_md = _real_inputs(tmp_path, _overshoot_record())
+    run_record, manifest, out_json, out_md = _real_inputs(
+        tmp_path, _unboxed_overshoot_record(), manifest_doc=_unboxed_roster_only_manifest()
+    )
     sentinel = '{"sentinel":"unpublished-refused"}'
     out_json.write_text(sentinel, encoding="utf-8")
     out_md.write_text(sentinel, encoding="utf-8")
@@ -201,6 +253,7 @@ def test_real_cli_refused_does_not_publish_and_exits_3(tmp_path: Path) -> None:
             str(out_md),
         ],
         cwd=_REPO_ROOT,
+        env=_REAL_CLI_ENV,
     )
     combined = proc.stdout + proc.stderr
     assert proc.returncode == 3, combined
@@ -212,8 +265,15 @@ def test_real_cli_refused_does_not_publish_and_exits_3(tmp_path: Path) -> None:
 def test_real_cli_refused_allow_refused_publishes_and_still_exits_3(
     tmp_path: Path,
 ) -> None:
-    """Consent publishes the refused report but must not greenwash to exit 0."""
-    run_record, manifest, out_json, out_md = _real_inputs(tmp_path, _overshoot_record())
+    """Consent publishes the refused report but must not greenwash to exit 0.
+
+    VLM6-DELTA-15: unboxed manifest — see the sibling exits-3 test's
+    docstring for why "both metrics refused" needs the unboxed fixture.
+    VLM6-GATE-INT-01: same non-vacuous 5-entry fixture as that sibling.
+    """
+    run_record, manifest, out_json, out_md = _real_inputs(
+        tmp_path, _unboxed_overshoot_record(), manifest_doc=_unboxed_roster_only_manifest()
+    )
     proc = _run_regen(
         [
             "--run-record",
@@ -227,6 +287,7 @@ def test_real_cli_refused_allow_refused_publishes_and_still_exits_3(
             "--allow-refused",
         ],
         cwd=_REPO_ROOT,
+        env=_REAL_CLI_ENV,
     )
     combined = proc.stdout + proc.stderr
     assert proc.returncode == 3, combined
@@ -262,6 +323,7 @@ def test_real_cli_partial_does_not_publish_and_exits_1(tmp_path: Path) -> None:
             str(out_md),
         ],
         cwd=_REPO_ROOT,
+        env=_REAL_CLI_ENV,
     )
     combined = proc.stdout + proc.stderr
     assert proc.returncode == 1, combined
@@ -288,12 +350,110 @@ def test_real_cli_partial_not_overridden_by_allow_refused(tmp_path: Path) -> Non
             "--allow-refused",
         ],
         cwd=_REPO_ROOT,
+        env=_REAL_CLI_ENV,
     )
     combined = proc.stdout + proc.stderr
     assert proc.returncode == 1, combined
     assert "partial-corpus" in combined
     assert not out_json.is_file()
     assert not out_md.is_file()
+
+
+# ---------------------------------------------------------------------------
+# Interpreter override (FIR-12-BR-67)
+# ---------------------------------------------------------------------------
+
+
+def test_invalid_override_errors_and_does_not_fall_back(tmp_path: Path) -> None:
+    """A set-but-unusable ACX_EVAL_PYTHON must not fall back to .venv."""
+    repo = _scratch_repo(tmp_path)
+    argv_log = _install_stub_python(repo)
+    run_record, manifest, out_json, out_md = _stub_paths(repo)
+    junk = tmp_path / "neutral-helper.bin"
+    junk.write_text("not an interpreter\n", encoding="utf-8")
+    proc = _run_regen(
+        [
+            "--run-record",
+            str(run_record),
+            "--manifest",
+            str(manifest),
+            "--out-json",
+            str(out_json),
+            "--out-md",
+            str(out_md),
+        ],
+        cwd=repo,
+        env={"ACX_EVAL_PYTHON": str(junk), "STUB_SCORE_EXIT": "0"},
+    )
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode == 2, combined
+    assert "invalid ACX_EVAL_PYTHON" in combined
+    assert "not an executable file" in combined
+    assert str(junk) in combined
+    assert "missing service venv python" not in combined
+    assert not argv_log.is_file()
+
+
+def test_unset_override_missing_venv_reports_missing_cli(tmp_path: Path) -> None:
+    repo = _scratch_repo(tmp_path)
+    (repo / "apps" / "prototype-description-service").mkdir(parents=True)
+    run_record, manifest, out_json, out_md = _stub_paths(repo)
+    proc = _run_regen(
+        [
+            "--run-record",
+            str(run_record),
+            "--manifest",
+            str(manifest),
+            "--out-json",
+            str(out_json),
+            "--out-md",
+            str(out_md),
+        ],
+        cwd=repo,
+    )
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode == 2, combined
+    assert "CLI did not write expected reports" in combined
+    assert "environment/startup failure, not a corpus outcome" in combined
+    assert "invalid ACX_EVAL_PYTHON" not in combined
+
+
+def test_resolve_eval_python_override_wins_without_venv(tmp_path: Path) -> None:
+    regen = _load_regen()
+    chosen = regen.resolve_eval_python(
+        tmp_path, environ={"ACX_EVAL_PYTHON": sys.executable}
+    )
+    assert chosen == Path(sys.executable)
+
+
+def test_resolve_eval_python_accepts_neutrally_named_executable(
+    tmp_path: Path,
+) -> None:
+    regen = _load_regen()
+    helper = tmp_path / "worker"
+    helper.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    helper.chmod(helper.stat().st_mode | stat.S_IXUSR)
+    chosen = regen.resolve_eval_python(
+        tmp_path, environ={"ACX_EVAL_PYTHON": str(helper)}
+    )
+    assert chosen == helper
+
+
+def test_resolve_eval_python_empty_override_is_invalid_not_missing(
+    tmp_path: Path,
+) -> None:
+    regen = _load_regen()
+    default = (
+        tmp_path / "apps" / "prototype-description-service" / ".venv" / "bin" / "python"
+    )
+    default.parent.mkdir(parents=True, exist_ok=True)
+    default.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    default.chmod(default.stat().st_mode | stat.S_IXUSR)
+    with pytest.raises(regen.EvalPythonError) as ei:
+        regen.resolve_eval_python(tmp_path, environ={"ACX_EVAL_PYTHON": ""})
+    message = str(ei.value)
+    assert "invalid ACX_EVAL_PYTHON" in message
+    assert "missing service venv python" not in message
 
 
 # ---------------------------------------------------------------------------
@@ -332,6 +492,27 @@ def _install_stub_python(repo: Path) -> Path:
     )
     python.chmod(python.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     return argv_log
+
+
+def _install_env_override_stub(tmp_path: Path, *, exit_code: int) -> Path:
+    """A resolvable ``ACX_EVAL_PYTHON`` override that never writes a report.
+
+    FIR-12-BR-70: `resolve_eval_python` only checks that the override is an
+    executable file — it cannot see whether the inner CLI subprocess will
+    actually produce a report. This stub is deterministic stand-in for a
+    real-but-broken interpreter (e.g. a system python lacking the eval
+    package's third-party deps: verified repro is
+    ``ACX_EVAL_PYTHON=/usr/bin/python3`` -> inner ``ModuleNotFoundError`` ->
+    inner exit 1, no report written) without depending on any particular
+    system python's installed package set.
+    """
+    stub = tmp_path / f"override-python-exit{exit_code}"
+    stub.write_text(
+        f"#!/usr/bin/env python3\nraise SystemExit({exit_code})\n",
+        encoding="utf-8",
+    )
+    stub.chmod(stub.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return stub
 
 
 _STUB_PUBLISHED_JSON = "{}\n"
@@ -437,6 +618,139 @@ def test_allow_refused_is_not_forwarded_to_score_cli(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# FIR-12-BR-70: env/startup failure must not alias the CLI's own
+# publication-contract exit codes (broken interpreter vs. genuine partial
+# corpus; silent no-op vs. genuine clean score)
+# ---------------------------------------------------------------------------
+
+
+def test_broken_real_interpreter_no_report_is_not_partial_corpus(
+    tmp_path: Path,
+) -> None:
+    """A resolvable-but-broken ACX_EVAL_PYTHON must not exit 1.
+
+    Exit 1 is this script's "partial corpus, never published" contract
+    (module docstring). A broken real interpreter that crashes before
+    writing anything is an environment failure, not a corpus-quality
+    result, and must not collapse onto that code.
+    """
+    repo = _scratch_repo(tmp_path)
+    (repo / "apps" / "prototype-description-service").mkdir(parents=True)
+    run_record, manifest, out_json, out_md = _stub_paths(repo)
+    broken = _install_env_override_stub(tmp_path, exit_code=1)
+    proc = _run_regen(
+        [
+            "--run-record",
+            str(run_record),
+            "--manifest",
+            str(manifest),
+            "--out-json",
+            str(out_json),
+            "--out-md",
+            str(out_md),
+        ],
+        cwd=repo,
+        env={"ACX_EVAL_PYTHON": str(broken)},
+    )
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode == 2, combined
+    assert "environment/startup failure" in combined
+    assert not out_json.is_file()
+    assert not out_md.is_file()
+
+
+def test_interpreter_exits_0_without_report_is_not_clean_score(
+    tmp_path: Path,
+) -> None:
+    """A silent no-op override (exit 0, no report) must not exit 0.
+
+    Exit 0 is this script's "clean score, published" contract. An
+    interpreter that exits 0 without writing anything is a broken
+    environment, not a clean score, and there is nothing to publish.
+    """
+    repo = _scratch_repo(tmp_path)
+    (repo / "apps" / "prototype-description-service").mkdir(parents=True)
+    run_record, manifest, out_json, out_md = _stub_paths(repo)
+    silent = _install_env_override_stub(tmp_path, exit_code=0)
+    proc = _run_regen(
+        [
+            "--run-record",
+            str(run_record),
+            "--manifest",
+            str(manifest),
+            "--out-json",
+            str(out_json),
+            "--out-md",
+            str(out_md),
+        ],
+        cwd=repo,
+        env={"ACX_EVAL_PYTHON": str(silent)},
+    )
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode == 2, combined
+    assert "environment/startup failure" in combined
+    assert not out_json.is_file()
+    assert not out_md.is_file()
+
+
+def test_env_failures_are_distinguishable_from_genuine_partial_corpus(
+    tmp_path: Path,
+) -> None:
+    """TEST-15 three-way pin: broken interpreter, silent no-op, and a real
+    partial-corpus result from the real score CLI must not be confusable —
+    the two env failures share exit 2 (neither is a corpus outcome) and
+    both are distinct from the genuine partial-corpus exit 1.
+    """
+    repo = _scratch_repo(tmp_path)
+    (repo / "apps" / "prototype-description-service").mkdir(parents=True)
+    run_record, manifest, out_json, out_md = _stub_paths(repo)
+    broken = _install_env_override_stub(tmp_path, exit_code=1)
+    silent = _install_env_override_stub(tmp_path, exit_code=0)
+
+    def _returncode(env: dict[str, str]) -> int:
+        return _run_regen(
+            [
+                "--run-record",
+                str(run_record),
+                "--manifest",
+                str(manifest),
+                "--out-json",
+                str(out_json),
+                "--out-md",
+                str(out_md),
+            ],
+            cwd=repo,
+            env=env,
+        ).returncode
+
+    broken_code = _returncode({"ACX_EVAL_PYTHON": str(broken)})
+    silent_code = _returncode({"ACX_EVAL_PYTHON": str(silent)})
+
+    real_run_record, real_manifest, real_out_json, real_out_md = _real_inputs(
+        tmp_path, _failed_item_record()
+    )
+    partial_code = _run_regen(
+        [
+            "--run-record",
+            str(real_run_record),
+            "--manifest",
+            str(real_manifest),
+            "--out-json",
+            str(real_out_json),
+            "--out-md",
+            str(real_out_md),
+        ],
+        cwd=_REPO_ROOT,
+        env=_REAL_CLI_ENV,
+    ).returncode
+
+    assert broken_code == 2
+    assert silent_code == 2
+    assert partial_code == 1
+    assert partial_code not in (broken_code, silent_code)
+
+
+# ---------------------------------------------------------------------------
 # S2R5-11: identification withdrawal must appear in the publish audit trail
 # ---------------------------------------------------------------------------
 
@@ -521,19 +835,97 @@ def test_md_identification_line_reads_face_identification_section(
     )
 
 
-def _unboxed_roster_only_manifest() -> dict:
-    """Same as the boxed fixture minus face_boxes — identification must refuse."""
+def _unboxed_roster_only_manifest(n: int = 5) -> dict:
+    """``n``-entry boxless corpus — identification (and roster_only detection)
+    still refuse, but sample_size/placement/fabricated_fact are genuinely
+    non-vacuous (VLM6-GATE-INT-01).
+
+    The CLI's category-vacuity gate (cli.py) now suppresses only the reasons
+    that are pure restatements of a refused identification/detection — every
+    other category-vacuity reason still hard-fails. The old single-entry,
+    no-facts fixture relied on the previous, over-broad gate
+    (``not ident_block.get("refused")``) skipping the whole check whenever
+    identification refused, which silently hid an undersized sample and
+    vacuous placement/fabricated_fact axes. This fixture clears those for
+    real: ``n=5`` entries clear ``SCORE_PASS_MIN_SCORED_IMAGES``; every entry
+    carries a ``spatial_facts`` "foreground" fact whose phrase the paired
+    ``_unboxed_overshoot_record`` caption states, giving
+    ``placement.claims > 0``; every entry carries a ``reference_facts``
+    FALSE-polarity trap the caption never states, giving ``fabricated_fact``
+    a real (untripped) rate instead of ``None``. Only used by the
+    "both metrics refused" tests below — the boxed ``_roster_only_manifest``
+    stays a single entry for the tests that target the partial-corpus /
+    failed-item paths instead.
+    """
+    import copy
+
+    template = _roster_only_manifest()["entries"][0]
+    entries = []
+    for i in range(1, n + 1):
+        entry = copy.deepcopy(template)
+        entry["media_id"] = i
+        entry["path"] = f"mock_images/alice{i}.jpg"
+        entry["sha256"] = f"{i:064x}"
+        entry["face_boxes"] = []
+        entry["spatial_facts"] = [
+            {
+                "subject": "Alice Example",
+                "relation": "foreground",
+                "phrases": ["in the foreground"],
+            }
+        ]
+        entry["reference_facts"] = [
+            {
+                "text": "wearing a red hat",
+                "kind": "attribute",
+                "polarity": "false",
+                "phrases": ["red hat"],
+            }
+        ]
+        entries.append(entry)
     payload = _roster_only_manifest()
-    payload["entries"][0]["face_boxes"] = []
+    payload["entries"] = entries
     return payload
+
+
+def _unboxed_overshoot_record(n: int = 5) -> dict:
+    """``n``-item record pairing ``_unboxed_roster_only_manifest`` (VLM6-GATE-INT-01).
+
+    Mirrors ``_overshoot_record`` per item but states "in the foreground" —
+    the phrase every unboxed manifest entry's ``spatial_facts`` carries — so
+    ``placement.claims > 0`` for real.
+    """
+    import copy
+
+    template = _overshoot_record()["items"][0]
+    items = []
+    for i in range(1, n + 1):
+        item = copy.deepcopy(template)
+        item["media_id"] = i
+        item["path"] = f"mock_images/alice{i}.jpg"
+        item["describe"]["alt_text_draft"] = "Alice Example in the foreground by the pool."
+        items.append(item)
+    record = _overshoot_record()
+    record["items"] = items
+    return record
 
 
 def test_real_cli_allow_refused_prints_identification_audit_trail(
     tmp_path: Path,
 ) -> None:
     """Publisher stdout must show the scored→refused identification change."""
-    run_record = _write_json(tmp_path / "run-record.json", _overshoot_record())
     manifest = _write_json(tmp_path / "manifest.json", _unboxed_roster_only_manifest())
+    # VLM6-DELTA-15: same manifest-drift stamping as _real_inputs — this test
+    # builds its own record inline instead of going through that helper.
+    # VLM6-GATE-INT-01: unboxed manifest is now 5 entries with real
+    # spatial_facts/reference_facts (see _unboxed_roster_only_manifest), so
+    # the paired record must be the matching multi-item one.
+    record = _unboxed_overshoot_record()
+    record["provenance"] = {
+        **record["provenance"],
+        "manifest_sha256": _real_manifest_sha(manifest),
+    }
+    run_record = _write_json(tmp_path / "run-record.json", record)
     out_json = tmp_path / "dest-report.json"
     out_md = tmp_path / "dest-report.md"
     leftover = {
@@ -567,6 +959,7 @@ def test_real_cli_allow_refused_prints_identification_audit_trail(
             "--allow-refused",
         ],
         cwd=_REPO_ROOT,
+        env=_REAL_CLI_ENV,
     )
     combined = proc.stdout + proc.stderr
     assert proc.returncode == 3, combined
@@ -675,3 +1068,19 @@ def test_score_interpreter_honours_an_explicit_override(
     monkeypatch.setenv("ACX_EVAL_SCORE_PYTHON", str(pinned))
 
     assert mod.score_interpreter(repo) == pinned
+
+
+@pytest.mark.parametrize('value', ['', '/missing/score-python'])
+def test_score_interpreter_rejects_invalid_score_override(tmp_path, monkeypatch, value):
+    mod = _load_regen()
+    monkeypatch.delenv('ACX_EVAL_PYTHON', raising=False)
+    monkeypatch.setenv('ACX_EVAL_SCORE_PYTHON', value)
+    with pytest.raises(mod.EvalPythonError, match='invalid ACX_EVAL_SCORE_PYTHON'):
+        mod.score_interpreter(tmp_path)
+
+
+def test_score_interpreter_legacy_override_has_explicit_precedence(tmp_path, monkeypatch):
+    mod = _load_regen()
+    monkeypatch.setenv('ACX_EVAL_PYTHON', sys.executable)
+    monkeypatch.setenv('ACX_EVAL_SCORE_PYTHON', '/missing/score-python')
+    assert mod.score_interpreter(tmp_path) == Path(sys.executable)

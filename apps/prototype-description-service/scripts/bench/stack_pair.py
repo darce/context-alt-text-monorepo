@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -149,6 +150,59 @@ class StackPairConfig:
         return frozenset(stack.stack_id for stack in self.stacks)
 
 
+def validate_stack_pair_config(pair: StackPairConfig) -> StackPairConfig:
+    """Validate an already materialized pair before a scoring phase consumes it.
+
+    ``load_stack_pair`` validates the source mapping, but run directories also
+    carry a redacted JSON snapshot that is reconstructed directly.  Keeping a
+    second, object-level guard prevents an empty or hand-built
+    ``StackPairConfig`` from becoming an implicit configuration.  This is an
+    integrity precondition for every phase (API-04); callers must not infer a
+    pair from whatever legs happen to be present.
+    """
+    if not isinstance(pair, StackPairConfig):
+        raise BenchError("config_invalid", "stack-pair configuration has an invalid type")
+    if not isinstance(pair.stacks, tuple) or len(pair.stacks) != 2:
+        raise BenchError("stack_pair_invalid", "stacks must be a tuple of exactly two entries")
+    if any(not isinstance(stack, StackEndpoint) for stack in pair.stacks):
+        raise BenchError("config_invalid", "stack-pair entries must be StackEndpoint values")
+    ids = [stack.stack_id for stack in pair.stacks]
+    if len(set(ids)) != 2:
+        raise BenchError("stack_pair_invalid", "stack_id values must be unique")
+    for stack in pair.stacks:
+        parsed = _parse_stack(
+            {
+                "stack_id": stack.stack_id,
+                "role": stack.role,
+                "base_url": stack.base_url,
+                "expected_profile": stack.expected_profile,
+                "expected_pgvector_dim": stack.expected_pgvector_dim,
+                "opencv_major": stack.opencv_major,
+                "api_key_env": stack.api_key_env,
+                "tenant_id_env": stack.tenant_id_env,
+            }
+        )
+        if parsed != stack:
+            raise BenchError("config_invalid", f"stack endpoint {stack.stack_id!r} is not canonical")
+    try:
+        _validate_endpoints(pair.primary_endpoint, list(pair.secondary_endpoints))
+    except (TypeError, ValueError) as exc:
+        raise BenchError("config_invalid", "stack-pair endpoint declarations are malformed") from exc
+    if isinstance(pair.head_to_head_delta, bool) or not isinstance(pair.head_to_head_delta, (int, float)):
+        raise BenchError("config_invalid", "head_to_head_delta must be numeric")
+    if not math.isfinite(float(pair.head_to_head_delta)):
+        raise BenchError("config_invalid", "head_to_head_delta must be finite")
+    if isinstance(pair.bootstrap_seed, bool) or not isinstance(pair.bootstrap_seed, int):
+        raise BenchError("config_invalid", "bootstrap_seed must be an integer")
+    _validate_floor(pair.accepted_set_floor)
+    if isinstance(pair.max_differential_attrition, bool) or not isinstance(
+        pair.max_differential_attrition, (int, float)
+    ):
+        raise BenchError("config_invalid", "max_differential_attrition must be numeric")
+    _validate_attrition(pair.max_differential_attrition)
+    return pair
+
+
 def load_stack_pair(path: str | Path) -> StackPairConfig:
     raw_path = Path(path)
     text = raw_path.read_text(encoding="utf-8")
@@ -179,7 +233,7 @@ def load_stack_pair(path: str | Path) -> StackPairConfig:
     secondaries = data["secondary_endpoints"]
     _validate_endpoints(primary, secondaries)
 
-    return StackPairConfig(
+    pair = StackPairConfig(
         stacks=endpoints,
         head_to_head_delta=_as_float(data["head_to_head_delta"], "head_to_head_delta"),
         bootstrap_seed=_as_int(data["bootstrap_seed"], "bootstrap_seed"),
@@ -196,6 +250,7 @@ def load_stack_pair(path: str | Path) -> StackPairConfig:
         baseline_manifest_path=data.get("baseline_manifest_path"),
         media_url_map_path=data.get("media_url_map_path"),
     )
+    return validate_stack_pair_config(pair)
 
 
 def _reject_deploy_keys(mapping: dict[str, Any], *, where: str) -> None:
@@ -324,20 +379,25 @@ def _validate_floor(value: Any) -> float | int:
 
 
 def _validate_attrition(value: Any) -> float:
+    if isinstance(value, bool):
+        raise BenchError("max_differential_attrition_invalid", "max_differential_attrition must be a float")
     try:
         parsed = float(value)
-    except (TypeError, ValueError) as exc:
+    except (OverflowError, TypeError, ValueError) as exc:
         raise BenchError("max_differential_attrition_invalid", "max_differential_attrition must be a float") from exc
-    if parsed < 0.0 or parsed > 1.0:
+    if not math.isfinite(parsed) or parsed < 0.0 or parsed > 1.0:
         raise BenchError("max_differential_attrition_invalid", "max_differential_attrition must be in [0.0, 1.0]")
     return parsed
 
 
 def _as_float(value: Any, name: str) -> float:
     try:
-        return float(value)
-    except (TypeError, ValueError) as exc:
+        parsed = float(value)
+    except (OverflowError, TypeError, ValueError) as exc:
         raise BenchError("config_invalid", f"{name} must be numeric") from exc
+    if not math.isfinite(parsed):
+        raise BenchError("config_invalid", f"{name} must be finite")
+    return parsed
 
 
 def _as_int(value: Any, name: str) -> int:
@@ -346,6 +406,6 @@ def _as_int(value: Any, name: str) -> int:
             if isinstance(value, bool):
                 raise ValueError
             return int(value)
-        except (TypeError, ValueError) as exc:
+        except (OverflowError, TypeError, ValueError) as exc:
             raise BenchError("config_invalid", f"{name} must be an integer") from exc
     return value

@@ -13,7 +13,7 @@ import json
 
 import pytest
 
-from scripts.eval_harness.manifest import ScoreInvariant
+from scripts.eval_harness.manifest import ScoreInvariant, compute_corpus_coverage_gaps
 from scripts.eval_harness.report import Audience, build_reports, score_run_record
 
 _LINEAGE = {
@@ -37,8 +37,11 @@ _PUBLIC_NAME = "Barack Obama"
 
 # Default 3-item fixture: two scored faces + one failed item.
 _DEFAULT_TP, _DEFAULT_FP, _DEFAULT_FN = 2, 0, 0
-_PUBLIC_TP = 1
 _LOCAL_TP = 2
+# build_reports scores the full corpus once, then redacts for PUBLIC
+# (report.py::build_reports docstring, VLM6-R3-03) — detection is never
+# re-scored on a filtered population, so PUBLIC == LOCAL here (VLM6-DELTA-11).
+_PUBLIC_TP = _LOCAL_TP
 
 
 def _named_box(name: str | None, *, x: float = 0.5) -> dict:
@@ -81,7 +84,7 @@ def _run_record() -> dict:
                     "model_version": "1",
                     "cached": False,
                 },
-                "identities": ["Alice Example"],
+                "identities": [{"name": "Alice Example", "unpositioned": True}],
                 "face_count": 1,
                 "error": None,
             },
@@ -96,7 +99,7 @@ def _run_record() -> dict:
                     "model_version": "1",
                     "cached": True,
                 },
-                "identities": ["Alice Example"],
+                "identities": [{"name": "Alice Example", "unpositioned": True}],
                 "face_count": 1,
                 "error": None,
             },
@@ -173,7 +176,7 @@ def _audience_fixtures(*, mode: str | None = "exhaustive") -> tuple[dict, list[d
                     "model_version": "1",
                     "cached": False,
                 },
-                "identities": [_PUBLIC_NAME],
+                "identities": [{"name": _PUBLIC_NAME, "unpositioned": True}],
                 "face_count": 1,
                 "error": None,
             },
@@ -188,7 +191,7 @@ def _audience_fixtures(*, mode: str | None = "exhaustive") -> tuple[dict, list[d
                     "model_version": "1",
                     "cached": False,
                 },
-                "identities": ["Wrong Celebrity"],
+                "identities": [{"name": "Wrong Celebrity", "unpositioned": True}],
                 "face_count": 1,
                 "error": None,
             },
@@ -276,6 +279,44 @@ def test_score_run_record_emits_scored_detection_arithmetic() -> None:
     assert scored["counts"] == {"total": 3, "scored": 2, "failed": 1}
 
 
+def test_live_score_stamps_mapping_corpus_coverage_audit() -> None:
+    """Live reports must carry honest registry counts (AUDIT-07 / EVAL-23)."""
+    entries = _manifest_entries()
+    gaps = compute_corpus_coverage_gaps(entries)
+    assert gaps["face_boxes"]["populated"] == 2
+    assert gaps["spatial_facts"]["populated"] == 0
+
+    scored = score_run_record(_run_record(), entries)
+    stamped = scored["provenance"]["coverage_gaps"]
+    assert stamped == gaps
+    assert stamped["reference_facts"]["below_threshold"] is True
+    assert stamped["demographic_cohort"]["pi_zero"] is True
+
+
+def test_markdown_surfaces_live_corpus_coverage_audit() -> None:
+    """Operators must see metric backing gaps without opening JSON (AUDIT-07)."""
+    _json_doc, markdown = build_reports(_run_record(), _manifest_entries())
+    assert "## Corpus coverage audit" in markdown
+    assert "reference_facts=0/3" in markdown
+    assert "face_boxes=2/3" in markdown
+    assert "below_threshold=true" in markdown
+
+
+def test_live_score_labels_offline_proxy_verdict() -> None:
+    """Offline score envelopes must not masquerade as product validation (EVAL-22)."""
+    record, entries = _run_record(), _manifest_entries()
+    scored = score_run_record(record, entries)
+    assert scored["evaluation_status"] == "unvalidated_proxy"
+    assert scored["provenance"]["evaluation_status"] == "unvalidated_proxy"
+    assert scored["verdict"]["evaluation_status"] == "unvalidated_proxy"
+    _json_doc, markdown = build_reports(record, entries)
+    assert "- evaluation_status: `unvalidated_proxy`" in markdown
+    public_json, _public_markdown = build_reports(record, entries, audience=Audience.PUBLIC)
+    public = json.loads(public_json)
+    assert public["evaluation_status"] == "unvalidated_proxy"
+    assert public["provenance"]["evaluation_status"] == "unvalidated_proxy"
+
+
 def test_markdown_renders_scored_detection_line() -> None:
     _json_doc, md = build_reports(_run_record(), _manifest_entries())
     _assert_scored_detection_markdown(md, tp=_DEFAULT_TP, fp=_DEFAULT_FP, fn=_DEFAULT_FN)
@@ -334,10 +375,22 @@ def test_public_redaction_keeps_scored_detection_and_withholds_private() -> None
     json_doc, md = build_reports(record, entries, audience=Audience.PUBLIC)
     scored = json.loads(json_doc)
     _assert_scored_detection(scored["faces"]["detection"], tp=_PUBLIC_TP, fp=0, fn=0)
+    # VLM6-DELTA-11: redaction block gained mode/unknown_media_items/
+    # withheld_manifest_entries/total_manifest_entries/note fields
+    # (report.py::_redact_caption_report_for_public, ~line 1026).
     assert scored["redaction"] == {
         "audience": "public",
+        "mode": "post_score_redact_caption_report",
         "withheld_items": 1,
+        "unknown_media_items": 0,
+        "withheld_manifest_entries": 1,
         "total_items": 2,
+        "total_manifest_entries": 2,
+        "note": (
+            "Aggregates scored on the full corpus (roster/rubric intact); "
+            "identity-bearing detail lists and non-publishable per_image rows "
+            "stripped. unknown_media_items are corpus-integrity failures, not privacy."
+        ),
     }
     assert "withheld 1 of 2 items" in md
     for blob in (json_doc, md):
@@ -345,7 +398,11 @@ def test_public_redaction_keeps_scored_detection_and_withholds_private() -> None
         assert _LOCAL_NAME not in blob
         assert "Wrong Celebrity" not in blob
     assert _PUBLIC_NAME in json_doc
-    assert _PUBLIC_PATH in json_doc
+    # RV4-05: PUBLIC per_image "path" is always the opaque media_id:N token —
+    # never an operator basename/path, even for a publishable item
+    # (_public_free_text_value, report.py ~line 792). VLM6-DELTA-11.
+    assert _PUBLIC_PATH not in json_doc
+    assert {row["media_id"] for row in scored["per_image"]} == {10}
 
 
 def test_public_scored_detection_is_deterministic() -> None:
@@ -374,7 +431,7 @@ def test_overshoot_markdown_names_fp() -> None:
                 "media_id": 1,
                 "path": "mock_images/alice.jpg",
                 "describe": {"alt_text_draft": "Alice Example.", "visual_facts": {"objects": []}},
-                "identities": ["Alice Example"],
+                "identities": [{"name": "Alice Example", "unpositioned": True}],
                 "face_count": 3,
                 "error": None,
             }
@@ -413,7 +470,7 @@ def test_stranger_faces_are_not_detection_fps() -> None:
                 "media_id": 1,
                 "path": "mock_images/group.jpg",
                 "describe": {"alt_text_draft": "Muted and friends.", "visual_facts": {"objects": []}},
-                "identities": ["Muted Yarrow"],
+                "identities": [{"name": "Muted Yarrow", "unpositioned": True}],
                 "face_count": 3,
                 "error": None,
             }
@@ -458,6 +515,93 @@ def test_json_and_markdown_detection_agree() -> None:
     assert built == scored["faces"]["detection"]
     _assert_scored_detection(built, tp=_DEFAULT_TP, fp=_DEFAULT_FP, fn=_DEFAULT_FN)
     _assert_scored_detection_markdown(md, tp=_DEFAULT_TP, fp=_DEFAULT_FP, fn=_DEFAULT_FN)
+
+
+def test_caption_quality_metrics_ignore_identity_spelling() -> None:
+    def _score_identity_variant(present_identity: str, caption: str, objects: list[str]) -> tuple[tuple, tuple, tuple]:
+        record = {
+            "schema": "acx-eval/v1",
+            "kind": "run_record",
+            "provenance": {
+                "manifest_sha256": "m" * 64,
+                "base_url": "x",
+                "head_sha": "0" * 40,
+                "started_at": "t",
+            },
+            "items": [
+                {
+                    "media_id": 1,
+                    "path": "mock_images/cake.jpg",
+                    "describe": {
+                        "alt_text_draft": caption,
+                        "visual_facts": {"objects": objects},
+                        "adapter": "seeded",
+                        "model_id": "seeded-fixtures",
+                        "model_version": "1",
+                        "cached": False,
+                    },
+                    "identities": [{"name": present_identity, "unpositioned": True}],
+                    "face_count": 1,
+                    "error": None,
+                }
+            ],
+        }
+        entry = _stamp_entry(
+            {
+                "path": "mock_images/cake.jpg",
+                "media_id": 1,
+                "face_count": 1,
+                "present_identities": [present_identity],
+                "must_right": [],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+                "face_boxes": [_named_box(present_identity)],
+            },
+            "exhaustive",
+        )
+        scored = score_run_record(record, [entry])
+        per_image = scored["per_image"][0]
+        return (
+            (
+                per_image["fkre"],
+                per_image["repetition_ratio"],
+                per_image["tag_coverage"],
+            ),
+            (
+                scored["quality"]["mean_fkre"],
+                scored["quality"]["mean_repetition_ratio"],
+                scored["quality"]["mean_tag_coverage"],
+            ),
+            (
+                per_image["inserted_identities"],
+                per_image["missing_identities"],
+                per_image["gated_score"],
+            ),
+        )
+
+    real_style = _score_identity_variant(
+        "Alexandria Cunningham",
+        "Alexandria Cunningham smiles while Alexandria Cunningham holds a cake.",
+        ["Alexandria", "Cunningham", "birthday cake"],
+    )
+    pseudonym = _score_identity_variant(
+        "Nimbus",
+        "Nimbus smiles while Nimbus holds a cake.",
+        ["Nimbus", "birthday cake"],
+    )
+
+    expected_quality = (42.62, 0.1429, 0.0)
+    assert pseudonym[0] == real_style[0] == expected_quality
+    assert pseudonym[1] == real_style[1] == expected_quality
+    assert real_style[2] == (["Alexandria Cunningham"], [], 1.0)
+    assert pseudonym[2] == (["Nimbus"], [], 1.0)
+
+    mismatched_roster = _score_identity_variant(
+        "Nimbus",
+        "Alexandria Cunningham smiles while Alexandria Cunningham holds a cake.",
+        ["Alexandria", "Cunningham", "birthday cake"],
+    )
+    assert mismatched_roster[2] == ([], ["Nimbus"], 0.0)
 
 
 def test_unstamped_entries_refuse_missing_mode() -> None:

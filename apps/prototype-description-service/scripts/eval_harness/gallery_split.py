@@ -6,11 +6,15 @@ subjects across two galleries drawn from disjoint templates so a search against
 one gallery contains probes whose subject is enrolled only in the other.
 
 Enrollment rule
-    Each subject is assigned to *exactly one* gallery (seeded shuffle, even
-    index → G1, odd → G2). One template is enrolled; remaining templates of
-    that subject are reserved probes. Dual enrollment is refused: putting
-    every multi-template subject in both galleries recreates the LOO failure
-    (every probe has a mate) and empties the non-mated stratum.
+    Subjects that share any template ``media_id`` (transitively) form one
+    component and are assigned together (seeded shuffle of components, even
+    index → G1, odd → G2). One template is enrolled per subject, preferring
+    a still whose media is not shared so a group photo can stay a probe
+    when a solo alternative exists. Leftovers whose media collides with
+    that component's enrolled media are withheld, not reserved as probes.
+    Dual enrollment is refused: putting every multi-template subject in
+    both galleries recreates the LOO failure (every probe has a mate) and
+    empties the non-mated stratum.
 
 Singleton rule (MLDATA-09)
     A subject with one template is assigned like any other — never dropped.
@@ -36,6 +40,7 @@ import random
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
+from types import MappingProxyType
 
 __all__ = [
     "GalleryName",
@@ -73,14 +78,37 @@ class GallerySplit:
     """Disjoint G1/G2 enrollment plus templates reserved as probes.
 
     ``g1`` / ``g2`` map subject_id → the single enrolled template.
+    Keys are stripped at construction so every consumer partitions on the
+    same identity; a blank or non-string subject_id is rejected (EVAL-18).
+    Maps are stored read-only so a caller cannot desynchronise that identity
+    after construction (EVAL-13 / rg-015).
     ``probe_templates`` are leftovers enrolled in neither gallery.
+    ``withheld_probe_templates`` are leftovers whose media collides with
+    an enrolled still in the same component; they are not searched.
     Other-gallery enrollments are *not* reserved here; ``probes_for``
     promotes them to non-mated probes at search time.
     """
 
-    g1: dict[str, Template]
-    g2: dict[str, Template]
+    g1: Mapping[str, Template]
+    g2: Mapping[str, Template]
     probe_templates: tuple[Template, ...]
+    withheld_probe_templates: tuple[Template, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "g1", _normalise_gallery_map(self.g1, gallery="g1"))
+        object.__setattr__(self, "g2", _normalise_gallery_map(self.g2, gallery="g2"))
+        object.__setattr__(
+            self,
+            "probe_templates",
+            _normalise_template_tuple(self.probe_templates, gallery="probe_templates"),
+        )
+        object.__setattr__(
+            self,
+            "withheld_probe_templates",
+            _normalise_template_tuple(
+                self.withheld_probe_templates, gallery="withheld_probe_templates"
+            ),
+        )
 
     @property
     def g1_template_ids(self) -> frozenset[str]:
@@ -125,25 +153,190 @@ class ProbeSet:
         return len({t.subject_id for t in (*self.mated, *self.nonmated)})
 
 
+def _normalise_subject_id(value: object, *, gallery: str) -> str:
+    if not isinstance(value, str):
+        raise GallerySplitError(
+            f"{gallery} subject_id must be a non-empty string, got {value!r}"
+        )
+    key = value.strip()
+    if not key:
+        raise GallerySplitError(
+            f"{gallery} subject_id must be a non-empty string, got {value!r}"
+        )
+    return key
+
+
+def _with_subject(template: Template, subject_id: str) -> Template:
+    if template.subject_id == subject_id:
+        return template
+    return Template(
+        template_id=template.template_id,
+        subject_id=subject_id,
+        media_ids=template.media_ids,
+    )
+
+
+def _normalise_gallery_map(
+    gallery_map: Mapping[object, Template], *, gallery: str
+) -> Mapping[str, Template]:
+    out: dict[str, Template] = {}
+    for subject_id, template in gallery_map.items():
+        key = _normalise_subject_id(subject_id, gallery=gallery)
+        template_key = _normalise_subject_id(template.subject_id, gallery=gallery)
+        if template_key != key:
+            raise GallerySplitError(
+                f"{gallery} key {key!r} holds template for {template.subject_id!r}"
+            )
+        if key in out:
+            raise GallerySplitError(
+                f"{gallery} subject_id {key!r} collides after normalisation "
+                f"(offending value {subject_id!r})"
+            )
+        out[key] = _with_subject(template, key)
+    return MappingProxyType({subject: out[subject] for subject in sorted(out)})
+
+
+def _normalise_template_tuple(
+    templates: Sequence[Template], *, gallery: str
+) -> tuple[Template, ...]:
+    out = [
+        _with_subject(
+            template,
+            _normalise_subject_id(template.subject_id, gallery=gallery),
+        )
+        for template in templates
+    ]
+    return tuple(sorted(out, key=lambda t: (t.subject_id, t.template_id)))
+
+
+def _media_ids_from_template_id(template_id: str) -> tuple[int, ...]:
+    """Parse ``'{media}:{subject}'`` when present. No match means no shared still."""
+    prefix, sep, rest = template_id.partition(":")
+    if sep and prefix.isdigit() and rest:
+        return (int(prefix),)
+    return ()
+
+
+def _canonical_template(template: Template) -> Template:
+    """Same co-assignment key for Template | str: explicit media_ids, else '{media}:{subject}'."""
+    if template.media_ids:
+        return template
+    parsed = _media_ids_from_template_id(template.template_id)
+    if not parsed:
+        return template
+    return Template(
+        template_id=template.template_id,
+        subject_id=template.subject_id,
+        media_ids=parsed,
+    )
+
+
 def _as_template(value: Template | str, *, subject_id: str) -> Template:
+    canonical_subject = _normalise_subject_id(subject_id, gallery="roster")
     if isinstance(value, Template):
-        if value.subject_id != subject_id:
+        template_subject = _normalise_subject_id(value.subject_id, gallery="template")
+        if template_subject != canonical_subject:
             raise GallerySplitError(
                 f"template {value.template_id!r} subject_id {value.subject_id!r} "
                 f"does not match roster key {subject_id!r}"
             )
         if not value.template_id:
             raise GallerySplitError("template id must be a non-empty string")
-        return value
+        return _canonical_template(_with_subject(value, canonical_subject))
     if isinstance(value, str):
         if not value:
             raise GallerySplitError("template id must be a non-empty string")
-        return Template(template_id=value, subject_id=subject_id)
+        return _canonical_template(
+            Template(template_id=value, subject_id=canonical_subject)
+        )
     raise GallerySplitError(f"unsupported template type: {type(value).__name__}")
 
 
 def _media_ids(templates: Sequence[Template]) -> list[int]:
     return [mid for t in templates for mid in t.media_ids]
+
+
+def _shared_media_ids(
+    by_subject: Mapping[str, Sequence[Template]],
+) -> frozenset[int]:
+    owners: dict[int, set[str]] = {}
+    for subject_id, templates in by_subject.items():
+        for template in templates:
+            for media_id in template.media_ids:
+                owners.setdefault(media_id, set()).add(subject_id)
+    return frozenset(media_id for media_id, names in owners.items() if len(names) > 1)
+
+
+def _subject_components(
+    by_subject: Mapping[str, Sequence[Template]],
+) -> list[list[str]]:
+    adjacency: dict[str, set[str]] = {subject_id: set() for subject_id in by_subject}
+    holders_by_media: dict[int, list[str]] = {}
+    for subject_id, templates in by_subject.items():
+        seen_media: set[int] = set()
+        for template in templates:
+            for media_id in template.media_ids:
+                if media_id in seen_media:
+                    continue
+                seen_media.add(media_id)
+                holders_by_media.setdefault(media_id, []).append(subject_id)
+    for holders in holders_by_media.values():
+        first = holders[0]
+        for other in holders[1:]:
+            adjacency[first].add(other)
+            adjacency[other].add(first)
+
+    unseen = set(by_subject)
+    components: list[list[str]] = []
+    for subject_id in by_subject:
+        if subject_id not in unseen:
+            continue
+        stack = [subject_id]
+        unseen.remove(subject_id)
+        members = [subject_id]
+        while stack:
+            current = stack.pop()
+            for neighbor in adjacency[current]:
+                if neighbor in unseen:
+                    unseen.remove(neighbor)
+                    stack.append(neighbor)
+                    members.append(neighbor)
+        components.append(sorted(members))
+    return components
+
+
+def _select_enrollment(
+    templates: Sequence[Template], shared_media: frozenset[int]
+) -> Template:
+    for template in templates:
+        if not shared_media.intersection(template.media_ids):
+            return template
+    return templates[0]
+
+
+def _enroll_component(
+    component: Sequence[str],
+    *,
+    by_subject: Mapping[str, Sequence[Template]],
+    shared_media: frozenset[int],
+) -> tuple[dict[str, Template], list[Template], list[Template]]:
+    enrolled: dict[str, Template] = {}
+    enrolled_media: set[int] = set()
+    leftovers: list[Template] = []
+    for subject_id in component:
+        templates = by_subject[subject_id]
+        chosen = _select_enrollment(templates, shared_media)
+        enrolled[subject_id] = chosen
+        enrolled_media.update(chosen.media_ids)
+        leftovers.extend(template for template in templates if template is not chosen)
+    probes: list[Template] = []
+    withheld: list[Template] = []
+    for template in leftovers:
+        if enrolled_media.intersection(template.media_ids):
+            withheld.append(template)
+        else:
+            probes.append(template)
+    return enrolled, probes, withheld
 
 
 def _assert_invariants(
@@ -177,13 +370,8 @@ def _assert_invariants(
             f"subject enrolled in both galleries; dual enrollment empties the "
             f"non-mated stratum (EVAL-18): {sorted(both)!r}"
         )
-    for gallery_name, gallery in (("g1", g1), ("g2", g2)):
-        for subject_id, template in gallery.items():
-            if template.subject_id != subject_id:
-                raise GallerySplitError(
-                    f"{gallery_name} key {subject_id!r} holds template for "
-                    f"{template.subject_id!r}"
-                )
+    # Gallery key/template identity is checked before _with_subject canonicalises
+    # it in _normalise_gallery_map; repeating that check here cannot observe input.
     media_g1 = _media_ids(list(g1.values()))
     media_g2 = _media_ids(list(g2.values()))
     media_probe = _media_ids(probes)
@@ -197,6 +385,12 @@ def _assert_invariants(
             f"reserved probe media ids collide with a gallery: "
             f"{sorted(gallery_media & set(media_probe))!r}"
         )
+    if not g1 or not g2:
+        empty = "g1" if not g1 else "g2"
+        raise GallerySplitError(
+            f"empty gallery {empty}: a 1:N search requires both G1 and G2 "
+            "to be populated"
+        )
 
 
 def build_disjoint_galleries(
@@ -207,19 +401,25 @@ def build_disjoint_galleries(
     """Partition subjects into disjoint G1/G2 galleries (one template each).
 
     Raises ``GallerySplitError`` on an empty roster, a subject with no
-    templates, duplicate template ids, or any invariant failure. Does not
-    drop singleton subjects.
+    templates, duplicate template ids, an empty G1 or G2 (one connected
+    component cannot support a 1:N search against both galleries), or
+    any other invariant failure. Does not drop singleton subjects.
     """
     if not templates_by_subject:
         raise GallerySplitError(
             "empty roster: refusing two empty galleries (no open-set stratum)"
         )
 
+    roster: dict[str, list[Template | str]] = {}
+    for subject_id, raw_templates in templates_by_subject.items():
+        key = _normalise_subject_id(subject_id, gallery="roster")
+        roster.setdefault(key, []).extend(raw_templates)
+
     rng = random.Random(seed)
     seen_ids: set[str] = set()
     by_subject: dict[str, list[Template]] = {}
-    for subject_id in sorted(templates_by_subject):
-        raw = list(templates_by_subject[subject_id])
+    for subject_id in sorted(roster):
+        raw = list(roster[subject_id])
         if not raw:
             raise GallerySplitError(
                 f"subject {subject_id!r} has no templates; refusing silent drop"
@@ -234,31 +434,41 @@ def build_disjoint_galleries(
         rng.shuffle(templates)
         by_subject[subject_id] = templates
 
-    order = list(by_subject)
-    rng.shuffle(order)
+    shared_media = _shared_media_ids(by_subject)
+    components = _subject_components(by_subject)
+    rng.shuffle(components)
 
     g1: dict[str, Template] = {}
     g2: dict[str, Template] = {}
     probes: list[Template] = []
-    for index, subject_id in enumerate(order):
-        templates = by_subject[subject_id]
-        enrolled, leftovers = templates[0], templates[1:]
-        if index % 2 == 0:
-            g1[subject_id] = enrolled
-        else:
-            g2[subject_id] = enrolled
-        probes.extend(leftovers)
+    withheld: list[Template] = []
+    for index, component in enumerate(components):
+        enrolled, extra_probes, extra_withheld = _enroll_component(
+            component, by_subject=by_subject, shared_media=shared_media
+        )
+        target = g1 if index % 2 == 0 else g2
+        target.update(enrolled)
+        probes.extend(extra_probes)
+        withheld.extend(extra_withheld)
 
     g1 = {s: g1[s] for s in sorted(g1)}
     g2 = {s: g2[s] for s in sorted(g2)}
     probe_templates = tuple(sorted(probes, key=lambda t: (t.subject_id, t.template_id)))
+    withheld_probe_templates = tuple(
+        sorted(withheld, key=lambda t: (t.subject_id, t.template_id))
+    )
     _assert_invariants(
         roster_subjects=set(by_subject),
         g1=g1,
         g2=g2,
         probes=probe_templates,
     )
-    return GallerySplit(g1=g1, g2=g2, probe_templates=probe_templates)
+    return GallerySplit(
+        g1=g1,
+        g2=g2,
+        probe_templates=probe_templates,
+        withheld_probe_templates=withheld_probe_templates,
+    )
 
 
 def probes_for(split: GallerySplit, *, gallery: GalleryName | str) -> ProbeSet:

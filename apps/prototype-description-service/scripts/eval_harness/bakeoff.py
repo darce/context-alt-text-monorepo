@@ -30,6 +30,18 @@ ALTQ-1 Slice 3 adds ``--weave-bench <run_record.json>``: replay the committed
 pass-1 facts of an existing ``--two-pass`` run through the pass-2 weave
 TEXT-ONLY (no image part) against this endpoint — the CPU synthesis cell.
 Provenance carries ``weave_bench: true`` + the source record's identity/sha.
+
+``--caption-length {standard,long}`` is the caption-length A/B axis on the v3
+three-surface weave: it swaps only the caption sentence band and raises the
+pass-2 token budget to match, so the two arms differ in length and nothing else.
+Both the band and the budget are stamped into provenance; records from different
+bands are different treatments and must not be pooled [EXP-16].
+
+VLM6-LEX adds ``--depiction-lexicon <canon-checkout>``: the A/B arm that
+appends the heuristics-canon depiction rules (ATTRIB/BOUND) to the
+prose-writing pass. Off by default, so the lexicon-off leg is byte-identical
+to every run record already on disk and the delta is attributable to the
+lexicon alone. See ``depiction_lexicon`` for the loader and its provenance.
 """
 
 from __future__ import annotations
@@ -38,11 +50,13 @@ import argparse
 import base64
 import hashlib
 import json
+import math
 import mimetypes
 import os
 import re
 import sys
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -50,6 +64,13 @@ from typing import Any
 
 import httpx
 
+from .bench_capture import (
+    LoadLoop,
+    VramSampler,
+    collect_item_latencies,
+    summarize_latencies,
+)
+from ._pathtext import _printable_message, _printable_path
 from .cli import (
     DEFAULT_KEEP,
     DEFAULT_STALL_LIMIT,
@@ -58,12 +79,22 @@ from .cli import (
     _keep_arg,
     _limit_arg,
     _manifest_sha,
+    _printable_exc,
     fetch_run_record,
     prune_out_dir,
 )
-from .manifest import GoldenManifest, ManifestError, load_manifest
+from .face_metrics import named_box_name
+from .manifest import GoldenManifest, ManifestError, _resolve_image, load_manifest
+from .depiction_lexicon import (
+    DETAIL_LEVELS,
+    KNOWN_FAMILIES,
+    KNOWN_TIERS,
+    DepictionLexicon,
+    LexiconError,
+    load_depiction_lexicon,
+)
 from .remote_client import RemoteClientError, RemoteSceneClient
-from .report import EVAL_MODES
+from .report import EVAL_MODES, RosterEpoch
 from .schema import SCHEMA, DocKind
 
 _CAPTION_MAX_TOKENS = 512
@@ -153,6 +184,26 @@ PROMPT_VARIANTS: dict[str, PromptVariant] = {
 }
 DEFAULT_PROMPT_VARIANT = "v1"
 
+# --- caption-length A/B axis (v3 three-surface only) -------------------------
+# The caption band is the treatment, so it is a named axis rather than a free
+# integer: a run record says which band it ran, and two records are comparable
+# only when the band matches. Longer descriptions are a product hypothesis to be
+# measured, not assumed, so both legs are first-class [EXP-03 declare the OEC].
+CAPTION_BANDS: dict[str, str] = {
+    "standard": "2-5 sentences",
+    "long": "8-14 sentences",
+}
+DEFAULT_CAPTION_LENGTH = "standard"
+
+# Per-band pass-2 budget. 512 tokens cannot hold a 14-sentence caption plus a
+# title, an alt and the JSON envelope; the long leg would be truncated mid-string
+# and would then lose on a length it was never allowed to spend -- a measurement
+# artefact indistinguishable from a real effect [EXP-06 Twyman before narrative].
+# A truncated weave is malformed JSON, so it fails closed as a typed per-item
+# error (ThreeSurfaceParseError) instead of scoring as a short caption.
+WEAVE_MAX_TOKENS: dict[str, int] = {"standard": _CAPTION_MAX_TOKENS, "long": 2048}
+assert set(WEAVE_MAX_TOKENS) == set(CAPTION_BANDS)
+
 # Pass-1 of the two-pass pipeline (findings §2.1): image only, NO context —
 # structured objective facts the weave pass must not overwrite. No names, no
 # speculation (the "contextual inference" stage-1 fields the HMMR paper used
@@ -183,30 +234,36 @@ _WEAVE_INSTRUCTIONS = (
     "only the man and never mentions Maria Chen."
 )
 
+
 # v3 three-surface output contract (ALTQ-1): the weave returns ONE fenced JSON
 # object carrying all three publish surfaces in a single call, superseding the
 # dual-length compression call for this variant. Every concrete detail in every
 # field must come from the committed pass-1 facts or the supplied context — the
 # CapRL failure mode (evocative captions inventing specifics) is the
 # anti-pattern this fences out.
-_V3_THREE_SURFACE_INSTRUCTIONS = (
-    "Output format: instead of one plain-prose alt text, return a single JSON "
-    "object inside a fenced ```json code block, with exactly these three string "
-    "fields and nothing else:\n"
-    '- "title": a terse 3-8 word label of the image subject. Front-load the '
-    "subject. No trailing period. Supplied names may appear when they fit "
-    "naturally.\n"
-    '- "alt": functional alt text of at most 125 characters, following every '
-    "style rule above: front-load the subject and their action, factual "
-    "register, plain prose. Weave the supplied identities in, with their "
-    "positional binding when more than one person is present.\n"
-    '- "caption": a free-form evocative caption of 2-5 sentences. A lyrical '
-    "register is welcome here, but every concrete detail — objects, legible "
-    "text, places, counts, names — must come from the committed facts or the "
-    "supplied context. Never invent specifics. Weave the supplied names in "
-    "naturally.\n"
-    "The never-guess and pixels-win rules apply to all three fields."
-)
+def _three_surface_instructions(caption_length: str = DEFAULT_CAPTION_LENGTH) -> str:
+    """The v3 output contract, with the caption band substituted from the
+    selected length arm. Only the band differs between arms, so the A/B
+    compares caption length and not a second hidden prompt edit."""
+    return (
+        "Output format: instead of one plain-prose alt text, return a single JSON "
+        "object inside a fenced ```json code block, with exactly these three string "
+        "fields and nothing else:\n"
+        '- "title": a terse 3-8 word label of the image subject. Front-load the '
+        "subject. No trailing period. Supplied names may appear when they fit "
+        "naturally.\n"
+        '- "alt": functional alt text of at most 125 characters, following every '
+        "style rule above: front-load the subject and their action, factual "
+        "register, plain prose. Weave the supplied identities in, with their "
+        "positional binding when more than one person is present.\n"
+        f'- "caption": a free-form evocative caption of {CAPTION_BANDS[caption_length]}. A lyrical '
+        "register is welcome here, but every concrete detail — objects, legible "
+        "text, places, counts, names — must come from the committed facts or the "
+        "supplied context. Never invent specifics. Weave the supplied names in "
+        "naturally.\n"
+        "The never-guess and pixels-win rules apply to all three fields."
+    )
+
 
 # Text-only compression (findings §4): the short alt is derived FROM the
 # committed long description, so the short can never contradict the long by
@@ -329,6 +386,33 @@ def _face_position(x: float) -> str:
     return "in the center"
 
 
+def _face_gate_norm_key(name: Any) -> str | None:
+    """Normalize a roster/box name via the shared namedness predicate."""
+    return named_box_name({"name": name})
+
+
+def _assert_no_roster_norm_collisions(known_names: list[str]) -> dict[str, str]:
+    """Map normalized name → first roster form; fail closed on collisions.
+
+    Keying the gate on normalized names fixes padded/BOM misses, but the inverse
+    hazard is silent merge of previously distinct roster strings (e.g. ``\"Alice\"``
+    and ``\"Alice \"``). Changing identity counts by merge is worse than the miss
+    it fixes — refuse loudly instead.
+    """
+    norm_to_roster: dict[str, str] = {}
+    for raw in known_names:
+        key = _face_gate_norm_key(raw)
+        if key is None:
+            continue
+        prev = norm_to_roster.get(key)
+        if prev is not None and prev != raw:
+            raise ValueError(
+                f"face_gate roster name collision after normalize: {prev!r} and {raw!r} both normalize to {key!r}"
+            )
+        norm_to_roster[key] = raw
+    return norm_to_roster
+
+
 def _apply_face_gate(
     context_pack: dict[str, Any],
     face_boxes: list[dict[str, Any]],
@@ -344,19 +428,43 @@ def _apply_face_gate(
     boxes) ⇒ nothing eligible ⇒ no names reach the prompt. The gate only ever
     narrows (never adds a name the context did not supply), so never-guess is
     tightened, never loosened. Eligible names gain positional binding derived
-    from the box centre ("Ana, on the left")."""
-    matched: dict[str, dict[str, Any]] = {}
+    from the box centre ("Ana, on the left").
+
+    Intersection keys both sides via ``face_metrics.named_box_name`` (Cf drop +
+    strip) so padded/BOM/ZWSP box names still match a clean roster entry.
+    Roster collisions under that normalization raise (fail closed).
+    """
+    _assert_no_roster_norm_collisions(known_names)
+    matched: dict[str, dict[str, Any]] = {}  # normalized name → box
     for box in face_boxes:
-        name = box.get("name")
-        if name:
-            matched.setdefault(str(name), box)
+        key = named_box_name(box)
+        if key is not None:
+            matched.setdefault(key, box)
     _, in_context = _ablate_names(context_pack, known_names)
-    eligible = [n for n in in_context if n in matched]
-    suppressed = [n for n in in_context if n not in matched]
+    eligible: list[str] = []
+    suppressed: list[str] = []
+    for n in in_context:
+        key = _face_gate_norm_key(n)
+        if key is not None and key in matched:
+            eligible.append(n)
+        else:
+            suppressed.append(n)
     pack, _ = _ablate_names(context_pack, suppressed)
     if eligible:
-        ordered = sorted(eligible, key=lambda n: (float(matched[n].get("x", 0.5)), n))
-        pack["people_present"] = "; ".join(f"{n}, {_face_position(float(matched[n].get('x', 0.5)))}" for n in ordered)
+
+        def _box_for(roster_name: str) -> dict[str, Any]:
+            key = _face_gate_norm_key(roster_name)
+            if key is None or key not in matched:
+                raise RuntimeError(
+                    f"face_gate invariant broken: eligible name {roster_name!r} has no matched box (norm={key!r})"
+                )
+            return matched[key]
+
+        ordered = sorted(
+            eligible,
+            key=lambda n: (float(_box_for(n).get("x", 0.5)), n),
+        )
+        pack["people_present"] = "; ".join(f"{n}, {_face_position(float(_box_for(n).get('x', 0.5)))}" for n in ordered)
     return pack, {"eligible_names": sorted(eligible), "suppressed_names": sorted(suppressed)}
 
 
@@ -368,13 +476,25 @@ def _stamp_pipeline_provenance(
     dual_length: bool,
     face_gate: bool,
     eval_mode: str,
+    instance_shape: str | None = None,
+    depiction_lexicon: DepictionLexicon | None = None,
+    caption_length: str = DEFAULT_CAPTION_LENGTH,
 ) -> None:
     """Stamp the pipeline config into run-record provenance (attribution, as --eval-mode).
 
     ``prompt_variant`` is always stamped; boolean pipeline flags and a
     non-standard ``eval_mode`` are stamped only when active so pre-Slice-2
-    records and standard runs keep their existing shape (additive schema)."""
+    records and standard runs keep their existing shape (additive schema).
+    ``instance_shape`` is operator-supplied and stamped verbatim; absent means
+    absent — the harness never infers a host (rg-015)."""
     provenance["prompt_variant"] = prompt_variant
+    # This tree is post-PRIV-1; pre-priv1 is only legal on historical records.
+    provenance["roster_epoch"] = RosterEpoch.POST_PRIV1.value
+    if caption_length != DEFAULT_CAPTION_LENGTH:
+        # Both the treatment and the budget it was given: a reader comparing two
+        # records must be able to see that the long leg was not silently capped.
+        provenance["caption_length"] = caption_length
+        provenance["weave_max_tokens"] = WEAVE_MAX_TOKENS[caption_length]
     if two_pass:
         provenance["two_pass"] = True
     if dual_length:
@@ -383,6 +503,10 @@ def _stamp_pipeline_provenance(
         provenance["face_gate"] = True
     if eval_mode != "standard":
         provenance["eval_mode"] = eval_mode
+    if instance_shape is not None:
+        provenance["instance_shape"] = instance_shape
+    if depiction_lexicon is not None:
+        provenance["depiction_lexicon"] = depiction_lexicon.provenance()
 
 
 class BakeoffClient(RemoteSceneClient):
@@ -411,15 +535,18 @@ class BakeoffClient(RemoteSceneClient):
         entry_traits: dict[int, dict[str, list[str]]] | None = None,
         roster: list[str] | None = None,
         prompt_variant: str = DEFAULT_PROMPT_VARIANT,
+        caption_length: str = DEFAULT_CAPTION_LENGTH,
         two_pass: bool = False,
         dual_length: bool = False,
         face_gate: bool = False,
         face_fixtures: dict[int, list[dict[str, Any]]] | None = None,
+        depiction_lexicon: DepictionLexicon | None = None,
     ) -> None:
         kwargs: dict[str, Any] = {"transport": transport}
         if timeout_s is not None:
             kwargs["timeout_s"] = timeout_s
         super().__init__(base_url, api_key="", **kwargs)
+        self._transport = transport
         self.model_id = model_id
         self.model_version = model_version
         self.no_think = no_think
@@ -429,6 +556,8 @@ class BakeoffClient(RemoteSceneClient):
             raise ValueError(f"eval_mode {eval_mode!r} requires entry_traits (per-media_id identities)")
         if prompt_variant not in PROMPT_VARIANTS:
             raise ValueError(f"unknown prompt_variant {prompt_variant!r}; expected one of {sorted(PROMPT_VARIANTS)}")
+        if caption_length not in CAPTION_BANDS:
+            raise ValueError(f"unknown caption_length {caption_length!r}; expected one of {sorted(CAPTION_BANDS)}")
         if PROMPT_VARIANTS[prompt_variant].three_surface:
             # rg-008 fail-fast: the three-surface contract lives in the pass-2
             # weave; without two_pass it would never reach the model.
@@ -442,6 +571,14 @@ class BakeoffClient(RemoteSceneClient):
                     f"prompt_variant {prompt_variant!r} already emits the long surface in the weave; "
                     "dual_length is incompatible (drop --dual-length)"
                 )
+        elif caption_length != DEFAULT_CAPTION_LENGTH:
+            # rg-008 fail-fast: only the three-surface contract carries a caption
+            # band. Accepting it elsewhere would stamp a treatment into the record
+            # that never reached the model -- a silently mislabelled arm.
+            raise ValueError(
+                f"caption_length {caption_length!r} applies to the three-surface weave; "
+                f"prompt_variant {prompt_variant!r} does not emit a caption"
+            )
         if face_gate and face_fixtures is None:
             raise ValueError("face_gate requires face_fixtures (per-media_id manifest face_boxes dicts)")
         if face_gate and not (roster or entry_traits):
@@ -452,10 +589,12 @@ class BakeoffClient(RemoteSceneClient):
         self.entry_traits = entry_traits or {}
         self.roster = list(roster or [])
         self.prompt_variant = prompt_variant
+        self.caption_length = caption_length
         self.two_pass = two_pass
         self.dual_length = dual_length
         self.face_gate = face_gate
         self.face_fixtures = face_fixtures or {}
+        self.depiction_lexicon = depiction_lexicon
 
     def describe(
         self,
@@ -487,6 +626,7 @@ class BakeoffClient(RemoteSceneClient):
                 self._weave_messages(facts_raw, context_pack, image_part=image_part),
                 pass_name="ground_weave",
                 passes=passes,
+                max_tokens=WEAVE_MAX_TOKENS[self.caption_length],
             )
             if PROMPT_VARIANTS[self.prompt_variant].three_surface:
                 # malformed/incomplete three-surface JSON => typed per-item failure
@@ -506,6 +646,7 @@ class BakeoffClient(RemoteSceneClient):
             "model_id": self.model_id,
             "model_version": self.model_version,
             "prompt_variant": self.prompt_variant,
+            **({"caption_length": self.caption_length} if self.caption_length != DEFAULT_CAPTION_LENGTH else {}),
             **stamps,
         }
         if surfaces is not None:
@@ -535,6 +676,9 @@ class BakeoffClient(RemoteSceneClient):
             result["alt_text_draft"] = caption
         if self.two_pass or self.dual_length:
             result["passes"] = passes
+        # Token usage is a scored bake-off axis (quality vs speed vs tokens), so
+        # roll it up for every pipeline config, not only the multi-pass ones.
+        result["tokens"] = _sum_usage(passes)
         return result
 
     def weave_bench_describe(self, *, media_id: int, facts_raw: str, context_pack: dict[str, Any]) -> dict[str, Any]:
@@ -550,15 +694,18 @@ class BakeoffClient(RemoteSceneClient):
             self._weave_bench_messages(facts_raw, context_pack),
             pass_name="weave_bench",
             passes=passes,
+            max_tokens=WEAVE_MAX_TOKENS[self.caption_length],
         )
         return {
             "adapter": "bakeoff",
             "model_id": self.model_id,
             "model_version": self.model_version,
             "prompt_variant": self.prompt_variant,
+            **({"caption_length": self.caption_length} if self.caption_length != DEFAULT_CAPTION_LENGTH else {}),
             **stamps,
             "alt_text_draft": caption,
             "passes": passes,
+            "tokens": _sum_usage(passes),
         }
 
     def _transformed_context(
@@ -592,8 +739,19 @@ class BakeoffClient(RemoteSceneClient):
         return context_pack, stamps
 
     def _system_prompt(self) -> str:
+        """Variant system prompt, plus the canon depiction rules when the A/B arm is on.
+
+        Appended here rather than folded into a PROMPT_VARIANTS entry so the
+        lexicon composes with every variant instead of doubling the registry,
+        and so the lexicon-off leg keeps the exact prompt string earlier run
+        records were produced with. Pass-1 is deliberately excluded — it emits
+        objective JSON facts and asserts nothing about who is depicted, so the
+        measured delta belongs to the pass that makes claims."""
         variant = PROMPT_VARIANTS[self.prompt_variant]
-        return variant.system_long if self.dual_length else variant.system
+        system = variant.system_long if self.dual_length else variant.system
+        if self.depiction_lexicon is not None:
+            system = f"{system}\n\n{self.depiction_lexicon.render()}"
+        return system
 
     def _weave_messages(
         self, facts_raw: str, context_pack: dict[str, Any], *, image_part: dict[str, Any] | None
@@ -608,7 +766,7 @@ class BakeoffClient(RemoteSceneClient):
             content.insert(0, image_part)
         system = f"{self._system_prompt()}\n\n{_WEAVE_INSTRUCTIONS}"
         if PROMPT_VARIANTS[self.prompt_variant].three_surface:
-            system = f"{system}\n\n{_V3_THREE_SURFACE_INSTRUCTIONS}"
+            system = f"{system}\n\n{_three_surface_instructions(self.caption_length)}"
         return [
             {"role": "system", "content": system},
             {"role": "user", "content": content},
@@ -626,11 +784,13 @@ class BakeoffClient(RemoteSceneClient):
         passes: list[dict[str, Any]],
         max_tokens: int = _CAPTION_MAX_TOKENS,
     ) -> str:
-        """One greedy chat completion; appends {pass, raw, latency_s} so the A/B
-        bench can attribute per-pass latency (raw=None on failure). ``max_tokens``
+        """One greedy chat completion; appends {pass, raw, latency_s, usage} so the
+        A/B bench can attribute per-pass latency and token usage (raw=None on
+        failure; usage=None when the server reported none). ``max_tokens``
         defaults to the caption budget; the structured pass-1 raises it so a
         fact-dense JSON never truncates mid-string (PassOneJSONError)."""
         started = time.monotonic()
+        usage: dict[str, int] | None = None
         try:
             payload = self._request_dict(
                 "POST",
@@ -642,11 +802,26 @@ class BakeoffClient(RemoteSceneClient):
                     "messages": messages,
                 },
             )
+            usage = _extract_usage(payload)
             text = _extract_caption(payload)
         except Exception:
-            passes.append({"pass": pass_name, "raw": None, "latency_s": round(time.monotonic() - started, 3)})
+            passes.append(
+                {
+                    "pass": pass_name,
+                    "raw": None,
+                    "latency_s": round(time.monotonic() - started, 3),
+                    "usage": usage,
+                }
+            )
             raise
-        passes.append({"pass": pass_name, "raw": text, "latency_s": round(time.monotonic() - started, 3)})
+        passes.append(
+            {
+                "pass": pass_name,
+                "raw": text,
+                "latency_s": round(time.monotonic() - started, 3),
+                "usage": usage,
+            }
+        )
         return text
 
     def _pass1_user_text(self) -> str:
@@ -728,27 +903,38 @@ def _load_weave_bench_source(path: Path) -> tuple[dict[str, Any], str]:
         raw_bytes = path.read_bytes()
         record = json.loads(raw_bytes)
     except (OSError, json.JSONDecodeError) as exc:
-        raise WeaveBenchRecordError(f"--weave-bench source {path} is not readable JSON: {exc}") from exc
+        raise WeaveBenchRecordError(
+            f"--weave-bench source {_printable_path(path)} is not readable JSON: {_printable_exc(exc)}"
+        ) from exc
     if not isinstance(record, dict):
-        raise WeaveBenchRecordError(f"--weave-bench source {path} must contain a JSON object")
+        raise WeaveBenchRecordError(
+            f"--weave-bench source {_printable_path(path)} must contain a JSON object"
+        )
     kind = record.get("kind")
     if kind is not None and kind != DocKind.RUN_RECORD.value:
         raise WeaveBenchRecordError(
-            f"--weave-bench source {path} has kind={kind!r}, expected {DocKind.RUN_RECORD.value!r} "
+            f"--weave-bench source {_printable_path(path)} has kind={kind!r}, expected {DocKind.RUN_RECORD.value!r} "
             "(did you pass a report file?)"
         )
     if not isinstance(record.get("provenance"), dict):
-        raise WeaveBenchRecordError(f"--weave-bench source {path} has no provenance block")
+        raise WeaveBenchRecordError(
+            f"--weave-bench source {_printable_path(path)} has no provenance block"
+        )
     items = record.get("items")
     if not isinstance(items, list) or not items:
-        raise WeaveBenchRecordError(f"--weave-bench source {path} carries no items to replay")
+        raise WeaveBenchRecordError(
+            f"--weave-bench source {_printable_path(path)} carries no items to replay"
+        )
     return record, hashlib.sha256(raw_bytes).hexdigest()
 
 
 def _weave_bench_facts(item: dict[str, Any]) -> str:
     """Pass-1 facts from a source item's ``describe.passes[0]`` (the ``describe_facts`` pass)."""
     if item.get("error"):
-        raise WeaveBenchSourceError(f"source item recorded a fetch error, nothing to replay: {item['error']}")
+        raise WeaveBenchSourceError(
+            "source item recorded a fetch error, nothing to replay: "
+            f"{_printable_message(str(item['error']))}"
+        )
     describe = item.get("describe")
     passes = describe.get("passes") if isinstance(describe, dict) else None
     first = passes[0] if isinstance(passes, list) and passes else None
@@ -761,6 +947,34 @@ def _weave_bench_facts(item: dict[str, Any]) -> str:
     if not isinstance(raw, str) or not raw.strip():
         raise WeaveBenchSourceError("source item's pass-1 facts are empty (describe.passes[0].raw)")
     return raw
+
+
+def _weave_bench_source_item_excerpt(source_item: object) -> str:
+    """Bound malformed-source diagnostics without leaking a manifest path.
+
+    ``str(dict)`` turns a PEP 383 surrogate into the literal six-character
+    ``\\udce9`` sequence before a message encoder can recover its original
+    byte. Encode the path field at construction, then encode any remaining
+    message text as a final boundary check.
+    """
+    if not isinstance(source_item, Mapping):
+        return str(_printable_message(repr(source_item)[:200]))
+    safe_item = dict(source_item)
+    raw_path = safe_item.get("path")
+    path_text: str | None = None
+    if isinstance(raw_path, (str, Path)):
+        path_text = str(_printable_path(raw_path))
+    elif raw_path is not None:
+        path_text = str(_printable_message(str(raw_path)))
+    if path_text is not None:
+        safe_item["path"] = None
+    rendered = []
+    for key, value in safe_item.items():
+        if key == "path" and path_text is not None:
+            rendered.append(f"{key}={path_text}")
+        else:
+            rendered.append(f"{key}={value!r}")
+    return str(_printable_message("{" + ", ".join(rendered) + "}")[:200])
 
 
 def weave_bench_run_record(
@@ -797,7 +1011,7 @@ def weave_bench_run_record(
             "started_at": started_at,
             "weave_bench": True,
             "weave_bench_source": {
-                "path": source_path,
+                "path": str(_printable_path(source_path)),
                 "sha256": source_sha256,
                 "manifest_sha256": source_prov.get("manifest_sha256"),
                 "head_sha": source_prov.get("head_sha"),
@@ -821,11 +1035,19 @@ def weave_bench_run_record(
             # No usable media_id => the OUTPUT record would be unscoreable; that is
             # a malformed source (whole-run abort), not a per-item degrade.
             raise WeaveBenchRecordError(
-                f"--weave-bench source item without a usable media_id: {str(source_item)[:200]}"
+                "--weave-bench source item without a usable media_id: "
+                f"{_weave_bench_source_item_excerpt(source_item)}"
             ) from exc
+        raw_path = source_item.get("path")
+        if isinstance(raw_path, (str, Path)):
+            item_path = str(_printable_path(raw_path))
+        elif raw_path is None:
+            item_path = f"media_id:{media_id}"
+        else:
+            item_path = str(_printable_path(str(raw_path)))
         item: dict[str, Any] = {
             "media_id": media_id,
-            "path": source_item.get("path", f"media_id:{media_id}"),
+            "path": item_path,
             "describe": None,
             "identities": [],
             "face_count": 0,
@@ -844,13 +1066,13 @@ def weave_bench_run_record(
                 context_pack=entry.context_pack.model_dump(exclude_none=True),
             )
         except Exception as exc:  # noqa: BLE001 — per-item isolation is the contract (rg-007)
-            item["error"] = f"{type(exc).__name__}: {exc}"
+            item["error"] = f"{type(exc).__name__}: {_printable_exc(exc)}"
             item["latency_s"] = round(time.monotonic() - started, 3)
             consecutive_failures += 1
             if consecutive_failures >= stall_limit:
                 items.append(item)
                 raise BoundedStallError(
-                    f"{consecutive_failures} consecutive item failures (last: {item['path']}); "
+                    f"{consecutive_failures} consecutive item failures (last: {_printable_path(item['path'])}); "
                     "aborting weave-bench run",
                     partial_record=_record(aborted=True),
                 ) from exc
@@ -915,12 +1137,213 @@ def _extract_caption(payload: dict[str, Any]) -> str:
     return content.strip()
 
 
+_USAGE_FIELDS = ("prompt_tokens", "completion_tokens", "total_tokens")
+
+
+def _extract_usage(payload: dict[str, Any]) -> dict[str, int] | None:
+    """Return the OpenAI ``usage`` block, or None when the server did not send one.
+
+    Never derived from the text: a token count guessed from characters would
+    read as measured in the bake-off report (rg-015). Absent usage is reported
+    as absent so the roll-up can say so. Negative counts and totals that do
+    not equal prompt + completion are rejected wholesale — a half-trusted
+    block would corrupt the quality-vs-tokens axis.
+    """
+    usage = payload.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    out: dict[str, int] = {}
+    for field in _USAGE_FIELDS:
+        value = usage.get(field)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            return None
+        out[field] = value
+    if out["total_tokens"] != out["prompt_tokens"] + out["completion_tokens"]:
+        return None
+    return out
+
+
+def _sum_usage(passes: list[dict[str, Any]]) -> dict[str, Any]:
+    """Roll per-pass usage up to a per-image total.
+
+    ``complete`` is False when any pass is missing usage, so a partial sum is
+    never read as the image's real cost. When no pass carried usage the three
+    count fields are ``None`` (not 0) so a consumer that reads ``total_tokens``
+    without also reading ``complete`` cannot score the leg as free.
+    """
+    totals: dict[str, int] = dict.fromkeys(_USAGE_FIELDS, 0)
+    missing = 0
+    present = 0
+    for entry in passes:
+        usage = entry.get("usage")
+        if not isinstance(usage, dict):
+            missing += 1
+            continue
+        present += 1
+        for field in _USAGE_FIELDS:
+            totals[field] += usage[field]
+    counts: dict[str, int | None] = dict.fromkeys(_USAGE_FIELDS, None) if present == 0 else totals
+    return {
+        **counts,
+        "model_calls": len(passes),
+        "passes_missing_usage": missing,
+        "complete": bool(passes) and missing == 0,
+    }
+
+
 def _safe_model_slug(model_id: str) -> str:
     """Filesystem-safe slug of an HF-style model id (``Qwen/Qwen3-VL-4B`` -> ``Qwen_Qwen3-VL-4B``)."""
     return re.sub(r"[^A-Za-z0-9._-]+", "_", model_id).strip("_") or "model"
 
 
-def main(argv: list[str] | None = None) -> None:
+def _nonneg_int_arg(raw: str) -> int:
+    value = int(raw)
+    if value < 0:
+        raise argparse.ArgumentTypeError("must be >= 0")
+    return value
+
+
+def _nonneg_finite_float_arg(raw: str) -> float:
+    value = float(raw)
+    if not math.isfinite(value) or value < 0:
+        raise argparse.ArgumentTypeError("must be a non-negative finite float")
+    return value
+
+
+def _gpu_sampling_disabled() -> dict[str, Any]:
+    """Unavailable GPU block with VramSampler.stop() keys (OBS-04, rg-015).
+
+    Derives the key set from VramSampler's zero-sample factory — do not
+    hand-write the record shape here. Unmeasured numerics stay null.
+    """
+    record = VramSampler().stop()
+    record["reason"] = "sampling disabled"
+    return record
+
+
+def _timeout_s_of(client: BakeoffClient) -> float | None:
+    timeout = client._client.timeout
+    read = getattr(timeout, "read", None)
+    if read is None:
+        return None
+    return float(read)
+
+
+def _clone_bakeoff_client(client: BakeoffClient) -> BakeoffClient:
+    """Throwaway client with the same endpoint/config; isolated breaker state."""
+    return BakeoffClient(
+        client.base_url,
+        model_id=client.model_id,
+        model_version=client.model_version,
+        no_think=client.no_think,
+        timeout_s=_timeout_s_of(client),
+        transport=client._transport,
+        eval_mode=client.eval_mode,
+        entry_traits=client.entry_traits,
+        roster=client.roster,
+        prompt_variant=client.prompt_variant,
+        caption_length=client.caption_length,
+        two_pass=client.two_pass,
+        dual_length=client.dual_length,
+        face_gate=client.face_gate,
+        face_fixtures=client.face_fixtures,
+        depiction_lexicon=client.depiction_lexicon,
+    )
+
+
+def _empty_warmup() -> dict[str, Any]:
+    return {"requests": 0, "succeeded": 0, "failed": 0, "elapsed_s": 0.0}
+
+
+def _run_warmup(
+    client: BakeoffClient,
+    manifest: GoldenManifest,
+    images_dir: str,
+    requests: int,
+) -> dict[str, Any]:
+    """Re-send the first manifest image's prompt ``requests`` times; discard results.
+
+    Uses a throwaway BakeoffClient so warm-up failures cannot open the scoring
+    client's 3-strike breaker (rg-015).
+    """
+    if requests <= 0 or not images_dir or not manifest.entries:
+        return _empty_warmup()
+    first = manifest.entries[0]
+    image_path = _resolve_image(Path(images_dir), first.path)
+    if image_path is None:
+        return _empty_warmup()
+    image_bytes = image_path.read_bytes()
+    context_pack = first.context_pack.model_dump(exclude_none=True)
+    warmup_client = _clone_bakeoff_client(client)
+    started = time.monotonic()
+    succeeded = 0
+    failed = 0
+    try:
+        for _ in range(requests):
+            try:
+                warmup_client.describe(
+                    image_bytes=image_bytes,
+                    filename=image_path.name,
+                    media_id=first.media_id,
+                    context_pack=context_pack,
+                )
+            except Exception:
+                failed += 1
+            else:
+                succeeded += 1
+    finally:
+        warmup_client.close()
+    return {
+        "requests": succeeded + failed,
+        "succeeded": succeeded,
+        "failed": failed,
+        "elapsed_s": round(time.monotonic() - started, 3),
+    }
+
+
+def _item_error_count(items: object) -> int:
+    if not isinstance(items, list):
+        return 0
+    return sum(1 for item in items if isinstance(item, Mapping) and item.get("error"))
+
+
+def _stamp_timing_and_gpu(
+    record: dict[str, Any],
+    *,
+    warmup: Mapping[str, Any],
+    cold_load_s: float | None,
+    gpu: Mapping[str, Any],
+) -> None:
+    """Stamp closed-serial per-item timing (PERF-03) plus GPU high-water mark.
+
+    ``loop=closed_serial``: this harness measures per-request service latency
+    under concurrency 1, not open-loop arrival (coordinated omission applies).
+    """
+    latencies = collect_item_latencies(record)
+    items = record.get("items")
+    n_items = len(items) if isinstance(items, list) else 0
+    items_with_error = _item_error_count(items)
+    record["timing"] = {
+        "loop": LoadLoop.CLOSED_SERIAL,
+        "concurrency": 1,
+        "per_item": summarize_latencies(latencies),
+        "items_with_error": items_with_error,
+        "items_without_latency": n_items - len(latencies) - items_with_error,
+        "warmup": dict(warmup),
+        "cold_load_s": cold_load_s,
+    }
+    record["gpu"] = dict(gpu)
+
+
+def _csv_arg(raw: str | None) -> list[str] | None:
+    """Split a comma-separated CLI list; None (flag absent) stays None so the
+    loader can tell "not narrowed" from "narrowed to nothing"."""
+    if raw is None:
+        return None
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="bakeoff",
         description=__doc__,
@@ -972,6 +1395,16 @@ def main(argv: list[str] | None = None) -> None:
         ),
     )
     parser.add_argument(
+        "--caption-length",
+        choices=sorted(CAPTION_BANDS),
+        default=DEFAULT_CAPTION_LENGTH,
+        help=(
+            "caption band for the v3 three-surface weave: standard=2-5 sentences (frozen baseline), "
+            "long=8-14 sentences. The long arm also raises the pass-2 token budget so it is not "
+            "truncated. Stamped into run-record provenance; only comparable against the same band."
+        ),
+    )
+    parser.add_argument(
         "--two-pass",
         action="store_true",
         help=(
@@ -997,6 +1430,44 @@ def main(argv: list[str] | None = None) -> None:
         ),
     )
     parser.add_argument(
+        "--depiction-lexicon",
+        default=None,
+        metavar="CANON_PATH",
+        help=(
+            "VLM6-LEX A/B arm: append the heuristics-canon depiction rules (ATTRIB/BOUND) to the "
+            "prose-writing system prompt. Takes a canon checkout root or the lexicons/depiction.md "
+            "file itself; the rules are read at run time and never vendored into this repo. Omit it "
+            "for the lexicon-off leg (the byte-identical baseline). Rule ids, sha256 and canon tag "
+            "land in run-record provenance."
+        ),
+    )
+    parser.add_argument(
+        "--lexicon-families",
+        default=None,
+        metavar="FAM[,FAM]",
+        help=f"restrict the injected rules to these canon families (default: all of {','.join(KNOWN_FAMILIES)})",
+    )
+    parser.add_argument(
+        "--lexicon-tiers",
+        default=None,
+        metavar="TIER[,TIER]",
+        help=(
+            "restrict the injected rules by canon tier: B(locker), S(hould), J(udgment). "
+            f"Default: all of {','.join(KNOWN_TIERS)}."
+        ),
+    )
+    parser.add_argument(
+        "--lexicon-detail",
+        choices=DETAIL_LEVELS,
+        default="full",
+        help="full keeps each rule's consequence clause; brief drops it (~20%% fewer prompt tokens)",
+    )
+    parser.add_argument(
+        "--lexicon-version",
+        default=None,
+        help="override the canon version stamped into provenance (default: git describe of the canon checkout)",
+    )
+    parser.add_argument(
         "--weave-bench",
         default=None,
         metavar="RUN_RECORD",
@@ -1006,7 +1477,38 @@ def main(argv: list[str] | None = None) -> None:
             "cell. GOLDEN_IMAGES_DIR is not required; incompatible with --two-pass/--dual-length."
         ),
     )
-    args = parser.parse_args(argv)
+    parser.add_argument(
+        "--instance-shape",
+        default=None,
+        help=(
+            "operator-supplied machine shape for cost attribution (e.g. gpu.a10, gpu.a1.flex). "
+            "Stamped verbatim onto run-record provenance; omitted when unset. The harness never "
+            "guesses or infers a host."
+        ),
+    )
+    parser.add_argument(
+        "--warmup",
+        type=_nonneg_int_arg,
+        default=1,
+        help="discarded first-image requests before scored items (default 1; 0 disables)",
+    )
+    parser.add_argument(
+        "--cold-load-s",
+        type=_nonneg_finite_float_arg,
+        default=None,
+        help="serve-to-ready seconds measured by bakeoff_runner; omitted/null when not passed",
+    )
+    parser.add_argument(
+        "--vram-sample-interval-s",
+        type=_nonneg_finite_float_arg,
+        default=1.0,
+        help="nvidia-smi sample interval (default 1.0; 0 disables sampling)",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = build_parser().parse_args(argv)
 
     if args.weave_bench is not None and (args.two_pass or args.dual_length):
         sys.exit("--weave-bench replays recorded pass-1 facts through pass-2 only; drop --two-pass/--dual-length")
@@ -1021,6 +1523,42 @@ def main(argv: list[str] | None = None) -> None:
                 f"--prompt-variant {args.prompt_variant} already emits the long surface in the weave; "
                 "drop --dual-length"
             )
+    elif args.caption_length != DEFAULT_CAPTION_LENGTH:
+        sys.exit(
+            f"--caption-length {args.caption_length} applies to the three-surface weave; "
+            f"--prompt-variant {args.prompt_variant} does not emit a caption"
+        )
+
+    lexicon_knobs = {
+        "--lexicon-families": args.lexicon_families,
+        "--lexicon-tiers": args.lexicon_tiers,
+        "--lexicon-version": args.lexicon_version,
+    }
+    orphaned = [flag for flag, value in lexicon_knobs.items() if value is not None]
+    if args.lexicon_detail != "full":
+        orphaned.append("--lexicon-detail")
+    if args.depiction_lexicon is None and orphaned:
+        # rg-008 fail-fast: silently ignoring these would ship a lexicon-off run
+        # that the operator believes was narrowed to a family or tier.
+        sys.exit(f"{' '.join(orphaned)} require --depiction-lexicon; without it no rules are injected")
+
+    depiction_lexicon: DepictionLexicon | None = None
+    if args.depiction_lexicon is not None:
+        try:
+            depiction_lexicon = load_depiction_lexicon(
+                args.depiction_lexicon,
+                families=_csv_arg(args.lexicon_families),
+                tiers=_csv_arg(args.lexicon_tiers),
+                detail=args.lexicon_detail,
+                version=args.lexicon_version,
+            )
+        except LexiconError as exc:
+            sys.exit(f"LexiconError: {_printable_exc(exc)}")
+        print(
+            f"depiction lexicon: {depiction_lexicon.version} "
+            f"({depiction_lexicon.rule_count_summary()}, {len(depiction_lexicon.render())} chars)",
+            file=sys.stderr,
+        )
 
     if os.environ.get("ACX_EVAL_LIVE") != "1":
         sys.exit("bakeoff fetch requires ACX_EVAL_LIVE=1 (safety gate, as VLM-2A live pattern)")
@@ -1031,11 +1569,16 @@ def main(argv: list[str] | None = None) -> None:
         try:
             source_record, source_sha256 = _load_weave_bench_source(Path(args.weave_bench))
         except WeaveBenchRecordError as exc:
-            sys.exit(f"WeaveBenchRecordError: {exc}")
-        # Text-only replay: no image bytes are sent, so the originals dir is not
-        # required and the manifest loads without image verification (as `cli score`).
+            sys.exit(f"WeaveBenchRecordError: {_printable_exc(exc)}")
+        # Text-only weave-bench: weave_bench_run_record reads roster/media_id/face_boxes
+        # pins only — never opens image files (GOLDEN_IMAGES_DIR not required).
         images_dir = ""
-        manifest = load_manifest(args.manifest)
+        manifest = load_manifest(
+            args.manifest,
+            metadata_only=True,
+            skip_hash_verification=True,
+            hash_skip_reason="weave-bench bakeoff is text-only; image bytes never opened",
+        )
     else:
         images_dir = os.environ.get("GOLDEN_IMAGES_DIR", "")
         if not images_dir:
@@ -1061,10 +1604,12 @@ def main(argv: list[str] | None = None) -> None:
         entry_traits=entry_traits,
         roster=roster,
         prompt_variant=args.prompt_variant,
+        caption_length=args.caption_length,
         two_pass=args.two_pass,
         dual_length=args.dual_length,
         face_gate=args.face_gate,
         face_fixtures=face_fixtures,
+        depiction_lexicon=depiction_lexicon,
     )
     started_at = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     stamp = started_at.replace(":", "").replace("-", "").replace("T", "-").rstrip("Z")
@@ -1084,9 +1629,24 @@ def main(argv: list[str] | None = None) -> None:
     try:
         record_path.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
-        sys.exit(f"run-record parent directory is not writable ({record_path.parent}): {exc}")
+        sys.exit(
+            "run-record parent directory is not writable "
+            f"({_printable_path(record_path.parent)}): {_printable_exc(exc)}"
+        )
 
+    sampler: VramSampler | None = None
+    gpu_block: dict[str, Any] | None
+    if args.vram_sample_interval_s == 0:
+        gpu_block = _gpu_sampling_disabled()
+    else:
+        gpu_block = None
+        sampler = VramSampler(interval_s=args.vram_sample_interval_s)
+        sampler.start()
+
+    warmup = _empty_warmup()
+    record: dict[str, Any] | None = None
     try:
+        warmup = _run_warmup(client, manifest, images_dir, args.warmup)
         if source_record is not None:
             record = weave_bench_run_record(
                 source_record,
@@ -1110,21 +1670,40 @@ def main(argv: list[str] | None = None) -> None:
                 started_at=started_at,
             )
     except WeaveBenchRecordError as exc:
-        sys.exit(f"WeaveBenchRecordError: {exc}")
+        sys.exit(f"WeaveBenchRecordError: {_printable_exc(exc)}")
     except BoundedStallError as exc:
         aborted_path = record_path.with_name(record_path.stem + "-aborted.json")
         _stamp_pipeline_provenance(
             exc.partial_record.setdefault("provenance", {}),
             prompt_variant=args.prompt_variant,
             two_pass=args.two_pass,
+            caption_length=args.caption_length,
             dual_length=args.dual_length,
             face_gate=args.face_gate,
             eval_mode=args.eval_mode,
+            instance_shape=args.instance_shape,
+            depiction_lexicon=depiction_lexicon,
+        )
+        if sampler is not None and gpu_block is None:
+            gpu_block = sampler.stop()
+        _stamp_timing_and_gpu(
+            exc.partial_record,
+            warmup=warmup,
+            cold_load_s=args.cold_load_s,
+            gpu=gpu_block or _gpu_sampling_disabled(),
         )
         aborted_path.write_text(json.dumps(exc.partial_record, indent=2, sort_keys=True) + "\n")
-        sys.exit(f"BoundedStallError: {exc} — partial record saved to {aborted_path}")
+        sys.exit(
+            "BoundedStallError: "
+            f"{_printable_exc(exc)} — partial record saved to {_printable_path(aborted_path)}"
+        )
     finally:
         client.close()
+        if sampler is not None and gpu_block is None:
+            gpu_block = sampler.stop()
+
+    if record is None:
+        sys.exit("bakeoff produced no run record")
 
     _stamp_pipeline_provenance(
         record["provenance"],
@@ -1133,14 +1712,23 @@ def main(argv: list[str] | None = None) -> None:
         dual_length=args.dual_length,
         face_gate=args.face_gate,
         eval_mode=args.eval_mode,
+        instance_shape=args.instance_shape,
+        depiction_lexicon=depiction_lexicon,
+        caption_length=args.caption_length,
+    )
+    _stamp_timing_and_gpu(
+        record,
+        warmup=warmup,
+        cold_load_s=args.cold_load_s,
+        gpu=gpu_block or _gpu_sampling_disabled(),
     )
     record_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
     prune_out_dir(str(out_dir), keep=args.keep)
-    print(record_path)
+    print(_printable_path(record_path))
 
 
 if __name__ == "__main__":
     try:
         main()
     except (ManifestError, RemoteClientError) as exc:
-        sys.exit(f"{type(exc).__name__}: {exc}")
+        sys.exit(f"{type(exc).__name__}: {_printable_exc(exc)}")

@@ -19,8 +19,11 @@ import pytest
 from scripts.eval_harness.bakeoff import (
     _CAPTION_MAX_TOKENS,
     _PASS1_MAX_TOKENS,
+    CAPTION_BANDS,
+    DEFAULT_CAPTION_LENGTH,
     DEFAULT_PROMPT_VARIANT,
     PROMPT_VARIANTS,
+    WEAVE_MAX_TOKENS,
     BakeoffClient,
     PassOneJSONError,
     ThreeSurfaceParseError,
@@ -31,6 +34,7 @@ from scripts.eval_harness.bakeoff import (
     _parse_pass1_json,
     _parse_three_surface_json,
     _stamp_pipeline_provenance,
+    _three_surface_instructions,
     main,
     weave_bench_run_record,
 )
@@ -162,7 +166,12 @@ def test_provenance_stamp_records_variant_and_enabled_pipeline_flags() -> None:
     _stamp_pipeline_provenance(
         provenance, prompt_variant="v2", two_pass=True, dual_length=False, face_gate=True, eval_mode="standard"
     )
-    assert provenance == {"prompt_variant": "v2", "two_pass": True, "face_gate": True}
+    assert provenance == {
+        "prompt_variant": "v2",
+        "two_pass": True,
+        "face_gate": True,
+        "roster_epoch": "post-priv1",
+    }
 
     provenance = {}
     _stamp_pipeline_provenance(
@@ -173,7 +182,12 @@ def test_provenance_stamp_records_variant_and_enabled_pipeline_flags() -> None:
         face_gate=False,
         eval_mode="context_distractor",
     )
-    assert provenance == {"prompt_variant": "v1", "dual_length": True, "eval_mode": "context_distractor"}
+    assert provenance == {
+        "prompt_variant": "v1",
+        "dual_length": True,
+        "eval_mode": "context_distractor",
+        "roster_epoch": "post-priv1",
+    }
 
 
 # --- Deliverable 2: two-pass describe-then-ground -----------------------------
@@ -261,8 +275,9 @@ def test_two_pass_malformed_pass1_json_is_typed_per_item_failure_and_run_continu
                 "provenance": {"source": "fixture", "license": "fixture"},
             }
         )
-    manifest = GoldenManifest.model_validate({"manifest_version": 3,
-            "annotation_mode": "roster_only", "roster": [], "entries": entries})
+    manifest = GoldenManifest.model_validate(
+        {"manifest_version": 3, "annotation_mode": "roster_only", "roster": [], "entries": entries}
+    )
     captured: list[dict] = []
     # item 0: pass-1 malformed; item 1: valid facts then a caption.
     client = _client(captured, ["not json at all", _FACTS_JSON, "A quiet shoreline."], two_pass=True)
@@ -450,6 +465,55 @@ def test_apply_face_gate_is_pure_and_deterministic() -> None:
     assert pack["caption"] == "Russet Fathom on the peninsula."  # input never mutated
 
 
+def test_apply_face_gate_keys_on_normalized_name_not_raw_str() -> None:
+    """Padded GT box name must still intersect roster form (wE4 residual / wF2).
+
+    Pre-fix: matched keyed by raw ``str(name)`` so ``\" Alice \"`` never
+    intersected roster ``\"Alice\"`` — gate silently under-counted eligible.
+    """
+    pack = {
+        "caption": "Alice is on the left.",
+        "people_present": "Alice",
+        "description": "Alice stands near the water.",
+    }
+    face_boxes = [
+        {"x": 0.2, "y": 0.4, "w": 0.1, "h": 0.15, "name": " Alice ", "source": "iptc"},
+    ]
+    roster = ["Alice", "Bob Builder"]
+    out_pack, stamp = _apply_face_gate(pack, face_boxes, roster)
+    assert stamp["eligible_names"] == ["Alice"], (
+        f"padded face-box name must match roster Alice; got stamp={stamp!r}"
+    )
+    assert stamp["suppressed_names"] == []
+    assert out_pack["people_present"].startswith("Alice,")
+
+
+def test_apply_face_gate_keys_bom_zwsp_name_to_roster() -> None:
+    """BOM/ZWSP-prefixed box names normalize to roster form under named_box_name."""
+    pack = {"caption": "Alice waves.", "people_present": "Alice"}
+    face_boxes = [
+        {"x": 0.5, "y": 0.5, "w": 0.1, "h": 0.1, "name": "\ufeffAlice", "source": "iptc"},
+    ]
+    _out, stamp = _apply_face_gate(pack, face_boxes, ["Alice"])
+    assert stamp["eligible_names"] == ["Alice"], stamp
+
+
+def test_apply_face_gate_detects_roster_normalization_collision() -> None:
+    """Normalizing both sides must not silently merge distinct roster strings.
+
+    If ``\"Alice\"`` and ``\"Alice \"`` both appear on the roster they collapse to
+    one key after namedness normalization — fail closed with ValueError rather
+    than change identity counts by merge (wave F fail-closed posture).
+    """
+    pack = {"caption": "Alice is here.", "people_present": "Alice"}
+    face_boxes = [
+        {"x": 0.2, "y": 0.4, "w": 0.1, "h": 0.15, "name": "Alice", "source": "iptc"},
+    ]
+    colliding_roster = ["Alice", "Alice "]
+    with pytest.raises(ValueError, match="collision|normalize"):
+        _apply_face_gate(pack, face_boxes, colliding_roster)
+
+
 # --- Score side: additive fields, old records unchanged -----------------------
 
 
@@ -615,8 +679,9 @@ def _weave_manifest(media_ids: list[int]) -> GoldenManifest:
                 "provenance": {"source": "fixture", "license": "fixture"},
             }
         )
-    return GoldenManifest.model_validate({"manifest_version": 3,
-            "annotation_mode": "roster_only", "roster": ["Russet Fathom"], "entries": entries})
+    return GoldenManifest.model_validate(
+        {"manifest_version": 3, "annotation_mode": "roster_only", "roster": ["Russet Fathom"], "entries": entries}
+    )
 
 
 def test_weave_bench_messages_match_live_pass2_without_image() -> None:
@@ -930,8 +995,9 @@ def test_v3_malformed_or_incomplete_weave_json_is_typed_per_item_failure_and_run
                 "provenance": {"source": "fixture", "license": "fixture"},
             }
         )
-    manifest = GoldenManifest.model_validate({"manifest_version": 3,
-            "annotation_mode": "roster_only", "roster": [], "entries": entries})
+    manifest = GoldenManifest.model_validate(
+        {"manifest_version": 3, "annotation_mode": "roster_only", "roster": [], "entries": entries}
+    )
     captured: list[dict] = []
     # item 0: weave JSON missing the "caption" field; item 1: valid three-surface JSON.
     missing_key = json.dumps({"title": "A title of five words", "alt": "An alt."})
@@ -970,7 +1036,7 @@ def test_v3_provenance_stamp_matches_v1_v2_mechanism() -> None:
     _stamp_pipeline_provenance(
         provenance, prompt_variant="v3", two_pass=True, dual_length=False, face_gate=False, eval_mode="standard"
     )
-    assert provenance == {"prompt_variant": "v3", "two_pass": True}
+    assert provenance == {"prompt_variant": "v3", "two_pass": True, "roster_epoch": "post-priv1"}
 
 
 # --- v3 score side: title quality axis (additive, closed-roster name scan) -----
@@ -1040,3 +1106,142 @@ def test_title_metrics_render_in_markdown() -> None:
     assert "title word band [3, 8] violations: 0" in md
     assert "title hallucinated-name images: 1 (Bob Builder)" in md
     assert "prompt variant: `v3`" in md
+
+
+# --- caption-length A/B axis (v3 three-surface) -------------------------------
+#
+# The product hypothesis is that a longer caption reads better; that is a claim
+# to measure, not to assume [EXP-03 declare the OEC]. So the band is a named arm
+# with its own token budget, and every refusal test below is paired with a
+# discrimination guard proving the same path succeeds on the comparable input
+# [TEST-15] -- a green here means the guard reacts to the arm, not that it always
+# fires.
+
+
+def _long_client(captured: list[dict], responses: list[object]) -> BakeoffClient:
+    return _client(captured, responses, prompt_variant="v3", two_pass=True, caption_length="long")
+
+
+def test_caption_band_registry_defaults_to_the_frozen_standard_band() -> None:
+    assert DEFAULT_CAPTION_LENGTH == "standard"
+    assert CAPTION_BANDS["standard"] == "2-5 sentences"  # v3 baseline, unchanged
+    assert set(WEAVE_MAX_TOKENS) == set(CAPTION_BANDS)  # no band without a budget
+    # The long arm must actually be given more room, else the A/B measures the cap.
+    assert WEAVE_MAX_TOKENS["long"] > WEAVE_MAX_TOKENS["standard"]
+    assert WEAVE_MAX_TOKENS["standard"] == _CAPTION_MAX_TOKENS  # standard is bit-identical to pre-axis
+
+
+def test_only_the_caption_band_differs_between_the_two_arms() -> None:
+    """The arms must differ in the band and nothing else, or the A/B is confounded."""
+    standard = _three_surface_instructions("standard")
+    long = _three_surface_instructions("long")
+    assert standard != long
+    assert standard.replace("2-5 sentences", "@@") == long.replace("8-14 sentences", "@@")
+
+
+def test_selected_band_reaches_the_weave_system_prompt() -> None:
+    captured: list[dict] = []
+    _describe(_long_client(captured, [_FACTS_JSON, _V3_FENCED]), {"caption": "x"})
+    system = _system_text(captured[1]["payload"])
+    assert "8-14 sentences" in system and "2-5 sentences" not in system
+    # Discrimination guard: the default arm still ships the frozen band.
+    captured_std: list[dict] = []
+    _describe(_v3_client(captured_std, [_FACTS_JSON, _V3_FENCED]), {"caption": "x"})
+    std_system = _system_text(captured_std[1]["payload"])
+    assert "2-5 sentences" in std_system and "8-14 sentences" not in std_system
+
+
+def test_long_arm_raises_the_pass2_budget_and_leaves_pass1_alone() -> None:
+    captured: list[dict] = []
+    _describe(_long_client(captured, [_FACTS_JSON, _V3_FENCED]), {"caption": "x"})
+    assert captured[0]["payload"]["max_tokens"] == _PASS1_MAX_TOKENS  # describe_facts untouched
+    assert captured[1]["payload"]["max_tokens"] == WEAVE_MAX_TOKENS["long"]
+    # Discrimination guard: the default arm keeps the original caption budget, so
+    # every pre-axis v3 record stays reproducible.
+    captured_std: list[dict] = []
+    _describe(_v3_client(captured_std, [_FACTS_JSON, _V3_FENCED]), {"caption": "x"})
+    assert captured_std[1]["payload"]["max_tokens"] == _CAPTION_MAX_TOKENS
+
+
+def test_weave_bench_replay_gets_the_same_raised_budget() -> None:
+    """Replaying the long arm at the short budget would truncate every cell."""
+    captured: list[dict] = []
+    client = _long_client(captured, [_V3_FENCED])
+    client.weave_bench_describe(media_id=7, facts_raw=_FACTS_JSON, context_pack={"caption": "x"})
+    assert captured[0]["payload"]["max_tokens"] == WEAVE_MAX_TOKENS["long"]
+
+
+def test_unknown_caption_length_rejected_at_construction() -> None:  # rg-008 fail-fast
+    with pytest.raises(ValueError, match="caption_length"):
+        _client([], ["x"], prompt_variant="v3", two_pass=True, caption_length="epic")
+
+
+def test_caption_length_rejected_on_variants_that_emit_no_caption() -> None:
+    """A band stamped into a record that never reached the model is a mislabelled arm."""
+    for variant in ("v1", "v2"):
+        with pytest.raises(ValueError, match="does not emit a caption"):
+            _client([], ["x"], prompt_variant=variant, caption_length="long")
+    # Discrimination guard: the default band is accepted everywhere.
+    _client([], ["x"], prompt_variant="v1", caption_length=DEFAULT_CAPTION_LENGTH).close()
+
+
+def test_cli_rejects_caption_length_without_the_three_surface_variant() -> None:
+    with pytest.raises(SystemExit, match="does not emit a caption"):
+        main(["--endpoint", "http://x", "--model-id", "m", "--prompt-variant", "v2", "--caption-length", "long"])
+
+
+def test_provenance_stamps_the_band_and_the_budget_only_when_non_default() -> None:
+    long_prov: dict = {}
+    _stamp_pipeline_provenance(
+        long_prov,
+        prompt_variant="v3",
+        two_pass=True,
+        dual_length=False,
+        face_gate=False,
+        eval_mode="standard",
+        caption_length="long",
+    )
+    # The budget is stamped alongside the band: a reader must be able to see that
+    # the long leg was not silently capped [EXP-06 Twyman before narrative].
+    assert long_prov == {
+        "prompt_variant": "v3",
+        "caption_length": "long",
+        "weave_max_tokens": WEAVE_MAX_TOKENS["long"],
+        "two_pass": True,
+        "roster_epoch": "post-priv1",
+    }
+    # Discrimination guard: the default arm's record shape is unchanged (additive
+    # schema), so pre-axis records and standard-arm records stay comparable.
+    std_prov: dict = {}
+    _stamp_pipeline_provenance(
+        std_prov,
+        prompt_variant="v3",
+        two_pass=True,
+        dual_length=False,
+        face_gate=False,
+        eval_mode="standard",
+    )
+    assert std_prov == {
+        "prompt_variant": "v3",
+        "two_pass": True,
+        "roster_epoch": "post-priv1",
+    }
+
+
+def test_describe_stamps_the_band_on_the_long_arm_only() -> None:
+    describe = _describe(_long_client([], [_FACTS_JSON, _V3_FENCED]), {"caption": "x"})
+    assert describe["caption_length"] == "long"
+    # Discrimination guard: the default arm's per-item shape is untouched.
+    assert "caption_length" not in _describe(_v3_client([], [_FACTS_JSON, _V3_FENCED]), {"caption": "x"})
+
+
+def test_truncated_long_weave_fails_closed_instead_of_scoring_as_a_short_caption() -> None:
+    """A caption cut off at the budget is malformed JSON, so it must raise rather
+    than land in the record as a legitimately short caption -- otherwise the long
+    arm would lose on a length it was never allowed to spend."""
+    truncated = _V3_FENCED[: len(_V3_FENCED) // 2]
+    with pytest.raises(ThreeSurfaceParseError):
+        _describe(_long_client([], [_FACTS_JSON, truncated]), {"caption": "x"})
+    # Discrimination guard: the complete response on the same arm parses.
+    describe = _describe(_long_client([], [_FACTS_JSON, _V3_FENCED]), {"caption": "x"})
+    assert describe["alt_text_long"] == _V3_SURFACES["caption"]

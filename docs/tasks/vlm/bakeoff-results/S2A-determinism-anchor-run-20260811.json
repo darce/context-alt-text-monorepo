@@ -1,0 +1,1111 @@
+{
+  "items": [
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A plate of food on a wooden table.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A plate of food on a wooden table.",
+          "objects": [
+            "food",
+            "plate",
+            "table"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "media_id": 1,
+      "path": "mock_images/Breiðamerkurjökull.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "Two people seated indoors in conversation.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "Two people seated indoors in conversation.",
+          "objects": [
+            "person",
+            "chair"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "name": "Hollow Pennant",
+          "unpositioned": true
+        }
+      ],
+      "media_id": 2,
+      "path": "mock_images/quiet-nye.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "Two people seated indoors in conversation.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "Two people seated indoors in conversation.",
+          "objects": [
+            "person",
+            "chair"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "name": "Russet Fathom",
+          "unpositioned": true
+        }
+      ],
+      "media_id": 3,
+      "path": "mock_images/ccqw-antartica.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A pet animal resting on a soft surface.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A pet animal resting on a soft surface.",
+          "objects": [
+            "animal"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "name": "Russet Fathom",
+          "unpositioned": true
+        }
+      ],
+      "media_id": 4,
+      "path": "mock_images/ccqw-bar.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A pet animal resting on a soft surface.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A pet animal resting on a soft surface.",
+          "objects": [
+            "animal"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 4,
+      "identities": [
+        {
+          "name": "Russet Fathom",
+          "unpositioned": true
+        },
+        {
+          "name": "Muted Current",
+          "unpositioned": true
+        }
+      ],
+      "media_id": 5,
+      "path": "mock_images/ccqw-candid.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A scenic landscape with mountains under a clear sky.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A scenic landscape with mountains under a clear sky.",
+          "objects": [
+            "mountain",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [],
+      "media_id": 6,
+      "path": "mock_images/ccqw-flowers.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A pet animal resting on a soft surface.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A pet animal resting on a soft surface.",
+          "objects": [
+            "animal"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "name": "Russet Fathom",
+          "unpositioned": true
+        }
+      ],
+      "media_id": 7,
+      "path": "mock_images/ccqw-hair.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A building exterior seen from the street.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A building exterior seen from the street.",
+          "objects": [
+            "building",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [
+        {
+          "name": "Russet Fathom",
+          "unpositioned": true
+        }
+      ],
+      "media_id": 8,
+      "path": "mock_images/ccqw-occlusion-2.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A building exterior seen from the street.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A building exterior seen from the street.",
+          "objects": [
+            "building",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "name": "Russet Fathom",
+          "unpositioned": true
+        }
+      ],
+      "media_id": 9,
+      "path": "mock_images/ccqw-occlusion.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A building exterior seen from the street.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A building exterior seen from the street.",
+          "objects": [
+            "building",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "name": "Russet Fathom",
+          "unpositioned": true
+        },
+        {
+          "name": "Fixture-Wrong-9",
+          "unpositioned": true
+        }
+      ],
+      "media_id": 10,
+      "path": "mock_images/ccqw-purple.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A scenic landscape with mountains under a clear sky.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A scenic landscape with mountains under a clear sky.",
+          "objects": [
+            "mountain",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [],
+      "media_id": 11,
+      "path": "mock_images/ccqw-running-2.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A scenic landscape with mountains under a clear sky.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A scenic landscape with mountains under a clear sky.",
+          "objects": [
+            "mountain",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 3,
+      "identities": [
+        {
+          "name": "Russet Fathom",
+          "unpositioned": true
+        }
+      ],
+      "media_id": 12,
+      "path": "mock_images/ccqw-running.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A building exterior seen from the street.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A building exterior seen from the street.",
+          "objects": [
+            "building",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "name": "Russet Fathom",
+          "unpositioned": true
+        }
+      ],
+      "media_id": 13,
+      "path": "mock_images/ccqw-sunglasses-flowers.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "Two people seated indoors in conversation.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "Two people seated indoors in conversation.",
+          "objects": [
+            "person",
+            "chair"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "name": "Russet Fathom",
+          "unpositioned": true
+        }
+      ],
+      "media_id": 14,
+      "path": "mock_images/ccqw-sunglasses.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A plate of food on a wooden table.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A plate of food on a wooden table.",
+          "objects": [
+            "food",
+            "plate",
+            "table"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [
+        {
+          "name": "Russet Fathom",
+          "unpositioned": true
+        }
+      ],
+      "media_id": 15,
+      "path": "mock_images/ccqw-underexposed.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A person standing outdoors near greenery.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A person standing outdoors near greenery.",
+          "objects": [
+            "person",
+            "plant",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [],
+      "media_id": 16,
+      "path": "mock_images/ccqw.blurry.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A scenic landscape with mountains under a clear sky.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A scenic landscape with mountains under a clear sky.",
+          "objects": [
+            "mountain",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 3,
+      "identities": [
+        {
+          "name": "Tidal Harbor",
+          "unpositioned": true
+        }
+      ],
+      "media_id": 17,
+      "path": "mock_images/tidal-1.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A close-up of a small object on a neutral background.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A close-up of a small object on a neutral background.",
+          "objects": [
+            "object"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "name": "Gilded Cypress",
+          "unpositioned": true
+        }
+      ],
+      "media_id": 18,
+      "path": "mock_images/example-gildedcypress-goldleaf.jpeg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A scenic landscape with mountains under a clear sky.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A scenic landscape with mountains under a clear sky.",
+          "objects": [
+            "mountain",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 2,
+      "identities": [
+        {
+          "name": "Auburn Current",
+          "unpositioned": true
+        },
+        {
+          "name": "Fixture-Wrong-18",
+          "unpositioned": true
+        }
+      ],
+      "media_id": 19,
+      "path": "mock_images/k.mcc-1.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A close-up of a small object on a neutral background.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A close-up of a small object on a neutral background.",
+          "objects": [
+            "object"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "name": "Auburn Current",
+          "unpositioned": true
+        }
+      ],
+      "media_id": 20,
+      "path": "mock_images/auburn-1.jpeg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A person standing outdoors near greenery.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A person standing outdoors near greenery.",
+          "objects": [
+            "person",
+            "plant",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 3,
+      "identities": [],
+      "media_id": 21,
+      "path": "mock_images/auburn-boat.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A close-up of a small object on a neutral background.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A close-up of a small object on a neutral background.",
+          "objects": [
+            "object"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "name": "Daniel Arce",
+          "unpositioned": true
+        },
+        {
+          "name": "Auburn Current",
+          "unpositioned": true
+        }
+      ],
+      "media_id": 23,
+      "path": "mock_images/auburn-daniel-sunglasses.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "Two people seated indoors in conversation.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "Two people seated indoors in conversation.",
+          "objects": [
+            "person",
+            "chair"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 2,
+      "identities": [
+        {
+          "name": "Auburn Current",
+          "unpositioned": true
+        }
+      ],
+      "media_id": 24,
+      "path": "mock_images/auburn-pool.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "Two people seated indoors in conversation.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "Two people seated indoors in conversation.",
+          "objects": [
+            "person",
+            "chair"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "name": "Linen Kestrel",
+          "unpositioned": true
+        }
+      ],
+      "media_id": 25,
+      "path": "mock_images/linen-kestrel-2.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A building exterior seen from the street.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A building exterior seen from the street.",
+          "objects": [
+            "building",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "name": "Linen Kestrel",
+          "unpositioned": true
+        }
+      ],
+      "media_id": 26,
+      "path": "mock_images/linen-kestrel-home.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A close-up of a small object on a neutral background.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A close-up of a small object on a neutral background.",
+          "objects": [
+            "object"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "media_id": 27,
+      "path": "mock_images/linen-kestrel-painting.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A pet animal resting on a soft surface.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A pet animal resting on a soft surface.",
+          "objects": [
+            "animal"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 4,
+      "identities": [
+        {
+          "name": "Slate Willow",
+          "unpositioned": true
+        }
+      ],
+      "media_id": 28,
+      "path": "mock_images/slate-cocktail.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A person standing outdoors near greenery.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A person standing outdoors near greenery.",
+          "objects": [
+            "person",
+            "plant",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 3,
+      "identities": [
+        {
+          "name": "Slate Willow",
+          "unpositioned": true
+        },
+        {
+          "name": "Fixture-Wrong-27",
+          "unpositioned": true
+        }
+      ],
+      "media_id": 29,
+      "path": "mock_images/slate-party.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A plate of food on a wooden table.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A plate of food on a wooden table.",
+          "objects": [
+            "food",
+            "plate",
+            "table"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [
+        {
+          "name": "Slate Willow",
+          "unpositioned": true
+        }
+      ],
+      "media_id": 30,
+      "path": "mock_images/slate-pool.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A printed document with several lines of text.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A printed document with several lines of text.",
+          "objects": [
+            "document"
+          ],
+          "ocr_text": "Sample text"
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "name": "Slate Willow",
+          "unpositioned": true
+        }
+      ],
+      "media_id": 31,
+      "path": "mock_images/mcm-eye-blocked.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "Two people seated indoors in conversation.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "Two people seated indoors in conversation.",
+          "objects": [
+            "person",
+            "chair"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [],
+      "media_id": 32,
+      "path": "mock_images/mcm-icecave.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A scenic landscape with mountains under a clear sky.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A scenic landscape with mountains under a clear sky.",
+          "objects": [
+            "mountain",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "name": "Slate Willow",
+          "unpositioned": true
+        }
+      ],
+      "media_id": 33,
+      "path": "mock_images/mcm-planecrash.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A printed document with several lines of text.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A printed document with several lines of text.",
+          "objects": [
+            "document"
+          ],
+          "ocr_text": "Sample text"
+        }
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "media_id": 34,
+      "path": "mock_images/nina-machiavelli.jpeg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A pet animal resting on a soft surface.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A pet animal resting on a soft surface.",
+          "objects": [
+            "animal"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 3,
+      "identities": [],
+      "media_id": 35,
+      "path": "mock_images/rrw-mirror.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A person standing outdoors near greenery.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A person standing outdoors near greenery.",
+          "objects": [
+            "person",
+            "plant",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "name": "Muted Yarrow",
+          "unpositioned": true
+        }
+      ],
+      "media_id": 36,
+      "path": "mock_images/muted-bar.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A printed document with several lines of text.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A printed document with several lines of text.",
+          "objects": [
+            "document"
+          ],
+          "ocr_text": "Sample text"
+        }
+      },
+      "error": null,
+      "face_count": 5,
+      "identities": [],
+      "media_id": 37,
+      "path": "mock_images/muted-group-party.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A building exterior seen from the street.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A building exterior seen from the street.",
+          "objects": [
+            "building",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 2,
+      "identities": [
+        {
+          "name": "Muted Yarrow",
+          "unpositioned": true
+        },
+        {
+          "name": "Fixture-Wrong-36",
+          "unpositioned": true
+        }
+      ],
+      "media_id": 38,
+      "path": "mock_images/muted-party.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A plate of food on a wooden table.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A plate of food on a wooden table.",
+          "objects": [
+            "food",
+            "plate",
+            "table"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 2,
+      "identities": [
+        {
+          "name": "Hollow Pennant",
+          "unpositioned": true
+        },
+        {
+          "name": "Russet Fathom",
+          "unpositioned": true
+        }
+      ],
+      "media_id": 39,
+      "path": "mock_images/y-missing-mixed-order.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A person standing outdoors near greenery.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A person standing outdoors near greenery.",
+          "objects": [
+            "person",
+            "plant",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 2,
+      "identities": [
+        {
+          "name": "Slate Willow",
+          "unpositioned": true
+        },
+        {
+          "name": "Russet Fathom",
+          "unpositioned": true
+        }
+      ],
+      "identity_ordering": "positional",
+      "media_id": 40,
+      "path": "mock_images/centre-x-tie-order.jpg"
+    }
+  ],
+  "kind": "run_record",
+  "provenance": {
+    "adapter": "seeded",
+    "base_url": "seeded-stub://offline",
+    "canonical_timestamp": "2026-08-11T00:00:00Z",
+    "corpus_traps": [
+      {
+        "kind": "VLM6-R2-G-01_mixed_y_order_degraded",
+        "media_id": 39,
+        "note": "named box missing y alongside sibling named box with y; order_degraded observable so the caption freeze counter cannot stay at structural 0. Golden seed stays 0/37 face_boxes; this trap is freeze-corpus-only.",
+        "path": "mock_images/y-missing-mixed-order.jpg",
+        "trips": "labeled_y_missing_images always-0 freeze blindness (VLM6-R2-G-01 residual / wG3 caption corpus)"
+      },
+      {
+        "kind": "VLM6-R2-G-02_centre_x_tie_positional",
+        "media_id": 40,
+        "note": "two named boxes share centre x with distinct y so a correct (x,y,name) key is distinguishable from a y-reversed or y-blind key. Without this entry positional_images stays structural 0 and HARM-06/HARM-07 ordering rewrites cannot go red on the caption freeze.",
+        "path": "mock_images/centre-x-tie-order.jpg",
+        "trips": "positional_images always-0 freeze blindness (VLM6-R2-G-02; no centre-x-tie image)"
+      }
+    ],
+    "coverage_gaps": {
+      "demographic_cohort": {
+        "below_threshold": true,
+        "pi_zero": true,
+        "populated": 0,
+        "reason": "0/39 entries populate it (threshold=5) — demographic/cohort fairness slices have no sampling frame",
+        "registry": "owner=FIR-5; action=label roster_cohorts / demographic_cohort after operator cohort definitions land — no labelled source exists yet",
+        "threshold": 5,
+        "total": 39
+      },
+      "face_boxes": {
+        "below_threshold": true,
+        "pi_zero": false,
+        "populated": 2,
+        "reason": "2/39 entries populate it (threshold=5) — positional_identification never runs; set-based identity scoring cannot catch right-names-on-wrong-faces",
+        "registry": "owner=FIR-1/VLM-6-operator; action=author FaceBox x/y/w/h per face — phrase_boxes.json has centers only for 6 scenes and is not a substitute",
+        "threshold": 5,
+        "total": 39
+      },
+      "reference_facts": {
+        "below_threshold": true,
+        "pi_zero": true,
+        "populated": 0,
+        "reason": "0/39 entries populate it (threshold=5) — no trap coverage for fabricated-fact scoring (rate is undefined)",
+        "registry": "owner=VLM-6-operator; action=author polarity-tagged reference_facts per image after a visual pass — cannot be derived from filename/face_count alone",
+        "threshold": 5,
+        "total": 39
+      },
+      "spatial_facts": {
+        "below_threshold": true,
+        "pi_zero": true,
+        "populated": 0,
+        "reason": "0/39 entries populate it (threshold=5) — placement accuracy is vacuous (0 asserted claims)",
+        "registry": "owner=VLM-6-operator; action=author spatial relations from curated boxes — no box geometry is vendored for the full corpus",
+        "threshold": 5,
+        "total": 39
+      }
+    },
+    "face_metrics_evidential": false,
+    "fixture_revision": "0000000000000000000000000000000000000000",
+    "generator": "scripts.eval_harness.generate_determinism_anchor",
+    "head_sha": null,
+    "manifest_sha256": "18d7fc6f3b0ef568da93df91694859ed3f2dc4e87cb237fb26375b077edc6eb3",
+    "metric_backing_refusals": {
+      "demographic_cohort": "cannot certify metric backed by 'demographic_cohort': 0/39 entries populate that field (vacuous corpus-wide; per-stratum gate would collapse to a single bucket). Declared coverage gap: owner=FIR-5; action=label roster_cohorts / demographic_cohort after operator cohort definitions land — no labelled source exists yet.",
+      "reference_facts": "cannot certify metric backed by 'reference_facts': 0/39 entries populate that field (vacuous corpus-wide; per-stratum gate would collapse to a single bucket). Declared coverage gap: owner=VLM-6-operator; action=author polarity-tagged reference_facts per image after a visual pass — cannot be derived from filename/face_count alone.",
+      "spatial_facts": "cannot certify metric backed by 'spatial_facts': 0/39 entries populate that field (vacuous corpus-wide; per-stratum gate would collapse to a single bucket). Declared coverage gap: owner=VLM-6-operator; action=author spatial relations from curated boxes — no box geometry is vendored for the full corpus."
+    },
+    "note": "byte-stability anchor from the seeded offline adapter; no model, no real image bytes. Proves the scoring path is deterministic and that corruption goes red — not that captions or faces are good. Face/identity predictions are ground_truth_derived_fixture with a fixed seeded deviation (TEST-15); face_metrics_evidential=false. fixture_revision/canonical_timestamp are byte-stability sentinels, not git/wall-clock provenance. Freeze corpus is golden.json + media 39 mixed-y order_degraded trap (VLM6-R2-G-01 / wG3) so labeled_y_missing_images is freeze-observable; see provenance.corpus_traps. Media 40 centre-x-tie trap (VLM6-R2-G-02) so positional_images is freeze-observable; see provenance.corpus_traps. See eval_harness/README.md § Corpus coverage boundary.",
+    "predictions_source": "ground_truth_derived_fixture",
+    "started_at": null
+  },
+  "schema": "acx-eval/v1"
+}

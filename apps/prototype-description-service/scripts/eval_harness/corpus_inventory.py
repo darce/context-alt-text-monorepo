@@ -37,6 +37,7 @@ from pathlib import Path
 
 from PIL import Image, ImageFilter
 
+from scripts.eval_harness._pathtext import _printable_message, _printable_path
 from scripts.eval_harness.identity_sources import (
     celeb_identity_from_filename,
     extract_face_regions,
@@ -261,7 +262,7 @@ def load_records(path: Path) -> list[ImageRecord]:
         # A schema change silently invalidates the checkpoint; make the re-scan visible
         # rather than letting --resume quietly redo work it looks like it already did (rg-008).
         print(
-            f"WARNING: {path}: dropped {schema_dropped} checkpoint row(s) whose fields do not "
+            f"WARNING: {_printable_path(path)}: dropped {schema_dropped} checkpoint row(s) whose fields do not "
             "match the current ImageRecord schema; those images will be re-inventoried",
             file=sys.stderr,
         )
@@ -299,7 +300,11 @@ def _scan(root: Path, out: Path, *, limit: int | None, resume: bool) -> tuple[in
                 # end the whole scan, and since the file is never checkpointed every
                 # --resume would re-hit it and re-abort at the same spot (never completing).
                 skipped += 1
-                print(f"WARNING: skipping {path}: {type(exc).__name__}: {exc}", file=sys.stderr)
+                print(
+                    f"WARNING: skipping {_printable_path(path)}: {type(exc).__name__}: "
+                    f"{_printable_message(str(exc))}",
+                    file=sys.stderr,
+                )
                 continue
             _append_record(handle, record)
             written += 1
@@ -314,7 +319,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--resume", action="store_true", help="keep --out's records and scan only what's missing")
     args = parser.parse_args(argv)
     if not args.root.is_dir():
-        parser.error(f"root is not a directory: {args.root}")
+        parser.error(f"root is not a directory: {_printable_path(args.root)}")
     written, resumed, skipped = _scan(args.root, args.out, limit=args.limit, resume=args.resume)
     records = load_records(args.out)
     bw = sum(1 for r in records if r.bw_candidate)
@@ -322,7 +327,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
     celebs = sum(1 for r in records if r.celeb_name)
     dupes = len(records) - len(dedupe_by_sha256(records))
     print(
-        f"{len(records)} images -> {args.out}  (+{written} new, resumed {resumed}, skipped {skipped}, "
+        f"{len(records)} images -> {_printable_path(args.out)}  (+{written} new, resumed {resumed}, skipped {skipped}, "
         f"dupes={dupes}, bw~{bw}, xmp-named={named}, celeb-labeled={celebs})"
     )
     # Non-zero when a run inventoried nothing new yet hit unreadable files: a bounded

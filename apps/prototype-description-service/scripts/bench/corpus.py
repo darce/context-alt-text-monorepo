@@ -16,7 +16,14 @@ from urllib.parse import urljoin, urlparse
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from scripts.bench.stack_pair import BenchError
-from scripts.eval_harness.manifest import GoldenEntry, GoldenManifest, load_manifest
+from scripts.eval_harness._pathtext import _printable_message, _printable_path
+from scripts.eval_harness.manifest import (
+    GoldenEntry,
+    GoldenManifest,
+    ManifestError,
+    load_manifest,
+    resolve_image_path,
+)
 
 Resolver = Callable[[str], list[str]]
 Fetcher = Callable[[str, set[str]], bytes]
@@ -83,9 +90,22 @@ def load_bench_manifest(
     path: str | Path,
     images_dir: str | Path | None = None,
     require_detection_exhaustiveness: bool = False,
+    *,
+    skip_hash_verification: bool = False,
+    metadata_only: bool = False,
+    hash_skip_reason: str | None = None,
 ) -> GoldenManifest:
     images = None if images_dir is None else str(images_dir)
-    manifest = load_manifest(str(path), images_dir=images)
+    # Do not infer metadata_only from skip + images_dir=None (rg-015).
+    # Callers that never open image bytes must pass metadata_only=True
+    # and a hash_skip_reason; pixel paths leave both at defaults.
+    manifest = load_manifest(
+        str(path),
+        images_dir=images,
+        skip_hash_verification=skip_hash_verification,
+        hash_skip_reason=hash_skip_reason,
+        metadata_only=metadata_only,
+    )
     non_exhaustive: list[int] = []
     for entry in manifest.entries:
         exhaustive = bool(entry.face_boxes) and entry.face_count == len(entry.face_boxes)
@@ -160,13 +180,19 @@ def resolve_media_bytes(
     fetcher: Fetcher | None = None,
 ) -> bytes:
     if images_dir is not None:
-        local = Path(images_dir) / entry.path
-        if local.is_file():
-            data = local.read_bytes()
-            digest = hashlib.sha256(data).hexdigest()
-            if entry.sha256 and digest != entry.sha256:
-                raise BenchError("media_unresolvable", f"sha256 mismatch for {entry.path}")
-            return data
+        try:
+            local = resolve_image_path(images_dir, entry.path)
+        except ManifestError as exc:
+            raise BenchError("media_unresolvable", str(exc)) from exc
+        if local is not None:
+            try:
+                data = local.read_bytes()
+            except OSError as exc:
+                raise BenchError(
+                    "media_resource_failed",
+                    f"could not read local media {_printable_path(entry.path)}: {exc}",
+                ) from exc
+            return _verify_media_bytes(data, entry.sha256, source="local", path=entry.path)
 
     url = _remote_url(entry, url_map_path)
     if url:
@@ -176,12 +202,35 @@ def resolve_media_bytes(
             resolver=resolver,
             fetcher=fetcher,
         )
-        if entry.sha256:
-            digest = hashlib.sha256(data).hexdigest()
-            if digest != entry.sha256:
-                raise BenchError("media_unresolvable", f"sha256 mismatch for remote {entry.path}")
-        return data
-    raise BenchError("media_unresolvable", f"no local file or remote URL for {entry.path}")
+        return _verify_media_bytes(data, entry.sha256, source="remote", path=entry.path)
+    raise BenchError(
+        "media_unresolvable",
+        f"no local file or remote URL for {_printable_path(entry.path)}",
+    )
+
+
+def _verify_media_bytes(data: object, expected_sha256: str, *, source: str, path: str) -> bytes:
+    """Validate the resolver's byte contract and the manifest content pin.
+
+    The hash check is deliberately immediately before the caller can decode or
+    upload the payload. That keeps a source failure a typed ingest failure and
+    makes the content pin effective for both local and remote resolution
+    ([RES-03] slow/failed integration points must not become success signals).
+    """
+    if not isinstance(data, bytes):
+        raise BenchError(
+            "media_resource_failed",
+            f"{source} media resolver returned {type(data).__name__}, expected bytes "
+            f"for {_printable_path(path)}",
+        )
+    digest = hashlib.sha256(data).hexdigest()
+    if expected_sha256 and digest != expected_sha256:
+        qualifier = "remote" if source == "remote" else "local"
+        raise BenchError(
+            "media_unresolvable",
+            f"sha256 mismatch for {qualifier} {_printable_path(path)}",
+        )
+    return data
 
 
 def _remote_url(entry: GoldenEntry, url_map_path: str | Path | None) -> str | None:
@@ -189,12 +238,28 @@ def _remote_url(entry: GoldenEntry, url_map_path: str | Path | None) -> str | No
         return entry.provenance.url
     if url_map_path is None:
         return None
-    raw = json.loads(Path(url_map_path).read_text(encoding="utf-8"))
+    try:
+        raw = json.loads(Path(url_map_path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, TypeError, ValueError) as exc:
+        raise BenchError(
+            "media_resource_failed",
+            f"could not read media URL map {_printable_path(url_map_path)}: {exc}",
+        ) from exc
     if not isinstance(raw, dict):
-        return None
+        raise BenchError(
+            "media_resource_failed",
+            f"media URL map {_printable_path(url_map_path)} must be a JSON object",
+        )
     for key in (entry.path, str(entry.media_id), str(entry.sha256)):
         if key in raw:
-            return str(raw[key])
+            value = raw[key]
+            if not isinstance(value, str) or not value.strip():
+                raise BenchError(
+                    "media_resource_failed",
+                    f"media URL map {_printable_path(url_map_path)} has an invalid URL "
+                    f"for {_printable_path(entry.path)}",
+                )
+            return value
     return None
 
 
@@ -206,28 +271,92 @@ def _fetch_remote(
     fetcher: Fetcher | None,
     hops: int = 0,
 ) -> bytes:
-    parsed = urlparse(url)
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname
+    except (TypeError, ValueError) as exc:
+        raise BenchError(
+            "media_unresolvable",
+            f"remote URL is malformed: {_printable_message(url)}",
+        ) from exc
     if parsed.scheme != "https" or not parsed.hostname:
-        raise BenchError("media_unresolvable", f"remote URL must be https: {url}")
-    host = parsed.hostname
-    addresses = set((resolver or _default_resolve)(host))
-    pinned = pin_media_hosts(host, addresses)
-    if addresses != pinned and not addresses.issubset(pinned):
-        raise BenchError("media_unresolvable", f"DNS pin mismatch for {host}: {addresses} vs {pinned}")
-    use_addrs = pinned
-    if not allow_private_source:
-        for addr in use_addrs:
-            if _is_non_public(addr):
-                raise BenchError("media_unresolvable", f"refusing non-public-unicast address {addr} for {host}")
+        raise BenchError(
+            "media_unresolvable",
+            f"remote URL must be https: {_printable_message(url)}",
+        )
+    try:
+        addresses = set((resolver or _default_resolve)(host))
+    except BenchError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — DNS implementations vary by platform
+        raise BenchError(
+            "media_resource_failed",
+            f"could not resolve media host {host}: {exc}",
+        ) from exc
+    if not addresses:
+        raise BenchError("media_resource_failed", f"media host {host} returned no addresses")
+    if not all(isinstance(address, str) for address in addresses):
+        raise BenchError(
+            "media_resource_failed",
+            f"media host {host} returned a non-text address",
+        )
+    try:
+        pinned = pin_media_hosts(host, addresses)
+        if addresses != pinned and not addresses.issubset(pinned):
+            raise BenchError(
+                "media_unresolvable",
+                f"DNS pin mismatch for {host}: {addresses} vs {pinned}",
+            )
+        use_addrs = pinned
+        if not use_addrs:
+            raise BenchError("media_resource_failed", f"media host {host} has no pinned addresses")
+        if not allow_private_source:
+            for addr in use_addrs:
+                if _is_non_public(addr):
+                    raise BenchError(
+                        "media_unresolvable",
+                        f"refusing non-public-unicast address {addr} for {host}",
+                    )
+    except BenchError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — pin/address implementations vary
+        raise BenchError(
+            "media_resource_failed",
+            f"could not validate pinned media host {host}: {exc}",
+        ) from exc
     if fetcher is not None:
-        return fetcher(url, use_addrs)
-    return _http_fetch_pinned(
-        url,
-        use_addrs,
-        allow_private_source=allow_private_source,
-        resolver=resolver,
-        hops=hops,
-    )
+        try:
+            data = fetcher(url, use_addrs)
+        except BenchError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — injected/HTTP transports vary
+            raise BenchError(
+                "media_resource_failed",
+                f"remote media fetch failed for {_printable_message(url)}: {exc}",
+            ) from exc
+        if not isinstance(data, bytes):
+            raise BenchError(
+                "media_resource_failed",
+                f"remote media fetch returned {type(data).__name__}, expected bytes",
+            )
+        return data
+    try:
+        # [RES-02][RES-03] Keep the socket connect/read bounded and turn slow or
+        # broken integration points into explicit resource failures.
+        return _http_fetch_pinned(
+            url,
+            use_addrs,
+            allow_private_source=allow_private_source,
+            resolver=resolver,
+            hops=hops,
+        )
+    except BenchError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — socket/TLS errors are resource failures
+        raise BenchError(
+            "media_resource_failed",
+            f"remote media fetch failed for {_printable_message(url)}: {exc}",
+        ) from exc
 
 
 def _default_resolve(host: str) -> list[str]:
@@ -262,20 +391,44 @@ def _http_fetch_pinned(
     hops: int,
 ) -> bytes:
     if hops > 5:
-        raise BenchError("media_unresolvable", f"too many redirects fetching {url}")
-    parsed = urlparse(url)
-    if parsed.scheme != "https" or not parsed.hostname:
-        raise BenchError("media_unresolvable", f"remote URL must be https: {url}")
+        raise BenchError(
+            "media_unresolvable",
+            f"too many redirects fetching {_printable_message(url)}",
+        )
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname
+    except (TypeError, ValueError) as exc:
+        raise BenchError(
+            "media_unresolvable",
+            f"remote URL is malformed: {_printable_message(url)}",
+        ) from exc
+    if parsed.scheme != "https" or not hostname:
+        raise BenchError(
+            "media_unresolvable",
+            f"remote URL must be https: {_printable_message(url)}",
+        )
+    if not pinned_addrs:
+        raise BenchError("media_resource_failed", "remote media has no pinned address")
     target = sorted(pinned_addrs)[0]
-    port = parsed.port or 443
+    try:
+        port = parsed.port or 443
+    except ValueError as exc:
+        raise BenchError(
+            "media_unresolvable",
+            f"remote URL has an invalid port: {_printable_message(url)}",
+        ) from exc
     path = parsed.path or "/"
     if parsed.query:
         path = f"{path}?{parsed.query}"
-    status, headers, body = _https_get_pinned(parsed.hostname, port, path, target)
+    status, headers, body = _https_get_pinned(hostname, port, path, target)
     if status in {301, 302, 303, 307, 308}:
         location = headers.get("location")
         if not location:
-            raise BenchError("media_unresolvable", f"redirect from {url} missing Location")
+            raise BenchError(
+                "media_unresolvable",
+                f"redirect from {_printable_message(url)} missing Location",
+            )
         return _fetch_remote(
             _absolute_https_redirect(url, location),
             allow_private_source=allow_private_source,
@@ -284,15 +437,28 @@ def _http_fetch_pinned(
             hops=hops + 1,
         )
     if status >= 400:
-        raise BenchError("media_unresolvable", f"GET {url} returned {status}")
+        raise BenchError(
+            "media_unresolvable",
+            f"GET {_printable_message(url)} returned {status}",
+        )
     return body
 
 
 def _absolute_https_redirect(base_url: str, location: str) -> str:
-    resolved = urljoin(base_url, location.strip())
-    parsed = urlparse(resolved)
-    if parsed.scheme != "https" or not parsed.hostname:
-        raise BenchError("media_unresolvable", f"redirect is not https: {resolved}")
+    try:
+        resolved = urljoin(base_url, location.strip())
+        parsed = urlparse(resolved)
+        hostname = parsed.hostname
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise BenchError(
+            "media_unresolvable",
+            f"redirect URL is malformed: {_printable_message(location)}",
+        ) from exc
+    if parsed.scheme != "https" or not hostname:
+        raise BenchError(
+            "media_unresolvable",
+            f"redirect is not https: {_printable_message(resolved)}",
+        )
     return resolved
 
 

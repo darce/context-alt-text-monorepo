@@ -24,6 +24,7 @@ from scripts.eval_harness.face_assignment import (
     associate_detections,
     build_loo_gallery,
     global_fold_ranks,
+    gt_box_name,
     gt_normalized_centre_to_pixel_corner,
     iou_pixel_corner,
     is_enrolled_for_probe,
@@ -34,6 +35,7 @@ from scripts.eval_harness.face_assignment import (
     select_tau_open_set_f1,
     similar_people_hungarian,
 )
+from scripts.eval_harness.face_metrics import named_box_name
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -63,7 +65,7 @@ def _face(
     }
 
 
-def _gt(x: float, y: float, w: float, h: float, name: str | None) -> dict:
+def _gt(x: float, y: float | None, w: float, h: float, name: str | None) -> dict:
     return {"x": x, "y": y, "w": w, "h": h, "name": name, "source": "iptc"}
 
 
@@ -177,6 +179,135 @@ def test_associate_stranger_name_none():
     result = associate_detections(dets, gt, [100, 100])
     assert len(result.pairs) == 1
     assert result.pairs[0].name is None
+
+
+# ---------------------------------------------------------------------------
+# Null-y GT hardening (wF4 residual 3 / VLM6 Wave G wG2)
+# ---------------------------------------------------------------------------
+# FaceBox.y is optional (order_degraded / labeled_y_missing_images). Association
+# needs a full centre for IoU — must not float(None), must not invent y=0 or
+# match on x alone, and must stamp incompleteness so consumers can tell a
+# complete association from a degraded one (rg-015 / DIAG-03 / S2-07).
+
+
+def test_associate_null_y_with_detections_does_not_crash():
+    """DBG-10 / TEST-15: null-y named box + n_det>0 must not TypeError."""
+    gt = [_gt(0.5, None, 0.2, 0.2, "Alice")]
+    dets = [[40.0, 40.0, 20.0, 20.0]]
+    result = associate_detections(dets, gt, [100, 100])
+    # No crash — result is stamped incomplete (not a complete empty match).
+    assert result.geometry_incomplete_gt == (0,)
+    assert result.association_complete is False
+    assert result.pairs == ()
+    assert result.unmatched_detections == (0,)
+    # Incomplete GT is not a detector FN (unmatched_gt).
+    assert result.unmatched_gt == ()
+
+
+def test_associate_mixed_y_excludes_incomplete_keeps_complete_match():
+    """Complete sibling still associates; null-y excluded + stamped."""
+    # Bob complete centre (0.25,0.25) size 0.4 → px [5,5,40,40] on 100×100.
+    # Alice null-y at x=0.75 — cannot enter IoU matrix.
+    gts = [
+        _gt(0.25, 0.25, 0.4, 0.4, "Bob"),
+        _gt(0.75, None, 0.4, 0.4, "Alice"),
+    ]
+    dets = [[5.0, 5.0, 40.0, 40.0]]  # matches Bob
+    result = associate_detections(dets, gts, [100, 100])
+    assert len(result.pairs) == 1
+    assert result.pairs[0].name == "Bob"
+    assert result.pairs[0].gt_index == 0
+    assert result.geometry_incomplete_gt == (1,)
+    assert result.association_complete is False
+    assert result.unmatched_gt == ()
+    assert result.unmatched_detections == ()
+
+
+def test_associate_null_y_not_x_only_match():
+    """Option-3 trap: must not silently match on x alone when y is missing."""
+    # If y were invented as 0.5, this det would match Alice with high IoU.
+    # With y=None the box must be excluded — never an invented pair.
+    gt = [_gt(0.5, None, 0.2, 0.2, "Alice")]
+    dets = [[40.0, 40.0, 20.0, 20.0]]  # would be perfect match at y=0.5
+    result = associate_detections(dets, gt, [100, 100])
+    assert result.pairs == ()
+    assert result.geometry_incomplete_gt == (0,)
+
+
+def test_associate_null_y_zero_det_stamps_incomplete_not_fn():
+    """Zero-det path: incomplete GT is geometry stamp, not unmatched_gt FN."""
+    gts = [
+        _gt(0.25, 0.25, 0.2, 0.2, "Bob"),
+        _gt(0.75, None, 0.2, 0.2, "Alice"),
+    ]
+    result = associate_detections([], gts, [100, 100])
+    assert result.pairs == ()
+    assert result.unmatched_detections == ()
+    assert result.unmatched_gt == (0,)  # Bob only — complete, missed
+    assert result.geometry_incomplete_gt == (1,)
+    assert result.association_complete is False
+
+
+def test_collect_matched_faces_null_y_with_detections_no_crash_no_fn_inflate():
+    """collect_matched_faces: n_det>0 + null-y must score without crash.
+
+    Incomplete named GT must not inflate missed_gt (detection FN).
+    """
+    from scripts.eval_harness.face_assignment import collect_matched_faces
+
+    gt_complete = _gt(0.25, 0.25, 0.4, 0.4, "Bob")
+    gt_incomplete = _gt(0.75, None, 0.4, 0.4, "Alice")
+    run = [
+        {
+            "media_id": 1,
+            "path": "mixed.jpg",
+            "image_size": [100, 100],
+            "faces": [
+                _face([5.0, 5.0, 40.0, 40.0], [1.0, 0.0]),  # Bob
+            ],
+        }
+    ]
+    matched, assocs, false_det, missed_named, missed_stranger = collect_matched_faces(
+        run, {1: [gt_complete, gt_incomplete]}
+    )
+    assert len(matched) == 1
+    assert matched[0].true_name == "Bob"
+    assert false_det == 0
+    assert missed_named == 0  # Alice incomplete ≠ detector FN
+    assert missed_stranger == 0
+    assoc = assocs[1]
+    assert assoc.geometry_incomplete_gt == (1,)
+    assert assoc.association_complete is False
+
+
+def test_score_face_assignment_propagates_geometry_incomplete_stamp():
+    """AssignmentResult must surface incompleteness (not only AssociationResult)."""
+    gt = [_gt(0.5, None, 0.2, 0.2, "Alice")]
+    run = [
+        {
+            "media_id": 7,
+            "path": "null-y.jpg",
+            "image_size": [100, 100],
+            "faces": [_face([40.0, 40.0, 20.0, 20.0], [1.0, 0.0])],
+        }
+    ]
+    result = score_face_assignment(run, {7: gt})
+    assert result.geometry_incomplete_gt == 1
+    assert result.association_incomplete_media == 1
+    assert result.false_detections == 1  # lone det unmatched
+    assert result.missed_gt == 0  # incomplete ≠ FN
+    assert result.matched == ()
+
+
+def test_associate_facebox_model_null_y():
+    """FaceBox pydantic model with y=None takes the same path as dict GT."""
+    from scripts.eval_harness.manifest import FaceBox
+
+    gt = [FaceBox(x=0.5, y=None, w=0.2, h=0.2, name="Alice", source="iptc")]
+    dets = [[40.0, 40.0, 20.0, 20.0]]
+    result = associate_detections(dets, gt, [100, 100])
+    assert result.geometry_incomplete_gt == (0,)
+    assert result.pairs == ()
 
 
 # ---------------------------------------------------------------------------
@@ -671,3 +802,44 @@ def test_scipy_optimize_importable():
 
     assert linear_sum_assignment is not None
     assert scipy.optimize is not None
+
+
+# ---------------------------------------------------------------------------
+# Namedness: gt_box_name must share body with face_metrics.named_box_name (wF2)
+# ---------------------------------------------------------------------------
+
+
+def test_gt_box_name_agrees_with_named_box_name_on_adversarial_names() -> None:
+    """Association and face_metrics must use one namedness rule (TEST-06 / TEST-15).
+
+    Assert agreement between the two call sites across adversarial names — not
+    hardcoded expected strings. Divergence on BOM/ZWSP was the Wave E residual:
+    strip-only ``gt_box_name`` treated format-control-padded names as named while
+    ``named_box_name`` (Cf drop + strip) treated them as named under a different
+    key or as anonymous when Cf-only.
+    """
+    adversarial = [
+        "\ufeffAlice",  # BOM + name
+        "\u200bAlice",  # ZWSP + name
+        "A\u200bB",  # ZWSP mid
+        " Alice ",  # padded
+        "\u00a0Alice\u00a0",  # NBSP padded
+        "   ",  # whitespace-only
+        "\u200b",  # ZWSP-only → anonymous under Cf rule
+        "\ufeff",  # BOM-only → anonymous under Cf rule
+        "",  # empty
+        None,  # missing
+        "Alice",  # normal
+        "Bob Builder",
+    ]
+    disagreements: list[str] = []
+    for raw in adversarial:
+        box = {"name": raw}
+        left = gt_box_name(box)
+        right = named_box_name(box)
+        if left != right:
+            disagreements.append(f"raw={raw!r} gt_box_name={left!r} named_box_name={right!r}")
+    assert not disagreements, (
+        "gt_box_name must agree with face_metrics.named_box_name (single harness "
+        f"predicate); diverged on:\n  " + "\n  ".join(disagreements)
+    )

@@ -6,7 +6,7 @@ No live leg detector during generation (firewall). Both legs re-detect+embed
 on the **identical** occluded pixels after generation.
 
 Occlusion metric = open-set paired accuracy: accept only when
-``s_max >= tau`` and ``name* == true_name`` against a gallery = identity
+``accept_predicate.accepts(s_max, tau)`` and ``name* == true_name`` against a gallery = identity
 un-occluded faces excluding twin source media_id + other identities'
 un-occluded prototypes. Guards: outcome-independent structural gallery
 eligibility first (distinct-image min-gallery + multi-identity; EXP-22),
@@ -41,6 +41,7 @@ from typing import Any, Literal
 import cv2
 import numpy as np
 
+from scripts.eval_harness.accept_predicate import accepts
 from .face_assignment import (
     MatchedFace,
     argmax_gallery,
@@ -549,7 +550,7 @@ def score_occlusion_pair(
 
     emb = np.asarray(twin_embedding, dtype=np.float64)
     s_max, name_star = argmax_gallery(emb, gallery)
-    accept = name_star is not None and s_max >= float(tau)
+    accept = name_star is not None and accepts(s_max, float(tau))
     correct = bool(accept and name_star == true_name)
     return OcclusionPairResult(
         media_id=source_media_id,

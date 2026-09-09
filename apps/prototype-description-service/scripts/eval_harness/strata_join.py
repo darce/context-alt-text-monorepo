@@ -38,6 +38,7 @@ class StratumIndex:
     strata_counts: Mapping[str, Any]
     declared_empty_cells: Sequence[str]
     declared_images: Mapping[str, int]
+    sha256_by_media_id: Mapping[int, str]
 
 
 @dataclass(frozen=True)
@@ -52,7 +53,7 @@ class StratumBucket:
 class _ResolvedRecord:
     stratum: str
     image_key: str
-    sha256: str | None
+    sha256: str
     media_id: int | None
 
 
@@ -116,10 +117,14 @@ class StratumReport:
 def load_stratum_index(path: str | Path) -> StratumIndex:
     """Load the selection manifest and index every entry by sha256 and media_id."""
     payload = _read_selection_payload(path)
-    by_sha256, by_media_id, subjects_by_sha256, subjects_by_media_id = _index_entries(
-        payload["entries"]
-    )
     declared_images = _declared_images_map(payload["strata_counts"])
+    (
+        by_sha256,
+        by_media_id,
+        sha256_by_media_id,
+        subjects_by_sha256,
+        subjects_by_media_id,
+    ) = _index_entries(payload["entries"], declared_strata=declared_images)
     empty = payload["declared_empty_cells"]
     if not isinstance(empty, list) or not all(isinstance(cell, str) for cell in empty):
         raise StratumJoinError(
@@ -133,6 +138,7 @@ def load_stratum_index(path: str | Path) -> StratumIndex:
         strata_counts=payload["strata_counts"],
         declared_empty_cells=empty,
         declared_images=declared_images,
+        sha256_by_media_id=sha256_by_media_id,
     )
 
 
@@ -142,7 +148,9 @@ def join_by_stratum(
 ) -> StratumReport:
     """Bucket records by selection-manifest stratum.
 
-    Each bucket reports ``n_images`` (distinct image keys) and
+    Each bucket reports ``n_images`` (distinct canonical sha256 keys;
+    media_id-only records are resolved through the manifest so a still
+    keyed once by sha256 and once by media_id counts as one image) and
     ``unique_subjects`` (distinct subject names from the manifest, falling
     back to the record only when the entry has no ``present_identities``).
     A record whose sha256 or media_id is absent from the index raises —
@@ -155,13 +163,12 @@ def join_by_stratum(
         images[resolved.stratum].add(resolved.image_key)
         subjects[resolved.stratum].update(_subjects_for(record, resolved, index))
     order = tuple(index.strata_counts)
+    extra = sorted(set(images) - set(order))
+    if extra:
+        raise StratumJoinError(f"joined strata {extra} are not in strata_counts")
     buckets: dict[str, StratumBucket] = {}
     for name in order:
         buckets[name] = _bucket(name, images, subjects, index)
-    extra = sorted(set(images) - set(order))
-    for name in extra:
-        buckets[name] = _bucket(name, images, subjects, index)
-        order = order + (name,)
     return StratumReport(
         buckets=buckets,
         declared_empty_cells=index.declared_empty_cells,
@@ -179,7 +186,7 @@ def _bucket(
         stratum=name,
         n_images=len(images.get(name, ())),
         unique_subjects=len(subjects.get(name, ())),
-        manifest_images=index.declared_images.get(name, 0),
+        manifest_images=index.declared_images[name],
     )
 
 
@@ -208,8 +215,11 @@ def _read_selection_payload(path: str | Path) -> dict[str, Any]:
 
 def _index_entries(
     entries: object,
+    *,
+    declared_strata: Mapping[str, Any],
 ) -> tuple[
     dict[str, str],
+    dict[int, str],
     dict[int, str],
     dict[str, tuple[str, ...]],
     dict[int, tuple[str, ...]],
@@ -218,18 +228,29 @@ def _index_entries(
         raise StratumJoinError("selection manifest 'entries' must be a list")
     by_sha256: dict[str, str] = {}
     by_media_id: dict[int, str] = {}
+    sha256_by_media_id: dict[int, str] = {}
     subjects_by_sha256: dict[str, tuple[str, ...]] = {}
     subjects_by_media_id: dict[int, tuple[str, ...]] = {}
     for i, entry in enumerate(entries):
         sha256, media_id, stratum, identities = _parse_entry(entry, i)
+        if stratum not in declared_strata:
+            raise StratumJoinError(
+                f"entries[{i}].stratum {stratum!r} is not in strata_counts"
+            )
         _reject_stratum_conflict(by_sha256, sha256, stratum, kind="sha256")
         _reject_stratum_conflict(by_media_id, media_id, stratum, kind="media_id")
+        prior_sha = sha256_by_media_id.get(media_id)
+        if prior_sha is not None and prior_sha != sha256:
+            raise StratumJoinError(
+                f"media_id {media_id!r} maps to both {prior_sha!r} and {sha256!r}"
+            )
         by_sha256[sha256] = stratum
         by_media_id[media_id] = stratum
+        sha256_by_media_id[media_id] = sha256
         if identities is not None:
             subjects_by_sha256[sha256] = identities
             subjects_by_media_id[media_id] = identities
-    return by_sha256, by_media_id, subjects_by_sha256, subjects_by_media_id
+    return by_sha256, by_media_id, sha256_by_media_id, subjects_by_sha256, subjects_by_media_id
 
 
 def _parse_entry(
@@ -257,11 +278,39 @@ def _entry_identities(entry: Mapping[str, Any], *, where: str) -> tuple[str, ...
     value = entry["present_identities"]
     if value is None:
         return ()
-    if isinstance(value, str):
-        return (value,) if value else ()
-    if isinstance(value, list):
-        return tuple(str(item) for item in value if item)
-    raise StratumJoinError(f"{where}.present_identities must be a list of strings")
+    if isinstance(value, (list, tuple)):
+        return tuple(
+            _normalise_identity_item(item, where=where) for item in value
+        )
+    raise StratumJoinError(
+        f"{where}.present_identities must be a list of strings, got {type(value).__name__}"
+    )
+
+
+def _normalise_identity_item(value: object, *, where: str) -> str:
+    """Ingest-time identity normalisation (BR-75).
+
+    Same alphabet as ``fir_bakeoff_run._normalise_subject_id`` /
+    ``gallery_split._normalise_subject_id``: strip and reject non-string or
+    blank-after-strip items. Applied here, at manifest parse, so membership
+    (roster lookup) and the census (unique-subject count) see the same
+    canonical key instead of diverging on unstripped whitespace. A blank or
+    malformed item is a manifest defect and must fail closed at the
+    boundary (sr-006) rather than pass through and crash later at point of
+    use, or silently vanish.
+    """
+    if not isinstance(value, str):
+        raise StratumJoinError(
+            f"{where}.present_identities item must be a non-empty string, "
+            f"got {value!r}"
+        )
+    key = value.strip()
+    if not key:
+        raise StratumJoinError(
+            f"{where}.present_identities item must be a non-empty string, "
+            f"got {value!r}"
+        )
+    return key
 
 
 def _reject_stratum_conflict(
@@ -325,17 +374,22 @@ def _resolve_record(record: object, index: StratumIndex) -> _ResolvedRecord:
             raise StratumJoinError(
                 f"record key absent from selection manifest: media_id={media_id!r}"
             )
-        found.append((stratum, str(media_id)))
+        found.append((stratum, index.sha256_by_media_id[media_id]))
     strata = {item[0] for item in found}
     if len(strata) != 1:
         raise StratumJoinError(
             f"record keys disagree on stratum: sha256={sha256!r} media_id={media_id!r}"
         )
-    image_key = sha256 if sha256 is not None else str(media_id)
+    identities = {item[1] for item in found}
+    if len(identities) != 1:
+        raise StratumJoinError(
+            f"record keys disagree on image: sha256={sha256!r} media_id={media_id!r}"
+        )
+    image_key = next(iter(identities))
     return _ResolvedRecord(
         stratum=found[0][0],
         image_key=image_key,
-        sha256=sha256 if isinstance(sha256, str) else None,
+        sha256=image_key,
         media_id=media_id,
     )
 
@@ -357,9 +411,11 @@ def _subjects_of(record: object) -> tuple[str, ...]:
         value = _field(record, name)
         if value is None:
             continue
-        if isinstance(value, str):
-            return (value,) if value else ()
-        return tuple(str(item) for item in value if item)
+        if isinstance(value, (list, tuple)):
+            return tuple(str(item) for item in value if item)
+        raise StratumJoinError(
+            f"record {name} must be a list of strings, got {type(value).__name__}"
+        )
     for name in _SUBJECT_SCALAR_FIELDS:
         value = _field(record, name)
         if value:
@@ -375,8 +431,6 @@ def _field(record: object, name: str) -> Any:
 
 def _as_media_id(value: object, *, where: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
-        if isinstance(value, str) and value.isdigit():
-            return int(value)
         raise StratumJoinError(f"{where} must be an int, got {value!r}")
     return value
 

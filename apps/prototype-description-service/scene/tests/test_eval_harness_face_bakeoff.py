@@ -20,6 +20,7 @@ from typing import Any
 import numpy as np
 import pytest
 
+import scripts.eval_harness.face_bakeoff as face_bakeoff_module
 from recognition.infrastructure.face_pipeline._common import (
     RawDetection,
     resolve_sface_embedding_dim,
@@ -38,7 +39,7 @@ from scripts.eval_harness.face_run_record import (
     validate_face_run_item,
 )
 from scripts.eval_harness.landmark_cache import LandmarkCacheProvenance
-from scripts.eval_harness.manifest import GoldenManifest
+from scripts.eval_harness.manifest import AnnotationMode, GoldenManifest, legacy_import_lineage
 from scripts.eval_harness.schema import SCHEMA, DocKind
 
 EMB_DET_TAU = 0.9999
@@ -282,6 +283,69 @@ def test_walker_isolates_per_item_failure(tmp_path: Path) -> None:
     assert record["items"][1]["faces"] == []
     assert record["items"][2].get("error") is None
     assert record["kind"] == DocKind.FACE_RUN_RECORD.value
+
+
+def test_walker_prints_filename_bearing_oserror_without_surrogate_leak(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Persisted per-item errors use the path-text wire form (VLM6-W22)."""
+    manifest = _tiny_manifest(1, tmp_path)
+
+    def _raise_permission(_image_bytes: bytes) -> np.ndarray:
+        raise PermissionError(13, "Permission denied", "/tmp/caf\udce9.jpg")
+
+    monkeypatch.setattr(face_bakeoff_module, "decode_image_bytes_bgr", _raise_permission)
+    record = walk_face_run_record(
+        manifest,
+        tmp_path,
+        detector=_MockDetector(),
+        embedder=_MockEmbedder(),
+        head_sha="deadbeef",
+        embedding_dim=8,
+    )
+    error = record["items"][0]["error"]
+    assert "undecodable:/tmp/caf\\\\xe9.jpg" in error
+    assert "\\udce9" not in error
+
+
+def test_twin_errors_print_filename_bearing_oserror_without_surrogate_leak(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Twin-pass per-entry errors use the same printable path boundary."""
+    raw = _tiny_manifest(1, tmp_path).model_dump(mode="python")
+    raw["entries"][0]["face_count"] = 1
+    raw["entries"][0]["face_boxes"] = [
+        {
+            "x": 0.5,
+            "y": 0.5,
+            "w": 0.25,
+            "h": 0.25,
+            "name": "Alice",
+            "source": "iptc",
+            "lineage": legacy_import_lineage(name="Alice"),
+        }
+    ]
+    manifest = GoldenManifest.model_validate(raw)
+
+    def _raise_permission(_images_root: Path, _entry_path: str) -> Path:
+        raise PermissionError(13, "Permission denied", "/tmp/twin-caf\udce9.jpg")
+
+    monkeypatch.setattr(face_bakeoff_module, "_resolve_image", _raise_permission)
+    cache_detector = _MockDetector()
+    cache_detector.landmark_cache_provenance = LandmarkCacheProvenance(
+        model_id="fixture-yunet", weights_sha256="f" * 64
+    )
+    _pairs, provenance = build_occlusion_twin_pairs(
+        manifest,
+        tmp_path,
+        detector=_MockDetector(),
+        embedder=_MockEmbedder(),
+        cache_detector=cache_detector,
+    )
+    assert len(provenance["errors"]) == 1
+    error = provenance["errors"][0]
+    assert "undecodable:/tmp/twin-caf\\\\xe9.jpg" in error
+    assert "\\udce9" not in error
 
 
 def test_walker_bounded_stall_aborts(tmp_path: Path) -> None:
@@ -718,6 +782,90 @@ def test_walker_provenance_defaults_stay_candidate(tmp_path: Path) -> None:
     assert "leg_mode" not in record["provenance"]
 
 
+def test_twin_pass_skips_whitespace_and_cf_only_names_as_anonymous(tmp_path: Path) -> None:
+    """``any(box.name)`` treats whitespace/Cf-only as named — twin universe must not run.
+
+    Namedness predicate (face_metrics.named_box_name): drop Unicode Cf then strip;
+    empty → anonymous. Control-flow: entries with only anonymous boxes are skipped
+    (no detector call, no twin pairs). TEST-15: pre-fix any(box.name) is True for
+    ``\"   \"`` and ``\"\\u200b\"``, so the twin pass would enter the entry body.
+    """
+    import cv2
+
+    img_dir = tmp_path / "anon"
+    img_dir.mkdir()
+    img = np.zeros((64, 64, 3), dtype=np.uint8)
+    assert cv2.imwrite(str(img_dir / "x.jpg"), img)
+
+    class _BoomDetector:
+        calls = 0
+        landmark_cache_provenance = LandmarkCacheProvenance.pinned_yunet()
+
+        def detect(self, images: list[np.ndarray]) -> list[list[RawDetection]]:
+            _BoomDetector.calls += 1
+            raise AssertionError("detector must not run for anonymous-only entries")
+
+    class _BoomEmbedder:
+        embedding_dim = 8
+
+        def embed(self, crops: list[np.ndarray]) -> np.ndarray:
+            raise AssertionError("embedder must not run for anonymous-only entries")
+
+    for raw_name, label in (("   ", "whitespace-only"), ("\u200b", "ZWSP-only"), ("\ufeff", "BOM-only")):
+        _BoomDetector.calls = 0
+        manifest = GoldenManifest.model_validate(
+            {
+                "manifest_version": 3,
+                "annotation_mode": AnnotationMode.ROSTER_ONLY.value,
+                "roster": [],
+                "entries": [
+                    {
+                        "path": "anon/x.jpg",
+                        "sha256": "b" * 64,
+                        "media_id": 1,
+                        "face_count": 1,
+                        "present_identities": [],
+                        "must_right": [],
+                        "easy_wrong": [],
+                        "policy": {"recognition_enabled": True},
+                        "context_pack": {"caption": "x"},
+                        "face_boxes": [
+                            {
+                                "x": 0.5,
+                                "y": 0.5,
+                                "w": 0.2,
+                                "h": 0.2,
+                                "name": raw_name,
+                                "source": "iptc",
+                                # VLM6-DELTA-08: FIR-11 v3 requires lineage on every
+                                # box. Predicate under test (named_box_name) reads
+                                # only .name; roster_only avoids the exhaustive
+                                # capture_session_id sentinel refusal (S2R6-01).
+                                "lineage": legacy_import_lineage(name=raw_name),
+                            }
+                        ],
+                        "provenance": {
+                            "source": "celeb",
+                            "license": "public_domain",
+                            "publishable": True,
+                        },
+                    }
+                ],
+            }
+        )
+        pairs_by_tag, prov = build_occlusion_twin_pairs(
+            manifest,
+            tmp_path,
+            detector=_BoomDetector(),  # type: ignore[arg-type]
+            embedder=_BoomEmbedder(),  # type: ignore[arg-type]
+        )
+        assert pairs_by_tag == {}, f"{label}: expected no twin pairs, got {pairs_by_tag!r}"
+        assert prov["n_pairs"] == 0, f"{label}: n_pairs={prov.get('n_pairs')}"
+        assert prov["n_twin_specs"] == 0, f"{label}: n_twin_specs={prov.get('n_twin_specs')}"
+        assert prov["errors"] == [], f"{label}: unexpected errors={prov.get('errors')}"
+        assert _BoomDetector.calls == 0, f"{label}: detector was invoked (truthiness gate leak)"
+
+
 def test_twin_pass_with_fused_leg_and_pinned_cache_detector(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -920,3 +1068,180 @@ def test_raw_detection_attribute_contract() -> None:
     # Walker maps these — not alternate names.
     assert not hasattr(det, "bbox_px")
     assert inspect.signature(walk_face_run_record).parameters["stall_limit"].default == DEFAULT_STALL_LIMIT
+
+
+def test_face_anchor_freeze_sees_labeled_y_missing_counter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """wG1 acceptance: face freeze surface publishes + pins labeled_y_missing_*.
+
+    Wave I regenerated the freeze, so the counter is now published AND pinned:
+    the committed report carries it, and lane wI2 showed wF4's original
+    constant-0 wiring turns the now-green freeze RED (TEST-15 satisfied at the
+    freeze level). This test pins the published value, asserts the freeze agrees
+    with a live re-score, and keeps the live-vs-mutated discrimination as a
+    second, independent guard.
+    """
+    import json
+    from pathlib import Path
+
+    from scripts.eval_harness.face_metrics import LabeledOrderResult, labeled_order
+    from scripts.eval_harness.manifest import load_manifest
+    from scripts.eval_harness.report import score_face_run_record
+    import scripts.eval_harness.report as report_mod
+
+    repo = Path(__file__).resolve().parents[4]
+    anchor = repo / "docs" / "tasks" / "vlm" / "bakeoff-results"
+    man = load_manifest(
+        str(anchor / "S2A-face-determinism-anchor-manifest-20260811.json"),
+        skip_hash_verification=True,
+    )
+    face_run = json.loads((anchor / "S2A-face-determinism-anchor-run-20260811.json").read_text())
+    committed = json.loads(
+        (anchor / "S2A-face-determinism-anchor-run-20260811-face-report.json").read_text()
+    )
+
+    # Post-Wave-I: the freeze PUBLISHES and PINS the counter. This assertion was
+    # inverted (was `not in`) when regeneration closed the blindness it described
+    # — strengthened, never relaxed (sr-001). A freeze that dropped the field
+    # again, or pinned a stale value, fails here.
+    committed_io = committed["identity_ordering"]
+    assert committed_io["labeled_y_missing_images"] == 1
+    assert committed_io["labeled_y_missing_paths"] == [
+        "celebs01/y-missing-mixed-order.jpg"
+    ]
+    assert committed_io["order_unknown_excluded"] == 2
+
+    live = score_face_run_record(face_run, man)
+    live_io = live["identity_ordering"]
+    live_n = int(live_io["labeled_y_missing_images"])
+    assert live_n == 1, f"extended face corpus must yield labeled_y_missing_images=1; got {live_n}"
+    assert live_io["labeled_y_missing_paths"] == ["celebs01/y-missing-mixed-order.jpg"]
+    # Denominator honesty: out of scored images on the face freeze corpus.
+    assert live["counts"]["scored"] == 11
+    assert live_n <= live["counts"]["scored"]
+    # GT-side order_unknown matches caption semantics (fp-only + y-missing).
+    assert live_io["order_unknown_excluded"] == 2
+    # The freeze actually pins the live value — this is what "sees" means.
+    assert live_io["labeled_y_missing_images"] == committed_io["labeled_y_missing_images"]
+    assert live_io["labeled_y_missing_paths"] == committed_io["labeled_y_missing_paths"]
+    assert live_io["order_unknown_excluded"] == committed_io["order_unknown_excluded"]
+
+    real_lo = labeled_order
+
+    def _blind_constant_zero(face_boxes):  # type: ignore[no-untyped-def]
+        result = real_lo(face_boxes)
+        return LabeledOrderResult(names=result.names, y_missing_count=0, order_degraded=False)
+
+    monkeypatch.setattr(report_mod, "labeled_order", _blind_constant_zero)
+    blind = score_face_run_record(face_run, man)
+    blind_n = int(blind["identity_ordering"]["labeled_y_missing_images"])
+    assert blind_n == 0
+
+    # Both diverge from stale freeze (pre-existing Expected-red); the *specific*
+    # new difference freeze must pin is live_n vs blind_n on the counter field.
+    assert live_n != blind_n, (
+        "mutation invisible on face report — freeze cannot pin labeled_y_missing "
+        "(wiring did not close blindness)"
+    )
+    # Structural: field present on live report JSON that freeze will absorb.
+    live_blob = json.dumps(live, sort_keys=True)
+    assert '"labeled_y_missing_images": 1' in live_blob
+    assert '"labeled_y_missing_images": 0' in json.dumps(blind, sort_keys=True)
+
+
+def test_face_anchor_freeze_sees_geometry_incomplete_counter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """wH1 acceptance: face freeze surface publishes + pins geometry_incomplete_*.
+
+    Wave I regenerated the freeze, so geometry_incomplete_* is now published AND
+    pinned; lane wI2 showed the constant-0 stamp mutation turns the now-green
+    freeze RED (TEST-15 satisfied at the freeze level). This test pins the
+    published values, asserts the freeze agrees with a live re-score, and keeps
+    the live-vs-mutated discrimination as a second, independent guard.
+    """
+    import json
+    from dataclasses import replace
+    from pathlib import Path
+
+    from scripts.eval_harness.face_assignment import score_face_assignment
+    from scripts.eval_harness.manifest import load_manifest
+    from scripts.eval_harness.report import score_face_run_record
+    import scripts.eval_harness.report as report_mod
+
+    repo = Path(__file__).resolve().parents[4]
+    anchor = repo / "docs" / "tasks" / "vlm" / "bakeoff-results"
+    man = load_manifest(
+        str(anchor / "S2A-face-determinism-anchor-manifest-20260811.json"),
+        skip_hash_verification=True,
+    )
+    face_run = json.loads((anchor / "S2A-face-determinism-anchor-run-20260811.json").read_text())
+    committed = json.loads(
+        (anchor / "S2A-face-determinism-anchor-run-20260811-face-report.json").read_text()
+    )
+
+    # Post-Wave-I: the freeze PUBLISHES and PINS the stamp. Inverted (was
+    # `not in`) when regeneration closed the blindness it described —
+    # strengthened, never relaxed (sr-001).
+    committed_det = committed["detection"]
+    assert committed_det["geometry_incomplete_gt"] == 1
+    assert committed_det["association_incomplete_media"] == 1
+    assert committed_det["association_complete"] is False
+    # Frozen arithmetic identity: tp + fn + geometry_incomplete == n_gt (wH1).
+    assert (
+        int(committed_det["tp"]) + int(committed_det["fn"])
+        + int(committed_det["geometry_incomplete_gt"]) == 12
+    )
+
+    live = score_face_run_record(face_run, man)
+    live_det = live["detection"]
+    live_n = int(live_det["geometry_incomplete_gt"])
+    assert live_n == 1, (
+        f"extended face corpus must yield geometry_incomplete_gt=1; got {live_n}"
+    )
+    assert live_det["association_incomplete_media"] == 1
+    assert live_det["association_complete"] is False
+    # Denominator honesty (EVAL-03): incomplete out of n_gt on scoreable media.
+    n_gt = int(live_det["tp"]) + int(live_det["fn"]) + live_n
+    assert n_gt == 12, f"tp+fn+incomplete must equal corpus n_gt=12; got {n_gt}"
+    assert live["provenance"]["total_gt_boxes"] == 12
+    # Incomplete not re-absorbed as FN: tp=6, fn=5 (not 6), incomplete=1.
+    assert live_det["tp"] == 6
+    assert live_det["fn"] == 5
+    # The freeze actually pins the live values — this is what "sees" means.
+    for _k in ("tp", "fn", "geometry_incomplete_gt", "association_incomplete_media"):
+        assert live_det[_k] == committed_det[_k], _k
+    assert live_det["association_complete"] == committed_det["association_complete"]
+    # Sampling frame states the real post-wG2 identity.
+    assert "tp+fn+geometry_incomplete_gt" in live_det["sampling_frame"]
+    assert "tp+fn equals GT boxes that reached association" not in live_det["sampling_frame"]
+
+    real_sfa = score_face_assignment
+
+    def _blind_constant_zero(run_items, gt_by_media, **kwargs):  # type: ignore[no-untyped-def]
+        result = real_sfa(run_items, gt_by_media, **kwargs)
+        return replace(
+            result,
+            geometry_incomplete_gt=0,
+            association_incomplete_media=0,
+        )
+
+    monkeypatch.setattr(report_mod, "score_face_assignment", _blind_constant_zero)
+    blind = score_face_run_record(face_run, man)
+    blind_n = int(blind["detection"]["geometry_incomplete_gt"])
+    assert blind_n == 0
+    assert blind["detection"]["association_complete"] is True
+
+    # Both diverge from stale freeze (pre-existing Expected-red); the *specific*
+    # new difference freeze must pin is live_n vs blind_n on the counter field.
+    assert live_n != blind_n, (
+        "mutation invisible on face report — freeze cannot pin geometry_incomplete "
+        "(wiring did not close blindness)"
+    )
+    live_blob = json.dumps(live, sort_keys=True)
+    assert '"geometry_incomplete_gt": 1' in live_blob
+    assert '"geometry_incomplete_gt": 0' in json.dumps(blind, sort_keys=True)
+    # Stamp-only mutation must not alter detection P/R arithmetic (sr-001).
+    assert blind["detection"]["fn"] == live_det["fn"]
+    assert blind["detection"]["tp"] == live_det["tp"]

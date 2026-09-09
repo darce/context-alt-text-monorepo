@@ -76,6 +76,55 @@ Anything else non-terminated in the tenancy is unexpected — investigate.
 Region: **`us-ashburn-1`** (iad). There are **no child compartments**; every
 resource lives under the tenancy root.
 
+## Tenancy inventory snapshot (2026-07-16)
+
+> Dated snapshot — the live CLI (commands in this runbook) is the source of
+> truth; re-derive rather than trust this table when it matters. Captured
+> during the VLM-6 A10 capacity drought.
+
+**Instances** (non-terminated):
+
+| Instance | Shape | AD | State | Notes |
+| --- | --- | --- | --- | --- |
+| `acx-backend` | `VM.Standard.A1.Flex` (4 OCPU / 24 GB) | AD-3 | RUNNING | Always-Free; dev/staging/prod recognition; Tailscale + SSH jump host |
+| `acx-gpu-burst` | `VM.GPU.A10.1` | AD-1 | STOPPED | START blocked on "Out of host capacity" since 2026-07-16 |
+
+**Custom images**:
+
+| Image | Created | Purpose |
+| --- | --- | --- |
+| `acx-gpu-vlm-multiad-20260716` | 2026-07-16 | Baked Qwen3-VL-30B Q4 weights + `acx-gpu-vlm.service`; built for multi-AD launch (see quota caveat below) |
+| `acx-gpu-qwen3vl30b-golden` | 2026-07-14 | Earlier golden image of the same stack |
+
+**Boot volumes** (block volumes: none):
+
+| Volume | Size | Cost |
+| --- | --- | --- |
+| `acx-gpu-burst (Boot Volume)` | 400 GB | ~$10–17/mo (bills while instance exists, even STOPPED) |
+| `acx-backend (Boot Volume)` | 200 GB | Always-Free allowance |
+
+**Service limits** (the binding constraint for GPU work):
+
+| Limit | AD-1 | AD-2 | AD-3 | Implication |
+| --- | --- | --- | --- | --- |
+| `gpu-a10-count` | 1 (used 1) | **0** | **0** | Multi-AD fresh launch is quota-blocked everywhere; AD-1 quota consumed by `acx-gpu-burst`. Only levers: START retry on the existing instance, or a (free) service-limit increase request for AD-2/3 |
+| `standard-a1-core-count` | 250 avail | — | — | Abundant ARM CPU headroom (Always-Free A1 counted separately) |
+| `standard-e4-core-count` | 100 avail | — | — | Abundant x86 CPU headroom for Florence/Qwen CPU batch VMs |
+
+**Network**:
+
+| VCN | CIDR | Subnets |
+| --- | --- | --- |
+| `acx-vcn` | 10.0.0.0/16 | `acx-public-subnet` 10.0.1.0/24 (regional — usable in any AD; public IPs permitted) |
+| `marketing-vcn` | 10.0.0.0/16 | `marketing-public-subnet` 10.0.1.0/24 (separate stack, no peering) |
+
+Planned but not yet created: `acx-batch-subnet` 10.0.2.0/24 (private, NAT +
+service gateway) per
+[`oci-vm-reachability-tailscale-vcn-plan.md`](oci-vm-reachability-tailscale-vcn-plan.md).
+
+Cost steady state at this snapshot: **~$10–17/mo** (the GPU boot volume) —
+everything else is Always-Free or stopped.
+
 For the disk/Docker side of the always-on `acx-backend` VM (what is consuming
 the 193 GB root filesystem, which reapers exist, and which accounts can see
 what), see

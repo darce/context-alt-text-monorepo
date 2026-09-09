@@ -75,14 +75,13 @@ def test_provenance_query_unavailable_aborts() -> None:
     assert ACTIVE_MODEL in reason
 
 
-def test_unstamped_representatives_abort() -> None:
-    """Reps carrying no embedding_model are a data gap, not a migration."""
+def test_unstamped_representatives_do_not_abort() -> None:
+    """Unstamped reps are the documented both-unstamped space, not an infrastructure wipe."""
     reason = _stats(
         representatives_excluded_unresolvable=12,
         clusters_excluded_unresolvable=5,
     ).abort_reason()
-    assert reason is not None
-    assert "12 representative(s) across 5 cluster(s)" in reason
+    assert reason is None
 
 
 def test_legitimate_space_migration_does_not_abort() -> None:
@@ -130,6 +129,15 @@ def test_runner_does_not_raise_on_migration_wipe() -> None:
     """Same wiped gallery, legitimate cause: the job proceeds."""
     runner = _make_runner()
     runner._abort_on_unprovenanced_gallery("job-1", _stats())
+
+
+def test_runner_does_not_raise_on_unstamped_gallery_with_known_active_model() -> None:
+    """Unstamped reps + known active model must proceed, not fail the job."""
+    runner = _make_runner()
+    runner._abort_on_unprovenanced_gallery(
+        "job-1",
+        _stats(representatives_excluded_unresolvable=12, clusters_excluded_unresolvable=5),
+    )
 
 
 @pytest.mark.asyncio

@@ -992,7 +992,6 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             .join(IdentityMemberModel, IdentityMemberModel.identity_id == MediaIdentity.id)
             .where(IdentityMemberModel.cluster_id == _coerce_uuid(cluster_id))
             .where(MediaIdentity.embedding.isnot(None))
-            .where(MediaIdentity.embedding_model.isnot(None))
         )
         result = await self._session.execute(stmt)
         rows = [(np.asarray(emb, dtype=np.float32), model) for emb, model in result.all()]
@@ -1013,7 +1012,6 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             select(IdentityClusterRepresentative.embedding, MediaIdentity.embedding_model)
             .join(MediaIdentity, MediaIdentity.id == IdentityClusterRepresentative.identity_id)
             .where(IdentityClusterRepresentative.cluster_id == _coerce_uuid(cluster_id))
-            .where(MediaIdentity.embedding_model.isnot(None))
         )
         result = await self._session.execute(stmt)
         rows = [(np.asarray(emb, dtype=np.float32), model) for emb, model in result.all()]
@@ -1053,7 +1051,6 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             )
             .join(MediaIdentity, MediaIdentity.id == IdentityClusterRepresentative.identity_id)
             .where(IdentityClusterRepresentative.cluster_id == _coerce_uuid(cluster_id))
-            .where(MediaIdentity.embedding_model.isnot(None))
         )
         result = await self._session.execute(stmt)
         rows: list[_QualityRow] = [
@@ -1083,7 +1080,6 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             .join(IdentityMemberModel, IdentityMemberModel.identity_id == MediaIdentity.id)
             .where(IdentityMemberModel.cluster_id == _coerce_uuid(cluster_id))
             .where(MediaIdentity.embedding.isnot(None))
-            .where(MediaIdentity.embedding_model.isnot(None))
             .order_by(IdentityMemberModel.similarity.desc(), IdentityMemberModel.assigned_at.asc())
         )
         result = await self._session.execute(stmt)
@@ -1122,7 +1118,6 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             .join(IdentityMemberModel, IdentityMemberModel.identity_id == MediaIdentity.id)
             .where(IdentityMemberModel.cluster_id == _coerce_uuid(cluster_id))
             .where(MediaIdentity.embedding.isnot(None))
-            .where(MediaIdentity.embedding_model.isnot(None))
             .order_by(IdentityMemberModel.similarity.desc(), IdentityMemberModel.assigned_at.asc())
         )
         result = await self._session.execute(stmt)
@@ -1182,6 +1177,19 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             # majority-space cut here drops same-space minority members.
             grouped[cluster_key] = [self._to_domain_identity(model, cluster_id=cluster_key) for model in models]
         return grouped
+
+    async def list_identity_ids_moved_by_merge(self, tenant_id: str, merge_id: str) -> list[str]:
+        """Return identity ids this merge stamped, from the still-open transaction."""
+        tenant_uuid = _coerce_uuid(tenant_id)
+        merge_uuid = _coerce_uuid(merge_id)
+        if tenant_uuid is None or merge_uuid is None:
+            return []
+        stmt = select(MediaIdentity.id).where(
+            MediaIdentity.tenant_id == tenant_uuid,
+            MediaIdentity.moved_by_merge_id == merge_uuid,
+        )
+        result = await self._session.execute(stmt)
+        return [str(identity_id) for identity_id in result.scalars().all()]
 
     async def get_confirmed_labeled(self, tenant_id: str) -> list[IdentityCluster]:
         """Return confirmed clusters with human labels."""

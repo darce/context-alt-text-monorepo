@@ -262,6 +262,247 @@ async def test_post_merge_retry_unstamped_gallery_does_not_starve_on_mixed_batch
 
 
 @pytest.mark.asyncio
+async def test_get_unclustered_in_embedding_space_does_not_starve_on_mixed_sqlite_batch() -> None:
+    """Runtime SQLite: filter tenant/space/membership before LIMIT 2 (DATA-13).
+
+    Three higher-confidence foreign-space rows would fill a limit-2 batch if
+    ``embedding_model IS NULL`` ran after LIMIT. Same-tenant membership and a
+    foreign-tenant unstamped row are extra controls. ORM ``embedding_model``
+    stays NOT NULL; SQLite DDL is relaxed on a private MetaData copy only.
+    Real ``get_unclustered_in_embedding_space`` produces candidates that feed
+    ``post_merge_retry_matching``; evaluate/persist see only eligible IDs.
+    """
+    from sqlalchemy import MetaData, event, text
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+    from sqlalchemy.pool import StaticPool
+
+    from db.base import Base
+    from db.models import IdentityCluster, IdentityMember, MediaIdentity, Tenant
+    from db.settings import get_database_settings
+    from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
+    from recognition.tests.conftest import _sqlite_vector_norm
+
+    dim = get_database_settings().pgvector_dimension
+    unit = [0.0] * dim
+    unit[0] = 1.0
+    tenant_a = uuid4()
+    tenant_b = uuid4()
+    cluster_id = uuid4()
+    foreign_space_ids = [uuid4(), uuid4(), uuid4()]
+    member_id = uuid4()
+    foreign_tenant_id = uuid4()
+    unstamped_ids = [uuid4(), uuid4()]
+    eligible_ids = [str(unstamped_ids[0]), str(unstamped_ids[1])]
+    forbidden_ids = {str(item) for item in foreign_space_ids} | {str(member_id), str(foreign_tenant_id)}
+
+    assert MediaIdentity.__table__.c.embedding_model.nullable is False
+    legacy_md = MetaData()
+    for table_name in ("tenants", "media_identities", "identity_clusters", "identity_members"):
+        Base.metadata.tables[table_name].to_metadata(legacy_md)
+    legacy_md.tables["media_identities"].c.embedding_model.nullable = True
+    assert MediaIdentity.__table__.c.embedding_model.nullable is False
+
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _register_vector_functions(dbapi_connection, _connection_record) -> None:
+        dbapi_connection.create_function("vector_norm", 1, _sqlite_vector_norm)
+
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text("PRAGMA foreign_keys=ON"))
+            await conn.run_sync(legacy_md.create_all)
+        assert MediaIdentity.__table__.c.embedding_model.nullable is False
+        session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        async with session_factory() as session:
+            session.add_all(
+                [
+                    Tenant(id=tenant_a, site_url="https://keep.example.test/wp"),
+                    Tenant(id=tenant_b, site_url="https://foreign.example.test/wp"),
+                ]
+            )
+            await session.flush()
+            session.add(IdentityCluster(id=cluster_id, tenant_id=tenant_a, identity_count=1))
+            await session.flush()
+
+            def _identity(
+                *,
+                identity_id: object,
+                tenant: object,
+                media_id: int,
+                model: str | None,
+                confidence: float,
+            ) -> MediaIdentity:
+                return MediaIdentity(
+                    id=identity_id,
+                    tenant_id=tenant,
+                    media_id=media_id,
+                    media_url=f"http://example.test/{media_id}.jpg",
+                    bbox_x=0,
+                    bbox_y=0,
+                    bbox_width=10,
+                    bbox_height=10,
+                    confidence=confidence,
+                    embedding=unit,
+                    embedding_model=model,
+                )
+
+            session.add_all(
+                [
+                    _identity(
+                        identity_id=foreign_space_ids[0],
+                        tenant=tenant_a,
+                        media_id=1,
+                        model="space-b",
+                        confidence=0.99,
+                    ),
+                    _identity(
+                        identity_id=foreign_space_ids[1],
+                        tenant=tenant_a,
+                        media_id=2,
+                        model="space-b",
+                        confidence=0.98,
+                    ),
+                    _identity(
+                        identity_id=foreign_space_ids[2],
+                        tenant=tenant_a,
+                        media_id=3,
+                        model="space-b",
+                        confidence=0.97,
+                    ),
+                    _identity(
+                        identity_id=member_id,
+                        tenant=tenant_a,
+                        media_id=4,
+                        model=None,
+                        confidence=0.96,
+                    ),
+                    _identity(
+                        identity_id=foreign_tenant_id,
+                        tenant=tenant_b,
+                        media_id=5,
+                        model=None,
+                        confidence=0.95,
+                    ),
+                    _identity(
+                        identity_id=unstamped_ids[0],
+                        tenant=tenant_a,
+                        media_id=6,
+                        model=None,
+                        confidence=0.51,
+                    ),
+                    _identity(
+                        identity_id=unstamped_ids[1],
+                        tenant=tenant_a,
+                        media_id=7,
+                        model=None,
+                        confidence=0.50,
+                    ),
+                ]
+            )
+            await session.flush()
+            session.add(
+                IdentityMember(
+                    tenant_id=tenant_a,
+                    cluster_id=cluster_id,
+                    identity_id=member_id,
+                    similarity=0.9,
+                )
+            )
+            await session.flush()
+
+            real_repo = SqlAlchemyClusterRepository(session)
+            produced: list[object] = []
+
+            class _DelegatingClusterRepository:
+                async def get_all_representatives(self, cluster_id: str) -> list[ClusterRepresentative]:
+                    return [
+                        ClusterRepresentative(
+                            id=str(uuid4()),
+                            cluster_id=cluster_id,
+                            identity_id=str(uuid4()),
+                            embedding=np.asarray(unit, dtype=np.float32),
+                            created_at=datetime.now(tz=UTC),
+                            embedding_model=None,
+                        )
+                    ]
+
+                async def get_unclustered_in_embedding_space(
+                    self,
+                    tenant_id: str,
+                    embedding_model: str | None,
+                    *,
+                    limit: int,
+                ) -> list[object]:
+                    rows = await real_repo.get_unclustered_in_embedding_space(
+                        tenant_id,
+                        embedding_model,
+                        limit=limit,
+                    )
+                    produced.extend(rows)
+                    return rows
+
+            evaluated_ids: list[str] = []
+            persisted_ids: list[str] = []
+
+            async def _eval(candidate):  # noqa: ANN001
+                evaluated_ids.append(str(candidate.identity.id))
+                return AssignmentDecision(
+                    outcome=AssignmentOutcome.ACCEPT,
+                    candidate=candidate,
+                    checks_passed=["confidence_check"],
+                    checks_failed=[],
+                )
+
+            async def _persist(decision: AssignmentDecision) -> None:
+                persisted_ids.append(str(decision.candidate.identity.id))
+
+            writer = SimpleNamespace(
+                cluster_repository=_DelegatingClusterRepository(),
+                member_repository=SimpleNamespace(get_by_identity_id=AsyncMock(return_value=[])),
+                persist_assignment=AsyncMock(side_effect=_persist),
+            )
+            gate = SimpleNamespace(
+                settings=SimpleNamespace(similarity_threshold=0.5),
+                evaluate=AsyncMock(side_effect=_eval),
+            )
+            suggestions = SimpleNamespace(
+                get_by_cluster=AsyncMock(return_value=[]),
+                create=AsyncMock(),
+                resolve_for_identity=AsyncMock(),
+                update_scores=AsyncMock(),
+            )
+            await post_merge_retry_matching(
+                tenant_id=str(tenant_a),
+                target_cluster_id=str(cluster_id),
+                session=session,
+                gate=gate,
+                assignment_writer=writer,
+                suggestion_service=suggestions,
+                max_unclustered=2,
+                min_similarity_for_unclustered=0.5,
+            )
+
+            found_ids = [identity.id for identity in produced]
+            assert found_ids == eligible_ids
+            assert len(produced) == 2
+            assert all(identity.embedding_model is None for identity in produced)
+            assert forbidden_ids.isdisjoint(found_ids)
+            assert evaluated_ids == eligible_ids
+            assert persisted_ids == eligible_ids
+            assert forbidden_ids.isdisjoint(evaluated_ids)
+            assert forbidden_ids.isdisjoint(persisted_ids)
+            assert MediaIdentity.__table__.c.embedding_model.nullable is False
+    finally:
+        await engine.dispose()
+        assert MediaIdentity.__table__.c.embedding_model.nullable is False
+
+
+@pytest.mark.asyncio
 async def test_get_unclustered_in_embedding_space_sql_is_null_for_legacy_gallery() -> None:
     from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
 

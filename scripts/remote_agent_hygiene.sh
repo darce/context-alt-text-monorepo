@@ -2,17 +2,26 @@
 # Remote-agent ping hygiene helpers (sourced by the plugin-managed scripts/remote_agent.sh transport overlay, which stays untracked). Sourceable for tests.
 #
 # Hung `codex exec ... ping` probes (ppid=1) leak pids and must be bounded and
-# reaped. GNU timeout treats a duration of 0 as "no timeout", so PING_TIMEOUT_SEC
-# must be a positive integer.
+# reaped. A ping with no deadline is an unbounded blocking call (RES-02). GNU
+# timeout treats duration 0 as "no timeout", so PING_TIMEOUT_SEC must be a
+# positive integer; missing/empty values fall back to a bounded default and log
+# (SECD-05). Live pings use a portable watchdog so the bound does not depend on
+# GNU timeout(1).
 set -euo pipefail
 
 PING_TIMEOUT_MIN=1
 PING_TIMEOUT_MAX=120
+PING_TIMEOUT_DEFAULT=5
 ORPHAN_PING_STALE_MIN=1
 ORPHAN_PING_STALE_MAX=3600
-: "${PING_TIMEOUT_SEC:=5}"
-: "${ORPHAN_PING_STALE_SEC:=30}"
+ORPHAN_PING_STALE_DEFAULT=30
 : "${ORPHAN_PING_MATCH:=codex}"
+
+if [ -z "${PING_TIMEOUT_SEC:-}" ]; then
+  echo "remote_agent: PING_TIMEOUT_SEC unset or empty; defaulting to ${PING_TIMEOUT_DEFAULT}" >&2
+  PING_TIMEOUT_SEC="$PING_TIMEOUT_DEFAULT"
+fi
+: "${ORPHAN_PING_STALE_SEC:=$ORPHAN_PING_STALE_DEFAULT}"
 
 acx_validate_positive_int() {
   local name="$1" value="$2" min="$3" max="$4" normalized
@@ -88,13 +97,142 @@ acx_kill_pid() {
   return 0
 }
 
+acx_ping_children_of() {
+  local parent="$1" out child cpid cppid
+  if command -v pgrep >/dev/null 2>&1; then
+    out="$(pgrep -P "$parent" 2>/dev/null || true)"
+    while IFS= read -r child; do
+      child="${child// /}"
+      case "$child" in
+        ''|*[!0-9]*) continue ;;
+      esac
+      printf '%s\n' "$child"
+    done <<EOF
+${out}
+EOF
+    return 0
+  fi
+  command -v ps >/dev/null 2>&1 || return 0
+  out="$(ps -eo pid=,ppid= 2>/dev/null || true)"
+  while IFS= read -r child; do
+    [ -n "$child" ] || continue
+    read -r cpid cppid _ <<<"$child" || continue
+    cpid="${cpid// /}"
+    cppid="${cppid// /}"
+    case "$cpid" in ''|*[!0-9]*) continue ;; esac
+    case "$cppid" in ''|*[!0-9]*) continue ;; esac
+    [ "$cppid" = "$parent" ] || continue
+    printf '%s\n' "$cpid"
+  done <<EOF
+${out}
+EOF
+}
+
+acx_ping_list_descendants() {
+  local parent="$1" child children
+  children="$(acx_ping_children_of "$parent")"
+  while IFS= read -r child; do
+    child="${child// /}"
+    case "$child" in
+      ''|*[!0-9]*) continue ;;
+    esac
+    acx_ping_list_descendants "$child"
+    printf '%s\n' "$child"
+  done <<EOF
+${children}
+EOF
+}
+
+acx_kill_ping_tree() {
+  local pid="$1" used_setsid="${2:-}" child descendants
+  if [ -n "$used_setsid" ]; then
+    # Negative PGID kills the whole session started by setsid.
+    kill -TERM -- "-$pid" 2>/dev/null || true
+    sleep 0.1
+    kill -KILL -- "-$pid" 2>/dev/null || true
+    return 0
+  fi
+  # Capture the tree before signaling. TERM on the parent can reparent a
+  # stubborn descendant to init (HARNC-R-08), hiding it from a later scan.
+  descendants="$(acx_ping_list_descendants "$pid")"
+  while IFS= read -r child; do
+    child="${child// /}"
+    case "$child" in
+      ''|*[!0-9]*) continue ;;
+    esac
+    kill -TERM "$child" 2>/dev/null || true
+  done <<EOF
+${descendants}
+EOF
+  kill -TERM "$pid" 2>/dev/null || true
+  sleep 0.1
+  while IFS= read -r child; do
+    child="${child// /}"
+    case "$child" in
+      ''|*[!0-9]*) continue ;;
+    esac
+    kill -KILL "$child" 2>/dev/null || true
+  done <<EOF
+${descendants}
+EOF
+  kill -KILL "$pid" 2>/dev/null || true
+}
+
 acx_run_bounded_ping() {
   acx_validate_ping_timeout || return $?
-  if ! command -v timeout >/dev/null 2>&1; then
-    echo "remote_agent: timeout is required to bound live pings" >&2
+  local ping_pid start now deadline used_setsid=""
+  if [ "$#" -eq 0 ]; then
+    echo "remote_agent: ping requires a command" >&2
     return 2
   fi
-  timeout -k 5 "$PING_TIMEOUT_SEC" "$@"
+  if [ "$1" = "--" ]; then
+    shift
+  fi
+  if [ "$#" -eq 0 ]; then
+    echo "remote_agent: ping requires a command" >&2
+    return 2
+  fi
+  start="$(date +%s)" || {
+    echo "remote_agent: could not read the clock" >&2
+    return 2
+  }
+  case "$start" in
+    ''|*[!0-9]*)
+      echo "remote_agent: clock returned a non-numeric value" >&2
+      return 2
+      ;;
+  esac
+  if command -v setsid >/dev/null 2>&1; then
+    used_setsid="$(command -v setsid)"
+    "$used_setsid" "$@" &
+  else
+    "$@" &
+  fi
+  ping_pid=$!
+  deadline=$((start + PING_TIMEOUT_SEC))
+  while kill -0 "$ping_pid" 2>/dev/null; do
+    now="$(date +%s)" || {
+      acx_kill_ping_tree "$ping_pid" "$used_setsid"
+      wait "$ping_pid" 2>/dev/null || true
+      echo "remote_agent: could not read the clock while pinging" >&2
+      return 2
+    }
+    case "$now" in
+      ''|*[!0-9]*)
+        acx_kill_ping_tree "$ping_pid" "$used_setsid"
+        wait "$ping_pid" 2>/dev/null || true
+        echo "remote_agent: clock returned a non-numeric value" >&2
+        return 2
+        ;;
+    esac
+    if [ "$now" -ge "$deadline" ]; then
+      acx_kill_ping_tree "$ping_pid" "$used_setsid"
+      wait "$ping_pid" 2>/dev/null || true
+      return 124
+    fi
+    sleep 0.1
+  done
+  wait "$ping_pid"
 }
 
 acx_reap_orphan_pings() {
@@ -144,7 +282,7 @@ case "$cmd" in
     acx_run_bounded_ping "$@"
     ;;
   ""|-h|--help|help)
-    sed -n '2,7p' "$0"
+    sed -n '2,10p' "$0"
     echo "Usage: $0 ping [--] <command>..." >&2
     echo "       $0 reap-orphan-pings" >&2
     exit 0

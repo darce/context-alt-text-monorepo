@@ -118,6 +118,21 @@ def test_ping_timeout_unset_falls_back_to_bounded_default() -> None:
     )
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.strip() == "5"
+    assert "PING_TIMEOUT_SEC unset or empty; defaulting to 5" in completed.stderr
+
+
+def test_ping_timeout_empty_falls_back_to_bounded_default() -> None:
+    completed = subprocess.run(
+        ["bash", "-c", 'source "$1"; printf "%s\\n" "$PING_TIMEOUT_SEC"', "bash", str(SCRIPT)],
+        env={**os.environ, "PING_TIMEOUT_SEC": ""},
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "5"
+    assert "PING_TIMEOUT_SEC unset or empty; defaulting to 5" in completed.stderr
 
 
 def _write_executable(path: Path, source: str) -> None:
@@ -305,6 +320,73 @@ exec sleep 30
     elapsed = time.monotonic() - started
     assert completed.returncode == 124, completed.stderr
     assert elapsed < 5, f"hung ping was not bounded: {elapsed:.1f}s"
+
+
+def test_bounded_ping_does_not_call_gnu_timeout(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _write_executable(
+        fake_bin / "timeout",
+        """#!/usr/bin/env bash
+echo GNU_TIMEOUT_CALLED >&2
+exit 99
+""",
+    )
+    _write_executable(
+        fake_bin / "codex",
+        """#!/usr/bin/env bash
+exec sleep 30
+""",
+    )
+    started = time.monotonic()
+    completed = _run(
+        "ping",
+        str(fake_bin / "codex"),
+        env={
+            "PING_TIMEOUT_SEC": "1",
+            "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+        },
+        timeout=10,
+    )
+    elapsed = time.monotonic() - started
+    assert completed.returncode == 124, completed.stderr
+    assert "GNU_TIMEOUT_CALLED" not in completed.stderr
+    assert elapsed < 5, f"hung ping was not bounded: {elapsed:.1f}s"
+
+
+def test_bounded_ping_reaps_grandchild(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    pidfile = tmp_path / "grandchild.pid"
+    _write_executable(
+        fake_bin / "codex",
+        f"""#!/usr/bin/env bash
+sleep 30 &
+printf '%s\\n' "$!" >{shlex.quote(str(pidfile))}
+wait
+""",
+    )
+    started = time.monotonic()
+    completed = _run(
+        "ping",
+        str(fake_bin / "codex"),
+        env={"PING_TIMEOUT_SEC": "1"},
+        timeout=10,
+    )
+    elapsed = time.monotonic() - started
+    assert completed.returncode == 124, completed.stderr
+    assert elapsed < 5, f"hung ping was not bounded: {elapsed:.1f}s"
+    assert pidfile.exists(), "grandchild pid was not recorded"
+    grandchild = int(pidfile.read_text(encoding="utf-8").strip())
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        try:
+            os.kill(grandchild, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.05)
+    else:
+        raise AssertionError(f"grandchild {grandchild} still alive after ping deadline")
 
 
 def test_orphan_reaper_kills_stale_ping_with_zero_padded_etime(tmp_path: Path) -> None:

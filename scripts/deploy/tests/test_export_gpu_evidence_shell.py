@@ -114,3 +114,62 @@ fi
         assert recovered.returncode != 0
     assert (bundle / "manifest.json").read_bytes() == b"previous evidence"
     assert not list(tmp_path.glob(".bundle.tmp.*"))
+
+
+@pytest.mark.parametrize("fault", ["none", "artifact", "publish_parent"])
+def test_publication_durability_barriers(tmp_path: Path, fault: str) -> None:
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (bundle / "manifest.json").write_bytes(b"previous evidence")
+    fake_oci = tmp_path / "oci"
+    fake_oci.write_text("#!/bin/bash\ncase \" $* \" in\n*' compute instance get '*) printf '%s\\n' '{\"data\":{\"id\":\"ocid1.instance.example\",\"compartment-id\":\"ocid1.compartment.example\",\"lifecycle-state\":\"STOPPED\"}}';;\n*) printf '%s\\n' '{\"data\":[]}' ;;\nesac\n")
+    fake_oci.chmod(0o755)
+    log = tmp_path / "barriers.log"
+    # Instrument the real fsync calls without requiring a storage-crash emulator.
+    (tmp_path / "sitecustomize.py").write_text(r"""
+import os
+from pathlib import Path
+_original_open, _original_fsync = os.open, os.fsync
+_paths = {}
+def traced_open(path, *args, **kwargs):
+    fd = _original_open(path, *args, **kwargs)
+    _paths[fd] = str(path)
+    return fd
+def traced_fsync(fd):
+    path = _paths.get(fd, "")
+    bundle = Path(os.environ["DURABILITY_BUNDLE"])
+    with open(os.environ["DURABILITY_LOG"], "a") as log:
+        log.write(path + "\n")
+    fault = os.environ["DURABILITY_FAULT"]
+    if fault == "artifact" and path.endswith("/manifest.json"):
+        raise OSError("injected artifact fsync failure")
+    if fault == "publish_parent" and path == str(bundle.parent) and (bundle / "manifest.json").exists() and (bundle / "manifest.json").read_bytes() != b"previous evidence":
+        raise OSError("injected publication parent fsync failure")
+    return _original_fsync(fd)
+os.open, os.fsync = traced_open, traced_fsync
+""")
+    environment = os.environ.copy()
+    environment.update({"PATH": str(Path(sys.executable).parent) + os.pathsep + environment["PATH"],
+                        "PYTHONPATH": str(tmp_path), "OCI_BIN": str(fake_oci),
+                        "DURABILITY_LOG": str(log), "DURABILITY_BUNDLE": str(bundle), "DURABILITY_FAULT": fault})
+    args = ["bash", str(SUITE.parent.parent / "lib/export-gpu-evidence.sh"),
+            "--instance-id", "ocid1.instance.example", "--compartment-id", "ocid1.compartment.example",
+            "--since", "2026-09-01T00:00:00Z", "--until", "2026-09-01T01:00:00Z", "--out", str(bundle)]
+    result = subprocess.run(args, env=environment, capture_output=True, text=True, timeout=20, check=False)
+    if fault == "none":
+        assert result.returncode == 0, result.stderr
+        synced = log.read_text().splitlines()
+        intent_index = next(i for i, path in enumerate(synced) if path.endswith("/.publish-intent"))
+        before_intent = synced[:intent_index]
+        for artifact in bundle.iterdir():
+            assert any(path.endswith("/" + artifact.name) for path in before_intent), artifact.name
+        assert any(Path(path).name == "bundle" for path in before_intent), before_intent
+    else:
+        assert result.returncode != 0, result.stdout + result.stderr
+        if fault == "artifact":
+            assert (bundle / "manifest.json").read_bytes() == b"previous evidence"
+        else:
+            transactions = list(tmp_path.glob(".bundle.tmp.*"))
+            assert len(transactions) == 1, result.stderr
+            assert (transactions[0] / "previous/manifest.json").read_bytes() == b"previous evidence"
+            assert (transactions[0] / ".publish-intent").is_file()

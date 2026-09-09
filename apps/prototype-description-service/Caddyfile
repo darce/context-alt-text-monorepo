@@ -42,6 +42,20 @@ fir.dev.api.altcontext.com {
 # A-record — no Caddy edit needed at cutover. WordPress' canonical WP_HOME/
 # WP_SITEURL points at the interim until then (set in demo secrets/.env).
 demo.altcontext.com, 129-213-40-111.sslip.io {
+	# Demo root is the walkthrough itself: a visitor who reaches the demo
+	# host already wants the product, so skip the intermediate homepage.
+	# Scoped to the bare root of the public hostname, GET/HEAD, empty query
+	# string, so /wp-admin/, /wp-login.php, /wp-json/, assets and WordPress
+	# query-based routes are untouched. `path /` is an exact match in Caddy,
+	# not a prefix. 302 while the site structure is still settling.
+	@demo_root {
+		host demo.altcontext.com
+		method GET HEAD
+		path /
+		expression {query} == ""
+	}
+	redir @demo_root /guide/ 302
+
 	@xmlrpc path /xmlrpc.php
 	respond @xmlrpc "Forbidden" 403
 

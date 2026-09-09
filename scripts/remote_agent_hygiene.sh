@@ -7,6 +7,14 @@
 # positive integer; missing/empty values fall back to a bounded default and log
 # (SECD-05). Live pings use a portable watchdog so the bound does not depend on
 # GNU timeout(1).
+#
+# OVERLAY_SEAM_CONTRACT
+# The plugin-managed scripts/remote_agent.sh overlay MUST:
+#   1. source this file (remote_agent_hygiene.sh)
+#   2. route hung ping probes through acx_run_bounded_ping
+#   3. call acx_reap_orphan_pings on the live transport
+# Tests assert this contract against the overlay when present, and against
+# this file's CLI / sourceable helpers when the overlay is absent.
 set -euo pipefail
 
 PING_TIMEOUT_MIN=1
@@ -56,6 +64,12 @@ acx_validate_orphan_ping_stale() {
   ORPHAN_PING_STALE_SEC=$((10#$value))
 }
 
+acx_cmd_has_ping_token() {
+  # Distinct argv token, not a substring of ping-hygiene / mapping / pinging.
+  local ping_token='(^|[[:space:]])ping([[:space:]]|$)'
+  [[ "$1" =~ $ping_token ]]
+}
+
 acx_etime_to_seconds() {
   local etime="${1// /}" days=0 hours=0 minutes=0 seconds=0
   local rest="$etime" first second third
@@ -87,14 +101,21 @@ acx_kill_pid() {
     return 1
   }
   "$kill_bin" -TERM "$pid" 2>/dev/null || return 1
-  while [ "$i" -lt 5 ]; do
+  # Bounded wait (~2s) so a cooperative process can exit on TERM.
+  while [ "$i" -lt 20 ]; do
     "$kill_bin" -0 "$pid" 2>/dev/null || return 0
     sleep 0.1
     i=$((i + 1))
   done
   "$kill_bin" -KILL "$pid" 2>/dev/null || true
-  "$kill_bin" -0 "$pid" 2>/dev/null && return 1
-  return 0
+  # Brief reap window: a just-killed pid can still look alive as a zombie.
+  i=0
+  while [ "$i" -lt 5 ]; do
+    "$kill_bin" -0 "$pid" 2>/dev/null || return 0
+    sleep 0.1
+    i=$((i + 1))
+  done
+  return 1
 }
 
 acx_ping_children_of() {
@@ -180,7 +201,7 @@ EOF
 
 acx_run_bounded_ping() {
   acx_validate_ping_timeout || return $?
-  local ping_pid start now deadline used_setsid=""
+  local ping_pid start now deadline used_setsid="" restore_monitor=0 ping_rc=0
   if [ "$#" -eq 0 ]; then
     echo "remote_agent: ping requires a command" >&2
     return 2
@@ -202,6 +223,12 @@ acx_run_bounded_ping() {
       return 2
       ;;
   esac
+  # util-linux setsid double-forks when the background job is already a
+  # process-group leader (bash job control / set -m). $! then dies immediately
+  # and the real command is reparented to init. Disable monitor mode first.
+  case "$-" in
+    *m*) restore_monitor=1; set +m ;;
+  esac
   if command -v setsid >/dev/null 2>&1; then
     used_setsid="$(command -v setsid)"
     "$used_setsid" "$@" &
@@ -210,34 +237,44 @@ acx_run_bounded_ping() {
   fi
   ping_pid=$!
   deadline=$((start + PING_TIMEOUT_SEC))
+  ping_rc=0
   while kill -0 "$ping_pid" 2>/dev/null; do
     now="$(date +%s)" || {
       acx_kill_ping_tree "$ping_pid" "$used_setsid"
       wait "$ping_pid" 2>/dev/null || true
       echo "remote_agent: could not read the clock while pinging" >&2
-      return 2
+      ping_rc=2
+      break
     }
     case "$now" in
       ''|*[!0-9]*)
         acx_kill_ping_tree "$ping_pid" "$used_setsid"
         wait "$ping_pid" 2>/dev/null || true
         echo "remote_agent: clock returned a non-numeric value" >&2
-        return 2
+        ping_rc=2
+        break
         ;;
     esac
     if [ "$now" -ge "$deadline" ]; then
       acx_kill_ping_tree "$ping_pid" "$used_setsid"
       wait "$ping_pid" 2>/dev/null || true
-      return 124
+      ping_rc=124
+      break
     fi
     sleep 0.1
   done
-  wait "$ping_pid"
+  if [ "$ping_rc" -eq 0 ]; then
+    wait "$ping_pid" && ping_rc=0 || ping_rc=$?
+  fi
+  if [ "$restore_monitor" -eq 1 ]; then
+    set -m
+  fi
+  return "$ping_rc"
 }
 
 acx_reap_orphan_pings() {
   acx_validate_orphan_ping_stale || return $?
-  local pid ppid etime cmd elapsed killed=0
+  local pid ppid etime cmd elapsed killed=0 parse_failed=0
   local ps_out
   ps_out="$(ps -eo pid=,ppid=,etime=,args=)" || {
     echo "remote_agent: ps failed; refusing to reap ping probes" >&2
@@ -251,8 +288,12 @@ acx_reap_orphan_pings() {
     [ "$ppid" = "1" ] || continue
     [ "$pid" != "$$" ] || continue
     [[ "$cmd" == *"$ORPHAN_PING_MATCH"* ]] || continue
-    [[ "$cmd" == *ping* ]] || continue
-    elapsed="$(acx_etime_to_seconds "$etime")" || continue
+    acx_cmd_has_ping_token "$cmd" || continue
+    if ! elapsed="$(acx_etime_to_seconds "$etime")"; then
+      echo "remote_agent: skipping pid ${pid}: could not parse etime '${etime}'" >&2
+      parse_failed=$((parse_failed + 1))
+      continue
+    fi
     if [ "$elapsed" -lt "$ORPHAN_PING_STALE_SEC" ]; then
       continue
     fi
@@ -261,14 +302,14 @@ acx_reap_orphan_pings() {
     fi
   done <<<"$ps_out"
   echo "remote_agent: reaped ${killed} stale orphan ping probe(s)"
+  if [ "$parse_failed" -gt 0 ]; then
+    echo "remote_agent: skipped ${parse_failed} ping probe(s) with unparseable etime" >&2
+  fi
 }
 
 if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
   return 0
 fi
-
-acx_validate_ping_timeout
-acx_validate_orphan_ping_stale
 
 cmd="${1:-}"
 if [ "$#" -gt 0 ]; then

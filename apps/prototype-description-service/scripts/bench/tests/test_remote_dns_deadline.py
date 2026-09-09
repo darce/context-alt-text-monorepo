@@ -14,6 +14,8 @@ from __future__ import annotations
 import threading
 import time
 
+import pytest
+
 from scripts.bench import corpus as corpus_mod
 from scripts.bench.corpus import reset_media_host_pins
 from scripts.bench.stack_pair import BenchError
@@ -110,3 +112,113 @@ def test_stalled_resolver_returns_deadline_before_late_answer() -> None:
     assert _HOST.lower() not in pinned_hosts_after
     assert corpus_mod._is_non_public(_LATE_PRIVATE) is True
     assert corpus_mod._is_non_public("8.8.8.8") is False
+
+
+class _Clock:
+    def __init__(self, t: float = 1_000.0) -> None:
+        self.t = t
+
+    def monotonic(self) -> float:
+        return self.t
+
+
+class _DeadlineConsumingSemaphore:
+    """Acquire succeeds and spends the remaining absolute budget on admission."""
+
+    def __init__(self, clock: _Clock) -> None:
+        self._clock = clock
+        self.acquires = 0
+        self.releases = 0
+        self.held = 0
+
+    def acquire(self, blocking: bool = True, timeout: float | None = None) -> bool:
+        del blocking
+        self.acquires += 1
+        self.held += 1
+        if timeout is not None:
+            self._clock.t += float(timeout)
+        return True
+
+    def release(self) -> None:
+        if self.held <= 0:
+            raise RuntimeError("release without matching acquire")
+        self.held -= 1
+        self.releases += 1
+
+
+class _SpyThread:
+    """Record construction/start without running the worker (unused permit)."""
+
+    instances: list["_SpyThread"] = []
+
+    def __init__(
+        self,
+        group: object = None,
+        target: object = None,
+        name: str | None = None,
+        args: tuple[object, ...] = (),
+        kwargs: dict[str, object] | None = None,
+        *,
+        daemon: bool | None = None,
+    ) -> None:
+        del group, args, kwargs, daemon
+        self.target = target
+        self.name = name
+        self.started = False
+        type(self).instances.append(self)
+
+    def start(self) -> None:
+        self.started = True
+
+
+def test_post_admission_deadline_does_not_start_resolver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Successful DNS admission that exhausts the deadline must not spawn.
+
+    Semaphore acquire is inside the absolute budget ([RES-02] [RES-03]); a
+    wait that consumes `deadline_at` must return `media_resource_failed`
+    without Thread.start, without a resolver call, and with the unused
+    acquired permit released ([TEST-15] [AGT-06]; DDIA Latency; Release It!).
+    The running worker's finally-owned permit is a different object.
+    """
+    clock = _Clock()
+    deadline_at = clock.t + _DEADLINE_S
+    gate = _DeadlineConsumingSemaphore(clock)
+    _SpyThread.instances = []
+    resolver_hosts: list[str] = []
+
+    def resolver(host: str) -> list[str]:
+        resolver_hosts.append(host)
+        return ["203.0.113.10"]
+
+    monkeypatch.setattr(corpus_mod, "time", clock, raising=False)
+    monkeypatch.setattr(corpus_mod, "_DNS_IN_FLIGHT", gate)
+    monkeypatch.setattr(corpus_mod.threading, "Thread", _SpyThread)
+
+    error: BenchError | None = None
+    try:
+        corpus_mod._resolve_host_with_deadline(_HOST, resolver, deadline_at)
+    except BenchError as exc:
+        error = exc
+
+    assert error is not None, "expected media_resource_failed after admission consumed the deadline"
+    assert error.code == "media_resource_failed"
+    assert "deadline" in str(error).lower()
+    assert _SpyThread.instances == [], (
+        "post-admission deadline must not construct a DNS worker "
+        f"(threads={[t.name for t in _SpyThread.instances]})"
+    )
+    assert not any(t.started for t in _SpyThread.instances), (
+        "post-admission deadline must not call Thread.start"
+    )
+    assert resolver_hosts == [], (
+        "post-admission deadline must not call the resolver "
+        f"(hosts={resolver_hosts})"
+    )
+    assert gate.acquires == 1
+    assert gate.held == 0
+    assert gate.releases == 1, (
+        "unused acquired permit must be released before spawn "
+        f"(acquires={gate.acquires} releases={gate.releases} held={gate.held})"
+    )

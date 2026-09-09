@@ -1195,10 +1195,13 @@ def test_do_restart_marks_post_restart_before_systemctl() -> None:
     assert body.index('ACX_RESTART_EVIDENCE_PHASE="pre_candidate"') < body.index(
         'ACX_RESTART_EVIDENCE_PHASE="post_restart"'
     )
-    assert body.index('ACX_RESTART_EVIDENCE_PHASE="post_restart"') < body.index("sudo systemctl start")
-    assert body.index("systemctl start") < body.index("systemctl restart")
+    recreate_at = body.index("recreate_cutover_candidate")
+    candidate = _function_body("recreate_cutover_candidate")
+    assert body.index('ACX_RESTART_EVIDENCE_PHASE="post_restart"') < recreate_at
+    assert "sudo systemctl start" in candidate
+    assert recreate_at < body.index("systemctl restart")
     assert body.index("ACX_LIVE_DISRUPTED=1") < body.index("systemctl restart ${unit}")
-    assert body.index("systemctl start") < body.index("ACX_LIVE_DISRUPTED=1")
+    assert recreate_at < body.index("ACX_LIVE_DISRUPTED=1")
     assert body.rindex("ACX_LIVE_DISRUPTED=0") > body.index("ACX_LIVE_DISRUPTED=1")
 
 
@@ -2598,6 +2601,9 @@ def _run_actual_restart_failure_transaction(
     candidate_digest = base + "@sha256:" + ("b" * 64)
     rollback_id = "sha256:" + ("1" * 64)
     candidate_id = "sha256:" + ("2" * 64)
+    candidate_commit = subprocess.check_output(
+        ["git", "-C", str(SCRIPT.parents[2]), "rev-parse", "HEAD"], text=True
+    ).strip()
     prior_cid = "5" * 64
     stopped_cid = "3" * 64
     rollback_cid = "4" * 64
@@ -2620,6 +2626,7 @@ rollback_digest="__ROLLBACK_DIGEST__"
 candidate_digest="__CANDIDATE_DIGEST__"
 rollback_id="__ROLLBACK_ID__"
 candidate_id="__CANDIDATE_ID__"
+candidate_commit="__CANDIDATE_COMMIT__"
 stopped_cid="__STOPPED_CID__"
 rollback_cid="__ROLLBACK_CID__"
 prior_cid="__PRIOR_CID__"
@@ -2661,6 +2668,13 @@ if [[ "${1:-}" == "compose" ]]; then
       cat "${state}/running-cid"
     fi
     exit 0
+  fi
+  exit 0
+fi
+
+if [[ "${1:-}" == "exec" ]]; then
+  if [[ "$*" == *"urllib.request"* ]]; then
+    printf '{"commit_sha":"%s","status":"ok"}\n' "$candidate_commit"
   fi
   exit 0
 fi
@@ -2755,6 +2769,7 @@ esac
         .replace("__CANDIDATE_DIGEST__", candidate_digest)
         .replace("__ROLLBACK_ID__", rollback_id)
         .replace("__CANDIDATE_ID__", candidate_id)
+        .replace("__CANDIDATE_COMMIT__", candidate_commit)
         .replace("__STOPPED_CID__", stopped_cid)
         .replace("__ROLLBACK_CID__", rollback_cid)
         .replace("__PRIOR_CID__", prior_cid)
@@ -2790,6 +2805,9 @@ if [[ "$remote" == *"systemctl start"* && "$remote" == *"-next"* ]]; then
       : >"${state}/candidate-stopped"
     fi
     exit 1
+  fi
+  if [[ "$remote" == *"docker compose"* && "$remote" == *"rm -fs api"* ]]; then
+    : >"${state}/candidate-recreated"
   fi
   printf '%s\n' "$stopped_cid" >"${state}/next-running-cid"
   exit 0
@@ -2948,6 +2966,10 @@ def test_actual_restart_failure_restores_after_confirmed_stopped_candidate(tmp_p
     assert docker_log.count(f"tag {rollback_digest} {base}:{env_name}") == 1
     assert docker_log.count(f"push {base}:{env_name}") == 1
     assert ssh_log.count(f"systemctl start {unit}-next") == 1, ssh_log
+    assert (state / "candidate-recreated").is_file(), ssh_log
+    assert ssh_log.index(f"systemctl stop {unit}-next") < ssh_log.index("rm -fs api") < ssh_log.index(
+        f"systemctl start {unit}-next"
+    )
     assert ssh_log.count(f"systemctl restart {unit}") == 2, ssh_log
     assert "-p acx-" + env_name + "-next" in docker_log, docker_log
     assert (state / "running-cid").read_text().strip() == "4" * 64
@@ -3043,11 +3065,40 @@ def test_do_restart_is_additive_then_flip() -> None:
     assert "env_to_next_unit" in body
     assert "render_cutover_compose" in body
     assert "render_next_unit" in body
+    assert "recreate_cutover_candidate" in body
     assert "flip_edge_alias" in body
     assert "probe_cutover_api_health" in body
-    assert body.index("systemctl start") < body.index("flip_edge_alias")
+    assert body.index("recreate_cutover_candidate") < body.index("flip_edge_alias")
     assert body.index("probe_cutover_api_health") < body.index("flip_edge_alias")
     assert body.index("flip_edge_alias") < body.index("systemctl restart")
+    recreate = _function_body("recreate_cutover_candidate")
+    assert recreate.index("systemctl stop") < recreate.index("rm -fs api") < recreate.index("systemctl start")
+
+
+def test_cutover_candidate_probe_requires_immutable_image_and_commit() -> None:
+    body = _function_body("probe_cutover_api_health")
+    assert "remote_image_id_for_digest" in body
+    assert "docker inspect --format '{{.Image}}'" in body
+    assert "expected_image_id" in body
+    assert "commit_sha" in body
+    assert "actual == sys.argv[1]" in body
+
+
+def test_abort_cutover_candidate_fails_closed_on_remote_cleanup_error(tmp_path: Path) -> None:
+    records = tmp_path / "abort.log"
+    command = f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+ACX_TRAFFIC_FLIPPED=1
+run_with_deadline() {{ return 73; }}
+if abort_cutover_candidate dev; then
+  exit 1
+fi
+printf 'traffic=%s\\n' "$ACX_TRAFFIC_FLIPPED" >"{records}"
+'''
+    result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert records.read_text() == "traffic=1\n"
 
 
 def test_do_restart_gates_canonical_health_before_flip_back() -> None:

@@ -2716,6 +2716,25 @@ EDGE_RESTORE
   fi
 }
 
+recreate_cutover_candidate() {
+  local env="$1" next_unit next_project remote_dir timeout
+  next_unit="$(env_to_next_unit "$env")"
+  next_project="acx-${env}-next"
+  remote_dir="$(env_to_remote_dir "$env")"
+  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  log "Force-stopping and recreating cutover candidate ${next_unit}"
+  if ! run_with_deadline "${timeout}" "recreate cutover candidate ${next_unit}" \
+    ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
+    "set -euo pipefail
+     sudo systemctl stop $(remote_quote "${next_unit}")
+     cd $(remote_quote "${remote_dir}")
+     docker compose -p $(remote_quote "${next_project}") -f docker-compose.cutover.yml rm -fs api
+     sudo systemctl start $(remote_quote "${next_unit}")"; then
+    warn "could not force-stop and recreate cutover candidate ${next_unit}"
+    return 1
+  fi
+}
+
 abort_cutover_candidate() {
   local env="$1" next_unit next_project remote_dir timeout
   next_unit="$(env_to_next_unit "$env")"
@@ -2723,14 +2742,19 @@ abort_cutover_candidate() {
   remote_dir="$(env_to_remote_dir "$env")"
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
   log "Draining cutover candidate ${next_unit}"
-  run_with_deadline "${timeout}" "drain cutover candidate ${next_unit}" \
+  if ! run_with_deadline "${timeout}" "drain cutover candidate ${next_unit}" \
     ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
-    "sudo systemctl stop '${next_unit}' 2>/dev/null || true
-     sudo systemctl disable '${next_unit}' 2>/dev/null || true
+    "set -euo pipefail
+     sudo systemctl stop $(remote_quote "${next_unit}")
+     if sudo systemctl is-enabled $(remote_quote "${next_unit}") >/dev/null 2>&1; then
+       sudo systemctl disable $(remote_quote "${next_unit}")
+     fi
      sudo rm -f '/etc/systemd/system/${next_unit}.service'
      sudo systemctl daemon-reload
-     cd '${remote_dir}' && docker compose -p '${next_project}' -f docker-compose.cutover.yml rm -fs api 2>/dev/null || true" \
-    || warn "cutover candidate drain returned non-zero for ${env}"
+     cd $(remote_quote "${remote_dir}") && docker compose -p $(remote_quote "${next_project}") -f docker-compose.cutover.yml rm -fs api"; then
+    warn "cutover candidate drain failed for ${env}; refusing to report a clean cutover"
+    return 1
+  fi
   ACX_TRAFFIC_FLIPPED=0
   return 0
 }
@@ -2786,7 +2810,10 @@ recover_interrupted_cutover() {
       enable_cutover_candidate "${env}" || true
       return 1
     fi
-    abort_cutover_candidate "${env}" || true
+    if ! abort_cutover_candidate "${env}"; then
+      warn "candidate cleanup after interrupted cutover failed"
+      return 1
+    fi
     return 0
   fi
   warn "edge restore after interrupt failed; leaving candidate ${env}-next enabled and serving"
@@ -2808,7 +2835,7 @@ restore_runtime_topology() {
   local env="$1"
   restore_topology_backups "$env" || return 1
   restore_edge_backups "$env" || return 1
-  abort_cutover_candidate "$env" || true
+  abort_cutover_candidate "$env" || return 1
 }
 
 flip_edge_alias() {
@@ -2881,10 +2908,29 @@ FLIP_EDGE
 }
 
 probe_cutover_api_health() {
-  local env="$1" next_project remote_dir timeout attempt max_attempts sleep_s
+  local env="$1" expected_digest expected_sha next_project remote_dir timeout attempt max_attempts sleep_s
+  local expected_image_id
+  expected_digest="${2:-${ACX_CANDIDATE_DIGEST_REF:-}}"
+  expected_sha="${3:-}"
   remote_dir="$(env_to_remote_dir "$env")"
   next_project="acx-${env}-next"
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  if [[ ! "${expected_digest}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]]; then
+    warn "cutover candidate health probe requires a digest-pinned expected image"
+    return 1
+  fi
+  if [[ -z "${expected_sha}" ]]; then
+    expected_sha="$(git -C "${REPO_ROOT}" rev-parse "${GIT_REF}" 2>/dev/null || true)"
+  fi
+  if [[ ! "${expected_sha}" =~ ^[a-f0-9]{40}$ ]]; then
+    warn "cutover candidate health probe requires a valid expected commit"
+    return 1
+  fi
+  expected_image_id="$(remote_image_id_for_digest "${expected_digest}" || true)"
+  if [[ ! "${expected_image_id}" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+    warn "cutover candidate image identity could not be resolved for ${expected_digest}"
+    return 1
+  fi
   max_attempts="${ACX_VERIFY_ATTEMPTS:-5}"
   sleep_s="${ACX_VERIFY_SLEEP:-5}"
   [[ "${max_attempts}" =~ ^[1-9][0-9]*$ ]] || return 1
@@ -2892,7 +2938,7 @@ probe_cutover_api_health() {
   for attempt in $(seq 1 "${max_attempts}"); do
     if run_with_deadline "${timeout}" "cutover health probe ${env} attempt ${attempt}" \
       ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
-      "cd '${remote_dir}' && cid=\$(docker compose -p '${next_project}' -f docker-compose.cutover.yml ps -q api | head -1) && [ -n \"\$cid\" ] && docker exec \"\$cid\" python -c 'import sys, urllib.request; r=urllib.request.urlopen(\"http://127.0.0.1:8000/health\", timeout=4); sys.exit(0 if r.status==200 else 1)'"; then
+      "cd '${remote_dir}' && cid=\$(docker compose -p '${next_project}' -f docker-compose.cutover.yml ps -q api | head -1) && [ -n \"\$cid\" ] && image_id=\$(docker inspect --format '{{.Image}}' \"\$cid\") && [ \"\$image_id\" = '${expected_image_id}' ] && docker exec \"\$cid\" python -c 'import json, sys, urllib.request; r=urllib.request.urlopen(\"http://127.0.0.1:8000/health\", timeout=4); body=json.load(r); actual=body.get(\"commit_sha\") or body.get(\"git_commit_sha\") or body.get(\"version\") or \"\"; sys.exit(0 if r.status == 200 and actual == sys.argv[1] else 1)' '${expected_sha}'"; then
       log "Cutover candidate ${next_project} is healthy"
       return 0
     fi
@@ -2927,7 +2973,7 @@ probe_canonical_api_health() {
 
 do_restart() {
   local env="$1" expected_digest="${2:-${ACX_CANDIDATE_DIGEST_REF:-}}"
-  local unit next_unit expected_repo env_tag pulled_digest timeout remote_dir
+  local unit next_unit expected_repo env_tag pulled_digest expected_sha timeout remote_dir
   ACX_RESTART_EVIDENCE_PHASE="pre_candidate"
   ACX_TRAFFIC_FLIPPED=0
   ACX_CUTOVER_ENV="$env"
@@ -2936,6 +2982,7 @@ do_restart() {
   unit="$(env_to_unit "$env")"
   next_unit="$(env_to_next_unit "$env")"
   remote_dir="$(env_to_remote_dir "$env")"
+  expected_sha="$(git -C "${REPO_ROOT}" rev-parse "${GIT_REF}" 2>/dev/null || true)"
   expected_repo="${expected_digest%@sha256:*}"
   env_tag="$(env_to_tag "${env}")"
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
@@ -2990,20 +3037,25 @@ do_restart() {
 
   log "Starting cutover candidate ${next_unit} (live unit ${unit} stays serving)"
   ACX_RESTART_EVIDENCE_PHASE="post_restart"
-  if ! run_with_deadline "${timeout}" "systemctl start ${next_unit}" \
-    ssh -l "${OCI_USER}" -- "${OCI_HOST}" "sudo systemctl start ${next_unit}"; then
-    warn "systemctl start ${next_unit} failed"
-    abort_cutover_candidate "$env" || true
+  if ! recreate_cutover_candidate "$env"; then
+    warn "cutover candidate ${next_unit} could not be force-recreated"
+    if ! abort_cutover_candidate "$env"; then
+      warn "cutover candidate cleanup also failed after recreation failure"
+    fi
     return 1
   fi
-  if ! probe_cutover_api_health "$env"; then
+  if ! probe_cutover_api_health "$env" "${expected_digest}" "${expected_sha}"; then
     warn "cutover candidate never became healthy; live unit ${unit} left serving"
-    abort_cutover_candidate "$env" || true
+    if ! abort_cutover_candidate "$env"; then
+      warn "cutover candidate cleanup failed after health failure"
+    fi
     return 1
   fi
   if ! flip_edge_alias "$env" next; then
     warn "traffic flip to ${next_unit} failed; live unit ${unit} left serving"
-    abort_cutover_candidate "$env" || true
+    if ! abort_cutover_candidate "$env"; then
+      warn "cutover candidate cleanup failed after canonical flip rollback"
+    fi
     return 1
   fi
   ACX_TRAFFIC_FLIPPED=1
@@ -3012,7 +3064,9 @@ do_restart() {
     if flip_edge_alias "$env" canonical; then
       ACX_TRAFFIC_FLIPPED=0
       ACX_CUTOVER_COMMITTED=1
-      abort_cutover_candidate "$env" || true
+      if ! abort_cutover_candidate "$env"; then
+        warn "cutover candidate cleanup failed after enablement rollback"
+      fi
     else
       warn "canonical flip failed; leaving candidate ${next_unit} serving"
     fi
@@ -3023,7 +3077,9 @@ do_restart() {
     if flip_edge_alias "$env" canonical; then
       ACX_TRAFFIC_FLIPPED=0
       ACX_CUTOVER_COMMITTED=1
-      abort_cutover_candidate "$env" || true
+      if ! abort_cutover_candidate "$env"; then
+        warn "cutover candidate cleanup failed after public health rollback"
+      fi
     else
       warn "canonical flip failed; leaving candidate ${next_unit} serving"
     fi
@@ -3040,7 +3096,7 @@ do_restart() {
   # The canonical unit's ExecStop is deliberately scoped to api+worker so the
   # shared postgres service remains available to the candidate. Re-gate the
   # candidate after the canonical stack changes before moving traffic back.
-  if ! probe_cutover_api_health "$env"; then
+  if ! probe_cutover_api_health "$env" "${expected_digest}" "${expected_sha}"; then
     warn "cutover candidate lost health after canonical api/worker restart; traffic remains on ${next_unit}"
     return 1
   fi
@@ -3058,7 +3114,10 @@ do_restart() {
   fi
   ACX_TRAFFIC_FLIPPED=0
   ACX_CUTOVER_COMMITTED=1
-  abort_cutover_candidate "$env" || true
+  if ! abort_cutover_candidate "$env"; then
+    warn "cutover candidate cleanup failed after successful canonical flip"
+    return 1
+  fi
   ACX_LIVE_DISRUPTED=0
   return 0
 }
@@ -3294,7 +3353,10 @@ restore_runtime_and_edge() {
     warn "edge restore left traffic on ${env}-next; refusing to drain candidate. Recovery: $(rollback_command_hint "${env}")"
     return 1
   fi
-  abort_cutover_candidate "${env}" || true
+  if ! abort_cutover_candidate "${env}"; then
+    warn "could not drain cutover candidate after restoring canonical topology"
+    return 1
+  fi
   if [[ "${restart_runtime}" == "1" ]]; then
     if ! verify_restored_runtime "${env}" "${ACX_ROLLBACK_DIGEST_REF}"; then
       warn "rollback restart completed but healthy serving state was not observed"

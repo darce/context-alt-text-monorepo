@@ -39,6 +39,15 @@ const response = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 
 describe('public demo describe polling', () => {
+  it('carries the submit capability on status polls so completion can be replayed', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(response(running({
+      status: 'completed', phase: 'complete', description: 'A lakeside path.',
+    })));
+    await pollRun({ statusUrl: '/status/run-1', nonce: 'nonce', idempotencyKey: 'resume-key-1234', fetchImpl });
+    const options = fetchImpl.mock.calls[0]?.[1];
+    expect(new Headers(options?.headers).get('Idempotency-Key')).toBe('resume-key-1234');
+  });
+
   it('backs off exponentially and stops polling on a terminal response', async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
@@ -735,7 +744,7 @@ describe('public demo radio contract from actual PHP shortcode markup', () => {
 
     document.body.innerHTML = ACTUAL_SHORTCODE_TWO_INSTANCES;
     try {
-      const names = [...document.querySelectorAll<HTMLInputElement>('input[type="radio"]')].map((input) => input.name);
+      const names = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="radio"]')).map((input) => input.name);
       expect(names).toEqual(['acx-demo-media-1', 'acx-demo-media-1', 'acx-demo-media-2', 'acx-demo-media-2']);
       expect(document.querySelector('input[name="acx-demo-media"]')).toBeNull();
     } finally {
@@ -745,7 +754,7 @@ describe('public demo radio contract from actual PHP shortcode markup', () => {
 
   it('posts each form\'s selected media_id and does not leak the other instance\'s choice', async () => {
     document.body.innerHTML = ACTUAL_SHORTCODE_TWO_INSTANCES;
-    const roots = [...document.querySelectorAll<HTMLElement>('[data-acx-demo]')];
+    const roots = Array.from(document.querySelectorAll<HTMLElement>('[data-acx-demo]'));
     const forms = roots.map((root) => root.querySelector<HTMLFormElement>('form.acx-demo__form'));
     const firstLake = document.querySelector<HTMLInputElement>('#acx-demo-media-1-41');
     const secondPath = document.querySelector<HTMLInputElement>('#acx-demo-media-2-42');
@@ -782,7 +791,7 @@ describe('public demo radio contract from actual PHP shortcode markup', () => {
 
   it('does not POST when the submitting instance has no radio selected', async () => {
     document.body.innerHTML = ACTUAL_SHORTCODE_TWO_INSTANCES;
-    const roots = [...document.querySelectorAll<HTMLElement>('[data-acx-demo]')];
+    const roots = Array.from(document.querySelectorAll<HTMLElement>('[data-acx-demo]'));
     const firstForm = roots[0]?.querySelector<HTMLFormElement>('form.acx-demo__form');
     const secondPath = document.querySelector<HTMLInputElement>('#acx-demo-media-2-42');
     expect(secondPath).toBeInstanceOf(HTMLInputElement);
@@ -823,7 +832,7 @@ describe('public demo illustrative outcome preview', () => {
   it('shows a static illustrative preview before submit in the PHP-rendered fixture', () => {
     document.body.innerHTML = ACTUAL_SHORTCODE_TWO_INSTANCES;
     try {
-      const roots = [...document.querySelectorAll<HTMLElement>('[data-acx-demo]')];
+      const roots = Array.from(document.querySelectorAll<HTMLElement>('[data-acx-demo]'));
       expect(roots).toHaveLength(2);
       for (const root of roots) {
         const preview = root.querySelector<HTMLElement>('[data-acx-demo-preview]');

@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -50,6 +51,15 @@ raise SystemExit(main([
     '--out', sys.argv[3],
 ]))
 """
+
+
+def test_report_builder_direct_script_keeps_startup_contract() -> None:
+    """The shebang/file-path entry point still exposes argparse help."""
+    script = Path(__file__).resolve().parents[2] / "scripts" / "eval_harness" / "build_bakeoff_report.py"
+    proc = subprocess.run([sys.executable, str(script), "--help"], capture_output=True, text=True)
+
+    assert proc.returncode == 0, proc.stderr
+    assert "usage:" in proc.stdout
 
 
 def _write_report_inputs(tmp_path: Path, *, extra_media_id: bool = False) -> tuple[bytes, bytes]:

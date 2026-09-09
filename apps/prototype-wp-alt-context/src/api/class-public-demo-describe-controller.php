@@ -83,6 +83,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 	private const LIVE_STATUSES         = array( 'pending', 'running' );
 	private const PHASES                = array( 'queued', 'warming', 'describing', 'complete', 'failed', 'cancelled' );
 	private const GPU_STATES            = array( 'unknown', 'stopped', 'starting', 'warming', 'ready', 'degraded' );
+	private const DESCRIPTION_RESULT_TIERS = array( 'provisional_cpu', 'final_gpu' );
 
 	private DescribeController $pipeline;
 	private ?string $inflight_token = null;
@@ -359,11 +360,16 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 
 		$status = $public_response->get_data()['status'];
 		if ( 'completed' === $status ) {
-			$description = $this->public_description( $pipeline_request, absint( $inflight['media_id'] ?? 0 ), $run_id, $lease_token );
-			if ( $description instanceof WP_Error ) {
-				return $description;
+			$described = $this->public_description( $pipeline_request, absint( $inflight['media_id'] ?? 0 ), $run_id, $lease_token );
+			if ( $described instanceof WP_Error ) {
+				return $described;
 			}
-			$public_response = $this->public_envelope_response( $response, false, $description );
+			$public_response = $this->public_envelope_response(
+				$response,
+				false,
+				$described['description'],
+				$described['description_tier']
+			);
 			if ( $public_response instanceof WP_Error ) {
 				return $public_response;
 			}
@@ -841,7 +847,10 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 		wp_cache_delete( $option, 'options' );
 	}
 
-	private function public_description( WP_REST_Request $pipeline_request, int $media_id, string $expected_run_id, string $expected_token ): string|WP_Error {
+	/**
+	 * @return array{description: string, description_tier: string|null}|WP_Error
+	 */
+	private function public_description( WP_REST_Request $pipeline_request, int $media_id, string $expected_run_id, string $expected_token ): array|WP_Error {
 		$items_response = $this->pipeline->get_describe_run_items( $pipeline_request );
 		if ( ! $items_response instanceof WP_REST_Response || $items_response->get_status() >= 400 ) {
 			return $this->invalid_pipeline_response();
@@ -871,13 +880,27 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 			if ( '' === $description ) {
 				continue;
 			}
-			return $description;
+			return array(
+				'description' => $description,
+				'description_tier' => $this->normalize_public_description_tier( $item['tier'] ?? null ),
+			);
 		}
 
-		return '';
+		return array(
+			'description' => '',
+			'description_tier' => null,
+		);
 	}
 
-	private function public_envelope_response( WP_REST_Response $upstream, bool $include_deadline, string $description = '' ): WP_REST_Response|WP_Error {
+	private function normalize_public_description_tier( mixed $tier ): ?string {
+		if ( ! is_string( $tier ) || ! in_array( $tier, self::DESCRIPTION_RESULT_TIERS, true ) ) {
+			return null;
+		}
+
+		return $tier;
+	}
+
+	private function public_envelope_response( WP_REST_Response $upstream, bool $include_deadline, string $description = '', ?string $description_tier = null ): WP_REST_Response|WP_Error {
 		$data = $upstream->get_data();
 		if ( ! is_array( $data ) ) {
 			return $this->invalid_pipeline_response();
@@ -931,6 +954,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 		}
 		if ( 'completed' === $status && '' !== $description ) {
 			$public['description'] = $description;
+			$public['description_tier'] = $this->normalize_public_description_tier( $description_tier );
 		}
 		if ( 'completed_with_errors' === $status ) {
 			$public['error'] = array(

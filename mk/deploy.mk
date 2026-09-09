@@ -15,6 +15,7 @@
 DEPLOY_SCRIPT         := $(ROOT_MAKEFILE_DIR)/scripts/deploy/recognition-service.sh
 DEPLOY_COMPOSE_SCRIPT := $(ROOT_MAKEFILE_DIR)/scripts/deploy/sync-compose.sh
 DEPLOY_DEMO_SCRIPT    := $(ROOT_MAKEFILE_DIR)/scripts/deploy/sync-demo.sh
+ENABLE_PUBLIC_GUIDE_SCRIPT := $(ROOT_MAKEFILE_DIR)/scripts/deploy/enable-public-guide.sh
 DB_RESET_REMOTE_SCRIPT := $(ROOT_MAKEFILE_DIR)/scripts/deploy/db-reset-remote.sh
 DEMO_WALKTHROUGH_APP  := $(ROOT_MAKEFILE_DIR)/apps/prototype-wp-alt-context
 
@@ -25,7 +26,8 @@ DEMO_WALKTHROUGH_APP  := $(ROOT_MAKEFILE_DIR)/apps/prototype-wp-alt-context
         deploy-verify deploy-verify-dev deploy-verify-staging deploy-verify-prod \
         deploy-status deploy-clear-image-repo \
         deploy-compose-dev deploy-compose-staging deploy-compose-prod \
-        reset-remote db-reset-remote demo-walkthrough-proof walkthrough-first-visitor guided-walkthrough-record
+        reset-remote db-reset-remote demo-walkthrough-proof walkthrough-first-visitor guided-walkthrough-record \
+        demo-enable-public-guide
 
 deploy-help:
 	@echo "Recognition service deploy targets:"
@@ -84,6 +86,12 @@ deploy-help:
 	@echo "    ACX_DEMO_GPU_PREFLIGHT=1 make deploy-demo  Fail closed on GPU/reaper env drift before stack up"
 	@echo "    ACX_DEMO_DESCRIBE_CHUNK=10 ACX_DEMO_DESCRIBE_MAX=100 make deploy-demo  Bound first describe burst"
 	@echo "    PLUGIN_ZIP=dist/alt-context-x.y.z.zip make deploy-demo   Pin plugin artifact explicitly"
+	@echo ""
+	@echo "  Public guide enable (deliberate per-site operator step; not implied by deploy-demo):"
+	@echo "    make demo-enable-public-guide WP_PATH=/path/to/wordpress SITE_URL=https://demo.altcontext.com"
+	@echo "    DRY_RUN=1 make demo-enable-public-guide WP_PATH=/path/to/wordpress SITE_URL=https://demo.altcontext.com"
+	@echo "    Sets acx_public_guide_enabled, flushes rewrites, signed-out GET /guide/ must be 200."
+	@echo "    acx_public_demo_enabled (public demo describe) stays off unless ACX_RETAIN_PUBLIC_DEMO_DESCRIBE=1."
 	@echo ""
 	@echo "  Demo walkthrough proof (Playwright evidence — screenshots + smoke-log fragment):"
 	@echo "    First-time setup: (cd apps/prototype-wp-alt-context && npm ci && npm run e2e:install)"
@@ -234,6 +242,22 @@ deploy-demo:
 		ACX_DEMO_DESCRIBE_CHUNK="$(ACX_DEMO_DESCRIBE_CHUNK)" \
 		ACX_DEMO_DESCRIBE_MAX="$(ACX_DEMO_DESCRIBE_MAX)" \
 		"$(DEPLOY_DEMO_SCRIPT)"
+
+# Deliberate per-site enable of the signed-out public guide. Requires WP_PATH and
+# SITE_URL; DRY_RUN=1 prints the plan and mutates nothing. Does not turn on
+# acx_public_demo_enabled unless ACX_RETAIN_PUBLIC_DEMO_DESCRIBE=1 is set.
+demo-enable-public-guide:
+	@if [ -z "$(WP_PATH)" ] || [ -z "$(SITE_URL)" ]; then \
+		echo "ERROR: WP_PATH and SITE_URL are required (no default site)." >&2; \
+		echo "  make demo-enable-public-guide WP_PATH=/path/to/wordpress SITE_URL=https://demo.altcontext.com" >&2; \
+		echo "  DRY_RUN=1 make demo-enable-public-guide WP_PATH=/path/to/wordpress SITE_URL=https://example.com" >&2; \
+		exit 2; \
+	fi
+	@WP_PATH="$(WP_PATH)" \
+		SITE_URL="$(SITE_URL)" \
+		DRY_RUN="$(DRY_RUN)" \
+		ACX_RETAIN_PUBLIC_DEMO_DESCRIBE="$(ACX_RETAIN_PUBLIC_DEMO_DESCRIBE)" \
+		"$(ENABLE_PUBLIC_GUIDE_SCRIPT)" --site-url "$(SITE_URL)" $(if $(filter 1,$(DRY_RUN)),--dry-run,)
 
 # Demo walkthrough proof: runs the Playwright `evidence` project's demo-walkthrough
 # spec against WP_BASE_URL (default https://demo.altcontext.com), emitting screenshots,

@@ -252,12 +252,33 @@ exit 7
 
 
 def _function_body(name: str) -> str:
-    """Slice one top-level `name() {` through the next column-0 `fn() {`."""
+    """Slice one top-level `name() {` through the next column-0 `fn() {`.
+
+    Nested helpers inside remote heredocs are not the next top-level function.
+    """
     source = SCRIPT.read_text()
     start = source.index(f"{name}() {{")
-    nxt = re.search(r"\n[A-Za-z_][A-Za-z0-9_]*\(\) \{", source[start + 1 :])
-    end = start + 1 + nxt.start() if nxt else len(source)
-    return source[start:end]
+    consumed = 0
+    heredoc_end: str | None = None
+    for idx, line in enumerate(source[start:].splitlines(keepends=True)):
+        raw = line.rstrip("\n")
+        if idx == 0:
+            consumed += len(line)
+            continue
+        if heredoc_end is not None:
+            consumed += len(line)
+            if raw == heredoc_end:
+                heredoc_end = None
+            continue
+        heredoc = re.search(r"""<<[-]?(['\"]?)(\w+)\1""", raw)
+        if heredoc:
+            heredoc_end = heredoc.group(2)
+            consumed += len(line)
+            continue
+        if re.match(r"[A-Za-z_][A-Za-z0-9_]*\(\) \{", raw):
+            return source[start : start + consumed]
+        consumed += len(line)
+    return source[start:]
 
 
 def _sanitize_deploy_diagnostic_src() -> str:
@@ -2715,6 +2736,10 @@ if [[ "$remote" == *"systemctl restart"* ]]; then
     printf '%s\n' "__ROLLBACK_CID__" >"${state}/running-cid"
     exit 0
   fi
+  if [[ "$fail_at" == "canonical_health" ]]; then
+    printf '%s\n' "$stopped_cid" >"${state}/running-cid"
+    exit 0
+  fi
   if [[ "$fail_at" == "live_restart" ]]; then
     rm -f "${state}/running-cid"
     if [[ "$runtime_mode" == "absent" || "$runtime_mode" == "unknown" ]]; then
@@ -2733,13 +2758,29 @@ fi
 remote="${remote//\/opt\/acx-backend\/dev/${state}/remote}"
 remote="${remote//\/opt\/acx-backend\/staging/${state}/remote}"
 remote="${remote//\/opt\/acx-backend\/prod/${state}/remote}"
-if [[ "$remote" == *"docker compose"* && "$remote" == *"ps"* ]]; then
+# Edge/topology sudo scripts must not run on the host. Match them before the
+# compose-ps executor: a flip script contains both "docker compose" and the
+# substring "ps" inside "snapshot", which used to leak `sudo` to the operator.
+if [[ "$fail_at" == "canonical_health" && "$remote" == *"docker-compose.env.yml"* \
+     && "$remote" == *"/health"* && "$remote" != *"cutover"* ]]; then
+  exit 1
+fi
+if [[ "$remote" == "bash -s" || "$remote" == *"Caddyfile"* \
+     || "$remote" == *"sudo test"* || "$remote" == *"sudo awk"* \
+     || "$remote" == *"sudo install"* || "$remote" == *"sudo sed"* \
+     || "$remote" == *"sudo mv"* || "$remote" == *"sudo tee"* ]]; then
+  exit 0
+fi
+if [[ "$remote" == *"docker compose"* ]] && \
+   [[ "$remote" == *" ps -q"* || "$remote" == *" ps -a"* \
+      || "$remote" == *" ps;"* || "$remote" == *" ps" \
+      || "$remote" == *" ps "* ]]; then
   bash -c "$remote"
   exit $?
 fi
 if [[ "$remote" == *"systemctl"* || "$remote" == *"daemon-reload"* \
      || "$remote" == *".bak"* || "$remote" == *"cutover"* \
-     || "$remote" == *"Caddyfile"* || "$remote" == *"sudo cp"* ]]; then
+     || "$remote" == *"sudo cp"* ]]; then
   exit 0
 fi
 if [[ "$remote" == cd\ *" && "* ]]; then
@@ -2946,6 +2987,37 @@ def test_do_restart_is_additive_then_flip() -> None:
     assert body.index("flip_edge_alias") < body.index("systemctl restart")
 
 
+def test_do_restart_gates_canonical_health_before_flip_back() -> None:
+    """R-01: a systemd restart is not enough to take traffic off the candidate."""
+    body = _function_body("do_restart")
+    restart_at = body.index("systemctl restart")
+    health_at = body.index("probe_canonical_api_health")
+    digest_at = body.index("verify_running_image_digest")
+    canonical_flip = body.index('flip_edge_alias "$env" canonical', restart_at)
+    abort_at = body.index("abort_cutover_candidate", restart_at)
+    assert restart_at < digest_at < canonical_flip
+    assert restart_at < health_at < canonical_flip < abort_at
+    assert "probe_cutover_api_health" in body[restart_at:canonical_flip]
+
+
+def test_canonical_health_failure_keeps_candidate_serving(tmp_path: Path) -> None:
+    """R-01: retain next until the canonical API itself is healthy."""
+    result = _run_actual_restart_failure_transaction(
+        tmp_path,
+        invoke='do_restart dev "$IMAGE_BASE@sha256:' + ("b" * 64) + '"',
+        fail_at="canonical_health",
+    )
+    combined = result.stdout + result.stderr
+    ssh_log = (tmp_path / "rollback-state" / "ssh.log").read_text()
+    assert result.returncode != 0, combined
+    assert "canonical api never became healthy" in combined.lower(), combined
+    assert "traffic remains on acx-dev-next" in combined, combined
+    assert "Flipping Caddy reverse_proxy dev-api-next:8000 -> dev-api:8000" not in combined
+    assert ssh_log.count("systemctl restart acx-dev") == 1, ssh_log
+    assert "systemctl stop 'acx-dev-next'" not in ssh_log
+    assert (tmp_path / "rollback-state" / "next-running-cid").exists()
+
+
 def test_promote_gate_restores_topology_on_converge_failure() -> None:
     """OCIRV1-FD-06: mixed compose/unit/edge files must roll back with the sticky repo."""
     body = _function_body("promote_gate")
@@ -2998,6 +3070,57 @@ def test_flip_edge_alias_rewrites_only_allowlisted_proxy_targets() -> None:
     assert "${alias}-next" in body
     assert "caddy reload" in body
     assert "next|canonical" in body or "next)" in body
+    assert "bash -s" in body
+    assert "source_count" in body
+    assert "expected exactly one formatted Caddy reverse_proxy source route" in body
+    assert '== "reverse_proxy"' in body
+
+
+def _run_flip_edge_alias(tmp_path: Path, caddyfile: str, target: str = "next") -> subprocess.CompletedProcess[str]:
+    edge = tmp_path / "edge"
+    edge.mkdir()
+    (edge / "Caddyfile").write_text(caddyfile)
+    (edge / "docker-compose.caddy.yml").write_text("services: {}\n")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _write_executable(bin_dir / "sudo", '#!/usr/bin/env bash\nexec "$@"\n')
+    _write_executable(bin_dir / "docker", "#!/usr/bin/env bash\nexit 0\n")
+    command = f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+run_with_deadline() {{ shift 2; "$@"; }}
+ssh() {{
+  last="${{@: -1}}"
+  if [[ "$last" != "bash -s" ]]; then
+    exit 0
+  fi
+  export PATH="{bin_dir}:$PATH"
+  sed "s|/opt/acx-backend|{edge}|g" | bash -s
+}}
+flip_edge_alias dev {target}
+'''
+    return subprocess.run(["bash", "-c", command], text=True, capture_output=True, check=False)
+
+
+def test_flip_edge_alias_fails_closed_without_source_route(tmp_path: Path) -> None:
+    """R-06: a missing reverse_proxy source must not report a successful flip."""
+    original = "dev.example {\n\treverse_proxy 127.0.0.1:8000\n}\n"
+    result = _run_flip_edge_alias(tmp_path, original)
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    assert "expected exactly one formatted Caddy reverse_proxy source route" in combined
+    assert (tmp_path / "edge" / "Caddyfile").read_text() == original
+
+
+def test_flip_edge_alias_rewrites_exactly_one_source_route(tmp_path: Path) -> None:
+    """R-06: replacement must leave exactly one desired route."""
+    original = "dev.example {\n\treverse_proxy dev-api:8000\n}\n"
+    result = _run_flip_edge_alias(tmp_path, original)
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+    rewritten = (tmp_path / "edge" / "Caddyfile").read_text()
+    assert "reverse_proxy dev-api-next:8000" in rewritten
+    assert "reverse_proxy dev-api:8000" not in rewritten
 
 
 def test_read_api_runtime_evidence_inspects_cutover_project() -> None:

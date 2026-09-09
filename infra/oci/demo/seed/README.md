@@ -235,3 +235,19 @@ after the import and Workbench scan (walkthrough runbook §2), authenticated as 
 
 Nothing here runs from CI or the deploy pipeline: `sync-demo.sh` ships the media and
 `import.sh` unchanged, and the roster write is deliberate.
+
+## Enable the public guide (operator step)
+
+`deploy-demo` does **not** turn on the signed-out walkthrough. Enabling
+`/guide/` is a deliberate per-site operator step after the stack is up:
+
+```bash
+make demo-enable-public-guide WP_PATH=/opt/acx-backend/data/demo-wpdata SITE_URL=https://demo.altcontext.com
+DRY_RUN=1 make demo-enable-public-guide WP_PATH=/opt/acx-backend/data/demo-wpdata SITE_URL=https://demo.altcontext.com
+```
+
+That runs `scripts/deploy/enable-public-guide.sh`: `wp option update acx_public_guide_enabled 1`,
+`wp rewrite flush --hard`, then a signed-out GET of `<site>/guide/` must return 200 with
+`id="acx-public-guide"`. The public demo describe endpoint (`/acx/v1/public/demo/describe`,
+gated by `acx_public_demo_enabled`) stays **off** unless you explicitly retain it with
+`ACX_RETAIN_PUBLIC_DEMO_DESCRIBE=1`.

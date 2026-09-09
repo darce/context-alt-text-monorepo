@@ -37,3 +37,8 @@ producer adapter/profile, GPU lifecycle, seed-generation, or Caddy mutation is
 part of this deployment. Full-stack preflight remains blocked by the registered
 but absent dev-fir environment; its registration is preserved pending clarification.
 Backend changes are integrated in Git, not claimed deployed by this plugin release.
+
+Live verification: plugin activation required a fresh-request rewrite flush to
+restore /guide/. bootstrap-wp.sh now performs that flush after activation. The
+enabled option was preserved. Rollback copy is retained on the VM under
+/opt/acx-backend/demo/rollback-guidepolish-20260909/alt-context.

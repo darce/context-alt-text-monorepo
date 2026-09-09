@@ -44,14 +44,14 @@ fi
 [[ "$acx_build_dir" == /* && "$acx_build_dir" != *[!A-Za-z0-9_./-]* ]] \
   || acx_bulkhead_fail "unsafe or missing generation directory"
 
-for acx_command in docker awk date sleep kill; do
+for acx_command in docker awk date sleep kill setsid; do
   command -v "$acx_command" >/dev/null 2>&1 \
     || acx_bulkhead_fail "required command unavailable: $acx_command"
 done
-acx_setsid=""
-if command -v setsid >/dev/null 2>&1; then
-  acx_setsid="setsid"
-fi
+# A process-group boundary is part of the supported remote contract. Running a
+# child directly when setsid is absent lets descendants outlive the deadline;
+# fail closed during admission instead of pretending the watchdog is complete.
+acx_setsid="setsid"
 
 acx_remaining() {
   local acx_phase="$1" acx_now acx_left
@@ -74,13 +74,9 @@ acx_run() {
   shift
   acx_left="$(acx_remaining "$acx_phase")" || return $?
   # New session/process group so descendants die with the watchdog
-  # (OCIR-ASTRA-20260908-04). kill of the direct child left synthetic
+  # (OCIR-ASTRA-20260908-04). Killing only the direct child left synthetic
   # grandchildren running past the deadline.
-  if [[ -n "$acx_setsid" ]]; then
-    $acx_setsid "$@" &
-  else
-    "$@" &
-  fi
+  "$acx_setsid" "$@" &
   acx_pid=$!
   while kill -0 "$acx_pid" 2>/dev/null; do
     acx_now="$(date +%s)" || {
@@ -101,11 +97,11 @@ acx_run() {
 
 acx_kill_tree() {
   local acx_pid="$1"
-  # Negative PGID kills the whole session started by setsid. Fall back to the
-  # direct child when the process is not a group leader.
-  kill -TERM -- "-$acx_pid" 2>/dev/null || kill -TERM "$acx_pid" 2>/dev/null || true
+  # Negative PGID kills the whole session started by setsid. Admission above
+  # refuses hosts without setsid, so there is no direct-child-only fallback.
+  kill -TERM -- "-$acx_pid" 2>/dev/null || true
   sleep 0.1
-  kill -KILL -- "-$acx_pid" 2>/dev/null || kill -KILL "$acx_pid" 2>/dev/null || true
+  kill -KILL -- "-$acx_pid" 2>/dev/null || true
 }
 
 acx_verify_builder_metadata() {

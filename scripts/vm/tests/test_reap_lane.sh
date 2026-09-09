@@ -1133,6 +1133,50 @@ assert_exists "in-use lane" "$lane_inuse"
 kill "$inuse_pid" 2>/dev/null || true
 wait "$inuse_pid" 2>/dev/null || true
 
+# A worker can enter an ordinary archive root after the initial liveness scan
+# and while archive metadata is being prepared. The final process probe must
+# catch that late occupant before rm -rf.
+if [[ -d /proc ]]; then
+  lane_final_process_check="$HOME/w/lane-final-process-check"
+  clone_lane "$lane_final_process_check"
+  touch -t 200001010000 "$lane_final_process_check" "$lane_final_process_check/.git/index" "$lane_final_process_check/.git/HEAD"
+  final_process_check_bin="$WORKDIR/final-process-check-bin"
+  mkdir "$final_process_check_bin"
+  cat >"$final_process_check_bin/du" <<'FINAL_PROCESS_CHECK_DU'
+#!/usr/bin/env bash
+set -e
+if [[ "$*" == *"$FINAL_PROCESS_CHECK_LANE"* && ! -e "$FINAL_PROCESS_CHECK_TRIGGER" ]]; then
+  : >"$FINAL_PROCESS_CHECK_TRIGGER"
+  (
+    cd "$FINAL_PROCESS_CHECK_LANE"
+    # `du` is called from command substitution by reap-lane.sh. Close the
+    # inherited pipe before keeping this synthetic worker alive, otherwise
+    # the command substitution waits for the worker instead of reaching the
+    # final liveness probe.
+    exec </dev/null >/dev/null 2>&1
+    trap 'exit 0' TERM INT
+    while :; do :; done
+  ) &
+  printf '%s\n' "$!" >"$FINAL_PROCESS_CHECK_PID"
+fi
+exec "$REAL_DU" "$@"
+FINAL_PROCESS_CHECK_DU
+  chmod +x "$final_process_check_bin/du"
+  FINAL_PROCESS_CHECK_LANE="$lane_final_process_check" \
+    FINAL_PROCESS_CHECK_TRIGGER="$WORKDIR/final-process-check-trigger" \
+    FINAL_PROCESS_CHECK_PID="$WORKDIR/final-process-check.pid" \
+    REAL_DU="$(command -v du)" PATH="$final_process_check_bin:$PATH" \
+    REAP_MIN_AGE_SEC=0 run_reap --yes --archive-to "$ARCHIVE" \
+    "$lane_final_process_check"
+  assert_contains "late ordinary-lane process" "lane has a live process"
+  assert_exists "late ordinary-lane process" "$lane_final_process_check"
+  final_process_pid="$(cat "$WORKDIR/final-process-check.pid")"
+  kill "$final_process_pid" 2>/dev/null || true
+  wait "$final_process_pid" 2>/dev/null || true
+else
+  skip_case "late ordinary-lane process"
+fi
+
 # Remaining fixtures isolate archive behavior, independently of the age gate.
 export REAP_MIN_AGE_SEC=0
 

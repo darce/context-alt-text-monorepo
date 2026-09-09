@@ -80,7 +80,6 @@ public/assets/dist/
 storybook-static/
 vendor/
 composer.lock
-!apps/prototype-wp-alt-context/composer.lock
 .phpunit.result.cache
 
 # Vite build output

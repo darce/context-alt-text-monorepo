@@ -193,3 +193,4 @@ local/*-worktrees.txt
 .vlm-*-promote.lock
 .vlm-*-anchor-promote.journal
 .vlm-*-promote-stage-*
+docs/evidence/

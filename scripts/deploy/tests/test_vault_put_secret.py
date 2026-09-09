@@ -125,6 +125,9 @@ def test_main_uses_idempotency_controls_with_stubbed_oci(monkeypatch, capsys) ->
         def list_secrets(self, **_kwargs):
             return SimpleNamespace(data=[existing] if existing_present[0] else [], headers={})
 
+        def list_secret_versions(self, *_args, **_kwargs):
+            return SimpleNamespace(data=[], headers={})
+
         def get_secret(self, *_args, **_kwargs):
             return SimpleNamespace(data=existing, headers={"etag": "etag-current"})
 

@@ -1,6 +1,53 @@
 # OCIRREV-1 stranded rev-ops adjudication
 
-## Result
+## Superseding landing review (2026-09-08)
+
+The initial assessment below is retained as historical evidence, not the current
+landing verdict. Luna MAX review of all 87 stranded hunks against the recovered
+implementation rejected its “no novel work” conclusion. Dropping an unsafe old
+implementation does not discharge a valid requirement (REF-13/REF-14, RES-02).
+
+The source branch was ancestry-consolidated into `feature/ocir-landing-1` without
+reapplying its obsolete runtime. Five current defects were recorded on
+`OCIR-LANDING-1` as `OCIR-LUNA-20260908-01` through `05`:
+
+- Remote builds must publish only the immutable SHA tag until push/verification.
+  Commit `79747d8da` removes premature local environment-tag publication.
+- A failed restart after cutover has ambiguous runtime state. The same commit
+  restores the prior runtime for post-restart failures; pre-restart failures
+  retain the lighter rollback. Executable phase tests cover deploy and promote.
+- An accepted Vault mutation followed by failed readback is outcome UNKNOWN,
+  including deadline exhaustion. Commit `d874e59ef` returns exit 75 and verifies
+  that rotation does not compensate an accepted username write blindly.
+- Pending Vault updates need stable identity and paged reconciliation. The same
+  commit uses deterministic version names and follows version-list pagination
+  before an ETag-fenced update. The explicit zero-readback mode remains intact.
+- Serialization and elapsed-time bounds do not limit build memory or CPU.
+  Finding `05` now uses a stable docker-container BuildKit builder with 6 GiB
+  memory/total-swap and 2 CPU quota, verifies its driver/node/endpoint and actual
+  container limits, and retains generation directories, a shared lock and one
+  deadline across setup, bootstrap, prune and build. Unsupported or mismatched
+  builders fail closed; builds load only the immutable full-SHA tag. Seven
+  executable fake-host tests cover rejection, reuse, tagging and deadlines.
+
+The Vault fixes passed 27 readiness tests, 21 helper tests and the shell rotation
+harness (MCP test receipts 1920–1922). Deployment publication/rollback fixes
+passed 17 focused tests (receipt 1916). These are slice receipts, not a claim
+that a live deployment or Vault rotation was performed. The final feature
+verdict requires Astra MEDIUM harmonization of the completed feature. The
+capacity slice was implemented and reviewed with Luna MAX priority. Its tests
+exercise the shell program through fake Docker/SSH commands; they do not claim
+a live BuildKit build. The read-only target capability probe reported Buildx
+v0.33.0. Parent verification also corrected a stale test that expected HTTP 503
+to pass deploy verification, preserving the existing GR-261 health gate.
+
+Applicable canon: `CARD-09`/`RES-02` resource isolation, `RES-03` whole-operation
+budgets, `CARD-15`/`DATA-13` durable mutation identity, `API-02`/`API-04` outcome
+ambiguity, and `TEST-15` executable regressions. The recovery coordinator read
+the local heuristics-canon-research corpus; the historical worker's missing
+checkout below is not the evidence boundary of this superseding review.
+
+## Initial result (superseded)
 
 The source of record is `rev-ops-stranded.patch`, with commit subjects and
 scope cross-checked against `rev-ops-commits.txt` and

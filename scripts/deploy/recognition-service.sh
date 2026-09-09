@@ -31,11 +31,12 @@
 #   status                            Snapshot /health for dev, dev-fir, staging, prod.
 #   gpu-lifecycle                     Install and verify the acx-gpu-start/reap timers when
 #                                       ACX_DEPLOY_GPU_LIFECYCLE=1. Requires ACX_GPU_READY_URL.
-#   prepare-producer <env>            First-producer bootstrap: verify the selected image and
-#                                       the effective /run/acx-write/<env>/describe-load.json
-#                                       writer, schema, and freshness. Does not skip verification
-#                                       and does not replace the aggregate GPU snapshot gate used
-#                                       by later deploys once sibling snapshots exist.
+#   prepare-producer <env>            First-producer bootstrap: same selected-env ship as
+#                                       deploy (CONFIRM=PROMOTE on prod, preserve, build/push,
+#                                       promote_gate smoke, digest-pinned restart), then
+#                                       image + scoped describe-load writer/schema/freshness.
+#                                       Does not call aggregate GPU snapshot verify; later
+#                                       `verify` / deploy still require the registry-wide gate.
 #   clear-image-repo <env>            Remove ACX_IMAGE_REPO from the remote env .env so compose falls
 #                                       back to the recognition default (${OCIR}/.../acx-backend).
 #                                       Use this to roll back sticky VLM/variant repo state after a
@@ -3665,6 +3666,14 @@ handle_failed_verification() {
 do_deploy() {
   local env="$1"; shift || true
   local check=0
+  # Non-exported latch consumed immediately. Public `deploy` never sets it;
+  # an exported ACX_* env cannot select scoped completion (RLSE-03, AGT-06).
+  local completion="${_ACX_SHIP_COMPLETION:-aggregate}"
+  _ACX_SHIP_COMPLETION=""
+  case "${completion}" in
+    aggregate|scoped) ;;
+    *) fail "internal: ship completion must be aggregate or scoped (got: ${completion})" ;;
+  esac
   [[ "${1:-}" == "--check" ]] && check=1
 
   # Read-only drift check bypasses build/push and the promote confirmation.
@@ -3682,6 +3691,9 @@ do_deploy() {
   sha="$(git -C "${REPO_ROOT}" rev-parse "${GIT_REF}")"
 
   if [[ "$env" == "prod" && "${CONFIRM:-}" != "PROMOTE" ]]; then
+    if [[ "${completion}" == "scoped" ]]; then
+      fail "Production prepare-producer requires CONFIRM=PROMOTE. Re-run: CONFIRM=PROMOTE $0 prepare-producer ${env}"
+    fi
     fail "Production deploy requires CONFIRM=PROMOTE. Re-run: CONFIRM=PROMOTE $0 deploy prod"
   fi
 
@@ -3732,6 +3744,10 @@ do_deploy() {
       warn "automatic env-tag restore failed; refusing further unfenced compensation; run: $(rollback_command_hint "$env")"
     fi
     fail "Restart failed; the previous env tag was restored where possible. Recovery: $(rollback_command_hint "$env")"
+  fi
+
+  if [[ "${completion}" == "scoped" ]]; then
+    return 0
   fi
 
   log "Deploy submitted. Verifying..."
@@ -4547,7 +4563,11 @@ do_prepare_producer() {
   local env="${1:-}"
   [[ -n "${env}" ]] || fail "prepare-producer requires <env> (dev|dev-fir|staging|prod)"
   env_to_unit "${env}" >/dev/null
-  preflight_ssh
+  # Reuse do_deploy's full ship (preserve/build/promote_gate/restart). The
+  # non-exported latch is consumed inside do_deploy and is not an ACX_* env
+  # var, so public deploy cannot drift into scoped completion.
+  _ACX_SHIP_COMPLETION=scoped
+  do_deploy "${env}"
   log "Scoped producer-preparation for ${env}: image, effective describe-load writer, schema, freshness"
   if ! verify_running_image_matches_deployed "${env}"; then
     fail "scoped producer-preparation refused: image verification failed for ${env}"

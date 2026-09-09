@@ -25,7 +25,7 @@ Degradation disclosures [GRPH-01] [AGT-06]:
 - **Graph MCP / `cli search_graph` unavailable.** Names-to-caption and demo-trigger traces used exact source files named by FIR v11, UX maps, and GPUOPS-1. No full-repo scan. Coverage of unopened files is not claimed.
 - **No production probe.** No HTTPS describe, no OCI start/stop, no secrets read. Live image `sha256:b88a09d` and “stale UID 10001 GID 999” remain prior-art until an operator evidence bundle records them.
 - **Handoff MCP Python API not importable** in this sandbox (`workbay_handoff_mcp` missing). Decision IDs from the brief are cited as dispatcher text, not re-queried rows.
-- **Git history is stripped** (`HEAD` = `459db9a1a418d43fcba7ae258cd14c535c234aaf`, no parent). `uv.lock` cannot be restored from `bc590810d` / `HEAD^`. File left untouched. `git hash-object uv.lock` = `eaa01bbd1b29973226435521594f1763528e1f89`.
+- **Git history is stripped** (sandbox `HEAD` has no parent). `uv.lock` was restored from the coordinator reverse-delta (`ef9f..bc`) to blob `3547d91088c0d85e26505b67a08029b47e376441`. Not restored via `HEAD^` / `git show main:uv.lock`. No `uv lock` regeneration.
 
 FIR HTML was read in full: `benchmarks/reports/fir-embeddings-dims-detectors-qa-20260723.html` **219586 bytes**, SHA-256 `e13cda3a5d8c6bc8dc4732d5128a9ef466e95adad220069e5b25fad32366895f`. Title is **v11 · 2026-09-04**; the July filename is retained. Linked JSON/manifest/run files were hashed; contents used where they bear on named descriptions.
 
@@ -33,11 +33,11 @@ FIR HTML was read in full: `benchmarks/reports/fir-embeddings-dims-detectors-qa-
 
 ## 1. Verdict
 
-**Production Qwen30B image descriptions with correctly incorporated named entities are not launch-ready on evidence.** Three independent gaps, any one of which blocks a “GPU named caption” claim [RLSE-03] [TEST-15]:
+**Production Qwen30B image descriptions with correctly incorporated named entities are not launch-ready on evidence.** Live production/UI proof is missing [RLSE-03] [TEST-15]. Deterministic GPU-tier naming fusion **is** already covered; do not treat that pipeline as untested.
 
-1. **The launch path does not give Qwen the names.** `POST /scene/describe/run` (the demo trigger) calls `VisualFactsService.describe(..., context=None)`. The GPU adapter therefore emits “No context is available for this image.” Roster names never enter the VLM prompt on this path.
-2. **Post-hoc naming on the GPU tier is ungrounded.** `GpuRemoteDescriptionAdapter` returns empty `phrase_boxes`. Stage-3 `naming_preview` therefore uses `PositionalFallbackRealizer` only. GPUOPS-1 already recorded that this fallback is untested on the GPU tier.
-3. **There is no admissible end-to-end identity-correct score for this path.** FIR OEC (identity-correct description rate at fixed abstention) is **undeclared** (T-12). M-07 is undefined. The 646-image Qwen run has `identities: []` on every item and its caption-quality report is marked **SUPERSEDED**.
+1. **`context=None` on `describe/run` is intentional architecture, not an automatic defect.** Identity reaches the worker as `naming_inputs` / post-hoc fusion (`describe_run.py`). The product requirement is roster entities in the **final caption**, not names in the VLM prompt. Source inspection of the empty-context prompt is inference, not measured runtime evidence.
+2. **GPU-tier positional fusion is covered by a fake-GPU test; live Qwen30B quality is not.** `test_fake_final_gpu_adapter_fuses_positional_names_and_disabled_run_does_not` (`apps/prototype-description-service/scene/tests/test_naming_provenance_gpu_tier.py` L156–176, helper `_run_fake_gpu` L134–153) runs FakeGpuAdapter enabled/disabled, asserts `COMPLETED` + `FINAL_GPU`, enabled draft `GENERIC + "Pictured from left: Ada and Bob."` with `naming.realizer=positional_fallback`, and disabled generic output. Wire serialization in the same file L295–353. GPUOPS-1 decision 9293 landed this naming/GID path; do not confuse the epic problem statement with current tests. Phrase boxes remain empty on the GPU adapter (positional, not span-grounded). **Absent:** live Qwen30B mention-level quality and production UI end-to-end proof on demo.altcontext.com.
+3. **There is no admissible end-to-end identity-correct score for the live path.** FIR OEC (identity-correct description rate at fixed abstention) is **undeclared** (T-12). M-07 is undefined. The 646-image Qwen run has `identities: []` on every item and its caption-quality report is marked **SUPERSEDED**. Current production image/config remains unproven.
 
 Ops start/stop is a **separate** launch gate (load snapshots, UID/GID, four producers). This lane did not actuate GPU. It does not convert ops gaps into caption-quality numbers.
 
@@ -192,9 +192,9 @@ Guided live UI states this to the learner (`docs/ux-maps/guided-prototype-live-d
 
 | Gap | Why it matters |
 | --- | --- |
-| G1 `context=None` on `describe/run` | Qwen cannot weave roster names; it is instructed not to guess. Named output depends entirely on post-hoc rewrite. |
+| G1 `context=None` on `describe/run` | Intentional: names fuse after the VLM via `naming_inputs`, not via prompt weave. Not a defect unless live captions omit roster entities. |
 | G2 GPU adapter has no phrase boxes | Grounded span replacement cannot run. Positional fallback is left/right order, not evidence that the name matches the person-phrase. |
-| G3 Positional fallback untested on GPU tier | GPUOPS-1 problem statement; still the only GPU naming path in this checkout. |
+| G3 GPU positional fusion tested (fake GPU); live Qwen30B/UI unproven | Cite `test_fake_final_gpu_adapter_fuses_positional_names_and_disabled_run_does_not`. Deterministic pipeline coverage exists. Live Qwen30B quality and production UI e2e remain gaps. |
 | G4 Bakeoff two-pass ≠ production one-pass | 646-run quality numbers are a different prompt contract. |
 | G5 Eval items carry `identities: []` | Cannot compute FIR OEC on that run even as a proxy. |
 | G6 Naming budget skip | `_apply_naming_preview` keeps generic draft on timeout (`SKIPPED_BUDGET`). A “GPU success” item can still be unnamed. |
@@ -386,8 +386,8 @@ Do not mark launch complete without a bundle that names SHA, image digest, run_i
 
 ## 9. Gaps that later slices must close (Qwen30B entity-aware burst)
 
-1. **Wire roster names into the GPU prompt on `describe/run`, or stop claiming Qwen “incorporates” names.** Today names are a positional rewrite of a context-free caption (G1).
-2. **Give the GPU adapter phrase boxes, or score positional fallback as a first-class error rate** (false-name / wrong-person) on the demo images (G2–G3).
+1. **Do not manufacture a prompt-weave slice from `context=None`.** Names are designed to land via post-hoc fusion. Remaining launch work is live proof that the fused caption on demo.altcontext.com names present enrolled people with zero false names (G1).
+2. **Score positional fallback as a first-class live error rate** (false-name / wrong-person) on demo images, or add phrase boxes if grounded spans are required. Fake-GPU fusion is already tested (`test_fake_final_gpu_adapter_fuses_positional_names_and_disabled_run_does_not`); live Qwen30B quality is not (G2, G3).
 3. **Adopt or replace the FIR OEC and instrument T-12** on the production path (G5). Until then M-07 stays undefined.
 4. **Align public client deadline with warmup** or keep a resumable handle; 120 s vs 510 s fails cold start (G-deadline).
 5. **Surface `final_gpu` vs `provisional_cpu` on the public shortcode.** Completion text that ignores tier overstates the machine.

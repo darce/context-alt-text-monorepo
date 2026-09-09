@@ -215,6 +215,8 @@ ACX_CANDIDATE_DIGEST_REF=""
 ACX_ROLLBACK_DIGEST_REF=""
 ACX_ROLLBACK_IMAGE_BASE=""
 ACX_ROLLBACK_TAG=""
+ACX_PRIOR_IMAGE_ID=""
+ACX_PRIOR_RUNTIME_IDENTITY=""
 ACX_RESTART_EVIDENCE_PHASE=""
 
 # Quote one argument for the remote bash command string.  OpenSSH concatenates
@@ -1748,6 +1750,44 @@ read_api_runtime_evidence() {
   printf '%s' "${normalized}"
 }
 
+# Snapshot the compose-scoped runtime generation before a deployment or manual
+# rollback changes the registry/runtime relationship. The identity is the exact
+# probe record (container ID, immutable image ID, state, project, service, and
+# config hash), not a caller-supplied or reconstructed container reference.
+#
+# Automatic deploys capture a RUNNING prior container whose image was already
+# verified by preserve_rollback_tag. Manual rollback also permits a STOPPED
+# observation because systemd's ExecStop is compose stop and an operator may be
+# recovering that stopped prior generation after a failed replacement create.
+capture_prior_runtime_identity() {
+  local env="$1" expected_image_ids="${2:-}" allow_stopped="${3:-0}"
+  local evidence runtime_kind runtime_cid runtime_image_id runtime_state
+  local runtime_project runtime_service runtime_hash runtime_extra selected=""
+  ACX_PRIOR_RUNTIME_IDENTITY=""
+  if ! evidence="$(read_api_runtime_evidence "${env}")"; then
+    return 1
+  fi
+  [[ "${evidence}" != "ABSENT" ]] || return 1
+  while IFS='|' read -r runtime_kind runtime_cid runtime_image_id runtime_state \
+    runtime_project runtime_service runtime_hash runtime_extra; do
+    [[ "${runtime_kind}" == "RUNNING" || "${runtime_kind}" == "STOPPED" ]] || continue
+    [[ -z "${runtime_extra}" ]] || return 1
+    [[ "${runtime_project}" == "acx-${env}" && "${runtime_service}" == "api" ]] || continue
+    [[ -n "${runtime_hash}" ]] || continue
+    [[ "${allow_stopped}" == "1" || "${runtime_kind}" == "RUNNING" ]] || continue
+    if [[ -n "${expected_image_ids}" ]]; then
+      case ",${expected_image_ids}," in
+        *,"${runtime_image_id}",*) ;;
+        *) continue ;;
+      esac
+    fi
+    [[ -z "${selected}" ]] || return 1
+    selected="${runtime_kind}|${runtime_cid}|${runtime_image_id}|${runtime_state}|${runtime_project}|${runtime_service}|${runtime_hash}"
+  done <<< "${evidence}"
+  [[ -n "${selected}" ]] || return 1
+  ACX_PRIOR_RUNTIME_IDENTITY="${selected}"
+}
+
 # Capture the image actually serving on the target by immutable image ID before
 # a build can overwrite any host-local tag, then publish rollback-<digest-prefix>
 # in that image's repository. Prod fails closed when preservation fails; lower
@@ -1828,6 +1868,7 @@ preserve_rollback_tag() {
   ACX_ROLLBACK_DIGEST_REF="${prev_digest}"
   ACX_ROLLBACK_IMAGE_BASE="${prev_base}"
   ACX_ROLLBACK_TAG="rollback-${prev_id}"
+  ACX_PRIOR_IMAGE_ID="${running_image_id}"
   log "Preserved registry rollback ${rollback_ref} -> ${prev_digest}"
 }
 
@@ -2298,6 +2339,8 @@ restore_env_tag_to_rollback() {
   local inspect_timeout current_digest candidate_digest candidate_base
   local rollback_image_id candidate_image_id runtime_evidence runtime_kind
   local runtime_cid runtime_image_id runtime_state runtime_project runtime_service runtime_hash
+  local prior_runtime_kind prior_runtime_cid prior_runtime_image_id prior_runtime_state
+  local prior_runtime_project prior_runtime_service prior_runtime_hash prior_runtime_extra
   local runtime_owner=""
   if [[ ! "${ACX_ROLLBACK_DIGEST_REF:-}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]]; then
     warn "ROLLBACK REQUIRED but no previous serving digest was captured"
@@ -2367,6 +2410,11 @@ restore_env_tag_to_rollback() {
       warn "ROLLBACK REQUIRED but no stopped api container proves this transaction's candidate generation"
       return 1
     fi
+    if [[ -n "${ACX_PRIOR_RUNTIME_IDENTITY:-}" ]]; then
+      IFS='|' read -r prior_runtime_kind prior_runtime_cid prior_runtime_image_id prior_runtime_state \
+        prior_runtime_project prior_runtime_service prior_runtime_hash prior_runtime_extra \
+        <<< "${ACX_PRIOR_RUNTIME_IDENTITY}"
+    fi
     while IFS='|' read -r runtime_kind runtime_cid runtime_image_id runtime_state \
       runtime_project runtime_service runtime_hash; do
       # Compose scoping plus these labels make the stopped record an identity
@@ -2397,6 +2445,17 @@ restore_env_tag_to_rollback() {
           elif [[ "${runtime_image_id}" == "${rollback_image_id}" \
             && "${current_digest}" == "${ACX_ROLLBACK_DIGEST_REF}" ]]; then
             runtime_owner="stopped-rollback"
+          elif [[ "${prior_runtime_kind}" == "RUNNING" || "${prior_runtime_kind}" == "STOPPED" ]] \
+            && [[ "${prior_runtime_kind}:${prior_runtime_state}" =~ ^(RUNNING:(running|restarting)|STOPPED:(created|exited|dead))$ ]] \
+            && [[ -z "${prior_runtime_extra}" ]] \
+            && [[ "${runtime_cid}" == "${prior_runtime_cid}" \
+              && "${runtime_image_id}" == "${prior_runtime_image_id}" \
+              && "${runtime_project}" == "${prior_runtime_project}" \
+              && "${runtime_service}" == "${prior_runtime_service}" \
+              && "${runtime_hash}" == "${prior_runtime_hash}" ]] \
+            && [[ "${prior_runtime_image_id}" == "${candidate_image_id}" \
+              || "${prior_runtime_image_id}" == "${rollback_image_id}" ]]; then
+            runtime_owner="stopped-prior"
           fi
           ;;
       esac
@@ -2408,6 +2467,8 @@ restore_env_tag_to_rollback() {
     fi
     if [[ "${runtime_owner}" == "stopped-candidate" ]]; then
       log "Confirmed stopped api container ${runtime_cid:0:12} belongs to the candidate generation; proceeding with rollback"
+    elif [[ "${runtime_owner}" == "stopped-prior" ]]; then
+      log "Confirmed stopped prior api container ${runtime_cid:0:12} belongs to the captured previous generation; proceeding with rollback"
     fi
   fi
 
@@ -2452,7 +2513,7 @@ rollback_command_hint() {
 }
 
 do_rollback() {
-  local env="$1" rollback_id="$2" rollback_ref digest env_tag current_digest
+  local env="$1" rollback_id="$2" rollback_ref digest env_tag current_digest current_image_id rollback_image_id
   if [[ ! "${rollback_id}" =~ ^[a-f0-9]{12}$ ]]; then
     fail "rollback id must be the 12-character digest prefix printed by a failed deployment"
   fi
@@ -2483,6 +2544,16 @@ do_rollback() {
   if [[ ! "${current_digest}" =~ ^${IMAGE_BASE}@sha256:[a-f0-9]{64}$ ]]; then
     fail "Current ${IMAGE_BASE}:${env_tag} mapping is invalid; refusing unfenced rollback"
   fi
+  rollback_image_id="$(remote_image_id_for_digest "${ACX_ROLLBACK_DIGEST_REF}")" \
+    || fail "Rollback ${rollback_ref} immutable image could not be inspected; refusing unfenced rollback"
+  current_image_id="$(remote_image_id_for_digest "${current_digest}")" \
+    || fail "Current ${IMAGE_BASE}:${env_tag} immutable image could not be inspected; refusing unfenced rollback"
+  # systemd ExecStop uses compose stop, so the runtime may still be the fenced
+  # rollback artifact while the registry tag remains on the generation an
+  # operator is replacing. Accept only the current registry image or the
+  # explicitly selected rollback image; never infer ownership from age alone.
+  capture_prior_runtime_identity "${env}" "${current_image_id},${rollback_image_id}" 1 \
+    || fail "Current ${env} runtime generation could not be captured; refusing unfenced rollback"
   ACX_CANDIDATE_DIGEST_REF="${current_digest}"
   restore_env_tag_to_rollback "${env}" 1 \
     || fail "Rollback failed; ${IMAGE_BASE}:${env_tag} outcome is unknown"
@@ -2680,6 +2751,11 @@ do_deploy() {
   # Remote builds only tag the SHA; the environment tag changes after smoke.
   preflight_remote_ocir_auth
   preserve_rollback_tag "$env"
+  if [[ -n "${ACX_ROLLBACK_DIGEST_REF:-}" ]]; then
+    if ! capture_prior_runtime_identity "$env" "${ACX_PRIOR_IMAGE_ID:-}" 0; then
+      warn "ROLLBACK NOT PRESERVED: prior api container identity could not be captured; runtime rollback will fail closed"
+    fi
+  fi
 
   if [[ "${REMOTE_BUILD}" == "1" ]]; then
     log "Mode: remote-build (${SSH_TARGET}, no local docker required)"
@@ -2753,6 +2829,11 @@ do_promote() {
 
   preflight_remote_ocir_auth
   preserve_rollback_tag "$to_env"
+  if [[ -n "${ACX_ROLLBACK_DIGEST_REF:-}" ]]; then
+    if ! capture_prior_runtime_identity "$to_env" "${ACX_PRIOR_IMAGE_ID:-}" 0; then
+      warn "ROLLBACK NOT PRESERVED: prior api container identity could not be captured; runtime rollback will fail closed"
+    fi
+  fi
 
   # Pull the source image so the boot smoke can run it before it is promoted.
   if [[ "${REMOTE_BUILD}" == "1" ]]; then

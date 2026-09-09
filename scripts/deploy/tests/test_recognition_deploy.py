@@ -2503,7 +2503,11 @@ def test_acx_verify_optional_downgrades_when_rollback_succeeds(
 
 
 def _run_actual_restart_failure_transaction(
-    tmp_path: Path, *, invoke: str, runtime_mode: str = "candidate"
+    tmp_path: Path,
+    *,
+    invoke: str,
+    runtime_mode: str = "candidate",
+    health_code: str = "200",
 ) -> subprocess.CompletedProcess[str]:
     """Run a real deploy/promote restart failure through fake SSH and Docker."""
     state = tmp_path / "rollback-state"
@@ -2520,7 +2524,10 @@ def _run_actual_restart_failure_transaction(
     prior_cid = "5" * 64
     stopped_cid = "3" * 64
     rollback_cid = "4" * 64
-    (state / "running-cid").write_text(prior_cid + "\n")
+    if invoke.startswith("do_rollback"):
+        (state / "prior-stopped").write_text("")
+    else:
+        (state / "running-cid").write_text(prior_cid + "\n")
 
     docker = r"""#!/usr/bin/env bash
 set -euo pipefail
@@ -2535,6 +2542,7 @@ rollback_id="__ROLLBACK_ID__"
 candidate_id="__CANDIDATE_ID__"
 stopped_cid="__STOPPED_CID__"
 rollback_cid="__ROLLBACK_CID__"
+prior_cid="__PRIOR_CID__"
 wrong_id="sha256:3333333333333333333333333333333333333333333333333333333333333333"
 printf '%s\n' "$*" >>"${state}/docker.log"
 
@@ -2550,6 +2558,8 @@ if [[ "${1:-}" == "compose" ]]; then
       [[ "$runtime_mode" == "unknown" ]] && exit 1
       if [[ -f "${state}/candidate-stopped" ]]; then
         printf '%s\n' "$stopped_cid"
+      elif [[ -f "${state}/prior-stopped" ]]; then
+        printf '%s\n' "$prior_cid"
       fi
     elif [[ -f "${state}/running-cid" ]]; then
       cat "${state}/running-cid"
@@ -2571,6 +2581,7 @@ if [[ "${1:-}" == "inspect" || ( "${1:-}" == "image" && "${2:-}" == "inspect" ) 
   target="${@: -1}"
   if [[ "$format" == *"RepoDigests"* ]]; then
     case "$target" in
+      "$base:rollback-"*) printf '%s\n' "$rollback_digest" ;;
       "$base:$env_tag") printf '%s\n' "$candidate_digest" ;;
       "$candidate_digest") printf '%s\n' "$candidate_digest" ;;
       "$rollback_digest") printf '%s\n' "$rollback_digest" ;;
@@ -2579,7 +2590,11 @@ if [[ "${1:-}" == "inspect" || ( "${1:-}" == "image" && "${2:-}" == "inspect" ) 
     exit 0
   fi
   if [[ "$format" == *"State.Status"* && "$format" == *"Config.Labels"* ]]; then
-    if [[ "$target" == "$stopped_cid" ]]; then
+    if [[ "$target" == "$prior_cid" ]]; then
+      prior_state="running"
+      [[ -f "${state}/prior-stopped" ]] && prior_state="exited"
+      printf 'RUNTIME|%s|%s|%s|%s|api|prior-generation\n' "$prior_cid" "$rollback_id" "$prior_state" "$project"
+    elif [[ "$target" == "$stopped_cid" ]]; then
       stopped_image_id="$candidate_id"
       [[ "$runtime_mode" == "wrong" ]] && stopped_image_id="$wrong_id"
       printf 'RUNTIME|%s|%s|exited|%s|api|candidate-generation\n' "$stopped_cid" "$stopped_image_id" "$project"
@@ -2591,11 +2606,13 @@ if [[ "${1:-}" == "inspect" || ( "${1:-}" == "image" && "${2:-}" == "inspect" ) 
     exit 0
   fi
   if [[ "$format" == *"State.Status"* ]]; then
+    [[ "$target" == "$prior_cid" && -f "${state}/prior-stopped" ]] && printf '%s\n' exited
     [[ "$target" == "$stopped_cid" ]] && printf '%s\n' exited
     [[ "$target" == "$rollback_cid" ]] && printf '%s\n' running
     exit 0
   fi
   if [[ "$format" == *".Image"* ]]; then
+    [[ "$target" == "$prior_cid" ]] && printf '%s\n' "$rollback_id"
     [[ "$target" == "$stopped_cid" ]] && printf '%s\n' "$candidate_id"
     [[ "$target" == "$rollback_cid" ]] && printf '%s\n' "$rollback_id"
     exit 0
@@ -2639,6 +2656,7 @@ esac
         .replace("__CANDIDATE_ID__", candidate_id)
         .replace("__STOPPED_CID__", stopped_cid)
         .replace("__ROLLBACK_CID__", rollback_cid)
+        .replace("__PRIOR_CID__", prior_cid)
     )
     _write_executable(fake_bin / "docker", docker)
 
@@ -2654,7 +2672,11 @@ if [[ "$remote" == *"systemctl restart"* ]]; then
     exit 0
   fi
   rm -f "${state}/running-cid"
-  [[ "$runtime_mode" == "candidate" || "$runtime_mode" == "wrong" ]] && : >"${state}/candidate-stopped"
+  if [[ "$runtime_mode" == "prior" ]]; then
+    : >"${state}/prior-stopped"
+  elif [[ "$runtime_mode" == "candidate" || "$runtime_mode" == "wrong" ]]; then
+    : >"${state}/candidate-stopped"
+  fi
   exit 1
 fi
 if [[ "$remote" == cd\ *" && "* ]]; then
@@ -2666,7 +2688,13 @@ bash -c "$remote"
 
     curl = r"""#!/usr/bin/env bash
 set -euo pipefail
-printf '%s\n' '{"status":"ok"}'
+code="${FAKE_HEALTH_CODE:-200}"
+if [[ "$code" =~ ^2[0-9][0-9]$ ]]; then
+  printf '%s\n' '{"status":"ok"}'
+  exit 0
+fi
+printf '%s\n%s\n' '{"status":"unhealthy"}' "$code"
+exit 22
 """
     _write_executable(fake_bin / "curl", curl)
 
@@ -2694,6 +2722,7 @@ preserve_rollback_tag() {{
   ACX_ROLLBACK_DIGEST_REF="$IMAGE_BASE@sha256:{'a' * 64}"
   ACX_ROLLBACK_IMAGE_BASE="$IMAGE_BASE"
   ACX_ROLLBACK_TAG="rollback-{'a' * 12}"
+  ACX_PRIOR_IMAGE_ID="sha256:{'1' * 64}"
 }}
 do_build() {{ return 0; }}
 do_build_remote() {{ return 0; }}
@@ -2715,6 +2744,7 @@ fail() {{ printf 'xx %s\\n' "$*" >&2; exit 1; }}
         {
             "PATH": f"{fake_bin}{os.pathsep}{env.get('PATH', '')}",
             "FAKE_ROLLBACK_STATE": str(state),
+            "FAKE_HEALTH_CODE": health_code,
             "CONFIRM": "PROMOTE",
         }
     )
@@ -2751,6 +2781,70 @@ def test_actual_restart_failure_restores_after_confirmed_stopped_candidate(
     assert ssh_log.count(f"systemctl restart {unit}") == 2, ssh_log
     assert (state / "running-cid").read_text().strip() == "4" * 64
     assert "STALE ROLLBACK REFUSED" not in combined
+
+
+@pytest.mark.parametrize("invoke", ["do_deploy dev", "do_promote dev staging"])
+def test_before_candidate_creation_recovers_confirmed_stopped_prior(
+    tmp_path: Path, invoke: str
+) -> None:
+    """A compose-stop-before-create failure may recover only its captured prior."""
+    result = _run_actual_restart_failure_transaction(tmp_path, invoke=invoke, runtime_mode="prior")
+    combined = result.stdout + result.stderr
+    state = tmp_path / "rollback-state"
+    env_name = "staging" if "staging" in invoke else "dev"
+    unit = "acx-" + env_name
+    base = "iad.ocir.io/idu2kqqe2jxy/acx-backend"
+    rollback_digest = base + "@sha256:" + "a" * 64
+    docker_log = (state / "docker.log").read_text()
+    ssh_log = (state / "ssh.log").read_text()
+
+    assert result.returncode != 0, combined
+    assert "Confirmed stopped prior api container" in combined, combined
+    assert "Rollback verified healthy" in combined, combined
+    assert docker_log.count(f"tag {rollback_digest} {base}:{env_name}") == 1
+    assert docker_log.count(f"push {base}:{env_name}") == 1
+    assert ssh_log.count(f"systemctl restart {unit}") == 2, ssh_log
+    assert (state / "running-cid").read_text().strip() == "4" * 64
+    assert "STALE ROLLBACK REFUSED" not in combined
+
+
+def test_manual_rollback_captures_stopped_current_generation(tmp_path: Path) -> None:
+    """Manual rollback must fence the stopped generation before retagging."""
+    result = _run_actual_restart_failure_transaction(
+        tmp_path,
+        invoke="do_rollback dev " + "a" * 12,
+        runtime_mode="prior",
+    )
+    combined = result.stdout + result.stderr
+    state = tmp_path / "rollback-state"
+    docker_log = (state / "docker.log").read_text()
+    ssh_log = (state / "ssh.log").read_text()
+    base = "iad.ocir.io/idu2kqqe2jxy/acx-backend"
+    rollback_digest = base + "@sha256:" + "a" * 64
+
+    assert result.returncode == 0, combined
+    assert "Confirmed stopped prior api container" in combined, combined
+    assert "Rollback verified healthy" in combined, combined
+    assert docker_log.count(f"tag {rollback_digest} {base}:dev") == 1
+    assert docker_log.count(f"push {base}:dev") == 1
+    assert ssh_log.count("systemctl restart acx-dev") == 1, ssh_log
+    assert (state / "running-cid").read_text().strip() == "4" * 64
+
+
+def test_manual_rollback_keeps_http_503_health_gate(tmp_path: Path) -> None:
+    """A 503 after retagging is not a verified healthy rollback."""
+    result = _run_actual_restart_failure_transaction(
+        tmp_path,
+        invoke="do_rollback dev " + "a" * 12,
+        runtime_mode="prior",
+        health_code="503",
+    )
+    combined = result.stdout + result.stderr
+
+    assert result.returncode != 0, combined
+    assert "Rollback health/digest verification failed" in combined, combined
+    assert "503" in combined, combined
+    assert "Rollback verified healthy" not in combined
 
 
 @pytest.mark.parametrize("runtime_mode", ["absent", "unknown", "wrong"])

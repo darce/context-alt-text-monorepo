@@ -260,6 +260,14 @@ class ClusterRepository(Protocol):
         """
         ...
 
+    async def list_identity_ids_moved_by_merge(self, tenant_id: str, merge_id: str) -> list[str]:
+        """Return identity ids stamped with ``moved_by_merge_id`` in this session.
+
+        Reads the still-open transaction so the accept endpoint can return the
+        rows the merge actually moved rather than a reconstructed guess.
+        """
+        ...
+
     async def get_members(self, cluster_id: str) -> list[IdentityMember]:
         """Fetch member records for a cluster."""
         ...

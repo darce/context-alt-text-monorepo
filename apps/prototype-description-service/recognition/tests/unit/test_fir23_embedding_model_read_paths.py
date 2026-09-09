@@ -410,3 +410,69 @@ def test_probe_space_skip_payload_shape() -> None:
         "kept_count": 1,
         "total_count": 3,
     }
+
+
+def test_unstamped_gallery_with_known_active_model_does_not_abort() -> None:
+    """Unstamped reps + known active model must proceed rather than fail the job."""
+    from recognition.application.orchestration.clustering.discovery_pipeline import GalleryProvenanceStats
+
+    stats = GalleryProvenanceStats(
+        active_embedding_model="opencv-sface+cv5@128d/l2/cosine",
+        provenance_loaded=True,
+        representatives_excluded_unresolvable=12,
+        clusters_excluded_unresolvable=5,
+        centroids_excluded_untrusted=4,
+        gallery_wiped=True,
+    )
+    assert stats.abort_reason() is None
+
+
+class _FakeResult:
+    def __init__(self, rows: list) -> None:
+        self._rows = rows
+
+    def all(self):
+        return list(self._rows)
+
+    def scalars(self):
+        return self
+
+
+@pytest.mark.asyncio
+async def test_with_model_loaders_keep_all_unstamped_cluster() -> None:
+    """All-null embedding_model rows must survive Python majority filter (legacy no-op)."""
+    from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
+
+    emb_a = np.array([1.0, 0.0], dtype=np.float32)
+    emb_b = np.array([0.0, 1.0], dtype=np.float32)
+    rows = [(emb_a, None), (emb_b, None)]
+    session = MagicMock()
+    session.execute = AsyncMock(return_value=_FakeResult(rows))
+    repo = SqlAlchemyClusterRepository(session)
+
+    embeddings, chosen = await repo.get_representative_embeddings_with_model("cluster-1")
+
+    assert chosen is None
+    assert len(embeddings) == 2
+    np.testing.assert_array_equal(embeddings[0], emb_a)
+    np.testing.assert_array_equal(embeddings[1], emb_b)
+
+
+@pytest.mark.asyncio
+async def test_list_identity_ids_moved_by_merge_reads_stamped_rows() -> None:
+    from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
+
+    tenant_id = str(uuid4())
+    merge_id = str(uuid4())
+    moved = [uuid4(), uuid4()]
+    session = MagicMock()
+    session.execute = AsyncMock(return_value=_FakeResult(moved))
+    repo = SqlAlchemyClusterRepository(session)
+
+    found = await repo.list_identity_ids_moved_by_merge(tenant_id, merge_id)
+
+    assert found == [str(identity_id) for identity_id in moved]
+    session.execute.assert_awaited_once()
+    stmt = session.execute.await_args.args[0]
+    sql = str(stmt.compile(compile_kwargs={"literal_binds": False})).lower()
+    assert "moved_by_merge_id" in sql

@@ -245,3 +245,22 @@ def test_ci_secret_mapping_and_gpu_deploy_order_are_documented() -> None:
     prod_redeploy = gpu_runbook.index("Redeploy the prod API", producer)
     deploy_demo = gpu_runbook.index("Run `deploy-demo`", prod_redeploy)
     assert producer < prod_redeploy < deploy_demo
+
+
+def test_caddy_promote_preserves_the_mounted_inode(tmp_path: Path) -> None:
+    """A mv'd promote is invisible to Caddy: the single-file bind mount pins the
+    inode at container start, so the deploy would report success while the proxy
+    kept serving the pre-promote config (GUIDEDEPLOY-1-BR-04)."""
+    result = _run_sync(tmp_path)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    remote_bodies = (tmp_path / "commands.log.stdin").read_text(encoding="utf-8")
+
+    assert "cat Caddyfile.new > Caddyfile" in remote_bodies
+    assert "mv Caddyfile.new Caddyfile" not in remote_bodies
+
+    # An inode already orphaned by a past mv-style promote is unreachable by any
+    # reload, so the deploy must detect the divergence and recreate.
+    assert "sha256sum /etc/caddy/Caddyfile" in remote_bodies
+    assert "up -d --force-recreate caddy" in remote_bodies
+    assert "caddy reload --config /etc/caddy/Caddyfile" in remote_bodies

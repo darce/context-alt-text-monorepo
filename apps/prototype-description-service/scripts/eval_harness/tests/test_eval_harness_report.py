@@ -302,6 +302,21 @@ def test_markdown_surfaces_live_corpus_coverage_audit() -> None:
     assert "below_threshold=true" in markdown
 
 
+def test_live_score_labels_offline_proxy_verdict() -> None:
+    """Offline score envelopes must not masquerade as product validation (EVAL-22)."""
+    record, entries = _run_record(), _manifest_entries()
+    scored = score_run_record(record, entries)
+    assert scored["evaluation_status"] == "unvalidated_proxy"
+    assert scored["provenance"]["evaluation_status"] == "unvalidated_proxy"
+    assert scored["verdict"]["evaluation_status"] == "unvalidated_proxy"
+    _json_doc, markdown = build_reports(record, entries)
+    assert "- evaluation_status: `unvalidated_proxy`" in markdown
+    public_json, _public_markdown = build_reports(record, entries, audience=Audience.PUBLIC)
+    public = json.loads(public_json)
+    assert public["evaluation_status"] == "unvalidated_proxy"
+    assert public["provenance"]["evaluation_status"] == "unvalidated_proxy"
+
+
 def test_markdown_renders_scored_detection_line() -> None:
     _json_doc, md = build_reports(_run_record(), _manifest_entries())
     _assert_scored_detection_markdown(md, tp=_DEFAULT_TP, fp=_DEFAULT_FP, fn=_DEFAULT_FN)

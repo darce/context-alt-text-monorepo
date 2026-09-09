@@ -4688,6 +4688,25 @@ def test_cli_compare_rejects_pass_ungated_baseline(tmp_path):
     assert "pass_ungated" in str(exc.value) or "adoption" in str(exc.value).lower()
 
 
+def test_cli_compare_rejects_unvalidated_offline_proxy(tmp_path):
+    """A labeled offline proxy cannot certify product adoption (EVAL-22)."""
+    baseline = _adoption_compare_report(
+        provenance={"evaluation_status": "unvalidated_proxy"}
+    )
+    candidate = _adoption_compare_report()
+    base_path = tmp_path / "baseline.json"
+    cand_path = tmp_path / "candidate.json"
+    base_path.write_text(json.dumps(baseline))
+    cand_path.write_text(json.dumps(candidate))
+
+    with pytest.raises(SystemExit) as exc:
+        main(["compare", "--baseline", str(base_path), "--candidate", str(cand_path)])
+    assert exc.value.code != 0
+    message = str(exc.value).lower()
+    assert "unvalidated_proxy" in message
+    assert "adoption" in message or "proxy" in message
+
+
 def test_cli_compare_rejects_failed_candidate(tmp_path):
     """VLM6-A-02: a failed candidate cannot be presented as an adoption PASS."""
     baseline = _adoption_compare_report()

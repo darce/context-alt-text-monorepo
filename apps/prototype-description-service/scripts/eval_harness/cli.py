@@ -74,6 +74,7 @@ from .report import (
     fabricated_fact_is_vacuous,  # noqa: F401 — shared S2-01 predicate (score/compare)
     identity_names,  # noqa: F401 — re-export for external callers; report owns it (VLM6-RH-07)
     occlusion_inputs_from_record,
+    OFFLINE_EVALUATION_STATUS,
     score_run_record,
     _selection_metadata_issue,
     score_vacuous_category_labels,
@@ -2654,6 +2655,38 @@ def _compare_harness_anchor_size(doc: Mapping[str, Any]) -> bool:
     return scored == _HARNESS_ANCHOR_CORPUS_SIZE and total == _HARNESS_ANCHOR_CORPUS_SIZE
 
 
+def _compare_offline_proxy_status(doc: Mapping[str, Any], *, role: str) -> list[str]:
+    """Reject score artifacts that are explicitly offline proxies for adoption.
+
+    ``score_run_record`` stamps the status in the top-level envelope, provenance,
+    and verdict.  Reading all three locations keeps the compare boundary safe
+    for reports produced during the additive rollout and for a caller that
+    forwards only the provenance/verdict portion of a report.  Handwritten
+    fixtures from before EVAL-22 may omit the field; they continue through the
+    structural checks, while every newly generated offline score is refused.
+    """
+    locations = (
+        ("evaluation_status", doc.get("evaluation_status")),
+        (
+            "provenance.evaluation_status",
+            (doc.get("provenance") or {}).get("evaluation_status")
+            if isinstance(doc.get("provenance"), Mapping)
+            else None,
+        ),
+        (
+            "verdict.evaluation_status",
+            (doc.get("verdict") or {}).get("evaluation_status")
+            if isinstance(doc.get("verdict"), Mapping)
+            else None,
+        ),
+    )
+    return [
+        f"{role} {path}={value!r} is not adoption-eligible; offline score is an unvalidated proxy (EVAL-22)"
+        for path, value in locations
+        if value == OFFLINE_EVALUATION_STATUS
+    ]
+
+
 def _cmd_compare(args: argparse.Namespace) -> None:
     """Meet-or-beat adoption gate: candidate vs baseline caption score report.
 
@@ -2697,6 +2730,12 @@ def _cmd_compare(args: argparse.Namespace) -> None:
     protocol = _compare_protocol_mismatches(baseline, candidate)
     if protocol:
         sys.exit("compare same-corpus gate: " + "; ".join(protocol))
+
+    proxy_status = _compare_offline_proxy_status(baseline, role="baseline") + _compare_offline_proxy_status(
+        candidate, role="candidate"
+    )
+    if proxy_status:
+        sys.exit("compare adoption gate: " + "; ".join(proxy_status))
 
     for role, report in (("baseline", baseline), ("candidate", candidate)):
         verdict = (report.get("verdict") or {}).get("verdict")

@@ -24,8 +24,8 @@ def _run_installer(
         """#!/usr/bin/env bash
 printf '%s\\n' "$*" >>"$TASKSMAX_SYSTEMCTL_LOG"
 case "$*" in
-  "--user daemon-reload") exit "$TASKSMAX_RELOAD_EXIT" ;;
-  "--user show user-"*" --property=TasksMax --value") printf '%s\\n' "$TASKSMAX_VALUE" ;;
+  "daemon-reload") exit "$TASKSMAX_RELOAD_EXIT" ;;
+  "show user-"*" --property=TasksMax --value") printf '%s\\n' "$TASKSMAX_VALUE" ;;
   *) echo "unexpected systemctl invocation: $*" >&2; exit 99 ;;
 esac
 """,
@@ -33,7 +33,7 @@ esac
     env = {
         **os.environ,
         "HOME": str(tmp_path / "home"),
-        "XDG_CONFIG_HOME": str(tmp_path / "config"),
+        "TASKSMAX_SYSTEMD_SYSTEM_DIR": str(tmp_path / "systemd"),
         "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
         "TASKSMAX_SYSTEMCTL_LOG": str(log),
         "TASKSMAX_RELOAD_EXIT": str(reload_exit),
@@ -47,10 +47,10 @@ def test_user_slice_tasksmax_dropin_is_applied_and_verified(tmp_path: Path) -> N
 
     assert completed.returncode == 0, completed.stderr
     uid = os.getuid()
-    dropin = tmp_path / "config/systemd/user" / f"user-{uid}.slice.d/tasksmax.conf"
+    dropin = tmp_path / "systemd" / f"user-{uid}.slice.d/tasksmax.conf"
     assert dropin.read_text(encoding="utf-8") == "[Slice]\nTasksMax=4096\n"
     calls = (tmp_path / "systemctl.log").read_text(encoding="utf-8").splitlines()
-    assert calls == ["--user daemon-reload", f"--user show user-{uid}.slice --property=TasksMax --value"]
+    assert calls == ["daemon-reload", f"show user-{uid}.slice --property=TasksMax --value"]
     assert "applied" in completed.stdout
 
 

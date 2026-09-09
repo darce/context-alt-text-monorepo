@@ -60,6 +60,35 @@ def test_provision_preserves_symlinked_overlay(tmp_path: Path) -> None:
     assert (dest / "lifecycle.mk").read_text(encoding="utf-8") == "# live overlay\n"
 
 
+def test_provision_does_not_overwrite_tracked_overlay_files(tmp_path: Path) -> None:
+    primary = tmp_path / "primary"
+    worktree = tmp_path / "worktree"
+    primary.mkdir()
+    worktree.mkdir()
+    (primary / ".gitignore").write_text("Makefile.d/*\n!Makefile.d/demo-auth.mk\n", encoding="utf-8")
+    overlay = primary / "Makefile.d"
+    overlay.mkdir()
+    (overlay / "demo-auth.mk").write_text("# primary tracked copy\n", encoding="utf-8")
+    (overlay / "lifecycle.mk").write_text("# ignored overlay\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(primary), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(primary), "add", ".gitignore", "Makefile.d/demo-auth.mk"], check=True)
+
+    destination_overlay = worktree / "Makefile.d"
+    destination_overlay.mkdir()
+    (destination_overlay / "demo-auth.mk").write_text("# linked branch copy\n", encoding="utf-8")
+
+    completed = subprocess.run(
+        [sys.executable, str(PROVISION), "--worktree", str(worktree), "--primary", str(primary)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert (destination_overlay / "demo-auth.mk").read_text(encoding="utf-8") == "# linked branch copy\n"
+    assert (destination_overlay / "lifecycle.mk").read_text(encoding="utf-8") == "# ignored overlay\n"
+
+
 def test_provision_does_not_copytree_node_modules() -> None:
     source = PROVISION.read_text(encoding="utf-8")
     tree_fn = source.split("def provision_dependency_trees")[1].split("def main")[0]

@@ -461,20 +461,121 @@ async def test_with_model_loaders_keep_all_unstamped_cluster() -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_identity_ids_moved_by_merge_reads_stamped_rows() -> None:
+async def test_list_identity_ids_moved_by_merge_sql_binds_tenant_and_merge() -> None:
     from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
 
     tenant_id = str(uuid4())
     merge_id = str(uuid4())
-    moved = [uuid4(), uuid4()]
     session = MagicMock()
-    session.execute = AsyncMock(return_value=_FakeResult(moved))
+    session.execute = AsyncMock(return_value=_FakeResult([]))
     repo = SqlAlchemyClusterRepository(session)
 
-    found = await repo.list_identity_ids_moved_by_merge(tenant_id, merge_id)
+    await repo.list_identity_ids_moved_by_merge(tenant_id, merge_id)
 
-    assert found == [str(identity_id) for identity_id in moved]
-    session.execute.assert_awaited_once()
     stmt = session.execute.await_args.args[0]
-    sql = str(stmt.compile(compile_kwargs={"literal_binds": False})).lower()
+    compiled = stmt.compile(compile_kwargs={"literal_binds": True})
+    sql = str(compiled).lower()
     assert "moved_by_merge_id" in sql
+    assert "tenant_id" in sql
+    bound = {str(value).replace("-", "").lower() for value in stmt.compile().params.values()}
+    assert tenant_id.replace("-", "").lower() in bound
+    assert merge_id.replace("-", "").lower() in bound
+
+
+@pytest.mark.asyncio
+async def test_list_identity_ids_moved_by_merge_reads_stamped_rows() -> None:
+    """Runtime SQLite: tenant + merge predicates, not a forced execute payload (DATA-13)."""
+    from sqlalchemy import Table, event, text
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+    from sqlalchemy.pool import StaticPool
+
+    from db.base import Base
+    from db.models import MediaIdentity, Tenant
+    from db.settings import get_database_settings
+    from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
+    from recognition.tests.conftest import _sqlite_vector_norm
+
+    dim = get_database_settings().pgvector_dimension
+    zero = [0.0] * dim
+    tenant_a = uuid4()
+    tenant_b = uuid4()
+    merge_keep = uuid4()
+    merge_other = uuid4()
+    keep_ids = [uuid4(), uuid4()]
+    other_merge_id = uuid4()
+    foreign_tenant_id = uuid4()
+    unstamped_id = uuid4()
+
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _register_vector_functions(dbapi_connection, _connection_record) -> None:
+        dbapi_connection.create_function("vector_norm", 1, _sqlite_vector_norm)
+
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text("PRAGMA foreign_keys=ON"))
+            await conn.run_sync(
+                Base.metadata.create_all,
+                tables=[
+                    Table("tenants", Base.metadata),
+                    Table("media_identities", Base.metadata),
+                ],
+            )
+        session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        async with session_factory() as session:
+            session.add_all(
+                [
+                    Tenant(id=tenant_a, site_url="https://keep.example.test/wp"),
+                    Tenant(id=tenant_b, site_url="https://foreign.example.test/wp"),
+                ]
+            )
+            await session.flush()
+
+            def _identity(
+                *,
+                identity_id: object,
+                tenant: object,
+                media_id: int,
+                moved_by: object | None,
+            ) -> MediaIdentity:
+                return MediaIdentity(
+                    id=identity_id,
+                    tenant_id=tenant,
+                    media_id=media_id,
+                    media_url=f"http://example.test/{media_id}.jpg",
+                    bbox_x=0,
+                    bbox_y=0,
+                    bbox_width=10,
+                    bbox_height=10,
+                    confidence=0.9,
+                    embedding=zero,
+                    embedding_model="space-a",
+                    moved_by_merge_id=moved_by,
+                )
+
+            session.add_all(
+                [
+                    _identity(identity_id=keep_ids[0], tenant=tenant_a, media_id=1, moved_by=merge_keep),
+                    _identity(identity_id=keep_ids[1], tenant=tenant_a, media_id=2, moved_by=merge_keep),
+                    _identity(identity_id=other_merge_id, tenant=tenant_a, media_id=3, moved_by=merge_other),
+                    _identity(identity_id=foreign_tenant_id, tenant=tenant_b, media_id=4, moved_by=merge_keep),
+                    _identity(identity_id=unstamped_id, tenant=tenant_a, media_id=5, moved_by=None),
+                ]
+            )
+            await session.flush()
+            found = await SqlAlchemyClusterRepository(session).list_identity_ids_moved_by_merge(
+                str(tenant_a),
+                str(merge_keep),
+            )
+        assert set(found) == {str(keep_ids[0]), str(keep_ids[1])}
+        assert len(found) == 2
+        assert str(other_merge_id) not in found
+        assert str(foreign_tenant_id) not in found
+        assert str(unstamped_id) not in found
+    finally:
+        await engine.dispose()

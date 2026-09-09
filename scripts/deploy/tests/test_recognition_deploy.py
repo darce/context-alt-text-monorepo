@@ -3500,7 +3500,14 @@ def test_cutover_failure_restart_runtime_ignores_evidence_phase() -> None:
 
 
 def test_prepare_producer_cli_verifies_image_and_scoped_load() -> None:
-    """R3-01: producer-preparation is a real gate, not ACX_VERIFY_OPTIONAL."""
+    """Explicit prepare-producer remains a real gate, not ACX_VERIFY_OPTIONAL.
+
+    Changed contract (ISSUEDAG-1 / RLSE-03): NORMAL verify_live_gpu_snapshots
+    always executes the aggregate checker and never substitutes
+    verify_scoped_producer_snapshots. Explicit producer-convergence stays on
+    do_prepare_producer (next slice); that helper still only verifies existing
+    state and cannot create cold loads.
+    """
     source = SCRIPT.read_text()
     assert "prepare-producer <env>" in source
     dispatch = source.split('case "$cmd" in', 1)[1]
@@ -3516,48 +3523,118 @@ def test_prepare_producer_cli_verifies_image_and_scoped_load() -> None:
     assert "queue_depth" in scoped
     assert "ACX_VERIFY_OPTIONAL" not in scoped
     gate = _function_body("verify_live_gpu_snapshots")
-    assert "sibling_gpu_snapshots_complete" in gate
-    assert "verify_scoped_producer_snapshots" in gate
-    assert gate.index("sibling_gpu_snapshots_complete") < gate.index("paste -sd,")
+    assert "check-gpu-snapshots.sh" in gate
+    assert "paste -sd," in gate
+    assert "ACX_GPU_CHECKER_V1" in gate
+    assert "timeout" in gate
+    assert "verify_scoped_producer_snapshots" not in gate
+    assert "using scoped producer-preparation" not in gate
 
 
-def test_first_producer_uses_scoped_snapshot_gate_not_aggregate(tmp_path: Path) -> None:
-    """R3-01: missing sibling snapshots must not invoke the aggregate registry checker."""
+def _run_verify_live_gpu_snapshots(
+    tmp_path: Path,
+    *,
+    sibling_rc: int,
+    timeout_rc: int,
+    scoped_rc: int = 0,
+) -> tuple[subprocess.CompletedProcess[str], str]:
+    """Drive verify_live_gpu_snapshots via its exact helpers, not an invented API.
+
+    timeout is the aggregate-checker transport (check-gpu-snapshots.sh over ssh).
+    verify_scoped_producer_snapshots is stubbed successful so a silent substitute
+    cannot hide an aggregate failure (TEST-15).
+    """
     records = tmp_path / "gate.log"
     command = f'''
 source "{SCRIPT}"
 GREEN=; YELLOW=; RED=; RESET=
-sibling_gpu_snapshots_complete() {{ printf 'probe:%s\\n' "$1" >>"{records}"; return 1; }}
-verify_scoped_producer_snapshots() {{ printf 'scoped:%s\\n' "$1" >>"{records}"; return 0; }}
-ssh() {{ printf 'ssh:%s\\n' "$*" >>"{records}"; return 0; }}
+sibling_gpu_snapshots_complete() {{ printf 'probe:%s\\n' "$1" >>"{records}"; return {sibling_rc}; }}
+verify_scoped_producer_snapshots() {{ printf 'scoped:%s\\n' "$1" >>"{records}"; return {scoped_rc}; }}
+ssh() {{ printf 'ssh\\n' >>"{records}"; return 0; }}
+timeout() {{ cat >/dev/null; printf 'aggregate:%s\\n' "{timeout_rc}" >>"{records}"; return {timeout_rc}; }}
 verify_live_gpu_snapshots prod
 '''
     result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, check=False)
     logged = records.read_text() if records.exists() else ""
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert logged.splitlines() == ["probe:prod", "scoped:prod"]
+    return result, logged
+
+
+def test_normal_verify_uses_aggregate_not_scoped_when_siblings_incomplete(
+    tmp_path: Path,
+) -> None:
+    """Changed contract: missing siblings still run the aggregate checker.
+
+    Former R3-01 approved implicit NORMAL-verify fallback to
+    verify_scoped_producer_snapshots. That substitutes a single-env writer
+    check for the registry-wide gate (RLSE-03, DATA-13). Scoped success is
+    stubbed so a bypass would still return 0 (TEST-15).
+    """
+    result, logged = _run_verify_live_gpu_snapshots(
+        tmp_path, sibling_rc=1, timeout_rc=0, scoped_rc=0
+    )
+    combined = result.stdout + result.stderr
+    lines = logged.splitlines()
+    assert "probe:prod" in lines, combined
+    assert "aggregate:0" in lines, combined
+    assert "scoped:prod" not in lines
+    assert "using scoped producer-preparation" not in combined
+    assert result.returncode == 0, combined
 
 
 def test_subsequent_deploy_keeps_aggregate_snapshot_gate(tmp_path: Path) -> None:
-    """R3-01: once every sibling has a snapshot, the aggregate gate still governs."""
-    records = tmp_path / "gate.log"
-    command = f'''
-source "{SCRIPT}"
-GREEN=; YELLOW=; RED=; RESET=
-sibling_gpu_snapshots_complete() {{ printf 'probe:%s\\n' "$1" >>"{records}"; return 0; }}
-verify_scoped_producer_snapshots() {{ printf 'scoped:%s\\n' "$1" >>"{records}"; return 0; }}
-ssh() {{ printf 'ssh\\n' >>"{records}"; return 0; }}
-timeout() {{ printf 'ssh\\n' >>"{records}"; return 0; }}
-verify_live_gpu_snapshots prod
-'''
-    result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, check=False)
-    logged = records.read_text() if records.exists() else ""
+    """Once every sibling has a snapshot, the aggregate gate still governs."""
+    result, logged = _run_verify_live_gpu_snapshots(
+        tmp_path, sibling_rc=0, timeout_rc=0, scoped_rc=0
+    )
     combined = result.stdout + result.stderr
-    assert "probe:prod" in logged.splitlines(), combined
-    assert "scoped:prod" not in logged
+    lines = logged.splitlines()
+    assert "probe:prod" in lines, combined
+    assert "aggregate:0" in lines, combined
+    assert "scoped:prod" not in lines
     assert "using scoped producer-preparation" not in combined
     assert "Verifying live GPU snapshot contract" in combined
-    assert "ssh" in logged.splitlines()
+    assert result.returncode == 0, combined
+
+
+@pytest.mark.parametrize(
+    "timeout_rc",
+    [1, 255, 124],
+    ids=["missing", "ssh_error", "deadline"],
+)
+def test_normal_verify_propagates_aggregate_checker_failure(
+    tmp_path: Path, timeout_rc: int
+) -> None:
+    """Aggregate checker failure must propagate; scoped success must not bypass.
+
+    RES-02 / RES-03: missing snapshots (1), SSH error (255), and GNU timeout
+    deadline (124) are distinct failure modes. A hung or refused checker must
+    not be replaced by a scoped writer check. TEST-15: scoped stub returns 0
+    so a silent substitute would turn this green for the wrong reason.
+    """
+    result, logged = _run_verify_live_gpu_snapshots(
+        tmp_path, sibling_rc=1, timeout_rc=timeout_rc, scoped_rc=0
+    )
+    combined = result.stdout + result.stderr
+    lines = logged.splitlines()
+    assert "probe:prod" in lines, combined
+    assert f"aggregate:{timeout_rc}" in lines, combined
+    assert "scoped:prod" not in lines
+    assert result.returncode == timeout_rc, (
+        f"expected aggregate rc {timeout_rc}, got {result.returncode}: {combined}"
+    )
+
+
+def test_normal_verify_runs_aggregate_on_sibling_probe_error(tmp_path: Path) -> None:
+    """Sibling probe errors must not substitute scoped producer snapshots."""
+    result, logged = _run_verify_live_gpu_snapshots(
+        tmp_path, sibling_rc=255, timeout_rc=1, scoped_rc=0
+    )
+    combined = result.stdout + result.stderr
+    lines = logged.splitlines()
+    assert "probe:prod" in lines, combined
+    assert "aggregate:1" in lines, combined
+    assert "scoped:prod" not in lines
+    assert result.returncode == 1, combined
 
 
 def _fresh_load_snapshot(written_at: int = 1000) -> str:

@@ -61,12 +61,13 @@ Admin `describe-gpu-tier` is a different product surface. Do not copy its GPU ch
 
 ```
 ┌ Public demo › Describe an image  [data-state=idle]  role=status polite ─┐
-│ Choose an image to describe                                            │
-│ ( ) Lake          ( ) Path                                             │
-│ radios name=acx-demo-media-<instance>  (this form only)                │
 │ Illustrative example — not a live result                               │
 │ Alex stands beside a bicycle outside a cafe.                           │
 │ This example is not a description of your selected image.              │
+│ (aside data-acx-demo-preview, before the form; not the selected image) │
+│ Choose an image to describe                                            │
+│ ( ) Lake          ( ) Path                                             │
+│ radios name=acx-demo-media-<instance>  (this form only)                │
 │ [ Describe selected image ]                                            │
 │ ● Select an image, then choose Describe.                               │
 └────────────────────────────────────────────────────────────────────────┘

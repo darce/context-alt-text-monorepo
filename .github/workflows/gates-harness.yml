@@ -3,26 +3,24 @@ name: Gates harness
 on:
   pull_request:
     paths:
-      - "scripts/**/*.sh"
-      - "scripts/**/*.py"
+      - "scripts/**"
       - "mk/**"
       - "Makefile.d/lifecycle.mk"
       - ".gitignore"
       - "pyproject.toml"
       - "uv.lock"
-      - ".github/workflows/gates-harness.yml"
+      - ".github/workflows/**"
   push:
     branches:
       - main
     paths:
-      - "scripts/**/*.sh"
-      - "scripts/**/*.py"
+      - "scripts/**"
       - "mk/**"
       - "Makefile.d/lifecycle.mk"
       - ".gitignore"
       - "pyproject.toml"
       - "uv.lock"
-      - ".github/workflows/gates-harness.yml"
+      - ".github/workflows/**"
 
 permissions:
   contents: read

@@ -6,6 +6,8 @@ never reaches sticky-repo restore.
 Finding 13677 / RES-02: cutover_inflight_present returns raw `sudo test -f` rc;
 recover_interrupted_cutover and recover_persisted_cutover `|| return 0` treat
 timeout/auth/transport as confirmed absence (RLSE-03, DATA-13, TEST-15, AGT-06).
+TEST-15: raw SSH/run_with_deadline rc 1 with no PRESENT/ABSENT token must not
+be classified as confirmed absence (inject transport_one).
 
 Sandbox isolation: every mutation is under pytest tmp_path. `/etc/systemd/system`
 is rewritten to a tmp unit dir. sudo/systemctl/docker/rm are fail-closed shims.
@@ -336,6 +338,7 @@ run_with_deadline() {{ shift 2; "$@"; }}
 ssh() {{
   case "{inject}" in
     transport) return 255 ;;
+    transport_one) return 1 ;;
     timeout) return 124 ;;
     generic) return 2 ;;
     malformed) printf 'not-a-token\\n'; return 0 ;;
@@ -377,7 +380,15 @@ def test_inflight_confirmed_absent_skips_without_drain(tmp_path: Path, caller: s
 @pytest.mark.parametrize("caller", ["recover_persisted_cutover dev", "recover_interrupted_cutover"])
 @pytest.mark.parametrize(
     "inject",
-    ["transport", "timeout", "generic", "sudo_fail", "malformed", "empty"],
+    [
+        "transport",
+        "transport_one",
+        "timeout",
+        "generic",
+        "sudo_fail",
+        "malformed",
+        "empty",
+    ],
 )
 def test_inflight_probe_errors_refuse_recovery_and_do_not_drain(
     tmp_path: Path, caller: str, inject: str

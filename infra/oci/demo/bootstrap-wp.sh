@@ -278,6 +278,10 @@ echo "==> Cycle plugin activation so activation-hook dbDelta applies schema chan
 compose run --rm --no-deps wpcli wp plugin deactivate alt-context || true
 compose run --rm --no-deps wpcli wp plugin activate alt-context
 
+# Activation runs after init; flush in a fresh request where the enabled guide
+# has registered its rewrite, so an update cannot leave /guide/ returning 404.
+wpcli wp rewrite flush
+
 # wp-cli --format=count -> digits, or "" on failure/non-numeric so the
 # classifier BLOCKs instead of guessing.
 wpcli_count_or_empty() {

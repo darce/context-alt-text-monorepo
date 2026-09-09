@@ -1794,9 +1794,10 @@ read_running_api_image_id() {
 read_api_runtime_evidence() {
   local env="$1" remote_dir compose_files remote_dir_q timeout output rc=0
   local record kind container_id image_id state compose_project compose_service config_hash extra
-  local normalized=""
+  local normalized="" next_project
   remote_dir="$(env_to_remote_dir "${env}")"
   compose_files="$(env_to_compose_files "${env}")"
+  next_project="acx-${env}-next"
   remote_dir_q="$(remote_quote "${remote_dir}")"
   timeout="$(validated_deadline ACX_REMOTE_INSPECT_TIMEOUT 60)"
   # shellcheck disable=SC2086 # compose_files is intentionally word-split remotely.
@@ -1805,19 +1806,32 @@ read_api_runtime_evidence() {
       -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
       -l "${OCI_USER}" -- "${OCI_HOST}" \
       "cd ${remote_dir_q} && \
-       running_ids=\$(docker compose ${compose_files} ps -q api 2>/dev/null) || exit 41; \
-       running_cid=\$(printf '%s\\n' \"\$running_ids\" | sed -n '1p'); \
-       if [ -n \"\$running_cid\" ]; then \
-         docker inspect --format 'RUNTIME|{{.Id}}|{{.Image}}|{{.State.Status}}|{{index .Config.Labels \"com.docker.compose.project\"}}|{{index .Config.Labels \"com.docker.compose.service\"}}|{{index .Config.Labels \"com.docker.compose.config-hash\"}}' \"\$running_cid\" || exit 42; \
-       else \
-         stopped_ids=\$(docker compose ${compose_files} ps -a -q api 2>/dev/null) || exit 43; \
-         if [ -z \"\$stopped_ids\" ]; then \
-           printf '%s\\n' ABSENT; \
-         else \
-           for stopped_cid in \$stopped_ids; do \
-             docker inspect --format 'RUNTIME|{{.Id}}|{{.Image}}|{{.State.Status}}|{{index .Config.Labels \"com.docker.compose.project\"}}|{{index .Config.Labels \"com.docker.compose.service\"}}|{{index .Config.Labels \"com.docker.compose.config-hash\"}}' \"\$stopped_cid\" || exit 44; \
-           done; \
+       inspect_fmt='RUNTIME|{{.Id}}|{{.Image}}|{{.State.Status}}|{{index .Config.Labels \"com.docker.compose.project\"}}|{{index .Config.Labels \"com.docker.compose.service\"}}|{{index .Config.Labels \"com.docker.compose.config-hash\"}}'; \
+       emit_api_records() { \
+         running_ids=\$(docker compose \"\$@\" ps -q api 2>/dev/null) || return 41; \
+         running_cid=\$(printf '%s\\n' \"\$running_ids\" | sed -n '1p'); \
+         if [ -n \"\$running_cid\" ]; then \
+           docker inspect --format \"\$inspect_fmt\" \"\$running_cid\" || return 42; \
+           return 0; \
          fi; \
+         stopped_ids=\$(docker compose \"\$@\" ps -a -q api 2>/dev/null) || return 43; \
+         if [ -z \"\$stopped_ids\" ]; then \
+           return 0; \
+         fi; \
+         for stopped_cid in \$stopped_ids; do \
+           docker inspect --format \"\$inspect_fmt\" \"\$stopped_cid\" || return 44; \
+         done; \
+       }; \
+       canonical_out=\$(emit_api_records ${compose_files}) || exit \$?; \
+       next_out=; \
+       if [ -f docker-compose.cutover.yml ]; then \
+         next_out=\$(emit_api_records -p ${next_project} -f docker-compose.cutover.yml) || exit \$?; \
+       fi; \
+       if [ -z \"\$canonical_out\" ] && [ -z \"\$next_out\" ]; then \
+         printf '%s\\n' ABSENT; \
+       else \
+         [ -z \"\$canonical_out\" ] || printf '%s\\n' \"\$canonical_out\"; \
+         [ -z \"\$next_out\" ] || printf '%s\\n' \"\$next_out\"; \
        fi")" || rc=$?
   if (( rc != 0 )); then
     return "${rc}"
@@ -2400,10 +2414,33 @@ restore_topology_backups() {
 }
 
 restore_edge_backups() {
-  local env="$1" edge_dir="/opt/acx-backend" timeout
+  local env="$1" edge_dir="/opt/acx-backend" timeout prefer_flip=0
   env_to_unit "$env" >/dev/null
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  [[ "${ACX_TRAFFIC_FLIPPED:-0}" == "1" ]] && prefer_flip=1
   log "Restoring Caddy edge topology for ${env} from .bak files"
+  if [[ "${prefer_flip}" == "1" ]]; then
+    if run_with_deadline "${timeout}" "restore pre-flip Caddyfile for ${env}" \
+      ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
+      "set -euo pipefail
+       edge_dir='${edge_dir}'
+       if [ ! -f \"\${edge_dir}/Caddyfile.flip.bak\" ]; then
+         echo 'missing Caddyfile.flip.bak while traffic is on next'
+         exit 1
+       fi
+       cp -f \"\${edge_dir}/Caddyfile.flip.bak\" \"\${edge_dir}/Caddyfile\"
+       echo 'restored:Caddyfile.flip.bak'
+       cd \"\${edge_dir}\"
+       docker compose -f docker-compose.caddy.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile \
+         || docker compose -f docker-compose.caddy.yml up -d"; then
+      ACX_TRAFFIC_FLIPPED=0
+    elif flip_edge_alias "$env" canonical; then
+      ACX_TRAFFIC_FLIPPED=0
+    else
+      warn "edge restore failed while traffic remains on ${env}-next; leaving candidate serving"
+      return 1
+    fi
+  fi
   run_with_deadline "${timeout}" "restore edge backups for ${env}" \
     ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
     "set -euo pipefail
@@ -2582,9 +2619,12 @@ do_restart() {
   ACX_TRAFFIC_FLIPPED=1
   if ! curl --fail --silent --show-error --max-time 10 "$(env_to_health_url "$env")" >/dev/null; then
     warn "public health failed after traffic flip; reverting to ${unit}"
-    flip_edge_alias "$env" canonical || true
-    ACX_TRAFFIC_FLIPPED=0
-    abort_cutover_candidate "$env" || true
+    if flip_edge_alias "$env" canonical; then
+      ACX_TRAFFIC_FLIPPED=0
+      abort_cutover_candidate "$env" || true
+    else
+      warn "canonical flip failed; leaving candidate ${next_unit} serving"
+    fi
     return 1
   fi
 
@@ -2605,19 +2645,29 @@ do_restart() {
   fi
   ACX_TRAFFIC_FLIPPED=0
   abort_cutover_candidate "$env" || true
+  ACX_LIVE_DISRUPTED=0
+  return 0
 }
 
-# Restore both the registry env tag and the VM's cached tag to the digest that
-# was serving before this transaction. This closes the latent-rollout window
-# when digest staging succeeds but a later repair/restart/verify step fails.
-restore_env_tag_to_rollback() {
-  local env="$1" restart_runtime="${2:-0}" env_tag timeout rollback_base unit pulled_digest
-  local inspect_timeout current_digest candidate_digest candidate_base
+# Automatic cutover compensation restarts the live unit only when this
+# transaction already disrupted it or flipped public traffic onto the candidate.
+# post_restart is an evidence-capture phase, not a live-restart trigger.
+cutover_failure_restart_runtime() {
+  if [[ "${ACX_LIVE_DISRUPTED:-0}" == "1" || "${ACX_TRAFFIC_FLIPPED:-0}" == "1" ]]; then
+    printf '1'
+  else
+    printf '0'
+  fi
+}
+
+assert_rollback_fence() {
+  local env="$1" restart_runtime="${2:-0}" env_tag timeout rollback_base pulled_digest
+  local current_digest candidate_digest candidate_base
   local rollback_image_id candidate_image_id runtime_evidence runtime_kind
   local runtime_cid runtime_image_id runtime_state runtime_project runtime_service runtime_hash
   local prior_runtime_kind prior_runtime_cid prior_runtime_image_id prior_runtime_state
   local prior_runtime_project prior_runtime_service prior_runtime_hash prior_runtime_extra
-  local runtime_owner=""
+  local runtime_owner="" canonical_project next_project
   if [[ ! "${ACX_ROLLBACK_DIGEST_REF:-}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]]; then
     warn "ROLLBACK REQUIRED but no previous serving digest was captured"
     return 1
@@ -2641,7 +2691,6 @@ restore_env_tag_to_rollback() {
   assert_safe_image_repo "rollback image repository" "${rollback_base}"
   env_tag="$(env_to_tag "${env}")"
   timeout="${ACX_PUSH_TIMEOUT:-900}"
-  inspect_timeout="$(validated_deadline ACX_REMOTE_INSPECT_TIMEOUT 60)"
   if [[ ! "${timeout}" =~ ^[1-9][0-9]*$ ]]; then
     warn "ACX_PUSH_TIMEOUT must be a positive integer (got: ${timeout})"
     return 1
@@ -2672,82 +2721,108 @@ restore_env_tag_to_rollback() {
       fi
     fi
   fi
-  if [[ "${restart_runtime}" == "1" ]]; then
-    if ! rollback_image_id="$(remote_image_id_for_digest "${ACX_ROLLBACK_DIGEST_REF}")" \
-      || ! candidate_image_id="$(remote_image_id_for_digest "${candidate_digest}")"; then
-      warn "cannot resolve immutable candidate/rollback image IDs; refusing unfenced rollback"
-      return 1
-    fi
-    if ! runtime_evidence="$(read_api_runtime_evidence "${env}")"; then
-      warn "ROLLBACK REQUIRED but api runtime inspection is unknown; refusing unfenced rollback"
-      return 1
-    fi
-    if [[ "${runtime_evidence}" == "ABSENT" ]]; then
-      warn "ROLLBACK REQUIRED but no stopped api container proves this transaction's candidate generation"
-      return 1
-    fi
-    if [[ -n "${ACX_PRIOR_RUNTIME_IDENTITY:-}" ]]; then
-      IFS='|' read -r prior_runtime_kind prior_runtime_cid prior_runtime_image_id prior_runtime_state \
-        prior_runtime_project prior_runtime_service prior_runtime_hash prior_runtime_extra \
-        <<< "${ACX_PRIOR_RUNTIME_IDENTITY}"
-    fi
-    while IFS='|' read -r runtime_kind runtime_cid runtime_image_id runtime_state \
-      runtime_project runtime_service runtime_hash; do
-      # Compose scoping plus these labels make the stopped record an identity
-      # proof, rather than merely an unrelated container with the same image.
-      case "${runtime_kind}:${runtime_state}" in
-        RUNNING:running|RUNNING:restarting|STOPPED:created|STOPPED:exited|STOPPED:dead) ;;
-        *) continue ;;
-      esac
-      if [[ "${runtime_project}" != "acx-${env}" \
-        || "${runtime_service}" != "api" \
-        || -z "${runtime_hash}" ]]; then
-        continue
-      fi
-      case "${runtime_kind}" in
-        RUNNING)
-          if [[ "${runtime_image_id}" == "${candidate_image_id}" \
-            || "${runtime_image_id}" == "${rollback_image_id}" ]]; then
-            runtime_owner="running"
-          fi
-          ;;
-        STOPPED)
-          # A stopped candidate container is the positive evidence that the
-          # failed restart reached this transaction's generation. A stopped
-          # rollback container is accepted only after the registry is already
-          # on the rollback digest, making an idempotent retry safe.
-          if [[ "${runtime_image_id}" == "${candidate_image_id}" ]]; then
-            runtime_owner="stopped-candidate"
-          elif [[ "${runtime_image_id}" == "${rollback_image_id}" \
-            && "${current_digest}" == "${ACX_ROLLBACK_DIGEST_REF}" ]]; then
-            runtime_owner="stopped-rollback"
-          elif [[ "${prior_runtime_kind}" == "RUNNING" || "${prior_runtime_kind}" == "STOPPED" ]] \
-            && [[ "${prior_runtime_kind}:${prior_runtime_state}" =~ ^(RUNNING:(running|restarting)|STOPPED:(created|exited|dead))$ ]] \
-            && [[ -z "${prior_runtime_extra}" ]] \
-            && [[ "${runtime_cid}" == "${prior_runtime_cid}" \
-              && "${runtime_image_id}" == "${prior_runtime_image_id}" \
-              && "${runtime_project}" == "${prior_runtime_project}" \
-              && "${runtime_service}" == "${prior_runtime_service}" \
-              && "${runtime_hash}" == "${prior_runtime_hash}" ]] \
-            && [[ "${prior_runtime_image_id}" == "${candidate_image_id}" \
-              || "${prior_runtime_image_id}" == "${rollback_image_id}" ]]; then
-            runtime_owner="stopped-prior"
-          fi
-          ;;
-      esac
-      [[ -n "${runtime_owner}" ]] && break
-    done <<< "${runtime_evidence}"
-    if [[ -z "${runtime_owner}" ]]; then
-      warn "STALE ROLLBACK REFUSED: ${env} runtime generation is outside this transaction's candidate/rollback fence"
-      return 1
-    fi
-    if [[ "${runtime_owner}" == "stopped-candidate" ]]; then
-      log "Confirmed stopped api container ${runtime_cid:0:12} belongs to the candidate generation; proceeding with rollback"
-    elif [[ "${runtime_owner}" == "stopped-prior" ]]; then
-      log "Confirmed stopped prior api container ${runtime_cid:0:12} belongs to the captured previous generation; proceeding with rollback"
-    fi
+  if [[ "${restart_runtime}" != "1" ]]; then
+    return 0
   fi
+  canonical_project="acx-${env}"
+  next_project="acx-${env}-next"
+  if ! rollback_image_id="$(remote_image_id_for_digest "${ACX_ROLLBACK_DIGEST_REF}")" \
+    || ! candidate_image_id="$(remote_image_id_for_digest "${candidate_digest}")"; then
+    warn "cannot resolve immutable candidate/rollback image IDs; refusing unfenced rollback"
+    return 1
+  fi
+  if ! runtime_evidence="$(read_api_runtime_evidence "${env}")"; then
+    warn "ROLLBACK REQUIRED but api runtime inspection is unknown; refusing unfenced rollback"
+    return 1
+  fi
+  if [[ "${runtime_evidence}" == "ABSENT" ]]; then
+    warn "ROLLBACK REQUIRED but no stopped api container proves this transaction's candidate generation"
+    return 1
+  fi
+  if [[ -n "${ACX_PRIOR_RUNTIME_IDENTITY:-}" ]]; then
+    IFS='|' read -r prior_runtime_kind prior_runtime_cid prior_runtime_image_id prior_runtime_state \
+      prior_runtime_project prior_runtime_service prior_runtime_hash prior_runtime_extra \
+      <<< "${ACX_PRIOR_RUNTIME_IDENTITY}"
+  fi
+  while IFS='|' read -r runtime_kind runtime_cid runtime_image_id runtime_state \
+    runtime_project runtime_service runtime_hash; do
+    # Compose scoping plus these labels make the stopped record an identity
+    # proof, rather than merely an unrelated container with the same image.
+    case "${runtime_kind}:${runtime_state}" in
+      RUNNING:running|RUNNING:restarting|STOPPED:created|STOPPED:exited|STOPPED:dead) ;;
+      *) continue ;;
+    esac
+    if [[ "${runtime_service}" != "api" || -z "${runtime_hash}" ]]; then
+      continue
+    fi
+    if [[ "${runtime_project}" != "${canonical_project}" \
+      && "${runtime_project}" != "${next_project}" ]]; then
+      continue
+    fi
+    case "${runtime_kind}" in
+      RUNNING)
+        if [[ "${runtime_image_id}" == "${candidate_image_id}" ]]; then
+          runtime_owner="running"
+        elif [[ "${runtime_image_id}" == "${rollback_image_id}" \
+          && "${runtime_project}" == "${canonical_project}" ]]; then
+          runtime_owner="running"
+        fi
+        ;;
+      STOPPED)
+        # A stopped candidate container is the positive evidence that the
+        # failed restart reached this transaction's generation. A stopped
+        # rollback container is accepted only after the registry is already
+        # on the rollback digest, making an idempotent retry safe.
+        if [[ "${runtime_image_id}" == "${candidate_image_id}" ]]; then
+          runtime_owner="stopped-candidate"
+        elif [[ "${runtime_image_id}" == "${rollback_image_id}" \
+          && "${runtime_project}" == "${canonical_project}" \
+          && "${current_digest}" == "${ACX_ROLLBACK_DIGEST_REF}" ]]; then
+          runtime_owner="stopped-rollback"
+        elif [[ "${runtime_project}" == "${canonical_project}" ]] \
+          && [[ "${prior_runtime_kind}" == "RUNNING" || "${prior_runtime_kind}" == "STOPPED" ]] \
+          && [[ "${prior_runtime_kind}:${prior_runtime_state}" =~ ^(RUNNING:(running|restarting)|STOPPED:(created|exited|dead))$ ]] \
+          && [[ -z "${prior_runtime_extra}" ]] \
+          && [[ "${runtime_cid}" == "${prior_runtime_cid}" \
+            && "${runtime_image_id}" == "${prior_runtime_image_id}" \
+            && "${runtime_project}" == "${prior_runtime_project}" \
+            && "${runtime_service}" == "${prior_runtime_service}" \
+            && "${runtime_hash}" == "${prior_runtime_hash}" ]] \
+          && [[ "${prior_runtime_image_id}" == "${candidate_image_id}" \
+            || "${prior_runtime_image_id}" == "${rollback_image_id}" ]]; then
+          runtime_owner="stopped-prior"
+        fi
+        ;;
+    esac
+    [[ -n "${runtime_owner}" ]] && break
+  done <<< "${runtime_evidence}"
+  if [[ -z "${runtime_owner}" ]]; then
+    warn "STALE ROLLBACK REFUSED: ${env} runtime generation is outside this transaction's candidate/rollback fence"
+    return 1
+  fi
+  if [[ "${runtime_owner}" == "running" ]]; then
+    log "Confirmed running api container ${runtime_cid:0:12} in ${runtime_project} belongs to this transaction; proceeding with rollback"
+  elif [[ "${runtime_owner}" == "stopped-candidate" ]]; then
+    log "Confirmed stopped api container ${runtime_cid:0:12} belongs to the candidate generation; proceeding with rollback"
+  elif [[ "${runtime_owner}" == "stopped-prior" ]]; then
+    log "Confirmed stopped prior api container ${runtime_cid:0:12} belongs to the captured previous generation; proceeding with rollback"
+  fi
+}
 
+restore_registry_env_tag() {
+  local env="$1" env_tag timeout inspect_timeout rollback_base
+  if [[ ! "${ACX_ROLLBACK_DIGEST_REF:-}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]]; then
+    warn "ROLLBACK REQUIRED but no previous serving digest was captured"
+    return 1
+  fi
+  rollback_base="${ACX_ROLLBACK_IMAGE_BASE:-${ACX_ROLLBACK_DIGEST_REF%@sha256:*}}"
+  env_tag="$(env_to_tag "${env}")"
+  timeout="${ACX_PUSH_TIMEOUT:-900}"
+  inspect_timeout="$(validated_deadline ACX_REMOTE_INSPECT_TIMEOUT 60)"
+  if [[ ! "${timeout}" =~ ^[1-9][0-9]*$ ]]; then
+    warn "ACX_PUSH_TIMEOUT must be a positive integer (got: ${timeout})"
+    return 1
+  fi
   if ! run_with_deadline "${inspect_timeout}" "rollback VM-local retag for ${env}" \
     remote_docker_with_config tag "${ACX_ROLLBACK_DIGEST_REF}" "${rollback_base}:${env_tag}"; then
     warn "could not restore VM-local ${rollback_base}:${env_tag}"
@@ -2758,6 +2833,11 @@ restore_env_tag_to_rollback() {
     warn "could not restore registry tag ${rollback_base}:${env_tag}"
     return 1
   fi
+}
+
+restore_runtime_and_edge() {
+  local env="$1" restart_runtime="${2:-0}" unit inspect_timeout
+  inspect_timeout="$(validated_deadline ACX_REMOTE_INSPECT_TIMEOUT 60)"
   if ! restore_topology_backups "${env}"; then
     warn "could not restore compose/unit topology from .bak before rollback"
     return 1
@@ -2777,7 +2857,15 @@ restore_env_tag_to_rollback() {
     fi
   fi
   if ! restore_edge_backups "${env}"; then
+    if [[ "${ACX_TRAFFIC_FLIPPED:-0}" == "1" ]]; then
+      warn "edge restore failed while traffic remains on ${env}-next; leaving candidate serving. Recovery: $(rollback_command_hint "${env}")"
+      return 1
+    fi
     warn "could not restore Caddy edge topology from .bak"
+    return 1
+  fi
+  if [[ "${ACX_TRAFFIC_FLIPPED:-0}" == "1" ]]; then
+    warn "edge restore left traffic on ${env}-next; refusing to drain candidate. Recovery: $(rollback_command_hint "${env}")"
     return 1
   fi
   abort_cutover_candidate "${env}" || true
@@ -2787,6 +2875,18 @@ restore_env_tag_to_rollback() {
       return 1
     fi
   fi
+}
+
+# Restore both the registry env tag and the VM's cached tag to the digest that
+# was serving before this transaction. This closes the latent-rollout window
+# when digest staging succeeds but a later repair/restart/verify step fails.
+restore_env_tag_to_rollback() {
+  local env="$1" restart_runtime="${2:-0}" rollback_base env_tag
+  assert_rollback_fence "${env}" "${restart_runtime}" || return 1
+  restore_registry_env_tag "${env}" || return 1
+  restore_runtime_and_edge "${env}" "${restart_runtime}" || return 1
+  rollback_base="${ACX_ROLLBACK_IMAGE_BASE:-${ACX_ROLLBACK_DIGEST_REF%@sha256:*}}"
+  env_tag="$(env_to_tag "${env}")"
   log "Restored ${rollback_base}:${env_tag} to ${ACX_ROLLBACK_DIGEST_REF}"
 }
 
@@ -3068,10 +3168,8 @@ do_deploy() {
 
   if ! do_restart "$env" "${ACX_CANDIDATE_DIGEST_REF}"; then
     capture_failure_evidence "$env" "${ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}" || warn "automatic failure evidence capture failed; continuing with rollback"
-    local restart_runtime=0
-    if [[ "${ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}" == "post_restart" ]]; then
-      restart_runtime=1
-    fi
+    local restart_runtime
+    restart_runtime="$(cutover_failure_restart_runtime)"
     if restore_env_tag_to_rollback "$env" "${restart_runtime}"; then
       restore_prior_image_repo_env || warn "env tag restored but prior sticky repository restore failed"
     else
@@ -3156,10 +3254,8 @@ do_promote() {
 
   if ! do_restart "$to_env" "${ACX_CANDIDATE_DIGEST_REF}"; then
     capture_failure_evidence "$to_env" "${ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}" || warn "automatic failure evidence capture failed; continuing with rollback"
-    local restart_runtime=0
-    if [[ "${ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}" == "post_restart" ]]; then
-      restart_runtime=1
-    fi
+    local restart_runtime
+    restart_runtime="$(cutover_failure_restart_runtime)"
     if restore_env_tag_to_rollback "$to_env" "${restart_runtime}"; then
       restore_prior_image_repo_env || warn "env tag restored but prior sticky repository restore failed"
     else

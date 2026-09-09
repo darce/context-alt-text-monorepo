@@ -143,3 +143,29 @@ Nothing here identifies which. The mechanism is **unidentified**, and the decisi
 experiment remains: exhaustively re-annotate a few hundred train images under the val/test
 rubric and compare to the shipped labels. Until that runs, the calibration reading is a
 *preferred hypothesis with unexcluded rivals*, not a result.
+
+## Still-open measurement gates (ISSUEDAG-1, 2026-09-09)
+
+Tracked companion (the HTML register is gitignored):
+`benchmarks/reports/fir-issuedag-1-measurement-gates.md`.
+
+These are not closed by this document. No new counts were taken in this pass.
+
+**COCO licence and keypoint counts are not first-party here.** The HTML report cites
+69.0% NC, 26.1% usable, 30,836 images, 16,513 with a person, 33,193 head-bearing
+instances, 48.6% keypoint coverage. Unlike the Open Images figures above, those
+COCO numbers have **no persisted script in this tree and no pinned annotation-JSON
+revision**. Do not treat them as audited. Closing that gate needs a committed
+reproducer plus a pinned COCO annotation SHA (the same auditability bar this file
+already meets for Open Images).
+
+**Train vs val/test `IsOccluded` mechanism (T-15) is unfunded and unscheduled.**
+Four rivals remain unexcluded. Supervision must stay conservative (positives-only
+with ignore-regions). Do not apply a quantitative calibration correction from this
+record.
+
+**COCO facial keypoint `v=0` cause distribution is unaudited** (occlusion vs
+out-of-frame vs annotator skip vs protocol). `v=0` means "not labelled", not
+"occluded". The usable hard-occlusion pool inside COCO cannot be sized until that
+is measured. Deferred until COCO is actually proposed as an occlusion-stratum
+source.

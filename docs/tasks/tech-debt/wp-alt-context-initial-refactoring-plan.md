@@ -10,16 +10,18 @@
 
 Ranked by ROI (impact × safety × low blast radius):
 
-> **Note — LOC figures below are the pre-refactor 2026-06-07 baseline.** All eight targets were decomposed (see the Closure section): current `main` sizes are cluster-mutations 455, clusters-repo 156, analysis-jobs 266, identity-members 141, clusters-controller 234. `split-topology-command-drain` instead grew 799→981 — re-evaluate it separately.
+> **Note — the Methods column in the 2026-06-07 table below is unreliable.** It listed clusters-repository 60, analysis-jobs 54, identity-members 55; even the contemporaneous epic disagreed (~20 methods each). **Do not author follow-up plans from this column.** Re-verify with `grep -c 'public function'` and `wc -l` against current sources. Epic `docs/epics/v0.4.1/wp-alt-context-structural-refactor-epic.md` + that recount is the source of truth. This companion is already flagged for deletion (epic REFA-PA-07).
+>
+> **2026-09-09 recount** (this checkout): cluster-mutations 509 LOC / 21 public methods; clusters-repo 168 / 23; analysis-jobs 280 / 15; identity-members 138 / 15; clusters-controller 253 / 14; split-topology-command-drain 1025 / 3 (still inlines START TRANSACTION); outbox-drain 652 / 14 (no in-file transactions); `_workbench.scss` 1425 LOC, 66 `px`, 0 hex. All eight original targets were decomposed (see Closure); do not restart REFA-1..8 from the historical table.
 
-| Rank | Target | LOC | Methods | Safety net | Smell | First move |
+| Rank | Target | LOC (2026-06-07, historical) | Methods (2026-06-07, **unreliable**) | Safety net | Smell | First move |
 |---|---|---|---|---|---|---|
-| **1** | `src/api/class-cluster-mutations-controller.php` | 1257 | 51 | partial (`ClusterMutationsControllerDualWriteTest`) | God controller, 11 routes + label/merge/split/dismiss/reassign | Extract Class per operation cluster |
-| **2** | `src/sovereign/repositories/class-clusters-repository.php` | 1164 | 60 | yes (`ClustersRepositoryTest` + `...MutationTest`) | God repository, CRUD + curation reset + delete-with-members + count derivation | Extract Class by cohesive method+field subset |
-| **3** | `src/api/class-analysis-jobs-controller.php` | 1144 | 54 | yes (`AnalysisJobsControllerTest` + transport) | God controller, 8 routes | Extract Class; Split Phase on job lifecycle |
-| **4** | `src/sovereign/repositories/class-identity-members-repository.php` | 1045 | 55 | yes (`IdentityMembersRepositoryTest`) | God repository | Extract Class; batch N+1 audit |
+| **1** | `src/api/class-cluster-mutations-controller.php` | 1257 | 51 (unreliable; epic had 21) | partial (`ClusterMutationsControllerDualWriteTest`) | God controller, 11 routes + label/merge/split/dismiss/reassign | Extract Class per operation cluster |
+| **2** | `src/sovereign/repositories/class-clusters-repository.php` | 1164 | 60 (unreliable; epic had 34; now 23) | yes (`ClustersRepositoryTest` + `...MutationTest`) | God repository, CRUD + curation reset + delete-with-members + count derivation | Extract Class by cohesive method+field subset |
+| **3** | `src/api/class-analysis-jobs-controller.php` | 1144 | 54 (unreliable; epic had 35; now 15) | yes (`AnalysisJobsControllerTest` + transport) | God controller, 8 routes | Extract Class; Split Phase on job lifecycle |
+| **4** | `src/sovereign/repositories/class-identity-members-repository.php` | 1045 | 55 (unreliable; epic had 28; now 15) | yes (`IdentityMembersRepositoryTest`) | God repository | Extract Class; batch N+1 audit |
 | **5** | `js/admin/styles/components/_workbench.scss` | 1159 | — | visual/Playwright a11y | Raw literals: 11 hex, 80 px, 0 `!important` | Token swap to `--acx-*` (sr-004) |
-| 6 | `src/sovereign/sync/class-split-topology-command-drain.php` | 799 | 44 | yes (`SplitTopologyCommandDrainTest`) | Loop+conditional sprawl | Split Loop + Extract Function |
+| 6 | `src/sovereign/sync/class-split-topology-command-drain.php` | 799 | 44 (unreliable; now 3 public / 1025 LOC) | yes (`SplitTopologyCommandDrainTest`) | Loop+conditional sprawl | Split Loop + Extract Function |
 | 7 | `src/api/class-clusters-controller.php` | 770 | — | yes (`ClustersControllerTest`) | God controller | Extract Class |
 | 8 | `src/sovereign/sync/class-outbox-drain.php` | 680 | — | yes (`OutboxDrainTest`) | Loop+conditional sprawl | Split Loop |
 

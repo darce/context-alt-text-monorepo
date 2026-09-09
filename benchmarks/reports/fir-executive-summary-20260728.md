@@ -2,6 +2,7 @@
 
 **Date:** 2026-07-28 · **Status:** program re-based on QA v8 · **Audience:** operator
 **Binding reference:** `benchmarks/reports/fir-embeddings-dims-detectors-qa-20260723.html` (v8, gitignored, uncommitted by design)
+**Still-open measurement gates (2026-09-09):** `benchmarks/reports/fir-issuedag-1-measurement-gates.md` — prevalence, unverified alternative licences, COCO unreplicated counts, Open Images pixel-licence hard gate, unidentified `IsOccluded` mechanism. None of those ran; do not read this summary as closing them.
 **This document does not create new claims.** Every number below is traceable to a v8 register row (D-\*, T-\*, M-\*) or to a committed task plan. Where v8 withdrew a number, this document says so rather than repeating it.
 
 ---

@@ -332,8 +332,18 @@ def test_compose_env_and_prod_blob_ownership_repair_profile() -> None:
 
 def _fn_body(script_text: str, name: str) -> str:
     start = script_text.index(f"{name}()")
-    end = script_text.index("\n}\n", start)
-    return script_text[start:end]
+    # A closing brace inside a heredoc is data, not the outer function boundary.
+    # Ask Bash to parse each candidate without executing the sourced deploy code.
+    search_at = start
+    while True:
+        end = script_text.index("\n}\n", search_at) + len("\n}\n")
+        body = script_text[start:end]
+        parsed = subprocess.run(
+            ["bash", "-n"], input=body, capture_output=True, text=True, timeout=5, check=False
+        )
+        if parsed.returncode == 0:
+            return body
+        search_at = end - 1
 
 
 def test_boot_smoke_mounts_modules_tmpfs_matching_dockerfile() -> None:
@@ -731,6 +741,7 @@ def test_expected_image_variant_and_verify_parse(tmp_path: Path) -> None:
             f"""\
             #!/bin/sh
             echo '{json.dumps(health)}'
+            printf '\\n200'
             exit 0
             """
         ),

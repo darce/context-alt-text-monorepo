@@ -436,8 +436,15 @@ class _MigrationRecorder:
             def first(self):
                 return self._row
 
+            def one(self):
+                assert self._row is not None, "expected one catalog row"
+                return self._row
+
         class _FakeBind:
             def execute(self, stmt, params=None):  # noqa: ANN001, ARG002
+                # These DDL-shape tests model a role allowed to create the view.
+                if "has_schema_privilege" in str(stmt) and "has_table_privilege" in str(stmt):
+                    return _FakeResult(("public", True, True, True, True, True))
                 if "relrowsecurity" in str(stmt):
                     return _FakeResult((False, False))
                 return _FakeResult(None)

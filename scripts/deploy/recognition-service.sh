@@ -4090,11 +4090,6 @@ SCOPED_PRODUCER
 verify_live_gpu_snapshots() {
   local env="$1" remote_dir payload expected_bytes expected_sha gate_timeout transport_rc=0
   env_to_unit "$env" >/dev/null
-  if ! sibling_gpu_snapshots_complete "$env"; then
-    log "Registered GPU snapshot siblings are incomplete; using scoped producer-preparation for ${env}"
-    verify_scoped_producer_snapshots "$env"
-    return
-  fi
   remote_dir="$(env_to_remote_dir "$env")"
   gate_timeout="${ACX_GPU_SNAPSHOT_GATE_TIMEOUT_SECONDS:-60}"
   if ! [[ "${gate_timeout}" =~ ^[1-9][0-9]*$ ]]; then

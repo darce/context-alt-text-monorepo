@@ -1,6 +1,7 @@
 """FIR23-01: embedding_model enforcement on read paths + fail-closed readiness.
 
-Single-model behavior must be a no-op; mixed-model sets keep one space only.
+Unclustered rows fail closed to the active runtime id. All-unstamped batches
+remain the legacy no-op; mixed or foreign stamps never pass through.
 """
 
 from __future__ import annotations
@@ -153,12 +154,60 @@ def test_filter_rows_unclustered_mixed_prefers_active(monkeypatch: pytest.Monkey
         get_settings.cache_clear()
 
 
-def test_filter_rows_unclustered_single_model_noop() -> None:
+def test_filter_rows_unclustered_single_foreign_model_excluded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("RECOGNITION_RUNTIME_MODE", "test")
+    from recognition.config import get_settings
+
+    get_settings.cache_clear()
+    try:
+        rows = [
+            SimpleNamespace(embedding_model="legacy-seed"),
+            SimpleNamespace(embedding_model="legacy-seed"),
+        ]
+        assert _filter_rows_to_single_embedding_model(rows) == []  # type: ignore[arg-type]
+    finally:
+        get_settings.cache_clear()
+
+
+def test_filter_rows_unclustered_active_model_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("RECOGNITION_RUNTIME_MODE", "test")
+    from recognition.config import get_settings
+
+    get_settings.cache_clear()
+    try:
+        rows = [
+            SimpleNamespace(embedding_model="stub-detector@test"),
+            SimpleNamespace(embedding_model="stub-detector@test"),
+        ]
+        assert _filter_rows_to_single_embedding_model(rows) == rows  # type: ignore[arg-type]
+    finally:
+        get_settings.cache_clear()
+
+
+def test_filter_rows_unclustered_unstamped_mixed_with_stamp_keeps_active(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("RECOGNITION_RUNTIME_MODE", "test")
+    from recognition.config import get_settings
+
+    get_settings.cache_clear()
+    try:
+        unstamped = SimpleNamespace(embedding_model=None)
+        active = SimpleNamespace(embedding_model="stub-detector@test")
+        foreign = SimpleNamespace(embedding_model="legacy-seed")
+        kept = _filter_rows_to_single_embedding_model([unstamped, active, foreign])  # type: ignore[arg-type]
+        assert kept == [active]
+    finally:
+        get_settings.cache_clear()
+
+
+def test_filter_rows_unclustered_all_unstamped_is_legacy_noop() -> None:
     rows = [
-        SimpleNamespace(embedding_model="legacy-seed"),
-        SimpleNamespace(embedding_model="legacy-seed"),
+        SimpleNamespace(embedding_model=None),
+        SimpleNamespace(embedding_model=None),
     ]
-    # Single model must pass through even if != active (no-op contract).
     assert _filter_rows_to_single_embedding_model(rows) == rows  # type: ignore[arg-type]
 
 

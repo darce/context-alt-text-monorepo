@@ -31,11 +31,12 @@ from recognition.application.settings import ClusteringSettings
 from recognition.application.similarity import RepresentativeCache, SimilaritySearch
 from recognition.application.suggestions.eligibility import is_eligible_cluster
 from recognition.application.suggestions.embedding_space import (
-    choose_embedding_model,
     models_are_same_space,
     representative_embedding_model,
+    same_space_representative_vectors,
     same_space_vector,
 )
+from recognition.shared.similarity import normalize_face_embedding
 from recognition.config.settings import resolve_effective_clustering_settings
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.repositories import (
@@ -658,7 +659,21 @@ class SuggestionRefreshService:
             labeled_reps = []
         else:
             labeled_reps = list(await load_representatives(cluster_id))
-        gallery_model = choose_embedding_model(representative_embedding_model(rep) for rep in labeled_reps)
+        gallery_model, gallery_vectors = same_space_representative_vectors(labeled_reps)
+        if gallery_vectors:
+            # Rebuild from current reps so a stale/foreign precomputed cache
+            # cannot be cosined against a current-space identity (FIR23-01).
+            search_gallery: Mapping[str, Sequence[np.ndarray] | np.ndarray] = {
+                cluster_id: [normalize_face_embedding(vector) for vector in gallery_vectors]
+            }
+        elif gallery_model is None and _has_reps(rep_embeddings):
+            search_gallery = {cluster_id: rep_embeddings}
+        else:
+            logger.info(
+                "[suggestions] surface_for_newly_labeled_cluster: no same-space representatives cluster_id=%s",
+                cluster_id,
+            )
+            return 0
         logger.info(
             "[suggestions] surface: loaded %d member identities from %d clusters in %.3fs",
             _total_members,
@@ -689,7 +704,7 @@ class SuggestionRefreshService:
                 seen_identity_ids.add(identity_id)
                 if not models_are_same_space(identity.embedding_model, gallery_model):
                     continue
-                match = self._search.find_best_match(identity.face_vector, representatives_by_cluster)
+                match = self._search.find_best_match(identity.face_vector, search_gallery)
                 if match is None:
                     continue
                 best_similarity = match.similarity

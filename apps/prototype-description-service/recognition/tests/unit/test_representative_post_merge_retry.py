@@ -214,3 +214,57 @@ async def test_post_merge_retry_unstamped_gallery_matches_unstamped_probe() -> N
 
     evaluate.assert_awaited()
     persist.assert_awaited()
+
+
+def _compiled_sql(stmt: object) -> str:
+    return str(stmt.compile(compile_kwargs={"literal_binds": True})).lower()
+
+
+def _session_honoring_embedding_model_predicate(models: list[SimpleNamespace]) -> AsyncMock:
+    """Simulate SQL filtering so a mixed LIMIT cannot starve unstamped rows."""
+
+    result = MagicMock()
+    session = AsyncMock()
+
+    async def execute(stmt):  # noqa: ANN001
+        sql = _compiled_sql(stmt)
+        if "embedding_model is null" in sql:
+            kept = [model for model in models if model.embedding_model is None]
+        else:
+            kept = [model for model in models if model.embedding_model is not None][:2]
+        result.scalars.return_value.all.return_value = kept
+        return result
+
+    session.execute = AsyncMock(side_effect=execute)
+    return session
+
+
+@pytest.mark.asyncio
+async def test_post_merge_retry_unstamped_gallery_does_not_starve_on_mixed_batch() -> None:
+    tenant_id = str(uuid4())
+    cluster_id = str(uuid4())
+    stamped = [_orm_identity(tenant_id=tenant_id, model="space-a") for _ in range(3)]
+    unstamped = _orm_identity(tenant_id=tenant_id, model=None)
+    persist, evaluate, writer, gate, suggestions, _unused_session = _harness(
+        reps=[_rep(cluster_id, None)],
+        unclustered=[],
+        tenant_id=tenant_id,
+        cluster_id=cluster_id,
+    )
+    session = _session_honoring_embedding_model_predicate([*stamped, unstamped])
+
+    await post_merge_retry_matching(
+        tenant_id=tenant_id,
+        target_cluster_id=cluster_id,
+        session=session,
+        gate=gate,
+        assignment_writer=writer,
+        suggestion_service=suggestions,
+        max_unclustered=2,
+        min_similarity_for_unclustered=0.5,
+    )
+
+    stmt = session.execute.await_args.args[0]
+    assert "embedding_model is null" in _compiled_sql(stmt)
+    evaluate.assert_awaited()
+    persist.assert_awaited()

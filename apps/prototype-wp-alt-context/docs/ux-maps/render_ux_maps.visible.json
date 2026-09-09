@@ -16,13 +16,17 @@
       "projection_sha256": "28e176487294f2842628b6492a02a78718ed95285d591f478a695f1bcbc31926",
       "source_sha256": "1f6743c1276ec031e35b4c78ea14d133fe288ce3f42921cde99a56ac32a99f1d"
     },
+    "guided-prototype": {
+      "projection_sha256": "deab4c2018b9e130924a45d50e11b8576c05afceacf83230ffc43edb92d5783e",
+      "source_sha256": "0e01890562a1a8780f14947384e3e1b25ec5eeb235e7fcee9d6071fa2240c6e4"
+    },
     "public-demo-describe": {
       "projection_sha256": "c36c30e4c5abaade7c4a3b2948bd12369f23a22729c613432da36c0f77f7d1c2",
       "source_sha256": "b0b3761f20ece84f20b512cde30a970277ed831a8f705da77665f76715429257"
     },
     "public-guide": {
       "projection_sha256": "7173d341d3ad1b565fb4e25f5c1fa828c3c7d230ed6837f29353a2597454ee57",
-      "source_sha256": "2f4d353d8b4407fdc13325aa227f9a4965c6ea648593931a84bddb8c9147a30a"
+      "source_sha256": "86590837f8d3b597a5693af1251547f8d749448337937079fe2dbc130728ecab"
     },
     "roster-people": {
       "projection_sha256": "c3674e305d16520943172b3699073d3603c30a7195d7170114bdbaa78e92206c",

@@ -7,7 +7,7 @@
     "NAV-08: the first screen shows three plain-language entry actions — Start the walkthrough, Watch the recording, Read the case study.",
     "NAV-07: public scope renders an escape-hatch link to the site home and to the case study.",
     "SECD-02/03: the public route performs no REST calls; /acx/v1/public/demo/describe stays gated by acx_public_demo_enabled and is expected off unless retained.",
-    "Bundle-failure still returns 200 with canonical and the fallback paragraph from publicGuideCopy.ts."
+    "Bundle-failure still returns 200 with canonical and the fallback paragraph from apps/prototype-wp-alt-context/js/admin/guidedPrototype/publicGuideCopy.ts."
   ],
   "jobs": [
     {
@@ -203,7 +203,7 @@
       "id": "fallback",
       "kind": "screen",
       "title": "The walkthrough could not load",
-      "purpose": "Domain bundle_failed mapped to error. js/guide/main.tsx hides .acx-public-guide__fallback on mount; if ViteManifest entry_assets returns null the template still renders 200 plus canonical and the paragraph stays visible. Copy from publicGuideCopy.ts PUBLIC_GUIDE_FALLBACK.",
+      "purpose": "Domain bundle_failed mapped to error. js/guide/main.tsx hides .acx-public-guide__fallback on mount; if ViteManifest entry_assets returns null the template still renders 200 plus canonical and the paragraph stays visible. Copy from apps/prototype-wp-alt-context/js/admin/guidedPrototype/publicGuideCopy.ts PUBLIC_GUIDE_FALLBACK.",
       "route": "/guide/",
       "wp_page": null,
       "job_entry": false,
@@ -229,7 +229,7 @@
       "id": "escape",
       "kind": "exit",
       "title": "Leave the walkthrough",
-      "purpose": "NAV-07 escape hatch from public scope: Home uses escapeHref (site home). Case study uses CASE_STUDY_URL in publicGuideCopy.ts. No authentication required.",
+      "purpose": "NAV-07 escape hatch from public scope: Home uses escapeHref (site home). Case study uses CASE_STUDY_URL in apps/prototype-wp-alt-context/js/admin/guidedPrototype/publicGuideCopy.ts. No authentication required.",
       "route": "/",
       "wp_page": null,
       "job_entry": true,

@@ -8,7 +8,7 @@
 - NAV-08: the first screen shows three plain-language entry actions — Start the walkthrough, Watch the recording, Read the case study.
 - NAV-07: public scope renders an escape-hatch link to the site home and to the case study.
 - SECD-02/03: the public route performs no REST calls; /acx/v1/public/demo/describe stays gated by acx_public_demo_enabled and is expected off unless retained.
-- Bundle-failure still returns 200 with canonical and the fallback paragraph from publicGuideCopy.ts.
+- Bundle-failure still returns 200 with canonical and the fallback paragraph from apps/prototype-wp-alt-context/js/admin/guidedPrototype/publicGuideCopy.ts.
 
 ## Jobs
 - `try-recorded` — Try the recorded review workflow signed-out
@@ -144,7 +144,7 @@ Purpose: Completion summary after Apply to demo copy. Applied to the demo copy i
 
 ### The walkthrough could not load (`fallback`)
 
-Purpose: Domain bundle_failed mapped to error. js/guide/main.tsx hides .acx-public-guide__fallback on mount; if ViteManifest entry_assets returns null the template still renders 200 plus canonical and the paragraph stays visible. Copy from publicGuideCopy.ts PUBLIC_GUIDE_FALLBACK.
+Purpose: Domain bundle_failed mapped to error. js/guide/main.tsx hides .acx-public-guide__fallback on mount; if ViteManifest entry_assets returns null the template still renders 200 plus canonical and the paragraph stays visible. Copy from apps/prototype-wp-alt-context/js/admin/guidedPrototype/publicGuideCopy.ts PUBLIC_GUIDE_FALLBACK.
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
@@ -168,7 +168,7 @@ Purpose: Domain bundle_failed mapped to error. js/guide/main.tsx hides .acx-publ
 
 ### Leave the walkthrough (`escape`)
 
-Purpose: NAV-07 escape hatch from public scope: Home uses escapeHref (site home). Case study uses CASE_STUDY_URL in publicGuideCopy.ts. No authentication required.
+Purpose: NAV-07 escape hatch from public scope: Home uses escapeHref (site home). Case study uses CASE_STUDY_URL in apps/prototype-wp-alt-context/js/admin/guidedPrototype/publicGuideCopy.ts. No authentication required.
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |

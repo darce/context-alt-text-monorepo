@@ -3626,3 +3626,129 @@ if (!function_exists('add_query_arg')) {
         return $url;
     }
 }
+
+if (!function_exists('add_rewrite_rule')) {
+    /**
+     * @param string $regex Regular expression matched against the request.
+     * @param string $query Query string rewritten to index.php.
+     * @param string $after Insertion position: 'top' or 'bottom'.
+     */
+    function add_rewrite_rule($regex, $query, $after = 'bottom'): void
+    {
+        $GLOBALS['__ac_rewrite_rules'][] = [
+            'regex' => (string) $regex,
+            'query' => (string) $query,
+            'after' => (string) $after,
+        ];
+    }
+}
+
+if (!function_exists('get_query_var')) {
+    /**
+     * @param string $query_var Query variable name.
+     * @param mixed  $default   Fallback when the variable is unset.
+     * @return mixed
+     */
+    function get_query_var($query_var, $default = '')
+    {
+        $key = (string) $query_var;
+
+        return $GLOBALS['__ac_query_vars'][$key] ?? $default;
+    }
+}
+
+if (!function_exists('status_header')) {
+    /**
+     * @param int $code HTTP status code.
+     */
+    function status_header($code): void
+    {
+        $GLOBALS['__ac_status_header'] = (int) $code;
+    }
+}
+
+if (!function_exists('get_404_template')) {
+    function get_404_template(): string
+    {
+        return (string) ($GLOBALS['__ac_404_template'] ?? '/theme/404.php');
+    }
+}
+
+if (!function_exists('home_url')) {
+    /**
+     * @param string $path Path appended to the home URL.
+     */
+    function home_url($path = '', $scheme = null): string
+    {
+        unset($scheme);
+        $base = $GLOBALS['__ac_home_url'] ?? 'http://example.test';
+
+        if ('' === $path) {
+            return $base;
+        }
+
+        return $base . '/' . ltrim((string) $path, '/');
+    }
+}
+
+if (!function_exists('language_attributes')) {
+    function language_attributes(): void
+    {
+        echo 'lang="en-US"';
+    }
+}
+
+if (!function_exists('body_class')) {
+    /**
+     * @param string|string[] $class Extra class names.
+     */
+    function body_class($class = ''): void
+    {
+        $classes = [];
+        if (is_array($class)) {
+            $classes = $class;
+        } elseif (is_string($class) && '' !== $class) {
+            $classes[] = $class;
+        }
+
+        echo 'class="' . esc_attr(implode(' ', $classes)) . '"';
+    }
+}
+
+if (!function_exists('wp_head')) {
+    function wp_head(): void
+    {
+        $GLOBALS['__ac_wp_head_calls'] = (int) ($GLOBALS['__ac_wp_head_calls'] ?? 0) + 1;
+        do_action('wp_head');
+    }
+}
+
+if (!function_exists('wp_footer')) {
+    function wp_footer(): void
+    {
+        $GLOBALS['__ac_wp_footer_calls'] = (int) ($GLOBALS['__ac_wp_footer_calls'] ?? 0) + 1;
+        do_action('wp_footer');
+    }
+}
+
+if (!function_exists('get_header')) {
+    /**
+     * @param string|null $name Optional header name.
+     */
+    function get_header($name = null, $args = []): void
+    {
+        unset($name, $args);
+        $GLOBALS['__ac_get_header_calls'] = (int) ($GLOBALS['__ac_get_header_calls'] ?? 0) + 1;
+    }
+}
+
+if (!function_exists('get_footer')) {
+    /**
+     * @param string|null $name Optional footer name.
+     */
+    function get_footer($name = null, $args = []): void
+    {
+        unset($name, $args);
+        $GLOBALS['__ac_get_footer_calls'] = (int) ($GLOBALS['__ac_get_footer_calls'] ?? 0) + 1;
+    }
+}

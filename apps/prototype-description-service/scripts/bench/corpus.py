@@ -9,7 +9,7 @@ import socket
 import ssl
 import time
 from http.client import HTTPSConnection
-from io import BytesIO
+from io import BytesIO, DEFAULT_BUFFER_SIZE, BufferedReader, BufferedRWPair, BufferedWriter, TextIOWrapper
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urljoin, urlparse
@@ -501,6 +501,120 @@ def _apply_sock_timeout(sock: object, timeout: float) -> None:
         setter(timeout)
 
 
+def _deadline_exceeded(exc: BaseException | None = None) -> BenchError:
+    error = BenchError("media_resource_failed", "remote media fetch deadline exceeded")
+    if exc is not None:
+        raise error from exc
+    raise error
+
+
+class _DeadlineSocket:
+    """Socket stand-in that refreshes the remaining wall-clock budget per I/O.
+
+    HTTPResponse parses status/headers via makefile readline before
+    getresponse returns, and Connection: close detaches conn.sock. The
+    makefile must use this object's recv so the absolute deadline survives
+    that detach ([API-04] Latency, [RES-02]).
+    """
+
+    def __init__(self, sock: object, deadline_at: float) -> None:
+        self._sock = sock
+        self._deadline_at = deadline_at
+        self._io_refs = 0
+        self._closed = False
+
+    def _refresh(self) -> None:
+        _apply_sock_timeout(self._sock, _remaining_timeout(self._deadline_at))
+
+    def _call(self, orig_name: str, *args: Any, **kwargs: Any) -> Any:
+        orig = getattr(self._sock, orig_name)
+        self._refresh()
+        try:
+            return orig(*args, **kwargs)
+        except (TimeoutError, socket.timeout) as exc:
+            raise _deadline_exceeded(exc)
+
+    def recv(self, *args: Any, **kwargs: Any) -> Any:
+        return self._call("recv", *args, **kwargs)
+
+    def recv_into(self, *args: Any, **kwargs: Any) -> Any:
+        return self._call("recv_into", *args, **kwargs)
+
+    def send(self, *args: Any, **kwargs: Any) -> Any:
+        return self._call("send", *args, **kwargs)
+
+    def sendall(self, *args: Any, **kwargs: Any) -> Any:
+        return self._call("sendall", *args, **kwargs)
+
+    def settimeout(self, timeout: object) -> None:
+        if timeout is not None:
+            _apply_sock_timeout(self._sock, float(timeout))
+
+    def gettimeout(self) -> object:
+        getter = getattr(self._sock, "gettimeout", None)
+        if callable(getter):
+            return getter()
+        return None
+
+    def makefile(
+        self,
+        mode: str = "r",
+        buffering: int | None = None,
+        *,
+        encoding: str | None = None,
+        errors: str | None = None,
+        newline: str | None = None,
+    ) -> Any:
+        if not set(mode) <= {"r", "w", "b"}:
+            raise ValueError(f"invalid mode {mode!r}")
+        writing = "w" in mode
+        reading = "r" in mode or not writing
+        binary = "b" in mode
+        rawmode = ("r" if reading else "") + ("w" if writing else "")
+        raw = socket.SocketIO(self, rawmode)  # type: ignore[arg-type]
+        self._io_refs += 1
+        if buffering is None:
+            buffering = -1
+        if buffering < 0:
+            buffering = DEFAULT_BUFFER_SIZE
+        if buffering == 0:
+            if not binary:
+                raise ValueError("unbuffered streams must be binary")
+            return raw
+        if reading and writing:
+            buffer: Any = BufferedRWPair(raw, raw, buffering)
+        elif reading:
+            buffer = BufferedReader(raw, buffering)
+        else:
+            buffer = BufferedWriter(raw, buffering)
+        if binary:
+            return buffer
+        text = TextIOWrapper(buffer, encoding, errors, newline)
+        text.mode = mode
+        return text
+
+    def fileno(self) -> int:
+        return self._sock.fileno()  # type: ignore[attr-defined,no-any-return]
+
+    def close(self) -> None:
+        self._closed = True
+        if self._io_refs <= 0:
+            closer = getattr(self._sock, "close", None)
+            if callable(closer):
+                closer()
+
+    def _decref_socketios(self) -> None:
+        if self._io_refs > 0:
+            self._io_refs -= 1
+        if self._closed and self._io_refs <= 0:
+            closer = getattr(self._sock, "close", None)
+            if callable(closer):
+                closer()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._sock, name)
+
+
 def _declared_content_length(hdrs: dict[str, str]) -> int | None:
     raw = hdrs.get("content-length")
     if raw is None or raw == "":
@@ -568,36 +682,58 @@ def _https_get_pinned(
 
     def _connect() -> None:
         timeout = _remaining_timeout(deadline_at)
-        sock = socket.create_connection((pinned_ip, port), timeout)
-        _apply_sock_timeout(sock, timeout)
         try:
-            # [GRPH-32][GRPH-33] Close the raw socket if TLS wrapping fails
-            # before HTTPSConnection owns it.
-            conn.sock = context.wrap_socket(sock, server_hostname=host)
+            sock = socket.create_connection((pinned_ip, port), timeout)
+        except (TimeoutError, socket.timeout) as exc:
+            raise _deadline_exceeded(exc)
+        try:
+            timeout = _remaining_timeout(deadline_at)
+            _apply_sock_timeout(sock, timeout)
+            try:
+                # [GRPH-32][GRPH-33] Close the raw socket if TLS wrapping fails
+                # before HTTPSConnection owns it. SNI stays the original hostname.
+                tls_sock = context.wrap_socket(sock, server_hostname=host)
+            except (TimeoutError, socket.timeout) as exc:
+                raise _deadline_exceeded(exc)
         except BaseException:
             sock.close()
             raise
+        try:
+            timeout = _remaining_timeout(deadline_at)
+            _apply_sock_timeout(tls_sock, timeout)
+            conn.sock = _DeadlineSocket(tls_sock, deadline_at)
+        except BaseException:
+            tls_sock.close()
+            raise
 
     conn.connect = _connect  # type: ignore[method-assign]
+    response = None
     try:
         timeout = _remaining_timeout(deadline_at)
         conn.timeout = timeout
-        _apply_sock_timeout(getattr(conn, "sock", None), timeout)
-        conn.request("GET", path, headers={"Host": host})
-        timeout = _remaining_timeout(deadline_at)
-        _apply_sock_timeout(getattr(conn, "sock", None), timeout)
-        response = conn.getresponse()
-        hdrs = {k.lower(): v for k, v in response.getheaders()}
-        declared = _declared_content_length(hdrs)
-        if declared is not None and declared > max_bytes:
-            raise BenchError(
-                "media_resource_failed",
-                f"remote media Content-Length {declared} exceeds max {max_bytes} bytes",
+        try:
+            conn.request("GET", path, headers={"Host": host})
+            timeout = _remaining_timeout(deadline_at)
+            _apply_sock_timeout(getattr(conn, "sock", None), timeout)
+            response = conn.getresponse()
+        except (TimeoutError, socket.timeout) as exc:
+            raise _deadline_exceeded(exc)
+        try:
+            hdrs = {k.lower(): v for k, v in response.getheaders()}
+            declared = _declared_content_length(hdrs)
+            if declared is not None and declared > max_bytes:
+                raise BenchError(
+                    "media_resource_failed",
+                    f"remote media Content-Length {declared} exceeds max {max_bytes} bytes",
+                )
+            payload = _read_response_body(
+                response, conn=conn, max_bytes=max_bytes, deadline_at=deadline_at
             )
-        payload = _read_response_body(
-            response, conn=conn, max_bytes=max_bytes, deadline_at=deadline_at
-        )
-        return response.status, hdrs, payload
+            return response.status, hdrs, payload
+        finally:
+            closer = getattr(response, "close", None)
+            if callable(closer):
+                closer()
     finally:
         conn.close()
 

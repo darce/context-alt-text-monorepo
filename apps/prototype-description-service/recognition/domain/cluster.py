@@ -44,6 +44,9 @@ class IdentityCluster:
     dismissed_at: datetime | None = None
     representatives: Sequence[ClusterRepresentative] | None = None
     centroid: Any | None = None
+    # FIR23-01: majority embedding_model of loaded representatives. None when
+    # unresolved (legacy unstamped rows). Appended last for positional safety.
+    embedding_model: str | None = None
 
     @property
     def is_auto_label(self) -> bool:

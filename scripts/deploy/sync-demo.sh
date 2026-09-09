@@ -3,12 +3,14 @@
 #
 # Order matters: bring up acx-demo first so acx-demo-net exists, then recreate
 # Caddy (network join requires container recreate — reload-only is insufficient).
-# When PLUGIN_ZIP is available (local dist/ or explicit path), runs bootstrap-wp.sh
-# after the stack is healthy.
+# When PLUGIN_ZIP is unset, auto-discovers the newest dist/alt-context-*.zip and
+# runs bootstrap-wp.sh after the stack is healthy. An explicitly empty PLUGIN_ZIP
+# means no artifact: skip the plugin rsync, skip bootstrap, leave BOOTSTRAP_RAN=0.
 #
 # Usage:
 #   scripts/deploy/sync-demo.sh
 #   PLUGIN_ZIP=dist/alt-context-1.2.3.zip scripts/deploy/sync-demo.sh
+#   PLUGIN_ZIP= scripts/deploy/sync-demo.sh
 #   OCI_HOST=<host> OCI_USER=ubuntu scripts/deploy/sync-demo.sh
 
 set -euo pipefail
@@ -47,8 +49,15 @@ shell_quote() {
   printf "'%s'" "$value"
 }
 
-if [[ -z "${PLUGIN_ZIP:-}" ]]; then
+if [[ -z ${PLUGIN_ZIP+x} ]]; then
   PLUGIN_ZIP="$(ls -t dist/alt-context-*.zip 2>/dev/null | head -1 || true)"
+  if [[ -n "${PLUGIN_ZIP}" ]]; then
+    echo "==> Auto-discovered plugin artifact: ${PLUGIN_ZIP}"
+  else
+    echo "==> No plugin artifact auto-discovered (no dist/alt-context-*.zip)"
+  fi
+elif [[ -z "${PLUGIN_ZIP}" ]]; then
+  echo "==> PLUGIN_ZIP is empty — deploying without a plugin artifact"
 fi
 
 # Resolved early and preflighted with the other sources: discovering it missing
@@ -132,7 +141,7 @@ if [[ -n "${PLUGIN_ZIP}" ]]; then
   echo "==> Rsync plugin package: ${PLUGIN_ZIP} -> ${REMOTE_PLUGIN_ZIP}"
   $SCP "$PLUGIN_ZIP" "${OCI_USER}@${OCI_HOST}:${REMOTE_PLUGIN_ZIP}"
 else
-  echo "WARN: no dist/alt-context-*.zip found locally — bootstrap will fail until a zip is shipped" >&2
+  echo "==> No plugin artifact to rsync; skipping bootstrap-wp.sh"
 fi
 
 echo "==> Rsync Caddy edge config (repo-tracked source of truth)"

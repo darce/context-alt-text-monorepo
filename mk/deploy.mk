@@ -25,7 +25,7 @@ DEMO_WALKTHROUGH_APP  := $(ROOT_MAKEFILE_DIR)/apps/prototype-wp-alt-context
         deploy-verify deploy-verify-dev deploy-verify-staging deploy-verify-prod \
         deploy-status deploy-clear-image-repo \
         deploy-compose-dev deploy-compose-staging deploy-compose-prod \
-        reset-remote db-reset-remote demo-walkthrough-proof walkthrough-first-visitor
+        reset-remote db-reset-remote demo-walkthrough-proof walkthrough-first-visitor guided-walkthrough-record
 
 deploy-help:
 	@echo "Recognition service deploy targets:"
@@ -280,3 +280,29 @@ demo-walkthrough-proof:
 	@echo "    $(DEMO_WALKTHROUGH_APP)/local/playwright/$(ACX_PLAYWRIGHT_TASK_REF)/evidence/"
 	@echo "    Smoke-log fragment (Playwright nests it in a per-test subdir) — locate with:"
 	@echo "    find $(DEMO_WALKTHROUGH_APP)/local/playwright/$(ACX_PLAYWRIGHT_TASK_REF)/evidence -name demo-walkthrough-smoke-log-fragment.md"
+
+# Guided walkthrough recording (GUIDESEED-1): headless Playwright run of the guided
+# prototype (photo → name choice → wording edit → before/after → apply → undo) that
+# emits a webm video, a WebVTT caption track timed from the run, a transcript and a
+# manifest asserting zero privileged acx/v1 requests. Default target is LocalWP; pass
+# WP_BASE_URL for another origin. Auth from ACX_E2E_WP_ADMIN_USER/ACX_E2E_WP_ADMIN_PASS.
+# Post-process (ffmpeg via Homebrew) for the case-study page:
+#   ffmpeg -i <video>.webm -i voiceover.m4a -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest out.mp4
+#   ffmpeg -i out.mp4 -i guided-walkthrough.vtt -c copy -c:s mov_text -metadata:s:s:0 language=eng out-cc.mp4
+guided-walkthrough-record: WP_BASE_URL ?= http://localhost:10010
+guided-walkthrough-record: ACX_PLAYWRIGHT_TASK_REF ?= GUIDESEED-1
+guided-walkthrough-record:
+	@cd "$(DEMO_WALKTHROUGH_APP)" && \
+		if [ ! -d node_modules ]; then \
+			echo "guided-walkthrough-record: dependencies missing. First run: (cd apps/prototype-wp-alt-context && npm ci && npm run e2e:install)" >&2; \
+			exit 2; \
+		fi
+	@cd "$(DEMO_WALKTHROUGH_APP)" && npm run e2e:install >/dev/null
+	@cd "$(DEMO_WALKTHROUGH_APP)" && \
+		WP_BASE_URL="$(WP_BASE_URL)" \
+		ACX_PLAYWRIGHT_TASK_REF="$(ACX_PLAYWRIGHT_TASK_REF)" \
+		ACX_DEPLOY_COMMIT_SHA="$${ACX_DEPLOY_COMMIT_SHA:-$$(git rev-parse HEAD 2>/dev/null || true)}" \
+		npm run e2e:guided-record
+	@echo "==> Guided walkthrough recording artifacts under:"
+	@echo "    $(DEMO_WALKTHROUGH_APP)/local/playwright/$(ACX_PLAYWRIGHT_TASK_REF)/guided-recording/"
+	@echo "    find $(DEMO_WALKTHROUGH_APP)/local/playwright/$(ACX_PLAYWRIGHT_TASK_REF)/guided-recording -name 'guided-walkthrough*' -o -name '*.webm'"

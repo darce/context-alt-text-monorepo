@@ -11,13 +11,14 @@ This map is the public `[acx_demo_describe]` widget. It is not the admin `descri
 | `command -v ux-map` / `uxmap` | absent |
 | `import workbay_canvas_mcp` | `ModuleNotFoundError` (no install/upgrade in this lane) |
 | `python3 -m json.tool …/public-demo-describe.uxmap.json` | syntax OK only — not schema validation (13832 bytes pretty-printed) |
-| consumer extra=forbid field check (mirrors `uxmap-render-parity.test.ts` model keys) | pass |
-| `render_ux_maps._validate_action_conditions` | pass |
+| consumer extra=forbid field check (mirrors `uxmap-render-parity.test.ts` model keys) | pass for this map (`public-demo-describe.uxmap.json validates against the canonical UxMap schema`) |
+| `render_ux_maps._validate_action_conditions` | prior helper check only — not official schema |
 | `.venv/bin/python …/render_ux_maps.py public-demo-describe` | exit 1 `OptionalRendererUnavailable`: workbay_canvas_mcp is not importable |
-| `.venv/bin/python -m pytest …/test_render_ux_maps.py -q -p no:cacheprovider` | 21 passed, 3339 subtests passed in 36.97s (scoped renderer unit tests; they do not prove this new map's schema/critique) |
-| official `ux-map critique` / RULE_PACK | unavailable — manual heuristic critique below, not a machine pack |
+| `.venv/bin/python -m pytest …/test_render_ux_maps.py -q -p no:cacheprovider` | prior 21 passed / 3339 subtests; renderer unit tests, not this map's schema/critique |
+| official `ux-map critique` / RULE_PACK | unavailable — agent-authored manual heuristic critique below, not a machine pack |
+| consumer Vitest (`uxmap-parity.test.ts` + `uxmap-render-parity.test.ts`) | this map: pass (focused `-t public-demo-describe` → 2 passed / 200 skipped). Full pair: 194 passed / 8 failed / 202 total. All 8 failures are sibling `guided-prototype.uxmap.json` (`screens.11.timed_out \| multiple_primary_actions \| ["live-keep-waiting","live-retry"]`). OWNED_MAPS `loadOwnedMap` loops throw on that JSON before this map. Not official Pydantic / RULE_PACK. |
 
-Unavailable capabilities (typed follow-up, not a stall): official UxMap Pydantic load, `ux-map critique` RULE_PACK, `ux-map project`, enrollment into `OWNED_MAPS` / `HAND_AUTHORED_MAPS` / `render_ux_maps.contracts.json` / `render_ux_maps.visible.json`. This lane must not edit those allowlists.
+Unavailable capabilities (typed follow-up, not a stall): official UxMap Pydantic load, `ux-map critique` RULE_PACK, `ux-map project`, and renderer enrollment into `render_ux_maps.contracts.json` / `render_ux_maps.visible.json`. Consumer TypeScript validation supports local extensions the older official package rejects; this lane does not claim official schema/critique. OWNED_MAPS / REQUIRED_OWNED_MAPS / HAND_AUTHORED_MAPS enrollment is this lane.
 
 ## Observed vs proposed (read this first)
 
@@ -138,7 +139,7 @@ Same-page retry of the same media reuses the key. Refresh (exit `refresh-page-dr
 
 ## Manual heuristic critique
 
-Canon: https://github.com/darce/heuristics-canon (stable IDs; not pinned). Also DDIA latency, Release It!, PRINCIPLES. This is a human pass. It is not `ux-map critique` output.
+Canon: https://github.com/darce/heuristics-canon (stable IDs; not pinned). Also DDIA latency, Release It!, PRINCIPLES. This is an agent-authored manual heuristic critique. It is not `ux-map critique` output.
 
 ### High
 
@@ -162,8 +163,8 @@ Canon: https://github.com/darce/heuristics-canon (stable IDs; not pinned). Also 
 
 - **RLSE-03 / Release It! bulkhead:** Rate limit, daily cap, and one inflight public run stay. Resume must not add a second paid job.
 
-- Tooling: official schema/critique pack was not run. Enrollment of this new `*.uxmap.json` into admin parity `OWNED_MAPS` is coordinator follow-up (this lane does not edit tests or renderer allowlists).
+- Tooling: official schema/critique pack was not run. Consumer TypeScript validation (local extensions included) is the machine gate; official Pydantic load is still unavailable. This slice enrolls the map in `OWNED_MAPS`, `REQUIRED_OWNED_MAPS`, and `HAND_AUTHORED_MAPS` (Owner: GPU-LAUNCH-1). Renderer `visible.json` / `contracts.json` stay unchanged because the sanctioned renderer has never generated this map. Full-file Vitest is blocked by sibling `guided-prototype.uxmap.json` (outside this lane); do not weaken the consumer validator or quarantine this map.
 
 ## What this lane did not do
 
-No UI, PHP, Python, lockfile, admin map, renderer, or test edits. No merge, deploy, or reviewer substitute.
+No UI, PHP, JSON SSOT, lockfile, renderer source, or renderer snapshot edits. No merge, deploy, or reviewer substitute.

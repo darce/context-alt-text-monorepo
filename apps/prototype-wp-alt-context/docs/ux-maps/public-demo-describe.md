@@ -183,11 +183,13 @@ flowchart TD
 
 ## Parity index
 
-Machine-checked by `js/admin/__tests__/uxmap-parity.test.ts` and
-`js/admin/__tests__/uxmap-render-parity.test.ts`: every id, state, and verbatim label
-below must exist in the sibling `.uxmap.json`, and no `z-*`/`act-*` id may appear here
-that the JSON does not define. Regenerate with `docs/ux-maps/render_ux_maps.py` — never
-hand-edit one side.
+Consumer-checked (not official `ux-map` / Pydantic schema) by
+`js/admin/__tests__/uxmap-parity.test.ts` and
+`js/admin/__tests__/uxmap-render-parity.test.ts` after this slice's enrollment: every id,
+state, and verbatim label below must exist in the sibling `.uxmap.json`, and no `z-*`/`act-*`
+id may appear here that the JSON does not define. Official schema/critique remains unavailable;
+do not treat this index as a RULE_PACK receipt. Hand-rendered; regenerate with
+`docs/ux-maps/render_ux_maps.py` once the canvas package is available — never hand-edit one side.
 
 Zone ids: z-media-choice z-submit z-status z-result z-unavailable-status z-refresh-consequence
 

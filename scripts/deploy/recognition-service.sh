@@ -2751,7 +2751,13 @@ abort_cutover_candidate() {
   if ! run_with_deadline "${timeout}" "drain cutover candidate ${next_unit}" \
     ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
     "set -euo pipefail
-     sudo systemctl stop $(remote_quote "${next_unit}")
+     if sudo systemctl stop $(remote_quote "${next_unit}"); then
+       :
+     else
+       stop_rc=\$?
+       # systemd: 5 = unit not loaded / not-installed (idempotent drain).
+       [ \"\${stop_rc}\" -eq 5 ] || exit \"\${stop_rc}\"
+     fi
      if sudo systemctl is-enabled $(remote_quote "${next_unit}") >/dev/null 2>&1; then
        sudo systemctl disable $(remote_quote "${next_unit}")
      fi
@@ -2776,13 +2782,33 @@ enable_cutover_candidate() {
 }
 
 cutover_inflight_present() {
-  local env="$1" timeout inflight
+  local env="$1" timeout inflight output rc=0
   env_to_unit "${env}" >/dev/null
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
   inflight="${ACX_DEPLOY_BACKUP_ROOT}/${env}/cutover-inflight"
-  run_with_deadline "${timeout}" "cutover inflight probe ${env}" \
-    ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
-    "sudo test -f $(remote_quote "${inflight}")"
+  # Privileged probe must print PRESENT or ABSENT only after sudo test
+  # succeeds. Do not treat raw test-f rc 1 as confirmed absence (sudo/auth
+  # also returns 1). RES-02 / DATA-13.
+  output="$(
+    run_with_deadline "${timeout}" "cutover inflight probe ${env}" \
+      ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
+      "if sudo test -f $(remote_quote "${inflight}"); then printf 'PRESENT\\n'
+       elif sudo test ! -f $(remote_quote "${inflight}"); then printf 'ABSENT\\n'
+       else exit 2
+       fi"
+  )" || rc=$?
+  if (( rc != 0 )); then
+    warn "cutover inflight probe failed for ${env} (rc=${rc})"
+    return "${rc}"
+  fi
+  case "${output}" in
+    PRESENT) return 0 ;;
+    ABSENT) return 1 ;;
+    *)
+      warn "cutover inflight probe returned malformed result for ${env}"
+      return 2
+      ;;
+  esac
 }
 
 commit_cutover_state() {
@@ -2800,14 +2826,19 @@ commit_cutover_state() {
 }
 
 recover_interrupted_cutover() {
-  local env="${ACX_CUTOVER_ENV:-}"
+  local env="${ACX_CUTOVER_ENV:-}" inflight_rc=0
   [[ -n "${env}" ]] || return 0
   if [[ "${ACX_CUTOVER_COMMITTED:-0}" == "1" && "${ACX_TRAFFIC_FLIPPED:-0}" != "1" ]]; then
     return 0
   fi
   if [[ "${ACX_TRAFFIC_FLIPPED:-0}" != "1" ]]; then
-    cutover_inflight_present "${env}" || return 0
-    ACX_TRAFFIC_FLIPPED=1
+    # `||` keeps set -e from treating confirmed ABSENT (rc 1) as a hard fail.
+    cutover_inflight_present "${env}" || inflight_rc=$?
+    case "${inflight_rc}" in
+      0) ACX_TRAFFIC_FLIPPED=1 ;;
+      1) return 0 ;;
+      *) return "${inflight_rc}" ;;
+    esac
   fi
   log "Interrupted cutover for ${env}; restoring canonical routing while keeping the candidate recoverable"
   if restore_edge_backups "${env}"; then
@@ -2828,10 +2859,16 @@ recover_interrupted_cutover() {
 }
 
 recover_persisted_cutover() {
-  local env="$1"
+  local env="$1" inflight_rc=0
   env_to_unit "${env}" >/dev/null
   ACX_CUTOVER_ENV="${env}"
-  cutover_inflight_present "${env}" || return 0
+  # `||` keeps set -e from treating confirmed ABSENT (rc 1) as a hard fail.
+  cutover_inflight_present "${env}" || inflight_rc=$?
+  case "${inflight_rc}" in
+    0) ;;
+    1) return 0 ;;
+    *) return "${inflight_rc}" ;;
+  esac
   ACX_TRAFFIC_FLIPPED=1
   log "Found persisted inflight cutover for ${env}; recovering before a new candidate"
   recover_interrupted_cutover

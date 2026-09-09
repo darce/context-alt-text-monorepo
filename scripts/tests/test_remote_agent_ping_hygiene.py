@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import os
 import shlex
+import signal
 import stat
 import subprocess
+import sys
 import time
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "scripts/remote_agent_hygiene.sh"
@@ -61,23 +65,28 @@ def _etime(value: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_etime_zero_padded_fields_parse_as_decimal() -> None:
-    """ps etime zero-pads 08/09; bash $((08)) is invalid octal (TD-05)."""
-    mmss = _etime("08:09")
-    assert mmss.returncode == 0, mmss.stderr
-    assert mmss.stdout.strip() == "489"
-
-    hhmmss = _etime("08:09:08")
-    assert hhmmss.returncode == 0, hhmmss.stderr
-    assert hhmmss.stdout.strip() == "29348"
-
-    with_days = _etime("1-08:09:08")
-    assert with_days.returncode == 0, with_days.stderr
-    assert with_days.stdout.strip() == "115748"
-
-    under_a_minute = _etime("00:08")
-    assert under_a_minute.returncode == 0, under_a_minute.stderr
-    assert under_a_minute.stdout.strip() == "8"
+@pytest.mark.parametrize(
+    ("etime", "seconds"),
+    [
+        ("00:08", 8),
+        ("00:09", 9),
+        ("01:08", 68),
+        ("08:09", 489),
+        ("10:08", 608),
+        ("12:08:30", 43710),
+        ("1-02:08:09", 94089),
+        ("00:45", 45),
+        ("05:00", 300),
+        ("1-02:03:04", 93784),
+        ("08:09:08", 29348),
+        ("1-08:09:08", 115748),
+    ],
+)
+def test_etime_to_seconds_table(etime: str, seconds: int) -> None:
+    """ps etime zero-pads 08/09; bash $((08)) is invalid octal (HARM-03)."""
+    completed = _etime(etime)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == str(seconds)
 
 
 def test_ping_timeout_zero_padded_is_normalized_to_decimal() -> None:
@@ -447,3 +456,174 @@ exit 0
     assert lines[0] == "-TERM 111"
     assert all(line.split()[-1] == "111" for line in lines)
     assert "reaped 1 stale orphan ping probe(s)" in completed.stdout
+
+
+def _pid_is_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _real_kill_wrapper(tmp_path: Path) -> tuple[Path, Path]:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir(exist_ok=True)
+    kill_log = tmp_path / "kill.log"
+    real_kill = subprocess.run(
+        ["bash", "-c", "type -P kill"],
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=5,
+    ).stdout.strip()
+    assert real_kill, "kill executable not found on PATH"
+    _write_executable(
+        fake_bin / "kill",
+        f"""#!/usr/bin/env bash
+printf '%s\\n' "$*" >>{shlex.quote(str(kill_log))}
+exec {shlex.quote(real_kill)} "$@"
+""",
+    )
+    return fake_bin, kill_log
+
+
+def _spawn_managed_child(tmp_path: Path, *, ignore_term: bool) -> tuple[subprocess.Popen[bytes], int]:
+    pidfile = tmp_path / "child.pid"
+    helper = f"""
+import os, signal, time
+pid = os.fork()
+if pid == 0:
+    if {ignore_term!r}:
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    with open({str(pidfile)!r}, "w", encoding="utf-8") as fh:
+        fh.write(str(os.getpid()))
+        fh.flush()
+        os.fsync(fh.fileno())
+    time.sleep(60)
+    os._exit(0)
+os.waitpid(pid, 0)
+"""
+    reaper = subprocess.Popen(
+        [sys.executable, "-c", helper],
+        start_new_session=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        if pidfile.exists():
+            text = pidfile.read_text(encoding="utf-8").strip()
+            if text.isdigit():
+                child = int(text)
+                if _pid_is_alive(child):
+                    return reaper, child
+        if reaper.poll() is not None:
+            break
+        time.sleep(0.02)
+    try:
+        os.killpg(reaper.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    raise AssertionError("managed child did not start")
+
+
+def _reap_managed(reaper: subprocess.Popen[bytes], child: int) -> None:
+    try:
+        os.kill(child, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    try:
+        os.killpg(reaper.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    reaper.wait(timeout=2)
+
+
+def test_kill_pid_terminates_child_that_ignores_term(tmp_path: Path) -> None:
+    fake_bin, kill_log = _real_kill_wrapper(tmp_path)
+    reaper, child = _spawn_managed_child(tmp_path, ignore_term=True)
+    try:
+        completed = subprocess.run(
+            ["bash", "-c", 'source "$1"; acx_kill_pid "$2"', "bash", str(SCRIPT), str(child)],
+            env={**os.environ, "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}"},
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=10,
+        )
+        assert completed.returncode == 0, completed.stderr
+        lines = kill_log.read_text(encoding="utf-8").splitlines()
+        assert f"-TERM {child}" in lines
+        assert f"-KILL {child}" in lines
+        deadline = time.monotonic() + 1
+        while time.monotonic() < deadline and _pid_is_alive(child):
+            time.sleep(0.02)
+        assert not _pid_is_alive(child), f"pid {child} still alive after acx_kill_pid"
+    finally:
+        _reap_managed(reaper, child)
+
+
+def test_kill_pid_does_not_send_kill_when_term_exits(tmp_path: Path) -> None:
+    fake_bin, kill_log = _real_kill_wrapper(tmp_path)
+    reaper, child = _spawn_managed_child(tmp_path, ignore_term=False)
+    try:
+        completed = subprocess.run(
+            ["bash", "-c", 'source "$1"; acx_kill_pid "$2"', "bash", str(SCRIPT), str(child)],
+            env={**os.environ, "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}"},
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=10,
+        )
+        assert completed.returncode == 0, completed.stderr
+        lines = kill_log.read_text(encoding="utf-8").splitlines()
+        assert f"-TERM {child}" in lines
+        assert f"-KILL {child}" not in lines
+        deadline = time.monotonic() + 1
+        while time.monotonic() < deadline and _pid_is_alive(child):
+            time.sleep(0.02)
+        assert not _pid_is_alive(child), f"pid {child} still alive after TERM"
+    finally:
+        _reap_managed(reaper, child)
+
+
+def test_orphan_reaper_logs_unparseable_etime(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    kill_log = tmp_path / "kill.log"
+    _write_executable(
+        fake_bin / "ps",
+        """#!/usr/bin/env bash
+cat <<'EOF'
+  111     1       not-a-clock codex exec --json ping
+EOF
+""",
+    )
+    _write_executable(
+        fake_bin / "kill",
+        f"""#!/usr/bin/env bash
+printf '%s\\n' "$*" >>{shlex.quote(str(kill_log))}
+exit 0
+""",
+    )
+    completed = subprocess.run(
+        ["bash", "-c", 'source "$1"; acx_reap_orphan_pings', "bash", str(SCRIPT)],
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+            "ORPHAN_PING_STALE_SEC": "30",
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert not kill_log.exists() or kill_log.read_text(encoding="utf-8") == ""
+    assert "could not parse etime" in completed.stderr
+    assert "skipped 1 ping probe(s) with unparseable etime" in completed.stderr
+    assert "reaped 0 stale orphan ping probe(s)" in completed.stdout
+

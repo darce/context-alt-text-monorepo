@@ -104,6 +104,12 @@ const REQUIRED_GENERATED_MAPS = [
  * shrink.
  */
 const HAND_AUTHORED_MAPS: Record<string, string> = {
+  'public-guide':
+    'Hand-authored alongside the GUIDEROUTE-1 public /guide/ route. It has no ' +
+    'render_ux_maps.visible.json entry because the sanctioned renderer needs the optional ' +
+    'mcp-workbay-canvas package, which is not installable in this environment. Owner: ' +
+    'GUIDEROUTE-1 — regenerate it with docs/ux-maps/render_ux_maps.py once the canvas ' +
+    'package is available, which enrolls it here automatically via the snapshot.',
   'guided-prototype':
     'Arrived on main hand-authored, with its screen inventories in a separate "## Screen inventories" ' +
     'section and 80-column ASCII frames, so it parses as a Screens table with no detail blocks and its ' +

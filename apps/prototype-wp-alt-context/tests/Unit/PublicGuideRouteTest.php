@@ -2,17 +2,6 @@
 
 declare(strict_types=1);
 
-namespace AltContext\PublicSite {
-    // WHY: the shared wp_scripts() stub has no queue; this override supplies one from $GLOBALS['__ac_scripts'] so dequeue_theme_assets() is exercisable without editing tests/stubs/wp.php.
-    function wp_scripts(): object
-    {
-        $scripts = new \stdClass();
-        $scripts->queue = array_keys($GLOBALS['__ac_scripts'] ?? []);
-
-        return $scripts;
-    }
-}
-
 namespace {
     if (!function_exists('wp_styles')) {
         function wp_styles(): object

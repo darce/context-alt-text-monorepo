@@ -57,6 +57,18 @@ def _remove_existing_path(path: Path) -> None:
         shutil.rmtree(path)
 
 
+def _git_metadata_present(primary: Path) -> bool:
+    """Return whether ``primary`` claims to be a Git checkout.
+
+    ``Path.exists`` is false for a broken ``.git`` link, but that is still Git
+    metadata and must not be treated as a fixture.  A checkout with broken or
+    unreadable metadata should fail closed instead of copying every overlay
+    entry.
+    """
+    metadata = primary / ".git"
+    return metadata.exists() or metadata.is_symlink()
+
+
 def _ignored_overlay_entries(primary: Path, rel: str) -> list[str] | None:
     """Return ignored entries below ``rel``; ``None`` means no Git metadata."""
     try:
@@ -77,8 +89,12 @@ def _ignored_overlay_entries(primary: Path, rel: str) -> list[str] | None:
             check=False,
         )
     except OSError:
+        if _git_metadata_present(primary):
+            raise RuntimeError(f"git ls-files could not run for {primary}; refusing overlay copy") from None
         return None
     if proc.returncode != 0:
+        if _git_metadata_present(primary):
+            raise RuntimeError(f"git ls-files failed for {primary} (exit {proc.returncode}); refusing overlay copy")
         return None
 
     prefix = f"{rel}/"
@@ -94,6 +110,22 @@ def _ignored_overlay_entries(primary: Path, rel: str) -> list[str] | None:
     return entries
 
 
+def _relocated_symlink_target(source: Path, target: Path) -> str:
+    """Relocate a link target so it keeps the source link's meaning.
+
+    ``os.readlink`` returns a relative target relative to ``source.parent``.
+    Reusing that text at a different worktree parent silently points at a
+    different tree, so recompute the relative spelling from ``target.parent``.
+    The path normalization is intentionally non-strict: an overlay may be
+    linked before its external target is materialized.
+    """
+    link_target = os.readlink(source)
+    if os.path.isabs(link_target):
+        return link_target
+    source_target = os.path.abspath(os.path.join(os.fspath(source.parent), link_target))
+    return os.path.relpath(source_target, os.fspath(target.parent))
+
+
 def _copy_overlay_entries(src: Path, dest: Path, entries: list[str]) -> None:
     """Copy an ignored-entry manifest without dereferencing entry symlinks."""
     for rel in entries:
@@ -102,7 +134,7 @@ def _copy_overlay_entries(src: Path, dest: Path, entries: list[str]) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         _remove_existing_path(target)
         if source.is_symlink():
-            target.symlink_to(os.readlink(source))
+            target.symlink_to(_relocated_symlink_target(source, target))
         elif source.is_dir():
             shutil.copytree(source, target, symlinks=True, dirs_exist_ok=True)
         else:
@@ -115,14 +147,12 @@ def _rsync_overlay(src: Path, dest: Path, *, entries: list[str] | None = None) -
     # overlay such as Makefile.d -> ../workbay-overlay remains a link in the
     # linked worktree instead of becoming a copied directory.
     if src.is_symlink():
-        link_target = os.readlink(src)
-        if dest.is_symlink() and os.readlink(dest) == link_target:
+        if dest.is_symlink() and os.path.realpath(dest) == os.path.realpath(src):
             return
         _remove_existing_path(dest)
-        if shutil.which("rsync"):
-            subprocess.run(["rsync", "-a", str(src), str(dest)], check=True)
-        else:
-            dest.symlink_to(link_target)
+        # Rsync preserves link text, not the link's source-relative meaning.
+        # Create the relocated link ourselves even when rsync is available.
+        dest.symlink_to(_relocated_symlink_target(src, dest))
         return
 
     if dest.is_symlink():

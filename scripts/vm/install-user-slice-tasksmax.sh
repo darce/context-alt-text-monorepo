@@ -4,7 +4,36 @@
 # pids.max=512 and starve later lanes. Idempotent drop-in.
 set -euo pipefail
 
-uid="$(id -u)"
+effective_uid="$(id -u)"
+case "${effective_uid}" in
+  ""|*[!0-9]*)
+    echo "install-user-slice-tasksmax: id -u returned an invalid UID: ${effective_uid}" >&2
+    exit 1
+    ;;
+esac
+
+# The system-manager drop-in must be installed by root.  When invoked through
+# sudo, SUDO_UID identifies the gate user whose slice should be raised; using
+# id -u here would otherwise configure user-0.slice.  Direct root invocations
+# must name their target explicitly because root has no unambiguous gate-user
+# identity.
+if [[ "${effective_uid}" == "0" ]]; then
+  uid="${TASKSMAX_TARGET_UID:-${SUDO_UID:-}}"
+  if [[ -z "${uid}" ]]; then
+    echo "install-user-slice-tasksmax: root invocation requires SUDO_UID or TASKSMAX_TARGET_UID" >&2
+    exit 1
+  fi
+else
+  echo "install-user-slice-tasksmax: run as root (for example, sudo with the gate user as SUDO_UID)" >&2
+  exit 1
+fi
+case "${uid}" in
+  ""|*[!0-9]*)
+    echo "install-user-slice-tasksmax: target UID is invalid: ${uid}" >&2
+    exit 1
+    ;;
+esac
+
 # The user-${uid}.slice unit is owned by the system manager (it contains the
 # user@${uid}.service), so its drop-in belongs under /etc/systemd/system.  The
 # override is only a hermetic-test seam; production uses the system path.

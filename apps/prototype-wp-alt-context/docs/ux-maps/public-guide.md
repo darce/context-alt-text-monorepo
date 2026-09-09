@@ -284,8 +284,7 @@ flowchart TD
 
 ## Parity index
 
-Machine-checked by `js/admin/__tests__/uxmap-parity.test.ts` and
-`js/admin/__tests__/uxmap-render-parity.test.ts`: every id, state, and verbatim label
+Machine-checked by `js/admin/__tests__/uxmap-render-parity.test.ts`: every id, state, and verbatim label
 below must exist in the sibling `.uxmap.json`, and no `z-*`/`act-*` id may appear here
 that the JSON does not define. Regenerate with `docs/ux-maps/render_ux_maps.py` — never
 hand-edit one side.

@@ -246,8 +246,11 @@ make demo-enable-public-guide WP_PATH=/opt/acx-backend/data/demo-wpdata SITE_URL
 DRY_RUN=1 make demo-enable-public-guide WP_PATH=/opt/acx-backend/data/demo-wpdata SITE_URL=https://demo.altcontext.com
 ```
 
-That runs `scripts/deploy/enable-public-guide.sh`: `wp option update acx_public_guide_enabled 1`,
-`wp rewrite flush --hard`, then a signed-out GET of `<site>/guide/` must return 200 with
+That runs `scripts/deploy/enable-public-guide.sh` through the compose `wpcli` tools
+service (the same seam as `bootstrap-wp.sh`: `docker compose run --rm --no-deps wpcli wp …`).
+There is no host `wp` on the demo VM. For LocalWP, set `ACX_WP_RUNNER=host` so the script
+uses `wp --path="$WP_PATH"` instead. The script updates `acx_public_guide_enabled`,
+flushes rewrites, then a signed-out GET of `<site>/guide/` must return 200 with
 `id="acx-public-guide"`. The public demo describe endpoint (`/acx/v1/public/demo/describe`,
 gated by `acx_public_demo_enabled`) stays **off** unless you explicitly retain it with
 `ACX_RETAIN_PUBLIC_DEMO_DESCRIBE=1`.

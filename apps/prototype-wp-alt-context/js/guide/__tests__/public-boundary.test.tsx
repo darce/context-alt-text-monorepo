@@ -1,4 +1,5 @@
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, extname, join, resolve } from 'node:path';
 
 import { fireEvent, render, screen, within } from '@testing-library/react';
@@ -70,7 +71,10 @@ const resolveRelativeImport = (fromFile: string, spec: string): string | null =>
   return null;
 };
 
-const collectImportGraph = (entry: string): string[] => {
+const FORBIDDEN_IMPORT = /\/api\/|GuidedLiveDescriptionPanel|useGuidedLiveDescription/;
+const MAX_PUBLIC_GRAPH_FILES = 256;
+
+const collectImportGraph = (entry: string, maxFiles: number = MAX_PUBLIC_GRAPH_FILES): string[] => {
   const seen = new Set<string>();
   const queue = [entry];
   const unresolved: string[] = [];
@@ -81,6 +85,9 @@ const collectImportGraph = (entry: string): string[] => {
       continue;
     }
     seen.add(file);
+    if (seen.size > maxFiles) {
+      throw new Error(`public import graph exceeded ${maxFiles} files (unbounded walk)`);
+    }
     for (const { spec, typeOnly } of importSpecifiers(readFileSync(file, 'utf8'))) {
       if (typeOnly || !spec.startsWith('.')) {
         continue;
@@ -101,6 +108,21 @@ const collectImportGraph = (entry: string): string[] => {
 
   expect(unresolved, 'unresolved relative imports in the public graph').toEqual([]);
   return [...seen];
+};
+
+const forbiddenImportHits = (files: string[]): string[] => {
+  const hits: string[] = [];
+  for (const file of files) {
+    for (const { spec, typeOnly } of importSpecifiers(readFileSync(file, 'utf8'))) {
+      if (typeOnly) {
+        continue;
+      }
+      if (FORBIDDEN_IMPORT.test(spec)) {
+        hits.push(`${file} imports ${spec}`);
+      }
+    }
+  }
+  return hits;
 };
 
 describe('public recorded walkthrough boundary', () => {
@@ -196,22 +218,34 @@ describe('public recorded walkthrough boundary', () => {
   it('walks the public entry import graph and forbids live/API imports', () => {
     const pluginRoot = resolve(__dirname, '../../..');
     const files = collectImportGraph(resolve(pluginRoot, 'js/guide/main.tsx'));
-    const forbidden = /\/api\/|GuidedLiveDescriptionPanel|useGuidedLiveDescription/;
 
+    expect(files.length).toBeLessThanOrEqual(MAX_PUBLIC_GRAPH_FILES);
     expect(files.some((file) => file.endsWith('GuidedFacesPanel.tsx'))).toBe(true);
     expect(files.some((file) => file.endsWith('GuidedDescriptionReview.tsx'))).toBe(true);
     expect(files.some((file) => file.endsWith('GuidedFaceMatchCard.tsx'))).toBe(true);
     expect(files.some((file) => file.endsWith('state.ts'))).toBe(true);
     expect(files.some((file) => file.includes('GuidedLiveDescriptionPanel'))).toBe(false);
     expect(files.some((file) => file.includes('useGuidedLiveDescription'))).toBe(false);
+    expect(forbiddenImportHits(files), forbiddenImportHits(files).join('; ')).toEqual([]);
+  });
 
-    for (const file of files) {
-      for (const { spec, typeOnly } of importSpecifiers(readFileSync(file, 'utf8'))) {
-        if (typeOnly) {
-          continue;
-        }
-        expect(spec, `${file} imports ${spec}`).not.toMatch(forbidden);
-      }
+  it('fails closed when a nested reachable module imports a live/API surface (canary)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'acx-public-boundary-'));
+    try {
+      const child = join(root, 'child.tsx');
+      const entry = join(root, 'entry.tsx');
+      writeFileSync(
+        child,
+        "import { GuidedLiveDescriptionPanel } from 'GuidedLiveDescriptionPanel';\nexport const leak = GuidedLiveDescriptionPanel;\n",
+      );
+      writeFileSync(entry, "import { leak } from './child';\nexport const root = leak;\n");
+      const files = collectImportGraph(entry);
+      expect(files.some((file) => file.endsWith('child.tsx'))).toBe(true);
+      const hits = forbiddenImportHits(files);
+      expect(hits.length, 'canary must fail when a descendant imports a live/API surface').toBeGreaterThan(0);
+      expect(() => collectImportGraph(entry, 1)).toThrow(/exceeded 1/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 });

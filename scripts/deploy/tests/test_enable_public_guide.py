@@ -25,6 +25,54 @@ def _write_executable(path: Path, body: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
+def _wp_stub_body(*, log_path: str, mutations_path: str, demo_enabled: str, prefix: str) -> str:
+    return (
+        "#!/usr/bin/env bash\n"
+        "set -u\n"
+        f"printf {shlex.quote(prefix)} >> {log_path}\n"
+        f"printf ' %q' \"$@\" >> {log_path}\n"
+        f"printf '\\n' >> {log_path}\n"
+        "joined=\"$*\"\n"
+        f"if [[ \"$joined\" == *'option update acx_public_guide_enabled'* ]]; then printf 'guide_enable\\n' >> {mutations_path}; fi\n"
+        f"if [[ \"$joined\" == *'option update acx_public_demo_enabled'* ]]; then printf 'demo_enable\\n' >> {mutations_path}; fi\n"
+        f"if [[ \"$joined\" == *'rewrite flush'* ]]; then printf 'rewrite_flush\\n' >> {mutations_path}; fi\n"
+        "if [[ \"$joined\" == *'option get acx_public_demo_enabled'* ]]; then\n"
+        f"  printf '%s\\n' {shlex.quote(demo_enabled)}\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 0\n"
+    )
+
+
+def _docker_stub_body(*, log_path: str, mutations_path: str, demo_enabled: str) -> str:
+    # Mimic `docker compose -f FILE run --rm --no-deps wpcli wp ...` and apply the
+    # same mutation/option-get behaviour as the host wp stub to the wp argv.
+    return (
+        "#!/usr/bin/env bash\n"
+        "set -u\n"
+        f"printf 'docker' >> {log_path}\n"
+        f"printf ' %q' \"$@\" >> {log_path}\n"
+        f"printf '\\n' >> {log_path}\n"
+        "wp_args=()\n"
+        "seen_wpcli=0\n"
+        "seen_wp=0\n"
+        "for arg in \"$@\"; do\n"
+        "  if [[ \"$seen_wp\" -eq 1 ]]; then wp_args+=(\"$arg\"); continue; fi\n"
+        "  if [[ \"$seen_wpcli\" -eq 1 && \"$arg\" == wp ]]; then seen_wp=1; continue; fi\n"
+        "  if [[ \"$arg\" == wpcli ]]; then seen_wpcli=1; continue; fi\n"
+        "done\n"
+        "joined=\"${wp_args[*]}\"\n"
+        f"if [[ \"$joined\" == *'option update acx_public_guide_enabled'* ]]; then printf 'guide_enable\\n' >> {mutations_path}; fi\n"
+        f"if [[ \"$joined\" == *'option update acx_public_demo_enabled'* ]]; then printf 'demo_enable\\n' >> {mutations_path}; fi\n"
+        f"if [[ \"$joined\" == *'rewrite flush'* ]]; then printf 'rewrite_flush\\n' >> {mutations_path}; fi\n"
+        "if [[ \"$joined\" == *'option get acx_public_demo_enabled'* ]]; then\n"
+        f"  printf '%s\\n' {shlex.quote(demo_enabled)}\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 0\n"
+    )
+
+
 def _run(
     tmp_path: Path,
     *,
@@ -36,6 +84,9 @@ def _run(
     curl_body: str = DEFAULT_BODY,
     demo_enabled: str = "0",
     include_site_url_flag: bool = True,
+    include_wp: bool = True,
+    include_docker: bool = False,
+    compose_file: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -44,23 +95,25 @@ def _run(
     mutations = tmp_path / "mutations.log"
     mutations_path = shlex.quote(str(mutations))
 
-    _write_executable(
-        bin_dir / "wp",
-        "#!/usr/bin/env bash\n"
-        "set -u\n"
-        f"printf 'wp' >> {log_path}\n"
-        f"printf ' %q' \"$@\" >> {log_path}\n"
-        f"printf '\\n' >> {log_path}\n"
-        "joined=\"$*\"\n"
-        f"if [[ \"$joined\" == *'option update acx_public_guide_enabled'* ]]; then printf 'guide_enable\\n' >> {mutations_path}; fi\n"
-        f"if [[ \"$joined\" == *'option update acx_public_demo_enabled'* ]]; then printf 'demo_enable\\n' >> {mutations_path}; fi\n"
-        f"if [[ \"$joined\" == *'rewrite flush'* ]]; then printf 'rewrite_flush\\n' >> {mutations_path}; fi\n"
-        "if [[ \"$joined\" == *'option get acx_public_demo_enabled'* ]]; then\n"
-        f"  printf '%s\\n' {shlex.quote(demo_enabled)}\n"
-        "  exit 0\n"
-        "fi\n"
-        "exit 0\n",
-    )
+    if include_wp:
+        _write_executable(
+            bin_dir / "wp",
+            _wp_stub_body(
+                log_path=log_path,
+                mutations_path=mutations_path,
+                demo_enabled=demo_enabled,
+                prefix="wp",
+            ),
+        )
+    if include_docker:
+        _write_executable(
+            bin_dir / "docker",
+            _docker_stub_body(
+                log_path=log_path,
+                mutations_path=mutations_path,
+                demo_enabled=demo_enabled,
+            ),
+        )
     _write_executable(
         bin_dir / "curl",
         "#!/usr/bin/env bash\n"
@@ -100,6 +153,12 @@ def _run(
     env.pop("ACX_RETAIN_PUBLIC_DEMO_DESCRIBE", None)
     env.pop("DRY_RUN", None)
     env.pop("SITE_URL", None)
+    env.pop("ACX_WP_RUNNER", None)
+    env.pop("COMPOSE_FILE", None)
+    # Isolate auto-detect from a host DEMO_DIR such as /opt/acx-backend/demo.
+    env["DEMO_DIR"] = str(tmp_path / "missing-demo-dir")
+    if compose_file is not None:
+        env["COMPOSE_FILE"] = str(compose_file)
 
     if wp_path is None:
         env.pop("WP_PATH", None)
@@ -272,3 +331,85 @@ def test_signed_out_curl_does_not_send_auth(tmp_path: Path, flag: str) -> None:
     for line in _log(tmp_path).splitlines():
         if line.startswith("curl "):
             assert flag not in line.split(), line
+
+
+def _write_compose_file(tmp_path: Path) -> Path:
+    path = tmp_path / "docker-compose.demo.yml"
+    path.write_text("services:\n  wpcli:\n    image: wordpress:cli\n", encoding="utf-8")
+    return path
+
+
+def test_compose_runner_used_by_default_when_compose_file_present(tmp_path: Path) -> None:
+    compose_file = _write_compose_file(tmp_path)
+    result = _run(tmp_path, include_docker=True, compose_file=compose_file)
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    log = _log(tmp_path)
+    docker_lines = [line for line in log.splitlines() if line.startswith("docker ")]
+    assert docker_lines, log
+    for line in docker_lines:
+        tokens = line.split()
+        assert "compose" in tokens, line
+        assert "--rm" in tokens, line
+        assert "--no-deps" in tokens, line
+        assert "wpcli" in tokens, line
+        assert "wp" in tokens, line
+    assert any("option" in line and "update" in line and "acx_public_guide_enabled" in line for line in docker_lines), log
+    assert any("rewrite" in line and "flush" in line and "--hard" in line for line in docker_lines), log
+    wp_lines = [line for line in log.splitlines() if line.startswith("wp ")]
+    assert wp_lines == [], log
+    mutations = _mutations(tmp_path).splitlines()
+    assert "guide_enable" in mutations
+    assert "rewrite_flush" in mutations
+
+
+def test_host_runner_reachable_via_acx_wp_runner(tmp_path: Path) -> None:
+    compose_file = _write_compose_file(tmp_path)
+    result = _run(
+        tmp_path,
+        include_docker=True,
+        compose_file=compose_file,
+        extra_env={"ACX_WP_RUNNER": "host"},
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    log = _log(tmp_path)
+    wp_lines = [line for line in log.splitlines() if line.startswith("wp ")]
+    assert wp_lines, log
+    assert any("option" in line and "update" in line and "acx_public_guide_enabled" in line for line in wp_lines), log
+    docker_lines = [line for line in log.splitlines() if line.startswith("docker ")]
+    assert docker_lines == [], log
+
+
+def test_refuses_when_neither_runner_is_available(tmp_path: Path) -> None:
+    result = _run(tmp_path, include_wp=False, include_docker=False)
+    output = result.stdout + result.stderr
+    assert result.returncode != 0, output
+    assert "wp" in output.lower() or "compose" in output.lower() or "runner" in output.lower()
+    assert _mutations(tmp_path) == ""
+    assert "wp " not in _log(tmp_path)
+    assert "docker " not in _log(tmp_path)
+
+
+def _curl_lines(tmp_path: Path) -> list[str]:
+    return [line for line in _log(tmp_path).splitlines() if line.startswith("curl ")]
+
+
+def test_signed_out_curl_sets_timeouts_and_follows_redirects(tmp_path: Path) -> None:
+    result = _run(tmp_path)
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    curl_lines = _curl_lines(tmp_path)
+    assert curl_lines, _log(tmp_path)
+    for line in curl_lines:
+        tokens = line.split()
+        assert "--connect-timeout" in tokens, line
+        timeout_idx = tokens.index("--connect-timeout")
+        assert tokens[timeout_idx + 1] == "10", line
+        assert "--max-time" in tokens, line
+        max_idx = tokens.index("--max-time")
+        assert tokens[max_idx + 1] == "15", line
+        assert "-L" in tokens, line
+        assert "--max-redirs" in tokens, line
+        redirs_idx = tokens.index("--max-redirs")
+        assert tokens[redirs_idx + 1] == "3", line

@@ -499,6 +499,212 @@ describe('public demo description_tier envelope contract', () => {
   });
 });
 
+describe('public demo visible description_tier labels', () => {
+  const DESCRIPTION = 'A lakeside path.';
+  const LABEL = {
+    final_gpu: 'GPU description complete.',
+    provisional_cpu: 'CPU fallback draft (not GPU final).',
+    unknown: 'Description complete, processing tier unavailable.',
+  } as const;
+
+  const completedDescription = (overrides: Record<string, unknown> = {}): Record<string, unknown> =>
+    running({
+      status: 'completed',
+      phase: 'complete',
+      progress: { done: 1, total: 1 },
+      description: DESCRIPTION,
+      ...overrides,
+    });
+
+  const settle = async (predicate: () => boolean): Promise<void> => {
+    for (let tick = 0; tick < 200; tick += 1) {
+      if (predicate()) return;
+      await Promise.resolve();
+      await new Promise((resolve) => { setTimeout(resolve, 0); });
+    }
+    throw new Error('timed out waiting for the demo client to settle');
+  };
+
+  it.each([
+    ['final_gpu', 'stopped', LABEL.final_gpu],
+    ['provisional_cpu', 'ready', LABEL.provisional_cpu],
+    [null, 'ready', LABEL.unknown],
+  ] as const)(
+    'statusPresentation labels parsed description_tier %s even when gpu_state is %s',
+    (tier, gpuState, expected) => {
+      const parsed = parsePublicDemoEnvelope(
+        completedDescription({ gpu_state: gpuState, description_tier: tier }),
+      );
+      const presentation = statusPresentation(parsed);
+
+      expect(parsed.description).toBe(DESCRIPTION);
+      expect(presentation.state).toBe('completed');
+      expect(presentation.message).toBe(expected);
+      expect(presentation.message).not.toBe(DESCRIPTION);
+    },
+  );
+
+  it('statusPresentation labels a legacy completed description without description_tier as unknown', () => {
+    const payload = completedDescription({ gpu_state: 'ready' });
+    expect(Object.prototype.hasOwnProperty.call(payload, 'description_tier')).toBe(false);
+    const presentation = statusPresentation(parsePublicDemoEnvelope(payload));
+
+    expect(presentation.state).toBe('completed');
+    expect(presentation.message).toBe(LABEL.unknown);
+  });
+
+  it('statusPresentation does not apply a GPU-final success label to a failed envelope', () => {
+    const presentation = statusPresentation(
+      parsePublicDemoEnvelope(
+        running({
+          status: 'failed',
+          phase: 'failed',
+          error: { code: 'acx_public_demo_pipeline_failed', message: 'The image could not be described.' },
+        }),
+      ),
+    );
+
+    expect(presentation.state).toBe('failed');
+    expect(presentation.message).toBe('The image could not be described.');
+    expect(presentation.message).not.toBe(LABEL.final_gpu);
+  });
+
+  it.each([
+    ['final_gpu', 'stopped', LABEL.final_gpu],
+    ['provisional_cpu', 'ready', LABEL.provisional_cpu],
+    [null, 'ready', LABEL.unknown],
+  ] as const)(
+    'initializeDemo completed DOM shows %s label after submit+poll (gpu_state %s)',
+    async (tier, gpuState, expected) => {
+      document.body.innerHTML = ACTUAL_SHORTCODE_TWO_INSTANCES;
+      const root = document.querySelectorAll<HTMLElement>('[data-acx-demo]')[0];
+      const form = root.querySelector<HTMLFormElement>('form.acx-demo__form');
+      const lake = document.querySelector<HTMLInputElement>('#acx-demo-media-1-41');
+      const result = root.querySelector<HTMLElement>('[data-acx-demo-result]');
+      const message = root.querySelector<HTMLElement>('[data-acx-demo-message]');
+      expect(root).toBeInstanceOf(HTMLElement);
+      expect(form).toBeInstanceOf(HTMLFormElement);
+      expect(lake).toBeInstanceOf(HTMLInputElement);
+      lake!.checked = true;
+
+      const fetchImpl = vi.fn<typeof fetch>()
+        .mockResolvedValueOnce(
+          response(
+            running({
+              status: 'pending',
+              phase: 'queued',
+              deadline_seconds: 120,
+              run_id: 'run-visible-1',
+            }),
+          ),
+        )
+        .mockResolvedValueOnce(
+          response(
+            completedDescription({
+              run_id: 'run-visible-1',
+              gpu_state: gpuState,
+              description_tier: tier,
+            }),
+          ),
+        );
+      vi.stubGlobal('fetch', fetchImpl);
+
+      try {
+        initializeDemo(root);
+        form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+        await settle(() => form?.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled === false);
+
+        expect(root.dataset.state).toBe('completed');
+        expect(message?.textContent).toBe(expected);
+        expect(message?.textContent).not.toBe(DESCRIPTION);
+        expect(result?.hidden).toBe(false);
+        expect(result?.textContent).toBe(DESCRIPTION);
+        expect(document.activeElement).toBe(result);
+        expect(Array.from(form?.elements ?? []).every((control) => !(control as HTMLInputElement).disabled)).toBe(true);
+      } finally {
+        vi.unstubAllGlobals();
+        document.body.innerHTML = '';
+      }
+    },
+  );
+
+  it('initializeDemo completed DOM labels a legacy missing description_tier as unknown', async () => {
+    document.body.innerHTML = ACTUAL_SHORTCODE_TWO_INSTANCES;
+    const root = document.querySelectorAll<HTMLElement>('[data-acx-demo]')[0];
+    const form = root.querySelector<HTMLFormElement>('form.acx-demo__form');
+    const lake = document.querySelector<HTMLInputElement>('#acx-demo-media-1-41');
+    const result = root.querySelector<HTMLElement>('[data-acx-demo-result]');
+    const message = root.querySelector<HTMLElement>('[data-acx-demo-message]');
+    lake!.checked = true;
+
+    const completed = completedDescription({ run_id: 'run-visible-legacy', gpu_state: 'ready' });
+    expect(Object.prototype.hasOwnProperty.call(completed, 'description_tier')).toBe(false);
+
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        response(running({ status: 'pending', phase: 'queued', deadline_seconds: 120, run_id: 'run-visible-legacy' })),
+      )
+      .mockResolvedValueOnce(response(completed));
+    vi.stubGlobal('fetch', fetchImpl);
+
+    try {
+      initializeDemo(root);
+      form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await settle(() => form?.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled === false);
+
+      expect(root.dataset.state).toBe('completed');
+      expect(message?.textContent).toBe(LABEL.unknown);
+      expect(result?.hidden).toBe(false);
+      expect(result?.textContent).toBe(DESCRIPTION);
+      expect(document.activeElement).toBe(result);
+    } finally {
+      vi.unstubAllGlobals();
+      document.body.innerHTML = '';
+    }
+  });
+
+  it('initializeDemo failed poll does not show a GPU-final success label', async () => {
+    document.body.innerHTML = ACTUAL_SHORTCODE_TWO_INSTANCES;
+    const root = document.querySelectorAll<HTMLElement>('[data-acx-demo]')[0];
+    const form = root.querySelector<HTMLFormElement>('form.acx-demo__form');
+    const lake = document.querySelector<HTMLInputElement>('#acx-demo-media-1-41');
+    const result = root.querySelector<HTMLElement>('[data-acx-demo-result]');
+    const message = root.querySelector<HTMLElement>('[data-acx-demo-message]');
+    lake!.checked = true;
+
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        response(running({ status: 'pending', phase: 'queued', deadline_seconds: 120, run_id: 'run-visible-fail' })),
+      )
+      .mockResolvedValueOnce(
+        response(
+          running({
+            run_id: 'run-visible-fail',
+            status: 'failed',
+            phase: 'failed',
+            error: { code: 'acx_public_demo_pipeline_failed', message: 'The image could not be described.' },
+          }),
+        ),
+      );
+    vi.stubGlobal('fetch', fetchImpl);
+
+    try {
+      initializeDemo(root);
+      form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await settle(() => form?.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled === false);
+
+      expect(root.dataset.state).toBe('failed');
+      expect(message?.textContent).toBe('The image could not be described.');
+      expect(message?.textContent).not.toBe(LABEL.final_gpu);
+      expect(result?.hidden).toBe(true);
+      expect(result?.textContent).toBe('');
+    } finally {
+      vi.unstubAllGlobals();
+      document.body.innerHTML = '';
+    }
+  });
+});
+
 describe('public demo radio contract from actual PHP shortcode markup', () => {
   const chooseImageMessage = 'Choose an image before requesting a description.';
   const postBodies = (fetchImpl: ReturnType<typeof vi.fn<typeof fetch>>): Array<{ media_id: number }> =>

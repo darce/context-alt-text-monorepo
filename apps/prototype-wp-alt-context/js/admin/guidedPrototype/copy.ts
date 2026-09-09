@@ -23,7 +23,7 @@ export const GUIDED_COPY = {
   "step.apply": "Apply and undo",
   "context.intro": "This photo appears in a festival gallery. Review the existing alt text alongside the photo and its page context.",
   "context.page_label": "Example page",
-  "context.current_label": "Current alt text in the demo copy",
+  "context.current_label": "Example starting alt text (for this demo)",
   "context.purpose": "Names can be useful in this gallery when the editor has enough evidence to include them. Leaving someone unnamed is also a valid choice.",
   "context.next": "Review name suggestions",
   "provenance.disclosure": "Saved example and image credits",

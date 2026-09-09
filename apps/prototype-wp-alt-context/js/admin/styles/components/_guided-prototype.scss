@@ -353,12 +353,15 @@
   &__lightbox-crop {
     display: flex;
     justify-content: center;
-    margin-bottom: var(--acx-space-16);
+    width: fit-content;
+    margin: 0 auto var(--acx-space-16);
+    border: 1px solid var(--acx-color-border);
   }
 
   &__lightbox-gallery {
     display: flex;
     flex-wrap: wrap;
+    justify-content: center;
     gap: var(--acx-space-8);
     margin: 0 0 var(--acx-space-12);
     padding: 0;
@@ -367,8 +370,9 @@
     img {
       display: block;
       width: var(--acx-space-80);
-      height: auto;
-      max-width: 100%;
+      height: var(--acx-space-80);
+      max-width: var(--acx-space-80);
+      max-height: var(--acx-space-80);
       object-fit: cover;
       border-radius: var(--acx-radius-md);
       background: var(--acx-color-data-placeholder);

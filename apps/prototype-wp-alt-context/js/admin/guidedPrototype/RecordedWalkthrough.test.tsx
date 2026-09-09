@@ -1,9 +1,9 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
 import { GuidedPrototypePage } from '../pages/guided/GuidedPrototypePage';
-import { CASE_STUDY_URL, guidedCopy } from './publicGuideCopy';
+import { CASE_STUDY_URL, RECORDING_URL, guidedCopy } from './publicGuideCopy';
 import { RecordedWalkthrough } from './RecordedWalkthrough';
 
 const PUBLIC_SCOPE =
@@ -12,6 +12,7 @@ const START_WALKTHROUGH = 'Start the walkthrough';
 const WATCH_RECORDING = 'Watch the recording';
 const READ_CASE_STUDY = 'Read the case study';
 const CANONICAL_CASE_STUDY_URL = 'https://darce.xyz/projects/altcontext/';
+const opensInNewWindow = (label: string): string => `${label} (opens in a new window)`;
 
 describe('RecordedWalkthrough extraction', () => {
   it('renders the recorded walkthrough without a live panel by default', () => {
@@ -61,8 +62,59 @@ describe('RecordedWalkthrough public scope', () => {
     expect(escape.querySelector(`a[href="${CASE_STUDY_URL}"]`)).not.toBeNull();
 
     expect(screen.getByRole('button', { name: START_WALKTHROUGH })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: WATCH_RECORDING })).toHaveAttribute('href', CASE_STUDY_URL);
-    expect(screen.getByRole('link', { name: READ_CASE_STUDY })).toHaveAttribute('href', CASE_STUDY_URL);
+    expect(screen.getByRole('link', { name: opensInNewWindow(WATCH_RECORDING) })).toHaveAttribute(
+      'href',
+      RECORDING_URL,
+    );
+    expect(screen.getByRole('link', { name: opensInNewWindow(READ_CASE_STUDY) })).toHaveAttribute(
+      'href',
+      CASE_STUDY_URL,
+    );
+  });
+
+  it('gives every public entry action a distinct destination', () => {
+    render(<RecordedWalkthrough scope="public" escapeHref="/" />);
+
+    expect(RECORDING_URL).not.toBe(CASE_STUDY_URL);
+    expect(RECORDING_URL.startsWith(CASE_STUDY_URL)).toBe(true);
+
+    const watch = screen.getByRole('link', { name: opensInNewWindow(WATCH_RECORDING) });
+    const read = screen.getByRole('link', { name: opensInNewWindow(READ_CASE_STUDY) });
+    const caseStudyNav = screen.getByRole('link', { name: opensInNewWindow(guidedCopy('nav.case_study')) });
+    const start = screen.getByRole('button', { name: START_WALKTHROUGH });
+
+    const actionLinks = Array.from(document.querySelectorAll('.acx-guided-entrance__actions a'));
+    const actionHrefs = actionLinks.map((link) => link.getAttribute('href'));
+    expect(actionHrefs).toEqual([RECORDING_URL, CASE_STUDY_URL]);
+    expect(new Set(actionHrefs).size).toBe(actionHrefs.length);
+
+    expect(watch).toHaveAttribute('href', RECORDING_URL);
+    expect(read).toHaveAttribute('href', CASE_STUDY_URL);
+    expect(caseStudyNav).toHaveAttribute('href', CASE_STUDY_URL);
+    expect(start).not.toHaveAttribute('href');
+  });
+
+  it('opens public case-study and recording exits in a new tab and keeps Home in-tab', () => {
+    render(<RecordedWalkthrough scope="public" escapeHref="/" />);
+
+    const watch = screen.getByRole('link', { name: opensInNewWindow(WATCH_RECORDING) });
+    const read = screen.getByRole('link', { name: opensInNewWindow(READ_CASE_STUDY) });
+    const escape = screen.getByRole('navigation', { name: guidedCopy('nav.leave') });
+    const caseStudyNav = within(escape).getByRole('link', {
+      name: opensInNewWindow(guidedCopy('nav.case_study')),
+    });
+    const home = within(escape).getByRole('link', { name: guidedCopy('nav.home') });
+
+    for (const link of [watch, read, caseStudyNav]) {
+      expect(link).toHaveAttribute('target', '_blank');
+      expect(link.getAttribute('rel') ?? '').toContain('noreferrer');
+      expect(link).toHaveAccessibleName(/opens in a new window/i);
+    }
+
+    expect(home).not.toHaveAttribute('target', '_blank');
+    expect(home.getAttribute('rel') ?? '').not.toContain('noreferrer');
+    expect(home).toHaveAccessibleName(guidedCopy('nav.home'));
+    expect(home).not.toHaveAccessibleName(/opens in a new window/i);
   });
 
   it('reaches Start, Watch, then Read by Tab in that order', async () => {
@@ -74,10 +126,10 @@ describe('RecordedWalkthrough public scope', () => {
     expect(document.activeElement).toBe(start);
 
     await user.tab();
-    expect(document.activeElement).toHaveAccessibleName(WATCH_RECORDING);
+    expect(document.activeElement).toHaveAccessibleName(opensInNewWindow(WATCH_RECORDING));
 
     await user.tab();
-    expect(document.activeElement).toHaveAccessibleName(READ_CASE_STUDY);
+    expect(document.activeElement).toHaveAccessibleName(opensInNewWindow(READ_CASE_STUDY));
   });
 
   it('keeps admin entrance copy and the existing case-study link', () => {
@@ -94,6 +146,17 @@ describe('RecordedWalkthrough public scope', () => {
       CANONICAL_CASE_STUDY_URL,
     );
     expect(CASE_STUDY_URL).toBe(CANONICAL_CASE_STUDY_URL);
+  });
+});
+
+describe('RecordedWalkthrough design notes', () => {
+  it('hides live-generation copy on the public surface and keeps it for admin', () => {
+    const { unmount } = render(<RecordedWalkthrough scope="public" escapeHref="/" />);
+    expect(document.body.textContent ?? '').not.toContain('Live generation');
+    unmount();
+
+    render(<RecordedWalkthrough scope="admin" />);
+    expect(document.body.textContent ?? '').toContain('Live generation');
   });
 });
 

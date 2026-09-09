@@ -1,12 +1,29 @@
 import React from 'react';
 
-import { CASE_STUDY_URL, guidedCopy } from '../guidedPrototype/publicGuideCopy';
+import { CASE_STUDY_URL, RECORDING_URL, guidedCopy } from '../guidedPrototype/publicGuideCopy';
 
 export interface GuidedPrototypeEntranceProps {
   onBegin: () => void;
   scope?: 'public' | 'admin';
   escapeHref?: string;
 }
+
+const NEW_WINDOW_HINT = ' (opens in a new window)';
+
+const ExternalGuideLink = ({
+  href,
+  className,
+  children,
+}: {
+  href: string;
+  className?: string;
+  children: React.ReactNode;
+}): React.JSX.Element => (
+  <a className={className} href={href} target="_blank" rel="noreferrer">
+    {children}
+    <span className="screen-reader-text">{NEW_WINDOW_HINT}</span>
+  </a>
+);
 
 export const GuidedPrototypeEntrance = ({
   onBegin,
@@ -18,7 +35,7 @@ export const GuidedPrototypeEntrance = ({
       <section className="acx-guided-entrance" aria-labelledby="acx-guided-entrance-title">
         <nav className="acx-guided-entrance__escape" aria-label={guidedCopy('nav.leave')}>
           <a href={escapeHref}>{guidedCopy('nav.home')}</a>
-          <a href={CASE_STUDY_URL}>{guidedCopy('nav.case_study')}</a>
+          <ExternalGuideLink href={CASE_STUDY_URL}>{guidedCopy('nav.case_study')}</ExternalGuideLink>
         </nav>
         <p className="acx-guided-entrance__scope" data-testid="guided-scope">
           {guidedCopy('scope.public')}
@@ -28,12 +45,12 @@ export const GuidedPrototypeEntrance = ({
           <button type="button" className="acx-button acx-button--primary" onClick={onBegin}>
             {guidedCopy('page.start')}
           </button>
-          <a className="acx-button acx-button--secondary" href={CASE_STUDY_URL}>
+          <ExternalGuideLink className="acx-button acx-button--secondary" href={RECORDING_URL}>
             {guidedCopy('entry.watch')}
-          </a>
-          <a className="acx-button acx-button--secondary" href={CASE_STUDY_URL}>
+          </ExternalGuideLink>
+          <ExternalGuideLink className="acx-button acx-button--secondary" href={CASE_STUDY_URL}>
             {guidedCopy('entry.read_case_study')}
-          </a>
+          </ExternalGuideLink>
         </div>
       </section>
     );
@@ -52,10 +69,9 @@ export const GuidedPrototypeEntrance = ({
       </button>
 
       <p className="acx-guided-entrance__boundary">
-        <a className="acx-guided-entrance__case-study" href={CASE_STUDY_URL} target="_blank" rel="noreferrer">
+        <ExternalGuideLink className="acx-guided-entrance__case-study" href={CASE_STUDY_URL}>
           {guidedCopy('page.case_study')}
-          <span className="screen-reader-text"> (opens in a new window)</span>
-        </a>
+        </ExternalGuideLink>
       </p>
     </section>
   );

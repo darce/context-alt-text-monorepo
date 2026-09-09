@@ -41,6 +41,7 @@ export const mountPublicGuide = (
   options: MountPublicGuideOptions = {},
 ): void => {
   assertMountNode(root);
+  root.classList.add('acx-public-guide');
   const makeRoot = options.createRoot ?? createRoot;
 
   let host = root.querySelector<HTMLElement>('.acx-public-guide__app');

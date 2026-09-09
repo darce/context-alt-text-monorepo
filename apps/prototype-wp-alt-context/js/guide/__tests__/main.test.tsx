@@ -35,16 +35,16 @@ describe('public guide entry', () => {
     expect((fallback as HTMLElement).hidden).toBe(true);
     expect(document.querySelectorAll('main')).toHaveLength(1);
     expect(document.getElementById('acx-public-guide')?.tagName).toBe('MAIN');
+    expect(document.getElementById('acx-public-guide')).toHaveClass('acx-public-guide');
     expect(screen.getByTestId('guided-demo-root').tagName).toBe('DIV');
     expect(screen.getByTestId('guided-scope')).toHaveTextContent(guidedCopy('scope.public'));
     expect(screen.getByRole('navigation', { name: guidedCopy('nav.leave') }).querySelector('a')).toHaveAttribute(
       'href',
       'https://demo.example/',
     );
-    expect(screen.getByRole('link', { name: guidedCopy('entry.read_case_study') })).toHaveAttribute(
-      'href',
-      CASE_STUDY_URL,
-    );
+    expect(
+      screen.getByRole('link', { name: `${guidedCopy('entry.read_case_study')} (opens in a new window)` }),
+    ).toHaveAttribute('href', CASE_STUDY_URL);
   });
 
   it('falls back to / when data-home-url is missing', () => {

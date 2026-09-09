@@ -258,7 +258,7 @@ export const RecordedWalkthrough = ({
           )}
         </section>
 
-        <GuidedDesignNotes />
+        <GuidedDesignNotes scope={scope} />
 
         {livePanel != null ? (
           <RecordedWalkthroughLiveSlot.Provider value={setLiveWaiting}>

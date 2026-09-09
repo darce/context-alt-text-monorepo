@@ -170,9 +170,11 @@ def test_provision_fails_closed_when_git_manifest_lookup_fails(tmp_path: Path) -
 def test_provision_does_not_copytree_node_modules() -> None:
     source = PROVISION.read_text(encoding="utf-8")
     tree_fn = source.split("def provision_dependency_trees")[1].split("def main")[0]
+    freeze_fn = source.split("def _freeze_dependency_tree")[1].split("\ndef ")[0]
     assert "copytree" not in tree_fn
+    assert "copytree" in freeze_fn
+    assert "symlinks=True" in freeze_fn
     assert "os.symlink" in source
-    assert "symlinks=True" in source
 
 
 def test_provision_does_not_destroy_same_path_dependency_trees(tmp_path: Path) -> None:
@@ -424,7 +426,8 @@ def test_provision_replaces_a_dereferenced_copy(tmp_path: Path) -> None:
     assert completed.returncode == 0, completed.stderr
     dest = worktree / "apps/prototype-wp-alt-context/node_modules"
     assert dest.is_symlink()
-    assert dest.resolve() == src.resolve()
+    assert dest.resolve() != src.resolve()
+    assert ".acx-dep-cache" in dest.resolve().parts
     assert (dest / ".bin" / "vitest").is_symlink()
 
 
@@ -466,13 +469,16 @@ def test_provision_links_when_lockfiles_match(tmp_path: Path) -> None:
     assert completed.returncode == 0, completed.stderr
     dest = worktree / "apps/prototype-wp-alt-context/node_modules"
     assert dest.is_symlink()
-    assert dest.resolve() == src.resolve()
+    assert dest.resolve() != src.resolve()
+    assert ".acx-dep-cache" in dest.resolve().parts
     sidecar = worktree / "apps/prototype-wp-alt-context/.acx-dep-source"
     assert sidecar.is_file()
     payload = sidecar.read_text(encoding="utf-8")
     assert "node_modules" in payload
     assert "vendor" in payload
+    assert "sha256" in payload
     assert (worktree / "apps/prototype-wp-alt-context/vendor").is_symlink()
+    assert (worktree / "apps/prototype-wp-alt-context/vendor").resolve() != vendor.resolve()
 
 
 def test_provision_refuses_symlink_when_lockfiles_differ(tmp_path: Path) -> None:
@@ -506,3 +512,44 @@ def test_provision_refuses_symlink_when_lockfiles_differ(tmp_path: Path) -> None
     assert not dest.exists()
     assert not dest.is_symlink()
     assert not (worktree / "apps/prototype-wp-alt-context/.acx-dep-source").exists()
+
+
+def test_provision_keyed_cache_isolates_primary_mutations(tmp_path: Path) -> None:
+    primary = tmp_path / "primary"
+    worktree = tmp_path / "worktree"
+    src = primary / "apps/prototype-wp-alt-context/node_modules"
+    src.mkdir(parents=True)
+    (src / "pkg").write_text("from-primary\n", encoding="utf-8")
+    bin_dir = src / ".bin"
+    bin_dir.mkdir()
+    (bin_dir / "vitest").symlink_to(src / "vitest.mjs")
+    _write_lockfiles(primary, '{"lock":"frozen"}\n', '{"lock":"vendor"}\n')
+    worktree.mkdir()
+    _write_lockfiles(worktree, '{"lock":"frozen"}\n', '{"lock":"vendor"}\n')
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(PROVISION),
+            "--worktree",
+            str(worktree),
+            "--primary",
+            str(primary),
+            "--fixture-mode",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    dest = worktree / "apps/prototype-wp-alt-context/node_modules"
+    assert dest.is_symlink()
+    assert dest.resolve() != src.resolve()
+    assert (dest / "pkg").read_text(encoding="utf-8") == "from-primary\n"
+    assert (dest / ".bin" / "vitest").is_symlink()
+
+    (src / "pkg").write_text("mutated-primary\n", encoding="utf-8")
+    (bin_dir / "vitest").unlink()
+    (bin_dir / "vitest").write_text("dereferenced\n", encoding="utf-8")
+    assert (dest / "pkg").read_text(encoding="utf-8") == "from-primary\n"
+    assert (dest / ".bin" / "vitest").is_symlink()

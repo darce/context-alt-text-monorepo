@@ -1,9 +1,10 @@
 import React from 'react';
 import { flushSync } from 'react-dom';
-import { createRoot } from 'react-dom/client';
+import { createRoot, type Root } from 'react-dom/client';
 
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { RecordedWalkthrough } from '../admin/guidedPrototype/RecordedWalkthrough';
+import { PUBLIC_GUIDE_FALLBACK } from '../admin/guidedPrototype/publicGuideCopy';
 import './index.css';
 
 const assertMountNode: (value: HTMLElement | null) => asserts value is HTMLElement = (value) => {
@@ -17,19 +18,30 @@ const homeUrlFrom = (root: HTMLElement): string => {
   return value && value.length > 0 ? value : '/';
 };
 
-const hideFallback = (root: HTMLElement): void => {
-  root.querySelectorAll('.acx-public-guide__fallback').forEach((node) => {
+const setFallbackHidden = (root: HTMLElement, hidden: boolean): void => {
+  root.querySelectorAll(':scope > .acx-public-guide__fallback').forEach((node) => {
     if (node instanceof HTMLElement) {
-      node.hidden = true;
+      node.hidden = hidden;
     }
   });
 };
 
+export interface MountPublicGuideOptions {
+  createRoot?: (container: Element | DocumentFragment) => Root;
+}
+
+const publicGuideFallback = (
+  <p className="acx-public-guide__fallback" role="alert">
+    {PUBLIC_GUIDE_FALLBACK}
+  </p>
+);
+
 export const mountPublicGuide = (
   root: HTMLElement | null = document.getElementById('acx-public-guide'),
+  options: MountPublicGuideOptions = {},
 ): void => {
   assertMountNode(root);
-  hideFallback(root);
+  const makeRoot = options.createRoot ?? createRoot;
 
   let host = root.querySelector<HTMLElement>('.acx-public-guide__app');
   if (host === null) {
@@ -37,15 +49,22 @@ export const mountPublicGuide = (
     host.className = 'acx-public-guide__app';
     root.appendChild(host);
   }
+  const appHost = host;
 
   const tree = (
-    <ErrorBoundary>
+    <ErrorBoundary fallback={publicGuideFallback}>
       <RecordedWalkthrough scope="public" escapeHref={homeUrlFrom(root)} />
     </ErrorBoundary>
   );
-  flushSync(() => {
-    createRoot(host).render(tree);
-  });
+
+  try {
+    flushSync(() => {
+      makeRoot(appHost).render(tree);
+    });
+    setFallbackHidden(root, true);
+  } catch {
+    setFallbackHidden(root, false);
+  }
 };
 
 const existingRoot = document.getElementById('acx-public-guide');

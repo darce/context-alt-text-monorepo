@@ -120,8 +120,10 @@ export const RecordedWalkthrough = ({
     setFeedback(guidedCopy('reset.status'));
   };
 
+  const RootTag = scope === 'public' ? 'div' : 'main';
+
   return (
-    <main
+    <RootTag
       className="acx-guided-page"
       aria-labelledby="acx-guided-entrance-title"
       data-testid="guided-demo-root"
@@ -264,7 +266,7 @@ export const RecordedWalkthrough = ({
           </RecordedWalkthroughLiveSlot.Provider>
         ) : null}
       </section>
-    </main>
+    </RootTag>
   );
 };
 

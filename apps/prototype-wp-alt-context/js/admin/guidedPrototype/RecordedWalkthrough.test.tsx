@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
 import { GuidedPrototypePage } from '../pages/guided/GuidedPrototypePage';
-import { CASE_STUDY_URL, guidedCopy } from './copy';
+import { CASE_STUDY_URL, guidedCopy } from './publicGuideCopy';
 import { RecordedWalkthrough } from './RecordedWalkthrough';
 
 const PUBLIC_SCOPE =
@@ -11,12 +11,14 @@ const PUBLIC_SCOPE =
 const START_WALKTHROUGH = 'Start the walkthrough';
 const WATCH_RECORDING = 'Watch the recording';
 const READ_CASE_STUDY = 'Read the case study';
+const CANONICAL_CASE_STUDY_URL = 'https://darce.xyz/projects/altcontext/';
 
 describe('RecordedWalkthrough extraction', () => {
   it('renders the recorded walkthrough without a live panel by default', () => {
     render(<RecordedWalkthrough scope="admin" />);
 
     expect(screen.getByTestId('guided-demo-root')).toBeInTheDocument();
+    expect(screen.getByTestId('guided-demo-root').tagName).toBe('MAIN');
     expect(screen.getByRole('heading', { level: 1 })).toBeInTheDocument();
     expect(screen.queryByTestId('guided-live')).not.toBeInTheDocument();
   });
@@ -39,7 +41,8 @@ describe('RecordedWalkthrough extraction', () => {
 
 describe('RecordedWalkthrough public scope', () => {
   it('exports the case-study URL from copy', () => {
-    expect(CASE_STUDY_URL).toBe('https://darce.github.io/');
+    expect(CASE_STUDY_URL).toBe(CANONICAL_CASE_STUDY_URL);
+    expect(CASE_STUDY_URL).not.toContain('github.io');
     expect(guidedCopy('scope.public')).toBe(PUBLIC_SCOPE);
   });
 
@@ -88,8 +91,9 @@ describe('RecordedWalkthrough public scope', () => {
     expect(screen.queryByRole('link', { name: READ_CASE_STUDY })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: new RegExp(`${guidedCopy('page.case_study')}.*opens in a new window`, 'i') })).toHaveAttribute(
       'href',
-      'https://darce.xyz/projects/altcontext/',
+      CANONICAL_CASE_STUDY_URL,
     );
+    expect(CASE_STUDY_URL).toBe(CANONICAL_CASE_STUDY_URL);
   });
 });
 

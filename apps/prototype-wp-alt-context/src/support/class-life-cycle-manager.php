@@ -30,8 +30,11 @@ use function wp_clear_scheduled_hook;
 
 class LifecycleManager {
 
+	public const REWRITE_VERSION = '2026-09-09-public-guide';
+
 	private const OPTION_VERSION      = 'acx_version';
 	private const OPTION_INSTALLED_AT = 'acx_installed';
+	private const OPTION_REWRITE_VERSION = 'acx_rewrite_version';
 	private const OPTION_SCHEMA_FINGERPRINT = 'acx_schema_fingerprint';
 	private const OPTION_HEAL_COMPLETE = 'acx_label_heal_complete';
 	private const OPTION_HEAL_ATTEMPTS = 'acx_label_heal_attempts';
@@ -92,6 +95,7 @@ class LifecycleManager {
 		if ( function_exists( 'add_action' ) ) {
 			add_action( self::LEGACY_ROSTER_MIGRATION_HOOK, array( $this, 'continue_legacy_roster_migration' ) );
 			add_action( 'admin_notices', array( $this, 'render_label_heal_notice' ) );
+			add_action( 'init', array( $this, 'maybe_flush_rewrites' ), 20 );
 		}
 	}
 
@@ -114,6 +118,28 @@ class LifecycleManager {
 		}
 		$this->maybe_heal_unbound_human_labels();
 		$this->migrate_legacy_roster_data();
+		flush_rewrite_rules( false );
+		update_option( self::OPTION_REWRITE_VERSION, self::REWRITE_VERSION );
+	}
+
+	/**
+	 * Flush rewrites once when an already-active install picks up a new rule set.
+	 *
+	 * Activation already flushes; this covers plugin updates that skip the
+	 * activation hook. Runs on init priority 20 so PublicGuideRoute has
+	 * registered ^guide/?$ first.
+	 */
+	public function maybe_flush_rewrites(): void {
+		$stored = get_option( self::OPTION_REWRITE_VERSION, '' );
+		if ( self::REWRITE_VERSION === $stored ) {
+			return;
+		}
+
+		$this->flush_rewrites();
+		update_option( self::OPTION_REWRITE_VERSION, self::REWRITE_VERSION );
+	}
+
+	protected function flush_rewrites(): void {
 		flush_rewrite_rules( false );
 	}
 
@@ -605,6 +631,7 @@ class LifecycleManager {
 	public function uninstall(): void {
 		delete_option( self::OPTION_VERSION );
 		delete_option( self::OPTION_INSTALLED_AT );
+		delete_option( self::OPTION_REWRITE_VERSION );
 		delete_option( self::OPTION_SCHEMA_FINGERPRINT );
 		delete_option( self::OPTION_HEAL_COMPLETE );
 		delete_option( self::OPTION_HEAL_ATTEMPTS );

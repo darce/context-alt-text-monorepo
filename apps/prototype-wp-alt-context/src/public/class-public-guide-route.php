@@ -25,6 +25,7 @@ use function wp_dequeue_style;
 use function wp_enqueue_script;
 use function wp_enqueue_style;
 use function wp_script_add_data;
+use function wp_scripts;
 use function wp_styles;
 
 /**

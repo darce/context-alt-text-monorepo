@@ -109,4 +109,4 @@ def test_stalled_resolver_returns_deadline_before_late_answer() -> None:
     assert _HOST not in pinned_hosts_after
     assert _HOST.lower() not in pinned_hosts_after
     assert corpus_mod._is_non_public(_LATE_PRIVATE) is True
-    assert corpus_mod._is_non_public("203.0.113.10") is False
+    assert corpus_mod._is_non_public("8.8.8.8") is False

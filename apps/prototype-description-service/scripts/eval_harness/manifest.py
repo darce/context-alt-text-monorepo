@@ -1284,10 +1284,25 @@ def resolve_verified_image(entry: GoldenEntry, images_root: Path | str) -> Path:
     try:
         digest = hashlib.sha256(image_path.read_bytes()).hexdigest()
     except OSError as exc:
-        raise ManifestError(
+        filename = exc.filename if exc.filename is not None else image_path
+        if exc.strerror is not None:
+            message = exc.strerror
+        else:
+            message = str(exc.args[0] if exc.args else type(exc).__name__)
+        filename2 = getattr(exc, "filename2", None)
+        filename_display = _printable_path(filename)
+        filename2_display = (
+            _printable_path(filename2) if filename2 is not None else None
+        )
+        message_display = _printable_message(message)
+        details = f"filename={filename_display}"
+        if filename2_display is not None:
+            details = f"{details}, filename2={filename2_display}"
+        error_message = (
             f"image file unreadable: {_printable_path(entry.path)} "
-            f"(under {_printable_path(root)}): {exc}"
-        ) from exc
+            f"(under {_printable_path(root)}): {message_display} ({details})"
+        )
+        raise ManifestError(error_message) from exc
     if digest != entry.sha256:
         raise ManifestError(
             f"sha256 mismatch for {_printable_path(entry.path)}: manifest {entry.sha256}, file {digest} — "
@@ -1720,8 +1735,31 @@ def _resolve_image(images_root: Path, rel_path: str) -> Path | None:
     try:
         root = images_root.resolve(strict=False)
     except (OSError, RuntimeError, ValueError) as exc:
+        if isinstance(exc, OSError):
+            filename = exc.filename if exc.filename is not None else images_root
+            if exc.strerror is not None:
+                message = exc.strerror
+            else:
+                message = str(exc.args[0] if exc.args else type(exc).__name__)
+            filename2 = getattr(exc, "filename2", None)
+        else:
+            filename = images_root
+            message = str(exc)
+            filename2 = None
+        filename_display = _printable_path(filename)
+        filename2_display = (
+            _printable_path(filename2) if filename2 is not None else None
+        )
+        message_display = _printable_message(message)
+        details = f"filename={filename_display}"
+        if filename2_display is not None:
+            details = f"{details}, filename2={filename2_display}"
+        error_message = (
+            f"image root cannot be resolved: {_printable_path(images_root)} "
+            f"({details}): {message_display}"
+        )
         raise ManifestError(
-            f"image root cannot be resolved: {_printable_path(images_root)}",
+            error_message,
             invariant="image_path_containment",
             entry_path=rel_path,
         ) from exc
@@ -1735,9 +1773,31 @@ def _resolve_image(images_root: Path, rel_path: str) -> Path | None:
             if resolved.is_file():
                 return resolved
         except (OSError, RuntimeError, ValueError) as exc:
-            raise ManifestError(
+            if isinstance(exc, OSError):
+                filename = exc.filename if exc.filename is not None else image_path
+                if exc.strerror is not None:
+                    message = exc.strerror
+                else:
+                    message = str(exc.args[0] if exc.args else type(exc).__name__)
+                filename2 = getattr(exc, "filename2", None)
+            else:
+                filename = image_path
+                message = str(exc)
+                filename2 = None
+            filename_display = _printable_path(filename)
+            filename2_display = (
+                _printable_path(filename2) if filename2 is not None else None
+            )
+            message_display = _printable_message(message)
+            details = f"root={_printable_path(images_root)}; filename={filename_display}"
+            if filename2_display is not None:
+                details = f"{details}, filename2={filename2_display}"
+            error_message = (
                 f"image path is outside corpus root: {_printable_path(rel_path)} "
-                f"(root={_printable_path(images_root)})",
+                f"({details}): {message_display}"
+            )
+            raise ManifestError(
+                error_message,
                 invariant="image_path_containment",
                 entry_path=rel_path,
             ) from exc

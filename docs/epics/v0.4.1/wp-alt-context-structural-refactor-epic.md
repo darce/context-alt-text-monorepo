@@ -14,7 +14,9 @@ Make the WP Alt-Context plugin core maintainable — thin composition-root contr
 
 ## Problem Statement
 
-Seven PHP files are ≥680 LOC (top two over 1,150) with 21–35 declared methods each, each mixing route registration, request parsing, business logic, transaction control, and persistence. `_workbench.scss` (1,159 LOC) violates sr-004 across all five governed families — 11 hex, raw radii (`999px`/`50%`/`4-10px`), **35 raw `font-size`**, **13 raw `font-weight`**, **1 raw `box-shadow`**, plus spacing `px` (the "83 px" figure counts only `px`, so it omits the rem font-sizes, weights, and shadow). Worse, `--acx-radius-*`/`--acx-text-*` are referenced but defined nowhere (18 dangling `var()`), so those sites render unstyled today. Change risk is concentrated, unit isolation is impossible, and the `acx/v1` surface is hard to reason about — every edit risks the whole controller/repository.
+**2026-06-07 baseline (historical, `0a955f1c`).** Seven PHP files were ≥680 LOC (top two over 1,150) with 21–35 declared methods each, mixing route registration, request parsing, business logic, transaction control, and persistence. `_workbench.scss` was 1,159 LOC and violated sr-004 across all five governed families — 11 hex, raw radii (`999px`/`50%`/`4-10px`), **35 raw `font-size`**, **13 raw `font-weight`**, **1 raw `box-shadow`**, plus spacing `px` (the "83 px" figure counted only `px`). `--acx-radius-*`/`--acx-text-*` were referenced but defined nowhere (18 dangling `var()`). That concentration of change risk is why this epic existed.
+
+**2026-09-09 remaining debt (this checkout).** REFA-1..8 landed. Do **not** plan as if seven god classes still exist. Only `class-split-topology-command-drain.php` is still ≥680 LOC (1025 / 3 public methods) and it still inlines START/COMMIT/ROLLBACK — leftover wrapper work is **REFA-9**. The other Current State PHP targets are composition-root sized. `_workbench.scss` grew to 1,425 LOC; live sr-004 color / font-size / font-weight / shadow literals are already `var(--acx-*)` (see Current State). Remaining `px` are 1px borders, 2px focus strokes, and layout widths this epic scopes out of sr-004. Residual work: REFA-9, `REFA-TS-DEBT-01`, optional spacing-token follow-up — not a restart of REFA-1..8.
 
 ## UX Vision
 
@@ -48,14 +50,14 @@ Developer/operator experience after the epic: editing one cluster operation touc
 | `src/sovereign/repositories/class-clusters-repository.php` | 168 | 23 | 1164 / 34 | 60 | **none** | REFA-2 landed; "yes = a suite exists" overstated mutation/delete coverage at epic time (`delete_cluster_with_members` had no direct test) |
 | `src/api/class-analysis-jobs-controller.php` | 280 | 15 | 1144 / 35 | 54 | none | REFA-4 landed; treat historical "yes" as partial |
 | `src/sovereign/repositories/class-identity-members-repository.php` | 138 | 15 | 1045 / 28 | 55 | none | REFA-5 landed; treat historical "yes" as partial |
-| `js/admin/styles/components/_workbench.scss` | 1425 | — | 1159; "83 px" | "80 px" | n/a | 2026-09-09: **66** `\d+px` literals, **0** hex, 38 `font-size`, 18 `font-weight`, 1 `box-shadow`. Re-count at any further token slice; the 80 vs 83 disagreement is obsolete. |
+| `js/admin/styles/components/_workbench.scss` | 1425 | — | 1159; "83 px" | "80 px" | n/a | 2026-09-09 live sr-004: **0** hex; **38** `font-size:` decls all `var(--acx-text-*)`; **18** `font-weight:` decls all `var(--acx-font-weight-*)`; 1 `box-shadow` already `var(--acx-shadow-card)`. Property-name grep hits 39/19 only because the closing comment names both families. Live `\d+px`: 34×`1px` borders (out of sr-004) plus 2px focus strokes and component layout widths also scoped out. **No remaining sr-004 token debt** in color/radius/font-size/font-weight/shadow. |
 | `src/sovereign/sync/class-split-topology-command-drain.php` | 1025 | 3 | 799 / 21 | 44 | **yes** — one `START TRANSACTION` at ~L771 with ROLLBACK/COMMIT | grew after REFA-6; remaining inline txn is REFA-9/drain follow-up |
 | `src/api/class-clusters-controller.php` | 253 | 14 | 770 / 23 | — | none | REFA-7 landed |
 | `src/sovereign/sync/class-outbox-drain.php` | 652 | 14 | 680 / 24 | — | **none** | REFA-6 landed; do not plan "preserve inline transactions" here |
 
 Calibration: God Class was the 2026-06-07 smell; the eight targets are decomposed. `run_transactional` exists and is in use on cluster mutation services. 10 `.tsx` over 300 lines remain deferred (`REFA-TS-DEBT-01`). REFA-1 has merged, so the live REFA-2 merge-churn gate is closed; any new clusters-repo work still sequences after whatever PHP REFA task is live.
 
-**px/hex done-criterion for a future token pass:** zero raw sr-004-governed literals (color, radius, font-size, font-weight, shadow). Count them at slice start with a script, not from this table.
+**px/hex done-criterion:** zero raw sr-004-governed literals (color, radius, font-size, font-weight, shadow). 2026-09-09 live count already meets that for those families. Remaining `px` are out of sr-004 (1px borders, 2px strokes, layout widths). Any future spacing-token slice must re-count with a script, not this table.
 
 ## Applied Concepts from Sources
 
@@ -110,7 +112,7 @@ Exit criteria:
 
 ### Phase 2: Stylesheet token debt -- landed (REFA-3); residual literals remain
 
-> **Status**: REFA-3 landed; 2026-09-09 still shows 66 px / 38 font-size / 18 font-weight / 1 box-shadow in `_workbench.scss` (file grew 1159→1425 LOC). Further tokenization is a new slice, not a restart of REFA-3's original "80 vs 83 px" count.
+> **Status**: REFA-3 landed. 2026-09-09: live sr-004 families in `_workbench.scss` are tokenized (0 hex, 0 raw font-size/font-weight/shadow). Remaining live `px` are 1px borders / 2px strokes / layout widths (out of sr-004). File grew 1159→1425 LOC. Further spacing-token work is a new slice, not a restart of REFA-3's original "80 vs 83 px" count.
 > **Task plans**: `docs/tasks/tech-debt/REFA-3-workbench-scss-tokenization-task-plan.md`
 
 **Goal**: Tokenize `_workbench.scss`.
@@ -188,9 +190,9 @@ Exit criteria:
 - [x] REFA-1 merged (cluster-mutations controller → composition root + services).
 - [x] REFA-2 merged (clusters repository split + N+1 audit + schema-parity test).
 
-## Phase 2: Stylesheet token debt -- landed (residuals remain; re-count at next slice)
+## Phase 2: Stylesheet token debt -- landed (sr-004 families tokenized)
 
-- [x] REFA-3 merged (`_workbench.scss` tokenized across all 5 sr-004 families; dangling `--acx-radius-*`/`--acx-text-*` defined; radius/font corrections re-baselined; `toHaveScreenshot` guard added; `_media-selection.scss` consumers verified). Residual raw literals: see Current State 2026-09-09 recount.
+- [x] REFA-3 merged (`_workbench.scss` tokenized across all 5 sr-004 families; dangling `--acx-radius-*`/`--acx-text-*` defined; radius/font corrections re-baselined; `toHaveScreenshot` guard added; `_media-selection.scss` consumers verified). Remaining live `px` are 1px borders / 2px strokes / layout widths this epic scopes out of sr-004 — see Current State 2026-09-09 recount.
 
 ## Phase 3: Job lifecycle + members repository -- landed
 

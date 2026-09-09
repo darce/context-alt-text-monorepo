@@ -25,7 +25,7 @@ Ranked by ROI (impact × safety × low blast radius):
 | 7 | `src/api/class-clusters-controller.php` | 770 | — | yes (`ClustersControllerTest`) | God controller | Extract Class |
 | 8 | `src/sovereign/sync/class-outbox-drain.php` | 680 | — | yes (`OutboxDrainTest`) | Loop+conditional sprawl | Split Loop |
 
-**Start with #1.** Highest LOC, most routes, mutation-critical, and only *partial* coverage — biggest readability win and the clearest seam (route registration stays; handler logic moves to focused services).
+**Do not start with #1.** REFA-1..8 already landed (see Closure). The table above is a 2026-06-07 scan record, not a queue. Remaining work is **REFA-9** (`run_transactional` on split-topology's leftover inline transaction) and the epic's Deferred list (TS splits, optional spacing-token follow-up, delete this companion per REFA-PA-07). Do not restart cluster-mutations / god-controller decomposition.
 
 ---
 
@@ -90,7 +90,7 @@ Two Hats: refactor hat XOR feature hat — never both in one commit (Fowler Ch2)
 ### REFA-6+ — drains (`split-topology` 799, `outbox-drain` 680)
 - **Move:** Split Loop + Extract Function (Fowler). Preserve append-only outbox payload semantics (backend-php; DDIA Ch4 — don't rewrite enqueued meaning).
 
-**Sequencing:** REFA-3 (SCSS) can start immediately in parallel (no PHP overlap). REFA-1 first among PHP (highest value, needs char-tests). REFA-2 next (shares cluster domain with REFA-1 — do sequentially to avoid merge churn). REFA-4/5/6 independent thereafter.
+**Sequencing (historical, 2026-06-07):** REFA-3 (SCSS) in parallel; REFA-1 first among PHP; REFA-2 next (cluster-domain merge churn). **2026-09-09:** that sequence is done. Author remaining work from the epic Deferred list / REFA-9 only.
 
 ---
 

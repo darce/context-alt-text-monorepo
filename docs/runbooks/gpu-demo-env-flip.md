@@ -77,7 +77,7 @@ scp scripts/deploy/preflight-gpu-env.sh ubuntu@acx-backend.tail1a44b8.ts.net:/tm
 scp scripts/deploy/lib/gpu-env-contract.sh ubuntu@acx-backend.tail1a44b8.ts.net:/tmp/acx-gpu-preflight/lib/
 scp infra/oci/demo/lib/describe-gate.sh ubuntu@acx-backend.tail1a44b8.ts.net:/tmp/acx-gpu-preflight/lib/
 scp scripts/deploy/lib/verify-live-gpu.sh ubuntu@acx-backend.tail1a44b8.ts.net:/tmp/acx-gpu-preflight/lib/
-ssh ubuntu@acx-backend.tail1a44b8.ts.net 'chmod 700 /tmp/acx-gpu-preflight/preflight-gpu-env.sh /tmp/acx-gpu-preflight/lib/verify-live-gpu.sh && sudo /tmp/acx-gpu-preflight/preflight-gpu-env.sh --check-reaper /opt/acx-backend/prod/secrets/.env /opt/acx-backend/demo/secrets/.env'
+ssh ubuntu@acx-backend.tail1a44b8.ts.net 'chmod 700 /tmp/acx-gpu-preflight/preflight-gpu-env.sh /tmp/acx-gpu-preflight/lib/verify-live-gpu.sh && sudo /tmp/acx-gpu-preflight/preflight-gpu-env.sh --check-reaper /opt/acx-backend/prod/.env /opt/acx-backend/demo/secrets/.env'
 ```
 
 If this optional check is run before the producer change, leave the staged
@@ -108,23 +108,38 @@ Use this producer-to-consumer order for the live flip:
    published yet (`OnActiveSec` delays the first tick). Runtime reaper cycles
    stay fail-closed on missing or stale snapshots; do not skip this
    convergence, and do not start the reaper unit by hand before deploy prod.
-3. Redeploy the prod API and wait for its health/adapter verification to pass.
+3. On a cold or partially converged host, stop for the producer-preparation
+   gate before invoking the production deploy. The standard recognition
+   deploy verifies every environment in
+   `gpu-snapshot-deployments.conf` after restart; it is an aggregate release
+   gate, not a first-producer bootstrap, and rolls back if any registered
+   sibling has no fresh snapshot. The deployment helper must first provide a
+   scoped producer-preparation operation that proves the selected image,
+   effective `/run/acx-write/<environment>/describe-load.json` writer, valid
+   schema, and freshness for each producer being brought up. If that scoped
+   operation is unavailable, stop and request it from the deployment owner.
+   Do not use `ACX_VERIFY_OPTIONAL` or fabricate zero-valued snapshots to get
+   past the aggregate gate.
+   Once that preparation has succeeded, run the full live snapshot checker
+   before the production deploy as a fail-closed proof that the aggregate
+   verifier will not reject a missing or stale registered sibling.
+4. Redeploy the prod API and wait for its health/adapter verification to pass.
    That publish is what makes the load snapshots exist for the later live
    checker and for the first timer-driven reaper cycle.
-4. Verify both env halves with `preflight-gpu-env.sh --check-reaper` after the
+5. Verify both env halves with `preflight-gpu-env.sh --check-reaper` after the
    lifecycle convergence and before publishing any demo descriptions.
-5. Run the live GPU snapshot checker after lifecycle convergence:
+6. Run the live GPU snapshot checker after lifecycle convergence:
    `GPU_SNAPSHOT_ENV=prod make check-gpu-snapshots-live`. This is mandatory;
    it validates every registered `describe-load.json` for schema, readability,
    and freshness on the host, rather than only checking that the files are
    non-empty. The checker must finish with its `OK:` line before continuing.
-6. Run `deploy-demo` with `ACX_DEMO_GPU_PREFLIGHT=1`, so the deploy repeats the
+7. Run `deploy-demo` with `ACX_DEMO_GPU_PREFLIGHT=1`, so the deploy repeats the
    reaper/environment gate immediately before the demo stack is brought up.
    Repeat `GPU_SNAPSHOT_ENV=prod make check-gpu-snapshots-live` immediately
    before that deploy so a slow artifact copy cannot exceed the snapshot
    freshness budget after the earlier check. `--check-reaper` also rejects
    any already-published load snapshot that has gone stale.
-7. Confirm the bounded first-burst result (`Describe burst bounded` and
+8. Confirm the bounded first-burst result (`Describe burst bounded` and
    `PASS demo first describe burst`) and retain the preflight's `MANUAL STOP
    fallback` line as the operator's reaper-stop backstop.
 
@@ -138,6 +153,7 @@ ACX_DEPLOY_GPU_LIFECYCLE=1 \
   GPU_INSTANCE_ID="$GPU_INSTANCE_ID" \
   ACX_GPU_READY_URL="$GPU_READY_URL" \
   scripts/deploy/recognition-service.sh gpu-lifecycle
+GPU_SNAPSHOT_ENV=prod make check-gpu-snapshots-live
 CONFIRM=PROMOTE scripts/deploy/recognition-service.sh deploy prod
 ssh ubuntu@acx-backend.tail1a44b8.ts.net 'set -euo pipefail
 for timer in acx-gpu-start.timer acx-gpu-reap.timer; do

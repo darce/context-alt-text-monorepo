@@ -350,6 +350,11 @@
     justify-self: start;
   }
 
+  &__lightbox {
+    box-sizing: border-box;
+    max-width: calc(100vw - 32px);
+  }
+
   &__lightbox-crop {
     display: flex;
     justify-content: center;

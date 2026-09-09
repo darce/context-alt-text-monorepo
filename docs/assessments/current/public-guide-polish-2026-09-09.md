@@ -67,3 +67,6 @@ text is a hard-coded example, not source alt text. Commons already captions the
 source with both names. Validation: 111 focused tests, TypeScript and build pass.
 Plugin-only deployment verified its ZIP checksum; 0.0.10 rollback is retained at
 /opt/acx-backend/demo/rollback-guidepolish-0.0.10/alt-context.
+
+Live visual QA also capped the comparison dialog to the mobile viewport with
+16 px side margins; reference images remain 80 px squares.

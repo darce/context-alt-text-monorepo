@@ -72,7 +72,8 @@ def install_probe_python(fake_bin: Path) -> None:
     )
     system_python.chmod(0o755)
     bootstrap = fake_bin / "probe-python.py"
-    bootstrap.write_text("""import subprocess
+    bootstrap.write_text(
+        """import subprocess
 import sys
 system_python = __SYSTEM_PYTHON__
 original_run = subprocess.run
@@ -93,7 +94,8 @@ elif args[0] == "-":
 else:
     raise RuntimeError("unexpected preflight Python invocation")
 exec(compile(code, "<preflight-test>", "exec"), {"__name__": "__main__"})
-""".replace("__SYSTEM_PYTHON__", repr(str(system_python))))
+""".replace("__SYSTEM_PYTHON__", repr(str(system_python)))
+    )
     wrapper = fake_bin / "python3"
     wrapper.write_text(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(str(bootstrap))} "$@"\n')
     wrapper.chmod(0o755)
@@ -239,7 +241,7 @@ esac
     if dns_address is not None:
         getent.write_text(
             "#!/usr/bin/env bash\n"
-            'if [ "${1:-}" = group ]; then echo \'acxapi:x:10001:\'; exit 0; fi\n'
+            "if [ \"${1:-}\" = group ]; then echo 'acxapi:x:10001:'; exit 0; fi\n"
             '[ "${1:-}" = ahosts ] || exit 2\n'
             "printf '%s STREAM fake\\n' " + '"$FAKE_DNS_ADDRESS"\n'
         )
@@ -1137,7 +1139,10 @@ def test_11_reaper_preflight_rejects_an_unresolvable_supplementary_gid(tmp_path:
     assert "216/GROUP" not in healthy.stderr
 
     result = run_preflight(
-        tmp_path, check_reaper=True, systemctl_script=unit, group_10001_present=False,
+        tmp_path,
+        check_reaper=True,
+        systemctl_script=unit,
+        group_10001_present=False,
     )
     assert result.returncode != 0
     assert "216/GROUP" in result.stderr
@@ -1190,9 +1195,7 @@ def test_11_reaper_preflight_accepts_quoted_last_wins_systemd_assignment(tmp_pat
 @pytest.mark.parametrize("custom_registry", [False, True])
 def test_11_installer_payload_passes_reaper_preflight(tmp_path: Path, custom_registry: bool) -> None:
     installer = (ROOT / "scripts/deploy/gpu-lifecycle-install.sh").read_text()
-    ssh_options_match = re.search(
-        r"(?ms)^SSH_OPTIONS=\(\n(?P<body>.*?)^\)", installer
-    )
+    ssh_options_match = re.search(r"(?ms)^SSH_OPTIONS=\(\n(?P<body>.*?)^\)", installer)
     assert ssh_options_match is not None, "installer must define its SSH_OPTIONS array"
     ssh_options = shlex.split(ssh_options_match.group("body"))
     assert ssh_options == [
@@ -1205,13 +1208,9 @@ def test_11_installer_payload_passes_reaper_preflight(tmp_path: Path, custom_reg
         "-o",
         "ServerAliveCountMax=3",
     ], "installer SSH_OPTIONS changed; update transport validation deliberately"
-    ssh_options_assignment = "SSH_OPTIONS=(" + " ".join(
-        shlex.quote(option) for option in ssh_options
-    ) + ")"
+    ssh_options_assignment = "SSH_OPTIONS=(" + " ".join(shlex.quote(option) for option in ssh_options) + ")"
     staging = installer.split("# Validate the identity at the boundary where remote transport begins.", 1)[1]
-    staging = (
-        staging.split('run_with_deadline "remote release validation and switch"', 1)[0]
-    )
+    staging = staging.split('run_with_deadline "remote release validation and switch"', 1)[0]
     service_root = tmp_path / "service"
     registry = ROOT / "scripts/deploy/gpu-snapshot-deployments.conf"
     if custom_registry:
@@ -1746,15 +1745,30 @@ def test_runbook_requires_reaper_fail_fast_and_checksum_bound_reviewed_artifact(
     assert "GPU_SNAPSHOT_ENV=prod make check-gpu-snapshots-live" in runbook
     deploy_block = runbook.split("## 3. Deploy in producer-then-consumer order", 1)[1]
     deploy_block = deploy_block.split("```bash\n", 1)[1].split("```", 1)[0]
-    assert deploy_block.index("scripts/deploy/recognition-service.sh gpu-lifecycle") < deploy_block.index(
-        "GPU_SNAPSHOT_ENV=prod make check-gpu-snapshots-live"
-    ) < deploy_block.index("ACX_DEMO_GPU_PREFLIGHT=1")
+    assert (
+        deploy_block.index("scripts/deploy/recognition-service.sh gpu-lifecycle")
+        < deploy_block.index("GPU_SNAPSHOT_ENV=prod make check-gpu-snapshots-live")
+        < deploy_block.index("ACX_DEMO_GPU_PREFLIGHT=1")
+    )
     assert "MANUAL STOP fallback" in runbook
     assert "ls -t dist/alt-context-*.zip" not in runbook
     assert "PLUGIN_ZIP_SHA256=replace-with-reviewed-sha256" in runbook
     assert 'shasum -a 256 "$PLUGIN_ZIP"' in runbook
+    assert "command -v sha256sum" in deploy_block
+    assert "GPU_SNAPSHOT_SHA256=gsha256sum" in deploy_block
+    assert "export GPU_SNAPSHOT_SHA256" in deploy_block
     assert "printf 'Deploying reviewed plugin artifact: %s\\n'" in runbook
     assert "oci compute instance action --action STOP" in runbook
+
+
+def test_runbook_converges_gpu_lifecycle_before_prod_deploy() -> None:
+    runbook = (ROOT / "docs/runbooks/gpu-demo-env-flip.md").read_text(encoding="utf-8")
+    deploy_block = runbook.split("## 3. Deploy in producer-then-consumer order", 1)[1]
+    deploy_block = deploy_block.split("```bash\n", 1)[1].split("```", 1)[0]
+
+    assert deploy_block.index("scripts/deploy/recognition-service.sh gpu-lifecycle") < deploy_block.index(
+        "CONFIRM=PROMOTE scripts/deploy/recognition-service.sh deploy prod"
+    )
 
 
 @pytest.mark.parametrize("tampered", [False, True])
@@ -1780,6 +1794,19 @@ def test_runbook_deploys_the_checksum_bound_artifact_not_newest_mtime(tmp_path: 
     ).replace("replace-with-reviewed-sha256", reviewed_sha256)
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
+    fake_terraform = fake_bin / "terraform"
+    fake_terraform.write_text(
+        "#!/usr/bin/env bash\nprintf '%s\\n' 'ocid1.instance.oc1.phx.fakegpu'\n",
+        encoding="utf-8",
+    )
+    fake_terraform.chmod(0o700)
+    fake_lifecycle = tmp_path / "scripts/deploy/recognition-service.sh"
+    fake_lifecycle.parent.mkdir(parents=True)
+    fake_lifecycle.write_text(
+        '#!/usr/bin/env bash\n[ "$1" = gpu-lifecycle ] || exit 99\n',
+        encoding="utf-8",
+    )
+    fake_lifecycle.chmod(0o700)
     fake_ssh = fake_bin / "ssh"
     fake_ssh.write_text("#!/usr/bin/env bash\nexit 0\n")
     fake_ssh.chmod(0o700)
@@ -1787,13 +1814,14 @@ def test_runbook_deploys_the_checksum_bound_artifact_not_newest_mtime(tmp_path: 
         reviewed.write_bytes(b"tampered after review")
     fake_make = fake_bin / "make"
     fake_make.write_text(
-        '#!/usr/bin/env bash\nprintf \'%s\' "$PLUGIN_ZIP" > "$MAKE_ARTIFACT_LOG"\n',
+        '#!/usr/bin/env bash\n[ "$1" = deploy-demo ] || exit 0\nprintf \'%s\' "$PLUGIN_ZIP" > "$MAKE_ARTIFACT_LOG"\n',
         encoding="utf-8",
     )
     fake_make.chmod(0o700)
     env = os.environ.copy()
     env["PATH"] = f"{fake_bin}:{env['PATH']}"
     env["MAKE_ARTIFACT_LOG"] = str(tmp_path / "artifact.log")
+    env["GPU_READY_URL"] = "http://127.0.0.1:8000/health"
 
     result = subprocess.run(["bash"], input=deploy_block, cwd=tmp_path, env=env, text=True, capture_output=True)
 

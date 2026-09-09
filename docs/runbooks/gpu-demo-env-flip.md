@@ -86,9 +86,9 @@ check as permission to publish the demo.
 
 ## 3. Deploy in producer-then-consumer order
 
-Deploy the description producer first. Deploy WordPress only after the
-recognition deploy's verification passes, so the demo never publishes against
-an unverified adapter.
+Converge the backend lifecycle before the description producer redeploy. Deploy
+WordPress only after the recognition deploy's verification passes, so the demo
+never publishes against an unverified adapter.
 
 ### Green ordering
 
@@ -97,13 +97,13 @@ Use this producer-to-consumer order for the live flip:
 1. Flip the description SERVICE producer profile by setting
    `ACX_DESCRIPTION_ADAPTER` on the running producer. The producer is the
    authority; do not make a demo-only env edit stand in for this change.
-2. Redeploy the prod API and wait for its health/adapter verification to pass.
-3. Converge the backend lifecycle release with the producer deployed. The
+2. Converge the backend lifecycle release before the producer redeploy. The
    `gpu-lifecycle` command stages the module atomically, provisions the
    `/run/acx-write/<environment>` producer directories, installs the
    `--load-dir /run/acx-write` units with the durable lease path and shared
    lifecycle lock, and verifies both timers are enabled and active. Do not
    enable an old unit by hand or copy the module directly into a live path.
+3. Redeploy the prod API and wait for its health/adapter verification to pass.
 4. Verify both env halves with `preflight-gpu-env.sh --check-reaper` after the
    lifecycle convergence and before publishing any demo descriptions.
 5. Run the live GPU snapshot checker after lifecycle convergence:
@@ -121,13 +121,13 @@ Use this producer-to-consumer order for the live flip:
 set -euo pipefail
 # Persist the same PHP reader for bootstrap; sync-demo preserves this helper.
 ssh ubuntu@acx-backend.tail1a44b8.ts.net 'sudo install -m 644 /tmp/acx-gpu-preflight/lib/gpu-env-contract.sh /opt/acx-backend/demo/lib/gpu-env-contract.sh'
-CONFIRM=PROMOTE scripts/deploy/recognition-service.sh deploy prod
 GPU_INSTANCE_ID="${GPU_INSTANCE_ID:-$(terraform -chdir=infra/oci output -raw gpu_instance_id)}"
 GPU_READY_URL="${GPU_READY_URL:?Set GPU_READY_URL to the private GPU service /health URL}"
 ACX_DEPLOY_GPU_LIFECYCLE=1 \
   GPU_INSTANCE_ID="$GPU_INSTANCE_ID" \
   ACX_GPU_READY_URL="$GPU_READY_URL" \
   scripts/deploy/recognition-service.sh gpu-lifecycle
+CONFIRM=PROMOTE scripts/deploy/recognition-service.sh deploy prod
 ssh ubuntu@acx-backend.tail1a44b8.ts.net 'set -euo pipefail
 for timer in acx-gpu-start.timer acx-gpu-reap.timer; do
   systemctl is-enabled --quiet "$timer"
@@ -142,6 +142,17 @@ for environment in dev dev-fir staging prod; do
     exit 1
   }
 done'
+# GNU coreutils uses sha256sum; Homebrew installs that command as gsha256sum
+# on macOS. Select the local payload digest tool before opening SSH.
+if command -v sha256sum >/dev/null 2>&1; then
+  GPU_SNAPSHOT_SHA256=sha256sum
+elif command -v gsha256sum >/dev/null 2>&1; then
+  GPU_SNAPSHOT_SHA256=gsha256sum
+else
+  echo 'Install GNU coreutils (macOS: brew install coreutils) to provide sha256sum or gsha256sum.' >&2
+  exit 1
+fi
+export GPU_SNAPSHOT_SHA256
 GPU_SNAPSHOT_ENV=prod make check-gpu-snapshots-live
 PLUGIN_ZIP=dist/alt-context-reviewed.zip # Replace with the artifact named in the review record.
 PLUGIN_ZIP_SHA256=replace-with-reviewed-sha256 # Replace with that record's SHA-256.

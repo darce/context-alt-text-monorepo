@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tracked plan-accept handler.
 
-Makefile.d/lifecycle.mk must invoke this file through ACX_LIFECYCLE_HANDLERS.
+mk/lane-lifecycle.mk must invoke this file through ACX_LIFECYCLE_HANDLERS.
 The external workbay_lifecycle package is not the source of truth here.
 """
 

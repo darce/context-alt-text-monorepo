@@ -16,8 +16,8 @@ From the repository root, review the complete worked blocks first:
 set -euo pipefail
 sed -n '/# --- GPU burst profile (demo) ---/,+35p' apps/prototype-description-service/.env.prod.example
 sed -n '/# --- GPU burst profile (demo) ---/,+35p' infra/oci/demo/.env.example
-ssh ubuntu@acx-backend.tail1a44b8.ts.net 'sudo cp -a /opt/acx-backend/prod/secrets/.env /opt/acx-backend/prod/secrets/.env.pre-gpu-flip && sudo cp -a /opt/acx-backend/demo/secrets/.env /opt/acx-backend/demo/secrets/.env.pre-gpu-flip'
-ssh -t ubuntu@acx-backend.tail1a44b8.ts.net 'sudoedit /opt/acx-backend/prod/secrets/.env /opt/acx-backend/demo/secrets/.env'
+ssh ubuntu@acx-backend.tail1a44b8.ts.net 'sudo cp -a /opt/acx-backend/prod/.env /opt/acx-backend/prod/.env.pre-gpu-flip && sudo cp -a /opt/acx-backend/demo/secrets/.env /opt/acx-backend/demo/secrets/.env.pre-gpu-flip'
+ssh -t ubuntu@acx-backend.tail1a44b8.ts.net 'sudoedit /opt/acx-backend/prod/.env /opt/acx-backend/demo/secrets/.env'
 ```
 
 Set `ACX_DESCRIPTION_ADAPTER=gpu_qwen30b` in both files. Set the same private
@@ -108,18 +108,20 @@ Use this producer-to-consumer order for the live flip:
    published yet (`OnActiveSec` delays the first tick). Runtime reaper cycles
    stay fail-closed on missing or stale snapshots; do not skip this
    convergence, and do not start the reaper unit by hand before deploy prod.
-3. On a cold or partially converged host, stop for the producer-preparation
-   gate before invoking the production deploy. The standard recognition
-   deploy verifies every environment in
+3. On a cold or partially converged host, run the scoped producer-preparation operation
+   before invoking the production deploy:
+   `CONFIRM=PROMOTE scripts/deploy/recognition-service.sh prepare-producer prod`.
+   That implemented command reuses the full selected-env ship (preserve,
+   build/push, promote_gate smoke, digest-pinned restart) and then checks the
+   selected image plus the effective `/run/acx-write/prod/describe-load.json`
+   writer, schema, and freshness. It does not start every registered
+   environment and does not delete `gpu-snapshot-deployments.conf`; bringing
+   up `dev-fir` or other siblings is an operator choice. The standard
+   recognition deploy verifies every environment in
    `gpu-snapshot-deployments.conf` after restart; it is an aggregate release
    gate, not a first-producer bootstrap, and rolls back if any registered
-   sibling has no fresh snapshot. The deployment helper must first provide a
-   scoped producer-preparation operation that proves the selected image,
-   effective `/run/acx-write/<environment>/describe-load.json` writer, valid
-   schema, and freshness for each producer being brought up. If that scoped
-   operation is unavailable, stop and request it from the deployment owner.
-   Do not use `ACX_VERIFY_OPTIONAL` or fabricate zero-valued snapshots to get
-   past the aggregate gate.
+   sibling is missing or stale. Do not use `ACX_VERIFY_OPTIONAL` or fabricate zero-valued snapshots
+   to get past the aggregate gate.
    Once that preparation has succeeded, run the full live snapshot checker
    before the production deploy as a fail-closed proof that the aggregate
    verifier will not reject a missing or stale registered sibling.
@@ -153,6 +155,7 @@ ACX_DEPLOY_GPU_LIFECYCLE=1 \
   GPU_INSTANCE_ID="$GPU_INSTANCE_ID" \
   ACX_GPU_READY_URL="$GPU_READY_URL" \
   scripts/deploy/recognition-service.sh gpu-lifecycle
+CONFIRM=PROMOTE scripts/deploy/recognition-service.sh prepare-producer prod
 GPU_SNAPSHOT_ENV=prod make check-gpu-snapshots-live
 CONFIRM=PROMOTE scripts/deploy/recognition-service.sh deploy prod
 ssh ubuntu@acx-backend.tail1a44b8.ts.net 'set -euo pipefail
@@ -245,7 +248,7 @@ separate block rather than appending them to the happy path.
 
 ```bash
 set -euo pipefail
-ssh ubuntu@acx-backend.tail1a44b8.ts.net 'sudo cp -a /opt/acx-backend/prod/secrets/.env.pre-gpu-flip /opt/acx-backend/prod/secrets/.env && sudo cp -a /opt/acx-backend/demo/secrets/.env.pre-gpu-flip /opt/acx-backend/demo/secrets/.env && sudo systemctl restart acx-prod.service acx-demo.service'
+ssh ubuntu@acx-backend.tail1a44b8.ts.net 'sudo cp -a /opt/acx-backend/prod/.env.pre-gpu-flip /opt/acx-backend/prod/.env && sudo cp -a /opt/acx-backend/demo/secrets/.env.pre-gpu-flip /opt/acx-backend/demo/secrets/.env && sudo systemctl restart acx-prod.service acx-demo.service'
 ```
 
 ```bash

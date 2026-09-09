@@ -69,7 +69,7 @@ class Admin {
 	);
 
 	private string $devServer;
-	private string $manifestPath;
+	private ?string $manifestPathOverride;
 	private ?ViteManifest $viteManifest = null;
 	private ?string $assetBootstrapFailureMessage = null;
 	private bool $assetBootstrapNoticeHooked = false;
@@ -77,9 +77,9 @@ class Admin {
 
 	public function __construct( ?string $manifestPath = null ) {
 		$this->devServer = defined('ACX_VITE_DEV_SERVER') ? (string) ACX_VITE_DEV_SERVER : '';
-		$this->manifestPath = null !== $manifestPath && '' !== $manifestPath
+		$this->manifestPathOverride = null !== $manifestPath && '' !== $manifestPath
 			? $manifestPath
-			: ACX_PLUGIN_DIR . 'public/assets/dist/.vite/manifest.json';
+			: null;
 	}
 
 	public function init(): void {
@@ -293,16 +293,24 @@ class Admin {
 
 	private function vite_manifest(): ViteManifest {
 		if ( null === $this->viteManifest ) {
-			// Private build_asset_url is not a valid callable array from outside this class.
-			$this->viteManifest = new ViteManifest(
-				$this->manifestPath,
-				function ( string $relative ): string {
-					return $this->build_asset_url( $relative );
-				}
-			);
+			if ( null === $this->manifestPathOverride ) {
+				$this->viteManifest = ViteManifest::from_plugin();
+			} else {
+				// Private build_asset_url is not a valid callable array from outside this class.
+				$this->viteManifest = new ViteManifest(
+					$this->manifestPathOverride,
+					function ( string $relative ): string {
+						return $this->build_asset_url( $relative );
+					}
+				);
+			}
 		}
 
 		return $this->viteManifest;
+	}
+
+	private function resolved_manifest_path(): string {
+		return $this->vite_manifest()->manifest_path();
 	}
 
 	/**
@@ -332,7 +340,8 @@ class Admin {
 			return;
 		}
 
-		$this->assetBootstrapFailureMessage = $reason . ' Manifest path: ' . $this->manifestPath;
+		$manifest_path                      = $this->resolved_manifest_path();
+		$this->assetBootstrapFailureMessage = $reason . ' Manifest path: ' . $manifest_path;
 
 		if ( ! $this->assetBootstrapNoticeHooked ) {
 			add_action( 'admin_notices', array( $this, 'render_asset_bootstrap_notice' ) );
@@ -347,7 +356,7 @@ class Admin {
 			'acx_admin_asset_bootstrap_failure',
 			$this->assetBootstrapFailureMessage,
 			array(
-				'manifest_path' => $this->manifestPath,
+				'manifest_path' => $manifest_path,
 				'reason'        => $reason,
 			)
 		);

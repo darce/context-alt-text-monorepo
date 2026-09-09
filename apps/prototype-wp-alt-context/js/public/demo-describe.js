@@ -16,6 +16,7 @@ export const PUBLIC_DEMO_ERROR_CODE = Object.freeze({
 const STATUSES = new Set(['pending', 'running', 'completed', 'completed_with_errors', 'failed', 'cancelled']);
 const PHASES = new Set(['queued', 'warming', 'describing', 'complete', 'failed', 'cancelled']);
 const GPU_STATES = new Set(['unknown', 'stopped', 'starting', 'warming', 'ready', 'degraded']);
+const DESCRIPTION_RESULT_TIERS = new Set(['provisional_cpu', 'final_gpu']);
 
 export class PublicDemoClientError extends Error {
   constructor(code, message, status = 0) {
@@ -96,6 +97,23 @@ export const parsePublicDemoEnvelope = (body) => {
     throw invalidResponse();
   }
 
+  const description = typeof body.description === 'string' ? body.description.trim() : '';
+  const hasCompletedDescription = body.status === 'completed' && description !== '';
+  let descriptionTier;
+  if (hasCompletedDescription) {
+    if (Object.prototype.hasOwnProperty.call(body, 'description_tier')) {
+      descriptionTier = body.description_tier;
+      if (
+        descriptionTier !== null
+        && (typeof descriptionTier !== 'string' || !DESCRIPTION_RESULT_TIERS.has(descriptionTier))
+      ) {
+        throw invalidResponse();
+      }
+    } else {
+      descriptionTier = null;
+    }
+  }
+
   return {
     run_id: body.run_id,
     status: body.status,
@@ -103,7 +121,8 @@ export const parsePublicDemoEnvelope = (body) => {
     progress: { done: body.progress.done, total: body.progress.total },
     ...(hasGpuState ? { gpu_state: body.gpu_state } : {}),
     ...(typeof body.deadline_seconds === 'number' ? { deadline_seconds: body.deadline_seconds } : {}),
-    ...(typeof body.description === 'string' ? { description: body.description.trim() } : {}),
+    ...(typeof body.description === 'string' ? { description } : {}),
+    ...(hasCompletedDescription ? { description_tier: descriptionTier } : {}),
     ...(isRecord(body.error) ? { error: { code: body.error.code, message: body.error.message } } : {}),
   };
 };

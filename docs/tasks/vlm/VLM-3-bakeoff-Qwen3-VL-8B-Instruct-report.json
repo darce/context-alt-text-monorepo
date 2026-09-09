@@ -3,6 +3,12 @@
   "kind": "pending_report",
   "task_ref": "VLM-3",
   "model_id": "Qwen3-VL-8B-Instruct",
+  "model_version": "F16",
   "status": "pending_live_gpu_bakeoff",
-  "reason": "Requires OCI GPU endpoint and golden images."
+  "reason": "Requires OCI GPU endpoint and golden images. Canonical acx-eval/v1 kind=report regeneration is locked pending by scripts/test_vlm3_gpu_bakeoff_artifacts.py; measured markdown/run-record siblings are not a substitute for the indexed JSON.",
+  "notes": [
+    "Provenance correction (2026-09-09): the linked run record and markdown report measure F16. The candidate index and launch command were corrected from bf16 to F16; this pending JSON remains a placeholder and does not make the linked measurement canonical."
+  ],
+  "measured_markdown": "VLM-3-bakeoff-Qwen3-VL-8B-Instruct-report.md",
+  "measured_run_record": "VLM-3-bakeoff-Qwen3-VL-8B-Instruct-run-record.json"
 }

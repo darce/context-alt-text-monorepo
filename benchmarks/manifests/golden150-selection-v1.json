@@ -36,7 +36,8 @@
  "coverage_gaps": [
   "Occlusion strata (occlusion_other, sunglasses, masked, blur) are known for only 150 of 646 corpus images, all hand-tagged. A full-corpus detector pass did NOT close this: calibrated against those 150 labels, every occlusion signal scored at chance (AUC 0.59-0.68), so no threshold can extend them. Natural-occlusion coverage needs either operator tagging or synthetic generation (synthetic_occlusion.py), not more detection.",
   "`profile` IS derived corpus-wide (AUC 0.782) but at ~0.67 precision it is a shortlist: roughly a third of derived profile media are not profile. Selection uses it for ordering only, and slice_tags_derived is never merged into slice_tags. The operator should confirm pose on the 150 selected images.",
-  "Identity labels descend from operator cluster merges, so they are ground truth for naming but must not be reused to score the clustering that produced them."
+  "Identity labels descend from operator cluster merges, so they are ground truth for naming but must not be reused to score the clustering that produced them.",
+  "YuNet t=0.3 emits zero boxes on three named-identity corpus images (media 221, 271, 556). Media 271 is in recognition_core. A face the detector never emits never reaches the recognizer, so scoring 271 as recognition accuracy silently depresses that stratum. Keep the image: it is a DETECTION discriminator between stacks (FIR replaces YuNet). Score it under detection, not recognition_core identity matching. benchmarks/tools/build_golden_selection.py is not in this tree; the scoring_role field on the 271 row is the committed correction."
  ],
  "realized": {
   "by_stratum": {
@@ -501,7 +502,10 @@
    ],
    "slice_tags_derived": [],
    "slice_tags_source": "operator_hand",
-   "detected_face_count": 0
+   "detected_face_count": 0,
+   "yunet_t030_zero_detection": true,
+   "scoring_role": "detection_discriminator",
+   "scoring_note": "Named identity, YuNet t=0.3 emits zero boxes. Do not score as recognition_core identity-match. Keep as a detector-stack discriminator (masked+profile)."
   },
   {
    "stratum": "recognition_core",

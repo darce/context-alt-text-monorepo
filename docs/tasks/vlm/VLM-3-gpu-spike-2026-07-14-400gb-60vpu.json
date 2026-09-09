@@ -70,6 +70,7 @@
   "notes": [
     "Artifact produced by scripts/gpu_spike_bench.py (VLM-3B Slice 7a).",
     "Warm-start reports p50/p95 percentiles, not means [PERF-01].",
-    "Warm-start p95 target 90.0s: FAIL (p95=92.478s)."
+    "Warm-start p95 target 90.0s: FAIL (p95=92.478s).",
+    "ISSUEDAG-1: a10_quota_confirmed remains false with source pending_operator. Live measurement does not confirm A10 service limits. Do not treat narrative 'quota granted' / 'quota observed' as this field. Operator must capture authenticated oci limits or console output on the live host before flipping it; never fabricate true."
   ]
 }

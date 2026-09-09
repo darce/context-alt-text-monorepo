@@ -50,13 +50,13 @@
     },
     {
       "model_id": "Qwen3-VL-8B-Instruct",
-      "model_version": "bf16",
+      "model_version": "F16",
       "tier": "dense_fit",
       "a10_24gb_fit": "yes",
       "estimated_model_gb": 16,
       "license": "Apache-2.0-family-check-at-download",
       "reasoning_tuned": false,
-      "command": "ACX_EVAL_LIVE=1 GOLDEN_IMAGES_DIR=<golden> uv run python -m scripts.eval_harness.bakeoff --endpoint http://acx-gpu-burst:8000 --model-id Qwen3-VL-8B-Instruct --model-version bf16 --out ../../docs/tasks/vlm/VLM-3-bakeoff-Qwen3-VL-8B-Instruct-run-record.json",
+      "command": "ACX_EVAL_LIVE=1 GOLDEN_IMAGES_DIR=<golden> uv run python -m scripts.eval_harness.bakeoff --endpoint http://acx-gpu-burst:8000 --model-id Qwen3-VL-8B-Instruct --model-version F16 --out ../../docs/tasks/vlm/VLM-3-bakeoff-Qwen3-VL-8B-Instruct-run-record.json",
       "report_artifact": "VLM-3-bakeoff-Qwen3-VL-8B-Instruct-report.json"
     },
     {
@@ -83,13 +83,13 @@
     },
     {
       "model_id": "MiMo-VL-7B-RL",
-      "model_version": "AWQ_INT4",
+      "model_version": "BF16",
       "tier": "reference",
       "a10_24gb_fit": "headroom",
       "estimated_model_gb": 5,
       "license": "MIT",
       "reasoning_tuned": true,
-      "command": "ACX_EVAL_LIVE=1 GOLDEN_IMAGES_DIR=<golden> uv run python -m scripts.eval_harness.bakeoff --endpoint http://acx-gpu-burst:8000 --model-id MiMo-VL-7B-RL --model-version AWQ_INT4 --no-think --out ../../docs/tasks/vlm/VLM-3-bakeoff-MiMo-VL-7B-RL-run-record.json",
+      "command": "ACX_EVAL_LIVE=1 GOLDEN_IMAGES_DIR=<golden> uv run python -m scripts.eval_harness.bakeoff --endpoint http://acx-gpu-burst:8000 --model-id MiMo-VL-7B-RL --model-version BF16 --no-think --out ../../docs/tasks/vlm/VLM-3-bakeoff-MiMo-VL-7B-RL-run-record.json",
       "report_artifact": "VLM-3-bakeoff-MiMo-VL-7B-RL-report.json"
     },
     {

@@ -66,7 +66,8 @@ def _install_fail_closed_shims(
         "    ;;\n"
         "  test)\n"
         "    for arg in \"$@\"; do\n"
-        "      [[ \"$arg\" == -* ]] && continue\n"
+        "      # POSIX test operators are not paths: unary -f/-d/..., negation `!`.\n"
+        "      [[ \"$arg\" == -* || \"$arg\" == '!' ]] && continue\n"
         "      under_allowed \"$arg\" || { echo \"sudo test: path outside sandbox: $arg\" >&2; exit 2; }\n"
         "    done\n"
         "    exec test \"$@\"\n"
@@ -337,6 +338,8 @@ ssh() {{
     transport) return 255 ;;
     timeout) return 124 ;;
     generic) return 2 ;;
+    malformed) printf 'not-a-token\\n'; return 0 ;;
+    empty) return 0 ;;
     *)
       last="${{@: -1}}"
       bash -c "$last"
@@ -372,7 +375,10 @@ def test_inflight_confirmed_absent_skips_without_drain(tmp_path: Path, caller: s
 
 
 @pytest.mark.parametrize("caller", ["recover_persisted_cutover dev", "recover_interrupted_cutover"])
-@pytest.mark.parametrize("inject", ["transport", "timeout", "generic", "sudo_fail"])
+@pytest.mark.parametrize(
+    "inject",
+    ["transport", "timeout", "generic", "sudo_fail", "malformed", "empty"],
+)
 def test_inflight_probe_errors_refuse_recovery_and_do_not_drain(
     tmp_path: Path, caller: str, inject: str
 ) -> None:

@@ -1222,8 +1222,8 @@ def _run_determinism_children(
                 sys.exit(
                     f"determinism check ERROR [{label}]: child build_reports module "
                     f"differs from parent (environment/import-root drift) "
-                    f"seed={hash_seed} parent={parent_reports_file} "
-                    f"child={child_reports_file} ({regime}); stderr={proc.stderr!r}"
+                    f"seed={hash_seed} parent={_printable_path(parent_reports_file)} "
+                    f"child={_printable_path(child_reports_file)} ({regime}); stderr={proc.stderr!r}"
                 )
             json_differs = sub_json != base_json
             md_differs = sub_md != base_md

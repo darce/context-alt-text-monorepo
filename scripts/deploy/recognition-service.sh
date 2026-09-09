@@ -2798,8 +2798,11 @@ cutover_inflight_present() {
        fi"
   )" || rc=$?
   if (( rc != 0 )); then
+    # 1 is reserved for successful decoded ABSENT. Operational probe
+    # errors (SSH/auth/timeout/generic) must not collapse into that
+    # signal. TEST-15 / RES-02 / RLSE-03.
     warn "cutover inflight probe failed for ${env} (rc=${rc})"
-    return "${rc}"
+    return 2
   fi
   case "${output}" in
     PRESENT) return 0 ;;

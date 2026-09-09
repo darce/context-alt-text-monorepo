@@ -3423,3 +3423,159 @@ def test_cutover_failure_restart_runtime_ignores_evidence_phase() -> None:
     assert "cutover_failure_restart_runtime" in promote
     assert 'ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}" == "post_restart"' not in deploy
     assert 'ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}" == "post_restart"' not in promote
+
+
+def test_prepare_producer_cli_verifies_image_and_scoped_load() -> None:
+    """R3-01: producer-preparation is a real gate, not ACX_VERIFY_OPTIONAL."""
+    source = SCRIPT.read_text()
+    assert "prepare-producer <env>" in source
+    dispatch = source.split('case "$cmd" in', 1)[1]
+    assert "prepare-producer)" in dispatch
+    body = _function_body("do_prepare_producer")
+    assert "verify_running_image_matches_deployed" in body
+    assert "verify_scoped_producer_snapshots" in body
+    assert "ACX_VERIFY_OPTIONAL" not in body
+    scoped = _function_body("verify_scoped_producer_snapshots")
+    assert "/run/acx-write/" in scoped
+    assert "describe-load.json" in scoped
+    assert "written_at" in scoped
+    assert "queue_depth" in scoped
+    assert "ACX_VERIFY_OPTIONAL" not in scoped
+    gate = _function_body("verify_live_gpu_snapshots")
+    assert "sibling_gpu_snapshots_complete" in gate
+    assert "verify_scoped_producer_snapshots" in gate
+    assert gate.index("sibling_gpu_snapshots_complete") < gate.index("paste -sd,")
+
+
+def test_first_producer_uses_scoped_snapshot_gate_not_aggregate(tmp_path: Path) -> None:
+    """R3-01: missing sibling snapshots must not invoke the aggregate registry checker."""
+    records = tmp_path / "gate.log"
+    command = f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+sibling_gpu_snapshots_complete() {{ printf 'probe:%s\\n' "$1" >>"{records}"; return 1; }}
+verify_scoped_producer_snapshots() {{ printf 'scoped:%s\\n' "$1" >>"{records}"; return 0; }}
+ssh() {{ printf 'ssh:%s\\n' "$*" >>"{records}"; return 0; }}
+verify_live_gpu_snapshots prod
+'''
+    result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, check=False)
+    logged = records.read_text() if records.exists() else ""
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert logged.splitlines() == ["probe:prod", "scoped:prod"]
+
+
+def test_subsequent_deploy_keeps_aggregate_snapshot_gate(tmp_path: Path) -> None:
+    """R3-01: once every sibling has a snapshot, the aggregate gate still governs."""
+    records = tmp_path / "gate.log"
+    command = f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+sibling_gpu_snapshots_complete() {{ printf 'probe:%s\\n' "$1" >>"{records}"; return 0; }}
+verify_scoped_producer_snapshots() {{ printf 'scoped:%s\\n' "$1" >>"{records}"; return 0; }}
+ssh() {{ printf 'ssh\\n' >>"{records}"; return 0; }}
+timeout() {{ printf 'ssh\\n' >>"{records}"; return 0; }}
+verify_live_gpu_snapshots prod
+'''
+    result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, check=False)
+    logged = records.read_text() if records.exists() else ""
+    combined = result.stdout + result.stderr
+    assert "probe:prod" in logged.splitlines(), combined
+    assert "scoped:prod" not in logged
+    assert "using scoped producer-preparation" not in combined
+    assert "Verifying live GPU snapshot contract" in combined
+    assert "ssh" in logged.splitlines()
+
+
+def _fresh_load_snapshot(written_at: int = 1000) -> str:
+    return (
+        '{"queue_depth":1,"in_flight":0,"batch_in_progress":false,'
+        f'"written_at":{written_at}}}\n'
+    )
+
+
+def _run_scoped_producer(
+    tmp_path: Path,
+    *,
+    env: str = "prod",
+    snapshot: str | None = _fresh_load_snapshot(),
+    now: int = 1000,
+    stale: int = 120,
+    compose: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    remote = tmp_path / "remote"
+    load_root = tmp_path / "run" / "acx-write"
+    env_dir = load_root / env
+    env_dir.mkdir(parents=True)
+    remote.mkdir(exist_ok=True)
+    if compose:
+        (remote / "docker-compose.env.yml").write_text(
+            "services:\n"
+            "  api:\n"
+            "    environment:\n"
+            "      - ACX_DESCRIBE_LOAD_PATH=/run/acx-write/${ACX_ENV}/describe-load.json\n"
+        )
+    if snapshot is not None:
+        (env_dir / "describe-load.json").write_text(snapshot)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    _write_executable(bin_dir / "sudo", '#!/usr/bin/env bash\nexec "$@"\n')
+    load_root_s = str(load_root)
+    remote_s = str(remote)
+    rewriter = tmp_path / "rewrite-remote"
+    _write_executable(
+        rewriter,
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        "src = sys.stdin.read()\n"
+        f"src = src.replace('load_dir=\"/run/acx-write/', 'load_dir=\"{load_root_s}/')\n"
+        f"src = src.replace('/opt/acx-backend/{env}', '{remote_s}')\n"
+        "sys.stdout.write(src)\n",
+    )
+    command = f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+ACX_DESCRIBE_LOAD_STALE_SECONDS={stale}
+ACX_NOW_EPOCH={now}
+run_with_deadline() {{ shift 2; "$@"; }}
+ssh() {{
+  export PATH="{bin_dir}:$PATH"
+  last="${{@: -1}}"
+  if [[ "$last" == "bash -s" ]]; then
+    "{rewriter}" | bash -s
+    exit $?
+  fi
+  last="${{last//\\/run\\/acx-write/{load_root_s}}}"
+  bash -c "$last"
+}}
+verify_scoped_producer_snapshots {env}
+'''
+    return subprocess.run(["bash", "-c", command], text=True, capture_output=True, check=False)
+
+
+def test_scoped_producer_refuses_missing_describe_load(tmp_path: Path) -> None:
+    result = _run_scoped_producer(tmp_path, snapshot=None)
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    assert "describe-load.json" in combined
+    assert "queue_depth\":0" not in combined
+
+
+def test_scoped_producer_refuses_stale_describe_load(tmp_path: Path) -> None:
+    result = _run_scoped_producer(tmp_path, snapshot=_fresh_load_snapshot(1), now=1000, stale=120)
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    assert "stale" in combined.lower()
+
+
+def test_scoped_producer_refuses_invalid_schema(tmp_path: Path) -> None:
+    result = _run_scoped_producer(tmp_path, snapshot='{"written_at":1000}\n')
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    assert "schema" in combined.lower() or "queue_depth" in combined
+
+
+def test_scoped_producer_accepts_fresh_valid_load(tmp_path: Path) -> None:
+    result = _run_scoped_producer(tmp_path, snapshot=_fresh_load_snapshot(1000), now=1000)
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+    assert "Scoped producer-preparation" in combined or "scoped producer" in combined.lower()

@@ -37,6 +37,7 @@ import io
 import json
 import math
 import sys
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -50,6 +51,25 @@ _REQUIRED_BASELINE_LABELS = (
     "current_production",
     "blinded_human",
 )
+
+# A bake-off report may be rendered for a small exploratory fixture, but the
+# explicit ``--bakeoff-gate`` is a release-surface check.  Keep the readiness
+# contract here, at the report boundary, so a caller cannot turn missing
+# sampling metadata into a clean headline by supplying a run record alone.
+_MIN_GOLDEN_ENTRIES = 100
+_MIN_STRATUM_CELL = 5
+_MIN_METRIC_BACKING_ENTRIES = 5
+_MANDATORY_LABEL_FIELDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("subject", ("subject_id", "subject_ids", "subject", "subjects")),
+    ("demographic_cohort", ("demographic_cohort", "cohort")),
+    ("domain", ("domain",)),
+    ("difficulty", ("difficulty",)),
+    ("capture_device", ("capture_device",)),
+    ("lighting", ("lighting",)),
+    ("environment", ("environment",)),
+    ("session", ("session", "capture_session", "capture_session_id")),
+)
+_METRIC_BACKING_FIELDS = ("reference_facts", "spatial_facts", "face_boxes")
 
 
 def _load_manifest(path: str) -> dict[int, dict[str, Any]]:
@@ -604,6 +624,183 @@ def _load_serving_gate_failure(path: str, expected_id: str) -> dict[str, Any]:
     return dict(raw)
 
 
+def _entry_value(entry: Mapping[str, Any], field: str, aliases: Sequence[str]) -> Any:
+    """Read a readiness field, allowing capture metadata to be namespaced."""
+    for key in aliases:
+        if key in entry:
+            return entry[key]
+    capture = entry.get("capture")
+    if isinstance(capture, Mapping):
+        for key in aliases:
+            if key in capture:
+                return capture[key]
+    return None
+
+
+def _is_populated(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, Mapping):
+        return bool(value)
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return any(_is_populated(item) for item in value)
+    return bool(value)
+
+
+def _label_values(value: Any) -> tuple[str, ...]:
+    """Return explicit categorical labels without manufacturing a category."""
+    if isinstance(value, str):
+        value = value.strip()
+        return (value,) if value else ()
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        labels: list[str] = []
+        for item in value:
+            labels.extend(_label_values(item))
+        return tuple(labels)
+    return ()
+
+
+def _entry_subjects(entry: Mapping[str, Any]) -> set[str]:
+    """Get subject labels for leakage checks; empty means no evidence."""
+    aliases = ("subject_id", "subject_ids", "subject", "subjects", "present_identities")
+    for key in aliases:
+        if key in entry:
+            return set(_label_values(entry[key]))
+    return set()
+
+
+def _corpus_readiness_reasons(manifest: Mapping[int, Mapping[str, Any]]) -> list[str]:
+    """Describe missing corpus evidence; callers must keep the result not_ready."""
+    total = len(manifest)
+    reasons: list[str] = []
+    if total < _MIN_GOLDEN_ENTRIES:
+        reasons.append(
+            f"Golden-100 data unavailable: manifest contains {total} entries"
+        )
+
+    for field, aliases in _MANDATORY_LABEL_FIELDS:
+        populated_ids = [
+            media_id
+            for media_id, entry in manifest.items()
+            if _is_populated(_entry_value(entry, field, aliases))
+        ]
+        if len(populated_ids) != total:
+            missing = sorted(set(manifest) - set(populated_ids))
+            reasons.append(
+                f"mandatory {field} strata unavailable: {len(populated_ids)}/{total} entries "
+                f"populated (missing media_ids {', '.join(str(mid) for mid in missing[:8])})"
+            )
+        counts = Counter(
+            label
+            for entry in manifest.values()
+            for label in _label_values(_entry_value(entry, field, aliases))
+        )
+        under = sorted(label for label, count in counts.items() if count < _MIN_STRATUM_CELL)
+        if under:
+            detail = ", ".join(f"{label}={counts[label]}" for label in under[:8])
+            reasons.append(
+                f"{field} strata below minimum cell size {_MIN_STRATUM_CELL}: {detail}"
+            )
+
+    for field in _METRIC_BACKING_FIELDS:
+        populated = sum(
+            1 for entry in manifest.values() if _is_populated(entry.get(field))
+        )
+        if populated < _MIN_METRIC_BACKING_ENTRIES:
+            reasons.append(
+                f"{field} metric backing unavailable: {populated}/{total} entries populated "
+                f"(minimum {_MIN_METRIC_BACKING_ENTRIES}; claim remains not_ready)"
+            )
+    return reasons
+
+
+def _selection_disjointness_reasons(
+    reported: Mapping[int, Mapping[str, Any]],
+    selections: Mapping[str, Mapping[int, Mapping[str, Any]]],
+) -> list[str]:
+    """Require an auditable selection/calibration frame before a bake-off pass."""
+    if not selections:
+        return [
+            "selection disjointness unavailable: --selection-manifest is required; "
+            "model/prompt/threshold selection cannot be certified"
+        ]
+
+    reasons: list[str] = []
+    reported_media = set(reported)
+    reported_sha = {
+        str(entry.get("sha256")).strip()
+        for entry in reported.values()
+        if isinstance(entry.get("sha256"), str) and entry.get("sha256", "").strip()
+    }
+    reported_paths = {
+        str(entry.get("path")).strip()
+        for entry in reported.values()
+        if isinstance(entry.get("path"), str) and entry.get("path", "").strip()
+    }
+    if len(reported_sha) != len(reported):
+        reasons.append(
+            "selection disjointness unavailable: reported manifest lacks a non-empty sha256 "
+            f"for {len(reported) - len(reported_sha)} entr{'y' if len(reported) - len(reported_sha) == 1 else 'ies'}"
+        )
+    if any(not _entry_subjects(entry) for entry in reported.values()):
+        reasons.append(
+            "selection disjointness unavailable: reported manifest lacks explicit subject evidence "
+            "for one or more entries"
+        )
+    reported_subjects = {
+        subject for entry in reported.values() for subject in _entry_subjects(entry)
+    }
+
+    for label, selection in selections.items():
+        prefix = f"selection manifest {label!r}"
+        if not selection:
+            reasons.append(f"{prefix} is empty")
+            continue
+        selection_sha = {
+            str(entry.get("sha256")).strip()
+            for entry in selection.values()
+            if isinstance(entry.get("sha256"), str) and entry.get("sha256", "").strip()
+        }
+        missing_sha = len(selection) - len(selection_sha)
+        if missing_sha:
+            reasons.append(
+                f"{prefix} lacks a non-empty sha256 for {missing_sha} entr{'y' if missing_sha == 1 else 'ies'}"
+            )
+        if any(not _entry_subjects(entry) for entry in selection.values()):
+            reasons.append(f"{prefix} lacks explicit subject evidence for one or more entries")
+        media_overlap = sorted(set(selection) & reported_media)
+        sha_overlap = sorted(selection_sha & reported_sha)
+        path_overlap = sorted(
+            {
+                str(entry.get("path")).strip()
+                for entry in selection.values()
+                if isinstance(entry.get("path"), str) and entry.get("path", "").strip()
+            }
+            & reported_paths
+        )
+        subject_overlap = sorted(
+            {
+                subject
+                for entry in selection.values()
+                for subject in _entry_subjects(entry)
+            }
+            & reported_subjects
+        )
+        if media_overlap:
+            reasons.append(f"{prefix} overlaps reported media_id values: {media_overlap[:8]}")
+        if sha_overlap:
+            reasons.append(f"{prefix} overlaps reported sha256 values: {sha_overlap[:4]}")
+        if path_overlap:
+            reasons.append(f"{prefix} overlaps reported paths: {path_overlap[:4]}")
+        if subject_overlap:
+            reasons.append(
+                f"{prefix} overlaps reported subject values: {subject_overlap[:8]}"
+            )
+    return reasons
+
+
 def _gate_evaluation(
     manifest: dict[int, dict[str, Any]],
     records: Mapping[str, dict[str, Any]],
@@ -615,18 +812,18 @@ def _gate_evaluation(
     required_baselines: Sequence[str],
     score_ok: Mapping[str, str],
     foreign: Mapping[str, str] | None = None,
+    selection_manifests: Mapping[str, Mapping[int, Mapping[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     """Evaluate the sealed bake-off readiness contract without inventing data."""
     reasons: list[str] = []
     axes: dict[str, str] = {}
 
-    if len(manifest) >= 100:
-        axes["data"] = "pass"
-    else:
-        axes["data"] = "not_ready"
-        reasons.append(
-            f"Golden-100 data unavailable: manifest contains {len(manifest)} entries"
-        )
+    data_reasons = _corpus_readiness_reasons(manifest)
+    reasons.extend(data_reasons)
+    axes["data"] = "pass" if not data_reasons else "not_ready"
+    selection_reasons = _selection_disjointness_reasons(manifest, selection_manifests or {})
+    reasons.extend(selection_reasons)
+    axes["selection"] = "pass" if not selection_reasons else "not_ready"
 
     missing_candidates = [
         candidate_id
@@ -760,7 +957,7 @@ def _gate_html(
     axes = evaluation.get("axes", {})
     readiness = " ".join(
         f"{name}={html.escape(str(axes.get(name, 'not_ready')))}"
-        for name in ("data", "model", "infra", "monitoring")
+        for name in ("data", "selection", "model", "infra", "monitoring")
     )
     reasons = evaluation.get("reasons", ())
     reason_html = "".join(f"<li>{html.escape(str(reason))}</li>" for reason in reasons)
@@ -813,7 +1010,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument(
         "--bakeoff-gate", action="store_true",
-        help="render and enforce the sealed roster/data/infra/monitoring readiness gate",
+        help="render and enforce the sealed roster/data/selection/infra/monitoring readiness gate",
+    )
+    ap.add_argument(
+        "--selection-manifest", action="append", default=[], metavar="PATH",
+        help="repeatable; model/prompt/threshold selection corpus that must be disjoint from --manifest",
     )
     ap.add_argument("--images-dir")
     ap.add_argument("--out", required=True)
@@ -876,6 +1077,8 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("run and baseline labels overlap: " + ", ".join(sorted(overlap)))
         serving_specs = _parse_label_path(args.serving_gate_failed, option="--serving-gate-failed")
         score_specs = _parse_label_path(args.score_ok, option="--score-ok")
+        if len(args.selection_manifest) != len(set(args.selection_manifest)):
+            raise ValueError("duplicate --selection-manifest path")
         serving_failures = {
             candidate_id: _load_serving_gate_failure(path, candidate_id)
             for candidate_id, path in serving_specs.items()
@@ -893,6 +1096,9 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         manifest = _load_manifest(args.manifest)
+        selection_manifests = {
+            path: _load_manifest(path) for path in args.selection_manifest
+        }
         run_info = {label: _load_record_info(path) for label, path in run_specs.items()}
         baseline_info = {label: _load_record_info(path) for label, path in baseline_specs.items()}
     except (OSError, json.JSONDecodeError, ValueError) as exc:
@@ -940,6 +1146,7 @@ def main(argv: list[str] | None = None) -> int:
             required_baselines=required_baselines,
             score_ok=score_specs,
             foreign=foreign,
+            selection_manifests=selection_manifests,
         )
     else:
         evaluation = None

@@ -173,3 +173,15 @@ os.open, os.fsync = traced_open, traced_fsync
             assert len(transactions) == 1, result.stderr
             assert (transactions[0] / "previous/manifest.json").read_bytes() == b"previous evidence"
             assert (transactions[0] / ".publish-intent").is_file()
+            # Retrying recovery must not discard the fallback while the same
+            # publication barrier still fails.
+            retry = subprocess.run(args, env=environment, capture_output=True, text=True, timeout=20, check=False)
+            assert retry.returncode != 0
+            assert (transactions[0] / "previous/manifest.json").read_bytes() == b"previous evidence"
+            assert (transactions[0] / ".publish-intent").is_file()
+            environment["DURABILITY_FAULT"] = "none"
+            environment["OCI_BIN"] = "/usr/bin/false"
+            recovered = subprocess.run(args, env=environment, capture_output=True, text=True, timeout=20, check=False)
+            assert recovered.returncode != 0  # Deliberate OCI failure after recovery.
+            assert not list(tmp_path.glob(".bundle.tmp.*"))
+            assert (bundle / "manifest.json").is_file()

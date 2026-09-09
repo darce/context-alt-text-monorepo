@@ -3633,38 +3633,112 @@ def test_normal_verify_runs_aggregate_on_sibling_probe_error(tmp_path: Path) -> 
     assert result.returncode == 1, combined
 
 
+_CANDIDATE_SHA = "b" * 64
+_ROLLBACK_SHA = "a" * 64
+_FENCED_DIGEST = re.compile(r"^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$")
+
+
 def _run_prepare_producer(
     tmp_path: Path,
     *,
     env: str = "prod",
+    confirm: str | None = "PROMOTE",
     sibling_rc: int = 0,
-    restart_rc: int = 0,
+    restart_after_fence_rc: int = 0,
     image_rc: int = 0,
     scoped_rc: int = 0,
-    rollback_rc: int = 0,
+    preserve_sets_rollback: bool = True,
+    records_name: str = "prepare.log",
 ) -> tuple[subprocess.CompletedProcess[str], str]:
-    """Drive do_prepare_producer via existing deploy helpers, not an invented API.
+    """Drive do_prepare_producer against real do_deploy transaction shapes.
 
-    do_restart is the existing cutover start transaction used by do_deploy.
-    restore_env_tag_to_rollback is the existing deploy rollback. Scoped image
-    and snapshot verifies are stubbed so a verify-only path cannot hide a
-    missing converge (TEST-15). sibling_gpu_snapshots_complete defaults to
-    success so missing siblings are not a bootstrap precondition.
+    do_restart is not a no-op: it applies the smoke-fenced digest check from
+    recognition-service.sh (expected_digest must match ACX_IMAGE_REPO@sha256:64).
+    restore_env_tag_to_rollback applies assert_rollback_fence's identity check
+    (ACX_ROLLBACK_DIGEST_REF must already be a captured digest). Scoped image
+    and snapshot verifies are stubbed successful so a verify-only path cannot
+    hide a missing transaction (TEST-15). do_deploy is left real so
+    CONFIRM=PROMOTE is not bypassed.
     """
-    records = tmp_path / "prepare.log"
+    records = tmp_path / records_name
+    confirm_line = f'export CONFIRM="{confirm}"' if confirm is not None else "unset CONFIRM || true"
+    preserve_body = (
+        f'  ACX_ROLLBACK_DIGEST_REF="$IMAGE_BASE@sha256:{_ROLLBACK_SHA}"\n'
+        '  ACX_ROLLBACK_IMAGE_BASE="$IMAGE_BASE"\n'
+        if preserve_sets_rollback
+        else ""
+    )
     command = f'''
 source "{SCRIPT}"
 GREEN=; YELLOW=; RED=; RESET=
+{confirm_line}
+ACX_IMAGE_REPO="$IMAGE_BASE"
+init_deploy_ocir_docker_config() {{ return 0; }}
 preflight_ssh() {{ printf 'preflight\\n' >>"{records}"; return 0; }}
+preflight_remote_face_pipeline_models() {{ return 0; }}
+preflight_git_clean() {{ return 0; }}
+preflight_branch_synced() {{ return 0; }}
+preflight_remote_ocir_auth() {{ return 0; }}
+preflight_remote_docker() {{ return 0; }}
+preflight_docker() {{ return 0; }}
+preflight_ocir_auth() {{ return 0; }}
+assert_remote_disk_headroom_for_pull() {{ return 0; }}
+capture_failure_evidence() {{ return 0; }}
+capture_prior_runtime_identity() {{ printf 'prior-identity:%s\\n' "$1" >>"{records}"; return 0; }}
 sibling_gpu_snapshots_complete() {{ printf 'sibling:%s\\n' "$1" >>"{records}"; return {sibling_rc}; }}
-converge_runtime() {{ printf 'converge:%s\\n' "$1" >>"{records}"; return 0; }}
-do_restart() {{ printf 'restart:%s\\n' "$1" >>"{records}"; return {restart_rc}; }}
-do_deploy() {{ printf 'deploy:%s\\n' "$1" >>"{records}"; return 0; }}
+preserve_rollback_tag() {{
+  printf 'preserve:%s\\n' "$1" >>"{records}"
+{preserve_body}  return 0
+}}
+do_build() {{ printf 'build\\n' >>"{records}"; return 0; }}
+do_build_remote() {{ printf 'build-remote\\n' >>"{records}"; return 0; }}
+do_push_sha() {{
+  printf 'push-sha\\n' >>"{records}"
+  ACX_CANDIDATE_DIGEST_REF="$IMAGE_BASE@sha256:{_CANDIDATE_SHA}"
+}}
+do_push_tag() {{ printf 'push-tag:%s\\n' "$1" >>"{records}"; return 0; }}
+do_boot_smoke() {{ printf 'smoke:%s:%s\\n' "$1" "$2" >>"{records}"; return 0; }}
+promote_gate() {{
+  printf 'promote:%s:%s\\n' "$1" "$2" >>"{records}"
+  if [[ ! "$2" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{{64}}$ ]]; then
+    warn "promote gate requires a digest-pinned candidate (got: ${{2:-empty}})"
+    return 1
+  fi
+  local repo="${{2%@sha256:*}}"
+  if [[ "$repo" != "$IMAGE_BASE" ]]; then
+    warn "promote digest repository does not match IMAGE_BASE"
+    return 1
+  fi
+  ACX_CANDIDATE_DIGEST_REF="$2"
+  return 0
+}}
+do_restart() {{
+  local env="$1" expected_digest="${{2:-${{ACX_CANDIDATE_DIGEST_REF:-}}}}"
+  local expected_repo="${{expected_digest%@sha256:*}}"
+  printf 'restart:%s:%s\\n' "$env" "$expected_digest" >>"{records}"
+  if [[ ! "${{expected_digest}}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{{64}}$ \\
+    || "${{expected_repo}}" != "${{ACX_IMAGE_REPO}}" ]]; then
+    warn "restart requires the smoke-fenced digest for ACX_IMAGE_REPO=${{ACX_IMAGE_REPO}} (got: ${{expected_digest:-empty}})"
+    printf 'restart-unfenced\\n' >>"{records}"
+    return 1
+  fi
+  printf 'restart-accepted:%s\\n' "$env" >>"{records}"
+  return {restart_after_fence_rc}
+}}
 do_verify() {{ printf 'verify:%s\\n' "$1" >>"{records}"; return 0; }}
 verify_live_gpu_snapshots() {{ printf 'aggregate:%s\\n' "$1" >>"{records}"; return 0; }}
 verify_running_image_matches_deployed() {{ printf 'image:%s\\n' "$1" >>"{records}"; return {image_rc}; }}
 verify_scoped_producer_snapshots() {{ printf 'scoped:%s\\n' "$1" >>"{records}"; return {scoped_rc}; }}
-restore_env_tag_to_rollback() {{ printf 'rollback:%s\\n' "$1" >>"{records}"; return {rollback_rc}; }}
+restore_env_tag_to_rollback() {{
+  printf 'rollback:%s\\n' "$1" >>"{records}"
+  if [[ ! "${{ACX_ROLLBACK_DIGEST_REF:-}}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{{64}}$ ]]; then
+    warn "ROLLBACK REQUIRED but no previous serving digest was captured"
+    printf 'rollback-unfenced\\n' >>"{records}"
+    return 1
+  fi
+  printf 'rollback-fenced:%s\\n' "$1" >>"{records}"
+  return 0
+}}
 do_prepare_producer {env}
 '''
     result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, check=False)
@@ -3672,65 +3746,134 @@ do_prepare_producer {env}
     return result, logged
 
 
+def _first_line(prefix: str, lines: list[str]) -> str | None:
+    for line in lines:
+        if line.startswith(prefix):
+            return line
+    return None
+
+
 def test_prepare_producer_converges_selected_env_before_verify(tmp_path: Path) -> None:
-    """Cold selected-env must start the producer before image/writer checks.
+    """Cold selected-env must run the safe deploy transaction before verifies.
 
     Finding 10250: a stale leftover snapshot can masquerade as a live writer.
-    do_prepare_producer currently only preflights and verifies existing state
-    (RLSE-03). Reuse do_restart from the existing deploy transaction, then
-    verify. TEST-15: image/scoped stubs succeed so a verify-only path would
-    return 0 for the wrong reason.
+    Observable order (do_deploy 3665): preserve prior state, smoke-fenced
+    candidate via promote_gate, do_restart with that digest, then image/writer
+    checks. TEST-15: image/scoped stubs succeed so verify-only still looks green.
     """
-    result, logged = _run_prepare_producer(
-        tmp_path, sibling_rc=0, restart_rc=0, image_rc=0, scoped_rc=0
-    )
+    result, logged = _run_prepare_producer(tmp_path, records_name="converge.log")
     combined = result.stdout + result.stderr
     lines = logged.splitlines()
-    assert "restart:prod" in lines, combined
+    preserve = _first_line("preserve:prod", lines)
+    promote = _first_line("promote:prod:", lines)
+    restart = _first_line("restart:prod:", lines)
+    assert preserve is not None, combined
+    assert promote is not None, combined
+    assert restart is not None, combined
+    assert "restart-accepted:prod" in lines, combined
+    assert "restart-unfenced" not in lines
+    digest = promote.split(":", 2)[2]
+    assert _FENCED_DIGEST.match(digest), digest
+    assert restart == f"restart:prod:{digest}", restart
     assert "image:prod" in lines, combined
     assert "scoped:prod" in lines, combined
-    assert lines.index("restart:prod") < lines.index("image:prod"), lines
-    assert lines.index("restart:prod") < lines.index("scoped:prod"), lines
+    assert lines.index(preserve) < lines.index("restart-accepted:prod"), lines
+    assert lines.index(promote) < lines.index("restart-accepted:prod"), lines
+    assert lines.index("restart-accepted:prod") < lines.index("image:prod"), lines
+    assert lines.index("restart-accepted:prod") < lines.index("scoped:prod"), lines
     assert "aggregate:prod" not in lines
+    assert "verify:prod" not in lines
     assert result.returncode == 0, combined
 
 
 def test_prepare_producer_convergence_does_not_require_missing_siblings(
     tmp_path: Path,
 ) -> None:
-    """Bootstrap the selected env even when sibling snapshots already exist."""
+    """Bootstrap the selected env whether sibling snapshots exist or not."""
     result, logged = _run_prepare_producer(
-        tmp_path, sibling_rc=0, restart_rc=0, image_rc=0, scoped_rc=0
+        tmp_path, sibling_rc=0, records_name="sib-complete.log"
     )
     combined = result.stdout + result.stderr
-    lines = logged.splitlines()
-    assert "restart:prod" in lines, combined
+    assert "restart-accepted:prod" in logged.splitlines(), combined
     assert result.returncode == 0, combined
     result_missing, logged_missing = _run_prepare_producer(
-        tmp_path, sibling_rc=1, restart_rc=0, image_rc=0, scoped_rc=0
+        tmp_path, sibling_rc=1, records_name="sib-missing.log"
     )
     combined_missing = result_missing.stdout + result_missing.stderr
-    assert "restart:prod" in logged_missing.splitlines(), combined_missing
+    assert "restart-accepted:prod" in logged_missing.splitlines(), combined_missing
     assert result_missing.returncode == 0, combined_missing
+    assert logged.splitlines() != logged_missing.splitlines() or "sibling:prod" not in logged
+
+
+def test_prepare_producer_prod_requires_confirm_promote(tmp_path: Path) -> None:
+    """Prod prepare-producer must not bypass CONFIRM=PROMOTE (do_deploy 3684)."""
+    result, logged = _run_prepare_producer(
+        tmp_path, confirm=None, records_name="no-confirm.log"
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    assert "passed" not in combined.lower()
+    assert "CONFIRM=PROMOTE" in combined
+    assert "restart-accepted:prod" not in logged.splitlines()
+
+
+def test_prepare_producer_restart_without_fenced_digest_is_refused(tmp_path: Path) -> None:
+    """A restart with no smoke-fenced digest must fail, not skip to scoped success."""
+    result, logged = _run_prepare_producer(tmp_path, records_name="unfenced-restart.log")
+    combined = result.stdout + result.stderr
+    lines = logged.splitlines()
+    restart = _first_line("restart:prod:", lines)
+    if restart is None:
+        assert result.returncode != 0, combined
+        assert "passed" not in combined.lower()
+        return
+    digest = restart.split(":", 2)[2]
+    if not _FENCED_DIGEST.match(digest) or not digest.startswith("iad.ocir.io/"):
+        assert "restart-unfenced" in lines, combined
+        assert "restart-accepted:prod" not in lines
+        assert result.returncode != 0, combined
+        assert "passed" not in combined.lower()
+        return
+    assert "restart-accepted:prod" in lines, combined
 
 
 def test_prepare_producer_restart_failure_rolls_back_and_does_not_succeed(
     tmp_path: Path,
 ) -> None:
-    """Start failure must reuse deploy rollback and must not report success.
+    """Start failure must fence-rollback with captured identity, never report success.
 
-    DATA-13 / RES-03: a failed do_restart is the same transaction boundary as
-    do_deploy (restore_env_tag_to_rollback). TEST-15: scoped verify is stubbed
-    successful so skipping rollback would still look green.
+    DATA-13 / RES-03: same boundary as do_deploy. assert_rollback_fence refuses
+    empty ACX_ROLLBACK_DIGEST_REF. TEST-15: scoped stub succeeds.
     """
     result, logged = _run_prepare_producer(
-        tmp_path, restart_rc=1, image_rc=0, scoped_rc=0, rollback_rc=0
+        tmp_path,
+        restart_after_fence_rc=1,
+        image_rc=0,
+        scoped_rc=0,
+        preserve_sets_rollback=True,
+        records_name="restart-fail.log",
     )
     combined = result.stdout + result.stderr
     lines = logged.splitlines()
-    assert "restart:prod" in lines, combined
-    assert "rollback:prod" in lines, combined
+    assert "restart-accepted:prod" in lines, combined
+    assert "rollback-fenced:prod" in lines, combined
+    assert "rollback-unfenced" not in lines
     assert "scoped:prod" not in lines
+    assert result.returncode != 0, combined
+    assert "passed" not in combined.lower()
+
+
+def test_prepare_producer_unfenced_rollback_does_not_compensate(tmp_path: Path) -> None:
+    """Verify/start failure must not roll back without a captured prior digest."""
+    result, logged = _run_prepare_producer(
+        tmp_path,
+        restart_after_fence_rc=1,
+        preserve_sets_rollback=False,
+        records_name="unfenced-rollback.log",
+    )
+    combined = result.stdout + result.stderr
+    lines = logged.splitlines()
+    assert "rollback-fenced:prod" not in lines
     assert result.returncode != 0, combined
     assert "passed" not in combined.lower()
 
@@ -3738,32 +3881,47 @@ def test_prepare_producer_restart_failure_rolls_back_and_does_not_succeed(
 def test_prepare_producer_scoped_failure_after_converge_is_not_success(
     tmp_path: Path,
 ) -> None:
-    """Writer/schema/freshness failure after start must not report success."""
+    """Writer/schema/freshness failure after a fenced restart must not report success."""
     result, logged = _run_prepare_producer(
-        tmp_path, restart_rc=0, image_rc=0, scoped_rc=1
+        tmp_path, restart_after_fence_rc=0, image_rc=0, scoped_rc=1, records_name="scoped-fail.log"
     )
     combined = result.stdout + result.stderr
     lines = logged.splitlines()
-    assert "restart:prod" in lines, combined
+    assert "restart-accepted:prod" in lines, combined
     assert "scoped:prod" in lines, combined
-    assert lines.index("restart:prod") < lines.index("scoped:prod"), lines
+    assert lines.index("restart-accepted:prod") < lines.index("scoped:prod"), lines
     assert result.returncode != 0, combined
     assert "passed" not in combined.lower()
 
 
 def test_prepare_producer_does_not_invoke_aggregate_snapshot_gate(tmp_path: Path) -> None:
-    """Aggregate checker still belongs to NORMAL verify (missing siblings refuse).
+    """Bootstrap completes scoped-only; aggregate stays on NORMAL verify.
 
     AGT-06: skip of verify_live_gpu_snapshots is explicit. RLSE-03: the
-    registry-wide gate remains on verify_live_gpu_snapshots, not this bootstrap.
+    registry-wide gate remains on verify_live_gpu_snapshots.
     """
-    result, logged = _run_prepare_producer(tmp_path, restart_rc=0, scoped_rc=0)
+    result, logged = _run_prepare_producer(tmp_path, records_name="no-aggregate.log")
     combined = result.stdout + result.stderr
     lines = logged.splitlines()
     assert "aggregate:prod" not in lines
     assert "verify:prod" not in lines
-    assert "restart:prod" in lines, combined
+    assert "restart-accepted:prod" in lines, combined
+    assert "scoped:prod" in lines, combined
     assert result.returncode == 0, combined
+
+
+def test_prepare_producer_leaves_aggregate_refusal_for_missing_siblings(
+    tmp_path: Path,
+) -> None:
+    """NORMAL verify still fails closed on missing siblings (RLSE-03, TEST-15)."""
+    result, logged = _run_verify_live_gpu_snapshots(
+        tmp_path, sibling_rc=1, timeout_rc=1, scoped_rc=0
+    )
+    combined = result.stdout + result.stderr
+    lines = logged.splitlines()
+    assert "aggregate:1" in lines, combined
+    assert "scoped:prod" not in lines
+    assert result.returncode == 1, combined
 
 
 def _fresh_load_snapshot(written_at: int = 1000) -> str:

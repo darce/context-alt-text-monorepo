@@ -10,7 +10,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import IdentityClusterRepresentative as RepModel
+from db.models import MediaIdentity as MediaIdentityModel
 from recognition.application.persistence.assignment_writer import AssignmentWriter
+from recognition.application.suggestions.embedding_space import models_are_same_space
 from recognition.shared.similarity import compute_face_similarity
 
 logger = logging.getLogger(__name__)
@@ -21,20 +23,38 @@ async def compute_curation_similarity(
     identity_embedding: np.ndarray,
     target_cluster_id: str,
     session: AsyncSession,
+    identity_embedding_model: str | None = None,
 ) -> float:
-    """Compute similarity between an identity and target cluster representatives."""
-    result = await session.execute(select(RepModel).where(RepModel.cluster_id == uuid.UUID(target_cluster_id)))
-    reps = result.scalars().all()
+    """Compute similarity between an identity and same-space cluster representatives."""
+    result = await session.execute(
+        select(RepModel, MediaIdentityModel.embedding_model)
+        .join(MediaIdentityModel, MediaIdentityModel.id == RepModel.identity_id)
+        .where(RepModel.cluster_id == uuid.UUID(target_cluster_id))
+    )
+    rows = result.all()
 
-    if not reps:
+    if not rows:
         return 0.0
 
     max_sim = 0.0
-    for rep in reps:
-        if rep.embedding is not None:
-            rep_embedding = np.asarray(rep.embedding, dtype=np.float32)
-            sim = compute_face_similarity(identity_embedding, rep_embedding)
-            max_sim = max(max_sim, sim)
+    compared = False
+    for rep, rep_model in rows:
+        if rep.embedding is None:
+            continue
+        if not models_are_same_space(identity_embedding_model, rep_model if isinstance(rep_model, str) else None):
+            continue
+        rep_embedding = np.asarray(rep.embedding, dtype=np.float32)
+        sim = compute_face_similarity(identity_embedding, rep_embedding)
+        max_sim = max(max_sim, sim)
+        compared = True
+
+    if not compared:
+        logger.info(
+            "[curation] skipped cross-space cosine cluster_id=%s identity_model=%s",
+            target_cluster_id,
+            identity_embedding_model,
+        )
+        return 0.0
 
     return float(max_sim)
 

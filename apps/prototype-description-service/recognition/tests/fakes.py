@@ -71,6 +71,12 @@ class _FakeClusterRepository:
     async def get_singleton_identities(self, tenant_id: str, *, limit: int | None = None):
         return []
 
+    async def list_identity_ids_moved_by_merge(self, tenant_id: str, merge_id: str) -> list[str]:
+        repo = self._service.fake_cluster_repository
+        if repo is None:
+            return []
+        return await repo.list_identity_ids_moved_by_merge(tenant_id, merge_id)
+
 
 class FakeClusterForRepo:
     """Minimal cluster object returned by FakeClusterRepository."""
@@ -106,6 +112,7 @@ class FakeClusterRepository:
         self.members_by_cluster: dict[str, list[tuple[IdentityMember, MediaIdentity]]] = {}
         self._rep_records: dict[str, list] = {}
         self._snapshot_version = 1
+        self.calls: list[dict[str, object]] = []
 
     def seed(
         self,
@@ -373,6 +380,24 @@ class FakeClusterRepository:
         if not any(c.tenant_id == tenant_id for c in self.clusters.values()):
             return 0
         return self._snapshot_version
+
+    async def list_identity_ids_moved_by_merge(self, tenant_id: str, merge_id: str) -> list[str]:
+        self.calls.append(
+            {
+                "method": "list_identity_ids_moved_by_merge",
+                "tenant_id": tenant_id,
+                "merge_id": merge_id,
+            }
+        )
+        found: list[str] = []
+        for members in self.members_by_cluster.values():
+            for _member, identity in members:
+                if identity.tenant_id != tenant_id:
+                    continue
+                if identity.moved_by_merge_id != merge_id:
+                    continue
+                found.append(identity.id)
+        return found
 
 
 class FakeJobRepository:
@@ -685,6 +710,12 @@ class FakeClusterService:
                 repo_target.identity_count = updated_target.identity_count
                 if final_label and not is_reserved_label_shape(final_label):
                     repo_target.user_confirmed = True
+            if moved_by_merge_id:
+                for _member, identity in self.fake_cluster_repository.members_by_cluster.get(
+                    source_cluster_id, []
+                ):
+                    if identity.tenant_id == tenant_id:
+                        identity.moved_by_merge_id = moved_by_merge_id
             if not defer_recompute:
                 self.fake_cluster_repository.clusters.pop(source_cluster_id, None)
         if not defer_recompute:

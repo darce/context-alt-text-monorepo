@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from recognition.application.assignment import AssignmentDecision, AssignmentOutcome
+from recognition.application.identity_mapping import media_identity_from_model
 from recognition.application.orchestration.cluster_merge import post_merge_retry_matching
 from recognition.domain.representative import ClusterRepresentative
 from recognition.domain.suggestion import AssignmentSuggestion, SuggestionStatus
@@ -76,7 +77,12 @@ def _harness(*, reps: list[ClusterRepresentative], unclustered: list[SimpleNames
     persist = AsyncMock()
     evaluate = AsyncMock(side_effect=_accept)
     assignment_writer = SimpleNamespace(
-        cluster_repository=SimpleNamespace(get_all_representatives=AsyncMock(return_value=reps)),
+        cluster_repository=SimpleNamespace(
+            get_all_representatives=AsyncMock(return_value=reps),
+            get_unclustered_in_embedding_space=AsyncMock(
+                return_value=[media_identity_from_model(model) for model in unclustered]
+            ),
+        ),
         member_repository=SimpleNamespace(get_by_identity_id=AsyncMock(return_value=[])),
         persist_assignment=persist,
     )
@@ -220,38 +226,20 @@ def _compiled_sql(stmt: object) -> str:
     return str(stmt.compile(compile_kwargs={"literal_binds": True})).lower()
 
 
-def _session_honoring_embedding_model_predicate(models: list[SimpleNamespace]) -> AsyncMock:
-    """Simulate SQL filtering so a mixed LIMIT cannot starve unstamped rows."""
-
-    result = MagicMock()
-    session = AsyncMock()
-
-    async def execute(stmt):  # noqa: ANN001
-        sql = _compiled_sql(stmt)
-        if "embedding_model is null" in sql:
-            kept = [model for model in models if model.embedding_model is None]
-        else:
-            kept = [model for model in models if model.embedding_model is not None][:2]
-        result.scalars.return_value.all.return_value = kept
-        return result
-
-    session.execute = AsyncMock(side_effect=execute)
-    return session
-
-
 @pytest.mark.asyncio
 async def test_post_merge_retry_unstamped_gallery_does_not_starve_on_mixed_batch() -> None:
     tenant_id = str(uuid4())
     cluster_id = str(uuid4())
-    stamped = [_orm_identity(tenant_id=tenant_id, model="space-a") for _ in range(3)]
     unstamped = _orm_identity(tenant_id=tenant_id, model=None)
-    persist, evaluate, writer, gate, suggestions, _unused_session = _harness(
+    persist, evaluate, writer, gate, suggestions, session = _harness(
         reps=[_rep(cluster_id, None)],
         unclustered=[],
         tenant_id=tenant_id,
         cluster_id=cluster_id,
     )
-    session = _session_honoring_embedding_model_predicate([*stamped, unstamped])
+    writer.cluster_repository.get_unclustered_in_embedding_space = AsyncMock(
+        return_value=[media_identity_from_model(unstamped)]
+    )
 
     await post_merge_retry_matching(
         tenant_id=tenant_id,
@@ -264,7 +252,47 @@ async def test_post_merge_retry_unstamped_gallery_does_not_starve_on_mixed_batch
         min_similarity_for_unclustered=0.5,
     )
 
-    stmt = session.execute.await_args.args[0]
-    assert "embedding_model is null" in _compiled_sql(stmt)
+    writer.cluster_repository.get_unclustered_in_embedding_space.assert_awaited_once_with(
+        tenant_id,
+        None,
+        limit=2,
+    )
     evaluate.assert_awaited()
     persist.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_unclustered_in_embedding_space_sql_is_null_for_legacy_gallery() -> None:
+    from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
+
+    session = AsyncMock()
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = []
+    session.execute = AsyncMock(return_value=result)
+    repo = SqlAlchemyClusterRepository(session)
+
+    await repo.get_unclustered_in_embedding_space(str(uuid4()), None, limit=2)
+
+    stmt = session.execute.await_args.args[0]
+    sql = _compiled_sql(stmt)
+    assert "embedding_model is null" in sql
+    assert "identity_member" in sql
+
+
+@pytest.mark.asyncio
+async def test_get_unclustered_in_embedding_space_sql_equals_gallery_model() -> None:
+    from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
+
+    session = AsyncMock()
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = []
+    session.execute = AsyncMock(return_value=result)
+    repo = SqlAlchemyClusterRepository(session)
+
+    await repo.get_unclustered_in_embedding_space(str(uuid4()), "space-a", limit=10)
+
+    stmt = session.execute.await_args.args[0]
+    sql = _compiled_sql(stmt)
+    assert "embedding_model" in sql
+    assert "is null" not in sql
+    assert "space-a" in sql

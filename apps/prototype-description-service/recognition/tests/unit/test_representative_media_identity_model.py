@@ -136,3 +136,38 @@ def test_filter_to_active_space_excludes_unstamped_rows_mixed_with_stamp() -> No
         return_value="space-b",
     ):
         assert filter_to_active_embedding_space([unstamped, active]) == [active]
+
+
+def test_build_domain_identities_preserves_embedding_model_stamp() -> None:
+    """Clustering domain mapping must keep provenance the helper already stamps."""
+    from uuid import uuid4
+
+    from recognition.application.orchestration.clustering.orchestrator import IncrementalClusteringRunner
+
+    merge_id = uuid4()
+    row = SimpleNamespace(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        media_id=7,
+        embedding=np.ones(4, dtype=np.float32),
+        confidence=0.91,
+        bbox_width=12,
+        bbox_height=14,
+        bbox_x=1,
+        bbox_y=2,
+        pose_pitch=None,
+        pose_yaw=None,
+        pose_roll=None,
+        image_phash=None,
+        sharpness=None,
+        embedding_norm=None,
+        occlusion_severity=None,
+        moved_by_merge_id=merge_id,
+        embedding_model="space-a",
+    )
+
+    identities = IncrementalClusteringRunner._build_domain_identities([row])  # type: ignore[arg-type]
+
+    assert len(identities) == 1
+    assert identities[0].embedding_model == "space-a"
+    assert identities[0].moved_by_merge_id == str(merge_id)

@@ -7,7 +7,8 @@ remain the legacy no-op; mixed or foreign stamps never pass through.
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import numpy as np
 import pytest
@@ -229,6 +230,52 @@ def test_filter_rows_unclustered_all_unstamped_is_legacy_noop() -> None:
     assert _filter_rows_to_single_embedding_model(rows) == rows  # type: ignore[arg-type]
 
 
+def _batch_member_model(*, embedding_model: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        media_id=1,
+        embedding=np.array([1.0, 0.0], dtype=np.float32),
+        confidence=0.99,
+        bbox_width=10,
+        bbox_height=10,
+        bbox_x=0,
+        bbox_y=0,
+        pose_pitch=None,
+        pose_yaw=None,
+        pose_roll=None,
+        image_phash=None,
+        sharpness=None,
+        embedding_norm=None,
+        occlusion_severity=None,
+        moved_by_merge_id=None,
+        embedding_model=embedding_model,
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_member_identities_for_clusters_keeps_same_space_minority() -> None:
+    """Batch member load must not majority-drop a same-space identity."""
+    from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
+
+    cluster_uuid = uuid4()
+    cluster_id = str(cluster_uuid)
+    gallery = _batch_member_model(embedding_model="space-a")
+    foreign = [_batch_member_model(embedding_model="space-b") for _ in range(3)]
+    result = MagicMock()
+    result.all.return_value = [(model, cluster_uuid) for model in [*foreign, gallery]]
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=result)
+    repo = SqlAlchemyClusterRepository(session)
+
+    grouped = await repo.get_member_identities_for_clusters([cluster_id])
+
+    identities = grouped[cluster_id]
+    assert len(identities) == 4
+    assert {identity.embedding_model for identity in identities} == {"space-a", "space-b"}
+    assert sum(1 for identity in identities if identity.embedding_model == "space-a") == 1
+
+
 def test_centroid_mv_sql_frames_by_embedding_model() -> None:
     """Migration MV definition must majority-frame by embedding_model (FIR23-01)."""
     from pathlib import Path
@@ -333,7 +380,99 @@ async def test_orchestrator_fetch_keeps_only_active_model(monkeypatch: pytest.Mo
         session.execute = AsyncMock(return_value=result)
         runner = IncrementalClusteringRunner.__new__(IncrementalClusteringRunner)
         runner._session = session
-        kept = await runner._fetch_unclustered_identities(uuid4())
+        kept, skip_payload = await runner._fetch_unclustered_identities(uuid4())
         assert kept == [active]
+        assert skip_payload["active_embedding_model"] == "stub-detector@test"
+        assert skip_payload["skipped_models"] == ["legacy-seed", "unstamped"]
+        assert skip_payload["skipped_count"] == 2
+        assert skip_payload["kept_count"] == 1
+        assert skip_payload["total_count"] == 3
     finally:
         get_settings.cache_clear()
+
+
+def test_probe_space_skip_payload_shape() -> None:
+    """B-05: job payload names active model, skipped models, and counts."""
+    from recognition.application.orchestration.clustering.orchestrator import probe_space_skip_payload
+
+    active = SimpleNamespace(embedding_model="stub-detector@test")
+    foreign = SimpleNamespace(embedding_model="legacy-seed")
+    unstamped = SimpleNamespace(embedding_model=None)
+    payload = probe_space_skip_payload(
+        [unstamped, foreign, active],
+        [active],
+        active_model="stub-detector@test",
+    )
+    assert payload == {
+        "active_embedding_model": "stub-detector@test",
+        "skipped_models": ["legacy-seed", "unstamped"],
+        "skipped_count": 2,
+        "kept_count": 1,
+        "total_count": 3,
+    }
+
+
+def test_unstamped_gallery_with_known_active_model_does_not_abort() -> None:
+    """Unstamped reps + known active model must proceed rather than fail the job."""
+    from recognition.application.orchestration.clustering.discovery_pipeline import GalleryProvenanceStats
+
+    stats = GalleryProvenanceStats(
+        active_embedding_model="opencv-sface+cv5@128d/l2/cosine",
+        provenance_loaded=True,
+        representatives_excluded_unresolvable=12,
+        clusters_excluded_unresolvable=5,
+        centroids_excluded_untrusted=4,
+        gallery_wiped=True,
+    )
+    assert stats.abort_reason() is None
+
+
+class _FakeResult:
+    def __init__(self, rows: list) -> None:
+        self._rows = rows
+
+    def all(self):
+        return list(self._rows)
+
+    def scalars(self):
+        return self
+
+
+@pytest.mark.asyncio
+async def test_with_model_loaders_keep_all_unstamped_cluster() -> None:
+    """All-null embedding_model rows must survive Python majority filter (legacy no-op)."""
+    from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
+
+    emb_a = np.array([1.0, 0.0], dtype=np.float32)
+    emb_b = np.array([0.0, 1.0], dtype=np.float32)
+    rows = [(emb_a, None), (emb_b, None)]
+    session = MagicMock()
+    session.execute = AsyncMock(return_value=_FakeResult(rows))
+    repo = SqlAlchemyClusterRepository(session)
+
+    embeddings, chosen = await repo.get_representative_embeddings_with_model("cluster-1")
+
+    assert chosen is None
+    assert len(embeddings) == 2
+    np.testing.assert_array_equal(embeddings[0], emb_a)
+    np.testing.assert_array_equal(embeddings[1], emb_b)
+
+
+@pytest.mark.asyncio
+async def test_list_identity_ids_moved_by_merge_reads_stamped_rows() -> None:
+    from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
+
+    tenant_id = str(uuid4())
+    merge_id = str(uuid4())
+    moved = [uuid4(), uuid4()]
+    session = MagicMock()
+    session.execute = AsyncMock(return_value=_FakeResult(moved))
+    repo = SqlAlchemyClusterRepository(session)
+
+    found = await repo.list_identity_ids_moved_by_merge(tenant_id, merge_id)
+
+    assert found == [str(identity_id) for identity_id in moved]
+    session.execute.assert_awaited_once()
+    stmt = session.execute.await_args.args[0]
+    sql = str(stmt.compile(compile_kwargs={"literal_binds": False})).lower()
+    assert "moved_by_merge_id" in sql

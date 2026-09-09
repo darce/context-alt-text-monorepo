@@ -69,10 +69,13 @@ class GalleryProvenanceStats:
         must not be collapsed.
 
         Abort when the gallery is empty because provenance could not be
-        established: no active model, no provenance query, or representatives
-        carrying no ``embedding_model`` stamp. Proceed when every excluded
-        representative resolved to a real model that simply is not the active
-        one — that is the migration, and it is the intended behaviour.
+        established: no active model, or the provenance query itself failed.
+        Unstamped/legacy representatives are the documented both-unstamped
+        space (``models_are_same_space(None, None)``), not an infrastructure
+        wipe — proceed so single-model tenants that never stamped provenance
+        keep clustering. Proceed also when every excluded representative
+        resolved to a real model that simply is not the active one — that is
+        the migration, and it is the intended behaviour.
         """
         if not self.gallery_wiped:
             return None
@@ -80,12 +83,6 @@ class GalleryProvenanceStats:
             return "active embedding_model unresolved (probe manifest unavailable)"
         if not self.provenance_loaded:
             return f"representative embedding_model provenance unavailable (active={self.active_embedding_model})"
-        if self.representatives_excluded_unresolvable > 0:
-            return (
-                f"{self.representatives_excluded_unresolvable} representative(s) across "
-                f"{self.clusters_excluded_unresolvable} cluster(s) carry no embedding_model "
-                f"stamp (active={self.active_embedding_model})"
-            )
         return None
 
     def to_payload(self) -> dict[str, object]:

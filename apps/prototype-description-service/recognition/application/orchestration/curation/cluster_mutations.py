@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import uuid
+from collections.abc import Awaitable, Callable
 from enum import StrEnum
 
 import numpy as np
@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import MediaIdentity as MediaIdentityModel
 from recognition.application.events.broadcaster import get_event_broadcaster
+from recognition.application.identity_mapping import media_identity_from_model
 from recognition.application.orchestration.curation.cluster_queries import get_identity_cluster_id
 from recognition.application.orchestration.curation.similarity import (
     check_and_refresh_representatives,
@@ -19,8 +20,16 @@ from recognition.application.orchestration.curation.similarity import (
 )
 from recognition.application.orchestration.protocols import SuggestionServiceProtocol
 from recognition.application.persistence.assignment_writer import AssignmentWriter
-from recognition.domain.cluster import IdentityCluster, ReservedClusterLabelError, is_reserved_label_shape
-from recognition.domain.identity import MediaIdentity
+from recognition.application.suggestions.embedding_space import (
+    models_are_same_space,
+    same_space_representative_vectors,
+)
+from recognition.domain.cluster import (
+    CrossSpaceMergeError,
+    IdentityCluster,
+    ReservedClusterLabelError,
+    is_reserved_label_shape,
+)
 from recognition.domain.repositories import ClusterRepository, MemberRepository
 from recognition.observability import ClusteringLogger, CurationEventType
 from recognition.shared.tenant import coerce_tenant_uuid
@@ -29,6 +38,25 @@ logger = logging.getLogger(__name__)
 
 _CURRICULUM_FALSE_NEGATIVE_DELTA = 0.01
 _CURRICULUM_FALSE_POSITIVE_DELTA = -0.05
+_CURATION_SIDE_EFFECT_ERRORS = (OSError, RuntimeError, ValueError, TypeError, AttributeError)
+
+
+def _log_side_effect_failure(action: str) -> None:
+    logger.warning("[curation] %s failed; mutation continues", action, exc_info=True)
+
+
+def _run_sync_side_effect(action: str, callback: Callable[[], None]) -> None:
+    try:
+        callback()
+    except _CURATION_SIDE_EFFECT_ERRORS:
+        _log_side_effect_failure(action)
+
+
+async def _run_async_side_effect(action: str, awaitable: Awaitable[object]) -> None:
+    try:
+        await awaitable
+    except _CURATION_SIDE_EFFECT_ERRORS:
+        _log_side_effect_failure(action)
 
 
 def _clamp01(value: float) -> float:
@@ -88,13 +116,15 @@ async def update_cluster(
     updated = await cluster_repo.update(cluster)
 
     if clustering_logger and old_label != label:
-        with contextlib.suppress(Exception):
-            clustering_logger.log_cluster_renamed(
+        _run_sync_side_effect(
+            "log_cluster_renamed",
+            lambda: clustering_logger.log_cluster_renamed(
                 cluster_id=cluster_id,
                 old_label=old_label,
                 new_label=label,
                 tenant_id=tenant_id,
-            )
+            ),
+        )
 
     logger.info(
         "[curation] RENAMED cluster_id=%s old_label='%s' new_label='%s' "
@@ -141,13 +171,15 @@ async def remove_identity_from_cluster(
             cluster.identity_count -= 1
             await cluster_repo.update(cluster)
 
-        with contextlib.suppress(Exception):
-            await _adjust_curriculum_t(
+        await _run_async_side_effect(
+            "adjust_curriculum_t(manual_remove)",
+            _adjust_curriculum_t(
                 cluster_repo=cluster_repo,
                 cluster_id=cluster_id,
                 delta=_CURRICULUM_FALSE_POSITIVE_DELTA,
                 reason="manual_remove",
-            )
+            ),
+        )
 
         refreshed = False
         if session and assignment_writer:
@@ -232,18 +264,7 @@ async def create_cluster_for_identity(
             session=session,
         )
 
-    identity = MediaIdentity(
-        id=str(identity_model.id),
-        tenant_id=str(identity_model.tenant_id),
-        media_id=str(identity_model.media_id),
-        embedding=np.asarray(identity_model.embedding, dtype=np.float32),
-        confidence=float(identity_model.confidence),
-        bbox_width=int(identity_model.bbox_width),
-        bbox_height=int(identity_model.bbox_height),
-        embedding_model=(
-            str(identity_model.embedding_model) if getattr(identity_model, "embedding_model", None) else None
-        ),
-    )
+    identity = media_identity_from_model(identity_model)
 
     cluster = await assignment_writer.persist_new_cluster(
         tenant_id=tenant_id,
@@ -266,12 +287,14 @@ async def create_cluster_for_identity(
     updated = await cluster_repo.update(updated)
 
     if suggestion_service and updated.id:
-        with contextlib.suppress(Exception):
-            await suggestion_service.resolve_for_identity_exclusive(
+        await _run_async_side_effect(
+            "resolve_for_identity_exclusive(manual_curation)",
+            suggestion_service.resolve_for_identity_exclusive(
                 identity_id=identity_id,
                 accepted_cluster_id=updated.id,
                 reason="manual_curation",
-            )
+            ),
+        )
 
     return updated
 
@@ -315,6 +338,17 @@ async def assign_outlier_to_cluster(
     identity_model = await session.get(MediaIdentityModel, identity_uuid)
     if not identity_model or identity_model.tenant_id != cluster_tenant_uuid:
         return None
+
+    identity = media_identity_from_model(identity_model)
+    reps = list(await cluster_repo.get_all_representatives(target_cluster_id))
+    gallery_model, gallery_vectors = same_space_representative_vectors(reps)
+    if gallery_vectors and not models_are_same_space(identity.embedding_model, gallery_model):
+        raise CrossSpaceMergeError(
+            source_cluster_id=str(identity_model.id),
+            target_cluster_id=target_cluster_id,
+            source_model=identity.embedding_model,
+            target_model=gallery_model,
+        )
 
     source_cluster_id = await get_identity_cluster_id(member_repo=member_repo, identity_id=str(identity_model.id))
     is_false_positive = source_cluster_id is not None
@@ -366,13 +400,15 @@ async def assign_outlier_to_cluster(
     await assignment_writer.recompute_representatives(target_cluster_id)
     await assignment_writer.recompute_centroid(target_cluster_id)
 
-    with contextlib.suppress(Exception):
-        await _adjust_curriculum_t(
+    await _run_async_side_effect(
+        "adjust_curriculum_t(manual_assign)",
+        _adjust_curriculum_t(
             cluster_repo=cluster_repo,
             cluster_id=target_cluster_id,
             delta=_CURRICULUM_FALSE_NEGATIVE_DELTA,
             reason="manual_assign",
-        )
+        ),
+    )
 
     if similarity == 0.0:
         try:
@@ -381,17 +417,20 @@ async def assign_outlier_to_cluster(
                 identity_embedding=identity_embedding_arr,
                 target_cluster_id=target_cluster_id,
                 session=session,
+                identity_embedding_model=identity.embedding_model,
             )
         except Exception as exc:
-            logger.warning("Failed to compute curation similarity: %s", exc)
+            logger.warning("Failed to compute curation similarity: %s", exc, exc_info=True)
 
     if suggestion_service:
-        with contextlib.suppress(Exception):
-            await suggestion_service.resolve_for_identity_exclusive(
+        await _run_async_side_effect(
+            "resolve_for_identity_exclusive(manual_assign)",
+            suggestion_service.resolve_for_identity_exclusive(
                 identity_id=identity_id,
                 accepted_cluster_id=target_cluster_id,
                 reason="manual_assign",
-            )
+            ),
+        )
     if clustering_logger:
         clustering_logger.log_curation_action(
             action=CurationEventType.ASSIGN_OUTLIER,

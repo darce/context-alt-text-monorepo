@@ -17,7 +17,7 @@ from recognition.infrastructure.repositories.merge_suggestion_repository import 
 from recognition.interface_adapters.http import deps as dependencies
 from recognition.interface_adapters.http.exception_handlers import register_exception_handlers
 from recognition.interface_adapters.http.schemas.responses import ClusterResponse
-from recognition.tests.api.conftest import FakeNameSuggestion, FakeSession, FakeSessionResult, FakeSuggestion
+from recognition.tests.api.conftest import FakeNameSuggestion, FakeSession, FakeSuggestion
 
 
 def test_list_suggestions_empty_by_default(api_client, tenant_id) -> None:
@@ -1151,20 +1151,27 @@ async def test_accept_merge_suggestion_returns_moved_identity_ids(
     fake_cluster_repository,
     monkeypatch,
 ) -> None:
-    """FEBT1-LD-01(a): the revert set must be read back from the merge transaction.
+    """FEBT1-LD-01(a): the revert set is the ids the merge stamped.
 
-    Red if the endpoint stops querying ``media_identities.moved_by_merge_id`` and
-    returns a fabricated or empty list instead.
+    Red if the endpoint stops calling ``list_identity_ids_moved_by_merge`` and
+    returns a fabricated or empty list instead of the fake merge path's stamp.
     """
     cluster_a_id, cluster_b_id = _seed_merge_pair(fake_cluster_service, fake_cluster_repository, tenant_id)
     suggestion = _pending_merge_suggestion(cluster_a_id, cluster_b_id)
     _bind_merge_repo(monkeypatch, suggestion)
 
-    moved = [uuid.uuid4(), uuid.uuid4()]
-    fake_session = _fake_session_of(api_client)
-    fake_session.default_execute_result = FakeSessionResult(
-        scalar_one_or_none_value=fake_session.default_execute_result.scalar_one_or_none(),
-        all_rows=moved,
+    moved = [str(uuid.uuid4()), str(uuid.uuid4())]
+    for identity_id in moved:
+        fake_cluster_repository.seed_member(
+            tenant_id=tenant_id,
+            cluster_id=cluster_a_id,
+            identity_id=identity_id,
+        )
+    # Ranking retires A; a target-cluster member must not leak into the revert set.
+    fake_cluster_repository.seed_member(
+        tenant_id=tenant_id,
+        cluster_id=cluster_b_id,
+        identity_id=str(uuid.uuid4()),
     )
 
     resp = api_client.post(
@@ -1175,10 +1182,14 @@ async def test_accept_merge_suggestion_returns_moved_identity_ids(
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["moved_identity_ids"] == [str(identity_id) for identity_id in moved]
-    # The set is scoped to this merge's provenance stamp, not to the whole tenant.
-    executed = " ".join(fake_session.executed_statements)
-    assert "moved_by_merge_id" in executed
+    assert body["moved_identity_ids"] == moved
+    list_calls = [
+        call
+        for call in fake_cluster_repository.calls
+        if call["method"] == "list_identity_ids_moved_by_merge"
+    ]
+    assert list_calls[-1]["tenant_id"] == tenant_id
+    assert list_calls[-1]["merge_id"] == suggestion.id
 
 
 @pytest.mark.asyncio

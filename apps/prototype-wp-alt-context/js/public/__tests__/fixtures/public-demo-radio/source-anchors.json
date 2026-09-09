@@ -1,0 +1,40 @@
+{
+  "finding": "GPU-LAUNCH-PUBLIC-RADIO-01",
+  "purpose": "Fixture parity for the public demo radio group names rendered by the PHP shortcode. Not a producer-contract fake.",
+  "generated_by": "PublicDemoShortcode::render() against apps/prototype-wp-alt-context/tests/stubs/wp.php",
+  "generation_options": {
+    "acx_public_demo_enabled": true,
+    "acx_public_demo_media_ids": [41, 42],
+    "attachment_urls": {
+      "41": "https://example.test/uploads/lake.jpg",
+      "42": "https://example.test/uploads/path.jpg"
+    },
+    "attachment_titles": {
+      "41": "Lake",
+      "42": "Path"
+    }
+  },
+  "source_anchors": {
+    "php_group_name": {
+      "path": "apps/prototype-wp-alt-context/src/public/class-public-demo-shortcode.php",
+      "line": 63,
+      "literal": "$group_name = 'acx-demo-media-' . $instance;"
+    },
+    "php_radio_input": {
+      "path": "apps/prototype-wp-alt-context/src/public/class-public-demo-shortcode.php",
+      "line": 68,
+      "literal": "<input id=\"' . esc_attr( $input_id ) . '\" type=\"radio\" name=\"' . esc_attr( $group_name ) . '\" value=\"' . esc_attr( (string) $choice['id'] ) . '\" required>"
+    },
+    "js_formdata_lookup": {
+      "path": "apps/prototype-wp-alt-context/js/public/demo-describe.js",
+      "line": 297,
+      "literal": "const selected = new FormData(form).get('acx-demo-media');"
+    }
+  },
+  "expected_names": ["acx-demo-media-1", "acx-demo-media-2"],
+  "forbidden_simplified_name": "acx-demo-media",
+  "notes": [
+    "two-instances.html is the literal concatenated output of two sequential render() calls (instance 1 then instance 2).",
+    "Existing Vitest markup that uses name=\"acx-demo-media\" is a simplified polling/retry harness and must not be treated as radio-contract coverage."
+  ]
+}

@@ -8,7 +8,7 @@ import pytest
 
 from scripts.bench.corpus import load_bench_manifest
 from scripts.bench.score_report import _load_manifest_from_run
-from scripts.bench.tests.conftest import write_manifest
+from scripts.bench.tests.conftest import write_manifest, write_manifest_sha
 from scripts.eval_harness.manifest import ManifestError
 
 
@@ -46,6 +46,7 @@ def test_load_manifest_from_run_ignores_empty_golden_dir(tmp_path: Path, monkeyp
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     write_manifest(run_dir / "manifest.json", [1, 2])
+    write_manifest_sha(run_dir)
     manifest = _load_manifest_from_run(run_dir)
     assert {e.media_id for e in manifest.entries} == {1, 2}
 

@@ -19,7 +19,7 @@ import pytest
 
 from scripts.bench.corpus import load_bench_manifest
 from scripts.bench.score_report import _load_manifest_from_run
-from scripts.bench.tests.conftest import write_manifest
+from scripts.bench.tests.conftest import write_manifest, write_manifest_sha
 from scripts.eval_harness.manifest import ManifestError
 
 
@@ -31,6 +31,7 @@ def test_load_manifest_from_run_succeeds_on_nonexistent_image_paths(tmp_path: Pa
     # created on disk here — proving _load_manifest_from_run reads metadata
     # only and never touches the filesystem paths it names.
     write_manifest(run_dir / "manifest.json", [1, 2])
+    write_manifest_sha(run_dir)
     for mid in (1, 2):
         assert not (run_dir / f"fixtures/m{mid}.jpg").exists()
 
@@ -60,6 +61,7 @@ def test_load_manifest_from_run_unresolvable_env_is_not_reason_without_skip(
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     write_manifest(run_dir / "manifest.json", [1, 2])
+    write_manifest_sha(run_dir)
 
     manifest = _load_manifest_from_run(run_dir)
 

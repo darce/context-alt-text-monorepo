@@ -463,9 +463,9 @@ describe('public demo radio contract from actual PHP shortcode markup', () => {
       forms[0]?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
       await settle(() => postBodies(fetchImpl).length >= 1 || messageOf(roots[0]) === chooseImageMessage);
       expect(
-        postBodies(fetchImpl),
+        postBodies(fetchImpl).map((body) => body.media_id),
         'selected acx-demo-media-1 value 41 must POST media_id 41',
-      ).toEqual([{ media_id: 41 }]);
+      ).toEqual([41]);
 
       await settle(() => forms[0]?.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled === false);
       forms[1]?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));

@@ -68,6 +68,7 @@ runtime code.
 | `origin/refactor/14-mcp-rewrite` | All four commits have integrated patch equivalents. |
 | Three `n16` lane references | Current EVAL preserves method-form/Kish estimators and table/tilde-fence guards; fresh Luna review verified these requirements. |
 | Seven `r4int/dux` references | Ancestry-consolidated in DEMO `37f2ed14b`; current HAI, sync and vocabulary gaps were implemented and reviewed. Current contracts refute the conditional authentication/GPU claims. |
+| Two `r7int` references | Canonical Golden37 restoration is retained in `cd6c33771`; the competing Golden20 reseal is superseded, with the old 20 examples preserved separately as held-out input. Current `3258b1a13` restores B711 identity, split, selection, and strict held-out guards; Luna evidence is in MCP `2013/2014` and decision `10033`. Neither historical tip needs to be merged wholesale. |
 | `vmlic3/lic3` | Sparse unrelated history: 103 of 106 patches equivalent; remaining baseline/import shims and ignore setup do not warrant merging the sparse repository. |
 | `vmbundle/vlm-6` | Rewritten VLM history includes deliberately purged private artifact paths. Prior decision `5581` governs exclusion; retain surviving code through current EVAL, never reattach that history. |
 
@@ -85,3 +86,10 @@ risk; the earlier feature-history rewrite did not remediate main. No separate
 maintenance task was found, so no such task or remediation is implied. This
 landing neither changes that manifest nor claims a privacy-sensitive release
 is cleared.
+
+Research readiness remains separate from code landing. Current Golden37 lacks
+the required Golden100 size, strata and independent selection evidence; report
+gates now emit `not_ready` and block adoption. Offline score proxies remain
+`unvalidated_proxy`; production threshold validation and independent empirical
+evidence are still required before a bakeoff or adoption claim. No additional
+images, annotations or measurements were fabricated to satisfy these gates.

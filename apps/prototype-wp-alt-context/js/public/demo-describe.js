@@ -294,7 +294,9 @@ export const initializeDemo = (root) => {
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    const selected = new FormData(form).get('acx-demo-media');
+    // PHP unique groups are `acx-demo-media-<instance>`; query only this form.
+    const selectedRadio = form.querySelector('input[type="radio"]:checked');
+    const selected = selectedRadio instanceof HTMLInputElement ? selectedRadio.value : null;
     if (typeof selected !== 'string' || !/^\d+$/.test(selected)) {
       setState('error', 'Choose an image before requesting a description.');
       return;

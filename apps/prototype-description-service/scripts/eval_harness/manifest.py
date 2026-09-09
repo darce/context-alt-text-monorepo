@@ -58,7 +58,7 @@ import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from pydantic import (
     BaseModel,
@@ -73,6 +73,32 @@ from pydantic import (
 from ._pathtext import _printable_message, _printable_path
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _validate_relative_image_path(value: str) -> str:
+    """Require a manifest image path to be relative and traversal-free.
+
+    The manifest is portable across POSIX and Windows workers, so both path
+    syntaxes are checked. Symlink containment is checked at resolution time,
+    when the corpus root is available.
+    """
+    if not isinstance(value, str) or not value:
+        raise ValueError("image path must be a non-empty relative path")
+    if "\x00" in value:
+        raise ValueError("image path must not contain NUL")
+    posix = Path(value)
+    windows = PureWindowsPath(value)
+    # ``PureWindowsPath.is_absolute()`` is false for a rooted path such as
+    # ``\\outside.jpg`` (it has no drive), even though joining it to a Windows
+    # corpus root discards the root's directory. Treat every Windows root or
+    # drive spelling as an absolute escape, including drive-relative ``C:foo``.
+    if posix.is_absolute() or windows.is_absolute() or windows.drive or windows.root:
+        raise ValueError("image path must be relative to the corpus root")
+    if any(part == ".." for part in (*posix.parts, *windows.parts)):
+        raise ValueError("image path must be relative and must not contain parent traversal")
+    if posix == Path(".") or windows == PureWindowsPath("."):
+        raise ValueError("image path must name a relative file below the corpus root")
+    return value
 
 
 def _printable_validation_value(value: object, *, depth: int = 0) -> str:
@@ -893,6 +919,11 @@ class GoldenEntry(BaseModel):
     # Optional image-level cohort fallback; single-subject celebs01 only (S3d enforces).
     demographic_cohort: str | None = None
 
+    @field_validator("path")
+    @classmethod
+    def _path_is_relative_to_corpus(cls, value: str) -> str:
+        return _validate_relative_image_path(value)
+
     @field_validator("sha256")
     @classmethod
     def _sha256_is_hex(cls, value: str) -> str:
@@ -1235,19 +1266,28 @@ def resolve_verified_image(entry: GoldenEntry, images_root: Path | str) -> Path:
     hash verification) so corpus drift cannot stay silent (VLM6-R2-05 / OBS-04).
     """
     root = Path(images_root)
+    # Validate and resolve the entry before checking whether the root exists.
+    # An unsafe spelling must not be treated as an ordinary missing file and
+    # then fall through to another source.
+    image_path = _resolve_image(root, entry.path)
     if not root.is_dir():
         raise ManifestError(
             f"images directory not found: {_printable_path(root)} — set GOLDEN_IMAGES_DIR to the "
             "rsync-bootstrapped fixture copy (see scene/tests/seed/README.md) before "
             "reading image bytes"
         )
-    image_path = _resolve_image(root, entry.path)
     if image_path is None:
         raise ManifestError(
             f"image file missing: {_printable_path(entry.path)} (under {_printable_path(root)}) — re-rsync fixtures or "
             "fix the manifest path (see scene/tests/seed/README.md)"
         )
-    digest = hashlib.sha256(image_path.read_bytes()).hexdigest()
+    try:
+        digest = hashlib.sha256(image_path.read_bytes()).hexdigest()
+    except OSError as exc:
+        raise ManifestError(
+            f"image file unreadable: {_printable_path(entry.path)} "
+            f"(under {_printable_path(root)}): {exc}"
+        ) from exc
     if digest != entry.sha256:
         raise ManifestError(
             f"sha256 mismatch for {_printable_path(entry.path)}: manifest {entry.sha256}, file {digest} — "
@@ -1255,6 +1295,20 @@ def resolve_verified_image(entry: GoldenEntry, images_root: Path | str) -> Path:
             "or update the manifest pin after an intentional replacement"
         )
     return image_path
+
+
+def resolve_image_path(images_root: Path | str, rel_path: str) -> Path | None:
+    """Resolve an optional local corpus file while enforcing root containment.
+
+    A missing root or file returns ``None`` so callers may try an explicitly
+    pinned remote source. An existing symlink that resolves outside the root is
+    an error, because falling through to a remote source would hide a local
+    corpus escape.
+    """
+    # Keep lexical and symlink containment checks active even when the root is
+    # absent. A missing local file is a valid remote-fallback signal, but an
+    # unsafe path must fail closed first.
+    return _resolve_image(Path(images_root), rel_path)
 
 
 def load_manifest(
@@ -1655,10 +1709,36 @@ def _resolve_image(images_root: Path, rel_path: str) -> Path | None:
     exact bytes first, then the NFC and NFD normalizations so a non-ASCII path
     resolves the same on either platform.
     """
+    try:
+        _validate_relative_image_path(rel_path)
+    except (TypeError, ValueError) as exc:
+        raise ManifestError(
+            f"image path is not a safe relative corpus path: {_printable_path(rel_path)}",
+            invariant="image_path_containment",
+            entry_path=rel_path if isinstance(rel_path, str) else None,
+        ) from exc
+    try:
+        root = images_root.resolve(strict=False)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise ManifestError(
+            f"image root cannot be resolved: {_printable_path(images_root)}",
+            invariant="image_path_containment",
+            entry_path=rel_path,
+        ) from exc
     for candidate in dict.fromkeys(
         (rel_path, unicodedata.normalize("NFC", rel_path), unicodedata.normalize("NFD", rel_path))
     ):
         image_path = images_root / candidate
-        if image_path.is_file():
-            return image_path
+        try:
+            resolved = image_path.resolve(strict=False)
+            resolved.relative_to(root)
+            if resolved.is_file():
+                return resolved
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise ManifestError(
+                f"image path is outside corpus root: {_printable_path(rel_path)} "
+                f"(root={_printable_path(images_root)})",
+                invariant="image_path_containment",
+                entry_path=rel_path,
+            ) from exc
     return None

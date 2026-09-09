@@ -175,7 +175,17 @@ def run_leg(
     leg_dir = root / "legs" / endpoint.stack_id
     leg_dir.mkdir(parents=True, exist_ok=True)
     store = ItemOutcomeStore(leg_dir / "items.jsonl")
-    manifest = load_bench_manifest(manifest_path, images_dir)
+    # Load metadata only here. Every byte is resolved below through
+    # resolve_media_bytes, which verifies the manifest sha256 for local files
+    # and for the explicitly pinned remote fallback. Strict whole-directory
+    # verification would make a missing local file prevent that fallback.
+    manifest = load_bench_manifest(
+        manifest_path,
+        None,
+        metadata_only=True,
+        skip_hash_verification=True,
+        hash_skip_reason="bench ingest resolves each media item with its sha256 pin",
+    )
     owned_client = False
     if client is None:
         client = RemoteSceneClient(
@@ -189,16 +199,33 @@ def run_leg(
     try:
         for entry in manifest.entries:
             _check_deadline(deadline)
-            latest = store.latest(entry.media_id, "analyze")
-            if latest is not None and latest.get("outcome") == "ok":
-                outcomes.append(AnalyzeOutcome(entry.media_id, "ok", int(latest.get("attempt", 1)), True))
+            latest_analyze = store.latest(entry.media_id, "analyze")
+            if latest_analyze is not None and latest_analyze.get("outcome") == "ok":
+                outcomes.append(
+                    AnalyzeOutcome(entry.media_id, "ok", int(latest_analyze.get("attempt", 1)), True)
+                )
                 continue
             # Analyze attempts are per-phase. An ingest-ok row must not seed
             # the analyze counter (that burned the first analyze try).
-            attempt = int((latest or {}).get("attempt", 0)) + 1
-            if latest is not None and latest.get("outcome") == "failed" and attempt > pair.item_max_attempts:
+            analyze_attempt = int((latest_analyze or {}).get("attempt", 0)) + 1
+            if (
+                latest_analyze is not None
+                and latest_analyze.get("outcome") == "failed"
+                and analyze_attempt > pair.item_max_attempts
+            ):
                 outcomes.append(AnalyzeOutcome(entry.media_id, "failed", pair.item_max_attempts, True))
                 continue
+            latest_ingest = store.latest(entry.media_id, "ingest")
+            ingest_attempt = analyze_attempt
+            if latest_analyze is None and latest_ingest is not None and latest_ingest.get("outcome") == "failed":
+                # Ingest failures have no analyze row, so their retry budget
+                # must come from the durable ingest journal rather than
+                # resetting to attempt one on every resumed invocation.
+                ingest_attempt = int(latest_ingest.get("attempt", 0)) + 1
+                if ingest_attempt > pair.item_max_attempts:
+                    outcomes.append(AnalyzeOutcome(entry.media_id, "failed", pair.item_max_attempts, True))
+                    continue
+            ingest_ready = False
             try:
                 data = resolve_media_bytes(
                     entry,
@@ -206,10 +233,9 @@ def run_leg(
                     url_map_path=pair.media_url_map_path,
                     allow_private_source=pair.allow_private_source,
                 )
-                prior_ingest = store.latest(entry.media_id, "ingest")
-                if prior_ingest is not None and prior_ingest.get("outcome") == "ok":
-                    width = int(prior_ingest["image_width"])
-                    height = int(prior_ingest["image_height"])
+                if latest_ingest is not None and latest_ingest.get("outcome") == "ok":
+                    width = int(latest_ingest["image_width"])
+                    height = int(latest_ingest["image_height"])
                 else:
                     width, height = decode_image_dimensions(data)
                     store.append(
@@ -223,10 +249,11 @@ def run_leg(
                             "phase": "ingest",
                             "outcome": "ok",
                             "error_code": None,
-                            "attempt": attempt,
+                            "attempt": ingest_attempt,
                             "terminal_ingest_outcome": "success",
                         }
                     )
+                ingest_ready = True
                 job_id = client.analyze([(entry.media_id, Path(entry.path).name, data)])
                 job = client.wait_job(job_id)
                 if _analyze_job_failed(job):
@@ -241,12 +268,12 @@ def run_leg(
                             "phase": "analyze",
                             "outcome": "failed",
                             "error_code": "analyze_completed_with_errors",
-                            "attempt": attempt,
+                            "attempt": analyze_attempt,
                             "terminal_ingest_outcome": "success",
                         }
                     )
-                    terminal = attempt >= pair.item_max_attempts
-                    outcomes.append(AnalyzeOutcome(entry.media_id, "failed", attempt, terminal))
+                    terminal = analyze_attempt >= pair.item_max_attempts
+                    outcomes.append(AnalyzeOutcome(entry.media_id, "failed", analyze_attempt, terminal))
                     continue
                 stack_media_id = _stack_media_id_from_job(job, entry.media_id)
                 store.append(
@@ -260,13 +287,14 @@ def run_leg(
                         "phase": "analyze",
                         "outcome": "ok",
                         "error_code": None,
-                        "attempt": attempt,
+                        "attempt": analyze_attempt,
                         "terminal_ingest_outcome": "success",
                     }
                 )
-                outcomes.append(AnalyzeOutcome(entry.media_id, "ok", attempt, True))
+                outcomes.append(AnalyzeOutcome(entry.media_id, "ok", analyze_attempt, True))
             except BenchError as exc:
-                ingest_failed = exc.code in {"media_unresolvable", "image_decode_failed"}
+                ingest_failed = not ingest_ready
+                failure_attempt = ingest_attempt if ingest_failed else analyze_attempt
                 store.append(
                     {
                         "manifest_media_id": entry.media_id,
@@ -276,28 +304,29 @@ def run_leg(
                         "phase": "ingest" if ingest_failed else "analyze",
                         "outcome": "failed",
                         "error_code": exc.code,
-                        "attempt": attempt,
+                        "attempt": failure_attempt,
                         "terminal_ingest_outcome": exc.code if ingest_failed else "success",
                     }
                 )
-                terminal = attempt >= pair.item_max_attempts
-                outcomes.append(AnalyzeOutcome(entry.media_id, "failed", attempt, terminal))
+                terminal = failure_attempt >= pair.item_max_attempts
+                outcomes.append(AnalyzeOutcome(entry.media_id, "failed", failure_attempt, terminal))
             except Exception as exc:  # noqa: BLE001 — per-item isolation
+                failure_attempt = ingest_attempt if not ingest_ready else analyze_attempt
                 store.append(
                     {
                         "manifest_media_id": entry.media_id,
                         "manifest_path": entry.path,
                         "content_sha256": entry.sha256,
                         "stack_media_id": None,
-                        "phase": "analyze",
+                        "phase": "ingest" if not ingest_ready else "analyze",
                         "outcome": "failed",
-                        "error_code": "analyze_failed",
-                        "attempt": attempt,
-                        "terminal_ingest_outcome": "success",
+                        "error_code": "ingest_failed" if not ingest_ready else "analyze_failed",
+                        "attempt": failure_attempt,
+                        "terminal_ingest_outcome": "ingest_failed" if not ingest_ready else "success",
                     }
                 )
-                terminal = attempt >= pair.item_max_attempts
-                outcomes.append(AnalyzeOutcome(entry.media_id, "failed", attempt, terminal))
+                terminal = failure_attempt >= pair.item_max_attempts
+                outcomes.append(AnalyzeOutcome(entry.media_id, "failed", failure_attempt, terminal))
                 _ = exc
 
         cluster_path = leg_dir / "cluster_job.json"

@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
 import { GuidedPrototypePage } from '../pages/guided/GuidedPrototypePage';
-import { CASE_STUDY_URL, RECORDING_URL, guidedCopy } from './publicGuideCopy';
+import { CASE_STUDY_URL, guidedCopy } from './publicGuideCopy';
 import { RecordedWalkthrough } from './RecordedWalkthrough';
 
 const PUBLIC_SCOPE =
@@ -63,7 +63,7 @@ describe('RecordedWalkthrough public scope', () => {
     expect(guidedCopy('scope.public')).toBe(PUBLIC_SCOPE);
   });
 
-  it('renders public scope copy first, the escape hatch, and the three entry actions', () => {
+  it('renders public scope copy first, the escape hatch, and the two entry actions', () => {
     render(<RecordedWalkthrough scope="public" escapeHref="https://example.test/" />);
 
     const scope = screen.getByTestId('guided-scope');
@@ -78,10 +78,7 @@ describe('RecordedWalkthrough public scope', () => {
     expect(escape.querySelector(`a[href="${CASE_STUDY_URL}"]`)).not.toBeNull();
 
     expect(screen.getByRole('button', { name: START_WALKTHROUGH })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: opensInNewWindow(WATCH_RECORDING) })).toHaveAttribute(
-      'href',
-      RECORDING_URL,
-    );
+    expect(screen.queryByRole('link', { name: opensInNewWindow(WATCH_RECORDING) })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: opensInNewWindow(READ_CASE_STUDY) })).toHaveAttribute(
       'href',
       CASE_STUDY_URL,
@@ -91,29 +88,24 @@ describe('RecordedWalkthrough public scope', () => {
   it('gives every public entry action a distinct destination', () => {
     render(<RecordedWalkthrough scope="public" escapeHref="/" />);
 
-    expect(RECORDING_URL).not.toBe(CASE_STUDY_URL);
-    expect(RECORDING_URL.startsWith(CASE_STUDY_URL)).toBe(true);
 
-    const watch = screen.getByRole('link', { name: opensInNewWindow(WATCH_RECORDING) });
     const read = screen.getByRole('link', { name: opensInNewWindow(READ_CASE_STUDY) });
     const caseStudyNav = screen.getByRole('link', { name: opensInNewWindow(guidedCopy('nav.case_study')) });
     const start = screen.getByRole('button', { name: START_WALKTHROUGH });
 
     const actionLinks = Array.from(document.querySelectorAll('.acx-guided-entrance__actions a'));
     const actionHrefs = actionLinks.map((link) => link.getAttribute('href'));
-    expect(actionHrefs).toEqual([RECORDING_URL, CASE_STUDY_URL]);
+    expect(actionHrefs).toEqual([CASE_STUDY_URL]);
     expect(new Set(actionHrefs).size).toBe(actionHrefs.length);
 
-    expect(watch).toHaveAttribute('href', RECORDING_URL);
     expect(read).toHaveAttribute('href', CASE_STUDY_URL);
     expect(caseStudyNav).toHaveAttribute('href', CASE_STUDY_URL);
     expect(start).not.toHaveAttribute('href');
   });
 
-  it('opens public case-study and recording exits in a new tab and keeps Home in-tab', () => {
+  it('opens public case-study exits in a new tab and keeps Home in-tab', () => {
     render(<RecordedWalkthrough scope="public" escapeHref="/" />);
 
-    const watch = screen.getByRole('link', { name: opensInNewWindow(WATCH_RECORDING) });
     const read = screen.getByRole('link', { name: opensInNewWindow(READ_CASE_STUDY) });
     const escape = screen.getByRole('navigation', { name: guidedCopy('nav.leave') });
     const caseStudyNav = within(escape).getByRole('link', {
@@ -121,7 +113,7 @@ describe('RecordedWalkthrough public scope', () => {
     });
     const home = within(escape).getByRole('link', { name: guidedCopy('nav.home') });
 
-    for (const link of [watch, read, caseStudyNav]) {
+    for (const link of [read, caseStudyNav]) {
       expect(link).toHaveAttribute('target', '_blank');
       expect(link.getAttribute('rel') ?? '').toContain('noreferrer');
       expect(link).toHaveAccessibleName(/opens in a new window/i);
@@ -133,16 +125,13 @@ describe('RecordedWalkthrough public scope', () => {
     expect(home).not.toHaveAccessibleName(/opens in a new window/i);
   });
 
-  it('reaches Start, Watch, then Read by Tab in that order', async () => {
+  it('reaches Start, then Read by Tab in that order', async () => {
     const user = userEvent.setup();
     render(<RecordedWalkthrough scope="public" escapeHref="/" />);
 
     const start = screen.getByRole('button', { name: START_WALKTHROUGH });
     start.focus();
     expect(document.activeElement).toBe(start);
-
-    await user.tab();
-    expect(document.activeElement).toHaveAccessibleName(opensInNewWindow(WATCH_RECORDING));
 
     await user.tab();
     expect(document.activeElement).toHaveAccessibleName(opensInNewWindow(READ_CASE_STUDY));

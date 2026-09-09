@@ -1,6 +1,6 @@
 import React from 'react';
 
-import { CASE_STUDY_URL, RECORDING_URL, guidedCopy } from '../guidedPrototype/publicGuideCopy';
+import { CASE_STUDY_URL, guidedCopy } from '../guidedPrototype/publicGuideCopy';
 
 export interface GuidedPrototypeEntranceProps {
   onBegin: () => void;
@@ -45,9 +45,6 @@ export const GuidedPrototypeEntrance = ({
           <button type="button" className="acx-button acx-button--primary" onClick={onBegin}>
             {guidedCopy('page.start')}
           </button>
-          <ExternalGuideLink className="acx-button acx-button--secondary" href={RECORDING_URL}>
-            {guidedCopy('entry.watch')}
-          </ExternalGuideLink>
           <ExternalGuideLink className="acx-button acx-button--secondary" href={CASE_STUDY_URL}>
             {guidedCopy('entry.read_case_study')}
           </ExternalGuideLink>

@@ -56,3 +56,14 @@ action, all five loaded references, apply/undo, fonts, no overflow, no page
 errors and no recognition API requests. Version 0.0.10 is active; uploaded ZIP
 SHA-256 was verified. Version 0.0.9 backup:
 /opt/acx-backend/demo/rollback-guidepolish-0.0.9/alt-context.
+
+Follow-up release 0.0.11 adds a third illustrative Trudeau reference from the
+March 2024 Ottawa meeting (Jonathan Miranda / Ecuador presidency, public domain).
+The demo roster count is now three; recorded recognition scores are unchanged.
+Inline face crops increase from 64 to 80 px. The comparison source crop is centered
+with a 1 px border, and its reference row uses equal 80 px square crops.
+The starting alt label now says “Example starting alt text (for this demo)”: its
+text is a hard-coded example, not source alt text. Commons already captions the
+source with both names. Validation: 111 focused tests, TypeScript and build pass.
+Plugin-only deployment verified its ZIP checksum; 0.0.10 rollback is retained at
+/opt/acx-backend/demo/rollback-guidepolish-0.0.10/alt-context.

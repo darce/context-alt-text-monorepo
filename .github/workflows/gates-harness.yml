@@ -8,6 +8,8 @@ on:
       - "scripts/tests/**"
       - "scripts/vm/**"
       - "scripts/workstate/**"
+      - "mk/lane-lifecycle.mk"
+      - "mk/lane-worker.mk"
       - "pyproject.toml"
       - "uv.lock"
       - ".github/workflows/gates-harness.yml"
@@ -20,6 +22,8 @@ on:
       - "scripts/tests/**"
       - "scripts/vm/**"
       - "scripts/workstate/**"
+      - "mk/lane-lifecycle.mk"
+      - "mk/lane-worker.mk"
       - "pyproject.toml"
       - "uv.lock"
       - ".github/workflows/gates-harness.yml"
@@ -52,6 +56,7 @@ jobs:
           python -m pytest
           scripts/tests/test_gate_wrapper_exit_codes.py
           scripts/tests/test_provision_lane_worktree.py
+          scripts/tests/test_lane_provisioner_make_wiring.py
           scripts/tests/test_root_dev_group_is_light.py
           scripts/tests/test_user_slice_tasksmax.py
           scripts/tests/test_admin_bundle_freshness.py

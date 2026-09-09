@@ -13,6 +13,11 @@ lane-check: lane-worker-guard
 		--lane-id "$(LANE)" \
 		--worktree-path "$(LANE_WORKTREE_TARGET)"; \
 	echo ""; \
+	echo "Provisioning lane worktree overlays..."; \
+	python3 "$(ORCHESTRATOR_ROOT)/scripts/workstate/provision_lane_worktree.py" \
+		--worktree "$(LANE_WORKTREE_TARGET)" \
+		--primary "$(ORCHESTRATOR_ROOT)"; \
+	echo ""; \
 	record_test_result() { \
 		command_text="$$1"; \
 		step_label="$$2"; \

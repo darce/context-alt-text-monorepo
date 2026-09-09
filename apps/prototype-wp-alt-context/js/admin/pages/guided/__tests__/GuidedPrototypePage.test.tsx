@@ -6,7 +6,7 @@ import { guidedCopy } from '../../../guidedPrototype/copy';
 import { createGuidedScenario } from '../../../guidedPrototype/state';
 import { GuidedPrototypePage } from '../GuidedPrototypePage';
 
-const SEED_ALT_TEXT = 'Canadian Prime Minister Justin Trudeau and singer Katy Perry posing together on the red carpet at the Tribeca Festival.';
+const SEED_ALT_TEXT = 'A man in a black suit and a woman in a white dress pose together, smiling, in front of a Tribeca Festival step-and-repeat backdrop.';
 const SCENARIO = createGuidedScenario();
 const JUSTIN_DRAFT = SCENARIO.samples['justin-trudeau'];
 const BOTH_NAMES_DRAFT = SCENARIO.samples.both;

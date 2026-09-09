@@ -173,7 +173,7 @@ export interface GuidedDemoState {
   actionHistory: GuidedActionHistoryEntry[];
 }
 
-const INITIAL_APPLIED_ALT_TEXT = 'Canadian Prime Minister Justin Trudeau and singer Katy Perry posing together on the red carpet at the Tribeca Festival.';
+const INITIAL_APPLIED_ALT_TEXT = 'A man in a black suit and a woman in a white dress pose together, smiling, in front of a Tribeca Festival step-and-repeat backdrop.';
 
 const GUIDED_SCENARIO_SEED: GuidedScenario = {
   origin: 'saved-build',

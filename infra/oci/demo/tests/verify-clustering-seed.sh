@@ -18,43 +18,124 @@ PERSONS="${PERSONS:-20}"
 PER_PERSON="${PER_PERSON:-5}"
 GUIDED_MANIFEST="${GUIDED_MANIFEST:-$SEED_DIR/guided-manifest.txt}"
 # GUIDESEED-1: media/ also holds the guided-prototype people written by
-# select-guided-seed.sh; their count comes from guided-manifest.txt (0 when absent).
+# select-guided-seed.sh. Every guided-manifest row is validated individually
+# (exact 1..N files + MIME). CRLF is stripped before parse; leftover malformed
+# lines fail closed instead of counting as guided=0.
+fail=0
 guided=0
+
+is_image_name() {
+  case "$1" in
+    *.jpg|*.jpeg|*.png|*.JPG|*.JPEG|*.PNG) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+count_prefix_files() {
+  _dir=$1
+  _prefix=$2
+  _n=0
+  for _f in "$_dir"/${_prefix}_*; do
+    [[ -f "$_f" ]] || continue
+    _n=$((_n + 1))
+  done
+  printf '%s\n' "$_n"
+}
+
+find_guided_file() {
+  _dir=$1
+  _slug=$2
+  _idx=$3
+  for _ext in jpg jpeg png JPG JPEG PNG; do
+    if [[ -f "$_dir/${_slug}_${_idx}.$_ext" ]]; then
+      printf '%s\n' "$_dir/${_slug}_${_idx}.$_ext"
+      return 0
+    fi
+  done
+  return 1
+}
+
 if [[ -f "$GUIDED_MANIFEST" ]]; then
-  guided=$(awk '/^[a-z0-9_]+ [0-9]+$/ { s += $2 } END { print s + 0 }' "$GUIDED_MANIFEST")
+  while IFS= read -r line || [[ -n "${line:-}" ]]; do
+    line=${line%$'\r'}
+    [[ -z "$line" ]] && continue
+    if [[ ! "$line" =~ ^[a-z0-9_]+\ [0-9]+$ ]]; then
+      echo "FAIL: malformed guided-manifest line (CRLF stripped): $line" >&2
+      fail=1
+      continue
+    fi
+    set -- $line
+    p=$1
+    c=$2
+    guided=$((guided + c))
+    i=1
+    while [[ "$i" -le "$c" ]]; do
+      if ! gfile=$(find_guided_file "$OUT" "$p" "$i"); then
+        echo "FAIL: guided $p missing exact file ${p}_${i}.jpg (or jpeg/png)" >&2
+        fail=1
+        i=$((i + 1))
+        continue
+      fi
+      gmt=$(file -b --mime-type "$gfile" 2>/dev/null || echo unknown)
+      case "$gmt" in
+        image/jpeg|image/png) : ;;
+        *) echo "FAIL: guided $(basename "$gfile") is '$gmt' by content, not image/jpeg|image/png" >&2; fail=1 ;;
+      esac
+      i=$((i + 1))
+    done
+  done < "$GUIDED_MANIFEST"
 fi
 EXPECT=$((PERSONS * PER_PERSON + guided))
-fail=0
 
-n=$(find "$OUT" -maxdepth 1 -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \) 2>/dev/null | wc -l | tr -d ' ')
+n=0
+w=0
+for f in "$OUT"/*; do
+  [[ -f "$f" ]] || continue
+  base=$(basename "$f")
+  case "$base" in
+    *.webp|*.WEBP) w=$((w + 1)) ;;
+  esac
+  if is_image_name "$base"; then
+    n=$((n + 1))
+  fi
+done
 [[ "$n" -eq "$EXPECT" ]] || { echo "FAIL: expected $EXPECT images in $OUT, found $n" >&2; fail=1; }
 
-w=$(find "$OUT" -maxdepth 1 -type f -iname '*.webp' 2>/dev/null | wc -l | tr -d ' ')
 [[ "$w" -eq 0 ]] || { echo "FAIL: $w .webp files in $OUT (glob excludes webp)" >&2; fail=1; }
 
 # Content (magic-byte) assertion — extension alone is insufficient: webp/avif files
 # carrying .jpg/.jpeg/.png names pass the glob but break the recognition decoder and
 # WP media handling (E15-29-BR-02). Require every image to be TRUE image/jpeg|image/png.
 bad_content=0
-while IFS= read -r f; do
-  [[ -n "$f" ]] || continue
+for f in "$OUT"/*; do
+  [[ -f "$f" ]] || continue
+  is_image_name "$(basename "$f")" || continue
   mt=$(file -b --mime-type "$f" 2>/dev/null || echo unknown)
   case "$mt" in
     image/jpeg|image/png) : ;;
     *) echo "FAIL: $(basename "$f") is '$mt' by content, not image/jpeg|image/png" >&2; bad_content=$((bad_content + 1)) ;;
   esac
-done < <(find "$OUT" -maxdepth 1 -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \) 2>/dev/null)
+done
 [[ "$bad_content" -eq 0 ]] || { echo "FAIL: $bad_content image(s) have non-jpeg/png content" >&2; fail=1; }
 
 if [[ ! -f "$MANIFEST" ]]; then
   echo "FAIL: manifest missing at $MANIFEST" >&2; fail=1
 else
-  lines=$(grep -cE '^[a-z0-9_]+ [0-9]+$' "$MANIFEST" || true)
+  lines=0
+  while IFS= read -r line || [[ -n "${line:-}" ]]; do
+    line=${line%$'\r'}
+    [[ -z "$line" ]] && continue
+    if [[ "$line" =~ ^[a-z0-9_]+\ [0-9]+$ ]]; then
+      lines=$((lines + 1))
+    fi
+  done < "$MANIFEST"
   [[ "$lines" -eq "$PERSONS" ]] || { echo "FAIL: manifest has $lines persons, expected $PERSONS" >&2; fail=1; }
   while read -r p c; do
     [[ -z "${p:-}" ]] && continue
+    p=${p%$'\r'}
+    c=${c%$'\r'}
     [[ "${c:-0}" -ge "$PER_PERSON" ]] || { echo "FAIL: manifest person $p has $c < $PER_PERSON" >&2; fail=1; }
-    actual=$(find "$OUT" -maxdepth 1 -type f -name "${p}_*" 2>/dev/null | wc -l | tr -d ' ')
+    actual=$(count_prefix_files "$OUT" "$p")
     [[ "$actual" -ge "$PER_PERSON" ]] || { echo "FAIL: $p has $actual files on disk < $PER_PERSON" >&2; fail=1; }
   done < "$MANIFEST"
 fi

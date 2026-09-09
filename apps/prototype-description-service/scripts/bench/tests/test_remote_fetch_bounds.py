@@ -708,4 +708,3 @@ def test_real_under_limit_body_closes_and_preserves_sni(monkeypatch: pytest.Monk
         assert sni == ["media.example.com"]
     finally:
         server.close()
-

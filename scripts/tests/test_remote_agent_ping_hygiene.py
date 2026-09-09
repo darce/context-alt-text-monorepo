@@ -822,4 +822,3 @@ def test_overlay_seam_contract(tmp_path: Path) -> None:
     assert help_run.returncode == 0, help_run.stderr
     assert "ping [--]" in help_run.stderr
     assert "reap-orphan-pings" in help_run.stderr
-

@@ -912,4 +912,3 @@ describe('public demo illustrative outcome preview', () => {
     }
   });
 });
-

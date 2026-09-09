@@ -1686,6 +1686,68 @@ read_running_api_image_id() {
   printf '%s\n' "${image_id}"
 }
 
+# Return validated runtime-generation evidence for the compose-scoped api
+# service. Each non-empty record is:
+#   RUNTIME|container-id|image-id|state|compose-project|compose-service|config-hash
+# `ps -q` is authoritative for a live container; when it is empty, `ps -a -q`
+# is inspected so a stopped replacement can prove that this transaction reached
+# the candidate generation. ABSENT is a successful observation of no container,
+# not ownership evidence. Any transport, inspect, parse, or label failure is
+# unknown and returns non-zero so callers cannot compensate blindly.
+read_api_runtime_evidence() {
+  local env="$1" remote_dir compose_files remote_dir_q timeout output rc=0
+  local record kind container_id image_id state compose_project compose_service config_hash extra
+  local normalized=""
+  remote_dir="$(env_to_remote_dir "${env}")"
+  compose_files="$(env_to_compose_files "${env}")"
+  remote_dir_q="$(remote_quote "${remote_dir}")"
+  timeout="$(validated_deadline ACX_REMOTE_INSPECT_TIMEOUT 60)"
+  # shellcheck disable=SC2086 # compose_files is intentionally word-split remotely.
+  output="$(run_with_deadline "${timeout}" "api runtime-generation inspection for ${env}" \
+    ssh -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
+      -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+      -l "${OCI_USER}" -- "${OCI_HOST}" \
+      "cd ${remote_dir_q} && \
+       running_ids=\$(docker compose ${compose_files} ps -q api 2>/dev/null) || exit 41; \
+       running_cid=\$(printf '%s\\n' \"\$running_ids\" | sed -n '1p'); \
+       if [ -n \"\$running_cid\" ]; then \
+         docker inspect --format 'RUNTIME|{{.Id}}|{{.Image}}|{{.State.Status}}|{{index .Config.Labels \"com.docker.compose.project\"}}|{{index .Config.Labels \"com.docker.compose.service\"}}|{{index .Config.Labels \"com.docker.compose.config-hash\"}}' \"\$running_cid\" || exit 42; \
+       else \
+         stopped_ids=\$(docker compose ${compose_files} ps -a -q api 2>/dev/null) || exit 43; \
+         if [ -z \"\$stopped_ids\" ]; then \
+           printf '%s\\n' ABSENT; \
+         else \
+           for stopped_cid in \$stopped_ids; do \
+             docker inspect --format 'RUNTIME|{{.Id}}|{{.Image}}|{{.State.Status}}|{{index .Config.Labels \"com.docker.compose.project\"}}|{{index .Config.Labels \"com.docker.compose.service\"}}|{{index .Config.Labels \"com.docker.compose.config-hash\"}}' \"\$stopped_cid\" || exit 44; \
+           done; \
+         fi; \
+       fi")" || rc=$?
+  if (( rc != 0 )); then
+    return "${rc}"
+  fi
+  if [[ "${output}" == "ABSENT" ]]; then
+    printf '%s\n' "ABSENT"
+    return 0
+  fi
+  [[ -n "${output}" ]] || return 1
+  while IFS='|' read -r record container_id image_id state compose_project compose_service config_hash extra; do
+    [[ "${record}" == "RUNTIME" && -z "${extra}" ]] || return 1
+    [[ "${container_id}" =~ ^[a-f0-9]{12,64}$ ]] || return 1
+    [[ "${image_id}" =~ ^sha256:[a-f0-9]{64}$ ]] || return 1
+    [[ "${state}" =~ ^(running|restarting|created|exited|dead)$ ]] || return 1
+    [[ "${compose_project}" =~ ^[A-Za-z0-9_.-]+$ ]] || return 1
+    [[ "${compose_service}" == "api" ]] || return 1
+    [[ "${config_hash}" =~ ^[A-Za-z0-9_.:-]+$ ]] || return 1
+    case "${state}" in
+      running|restarting) kind="RUNNING" ;;
+      created|exited|dead) kind="STOPPED" ;;
+    esac
+    normalized+="${kind}|${container_id}|${image_id}|${state}|${compose_project}|${compose_service}|${config_hash}"$'\n'
+  done <<< "${output}"
+  [[ -n "${normalized}" ]] || return 1
+  printf '%s' "${normalized}"
+}
+
 # Capture the image actually serving on the target by immutable image ID before
 # a build can overwrite any host-local tag, then publish rollback-<digest-prefix>
 # in that image's repository. Prod fails closed when preservation fails; lower
@@ -2234,7 +2296,9 @@ do_restart() {
 restore_env_tag_to_rollback() {
   local env="$1" restart_runtime="${2:-0}" env_tag timeout rollback_base unit pulled_digest
   local inspect_timeout current_digest candidate_digest candidate_base
-  local running_image_id rollback_image_id candidate_image_id
+  local rollback_image_id candidate_image_id runtime_evidence runtime_kind
+  local runtime_cid runtime_image_id runtime_state runtime_project runtime_service runtime_hash
+  local runtime_owner=""
   if [[ ! "${ACX_ROLLBACK_DIGEST_REF:-}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]]; then
     warn "ROLLBACK REQUIRED but no previous serving digest was captured"
     return 1
@@ -2243,6 +2307,17 @@ restore_env_tag_to_rollback() {
   if [[ "${ACX_ROLLBACK_DIGEST_REF}" != "${rollback_base}@sha256:"* ]]; then
     warn "ROLLBACK REQUIRED but the captured repository and digest disagree"
     return 1
+  fi
+  candidate_digest="${ACX_CANDIDATE_DIGEST_REF:-}"
+  if [[ ! "${candidate_digest}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]]; then
+    if [[ "${restart_runtime}" == "1" ]]; then
+      warn "ROLLBACK REQUIRED but no candidate generation was captured; refusing unfenced runtime rollback"
+      return 1
+    fi
+    candidate_digest=""
+    candidate_base=""
+  else
+    candidate_base="${candidate_digest%@sha256:*}"
   fi
   assert_safe_image_repo "rollback image repository" "${rollback_base}"
   env_tag="$(env_to_tag "${env}")"
@@ -2265,9 +2340,7 @@ restore_env_tag_to_rollback() {
   # Fence automatic compensation against a newer deployment. The mutable tag
   # may only be changed when its registry mapping is still this transaction's
   # candidate (or is already the rollback digest after an idempotent retry).
-  candidate_digest="${ACX_CANDIDATE_DIGEST_REF:-}"
-  if [[ "${candidate_digest}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]]; then
-    candidate_base="${candidate_digest%@sha256:*}"
+  if [[ -n "${candidate_digest}" ]]; then
     if ! _pull_ref_remote "${rollback_base}:${env_tag}" >/dev/null \
       || ! current_digest="$(remote_image_digest_ref "${rollback_base}:${env_tag}")"; then
       warn "cannot observe current registry mapping for ${rollback_base}:${env_tag}; refusing unfenced rollback"
@@ -2279,16 +2352,62 @@ restore_env_tag_to_rollback() {
         return 1
       fi
     fi
-    if [[ "${restart_runtime}" == "1" ]]; then
-      running_image_id="$(read_running_api_image_id "${env}" || true)"
-      rollback_image_id="$(remote_image_id_for_digest "${ACX_ROLLBACK_DIGEST_REF}" || true)"
-      candidate_image_id="$(remote_image_id_for_digest "${candidate_digest}" || true)"
-      if [[ -z "${running_image_id}" \
-        || ( "${running_image_id}" != "${rollback_image_id}" \
-          && "${running_image_id}" != "${candidate_image_id}" ) ]]; then
-        warn "STALE ROLLBACK REFUSED: ${env} now serves ${running_image_id:-unknown}, outside this transaction's candidate/rollback generation"
-        return 1
+  fi
+  if [[ "${restart_runtime}" == "1" ]]; then
+    if ! rollback_image_id="$(remote_image_id_for_digest "${ACX_ROLLBACK_DIGEST_REF}")" \
+      || ! candidate_image_id="$(remote_image_id_for_digest "${candidate_digest}")"; then
+      warn "cannot resolve immutable candidate/rollback image IDs; refusing unfenced rollback"
+      return 1
+    fi
+    if ! runtime_evidence="$(read_api_runtime_evidence "${env}")"; then
+      warn "ROLLBACK REQUIRED but api runtime inspection is unknown; refusing unfenced rollback"
+      return 1
+    fi
+    if [[ "${runtime_evidence}" == "ABSENT" ]]; then
+      warn "ROLLBACK REQUIRED but no stopped api container proves this transaction's candidate generation"
+      return 1
+    fi
+    while IFS='|' read -r runtime_kind runtime_cid runtime_image_id runtime_state \
+      runtime_project runtime_service runtime_hash; do
+      # Compose scoping plus these labels make the stopped record an identity
+      # proof, rather than merely an unrelated container with the same image.
+      case "${runtime_kind}:${runtime_state}" in
+        RUNNING:running|RUNNING:restarting|STOPPED:created|STOPPED:exited|STOPPED:dead) ;;
+        *) continue ;;
+      esac
+      if [[ "${runtime_project}" != "acx-${env}" \
+        || "${runtime_service}" != "api" \
+        || -z "${runtime_hash}" ]]; then
+        continue
       fi
+      case "${runtime_kind}" in
+        RUNNING)
+          if [[ "${runtime_image_id}" == "${candidate_image_id}" \
+            || "${runtime_image_id}" == "${rollback_image_id}" ]]; then
+            runtime_owner="running"
+          fi
+          ;;
+        STOPPED)
+          # A stopped candidate container is the positive evidence that the
+          # failed restart reached this transaction's generation. A stopped
+          # rollback container is accepted only after the registry is already
+          # on the rollback digest, making an idempotent retry safe.
+          if [[ "${runtime_image_id}" == "${candidate_image_id}" ]]; then
+            runtime_owner="stopped-candidate"
+          elif [[ "${runtime_image_id}" == "${rollback_image_id}" \
+            && "${current_digest}" == "${ACX_ROLLBACK_DIGEST_REF}" ]]; then
+            runtime_owner="stopped-rollback"
+          fi
+          ;;
+      esac
+      [[ -n "${runtime_owner}" ]] && break
+    done <<< "${runtime_evidence}"
+    if [[ -z "${runtime_owner}" ]]; then
+      warn "STALE ROLLBACK REFUSED: ${env} runtime generation is outside this transaction's candidate/rollback fence"
+      return 1
+    fi
+    if [[ "${runtime_owner}" == "stopped-candidate" ]]; then
+      log "Confirmed stopped api container ${runtime_cid:0:12} belongs to the candidate generation; proceeding with rollback"
     fi
   fi
 
@@ -2333,7 +2452,7 @@ rollback_command_hint() {
 }
 
 do_rollback() {
-  local env="$1" rollback_id="$2" rollback_ref digest env_tag
+  local env="$1" rollback_id="$2" rollback_ref digest env_tag current_digest
   if [[ ! "${rollback_id}" =~ ^[a-f0-9]{12}$ ]]; then
     fail "rollback id must be the 12-character digest prefix printed by a failed deployment"
   fi
@@ -2353,6 +2472,18 @@ do_rollback() {
   ACX_ROLLBACK_DIGEST_REF="${digest}"
   ACX_ROLLBACK_IMAGE_BASE="${IMAGE_BASE}"
   env_tag="$(env_to_tag "${env}")"
+  # Manual rollback has no build candidate, so snapshot the current registry
+  # generation and pass it through the same stale-tag fence as automatic
+  # compensation. An unreadable/empty mapping is unknown, never permission to
+  # overwrite the environment tag.
+  _pull_ref_remote "${IMAGE_BASE}:${env_tag}" \
+    || fail "Current ${IMAGE_BASE}:${env_tag} could not be pulled; refusing unfenced rollback"
+  current_digest="$(remote_image_digest_ref "${IMAGE_BASE}:${env_tag}")" \
+    || fail "Current ${IMAGE_BASE}:${env_tag} mapping could not be inspected; refusing unfenced rollback"
+  if [[ ! "${current_digest}" =~ ^${IMAGE_BASE}@sha256:[a-f0-9]{64}$ ]]; then
+    fail "Current ${IMAGE_BASE}:${env_tag} mapping is invalid; refusing unfenced rollback"
+  fi
+  ACX_CANDIDATE_DIGEST_REF="${current_digest}"
   restore_env_tag_to_rollback "${env}" 1 \
     || fail "Rollback failed; ${IMAGE_BASE}:${env_tag} outcome is unknown"
   # restore_env_tag_to_rollback already requires both /health and immutable

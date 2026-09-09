@@ -9,9 +9,13 @@
 # between the GUIDED-PROVENANCE markers in seed/README.md. The SEED-PROVENANCE
 # (celebs01) block is left untouched.
 #
-# Idempotent: clears prior manifest-listed files from OUT before copying.
+# Idempotent: removes only the exact <slug>_1..N files this script owns (from the
+# previous guided-manifest counts and the rows about to be written). Never glob-
+# deletes shared-media prefixes — a clustering file like katy_perry_99.jpg must
+# survive a guided rerun.
 # Refuses (exit 2) if any bundled source is missing or is not image/jpeg by content.
-# Portable to bash 3.2 (macOS) and bash 5 (VM): no mapfile / associative arrays.
+# Portable to bash 3.2 (macOS) and bash 5 (VM): no mapfile / associative arrays /
+# GNU-only find depth flags. Cleanup failures are not suppressed.
 #
 # Usage:
 #   bash infra/oci/demo/seed/select-guided-seed.sh
@@ -54,15 +58,57 @@ mkdir -p "$OUT"
 tmp_rows="$(mktemp)"; tmp_manifest="$(mktemp)"; tmp_readme="$(mktemp)"
 trap 'rm -f "$tmp_rows" "$tmp_manifest" "$tmp_readme"' EXIT
 
-# Idempotent clear: prior manifest slugs + the slugs we are about to write.
+# Remove exactly slug_1..slug_count in OUT. Never glob slug_* (GR-01).
+# Portable: no find(1) (GR-06). Do not swallow rm failures.
+remove_guided_owned() {
+  _slug=$1
+  _count=$2
+  _i=1
+  case "$_count" in
+    ''|*[!0-9]*) _count=0 ;;
+  esac
+  while [ "$_i" -le "$_count" ]; do
+    for _ext in jpg jpeg png JPG JPEG PNG; do
+      _path="$OUT/${_slug}_${_i}.$_ext"
+      if [ -e "$_path" ]; then
+        rm -f "$_path" || { echo "ERROR: failed to remove owned guided file: $_path" >&2; exit 1; }
+      fi
+    done
+    _i=$((_i + 1))
+  done
+}
+
+# Idempotent clear of previously owned guided files (exact 1..N from last manifest).
 if [ -f "$MANIFEST" ]; then
-  while read -r oldp _; do
-    [ -n "${oldp:-}" ] && find "$OUT" -maxdepth 1 -type f -name "${oldp}_*" -delete 2>/dev/null || true
+  while IFS= read -r _line || [ -n "${_line:-}" ]; do
+    _line=${_line%$'\r'}
+    [ -n "$_line" ] || continue
+    # Word-split the manifest row: "<slug> <count>"
+    set -- $_line
+    _oldp=$1
+    _oldc=${2:-0}
+    [ -n "${_oldp:-}" ] || continue
+    remove_guided_owned "$_oldp" "$_oldc"
   done < "$MANIFEST"
 fi
-printf '%s\n' "$ROWS" | cut -d'|' -f2 | sort -u | while IFS= read -r p; do
-  find "$OUT" -maxdepth 1 -type f -name "${p}_*" -delete 2>/dev/null || true
-done
+
+# Also drop the exact targets we are about to write (manifest missing or counts changed).
+_prev=""
+_n=0
+while IFS='|' read -r _src _slug _label _lic; do
+  [ -n "${_src:-}" ] || continue
+  if [ "$_slug" != "$_prev" ]; then
+    _prev=$_slug
+    _n=0
+  fi
+  _n=$((_n + 1))
+  for _ext in jpg jpeg png JPG JPEG PNG; do
+    _path="$OUT/${_slug}_${_n}.$_ext"
+    if [ -e "$_path" ]; then
+      rm -f "$_path" || { echo "ERROR: failed to remove guided target: $_path" >&2; exit 1; }
+    fi
+  done
+done <<< "$ROWS"
 
 total=0
 prev=""; n=0

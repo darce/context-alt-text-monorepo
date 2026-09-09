@@ -127,7 +127,9 @@ from a saved fixture. So the live roster can name the same people, `select-guide
 copies the six licence-cleared plugin assets from
 `apps/prototype-wp-alt-context/js/admin/assets/guided/` (credits: `CREDITS.md` there) into
 `media/` as `katy_perry_<n>.jpg`, `justin_trudeau_<n>.jpg` and `tribeca_press_1.jpg`, and
-writes `guided-manifest.txt`. All six are Wikimedia Commons files under CC BY / CC BY-SA /
+writes `guided-manifest.txt`. Reruns replace only those exact owned `<slug>_1..N` files
+(never a shared-media slug-prefix glob, so a clustering file like `katy_perry_99.jpg`
+survives). All six are Wikimedia Commons files under CC BY / CC BY-SA /
 public domain / EU reuse licence — a stronger basis than the celebs01 fair-use rows.
 The table below is **regenerated** by `select-guided-seed.sh` — do not hand-edit between
 the markers.

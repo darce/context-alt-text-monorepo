@@ -74,7 +74,7 @@ class CueTimer {
 test.describe('guided walkthrough recording', () => {
   test.setTimeout(240_000);
 
-  test('records one complete decision with in-tab apply/undo and no privileged requests', async ({ page, baseURL }, testInfo) => {
+  test('records one complete decision with in-tab apply/undo and no privileged requests', async ({ page, context, baseURL }, testInfo) => {
     if (!baseURL) {
       throw new Error('baseURL is required (WP_BASE_URL / ACX_E2E_BASE_URL)');
     }
@@ -85,13 +85,19 @@ test.describe('guided walkthrough recording', () => {
       if (!isAcxRestRequest(url)) {
         return;
       }
-      acxRequests.push({ method: request.method(), url, classification: classifyAcxRequest(request.method(), url) });
+      acxRequests.push({
+        method: request.method(),
+        url,
+        classification: classifyAcxRequest(request.method(), url, request.headers()),
+      });
     });
 
     const timer = new CueTimer();
     let appliedAfterApply: string | null = null;
     let appliedAfterUndo: string | null = null;
     let verdict: GuidedRecordingManifest['verdict'] = 'fail';
+    let walkthroughError: unknown;
+    let videoPath: string | null = null;
 
     try {
       const root = page.getByTestId('guided-demo-root');
@@ -198,33 +204,62 @@ test.describe('guided walkthrough recording', () => {
       const privileged = acxRequests.filter((record) => record.classification === 'privileged');
       expect(privileged, `privileged acx/v1 requests during the recorded walkthrough: ${JSON.stringify(privileged)}`).toEqual([]);
       verdict = 'pass';
+    } catch (err) {
+      walkthroughError = err;
     } finally {
       const cues = timer.cues;
       const captionsPath = testInfo.outputPath(GUIDED_RECORDING_CAPTIONS_FILENAME);
       await fs.writeFile(captionsPath, renderWebVtt(cues));
       await fs.writeFile(testInfo.outputPath('guided-walkthrough-transcript.txt'), renderTranscript(cues));
-      // video.path() resolves once the recorder knows its file; do not let a slow
-      // recorder hold the manifest hostage.
-      const videoPath = await Promise.race<string | null>([
-        page.video()?.path().catch(() => null) ?? Promise.resolve(null),
-        new Promise<null>((resolve) => setTimeout(() => resolve(null), 5_000)),
-      ]);
-      const manifest: GuidedRecordingManifest = {
-        task_ref: taskRef,
-        captured_at: new Date().toISOString(),
-        base_url: baseURL,
-        deploy_commit_sha: deployCommitSha,
-        harness: HARNESS_INFO,
-        video_path: videoPath ?? null,
-        captions_path: captionsPath,
-        cues,
-        acx_requests: acxRequests,
-        privileged_request_count: countPrivileged(acxRequests),
-        applied_text_after_apply: appliedAfterApply,
-        applied_text_after_undo: appliedAfterUndo,
-        verdict,
-      };
-      await fs.writeFile(testInfo.outputPath(GUIDED_RECORDING_MANIFEST_FILENAME), `${JSON.stringify(manifest, null, 2)}\n`);
+      // Playwright finalizes the webm on context close. Resolve the path only after
+      // that, and refuse to write a silent null video_path (GUIDESEED-1-GR-08).
+      const video = page.video();
+      try {
+        if (!page.isClosed()) {
+          await page.close();
+        }
+      } catch {
+        // Already closed by a walkthrough failure or fixture teardown.
+      }
+      try {
+        await context.close();
+      } catch {
+        // Fixture may close the context after this block.
+      }
+      if (video) {
+        const videoDest = testInfo.outputPath('guided-walkthrough.webm');
+        try {
+          await video.saveAs(videoDest);
+          videoPath = videoDest;
+        } catch {
+          videoPath = null;
+        }
+      }
+      if (videoPath) {
+        const manifest: GuidedRecordingManifest = {
+          task_ref: taskRef,
+          captured_at: new Date().toISOString(),
+          base_url: baseURL,
+          deploy_commit_sha: deployCommitSha,
+          harness: HARNESS_INFO,
+          video_path: videoPath,
+          captions_path: captionsPath,
+          cues,
+          acx_requests: acxRequests,
+          privileged_request_count: countPrivileged(acxRequests),
+          applied_text_after_apply: appliedAfterApply,
+          applied_text_after_undo: appliedAfterUndo,
+          verdict,
+        };
+        await fs.writeFile(testInfo.outputPath(GUIDED_RECORDING_MANIFEST_FILENAME), `${JSON.stringify(manifest, null, 2)}\n`);
+      }
+    }
+
+    if (!videoPath) {
+      throw new Error('guided recording produced no video artifact; refusing to write a silent null video_path');
+    }
+    if (walkthroughError) {
+      throw walkthroughError;
     }
   });
 });

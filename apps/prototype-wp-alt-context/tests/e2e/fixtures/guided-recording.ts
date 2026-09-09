@@ -95,32 +95,83 @@ export const renderTranscript = (cues: readonly GuidedRecordingCue[]): string =>
 
 const ACX_REST_PATTERN = /(?:\/wp-json\/acx\/v1\/|[?&]rest_route=(?:%2F|\/)acx(?:%2F|\/)v1(?:%2F|\/))/i;
 const PRIVILEGED_PATH_PATTERN = /\/(?:describe|persons|commit|scan|apply|jobs|tasks)(?:[/?#]|$)/i;
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+const METHOD_OVERRIDE_HEADER = 'x-http-method-override';
+
+export type AcxRequestHeaders = Record<string, string | string[] | undefined>;
 
 /** True when the request targets the plugin's REST namespace at all. */
 export const isAcxRestRequest = (url: string): boolean => ACX_REST_PATTERN.test(url);
 
+const parseUrl = (url: string): URL | null => {
+  try {
+    return new URL(url);
+  } catch {
+    try {
+      return new URL(url, 'http://guided.invalid');
+    } catch {
+      return null;
+    }
+  }
+};
+
+const headerValue = (headers: AcxRequestHeaders | undefined, name: string): string | undefined => {
+  if (!headers) {
+    return undefined;
+  }
+  const want = name.toLowerCase();
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() !== want) {
+      continue;
+    }
+    const raw = Array.isArray(value) ? value[0] : value;
+    if (typeof raw === 'string' && raw.trim().length > 0) {
+      return raw.trim();
+    }
+  }
+  return undefined;
+};
+
+const methodOverride = (url: string, headers?: AcxRequestHeaders): string | undefined => {
+  const parsed = parseUrl(url);
+  const fromQuery = parsed?.searchParams.get('_method')?.trim();
+  if (fromQuery) {
+    return fromQuery.toUpperCase();
+  }
+  const fromHeader = headerValue(headers, METHOD_OVERRIDE_HEADER);
+  return fromHeader ? fromHeader.toUpperCase() : undefined;
+};
+
 /**
  * Recorded-only policy: the guided page may read (GET) plugin state, but any write
  * verb or any path that starts server-side work (describe, roster writes, scans, jobs)
- * is privileged and fails the recording.
+ * is privileged and fails the recording. Query `_method` and `X-HTTP-Method-Override`
+ * write overrides are treated as privileged even when the HTTP verb is GET.
  */
-export const classifyAcxRequest = (method: string, url: string): AcxRequestClass => {
+export const classifyAcxRequest = (
+  method: string,
+  url: string,
+  headers?: AcxRequestHeaders,
+): AcxRequestClass => {
   if (!isAcxRestRequest(url)) {
     return 'other';
   }
   const verb = method.toUpperCase();
-  if (verb !== 'GET' && verb !== 'HEAD' && verb !== 'OPTIONS') {
+  const override = methodOverride(url, headers);
+  if (!SAFE_METHODS.has(verb) || (override !== undefined && !SAFE_METHODS.has(override))) {
     return 'privileged';
   }
   let pathname = url;
-  try {
-    const parsed = new URL(url);
+  const parsed = parseUrl(url);
+  if (parsed) {
     const routeParam = parsed.searchParams.get('rest_route');
     pathname = routeParam ?? parsed.pathname;
-  } catch {
-    // Relative or malformed URL: classify on the raw string.
   }
-  return PRIVILEGED_PATH_PATTERN.test(decodeURIComponent(pathname)) ? 'privileged' : 'read';
+  try {
+    return PRIVILEGED_PATH_PATTERN.test(decodeURIComponent(pathname)) ? 'privileged' : 'read';
+  } catch {
+    return PRIVILEGED_PATH_PATTERN.test(pathname) ? 'privileged' : 'read';
+  }
 };
 
 export const countPrivileged = (records: readonly AcxRequestRecord[]): number =>

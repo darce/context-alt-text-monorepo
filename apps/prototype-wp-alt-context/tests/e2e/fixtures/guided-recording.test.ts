@@ -101,6 +101,30 @@ describe('classifyAcxRequest', () => {
   it('does not confuse similar words in unrelated segments', () => {
     expect(classifyAcxRequest('GET', `${base}/roster/entries?include=described`)).toBe('read');
   });
+
+  it('flags query _method write overrides on GET as privileged', () => {
+    expect(classifyAcxRequest('GET', `${base}/settings?_method=POST`)).toBe('privileged');
+    expect(classifyAcxRequest('GET', `${base}/roster/entries?_method=put`)).toBe('privileged');
+    expect(
+      classifyAcxRequest('GET', 'http://localhost:10010/?rest_route=/acx/v1/settings&_method=POST'),
+    ).toBe('privileged');
+  });
+
+  it('flags X-HTTP-Method-Override write overrides as privileged', () => {
+    expect(classifyAcxRequest('GET', `${base}/settings`, { 'X-HTTP-Method-Override': 'POST' })).toBe(
+      'privileged',
+    );
+    expect(classifyAcxRequest('GET', `${base}/settings`, { 'x-http-method-override': 'PATCH' })).toBe(
+      'privileged',
+    );
+  });
+
+  it('does not treat a GET override as a write', () => {
+    expect(classifyAcxRequest('GET', `${base}/settings?_method=GET`)).toBe('read');
+    expect(classifyAcxRequest('GET', `${base}/settings`, { 'X-HTTP-Method-Override': 'HEAD' })).toBe(
+      'read',
+    );
+  });
 });
 
 describe('countPrivileged', () => {

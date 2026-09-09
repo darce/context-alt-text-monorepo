@@ -258,22 +258,117 @@ def test_selection_and_reported_corpora_are_disjoint() -> None:
     assert not wrong_reported_half, f"reported corpus contains train images: {wrong_reported_half}"
 
 
-def test_manifest_covers_discriminating_classes(manifest: GoldenManifest) -> None:
-    """Pin the §6b discriminating classes so a later 'reuse VLM-2C packs' edit cannot silently
-    delete the entries that give the bake-off its discriminating power."""
-    entries = manifest.entries
-    # roster-plus-strangers association: more faces than named present identities.
-    assert any(e.face_count > len(e.present_identities) >= 1 for e in entries), (
-        "manifest lost its roster-plus-strangers association entry"
+def _load_manifest_metadata(path: Path) -> GoldenManifest:
+    return load_manifest(
+        str(path),
+        skip_hash_verification=True,
+        hash_skip_reason="test metadata-only; image bytes never opened",
+        metadata_only=True,
     )
+
+
+def _assert_multi_person_plus_strangers(entries, *, label: str) -> None:
+    assert any(
+        e.face_count > len(e.present_identities) and len(e.present_identities) >= 2 for e in entries
+    ), f"{label} lost its multi-person-plus-strangers association entry"
+
+
+def _assert_context_conflicts_pixels(entries, *, label: str) -> None:
+    assert any(e.path.endswith("mcm-planecrash.jpg") for e in entries), (
+        f"{label} lost its context-conflicts-pixels (mcm-planecrash) entry"
+    )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "FIR-ORCH-BR-22: after the image-hash split, selection paths are disjoint from "
+        "reported golden, so present_identities cannot be checked against a shared-path "
+        "golden entry. Restored and kept loud; not deleted. The multi-person-plus-strangers "
+        "case and the context-conflicts-pixels case are NOT represented in the current "
+        "selection half."
+    ),
+)
+def test_entries_present_identities_match_golden_corpus() -> None:
+    """FIR-ORCH-BR-22: restore the present_identities drift check deleted in 8b93c473."""
+    selection = _load_manifest_metadata(BAKEOFF_MANIFEST)
+    golden = _load_manifest_metadata(GOLDEN_MANIFEST)
+    golden_by_path = {e.path: e for e in golden.entries}
+    for entry in selection.entries:
+        assert entry.path in golden_by_path, (
+            f"{entry.path}: not in golden corpus (new image needs README bootstrap)"
+        )
+        gold = golden_by_path[entry.path]
+        assert entry.present_identities == gold.present_identities, (
+            f"{entry.path}: present_identities drifted from golden corpus"
+        )
+
+
+def test_manifest_covers_discriminating_classes_still_in_selection() -> None:
+    """Train-half classes that survived the split stay pinned on the bake-off manifest."""
+    entries = _load_manifest_metadata(BAKEOFF_MANIFEST).entries
     # abstract / hallucination-pressure: no faces but an attribution must_right.
     assert any(e.face_count == 0 and e.must_right for e in entries), (
         "manifest lost its abstract/attribution (face_count 0 + must_right) entry"
     )
-    # reflection-heavy hard case from the train half of the frozen draw.
+    # Present in the train half; additional hard-case coverage, not a replacement pin.
     assert any(e.path.endswith("rrw-mirror.jpg") for e in entries), (
-        "manifest lost its mirror/reflection entry"
+        "manifest lost its train-half mirror/reflection entry"
     )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "FIR-ORCH-BR-22: multi-person-plus-strangers (ccqw-candid.jpg, 4 faces / 2 named) "
+        "is NOT in the current selection half; it landed held-out. Do not lower >=2."
+    ),
+)
+def test_selection_covers_multi_person_plus_strangers() -> None:
+    _assert_multi_person_plus_strangers(
+        _load_manifest_metadata(BAKEOFF_MANIFEST).entries, label="selection manifest"
+    )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "FIR-ORCH-BR-22: context-conflicts-pixels (mcm-planecrash.jpg) is NOT in the "
+        "current selection half; it landed held-out. Do not swap the pin."
+    ),
+)
+def test_selection_covers_context_conflicts_pixels() -> None:
+    _assert_context_conflicts_pixels(
+        _load_manifest_metadata(BAKEOFF_MANIFEST).entries, label="selection manifest"
+    )
+
+
+def test_reported_corpus_covers_discriminating_classes_absent_from_selection() -> None:
+    """Assertion of record: the classes selection lost live in the reported half."""
+    entries = _load_manifest_metadata(GOLDEN_MANIFEST).entries
+    _assert_multi_person_plus_strangers(entries, label="reported corpus")
+    _assert_context_conflicts_pixels(entries, label="reported corpus")
+
+
+def test_reported_discriminating_class_guards_go_red_on_scratch_drop(tmp_path: Path) -> None:
+    """TEST-15: dropping the held-out carriers from a scratch copy makes the pins fail."""
+    raw = json.loads(GOLDEN_MANIFEST.read_text(encoding="utf-8"))
+    raw["entries"] = [
+        entry
+        for entry in raw["entries"]
+        if not str(entry.get("path", "")).endswith("mcm-planecrash.jpg")
+        and not (
+            int(entry.get("face_count") or 0) > len(entry.get("present_identities") or [])
+            and len(entry.get("present_identities") or []) >= 2
+        )
+    ]
+    scratch = tmp_path / "golden-drop-hard-cases.json"
+    scratch.write_text(json.dumps(raw), encoding="utf-8")
+    entries = _load_manifest_metadata(scratch).entries
+    with pytest.raises(AssertionError, match="multi-person-plus-strangers"):
+        _assert_multi_person_plus_strangers(entries, label="reported corpus")
+    with pytest.raises(AssertionError, match="context-conflicts-pixels"):
+        _assert_context_conflicts_pixels(entries, label="reported corpus")
 
 
 # --- Slice 3: BakeoffClient transport (stubbed endpoint, no network) ---

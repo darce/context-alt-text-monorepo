@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = REPO_ROOT / "scripts/remote_agent.sh"
+SCRIPT = REPO_ROOT / "scripts/remote_agent_hygiene.sh"
 
 
 def _run(

@@ -28,6 +28,7 @@ export interface GuidedFaceMatchCardProps {
   onChoose: (choice: GuidedNameChoice, origin: HTMLInputElement) => void;
 }
 
+const INLINE_CROP_PX = 80;
 const ENLARGED_CROP_PX = 240;
 
 const choiceStatus = (choice: GuidedNameChoice, personName: string): string => {
@@ -87,7 +88,7 @@ export const GuidedFaceMatchCard = ({
     onChoose(nextChoice, event.currentTarget);
   };
 
-  const thumbnail = (sizePx?: number): React.JSX.Element => (
+  const thumbnail = (sizePx = INLINE_CROP_PX): React.JSX.Element => (
     <FaceThumbnail
       mediaUrl={mediaUrl}
       bbox={{

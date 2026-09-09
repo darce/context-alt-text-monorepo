@@ -276,19 +276,209 @@ manifest_format="$(printf '%s\n' "$schema_values" | sed -n '2p')"
 sync_paths() {
     "$resolved_python" - "$@" <<'PY'
 import os
+import stat
 import sys
 
 
+nofollow = getattr(os, "O_NOFOLLOW", 0)
+nonblock = getattr(os, "O_NONBLOCK", 0)
+directory = getattr(os, "O_DIRECTORY", 0)
+
 for raw_path in sys.argv[1:]:
-    flags = os.O_RDONLY
-    if os.path.isdir(raw_path):
-        flags |= getattr(os, "O_DIRECTORY", 0)
-    descriptor = os.open(raw_path, flags)
     try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+        before = os.lstat(raw_path)
+        if stat.S_ISDIR(before.st_mode):
+            flags = os.O_RDONLY | directory | nofollow
+            expected_type = stat.S_IFDIR
+        elif stat.S_ISREG(before.st_mode):
+            flags = os.O_RDONLY | nonblock | nofollow
+            expected_type = stat.S_IFREG
+        else:
+            raise OSError("refusing to fsync a non-regular, non-directory path")
+        descriptor = os.open(raw_path, flags)
+        try:
+            after = os.fstat(descriptor)
+            if stat.S_IFMT(after.st_mode) != expected_type or (
+                after.st_dev,
+                after.st_ino,
+            ) != (before.st_dev, before.st_ino):
+                raise OSError("path changed while preparing its durability barrier")
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    except OSError as exc:
+        raise SystemExit(f"cannot safely fsync {raw_path}: {exc}") from exc
 PY
+}
+
+recognized_artifacts=(
+    instance.json
+    audit-events.json
+    state_history.json
+    state_snapshot.json
+    wp_describe_receipts.json
+    manifest.json
+)
+
+# Recovery examines a bounded, known artifact set without opening entries. This
+# keeps empty bundles valid and rejects FIFOs/devices/symlinks before any copy
+# or fsync can block on them. Unknown-entry rejection remains fail-closed.
+validate_restore_bundle() {
+    "$resolved_python" - "$1" <<'PY'
+import os
+import stat
+import sys
+
+
+allowed = {
+    "instance.json",
+    "audit-events.json",
+    "state_history.json",
+    "state_snapshot.json",
+    "wp_describe_receipts.json",
+    "manifest.json",
+}
+root = sys.argv[1]
+try:
+    root_stat = os.lstat(root)
+    if not stat.S_ISDIR(root_stat.st_mode):
+        raise OSError("bundle is not a directory")
+    with os.scandir(root) as entries:
+        for entry in entries:
+            if entry.name not in allowed:
+                raise OSError(f"bundle contains an unrecognized entry: {entry.name}")
+            entry_stat = entry.stat(follow_symlinks=False)
+            if not stat.S_ISREG(entry_stat.st_mode):
+                raise OSError(f"bundle artifact is not a regular file: {entry.name}")
+except OSError as exc:
+    raise SystemExit(f"cannot safely recover {root}: {exc}") from exc
+PY
+}
+
+sync_bundle() {
+    local bundle="$1"
+    local artifact
+    local artifact_path
+    local -a sync_targets=()
+    shift
+
+    if ! validate_restore_bundle "$bundle"; then
+        return 1
+    fi
+    for artifact in "${recognized_artifacts[@]}"; do
+        artifact_path="${bundle}/${artifact}"
+        if [ -e "$artifact_path" ] || [ -L "$artifact_path" ]; then
+            sync_targets+=("$artifact_path")
+        fi
+    done
+    sync_targets+=("$bundle")
+    sync_targets+=("$@")
+    sync_paths "${sync_targets[@]}"
+}
+
+# Copying is bounded for ordinary input receipts and for recovery staging. The
+# recovery caller validates its source bundle first; -p preserves artifact
+# modes while the existing timeout behavior bounds a stalled filesystem.
+bounded_copy() {
+    local source="$1"
+    local destination="$2"
+    local copy_pid=""
+    local elapsed=0
+
+    if command -v timeout >/dev/null 2>&1; then
+        timeout "$copy_max_time" cp -p -- "$source" "$destination"
+        return $?
+    fi
+
+    # Keep a bounded fallback for hosts without coreutils timeout.  A
+    # stubborn filesystem may outlive the TERM/KILL request, but the
+    # exporter itself does not wait indefinitely for an ordinary cp process.
+    cp -p -- "$source" "$destination" &
+    copy_pid="$!"
+    while kill -0 "$copy_pid" 2>/dev/null; do
+        if [ "$elapsed" -ge "$copy_max_time" ]; then
+            echo "ERROR: timed out copying evidence input: $source" >&2
+            kill "$copy_pid" 2>/dev/null || true
+            sleep 1
+            kill -KILL "$copy_pid" 2>/dev/null || true
+            wait "$copy_pid" 2>/dev/null || true
+            return 124
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    wait "$copy_pid"
+}
+
+preserve_directory_mode() {
+    "$resolved_python" - "$1" "$2" <<'PY'
+import os
+import stat
+import sys
+
+
+source, destination = sys.argv[1:]
+source_stat = os.lstat(source)
+destination_stat = os.lstat(destination)
+if not stat.S_ISDIR(source_stat.st_mode) or not stat.S_ISDIR(destination_stat.st_mode):
+    raise SystemExit("restore staging: expected directories")
+os.chmod(destination, stat.S_IMODE(source_stat.st_mode))
+PY
+}
+
+# Never move the only fallback into visibility before its replacement has
+# passed file, directory, and destination-parent durability barriers. The
+# original backup is garbage-collected only after the durable rename.
+restore_previous_bundle() {
+    local source="$1"
+    local destination="$2"
+    local transaction="$3"
+    local stage=""
+    local artifact
+    local source_path
+    local destination_path
+
+    if ! validate_restore_bundle "$source"; then
+        return 1
+    fi
+    if ! stage="$(mktemp -d "${transaction}/.restore.XXXXXXXXXX")"; then
+        echo "ERROR: could not create a recovery staging directory: $transaction" >&2
+        return 1
+    fi
+    if ! preserve_directory_mode "$source" "$stage"; then
+        echo "ERROR: could not preserve the previous evidence bundle mode: $source" >&2
+        rm -rf -- "$stage" || true
+        return 1
+    fi
+    for artifact in "${recognized_artifacts[@]}"; do
+        source_path="${source}/${artifact}"
+        if [ -e "$source_path" ] || [ -L "$source_path" ]; then
+            destination_path="${stage}/${artifact}"
+            if ! bounded_copy "$source_path" "$destination_path"; then
+                echo "ERROR: could not stage the previous evidence artifact: $source_path" >&2
+                rm -rf -- "$stage" || true
+                return 1
+            fi
+        fi
+    done
+    if ! sync_bundle "$stage"; then
+        echo "ERROR: could not durably stage the previous evidence bundle: $source" >&2
+        rm -rf -- "$stage" || true
+        return 1
+    fi
+    if ! mv -- "$stage" "$destination"; then
+        echo "ERROR: could not publish the staged previous evidence bundle: $destination" >&2
+        return 1
+    fi
+    stage=""
+    if ! sync_paths "$destination" "$out_parent"; then
+        echo "ERROR: could not durably restore the previous evidence bundle: $destination" >&2
+        return 1
+    fi
+    if ! rm -rf -- "$source"; then
+        echo "ERROR: could not remove the durably restored evidence backup: $source" >&2
+        return 1
+    fi
 }
 
 # mkdir -p may introduce several directory entries. Persist the directory chain
@@ -348,15 +538,10 @@ cleanup() {
     # removing the transaction directory. A failed capture must never leave
     # callers with an empty or half-written destination.
     if [ "$previous_moved" -eq 1 ] && [ ! -e "$out_dir" ] && [ -e "$backup_dir" ]; then
-        if ! mv -- "$backup_dir" "$out_dir"; then
+        if ! restore_previous_bundle "$backup_dir" "$out_dir" "$transaction_dir"; then
             echo "ERROR: could not restore the previous evidence bundle: $out_dir; recovery transaction retained: $transaction_dir" >&2
             preserve_transaction=1
             exit_status=1
-        else
-            if ! sync_paths "$out_parent" "$transaction_dir"; then
-                preserve_transaction=1
-                exit_status=1
-            fi
         fi
     fi
     # A visible replacement is not committed until its parent rename barrier
@@ -396,10 +581,19 @@ recover_pending_publishes() {
         fi
 
         candidate_backup="${candidate}/previous"
+        if [ -e "$candidate_backup" ] || [ -L "$candidate_backup" ]; then
+            if [ ! -d "$candidate_backup" ] || [ -L "$candidate_backup" ]; then
+                echo "ERROR: refusing to recover an invalid previous evidence bundle: $candidate_backup" >&2
+                return 1
+            fi
+            if ! validate_restore_bundle "$candidate_backup"; then
+                return 1
+            fi
+        fi
         if [ -e "$out_dir" ] || [ -L "$out_dir" ]; then
             # A prior attempt may have retained this transaction because a
             # durability barrier failed. Visibility alone cannot authorize GC.
-            sync_paths "$out_dir"/* "$out_dir" "$out_parent"
+            sync_bundle "$out_dir" "$out_parent"
             echo "INFO: completing cleanup of an already-published evidence transaction: $candidate" >&2
             rm -rf -- "$candidate"
             sync_paths "$out_parent"
@@ -408,8 +602,10 @@ recover_pending_publishes() {
 
         if [ -d "$candidate_backup" ] && [ ! -L "$candidate_backup" ]; then
             echo "INFO: restoring the previous evidence bundle from an interrupted publish: $out_dir" >&2
-            mv -- "$candidate_backup" "$out_dir"
-            sync_paths "$out_dir"/* "$out_dir" "$out_parent" "$candidate"
+            if ! restore_previous_bundle "$candidate_backup" "$out_dir" "$candidate"; then
+                echo "ERROR: previous evidence restore failed; recovery transaction retained: $candidate" >&2
+                return 1
+            fi
         else
             echo "INFO: discarding an interrupted first publish with no previous bundle: $candidate" >&2
         fi
@@ -569,37 +765,6 @@ strip_url_query_for_manifest() {
             printf '%s' "$url"
             ;;
     esac
-}
-
-bounded_copy() {
-    local source="$1"
-    local destination="$2"
-    local copy_pid=""
-    local elapsed=0
-
-    if command -v timeout >/dev/null 2>&1; then
-        timeout "$copy_max_time" cp -- "$source" "$destination"
-        return $?
-    fi
-
-    # Keep a bounded fallback for hosts without coreutils timeout.  A
-    # stubborn filesystem may outlive the TERM/KILL request, but the
-    # exporter itself does not wait indefinitely for an ordinary cp process.
-    cp -- "$source" "$destination" &
-    copy_pid="$!"
-    while kill -0 "$copy_pid" 2>/dev/null; do
-        if [ "$elapsed" -ge "$copy_max_time" ]; then
-            echo "ERROR: timed out copying evidence input: $source" >&2
-            kill "$copy_pid" 2>/dev/null || true
-            sleep 1
-            kill -KILL "$copy_pid" 2>/dev/null || true
-            wait "$copy_pid" 2>/dev/null || true
-            return 124
-        fi
-        sleep 1
-        elapsed=$((elapsed + 1))
-    done
-    wait "$copy_pid"
 }
 
 instance_file="${work_dir}/instance.json"

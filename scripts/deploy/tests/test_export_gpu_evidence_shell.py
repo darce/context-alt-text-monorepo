@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import socket
 import sys
@@ -12,6 +13,66 @@ from pathlib import Path
 
 SUITE = Path(__file__).with_name("test-export-gpu-evidence.sh")
 REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _exporter_args(bundle: Path) -> list[str]:
+    return [
+        "bash", str(SUITE.parent.parent / "lib/export-gpu-evidence.sh"),
+        "--instance-id", "ocid1.instance.example", "--compartment-id", "ocid1.compartment.example",
+        "--since", "2026-09-01T00:00:00Z", "--until", "2026-09-01T01:00:00Z", "--out", str(bundle),
+    ]
+
+
+def _seed_pending_recovery(tmp_path: Path, *, empty: bool = False) -> tuple[Path, Path]:
+    bundle = tmp_path / "bundle"
+    transaction = tmp_path / ".bundle.tmp.pending"
+    previous = transaction / "previous"
+    previous.mkdir(parents=True)
+    (transaction / ".publish-intent").write_text("publish-intent-v1\n", encoding="utf-8")
+    if not empty:
+        artifact = previous / "manifest.json"
+        artifact.write_bytes(b"previous evidence")
+        artifact.chmod(0o640)
+    return bundle, transaction
+
+
+def _recovery_environment() -> dict[str, str]:
+    environment = os.environ.copy()
+    environment.update({
+        "PATH": str(Path(sys.executable).parent) + os.pathsep + environment["PATH"],
+        "OCI_BIN": "/usr/bin/false",
+    })
+    return environment
+
+
+def _write_restore_parent_fault(tmp_path: Path) -> None:
+    (tmp_path / "sitecustomize.py").write_text(r"""
+import os
+from pathlib import Path
+
+_original_open, _original_fsync = os.open, os.fsync
+_paths = {}
+
+def traced_open(path, *args, **kwargs):
+    fd = _original_open(path, *args, **kwargs)
+    _paths[fd] = str(path)
+    return fd
+
+def traced_fsync(fd):
+    path = _paths.get(fd, "")
+    bundle = Path(os.environ["DURABILITY_BUNDLE"])
+    if (
+        os.environ["DURABILITY_FAULT"] == "restore_parent"
+        and path == str(bundle.parent)
+        and bundle.is_dir()
+        and (bundle / "manifest.json").is_file()
+        and (bundle / "manifest.json").read_bytes() == b"previous evidence"
+    ):
+        raise OSError("injected restore destination parent fsync failure")
+    return _original_fsync(fd)
+
+os.open, os.fsync = traced_open, traced_fsync
+""", encoding="utf-8")
 
 
 def test_export_gpu_evidence_shell_suite() -> None:
@@ -82,7 +143,7 @@ def test_term_during_publication_preserves_previous_bundle(tmp_path: Path, resto
     fake_mv.write_text(r"""#!/bin/bash
 set -eu
 [[ "${1:-}" != -- ]] || shift
-if [[ "$1" == */previous && "$RESTORE_FAILS" == 1 ]]; then
+if [[ ( "$1" == */previous || "$1" == */.restore.* ) && "$RESTORE_FAILS" == 1 ]]; then
     exit 74
 fi
 /bin/mv "$@"
@@ -114,6 +175,72 @@ fi
         assert recovered.returncode != 0
     assert (bundle / "manifest.json").read_bytes() == b"previous evidence"
     assert not list(tmp_path.glob(".bundle.tmp.*"))
+
+
+def test_cleanup_retains_previous_after_restore_barrier_failure(tmp_path: Path) -> None:
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (bundle / "manifest.json").write_bytes(b"previous evidence")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_oci = fake_bin / "oci"
+    fake_oci.write_text("#!/bin/bash\ncase \" $* \" in\n*' compute instance get '*) printf '%s\\n' '{\"data\":{\"id\":\"ocid1.instance.example\",\"compartment-id\":\"ocid1.compartment.example\",\"lifecycle-state\":\"STOPPED\"}}';;\n*) printf '%s\\n' '{\"data\":[]}' ;;\nesac\n")
+    fake_oci.chmod(0o755)
+    fake_mv = fake_bin / "mv"
+    fake_mv.write_text(r"""#!/bin/bash
+set -eu
+[[ "${1:-}" != -- ]] || shift
+/bin/mv "$@"
+if [[ "$1" == "$SIGNAL_BUNDLE" ]]; then
+    : >"$DURABILITY_ARMED"
+    kill -TERM "$PPID"
+fi
+""")
+    fake_mv.chmod(0o755)
+    (tmp_path / "sitecustomize.py").write_text(r"""
+import os
+from pathlib import Path
+
+_original_open, _original_fsync = os.open, os.fsync
+_paths = {}
+
+def traced_open(path, *args, **kwargs):
+    fd = _original_open(path, *args, **kwargs)
+    _paths[fd] = str(path)
+    return fd
+
+def traced_fsync(fd):
+    path = _paths.get(fd, "")
+    bundle = Path(os.environ["DURABILITY_BUNDLE"])
+    if (
+        Path(os.environ["DURABILITY_ARMED"]).exists()
+        and path == str(bundle.parent)
+        and bundle.is_dir()
+        and (bundle / "manifest.json").is_file()
+        and (bundle / "manifest.json").read_bytes() == b"previous evidence"
+    ):
+        raise OSError("injected cleanup restore destination parent fsync failure")
+    return _original_fsync(fd)
+
+os.open, os.fsync = traced_open, traced_fsync
+""", encoding="utf-8")
+    environment = os.environ.copy()
+    environment.update({
+        "PATH": str(fake_bin) + os.pathsep + str(Path(sys.executable).parent) + os.pathsep + environment["PATH"],
+        "PYTHONPATH": str(tmp_path), "OCI_BIN": str(fake_oci),
+        "SIGNAL_BUNDLE": str(bundle), "DURABILITY_BUNDLE": str(bundle),
+        "DURABILITY_ARMED": str(tmp_path / "restore-barrier-armed"),
+    })
+
+    result = subprocess.run(
+        _exporter_args(bundle), env=environment, capture_output=True, text=True, timeout=20, check=False,
+    )
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    transactions = list(tmp_path.glob(".bundle.tmp.*"))
+    assert len(transactions) == 1, result.stderr
+    assert (transactions[0] / "previous/manifest.json").read_bytes() == b"previous evidence"
+    assert (transactions[0] / ".publish-intent").is_file()
 
 
 @pytest.mark.parametrize(("fault", "new_parent"), [("none", False), ("artifact", False), ("publish_parent", False), ("none", True)])
@@ -196,3 +323,87 @@ os.open, os.fsync = traced_open, traced_fsync
             assert recovered.returncode != 0  # Deliberate OCI failure after recovery.
             assert not list(tmp_path.glob(".bundle.tmp.*"))
             assert (bundle / "manifest.json").is_file()
+
+
+def test_recovery_retains_previous_after_restore_barrier_failure(tmp_path: Path) -> None:
+    bundle, transaction = _seed_pending_recovery(tmp_path)
+    _write_restore_parent_fault(tmp_path)
+    environment = _recovery_environment()
+    environment.update({
+        "PYTHONPATH": str(tmp_path),
+        "DURABILITY_BUNDLE": str(bundle),
+        "DURABILITY_FAULT": "restore_parent",
+    })
+
+    result = subprocess.run(
+        _exporter_args(bundle), env=environment, capture_output=True, text=True, timeout=20, check=False,
+    )
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert (transaction / "previous/manifest.json").read_bytes() == b"previous evidence"
+    assert (transaction / ".publish-intent").is_file()
+    assert (transaction / "previous/manifest.json").stat().st_mode & 0o777 == 0o640
+
+
+def test_recovery_retry_after_absent_output_uses_retained_previous(tmp_path: Path) -> None:
+    bundle, transaction = _seed_pending_recovery(tmp_path)
+    _write_restore_parent_fault(tmp_path)
+    environment = _recovery_environment()
+    environment.update({
+        "PYTHONPATH": str(tmp_path),
+        "DURABILITY_BUNDLE": str(bundle),
+        "DURABILITY_FAULT": "restore_parent",
+    })
+    args = _exporter_args(bundle)
+
+    first = subprocess.run(args, env=environment, capture_output=True, text=True, timeout=20, check=False)
+    assert first.returncode != 0, first.stdout + first.stderr
+    assert bundle.is_dir()
+    shutil.rmtree(bundle)
+
+    second = subprocess.run(args, env=environment, capture_output=True, text=True, timeout=20, check=False)
+    assert second.returncode != 0, second.stdout + second.stderr
+    assert (transaction / "previous/manifest.json").read_bytes() == b"previous evidence"
+    assert (transaction / ".publish-intent").is_file()
+
+    environment["DURABILITY_FAULT"] = "none"
+    third = subprocess.run(args, env=environment, capture_output=True, text=True, timeout=20, check=False)
+    assert third.returncode != 0, third.stdout + third.stderr
+    assert (bundle / "manifest.json").read_bytes() == b"previous evidence"
+    assert (bundle / "manifest.json").stat().st_mode & 0o777 == 0o640
+    assert not list(tmp_path.glob(".bundle.tmp.*"))
+
+
+def test_recovery_handles_empty_previous_bundle(tmp_path: Path) -> None:
+    bundle, _ = _seed_pending_recovery(tmp_path, empty=True)
+    environment = _recovery_environment()
+
+    result = subprocess.run(
+        _exporter_args(bundle), env=environment, capture_output=True, text=True, timeout=20, check=False,
+    )
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert bundle.is_dir()
+    assert not list(bundle.iterdir())
+    assert not list(tmp_path.glob(".bundle.tmp.*")), result.stderr
+    assert "/*" not in result.stderr
+
+
+def test_recovery_rejects_fifo_artifact_without_blocking(tmp_path: Path) -> None:
+    if not hasattr(os, "mkfifo"):
+        pytest.skip("FIFO fixtures require a POSIX host")
+    bundle, transaction = _seed_pending_recovery(tmp_path, empty=True)
+    os.mkfifo(transaction / "previous/manifest.json")
+    environment = _recovery_environment()
+
+    try:
+        result = subprocess.run(
+            _exporter_args(bundle), env=environment, capture_output=True, text=True, timeout=5, check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(f"recovery blocked while inspecting a FIFO: {exc}")
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "regular" in result.stderr.lower(), result.stderr
+    assert (transaction / "previous/manifest.json").is_fifo()
+    assert (transaction / ".publish-intent").is_file()

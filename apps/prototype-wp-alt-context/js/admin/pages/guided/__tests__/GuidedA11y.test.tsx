@@ -515,18 +515,25 @@ describe('GuidedA11y (W04)', () => {
     render(<GuidedPrototypePage />);
 
     await user.click(screen.getByText(guidedCopy('names.evidence_open', { position: 'left' })));
-    const enlargeButtons = screen.getAllByRole('button', { name: /enlarg|larger|full.?size|expand comparison/i });
+    const enlargeButtons = screen.getAllByRole('button', { name: guidedCopy('names.enlarge') });
     expect(enlargeButtons).toHaveLength(2);
-    expect(screen.getByRole('img', { name: 'Detected left face' })).toBeInTheDocument();
-    expect(screen.getByRole('img', { name: 'Detected right face' })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: guidedCopy('names.crop_alt', { position: 'left' }) })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: guidedCopy('names.crop_alt', { position: 'right' }) })).toBeInTheDocument();
 
     const enlarge = enlargeButtons[0];
     assertHtmlElement(enlarge, 'left enlarge comparison button');
     await user.click(enlarge);
-    const comparison = screen.getByRole('dialog', { name: /enlarged comparison/i });
+    const comparison = screen.getByRole('dialog', { name: guidedCopy('names.enlarge_title') });
     expect(comparison).toHaveAttribute('aria-modal', 'true');
     await user.click(within(comparison).getByRole('button', { name: guidedCopy('names.evidence_close') }));
-    expect(screen.queryByRole('dialog', { name: /enlarged comparison/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: guidedCopy('names.enlarge_title') })).not.toBeInTheDocument();
+    expect(document.activeElement).toBe(enlarge);
+
+    enlarge.focus();
+    await user.keyboard('{Enter}');
+    expect(screen.getByRole('dialog', { name: guidedCopy('names.enlarge_title') })).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog', { name: guidedCopy('names.enlarge_title') })).not.toBeInTheDocument();
     expect(document.activeElement).toBe(enlarge);
   });
 });

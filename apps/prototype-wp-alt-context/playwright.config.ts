@@ -81,7 +81,8 @@ export default defineConfig({
     {
       // GUIDEROUTE-1: signed-out public guide at /guide/. No auth-setup; desktop
       // 1440×900 is the project default and the spec also covers Pixel 7.
-      // Skips when ACX_PUBLIC_GUIDE_URL is unset (not run in the deploy-enable lane).
+      // Export ACX_PUBLIC_GUIDE_URL via `npm run e2e:public-guide` or
+      // `make demo-public-guide-e2e SITE_URL=...`. Spec skips if unset.
       name: 'public-guide',
       testMatch: /evidence\/public-guide\.spec\.ts/,
       outputDir: path.join(artifactRoot, 'public-guide'),

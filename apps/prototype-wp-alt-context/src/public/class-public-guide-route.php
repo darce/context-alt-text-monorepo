@@ -11,14 +11,12 @@ use function add_filter;
 use function add_rewrite_rule;
 use function array_values;
 use function class_exists;
+use function flush_rewrite_rules;
 use function function_exists;
-use function get_404_template;
 use function get_option;
-use function get_query_var;
 use function is_array;
 use function is_object;
 use function is_string;
-use function nocache_headers;
 use function status_header;
 use function str_starts_with;
 use function wp_dequeue_script;
@@ -37,6 +35,7 @@ final class PublicGuideRoute {
 	public const OPTION_ENABLED = 'acx_public_guide_enabled';
 	public const ENTRY_POINT = 'js/guide/main.tsx';
 	public const SCRIPT_HANDLE = 'acx-public-guide';
+	public const REWRITE_REGEX = '^guide/?$';
 
 	private const FALLBACK_COPY = 'The walkthrough could not load. Reload the page, or watch the recorded video on the case study page.';
 
@@ -51,7 +50,14 @@ final class PublicGuideRoute {
 	}
 
 	public function init(): void {
+		add_action( 'update_option_' . self::OPTION_ENABLED, array( $this, 'on_enabled_option_change' ) );
+		add_action( 'add_option_' . self::OPTION_ENABLED, array( $this, 'on_enabled_option_change' ) );
 		add_action( 'init', array( $this, 'register_rewrite' ) );
+
+		if ( ! self::is_enabled() ) {
+			return;
+		}
+
 		add_filter( 'query_vars', array( $this, 'add_query_var' ) );
 		add_filter( 'template_include', array( $this, 'template_include' ) );
 		add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_assets' ) );
@@ -59,7 +65,25 @@ final class PublicGuideRoute {
 	}
 
 	public function register_rewrite(): void {
-		add_rewrite_rule( '^guide/?$', 'index.php?acx_public_guide=1', 'top' );
+		if ( ! self::is_enabled() ) {
+			return;
+		}
+
+		add_rewrite_rule( self::REWRITE_REGEX, 'index.php?' . self::QUERY_VAR . '=1', 'top' );
+	}
+
+	public function on_enabled_option_change(): void {
+		global $wp_rewrite;
+
+		if ( self::is_enabled() ) {
+			$this->register_rewrite();
+		} elseif ( isset( $wp_rewrite ) && is_object( $wp_rewrite ) && isset( $wp_rewrite->extra_rules_top ) && is_array( $wp_rewrite->extra_rules_top ) ) {
+			unset( $wp_rewrite->extra_rules_top[ self::REWRITE_REGEX ] );
+		}
+
+		if ( function_exists( 'flush_rewrite_rules' ) ) {
+			flush_rewrite_rules( false );
+		}
 	}
 
 	/**
@@ -73,16 +97,8 @@ final class PublicGuideRoute {
 	}
 
 	public function template_include( string $template ): string {
-		if ( ! $this->is_public_guide_request() ) {
+		if ( ! self::is_enabled() || ! $this->is_public_guide_request() ) {
 			return $template;
-		}
-
-		if ( ! self::is_enabled() ) {
-			status_header( 404 );
-			nocache_headers();
-			$not_found = function_exists( 'get_404_template' ) ? get_404_template() : '';
-
-			return is_string( $not_found ) && '' !== $not_found ? $not_found : $template;
 		}
 
 		status_header( 200 );
@@ -91,7 +107,7 @@ final class PublicGuideRoute {
 	}
 
 	public function enqueue_assets(): void {
-		if ( ! $this->is_public_guide_request() || ! self::is_enabled() ) {
+		if ( ! self::is_enabled() || ! $this->is_public_guide_request() ) {
 			return;
 		}
 
@@ -124,7 +140,7 @@ final class PublicGuideRoute {
 	}
 
 	public function dequeue_theme_assets(): void {
-		if ( ! $this->is_public_guide_request() ) {
+		if ( ! self::is_enabled() || ! $this->is_public_guide_request() ) {
 			return;
 		}
 
@@ -160,13 +176,14 @@ final class PublicGuideRoute {
 	}
 
 	private function is_public_guide_request(): bool {
-		if ( ! function_exists( 'get_query_var' ) ) {
+		$wp = $GLOBALS['wp'] ?? null;
+		if ( ! is_object( $wp ) ) {
 			return false;
 		}
 
-		$value = get_query_var( self::QUERY_VAR );
+		$matched = isset( $wp->matched_rule ) ? (string) $wp->matched_rule : '';
 
-		return '' !== (string) $value && '0' !== (string) $value;
+		return self::REWRITE_REGEX === $matched;
 	}
 
 	private function template_path(): string {

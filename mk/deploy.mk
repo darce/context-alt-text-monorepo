@@ -27,7 +27,7 @@ DEMO_WALKTHROUGH_APP  := $(ROOT_MAKEFILE_DIR)/apps/prototype-wp-alt-context
         deploy-status deploy-clear-image-repo \
         deploy-compose-dev deploy-compose-staging deploy-compose-prod \
         reset-remote db-reset-remote demo-walkthrough-proof walkthrough-first-visitor guided-walkthrough-record \
-        demo-enable-public-guide
+        demo-enable-public-guide demo-public-guide-e2e
 
 deploy-help:
 	@echo "Recognition service deploy targets:"
@@ -90,8 +90,11 @@ deploy-help:
 	@echo "  Public guide enable (deliberate per-site operator step; not implied by deploy-demo):"
 	@echo "    make demo-enable-public-guide WP_PATH=/path/to/wordpress SITE_URL=https://demo.altcontext.com"
 	@echo "    DRY_RUN=1 make demo-enable-public-guide WP_PATH=/path/to/wordpress SITE_URL=https://demo.altcontext.com"
-	@echo "    Sets acx_public_guide_enabled, flushes rewrites, signed-out GET /guide/ must be 200."
+	@echo "    Sets acx_public_guide_enabled, flushes rewrites, signed-out GET /guide/ must be 200 with the guide module script."
 	@echo "    acx_public_demo_enabled (public demo describe) stays off unless ACX_RETAIN_PUBLIC_DEMO_DESCRIBE=1."
+	@echo "    make demo-public-guide-e2e SITE_URL=https://demo.altcontext.com"
+	@echo "    make demo-public-guide-e2e ACX_PUBLIC_GUIDE_URL=https://demo.altcontext.com/guide/"
+	@echo "    Exports ACX_PUBLIC_GUIDE_URL and runs npm run e2e:public-guide (Playwright public-guide project)."
 	@echo ""
 	@echo "  Demo walkthrough proof (Playwright evidence — screenshots + smoke-log fragment):"
 	@echo "    First-time setup: (cd apps/prototype-wp-alt-context && npm ci && npm run e2e:install)"
@@ -258,6 +261,25 @@ demo-enable-public-guide:
 		DRY_RUN="$(DRY_RUN)" \
 		ACX_RETAIN_PUBLIC_DEMO_DESCRIBE="$(ACX_RETAIN_PUBLIC_DEMO_DESCRIBE)" \
 		"$(ENABLE_PUBLIC_GUIDE_SCRIPT)" --site-url "$(SITE_URL)" $(if $(filter 1,$(DRY_RUN)),--dry-run,)
+
+# Signed-out public-guide acceptance (GUIDEROUTE-1). Exports ACX_PUBLIC_GUIDE_URL for
+# the Playwright `public-guide` project. Does not run as part of deploy-demo.
+# SITE_URL or ACX_PUBLIC_GUIDE_URL is required (no default site).
+demo-public-guide-e2e:
+	@if [ -z "$(ACX_PUBLIC_GUIDE_URL)" ] && [ -z "$(SITE_URL)" ]; then \
+		echo "ERROR: SITE_URL or ACX_PUBLIC_GUIDE_URL is required (no default site)." >&2; \
+		echo "  make demo-public-guide-e2e SITE_URL=https://demo.altcontext.com" >&2; \
+		echo "  make demo-public-guide-e2e ACX_PUBLIC_GUIDE_URL=https://demo.altcontext.com/guide/" >&2; \
+		exit 2; \
+	fi
+	@cd "$(DEMO_WALKTHROUGH_APP)" && \
+		if [ ! -d node_modules ]; then \
+			echo "demo-public-guide-e2e: dependencies missing. First run: (cd apps/prototype-wp-alt-context && npm ci && npm run e2e:install)" >&2; \
+			exit 2; \
+		fi
+	@cd "$(DEMO_WALKTHROUGH_APP)" && \
+		ACX_PUBLIC_GUIDE_URL="$(if $(ACX_PUBLIC_GUIDE_URL),$(ACX_PUBLIC_GUIDE_URL),$(SITE_URL)/guide/)" \
+		npm run e2e:public-guide
 
 # Demo walkthrough proof: runs the Playwright `evidence` project's demo-walkthrough
 # spec against WP_BASE_URL (default https://demo.altcontext.com), emitting screenshots,

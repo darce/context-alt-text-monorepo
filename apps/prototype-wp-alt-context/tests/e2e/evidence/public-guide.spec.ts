@@ -10,8 +10,9 @@ import {
  * GUIDEROUTE-1: signed-out public guide acceptance.
  *
  * Runs under the `public-guide` Playwright project (no auth-setup). Skips when
- * ACX_PUBLIC_GUIDE_URL is unset — this spec is not executed in the deploy-enable
- * lane. Desktop 1440×900 and mobile Pixel 7 both complete choose → edit →
+ * ACX_PUBLIC_GUIDE_URL is unset. Wire it with `npm run e2e:public-guide` or
+ * `make demo-public-guide-e2e SITE_URL=...` (not implied by deploy-enable).
+ * Desktop 1440×900 and mobile Pixel 7 both complete choose → edit →
  * preview → apply → undo from the keyboard only, with zero privileged acx/v1
  * traffic and zero describe calls.
  */
@@ -93,7 +94,7 @@ const completeKeyboardWalkthrough = async (page: Page): Promise<void> => {
 test.describe('public guide signed-out', () => {
   test.skip(
     configuredUrl === '',
-    'ACX_PUBLIC_GUIDE_URL is unset; public-guide acceptance is not run in this lane',
+    'ACX_PUBLIC_GUIDE_URL is unset; run npm run e2e:public-guide or make demo-public-guide-e2e',
   );
   test.setTimeout(120_000);
 

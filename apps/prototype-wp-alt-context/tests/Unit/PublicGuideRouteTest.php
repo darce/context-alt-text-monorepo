@@ -9,6 +9,8 @@ require_once __DIR__ . '/../../src/public/class-public-guide-route.php';
 use AltContext\PublicSite\PublicGuideRoute;
 use AltContext\Support\LifecycleManager;
 use AltContext\Tests\TestCase;
+use ReflectionMethod;
+use stdClass;
 
 final class PublicGuideRouteTest extends TestCase
 {
@@ -30,10 +32,52 @@ final class PublicGuideRouteTest extends TestCase
         $GLOBALS['__ac_wp_footer_calls'] = 0;
         $GLOBALS['__ac_get_header_calls'] = 0;
         $GLOBALS['__ac_get_footer_calls'] = 0;
+        unset($GLOBALS['wp'], $GLOBALS['wp_rewrite']);
     }
 
-    public function testInitRegistersRewriteAndQueryVar(): void
+    public function testInitDoesNotRegisterRewriteOrRequestHooksWhenDisabled(): void
     {
+        $route = new PublicGuideRoute($this->nullResolver());
+        $route->init();
+
+        self::assertTrue(
+            $this->hasHook($GLOBALS['__ac_actions']['init'][10] ?? [], [$route, 'register_rewrite']),
+            'init() must still hook register_rewrite so a later enable can flush'
+        );
+        self::assertTrue(
+            $this->hasHook(
+                $GLOBALS['__ac_actions']['update_option_acx_public_guide_enabled'][10] ?? [],
+                [$route, 'on_enabled_option_change']
+            )
+        );
+        self::assertTrue(
+            $this->hasHook(
+                $GLOBALS['__ac_actions']['add_option_acx_public_guide_enabled'][10] ?? [],
+                [$route, 'on_enabled_option_change']
+            )
+        );
+        self::assertFalse(
+            $this->hasHook($GLOBALS['__ac_filters']['query_vars'][10] ?? [], [$route, 'add_query_var']),
+            'disabled state must not register the public query var'
+        );
+        self::assertFalse(
+            $this->hasHook($GLOBALS['__ac_filters']['template_include'][10] ?? [], [$route, 'template_include']),
+            'disabled state must not hook template_include'
+        );
+        self::assertFalse(
+            $this->hasHook($GLOBALS['__ac_actions']['wp_enqueue_scripts'][10] ?? [], [$route, 'enqueue_assets'])
+        );
+        self::assertFalse(
+            $this->hasHook($GLOBALS['__ac_actions']['wp_enqueue_scripts'][100] ?? [], [$route, 'dequeue_theme_assets'])
+        );
+
+        $route->register_rewrite();
+        self::assertSame([], $GLOBALS['__ac_rewrite_rules']);
+    }
+
+    public function testInitRegistersRewriteAndQueryVarWhenEnabled(): void
+    {
+        $this->setOption('acx_public_guide_enabled', true);
         $route = new PublicGuideRoute($this->nullResolver());
         $route->init();
 
@@ -49,13 +93,19 @@ final class PublicGuideRouteTest extends TestCase
             $this->hasHook($GLOBALS['__ac_filters']['template_include'][10] ?? [], [$route, 'template_include']),
             'init() must handle the route via template_include'
         );
+        self::assertTrue(
+            $this->hasHook($GLOBALS['__ac_actions']['wp_enqueue_scripts'][10] ?? [], [$route, 'enqueue_assets'])
+        );
+        self::assertTrue(
+            $this->hasHook($GLOBALS['__ac_actions']['wp_enqueue_scripts'][100] ?? [], [$route, 'dequeue_theme_assets'])
+        );
 
         $route->register_rewrite();
 
         self::assertSame(
             [
                 [
-                    'regex' => '^guide/?$',
+                    'regex' => PublicGuideRoute::REWRITE_REGEX,
                     'query' => 'index.php?acx_public_guide=1',
                     'after' => 'top',
                 ],
@@ -67,22 +117,22 @@ final class PublicGuideRouteTest extends TestCase
         self::assertSame(['s', 'acx_public_guide'], $vars);
     }
 
-    public function testDisabledOptionWithQueryVarReturns404Template(): void
+    public function testDisabledOptionLeavesIncomingTemplateUntouched(): void
     {
-        $GLOBALS['__ac_query_vars']['acx_public_guide'] = '1';
+        $this->simulateRewriteMatch();
 
         $route = new PublicGuideRoute($this->nullResolver());
-        $result = $route->template_include('/theme/page.php');
+        $incoming = '/theme/page.php';
+        $result = $route->template_include($incoming);
 
-        self::assertSame(404, $GLOBALS['__ac_status_header']);
-        self::assertSame('/theme/404.php', $result);
-        self::assertStringEndsNotWith('public-guide.php', $result);
+        self::assertSame($incoming, $result);
+        self::assertNull($GLOBALS['__ac_status_header']);
     }
 
     public function testEnabledOptionReturnsStandaloneGuideTemplate(): void
     {
         $this->setOption('acx_public_guide_enabled', true);
-        $GLOBALS['__ac_query_vars']['acx_public_guide'] = '1';
+        $this->simulateRewriteMatch();
 
         $route = new PublicGuideRoute($this->nullResolver());
         $result = $route->template_include('/theme/page.php');
@@ -106,7 +156,7 @@ final class PublicGuideRouteTest extends TestCase
         self::assertStringNotContainsString('get_footer(', $templateSource);
     }
 
-    public function testRequestWithoutQueryVarLeavesIncomingTemplateUntouched(): void
+    public function testRequestWithoutRewriteMatchLeavesIncomingTemplateUntouched(): void
     {
         $this->setOption('acx_public_guide_enabled', true);
 
@@ -117,10 +167,91 @@ final class PublicGuideRouteTest extends TestCase
         self::assertNull($GLOBALS['__ac_status_header']);
     }
 
+    /**
+     * @dataProvider provideEnabledFlags
+     */
+    public function testQueryVarSpoofOnOtherPathDoesNot404OrDequeue(bool $enabled): void
+    {
+        if ($enabled) {
+            $this->setOption('acx_public_guide_enabled', true);
+        }
+
+        $this->simulateQueryVarSpoof();
+        $GLOBALS['__ac_styles']['theme-style'] = ['src' => 'http://example.test/theme.css'];
+        $GLOBALS['__ac_scripts']['theme-script'] = ['src' => 'http://example.test/theme.js'];
+
+        $route = new PublicGuideRoute($this->nullResolver());
+        $incoming = '/theme/page.php';
+        $result = $route->template_include($incoming);
+
+        self::assertSame($incoming, $result);
+        self::assertNull($GLOBALS['__ac_status_header']);
+        self::assertFalse($this->isPublicGuideRequest($route));
+
+        $route->dequeue_theme_assets();
+        self::assertArrayHasKey('theme-style', $GLOBALS['__ac_styles']);
+        self::assertArrayHasKey('theme-script', $GLOBALS['__ac_scripts']);
+
+        $route->enqueue_assets();
+        self::assertArrayNotHasKey('acx-public-guide', $GLOBALS['__ac_scripts']);
+    }
+
+    /**
+     * @return array<string, array{0: bool}>
+     */
+    public static function provideEnabledFlags(): array
+    {
+        return [
+            'option off' => [false],
+            'option on' => [true],
+        ];
+    }
+
+    public function testEnabledOptionChangeRegistersRewrite(): void
+    {
+        $route = new PublicGuideRoute($this->nullResolver());
+        $route->init();
+        self::assertSame([], $GLOBALS['__ac_rewrite_rules']);
+
+        $this->setOption('acx_public_guide_enabled', true);
+        $route->on_enabled_option_change();
+
+        self::assertSame(
+            [
+                [
+                    'regex' => PublicGuideRoute::REWRITE_REGEX,
+                    'query' => 'index.php?acx_public_guide=1',
+                    'after' => 'top',
+                ],
+            ],
+            $GLOBALS['__ac_rewrite_rules']
+        );
+    }
+
+    public function testDisabledOptionChangeDropsRewriteFromExtraRulesTop(): void
+    {
+        $wpRewrite = new stdClass();
+        $wpRewrite->extra_rules_top = [
+            PublicGuideRoute::REWRITE_REGEX => 'index.php?acx_public_guide=1',
+            '^other/?$' => 'index.php?pagename=other',
+        ];
+        // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited -- unit-test rewrite object
+        $GLOBALS['wp_rewrite'] = $wpRewrite;
+
+        $route = new PublicGuideRoute($this->nullResolver());
+        $route->on_enabled_option_change();
+
+        self::assertSame(
+            ['^other/?$' => 'index.php?pagename=other'],
+            $wpRewrite->extra_rules_top
+        );
+        self::assertSame([], $GLOBALS['__ac_rewrite_rules']);
+    }
+
     public function testBundleFailureStillRendersFallbackAndEnqueuesNothing(): void
     {
         $this->setOption('acx_public_guide_enabled', true);
-        $GLOBALS['__ac_query_vars']['acx_public_guide'] = '1';
+        $this->simulateRewriteMatch();
 
         $route = new PublicGuideRoute($this->nullResolver());
         $route->init();
@@ -142,7 +273,7 @@ final class PublicGuideRouteTest extends TestCase
     public function testSuccessPathEnqueuesModuleScriptAndCssUrls(): void
     {
         $this->setOption('acx_public_guide_enabled', true);
-        $GLOBALS['__ac_query_vars']['acx_public_guide'] = '1';
+        $this->simulateRewriteMatch();
 
         $seen = [];
         $assets = [
@@ -284,5 +415,27 @@ final class PublicGuideRouteTest extends TestCase
         include $path;
 
         return (string) ob_get_clean();
+    }
+
+    private function simulateRewriteMatch(): void
+    {
+        $GLOBALS['__ac_query_vars'][PublicGuideRoute::QUERY_VAR] = '1';
+        // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited -- simulate rewrite-matched request
+        $GLOBALS['wp'] = (object) ['matched_rule' => PublicGuideRoute::REWRITE_REGEX];
+    }
+
+    private function simulateQueryVarSpoof(): void
+    {
+        $GLOBALS['__ac_query_vars'][PublicGuideRoute::QUERY_VAR] = '1';
+        // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited -- simulate GET query-var spoof
+        $GLOBALS['wp'] = (object) ['matched_rule' => '(.?.+?)(?:/([0-9]+))?/?$'];
+    }
+
+    private function isPublicGuideRequest(PublicGuideRoute $route): bool
+    {
+        $method = new ReflectionMethod(PublicGuideRoute::class, 'is_public_guide_request');
+        $method->setAccessible(true);
+
+        return (bool) $method->invoke($route);
     }
 }

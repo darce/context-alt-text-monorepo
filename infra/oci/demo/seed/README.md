@@ -251,6 +251,16 @@ service (the same seam as `bootstrap-wp.sh`: `docker compose run --rm --no-deps 
 There is no host `wp` on the demo VM. For LocalWP, set `ACX_WP_RUNNER=host` so the script
 uses `wp --path="$WP_PATH"` instead. The script updates `acx_public_guide_enabled`,
 flushes rewrites, then a signed-out GET of `<site>/guide/` must return 200 with
-`id="acx-public-guide"`. The public demo describe endpoint (`/acx/v1/public/demo/describe`,
-gated by `acx_public_demo_enabled`) stays **off** unless you explicitly retain it with
-`ACX_RETAIN_PUBLIC_DEMO_DESCRIBE=1`.
+`id="acx-public-guide-js"` (the enqueued guide module). A 404 or fallback-only body
+rolls the option back to 0 and flushes rewrites. The public demo describe endpoint
+(`/acx/v1/public/demo/describe`, gated by `acx_public_demo_enabled`) stays **off**
+unless you explicitly retain it with `ACX_RETAIN_PUBLIC_DEMO_DESCRIBE=1`.
+
+After enable, run the signed-out acceptance suite (exports `ACX_PUBLIC_GUIDE_URL`;
+does not run Playwright from the enable script):
+
+```bash
+make demo-public-guide-e2e SITE_URL=https://demo.altcontext.com
+make demo-public-guide-e2e ACX_PUBLIC_GUIDE_URL=https://demo.altcontext.com/guide/
+cd apps/prototype-wp-alt-context && ACX_PUBLIC_GUIDE_URL=https://demo.altcontext.com/guide/ npm run e2e:public-guide
+```

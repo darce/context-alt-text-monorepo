@@ -205,8 +205,9 @@ plan:
   ACX_WP_RUNNER=$WP_RUNNER
   ${_wp_prefix} option update acx_public_guide_enabled 1
   ${_wp_prefix} rewrite flush --hard
-  curl signed-out GET $GUIDE_URL expect 200 and id="acx-public-guide"
+  curl signed-out GET $GUIDE_URL expect 200 and id="acx-public-guide-js"
   print acx_public_demo_enabled; refuse unless it is off or ACX_RETAIN_PUBLIC_DEMO_DESCRIBE=1
+  on GET 4/5: option update acx_public_guide_enabled 0; rewrite flush --hard
 EOF
 }
 
@@ -241,7 +242,17 @@ echo "==> Flush rewrites"
 run_wp rewrite flush --hard
 
 body_file="$(mktemp "${TMPDIR:-/tmp}/acx-public-guide.XXXXXX")"
+verify_exit=0
+rollback_public_guide() {
+  echo "==> Verification failed (exit ${verify_exit}); rolling back acx_public_guide_enabled" >&2
+  run_wp option update acx_public_guide_enabled 0 || true
+  run_wp rewrite flush --hard || true
+  echo "rolled back acx_public_guide_enabled to 0" >&2
+}
 cleanup() {
+  if [ "$verify_exit" -eq 4 ] || [ "$verify_exit" -eq 5 ]; then
+    rollback_public_guide
+  fi
   rm -f "$body_file"
 }
 trap cleanup EXIT
@@ -252,10 +263,12 @@ echo "GET $GUIDE_URL -> ${http_code}"
 
 if [ "$http_code" != "200" ]; then
   echo "ERROR: expected HTTP 200 from $GUIDE_URL, got ${http_code}" >&2
+  verify_exit=4
   exit 4
 fi
-if ! grep -q 'id="acx-public-guide"' "$body_file"; then
-  echo "ERROR: response body from $GUIDE_URL lacks id=\"acx-public-guide\"" >&2
+if ! grep -q 'id="acx-public-guide-js"' "$body_file"; then
+  echo "ERROR: response body from $GUIDE_URL lacks id=\"acx-public-guide-js\" (working guide bundle)" >&2
+  verify_exit=5
   exit 5
 fi
 

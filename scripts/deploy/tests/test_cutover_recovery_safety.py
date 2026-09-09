@@ -283,6 +283,11 @@ def test_abort_payload_propagates_genuine_cleanup_failure(tmp_path: Path, fail_a
     result, logged = _run_abort_payload(tmp_path, unit_state="active", fail_at=fail_at)
     combined = result.stdout + result.stderr + logged
     assert result.returncode != 0, combined
+    if fail_at == "stop":
+        assert (tmp_path / "systemd" / "acx-dev-next.service").exists(), combined
+        assert "systemctl disable acx-dev-next" not in logged, combined
+        assert "sudo rm" not in logged, combined
+        assert "docker compose" not in logged, combined
 
 
 def _assert_failed_stop_did_not_cleanup(
@@ -487,6 +492,58 @@ enable_cutover_candidate() {{ printf 'enabled\\n' >>"{records}"; return 0; }}
     result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, check=False)
     logged = records.read_text() if records.exists() else ""
     return result, logged
+
+
+def test_inflight_probe_rejects_malformed_marker_output(tmp_path: Path) -> None:
+    result, logged = _run_inflight_callers(
+        tmp_path,
+        inject="malformed",
+        marker=True,
+        caller="cutover_inflight_present dev",
+    )
+    combined = result.stdout + result.stderr + logged
+    assert result.returncode == 2, combined
+
+
+def test_failed_cleanup_is_retried_after_transient_stop_failure(tmp_path: Path) -> None:
+    """A later invocation can finish cleanup after a transient stop failure."""
+    _sandbox_abort_payload(tmp_path)
+    state = tmp_path / "unit-state"
+    unit = "acx-dev-next"
+    state.mkdir()
+    (state / unit).write_text("active\n", encoding="utf-8")
+    (state / f"{unit}.enabled").write_text("1", encoding="utf-8")
+    unit_file = tmp_path / "systemd" / f"{unit}.service"
+    unit_file.write_text("# fake unit\n", encoding="utf-8")
+
+    def run_payload(fail_at: str | None) -> subprocess.CompletedProcess[str]:
+        bin_dir = _install_fail_closed_shims(tmp_path, fail_at=fail_at)
+        env_vars = os.environ.copy()
+        env_vars["PATH"] = f"{bin_dir}:{env_vars.get('PATH', '')}"
+        return subprocess.run(
+            ["bash", str(tmp_path / "abort.payload")],
+            text=True,
+            capture_output=True,
+            check=False,
+            env=env_vars,
+            cwd=tmp_path,
+        )
+
+    first = run_payload("stop")
+    first_logged = (tmp_path / "shim.log").read_text(encoding="utf-8")
+    first_combined = first.stdout + first.stderr + first_logged
+    assert first.returncode != 0, first_combined
+    assert unit_file.exists(), first_combined
+    assert "systemctl disable" not in first_logged, first_combined
+    assert "docker compose" not in first_logged, first_combined
+
+    second = run_payload(None)
+    second_logged = (tmp_path / "shim.log").read_text(encoding="utf-8")
+    second_combined = second.stdout + second.stderr + second_logged
+    assert second.returncode == 0, second_combined
+    assert not unit_file.exists(), second_combined
+    assert "systemctl disable acx-dev-next" in second_logged, second_combined
+    assert "docker compose" in second_logged, second_combined
 
 
 @pytest.mark.parametrize("caller", ["recover_persisted_cutover dev", "recover_interrupted_cutover"])

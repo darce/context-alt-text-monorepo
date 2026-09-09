@@ -706,7 +706,7 @@
       "screen_id": "live",
       "verb": "Try live generation again",
       "target": "live",
-      "hierarchy": "primary",
+      "hierarchy": "secondary",
       "costly": true,
       "irreversible": false,
       "when": ["complete", "failed", "timed_out", "stopped", "no_result"]

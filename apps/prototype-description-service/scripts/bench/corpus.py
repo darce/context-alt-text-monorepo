@@ -387,6 +387,10 @@ def _resolve_host_with_deadline(
     resolve = resolver or _default_resolve
     if not _DNS_IN_FLIGHT.acquire(timeout=remaining):
         raise _deadline_exceeded()
+    remaining = deadline_at - time.monotonic()
+    if remaining <= 0:
+        _DNS_IN_FLIGHT.release()
+        raise _deadline_exceeded()
     outcome: dict[str, object] = {}
     done = threading.Event()
 

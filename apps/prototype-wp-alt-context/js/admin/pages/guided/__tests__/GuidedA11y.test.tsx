@@ -501,7 +501,7 @@ describe('GuidedA11y (W04)', () => {
     const leftSummary = screen.getByText(guidedCopy('names.evidence_open', { position: 'left' }));
     leftSummary.focus();
     await user.keyboard('{Enter}');
-    expect(screen.getByText(guidedCopy('names.coverage_all', { total: 2 }))).toBeInTheDocument();
+    expect(screen.getByText(guidedCopy('names.coverage_all', { total: 3 }))).toBeInTheDocument();
 
     const rightSummary = screen.getByText(guidedCopy('names.evidence_open', { position: 'right' }));
     rightSummary.focus();

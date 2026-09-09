@@ -37,6 +37,7 @@ const ROLLUP_ENTRY_POINTS = [
 ] as const;
 const GUIDED_ASSETS = [
   'js/admin/assets/guided/guided-justin-trudeau-2023.jpg',
+  'js/admin/assets/guided/guided-justin-trudeau-2024.jpg',
   'js/admin/assets/guided/guided-justin-trudeau-2025.jpg',
   'js/admin/assets/guided/guided-katy-perry-2016.jpg',
   'js/admin/assets/guided/guided-katy-perry-2019.jpg',

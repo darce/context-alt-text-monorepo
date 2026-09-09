@@ -332,7 +332,7 @@ describe('GuidedPrototypePage journey', () => {
     const summaries = screen.getAllByText(/Compare the (left|right) face and reference photos/);
     await user.click(summaries[0]);
     await user.click(summaries[1]);
-    expect(screen.getByText(guidedCopy('names.coverage_all', { total: 2 }))).toBeInTheDocument();
+    expect(screen.getByText(guidedCopy('names.coverage_all', { total: 3 }))).toBeInTheDocument();
     expect(screen.getByText(guidedCopy('names.coverage_partial', { shown: 3, total: 5 }))).toBeInTheDocument();
     expect(screen.queryByText(/Show all 5/)).not.toBeInTheDocument();
     expect(screen.getAllByText('© European Union, 2025, EU reuse licence, resized').length).toBeGreaterThan(0);

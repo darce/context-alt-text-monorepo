@@ -48,8 +48,10 @@ for acx_command in docker awk date sleep kill; do
   command -v "$acx_command" >/dev/null 2>&1 \
     || acx_bulkhead_fail "required command unavailable: $acx_command"
 done
-# Prefer a new session so descendants die with the watchdog. Without setsid,
-# acx_kill_tree walks the process tree instead of killing only the direct child.
+# Primary: setsid + kill -- -PID (process group). One signal reaps the whole
+# tree without racing reparent-to-init. PID-walking is the fallback when
+# setsid is absent (stock macOS); it snapshots descendants before TERM
+# because CON-04 orphans appear exactly when a child is reparented first.
 if command -v setsid >/dev/null 2>&1; then
   acx_setsid="setsid"
 else
@@ -58,6 +60,12 @@ else
     acx_bulkhead_fail "required command unavailable: pgrep or ps"
   fi
 fi
+
+acx_sleep_brief() {
+  # GNU sleep accepts fractions. BSD sleep (macOS bash 3.2 hosts) does not.
+  # Under set -e a failed `sleep 0.1` aborts before KILL and orphans the tree.
+  sleep 0.1 2>/dev/null || sleep 1
+}
 
 acx_remaining() {
   local acx_phase="$1" acx_now acx_left
@@ -76,13 +84,13 @@ acx_remaining() {
 # watchdog makes each Docker phase observe the same absolute deadline after a
 # late lock acquisition, instead of restarting a fresh timeout per phase.
 acx_run() {
-  local acx_phase="$1" acx_pid acx_left acx_now
+  local acx_phase="$1" acx_pid acx_left acx_now acx_state
   shift
   acx_left="$(acx_remaining "$acx_phase")" || return $?
   # New session/process group so descendants die with the watchdog
-  # (OCIR-ASTRA-20260908-04). Killing only the direct child left synthetic
-  # grandchildren running past the deadline. Without setsid, launch the child
-  # directly and walk its descendants in acx_kill_tree.
+  # (OCIR-ASTRA-20260908-04 / HARNC-R-07). Killing only the direct child left
+  # synthetic grandchildren running past the deadline. Without setsid, launch
+  # the child directly and walk its descendants in acx_kill_tree.
   if [[ -n "$acx_setsid" ]]; then
     "$acx_setsid" "$@" &
   else
@@ -95,13 +103,22 @@ acx_run() {
       wait "$acx_pid" 2>/dev/null || true
       acx_bulkhead_fail "could not read the remote clock while running $acx_phase"
     }
+    # kill -0 also succeeds for an unreaped zombie. Break so each healthy
+    # phase does not pay a poll interval (rg-007 / GATES-HARNESS-R-07).
+    if command -v ps >/dev/null 2>&1; then
+      acx_state="$(ps -o stat= -p "$acx_pid" 2>/dev/null || true)"
+      acx_state="${acx_state// /}"
+      if [[ -z "$acx_state" || "$acx_state" == Z* ]]; then
+        break
+      fi
+    fi
     if (( acx_now >= acx_deadline_epoch )); then
       acx_kill_tree "$acx_pid"
       wait "$acx_pid" 2>/dev/null || true
       printf 'remote BuildKit phase timed out during %s; outcome UNKNOWN\n' "$acx_phase" >&2
       return 124
     fi
-    sleep 0.1
+    acx_sleep_brief
   done
   wait "$acx_pid"
 }
@@ -130,8 +147,9 @@ acx_kill_tree() {
   local acx_pid="$1" acx_child acx_descendants
   if [[ -n "${acx_setsid:-}" ]]; then
     # Negative PGID kills the whole session started by setsid.
+    # SECD-05: always escalate to KILL; do not assume TERM succeeded.
     kill -TERM -- "-$acx_pid" 2>/dev/null || true
-    sleep 0.1
+    acx_sleep_brief
     kill -KILL -- "-$acx_pid" 2>/dev/null || true
     return
   fi
@@ -143,7 +161,7 @@ acx_kill_tree() {
     kill -TERM "$acx_child" 2>/dev/null || true
   done <<<"$acx_descendants"
   kill -TERM "$acx_pid" 2>/dev/null || true
-  sleep 0.1
+  acx_sleep_brief
   while IFS= read -r acx_child; do
     [[ "$acx_child" =~ ^[0-9]+$ ]] || continue
     kill -KILL "$acx_child" 2>/dev/null || true

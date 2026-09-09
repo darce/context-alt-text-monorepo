@@ -3,8 +3,8 @@
   "product": "alt-context WP plugin public demo — [acx_demo_describe] anonymous describe widget",
   "source_fixture": "apps/prototype-wp-alt-context/src/public/class-public-demo-shortcode.php",
   "goals": [
-    "Inventory OBSERVED-UI public-demo states from the shortcode and client: idle selection, queued, warming, describing, complete generic alt text, 429 limited, error/failed, and the 120-second poll ceiling (INT-10, RES-02, RES-03).",
-    "Record OBSERVED-FEATURE wire on this branch (these feature changes have not been deployed): completed nonempty public envelopes emit description_tier; the parser and pollRun preserve provisional_cpu | final_gpu | null, and a missing legacy field becomes explicit null. Keep PROPOSED visible-tier labels out of the observed UI inventory. Do not infer from gpu_state (HAI-05, HAI-08, PROV-06, DATA-13, rg-015).",
+    "Inventory OBSERVED-UI public-demo states from the shortcode and client: idle selection, static illustrative example, queued, warming, describing, typed complete labels, 429 limited, error/failed, and the 120-second poll ceiling (INT-10, RES-02, RES-03).",
+    "Record OBSERVED-FEATURE on this branch (these feature changes have not been deployed): completed nonempty envelopes emit description_tier; parser and pollRun preserve provisional_cpu | final_gpu | null; missing legacy is explicit null; completed UI labels are final_gpu = GPU description complete., provisional_cpu = CPU fallback draft (not GPU final)., null/legacy = Description complete, processing tier unavailable. Do not infer from gpu_state (HAI-05, HAI-08, PROV-06, DATA-13, rg-015).",
     "Keep PROPOSED same-run resume bounded to the existing in-flight owner plus the in-memory idempotency key. Refresh drops that key. Do not invent a new paid job, do not raise the 120-second ceiling, and do not weaken authorization for terminal-run reads (API-02, API-04, RLSE-03)."
   ],
   "jobs": [
@@ -22,7 +22,7 @@
       "id": "public-demo-describe",
       "kind": "screen",
       "title": "Public demo › Describe an image",
-      "purpose": "OBSERVED visitor widget. Domain vocabulary behind canonical states: idle selection = default; queued, warming and describing = loading; no allowlisted images is a different screen; 429 limited = degraded; failed, invalid response, incomplete result and 120s poll timeout = error. Complete UI is generic alt text. On this feature branch the completed envelope may include description_tier; the rendered label does not. Production is deployed; these feature changes have not been deployed. Serves job describe-allowlisted-image.",
+      "purpose": "OBSERVED visitor widget. Domain vocabulary behind canonical states: idle selection = default; queued, warming and describing = loading; no allowlisted images is a different screen; 429 limited = degraded; failed, invalid response, incomplete result and 120s poll timeout = error. Complete UI labels come from description_tier. A static illustrative example sits before Describe; it is not the selected image. Production is deployed; these feature changes have not been deployed. Serves job describe-allowlisted-image.",
       "route": "[acx_demo_describe]",
       "job_entry": true,
       "deep_link": false,
@@ -45,15 +45,21 @@
           "states": ["default", "loading", "error", "degraded"]
         },
         {
+          "id": "z-preview",
+          "label": "OBSERVED-FEATURE static illustrative example before Describe, labeled Illustrative example — not a live result. Fictional sentence is not the selected image, not a saved result, not a GPU receipt. Separate from data-acx-demo-result. Absent when the demo is disabled or the allowlist is empty.",
+          "role": "content",
+          "states": ["default"]
+        },
+        {
           "id": "z-status",
-          "label": "OBSERVED polite status — idle, queued, warming, describing, completed, limited (HTTP 429), failed, client error, 120s poll timeout. Icon plus token color. Envelope gpu_state is accepted and unused; it is lifecycle telemetry, not DescriptionResultTier. Parsed description_tier does not change this generic completed label.",
+          "label": "OBSERVED polite status — idle, queued, warming, describing, completed, limited (HTTP 429), failed, client error, 120s poll timeout. Icon plus token color. Envelope gpu_state is unused telemetry. Completed labels: GPU description complete. / CPU fallback draft (not GPU final). / Description complete, processing tier unavailable.",
           "role": "status",
           "evidence_linked": true,
           "states": ["default", "loading", "error", "degraded"]
         },
         {
           "id": "z-result",
-          "label": "OBSERVED-UI completed result is generic alt_text_draft with focus move and the generic completed label. OBSERVED-FEATURE completed envelopes carry description_tier (provisional_cpu | final_gpu | null; missing legacy is null) unused by presentation. OBSERVED-PRODUCTION is deployed; these feature changes have not been deployed. Prior observation: old Florence recognition image; Qwen-on-GPU entity-description proof is absent. PROPOSED visible-tier labels are absent and must not be inferred from gpu_state.",
+          "label": "OBSERVED-FEATURE completed result is alt_text_draft with focus move. Status labels come from description_tier (provisional_cpu | final_gpu | null; missing legacy is null) and are never inferred from gpu_state. OBSERVED-PRODUCTION is deployed; these feature changes have not been deployed. Prior observation: old Florence recognition image; Qwen-on-GPU entity-description proof is absent.",
           "role": "ai_review",
           "evidence_linked": true,
           "states": ["default", "empty"]
@@ -111,7 +117,7 @@
       "hierarchy": "primary",
       "costly": true,
       "irreversible": false,
-      "preview_required": false,
+      "preview_required": true,
       "screen_id": "public-demo-describe",
       "when": ["idle", "completed", "failed", "limited", "timeout"]
     }
@@ -120,11 +126,11 @@
     {
       "id": "observed-happy-path",
       "job": "describe-allowlisted-image",
-      "label": "OBSERVED: select image, wait, generic alt text",
+      "label": "OBSERVED: illustrative example, select image, wait, typed complete label",
       "steps": [
         {
           "screen_id": "public-demo-describe",
-          "branch_label": "idle selection (instance-scoped radio in this form) → POST describe"
+          "branch_label": "illustrative example visible; idle selection (instance-scoped radio in this form) → POST describe"
         },
         {
           "screen_id": "public-demo-describe",
@@ -132,7 +138,7 @@
         },
         {
           "screen_id": "public-demo-describe",
-          "branch_label": "completed generic UI label and alt text; envelope description_tier is not shown"
+          "branch_label": "completed typed label from description_tier plus live alt text; illustrative example stays"
         }
       ]
     },
@@ -183,16 +189,14 @@
     }
   ],
   "open_questions": [
-    "PROPOSED UI, not implemented: show typed complete labels from parsed description_tier (final_gpu → GPU description complete; provisional_cpu → CPU fallback draft, not GPU final; null → Description complete, processing tier unavailable). Description text stays separate. Live polite and focus stay. Never from gpu_state. OBSERVED-FEATURE wire exists on this branch and has not been deployed. Production is deployed; prior observation used the old Florence recognition image. Qwen-on-GPU entity-description proof is absent (not a fresh runtime check).",
-    "PROPOSED INT-07, not implemented: a clearly marked illustrative example before the visitor explicitly chooses Describe. Not a fake live or GPU receipt. Never substitute the example for the actual result. Keep submit-describe.preview_required false until that ships; allowlist thumbnails are input choices, not outcome samples.",
     "PROPOSED, not implemented: same-run resume after refresh or after the 120s poll ceiling. Bound remains existing inflight owner + idempotency; not a new paid job; 120s per-poll ceiling stays; bulkhead and nonce/allowlist stay.",
     "Design question, not a slice: how can a visitor securely re-read a terminal run after inflight is released (status today returns 403 run_not_available) without weakening authorization? A durable handle must not become an unauthenticated run oracle."
   ],
   "not_doing": [
     "Do not treat this map as the admin describe-gpu-tier map. Admin GPU chip, provisional/final badges, and gpu_state presentation are operator SPA, not public demo.",
     "Do not infer CPU-fallback, GPU-final, or unknown description-tier UI from envelope gpu_state. That field is optional lifecycle telemetry and is unused by presentation.",
-    "Do not treat the on-feature description_tier wire as shipped UI or as deployed production. Production is deployed; these feature changes have not been deployed. Prior observation used the old Florence recognition image; Qwen-on-GPU entity-description proof is absent.",
-    "Do not set submit-describe.preview_required true until an illustrative-example preview is implemented. Allowlist thumbnails are input, not outcome samples (INT-07).",
+    "Do not treat the on-feature description_tier labels or illustrative example as deployed production. Production is deployed; these feature changes have not been deployed. Prior observation used the old Florence recognition image; Qwen-on-GPU entity-description proof is absent.",
+    "Do not treat the illustrative example as a preview of the selected image or as a GPU receipt. Allowlist thumbnails remain input choices (INT-07).",
     "Do not invent extra states on the refresh exit. kind=exit and states=default are correct; RLSE-04 warning is a scope mismatch, not a missing journey (RLSE-04).",
     "Do not claim official ux-map critique, schema, or gate passed. Critique 10316 used extra=allow; official strict extra=forbid still fails 4 local extras.",
     "Do not claim refresh-safe resume is implemented. Refresh drops the in-memory retry key and run_id.",
@@ -220,8 +224,6 @@
     }
   ],
   "slices": [
-    "PROPOSED UI follow-up, not this map: render the three visible-tier labels from parsed description_tier. Do not derive from gpu_state. Do not treat the on-feature wire as deployed production or as shipped UI.",
-    "PROPOSED INT-07 follow-up, not this map: a clearly marked illustrative example before explicit live Describe. Not a fake live or GPU receipt. Never substitute the example for the actual result. Keep submit-describe.preview_required false until that ships.",
     "PROPOSED follow-up, not this map: same-run resume using existing owner plus idempotency only. Keep the 120s ceiling, inflight bulkhead, nonce, and allowlist.",
     "Design-question follow-up, not this map: secure durable handle for terminal-run read after inflight release. No authorization weakening."
   ]

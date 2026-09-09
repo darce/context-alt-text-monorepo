@@ -1026,6 +1026,9 @@ const DESCRIBE_RUN_RESPONSE_KEYS = [
 
 const DESCRIBE_RUN_STATUSES: ReadonlySet<string> = new Set(Object.values(DESCRIBE_RUN_STATUS));
 const DESCRIBE_RUN_PHASES: ReadonlySet<string> = new Set(Object.values(DESCRIBE_RUN_PHASE));
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const isUuid = (value: unknown): value is string => typeof value === 'string' && UUID_PATTERN.test(value);
 
 const validateDescribeRunResponse = (payload: unknown): string | null => {
   if (!isRecord(payload)) {
@@ -1039,10 +1042,10 @@ const validateDescribeRunResponse = (payload: unknown): string | null => {
   if (unexpectedKey) {
     return `response.${unexpectedKey}`;
   }
-  if (typeof payload.tenant_id !== 'string' || payload.tenant_id.length === 0) {
+  if (!isUuid(payload.tenant_id)) {
     return 'response.tenant_id';
   }
-  if (typeof payload.run_id !== 'string' || payload.run_id.length === 0) {
+  if (!isUuid(payload.run_id)) {
     return 'response.run_id';
   }
   if (typeof payload.status !== 'string' || !DESCRIBE_RUN_STATUSES.has(payload.status)) {

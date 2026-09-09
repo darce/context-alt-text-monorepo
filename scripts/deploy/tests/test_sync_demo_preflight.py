@@ -11,6 +11,44 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "scripts" / "deploy" / "sync-demo.sh"
 
+# Isolated workspaces plant zips here so auto-discovery cannot see the
+# developer's untracked repo dist/. Do not write under REPO_ROOT / "dist".
+_OLDER_DIST_ZIP = "alt-context-0.0.4.zip"
+_NEWER_DIST_ZIP = "alt-context-0.0.9.zip"
+_OLDER_MTIME = 1_700_000_000
+_NEWER_MTIME = 1_700_000_100
+
+
+def _repo_dist_zip_names() -> set[str]:
+    dist = REPO_ROOT / "dist"
+    if not dist.is_dir():
+        return set()
+    return {path.name for path in dist.glob("alt-context-*.zip")}
+
+
+def _isolated_repo(tmp_path: Path) -> Path:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    for name in ("apps", "infra", "scripts", "docs"):
+        target = REPO_ROOT / name
+        if target.exists():
+            (workspace / name).symlink_to(target, target_is_directory=target.is_dir())
+    (workspace / "dist").mkdir()
+    return workspace
+
+
+def _plant_dist_zip(workspace: Path, name: str, content: bytes, mtime: int) -> Path:
+    path = workspace / "dist" / name
+    path.write_bytes(content)
+    os.utime(path, (mtime, mtime))
+    return path
+
+
+def _plant_stale_and_newest_dist_zips(workspace: Path) -> tuple[Path, Path]:
+    older = _plant_dist_zip(workspace, _OLDER_DIST_ZIP, b"older plugin", _OLDER_MTIME)
+    newer = _plant_dist_zip(workspace, _NEWER_DIST_ZIP, b"newer plugin", _NEWER_MTIME)
+    return older, newer
+
 
 def _run_sync(
     tmp_path: Path,
@@ -21,7 +59,9 @@ def _run_sync(
     describe_chunk: str | None = None,
     describe_max: str | None = None,
     with_plugin: bool = False,
+    unset_plugin_zip: bool = False,
     execute_remote_smoke: bool = False,
+    cwd: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -98,10 +138,14 @@ def _run_sync(
 
     env = os.environ.copy()
     env["PATH"] = f"{bin_dir}:{env['PATH']}"
+    if with_plugin and unset_plugin_zip:
+        raise ValueError("with_plugin and unset_plugin_zip are mutually exclusive")
     if with_plugin:
         plugin_zip = tmp_path / "alt-context.zip"
         plugin_zip.write_bytes(b"test plugin")
         env["PLUGIN_ZIP"] = str(plugin_zip)
+    elif unset_plugin_zip:
+        env.pop("PLUGIN_ZIP", None)
     else:
         env["PLUGIN_ZIP"] = ""
     env["OCI_HOST"] = "test-host.invalid"
@@ -123,7 +167,7 @@ def _run_sync(
     env["FAIL_PREFLIGHT"] = "1" if fail_preflight else "0"
     return subprocess.run(
         ["bash", str(SCRIPT)],
-        cwd=REPO_ROOT,
+        cwd=cwd or REPO_ROOT,
         env=env,
         text=True,
         capture_output=True,
@@ -134,6 +178,14 @@ def _run_sync(
 
 def _log(tmp_path: Path) -> str:
     return (tmp_path / "commands.log").read_text(encoding="utf-8")
+
+
+def _stdin(tmp_path: Path) -> str:
+    return (tmp_path / "commands.log.stdin").read_text(encoding="utf-8")
+
+
+def _plugin_bootstrap_invoked(tmp_path: Path) -> bool:
+    return "PLUGIN_ZIP='/tmp/alt-context.zip' ./bootstrap-wp.sh" in _stdin(tmp_path)
 
 
 def test_gpu_preflight_runs_once_when_opted_in(tmp_path: Path) -> None:
@@ -176,10 +228,64 @@ def test_no_plugin_artifact_skips_first_burst_assertion(tmp_path: Path) -> None:
     result = _run_sync(tmp_path, execute_remote_smoke=True)
 
     assert result.returncode == 0, result.stdout + result.stderr
-    bootstrap_input = (tmp_path / "commands.log.stdin").read_text(encoding="utf-8")
+    bootstrap_input = _stdin(tmp_path)
     assert 'BOOTSTRAP_RAN="0"' in bootstrap_input
     assert 'if [[ "$BOOTSTRAP_RAN" == "1" ]]; then' in bootstrap_input
     assert "SKIP demo first describe burst (bootstrap did not run" in result.stdout
+
+
+def test_empty_plugin_zip_skips_artifact_even_when_dist_has_zips(tmp_path: Path) -> None:
+    """PLUGIN_ZIP="" must mean no artifact; must FAIL against pre-BR-06 auto-discover."""
+    before = _repo_dist_zip_names()
+    workspace = _isolated_repo(tmp_path)
+    older, newer = _plant_stale_and_newest_dist_zips(workspace)
+
+    result = _run_sync(tmp_path, execute_remote_smoke=True, cwd=workspace)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    log = _log(tmp_path)
+    assert newer.name not in log
+    assert older.name not in log
+    assert "Rsync plugin package" not in result.stdout
+    assert not _plugin_bootstrap_invoked(tmp_path)
+    assert 'BOOTSTRAP_RAN="0"' in _stdin(tmp_path)
+    assert "SKIP demo first describe burst (bootstrap did not run" in result.stdout
+    assert _repo_dist_zip_names() == before
+
+
+def test_unset_plugin_zip_auto_discovers_newest_dist_zip(tmp_path: Path) -> None:
+    before = _repo_dist_zip_names()
+    workspace = _isolated_repo(tmp_path)
+    older, newer = _plant_stale_and_newest_dist_zips(workspace)
+
+    result = _run_sync(tmp_path, unset_plugin_zip=True, cwd=workspace)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    log = _log(tmp_path)
+    assert f"Auto-discovered plugin artifact: dist/{newer.name}" in result.stdout
+    assert str(newer) in log or f"dist/{newer.name}" in log
+    assert older.name not in log
+    assert _plugin_bootstrap_invoked(tmp_path)
+    assert 'BOOTSTRAP_RAN="1"' in _stdin(tmp_path)
+    assert _repo_dist_zip_names() == before
+
+
+def test_explicit_plugin_zip_ignores_dist_zips(tmp_path: Path) -> None:
+    before = _repo_dist_zip_names()
+    workspace = _isolated_repo(tmp_path)
+    older, newer = _plant_stale_and_newest_dist_zips(workspace)
+
+    result = _run_sync(tmp_path, with_plugin=True, cwd=workspace)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    log = _log(tmp_path)
+    explicit = tmp_path / "alt-context.zip"
+    assert str(explicit) in log
+    assert newer.name not in log
+    assert older.name not in log
+    assert _plugin_bootstrap_invoked(tmp_path)
+    assert 'BOOTSTRAP_RAN="1"' in _stdin(tmp_path)
+    assert _repo_dist_zip_names() == before
 
 
 def test_bootstrap_required_keys_are_all_declared_in_demo_template() -> None:

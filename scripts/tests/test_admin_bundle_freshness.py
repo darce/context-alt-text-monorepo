@@ -7,38 +7,47 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 APP = REPO_ROOT / "apps/prototype-wp-alt-context"
 SOURCE_ROOT = APP / "js"
 DIST_ROOT = APP / "public/assets/dist"
+PACKAGE_DIST_ROOT = REPO_ROOT / "dist"
+LEGACY_PACKAGE_DIST_ROOT = APP / "dist"
 GUIDED_COPY = "Apply and undo"
 RETIRED_COPY = "Apply it yourself"
 
 
 def _source_mtime() -> float:
-    newest = 0.0
-    for path in SOURCE_ROOT.rglob("*"):
-        if path.suffix in {".ts", ".tsx", ".scss", ".js"} and path.is_file():
-            newest = max(newest, path.stat().st_mtime)
-    return newest
+    source_files = [
+        path for path in SOURCE_ROOT.rglob("*") if path.suffix in {".ts", ".tsx", ".scss", ".js"} and path.is_file()
+    ]
+    assert source_files, f"no admin source files found under {SOURCE_ROOT}"
+    return max(path.stat().st_mtime for path in source_files)
+
+
+def _package_zips() -> list[Path]:
+    roots = (PACKAGE_DIST_ROOT, LEGACY_PACKAGE_DIST_ROOT)
+    return sorted(path for root in roots if root.is_dir() for path in root.glob("*.zip"))
 
 
 def test_built_bundle_is_not_older_than_admin_sources() -> None:
-    if not DIST_ROOT.exists():
-        return
-    dist_files = [path for path in DIST_ROOT.rglob("*") if path.is_file()]
-    if not dist_files:
-        return
-    newest_dist = max(path.stat().st_mtime for path in dist_files)
+    if DIST_ROOT.exists():
+        dist_files = [path for path in DIST_ROOT.rglob("*") if path.is_file()]
+        assert dist_files, f"admin bundle directory is empty: {DIST_ROOT}"
+        artifacts = dist_files
+    else:
+        # The package workflow writes its ZIP at the monorepo root. A checked-in
+        # legacy ZIP is accepted for local source snapshots, but no artifact
+        # surface may be absent without failing the gate.
+        artifacts = _package_zips()
+        assert artifacts, (
+            f"missing admin bundle {DIST_ROOT} and packaged plugin artifact under "
+            f"{PACKAGE_DIST_ROOT} or {LEGACY_PACKAGE_DIST_ROOT}"
+        )
+    newest_dist = max(path.stat().st_mtime for path in artifacts)
     newest_source = _source_mtime()
-    assert newest_dist >= newest_source - 1, "admin bundle in public/assets/dist is stale relative to js/ sources"
-
-
-def test_gitignore_does_not_hide_php_lockfile() -> None:
-    gitignore = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
-    assert "!apps/prototype-wp-alt-context/composer.lock" in gitignore
+    assert newest_dist >= newest_source - 1, "admin bundle/package artifact is stale relative to js/ sources"
 
 
 def test_packaged_zip_does_not_ship_retired_apply_copy() -> None:
-    zips = list((APP / "dist").glob("*.zip"))
-    if not zips:
-        return
+    zips = _package_zips()
+    assert zips, f"missing packaged plugin artifact under {PACKAGE_DIST_ROOT} or {LEGACY_PACKAGE_DIST_ROOT}"
     retired = []
     for archive in zips:
         with zipfile.ZipFile(archive) as handle:

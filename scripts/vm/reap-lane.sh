@@ -1479,9 +1479,10 @@ process_one() {
     return 0
   fi
 
-  # This is the final complete state check. There remains an unavoidable race
-  # between this comparison and rm below; callers that can mutate sandboxes
-  # must use the per-lane lock.
+  # This is the final complete state check. Sandboxes also have a materializer
+  # lock, while ordinary archive roots rely on the process/ownership probe below
+  # because they have no shared worker lease. Keep both checks immediately next
+  # to deletion so a worker entering during archive preparation is observed.
   if ! lane_matches_snapshot "$real" "$safety_ignore_ref" "$safety_snapshot"; then
     release_grok_lane_lock
     skip "$path" "lane changed after snapshot; skipped"
@@ -1502,6 +1503,18 @@ process_one() {
       return 1
     fi
     partial_intent_path="$(partial_intent_path_for "$real")"
+  fi
+
+  # Archive roots do not have the sandbox materializer's lease. Re-probe the
+  # process/ownership boundary after all archive work and immediately before
+  # rm, closing the window in which a worker can enter after the earlier scan.
+  # Remove a newly written partial intent before returning so this refusal is a
+  # normal retry, not a misleading operator-review tombstone.
+  if lane_has_live_process "$real"; then
+    [[ -n "$partial_intent_path" ]] && rm -f -- "$partial_intent_path"
+    release_grok_lane_lock
+    skip "$path" "lane has a live process"
+    return 0
   fi
 
   if ! rm -rf -- "$real" || [[ -e "$real" ]]; then

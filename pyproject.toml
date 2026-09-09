@@ -1,8 +1,8 @@
 # Virtual root project — exists so the remote offload sandbox's root `uv sync`
-# (scripts/remote_agent.sh) succeeds in this monorepo, whose real Python
-# projects live under apps/*. Not a build target.
+# succeeds in this monorepo, whose real Python projects live under apps/*. Not
+# a build target.
 #
-# It installs exactly one thing: pytest. remote_agent.sh runs `uv sync` and then
+# It installs exactly one thing: pytest. The remote offload runner runs `uv sync` and then
 # hands the caller's TEST_CMD a PATH of "$SBX/.venv/bin:$PATH" on the documented
 # premise that "the lane venv's bin makes a bare 'pytest' resolve". With
 # `dependencies = []` that premise is false here — the lane venv is empty, bare
@@ -22,19 +22,12 @@ dependencies = [
 [tool.uv]
 package = false
 
-# Remote lane sandboxes are provisioned by `uv sync` at this virtual root
-# (UV_PROJECT_ENVIRONMENT=<lane venv>). pytest is already a project dependency
-# so the default group must not pull prototype-description-service[dev] —
-# that extra also installs the service runtime graph (NumPy/SciPy/OpenCV/ONNX
-# Runtime/HDBSCAN/OCI) into every root-synced lane (VMREAP-M-03). Opt into
-# the heavy service toolchain with `uv sync --group service-dev`.
+# Keep this group aligned with the committed uv.lock until the root dependency
+# owner regenerates both files together. A default root sync includes the
+# service's development extra; changing that contract requires a lock update in
+# the dependency lane, not a pyproject-only edit.
 [dependency-groups]
-dev = [
-    "pytest>=8.3.0,<10.0.0",
-    "ruff>=0.7.0,<1.0.0",
-    "mypy>=1.7.0,<2.0.0",
-]
-service-dev = ["prototype-description-service[dev]"]
+dev = ["prototype-description-service[dev]"]
 
 [tool.uv.sources]
 prototype-description-service = { path = "apps/prototype-description-service", editable = true }

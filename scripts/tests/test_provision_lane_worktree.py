@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -34,6 +35,29 @@ def test_provision_symlinks_binaries_instead_of_dereferencing(tmp_path: Path) ->
     vitest = dest / ".bin" / "vitest"
     assert vitest.is_symlink()
     assert (worktree / "Makefile.d/lifecycle.mk").read_text(encoding="utf-8") == "# overlay\n"
+
+
+def test_provision_preserves_symlinked_overlay(tmp_path: Path) -> None:
+    primary = tmp_path / "primary"
+    worktree = tmp_path / "worktree"
+    overlay = primary / "plugin-overlay"
+    overlay.mkdir(parents=True)
+    (overlay / "lifecycle.mk").write_text("# live overlay\n", encoding="utf-8")
+    (primary / "Makefile.d").symlink_to(overlay, target_is_directory=True)
+    worktree.mkdir()
+
+    completed = subprocess.run(
+        [sys.executable, str(PROVISION), "--worktree", str(worktree), "--primary", str(primary)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    dest = worktree / "Makefile.d"
+    assert dest.is_symlink(), "top-level plugin overlay links must not be dereferenced"
+    assert os.readlink(dest) == str(overlay)
+    assert (dest / "lifecycle.mk").read_text(encoding="utf-8") == "# live overlay\n"
 
 
 def test_provision_does_not_copytree_node_modules() -> None:

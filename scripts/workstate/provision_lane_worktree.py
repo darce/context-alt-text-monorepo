@@ -48,8 +48,31 @@ def primary_checkout(start: Path) -> Path:
     return Path(proc.stdout.strip()).parent
 
 
+def _remove_existing_path(path: Path) -> None:
+    """Remove a destination without following a symlink at its top level."""
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+    elif path.is_dir():
+        shutil.rmtree(path)
+
+
 def _rsync_overlay(src: Path, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
+    # Path.is_dir() follows symlinks.  Test the link first so a plugin-managed
+    # overlay such as Makefile.d -> ../workbay-overlay remains a link in the
+    # linked worktree instead of becoming a copied directory.
+    if src.is_symlink():
+        link_target = os.readlink(src)
+        if dest.is_symlink() and os.readlink(dest) == link_target:
+            return
+        _remove_existing_path(dest)
+        if shutil.which("rsync"):
+            subprocess.run(["rsync", "-a", str(src), str(dest)], check=True)
+        else:
+            dest.symlink_to(link_target)
+        return
+    if dest.is_symlink():
+        _remove_existing_path(dest)
     if shutil.which("rsync"):
         source = f"{src}/" if src.is_dir() else str(src)
         target = str(dest)
@@ -66,9 +89,12 @@ def provision_overlay(*, primary: Path, worktree: Path) -> list[str]:
     for rel in OVERLAY_PATHS:
         src = primary / rel
         dest = worktree / rel
-        if not src.exists():
+        # exists() is false for a broken symlink, but the contract is to carry
+        # the plugin's overlay link itself even when its target is provisioned
+        # separately on the host.
+        if not src.exists() and not src.is_symlink():
             continue
-        if dest.resolve() == src.resolve():
+        if dest.resolve(strict=False) == src.resolve(strict=False):
             continue
         _rsync_overlay(src, dest)
         copied.append(rel)

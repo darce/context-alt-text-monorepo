@@ -1,5 +1,5 @@
 import guidedJustinTrudeauPhoto from '../assets/guided/guided-justin-trudeau-2025.jpg';
-import guidedJustinTrudeauPhotoB from '../assets/guided/guided-justin-trudeau-2025-b.jpg';
+import guidedJustinTrudeauPhoto2023 from '../assets/guided/guided-justin-trudeau-2023.jpg';
 import guidedKatyPerryPhoto from '../assets/guided/guided-katy-perry-2026.jpg';
 import guidedKatyPerryPhoto2019 from '../assets/guided/guided-katy-perry-2019.jpg';
 import guidedKatyPerryPhoto2016 from '../assets/guided/guided-katy-perry-2016.jpg';
@@ -225,9 +225,9 @@ const GUIDED_SCENARIO_SEED: GuidedScenario = {
           credit: '© European Union, 2025, EU reuse licence, resized',
         },
         {
-          src: guidedJustinTrudeauPhotoB,
-          altText: 'Justin Trudeau speaking, grey suit, white shirt and green patterned tie, flags behind him.',
-          credit: '© European Union, 2025, EU reuse licence, resized',
+          src: guidedJustinTrudeauPhoto2023,
+          altText: 'Justin Trudeau in a grey suit, blue shirt and patterned blue tie, looking slightly to the side.',
+          credit: 'Lea-Kim Chateauneuf, CC BY-SA 4.0, resized',
         },
       ],
     },

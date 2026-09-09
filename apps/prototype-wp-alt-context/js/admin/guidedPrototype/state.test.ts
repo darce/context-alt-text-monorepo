@@ -111,13 +111,13 @@ describe('guided scenario fixture', () => {
     expect(justinPhotos).toHaveLength(2);
     expect(justinPhotos.map((photo) => photo.src)).toEqual([
       expect.stringContaining('guided-justin-trudeau-2025'),
-      expect.stringContaining('guided-justin-trudeau-2025-b'),
+      expect.stringContaining('guided-justin-trudeau-2023'),
     ]);
     expect(justinPhotos.every((photo) => photo.src.trim() !== '')).toBe(true);
     expect(new Set(justinPhotos.map((photo) => photo.src)).size).toBe(justinPhotos.length);
     expect(justinPhotos.map((photo) => photo.credit)).toEqual([
       '© European Union, 2025, EU reuse licence, resized',
-      '© European Union, 2025, EU reuse licence, resized',
+      'Lea-Kim Chateauneuf, CC BY-SA 4.0, resized',
     ]);
     for (const person of scenario.people) {
       expect(person.galleryPhotos.length).toBeLessThanOrEqual(person.savedPhotoCount);

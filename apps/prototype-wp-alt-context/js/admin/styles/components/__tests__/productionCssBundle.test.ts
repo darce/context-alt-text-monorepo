@@ -36,7 +36,7 @@ const ROLLUP_ENTRY_POINTS = [
   'js/guide/publicGuideWatch.ts',
 ] as const;
 const GUIDED_ASSETS = [
-  'js/admin/assets/guided/guided-justin-trudeau-2025-b.jpg',
+  'js/admin/assets/guided/guided-justin-trudeau-2023.jpg',
   'js/admin/assets/guided/guided-justin-trudeau-2025.jpg',
   'js/admin/assets/guided/guided-katy-perry-2016.jpg',
   'js/admin/assets/guided/guided-katy-perry-2019.jpg',

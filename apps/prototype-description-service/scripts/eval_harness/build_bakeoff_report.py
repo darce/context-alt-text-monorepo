@@ -42,7 +42,10 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from ._pathtext import _printable_path
+try:
+    from ._pathtext import _printable_path
+except ImportError:  # invoked by file path rather than as a module
+    from _pathtext import _printable_path  # type: ignore[no-redef]
 
 _THUMB_DEFAULT = 440
 EXIT_NOT_COMPARABLE = 4

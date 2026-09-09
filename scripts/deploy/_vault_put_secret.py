@@ -346,6 +346,17 @@ def _list_secret_versions(vaults_client, secret_id, invoke=None):
         page = next_page
 
 
+_RECONCILABLE_VERSION_STAGES = frozenset({"CURRENT", "PENDING", "LATEST"})
+
+
+def _version_stages(version):
+    """Return the stage labels reported for a Vault version."""
+    stages = getattr(version, "stages", None) or ()
+    if isinstance(stages, str):
+        stages = (stages,)
+    return {stage.upper() for stage in stages if isinstance(stage, str)}
+
+
 def find_secret_version(vaults_client, secret_id, version_name, invoke=None):
     """Find a version by its caller-supplied deterministic name."""
     for version in _list_secret_versions(vaults_client, secret_id, invoke=invoke):
@@ -547,17 +558,26 @@ def main() -> int:
     validate_current_prefix(current_value, args.require_current_prefix, args.secret_name)
 
     pending_version = None
+    historical_version = None
     if existing is not None and current_value != value:
         # A previous update may have been accepted while its response was lost,
         # leaving the consumer path on the old ACTIVE version. Vault version
         # names are unique within a secret, so this deterministic name lets a
         # retry reconcile that mutation before submitting another version.
-        pending_version = find_secret_version(
+        matching_version = find_secret_version(
             vaults,
             existing.id,
             version_name,
             invoke=invoke,
         )
+        if matching_version is not None:
+            if _version_stages(matching_version) & _RECONCILABLE_VERSION_STAGES:
+                pending_version = matching_version
+            else:
+                # PREVIOUS and DEPRECATED versions retain their unique name, so
+                # submitting the same content again is not a valid idempotent
+                # retry. Re-select the existing version as CURRENT instead.
+                historical_version = matching_version
 
     mutation_etag = update_etag
 
@@ -599,10 +619,32 @@ def main() -> int:
         mutation_etag = require_etag(response, args.secret_name)
         return response.data
 
-    if pending_version is not None:
-        secret, action = existing, "existing version pending"
-    else:
-        try:
+    def reactivate_historical_version():
+        nonlocal mutation_etag
+        version_number = getattr(historical_version, "version_number", None)
+        if not isinstance(version_number, int) or isinstance(version_number, bool) or version_number <= 0:
+            raise RuntimeError(
+                f"matching historical {args.secret_name} version has no usable version number; "
+                "refusing to submit a duplicate version"
+            )
+        update_kwargs = {"if_match": update_etag} if conditional_update else {}
+        response = invoke(
+            f"reactivate {args.secret_name} version {version_number}",
+            vaults.update_secret,
+            existing.id,
+            oci.vault.models.UpdateSecretDetails(current_version_number=version_number),
+            mutation=True,
+            **update_kwargs,
+        )
+        mutation_etag = require_etag(response, args.secret_name)
+        return response.data
+
+    try:
+        if pending_version is not None:
+            secret, action = existing, "existing version pending"
+        elif historical_version is not None:
+            secret, action = reactivate_historical_version(), "reactivated historical version"
+        else:
             secret, action = write_secret_if_needed(
                 existing=existing,
                 value=value,
@@ -610,24 +652,23 @@ def main() -> int:
                 create_secret=create_secret,
                 update_secret=update_secret,
             )
-        except MutationOutcomeUnknownError as exc:
-            # A lost create/update response is not proof of failure. Reconcile
-            # from the consumer path before allowing a rerun to submit another
-            # version.
-            try:
-                remaining = deadline.remaining(f"reconcile {args.secret_name}")
-                wait_until_readable(
-                    read_bundle,
-                    args.secret_name,
-                    hashlib.sha256(value).hexdigest(),
-                    timeout=remaining,
-                )
-            except (OperationDeadlineError, SecretNotReadableError) as reconcile_exc:
-                raise MutationOutcomeUnknownError(
-                    f"{exc}; reconciliation did not establish the active value ({reconcile_exc})"
-                ) from exc
-            secret = existing
-            action = "reconciled after unknown mutation outcome"
+    except MutationOutcomeUnknownError as exc:
+        # A lost create/update response is not proof of failure. Reconcile from
+        # the consumer path before allowing a rerun to submit another version.
+        try:
+            remaining = deadline.remaining(f"reconcile {args.secret_name}")
+            wait_until_readable(
+                read_bundle,
+                args.secret_name,
+                hashlib.sha256(value).hexdigest(),
+                timeout=remaining,
+            )
+        except (OperationDeadlineError, SecretNotReadableError) as reconcile_exc:
+            raise MutationOutcomeUnknownError(
+                f"{exc}; reconciliation did not establish the active value ({reconcile_exc})"
+            ) from exc
+        secret = existing
+        action = "reconciled after unknown mutation outcome"
 
     print(f"{action}: {args.secret_name} ({len(value)} bytes)")
     secret_id = getattr(secret, "id", "<accepted; id unavailable before reconciliation deadline>")
@@ -656,7 +697,7 @@ def main() -> int:
                 timeout=min(args.readable_timeout, deadline.remaining("read-back")),
                 prepare_attempt=prepare_attempt,
             )
-        except (OperationDeadlineError, SecretNotReadableError) as exc:
+        except Exception as exc:
             if action != "already current":
                 raise MutationOutcomeUnknownError(
                     f"{args.secret_name} write was accepted but read-back did not confirm it: {exc}"

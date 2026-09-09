@@ -382,6 +382,9 @@ class _FakeVaultStore:
         self.list_calls = []
         self.version_pages = None
         self.version_calls = []
+        self.version_values = {}
+        if existing_value is not None:
+            self.version_values[1] = existing_value
         # OCI hands back an ETag on every get/create/update and requires the
         # current one as an update precondition, so the double carries it too:
         # a fixture that returns bare payloads cannot catch a lost precondition.
@@ -412,7 +415,9 @@ class _FakeVaultStore:
             id=self.SECRET_ID,
             lifecycle_state="ACTIVE",
         )
-        self._stage(self._decode(details))
+        value = self._decode(details)
+        self.version_values[len(self.version_values) + 1] = value
+        self._stage(value)
         self.version_pages = None
         self._rotate_etag()
         return self.existing
@@ -424,7 +429,13 @@ class _FakeVaultStore:
         # regression that drops --if-match still shows green here.
         if if_match != self.etag:
             raise _ServiceError(409, "NoEtagMatch")
-        self._stage(self._decode(details))
+        current_version_number = getattr(details, "current_version_number", None)
+        if current_version_number is None:
+            value = self._decode(details)
+            self.version_values[len(self.version_values) + 1] = value
+        else:
+            value = self.version_values[current_version_number]
+        self._stage(value)
         self.version_pages = None
         self._rotate_etag()
         return self.existing
@@ -701,6 +712,66 @@ def test_accepted_write_readback_timeout_is_an_unknown_mutation(monkeypatch):
             existing_value=old,
             extra_args=("--readable-timeout", "1"),
         )
+
+
+def test_accepted_write_nonretryable_readback_is_an_unknown_mutation(monkeypatch):
+    old = b"old-token-value-00000"
+    new = b"new-token-value-11111"
+    store, _, _ = _install_fake_oci(monkeypatch, not_ready_reads=0, existing_value=old)
+    read = store.read
+
+    def fail_after_update():
+        if store.update_calls:
+            raise _ServiceError(403, "NotAuthorized")
+        return read()
+
+    store.read = fail_after_update
+    _install_fake_clock(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["_vault_put_secret.py", "--secret-name", "OCIR_AUTH_TOKEN"])
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        types.SimpleNamespace(isatty=lambda: False, buffer=io.BytesIO(new)),
+    )
+
+    with pytest.raises(vps.MutationOutcomeUnknownError, match="accepted"):
+        vps.main()
+    assert len(store.update_calls) == 1
+
+
+@pytest.mark.parametrize("historical_stage", ["PREVIOUS", "DEPRECATED"])
+def test_main_reactivates_historical_matching_version(monkeypatch, capsys, historical_stage):
+    previous = b"historical-token"
+    current = b"current-token"
+    store, secrets_clients, _ = _install_fake_oci(monkeypatch, not_ready_reads=0, existing_value=current)
+    store.version_values[7] = previous
+    store.version_pages = [
+        [
+            types.SimpleNamespace(
+                name=vps.mutation_version_name(previous),
+                stages=[historical_stage],
+                version_number=7,
+            )
+        ]
+    ]
+    _install_fake_clock(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["_vault_put_secret.py", "--secret-name", "OCIR_AUTH_TOKEN"])
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        types.SimpleNamespace(isatty=lambda: False, buffer=io.BytesIO(previous)),
+    )
+
+    assert vps.main() == 0
+
+    assert len(store.update_calls) == 1
+    _, details = store.update_calls[0]
+    assert details.current_version_number == 7
+    assert getattr(details, "secret_content", None) is None
+    assert store.update_if_match == [store.etag_history[0]]
+    assert store.active_value == previous
+    assert secrets_clients[0].reads == 2
+    assert "reactivated historical version" in capsys.readouterr().out
 
 
 def test_lost_update_response_reuses_paginated_pending_version(monkeypatch, capsys):

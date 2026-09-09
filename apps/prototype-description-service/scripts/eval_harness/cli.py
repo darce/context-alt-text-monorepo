@@ -216,9 +216,10 @@ class ScoreGateError(RuntimeError):
 
 def _score_gate_fail(message: str) -> NoReturn:
     """Fail a post-write score gate with a class-unique operator message."""
-    # Message encoder, not path-slot encoder: the whole sentence is not a
-    # filename (API-11 / VLM6-RV16-L-02). Path slots are wrapped at call sites.
-    raise ScoreGateError(_printable_message(message))
+    # Preserve sentence semantics while encoding any embedded path token at the
+    # exception boundary. The outer message pass is an EncodedText no-op, and
+    # keeps this gate on the message encoder contract (API-11 / OBS-08).
+    raise ScoreGateError(_printable_message(_printable_exception_message(message)))
 
 
 def _score_schema_error_message(dotted_path: str, expected: str) -> str:
@@ -2934,15 +2935,66 @@ def _cmd_draw_eval_split(args: argparse.Namespace) -> None:
     print(_printable_path(out))
 
 
+_EXCEPTION_PATH_LEADING = "\"'`([{<"
+_EXCEPTION_PATH_TRAILING = "\"'`)]}>,;:"
+_EXCEPTION_PATH_EXT_RE = re.compile(r"\.[A-Za-z0-9]{1,12}$")
+
+
+def _printable_exception_message(message: str) -> str:
+    """Encode undecodable path tokens inside an exception sentence.
+
+    ``_printable_message`` intentionally does not add the ``undecodable:``
+    marker because a sentence is not a filename.  Exception text is the one
+    boundary where a path is often flattened into an otherwise free-form
+    message (for example ``stall /tmp/caf\udce9.jpg``), so identify each
+    surrogate-bearing path token and encode that token with the path wire.
+    Remaining text still uses the message encoder.  Keeping this split here
+    makes OSError's structured fields and generic exception tails use one
+    round-trippable path representation (API-11 / OBS-08).
+    """
+    changed = False
+    pieces: list[str] = []
+    cursor = 0
+    for match in re.finditer(r"\S+", message):
+        token = match.group()
+        if not any(0xDC80 <= ord(char) <= 0xDCFF for char in token):
+            continue
+        leading_count = len(token) - len(token.lstrip(_EXCEPTION_PATH_LEADING))
+        trailing_count = len(token) - len(token.rstrip(_EXCEPTION_PATH_TRAILING))
+        end = len(token) - trailing_count if trailing_count else len(token)
+        core = token[leading_count:end]
+        # A surrogate in a slash/backslash-delimited token or a filename-like
+        # token is overwhelmingly an undecodable path.  A bare surrogate in a
+        # provider's prose remains message text and is still escaped safely.
+        looks_like_path = "/" in core or "\\" in core or bool(_EXCEPTION_PATH_EXT_RE.search(core))
+        if not core or not looks_like_path:
+            continue
+        replacement = (
+            token[:leading_count]
+            + str(_printable_path(core))
+            + (token[end:] if trailing_count else "")
+        )
+        pieces.append(message[cursor : match.start()])
+        pieces.append(replacement)
+        cursor = match.end()
+        changed = True
+    if not changed:
+        return _printable_message(message)
+    pieces.append(message[cursor:])
+    return _printable_message("".join(pieces))
+
+
 def _printable_exc(exc: BaseException) -> str:
     """OBS-08: exception text for stderr must not leak PEP 383 surrogates.
 
     OSError: render the strerror and filename fields separately. Rebuilding an
     OSError with an escaped filename makes ``repr(filename)`` escape the
     backslashes a second time and drops ``filename2`` on two-path errors
-    (VLM6-RV15-Q1-02 / VLM6-W22-M02). Other exceptions: recover the whole
-    message via ``_printable_message`` (a message is not a path slot — API-11 /
-    VLM6-RV16-L-03). Idempotent on already-encoded text.
+    (VLM6-RV15-Q1-02 / VLM6-W22-M02). Other exceptions: encode any
+    surrogate-bearing path token with ``_printable_path`` while keeping the
+    surrounding sentence on ``_printable_message`` (API-11 / OBS-08). This
+    keeps path tokens round-trippable without marking the entire sentence.
+    Idempotent on already-encoded text.
     """
     if isinstance(exc, OSError) and exc.filename is not None:
         strerror = type(exc).__name__ if exc.strerror is None else str(exc.strerror)
@@ -2951,7 +3003,7 @@ def _printable_exc(exc: BaseException) -> str:
         if filename2 is not None:
             rendered += f" -> {_printable_path(filename2)}"
         return _printable_message(rendered)
-    return _printable_message(str(exc))
+    return _printable_exception_message(str(exc))
 
 
 def _reconfigure_stdio() -> None:

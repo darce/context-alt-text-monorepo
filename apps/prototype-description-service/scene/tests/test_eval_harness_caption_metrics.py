@@ -81,10 +81,28 @@ def test_repetition_ratio():
     assert scores.repetition_ratio == pytest.approx(0.75)
 
 
-def test_fkre_in_plausible_band():
+def test_caption_score_envelope_is_pinned_for_canonical_fixture():
+    """The fixture pins every synthesized field, including the FKRE formula."""
     scores = score_caption(CAPTION, **_entry())
-    assert isinstance(scores.fkre, float)
-    assert 0.0 <= scores.fkre <= 121.22  # theoretical FKRE bounds
+    assert scores == CaptionScores(
+        inserted_identities=["Alice Example"],
+        missing_identities=[],
+        insertion_eligible=True,
+        must_right_failures=[],
+        policy_violation=False,
+        wrong_name_hits=[],
+        hallucinated_names=[],
+        fkre=87.94500000000002,
+        repetition_ratio=0.0,
+        tag_coverage=None,
+        word_count=12,
+        char_count=59,
+        first_sentence_gist_ok=True,
+        meta_framing_hits=[],
+        context_duplication_ratio=None,
+        sentence_count=2,
+        name_front_loaded=True,
+    )
 
 
 def test_tag_coverage():

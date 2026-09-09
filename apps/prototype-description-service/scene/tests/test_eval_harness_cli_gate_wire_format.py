@@ -46,13 +46,21 @@ _SURROGATE_LEAK = b"\\udc"
 _BACKSLASHREPLACE_XE9 = b"\\xe9"
 _CLI_PATH = _SERVICE_ROOT / "scripts" / "eval_harness" / "cli.py"
 # Absolute ScoreGateError wire (VLM6-RV18-01). Raise ScoreGateError with a
-# raw latin-1 surrogate — `_score_gate_fail` pre-encodes, which hides
-# `sys.exit(str(exc))` at cli.py:3197 / unwraps at :2015/:2018.
-_GATE_WIRE = b"score aborted-record gate: see /tmp/run-caf\\xe9.json"
+# raw latin-1 surrogate and pin the path marker added at the exception
+# boundary (`sys.exit(_printable_exc(exc))`, cli.py:3350; run unwraps at
+# :2015/:2018).
+_GATE_WIRE = b"score aborted-record gate: see undecodable:/tmp/run-caf\\xe9.json"
 _STANDALONE_RAW_GATE = b"""
 from scripts.eval_harness import cli as _cli
 def boom(args):
     raise _cli.ScoreGateError("score aborted-record gate: see /tmp/run-caf\\udce9.json")
+_cli._cmd_score = boom
+_cli.main(["score", "--run-record", "x.json", "--manifest", "m.json"])
+"""
+_STANDALONE_RAW_MANIFEST_ERROR = b"""
+from scripts.eval_harness import cli as _cli
+def boom(args):
+    raise _cli.ManifestError("cannot read /tmp/main-caf\\udce9.json")
 _cli._cmd_score = boom
 _cli.main(["score", "--run-record", "x.json", "--manifest", "m.json"])
 """
@@ -146,7 +154,7 @@ def test_score_gate_fail_keeps_path_slot_marker_inside_sentence() -> None:
 
     with pytest.raises(ScoreGateError) as cap_raw:
         _score_gate_fail(f"{SCORE_GATE_PREFIX_ABORTED_RECORD} see run-caf\udce9.json")
-    raw_expected = f"{SCORE_GATE_PREFIX_ABORTED_RECORD} see run-caf\\xe9.json"
+    raw_expected = f"{SCORE_GATE_PREFIX_ABORTED_RECORD} see {_UNDECODABLE_PATH_PREFIX}run-caf\\xe9.json"
     assert str(cap_raw.value) == raw_expected
     assert not str(cap_raw.value).startswith(_UNDECODABLE_PATH_PREFIX)
 
@@ -233,6 +241,16 @@ def test_printable_exc_oserror_preserves_both_path_fields_once() -> None:
     assert "\\\\xe9" not in out
 
 
+def test_printable_exc_marks_embedded_non_oserror_path_once() -> None:
+    """Every undecodable path in an exception sentence uses the path wire."""
+    path = "/tmp/manifest-caf" + chr(0xDCE9) + ".json"
+    out = _printable_exc(RuntimeError(f"cannot read {path}"))
+    assert out == "cannot read undecodable:/tmp/manifest-caf\\xe9.json"
+    assert not out.startswith(_UNDECODABLE_PATH_PREFIX)
+    assert "\\udce9" not in out
+    assert "\\\\xe9" not in out
+
+
 def test_fetch_item_oserror_tail_uses_printable_exception_encoder(tmp_path: Path) -> None:
     """CLI item isolation must apply the same path-text boundary as stderr."""
     images = tmp_path / "mock_images"
@@ -251,10 +269,12 @@ def test_fetch_item_oserror_tail_uses_printable_exception_encoder(tmp_path: Path
 
 
 def test_standalone_score_gate_error_exit_pins_absolute_latin1_wire() -> None:
-    """MUT cli.py:3197 ``sys.exit(_printable_exc(exc))`` -> ``str(exc)`` (VLM6-RV18-01).
+    """MUT cli.py:3350 ``sys.exit(_printable_exc(exc))`` -> ``str(exc)`` (W22V1-F4).
 
-    Raises raw ``ScoreGateError`` (not ``_score_gate_fail``): construction-time
-    encoding would make ``str(exc)`` a no-op and hide the exit-path mutation.
+    Raises a raw ``ScoreGateError`` through ``cli.main`` so the production
+    exception handler, rather than a formatter-only helper, is exercised.
+    The embedded path marker distinguishes both a raw ``str(exc)`` mutation
+    and the old unmarked message encoder.
     """
     proc = _run_python_bytes(_STANDALONE_RAW_GATE)
     assert proc.returncode != 0
@@ -262,6 +282,40 @@ def test_standalone_score_gate_error_exit_pins_absolute_latin1_wire() -> None:
     assert payload == _GATE_WIRE, proc.stderr
     assert _SURROGATE_LEAK not in payload
     assert _BACKSLASHREPLACE_XE9 in payload
+
+
+def test_main_score_gate_handler_calls_printable_exception_encoder() -> None:
+    """The main score-gate handler must preserve the path-aware boundary."""
+    tree = ast.parse(_CLI_PATH.read_text(encoding="utf-8"))
+    handlers = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ExceptHandler)
+        and isinstance(node.type, ast.Name)
+        and node.type.id == "ScoreGateError"
+    ]
+    assert handlers, "cli.main lost its ScoreGateError handler"
+    calls = [
+        node
+        for handler in handlers
+        for node in ast.walk(handler)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_printable_exc"
+        and len(node.args) == 1
+        and isinstance(node.args[0], ast.Name)
+        and node.args[0].id == "exc"
+    ]
+    assert calls, "ScoreGateError exits must route through _printable_exc(exc)"
+
+
+def test_main_manifest_error_handler_encodes_embedded_path() -> None:
+    """A generic manifest error path must reach the path-aware boundary."""
+    proc = _run_python_bytes(_STANDALONE_RAW_MANIFEST_ERROR)
+    assert proc.returncode != 0
+    assert proc.stderr.strip() == b"ManifestError: cannot read undecodable:/tmp/main-caf\\xe9.json"
+    assert _SURROGATE_LEAK not in proc.stderr
+    assert b"/tmp/main-caf\\xe9.json" in proc.stderr
 
 
 def test_run_wrapper_print_pins_absolute_latin1_gate_payload() -> None:
@@ -424,7 +478,7 @@ def test_fetch_abort_exception_tail_is_printable(tmp_path: Path) -> None:
     """Fetch stall errors encode free-text paths before SystemExit renders them."""
     proc = _run_python_bytes(_FETCH_ABORT_CHILD, [os.fsencode(tmp_path / "out")])
     assert proc.returncode != 0
-    assert b"BoundedStallError: stall /tmp/fetch-caf\\xe9.jpg" in proc.stderr
+    assert b"BoundedStallError: stall undecodable:/tmp/fetch-caf\\xe9.jpg" in proc.stderr
     assert _SURROGATE_LEAK not in proc.stderr
     assert b"\\\\xe9" not in proc.stderr
 
@@ -441,10 +495,10 @@ def test_face_bakeoff_abort_path_stdout_prints_latin1_via_printable_path(tmp_pat
 
 
 def test_face_bakeoff_abort_exception_tail_is_printable(tmp_path: Path) -> None:
-    """Face stall errors encode free-text paths before SystemExit renders them."""
+    """The production ``cli.main`` face-bakeoff handler encodes path tails."""
     proc = _run_python_bytes(_FACE_ABORT_EXCEPTION_CHILD, [os.fsencode(tmp_path / "out")])
     assert proc.returncode != 0
-    assert b"FaceBoundedStallError: stall /tmp/face-caf\\xe9.jpg" in proc.stderr
+    assert b"FaceBoundedStallError: stall undecodable:/tmp/face-caf\\xe9.jpg" in proc.stderr
     assert _SURROGATE_LEAK not in proc.stderr
     assert b"\\\\xe9" not in proc.stderr
 

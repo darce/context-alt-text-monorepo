@@ -60,6 +60,29 @@ def test_provision_preserves_symlinked_overlay(tmp_path: Path) -> None:
     assert (dest / "lifecycle.mk").read_text(encoding="utf-8") == "# live overlay\n"
 
 
+def test_provision_relocates_relative_overlay_symlink(tmp_path: Path) -> None:
+    primary = tmp_path / "primary"
+    worktree = tmp_path / "separate-parent" / "worktree"
+    overlay = primary / "overlay"
+    overlay.mkdir(parents=True)
+    (overlay / "lifecycle.mk").write_text("# live overlay\n", encoding="utf-8")
+    (primary / "Makefile.d").symlink_to("../primary/overlay", target_is_directory=True)
+    worktree.mkdir(parents=True)
+
+    completed = subprocess.run(
+        [sys.executable, str(PROVISION), "--worktree", str(worktree), "--primary", str(primary)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    dest = worktree / "Makefile.d"
+    assert dest.is_symlink()
+    assert dest.resolve() == overlay.resolve()
+    assert (dest / "lifecycle.mk").read_text(encoding="utf-8") == "# live overlay\n"
+
+
 def test_provision_does_not_overwrite_tracked_overlay_files(tmp_path: Path) -> None:
     primary = tmp_path / "primary"
     worktree = tmp_path / "worktree"
@@ -87,6 +110,35 @@ def test_provision_does_not_overwrite_tracked_overlay_files(tmp_path: Path) -> N
     assert completed.returncode == 0, completed.stderr
     assert (destination_overlay / "demo-auth.mk").read_text(encoding="utf-8") == "# linked branch copy\n"
     assert (destination_overlay / "lifecycle.mk").read_text(encoding="utf-8") == "# ignored overlay\n"
+
+
+def test_provision_fails_closed_when_git_manifest_lookup_fails(tmp_path: Path) -> None:
+    primary = tmp_path / "primary"
+    worktree = tmp_path / "worktree"
+    fake_bin = tmp_path / "bin"
+    (primary / ".git").mkdir(parents=True)
+    (primary / "Makefile.d").mkdir()
+    (primary / "Makefile.d" / "primary.mk").write_text("# primary\n", encoding="utf-8")
+    worktree.mkdir()
+    (worktree / "Makefile.d").mkdir()
+    tracked_copy = worktree / "Makefile.d" / "primary.mk"
+    tracked_copy.write_text("# branch-owned\n", encoding="utf-8")
+    fake_bin.mkdir()
+    fake_git = fake_bin / "git"
+    fake_git.write_text("#!/usr/bin/env bash\necho 'simulated git failure' >&2\nexit 42\n", encoding="utf-8")
+    fake_git.chmod(0o755)
+
+    completed = subprocess.run(
+        [sys.executable, str(PROVISION), "--worktree", str(worktree), "--primary", str(primary)],
+        env={**os.environ, "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}"},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode != 0
+    assert "refusing overlay copy" in completed.stderr
+    assert tracked_copy.read_text(encoding="utf-8") == "# branch-owned\n"
 
 
 def test_provision_does_not_copytree_node_modules() -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import zipfile
 from pathlib import Path
 
@@ -11,6 +12,7 @@ PACKAGE_DIST_ROOT = REPO_ROOT / "dist"
 LEGACY_PACKAGE_DIST_ROOT = APP / "dist"
 GUIDED_COPY = "Apply and undo"
 RETIRED_COPY = "Apply it yourself"
+FRESHNESS_TOLERANCE_SECONDS = 1
 
 
 def _source_mtime() -> float:
@@ -26,6 +28,25 @@ def _package_zips() -> list[Path]:
     return sorted(path for root in roots if root.is_dir() for path in root.glob("*.zip"))
 
 
+def _bundle_artifacts() -> list[Path]:
+    artifacts: list[Path] = []
+    if DIST_ROOT.exists():
+        dist_files = [path for path in DIST_ROOT.rglob("*") if path.is_file()]
+        assert dist_files, f"admin bundle directory is empty: {DIST_ROOT}"
+        artifacts.extend(dist_files)
+    artifacts.extend(_package_zips())
+    assert artifacts, (
+        f"missing admin bundle {DIST_ROOT} and packaged plugin artifact under "
+        f"{PACKAGE_DIST_ROOT} or {LEGACY_PACKAGE_DIST_ROOT}"
+    )
+    return artifacts
+
+
+def _stale_artifacts(artifacts: list[Path], newest_source: float) -> list[Path]:
+    cutoff = newest_source - FRESHNESS_TOLERANCE_SECONDS
+    return [path for path in artifacts if path.stat().st_mtime < cutoff]
+
+
 def _retired_copy_members(archive: Path) -> list[str]:
     retired: list[str] = []
     with zipfile.ZipFile(archive) as handle:
@@ -39,22 +60,21 @@ def _retired_copy_members(archive: Path) -> list[str]:
 
 
 def test_built_bundle_is_not_older_than_admin_sources() -> None:
-    if DIST_ROOT.exists():
-        dist_files = [path for path in DIST_ROOT.rglob("*") if path.is_file()]
-        assert dist_files, f"admin bundle directory is empty: {DIST_ROOT}"
-        artifacts = dist_files
-    else:
-        # The package workflow writes its ZIP at the monorepo root. A checked-in
-        # legacy ZIP is accepted for local source snapshots, but no artifact
-        # surface may be absent without failing the gate.
-        artifacts = _package_zips()
-        assert artifacts, (
-            f"missing admin bundle {DIST_ROOT} and packaged plugin artifact under "
-            f"{PACKAGE_DIST_ROOT} or {LEGACY_PACKAGE_DIST_ROOT}"
-        )
-    newest_dist = max(path.stat().st_mtime for path in artifacts)
+    artifacts = _bundle_artifacts()
     newest_source = _source_mtime()
-    assert newest_dist >= newest_source - 1, "admin bundle/package artifact is stale relative to js/ sources"
+    stale = [str(path.relative_to(REPO_ROOT)) for path in _stale_artifacts(artifacts, newest_source)]
+    assert stale == [], f"admin bundle/package artifacts are stale relative to js/ sources: {stale}"
+
+
+def test_one_stale_bundle_member_is_not_hidden_by_a_fresh_member(tmp_path: Path) -> None:
+    fresh = tmp_path / "fresh.js"
+    stale = tmp_path / "stale.css"
+    fresh.write_text("fresh", encoding="utf-8")
+    stale.write_text("stale", encoding="utf-8")
+    os.utime(fresh, (200, 200))
+    os.utime(stale, (100, 100))
+
+    assert _stale_artifacts([fresh, stale], 200) == [stale]
 
 
 def test_packaged_zip_does_not_ship_retired_apply_copy() -> None:

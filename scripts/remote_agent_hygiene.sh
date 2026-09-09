@@ -87,14 +87,21 @@ acx_kill_pid() {
     return 1
   }
   "$kill_bin" -TERM "$pid" 2>/dev/null || return 1
-  while [ "$i" -lt 5 ]; do
+  # Bounded wait (~2s) so a cooperative process can exit on TERM.
+  while [ "$i" -lt 20 ]; do
     "$kill_bin" -0 "$pid" 2>/dev/null || return 0
     sleep 0.1
     i=$((i + 1))
   done
   "$kill_bin" -KILL "$pid" 2>/dev/null || true
-  "$kill_bin" -0 "$pid" 2>/dev/null && return 1
-  return 0
+  # Brief reap window: a just-killed pid can still look alive as a zombie.
+  i=0
+  while [ "$i" -lt 5 ]; do
+    "$kill_bin" -0 "$pid" 2>/dev/null || return 0
+    sleep 0.1
+    i=$((i + 1))
+  done
+  return 1
 }
 
 acx_ping_children_of() {
@@ -237,7 +244,7 @@ acx_run_bounded_ping() {
 
 acx_reap_orphan_pings() {
   acx_validate_orphan_ping_stale || return $?
-  local pid ppid etime cmd elapsed killed=0
+  local pid ppid etime cmd elapsed killed=0 parse_failed=0
   local ps_out
   ps_out="$(ps -eo pid=,ppid=,etime=,args=)" || {
     echo "remote_agent: ps failed; refusing to reap ping probes" >&2
@@ -252,7 +259,11 @@ acx_reap_orphan_pings() {
     [ "$pid" != "$$" ] || continue
     [[ "$cmd" == *"$ORPHAN_PING_MATCH"* ]] || continue
     [[ "$cmd" == *ping* ]] || continue
-    elapsed="$(acx_etime_to_seconds "$etime")" || continue
+    if ! elapsed="$(acx_etime_to_seconds "$etime")"; then
+      echo "remote_agent: skipping pid ${pid}: could not parse etime '${etime}'" >&2
+      parse_failed=$((parse_failed + 1))
+      continue
+    fi
     if [ "$elapsed" -lt "$ORPHAN_PING_STALE_SEC" ]; then
       continue
     fi
@@ -261,6 +272,9 @@ acx_reap_orphan_pings() {
     fi
   done <<<"$ps_out"
   echo "remote_agent: reaped ${killed} stale orphan ping probe(s)"
+  if [ "$parse_failed" -gt 0 ]; then
+    echo "remote_agent: skipped ${parse_failed} ping probe(s) with unparseable etime" >&2
+  fi
 }
 
 if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then

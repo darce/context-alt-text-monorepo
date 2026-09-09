@@ -9,6 +9,14 @@
 - started_at: null
 - images: 39/39 scored, 0 failed
 - quality_floor_caveat: position_accuracy/placement floors are binary-chance (0.5); accuracy at the floor fails the gate
+
+## Corpus coverage audit
+
+- demographic_cohort=0/39 (threshold=5; below_threshold=true; pi_zero=true) — 0/39 entries populate it (threshold=5) — demographic/cohort fairness slices have no sampling frame
+- face_boxes=2/39 (threshold=5; below_threshold=true; pi_zero=false) — 2/39 entries populate it (threshold=5) — positional_identification never runs; set-based identity scoring cannot catch right-names-on-wrong-faces
+- reference_facts=0/39 (threshold=5; below_threshold=true; pi_zero=true) — 0/39 entries populate it (threshold=5) — no trap coverage for fabricated-fact scoring (rate is undefined)
+- spatial_facts=0/39 (threshold=5; below_threshold=true; pi_zero=true) — 0/39 entries populate it (threshold=5) — placement accuracy is vacuous (0 asserted claims)
+- evaluation_status: `unvalidated_proxy`
 - verdict: **fail** (wrong_name_rate=0.000, floor=0.000)
 - rubric_gate: `skip`
 - verdict reason: quality-floor: position_accuracy=0.0 <= floor=0.5 (critical scored slice total failure; EVAL-04 / S2-02)

@@ -23,6 +23,7 @@
     "total": 39
   },
   "eval_mode": "standard",
+  "evaluation_status": "unvalidated_proxy",
   "faces": {
     "detection": {
       "fn": null,
@@ -1742,6 +1743,7 @@
         "total": 39
       }
     },
+    "evaluation_status": "unvalidated_proxy",
     "face_metrics_evidential": false,
     "fixture_revision": "0000000000000000000000000000000000000000",
     "generator": "scripts.eval_harness.generate_determinism_anchor",
@@ -1922,6 +1924,7 @@
     }
   },
   "verdict": {
+    "evaluation_status": "unvalidated_proxy",
     "insertion_rate": 0.0,
     "mean_gated_score": 0.0,
     "must_right_failed_images": 34,

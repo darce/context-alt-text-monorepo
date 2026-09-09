@@ -369,16 +369,26 @@ class IntentAuthorityStore:
                     raise IntentAuthorityError(f"intent authority ledger is invalid: {self.path}")
                 try:
                     _parse_timestamp(publication["requested_at"], field="requested_at")
-                    _parse_timestamp(publication["expires_at"], field="expires_at")
+                    publication_expiry = _parse_timestamp(publication["expires_at"], field="expires_at")
+                    if (
+                        publication_expiry != _parse_timestamp(record["expires_at"], field="expires_at")
+                        or publication["sequence"] != sequence
+                    ):
+                        raise ValueError("authority record differs from its immutable publication")
                 except ValueError as exc:
                     raise IntentAuthorityError(f"intent authority ledger is invalid: {self.path}: {exc}") from exc
             monotonic_expiry = record.get("monotonic_expires_at")
-            if monotonic_expiry is not None and (
-                isinstance(monotonic_expiry, bool)
-                or not isinstance(monotonic_expiry, (int, float))
-                or not math.isfinite(monotonic_expiry)
-            ):
-                raise IntentAuthorityError(f"intent authority ledger is invalid: {self.path}")
+            if monotonic_expiry is not None:
+                try:
+                    valid_expiry = (
+                        not isinstance(monotonic_expiry, bool)
+                        and isinstance(monotonic_expiry, (int, float))
+                        and math.isfinite(monotonic_expiry)
+                    )
+                except OverflowError as exc:
+                    raise IntentAuthorityError(f"intent authority ledger is invalid: {self.path}") from exc
+                if not valid_expiry:
+                    raise IntentAuthorityError(f"intent authority ledger is invalid: {self.path}")
         return payload
 
     @staticmethod
@@ -402,6 +412,20 @@ class IntentAuthorityStore:
         with _intent_file_lock(self.path):
             return int(self._read_state()["highest_sequence"])
 
+    def token_fence(self, *, sequence: int, nonce: str) -> tuple[int, bool]:
+        """Read high-water and token rejection from one locked ledger snapshot.
+
+        A deferred STOP outlives its publication TTL, but never a rejected
+        sequence or a different nonce that owns the same sequence.
+        """
+        with _intent_file_lock(self.path):
+            state = self._read_state()
+            owner = state.get("sequences", {}).get(str(sequence))
+            rejected = sequence in state.get("rejected_sequences", []) or (
+                owner is not None and owner != nonce
+            )
+            return int(state["highest_sequence"]), rejected
+
     def filter_valid(
         self,
         intents: list[OperatorIntent],
@@ -409,6 +433,8 @@ class IntentAuthorityStore:
         now: datetime,
     ) -> tuple[list[OperatorIntent], set[str]]:
         """Return intents not expired by logical wall or current-boot monotonic time."""
+        if not isinstance(self._boot_id, str) or not self._boot_id.strip():
+            raise IntentAuthorityError("intent boot identity is unavailable")
         current_time = _coerce_now(now)
         try:
             monotonic_now = float(self._monotonic())
@@ -524,6 +550,18 @@ class IntentAuthorityStore:
                 highest_sequence = max(highest_sequence, intent.sequence)
                 record_expiry = _parse_timestamp(record["expires_at"], field="expires_at")
                 expired = bool(record.get("expired")) or logical_now >= record_expiry
+                if not expired and record.get("boot_id") != self._boot_id:
+                    expired = True
+                    record["revocation_reason"] = "boot_changed_or_unknown"
+                    record["revoked_in_boot_id"] = self._boot_id
+                    publication = record.get("publication") or {}
+                    logger.error(
+                        "operator intent revoked across boot: nonce=%s requested_by=%r previous_boot=%r current_boot=%r",
+                        intent.nonce,
+                        publication.get("requested_by", intent.requested_by),
+                        record.get("boot_id"),
+                        self._boot_id,
+                    )
                 if (
                     not expired
                     and record.get("boot_id") == self._boot_id
@@ -636,7 +674,10 @@ class DeferredStopStore:
         with _intent_file_lock(self.path):
             _atomic_write_json(self.path, payload)
 
-    def supersede_if_newer(self, *, sequence: int, nonce: str) -> bool:
+    def supersede_if_newer(
+        self, *, sequence: int, nonce: str,
+        before_clear: Callable[[DeferredStopRecord], None] | None = None,
+    ) -> bool:
         """Atomically clear a deferred STOP superseded by a fencing token."""
         if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < MIN_INTENT_SEQUENCE:
             raise ValueError("sequence must be a positive integer")
@@ -650,13 +691,20 @@ class DeferredStopStore:
                 sequence == record.sequence and nonce != record.nonce
             )
             if superseded:
+                if before_clear is not None:
+                    before_clear(record)
                 _durable_unlink(self.path)
             return superseded
 
-    def clear(self, *, sequence: int | None = None) -> None:
+    def clear(
+        self, *, sequence: int | None = None,
+        before_clear: Callable[[DeferredStopRecord], None] | None = None,
+    ) -> None:
         with _intent_file_lock(self.path):
             record = self.read()
             if record is None or sequence is None or record.sequence <= sequence:
+                if record is not None and before_clear is not None:
+                    before_clear(record)
                 _durable_unlink(self.path)
 
 

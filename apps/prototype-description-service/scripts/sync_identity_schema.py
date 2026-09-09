@@ -63,8 +63,8 @@ def main() -> int:
     engine = create_engine(get_database_settings().postgres_sync_dsn)
     try:
         sync_schema(engine)
-    except Exception:  # fail closed at the entrypoint — no worse than verify failing
-        logger.exception("identity schema heal failed")
+    except Exception as exc:  # fail closed at the entrypoint — no worse than verify failing
+        logger.exception("identity schema heal failed: %s", exc)
         return 1
     finally:
         engine.dispose()

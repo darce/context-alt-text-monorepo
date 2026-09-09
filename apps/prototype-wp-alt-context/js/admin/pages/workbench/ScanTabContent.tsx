@@ -23,6 +23,10 @@ import { useJobPipeline } from './JobPipelineContext';
 import { useClusterPanel } from './ClusterPanelContext';
 import { useWorkbenchMediaContext } from './WorkbenchMediaContext';
 import { useReviewSurface } from './ReviewSurfaceContext';
+import {
+  createEmptyHAIReviewState,
+  type HAIReviewState,
+} from './identity-clusters/haiReviewState';
 import { EmptyState, EmptyStateVariant } from '../../components/ui/EmptyState';
 import { toWorkbench } from '../../navigation/appLinks';
 
@@ -51,7 +55,7 @@ export const NoMediaPanel = () => (
   />
 );
 
-export const ScanTabContent = (): React.JSX.Element => {
+const ScanTabContentBody = (): React.JSX.Element => {
   const { scanRun, status, history, cancelScan, retryScanStream } = useJobPipeline();
   const { clusterPanel, dispatchClusterPanel } = useClusterPanel();
   const { hasIdentities } = useWorkbenchMediaContext().mediaQueue;
@@ -122,6 +126,16 @@ export const ScanTabContent = (): React.JSX.Element => {
   const [selectedSuggestionIds, setSelectedSuggestionIds] = React.useState<Set<string>>(
     () => new Set(),
   );
+  // HAI-15 state lives on this stable body while the queue swaps with label or
+  // review panels. It is intentionally session-only; no localStorage/backend
+  // durability is implied. The exported tenant-keyed shell clears it at a
+  // tenant boundary by remounting this body.
+  const [haiReviewState, setHAIReviewState] = React.useState<HAIReviewState>(
+    () => createEmptyHAIReviewState(),
+  );
+  const handleHAIReviewStateChange = React.useCallback((next: HAIReviewState): void => {
+    setHAIReviewState(next);
+  }, []);
 
   const handleClampIndex = React.useCallback(
     (nextIndex: number): void => {
@@ -260,6 +274,8 @@ export const ScanTabContent = (): React.JSX.Element => {
                 onClearFilters={handleClearFilters}
                 selectedIds={selectedSuggestionIds}
                 onSelectedIdsChange={setSelectedSuggestionIds}
+                haiReviewState={haiReviewState}
+                onHAIReviewStateChange={handleHAIReviewStateChange}
                 emptyStateAnchorRef={findingsDetailRef}
                 onReview={(clusterId: string) => dispatchClusterPanel({ type: 'open_review', clusterId })}
                 onLabel={(clusterId: string) => dispatchClusterPanel({ type: 'open_label', clusterId })}
@@ -302,4 +318,11 @@ export const ScanTabContent = (): React.JSX.Element => {
       </section>
     </>
   );
+};
+
+/** Remount the session-owned HAI state when the active tenant changes. */
+export const ScanTabContent = (): React.JSX.Element => {
+  const tenantId =
+    typeof window === 'undefined' ? '' : window.AltContextAdmin?.tenant_id ?? '';
+  return <ScanTabContentBody key={tenantId} />;
 };

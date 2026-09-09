@@ -100,6 +100,68 @@ async def test_generate_cluster_merge_suggestions_skips_cross_space_centroids() 
     assert all(foreign.id not in pair for pair in pair_ids)
 
 
+def _centroid_only_cluster(*, tenant_id: str, embedding: np.ndarray, model: str | None) -> IdentityCluster:
+    """Cluster with a centroid but no loaded representatives (pre-recompute state)."""
+    return IdentityCluster(
+        id=str(generate_id()),
+        tenant_id=tenant_id,
+        is_labeled=False,
+        identity_count=3,
+        created_at=datetime.now(tz=UTC),
+        user_confirmed=False,
+        representatives=[],
+        centroid=compute_centroid([embedding]),
+        embedding_model=model,
+    )
+
+
+@pytest.mark.asyncio
+async def test_generate_cluster_merge_suggestions_skips_unresolved_when_tenant_has_stamp() -> None:
+    """Unstamped-model clusters must not pair on centroid cosine once any stamp exists."""
+    tenant_id = str(generate_id())
+    vec_a = np.array([1.0, 0.0], dtype=np.float32)
+    vec_b = np.array([0.8, 0.6], dtype=np.float32)
+    unresolved_a = _centroid_only_cluster(tenant_id=tenant_id, embedding=vec_a, model=None)
+    unresolved_b = _centroid_only_cluster(tenant_id=tenant_id, embedding=vec_b, model=None)
+    stamped = _cluster(tenant_id=tenant_id, embedding=vec_a, model="space-a")
+    repo = MergeSuggestionRepoStub()
+    settings = ClusteringSettings(similarity_threshold=0.99, suggestion_floor=0.5)
+
+    created = await generate_cluster_merge_suggestions(
+        tenant_id=tenant_id,
+        clusters=[unresolved_a, unresolved_b, stamped],
+        repository=repo,
+        settings=settings,
+    )
+
+    involved = {cid for call in repo.calls for cid in (call.cluster_a_id, call.cluster_b_id)}
+    assert unresolved_a.id not in involved
+    assert unresolved_b.id not in involved
+    assert created == 0
+
+
+@pytest.mark.asyncio
+async def test_generate_cluster_merge_suggestions_pairs_legacy_all_unstamped() -> None:
+    tenant_id = str(generate_id())
+    vec_a = np.array([1.0, 0.0], dtype=np.float32)
+    vec_b = np.array([0.8, 0.6], dtype=np.float32)
+    unresolved_a = _centroid_only_cluster(tenant_id=tenant_id, embedding=vec_a, model=None)
+    unresolved_b = _centroid_only_cluster(tenant_id=tenant_id, embedding=vec_b, model=None)
+    repo = MergeSuggestionRepoStub()
+    settings = ClusteringSettings(similarity_threshold=0.99, suggestion_floor=0.5)
+
+    created = await generate_cluster_merge_suggestions(
+        tenant_id=tenant_id,
+        clusters=[unresolved_a, unresolved_b],
+        repository=repo,
+        settings=settings,
+    )
+
+    assert created == 1
+    pair_ids = {(call.cluster_a_id, call.cluster_b_id) for call in repo.calls}
+    assert (unresolved_a.id, unresolved_b.id) in pair_ids or (unresolved_b.id, unresolved_a.id) in pair_ids
+
+
 class ClusterRepoStub:
     def __init__(self, clusters: list[IdentityCluster]) -> None:
         self._clusters = clusters

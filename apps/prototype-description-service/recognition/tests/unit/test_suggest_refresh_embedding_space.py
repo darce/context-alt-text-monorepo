@@ -266,6 +266,52 @@ async def test_surface_rebuilds_gallery_instead_of_using_stale_precomputed_vecto
 
 
 @pytest.mark.asyncio
+async def test_surface_empty_live_reps_does_not_use_stale_precomputed_vectors() -> None:
+    """Empty live representatives fail-closed; metadata-free cache must not cosine.
+
+    Background surfacing preloads numeric arrays with no embedding_model. When
+    get_all_representatives returns [] (MVCC miss, cleared reps), the previous
+    fallback reused that cache against unstamped identities.
+    """
+    tenant_id = str(uuid4())
+    labeled_id = str(uuid4())
+    unlabeled_id = str(uuid4())
+    labeled_cluster = IdentityCluster(
+        tenant_id=tenant_id,
+        is_labeled=True,
+        identity_count=1,
+        id=labeled_id,
+        label="Ada",
+        user_confirmed=True,
+        representatives=None,
+    )
+    unstamped = _stamped_identity("identity-unstamped", tenant_id, None)
+    repo = _SurfaceRepoStub(
+        identities_by_cluster={unlabeled_id: [unstamped]},
+        labeled_cluster=labeled_cluster,
+        labeled_reps=[],
+    )
+    suggestion_repo = AsyncMock()
+    service = SuggestionRefreshService(
+        repository=suggestion_repo,
+        tenant_id=tenant_id,
+        cluster_repository=repo,
+        session=object(),
+        settings=ClusteringSettings(similarity_threshold=0.0, suggestion_floor=0.0, suggestion_ceiling=1.1),
+    )
+
+    created = await service.surface_for_newly_labeled_cluster(
+        labeled_id,
+        cluster_label="Ada",
+        candidate_cluster_ids=[unlabeled_id],
+        representatives_by_cluster={labeled_id: [unstamped.embedding]},
+    )
+
+    assert created == 0
+    suggestion_repo.upsert_by_identity_cluster.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_refresh_rejects_pending_suggestion_with_foreign_space() -> None:
     tenant_id = str(uuid4())
     cluster_id = str(uuid4())

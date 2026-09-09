@@ -346,7 +346,10 @@ def _list_secret_versions(vaults_client, secret_id, invoke=None):
         page = next_page
 
 
-_RECONCILABLE_VERSION_STAGES = frozenset({"CURRENT", "PENDING", "LATEST"})
+# CURRENT/PENDING describe the active rotation state. LATEST is independent
+# metadata for the most recently uploaded content and may remain attached to a
+# historical PREVIOUS/DEPRECATED version after a later version becomes current.
+_RECONCILABLE_VERSION_STAGES = frozenset({"CURRENT", "PENDING"})
 
 
 def _version_stages(version):
@@ -663,7 +666,7 @@ def main() -> int:
                 hashlib.sha256(value).hexdigest(),
                 timeout=remaining,
             )
-        except (OperationDeadlineError, SecretNotReadableError) as reconcile_exc:
+        except Exception as reconcile_exc:
             raise MutationOutcomeUnknownError(
                 f"{exc}; reconciliation did not establish the active value ({reconcile_exc})"
             ) from exc

@@ -252,12 +252,33 @@ exit 7
 
 
 def _function_body(name: str) -> str:
-    """Slice one top-level `name() {` through the next column-0 `fn() {`."""
+    """Slice one top-level `name() {` through the next column-0 `fn() {`.
+
+    Nested helpers inside remote heredocs are not the next top-level function.
+    """
     source = SCRIPT.read_text()
     start = source.index(f"{name}() {{")
-    nxt = re.search(r"\n[A-Za-z_][A-Za-z0-9_]*\(\) \{", source[start + 1 :])
-    end = start + 1 + nxt.start() if nxt else len(source)
-    return source[start:end]
+    consumed = 0
+    heredoc_end: str | None = None
+    for idx, line in enumerate(source[start:].splitlines(keepends=True)):
+        raw = line.rstrip("\n")
+        if idx == 0:
+            consumed += len(line)
+            continue
+        if heredoc_end is not None:
+            consumed += len(line)
+            if raw == heredoc_end:
+                heredoc_end = None
+            continue
+        heredoc = re.search(r"""<<[-]?(['\"]?)(\w+)\1""", raw)
+        if heredoc:
+            heredoc_end = heredoc.group(2)
+            consumed += len(line)
+            continue
+        if re.match(r"[A-Za-z_][A-Za-z0-9_]*\(\) \{", raw):
+            return source[start : start + consumed]
+        consumed += len(line)
+    return source[start:]
 
 
 def _sanitize_deploy_diagnostic_src() -> str:
@@ -440,9 +461,7 @@ def _run_boot_smoke(
             wrapper = tmp_path / "closed-stderr.sh"
             _write_executable(
                 wrapper,
-                "#!/usr/bin/env bash\n"
-                "exec 2>&-\n"
-                f'exec bash "{smoke}" "$@"\n',
+                f'#!/usr/bin/env bash\nexec 2>&-\nexec bash "{smoke}" "$@"\n',
             )
             cmd = ["bash", str(wrapper), *args]
         result = subprocess.run(
@@ -560,6 +579,7 @@ ACX_IMAGE_REPO="$IMAGE_BASE"
 read_remote_image_repo() {{ printf '%s\\n' "$IMAGE_BASE-vlm"; }}
 ship_remote_image_repo_env() {{ printf '%s\\n' "$ACX_IMAGE_REPO" >>"{records}"; }}
 converge_runtime() {{ fail "synthetic convergence failure"; }}
+restore_runtime_topology() {{ printf 'topology\\n' >>"{records}"; }}
 rc=0
 promote_gate dev "$ACX_IMAGE_REPO@sha256:{digest}" || rc=$?
 exit "$rc"
@@ -575,6 +595,7 @@ exit "$rc"
     assert "synthetic convergence failure" in result.stderr
     assert records.read_text().splitlines() == [
         "iad.ocir.io/idu2kqqe2jxy/acx-backend",
+        "topology",
         "iad.ocir.io/idu2kqqe2jxy/acx-backend-vlm",
     ]
 
@@ -625,8 +646,9 @@ run_with_deadline() {{
 }}
 do_build_remote dev
 '''
-    result = subprocess.run(["bash", "-c", driver], text=True, capture_output=True,
-                            cwd=SCRIPT.parents[2], env=dict(os.environ), timeout=10)
+    result = subprocess.run(
+        ["bash", "-c", driver], text=True, capture_output=True, cwd=SCRIPT.parents[2], env=dict(os.environ), timeout=10
+    )
     assert result.returncode == 0, result.stdout + result.stderr
     commands = calls.read_text()
     assert "buildx build" in commands
@@ -686,16 +708,12 @@ def test_automatic_rollbacks_capture_failure_evidence_first() -> None:
     assert helper_evidence in helper
     assert helper_restore in helper
     assert helper.index(helper_evidence) < helper.index(helper_restore)
-    for function_name, env_expression in (("do_deploy", "\"$env\""), ("do_promote", "\"$to_env\"")):
+    for function_name, env_expression in (("_ship_selected_env", '"$env"'), ("do_promote", '"$to_env"')):
         body = _function_body(function_name)
         evidence_marker = f"capture_failure_evidence {env_expression}"
         restore_marker = f"restore_env_tag_to_rollback {env_expression}"
-        evidence_positions = [
-            index for index in range(len(body)) if body.startswith(evidence_marker, index)
-        ]
-        restore_positions = [
-            index for index in range(len(body)) if body.startswith(restore_marker, index)
-        ]
+        evidence_positions = [index for index in range(len(body)) if body.startswith(evidence_marker, index)]
+        restore_positions = [index for index in range(len(body)) if body.startswith(restore_marker, index)]
         assert len(evidence_positions) == 2
         assert len(restore_positions) == 2
         assert all(evidence < restore for evidence, restore in zip(evidence_positions, restore_positions))
@@ -733,10 +751,12 @@ def test_do_verify_surfaces_non_gating_readiness_code_and_body(tmp_path: Path) -
 
 def test_restart_and_rollback_integration_points_are_deadlined() -> None:
     restart = _function_body("do_restart")
-    rollback = _function_body("restore_env_tag_to_rollback")
+    registry = _function_body("restore_registry_env_tag")
+    runtime = _function_body("restore_runtime_and_edge")
     assert "run_with_deadline" in _function_body("repair_blob_volume_ownership")
     assert "run_with_deadline" in restart
-    assert rollback.count("run_with_deadline") >= 3
+    assert registry.count("run_with_deadline") >= 2
+    assert runtime.count("run_with_deadline") >= 1
 
 
 def test_remote_repo_transport_failure_is_not_reported_as_absent() -> None:
@@ -774,10 +794,23 @@ verify_running_image_matches_deployed dev
 
 
 def test_rollback_success_requires_post_restart_health_evidence() -> None:
-    body = _function_body("restore_env_tag_to_rollback")
+    orchestrator = _function_body("restore_env_tag_to_rollback")
+    body = _function_body("restore_runtime_and_edge")
+    assert "assert_rollback_fence" in orchestrator
+    assert "restore_registry_env_tag" in orchestrator
+    assert "restore_runtime_and_edge" in orchestrator
+    assert orchestrator.index("assert_rollback_fence") < orchestrator.index("restore_registry_env_tag")
+    assert orchestrator.index("restore_registry_env_tag") < orchestrator.index("restore_runtime_and_edge")
     assert "verify_restored_runtime" in body
+    assert "restore_topology_backups" in body
+    assert "restore_edge_backups" in body
+    assert "abort_cutover_candidate" in body
+    assert body.index("restore_topology_backups") < body.index("restore_prior_image_repo_env")
     assert body.index("restore_prior_image_repo_env") < body.index('"rollback systemctl restart')
-    assert body.index("verify_restored_runtime") < body.index('log "Restored')
+    assert body.index('"rollback systemctl restart') < body.index("restore_edge_backups")
+    assert body.index("restore_edge_backups") < body.index("abort_cutover_candidate")
+    assert body.index("verify_restored_runtime") > body.index("abort_cutover_candidate")
+    assert 'log "Restored' in orchestrator
 
 
 def test_docker_credential_paths_are_not_globally_exported() -> None:
@@ -796,6 +829,7 @@ source "{SCRIPT}"
 ACX_ROLLBACK_DIGEST_REF="$IMAGE_BASE@sha256:{rollback}"
 ACX_ROLLBACK_IMAGE_BASE="$IMAGE_BASE"
 ACX_CANDIDATE_DIGEST_REF="$IMAGE_BASE@sha256:{candidate}"
+with_shared_tag_lock() {{ shift; "$@"; }}
 _pull_ref_remote() {{ :; }}
 remote_image_digest_ref() {{
   if [[ "$1" == *":dev" ]]; then printf '%s\n' "$IMAGE_BASE@sha256:{newer}"; else printf '%s\n' "$1"; fi
@@ -807,6 +841,93 @@ restore_env_tag_to_rollback dev 0
     assert result.returncode != 0
     assert "STALE ROLLBACK REFUSED" in result.stderr
     assert not records.exists()
+
+
+def test_rollback_push_cas_refuses_generation_changed_after_fence(tmp_path: Path) -> None:
+    """R-07: a newer shared-tag mapping between fence and push must not be overwritten."""
+    records = tmp_path / "docker-commands"
+    rollback = "a" * 64
+    candidate = "b" * 64
+    newer = "c" * 64
+    command = f'''
+source "{SCRIPT}"
+ACX_ROLLBACK_DIGEST_REF="$IMAGE_BASE@sha256:{rollback}"
+ACX_ROLLBACK_IMAGE_BASE="$IMAGE_BASE"
+ACX_CANDIDATE_DIGEST_REF="$IMAGE_BASE@sha256:{candidate}"
+with_shared_tag_lock() {{ shift; "$@"; }}
+_pull_ref_remote() {{ :; }}
+restore_runtime_and_edge() {{ return 0; }}
+remote_image_digest_ref() {{
+  if [[ "$1" == *":dev" ]]; then
+    printf 'inspect\\n' >>"{records}.inspects"
+    if [[ "$(wc -l < "{records}.inspects")" -eq 1 ]]; then
+      printf '%s\\n' "$IMAGE_BASE@sha256:{candidate}"
+    else
+      printf '%s\\n' "$IMAGE_BASE@sha256:{newer}"
+    fi
+  else
+    printf '%s\\n' "$1"
+  fi
+}}
+remote_docker_with_config() {{ printf '%s\\n' "$*" >>"{records}"; return 0; }}
+restore_env_tag_to_rollback dev-fir 0
+'''
+    result = subprocess.run(["/bin/bash", "-c", command], text=True, capture_output=True, check=False)
+    logged = records.read_text() if records.exists() else ""
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    assert "ROLLBACK CAS REFUSED" in result.stderr
+    assert "dev-fir" in result.stderr
+    assert candidate in result.stderr
+    assert newer in result.stderr
+    assert "push " not in logged
+
+
+def test_rollback_push_cas_happy_path_pushes_when_tag_unchanged(tmp_path: Path) -> None:
+    """R-07: compare-and-swap must push when the shared env tag is still the planned digest."""
+    records = tmp_path / "docker-commands"
+    rollback = "a" * 64
+    candidate = "b" * 64
+    command = f'''
+source "{SCRIPT}"
+ACX_ROLLBACK_DIGEST_REF="$IMAGE_BASE@sha256:{rollback}"
+ACX_ROLLBACK_IMAGE_BASE="$IMAGE_BASE"
+ACX_CANDIDATE_DIGEST_REF="$IMAGE_BASE@sha256:{candidate}"
+with_shared_tag_lock() {{ shift; "$@"; }}
+_pull_ref_remote() {{ :; }}
+restore_runtime_and_edge() {{ return 0; }}
+remote_image_digest_ref() {{
+  if [[ "$1" == *":dev" ]]; then
+    printf '%s\\n' "$IMAGE_BASE@sha256:{candidate}"
+  else
+    printf '%s\\n' "$1"
+  fi
+}}
+remote_docker_with_config() {{ printf '%s\\n' "$*" >>"{records}"; return 0; }}
+restore_env_tag_to_rollback dev-fir 0
+'''
+    result = subprocess.run(["/bin/bash", "-c", command], text=True, capture_output=True, check=False)
+    logged = records.read_text() if records.exists() else ""
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+    assert "ROLLBACK CAS REFUSED" not in combined
+    assert "tag " in logged
+    assert "push " in logged
+
+
+def test_restore_and_promote_serialize_on_shared_env_tag() -> None:
+    """R-07: dev and dev-fir share :dev, so rollback and promote must lock that tag."""
+    restore = _function_body("restore_env_tag_to_rollback")
+    registry = _function_body("restore_registry_env_tag")
+    promote = _function_body("do_push_tag")
+    lock = _function_body("with_shared_tag_lock")
+    assert "with_shared_tag_lock" in restore
+    assert "with_shared_tag_lock" in promote
+    assert "flock" in lock
+    assert "tag-${tag}.lock" in lock
+    assert "remote_image_digest_ref" in registry
+    assert restore.index("with_shared_tag_lock") < restore.index("assert_rollback_fence")
+    assert registry.index("remote_image_digest_ref") < registry.index("remote_docker_with_config tag")
 
 
 def test_boot_smoke_captures_crash_logs_after_entrypoint_exit(tmp_path: Path) -> None:
@@ -971,13 +1092,10 @@ def test_push_and_restart_failures_use_pre_candidate_evidence_phase() -> None:
     """VLMHEAL-1-REV-B-06 / D-02: push is pre_candidate; restart uses post_restart phase."""
     helper = _function_body("handle_failed_verification")
     assert 'capture_failure_evidence "$env" candidate' in helper
-    for function_name, env_expression in (("do_deploy", '"$env"'), ("do_promote", '"$to_env"')):
+    for function_name, env_expression in (("_ship_selected_env", '"$env"'), ("do_promote", '"$to_env"')):
         body = _function_body(function_name)
         assert f"capture_failure_evidence {env_expression} pre_candidate" in body
-        assert (
-            f'capture_failure_evidence {env_expression} "${{ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}}"'
-            in body
-        )
+        assert f'capture_failure_evidence {env_expression} "${{ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}}"' in body
         assert f"handle_failed_verification {env_expression}" in body
         assert f"capture_failure_evidence {env_expression} candidate" not in body
         assert body.count(f"capture_failure_evidence {env_expression} pre_candidate") == 1
@@ -988,9 +1106,7 @@ def test_run_with_deadline_does_not_dup_stdin_through_fd3() -> None:
     source = SCRIPT.read_text()
     start = source.index("run_with_deadline() {")
     end = source.index("validated_deadline() {")
-    code = "\n".join(
-        line for line in source[start:end].splitlines() if not line.lstrip().startswith("#")
-    )
+    code = "\n".join(line for line in source[start:end].splitlines() if not line.lstrip().startswith("#"))
     assert "exec 3<&0" not in code
     assert '"$@" <&0 &' in code
 
@@ -1108,16 +1224,21 @@ def test_post_restart_evidence_keeps_logs_and_skips_http(tmp_path: Path) -> None
 
 
 def test_do_restart_marks_post_restart_before_systemctl() -> None:
-    """D-02: systemctl restart failure must request post_restart evidence."""
+    """D-02: candidate unit start failure must request post_restart evidence."""
     body = _function_body("do_restart")
     assert 'ACX_RESTART_EVIDENCE_PHASE="pre_candidate"' in body
     assert 'ACX_RESTART_EVIDENCE_PHASE="post_restart"' in body
     assert body.index('ACX_RESTART_EVIDENCE_PHASE="pre_candidate"') < body.index(
         'ACX_RESTART_EVIDENCE_PHASE="post_restart"'
     )
-    assert body.index('ACX_RESTART_EVIDENCE_PHASE="post_restart"') < body.index(
-        "sudo systemctl restart"
-    )
+    recreate_at = body.index("recreate_cutover_candidate")
+    candidate = _function_body("recreate_cutover_candidate")
+    assert body.index('ACX_RESTART_EVIDENCE_PHASE="post_restart"') < recreate_at
+    assert "sudo systemctl start" in candidate
+    assert recreate_at < body.index("systemctl restart")
+    assert body.index("ACX_LIVE_DISRUPTED=1") < body.index("systemctl restart ${unit}")
+    assert recreate_at < body.index("ACX_LIVE_DISRUPTED=1")
+    assert body.rindex("ACX_LIVE_DISRUPTED=0") > body.index("ACX_LIVE_DISRUPTED=1")
 
 
 def test_pre_candidate_docker_ps_is_compose_project_scoped(tmp_path: Path) -> None:
@@ -1147,7 +1268,7 @@ def test_boot_smoke_failure_redacts_tokens(tmp_path: Path) -> None:
         extra_env={
             "FAKE_HEALTH_CODE": "503",
             "FAKE_HEALTH_BODY": (
-                'RECOGNITION_ADMIN_TOKEN=admin-secret HF_TOKEN=hf-secret '
+                "RECOGNITION_ADMIN_TOKEN=admin-secret HF_TOKEN=hf-secret "
                 'PGPASSWORD=pg-secret "token": "json-secret" '
                 "AUTHORIZATION: BEARER header-secret Bearer naked-secret"
             ),
@@ -1176,9 +1297,7 @@ def _run_do_verify(
 ) -> subprocess.CompletedProcess[str]:
     curl_log = tmp_path / "curl.log"
     expected = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-    health_body = (
-        '{"commit_sha":"' + health_sha + '","status":"ok","image_variant":"recognition"}'
-    )
+    health_body = '{"commit_sha":"' + health_sha + '","status":"ok","image_variant":"recognition"}'
     driver = tmp_path / "verify-driver.sh"
     driver.write_text(
         f'''
@@ -1239,14 +1358,10 @@ def test_do_verify_probes_ready_only_on_terminal_failure(tmp_path: Path) -> None
 
 
 @pytest.mark.parametrize("health_code", ["302", "404", "500", "503"])
-def test_do_verify_non_2xx_matching_sha_fails_and_probes_ready(
-    tmp_path: Path, health_code: str
-) -> None:
+def test_do_verify_non_2xx_matching_sha_fails_and_probes_ready(tmp_path: Path, health_code: str) -> None:
     """GR-261: matching commit_sha on non-2xx /health must not verify; /ready is non-gating."""
     expected = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-    result = _run_do_verify(
-        tmp_path, attempts=1, health_sha=expected, health_code=health_code
-    )
+    result = _run_do_verify(tmp_path, attempts=1, health_sha=expected, health_code=health_code)
     combined = result.stdout + result.stderr
     assert result.returncode != 0, combined
     assert "Verified:" not in combined
@@ -1259,9 +1374,7 @@ def test_do_verify_non_2xx_matching_sha_fails_and_probes_ready(
 def test_do_verify_non_2xx_matching_sha_retries_then_probes_ready(tmp_path: Path) -> None:
     """GR-261: a baked SHA on HTTP 503 must not skip warm-up retries."""
     expected = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-    result = _run_do_verify(
-        tmp_path, attempts=3, health_sha=expected, health_code="503"
-    )
+    result = _run_do_verify(tmp_path, attempts=3, health_sha=expected, health_code="503")
     combined = result.stdout + result.stderr
     assert result.returncode != 0, combined
     assert "Verified:" not in combined
@@ -1574,9 +1687,7 @@ exec /usr/bin/sed "$@"
 """,
     )
     expected = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-    health_body = (
-        '{"commit_sha":"' + expected + '","status":"ok","image_variant":"recognition"}'
-    )
+    health_body = '{"commit_sha":"' + expected + '","status":"ok","image_variant":"recognition"}'
     driver = tmp_path / "sed-fail-driver.sh"
     driver.write_text(
         f'''
@@ -1833,7 +1944,7 @@ def test_boot_smoke_trap_handles_term_and_int(tmp_path: Path) -> None:
 
 def test_do_boot_smoke_prepull_failure_skips_health_gate(tmp_path: Path) -> None:
     """GR-31 / GR-06: failed pgvector pre-pull must not send the smoke-body payload."""
-    extra = '''
+    extra = """
 run_with_deadline() {
   local label="$2"
   shift 2
@@ -1842,7 +1953,7 @@ run_with_deadline() {
   fi
   "$@"
 }
-'''
+"""
     result = _run_do_boot_smoke_wrapper(tmp_path, extra_script=extra, unread_fifo=True)
     combined = result.stdout + result.stderr
     payload = tmp_path / "smoke-wrap"
@@ -2065,14 +2176,7 @@ def test_boot_smoke_composite_deadline_covers_inner_caps(tmp_path: Path) -> None
     trap_docker_s = 10
     margin = 5
     inner_sum = (
-        net_create_cap
-        + setup_slack
-        + pg_ready
-        + setup_slack
-        + port_cap
-        + smoke_timeout
-        + trap_docker_s
-        + poll_interval
+        net_create_cap + setup_slack + pg_ready + setup_slack + port_cap + smoke_timeout + trap_docker_s + poll_interval
     )
     expected_deadline = inner_sum + margin
     old_composite = pg_ready + smoke_timeout + setup_slack
@@ -2400,6 +2504,8 @@ def _run_verify_optional_after_verify_failure(
     invoke: str,
     rollback_rc: int,
     restart_failure_phase: str | None = None,
+    live_disrupted: int = 0,
+    traffic_flipped: int = 0,
 ) -> subprocess.CompletedProcess[str]:
     """Source recognition-service.sh and reach the post-verify rollback branch."""
     fail_log = tmp_path / "fail.log"
@@ -2425,7 +2531,9 @@ do_build_remote() {{ return 0; }}
 do_push_sha() {{ return 0; }}
 do_push_tag() {{ return 0; }}
 do_restart() {{
-  ACX_RESTART_EVIDENCE_PHASE={restart_failure_phase or 'pre_candidate'}
+  ACX_RESTART_EVIDENCE_PHASE={restart_failure_phase or "pre_candidate"}
+  ACX_LIVE_DISRUPTED={live_disrupted}
+  ACX_TRAFFIC_FLIPPED={traffic_flipped}
   return {1 if restart_failure_phase else 0}
 }}
 promote_gate() {{ return 0; }}
@@ -2456,11 +2564,26 @@ fail() {{
 
 
 @pytest.mark.parametrize("invoke", ["do_deploy dev", "do_promote dev prod"])
-@pytest.mark.parametrize("phase,runtime", [("pre_candidate", "0"), ("post_restart", "1")])
-def test_restart_failure_recovers_runtime_only_after_restart_begins(tmp_path, monkeypatch, invoke, phase, runtime):
+@pytest.mark.parametrize(
+    "phase,live_disrupted,traffic_flipped,runtime",
+    [
+        ("pre_candidate", 0, 0, "0"),
+        ("post_restart", 0, 0, "0"),
+        ("post_restart", 1, 0, "1"),
+        ("post_restart", 0, 1, "1"),
+    ],
+)
+def test_restart_failure_recovers_runtime_only_after_live_disruption(
+    tmp_path, monkeypatch, invoke, phase, live_disrupted, traffic_flipped, runtime
+):
     monkeypatch.setenv("CONFIRM", "PROMOTE")
     result = _run_verify_optional_after_verify_failure(
-        tmp_path, invoke=invoke, rollback_rc=0, restart_failure_phase=phase,
+        tmp_path,
+        invoke=invoke,
+        rollback_rc=0,
+        restart_failure_phase=phase,
+        live_disrupted=live_disrupted,
+        traffic_flipped=traffic_flipped,
     )
     assert result.returncode != 0
     assert f"rollback-runtime={runtime}" in result.stdout, result.stdout + result.stderr
@@ -2471,13 +2594,9 @@ def test_restart_failure_recovers_runtime_only_after_restart_begins(tmp_path, mo
     ("do_deploy dev", "do_promote dev staging"),
     ids=("do_deploy", "do_promote"),
 )
-def test_acx_verify_optional_fails_closed_when_rollback_fails(
-    tmp_path: Path, invoke: str
-) -> None:
+def test_acx_verify_optional_fails_closed_when_rollback_fails(tmp_path: Path, invoke: str) -> None:
     """VLMHEAL-1-HARM-01: ACX_VERIFY_OPTIONAL=1 must not exit 0 after a failed rollback."""
-    result = _run_verify_optional_after_verify_failure(
-        tmp_path, invoke=invoke, rollback_rc=1
-    )
+    result = _run_verify_optional_after_verify_failure(tmp_path, invoke=invoke, rollback_rc=1)
     combined = result.stdout + result.stderr
     assert result.returncode != 0, combined
     assert "rollback failed" in combined, combined
@@ -2489,13 +2608,9 @@ def test_acx_verify_optional_fails_closed_when_rollback_fails(
     ("do_deploy dev", "do_promote dev staging"),
     ids=("do_deploy", "do_promote"),
 )
-def test_acx_verify_optional_downgrades_when_rollback_succeeds(
-    tmp_path: Path, invoke: str
-) -> None:
+def test_acx_verify_optional_downgrades_when_rollback_succeeds(tmp_path: Path, invoke: str) -> None:
     """VLMHEAL-1-HARM-01: a verified rollback may still warn-and-exit-0 under ACX_VERIFY_OPTIONAL=1."""
-    result = _run_verify_optional_after_verify_failure(
-        tmp_path, invoke=invoke, rollback_rc=0
-    )
+    result = _run_verify_optional_after_verify_failure(tmp_path, invoke=invoke, rollback_rc=0)
     combined = result.stdout + result.stderr
     assert result.returncode == 0, combined
     assert "previous image restored" in combined, combined
@@ -2508,6 +2623,7 @@ def _run_actual_restart_failure_transaction(
     invoke: str,
     runtime_mode: str = "candidate",
     health_code: str = "200",
+    fail_at: str = "next_start",
 ) -> subprocess.CompletedProcess[str]:
     """Run a real deploy/promote restart failure through fake SSH and Docker."""
     state = tmp_path / "rollback-state"
@@ -2521,9 +2637,15 @@ def _run_actual_restart_failure_transaction(
     candidate_digest = base + "@sha256:" + ("b" * 64)
     rollback_id = "sha256:" + ("1" * 64)
     candidate_id = "sha256:" + ("2" * 64)
+    candidate_commit = subprocess.check_output(
+        ["git", "-C", str(SCRIPT.parents[2]), "rev-parse", "HEAD"], text=True
+    ).strip()
     prior_cid = "5" * 64
     stopped_cid = "3" * 64
     rollback_cid = "4" * 64
+    remote_dir = state / "remote"
+    remote_dir.mkdir()
+    (remote_dir / "docker-compose.cutover.yml").write_text("# fake cutover compose\n")
     if invoke.startswith("do_rollback"):
         (state / "prior-stopped").write_text("")
     else:
@@ -2540,6 +2662,7 @@ rollback_digest="__ROLLBACK_DIGEST__"
 candidate_digest="__CANDIDATE_DIGEST__"
 rollback_id="__ROLLBACK_ID__"
 candidate_id="__CANDIDATE_ID__"
+candidate_commit="__CANDIDATE_COMMIT__"
 stopped_cid="__STOPPED_CID__"
 rollback_cid="__ROLLBACK_CID__"
 prior_cid="__PRIOR_CID__"
@@ -2549,22 +2672,45 @@ printf '%s\n' "$*" >>"${state}/docker.log"
 if [[ "${1:-}" == "compose" ]]; then
   ps=0
   all=0
+  compose_project="$project"
+  prev=""
   for arg in "$@"; do
     [[ "$arg" == "ps" ]] && ps=1
     [[ "$arg" == "-a" || "$arg" == "-aq" || "$arg" == "--all" ]] && all=1
+    if [[ "$prev" == "-p" || "$prev" == "--project-name" ]]; then
+      compose_project="$arg"
+    fi
+    prev="$arg"
   done
+  next_project="${project}-next"
   if (( ps )); then
+    if [[ "$compose_project" == "$next_project" ]]; then
+      if (( all )); then
+        [[ "$runtime_mode" == "unknown" ]] && exit 1
+        if [[ -f "${state}/candidate-stopped" || -f "${state}/next-running-cid" ]]; then
+          printf '%s\n' "$stopped_cid"
+        fi
+      elif [[ -f "${state}/next-running-cid" ]]; then
+        cat "${state}/next-running-cid"
+      fi
+      exit 0
+    fi
     if (( all )); then
       [[ "$runtime_mode" == "unknown" ]] && exit 1
-      if [[ -f "${state}/candidate-stopped" ]]; then
-        printf '%s\n' "$stopped_cid"
-      elif [[ -f "${state}/prior-stopped" ]]; then
+      if [[ -f "${state}/prior-stopped" ]]; then
         printf '%s\n' "$prior_cid"
       fi
     elif [[ -f "${state}/running-cid" ]]; then
       cat "${state}/running-cid"
     fi
     exit 0
+  fi
+  exit 0
+fi
+
+if [[ "${1:-}" == "exec" ]]; then
+  if [[ "$*" == *"urllib.request"* ]]; then
+    printf '{"commit_sha":"%s","status":"ok"}\n' "$candidate_commit"
   fi
   exit 0
 fi
@@ -2590,6 +2736,7 @@ if [[ "${1:-}" == "inspect" || ( "${1:-}" == "image" && "${2:-}" == "inspect" ) 
     exit 0
   fi
   if [[ "$format" == *"State.Status"* && "$format" == *"Config.Labels"* ]]; then
+    next_project="${project}-next"
     if [[ "$target" == "$prior_cid" ]]; then
       prior_state="running"
       [[ -f "${state}/prior-stopped" ]] && prior_state="exited"
@@ -2597,7 +2744,11 @@ if [[ "${1:-}" == "inspect" || ( "${1:-}" == "image" && "${2:-}" == "inspect" ) 
     elif [[ "$target" == "$stopped_cid" ]]; then
       stopped_image_id="$candidate_id"
       [[ "$runtime_mode" == "wrong" ]] && stopped_image_id="$wrong_id"
-      printf 'RUNTIME|%s|%s|exited|%s|api|candidate-generation\n' "$stopped_cid" "$stopped_image_id" "$project"
+      if [[ -f "${state}/next-running-cid" && ! -f "${state}/candidate-stopped" ]]; then
+        printf 'RUNTIME|%s|%s|running|%s|api|candidate-generation\n' "$stopped_cid" "$stopped_image_id" "$next_project"
+      else
+        printf 'RUNTIME|%s|%s|exited|%s|api|candidate-generation\n' "$stopped_cid" "$stopped_image_id" "$next_project"
+      fi
     elif [[ "$target" == "$rollback_cid" ]]; then
       printf 'RUNTIME|%s|%s|running|%s|api|rollback-generation\n' "$rollback_cid" "$rollback_id" "$project"
     else
@@ -2654,22 +2805,64 @@ esac
         .replace("__CANDIDATE_DIGEST__", candidate_digest)
         .replace("__ROLLBACK_ID__", rollback_id)
         .replace("__CANDIDATE_ID__", candidate_id)
+        .replace("__CANDIDATE_COMMIT__", candidate_commit)
         .replace("__STOPPED_CID__", stopped_cid)
         .replace("__ROLLBACK_CID__", rollback_cid)
         .replace("__PRIOR_CID__", prior_cid)
     )
     _write_executable(fake_bin / "docker", docker)
 
-    ssh = r"""#!/usr/bin/env bash
+    ssh = (
+        r"""#!/usr/bin/env bash
 set -euo pipefail
 state="${FAKE_ROLLBACK_STATE:?}"
 runtime_mode="__RUNTIME_MODE__"
+fail_at="__FAIL_AT__"
+stopped_cid="__STOPPED_CID__"
+cat >/dev/null || true
 remote="${@: -1}"
 printf '%s\n' "$remote" >>"${state}/ssh.log"
+if [[ "$remote" == *"cutover-inflight"* ]]; then
+  if [[ -f "${state}/cutover-inflight" ]]; then
+    cat "${state}/cutover-inflight"
+    exit 0
+  fi
+  exit 1
+fi
+if [[ "$remote" == *"flock"* || "$remote" == *"/locks/tag-"* ]]; then
+  printf 'LOCKED\n'
+  exit 0
+fi
+if [[ "$remote" == *"systemctl start"* && "$remote" == *"-next"* ]]; then
+  if [[ "$fail_at" == "next_start" ]]; then
+    if [[ "$runtime_mode" == "prior" ]]; then
+      : >"${state}/prior-stopped"
+    elif [[ "$runtime_mode" == "candidate" || "$runtime_mode" == "wrong" ]]; then
+      : >"${state}/candidate-stopped"
+    fi
+    exit 1
+  fi
+  if [[ "$remote" == *"docker compose"* && "$remote" == *"rm -fs api"* ]]; then
+    : >"${state}/candidate-recreated"
+  fi
+  printf '%s\n' "$stopped_cid" >"${state}/next-running-cid"
+  exit 0
+fi
 if [[ "$remote" == *"systemctl restart"* ]]; then
   if [[ -f "${state}/rollback-pushed" ]]; then
     printf '%s\n' "__ROLLBACK_CID__" >"${state}/running-cid"
     exit 0
+  fi
+  if [[ "$fail_at" == "canonical_health" ]]; then
+    printf '%s\n' "$stopped_cid" >"${state}/running-cid"
+    exit 0
+  fi
+  if [[ "$fail_at" == "live_restart" ]]; then
+    rm -f "${state}/running-cid"
+    if [[ "$runtime_mode" == "absent" || "$runtime_mode" == "unknown" ]]; then
+      rm -f "${state}/next-running-cid"
+    fi
+    exit 1
   fi
   rm -f "${state}/running-cid"
   if [[ "$runtime_mode" == "prior" ]]; then
@@ -2679,11 +2872,43 @@ if [[ "$remote" == *"systemctl restart"* ]]; then
   fi
   exit 1
 fi
+remote="${remote//\/opt\/acx-backend\/dev/${state}/remote}"
+remote="${remote//\/opt\/acx-backend\/staging/${state}/remote}"
+remote="${remote//\/opt\/acx-backend\/prod/${state}/remote}"
+# Edge/topology sudo scripts must not run on the host. Match them before the
+# compose-ps executor: a flip script contains both "docker compose" and the
+# substring "ps" inside "snapshot", which used to leak `sudo` to the operator.
+if [[ "$fail_at" == "canonical_health" && "$remote" == *"docker-compose.env.yml"* \
+     && "$remote" == *"/health"* && "$remote" != *"cutover"* ]]; then
+  exit 1
+fi
+if [[ "$remote" == "bash -s" || "$remote" == *"Caddyfile"* \
+     || "$remote" == *"sudo test"* || "$remote" == *"sudo awk"* \
+     || "$remote" == *"sudo install"* || "$remote" == *"sudo sed"* \
+     || "$remote" == *"sudo mv"* || "$remote" == *"sudo tee"* ]]; then
+  exit 0
+fi
+if [[ "$remote" == *"docker compose"* ]] && \
+   [[ "$remote" == *" ps -q"* || "$remote" == *" ps -a"* \
+      || "$remote" == *" ps;"* || "$remote" == *" ps" \
+      || "$remote" == *" ps "* ]]; then
+  bash -c "$remote"
+  exit $?
+fi
+if [[ "$remote" == *"systemctl"* || "$remote" == *"daemon-reload"* \
+     || "$remote" == *".bak"* || "$remote" == *"cutover"* \
+     || "$remote" == *"sudo cp"* ]]; then
+  exit 0
+fi
 if [[ "$remote" == cd\ *" && "* ]]; then
   remote="${remote#* && }"
 fi
 bash -c "$remote"
-""".replace("__ROLLBACK_CID__", rollback_cid).replace("__RUNTIME_MODE__", runtime_mode)
+""".replace("__ROLLBACK_CID__", rollback_cid)
+        .replace("__RUNTIME_MODE__", runtime_mode)
+        .replace("__FAIL_AT__", fail_at)
+        .replace("__STOPPED_CID__", stopped_cid)
+    )
     _write_executable(fake_bin / "ssh", ssh)
 
     curl = r"""#!/usr/bin/env bash
@@ -2708,7 +2933,7 @@ ACX_PUSH_TIMEOUT=5
 ACX_VERIFY_ATTEMPTS=1
 ACX_VERIFY_SLEEP=0
 ACX_IMAGE_REPO="$IMAGE_BASE"
-init_deploy_ocir_docker_config() {{ ACX_DEPLOY_OCIR_CONFIG_DIR="{tmp_path / 'docker-config'}"; mkdir -p "$ACX_DEPLOY_OCIR_CONFIG_DIR"; return 0; }}
+init_deploy_ocir_docker_config() {{ ACX_DEPLOY_OCIR_CONFIG_DIR="{tmp_path / "docker-config"}"; mkdir -p "$ACX_DEPLOY_OCIR_CONFIG_DIR"; return 0; }}
 preflight_ssh() {{ return 0; }}
 preflight_remote_face_pipeline_models() {{ return 0; }}
 preflight_git_clean() {{ return 0; }}
@@ -2719,20 +2944,20 @@ preflight_docker() {{ return 0; }}
 preflight_ocir_auth() {{ return 0; }}
 assert_remote_disk_headroom_for_pull() {{ return 0; }}
 preserve_rollback_tag() {{
-  ACX_ROLLBACK_DIGEST_REF="$IMAGE_BASE@sha256:{'a' * 64}"
+  ACX_ROLLBACK_DIGEST_REF="$IMAGE_BASE@sha256:{"a" * 64}"
   ACX_ROLLBACK_IMAGE_BASE="$IMAGE_BASE"
-  ACX_ROLLBACK_TAG="rollback-{'a' * 12}"
-  ACX_PRIOR_IMAGE_ID="sha256:{'1' * 64}"
+  ACX_ROLLBACK_TAG="rollback-{"a" * 12}"
+  ACX_PRIOR_IMAGE_ID="sha256:{"1" * 64}"
 }}
 do_build() {{ return 0; }}
 do_build_remote() {{ return 0; }}
-do_push_sha() {{ ACX_CANDIDATE_DIGEST_REF="$IMAGE_BASE@sha256:{'b' * 64}"; }}
+do_push_sha() {{ ACX_CANDIDATE_DIGEST_REF="$IMAGE_BASE@sha256:{"b" * 64}"; }}
 promote_gate() {{ return 0; }}
 do_push_tag() {{ return 0; }}
 repair_blob_volume_ownership() {{ return 0; }}
 restore_prior_image_repo_env() {{ return 0; }}
 _pull_ref() {{ return 0; }}
-image_digest_ref() {{ printf '%s\\n' "$IMAGE_BASE@sha256:{'b' * 64}"; }}
+image_digest_ref() {{ printf '%s\\n' "$IMAGE_BASE@sha256:{"b" * 64}"; }}
 do_verify() {{ return 1; }}
 fail() {{ printf 'xx %s\\n' "$*" >&2; exit 1; }}
 {invoke}
@@ -2760,11 +2985,9 @@ fail() {{ printf 'xx %s\\n' "$*" >&2; exit 1; }}
 
 
 @pytest.mark.parametrize("invoke", ["do_deploy dev", "do_promote dev staging"])
-def test_actual_restart_failure_restores_after_confirmed_stopped_candidate(
-    tmp_path: Path, invoke: str
-) -> None:
-    """A failed replacement leaves a candidate stopped container as ownership proof."""
-    result = _run_actual_restart_failure_transaction(tmp_path, invoke=invoke)
+def test_actual_restart_failure_restores_after_confirmed_stopped_candidate(tmp_path: Path, invoke: str) -> None:
+    """A failed live restart fences the next-project candidate before bouncing live."""
+    result = _run_actual_restart_failure_transaction(tmp_path, invoke=invoke, fail_at="live_restart")
     combined = result.stdout + result.stderr
     state = tmp_path / "rollback-state"
     env_name = "staging" if "staging" in invoke else "dev"
@@ -2775,20 +2998,24 @@ def test_actual_restart_failure_restores_after_confirmed_stopped_candidate(
     ssh_log = (state / "ssh.log").read_text()
     assert result.returncode != 0, combined
     assert "Rollback verified healthy" in combined, combined
-    assert "Confirmed stopped api container" in combined, combined
+    assert f"in acx-{env_name}-next" in combined, combined
     assert docker_log.count(f"tag {rollback_digest} {base}:{env_name}") == 1
     assert docker_log.count(f"push {base}:{env_name}") == 1
+    assert ssh_log.count(f"systemctl start {unit}-next") == 1, ssh_log
+    assert (state / "candidate-recreated").is_file(), ssh_log
+    assert ssh_log.index(f"systemctl stop {unit}-next") < ssh_log.index("rm -fs api") < ssh_log.index(
+        f"systemctl start {unit}-next"
+    )
     assert ssh_log.count(f"systemctl restart {unit}") == 2, ssh_log
+    assert "-p acx-" + env_name + "-next" in docker_log, docker_log
     assert (state / "running-cid").read_text().strip() == "4" * 64
     assert "STALE ROLLBACK REFUSED" not in combined
 
 
 @pytest.mark.parametrize("invoke", ["do_deploy dev", "do_promote dev staging"])
-def test_before_candidate_creation_recovers_confirmed_stopped_prior(
-    tmp_path: Path, invoke: str
-) -> None:
-    """A compose-stop-before-create failure may recover only its captured prior."""
-    result = _run_actual_restart_failure_transaction(tmp_path, invoke=invoke, runtime_mode="prior")
+def test_failed_next_unit_start_does_not_restart_live(tmp_path: Path, invoke: str) -> None:
+    """A failed additive start restores the env tag without bouncing the live unit."""
+    result = _run_actual_restart_failure_transaction(tmp_path, invoke=invoke, fail_at="next_start")
     combined = result.stdout + result.stderr
     state = tmp_path / "rollback-state"
     env_name = "staging" if "staging" in invoke else "dev"
@@ -2799,12 +3026,12 @@ def test_before_candidate_creation_recovers_confirmed_stopped_prior(
     ssh_log = (state / "ssh.log").read_text()
 
     assert result.returncode != 0, combined
-    assert "Confirmed stopped prior api container" in combined, combined
-    assert "Rollback verified healthy" in combined, combined
     assert docker_log.count(f"tag {rollback_digest} {base}:{env_name}") == 1
     assert docker_log.count(f"push {base}:{env_name}") == 1
-    assert ssh_log.count(f"systemctl restart {unit}") == 2, ssh_log
-    assert (state / "running-cid").read_text().strip() == "4" * 64
+    assert ssh_log.count(f"systemctl start {unit}-next") == 1, ssh_log
+    assert ssh_log.count(f"systemctl restart {unit}") == 0, ssh_log
+    assert (state / "running-cid").read_text().strip() == "5" * 64
+    assert "Rollback verified healthy" not in combined
     assert "STALE ROLLBACK REFUSED" not in combined
 
 
@@ -2848,12 +3075,10 @@ def test_manual_rollback_keeps_http_503_health_gate(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("runtime_mode", ["absent", "unknown", "wrong"])
-def test_actual_restart_failure_refuses_unowned_runtime_observation(
-    tmp_path: Path, runtime_mode: str
-) -> None:
-    """No container or failed inspection cannot authorize automatic rollback."""
+def test_actual_restart_failure_refuses_unowned_runtime_observation(tmp_path: Path, runtime_mode: str) -> None:
+    """No container or failed inspection cannot authorize automatic live rollback."""
     result = _run_actual_restart_failure_transaction(
-        tmp_path, invoke="do_deploy dev", runtime_mode=runtime_mode
+        tmp_path, invoke="do_deploy dev", runtime_mode=runtime_mode, fail_at="live_restart"
     )
     combined = result.stdout + result.stderr
     state = tmp_path / "rollback-state"
@@ -2865,5 +3090,934 @@ def test_actual_restart_failure_refuses_unowned_runtime_observation(
     assert "refusing" in combined.lower(), combined
     assert f"tag {rollback_digest} {base}:dev" not in docker_log
     assert f"push {base}:dev" not in docker_log
+    assert ssh_log.count("systemctl start acx-dev-next") == 1, ssh_log
     assert ssh_log.count("systemctl restart acx-dev") == 1, ssh_log
     assert not (state / "running-cid").exists()
+
+
+def test_do_restart_is_additive_then_flip() -> None:
+    """OCIRV1-RB-11: start a next unit and flip traffic before touching the live unit."""
+    body = _function_body("do_restart")
+    assert "env_to_next_unit" in body
+    assert "render_cutover_compose" in body
+    assert "render_next_unit" in body
+    assert "recreate_cutover_candidate" in body
+    assert "flip_edge_alias" in body
+    assert "probe_cutover_api_health" in body
+    assert body.index("recreate_cutover_candidate") < body.index("flip_edge_alias")
+    assert body.index("probe_cutover_api_health") < body.index("flip_edge_alias")
+    assert body.index("flip_edge_alias") < body.index("systemctl restart")
+    recreate = _function_body("recreate_cutover_candidate")
+    assert recreate.index("systemctl stop") < recreate.index("rm -fs api") < recreate.index("systemctl start")
+
+
+def test_cutover_candidate_probe_requires_immutable_image_and_commit() -> None:
+    body = _function_body("probe_cutover_api_health")
+    assert "remote_image_id_for_digest" in body
+    assert "docker inspect --format '{{.Image}}'" in body
+    assert "expected_image_id" in body
+    assert "commit_sha" in body
+    assert "actual == sys.argv[1]" in body
+
+
+def test_abort_cutover_candidate_fails_closed_on_remote_cleanup_error(tmp_path: Path) -> None:
+    records = tmp_path / "abort.log"
+    command = f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+ACX_TRAFFIC_FLIPPED=1
+run_with_deadline() {{ return 73; }}
+if abort_cutover_candidate dev; then
+  exit 1
+fi
+printf 'traffic=%s\\n' "$ACX_TRAFFIC_FLIPPED" >"{records}"
+'''
+    result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert records.read_text() == "traffic=1\n"
+
+
+def test_do_restart_gates_canonical_health_before_flip_back() -> None:
+    """R-01: a systemd restart is not enough to take traffic off the candidate."""
+    body = _function_body("do_restart")
+    restart_at = body.index("systemctl restart")
+    health_at = body.index("probe_canonical_api_health")
+    digest_at = body.index("verify_running_image_digest")
+    canonical_flip = body.index('flip_edge_alias "$env" canonical', restart_at)
+    abort_at = body.index("abort_cutover_candidate", restart_at)
+    assert restart_at < digest_at < canonical_flip
+    assert restart_at < health_at < canonical_flip < abort_at
+    assert "probe_cutover_api_health" in body[restart_at:canonical_flip]
+
+
+def test_canonical_health_failure_keeps_candidate_serving(tmp_path: Path) -> None:
+    """R-01: retain next until the canonical API itself is healthy."""
+    result = _run_actual_restart_failure_transaction(
+        tmp_path,
+        invoke='do_restart dev "$IMAGE_BASE@sha256:' + ("b" * 64) + '"',
+        fail_at="canonical_health",
+    )
+    combined = result.stdout + result.stderr
+    ssh_log = (tmp_path / "rollback-state" / "ssh.log").read_text()
+    assert result.returncode != 0, combined
+    assert "canonical api never became healthy" in combined.lower(), combined
+    assert "traffic remains on acx-dev-next" in combined, combined
+    assert "Flipping Caddy reverse_proxy dev-api-next:8000 -> dev-api:8000" not in combined
+    assert ssh_log.count("systemctl restart acx-dev") == 1, ssh_log
+    assert "systemctl stop 'acx-dev-next'" not in ssh_log
+    assert (tmp_path / "rollback-state" / "next-running-cid").exists()
+
+
+def test_promote_gate_restores_topology_on_converge_failure() -> None:
+    """OCIRV1-FD-06: mixed compose/unit/edge files must roll back with the sticky repo."""
+    body = _function_body("promote_gate")
+    assert "restore_runtime_topology" in body
+    converge_fail = body.index('if ! (converge_runtime "$env"); then')
+    topo = body.index("restore_runtime_topology")
+    assert converge_fail < topo
+    assert topo < body.index("restore_prior_image_repo_env", converge_fail)
+
+
+def test_restore_runtime_topology_consumes_bak_files() -> None:
+    """OCIRV1-FD-06: .bak topology files are the rollback participants, not just backups."""
+    backups = _function_body("restore_topology_backups")
+    edge = _function_body("restore_edge_backups")
+    wrapper = _function_body("restore_runtime_topology")
+    for body in (backups, edge):
+        assert ".bak" in body
+    assert "docker-compose.env.yml.bak" in backups
+    assert ".service.bak" in backups
+    assert "docker-compose.admin.yml.bak" in backups
+    assert "Caddyfile.bak" in edge
+    assert "docker-compose.caddy.yml.bak" in edge
+    assert "restore_topology_backups" in wrapper
+    assert "restore_edge_backups" in wrapper
+    assert "abort_cutover_candidate" in wrapper
+
+
+def test_restore_topology_backups_copies_bak_via_ssh(tmp_path: Path) -> None:
+    records = tmp_path / "ssh.log"
+    command = f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+run_with_deadline() {{ shift 2; "$@"; }}
+ssh() {{
+  printf '%s\\n' "$*" >>"{records}"
+  return 0
+}}
+restore_topology_backups dev
+'''
+    result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    logged = records.read_text()
+    assert "docker-compose.env.yml.bak" in logged
+    assert "acx-dev.service.bak" in logged
+
+
+def test_flip_edge_alias_rewrites_only_allowlisted_proxy_targets() -> None:
+    body = _function_body("flip_edge_alias")
+    assert "reverse_proxy" in body
+    assert "${alias}-next" in body
+    assert "caddy reload" in body
+    assert "next|canonical" in body or "next)" in body
+    assert "bash -s" in body
+    assert "source_count" in body
+    assert "expected exactly one formatted Caddy reverse_proxy source route" in body
+    assert '== "reverse_proxy"' in body
+
+
+def _run_flip_edge_alias(tmp_path: Path, caddyfile: str, target: str = "next") -> subprocess.CompletedProcess[str]:
+    edge = tmp_path / "edge"
+    edge.mkdir(exist_ok=True)
+    (edge / "Caddyfile").write_text(caddyfile)
+    (edge / "docker-compose.caddy.yml").write_text("services: {}\n")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _write_executable(bin_dir / "sudo", '#!/usr/bin/env bash\nexec "$@"\n')
+    _write_executable(bin_dir / "docker", "#!/usr/bin/env bash\nexit 0\n")
+    digest = "b" * 64
+    command = f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+ACX_CANDIDATE_DIGEST_REF="$IMAGE_BASE@sha256:{digest}"
+run_with_deadline() {{ shift 2; "$@"; }}
+ssh() {{
+  last="${{@: -1}}"
+  if [[ "$last" != "bash -s" ]]; then
+    exit 0
+  fi
+  export PATH="{bin_dir}:$PATH"
+  sed "s|/opt/acx-backend|{edge}|g" | bash -s
+}}
+flip_edge_alias dev {target}
+'''
+    return subprocess.run(["bash", "-c", command], text=True, capture_output=True, check=False)
+
+
+def test_flip_edge_alias_fails_closed_without_source_route(tmp_path: Path) -> None:
+    """R-06: a missing reverse_proxy source must not report a successful flip."""
+    original = "dev.example {\n\treverse_proxy 127.0.0.1:8000\n}\n"
+    result = _run_flip_edge_alias(tmp_path, original)
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    assert "expected exactly one formatted Caddy reverse_proxy source route" in combined
+    assert (tmp_path / "edge" / "Caddyfile").read_text() == original
+
+
+def test_flip_edge_alias_rewrites_exactly_one_source_route(tmp_path: Path) -> None:
+    """R-06: replacement must leave exactly one desired route."""
+    original = "dev.example {\n\treverse_proxy dev-api:8000\n}\n"
+    result = _run_flip_edge_alias(tmp_path, original)
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+    rewritten = (tmp_path / "edge" / "Caddyfile").read_text()
+    assert "reverse_proxy dev-api-next:8000" in rewritten
+    assert "reverse_proxy dev-api:8000" not in rewritten
+
+
+def _cutover_state_dir(tmp_path: Path) -> Path:
+    return tmp_path / "edge" / ".acx-deploy-backups" / "dev"
+
+
+def test_flip_edge_alias_persists_inflight_cutover_marker(tmp_path: Path) -> None:
+    """R-09: traffic-on-next must be durable on the remote, not only ACX_TRAFFIC_FLIPPED."""
+    original = "dev.example {\n\treverse_proxy dev-api:8000\n}\n"
+    result = _run_flip_edge_alias(tmp_path, original, target="next")
+    combined = result.stdout + result.stderr
+    inflight = _cutover_state_dir(tmp_path) / "cutover-inflight"
+    committed = _cutover_state_dir(tmp_path) / "cutover-committed"
+    assert result.returncode == 0, combined
+    assert inflight.is_file(), combined
+    body = inflight.read_text()
+    assert "env=dev" in body
+    assert "status=traffic_on_next" in body
+    assert "next_unit=acx-dev-next" in body
+    assert re.search(r"(?m)^digest=.+@sha256:[a-f0-9]{64}$", body)
+    assert re.search(r"(?m)^timestamp=[0-9]+$", body)
+    assert not committed.exists()
+
+
+def test_flip_edge_alias_writes_marker_before_caddy_rewrite() -> None:
+    """R-09: the durable flip marker must be written before traffic is rewritten."""
+    body = _function_body("flip_edge_alias")
+    marker_at = body.index("cutover-inflight")
+    rewrite_at = body.index("sed -E")
+    assert marker_at < rewrite_at
+    assert "timestamp=" in body
+    assert "digest=" in body
+
+
+def test_flip_edge_alias_canonical_writes_commit_marker(tmp_path: Path) -> None:
+    """R-09: canonical routing is committed only after the flip-back succeeds."""
+    original = "dev.example {\n\treverse_proxy dev-api-next:8000\n}\n"
+    inflight = _cutover_state_dir(tmp_path)
+    inflight.mkdir(parents=True)
+    (inflight / "cutover-inflight").write_text(
+        "env=dev\ndigest=sha256:" + ("b" * 64) + "\ntimestamp=1\nstatus=traffic_on_next\nnext_unit=acx-dev-next\n"
+    )
+    result = _run_flip_edge_alias(tmp_path, original, target="canonical")
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+    assert not (inflight / "cutover-inflight").exists(), combined
+    committed = inflight / "cutover-committed"
+    assert committed.is_file(), combined
+    assert "status=canonical" in committed.read_text()
+
+
+def test_deploy_signal_traps_run_cutover_recovery() -> None:
+    """R-09: HUP/INT/TERM must recover inflight cutover instead of bare-exit."""
+    init = _function_body("init_deploy_ocir_docker_config")
+    assert "deploy_interrupt_cleanup" in init
+    assert "trap 'exit 129' HUP" not in init
+    assert "trap 'exit 130' INT" not in init
+    assert "trap 'exit 143' TERM" not in init
+    cleanup = _function_body("deploy_interrupt_cleanup")
+    assert "recover_interrupted_cutover" in cleanup
+    restart = _function_body("do_restart")
+    assert "enable_cutover_candidate" in restart
+    assert "recover_persisted_cutover" in restart
+    assert restart.index("flip_edge_alias") < restart.index("enable_cutover_candidate")
+
+
+def test_recover_interrupted_cutover_keeps_candidate_if_edge_restore_fails(
+    tmp_path: Path,
+) -> None:
+    """R-09: a failed flip-back must not drain the still-serving candidate."""
+    records = tmp_path / "recover.log"
+    command = f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+ACX_CUTOVER_ENV=dev
+ACX_TRAFFIC_FLIPPED=1
+cutover_inflight_present() {{ return 0; }}
+restore_edge_backups() {{ return 1; }}
+abort_cutover_candidate() {{ printf 'aborted\\n' >>"{records}"; return 0; }}
+enable_cutover_candidate() {{ printf 'enabled\\n' >>"{records}"; return 0; }}
+commit_cutover_state() {{ printf 'committed\\n' >>"{records}"; return 0; }}
+recover_interrupted_cutover
+'''
+    result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, check=False)
+    logged = records.read_text() if records.exists() else ""
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "aborted" not in logged
+    assert "committed" not in logged
+    assert "enabled" in logged
+
+
+def test_recover_interrupted_cutover_commits_after_successful_restore(tmp_path: Path) -> None:
+    """R-09: successful signal-safe restore may drain the candidate only after commit."""
+    records = tmp_path / "recover.log"
+    command = f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+ACX_CUTOVER_ENV=dev
+ACX_TRAFFIC_FLIPPED=1
+cutover_inflight_present() {{ return 0; }}
+restore_edge_backups() {{ ACX_TRAFFIC_FLIPPED=0; return 0; }}
+abort_cutover_candidate() {{ printf 'aborted\\n' >>"{records}"; return 0; }}
+enable_cutover_candidate() {{ printf 'enabled\\n' >>"{records}"; return 0; }}
+commit_cutover_state() {{ printf 'committed\\n' >>"{records}"; return 0; }}
+recover_interrupted_cutover
+'''
+    result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, check=False)
+    logged = records.read_text() if records.exists() else ""
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert logged.splitlines() == ["committed", "aborted"]
+
+
+def test_killed_run_flip_marker_recovers_on_next_deploy(tmp_path: Path) -> None:
+    """R-09: a leftover remote marker must recover even when ACX_TRAFFIC_FLIPPED starts at 0."""
+    records = tmp_path / "recover.log"
+    command = f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+ACX_TRAFFIC_FLIPPED=0
+cutover_inflight_present() {{ return 0; }}
+restore_edge_backups() {{ printf 'restored\\n' >>"{records}"; ACX_TRAFFIC_FLIPPED=0; return 0; }}
+abort_cutover_candidate() {{ printf 'aborted\\n' >>"{records}"; return 0; }}
+enable_cutover_candidate() {{ printf 'enabled\\n' >>"{records}"; return 0; }}
+commit_cutover_state() {{ printf 'committed\\n' >>"{records}"; return 0; }}
+recover_persisted_cutover dev
+printf 'traffic=%s\\n' "$ACX_TRAFFIC_FLIPPED" >>"{records}"
+'''
+    result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, check=False)
+    logged = records.read_text() if records.exists() else ""
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert logged.splitlines() == ["restored", "committed", "aborted", "traffic=0"]
+
+
+def test_term_after_traffic_flip_invokes_cutover_recovery(tmp_path: Path) -> None:
+    """R-09: SIGTERM during an inflight cutover must run recovery before exit."""
+    marker = tmp_path / "recovered"
+    ready = tmp_path / "traps-ready"
+    driver = tmp_path / "term-recover.sh"
+    driver.write_text(
+        f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+export TMPDIR="{tmp_path}"
+recover_interrupted_cutover() {{ printf 'recovered\\n' >"{marker}"; return 0; }}
+init_deploy_ocir_docker_config
+printf 'ready\\n' >"{ready}"
+sleep 30
+'''
+    )
+    proc = subprocess.Popen(
+        ["bash", str(driver)],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            break
+        if ready.is_file():
+            time.sleep(0.05)
+            break
+        time.sleep(0.05)
+    if proc.poll() is None:
+        os.killpg(proc.pid, signal.SIGTERM)
+    stdout, stderr = proc.communicate(timeout=8)
+    combined = (stdout or "") + (stderr or "")
+    assert proc.returncode == 143, combined
+    assert marker.is_file(), combined
+    assert marker.read_text() == "recovered\n"
+
+
+def test_read_api_runtime_evidence_inspects_cutover_project() -> None:
+    body = _function_body("read_api_runtime_evidence")
+    assert "docker-compose.cutover.yml" in body
+    assert "acx-${env}-next" in body
+    assert "-p ${next_project}" in body or "-p ${next_project} -f docker-compose.cutover.yml" in body
+
+
+def test_assert_rollback_fence_accepts_next_project_candidate() -> None:
+    body = _function_body("assert_rollback_fence")
+    assert 'next_project="acx-${env}-next"' in body
+    assert "${canonical_project}" in body
+    assert "${next_project}" in body
+    assert "stopped-candidate" in body
+
+
+def test_restore_rollback_helpers_are_split() -> None:
+    orchestrator = _function_body("restore_env_tag_to_rollback")
+    fence = _function_body("assert_rollback_fence")
+    registry = _function_body("restore_registry_env_tag")
+    runtime = _function_body("restore_runtime_and_edge")
+    assert "assert_rollback_fence" in orchestrator
+    assert "restore_registry_env_tag" in orchestrator
+    assert "restore_runtime_and_edge" in orchestrator
+    assert "systemctl restart" not in registry
+    assert "remote_docker_with_config push" in registry
+    assert "read_api_runtime_evidence" in fence
+    assert "restore_topology_backups" in runtime
+    assert "leaving candidate serving" in runtime
+
+
+def test_restore_edge_backups_uses_immutable_pre_cutover_snapshot() -> None:
+    body = _function_body("restore_edge_backups")
+    assert "Caddyfile.pre-cutover" in body
+    assert "edge-cutover.current" in body
+    assert "Caddyfile.flip.bak" not in body
+    assert 'ACX_TRAFFIC_FLIPPED:-0}" == "1"' in body
+    assert "require_canonical_route" in body
+    assert "compose_restored" in body
+
+
+def test_cutover_failure_restart_runtime_ignores_evidence_phase() -> None:
+    helper = _function_body("cutover_failure_restart_runtime")
+    deploy = _function_body("_ship_selected_env")
+    assert '_ship_selected_env "$env" aggregate' in _function_body("do_deploy")
+    promote = _function_body("do_promote")
+    assert "ACX_LIVE_DISRUPTED" in helper
+    assert "ACX_TRAFFIC_FLIPPED" in helper
+    assert "post_restart" not in helper
+    assert "cutover_failure_restart_runtime" in deploy
+    assert "cutover_failure_restart_runtime" in promote
+    assert 'ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}" == "post_restart"' not in deploy
+    assert 'ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}" == "post_restart"' not in promote
+
+
+def test_prepare_producer_cli_verifies_image_and_scoped_load() -> None:
+    """Explicit prepare-producer remains a real gate, not ACX_VERIFY_OPTIONAL.
+
+    Changed contract (ISSUEDAG-1 / RLSE-03): NORMAL verify_live_gpu_snapshots
+    always executes the aggregate checker and never substitutes
+    verify_scoped_producer_snapshots. Explicit producer-convergence stays on
+    do_prepare_producer (next slice); that helper still only verifies existing
+    state and cannot create cold loads.
+    """
+    source = SCRIPT.read_text()
+    assert "prepare-producer <env>" in source
+    dispatch = source.split('case "$cmd" in', 1)[1]
+    assert "prepare-producer)" in dispatch
+    body = _function_body("do_prepare_producer")
+    assert "verify_running_image_matches_deployed" in body
+    assert "verify_scoped_producer_snapshots" in body
+    assert "ACX_VERIFY_OPTIONAL" not in body
+    scoped = _function_body("verify_scoped_producer_snapshots")
+    assert "/run/acx-write/" in scoped
+    assert "describe-load.json" in scoped
+    assert "written_at" in scoped
+    assert "queue_depth" in scoped
+    assert "ACX_VERIFY_OPTIONAL" not in scoped
+    gate = _function_body("verify_live_gpu_snapshots")
+    assert "check-gpu-snapshots.sh" in gate
+    assert "paste -sd," in gate
+    assert "ACX_GPU_CHECKER_V1" in gate
+    assert "timeout" in gate
+    assert "verify_scoped_producer_snapshots" not in gate
+    assert "using scoped producer-preparation" not in gate
+
+
+def _run_verify_live_gpu_snapshots(
+    tmp_path: Path,
+    *,
+    sibling_rc: int,
+    timeout_rc: int,
+    scoped_rc: int = 0,
+) -> tuple[subprocess.CompletedProcess[str], str]:
+    """Drive verify_live_gpu_snapshots via its exact helpers, not an invented API.
+
+    timeout is the aggregate-checker transport (check-gpu-snapshots.sh over ssh).
+    verify_scoped_producer_snapshots is stubbed successful so a silent substitute
+    cannot hide an aggregate failure (TEST-15).
+    """
+    records = tmp_path / "gate.log"
+    command = f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+sibling_gpu_snapshots_complete() {{ printf 'probe:%s\\n' "$1" >>"{records}"; return {sibling_rc}; }}
+verify_scoped_producer_snapshots() {{ printf 'scoped:%s\\n' "$1" >>"{records}"; return {scoped_rc}; }}
+ssh() {{ printf 'ssh\\n' >>"{records}"; return 0; }}
+timeout() {{ cat >/dev/null; printf 'aggregate:%s\\n' "{timeout_rc}" >>"{records}"; return {timeout_rc}; }}
+verify_live_gpu_snapshots prod
+'''
+    result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, check=False)
+    logged = records.read_text() if records.exists() else ""
+    return result, logged
+
+
+def test_normal_verify_uses_aggregate_not_scoped_when_siblings_incomplete(
+    tmp_path: Path,
+) -> None:
+    """Changed contract: missing siblings still run the aggregate checker.
+
+    Former R3-01 approved implicit NORMAL-verify fallback to
+    verify_scoped_producer_snapshots. That substitutes a single-env writer
+    check for the registry-wide gate (RLSE-03, DATA-13). Scoped success is
+    stubbed so a bypass would still return 0 (TEST-15).
+    """
+    result, logged = _run_verify_live_gpu_snapshots(
+        tmp_path, sibling_rc=1, timeout_rc=0, scoped_rc=0
+    )
+    combined = result.stdout + result.stderr
+    lines = logged.splitlines()
+    assert "aggregate:0" in lines, combined
+    assert "scoped:prod" not in lines
+    assert "using scoped producer-preparation" not in combined
+    assert result.returncode == 0, combined
+
+
+def test_subsequent_deploy_keeps_aggregate_snapshot_gate(tmp_path: Path) -> None:
+    """Once every sibling has a snapshot, the aggregate gate still governs."""
+    result, logged = _run_verify_live_gpu_snapshots(
+        tmp_path, sibling_rc=0, timeout_rc=0, scoped_rc=0
+    )
+    combined = result.stdout + result.stderr
+    lines = logged.splitlines()
+    assert "aggregate:0" in lines, combined
+    assert "scoped:prod" not in lines
+    assert "using scoped producer-preparation" not in combined
+    assert "Verifying live GPU snapshot contract" in combined
+    assert result.returncode == 0, combined
+
+
+@pytest.mark.parametrize(
+    "timeout_rc",
+    [1, 255, 124],
+    ids=["missing", "ssh_error", "deadline"],
+)
+def test_normal_verify_propagates_aggregate_checker_failure(
+    tmp_path: Path, timeout_rc: int
+) -> None:
+    """Aggregate checker failure must propagate; scoped success must not bypass.
+
+    RES-02 / RES-03: missing snapshots (1), SSH error (255), and GNU timeout
+    deadline (124) are distinct failure modes. A hung or refused checker must
+    not be replaced by a scoped writer check. TEST-15: scoped stub returns 0
+    so a silent substitute would turn this green for the wrong reason.
+    """
+    result, logged = _run_verify_live_gpu_snapshots(
+        tmp_path, sibling_rc=1, timeout_rc=timeout_rc, scoped_rc=0
+    )
+    combined = result.stdout + result.stderr
+    lines = logged.splitlines()
+    assert f"aggregate:{timeout_rc}" in lines, combined
+    assert "scoped:prod" not in lines
+    assert result.returncode == timeout_rc, (
+        f"expected aggregate rc {timeout_rc}, got {result.returncode}: {combined}"
+    )
+
+
+def test_normal_verify_runs_aggregate_on_sibling_probe_error(tmp_path: Path) -> None:
+    """Sibling probe errors must not substitute scoped producer snapshots."""
+    result, logged = _run_verify_live_gpu_snapshots(
+        tmp_path, sibling_rc=255, timeout_rc=1, scoped_rc=0
+    )
+    combined = result.stdout + result.stderr
+    lines = logged.splitlines()
+    assert "aggregate:1" in lines, combined
+    assert "scoped:prod" not in lines
+    assert result.returncode == 1, combined
+
+
+_CANDIDATE_SHA = "b" * 64
+_ROLLBACK_SHA = "a" * 64
+_FENCED_DIGEST = re.compile(r"^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$")
+
+
+def _run_prepare_producer(
+    tmp_path: Path,
+    *,
+    env: str = "prod",
+    confirm: str | None = "PROMOTE",
+    candidate_sha: str = _CANDIDATE_SHA,
+    public_deploy: bool = False,
+    sibling_rc: int = 0,
+    restart_after_fence_rc: int = 0,
+    image_rc: int = 0,
+    scoped_rc: int = 0,
+    preserve_sets_rollback: bool = True,
+    records_name: str = "prepare.log",
+) -> tuple[subprocess.CompletedProcess[str], str]:
+    """Drive do_prepare_producer against real do_deploy transaction shapes.
+
+    do_restart is not a no-op: it applies the smoke-fenced digest check from
+    recognition-service.sh (expected_digest must match ACX_IMAGE_REPO@sha256:64).
+    restore_env_tag_to_rollback applies assert_rollback_fence's identity check
+    (ACX_ROLLBACK_DIGEST_REF must already be a captured digest). Scoped image
+    and snapshot verifies are stubbed successful so a verify-only path cannot
+    hide a missing transaction (TEST-15). do_deploy is left real so
+    CONFIRM=PROMOTE is not bypassed.
+    """
+    records = tmp_path / records_name
+    confirm_line = f'export CONFIRM="{confirm}"' if confirm is not None else "unset CONFIRM || true"
+    preserve_body = (
+        f'  ACX_ROLLBACK_DIGEST_REF="$IMAGE_BASE@sha256:{_ROLLBACK_SHA}"\n'
+        '  ACX_ROLLBACK_IMAGE_BASE="$IMAGE_BASE"\n'
+        if preserve_sets_rollback
+        else ""
+    )
+    command = f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+{confirm_line}
+ACX_IMAGE_REPO="$IMAGE_BASE"
+init_deploy_ocir_docker_config() {{ return 0; }}
+preflight_ssh() {{ printf 'preflight\\n' >>"{records}"; return 0; }}
+preflight_remote_face_pipeline_models() {{ return 0; }}
+preflight_git_clean() {{ return 0; }}
+preflight_branch_synced() {{ return 0; }}
+preflight_remote_ocir_auth() {{ return 0; }}
+preflight_remote_docker() {{ return 0; }}
+preflight_docker() {{ return 0; }}
+preflight_ocir_auth() {{ return 0; }}
+assert_remote_disk_headroom_for_pull() {{ return 0; }}
+capture_failure_evidence() {{ return 0; }}
+capture_prior_runtime_identity() {{ printf 'prior-identity:%s\\n' "$1" >>"{records}"; return 0; }}
+sibling_gpu_snapshots_complete() {{ printf 'sibling:%s\\n' "$1" >>"{records}"; return {sibling_rc}; }}
+preserve_rollback_tag() {{
+  printf 'preserve:%s\\n' "$1" >>"{records}"
+{preserve_body}  return 0
+}}
+do_build() {{ printf 'build\\n' >>"{records}"; return 0; }}
+do_build_remote() {{ printf 'build-remote\\n' >>"{records}"; return 0; }}
+do_push_sha() {{
+  printf 'push-sha\\n' >>"{records}"
+  ACX_CANDIDATE_DIGEST_REF="$IMAGE_BASE@sha256:{candidate_sha}"
+}}
+do_push_tag() {{ printf 'push-tag:%s\\n' "$1" >>"{records}"; return 0; }}
+do_boot_smoke() {{ printf 'smoke:%s:%s\\n' "$1" "$2" >>"{records}"; return 0; }}
+promote_gate() {{
+  printf 'promote:%s:%s\\n' "$1" "$2" >>"{records}"
+  if [[ ! "$2" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{{64}}$ ]]; then
+    warn "promote gate requires a digest-pinned candidate (got: ${{2:-empty}})"
+    return 1
+  fi
+  local repo="${{2%@sha256:*}}"
+  if [[ "$repo" != "$IMAGE_BASE" ]]; then
+    warn "promote digest repository does not match IMAGE_BASE"
+    return 1
+  fi
+  ACX_CANDIDATE_DIGEST_REF="$2"
+  return 0
+}}
+do_restart() {{
+  local env="$1" expected_digest="${{2:-${{ACX_CANDIDATE_DIGEST_REF:-}}}}"
+  local expected_repo="${{expected_digest%@sha256:*}}"
+  printf 'restart:%s:%s\\n' "$env" "$expected_digest" >>"{records}"
+  if [[ ! "${{expected_digest}}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{{64}}$ \\
+    || "${{expected_repo}}" != "${{ACX_IMAGE_REPO}}" ]]; then
+    warn "restart requires the smoke-fenced digest for ACX_IMAGE_REPO=${{ACX_IMAGE_REPO}} (got: ${{expected_digest:-empty}})"
+    printf 'restart-unfenced\\n' >>"{records}"
+    return 1
+  fi
+  printf 'restart-accepted:%s\\n' "$env" >>"{records}"
+  return {restart_after_fence_rc}
+}}
+do_verify() {{ printf 'verify:%s\\n' "$1" >>"{records}"; return 0; }}
+verify_live_gpu_snapshots() {{ printf 'aggregate:%s\\n' "$1" >>"{records}"; return 0; }}
+verify_running_image_matches_deployed() {{ printf 'image:%s\\n' "$1" >>"{records}"; return {image_rc}; }}
+verify_scoped_producer_snapshots() {{ printf 'scoped:%s\\n' "$1" >>"{records}"; return {scoped_rc}; }}
+restore_env_tag_to_rollback() {{
+  printf 'rollback:%s\\n' "$1" >>"{records}"
+  if [[ ! "${{ACX_ROLLBACK_DIGEST_REF:-}}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{{64}}$ ]]; then
+    warn "ROLLBACK REQUIRED but no previous serving digest was captured"
+    printf 'rollback-unfenced\\n' >>"{records}"
+    return 1
+  fi
+  printf 'rollback-fenced:%s\\n' "$1" >>"{records}"
+  return 0
+}}
+{'export _ACX_SHIP_COMPLETION=scoped' if public_deploy else ':'}
+{'do_deploy' if public_deploy else 'do_prepare_producer'} {env}
+'''
+    result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, check=False)
+    logged = records.read_text() if records.exists() else ""
+    return result, logged
+
+
+def test_prepare_producer_setting_cannot_downgrade_public_deploy(tmp_path: Path) -> None:
+    result, logged = _run_prepare_producer(tmp_path, public_deploy=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "verify:prod" in logged.splitlines(), logged
+    assert "scoped:prod" not in logged.splitlines(), logged
+
+
+def _first_line(prefix: str, lines: list[str]) -> str | None:
+    for line in lines:
+        if line.startswith(prefix):
+            return line
+    return None
+
+
+def test_prepare_producer_converges_selected_env_before_verify(tmp_path: Path) -> None:
+    """Cold selected-env must run the safe deploy transaction before verifies.
+
+    Finding 10250: a stale leftover snapshot can masquerade as a live writer.
+    Observable order (do_deploy 3665): preserve prior state, smoke-fenced
+    candidate via promote_gate, do_restart with that digest, then image/writer
+    checks. TEST-15: image/scoped stubs succeed so verify-only still looks green.
+    """
+    result, logged = _run_prepare_producer(tmp_path, records_name="converge.log")
+    combined = result.stdout + result.stderr
+    lines = logged.splitlines()
+    preserve = _first_line("preserve:prod", lines)
+    promote = _first_line("promote:prod:", lines)
+    restart = _first_line("restart:prod:", lines)
+    assert preserve is not None, combined
+    assert promote is not None, combined
+    assert restart is not None, combined
+    assert "restart-accepted:prod" in lines, combined
+    assert "restart-unfenced" not in lines
+    digest = promote.split(":", 2)[2]
+    assert _FENCED_DIGEST.match(digest), digest
+    assert restart == f"restart:prod:{digest}", restart
+    assert "image:prod" in lines, combined
+    assert "scoped:prod" in lines, combined
+    assert lines.index(preserve) < lines.index("restart-accepted:prod"), lines
+    assert lines.index(promote) < lines.index("restart-accepted:prod"), lines
+    assert lines.index("restart-accepted:prod") < lines.index("image:prod"), lines
+    assert lines.index("restart-accepted:prod") < lines.index("scoped:prod"), lines
+    assert "aggregate:prod" not in lines
+    assert "verify:prod" not in lines
+    assert result.returncode == 0, combined
+
+
+def test_prepare_producer_convergence_does_not_require_missing_siblings(
+    tmp_path: Path,
+) -> None:
+    """Bootstrap the selected env whether sibling snapshots exist or not."""
+    result, logged = _run_prepare_producer(
+        tmp_path, sibling_rc=0, records_name="sib-complete.log"
+    )
+    combined = result.stdout + result.stderr
+    assert "restart-accepted:prod" in logged.splitlines(), combined
+    assert result.returncode == 0, combined
+    result_missing, logged_missing = _run_prepare_producer(
+        tmp_path, sibling_rc=1, records_name="sib-missing.log"
+    )
+    combined_missing = result_missing.stdout + result_missing.stderr
+    assert "restart-accepted:prod" in logged_missing.splitlines(), combined_missing
+    assert result_missing.returncode == 0, combined_missing
+    assert logged.splitlines() != logged_missing.splitlines() or "sibling:prod" not in logged
+
+
+def test_prepare_producer_prod_requires_confirm_promote(tmp_path: Path) -> None:
+    """Prod prepare-producer must not bypass CONFIRM=PROMOTE (do_deploy 3684)."""
+    result, logged = _run_prepare_producer(
+        tmp_path, confirm=None, records_name="no-confirm.log"
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    assert "passed" not in combined.lower()
+    assert "CONFIRM=PROMOTE" in combined
+    assert "restart-accepted:prod" not in logged.splitlines()
+
+
+def test_prepare_producer_restart_without_fenced_digest_is_refused(tmp_path: Path) -> None:
+    """A restart with no smoke-fenced digest must fail, not skip to scoped success."""
+    result, logged = _run_prepare_producer(
+        tmp_path, candidate_sha="malformed", records_name="unfenced-restart.log"
+    )
+    combined = result.stdout + result.stderr
+    lines = logged.splitlines()
+    assert result.returncode != 0, combined
+    assert "passed" not in combined.lower()
+    assert "restart-accepted:prod" not in lines
+    assert "scoped:prod" not in lines
+
+
+def test_prepare_producer_restart_failure_rolls_back_and_does_not_succeed(
+    tmp_path: Path,
+) -> None:
+    """Start failure must fence-rollback with captured identity, never report success.
+
+    DATA-13 / RES-03: same boundary as do_deploy. assert_rollback_fence refuses
+    empty ACX_ROLLBACK_DIGEST_REF. TEST-15: scoped stub succeeds.
+    """
+    result, logged = _run_prepare_producer(
+        tmp_path,
+        restart_after_fence_rc=1,
+        image_rc=0,
+        scoped_rc=0,
+        preserve_sets_rollback=True,
+        records_name="restart-fail.log",
+    )
+    combined = result.stdout + result.stderr
+    lines = logged.splitlines()
+    assert "restart-accepted:prod" in lines, combined
+    assert "rollback-fenced:prod" in lines, combined
+    assert "rollback-unfenced" not in lines
+    assert "scoped:prod" not in lines
+    assert result.returncode != 0, combined
+    assert "passed" not in combined.lower()
+
+
+def test_prepare_producer_unfenced_rollback_does_not_compensate(tmp_path: Path) -> None:
+    """Verify/start failure must not roll back without a captured prior digest."""
+    result, logged = _run_prepare_producer(
+        tmp_path,
+        restart_after_fence_rc=1,
+        preserve_sets_rollback=False,
+        records_name="unfenced-rollback.log",
+    )
+    combined = result.stdout + result.stderr
+    lines = logged.splitlines()
+    assert "rollback-fenced:prod" not in lines
+    assert result.returncode != 0, combined
+    assert "passed" not in combined.lower()
+
+
+def test_prepare_producer_scoped_failure_after_converge_is_not_success(
+    tmp_path: Path,
+) -> None:
+    """Writer/schema/freshness failure after a fenced restart must not report success."""
+    result, logged = _run_prepare_producer(
+        tmp_path, restart_after_fence_rc=0, image_rc=0, scoped_rc=1, records_name="scoped-fail.log"
+    )
+    combined = result.stdout + result.stderr
+    lines = logged.splitlines()
+    assert "restart-accepted:prod" in lines, combined
+    assert "scoped:prod" in lines, combined
+    assert lines.index("restart-accepted:prod") < lines.index("scoped:prod"), lines
+    assert result.returncode != 0, combined
+    assert "passed" not in combined.lower()
+
+
+def test_prepare_producer_does_not_invoke_aggregate_snapshot_gate(tmp_path: Path) -> None:
+    """Bootstrap completes scoped-only; aggregate stays on NORMAL verify.
+
+    AGT-06: skip of verify_live_gpu_snapshots is explicit. RLSE-03: the
+    registry-wide gate remains on verify_live_gpu_snapshots.
+    """
+    result, logged = _run_prepare_producer(tmp_path, records_name="no-aggregate.log")
+    combined = result.stdout + result.stderr
+    lines = logged.splitlines()
+    assert "aggregate:prod" not in lines
+    assert "verify:prod" not in lines
+    assert "restart-accepted:prod" in lines, combined
+    assert "scoped:prod" in lines, combined
+    assert result.returncode == 0, combined
+
+
+def test_prepare_producer_leaves_aggregate_refusal_for_missing_siblings(
+    tmp_path: Path,
+) -> None:
+    """NORMAL verify still fails closed on missing siblings (RLSE-03, TEST-15)."""
+    result, logged = _run_verify_live_gpu_snapshots(
+        tmp_path, sibling_rc=1, timeout_rc=1, scoped_rc=0
+    )
+    combined = result.stdout + result.stderr
+    lines = logged.splitlines()
+    assert "aggregate:1" in lines, combined
+    assert "scoped:prod" not in lines
+    assert result.returncode == 1, combined
+
+
+def _fresh_load_snapshot(written_at: int = 1000) -> str:
+    return (
+        '{"queue_depth":1,"in_flight":0,"batch_in_progress":false,'
+        f'"written_at":{written_at}}}\n'
+    )
+
+
+def _run_scoped_producer(
+    tmp_path: Path,
+    *,
+    env: str = "prod",
+    snapshot: str | None = _fresh_load_snapshot(),
+    now: int = 1000,
+    stale: int = 120,
+    compose: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    remote = tmp_path / "remote"
+    load_root = tmp_path / "run" / "acx-write"
+    env_dir = load_root / env
+    env_dir.mkdir(parents=True)
+    remote.mkdir(exist_ok=True)
+    if compose:
+        (remote / "docker-compose.env.yml").write_text(
+            "services:\n"
+            "  api:\n"
+            "    environment:\n"
+            "      - ACX_DESCRIBE_LOAD_PATH=/run/acx-write/${ACX_ENV}/describe-load.json\n"
+        )
+    if snapshot is not None:
+        (env_dir / "describe-load.json").write_text(snapshot)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    _write_executable(bin_dir / "sudo", '#!/usr/bin/env bash\nexec "$@"\n')
+    load_root_s = str(load_root)
+    remote_s = str(remote)
+    rewriter = tmp_path / "rewrite-remote"
+    _write_executable(
+        rewriter,
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        "src = sys.stdin.read()\n"
+        f"src = src.replace('load_dir=\"/run/acx-write/', 'load_dir=\"{load_root_s}/')\n"
+        f"src = src.replace('/opt/acx-backend/{env}', '{remote_s}')\n"
+        "sys.stdout.write(src)\n",
+    )
+    command = f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+ACX_DESCRIBE_LOAD_STALE_SECONDS={stale}
+ACX_NOW_EPOCH={now}
+run_with_deadline() {{ shift 2; "$@"; }}
+ssh() {{
+  export PATH="{bin_dir}:$PATH"
+  last="${{@: -1}}"
+  if [[ "$last" == "bash -s" ]]; then
+    "{rewriter}" | bash -s
+    exit $?
+  fi
+  last="${{last//\\/run\\/acx-write/{load_root_s}}}"
+  bash -c "$last"
+}}
+verify_scoped_producer_snapshots {env}
+'''
+    return subprocess.run(["bash", "-c", command], text=True, capture_output=True, check=False)
+
+
+def test_scoped_producer_refuses_missing_describe_load(tmp_path: Path) -> None:
+    result = _run_scoped_producer(tmp_path, snapshot=None)
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    assert "describe-load.json" in combined
+    assert "queue_depth\":0" not in combined
+
+
+def test_scoped_producer_refuses_stale_describe_load(tmp_path: Path) -> None:
+    result = _run_scoped_producer(tmp_path, snapshot=_fresh_load_snapshot(1), now=1000, stale=120)
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    assert "stale" in combined.lower()
+
+
+def test_scoped_producer_refuses_invalid_schema(tmp_path: Path) -> None:
+    result = _run_scoped_producer(tmp_path, snapshot='{"written_at":1000}\n')
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    assert "schema" in combined.lower() or "queue_depth" in combined
+
+
+def test_scoped_producer_accepts_fresh_valid_load(tmp_path: Path) -> None:
+    result = _run_scoped_producer(tmp_path, snapshot=_fresh_load_snapshot(1000), now=1000)
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+    assert "Scoped producer-preparation" in combined or "scoped producer" in combined.lower()

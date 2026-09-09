@@ -2,6 +2,7 @@
 
 **Date:** 2026-07-28 · **Status:** program re-based on QA v8 · **Audience:** operator
 **Binding reference:** `benchmarks/reports/fir-embeddings-dims-detectors-qa-20260723.html` (v8, gitignored, uncommitted by design)
+**Still-open measurement gates (2026-09-09):** `benchmarks/reports/fir-issuedag-1-measurement-gates.md` — prevalence, unverified alternative licences, COCO unreplicated counts, Open Images pixel-licence hard gate, unidentified `IsOccluded` mechanism. None of those ran; do not read this summary as closing them.
 **This document does not create new claims.** Every number below is traceable to a v8 register row (D-\*, T-\*, M-\*) or to a committed task plan. Where v8 withdrew a number, this document says so rather than repeating it.
 
 ---
@@ -121,7 +122,7 @@ Four levers, in increasing cost:
 Detect a *person* with the off-the-shelf cascade, then search for a face in the expected region above the torso instead of across the whole image. This collapses the search space in exactly the hard cases. The motivating case is real and in our corpus: `pewter_hollow_271.jpg`, where only part of the left eye is visible and the rest of the face is behind a phone. **If D1 passes, this is the terminal deliverable — the plan explicitly says take the cascade and stop.**
 
 **(b) COCO keypoints 2017 as a hard-occlusion mining complement.**
-5 of 17 keypoints are facial (nose, eyes, ears). 26.1% clean licence = 30,836 images, 16,513 with a person, 33,193 head-bearing instances. Instances with labelled shoulders/hips but **all facial keypoints v=0** are candidate hard-occlusion positives — the `pewter_hollow_271` case as *data*. **Trap:** 51.4% of person instances carry no facial keypoint at all, so keypoint-derived faces are **not** exhaustive ground truth. Tracked as D-05 / D-10 / T-07 (~3 eng-h).
+5 of 17 keypoints are facial (nose, eyes, ears). Instances with labelled shoulders/hips but **all facial keypoints v=0** are candidate hard-occlusion positives — the `pewter_hollow_271` case as *data*. **Those pool-size figures are unreplicated.** The previously cited "26.1% clean licence = 30,836 images, 16,513 with a person, 33,193 head-bearing instances, 48.6% keypoint coverage" counts have **no persisted script and no pinned annotation-JSON revision**. Do not treat them as audited program facts; they are blocked on T-07 / D-05. See `benchmarks/reports/fir-issuedag-1-measurement-gates.md` and `openimages-occlusion-MEASUREMENTS.md`. **Trap:** even if those counts later replicate, 51.4% of person instances carry no facial keypoint at all, so keypoint-derived faces are **not** exhaustive ground truth.
 
 **(c) SAM-based occluder compositing — synthetic degradation.**
 SAM segments occluders offline and composites controlled degradation onto clean faces. This supplies a *controlled* difficulty axis for training and ablation. It must **never** be used to define an occlusion stratum for evaluation — synthetic occlusion is not the thing we are measuring.

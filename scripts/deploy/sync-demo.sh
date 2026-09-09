@@ -97,7 +97,7 @@ run_gpu_env_preflight() {
   $SCP "$GPU_PREFLIGHT_SRC" "${OCI_USER}@${OCI_HOST}:${REMOTE_GPU_PREFLIGHT_DIR}/preflight-gpu-env.sh"
   $SCP "$GPU_ENV_CONTRACT_SRC" "${OCI_USER}@${OCI_HOST}:${REMOTE_GPU_PREFLIGHT_DIR}/lib/gpu-env-contract.sh"
   $SCP "$DESCRIBE_GATE_SRC" "${OCI_USER}@${OCI_HOST}:${REMOTE_GPU_PREFLIGHT_DIR}/lib/describe-gate.sh"
-  if ! $SSH "sudo chmod 700 '${REMOTE_GPU_PREFLIGHT_DIR}/preflight-gpu-env.sh' && sudo chmod 644 '${REMOTE_GPU_PREFLIGHT_DIR}/lib/gpu-env-contract.sh' '${REMOTE_GPU_PREFLIGHT_DIR}/lib/describe-gate.sh' && sudo '${REMOTE_GPU_PREFLIGHT_DIR}/preflight-gpu-env.sh' --check-reaper '${REMOTE_BACKEND_DIR}/prod/secrets/.env' '${REMOTE_DEMO_DIR}/secrets/.env'"; then
+  if ! $SSH "sudo chmod 700 '${REMOTE_GPU_PREFLIGHT_DIR}/preflight-gpu-env.sh' && sudo chmod 644 '${REMOTE_GPU_PREFLIGHT_DIR}/lib/gpu-env-contract.sh' '${REMOTE_GPU_PREFLIGHT_DIR}/lib/describe-gate.sh' && sudo '${REMOTE_GPU_PREFLIGHT_DIR}/preflight-gpu-env.sh' --check-reaper '${REMOTE_BACKEND_DIR}/prod/.env' '${REMOTE_DEMO_DIR}/secrets/.env'"; then
     echo "ERROR: GPU environment preflight failed; demo deploy aborted (exit 4)." >&2
     return 4
   fi

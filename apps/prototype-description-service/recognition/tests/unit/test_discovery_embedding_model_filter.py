@@ -13,6 +13,7 @@ import pytest
 from recognition.application.discovery.representative import RepresentativeDiscovery
 from recognition.application.orchestration.clustering.discovery_pipeline import (
     GalleryProvenanceStats,
+    GalleryProvenanceUnavailableError,
     _load_representative_embedding_models,
     _resolve_assignment_session,
     prepare_cluster_caches,
@@ -531,6 +532,85 @@ async def test_empty_provenance_map_with_loaded_true_excludes_and_warns(
     # Must NOT rely only on the old "provenance unavailable" gate (that path is
     # silent when provenance_loaded=True).
     assert not any("provenance unavailable" in record.message for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_all_unstamped_tenant_aborts_instead_of_minting_new_clusters() -> None:
+    """SVCSRC-R-01: all-unstamped gallery + known active model must fail closed.
+
+    prepare_cluster_caches drops unstamped reps. If abort_reason stays None,
+    discovery proceeds against an empty gallery and GraphDiscovery mints new
+    clusters instead of matching existing identities.
+    """
+    same_space = "opencv-sface+cv5@128d/l2/cosine"
+    vec = _normalize(np.array([1.0, 0.0, 0.0]))
+    identity_id = str(generate_id())
+    rep = SimpleNamespace(embedding=vec, identity_id=identity_id)  # no embedding_model
+    clusters = [
+        SimpleNamespace(
+            id="c-legacy",
+            label="LegacyAlice",
+            user_confirmed=True,
+            representatives=[rep],
+            centroid=vec,
+        ),
+    ]
+    writer = _FakeWriter(clusters)
+
+    class _EmptyRows:
+        def all(self):
+            return []
+
+    session = SimpleNamespace(execute=AsyncMock(return_value=_EmptyRows()))
+
+    with patch(
+        "recognition.application.orchestration.clustering.discovery_pipeline._resolve_probe_embedding_model",
+        return_value=same_space,
+    ):
+        reps, centroids, labeled, stats = await prepare_cluster_caches(
+            writer,
+            tenant_id=str(generate_id()),
+            session=session,
+        )
+
+    assert stats.provenance_loaded is True
+    assert stats.gallery_wiped is True
+    assert stats.representatives_excluded_unresolvable == 1
+    assert reps == {}
+    assert centroids == {}
+    reason = stats.abort_reason()
+    assert reason is not None
+    assert "legacy unstamped gallery excluded" in reason
+
+    settings = _make_settings(threshold=0.5)
+    remaining: list[MediaIdentity] = []
+
+    async def _graph_discover(chunk: list[MediaIdentity], _anchors: object) -> SimpleNamespace:
+        remaining.extend(chunk)
+        proposals = [(chunk, [1.0] * len(chunk))] if chunk else []
+        return SimpleNamespace(candidates=[], new_clusters=proposals)
+
+    candidates, new_clusters = await run_discovery_pipeline(
+        chunk=[_make_identity(vec)],
+        representative_discovery=RepresentativeDiscovery(settings=settings),
+        centroid_discovery=SimpleNamespace(discover=AsyncMock(return_value=[])),
+        graph_discovery=SimpleNamespace(discover=_graph_discover),
+        representatives_by_cluster=reps,
+        centroids_by_cluster=centroids,
+        labeled_cluster_ids=labeled,
+    )
+
+    assert candidates == []
+    assert remaining
+    assert new_clusters
+    assert all(proposal[0] for proposal in new_clusters)
+
+    from recognition.application.orchestration.clustering.orchestrator import (
+        IncrementalClusteringRunner,
+    )
+
+    with pytest.raises(GalleryProvenanceUnavailableError, match="legacy unstamped gallery excluded"):
+        IncrementalClusteringRunner._abort_on_unprovenanced_gallery("job-unstamped", stats)
 
 
 # ---------------------------------------------------------------------------

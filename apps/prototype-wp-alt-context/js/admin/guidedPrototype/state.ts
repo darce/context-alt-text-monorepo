@@ -526,15 +526,11 @@ export const chooseGuidedName = (
     return state;
   }
   if (state.draftOrigin === GUIDED_DRAFT_ORIGIN.VISITOR_EDIT) {
-    return withLocalAction(
-      {
-        ...cloneState(state),
-        pendingChoiceChange: { position, choice },
-        outcome: GUIDED_OUTCOME.NOT_FINISHED,
-      },
-      'choose_name_option',
-      'names.change_title',
-    );
+    // Park the intended change only. Confirm applies it; cancel is a no-op for
+    // outcome, copy, and history of a choice that has not happened yet (T07).
+    const next = cloneState(state);
+    next.pendingChoiceChange = { position, choice };
+    return next;
   }
 
   const choices = cloneChoices(state.choices);

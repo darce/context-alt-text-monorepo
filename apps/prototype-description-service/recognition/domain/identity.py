@@ -34,6 +34,9 @@ class MediaIdentity:
     metadata: dict[str, Any] = field(default_factory=dict)
     cluster_id: str | None = None
     moved_by_merge_id: str | None = None
+    # FIR23-01 / CVUP1-R3-18: provenance for the embedding space this vector belongs to.
+    # Appended last so existing positional construction sites keep working.
+    embedding_model: str | None = None
 
     def extract_face_embedding(self) -> np.ndarray:
         """Return the face-only portion of the extended embedding vector.

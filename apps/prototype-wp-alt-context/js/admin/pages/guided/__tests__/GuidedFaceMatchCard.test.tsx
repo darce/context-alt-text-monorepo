@@ -165,7 +165,10 @@ describe('GuidedFacesPanel and GuidedFaceMatchCard', () => {
     );
     expect(screen.getByRole('article')).toHaveAttribute('aria-labelledby', `guided-face-${face.id}-title`);
     expect(screen.getByTestId('name-choice-left')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /enlarge comparison/i })).toBeInTheDocument();
-    expect(screen.getByTestId('face-thumbnail')).toHaveAttribute('data-alt', 'Detected left face');
+    expect(screen.getByRole('button', { name: guidedCopy('names.enlarge') })).toBeInTheDocument();
+    expect(screen.getByTestId('face-thumbnail')).toHaveAttribute(
+      'data-alt',
+      guidedCopy('names.crop_alt', { position: 'left' }),
+    );
   });
 });

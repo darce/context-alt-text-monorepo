@@ -69,10 +69,15 @@ class GalleryProvenanceStats:
         must not be collapsed.
 
         Abort when the gallery is empty because provenance could not be
-        established: no active model, no provenance query, or representatives
-        carrying no ``embedding_model`` stamp. Proceed when every excluded
-        representative resolved to a real model that simply is not the active
-        one — that is the migration, and it is the intended behaviour.
+        established: no active model, or the provenance query itself failed.
+        Also abort when the wipe is leftover unstamped/legacy representatives:
+        the active-space filter drops ``embedding_model is None`` rows, so
+        proceeding would mint brand-new clusters against an empty gallery
+        (SVCSRC-R-01). Retention is unsafe while the active model is known —
+        it reintroduces cross-space cosine (FIR23-01 / GR-02). Proceed only
+        when every excluded representative resolved to a real model that
+        simply is not the active one — that is the migration, and it is the
+        intended behaviour.
         """
         if not self.gallery_wiped:
             return None
@@ -82,9 +87,8 @@ class GalleryProvenanceStats:
             return f"representative embedding_model provenance unavailable (active={self.active_embedding_model})"
         if self.representatives_excluded_unresolvable > 0:
             return (
-                f"{self.representatives_excluded_unresolvable} representative(s) across "
-                f"{self.clusters_excluded_unresolvable} cluster(s) carry no embedding_model "
-                f"stamp (active={self.active_embedding_model})"
+                "legacy unstamped gallery excluded while active model is known "
+                f"(active={self.active_embedding_model})"
             )
         return None
 

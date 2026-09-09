@@ -5,9 +5,10 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
 from sqlalchemy import Select, exists, select
@@ -18,6 +19,7 @@ from db.models import IdentityMember as MemberModel
 from db.models import MediaIdentity as MediaIdentityModel
 from db.tenant_context import enable_rls_bypass, set_tenant_context
 from recognition.application.assignment.joint import group_accepted_by_media, resolve_photo_conflicts
+from recognition.application.identity_mapping import media_identity_from_model
 from recognition.application.orchestration.clustering.chunked_processor import ChunkedIdentityProcessor
 from recognition.application.orchestration.clustering.decision_handler import DecisionHandler
 from recognition.application.orchestration.clustering.dependencies import (
@@ -54,6 +56,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class _EmbeddingModelRow(Protocol):
+    embedding_model: str | None
+
+
 def _joint_assignment_active() -> bool:
     """True when face_pipeline profile is active and joint assignment is enabled."""
     from recognition.config import get_settings as get_recognition_settings
@@ -67,6 +73,41 @@ def _joint_assignment_active() -> bool:
         identity_detection=settings.identity_detection,
     )
     return knobs.profile == "face_pipeline" and bool(knobs.joint_assignment_enabled)
+
+
+def probe_space_skip_payload(
+    rows: Sequence[_EmbeddingModelRow],
+    kept: Sequence[_EmbeddingModelRow],
+    *,
+    active_model: str | None,
+) -> dict[str, object]:
+    """Operator-visible probe-side FIR23-01 skip counts for clustering_job.payload."""
+    kept_ids = {id(row) for row in kept}
+    skipped_models: set[str] = set()
+    skipped_count = 0
+    for row in rows:
+        if id(row) in kept_ids:
+            continue
+        skipped_count += 1
+        model = row.embedding_model
+        skipped_models.add(str(model) if model else "unstamped")
+    return {
+        "active_embedding_model": active_model,
+        "skipped_models": sorted(skipped_models),
+        "skipped_count": skipped_count,
+        "kept_count": len(kept),
+        "total_count": len(rows),
+    }
+
+
+def _record_probe_space_skip(
+    clustering_job: IdentityClusteringJob,
+    skip_payload: dict[str, object],
+) -> None:
+    clustering_job.payload = {
+        **(clustering_job.payload or {}),
+        "probe_space_skip": skip_payload,
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,7 +195,8 @@ class IncrementalClusteringRunner:
 
         await self._cleanup_orphaned_representatives(context.tenant_id)
 
-        unclustered = await self._fetch_unclustered_identities(tenant_uuid)
+        unclustered, skip_payload = await self._fetch_unclustered_identities(tenant_uuid)
+        _record_probe_space_skip(clustering_job, skip_payload)
         if not unclustered:
             return await self._complete_empty_job(
                 clustering_job=clustering_job,
@@ -276,12 +318,16 @@ class IncrementalClusteringRunner:
         except Exception as exc:
             logger.warning("[clustering] Failed to cleanup orphaned representatives: %s", exc)
 
-    async def _fetch_unclustered_identities(self, tenant_uuid: uuid.UUID) -> list[MediaIdentityModel]:
+    async def _fetch_unclustered_identities(
+        self, tenant_uuid: uuid.UUID
+    ) -> tuple[list[MediaIdentityModel], dict[str, object]]:
         """Load unclustered identities for this tenant.
 
         FIR23-01: when multiple embedding_model values coexist, keep only the
         active runtime model (never mix spaces). A single-model tenant is a
-        no-op — every row is returned unchanged.
+        no-op — every row is returned unchanged. Probe-side skips are returned
+        so the job payload can distinguish a foreign-space filter from an
+        empty gallery.
         """
         stmt: Select[tuple[MediaIdentityModel]] = (
             select(MediaIdentityModel)
@@ -290,34 +336,12 @@ class IncrementalClusteringRunner:
         )
         result = await self._session.execute(stmt)
         rows = list(result.scalars().all())
-        models = {str(row.embedding_model) for row in rows if getattr(row, "embedding_model", None)}
-        if len(models) <= 1:
-            return rows
-        try:
-            from recognition.application.embedding.manifest import active_embedding_model_id
+        from recognition.application.embedding.manifest import try_active_embedding_model_id
+        from recognition.application.suggestions.embedding_space import filter_to_active_embedding_space
 
-            active = active_embedding_model_id()
-        except Exception:
-            logger.warning(
-                "[clustering] mixed embedding_model present but active model unresolved; "
-                "fail-closed empty batch (FIR23-01)"
-            )
-            return []
-        filtered = [row for row in rows if getattr(row, "embedding_model", None) == active]
-        if not filtered:
-            logger.warning(
-                "[clustering] mixed embedding_model=%s none match active=%s; fail-closed empty batch",
-                sorted(models),
-                active,
-            )
-        elif len(filtered) < len(rows):
-            logger.info(
-                "[clustering] embedding_model filter active=%s kept=%d skipped=%d",
-                active,
-                len(filtered),
-                len(rows) - len(filtered),
-            )
-        return filtered
+        # Mixed rows keep active_embedding_model_id only; unresolved → empty.
+        kept = filter_to_active_embedding_space(rows)
+        return kept, probe_space_skip_payload(rows, kept, active_model=try_active_embedding_model_id())
 
     async def _complete_empty_job(
         self,
@@ -371,27 +395,7 @@ class IncrementalClusteringRunner:
 
     @staticmethod
     def _build_domain_identities(rows: list[MediaIdentityModel]) -> list[MediaIdentity]:
-        return [
-            MediaIdentity(
-                id=str(row.id),
-                tenant_id=str(row.tenant_id),
-                media_id=str(row.media_id),
-                embedding=np.array(row.embedding, dtype=np.float32),
-                confidence=row.confidence,
-                bbox_width=row.bbox_width,
-                bbox_height=row.bbox_height,
-                bbox_x=row.bbox_x,
-                bbox_y=row.bbox_y,
-                pose_pitch=row.pose_pitch,
-                pose_yaw=row.pose_yaw,
-                pose_roll=row.pose_roll,
-                image_phash=row.image_phash,
-                sharpness=row.sharpness,
-                embedding_norm=row.embedding_norm,
-                occlusion_severity=row.occlusion_severity,
-            )
-            for row in rows
-        ]
+        return [media_identity_from_model(row) for row in rows]
 
     @staticmethod
     def _log_batch_media_ids(job_id: str, identities: list[MediaIdentity]) -> None:

@@ -28,8 +28,6 @@ export interface GuidedFaceMatchCardProps {
   onChoose: (choice: GuidedNameChoice, origin: HTMLInputElement) => void;
 }
 
-const ENLARGE_COMPARISON_LABEL = 'Enlarge comparison';
-const ENLARGED_COMPARISON_TITLE = 'Enlarged comparison';
 const ENLARGED_CROP_PX = 240;
 
 const choiceStatus = (choice: GuidedNameChoice, personName: string): string => {
@@ -52,7 +50,7 @@ const coverageCopy = (coverage: GuidedNameCoverage): string =>
     ? guidedCopy('names.coverage_all', { total: coverage.total })
     : guidedCopy('names.coverage_partial', { shown: coverage.shown, total: coverage.total });
 
-const cropAlt = (position: GuidedFace['position']): string => `Detected ${position} face`;
+const cropAlt = (position: GuidedFace['position']): string => guidedCopy('names.crop_alt', { position });
 
 export const GuidedFaceMatchCard = ({
   face,
@@ -116,7 +114,7 @@ export const GuidedFaceMatchCard = ({
           className="acx-button acx-button--tertiary acx-guided-face__enlarge"
           onClick={() => setComparisonOpen(true)}
         >
-          {ENLARGE_COMPARISON_LABEL}
+          {guidedCopy('names.enlarge')}
         </button>
       </div>
       <div className="acx-guided-face__content">
@@ -177,7 +175,7 @@ export const GuidedFaceMatchCard = ({
               enlargeRef.current?.focus();
             }}
           >
-            <DialogTitle>{ENLARGED_COMPARISON_TITLE}</DialogTitle>
+            <DialogTitle>{guidedCopy('names.enlarge_title')}</DialogTitle>
             <DialogDescription>{guidedCopy('names.evidence_open', { position: face.position })}</DialogDescription>
             <div className="acx-guided-face__lightbox-crop">{thumbnail(ENLARGED_CROP_PX)}</div>
             <ul className="acx-guided-face__lightbox-gallery" aria-label={person.name}>

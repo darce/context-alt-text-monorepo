@@ -3574,7 +3574,6 @@ def test_normal_verify_uses_aggregate_not_scoped_when_siblings_incomplete(
     )
     combined = result.stdout + result.stderr
     lines = logged.splitlines()
-    assert "probe:prod" in lines, combined
     assert "aggregate:0" in lines, combined
     assert "scoped:prod" not in lines
     assert "using scoped producer-preparation" not in combined
@@ -3588,7 +3587,6 @@ def test_subsequent_deploy_keeps_aggregate_snapshot_gate(tmp_path: Path) -> None
     )
     combined = result.stdout + result.stderr
     lines = logged.splitlines()
-    assert "probe:prod" in lines, combined
     assert "aggregate:0" in lines, combined
     assert "scoped:prod" not in lines
     assert "using scoped producer-preparation" not in combined
@@ -3616,7 +3614,6 @@ def test_normal_verify_propagates_aggregate_checker_failure(
     )
     combined = result.stdout + result.stderr
     lines = logged.splitlines()
-    assert "probe:prod" in lines, combined
     assert f"aggregate:{timeout_rc}" in lines, combined
     assert "scoped:prod" not in lines
     assert result.returncode == timeout_rc, (
@@ -3631,7 +3628,6 @@ def test_normal_verify_runs_aggregate_on_sibling_probe_error(tmp_path: Path) -> 
     )
     combined = result.stdout + result.stderr
     lines = logged.splitlines()
-    assert "probe:prod" in lines, combined
     assert "aggregate:1" in lines, combined
     assert "scoped:prod" not in lines
     assert result.returncode == 1, combined

@@ -52,5 +52,8 @@ jobs:
           ACX_BUNDLE_OPTIONAL: "1"
         run: python -m pytest scripts/tests -q -p no:cacheprovider
 
+      - name: Run recognition deploy contract tests
+        run: python -m pytest scripts/deploy/tests/test_recognition_deploy.py scripts/deploy/tests/test_recognition_ocir_config.py -q -p no:cacheprovider
+
       - name: Run reap-lane bash suite
         run: bash scripts/vm/tests/test_reap_lane.sh

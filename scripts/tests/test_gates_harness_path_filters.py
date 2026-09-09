@@ -81,3 +81,10 @@ def test_owned_path_prefixes_are_covered_by_workflow_filters() -> None:
         if not any(_github_match(candidate, pattern) for candidate in _candidates(prefix) for pattern in filters):
             missing.append(prefix)
     assert missing == [], f"owned prefixes not covered by gates-harness.yml path filters: {missing}"
+
+
+def test_gates_harness_workflow_runs_recognition_deploy_tests() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    assert "scripts/deploy/tests/test_recognition_deploy.py" in workflow
+    assert "scripts/deploy/tests/test_recognition_ocir_config.py" in workflow
+    assert 'ACX_BUNDLE_OPTIONAL: "1"' in workflow

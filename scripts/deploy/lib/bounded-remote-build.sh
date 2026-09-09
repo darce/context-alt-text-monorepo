@@ -54,6 +54,9 @@ if command -v setsid >/dev/null 2>&1; then
   acx_setsid="setsid"
 else
   acx_setsid=""
+  if ! command -v pgrep >/dev/null 2>&1 && ! command -v ps >/dev/null 2>&1; then
+    acx_bulkhead_fail "required command unavailable: pgrep or ps"
+  fi
 fi
 
 acx_remaining() {
@@ -107,8 +110,10 @@ acx_children_of() {
   local acx_parent="$1"
   if command -v pgrep >/dev/null 2>&1; then
     pgrep -P "$acx_parent" 2>/dev/null || true
-  else
+  elif command -v ps >/dev/null 2>&1; then
     ps -o pid= --ppid "$acx_parent" 2>/dev/null || true
+  else
+    acx_bulkhead_fail "required command unavailable: pgrep or ps"
   fi
 }
 
@@ -122,7 +127,7 @@ acx_list_descendants() {
 }
 
 acx_kill_tree() {
-  local acx_pid="$1" acx_child
+  local acx_pid="$1" acx_child acx_descendants
   if [[ -n "${acx_setsid:-}" ]]; then
     # Negative PGID kills the whole session started by setsid.
     kill -TERM -- "-$acx_pid" 2>/dev/null || true
@@ -130,17 +135,19 @@ acx_kill_tree() {
     kill -KILL -- "-$acx_pid" 2>/dev/null || true
     return
   fi
-  # Walk children before the parent so they cannot outlive a direct-child kill.
+  # Capture the tree before signaling. TERM on the parent can reparent a
+  # stubborn descendant to init, hiding it from a later pgrep -P / ps scan.
+  acx_descendants="$(acx_list_descendants "$acx_pid")"
   while IFS= read -r acx_child; do
     [[ "$acx_child" =~ ^[0-9]+$ ]] || continue
     kill -TERM "$acx_child" 2>/dev/null || true
-  done < <(acx_list_descendants "$acx_pid")
+  done <<<"$acx_descendants"
   kill -TERM "$acx_pid" 2>/dev/null || true
   sleep 0.1
   while IFS= read -r acx_child; do
     [[ "$acx_child" =~ ^[0-9]+$ ]] || continue
     kill -KILL "$acx_child" 2>/dev/null || true
-  done < <(acx_list_descendants "$acx_pid")
+  done <<<"$acx_descendants"
   kill -KILL "$acx_pid" 2>/dev/null || true
 }
 

@@ -1152,28 +1152,166 @@ has_linked_worktrees() {
   [[ "${n:-0}" -gt 1 ]]
 }
 
+live_probe_reason=""
+restore_quarantined_error=""
+
+# Return 0 = occupied, 1 = provably unoccupied, 2 = could not determine.
+# Archive-mode sweeps of ~/w, ~/lanes, etc. have no lease/lock contract, so a
+# worker that committed >1h ago and is now running a long test would otherwise
+# lose its checkout (VMREAP-RA-06). Keep the three outcomes separate: the
+# fail-closed unknown branch addresses ISSUEDAG-1-HARM-04/HARNC-R-10 and keeps
+# restricted or absent process enumeration from becoming permission to delete.
 lane_has_live_process() {
-  # True when some process (other than this reaper) has cwd inside $1.
-  # Archive-mode sweeps of ~/w, ~/lanes, etc. have no lease/lock contract, so a
-  # worker that committed >1h ago and is now running a long test would otherwise
-  # lose its checkout (VMREAP-RA-06).
-  local dir="$1" cwd target pid
-  [[ -n "$dir" ]] || return 1
-  if [[ -d /proc ]]; then
-    for cwd in /proc/[0-9]*/cwd; do
-      [[ -L "$cwd" ]] || continue
-      target="$(readlink "$cwd" 2>/dev/null || true)"
-      case "$target" in
-        "$dir"|"$dir"/*)
-          pid="${cwd#/proc/}"
-          pid="${pid%/cwd}"
-          [[ "$pid" == "$$" ]] && continue
-          return 0
-          ;;
-      esac
-    done
+  # REAP_LIVE_PROBE is a hermetic seam for the no-probe case. It also makes it
+  # possible to force a particular portable probe when validating a host whose
+  # procfs is restricted (ISSUEDAG-1-HARNC-R-06/GATES-HARNESS-R-10).
+  local dir="$1" probe="${REAP_LIVE_PROBE:-auto}" cwd target pid self_cwd
+  local proc_error=0 self_target="" procfs_restricted=0 probe_status
+  local fallback_error=""
+  local mount_source mount_point mount_type mount_options mount_extra
+  live_probe_reason=""
+  if [[ -z "$dir" ]]; then
+    live_probe_reason="could not determine lane liveness: empty lane path"
+    return 2
   fi
-  return 1
+
+  case "$probe" in
+    none)
+      live_probe_reason="could not determine lane liveness: process probe disabled"
+      return 2
+      ;;
+    ''|auto|proc)
+      if [[ ! -d /proc ]]; then
+        if [[ "$probe" == "proc" ]]; then
+          live_probe_reason="could not determine lane liveness: procfs is unavailable"
+          return 2
+        fi
+      else
+        # A hidepid mount deliberately hides other users' processes. The
+        # current shell remains visible, but that is not enough to prove a lane
+        # is unoccupied, so let the portable fallback have a chance instead.
+        if [[ -r /proc/mounts ]]; then
+          while IFS=' ' read -r mount_source mount_point mount_type mount_options mount_extra; do
+            [[ "$mount_point" == "/proc" ]] || continue
+            case ",${mount_options}," in
+              *,hidepid=1,*|*,hidepid=2,*)
+                procfs_restricted=1
+                break
+                ;;
+            esac
+          done </proc/mounts
+        fi
+        if [[ "$procfs_restricted" -eq 1 ]]; then
+          if [[ "$probe" == "proc" ]]; then
+            live_probe_reason="could not determine lane liveness: procfs enumeration is restricted"
+            return 2
+          fi
+        else
+          self_cwd="/proc/$$/cwd"
+          if [[ ! -L "$self_cwd" ]] || ! self_target="$(readlink "$self_cwd" 2>/dev/null)"; then
+            if [[ "$probe" == "proc" ]]; then
+              live_probe_reason="could not determine lane liveness: procfs cwd entries are unreadable"
+              return 2
+            fi
+          else
+            for cwd in /proc/[0-9]*/cwd; do
+              [[ -L "$cwd" ]] || continue
+              pid="${cwd#/proc/}"
+              pid="${pid%/cwd}"
+              target="$(readlink "$cwd" 2>/dev/null || true)"
+              if [[ -z "$target" ]]; then
+                # Processes can disappear between glob expansion and readlink;
+                # an entry that still exists is an enumeration failure.
+                if [[ -e "${cwd%/cwd}" ]]; then
+                  proc_error=1
+                fi
+                continue
+              fi
+              case "$target" in
+                "$dir"|"$dir"/*|"$dir (deleted)"|"$dir"/*\ \(deleted\))
+                  [[ "$pid" == "$$" ]] && continue
+                  live_probe_reason="lane has a live process"
+                  return 0
+                  ;;
+              esac
+            done
+            if [[ "$proc_error" -eq 0 ]]; then
+              live_probe_reason="lane has no live process"
+              return 1
+            fi
+            if [[ "$probe" == "proc" ]]; then
+              live_probe_reason="could not determine lane liveness: procfs cwd enumeration failed"
+              return 2
+            fi
+          fi
+        fi
+      fi
+      ;;
+    lsof)
+      ;;
+    *)
+      live_probe_reason="could not determine lane liveness: invalid REAP_LIVE_PROBE=$probe"
+      return 2
+      ;;
+  esac
+
+  if [[ "$probe" == "none" ]]; then
+    live_probe_reason="could not determine lane liveness: process probe disabled"
+    return 2
+  fi
+
+  if command -v lsof >/dev/null 2>&1; then
+    if lsof -a -d cwd -- "$dir" >/dev/null 2>&1; then
+      live_probe_reason="lane has a live process"
+      return 0
+    else
+      # Capture the command's status in the else arm. The status of an `if`
+      # compound command is zero when no branch runs, which would otherwise
+      # turn lsof's documented "no open files" status into an unknown result.
+      probe_status=$?
+      case "$probe_status" in
+        1)
+          live_probe_reason="lane has no live process"
+          return 1
+          ;;
+        *) fallback_error="could not determine lane liveness: lsof failed" ;;
+      esac
+    fi
+  fi
+
+  if command -v fuser >/dev/null 2>&1; then
+    if fuser -m "$dir" >/dev/null 2>&1; then
+      live_probe_reason="lane has a live process"
+      return 0
+    else
+      probe_status=$?
+      case "$probe_status" in
+        1)
+          live_probe_reason="lane has no live process"
+          return 1
+          ;;
+        *) fallback_error="${fallback_error:-could not determine lane liveness: fuser failed}" ;;
+      esac
+    fi
+  fi
+
+  live_probe_reason="${fallback_error:-could not determine lane liveness: no process probe is available}"
+  return 2
+}
+
+# Treat both an observed process and an unknown result as occupied. Callers use
+# this wrapper at every destructive boundary so no probe can fail open.
+lane_live_probe_blocks_reap() {
+  local status
+  if lane_has_live_process "$1"; then
+    status=0
+  else
+    status=$?
+  fi
+  case "$status" in
+    1) return 1 ;;
+    *) return 0 ;;
+  esac
 }
 
 # Move $1 aside so new workers cannot enter the original path. Same-filesystem
@@ -1194,10 +1332,19 @@ quarantine_lane() {
 
 restore_quarantined_lane() {
   local real="$1" quarantine="$2"
+  restore_quarantined_error=""
   if [[ -e "$real" || -L "$real" ]]; then
+    restore_quarantined_error="destination already exists: $real"
     return 1
   fi
-  mv -- "$quarantine" "$real"
+  if [[ ! -e "$quarantine" && ! -L "$quarantine" ]]; then
+    restore_quarantined_error="quarantine does not exist: $quarantine"
+    return 1
+  fi
+  if ! mv -- "$quarantine" "$real"; then
+    restore_quarantined_error="could not move quarantine back to $real"
+    return 1
+  fi
 }
 
 lane_newest_mtime() {
@@ -1243,7 +1390,7 @@ process_one() {
   local real size size_kib head_sha upstream upstream_label url ref log_dir ns parent
   local now newest_mtime min_age generation cleanup_failed=0
   local safety_snapshot safety_ignore_ref="" archive_ref="" partial_archive_ref="" partial_line
-  local intent_real="" partial_intent_path="" net_status
+  local intent_real="" partial_intent_path="" net_status restore_error=""
   local partial_verified_tips="" occupant_head="" stale_intent quarantine=""
 
   candidates=$((candidates + 1))
@@ -1371,8 +1518,8 @@ process_one() {
   fi
   freshness_candidates=$((freshness_candidates + 1))
 
-  if lane_has_live_process "$real"; then
-    skip "$path" "lane has a live process"
+  if [[ "$yes" -eq 1 ]] && lane_live_probe_blocks_reap "$real"; then
+    skip "$path" "$live_probe_reason"
     return 0
   fi
 
@@ -1535,9 +1682,9 @@ process_one() {
   # re-probe the quarantine inode, then delete that aside copy. Remove a newly
   # written partial intent before a live-process refusal so it stays a retry,
   # not a misleading operator-review tombstone.
-  if lane_has_live_process "$real"; then
+  if lane_live_probe_blocks_reap "$real"; then
     [[ -n "$partial_intent_path" ]] && rm -f -- "$partial_intent_path"
-    skip "$path" "lane has a live process"
+    skip "$path" "$live_probe_reason"
     return 0
   fi
 
@@ -1547,22 +1694,32 @@ process_one() {
     return 1
   }
 
-  if lane_has_live_process "$quarantine"; then
+  if lane_live_probe_blocks_reap "$quarantine"; then
     [[ -n "$partial_intent_path" ]] && rm -f -- "$partial_intent_path"
     if restore_quarantined_lane "$real" "$quarantine"; then
-      skip "$path" "lane has a live process"
+      skip "$path" "$live_probe_reason"
       return 0
     fi
-    skip "$path" "lane has a live process; quarantine retained at $quarantine"
+    skip "$path" "$live_probe_reason; could not restore quarantine at $quarantine: ${restore_quarantined_error:-unknown restore failure}"
     return 1
   fi
 
   if ! rm -rf -- "$quarantine" || [[ -e "$quarantine" ]]; then
-    restore_quarantined_lane "$real" "$quarantine" >/dev/null 2>&1 || true
+    if ! restore_quarantined_lane "$real" "$quarantine"; then
+      restore_error="${restore_quarantined_error:-unknown restore failure}"
+    fi
     if [[ -n "$archive_ref" ]]; then
-      skip "$path" "rm failed after archive ${archive_ref}; lane partially removed"
+      if [[ -n "$restore_error" ]]; then
+        skip "$path" "rm failed after archive ${archive_ref}; lane partially removed; could not restore quarantine at $quarantine: $restore_error"
+      else
+        skip "$path" "rm failed after archive ${archive_ref}; lane partially removed"
+      fi
     else
-      skip "$path" "rm failed; lane partially removed"
+      if [[ -n "$restore_error" ]]; then
+        skip "$path" "rm failed; lane partially removed; could not restore quarantine at $quarantine: $restore_error"
+      else
+        skip "$path" "rm failed; lane partially removed"
+      fi
     fi
     return 1
   fi

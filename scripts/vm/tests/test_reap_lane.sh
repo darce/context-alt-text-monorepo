@@ -1133,6 +1133,24 @@ assert_contains "unavailable live probe" "could not determine lane liveness"
 assert_exists "unavailable live probe" "$lane_no_probe"
 assert_summary "unavailable live probe" 1 0 1 0
 
+# An available portable fallback must be able to prove that no process owns a
+# lane. This also guards against losing lsof's exit status through an `if`
+# compound command (exit 1 means no matching open file).
+lane_lsof_fallback="$HOME/w/lane-lsof-fallback"
+clone_lane "$lane_lsof_fallback"
+touch -t 200001010000 "$lane_lsof_fallback" "$lane_lsof_fallback/.git/index" "$lane_lsof_fallback/.git/HEAD"
+lsof_fallback_bin="$WORKDIR/lsof-fallback-bin"
+mkdir "$lsof_fallback_bin"
+cat >"$lsof_fallback_bin/lsof" <<'FAKE_LSOF'
+#!/usr/bin/env bash
+exit 1
+FAKE_LSOF
+chmod +x "$lsof_fallback_bin/lsof"
+REAP_MIN_AGE_SEC=0 REAP_LIVE_PROBE=lsof PATH="$lsof_fallback_bin:$PATH" \
+  run_reap --yes --archive-to "$ARCHIVE" "$lane_lsof_fallback"
+assert_rc0 "lsof fallback"
+assert_gone "lsof fallback" "$lane_lsof_fallback"
+
 # A worker still running in an aged, clean checkout must not be deleted.
 lane_inuse="$HOME/w/lane-in-use"
 clone_lane "$lane_inuse"

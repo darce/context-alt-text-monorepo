@@ -1166,7 +1166,8 @@ lane_has_live_process() {
   # possible to force a particular portable probe when validating a host whose
   # procfs is restricted (ISSUEDAG-1-HARNC-R-06/GATES-HARNESS-R-10).
   local dir="$1" probe="${REAP_LIVE_PROBE:-auto}" cwd target pid self_cwd
-  local proc_error=0 self_target="" procfs_restricted=0
+  local proc_error=0 self_target="" procfs_restricted=0 probe_status
+  local fallback_error=""
   local mount_source mount_point mount_type mount_options mount_extra
   live_probe_reason=""
   if [[ -z "$dir" ]]; then
@@ -1263,37 +1264,38 @@ lane_has_live_process() {
     if lsof -a -d cwd -- "$dir" >/dev/null 2>&1; then
       live_probe_reason="lane has a live process"
       return 0
+    else
+      # Capture the command's status in the else arm. The status of an `if`
+      # compound command is zero when no branch runs, which would otherwise
+      # turn lsof's documented "no open files" status into an unknown result.
+      probe_status=$?
+      case "$probe_status" in
+        1)
+          live_probe_reason="lane has no live process"
+          return 1
+          ;;
+        *) fallback_error="could not determine lane liveness: lsof failed" ;;
+      esac
     fi
-    case "$?" in
-      1)
-        live_probe_reason="lane has no live process"
-        return 1
-        ;;
-      *)
-        live_probe_reason="could not determine lane liveness: lsof failed"
-        return 2
-        ;;
-    esac
   fi
 
   if command -v fuser >/dev/null 2>&1; then
     if fuser -m "$dir" >/dev/null 2>&1; then
       live_probe_reason="lane has a live process"
       return 0
+    else
+      probe_status=$?
+      case "$probe_status" in
+        1)
+          live_probe_reason="lane has no live process"
+          return 1
+          ;;
+        *) fallback_error="${fallback_error:-could not determine lane liveness: fuser failed}" ;;
+      esac
     fi
-    case "$?" in
-      1)
-        live_probe_reason="lane has no live process"
-        return 1
-        ;;
-      *)
-        live_probe_reason="could not determine lane liveness: fuser failed"
-        return 2
-        ;;
-    esac
   fi
 
-  live_probe_reason="could not determine lane liveness: no process probe is available"
+  live_probe_reason="${fallback_error:-could not determine lane liveness: no process probe is available}"
   return 2
 }
 

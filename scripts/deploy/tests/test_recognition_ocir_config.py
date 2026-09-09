@@ -350,7 +350,8 @@ def test_rollback_is_captured_before_remote_build_and_used_on_failures() -> None
     ]
     assert deploy.index('preserve_rollback_tag "$env"') < deploy.index('do_build_remote "$tag"')
     assert 'restore_env_tag_to_rollback "$env" 0' in deploy
-    assert 'restore_env_tag_to_rollback "$env" 1' in deploy
+    # Executable phase tests pin when runtime recovery is required.
+    assert 'restore_env_tag_to_rollback "$env" "${restart_runtime}"' in deploy
     assert 'promote_gate "$env" "${ACX_CANDIDATE_DIGEST_REF}"' in deploy
 
 
@@ -590,7 +591,7 @@ def test_single_attempt_verify_does_not_sleep_after_terminal_failure(tmp_path: P
     assert not sleep_record.exists()
 
 
-def test_verify_accepts_unhealthy_health_body_and_compares_identity() -> None:
+def test_verify_rejects_unhealthy_health_even_with_matching_identity() -> None:
     expected_sha = subprocess.check_output(
         ["git", "rev-parse", "HEAD"],
         cwd=SCRIPT.parents[2],
@@ -613,9 +614,9 @@ do_verify dev
 '''
     result = subprocess.run(["/bin/bash", "-c", command], text=True, capture_output=True, check=False)
 
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 1, result.stderr
     assert "reports unhealthy (database)" in result.stderr
-    assert "Verified: dev runs" in result.stdout
+    assert "Verified: dev runs" not in result.stdout
 
 
 def test_status_prints_unhealthy_for_reachable_503_health_body() -> None:

@@ -321,6 +321,53 @@ def find_secret(vaults_client, compartment_id, vault_id, name, invoke=None):
     return None
 
 
+def _list_secret_versions(vaults_client, secret_id, invoke=None):
+    """Return every version summary, following the Vault pagination token."""
+    invoke = invoke or _direct_call
+    versions = []
+    page = None
+    seen_pages = set()
+    while True:
+        kwargs = {
+            "sort_by": "VERSION_NUMBER",
+            "sort_order": "DESC",
+        }
+        if page is not None:
+            kwargs["page"] = page
+        response = invoke("list secret versions", vaults_client.list_secret_versions, secret_id, **kwargs)
+        versions.extend(response.data)
+        headers = getattr(response, "headers", None) or {}
+        next_page = headers.get("opc-next-page") or getattr(response, "next_page", None)
+        if not next_page:
+            return versions
+        if next_page in seen_pages:
+            raise RuntimeError(f"Vaults API repeated pagination token {next_page!r}")
+        seen_pages.add(next_page)
+        page = next_page
+
+
+# CURRENT/PENDING describe the active rotation state. LATEST is independent
+# metadata for the most recently uploaded content and may remain attached to a
+# historical PREVIOUS/DEPRECATED version after a later version becomes current.
+_RECONCILABLE_VERSION_STAGES = frozenset({"CURRENT", "PENDING"})
+
+
+def _version_stages(version):
+    """Return the stage labels reported for a Vault version."""
+    stages = getattr(version, "stages", None) or ()
+    if isinstance(stages, str):
+        stages = (stages,)
+    return {stage.upper() for stage in stages if isinstance(stage, str)}
+
+
+def find_secret_version(vaults_client, secret_id, version_name, invoke=None):
+    """Find a version by its caller-supplied deterministic name."""
+    for version in _list_secret_versions(vaults_client, secret_id, invoke=invoke):
+        if getattr(version, "name", None) == version_name:
+            return version
+    return None
+
+
 def write_secret_if_needed(*, existing, value, read_current, create_secret, update_secret):
     """Create/update a secret, skipping a duplicate version on identical input."""
     if existing is not None and read_current() == value:
@@ -337,6 +384,11 @@ def mutation_retry_token(vault_id: str, secret_name: str, value: bytes) -> str:
         digest.update(len(field).to_bytes(8, "big"))
         digest.update(field)
     return digest.hexdigest()
+
+
+def mutation_version_name(value: bytes) -> str:
+    """Return a stable, non-secret name for this value's Vault version."""
+    return f"acx-{hashlib.sha256(value).hexdigest()[:32]}"
 
 
 def require_etag(response, secret_name: str) -> str:
@@ -470,8 +522,10 @@ def main() -> int:
         invoke=invoke,
     )
 
+    version_name = mutation_version_name(value)
     content = oci.vault.models.Base64SecretContentDetails(
         content_type="BASE64",
+        name=version_name,
         content=base64.b64encode(value).decode("ascii"),
     )
     retry_token = mutation_retry_token(args.vault_id, args.secret_name, value)
@@ -505,6 +559,28 @@ def main() -> int:
 
     current_value = read_bundle() if existing is not None else None
     validate_current_prefix(current_value, args.require_current_prefix, args.secret_name)
+
+    pending_version = None
+    historical_version = None
+    if existing is not None and current_value != value:
+        # A previous update may have been accepted while its response was lost,
+        # leaving the consumer path on the old ACTIVE version. Vault version
+        # names are unique within a secret, so this deterministic name lets a
+        # retry reconcile that mutation before submitting another version.
+        matching_version = find_secret_version(
+            vaults,
+            existing.id,
+            version_name,
+            invoke=invoke,
+        )
+        if matching_version is not None:
+            if _version_stages(matching_version) & _RECONCILABLE_VERSION_STAGES:
+                pending_version = matching_version
+            else:
+                # PREVIOUS and DEPRECATED versions retain their unique name, so
+                # submitting the same content again is not a valid idempotent
+                # retry. Re-select the existing version as CURRENT instead.
+                historical_version = matching_version
 
     mutation_etag = update_etag
 
@@ -546,14 +622,39 @@ def main() -> int:
         mutation_etag = require_etag(response, args.secret_name)
         return response.data
 
-    try:
-        secret, action = write_secret_if_needed(
-            existing=existing,
-            value=value,
-            read_current=lambda: current_value,
-            create_secret=create_secret,
-            update_secret=update_secret,
+    def reactivate_historical_version():
+        nonlocal mutation_etag
+        version_number = getattr(historical_version, "version_number", None)
+        if not isinstance(version_number, int) or isinstance(version_number, bool) or version_number <= 0:
+            raise RuntimeError(
+                f"matching historical {args.secret_name} version has no usable version number; "
+                "refusing to submit a duplicate version"
+            )
+        update_kwargs = {"if_match": update_etag} if conditional_update else {}
+        response = invoke(
+            f"reactivate {args.secret_name} version {version_number}",
+            vaults.update_secret,
+            existing.id,
+            oci.vault.models.UpdateSecretDetails(current_version_number=version_number),
+            mutation=True,
+            **update_kwargs,
         )
+        mutation_etag = require_etag(response, args.secret_name)
+        return response.data
+
+    try:
+        if pending_version is not None:
+            secret, action = existing, "existing version pending"
+        elif historical_version is not None:
+            secret, action = reactivate_historical_version(), "reactivated historical version"
+        else:
+            secret, action = write_secret_if_needed(
+                existing=existing,
+                value=value,
+                read_current=lambda: current_value,
+                create_secret=create_secret,
+                update_secret=update_secret,
+            )
     except MutationOutcomeUnknownError as exc:
         # A lost create/update response is not proof of failure. Reconcile from
         # the consumer path before allowing a rerun to submit another version.
@@ -565,7 +666,7 @@ def main() -> int:
                 hashlib.sha256(value).hexdigest(),
                 timeout=remaining,
             )
-        except (OperationDeadlineError, SecretNotReadableError) as reconcile_exc:
+        except Exception as reconcile_exc:
             raise MutationOutcomeUnknownError(
                 f"{exc}; reconciliation did not establish the active value ({reconcile_exc})"
             ) from exc
@@ -591,13 +692,20 @@ def main() -> int:
             )
 
         print(f"  waiting for {args.secret_name} to become readable ...", flush=True)
-        wait_until_readable(
-            read_bundle,
-            args.secret_name,
-            hashlib.sha256(value).hexdigest(),
-            timeout=min(args.readable_timeout, deadline.remaining("read-back")),
-            prepare_attempt=prepare_attempt,
-        )
+        try:
+            wait_until_readable(
+                read_bundle,
+                args.secret_name,
+                hashlib.sha256(value).hexdigest(),
+                timeout=min(args.readable_timeout, deadline.remaining("read-back")),
+                prepare_attempt=prepare_attempt,
+            )
+        except Exception as exc:
+            if action != "already current":
+                raise MutationOutcomeUnknownError(
+                    f"{args.secret_name} write was accepted but read-back did not confirm it: {exc}"
+                ) from exc
+            raise
         print("  readable: value matches what was written")
     return 0
 

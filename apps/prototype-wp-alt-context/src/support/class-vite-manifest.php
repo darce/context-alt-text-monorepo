@@ -39,12 +39,8 @@ final class ViteManifest {
 	}
 
 	public static function from_plugin(): self {
-		$primary  = ACX_PLUGIN_DIR . 'public/assets/dist/.vite/manifest.json';
-		$fallback = ACX_PLUGIN_DIR . 'public/assets/dist/manifest.json';
-		$path     = is_readable( $primary ) ? $primary : $fallback;
-
 		return new self(
-			$path,
+			self::plugin_manifest_path(),
 			static function ( string $relative ): string {
 				$asset_path = 'public/assets/dist/' . ltrim( $relative, '/' );
 				$url        = plugins_url( $asset_path, 'alt-context/alt-context.php' );
@@ -52,6 +48,17 @@ final class ViteManifest {
 				return function_exists( 'esc_url_raw' ) ? esc_url_raw( $url ) : $url;
 			}
 		);
+	}
+
+	public static function plugin_manifest_path(): string {
+		$primary  = ACX_PLUGIN_DIR . 'public/assets/dist/.vite/manifest.json';
+		$fallback = ACX_PLUGIN_DIR . 'public/assets/dist/manifest.json';
+
+		return is_readable( $primary ) ? $primary : $fallback;
+	}
+
+	public function manifest_path(): string {
+		return $this->manifestPath;
 	}
 
 	/**
@@ -155,16 +162,6 @@ final class ViteManifest {
 		}
 
 		$css = array();
-		if ( isset( $chunk['css'] ) && is_array( $chunk['css'] ) ) {
-			foreach ( $chunk['css'] as $file ) {
-				if ( ! is_string( $file ) || '' === $file || isset( $seen_css[ $file ] ) ) {
-					continue;
-				}
-				$seen_css[ $file ] = true;
-				$css[]             = $file;
-			}
-		}
-
 		if ( isset( $chunk['imports'] ) && is_array( $chunk['imports'] ) ) {
 			foreach ( $chunk['imports'] as $import ) {
 				if ( ! is_string( $import ) || '' === $import ) {
@@ -173,6 +170,17 @@ final class ViteManifest {
 				foreach ( $this->collect_css( $import, $visited, $seen_css ) as $imported ) {
 					$css[] = $imported;
 				}
+			}
+		}
+
+		// Post-order: imported CSS first so this chunk can override shared rules.
+		if ( isset( $chunk['css'] ) && is_array( $chunk['css'] ) ) {
+			foreach ( $chunk['css'] as $file ) {
+				if ( ! is_string( $file ) || '' === $file || isset( $seen_css[ $file ] ) ) {
+					continue;
+				}
+				$seen_css[ $file ] = true;
+				$css[]             = $file;
 			}
 		}
 

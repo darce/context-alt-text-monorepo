@@ -581,6 +581,7 @@ test-scripts:
 		scripts/test_ocirv1_vault_readiness.py \
 		scripts/test_shell_parses_under_system_bash.py \
 		scripts/test_worktree_reap.py \
+		scripts/test_gpu_burst_evidence.py \
 		scripts/test_gpu_burst_smoke.py scripts/test_gpu_cost_report.py scripts/test_gpu_spike_bench.py; \
 	if [ -d scripts/hooks ] && [ -d .github/hooks ] && [ -d scripts/consumer-hooks/git ]; then \
 		set -- scripts/hooks .github/hooks scripts/test_php_characterization_gate.py "$$@"; \

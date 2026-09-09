@@ -730,10 +730,12 @@ def test_do_verify_surfaces_non_gating_readiness_code_and_body(tmp_path: Path) -
 
 def test_restart_and_rollback_integration_points_are_deadlined() -> None:
     restart = _function_body("do_restart")
-    rollback = _function_body("restore_env_tag_to_rollback")
+    registry = _function_body("restore_registry_env_tag")
+    runtime = _function_body("restore_runtime_and_edge")
     assert "run_with_deadline" in _function_body("repair_blob_volume_ownership")
     assert "run_with_deadline" in restart
-    assert rollback.count("run_with_deadline") >= 3
+    assert registry.count("run_with_deadline") >= 2
+    assert runtime.count("run_with_deadline") >= 1
 
 
 def test_remote_repo_transport_failure_is_not_reported_as_absent() -> None:
@@ -771,7 +773,13 @@ verify_running_image_matches_deployed dev
 
 
 def test_rollback_success_requires_post_restart_health_evidence() -> None:
-    body = _function_body("restore_env_tag_to_rollback")
+    orchestrator = _function_body("restore_env_tag_to_rollback")
+    body = _function_body("restore_runtime_and_edge")
+    assert "assert_rollback_fence" in orchestrator
+    assert "restore_registry_env_tag" in orchestrator
+    assert "restore_runtime_and_edge" in orchestrator
+    assert orchestrator.index("assert_rollback_fence") < orchestrator.index("restore_registry_env_tag")
+    assert orchestrator.index("restore_registry_env_tag") < orchestrator.index("restore_runtime_and_edge")
     assert "verify_restored_runtime" in body
     assert "restore_topology_backups" in body
     assert "restore_edge_backups" in body
@@ -780,7 +788,8 @@ def test_rollback_success_requires_post_restart_health_evidence() -> None:
     assert body.index("restore_prior_image_repo_env") < body.index('"rollback systemctl restart')
     assert body.index('"rollback systemctl restart') < body.index("restore_edge_backups")
     assert body.index("restore_edge_backups") < body.index("abort_cutover_candidate")
-    assert body.index("verify_restored_runtime") < body.index('log "Restored')
+    assert body.index("verify_restored_runtime") > body.index("abort_cutover_candidate")
+    assert 'log "Restored' in orchestrator
 
 
 def test_docker_credential_paths_are_not_globally_exported() -> None:
@@ -1115,6 +1124,9 @@ def test_do_restart_marks_post_restart_before_systemctl() -> None:
     )
     assert body.index('ACX_RESTART_EVIDENCE_PHASE="post_restart"') < body.index("sudo systemctl start")
     assert body.index("systemctl start") < body.index("systemctl restart")
+    assert body.index("ACX_LIVE_DISRUPTED=1") < body.index("systemctl restart ${unit}")
+    assert body.index("systemctl start") < body.index("ACX_LIVE_DISRUPTED=1")
+    assert body.rindex("ACX_LIVE_DISRUPTED=0") > body.index("ACX_LIVE_DISRUPTED=1")
 
 
 def test_pre_candidate_docker_ps_is_compose_project_scoped(tmp_path: Path) -> None:
@@ -2380,6 +2392,8 @@ def _run_verify_optional_after_verify_failure(
     invoke: str,
     rollback_rc: int,
     restart_failure_phase: str | None = None,
+    live_disrupted: int = 0,
+    traffic_flipped: int = 0,
 ) -> subprocess.CompletedProcess[str]:
     """Source recognition-service.sh and reach the post-verify rollback branch."""
     fail_log = tmp_path / "fail.log"
@@ -2406,6 +2420,8 @@ do_push_sha() {{ return 0; }}
 do_push_tag() {{ return 0; }}
 do_restart() {{
   ACX_RESTART_EVIDENCE_PHASE={restart_failure_phase or "pre_candidate"}
+  ACX_LIVE_DISRUPTED={live_disrupted}
+  ACX_TRAFFIC_FLIPPED={traffic_flipped}
   return {1 if restart_failure_phase else 0}
 }}
 promote_gate() {{ return 0; }}
@@ -2436,14 +2452,26 @@ fail() {{
 
 
 @pytest.mark.parametrize("invoke", ["do_deploy dev", "do_promote dev prod"])
-@pytest.mark.parametrize("phase,runtime", [("pre_candidate", "0"), ("post_restart", "1")])
-def test_restart_failure_recovers_runtime_only_after_restart_begins(tmp_path, monkeypatch, invoke, phase, runtime):
+@pytest.mark.parametrize(
+    "phase,live_disrupted,traffic_flipped,runtime",
+    [
+        ("pre_candidate", 0, 0, "0"),
+        ("post_restart", 0, 0, "0"),
+        ("post_restart", 1, 0, "1"),
+        ("post_restart", 0, 1, "1"),
+    ],
+)
+def test_restart_failure_recovers_runtime_only_after_live_disruption(
+    tmp_path, monkeypatch, invoke, phase, live_disrupted, traffic_flipped, runtime
+):
     monkeypatch.setenv("CONFIRM", "PROMOTE")
     result = _run_verify_optional_after_verify_failure(
         tmp_path,
         invoke=invoke,
         rollback_rc=0,
         restart_failure_phase=phase,
+        live_disrupted=live_disrupted,
+        traffic_flipped=traffic_flipped,
     )
     assert result.returncode != 0
     assert f"rollback-runtime={runtime}" in result.stdout, result.stdout + result.stderr
@@ -2483,6 +2511,7 @@ def _run_actual_restart_failure_transaction(
     invoke: str,
     runtime_mode: str = "candidate",
     health_code: str = "200",
+    fail_at: str = "next_start",
 ) -> subprocess.CompletedProcess[str]:
     """Run a real deploy/promote restart failure through fake SSH and Docker."""
     state = tmp_path / "rollback-state"
@@ -2499,6 +2528,9 @@ def _run_actual_restart_failure_transaction(
     prior_cid = "5" * 64
     stopped_cid = "3" * 64
     rollback_cid = "4" * 64
+    remote_dir = state / "remote"
+    remote_dir.mkdir()
+    (remote_dir / "docker-compose.cutover.yml").write_text("# fake cutover compose\n")
     if invoke.startswith("do_rollback"):
         (state / "prior-stopped").write_text("")
     else:
@@ -2524,16 +2556,32 @@ printf '%s\n' "$*" >>"${state}/docker.log"
 if [[ "${1:-}" == "compose" ]]; then
   ps=0
   all=0
+  compose_project="$project"
+  prev=""
   for arg in "$@"; do
     [[ "$arg" == "ps" ]] && ps=1
     [[ "$arg" == "-a" || "$arg" == "-aq" || "$arg" == "--all" ]] && all=1
+    if [[ "$prev" == "-p" || "$prev" == "--project-name" ]]; then
+      compose_project="$arg"
+    fi
+    prev="$arg"
   done
+  next_project="${project}-next"
   if (( ps )); then
+    if [[ "$compose_project" == "$next_project" ]]; then
+      if (( all )); then
+        [[ "$runtime_mode" == "unknown" ]] && exit 1
+        if [[ -f "${state}/candidate-stopped" || -f "${state}/next-running-cid" ]]; then
+          printf '%s\n' "$stopped_cid"
+        fi
+      elif [[ -f "${state}/next-running-cid" ]]; then
+        cat "${state}/next-running-cid"
+      fi
+      exit 0
+    fi
     if (( all )); then
       [[ "$runtime_mode" == "unknown" ]] && exit 1
-      if [[ -f "${state}/candidate-stopped" ]]; then
-        printf '%s\n' "$stopped_cid"
-      elif [[ -f "${state}/prior-stopped" ]]; then
+      if [[ -f "${state}/prior-stopped" ]]; then
         printf '%s\n' "$prior_cid"
       fi
     elif [[ -f "${state}/running-cid" ]]; then
@@ -2565,6 +2613,7 @@ if [[ "${1:-}" == "inspect" || ( "${1:-}" == "image" && "${2:-}" == "inspect" ) 
     exit 0
   fi
   if [[ "$format" == *"State.Status"* && "$format" == *"Config.Labels"* ]]; then
+    next_project="${project}-next"
     if [[ "$target" == "$prior_cid" ]]; then
       prior_state="running"
       [[ -f "${state}/prior-stopped" ]] && prior_state="exited"
@@ -2572,7 +2621,11 @@ if [[ "${1:-}" == "inspect" || ( "${1:-}" == "image" && "${2:-}" == "inspect" ) 
     elif [[ "$target" == "$stopped_cid" ]]; then
       stopped_image_id="$candidate_id"
       [[ "$runtime_mode" == "wrong" ]] && stopped_image_id="$wrong_id"
-      printf 'RUNTIME|%s|%s|exited|%s|api|candidate-generation\n' "$stopped_cid" "$stopped_image_id" "$project"
+      if [[ -f "${state}/next-running-cid" && ! -f "${state}/candidate-stopped" ]]; then
+        printf 'RUNTIME|%s|%s|running|%s|api|candidate-generation\n' "$stopped_cid" "$stopped_image_id" "$next_project"
+      else
+        printf 'RUNTIME|%s|%s|exited|%s|api|candidate-generation\n' "$stopped_cid" "$stopped_image_id" "$next_project"
+      fi
     elif [[ "$target" == "$rollback_cid" ]]; then
       printf 'RUNTIME|%s|%s|running|%s|api|rollback-generation\n' "$rollback_cid" "$rollback_id" "$project"
     else
@@ -2635,14 +2688,40 @@ esac
     )
     _write_executable(fake_bin / "docker", docker)
 
-    ssh = r"""#!/usr/bin/env bash
+    ssh = (
+        r"""#!/usr/bin/env bash
 set -euo pipefail
 state="${FAKE_ROLLBACK_STATE:?}"
 runtime_mode="__RUNTIME_MODE__"
+fail_at="__FAIL_AT__"
+stopped_cid="__STOPPED_CID__"
 cat >/dev/null || true
 remote="${@: -1}"
 printf '%s\n' "$remote" >>"${state}/ssh.log"
 if [[ "$remote" == *"systemctl start"* && "$remote" == *"-next"* ]]; then
+  if [[ "$fail_at" == "next_start" ]]; then
+    if [[ "$runtime_mode" == "prior" ]]; then
+      : >"${state}/prior-stopped"
+    elif [[ "$runtime_mode" == "candidate" || "$runtime_mode" == "wrong" ]]; then
+      : >"${state}/candidate-stopped"
+    fi
+    exit 1
+  fi
+  printf '%s\n' "$stopped_cid" >"${state}/next-running-cid"
+  exit 0
+fi
+if [[ "$remote" == *"systemctl restart"* ]]; then
+  if [[ -f "${state}/rollback-pushed" ]]; then
+    printf '%s\n' "__ROLLBACK_CID__" >"${state}/running-cid"
+    exit 0
+  fi
+  if [[ "$fail_at" == "live_restart" ]]; then
+    rm -f "${state}/running-cid"
+    if [[ "$runtime_mode" == "absent" || "$runtime_mode" == "unknown" ]]; then
+      rm -f "${state}/next-running-cid"
+    fi
+    exit 1
+  fi
   rm -f "${state}/running-cid"
   if [[ "$runtime_mode" == "prior" ]]; then
     : >"${state}/prior-stopped"
@@ -2651,18 +2730,12 @@ if [[ "$remote" == *"systemctl start"* && "$remote" == *"-next"* ]]; then
   fi
   exit 1
 fi
-if [[ "$remote" == *"systemctl restart"* ]]; then
-  if [[ -f "${state}/rollback-pushed" ]]; then
-    printf '%s\n' "__ROLLBACK_CID__" >"${state}/running-cid"
-    exit 0
-  fi
-  rm -f "${state}/running-cid"
-  if [[ "$runtime_mode" == "prior" ]]; then
-    : >"${state}/prior-stopped"
-  elif [[ "$runtime_mode" == "candidate" || "$runtime_mode" == "wrong" ]]; then
-    : >"${state}/candidate-stopped"
-  fi
-  exit 1
+remote="${remote//\/opt\/acx-backend\/dev/${state}/remote}"
+remote="${remote//\/opt\/acx-backend\/staging/${state}/remote}"
+remote="${remote//\/opt\/acx-backend\/prod/${state}/remote}"
+if [[ "$remote" == *"docker compose"* && "$remote" == *"ps"* ]]; then
+  bash -c "$remote"
+  exit $?
 fi
 if [[ "$remote" == *"systemctl"* || "$remote" == *"daemon-reload"* \
      || "$remote" == *".bak"* || "$remote" == *"cutover"* \
@@ -2673,7 +2746,11 @@ if [[ "$remote" == cd\ *" && "* ]]; then
   remote="${remote#* && }"
 fi
 bash -c "$remote"
-""".replace("__ROLLBACK_CID__", rollback_cid).replace("__RUNTIME_MODE__", runtime_mode)
+""".replace("__ROLLBACK_CID__", rollback_cid)
+        .replace("__RUNTIME_MODE__", runtime_mode)
+        .replace("__FAIL_AT__", fail_at)
+        .replace("__STOPPED_CID__", stopped_cid)
+    )
     _write_executable(fake_bin / "ssh", ssh)
 
     curl = r"""#!/usr/bin/env bash
@@ -2751,8 +2828,8 @@ fail() {{ printf 'xx %s\\n' "$*" >&2; exit 1; }}
 
 @pytest.mark.parametrize("invoke", ["do_deploy dev", "do_promote dev staging"])
 def test_actual_restart_failure_restores_after_confirmed_stopped_candidate(tmp_path: Path, invoke: str) -> None:
-    """A failed replacement leaves a candidate stopped container as ownership proof."""
-    result = _run_actual_restart_failure_transaction(tmp_path, invoke=invoke)
+    """A failed live restart fences the next-project candidate before bouncing live."""
+    result = _run_actual_restart_failure_transaction(tmp_path, invoke=invoke, fail_at="live_restart")
     combined = result.stdout + result.stderr
     state = tmp_path / "rollback-state"
     env_name = "staging" if "staging" in invoke else "dev"
@@ -2763,19 +2840,20 @@ def test_actual_restart_failure_restores_after_confirmed_stopped_candidate(tmp_p
     ssh_log = (state / "ssh.log").read_text()
     assert result.returncode != 0, combined
     assert "Rollback verified healthy" in combined, combined
-    assert "Confirmed stopped api container" in combined, combined
+    assert f"in acx-{env_name}-next" in combined, combined
     assert docker_log.count(f"tag {rollback_digest} {base}:{env_name}") == 1
     assert docker_log.count(f"push {base}:{env_name}") == 1
     assert ssh_log.count(f"systemctl start {unit}-next") == 1, ssh_log
-    assert ssh_log.count(f"systemctl restart {unit}") == 1, ssh_log
+    assert ssh_log.count(f"systemctl restart {unit}") == 2, ssh_log
+    assert "-p acx-" + env_name + "-next" in docker_log, docker_log
     assert (state / "running-cid").read_text().strip() == "4" * 64
     assert "STALE ROLLBACK REFUSED" not in combined
 
 
 @pytest.mark.parametrize("invoke", ["do_deploy dev", "do_promote dev staging"])
-def test_before_candidate_creation_recovers_confirmed_stopped_prior(tmp_path: Path, invoke: str) -> None:
-    """A compose-stop-before-create failure may recover only its captured prior."""
-    result = _run_actual_restart_failure_transaction(tmp_path, invoke=invoke, runtime_mode="prior")
+def test_failed_next_unit_start_does_not_restart_live(tmp_path: Path, invoke: str) -> None:
+    """A failed additive start restores the env tag without bouncing the live unit."""
+    result = _run_actual_restart_failure_transaction(tmp_path, invoke=invoke, fail_at="next_start")
     combined = result.stdout + result.stderr
     state = tmp_path / "rollback-state"
     env_name = "staging" if "staging" in invoke else "dev"
@@ -2786,13 +2864,12 @@ def test_before_candidate_creation_recovers_confirmed_stopped_prior(tmp_path: Pa
     ssh_log = (state / "ssh.log").read_text()
 
     assert result.returncode != 0, combined
-    assert "Confirmed stopped prior api container" in combined, combined
-    assert "Rollback verified healthy" in combined, combined
     assert docker_log.count(f"tag {rollback_digest} {base}:{env_name}") == 1
     assert docker_log.count(f"push {base}:{env_name}") == 1
     assert ssh_log.count(f"systemctl start {unit}-next") == 1, ssh_log
-    assert ssh_log.count(f"systemctl restart {unit}") == 1, ssh_log
-    assert (state / "running-cid").read_text().strip() == "4" * 64
+    assert ssh_log.count(f"systemctl restart {unit}") == 0, ssh_log
+    assert (state / "running-cid").read_text().strip() == "5" * 64
+    assert "Rollback verified healthy" not in combined
     assert "STALE ROLLBACK REFUSED" not in combined
 
 
@@ -2837,8 +2914,10 @@ def test_manual_rollback_keeps_http_503_health_gate(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("runtime_mode", ["absent", "unknown", "wrong"])
 def test_actual_restart_failure_refuses_unowned_runtime_observation(tmp_path: Path, runtime_mode: str) -> None:
-    """No container or failed inspection cannot authorize automatic rollback."""
-    result = _run_actual_restart_failure_transaction(tmp_path, invoke="do_deploy dev", runtime_mode=runtime_mode)
+    """No container or failed inspection cannot authorize automatic live rollback."""
+    result = _run_actual_restart_failure_transaction(
+        tmp_path, invoke="do_deploy dev", runtime_mode=runtime_mode, fail_at="live_restart"
+    )
     combined = result.stdout + result.stderr
     state = tmp_path / "rollback-state"
     docker_log = (state / "docker.log").read_text()
@@ -2850,7 +2929,7 @@ def test_actual_restart_failure_refuses_unowned_runtime_observation(tmp_path: Pa
     assert f"tag {rollback_digest} {base}:dev" not in docker_log
     assert f"push {base}:dev" not in docker_log
     assert ssh_log.count("systemctl start acx-dev-next") == 1, ssh_log
-    assert ssh_log.count("systemctl restart acx-dev") == 0, ssh_log
+    assert ssh_log.count("systemctl restart acx-dev") == 1, ssh_log
     assert not (state / "running-cid").exists()
 
 
@@ -2919,3 +2998,56 @@ def test_flip_edge_alias_rewrites_only_allowlisted_proxy_targets() -> None:
     assert "${alias}-next" in body
     assert "caddy reload" in body
     assert "next|canonical" in body or "next)" in body
+
+
+def test_read_api_runtime_evidence_inspects_cutover_project() -> None:
+    body = _function_body("read_api_runtime_evidence")
+    assert "docker-compose.cutover.yml" in body
+    assert "acx-${env}-next" in body
+    assert "-p ${next_project}" in body or "-p ${next_project} -f docker-compose.cutover.yml" in body
+
+
+def test_assert_rollback_fence_accepts_next_project_candidate() -> None:
+    body = _function_body("assert_rollback_fence")
+    assert 'next_project="acx-${env}-next"' in body
+    assert "${canonical_project}" in body
+    assert "${next_project}" in body
+    assert "stopped-candidate" in body
+
+
+def test_restore_rollback_helpers_are_split() -> None:
+    orchestrator = _function_body("restore_env_tag_to_rollback")
+    fence = _function_body("assert_rollback_fence")
+    registry = _function_body("restore_registry_env_tag")
+    runtime = _function_body("restore_runtime_and_edge")
+    assert "assert_rollback_fence" in orchestrator
+    assert "restore_registry_env_tag" in orchestrator
+    assert "restore_runtime_and_edge" in orchestrator
+    assert "systemctl restart" not in registry
+    assert "remote_docker_with_config push" in registry
+    assert "read_api_runtime_evidence" in fence
+    assert "restore_topology_backups" in runtime
+    assert "leaving candidate serving" in runtime
+
+
+def test_restore_edge_backups_prefers_flip_bak_when_traffic_flipped() -> None:
+    body = _function_body("restore_edge_backups")
+    assert "Caddyfile.flip.bak" in body
+    assert "Caddyfile.bak" in body
+    assert 'ACX_TRAFFIC_FLIPPED:-0}" == "1"' in body
+    assert body.index("Caddyfile.flip.bak") < body.index("Caddyfile.bak")
+    assert "flip_edge_alias" in body
+    assert "leaving candidate serving" in body
+
+
+def test_cutover_failure_restart_runtime_ignores_evidence_phase() -> None:
+    helper = _function_body("cutover_failure_restart_runtime")
+    deploy = _function_body("do_deploy")
+    promote = _function_body("do_promote")
+    assert "ACX_LIVE_DISRUPTED" in helper
+    assert "ACX_TRAFFIC_FLIPPED" in helper
+    assert "post_restart" not in helper
+    assert "cutover_failure_restart_runtime" in deploy
+    assert "cutover_failure_restart_runtime" in promote
+    assert 'ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}" == "post_restart"' not in deploy
+    assert 'ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}" == "post_restart"' not in promote

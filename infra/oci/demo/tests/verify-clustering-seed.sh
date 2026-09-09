@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # E15-29 Slice 1: assert the clustering seed bundle is correctly populated.
-#   - exactly PERSONS*PER_PERSON eligible images in OUT, zero webp
+#   - exactly PERSONS*PER_PERSON (+ guided-manifest files) eligible images in OUT, zero webp
 #   - every image is TRUE image/jpeg or image/png by content (magic bytes),
 #     not just by extension (E15-29-BR-02: webp/avif renamed .jpg break the decoder)
 #   - manifest lists PERSONS persons, each with >= PER_PERSON
@@ -16,7 +16,14 @@ MANIFEST="${MANIFEST:-$SEED_DIR/clustering-manifest.txt}"
 README="${README:-$SEED_DIR/README.md}"
 PERSONS="${PERSONS:-20}"
 PER_PERSON="${PER_PERSON:-5}"
-EXPECT=$((PERSONS * PER_PERSON))
+GUIDED_MANIFEST="${GUIDED_MANIFEST:-$SEED_DIR/guided-manifest.txt}"
+# GUIDESEED-1: media/ also holds the guided-prototype people written by
+# select-guided-seed.sh; their count comes from guided-manifest.txt (0 when absent).
+guided=0
+if [[ -f "$GUIDED_MANIFEST" ]]; then
+  guided=$(awk '/^[a-z0-9_]+ [0-9]+$/ { s += $2 } END { print s + 0 }' "$GUIDED_MANIFEST")
+fi
+EXPECT=$((PERSONS * PER_PERSON + guided))
 fail=0
 
 n=$(find "$OUT" -maxdepth 1 -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \) 2>/dev/null | wc -l | tr -d ' ')
@@ -59,4 +66,4 @@ rows=$(grep -cE '^\| [a-z0-9_]+\.(jpg|jpeg|png) \|' "$README" 2>/dev/null || tru
 [[ "$rows" -ge "$EXPECT" ]] || { echo "FAIL: provenance rows $rows < $EXPECT in $README" >&2; fail=1; }
 
 if [[ "$fail" -ne 0 ]]; then echo "verify-clustering-seed: FAIL" >&2; exit 1; fi
-echo "verify-clustering-seed: OK ($n images, $PERSONS persons >= $PER_PERSON each, $rows provenance rows)"
+echo "verify-clustering-seed: OK ($n images = $PERSONS persons x $PER_PERSON + $guided guided, $rows provenance rows)"

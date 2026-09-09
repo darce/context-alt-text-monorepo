@@ -859,7 +859,7 @@ _pull_ref_remote() {{ :; }}
 restore_runtime_and_edge() {{ return 0; }}
 remote_image_digest_ref() {{
   if [[ "$1" == *":dev" ]]; then
-    printf x >>"{records}.inspects"
+    printf 'inspect\\n' >>"{records}.inspects"
     if [[ "$(wc -l < "{records}.inspects")" -eq 1 ]]; then
       printf '%s\\n' "$IMAGE_BASE@sha256:{candidate}"
     else
@@ -870,13 +870,49 @@ remote_image_digest_ref() {{
   fi
 }}
 remote_docker_with_config() {{ printf '%s\\n' "$*" >>"{records}"; return 0; }}
-restore_env_tag_to_rollback dev 0
+restore_env_tag_to_rollback dev-fir 0
 '''
     result = subprocess.run(["/bin/bash", "-c", command], text=True, capture_output=True, check=False)
     logged = records.read_text() if records.exists() else ""
-    assert result.returncode != 0, result.stdout + result.stderr
-    assert "STALE ROLLBACK REFUSED" in result.stderr
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    assert "ROLLBACK CAS REFUSED" in result.stderr
+    assert "dev-fir" in result.stderr
+    assert candidate in result.stderr
+    assert newer in result.stderr
     assert "push " not in logged
+
+
+def test_rollback_push_cas_happy_path_pushes_when_tag_unchanged(tmp_path: Path) -> None:
+    """R-07: compare-and-swap must push when the shared env tag is still the planned digest."""
+    records = tmp_path / "docker-commands"
+    rollback = "a" * 64
+    candidate = "b" * 64
+    command = f'''
+source "{SCRIPT}"
+ACX_ROLLBACK_DIGEST_REF="$IMAGE_BASE@sha256:{rollback}"
+ACX_ROLLBACK_IMAGE_BASE="$IMAGE_BASE"
+ACX_CANDIDATE_DIGEST_REF="$IMAGE_BASE@sha256:{candidate}"
+with_shared_tag_lock() {{ shift; "$@"; }}
+_pull_ref_remote() {{ :; }}
+restore_runtime_and_edge() {{ return 0; }}
+remote_image_digest_ref() {{
+  if [[ "$1" == *":dev" ]]; then
+    printf '%s\\n' "$IMAGE_BASE@sha256:{candidate}"
+  else
+    printf '%s\\n' "$1"
+  fi
+}}
+remote_docker_with_config() {{ printf '%s\\n' "$*" >>"{records}"; return 0; }}
+restore_env_tag_to_rollback dev-fir 0
+'''
+    result = subprocess.run(["/bin/bash", "-c", command], text=True, capture_output=True, check=False)
+    logged = records.read_text() if records.exists() else ""
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+    assert "ROLLBACK CAS REFUSED" not in combined
+    assert "tag " in logged
+    assert "push " in logged
 
 
 def test_restore_and_promote_serialize_on_shared_env_tag() -> None:
@@ -3199,9 +3235,11 @@ def _run_flip_edge_alias(tmp_path: Path, caddyfile: str, target: str = "next") -
     bin_dir.mkdir()
     _write_executable(bin_dir / "sudo", '#!/usr/bin/env bash\nexec "$@"\n')
     _write_executable(bin_dir / "docker", "#!/usr/bin/env bash\nexit 0\n")
+    digest = "b" * 64
     command = f'''
 source "{SCRIPT}"
 GREEN=; YELLOW=; RED=; RESET=
+ACX_CANDIDATE_DIGEST_REF="$IMAGE_BASE@sha256:{digest}"
 run_with_deadline() {{ shift 2; "$@"; }}
 ssh() {{
   last="${{@: -1}}"
@@ -3251,9 +3289,22 @@ def test_flip_edge_alias_persists_inflight_cutover_marker(tmp_path: Path) -> Non
     assert result.returncode == 0, combined
     assert inflight.is_file(), combined
     body = inflight.read_text()
+    assert "env=dev" in body
     assert "status=traffic_on_next" in body
     assert "next_unit=acx-dev-next" in body
+    assert re.search(r"(?m)^digest=.+@sha256:[a-f0-9]{64}$", body)
+    assert re.search(r"(?m)^timestamp=[0-9]+$", body)
     assert not committed.exists()
+
+
+def test_flip_edge_alias_writes_marker_before_caddy_rewrite() -> None:
+    """R-09: the durable flip marker must be written before traffic is rewritten."""
+    body = _function_body("flip_edge_alias")
+    marker_at = body.index("cutover-inflight")
+    rewrite_at = body.index("sed -E")
+    assert marker_at < rewrite_at
+    assert "timestamp=" in body
+    assert "digest=" in body
 
 
 def test_flip_edge_alias_canonical_writes_commit_marker(tmp_path: Path) -> None:
@@ -3261,7 +3312,9 @@ def test_flip_edge_alias_canonical_writes_commit_marker(tmp_path: Path) -> None:
     original = "dev.example {\n\treverse_proxy dev-api-next:8000\n}\n"
     inflight = _cutover_state_dir(tmp_path)
     inflight.mkdir(parents=True)
-    (inflight / "cutover-inflight").write_text("status=traffic_on_next\nnext_unit=acx-dev-next\n")
+    (inflight / "cutover-inflight").write_text(
+        "env=dev\ndigest=sha256:" + ("b" * 64) + "\ntimestamp=1\nstatus=traffic_on_next\nnext_unit=acx-dev-next\n"
+    )
     result = _run_flip_edge_alias(tmp_path, original, target="canonical")
     combined = result.stdout + result.stderr
     assert result.returncode == 0, combined
@@ -3330,6 +3383,27 @@ recover_interrupted_cutover
     logged = records.read_text() if records.exists() else ""
     assert result.returncode == 0, result.stdout + result.stderr
     assert logged.splitlines() == ["committed", "aborted"]
+
+
+def test_killed_run_flip_marker_recovers_on_next_deploy(tmp_path: Path) -> None:
+    """R-09: a leftover remote marker must recover even when ACX_TRAFFIC_FLIPPED starts at 0."""
+    records = tmp_path / "recover.log"
+    command = f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+ACX_TRAFFIC_FLIPPED=0
+cutover_inflight_present() {{ return 0; }}
+restore_edge_backups() {{ printf 'restored\\n' >>"{records}"; ACX_TRAFFIC_FLIPPED=0; return 0; }}
+abort_cutover_candidate() {{ printf 'aborted\\n' >>"{records}"; return 0; }}
+enable_cutover_candidate() {{ printf 'enabled\\n' >>"{records}"; return 0; }}
+commit_cutover_state() {{ printf 'committed\\n' >>"{records}"; return 0; }}
+recover_persisted_cutover dev
+printf 'traffic=%s\\n' "$ACX_TRAFFIC_FLIPPED" >>"{records}"
+'''
+    result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, check=False)
+    logged = records.read_text() if records.exists() else ""
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert logged.splitlines() == ["restored", "committed", "aborted", "traffic=0"]
 
 
 def test_term_after_traffic_flip_invokes_cutover_recovery(tmp_path: Path) -> None:

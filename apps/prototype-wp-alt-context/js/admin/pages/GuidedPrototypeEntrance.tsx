@@ -1,32 +1,80 @@
 import React from 'react';
 
-import { guidedCopy } from '../guidedPrototype/copy';
-
-const CASE_STUDY_HREF = 'https://darce.xyz/projects/altcontext/';
+import { CASE_STUDY_URL, RECORDING_URL, guidedCopy } from '../guidedPrototype/publicGuideCopy';
 
 export interface GuidedPrototypeEntranceProps {
   onBegin: () => void;
+  scope?: 'public' | 'admin';
+  escapeHref?: string;
 }
 
-export const GuidedPrototypeEntrance = ({ onBegin }: GuidedPrototypeEntranceProps): React.JSX.Element => (
-  <section className="acx-guided-entrance" aria-labelledby="acx-guided-entrance-title">
-    <p className="acx-guided-entrance__eyebrow">{guidedCopy('page.eyebrow')}</p>
-    <h1 id="acx-guided-entrance-title">{guidedCopy('page.title')}</h1>
-    <p className="acx-guided-entrance__intro">{guidedCopy('page.intro')}</p>
-    <p className="acx-guided-entrance__scope">{guidedCopy('page.scope')}</p>
-    <p className="acx-guided-entrance__live-scope">{guidedCopy('page.live_scope')}</p>
+const NEW_WINDOW_HINT = ' (opens in a new window)';
 
-    <button type="button" className="acx-button acx-button--primary" onClick={onBegin}>
-      {guidedCopy('page.start')}
-    </button>
-
-    <p className="acx-guided-entrance__boundary">
-      <a className="acx-guided-entrance__case-study" href={CASE_STUDY_HREF} target="_blank" rel="noreferrer">
-        {guidedCopy('page.case_study')}
-        <span className="screen-reader-text"> (opens in a new window)</span>
-      </a>
-    </p>
-  </section>
+const ExternalGuideLink = ({
+  href,
+  className,
+  children,
+}: {
+  href: string;
+  className?: string;
+  children: React.ReactNode;
+}): React.JSX.Element => (
+  <a className={className} href={href} target="_blank" rel="noreferrer">
+    {children}
+    <span className="screen-reader-text">{NEW_WINDOW_HINT}</span>
+  </a>
 );
+
+export const GuidedPrototypeEntrance = ({
+  onBegin,
+  scope = 'admin',
+  escapeHref = '/',
+}: GuidedPrototypeEntranceProps): React.JSX.Element => {
+  if (scope === 'public') {
+    return (
+      <section className="acx-guided-entrance" aria-labelledby="acx-guided-entrance-title">
+        <nav className="acx-guided-entrance__escape" aria-label={guidedCopy('nav.leave')}>
+          <a href={escapeHref}>{guidedCopy('nav.home')}</a>
+          <ExternalGuideLink href={CASE_STUDY_URL}>{guidedCopy('nav.case_study')}</ExternalGuideLink>
+        </nav>
+        <p className="acx-guided-entrance__scope" data-testid="guided-scope">
+          {guidedCopy('scope.public')}
+        </p>
+        <h1 id="acx-guided-entrance-title">{guidedCopy('page.title')}</h1>
+        <div className="acx-guided-entrance__actions">
+          <button type="button" className="acx-button acx-button--primary" onClick={onBegin}>
+            {guidedCopy('page.start')}
+          </button>
+          <ExternalGuideLink className="acx-button acx-button--secondary" href={RECORDING_URL}>
+            {guidedCopy('entry.watch')}
+          </ExternalGuideLink>
+          <ExternalGuideLink className="acx-button acx-button--secondary" href={CASE_STUDY_URL}>
+            {guidedCopy('entry.read_case_study')}
+          </ExternalGuideLink>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="acx-guided-entrance" aria-labelledby="acx-guided-entrance-title">
+      <p className="acx-guided-entrance__eyebrow">{guidedCopy('page.eyebrow')}</p>
+      <h1 id="acx-guided-entrance-title">{guidedCopy('page.title')}</h1>
+      <p className="acx-guided-entrance__intro">{guidedCopy('page.intro')}</p>
+      <p className="acx-guided-entrance__scope">{guidedCopy('page.scope')}</p>
+      <p className="acx-guided-entrance__live-scope">{guidedCopy('page.live_scope')}</p>
+
+      <button type="button" className="acx-button acx-button--primary" onClick={onBegin}>
+        {guidedCopy('page.start')}
+      </button>
+
+      <p className="acx-guided-entrance__boundary">
+        <ExternalGuideLink className="acx-guided-entrance__case-study" href={CASE_STUDY_URL}>
+          {guidedCopy('page.case_study')}
+        </ExternalGuideLink>
+      </p>
+    </section>
+  );
+};
 
 GuidedPrototypeEntrance.displayName = 'GuidedPrototypeEntrance';

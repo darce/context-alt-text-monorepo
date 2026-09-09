@@ -46,7 +46,7 @@ export default defineConfig({
     {
       name: 'evidence',
       dependencies: ['auth-setup'],
-      testMatch: /evidence\/(?!guided-walkthrough\.spec\.ts$).*\.spec\.ts/,
+      testMatch: /evidence\/(?!(?:guided-walkthrough|public-guide)\.spec\.ts$).*\.spec\.ts/,
       outputDir: path.join(artifactRoot, 'evidence'),
       use: {
         headless: false,
@@ -76,6 +76,23 @@ export default defineConfig({
         storageState: storageStatePath,
         trace: 'retain-on-failure',
         video: { mode: 'on', size: { width: 1440, height: 900 } },
+      },
+    },
+    {
+      // GUIDEROUTE-1: signed-out public guide at /guide/. No auth-setup; desktop
+      // 1440×900 is the project default and the spec also covers Pixel 7.
+      // Export ACX_PUBLIC_GUIDE_URL via `npm run e2e:public-guide` or
+      // `make demo-public-guide-e2e SITE_URL=...`. Spec skips if unset.
+      name: 'public-guide',
+      testMatch: /evidence\/public-guide\.spec\.ts/,
+      outputDir: path.join(artifactRoot, 'public-guide'),
+      retries: 0,
+      use: {
+        baseURL: (process.env.ACX_PUBLIC_GUIDE_URL ?? wpBaseUrl).replace(/\/guide\/?$/, ''),
+        headless: true,
+        storageState: { cookies: [], origins: [] },
+        viewport: { width: 1440, height: 900 },
+        trace: 'retain-on-failure',
       },
     },
     {

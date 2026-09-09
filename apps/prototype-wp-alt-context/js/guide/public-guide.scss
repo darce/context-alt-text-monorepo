@@ -1,0 +1,63 @@
+@use 'sass:meta';
+@use '../admin/styles/tokens/colors';
+@use '../admin/styles/tokens/radius';
+@use '../admin/styles/tokens/spacing';
+@use '../admin/styles/tokens/typography';
+
+.acx-public-guide {
+  @include meta.load-css('../admin/styles/components/button');
+  @include meta.load-css('../admin/styles/components/guided-prototype');
+  @include meta.load-css('../admin/styles/components/dialog');
+  @include meta.load-css('../admin/styles/components/radio-group');
+
+  margin: 0;
+  background: var(--acx-color-surface);
+  color: var(--acx-color-text);
+
+  .screen-reader-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  &__loading {
+    margin: var(--acx-space-24);
+    color: var(--acx-color-text-muted);
+    font-size: var(--acx-text-base);
+    font-weight: var(--acx-font-weight-medium);
+  }
+
+  &__fallback {
+    margin: var(--acx-space-24);
+    color: var(--acx-color-text);
+  }
+
+  &__loading[hidden],
+  &__fallback[hidden] {
+    display: none;
+  }
+
+  .acx-guided-entrance__escape {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--acx-space-16);
+  }
+
+  .acx-guided-entrance__escape a {
+    color: var(--acx-color-accent-contrast);
+    font-weight: var(--acx-font-weight-semibold);
+  }
+
+  .acx-guided-entrance__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--acx-space-12);
+    align-items: center;
+  }
+}

@@ -42,6 +42,8 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from ._pathtext import _printable_path
+
 _THUMB_DEFAULT = 440
 EXIT_NOT_COMPARABLE = 4
 EXIT_BAKEOFF_GATE = 5
@@ -1123,7 +1125,10 @@ def main(argv: list[str] | None = None) -> int:
     except ComparabilityError as exc:
         print(f"error: {exc}", file=sys.stderr)
         if Path(args.out).exists():
-            print(f"warning: {args.out} was NOT rewritten and still holds an older report", file=sys.stderr)
+            print(
+                f"warning: {_printable_path(args.out)} was NOT rewritten and still holds an older report",
+                file=sys.stderr,
+            )
         return EXIT_NOT_COMPARABLE
     if foreign:
         badged = {(f"{label}{NON_COMPARABLE_BADGE} ({foreign[label]})" if label in foreign else label): cells
@@ -1181,7 +1186,7 @@ def main(argv: list[str] | None = None) -> int:
         if banner:
             doc = doc.replace("<main>", "<main>" + banner, 1)
     Path(args.out).write_text(doc)
-    print(f"wrote {args.out} ({len(doc) / 1024:.0f}KB, {len(media_ids)} images, {len(runs)} run(s))")
+    print(f"wrote {_printable_path(args.out)} ({len(doc) / 1024:.0f}KB, {len(media_ids)} images, {len(runs)} run(s))")
     if evaluation is not None and evaluation["status"] != "pass":
         print(f"bakeoff-gate: {evaluation['status']}", file=sys.stderr)
         return EXIT_BAKEOFF_GATE

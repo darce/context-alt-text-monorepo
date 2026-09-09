@@ -20,17 +20,24 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--task", required=True)
     parser.add_argument("--plan", default="")
     args = parser.parse_args(argv)
+    task = args.task.strip()
+    plan_arg = args.plan.strip()
     payload = {
         "handler": HANDLER_ID,
-        "task": args.task,
-        "plan": args.plan,
+        "task": task,
+        "plan": plan_arg,
     }
-    if not args.plan:
+    if not task:
+        payload["status"] = "missing_task"
+        print(json.dumps(payload, sort_keys=True))
+        print("TASK= is required for plan-accept", file=sys.stderr)
+        return 2
+    if not plan_arg:
         payload["status"] = "missing_plan"
         print(json.dumps(payload, sort_keys=True))
         print("PLAN= is required for plan-accept", file=sys.stderr)
         return 2
-    plan = Path(args.plan)
+    plan = Path(plan_arg)
     if not plan.is_file():
         payload["status"] = "missing_file"
         print(json.dumps(payload, sort_keys=True))

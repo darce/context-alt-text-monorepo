@@ -45,6 +45,10 @@ DEPENDENCY_LOCKFILES: dict[str, str] = {
 
 SECURE_OFFLOAD_MARKER = ".acx-secure-offload"
 DEP_SOURCE_SIDECAR = ".acx-dep-source"
+# Tail case (PERF-08): one wave of many lanes, each freezing GB-scale trees.
+# Keep only live lockfile digests; history of lockfile churn must not accumulate.
+DEP_CACHE_SCAN_LIMIT = 32
+SIDECAR_ENTRY_KEYS = ("lockfile", "sha256", "readonly", "cache")
 
 
 def primary_checkout(start: Path) -> Path:
@@ -167,9 +171,36 @@ def _relocated_symlink_target(source: Path, target: Path) -> str:
     return os.path.relpath(source_target, os.fspath(target.parent))
 
 
+def _relative_stays_inside(rel: str) -> bool:
+    """Return whether ``rel`` cannot walk above its overlay root."""
+    if not rel:
+        return True
+    path = Path(rel)
+    if path.is_absolute():
+        return False
+    depth = 0
+    for part in path.parts:
+        if part == "..":
+            depth -= 1
+            if depth < 0:
+                return False
+        elif part in (".", ""):
+            continue
+        else:
+            depth += 1
+    return True
+
+
+def _require_contained_overlay_entry(src: Path, rel: str) -> None:
+    if _relative_stays_inside(rel):
+        return
+    raise RuntimeError(f"ignored overlay entry {rel!r} escapes {src}; refusing overlay copy")
+
+
 def _copy_overlay_entries(src: Path, dest: Path, entries: list[str]) -> None:
     """Copy an ignored-entry manifest without dereferencing entry symlinks."""
     for rel in entries:
+        _require_contained_overlay_entry(src, rel)
         source = src / rel
         target = dest / rel
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -202,6 +233,8 @@ def _rsync_overlay(src: Path, dest: Path, *, entries: list[str] | None = None) -
     if entries is not None:
         if not entries:
             return
+        for rel in entries:
+            _require_contained_overlay_entry(src, rel)
         # rsync preserves link text and, for a one-file files-from list, may
         # replace dest with that file. Copy overlay symlinks ourselves so
         # relative targets keep source meaning on rsync and non-rsync hosts.
@@ -290,6 +323,11 @@ def _dep_cache_path(worktree: Path, rel: str, digest: str) -> Path:
     return worktree / tree.parent / ".acx-dep-cache" / digest / tree.name
 
 
+def _usable_dep_cache(cache: Path) -> bool:
+    """Return whether ``cache`` is a real directory snapshot, not a dangling hit."""
+    return cache.is_dir()
+
+
 def _freeze_dependency_tree(src: Path, cache: Path) -> None:
     """Snapshot ``src`` into ``cache`` without dereferencing bin stubs.
 
@@ -297,8 +335,10 @@ def _freeze_dependency_tree(src: Path, cache: Path) -> None:
     the live primary tree, so an ``npm install`` in the primary cannot mutate a
     provisioned lane.
     """
-    if cache.exists() or cache.is_symlink():
+    if _usable_dep_cache(cache):
         return
+    if cache.exists() or cache.is_symlink():
+        _remove_existing_path(cache)
     cache.parent.mkdir(parents=True, exist_ok=True)
     tmp = cache.parent / f".tmp-{cache.name}.{os.getpid()}"
     _remove_existing_path(tmp)
@@ -308,7 +348,7 @@ def _freeze_dependency_tree(src: Path, cache: Path) -> None:
             tmp.rename(cache)
         except OSError:
             _remove_existing_path(tmp)
-            if not (cache.exists() or cache.is_symlink()):
+            if not _usable_dep_cache(cache):
                 raise
     except Exception:
         _remove_existing_path(tmp)
@@ -325,15 +365,94 @@ def _sidecar_path(dest: Path) -> Path:
     return dest.parent / DEP_SOURCE_SIDECAR
 
 
+def _require_sidecar_entry(sidecar: Path, name: object, entry: object) -> None:
+    if not isinstance(name, str) or not name:
+        raise RuntimeError(f"{sidecar} has an invalid dependency key; refusing to provision")
+    if not isinstance(entry, dict):
+        raise RuntimeError(f"{sidecar}: {name} must be an object; refusing to provision")
+    missing = [key for key in SIDECAR_ENTRY_KEYS if key not in entry]
+    if missing:
+        raise RuntimeError(
+            f"{sidecar}: {name} missing {', '.join(missing)}; refusing to provision"
+        )
+    lockfile = entry["lockfile"]
+    digest = entry["sha256"]
+    cache = entry["cache"]
+    if not isinstance(lockfile, str) or not lockfile:
+        raise RuntimeError(f"{sidecar}: {name}.lockfile must be a non-empty string")
+    if not isinstance(digest, str) or not digest:
+        raise RuntimeError(f"{sidecar}: {name}.sha256 must be a non-empty string")
+    if not isinstance(entry["readonly"], bool):
+        raise RuntimeError(f"{sidecar}: {name}.readonly must be a boolean")
+    if not isinstance(cache, str) or not cache:
+        raise RuntimeError(f"{sidecar}: {name}.cache must be a non-empty string")
+
+
 def _read_sidecar(dest: Path) -> dict[str, object]:
     sidecar = _sidecar_path(dest)
-    if not sidecar.is_file():
+    if not sidecar.exists() and not sidecar.is_symlink():
         return {}
+    if sidecar.is_symlink() or not sidecar.is_file():
+        raise RuntimeError(f"{sidecar} is not a regular file; refusing to provision")
     try:
         payload = json.loads(sidecar.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return payload if isinstance(payload, dict) else {}
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"{sidecar} is not valid JSON; refusing to provision") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"{sidecar} must be a JSON object; refusing to provision")
+    for name, entry in payload.items():
+        _require_sidecar_entry(sidecar, name, entry)
+    return payload
+
+
+def _sidecar_digests(payload: dict[str, object]) -> set[str]:
+    keep: set[str] = set()
+    for entry in payload.values():
+        if isinstance(entry, dict):
+            digest = entry.get("sha256")
+            if isinstance(digest, str) and digest:
+                keep.add(digest)
+    return keep
+
+
+def _evict_stale_dep_caches(worktree: Path, rel: str, *, keep_digests: set[str]) -> None:
+    """Drop stale snapshots of ``rel`` so the per-worktree cache stays bounded.
+
+    RES-08 / PERF-08: the miss path is one copytree of the current lockfile
+    tree. Retaining old digests does not help the many-lanes-in-one-wave tail;
+    it only grows disk. RES-05: directory scan is capped per provision.
+    """
+    cache_root = worktree / Path(rel).parent / ".acx-dep-cache"
+    tree_name = Path(rel).name
+    if cache_root.is_symlink() or not cache_root.is_dir():
+        return
+    scanned = 0
+    try:
+        iterator = os.scandir(cache_root)
+    except OSError as exc:
+        raise RuntimeError(f"cannot scan dependency cache {cache_root}: {exc}") from exc
+    with iterator:
+        for entry in iterator:
+            scanned += 1
+            if scanned > DEP_CACHE_SCAN_LIMIT:
+                break
+            path = Path(entry.path)
+            if entry.name.startswith(".tmp-"):
+                _remove_existing_path(path)
+                continue
+            if not entry.is_dir(follow_symlinks=False):
+                continue
+            if entry.name in keep_digests:
+                continue
+            stale_tree = path / tree_name
+            if stale_tree.exists() or stale_tree.is_symlink():
+                _remove_existing_path(stale_tree)
+            try:
+                next(path.iterdir())
+            except StopIteration:
+                _remove_existing_path(path)
+            except OSError:
+                continue
 
 
 def _write_sidecar_entry(dest: Path, *, lockfile: str, digest: str, cache: Path) -> None:
@@ -381,10 +500,12 @@ def provision_dependency_trees(*, primary: Path, worktree: Path) -> list[str]:
         lock_rel = DEPENDENCY_LOCKFILES[rel]
         digest = _lockfile_digest(worktree / lock_rel)
         primary_digest = _lockfile_digest(primary / lock_rel)
+        _read_sidecar(dest)
         if digest is None or primary_digest is None or digest != primary_digest:
             if dest.is_symlink():
                 dest.unlink()
             _drop_sidecar_entry(dest)
+            _evict_stale_dep_caches(worktree, rel, keep_digests=_sidecar_digests(_read_sidecar(dest)))
             mismatches.append(rel)
             print(
                 f"{rel}: lockfile mismatch or missing; install dependencies in the lane "
@@ -401,6 +522,7 @@ def provision_dependency_trees(*, primary: Path, worktree: Path) -> list[str]:
             dest.parent.mkdir(parents=True, exist_ok=True)
             os.symlink(cache, dest)
         _write_sidecar_entry(dest, lockfile=lock_rel, digest=digest, cache=cache)
+        _evict_stale_dep_caches(worktree, rel, keep_digests=_sidecar_digests(_read_sidecar(dest)))
         linked.append(rel)
     if mismatches:
         raise RuntimeError(

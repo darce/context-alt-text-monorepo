@@ -291,7 +291,29 @@ for raw_path in sys.argv[1:]:
 PY
 }
 
+# mkdir -p may introduce several directory entries. Persist the directory chain
+# so a successful first export cannot become unreachable after a host crash.
+sync_output_ancestors() {
+    "$resolved_python" - "$out_parent" <<'PY_ANCESTORS'
+import os
+import sys
+
+path = os.path.realpath(sys.argv[1])
+while True:
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    parent = os.path.dirname(path)
+    if parent == path:
+        break
+    path = parent
+PY_ANCESTORS
+}
+
 mkdir -p "$out_parent"
+sync_output_ancestors
 [ -d "$out_parent" ] || {
     echo "ERROR: output path is not a directory: $out_dir" >&2
     exit 1
@@ -754,7 +776,8 @@ if [ -e "$out_dir" ]; then
     # Arm cleanup first; it also checks that the backup actually exists.
     previous_moved=1
     mv -- "$out_dir" "$backup_dir"
-    sync_paths "$out_parent" "$transaction_dir"
+    # Persist the backup entry before persisting removal of the old entry.
+    sync_paths "$transaction_dir" "$out_parent"
 fi
 mv -- "$work_dir" "$out_dir"
 sync_paths "$out_parent"

@@ -51,6 +51,11 @@ lane-open: lane-guard
 			--lane-id "$(LANE)" \
 			--worktree-path "$(LANE_WORKTREE)"; \
 		echo ""; \
+		echo "Provisioning lane worktree overlays..."; \
+		python3 "$(ORCHESTRATOR_ROOT)/scripts/workstate/provision_lane_worktree.py" \
+			--worktree "$(LANE_WORKTREE)" \
+			--primary "$(ORCHESTRATOR_ROOT)"; \
+		echo ""; \
 		echo "Initial lane inbox:"; \
 		$(MAKE) --no-print-directory lane-inbox TASK="$(TASK)" LANE="$(LANE)"; \
 	fi; \

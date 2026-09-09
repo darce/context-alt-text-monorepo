@@ -13,6 +13,7 @@ import pytest
 from recognition.application.assignment import AssignmentDecision, AssignmentOutcome
 from recognition.application.orchestration.cluster_merge import post_merge_retry_matching
 from recognition.domain.representative import ClusterRepresentative
+from recognition.domain.suggestion import AssignmentSuggestion, SuggestionStatus
 
 
 def _unit(vec: list[float]) -> np.ndarray:
@@ -140,6 +141,51 @@ async def test_post_merge_retry_skips_foreign_space_even_when_cosine_is_high() -
         min_similarity_for_unclustered=0.5,
     )
 
+    evaluate.assert_not_awaited()
+    persist.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_post_merge_retry_rejects_pending_foreign_space_suggestion() -> None:
+    tenant_id = str(uuid4())
+    cluster_id = str(uuid4())
+    identity_id = str(uuid4())
+    suggestion = AssignmentSuggestion(
+        id=str(uuid4()),
+        identity_id=identity_id,
+        cluster_id=cluster_id,
+        representative_similarity=0.99,
+        member_similarity=0.99,
+        status=SuggestionStatus.PENDING,
+    )
+    model = _orm_identity(tenant_id=tenant_id, model="space-b")
+    model.id = uuid4()
+    model.id = identity_id
+    persist, evaluate, writer, gate, suggestions, session = _harness(
+        reps=[_rep(cluster_id, "space-a")],
+        unclustered=[],
+        tenant_id=tenant_id,
+        cluster_id=cluster_id,
+    )
+    suggestions.get_by_cluster = AsyncMock(return_value=[suggestion])
+    session.get = AsyncMock(return_value=model)
+
+    await post_merge_retry_matching(
+        tenant_id=tenant_id,
+        target_cluster_id=cluster_id,
+        session=session,
+        gate=gate,
+        assignment_writer=writer,
+        suggestion_service=suggestions,
+        max_unclustered=10,
+        min_similarity_for_unclustered=0.5,
+    )
+
+    suggestions.resolve_for_identity.assert_awaited_once_with(
+        identity_id,
+        cluster_id,
+        resolution="rejected",
+    )
     evaluate.assert_not_awaited()
     persist.assert_not_awaited()
 

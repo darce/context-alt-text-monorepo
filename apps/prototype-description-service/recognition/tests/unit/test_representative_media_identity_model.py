@@ -114,3 +114,25 @@ def test_filter_to_active_space_never_majority_falls_back() -> None:
     ):
         kept = filter_to_active_embedding_space(rows)
     assert [row.embedding_model for row in kept] == ["space-b"]
+
+
+def test_filter_to_active_space_excludes_single_foreign_model() -> None:
+    rows = [
+        SimpleNamespace(embedding_model="space-a"),
+        SimpleNamespace(embedding_model="space-a"),
+    ]
+    with patch(
+        "recognition.application.embedding.manifest.try_active_embedding_model_id",
+        return_value="space-b",
+    ):
+        assert filter_to_active_embedding_space(rows) == []
+
+
+def test_filter_to_active_space_excludes_unstamped_rows_mixed_with_stamp() -> None:
+    unstamped = SimpleNamespace(embedding_model=None)
+    active = SimpleNamespace(embedding_model="space-b")
+    with patch(
+        "recognition.application.embedding.manifest.try_active_embedding_model_id",
+        return_value="space-b",
+    ):
+        assert filter_to_active_embedding_space([unstamped, active]) == [active]

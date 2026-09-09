@@ -106,9 +106,14 @@ Use this producer-to-consumer order for the live flip:
    enable an old unit by hand or copy the module directly into a live path.
 4. Verify both env halves with `preflight-gpu-env.sh --check-reaper` after the
    lifecycle convergence and before publishing any demo descriptions.
-5. Run `deploy-demo` with `ACX_DEMO_GPU_PREFLIGHT=1`, so the deploy repeats the
+5. Run the live GPU snapshot checker after lifecycle convergence:
+   `GPU_SNAPSHOT_ENV=prod make check-gpu-snapshots-live`. This is mandatory;
+   it validates every registered `describe-load.json` for schema, readability,
+   and freshness on the host, rather than only checking that the files are
+   non-empty. The checker must finish with its `OK:` line before continuing.
+6. Run `deploy-demo` with `ACX_DEMO_GPU_PREFLIGHT=1`, so the deploy repeats the
    reaper/environment gate immediately before the demo stack is brought up.
-6. Confirm the bounded first-burst result (`Describe burst bounded` and
+7. Confirm the bounded first-burst result (`Describe burst bounded` and
    `PASS demo first describe burst`) and retain the preflight's `MANUAL STOP
    fallback` line as the operator's reaper-stop backstop.
 
@@ -137,6 +142,7 @@ for environment in dev dev-fir staging prod; do
     exit 1
   }
 done'
+GPU_SNAPSHOT_ENV=prod make check-gpu-snapshots-live
 PLUGIN_ZIP=dist/alt-context-reviewed.zip # Replace with the artifact named in the review record.
 PLUGIN_ZIP_SHA256=replace-with-reviewed-sha256 # Replace with that record's SHA-256.
 case "$PLUGIN_ZIP" in dist/alt-context-*.zip) ;; *) echo "Refusing unscoped plugin artifact path." >&2; exit 1 ;; esac

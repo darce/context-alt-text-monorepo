@@ -109,6 +109,8 @@ CURRENT_TASK.md
 DASHBOARD.txt
 DASHBOARD.md
 .task-state/
+.acx-dep-cache/
+.acx-dep-source
 
 # --- workbay-bootstrap-managed surfaces -------------------------------
 # Regenerate via `workbay-bootstrap install` from the pinned remote_sha in

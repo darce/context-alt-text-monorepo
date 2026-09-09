@@ -103,7 +103,14 @@ Use this producer-to-consumer order for the live flip:
    `--load-dir /run/acx-write` units with the durable lease path and shared
    lifecycle lock, and verifies both timers are enabled and active. Do not
    enable an old unit by hand or copy the module directly into a live path.
+   On a fresh host the installer enables `acx-gpu-reap.timer` without a
+   synchronous reaper start when `describe-load.json` snapshots have not been
+   published yet (`OnActiveSec` delays the first tick). Runtime reaper cycles
+   stay fail-closed on missing or stale snapshots; do not skip this
+   convergence, and do not start the reaper unit by hand before deploy prod.
 3. Redeploy the prod API and wait for its health/adapter verification to pass.
+   That publish is what makes the load snapshots exist for the later live
+   checker and for the first timer-driven reaper cycle.
 4. Verify both env halves with `preflight-gpu-env.sh --check-reaper` after the
    lifecycle convergence and before publishing any demo descriptions.
 5. Run the live GPU snapshot checker after lifecycle convergence:
@@ -113,6 +120,10 @@ Use this producer-to-consumer order for the live flip:
    non-empty. The checker must finish with its `OK:` line before continuing.
 6. Run `deploy-demo` with `ACX_DEMO_GPU_PREFLIGHT=1`, so the deploy repeats the
    reaper/environment gate immediately before the demo stack is brought up.
+   Repeat `GPU_SNAPSHOT_ENV=prod make check-gpu-snapshots-live` immediately
+   before that deploy so a slow artifact copy cannot exceed the snapshot
+   freshness budget after the earlier check. `--check-reaper` also rejects
+   any already-published load snapshot that has gone stale.
 7. Confirm the bounded first-burst result (`Describe burst bounded` and
    `PASS demo first describe burst`) and retain the preflight's `MANUAL STOP
    fallback` line as the operator's reaper-stop backstop.
@@ -160,9 +171,11 @@ case "$PLUGIN_ZIP" in dist/alt-context-*.zip) ;; *) echo "Refusing unscoped plug
 case "$PLUGIN_ZIP_SHA256" in replace-*|*[!0-9a-fA-F]*|'') echo "Set the reviewed artifact SHA-256." >&2; exit 1 ;; esac
 test "${#PLUGIN_ZIP_SHA256}" -eq 64
 test -f "$PLUGIN_ZIP"
-ACTUAL_PLUGIN_ZIP_SHA256="$(shasum -a 256 "$PLUGIN_ZIP" | awk '{print $1}')"
+ACTUAL_PLUGIN_ZIP_SHA256="$("$GPU_SNAPSHOT_SHA256" "$PLUGIN_ZIP" | awk '{print $1}')"
 test "$ACTUAL_PLUGIN_ZIP_SHA256" = "$PLUGIN_ZIP_SHA256"
 printf 'Deploying reviewed plugin artifact: %s\n' "$PLUGIN_ZIP"
+# Re-validate snapshot freshness immediately before stack startup.
+GPU_SNAPSHOT_ENV=prod make check-gpu-snapshots-live
 ACX_DEMO_GPU_PREFLIGHT=1 PLUGIN_ZIP="$PLUGIN_ZIP" make deploy-demo
 ```
 

@@ -237,6 +237,32 @@ ensure_acx_api_group() {
     printf '%s\n' "$name"
 }
 
+load_snapshots_ready_for_reaper_proof() {
+    # Immediate reaper proof needs published describe-load.json files. A fresh
+    # host has the directories (tmpfiles) but no producer snapshots yet; starting
+    # acx-gpu-reap.service then fails closed and aborts install before deploy
+    # prod can publish them. Runtime timer ticks remain fail-closed.
+    local dir snapshot
+    local ready=0
+    for dir in /run/acx-write/*/; do
+        if [ ! -d "$dir" ]; then
+            echo "gpu-lifecycle: no load snapshot directories yet; deferring immediate reaper proof until producer deploy publishes describe-load.json" >&2
+            return 1
+        fi
+        snapshot="${dir}describe-load.json"
+        if [ ! -s "$snapshot" ]; then
+            echo "gpu-lifecycle: missing load snapshot ${snapshot}; deferring immediate reaper proof until producer deploy publishes it" >&2
+            return 1
+        fi
+        ready=1
+    done
+    if [ "$ready" -ne 1 ]; then
+        echo "gpu-lifecycle: no load snapshot directories yet; deferring immediate reaper proof until producer deploy publishes describe-load.json" >&2
+        return 1
+    fi
+    return 0
+}
+
 activate_gpu_lifecycle_timers() {
     [ "$#" -eq 6 ] || {
         echo "error: lifecycle activation requires four expected hashes, max lease, and intent-path hash" >&2
@@ -244,7 +270,9 @@ activate_gpu_lifecycle_timers() {
     }
     local expected_intent_path_hash=$6
     sudo systemctl enable --now acx-gpu-reap.timer
-    sudo systemctl start acx-gpu-reap.service
+    if load_snapshots_ready_for_reaper_proof; then
+        sudo systemctl start acx-gpu-reap.service
+    fi
     verify_gpu_lifecycle_timers "$1" "$2" "$3" "$4" "$5"
 
     sudo systemctl enable --now acx-gpu-start.timer
@@ -817,6 +845,7 @@ start_verification_function=$(declare -f verify_gpu_lifecycle_start_timer)
 intent_path_verification_function=$(declare -f verify_gpu_intent_path)
 intent_path_fence_function=$(declare -f fence_gpu_intent_path)
 activation_function=$(declare -f activate_gpu_lifecycle_timers)
+load_snapshot_proof_function=$(declare -f load_snapshots_ready_for_reaper_proof)
 start_fence_function=$(declare -f fence_gpu_lifecycle_start)
 stale_reaper_purge_function=$(declare -f purge_stale_gpu_reaper_units)
 api_group_function=$(declare -f ensure_acx_api_group)
@@ -831,6 +860,7 @@ ${start_verification_function}
 ${intent_path_verification_function}
 ${intent_path_fence_function}
 ${activation_function}
+${load_snapshot_proof_function}
 ${start_fence_function}
 ${stale_reaper_purge_function}
 ${api_group_function}

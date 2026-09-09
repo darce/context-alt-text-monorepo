@@ -86,6 +86,99 @@ describe('DescribeRunApplyView', () => {
     expect(screen.getByLabelText(/Overwrite existing alt text for media 70/)).toBeInTheDocument();
   });
 
+  it('renders each supported naming provenance status and hides absent naming metadata', async () => {
+    fetchItemsMock.mockResolvedValue({
+      run_id: 'run-naming',
+      items: [
+        {
+          media_id: 81,
+          status: 'completed',
+          alt_text_draft: 'Ada and Bea stand by a window.',
+          caption: 'Two people by a window.',
+          provenance: {
+            naming: {
+              status: 'applied',
+              realizer: 'positional_fallback',
+              names_applied: ['Ada', 'Bea'],
+            },
+          },
+          ...runItemContract,
+          existing_alt: false,
+        },
+        {
+          media_id: 82,
+          status: 'completed',
+          alt_text_draft: 'A person by a window.',
+          caption: 'A person by a window.',
+          provenance: {
+            naming: { status: 'disabled', realizer: null, names_applied: [] },
+          },
+          ...runItemContract,
+          existing_alt: false,
+        },
+        {
+          media_id: 83,
+          status: 'completed',
+          alt_text_draft: 'A person by a window.',
+          caption: 'Another person by a window.',
+          provenance: {
+            naming: { status: 'skipped_budget', realizer: null, names_applied: [] },
+          },
+          ...runItemContract,
+          existing_alt: false,
+        },
+        {
+          media_id: 84,
+          status: 'completed',
+          alt_text_draft: null,
+          caption: null,
+          provenance: {
+            naming: { status: 'no_faces', realizer: null, names_applied: [] },
+          },
+          ...runItemContract,
+          existing_alt: false,
+        },
+        {
+          media_id: 85,
+          status: 'completed',
+          alt_text_draft: 'A landscape.',
+          caption: 'A landscape.',
+          provenance: null,
+          ...runItemContract,
+          existing_alt: false,
+        },
+        {
+          media_id: 86,
+          status: 'completed',
+          alt_text_draft: 'Ada stands by a window.',
+          caption: 'A person by a window.',
+          provenance: {
+            naming: { status: 'applied', realizer: 'grounded', names_applied: ['Ada'] },
+          },
+          ...runItemContract,
+          existing_alt: false,
+        },
+      ],
+    });
+
+    renderView('run-naming');
+
+    expect(await screen.findByText('Ada and Bea stand by a window.')).toBeInTheDocument();
+    expect(screen.getByText('Names: Ada, Bea · positional')).toBeInTheDocument();
+    expect(screen.getByText('No names (disabled)')).toBeInTheDocument();
+    expect(screen.getByText('Names skipped (time budget)')).toBeInTheDocument();
+    expect(screen.getByText('No faces')).toBeInTheDocument();
+    expect(screen.getByText('Names: Ada · grounded')).toBeInTheDocument();
+    expect(screen.queryByTestId('acx-run-apply-naming-85')).not.toBeInTheDocument();
+
+    const positionalBadge = screen.getByTestId('acx-run-apply-naming-81');
+    expect(positionalBadge).toHaveAttribute(
+      'aria-label',
+      'Names were applied using positional fallback.',
+    );
+    expect(positionalBadge).toHaveAttribute('title', 'Names were applied using positional fallback.');
+  });
+
   it('applies the safe bucket with no overwrites by default', async () => {
     renderView();
     await screen.findByText('A red flower.');

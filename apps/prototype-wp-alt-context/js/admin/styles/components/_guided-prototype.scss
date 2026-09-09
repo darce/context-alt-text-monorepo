@@ -90,9 +90,14 @@
     letter-spacing: 0.04em;
   }
 
-  &__intro {
+  &__intro,
+  &__scope,
+  &__live-scope {
     max-width: 48rem;
     margin-bottom: var(--acx-space-8);
+  }
+
+  &__intro {
     font-size: var(--acx-text-lg);
   }
 
@@ -113,6 +118,11 @@
   &__boundary {
     max-width: 44rem;
     color: var(--acx-color-accent-contrast);
+  }
+
+  &__case-study {
+    color: inherit;
+    font-weight: var(--acx-font-weight-semibold);
   }
 
   .acx-button--primary {
@@ -226,15 +236,14 @@
   &__toggle {
     flex-shrink: 0;
   }
-
-  &__skip-link {
-    color: var(--acx-color-primary);
-    font-size: var(--acx-text-sm);
-    font-weight: var(--acx-font-weight-semibold);
-  }
 }
 
 .acx-guided-page__workspace {
+  display: grid;
+  gap: var(--acx-space-24);
+}
+
+.acx-guided-page__understand {
   display: grid;
   gap: var(--acx-space-24);
 }
@@ -273,6 +282,12 @@
   gap: var(--acx-space-16);
 }
 
+.acx-guided-page__context {
+  display: grid;
+  gap: var(--acx-space-12);
+  align-content: start;
+}
+
 .acx-guided-page__media-card,
 .acx-guided-page__provenance,
 .acx-guided-history,
@@ -294,33 +309,13 @@
   background: var(--acx-color-surface);
   box-shadow: var(--acx-shadow-card);
 
-  &__header,
-  &__how-it-works {
+  &__header {
     display: grid;
     gap: var(--acx-space-8);
-  }
 
-  &__header {
     h3 {
       margin-bottom: 0;
       font-size: var(--acx-text-xl);
-    }
-  }
-
-  &__how-it-works {
-    p {
-      margin: 0;
-      color: var(--acx-color-text);
-      font-weight: var(--acx-font-weight-semibold);
-    }
-
-    ol {
-      display: grid;
-      gap: var(--acx-space-4);
-      margin: 0;
-      padding-left: var(--acx-space-20);
-      color: var(--acx-color-text-muted);
-      font-size: var(--acx-text-sm);
     }
   }
 
@@ -344,9 +339,40 @@
 
   &__crop {
     display: flex;
-    align-items: flex-start;
-    justify-content: center;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    gap: var(--acx-space-8);
     min-width: 0;
+  }
+
+  &__enlarge {
+    justify-self: start;
+  }
+
+  &__lightbox-crop {
+    display: flex;
+    justify-content: center;
+    margin-bottom: var(--acx-space-16);
+  }
+
+  &__lightbox-gallery {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--acx-space-8);
+    margin: 0 0 var(--acx-space-12);
+    padding: 0;
+    list-style: none;
+
+    img {
+      display: block;
+      width: var(--acx-space-80);
+      height: auto;
+      max-width: 100%;
+      object-fit: cover;
+      border-radius: var(--acx-radius-md);
+      background: var(--acx-color-data-placeholder);
+    }
   }
 
   &__content {
@@ -363,17 +389,6 @@
   p {
     margin: 0;
     color: var(--acx-color-text-muted);
-  }
-
-  &__strength {
-    display: flex;
-    align-items: baseline;
-    gap: var(--acx-space-4);
-  }
-
-  &__strength-icon {
-    color: var(--acx-color-success-text);
-    font-weight: var(--acx-font-weight-bold);
   }
 
   &__disclosure,
@@ -455,6 +470,38 @@
     display: flex;
     flex-wrap: wrap;
     gap: var(--acx-space-8);
+  }
+
+  &__choice {
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  &__choice-options {
+    display: grid;
+    gap: var(--acx-space-8);
+  }
+
+  &__choice label {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--acx-space-8);
+    color: var(--acx-color-text);
+    font-size: var(--acx-text-sm);
+  }
+
+  &__evidence {
+    min-width: 0;
+    color: var(--acx-color-text);
+    font-size: var(--acx-text-sm);
+  }
+
+  &__next-reason {
+    margin: 0;
+    color: var(--acx-color-text-muted);
+    font-size: var(--acx-text-sm);
   }
 }
 
@@ -547,10 +594,26 @@
 }
 
 .acx-guided-page__feedback {
+  display: flex;
+  align-items: center;
+  gap: var(--acx-space-8);
   min-height: var(--acx-space-24);
   margin-bottom: 0;
   color: var(--acx-color-success-text);
   font-weight: var(--acx-font-weight-semibold);
+}
+
+.acx-guided-page__feedback-icon {
+  flex: 0 0 auto;
+  width: var(--acx-space-16);
+  color: var(--acx-color-success-text);
+  font-size: var(--acx-text-sm);
+  line-height: 1;
+  text-align: center;
+
+  &::before {
+    content: '\2713';
+  }
 }
 
 .acx-guided-review {
@@ -577,67 +640,6 @@
     h2 {
       margin-bottom: 0;
       font-size: var(--acx-text-xl);
-    }
-  }
-
-  &__status {
-    min-width: 0;
-    max-width: 100%;
-    flex-shrink: 1;
-    overflow-wrap: anywhere;
-    padding: var(--acx-space-4) var(--acx-space-8);
-    border-radius: var(--acx-radius-pill);
-    background: var(--acx-color-panel);
-    color: var(--acx-color-text-muted);
-    font-size: var(--acx-text-sm);
-    font-weight: var(--acx-font-weight-semibold);
-
-    &--edited {
-      background: var(--acx-color-accent-soft);
-      color: var(--acx-color-primary);
-    }
-
-    &--rejected {
-      background: var(--acx-color-danger-soft);
-      color: var(--acx-color-danger-strong);
-    }
-  }
-
-  &__context-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: var(--acx-space-12);
-    padding: var(--acx-space-20);
-    border-bottom: 1px solid var(--acx-color-border);
-    background: var(--acx-color-surface);
-  }
-
-  &__context-card {
-    min-width: 0;
-    padding: var(--acx-space-16);
-    border: 1px solid var(--acx-color-border);
-    border-radius: var(--acx-radius-md);
-    background: var(--acx-color-surface-alt);
-
-    h3 {
-      margin-bottom: var(--acx-space-8);
-      font-size: var(--acx-text-base);
-    }
-
-    p,
-    ul {
-      margin-bottom: var(--acx-space-8);
-      color: var(--acx-color-text-muted);
-      font-size: var(--acx-text-sm);
-    }
-
-    p:last-child,
-    ul:last-child {
-      margin-bottom: 0;
-    }
-
-    ul {
-      padding-left: var(--acx-space-20);
     }
   }
 
@@ -734,6 +736,58 @@
       color: var(--acx-color-text-muted);
     }
   }
+
+  &__preview-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--acx-space-16);
+  }
+
+  &__demo-preview {
+    display: grid;
+    gap: var(--acx-space-8);
+    margin: 0;
+    min-width: 0;
+
+    img {
+      display: block;
+      width: 100%;
+      max-height: 16rem;
+      object-fit: cover;
+      background: var(--acx-color-panel);
+    }
+  }
+
+  &__history {
+    padding: var(--acx-space-20);
+    color: var(--acx-color-text-muted);
+    font-size: var(--acx-text-sm);
+  }
+}
+
+.acx-guided-outcome,
+.acx-guided-notes {
+  display: grid;
+  gap: var(--acx-space-12);
+  padding: var(--acx-space-20);
+  border: 1px solid var(--acx-color-border);
+  border-radius: var(--acx-radius-lg);
+  background: var(--acx-color-surface);
+}
+
+.acx-guided-outcome h2,
+.acx-guided-notes summary {
+  margin: 0;
+  font-size: var(--acx-text-xl);
+  font-weight: var(--acx-font-weight-semibold);
+}
+
+.acx-guided-notes ul {
+  display: grid;
+  gap: var(--acx-space-8);
+  margin: 0;
+  padding-left: var(--acx-space-20);
+  color: var(--acx-color-text-muted);
 }
 
 .acx-guided-history {
@@ -762,8 +816,9 @@
 @media (max-width: 48rem) {
   .acx-guided-guide__body ol,
   .acx-guided-page__scenario,
-  .acx-guided-review__context-grid,
-  .acx-guided-review__comparison {
+  .acx-guided-review__comparison,
+  .acx-guided-review__preview-grid,
+  .acx-guided-face__cards {
     grid-template-columns: 1fr;
   }
 
@@ -790,7 +845,6 @@
   .acx-guided-guide__body,
   .acx-guided-guide__status,
   .acx-guided-review__header,
-  .acx-guided-review__context-grid,
   .acx-guided-review__comparison,
   .acx-guided-review__apply,
   .acx-guided-history,
@@ -833,7 +887,6 @@
   }
 }
 
-.acx-guided-live__additive,
 .acx-guided-live__naming {
   margin: 0 0 var(--acx-space-8);
   color: var(--acx-color-text-muted);
@@ -861,37 +914,43 @@
 }
 
 /**
- * One rule per GUIDED_LIVE_STATUS member. The waiting and pre-run states are
- * muted rather than unstyled, so a new status added to the enum without a rule
- * here is visible as body-coloured text instead of passing for a calm state.
+ * One rule per GUIDED_LIVE_BRIEF_STATUS member. A new brief status without a
+ * rule here is visible as body-coloured text instead of passing for a calm state.
  */
-.acx-guided-live__status--blocked,
+.acx-guided-live__status--unavailable {
+  color: var(--acx-color-danger);
+}
+
 .acx-guided-live__status--idle,
-.acx-guided-live__status--queued,
-.acx-guided-live__status--warming,
-.acx-guided-live__status--describing {
+.acx-guided-live__status--pending {
   color: var(--acx-color-text-muted);
 }
 
-.acx-guided-live__status--ready {
+.acx-guided-live__status--succeeded {
   color: var(--acx-color-success-text);
 }
 
-.acx-guided-live__status--degraded,
 .acx-guided-live__status--timed_out {
   color: var(--acx-color-warning-pill-text);
 }
 
-.acx-guided-live__status--unavailable,
-.acx-guided-live__status--cancelled {
+.acx-guided-live__status--stopped,
+.acx-guided-live__status--failed {
   color: var(--acx-color-danger);
 }
 
 .acx-guided-live__elapsed {
-  margin: 0 0 var(--acx-space-16);
+  margin: 0 0 var(--acx-space-4);
   color: var(--acx-color-text-muted);
   font-size: var(--acx-text-sm);
   font-variant-numeric: tabular-nums;
+}
+
+/** Whose budget the elapsed line counts against: the server's, or only ours. */
+.acx-guided-live__budget {
+  margin: 0 0 var(--acx-space-16);
+  color: var(--acx-color-text-muted);
+  font-size: var(--acx-text-sm);
 }
 
 .acx-guided-live__actions {

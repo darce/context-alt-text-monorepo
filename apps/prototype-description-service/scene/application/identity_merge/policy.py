@@ -38,6 +38,22 @@ class NamingMode(StrEnum):
     POSITIONAL = "positional"
 
 
+class NamingStatus(StrEnum):
+    """Stable outcome vocabulary for the persisted naming provenance."""
+
+    APPLIED = "applied"
+    DISABLED = "disabled"
+    SKIPPED_BUDGET = "skipped_budget"
+    NO_FACES = "no_faces"
+
+
+class NamingRealizer(StrEnum):
+    """Realizer vocabulary; no realizer is represented by ``None``."""
+
+    GROUNDED = "grounded"
+    POSITIONAL_FALLBACK = "positional_fallback"
+
+
 @dataclass(frozen=True)
 class NamingPolicy:
     """Tenant naming-agreement flag + per-roster suppress set + thresholds."""
@@ -70,6 +86,9 @@ class NamingProvenance:
     naming_allowed: bool = False
     reason: NamingSkipReason | None = None
     mode: NamingMode | None = None
+    status: NamingStatus | None = None
+    realizer: NamingRealizer | None = None
+    names_applied: tuple[str, ...] = field(default_factory=tuple)
 
 
 def resolve_naming_allowed(face: ConfirmedFace, policy: NamingPolicy) -> bool:

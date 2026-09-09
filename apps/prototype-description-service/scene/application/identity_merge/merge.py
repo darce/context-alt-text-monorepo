@@ -150,6 +150,26 @@ def containment_match(
     return [assoc for assoc in candidates if matched_counts[_box_key(assoc.phrase_box.box)] == 1]
 
 
+def _person_key(face: ConfirmedFace) -> tuple[str, str]:
+    """Identify a person without collapsing distinct people sharing a label."""
+    if face.cluster_id is not None:
+        return "cluster", str(face.cluster_id)
+    return "identity", str(face.identity_id)
+
+
+def _distinct_faces_by_person(faces: list[ConfirmedFace]) -> list[ConfirmedFace]:
+    """Keep one face per cluster while preserving the first visual occurrence."""
+    seen: set[tuple[str, str]] = set()
+    distinct: list[ConfirmedFace] = []
+    for face in faces:
+        key = _person_key(face)
+        if key in seen:
+            continue
+        seen.add(key)
+        distinct.append(face)
+    return distinct
+
+
 def merge_identities(
     *,
     caption: str,
@@ -176,7 +196,9 @@ def merge_identities(
         InjectedName,
         NamingMode,
         NamingProvenance,
+        NamingRealizer,
         NamingSkipReason,
+        NamingStatus,
         resolve_naming_allowed,
     )
     from scene.application.identity_merge.realizer import (
@@ -185,7 +207,17 @@ def merge_identities(
     )
 
     def _generic(reason: Any) -> MergeResult:
-        provenance = NamingProvenance(naming_allowed=False, reason=reason) if policy is not None else None
+        if policy is None:
+            provenance = None
+        else:
+            status = NamingStatus.DISABLED if reason is NamingSkipReason.AGREEMENT_DISABLED else NamingStatus.NO_FACES
+            provenance = NamingProvenance(
+                naming_allowed=False,
+                reason=reason,
+                status=status,
+                realizer=None,
+                names_applied=(),
+            )
         return MergeResult(generic_draft=caption, named_draft=caption, provenance=provenance)
 
     faces = list(confirmed_faces)
@@ -209,13 +241,13 @@ def merge_identities(
         # replace; duplicate mentions of one person collapse to one entry.
         # Keyed by cluster_id (the person), not label, so provenance stays
         # correct even if label uniqueness were ever relaxed.
-        dedup: dict[Any, ConfirmedFace] = {}
-        for a in associations:
-            dedup.setdefault(a.face.cluster_id, a.face)
+        dedup: dict[tuple[str, str], ConfirmedFace] = {}
+        for a in sorted(associations, key=lambda association: association.phrase_box.span_start):
+            dedup.setdefault(_person_key(a.face), a.face)
         named_faces = list(dedup.values())
         mode = NamingMode.GROUNDED
     elif not phrase_boxes and faces:
-        named_faces = sorted(faces, key=lambda f: f.box.center[0])  # fallback order
+        named_faces = _distinct_faces_by_person(sorted(faces, key=lambda f: f.box.center[0]))
         mode = NamingMode.POSITIONAL
     else:
         named_faces = []
@@ -225,8 +257,9 @@ def merge_identities(
             realizer = DeterministicNlgRealizer()
         elif not phrase_boxes and faces:
             realizer = PositionalFallbackRealizer()
+    realizer_faces = named_faces if not associations and not phrase_boxes else faces
     named_draft = (
-        realizer.realize(caption=caption, associations=associations, confirmed_faces=faces)
+        realizer.realize(caption=caption, associations=associations, confirmed_faces=realizer_faces)
         if realizer is not None
         else caption
     )
@@ -247,11 +280,21 @@ def merge_identities(
                 naming_allowed=True,
                 reason=None,
                 mode=mode,
+                status=NamingStatus.APPLIED,
+                realizer=(
+                    NamingRealizer.GROUNDED
+                    if mode is NamingMode.GROUNDED
+                    else NamingRealizer.POSITIONAL_FALLBACK
+                ),
+                names_applied=tuple(f.label for f in named_faces),
             )
         else:
             provenance = NamingProvenance(
                 naming_allowed=False,
                 reason=NamingSkipReason.AMBIGUOUS_GROUNDING,
+                status=NamingStatus.NO_FACES,
+                realizer=None,
+                names_applied=(),
             )
     return MergeResult(
         generic_draft=caption,

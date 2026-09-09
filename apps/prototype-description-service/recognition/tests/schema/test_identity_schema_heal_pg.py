@@ -11,13 +11,20 @@ against real Postgres).
 from __future__ import annotations
 
 import importlib
+import inspect
+import os
+import uuid
+from urllib.parse import urlsplit
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import create_engine, text
+
+from recognition.tests.schema.test_identity_schema_heal_fakeop import (
+    _FakeOp,
+    _issued_drop,
+)
 
 MIGRATION = importlib.import_module("db.migrations.versions.001_identity_schema")
-
-pytestmark = pytest.mark.pg
 
 
 def _table_names(engine) -> set[str]:
@@ -38,6 +45,7 @@ def _rls_state(engine) -> dict[str, tuple[bool, bool]]:
     return {name: (enabled, forced) for name, enabled, forced in rows}
 
 
+@pytest.mark.pg
 def test_heal_from_empty_db_converges_to_full_schema_with_rls(pg_empty_engine) -> None:
     # BR2-01 + BR2-02: from a bare database heal creates every expected table
     # (including the raw-SQL refresh queue) and tenant tables get enabled+forced RLS.
@@ -63,6 +71,7 @@ def test_heal_from_empty_db_converges_to_full_schema_with_rls(pg_empty_engine) -
     assert relkind == "m"
 
 
+@pytest.mark.pg
 def test_heal_twice_is_a_noop(pg_empty_engine) -> None:
     with pg_empty_engine.begin() as conn:
         MIGRATION.heal(conn)
@@ -72,6 +81,7 @@ def test_heal_twice_is_a_noop(pg_empty_engine) -> None:
     assert _table_names(pg_empty_engine) == before
 
 
+@pytest.mark.pg
 def test_heal_recreates_dropped_refresh_queue(pg_empty_engine) -> None:
     # BR2-01 regression: the exact E15-29 drift shape — stamped DB missing the
     # raw-SQL table — must be repaired by heal.
@@ -84,6 +94,516 @@ def test_heal_recreates_dropped_refresh_queue(pg_empty_engine) -> None:
     assert "identity_cluster_refresh_queue" in _table_names(pg_empty_engine)
 
 
+def _centroid_typmod(engine) -> int | None:
+    with engine.connect() as conn:
+        return conn.execute(
+            text(
+                "SELECT a.atttypmod FROM pg_attribute a "
+                "JOIN pg_class c ON c.oid = a.attrelid "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE n.nspname='public' AND c.relname='mv_identity_cluster_centroids' "
+                "AND a.attname='centroid'"
+            )
+        ).scalar()
+
+
+@pytest.mark.pg
+def test_heal_rebuilds_matview_that_lost_its_vector_typmod(pg_empty_engine) -> None:
+    # Every stack deployed before the outer cast carries a centroid column with
+    # atttypmod -1, which /health and /ready reject. Boot heal must rebuild it
+    # (indexes included) rather than leave the 503 to an operator.
+    with pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+    assert _centroid_typmod(pg_empty_engine) == MIGRATION.EMBEDDING_DIMENSION
+    with pg_empty_engine.begin() as conn:
+        conn.execute(text("DROP MATERIALIZED VIEW mv_identity_cluster_centroids"))
+        conn.execute(
+            text(
+                "CREATE MATERIALIZED VIEW mv_identity_cluster_centroids AS "
+                "SELECT c.id AS cluster_id, c.tenant_id, 0 AS identity_count, "
+                "NULL::vector AS centroid, c.updated_at AS refreshed_at "
+                "FROM identity_clusters c"
+            )
+        )
+    assert _centroid_typmod(pg_empty_engine) == -1
+
+    with pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+
+    assert _centroid_typmod(pg_empty_engine) == MIGRATION.EMBEDDING_DIMENSION
+    with pg_empty_engine.connect() as conn:
+        indexes = {
+            row[0]
+            for row in conn.execute(
+                text("SELECT indexname FROM pg_indexes WHERE tablename='mv_identity_cluster_centroids'")
+            )
+        }
+    assert {
+        "mv_cluster_centroids_cluster_id",
+        "mv_cluster_centroids_tenant_idx",
+        "mv_cluster_centroids_vector_idx",
+    } <= indexes
+
+
+def _matview_relacl(engine):
+    with engine.connect() as conn:
+        return conn.execute(
+            text(
+                "SELECT c.relacl FROM pg_class c "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE n.nspname = current_schema() "
+                "AND c.relname = 'mv_identity_cluster_centroids' AND c.relkind = 'm'"
+            )
+        ).scalar()
+
+
+def _matview_nonowner_grantees(engine) -> set[str]:
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT CASE WHEN acl.grantee = 0 THEN 'public' "
+                "ELSE pg_get_userbyid(acl.grantee) END "
+                "FROM pg_class c "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "CROSS JOIN LATERAL aclexplode(c.relacl) AS acl "
+                "WHERE n.nspname = current_schema() "
+                "AND c.relname = 'mv_identity_cluster_centroids' "
+                "AND c.relkind = 'm' "
+                "AND acl.grantee IS NOT NULL "
+                "AND acl.grantee IS DISTINCT FROM c.relowner"
+            )
+        ).fetchall()
+    return {str(row[0]) for row in rows}
+
+
+@pytest.mark.pg
+def test_heal_rebuilds_typmod_less_matview_with_null_relacl(pg_empty_engine) -> None:
+    # VLMHEAL-1-PG-ACL-01: default ACL (relacl NULL) must not trip aclexplode.
+    # This test uses pg_empty_engine; it must pytest.fail (never skip) when the
+    # fixture connected. Do not add pytest.skip based on IDENTITY_PG_URL.
+    with pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+        conn.execute(text("DROP MATERIALIZED VIEW mv_identity_cluster_centroids"))
+        conn.execute(
+            text(
+                "CREATE MATERIALIZED VIEW mv_identity_cluster_centroids AS "
+                "SELECT c.id AS cluster_id, c.tenant_id, 0 AS identity_count, "
+                "NULL::vector AS centroid, c.updated_at AS refreshed_at "
+                "FROM identity_clusters c"
+            )
+        )
+    if _matview_relacl(pg_empty_engine) is not None:
+        pytest.fail("typmod-less matview has explicit relacl right after CREATE")
+    assert _centroid_typmod(pg_empty_engine) == -1
+
+    with pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+
+    assert _centroid_typmod(pg_empty_engine) == MIGRATION.EMBEDDING_DIMENSION
+    assert _matview_nonowner_grantees(pg_empty_engine) == set()
+    assert _matview_relacl(pg_empty_engine) is None
+
+
+def _insert_describe_run(conn, *, tenant_id: str, run_id: str, idempotency_key: str | None) -> None:
+    conn.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+    conn.execute(
+        text(
+            "INSERT INTO image_description_runs "
+            "(id, tenant_id, media_ids, total_items, idempotency_key) "
+            "VALUES (:id, :tenant, CAST(:media AS jsonb), 1, :key)"
+        ),
+        {"id": run_id, "tenant": tenant_id, "media": "[]", "key": idempotency_key},
+    )
+
+
+def _unique_constraint_exists(engine, name: str) -> bool:
+    with engine.connect() as conn:
+        return (
+            conn.execute(
+                text(
+                    "SELECT 1 FROM pg_constraint c "
+                    "JOIN pg_class t ON c.conrelid = t.oid "
+                    "JOIN pg_namespace n ON t.relnamespace = n.oid "
+                    "WHERE n.nspname = current_schema() "
+                    "AND t.relname = 'image_description_runs' AND c.conname = :name"
+                ),
+                {"name": name},
+            ).scalar()
+            is not None
+        )
+
+
+@pytest.mark.pg
+def test_heal_raises_named_action_when_unique_constraint_has_duplicate_rows(pg_empty_engine) -> None:
+    constraint = "uq_image_description_runs_idempotency_key"
+    tenant_id = str(uuid.uuid4())
+    with pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+    with pg_empty_engine.begin() as conn:
+        conn.execute(text(f'ALTER TABLE image_description_runs DROP CONSTRAINT "{constraint}"'))
+        conn.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+        conn.execute(
+            text("INSERT INTO tenants (id, site_url) VALUES (:id, :url)"),
+            {"id": tenant_id, "url": f"https://{tenant_id}.example"},
+        )
+        _insert_describe_run(conn, tenant_id=tenant_id, run_id=str(uuid.uuid4()), idempotency_key="same-token")
+        _insert_describe_run(conn, tenant_id=tenant_id, run_id=str(uuid.uuid4()), idempotency_key="same-token")
+
+    with pytest.raises(RuntimeError) as exc_info, pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+    message = str(exc_info.value)
+    assert constraint in message
+    assert "23505" in message
+    assert "image_description_runs" in message
+    assert "operator" in message.lower()
+    assert not _unique_constraint_exists(pg_empty_engine, constraint)
+
+
+@pytest.mark.pg
+def test_heal_adds_unique_constraint_when_rows_are_distinct_or_null(pg_empty_engine) -> None:
+    constraint = "uq_image_description_runs_idempotency_key"
+    tenant_id = str(uuid.uuid4())
+    with pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+    with pg_empty_engine.begin() as conn:
+        conn.execute(text(f'ALTER TABLE image_description_runs DROP CONSTRAINT "{constraint}"'))
+        conn.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+        conn.execute(
+            text("INSERT INTO tenants (id, site_url) VALUES (:id, :url)"),
+            {"id": tenant_id, "url": f"https://{tenant_id}.example"},
+        )
+        _insert_describe_run(conn, tenant_id=tenant_id, run_id=str(uuid.uuid4()), idempotency_key=None)
+        _insert_describe_run(conn, tenant_id=tenant_id, run_id=str(uuid.uuid4()), idempotency_key=None)
+        _insert_describe_run(conn, tenant_id=tenant_id, run_id=str(uuid.uuid4()), idempotency_key="distinct-a")
+        _insert_describe_run(conn, tenant_id=tenant_id, run_id=str(uuid.uuid4()), idempotency_key="distinct-b")
+    assert not _unique_constraint_exists(pg_empty_engine, constraint)
+
+    with pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+
+    assert _unique_constraint_exists(pg_empty_engine, constraint)
+
+
+def _admin_engine_for_scratch(app_engine):
+    """Connect IDENTITY_PG_ADMIN_URL (or the conftest default) to app_engine's DB.
+
+    CREATE ROLE is cluster-wide; ALTER OWNER must run against the scratch
+    database. Never use the app-role engine for role setup (P14).
+    """
+    scratch_url = str(app_engine.url)
+    scratch_db = urlsplit(scratch_url).path.lstrip("/")
+    admin_url = os.environ.get("IDENTITY_PG_ADMIN_URL")
+    if not admin_url:
+        parts = urlsplit(scratch_url)
+        admin_url = f"postgresql+psycopg://{parts.hostname or 'localhost'}:{parts.port or 5432}/postgres"
+    return create_engine(admin_url.rsplit("/", 1)[0] + f"/{scratch_db}", isolation_level="AUTOCOMMIT")
+
+
+@pytest.mark.pg
+def test_heal_refuses_typmod_rebuild_when_matview_has_foreign_owner(pg_empty_engine) -> None:
+    # A role-owned matview cannot be dropped by the app role. The refusal must
+    # leave the drifted relation in place and give an operator copy/pasteable
+    # remediation rather than attempting a partial rebuild.
+    # VLMHEAL-1-REV-A-02: create/drop the scratch role and transfer ownership
+    # through the admin engine. pytest.fail (never skip) if that setup fails.
+    owner_role = f"identity_mv_owner_{uuid.uuid4().hex[:12]}"
+    with pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+        conn.execute(text("DROP MATERIALIZED VIEW mv_identity_cluster_centroids"))
+        conn.execute(
+            text(
+                "CREATE MATERIALIZED VIEW mv_identity_cluster_centroids AS "
+                "SELECT c.id AS cluster_id, c.tenant_id, 0 AS identity_count, "
+                "NULL::vector AS centroid, c.updated_at AS refreshed_at "
+                "FROM identity_clusters c"
+            )
+        )
+        app_role = str(conn.execute(text("SELECT current_user")).scalar())
+
+    admin = _admin_engine_for_scratch(pg_empty_engine)
+    try:
+        try:
+            with admin.connect() as aconn:
+                aconn.execute(text(f'CREATE ROLE "{owner_role}" NOLOGIN'))
+                aconn.execute(text(f'ALTER MATERIALIZED VIEW mv_identity_cluster_centroids OWNER TO "{owner_role}"'))
+        except Exception as exc:
+            pytest.fail(f"scratch owner role setup failed via admin engine: {exc}")
+
+        with pg_empty_engine.begin() as conn:
+            with pytest.raises(RuntimeError) as exc_info:
+                MIGRATION.heal(conn)
+            message = str(exc_info.value)
+            operator_sql = f"ALTER MATERIALIZED VIEW mv_identity_cluster_centroids OWNER TO {app_role};"
+            assert "mv_identity_cluster_centroids" in message
+            assert "-1" in message
+            assert owner_role in message
+            assert app_role in message
+            assert operator_sql in message
+            assert "python -m scripts.sync_identity_schema" in message
+            assert (
+                conn.execute(
+                    text(
+                        "SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+                        "WHERE n.nspname=current_schema() "
+                        "AND c.relname='mv_identity_cluster_centroids' AND c.relkind='m'"
+                    )
+                ).scalar()
+                == 1
+            )
+    finally:
+        with admin.connect() as aconn:
+            aconn.execute(
+                text(f'ALTER MATERIALIZED VIEW IF EXISTS mv_identity_cluster_centroids OWNER TO "{app_role}"')
+            )
+            aconn.execute(text(f'DROP ROLE IF EXISTS "{owner_role}"'))
+        admin.dispose()
+
+
+def test_foreign_owner_scratch_role_setup_does_not_skip_without_createrole() -> None:
+    # VLMHEAL-1-REV-A-02: a CREATEROLE denial on the *app* engine must not skip
+    # the ownership-refusal branch. Observation that would refute the finding:
+    # this test's source uses IDENTITY_PG_ADMIN_URL to create the scratch role
+    # and contains no pytest.skip on SQLSTATE 42501.
+    src = inspect.getsource(test_heal_refuses_typmod_rebuild_when_matview_has_foreign_owner)
+    assert "_admin_engine_for_scratch" in src or "IDENTITY_PG_ADMIN_URL" in src
+    assert "pytest.skip" not in src
+    assert "_createrole_denied" not in src
+
+
+@pytest.mark.pg
+def test_heal_does_not_rebuild_matview_when_vector_typmod_matches(pg_empty_engine) -> None:
+    with pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+    with pg_empty_engine.connect() as conn:
+        before_oid = conn.execute(
+            text(
+                "SELECT c.oid FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+                "WHERE n.nspname=current_schema() AND c.relname='mv_identity_cluster_centroids' "
+                "AND c.relkind='m'"
+            )
+        ).scalar()
+    assert _centroid_typmod(pg_empty_engine) == MIGRATION.EMBEDDING_DIMENSION
+
+    with pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+
+    with pg_empty_engine.connect() as conn:
+        after_oid = conn.execute(
+            text(
+                "SELECT c.oid FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+                "WHERE n.nspname=current_schema() AND c.relname='mv_identity_cluster_centroids' "
+                "AND c.relkind='m'"
+            )
+        ).scalar()
+    assert after_oid == before_oid
+
+
+def test_ensure_matview_rebuilds_when_current_role_can_drop(monkeypatch: pytest.MonkeyPatch) -> None:
+    op = _FakeOp()
+    monkeypatch.setattr(MIGRATION, "_relkind", lambda _op, _name: "m")
+    monkeypatch.setattr(MIGRATION, "_matview_centroid_typmod", lambda _op: -1)
+    monkeypatch.setattr(MIGRATION, "_matview_owner_and_can_drop", lambda _op: ("app_role", True))
+    monkeypatch.setattr(MIGRATION, "_matview_create_privilege_gaps", lambda _op: [])
+    monkeypatch.setattr(MIGRATION, "_matview_nonowner_grants", lambda _op: ())
+
+    MIGRATION.ensure_matview(op)
+
+    assert _issued_drop(op)
+    assert any("CREATE MATERIALIZED VIEW" in sql for sql in op.statements)
+
+
+def test_ensure_matview_refuses_rebuild_with_named_owner_and_operator_sql(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner_role = "identity_mv_owner_abc123"
+    app_role = "context"
+    op = _FakeOp(current_user=app_role)
+    monkeypatch.setattr(MIGRATION, "_relkind", lambda _op, _name: "m")
+    monkeypatch.setattr(MIGRATION, "_matview_centroid_typmod", lambda _op: -1)
+    monkeypatch.setattr(MIGRATION, "_matview_owner_and_can_drop", lambda _op: (owner_role, False))
+
+    with pytest.raises(RuntimeError) as exc_info:
+        MIGRATION.ensure_matview(op)
+
+    message = str(exc_info.value)
+    operator_sql = f"ALTER MATERIALIZED VIEW mv_identity_cluster_centroids OWNER TO {app_role};"
+    assert "mv_identity_cluster_centroids" in message
+    assert "-1" in message
+    assert owner_role in message
+    assert app_role in message
+    assert operator_sql in message
+    assert "python -m scripts.sync_identity_schema" in message
+    assert not _issued_drop(op)
+    assert not any("CREATE MATERIALIZED VIEW" in sql for sql in op.statements)
+
+
+def test_ensure_matview_skips_drop_when_vector_typmod_matches(monkeypatch: pytest.MonkeyPatch) -> None:
+    op = _FakeOp()
+
+    def _ownership_must_not_run(_op) -> tuple[str, bool]:
+        raise AssertionError("ownership check must not run when typmod already matches")
+
+    monkeypatch.setattr(MIGRATION, "_relkind", lambda _op, _name: "m")
+    monkeypatch.setattr(MIGRATION, "_matview_centroid_typmod", lambda _op: MIGRATION.EMBEDDING_DIMENSION)
+    monkeypatch.setattr(MIGRATION, "_matview_owner_and_can_drop", _ownership_must_not_run)
+
+    MIGRATION.ensure_matview(op)
+
+    assert not _issued_drop(op)
+    assert any("CREATE MATERIALIZED VIEW IF NOT EXISTS" in sql for sql in op.statements)
+
+
+def test_matview_centroid_typmod_probe_requires_pgvector_type() -> None:
+    # VLMHEAL-1-INT-01: a non-vector centroid with a matching numeric typmod
+    # must not count as healthy. Observation that would refute the finding:
+    # _matview_centroid_typmod joins pg_type and filters typname='vector'.
+    src = inspect.getsource(MIGRATION._matview_centroid_typmod)
+    assert "pg_type" in src
+    assert "typname" in src
+    assert "vector" in src
+
+
+def test_operator_sql_quote_idents_hyphenated_role(monkeypatch: pytest.MonkeyPatch) -> None:
+    # VLMHEAL-1-REV-A-06: unquoted current_user in the ALTER OWNER remediation
+    # is not paste-safe for hyphenated managed-PG roles (rg-006). Observation
+    # that would refute the finding: the raised SQL uses quote_ident output.
+    app_role = "alt-context-app"
+    op = _FakeOp(current_user=app_role)
+    monkeypatch.setattr(MIGRATION, "_relkind", lambda _op, _name: "m")
+    monkeypatch.setattr(MIGRATION, "_matview_centroid_typmod", lambda _op: -1)
+    monkeypatch.setattr(MIGRATION, "_matview_owner_and_can_drop", lambda _op: ("identity_mv_owner", False))
+
+    with pytest.raises(RuntimeError) as exc_info:
+        MIGRATION.ensure_matview(op)
+
+    message = str(exc_info.value)
+    assert 'OWNER TO "alt-context-app"' in message
+    assert "OWNER TO alt-context-app;" not in message
+    assert not _issued_drop(op)
+
+
+def test_matview_owner_probe_names_vanished_relation() -> None:
+    # VLMHEAL-1-REV-A-07: a concurrent drop between _relkind and the owner
+    # probe must not surface sqlalchemy.exc.NoResultFound. Observation that
+    # would refute the finding: the helper raises a named RuntimeError.
+    from sqlalchemy.exc import NoResultFound
+
+    class _Op:
+        def get_bind(self):
+            class _Bind:
+                def execute(self, stmt):  # noqa: ANN001
+                    class _Res:
+                        def one(self):
+                            raise NoResultFound()
+
+                        def one_or_none(self):
+                            return None
+
+                    return _Res()
+
+            return _Bind()
+
+    with pytest.raises(RuntimeError, match="vanished mid-heal"):
+        MIGRATION._matview_owner_and_can_drop(_Op())
+
+
+def test_ensure_matview_refuses_drop_when_create_privileges_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    # VLMHEAL-1-REV-A-03: DROP-capable membership is not enough to CREATE the
+    # replacement view. Observation that would refute the finding: missing
+    # CREATE/SELECT/EXECUTE privileges are named and no DROP is issued.
+    op = _FakeOp()
+    monkeypatch.setattr(MIGRATION, "_relkind", lambda _op, _name: "m")
+    monkeypatch.setattr(MIGRATION, "_matview_centroid_typmod", lambda _op: -1)
+    monkeypatch.setattr(MIGRATION, "_matview_owner_and_can_drop", lambda _op: ("r_owner", True))
+    monkeypatch.setattr(
+        MIGRATION,
+        "_matview_create_privilege_gaps",
+        lambda _op: ["CREATE on schema public", "SELECT on identity_clusters"],
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        MIGRATION.ensure_matview(op)
+
+    message = str(exc_info.value)
+    assert "CREATE on schema public" in message
+    assert "SELECT on identity_clusters" in message
+    assert not _issued_drop(op)
+
+
+def test_ensure_matview_restores_owner_and_grants_after_rebuild(monkeypatch: pytest.MonkeyPatch) -> None:
+    # VLMHEAL-1-REV-A-04: member-of-owner DROP+CREATE transfers ownership and
+    # clears relacl. Observation that would refute the finding: the same
+    # transaction reissues GRANT and ALTER OWNER before returning.
+    op = _FakeOp()
+    monkeypatch.setattr(MIGRATION, "_relkind", lambda _op, _name: "m")
+    monkeypatch.setattr(MIGRATION, "_matview_centroid_typmod", lambda _op: -1)
+    monkeypatch.setattr(MIGRATION, "_matview_owner_and_can_drop", lambda _op: ("r_owner_x", True))
+    monkeypatch.setattr(MIGRATION, "_matview_create_privilege_gaps", lambda _op: [])
+    monkeypatch.setattr(
+        MIGRATION,
+        "_matview_nonowner_grants",
+        lambda _op: (("r_reader_x", "SELECT", False),),
+    )
+
+    MIGRATION.ensure_matview(op)
+
+    joined = " ".join(op.statements)
+    assert "DROP MATERIALIZED VIEW mv_identity_cluster_centroids" in joined
+    assert "CREATE MATERIALIZED VIEW" in joined
+    assert "GRANT SELECT ON mv_identity_cluster_centroids TO" in joined
+    assert "r_reader_x" in joined
+    assert "ALTER MATERIALIZED VIEW mv_identity_cluster_centroids OWNER TO" in joined
+    assert "r_owner_x" in joined
+
+
+def test_ensure_table_vector_typmods_refuses_wrong_table_typmod(monkeypatch: pytest.MonkeyPatch) -> None:
+    # VLMHEAL-1-REV-A-01: a wrong-typmod table column cannot be drop-rebuilt.
+    # Observation that would refute the finding: ensure raises a named
+    # operator action naming the table.column and does not DROP the table.
+    op = _FakeOp()
+    monkeypatch.setattr(MIGRATION, "_relkind", lambda _op, name: "r" if name == "media_identities" else None)
+    monkeypatch.setattr(
+        MIGRATION,
+        "_vector_column_typmod",
+        lambda _op, table, _col: -1 if table == "media_identities" else MIGRATION.EMBEDDING_DIMENSION,
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        MIGRATION.ensure_identity_vector_typmods(op)
+
+    message = str(exc_info.value)
+    assert "media_identities.embedding" in message
+    assert "operator" in message.lower()
+    assert "re-embed" in message.lower()
+    assert "null" in message.lower()
+    assert f"USING embedding::vector({MIGRATION.EMBEDDING_DIMENSION})" not in message
+    assert not any("DROP TABLE media_identities" in sql for sql in op.statements)
+
+
+def test_identity_vector_columns_agree_with_health_ready_probe() -> None:
+    # VLMHEAL-1-REV-A-08: heal/verify/health must share the vector-column
+    # contract. Observation that would refute the finding: the migration
+    # tuple equals recognition.application.health.IDENTITY_VECTOR_COLUMNS.
+    from recognition.application.health import IDENTITY_VECTOR_COLUMNS as HEALTH_COLS
+
+    assert MIGRATION.IDENTITY_VECTOR_COLUMNS == HEALTH_COLS
+
+
+@pytest.mark.pg
+def test_heal_refuses_wrong_table_vector_typmod(pg_empty_engine) -> None:
+    with pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+        conn.execute(text("ALTER TABLE media_identities ALTER COLUMN embedding TYPE vector"))
+    with pytest.raises(RuntimeError) as exc_info, pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+    message = str(exc_info.value)
+    assert "media_identities.embedding" in message
+    assert "re-embed" in message.lower()
+    assert "null" in message.lower()
+    assert f"USING embedding::vector({MIGRATION.EMBEDDING_DIMENSION})" not in message
+
+
+@pytest.mark.pg
 def test_heal_restores_dropped_rls_policy(pg_empty_engine) -> None:
     # BR2-02 drift direction: a tenant table that lost its policy is re-covered.
     with pg_empty_engine.begin() as conn:
@@ -118,6 +638,7 @@ def _table_columns(engine, table_name: str) -> set[str]:
         }
 
 
+@pytest.mark.pg
 def test_heal_restores_dropped_column(pg_empty_engine) -> None:
     # MAINT-TPR-01 / PA-03: an existing table missing an expand-first column is
     # the exact prod drift — `_ensure_table` no-ops on the existing table, so
@@ -135,6 +656,7 @@ def test_heal_restores_dropped_column(pg_empty_engine) -> None:
     assert "naming_agreement_enabled" in _table_columns(pg_empty_engine, "tenants")
 
 
+@pytest.mark.pg
 def test_heal_creates_every_orm_declared_column(pg_empty_engine) -> None:
     # MAINT-TPR-BR-05 ratchet: verify_identity_schema derives expected columns
     # from ORM Base.metadata while heal adds them from the migration's
@@ -161,6 +683,7 @@ def test_heal_creates_every_orm_declared_column(pg_empty_engine) -> None:
     assert not gaps, f"ORM columns not created by heal (ensure_tables drift): {gaps}"
 
 
+@pytest.mark.pg
 def test_verifier_detects_dropped_column_then_heal_repairs(pg_empty_engine) -> None:
     # Slice 3 E2E: a dropped column -> verifier exit 1 naming table+column;
     # heal -> verifier OK. Stamp alembic_version so the revision check passes
@@ -189,6 +712,7 @@ def test_verifier_detects_dropped_column_then_heal_repairs(pg_empty_engine) -> N
         assert collect_and_validate(conn)["ok"] is True
 
 
+@pytest.mark.pg
 def test_concurrent_sync_entrypoints_serialize_on_advisory_lock(pg_empty_engine) -> None:
     # BR2-10: two concurrent sync_schema() runs against the same empty DB must
     # both succeed (the loser waits on pg_advisory_xact_lock, then no-ops).
@@ -204,6 +728,7 @@ def test_concurrent_sync_entrypoints_serialize_on_advisory_lock(pg_empty_engine)
     assert not missing, f"concurrent heal left tables missing: {sorted(missing)}"
 
 
+@pytest.mark.pg
 def test_verifier_detects_dropped_policy_then_heal_repairs(pg_empty_engine) -> None:
     # Slice 4 E2E: dropped policy -> verifier exit 1 naming the table; heal ->
     # verifier OK. (Revision check passes because heal-only DBs have no
@@ -232,6 +757,7 @@ def test_verifier_detects_dropped_policy_then_heal_repairs(pg_empty_engine) -> N
         assert collect_and_validate(conn)["ok"] is True
 
 
+@pytest.mark.pg
 def test_adopted_observability_tables_isolate_tenants(pg_empty_engine) -> None:
     # Slice 5: assignment_decisions / clustering_job_reports are migration-owned
     # tenant tables now — tenant B must not read (or write over) tenant A rows,

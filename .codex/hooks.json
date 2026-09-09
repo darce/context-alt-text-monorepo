@@ -42,6 +42,13 @@
         "command": "scripts/hooks/_launch_python.sh scripts/hooks/_run_guard.py scripts/hooks/validate-mcp-dict-params.py",
         "timeout": 5,
         "statusMessage": "Validating MCP dict params"
+      },
+      {
+        "matcher": "Bash",
+        "type": "command",
+        "command": "scripts/hooks/_launch_python.sh scripts/hooks/_run_guard.py scripts/guard_codemap_first.py",
+        "timeout": 5,
+        "statusMessage": "Routing code searches to codemap"
       }
     ],
     "PostToolUse": [

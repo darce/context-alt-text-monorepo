@@ -1,45 +1,30 @@
 import React from 'react';
 
+import { guidedCopy } from '../guidedPrototype/copy';
+
+const CASE_STUDY_HREF = 'https://darce.xyz/projects/altcontext/';
+
 export interface GuidedPrototypeEntranceProps {
   onBegin: () => void;
 }
 
 export const GuidedPrototypeEntrance = ({ onBegin }: GuidedPrototypeEntranceProps): React.JSX.Element => (
   <section className="acx-guided-entrance" aria-labelledby="acx-guided-entrance-title">
-    <div className="acx-guided-entrance__brand" aria-label="AltContext">
-      <span className="acx-guided-entrance__mark" aria-hidden="true">
-        AC
-      </span>
-      <span>AltContext</span>
-    </div>
-    <p className="acx-guided-entrance__eyebrow">Guided demo</p>
-    <h1 id="acx-guided-entrance-title">AltContext guided demo</h1>
-    <p className="acx-guided-entrance__intro">
-      Follow one photo from start to finish. AltContext finds two faces, matches each one to a person you already named,
-      and puts their names in the image description. You choose what gets saved.
-    </p>
-
-    <div className="acx-guided-entrance__status">
-      <strong>Current build</strong>
-      <span>This demo uses one saved face-match run. Descriptions can run live on the real GPU.</span>
-    </div>
+    <p className="acx-guided-entrance__eyebrow">{guidedCopy('page.eyebrow')}</p>
+    <h1 id="acx-guided-entrance-title">{guidedCopy('page.title')}</h1>
+    <p className="acx-guided-entrance__intro">{guidedCopy('page.intro')}</p>
+    <p className="acx-guided-entrance__scope">{guidedCopy('page.scope')}</p>
+    <p className="acx-guided-entrance__live-scope">{guidedCopy('page.live_scope')}</p>
 
     <button type="button" className="acx-button acx-button--primary" onClick={onBegin}>
-      Start the demo
+      {guidedCopy('page.start')}
     </button>
 
     <p className="acx-guided-entrance__boundary">
-      This is a practice copy. Changes stay in this tab and reset when you reload the page. Live recognition and guest
-      access are still in progress.{' '}
-      <a
-        className="acx-button acx-button--secondary acx-guided-entrance__case-study"
-        href="https://darce.xyz/projects/altcontext/"
-        target="_blank"
-        rel="noreferrer"
-      >
-        Read the AltContext case study
+      <a className="acx-guided-entrance__case-study" href={CASE_STUDY_HREF} target="_blank" rel="noreferrer">
+        {guidedCopy('page.case_study')}
+        <span className="screen-reader-text"> (opens in a new window)</span>
       </a>
-      .
     </p>
   </section>
 );

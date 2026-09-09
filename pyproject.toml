@@ -72,5 +72,5 @@ indent-style = "space"
 # blocked every frontend/PHP lane (GPUUX-1 blocker 296). npm/composer/node/php are
 # reserved by workbay because they can launch arbitrary repo scripts: JS lanes use
 # `npx vitest ...`, PHP lanes use `vendor/bin/phpunit ...`.
-runner_commands = ["vitest", "phpunit"]
+runner_commands = ["vitest", "phpunit", "tsc"]
 runner_selecting_wrappers = ["npx"]

@@ -90,6 +90,7 @@ const REQUIRED_GENERATED_MAPS = [
   'dashboard',
   'describe-gpu-tier',
   'febt-1-job-error-states',
+  'gpu-operator-control',
   'roster-people',
   'workbench-2pane',
   'workbench-operator-loop',
@@ -167,6 +168,7 @@ const OWNED_MAPS = [
   'workbench-operator-loop',
   'dashboard',
   'describe-gpu-tier',
+  'gpu-operator-control',
   'guided-prototype',
   'febt-1-job-error-states',
 ] as const;
@@ -177,7 +179,13 @@ const OWNED_MAPS = [
  * the coverage-gaming failure mode of TEST-11, and the gate below is the upward ratchet
  * (OBS-11) that stops the list sliding back down.
  */
-const REQUIRED_OWNED_MAPS = ['dashboard', 'describe-gpu-tier', 'workbench-2pane', 'febt-1-job-error-states'] as const;
+const REQUIRED_OWNED_MAPS = [
+  'dashboard',
+  'describe-gpu-tier',
+  'febt-1-job-error-states',
+  'gpu-operator-control',
+  'workbench-2pane',
+] as const;
 
 /**
  * Maps that exist on disk but cannot be enrolled in OWNED_MAPS yet, each with the reason and

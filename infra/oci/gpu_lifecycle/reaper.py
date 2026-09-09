@@ -44,7 +44,7 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Protocol
 
@@ -54,6 +54,21 @@ from infra.oci.gpu_lifecycle.controller import (
     GpuLifecycleController,
     JobLoadSnapshot,
     LifecycleAction,
+)
+from infra.oci.gpu_lifecycle.intent import (
+    DEFAULT_GPU_STATE_DIR,
+    DeferredStopRecord,
+    DeferredStopStore,
+    DecisionLogStore,
+    EffectiveIntent,
+    IntentAction,
+    IntentAuthorityError,
+    IntentAuthorityStore,
+    IntentStatus,
+    read_effective_intent,
+    copy_intents_to_durable_dir,
+    _atomic_write_json,
+    _durable_unlink,
 )
 from infra.oci.gpu_lifecycle.load_source import AggregateJobLoadSource
 from infra.oci.gpu_lifecycle.probe import (
@@ -65,6 +80,7 @@ from infra.oci.gpu_lifecycle.probe import (
 from infra.oci.gpu_lifecycle.state_snapshot import (
     DEFAULT_GPU_STATE_PATH,
     GpuLifecycleState,
+    LastTransitionReason,
     read_previous_gpu_state,
     resolve_gpu_state_path,
     state_for_instances,
@@ -90,6 +106,13 @@ _LOCK_RETRY_SECONDS = 0.05
 _DEFAULT_RUNNING_SINCE_PATH = Path("/var/lib/acx-gpu/running-since.json")
 _RUNNING_SINCE_READ_FAILURE_RECOVERY_CYCLES = 3
 _RUNNING_SINCE_FUTURE_SKEW_SECONDS = 5.0
+_HONOURED_NONCES_SCHEMA_VERSION = 1
+_PENDING_START_SCHEMA_VERSION = 1
+# A deferred STOP is re-armed for a bounded interval on every blocked cycle.
+# Repeated lifecycle cycles therefore preserve the instruction for arbitrarily
+# long work, while a single stale record never pins the machine forever.
+_MIN_DEFERRED_STOP_EXTENSION_SECONDS = 60
+_MAX_DEFERRED_STOP_EXTENSION_SECONDS = 7200
 # Live describe dumps omit batch_in_progress; warn once per process, not per poll.
 _ABSENT_BATCH_KEY_WARNED = False
 
@@ -439,10 +462,26 @@ class RunningSinceRecord:
     source: str
     monotonic_since: float | None = None
     boot_id: str | None = None
+    honoured_nonce: str | None = None
+
+
+@dataclass(frozen=True)
+class PendingStartRecord:
+    """Write-ahead authority for an OCI START that has not committed yet."""
+
+    instance_id: str
+    since: datetime
+    monotonic_since: float
+    boot_id: str
+    honoured_nonce: str | None = None
 
 
 class CorruptRunningSinceLeaseError(ValueError):
     """Persisted lease metadata is unsafe to use as a duration origin."""
+
+
+class CorruptHonouredNonceError(ValueError):
+    """Persisted START idempotency metadata is unreadable or invalid."""
 
 
 class BootIdentityUnavailableError(RuntimeError):
@@ -529,6 +568,126 @@ class RunningSinceLeaseStore:
             finally:
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
+    @property
+    def honoured_nonces_path(self) -> Path:
+        """Durable START nonce ledger kept independently from lease lifetimes."""
+        return self.path.with_name(f".{self.path.name}.honoured-nonces.json")
+
+    @property
+    def pending_starts_path(self) -> Path:
+        """Durable write-ahead records for STARTs between prepare and commit."""
+        return self.path.with_name(f".{self.path.name}.pending.json")
+
+    @staticmethod
+    def _validate_instance_id(instance_id: str) -> None:
+        if not isinstance(instance_id, str) or not instance_id.strip():
+            raise ValueError("instance_id must be a non-blank string")
+
+    @staticmethod
+    def _validate_nonce(nonce: str | None) -> None:
+        if nonce is not None and (not isinstance(nonce, str) or not nonce.strip()):
+            raise ValueError("honoured_nonce must be a non-blank string or None")
+
+    def _write_instances_locked(self, instances: dict[str, dict[str, object]]) -> None:
+        _atomic_write_json(
+            self.path,
+            {
+                "schema_version": self._SCHEMA_VERSION,
+                "instances": instances,
+            },
+        )
+
+    def _read_pending_starts(self) -> dict[str, dict[str, object]]:
+        try:
+            payload = json.loads(self.pending_starts_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {}
+        except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            raise CorruptRunningSinceLeaseError(
+                f"pending START authority is unreadable: {self.pending_starts_path}: {exc}"
+            ) from exc
+        if (
+            not isinstance(payload, dict)
+            or payload.get("schema_version") != _PENDING_START_SCHEMA_VERSION
+            or not isinstance(payload.get("instances"), dict)
+        ):
+            raise CorruptRunningSinceLeaseError(
+                f"pending START authority is invalid: {self.pending_starts_path}"
+            )
+        pending: dict[str, dict[str, object]] = {}
+        for instance_id, raw_record in payload["instances"].items():
+            if not isinstance(instance_id, str) or not instance_id.strip() or not isinstance(raw_record, dict):
+                raise CorruptRunningSinceLeaseError(
+                    f"pending START authority is invalid: {self.pending_starts_path}"
+                )
+            if raw_record.get("state") != "pending":
+                raise CorruptRunningSinceLeaseError(
+                    f"pending START authority is invalid: {self.pending_starts_path}"
+                )
+            since = raw_record.get("since")
+            try:
+                parsed_since = datetime.fromisoformat(since) if isinstance(since, str) else None
+            except ValueError as exc:
+                raise CorruptRunningSinceLeaseError(
+                    f"pending START timestamp is invalid: {self.pending_starts_path}"
+                ) from exc
+            monotonic_since = raw_record.get("monotonic_since")
+            boot_id = raw_record.get("boot_id")
+            nonce = raw_record.get("honoured_nonce")
+            if (
+                parsed_since is None
+                or parsed_since.tzinfo is None
+                or parsed_since.utcoffset() is None
+                or isinstance(monotonic_since, bool)
+                or not isinstance(monotonic_since, (int, float))
+                or not math.isfinite(monotonic_since)
+                or monotonic_since < 0
+                or not isinstance(boot_id, str)
+                or not boot_id.strip()
+                or (nonce is not None and (not isinstance(nonce, str) or not nonce.strip()))
+            ):
+                raise CorruptRunningSinceLeaseError(
+                    f"pending START authority is invalid: {self.pending_starts_path}"
+                )
+            pending[instance_id] = {
+                "state": "pending",
+                "since": parsed_since.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+                "monotonic_since": float(monotonic_since),
+                "boot_id": boot_id,
+                "honoured_nonce": nonce,
+            }
+        return pending
+
+    def _write_pending_starts_locked(self, pending: dict[str, dict[str, object]]) -> None:
+        if not pending:
+            _durable_unlink(self.pending_starts_path)
+            return
+        _atomic_write_json(
+            self.pending_starts_path,
+            {
+                "schema_version": _PENDING_START_SCHEMA_VERSION,
+                "instances": pending,
+            },
+        )
+
+    @staticmethod
+    def _pending_record_to_origin(
+        instance_id: str,
+        raw_record: dict[str, object],
+    ) -> PendingStartRecord:
+        parsed_since = datetime.fromisoformat(str(raw_record["since"])).astimezone(UTC)
+        return PendingStartRecord(
+            instance_id=instance_id,
+            since=parsed_since,
+            monotonic_since=float(raw_record["monotonic_since"]),
+            boot_id=str(raw_record["boot_id"]),
+            honoured_nonce=(
+                raw_record["honoured_nonce"]
+                if isinstance(raw_record.get("honoured_nonce"), str)
+                else None
+            ),
+        )
+
     def read(self, instance_id: str) -> RunningSinceRecord | None:
         try:
             payload = json.loads(self.path.read_text())
@@ -557,6 +716,10 @@ class RunningSinceLeaseStore:
             parsed = datetime.fromisoformat(since)
         except ValueError:
             logger.warning("running-since timestamp invalid; replacing it: %s", self.path)
+            return None
+        honoured_nonce = raw_record.get("honoured_nonce")
+        if honoured_nonce is not None and (not isinstance(honoured_nonce, str) or not honoured_nonce.strip()):
+            logger.warning("running-since honoured_nonce invalid; replacing it: %s", self.path)
             return None
         if parsed.tzinfo is None or parsed.utcoffset() is None:
             message = f"running-since timestamp has no timezone: {self.path}"
@@ -592,15 +755,25 @@ class RunningSinceLeaseStore:
             source=source,
             monotonic_since=(None if monotonic_since is None else float(monotonic_since)),
             boot_id=record_boot_id,
+            honoured_nonce=honoured_nonce,
         )
 
-    def write(self, instance_id: str, *, source: str) -> RunningSinceRecord:
+    def write(
+        self,
+        instance_id: str,
+        *,
+        source: str,
+        honoured_nonce: str | None = None,
+    ) -> RunningSinceRecord:
         if source not in self._SOURCES:
             raise ValueError(f"unsupported running-since source: {source}")
+        self._validate_instance_id(instance_id)
+        self._validate_nonce(honoured_nonce)
         now = self._utc_now()
         monotonic_now = self._monotonic_now()
         with self._locked_for_update():
             instances = self._read_instances_for_update()
+            previous_record = instances.get(instance_id)
             record_payload: dict[str, object] = {
                 "since": now.isoformat().replace("+00:00", "Z"),
                 "source": source,
@@ -610,24 +783,221 @@ class RunningSinceLeaseStore:
                     monotonic_since=monotonic_now,
                     boot_id=self._boot_id,
                 )
+            if honoured_nonce is not None:
+                record_payload["honoured_nonce"] = honoured_nonce
+            elif isinstance(previous_record, dict):
+                previous_nonce = previous_record.get("honoured_nonce")
+                if isinstance(previous_nonce, str) and previous_nonce.strip():
+                    record_payload["honoured_nonce"] = previous_nonce
             instances[instance_id] = record_payload
-            payload = {
-                "schema_version": self._SCHEMA_VERSION,
-                "instances": instances,
-            }
-            temporary = self.path.with_name(f".{self.path.name}.tmp")
-            temporary.write_text(json.dumps(payload, sort_keys=True) + "\n")
-            temporary.replace(self.path)
+            self._write_instances_locked(instances)
         return RunningSinceRecord(
             instance_id=instance_id,
             since=now,
             source=source,
             monotonic_since=(monotonic_now if self._boot_id is not None else None),
             boot_id=self._boot_id,
+            honoured_nonce=honoured_nonce,
         )
 
-    def record_start(self, instance_id: str) -> RunningSinceRecord:
-        return self.write(instance_id, source="start_actuator")
+    def prepare_start(self, instance_id: str, *, honoured_nonce: str | None = None) -> PendingStartRecord:
+        """Durably record the lease authority before issuing OCI START."""
+        self._validate_instance_id(instance_id)
+        self._validate_nonce(honoured_nonce)
+        origin = PendingStartRecord(
+            instance_id=instance_id,
+            since=self._utc_now(),
+            monotonic_since=self._monotonic_now(),
+            boot_id=self._boot_id,
+            honoured_nonce=honoured_nonce,
+        )
+        with self._locked_for_update():
+            pending = self._read_pending_starts()
+            existing = pending.get(instance_id)
+            if existing is not None:
+                existing_origin = self._pending_record_to_origin(instance_id, existing)
+                if existing_origin.honoured_nonce != honoured_nonce:
+                    raise CorruptRunningSinceLeaseError(
+                        f"pending START authority for {instance_id} has a different nonce"
+                    )
+                return existing_origin
+            pending[instance_id] = {
+                "state": "pending",
+                "since": origin.since.isoformat().replace("+00:00", "Z"),
+                "monotonic_since": origin.monotonic_since,
+                "boot_id": origin.boot_id,
+                "honoured_nonce": origin.honoured_nonce,
+            }
+            self._write_pending_starts_locked(pending)
+        return origin
+
+    def _write_honoured_nonce_locked(self, instance_id: str, nonce: str) -> None:
+        instances = self._read_honoured_nonces()
+        nonces = instances.setdefault(instance_id, set())
+        if nonce in nonces:
+            return
+        nonces.add(nonce)
+        _atomic_write_json(
+            self.honoured_nonces_path,
+            {
+                "schema_version": _HONOURED_NONCES_SCHEMA_VERSION,
+                "instances": {key: sorted(values) for key, values in instances.items()},
+            },
+        )
+
+    def _commit_start_locked(
+        self,
+        instance_id: str,
+        *,
+        origin: PendingStartRecord,
+    ) -> RunningSinceRecord:
+        instances = self._read_instances_for_update()
+        previous_record = instances.get(instance_id)
+        record_payload: dict[str, object] = {
+            "since": origin.since.isoformat().replace("+00:00", "Z"),
+            "source": "start_actuator",
+            "monotonic_since": origin.monotonic_since,
+            "boot_id": origin.boot_id,
+        }
+        if origin.honoured_nonce is not None:
+            self._write_honoured_nonce_locked(instance_id, origin.honoured_nonce)
+            record_payload["honoured_nonce"] = origin.honoured_nonce
+        elif isinstance(previous_record, dict):
+            previous_nonce = previous_record.get("honoured_nonce")
+            if isinstance(previous_nonce, str) and previous_nonce.strip():
+                record_payload["honoured_nonce"] = previous_nonce
+        instances[instance_id] = record_payload
+        self._write_instances_locked(instances)
+        return RunningSinceRecord(
+            instance_id=instance_id,
+            since=origin.since,
+            source="start_actuator",
+            monotonic_since=origin.monotonic_since,
+            boot_id=origin.boot_id,
+            honoured_nonce=origin.honoured_nonce,
+        )
+
+    def commit_start(self, instance_id: str, *, honoured_nonce: str | None = None) -> RunningSinceRecord:
+        """Commit a prepared START, retaining the write-ahead record on failure."""
+        self._validate_instance_id(instance_id)
+        self._validate_nonce(honoured_nonce)
+        with self._locked_for_update():
+            pending = self._read_pending_starts()
+            raw_origin = pending.get(instance_id)
+            if raw_origin is None:
+                origin = PendingStartRecord(
+                    instance_id=instance_id,
+                    since=self._utc_now(),
+                    monotonic_since=self._monotonic_now(),
+                    boot_id=self._boot_id,
+                    honoured_nonce=honoured_nonce,
+                )
+            else:
+                origin = self._pending_record_to_origin(instance_id, raw_origin)
+                if honoured_nonce is not None and origin.honoured_nonce != honoured_nonce:
+                    raise CorruptRunningSinceLeaseError(
+                        f"pending START authority for {instance_id} has a different nonce"
+                    )
+            record = self._commit_start_locked(instance_id, origin=origin)
+            if raw_origin is not None:
+                del pending[instance_id]
+                self._write_pending_starts_locked(pending)
+            return record
+
+    def reconcile_pending_start(self, instance_id: str, observed_state: str) -> bool:
+        """Recover a START left between OCI mutation and durable commit.
+
+        RUNNING/STARTING proves the mutation is in flight or complete, so the
+        pre-recorded lease is committed. STOPPED proves the mutation did not
+        take effect, so the pending record is discarded. Other states remain
+        ambiguous and block further actuation.
+        """
+        self._validate_instance_id(instance_id)
+        if observed_state not in {"RUNNING", "STARTING", "STOPPED", "STOPPING", "UNKNOWN"}:
+            raise ValueError(f"unsupported instance state for pending START: {observed_state}")
+        with self._locked_for_update():
+            pending = self._read_pending_starts()
+            raw_origin = pending.get(instance_id)
+            if raw_origin is None:
+                return False
+            if observed_state in {"RUNNING", "STARTING"}:
+                origin = self._pending_record_to_origin(instance_id, raw_origin)
+                self._commit_start_locked(instance_id, origin=origin)
+                del pending[instance_id]
+                self._write_pending_starts_locked(pending)
+                logger.warning(
+                    "reconciled pending START for %s from observed %s",
+                    instance_id,
+                    observed_state,
+                )
+                return True
+            if observed_state == "STOPPED":
+                del pending[instance_id]
+                self._write_pending_starts_locked(pending)
+                logger.info("discarded pending START for %s after observed STOPPED", instance_id)
+                return False
+            raise CorruptRunningSinceLeaseError(
+                f"pending START outcome is ambiguous for {instance_id}: observed {observed_state}"
+            )
+
+    def record_start(self, instance_id: str, *, honoured_nonce: str | None = None) -> RunningSinceRecord:
+        if honoured_nonce is not None:
+            self.prepare_start(instance_id, honoured_nonce=honoured_nonce)
+        return self.commit_start(instance_id, honoured_nonce=honoured_nonce)
+
+    def has_honoured_nonce(self, instance_id: str, nonce: str) -> bool:
+        """Return whether this instance has already honoured ``nonce``.
+
+        A missing ledger is the normal pre-first-START state.  Once a ledger
+        exists, any unreadable or malformed contents are unsafe to interpret;
+        callers deliberately handle ``CorruptHonouredNonceError`` as already
+        honoured so a storage fault cannot cause a duplicate billable START.
+        """
+        if not isinstance(instance_id, str) or not instance_id.strip():
+            raise ValueError("instance_id must be a non-blank string")
+        if not isinstance(nonce, str) or not nonce.strip():
+            raise ValueError("nonce must be a non-blank string")
+        instances = self._read_honoured_nonces()
+        return nonce in instances.get(instance_id, set())
+
+    def record_honoured_nonce(self, instance_id: str, nonce: str) -> None:
+        """Persist a successful operator START nonce independently of leases."""
+        self._validate_instance_id(instance_id)
+        if not isinstance(nonce, str) or not nonce.strip():
+            raise ValueError("nonce must be a non-blank string")
+        with self._locked_for_update():
+            self._write_honoured_nonce_locked(instance_id, nonce)
+
+    def _read_honoured_nonces(self) -> dict[str, set[str]]:
+        try:
+            payload = json.loads(self.honoured_nonces_path.read_text())
+        except FileNotFoundError:
+            return {}
+        except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            raise CorruptHonouredNonceError(
+                f"honoured nonce marker is unreadable: {self.honoured_nonces_path}: {exc}"
+            ) from exc
+        if (
+            not isinstance(payload, dict)
+            or payload.get("schema_version") != _HONOURED_NONCES_SCHEMA_VERSION
+            or not isinstance(payload.get("instances"), dict)
+        ):
+            raise CorruptHonouredNonceError(
+                f"honoured nonce marker is invalid: {self.honoured_nonces_path}"
+            )
+        instances: dict[str, set[str]] = {}
+        for instance_id, raw_nonces in payload["instances"].items():
+            if (
+                not isinstance(instance_id, str)
+                or not instance_id.strip()
+                or not isinstance(raw_nonces, list)
+                or any(not isinstance(nonce, str) or not nonce.strip() for nonce in raw_nonces)
+            ):
+                raise CorruptHonouredNonceError(
+                    f"honoured nonce marker is invalid: {self.honoured_nonces_path}"
+                )
+            instances[instance_id] = set(raw_nonces)
+        return instances
 
     def observe_running(self, instance_id: str) -> RunningSinceRecord:
         record = self.read(instance_id)
@@ -689,15 +1059,13 @@ class RunningSinceLeaseStore:
 
     def _write_failure_counts(self, failures: dict[str, int]) -> None:
         if not failures:
-            self._read_failures_path.unlink(missing_ok=True)
+            _durable_unlink(self._read_failures_path)
             return
         payload = {
             "schema_version": self._FAILURE_SCHEMA_VERSION,
             "instances": failures,
         }
-        temporary = self._read_failures_path.with_name(f".{self._read_failures_path.name}.tmp")
-        temporary.write_text(json.dumps(payload, sort_keys=True) + "\n")
-        temporary.replace(self._read_failures_path)
+        _atomic_write_json(self._read_failures_path, payload)
 
     def remove(self, instance_id: str) -> None:
         with self._locked_for_update():
@@ -706,15 +1074,9 @@ class RunningSinceLeaseStore:
                 return
             del instances[instance_id]
             if not instances:
-                self.path.unlink(missing_ok=True)
+                _durable_unlink(self.path)
                 return
-            payload = {
-                "schema_version": self._SCHEMA_VERSION,
-                "instances": instances,
-            }
-            temporary = self.path.with_name(f".{self.path.name}.tmp")
-            temporary.write_text(json.dumps(payload, sort_keys=True) + "\n")
-            temporary.replace(self.path)
+            self._write_instances_locked(instances)
 
     def _read_instances_for_update(self) -> dict[str, dict[str, object]]:
         try:
@@ -802,6 +1164,12 @@ class ReapCycleResult:
     # queue draining from the cost backstop firing.
     lease_expired: list[tuple[str, str]] = field(default_factory=list)
     snapshot_persisted: bool = True
+    intent: EffectiveIntent = field(default_factory=EffectiveIntent)
+    intent_status: IntentStatus = IntentStatus.NONE
+    honoured_nonce: str | None = None
+    instance_running_since: datetime | None = None
+    lease_expires_at: datetime | None = None
+    last_transition_reason: LastTransitionReason = LastTransitionReason.UNKNOWN
 
 
 @dataclass(frozen=True)
@@ -812,6 +1180,505 @@ class StartCycleResult:
     wait_result: ReadinessWaitResult | None = None
     fallbacks: tuple[FallbackDecision, ...] = ()
     snapshot_persisted: bool = True
+    intent: EffectiveIntent = field(default_factory=EffectiveIntent)
+    intent_status: IntentStatus = IntentStatus.NONE
+    honoured_nonce: str | None = None
+    instance_running_since: datetime | None = None
+    lease_expires_at: datetime | None = None
+    last_transition_reason: LastTransitionReason = LastTransitionReason.UNKNOWN
+
+
+def _intent_store_paths(
+    durable_state_dir: str | Path | None,
+) -> tuple[Path, Path, Path, Path]:
+    """Return the persistent intent paths, keeping the production defaults centralized."""
+    root = DEFAULT_GPU_STATE_DIR if durable_state_dir is None else Path(durable_state_dir)
+    return (
+        root / "intents",
+        root / "intent-authority.json",
+        root / "deferred-stop.json",
+        root / "decision-log.jsonl",
+    )
+
+
+def _intent_source_dir(
+    *,
+    intent_dir: str | Path | None,
+    durable_intent_dir: str | Path | None,
+    durable_state_dir: str | Path | None,
+) -> Path | None:
+    if intent_dir is not None:
+        return Path(intent_dir)
+    if durable_intent_dir is not None:
+        return Path(durable_intent_dir)
+    if durable_state_dir is not None:
+        return _intent_store_paths(durable_state_dir)[0]
+    return None
+
+
+def _intent_stores(
+    *,
+    intent_dir: str | Path | None,
+    durable_intent_dir: str | Path | None,
+    durable_state_dir: str | Path | None,
+    authority_store: IntentAuthorityStore | None,
+    deferred_stop_store: DeferredStopStore | None,
+    decision_log_store: DecisionLogStore | None,
+) -> tuple[
+    Path | None,
+    IntentAuthorityStore | None,
+    DeferredStopStore | None,
+    DecisionLogStore | None,
+]:
+    """Build stores only when the caller opted into operator intent handling.
+
+    Existing callers that omit ``intent_dir`` retain the legacy in-memory
+    behavior. Production and call-site tests that provide an intent directory
+    get the durable stores automatically, with the state root override making
+    the same wiring testable without touching ``/var/lib``.
+    """
+    source_dir = _intent_source_dir(
+        intent_dir=intent_dir,
+        durable_intent_dir=durable_intent_dir,
+        durable_state_dir=durable_state_dir,
+    )
+    if source_dir is None and not any(
+        store is not None for store in (authority_store, deferred_stop_store, decision_log_store)
+    ):
+        return None, authority_store, deferred_stop_store, decision_log_store
+    if source_dir is None:
+        # A caller may inject one store for a focused test or an alternate
+        # deployment without implicitly creating the other production stores.
+        return None, authority_store, deferred_stop_store, decision_log_store
+    durable_default, authority_default, deferred_default, decision_default = _intent_store_paths(
+        durable_state_dir
+    )
+    durable_dir = Path(durable_intent_dir) if durable_intent_dir is not None else durable_default
+    return (
+        durable_dir,
+        authority_store or IntentAuthorityStore(authority_default),
+        deferred_stop_store or DeferredStopStore(deferred_default),
+        decision_log_store or DecisionLogStore(decision_default),
+    )
+
+
+def _coerce_cycle_time(now: datetime | float | int | None) -> datetime:
+    if now is None:
+        return datetime.now(UTC)
+    if isinstance(now, datetime):
+        if now.tzinfo is None or now.utcoffset() is None:
+            raise ValueError("now must be timezone-aware")
+        return now.astimezone(UTC)
+    if isinstance(now, bool) or not isinstance(now, (int, float)) or not math.isfinite(now):
+        raise ValueError("now must be a finite epoch timestamp or timezone-aware datetime")
+    return datetime.fromtimestamp(float(now), tz=UTC)
+
+
+def _deferred_extension_seconds(ttl_seconds: int) -> int:
+    return max(
+        _MIN_DEFERRED_STOP_EXTENSION_SECONDS,
+        min(_MAX_DEFERRED_STOP_EXTENSION_SECONDS, int(ttl_seconds)),
+    )
+
+
+def _deferred_record_for_intent(
+    effective_intent: EffectiveIntent,
+    *,
+    now: datetime,
+) -> DeferredStopRecord | None:
+    if effective_intent.action is not IntentAction.STOP:
+        return None
+    if (
+        not isinstance(effective_intent.requested_at, datetime)
+        or not isinstance(effective_intent.expires_at, datetime)
+        or not isinstance(effective_intent.nonce, str)
+        or not effective_intent.nonce.strip()
+        or isinstance(effective_intent.sequence, bool)
+        or not isinstance(effective_intent.sequence, int)
+        or effective_intent.sequence < 1
+    ):
+        return None
+    requested_at = effective_intent.requested_at.astimezone(UTC)
+    expires_at = effective_intent.expires_at.astimezone(UTC)
+    ttl_seconds = max(1, int((expires_at - requested_at).total_seconds()))
+    extension = _deferred_extension_seconds(ttl_seconds)
+    deferred_until = max(now, expires_at) + timedelta(seconds=extension)
+    return DeferredStopRecord(
+        action=IntentAction.STOP,
+        requested_at=requested_at,
+        expires_at=expires_at,
+        nonce=effective_intent.nonce.strip(),
+        requested_by=(effective_intent.requested_by or "unknown").strip() or "unknown",
+        ttl_seconds=ttl_seconds,
+        sequence=effective_intent.sequence,
+        deferred_until=deferred_until,
+        deferred_reason="STOP deferred while work is in flight",
+    )
+
+
+def _rearm_deferred_record(
+    store: DeferredStopStore,
+    record: DeferredStopRecord,
+    *,
+    now: datetime,
+) -> DeferredStopRecord:
+    if record.deferred_until > now:
+        return record
+    extension = _deferred_extension_seconds(record.ttl_seconds)
+    rearmed = replace(record, deferred_until=now + timedelta(seconds=extension))
+    store.write(rearmed)
+    logger.warning(
+        "re-armed expired deferred STOP nonce=%s sequence=%s until=%s",
+        rearmed.nonce,
+        rearmed.sequence,
+        rearmed.deferred_until.isoformat(),
+    )
+    return rearmed
+
+
+def _blocked_deferred_intent(
+    effective_intent: EffectiveIntent,
+    record: DeferredStopRecord,
+    *,
+    reason: str,
+    error: Exception,
+    decision_log_store: DecisionLogStore | None,
+) -> EffectiveIntent:
+    """Retain a failed deferred decision as a fail-closed STOP sentinel."""
+    error_text = f"{type(error).__name__}: {error}"
+    message = (
+        f"deferred STOP {reason} failed; automatic actuation blocked for "
+        f"nonce={record.nonce} sequence={record.sequence}: {error_text}"
+    )
+    audit = {
+        "event": "dropped",
+        "reason": reason,
+        "action": IntentAction.STOP.value,
+        "nonce": record.nonce,
+        "sequence": record.sequence,
+        "requested_by": record.requested_by,
+        "error": error_text,
+        "deferred_reason": record.deferred_reason,
+    }
+    if decision_log_store is not None:
+        try:
+            decision_log_store.append(audit)
+        except Exception as audit_error:  # noqa: BLE001 - preserve the fail-closed sentinel
+            message = f"{message}; deferred audit append failed: {type(audit_error).__name__}: {audit_error}"
+            logger.error(message)
+    logger.error(message)
+    return EffectiveIntent(
+        action=IntentAction.STOP,
+        requested_at=record.requested_at,
+        expires_at=record.deferred_until,
+        nonce=record.nonce,
+        requested_by=record.requested_by,
+        sequence=record.sequence,
+        source=effective_intent.source,
+        status=IntentStatus.BLOCKED_WORK_IN_FLIGHT,
+        reason=message,
+        deferred_until=record.deferred_until,
+        deferred_reason=record.deferred_reason,
+        deferred_rearm_failed=True,
+    )
+
+
+def _audit_deferred_fenced(
+    record: DeferredStopRecord,
+    *,
+    high_water: int,
+    decision_log_store: DecisionLogStore | None,
+    token_rejected: bool = False,
+) -> None:
+    """Persist a fencing decision before clearing its deferred STOP record."""
+    logger.warning(
+        "dropped deferred STOP fenced by authority: "
+        "nonce=%s sequence=%s highest=%s token_rejected=%s",
+        record.nonce,
+        record.sequence,
+        high_water,
+        token_rejected,
+    )
+    if decision_log_store is None:
+        return
+    try:
+        decision_log_store.append(
+            {
+                "event": "dropped",
+                "phase": "before_clear",
+                "reason": "rejected_by_authority_token" if token_rejected else "fenced_by_authority_sequence",
+                "action": IntentAction.STOP.value,
+                "nonce": record.nonce,
+                "sequence": record.sequence,
+                "highest_sequence": high_water,
+                "requested_by": record.requested_by,
+                "deferred_reason": record.deferred_reason,
+            }
+        )
+    except Exception as audit_error:  # noqa: BLE001 - retain the record on every audit failure
+        raise OSError(f"deferred fenced audit append failed: {audit_error}") from audit_error
+
+
+def _apply_deferred_stop(
+    effective_intent: EffectiveIntent,
+    *,
+    store: DeferredStopStore | None,
+    now: datetime,
+    decision_log_store: DecisionLogStore | None = None,
+    authority_store: IntentAuthorityStore | None = None,
+) -> EffectiveIntent:
+    if store is None:
+        return effective_intent
+    if decision_log_store is None:
+        decision_log_store = DecisionLogStore(store.path.with_name("decision-log.jsonl"))
+    record = store.read()
+    if record is None:
+        return effective_intent
+    if (
+        isinstance(effective_intent.sequence, int)
+        and not isinstance(effective_intent.sequence, bool)
+        and isinstance(effective_intent.nonce, str)
+        and effective_intent.nonce.strip()
+        and (
+            effective_intent.sequence > record.sequence
+            or (
+                effective_intent.sequence == record.sequence
+                and effective_intent.nonce != record.nonce
+            )
+        )
+    ):
+        try:
+            if store.supersede_if_newer(
+                sequence=effective_intent.sequence,
+                nonce=effective_intent.nonce,
+                before_clear=lambda current: _audit_deferred_fenced(
+                    current, high_water=effective_intent.sequence,
+                    decision_log_store=decision_log_store,
+                    token_rejected=effective_intent.sequence == current.sequence,
+                ),
+            ):
+                return effective_intent
+            refreshed = store.read()
+            if refreshed is None:
+                return effective_intent
+            record = refreshed
+        except (OSError, ValueError) as exc:
+            return _blocked_deferred_intent(
+                effective_intent,
+                record,
+                reason="supersession_failed",
+                error=exc,
+                decision_log_store=decision_log_store,
+            )
+    # The live intent's own sequence is absent once it expires, so the check
+    # above cannot see a supersession whose publication has already elapsed.
+    # The durable high-water mark still carries it: fence on that before the
+    # record is re-armed, or an expired newer intent silently reinstates the
+    # STOP it superseded.
+    if authority_store is not None:
+        try:
+            high_water, token_rejected = authority_store.token_fence(
+                sequence=record.sequence, nonce=record.nonce,
+            )
+        except (IntentAuthorityError, OSError, ValueError) as exc:
+            return _blocked_deferred_intent(
+                effective_intent,
+                record,
+                reason="authority_read_failed",
+                error=exc,
+                decision_log_store=decision_log_store,
+            )
+        if high_water > record.sequence or token_rejected:
+            try:
+                store.clear(
+                    sequence=record.sequence,
+                    before_clear=lambda current: _audit_deferred_fenced(
+                        current, high_water=high_water,
+                        decision_log_store=decision_log_store,
+                        token_rejected=token_rejected,
+                    ),
+                )
+            except (OSError, ValueError) as exc:
+                return _blocked_deferred_intent(
+                    effective_intent,
+                    record,
+                    reason="fenced_clear_failed",
+                    error=exc,
+                    decision_log_store=decision_log_store,
+                )
+            return effective_intent
+    try:
+        record = _rearm_deferred_record(store, record, now=now)
+    except (OSError, ValueError) as exc:
+        return _blocked_deferred_intent(
+            effective_intent,
+            record,
+            reason="rearm_failed",
+            error=exc,
+            decision_log_store=decision_log_store,
+        )
+    return record.to_effective_intent(source=effective_intent.source)
+
+
+def _resolve_effective_intent(
+    *,
+    intent_dir: str | Path | None,
+    intent: EffectiveIntent | IntentAction | str | None,
+    now: datetime | float | int | None,
+    durable_intent_dir: str | Path | None = None,
+    authority_store: IntentAuthorityStore | None = None,
+    deferred_stop_store: DeferredStopStore | None = None,
+    decision_log_store: DecisionLogStore | None = None,
+) -> EffectiveIntent:
+    if isinstance(intent, EffectiveIntent):
+        return _apply_deferred_stop(
+            intent,
+            store=deferred_stop_store,
+            now=_coerce_cycle_time(now),
+            decision_log_store=decision_log_store,
+            authority_store=authority_store,
+        )
+    if intent is not None:
+        return _apply_deferred_stop(
+            EffectiveIntent(action=IntentAction(intent)),
+            store=deferred_stop_store,
+            now=_coerce_cycle_time(now),
+            decision_log_store=decision_log_store,
+            authority_store=authority_store,
+        )
+    source_dir = _intent_source_dir(
+        intent_dir=intent_dir,
+        durable_intent_dir=durable_intent_dir,
+        durable_state_dir=None,
+    )
+    if source_dir is None:
+        return _apply_deferred_stop(
+            EffectiveIntent(),
+            store=deferred_stop_store,
+            now=_coerce_cycle_time(now),
+            decision_log_store=decision_log_store,
+            authority_store=authority_store,
+        )
+    current_time = _coerce_cycle_time(now)
+    durable_dir = (
+        Path(durable_intent_dir)
+        if durable_intent_dir is not None
+        else _intent_store_paths(None)[0]
+    )
+    read_dir = source_dir
+    if durable_dir != source_dir:
+        try:
+            copy_intents_to_durable_dir(source_dir, durable_dir)
+        except OSError as exc:
+            # A first boot can legitimately lack the provisioned durable
+            # directory.  Use the runtime publication until it is available;
+            # once a durable directory exists it remains authoritative.
+            logger.warning("could not copy runtime intents to durable storage: %s", exc)
+        try:
+            if durable_dir.is_dir():
+                read_dir = durable_dir
+        except OSError as exc:
+            logger.warning("could not inspect durable intent directory %s: %s", durable_dir, exc)
+    try:
+        effective = read_effective_intent(
+            read_dir,
+            current_time,
+            authority_store=authority_store,
+        )
+    except (IntentAuthorityError, OSError, ValueError) as exc:
+        # Never honour an intent when its durable authority cannot be read.
+        # Returning AUTO preserves the existing lifecycle safety policy while
+        # making the authority failure visible in the cycle result/log.
+        logger.error("operator intent authority unavailable; using auto: %s", exc)
+        effective = EffectiveIntent(reason=f"intent authority unavailable: {exc}")
+    return _apply_deferred_stop(
+        effective,
+        store=deferred_stop_store,
+        now=current_time,
+        decision_log_store=decision_log_store,
+        authority_store=authority_store,
+    )
+
+
+def _honoured_instance_ids(
+    instances: list[GpuInstance],
+    store: RunningSinceLeaseStore | None,
+    nonce: str | None,
+) -> set[str]:
+    if store is None or nonce is None:
+        return set()
+    read_record = getattr(store, "read", None)
+    has_honoured_nonce = getattr(store, "has_honoured_nonce", None)
+    if not callable(read_record) and not callable(has_honoured_nonce):
+        return set()
+    honoured: set[str] = set()
+    for instance in instances:
+        if callable(has_honoured_nonce):
+            try:
+                if has_honoured_nonce(instance.instance_id, nonce):
+                    honoured.add(instance.instance_id)
+                    continue
+            except (AttributeError, OSError, ValueError) as exc:
+                logger.warning(
+                    "could not read honoured operator nonce for %s: %s",
+                    instance.instance_id,
+                    exc,
+                )
+                # A corrupt idempotency marker is safer as a deny-all result
+                # for the current nonce than as an empty ledger.
+                honoured.add(instance.instance_id)
+                continue
+        if not callable(read_record):
+            continue
+        try:
+            record = read_record(instance.instance_id)
+        except (AttributeError, OSError, ValueError) as exc:
+            logger.warning(
+                "could not read honoured operator nonce for %s: %s",
+                instance.instance_id,
+                exc,
+            )
+            continue
+        if record is not None and getattr(record, "honoured_nonce", None) == nonce:
+            honoured.add(instance.instance_id)
+    return honoured
+
+
+def _lease_snapshot_metadata(
+    instances: list[GpuInstance],
+    store: RunningSinceLeaseStore | None,
+    *,
+    max_lease_seconds: int,
+    stopped_instance_ids: set[str] | None = None,
+) -> tuple[datetime | None, datetime | None, str | None]:
+    """Return C2 lease fields and the persisted START nonce for one subject."""
+    if store is None:
+        return None, None, None
+    instance_id = _snapshot_instance_id(instances)
+    if instance_id is None:
+        return None, None, None
+    read_record = getattr(store, "read", None)
+    if not callable(read_record):
+        return None, None, None
+    try:
+        record = read_record(instance_id)
+    except (AttributeError, OSError, ValueError) as exc:
+        logger.warning("could not read lease metadata for %s: %s", instance_id, exc)
+        return None, None, None
+    if record is None:
+        return None, None, None
+    honoured_nonce = getattr(record, "honoured_nonce", None)
+    since = getattr(record, "since", None)
+    if not isinstance(since, datetime):
+        return None, None, honoured_nonce if isinstance(honoured_nonce, str) else None
+    if stopped_instance_ids is not None and instance_id in stopped_instance_ids:
+        return None, None, honoured_nonce if isinstance(honoured_nonce, str) else None
+    lease_expires_at = (
+        since + timedelta(seconds=max_lease_seconds)
+        if max_lease_seconds > 0
+        else None
+    )
+    return since, lease_expires_at, honoured_nonce if isinstance(honoured_nonce, str) else None
 
 
 def _reconcile_ambiguous_action(
@@ -968,6 +1835,69 @@ def _state_reason(
     return "readiness_failure"
 
 
+def _decision_action_pairs(pairs: list[tuple[str, str]]) -> list[dict[str, str]]:
+    return [
+        {
+            "action": getattr(action, "value", str(action)),
+            "instance_id": instance_id,
+        }
+        for action, instance_id in pairs
+    ]
+
+
+def _record_decision(
+    result: ReapCycleResult | StartCycleResult,
+    *,
+    mode: str,
+    now: datetime | float | int | None,
+    store: DecisionLogStore | None,
+) -> ReapCycleResult | StartCycleResult:
+    """Append one durable record for every cycle that made a spend decision."""
+    if store is None:
+        return result
+    lease_expired = getattr(result, "lease_expired", [])
+    blocked = result.intent_status is IntentStatus.BLOCKED_WORK_IN_FLIGHT
+    if not (result.decided or result.actuated or lease_expired or blocked):
+        return result
+    if result.actuated:
+        outcome = "honoured" if not result.errors else "partial"
+    elif blocked:
+        outcome = "deferred"
+    elif result.errors:
+        outcome = "failed"
+    elif getattr(result, "fenced_off", False):
+        outcome = "fenced_off"
+    else:
+        outcome = "not_actuated"
+    intent = result.intent
+    record = {
+        "timestamp": _coerce_cycle_time(now).isoformat().replace("+00:00", "Z"),
+        "mode": mode,
+        "requested_by": intent.requested_by,
+        "nonce": intent.nonce,
+        "sequence": intent.sequence,
+        "effective_intent": intent.action.value,
+        "intent_status": result.intent_status.value,
+        "intent_expires_at": (
+            intent.expires_at.isoformat().replace("+00:00", "Z")
+            if intent.expires_at is not None
+            else None
+        ),
+        "decided": _decision_action_pairs(result.decided),
+        "lease_expired": _decision_action_pairs(lease_expired),
+        "actuated": _decision_action_pairs(result.actuated),
+        "actuation_outcome": outcome,
+        "errors": list(result.errors),
+    }
+    try:
+        store.append(record)
+    except Exception as exc:  # noqa: BLE001 - audit failure must surface in result
+        message = f"decision log append failed: {type(exc).__name__}: {exc}"
+        logger.error(message)
+        return replace(result, errors=[*result.errors, message])
+    return result
+
+
 def _apply_running_since_leases(
     instances: list[GpuInstance],
     store: RunningSinceLeaseStore,
@@ -1108,82 +2038,182 @@ def _apply_running_since_leases(
     return observed, errors
 
 
-def _run_reap_cycle(
-    *,
-    controller: GpuLifecycleController,
-    instances: list[GpuInstance],
-    load_source: JobLoadSource,
-    actuator: InstanceStopActuator,
-    fence_delay_seconds: float = _DEFAULT_FENCE_DELAY_SECONDS,
-    max_lease_seconds: int = 0,
-    running_since_store: RunningSinceLeaseStore | None = None,
-    use_recorded_lease_age: bool = True,
-    dry_run: bool = False,
-) -> ReapCycleResult:
-    """Decision → fence delay → re-sample → STOP only if still idle.
+@dataclass(frozen=True)
+class _ReapLeaseContext:
+    controller: GpuLifecycleController
+    actuator: InstanceStopActuator
+    instances: list[GpuInstance]
+    max_lease_seconds: int
+    load_trustworthy: bool
+    dry_run: bool
+    effective_intent: EffectiveIntent
+    deferred_stop_store: DeferredStopStore | None
 
-    Per-instance STOP failures are collected; the loop continues (rg-007).
 
-    The max-lease cost cap is absolute: it may STOP a RUNNING instance when the
-    load boundary is busy, untrustworthy, unavailable, or fails to sample. The
-    idle-STOP path remains fail-closed and refuses STOP on untrustworthy load.
-    """
-    lease_expired: list[tuple[str, str]] = []
-    lease_errors: list[str] = []
-    if running_since_store is not None:
-        instances, lease_errors = _apply_running_since_leases(
-            instances,
-            running_since_store,
-            use_recorded_age=use_recorded_lease_age,
-            dry_run=dry_run,
-        )
+@dataclass(frozen=True)
+class _ReapLeaseAttempt:
+    expired: bool
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class _ReapLeaseResult:
+    lease_expired: list[tuple[str, str]]
+    errors: list[str]
+
+
+@dataclass(frozen=True)
+class _ReapFenceObservation:
+    pre_stop: JobLoadSnapshot | None
+    generation: object
+    expired: bool
+
+
+@dataclass(frozen=True)
+class _ReapActuationInputs:
+    controller: GpuLifecycleController
+    load_source: JobLoadSource
+    actuator: InstanceStopActuator
+    expected_generation: object
+    dry_run: bool
+
+
+@dataclass(frozen=True)
+class _ReapOutcomeContext:
+    decided: list[tuple[str, str]]
+    fenced: list[tuple[str, str]]
+    lease_expired: list[tuple[str, str]]
+    lease_errors: list[str]
+    effective_intent: EffectiveIntent
+    intent_status: IntentStatus
+    last_transition_reason: LastTransitionReason
+    deferred_stop_store: DeferredStopStore | None
+
+
+@dataclass(frozen=True)
+class _ReapStopAttempt:
+    actuated: bool = False
+    cancelled: bool = False
+    errors: tuple[str, ...] = ()
+
+
+def _pending_intent_status(effective_intent: EffectiveIntent) -> IntentStatus:
+    """Return the pending status used when a non-automatic intent is unresolved."""
+    if effective_intent.status is IntentStatus.NONE and effective_intent.action is not IntentAction.AUTO:
+        return IntentStatus.PENDING
+    return effective_intent.status
+
+
+def _load_reap_snapshot(load_source: JobLoadSource) -> JobLoadSnapshot | None:
+    """Read the initial reap load boundary, failing closed when it cannot be sampled."""
     try:
-        load = load_source.snapshot()
+        return load_source.snapshot()
     except Exception as exc:  # noqa: BLE001 - an unusable load fence fails closed
         logger.error("load snapshot failed; treating load as untrustworthy: %s", exc)
-        load = None
+        return None
 
-    load_trustworthy = isinstance(load, JobLoadSnapshot) and not load.untrustworthy
 
-    forced = controller.lease_expired_instances(instances, max_lease_seconds=max_lease_seconds)
+def _reap_expired_lease_attempt(
+    context: _ReapLeaseContext,
+    *,
+    action: str,
+    instance_id: str,
+) -> _ReapLeaseAttempt:
+    """Attempt one absolute cost-cap STOP and classify its outcome."""
+    if context.load_trustworthy:
+        logger.warning(
+            "max lease %ss exceeded; forcing STOP despite trustworthy busy load: %s",
+            context.max_lease_seconds,
+            instance_id,
+        )
+    else:
+        logger.error(
+            "max lease exceeded with untrustworthy load; forcing STOP (cost cap is absolute): %s",
+            instance_id,
+        )
+    if context.dry_run:
+        logger.info("dry-run would force STOP for expired lease: %s", instance_id)
+        return _ReapLeaseAttempt(expired=True)
+    try:
+        context.actuator.stop_instance(instance_id)
+        return _ReapLeaseAttempt(expired=True)
+    except subprocess.SubprocessError as exc:
+        if _reconcile_ambiguous_action(
+            context.actuator,
+            instance_id,
+            desired_state="STOPPED",
+        ):
+            return _ReapLeaseAttempt(expired=True)
+        return _ReapLeaseAttempt(
+            expired=False,
+            error=f"{instance_id}: STOP outcome unknown after {type(exc).__name__}: {exc}",
+        )
+    except Exception as exc:  # noqa: BLE001 - isolate per-instance (rg-007)
+        msg = f"{instance_id}: {type(exc).__name__}: {exc}"
+        logger.error("lease-expiry STOP failed: %s", msg)
+        return _ReapLeaseAttempt(expired=False, error=msg)
+
+
+def _force_reap_leases(context: _ReapLeaseContext) -> _ReapLeaseResult:
+    """Apply the absolute lease cap before evaluating idle STOP decisions."""
+    forced = context.controller.lease_expired_instances(
+        context.instances,
+        max_lease_seconds=context.max_lease_seconds,
+    )
+    lease_expired: list[tuple[str, str]] = []
+    lease_errors: list[str] = []
     for action, instance_id in forced:
-        if load_trustworthy:
-            logger.warning(
-                "max lease %ss exceeded; forcing STOP despite trustworthy busy load: %s",
-                max_lease_seconds,
-                instance_id,
-            )
-        else:
-            logger.error(
-                "max lease exceeded with untrustworthy load; forcing STOP (cost cap is absolute): %s",
-                instance_id,
-            )
-        if dry_run:
-            logger.info("dry-run would force STOP for expired lease: %s", instance_id)
+        attempt = _reap_expired_lease_attempt(
+            context,
+            action=action,
+            instance_id=instance_id,
+        )
+        if attempt.expired:
             lease_expired.append((action, instance_id))
-            continue
+        if attempt.error is not None:
+            lease_errors.append(attempt.error)
+    if lease_expired and context.effective_intent.action is IntentAction.STOP and context.deferred_stop_store is not None:
         try:
-            actuator.stop_instance(instance_id)
-            lease_expired.append((action, instance_id))
-        except subprocess.SubprocessError as exc:
-            if _reconcile_ambiguous_action(
-                actuator,
-                instance_id,
-                desired_state="STOPPED",
-            ):
-                lease_expired.append((action, instance_id))
-                continue
-            msg = f"{instance_id}: STOP outcome unknown after {type(exc).__name__}: {exc}"
-            lease_errors.append(msg)
-        except Exception as exc:  # noqa: BLE001 - isolate per-instance (rg-007)
-            msg = f"{instance_id}: {type(exc).__name__}: {exc}"
-            logger.error("lease-expiry STOP failed: %s", msg)
-            lease_errors.append(msg)
-    # Anything already stopped by the cap must not be considered again below.
-    forced_ids = {instance_id for _, instance_id in lease_expired}
-    if forced_ids:
-        instances = [i for i in instances if i.instance_id not in forced_ids]
+            context.deferred_stop_store.clear(sequence=context.effective_intent.sequence)
+        except OSError as exc:
+            lease_errors.append(f"deferred STOP clear failed: {type(exc).__name__}: {exc}")
+    return _ReapLeaseResult(lease_expired=lease_expired, errors=lease_errors)
 
+
+def _reap_instances_after_lease_cap(
+    instances: list[GpuInstance],
+    lease_expired: list[tuple[str, str]],
+) -> tuple[list[GpuInstance], LastTransitionReason]:
+    """Remove lease-cap subjects from the idle decision and set its transition reason."""
+    forced_ids = {instance_id for _, instance_id in lease_expired}
+    remaining = [instance for instance in instances if instance.instance_id not in forced_ids] if forced_ids else instances
+    reason = LastTransitionReason.LEASE_CAP if lease_expired else LastTransitionReason.UNKNOWN
+    return remaining, reason
+
+
+def _reap_guard_result(
+    *,
+    effective_intent: EffectiveIntent,
+    load_trustworthy: bool,
+    lease_expired: list[tuple[str, str]],
+    lease_errors: list[str],
+    intent_status: IntentStatus,
+    last_transition_reason: LastTransitionReason,
+) -> ReapCycleResult | None:
+    """Return the fail-closed reap result for blocked intent or bad load evidence."""
+    if effective_intent.deferred_rearm_failed:
+        message = effective_intent.reason or "deferred STOP rearm failed; automatic actuation blocked"
+        logger.error(message)
+        return ReapCycleResult(
+            decided=[],
+            actuated=[],
+            fenced_off=True,
+            errors=[*lease_errors, message],
+            lease_expired=lease_expired,
+            intent=effective_intent,
+            intent_status=IntentStatus.BLOCKED_WORK_IN_FLIGHT,
+            last_transition_reason=last_transition_reason,
+        )
     if not load_trustworthy:
         msg = "load snapshot untrustworthy; refusing STOP (fail closed)"
         logger.error(msg)
@@ -1193,24 +2223,67 @@ def _run_reap_cycle(
             fenced_off=True,
             errors=[*lease_errors, msg],
             lease_expired=lease_expired,
+            intent=effective_intent,
+            intent_status=intent_status,
+            last_transition_reason=last_transition_reason,
         )
+    return None
 
-    assert isinstance(load, JobLoadSnapshot)
-    decided = controller.reap_idle_instances(
-        instances,
-        queue_depth=load.queue_depth,
-        in_flight=load.in_flight,
-        batch_in_progress=load.batch_in_progress,
+
+def _reap_busy_intent_result(
+    *,
+    load: JobLoadSnapshot,
+    cycle_time: datetime,
+    effective_intent: EffectiveIntent,
+    deferred_stop_store: DeferredStopStore | None,
+    lease_expired: list[tuple[str, str]],
+    lease_errors: list[str],
+    last_transition_reason: LastTransitionReason,
+) -> ReapCycleResult | None:
+    """Persist a deferred operator STOP when work prevents immediate actuation."""
+    if effective_intent.action is not IntentAction.STOP or not load.has_work:
+        return None
+    blocked_errors = list(lease_errors)
+    if deferred_stop_store is not None:
+        deferred_record = _deferred_record_for_intent(effective_intent, now=cycle_time)
+        if deferred_record is None:
+            blocked_errors.append(
+                "deferred STOP could not be persisted: intent is missing requested_at, nonce, or sequence"
+            )
+            logger.error(blocked_errors[-1])
+        else:
+            try:
+                deferred_stop_store.write(deferred_record)
+            except (OSError, ValueError) as exc:
+                blocked_errors.append(f"deferred STOP write failed: {type(exc).__name__}: {exc}")
+                logger.error(blocked_errors[-1])
+            else:
+                effective_intent = replace(
+                    effective_intent,
+                    expires_at=deferred_record.deferred_until,
+                    status=IntentStatus.BLOCKED_WORK_IN_FLIGHT,
+                    reason="STOP re-armed while work is in flight",
+                    deferred_until=deferred_record.deferred_until,
+                    deferred_reason=deferred_record.deferred_reason,
+                )
+    return ReapCycleResult(
+        decided=[],
+        actuated=[],
+        fenced_off=False,
+        errors=blocked_errors,
+        lease_expired=lease_expired,
+        intent=effective_intent,
+        intent_status=IntentStatus.BLOCKED_WORK_IN_FLIGHT,
+        last_transition_reason=last_transition_reason,
     )
-    if not decided:
-        return ReapCycleResult(
-            decided=[],
-            actuated=[],
-            fenced_off=False,
-            errors=lease_errors,
-            lease_expired=lease_expired,
-        )
 
+
+def _reap_fence_observation(
+    load_source: JobLoadSource,
+    *,
+    fence_delay_seconds: float,
+) -> _ReapFenceObservation:
+    """Take the delayed load sample and generation used by the STOP fence."""
     fence_expired = False
     pre_stop: JobLoadSnapshot | None = None
     pre_stop_generation: object = None
@@ -1229,15 +2302,222 @@ def _run_reap_cycle(
     except Exception as exc:  # noqa: BLE001 - fence expiry fails closed
         logger.error("fence resample failed; cancelling STOP: %s", exc)
         fence_expired = True
+    return _ReapFenceObservation(
+        pre_stop=pre_stop,
+        generation=pre_stop_generation,
+        expired=fence_expired,
+    )
 
-    fenced = controller.fence_stop_actions(decided, pre_stop_load=pre_stop, fence_expired=fence_expired)
+
+def _reap_stop_attempt(
+    inputs: _ReapActuationInputs,
+    *,
+    action: str,
+    instance_id: str,
+) -> _ReapStopAttempt:
+    """Validate and actuate one fenced idle STOP."""
+    current_load = _validated_stop_observation(
+        inputs.load_source,
+        expected_generation=inputs.expected_generation,
+    )
+    if not inputs.controller.fence_stop_actions(
+        [(action, instance_id)],
+        pre_stop_load=current_load,
+        fence_expired=current_load is None,
+    ):
+        logger.info("generation fence cancelled STOP for %s", instance_id)
+        return _ReapStopAttempt(cancelled=True)
+    if inputs.dry_run:
+        logger.info("dry-run would STOP idle instance: %s", instance_id)
+        return _ReapStopAttempt(actuated=True)
+    try:
+        stopped, fence_supported = _actuate_stop_with_generation_fence(
+            inputs.load_source,
+            inputs.actuator,
+            instance_id=instance_id,
+            expected_generation=inputs.expected_generation,
+        )
+        if not stopped:
+            logger.info("atomic generation fence cancelled STOP for %s", instance_id)
+            fence_errors = (
+                ()
+                if fence_supported
+                else (f"{instance_id}: writer-coordinated STOP generation fence unavailable",)
+            )
+            return _ReapStopAttempt(cancelled=True, errors=fence_errors)
+        return _ReapStopAttempt(actuated=True)
+    except subprocess.SubprocessError as exc:
+        if _reconcile_ambiguous_action(
+            inputs.actuator,
+            instance_id,
+            desired_state="STOPPED",
+        ):
+            return _ReapStopAttempt(actuated=True)
+        return _ReapStopAttempt(
+            errors=(f"{instance_id}: STOP outcome unknown after {type(exc).__name__}: {exc}",)
+        )
+    except Exception as exc:  # noqa: BLE001 - isolate per-instance (VLMFIX-S2-03)
+        msg = f"{instance_id}: {type(exc).__name__}: {exc}"
+        logger.error("STOP failed: %s", msg)
+        return _ReapStopAttempt(errors=(msg,))
+
+
+def _actuate_reap_stops(
+    inputs: _ReapActuationInputs,
+    context: _ReapOutcomeContext,
+) -> ReapCycleResult:
+    """Apply the per-instance generation fence and publish STOP outcomes."""
+    actuated: list[tuple[str, str]] = []
+    errors: list[str] = []
+    for action, instance_id in context.fenced:
+        if action != "STOP":
+            continue
+        attempt = _reap_stop_attempt(
+            inputs,
+            action=action,
+            instance_id=instance_id,
+        )
+        errors.extend(attempt.errors)
+        if attempt.cancelled:
+            return ReapCycleResult(
+                decided=context.decided,
+                actuated=actuated,
+                fenced_off=True,
+                errors=[*context.lease_errors, *errors],
+                lease_expired=context.lease_expired,
+                intent=context.effective_intent,
+                intent_status=context.intent_status,
+                last_transition_reason=context.last_transition_reason,
+            )
+        if attempt.actuated:
+            actuated.append((action, instance_id))
+    intent_status = context.intent_status
+    last_transition_reason = context.last_transition_reason
+    if actuated and context.effective_intent.action is IntentAction.STOP:
+        intent_status = IntentStatus.HONOURED
+        last_transition_reason = LastTransitionReason.OPERATOR
+        if context.deferred_stop_store is not None:
+            try:
+                context.deferred_stop_store.clear(sequence=context.effective_intent.sequence)
+            except OSError as exc:
+                errors.append(f"deferred STOP clear failed: {type(exc).__name__}: {exc}")
+    elif actuated:
+        last_transition_reason = LastTransitionReason.IDLE
+    return ReapCycleResult(
+        decided=context.decided,
+        actuated=actuated,
+        fenced_off=False,
+        errors=[*context.lease_errors, *errors],
+        lease_expired=context.lease_expired,
+        intent=context.effective_intent,
+        intent_status=intent_status,
+        last_transition_reason=last_transition_reason,
+    )
+
+
+def _run_reap_cycle(
+    *,
+    controller: GpuLifecycleController,
+    instances: list[GpuInstance],
+    load_source: JobLoadSource,
+    actuator: InstanceStopActuator,
+    fence_delay_seconds: float = _DEFAULT_FENCE_DELAY_SECONDS,
+    max_lease_seconds: int = 0,
+    running_since_store: RunningSinceLeaseStore | None = None,
+    use_recorded_lease_age: bool = True,
+    dry_run: bool = False,
+    effective_intent: EffectiveIntent | None = None,
+    deferred_stop_store: DeferredStopStore | None = None,
+    now: datetime | float | int | None = None,
+) -> ReapCycleResult:
+    """Decision → fence delay → re-sample → STOP only if still idle."""
+    effective_intent = effective_intent or EffectiveIntent()
+    cycle_time = _coerce_cycle_time(now)
+    intent_status = _pending_intent_status(effective_intent)
+    lease_errors: list[str] = []
+    if running_since_store is not None:
+        instances, lease_errors = _apply_running_since_leases(
+            instances,
+            running_since_store,
+            use_recorded_age=use_recorded_lease_age,
+            dry_run=dry_run,
+        )
+    load = _load_reap_snapshot(load_source)
+    load_trustworthy = isinstance(load, JobLoadSnapshot) and not load.untrustworthy
+    honoured_ids = _honoured_instance_ids(instances, running_since_store, effective_intent.nonce)
+    lease_result = _force_reap_leases(
+        _ReapLeaseContext(
+            controller=controller,
+            actuator=actuator,
+            instances=instances,
+            max_lease_seconds=max_lease_seconds,
+            load_trustworthy=load_trustworthy,
+            dry_run=dry_run,
+            effective_intent=effective_intent,
+            deferred_stop_store=deferred_stop_store,
+        )
+    )
+    lease_expired = lease_result.lease_expired
+    lease_errors.extend(lease_result.errors)
+    instances, last_transition_reason = _reap_instances_after_lease_cap(instances, lease_expired)
+    if honoured_ids and effective_intent.action is IntentAction.START:
+        intent_status = IntentStatus.HONOURED
+    guard_result = _reap_guard_result(
+        effective_intent=effective_intent,
+        load_trustworthy=load_trustworthy,
+        lease_expired=lease_expired,
+        lease_errors=lease_errors,
+        intent_status=intent_status,
+        last_transition_reason=last_transition_reason,
+    )
+    if guard_result is not None:
+        return guard_result
+    assert isinstance(load, JobLoadSnapshot)
+    decided = controller.reap_idle_instances(
+        instances,
+        queue_depth=load.queue_depth,
+        in_flight=load.in_flight,
+        batch_in_progress=load.batch_in_progress,
+        intent=effective_intent.action,
+    )
+    blocked_result = _reap_busy_intent_result(
+        load=load,
+        cycle_time=cycle_time,
+        effective_intent=effective_intent,
+        deferred_stop_store=deferred_stop_store,
+        lease_expired=lease_expired,
+        lease_errors=lease_errors,
+        last_transition_reason=last_transition_reason,
+    )
+    if blocked_result is not None:
+        return blocked_result
+    if not decided:
+        return ReapCycleResult(
+            decided=[],
+            actuated=[],
+            fenced_off=False,
+            errors=lease_errors,
+            lease_expired=lease_expired,
+            intent=effective_intent,
+            intent_status=intent_status,
+            last_transition_reason=last_transition_reason,
+        )
+    fence = _reap_fence_observation(
+        load_source,
+        fence_delay_seconds=fence_delay_seconds,
+    )
+    fenced = controller.fence_stop_actions(
+        decided,
+        pre_stop_load=fence.pre_stop,
+        fence_expired=fence.expired,
+    )
     if not fenced:
         logger.info(
             "fence cancelled STOP (queue_depth=%s in_flight=%s batch=%s expired=%s)",
-            None if pre_stop is None else pre_stop.queue_depth,
-            None if pre_stop is None else pre_stop.in_flight,
-            None if pre_stop is None else pre_stop.batch_in_progress,
-            fence_expired,
+            None if fence.pre_stop is None else fence.pre_stop.queue_depth,
+            None if fence.pre_stop is None else fence.pre_stop.in_flight,
+            None if fence.pre_stop is None else fence.pre_stop.batch_in_progress,
+            fence.expired,
         )
         return ReapCycleResult(
             decided=decided,
@@ -1245,74 +2525,28 @@ def _run_reap_cycle(
             fenced_off=True,
             errors=lease_errors,
             lease_expired=lease_expired,
+            intent=effective_intent,
+            intent_status=intent_status,
+            last_transition_reason=last_transition_reason,
         )
-
-    actuated: list[tuple[str, str]] = []
-    errors: list[str] = []
-    for action, instance_id in fenced:
-        if action != "STOP":
-            continue
-        current_load = _validated_stop_observation(
-            load_source,
-            expected_generation=pre_stop_generation,
-        )
-        if not controller.fence_stop_actions(
-            [(action, instance_id)],
-            pre_stop_load=current_load,
-            fence_expired=current_load is None,
-        ):
-            logger.info("generation fence cancelled STOP for %s", instance_id)
-            return ReapCycleResult(
-                decided=decided,
-                actuated=actuated,
-                fenced_off=True,
-                errors=[*lease_errors, *errors],
-                lease_expired=lease_expired,
-            )
-        if dry_run:
-            logger.info("dry-run would STOP idle instance: %s", instance_id)
-            actuated.append((action, instance_id))
-            continue
-        try:
-            stopped, fence_supported = _actuate_stop_with_generation_fence(
-                load_source,
-                actuator,
-                instance_id=instance_id,
-                expected_generation=pre_stop_generation,
-            )
-            if not stopped:
-                logger.info("atomic generation fence cancelled STOP for %s", instance_id)
-                fence_errors = (
-                    [] if fence_supported else [f"{instance_id}: writer-coordinated STOP generation fence unavailable"]
-                )
-                return ReapCycleResult(
-                    decided=decided,
-                    actuated=actuated,
-                    fenced_off=True,
-                    errors=[*lease_errors, *errors, *fence_errors],
-                    lease_expired=lease_expired,
-                )
-            actuated.append((action, instance_id))
-        except subprocess.SubprocessError as exc:
-            if _reconcile_ambiguous_action(
-                actuator,
-                instance_id,
-                desired_state="STOPPED",
-            ):
-                actuated.append((action, instance_id))
-                continue
-            msg = f"{instance_id}: STOP outcome unknown after {type(exc).__name__}: {exc}"
-            errors.append(msg)
-        except Exception as exc:  # noqa: BLE001 - isolate per-instance (VLMFIX-S2-03)
-            msg = f"{instance_id}: {type(exc).__name__}: {exc}"
-            logger.error("STOP failed: %s", msg)
-            errors.append(msg)
-    return ReapCycleResult(
-        decided=decided,
-        actuated=actuated,
-        fenced_off=False,
-        errors=[*lease_errors, *errors],
-        lease_expired=lease_expired,
+    return _actuate_reap_stops(
+        _ReapActuationInputs(
+            controller=controller,
+            load_source=load_source,
+            actuator=actuator,
+            expected_generation=fence.generation,
+            dry_run=dry_run,
+        ),
+        _ReapOutcomeContext(
+            decided=decided,
+            fenced=fenced,
+            lease_expired=lease_expired,
+            lease_errors=lease_errors,
+            effective_intent=effective_intent,
+            intent_status=intent_status,
+            last_transition_reason=last_transition_reason,
+            deferred_stop_store=deferred_stop_store,
+        ),
     )
 
 
@@ -1328,10 +2562,35 @@ def run_reap_cycle(
     use_recorded_lease_age: bool = True,
     dry_run: bool = False,
     gpu_state_path: str | Path | None = None,
+    intent_dir: str | Path | None = None,
+    intent: EffectiveIntent | IntentAction | str | None = None,
+    now: datetime | float | int | None = None,
+    durable_state_dir: str | Path | None = None,
+    durable_intent_dir: str | Path | None = None,
+    authority_store: IntentAuthorityStore | None = None,
+    deferred_stop_store: DeferredStopStore | None = None,
+    decision_log_store: DecisionLogStore | None = None,
 ) -> ReapCycleResult:
     """Serialize observe/decide/actuate/publish as one lifecycle transition."""
+    resolved_durable_dir, resolved_authority, resolved_deferred, resolved_log = _intent_stores(
+        intent_dir=intent_dir,
+        durable_intent_dir=durable_intent_dir,
+        durable_state_dir=durable_state_dir,
+        authority_store=authority_store,
+        deferred_stop_store=deferred_stop_store,
+        decision_log_store=decision_log_store,
+    )
+    effective_intent = _resolve_effective_intent(
+        intent_dir=intent_dir,
+        intent=intent,
+        now=now,
+        durable_intent_dir=resolved_durable_dir,
+        authority_store=resolved_authority,
+        deferred_stop_store=resolved_deferred,
+        decision_log_store=resolved_log,
+    )
     if dry_run:
-        return _run_reap_cycle(
+        result = _run_reap_cycle(
             controller=controller,
             instances=instances,
             load_source=load_source,
@@ -1341,7 +2600,11 @@ def run_reap_cycle(
             running_since_store=running_since_store,
             use_recorded_lease_age=use_recorded_lease_age,
             dry_run=True,
+            effective_intent=effective_intent,
+            deferred_stop_store=resolved_deferred,
+            now=now,
         )
+        return _record_decision(result, mode="reap", now=now, store=resolved_log)
     with _serialized_gpu_state_publish(gpu_state_path):
         result = _run_reap_cycle(
             controller=controller,
@@ -1353,7 +2616,11 @@ def run_reap_cycle(
             running_since_store=running_since_store,
             use_recorded_lease_age=use_recorded_lease_age,
             dry_run=False,
+            effective_intent=effective_intent,
+            deferred_stop_store=resolved_deferred,
+            now=now,
         )
+        result = _record_decision(result, mode="reap", now=now, store=resolved_log)
         stopped_instance_ids = {
             instance_id for action, instance_id in [*result.actuated, *result.lease_expired] if action == "STOP"
         }
@@ -1375,6 +2642,23 @@ def run_reap_cycle(
         )
         if result.errors:
             state = GpuLifecycleState.DEGRADED
+        instance_running_since, lease_expires_at, persisted_nonce = _lease_snapshot_metadata(
+            post_actuation_instances,
+            running_since_store,
+            max_lease_seconds=max_lease_seconds,
+            stopped_instance_ids=stopped_instance_ids,
+        )
+        snapshot_kwargs: dict[str, object] = {}
+        if snapshot_instance_id is not None:
+            snapshot_kwargs = {
+                "intent": result.intent.action,
+                "intent_expires_at": result.intent.expires_at,
+                "intent_status": result.intent_status,
+                "honoured_nonce": result.honoured_nonce or persisted_nonce,
+                "lease_expires_at": lease_expires_at,
+                "instance_running_since": instance_running_since,
+                "last_transition_reason": result.last_transition_reason,
+            }
         snapshot_persisted = write_gpu_state_snapshot(
             state,
             instance_id=snapshot_instance_id,
@@ -1384,28 +2668,139 @@ def run_reap_cycle(
                 has_errors=bool(result.errors),
             ),
             path=gpu_state_path,
+            **snapshot_kwargs,
         )
-    return replace(result, snapshot_persisted=snapshot_persisted)
+    return replace(
+        result,
+        snapshot_persisted=snapshot_persisted,
+        honoured_nonce=result.honoured_nonce or persisted_nonce,
+        instance_running_since=instance_running_since,
+        lease_expires_at=lease_expires_at,
+    )
 
 
-def _run_start_cycle(
+@dataclass(frozen=True)
+class _StartDecision:
+    load: object
+    honoured_ids: set[str]
+    decided: list[tuple[str, str]]
+    waiting_ids: list[str]
+    running_ids: list[str]
+
+
+@dataclass(frozen=True)
+class _StartPreActuation:
+    result: StartCycleResult | None
+    wait_ids: list[str]
+
+
+@dataclass(frozen=True)
+class _StartActuationContext:
+    actuator: InstanceStartActuator
+    running_since_store: RunningSinceLeaseStore | None
+    effective_intent: EffectiveIntent
+    dry_run: bool
+    use_write_ahead_start: bool
+    prepare_start: Callable[..., object] | None
+    commit_start: Callable[..., object] | None
+
+
+@dataclass(frozen=True)
+class _StartInstanceAttempt:
+    actuated: bool = False
+    failed: bool = False
+    errors: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _StartActuationResult:
+    actuated: list[tuple[str, str]]
+    start_failed: list[str]
+    errors: list[str]
+
+
+@dataclass(frozen=True)
+class _StartReadinessContext:
+    controller: GpuLifecycleController
+    probe: InstanceReadinessProbe | None
+    readiness_wait: WarmReadinessWait | None
+    actuated: list[tuple[str, str]]
+    waiting_ids: list[str]
+    running_ids: list[str]
+    start_failed: list[str]
+    errors: list[str]
+
+
+@dataclass(frozen=True)
+class _StartReadinessResult:
+    wait_result: ReadinessWaitResult | None
+    fallbacks: list[FallbackDecision]
+
+
+def _blocked_start_result(effective_intent: EffectiveIntent) -> StartCycleResult | None:
+    """Return the fail-closed result when deferred STOP recovery is unsafe."""
+    if not effective_intent.deferred_rearm_failed:
+        return None
+    message = effective_intent.reason or "deferred STOP rearm failed; automatic actuation blocked"
+    logger.error(message)
+    return StartCycleResult(
+        decided=[],
+        actuated=[],
+        errors=[message],
+        intent=effective_intent,
+        intent_status=IntentStatus.BLOCKED_WORK_IN_FLIGHT,
+    )
+
+
+def _start_pending_recovery_errors(
+    instances: list[GpuInstance],
+    running_since_store: RunningSinceLeaseStore | None,
+    *,
+    dry_run: bool,
+) -> list[str]:
+    """Reconcile pending durable START records before reading new load."""
+    errors: list[str] = []
+    reconcile_pending = getattr(running_since_store, "reconcile_pending_start", None)
+    if callable(reconcile_pending) and not dry_run:
+        for instance in instances:
+            try:
+                reconcile_pending(instance.instance_id, instance.state)
+            except (OSError, ValueError) as exc:
+                msg = (
+                    f"{instance.instance_id}: pending START recovery failed; refusing START: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+                logger.error(msg)
+                errors.append(msg)
+    return errors
+
+
+def _start_recovery_error_result(
+    effective_intent: EffectiveIntent,
+    errors: list[str],
+) -> StartCycleResult:
+    """Publish the result of refusing START after pending-authority recovery errors."""
+    return StartCycleResult(
+        decided=[],
+        actuated=[],
+        errors=errors,
+        intent=effective_intent,
+        intent_status=_pending_intent_status(effective_intent),
+    )
+
+
+def _start_work_decision(
     *,
     controller: GpuLifecycleController,
     instances: list[GpuInstance],
     load_source: JobLoadSource,
-    actuator: InstanceStartActuator,
-    probe: InstanceReadinessProbe | None = None,
-    readiness_wait: WarmReadinessWait | None = None,
-    running_since_store: RunningSinceLeaseStore | None = None,
-    dry_run: bool = False,
-) -> StartCycleResult:
-    """Emit START for STOPPED instances when the job store has work.
-
-    Per-instance START failures are collected; the loop continues (rg-007).
-    When a readiness probe is supplied, wait is bounded; timeout/stall is loud.
-    """
+    running_since_store: RunningSinceLeaseStore | None,
+    effective_intent: EffectiveIntent,
+    errors: list[str],
+) -> _StartDecision:
+    """Observe load and decide which instances need START or readiness waiting."""
     load = load_source.snapshot()
-    errors: list[str] = []
+    honoured_ids = _honoured_instance_ids(instances, running_since_store, effective_intent.nonce)
     if not isinstance(load, JobLoadSnapshot) or load.untrustworthy:
         msg = "load snapshot untrustworthy; refusing START"
         logger.error("%s to avoid unfenced GPU burn", msg)
@@ -1418,20 +2813,88 @@ def _run_start_cycle(
             queue_depth=load.queue_depth,
             in_flight=load.in_flight,
             batch_in_progress=load.batch_in_progress,
+            intent=effective_intent.action,
+            honoured_instance_ids=honoured_ids,
         )
-        waiting_ids = controller.instances_waiting_on_boot(instances) if load.has_work else []
+        waiting_ids = (
+            controller.instances_waiting_on_boot(instances)
+            if load.has_work and effective_intent.action is not IntentAction.STOP
+            else []
+        )
     running_ids = [instance.instance_id for instance in instances if instance.state == "RUNNING"]
-    blocked = controller.instances_blocking_start(instances) if not load.untrustworthy and load.has_work else []
+    return _StartDecision(
+        load=load,
+        honoured_ids=honoured_ids,
+        decided=decided,
+        waiting_ids=waiting_ids,
+        running_ids=running_ids,
+    )
+
+
+def _start_blocking_errors(
+    *,
+    controller: GpuLifecycleController,
+    instances: list[GpuInstance],
+    decision: _StartDecision,
+    effective_intent: EffectiveIntent,
+) -> list[str]:
+    """Record fail-closed START refusals for instances that block waiting work."""
+    load = decision.load
+    blocked = (
+        controller.instances_blocking_start(instances)
+        if isinstance(load, JobLoadSnapshot)
+        and not load.untrustworthy
+        and load.has_work
+        and effective_intent.action is not IntentAction.STOP
+        else []
+    )
+    errors: list[str] = []
     for instance in blocked:
         msg = f"{instance.instance_id}: fail-closed START refused; state={instance.state} while work waits"
         logger.error(msg)
         errors.append(msg)
-    should_probe_running = probe is not None and readiness_wait is not None and bool(running_ids)
-    if not decided and not waiting_ids and not errors and not should_probe_running:
-        return StartCycleResult(decided=[], actuated=[], errors=[])
+    return errors
 
-    start_ids = [instance_id for action, instance_id in decided if action == LifecycleAction.START]
-    wait_ids = list(dict.fromkeys([*start_ids, *waiting_ids, *running_ids]))
+
+def _start_idle_intent_status(
+    effective_intent: EffectiveIntent,
+    honoured_ids: set[str],
+) -> IntentStatus:
+    """Resolve intent status for a cycle that has no START or readiness work."""
+    status = effective_intent.status
+    if status is IntentStatus.NONE and effective_intent.action is not IntentAction.AUTO:
+        return (
+            IntentStatus.HONOURED
+            if effective_intent.action is IntentAction.START and honoured_ids
+            else IntentStatus.PENDING
+        )
+    return status
+
+
+def _start_pre_actuation(
+    *,
+    decision: _StartDecision,
+    errors: list[str],
+    effective_intent: EffectiveIntent,
+    probe: InstanceReadinessProbe | None,
+    readiness_wait: WarmReadinessWait | None,
+) -> _StartPreActuation:
+    """Apply no-work and shared-endpoint guards before issuing START."""
+    start_ids = [instance_id for action, instance_id in decision.decided if action == LifecycleAction.START]
+    wait_ids = list(dict.fromkeys([*start_ids, *decision.waiting_ids, *decision.running_ids]))
+    should_probe_running = probe is not None and readiness_wait is not None and bool(decision.running_ids)
+    if not decision.decided and not decision.waiting_ids and not errors and not should_probe_running:
+        return _StartPreActuation(
+            result=StartCycleResult(
+                decided=[],
+                actuated=[],
+                errors=[],
+                intent=effective_intent,
+                intent_status=_start_idle_intent_status(effective_intent, decision.honoured_ids),
+                honoured_nonce=(effective_intent.nonce if decision.honoured_ids else None),
+            ),
+            wait_ids=[],
+        )
     if isinstance(probe, HttpReadinessProbe) and not probe.is_per_instance and len(wait_ids) > 1:
         msg = (
             "HttpReadinessProbe URL is a single shared endpoint; refusing "
@@ -1439,85 +2902,312 @@ def _run_start_cycle(
         )
         logger.error(msg)
         errors.append(msg)
-        return StartCycleResult(decided=decided, actuated=[], errors=errors, wait_result=None)
+        return _StartPreActuation(
+            result=StartCycleResult(
+                decided=decision.decided,
+                actuated=[],
+                errors=errors,
+                wait_result=None,
+                intent=effective_intent,
+                intent_status=_pending_intent_status(effective_intent),
+                honoured_nonce=(effective_intent.nonce if decision.honoured_ids else None),
+            ),
+            wait_ids=wait_ids,
+        )
+    return _StartPreActuation(result=None, wait_ids=wait_ids)
 
+
+def _prepare_start_instance(
+    context: _StartActuationContext,
+    *,
+    instance_id: str,
+) -> tuple[bool, str | None]:
+    """Persist write-ahead START authority before the OCI mutation when supported."""
+    if context.running_since_store is None or context.dry_run or not context.use_write_ahead_start:
+        return False, None
+    try:
+        context.prepare_start(
+            instance_id,
+            honoured_nonce=(
+                context.effective_intent.nonce
+                if context.effective_intent.action is IntentAction.START
+                else None
+            ),
+        )
+        return True, None
+    except (OSError, ValueError) as exc:
+        msg = (
+            f"{instance_id}: durable START authority prepare failed; refusing OCI START: "
+            f"{type(exc).__name__}: {exc}"
+        )
+        logger.error(msg)
+        return False, msg
+
+
+def _commit_start_lease(
+    context: _StartActuationContext,
+    *,
+    instance_id: str,
+    prepared: bool,
+) -> str | None:
+    """Commit the RUNNING lease after an acknowledged START, preserving compatibility call shapes."""
+    if context.running_since_store is None:
+        return None
+    if context.dry_run:
+        logger.info(
+            "dry-run would record RUNNING lease instance=%s source=start_actuator",
+            instance_id,
+        )
+        return None
+    try:
+        if context.use_write_ahead_start and prepared:
+            record = context.commit_start(
+                instance_id,
+                honoured_nonce=(
+                    context.effective_intent.nonce
+                    if context.effective_intent.action is IntentAction.START
+                    else None
+                ),
+            )
+        elif context.effective_intent.action is IntentAction.START:
+            # Compatibility path for injected stores from older callers.
+            record = context.running_since_store.record_start(
+                instance_id,
+                honoured_nonce=context.effective_intent.nonce,
+            )
+        else:
+            # Keep the legacy call shape for custom lease-store fakes.
+            record = context.running_since_store.record_start(instance_id)
+    except (OSError, ValueError) as exc:
+        msg = (
+            f"{instance_id}: START issued but durable lease commit failed; pending authority retained: "
+            f"{type(exc).__name__}: {exc}"
+        )
+        logger.error(msg)
+        return msg
+    logger.info(
+        "recorded RUNNING lease instance=%s source=%s since=%s",
+        instance_id,
+        record.source,
+        record.since.isoformat(),
+    )
+    return None
+
+
+def _start_instance_attempt(
+    context: _StartActuationContext,
+    *,
+    instance_id: str,
+) -> _StartInstanceAttempt:
+    """Prepare, issue, reconcile, and commit one START mutation."""
+    prepared, prepare_error = _prepare_start_instance(context, instance_id=instance_id)
+    if prepare_error is not None:
+        return _StartInstanceAttempt(failed=True, errors=(prepare_error,))
+    try:
+        context.actuator.start_instance(instance_id)
+    except subprocess.SubprocessError as exc:
+        if not _reconcile_ambiguous_action(
+            context.actuator,
+            instance_id,
+            desired_state="RUNNING",
+        ):
+            msg = f"{instance_id}: START outcome unknown after {type(exc).__name__}: {exc}"
+            return _StartInstanceAttempt(failed=True, errors=(msg,))
+    except Exception as exc:  # noqa: BLE001 - isolate per-instance (rg-007)
+        msg = f"{instance_id}: {type(exc).__name__}: {exc}"
+        logger.error("START failed: %s", msg)
+        return _StartInstanceAttempt(failed=True, errors=(msg,))
+    commit_error = _commit_start_lease(
+        context,
+        instance_id=instance_id,
+        prepared=prepared,
+    )
+    return _StartInstanceAttempt(
+        actuated=True,
+        errors=() if commit_error is None else (commit_error,),
+    )
+
+
+def _actuate_start_instances(
+    context: _StartActuationContext,
+    decided: list[tuple[str, str]],
+) -> _StartActuationResult:
+    """Apply START authority and actuator calls while isolating each instance failure."""
     actuated: list[tuple[str, str]] = []
     start_failed: list[str] = []
+    errors: list[str] = []
     for action, instance_id in decided:
         if action != LifecycleAction.START:
             continue
-        try:
-            actuator.start_instance(instance_id)
-        except subprocess.SubprocessError as exc:
-            if not _reconcile_ambiguous_action(
-                actuator,
-                instance_id,
-                desired_state="RUNNING",
-            ):
-                msg = f"{instance_id}: START outcome unknown after {type(exc).__name__}: {exc}"
-                errors.append(msg)
-                continue
+        attempt = _start_instance_attempt(context, instance_id=instance_id)
+        errors.extend(attempt.errors)
+        if attempt.actuated:
             actuated.append((action, instance_id))
-        except Exception as exc:  # noqa: BLE001 - isolate per-instance (rg-007)
-            msg = f"{instance_id}: {type(exc).__name__}: {exc}"
-            logger.error("START failed: %s", msg)
-            errors.append(msg)
+        if attempt.failed:
             start_failed.append(instance_id)
-            continue
-        else:
-            actuated.append((action, instance_id))
-        if running_since_store is not None:
-            if dry_run:
-                logger.info(
-                    "dry-run would record RUNNING lease instance=%s source=start_actuator",
-                    instance_id,
-                )
-                continue
-            try:
-                record = running_since_store.record_start(instance_id)
-            except (OSError, ValueError) as exc:
-                msg = (
-                    f"{instance_id}: START issued but running-since write failed; lease cap disabled: "
-                    f"{type(exc).__name__}: {exc}"
-                )
-                logger.error(msg)
-                errors.append(msg)
-            else:
-                logger.info(
-                    "recorded RUNNING lease instance=%s source=%s since=%s",
-                    instance_id,
-                    record.source,
-                    record.since.isoformat(),
-                )
+    return _StartActuationResult(
+        actuated=actuated,
+        start_failed=start_failed,
+        errors=errors,
+    )
 
+
+def _wait_for_start_readiness(context: _StartReadinessContext) -> _StartReadinessResult:
+    """Wait for newly started or already-running instances and collect fallbacks."""
     wait_result: ReadinessWaitResult | None = None
     fallbacks: list[FallbackDecision] = list(
-        controller.fallback_on_boot_failure(start_failed, reason="start_failed") if start_failed else ()
+        context.controller.fallback_on_boot_failure(context.start_failed, reason="start_failed")
+        if context.start_failed
+        else ()
     )
     wait_ids = list(
         dict.fromkeys(
             [
-                *(instance_id for _, instance_id in actuated),
-                *waiting_ids,
-                *running_ids,
+                *(instance_id for _, instance_id in context.actuated),
+                *context.waiting_ids,
+                *context.running_ids,
             ]
         )
     )
-    if probe is not None and readiness_wait is not None and wait_ids:
-        wait_result = readiness_wait.wait(wait_ids, probe)
+    if context.probe is not None and context.readiness_wait is not None and wait_ids:
+        wait_result = context.readiness_wait.wait(wait_ids, context.probe)
         if wait_result.errors:
-            errors.extend(wait_result.errors)
+            context.errors.extend(wait_result.errors)
         if wait_result.failed:
             fallbacks.extend(
-                controller.fallback_on_boot_failure(list(wait_result.timed_out), reason="readiness_timeout")
-                + controller.fallback_on_boot_failure(list(wait_result.stalled), reason="readiness_stall")
+                context.controller.fallback_on_boot_failure(
+                    list(wait_result.timed_out),
+                    reason="readiness_timeout",
+                )
+                + context.controller.fallback_on_boot_failure(
+                    list(wait_result.stalled),
+                    reason="readiness_stall",
+                )
             )
+    return _StartReadinessResult(wait_result=wait_result, fallbacks=fallbacks)
+
+
+def _finalize_start_result(
+    *,
+    effective_intent: EffectiveIntent,
+    decision: _StartDecision,
+    actuation: _StartActuationResult,
+    readiness: _StartReadinessResult,
+    errors: list[str],
+) -> StartCycleResult:
+    """Publish START intent, lease, readiness, and transition metadata."""
+    intent_status = _pending_intent_status(effective_intent)
+    honoured_nonce = effective_intent.nonce if decision.honoured_ids else None
+    last_transition_reason = LastTransitionReason.UNKNOWN
+    if actuation.actuated:
+        honoured_nonce = (
+            effective_intent.nonce if effective_intent.action is IntentAction.START else honoured_nonce
+        )
+        intent_status = (
+            IntentStatus.HONOURED if effective_intent.action is IntentAction.START else intent_status
+        )
+        last_transition_reason = (
+            LastTransitionReason.OPERATOR
+            if effective_intent.action is IntentAction.START
+            else LastTransitionReason.WORK
+        )
+    if actuation.start_failed:
+        last_transition_reason = LastTransitionReason.START_FAILED
     return StartCycleResult(
-        decided=decided,
-        actuated=actuated,
+        decided=decision.decided,
+        actuated=actuation.actuated,
         errors=errors,
-        wait_result=wait_result,
-        fallbacks=tuple(fallbacks),
+        wait_result=readiness.wait_result,
+        fallbacks=tuple(readiness.fallbacks),
+        intent=effective_intent,
+        intent_status=intent_status,
+        honoured_nonce=honoured_nonce,
+        last_transition_reason=last_transition_reason,
+    )
+
+
+def _run_start_cycle(
+    *,
+    controller: GpuLifecycleController,
+    instances: list[GpuInstance],
+    load_source: JobLoadSource,
+    actuator: InstanceStartActuator,
+    probe: InstanceReadinessProbe | None = None,
+    readiness_wait: WarmReadinessWait | None = None,
+    running_since_store: RunningSinceLeaseStore | None = None,
+    dry_run: bool = False,
+    effective_intent: EffectiveIntent | None = None,
+) -> StartCycleResult:
+    """Emit START for STOPPED instances when the job store has work."""
+    effective_intent = effective_intent or EffectiveIntent()
+    blocked_result = _blocked_start_result(effective_intent)
+    if blocked_result is not None:
+        return blocked_result
+    errors = _start_pending_recovery_errors(
+        instances,
+        running_since_store,
+        dry_run=dry_run,
+    )
+    if errors:
+        return _start_recovery_error_result(effective_intent, errors)
+    decision = _start_work_decision(
+        controller=controller,
+        instances=instances,
+        load_source=load_source,
+        running_since_store=running_since_store,
+        effective_intent=effective_intent,
+        errors=errors,
+    )
+    errors.extend(
+        _start_blocking_errors(
+            controller=controller,
+            instances=instances,
+            decision=decision,
+            effective_intent=effective_intent,
+        )
+    )
+    pre_actuation = _start_pre_actuation(
+        decision=decision,
+        errors=errors,
+        effective_intent=effective_intent,
+        probe=probe,
+        readiness_wait=readiness_wait,
+    )
+    if pre_actuation.result is not None:
+        return pre_actuation.result
+    prepare_start = getattr(running_since_store, "prepare_start", None)
+    commit_start = getattr(running_since_store, "commit_start", None)
+    actuation = _actuate_start_instances(
+        _StartActuationContext(
+            actuator=actuator,
+            running_since_store=running_since_store,
+            effective_intent=effective_intent,
+            dry_run=dry_run,
+            use_write_ahead_start=callable(prepare_start) and callable(commit_start),
+            prepare_start=prepare_start,
+            commit_start=commit_start,
+        ),
+        decision.decided,
+    )
+    errors.extend(actuation.errors)
+    readiness = _wait_for_start_readiness(
+        _StartReadinessContext(
+            controller=controller,
+            probe=probe,
+            readiness_wait=readiness_wait,
+            actuated=actuation.actuated,
+            waiting_ids=decision.waiting_ids,
+            running_ids=decision.running_ids,
+            start_failed=actuation.start_failed,
+            errors=errors,
+        )
+    )
+    return _finalize_start_result(
+        effective_intent=effective_intent,
+        decision=decision,
+        actuation=actuation,
+        readiness=readiness,
+        errors=errors,
     )
 
 
@@ -1530,12 +3220,38 @@ def run_start_cycle(
     probe: InstanceReadinessProbe | None = None,
     readiness_wait: WarmReadinessWait | None = None,
     running_since_store: RunningSinceLeaseStore | None = None,
+    max_lease_seconds: int = 0,
     dry_run: bool = False,
     gpu_state_path: str | Path | None = None,
+    intent_dir: str | Path | None = None,
+    intent: EffectiveIntent | IntentAction | str | None = None,
+    now: datetime | float | int | None = None,
+    durable_state_dir: str | Path | None = None,
+    durable_intent_dir: str | Path | None = None,
+    authority_store: IntentAuthorityStore | None = None,
+    deferred_stop_store: DeferredStopStore | None = None,
+    decision_log_store: DecisionLogStore | None = None,
 ) -> StartCycleResult:
     """Serialize observe/decide/actuate/publish as one lifecycle transition."""
+    resolved_durable_dir, resolved_authority, resolved_deferred, resolved_log = _intent_stores(
+        intent_dir=intent_dir,
+        durable_intent_dir=durable_intent_dir,
+        durable_state_dir=durable_state_dir,
+        authority_store=authority_store,
+        deferred_stop_store=deferred_stop_store,
+        decision_log_store=decision_log_store,
+    )
+    effective_intent = _resolve_effective_intent(
+        intent_dir=intent_dir,
+        intent=intent,
+        now=now,
+        durable_intent_dir=resolved_durable_dir,
+        authority_store=resolved_authority,
+        deferred_stop_store=resolved_deferred,
+        decision_log_store=resolved_log,
+    )
     if dry_run:
-        return _run_start_cycle(
+        result = _run_start_cycle(
             controller=controller,
             instances=instances,
             load_source=load_source,
@@ -1544,7 +3260,9 @@ def run_start_cycle(
             readiness_wait=readiness_wait,
             running_since_store=running_since_store,
             dry_run=True,
+            effective_intent=effective_intent,
         )
+        return _record_decision(result, mode="start", now=now, store=resolved_log)
     with _serialized_gpu_state_publish(gpu_state_path):
         result = _run_start_cycle(
             controller=controller,
@@ -1555,7 +3273,9 @@ def run_start_cycle(
             readiness_wait=readiness_wait,
             running_since_store=running_since_store,
             dry_run=False,
+            effective_intent=effective_intent,
         )
+        result = _record_decision(result, mode="start", now=now, store=resolved_log)
         snapshot_instance_id = _snapshot_instance_id(instances)
         if result.fallbacks:
             state = GpuLifecycleState.DEGRADED
@@ -1574,6 +3294,11 @@ def run_start_cycle(
                 ),
             )
         fallback_reason = result.fallbacks[0].reason if result.fallbacks else None
+        instance_running_since, lease_expires_at, persisted_nonce = _lease_snapshot_metadata(
+            instances,
+            running_since_store,
+            max_lease_seconds=max_lease_seconds,
+        )
         snapshot_persisted = write_gpu_state_snapshot(
             state,
             instance_id=snapshot_instance_id,
@@ -1584,8 +3309,21 @@ def run_start_cycle(
                 has_errors=bool(result.errors),
             ),
             path=gpu_state_path,
+            intent=result.intent.action,
+            intent_expires_at=result.intent.expires_at,
+            intent_status=result.intent_status,
+            honoured_nonce=result.honoured_nonce or persisted_nonce,
+            lease_expires_at=lease_expires_at,
+            instance_running_since=instance_running_since,
+            last_transition_reason=result.last_transition_reason,
         )
-    return replace(result, snapshot_persisted=snapshot_persisted)
+    return replace(
+        result,
+        snapshot_persisted=snapshot_persisted,
+        honoured_nonce=result.honoured_nonce or persisted_nonce,
+        instance_running_since=instance_running_since,
+        lease_expires_at=lease_expires_at,
+    )
 
 
 def _positive_integer(value: str) -> int:
@@ -1662,6 +3400,15 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help=(f"GPU state snapshot path (default: ACX_GPU_STATE_PATH or {DEFAULT_GPU_STATE_PATH})"),
+    )
+    parser.add_argument(
+        "--intent-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Optional directory containing <environment>/gpu-intent.json files. "
+            "The newest unexpired operator intent wins; omitted keeps legacy automatic behavior."
+        ),
     )
     load = parser.add_mutually_exclusive_group()
     load.add_argument(
@@ -1910,7 +3657,9 @@ def main(argv: list[str] | None = None) -> int:
             readiness_wait=readiness_wait,
             gpu_state_path=args.gpu_state_json,
             running_since_store=running_since_store,
+            max_lease_seconds=args.max_lease_seconds,
             dry_run=args.dry_run,
+            intent_dir=args.intent_dir,
         )
         logger.info(
             "start cycle decided=%s actuated=%s errors=%s wait=%s fallbacks=%s",
@@ -1939,6 +3688,7 @@ def main(argv: list[str] | None = None) -> int:
         running_since_store=running_since_store,
         use_recorded_lease_age=not explicit_idle_override,
         dry_run=args.dry_run,
+        intent_dir=args.intent_dir,
     )
     logger.info(
         "reap cycle decided=%s actuated=%s fenced_off=%s lease_expired=%s errors=%s",

@@ -3663,30 +3663,21 @@ handle_failed_verification() {
 }
 
 #---------------------------------------------------------------- deploy
-do_deploy() {
-  local env="$1"; shift || true
-  local check=0
-  # Non-exported latch consumed immediately. Public `deploy` never sets it;
-  # an exported ACX_* env cannot select scoped completion (RLSE-03, AGT-06).
-  local completion="${_ACX_SHIP_COMPLETION:-aggregate}"
-  _ACX_SHIP_COMPLETION=""
+# Shared selected-env ship. Completion is a required positional
+# (aggregate|scoped), never an inherited variable and never a public
+# do_deploy argument (RLSE-03, AGT-06, DATA-13).
+_ship_selected_env() {
+  local env="$1"
+  local completion="$2"
+  local tag sha restart_runtime
+
   case "${completion}" in
     aggregate|scoped) ;;
-    *) fail "internal: ship completion must be aggregate or scoped (got: ${completion})" ;;
+    *) fail "internal: _ship_selected_env completion must be aggregate or scoped (got: ${completion:-empty})" ;;
   esac
-  [[ "${1:-}" == "--check" ]] && check=1
-
-  # Read-only drift check bypasses build/push and the promote confirmation.
-  if (( check )); then
-    env_to_remote_dir "$env" >/dev/null   # validate env before any network
-    preflight_ssh
-    converge_check "$env"
-    return 0
-  fi
 
   init_deploy_ocir_docker_config
 
-  local tag sha
   tag="$(env_to_tag "$env")"
   sha="$(git -C "${REPO_ROOT}" rev-parse "${GIT_REF}")"
 
@@ -3736,7 +3727,6 @@ do_deploy() {
 
   if ! do_restart "$env" "${ACX_CANDIDATE_DIGEST_REF}"; then
     capture_failure_evidence "$env" "${ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}" || warn "automatic failure evidence capture failed; continuing with rollback"
-    local restart_runtime
     restart_runtime="$(cutover_failure_restart_runtime)"
     if restore_env_tag_to_rollback "$env" "${restart_runtime}"; then
       restore_prior_image_repo_env || warn "env tag restored but prior sticky repository restore failed"
@@ -3746,16 +3736,32 @@ do_deploy() {
     fail "Restart failed; the previous env tag was restored where possible. Recovery: $(rollback_command_hint "$env")"
   fi
 
-  if [[ "${completion}" == "scoped" ]]; then
+  if [[ "${completion}" == "aggregate" ]]; then
+    log "Deploy submitted. Verifying..."
+    # S2-A-04: deploy path uses local resolve as authority (not the remote .env
+    # we just wrote — that comparison would be tautological).
+    if ! ACX_VERIFY_EXPECT_LOCAL=1 do_verify "$env"; then
+      handle_failed_verification "$env" "Deploy"
+    fi
+  fi
+}
+
+do_deploy() {
+  local env="$1"; shift || true
+  local check=0
+  [[ "${1:-}" == "--check" ]] && check=1
+
+  # Read-only drift check bypasses build/push and the promote confirmation.
+  if (( check )); then
+    env_to_remote_dir "$env" >/dev/null   # validate env before any network
+    preflight_ssh
+    converge_check "$env"
     return 0
   fi
 
-  log "Deploy submitted. Verifying..."
-  # S2-A-04: deploy path uses local resolve as authority (not the remote .env
-  # we just wrote — that comparison would be tautological).
-  if ! ACX_VERIFY_EXPECT_LOCAL=1 do_verify "$env"; then
-    handle_failed_verification "$env" "Deploy"
-  fi
+  # Public deploy always aggregate. Extra argv and inherited
+  # _ACX_SHIP_COMPLETION / ACX_* vars cannot select scoped (TEST-15).
+  _ship_selected_env "$env" aggregate
 }
 
 #---------------------------------------------------------------- promote
@@ -4563,17 +4569,15 @@ do_prepare_producer() {
   local env="${1:-}"
   [[ -n "${env}" ]] || fail "prepare-producer requires <env> (dev|dev-fir|staging|prod)"
   env_to_unit "${env}" >/dev/null
-  # Reuse do_deploy's full ship (preserve/build/promote_gate/restart). The
-  # non-exported latch is consumed inside do_deploy and is not an ACX_* env
-  # var, so public deploy cannot drift into scoped completion.
-  _ACX_SHIP_COMPLETION=scoped
-  do_deploy "${env}"
+  # Explicit scoped completion on the shared ship; not an env latch and not a
+  # public do_deploy argument.
+  _ship_selected_env "${env}" scoped
   log "Scoped producer-preparation for ${env}: image, effective describe-load writer, schema, freshness"
   if ! verify_running_image_matches_deployed "${env}"; then
-    fail "scoped producer-preparation refused: image verification failed for ${env}"
+    handle_failed_verification "${env}" "Scoped producer-preparation"
   fi
   if ! verify_scoped_producer_snapshots "${env}"; then
-    fail "scoped producer-preparation refused: describe-load writer/schema/freshness failed for ${env}"
+    handle_failed_verification "${env}" "Scoped producer-preparation"
   fi
   log "Scoped producer-preparation passed for ${env}"
 }

@@ -284,6 +284,37 @@ def _replace_with_symlink(dest: Path, src: Path) -> None:
     os.symlink(src, dest)
 
 
+def _dep_cache_path(worktree: Path, rel: str, digest: str) -> Path:
+    """Return the lockfile-keyed freeze directory for one dependency tree."""
+    tree = Path(rel)
+    return worktree / tree.parent / ".acx-dep-cache" / digest / tree.name
+
+
+def _freeze_dependency_tree(src: Path, cache: Path) -> None:
+    """Snapshot ``src`` into ``cache`` without dereferencing bin stubs.
+
+    Parallel lanes with the same lockfile digest reuse this snapshot instead of
+    the live primary tree, so an ``npm install`` in the primary cannot mutate a
+    provisioned lane.
+    """
+    if cache.exists() or cache.is_symlink():
+        return
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    tmp = cache.parent / f".tmp-{cache.name}.{os.getpid()}"
+    _remove_existing_path(tmp)
+    try:
+        shutil.copytree(src, tmp, symlinks=True)
+        try:
+            tmp.rename(cache)
+        except OSError:
+            _remove_existing_path(tmp)
+            if not (cache.exists() or cache.is_symlink()):
+                raise
+    except Exception:
+        _remove_existing_path(tmp)
+        raise
+
+
 def _lockfile_digest(path: Path) -> str | None:
     if not path.is_file():
         return None
@@ -305,12 +336,13 @@ def _read_sidecar(dest: Path) -> dict[str, object]:
     return payload if isinstance(payload, dict) else {}
 
 
-def _write_sidecar_entry(dest: Path, *, lockfile: str, digest: str) -> None:
+def _write_sidecar_entry(dest: Path, *, lockfile: str, digest: str, cache: Path) -> None:
     payload = _read_sidecar(dest)
     payload[dest.name] = {
         "lockfile": lockfile,
         "sha256": digest,
         "readonly": True,
+        "cache": str(cache),
     }
     sidecar = _sidecar_path(dest)
     sidecar.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -359,12 +391,14 @@ def provision_dependency_trees(*, primary: Path, worktree: Path) -> list[str]:
             )
             continue
 
+        cache = _dep_cache_path(worktree, rel, digest)
+        _freeze_dependency_tree(src, cache)
         if dest.exists() or dest.is_symlink():
-            _replace_with_symlink(dest, src)
+            _replace_with_symlink(dest, cache)
         else:
             dest.parent.mkdir(parents=True, exist_ok=True)
-            os.symlink(src, dest)
-        _write_sidecar_entry(dest, lockfile=lock_rel, digest=digest)
+            os.symlink(cache, dest)
+        _write_sidecar_entry(dest, lockfile=lock_rel, digest=digest, cache=cache)
         linked.append(rel)
     if mismatches:
         raise RuntimeError(

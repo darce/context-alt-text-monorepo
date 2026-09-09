@@ -174,9 +174,7 @@ def test_generated_program_fake_docker_reaps_grandchild(tmp_path: Path) -> None:
     assert pidfile.exists() and pidfile.stat().st_size > 0, completed.stderr
     grandchild = int(pidfile.read_text(encoding="utf-8").strip())
     assert grandchild > 1
-    assert not _pid_is_alive(grandchild), (
-        f"FAKE_DOCKER grandchild {grandchild} survived the generated watchdog"
-    )
+    assert not _pid_is_alive(grandchild), f"FAKE_DOCKER grandchild {grandchild} survived the generated watchdog"
     docker_log = (tmp_path / "docker.log").read_text(encoding="utf-8")
     assert "buildx build" in docker_log
 
@@ -296,9 +294,43 @@ test -s {pid_arg}
     assert completed.returncode == 0, completed.stderr
     grandchild = int(pidfile.read_text(encoding="utf-8").strip())
     assert grandchild > 1
-    assert not _pid_is_alive(grandchild), (
-        f"TERM-ignoring grandchild {grandchild} survived without setsid"
+    assert not _pid_is_alive(grandchild), f"TERM-ignoring grandchild {grandchild} survived without setsid"
+
+
+def test_generated_program_preserves_deadline_exit_when_already_expired(
+    tmp_path: Path,
+) -> None:
+    """Deadline 124 must not be rewritten as bulkhead-unavailable 125."""
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _write_executable(fake_bin / "docker", FAKE_DOCKER)
+
+    deadline = int(time.time()) - 1
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            _render_program(),
+            "bash",
+            *PROGRAM_ARGS,
+            str(deadline),
+            str(tmp_path),
+        ],
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+            "FAKE_DOCKER_LOG": str(tmp_path / "docker.log"),
+            "FAKE_GRANDCHILD_PIDFILE": str(tmp_path / "grandchild.pid"),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
     )
+    combined = completed.stdout + completed.stderr
+    assert completed.returncode == 124, combined
+    assert "overall deadline exhausted" in combined
+    assert "bulkhead:" not in combined
 
 
 def test_generated_program_reaps_grandchild_when_fractional_sleep_is_rejected(
@@ -332,7 +364,9 @@ exec {shlex.quote(real_sleep)} "$@"
     )
     _write_executable(fake_bin / "docker", FAKE_DOCKER)
 
-    deadline = int(time.time()) + 2
+    # Integer sleep fallback is 1s per poll, so a 2s overall budget can
+    # expire during setup and never start the build grandchild.
+    deadline = int(time.time()) + 12
     completed = subprocess.run(
         [
             bash_bin,
@@ -351,16 +385,14 @@ exec {shlex.quote(real_sleep)} "$@"
         capture_output=True,
         text=True,
         check=False,
-        timeout=15,
+        timeout=25,
     )
     time.sleep(0.2)
     assert completed.returncode == 124, completed.stdout + completed.stderr
     assert pidfile.exists() and pidfile.stat().st_size > 0, completed.stderr
     grandchild = int(pidfile.read_text(encoding="utf-8").strip())
     assert grandchild > 1
-    assert not _pid_is_alive(grandchild), (
-        f"grandchild {grandchild} survived after fractional sleep was rejected"
-    )
+    assert not _pid_is_alive(grandchild), f"grandchild {grandchild} survived after fractional sleep was rejected"
 
 
 def test_generated_watchdog_fails_closed_without_process_enumeration(tmp_path: Path) -> None:

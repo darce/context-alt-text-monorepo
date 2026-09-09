@@ -13,6 +13,8 @@ export const RECORDING_URL = `${CASE_STUDY_URL}#recording`;
 export const PUBLIC_GUIDE_FALLBACK =
   'The walkthrough could not load. Reload the page, or watch the recorded video on the case study page.';
 
+export const PUBLIC_GUIDE_LOADING = 'Loading the walkthrough.';
+
 export const PUBLIC_GUIDED_COPY = {
   'scope.public':
     'Try the review workflow using a recorded example. Your changes affect only the demo copy in this tab.',

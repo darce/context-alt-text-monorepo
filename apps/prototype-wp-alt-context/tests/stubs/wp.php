@@ -1820,6 +1820,9 @@ if (!function_exists('delete_option')) {
             $beforeDelete();
         }
         unset($GLOBALS['__ac_options'][$key]);
+        if (function_exists('do_action')) {
+            do_action('delete_option_' . $key, $key);
+        }
     }
 }
 
@@ -3555,7 +3558,13 @@ if (!function_exists('flush_rewrite_rules')) {
      */
     function flush_rewrite_rules($hard = true): void
     {
-        // No-op in tests
+        $wpRewrite = $GLOBALS['wp_rewrite'] ?? null;
+        $persisted = [];
+        if (is_object($wpRewrite) && isset($wpRewrite->extra_rules_top) && is_array($wpRewrite->extra_rules_top)) {
+            $persisted = $wpRewrite->extra_rules_top;
+        }
+        $GLOBALS['__ac_persisted_rewrite_rules'] = $persisted;
+        $GLOBALS['__ac_flush_rewrite_hard'] = $hard;
     }
 }
 

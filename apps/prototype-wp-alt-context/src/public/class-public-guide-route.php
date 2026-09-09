@@ -38,6 +38,8 @@ final class PublicGuideRoute {
 	public const REWRITE_REGEX = '^guide/?$';
 
 	private const FALLBACK_COPY = 'The walkthrough could not load. Reload the page, or watch the recorded video on the case study page.';
+	private const LOADING_COPY = 'Loading the walkthrough.';
+	public const LOAD_TIMEOUT_MS = 8000;
 
 	/** @var callable(string): ?array{js: string, css: list<string>} */
 	private $assetResolver;
@@ -52,6 +54,7 @@ final class PublicGuideRoute {
 	public function init(): void {
 		add_action( 'update_option_' . self::OPTION_ENABLED, array( $this, 'on_enabled_option_change' ) );
 		add_action( 'add_option_' . self::OPTION_ENABLED, array( $this, 'on_enabled_option_change' ) );
+		add_action( 'delete_option_' . self::OPTION_ENABLED, array( $this, 'on_enabled_option_change' ) );
 		add_action( 'init', array( $this, 'register_rewrite' ) );
 
 		if ( ! self::is_enabled() ) {
@@ -73,16 +76,29 @@ final class PublicGuideRoute {
 	}
 
 	public function on_enabled_option_change(): void {
-		global $wp_rewrite;
-
 		if ( self::is_enabled() ) {
 			$this->register_rewrite();
-		} elseif ( isset( $wp_rewrite ) && is_object( $wp_rewrite ) && isset( $wp_rewrite->extra_rules_top ) && is_array( $wp_rewrite->extra_rules_top ) ) {
-			unset( $wp_rewrite->extra_rules_top[ self::REWRITE_REGEX ] );
+		} else {
+			self::drop_rewrite_from_extra_rules_top();
 		}
 
 		if ( function_exists( 'flush_rewrite_rules' ) ) {
 			flush_rewrite_rules( false );
+		}
+	}
+
+	/**
+	 * Drop ^guide/?$ from extra_rules_top so a later flush cannot persist it.
+	 *
+	 * WP_Rewrite::flush_rules() merges extra_rules_top first. Calling flush
+	 * while this plugin is still loaded (deactivate, option delete) would
+	 * otherwise write the stale rule into the rewrite_rules option.
+	 */
+	public static function drop_rewrite_from_extra_rules_top(): void {
+		global $wp_rewrite;
+
+		if ( isset( $wp_rewrite ) && is_object( $wp_rewrite ) && isset( $wp_rewrite->extra_rules_top ) && is_array( $wp_rewrite->extra_rules_top ) ) {
+			unset( $wp_rewrite->extra_rules_top[ self::REWRITE_REGEX ] );
 		}
 	}
 
@@ -173,6 +189,10 @@ final class PublicGuideRoute {
 
 	public static function fallback_copy(): string {
 		return self::FALLBACK_COPY;
+	}
+
+	public static function loading_copy(): string {
+		return self::LOADING_COPY;
 	}
 
 	private function is_public_guide_request(): bool {

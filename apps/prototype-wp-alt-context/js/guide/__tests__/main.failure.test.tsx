@@ -1,7 +1,7 @@
 import { act, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { PUBLIC_GUIDE_FALLBACK } from '../../admin/guidedPrototype/publicGuideCopy';
+import { PUBLIC_GUIDE_FALLBACK, PUBLIC_GUIDE_LOADING } from '../../admin/guidedPrototype/publicGuideCopy';
 
 vi.mock('../../admin/guidedPrototype/RecordedWalkthrough', () => ({
   RecordedWalkthrough: (): never => {
@@ -19,7 +19,8 @@ describe('public guide render failure', () => {
   it('shows the public recovery copy instead of the WordPress default', () => {
     document.body.innerHTML = `
       <main id="acx-public-guide">
-        <p class="acx-public-guide__fallback" role="alert">${PUBLIC_GUIDE_FALLBACK}</p>
+        <p class="acx-public-guide__loading" aria-live="polite">${PUBLIC_GUIDE_LOADING}</p>
+        <p class="acx-public-guide__fallback" role="alert" hidden>${PUBLIC_GUIDE_FALLBACK}</p>
       </main>
     `;
 

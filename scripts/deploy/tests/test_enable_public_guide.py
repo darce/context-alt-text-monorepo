@@ -35,7 +35,26 @@ def _write_executable(path: Path, body: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
-def _wp_stub_body(*, log_path: str, mutations_path: str, demo_enabled: str, prefix: str) -> str:
+def _wp_stub_body(
+    *,
+    log_path: str,
+    mutations_path: str,
+    demo_enabled: str,
+    prefix: str,
+    fail_first_flush: bool = False,
+    once_path: str = "",
+) -> str:
+    flush_fail = ""
+    if fail_first_flush:
+        flush_fail = (
+            f"if [[ \"$joined\" == *'rewrite flush'* ]]; then\n"
+            f"  if [[ ! -f {shlex.quote(once_path)} ]]; then\n"
+            f"    printf '1' > {shlex.quote(once_path)}\n"
+            f"    printf 'rewrite_flush\\n' >> {mutations_path}\n"
+            "    exit 1\n"
+            "  fi\n"
+            "fi\n"
+        )
     return (
         "#!/usr/bin/env bash\n"
         "set -u\n"
@@ -51,7 +70,8 @@ def _wp_stub_body(*, log_path: str, mutations_path: str, demo_enabled: str, pref
         "  fi\n"
         "fi\n"
         f"if [[ \"$joined\" == *'option update acx_public_demo_enabled'* ]]; then printf 'demo_enable\\n' >> {mutations_path}; fi\n"
-        f"if [[ \"$joined\" == *'rewrite flush'* ]]; then printf 'rewrite_flush\\n' >> {mutations_path}; fi\n"
+        + flush_fail
+        + f"if [[ \"$joined\" == *'rewrite flush'* ]]; then printf 'rewrite_flush\\n' >> {mutations_path}; fi\n"
         "if [[ \"$joined\" == *'option get acx_public_demo_enabled'* ]]; then\n"
         f"  printf '%s\\n' {shlex.quote(demo_enabled)}\n"
         "  exit 0\n"
@@ -109,6 +129,8 @@ def _run(
     include_wp: bool = True,
     include_docker: bool = False,
     compose_file: Path | None = None,
+    curl_exit: int = 0,
+    fail_first_flush: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -116,6 +138,7 @@ def _run(
     log_path = shlex.quote(str(log))
     mutations = tmp_path / "mutations.log"
     mutations_path = shlex.quote(str(mutations))
+    once_path = str(tmp_path / "flush-failed-once")
 
     if include_wp:
         _write_executable(
@@ -125,6 +148,8 @@ def _run(
                 mutations_path=mutations_path,
                 demo_enabled=demo_enabled,
                 prefix="wp",
+                fail_first_flush=fail_first_flush,
+                once_path=once_path,
             ),
         )
     if include_docker:
@@ -166,7 +191,7 @@ def _run(
         "else\n"
         "  printf '%s' \"$body\"\n"
         "fi\n"
-        "exit 0\n",
+        f"exit {int(curl_exit)}\n",
     )
 
     env = os.environ.copy()
@@ -312,6 +337,20 @@ def test_fails_when_guide_body_is_fallback_only(tmp_path: Path) -> None:
     output = result.stdout + result.stderr
     assert result.returncode != 0, output
     assert "acx-public-guide-js" in output
+    _assert_rolled_back(tmp_path, output)
+
+
+def test_rolls_back_when_curl_transport_fails(tmp_path: Path) -> None:
+    result = _run(tmp_path, curl_exit=28)
+    output = result.stdout + result.stderr
+    assert result.returncode == 28, output
+    _assert_rolled_back(tmp_path, output)
+
+
+def test_rolls_back_when_pre_verification_flush_fails(tmp_path: Path) -> None:
+    result = _run(tmp_path, fail_first_flush=True)
+    output = result.stdout + result.stderr
+    assert result.returncode != 0, output
     _assert_rolled_back(tmp_path, output)
 
 

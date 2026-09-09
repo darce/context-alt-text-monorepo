@@ -15,6 +15,7 @@ use stdClass;
 final class PublicGuideRouteTest extends TestCase
 {
     private const FALLBACK_COPY = 'The walkthrough could not load. Reload the page, or watch the recorded video on the case study page.';
+    private const LOADING_COPY = 'Loading the walkthrough.';
 
     protected function setUp(): void
     {
@@ -32,7 +33,7 @@ final class PublicGuideRouteTest extends TestCase
         $GLOBALS['__ac_wp_footer_calls'] = 0;
         $GLOBALS['__ac_get_header_calls'] = 0;
         $GLOBALS['__ac_get_footer_calls'] = 0;
-        unset($GLOBALS['wp'], $GLOBALS['wp_rewrite']);
+        unset($GLOBALS['wp'], $GLOBALS['wp_rewrite'], $GLOBALS['__ac_persisted_rewrite_rules']);
     }
 
     public function testInitDoesNotRegisterRewriteOrRequestHooksWhenDisabled(): void
@@ -53,6 +54,12 @@ final class PublicGuideRouteTest extends TestCase
         self::assertTrue(
             $this->hasHook(
                 $GLOBALS['__ac_actions']['add_option_acx_public_guide_enabled'][10] ?? [],
+                [$route, 'on_enabled_option_change']
+            )
+        );
+        self::assertTrue(
+            $this->hasHook(
+                $GLOBALS['__ac_actions']['delete_option_acx_public_guide_enabled'][10] ?? [],
                 [$route, 'on_enabled_option_change']
             )
         );
@@ -152,6 +159,10 @@ final class PublicGuideRouteTest extends TestCase
         self::assertStringContainsString('id="acx-public-guide"', $html);
         self::assertStringContainsString('data-scope="recorded"', $html);
         self::assertStringContainsString('data-example="bundled"', $html);
+        self::assertStringContainsString('class="acx-public-guide__loading"', $html);
+        self::assertStringContainsString('aria-live="polite"', $html);
+        self::assertStringContainsString(self::LOADING_COPY, $html);
+        self::assertStringContainsString('data-acx-load-timeout="' . PublicGuideRoute::LOAD_TIMEOUT_MS . '"', $html);
         self::assertStringNotContainsString('get_header(', $templateSource);
         self::assertStringNotContainsString('get_footer(', $templateSource);
     }
@@ -246,6 +257,60 @@ final class PublicGuideRouteTest extends TestCase
             $wpRewrite->extra_rules_top
         );
         self::assertSame([], $GLOBALS['__ac_rewrite_rules']);
+        self::assertSame(
+            ['^other/?$' => 'index.php?pagename=other'],
+            $GLOBALS['__ac_persisted_rewrite_rules']
+        );
+        self::assertArrayNotHasKey(PublicGuideRoute::REWRITE_REGEX, $GLOBALS['__ac_persisted_rewrite_rules']);
+    }
+
+    public function testOptionDeleteDropsRewriteFromPersistedRules(): void
+    {
+        $this->setOption('acx_public_guide_enabled', true);
+        $wpRewrite = new stdClass();
+        $wpRewrite->extra_rules_top = [
+            PublicGuideRoute::REWRITE_REGEX => 'index.php?acx_public_guide=1',
+            '^other/?$' => 'index.php?pagename=other',
+        ];
+        // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited -- unit-test rewrite object
+        $GLOBALS['wp_rewrite'] = $wpRewrite;
+
+        $route = new PublicGuideRoute($this->nullResolver());
+        $route->init();
+        delete_option('acx_public_guide_enabled');
+
+        self::assertSame(
+            ['^other/?$' => 'index.php?pagename=other'],
+            $wpRewrite->extra_rules_top
+        );
+        self::assertSame(
+            ['^other/?$' => 'index.php?pagename=other'],
+            $GLOBALS['__ac_persisted_rewrite_rules']
+        );
+        self::assertArrayNotHasKey(PublicGuideRoute::REWRITE_REGEX, $GLOBALS['__ac_persisted_rewrite_rules']);
+    }
+
+    public function testDeactivateDropsRewriteFromPersistedRules(): void
+    {
+        $wpRewrite = new stdClass();
+        $wpRewrite->extra_rules_top = [
+            PublicGuideRoute::REWRITE_REGEX => 'index.php?acx_public_guide=1',
+            '^other/?$' => 'index.php?pagename=other',
+        ];
+        // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited -- unit-test rewrite object
+        $GLOBALS['wp_rewrite'] = $wpRewrite;
+
+        (new LifecycleManager())->deactivate();
+
+        self::assertSame(
+            ['^other/?$' => 'index.php?pagename=other'],
+            $wpRewrite->extra_rules_top
+        );
+        self::assertSame(
+            ['^other/?$' => 'index.php?pagename=other'],
+            $GLOBALS['__ac_persisted_rewrite_rules']
+        );
+        self::assertArrayNotHasKey(PublicGuideRoute::REWRITE_REGEX, $GLOBALS['__ac_persisted_rewrite_rules']);
     }
 
     public function testBundleFailureStillRendersFallbackAndEnqueuesNothing(): void
@@ -263,9 +328,15 @@ final class PublicGuideRouteTest extends TestCase
         self::assertSame([], $GLOBALS['__ac_styles']);
 
         $html = $this->renderTemplate($template);
+        self::assertStringContainsString('class="acx-public-guide__loading"', $html);
+        self::assertStringContainsString('aria-live="polite"', $html);
+        self::assertStringContainsString(self::LOADING_COPY, $html);
         self::assertStringContainsString('class="acx-public-guide__fallback"', $html);
         self::assertStringContainsString('role="alert"', $html);
+        self::assertStringContainsString('hidden', $html);
         self::assertStringContainsString(self::FALLBACK_COPY, $html);
+        self::assertStringContainsString("addEventListener('error'", $html);
+        self::assertStringContainsString('setTimeout', $html);
         self::assertStringContainsString('rel="canonical"', $html);
         self::assertStringContainsString('href="http://example.test/guide/"', $html);
     }

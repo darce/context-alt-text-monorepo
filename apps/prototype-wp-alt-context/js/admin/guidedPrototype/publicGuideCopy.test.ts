@@ -8,6 +8,7 @@ import { GUIDED_COPY, interpolateGuidedCopy } from './copy';
 import {
   CASE_STUDY_URL,
   PUBLIC_GUIDE_FALLBACK,
+  PUBLIC_GUIDE_LOADING,
   PUBLIC_GUIDED_COPY,
   RECORDING_URL,
   guidedCopy,
@@ -57,6 +58,7 @@ describe('public guide copy overlay', () => {
     expect(PUBLIC_GUIDED_COPY['notes.recorded_public']).not.toMatch(/Live generation/);
     expect(guidedCopy('nav.leave')).toBe('Leave the walkthrough');
     expect(PUBLIC_GUIDE_FALLBACK).toMatch(/Reload the page/);
+    expect(PUBLIC_GUIDE_LOADING).toBe('Loading the walkthrough.');
     expect(guidedCopy('page.start')).toBe('Start the walkthrough');
   });
 

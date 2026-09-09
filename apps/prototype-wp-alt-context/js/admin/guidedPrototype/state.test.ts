@@ -322,10 +322,7 @@ describe('derived guards', () => {
   it('canRestoreRevision compares choice enum values, not object identity', () => {
     const scenario = createGuidedScenario();
     const edited = editGuidedDraft(includeBoth(scenario), 'First manual draft.');
-    const confirmed = confirmGuidedChoiceReplacement(
-      chooseGuidedName(edited, scenario, 'right', OMIT),
-      scenario,
-    );
+    const confirmed = confirmGuidedChoiceReplacement(chooseGuidedName(edited, scenario, 'right', OMIT), scenario);
     const revision = confirmed.draftHistory[0];
     expect(revision).toBeDefined();
     const matching = chooseGuidedName(confirmed, scenario, 'right', INCLUDE);
@@ -487,15 +484,37 @@ describe('confirmGuidedChoiceReplacement and cancelGuidedChoiceReplacement', () 
     expect(cancelled.actionHistory.at(-1)?.summary).toBe(guidedCopy('names.change_cancel'));
   });
 
+  it('does not treat opening or cancelling a name-change dialog as finishing an apply (T07)', () => {
+    const scenario = createGuidedScenario();
+    const applied = applyGuidedDraft(
+      previewGuidedDraft(editGuidedDraft(includeBoth(scenario), 'A distinctive manually edited draft.')),
+    );
+    expect(applied.outcome).toBe(GUIDED_OUTCOME.APPLIED);
+
+    const pending = chooseGuidedName(applied, scenario, 'right', OMIT);
+    expect(pending.pendingChoiceChange).toEqual({ position: 'right', choice: OMIT });
+    expect(pending.outcome).toBe(GUIDED_OUTCOME.APPLIED);
+    expect(pending.actionHistory).toEqual(applied.actionHistory);
+
+    const cancelled = cancelGuidedChoiceReplacement(pending);
+    expect(cancelled.pendingChoiceChange).toBeNull();
+    expect(cancelled.outcome).toBe(GUIDED_OUTCOME.APPLIED);
+    expect(cancelled.appliedAltText).toBe(applied.appliedAltText);
+    expect(cancelled.choices).toEqual(applied.choices);
+    expect(cancelled.draftText).toBe(applied.draftText);
+
+    const kept = keepGuidedCurrentAltText(applied);
+    const pendingKept = chooseGuidedName(kept, scenario, 'right', OMIT);
+    expect(pendingKept.outcome).toBe(GUIDED_OUTCOME.KEPT);
+    expect(cancelGuidedChoiceReplacement(pendingKept).outcome).toBe(GUIDED_OUTCOME.KEPT);
+  });
+
   it('confirm archives the current draft, loads the matching sample, and never relabels the edit as recorded (T07)', () => {
     const scenario = createGuidedScenario();
     const edited = editGuidedDraft(includeBoth(scenario), 'A distinctive manually edited draft.');
     const appliedBefore = edited.appliedAltText;
     const undoBefore = edited.applicationUndoStack;
-    const confirmed = confirmGuidedChoiceReplacement(
-      chooseGuidedName(edited, scenario, 'right', OMIT),
-      scenario,
-    );
+    const confirmed = confirmGuidedChoiceReplacement(chooseGuidedName(edited, scenario, 'right', OMIT), scenario);
     expect(confirmed.pendingChoiceChange).toBeNull();
     expect(confirmed.choices).toEqual({ left: INCLUDE, right: OMIT });
     expect(confirmed.draftText).toBe(scenario.samples['justin-trudeau']);
@@ -614,9 +633,7 @@ describe('undoGuidedApplication', () => {
   it('restores previousAltText in LIFO order and keeps the current draft (T06)', () => {
     const scenario = createGuidedScenario();
     const first = applyGuidedDraft(previewGuidedDraft(includeBoth(scenario)));
-    const second = applyGuidedDraft(
-      previewGuidedDraft(editGuidedDraft(first, 'Draft B unique.')),
-    );
+    const second = applyGuidedDraft(previewGuidedDraft(editGuidedDraft(first, 'Draft B unique.')));
     expect(second.appliedAltText).toBe('Draft B unique.');
     const undoOnce = undoGuidedApplication(second);
     expect(undoOnce.appliedAltText).toBe(first.appliedAltText);
@@ -692,10 +709,7 @@ describe('restoreGuidedRevision', () => {
   const archivedMismatch = () => {
     const scenario = createGuidedScenario();
     const first = editGuidedDraft(includeBoth(scenario), 'First manual draft.');
-    const confirmed = confirmGuidedChoiceReplacement(
-      chooseGuidedName(first, scenario, 'right', OMIT),
-      scenario,
-    );
+    const confirmed = confirmGuidedChoiceReplacement(chooseGuidedName(first, scenario, 'right', OMIT), scenario);
     const second = editGuidedDraft(confirmed, 'Second manual draft.');
     return { scenario, first, confirmed, second, revision: confirmed.draftHistory[0] };
   };
@@ -723,10 +737,7 @@ describe('restoreGuidedRevision', () => {
   it('restores a matching revision as visitor_edit, archives the current manual draft, and does not apply (T13)', () => {
     const { scenario, confirmed, revision } = archivedMismatch();
     expect(revision).toBeDefined();
-    const matching = editGuidedDraft(
-      chooseGuidedName(confirmed, scenario, 'right', INCLUDE),
-      'Current manual draft.',
-    );
+    const matching = editGuidedDraft(chooseGuidedName(confirmed, scenario, 'right', INCLUDE), 'Current manual draft.');
     const restored = restoreGuidedRevision(matching, revision.revisionId, 'full');
     expect(restored.draftText).toBe('First manual draft.');
     expect(restored.draftOrigin).toBe(GUIDED_DRAFT_ORIGIN.VISITOR_EDIT);
@@ -743,9 +754,7 @@ describe('restoreGuidedRevision', () => {
 describe('resetGuidedDemoState', () => {
   it('restores core initial values and empty local histories (T17)', () => {
     const scenario = createGuidedScenario();
-    const used = applyGuidedDraft(
-      previewGuidedDraft(editGuidedDraft(includeBoth(scenario), 'Used draft.')),
-    );
+    const used = applyGuidedDraft(previewGuidedDraft(editGuidedDraft(includeBoth(scenario), 'Used draft.')));
     const before = snapshot(used);
     const fresh = resetGuidedDemoState(used);
     expect(fresh).toEqual(createGuidedDemoState());
@@ -815,10 +824,7 @@ describe('network boundary (T01, T18)', () => {
   });
 
   it('has no fetch, XHR, window, storage, timer, or ../api import surface in the module source', () => {
-    const source = readFileSync(
-      path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'state.ts'),
-      'utf8',
-    );
+    const source = readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'state.ts'), 'utf8');
     expect(source).not.toMatch(/\bfetch\s*\(/);
     expect(source).not.toMatch(/\bXMLHttpRequest\b/);
     expect(source).not.toMatch(/from ['"]\.\.\/api\//);

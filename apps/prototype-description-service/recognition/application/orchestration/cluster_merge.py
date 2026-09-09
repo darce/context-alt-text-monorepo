@@ -9,28 +9,192 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import cast
+from collections.abc import Sequence
 
 import numpy as np
-from sqlalchemy import Select, exists, select, update
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import IdentityMember as MemberModel
 from db.models import MediaIdentity as MediaIdentityModel
 from recognition.application.assignment import AssignmentCandidate, AssignmentGate, AssignmentOutcome, DiscoveryMethod
 from recognition.application.events.broadcaster import get_event_broadcaster
+from recognition.application.identity_mapping import media_identity_from_model
 from recognition.application.orchestration.curation import update_cluster
 from recognition.application.orchestration.protocols import MergeSuggestionServiceProtocol, SuggestionServiceProtocol
 from recognition.application.persistence.assignment_writer import AssignmentWriter
-from recognition.domain.cluster import IdentityCluster, ReservedClusterLabelError, is_reserved_label_shape
+from recognition.application.suggestions.embedding_space import (
+    models_are_same_space,
+    same_space_representative_vectors,
+)
+from recognition.domain.cluster import (
+    CrossSpaceMergeError,
+    IdentityCluster,
+    ReservedClusterLabelError,
+    is_reserved_label_shape,
+)
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.repositories import ClusterRepository, MemberRepository
-from recognition.domain.suggestion import SuggestionStatus
+from recognition.domain.suggestion import AssignmentSuggestion, SuggestionStatus
 from recognition.observability import ClusteringLogger
 from recognition.shared.similarity import normalize_face_embedding
-from recognition.shared.tenant import coerce_tenant_uuid
 
 logger = logging.getLogger(__name__)
+
+
+async def _cluster_gallery_model(cluster_repo: ClusterRepository, cluster_id: str) -> str | None:
+    """Resolve a cluster's gallery space from loaded representatives, not get_by_id."""
+    reps = list(await cluster_repo.get_all_representatives(cluster_id))
+    model, _vectors = same_space_representative_vectors(reps)
+    return model
+
+
+async def _ensure_same_space_merge(
+    cluster_repo: ClusterRepository,
+    source_cluster_id: str,
+    target_cluster_id: str,
+) -> None:
+    """FIR23-01: refuse composing mixed embedding spaces via merge."""
+    source_model = await _cluster_gallery_model(cluster_repo, source_cluster_id)
+    target_model = await _cluster_gallery_model(cluster_repo, target_cluster_id)
+    if models_are_same_space(source_model, target_model):
+        return
+    raise CrossSpaceMergeError(
+        source_cluster_id=source_cluster_id,
+        target_cluster_id=target_cluster_id,
+        source_model=source_model,
+        target_model=target_model,
+    )
+
+
+async def _retry_pending_suggestions(
+    *,
+    pending_suggestions: Sequence[AssignmentSuggestion],
+    target_cluster_id: str,
+    session: AsyncSession,
+    member_repo: MemberRepository,
+    gate: AssignmentGate,
+    assignment_writer: AssignmentWriter,
+    suggestion_service: SuggestionServiceProtocol,
+    gallery_model: str | None,
+    rep_face_vecs: Sequence[np.ndarray],
+    processed_identity_ids: set[str],
+) -> tuple[int, int, int]:
+    """Re-score pending suggestions against one representative space."""
+    accepted = 0
+    suggested = 0
+    evaluated = 0
+
+    for suggestion in pending_suggestions:
+        identity_id = suggestion.identity_id
+        if not identity_id or identity_id in processed_identity_ids:
+            continue
+        processed_identity_ids.add(identity_id)
+
+        existing_members = await member_repo.get_by_identity_id(identity_id)
+        if existing_members:
+            resolution = "accepted" if any(m.cluster_id == target_cluster_id for m in existing_members) else "rejected"
+            await suggestion_service.resolve_for_identity(identity_id, target_cluster_id, resolution=resolution)
+            continue
+
+        try:
+            identity_uuid = uuid.UUID(str(identity_id))
+        except ValueError:
+            continue
+
+        model = await session.get(MediaIdentityModel, identity_uuid)
+        if not model or model.embedding is None:
+            continue
+
+        identity = media_identity_from_model(model)
+        if not models_are_same_space(identity.embedding_model, gallery_model):
+            await suggestion_service.resolve_for_identity(identity_id, target_cluster_id, resolution="rejected")
+            continue
+
+        face_vec = normalize_face_embedding(identity.embedding)
+        best_sim = max(float(np.dot(face_vec, rep_vec)) for rep_vec in rep_face_vecs)
+        candidate = AssignmentCandidate(
+            identity=identity,
+            identity_vector=face_vec,
+            cluster_id=target_cluster_id,
+            discovery_method=DiscoveryMethod.REPRESENTATIVE,
+            discovery_similarity=best_sim,
+        )
+
+        decision = None
+        confidence_score = best_sim
+        if best_sim >= gate.settings.similarity_threshold:
+            evaluated += 1
+            decision = await gate.evaluate(candidate)
+            suggestion_confidence = decision.suggestion_confidence
+            if suggestion_confidence is not None:
+                confidence_score = float(suggestion_confidence)
+
+        await suggestion_service.update_scores(
+            suggestion.id,
+            representative_similarity=best_sim,
+            member_similarity=best_sim,
+            confidence_score=confidence_score,
+        )
+
+        if decision is None:
+            continue
+        if decision.outcome == AssignmentOutcome.ACCEPT:
+            await assignment_writer.persist_assignment(decision)
+            accepted += 1
+            await suggestion_service.resolve_for_identity(identity.id, target_cluster_id, resolution="accepted")
+        elif decision.outcome == AssignmentOutcome.SUGGEST:
+            suggested += 1
+
+    return accepted, suggested, evaluated
+
+
+async def _retry_unclustered_models(
+    *,
+    identities: Sequence[MediaIdentity],
+    target_cluster_id: str,
+    gate: AssignmentGate,
+    assignment_writer: AssignmentWriter,
+    suggestion_service: SuggestionServiceProtocol,
+    gallery_model: str | None,
+    rep_face_vecs: Sequence[np.ndarray],
+    processed_identity_ids: set[str],
+    min_similarity_for_unclustered: float,
+) -> tuple[int, int, int]:
+    """Assign or suggest high-confidence identities from one gallery space."""
+    accepted = 0
+    suggested = 0
+    evaluated = 0
+
+    for identity in identities:
+        identity_id = str(identity.id)
+        if identity_id in processed_identity_ids:
+            continue
+        processed_identity_ids.add(identity_id)
+
+        if not models_are_same_space(identity.embedding_model, gallery_model):
+            continue
+        face_vec = normalize_face_embedding(identity.embedding)
+        best_sim = max(float(np.dot(face_vec, rep_vec)) for rep_vec in rep_face_vecs)
+        if best_sim < min_similarity_for_unclustered or best_sim < gate.settings.similarity_threshold:
+            continue
+
+        evaluated += 1
+        candidate = AssignmentCandidate(
+            identity=identity,
+            identity_vector=face_vec,
+            cluster_id=target_cluster_id,
+            discovery_method=DiscoveryMethod.REPRESENTATIVE,
+            discovery_similarity=best_sim,
+        )
+        decision = await gate.evaluate(candidate)
+        if decision.outcome == AssignmentOutcome.ACCEPT:
+            await assignment_writer.persist_assignment(decision)
+            accepted += 1
+        elif decision.outcome == AssignmentOutcome.SUGGEST:
+            await suggestion_service.create(candidate, decision.suggestion_confidence)
+            suggested += 1
+
+    return accepted, suggested, evaluated
 
 
 async def post_merge_retry_matching(
@@ -63,167 +227,50 @@ async def post_merge_retry_matching(
     if not reps:
         return
 
-    rep_face_vecs = [normalize_face_embedding(cast(np.ndarray, getattr(rep, "embedding", rep))) for rep in reps]
+    gallery_model, gallery_vectors = same_space_representative_vectors(reps)
+    rep_face_vecs = [normalize_face_embedding(vector) for vector in gallery_vectors]
     if not rep_face_vecs:
         return
-
-    accepted = 0
-    suggested = 0
-    evaluated = 0
 
     processed_identity_ids: set[str] = set()
 
     # 1) Re-evaluate pending suggestions for the target cluster.
     suggestions_for_cluster = await suggestion_service.get_by_cluster(target_cluster_id)
-
     pending_suggestions = [s for s in suggestions_for_cluster if s.status == SuggestionStatus.PENDING]
-
-    for suggestion in pending_suggestions:
-        identity_id = suggestion.identity_id
-        if not identity_id or identity_id in processed_identity_ids:
-            continue
-        processed_identity_ids.add(identity_id)
-
-        # If the identity is already assigned, resolve the suggestion and skip re-matching.
-        existing_members = await member_repo.get_by_identity_id(identity_id)
-        if existing_members:
-            resolution = "accepted" if any(m.cluster_id == target_cluster_id for m in existing_members) else "rejected"
-            await suggestion_service.resolve_for_identity(identity_id, target_cluster_id, resolution=resolution)
-            continue
-
-        try:
-            identity_uuid = uuid.UUID(str(identity_id))
-        except ValueError:
-            continue
-
-        model = await session.get(MediaIdentityModel, identity_uuid)
-        if not model or model.embedding is None:
-            continue
-
-        identity = MediaIdentity(
-            id=str(model.id),
-            tenant_id=str(model.tenant_id),
-            media_id=str(model.media_id),
-            embedding=np.asarray(model.embedding, dtype=np.float32),
-            confidence=float(model.confidence),
-            bbox_width=int(model.bbox_width),
-            bbox_height=int(model.bbox_height),
-            bbox_x=int(model.bbox_x),
-            bbox_y=int(model.bbox_y),
-            pose_pitch=float(model.pose_pitch) if model.pose_pitch is not None else None,
-            pose_yaw=float(model.pose_yaw) if model.pose_yaw is not None else None,
-            pose_roll=float(model.pose_roll) if model.pose_roll is not None else None,
-            image_phash=model.image_phash,
-            sharpness=float(model.sharpness) if model.sharpness is not None else None,
-            embedding_norm=float(model.embedding_norm) if model.embedding_norm is not None else None,
-            occlusion_severity=(
-                float(model.occlusion_severity) if model.occlusion_severity is not None else None
-            ),
-            moved_by_merge_id=str(model.moved_by_merge_id) if getattr(model, "moved_by_merge_id", None) else None,
-        )
-        face_vec = normalize_face_embedding(identity.embedding)
-        best_sim = max(float(np.dot(face_vec, rep_vec)) for rep_vec in rep_face_vecs)
-        candidate = AssignmentCandidate(
-            identity=identity,
-            identity_vector=face_vec,
-            cluster_id=target_cluster_id,
-            discovery_method=DiscoveryMethod.REPRESENTATIVE,
-            discovery_similarity=best_sim,
-        )
-
-        decision = None
-        confidence_score = best_sim
-        if best_sim >= gate.settings.similarity_threshold:
-            evaluated += 1
-            decision = await gate.evaluate(candidate)
-            suggestion_confidence = decision.suggestion_confidence
-            if suggestion_confidence is not None:
-                confidence_score = float(suggestion_confidence)
-
-        # Always rescore the existing pending suggestion so the UI % stays current.
-        await suggestion_service.update_scores(
-            suggestion.id,
-            representative_similarity=best_sim,
-            member_similarity=best_sim,
-            confidence_score=confidence_score,
-        )
-
-        if decision is None:
-            continue
-
-        if decision.outcome == AssignmentOutcome.ACCEPT:
-            await assignment_writer.persist_assignment(decision)
-            accepted += 1
-            await suggestion_service.resolve_for_identity(identity.id, target_cluster_id, resolution="accepted")
-        elif decision.outcome == AssignmentOutcome.SUGGEST:
-            suggested += 1
+    accepted, suggested, evaluated = await _retry_pending_suggestions(
+        pending_suggestions=pending_suggestions,
+        target_cluster_id=target_cluster_id,
+        session=session,
+        member_repo=member_repo,
+        gate=gate,
+        assignment_writer=assignment_writer,
+        suggestion_service=suggestion_service,
+        gallery_model=gallery_model,
+        rep_face_vecs=rep_face_vecs,
+        processed_identity_ids=processed_identity_ids,
+    )
 
     # 2) Try high-confidence matches from remaining unclustered identities.
-    try:
-        tenant_uuid = coerce_tenant_uuid(tenant_id)
-    except ValueError:
-        tenant_uuid = None
-
-    if tenant_uuid is not None and max_unclustered > 0:
-        stmt: Select[tuple[MediaIdentityModel]] = (
-            select(MediaIdentityModel)
-            .where(MediaIdentityModel.tenant_id == tenant_uuid)
-            .where(~exists(select(MemberModel.id).where(MemberModel.identity_id == MediaIdentityModel.id)))
-            .order_by(MediaIdentityModel.confidence.desc())
-            .limit(max_unclustered)
+    if max_unclustered > 0:
+        unclustered = await cluster_repo.get_unclustered_in_embedding_space(
+            tenant_id,
+            gallery_model,
+            limit=max_unclustered,
         )
-        result = await session.execute(stmt)
-        unclustered_models = result.scalars().all()
-
-        for model in unclustered_models:
-            identity_id = str(model.id)
-            if identity_id in processed_identity_ids:
-                continue
-            processed_identity_ids.add(identity_id)
-
-            identity = MediaIdentity(
-                id=str(model.id),
-                tenant_id=str(model.tenant_id),
-                media_id=str(model.media_id),
-                embedding=np.asarray(model.embedding, dtype=np.float32),
-                confidence=float(model.confidence),
-                bbox_width=int(model.bbox_width),
-                bbox_height=int(model.bbox_height),
-                bbox_x=int(model.bbox_x),
-                bbox_y=int(model.bbox_y),
-                pose_pitch=float(model.pose_pitch) if model.pose_pitch is not None else None,
-                pose_yaw=float(model.pose_yaw) if model.pose_yaw is not None else None,
-                pose_roll=float(model.pose_roll) if model.pose_roll is not None else None,
-                image_phash=model.image_phash,
-                sharpness=float(model.sharpness) if model.sharpness is not None else None,
-                embedding_norm=float(model.embedding_norm) if model.embedding_norm is not None else None,
-                occlusion_severity=(
-                    float(model.occlusion_severity) if model.occlusion_severity is not None else None
-                ),
-                moved_by_merge_id=str(model.moved_by_merge_id) if getattr(model, "moved_by_merge_id", None) else None,
-            )
-            face_vec = normalize_face_embedding(identity.embedding)
-            best_sim = max(float(np.dot(face_vec, rep_vec)) for rep_vec in rep_face_vecs)
-            if best_sim < min_similarity_for_unclustered:
-                continue
-            if best_sim < gate.settings.similarity_threshold:
-                continue
-
-            evaluated += 1
-            candidate = AssignmentCandidate(
-                identity=identity,
-                identity_vector=face_vec,
-                cluster_id=target_cluster_id,
-                discovery_method=DiscoveryMethod.REPRESENTATIVE,
-                discovery_similarity=best_sim,
-            )
-            decision = await gate.evaluate(candidate)
-            if decision.outcome == AssignmentOutcome.ACCEPT:
-                await assignment_writer.persist_assignment(decision)
-                accepted += 1
-            elif decision.outcome == AssignmentOutcome.SUGGEST:
-                await suggestion_service.create(candidate, decision.suggestion_confidence)
-                suggested += 1
+        additional_accepted, additional_suggested, additional_evaluated = await _retry_unclustered_models(
+            identities=unclustered,
+            target_cluster_id=target_cluster_id,
+            gate=gate,
+            assignment_writer=assignment_writer,
+            suggestion_service=suggestion_service,
+            gallery_model=gallery_model,
+            rep_face_vecs=rep_face_vecs,
+            processed_identity_ids=processed_identity_ids,
+            min_similarity_for_unclustered=min_similarity_for_unclustered,
+        )
+        accepted += additional_accepted
+        suggested += additional_suggested
+        evaluated += additional_evaluated
 
     if accepted or suggested:
         logger.info(
@@ -275,6 +322,8 @@ async def merge_cluster(
             assignment_writer=assignment_writer,
             clustering_logger=clustering_logger,
         )
+
+    await _ensure_same_space_merge(cluster_repo, source_cluster_id, target_cluster_id)
 
     moved_identity_ids: list[uuid.UUID] = []
     if moved_by_merge_id and session is not None:

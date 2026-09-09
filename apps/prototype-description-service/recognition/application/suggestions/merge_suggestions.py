@@ -13,6 +13,11 @@ import numpy as np
 from recognition.application.clustering.centroid_utils import compute_similarity
 from recognition.application.settings import ClusteringSettings
 from recognition.application.settings.clustering import HACSettings
+from recognition.application.suggestions.embedding_space import (
+    cluster_embedding_model,
+    models_are_same_space,
+    representative_embedding_model,
+)
 from recognition.domain.cluster import IdentityCluster, is_reserved_label_shape
 from recognition.domain.repositories import (
     ClusterRepository,
@@ -79,7 +84,7 @@ class MergeSuggestionService:
         limit = max(limit, hac_settings.max_scope_size)
         clusters = await self._cluster_repository.get_by_tenant(tenant_id, limit=limit)
 
-        singleton_candidates: list[tuple[IdentityCluster, str, np.ndarray]] = []
+        singleton_candidates: list[tuple[IdentityCluster, str, np.ndarray, str | None]] = []
         for cluster in clusters:
             if cluster.identity_count != 1 or not _is_eligible_for_merge_suggestion(cluster, tenant_id):
                 continue
@@ -94,33 +99,77 @@ class MergeSuggestionService:
                     embedding is None,
                 )
                 continue
-            singleton_candidates.append((cluster, identity_id, embedding))
+            singleton_candidates.append(
+                (cluster, identity_id, embedding, _singleton_embedding_model(cluster, identity_id))
+            )
 
         if len(singleton_candidates) < 2:
             return 0
 
-        if len(singleton_candidates) > hac_settings.max_scope_size:
-            singleton_candidates.sort(
+        # Partition by embedding space before HAC. Mixed 128d/512d stacks raise
+        # ValueError in ConstrainedHAC.refine_clusters; same-dim foreign spaces
+        # would contaminate linkage. Legacy both-unstamped share one bucket.
+        buckets: dict[str, list[tuple[IdentityCluster, str, np.ndarray, str | None]]] = {}
+        for candidate in singleton_candidates:
+            bucket_key = str(candidate[3]) if candidate[3] else ""
+            buckets.setdefault(bucket_key, []).append(candidate)
+
+        created = 0
+        now = datetime.now(tz=UTC)
+        for space_candidates in buckets.values():
+            created += await self._generate_singleton_hac_for_space(
+                tenant_id=tenant_id,
+                space_candidates=space_candidates,
+                constrained_hac=constrained_hac,
+                hac_settings=hac_settings,
+                now=now,
+            )
+
+        if created:
+            logger.info(
+                "[merge_suggestions] Generated %d singleton HAC suggestions (tenant_id=%s)",
+                created,
+                tenant_id,
+            )
+        return created
+
+    async def _generate_singleton_hac_for_space(
+        self,
+        *,
+        tenant_id: str,
+        space_candidates: list[tuple[IdentityCluster, str, np.ndarray, str | None]],
+        constrained_hac: ConstrainedHACProtocol,
+        hac_settings: HACSettings,
+        now: datetime,
+    ) -> int:
+        """Run HAC + upsert for one embedding-space bucket of singletons."""
+        if len(space_candidates) < 2:
+            return 0
+
+        if len(space_candidates) > hac_settings.max_scope_size:
+            space_candidates = sorted(
+                space_candidates,
                 key=lambda item: item[0].created_at.timestamp() if item[0].created_at else 0.0,
                 reverse=True,
-            )
-            singleton_candidates = singleton_candidates[: hac_settings.max_scope_size]
+            )[: hac_settings.max_scope_size]
             logger.info(
                 "[merge_suggestions] singleton_scope_trimmed=%d max_scope=%d tenant_id=%s",
-                len(singleton_candidates),
+                len(space_candidates),
                 hac_settings.max_scope_size,
                 tenant_id,
             )
 
         embeddings: dict[uuid.UUID, np.ndarray] = {}
         identity_to_cluster: dict[uuid.UUID, IdentityCluster] = {}
-        for cluster, identity_id, embedding in singleton_candidates:
+        identity_models: dict[uuid.UUID, str | None] = {}
+        for cluster, identity_id, embedding, embedding_model in space_candidates:
             try:
                 identity_uuid = uuid.UUID(identity_id)
             except ValueError:
                 logger.debug("[merge_suggestions] singleton_skip invalid_identity_id=%s", identity_id)
                 continue
             embeddings[identity_uuid] = normalize_face_embedding(np.array(embedding, dtype=np.float32))
+            identity_models[identity_uuid] = embedding_model
             if cluster.id is not None:
                 identity_to_cluster[identity_uuid] = cluster
 
@@ -138,7 +187,6 @@ class MergeSuggestionService:
                 groups.setdefault(group_uuid, []).append(identity_uuid)
 
         created = 0
-        now = datetime.now(tz=UTC)
         for group in groups.values():
             if len(group) < 2:
                 continue
@@ -148,6 +196,8 @@ class MergeSuggestionService:
                 if cluster_a is None or cluster_b is None or cluster_a.id is None or cluster_b.id is None:
                     continue
                 if not _is_merge_pair_eligible(cluster_a, cluster_b):
+                    continue
+                if not models_are_same_space(identity_models.get(identity_a), identity_models.get(identity_b)):
                     continue
                 similarity = compute_similarity(embeddings[identity_a], embeddings[identity_b])
                 if similarity < self._settings.suggestion_floor:
@@ -163,13 +213,6 @@ class MergeSuggestionService:
                 )
                 await self._repository.upsert_pending(tenant_id, payload)
                 created += 1
-
-        if created:
-            logger.info(
-                "[merge_suggestions] Generated %d singleton HAC suggestions (tenant_id=%s)",
-                created,
-                tenant_id,
-            )
         return created
 
     async def delete_by_cluster(self, tenant_id: str, cluster_id: str) -> int:
@@ -216,9 +259,16 @@ async def generate_cluster_merge_suggestions(
 
     created = 0
     now = datetime.now(tz=UTC)
+    tenant_has_stamped = any(cluster_embedding_model(cluster) for cluster in clusters)
     for idx, (cluster_a, centroid_a) in enumerate(candidates):
         for cluster_b, centroid_b in candidates[idx + 1 :]:
             if not _is_merge_pair_eligible(cluster_a, cluster_b):
+                continue
+            if not _pair_shares_embedding_space(
+                cluster_a,
+                cluster_b,
+                tenant_has_stamped=tenant_has_stamped,
+            ):
                 continue
             similarity = compute_similarity(centroid_a, centroid_b)
             if similarity < settings.suggestion_floor:
@@ -265,6 +315,27 @@ def _is_labeled_for_merge_suggestion(cluster: IdentityCluster) -> bool:
 def _is_merge_pair_eligible(cluster_a: IdentityCluster, cluster_b: IdentityCluster) -> bool:
     """A pair is suggestible unless both sides are labeled."""
     return not (_is_labeled_for_merge_suggestion(cluster_a) and _is_labeled_for_merge_suggestion(cluster_b))
+
+
+def _pair_shares_embedding_space(
+    cluster_a: IdentityCluster,
+    cluster_b: IdentityCluster,
+    *,
+    tenant_has_stamped: bool,
+) -> bool:
+    """True when both clusters are comparable in one embedding space.
+
+    Unresolved (None) models are the legacy all-unstamped case. Once any
+    cluster in the tenant carries a stamp, an unresolved side is treated as
+    unknown space and must not be cosined against MV centroids (FIR23-01).
+    """
+    model_a = cluster_embedding_model(cluster_a)
+    model_b = cluster_embedding_model(cluster_b)
+    if model_a is None or model_b is None:
+        if tenant_has_stamped:
+            return False
+        return model_a is None and model_b is None
+    return models_are_same_space(model_a, model_b)
 
 
 def _merge_pair_cluster_ids(cluster_a: IdentityCluster, cluster_b: IdentityCluster) -> tuple[str, str]:
@@ -333,6 +404,16 @@ def _extract_singleton_identity_embedding(cluster: IdentityCluster) -> tuple[str
             return identity_id, embedding
 
     return identity_id, embedding
+
+
+def _singleton_embedding_model(cluster: IdentityCluster, identity_id: str) -> str | None:
+    """Resolve the singleton face's embedding space from loaded reps, else cluster."""
+    for rep in list(cluster.representatives or []):
+        if rep.identity_id == identity_id:
+            model = representative_embedding_model(rep)
+            if model is not None:
+                return model
+    return cluster_embedding_model(cluster)
 
 
 __all__ = ["MergeSuggestionService", "generate_cluster_merge_suggestions"]

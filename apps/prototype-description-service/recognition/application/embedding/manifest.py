@@ -3,14 +3,21 @@
 Incumbent production value describes InsightFace buffalo_l @ settings dim / l2 / cosine.
 Adapters stamp ``FaceDetection.model_id`` from ``model_id``.
 
-Example model_id: ``insightface-buffalo_l@512d/l2/cosine``
+The InsightFace name folds the OpenCV runtime into a space token so a
+``cv2.warpAffine`` numeric move partitions FIR23-01 rather than silently
+re-baselining 512d vectors under a byte-identical id.
+
+Example model_id: ``insightface-buffalo_l+cv5.0@512d/l2/cosine``
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from recognition.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,9 +44,7 @@ class EmbeddingModelManifest:
         if not name:
             raise ValueError("EmbeddingModelManifest.name must be a non-empty string")
         if not isinstance(self.dimensions, int) or isinstance(self.dimensions, bool) or self.dimensions <= 0:
-            raise ValueError(
-                f"EmbeddingModelManifest.dimensions must be a positive int, got {self.dimensions!r}"
-            )
+            raise ValueError(f"EmbeddingModelManifest.dimensions must be a positive int, got {self.dimensions!r}")
         if not normalization:
             raise ValueError("EmbeddingModelManifest.normalization must be a non-empty string")
         if not metric:
@@ -56,12 +61,41 @@ class EmbeddingModelManifest:
         return f"{self.framework}-{self.name}@{self.dimensions}d/{self.normalization}/{self.metric}"
 
 
+def _opencv_major_minor(version: str) -> str:
+    """Stable OpenCV space id: major.minor, not the live wheel patch string.
+
+    A token change is a FIR23-01 space migration and must not ride a silent
+    patch/rebuild bump of ``cv2.__version__`` (for example 5.0.0 → 5.0.0.93).
+    """
+    parts = [part for part in str(version).split(".") if part]
+    if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+        return f"{parts[0]}.{parts[1]}"
+    return str(version)
+
+
+def _insightface_space_token() -> str:
+    """OpenCV major.minor folded into InsightFace ``model_id`` (CVUP1-GR-03).
+
+    buffalo_l alignment runs through ``cv2.warpAffine`` (InsightFace ``norm_crop``).
+    That is the same numeric surface whose 4.13→5.0 move forced SFace golden
+    regeneration; without this token the incumbent ``model_id`` stays
+    byte-identical across the bump and clustering treats old/new 512d vectors
+    as co-spatial. Major.minor (not the full ``cv2.__version__``) is the
+    intended partition: a patch or wheel rebuild must not fragment the tenant.
+    Lazy import keeps the module importable when cv2 is absent in narrow unit
+    tests — those tests must not claim a deployed space id.
+    """
+    import cv2
+
+    return f"cv{_opencv_major_minor(cv2.__version__)}"
+
+
 def incumbent_embedding_model_manifest() -> EmbeddingModelManifest:
     """Resolve the currently wired production model from recognition settings."""
     settings = get_settings()
     return EmbeddingModelManifest(
         framework="insightface",
-        name=settings.insightface.model_name,
+        name=f"{settings.insightface.model_name}+{_insightface_space_token()}",
         dimensions=settings.identity_detection.embedding_dimension,
         normalization="l2",
         metric="cosine",
@@ -91,8 +125,18 @@ def active_embedding_model_id() -> str:
     return str(model_id).strip()
 
 
+def try_active_embedding_model_id() -> str | None:
+    """Return the active space id, or None after logging if resolve fails."""
+    try:
+        return active_embedding_model_id()
+    except (RuntimeError, ImportError, ValueError, AttributeError, OSError) as exc:
+        logger.warning("active embedding_model unresolved (FIR23-01): %s", exc)
+        return None
+
+
 __all__ = [
     "EmbeddingModelManifest",
     "active_embedding_model_id",
     "incumbent_embedding_model_manifest",
+    "try_active_embedding_model_id",
 ]

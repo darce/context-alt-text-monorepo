@@ -5,15 +5,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any
 
 import numpy as np
 
 from recognition.application.settings import ClusteringSettings
 from recognition.application.similarity.search import SimilaritySearch
-from recognition.application.suggestions.embedding_space import same_space_vector
+from recognition.application.suggestions.embedding_space import (
+    models_are_same_space,
+    representative_embedding_model,
+    representative_vector,
+)
 from recognition.config.settings import resolve_effective_clustering_settings
 from recognition.domain.cluster import is_reserved_label_shape
+from recognition.domain.repositories import ClusterRepository
 
 DEFAULT_ROSTER_CANDIDATES_TOP_K = 10
 MAX_ROSTER_CANDIDATES_TOP_K = 50
@@ -116,27 +120,13 @@ def _quality_flag_from_samples(
 
 
 async def _load_probe_faces(
-    cluster_repository: Any, cluster_id: str
+    cluster_repository: ClusterRepository, cluster_id: str
 ) -> tuple[list[np.ndarray], str | None, list[tuple[float | None, float | None, float | None]]]:
-    """Load ranking rows + quality from the same query. Prefer the quality loader."""
-    quality_loader = getattr(cluster_repository, "get_representative_embeddings_with_quality", None)
-    if quality_loader is not None:
-        embeddings, model, qualities = await quality_loader(cluster_id)
-    else:
-        embeddings, model = await cluster_repository.get_representative_embeddings_with_model(cluster_id)
-        qualities = [(None, None, None) for _ in embeddings]
-
+    """Load ranking rows + quality from the ClusterRepository protocol loaders."""
+    embeddings, model, qualities = await cluster_repository.get_representative_embeddings_with_quality(cluster_id)
     if embeddings:
         return embeddings, model, qualities
-
-    fallback_quality = getattr(cluster_repository, "get_member_fallback_embeddings_with_quality", None)
-    if fallback_quality is not None:
-        return await fallback_quality(cluster_id, limit=4)
-
-    embeddings, model = await cluster_repository.get_member_fallback_embeddings_with_model(
-        cluster_id, limit=4
-    )
-    return embeddings, model, [(None, None, None) for _ in embeddings]
+    return await cluster_repository.get_member_fallback_embeddings_with_quality(cluster_id, limit=4)
 
 
 def _vector_dim(vec: np.ndarray) -> int:
@@ -150,7 +140,7 @@ async def list_roster_candidates(
     tenant_id: str,
     cluster_id: str,
     *,
-    cluster_repository: Any,
+    cluster_repository: ClusterRepository,
     settings: ClusteringSettings | None = None,
     top_k: int = DEFAULT_ROSTER_CANDIDATES_TOP_K,
 ) -> RosterCandidatesResult:
@@ -190,7 +180,7 @@ async def list_roster_candidates(
                 usable_qualities.append(sample)
     quality_flag = _quality_flag_from_samples(usable_qualities, inference_settings)
 
-    if not usable_probes or probe_model is None:
+    if not usable_probes:
         return RosterCandidatesResult(
             model_id=model_id,
             embedding_model=model_id,
@@ -215,7 +205,9 @@ async def list_roster_candidates(
             continue
         same_space: list[np.ndarray] = []
         for rep in cluster_reps:
-            vec = same_space_vector(rep, str(probe_model))
+            if not models_are_same_space(probe_model, representative_embedding_model(rep)):
+                continue
+            vec = representative_vector(rep)
             if vec is None or _vector_dim(vec) != probe_dim:
                 continue
             same_space.append(vec)
@@ -253,8 +245,8 @@ async def list_roster_candidates(
         for labeled_id, similarity in ranked[:top_k]
     ]
     return RosterCandidatesResult(
-        model_id=str(probe_model),
-        embedding_model=str(probe_model),
+        model_id=model_id,
+        embedding_model=model_id,
         computed_at=computed_at,
         probe_face_count=len(usable_probes),
         reference_face_count=reference_face_count,

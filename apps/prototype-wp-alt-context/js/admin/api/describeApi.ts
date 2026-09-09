@@ -994,38 +994,147 @@ export const correctDescriptionHistoryItem = async (
   );
 };
 
+/** Thrown when a describe-run envelope violates the shared schema at runtime. */
+export class MalformedDescribeRunResponseError extends Error {
+  constructor(field: string) {
+    super(`Describe run response is missing or malformed: ${field}`);
+    this.name = 'MalformedDescribeRunResponseError';
+  }
+}
+
+const DESCRIBE_RUN_RESPONSE_REQUIRED_KEYS = [
+  'tenant_id',
+  'run_id',
+  'status',
+  'phase',
+  'completed',
+  'failed',
+  'skipped',
+  'total',
+  'cancel_requested',
+  'eta_seconds',
+  'gpu_state',
+  'recognition_enabled',
+] as const;
+
+const DESCRIBE_RUN_RESPONSE_OPTIONAL_KEYS = ['deadline_seconds'] as const;
+
+const DESCRIBE_RUN_RESPONSE_KEYS = [
+  ...DESCRIBE_RUN_RESPONSE_REQUIRED_KEYS,
+  ...DESCRIBE_RUN_RESPONSE_OPTIONAL_KEYS,
+] as const;
+
+const DESCRIBE_RUN_STATUSES: ReadonlySet<string> = new Set(Object.values(DESCRIBE_RUN_STATUS));
+const DESCRIBE_RUN_PHASES: ReadonlySet<string> = new Set(Object.values(DESCRIBE_RUN_PHASE));
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const isUuid = (value: unknown): value is string => typeof value === 'string' && UUID_PATTERN.test(value);
+
+const validateDescribeRunResponse = (payload: unknown): string | null => {
+  if (!isRecord(payload)) {
+    return 'response body';
+  }
+  const missingRequiredKey = DESCRIBE_RUN_RESPONSE_REQUIRED_KEYS.find((key) => !hasOwn(payload, key));
+  if (missingRequiredKey) {
+    return `response.${missingRequiredKey}`;
+  }
+  const unexpectedKey = Object.keys(payload).find((key) => !includesString(DESCRIBE_RUN_RESPONSE_KEYS, key));
+  if (unexpectedKey) {
+    return `response.${unexpectedKey}`;
+  }
+  if (!isUuid(payload.tenant_id)) {
+    return 'response.tenant_id';
+  }
+  if (!isUuid(payload.run_id)) {
+    return 'response.run_id';
+  }
+  if (typeof payload.status !== 'string' || !DESCRIBE_RUN_STATUSES.has(payload.status)) {
+    return 'response.status';
+  }
+  if (typeof payload.phase !== 'string' || !DESCRIBE_RUN_PHASES.has(payload.phase)) {
+    return 'response.phase';
+  }
+  for (const key of ['completed', 'failed', 'skipped'] as const) {
+    if (!isInteger(payload[key]) || payload[key] < 0) {
+      return `response.${key}`;
+    }
+  }
+  if (!isInteger(payload.total) || payload.total < 1) {
+    return 'response.total';
+  }
+  if (typeof payload.cancel_requested !== 'boolean') {
+    return 'response.cancel_requested';
+  }
+  if (payload.eta_seconds !== null && (!isFiniteNumber(payload.eta_seconds) || payload.eta_seconds < 0)) {
+    return 'response.eta_seconds';
+  }
+  if (!isGpuState(payload.gpu_state)) {
+    return 'response.gpu_state';
+  }
+  if (typeof payload.recognition_enabled !== 'boolean') {
+    return 'response.recognition_enabled';
+  }
+  if (
+    hasOwn(payload, 'deadline_seconds') &&
+    payload.deadline_seconds !== null &&
+    (!isFiniteNumber(payload.deadline_seconds) || payload.deadline_seconds <= 0)
+  ) {
+    return 'response.deadline_seconds';
+  }
+  return null;
+};
+
+const assertDescribeRunResponse: (payload: unknown) => asserts payload is DescribeRunResponse = (payload) => {
+  const malformedField = validateDescribeRunResponse(payload);
+  if (malformedField) {
+    throw new MalformedDescribeRunResponseError(malformedField);
+  }
+};
+
+/** Validate the async describe-run envelope before consumers read run_id. */
+export const parseDescribeRunResponse = (payload: unknown): DescribeRunResponse => {
+  assertDescribeRunResponse(payload);
+  return payload;
+};
+
 export const submitBulkDescribeRun = async (mediaIds: number[]): Promise<DescribeRunResponse> =>
-  fetchRequiredApi<DescribeRunResponse>(getEndpoint('recognitionDescribeRuns'), {
-    method: 'POST',
-    body: { media_ids: mediaIds },
-    restNonce: getConfig().nonce,
-    // WP loads attachment bytes and forwards a multipart body under the proxy's
-    // 180s 'description' budget; the browser timeout must exceed it so a slow
-    // bulk upload cannot abort client-side after the run was already created
-    // (which would orphan an untracked run — CLI-01).
-    signal: createRecognitionTimeoutSignal(185_000),
-  });
+  parseDescribeRunResponse(
+    await fetchRequiredApi<unknown>(getEndpoint('recognitionDescribeRuns'), {
+      method: 'POST',
+      body: { media_ids: mediaIds },
+      restNonce: getConfig().nonce,
+      // WP loads attachment bytes and forwards a multipart body under the proxy's
+      // 180s 'description' budget; the browser timeout must exceed it so a slow
+      // bulk upload cannot abort client-side after the run was already created
+      // (which would orphan an untracked run — CLI-01).
+      signal: createRecognitionTimeoutSignal(185_000),
+    }),
+  );
 
 export const fetchBulkDescribeRun = async (runId: string): Promise<DescribeRunResponse> =>
-  fetchRequiredApi<DescribeRunResponse>(
-    `${getEndpoint('recognitionDescribeRuns')}/${encodeURIComponent(runId)}`,
-    {
-      method: 'GET',
-      restNonce: getConfig().nonce,
-      // Status is a cheap read polled every ~2s; a short timeout keeps a slow
-      // poll from hanging and lets the next interval retry (INT-04).
-      signal: createRecognitionTimeoutSignal(10_000),
-    },
+  parseDescribeRunResponse(
+    await fetchRequiredApi<unknown>(
+      `${getEndpoint('recognitionDescribeRuns')}/${encodeURIComponent(runId)}`,
+      {
+        method: 'GET',
+        restNonce: getConfig().nonce,
+        // Status is a cheap read polled every ~2s; a short timeout keeps a slow
+        // poll from hanging and lets the next interval retry (INT-04).
+        signal: createRecognitionTimeoutSignal(10_000),
+      },
+    ),
   );
 
 export const cancelBulkDescribeRun = async (runId: string): Promise<DescribeRunResponse> =>
-  fetchRequiredApi<DescribeRunResponse>(
-    `${getEndpoint('recognitionDescribeRuns')}/${encodeURIComponent(runId)}/cancel`,
-    {
-      method: 'POST',
-      restNonce: getConfig().nonce,
-      signal: createRecognitionTimeoutSignal(30_000),
-    },
+  parseDescribeRunResponse(
+    await fetchRequiredApi<unknown>(
+      `${getEndpoint('recognitionDescribeRuns')}/${encodeURIComponent(runId)}/cancel`,
+      {
+        method: 'POST',
+        restNonce: getConfig().nonce,
+        signal: createRecognitionTimeoutSignal(30_000),
+      },
+    ),
   );
 
 /**

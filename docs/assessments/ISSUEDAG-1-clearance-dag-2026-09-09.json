@@ -1,0 +1,1656 @@
+{
+ "schema": "issue-clearance-dag/v1",
+ "task_ref": "ISSUEDAG-1",
+ "generated": "2026-09-09",
+ "workers": 4,
+ "base_main": "e8dcf0cd07e984efecdf74ecc1bc751b59faaf7e",
+ "canon": [
+  "GRPH-01",
+  "GRPH-02",
+  "GRPH-06",
+  "GRPH-09",
+  "GRPH-16",
+  "GRPH-31",
+  "GRPH-32",
+  "GRPH-33",
+  "GRPH-34"
+ ],
+ "excluded_tasks": [
+  "EVAL-LANDING-1",
+  "MAINT-fir-review-parallel-20260729"
+ ],
+ "metrics": {
+  "nodes": 25,
+  "precedence_edges": 13,
+  "conflict_edges_after_cut": 0,
+  "chromatic_number": 1,
+  "width_max_antichain": 17,
+  "critical_path": [
+   "RECOG-DEPLOY-ROLLBACK",
+   "RECOG-DEPLOY-FASTFOLLOW"
+  ],
+  "critical_path_hours": 14.55,
+  "list_schedule_makespan_hours": 30.91,
+  "total_work_hours": 120.34,
+  "makespan_by_workers": {
+   "3": 40.69,
+   "4": 30.91,
+   "5": 24.29,
+   "6": 21.02,
+   "8": 15.9,
+   "12": 14.55
+  },
+  "findings_in_lanes": 351,
+  "findings_gated": 37,
+  "unassigned": 0
+ },
+ "lanes": {
+  "GS-REVIEW": {
+   "title": "GUIDESEED-1 luna-max review (running)",
+   "external_task": "GUIDESEED-1",
+   "kind": "review",
+   "est_h": 1.5,
+   "owned_paths": [
+    "apps/prototype-wp-alt-context/tests/e2e/",
+    "apps/prototype-wp-alt-context/playwright.config.ts",
+    "infra/oci/demo/seed/",
+    "infra/oci/demo/tests/verify-clustering-seed.sh",
+    "scripts/deploy/tests/test-guided-seed.sh",
+    "scripts/deploy/tests/test_guided_seed_shell.py"
+   ],
+   "test_cmd": "python3 -m pytest scripts/deploy/tests/test_guided_seed_shell.py -q -p no:cacheprovider",
+   "tier": "review:gpt-5.6-luna/max",
+   "include_findings": [],
+   "exclude_findings": [],
+   "est_hours": 1.5,
+   "asap_level": 0,
+   "longest_remaining_chain_hours": 5.8,
+   "sched_start_h": 0.0,
+   "sched_finish_h": 1.0,
+   "depends_on": [],
+   "downstream": [
+    "GS-FIX"
+   ],
+   "findings": {
+    "high": [],
+    "medium": [],
+    "low": []
+   },
+   "source_tasks": [],
+   "branch": "feature/guideseed-1",
+   "worktree": null
+  },
+  "GS-FIX": {
+   "title": "GUIDESEED-1 fix high+medium review findings",
+   "external_task": "GUIDESEED-1",
+   "kind": "impl",
+   "est_h": 2.0,
+   "owned_paths": [],
+   "test_cmd": "python3 -m pytest scripts/deploy/tests/test_guided_seed_shell.py -q -p no:cacheprovider",
+   "tier": "impl:grok-4.6/high",
+   "include_findings": [],
+   "exclude_findings": [],
+   "est_hours": 2.0,
+   "asap_level": 1,
+   "longest_remaining_chain_hours": 4.3,
+   "sched_start_h": 1.0,
+   "sched_finish_h": 3.0,
+   "depends_on": [
+    "GS-REVIEW"
+   ],
+   "downstream": [
+    "GS-HARM"
+   ],
+   "findings": {
+    "high": [],
+    "medium": [],
+    "low": []
+   },
+   "source_tasks": [],
+   "branch": "feature/guideseed-1",
+   "worktree": null
+  },
+  "GS-HARM": {
+   "title": "GUIDESEED-1 astra-medium harmonizing review",
+   "external_task": "GUIDESEED-1",
+   "kind": "review",
+   "est_h": 1.0,
+   "owned_paths": [],
+   "test_cmd": "python3 -m pytest scripts/deploy/tests/test_guided_seed_shell.py -q -p no:cacheprovider",
+   "tier": "harmonize:gpt-6-astra/medium",
+   "include_findings": [],
+   "exclude_findings": [],
+   "est_hours": 1.0,
+   "asap_level": 2,
+   "longest_remaining_chain_hours": 2.3,
+   "sched_start_h": 3.0,
+   "sched_finish_h": 4.0,
+   "depends_on": [
+    "GS-FIX"
+   ],
+   "downstream": [
+    "GS-LAND"
+   ],
+   "findings": {
+    "high": [],
+    "medium": [],
+    "low": []
+   },
+   "source_tasks": [],
+   "branch": "feature/guideseed-1",
+   "worktree": null
+  },
+  "GS-LAND": {
+   "title": "GUIDESEED-1 landing gate + merge to main",
+   "external_task": "GUIDESEED-1",
+   "kind": "land",
+   "est_h": 0.5,
+   "owned_paths": [],
+   "test_cmd": "",
+   "tier": "coordinator",
+   "include_findings": [],
+   "exclude_findings": [],
+   "est_hours": 0.5,
+   "asap_level": 3,
+   "longest_remaining_chain_hours": 1.3,
+   "sched_start_h": 4.0,
+   "sched_finish_h": 4.5,
+   "depends_on": [
+    "GS-HARM"
+   ],
+   "downstream": [
+    "POST-GS-TOUCHUPS"
+   ],
+   "findings": {
+    "high": [],
+    "medium": [],
+    "low": []
+   },
+   "source_tasks": [],
+   "branch": "feature/guideseed-1",
+   "worktree": null
+  },
+  "WP-ERRORS": {
+   "title": "Admin error taxonomy: abort vs timeout tags, tagged fetchApi errors, retry policy",
+   "kind": "impl",
+   "est_h": null,
+   "owned_paths": [
+    "apps/prototype-wp-alt-context/js/admin/utils/",
+    "apps/prototype-wp-alt-context/js/admin/components/ui/UserFacingErrorNotice.tsx",
+    "apps/prototype-wp-alt-context/js/admin/components/UserFacingErrorNotice.tsx",
+    "apps/prototype-wp-alt-context/js/admin/api/config.ts",
+    "apps/prototype-wp-alt-context/js/admin/main.tsx",
+    "apps/prototype-wp-alt-context/js/components/"
+   ],
+   "test_cmd": "npx vitest run js/admin/utils js/admin/components",
+   "tier": "impl:grok-4.6/high",
+   "contract": "ADDITIVE tag split: keep `_tag:'abort'` for user cancels, ADD `_tag:'timeout'` for TimeoutError; export the union type; no consumer file outside owned_paths is edited.",
+   "include_findings": [],
+   "exclude_findings": [],
+   "est_hours": 6.46,
+   "asap_level": 0,
+   "longest_remaining_chain_hours": 6.46,
+   "sched_start_h": 17.61,
+   "sched_finish_h": 24.07,
+   "depends_on": [],
+   "downstream": [],
+   "findings": {
+    "high": [
+     "FEBT1-W2A-05",
+     "FEBT1-W2A-01"
+    ],
+    "medium": [
+     "FEBT1-LE-03",
+     "FEBT1-LE-01",
+     "FEBT1-LB-03",
+     "FEBT1-LB-01",
+     "FEBT1-W2B-01",
+     "FEBT-1-W1-E-03",
+     "UXPNET2-HARM-01",
+     "UXP-NET-2-A-04",
+     "UXP-NET-2-A-03",
+     "UXP-NET-2-A-02"
+    ],
+    "low": [
+     "E21-20-REV10-01",
+     "FEBT1-LH-02",
+     "FEBT1-LB-02",
+     "FEBT-1-W1-E-05",
+     "UXP-NET-2-C-06",
+     "UXP-NET-2-C-04",
+     "UXP-NET-2-A-06"
+    ]
+   },
+   "source_tasks": [
+    "E21-20",
+    "FEBT-1",
+    "UXP-NET-2"
+   ],
+   "branch": "feature/issuedag-1-wp-errors",
+   "worktree": "/Users/daniel/Development/context-alt-text-monorepo-issuedag-1-wp-errors"
+  },
+  "WP-JOBSTREAM": {
+   "title": "Job progress stream / job machine wide events, bulk describe, remote-action gate, misc admin pages",
+   "kind": "impl",
+   "est_h": null,
+   "owned_paths": [
+    "apps/prototype-wp-alt-context/js/admin/hooks/",
+    "apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaAnalyzeCta.tsx",
+    "apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelection.tsx",
+    "apps/prototype-wp-alt-context/js/admin/pages/SettingsPage.tsx",
+    "apps/prototype-wp-alt-context/js/admin/pages/__tests__/SettingsPage.test.tsx",
+    "apps/prototype-wp-alt-context/js/admin/pages/retention/",
+    "apps/prototype-wp-alt-context/js/admin/pages/workbench/syncVocabulary",
+    "apps/prototype-wp-alt-context/js/admin/styles/components/__tests__/"
+   ],
+   "test_cmd": "npx vitest run js/admin/hooks js/admin/pages/workbench js/admin/pages/__tests__ js/admin/pages/retention",
+   "tier": "impl:grok-4.6/high",
+   "contract": "Consumes WP-ERRORS contract read-only: treat `_tag:'timeout'` as distinct from `'abort'` where a hook branches on abort; do not edit js/admin/utils/.",
+   "include_findings": [],
+   "exclude_findings": [],
+   "est_hours": 6.58,
+   "asap_level": 0,
+   "longest_remaining_chain_hours": 6.58,
+   "sched_start_h": 16.16,
+   "sched_finish_h": 22.74,
+   "depends_on": [],
+   "downstream": [],
+   "findings": {
+    "high": [
+     "FEBT-1-W1-O-02"
+    ],
+    "medium": [
+     "D5-AR-04",
+     "D5-AR-05",
+     "FEBT1-LH-01",
+     "FEBT1-LA-05",
+     "FEBT1-LA-03",
+     "FEBT-1-W1-E-02",
+     "FEBT-1-W1-O-06",
+     "UXP-2-BR-07",
+     "UXPNET2-HARM-02",
+     "UXP-NET-2-B-02"
+    ],
+    "low": [
+     "E21-13-REV-HARM-04",
+     "E21-13-REV-HARM-02",
+     "E21-13-REV-HARM-01",
+     "FEBT1-LE-02",
+     "FEBT1-LA-04",
+     "FEBT-1-W1-M-07",
+     "FEBT-1-W1-M-08",
+     "FEBT-1-W1-E-07",
+     "ORCH-UX-UI-BR-36",
+     "UXP-NET-2-B-05",
+     "WBUX6-W4-B-03",
+     "WBUX6-W4-B-01",
+     "WBUX6-W3-L1-01",
+     "WBUX-6-r0902w2-S7R2-F1",
+     "REVB-02",
+     "REVB-01"
+    ]
+   },
+   "source_tasks": [
+    "DEFWAVE-1",
+    "E21-13",
+    "FEBT-1",
+    "ORCH-UX-UI",
+    "UXP-2",
+    "UXP-NET-2",
+    "WBUX-6",
+    "internal-20260907"
+   ],
+   "branch": "feature/issuedag-1-wp-jobstream",
+   "worktree": "/Users/daniel/Development/context-alt-text-monorepo-issuedag-1-wp-jobstream"
+  },
+  "WP-CLUSTERS": {
+   "title": "Identity-clusters review queue: lookup-failure null collapse, mutation hooks, attachment-edit, APIs",
+   "kind": "impl",
+   "est_h": null,
+   "owned_paths": [
+    "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/",
+    "apps/prototype-wp-alt-context/js/attachment-edit/",
+    "apps/prototype-wp-alt-context/js/admin/api/mediaApi.ts",
+    "apps/prototype-wp-alt-context/js/admin/api/rosterApi.ts",
+    "apps/prototype-wp-alt-context/js/admin/api/recognition/retentionApi.ts"
+   ],
+   "test_cmd": "npx vitest run js/admin/pages/workbench/identity-clusters js/attachment-edit",
+   "tier": "impl:grok-4.6/high",
+   "contract": "Do NOT adopt the atomic merge+accept endpoint here (WP-MERGE-ACCEPT owns it after SVC-EMBED-SCOPE lands); fix FEBT1G-H-04 by distinguishing not-found from request failure.",
+   "include_findings": [],
+   "exclude_findings": [],
+   "est_hours": 6.85,
+   "asap_level": 0,
+   "longest_remaining_chain_hours": 8.35,
+   "sched_start_h": 12.44,
+   "sched_finish_h": 19.29,
+   "depends_on": [],
+   "downstream": [
+    "WP-MERGE-ACCEPT"
+   ],
+   "findings": {
+    "high": [
+     "FEBT1G-H-04"
+    ],
+    "medium": [
+     "E21-14-R3-GOLDENS-01",
+     "FEBT1-LG-01",
+     "FEBT1-LD-04",
+     "FEBT1-LD-03",
+     "FEBT1-LD-02",
+     "FEBT1-LC-01",
+     "FEBT1G-M-14",
+     "UXP5-BRV-03",
+     "UXP-NET-2-B-07",
+     "UXP-NET-2-B-06",
+     "UXP-NET-2-B-04",
+     "UXP-NET-2-B-03",
+     "UXP-NET-2-B-01"
+    ],
+    "low": [
+     "E21-18-L1R-09",
+     "E21-18-L1R-08",
+     "FEBT1-LD-05",
+     "FEBT1-LC-03",
+     "FEBT1-LC-02",
+     "UXPNET2-HARM-04",
+     "UXPNET2-HARM-03",
+     "UXP-NET-2-C-05",
+     "UXP-NET-2-C-03",
+     "UXP-NET-2-B-09"
+    ]
+   },
+   "source_tasks": [
+    "E21-14",
+    "E21-18",
+    "FEBT-1",
+    "UXP-5",
+    "UXP-NET-2"
+   ],
+   "branch": "feature/issuedag-1-wp-clusters",
+   "worktree": "/Users/daniel/Development/context-alt-text-monorepo-issuedag-1-wp-clusters"
+  },
+  "WP-GUIDED": {
+   "title": "Guided prototype fast-follow (GUIDEDQM-1 deferred set minus GR-201)",
+   "kind": "impl",
+   "est_h": null,
+   "owned_paths": [
+    "apps/prototype-wp-alt-context/js/admin/guidedPrototype/",
+    "apps/prototype-wp-alt-context/js/admin/pages/guided/",
+    "apps/prototype-wp-alt-context/js/admin/api/describeApi.ts",
+    "apps/prototype-wp-alt-context/js/admin/styles/components/_guided-prototype.scss",
+    "apps/prototype-wp-alt-context/docs/assessments/current/demo/"
+   ],
+   "test_cmd": "npx vitest run js/admin/guidedPrototype js/admin/pages/guided",
+   "tier": "impl:grok-4.6/high",
+   "contract": "GUIDEDQM-1-GR-201 stays deferred (operator constraint). HARM-A-02/03 belong to DESCRIBE-DEADLINE; do not touch the 510s ceiling or add idempotency keys here.",
+   "include_findings": [],
+   "exclude_findings": [
+    "GUIDEDFIX-1-REV-r09079a26-HARM-A-02",
+    "GUIDEDFIX-1-REV-r09079a26-HARM-A-03",
+    "GUIDEDQM-1-GR-201"
+   ],
+   "est_hours": 5.5,
+   "asap_level": 0,
+   "longest_remaining_chain_hours": 10.21,
+   "sched_start_h": 4.5,
+   "sched_finish_h": 10.0,
+   "depends_on": [],
+   "downstream": [
+    "DESCRIBE-DEADLINE"
+   ],
+   "findings": {
+    "high": [],
+    "medium": [
+     "GUIDEDQM-1-TSC-02",
+     "GUIDEDQM-1-GR-203",
+     "GUIDEDQM-1-S1B-01",
+     "GUIDEDQM-1-RB-05",
+     "GUIDEDQM-1-RB-04",
+     "GUIDEDQM-1-RB-03",
+     "GUIDEDQM-1-RB-02",
+     "GUIDEDQM-1-RB-01",
+     "GUIDEDQM-1-RA-03",
+     "GUIDEDQM-1-RA-02"
+    ],
+    "low": [
+     "GPUUX-1-REV-r0902287f-A-10",
+     "GUIDEDQM-1-HARM-06",
+     "GUIDEDQM-1-HARM-05",
+     "GUIDEDQM-1-HARM-04",
+     "GUIDEDQM-1-HARM-03",
+     "GUIDEDQM-1-HARM-02",
+     "GUIDEDQM-1-PG-F-01",
+     "GUIDEDQM-1-PG-F-02",
+     "GUIDEDQM-1-RB-06",
+     "GUIDEDQM-1-RA-04"
+    ]
+   },
+   "source_tasks": [
+    "GPUUX-1",
+    "GUIDEDQM-1"
+   ],
+   "branch": "feature/issuedag-1-wp-guided",
+   "worktree": "/Users/daniel/Development/context-alt-text-monorepo-issuedag-1-wp-guided"
+  },
+  "DESCRIBE-DEADLINE": {
+   "title": "Server-negotiated describe deadline + admin submit idempotency (GUIDEDFIX HARM-A-02/03)",
+   "kind": "impl",
+   "est_h": null,
+   "owned_paths": [
+    "apps/prototype-description-service/scene/interface_adapters/",
+    "apps/prototype-wp-alt-context/src/api/class-describe-controller.php",
+    "apps/prototype-wp-alt-context/js/admin/guidedPrototype/liveDescription.ts",
+    "apps/prototype-wp-alt-context/js/admin/guidedPrototype/useGuidedLiveDescription.ts"
+   ],
+   "test_cmd": "npx vitest run js/admin/guidedPrototype",
+   "tier": "impl:grok-4.6/high",
+   "contract": "Cross-service contract: describe_run response carries `deadline_seconds`; client replaces the hard-coded 510s ceiling; idempotency key header mirrors js/public/demo-describe.js. `ruff format` describe_run.py (D1-AR-02 lists it).",
+   "include_findings": [
+    "GUIDEDFIX-1-REV-r09079a26-HARM-A-02",
+    "GUIDEDFIX-1-REV-r09079a26-HARM-A-03"
+   ],
+   "exclude_findings": [],
+   "est_hours": 4.71,
+   "asap_level": 1,
+   "longest_remaining_chain_hours": 4.71,
+   "sched_start_h": 22.74,
+   "sched_finish_h": 27.45,
+   "depends_on": [
+    "WP-GUIDED"
+   ],
+   "downstream": [],
+   "findings": {
+    "high": [
+     "GUIDEDFIX-1-REV-r09079a26-HARM-A-02"
+    ],
+    "medium": [
+     "GPUSMOKE-1-REV-r0903b9ec7-B-04",
+     "GUIDEDFIX-1-REV-r09079a26-HARM-A-03",
+     "GUIDEDQM-1-HARM-01",
+     "GUIDEDQM-1-GR-202",
+     "GUIDEDQM-1-S1B-02",
+     "GUIDEDQM-1-S1B-04",
+     "GUIDEDQM-1-RA-01"
+    ],
+    "low": [
+     "GPUOPS-L-08",
+     "GUIDEDQM-1-S1B-03"
+    ]
+   },
+   "source_tasks": [
+    "GPUOPS-1",
+    "GPUSMOKE-1",
+    "GUIDEDFIX-1",
+    "GUIDEDQM-1"
+   ],
+   "branch": "feature/issuedag-1-describe-deadline",
+   "worktree": "/Users/daniel/Development/context-alt-text-monorepo-issuedag-1-describe-deadline"
+  },
+  "WP-MERGE-ACCEPT": {
+   "title": "Client adopts the atomic merge+accept endpoint (FEBT1-LD-01 client side)",
+   "kind": "impl",
+   "est_h": 1.5,
+   "owned_paths": [
+    "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/useSuggestionReviewMutations.ts"
+   ],
+   "test_cmd": "npx vitest run js/admin/pages/workbench/identity-clusters",
+   "tier": "impl:grok-4.6/high",
+   "include_findings": [],
+   "exclude_findings": [],
+   "est_hours": 1.5,
+   "asap_level": 1,
+   "longest_remaining_chain_hours": 1.5,
+   "sched_start_h": 28.17,
+   "sched_finish_h": 29.67,
+   "depends_on": [
+    "SVC-EMBED-SCOPE",
+    "WP-CLUSTERS"
+   ],
+   "downstream": [],
+   "findings": {
+    "high": [],
+    "medium": [],
+    "low": [
+     "E21-18-L2V-06"
+    ]
+   },
+   "source_tasks": [
+    "E21-18"
+   ],
+   "branch": "feature/issuedag-1-wp-merge-accept",
+   "worktree": "/Users/daniel/Development/context-alt-text-monorepo-issuedag-1-wp-merge-accept"
+  },
+  "SVC-EMBED-SCOPE": {
+   "title": "Embedding-space scoping in suggestions/merge/representatives + merge-accept endpoint contract",
+   "kind": "impl",
+   "est_h": null,
+   "owned_paths": [
+    "apps/prototype-description-service/recognition/application/",
+    "apps/prototype-description-service/recognition/infrastructure/repositories/",
+    "apps/prototype-description-service/recognition/infrastructure/embeddings/",
+    "apps/prototype-description-service/recognition/interface_adapters/http/routers/suggestions.py",
+    "apps/prototype-description-service/src/recognition/application/services/import_service.py",
+    "apps/prototype-description-service/recognition/tests/unit/test_representative",
+    "apps/prototype-description-service/recognition/tests/unit/test_suggest",
+    "apps/prototype-description-service/recognition/config/",
+    "apps/prototype-description-service/recognition/domain/",
+    "apps/prototype-description-service/recognition/tests/unit/test_embedd",
+    "apps/prototype-description-service/recognition/tests/unit/test_face",
+    "apps/prototype-description-service/recognition/tests/conftest.py"
+   ],
+   "test_cmd": "python3 -m pytest apps/prototype-description-service/recognition/tests/unit -q -p no:cacheprovider -k 'representative or suggest or label or merge or inference'",
+   "tier": "impl:grok-4.6/high",
+   "contract": "Every cosine over cluster centroids/galleries/representatives carries an embedding_model predicate for the active space.",
+   "include_findings": [],
+   "exclude_findings": [],
+   "est_hours": 7.61,
+   "asap_level": 0,
+   "longest_remaining_chain_hours": 9.11,
+   "sched_start_h": 10.0,
+   "sched_finish_h": 17.61,
+   "depends_on": [],
+   "downstream": [
+    "WP-MERGE-ACCEPT",
+    "RATCHET-GREEN"
+   ],
+   "findings": {
+    "high": [
+     "CVUP1-GR-03",
+     "CVUP1-R3-17",
+     "CVUP1-R3-16",
+     "CVUP1-R3-15",
+     "FEBT1-LD-01"
+    ],
+    "medium": [
+     "CVUP1-R3-18",
+     "FEBT1-LG-02",
+     "FIR2-r0717cc62-S3-BR-2",
+     "FIR2-r0717cc62-S2-BR-1",
+     "FIR6V11-03",
+     "FIR6V11-05",
+     "FL30B-GATE-01",
+     "FIR23-06",
+     "VLMHEAL-1-RB-03"
+    ],
+    "low": [
+     "FIR2-r0717cc62-S3-BR-3",
+     "FIR-9-AMG-04"
+    ]
+   },
+   "source_tasks": [
+    "CVUP-1",
+    "FEBT-1",
+    "FIR-2",
+    "FIR-6",
+    "FIR-9",
+    "FIR23CF-1",
+    "VLMHEAL-1"
+   ],
+   "branch": "feature/issuedag-1-svc-embed-scope",
+   "worktree": "/Users/daniel/Development/context-alt-text-monorepo-issuedag-1-svc-embed-scope"
+  },
+  "SVC-SCAN-WORKER": {
+   "title": "Scan worker readiness guard + retry backoff (FIR-4-E2E-10)",
+   "kind": "impl",
+   "est_h": null,
+   "owned_paths": [
+    "apps/prototype-description-service/recognition/worker/",
+    "apps/prototype-description-service/recognition/tests/unit/test_scan_"
+   ],
+   "test_cmd": "python3 -m pytest apps/prototype-description-service/recognition/tests/unit -q -p no:cacheprovider -k scan",
+   "tier": "impl:grok-4.6/high",
+   "include_findings": [],
+   "exclude_findings": [],
+   "est_hours": 2.8,
+   "asap_level": 0,
+   "longest_remaining_chain_hours": 3.5,
+   "sched_start_h": 26.72,
+   "sched_finish_h": 29.52,
+   "depends_on": [],
+   "downstream": [
+    "RATCHET-GREEN"
+   ],
+   "findings": {
+    "high": [
+     "FIR-4-E2E-10"
+    ],
+    "medium": [],
+    "low": []
+   },
+   "source_tasks": [
+    "FIR-4"
+   ],
+   "branch": "feature/issuedag-1-svc-scan-worker",
+   "worktree": "/Users/daniel/Development/context-alt-text-monorepo-issuedag-1-svc-scan-worker"
+  },
+  "SVC-DESCRIBE-WORKER": {
+   "title": "Describe run worker / load producer (GPUW-1) + prod compose load path (OPSGPU-H-03 code side)",
+   "kind": "impl",
+   "est_h": null,
+   "owned_paths": [
+    "apps/prototype-description-service/scene/application/",
+    "apps/prototype-description-service/scene/config/",
+    "apps/prototype-description-service/scene/tests/",
+    "apps/prototype-description-service/docker-compose.prod.yml",
+    "apps/prototype-description-service/Dockerfile",
+    "apps/prototype-description-service/shared/"
+   ],
+   "test_cmd": "python3 -m pytest apps/prototype-description-service/scene/tests -q -p no:cacheprovider",
+   "tier": "impl:grok-4.6/high",
+   "contract": "Run `ruff format` on every file you touch (D1-AR-02 lists describe_run_worker.py); RATCHET-GREEN re-baselines afterwards.",
+   "include_findings": [],
+   "exclude_findings": [],
+   "est_hours": 4.61,
+   "asap_level": 0,
+   "longest_remaining_chain_hours": 5.31,
+   "sched_start_h": 19.29,
+   "sched_finish_h": 23.9,
+   "depends_on": [],
+   "downstream": [
+    "RATCHET-GREEN"
+   ],
+   "findings": {
+    "high": [
+     "OPSGPU-H-03"
+    ],
+    "medium": [
+     "GPUW1_RDELTA0831_D04",
+     "GPUW1_R08318792_HARM_02",
+     "GPUW1_R08318792_S1B_04",
+     "GPUW1_R08318792_S1B_02",
+     "ORCH-LAUNCH-01-S1-BR-03"
+    ],
+    "low": [
+     "GPUW1_RDELTA0831_D07",
+     "GPUW1_RDELTA0831_D06",
+     "GPUW1_R08318792_S1B_09",
+     "GPUW1_R08318792_S1B_08",
+     "GPUW1_R08318792_S1B_07",
+     "GPUW1_R08318792_S1B_06",
+     "HEALTH-L-05"
+    ]
+   },
+   "source_tasks": [
+    "GPUOPS-1",
+    "GPUW-1",
+    "HEALTHOBS-1",
+    "ORCH-LAUNCH-01"
+   ],
+   "branch": "feature/issuedag-1-svc-describe-worker",
+   "worktree": "/Users/daniel/Development/context-alt-text-monorepo-issuedag-1-svc-describe-worker"
+  },
+  "SVC-SCHEMA-HEAL": {
+   "title": "Identity schema heal: migration truth, verify_identity_schema, schema tests (VLMHEAL-1 schema set)",
+   "kind": "impl",
+   "est_h": null,
+   "owned_paths": [
+    "apps/prototype-description-service/db/",
+    "apps/prototype-description-service/scripts/verify_identity_schema.py",
+    "apps/prototype-description-service/recognition/tests/schema/"
+   ],
+   "test_cmd": "python3 -m pytest apps/prototype-description-service/recognition/tests/schema -q -p no:cacheprovider",
+   "tier": "impl:grok-4.6/high",
+   "contract": "Greenfield: schema changes go directly in 001_identity_schema.py, no migrations. `ruff format` touched files (D1-AR-02).",
+   "include_findings": [],
+   "exclude_findings": [],
+   "est_hours": 7.05,
+   "asap_level": 0,
+   "longest_remaining_chain_hours": 7.75,
+   "sched_start_h": 14.55,
+   "sched_finish_h": 21.6,
+   "depends_on": [],
+   "downstream": [
+    "RATCHET-GREEN"
+   ],
+   "findings": {
+    "high": [],
+    "medium": [
+     "VLMHEAL-1-ENG-06",
+     "VLMHEAL-1-HN-01",
+     "VLMHEAL-1-HN-02",
+     "VLMHEAL-1-H1E-01",
+     "VLMHEA-M-03",
+     "VLMHEA-M-04",
+     "VLMHEAL-1-GR-203",
+     "VLMHEAL-1-GR-202",
+     "VLMHEAL-1-GR-201",
+     "VLMHEAL-1-S1B-01",
+     "VLMHEAL-1-SCH-F-01",
+     "VLMHEAL-1-RB-02",
+     "VLMHEAL-1-RB-01"
+    ],
+    "low": [
+     "FIR6V11-04",
+     "VLMHEAL-1-SCH-F-02",
+     "VLMHEAL-1-REV-F-03",
+     "VLMHEAL-1-HN-03",
+     "VLMHEAL-1-HN-04",
+     "VLMHEAL-1-HN-05",
+     "VLMHEAL-1-HN-06",
+     "VLMHEAL-1-HN-07",
+     "VLMHEAL-1-HN-08",
+     "VLMHEA-L-03",
+     "VLMHEA-L-04",
+     "VLMHEAL-1-GR-110",
+     "VLMHEAL-1-GR-112",
+     "VLMHEAL-1-GR-113",
+     "VLMHEAL-1-GR-204",
+     "VLMHEAL-1-S1B-05",
+     "VLMHEAL-1-S1B-04",
+     "VLMHEAL-1-S1B-03",
+     "VLMHEAL-1-S1B-02",
+     "VLMHEAL-1-RB-04"
+    ]
+   },
+   "source_tasks": [
+    "FIR-6",
+    "VLMHEAL-1"
+   ],
+   "branch": "feature/issuedag-1-svc-schema-heal",
+   "worktree": "/Users/daniel/Development/context-alt-text-monorepo-issuedag-1-svc-schema-heal"
+  },
+  "RECOG-DEPLOY-ROLLBACK": {
+   "title": "recognition-service.sh additive-then-flip cutover with topology rollback (OCIRV1-FD-06, RB-11)",
+   "kind": "impl",
+   "est_h": null,
+   "owned_paths": [
+    "scripts/deploy/recognition-service.sh",
+    "scripts/deploy/tests/test_recognition_"
+   ],
+   "test_cmd": "python3 -m pytest scripts/deploy/tests/test_recognition_deploy.py scripts/deploy/tests/test_recognition_ocir_config.py -q -p no:cacheprovider",
+   "tier": "impl:grok-4.6/high",
+   "include_findings": [
+    "OCIRV1-FD-06",
+    "OCIRV1-RB-11"
+   ],
+   "exclude_findings": [],
+   "est_hours": 3.4,
+   "asap_level": 0,
+   "longest_remaining_chain_hours": 14.55,
+   "sched_start_h": 0.0,
+   "sched_finish_h": 3.4,
+   "depends_on": [],
+   "downstream": [
+    "RECOG-DEPLOY-FASTFOLLOW"
+   ],
+   "findings": {
+    "high": [
+     "OCIRV1-FD-06",
+     "OCIRV1-RB-11"
+    ],
+    "medium": [],
+    "low": []
+   },
+   "source_tasks": [
+    "OCIRV-1"
+   ],
+   "branch": "feature/issuedag-1-recog-deploy-rollback",
+   "worktree": "/Users/daniel/Development/context-alt-text-monorepo-issuedag-1-recog-deploy-rollback"
+  },
+  "RECOG-DEPLOY-FASTFOLLOW": {
+   "title": "recognition-service.sh medium/low fast-follow (VLMHEAL-1 deploy set, OCIRV mediums)",
+   "kind": "impl",
+   "est_h": null,
+   "owned_paths": [
+    "scripts/deploy/recognition-service.sh",
+    "scripts/deploy/tests/test_recognition_",
+    "docs/runbooks/deploy-recognition"
+   ],
+   "test_cmd": "python3 -m pytest scripts/deploy/tests/test_recognition_deploy.py scripts/deploy/tests/test_recognition_ocir_config.py -q -p no:cacheprovider",
+   "tier": "impl:grok-4.6/high",
+   "include_findings": [],
+   "exclude_findings": [],
+   "est_hours": 11.15,
+   "asap_level": 1,
+   "longest_remaining_chain_hours": 11.15,
+   "sched_start_h": 3.4,
+   "sched_finish_h": 14.55,
+   "depends_on": [
+    "RECOG-DEPLOY-ROLLBACK"
+   ],
+   "downstream": [],
+   "findings": {
+    "high": [],
+    "medium": [
+     "OCIRV1-FR-08",
+     "OCIRV1-FS-07",
+     "VLMHEAL-1-HARM-02",
+     "VLMHEAL-1-SMK-F-01",
+     "VLMHEAL-1-GR-123",
+     "VLMHEAL-1-GR-121",
+     "VLMHEAL-1-REV-X-02",
+     "VLMHEAL-1-REV-X-03",
+     "VLMHEAL-1-REV-X-05",
+     "VLMHEAL-1-LR-01",
+     "VLMHEAL-1-GR-02",
+     "VLMHEA-M-05",
+     "VLMHEAL-1-H2E-02",
+     "VLMHEAL-1-GR-61",
+     "VLMHEAL-1-GR-63",
+     "VLMHEAL-1-GR-104",
+     "VLMHEAL-1-GR-105",
+     "VLMHEAL-1-GR-107",
+     "VLMHEAL-1-GR-109",
+     "VLMHEAL-1-GR-143",
+     "VLMHEAL-1-RA-06",
+     "VLMHEAL-1-RA-05",
+     "VLMHEAL-1-RB-05"
+    ],
+    "low": [
+     "LANDING-VLMQUAR-LOW-01",
+     "VLMHEAL-1-SMK-F-02",
+     "VLMHEAL-1-SAN-H-02",
+     "VLMHEAL-1-REV-B-09",
+     "VLMHEAL-1-REV-B-10",
+     "VLMHEAL-1-REV-D-03",
+     "VLMHEAL-1-REV-D-04",
+     "VLMHEAL-1-REV-D-06",
+     "VLMHEAL-1-REV-W-06",
+     "VLMHEAL-1-REV-W-07",
+     "VLMHEAL-1-REV-W-08",
+     "VLMHEAL-1-REV-X-06",
+     "VLMHEAL-1-REV-X-07",
+     "VLMHEAL-1-REV-X-08",
+     "VLMHEAL-1-SB-07",
+     "VLMHEAL-1-SB-08",
+     "VLMHEAL-1-SB-09",
+     "VLMHEAL-1-LR-02",
+     "VLMHEAL-1-LR-03",
+     "VLMHEAL-1-LR-04",
+     "VLMHEAL-1-LR-05",
+     "VLMHEAL-1-LR-06",
+     "VLMHEAL-1-GR-01",
+     "VLMHEAL-1-GR-03",
+     "VLMHEAL-1-GR-05",
+     "VLMHEAL-1-GR-07",
+     "VLMHEAL-1-GR-08",
+     "VLMHEAL-1-GR-09",
+     "VLMHEAL-1-GR-10",
+     "VLMHEAL-1-GR-38",
+     "VLMHEA-L-06",
+     "VLMHEAL-1-GR-64",
+     "VLMHEAL-1-GR-65",
+     "VLMHEAL-1-GR-66",
+     "VLMHEAL-1-GR-84",
+     "VLMHEAL-1-GR-122",
+     "VLMHEAL-1-GR-111",
+     "VLMHEAL-1-GR-144",
+     "VLMHEAL-1-S2B-09",
+     "VLMHEAL-1-S3B-03"
+    ]
+   },
+   "source_tasks": [
+    "MAINT-LANDING-20260908",
+    "OCIRV-1",
+    "VLMHEAL-1"
+   ],
+   "branch": "feature/issuedag-1-recog-deploy-fastfollow",
+   "worktree": "/Users/daniel/Development/context-alt-text-monorepo-issuedag-1-recog-deploy-fastfollow"
+  },
+  "POST-GS-TOUCHUPS": {
+   "title": "Files GUIDESEED-1 also edits: mk/deploy.mk (OCIRV), package.json (FEBT-1)",
+   "kind": "impl",
+   "est_h": 0.8,
+   "owned_paths": [
+    "mk/deploy.mk",
+    "apps/prototype-wp-alt-context/package.json"
+   ],
+   "test_cmd": "python3 -m pytest scripts/deploy/tests/test_guided_seed_shell.py -q -p no:cacheprovider",
+   "tier": "impl:grok-4.6/high",
+   "include_findings": [],
+   "exclude_findings": [],
+   "est_hours": 0.8,
+   "asap_level": 4,
+   "longest_remaining_chain_hours": 0.8,
+   "sched_start_h": 28.24,
+   "sched_finish_h": 29.04,
+   "depends_on": [
+    "GS-LAND"
+   ],
+   "downstream": [],
+   "findings": {
+    "high": [],
+    "medium": [
+     "OCIRV1-RB-18"
+    ],
+    "low": [
+     "FEBT1-W2C-06"
+    ]
+   },
+   "source_tasks": [
+    "FEBT-1",
+    "OCIRV-1"
+   ],
+   "branch": "feature/issuedag-1-post-gs-touchups",
+   "worktree": "/Users/daniel/Development/context-alt-text-monorepo-issuedag-1-post-gs-touchups"
+  },
+  "DEPLOY-SCRIPTS-TESTS": {
+   "title": "Deploy convergence test executes a failing preflight (G3-01); sync-demo/smoke-gate; VLM-3 infra test",
+   "kind": "impl",
+   "est_h": null,
+   "owned_paths": [
+    "scripts/test_e15_33_deploy_convergence.py",
+    "scripts/deploy/sync-demo.sh",
+    "scripts/deploy/lib/smoke-gate.sh",
+    "scripts/gpu_spike_bench.py",
+    "scripts/test_gpu_spike_bench.py",
+    "scripts/test_vlm3_oci_gpu_infra.py",
+    "scripts/deploy/deploy"
+   ],
+   "test_cmd": "python3 -m pytest scripts/test_e15_33_deploy_convergence.py scripts/test_vlm3_oci_gpu_infra.py scripts/test_gpu_spike_bench.py -q -p no:cacheprovider",
+   "tier": "impl:grok-4.6/high",
+   "include_findings": [],
+   "exclude_findings": [],
+   "est_hours": 3.46,
+   "asap_level": 0,
+   "longest_remaining_chain_hours": 3.46,
+   "sched_start_h": 27.45,
+   "sched_finish_h": 30.91,
+   "depends_on": [],
+   "downstream": [],
+   "findings": {
+    "high": [
+     "G3-01"
+    ],
+    "medium": [
+     "DEMOLIVE-9-R4-02",
+     "GPUSMO-G-28"
+    ],
+    "low": [
+     "DEMOLIVE-9-R1-03D",
+     "GPUSMOKE-1-REV-r0903b9ec7-A-11"
+    ]
+   },
+   "source_tasks": [
+    "DEMOLIVE-9",
+    "FIR23-STACK",
+    "GPUSMOKE-1"
+   ],
+   "branch": "feature/issuedag-1-deploy-scripts-tests",
+   "worktree": "/Users/daniel/Development/context-alt-text-monorepo-issuedag-1-deploy-scripts-tests"
+  },
+  "GATES-HARNESS": {
+   "title": "Remote agent orphan-ping hygiene (MAINT-ORCHW2-02), gate wrapper exit codes, lint ratchet, lane worktree provisioning",
+   "kind": "impl",
+   "est_h": null,
+   "owned_paths": [
+    "scripts/remote_agent.sh",
+    "scripts/remote_gate.sh",
+    "scripts/lint_ratchet.py",
+    "scripts/tests/",
+    ".github/workflows/",
+    ".gitignore",
+    "scripts/workstate/",
+    "scripts/workbay_lifecycle/",
+    "Makefile.d/lifecycle.mk",
+    "pyproject.toml",
+    "scripts/deploy/lib/bounded-remote-build",
+    "scripts/vm/"
+   ],
+   "test_cmd": "python3 -m pytest scripts/tests/test_gate_wrapper_exit_codes.py -q -p no:cacheprovider",
+   "tier": "impl:grok-4.6/high",
+   "contract": "Raises VM capacity for every later wave (pids.max starvation): schedule first. Do not change the remote transport protocol; add ping timeout + orphan reap only.",
+   "include_findings": [],
+   "exclude_findings": [],
+   "est_hours": 6.39,
+   "asap_level": 0,
+   "longest_remaining_chain_hours": 7.09,
+   "sched_start_h": 0.0,
+   "sched_finish_h": 6.39,
+   "depends_on": [],
+   "downstream": [
+    "RATCHET-GREEN"
+   ],
+   "findings": {
+    "high": [
+     "GPUUX-1-REPO-BR-02",
+     "MAINT-ORCHW2-02"
+    ],
+    "medium": [
+     "D5-AR-03",
+     "D5-AR-02",
+     "D5-AR-01",
+     "GPUUX-1-REPO-BR-01",
+     "MAINTL-DEMO-BUNDLE-01",
+     "OCIR-ASTRA-20260908-04",
+     "VMREAP-RA-06",
+     "VMREAP-M-03",
+     "VMREAP-1-BR-04",
+     "E15-23-PR-20260605-03",
+     "RGCLI-01"
+    ],
+    "low": [
+     "DEFWAVE-1-D1-FU-01",
+     "D5-AR-07",
+     "D5-AR-06"
+    ]
+   },
+   "source_tasks": [
+    "DEFWAVE-1",
+    "GPUUX-1",
+    "MAINT-LANDING-20260908",
+    "MAINT-orch-wave2-20260907",
+    "OCIR-LANDING-1",
+    "VMREAP-1",
+    "internal-20260907"
+   ],
+   "branch": "feature/issuedag-1-gates-harness",
+   "worktree": "/Users/daniel/Development/context-alt-text-monorepo-issuedag-1-gates-harness"
+  },
+  "SCRIPTS-GPU-TOOLS": {
+   "title": "GPU burst evidence/smoke scripts + worktree reap test (EVID-1, SMOKE-1, LAND-1 fast-follow)",
+   "kind": "impl",
+   "est_h": null,
+   "owned_paths": [
+    "scripts/gpu_burst_evidence.py",
+    "scripts/test_gpu_burst_evidence.py",
+    "scripts/gpu_burst_smoke.py",
+    "scripts/test_gpu_burst_smoke.py",
+    "scripts/deploy/lib/export-gpu-evidence.sh",
+    "scripts/deploy/tests/test_export_gpu",
+    "scripts/deploy/tests/test-export-gpu",
+    "docs/runbooks/gpu-evidence-capture.md",
+    "scripts/test_worktree_reap.py",
+    "scripts/worktree_reap.py"
+   ],
+   "test_cmd": "python3 -m pytest scripts/test_gpu_burst_evidence.py scripts/test_gpu_burst_smoke.py scripts/test_worktree_reap.py -q -p no:cacheprovider",
+   "tier": "impl:grok-4.6/high",
+   "include_findings": [],
+   "exclude_findings": [],
+   "est_hours": 4.1,
+   "asap_level": 0,
+   "longest_remaining_chain_hours": 4.1,
+   "sched_start_h": 24.07,
+   "sched_finish_h": 28.17,
+   "depends_on": [],
+   "downstream": [],
+   "findings": {
+    "high": [],
+    "medium": [
+     "EVID-ASTRA-20260908-02",
+     "EVID1E-M-01",
+     "EVID1-R5-AUDIT-04",
+     "LAND-1-HARM-01",
+     "SMOKE1-R2-08",
+     "SMOKE1-M-08"
+    ],
+    "low": [
+     "EVID-ASTRA-20260908-03",
+     "EVID1E-L-04",
+     "EVID1F-L-06",
+     "EVID1F-L-09",
+     "WBUX6-W5-03"
+    ]
+   },
+   "source_tasks": [
+    "EVID-1",
+    "LAND-1",
+    "SMOKE-1",
+    "WBUX-6"
+   ],
+   "branch": "feature/issuedag-1-scripts-gpu-tools",
+   "worktree": "/Users/daniel/Development/context-alt-text-monorepo-issuedag-1-scripts-gpu-tools"
+  },
+  "UXMAP-PARITY": {
+   "title": "ux-map SSOT: .md as deterministic render of .uxmap.json, render_ux_maps.py, six red gates (WBUX6-W3-L3-05)",
+   "kind": "impl",
+   "est_h": null,
+   "owned_paths": [
+    "apps/prototype-wp-alt-context/docs/ux-maps/",
+    "apps/prototype-wp-alt-context/js/admin/__tests__/uxmap-render-parity.test.ts",
+    "docs/ux-maps/"
+   ],
+   "test_cmd": "python3 -m pytest apps/prototype-wp-alt-context/docs/ux-maps/test_render_ux_maps.py apps/prototype-wp-alt-context/docs/ux-maps/test_sync_unicode_width.py -q -p no:cacheprovider",
+   "tier": "impl:grok-4.6/high",
+   "include_findings": [],
+   "exclude_findings": [],
+   "est_hours": 5.12,
+   "asap_level": 0,
+   "longest_remaining_chain_hours": 5.12,
+   "sched_start_h": 21.6,
+   "sched_finish_h": 26.72,
+   "depends_on": [],
+   "downstream": [],
+   "findings": {
+    "high": [
+     "WBUX6-W3-L3-05"
+    ],
+    "medium": [
+     "D2-AR-02",
+     "D2-AR-01",
+     "DUX-W2G-B-06",
+     "LAND1-UX-DEADLINE-01",
+     "LAND1-DEPLOY-UI-01",
+     "WBUX6-W4-A-03",
+     "WBUX6-W4-A-02",
+     "WBUX6-W3-L3-06"
+    ],
+    "low": [
+     "D2-AR-03",
+     "D2-AR-05",
+     "D2-AR-04",
+     "GPFACE-1-RW-12"
+    ]
+   },
+   "source_tasks": [
+    "DEFWAVE-1",
+    "DUX-W2-INTEGRATION",
+    "GPFACE-1",
+    "LAND-1",
+    "WBUX-6"
+   ],
+   "branch": "feature/issuedag-1-uxmap-parity",
+   "worktree": "/Users/daniel/Development/context-alt-text-monorepo-issuedag-1-uxmap-parity"
+  },
+  "PHP-PLUGIN": {
+   "title": "PHP plugin fast-follow: autoload parity, endpoint resolver, lifecycle manager, cluster read service",
+   "kind": "impl",
+   "est_h": null,
+   "owned_paths": [
+    "apps/prototype-wp-alt-context/src/admin/",
+    "apps/prototype-wp-alt-context/src/support/",
+    "apps/prototype-wp-alt-context/src/sovereign/",
+    "apps/prototype-wp-alt-context/src/api/class-recognition-endpoint-resolver.php",
+    "apps/prototype-wp-alt-context/src/api/class-api.php",
+    "apps/prototype-wp-alt-context/src/api/services/",
+    "apps/prototype-wp-alt-context/src/api/class-settings",
+    "apps/prototype-wp-alt-context/tests/Unit/",
+    "apps/prototype-wp-alt-context/tests/Integration/",
+    "apps/prototype-wp-alt-context/tests/bootstrap.php"
+   ],
+   "test_cmd": "vendor/bin/phpunit --testsuite Unit",
+   "tier": "impl:grok-4.6/high",
+   "include_findings": [],
+   "exclude_findings": [],
+   "est_hours": 4.34,
+   "asap_level": 0,
+   "longest_remaining_chain_hours": 4.34,
+   "sched_start_h": 23.9,
+   "sched_finish_h": 28.24,
+   "depends_on": [],
+   "downstream": [],
+   "findings": {
+    "high": [],
+    "medium": [
+     "DEMOLIVE-9-R2-07",
+     "E21-14-R3-FRONTEND-02",
+     "E21-14-R3-SCHEMA-03",
+     "ORCH-UX-UI-BR-27",
+     "MAINT-PHPAUTO-02",
+     "MAINT-PHPAUTO-01"
+    ],
+    "low": [
+     "E21-14-R3-COORDINATOR-02",
+     "E21-14-R3-SCHEMA-04",
+     "WORKSTATE-REF-e15-setux-review-20260608:REVA-06",
+     "WORKSTATE-REF-e15-setux-review-20260608:REVA-03",
+     "REVA-02",
+     "REVA-01",
+     "REVA-06",
+     "REVA-03"
+    ]
+   },
+   "source_tasks": [
+    "DEMOLIVE-9",
+    "E21-14",
+    "ORCH-UX-UI",
+    "internal-20260907"
+   ],
+   "branch": "feature/issuedag-1-php-plugin",
+   "worktree": "/Users/daniel/Development/context-alt-text-monorepo-issuedag-1-php-plugin"
+  },
+  "DOCS-CORRECTIONS": {
+   "title": "Planning/report corrections: UXP-2 plan (6 highs), structural-refactor epic, benchmarks reports, VLM-3 canonical report JSON, review reports",
+   "kind": "impl",
+   "est_h": null,
+   "owned_paths": [
+    "docs/tasks/",
+    "docs/epics/",
+    "docs/adrs/",
+    "docs/reviews/",
+    "benchmarks/"
+   ],
+   "test_cmd": "python3 -m pytest scripts/test_vlm3_gpu_bakeoff_artifacts.py scripts/test_e15_28_demo_seed_and_epic.py -q -p no:cacheprovider",
+   "tier": "impl:grok-4.6/high",
+   "contract": "Task-plan guard: never write 3+ consecutive bullets that open with a finding id. Reference findings by id in prose only.",
+   "include_findings": [],
+   "exclude_findings": [],
+   "est_hours": 12.44,
+   "asap_level": 0,
+   "longest_remaining_chain_hours": 12.44,
+   "sched_start_h": 0.0,
+   "sched_finish_h": 12.44,
+   "depends_on": [],
+   "downstream": [],
+   "findings": {
+    "high": [
+     "GPUSMO-G-11",
+     "UXP-2-PR-06",
+     "UXP-2-PR-05",
+     "UXP-2-PR-04",
+     "UXP-2-PR-03",
+     "UXP-2-PR-02",
+     "UXP-2-PR-01"
+    ],
+    "medium": [
+     "CVUP1-GR-12",
+     "FEBT1G-M-15",
+     "FEBT1-GATE-01",
+     "GPUSMO-G-13",
+     "GPUSMO-M-08",
+     "GPUSMO-M-07",
+     "GPUSMO-M-06",
+     "UXP-2-PR-14",
+     "UXP-2-PR-13",
+     "UXP-2-PR-12",
+     "VMREAP-1-BR-05",
+     "MANIFEST-V3-06",
+     "FIRQA5-PR-21",
+     "FIRQA5-PR-20",
+     "FIRQA5-PR-19",
+     "FIRQA5-PR-18",
+     "FIRQA5-PR-17",
+     "REFA-REST-PA-03",
+     "REFA-REST-PA-02",
+     "REFA-REST-PA-01"
+    ],
+    "low": [
+     "REPO-BR-03",
+     "EVID1F-L-05",
+     "FEBT1-GATE-03",
+     "GPUUX-1-F-04",
+     "LAND-1-HARM-02",
+     "UXP-2-PR-17",
+     "UXP-2-PR-16",
+     "WBUX6-W5-05",
+     "MANIFEST-V3-05",
+     "FIRQA5-PR-22",
+     "REFA-REST-PA-06",
+     "REFA-REST-PA-05",
+     "REFA-REST-PA-04"
+    ]
+   },
+   "source_tasks": [
+    "CVUP-1",
+    "DEFWAVE-1",
+    "EVID-1",
+    "FEBT-1",
+    "GPUSMOKE-1",
+    "GPUUX-1",
+    "LAND-1",
+    "UXP-2",
+    "VMREAP-1",
+    "WBUX-6",
+    "internal-20260907"
+   ],
+   "branch": "feature/issuedag-1-docs-corrections",
+   "worktree": "/Users/daniel/Development/context-alt-text-monorepo-issuedag-1-docs-corrections"
+  },
+  "GPU-LIFECYCLE-CODE": {
+   "title": "gpu-lifecycle install/reaper/producer contract reconciliation against live findings; redeploy runbook step list",
+   "kind": "impl",
+   "est_h": null,
+   "owned_paths": [
+    "scripts/deploy/gpu-lifecycle-install.sh",
+    "infra/oci/gpu_lifecycle/",
+    "infra/oci/gpu-cloud-init",
+    "infra/oci/cloud-init.yaml",
+    "infra/oci/main.tf",
+    "scripts/deploy/preflight-gpu-env.sh",
+    "docs/runbooks/gpu-demo-env-flip.md",
+    "scripts/deploy/tests/test_gpu_lifecycle",
+    "infra/oci/INFRA-TOPOLOGY.md",
+    "scripts/deploy/tests/test_preflight_gpu"
+   ],
+   "test_cmd": "python3 -m pytest scripts/deploy/tests -q -p no:cacheprovider -k gpu_lifecycle",
+   "tier": "impl:grok-4.6/high",
+   "contract": "Code side only. Findings verified against the live host close only after OPS-GPU-REDEPLOY; the lane emits the exact operator redeploy steps in docs/runbooks/gpu-demo-env-flip.md. `ruff format` scripts/deploy/tests/test_gpu_lifecycle_install_script.py (D1-AR-02 lists it).",
+   "include_findings": [],
+   "exclude_findings": [
+    "GPUSMO-G-25"
+   ],
+   "est_hours": 9.77,
+   "asap_level": 0,
+   "longest_remaining_chain_hours": 9.77,
+   "sched_start_h": 6.39,
+   "sched_finish_h": 16.16,
+   "depends_on": [],
+   "downstream": [],
+   "findings": {
+    "high": [
+     "GPU-LIVE-STOP-01",
+     "GPU-LIVE-CONFIG-01",
+     "OPSGPU-H-02",
+     "OPSGPU-H-01",
+     "OPSGPU-R3-01",
+     "OPSGPU-R4-01",
+     "MAINTL-DEMO-DEPLOY-01",
+     "WATCHD-OPS-05",
+     "WATCHD-OPS-03",
+     "WATCHD-OPS-02"
+    ],
+    "medium": [
+     "GPUOPS-1-R3-03",
+     "GPUSMOKE-1-REV-r0903b9ec7-B-02",
+     "WATCHD-M-06",
+     "WATCHD-OPS-04",
+     "WBUX6-L5-NEW-01"
+    ],
+    "low": [
+     "GPUSMOKE-1-REV-r0903b9ec7-B-03",
+     "GPUSMOKE-1-REV-r0903b9ec7-A-05",
+     "VLMHEAL-1-REV-D-07",
+     "WBUX6-L5-NEW-02"
+    ]
+   },
+   "source_tasks": [
+    "EVID-1",
+    "GPUOPS-1",
+    "GPUSMOKE-1",
+    "MAINT-LANDING-20260908",
+    "VLMHEAL-1",
+    "WATCHDOG-1",
+    "WBUX-6"
+   ],
+   "branch": "feature/issuedag-1-gpu-lifecycle-code",
+   "worktree": "/Users/daniel/Development/context-alt-text-monorepo-issuedag-1-gpu-lifecycle-code"
+  },
+  "RATCHET-GREEN": {
+   "title": "ruff-format ratchet back to green: format the 7 regressed files, drop the stale entry, re-baseline (D1-AR-02)",
+   "kind": "impl",
+   "est_h": 0.7,
+   "owned_paths": [
+    "apps/prototype-description-service/db/models/constraints.py",
+    "config/lint-ratchet",
+    "scripts/deploy/tests/test_gpu_cost_runbook_matches_verified_state.py"
+   ],
+   "contract": "GRPH-34 edge work: describe_run.py is formatted by DESCRIBE-DEADLINE and test_gpu_lifecycle_install_script.py by GPU-LIFECYCLE-CODE (both own those files); this node formats only the files no other lane owns, then re-baselines with `lint_ratchet.py --tool ruff-format --update-baseline` and proves `make check-all` ratchet step green.",
+   "test_cmd": "python3 -m pytest scripts/tests/test_gate_wrapper_exit_codes.py -q -p no:cacheprovider",
+   "tier": "impl:grok-4.6/high",
+   "include_findings": [
+    "D1-AR-02"
+   ],
+   "exclude_findings": [],
+   "est_hours": 0.7,
+   "asap_level": 1,
+   "longest_remaining_chain_hours": 0.7,
+   "sched_start_h": 29.52,
+   "sched_finish_h": 30.22,
+   "depends_on": [
+    "SVC-DESCRIBE-WORKER",
+    "SVC-SCHEMA-HEAL",
+    "SVC-EMBED-SCOPE",
+    "SVC-SCAN-WORKER",
+    "GATES-HARNESS"
+   ],
+   "downstream": [],
+   "findings": {
+    "high": [
+     "D1-AR-02"
+    ],
+    "medium": [],
+    "low": [
+     "MAINT-ORCHW2-01"
+    ]
+   },
+   "source_tasks": [
+    "DEFWAVE-1",
+    "MAINT-orch-wave2-20260907"
+   ],
+   "branch": "feature/issuedag-1-ratchet-green",
+   "worktree": "/Users/daniel/Development/context-alt-text-monorepo-issuedag-1-ratchet-green"
+  }
+ },
+ "precedence_edges": [
+  {
+   "from": "GS-REVIEW",
+   "to": "GS-FIX",
+   "why": "review findings feed the fix brief"
+  },
+  {
+   "from": "GS-FIX",
+   "to": "GS-HARM",
+   "why": "harmonize the fixed tip"
+  },
+  {
+   "from": "GS-HARM",
+   "to": "GS-LAND",
+   "why": "gate needs the harmonizing verdict"
+  },
+  {
+   "from": "GS-LAND",
+   "to": "POST-GS-TOUCHUPS",
+   "why": "mk/deploy.mk and package.json are edited by feature/guideseed-1; edit them only from the merged main"
+  },
+  {
+   "from": "WP-GUIDED",
+   "to": "DESCRIBE-DEADLINE",
+   "why": "both edit liveDescription.ts/useGuidedLiveDescription.ts: shared file => sequence, highs need the fast-follow tip"
+  },
+  {
+   "from": "SVC-EMBED-SCOPE",
+   "to": "WP-MERGE-ACCEPT",
+   "why": "client adopts the endpoint contract fixed server-side (FEBT1-LD-01)"
+  },
+  {
+   "from": "WP-CLUSTERS",
+   "to": "WP-MERGE-ACCEPT",
+   "why": "same mutation hook file; client fixes land first"
+  },
+  {
+   "from": "RECOG-DEPLOY-ROLLBACK",
+   "to": "RECOG-DEPLOY-FASTFOLLOW",
+   "why": "same script; highs land before the 60-item medium/low sweep"
+  },
+  {
+   "from": "SVC-DESCRIBE-WORKER",
+   "to": "RATCHET-GREEN",
+   "why": "ratchet re-baseline must count the formatted worker files"
+  },
+  {
+   "from": "SVC-SCHEMA-HEAL",
+   "to": "RATCHET-GREEN",
+   "why": "ratchet re-baseline must count the formatted schema file"
+  },
+  {
+   "from": "SVC-EMBED-SCOPE",
+   "to": "RATCHET-GREEN",
+   "why": "re-baseline after every description-service lane lands"
+  },
+  {
+   "from": "SVC-SCAN-WORKER",
+   "to": "RATCHET-GREEN",
+   "why": "re-baseline after every description-service lane lands"
+  },
+  {
+   "from": "GATES-HARNESS",
+   "to": "RATCHET-GREEN",
+   "why": "lint_ratchet.py fixes land before the baseline is rewritten"
+  }
+ ],
+ "gated_leaves": {
+  "OPS-GPU-REDEPLOY": {
+   "gate": "operator",
+   "why": "live acx-backend unit/compose redeploy; closes OPSGPU-H-01/02, R3-01, R4-01, WATCHD-OPS-02/03/05, GPU-LIVE-STOP-01/CONFIG-01, VLMHEAL-1-DEP-01/02/03, OPSGPU-H-03 live side",
+   "depends_on": [
+    "GPU-LIFECYCLE-CODE",
+    "SVC-DESCRIBE-WORKER"
+   ],
+   "paths": [
+    "infra/oci",
+    "apps/prototype-description-service/docker-compose.prod.yml",
+    "scripts/deploy/gpu-lifecycle-install.sh"
+   ],
+   "findings": [
+    "GPU-LIVE-CONFIG-01",
+    "GPU-LIVE-STOP-01",
+    "GPUOPS-1-R3-03",
+    "GPUSMO-G-25",
+    "GPUSMOKE-1-REV-r0903b9ec7-A-05",
+    "GPUSMOKE-1-REV-r0903b9ec7-B-02",
+    "GPUSMOKE-1-REV-r0903b9ec7-B-03",
+    "MAINTL-DEMO-DEPLOY-01",
+    "OPSGPU-H-01",
+    "OPSGPU-H-02",
+    "OPSGPU-H-03",
+    "OPSGPU-R3-01",
+    "OPSGPU-R4-01",
+    "VLMHEAL-1-DEP-01",
+    "VLMHEAL-1-DEP-02",
+    "VLMHEAL-1-DEP-03",
+    "VLMHEAL-1-DEP-04",
+    "VLMHEAL-1-REV-D-07",
+    "WATCHD-M-06",
+    "WATCHD-OPS-02",
+    "WATCHD-OPS-03",
+    "WATCHD-OPS-04",
+    "WATCHD-OPS-05",
+    "WBUX6-L5-NEW-01",
+    "WBUX6-L5-NEW-02"
+   ]
+  },
+  "OPS-DEMO-DEPLOY": {
+   "gate": "operator",
+   "why": "MAINTL-DEMO-DEPLOY-01: acx-gpu-start.timer must be enabled+active before deploy-demo passes preflight [11]; GPU-LIVE-PUBLIC-01 production WordPress option state (operator release, already deferred on EVID-1)",
+   "depends_on": [
+    "OPS-GPU-REDEPLOY"
+   ],
+   "paths": [],
+   "findings": [
+    "GPU-LIVE-PUBLIC-01"
+   ]
+  },
+  "OPS-IAM-G25": {
+   "gate": "operator",
+   "why": "GPUSMO-G-25 tenancy-admin key reachable from instance principal: IAM redesign, accepted operator deferral",
+   "depends_on": [],
+   "paths": [],
+   "findings": []
+  },
+  "PEER-EVAL-FASTFOLLOW": {
+   "gate": "peer",
+   "why": "ALTQ-1 lows in scripts/eval_harness are inside PEER-CODEX's EVAL-LANDING-1 worktree; park until the peer lands, then one lane",
+   "depends_on": [],
+   "paths": [
+    "apps/prototype-description-service/scripts/eval_harness/"
+   ],
+   "findings": [
+    "ALTQ-1-REV-A-08",
+    "ALTQ-1-REV-A-09",
+    "ALTQ-1-REV-B-05",
+    "ALTQ-1-REV-B-06"
+   ]
+  },
+  "OOB-UPSTREAM": {
+   "gate": "plugin-boundary",
+   "why": "GPUOPS-1-DISP-01/03/05 and MAINT-CODEX-LUNA-20260905-RCA-001 live in the orchestrator/handoff packages; route to the sibling repos",
+   "depends_on": [],
+   "paths": [
+    ".venv/",
+    ".task-state/",
+    "packages/mcp-workbay-orchestrator",
+    "packages/mcp-workbay-handoff"
+   ],
+   "findings": [
+    "GPUOPS-1-DISP-01",
+    "GPUOPS-1-DISP-03",
+    "GPUOPS-1-DISP-05",
+    "MAINT-CODEX-LUNA-20260905-RCA-001"
+   ]
+  },
+  "HOST-GITIGNORED-DOCS": {
+   "gate": "host-manual",
+   "why": "docs/workbay/rules and docs/workbay/contracts are tracked-but-gitignored; the sandbox returns them as new files and the patch is rejected, so WBUX-6 development-workflow.md and the gpu-lifecycle contract note are edited on the host branch by the coordinator",
+   "depends_on": [],
+   "paths": [
+    "docs/workbay/"
+   ],
+   "findings": [
+    "GPUOPS-1-CANON-07",
+    "WBUX6-W4-R-06"
+   ]
+  },
+  "KEEP-DEFERRED": {
+   "gate": "operator-constraint",
+   "why": "GUIDEDQM-1-GR-201 stays deferred by operator order",
+   "depends_on": [],
+   "paths": [],
+   "findings": [
+    "GUIDEDQM-1-GR-201"
+   ]
+  }
+ },
+ "unassigned": [],
+ "schedule_by_start": {
+  "0.0": [
+   "GS-REVIEW",
+   "GATES-HARNESS",
+   "RECOG-DEPLOY-ROLLBACK",
+   "DOCS-CORRECTIONS"
+  ],
+  "1.0": [
+   "GS-FIX"
+  ],
+  "3.0": [
+   "GS-HARM"
+  ],
+  "3.4": [
+   "RECOG-DEPLOY-FASTFOLLOW"
+  ],
+  "4.0": [
+   "GS-LAND"
+  ],
+  "4.5": [
+   "WP-GUIDED"
+  ],
+  "6.39": [
+   "GPU-LIFECYCLE-CODE"
+  ],
+  "10.0": [
+   "SVC-EMBED-SCOPE"
+  ],
+  "12.44": [
+   "WP-CLUSTERS"
+  ],
+  "14.55": [
+   "SVC-SCHEMA-HEAL"
+  ],
+  "16.16": [
+   "WP-JOBSTREAM"
+  ],
+  "17.61": [
+   "WP-ERRORS"
+  ],
+  "19.29": [
+   "SVC-DESCRIBE-WORKER"
+  ],
+  "21.6": [
+   "UXMAP-PARITY"
+  ],
+  "22.74": [
+   "DESCRIBE-DEADLINE"
+  ],
+  "23.9": [
+   "PHP-PLUGIN"
+  ],
+  "24.07": [
+   "SCRIPTS-GPU-TOOLS"
+  ],
+  "26.72": [
+   "SVC-SCAN-WORKER"
+  ],
+  "27.45": [
+   "DEPLOY-SCRIPTS-TESTS"
+  ],
+  "28.17": [
+   "WP-MERGE-ACCEPT"
+  ],
+  "28.24": [
+   "POST-GS-TOUCHUPS"
+  ],
+  "29.52": [
+   "RATCHET-GREEN"
+  ]
+ }
+}

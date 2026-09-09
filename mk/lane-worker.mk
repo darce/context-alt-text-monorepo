@@ -13,6 +13,18 @@ lane-check: lane-worker-guard
 		--lane-id "$(LANE)" \
 		--worktree-path "$(LANE_WORKTREE_TARGET)"; \
 	echo ""; \
+	echo "Provisioning lane worktree overlays..."; \
+	if [ -e "$(LANE_WORKTREE_TARGET)/.acx-secure-offload" ]; then \
+		echo "Skipping overlay/dependency provision for secure-offload sandbox at $(LANE_WORKTREE_TARGET)"; \
+	else \
+		SECURE_OFFLOAD_FLAG=""; \
+		case "$(OFFLOAD_BACKEND)" in grok*) SECURE_OFFLOAD_FLAG="--secure-offload" ;; esac; \
+		python3 "$(ORCHESTRATOR_ROOT)/scripts/workstate/provision_lane_worktree.py" \
+			--worktree "$(LANE_WORKTREE_TARGET)" \
+			--primary "$(ORCHESTRATOR_ROOT)" \
+			$$SECURE_OFFLOAD_FLAG; \
+	fi; \
+	echo ""; \
 	record_test_result() { \
 		command_text="$$1"; \
 		step_label="$$2"; \

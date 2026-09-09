@@ -823,21 +823,26 @@ LATE_LOCK_DU
   cat >"$recreated_rm_bin/rm" <<'RECREATED_RM'
 #!/usr/bin/env bash
 set -e
+lane="${RECREATED_LANE:-}"
+parent="${lane%/*}"
+key="${lane##*/}"
 for arg in "$@"; do
-  if [[ "$arg" == "$RECREATED_LANE" ]]; then
-    "$REAL_RM" "$@"
-    : >"$RECREATED_TRIGGER"
-    attempt=0
-    while [[ ! -e "$RECREATED_READY" && "$attempt" -lt 1000 ]]; do
-      sleep 0.01
-      attempt=$((attempt + 1))
-    done
-    if [[ ! -e "$RECREATED_READY" ]]; then
-      echo "FAIL: recreated lane lock materializer did not become ready" >&2
-      exit 124
-    fi
-    exit 0
-  fi
+  case "$arg" in
+    "$lane"|"$parent/.reap-quarantine-${key}."*)
+      "$REAL_RM" "$@"
+      : >"$RECREATED_TRIGGER"
+      attempt=0
+      while [[ ! -e "$RECREATED_READY" && "$attempt" -lt 1000 ]]; do
+        sleep 0.01
+        attempt=$((attempt + 1))
+      done
+      if [[ ! -e "$RECREATED_READY" ]]; then
+        echo "FAIL: recreated lane lock materializer did not become ready" >&2
+        exit 124
+      fi
+      exit 0
+      ;;
+  esac
 done
 exec "$REAL_RM" "$@"
 RECREATED_RM
@@ -1116,6 +1121,148 @@ run_reap --yes --archive-to "$ARCHIVE" "$lane_recent"
 assert_gone "archive aged lane" "$lane_recent"
 archive_has "archive aged lane" "refs/lanes/w/lane-recent/$recent_generation/main" "$recent_sha"
 
+# If no process probe can run, an otherwise eligible lane is occupied by
+# default. This seam keeps the fail-closed contract testable on every host,
+# including macOS and Linux procfs mounts that hide other users' processes.
+lane_no_probe="$HOME/w/lane-no-live-probe"
+clone_lane "$lane_no_probe"
+touch -t 200001010000 "$lane_no_probe" "$lane_no_probe/.git/index" "$lane_no_probe/.git/HEAD"
+REAP_MIN_AGE_SEC=0 REAP_LIVE_PROBE=none run_reap --yes --archive-to "$ARCHIVE" "$lane_no_probe"
+assert_rc0 "unavailable live probe"
+assert_contains "unavailable live probe" "could not determine lane liveness"
+assert_exists "unavailable live probe" "$lane_no_probe"
+assert_summary "unavailable live probe" 1 0 1 0
+
+# An available portable fallback must be able to prove that no process owns a
+# lane. This also guards against losing lsof's exit status through an `if`
+# compound command (exit 1 means no matching open file).
+lane_lsof_fallback="$HOME/w/lane-lsof-fallback"
+clone_lane "$lane_lsof_fallback"
+touch -t 200001010000 "$lane_lsof_fallback" "$lane_lsof_fallback/.git/index" "$lane_lsof_fallback/.git/HEAD"
+lsof_fallback_bin="$WORKDIR/lsof-fallback-bin"
+mkdir "$lsof_fallback_bin"
+cat >"$lsof_fallback_bin/lsof" <<'FAKE_LSOF'
+#!/usr/bin/env bash
+exit 1
+FAKE_LSOF
+chmod +x "$lsof_fallback_bin/lsof"
+REAP_MIN_AGE_SEC=0 REAP_LIVE_PROBE=lsof PATH="$lsof_fallback_bin:$PATH" \
+  run_reap --yes --archive-to "$ARCHIVE" "$lane_lsof_fallback"
+assert_rc0 "lsof fallback"
+assert_gone "lsof fallback" "$lane_lsof_fallback"
+
+# A worker still running in an aged, clean checkout must not be deleted.
+lane_inuse="$HOME/w/lane-in-use"
+clone_lane "$lane_inuse"
+touch -t 200001010000 "$lane_inuse" "$lane_inuse/.git/index" "$lane_inuse/.git/HEAD"
+inuse_pid=""
+(
+  cd "$lane_inuse"
+  sleep 30 &
+  echo $! >"$WORKDIR/inuse.pid"
+)
+inuse_pid="$(cat "$WORKDIR/inuse.pid")"
+REAP_MIN_AGE_SEC=0 REAP_LIVE_PROBE=proc run_reap --yes --archive-to "$ARCHIVE" "$lane_inuse"
+assert_contains "in-use lane" "lane has a live process"
+assert_exists "in-use lane" "$lane_inuse"
+kill "$inuse_pid" 2>/dev/null || true
+wait "$inuse_pid" 2>/dev/null || true
+
+# A worker can enter an ordinary archive root after the initial liveness scan
+# and while archive metadata is being prepared. The final process probe must
+# catch that late occupant before rm -rf.
+if [[ -d /proc ]]; then
+  lane_final_process_check="$HOME/w/lane-final-process-check"
+  clone_lane "$lane_final_process_check"
+  touch -t 200001010000 "$lane_final_process_check" "$lane_final_process_check/.git/index" "$lane_final_process_check/.git/HEAD"
+  final_process_check_bin="$WORKDIR/final-process-check-bin"
+  mkdir "$final_process_check_bin"
+  cat >"$final_process_check_bin/du" <<'FINAL_PROCESS_CHECK_DU'
+#!/usr/bin/env bash
+set -e
+if [[ "$*" == *"$FINAL_PROCESS_CHECK_LANE"* && ! -e "$FINAL_PROCESS_CHECK_TRIGGER" ]]; then
+  : >"$FINAL_PROCESS_CHECK_TRIGGER"
+  (
+    cd "$FINAL_PROCESS_CHECK_LANE"
+    # `du` is called from command substitution by reap-lane.sh. Close the
+    # inherited pipe before keeping this synthetic worker alive, otherwise
+    # the command substitution waits for the worker instead of reaching the
+    # final liveness probe.
+    exec </dev/null >/dev/null 2>&1
+    trap 'exit 0' TERM INT
+    while :; do :; done
+  ) &
+  printf '%s\n' "$!" >"$FINAL_PROCESS_CHECK_PID"
+fi
+exec "$REAL_DU" "$@"
+FINAL_PROCESS_CHECK_DU
+  chmod +x "$final_process_check_bin/du"
+  FINAL_PROCESS_CHECK_LANE="$lane_final_process_check" \
+    FINAL_PROCESS_CHECK_TRIGGER="$WORKDIR/final-process-check-trigger" \
+    FINAL_PROCESS_CHECK_PID="$WORKDIR/final-process-check.pid" \
+    REAL_DU="$(command -v du)" PATH="$final_process_check_bin:$PATH" \
+    REAP_MIN_AGE_SEC=0 run_reap --yes --archive-to "$ARCHIVE" \
+    "$lane_final_process_check"
+  assert_contains "late ordinary-lane process" "lane has a live process"
+  assert_exists "late ordinary-lane process" "$lane_final_process_check"
+  final_process_pid="$(cat "$WORKDIR/final-process-check.pid")"
+  kill "$final_process_pid" 2>/dev/null || true
+  wait "$final_process_pid" 2>/dev/null || true
+else
+  skip_case "late ordinary-lane process"
+fi
+
+# The remaining window is after the final liveness probe and before deletion.
+# Intercepting `rm` is that window: a worker that can still `cd` the original
+# path would have its live worktree destroyed. Quarantine must rename first.
+if [[ -d /proc ]]; then
+  lane_rm_window="$HOME/w/lane-rm-window"
+  clone_lane "$lane_rm_window"
+  touch -t 200001010000 "$lane_rm_window" "$lane_rm_window/.git/index" "$lane_rm_window/.git/HEAD"
+  rm_window_bin="$WORKDIR/rm-window-bin"
+  mkdir "$rm_window_bin"
+  cat >"$rm_window_bin/rm" <<'RM_WINDOW_RM'
+#!/usr/bin/env bash
+set -e
+if [[ -d "$RM_WINDOW_LANE" ]]; then
+  (
+    cd "$RM_WINDOW_LANE" || exit 0
+    : >"$RM_WINDOW_ENTERED"
+    exec </dev/null >/dev/null 2>&1
+    trap 'exit 0' TERM INT
+    while :; do :; done
+  ) &
+  printf '%s\n' "$!" >"$RM_WINDOW_PID"
+  attempt=0
+  while [[ ! -e "$RM_WINDOW_ENTERED" && "$attempt" -lt 100 ]]; do
+    sleep 0.01
+    attempt=$((attempt + 1))
+  done
+fi
+exec "$REAL_RM" "$@"
+RM_WINDOW_RM
+  chmod +x "$rm_window_bin/rm"
+  RM_WINDOW_LANE="$lane_rm_window" \
+    RM_WINDOW_ENTERED="$WORKDIR/rm-window-entered" \
+    RM_WINDOW_PID="$WORKDIR/rm-window.pid" \
+    REAL_RM="$(command -v rm)" PATH="$rm_window_bin:$PATH" \
+    REAP_MIN_AGE_SEC=0 run_reap --yes --archive-to "$ARCHIVE" \
+    "$lane_rm_window"
+  assert_gone "rm-window ordinary-lane process" "$lane_rm_window"
+  if [[ -e "$WORKDIR/rm-window-entered" ]]; then
+    fail "rm-window ordinary-lane process entered original path during rm"
+  else
+    pass "rm-window ordinary-lane process could not enter original path during rm"
+  fi
+  if [[ -f "$WORKDIR/rm-window.pid" ]]; then
+    rm_window_pid="$(cat "$WORKDIR/rm-window.pid")"
+    kill "$rm_window_pid" 2>/dev/null || true
+    wait "$rm_window_pid" 2>/dev/null || true
+  fi
+else
+  skip_case "rm-window ordinary-lane process"
+fi
+
 # Remaining fixtures isolate archive behavior, independently of the age gate.
 export REAP_MIN_AGE_SEC=0
 
@@ -1250,12 +1397,17 @@ rm_fail_bin="$WORKDIR/rm-fail-bin"
 mkdir "$rm_fail_bin"
 cat >"$rm_fail_bin/rm" <<'FAKE_RM'
 #!/usr/bin/env bash
+lane="${FAIL_RM_PATH:-}"
+parent="${lane%/*}"
+key="${lane##*/}"
 for arg in "$@"; do
-  if [[ "$arg" == "${FAIL_RM_PATH:-}" ]]; then
-    "$REAL_RM" -rf -- "$arg/.git"
-    chmod a-w "$arg"
-    exit 1
-  fi
+  case "$arg" in
+    "$lane"|"$parent/.reap-quarantine-${key}."*)
+      "$REAL_RM" -rf -- "$arg/.git"
+      chmod a-w "$arg"
+      exit 1
+      ;;
+  esac
 done
 exec "$REAL_RM" "$@"
 FAKE_RM
@@ -1268,6 +1420,11 @@ assert_contains "rm failure" "rm failed"
 assert_exists "rm failure" "$lane_rm_fail"
 assert_contains "rm failure archive context" "rm failed after archive refs/lanes/"
 assert_contains "rm failure partial context" "lane partially removed"
+if [[ -z "$(find "$HOME/w" -type d -name '.reap-quarantine-lane-rm-fail.*' -print -quit 2>/dev/null || true)" ]]; then
+  pass "rm failure quarantine restored"
+else
+  fail "rm failure quarantine left behind"
+fi
 partial_intent="$(find "$HOME/.workbay-reap/partial" -type f -name '*.json' -print -quit 2>/dev/null || true)"
 if [[ -n "$partial_intent" ]] && grep -q '"archive_ref":"refs/lanes/' "$partial_intent"; then
   pass "rm failure external intent records archive ref"

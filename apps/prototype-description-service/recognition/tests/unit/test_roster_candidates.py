@@ -29,7 +29,7 @@ def _normalize(vec: np.ndarray) -> np.ndarray:
 def _rep(
     *,
     embedding: np.ndarray,
-    embedding_model: str,
+    embedding_model: str | None,
     quality_score: float | None = 1.0,
     landmark_quality: float | None = None,
     det_score: float | None = 0.99,
@@ -229,6 +229,36 @@ async def test_empty_roster_returns_empty_candidates_not_error() -> None:
     assert result.probe_face_count == 1
     assert result.reference_face_count == 0
     assert result.quality_flag is QualityFlag.OK
+
+
+@pytest.mark.asyncio
+async def test_usable_unstamped_probe_does_not_invent_literal_none_model() -> None:
+    """SVCSRC-R-03: a usable probe_model=None must not stringify to 'None'."""
+    tenant_id = str(uuid4())
+    probe_id = str(uuid4())
+    labeled_id = str(uuid4())
+    repo = _FakeRosterRepo(
+        probe=SimpleNamespace(id=probe_id, tenant_id=tenant_id),
+        probe_embeddings=[_normalize(np.array([1.0, 0.0]))],
+        probe_model=None,
+        labeled=[
+            (
+                SimpleNamespace(id=labeled_id, label="Ada", tenant_id=tenant_id),
+                [_rep(embedding=_normalize(np.array([1.0, 0.0])), embedding_model=None)],
+            )
+        ],
+        probe_qualities=[(1.0, 1.0, 0.99)],
+    )
+
+    result = await list_roster_candidates(
+        tenant_id, probe_id, cluster_repository=repo, settings=ClusteringSettings(), top_k=10
+    )
+
+    assert result.candidates
+    assert result.model_id == ""
+    assert result.embedding_model == ""
+    assert result.model_id != "None"
+    assert result.embedding_model != "None"
 
 
 @pytest.mark.asyncio

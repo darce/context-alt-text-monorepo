@@ -2377,3 +2377,16 @@ GATE PASS is blocked by step 4 (not only test-name matches) and by step 6. First
 
 ## VERDICT
 GREP FAIL
+
+## Lint-gate gap (ISSUEDAG-1 docs-corrections, 2026-09-09)
+
+Step 6 (`npx eslint js/admin --ext .ts,.tsx`) exited 1 with 49 errors / 2 warnings.
+Later G1 evidence reruns tests but still supplies **no passing lint result for
+the final tree**. Format/lint readiness is therefore unproven in this file.
+
+This is a pre-existing sr-002 violation on `main` (`npm run lint` / `eslint .`
+fails across files FEBT-1 never touched). Fixing it inside FEBT-1 would balloon
+the branch or tempt a config relaxation (sr-001). Owner: `MAINT-lint-gate-ratchet-20260904`.
+Do not read a later green vitest run as a green lint gate. Per sr-011, lint
+findings are recorded `low` / deferred one wave — they do not block merge, and
+they are not silently dropped.

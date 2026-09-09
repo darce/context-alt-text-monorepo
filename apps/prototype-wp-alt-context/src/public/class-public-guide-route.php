@@ -14,6 +14,7 @@ use function class_exists;
 use function flush_rewrite_rules;
 use function function_exists;
 use function get_option;
+use function in_array;
 use function is_array;
 use function is_object;
 use function is_string;
@@ -24,7 +25,6 @@ use function wp_dequeue_style;
 use function wp_enqueue_script;
 use function wp_enqueue_style;
 use function wp_script_add_data;
-use function wp_scripts;
 use function wp_styles;
 
 /**
@@ -38,6 +38,9 @@ final class PublicGuideRoute {
 	public const SCRIPT_HANDLE = 'acx-public-guide';
 	public const WATCH_SCRIPT_HANDLE = 'acx-public-guide-watch';
 	public const REWRITE_REGEX = '^guide/?$';
+
+	// WHY: WordPress's own admin-bar chrome; the template emits the bar markup via wp_footer(), so stripping them leaves an unstyled bar.
+	private const CORE_CHROME_HANDLES = array( 'admin-bar', 'dashicons' );
 
 	private const FALLBACK_COPY = 'The walkthrough could not load. Reload the page, or watch the recorded video on the case study page.';
 	private const LOADING_COPY = 'Loading the walkthrough.';
@@ -176,7 +179,7 @@ final class PublicGuideRoute {
 		if ( is_object( $styles ) && isset( $styles->queue ) && is_array( $styles->queue ) ) {
 			foreach ( $styles->queue as $handle ) {
 				$handle = (string) $handle;
-				if ( ! $this->is_plugin_handle( $handle ) && function_exists( 'wp_dequeue_style' ) ) {
+				if ( ! $this->handle_survives_guide_sweep( $handle ) && function_exists( 'wp_dequeue_style' ) ) {
 					wp_dequeue_style( $handle );
 				}
 			}
@@ -186,7 +189,7 @@ final class PublicGuideRoute {
 		if ( is_object( $scripts ) && isset( $scripts->queue ) && is_array( $scripts->queue ) ) {
 			foreach ( $scripts->queue as $handle ) {
 				$handle = (string) $handle;
-				if ( ! $this->is_plugin_handle( $handle ) && function_exists( 'wp_dequeue_script' ) ) {
+				if ( ! $this->handle_survives_guide_sweep( $handle ) && function_exists( 'wp_dequeue_script' ) ) {
 					wp_dequeue_script( $handle );
 				}
 			}
@@ -227,6 +230,10 @@ final class PublicGuideRoute {
 
 	private function is_plugin_handle( string $handle ): bool {
 		return str_starts_with( $handle, 'acx-' ) || str_starts_with( $handle, 'alt-context-' );
+	}
+
+	private function handle_survives_guide_sweep( string $handle ): bool {
+		return $this->is_plugin_handle( $handle ) || in_array( $handle, self::CORE_CHROME_HANDLES, true );
 	}
 
 	/**

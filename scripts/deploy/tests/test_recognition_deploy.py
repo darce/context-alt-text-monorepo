@@ -440,9 +440,7 @@ def _run_boot_smoke(
             wrapper = tmp_path / "closed-stderr.sh"
             _write_executable(
                 wrapper,
-                "#!/usr/bin/env bash\n"
-                "exec 2>&-\n"
-                f'exec bash "{smoke}" "$@"\n',
+                f'#!/usr/bin/env bash\nexec 2>&-\nexec bash "{smoke}" "$@"\n',
             )
             cmd = ["bash", str(wrapper), *args]
         result = subprocess.run(
@@ -560,6 +558,7 @@ ACX_IMAGE_REPO="$IMAGE_BASE"
 read_remote_image_repo() {{ printf '%s\\n' "$IMAGE_BASE-vlm"; }}
 ship_remote_image_repo_env() {{ printf '%s\\n' "$ACX_IMAGE_REPO" >>"{records}"; }}
 converge_runtime() {{ fail "synthetic convergence failure"; }}
+restore_runtime_topology() {{ printf 'topology\\n' >>"{records}"; }}
 rc=0
 promote_gate dev "$ACX_IMAGE_REPO@sha256:{digest}" || rc=$?
 exit "$rc"
@@ -575,6 +574,7 @@ exit "$rc"
     assert "synthetic convergence failure" in result.stderr
     assert records.read_text().splitlines() == [
         "iad.ocir.io/idu2kqqe2jxy/acx-backend",
+        "topology",
         "iad.ocir.io/idu2kqqe2jxy/acx-backend-vlm",
     ]
 
@@ -625,8 +625,9 @@ run_with_deadline() {{
 }}
 do_build_remote dev
 '''
-    result = subprocess.run(["bash", "-c", driver], text=True, capture_output=True,
-                            cwd=SCRIPT.parents[2], env=dict(os.environ), timeout=10)
+    result = subprocess.run(
+        ["bash", "-c", driver], text=True, capture_output=True, cwd=SCRIPT.parents[2], env=dict(os.environ), timeout=10
+    )
     assert result.returncode == 0, result.stdout + result.stderr
     commands = calls.read_text()
     assert "buildx build" in commands
@@ -686,16 +687,12 @@ def test_automatic_rollbacks_capture_failure_evidence_first() -> None:
     assert helper_evidence in helper
     assert helper_restore in helper
     assert helper.index(helper_evidence) < helper.index(helper_restore)
-    for function_name, env_expression in (("do_deploy", "\"$env\""), ("do_promote", "\"$to_env\"")):
+    for function_name, env_expression in (("do_deploy", '"$env"'), ("do_promote", '"$to_env"')):
         body = _function_body(function_name)
         evidence_marker = f"capture_failure_evidence {env_expression}"
         restore_marker = f"restore_env_tag_to_rollback {env_expression}"
-        evidence_positions = [
-            index for index in range(len(body)) if body.startswith(evidence_marker, index)
-        ]
-        restore_positions = [
-            index for index in range(len(body)) if body.startswith(restore_marker, index)
-        ]
+        evidence_positions = [index for index in range(len(body)) if body.startswith(evidence_marker, index)]
+        restore_positions = [index for index in range(len(body)) if body.startswith(restore_marker, index)]
         assert len(evidence_positions) == 2
         assert len(restore_positions) == 2
         assert all(evidence < restore for evidence, restore in zip(evidence_positions, restore_positions))
@@ -776,7 +773,13 @@ verify_running_image_matches_deployed dev
 def test_rollback_success_requires_post_restart_health_evidence() -> None:
     body = _function_body("restore_env_tag_to_rollback")
     assert "verify_restored_runtime" in body
+    assert "restore_topology_backups" in body
+    assert "restore_edge_backups" in body
+    assert "abort_cutover_candidate" in body
+    assert body.index("restore_topology_backups") < body.index("restore_prior_image_repo_env")
     assert body.index("restore_prior_image_repo_env") < body.index('"rollback systemctl restart')
+    assert body.index('"rollback systemctl restart') < body.index("restore_edge_backups")
+    assert body.index("restore_edge_backups") < body.index("abort_cutover_candidate")
     assert body.index("verify_restored_runtime") < body.index('log "Restored')
 
 
@@ -974,10 +977,7 @@ def test_push_and_restart_failures_use_pre_candidate_evidence_phase() -> None:
     for function_name, env_expression in (("do_deploy", '"$env"'), ("do_promote", '"$to_env"')):
         body = _function_body(function_name)
         assert f"capture_failure_evidence {env_expression} pre_candidate" in body
-        assert (
-            f'capture_failure_evidence {env_expression} "${{ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}}"'
-            in body
-        )
+        assert f'capture_failure_evidence {env_expression} "${{ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}}"' in body
         assert f"handle_failed_verification {env_expression}" in body
         assert f"capture_failure_evidence {env_expression} candidate" not in body
         assert body.count(f"capture_failure_evidence {env_expression} pre_candidate") == 1
@@ -988,9 +988,7 @@ def test_run_with_deadline_does_not_dup_stdin_through_fd3() -> None:
     source = SCRIPT.read_text()
     start = source.index("run_with_deadline() {")
     end = source.index("validated_deadline() {")
-    code = "\n".join(
-        line for line in source[start:end].splitlines() if not line.lstrip().startswith("#")
-    )
+    code = "\n".join(line for line in source[start:end].splitlines() if not line.lstrip().startswith("#"))
     assert "exec 3<&0" not in code
     assert '"$@" <&0 &' in code
 
@@ -1108,16 +1106,15 @@ def test_post_restart_evidence_keeps_logs_and_skips_http(tmp_path: Path) -> None
 
 
 def test_do_restart_marks_post_restart_before_systemctl() -> None:
-    """D-02: systemctl restart failure must request post_restart evidence."""
+    """D-02: candidate unit start failure must request post_restart evidence."""
     body = _function_body("do_restart")
     assert 'ACX_RESTART_EVIDENCE_PHASE="pre_candidate"' in body
     assert 'ACX_RESTART_EVIDENCE_PHASE="post_restart"' in body
     assert body.index('ACX_RESTART_EVIDENCE_PHASE="pre_candidate"') < body.index(
         'ACX_RESTART_EVIDENCE_PHASE="post_restart"'
     )
-    assert body.index('ACX_RESTART_EVIDENCE_PHASE="post_restart"') < body.index(
-        "sudo systemctl restart"
-    )
+    assert body.index('ACX_RESTART_EVIDENCE_PHASE="post_restart"') < body.index("sudo systemctl start")
+    assert body.index("systemctl start") < body.index("systemctl restart")
 
 
 def test_pre_candidate_docker_ps_is_compose_project_scoped(tmp_path: Path) -> None:
@@ -1147,7 +1144,7 @@ def test_boot_smoke_failure_redacts_tokens(tmp_path: Path) -> None:
         extra_env={
             "FAKE_HEALTH_CODE": "503",
             "FAKE_HEALTH_BODY": (
-                'RECOGNITION_ADMIN_TOKEN=admin-secret HF_TOKEN=hf-secret '
+                "RECOGNITION_ADMIN_TOKEN=admin-secret HF_TOKEN=hf-secret "
                 'PGPASSWORD=pg-secret "token": "json-secret" '
                 "AUTHORIZATION: BEARER header-secret Bearer naked-secret"
             ),
@@ -1176,9 +1173,7 @@ def _run_do_verify(
 ) -> subprocess.CompletedProcess[str]:
     curl_log = tmp_path / "curl.log"
     expected = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-    health_body = (
-        '{"commit_sha":"' + health_sha + '","status":"ok","image_variant":"recognition"}'
-    )
+    health_body = '{"commit_sha":"' + health_sha + '","status":"ok","image_variant":"recognition"}'
     driver = tmp_path / "verify-driver.sh"
     driver.write_text(
         f'''
@@ -1239,14 +1234,10 @@ def test_do_verify_probes_ready_only_on_terminal_failure(tmp_path: Path) -> None
 
 
 @pytest.mark.parametrize("health_code", ["302", "404", "500", "503"])
-def test_do_verify_non_2xx_matching_sha_fails_and_probes_ready(
-    tmp_path: Path, health_code: str
-) -> None:
+def test_do_verify_non_2xx_matching_sha_fails_and_probes_ready(tmp_path: Path, health_code: str) -> None:
     """GR-261: matching commit_sha on non-2xx /health must not verify; /ready is non-gating."""
     expected = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-    result = _run_do_verify(
-        tmp_path, attempts=1, health_sha=expected, health_code=health_code
-    )
+    result = _run_do_verify(tmp_path, attempts=1, health_sha=expected, health_code=health_code)
     combined = result.stdout + result.stderr
     assert result.returncode != 0, combined
     assert "Verified:" not in combined
@@ -1259,9 +1250,7 @@ def test_do_verify_non_2xx_matching_sha_fails_and_probes_ready(
 def test_do_verify_non_2xx_matching_sha_retries_then_probes_ready(tmp_path: Path) -> None:
     """GR-261: a baked SHA on HTTP 503 must not skip warm-up retries."""
     expected = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-    result = _run_do_verify(
-        tmp_path, attempts=3, health_sha=expected, health_code="503"
-    )
+    result = _run_do_verify(tmp_path, attempts=3, health_sha=expected, health_code="503")
     combined = result.stdout + result.stderr
     assert result.returncode != 0, combined
     assert "Verified:" not in combined
@@ -1574,9 +1563,7 @@ exec /usr/bin/sed "$@"
 """,
     )
     expected = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-    health_body = (
-        '{"commit_sha":"' + expected + '","status":"ok","image_variant":"recognition"}'
-    )
+    health_body = '{"commit_sha":"' + expected + '","status":"ok","image_variant":"recognition"}'
     driver = tmp_path / "sed-fail-driver.sh"
     driver.write_text(
         f'''
@@ -1833,7 +1820,7 @@ def test_boot_smoke_trap_handles_term_and_int(tmp_path: Path) -> None:
 
 def test_do_boot_smoke_prepull_failure_skips_health_gate(tmp_path: Path) -> None:
     """GR-31 / GR-06: failed pgvector pre-pull must not send the smoke-body payload."""
-    extra = '''
+    extra = """
 run_with_deadline() {
   local label="$2"
   shift 2
@@ -1842,7 +1829,7 @@ run_with_deadline() {
   fi
   "$@"
 }
-'''
+"""
     result = _run_do_boot_smoke_wrapper(tmp_path, extra_script=extra, unread_fifo=True)
     combined = result.stdout + result.stderr
     payload = tmp_path / "smoke-wrap"
@@ -2065,14 +2052,7 @@ def test_boot_smoke_composite_deadline_covers_inner_caps(tmp_path: Path) -> None
     trap_docker_s = 10
     margin = 5
     inner_sum = (
-        net_create_cap
-        + setup_slack
-        + pg_ready
-        + setup_slack
-        + port_cap
-        + smoke_timeout
-        + trap_docker_s
-        + poll_interval
+        net_create_cap + setup_slack + pg_ready + setup_slack + port_cap + smoke_timeout + trap_docker_s + poll_interval
     )
     expected_deadline = inner_sum + margin
     old_composite = pg_ready + smoke_timeout + setup_slack
@@ -2425,7 +2405,7 @@ do_build_remote() {{ return 0; }}
 do_push_sha() {{ return 0; }}
 do_push_tag() {{ return 0; }}
 do_restart() {{
-  ACX_RESTART_EVIDENCE_PHASE={restart_failure_phase or 'pre_candidate'}
+  ACX_RESTART_EVIDENCE_PHASE={restart_failure_phase or "pre_candidate"}
   return {1 if restart_failure_phase else 0}
 }}
 promote_gate() {{ return 0; }}
@@ -2460,7 +2440,10 @@ fail() {{
 def test_restart_failure_recovers_runtime_only_after_restart_begins(tmp_path, monkeypatch, invoke, phase, runtime):
     monkeypatch.setenv("CONFIRM", "PROMOTE")
     result = _run_verify_optional_after_verify_failure(
-        tmp_path, invoke=invoke, rollback_rc=0, restart_failure_phase=phase,
+        tmp_path,
+        invoke=invoke,
+        rollback_rc=0,
+        restart_failure_phase=phase,
     )
     assert result.returncode != 0
     assert f"rollback-runtime={runtime}" in result.stdout, result.stdout + result.stderr
@@ -2471,13 +2454,9 @@ def test_restart_failure_recovers_runtime_only_after_restart_begins(tmp_path, mo
     ("do_deploy dev", "do_promote dev staging"),
     ids=("do_deploy", "do_promote"),
 )
-def test_acx_verify_optional_fails_closed_when_rollback_fails(
-    tmp_path: Path, invoke: str
-) -> None:
+def test_acx_verify_optional_fails_closed_when_rollback_fails(tmp_path: Path, invoke: str) -> None:
     """VLMHEAL-1-HARM-01: ACX_VERIFY_OPTIONAL=1 must not exit 0 after a failed rollback."""
-    result = _run_verify_optional_after_verify_failure(
-        tmp_path, invoke=invoke, rollback_rc=1
-    )
+    result = _run_verify_optional_after_verify_failure(tmp_path, invoke=invoke, rollback_rc=1)
     combined = result.stdout + result.stderr
     assert result.returncode != 0, combined
     assert "rollback failed" in combined, combined
@@ -2489,13 +2468,9 @@ def test_acx_verify_optional_fails_closed_when_rollback_fails(
     ("do_deploy dev", "do_promote dev staging"),
     ids=("do_deploy", "do_promote"),
 )
-def test_acx_verify_optional_downgrades_when_rollback_succeeds(
-    tmp_path: Path, invoke: str
-) -> None:
+def test_acx_verify_optional_downgrades_when_rollback_succeeds(tmp_path: Path, invoke: str) -> None:
     """VLMHEAL-1-HARM-01: a verified rollback may still warn-and-exit-0 under ACX_VERIFY_OPTIONAL=1."""
-    result = _run_verify_optional_after_verify_failure(
-        tmp_path, invoke=invoke, rollback_rc=0
-    )
+    result = _run_verify_optional_after_verify_failure(tmp_path, invoke=invoke, rollback_rc=0)
     combined = result.stdout + result.stderr
     assert result.returncode == 0, combined
     assert "previous image restored" in combined, combined
@@ -2664,8 +2639,18 @@ esac
 set -euo pipefail
 state="${FAKE_ROLLBACK_STATE:?}"
 runtime_mode="__RUNTIME_MODE__"
+cat >/dev/null || true
 remote="${@: -1}"
 printf '%s\n' "$remote" >>"${state}/ssh.log"
+if [[ "$remote" == *"systemctl start"* && "$remote" == *"-next"* ]]; then
+  rm -f "${state}/running-cid"
+  if [[ "$runtime_mode" == "prior" ]]; then
+    : >"${state}/prior-stopped"
+  elif [[ "$runtime_mode" == "candidate" || "$runtime_mode" == "wrong" ]]; then
+    : >"${state}/candidate-stopped"
+  fi
+  exit 1
+fi
 if [[ "$remote" == *"systemctl restart"* ]]; then
   if [[ -f "${state}/rollback-pushed" ]]; then
     printf '%s\n' "__ROLLBACK_CID__" >"${state}/running-cid"
@@ -2678,6 +2663,11 @@ if [[ "$remote" == *"systemctl restart"* ]]; then
     : >"${state}/candidate-stopped"
   fi
   exit 1
+fi
+if [[ "$remote" == *"systemctl"* || "$remote" == *"daemon-reload"* \
+     || "$remote" == *".bak"* || "$remote" == *"cutover"* \
+     || "$remote" == *"Caddyfile"* || "$remote" == *"sudo cp"* ]]; then
+  exit 0
 fi
 if [[ "$remote" == cd\ *" && "* ]]; then
   remote="${remote#* && }"
@@ -2708,7 +2698,7 @@ ACX_PUSH_TIMEOUT=5
 ACX_VERIFY_ATTEMPTS=1
 ACX_VERIFY_SLEEP=0
 ACX_IMAGE_REPO="$IMAGE_BASE"
-init_deploy_ocir_docker_config() {{ ACX_DEPLOY_OCIR_CONFIG_DIR="{tmp_path / 'docker-config'}"; mkdir -p "$ACX_DEPLOY_OCIR_CONFIG_DIR"; return 0; }}
+init_deploy_ocir_docker_config() {{ ACX_DEPLOY_OCIR_CONFIG_DIR="{tmp_path / "docker-config"}"; mkdir -p "$ACX_DEPLOY_OCIR_CONFIG_DIR"; return 0; }}
 preflight_ssh() {{ return 0; }}
 preflight_remote_face_pipeline_models() {{ return 0; }}
 preflight_git_clean() {{ return 0; }}
@@ -2719,20 +2709,20 @@ preflight_docker() {{ return 0; }}
 preflight_ocir_auth() {{ return 0; }}
 assert_remote_disk_headroom_for_pull() {{ return 0; }}
 preserve_rollback_tag() {{
-  ACX_ROLLBACK_DIGEST_REF="$IMAGE_BASE@sha256:{'a' * 64}"
+  ACX_ROLLBACK_DIGEST_REF="$IMAGE_BASE@sha256:{"a" * 64}"
   ACX_ROLLBACK_IMAGE_BASE="$IMAGE_BASE"
-  ACX_ROLLBACK_TAG="rollback-{'a' * 12}"
-  ACX_PRIOR_IMAGE_ID="sha256:{'1' * 64}"
+  ACX_ROLLBACK_TAG="rollback-{"a" * 12}"
+  ACX_PRIOR_IMAGE_ID="sha256:{"1" * 64}"
 }}
 do_build() {{ return 0; }}
 do_build_remote() {{ return 0; }}
-do_push_sha() {{ ACX_CANDIDATE_DIGEST_REF="$IMAGE_BASE@sha256:{'b' * 64}"; }}
+do_push_sha() {{ ACX_CANDIDATE_DIGEST_REF="$IMAGE_BASE@sha256:{"b" * 64}"; }}
 promote_gate() {{ return 0; }}
 do_push_tag() {{ return 0; }}
 repair_blob_volume_ownership() {{ return 0; }}
 restore_prior_image_repo_env() {{ return 0; }}
 _pull_ref() {{ return 0; }}
-image_digest_ref() {{ printf '%s\\n' "$IMAGE_BASE@sha256:{'b' * 64}"; }}
+image_digest_ref() {{ printf '%s\\n' "$IMAGE_BASE@sha256:{"b" * 64}"; }}
 do_verify() {{ return 1; }}
 fail() {{ printf 'xx %s\\n' "$*" >&2; exit 1; }}
 {invoke}
@@ -2760,9 +2750,7 @@ fail() {{ printf 'xx %s\\n' "$*" >&2; exit 1; }}
 
 
 @pytest.mark.parametrize("invoke", ["do_deploy dev", "do_promote dev staging"])
-def test_actual_restart_failure_restores_after_confirmed_stopped_candidate(
-    tmp_path: Path, invoke: str
-) -> None:
+def test_actual_restart_failure_restores_after_confirmed_stopped_candidate(tmp_path: Path, invoke: str) -> None:
     """A failed replacement leaves a candidate stopped container as ownership proof."""
     result = _run_actual_restart_failure_transaction(tmp_path, invoke=invoke)
     combined = result.stdout + result.stderr
@@ -2778,15 +2766,14 @@ def test_actual_restart_failure_restores_after_confirmed_stopped_candidate(
     assert "Confirmed stopped api container" in combined, combined
     assert docker_log.count(f"tag {rollback_digest} {base}:{env_name}") == 1
     assert docker_log.count(f"push {base}:{env_name}") == 1
-    assert ssh_log.count(f"systemctl restart {unit}") == 2, ssh_log
+    assert ssh_log.count(f"systemctl start {unit}-next") == 1, ssh_log
+    assert ssh_log.count(f"systemctl restart {unit}") == 1, ssh_log
     assert (state / "running-cid").read_text().strip() == "4" * 64
     assert "STALE ROLLBACK REFUSED" not in combined
 
 
 @pytest.mark.parametrize("invoke", ["do_deploy dev", "do_promote dev staging"])
-def test_before_candidate_creation_recovers_confirmed_stopped_prior(
-    tmp_path: Path, invoke: str
-) -> None:
+def test_before_candidate_creation_recovers_confirmed_stopped_prior(tmp_path: Path, invoke: str) -> None:
     """A compose-stop-before-create failure may recover only its captured prior."""
     result = _run_actual_restart_failure_transaction(tmp_path, invoke=invoke, runtime_mode="prior")
     combined = result.stdout + result.stderr
@@ -2803,7 +2790,8 @@ def test_before_candidate_creation_recovers_confirmed_stopped_prior(
     assert "Rollback verified healthy" in combined, combined
     assert docker_log.count(f"tag {rollback_digest} {base}:{env_name}") == 1
     assert docker_log.count(f"push {base}:{env_name}") == 1
-    assert ssh_log.count(f"systemctl restart {unit}") == 2, ssh_log
+    assert ssh_log.count(f"systemctl start {unit}-next") == 1, ssh_log
+    assert ssh_log.count(f"systemctl restart {unit}") == 1, ssh_log
     assert (state / "running-cid").read_text().strip() == "4" * 64
     assert "STALE ROLLBACK REFUSED" not in combined
 
@@ -2848,13 +2836,9 @@ def test_manual_rollback_keeps_http_503_health_gate(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("runtime_mode", ["absent", "unknown", "wrong"])
-def test_actual_restart_failure_refuses_unowned_runtime_observation(
-    tmp_path: Path, runtime_mode: str
-) -> None:
+def test_actual_restart_failure_refuses_unowned_runtime_observation(tmp_path: Path, runtime_mode: str) -> None:
     """No container or failed inspection cannot authorize automatic rollback."""
-    result = _run_actual_restart_failure_transaction(
-        tmp_path, invoke="do_deploy dev", runtime_mode=runtime_mode
-    )
+    result = _run_actual_restart_failure_transaction(tmp_path, invoke="do_deploy dev", runtime_mode=runtime_mode)
     combined = result.stdout + result.stderr
     state = tmp_path / "rollback-state"
     docker_log = (state / "docker.log").read_text()
@@ -2865,5 +2849,73 @@ def test_actual_restart_failure_refuses_unowned_runtime_observation(
     assert "refusing" in combined.lower(), combined
     assert f"tag {rollback_digest} {base}:dev" not in docker_log
     assert f"push {base}:dev" not in docker_log
-    assert ssh_log.count("systemctl restart acx-dev") == 1, ssh_log
+    assert ssh_log.count("systemctl start acx-dev-next") == 1, ssh_log
+    assert ssh_log.count("systemctl restart acx-dev") == 0, ssh_log
     assert not (state / "running-cid").exists()
+
+
+def test_do_restart_is_additive_then_flip() -> None:
+    """OCIRV1-RB-11: start a next unit and flip traffic before touching the live unit."""
+    body = _function_body("do_restart")
+    assert "env_to_next_unit" in body
+    assert "render_cutover_compose" in body
+    assert "render_next_unit" in body
+    assert "flip_edge_alias" in body
+    assert "probe_cutover_api_health" in body
+    assert body.index("systemctl start") < body.index("flip_edge_alias")
+    assert body.index("probe_cutover_api_health") < body.index("flip_edge_alias")
+    assert body.index("flip_edge_alias") < body.index("systemctl restart")
+
+
+def test_promote_gate_restores_topology_on_converge_failure() -> None:
+    """OCIRV1-FD-06: mixed compose/unit/edge files must roll back with the sticky repo."""
+    body = _function_body("promote_gate")
+    assert "restore_runtime_topology" in body
+    converge_fail = body.index('if ! (converge_runtime "$env"); then')
+    topo = body.index("restore_runtime_topology")
+    assert converge_fail < topo
+    assert topo < body.index("restore_prior_image_repo_env", converge_fail)
+
+
+def test_restore_runtime_topology_consumes_bak_files() -> None:
+    """OCIRV1-FD-06: .bak topology files are the rollback participants, not just backups."""
+    backups = _function_body("restore_topology_backups")
+    edge = _function_body("restore_edge_backups")
+    wrapper = _function_body("restore_runtime_topology")
+    for body in (backups, edge):
+        assert ".bak" in body
+    assert "docker-compose.env.yml.bak" in backups
+    assert ".service.bak" in backups
+    assert "docker-compose.admin.yml.bak" in backups
+    assert "Caddyfile.bak" in edge
+    assert "docker-compose.caddy.yml.bak" in edge
+    assert "restore_topology_backups" in wrapper
+    assert "restore_edge_backups" in wrapper
+    assert "abort_cutover_candidate" in wrapper
+
+
+def test_restore_topology_backups_copies_bak_via_ssh(tmp_path: Path) -> None:
+    records = tmp_path / "ssh.log"
+    command = f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+run_with_deadline() {{ shift 2; "$@"; }}
+ssh() {{
+  printf '%s\\n' "$*" >>"{records}"
+  return 0
+}}
+restore_topology_backups dev
+'''
+    result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    logged = records.read_text()
+    assert "docker-compose.env.yml.bak" in logged
+    assert "acx-dev.service.bak" in logged
+
+
+def test_flip_edge_alias_rewrites_only_allowlisted_proxy_targets() -> None:
+    body = _function_body("flip_edge_alias")
+    assert "reverse_proxy" in body
+    assert "${alias}-next" in body
+    assert "caddy reload" in body
+    assert "next|canonical" in body or "next)" in body

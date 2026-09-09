@@ -414,6 +414,9 @@ def test_repair_failure_recovery_restores_vm_and_registry_tag(tmp_path: Path) ->
 set -euo pipefail
 last=
 for arg in "$@"; do last="$arg"; done
+if [[ "$last" == *".bak"* || "$last" == *"systemctl"* || "$last" == *"Caddyfile"* || "$last" == *"cutover"* ]]; then
+  exit 0
+fi
 bash -c "$last"
 """,
     )

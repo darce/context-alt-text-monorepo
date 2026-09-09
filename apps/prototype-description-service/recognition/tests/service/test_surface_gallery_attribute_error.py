@@ -241,10 +241,188 @@ async def test_internal_gallery_attribute_error_does_not_authorize_cached_search
         f"upserts={len(suggestion_repo.payloads)}"
     )
     assert search.calls == [], (
-        "repository fault must not authorize SimilaritySearch against cached vectors "
-        f"(got {len(search.calls)} calls)"
+        f"repository fault must not authorize SimilaritySearch against cached vectors (got {len(search.calls)} calls)"
     )
     assert suggestion_repo.payloads == [], (
         "repository fault must not persist suggestions from a metadata-free cache "
         f"(got {len(suggestion_repo.payloads)} upserts)"
     )
+
+
+class _MissingMethodClusterRepository:
+    """Batch-surfacing double: Protocol method is absent, not faulting."""
+
+    def __init__(
+        self,
+        *,
+        identities_by_cluster: dict[str, list[MediaIdentity]],
+        labeled_cluster: IdentityCluster,
+    ) -> None:
+        self._identities_by_cluster = identities_by_cluster
+        self._labeled_cluster = labeled_cluster
+
+    async def get_member_identities_for_clusters(self, cluster_ids: list[str]) -> dict[str, list[MediaIdentity]]:
+        return {cid: list(self._identities_by_cluster.get(cid, [])) for cid in cluster_ids}
+
+    async def get_by_id(self, cluster_id: str) -> IdentityCluster:
+        return self._labeled_cluster
+
+
+class _AwaitableFaultClusterRepository(_MissingMethodClusterRepository):
+    async def get_all_representatives(self, cluster_id: str) -> list[Any]:
+        raise AttributeError("await-time gallery fault")
+
+
+class _IterationFaultClusterRepository(_MissingMethodClusterRepository):
+    async def get_all_representatives(self, cluster_id: str) -> Any:
+        def _rows() -> Any:
+            raise AttributeError("iteration gallery fault")
+            yield None  # pragma: no cover
+
+        return _rows()
+
+
+def _labeled_cluster(tenant_id: str, labeled_id: str) -> IdentityCluster:
+    return IdentityCluster(
+        tenant_id=tenant_id,
+        is_labeled=True,
+        identity_count=1,
+        id=labeled_id,
+        label="Ada",
+        user_confirmed=True,
+        representatives=None,
+    )
+
+
+def _surface_service(
+    repo: Any,
+    tenant_id: str,
+) -> tuple[SuggestionRefreshService, _RecordingSuggestionRepository, _RecordingSimilaritySearch]:
+    suggestion_repo = _RecordingSuggestionRepository()
+    settings = ClusteringSettings(
+        similarity_threshold=0.0,
+        suggestion_floor=0.0,
+        suggestion_ceiling=1.1,
+    )
+    search = _RecordingSimilaritySearch(settings)
+    service = SuggestionRefreshService(
+        repository=suggestion_repo,
+        tenant_id=tenant_id,
+        cluster_repository=repo,
+        session=object(),
+        settings=settings,
+    )
+    service._search = search
+    return service, suggestion_repo, search
+
+
+async def _surface(
+    service: SuggestionRefreshService,
+    *,
+    labeled_id: str,
+    unlabeled_id: str,
+    identity: MediaIdentity,
+) -> tuple[BaseException | None, int | None]:
+    raised: BaseException | None = None
+    created: int | None = None
+    try:
+        created = await service.surface_for_newly_labeled_cluster(
+            labeled_id,
+            cluster_label="Ada",
+            candidate_cluster_ids=[unlabeled_id],
+            representatives_by_cluster={labeled_id: [identity.embedding]},
+        )
+    except AttributeError as exc:
+        raised = exc
+    return raised, created
+
+
+@pytest.mark.asyncio
+async def test_present_method_await_attribute_error_does_not_authorize_cached_search() -> None:
+    """Lookup succeeded; AttributeError from the await must fail closed."""
+    tenant_id = str(uuid4())
+    labeled_id = str(uuid4())
+    unlabeled_id = str(uuid4())
+    unstamped = _unstamped_identity("identity-unstamped", tenant_id)
+    repo = _AwaitableFaultClusterRepository(
+        identities_by_cluster={unlabeled_id: [unstamped]},
+        labeled_cluster=_labeled_cluster(tenant_id, labeled_id),
+    )
+    service, suggestion_repo, search = _surface_service(repo, tenant_id)
+
+    raised, created = await _surface(service, labeled_id=labeled_id, unlabeled_id=unlabeled_id, identity=unstamped)
+
+    assert raised is not None, f"await-time AttributeError swallowed_return={created!r}"
+    assert search.calls == []
+    assert suggestion_repo.payloads == []
+
+
+@pytest.mark.asyncio
+async def test_present_method_iteration_attribute_error_does_not_authorize_cached_search() -> None:
+    """Lookup succeeded; AttributeError while listing reps must fail closed."""
+    tenant_id = str(uuid4())
+    labeled_id = str(uuid4())
+    unlabeled_id = str(uuid4())
+    unstamped = _unstamped_identity("identity-unstamped", tenant_id)
+    repo = _IterationFaultClusterRepository(
+        identities_by_cluster={unlabeled_id: [unstamped]},
+        labeled_cluster=_labeled_cluster(tenant_id, labeled_id),
+    )
+    service, suggestion_repo, search = _surface_service(repo, tenant_id)
+
+    raised, created = await _surface(service, labeled_id=labeled_id, unlabeled_id=unlabeled_id, identity=unstamped)
+
+    assert raised is not None, f"iteration AttributeError swallowed_return={created!r}"
+    assert search.calls == []
+    assert suggestion_repo.payloads == []
+
+
+@pytest.mark.asyncio
+async def test_absent_method_unstamped_identities_may_use_precomputed_cache() -> None:
+    """Lookup AttributeError on an incomplete double keeps unstamped cache compatibility."""
+    tenant_id = str(uuid4())
+    labeled_id = str(uuid4())
+    unlabeled_id = str(uuid4())
+    unstamped = _unstamped_identity("identity-unstamped", tenant_id)
+    repo = _MissingMethodClusterRepository(
+        identities_by_cluster={unlabeled_id: [unstamped]},
+        labeled_cluster=_labeled_cluster(tenant_id, labeled_id),
+    )
+    assert not hasattr(repo, "get_all_representatives")
+    service, suggestion_repo, search = _surface_service(repo, tenant_id)
+
+    raised, created = await _surface(service, labeled_id=labeled_id, unlabeled_id=unlabeled_id, identity=unstamped)
+
+    assert raised is None
+    assert created == 1
+    assert len(search.calls) == 1
+    assert len(suggestion_repo.payloads) == 1
+
+
+@pytest.mark.asyncio
+async def test_absent_method_stamped_identities_still_reject() -> None:
+    """Lookup AttributeError must still raise when any probe is stamped."""
+    tenant_id = str(uuid4())
+    labeled_id = str(uuid4())
+    unlabeled_id = str(uuid4())
+    stamped = MediaIdentity(
+        id="identity-stamped",
+        tenant_id=tenant_id,
+        media_id="media-1",
+        embedding=_normalize(np.array([1.0, 0.0, 0.0])),
+        confidence=0.99,
+        bbox_width=10,
+        bbox_height=10,
+        embedding_model="space-a",
+    )
+    repo = _MissingMethodClusterRepository(
+        identities_by_cluster={unlabeled_id: [stamped]},
+        labeled_cluster=_labeled_cluster(tenant_id, labeled_id),
+    )
+    service, suggestion_repo, search = _surface_service(repo, tenant_id)
+
+    raised, created = await _surface(service, labeled_id=labeled_id, unlabeled_id=unlabeled_id, identity=stamped)
+
+    assert raised is not None, f"stamped missing-method must raise swallowed_return={created!r}"
+    assert search.calls == []
+    assert suggestion_repo.payloads == []

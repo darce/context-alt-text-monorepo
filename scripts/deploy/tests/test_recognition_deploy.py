@@ -3643,6 +3643,7 @@ def _run_prepare_producer(
     *,
     env: str = "prod",
     confirm: str | None = "PROMOTE",
+    candidate_sha: str = _CANDIDATE_SHA,
     sibling_rc: int = 0,
     restart_after_fence_rc: int = 0,
     image_rc: int = 0,
@@ -3694,7 +3695,7 @@ do_build() {{ printf 'build\\n' >>"{records}"; return 0; }}
 do_build_remote() {{ printf 'build-remote\\n' >>"{records}"; return 0; }}
 do_push_sha() {{
   printf 'push-sha\\n' >>"{records}"
-  ACX_CANDIDATE_DIGEST_REF="$IMAGE_BASE@sha256:{_CANDIDATE_SHA}"
+  ACX_CANDIDATE_DIGEST_REF="$IMAGE_BASE@sha256:{candidate_sha}"
 }}
 do_push_tag() {{ printf 'push-tag:%s\\n' "$1" >>"{records}"; return 0; }}
 do_boot_smoke() {{ printf 'smoke:%s:%s\\n' "$1" "$2" >>"{records}"; return 0; }}
@@ -3819,22 +3820,15 @@ def test_prepare_producer_prod_requires_confirm_promote(tmp_path: Path) -> None:
 
 def test_prepare_producer_restart_without_fenced_digest_is_refused(tmp_path: Path) -> None:
     """A restart with no smoke-fenced digest must fail, not skip to scoped success."""
-    result, logged = _run_prepare_producer(tmp_path, records_name="unfenced-restart.log")
+    result, logged = _run_prepare_producer(
+        tmp_path, candidate_sha="malformed", records_name="unfenced-restart.log"
+    )
     combined = result.stdout + result.stderr
     lines = logged.splitlines()
-    restart = _first_line("restart:prod:", lines)
-    if restart is None:
-        assert result.returncode != 0, combined
-        assert "passed" not in combined.lower()
-        return
-    digest = restart.split(":", 2)[2]
-    if not _FENCED_DIGEST.match(digest) or not digest.startswith("iad.ocir.io/"):
-        assert "restart-unfenced" in lines, combined
-        assert "restart-accepted:prod" not in lines
-        assert result.returncode != 0, combined
-        assert "passed" not in combined.lower()
-        return
-    assert "restart-accepted:prod" in lines, combined
+    assert result.returncode != 0, combined
+    assert "passed" not in combined.lower()
+    assert "restart-accepted:prod" not in lines
+    assert "scoped:prod" not in lines
 
 
 def test_prepare_producer_restart_failure_rolls_back_and_does_not_succeed(

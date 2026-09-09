@@ -12,10 +12,21 @@ import dataclasses
 import numpy as np
 import pytest
 
-from scripts.eval_harness.face_assignment import FaceDecision
+from scripts.eval_harness.face_assignment import (
+    FaceDecision,
+    collect_matched_faces,
+    gt_box_name,
+    score_face_assignment,
+)
+from scripts.eval_harness import face_metrics as face_metrics_mod
 from scripts.eval_harness.manifest import AnnotationMode, ManifestError, ScoreInvariant
 from scripts.eval_harness.face_metrics import (
     DEMOGRAPHIC_SECTION_HEADER,
+    POSITIONAL_EVAL_NOT_EVALUABLE,
+    POSITIONAL_EVAL_SCORED,
+    POSITIONAL_VACUITY_SIGNAL,
+    SAMPLING_FRAME_FACE_ID,
+    SAMPLING_FRAME_UNKNOWN_REJECTION,
     UNLABELED_COHORT_KEY,
     ImageDetection,
     ImageIdentities,
@@ -26,7 +37,20 @@ from scripts.eval_harness.face_metrics import (
     face_identification_pr,
     face_unknown_rejection,
     identification_pr,
+    LabeledOrderResult,
+    labeled_left_to_right,
+    labeled_order,
+    latency_summary,
+    nearest_rank_percentile,
+    normalized_centre_order_key,
+    positional_identification,
+    predicted_left_to_right,
+    predicted_names_for_positional,
+    sort_identity_rows_by_normalized_centre,
+    wire_bbox_normalized_centre,
 )
+
+
 
 # --- detection level (identity-agnostic) ---
 
@@ -285,10 +309,7 @@ def _dec(
 
 def test_face_id_forced_wrong_name_drops_precision_and_recall():
     """TEST-15: confusion is FP on name* AND FN on true (enrolled) — both P and R drop."""
-    good = [
-        _dec(media_id=i, true_name="Alice", decision="accept", predicted_name="Alice")
-        for i in range(4)
-    ]
+    good = [_dec(media_id=i, true_name="Alice", decision="accept", predicted_name="Alice") for i in range(4)]
     wrong = _dec(
         media_id=99,
         true_name="Alice",
@@ -346,10 +367,7 @@ def test_face_id_zero_over_zero_is_zero():
 
 def test_face_unknown_rejection_stranger_label_goes_red():
     """TEST-15 MANDATORY: candidate labels a stranger → unknown-rejection RED."""
-    clean = [
-        _dec(media_id=i, true_name=None, decision="reject", predicted_name=None)
-        for i in range(5)
-    ]
+    clean = [_dec(media_id=i, true_name=None, decision="reject", predicted_name=None) for i in range(5)]
     polluted = clean + [
         _dec(
             media_id=99,
@@ -359,8 +377,8 @@ def test_face_unknown_rejection_stranger_label_goes_red():
             s_max=0.9,
         )
     ]
-    clean_rate = face_unknown_rejection(clean).rate
-    bad = face_unknown_rejection(polluted)
+    clean_rate = face_unknown_rejection(clean, missed_stranger_gt=0).rate
+    bad = face_unknown_rejection(polluted, missed_stranger_gt=0)
     assert clean_rate == 1.0
     assert bad.false_accepts == 1
     assert bad.rate < 1.0
@@ -372,9 +390,46 @@ def test_face_unknown_rejection_ignores_named_probes():
         _dec(media_id=1, true_name="Alice", decision="accept", predicted_name="Alice"),
         _dec(media_id=2, true_name=None, decision="reject"),
     ]
-    result = face_unknown_rejection(decisions)
+    result = face_unknown_rejection(decisions, missed_stranger_gt=0)
     assert result.n == 1
     assert result.correct_rejects == 1
+
+
+def test_face_unknown_rejection_missed_stranger_gt_counts_against_rate():
+    """VLM6-B-08 / EVAL-16 / AUDIT-07: missed stranger GT lowers the rate.
+
+    Pre-fix: three matched reject-stranger decisions → rate=1.0, n=3 even when
+    fifty stranger boxes were missed upstream. Post-fix: missed_stranger_gt
+    enters n and the rate denominator as failures.
+    """
+    matched = [
+        _dec(media_id=i, true_name=None, decision="reject", predicted_name=None) for i in range(3)
+    ]
+    # Unfixed signature rejects the kwarg → TypeError (RED). Fixed → counts.
+    with_misses = face_unknown_rejection(matched, missed_stranger_gt=50)
+    assert with_misses.correct_rejects == 3
+    assert with_misses.false_accepts == 0
+    assert getattr(with_misses, "missed_stranger_gt", 0) == 50
+    assert with_misses.n == 53  # matched + missed
+    assert with_misses.rate == pytest.approx(3 / 53)
+    assert with_misses.rate < 1.0
+    # Sampling frame names the true observation unit (AUDIT-07).
+    assert "missed" in SAMPLING_FRAME_UNKNOWN_REJECTION.lower()
+    assert "full_corpus_including_unpublishable" not in SAMPLING_FRAME_UNKNOWN_REJECTION
+    assert with_misses.sampling_frame == SAMPLING_FRAME_UNKNOWN_REJECTION
+
+
+def test_face_unknown_rejection_requires_missed_stranger_gt():
+    """S3-03 / AUDIT-07: production-shaped call without attributed misses must fail.
+
+    Pre-fix fail-open default of 0 published rate=1.0 with n=3 while 50
+    strangers were unattributed. Post-fix: missing kwarg is TypeError.
+    """
+    matched = [
+        _dec(media_id=i, true_name=None, decision="reject", predicted_name=None) for i in range(3)
+    ]
+    with pytest.raises(TypeError, match="missed_stranger_gt"):
+        face_unknown_rejection(matched)  # type: ignore[call-arg]
 
 
 # --- clustering (single-linkage) ---
@@ -494,7 +549,28 @@ def test_clustering_sweep_headline_uses_tau_op():
 
 
 def test_face_id_detection_recall_coupling_flag_computed():
-    """EVAL-16: coupling flag is computed from missed_gt / unmatched detections."""
+    """EVAL-16 / VLM6-B-01 / VLM6-B-02: missed_gt folds into FN; flag is disclosure.
+
+    Pre-fix defect: one enrolled-accept TP + missed_gt=2 yielded FN=0, recall=1.0
+    and only flipped detection_recall_coupling_flag. TEST-15: this assertion goes
+    red against code that ignores misses and merely sets the flag.
+    """
+    # One TP accept + two detector-missed named GT → FN includes both misses.
+    # Assert FN/recall FIRST so unfixed code fails on the load-bearing claim
+    # (VLM6-B-02), not only on the sampling-frame string rewrite.
+    coupled = face_identification_pr(
+        [_dec(true_name="Alice", decision="accept", predicted_name="Alice")],
+        missed_gt=2,
+        unmatched_detections=0,
+    )
+    assert coupled.true_positives == 1
+    assert coupled.false_negatives == 2  # EVAL-16: missed_gt folded into FN
+    assert coupled.recall == pytest.approx(1 / 3)  # TP / (TP+FN) = 1/3
+    assert coupled.recall_denominator == 3  # TP + FN
+    assert coupled.precision == 1.0  # no FP from misses
+    assert coupled.detection_recall_coupling_flag is True  # disclosure retained
+    assert coupled.missed_gt == 2
+
     clean = face_identification_pr(
         [_dec(true_name="Alice", decision="accept", predicted_name="Alice")],
         missed_gt=0,
@@ -503,15 +579,11 @@ def test_face_id_detection_recall_coupling_flag_computed():
     assert clean.detection_recall_coupling_flag is False
     assert clean.precision_denominator == 1
     assert clean.recall_denominator == 1
+    assert clean.false_negatives == 0
+    assert clean.recall == 1.0
     assert clean.sampling_frame  # named frame always present
-
-    coupled = face_identification_pr(
-        [_dec(true_name="Alice", decision="accept", predicted_name="Alice")],
-        missed_gt=2,
-        unmatched_detections=0,
-    )
-    assert coupled.detection_recall_coupling_flag is True
-    assert coupled.missed_gt == 2
+    assert "missed_gt" in SAMPLING_FRAME_FACE_ID
+    assert "excluded from FN" not in SAMPLING_FRAME_FACE_ID
 
     coupled_fp = face_identification_pr(
         [_dec(true_name="Alice", decision="accept", predicted_name="Alice")],
@@ -519,6 +591,9 @@ def test_face_id_detection_recall_coupling_flag_computed():
         unmatched_detections=1,
     )
     assert coupled_fp.detection_recall_coupling_flag is True
+    # Unmatched detections alone do not invent FNs (no missed named GT).
+    assert coupled_fp.false_negatives == 0
+    assert coupled_fp.recall == 1.0
 
 
 def test_face_id_coupling_kwargs_required_no_fail_open_default():
@@ -687,9 +762,7 @@ def test_demographic_rollup_never_fabricates_zero_miss_fields():
         _dec(media_id=2, true_name="Bob", decision="accept", predicted_name="Bob"),
     ]
     cohorts = {"Alice": "cohort-a", "Bob": "cohort-b"}
-    inherited = demographic_rollup(
-        decisions, cohorts, parent_detection_coupling=True
-    )
+    inherited = demographic_rollup(decisions, cohorts, parent_detection_coupling=True)
     for pr in inherited.by_cohort.values():
         assert pr.missed_gt is None  # not 0 — the cohort frame cannot know
         assert pr.unmatched_detections is None
@@ -760,7 +833,8 @@ def test_unknown_rejection_error_target_discloses_trial_dependence():
     assert "independent" in UNKNOWN_REJECTION_ERROR_TARGET
     assert "effective" in UNKNOWN_REJECTION_ERROR_TARGET
     result = face_unknown_rejection(
-        [_dec(media_id=1, true_name=None, decision="reject")]
+        [_dec(media_id=1, true_name=None, decision="reject")],
+        missed_stranger_gt=0,
     )
     assert "independent" in result.error_target
 
@@ -785,6 +859,677 @@ def test_demographic_rollup_strangers_excluded_and_unlabeled_legible():
     assert total_n == 2
 
 
+# ---------------------------------------------------------------------------
+# VLM6-R4-08 / VLM6-RH-03 / VLM6-RH-04 — L→R order + shared latency schema
+# ---------------------------------------------------------------------------
+
+
+def test_labeled_left_to_right_all_anonymous_is_empty_not_none():
+    """Boxes present, all strangers → established empty order ([]), not unknown."""
+    boxes = [{"name": None, "x": 0.2, "y": 0.5, "w": 0.1, "h": 0.1}, {"name": "", "x": 0.8}]
+    assert labeled_left_to_right(boxes) == []
+
+
+def test_labeled_left_to_right_named_but_missing_x_is_none():
+    """VLM6-R4-08: named boxes with no x are malformed GT → exclude (None), not []."""
+    assert labeled_left_to_right([{"name": "A"}, {"name": "B"}]) is None
+    assert labeled_left_to_right([{"name": "A", "x": None}, {"name": "B", "y": 0.5}]) is None
+
+
+def test_labeled_left_to_right_partial_x_keeps_named_with_coords():
+    """Named box missing x is dropped; named-with-x still establishes order."""
+    boxes = [
+        {"name": "NoX"},  # dropped
+        {"name": "Right", "x": 0.8},
+        {"name": "Left", "x": 0.2},
+    ]
+    assert labeled_left_to_right(boxes) == ["Left", "Right"]
+
+
+def test_wire_bbox_normalized_centre_converts_pixel_corner():
+    """VLM6-RH-03: absolute-pixel corner → normalized centre."""
+    # corner (100,50) size 200x100 on 1000x500 → centre (200,100) → (0.2, 0.2)
+    cx, cy = wire_bbox_normalized_centre(
+        {"x": 100, "y": 50, "width": 200, "height": 100},
+        image_width=1000,
+        image_height=500,
+    )
+    assert cx == pytest.approx(0.2)
+    assert cy == pytest.approx(0.2)
+    assert (
+        wire_bbox_normalized_centre(
+            {"x": 0, "y": 0, "width": 10, "height": 10},
+            image_width=None,
+            image_height=100,
+        )
+        is None
+    )
+
+
+def test_wire_bbox_normalized_centre_rejects_degenerate_box_size():
+    """S3-07: w<=0 / h<=0 is unpositionable None (not a fabricated centre)."""
+    assert (
+        wire_bbox_normalized_centre(
+            {"x": 0, "y": 0, "width": 0, "height": 10},
+            image_width=200,
+            image_height=100,
+        )
+        is None
+    )
+    assert (
+        wire_bbox_normalized_centre(
+            {"x": 100, "y": 0, "width": -40, "height": 10},
+            image_width=200,
+            image_height=100,
+        )
+        is None
+    )
+    assert (
+        wire_bbox_normalized_centre(
+            {"x": 0, "y": 0, "width": 10, "height": 0},
+            image_width=200,
+            image_height=100,
+        )
+        is None
+    )
+
+
+def test_predicted_left_to_right_matches_centre_not_corner_order():
+    """Corner-x and centre-x disagree: wide-left vs narrow-right → centre order wins."""
+    # Image 400px wide.
+    # Wide face: corner x=100, w=200 → centre 200 → norm 0.5
+    # Narrow face: corner x=150, w=50 → centre 175 → norm 0.4375  (LEFT of wide)
+    # Corner-x sort would put Wide first (100 < 150); centre sort puts Narrow first.
+    identities = [
+        {
+            "name": "Wide",
+            "bbox": {"x": 100, "y": 0, "width": 200, "height": 100},
+            "unpositioned": False,
+        },
+        {
+            "name": "Narrow",
+            "bbox": {"x": 150, "y": 0, "width": 50, "height": 100},
+            "unpositioned": False,
+        },
+    ]
+    assert predicted_left_to_right(identities, image_width=400, image_height=200) == [
+        "Narrow",
+        "Wide",
+    ]
+    # RV3-04 / TEST-15: alias is object identity — no behavioural fallback.
+    # A re-clone that agrees only on Wide/Narrow must not pass.
+    assert predicted_names_for_positional is predicted_left_to_right
+    assert predicted_names_for_positional(identities, image_width=400, image_height=200) == [
+        "Narrow",
+        "Wide",
+    ]
+    # Without image size both fall to unpositioned → alpha: "Narrow" < "Wide".
+    # Use names that reverse under alpha to prove the unpositioned path.
+    # Drive the ALIAS (not only predicted_left_to_right) through Zebra/Aardvark.
+    swapped_names = [
+        {
+            "name": "Zebra",
+            "bbox": {"x": 100, "y": 0, "width": 200, "height": 100},
+        },
+        {
+            "name": "Aardvark",
+            "bbox": {"x": 150, "y": 0, "width": 50, "height": 100},
+        },
+    ]
+    assert predicted_names_for_positional(swapped_names, image_width=400, image_height=200) == [
+        "Aardvark",  # centre-left
+        "Zebra",
+    ]
+    assert predicted_names_for_positional(swapped_names, image_width=None, image_height=None) == [
+        "Aardvark",  # alpha fallback among unpositioned
+        "Zebra",
+    ]
+
+
+def test_centre_x_tie_both_apis_share_one_order_key():
+    """S3-01 / rg-005: identical centre-x, different centre-y → one shared order.
+
+    Pre-fix: predicted_left_to_right sorted (cx, name) → [Alice, Bob] while
+    sort_identity_rows_by_normalized_centre sorted (cx, cy, name) → [Bob, Alice].
+    Post-fix: both use normalized_centre_order_key → same L→R sequence.
+    RV3-04: drive the alias itself through the centre-y tie fixture.
+    """
+    rows = [
+        {"name": "Alice", "bbox": {"x": 90, "y": 200, "width": 20, "height": 20}},  # cx=100 cy=210
+        {"name": "Bob", "bbox": {"x": 90, "y": 10, "width": 20, "height": 20}},  # cx=100 cy=20
+    ]
+    predicted = predicted_names_for_positional(rows, image_width=200, image_height=400)
+    sorted_rows = sort_identity_rows_by_normalized_centre(
+        rows, image_width=200, image_height=400
+    )
+    row_names = [r["name"] for r in sorted_rows]
+    assert predicted == row_names
+    assert predicted == ["Bob", "Alice"]  # lower centre-y first
+    # Shared pure key is the single definition (no third fork).
+    assert normalized_centre_order_key(0.5, 0.05, "Bob") < normalized_centre_order_key(
+        0.5, 0.525, "Alice"
+    )
+
+
+def test_labeled_left_to_right_tie_stable_across_input_order():
+    """S3-02: exact-x ties use secondary keys; input array order must not decide.
+
+    Pre-fix: stable sort on x alone → input order wins on pure ties.
+    Post-fix: (x, y, name) matches predicted path → same sequence either way.
+    HARM-07: never invent y=0.0 for a missing secondary coordinate.
+    """
+    order_a = [{"name": "Bob", "x": 0.5, "y": 0.1}, {"name": "Alice", "x": 0.5, "y": 0.1}]
+    order_b = [{"name": "Alice", "x": 0.5, "y": 0.1}, {"name": "Bob", "x": 0.5, "y": 0.1}]
+    assert labeled_left_to_right(order_a) == labeled_left_to_right(order_b)
+    assert labeled_left_to_right(order_a) == ["Alice", "Bob"]  # name tie-break
+    # Different y at same x must NOT collapse via invented 0.0.
+    y_order = [
+        {"name": "High", "x": 0.5, "y": 0.9},
+        {"name": "Low", "x": 0.5, "y": 0.1},
+    ]
+    assert labeled_left_to_right(y_order) == ["Low", "High"]
+    assert labeled_order(y_order).order_degraded is False
+
+
+def test_labeled_order_per_box_missing_y_preserves_real_y(  # VLM6-R2-G-01
+):
+    """Per-box fallback: one missing y must not discard every other box's y.
+
+    Reviewer repro: A(0.5,0.9), B(0.5,0.1), C(0.2, y=None).
+    Whole-image (x,name) fallback yields C,A,B (A before B by name).
+    Per-box: C by x alone, then B,A by real y → C,B,A. order_degraded=True.
+    TEST-15: pre-fix whole-image path must go red on this fixture.
+    """
+    boxes = [
+        {"name": "A", "x": 0.5, "y": 0.9, "w": 0.1, "h": 0.1},
+        {"name": "B", "x": 0.5, "y": 0.1, "w": 0.1, "h": 0.1},
+        {"name": "C", "x": 0.2, "w": 0.1, "h": 0.1},  # no y
+    ]
+    result = labeled_order(boxes)
+    assert result.names == ["C", "B", "A"]
+    assert result.order_degraded is True
+    assert result.y_missing_count == 1
+    # Convenience wrapper agrees.
+    assert labeled_left_to_right(boxes) == ["C", "B", "A"]
+
+
+def test_labeled_order_identical_x_no_y_discloses_degraded_not_spatial(  # VLM6-R2-G-01
+):
+    """Identical x, no y: order is unknown spatially — disclose degraded.
+
+    Do not treat alphabetical name order as a spatial claim (HARM-07 / AUDIT-07).
+    Deterministic stability across input order is required; invented L→R is not.
+    """
+    bare_a = [{"name": "Bob", "x": 0.5}, {"name": "Alice", "x": 0.5}]
+    bare_b = [{"name": "Alice", "x": 0.5}, {"name": "Bob", "x": 0.5}]
+    ra, rb = labeled_order(bare_a), labeled_order(bare_b)
+    assert ra.names == rb.names  # deterministic, input-order independent
+    assert ra.order_degraded is True
+    assert rb.order_degraded is True
+    assert ra.y_missing_count == 2
+    assert rb.y_missing_count == 2
+
+
+def test_labeled_order_identical_centre_x_distinct_y():  # VLM6-R2-G-01
+    """Same centre-x, distinct y → y decides; not degraded."""
+    boxes = [
+        {"name": "A", "x": 0.5, "y": 0.9, "w": 0.1, "h": 0.1},
+        {"name": "B", "x": 0.5, "y": 0.1, "w": 0.1, "h": 0.1},
+    ]
+    result = labeled_order(boxes)
+    assert result.names == ["B", "A"]
+    assert result.order_degraded is False
+    assert result.y_missing_count == 0
+
+
+def test_labeled_order_blank_non_numeric_y_is_missing():  # RA-04 source / wF1
+    """Blank / whitespace / non-numeric y must coerce to missing, not raise.
+
+    Called *directly* (not via report._normalize_face_boxes_for_order) so non-report
+    callers share the same fail-closed missing-y branch (order_degraded=True).
+    TEST-15: pre-fix float(y) raises ValueError on these fixtures.
+    """
+    for y in ("", "  ", "abc"):
+        result = labeled_order([{"name": "A", "x": 0.5, "y": y}])
+        assert isinstance(result, LabeledOrderResult), repr(y)
+        assert result.names == ["A"], repr(y)
+        assert result.order_degraded is True, repr(y)
+        assert result.y_missing_count == 1, repr(y)
+    # Numeric string still parses (not a third state).
+    ok = labeled_order([{"name": "A", "x": 0.5, "y": "0.3"}])
+    assert ok.names == ["A"]
+    assert ok.order_degraded is False
+    assert ok.y_missing_count == 0
+
+
+def test_namedness_predicate_shared_across_sites():  # VLM6-R2-A-01
+    """One namedness predicate: strip; empty/whitespace → anonymous.
+
+    Pre-fix: gt_box_name stripped but L→R gated on ``name is None or == ''``
+    only — whitespace-only counted as named; padded names kept unstripped.
+    Cross-site: association / labeled L→R / predicted L→R / identification_pr
+    must agree. TEST-15: self-certifying gt_box_name-only green is not enough.
+    """
+    ws = "   "
+    padded = " Alice "
+    # Predicate itself.
+    assert gt_box_name({"name": ws}) is None
+    assert gt_box_name({"name": padded}) == "Alice"
+    assert gt_box_name({"name": ""}) is None
+    assert gt_box_name({"name": None}) is None
+
+    # Labeled L→R: whitespace-only skipped; padded stripped.
+    assert labeled_left_to_right(
+        [{"name": ws, "x": 0.2, "y": 0.2, "w": 0.1, "h": 0.1}]
+    ) == []
+    boxes = [
+        {"name": "  ", "x": 0.3, "y": 0.5, "w": 0.1, "h": 0.1},
+        {"name": "Bob", "x": 0.7, "y": 0.5, "w": 0.1, "h": 0.1},
+    ]
+    assert labeled_left_to_right(boxes) == ["Bob"]
+    assert [gt_box_name(b) for b in boxes] == [None, "Bob"]
+
+    # identification_pr: model naming Bob only is a clean TP (no FN on '  ').
+    pr = identification_pr(
+        [ImageIdentities(image="x.jpg", predicted=["Bob"], labeled=labeled_left_to_right(boxes))]
+    )
+    assert (pr.true_positives, pr.false_positives, pr.false_negatives) == (1, 0, 0)
+    assert pr.wrong_names == []
+
+    # Padded GT name strips so model "Alice" is TP, not wrong-name.
+    boxes3 = [{"name": padded, "x": 0.5, "y": 0.5, "w": 0.1, "h": 0.1}]
+    assert labeled_left_to_right(boxes3) == ["Alice"]
+    pr3 = identification_pr(
+        [
+            ImageIdentities(
+                image="y.jpg",
+                predicted=["Alice"],
+                labeled=labeled_left_to_right(boxes3),
+            )
+        ]
+    )
+    assert (pr3.true_positives, pr3.false_positives, pr3.false_negatives) == (1, 0, 0)
+    assert pr3.wrong_names == []
+
+    # Predicted L→R: same predicate (whitespace skipped; padded stripped).
+    assert predicted_left_to_right(
+        [
+            {"name": "  ", "bbox": {"x": 0.2, "y": 0.2, "w": 0.1, "h": 0.1}},
+            {"name": "Bob", "bbox": {"x": 0.8, "y": 0.2, "w": 0.1, "h": 0.1}},
+        ],
+        image_width=100,
+        image_height=100,
+    ) == ["Bob"]
+    assert predicted_left_to_right(
+        [{"name": padded, "bbox": {"x": 10, "y": 10, "width": 20, "height": 20}}],
+        image_width=100,
+        image_height=100,
+    ) == ["Alice"]
+
+    # Association / collect_matched_faces: whitespace-only is stranger miss.
+    run_items = [
+        {
+            "media_id": 1,
+            "path": "a.jpg",
+            "image_size": [100, 100],
+            "faces": [],
+        }
+    ]
+    gt = {
+        1: [
+            {"x": 0.5, "y": 0.5, "w": 0.2, "h": 0.2, "name": ""},
+            {"x": 0.2, "y": 0.2, "w": 0.1, "h": 0.1, "name": None},
+            {"x": 0.3, "y": 0.3, "w": 0.1, "h": 0.1, "name": "   "},
+            {"x": 0.4, "y": 0.4, "w": 0.1, "h": 0.1, "name": " Alice "},
+        ]
+    }
+    _matched, _assoc, false_det, missed_named, missed_stranger = collect_matched_faces(
+        run_items, gt
+    )
+    assert false_det == 0
+    assert missed_named == 1  # only stripped "Alice"
+    assert missed_stranger == 3  # "", None, whitespace
+
+
+def test_face_metrics_namedness_sites_share_one_predicate(monkeypatch):
+    """RA-02 / TEST-15: every face_metrics name decision routes through one predicate.
+
+    Pre-fix (cx1 residual): ``sort_identity_rows_by_normalized_centre`` used
+    ``str(row.get("name") or "")`` while L→R paths used ``gt_box_name`` — a
+    reintroduced inline check never appears in the spy and fails this test.
+    Not an enumeration of call sites (those rot); a divergent site is one that
+    does not call the module predicate.
+    """
+    assert hasattr(face_metrics_mod, "named_box_name"), (
+        "face_metrics must expose named_box_name as the single namedness predicate"
+    )
+    calls: list[object] = []
+    real = face_metrics_mod.named_box_name
+
+    def spy(box: object) -> str | None:
+        calls.append(box)
+        return real(box)
+
+    monkeypatch.setattr(face_metrics_mod, "named_box_name", spy)
+
+    rows = [
+        {"name": "  ", "bbox": {"x": 0, "y": 0, "width": 10, "height": 10}},
+        {"name": " Bob ", "bbox": {"x": 50, "y": 0, "width": 10, "height": 10}},
+    ]
+    labeled_boxes = [
+        {"name": "  ", "x": 0.2, "y": 0.5},
+        {"name": " Alice ", "x": 0.8, "y": 0.5},
+    ]
+
+    n0 = len(calls)
+    sort_identity_rows_by_normalized_centre(rows, image_width=100, image_height=100)
+    sort_calls = len(calls) - n0
+    assert sort_calls >= 2, (
+        "sort_identity_rows_by_normalized_centre must route each row through "
+        f"named_box_name (got {sort_calls} calls)"
+    )
+
+    n1 = len(calls)
+    assert predicted_left_to_right(rows, image_width=100, image_height=100) == ["Bob"]
+    pred_calls = len(calls) - n1
+    assert pred_calls >= 2
+
+    n2 = len(calls)
+    assert labeled_left_to_right(labeled_boxes) == ["Alice"]
+    assert labeled_order(labeled_boxes).names == ["Alice"]
+    labeled_calls = len(calls) - n2
+    assert labeled_calls >= 2
+
+
+def test_sort_identity_rows_name_tiebreak_uses_stripped_namedness():
+    """RA-02: same centre → tertiary name key must use the namedness predicate.
+
+    Pre-fix: raw ``" Bob "`` sorts before ``"Alice"`` (leading space). After
+    strip the order is Alice, Bob — same as predicted L→R name sequence.
+    Rows are still all kept (storage multiset); only the sort key is normalized.
+    """
+    rows = [
+        {"name": " Bob ", "bbox": {"x": 0, "y": 0, "width": 10, "height": 10}},
+        {"name": "Alice", "bbox": {"x": 0, "y": 0, "width": 10, "height": 10}},
+    ]
+    ordered = sort_identity_rows_by_normalized_centre(
+        rows, image_width=100, image_height=100
+    )
+    # Spatial keys identical → name tie-break via stripped namedness.
+    assert [r["name"] for r in ordered] == ["Alice", " Bob "]
+    predicted = predicted_left_to_right(rows, image_width=100, image_height=100)
+    assert predicted == ["Alice", "Bob"]
+    # Named subsequence order of sort rows (via predicate) matches predicted.
+    assert hasattr(face_metrics_mod, "named_box_name"), "named_box_name missing"
+    pred = face_metrics_mod.named_box_name
+    assert [pred(r) for r in ordered if pred(r) is not None] == predicted
+
+
+def test_named_box_name_rejects_invisible_format_chars():
+    """RA-03: format controls (Cf) are not names; strip alone is insufficient.
+
+    Explicit rule (face_metrics.named_box_name): remove Unicode category Cf
+    (ZWSP/ZWJ/ZWNJ/BOM/soft-hyphen/…), then str.strip() of Unicode whitespace;
+    empty → anonymous (None). Visible characters remain (``"A\\u200bB"`` → ``"AB"``).
+    Mechanism only — corpus incidence not measured (AUDIT-07).
+    """
+    assert hasattr(face_metrics_mod, "named_box_name"), "named_box_name missing"
+    named_box_name = face_metrics_mod.named_box_name
+    for invisible in ("\u200b", "\u200d", "\u200c", "\ufeff", "\u00ad"):
+        assert named_box_name({"name": invisible}) is None, repr(invisible)
+        assert labeled_left_to_right(
+            [{"name": invisible, "x": 0.5, "y": 0.5}]
+        ) == []
+        assert predicted_left_to_right(
+            [{"name": invisible, "bbox": {"x": 0, "y": 0, "width": 10, "height": 10}}],
+            image_width=100,
+            image_height=100,
+        ) == []
+    # NBSP is whitespace — still anonymous after strip.
+    assert named_box_name({"name": "\u00a0"}) is None
+    assert named_box_name({"name": "\u00a0Alice\u00a0"}) == "Alice"
+    # Format char inside a real name is removed, not a distinct identity.
+    assert named_box_name({"name": "A\u200bB"}) == "AB"
+    assert named_box_name({"name": " Alice "}) == "Alice"
+    assert named_box_name({"name": "   "}) is None
+    assert named_box_name({"name": None}) is None
+    assert named_box_name({"name": ""}) is None
+
+
+def test_gt_box_name_empty_string_is_anonymous():
+    """HARM-06 / rg-005: empty-string name is anonymous, not named.
+
+    Strengthened cross-site coverage lives in
+    test_namedness_predicate_shared_across_sites (VLM6-R2-A-01). Kept as a
+    thin direct unit for gt_box_name + stranger-miss routing.
+    """
+    assert gt_box_name({"name": None, "x": 0.1, "y": 0.1, "w": 0.1, "h": 0.1}) is None
+    assert gt_box_name({"name": "", "x": 0.1, "y": 0.1, "w": 0.1, "h": 0.1}) is None
+    assert gt_box_name({"name": "   ", "x": 0.1, "y": 0.1, "w": 0.1, "h": 0.1}) is None
+    assert gt_box_name({"name": "Alice", "x": 0.1, "y": 0.1, "w": 0.1, "h": 0.1}) == "Alice"
+    # Empty-name unmatched GT counts as stranger miss, not named missed_gt.
+    run_items = [
+        {
+            "media_id": 1,
+            "path": "a.jpg",
+            "image_size": [100, 100],
+            "faces": [],
+        }
+    ]
+    gt = {
+        1: [
+            {"x": 0.5, "y": 0.5, "w": 0.2, "h": 0.2, "name": ""},
+            {"x": 0.2, "y": 0.2, "w": 0.1, "h": 0.1, "name": None},
+        ]
+    }
+    _matched, _assoc, false_det, missed_named, missed_stranger = collect_matched_faces(
+        run_items, gt
+    )
+    assert false_det == 0
+    assert missed_named == 0
+    assert missed_stranger == 2
+
+
+def test_missed_gt_named_only_stranger_not_id_fn():
+    """S3-04 / EVAL-16 / EVAL-19: unmatched stranger GT is not identification FN.
+
+    Zero detections, GT = named Alice + anonymous stranger:
+    - assignment.missed_gt == 1 (Alice only)
+    - assignment.missed_stranger_gt == 1
+    - face_identification_pr FN folds named misses only
+    """
+    run_items = [
+        {
+            "media_id": 1,
+            "path": "a.jpg",
+            "image_size": [100, 100],
+            "faces": [],
+        }
+    ]
+    gt = {
+        1: [
+            {"x": 0.5, "y": 0.5, "w": 0.2, "h": 0.2, "name": "Alice"},
+            {"x": 0.2, "y": 0.2, "w": 0.1, "h": 0.1, "name": None},
+        ]
+    }
+    matched, associations, false_det, missed_named, missed_stranger = collect_matched_faces(
+        run_items, gt
+    )
+    assert matched == []
+    assert false_det == 0
+    assert missed_named == 1
+    assert missed_stranger == 1
+    assert len(associations[1].unmatched_gt) == 2
+
+    assignment = score_face_assignment(run_items, gt, k_folds=2)
+    assert assignment.missed_gt == 1
+    assert assignment.missed_stranger_gt == 1
+
+    pr_named = face_identification_pr(
+        assignment.decisions,
+        missed_gt=assignment.missed_gt,
+        unmatched_detections=assignment.false_detections,
+    )
+    assert pr_named.false_negatives == 1  # Alice only
+    assert pr_named.missed_gt == 1
+
+    # Contrasting wrong unit: feeding both misses would inflate FN (pre-fix).
+    pr_inflated = face_identification_pr(
+        [],
+        missed_gt=2,  # Alice + stranger — wrong observation unit
+        unmatched_detections=0,
+    )
+    assert pr_inflated.false_negatives == 2
+
+
+def test_predicted_left_to_right_dedupes_leftmost_like_labeled():
+    """VLM6-R4-08: predicted duplicate names keep leftmost only (mirrors labeled)."""
+    identities = [
+        {"name": "A", "bbox": {"x": 0, "y": 0, "width": 10, "height": 10}},
+        {"name": "A", "bbox": {"x": 50, "y": 0, "width": 10, "height": 10}},
+        {"name": "B", "bbox": {"x": 100, "y": 0, "width": 10, "height": 10}},
+    ]
+    assert predicted_left_to_right(identities, image_width=200, image_height=100) == ["A", "B"]
+
+
+def test_positional_identification_uses_centre_order_via_predicted_rows():
+    """VLM6-B-03: positional scoring via predicted_rows uses centre-x, not corner-x.
+
+    Wide box corner-x=100 w=200 vs narrow corner-x=150 w=50 on 400px image:
+    corner order [Wide, Narrow], centre order [Narrow, Wide]. Labeled L→R is
+    centre-based [Narrow, Wide] → exact_order only when predicted uses centre.
+    """
+    rows = [
+        {"name": "Wide", "bbox": {"x": 100, "y": 0, "width": 200, "height": 100}},
+        {"name": "Narrow", "bbox": {"x": 150, "y": 0, "width": 50, "height": 100}},
+    ]
+    # Raw identity_names order (corner / storage order) would be [Wide, Narrow].
+    corner_order_names = ["Wide", "Narrow"]
+    labelled = ["Narrow", "Wide"]  # centre L→R as labeled_left_to_right would yield
+    # Without predicted_rows: only leftmost dedupe of the raw list (still wrong order).
+    bare = positional_identification(
+        [
+            ImageIdentities(
+                image="a.jpg",
+                predicted=corner_order_names,
+                labeled=labelled,
+                labeled_order_known=True,
+            )
+        ]
+    )
+    assert bare.position_accuracy == 0.0
+    assert bare.exact_order_images == 0
+    # With predicted_rows + image size: centre order wins → exact match.
+    # Unfixed code rejects predicted_rows kwarg → TypeError (RED). Fixed → exact.
+    fixed = positional_identification(
+        [
+            ImageIdentities(
+                image="a.jpg",
+                predicted=corner_order_names,  # ignored when rows present
+                labeled=labelled,
+                labeled_order_known=True,
+                predicted_rows=rows,
+                image_width=400,
+                image_height=200,
+            )
+        ]
+    )
+    assert fixed.exact_order_images == 1
+    assert fixed.position_accuracy == 1.0
+    assert getattr(fixed, "evaluable", None) is True
+    assert getattr(fixed, "status", POSITIONAL_EVAL_SCORED) == POSITIONAL_EVAL_SCORED
+
+
+def test_positional_identification_dedupes_duplicate_predicted_names():
+    """VLM6-B-03: [Alice, Alice, Bob] vs labeled [Alice, Bob] → exact after dedup.
+
+    Pre-fix via raw identity_names: 1/3 position hits. Post-fix: leftmost-wins
+    dedup matches labeled cardinality → exact_order 1.0.
+    """
+    result = positional_identification(
+        [
+            ImageIdentities(
+                image="a.jpg",
+                predicted=["Alice", "Alice", "Bob"],
+                labeled=["Alice", "Bob"],
+                labeled_order_known=True,
+            )
+        ]
+    )
+    assert result.compared_images == 1
+    assert result.exact_order_images == 1
+    assert result.position_accuracy == 1.0
+    assert result.position_hits == 2
+    assert result.position_total == 2
+
+
+def test_positional_vacuity_signal_on_real_golden_corpus():
+    """VLM6-B-10 / EVAL-23 / AUDIT-07: golden.json has face_boxes on 0/37 → π=0.
+
+    Positional identification must emit an explicit not_evaluable vacuity signal
+    the verdict layer can consume — never a silent accuracy=None pass.
+    """
+    import json
+    from pathlib import Path
+
+    golden_path = Path(__file__).parent / "seed" / "golden.json"
+    manifest = json.loads(golden_path.read_text())
+    entries = manifest["entries"]
+    assert len(entries) == 37
+    assert sum(1 for e in entries if e.get("face_boxes")) == 0
+
+    items: list[ImageIdentities] = []
+    for entry in entries:
+        ordered = labeled_left_to_right(entry.get("face_boxes") or [])
+        items.append(
+            ImageIdentities(
+                image=str(entry["path"]),
+                predicted=list(entry.get("present_identities") or []),
+                labeled=list(ordered) if ordered is not None else [],
+                labeled_order_known=ordered is not None,
+            )
+        )
+    result = positional_identification(items)
+    assert result.compared_images == 0
+    assert result.position_accuracy is None
+    assert getattr(result, "evaluable", None) is False
+    assert getattr(result, "status", None) == POSITIONAL_EVAL_NOT_EVALUABLE
+    assert getattr(result, "vacuity_signal", None) == POSITIONAL_VACUITY_SIGNAL
+    assert "π=0" in (getattr(result, "vacuity_signal", None) or "")
+    assert len(result.excluded_images) == 37
+
+
+def test_sort_identity_rows_preserves_duplicates_reorders_by_centre():
+    """face_pass storage keeps multiset; only sort key is corrected."""
+    rows = [
+        {"name": "Wide", "bbox": {"x": 100, "y": 0, "width": 200, "height": 100}},
+        {"name": "Narrow", "bbox": {"x": 150, "y": 0, "width": 50, "height": 100}},
+        {"name": "Wide", "bbox": {"x": 300, "y": 0, "width": 20, "height": 100}},
+    ]
+    ordered = sort_identity_rows_by_normalized_centre(rows, image_width=400, image_height=200)
+    assert [r["name"] for r in ordered] == ["Narrow", "Wide", "Wide"]
+
+
+def test_latency_summary_schema_and_throughput():
+    """VLM6-RH-04: one nested schema with n/mean/min/p50/p95/p99/max + throughput."""
+    assert latency_summary([]) is None
+    block = latency_summary([1.0, 2.0, 10.0], unit="s", wall_clock_s=30.0, throughput_n=3)
+    assert block is not None
+    assert block["unit"] == "s"
+    assert block["n"] == 3
+    assert block["mean"] == pytest.approx(4.333, abs=0.001)
+    assert block["min"] == 1.0
+    assert block["p50"] == 2.0
+    assert block["p95"] == 10.0
+    assert block["p99"] == 10.0
+    assert block["max"] == 10.0
+    assert block["wall_clock_s"] == 30.0
+    assert block["images_per_min"] == 6.0  # 3 images / 0.5 min
+    assert nearest_rank_percentile([1.0, 2.0, 10.0], 0.50) == 2.0
+    with pytest.raises(ValueError):
+        nearest_rank_percentile([], 0.5)
+
+
 # --- FIR-8: optional last-field matched_faces + bounds table ---
 
 
@@ -797,6 +1542,9 @@ def test_matched_faces_is_optional_last_field():
     assert row.matched_faces is None
 
 
+# VLM6-S7-02: this test was defined twice; the shadowed copy's extra
+# `assert result.recall is None` was dropped, not merged — recall is None only
+# when tp+fn == 0, which no row here produces (labeled_faces=2 throughout).
 @pytest.mark.parametrize(
     ("matched", "expect_ok", "fp", "fn"),
     [

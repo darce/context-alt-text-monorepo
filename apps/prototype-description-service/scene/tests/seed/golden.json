@@ -42,7 +42,9 @@
         "source": "fixture",
         "license": "fixture",
         "note": "vendored eval-corpus fixture"
-      }
+      },
+      "difficulty": "easy",
+      "domain": "faces"
     },
     {
       "path": "mock_images/quiet-nye.jpg",
@@ -72,7 +74,9 @@
         "source": "fixture",
         "license": "fixture",
         "note": "vendored eval-corpus fixture"
-      }
+      },
+      "difficulty": "medium",
+      "domain": "mirrors"
     },
     {
       "path": "mock_images/ccqw-antartica.jpg",
@@ -102,7 +106,9 @@
         "source": "fixture",
         "license": "fixture",
         "note": "vendored eval-corpus fixture"
-      }
+      },
+      "difficulty": "easy",
+      "domain": "faces"
     },
     {
       "path": "mock_images/ccqw-bar.jpg",
@@ -132,7 +138,9 @@
         "source": "fixture",
         "license": "fixture",
         "note": "vendored eval-corpus fixture"
-      }
+      },
+      "difficulty": "easy",
+      "domain": "faces"
     },
     {
       "path": "mock_images/ccqw-candid.jpg",
@@ -164,7 +172,9 @@
         "source": "fixture",
         "license": "fixture",
         "note": "vendored eval-corpus fixture"
-      }
+      },
+      "difficulty": "hard",
+      "domain": "crowds"
     },
     {
       "path": "mock_images/ccqw-flowers.jpg",
@@ -194,7 +204,9 @@
         "source": "fixture",
         "license": "fixture",
         "note": "vendored eval-corpus fixture"
-      }
+      },
+      "difficulty": "easy",
+      "domain": "faces"
     },
     {
       "path": "mock_images/ccqw-hair.jpg",
@@ -224,7 +236,9 @@
         "source": "fixture",
         "license": "fixture",
         "note": "vendored eval-corpus fixture"
-      }
+      },
+      "difficulty": "easy",
+      "domain": "faces"
     },
     {
       "path": "mock_images/ccqw-occlusion-2.jpg",
@@ -254,7 +268,12 @@
         "source": "fixture",
         "license": "fixture",
         "note": "vendored eval-corpus fixture"
-      }
+      },
+      "difficulty": "hard",
+      "domain": "occlusion",
+      "tags": [
+        "occlusion_other"
+      ]
     },
     {
       "path": "mock_images/ccqw-occlusion.jpg",
@@ -284,7 +303,12 @@
         "source": "fixture",
         "license": "fixture",
         "note": "vendored eval-corpus fixture"
-      }
+      },
+      "difficulty": "hard",
+      "domain": "occlusion",
+      "tags": [
+        "occlusion_other"
+      ]
     },
     {
       "path": "mock_images/ccqw-purple.jpg",
@@ -314,7 +338,9 @@
         "source": "fixture",
         "license": "fixture",
         "note": "vendored eval-corpus fixture"
-      }
+      },
+      "difficulty": "easy",
+      "domain": "faces"
     },
     {
       "path": "mock_images/ccqw-running-2.jpg",
@@ -344,7 +370,9 @@
         "source": "fixture",
         "license": "fixture",
         "note": "vendored eval-corpus fixture"
-      }
+      },
+      "difficulty": "easy",
+      "domain": "faces"
     },
     {
       "path": "mock_images/ccqw-running.jpg",
@@ -374,7 +402,9 @@
         "source": "fixture",
         "license": "fixture",
         "note": "vendored eval-corpus fixture"
-      }
+      },
+      "difficulty": "medium",
+      "domain": "people"
     },
     {
       "path": "mock_images/ccqw-sunglasses-flowers.jpg",
@@ -404,7 +434,12 @@
         "source": "fixture",
         "license": "fixture",
         "note": "vendored eval-corpus fixture"
-      }
+      },
+      "difficulty": "medium",
+      "domain": "faces",
+      "tags": [
+        "sunglasses"
+      ]
     },
     {
       "path": "mock_images/ccqw-sunglasses.jpg",
@@ -434,7 +469,12 @@
         "source": "fixture",
         "license": "fixture",
         "note": "vendored eval-corpus fixture"
-      }
+      },
+      "difficulty": "medium",
+      "domain": "faces",
+      "tags": [
+        "sunglasses"
+      ]
     },
     {
       "path": "mock_images/ccqw-underexposed.jpg",
@@ -464,7 +504,9 @@
         "source": "fixture",
         "license": "fixture",
         "note": "vendored eval-corpus fixture"
-      }
+      },
+      "difficulty": "hard",
+      "domain": "low_light"
     },
     {
       "path": "mock_images/ccqw.blurry.jpg",
@@ -494,7 +536,12 @@
         "source": "fixture",
         "license": "fixture",
         "note": "vendored eval-corpus fixture"
-      }
+      },
+      "difficulty": "hard",
+      "domain": "faces",
+      "tags": [
+        "blur"
+      ]
     },
     {
       "path": "mock_images/tidal-1.jpg",
@@ -524,7 +571,9 @@
         "source": "fixture",
         "license": "fixture",
         "note": "vendored eval-corpus fixture"
-      }
+      },
+      "difficulty": "hard",
+      "domain": "crowds"
     },
     {
       "path": "mock_images/example-gildedcypress-goldleaf.jpeg",
@@ -554,7 +603,9 @@
         "source": "fixture",
         "license": "fixture",
         "note": "vendored eval-corpus fixture"
-      }
+      },
+      "difficulty": "easy",
+      "domain": "faces"
     },
     {
       "path": "mock_images/k.mcc-1.jpg",
@@ -584,7 +635,9 @@
         "source": "fixture",
         "license": "fixture",
         "note": "vendored eval-corpus fixture"
-      }
+      },
+      "difficulty": "medium",
+      "domain": "people"
     },
     {
       "path": "mock_images/auburn-1.jpeg",
@@ -614,7 +667,9 @@
         "source": "fixture",
         "license": "fixture",
         "note": "vendored eval-corpus fixture"
-      }
+      },
+      "difficulty": "easy",
+      "domain": "faces"
     },
     {
       "path": "mock_images/auburn-boat.jpg",
@@ -644,7 +699,9 @@
         "source": "fixture",
         "license": "fixture",
         "note": "vendored eval-corpus fixture"
-      }
+      },
+      "difficulty": "hard",
+      "domain": "crowds"
     },
     {
       "path": "mock_images/auburn-daniel-sunglasses.jpg",
@@ -676,7 +733,12 @@
         "source": "fixture",
         "license": "fixture",
         "note": "vendored eval-corpus fixture"
-      }
+      },
+      "difficulty": "medium",
+      "domain": "people",
+      "tags": [
+        "sunglasses"
+      ]
     },
     {
       "path": "mock_images/auburn-pool.jpg",
@@ -706,7 +768,9 @@
         "source": "fixture",
         "license": "fixture",
         "note": "vendored eval-corpus fixture"
-      }
+      },
+      "difficulty": "easy",
+      "domain": "faces"
     },
     {
       "path": "mock_images/linen-kestrel-2.jpg",
@@ -735,7 +799,9 @@
         "source": "fixture",
         "license": "fixture",
         "note": "vendored eval-corpus fixture"
-      }
+      },
+      "difficulty": "easy",
+      "domain": "faces"
     },
     {
       "path": "mock_images/linen-kestrel-home.jpg",
@@ -764,7 +830,9 @@
         "source": "fixture",
         "license": "fixture",
         "note": "vendored eval-corpus fixture"
-      }
+      },
+      "difficulty": "easy",
+      "domain": "faces"
     },
     {
       "path": "mock_images/linen-kestrel-painting.jpg",
@@ -790,7 +858,9 @@
         "source": "fixture",
         "license": "fixture",
         "note": "vendored eval-corpus fixture"
-      }
+      },
+      "difficulty": "medium",
+      "domain": "art"
     },
     {
       "path": "mock_images/slate-cocktail.jpg",
@@ -820,7 +890,9 @@
         "source": "fixture",
         "license": "fixture",
         "note": "vendored eval-corpus fixture"
-      }
+      },
+      "difficulty": "hard",
+      "domain": "crowds"
     },
     {
       "path": "mock_images/slate-party.jpg",
@@ -850,7 +922,9 @@
         "source": "fixture",
         "license": "fixture",
         "note": "vendored eval-corpus fixture"
-      }
+      },
+      "difficulty": "hard",
+      "domain": "crowds"
     },
     {
       "path": "mock_images/slate-pool.jpg",
@@ -880,7 +954,9 @@
         "source": "fixture",
         "license": "fixture",
         "note": "vendored eval-corpus fixture"
-      }
+      },
+      "difficulty": "easy",
+      "domain": "faces"
     },
     {
       "path": "mock_images/mcm-eye-blocked.jpg",
@@ -910,7 +986,12 @@
         "source": "fixture",
         "license": "fixture",
         "note": "vendored eval-corpus fixture"
-      }
+      },
+      "difficulty": "hard",
+      "domain": "occlusion",
+      "tags": [
+        "occlusion_other"
+      ]
     },
     {
       "path": "mock_images/mcm-icecave.jpg",
@@ -940,7 +1021,9 @@
         "source": "fixture",
         "license": "fixture",
         "note": "vendored eval-corpus fixture"
-      }
+      },
+      "difficulty": "easy",
+      "domain": "faces"
     },
     {
       "path": "mock_images/mcm-planecrash.jpg",
@@ -970,7 +1053,9 @@
         "source": "fixture",
         "license": "fixture",
         "note": "vendored eval-corpus fixture"
-      }
+      },
+      "difficulty": "easy",
+      "domain": "faces"
     },
     {
       "path": "mock_images/nina-machiavelli.jpeg",
@@ -996,7 +1081,9 @@
         "source": "fixture",
         "license": "fixture",
         "note": "vendored eval-corpus fixture"
-      }
+      },
+      "difficulty": "medium",
+      "domain": "art"
     },
     {
       "path": "mock_images/rrw-mirror.jpg",
@@ -1022,7 +1109,9 @@
         "source": "fixture",
         "license": "fixture",
         "note": "vendored eval-corpus fixture"
-      }
+      },
+      "difficulty": "medium",
+      "domain": "mirrors"
     },
     {
       "path": "mock_images/muted-bar.jpg",
@@ -1052,7 +1141,9 @@
         "source": "fixture",
         "license": "fixture",
         "note": "vendored eval-corpus fixture"
-      }
+      },
+      "difficulty": "easy",
+      "domain": "faces"
     },
     {
       "path": "mock_images/muted-group-party.jpg",
@@ -1082,7 +1173,9 @@
         "source": "fixture",
         "license": "fixture",
         "note": "vendored eval-corpus fixture"
-      }
+      },
+      "difficulty": "hard",
+      "domain": "crowds"
     },
     {
       "path": "mock_images/muted-party.jpg",
@@ -1112,7 +1205,9 @@
         "source": "fixture",
         "license": "fixture",
         "note": "vendored eval-corpus fixture"
-      }
+      },
+      "difficulty": "medium",
+      "domain": "people"
     }
   ]
 }

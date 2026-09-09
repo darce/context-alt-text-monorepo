@@ -97,20 +97,42 @@ echo "== build the comparison report =="
 # candidates-only instead of crashing build_bakeoff_report (uncaught FileNotFoundError)
 # AFTER the A10 GPU spend. Warn loudly so the operator knows the baseline is absent.
 CONTROL_RUN="$BENCH_DIR/run-altq-646-interleave-v3.json"
+CONTROL_LABEL="Qwen3-VL-30B (control)"
 RUNS=()
+RUNS_EMPTY=1
 if [ -f "$CONTROL_RUN" ]; then
-  RUNS+=(--run "Qwen3-VL-30B (control)=$CONTROL_RUN")
+  # The control was measured on the 646-image corpus, not on $MANIFEST. That is a
+  # different split [EVAL-01/EXP-07], so consent to it explicitly: the report keeps
+  # the column but badges it non-comparable instead of passing it off as a control.
+  RUNS+=(--run "$CONTROL_LABEL=$CONTROL_RUN" --allow-foreign-run "$CONTROL_LABEL")
+  RUNS_EMPTY=0
 else
   echo "  WARN: control run-record missing ($CONTROL_RUN) — move/symlink the interleave run into \$BENCH_DIR; report will omit the 30B control baseline." >&2
 fi
 for spec in "${MODELS[@]}"; do
   IFS='|' read -r label _ _ _ _ <<<"$spec"
-  [ -f "$BENCH_DIR/run-bakeoff-$label.json" ] && RUNS+=(--run "$label=$BENCH_DIR/run-bakeoff-$label.json")
+  if [ -f "$BENCH_DIR/run-bakeoff-$label.json" ]; then
+    RUNS+=(--run "$label=$BENCH_DIR/run-bakeoff-$label.json")
+    RUNS_EMPTY=0
+  fi
 done
-( cd "$SVC" && "$PY" -m scripts.eval_harness.build_bakeoff_report \
-    --manifest "$MANIFEST" --images-dir "$GOLDEN_IMAGES_DIR" \
-    --media-ids 93,154,200,46,62,98,6,11,400,378 --embed-images \
-    "${RUNS[@]}" --title "10-image multi-model bake-off" \
-    --out "$BENCH_DIR/reports/bakeoff-10img-multimodel.html" )
-echo "report -> $BENCH_DIR/reports/bakeoff-10img-multimodel.html (gitignored)"
+REPORT_OUT="$BENCH_DIR/reports/bakeoff-10img-multimodel.html"
+if [ "$RUNS_EMPTY" = 1 ]; then
+  # bash 3.2 + `set -u`: expanding an empty array is a fatal unbound-variable error.
+  echo "  WARN: no run-records to report on — skipping the report build." >&2
+else
+  rc=0
+  ( cd "$SVC" && "$PY" -m scripts.eval_harness.build_bakeoff_report \
+      --manifest "$MANIFEST" --images-dir "$GOLDEN_IMAGES_DIR" \
+      --media-ids 93,154,200,46,62,98,6,11,400,378 --embed-images \
+      ${RUNS[@]+"${RUNS[@]}"} --title "10-image multi-model bake-off" \
+      --out "$REPORT_OUT" ) || rc=$?
+  if [ "$rc" = 0 ]; then
+    echo "report -> $REPORT_OUT (gitignored)"
+  elif [ "$rc" = 4 ]; then
+    echo "  REFUSED: a run-record is not comparable to $MANIFEST; no report written. See the error above." >&2
+  else
+    echo "  ERROR: report build failed (exit $rc); no report written." >&2
+  fi
+fi
 echo "TEARDOWN (owed): terminate the A10 when done."

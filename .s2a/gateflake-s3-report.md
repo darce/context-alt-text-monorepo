@@ -13,7 +13,10 @@ Canon: **TEST-08**, **TEST-16**, **TEST-15**, **REF-25**, **CON-17**.
 ## Progress
 
 - Report stub created.
-- Code committed at `bf2095ae2a923640ab28033e9f178bbeac8a40b7` (drop StaticPool, connect-listener `sleep_ms`, rewrite comments). R1-03 `TimeoutError` message kept; with the listener it should be unreachable.
+- Code committed (sandbox SHA, unresolvable at destination per VLM6-S2A-F3-02;
+  landed as destination `a7def04e48723c70b100047ed8f41c7755a8c7a8`) — drop
+  StaticPool, connect-listener `sleep_ms`, rewrite comments. R1-03
+  `TimeoutError` message kept; with the listener it should be unreachable.
 
 ## Step 1 — the barrier is real
 
@@ -399,7 +402,7 @@ no leaked temp dirs
 
 No steps dropped.
 
-## Final diffs (`bf2095ae`)
+## Final diffs (destination `a7def04e48723c70b100047ed8f41c7755a8c7a8`)
 
 `_sessionmaker`:
 

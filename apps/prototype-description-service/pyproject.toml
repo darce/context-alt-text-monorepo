@@ -81,10 +81,18 @@ dev = [
     "pytest-asyncio>=0.21.0,<2.0.0",
     "aiosqlite>=0.19.0,<1.0.0",  # Test-only: in-memory SQLite for async tests
     "fastmcp>=3.1.1,<4.0.0",  # MCP server for agent tooling (v3 decorator semantics)
+    # Revision-pin verification for the bake-off candidate registry: makes the
+    # opt-in ACX_BAKEOFF_VERIFY_REVISIONS check installable rather than skipped.
+    "huggingface_hub>=0.36.0,<1.0.0",
     # Type stubs for mypy
     "types-PyYAML",
     "types-Pillow",
     "types-networkx",
+    # Required by bakeoff_candidates --verify-revisions (HfApi.list_repo_files).
+    # The default load path stays offline; this extra only makes the opt-in
+    # flag installable. Pins match the huggingface_hub already locked via the
+    # vlm extra (transformers).
+    "huggingface_hub>=0.36.0,<1.0.0",
 ]
 # InsightFace for FIR-5 bake-off legs and the FIR-4 dark-default prod image
 # (Dockerfile installs .[bench] so the incumbent path stays available until FIR-6).
@@ -234,16 +242,32 @@ ignore_missing_imports = true
 ignore_errors = true
 
 [tool.pytest.ini_options]
+collection_scope_receipt = "/tmp/prototype-description-service-pytest-collection-scope.json"
 markers = [
     "integration: marks tests as integration tests (require database)",
     "pg: marks tests requiring a local PostgreSQL (schema/RLS/matview behavior; skip when unreachable)",
     "timing: marks wall-clock-sensitive tests (latency budgets, expiry races); run serial via test-integration, excluded from the parallel fast lane",
+    "requires_surrogate_argv: C-locale child needs PEP 383 surrogate-escaped UTF-8 argv; skip when the host cannot produce it (AGT-06)",
 ]
 norecursedirs = [
     "apps/archived-recognition-service",
     "apps/prototype-description-service/archived-recognition.4.2.3",
     "scripts",
 ]
+# FIR-12-BR-67: this is the FULL declared collection (~300 tests live under
+# the two scripts/eval_harness/tests entries alone). A gate/CI invocation
+# that passes an explicit positional path (e.g. `pytest scene/tests`)
+# SILENTLY OVERRIDES testpaths -- pytest collects only what was given on the
+# command line, not this list plus it. That gap ran undetected across five
+# review rounds and excluded every test for the eval-harness modules under
+# change (RLSE-12: pipeline scope must equal the deployable unit; OBS-08:
+# a narrowed gate reading green is silence, not proof). The correct gate
+# invocation never repeats or narrows this list -- run bare `pytest` (or
+# `make test` / `make check`, which do the same) from
+# apps/prototype-description-service and let this declaration alone drive
+# collection. CI can additionally set ACX_STRICT_GATE=1; the conftest hook
+# then fails a narrowed positional invocation after writing its receipt.
+# See docs/workbay/rules/testing-python.md#commands.
 testpaths = [
     "recognition/tests",
     "apps/prototype-description-service/recognition/tests",

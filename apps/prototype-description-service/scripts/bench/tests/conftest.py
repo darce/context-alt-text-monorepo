@@ -189,6 +189,13 @@ def write_manifest(
     return path
 
 
+def write_manifest_sha(run_dir: Path) -> Path:
+    manifest_path = Path(run_dir) / "manifest.json"
+    pin_path = Path(run_dir) / "manifest.sha"
+    pin_path.write_text(hashlib.sha256(manifest_path.read_bytes()).hexdigest() + "\n", encoding="ascii")
+    return pin_path
+
+
 def png_bytes(width: int = 8, height: int = 8) -> bytes:
     from io import BytesIO
 

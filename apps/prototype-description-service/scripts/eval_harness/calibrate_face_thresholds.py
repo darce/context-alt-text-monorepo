@@ -36,6 +36,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from scripts.eval_harness.accept_predicate import is_fnir_miss, is_fpi
+
 # Pinned face_bakeoff report schema v1 (FIR-5 report.py serialization; LC-06/GR-08).
 REPORT_KIND = "face_bakeoff"
 REPORT_SCHEMA = "acx-eval/v1"
@@ -75,11 +77,11 @@ REQUIRED_DECISION_KEYS = frozenset(
     }
 )
 # Pre-registered threshold-selection rule id (fit folds only; never re-tuned on read).
-SELECTION_RULE_ID = "min_tau_at_fmr_le"
+SELECTION_RULE_ID = "min_nonobserved_tau_at_fmr_le"
 DEFAULT_FMR_TARGET = 0.01
 GLOBAL_STRATUM = "_global"
 ARTIFACT_KIND = "face_threshold_calibration"
-ARTIFACT_SCHEMA_VERSION = 1
+ARTIFACT_SCHEMA_VERSION = 2
 # No-match sentinel for s_max:null (FIR-5 serializes -inf as JSON null).
 S_MAX_NO_MATCH = float("-inf")
 
@@ -286,9 +288,10 @@ def validate_golden_manifest(doc: object) -> list[str]:
             )
         if domain is not None and not isinstance(domain, str):
             errors.append(f"entries[{i}].domain must be a string when present")
-        if tags is not None:
-            if not isinstance(tags, list) or not all(isinstance(t, str) for t in tags):
-                errors.append(f"entries[{i}].tags must be a list of strings when present")
+        if tags is not None and (
+            not isinstance(tags, list) or not all(isinstance(t, str) for t in tags)
+        ):
+            errors.append(f"entries[{i}].tags must be a list of strings when present")
     return errors
 
 
@@ -640,16 +643,29 @@ def assert_fit_side_impostor_disjointness(
 
 
 def fmr_at(scores: Sequence[float], tau: float) -> float | None:
+    """Impostor acceptance rate at ``tau``.
+
+    JANUS 2.3.4 FPI: a non-mated rank-1 is a false positive only when score
+    is strictly greater than ``t``. Delegates to ``accept_predicate.is_fpi``
+    so this stays in lockstep with ``open_set_identification._is_fpi`` — the
+    FMR this module calibrates is the operating point the scorer publishes.
+    """
     if not scores:
         return None
-    accepted = sum(1 for s in scores if s >= tau)
+    accepted = sum(1 for s in scores if is_fpi(s, tau))
     return accepted / len(scores)
 
 
 def fnmr_at(scores: Sequence[float], tau: float) -> float | None:
+    """Genuine miss rate at ``tau``.
+
+    JANUS 2.3.4 FNIR: a mated search misses when it does not return the mate
+    at or above ``t`` (score < tau). A tie at tau is a hit, matching
+    ``open_set_identification._is_fnir_miss``.
+    """
     if not scores:
         return None
-    missed = sum(1 for s in scores if s < tau)
+    missed = sum(1 for s in scores if is_fnir_miss(s, tau))
     return missed / len(scores)
 
 
@@ -659,17 +675,24 @@ def select_threshold(
     *,
     fmr_target: float,
 ) -> float | None:
-    """Pre-registered rule: minimum tau with fit FMR ≤ target.
+    """Pre-registered rule: minimum non-observed tau with fit FMR ≤ target.
 
-    Returns ``None`` (abstain) when there are zero fit impostors **or** every
-    impostor score is non-finite (-inf / no-match only) — never fail-open to
-    tau=0.0 / accept-everything ([CAL-01]). All--inf impostors yield
-    ``fmr_at(..., 0.0) == 0`` which would otherwise accept candidate 0.0.
-    When no candidate meets the target, fail-closed to max(1.0, peak observed
-    finite score). Empty genuines are allowed (threshold from impostors only).
+    FMR is JANUS 2.3.4 FPI (``fmr_at``: score > tau). Candidate thresholds are
+    midpoints between consecutive unique finite observed scores plus open
+    boundaries immediately below the minimum and above the maximum. Every
+    selected threshold therefore differs from every finite fit observation,
+    keeping the published strict FPI and operational inclusive acceptance
+    predicates in agreement on observed scores.
 
-    Candidate thresholds are the sorted unique finite scores from fit trials
-    (plus 0.0 and 1.0 bounds). Deterministic; no RNG.
+    Returns ``None`` (abstain) when there are zero fit impostors, fewer than
+    two unique finite impostor scores, or every impostor score is non-finite
+    (-inf / no-match only). Sparse or missing FMR evidence is an explicit
+    insufficient-evidence result ([CAL-01], [CAL-02]), never fail-open to
+    tau=0.0 / accept-everything. When no finite candidate meets the target,
+    fail-closed to an open threshold above the finite observed peak. Empty
+    genuines are allowed (threshold from impostors only).
+
+    Deterministic; no RNG.
     """
     if fmr_target < 0.0 or fmr_target > 1.0:
         raise CalibrationError(f"fmr_target must be in [0,1], got {fmr_target}")
@@ -680,11 +703,35 @@ def select_threshold(
 
     # Finite impostor evidence required. All -inf (JSON null s_max) is not
     # usable FMR evidence at any finite tau (would fail-open to 0.0).
-    if not any(math.isfinite(float(s)) for s in impostor_scores):
+    finite_impostors = [
+        float(s) for s in impostor_scores if math.isfinite(float(s))
+    ]
+    if not finite_impostors:
+        return None
+    # One unique finite score cannot establish a usable operating region;
+    # preserve designed unknown rather than emitting an evidence-poor boundary.
+    if len(set(finite_impostors)) < 2:
         return None
 
-    finite = [float(s) for s in list(genuine_scores) + list(impostor_scores) if math.isfinite(float(s))]
-    candidates = sorted(set(finite) | {0.0, 1.0})
+    finite = [
+        float(s)
+        for s in list(genuine_scores) + list(impostor_scores)
+        if math.isfinite(float(s))
+    ]
+    observed = sorted(set(finite))
+    midpoints = [
+        (lower + upper) / 2.0 for lower, upper in zip(observed, observed[1:])
+    ]
+    # Open boundaries are the nearest representable values outside support.
+    # They replace literal 0.0/1.0 bounds, which can be valid observations and
+    # can make strict publication disagree with inclusive apply.
+    boundary_candidates = {
+        math.nextafter(observed[0], -math.inf),
+        math.nextafter(observed[-1], math.inf),
+    }
+    candidates = sorted(
+        tau for tau in (set(midpoints) | boundary_candidates) if math.isfinite(tau)
+    )
     # Prefer lower tau among those meeting FMR (higher acceptance). Walk ascending.
     for tau in candidates:
         fmr = fmr_at(impostor_scores, tau)
@@ -692,9 +739,11 @@ def select_threshold(
         if fmr is not None and fmr <= fmr_target:
             return float(tau)
 
-    # No tau meets target — fail closed to "accept nothing".
-    peak = max(candidates) if candidates else 1.0
-    return float(max(peak, 1.0))
+    # No finite candidate meets target — fail closed to an open threshold above
+    # the observed peak, retaining finite artifact serialization for face scores.
+    peak = max(observed) if observed else 1.0
+    fallback = math.nextafter(max(peak, 1.0), math.inf)
+    return float(fallback if math.isfinite(fallback) else peak)
 
 
 def _filter_trials_for_stratum(
@@ -714,21 +763,19 @@ def _oof_metrics_for_stratum(
     stratum: str | None,
     fmr_target: float,
 ) -> dict[str, Any]:
-    """Fit-on-complement / read-on-held metrics; per-fold OOF at each fit tau.
+    """Fit-on-complement / read-on-held metrics with a published median tau.
 
-    OOF rates pool per-fold accept/miss counts evaluated at **that fold's**
-    fit tau only (never at the median of taus that saw the read fold). Residual
-    CAL-07 disclosure notes that the final proposed tau is still the median of
-    fit taus and is not re-used to re-score every fold.
+    Each ``fold_rows`` entry retains diagnostics evaluated at that fold's fit
+    tau. Public aggregate OOF rates pool the non-abstained read observations
+    and rescore them at the published median ``tau_proposed`` so the reported
+    rates describe the threshold an operator receives.
     """
     fit_taus: list[float] = []
     oof_genuine: list[float] = []
     oof_impostor: list[float] = []
-    # Per-fold OOF outcome counts at that fold's tau.
+    # Pooled non-abstained OOF observations; fold_rows retain per-fold outcomes.
     n_gen_oof = 0
-    n_gen_miss = 0
     n_imp_oof = 0
-    n_imp_accept = 0
     fold_rows: list[dict[str, Any]] = []
     n_abstained_folds = 0
 
@@ -764,12 +811,8 @@ def _oof_metrics_for_stratum(
             fold_fnmr = fnmr_at(g_read, tau)
             for s in g_read:
                 n_gen_oof += 1
-                if s < tau:
-                    n_gen_miss += 1
             for s in i_read:
                 n_imp_oof += 1
-                if s >= tau:
-                    n_imp_accept += 1
 
         fold_rows.append(
             {
@@ -797,8 +840,8 @@ def _oof_metrics_for_stratum(
     else:
         tau_proposed = None
 
-    fnmr_oof = (n_gen_miss / n_gen_oof) if n_gen_oof else None
-    fmr_oof = (n_imp_accept / n_imp_oof) if n_imp_oof else None
+    fnmr_oof = fnmr_at(oof_genuine, tau_proposed) if tau_proposed is not None else None
+    fmr_oof = fmr_at(oof_impostor, tau_proposed) if tau_proposed is not None else None
 
     return {
         "tau_proposed": tau_proposed,
@@ -1001,8 +1044,10 @@ def calibrate(
         "strangers_single_count_by_fold": True,
         "strangers_count_under_gallery_fold": True,
         "oof_read_per_fold_tau": True,
+        "oof_rates_at_tau_proposed": True,
         "zero_fit_impostor_policy": "abstain",
         "all_nonfinite_impostor_policy": "abstain",
+        "sparse_finite_impostor_policy": "abstain",
         "excluded_single_face_recall_skipped": True,
         "rank1_miss_genuine_at_neg_inf": True,
         "selection_rule_pre_registered": True,
@@ -1122,18 +1167,18 @@ def calibrate(
         ),
         "disclosure": (
             "Thresholds are fit on the complement of each held fold; gate metrics "
-            "are read on that held fold only, evaluated at that fold's fit tau "
-            "(not at the median of taus that saw the read fold). Final "
-            "tau_proposed is the median of non-abstained fit taus and is a "
-            "proposal only — residual CAL-07 note: applying that single median "
-            "back to every fold would re-introduce a weak train/test contact. "
+            "are read on that held fold only. Each fold row records diagnostics "
+            "at that fold's fit tau, while pooled OOF rates are re-scored at the "
+            "published median tau_proposed so the reported rates describe the "
+            "operator threshold. "
             "Read-fold impostor pairs require both identities in the held fold "
             "(cross-fold pairs excluded). Fit-side impostor pairs require both "
             "probe and gallery identities in the fit set (FIR6RC-06). Anonymous "
             "strangers (true_name=null) are read-only probes, counted exactly "
             "once (named gallery under that gallery identity's fold; null "
             "gallery under decision.fold), and never inform fitting. Folds with "
-            "zero fit impostors or only non-finite (-inf) impostor scores "
+            "zero fit impostors, fewer than two unique finite impostor scores, or "
+            "only non-finite (-inf) impostor scores "
             "abstain (tau_fit=null / insufficient_impostor_evidence=true; never "
             "fail-open to 0.0). Enrolled rank-1-miss genuines remain in the FNMR "
             "denominator at score -inf (mate never accepted at any finite tau); "
@@ -1142,7 +1187,11 @@ def calibrate(
             "parity). Non-enrolled named probes are also silent-dropped (zero "
             "trials). "
             f"Selection rule {SELECTION_RULE_ID!r} is pre-registered on fit folds "
-            "only before any held fold is read (FIR6RC-07). "
+            "only before any held fold is read (FIR6RC-07). Candidate taus are "
+            "midpoints between consecutive unique finite fit scores plus open "
+            "boundaries immediately below the minimum and above the maximum, so "
+            "no selected tau ties a finite fit observation and JANUS FPI and "
+            "operational acceptance agree on fit observations. "
             "The calibration artifact is deterministic: bit-identical re-runs "
             "with the same report+manifest+fmr_target (no wall-clock or unpinned "
             "RNG; PYTHONHASHSEED-independent serialization). "

@@ -75,6 +75,24 @@ def provision_overlay(*, primary: Path, worktree: Path) -> list[str]:
     return copied
 
 
+def _same_symlink(dest: Path, src: Path) -> bool:
+    if not dest.is_symlink():
+        return False
+    try:
+        return dest.resolve() == src.resolve()
+    except OSError:
+        return False
+
+
+def _replace_with_symlink(dest: Path, src: Path) -> None:
+    if dest.is_symlink() or dest.is_file():
+        dest.unlink()
+    elif dest.is_dir():
+        shutil.rmtree(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    os.symlink(src, dest)
+
+
 def provision_dependency_trees(*, primary: Path, worktree: Path) -> list[str]:
     """Symlink primary dependency trees. Never copy; never dereference."""
     linked: list[str] = []
@@ -83,12 +101,14 @@ def provision_dependency_trees(*, primary: Path, worktree: Path) -> list[str]:
         dest = worktree / rel
         if not src.exists():
             continue
-        if dest.exists() or dest.is_symlink():
-            if dest.is_symlink() and dest.resolve() == src.resolve():
-                linked.append(rel)
+        if _same_symlink(dest, src):
+            linked.append(rel)
             continue
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        os.symlink(src, dest)
+        if dest.exists() or dest.is_symlink():
+            _replace_with_symlink(dest, src)
+        else:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            os.symlink(src, dest)
         linked.append(rel)
     return linked
 

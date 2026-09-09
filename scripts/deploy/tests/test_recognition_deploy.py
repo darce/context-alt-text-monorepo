@@ -3030,14 +3030,14 @@ def test_restore_rollback_helpers_are_split() -> None:
     assert "leaving candidate serving" in runtime
 
 
-def test_restore_edge_backups_prefers_flip_bak_when_traffic_flipped() -> None:
+def test_restore_edge_backups_uses_immutable_pre_cutover_snapshot() -> None:
     body = _function_body("restore_edge_backups")
-    assert "Caddyfile.flip.bak" in body
-    assert "Caddyfile.bak" in body
+    assert "Caddyfile.pre-cutover" in body
+    assert "edge-cutover.current" in body
+    assert "Caddyfile.flip.bak" not in body
     assert 'ACX_TRAFFIC_FLIPPED:-0}" == "1"' in body
-    assert body.index("Caddyfile.flip.bak") < body.index("Caddyfile.bak")
-    assert "flip_edge_alias" in body
-    assert "leaving candidate serving" in body
+    assert "require_canonical_route" in body
+    assert "compose_restored" in body
 
 
 def test_cutover_failure_restart_runtime_ignores_evidence_phase() -> None:

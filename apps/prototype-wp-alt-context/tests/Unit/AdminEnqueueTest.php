@@ -25,6 +25,11 @@ class AdminEnqueueTest extends TestCase
         return dirname(__DIR__) . '/fixtures/admin-manifest.json';
     }
 
+    private function importedChunkManifestPath(): string
+    {
+        return dirname(__DIR__) . '/fixtures/vite-manifest/admin-with-import.json';
+    }
+
     private function seedAttachmentPost(int $postId = 55): void
     {
         $_GET['post'] = (string) $postId;
@@ -194,6 +199,31 @@ class AdminEnqueueTest extends TestCase
         $this->assertIsArray($attachment);
         $this->assertSame('assets/attachment-edit-test.js', $attachment['file'] ?? null);
         $this->assertNull($missing);
+    }
+
+    public function testAdminEnqueueIncludesImportedChunkCss(): void
+    {
+        unset($_ENV['WP_ENVIRONMENT_TYPE']);
+        $this->setUserCapability('manage_options', true);
+
+        $admin = new Admin($this->importedChunkManifestPath());
+        $admin->enqueue_scripts('toplevel_page_alt-context-dashboard');
+
+        $this->assertArrayHasKey('alt-context-admin', $GLOBALS['__ac_scripts']);
+        $this->assertSame(
+            'http://example.test/wp-content/plugins/alt-context/public/assets/dist/assets/admin-test.js',
+            $GLOBALS['__ac_scripts']['alt-context-admin']['src'] ?? null
+        );
+        $this->assertArrayHasKey('alt-context-admin-0', $GLOBALS['__ac_styles']);
+        $this->assertSame(
+            'http://example.test/wp-content/plugins/alt-context/public/assets/dist/assets/admin-test.css',
+            $GLOBALS['__ac_styles']['alt-context-admin-0']['src'] ?? null
+        );
+        $this->assertArrayHasKey('alt-context-admin-1', $GLOBALS['__ac_styles']);
+        $this->assertSame(
+            'http://example.test/wp-content/plugins/alt-context/public/assets/dist/assets/admin-shared.css',
+            $GLOBALS['__ac_styles']['alt-context-admin-1']['src'] ?? null
+        );
     }
 
     public function testModuleHandleScriptTagRendersTypeModule(): void

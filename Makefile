@@ -147,6 +147,7 @@ include $(ROOT_MAKEFILE_DIR)/mk/lane-lifecycle.mk
 include $(ROOT_MAKEFILE_DIR)/mk/lane-worker.mk
 include $(ROOT_MAKEFILE_DIR)/mk/lane-maintenance.mk
 include $(ROOT_MAKEFILE_DIR)/mk/deploy.mk
+include $(ROOT_MAKEFILE_DIR)/mk/demo-auth.mk
 include $(ROOT_MAKEFILE_DIR)/mk/logs.mk
 include $(ROOT_MAKEFILE_DIR)/mk/evals.mk
 # Wave-1 lane-owned modules (EVID-1, GATETOPO-1); optional until the lanes land.

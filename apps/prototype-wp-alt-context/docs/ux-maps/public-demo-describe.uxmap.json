@@ -1,0 +1,222 @@
+{
+  "map_ref": "public-demo-describe",
+  "product": "alt-context WP plugin public demo — [acx_demo_describe] anonymous describe widget",
+  "source_fixture": "apps/prototype-wp-alt-context/src/public/class-public-demo-shortcode.php",
+  "goals": [
+    "Inventory OBSERVED public-demo states from the shipped shortcode and client: idle selection, queued, warming, describing, complete generic alt text, 429 limited, error/failed, and the 120-second poll ceiling (INT-10, RES-02, RES-03).",
+    "Keep PROPOSED typed CPU-fallback / GPU-final / unknown description-tier states out of the observed inventory. Producer DescriptionResultTier is provisional_cpu | final_gpu; the public adapter currently returns alt_text_draft only. Do not infer tier from gpu_state (HAI-05, HAI-08, PROV-06, DATA-13, rg-015).",
+    "Keep PROPOSED same-run resume bounded to the existing in-flight owner plus the in-memory idempotency key. Refresh drops that key. Do not invent a new paid job, do not raise the 120-second ceiling, and do not weaken authorization for terminal-run reads (API-02, API-04, RLSE-03)."
+  ],
+  "jobs": [
+    {
+      "id": "describe-allowlisted-image",
+      "label": "Choose one operator-curated image and receive a generic alt-text draft"
+    },
+    {
+      "id": "retry-same-trigger",
+      "label": "Retry the same in-page trigger without minting a new idempotency key"
+    }
+  ],
+  "screens": [
+    {
+      "id": "public-demo-describe",
+      "kind": "screen",
+      "title": "Public demo › Describe an image",
+      "purpose": "OBSERVED visitor widget. Domain vocabulary behind canonical states: idle selection = default; queued, warming and describing = loading; no allowlisted images is a different screen; 429 limited = degraded; failed, invalid response, incomplete result and 120s poll timeout = error. Complete shows generic alt text with no description tier. Serves job describe-allowlisted-image.",
+      "route": "[acx_demo_describe]",
+      "job_entry": true,
+      "deep_link": false,
+      "url_params": [],
+      "code_ref": "apps/prototype-wp-alt-context/js/public/demo-describe.js",
+      "primary_action_id": "submit-describe",
+      "states": ["default", "loading", "error", "degraded"],
+      "action_states": ["idle", "in_flight", "completed", "failed", "limited", "timeout"],
+      "zones": [
+        {
+          "id": "z-media-choice",
+          "label": "OBSERVED image picker — idle radios are instance-scoped (acx-demo-media-N) and read from the submitting form only. Empty-selection submit stays on this screen as error copy. No images is public-demo-unavailable, not this zone.",
+          "role": "form",
+          "states": ["default", "loading", "error"]
+        },
+        {
+          "id": "z-submit",
+          "label": "OBSERVED primary Describe selected image — enabled in idle, completed, failed, limited and timeout; disabled in in_flight. Same control retries; key reuse is in-memory only.",
+          "role": "job",
+          "states": ["default", "loading", "error", "degraded"]
+        },
+        {
+          "id": "z-status",
+          "label": "OBSERVED polite status — idle, queued, warming, describing, completed, limited (HTTP 429), failed, client error, 120s poll timeout. Icon plus token color. Envelope gpu_state is accepted and unused; it is lifecycle telemetry, not DescriptionResultTier.",
+          "role": "status",
+          "evidence_linked": true,
+          "states": ["default", "loading", "error", "degraded"]
+        },
+        {
+          "id": "z-result",
+          "label": "OBSERVED completed result is generic alt_text_draft with focus move. Producer tiers provisional_cpu and final_gpu are dropped by the public adapter. PROPOSED CPU-fallback / GPU-final / unknown-tier presentation is absent and must not be inferred from gpu_state.",
+          "role": "ai_review",
+          "evidence_linked": true,
+          "states": ["default", "empty"]
+        }
+      ]
+    },
+    {
+      "id": "public-demo-unavailable",
+      "kind": "screen",
+      "title": "Public demo › Unavailable",
+      "purpose": "OBSERVED PHP shortcode substitutes when the widget cannot run. Demo flag off = degraded limited copy. Allowlist empty or unreadable = error copy. No form, no client, no paid dispatch. Serves neither job until an operator enables the demo and curates media.",
+      "route": "[acx_demo_describe]",
+      "job_entry": false,
+      "deep_link": false,
+      "url_params": [],
+      "code_ref": "apps/prototype-wp-alt-context/src/public/class-public-demo-shortcode.php",
+      "primary_action_id": null,
+      "states": ["error", "degraded"],
+      "zones": [
+        {
+          "id": "z-unavailable-status",
+          "label": "OBSERVED substitute status — limited when the demo is disabled; error when no demo images are available. Not a describe-run phase.",
+          "role": "status",
+          "states": ["error", "degraded"]
+        }
+      ]
+    },
+    {
+      "id": "refresh-page-drops-retry-key",
+      "kind": "exit",
+      "title": "Refresh page (drops in-memory retry key)",
+      "purpose": "OBSERVED: a full page load drops the in-memory idempotency key and the in-memory run_id. Timeout copy currently tells the visitor to refresh. PROPOSED durable resume is not this exit and is not implemented.",
+      "route": "[acx_demo_describe] (browser refresh)",
+      "job_entry": false,
+      "deep_link": false,
+      "url_params": [],
+      "code_ref": "apps/prototype-wp-alt-context/js/public/demo-describe.js",
+      "primary_action_id": null,
+      "states": ["default"],
+      "zones": [
+        {
+          "id": "z-refresh-consequence",
+          "label": "OBSERVED refresh consequence — in-memory retry key is gone. Same-page retry would have retained it. Do not claim a new paid job is proven or disproven after refresh.",
+          "role": "status",
+          "states": ["default"]
+        }
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "id": "submit-describe",
+      "verb": "Describe selected image",
+      "target": "POST /acx/v1/public/demo/describe",
+      "hierarchy": "primary",
+      "costly": true,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "public-demo-describe",
+      "when": ["idle", "completed", "failed", "limited", "timeout"]
+    }
+  ],
+  "flows": [
+    {
+      "id": "observed-happy-path",
+      "job": "describe-allowlisted-image",
+      "label": "OBSERVED: select image, wait, generic alt text",
+      "steps": [
+        {
+          "screen_id": "public-demo-describe",
+          "branch_label": "idle selection (instance-scoped radio in this form) → POST describe"
+        },
+        {
+          "screen_id": "public-demo-describe",
+          "branch_label": "queued → warming → describing (client poll, 120s ceiling)"
+        },
+        {
+          "screen_id": "public-demo-describe",
+          "branch_label": "completed generic alt_text_draft; no CPU/GPU/unknown tier"
+        }
+      ]
+    },
+    {
+      "id": "observed-429-limited",
+      "job": "describe-allowlisted-image",
+      "label": "OBSERVED: HTTP 429 bulkhead or rate limit",
+      "steps": [
+        {
+          "screen_id": "public-demo-describe",
+          "branch_label": "POST or poll returns 429 → data-state=limited; form re-enabled; in-memory key kept"
+        }
+      ]
+    },
+    {
+      "id": "observed-error-or-timeout",
+      "job": "describe-allowlisted-image",
+      "label": "OBSERVED: failed pipeline, invalid envelope, or 120s poll timeout",
+      "steps": [
+        {
+          "screen_id": "public-demo-describe",
+          "branch_label": "failed / invalid / incomplete → data-state=failed; form re-enabled; in-memory key kept"
+        },
+        {
+          "screen_id": "public-demo-describe",
+          "branch_label": "120s client ceiling → poll timeout copy; form re-enabled; in-memory key kept"
+        },
+        {
+          "screen_id": "refresh-page-drops-retry-key",
+          "branch_label": "timeout copy currently tells the visitor to refresh, which drops the key"
+        }
+      ]
+    },
+    {
+      "id": "observed-same-page-retry",
+      "job": "retry-same-trigger",
+      "label": "OBSERVED: same-page retry reuses the in-memory key",
+      "steps": [
+        {
+          "screen_id": "public-demo-describe",
+          "branch_label": "failed, limited, or timeout on the same page with the same media → same idempotency_key"
+        },
+        {
+          "screen_id": "public-demo-describe",
+          "branch_label": "completed run clears the key; the next submit mints a new one"
+        }
+      ]
+    }
+  ],
+  "open_questions": [
+    "PROPOSED, not implemented: should the public complete state show typed description tier (CPU fallback / GPU final / unknown) from item.tier, never from gpu_state? Producer DescriptionResultTier is provisional_cpu | final_gpu only; unknown would be an explicit public absence token, not a guessed gpu_state.",
+    "PROPOSED, not implemented: same-run resume after refresh or after the 120s poll ceiling. Bound remains existing inflight owner + idempotency; not a new paid job; 120s per-poll ceiling stays; bulkhead and nonce/allowlist stay.",
+    "Design question, not a slice: how can a visitor securely re-read a terminal run after inflight is released (status today returns 403 run_not_available) without weakening authorization? A durable handle must not become an unauthenticated run oracle."
+  ],
+  "not_doing": [
+    "Do not treat this map as the admin describe-gpu-tier map. Admin GPU chip, provisional/final badges, and gpu_state presentation are operator SPA, not public demo.",
+    "Do not infer CPU-fallback, GPU-final, or unknown description-tier UI from envelope gpu_state. That field is optional lifecycle telemetry and is unused by statusPresentation.",
+    "Do not claim refresh-safe resume is implemented. Refresh drops the in-memory retry key and run_id.",
+    "Do not claim same-page retry already proven to create duplicate paid jobs. Same-page retry reuses the key; duplicate-dispatch behaviour after refresh is not claimed here.",
+    "Do not raise the public 120-second poll ceiling to the server warmup-plus-inference deadline.",
+    "Do not add a new paid job, upload field, or URL input to resume or retry.",
+    "Do not weaken public status authorization to read arbitrary run_ids after inflight release."
+  ],
+  "domain_state_mappings": [
+    {
+      "domain_states": ["idle", "completed"],
+      "canonical_state": "default"
+    },
+    {
+      "domain_states": ["queued", "warming", "describing", "in_flight"],
+      "canonical_state": "loading"
+    },
+    {
+      "domain_states": ["limited"],
+      "canonical_state": "degraded"
+    },
+    {
+      "domain_states": ["failed", "error", "timeout"],
+      "canonical_state": "error"
+    }
+  ],
+  "slices": [
+    "PROPOSED follow-up, not this map: optional item.tier wire through public_description (provisional_cpu | final_gpu, plus an explicit unknown when absent). Do not derive from gpu_state.",
+    "PROPOSED follow-up, not this map: same-run resume using existing owner plus idempotency only. Keep the 120s ceiling, inflight bulkhead, nonce, and allowlist.",
+    "Design-question follow-up, not this map: secure durable handle for terminal-run read after inflight release. No authorization weakening."
+  ]
+}

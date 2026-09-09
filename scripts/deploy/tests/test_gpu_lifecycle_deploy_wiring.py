@@ -33,8 +33,7 @@ def _run_lifecycle(
     drop_in_paths: str = "",
     mismatched_unit: str | None = None,
     reap_exec_start: str = (
-        "/usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap "
-        "--max-lease-seconds ${MAX_LEASE_SECONDS}"
+        "/usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap --max-lease-seconds ${MAX_LEASE_SECONDS}"
     ),
     remote_body_mutation: str = "",
     previous_release: bool = False,
@@ -53,6 +52,7 @@ def _run_lifecycle(
     groupadd_rc: int = 0,
     groupadd_noop: bool = False,
     existing_groups: tuple[str, ...] = (),
+    load_snapshots: bool = True,
 ) -> tuple[subprocess.CompletedProcess[str], str]:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir(exist_ok=True)
@@ -67,15 +67,18 @@ def _run_lifecycle(
     expected_systemd.mkdir(exist_ok=True)
     effective_systemd.mkdir(exist_ok=True)
     # Fresh hosts have no lifecycle units; upgrades retain the old units.
-    for unit in (() if not previous_release else (
-        "acx-gpu-start.service",
-        "acx-gpu-start.timer",
-        "acx-gpu-reap.service",
-        "acx-gpu-reap.timer",
-    )):
+    for unit in (
+        ()
+        if not previous_release
+        else (
+            "acx-gpu-start.service",
+            "acx-gpu-start.timer",
+            "acx-gpu-reap.service",
+            "acx-gpu-reap.timer",
+        )
+    ):
         content = (
-            "[Service]\nExecStart=/usr/bin/true\n" if unit.endswith(".service")
-            else "[Timer]\nOnUnitActiveSec=2min\n"
+            "[Service]\nExecStart=/usr/bin/true\n" if unit.endswith(".service") else "[Timer]\nOnUnitActiveSec=2min\n"
         )
         (expected_systemd / unit).write_text(content, encoding="utf-8")
         (effective_systemd / unit).write_text(content, encoding="utf-8")
@@ -92,6 +95,14 @@ def _run_lifecycle(
         "var-lib-acx-gpu",
     ):
         (fake_host / directory).mkdir(exist_ok=True)
+    if load_snapshots:
+        for environment in ("dev", "dev-fir", "staging", "prod"):
+            environment_dir = fake_host / "run-acx-write" / environment
+            environment_dir.mkdir(parents=True, exist_ok=True)
+            (environment_dir / "describe-load.json").write_text(
+                '{"queue_depth":0,"in_flight":0,"batch_in_progress":false,"written_at":1000000000}\n',
+                encoding="utf-8",
+            )
     if previous_release and not (fake_host / "opt-acx-gpu/current").is_symlink():
         release_root = fake_host / "opt-acx-gpu"
         old_release = release_root / "old release"
@@ -458,9 +469,7 @@ def test_flag_on_requires_explicit_ready_url(tmp_path: Path) -> None:
         "http://user@gpu.test/health",
     ),
 )
-def test_flag_on_rejects_malformed_ready_url_authority_before_transport(
-    tmp_path: Path, ready_url: str
-) -> None:
+def test_flag_on_rejects_malformed_ready_url_authority_before_transport(tmp_path: Path, ready_url: str) -> None:
     result, calls = _run_lifecycle(tmp_path, enabled=True, ready_url=ready_url)
 
     assert result.returncode == 2
@@ -477,9 +486,7 @@ def test_flag_on_rejects_malformed_ready_url_authority_before_transport(
         "ocid1.instance.oc1.us-ashburn-1.",
     ),
 )
-def test_flag_on_rejects_non_instance_ocid_before_transport(
-    tmp_path: Path, instance_id: str
-) -> None:
+def test_flag_on_rejects_non_instance_ocid_before_transport(tmp_path: Path, instance_id: str) -> None:
     result, calls = _run_lifecycle(
         tmp_path,
         enabled=True,
@@ -581,17 +588,11 @@ def test_install_fails_when_timer_verification_finds_an_inactive_timer(tmp_path:
     assert calls.count("systemctl <start> <acx-gpu-reap.service>") == 2
     assert calls.count("systemctl <disable> <--now> <acx-gpu-start.timer>") == 2
     stop_fences = [
-        index
-        for index, call in enumerate(calls.splitlines())
-        if call == "systemctl <stop> <acx-gpu-start.service>"
+        index for index, call in enumerate(calls.splitlines()) if call == "systemctl <stop> <acx-gpu-start.service>"
     ]
-    lock_fences = [
-        index for index, call in enumerate(calls.splitlines()) if call.startswith("flock <--wait> <120>")
-    ]
+    lock_fences = [index for index, call in enumerate(calls.splitlines()) if call.startswith("flock <--wait> <120>")]
     reapers = [
-        index
-        for index, call in enumerate(calls.splitlines())
-        if call == "systemctl <start> <acx-gpu-reap.service>"
+        index for index, call in enumerate(calls.splitlines()) if call == "systemctl <start> <acx-gpu-reap.service>"
     ]
     assert len(stop_fences) == len(lock_fences) == len(reapers) == 2
     assert all(stop < lock < reap for stop, lock, reap in zip(stop_fences, lock_fences, reapers))
@@ -606,8 +607,13 @@ def test_remote_body_stall_reaches_timeout_rejection(tmp_path: Path) -> None:
     # or mistake a deadline failure for the expected inactive-timer failure.
     with pytest.raises(AssertionError, match="systemd unit installation exceeded 1s"):
         _run_lifecycle(
-            tmp_path, enabled=True, ready_url="http://gpu.test:8000/health",
-            dry_run=False, verify_rc=3, remote_timeout=1, fixture_timeout=8,
+            tmp_path,
+            enabled=True,
+            ready_url="http://gpu.test:8000/health",
+            dry_run=False,
+            verify_rc=3,
+            remote_timeout=1,
+            fixture_timeout=8,
             remote_stall=30,
         )
     assert time.monotonic() - started < 8
@@ -616,11 +622,17 @@ def test_remote_body_stall_reaches_timeout_rejection(tmp_path: Path) -> None:
 @pytest.mark.parametrize("unit", ("timer", "service"))
 @pytest.mark.parametrize("load_state", ("loaded", "error", "", "query-error"))
 def test_fence_failure_requires_confirmed_absent_unit(
-    tmp_path: Path, unit: str, load_state: str,
+    tmp_path: Path,
+    unit: str,
+    load_state: str,
 ) -> None:
     result, calls = _run_lifecycle(
-        tmp_path, enabled=True, ready_url="http://gpu.test:8000/health",
-        dry_run=False, previous_release=True, fence_failure=unit,
+        tmp_path,
+        enabled=True,
+        ready_url="http://gpu.test:8000/health",
+        dry_run=False,
+        previous_release=True,
+        fence_failure=unit,
         fence_load_state=load_state,
     )
     assert result.returncode != 0
@@ -804,9 +816,7 @@ def test_fresh_host_gets_the_supplementary_group_before_the_reaper_is_proved(
     assert calls.count(getent) >= 2
     assert calls.index(getent) < calls.index(groupadd) < calls.rindex(getent)
     assert calls.rindex(getent) < calls.index("systemctl <start> <acx-gpu-reap.service>")
-    assert calls.index(groupadd) < calls.index(
-        "systemctl <start> <acx-gpu-reap.service>"
-    )
+    assert calls.index(groupadd) < calls.index("systemctl <start> <acx-gpu-reap.service>")
 
 
 def test_reinstall_does_not_recreate_an_existing_supplementary_group(
@@ -862,14 +872,11 @@ def test_group_name_collision_still_provisions_the_gid_the_units_resolve(
     preferred = "groupadd <-r> <-g> <10001> <acxapi>"
     fallback = "groupadd <-r> <-g> <10001> <acxgid10001>"
     assert calls.count(preferred) == 1
-    assert calls.count(fallback) == 1, (
-        "the pre-existing acxapi name must take the installer's fallback groupadd path"
-    )
+    assert calls.count(fallback) == 1, "the pre-existing acxapi name must take the installer's fallback groupadd path"
     assert calls.index(preferred) < calls.index(fallback)
     group_db = (tmp_path / "fake-etc-group").read_text(encoding="utf-8")
     assert ":10001:" in group_db, (
-        "the collision path must fall back to another name and still create GID 10001, "
-        f"got: {group_db!r}"
+        f"the collision path must fall back to another name and still create GID 10001, got: {group_db!r}"
     )
 
 
@@ -902,12 +909,18 @@ def test_install_fails_closed_when_the_gid_is_unresolvable_after_groupadd(
 
 def test_rendered_remote_body_avoids_nonportable_shell_constructs(tmp_path: Path) -> None:
     result, _ = _run_lifecycle(
-        tmp_path, enabled=True, ready_url="http://gpu.test:8000/health", dry_run=False,
+        tmp_path,
+        enabled=True,
+        ready_url="http://gpu.test:8000/health",
+        dry_run=False,
     )
     body = (tmp_path / "remote-body.sh").read_text(encoding="utf-8")
     for pattern in (
-        r"\bmv\s+-\w*T", r"\breadlink\s+-f\b", r"\btac\b",
-        r"\b(?:mapfile|readarray)\b", r"\$\{[^}]*,,[^}]*\}",
+        r"\bmv\s+-\w*T",
+        r"\breadlink\s+-f\b",
+        r"\btac\b",
+        r"\b(?:mapfile|readarray)\b",
+        r"\$\{[^}]*,,[^}]*\}",
         r"\[\s+(?:-\w\s+)?\$",  # unquoted first test operand
         r"(?:!=|=)\s+\$[^\n]*\]",  # unquoted comparison operand
     ):
@@ -917,7 +930,10 @@ def test_rendered_remote_body_avoids_nonportable_shell_constructs(tmp_path: Path
 
 def test_fake_ssh_avoids_locale_sensitive_bulk_shell_rewrites(tmp_path: Path) -> None:
     result, _ = _run_lifecycle(
-        tmp_path, enabled=True, ready_url="http://gpu.test:8000/health", dry_run=False,
+        tmp_path,
+        enabled=True,
+        ready_url="http://gpu.test:8000/health",
+        dry_run=False,
     )
     transport = (tmp_path / "bin" / "ssh").read_text(encoding="utf-8")
     # Bash 3.2 in a UTF-8 locale takes tens of seconds per substitution on
@@ -928,8 +944,11 @@ def test_fake_ssh_avoids_locale_sensitive_bulk_shell_rewrites(tmp_path: Path) ->
 
 def test_release_upgrade_replaces_symlinks_and_preserves_old_directories(tmp_path: Path) -> None:
     result, calls = _run_lifecycle(
-        tmp_path, enabled=True, ready_url="http://gpu.test:8000/health",
-        dry_run=False, previous_release=True,
+        tmp_path,
+        enabled=True,
+        ready_url="http://gpu.test:8000/health",
+        dry_run=False,
+        previous_release=True,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     release_root = tmp_path / "host" / "opt-acx-gpu"
@@ -943,11 +962,16 @@ def test_release_upgrade_replaces_symlinks_and_preserves_old_directories(tmp_pat
     _assert_rendered_activation_contract(result, calls)
 
 
-@pytest.mark.parametrize("interval", ["not-a-duration", "0s", "infinity", "", "2min\nOnUnitActiveSec=", "999999999999999999999d"])
+@pytest.mark.parametrize(
+    "interval", ["not-a-duration", "0s", "infinity", "", "2min\nOnUnitActiveSec=", "999999999999999999999d"]
+)
 def test_invalid_reap_interval_fails_before_transport_or_unit_writes(tmp_path: Path, interval: str) -> None:
     result, calls = _run_lifecycle(
-        tmp_path, enabled=True, ready_url="http://gpu.test:8000/health",
-        dry_run=False, reap_interval=interval,
+        tmp_path,
+        enabled=True,
+        ready_url="http://gpu.test:8000/health",
+        dry_run=False,
+        reap_interval=interval,
     )
     assert result.returncode != 0, result.stdout + result.stderr
     assert "REAP_INTERVAL" in result.stderr
@@ -957,8 +981,12 @@ def test_invalid_reap_interval_fails_before_transport_or_unit_writes(tmp_path: P
 
 def test_partial_existing_snapshot_is_never_published_as_previous(tmp_path: Path) -> None:
     result, _ = _run_lifecycle(
-        tmp_path, enabled=True, ready_url="http://gpu.test:8000/health",
-        dry_run=False, previous_release=True, snapshot_kind="partial",
+        tmp_path,
+        enabled=True,
+        ready_url="http://gpu.test:8000/health",
+        dry_run=False,
+        previous_release=True,
+        snapshot_kind="partial",
     )
     assert result.returncode != 0, result.stdout + result.stderr
     assert "incomplete rollback snapshot" in result.stderr
@@ -968,16 +996,29 @@ def test_partial_existing_snapshot_is_never_published_as_previous(tmp_path: Path
 
 
 @pytest.mark.parametrize("snapshot_kind", ["complete", "missing"])
-@pytest.mark.parametrize("artifact", [
-    "gpu-lifecycle.env", "acx-gpu.conf", "acx-gpu-start.service",
-    "acx-gpu-start.timer", "acx-gpu-reap.service", "acx-gpu-reap.timer",
-])
+@pytest.mark.parametrize(
+    "artifact",
+    [
+        "gpu-lifecycle.env",
+        "acx-gpu.conf",
+        "acx-gpu-start.service",
+        "acx-gpu-start.timer",
+        "acx-gpu-reap.service",
+        "acx-gpu-reap.timer",
+    ],
+)
 def test_empty_rollback_artifact_must_not_replace_previous(
-    tmp_path: Path, snapshot_kind: str, artifact: str,
+    tmp_path: Path,
+    snapshot_kind: str,
+    artifact: str,
 ) -> None:
     result, calls = _run_lifecycle(
-        tmp_path, enabled=True, ready_url="http://gpu.test:8000/health",
-        dry_run=False, previous_release=True, snapshot_kind=snapshot_kind,
+        tmp_path,
+        enabled=True,
+        ready_url="http://gpu.test:8000/health",
+        dry_run=False,
+        previous_release=True,
+        snapshot_kind=snapshot_kind,
         empty_rollback_artifact=artifact,
     )
     assert result.returncode != 0, result.stdout + result.stderr
@@ -997,8 +1038,11 @@ def test_empty_rollback_artifact_must_not_replace_previous(
 def test_failed_idempotent_rewrite_must_preserve_valid_rollback(tmp_path: Path) -> None:
     def install(generation: str, *, fail: bool = False) -> subprocess.CompletedProcess[str]:
         result, _ = _run_lifecycle(
-            tmp_path, enabled=True, ready_url=f"http://gpu-{generation}.test/health",
-            dry_run=False, partial_reaper_write=fail,
+            tmp_path,
+            enabled=True,
+            ready_url=f"http://gpu-{generation}.test/health",
+            dry_run=False,
+            partial_reaper_write=fail,
         )
         return result
 
@@ -1027,14 +1071,20 @@ def test_failed_idempotent_rewrite_must_preserve_valid_rollback(tmp_path: Path) 
 
 def test_successful_idempotent_rewrite_publishes_complete_generation(tmp_path: Path) -> None:
     result, _ = _run_lifecycle(
-        tmp_path, enabled=True, ready_url="http://gpu.test/health", dry_run=False,
+        tmp_path,
+        enabled=True,
+        ready_url="http://gpu.test/health",
+        dry_run=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     snapshot = tmp_path / "host/opt-acx-gpu/current/systemd"
     original_dir = snapshot.resolve()
     original = {path.name: path.read_bytes() for path in snapshot.iterdir()}
     result, _ = _run_lifecycle(
-        tmp_path, enabled=True, ready_url="http://gpu.test/health", dry_run=False,
+        tmp_path,
+        enabled=True,
+        ready_url="http://gpu.test/health",
+        dry_run=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert snapshot.is_symlink()
@@ -1044,15 +1094,28 @@ def test_successful_idempotent_rewrite_publishes_complete_generation(tmp_path: P
 
 
 @pytest.mark.parametrize("snapshot_kind", ["complete", "missing"])
-@pytest.mark.parametrize("unit", [
-    "acx-gpu-start.service", "acx-gpu-reap.service", "acx-gpu-start.timer", "acx-gpu-reap.timer",
-])
+@pytest.mark.parametrize(
+    "unit",
+    [
+        "acx-gpu-start.service",
+        "acx-gpu-reap.service",
+        "acx-gpu-start.timer",
+        "acx-gpu-reap.timer",
+    ],
+)
 def test_snapshot_missing_required_unit_key_must_not_replace_previous(
-    tmp_path: Path, snapshot_kind: str, unit: str,
+    tmp_path: Path,
+    snapshot_kind: str,
+    unit: str,
 ) -> None:
     result, _ = _run_lifecycle(
-        tmp_path, enabled=True, ready_url="http://gpu.test/health", dry_run=False,
-        previous_release=True, snapshot_kind=snapshot_kind, damaged_rollback_unit=unit,
+        tmp_path,
+        enabled=True,
+        ready_url="http://gpu.test/health",
+        dry_run=False,
+        previous_release=True,
+        snapshot_kind=snapshot_kind,
+        damaged_rollback_unit=unit,
     )
     assert result.returncode != 0, result.stdout + result.stderr
     assert "incomplete rollback snapshot" in result.stderr
@@ -1066,8 +1129,13 @@ def test_snapshot_missing_required_unit_key_must_not_replace_previous(
 
 def test_snapshot_copy_failure_retry_publishes_only_complete_generation(tmp_path: Path) -> None:
     result, _ = _run_lifecycle(
-        tmp_path, enabled=True, ready_url="http://gpu.test:8000/health",
-        dry_run=False, previous_release=True, snapshot_kind="missing", snapshot_copy_failure=True,
+        tmp_path,
+        enabled=True,
+        ready_url="http://gpu.test:8000/health",
+        dry_run=False,
+        previous_release=True,
+        snapshot_kind="missing",
+        snapshot_copy_failure=True,
     )
     assert result.returncode != 0
     assert "injected snapshot copy failure" in result.stderr
@@ -1076,15 +1144,23 @@ def test_snapshot_copy_failure_retry_publishes_only_complete_generation(tmp_path
     assert not (release_root / "old release/systemd").exists()
 
     result, _ = _run_lifecycle(
-        tmp_path, enabled=True, ready_url="http://gpu.test:8000/health",
-        dry_run=False, previous_release=True, snapshot_kind="missing",
+        tmp_path,
+        enabled=True,
+        ready_url="http://gpu.test:8000/health",
+        dry_run=False,
+        previous_release=True,
+        snapshot_kind="missing",
     )
     assert result.returncode == 0, result.stdout + result.stderr
     previous = release_root / "previous"
     assert previous.resolve().name == "old release"
     assert {path.name for path in (previous / "systemd").iterdir()} == {
-        "gpu-lifecycle.env", "acx-gpu.conf", "acx-gpu-start.service",
-        "acx-gpu-start.timer", "acx-gpu-reap.service", "acx-gpu-reap.timer",
+        "gpu-lifecycle.env",
+        "acx-gpu.conf",
+        "acx-gpu-start.service",
+        "acx-gpu-start.timer",
+        "acx-gpu-reap.service",
+        "acx-gpu-reap.timer",
     }
 
 
@@ -1139,6 +1215,11 @@ def test_fail_safe_guard_precedes_live_release_and_effective_artifact_mutations(
     assert guard < fence < switch < artifact_write < prove_reaper
     assert "sudo systemctl start acx-gpu-reap.service" in source
     assert source.index("sudo systemctl start acx-gpu-reap.service") < rearm_start
+    assert "load_snapshots_ready_for_reaper_proof" in source
+    assert "${load_snapshot_proof_function}" in transaction
+    assert source.index("if load_snapshots_ready_for_reaper_proof; then") < source.index(
+        "sudo systemctl start acx-gpu-reap.service"
+    )
     assert "sudo systemctl stop acx-gpu-start.service" in source
     assert "systemctl is-active --quiet acx-gpu-start.service" in source
     assert "flock --wait 120" in source
@@ -1192,3 +1273,47 @@ def test_failed_synchronous_reaper_never_enables_start_timer(tmp_path: Path) -> 
     assert "<--property=FragmentPath>" not in calls
     assert "<--property=DropInPaths>" not in calls
     assert "<--property=ExecStart>" not in calls
+
+
+def test_missing_load_snapshots_do_not_block_initial_gpu_lifecycle_convergence(
+    tmp_path: Path,
+) -> None:
+    """Fresh hosts have load dirs but no describe-load.json yet.
+
+    Runtime reaping stays fail-closed (the fake reaper exits 1). Initial
+    convergence must still enable the timers so deploy prod can publish
+    snapshots before the first OnActiveSec tick.
+    """
+    result, calls = _run_lifecycle(
+        tmp_path,
+        enabled=True,
+        ready_url="http://10.0.1.36:8000/health",
+        dry_run=False,
+        load_snapshots=False,
+        reaper_rc=1,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "systemctl <enable> <--now> <acx-gpu-reap.timer>" in calls
+    assert "systemctl <enable> <--now> <acx-gpu-start.timer>" in calls
+    assert "systemctl <start> <acx-gpu-reap.service>" not in calls
+    assert "deferring immediate reaper proof" in result.stderr
+
+
+def test_published_load_snapshots_still_prove_the_reaper_before_start(
+    tmp_path: Path,
+) -> None:
+    result, calls = _run_lifecycle(
+        tmp_path,
+        enabled=True,
+        ready_url="http://10.0.1.36:8000/health",
+        dry_run=False,
+        load_snapshots=True,
+        reaper_rc=0,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "systemctl <start> <acx-gpu-reap.service>" in calls
+    assert calls.index("systemctl <start> <acx-gpu-reap.service>") < calls.index(
+        "systemctl <enable> <--now> <acx-gpu-start.timer>"
+    )

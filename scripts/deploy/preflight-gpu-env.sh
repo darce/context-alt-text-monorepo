@@ -724,6 +724,85 @@ while raw:
     printf "MANUAL STOP fallback: oci compute instance action --action STOP --instance-id '%s'\n" "$instance_id"
 }
 
+preflight_published_load_snapshots() {
+    local load_dir="${ACX_DESCRIBE_LOAD_DIR:-/run/acx-write}"
+    local stale_seconds="${ACX_DESCRIBE_LOAD_STALE_SECONDS:-120}"
+    local now_epoch="${ACX_NOW_EPOCH:-$(date +%s)}"
+    local environment snapshot
+    local future_skew_tolerance_seconds=5
+
+    if [[ ! "$stale_seconds" =~ ^[1-9][0-9]*$ ]]; then
+        echo "ERROR [12] ACX_DESCRIBE_LOAD_STALE_SECONDS must be a positive integer." >&2
+        exit 1
+    fi
+    if [[ ! "$now_epoch" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+        echo "ERROR [12] ACX_NOW_EPOCH must be numeric." >&2
+        exit 1
+    fi
+    [[ -d "$load_dir" ]] || return 0
+    for environment in dev dev-fir staging prod; do
+        snapshot="${load_dir}/${environment}/describe-load.json"
+        [[ -e "$snapshot" ]] || continue
+        if ! python3 - "$snapshot" "$now_epoch" "$stale_seconds" "$future_skew_tolerance_seconds" <<'PY'
+import json
+import math
+import sys
+
+path, now_raw, budget_raw, skew_raw = sys.argv[1:]
+
+
+def fail(message):
+    print(f"{path}: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+try:
+    now = float(now_raw)
+    budget = float(budget_raw)
+    skew = float(skew_raw)
+except ValueError as exc:
+    fail(f"internal freshness bounds are not numeric: {exc}")
+
+try:
+    with open(path, encoding="utf-8") as snapshot_file:
+        payload = json.load(snapshot_file)
+except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+    fail(f"snapshot must contain valid JSON: {exc}")
+
+if not isinstance(payload, dict):
+    fail("snapshot root must be an object")
+
+written_at = payload.get("written_at")
+if (
+    isinstance(written_at, bool)
+    or not isinstance(written_at, (int, float))
+    or not math.isfinite(written_at)
+):
+    fail("written_at must be finite epoch seconds")
+
+for field in ("queue_depth", "in_flight"):
+    if field not in payload:
+        fail(f"{field} is required")
+    value = payload[field]
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        fail(f"{field} must be a non-negative integer")
+
+if "batch_in_progress" in payload and not isinstance(payload["batch_in_progress"], bool):
+    fail("batch_in_progress must be a boolean when present")
+
+age = now - float(written_at)
+if age < -skew:
+    fail(f"written_at exceeds {skew:g}s future-skew tolerance: {written_at}")
+if age > budget:
+    fail(f"stale load snapshot: age {age:g}s exceeds {budget:g}s budget")
+PY
+        then
+            echo "ERROR [12] describe-load snapshot ${snapshot} failed freshness/schema validation." >&2
+            exit 1
+        fi
+    done
+}
+
 validate_side() {
     local role="$1" file="$2"
     local adapter endpoint_url endpoint_api_key snapshot_dir state_path stale_seconds
@@ -854,6 +933,7 @@ validate_side() {
 
 if (( check_reaper )); then
     preflight_gpu_reaper
+    preflight_published_load_snapshots
 fi
 
 validate_runtime_gpu_settings "$producer_env"

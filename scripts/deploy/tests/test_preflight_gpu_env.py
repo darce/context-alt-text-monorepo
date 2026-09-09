@@ -198,6 +198,7 @@ def run_preflight(
     systemctl_script: str | None = None,
     dns_address: str | None = None,
     group_10001_present: bool = True,
+    extra_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     producer_file = tmp_path / "producer.env"
     demo_file = tmp_path / "demo.env"
@@ -255,6 +256,9 @@ esac
     if dns_address is not None:
         env["FAKE_DNS_ADDRESS"] = dns_address
     env["FAKE_GROUP_10001_PRESENT"] = "1" if group_10001_present else "0"
+    env.setdefault("ACX_DESCRIBE_LOAD_DIR", str(tmp_path / "no-load-snapshots"))
+    if extra_env:
+        env.update(extra_env)
     args = [str(SCRIPT)]
     if check_reaper:
         args.append("--check-reaper")
@@ -1753,10 +1757,20 @@ def test_runbook_requires_reaper_fail_fast_and_checksum_bound_reviewed_artifact(
     assert "MANUAL STOP fallback" in runbook
     assert "ls -t dist/alt-context-*.zip" not in runbook
     assert "PLUGIN_ZIP_SHA256=replace-with-reviewed-sha256" in runbook
-    assert 'shasum -a 256 "$PLUGIN_ZIP"' in runbook
+    assert '"$GPU_SNAPSHOT_SHA256" "$PLUGIN_ZIP"' in deploy_block
+    assert "shasum -a 256" not in deploy_block
     assert "command -v sha256sum" in deploy_block
     assert "GPU_SNAPSHOT_SHA256=gsha256sum" in deploy_block
     assert "export GPU_SNAPSHOT_SHA256" in deploy_block
+    assert deploy_block.index("GPU_SNAPSHOT_ENV=prod make check-gpu-snapshots-live") < deploy_block.index(
+        "ACTUAL_PLUGIN_ZIP_SHA256="
+    )
+    assert deploy_block.rindex("GPU_SNAPSHOT_ENV=prod make check-gpu-snapshots-live") < deploy_block.index(
+        "ACX_DEMO_GPU_PREFLIGHT=1"
+    )
+    assert deploy_block.index("ACTUAL_PLUGIN_ZIP_SHA256=") < deploy_block.rindex(
+        "GPU_SNAPSHOT_ENV=prod make check-gpu-snapshots-live"
+    )
     assert "printf 'Deploying reviewed plugin artifact: %s\\n'" in runbook
     assert "oci compute instance action --action STOP" in runbook
 
@@ -1768,6 +1782,9 @@ def test_runbook_converges_gpu_lifecycle_before_prod_deploy() -> None:
 
     assert deploy_block.index("scripts/deploy/recognition-service.sh gpu-lifecycle") < deploy_block.index(
         "CONFIRM=PROMOTE scripts/deploy/recognition-service.sh deploy prod"
+    )
+    assert deploy_block.index("CONFIRM=PROMOTE scripts/deploy/recognition-service.sh deploy prod") < deploy_block.index(
+        "Missing describe-load snapshot"
     )
 
 
@@ -1783,12 +1800,7 @@ def test_runbook_deploys_the_checksum_bound_artifact_not_newest_mtime(tmp_path: 
     unreviewed.write_bytes(b"unreviewed")
     os.utime(reviewed, (1, 1))
     os.utime(unreviewed, (2, 2))
-    reviewed_sha256 = subprocess.run(
-        ["shasum", "-a", "256", str(reviewed)],
-        text=True,
-        capture_output=True,
-        check=True,
-    ).stdout.split()[0]
+    reviewed_sha256 = hashlib.sha256(reviewed.read_bytes()).hexdigest()
     deploy_block = deploy_block.replace(
         "CONFIRM=PROMOTE scripts/deploy/recognition-service.sh deploy prod", ":"
     ).replace("replace-with-reviewed-sha256", reviewed_sha256)
@@ -1800,6 +1812,20 @@ def test_runbook_deploys_the_checksum_bound_artifact_not_newest_mtime(tmp_path: 
         encoding="utf-8",
     )
     fake_terraform.chmod(0o700)
+    fake_digest = fake_bin / "sha256sum"
+    fake_digest.write_text(
+        "#!/usr/bin/env bash\n"
+        "python3 -c 'import hashlib,sys; p=sys.argv[1];"
+        ' print(hashlib.sha256(open(p,"rb").read()).hexdigest(), p)\' "$1"\n',
+        encoding="utf-8",
+    )
+    fake_digest.chmod(0o700)
+    fake_shasum = fake_bin / "shasum"
+    fake_shasum.write_text(
+        "#!/usr/bin/env bash\necho 'shasum must not be required for plugin hashing' >&2\nexit 1\n",
+        encoding="utf-8",
+    )
+    fake_shasum.chmod(0o700)
     fake_lifecycle = tmp_path / "scripts/deploy/recognition-service.sh"
     fake_lifecycle.parent.mkdir(parents=True)
     fake_lifecycle.write_text(
@@ -1831,6 +1857,84 @@ def test_runbook_deploys_the_checksum_bound_artifact_not_newest_mtime(tmp_path: 
         return
     assert result.returncode == 0, result.stderr
     assert (tmp_path / "artifact.log").read_text(encoding="utf-8") == str(reviewed.relative_to(tmp_path))
+
+
+def test_gpu_lifecycle_runbook_repeats_live_snapshot_gate_before_deploy_demo() -> None:
+    runbook = (ROOT / "docs/runbooks/gpu-demo-env-flip.md").read_text(encoding="utf-8")
+    deploy_block = runbook.split("## 3. Deploy in producer-then-consumer order", 1)[1]
+    deploy_block = deploy_block.split("```bash\n", 1)[1].split("```", 1)[0]
+    first = deploy_block.index("GPU_SNAPSHOT_ENV=prod make check-gpu-snapshots-live")
+    hashed = deploy_block.index('ACTUAL_PLUGIN_ZIP_SHA256="$("$GPU_SNAPSHOT_SHA256"')
+    second = deploy_block.rindex("GPU_SNAPSHOT_ENV=prod make check-gpu-snapshots-live")
+    demo = deploy_block.index("ACX_DEMO_GPU_PREFLIGHT=1")
+
+    assert first < hashed < second < demo
+    assert first != second
+
+
+def test_gpu_lifecycle_runbook_rejects_snapshot_expiry_before_deploy_demo(tmp_path: Path) -> None:
+    runbook = (ROOT / "docs/runbooks/gpu-demo-env-flip.md").read_text(encoding="utf-8")
+    deploy_block = runbook.split("## 3. Deploy in producer-then-consumer order", 1)[1]
+    deploy_block = deploy_block.split("```bash\n", 1)[1].split("```", 1)[0]
+    reviewed = tmp_path / "dist/alt-context-reviewed.zip"
+    reviewed.parent.mkdir()
+    reviewed.write_bytes(b"reviewed")
+    reviewed_sha256 = hashlib.sha256(reviewed.read_bytes()).hexdigest()
+    deploy_block = deploy_block.replace(
+        "CONFIRM=PROMOTE scripts/deploy/recognition-service.sh deploy prod", ":"
+    ).replace("replace-with-reviewed-sha256", reviewed_sha256)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    (fake_bin / "terraform").write_text(
+        "#!/usr/bin/env bash\nprintf '%s\\n' 'ocid1.instance.oc1.phx.fakegpu'\n",
+        encoding="utf-8",
+    )
+    (fake_bin / "sha256sum").write_text(
+        "#!/usr/bin/env bash\n"
+        "python3 -c 'import hashlib,sys; p=sys.argv[1];"
+        ' print(hashlib.sha256(open(p,"rb").read()).hexdigest(), p)\' "$1"\n',
+        encoding="utf-8",
+    )
+    (fake_bin / "ssh").write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    (fake_bin / "make").write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+if [ "${1:-}" = check-gpu-snapshots-live ]; then
+  echo check >>"$LIVE_CHECK_LOG"
+  if [ "$(wc -l <"$LIVE_CHECK_LOG" | tr -d ' ')" -ge 2 ]; then
+    echo 'stale load snapshot: age exceeded budget' >&2
+    exit 1
+  fi
+  exit 0
+fi
+if [ "${1:-}" = deploy-demo ]; then
+  printf '%s' "$PLUGIN_ZIP" > "$MAKE_ARTIFACT_LOG"
+fi
+exit 0
+""",
+        encoding="utf-8",
+    )
+    for path in fake_bin.iterdir():
+        path.chmod(0o700)
+    fake_lifecycle = tmp_path / "scripts/deploy/recognition-service.sh"
+    fake_lifecycle.parent.mkdir(parents=True)
+    fake_lifecycle.write_text(
+        '#!/usr/bin/env bash\n[ "$1" = gpu-lifecycle ] || exit 99\n',
+        encoding="utf-8",
+    )
+    fake_lifecycle.chmod(0o700)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    env["MAKE_ARTIFACT_LOG"] = str(tmp_path / "artifact.log")
+    env["LIVE_CHECK_LOG"] = str(tmp_path / "live-checks.log")
+    env["GPU_READY_URL"] = "http://127.0.0.1:8000/health"
+
+    result = subprocess.run(["bash"], input=deploy_block, cwd=tmp_path, env=env, text=True, capture_output=True)
+
+    assert result.returncode != 0
+    assert "stale load snapshot" in result.stderr
+    assert not (tmp_path / "artifact.log").exists()
+    assert (tmp_path / "live-checks.log").read_text(encoding="utf-8").count("check") == 2
 
 
 def test_runbook_final_verification_requires_uncached_live_gpu_inference() -> None:
@@ -2620,6 +2724,76 @@ def test_11_reaper_rejects_inaccessible_lease_path(tmp_path: Path) -> None:
     result = run_preflight(tmp_path, check_reaper=True, systemctl_script=unit)
     assert result.returncode != 0
     assert "lease" in result.stderr
+
+
+def _write_load_snapshot(root: Path, environment: str, *, written_at: int, queue_depth: int = 0) -> Path:
+    path = root / environment / "describe-load.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "queue_depth": queue_depth,
+                "in_flight": 0,
+                "batch_in_progress": False,
+                "written_at": written_at,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_gpu_lifecycle_preflight_rejects_stale_published_load_snapshot(tmp_path: Path) -> None:
+    reaper_env = tmp_path / "gpu-lifecycle.env"
+    reaper_env.write_text("GPU_INSTANCE_ID=ocid1.instance.oc1.iad.fakeinstance\nMAX_LEASE_SECONDS=3600\n")
+    load_dir = tmp_path / "load"
+    now = 1_700_000_000
+    _write_load_snapshot(load_dir, "prod", written_at=now - 121)
+    result = run_preflight(
+        tmp_path,
+        check_reaper=True,
+        systemctl_script=reaper_systemctl_script(reaper_env),
+        extra_env={
+            "ACX_DESCRIBE_LOAD_DIR": str(load_dir),
+            "ACX_NOW_EPOCH": str(now),
+            "ACX_DESCRIBE_LOAD_STALE_SECONDS": "120",
+        },
+    )
+    assert result.returncode != 0
+    assert "ERROR [12]" in result.stderr
+    assert "stale load snapshot" in result.stderr
+
+
+def test_gpu_lifecycle_preflight_accepts_fresh_published_load_snapshot(tmp_path: Path) -> None:
+    reaper_env = tmp_path / "gpu-lifecycle.env"
+    reaper_env.write_text("GPU_INSTANCE_ID=ocid1.instance.oc1.iad.fakeinstance\nMAX_LEASE_SECONDS=3600\n")
+    load_dir = tmp_path / "load"
+    now = 1_700_000_000
+    _write_load_snapshot(load_dir, "prod", written_at=now - 30)
+    result = run_preflight(
+        tmp_path,
+        check_reaper=True,
+        systemctl_script=reaper_systemctl_script(reaper_env),
+        extra_env={
+            "ACX_DESCRIBE_LOAD_DIR": str(load_dir),
+            "ACX_NOW_EPOCH": str(now),
+            "ACX_DESCRIBE_LOAD_STALE_SECONDS": "120",
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    assert "OK: GPU env preflight passed" in result.stdout
+
+
+def test_gpu_lifecycle_preflight_skips_missing_load_snapshots(tmp_path: Path) -> None:
+    reaper_env = tmp_path / "gpu-lifecycle.env"
+    reaper_env.write_text("GPU_INSTANCE_ID=ocid1.instance.oc1.iad.fakeinstance\nMAX_LEASE_SECONDS=3600\n")
+    result = run_preflight(
+        tmp_path,
+        check_reaper=True,
+        systemctl_script=reaper_systemctl_script(reaper_env),
+        extra_env={"ACX_DESCRIBE_LOAD_DIR": str(tmp_path / "absent-load")},
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_live_gpu_verifier_accepts_unterminated_env(tmp_path: Path) -> None:

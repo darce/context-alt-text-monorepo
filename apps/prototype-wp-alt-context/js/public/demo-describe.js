@@ -288,7 +288,13 @@ export const statusPresentation = (body) => {
     return { state: 'describing', message: progress === null ? 'Describing the image…' : `Describing the image… ${progress}%` };
   }
   if (body.phase === 'complete' && body.status === 'completed') {
-    return { state: 'completed', message: 'Description complete.' };
+    let message = 'Description complete, processing tier unavailable.';
+    if (body.description_tier === 'final_gpu') {
+      message = 'GPU description complete.';
+    } else if (body.description_tier === 'provisional_cpu') {
+      message = 'CPU fallback draft (not GPU final).';
+    }
+    return { state: 'completed', message };
   }
   return { state: 'failed', message: body.error?.message ?? 'The image could not be described. Please try again later.' };
 };
@@ -367,7 +373,8 @@ export const initializeDemo = (root) => {
       result.textContent = finalState.description;
       result.hidden = false;
       result.focus();
-      setState('completed', 'Description complete.');
+      const presentation = statusPresentation(finalState);
+      setState(presentation.state, presentation.message);
       retryKey = null;
       retryMedia = null;
     } catch (error) {

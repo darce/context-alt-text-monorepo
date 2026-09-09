@@ -1,5 +1,5 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { dirname, extname, join, resolve } from 'node:path';
 
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -22,27 +22,85 @@ const choose = (position: 'left' | 'right', option: 'include' | 'omit'): void =>
   fireEvent.click(within(fieldset).getByRole('radio', { name }));
 };
 
-const collectSources = (dir: string, acc: string[] = []): string[] => {
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) {
-      collectSources(full, acc);
-      continue;
-    }
-    if (full.endsWith('.ts') || full.endsWith('.tsx') || full.endsWith('.css') || full.endsWith('.scss')) {
-      acc.push(full);
-    }
-  }
-  return acc;
-};
+const SKIP_IMPORT_EXT = new Set([
+  '.css',
+  '.scss',
+  '.jpg',
+  '.jpeg',
+  '.png',
+  '.gif',
+  '.svg',
+  '.json',
+  '.woff',
+  '.woff2',
+]);
 
-const importSpecifiers = (source: string): string[] => {
-  const specs: string[] = [];
+interface ImportSpecifier {
+  spec: string;
+  typeOnly: boolean;
+}
+
+const importSpecifiers = (source: string): ImportSpecifier[] => {
+  const specs: ImportSpecifier[] = [];
   const pattern = /(?:from|import)\s+['"]([^'"]+)['"]/g;
   for (const match of source.matchAll(pattern)) {
-    specs.push(match[1]);
+    const spec = match[1];
+    const start = match.index ?? 0;
+    const lineStart = source.lastIndexOf('\n', start - 1) + 1;
+    const prefix = source.slice(lineStart, start);
+    specs.push({ spec, typeOnly: /^\s*(?:import|export)\s+type\b/.test(prefix) });
   }
   return specs;
+};
+
+const resolveRelativeImport = (fromFile: string, spec: string): string | null => {
+  if (!spec.startsWith('.')) {
+    return null;
+  }
+  if (SKIP_IMPORT_EXT.has(extname(spec))) {
+    return null;
+  }
+  const base = resolve(dirname(fromFile), spec);
+  const candidates = [base, `${base}.ts`, `${base}.tsx`, join(base, 'index.ts'), join(base, 'index.tsx')];
+  for (const candidate of candidates) {
+    if (existsSync(candidate) && statSync(candidate).isFile()) {
+      return candidate;
+    }
+  }
+  return null;
+};
+
+const collectImportGraph = (entry: string): string[] => {
+  const seen = new Set<string>();
+  const queue = [entry];
+  const unresolved: string[] = [];
+
+  while (queue.length > 0) {
+    const file = queue.pop();
+    if (file === undefined || seen.has(file)) {
+      continue;
+    }
+    seen.add(file);
+    for (const { spec, typeOnly } of importSpecifiers(readFileSync(file, 'utf8'))) {
+      if (typeOnly || !spec.startsWith('.')) {
+        continue;
+      }
+      if (SKIP_IMPORT_EXT.has(extname(spec))) {
+        continue;
+      }
+      const resolved = resolveRelativeImport(file, spec);
+      if (resolved === null) {
+        unresolved.push(`${file} -> ${spec}`);
+        continue;
+      }
+      if (!seen.has(resolved)) {
+        queue.push(resolved);
+      }
+    }
+  }
+
+  expect(unresolved, 'unresolved relative imports in the public graph').toEqual([]);
+  return [...seen];
 };
 
 describe('public recorded walkthrough boundary', () => {
@@ -135,17 +193,23 @@ describe('public recorded walkthrough boundary', () => {
     expect(seedAfter.pressPhoto.altText).toBe(SEED_ALT_TEXT);
   });
 
-  it('keeps js/guide sources and RecordedWalkthrough free of live/API imports', () => {
+  it('walks the public entry import graph and forbids live/API imports', () => {
     const pluginRoot = resolve(__dirname, '../../..');
-    const files = [
-      ...collectSources(resolve(pluginRoot, 'js/guide')),
-      resolve(pluginRoot, 'js/admin/guidedPrototype/RecordedWalkthrough.tsx'),
-    ];
+    const files = collectImportGraph(resolve(pluginRoot, 'js/guide/main.tsx'));
     const forbidden = /\/api\/|GuidedLiveDescriptionPanel|useGuidedLiveDescription/;
 
+    expect(files.some((file) => file.endsWith('GuidedFacesPanel.tsx'))).toBe(true);
+    expect(files.some((file) => file.endsWith('GuidedDescriptionReview.tsx'))).toBe(true);
+    expect(files.some((file) => file.endsWith('GuidedFaceMatchCard.tsx'))).toBe(true);
+    expect(files.some((file) => file.endsWith('state.ts'))).toBe(true);
+    expect(files.some((file) => file.includes('GuidedLiveDescriptionPanel'))).toBe(false);
+    expect(files.some((file) => file.includes('useGuidedLiveDescription'))).toBe(false);
+
     for (const file of files) {
-      const specs = importSpecifiers(readFileSync(file, 'utf8'));
-      for (const spec of specs) {
+      for (const { spec, typeOnly } of importSpecifiers(readFileSync(file, 'utf8'))) {
+        if (typeOnly) {
+          continue;
+        }
         expect(spec, `${file} imports ${spec}`).not.toMatch(forbidden);
       }
     }

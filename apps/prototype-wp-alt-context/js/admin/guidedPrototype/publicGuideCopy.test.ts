@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-import { GUIDED_COPY } from './copy';
+import { GUIDED_COPY, interpolateGuidedCopy } from './copy';
 import {
   CASE_STUDY_URL,
   PUBLIC_GUIDE_FALLBACK,
@@ -58,5 +58,17 @@ describe('public guide copy overlay', () => {
     expect(guidedCopy('nav.leave')).toBe('Leave the walkthrough');
     expect(PUBLIC_GUIDE_FALLBACK).toMatch(/Reload the page/);
     expect(guidedCopy('page.start')).toBe('Start the walkthrough');
+  });
+
+  it('uses the catalog interpolator and a single overlay copy helper', () => {
+    const overlay = readFileSync(PUBLIC_COPY, 'utf8');
+    const notes = readFileSync(resolve(here, '../pages/guided/GuidedDesignNotes.tsx'), 'utf8');
+
+    expect(overlay).not.toMatch(/const PLACEHOLDER/);
+    expect(overlay).toMatch(/interpolateGuidedCopy/);
+    expect(notes).not.toMatch(/guidedPrototype\/copy['"]/);
+    expect(notes).toMatch(/guidedPrototype\/publicGuideCopy['"]/);
+    expect(interpolateGuidedCopy('demo.key', 'Hello {name}', { name: 'Ada' })).toBe('Hello Ada');
+    expect(guidedCopy('names.include', { name: 'Ada' })).toBe('Use Ada');
   });
 });

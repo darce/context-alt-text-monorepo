@@ -4,7 +4,7 @@
  * remains the source of truth for admin guided copy (`copy.ts`).
  */
 
-import { guidedCopy as catalogCopy, type GuidedCopyKey } from './copy';
+import { guidedCopy as catalogCopy, interpolateGuidedCopy, type GuidedCopyKey } from './copy';
 
 export const CASE_STUDY_URL = 'https://darce.xyz/projects/altcontext/';
 /** Recording destination on the case study page. Distinct from CASE_STUDY_URL so Watch and Read stay different actions. */
@@ -28,23 +28,12 @@ export const PUBLIC_GUIDED_COPY = {
 export type PublicGuidedCopyKey = keyof typeof PUBLIC_GUIDED_COPY;
 export type GuideCopyKey = GuidedCopyKey | PublicGuidedCopyKey;
 
-const PLACEHOLDER = /\{(\w+)\}/g;
-
-const interpolate = (key: string, template: string, values: Record<string, string | number>): string =>
-  template.replace(PLACEHOLDER, (_match, name: string) => {
-    const value = values[name];
-    if (value === undefined) {
-      throw new Error(`Unresolved guided copy placeholder {${name}} in ${key}`);
-    }
-    return String(value);
-  });
-
 const isPublicGuidedCopyKey = (key: GuideCopyKey): key is PublicGuidedCopyKey =>
   Object.prototype.hasOwnProperty.call(PUBLIC_GUIDED_COPY, key);
 
 export const guidedCopy = (key: GuideCopyKey, values: Record<string, string | number> = {}): string => {
   if (isPublicGuidedCopyKey(key)) {
-    return interpolate(key, PUBLIC_GUIDED_COPY[key], values);
+    return interpolateGuidedCopy(key, PUBLIC_GUIDED_COPY[key], values);
   }
   return catalogCopy(key, values);
 };

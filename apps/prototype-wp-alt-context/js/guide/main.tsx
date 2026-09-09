@@ -58,12 +58,16 @@ export const mountPublicGuide = (
     </ErrorBoundary>
   );
 
+  let reactRoot: Root | undefined;
   try {
     flushSync(() => {
-      makeRoot(appHost).render(tree);
+      reactRoot = makeRoot(appHost);
+      reactRoot.render(tree);
     });
     setFallbackHidden(root, true);
-  } catch {
+  } catch (error) {
+    console.error('Public guide failed to mount', error);
+    reactRoot?.unmount();
     setFallbackHidden(root, false);
   }
 };

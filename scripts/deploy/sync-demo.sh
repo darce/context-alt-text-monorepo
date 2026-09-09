@@ -208,7 +208,14 @@ docker run --rm \
   -v /opt/acx-backend/Caddyfile.new:/etc/caddy/Caddyfile:ro \
   caddy:2-alpine \
   caddy validate --config /etc/caddy/Caddyfile
-mv Caddyfile.new Caddyfile
+# `mv` over the live Caddyfile allocates a new inode. docker-compose.caddy.yml
+# bind-mounts this one file, and a single-file bind mount pins the inode at
+# container start, so a mv'd promote never reaches the running proxy: the deploy
+# reports success while Caddy keeps serving the pre-promote config
+# (GUIDEDEPLOY-1-BR-04). Truncate in place so the mounted inode is the one we
+# just wrote.
+cat Caddyfile.new > Caddyfile
+rm -f Caddyfile.new
 mv docker-compose.caddy.yml.new docker-compose.caddy.yml
 EOF
 
@@ -224,6 +231,21 @@ docker network inspect acx-dev-fir-net >/dev/null 2>&1 || docker network create 
   --label com.docker.compose.project=acx-dev-fir \
   acx-dev-fir-net
 docker compose -f docker-compose.caddy.yml up -d
+
+# The in-place promote above only reaches Caddy when the container's mount
+# already pins the current inode. A container recreated before an earlier
+# mv-style promote is pinned to an orphaned inode that no reload can reach, so
+# compare host and container copies and recreate when they diverge. Reload
+# otherwise: it applies the new config without dropping in-flight TLS sessions.
+want_config="$(sha256sum Caddyfile | cut -d' ' -f1)"
+have_config="$(docker compose -f docker-compose.caddy.yml exec -T caddy sha256sum /etc/caddy/Caddyfile | cut -d' ' -f1)"
+if [ "$want_config" != "$have_config" ]; then
+  echo "    caddy mount diverged from /opt/acx-backend/Caddyfile; recreating"
+  docker compose -f docker-compose.caddy.yml up -d --force-recreate caddy
+else
+  docker compose -f docker-compose.caddy.yml exec -T caddy \
+    caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+fi
 docker compose -f docker-compose.caddy.yml ps
 EOF
 

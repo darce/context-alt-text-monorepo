@@ -4,46 +4,52 @@ Source of truth: `public-demo-describe.uxmap.json`. Sibling `public-demo-describ
 
 This map is the public `[acx_demo_describe]` widget. It is not the admin `describe-gpu-tier` map.
 
+This slice is UX documentation, not UI implementation.
+
 ## Tooling receipts (do not over-claim)
 
 | check | result |
 | --- | --- |
 | `command -v ux-map` / `uxmap` | absent |
 | `import workbay_canvas_mcp` | `ModuleNotFoundError` (no install/upgrade in this lane) |
-| `python3 -m json.tool …/public-demo-describe.uxmap.json` | syntax OK only — not schema validation (13832 bytes pretty-printed) |
-| consumer extra=forbid field check (mirrors `uxmap-render-parity.test.ts` model keys) | pass for this map (`public-demo-describe.uxmap.json validates against the canonical UxMap schema`) |
-| `render_ux_maps._validate_action_conditions` | prior helper check only — not official schema |
+| Critique 10316 | ran the unchanged 8-rule pack via Pydantic `model_validate(extra=allow)` and retained local extensions |
+| official strict extra=forbid | still 4 extras FAIL — local extensions, not a schema pass |
+| consumer TypeScript extra=forbid | local gate only (`uxmap-parity` / `uxmap-render-parity`) |
 | `.venv/bin/python …/render_ux_maps.py public-demo-describe` | exit 1 `OptionalRendererUnavailable`: workbay_canvas_mcp is not importable |
-| `.venv/bin/python -m pytest …/test_render_ux_maps.py -q -p no:cacheprovider` | prior 21 passed / 3339 subtests; renderer unit tests, not this map's schema/critique |
-| official `ux-map critique` / RULE_PACK | unavailable — agent-authored manual heuristic critique below, not a machine pack |
-| consumer Vitest (`uxmap-parity.test.ts` + `uxmap-render-parity.test.ts`) | this map: pass (focused `-t public-demo-describe` → 2 passed / 200 skipped). Full pair: 194 passed / 8 failed / 202 total. All 8 failures are sibling `guided-prototype.uxmap.json` (`screens.11.timed_out \| multiple_primary_actions \| ["live-keep-waiting","live-retry"]`). OWNED_MAPS `loadOwnedMap` loops throw on that JSON before this map. Not official Pydantic / RULE_PACK. |
+| official `ux-map critique` RULE_PACK / schema / gate | **not passed** — do not claim official critique, schema, or gate |
 
-Unavailable capabilities (typed follow-up, not a stall): official UxMap Pydantic load, `ux-map critique` RULE_PACK, `ux-map project`, and renderer enrollment into `render_ux_maps.contracts.json` / `render_ux_maps.visible.json`. Consumer TypeScript validation supports local extensions the older official package rejects; this lane does not claim official schema/critique. OWNED_MAPS / REQUIRED_OWNED_MAPS / HAND_AUTHORED_MAPS enrollment is this lane.
+Unavailable capabilities remain typed follow-up, not a stall: official strict UxMap load, RULE_PACK as a merge gate, `ux-map project`, and renderer enrollment into `render_ux_maps.contracts.json` / `render_ux_maps.visible.json`. Consumer TypeScript validation supports local extensions the older official package rejects. OWNED_MAPS / REQUIRED_OWNED_MAPS / HAND_AUTHORED_MAPS enrollment is GPU-LAUNCH-1. Full-file Vitest is blocked by sibling `guided-prototype.uxmap.json` (outside this lane); do not weaken the consumer validator.
 
-## Observed vs proposed (read this first)
+## Observed-feature vs observed-production vs proposed (read this first)
 
-| kind | states / behaviour | implemented? |
+| kind | states / behaviour | where |
 | --- | --- | --- |
-| OBSERVED | idle selection; queued; warming; describing; complete generic alt text; HTTP 429 limited; error/failed; 120s poll timeout | yes |
-| OBSERVED | instance-scoped radios `acx-demo-media-N`, read from the submitting form only | yes (JS form query, not a global `acx-demo-media` name) |
-| OBSERVED | `gpu_state` may appear on the public envelope and is unused by `statusPresentation` | yes (telemetry, not a result tier) |
+| OBSERVED-UI | idle; queued; warming; describing; generic **Description complete.** plus alt text; HTTP 429; error/failed; 120s poll timeout; live polite; focus on result | this branch (and would be production if deployed) |
+| OBSERVED-FEATURE wire | completed nonempty public envelope emits `description_tier`; parser and `pollRun` preserve `provisional_cpu` \| `final_gpu` \| `null`; missing legacy becomes explicit `null` | this feature branch only |
+| OBSERVED-PRODUCTION | public demo is **not deployed**; no Qwen-on-GPU proof | production |
+| OBSERVED | instance-scoped radios `acx-demo-media-N`, submitting form only | yes |
+| OBSERVED | `gpu_state` may appear and is unused by presentation | yes (telemetry, not a result tier) |
 | OBSERVED | same-page retry reuses in-memory `idempotency_key`; completed run clears it | yes |
 | OBSERVED | refresh drops the in-memory key and `run_id` | yes |
-| OBSERVED | public complete payload is `alt_text_draft` only; `item.tier` is dropped | yes |
-| PRODUCER (not public UI) | `DescriptionResultTier`: `provisional_cpu` \| `final_gpu` | producer only |
-| PROPOSED | typed public complete states: CPU fallback / GPU final / unknown | **no** — do not infer from `gpu_state` |
-| PROPOSED | refresh-safe same-run resume via existing owner + idempotency, not a new paid job | **no** |
-| DESIGN Q | durable handle to re-read a terminal run after inflight release, without weakening 403 `run_not_available` | **no** |
+| PRODUCER | `DescriptionResultTier`: `provisional_cpu` \| `final_gpu` | producer enum |
+| PROPOSED-UI | typed complete labels from parsed `description_tier` (below) | **no** — do not infer from `gpu_state` |
+| PROPOSED INT-07 | clearly marked illustrative example before explicit live Describe | **no** — `preview_required` stays false |
+| PROPOSED | refresh-safe same-run resume via existing owner + idempotency | **no** |
+| DESIGN Q | durable handle to re-read a terminal run after inflight release | **no** |
+
+Do not paint the observed map green because `preview_required` is false. That flag is current behaviour, not a shipped preview.
 
 ## Source anchors (workspace-relative)
 
 | fact | path |
 | --- | --- |
 | Shortcode idle / limited / empty-allowlist markup | `apps/prototype-wp-alt-context/src/public/class-public-demo-shortcode.php` (`render`, instance-scoped `$group_name = 'acx-demo-media-' . $instance`) |
-| Client states, 120s ceiling, envelope parse, in-memory retry key | `apps/prototype-wp-alt-context/js/public/demo-describe.js` (`PUBLIC_DEMO_CLIENT_DEADLINE_CEILING_SECONDS`, `statusPresentation`, `initializeDemo`) |
-| Radio lookup is per-form checked input, not `FormData(form).get('acx-demo-media')` | `apps/prototype-wp-alt-context/js/public/demo-describe.js` (`form.querySelector('input[type="radio"]:checked')`) |
+| Client states, 120s ceiling, envelope parse, in-memory retry key | `apps/prototype-wp-alt-context/js/public/demo-describe.js` (`PUBLIC_DEMO_CLIENT_DEADLINE_CEILING_SECONDS`, `parsePublicDemoEnvelope`, `pollRun`, `statusPresentation`, `initializeDemo`) |
+| Radio lookup is per-form checked input | `apps/prototype-wp-alt-context/js/public/demo-describe.js` (`form.querySelector('input[type="radio"]:checked')`) |
 | Public REST submit/status, inflight bulkhead, 403 after release | `apps/prototype-wp-alt-context/src/api/class-public-demo-describe-controller.php` (`submit`, `status`, `public_envelope_response`) |
-| Complete text drops `item.tier` after run/token/media checks | `apps/prototype-wp-alt-context/src/api/class-public-demo-describe-controller.php` (`public_description`) |
+| Completed nonempty envelope emits `description_tier` | `apps/prototype-wp-alt-context/src/api/class-public-demo-describe-controller.php` (`public_description`, `normalize_public_description_tier`) |
+| Parser/pollRun preserve known tokens and explicit null | `apps/prototype-wp-alt-context/js/public/demo-describe.js` (`DESCRIPTION_RESULT_TIERS`) |
+| Rendered complete label is still generic | `apps/prototype-wp-alt-context/js/public/demo-describe.js` (`statusPresentation` → `Description complete.`) |
 | Producer tier enum | `apps/prototype-description-service/scene/domain/description.py` (`DescriptionResultTier`) |
 | Status tokens + icon/color | `apps/prototype-wp-alt-context/js/public/demo-describe.css` (`data-state` queued/warming/describing/completed/limited/error/failed) |
 | Error vocabulary | `apps/prototype-wp-alt-context/src/public/class-public-demo-error-code.php` |
@@ -64,6 +70,8 @@ Admin `describe-gpu-tier` is a different product surface. Do not copy its GPU ch
 
 Empty submit (no radio in this form): `data-state=error`, "Choose an image before requesting a description." Other instances' radios do not leak.
 
+Allowlist thumbnails here are **input choices**, not an outcome sample (INT-07; canon interaction-ux.md ~164; adjudication 10317).
+
 ## Screen 2 — OBSERVED queued → warming → describing
 
 ```
@@ -81,14 +89,15 @@ Empty submit (no radio in this form): `data-state=error`, "Choose an image befor
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Screen 3 — OBSERVED complete (generic alt text, no tier)
+## Screen 3 — OBSERVED-UI complete (generic label; wire unused)
 
 ```
-┌ data-state=completed  ✓ Description complete.                          ┐
+┌ data-state=completed  ✓ Description complete.     ← generic UI label   ┐
 │ ┌ result (focus moved here) ─────────────────────────────────────────┐ │
 │ │ A person walking beside a lake under a cloudy sky.                 │ │
-│ │ (alt_text_draft only — no provisional_cpu / final_gpu / unknown)   │ │
+│ │ (description text is separate from the status label)               │ │
 │ └────────────────────────────────────────────────────────────────────┘ │
+│ JSON may include description_tier on this branch; presentation ignores │
 │ [ Describe selected image ]  next click mints a new idempotency key    │
 └────────────────────────────────────────────────────────────────────────┘
 ```
@@ -109,7 +118,7 @@ Empty submit (no radio in this form): `data-state=error`, "Choose an image befor
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-Same-page retry of the same media reuses the key. Refresh (exit `refresh-page-drops-retry-key`) drops it. Timeout copy currently pushes refresh.
+Same-page retry of the same media reuses the key. Refresh (exit `refresh-page-drops-retry-key`) drops it. Timeout copy currently pushes refresh. The exit node stays `kind=exit` / `states=default` (RLSE-04: do not invent extra journey states on an exit).
 
 ## Screen 5 — OBSERVED PHP substitutes (no client)
 
@@ -122,38 +131,61 @@ Same-page retry of the same media reuses the key. Refresh (exit `refresh-page-dr
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Screen 6 — PROPOSED only (not implemented — ASCII is a sketch, not inventory)
+## Screen 6 — PROPOSED visible-tier labels (NOT SHIPPED UI)
+
+Wire exists on this feature branch. Production is not deployed. Do not treat this sketch as inventory.
+
+Keep description text in `z-result`, separate from the status label. Keep existing live polite and focus-on-result behaviour. Never infer from `gpu_state`.
 
 ```
-┌ PROPOSED complete with typed description tier  (NOT SHIPPED)           ┐
-│ ✓ Description complete.                                                │
-│   CPU fallback draft  |  GPU final  |  unknown (tier absent)           │
-│ Must come from item.tier / explicit absence — never from gpu_state.    │
+┌ PROPOSED complete labels (NOT SHIPPED UI)                              ┐
+│ description text stays in z-result, unchanged                          │
+│                                                                        │
+│ final_gpu       →  GPU description complete.                           │
+│ provisional_cpu →  CPU fallback draft (not GPU final).                 │
+│ null            →  Description complete, processing tier unavailable.  │
+│                                                                        │
+│ Live polite + focus stay as today. 120s ceiling stays.                 │
+│ In-memory retry stays. No new paid job / history / resume weakening.   │
 └────────────────────────────────────────────────────────────────────────┘
-┌ PROPOSED same-run resume after refresh  (NOT SHIPPED)                  ┐
-│ Bound: existing inflight owner + idempotency key. Not a new paid job.  │
-│ 120s poll ceiling stays. Bulkhead, nonce, allowlist stay.              │
-│ Terminal re-read after inflight release is an open authorization Q.    │
+```
+
+## Screen 7 — PROPOSED INT-07 illustrative example (NOT SHIPPED)
+
+Current `submit-describe.preview_required` is **false** and must stay false until this is implemented. Do not mark the observed map complete by flipping that flag.
+
+Test intent when implemented: the example is labeled illustrative; it appears before the visitor explicitly chooses Describe; it is not a live or GPU receipt; the result zone still shows the actual description, never the example.
+
+```
+┌ PROPOSED illustrative example (NOT SHIPPED; INT-07)                    ┐
+│ [Example — not a live description] A path beside a lake at dusk.       │
+│ Shown before the visitor explicitly chooses Describe.                  │
+│ Never a GPU receipt. Never substitutes for the actual result.          │
+│ Thumbnails above remain input choices, not this example.               │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Manual heuristic critique
 
-Canon: https://github.com/darce/heuristics-canon (stable IDs; not pinned). Also DDIA latency, Release It!, PRINCIPLES. This is an agent-authored manual heuristic critique. It is not `ux-map critique` output.
+Canon: https://github.com/darce/heuristics-canon (stable IDs; not pinned). Also DDIA latency, Release It!, PRINCIPLES. This is documentation of prior findings, not a claim that official `ux-map critique` passed.
 
 ### High
 
-- **HAI-05 / HAI-08 / PROV-06 / DATA-13:** OBSERVED complete is generic alt text. Producer `DescriptionResultTier` exists (`provisional_cpu` / `final_gpu`) but `public_description` returns `alt_text_draft` only after run/token/media checks. A visitor cannot tell CPU fallback from GPU final. Map keeps proposed typed states out of the observed inventory so planning cannot treat them as shipped.
+- **INT-07:** `submit-describe.preview_required` is false. Adjudication 10317: allowlist thumbnails are input, not an outcome sample (canon interaction-ux.md ~164). A costly live Describe still has no implemented preview of the *result*. Proposed fix is a clearly marked illustrative example before explicit Describe — documented above, not shipped. Do not set `preview_required` true on the observed action until that ships.
 
-- **INT-10 vs timeout copy:** OBSERVED 120s stop re-enables the form and keeps the in-memory key, but `POLL_TIMEOUT_MESSAGE` tells the visitor to refresh, which drops that key. Recovery that would reuse the existing trigger is hidden by the copy. Same-page retry is implemented; refresh-safe resume is not.
+- **HAI-05 / HAI-08 / PROV-06 / DATA-13:** OBSERVED-UI complete is still the generic label. OBSERVED-FEATURE wire now carries `description_tier` on this branch (PHP 2090, parser 2093). A visitor still cannot tell CPU fallback from GPU final in the rendered UI. OBSERVED-PRODUCTION is not deployed and is not Qwen proof. Proposed typed labels stay out of the observed inventory.
+
+- **INT-10 vs timeout copy:** OBSERVED 120s stop re-enables the form and keeps the in-memory key, but `POLL_TIMEOUT_MESSAGE` tells the visitor to refresh, which drops that key. Same-page retry is implemented; refresh-safe resume is not.
 
 ### Medium
 
-- **RES-02 / RES-03 / INT-08 / CARD-09 / DDIA latency:** The public contract ceiling is 120s per poll, even when `deadline_seconds` is warmup+inference (default 510+180). Warming copy says a cold start can take several minutes. The bound is real and honest as a stop; it is not a GPU-ready guarantee. Do not raise the ceiling in this map.
+- **RLSE-04:** critique warned that the refresh exit only has `states=default`. That is a **scope mismatch**, not a missing journey: `refresh-page-drops-retry-key` is `kind=exit`. Retain `exit` / `default` and explain; do not invent loading/error states for a page unload.
 
-- **API-02 / API-04 / RLSE-03:** `GET …/runs/{run_id}` authorizes only the current inflight owner. Terminal status releases the bulkhead; a later GET is 403 `acx_public_demo_run_not_available`. That is a security bulkhead, not a missing public history page. A durable terminal-run handle is a design question; weakening that 403 is out of bounds.
+- **RES-02 / RES-03 / INT-08 / CARD-09 / DDIA latency:** The public contract ceiling is 120s per poll, even when `deadline_seconds` is warmup+inference (default 510+180). Warming copy says a cold start can take several minutes. Do not raise the ceiling in this map.
 
-- **TEST-15 / AGT-06:** Envelope `gpu_state` is accepted and unused. A later UI that maps `warming|ready` onto CPU/GPU result tiers would be a mutant of this map. Kill that inference; proposed tier is `item.tier` or explicit unknown.
+- **API-02 / API-04 / RLSE-03:** `GET …/runs/{run_id}` authorizes only the current inflight owner. Terminal status releases the bulkhead; a later GET is 403 `acx_public_demo_run_not_available`. Refresh-safe authorization remains an open design question. Weakening that 403 is out of bounds.
+
+- **TEST-15 / AGT-06:** Envelope `gpu_state` is accepted and unused. A later UI that maps `warming|ready` onto CPU/GPU result tiers would be a mutant of this map. Kill that inference; proposed tier copy is parsed `description_tier` only.
 
 ### Low
 
@@ -163,8 +195,8 @@ Canon: https://github.com/darce/heuristics-canon (stable IDs; not pinned). Also 
 
 - **RLSE-03 / Release It! bulkhead:** Rate limit, daily cap, and one inflight public run stay. Resume must not add a second paid job.
 
-- Tooling: official schema/critique pack was not run. Consumer TypeScript validation (local extensions included) is the machine gate; official Pydantic load is still unavailable. This slice enrolls the map in `OWNED_MAPS`, `REQUIRED_OWNED_MAPS`, and `HAND_AUTHORED_MAPS` (Owner: GPU-LAUNCH-1). Renderer `visible.json` / `contracts.json` stay unchanged because the sanctioned renderer has never generated this map. Full-file Vitest is blocked by sibling `guided-prototype.uxmap.json` (outside this lane); do not weaken the consumer validator or quarantine this map.
+- Tooling: official schema/critique pack is **not** a pass. Critique 10316 retained extensions under extra=allow; official strict still fails 4 extras. Consumer TypeScript validation is the machine gate used here. Renderer `visible.json` / `contracts.json` stay unchanged. Full-file Vitest is blocked by sibling `guided-prototype.uxmap.json` (outside this lane).
 
 ## What this lane did not do
 
-No UI, PHP, JSON SSOT, lockfile, renderer source, or renderer snapshot edits. No merge, deploy, or reviewer substitute.
+No UI, PHP, public JS, lockfile, renderer source, snapshot, or validator edits. No merge, deploy, or reviewer substitute. This is UX documentation of on-feature wire vs still-generic UI vs undeployed production.

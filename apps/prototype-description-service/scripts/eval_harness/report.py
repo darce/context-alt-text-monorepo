@@ -2995,6 +2995,19 @@ def _markdown(scored: dict[str, Any]) -> str:
         lines.append(f"- ⚠️ **low_sample_warning**: {_fmt_prov(prov.get('low_sample_warning'))}")
     if prov.get("quality_floor_caveat"):
         lines.append(f"- quality_floor_caveat: {_fmt_prov(prov.get('quality_floor_caveat'))}")
+    coverage_gaps = prov.get("coverage_gaps")
+    if isinstance(coverage_gaps, Mapping):
+        lines += ["", "## Corpus coverage audit", ""]
+        for field, info in sorted(coverage_gaps.items()):
+            if not isinstance(info, Mapping):
+                continue
+            lines.append(
+                f"- {field}={_fmt_prov(info.get('populated'))}/{_fmt_prov(info.get('total'))} "
+                f"(threshold={_fmt_prov(info.get('threshold'))}; "
+                f"below_threshold={_fmt_prov(info.get('below_threshold'))}; "
+                f"pi_zero={_fmt_prov(info.get('pi_zero'))}) — "
+                f"{_fmt_prov(info.get('reason'), default='no reason recorded')}"
+            )
     verdict = scored.get("verdict") or {}
     if verdict:
         rate = verdict.get("wrong_name_rate")

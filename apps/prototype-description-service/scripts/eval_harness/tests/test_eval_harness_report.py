@@ -293,6 +293,15 @@ def test_live_score_stamps_mapping_corpus_coverage_audit() -> None:
     assert stamped["demographic_cohort"]["pi_zero"] is True
 
 
+def test_markdown_surfaces_live_corpus_coverage_audit() -> None:
+    """Operators must see metric backing gaps without opening JSON (AUDIT-07)."""
+    _json_doc, markdown = build_reports(_run_record(), _manifest_entries())
+    assert "## Corpus coverage audit" in markdown
+    assert "reference_facts=0/3" in markdown
+    assert "face_boxes=2/3" in markdown
+    assert "below_threshold=true" in markdown
+
+
 def test_markdown_renders_scored_detection_line() -> None:
     _json_doc, md = build_reports(_run_record(), _manifest_entries())
     _assert_scored_detection_markdown(md, tp=_DEFAULT_TP, fp=_DEFAULT_FP, fn=_DEFAULT_FN)

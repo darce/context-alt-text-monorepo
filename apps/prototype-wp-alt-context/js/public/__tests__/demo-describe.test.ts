@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -9,6 +12,19 @@ import {
   statusPresentation,
   initializeDemo,
 } from '../demo-describe.js';
+
+const radioFixtureDir = join(dirname(fileURLToPath(import.meta.url)), 'fixtures/public-demo-radio');
+const ACTUAL_SHORTCODE_TWO_INSTANCES = readFileSync(join(radioFixtureDir, 'two-instances.html'), 'utf8');
+const RADIO_SOURCE_ANCHORS = JSON.parse(
+  readFileSync(join(radioFixtureDir, 'source-anchors.json'), 'utf8'),
+) as {
+  expected_names: string[];
+  forbidden_simplified_name: string;
+  source_anchors: {
+    php_group_name: { literal: string };
+    js_formdata_lookup: { literal: string };
+  };
+};
 
 const running = (overrides: Record<string, unknown> = {}) => ({
   run_id: 'run-1',
@@ -234,6 +250,8 @@ describe('public demo describe polling', () => {
 
   it('clamps a large server deadline to the browser contract ceiling', async () => {
     vi.useFakeTimers();
+    // Simplified name="acx-demo-media" harness for deadline/polling only.
+    // GPU-LAUNCH-PUBLIC-RADIO-01 coverage uses fixtures/public-demo-radio/.
     document.body.innerHTML = `
       <div data-acx-demo data-submit-url="/submit" data-nonce="nonce">
         <form class="acx-demo__form">
@@ -272,6 +290,7 @@ describe('public demo describe polling', () => {
   });
 
   it('reuses a trigger key for a retry and mints a new key after completion', async () => {
+    // Simplified name="acx-demo-media" harness for retry-key behaviour only.
     document.body.innerHTML = `
       <div data-acx-demo data-submit-url="/submit" data-nonce="nonce">
         <form class="acx-demo__form">
@@ -342,6 +361,7 @@ describe('public demo describe polling', () => {
 
   it('re-enables form controls after a polling timeout', async () => {
     vi.useFakeTimers();
+    // Simplified name="acx-demo-media" harness for control re-enable only.
     document.body.innerHTML = `
       <div data-acx-demo data-submit-url="/submit" data-nonce="nonce">
         <form class="acx-demo__form">
@@ -384,3 +404,103 @@ describe('public demo describe polling', () => {
     }
   });
 });
+
+describe('public demo radio contract from actual PHP shortcode markup', () => {
+  const chooseImageMessage = 'Choose an image before requesting a description.';
+  const postBodies = (fetchImpl: ReturnType<typeof vi.fn<typeof fetch>>): Array<{ media_id: number }> =>
+    fetchImpl.mock.calls
+      .filter((call) => (call[1] as RequestInit | undefined)?.method === 'POST')
+      .map((call) => JSON.parse(String((call[1] as RequestInit).body)) as { media_id: number });
+
+  const settle = async (predicate: () => boolean): Promise<void> => {
+    for (let tick = 0; tick < 200; tick += 1) {
+      if (predicate()) return;
+      await Promise.resolve();
+      await new Promise((resolve) => { setTimeout(resolve, 0); });
+    }
+    throw new Error('timed out waiting for the demo client to settle');
+  };
+
+  const messageOf = (root: HTMLElement | undefined): string =>
+    root?.querySelector('[data-acx-demo-message]')?.textContent ?? '';
+
+  it('loads instance-scoped group names from the PHP-rendered fixture, not the simplified harness', () => {
+    expect(RADIO_SOURCE_ANCHORS.expected_names).toEqual(['acx-demo-media-1', 'acx-demo-media-2']);
+    expect(RADIO_SOURCE_ANCHORS.forbidden_simplified_name).toBe('acx-demo-media');
+    expect(RADIO_SOURCE_ANCHORS.source_anchors.php_group_name.literal).toContain("acx-demo-media-' . $instance");
+    expect(RADIO_SOURCE_ANCHORS.source_anchors.js_formdata_lookup.literal).toContain("FormData(form).get('acx-demo-media')");
+    expect(ACTUAL_SHORTCODE_TWO_INSTANCES).toContain('name="acx-demo-media-1"');
+    expect(ACTUAL_SHORTCODE_TWO_INSTANCES).toContain('name="acx-demo-media-2"');
+    expect(ACTUAL_SHORTCODE_TWO_INSTANCES.includes('name="acx-demo-media"')).toBe(false);
+
+    document.body.innerHTML = ACTUAL_SHORTCODE_TWO_INSTANCES;
+    try {
+      const names = [...document.querySelectorAll<HTMLInputElement>('input[type="radio"]')].map((input) => input.name);
+      expect(names).toEqual(['acx-demo-media-1', 'acx-demo-media-1', 'acx-demo-media-2', 'acx-demo-media-2']);
+      expect(document.querySelector('input[name="acx-demo-media"]')).toBeNull();
+    } finally {
+      document.body.innerHTML = '';
+    }
+  });
+
+  it('posts each form\'s selected media_id and does not leak the other instance\'s choice', async () => {
+    document.body.innerHTML = ACTUAL_SHORTCODE_TWO_INSTANCES;
+    const roots = [...document.querySelectorAll<HTMLElement>('[data-acx-demo]')];
+    const forms = roots.map((root) => root.querySelector<HTMLFormElement>('form.acx-demo__form'));
+    const firstLake = document.querySelector<HTMLInputElement>('#acx-demo-media-1-41');
+    const secondPath = document.querySelector<HTMLInputElement>('#acx-demo-media-2-42');
+    expect(firstLake).toBeInstanceOf(HTMLInputElement);
+    expect(secondPath).toBeInstanceOf(HTMLInputElement);
+    firstLake!.checked = true;
+    secondPath!.checked = true;
+
+    const fetchImpl = vi.fn<typeof fetch>().mockRejectedValue(new Error('capture POST only'));
+    vi.stubGlobal('fetch', fetchImpl);
+
+    try {
+      roots.forEach((root) => initializeDemo(root));
+
+      forms[0]?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await settle(() => postBodies(fetchImpl).length >= 1 || messageOf(roots[0]) === chooseImageMessage);
+      expect(
+        postBodies(fetchImpl),
+        'selected acx-demo-media-1 value 41 must POST media_id 41',
+      ).toEqual([{ media_id: 41 }]);
+
+      await settle(() => forms[0]?.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled === false);
+      forms[1]?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await settle(() => postBodies(fetchImpl).length >= 2 || messageOf(roots[1]) === chooseImageMessage);
+      expect(
+        postBodies(fetchImpl).map((body) => body.media_id),
+        'selected acx-demo-media-2 value 42 must POST 42 without the other form\'s 41',
+      ).toEqual([41, 42]);
+    } finally {
+      vi.unstubAllGlobals();
+      document.body.innerHTML = '';
+    }
+  });
+
+  it('does not POST when the submitting instance has no radio selected', async () => {
+    document.body.innerHTML = ACTUAL_SHORTCODE_TWO_INSTANCES;
+    const roots = [...document.querySelectorAll<HTMLElement>('[data-acx-demo]')];
+    const firstForm = roots[0]?.querySelector<HTMLFormElement>('form.acx-demo__form');
+    const secondPath = document.querySelector<HTMLInputElement>('#acx-demo-media-2-42');
+    expect(secondPath).toBeInstanceOf(HTMLInputElement);
+    secondPath!.checked = true;
+
+    const fetchImpl = vi.fn<typeof fetch>();
+    vi.stubGlobal('fetch', fetchImpl);
+
+    try {
+      roots.forEach((root) => initializeDemo(root));
+      firstForm?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await settle(() => messageOf(roots[0]) === chooseImageMessage);
+      expect(fetchImpl, 'empty acx-demo-media-1 selection must not POST').not.toHaveBeenCalled();
+      expect(messageOf(roots[0])).toBe(chooseImageMessage);
+    } finally {
+      vi.unstubAllGlobals();
+      document.body.innerHTML = '';
+    }
+  });
+});
+

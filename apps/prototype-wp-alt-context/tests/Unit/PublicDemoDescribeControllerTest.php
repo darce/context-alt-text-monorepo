@@ -33,6 +33,8 @@ final class PublicDemoDescribeControllerTest extends TestCase
             public WP_REST_Response|WP_Error|null $submitResult = null;
             /** @var array<string,mixed> */
             public array $statusData = [];
+            /** @var array<string,mixed> */
+            public array $itemFields = [];
 
             public function __construct()
             {
@@ -90,10 +92,12 @@ final class PublicDemoDescribeControllerTest extends TestCase
                 ++$this->itemRequests;
                 return new WP_REST_Response([
                     'run_id' => $this->itemsRunId ?? (string) $request->get_param('run_id'),
-                    'items' => [[
-                        'media_id' => 41,
-                        'alt_text_draft' => 'A person walking beside a lake.',
-                    ]],
+                    'items' => [
+                        array_merge([
+                            'media_id' => 41,
+                            'alt_text_draft' => 'A person walking beside a lake.',
+                        ], $this->itemFields),
+                    ],
                 ]);
             }
         };
@@ -1003,6 +1007,104 @@ PHP];
         self::assertSame(PublicDemoErrorCode::PIPELINE_FAILED, $data['error']['code']);
         self::assertStringNotContainsString('secret', json_encode($data, JSON_THROW_ON_ERROR));
         self::assertStringNotContainsString('credentials', json_encode($data, JSON_THROW_ON_ERROR));
+    }
+
+    /**
+     * Completed public responses that carry a description also carry additive
+     * description_tier from item.tier. Known tokens match DescriptionResultTier
+     * exactly; missing/null/unrecognized/non-string tiers are JSON null and
+     * are never inferred from gpu_state ([DATA-13] [API-02] [API-04] [TEST-15]
+     * [PROV-06] [HAI-05] [HAI-08]).
+     *
+     * @dataProvider publicDescriptionTierProvider
+     */
+    public function testCompletedPublicDescriptionCarriesAdditiveResultTier(
+        mixed $itemTier,
+        bool $includeTierKey,
+        ?string $expectedTier,
+        string $gpuState,
+    ): void {
+        $this->enable([41]);
+        $this->pipeline->gpuState = $gpuState;
+        $submitted = $this->controller->submit($this->authorizedRequest('POST', ['media_id' => 41]));
+
+        self::assertInstanceOf(WP_REST_Response::class, $submitted);
+        self::assertSame(202, $submitted->get_status());
+        self::assertArrayNotHasKey('description_tier', $submitted->get_data());
+        self::assertArrayNotHasKey('description', $submitted->get_data());
+
+        $this->pipeline->status = 'completed';
+        $this->pipeline->statusData = ['phase' => 'complete', 'completed' => 1];
+        if ($includeTierKey) {
+            $this->pipeline->itemFields = ['tier' => $itemTier];
+        }
+
+        $status = $this->controller->status($this->authorizedRequest('GET', ['run_id' => 'public-run-1']));
+        self::assertInstanceOf(WP_REST_Response::class, $status);
+        $data = $status->get_data();
+
+        self::assertSame(200, $status->get_status());
+        self::assertSame('completed', $data['status']);
+        self::assertSame('A person walking beside a lake.', $data['description']);
+        self::assertSame($gpuState, $data['gpu_state']);
+        self::assertArrayHasKey('description_tier', $data);
+        self::assertSame($expectedTier, $data['description_tier']);
+        self::assertArrayNotHasKey('acx_public_demo_inflight', $GLOBALS['__ac_options']);
+    }
+
+    /** @return iterable<string, array{0: mixed, 1: bool, 2: ?string, 3: string}> */
+    public static function publicDescriptionTierProvider(): iterable
+    {
+        yield 'provisional_cpu' => ['provisional_cpu', true, 'provisional_cpu', 'warming'];
+        yield 'final_gpu' => ['final_gpu', true, 'final_gpu', 'ready'];
+        yield 'absent tier is explicit null' => [null, false, null, 'ready'];
+        yield 'null tier is explicit null' => [null, true, null, 'ready'];
+        yield 'unrecognized string is explicit null' => ['local_cpu', true, null, 'ready'];
+        yield 'non-string int is explicit null' => [1, true, null, 'ready'];
+        yield 'non-string array is explicit null' => [['final_gpu'], true, null, 'ready'];
+        yield 'ready gpu_state does not override provisional_cpu' => ['provisional_cpu', true, 'provisional_cpu', 'ready'];
+    }
+
+    public function testNoncompletedAndErrorEnvelopesDoNotClaimResultTier(): void
+    {
+        $this->enable([41]);
+        $this->pipeline->itemFields = ['tier' => 'final_gpu'];
+        $submitted = $this->controller->submit($this->authorizedRequest('POST', ['media_id' => 41]));
+
+        self::assertInstanceOf(WP_REST_Response::class, $submitted);
+        self::assertArrayNotHasKey('description_tier', $submitted->get_data());
+
+        $running = $this->controller->status($this->authorizedRequest('GET', ['run_id' => 'public-run-1']));
+        self::assertInstanceOf(WP_REST_Response::class, $running);
+        self::assertSame('running', $running->get_data()['status']);
+        self::assertArrayNotHasKey('description', $running->get_data());
+        self::assertArrayNotHasKey('description_tier', $running->get_data());
+
+        $this->pipeline->status = 'failed';
+        $this->pipeline->statusData = ['phase' => 'failed'];
+        $failed = $this->controller->status($this->authorizedRequest('GET', ['run_id' => 'public-run-1']));
+        self::assertInstanceOf(WP_REST_Response::class, $failed);
+        self::assertSame('failed', $failed->get_data()['status']);
+        self::assertArrayHasKey('error', $failed->get_data());
+        self::assertArrayNotHasKey('description_tier', $failed->get_data());
+    }
+
+    public function testCompletedEnvelopeWithoutDescriptionDoesNotClaimResultTier(): void
+    {
+        $this->enable([41]);
+        $this->controller->submit($this->authorizedRequest('POST', ['media_id' => 41]));
+        $this->pipeline->status = 'completed';
+        $this->pipeline->statusData = ['phase' => 'complete', 'completed' => 1];
+        $this->pipeline->itemFields = [
+            'alt_text_draft' => '',
+            'tier' => 'final_gpu',
+        ];
+
+        $status = $this->controller->status($this->authorizedRequest('GET', ['run_id' => 'public-run-1']));
+        self::assertInstanceOf(WP_REST_Response::class, $status);
+        self::assertSame('completed', $status->get_data()['status']);
+        self::assertArrayNotHasKey('description', $status->get_data());
+        self::assertArrayNotHasKey('description_tier', $status->get_data());
     }
 
     public function testDailyCapReturnsRetryAfterWithoutDelegating(): void

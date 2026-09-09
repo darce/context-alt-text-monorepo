@@ -380,6 +380,11 @@ class _FakeVaultStore:
         self.update_calls = []
         self.read_history = []
         self.list_calls = []
+        self.version_pages = None
+        self.version_calls = []
+        self.version_values = {}
+        if existing_value is not None:
+            self.version_values[1] = existing_value
         # OCI hands back an ETag on every get/create/update and requires the
         # current one as an update precondition, so the double carries it too:
         # a fixture that returns bare payloads cannot catch a lost precondition.
@@ -410,7 +415,10 @@ class _FakeVaultStore:
             id=self.SECRET_ID,
             lifecycle_state="ACTIVE",
         )
-        self._stage(self._decode(details))
+        value = self._decode(details)
+        self.version_values[len(self.version_values) + 1] = value
+        self._stage(value)
+        self.version_pages = None
         self._rotate_etag()
         return self.existing
 
@@ -421,7 +429,14 @@ class _FakeVaultStore:
         # regression that drops --if-match still shows green here.
         if if_match != self.etag:
             raise _ServiceError(409, "NoEtagMatch")
-        self._stage(self._decode(details))
+        current_version_number = getattr(details, "current_version_number", None)
+        if current_version_number is None:
+            value = self._decode(details)
+            self.version_values[len(self.version_values) + 1] = value
+        else:
+            value = self.version_values[current_version_number]
+        self._stage(value)
+        self.version_pages = None
         self._rotate_etag()
         return self.existing
 
@@ -505,8 +520,9 @@ def _install_fake_oci(
     secrets_clients = []
 
     class _Vaults:
-        def __init__(self, config):
-            pass
+        def __init__(self, config, **kwargs):
+            self.init_kwargs = kwargs
+            self.base_client = types.SimpleNamespace(timeout=kwargs.get("timeout"))
 
         def list_secrets(
             self,
@@ -542,6 +558,18 @@ def _install_fake_oci(
             secret = store.update(secret_id, details, if_match)
             return types.SimpleNamespace(data=secret, headers={"etag": store.etag})
 
+        def list_secret_versions(self, secret_id, page=None, **kwargs):
+            del secret_id
+            store.version_calls.append({"page": page, **kwargs})
+            if store.version_pages is None:
+                return types.SimpleNamespace(data=[], headers={})
+            page_index = 0 if page is None else int(page.rsplit("-", 1)[-1]) - 1
+            versions = store.version_pages[page_index]
+            headers = {}
+            if page_index + 1 < len(store.version_pages):
+                headers["opc-next-page"] = f"page-{page_index + 2}"
+            return types.SimpleNamespace(data=versions, headers=headers)
+
     class _Kms:
         def __init__(self, config):
             pass
@@ -550,8 +578,8 @@ def _install_fake_oci(
             return types.SimpleNamespace(data=types.SimpleNamespace(compartment_id="ocid1.compartment.oc1..c"))
 
     models = types.SimpleNamespace(
-        Base64SecretContentDetails=lambda content_type, content: types.SimpleNamespace(
-            content_type=content_type, content=content
+        Base64SecretContentDetails=lambda content_type, content, name=None, stage=None: types.SimpleNamespace(
+            content_type=content_type, content=content, name=name, stage=stage
         ),
         CreateSecretDetails=lambda **kw: types.SimpleNamespace(**kw),
         UpdateSecretDetails=lambda **kw: types.SimpleNamespace(**kw),
@@ -670,6 +698,249 @@ def test_main_rotation_waits_for_the_new_submitted_version(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "new version" in out
     assert f"write_etag: {store.etag}" in out
+
+
+def test_accepted_write_readback_timeout_is_an_unknown_mutation(monkeypatch):
+    old = b"old-token-value-00000"
+    new = b"new-token-value-11111"
+
+    with pytest.raises(vps.MutationOutcomeUnknownError, match="accepted"):
+        _run_main(
+            monkeypatch,
+            new,
+            not_ready_reads=200,
+            existing_value=old,
+            extra_args=("--readable-timeout", "1"),
+        )
+
+
+def test_accepted_write_nonretryable_readback_is_an_unknown_mutation(monkeypatch):
+    old = b"old-token-value-00000"
+    new = b"new-token-value-11111"
+    store, _, _ = _install_fake_oci(monkeypatch, not_ready_reads=0, existing_value=old)
+    read = store.read
+
+    def fail_after_update():
+        if store.update_calls:
+            raise _ServiceError(403, "NotAuthorized")
+        return read()
+
+    store.read = fail_after_update
+    _install_fake_clock(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["_vault_put_secret.py", "--secret-name", "OCIR_AUTH_TOKEN"])
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        types.SimpleNamespace(isatty=lambda: False, buffer=io.BytesIO(new)),
+    )
+
+    with pytest.raises(vps.MutationOutcomeUnknownError, match="accepted"):
+        vps.main()
+    assert len(store.update_calls) == 1
+
+
+def test_lost_update_response_reconciliation_403_is_an_unknown_mutation(monkeypatch):
+    """A post-acceptance reconciliation denial must stay UNKNOWN/75."""
+    old = b"old-token-value-00000"
+    new = b"new-token-value-11111"
+    store, _, _ = _install_fake_oci(monkeypatch, not_ready_reads=0, existing_value=old)
+    original_update = store.update
+    original_read = store.read
+
+    def accept_then_lose(secret_id, details, if_match=None):
+        accepted = original_update(secret_id, details, if_match)
+        raise vps.MutationOutcomeUnknownError("accepted update response was lost")
+
+    def deny_reconciliation_read():
+        if store.update_calls:
+            raise _ServiceError(403, "NotAuthorized")
+        return original_read()
+
+    store.update = accept_then_lose
+    store.read = deny_reconciliation_read
+    _install_fake_clock(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["_vault_put_secret.py", "--secret-name", "OCIR_AUTH_TOKEN"])
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        types.SimpleNamespace(isatty=lambda: False, buffer=io.BytesIO(new)),
+    )
+
+    with pytest.raises(vps.MutationOutcomeUnknownError, match="reconciliation"):
+        vps.main()
+    assert len(store.update_calls) == 1
+
+
+def test_pre_mutation_403_remains_an_ordinary_failure(monkeypatch):
+    old = b"old-token-value-00000"
+    new = b"new-token-value-11111"
+    store, _, _ = _install_fake_oci(monkeypatch, not_ready_reads=0, existing_value=old)
+
+    def deny_before_acceptance(secret_id, details, if_match=None):
+        del secret_id, details, if_match
+        raise _ServiceError(403, "NotAuthorized")
+
+    store.update = deny_before_acceptance
+    _install_fake_clock(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["_vault_put_secret.py", "--secret-name", "OCIR_AUTH_TOKEN"])
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        types.SimpleNamespace(isatty=lambda: False, buffer=io.BytesIO(new)),
+    )
+
+    with pytest.raises(_ServiceError, match="NotAuthorized"):
+        vps.main()
+
+
+def test_unknown_username_write_cannot_trigger_token_compensation():
+    rotation_source = Path(__file__).parent / "deploy" / "ocir-token-rotate.sh"
+    source = rotation_source.read_text()
+    guard = 'if [ "$username_rc" -ne 75 ]'
+    compensation = 'printf \'%s\' "$previous_token" | put_secret "$ACX_OCIR_TOKEN_SECRET"'
+    assert guard in source
+    assert compensation in source
+    assert source.index(guard) < source.index(compensation)
+    # The guard is the condition around the compensation command: exit 75 from
+    # the helper therefore reports uncertainty instead of restoring a token
+    # whose paired username may already have been accepted.
+    guarded_block = source[source.index(guard) : source.index("recovery_username", source.index(guard))]
+    assert guard in guarded_block
+
+
+@pytest.mark.parametrize(
+    "historical_stages",
+    [
+        ("PREVIOUS", "LATEST"),
+        ("DEPRECATED", "LATEST"),
+    ],
+    ids=("previous-plus-latest", "deprecated-plus-latest"),
+)
+@pytest.mark.parametrize("readable_timeout", [None, "0"], ids=("readback", "zero-readback"))
+def test_main_reactivates_historical_latest_version_without_duplicate(
+    monkeypatch, capsys, historical_stages, readable_timeout
+):
+    """A→B→A→B reuses historical B even when Vault also labels it LATEST."""
+    first = b"first-token-value-0000"
+    second = b"second-token-value-111"
+    assert len(first) == len(second)
+    store, secrets_clients, _ = _install_fake_oci(monkeypatch, not_ready_reads=0, existing_value=first)
+    # Model A -> B -> A, with the retry asking to reactivate the existing B
+    # version rather than submitting a fourth version.
+    store.version_values.update({2: second, 3: first})
+    store.version_pages = [
+        [
+            types.SimpleNamespace(
+                name=vps.mutation_version_name(first),
+                stages=["CURRENT", "LATEST"],
+                version_number=3,
+            )
+        ],
+        [
+            types.SimpleNamespace(
+                name=vps.mutation_version_name(second),
+                stages=list(historical_stages),
+                version_number=2,
+            ),
+            types.SimpleNamespace(
+                name=vps.mutation_version_name(first),
+                stages=["PREVIOUS"],
+                version_number=1,
+            ),
+        ],
+    ]
+    _install_fake_clock(monkeypatch)
+    argv = ["_vault_put_secret.py", "--secret-name", "OCIR_AUTH_TOKEN"]
+    if readable_timeout is not None:
+        argv.extend(["--readable-timeout", readable_timeout])
+    monkeypatch.setattr(sys, "argv", argv)
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        types.SimpleNamespace(isatty=lambda: False, buffer=io.BytesIO(second)),
+    )
+
+    assert vps.main() == 0
+
+    assert len(store.create_calls) == 0
+    assert len(store.update_calls) == 1
+    _, details = store.update_calls[0]
+    assert details.current_version_number == 2
+    assert getattr(details, "secret_content", None) is None
+    assert store.update_if_match == [store.etag_history[0]]
+    assert len(store.version_values) == 3
+    assert [call["page"] for call in store.version_calls] == [None, "page-2"]
+    if readable_timeout == "0":
+        assert secrets_clients[0].reads == 1
+        assert store.active_value == first
+        assert store.pending_value == second
+        assert "ACCEPTED-BUT-UNVERIFIED" in capsys.readouterr().out
+    else:
+        assert secrets_clients[0].reads == 2
+        assert store.active_value == second
+        assert "reactivated historical version" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("historical_stage", ["PREVIOUS", "DEPRECATED"])
+def test_main_reactivates_historical_matching_version(monkeypatch, capsys, historical_stage):
+    previous = b"historical-token"
+    current = b"current-token"
+    store, secrets_clients, _ = _install_fake_oci(monkeypatch, not_ready_reads=0, existing_value=current)
+    store.version_values[7] = previous
+    store.version_pages = [
+        [
+            types.SimpleNamespace(
+                name=vps.mutation_version_name(previous),
+                stages=[historical_stage],
+                version_number=7,
+            )
+        ]
+    ]
+    _install_fake_clock(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["_vault_put_secret.py", "--secret-name", "OCIR_AUTH_TOKEN"])
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        types.SimpleNamespace(isatty=lambda: False, buffer=io.BytesIO(previous)),
+    )
+
+    assert vps.main() == 0
+
+    assert len(store.update_calls) == 1
+    _, details = store.update_calls[0]
+    assert details.current_version_number == 7
+    assert getattr(details, "secret_content", None) is None
+    assert store.update_if_match == [store.etag_history[0]]
+    assert store.active_value == previous
+    assert secrets_clients[0].reads == 2
+    assert "reactivated historical version" in capsys.readouterr().out
+
+
+def test_lost_update_response_reuses_paginated_pending_version(monkeypatch, capsys):
+    old = b"old-active-token"
+    new = b"accepted-pending-token"
+    store, secrets_clients, _ = _install_fake_oci(monkeypatch, not_ready_reads=2, existing_value=old)
+    store.pending_value = new
+    store.remaining = 2
+    store.version_pages = [
+        [types.SimpleNamespace(name="unrelated-version", stages=["DEPRECATED"])],
+        [types.SimpleNamespace(name=f"acx-{_digest(new)[:32]}", stages=["CURRENT", "LATEST"])],
+    ]
+    _install_fake_clock(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["_vault_put_secret.py", "--secret-name", "OCIR_AUTH_TOKEN"])
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        types.SimpleNamespace(isatty=lambda: False, buffer=io.BytesIO(new)),
+    )
+
+    assert vps.main() == 0
+    assert store.update_calls == []
+    assert secrets_clients[0].reads == 3
+    assert [call["page"] for call in store.version_calls] == [None, "page-2"]
+    assert all(call["sort_by"] == "VERSION_NUMBER" for call in store.version_calls)
+    assert all(call["sort_order"] == "DESC" for call in store.version_calls)
+    assert "existing version pending" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(

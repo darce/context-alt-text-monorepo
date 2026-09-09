@@ -88,6 +88,12 @@ if [ "${OCIR_TEST_PUT_FAIL_SECRET:-}" = "$secret_name" ]; then
     printf 'simulated %s write failure\n' "$secret_name" >&2
     exit "${OCIR_TEST_PUT_FAIL_RC:-70}"
 fi
+if [ "${OCIR_TEST_PUT_ACCEPTED_UNKNOWN_SECRET:-}" = "$secret_name" ]; then
+    printf '%s|%s|%s\n' "$secret_name" "$readable_timeout" "$value" >>"$OCIR_TEST_PUT_LOG"
+    printf '%s|%s|%s\n' "$secret_name" "$vault_id" "$if_match" >>"$OCIR_TEST_PUT_ARGS_LOG"
+    printf 'simulated accepted write with unreadable read-back\n' >&2
+    exit 75
+fi
 if [ -n "${OCIR_TEST_COMPENSATION_FAIL:-}" ] && \
     [ "$secret_name" = OCIR_AUTH_TOKEN ] && grep -q '^OCIR_AUTH_TOKEN|' "$OCIR_TEST_PUT_LOG"; then
     printf 'simulated compensation failure\n' >&2
@@ -191,6 +197,7 @@ reset_case() {
         OCIR_TEST_STORED_USERNAME OCIR_TEST_USERNAME_SLEEP \
         OCIR_TEST_USERNAME_STDERR OCIR_TEST_DOCKER_STALL_AT \
         OCIR_TEST_PUT_FAIL_SECRET OCIR_TEST_PUT_FAIL_RC \
+        OCIR_TEST_PUT_ACCEPTED_UNKNOWN_SECRET \
         OCIR_TEST_COMPENSATION_FAIL
 }
 
@@ -225,6 +232,7 @@ run_rotate() {
         export OCIR_TEST_SSH_MODE="${OCIR_TEST_SSH_MODE:-success}"
         export OCIR_TEST_PUT_FAIL_SECRET="${OCIR_TEST_PUT_FAIL_SECRET:-}"
         export OCIR_TEST_PUT_FAIL_RC="${OCIR_TEST_PUT_FAIL_RC:-70}"
+        export OCIR_TEST_PUT_ACCEPTED_UNKNOWN_SECRET="${OCIR_TEST_PUT_ACCEPTED_UNKNOWN_SECRET:-}"
         export OCIR_TEST_COMPENSATION_FAIL="${OCIR_TEST_COMPENSATION_FAIL:-}"
         export OCIR_TEST_USERNAME_SLEEP="${OCIR_TEST_USERNAME_SLEEP:-}"
         export OCIR_TEST_USERNAME_STDERR="${OCIR_TEST_USERNAME_STDERR:-}"
@@ -443,12 +451,13 @@ assert_contains "successful compensation is reported" \
 # the write did commit. Preserve the known token state and give a recovery
 # command for the explicitly unknown pair.
 reset_case
-OCIR_TEST_PUT_FAIL_SECRET=OCIR_USERNAME
-OCIR_TEST_PUT_FAIL_RC=75
+OCIR_TEST_PUT_ACCEPTED_UNKNOWN_SECRET=OCIR_USERNAME
 run_rotate 'new-token' --set-username 'new-user' --skip-verify
 assert_eq "unknown username mutation preserves exit 75" 75 "$rotate_rc"
 assert_eq "unknown username mutation does not attempt unsafe compensation" \
     'OCIR_AUTH_TOKEN|120|new-token' "$(grep '^OCIR_AUTH_TOKEN|' "$put_log")"
+assert_contains "accepted username mutation is retained as evidence" \
+    'OCIR_USERNAME|120|new-user' "$put_log"
 assert_contains "unknown username mutation names uncertain pair state" \
     'UNKNOWN/INCONSISTENT: OCIR_AUTH_TOKEN and OCIR_USERNAME may represent different credential generations.' \
     "$rotate_stderr"

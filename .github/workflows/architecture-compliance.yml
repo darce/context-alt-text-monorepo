@@ -10,6 +10,7 @@ on:
       - "apps/prototype-wp-alt-context/package.json"
       - "apps/prototype-wp-alt-context/package-lock.json"
       - "apps/prototype-wp-alt-context/eslint.config.mjs"
+      - ".github/workflows/architecture-compliance.yml"
   push:
     branches:
       - main
@@ -23,6 +24,7 @@ on:
       - "apps/prototype-wp-alt-context/package.json"
       - "apps/prototype-wp-alt-context/package-lock.json"
       - "apps/prototype-wp-alt-context/eslint.config.mjs"
+      - ".github/workflows/architecture-compliance.yml"
 
 jobs:
   architecture-compliance:

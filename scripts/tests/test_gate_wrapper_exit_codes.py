@@ -312,6 +312,93 @@ exit "$REMOTE_GATE_TEST_SSH_EXIT"
     assert f"git checkout -qf {expected_sha} || exit 1" in ssh_argv[-1]
 
 
+def test_remote_gate_quotes_env_values_before_remote_shell(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    remote_command = tmp_path / "remote-command"
+    expected_sha = "0123456789abcdef0123456789abcdef01234567"
+
+    _write_executable(
+        fake_bin / "git",
+        """#!/usr/bin/env bash
+case "$1 $2" in
+  "rev-parse --path-format=absolute") printf '%s\\n' "$REMOTE_GATE_TEST_COMMON_DIR" ;;
+  "status --porcelain") exit 0 ;;
+  "rev-parse HEAD") printf '%s\\n' "$REMOTE_GATE_TEST_SHA" ;;
+  "push --quiet") exit 0 ;;
+  *) echo "unexpected git invocation: $*" >&2; exit 74 ;;
+esac
+""",
+    )
+    _write_executable(
+        fake_bin / "ssh",
+        """#!/usr/bin/env bash
+printf '%s' "${!#}" > "$REMOTE_GATE_TEST_REMOTE_COMMAND"
+exit 0
+""",
+    )
+
+    completed = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts/remote_gate.sh"), "run", "test"],
+        cwd=REPO_ROOT,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+            "WORKBAY_REMOTE_GATE_HOST": "gate@example.invalid",
+            "WORKBAY_REMOTE_GATE_DIR": "src/repo",
+            "WORKBAY_REMOTE_GATE_ENV": 'SAFE=quote"me',
+            "REMOTE_GATE_TEST_COMMON_DIR": str(tmp_path / "repo" / ".git"),
+            "REMOTE_GATE_TEST_REMOTE_COMMAND": str(remote_command),
+            "REMOTE_GATE_TEST_SHA": expected_sha,
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    command = remote_command.read_text(encoding="utf-8")
+    assert r"SAFE=quote\"me" in command
+    assert 'SAFE=quote"me' not in command
+
+
+@pytest.mark.parametrize("entry", ["1BAD=value", "BAD-NAME=value", "BAD.NAME=value"])
+def test_remote_gate_rejects_invalid_env_names(entry: str) -> None:
+    completed = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts/remote_gate.sh"), "run", "test"],
+        cwd=REPO_ROOT,
+        env={
+            **os.environ,
+            "WORKBAY_REMOTE_GATE_HOST": "gate@example.invalid",
+            "WORKBAY_REMOTE_GATE_ENV": entry,
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 2
+    assert "REMOTE_GATE_ENV names must match" in completed.stderr
+
+
+def test_remote_gate_rejects_parameter_expansion_in_env_value() -> None:
+    completed = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts/remote_gate.sh"), "run", "test"],
+        cwd=REPO_ROOT,
+        env={
+            **os.environ,
+            "WORKBAY_REMOTE_GATE_HOST": "gate@example.invalid",
+            "WORKBAY_REMOTE_GATE_ENV": "FOO=${IFS}bash${IFS}-c${IFS}id",
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 2
+    assert "shell metacharacters" in completed.stderr
+
+
 def _remote_shell_enables_pipefail(source: str) -> bool:
     """True when the first executable remote line enables pipefail (D5-AR-03).
 
@@ -574,6 +661,19 @@ def test_workflow_shell_survives_working_directory_before_shell(tmp_path: Path) 
         encoding="utf-8",
     )
     assert _unsafe_run_steps(_load_gha_yaml(workflow_path), workflow_path.name) == []
+
+
+def test_architecture_workflow_triggers_when_its_definition_changes() -> None:
+    workflow_path = REPO_ROOT / ".github" / "workflows" / "architecture-compliance.yml"
+    workflow = _load_gha_yaml(workflow_path)
+    triggers = workflow.get("on", workflow.get(True, {}))
+    workflow_name = ".github/workflows/architecture-compliance.yml"
+
+    assert isinstance(triggers, dict)
+    for event in ("pull_request", "push"):
+        event_config = triggers.get(event, {})
+        assert isinstance(event_config, dict)
+        assert workflow_name in event_config.get("paths", [])
 
 
 def test_remote_gate_no_args_prints_usage_and_does_not_run() -> None:

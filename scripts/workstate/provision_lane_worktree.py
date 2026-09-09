@@ -9,8 +9,9 @@ the worktree to run `npm ci` / `composer install`.
 
 VMREAP-1-BR-04: linked worktrees do not inherit gitignored overlay surfaces
 (Makefile.d except tracked files, scripts/hooks, scripts/workbay,
-scripts/workbay_lifecycle). Rsync those from the primary checkout with `-a`
-so overlay symlinks stay symlinks.
+scripts/workbay_lifecycle). Rsync only ignored entries from the primary
+checkout with `-a` so tracked files already checked out in the linked tree are
+never overwritten and overlay symlinks stay symlinks.
 """
 
 from __future__ import annotations
@@ -56,7 +57,59 @@ def _remove_existing_path(path: Path) -> None:
         shutil.rmtree(path)
 
 
-def _rsync_overlay(src: Path, dest: Path) -> None:
+def _ignored_overlay_entries(primary: Path, rel: str) -> list[str] | None:
+    """Return ignored entries below ``rel``; ``None`` means no Git metadata."""
+    try:
+        proc = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(primary),
+                "ls-files",
+                "--others",
+                "--ignored",
+                "--exclude-standard",
+                "-z",
+                "--",
+                rel,
+            ],
+            capture_output=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    if proc.returncode != 0:
+        return None
+
+    prefix = f"{rel}/"
+    entries: list[str] = []
+    for raw_entry in proc.stdout.split(b"\0"):
+        if not raw_entry:
+            continue
+        entry = os.fsdecode(raw_entry)
+        if entry == rel:
+            entries.append("")
+        elif entry.startswith(prefix):
+            entries.append(entry[len(prefix) :])
+    return entries
+
+
+def _copy_overlay_entries(src: Path, dest: Path, entries: list[str]) -> None:
+    """Copy an ignored-entry manifest without dereferencing entry symlinks."""
+    for rel in entries:
+        source = src / rel
+        target = dest / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        _remove_existing_path(target)
+        if source.is_symlink():
+            target.symlink_to(os.readlink(source))
+        elif source.is_dir():
+            shutil.copytree(source, target, symlinks=True, dirs_exist_ok=True)
+        else:
+            shutil.copy2(source, target, follow_symlinks=False)
+
+
+def _rsync_overlay(src: Path, dest: Path, *, entries: list[str] | None = None) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     # Path.is_dir() follows symlinks.  Test the link first so a plugin-managed
     # overlay such as Makefile.d -> ../workbay-overlay remains a link in the
@@ -71,8 +124,24 @@ def _rsync_overlay(src: Path, dest: Path) -> None:
         else:
             dest.symlink_to(link_target)
         return
+
     if dest.is_symlink():
         _remove_existing_path(dest)
+
+    if entries is not None:
+        if not entries:
+            return
+        if shutil.which("rsync"):
+            payload = b"".join(os.fsencode(entry) + b"\0" for entry in entries)
+            subprocess.run(
+                ["rsync", "-a", "--from0", "--files-from=-", f"{src}/", str(dest)],
+                input=payload,
+                check=True,
+            )
+        else:
+            _copy_overlay_entries(src, dest, entries)
+        return
+
     if shutil.which("rsync"):
         source = f"{src}/" if src.is_dir() else str(src)
         target = str(dest)
@@ -96,7 +165,29 @@ def provision_overlay(*, primary: Path, worktree: Path) -> list[str]:
             continue
         if dest.resolve(strict=False) == src.resolve(strict=False):
             continue
-        _rsync_overlay(src, dest)
+
+        # A top-level symlink is the overlay contract itself. Preserve it even
+        # when its target is outside this checkout or Git cannot inspect it.
+        if src.is_symlink():
+            _rsync_overlay(src, dest)
+            copied.append(rel)
+            continue
+
+        ignored_entries = _ignored_overlay_entries(primary, rel)
+        if ignored_entries is None:
+            # Unit fixtures and older callers may provide a directory without
+            # Git metadata. The real worktree path always has Git metadata;
+            # retain the historical copy behavior for those hermetic callers.
+            _rsync_overlay(src, dest)
+        elif src.is_dir():
+            # In a real checkout, only ignored overlay entries are eligible.
+            # Tracked files (for example Makefile.d/demo-auth.mk) are omitted,
+            # leaving the linked worktree's branch-owned version untouched.
+            _rsync_overlay(src, dest, entries=ignored_entries)
+        elif "" in ignored_entries:
+            _rsync_overlay(src, dest)
+        else:
+            continue
         copied.append(rel)
     return copied
 

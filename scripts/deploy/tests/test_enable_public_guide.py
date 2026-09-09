@@ -17,7 +17,17 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "scripts" / "deploy" / "enable-public-guide.sh"
 DEFAULT_SITE = "https://guide.test"
-DEFAULT_BODY = '<main id="acx-public-guide" data-scope="recorded" data-example="bundled"></main>'
+DEFAULT_BODY = (
+    '<main id="acx-public-guide" data-scope="recorded" data-example="bundled"></main>'
+    '<script type="module" src="https://guide.test/assets/guide.js" id="acx-public-guide-js"></script>'
+)
+FALLBACK_ONLY_BODY = (
+    '<main id="acx-public-guide">'
+    '<p class="acx-public-guide__fallback" role="alert">'
+    "The walkthrough could not load. Reload the page, or watch the recorded video on the case study page."
+    "</p>"
+    "</main>"
+)
 
 
 def _write_executable(path: Path, body: str) -> None:
@@ -33,7 +43,13 @@ def _wp_stub_body(*, log_path: str, mutations_path: str, demo_enabled: str, pref
         f"printf ' %q' \"$@\" >> {log_path}\n"
         f"printf '\\n' >> {log_path}\n"
         "joined=\"$*\"\n"
-        f"if [[ \"$joined\" == *'option update acx_public_guide_enabled'* ]]; then printf 'guide_enable\\n' >> {mutations_path}; fi\n"
+        f"if [[ \"$joined\" == *'option update acx_public_guide_enabled'* ]]; then\n"
+        "  if [[ \"$joined\" == *'acx_public_guide_enabled 0'* ]]; then\n"
+        f"    printf 'guide_disable\\n' >> {mutations_path}\n"
+        "  else\n"
+        f"    printf 'guide_enable\\n' >> {mutations_path}\n"
+        "  fi\n"
+        "fi\n"
         f"if [[ \"$joined\" == *'option update acx_public_demo_enabled'* ]]; then printf 'demo_enable\\n' >> {mutations_path}; fi\n"
         f"if [[ \"$joined\" == *'rewrite flush'* ]]; then printf 'rewrite_flush\\n' >> {mutations_path}; fi\n"
         "if [[ \"$joined\" == *'option get acx_public_demo_enabled'* ]]; then\n"
@@ -62,7 +78,13 @@ def _docker_stub_body(*, log_path: str, mutations_path: str, demo_enabled: str) 
         "  if [[ \"$arg\" == wpcli ]]; then seen_wpcli=1; continue; fi\n"
         "done\n"
         "joined=\"${wp_args[*]}\"\n"
-        f"if [[ \"$joined\" == *'option update acx_public_guide_enabled'* ]]; then printf 'guide_enable\\n' >> {mutations_path}; fi\n"
+        f"if [[ \"$joined\" == *'option update acx_public_guide_enabled'* ]]; then\n"
+        "  if [[ \"$joined\" == *'acx_public_guide_enabled 0'* ]]; then\n"
+        f"    printf 'guide_disable\\n' >> {mutations_path}\n"
+        "  else\n"
+        f"    printf 'guide_enable\\n' >> {mutations_path}\n"
+        "  fi\n"
+        "fi\n"
         f"if [[ \"$joined\" == *'option update acx_public_demo_enabled'* ]]; then printf 'demo_enable\\n' >> {mutations_path}; fi\n"
         f"if [[ \"$joined\" == *'rewrite flush'* ]]; then printf 'rewrite_flush\\n' >> {mutations_path}; fi\n"
         "if [[ \"$joined\" == *'option get acx_public_demo_enabled'* ]]; then\n"
@@ -262,18 +284,35 @@ def test_updates_option_then_flushes_rewrites(tmp_path: Path) -> None:
     assert "demo_enable" not in mutations
 
 
+def _assert_rolled_back(tmp_path: Path, output: str) -> None:
+    mutations = _mutations(tmp_path).splitlines()
+    assert "guide_enable" in mutations, mutations
+    assert mutations[-2:] == ["guide_disable", "rewrite_flush"], mutations
+    assert "rolled back" in output
+
+
 def test_fails_when_guide_http_code_is_not_200(tmp_path: Path) -> None:
     result = _run(tmp_path, curl_http_code="404")
     output = result.stdout + result.stderr
     assert result.returncode != 0, output
     assert "200" in output or "404" in output
+    _assert_rolled_back(tmp_path, output)
 
 
 def test_fails_when_guide_body_lacks_mount_id(tmp_path: Path) -> None:
     result = _run(tmp_path, curl_body="<html><body>not the guide</body></html>")
     output = result.stdout + result.stderr
     assert result.returncode != 0, output
-    assert "acx-public-guide" in output
+    assert "acx-public-guide-js" in output
+    _assert_rolled_back(tmp_path, output)
+
+
+def test_fails_when_guide_body_is_fallback_only(tmp_path: Path) -> None:
+    result = _run(tmp_path, curl_body=FALLBACK_ONLY_BODY)
+    output = result.stdout + result.stderr
+    assert result.returncode != 0, output
+    assert "acx-public-guide-js" in output
+    _assert_rolled_back(tmp_path, output)
 
 
 def test_fails_when_public_demo_describe_is_on_unless_retained(tmp_path: Path) -> None:

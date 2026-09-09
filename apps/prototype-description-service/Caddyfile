@@ -66,3 +66,21 @@ demo.altcontext.com, 129-213-40-111.sslip.io {
 
 	reverse_proxy demo-wp:80
 }
+
+# dl.darce.xyz is the portfolio's download rail, not an altcontext surface: it
+# shares this proxy because the proxy is here, but the NAME belongs to the
+# domain the portfolio itself lives on, so parking or selling altcontext.com
+# never breaks a published download link.
+#
+# 302, not 301: a permanent redirect is cached by browsers effectively forever,
+# which would forfeit the only thing this vhost buys — the ability to move the
+# bytes (GitHub Releases today, object storage or anything else tomorrow) by
+# editing one line here instead of editing every page that ever linked it.
+#
+# The target is the `latest` release PAGE, deliberately not a versioned asset
+# path: GitHub resolves `latest` itself, so cutting a new release needs no edit
+# to this file, and the reader lands beside the SHA256SUMS file the download
+# instructions tell them to check.
+dl.darce.xyz {
+	redir https://github.com/darce/visual-search-workbench/releases/latest 302
+}

@@ -37,6 +37,11 @@ check '^[[:space:]]*path /$' "demo-root matcher scoped to the exact bare root (p
 check '^[[:space:]]*method GET HEAD$' "demo-root matcher restricted to GET and HEAD"
 check '^[[:space:]]*host demo\.altcontext\.com$' "demo-root redirect scoped to the public demo hostname"
 
+# Every vhost that exists on the live proxy must exist here. sync-demo.sh
+# promotes this file over /opt/acx-backend/Caddyfile wholesale, so a vhost that
+# lives only on the VM is deleted by the next deploy (GUIDEDEPLOY-1-BR-03).
+check '^dl\.darce\.xyz \{' "dl.darce.xyz vhost (live-only vhosts are destroyed by the next promote)"
+
 # A doubled slash must never reach a published link.
 if grep -qF '//guide' "$CADDYFILE"; then
   echo "FAIL: '//guide' appears in $CADDYFILE — published links must use a single leading slash" >&2

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 import zipfile
 from pathlib import Path
 
@@ -16,47 +18,79 @@ GUIDED_COPY = "Apply and undo"
 RETIRED_COPY = "Apply it yourself"
 FRESHNESS_TOLERANCE_SECONDS = 1
 BUNDLE_OPTIONAL_ENV = "ACX_BUNDLE_OPTIONAL"
+ADMIN_SOURCE_ROOT_ENV = "ACX_ADMIN_SOURCE_ROOT"
+ADMIN_DIST_ROOT_ENV = "ACX_ADMIN_DIST_ROOT"
+PACKAGE_DIST_ROOT_ENV = "ACX_PACKAGE_DIST_ROOT"
+LIVE_FRESHNESS_NODE = "test_built_bundle_is_not_older_than_admin_sources"
 
 
-def _source_mtime() -> float:
+def _path_from_env(name: str, default: Path) -> Path:
+    raw = os.environ.get(name)
+    return Path(raw) if raw else default
+
+
+def _source_root() -> Path:
+    return _path_from_env(ADMIN_SOURCE_ROOT_ENV, SOURCE_ROOT)
+
+
+def _dist_root() -> Path:
+    return _path_from_env(ADMIN_DIST_ROOT_ENV, DIST_ROOT)
+
+
+def _package_roots() -> tuple[Path, ...]:
+    raw = os.environ.get(PACKAGE_DIST_ROOT_ENV)
+    if raw:
+        return (Path(raw),)
+    return (PACKAGE_DIST_ROOT, LEGACY_PACKAGE_DIST_ROOT)
+
+
+def _using_override_roots() -> bool:
+    return any(
+        name in os.environ
+        for name in (ADMIN_SOURCE_ROOT_ENV, ADMIN_DIST_ROOT_ENV, PACKAGE_DIST_ROOT_ENV)
+    )
+
+
+def _source_mtime(source_root: Path | None = None) -> float:
+    root = source_root or _source_root()
     source_files = [
-        path for path in SOURCE_ROOT.rglob("*") if path.suffix in {".ts", ".tsx", ".scss", ".js"} and path.is_file()
+        path for path in root.rglob("*") if path.suffix in {".ts", ".tsx", ".scss", ".js"} and path.is_file()
     ]
-    assert source_files, f"no admin source files found under {SOURCE_ROOT}"
+    assert source_files, f"no admin source files found under {root}"
     return max(path.stat().st_mtime for path in source_files)
 
 
 def _package_zips() -> list[Path]:
-    roots = (PACKAGE_DIST_ROOT, LEGACY_PACKAGE_DIST_ROOT)
-    return sorted(path for root in roots if root.is_dir() for path in root.glob("*.zip"))
+    return sorted(path for root in _package_roots() if root.is_dir() for path in root.glob("*.zip"))
 
 
-def _admin_dist_present(dist_root: Path = DIST_ROOT) -> bool:
-    return dist_root.is_dir() and any(path.is_file() for path in dist_root.rglob("*"))
+def _admin_dist_present(dist_root: Path | None = None) -> bool:
+    root = dist_root if dist_root is not None else _dist_root()
+    return root.is_dir() and any(path.is_file() for path in root.rglob("*"))
 
 
 def _bundle_optional() -> bool:
     return os.environ.get(BUNDLE_OPTIONAL_ENV) == "1"
 
 
-def _require_admin_dist(dist_root: Path = DIST_ROOT) -> None:
+def _require_admin_dist(dist_root: Path | None = None) -> None:
     """Fail closed when the built admin bundle is missing unless explicitly optional."""
-    if _admin_dist_present(dist_root):
+    root = dist_root if dist_root is not None else _dist_root()
+    if _admin_dist_present(root):
         return
     if _bundle_optional():
-        pytest.skip(
-            f"admin bundle {dist_root} is absent and {BUNDLE_OPTIONAL_ENV}=1"
-        )
+        pytest.skip(f"admin bundle {root} is absent and {BUNDLE_OPTIONAL_ENV}=1")
     raise AssertionError(
-        f"missing admin bundle {dist_root}; set {BUNDLE_OPTIONAL_ENV}=1 if the bundle is not expected"
+        f"missing admin bundle {root}; set {BUNDLE_OPTIONAL_ENV}=1 if the bundle is not expected"
     )
 
 
 def _bundle_artifacts() -> list[Path]:
-    _require_admin_dist()
+    dist_root = _dist_root()
+    _require_admin_dist(dist_root)
     artifacts: list[Path] = []
-    dist_files = [path for path in DIST_ROOT.rglob("*") if path.is_file()]
-    assert dist_files, f"admin bundle directory is empty: {DIST_ROOT}"
+    dist_files = [path for path in dist_root.rglob("*") if path.is_file()]
+    assert dist_files, f"admin bundle directory is empty: {dist_root}"
     artifacts.extend(dist_files)
     artifacts.extend(_package_zips())
     return artifacts
@@ -79,10 +113,81 @@ def _retired_copy_members(archive: Path) -> list[str]:
     return retired
 
 
-def test_conftest_does_not_enable_optional_bundle_bypass() -> None:
-    source = (REPO_ROOT / "scripts/tests/conftest.py").read_text(encoding="utf-8")
-    assert "setdefault" not in source
-    assert "os.environ" not in source
+def _clean_subprocess_env() -> dict[str, str]:
+    env = {key: value for key, value in os.environ.items() if key != BUNDLE_OPTIONAL_ENV}
+    env.pop("PYTEST_ADDOPTS", None)
+    return env
+
+
+def _run_pytest(args: list[str], *, cwd: Path, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    merged = _clean_subprocess_env()
+    if env:
+        merged.update(env)
+    return subprocess.run(
+        [sys.executable, "-m", "pytest", *args, "-p", "no:cacheprovider", "-q"],
+        cwd=str(cwd),
+        env=merged,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def _write_bundle_tree(root: Path, *, source_mtime: float, artifact_mtimes: dict[str, float]) -> tuple[Path, Path, Path]:
+    source_root = root / "js"
+    dist_root = root / "public-dist"
+    package_root = root / "packages"
+    source_root.mkdir(parents=True)
+    dist_root.mkdir(parents=True)
+    package_root.mkdir(parents=True)
+    source = source_root / "admin.ts"
+    source.write_text("export {}\n", encoding="utf-8")
+    os.utime(source, (source_mtime, source_mtime))
+    for name, mtime in artifact_mtimes.items():
+        path = dist_root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("bundle\n", encoding="utf-8")
+        os.utime(path, (mtime, mtime))
+    return source_root, dist_root, package_root
+
+
+def _freshness_override_env(source_root: Path, dist_root: Path, package_root: Path) -> dict[str, str]:
+    return {
+        ADMIN_SOURCE_ROOT_ENV: str(source_root),
+        ADMIN_DIST_ROOT_ENV: str(dist_root),
+        PACKAGE_DIST_ROOT_ENV: str(package_root),
+    }
+
+
+def _run_live_freshness(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return _run_pytest(
+        [f"{Path(__file__).resolve()}::{LIVE_FRESHNESS_NODE}"],
+        cwd=REPO_ROOT,
+        env=env,
+    )
+
+
+def test_conftest_collection_does_not_set_optional_bundle_bypass(tmp_path: Path) -> None:
+    plugin = tmp_path / "conftest_probe_plugin.py"
+    plugin.write_text(
+        "import os\n"
+        "\n"
+        "def pytest_collection_finish(session):\n"
+        f"    value = os.environ.get({BUNDLE_OPTIONAL_ENV!r})\n"
+        "    if value is not None:\n"
+        f"        raise SystemExit({BUNDLE_OPTIONAL_ENV!r} + f' was set to {{value!r}} during collection')\n",
+        encoding="utf-8",
+    )
+    env = {"PYTHONPATH": os.pathsep.join([str(tmp_path), os.environ.get("PYTHONPATH", "")])}
+    completed = _run_pytest(
+        ["--collect-only", str(Path(__file__).resolve()), "-p", "conftest_probe_plugin"],
+        cwd=REPO_ROOT,
+        env=env,
+    )
+    assert completed.returncode == 0, (
+        "scripts/tests/conftest.py set ACX_BUNDLE_OPTIONAL during collection; "
+        f"stdout={completed.stdout!r}; stderr={completed.stderr!r}"
+    )
 
 
 def test_require_admin_dist_accepts_a_present_bundle(tmp_path: Path) -> None:
@@ -105,9 +210,15 @@ def test_missing_admin_dist_skips_when_optional(monkeypatch: pytest.MonkeyPatch,
 
 
 def test_built_bundle_is_not_older_than_admin_sources() -> None:
+    dist_root = _dist_root()
+    if not _using_override_roots() and not _admin_dist_present(dist_root):
+        pytest.skip(
+            f"live admin bundle {dist_root} is gitignored and absent; "
+            "missing/stale red-proof is the subprocess tests"
+        )
     artifacts = _bundle_artifacts()
     newest_source = _source_mtime()
-    stale = [str(path.relative_to(REPO_ROOT)) for path in _stale_artifacts(artifacts, newest_source)]
+    stale = [str(path) for path in _stale_artifacts(artifacts, newest_source)]
     assert stale == [], f"admin bundle/package artifacts are stale relative to js/ sources: {stale}"
 
 
@@ -120,6 +231,53 @@ def test_one_stale_bundle_member_is_not_hidden_by_a_fresh_member(tmp_path: Path)
     os.utime(stale, (100, 100))
 
     assert _stale_artifacts([fresh, stale], 200) == [stale]
+
+
+def test_stale_bundle_pytest_exits_nonzero(tmp_path: Path) -> None:
+    source_mtime = 1_700_000_200
+    source_root, dist_root, package_root = _write_bundle_tree(
+        tmp_path,
+        source_mtime=source_mtime,
+        artifact_mtimes={"admin.js": source_mtime, "admin.css": source_mtime - 60},
+    )
+    completed = _run_live_freshness(_freshness_override_env(source_root, dist_root, package_root))
+    assert completed.returncode != 0, (
+        "freshness gate stayed green on a stale sibling artifact; "
+        f"stdout={completed.stdout!r}; stderr={completed.stderr!r}"
+    )
+    combined = f"{completed.stdout}\n{completed.stderr}"
+    assert "stale" in combined.lower()
+
+
+def test_fresh_bundle_pytest_exits_zero(tmp_path: Path) -> None:
+    source_mtime = 1_700_000_200
+    source_root, dist_root, package_root = _write_bundle_tree(
+        tmp_path,
+        source_mtime=source_mtime,
+        artifact_mtimes={"admin.js": source_mtime + 60, "admin.css": source_mtime + 60},
+    )
+    completed = _run_live_freshness(_freshness_override_env(source_root, dist_root, package_root))
+    assert completed.returncode == 0, (
+        "freshness gate went red on a fully fresh bundle; "
+        f"stdout={completed.stdout!r}; stderr={completed.stderr!r}"
+    )
+
+
+def test_missing_bundle_pytest_exits_nonzero(tmp_path: Path) -> None:
+    source_root, dist_root, package_root = _write_bundle_tree(
+        tmp_path,
+        source_mtime=1_700_000_200,
+        artifact_mtimes={"admin.js": 1_700_000_200},
+    )
+    dist_root.joinpath("admin.js").unlink()
+    dist_root.rmdir()
+    completed = _run_live_freshness(_freshness_override_env(source_root, dist_root, package_root))
+    assert completed.returncode != 0, (
+        "freshness gate stayed green on a missing admin bundle; "
+        f"stdout={completed.stdout!r}; stderr={completed.stderr!r}"
+    )
+    combined = f"{completed.stdout}\n{completed.stderr}"
+    assert "missing admin bundle" in combined
 
 
 def test_packaged_zip_does_not_ship_retired_apply_copy() -> None:

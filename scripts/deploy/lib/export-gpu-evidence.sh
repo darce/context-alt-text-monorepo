@@ -375,15 +375,19 @@ recover_pending_publishes() {
 
         candidate_backup="${candidate}/previous"
         if [ -e "$out_dir" ] || [ -L "$out_dir" ]; then
+            # A prior attempt may have retained this transaction because a
+            # durability barrier failed. Visibility alone cannot authorize GC.
+            sync_paths "$out_dir"/* "$out_dir" "$out_parent"
             echo "INFO: completing cleanup of an already-published evidence transaction: $candidate" >&2
             rm -rf -- "$candidate"
+            sync_paths "$out_parent"
             continue
         fi
 
         if [ -d "$candidate_backup" ] && [ ! -L "$candidate_backup" ]; then
             echo "INFO: restoring the previous evidence bundle from an interrupted publish: $out_dir" >&2
             mv -- "$candidate_backup" "$out_dir"
-            sync_paths "$out_parent"
+            sync_paths "$out_dir"/* "$out_dir" "$out_parent" "$candidate"
         else
             echo "INFO: discarding an interrupted first publish with no previous bundle: $candidate" >&2
         fi

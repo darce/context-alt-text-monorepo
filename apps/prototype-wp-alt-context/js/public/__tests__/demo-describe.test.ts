@@ -405,6 +405,100 @@ describe('public demo describe polling', () => {
   });
 });
 
+describe('public demo description_tier envelope contract', () => {
+  const completedDescription = (overrides: Record<string, unknown> = {}) =>
+    running({
+      status: 'completed',
+      phase: 'complete',
+      progress: { done: 1, total: 1 },
+      description: 'A lakeside path.',
+      ...overrides,
+    });
+
+  it.each([
+    ['provisional_cpu', 'provisional_cpu'],
+    ['final_gpu', 'final_gpu'],
+    [null, null],
+  ] as const)(
+    'keeps description_tier %s on a completed description even when gpu_state is ready',
+    (tier, expected) => {
+      const parsed = parsePublicDemoEnvelope(
+        completedDescription({ gpu_state: 'ready', description_tier: tier }),
+      );
+
+      expect(parsed.description).toBe('A lakeside path.');
+      expect(parsed.gpu_state).toBe('ready');
+      expect(Object.prototype.hasOwnProperty.call(parsed, 'description_tier')).toBe(true);
+      expect(parsed.description_tier).toBe(expected);
+    },
+  );
+
+  it('treats a legacy completed description without description_tier as explicit null', () => {
+    const payload = completedDescription({ gpu_state: 'ready' });
+    expect(Object.prototype.hasOwnProperty.call(payload, 'description_tier')).toBe(false);
+
+    const parsed = parsePublicDemoEnvelope(payload);
+
+    expect(parsed.description).toBe('A lakeside path.');
+    expect(parsed.gpu_state).toBe('ready');
+    expect(Object.prototype.hasOwnProperty.call(parsed, 'description_tier')).toBe(true);
+    expect(parsed.description_tier).toBeNull();
+  });
+
+  it.each<[string, unknown]>([
+    ['unknown string', 'unknown'],
+    ['number', 1],
+    ['array', ['final_gpu']],
+  ])('rejects an explicit unknown description_tier with INVALID_RESPONSE (%s)', (_label, tier) => {
+    expect(() => parsePublicDemoEnvelope(completedDescription({ description_tier: tier }))).toThrow(
+      PublicDemoClientError,
+    );
+    try {
+      parsePublicDemoEnvelope(completedDescription({ description_tier: tier }));
+      expect.unreachable('invalid description_tier must not parse');
+    } catch (error) {
+      expect(error).toMatchObject({ code: 'acx_public_demo_invalid_response' });
+    }
+  });
+
+  it.each([
+    running({ description_tier: 'final_gpu' }),
+    running({
+      status: 'failed',
+      phase: 'failed',
+      error: { code: 'acx_public_demo_pipeline_failed', message: 'The image could not be described.' },
+      description_tier: 'provisional_cpu',
+    }),
+    running({
+      status: 'completed',
+      phase: 'complete',
+      progress: { done: 1, total: 1 },
+      description_tier: 'final_gpu',
+    }),
+  ])('does not produce description_tier on noncompleted, error, or no-description payloads', (payload) => {
+    const parsed = parsePublicDemoEnvelope(payload);
+    expect(Object.prototype.hasOwnProperty.call(parsed, 'description_tier')).toBe(false);
+  });
+
+  it('returns the parsed description_tier from pollRun on a completed description', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      response(
+        completedDescription({
+          gpu_state: 'ready',
+          description_tier: 'final_gpu',
+        }),
+      ),
+    );
+
+    const result = await pollRun({ statusUrl: '/status/run-1', nonce: 'nonce', fetchImpl });
+
+    expect(result.status).toBe('completed');
+    expect(result.description).toBe('A lakeside path.');
+    expect(result.gpu_state).toBe('ready');
+    expect(result.description_tier).toBe('final_gpu');
+  });
+});
+
 describe('public demo radio contract from actual PHP shortcode markup', () => {
   const chooseImageMessage = 'Choose an image before requesting a description.';
   const postBodies = (fetchImpl: ReturnType<typeof vi.fn<typeof fetch>>): Array<{ media_id: number }> =>

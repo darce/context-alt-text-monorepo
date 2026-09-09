@@ -7,6 +7,7 @@ import ipaddress
 import json
 import socket
 import ssl
+import threading
 import time
 from http.client import HTTPSConnection
 from io import BytesIO, DEFAULT_BUFFER_SIZE, BufferedReader, BufferedRWPair, BufferedWriter, TextIOWrapper
@@ -39,6 +40,10 @@ REMOTE_FETCH_MAX_BYTES = 8 * 1024 * 1024
 # request/headers/body. Matches the previous per-phase 30s socket timeout but
 # does not reset on hops ([API-04] [RES-02]).
 REMOTE_FETCH_DEADLINE_S = 30.0
+# getaddrinfo cannot be cancelled. Cap concurrent DNS workers; a stall must
+# lose to deadline_at without join, pin, or fetch ([API-04] [RES-02] [RES-03]).
+_DNS_MAX_IN_FLIGHT = 4
+_DNS_IN_FLIGHT = threading.BoundedSemaphore(_DNS_MAX_IN_FLIGHT)
 
 
 class ItemOutcomeStore:
@@ -292,13 +297,13 @@ def _fetch_remote(
             "media_unresolvable",
             f"remote URL is malformed: {_printable_message(url)}",
         ) from exc
-    if parsed.scheme != "https" or not parsed.hostname:
+    if parsed.scheme != "https" or not host:
         raise BenchError(
             "media_unresolvable",
             f"remote URL must be https: {_printable_message(url)}",
         )
     try:
-        addresses = set((resolver or _default_resolve)(host))
+        addresses = set(_resolve_host_with_deadline(host, resolver, deadline_at))
     except BenchError:
         raise
     except Exception as exc:  # noqa: BLE001 — DNS implementations vary by platform
@@ -371,6 +376,44 @@ def _fetch_remote(
             "media_resource_failed",
             f"remote media fetch failed for {_printable_message(url)}: {exc}",
         ) from exc
+
+
+def _resolve_host_with_deadline(
+    host: str,
+    resolver: Resolver | None,
+    deadline_at: float,
+) -> list[str]:
+    remaining = _remaining_timeout(deadline_at)
+    resolve = resolver or _default_resolve
+    if not _DNS_IN_FLIGHT.acquire(timeout=remaining):
+        raise _deadline_exceeded()
+    outcome: dict[str, object] = {}
+    done = threading.Event()
+
+    def _run() -> None:
+        try:
+            outcome["addrs"] = resolve(host)
+        except Exception as exc:  # noqa: BLE001 — DNS implementations vary
+            outcome["error"] = exc
+        finally:
+            done.set()
+            _DNS_IN_FLIGHT.release()
+
+    try:
+        threading.Thread(target=_run, name="bench-media-dns", daemon=True).start()
+    except Exception:
+        _DNS_IN_FLIGHT.release()
+        raise
+    wait_for = deadline_at - time.monotonic()
+    if wait_for <= 0 or not done.wait(timeout=wait_for):
+        raise _deadline_exceeded()
+    error = outcome.get("error")
+    if isinstance(error, Exception):
+        raise error
+    if "addrs" not in outcome:
+        raise _deadline_exceeded()
+    _remaining_timeout(deadline_at)
+    return outcome["addrs"]  # type: ignore[return-value]
 
 
 def _default_resolve(host: str) -> list[str]:

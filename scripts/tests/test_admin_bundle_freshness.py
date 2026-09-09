@@ -4,6 +4,8 @@ import os
 import zipfile
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 APP = REPO_ROOT / "apps/prototype-wp-alt-context"
 SOURCE_ROOT = APP / "js"
@@ -13,6 +15,7 @@ LEGACY_PACKAGE_DIST_ROOT = APP / "dist"
 GUIDED_COPY = "Apply and undo"
 RETIRED_COPY = "Apply it yourself"
 FRESHNESS_TOLERANCE_SECONDS = 1
+BUNDLE_OPTIONAL_ENV = "ACX_BUNDLE_OPTIONAL"
 
 
 def _source_mtime() -> float:
@@ -28,17 +31,34 @@ def _package_zips() -> list[Path]:
     return sorted(path for root in roots if root.is_dir() for path in root.glob("*.zip"))
 
 
-def _bundle_artifacts() -> list[Path]:
-    artifacts: list[Path] = []
-    if DIST_ROOT.exists():
-        dist_files = [path for path in DIST_ROOT.rglob("*") if path.is_file()]
-        assert dist_files, f"admin bundle directory is empty: {DIST_ROOT}"
-        artifacts.extend(dist_files)
-    artifacts.extend(_package_zips())
-    assert artifacts, (
-        f"missing admin bundle {DIST_ROOT} and packaged plugin artifact under "
-        f"{PACKAGE_DIST_ROOT} or {LEGACY_PACKAGE_DIST_ROOT}"
+def _admin_dist_present(dist_root: Path = DIST_ROOT) -> bool:
+    return dist_root.is_dir() and any(path.is_file() for path in dist_root.rglob("*"))
+
+
+def _bundle_optional() -> bool:
+    return os.environ.get(BUNDLE_OPTIONAL_ENV) == "1"
+
+
+def _require_admin_dist(dist_root: Path = DIST_ROOT) -> None:
+    """Fail closed when the built admin bundle is missing unless explicitly optional."""
+    if _admin_dist_present(dist_root):
+        return
+    if _bundle_optional():
+        pytest.skip(
+            f"admin bundle {dist_root} is absent and {BUNDLE_OPTIONAL_ENV}=1"
+        )
+    raise AssertionError(
+        f"missing admin bundle {dist_root}; set {BUNDLE_OPTIONAL_ENV}=1 if the bundle is not expected"
     )
+
+
+def _bundle_artifacts() -> list[Path]:
+    _require_admin_dist()
+    artifacts: list[Path] = []
+    dist_files = [path for path in DIST_ROOT.rglob("*") if path.is_file()]
+    assert dist_files, f"admin bundle directory is empty: {DIST_ROOT}"
+    artifacts.extend(dist_files)
+    artifacts.extend(_package_zips())
     return artifacts
 
 
@@ -57,6 +77,25 @@ def _retired_copy_members(archive: Path) -> list[str]:
             if RETIRED_COPY in data:
                 retired.append(name)
     return retired
+
+
+def test_require_admin_dist_accepts_a_present_bundle(tmp_path: Path) -> None:
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "admin.js").write_text("ok", encoding="utf-8")
+    _require_admin_dist(dist)
+
+
+def test_missing_admin_dist_fails_unless_optional(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv(BUNDLE_OPTIONAL_ENV, raising=False)
+    with pytest.raises(AssertionError, match="missing admin bundle"):
+        _require_admin_dist(tmp_path / "missing-dist")
+
+
+def test_missing_admin_dist_skips_when_optional(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv(BUNDLE_OPTIONAL_ENV, "1")
+    with pytest.raises(pytest.skip.Exception, match=f"{BUNDLE_OPTIONAL_ENV}=1"):
+        _require_admin_dist(tmp_path / "missing-dist")
 
 
 def test_built_bundle_is_not_older_than_admin_sources() -> None:

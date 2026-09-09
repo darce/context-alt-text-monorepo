@@ -2726,45 +2726,46 @@ flip_edge_alias() {
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
   log "Flipping Caddy reverse_proxy ${from}:8000 -> ${to}:8000"
   run_with_deadline "${timeout}" "caddy flip ${from} -> ${to}" \
-    ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
-    "set -euo pipefail
-     cd /opt/acx-backend
-     backup_root='${ACX_DEPLOY_BACKUP_ROOT}'
-     transaction_dir=\"\$backup_root/${env}/${ACX_DEPLOY_TRANSACTION_ID}\"
-     snapshot=\"\$transaction_dir/edge/Caddyfile.pre-cutover\"
-     pointer=\"\$backup_root/${env}/edge-cutover.current\"
-     sudo install -d -m 700 -- \"\$transaction_dir/edge\"
-     route_count() {
-       route=\"\$1:8000\"; file=\"\${2:-Caddyfile}\"
-       sudo awk -v expected=\"\$route\" '\$1 == "reverse_proxy" && NF == 2 && \$2 == expected { count++ } END { print count + 0 }' \"\$file\"
-     }
-     if sudo test -e \"\$snapshot\"; then
-       sudo test -f \"\$snapshot\" || { echo 'pre-cutover Caddyfile snapshot is not a regular file' >&2; exit 1; }
-       snapshot_canonical=\$(route_count '${alias}' \"\$snapshot\")
-       snapshot_next=\$(route_count '${next_alias}' \"\$snapshot\")
-       [ \"\$snapshot_canonical\" -eq 1 ] && [ \"\$snapshot_next\" -eq 0 ] || { echo 'pre-cutover Caddyfile snapshot is not canonical' >&2; exit 1; }
-     elif sudo test -f "\$snapshot.absent"; then
-       echo 'pre-cutover Caddyfile was absent; refusing to overwrite its immutable absence marker' >&2
-       exit 1
-     else
-       sudo test -f Caddyfile || { echo 'Caddyfile is missing; refusing traffic flip' >&2; exit 1; }
-       sudo cp -p -- Caddyfile \"\$snapshot\"
-       sudo cmp -s -- Caddyfile \"\$snapshot\" || { echo 'pre-cutover Caddyfile snapshot verification failed' >&2; exit 1; }
-     fi
-     printf '%s\\n' \"\$snapshot\" | sudo tee \"\$pointer\" >/dev/null
-     sudo touch -- \"\$transaction_dir/edge-cutover.ready\"
-     source_count=\$(route_count '${from}')
-     [ \"\$source_count\" -eq 1 ] || { echo 'expected exactly one formatted Caddy reverse_proxy source route' >&2; exit 1; }
-     tmp=\$(mktemp Caddyfile.flip.XXXXXX)
-     trap 'rm -f -- \"\$tmp\"' EXIT
-     sudo sed -E 's|(^[[:space:]]*reverse_proxy[[:space:]]+)${from}:8000([[:space:]]*)$|\\1${to}:8000\\2|' Caddyfile >\"\$tmp\"
-     sudo mv -f -- \"\$tmp\" Caddyfile
-     desired_count=\$(route_count '${to}')
-     remaining_source_count=\$(route_count '${from}')
-     [ \"\$desired_count\" -eq 1 ] && [ \"\$remaining_source_count\" -eq 0 ] || { echo 'Caddy reverse_proxy replacement did not converge exactly once' >&2; exit 1; }
-     if ! docker compose -f docker-compose.caddy.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile; then
-       docker compose -f docker-compose.caddy.yml up -d
-     fi"
+    ssh -l "${OCI_USER}" -- "${OCI_HOST}" "bash -s" <<FLIP_EDGE
+set -euo pipefail
+cd /opt/acx-backend
+backup_root='${ACX_DEPLOY_BACKUP_ROOT}'
+transaction_dir="\$backup_root/${env}/${ACX_DEPLOY_TRANSACTION_ID}"
+snapshot="\$transaction_dir/edge/Caddyfile.pre-cutover"
+pointer="\$backup_root/${env}/edge-cutover.current"
+sudo install -d -m 700 -- "\$transaction_dir/edge"
+route_count() {
+  route="\$1:8000"; file="\${2:-Caddyfile}"
+  sudo awk -v expected="\$route" '\$1 == "reverse_proxy" && NF == 2 && \$2 == expected { count++ } END { print count + 0 }' "\$file"
+}
+if sudo test -e "\$snapshot"; then
+  sudo test -f "\$snapshot" || { echo 'pre-cutover Caddyfile snapshot is not a regular file' >&2; exit 1; }
+  snapshot_canonical=\$(route_count '${alias}' "\$snapshot")
+  snapshot_next=\$(route_count '${next_alias}' "\$snapshot")
+  [ "\$snapshot_canonical" -eq 1 ] && [ "\$snapshot_next" -eq 0 ] || { echo 'pre-cutover Caddyfile snapshot is not canonical' >&2; exit 1; }
+elif sudo test -f "\$snapshot.absent"; then
+  echo 'pre-cutover Caddyfile was absent; refusing to overwrite its immutable absence marker' >&2
+  exit 1
+else
+  sudo test -f Caddyfile || { echo 'Caddyfile is missing; refusing traffic flip' >&2; exit 1; }
+  sudo cp -p -- Caddyfile "\$snapshot"
+  sudo cmp -s -- Caddyfile "\$snapshot" || { echo 'pre-cutover Caddyfile snapshot verification failed' >&2; exit 1; }
+fi
+printf '%s\n' "\$snapshot" | sudo tee "\$pointer" >/dev/null
+sudo touch -- "\$transaction_dir/edge-cutover.ready"
+source_count=\$(route_count '${from}')
+[ "\$source_count" -eq 1 ] || { echo 'expected exactly one formatted Caddy reverse_proxy source route' >&2; exit 1; }
+tmp=\$(mktemp Caddyfile.flip.XXXXXX)
+trap 'rm -f -- "\$tmp"' EXIT
+sudo sed -E 's|(^[[:space:]]*reverse_proxy[[:space:]]+)${from}:8000([[:space:]]*)\$|\\1${to}:8000\\2|' Caddyfile >"\$tmp"
+sudo mv -f -- "\$tmp" Caddyfile
+desired_count=\$(route_count '${to}')
+remaining_source_count=\$(route_count '${from}')
+[ "\$desired_count" -eq 1 ] && [ "\$remaining_source_count" -eq 0 ] || { echo 'Caddy reverse_proxy replacement did not converge exactly once' >&2; exit 1; }
+if ! docker compose -f docker-compose.caddy.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile; then
+  docker compose -f docker-compose.caddy.yml up -d
+fi
+FLIP_EDGE
 }
 
 probe_cutover_api_health() {
@@ -2784,6 +2785,29 @@ probe_cutover_api_health() {
       return 0
     fi
     warn "Cutover candidate health failed on attempt ${attempt}/${max_attempts}"
+    verify_retry_sleep "${attempt}" "${max_attempts}" "${sleep_s}"
+  done
+  return 1
+}
+
+probe_canonical_api_health() {
+  local env="$1" remote_dir compose_files timeout attempt max_attempts sleep_s
+  remote_dir="$(env_to_remote_dir "$env")"
+  compose_files="$(env_to_compose_files "$env")"
+  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  max_attempts="${ACX_VERIFY_ATTEMPTS:-5}"
+  sleep_s="${ACX_VERIFY_SLEEP:-5}"
+  [[ "${max_attempts}" =~ ^[1-9][0-9]*$ ]] || return 1
+  [[ "${sleep_s}" =~ ^[0-9]+$ ]] || return 1
+  for attempt in $(seq 1 "${max_attempts}"); do
+    # shellcheck disable=SC2086 # compose_files is intentionally word-split remotely.
+    if run_with_deadline "${timeout}" "canonical health probe ${env} attempt ${attempt}" \
+      ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
+      "cd '${remote_dir}' && cid=\$(docker compose ${compose_files} ps -q api | head -1) && [ -n \"\$cid\" ] && docker exec \"\$cid\" python -c 'import sys, urllib.request; r=urllib.request.urlopen(\"http://127.0.0.1:8000/health\", timeout=4); sys.exit(0 if r.status==200 else 1)'"; then
+      log "Canonical api ${env} is healthy"
+      return 0
+    fi
+    warn "Canonical api health failed on attempt ${attempt}/${max_attempts}"
     verify_retry_sleep "${attempt}" "${max_attempts}" "${sleep_s}"
   done
   return 1
@@ -2892,6 +2916,10 @@ do_restart() {
   fi
   if ! verify_running_image_digest "$env" "${expected_digest}"; then
     warn "live unit ${unit} came up on the wrong image; traffic remains on ${next_unit}"
+    return 1
+  fi
+  if ! probe_canonical_api_health "$env"; then
+    warn "canonical api never became healthy after restart; traffic remains on ${next_unit}"
     return 1
   fi
   if ! flip_edge_alias "$env" canonical; then

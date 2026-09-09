@@ -3633,6 +3633,139 @@ def test_normal_verify_runs_aggregate_on_sibling_probe_error(tmp_path: Path) -> 
     assert result.returncode == 1, combined
 
 
+def _run_prepare_producer(
+    tmp_path: Path,
+    *,
+    env: str = "prod",
+    sibling_rc: int = 0,
+    restart_rc: int = 0,
+    image_rc: int = 0,
+    scoped_rc: int = 0,
+    rollback_rc: int = 0,
+) -> tuple[subprocess.CompletedProcess[str], str]:
+    """Drive do_prepare_producer via existing deploy helpers, not an invented API.
+
+    do_restart is the existing cutover start transaction used by do_deploy.
+    restore_env_tag_to_rollback is the existing deploy rollback. Scoped image
+    and snapshot verifies are stubbed so a verify-only path cannot hide a
+    missing converge (TEST-15). sibling_gpu_snapshots_complete defaults to
+    success so missing siblings are not a bootstrap precondition.
+    """
+    records = tmp_path / "prepare.log"
+    command = f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+preflight_ssh() {{ printf 'preflight\\n' >>"{records}"; return 0; }}
+sibling_gpu_snapshots_complete() {{ printf 'sibling:%s\\n' "$1" >>"{records}"; return {sibling_rc}; }}
+converge_runtime() {{ printf 'converge:%s\\n' "$1" >>"{records}"; return 0; }}
+do_restart() {{ printf 'restart:%s\\n' "$1" >>"{records}"; return {restart_rc}; }}
+do_deploy() {{ printf 'deploy:%s\\n' "$1" >>"{records}"; return 0; }}
+do_verify() {{ printf 'verify:%s\\n' "$1" >>"{records}"; return 0; }}
+verify_live_gpu_snapshots() {{ printf 'aggregate:%s\\n' "$1" >>"{records}"; return 0; }}
+verify_running_image_matches_deployed() {{ printf 'image:%s\\n' "$1" >>"{records}"; return {image_rc}; }}
+verify_scoped_producer_snapshots() {{ printf 'scoped:%s\\n' "$1" >>"{records}"; return {scoped_rc}; }}
+restore_env_tag_to_rollback() {{ printf 'rollback:%s\\n' "$1" >>"{records}"; return {rollback_rc}; }}
+do_prepare_producer {env}
+'''
+    result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, check=False)
+    logged = records.read_text() if records.exists() else ""
+    return result, logged
+
+
+def test_prepare_producer_converges_selected_env_before_verify(tmp_path: Path) -> None:
+    """Cold selected-env must start the producer before image/writer checks.
+
+    Finding 10250: a stale leftover snapshot can masquerade as a live writer.
+    do_prepare_producer currently only preflights and verifies existing state
+    (RLSE-03). Reuse do_restart from the existing deploy transaction, then
+    verify. TEST-15: image/scoped stubs succeed so a verify-only path would
+    return 0 for the wrong reason.
+    """
+    result, logged = _run_prepare_producer(
+        tmp_path, sibling_rc=0, restart_rc=0, image_rc=0, scoped_rc=0
+    )
+    combined = result.stdout + result.stderr
+    lines = logged.splitlines()
+    assert "restart:prod" in lines, combined
+    assert "image:prod" in lines, combined
+    assert "scoped:prod" in lines, combined
+    assert lines.index("restart:prod") < lines.index("image:prod"), lines
+    assert lines.index("restart:prod") < lines.index("scoped:prod"), lines
+    assert "aggregate:prod" not in lines
+    assert result.returncode == 0, combined
+
+
+def test_prepare_producer_convergence_does_not_require_missing_siblings(
+    tmp_path: Path,
+) -> None:
+    """Bootstrap the selected env even when sibling snapshots already exist."""
+    result, logged = _run_prepare_producer(
+        tmp_path, sibling_rc=0, restart_rc=0, image_rc=0, scoped_rc=0
+    )
+    combined = result.stdout + result.stderr
+    lines = logged.splitlines()
+    assert "restart:prod" in lines, combined
+    assert result.returncode == 0, combined
+    result_missing, logged_missing = _run_prepare_producer(
+        tmp_path, sibling_rc=1, restart_rc=0, image_rc=0, scoped_rc=0
+    )
+    combined_missing = result_missing.stdout + result_missing.stderr
+    assert "restart:prod" in logged_missing.splitlines(), combined_missing
+    assert result_missing.returncode == 0, combined_missing
+
+
+def test_prepare_producer_restart_failure_rolls_back_and_does_not_succeed(
+    tmp_path: Path,
+) -> None:
+    """Start failure must reuse deploy rollback and must not report success.
+
+    DATA-13 / RES-03: a failed do_restart is the same transaction boundary as
+    do_deploy (restore_env_tag_to_rollback). TEST-15: scoped verify is stubbed
+    successful so skipping rollback would still look green.
+    """
+    result, logged = _run_prepare_producer(
+        tmp_path, restart_rc=1, image_rc=0, scoped_rc=0, rollback_rc=0
+    )
+    combined = result.stdout + result.stderr
+    lines = logged.splitlines()
+    assert "restart:prod" in lines, combined
+    assert "rollback:prod" in lines, combined
+    assert "scoped:prod" not in lines
+    assert result.returncode != 0, combined
+    assert "passed" not in combined.lower()
+
+
+def test_prepare_producer_scoped_failure_after_converge_is_not_success(
+    tmp_path: Path,
+) -> None:
+    """Writer/schema/freshness failure after start must not report success."""
+    result, logged = _run_prepare_producer(
+        tmp_path, restart_rc=0, image_rc=0, scoped_rc=1
+    )
+    combined = result.stdout + result.stderr
+    lines = logged.splitlines()
+    assert "restart:prod" in lines, combined
+    assert "scoped:prod" in lines, combined
+    assert lines.index("restart:prod") < lines.index("scoped:prod"), lines
+    assert result.returncode != 0, combined
+    assert "passed" not in combined.lower()
+
+
+def test_prepare_producer_does_not_invoke_aggregate_snapshot_gate(tmp_path: Path) -> None:
+    """Aggregate checker still belongs to NORMAL verify (missing siblings refuse).
+
+    AGT-06: skip of verify_live_gpu_snapshots is explicit. RLSE-03: the
+    registry-wide gate remains on verify_live_gpu_snapshots, not this bootstrap.
+    """
+    result, logged = _run_prepare_producer(tmp_path, restart_rc=0, scoped_rc=0)
+    combined = result.stdout + result.stderr
+    lines = logged.splitlines()
+    assert "aggregate:prod" not in lines
+    assert "verify:prod" not in lines
+    assert "restart:prod" in lines, combined
+    assert result.returncode == 0, combined
+
+
 def _fresh_load_snapshot(written_at: int = 1000) -> str:
     return (
         '{"queue_depth":1,"in_flight":0,"batch_in_progress":false,'

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Remote-agent ping hygiene helpers. Sourceable for tests.
+# Remote-agent ping hygiene helpers (sourced by the plugin-managed scripts/remote_agent.sh transport overlay, which stays untracked). Sourceable for tests.
 #
 # Hung `codex exec ... ping` probes (ppid=1) leak pids and must be bounded and
 # reaped. GNU timeout treats a duration of 0 as "no timeout", so PING_TIMEOUT_SEC

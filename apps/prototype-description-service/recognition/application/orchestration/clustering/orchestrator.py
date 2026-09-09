@@ -5,9 +5,10 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
 from sqlalchemy import Select, exists, select
@@ -55,6 +56,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class _EmbeddingModelRow(Protocol):
+    embedding_model: str | None
+
+
 def _joint_assignment_active() -> bool:
     """True when face_pipeline profile is active and joint assignment is enabled."""
     from recognition.config import get_settings as get_recognition_settings
@@ -68,6 +73,41 @@ def _joint_assignment_active() -> bool:
         identity_detection=settings.identity_detection,
     )
     return knobs.profile == "face_pipeline" and bool(knobs.joint_assignment_enabled)
+
+
+def probe_space_skip_payload(
+    rows: Sequence[_EmbeddingModelRow],
+    kept: Sequence[_EmbeddingModelRow],
+    *,
+    active_model: str | None,
+) -> dict[str, object]:
+    """Operator-visible probe-side FIR23-01 skip counts for clustering_job.payload."""
+    kept_ids = {id(row) for row in kept}
+    skipped_models: set[str] = set()
+    skipped_count = 0
+    for row in rows:
+        if id(row) in kept_ids:
+            continue
+        skipped_count += 1
+        model = row.embedding_model
+        skipped_models.add(str(model) if model else "unstamped")
+    return {
+        "active_embedding_model": active_model,
+        "skipped_models": sorted(skipped_models),
+        "skipped_count": skipped_count,
+        "kept_count": len(kept),
+        "total_count": len(rows),
+    }
+
+
+def _record_probe_space_skip(
+    clustering_job: IdentityClusteringJob,
+    skip_payload: dict[str, object],
+) -> None:
+    clustering_job.payload = {
+        **(clustering_job.payload or {}),
+        "probe_space_skip": skip_payload,
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,7 +195,8 @@ class IncrementalClusteringRunner:
 
         await self._cleanup_orphaned_representatives(context.tenant_id)
 
-        unclustered = await self._fetch_unclustered_identities(tenant_uuid)
+        unclustered, skip_payload = await self._fetch_unclustered_identities(tenant_uuid)
+        _record_probe_space_skip(clustering_job, skip_payload)
         if not unclustered:
             return await self._complete_empty_job(
                 clustering_job=clustering_job,
@@ -277,12 +318,16 @@ class IncrementalClusteringRunner:
         except Exception as exc:
             logger.warning("[clustering] Failed to cleanup orphaned representatives: %s", exc)
 
-    async def _fetch_unclustered_identities(self, tenant_uuid: uuid.UUID) -> list[MediaIdentityModel]:
+    async def _fetch_unclustered_identities(
+        self, tenant_uuid: uuid.UUID
+    ) -> tuple[list[MediaIdentityModel], dict[str, object]]:
         """Load unclustered identities for this tenant.
 
         FIR23-01: when multiple embedding_model values coexist, keep only the
         active runtime model (never mix spaces). A single-model tenant is a
-        no-op — every row is returned unchanged.
+        no-op — every row is returned unchanged. Probe-side skips are returned
+        so the job payload can distinguish a foreign-space filter from an
+        empty gallery.
         """
         stmt: Select[tuple[MediaIdentityModel]] = (
             select(MediaIdentityModel)
@@ -291,10 +336,12 @@ class IncrementalClusteringRunner:
         )
         result = await self._session.execute(stmt)
         rows = list(result.scalars().all())
+        from recognition.application.embedding.manifest import try_active_embedding_model_id
         from recognition.application.suggestions.embedding_space import filter_to_active_embedding_space
 
         # Mixed rows keep active_embedding_model_id only; unresolved → empty.
-        return filter_to_active_embedding_space(rows)
+        kept = filter_to_active_embedding_space(rows)
+        return kept, probe_space_skip_payload(rows, kept, active_model=try_active_embedding_model_id())
 
     async def _complete_empty_job(
         self,

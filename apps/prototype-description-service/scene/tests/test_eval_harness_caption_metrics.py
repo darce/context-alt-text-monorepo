@@ -1,14 +1,19 @@
 """VLM-2A Slice 2: caption deterministic metrics (assessment §6c tiers 1-2, 5-6)."""
 
+import json
+
 import pytest
 
 from scripts.eval_harness.caption_metrics import (
     CaptionScores,
+    aggregate_gated_scores,
     insertion_rate,
+    mean_gated_score,
     name_precision,
     score_caption,
     wrong_name_image_rate,
 )
+from scripts.eval_harness.report import ScoreVerdict, build_reports
 
 
 def _entry(**overrides):
@@ -79,10 +84,83 @@ def test_repetition_ratio():
     assert scores.repetition_ratio == pytest.approx(0.75)
 
 
-def test_fkre_in_plausible_band():
+def test_caption_score_envelope_is_pinned_for_canonical_fixture():
+    """The fixture pins every synthesized field, including the FKRE formula."""
     scores = score_caption(CAPTION, **_entry())
-    assert isinstance(scores.fkre, float)
-    assert 0.0 <= scores.fkre <= 121.22  # theoretical FKRE bounds
+    assert scores == CaptionScores(
+        inserted_identities=["Alice Example"],
+        missing_identities=[],
+        insertion_eligible=True,
+        must_right_failures=[],
+        policy_violation=False,
+        wrong_name_hits=[],
+        hallucinated_names=[],
+        fkre=87.94500000000002,
+        repetition_ratio=0.0,
+        tag_coverage=None,
+        word_count=12,
+        char_count=59,
+        first_sentence_gist_ok=True,
+        meta_framing_hits=[],
+        context_duplication_ratio=None,
+        sentence_count=2,
+        name_front_loaded=True,
+    )
+
+
+def test_bakeoff_caption_score_reaches_report_verdict():
+    """The bake-off scoring path carries caption metrics into its verdict."""
+    entry = {
+        "path": "img.jpg",
+        "media_id": 1,
+        "face_count": 1,
+        "present_identities": ["Alice Example"],
+        "must_right": ["Alice Example"],
+        "easy_wrong": [],
+        "policy": {"recognition_enabled": True},
+        "face_boxes": [],
+    }
+    record = {
+        "schema": "acx-eval/v1",
+        "kind": "run_record",
+        "provenance": {
+            "manifest_sha256": "m" * 64,
+            "base_url": "https://candidate.example",
+            "head_sha": "0" * 40,
+            "started_at": "2026-07-06T00:00:00Z",
+        },
+        "items": [
+            {
+                "media_id": 1,
+                "path": "img.jpg",
+                "describe": {
+                    "alt_text_draft": CAPTION,
+                    "visual_facts": {"caption": "a person by a lake", "objects": ["lake"]},
+                    "adapter": "bakeoff",
+                    "model_id": "fixture",
+                    "model_version": "1",
+                    "cached": False,
+                },
+                "identities": [
+                    {
+                        "name": "Alice Example",
+                        "bbox": {"x": 0.0, "y": 0.0, "width": 1.0, "height": 1.0},
+                        "unpositioned": False,
+                    }
+                ],
+                "face_count": 1,
+                "error": None,
+            }
+        ],
+    }
+
+    report_doc, _ = build_reports(record, [entry])
+    report = json.loads(report_doc)
+    assert report["caption"]["insertion_rate"] == 1.0
+    assert report["caption"]["mean_gated_score"] == 1.0
+    assert report["per_image"][0]["inserted_identities"] == ["Alice Example"]
+    assert report["verdict"]["verdict"] == ScoreVerdict.FAIL.value
+    assert any("sample-size" in reason for reason in report["verdict"]["reasons"])
 
 
 def test_tag_coverage():
@@ -156,6 +234,62 @@ def test_insertion_rate_excludes_policy_disabled():
 def test_insertion_rate_none_when_no_eligible_identities():
     scores = [score_caption("A glacier.", **_entry(present_identities=[], must_right=[]))]
     assert insertion_rate(scores) is None
+
+
+# --- VLM6-R4-01: vacuous gated_score must not be a perfect win (UXR-07, EXP-06) ---
+
+
+def test_empty_identity_set_gated_score_is_not_applicable():
+    """Empty present_identities ⇒ metric undefined (None), never a vacuous 1.0.
+
+    Twyman's-law control (EXP-06): a garbage caption with no identity rubric must
+    not score as perfect. UXR-07: a rate with zero denominator is undefined.
+    """
+    scores = score_caption(
+        "A totally unrelated garbage caption about nothing at all whatsoever here.",
+        present_identities=[],
+        must_right=[],
+        easy_wrong=[],
+        recognition_enabled=True,
+    )
+    assert scores.insertion_eligible is True
+    assert scores.inserted_identities == []
+    assert scores.missing_identities == []
+    assert scores.gated_score is None  # not 1.0
+
+
+def test_empty_identity_set_hard_gate_failures_still_zero():
+    """Wrong-name / policy failures remain 0.0 even when identity denominator is empty."""
+    wrong = score_caption(
+        "Mallory Trap by a lake.",
+        present_identities=[],
+        must_right=[],
+        easy_wrong=["Mallory Trap"],
+        recognition_enabled=True,
+    )
+    assert wrong.gated_score == 0.0
+
+
+def test_aggregate_gated_scores_excludes_not_applicable_and_reports_count():
+    """Aggregates must drop N/A rows from the mean and surface how many were excluded."""
+    perfect = score_caption(CAPTION, **_entry())  # gated 1.0
+    miss = score_caption("A person by a lake.", **_entry())  # gated 0.0 (must-right fail)
+    na_empty = score_caption(
+        "Generic filler with no relationship to any image.",
+        **_entry(present_identities=[], must_right=[]),
+    )  # gated None (VLM6-R4-01)
+    na_policy_clean = score_caption(
+        "A person stands by a lake.",
+        **_entry(recognition_enabled=False, must_right=[]),
+    )  # gated None (VLMFIX-S3-04)
+
+    agg = aggregate_gated_scores([perfect, miss, na_empty, na_policy_clean])
+    assert agg.scored == 2
+    assert agg.excluded == 2
+    assert agg.mean == pytest.approx(0.5)
+    # Vacuous N/A rows must not inflate the mean toward 1.0
+    assert mean_gated_score([na_empty, na_empty]) is None
+    assert mean_gated_score([perfect, na_empty]) == pytest.approx(1.0)
 
 
 # --- ALTQ-1: wrong-name trap + roster hallucination (hard gates) ---
@@ -359,6 +493,8 @@ def test_nfc_nfd_name_drift_still_trips_gate():  # A-10
     scores = score_caption(nfc_caption, **_entry(easy_wrong=[nfd_name]))
     assert scores.wrong_name_hits == [nfd_name]
     assert scores.gated_score == 0.0
+
+
 # --- VLM-6 S1: fabricated-fact hallucination metric --------------------------
 
 from scripts.eval_harness.caption_metrics import (  # noqa: E402
@@ -464,6 +600,20 @@ def test_fabricated_fact_rate_all_vs_trapped():
     assert fabricated_fact_rate(scores, over="all") == pytest.approx(1 / 3)
     assert fabricated_fact_rate(scores, over="trapped") == pytest.approx(1 / 2)
     assert fabricated_fact_rate([untrapped], over="trapped") is None
+
+
+def test_fabricated_fact_rate_none_when_no_traps_corpus_wide():  # VLM6-C-05 / EVAL-19
+    """Zero trap coverage → rate is undefined (None), not a vacuous 0.0 success.
+
+    TEST-15: unfixed code returned 0.0 with denom=len(scores) when every image
+    has trap_count=0 — reading as "zero hallucination" where the truth is
+    non-observable.
+    """
+    untrapped = [score_hallucination("anything", reference_facts=[]) for _ in range(37)]
+    assert fabricated_fact_rate(untrapped, over="all") is None
+    assert fabricated_fact_rate(untrapped, over="trapped") is None
+    # Empty score list is also None.
+    assert fabricated_fact_rate([], over="all") is None
 
 
 def test_fabrication_by_kind_tally():

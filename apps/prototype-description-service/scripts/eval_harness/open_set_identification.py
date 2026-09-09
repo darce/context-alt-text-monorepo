@@ -18,18 +18,38 @@ never FNIR 0.0. FPI stays an integer count and is still reported.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
+
+from scripts.eval_harness.accept_predicate import is_fnir_miss, is_fpi
+from scripts.eval_harness.gallery_split import GalleryName
+
+
+def _require_finite(value: float, *, name: str) -> None:
+    if not math.isfinite(value):
+        raise ValueError(f"{name} must be finite, got {value!r}")
 
 
 @dataclass(frozen=True)
 class SearchResult:
-    """One 1:N search. ``true_name is None`` means the probe is non-mated."""
+    """One 1:N search: a (probe image, gallery) pair.
+
+    ``true_name is None`` means the probe is non-mated against ``gallery``.
+    Mated-ness is per gallery, not per still — a still enrolled in both
+    galleries is two searches (JANUS 2.2 / EVAL-18).
+    """
 
     detected: bool
     top1_score: float | None
     top1_name: str | None
     true_name: str | None
+    gallery: GalleryName | str
+    media_id: int
+
+    def __post_init__(self) -> None:
+        if isinstance(self.media_id, bool) or not isinstance(self.media_id, int):
+            raise ValueError(f"media_id must be an int, got {self.media_id!r}")
 
 
 @dataclass(frozen=True)
@@ -85,9 +105,11 @@ def _is_fnir_miss(search: SearchResult, *, tau: float) -> bool:
         raise ValueError("mated SearchResult requires true_name")
     if not search.detected:
         return True
+    if search.top1_score is not None:
+        _require_finite(search.top1_score, name="top1_score")
     if search.top1_name is None or search.top1_score is None:
         return True
-    return search.top1_name != search.true_name or search.top1_score < tau
+    return search.top1_name != search.true_name or is_fnir_miss(search.top1_score, tau)
 
 
 def _is_fpi(search: SearchResult, *, tau: float) -> bool:
@@ -96,9 +118,11 @@ def _is_fpi(search: SearchResult, *, tau: float) -> bool:
         raise ValueError("nonmated SearchResult requires true_name is None")
     if not search.detected:
         return False
+    if search.top1_score is not None:
+        _require_finite(search.top1_score, name="top1_score")
     if search.top1_name is None or search.top1_score is None:
         return False
-    return search.top1_score > tau
+    return is_fpi(search.top1_score, tau)
 
 
 def fnir_fpi_at_threshold(
@@ -117,9 +141,14 @@ def fnir_fpi_at_threshold(
 
     FPI: integer count of ``nonmated`` searches returning a rank-1 candidate
     with score > ``tau``. Not a rate over ``len(nonmated)`` (EVAL-19).
+
+    Non-finite ``tau`` or a non-finite ``top1_score`` on a detected search
+    raises ``ValueError``: IEEE NaN comparisons are all false, so they would
+    otherwise report as a clean measurement (EVAL-18).
     """
     if n_enrolled_gallery_subjects is not None and n_enrolled_gallery_subjects < 0:
         raise ValueError("n_enrolled_gallery_subjects must be >= 0 when provided")
+    _require_finite(tau, name="tau")
 
     n_mated = len(mated)
     n_misses = sum(1 for search in mated if _is_fnir_miss(search, tau=tau))

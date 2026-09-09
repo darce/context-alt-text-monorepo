@@ -1,0 +1,619 @@
+{
+  "counts": {
+    "failed": 0,
+    "matched_faces": 6,
+    "named_matched": 5,
+    "scored": 11,
+    "stranger_matched": 1,
+    "total": 11
+  },
+  "decisions": [
+    {
+      "box_index": 0,
+      "decision": "accept",
+      "det_index": 0,
+      "enrolled": true,
+      "excluded_single_face_recall": false,
+      "fold": 0,
+      "media_id": 1,
+      "name_star": "Alice Example",
+      "path": "celebs01/alice-a.jpg",
+      "predicted_name": "Alice Example",
+      "publishable": true,
+      "s_max": 0.7034539683397625,
+      "tau_k": 0.55,
+      "true_name": "Alice Example"
+    },
+    {
+      "box_index": 0,
+      "decision": "accept",
+      "det_index": 0,
+      "enrolled": true,
+      "excluded_single_face_recall": false,
+      "fold": 0,
+      "media_id": 2,
+      "name_star": "Alice Example",
+      "path": "celebs01/alice-b.jpg",
+      "predicted_name": "Alice Example",
+      "publishable": true,
+      "s_max": 0.7034539683397626,
+      "tau_k": 0.55,
+      "true_name": "Alice Example"
+    },
+    {
+      "box_index": 0,
+      "decision": "accept",
+      "det_index": 0,
+      "enrolled": true,
+      "excluded_single_face_recall": false,
+      "fold": 0,
+      "media_id": 6,
+      "name_star": "Bob Example",
+      "path": "celebs01/alice-wrong.jpg",
+      "predicted_name": "Bob Example",
+      "publishable": true,
+      "s_max": 0.9946140293178987,
+      "tau_k": 0.55,
+      "true_name": "Alice Example"
+    },
+    {
+      "box_index": 0,
+      "decision": "accept",
+      "det_index": 0,
+      "enrolled": true,
+      "excluded_single_face_recall": false,
+      "fold": 1,
+      "media_id": 4,
+      "name_star": "Bob Example",
+      "path": "celebs01/bob-a.jpg",
+      "predicted_name": "Bob Example",
+      "publishable": true,
+      "s_max": 0.9987009944894547,
+      "tau_k": 0.45,
+      "true_name": "Bob Example"
+    },
+    {
+      "box_index": 0,
+      "decision": "accept",
+      "det_index": 0,
+      "enrolled": true,
+      "excluded_single_face_recall": false,
+      "fold": 1,
+      "media_id": 5,
+      "name_star": "Bob Example",
+      "path": "celebs01/bob-b.jpg",
+      "predicted_name": "Bob Example",
+      "publishable": true,
+      "s_max": 0.9987009944894547,
+      "tau_k": 0.45,
+      "true_name": "Bob Example"
+    },
+    {
+      "box_index": 0,
+      "decision": "reject",
+      "det_index": 0,
+      "enrolled": false,
+      "excluded_single_face_recall": false,
+      "fold": 2,
+      "media_id": 3,
+      "name_star": "Alice Example",
+      "path": "localwp/uploads/stranger-party.jpg",
+      "predicted_name": null,
+      "publishable": false,
+      "s_max": 0.045445278455378546,
+      "tau_k": 0.45,
+      "true_name": null
+    }
+  ],
+  "detection": {
+    "association_complete": false,
+    "association_incomplete_media": 1,
+    "fn": 5,
+    "fp": 1,
+    "geometry_incomplete_gt": 1,
+    "precision": 0.8571428571428571,
+    "recall": 0.5454545454545454,
+    "sampling_frame": "all_gt_boxes_on_scoreable_media_via_association: named and anonymous GT share one population (HARM-01 / EVAL-16); TP=IoU-matched pairs; FN=unmatched complete GT (named missed_gt + missed_stranger_gt); FP=unmatched detections; geometry_incomplete_gt = GT boxes excluded from IoU (null/invalid centre-y; not detector FN); tp+fn+geometry_incomplete_gt equals GT boxes that reached association; association_complete=false when geometry_incomplete_gt>0; error-item media excluded from association (listed in failures)",
+    "tp": 6
+  },
+  "failures": [],
+  "gate_proposal": {
+    "canon_version": "0.11.0",
+    "evidence_admission": {
+      "detector_independent_fmr": {
+        "admission": "blocked",
+        "reason": "fmr_denominator_status=detector_observed_only",
+        "status": "detector_observed_only"
+      },
+      "occlusion_twin_pass": {
+        "admission": "blocked",
+        "n_errors": 0,
+        "status": "unattested"
+      },
+      "production_aggregation": {
+        "admission": "blocked",
+        "reason": "production clustering/aggregation parity was not measured",
+        "status": "not_measured"
+      },
+      "query_enrolled_pair_strata": {
+        "admission": "blocked",
+        "reason": "query-regime × enrolled-regime cells are not represented by this pair-level report",
+        "status": "not_measured"
+      },
+      "real_occlusion": {
+        "masked": {
+          "admission": "blocked",
+          "n_eligible": 0,
+          "status": "not_observed"
+        },
+        "occlusion_other": {
+          "admission": "blocked",
+          "n_eligible": 0,
+          "status": "not_observed"
+        },
+        "sunglasses": {
+          "admission": "blocked",
+          "n_eligible": 0,
+          "status": "not_observed"
+        }
+      }
+    },
+    "excluded_directional": [
+      "clustering",
+      "headline_identification",
+      "occlusion.masked",
+      "occlusion.occlusion_other",
+      "occlusion.sunglasses",
+      "unknown_rejection"
+    ],
+    "identification_detection_coupling": {
+      "detection_recall": 0.5454545454545454,
+      "detection_recall_coupling_flag": true,
+      "flag": "identification recall includes attributed detector-missed named GT as FN; detection recall is reported alongside for stage attribution",
+      "identification_recall": 0.5714285714285714,
+      "missed_gt": 2,
+      "sampling_frame": "celebs01_named_matched_probes (provenance.source==CELEB); named_matched_probes_pooled_kfold_decisions_plus_missed_gt: precision over accept/confusion; recall denominator = TP + decision-FN + missed_gt (EVAL-16: detector-missed named GT is an identification FN); unmatched_detections disclosed via detection_recall_coupling_flag; error-item media excluded from association (attributable named GT misses remain in headline FN; listed in failures)",
+      "unmatched_detections": 0
+    },
+    "measurement_status": "provisional_incomplete",
+    "operator_authority": "FIR-6 human operator records gate/deferral; FIR-5 cannot self-promote",
+    "p95_scan_latency": "FIR-6-owned; not measured here.",
+    "perf_label": "detect+embed-only (COST-04/15); not full-scan p95",
+    "proposed_slices": {},
+    "protocol_disclosures": [
+      "exact-vs-index separation of concerns and contender-set retrieval design are S4/S5 measurement-time items (IDX-01/07/11) — not measured here",
+      "filter_headline_probes is fail-closed: occluded_probe_keys is required",
+      "fit-phase galleries are restricted to fit-fold identities (CAL-07) while read-phase LOO galleries span the full matched corpus — τ_k is selected against a lower-cardinality gallery than the one held-out probes are read against, so read-time argmax competition is harder than fit-time",
+      "identification P/R runs over §C-matched named decisions plus attributed detector-missed named GT folded into FN (EVAL-16); unmatched detections remain disclosed separately; stranger false-accepts live only in unknown-rejection (EVAL-18)",
+      "impostors are pooled zero-effort strangers rather than matched non-mates (CAL-04 posture declared in FIR-6 plan)",
+      "k-fold splits are subject-disjoint but not media-disjoint — a stranger face co-resident on a held-out identity's image can enter that identity's fit fold, so fit and read phases share image context (contextual dependency)",
+      "mean_prototype is an unweighted raw mean — one blurred face moves the identity centroid (EMB-02); weighted/medoid prototypes are FIR-6-owned",
+      "occluded non-mated (stranger) behaviour is unmeasured — every occlusion twin is a mated named-roster probe; occluded-stranger false-accept measurement (stranger twins) is deferred to FIR-6",
+      "occlusion denominator membership is outcome-independent: distinct-image min-gallery and multi-identity gallery gates run before re-detect miss or recovery scoring (EXP-22)",
+      "occlusion recovery uses open-set threshold (s_max >= tau), not closed-set argmax; each twin is scored at its source identity's held-out fold tau_k (entity-disjoint — CAL-07/EVAL-07); pooled tau_op is a last-resort fallback gated behind an explicit per-identity opt-in (allow_tau_fallback_for) for identities with no held-out probe decision — not guaranteed entity-disjoint if the identity still entered fit galleries; single-identity galleries are excluded from the denominator (EVAL-18)",
+      "occlusion twin eligibility for BOTH legs is conditioned on the frozen YuNet (candidate-family) landmark cache — faces only the incumbent detects are structurally excluded; the comparison population is correlated with the candidate detection distribution (EXP-08)",
+      "open-set accept is raw cosine vs τ with no ambiguity/margin penalty (EMB-09); product ternary accept|suggest|reject is FIR-6-owned",
+      "pooled decisions mix heterogeneous per-fold τ_k (subject-disjoint folds; fit galleries restricted to fit identities — CAL-07)",
+      "synthetic occluders are solid seeded rectangles mapped onto MASKED/sunglasses/occlusion_other slice tags — not photo-realistic masks",
+      "twin universe = cached clean detections only; hard clean-detection failures are structurally absent (EVAL-17)",
+      "unknown-rejection trials are not independent — stranger probes cluster within images and within individuals, so the Wilson error target's nominal n overstates the effective sample size (n_floor=43 kept; dependence disclosed on the slice's error_target)"
+    ],
+    "protocol_id": "fir-5-face-bakeoff-v0.11.0",
+    "release_surface": "proposal_only_not_release",
+    "role": "proposal_only",
+    "scope_amendments_for_operator_ack": [
+      "A10 eval throughput deferred to named follow-up FIR-5a (NOT FIR-7 prod GPU)",
+      "clustering local floor P_same≥20 ∧ P_diff≥20 and M==0 all-singletons guard",
+      "detector-independent FMR denominator is not observed by this pair-level artifact; calibration thresholds remain provisional until detector misses are included",
+      "occlusion twin-pass errors stay in provenance and cannot certify a completers-only result",
+      "p95 full-scan latency deferred to FIR-6 (not measured in FIR-5)",
+      "production clustering/aggregation is not rerun by pair-level calibration; parity remains unmeasured and excluded from the gate proposal",
+      "query-regime × enrolled-regime pair strata are not represented by query-only strata; no cross-cell gate is proposed",
+      "real-occlusion evidence is not measured by synthetic rectangle twins; absent or under-floor real cells remain directional",
+      "synthetic↔real divergence uses Wilson half-width rule (replaces scope >1/3)"
+    ]
+  },
+  "identity_ordering": {
+    "degraded_images": 0,
+    "degraded_paths": [],
+    "labeled_y_missing_images": 1,
+    "labeled_y_missing_paths": [
+      "celebs01/y-missing-mixed-order.jpg"
+    ],
+    "order_unknown_excluded": 2,
+    "positional_images": 0
+  },
+  "kind": "report",
+  "measurement_status": "provisional_incomplete",
+  "protocol_disclosures": [
+    "exact-vs-index separation of concerns and contender-set retrieval design are S4/S5 measurement-time items (IDX-01/07/11) — not measured here",
+    "filter_headline_probes is fail-closed: occluded_probe_keys is required",
+    "fit-phase galleries are restricted to fit-fold identities (CAL-07) while read-phase LOO galleries span the full matched corpus — τ_k is selected against a lower-cardinality gallery than the one held-out probes are read against, so read-time argmax competition is harder than fit-time",
+    "identification P/R runs over §C-matched named decisions plus attributed detector-missed named GT folded into FN (EVAL-16); unmatched detections remain disclosed separately; stranger false-accepts live only in unknown-rejection (EVAL-18)",
+    "impostors are pooled zero-effort strangers rather than matched non-mates (CAL-04 posture declared in FIR-6 plan)",
+    "k-fold splits are subject-disjoint but not media-disjoint — a stranger face co-resident on a held-out identity's image can enter that identity's fit fold, so fit and read phases share image context (contextual dependency)",
+    "mean_prototype is an unweighted raw mean — one blurred face moves the identity centroid (EMB-02); weighted/medoid prototypes are FIR-6-owned",
+    "occluded non-mated (stranger) behaviour is unmeasured — every occlusion twin is a mated named-roster probe; occluded-stranger false-accept measurement (stranger twins) is deferred to FIR-6",
+    "occlusion denominator membership is outcome-independent: distinct-image min-gallery and multi-identity gallery gates run before re-detect miss or recovery scoring (EXP-22)",
+    "occlusion recovery uses open-set threshold (s_max >= tau), not closed-set argmax; each twin is scored at its source identity's held-out fold tau_k (entity-disjoint — CAL-07/EVAL-07); pooled tau_op is a last-resort fallback gated behind an explicit per-identity opt-in (allow_tau_fallback_for) for identities with no held-out probe decision — not guaranteed entity-disjoint if the identity still entered fit galleries; single-identity galleries are excluded from the denominator (EVAL-18)",
+    "occlusion twin eligibility for BOTH legs is conditioned on the frozen YuNet (candidate-family) landmark cache — faces only the incumbent detects are structurally excluded; the comparison population is correlated with the candidate detection distribution (EXP-08)",
+    "open-set accept is raw cosine vs τ with no ambiguity/margin penalty (EMB-09); product ternary accept|suggest|reject is FIR-6-owned",
+    "pooled decisions mix heterogeneous per-fold τ_k (subject-disjoint folds; fit galleries restricted to fit identities — CAL-07)",
+    "synthetic occluders are solid seeded rectangles mapped onto MASKED/sunglasses/occlusion_other slice tags — not photo-realistic masks",
+    "twin universe = cached clean detections only; hard clean-detection failures are structurally absent (EVAL-17)",
+    "unknown-rejection trials are not independent — stranger probes cluster within images and within individuals, so the Wilson error target's nominal n overstates the effective sample size (n_floor=43 kept; dependence disclosed on the slice's error_target)"
+  ],
+  "provenance": {
+    "canon_version": "0.11.0",
+    "canonical_timestamp": "2026-08-11T00:00:00Z",
+    "corpus_traps": [
+      {
+        "affects": [
+          "detection_fn"
+        ],
+        "fn_count": 1,
+        "kind": "HARM-05_pure_stranger_miss",
+        "media_id": 9,
+        "note": "anonymous GT, zero detections; contributes exactly 1 detection FN. Without this entry pre- and post-HARM-01 fn agree (blind freeze).",
+        "path": "localwp/uploads/stranger-fn-miss.jpg",
+        "trips": "pre-HARM-01 named-only detection FN formula (HARM-01 / EVAL-13)"
+      },
+      {
+        "affects": [
+          "detection_fn"
+        ],
+        "fn_count": 2,
+        "kind": "HARM-05_mixed_named_anonymous_miss",
+        "media_id": 10,
+        "note": "named Alice GT + anonymous GT, zero detections; contributes named FN plus stranger FN (2 total). Discriminates identity-agnostic vs named-only recall.",
+        "path": "localwp/uploads/mixed-fn-miss.jpg",
+        "trips": "pre-HARM-01 named-only detection FN formula (HARM-01 / EVAL-13)"
+      },
+      {
+        "affects": [
+          "identity_ordering"
+        ],
+        "kind": "VLM6-R2-G-01_mixed_y_order_degraded",
+        "media_id": 11,
+        "note": "named box missing y alongside sibling named box with y; order_degraded observable so the disclosure counter cannot freeze at structural 0.",
+        "path": "celebs01/y-missing-mixed-order.jpg",
+        "trips": "labeled_y_missing_images always-0 freeze blindness (VLM6-R2-G-01 residual)"
+      }
+    ],
+    "coverage_gaps": [
+      "failures",
+      "occlusion.occlusion_other",
+      "occlusion.sunglasses"
+    ],
+    "embedding_dim": 8,
+    "fixture_revision": "0000000000000000000000000000000000000000",
+    "fmr_denominator_status": "detector_observed_only",
+    "generator": "scripts.eval_harness.generate_face_determinism_anchor",
+    "head_sha": null,
+    "k_folds": {
+      "clamped": true,
+      "effective": 3,
+      "requested": 5
+    },
+    "leg": "candidate",
+    "manifest_matches_fetch": true,
+    "manifest_sha256": "3c5223fce7f2e85e6fa4c5295f74f8fb372aa12b4996a585078b2dff8abb60db",
+    "measurement_status": "provisional_incomplete",
+    "model": {
+      "embedding_dims": [
+        8
+      ],
+      "leg": "candidate",
+      "model_ids": [
+        "synthetic-face-anchor"
+      ]
+    },
+    "model_id": "synthetic-face-anchor",
+    "note": "synthetic dim=8 unit vectors; no real image/embedding (PROV-01); fixture_revision/canonical_timestamp are byte-stability sentinels (not git/wall-clock provenance); F7 multi-regime corpus (2 identities, FP/FN, wrong-name, occlusion twin, 2 cohorts; HARM-05 unmatched stranger GT + mixed named/anonymous miss; VLM6-R2-G-01 mixed-y order_degraded trap (media 11); failures[] declared gap — score-face hard-exits on counts.failed>0); see provenance.corpus_traps",
+    "occlusion_twin_pass_status": "unattested",
+    "production_aggregation_status": "not_measured",
+    "protocol_id": "fir-5-face-bakeoff-v0.11.0",
+    "sampling_frames": {
+      "clustering": "named_matched_faces_pairwise: P_same/P_diff pair floors; M==0 all-singletons guard; single-linkage diagnostic (GRPH-18)",
+      "detection": "all_gt_boxes_on_scoreable_media_via_association: named and anonymous GT share one population (HARM-01 / EVAL-16); TP=IoU-matched pairs; FN=unmatched complete GT (named missed_gt + missed_stranger_gt); FP=unmatched detections; geometry_incomplete_gt = GT boxes excluded from IoU (null/invalid centre-y; not detector FN); tp+fn+geometry_incomplete_gt equals GT boxes that reached association; association_complete=false when geometry_incomplete_gt>0; error-item media excluded from association (listed in failures)",
+      "full_corpus_identification": "full_corpus_named_matched_probes_pooled_kfold_decisions_plus_missed_gt: precision over accept/confusion; recall denominator = TP + decision-FN + missed_gt (EVAL-16: detector-missed named GT is an identification FN); unmatched_detections disclosed via detection_recall_coupling_flag",
+      "headline_identification": "celebs01_named_matched_probes (provenance.source==CELEB); named_matched_probes_pooled_kfold_decisions_plus_missed_gt: precision over accept/confusion; recall denominator = TP + decision-FN + missed_gt (EVAL-16: detector-missed named GT is an identification FN); unmatched_detections disclosed via detection_recall_coupling_flag; error-item media excluded from association (attributable named GT misses remain in headline FN; listed in failures)",
+      "occlusion_recovery": "eligible_twin_pairs: distinct_image_min_gallery AND gallery_n_identities>=2; re_detect_miss counts as incorrect only inside that frame",
+      "unknown_rejection": "stranger_probes_matched_plus_missed_gt: correct_reject=decision=reject; false_accept=decision=accept; missed_stranger_gt counted as failure in denominator (EVAL-16 / AUDIT-07); caller must pass missed_stranger_gt scoped to the same frame as decisions"
+    },
+    "score_manifest_sha256": "3c5223fce7f2e85e6fa4c5295f74f8fb372aa12b4996a585078b2dff8abb60db",
+    "started_at": null,
+    "tau_fit_status": "fitted",
+    "total_gt_boxes": 12,
+    "zero_box_corpus": false
+  },
+  "report_kind": "face_bakeoff",
+  "schema": "acx-eval/v1",
+  "slices": {
+    "clustering": {
+      "d_cut": 0.55,
+      "directional": true,
+      "false_merge": 0.5,
+      "false_split": 0.5,
+      "label": "UNDER-FLOOR / DIRECTIONAL — awaiting operator demotion",
+      "labels": [
+        0,
+        0,
+        1,
+        1,
+        1
+      ],
+      "m_co_clustered": 4,
+      "n_clusters": 2,
+      "n_faces": 5,
+      "p_diff": 6,
+      "p_same": 4,
+      "purity": 0.8,
+      "reasons": [
+        "p_diff<20",
+        "p_same<20",
+        "production_aggregation_status=not_measured"
+      ],
+      "sampling_frame": "named_matched_faces_pairwise: P_same/P_diff pair floors; M==0 all-singletons guard; single-linkage diagnostic (GRPH-18)",
+      "status": "UNDER-FLOOR / DIRECTIONAL — awaiting operator demotion"
+    },
+    "demographic": {
+      "by_cohort": {
+        "cohort_a": {
+          "detection_recall_coupling_flag": true,
+          "fn": 1,
+          "fp": 1,
+          "missed_gt": null,
+          "n_named_probes": 3,
+          "n_recall_eligible": 3,
+          "precision": 0.6666666666666666,
+          "precision_denominator": 3,
+          "precision_numerator": 2,
+          "recall": 0.6666666666666666,
+          "recall_denominator": 3,
+          "recall_numerator": 2,
+          "sampling_frame": "named_matched_probes_in_cohort: roster_cohorts primary, single-subject celebs01 media fallback; strangers excluded; always DIRECTIONAL; detection misses are excluded (missed_gt/unmatched_detections not attributed per cohort — emitted as null, never fabricated zeros); detection_recall_coupling_flag is inherited from full-corpus totals (null = unknown)",
+          "tp": 2,
+          "unmatched_detections": null,
+          "wrong_names": [
+            [
+              6,
+              0,
+              "Alice Example",
+              "Bob Example"
+            ]
+          ]
+        },
+        "cohort_b": {
+          "detection_recall_coupling_flag": true,
+          "fn": 0,
+          "fp": 0,
+          "missed_gt": null,
+          "n_named_probes": 2,
+          "n_recall_eligible": 2,
+          "precision": 1.0,
+          "precision_denominator": 2,
+          "precision_numerator": 2,
+          "recall": 1.0,
+          "recall_denominator": 2,
+          "recall_numerator": 2,
+          "sampling_frame": "named_matched_probes_in_cohort: roster_cohorts primary, single-subject celebs01 media fallback; strangers excluded; always DIRECTIONAL; detection misses are excluded (missed_gt/unmatched_detections not attributed per cohort — emitted as null, never fabricated zeros); detection_recall_coupling_flag is inherited from full-corpus totals (null = unknown)",
+          "tp": 2,
+          "unmatched_detections": null,
+          "wrong_names": []
+        }
+      },
+      "directional": true,
+      "directional_reasons": [
+        "no demographic n-floor"
+      ],
+      "label": "UNDER-FLOOR / DIRECTIONAL — awaiting operator demotion",
+      "section_header": "demographic Fair-SA (DIRECTIONAL)",
+      "status": "UNDER-FLOOR / DIRECTIONAL — awaiting operator demotion"
+    },
+    "full_corpus_identification": {
+      "detection_recall_coupling_flag": true,
+      "fn": 4,
+      "fp": 1,
+      "missed_gt": 3,
+      "n_named_probes": 5,
+      "n_recall_eligible": 5,
+      "precision": 0.8,
+      "precision_denominator": 5,
+      "precision_numerator": 4,
+      "recall": 0.5,
+      "recall_denominator": 8,
+      "recall_numerator": 4,
+      "sampling_frame": "full_corpus_named_matched_probes_pooled_kfold_decisions_plus_missed_gt: precision over accept/confusion; recall denominator = TP + decision-FN + missed_gt (EVAL-16: detector-missed named GT is an identification FN); unmatched_detections disclosed via detection_recall_coupling_flag",
+      "tp": 4,
+      "unmatched_detections": 1,
+      "wrong_names": [
+        [
+          6,
+          0,
+          "Alice Example",
+          "Bob Example"
+        ]
+      ]
+    },
+    "headline_identification": {
+      "association_provenance_notes": [],
+      "detection_recall_coupling_flag": true,
+      "directional": true,
+      "error_target": "Wilson_95_halfwidth_le_10pct_at_p0.5 (n≈96–100 → ±9.8%)",
+      "floor_unit": "recall_eligible_celebs01",
+      "fn": 3,
+      "fp": 1,
+      "label": "UNDER-FLOOR / DIRECTIONAL — awaiting operator demotion",
+      "missed_gt": 2,
+      "n_floor": 100,
+      "n_named_probes": 5,
+      "n_recall_eligible": 5,
+      "precision": 0.8,
+      "precision_denominator": 5,
+      "precision_numerator": 4,
+      "reasons": [
+        "fmr_denominator_status=detector_observed_only",
+        "n_recall_eligible=5<100"
+      ],
+      "recall": 0.5714285714285714,
+      "recall_denominator": 7,
+      "recall_numerator": 4,
+      "sampling_frame": "celebs01_named_matched_probes (provenance.source==CELEB); named_matched_probes_pooled_kfold_decisions_plus_missed_gt: precision over accept/confusion; recall denominator = TP + decision-FN + missed_gt (EVAL-16: detector-missed named GT is an identification FN); unmatched_detections disclosed via detection_recall_coupling_flag; error-item media excluded from association (attributable named GT misses remain in headline FN; listed in failures)",
+      "status": "UNDER-FLOOR / DIRECTIONAL — awaiting operator demotion",
+      "tp": 4,
+      "unmatched_detections": 0,
+      "wrong_names": [
+        [
+          6,
+          0,
+          "Alice Example",
+          "Bob Example"
+        ]
+      ]
+    },
+    "occlusion": {
+      "masked": {
+        "divergence": {
+          "auto_demote": false,
+          "d": null,
+          "n_real": 0,
+          "real_floor": 90,
+          "reason": "missing_accuracy",
+          "threshold": null,
+          "wilson_half_width": null
+        },
+        "real": null,
+        "synthetic": {
+          "accuracy": 1.0,
+          "directional": true,
+          "evidence_status": "provisional_incomplete",
+          "label": "UNDER-FLOOR / DIRECTIONAL — awaiting operator demotion",
+          "n_correct": 1,
+          "n_eligible": 1,
+          "n_floor": 90,
+          "n_ineligible": 0,
+          "n_re_detect_miss": 0,
+          "rate_denominator": 1,
+          "rate_numerator": 1,
+          "reasons": [
+            "eligible_pairs=1<floor=90",
+            "fmr_denominator_status=detector_observed_only",
+            "occlusion_twin_pass_status=unattested",
+            "real_occlusion_status=not_observed",
+            "walk_stability_not_asserted"
+          ],
+          "sampling_frame": "eligible_twin_pairs: distinct_image_min_gallery AND gallery_n_identities>=2; re_detect_miss counts as incorrect only inside that frame",
+          "status": "UNDER-FLOOR / DIRECTIONAL — awaiting operator demotion",
+          "walk_stability_asserted": false,
+          "walk_stability_delta": null
+        }
+      },
+      "occlusion_other": {
+        "divergence": {
+          "auto_demote": false,
+          "d": null,
+          "n_real": 0,
+          "real_floor": 90,
+          "reason": "missing_accuracy",
+          "threshold": null,
+          "wilson_half_width": null
+        },
+        "real": null,
+        "synthetic": {
+          "accuracy": null,
+          "directional": true,
+          "evidence_status": "provisional_incomplete",
+          "label": "UNDER-FLOOR / DIRECTIONAL — awaiting operator demotion",
+          "n_correct": 0,
+          "n_eligible": 0,
+          "n_floor": 90,
+          "n_ineligible": 0,
+          "n_re_detect_miss": 0,
+          "rate_denominator": 0,
+          "rate_numerator": 0,
+          "reasons": [
+            "eligible_pairs=0<floor=90",
+            "fmr_denominator_status=detector_observed_only",
+            "occlusion_twin_pass_status=unattested",
+            "real_occlusion_status=not_observed",
+            "walk_stability_not_asserted"
+          ],
+          "sampling_frame": "eligible_twin_pairs: distinct_image_min_gallery AND gallery_n_identities>=2; re_detect_miss counts as incorrect only inside that frame",
+          "status": "UNDER-FLOOR / DIRECTIONAL — awaiting operator demotion",
+          "walk_stability_asserted": false,
+          "walk_stability_delta": null
+        }
+      },
+      "sunglasses": {
+        "divergence": {
+          "auto_demote": false,
+          "d": null,
+          "n_real": 0,
+          "real_floor": 90,
+          "reason": "missing_accuracy",
+          "threshold": null,
+          "wilson_half_width": null
+        },
+        "real": null,
+        "synthetic": {
+          "accuracy": null,
+          "directional": true,
+          "evidence_status": "provisional_incomplete",
+          "label": "UNDER-FLOOR / DIRECTIONAL — awaiting operator demotion",
+          "n_correct": 0,
+          "n_eligible": 0,
+          "n_floor": 90,
+          "n_ineligible": 0,
+          "n_re_detect_miss": 0,
+          "rate_denominator": 0,
+          "rate_numerator": 0,
+          "reasons": [
+            "eligible_pairs=0<floor=90",
+            "fmr_denominator_status=detector_observed_only",
+            "occlusion_twin_pass_status=unattested",
+            "real_occlusion_status=not_observed",
+            "walk_stability_not_asserted"
+          ],
+          "sampling_frame": "eligible_twin_pairs: distinct_image_min_gallery AND gallery_n_identities>=2; re_detect_miss counts as incorrect only inside that frame",
+          "status": "UNDER-FLOOR / DIRECTIONAL — awaiting operator demotion",
+          "walk_stability_asserted": false,
+          "walk_stability_delta": null
+        }
+      }
+    },
+    "unknown_rejection": {
+      "correct_rejects": 1,
+      "directional": true,
+      "error_target": "Wilson_95_halfwidth_le_15pct_at_p0.5 (n=43 → ±14.3%); assumes independent trials — stranger probes cluster within images/individuals, so effective n may be lower and the half-width optimistic (trial dependence disclosed)",
+      "false_accepts": 0,
+      "label": "UNDER-FLOOR / DIRECTIONAL — awaiting operator demotion",
+      "missed_stranger_gt": 2,
+      "n": 3,
+      "n_floor": 43,
+      "rate": 0.3333333333333333,
+      "rate_denominator": 3,
+      "rate_numerator": 1,
+      "reasons": [
+        "fmr_denominator_status=detector_observed_only",
+        "n=3<43"
+      ],
+      "sampling_frame": "stranger_probes_matched_plus_missed_gt: correct_reject=decision=reject; false_accept=decision=accept; missed_stranger_gt counted as failure in denominator (EVAL-16 / AUDIT-07); caller must pass missed_stranger_gt scoped to the same frame as decisions",
+      "status": "UNDER-FLOOR / DIRECTIONAL — awaiting operator demotion"
+    }
+  },
+  "tau": {
+    "effective_k": 3,
+    "fmr_denominator_status": "detector_observed_only",
+    "k_clamp_disclosure": "requested_k=5 clamped to effective_k=3 by the subject count — tau_k/folds reflect effective_k, not the requested protocol K",
+    "note": "PROVISIONAL — not product defaults (FIR-6 owns calibration)",
+    "requested_k": 5,
+    "tau_fit_status": "fitted",
+    "tau_k": [
+      0.45,
+      0.45,
+      0.55
+    ],
+    "tau_op": 0.45
+  }
+}

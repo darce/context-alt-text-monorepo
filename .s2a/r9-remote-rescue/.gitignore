@@ -1,0 +1,2 @@
+# keep logs on disk for the reviewer; do not commit ~6MB tails
+**/debug.log

@@ -11,6 +11,33 @@ partial corpus and is never published. Exit 3 is a refused metric: publish
 only with ``--allow-refused`` (default off) and still exit 3. Any other
 nonzero exit is unrecognized and is not swallowed.
 
+The inner interpreter is ``$ACX_EVAL_PYTHON`` when that variable is set
+(must be an executable file; a bad override is an error, not a fall-back).
+When it is unset, ``$ACX_EVAL_SCORE_PYTHON`` can pin the scoring interpreter.
+Otherwise use the service ``.venv/bin/python`` when present, then the running
+interpreter so linked worktrees can score without their own environment.
+
+This script's own exit codes (FIR-12-BR-70: distinct from the inner CLI's
+publication contract above — a code here never inherits meaning from a
+subprocess return value that carried no publication outcome):
+
+    0    Clean score, published. The CLI exited 0 and wrote a report.
+    1    Partial-corpus score gate. The CLI exited 1 *and wrote a report*;
+         held, not published. This is a genuine corpus-quality outcome.
+    2    Resolution/environment/usage failure, never a corpus outcome:
+         missing ``--run-record``/``--manifest`` input, an unresolvable
+         interpreter override (set to a non-executable path — see
+         ``EvalPythonError``), or the CLI
+         produced *no report at all* regardless of its own exit code
+         (crashed before writing one, or exited 0 without writing one).
+         The inner subprocess return code is never passed through here —
+         no report means no publication meaning to inherit, so a broken
+         real interpreter (e.g. missing a dependency, inner exit 1) is
+         never confusable with case 1's genuine partial corpus.
+    3    Refused metrics (CLI exited 3); held unless ``--allow-refused``.
+    *    Any other CLI exit *with a report on disk* is unrecognized and
+         held, not swallowed.
+
 Usage (from repo root):
 
     python3 scripts/regen_eval_report.py \\
@@ -29,8 +56,16 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+
+EVAL_PYTHON_ENV = "ACX_EVAL_PYTHON"
+
+# FIR-12-BR-70: this script's own resolution/environment/usage exit code —
+# reused (not a passthrough) for every failure that carries no publication
+# meaning. See the module docstring's exit-code table.
+EXIT_RESOLUTION_OR_ENV_FAILURE = 2
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(_SCRIPTS_DIR) not in sys.path:
@@ -44,6 +79,10 @@ from eval_exit_contract import (  # noqa: E402
 )
 
 
+class EvalPythonError(Exception):
+    """The score-CLI interpreter path could not be resolved."""
+
+
 @dataclass(frozen=True)
 class ScoreExitDecision:
     """Publication decision derived from the scorer's actual exit code."""
@@ -52,6 +91,37 @@ class ScoreExitDecision:
     exit_code: int
     reason: str
     message: str
+
+
+def _is_executable_file(path: Path) -> bool:
+    return path.is_file() and os.access(path, os.X_OK)
+
+
+def resolve_eval_python(
+    root: Path,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> Path:
+    """Return the interpreter the score CLI must run under.
+
+    A set ``ACX_EVAL_PYTHON`` that is not an executable file is an error —
+    never a silent fall-back to the service venv or to ``sys.executable``.
+    Unset keeps the historical ``.venv/bin/python`` requirement.
+    """
+    env: Mapping[str, str] = os.environ if environ is None else environ
+    if EVAL_PYTHON_ENV in env:
+        python = Path(env[EVAL_PYTHON_ENV])
+        if not _is_executable_file(python):
+            raise EvalPythonError(
+                f"invalid {EVAL_PYTHON_ENV}: not an executable file: {python}"
+            )
+        return python
+    python = (
+        root / "apps" / "prototype-description-service" / ".venv" / "bin" / "python"
+    )
+    if not python.is_file():
+        raise EvalPythonError(f"missing service venv python: {python}")
+    return python
 
 
 def classify_score_exit(returncode: int, *, allow_refused: bool) -> ScoreExitDecision:
@@ -219,7 +289,12 @@ def attach_disclosure_notes(json_path: Path, md_path: Path, notes: list[str]) ->
     md_path.write_text("\n".join(out) + "\n", encoding="utf-8")
 
 
-def _md_section_first_bullet(path: Path | None, heading: str) -> str | None:
+def _md_section_first_bullet(
+    path: Path | None,
+    heading: str,
+    *,
+    skip_prefixes: tuple[str, ...] = (),
+) -> str | None:
     if path is None or not path.is_file():
         return None
     in_section = False
@@ -228,6 +303,8 @@ def _md_section_first_bullet(path: Path | None, heading: str) -> str | None:
             in_section = True
             continue
         if in_section and line.startswith("- "):
+            if any(line.startswith(prefix) for prefix in skip_prefixes):
+                continue
             return line
         if in_section and line.startswith("## "):
             break
@@ -239,7 +316,17 @@ def md_detection_line(path: Path | None) -> str | None:
 
 
 def md_identification_line(path: Path | None) -> str | None:
-    return _md_section_first_bullet(path, "## Face identification")
+    """Status bullet: REFUSED, or the scored micro-precision line.
+
+    VLM6-DELTA-15: this branch's identity-ordering positional block
+    (report.py VLM6-B-10) unconditionally renders diagnostic bullets
+    ("- positional accuracy ...", "- positional vacuity ...",
+    "- ⚠ ..." ordering-degraded notes) ahead of the REFUSED/scored status
+    bullet. Naively taking the section's first bullet silently reports a
+    diagnostic line instead of the identification status the audit trail
+    exists to surface. Skip those known diagnostic prefixes.
+    """
+    return _md_section_first_bullet(path, "## Face identification", skip_prefixes=("- positional", "- ⚠"))
 
 
 def score_interpreter(root: Path) -> Path:
@@ -251,11 +338,19 @@ def score_interpreter(root: Path) -> Path:
     explicit operator pin, then that venv, then the interpreter already
     running us -- which, under the repo venv, can import the CLI just fine.
     """
-    override = os.environ.get("ACX_EVAL_SCORE_PYTHON")
-    if override:
-        return Path(override)
+    if EVAL_PYTHON_ENV in os.environ:
+        return resolve_eval_python(root)
+    if "ACX_EVAL_SCORE_PYTHON" in os.environ:
+        override = Path(os.environ["ACX_EVAL_SCORE_PYTHON"])
+        if not _is_executable_file(override):
+            raise EvalPythonError(
+                f"invalid ACX_EVAL_SCORE_PYTHON: not an executable file: {override}"
+            )
+        return override
     venv_python = root / "apps" / "prototype-description-service" / ".venv" / "bin" / "python"
     if venv_python.is_file():
+        if not _is_executable_file(venv_python):
+            raise EvalPythonError(f"service venv python is not executable: {venv_python}")
         return venv_python
     return Path(sys.executable)
 
@@ -295,10 +390,10 @@ def main(argv: list[str] | None = None) -> int:
     out_md = (root / args.out_md).resolve()
     if not run_record.is_file():
         print(f"missing run-record: {run_record}", file=sys.stderr)
-        return 2
+        return EXIT_RESOLUTION_OR_ENV_FAILURE
     if not manifest.is_file():
         print(f"missing manifest: {manifest}", file=sys.stderr)
-        return 2
+        return EXIT_RESOLUTION_OR_ENV_FAILURE
 
     before_json = detection_summary(out_json if out_json.is_file() else None)
     before_ident_json = identification_summary(
@@ -308,10 +403,11 @@ def main(argv: list[str] | None = None) -> int:
     before_ident_md = md_identification_line(out_md if out_md.is_file() else None)
 
     service = root / "apps" / "prototype-description-service"
-    python = score_interpreter(root)
-    if not python.is_file():
-        print(f"missing score interpreter: {python}", file=sys.stderr)
-        return 2
+    try:
+        python = score_interpreter(root)
+    except EvalPythonError as exc:
+        print(str(exc), file=sys.stderr)
+        return EXIT_RESOLUTION_OR_ENV_FAILURE
 
     with tempfile.TemporaryDirectory(prefix="regen-eval-") as tmp:
         tmp_dir = Path(tmp)
@@ -328,15 +424,30 @@ def main(argv: list[str] | None = None) -> int:
             str(manifest),
         ]
         print("REGEN:", " ".join(cmd))
-        proc = subprocess.run(cmd, cwd=service)
+        try:
+            proc = subprocess.run(cmd, cwd=service)
+        except OSError as exc:
+            print(f"CLI startup failure: {exc}; not a corpus outcome", file=sys.stderr)
+            return EXIT_RESOLUTION_OR_ENV_FAILURE
         tmp_json = tmp_dir / "run-report.json"
         tmp_md = tmp_dir / "run-report.md"
         if not tmp_json.is_file() or not tmp_md.is_file():
+            # FIR-12-BR-70: the inner returncode carries no publication
+            # meaning here — no report was written, so there is nothing to
+            # classify via classify_score_exit's CLI exit-code contract.
+            # Passing proc.returncode straight through used to alias a
+            # broken-but-real ACX_EVAL_PYTHON (inner ModuleNotFoundError,
+            # exit 1) onto this script's own exit 1, which the docstring
+            # defines as "partial corpus, never published" — indistinguishable
+            # from a genuine partial-corpus result. Always report the
+            # dedicated env/resolution failure code instead.
             print(
-                f"CLI did not write expected reports in {tmp_dir} (exit {proc.returncode})",
+                f"CLI did not write expected reports in {tmp_dir} "
+                f"(inner exit {proc.returncode}); treating as an "
+                "environment/startup failure, not a corpus outcome",
                 file=sys.stderr,
             )
-            return proc.returncode or 2
+            return EXIT_RESOLUTION_OR_ENV_FAILURE
         decision = classify_score_exit(
             proc.returncode, allow_refused=args.allow_refused
         )

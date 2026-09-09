@@ -4,7 +4,7 @@
 **Task:** `MAINT-GATE-FLAKES-20260815`
 **Subject:** file-backed SQLite `_sessionmaker` + `job_timeout_seconds` 0.05 revert
 **Posture:** adversarial. Report assumed optimistic. Mutations uncommitted and restored after each run.
-**Sandbox note:** this checkout is history-stripped (`8778ac8`). Commit `818d19f2` / parent `dcb7c49f` are not present as distinct SHAs. Review is of the current tree contents matching the claimed diff.
+**Sandbox note:** this checkout is history-stripped (`8778ac8` sha-guard:ignore — foreign sandbox-clone root SHA, does not exist in this repo's history). Commit `818d19f2` / parent `dcb7c49f` are not present as distinct SHAs. Review is of the current tree contents matching the claimed diff.
 
 ## Verdict
 

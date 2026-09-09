@@ -59,8 +59,10 @@ from scene.interface_adapters.http.schemas.requests import (
     TaxonomyTermContext,
 )
 
+from ._pathtext import _printable_path
+from .cli import _printable_exc
 from .manifest import GoldenEntry, GoldenManifest, ManifestError, load_manifest
-from .report import build_reports
+from .report import Audience, build_reports
 from .schema import SCHEMA, DocKind
 
 Mode = Literal["staged", "adhoc"]
@@ -153,6 +155,20 @@ def _detected_identities(entry: GoldenEntry) -> list[str]:
         return []
     undetected = _undetected_identities(entry)
     return [name for name in entry.present_identities if name not in undetected]
+
+
+def _identity_rows(entry: GoldenEntry) -> list[dict[str, Any]]:
+    """Dict identity rows matching cli._identity_row_from_wire / report constructors.
+
+    Shape: ``{"name", "bbox", "unpositioned"}`` — greenfield rejects bare strings.
+    Bboxes reuse the same simulated face geometry as ``_make_face``.
+    """
+    rows: list[dict[str, Any]] = []
+    for index, name in enumerate(_detected_identities(entry)):
+        box = _face_box(index)
+        bbox = {"x": box.x, "y": box.y, "width": box.width, "height": box.height}
+        rows.append({"name": name, "bbox": bbox, "unpositioned": False})
+    return rows
 
 
 def build_typed_context_pack(entry: GoldenEntry, roster: Sequence[str]) -> ContextPack | None:
@@ -420,7 +436,7 @@ async def _run_staged_item(entry: GoldenEntry, image_bytes: bytes, roster: Seque
             "cached": bool(response.cached),
             "attachment_provenance": {"facts": facts},
         },
-        "identities": detected,
+        "identities": _identity_rows(entry),
         "face_count": _reported_face_count(entry),
         "error": None,
     }
@@ -455,7 +471,8 @@ async def _run_adhoc_item(entry: GoldenEntry, image_bytes: bytes, roster: Sequen
     service_facts = list(response.attachment_provenance.facts) if response.attachment_provenance else []
     if service_facts:  # legacy context must never reach Stage-2 (honest-baseline invariant)
         raise RuntimeError(
-            f"ad-hoc arm unexpectedly produced {len(service_facts)} Stage-2 facts for {entry.path}; "
+            f"ad-hoc arm unexpectedly produced {len(service_facts)} Stage-2 facts for "
+            f"{_printable_path(entry.path)}; "
             "legacy context should not coerce to a typed ContextPack"
         )
     return {
@@ -476,7 +493,7 @@ async def _run_adhoc_item(entry: GoldenEntry, image_bytes: bytes, roster: Sequen
                 "derivation": _ADHOC_EVIDENCE,
             },
         },
-        "identities": detected,
+        "identities": _identity_rows(entry),
         "face_count": _reported_face_count(entry),
         "error": None,
     }
@@ -488,16 +505,41 @@ def _synthetic_image_bytes(entry: GoldenEntry) -> bytes:
     return hashlib.sha256(material).digest() + b"\x89PNG\r\n\x1a\nfusion-eval"
 
 
+def _canonical_manifest_sha(manifest: GoldenManifest) -> str:
+    """Use the one producer-side manifest identity recipe (VLM-6-CAN-03).
+
+    The CLI owns the canonical recipe.  Import lazily so importing this offline
+    fusion module does not pull the live-client dependencies until a run is
+    actually scored.
+    """
+    from .cli import _manifest_sha
+
+    return _manifest_sha(manifest)
+
+
+def _positive_limit(raw: str) -> int:
+    """Parse a bounded prefix without treating zero as the full corpus."""
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be an integer") from exc
+    if value < 1:
+        raise argparse.ArgumentTypeError("must be >= 1")
+    return value
+
+
 def run_fusion_eval(
     manifest: GoldenManifest,
     *,
     mode: Mode,
-    head_sha: str,
+    head_sha: str | None,
     started_at: str | None = None,
     limit: int | None = None,
 ) -> dict[str, Any]:
     """Walk bakeoff entries; emit acx-eval/v1 run_record for ``mode``."""
-    entries = list(manifest.entries[:limit] if limit else manifest.entries)
+    if limit is not None and limit < 1:
+        raise ValueError(f"limit must be >= 1, got {limit}")
+    entries = list(manifest.entries[:limit] if limit is not None else manifest.entries)
     roster = list(manifest.roster)
     items: list[dict[str, Any]] = []
     for entry in entries:
@@ -518,24 +560,21 @@ def run_fusion_eval(
         else:
             items.append(item)
 
-    manifest_bytes = json.dumps(
-        {
-            "manifest_version": manifest.manifest_version,
-            "roster": manifest.roster,
-            "entries": [e.model_dump(mode="json") for e in manifest.entries],
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode()
     return {
         "schema": SCHEMA,
         "kind": DocKind.RUN_RECORD.value,
         "provenance": {
-            "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+            "manifest_sha256": _canonical_manifest_sha(manifest),
             "base_url": f"fusion-runner://{mode}",
             "head_sha": head_sha,
             "started_at": started_at or datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
             "fusion_mode": mode,
+            # Keep prefix selection explicit in the record.  The report still
+            # compares the media-id multiset against the score-time manifest,
+            # so a smoke run can never masquerade as full-corpus evidence.
+            "requested_limit": limit,
+            "manifest_entries": len(manifest.entries),
+            "evaluated_entries": len(items),
         },
         "items": items,
     }
@@ -689,9 +728,7 @@ def manifest_entries_as_dicts(manifest: GoldenManifest) -> list[dict[str, Any]]:
     widen a ``roster_only`` stamp to exhaustive.
     """
     mode = (
-        manifest.annotation_mode.value
-        if hasattr(manifest.annotation_mode, "value")
-        else str(manifest.annotation_mode)
+        manifest.annotation_mode.value if hasattr(manifest.annotation_mode, "value") else str(manifest.annotation_mode)
     )
     projected: list[dict[str, Any]] = []
     for entry in manifest.entries:
@@ -703,12 +740,20 @@ def manifest_entries_as_dicts(manifest: GoldenManifest) -> list[dict[str, Any]]:
     return projected
 
 
-def _head_sha() -> str:
+def _head_sha() -> str | None:
+    """Resolve live git HEAD, or None when unresolvable (never fabricate).
+
+    Returns ``None`` on missing git, non-repo cwd, or rev-parse failure —
+    never the fabricated forty-zero sentinel that S4-06 refuses
+    (RV2-06 / HARM-03 / rg-015).
+    """
     try:
-        out = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL)
-        return out.strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return "0" * 40
+        out = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL).strip()
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return None
+    if not out or out == "0" * 40:
+        return None
+    return out
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -719,8 +764,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--mode", choices=("staged", "adhoc", "both"), default="both")
     # fusion_runner.py → eval_harness → scripts → service → apps → monorepo root
-    parser.add_argument("--out-dir", default=str(Path(__file__).resolve().parents[4] / "docs" / "tasks" / "20.0"))
-    parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--out-dir", default=str(Path(__file__).resolve().parent / "out" / "fusion"))
+    parser.add_argument("--limit", type=_positive_limit, default=None)
+    parser.add_argument(
+        "--audience",
+        choices=(Audience.LOCAL.value, Audience.PUBLIC.value),
+        default=Audience.LOCAL.value,
+        help="public ALSO emits a redacted publishable-only <stem>-report.public.{json,md} (VLM-6 S5 W1)",
+    )
     from .cli import (
         ALLOW_REFUSED_ALL,
         REFUSED_METRIC_EXIT_CODE,
@@ -748,16 +799,38 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        manifest = load_manifest(args.manifest)
+        # Metadata-only: run_fusion_eval uses _synthetic_image_bytes (path/sha/media_id pins),
+        # never opens fixture image files — skip hash verification (VLM6-R2-05 / OBS-04).
+        manifest = load_manifest(
+            args.manifest,
+            metadata_only=True,
+            skip_hash_verification=True,
+            hash_skip_reason="fusion runner synthesizes image bytes from pins; fixture files never opened",
+        )
     except ManifestError as exc:
-        print(f"manifest error: {exc}", file=sys.stderr)
+        print(f"manifest error: {_printable_exc(exc)}", file=sys.stderr)
+        return 2
+
+    # Score against a separately loaded metadata snapshot.  This keeps the
+    # score-time identity independent from the object used by the fetch arm;
+    # a changed manifest is then surfaced as a non-comparable report.
+    try:
+        score_manifest = load_manifest(
+            args.manifest,
+            metadata_only=True,
+            skip_hash_verification=True,
+            hash_skip_reason="fusion score-time identity reads metadata only; fixture files are not opened",
+        )
+    except ManifestError as exc:
+        print(f"score manifest error: {_printable_exc(exc)}", file=sys.stderr)
         return 2
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     head = _head_sha()
     modes: list[Mode] = ["staged", "adhoc"] if args.mode == "both" else [args.mode]  # type: ignore[list-item]
-    entries = manifest_entries_as_dicts(manifest)
+    entries = manifest_entries_as_dicts(score_manifest)
+    score_manifest_sha = _canonical_manifest_sha(score_manifest)
 
     exit_code = 0
     for mode in modes:
@@ -766,7 +839,7 @@ def main(argv: list[str] | None = None) -> int:
         json_report, md_report = build_reports(
             record,
             entries,
-            score_manifest_sha256=record["provenance"]["manifest_sha256"],
+            score_manifest_sha256=score_manifest_sha,
         )
         # Append mis-attachment summary to markdown (report.py unchanged).
         md_report = md_report.rstrip() + "\n\n## Mis-attachment (E20-FUSION)\n\n"
@@ -784,12 +857,42 @@ def main(argv: list[str] | None = None) -> int:
         md_report += "\n"
 
         stem = f"E20-FUSION-{mode}"
-        (out_dir / f"{stem}-run-record.json").write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
-        (out_dir / f"{stem}-report.json").write_text(json_report)
-        (out_dir / f"{stem}-report.md").write_text(md_report)
-        (out_dir / f"{stem}-misattachment.json").write_text(json.dumps(mis, indent=2, sort_keys=True) + "\n")
-        print(f"{mode}: misattachments={mis['misattachments']}/{mis['labeled_facts']} → {out_dir / stem}-report.md")
+        (out_dir / f"{stem}-run-record.json").write_text(
+            json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        (out_dir / f"{stem}-report.json").write_text(json_report, encoding="utf-8")
+        (out_dir / f"{stem}-report.md").write_text(md_report, encoding="utf-8")
+        (out_dir / f"{stem}-misattachment.json").write_text(
+            json.dumps(mis, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        # VLM-6 S5 W1: redacted public export. Rebuilt with audience=PUBLIC (not the
+        # mis-attachment-appended local md, whose hit paths can be local-only).
+        if args.audience == Audience.PUBLIC.value:
+            public_json, public_md = build_reports(
+                record,
+                entries,
+                audience=Audience.PUBLIC,
+                score_manifest_sha256=score_manifest_sha,
+            )
+            (out_dir / f"{stem}-report.public.json").write_text(public_json, encoding="utf-8")
+            (out_dir / f"{stem}-report.public.md").write_text(public_md, encoding="utf-8")
+        print(
+            f"{mode}: misattachments={mis['misattachments']}/{mis['labeled_facts']} -> "
+            f"{_printable_path(out_dir / f'{stem}-report.md')}"
+        )
         scored = json.loads(json_report)
+        truncation_reasons = [
+            str(reason)
+            for reason in (scored.get("verdict") or {}).get("reasons", [])
+            if str(reason).startswith("truncation:")
+        ]
+        if truncation_reasons:
+            print(
+                f"fusion {mode} gate failed: {truncation_reasons[0]}; "
+                "refusing to present a prefix run as full-corpus evidence",
+                file=sys.stderr,
+            )
+            exit_code = max(exit_code, 1)
         blocked = {
             name: invariant
             for name, invariant in collect_refused_metrics(scored).items()

@@ -110,7 +110,8 @@ def test_refetch6_flipped_to_exhaustive_is_rejected(tmp_path: Path) -> None:
 def test_real_capture_session_still_loads_exhaustive(tmp_path: Path) -> None:
     """Positive pair: a real occasion key still clears the gate."""
     path = _write(tmp_path, _exhaustive_doc(session=REAL_SESSION, label_source="operator_blind"))
-    manifest = load_manifest(str(path))
+    # Metadata-only fixture load; never opens image bytes (VLM6-PANEL6L-rvM-01).
+    manifest = load_manifest(str(path), skip_hash_verification=True)
     assert manifest.annotation_mode is AnnotationMode.EXHAUSTIVE
     assert manifest.entries[0].face_boxes[0].lineage.capture_session_id == REAL_SESSION
 
@@ -118,7 +119,7 @@ def test_real_capture_session_still_loads_exhaustive(tmp_path: Path) -> None:
 def test_real_session_on_legacy_import_source_still_loads_exhaustive(tmp_path: Path) -> None:
     """The pin is the sentinel, not label_source=legacy_import."""
     path = _write(tmp_path, _exhaustive_doc(session=REAL_SESSION, label_source="legacy_import"))
-    manifest = load_manifest(str(path))
+    manifest = load_manifest(str(path), skip_hash_verification=True)
     assert manifest.annotation_mode is AnnotationMode.EXHAUSTIVE
     assert manifest.entries[0].face_boxes[0].lineage.capture_session_id == REAL_SESSION
     assert manifest.entries[0].face_boxes[0].lineage.label_source.value == "legacy_import"
@@ -151,7 +152,8 @@ def test_sentinel_still_loads_under_roster_only(tmp_path: Path) -> None:
     doc = _exhaustive_doc(session=LEGACY_IMPORT_CAPTURE_SESSION_ID)
     doc["annotation_mode"] = "roster_only"
     path = _write(tmp_path, doc, "roster-sentinel.json")
-    manifest = load_manifest(str(path))
+    # Metadata-only fixture load; never opens image bytes (VLM6-PANEL6L-rvM-01).
+    manifest = load_manifest(str(path), skip_hash_verification=True)
     assert manifest.annotation_mode is AnnotationMode.ROSTER_ONLY
     assert (
         manifest.entries[0].face_boxes[0].lineage.capture_session_id

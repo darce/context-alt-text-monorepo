@@ -12,7 +12,9 @@ import numpy as np
 import pytest
 import pytest_asyncio
 from sqlalchemy import Table, event, text
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
@@ -39,6 +41,14 @@ from recognition.tests.db_seed import ensure_media_identity as _ensure_media_ide
 os.environ["RECOGNITION_AUTH_ENABLED"] = "0"
 os.environ["RECOGNITION_ASYNC_ANALYZE_INLINE"] = "1"
 os.environ["RECOGNITION_RUNTIME_MODE"] = "test"
+
+
+@compiles(UUID, "sqlite")
+def _sqlite_uuid_storage(type_, compiler, **kwargs) -> str:
+    # SQLite gives a literal UUID declaration NUMERIC affinity. Valid UUIDs
+    # containing only digits (or an exponent-like e) then become numbers and
+    # cannot round-trip through SQLAlchemy's UUID result processor.
+    return "CHAR(32)"
 
 
 def _sqlite_vector_norm(value: object) -> float | None:

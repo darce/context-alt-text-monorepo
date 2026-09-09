@@ -73,8 +73,14 @@ Corrected `.s2a/gateflake-s1-report.md` in this commit:
 
 ## Commits
 
-- `4fd501526d1572daea55f076bb6772d1bfb18c62` — file URL + `poolclass=StaticPool`, keep 0.05, named UDF timeout
-- `bcdb09a5a119e23c44bb0343be124f654aac421b` — fallback after the batteries below failed
+Sandbox-clone SHAs below never resolve at the destination (VLM6-S2A-F3-02).
+Both items landed squashed into one destination commit,
+`de473ecef34733851d5a06066800e490ed757673` — `offload: FALLBACK: StaticPool
+left the R1-01 lock window open; 0.5s +` (adds this report file in the same
+commit).
+
+- file URL + `poolclass=StaticPool`, keep 0.05, named UDF timeout
+- fallback after the batteries below failed
 
 ---
 
@@ -259,7 +265,9 @@ No run was retried to replace a fail.
 
 ## Fallback batteries — 0.5s timeout + wait-for-RUNNING — PASS
 
-Same 6 burners still up. Code at `bcdb09a5a119e23c44bb0343be124f654aac421b`.
+Same 6 burners still up. Code at the fallback commit above (destination
+`de473ecef34733851d5a06066800e490ed757673`; sandbox SHA not reproduced here
+per VLM6-S2A-F3-02).
 
 Command A (timeout test, `job_timeout_seconds=0.5`):
 

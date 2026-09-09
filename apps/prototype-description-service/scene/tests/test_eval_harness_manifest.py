@@ -3,24 +3,30 @@
 import hashlib
 import json
 import os
+import subprocess
+import sys
 import unicodedata
 import warnings
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
+
+from scene.tests.test_eval_harness_cli import _assert_child_ascii_locale, _c_locale_child_env
 
 from scripts.eval_harness.manifest import (
     AnnotationMode,
     GoldenEntry,
     GoldenManifest,
+    HashVerificationSkippedWarning,
     ManifestError,
     ReferenceFact,
     RubricEmptyWarning,
     ScoreInvariant,
     SliceTag,
+    load_legacy_manifest,
     load_manifest,
 )
-
 
 _MOCK_PROVENANCE = {
     "source": "fixture",
@@ -87,14 +93,14 @@ def test_v2_requires_base_caption_key(tmp_path):  # S6-01
     data = _valid_manifest_dict()
     del data["entries"][0]["base_caption"]
     with pytest.raises(ManifestError, match="base_caption"):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
 def test_v2_rejects_null_base_caption(tmp_path):  # VLMFIX-S3-03
     data = _valid_manifest_dict()
     data["entries"][0]["base_caption"] = None
     with pytest.raises(ManifestError, match="null base_caption|base_caption"):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
 def _write_manifest(tmp_path, data) -> str:
@@ -104,7 +110,7 @@ def _write_manifest(tmp_path, data) -> str:
 
 
 def test_valid_manifest_loads(tmp_path):
-    manifest = load_manifest(_write_manifest(tmp_path, _valid_manifest_dict()))
+    manifest = load_manifest(_write_manifest(tmp_path, _valid_manifest_dict()), skip_hash_verification=True)
     assert isinstance(manifest, GoldenManifest)
     assert len(manifest.entries) == 2
     assert manifest.entries[0].media_id == 1
@@ -113,42 +119,42 @@ def test_valid_manifest_loads(tmp_path):
 
 def test_missing_manifest_file_is_actionable(tmp_path):
     with pytest.raises(ManifestError, match="golden.json"):
-        load_manifest(str(tmp_path / "golden.json"))
+        load_manifest(str(tmp_path / "golden.json"), skip_hash_verification=True)
 
 
 def test_malformed_json_fails_fast(tmp_path):
     path = tmp_path / "golden.json"
     path.write_text("{not json")
     with pytest.raises(ManifestError):
-        load_manifest(str(path))
+        load_manifest(str(path), skip_hash_verification=True)
 
 
 def test_bad_sha256_rejected(tmp_path):
     data = _valid_manifest_dict()
     data["entries"][0]["sha256"] = "nothex"
     with pytest.raises(ManifestError, match="sha256"):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
 def test_duplicate_media_id_rejected(tmp_path):
     data = _valid_manifest_dict()
     data["entries"][1]["media_id"] = 1
     with pytest.raises(ManifestError, match="media_id"):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
 def test_identity_not_in_roster_rejected(tmp_path):
     data = _valid_manifest_dict()
     data["entries"][0]["present_identities"] = ["Nobody Known"]
     with pytest.raises(ManifestError, match="roster"):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
 def test_missing_required_entry_field_rejected(tmp_path):
     data = _valid_manifest_dict()
     del data["entries"][0]["media_id"]
     with pytest.raises(ManifestError):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
 def test_media_id_below_one_rejected(tmp_path):
@@ -157,7 +163,7 @@ def test_media_id_below_one_rejected(tmp_path):
     data = _valid_manifest_dict()
     data["entries"][0]["media_id"] = 0
     with pytest.raises(ManifestError):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
 def test_reference_fact_rejects_whitespace_only_phrases():
@@ -211,21 +217,21 @@ def test_duplicate_path_rejected(tmp_path):  # S1-04
     data = _valid_manifest_dict()
     data["entries"][1]["path"] = data["entries"][0]["path"]
     with pytest.raises(ManifestError, match="duplicate path"):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
 def test_empty_entries_rejected(tmp_path):  # S1-04
     data = _valid_manifest_dict()
     data["entries"] = []
     with pytest.raises(ManifestError, match="no entries"):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
 def test_unsupported_manifest_version_rejected(tmp_path):  # S1-04
     data = _valid_manifest_dict()
     data["manifest_version"] = 999
     with pytest.raises(ManifestError, match="manifest_version"):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
 def test_face_count_below_labeled_rejected(tmp_path):  # boxes_cover_face_count boxed form
@@ -319,28 +325,28 @@ def test_must_right_name_not_in_roster_rejected(tmp_path):  # S1-05
     data = _valid_manifest_dict()
     data["entries"][0]["must_right"] = ["Nobody Known"]
     with pytest.raises(ManifestError, match="roster"):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
 def test_easy_wrong_name_not_in_roster_rejected(tmp_path):  # S1-05
     data = _valid_manifest_dict()
     data["entries"][0]["easy_wrong"] = ["Nobody Known"]
     with pytest.raises(ManifestError, match="roster"):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
 def test_unknown_entry_key_rejected(tmp_path):  # S1-05 extra='forbid'
     data = _valid_manifest_dict()
     data["entries"][0]["surprise"] = True
     with pytest.raises(ManifestError):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
 def test_policy_missing_recognition_enabled_rejected(tmp_path):  # S1-03
     data = _valid_manifest_dict()
     data["entries"][0]["policy"] = {"recogntion_enabled": True}  # typo -> extra key + missing required
     with pytest.raises(ManifestError):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
 def test_rubric_empty_warns(tmp_path):  # S1-02
@@ -349,22 +355,88 @@ def test_rubric_empty_warns(tmp_path):  # S1-02
         entry["must_right"] = []
         entry["easy_wrong"] = []
     with pytest.warns(RubricEmptyWarning):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
+
+
+def _nfc_nfd_glacier_names() -> tuple[str, str]:
+    stem = "Breiðamerkurjökull.jpg"
+    return unicodedata.normalize("NFD", stem), unicodedata.normalize("NFC", stem)
+
+
+def _fs_encoding_is_utf8() -> bool:
+    return sys.getfilesystemencoding().lower().replace("_", "-") in {"utf-8", "utf8"}
+
+
+def _can_fsencode_nfc_nfd() -> bool:
+    decomposed, composed = _nfc_nfd_glacier_names()
+    try:
+        os.fsencode(composed)
+        os.fsencode(decomposed)
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _plant_nfc_glacier_bytes(mock_dir: Path, body: bytes) -> bytes:
+    """Create the NFC filename as raw UTF-8 bytes (works under ASCII fs encoding)."""
+    _, composed = _nfc_nfd_glacier_names()
+    bytes_path = os.fsencode(str(mock_dir)) + b"/" + composed.encode("utf-8")
+    with open(bytes_path, "wb") as handle:
+        handle.write(body)
+    return bytes_path
 
 
 def test_non_ascii_path_resolves_across_normalization_forms(tmp_path):  # S1-07
-    decomposed = unicodedata.normalize("NFD", "Breiðamerkurjökull.jpg")
-    composed = unicodedata.normalize("NFC", "Breiðamerkurjökull.jpg")
+    decomposed, composed = _nfc_nfd_glacier_names()
+    encode_ok = _can_fsencode_nfc_nfd()
+    if not encode_ok and _fs_encoding_is_utf8():
+        pytest.fail(
+            "NFC/NFD skip guard fired while filesystem encoding is UTF-8; "
+            "product _resolve_image is silently untested (AGT-06 / VLM6-RV13-Q2-02)"
+        )
     body = b"glacier bytes"
     data = _valid_manifest_dict()
     data["entries"][0]["path"] = f"mock_images/{decomposed}"  # manifest in NFD
     data["entries"][0]["sha256"] = hashlib.sha256(body).hexdigest()
     images = tmp_path / "images"
-    (images / "mock_images").mkdir(parents=True)
-    (images / "mock_images" / composed).write_bytes(body)  # file on disk in NFC
-    (images / "mock_images" / "scene-002.jpg").write_bytes(b"fake image bytes")
-    manifest = load_manifest(_write_manifest(tmp_path, data), images_dir=str(images))
-    assert len(manifest.entries) == 2
+    mock_dir = images / "mock_images"
+    mock_dir.mkdir(parents=True)
+    bytes_path = _plant_nfc_glacier_bytes(mock_dir, body)
+    assert os.path.isfile(bytes_path)
+    (mock_dir / "scene-002.jpg").write_bytes(b"fake image bytes")
+    man_path = _write_manifest(tmp_path, data)
+    if encode_ok:
+        manifest = load_manifest(man_path, images_dir=str(images))
+        assert len(manifest.entries) == 2
+        return
+    # ASCII fs: Path/os.fsencode cannot name the NFC file, so in-process
+    # _resolve_image never sees it. Drive the same load in a UTF-8 child
+    # that can express the bytes we planted (no skip — AGT-06).
+    service_root = Path(__file__).resolve().parents[2]
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+    env["LC_ALL"] = "C.UTF-8"
+    env["LANG"] = "C.UTF-8"
+    extra = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = str(service_root) + (os.pathsep + extra if extra else "")
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "from scripts.eval_harness.manifest import load_manifest;"
+                f"m=load_manifest({man_path!r}, images_dir={str(images)!r});"
+                "assert len(m.entries)==2, len(m.entries)"
+            ),
+        ],
+        cwd=str(service_root),
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
 
 
 # --- VLM-2C Slice 1: real seed-corpus ground truth (operator-confirmed) ---
@@ -380,7 +452,7 @@ _DESIGNATED_STRANGER_MEDIA_ID = 38
 def _load_seed_manifest() -> GoldenManifest:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RubricEmptyWarning)
-        return load_manifest(_SEED_MANIFEST)
+        return load_manifest(_SEED_MANIFEST, skip_hash_verification=True)
 
 
 def test_seed_corpus_has_designated_stranger_entry():  # VLM-2C S1
@@ -400,7 +472,7 @@ def test_seed_corpus_has_designated_stranger_entry():  # VLM-2C S1
 
 def test_seed_corpus_reconciles_with_fixture_scan():  # VLM-2C S1
     images_dir = os.environ.get("GOLDEN_IMAGES_DIR")
-    if not images_dir:
+    if not images_dir or not os.path.isdir(images_dir):
         pytest.skip("GOLDEN_IMAGES_DIR not set (fixture bytes not vendored)")
     from scripts.eval_harness.draft_labels import generate_draft_manifest, normalize_rel_path
 
@@ -429,7 +501,7 @@ def test_seed_corpus_reconciles_with_fixture_scan():  # VLM-2C S1
 def test_seed_corpus_caption_fixtures_populated():  # VLM-2C S2
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        manifest = load_manifest(_SEED_MANIFEST)
+        manifest = load_manifest(_SEED_MANIFEST, skip_hash_verification=True)
     assert not [w for w in caught if issubclass(w.category, RubricEmptyWarning)], (
         "seed corpus must define Must-Right/Easy-Wrong rubrics (RubricEmptyWarning fired)"
     )
@@ -454,7 +526,10 @@ def test_seed_corpus_caption_fixtures_populated():  # VLM-2C S2
 
 
 def test_seed_readme_documents_v2_corpus():  # VLM-2C S4
-    with open(os.path.join(os.path.dirname(__file__), "seed", "README.md")) as handle:
+    with open(
+        os.path.join(os.path.dirname(__file__), "seed", "README.md"),
+        encoding="utf-8",
+    ) as handle:
         readme = handle.read()
     assert "are empty for every entry" not in readme, "stale VLM-2A rubric-empty claim"
     assert "manifest_version" in readme and "base_caption" in readme
@@ -511,7 +586,7 @@ GOLDEN_38_MEDIA_IDS = frozenset(
 
 def test_legacy_entry_defaults_additive_fields(tmp_path):
     """A manifest predating Golden-100 loads; new fields default empty/None."""
-    manifest = load_manifest(_write_manifest(tmp_path, _valid_manifest_dict()))
+    manifest = load_manifest(_write_manifest(tmp_path, _valid_manifest_dict()), skip_hash_verification=True)
     e = manifest.entries[0]
     assert e.difficulty is None and e.domain is None
     assert e.reference_facts == [] and e.spatial_facts == []
@@ -537,7 +612,7 @@ def test_golden100_fields_roundtrip(tmp_path):
             "provenance": {"source": "wikimedia", "license": "cc0", "url": "http://example/x"},
         }
     )
-    e = load_manifest(_write_manifest(tmp_path, data)).entries[0]
+    e = load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True).entries[0]
     assert e.difficulty.value == "hard" and e.domain.value == "mirrors"
     assert e.provenance.license.value == "cc0"
     false_facts = [f for f in e.reference_facts if f.polarity.value == "false"]
@@ -548,7 +623,7 @@ def test_golden100_fields_roundtrip(tmp_path):
 def test_reference_fact_phrases_fallback_to_text(tmp_path):
     data = _valid_manifest_dict()
     data["entries"][0]["reference_facts"] = [{"text": "a red bicycle", "kind": "object"}]
-    e = load_manifest(_write_manifest(tmp_path, data)).entries[0]
+    e = load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True).entries[0]
     assert e.reference_facts[0].match_targets() == ["a red bicycle"]
 
 
@@ -556,32 +631,38 @@ def test_unknown_domain_rejected(tmp_path):
     data = _valid_manifest_dict()
     data["entries"][0]["domain"] = "not_a_real_stratum"
     with pytest.raises(ManifestError):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
 def test_spatial_binary_relation_requires_reference(tmp_path):
     data = _valid_manifest_dict()
     data["entries"][0]["spatial_facts"] = [{"subject": "Alice Example", "relation": "left_of"}]
     with pytest.raises(ManifestError):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
+
+
+_TRUTHFUL_SEED_PROVENANCE_NOTES = {
+    "vendored eval-corpus fixture",
+    "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
+}
 
 
 def test_seed_corpus_uses_fixture_provenance():
     """Vendored seed pixels are fixture/fixture, not operator/mock_entity (PROV-01)."""
     seed_dir = os.path.join(os.path.dirname(__file__), "seed")
     for name in ("golden.json", "bakeoff_golden.json"):
-        manifest = load_manifest(os.path.join(seed_dir, name))
+        manifest = load_manifest(os.path.join(seed_dir, name), skip_hash_verification=True)
         assert manifest.entries, f"{name} must not be empty"
         for entry in manifest.entries:
             assert entry.provenance.source.value == "fixture", entry.path
             assert entry.provenance.license.value == "fixture", entry.path
-            assert entry.provenance.note == "vendored eval-corpus fixture", entry.path
+            assert entry.provenance.note in _TRUTHFUL_SEED_PROVENANCE_NOTES, entry.path
 
 
 def test_golden38_subset_pin():
     """The historical golden-38 media_ids are frozen (subset-pin, plan S1)."""
     path = os.path.join(os.path.dirname(__file__), "seed", "golden.json")
-    manifest = load_manifest(path)
+    manifest = load_manifest(path, skip_hash_verification=True)
     ids = {e.media_id for e in manifest.entries}
     legacy = {i for i in ids if i <= 38}
     assert legacy == GOLDEN_38_MEDIA_IDS, (
@@ -624,7 +705,7 @@ def test_legacy_domain_without_tags_or_cohort_loads(tmp_path):
     data = _valid_manifest_dict()
     data["entries"][0]["domain"] = "people"
     # deliberately omit tags / demographic_cohort / roster_cohorts
-    manifest = load_manifest(_write_manifest(tmp_path, data))
+    manifest = load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
     e = manifest.entries[0]
     assert e.domain.value == "people"
     assert e.tags == []
@@ -663,14 +744,14 @@ def test_unknown_tag_string_rejected_via_load_manifest(tmp_path):
     data = _valid_manifest_dict()
     data["entries"][0]["tags"] = ["wearing_hat"]
     with pytest.raises(ManifestError, match="schema violation"):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
 def test_roster_cohorts_key_outside_roster_rejected(tmp_path):
     data = _valid_manifest_dict()
     data["roster_cohorts"] = {"Nobody Known": "cohort-a"}
     with pytest.raises(ManifestError, match="Nobody Known"):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
 def test_valid_roster_cohorts_loads(tmp_path):
@@ -680,12 +761,272 @@ def test_valid_roster_cohorts_loads(tmp_path):
         "Bob Example": "cohort-b",
     }
     data["entries"][0]["demographic_cohort"] = "cohort-a"
-    manifest = load_manifest(_write_manifest(tmp_path, data))
+    manifest = load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
     assert manifest.roster_cohorts == {
         "Alice Example": "cohort-a",
         "Bob Example": "cohort-b",
     }
     assert manifest.entries[0].demographic_cohort == "cohort-a"
+
+
+# --- VLM6-R2-05: image sha256 pin verified by default (OBS-04) -----------------
+
+
+def test_load_manifest_requires_hash_verification_by_default(tmp_path, monkeypatch):
+    """Without images_dir / GOLDEN_IMAGES_DIR / explicit skip, load is refuse-loud.
+
+    Pre-fix: load_manifest silently skipped hash checks when images_dir was omitted
+    (only _cmd_fetch passed it). That let every offline path drift from pinned
+    hashes without a word (VLM6-R2-05).
+    """
+    monkeypatch.delenv("GOLDEN_IMAGES_DIR", raising=False)
+    path = _write_manifest(tmp_path, _valid_manifest_dict())
+    with pytest.raises(ManifestError, match="skip_hash_verification=True|GOLDEN_IMAGES_DIR|images_dir"):
+        load_manifest(path)
+
+
+def test_load_manifest_skip_hash_verification_allows_metadata_only(tmp_path, monkeypatch):
+    monkeypatch.delenv("GOLDEN_IMAGES_DIR", raising=False)
+    manifest = load_manifest(
+        _write_manifest(tmp_path, _valid_manifest_dict()),
+        skip_hash_verification=True,
+    )
+    assert len(manifest.entries) == 2
+
+
+def test_load_manifest_skip_hash_warning_includes_caller_reason(tmp_path, monkeypatch):
+    """VLM6-DELTA-05 / OBS-04: named skip must say WHY it is safe (TEST-15)."""
+    monkeypatch.delenv("GOLDEN_IMAGES_DIR", raising=False)
+    path = _write_manifest(tmp_path, _valid_manifest_dict())
+    reason = "metadata-only scoring path; image bytes never opened"
+    with pytest.warns(HashVerificationSkippedWarning) as rec:
+        load_manifest(path, skip_hash_verification=True, hash_skip_reason=reason)
+    skipped = [w for w in rec.list if issubclass(w.category, HashVerificationSkippedWarning)]
+    assert len(skipped) == 1
+    msg = str(skipped[0].message)
+    assert reason in msg
+    assert path in msg
+
+
+def test_load_manifest_hash_skip_reason_without_skip_raises(tmp_path, monkeypatch):
+    """A reason without a skip is a caller bug — fail loudly (VLM6-DELTA-05)."""
+    monkeypatch.delenv("GOLDEN_IMAGES_DIR", raising=False)
+    data = _valid_manifest_dict()
+    images = tmp_path / "images"
+    (images / "mock_images").mkdir(parents=True)
+    (images / "mock_images" / "scene-001.jpg").write_bytes(b"fake image bytes")
+    (images / "mock_images" / "scene-002.jpg").write_bytes(b"fake image bytes")
+    path = _write_manifest(tmp_path, data)
+    with pytest.raises(ManifestError, match="hash_skip_reason"):
+        load_manifest(
+            path,
+            images_dir=str(images),
+            skip_hash_verification=False,
+            hash_skip_reason="should not be here",
+        )
+
+
+def test_load_manifest_skip_true_reason_with_golden_images_dir_verifies(tmp_path, monkeypatch):
+    """VLM6-W2-RV-01: skip=True + reason + resolvable GOLDEN_IMAGES_DIR verifies.
+
+    Production metadata-only sites pass skip+reason. When the documented eval
+    env is exported and the dir exists, hashes are still checked; the reason
+    is unused (no HashVerificationSkippedWarning, no raise).
+    """
+    data = _valid_manifest_dict()
+    images = tmp_path / "images"
+    (images / "mock_images").mkdir(parents=True)
+    (images / "mock_images" / "scene-001.jpg").write_bytes(b"fake image bytes")
+    (images / "mock_images" / "scene-002.jpg").write_bytes(b"fake image bytes")
+    monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(images))
+    path = _write_manifest(tmp_path, data)
+    with warnings.catch_warnings(record=True) as rec:
+        warnings.simplefilter("always")
+        manifest = load_manifest(
+            path,
+            skip_hash_verification=True,
+            hash_skip_reason="metadata-only scoring path; image bytes never opened",
+        )
+    assert len(manifest.entries) == 2
+    assert not any(issubclass(w.category, HashVerificationSkippedWarning) for w in rec)
+
+
+def test_load_manifest_skip_true_reason_with_golden_images_dir_verifies_tamper(tmp_path, monkeypatch):
+    """VLM6-W3-RV-06: skip=True + reason + GOLDEN_IMAGES_DIR still verifies.
+
+    Env-resolved dir (no images_dir arg) must not skip _verify_hashes.
+    Tampered scene-001 bytes must raise ManifestError naming the field.
+    """
+    data = _valid_manifest_dict()
+    images = tmp_path / "images"
+    (images / "mock_images").mkdir(parents=True)
+    (images / "mock_images" / "scene-001.jpg").write_bytes(b"tampered bytes")
+    (images / "mock_images" / "scene-002.jpg").write_bytes(b"fake image bytes")
+    monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(images))
+    path = _write_manifest(tmp_path, data)
+    with pytest.raises(ManifestError, match="sha256 mismatch|scene-001"):
+        load_manifest(
+            path,
+            skip_hash_verification=True,
+            hash_skip_reason="metadata-only scoring path; image bytes never opened",
+        )
+
+
+def test_load_manifest_skip_true_reason_with_images_dir_still_verifies_tamper(tmp_path, monkeypatch):
+    """VLM6-W2-RV-01 / R1-02: skip=True must not bypass verify when images resolve.
+
+    Reordering skip-before-verify would load a tampered pin silently.
+    """
+    monkeypatch.delenv("GOLDEN_IMAGES_DIR", raising=False)
+    data = _valid_manifest_dict()
+    images = tmp_path / "images"
+    (images / "mock_images").mkdir(parents=True)
+    (images / "mock_images" / "scene-001.jpg").write_bytes(b"tampered bytes")
+    (images / "mock_images" / "scene-002.jpg").write_bytes(b"fake image bytes")
+    path = _write_manifest(tmp_path, data)
+    with pytest.raises(ManifestError, match="sha256 mismatch|scene-001"):
+        load_manifest(
+            path,
+            images_dir=str(images),
+            skip_hash_verification=True,
+            hash_skip_reason="metadata-only scoring path; image bytes never opened",
+        )
+
+
+def test_load_manifest_skip_without_reason_says_none_supplied(tmp_path, monkeypatch):
+    """Boolean skip stays valid; warning names the missing reason (VLM6-DELTA-05)."""
+    monkeypatch.delenv("GOLDEN_IMAGES_DIR", raising=False)
+    path = _write_manifest(tmp_path, _valid_manifest_dict())
+    with pytest.warns(HashVerificationSkippedWarning, match="no reason supplied") as rec:
+        load_manifest(path, skip_hash_verification=True)
+    skipped = [w for w in rec.list if issubclass(w.category, HashVerificationSkippedWarning)]
+    assert len(skipped) == 1
+    assert path in str(skipped[0].message)
+
+
+def test_load_manifest_verified_path_emits_no_skip_warning(tmp_path, monkeypatch):
+    """images_dir set, no skip — hashes verified, no HashVerificationSkippedWarning."""
+    monkeypatch.delenv("GOLDEN_IMAGES_DIR", raising=False)
+    data = _valid_manifest_dict()
+    images = tmp_path / "images"
+    (images / "mock_images").mkdir(parents=True)
+    (images / "mock_images" / "scene-001.jpg").write_bytes(b"fake image bytes")
+    (images / "mock_images" / "scene-002.jpg").write_bytes(b"fake image bytes")
+    with warnings.catch_warnings(record=True) as rec:
+        warnings.simplefilter("always")
+        load_manifest(_write_manifest(tmp_path, data), images_dir=str(images))
+    assert not any(issubclass(w.category, HashVerificationSkippedWarning) for w in rec)
+
+
+def test_load_manifest_verifies_via_golden_images_dir_env(tmp_path, monkeypatch):
+    data = _valid_manifest_dict()
+    images = tmp_path / "images"
+    (images / "mock_images").mkdir(parents=True)
+    (images / "mock_images" / "scene-001.jpg").write_bytes(b"fake image bytes")
+    (images / "mock_images" / "scene-002.jpg").write_bytes(b"fake image bytes")
+    monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(images))
+    manifest = load_manifest(_write_manifest(tmp_path, data))
+    assert len(manifest.entries) == 2
+
+
+def test_resolve_verified_image_rejects_sha_drift(tmp_path):
+    from scripts.eval_harness.manifest import resolve_verified_image
+
+    data = _valid_manifest_dict()
+    entry = load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True).entries[0]
+    images = tmp_path / "images"
+    (images / "mock_images").mkdir(parents=True)
+    (images / "mock_images" / "scene-001.jpg").write_bytes(b"tampered bytes")
+    with pytest.raises(ManifestError, match="sha256 mismatch|scene-001"):
+        resolve_verified_image(entry, images)
+
+
+def test_resolve_verified_image_returns_path_when_pin_matches(tmp_path):
+    from scripts.eval_harness.manifest import resolve_verified_image
+
+    data = _valid_manifest_dict()
+    entry = load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True).entries[0]
+    images = tmp_path / "images"
+    (images / "mock_images").mkdir(parents=True)
+    target = images / "mock_images" / "scene-001.jpg"
+    target.write_bytes(b"fake image bytes")
+    assert resolve_verified_image(entry, images) == target
+
+
+# --- VLM6-R2-03: corpus field inventory + vacuous-metric refuse --------------
+
+
+def test_inventory_corpus_fields_reports_per_field_counts(tmp_path):
+    from scripts.eval_harness.manifest import inventory_corpus_fields
+
+    data = _valid_manifest_dict()
+    data["entries"][0]["domain"] = "faces"
+    data["entries"][0]["difficulty"] = "easy"
+    data["entries"][0]["tags"] = ["blur"]
+    # entry 1 left empty on all stratification fields
+    manifest = load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
+    inv = inventory_corpus_fields(manifest)
+    assert inv["domain"].total == 2 and inv["domain"].populated == 1
+    assert inv["difficulty"].populated == 1
+    assert inv["tags"].populated == 1
+    assert inv["reference_facts"].populated == 0
+    assert inv["spatial_facts"].populated == 0
+    assert inv["face_boxes"].populated == 0
+    assert inv["must_right"].populated == 1  # only entry 0 has must_right
+    assert inv["easy_wrong"].populated == 1
+
+
+def test_require_metric_backing_refuses_empty_corpus_field(tmp_path):
+    from scripts.eval_harness.manifest import require_metric_backing
+
+    manifest = load_manifest(
+        _write_manifest(tmp_path, _valid_manifest_dict()),
+        skip_hash_verification=True,
+    )
+    with pytest.raises(ManifestError, match="reference_facts|vacuous|0/"):
+        require_metric_backing(manifest, "reference_facts")
+
+
+def test_require_metric_backing_passes_when_field_populated(tmp_path):
+    from scripts.eval_harness.manifest import require_metric_backing
+
+    data = _valid_manifest_dict()
+    data["entries"][0]["domain"] = "people"
+    data["entries"][1]["domain"] = "art"
+    manifest = load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
+    pop = require_metric_backing(manifest, "domain")
+    assert pop.populated == 2 and pop.total == 2
+
+
+def test_seed_corpus_inventory_exposes_stratification_gaps_honestly():
+    """Shipped golden must not silently look stratified when fields are empty.
+
+    After R2-03 population of *derivable* fields, domain/difficulty/tags/provenance
+    should be non-zero; reference_facts/spatial_facts/face_boxes remain honest gaps
+    (cannot invent ground truth without viewing images).
+    """
+    from scripts.eval_harness.manifest import (
+        SHIPPED_CORPUS_COVERAGE_GAPS,
+        inventory_corpus_fields,
+        require_metric_backing,
+    )
+
+    manifest = load_manifest(_SEED_MANIFEST, skip_hash_verification=True)
+    inv = inventory_corpus_fields(manifest)
+    assert inv["domain"].populated > 0, "derivable domain labels must be present"
+    assert inv["difficulty"].populated > 0, "derivable difficulty labels must be present"
+    assert inv["tags"].populated > 0, "filename-derived slice tags must be present"
+    assert inv["provenance"].populated == inv["provenance"].total
+    # Honest negatives — not fabricatable without image bytes / operator boxes:
+    for field in ("reference_facts", "spatial_facts", "face_boxes"):
+        assert inv[field].populated == 0, f"{field} must stay empty until operator-curated"
+        assert field in SHIPPED_CORPUS_COVERAGE_GAPS
+        assert "owner=" in SHIPPED_CORPUS_COVERAGE_GAPS[field]
+    # Gate refuses to certify a metric on an empty backing field:
+    with pytest.raises(ManifestError, match="face_boxes"):
+        require_metric_backing(manifest, "face_boxes")
+    # And accepts a populated one:
+    require_metric_backing(manifest, "domain")
 
 
 # --- FIR-11 Slice 2: annotation mode, coverage, lineage ----------------------
@@ -819,7 +1160,7 @@ def test_exhaustive_matching_boxes_loads(tmp_path):
     ]
     data["entries"][1]["face_count"] = 0
     data["entries"][1]["face_boxes"] = []
-    manifest = load_manifest(_write_manifest(tmp_path, data))
+    manifest = load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
     assert manifest.annotation_mode is AnnotationMode.EXHAUSTIVE
     assert manifest.entries[0].face_boxes[0].lineage.capture_session_id == "test-session"
 
@@ -835,7 +1176,8 @@ def test_retired_face_count_covers_labeled_is_gone():
         "eval_harness",
         "manifest.py",
     )
-    source = open(path, encoding="utf-8").read()
+    with open(path, encoding="utf-8") as handle:
+        source = handle.read()
     assert "_face_count_covers_labeled" not in source
     assert "SUPPORTED_MANIFEST_VERSION = 3" in source
 
@@ -869,6 +1211,8 @@ def test_cli_gate_commands_do_not_reach_load_legacy_manifest(tmp_path, monkeypat
     data = _valid_manifest_dict()
     man_path = tmp_path / "golden.json"
     man_path.write_text(json.dumps(data))
+    loaded_manifest = man_mod.load_manifest(str(man_path), skip_hash_verification=True)
+    fetch_manifest_sha256 = cli_mod._manifest_sha(loaded_manifest)
     record_path = tmp_path / "run.json"
     record_path.write_text(
         json.dumps(
@@ -876,7 +1220,10 @@ def test_cli_gate_commands_do_not_reach_load_legacy_manifest(tmp_path, monkeypat
                 "schema": "acx-eval/v1",
                 "kind": "run_record",
                 "provenance": {
-                    "manifest_sha256": "m" * 64,
+                    # Must match the manifest actually scored against, or the
+                    # branch-only manifest-drift gate (EVAL-13) fires first and
+                    # masks the refused-metric exit code this test pins.
+                    "manifest_sha256": fetch_manifest_sha256,
                     "base_url": "x",
                     "head_sha": "0" * 40,
                     "started_at": "t",
@@ -886,7 +1233,13 @@ def test_cli_gate_commands_do_not_reach_load_legacy_manifest(tmp_path, monkeypat
                         "media_id": 1,
                         "path": data["entries"][0]["path"],
                         "describe": {"alt_text_draft": "Alice Example.", "visual_facts": {"objects": []}},
-                        "identities": ["Alice Example"],
+                        "identities": [
+                            {
+                                "name": "Alice Example",
+                                "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                                "unpositioned": False,
+                            }
+                        ],
                         "face_count": 1,
                         "error": None,
                     },
@@ -905,7 +1258,18 @@ def test_cli_gate_commands_do_not_reach_load_legacy_manifest(tmp_path, monkeypat
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
     with pytest.raises(SystemExit) as exc:
         cli_mod.main(["score", "--manifest", str(man_path), "--run-record", str(record_path)])
-    assert exc.value.code == 3
+    # main pins exit code 3 (REFUSED_METRIC_EXIT_CODE) because main's score
+    # path has no vacuity/drift gates ahead of raise_if_unconsented_refusals.
+    # This branch added several earlier score gates (category-vacuity,
+    # wrong-name-floor vacuity, manifest-drift — none exist on main) that
+    # fire first for this roster_only + boxed-identity-claim fixture and
+    # exit via a class-unique SCORE_GATE_PREFIXES string instead. Either
+    # exit shape proves the command failed loudly without ever reaching
+    # load_legacy_manifest, which is this test's actual invariant.
+    assert exc.value.code == 3 or (
+        isinstance(exc.value.code, str)
+        and any(exc.value.code.startswith(prefix) for prefix in cli_mod.SCORE_GATE_PREFIXES)
+    ), exc.value.code
     assert hits == []
 
     face_record_path = tmp_path / "face-run.json"
@@ -915,7 +1279,7 @@ def test_cli_gate_commands_do_not_reach_load_legacy_manifest(tmp_path, monkeypat
                 "schema": "acx-eval/v1",
                 "kind": "face_run_record",
                 "provenance": {
-                    "manifest_sha256": "m" * 64,
+                    "manifest_sha256": fetch_manifest_sha256,
                     "head_sha": "0" * 40,
                     "started_at": "t",
                     "leg": "candidate",
@@ -926,8 +1290,254 @@ def test_cli_gate_commands_do_not_reach_load_legacy_manifest(tmp_path, monkeypat
     )
     # roster_only score-face raises via the CLI wrapper; pin the invariant.
     with pytest.raises(SystemExit, match=ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY) as exc_info:
-        cli_mod.main(
-            ["score-face", "--manifest", str(man_path), "--run-record", str(face_record_path)]
-        )
+        cli_mod.main(["score-face", "--manifest", str(man_path), "--run-record", str(face_record_path)])
     assert "score_face_run_record refuses roster_only" in str(exc_info.value)
     assert hits == []
+
+
+# --- VLM6-W3-RV-01: metadata_only load (OBS-04) --------------------------------
+
+
+def test_load_manifest_metadata_only_ignores_existing_empty_golden_dir(tmp_path, monkeypatch):
+    """W3-RV-01(a): metadata_only never opens image bytes even when GOLDEN_IMAGES_DIR exists."""
+    empty_images = tmp_path / "empty-golden"
+    empty_images.mkdir()
+    monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(empty_images))
+    path = _write_manifest(tmp_path, _valid_manifest_dict())
+    reason = "metadata-only; image bytes never opened"
+    original_read_bytes = Path.read_bytes
+    reads: list[Path] = []
+
+    def _spy(self):
+        reads.append(Path(self))
+        return original_read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_bytes", _spy)
+    with pytest.warns(HashVerificationSkippedWarning) as rec:
+        manifest = load_manifest(
+            path,
+            metadata_only=True,
+            skip_hash_verification=True,
+            hash_skip_reason=reason,
+        )
+    assert len(manifest.entries) == 2
+    skipped = [w for w in rec.list if issubclass(w.category, HashVerificationSkippedWarning)]
+    assert len(skipped) == 1
+    assert reason in str(skipped[0].message)
+    assert reads == []
+
+
+def test_load_manifest_metadata_only_without_skip_raises(tmp_path, monkeypatch):
+    monkeypatch.delenv("GOLDEN_IMAGES_DIR", raising=False)
+    path = _write_manifest(tmp_path, _valid_manifest_dict())
+    with pytest.raises(ManifestError, match="metadata_only"):
+        load_manifest(path, metadata_only=True)
+
+
+def test_load_manifest_metadata_only_with_images_dir_raises(tmp_path, monkeypatch):
+    monkeypatch.delenv("GOLDEN_IMAGES_DIR", raising=False)
+    images = tmp_path / "images"
+    images.mkdir()
+    path = _write_manifest(tmp_path, _valid_manifest_dict())
+    with pytest.raises(ManifestError, match="metadata_only"):
+        load_manifest(
+            path,
+            images_dir=str(images),
+            metadata_only=True,
+            skip_hash_verification=True,
+            hash_skip_reason="must not pair with images_dir",
+        )
+
+
+def test_load_manifest_empty_images_dir_raises(tmp_path, monkeypatch):
+    monkeypatch.delenv("GOLDEN_IMAGES_DIR", raising=False)
+    path = _write_manifest(tmp_path, _valid_manifest_dict())
+    with pytest.raises(ManifestError, match="images_dir must be a real directory path; use metadata_only=True"):
+        load_manifest(path, images_dir="")
+
+
+# --- VLM6-RV10-Q1-01: UTF-8 pin + ValueError guard (EVAL-10 / AGT-21) ----------
+
+_SERVICE_ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.mark.parametrize("loader_name", ["load_manifest", "load_legacy_manifest"])
+def test_load_manifest_utf8_under_c_locale(loader_name):
+    """C-locale subprocess must decode golden.json as UTF-8 on both loaders.
+
+    MUT[drop_manifest_pin]: bare read_text() at load_manifest → ascii codec.
+    MUT[drop_legacy_pin]: bare read_text() at load_legacy_manifest → ascii codec.
+    Decode runs before the v2 version check; legacy then raises the
+    version-mismatch ManifestError, not an ascii codec error.
+    """
+    _assert_child_ascii_locale()
+    env = _c_locale_child_env()
+    env.pop("GOLDEN_IMAGES_DIR", None)
+    golden = "scene/tests/seed/golden.json"
+    if loader_name == "load_manifest":
+        snippet = (
+            "from scripts.eval_harness.manifest import load_manifest; "
+            f"load_manifest({golden!r}, skip_hash_verification=True)"
+        )
+    else:
+        snippet = f"from scripts.eval_harness.manifest import load_legacy_manifest; load_legacy_manifest({golden!r})"
+    proc = subprocess.run(
+        [sys.executable, "-c", snippet],
+        cwd=str(_SERVICE_ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    if loader_name == "load_manifest":
+        assert proc.returncode == 0, proc.stderr
+        assert "UnicodeDecodeError" not in proc.stderr
+        return
+    message = proc.stderr
+    assert "'ascii'" not in message
+    assert "codec can't decode" not in message.lower()
+    assert "version" in message.lower()
+
+
+@pytest.mark.parametrize("loader_name", ["load_manifest", "load_legacy_manifest"])
+def test_bom_prefixed_manifest_decodes(tmp_path, loader_name):
+    """UTF-8 BOM on an otherwise-valid manifest must not fail decode.
+
+    MUT[utf8_sig_to_utf8]: encoding="utf-8" → ManifestError "Unexpected UTF-8 BOM".
+    """
+    path = tmp_path / "bom.json"
+    path.write_bytes(b"\xef\xbb\xbf" + json.dumps(_valid_manifest_dict()).encode("utf-8"))
+    loader = load_manifest if loader_name == "load_manifest" else load_legacy_manifest
+    kwargs = {"skip_hash_verification": True} if loader_name == "load_manifest" else {}
+    if loader_name == "load_manifest":
+        manifest = loader(str(path), **kwargs)
+        assert isinstance(manifest, GoldenManifest)
+        return
+    with pytest.raises(ManifestError) as excinfo:
+        loader(str(path), **kwargs)
+    message = str(excinfo.value)
+    assert "UTF-8 BOM" not in message
+    assert "codec" not in message.lower()
+    assert "version" in message.lower()
+
+
+@pytest.mark.parametrize("loader_name", ["load_manifest", "load_legacy_manifest"])
+def test_non_utf8_manifest_is_manifest_error(tmp_path, loader_name):
+    """Invalid UTF-8 bytes → ManifestError (not uncaught UnicodeDecodeError).
+
+    MUT[narrow_manifest_guard]: except (OSError, json.JSONDecodeError) lets
+    UnicodeDecodeError escape. Both loaders fail at read_text before version
+    checks, so a v3-shaped payload reaches the legacy loader's decode site.
+    """
+    path = tmp_path / "bad.json"
+    path.write_bytes(b'{"manifest_version": 3, "x": "\xff\xfe"}')
+    loader = load_manifest if loader_name == "load_manifest" else load_legacy_manifest
+    kwargs = {"skip_hash_verification": True} if loader_name == "load_manifest" else {}
+    with pytest.raises(ManifestError, match="unreadable or malformed JSON") as excinfo:
+        loader(str(path), **kwargs)
+    message = str(excinfo.value)
+    assert "codec" in message or "utf-8" in message.lower() or "utf_8" in message.lower()
+
+
+def test_adjudication_rule_rejects_free_text():
+    """MLDATA-03: a written rule is a closed enum, not unconstrained prose."""
+    with pytest.raises(ValidationError, match="adjudication_rule"):
+        ReferenceFact(
+            text="wearing a red hat",
+            kind="attribute",
+            phrases=["red hat"],
+            adjudicated_by="sme-03",
+            adjudication_rule="coin-flip",
+        )
+
+
+def test_adjudicated_by_requires_written_rule():
+    """MLDATA-03: claiming SME adjudication without a named rule is incomplete."""
+    with pytest.raises(ValidationError, match="adjudication_rule"):
+        ReferenceFact(
+            text="wearing a red hat",
+            kind="attribute",
+            phrases=["red hat"],
+            adjudicated_by="sme-03",
+        )
+
+
+def test_named_adjudication_rule_is_accepted():
+    fact = ReferenceFact(
+        text="wearing a red hat",
+        kind="attribute",
+        phrases=["red hat"],
+        adjudicated_by="sme-03",
+        adjudication_rule="disagreement-escalate-to-sme",
+        pre_adjudication=[
+            {
+                "annotator_id": "ann-01",
+                "polarity": "true",
+                "text": "wearing a red hat",
+                "noted_at": "2026-08-19T09:00:00Z",
+            },
+            {
+                "annotator_id": "ann-02",
+                "polarity": "false",
+                "text": "wearing a red hat",
+                "noted_at": "2026-08-19T09:01:00Z",
+            },
+        ],
+    )
+    assert fact.adjudication_rule.value == "disagreement-escalate-to-sme"
+
+
+def _operator_gold_payload(**overrides) -> dict:
+    payload = {
+        "text": "a red bicycle",
+        "kind": "object",
+        "phrases": ["red bicycle"],
+        "confirmed_by": "operator",
+        "annotator_id": "ann-07",
+        "annotation_batch": "batch-2026-08-20",
+        "annotated_at": "2026-08-20T12:00:00Z",
+        "source_pool": "golden-646-pool",
+    }
+    payload.update(overrides)
+    return payload
+
+
+@pytest.mark.parametrize("missing", ["annotation_batch", "annotated_at", "source_pool"])
+def test_human_confirmed_fact_missing_lineage_field_raises(missing):
+    """MLDATA-04: per-label lineage is mandatory on human gold, not presence-if-supplied."""
+    payload = _operator_gold_payload()
+    payload[missing] = None
+    with pytest.raises(ValidationError, match=missing):
+        ReferenceFact.model_validate(payload)
+
+
+@pytest.mark.parametrize("blank", ["annotation_batch", "annotated_at", "source_pool"])
+def test_human_confirmed_fact_blank_lineage_field_raises(blank):
+    payload = _operator_gold_payload()
+    payload[blank] = "   "
+    with pytest.raises(ValidationError, match=blank):
+        ReferenceFact.model_validate(payload)
+
+
+def test_operator_gold_with_no_lineage_raises():
+    """M9: operator gold with batch/at/pool all None must not validate."""
+    with pytest.raises(ValidationError, match="annotation_batch"):
+        ReferenceFact(
+            text="a red bicycle",
+            kind="object",
+            phrases=["red bicycle"],
+            confirmed_by="operator",
+            annotator_id="ann-07",
+        )
+
+
+def test_adjudicated_fact_with_empty_pre_adjudication_raises():
+    """M10: SME adjudication without stored pre-labels leaves no disagreement trail."""
+    with pytest.raises(ValidationError, match="pre_adjudication"):
+        ReferenceFact(
+            text="wearing a red hat",
+            kind="attribute",
+            phrases=["red hat"],
+            adjudicated_by="sme-03",
+            adjudication_rule="disagreement-escalate-to-sme",
+            pre_adjudication=[],
+        )

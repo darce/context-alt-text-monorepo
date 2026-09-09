@@ -24,7 +24,7 @@ Unavailable capabilities remain typed follow-up, not a stall: official strict Ux
 
 | kind | states / behaviour | where |
 | --- | --- | --- |
-| OBSERVED-UI | idle; queued; warming; describing; generic **Description complete.** plus alt text; HTTP 429; error/failed; 120s poll timeout; live polite; focus on result | this branch (and would be production if deployed) |
+| OBSERVED-UI | idle; static illustrative example; queued; warming; describing; typed complete labels plus alt text; HTTP 429; error/failed; 120s poll timeout; live polite; focus on result | this feature branch (not deployed) |
 | OBSERVED-FEATURE wire | completed nonempty public envelope emits `description_tier`; parser and `pollRun` preserve `provisional_cpu` \| `final_gpu` \| `null`; missing legacy becomes explicit `null` | this feature branch only |
 | OBSERVED-PRODUCTION | public demo **is deployed**; these feature changes have **not** been deployed. Prior observation: old Florence recognition image; Qwen-on-GPU entity-description proof is absent (not a fresh runtime check). | production |
 | OBSERVED | instance-scoped radios `acx-demo-media-N`, submitting form only | yes |
@@ -32,12 +32,12 @@ Unavailable capabilities remain typed follow-up, not a stall: official strict Ux
 | OBSERVED | same-page retry reuses in-memory `idempotency_key`; completed run clears it | yes |
 | OBSERVED | refresh drops the in-memory key and `run_id` | yes |
 | PRODUCER | `DescriptionResultTier`: `provisional_cpu` \| `final_gpu` | producer enum |
-| PROPOSED-UI | typed complete labels from parsed `description_tier` (below) | **no** — do not infer from `gpu_state` |
-| PROPOSED INT-07 | clearly marked illustrative example before explicit live Describe | **no** — `preview_required` stays false |
+| OBSERVED-FEATURE UI | completed labels: **GPU description complete.** / **CPU fallback draft (not GPU final).** / **Description complete, processing tier unavailable.** | this feature branch; never from `gpu_state` |
+| OBSERVED-FEATURE INT-07 | static illustrative example before Describe; `preview_required` true because that example exists. It is **not** a preview of the selected image | this feature branch |
 | PROPOSED | refresh-safe same-run resume via existing owner + idempotency | **no** |
 | DESIGN Q | durable handle to re-read a terminal run after inflight release | **no** |
 
-Do not paint the observed map green because `preview_required` is false. That flag is current behaviour, not a shipped preview.
+`preview_required` is true because a pre-submit illustrative example exists. That example is not a selected-image preview and is not deployed production.
 
 ## Source anchors (workspace-relative)
 
@@ -49,7 +49,8 @@ Do not paint the observed map green because `preview_required` is false. That fl
 | Public REST submit/status, inflight bulkhead, 403 after release | `apps/prototype-wp-alt-context/src/api/class-public-demo-describe-controller.php` (`submit`, `status`, `public_envelope_response`) |
 | Completed nonempty envelope emits `description_tier` | `apps/prototype-wp-alt-context/src/api/class-public-demo-describe-controller.php` (`public_description`, `normalize_public_description_tier`) |
 | Parser/pollRun preserve known tokens and explicit null | `apps/prototype-wp-alt-context/js/public/demo-describe.js` (`DESCRIPTION_RESULT_TIERS`) |
-| Rendered complete label is still generic | `apps/prototype-wp-alt-context/js/public/demo-describe.js` (`statusPresentation` → `Description complete.`) |
+| Rendered complete labels from `description_tier` | `apps/prototype-wp-alt-context/js/public/demo-describe.js` (`statusPresentation`, `initializeDemo`) |
+| Static illustrative example before submit | `apps/prototype-wp-alt-context/src/public/class-public-demo-shortcode.php` (`data-acx-demo-preview`) |
 | Producer tier enum | `apps/prototype-description-service/scene/domain/description.py` (`DescriptionResultTier`) |
 | Status tokens + icon/color | `apps/prototype-wp-alt-context/js/public/demo-describe.css` (`data-state` queued/warming/describing/completed/limited/error/failed) |
 | Error vocabulary | `apps/prototype-wp-alt-context/src/public/class-public-demo-error-code.php` |
@@ -63,6 +64,9 @@ Admin `describe-gpu-tier` is a different product surface. Do not copy its GPU ch
 │ Choose an image to describe                                            │
 │ ( ) Lake          ( ) Path                                             │
 │ radios name=acx-demo-media-<instance>  (this form only)                │
+│ Illustrative example — not a live result                               │
+│ Alex stands beside a bicycle outside a cafe.                           │
+│ This example is not a description of your selected image.              │
 │ [ Describe selected image ]                                            │
 │ ● Select an image, then choose Describe.                               │
 └────────────────────────────────────────────────────────────────────────┘
@@ -89,15 +93,18 @@ Allowlist thumbnails here are **input choices**, not an outcome sample (INT-07; 
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Screen 3 — OBSERVED-UI complete (generic label; wire unused)
+## Screen 3 — OBSERVED-FEATURE complete (typed labels)
 
 ```
-┌ data-state=completed  ✓ Description complete.     ← generic UI label   ┐
+┌ data-state=completed  ✓ GPU description complete.                      ┐
+│                   or  ✓ CPU fallback draft (not GPU final).            │
+│                   or  ✓ Description complete, processing tier          │
+│                         unavailable.                                   │
 │ ┌ result (focus moved here) ─────────────────────────────────────────┐ │
 │ │ A person walking beside a lake under a cloudy sky.                 │ │
 │ │ (description text is separate from the status label)               │ │
 │ └────────────────────────────────────────────────────────────────────┘ │
-│ JSON may include description_tier on this branch; presentation ignores │
+│ Labels from description_tier only — never from gpu_state               │
 │ [ Describe selected image ]  next click mints a new idempotency key    │
 └────────────────────────────────────────────────────────────────────────┘
 ```
@@ -131,37 +138,26 @@ Same-page retry of the same media reuses the key. Refresh (exit `refresh-page-dr
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Screen 6 — PROPOSED visible-tier labels (NOT SHIPPED UI)
-
-Wire exists on this feature branch and has not been deployed. Production itself is deployed. Do not treat this sketch as inventory.
-
-Keep description text in `z-result`, separate from the status label. Keep existing live polite and focus-on-result behaviour. Never infer from `gpu_state`.
+## Screen 6 — OBSERVED-FEATURE complete labels (this branch; not deployed)
 
 ```
-┌ PROPOSED complete labels (NOT SHIPPED UI)                              ┐
-│ description text stays in z-result, unchanged                          │
-│                                                                        │
-│ final_gpu       →  GPU description complete.                           │
+┌ final_gpu       →  GPU description complete.                           ┐
 │ provisional_cpu →  CPU fallback draft (not GPU final).                 │
-│ null            →  Description complete, processing tier unavailable.  │
-│                                                                        │
-│ Live polite + focus stay as today. 120s ceiling stays.                 │
-│ In-memory retry stays. No new paid job / history / resume weakening.   │
+│ null / legacy   →  Description complete, processing tier unavailable.  │
+│ Description text stays in z-result. Never infer from gpu_state.        │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Screen 7 — PROPOSED INT-07 illustrative example (NOT SHIPPED)
+## Screen 7 — OBSERVED-FEATURE INT-07 illustrative example (this branch; not deployed)
 
-Current `submit-describe.preview_required` is **false** and must stay false until this is implemented. Do not mark the observed map complete by flipping that flag.
-
-Test intent when implemented: the example is labeled illustrative; it appears before the visitor explicitly chooses Describe; it is not a live or GPU receipt; the result zone still shows the actual description, never the example.
+`preview_required` is true because this static example exists. It is **not** a preview of the selected image, not a saved result, not Qwen evidence, and not a GPU receipt. Live result stays in `data-acx-demo-result`.
 
 ```
-┌ PROPOSED illustrative example (NOT SHIPPED; INT-07)                    ┐
-│ [Example — not a live description] A path beside a lake at dusk.       │
-│ Shown before the visitor explicitly chooses Describe.                  │
-│ Never a GPU receipt. Never substitutes for the actual result.          │
-│ Thumbnails above remain input choices, not this example.               │
+┌ Illustrative example — not a live result                               ┐
+│ Alex stands beside a bicycle outside a cafe.                           │
+│ This example is not a description of your selected image.              │
+│ Your live result may differ.                                           │
+│ Shown before Describe. Thumbnails remain input choices.                │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -171,9 +167,9 @@ Canon: https://github.com/darce/heuristics-canon (stable IDs; not pinned). Also 
 
 ### High
 
-- **INT-07:** `submit-describe.preview_required` is false. Adjudication 10317: allowlist thumbnails are input, not an outcome sample (canon interaction-ux.md ~164). A costly live Describe still has no implemented preview of the *result*. Proposed fix is a clearly marked illustrative example before explicit Describe — documented above, not shipped. Do not set `preview_required` true on the observed action until that ships.
+- **INT-07:** Adjudication 10317: allowlist thumbnails are input, not an outcome sample. This branch adds a static illustrative example before Describe (`preview_required` true). That example is not a preview of the selected image and must not be read as a GPU receipt. These feature changes have not been deployed.
 
-- **HAI-05 / HAI-08 / PROV-06 / DATA-13:** OBSERVED-UI complete is still the generic label. OBSERVED-FEATURE wire now carries `description_tier` on this branch (PHP 2090, parser 2093) and has not been deployed. A visitor still cannot tell CPU fallback from GPU final in the rendered UI. Production is deployed; prior observation used the old Florence recognition image; Qwen-on-GPU entity-description proof is absent (not a fresh runtime check). Proposed typed labels stay out of the observed inventory.
+- **HAI-05 / HAI-08 / PROV-06 / DATA-13:** OBSERVED-FEATURE completed UI now labels `final_gpu` / `provisional_cpu` / null from parsed `description_tier` (GREEN 2103). Never from `gpu_state`. Production is deployed; these feature changes have not been deployed. Prior observation used the old Florence recognition image; Qwen-on-GPU entity-description proof is absent (not a fresh runtime check).
 
 - **INT-10 vs timeout copy:** OBSERVED 120s stop re-enables the form and keeps the in-memory key, but `POLL_TIMEOUT_MESSAGE` tells the visitor to refresh, which drops that key. Same-page retry is implemented; refresh-safe resume is not.
 
@@ -199,4 +195,4 @@ Canon: https://github.com/darce/heuristics-canon (stable IDs; not pinned). Also 
 
 ## What this lane did not do
 
-No UI, PHP, public JS, lockfile, renderer source, snapshot, or validator edits. No merge, deploy, or reviewer substitute. This is UX documentation of on-feature wire vs still-generic UI vs deployed production that does not yet include these feature changes.
+No test, fixture, snapshot, lockfile, validator, or public JS edits in this slice. No merge, deploy, or reviewer substitute. Production is deployed; these feature changes have not been deployed.

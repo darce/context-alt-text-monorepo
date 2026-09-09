@@ -136,8 +136,7 @@ DASHBOARD.md
 /scripts/workbay_lifecycle
 /.github/hooks
 /skills
-/Makefile.d/*
-!/Makefile.d/lifecycle.mk
+/Makefile.d
 /.github/prompts/
 /.claude-plugin/
 /.agents/

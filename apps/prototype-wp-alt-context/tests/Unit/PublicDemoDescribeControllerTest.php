@@ -30,6 +30,7 @@ final class PublicDemoDescribeControllerTest extends TestCase
             public bool $omitGpuState = false;
             public ?string $itemsRunId = null;
             public int $itemRequests = 0;
+            public int $statusRequests = 0;
             public WP_REST_Response|WP_Error|null $submitResult = null;
             /** @var array<string,mixed> */
             public array $statusData = [];
@@ -67,6 +68,7 @@ final class PublicDemoDescribeControllerTest extends TestCase
 
             public function get_describe_run_status(WP_REST_Request $request): WP_REST_Response|WP_Error
             {
+                ++$this->statusRequests;
                 $data = array_merge([
                     'run_id' => (string) $request->get_param('run_id'),
                     'status' => $this->status,
@@ -98,11 +100,14 @@ final class PublicDemoDescribeControllerTest extends TestCase
             }
         };
         $this->controller = new PublicDemoDescribeController($this->pipeline);
+        unset($GLOBALS['__ac_set_transient_fail']);
+        $GLOBALS['__ac_transient_ttls'] = [];
     }
 
     protected function tearDown(): void
     {
-        unset($_SERVER['REMOTE_ADDR']);
+        unset($_SERVER['REMOTE_ADDR'], $GLOBALS['__ac_set_transient_fail']);
+        $GLOBALS['__ac_transient_ttls'] = [];
         parent::tearDown();
     }
 
@@ -1018,6 +1023,187 @@ PHP];
         self::assertSame([], $this->pipeline->submissions);
     }
 
+    public function testSecureResumeSameClientReplaysSanitizedTerminalEnvelopeWithoutRerun(): void
+    {
+        $this->enable([41]);
+        $key = 'client-resume-key01';
+        $submitted = $this->controller->submit($this->authorizedRequest('POST', ['media_id' => 41], $key));
+        self::assertSame(202, $submitted->get_status());
+        self::assertSame('public-run-1', $submitted->get_data()['run_id']);
+
+        $first = $this->completePublicRun('public-run-1', $key);
+        self::assertInstanceOf(WP_REST_Response::class, $first);
+        self::assertSame(200, $first->get_status());
+        self::assertSame('completed', $first->get_data()['status']);
+        self::assertSame('A person walking beside a lake.', $first->get_data()['description']);
+        self::assertArrayNotHasKey('tenant_id', $first->get_data());
+        self::assertArrayNotHasKey('acx_public_demo_inflight', $GLOBALS['__ac_options']);
+        self::assertCount(1, $this->pipeline->submissions);
+        $statusRequestsAfterComplete = $this->pipeline->statusRequests;
+        $itemRequestsAfterComplete = $this->pipeline->itemRequests;
+        self::assertGreaterThan(0, $statusRequestsAfterComplete);
+        self::assertSame(1, $itemRequestsAfterComplete);
+
+        $mappingKey = $this->idempotencyMappingKey($key);
+        $expiresAt = (int) ($GLOBALS['__ac_transients'][$mappingKey]['expires_at'] ?? 0);
+        self::assertEqualsWithDelta(time() + 900, $expiresAt, 2);
+        $transientsAfterComplete = $GLOBALS['__ac_transients'];
+        $ttlsAfterComplete = $GLOBALS['__ac_transient_ttls'] ?? [];
+
+        $second = $this->controller->status($this->authorizedRequest('GET', ['run_id' => 'public-run-1'], $key));
+        $third = $this->controller->status($this->authorizedRequest('GET', ['run_id' => 'public-run-1'], $key));
+
+        self::assertInstanceOf(WP_REST_Response::class, $second);
+        self::assertInstanceOf(WP_REST_Response::class, $third);
+        self::assertSame(200, $second->get_status());
+        self::assertSame(200, $third->get_status());
+        self::assertSame($first->get_data(), $second->get_data());
+        self::assertSame($first->get_data(), $third->get_data());
+        self::assertCount(1, $this->pipeline->submissions);
+        self::assertSame($statusRequestsAfterComplete, $this->pipeline->statusRequests);
+        self::assertSame($itemRequestsAfterComplete, $this->pipeline->itemRequests);
+        self::assertSame($expiresAt, (int) ($GLOBALS['__ac_transients'][$mappingKey]['expires_at'] ?? 0));
+        self::assertSame($transientsAfterComplete, $GLOBALS['__ac_transients']);
+        self::assertSame($ttlsAfterComplete, $GLOBALS['__ac_transient_ttls'] ?? []);
+        self::assertArrayNotHasKey('acx_public_demo_inflight', $GLOBALS['__ac_options']);
+    }
+
+    public function testSecureResumeTerminalCacheWriteFailureReturns503AndRetainsMatchingLease(): void
+    {
+        $GLOBALS['__ac_set_transient_fail'] = true;
+        self::assertFalse(\set_transient('acx_secure_resume_probe', ['probe' => true], 15));
+        self::assertArrayNotHasKey('acx_secure_resume_probe', $GLOBALS['__ac_transients'] ?? []);
+        self::assertFalse($GLOBALS['__ac_set_transient_fail']);
+        self::assertTrue(\set_transient('acx_secure_resume_later', ['ok' => true], 15));
+        self::assertSame(['ok' => true], $GLOBALS['__ac_transients']['acx_secure_resume_later']);
+        unset($GLOBALS['__ac_transients']['acx_secure_resume_later'], $GLOBALS['__ac_transient_ttls']['acx_secure_resume_later']);
+
+        $this->enable([41]);
+        $key = 'client-resume-key01';
+        $submitted = $this->controller->submit($this->authorizedRequest('POST', ['media_id' => 41], $key));
+        self::assertSame(202, $submitted->get_status());
+        self::assertSame('public-run-1', $GLOBALS['__ac_options']['acx_public_demo_inflight']['run_id']);
+
+        $GLOBALS['__ac_set_transient_fail'] = true;
+        $result = $this->completePublicRun('public-run-1', $key);
+
+        self::assertInstanceOf(WP_REST_Response::class, $result);
+        self::assertSame(503, $result->get_status());
+        self::assertSame(PublicDemoErrorCode::STATE_UNAVAILABLE, $result->get_data()['code']);
+        self::assertSame(503, $result->get_data()['data']['status'] ?? null);
+        self::assertFalse($GLOBALS['__ac_set_transient_fail']);
+        self::assertSame([], $this->terminalCacheKeys());
+        self::assertSame('public-run-1', $GLOBALS['__ac_options']['acx_public_demo_inflight']['run_id'] ?? null);
+        self::assertCount(1, $this->pipeline->submissions);
+    }
+
+    public function testSecureResumeBareHeaderIsForbiddenAfterLeaseRelease(): void
+    {
+        $this->enable([41]);
+        $key = 'client-resume-key01';
+        $this->controller->submit($this->authorizedRequest('POST', ['media_id' => 41], $key));
+        $this->completePublicRun('public-run-1', $key);
+
+        $result = $this->controller->status($this->authorizedRequest('GET', ['run_id' => 'public-run-1']));
+
+        $this->assertForbiddenAfterRelease($result);
+    }
+
+    public function testSecureResumeWrongIdempotencyKeyIsForbiddenAfterLeaseRelease(): void
+    {
+        $this->enable([41]);
+        $key = 'client-resume-key01';
+        $this->controller->submit($this->authorizedRequest('POST', ['media_id' => 41], $key));
+        $this->completePublicRun('public-run-1', $key);
+
+        $result = $this->controller->status($this->authorizedRequest('GET', ['run_id' => 'public-run-1'], 'client-resume-other'));
+
+        $this->assertForbiddenAfterRelease($result);
+    }
+
+    public function testSecureResumeWrongRunIsForbiddenAfterLeaseRelease(): void
+    {
+        $this->enable([41]);
+        $key = 'client-resume-key01';
+        $this->controller->submit($this->authorizedRequest('POST', ['media_id' => 41], $key));
+        $this->completePublicRun('public-run-1', $key);
+
+        $result = $this->controller->status($this->authorizedRequest('GET', ['run_id' => 'public-run-other'], $key));
+
+        $this->assertForbiddenAfterRelease($result);
+    }
+
+    public function testSecureResumeWrongMediaIsForbiddenAfterLeaseRelease(): void
+    {
+        $this->enable([41]);
+        $key = 'client-resume-key01';
+        $this->controller->submit($this->authorizedRequest('POST', ['media_id' => 41], $key));
+        $this->completePublicRun('public-run-1', $key);
+        $mappingKey = $this->idempotencyMappingKey($key);
+        $GLOBALS['__ac_transients'][$mappingKey]['media_id'] = 99;
+        foreach ($this->terminalCacheKeys() as $cacheKey) {
+            if (is_array($GLOBALS['__ac_transients'][$cacheKey] ?? null)) {
+                $GLOBALS['__ac_transients'][$cacheKey]['media_id'] = 41;
+            }
+        }
+
+        $result = $this->controller->status($this->authorizedRequest('GET', ['run_id' => 'public-run-1'], $key));
+
+        $this->assertForbiddenAfterRelease($result);
+    }
+
+    public function testSecureResumeForeignClientIsForbiddenAfterLeaseRelease(): void
+    {
+        $this->enable([41]);
+        $key = 'client-resume-key01';
+        $this->controller->submit($this->authorizedRequest('POST', ['media_id' => 41], $key));
+        $this->completePublicRun('public-run-1', $key);
+
+        $_SERVER['REMOTE_ADDR'] = '198.51.100.9';
+        $result = $this->controller->status($this->authorizedRequest('GET', ['run_id' => 'public-run-1'], $key));
+
+        $this->assertForbiddenAfterRelease($result);
+    }
+
+    public function testSecureResumeExpiredMappingIsForbiddenAfterLeaseRelease(): void
+    {
+        $this->enable([41]);
+        $key = 'client-resume-key01';
+        $this->controller->submit($this->authorizedRequest('POST', ['media_id' => 41], $key));
+        $this->completePublicRun('public-run-1', $key);
+        $expired = time() - 1;
+        $mappingKey = $this->idempotencyMappingKey($key);
+        $GLOBALS['__ac_transients'][$mappingKey]['expires_at'] = $expired;
+        foreach ($this->terminalCacheKeys() as $cacheKey) {
+            if (is_array($GLOBALS['__ac_transients'][$cacheKey] ?? null)) {
+                $GLOBALS['__ac_transients'][$cacheKey]['expires_at'] = $expired;
+            }
+        }
+
+        $result = $this->controller->status($this->authorizedRequest('GET', ['run_id' => 'public-run-1'], $key));
+
+        $this->assertForbiddenAfterRelease($result);
+    }
+
+    public function testSecureResumeLegacyMappingWithoutTrustedExpiryIsForbiddenAfterLeaseRelease(): void
+    {
+        $this->enable([41]);
+        $key = 'client-resume-key01';
+        $this->controller->submit($this->authorizedRequest('POST', ['media_id' => 41], $key));
+        $this->completePublicRun('public-run-1', $key);
+        $mappingKey = $this->idempotencyMappingKey($key);
+        unset($GLOBALS['__ac_transients'][$mappingKey]['expires_at']);
+        foreach ($this->terminalCacheKeys() as $cacheKey) {
+            if (is_array($GLOBALS['__ac_transients'][$cacheKey] ?? null)) {
+                unset($GLOBALS['__ac_transients'][$cacheKey]['expires_at']);
+            }
+        }
+
+        $result = $this->controller->status($this->authorizedRequest('GET', ['run_id' => 'public-run-1'], $key));
+
+        $this->assertForbiddenAfterRelease($result);
+    }
+
     /** @param list<int> $ids */
     private function enable(array $ids): void
     {
@@ -1027,11 +1213,52 @@ PHP];
     }
 
     /** @param array<string,mixed> $params */
-    private function authorizedRequest(string $method, array $params = []): WP_REST_Request
+    private function authorizedRequest(string $method, array $params = [], ?string $idempotencyKey = null): WP_REST_Request
     {
         $request = new WP_REST_Request($method, '', $params);
         $request->set_header('X-WP-Nonce', 'nonce-wp_rest');
+        if (null !== $idempotencyKey) {
+            $request->set_header('Idempotency-Key', $idempotencyKey);
+        }
 
         return $request;
+    }
+
+    private function completePublicRun(string $runId, string $idempotencyKey): WP_REST_Response|WP_Error
+    {
+        $this->pipeline->status = 'completed';
+        $this->pipeline->statusData = ['phase' => 'complete', 'completed' => 1];
+
+        return $this->controller->status($this->authorizedRequest('GET', ['run_id' => $runId], $idempotencyKey));
+    }
+
+    private function idempotencyMappingKey(string $idempotencyKey): string
+    {
+        $rateKey = hash('sha256', (string) $_SERVER['REMOTE_ADDR']);
+        $method = new \ReflectionMethod(PublicDemoDescribeController::class, 'idempotency_transient_key');
+        $method->setAccessible(true);
+
+        return $method->invoke($this->controller, $rateKey, $idempotencyKey);
+    }
+
+    /** @return list<string> */
+    private function terminalCacheKeys(): array
+    {
+        $keys = [];
+        foreach (array_keys($GLOBALS['__ac_transients'] ?? []) as $key) {
+            if (is_string($key) && str_starts_with($key, 'acx_public_demo_terminal_')) {
+                $keys[] = $key;
+            }
+        }
+
+        return $keys;
+    }
+
+    private function assertForbiddenAfterRelease(WP_REST_Response|WP_Error $result): void
+    {
+        self::assertInstanceOf(WP_Error::class, $result);
+        self::assertSame(PublicDemoErrorCode::RUN_NOT_AVAILABLE, $result->get_error_code());
+        self::assertSame(403, $result->get_error_data()['status']);
+        self::assertCount(1, $this->pipeline->submissions);
     }
 }

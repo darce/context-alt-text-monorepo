@@ -2755,8 +2755,34 @@ abort_cutover_candidate() {
        :
      else
        stop_rc=\$?
-       # systemd: 5 = unit not loaded / not-installed (idempotent drain).
-       [ \"\${stop_rc}\" -eq 5 ] || exit \"\${stop_rc}\"
+       # Failed stop is not confirmed absence (MCP10415). Query explicit
+       # unit state; only LoadState=not-found ActiveState=inactive
+       # SubState=dead licenses cleanup. TEST-15 / RLSE-03 / RES-03.
+       show_out=\"\$(sudo systemctl show $(remote_quote "${next_unit}.service") --property=LoadState --property=ActiveState --property=SubState --no-pager)\" || exit \$?
+       load_state=
+       active_state=
+       sub_state=
+       while IFS= read -r line || [ -n \"\${line}\" ]; do
+         [ -z \"\${line}\" ] && continue
+         case \"\${line}\" in
+           LoadState=*)
+             [ -n \"\${load_state}\" ] && exit 2
+             load_state=\${line#LoadState=}
+             ;;
+           ActiveState=*)
+             [ -n \"\${active_state}\" ] && exit 2
+             active_state=\${line#ActiveState=}
+             ;;
+           SubState=*)
+             [ -n \"\${sub_state}\" ] && exit 2
+             sub_state=\${line#SubState=}
+             ;;
+           *)
+             exit 2
+             ;;
+         esac
+       done <<< \"\${show_out}\"
+       [ \"\${load_state}\" = not-found ] && [ \"\${active_state}\" = inactive ] && [ \"\${sub_state}\" = dead ] || exit \"\${stop_rc}\"
      fi
      if sudo systemctl is-enabled $(remote_quote "${next_unit}") >/dev/null 2>&1; then
        sudo systemctl disable $(remote_quote "${next_unit}")

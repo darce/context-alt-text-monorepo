@@ -10,7 +10,11 @@ chain ([API-04] Latency: end-to-end deadlines).
 from __future__ import annotations
 
 import hashlib
+import socket
 import ssl
+import threading
+import time
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -44,6 +48,9 @@ class _FakeSock:
     def settimeout(self, timeout: object) -> None:
         self.timeouts.append(timeout)
 
+    def gettimeout(self) -> object:
+        return self.timeouts[-1] if self.timeouts else None
+
     def close(self) -> None:
         self.closed = True
 
@@ -69,7 +76,10 @@ def _install_https(
     request_error: BaseException | None = None,
     response_error: BaseException | None = None,
     wrap_error: BaseException | None = None,
+    connect_error: BaseException | None = None,
     clock: _Clock | None = None,
+    connect_advance: float = 0.0,
+    wrap_advance: float = 0.0,
 ) -> dict[str, list]:
     probe: dict[str, list] = {
         "conns": [],
@@ -78,6 +88,9 @@ def _install_https(
         "socks": [],
         "sni": [],
         "hosts": [],
+        "requests": [],
+        "request_timeouts": [],
+        "wrap_timeouts": [],
         "reads": [],
         "read1s": [],
     }
@@ -97,6 +110,9 @@ def _install_https(
             probe["hosts"].append((self.host, headers or {}))
             if self.sock is None:
                 self.connect()
+            gettimeout = getattr(self.sock, "gettimeout", None)
+            probe["request_timeouts"].append(gettimeout() if callable(gettimeout) else None)
+            probe["requests"].append(path)
             if request_error is not None:
                 raise request_error
 
@@ -139,12 +155,20 @@ def _install_https(
     def fake_create_connection(address: tuple, timeout: object = None):
         probe["connects"].append(address)
         probe["connect_timeouts"].append(timeout)
+        if clock is not None and connect_advance:
+            clock.t += connect_advance
+        if connect_error is not None:
+            raise connect_error
         sock = _FakeSock()
         probe["socks"].append(sock)
         return sock
 
     def fake_wrap(self, sock, server_hostname=None):
         probe["sni"].append(server_hostname)
+        gettimeout = getattr(sock, "gettimeout", None)
+        probe["wrap_timeouts"].append(gettimeout() if callable(gettimeout) else None)
+        if clock is not None and wrap_advance:
+            clock.t += wrap_advance
         if wrap_error is not None:
             raise wrap_error
         return sock
@@ -392,3 +416,296 @@ def test_redirect_does_not_connect_when_deadline_already_exhausted(
     assert "deadline" in str(exc.value).lower()
     assert probe["connects"] == [("203.0.113.10", 443)]
     assert probe["conns"] and all(conn.closed for conn in probe["conns"])
+
+
+def test_slow_tcp_recomputes_remaining_before_tls(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = _Clock()
+    probe = _install_https(
+        monkeypatch,
+        response_for=lambda _host: (200, [("Content-Length", str(len(_JPEG)))], _JPEG),
+        clock=clock,
+        connect_advance=10.0,
+    )
+    corpus_mod._https_get_pinned("media.example.com", 443, "/x", "203.0.113.10")
+    assert probe["connect_timeouts"] == [pytest.approx(_REMOTE_DEADLINE_S)]
+    assert probe["wrap_timeouts"] == [pytest.approx(20.0)]
+    assert probe["sni"] == ["media.example.com"]
+    assert probe["conns"] and probe["conns"][0].closed is True
+
+
+def test_slow_tls_recomputes_remaining_before_get(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = _Clock()
+    probe = _install_https(
+        monkeypatch,
+        response_for=lambda _host: (200, [("Content-Length", str(len(_JPEG)))], _JPEG),
+        clock=clock,
+        wrap_advance=10.0,
+    )
+    corpus_mod._https_get_pinned("media.example.com", 443, "/x", "203.0.113.10")
+    assert probe["request_timeouts"] == [pytest.approx(20.0)]
+    assert probe["requests"] == ["/x"]
+    assert probe["conns"] and probe["conns"][0].closed is True
+
+
+def test_connect_timeout_error_is_deadline_exceeded(monkeypatch: pytest.MonkeyPatch) -> None:
+    probe = _install_https(
+        monkeypatch,
+        response_for=lambda _host: (200, [], _JPEG),
+        connect_error=TimeoutError("connect timed out"),
+    )
+    with pytest.raises(BenchError) as exc:
+        corpus_mod._https_get_pinned("media.example.com", 443, "/x", "203.0.113.10")
+    assert exc.value.code == "media_resource_failed"
+    assert "deadline" in str(exc.value).lower()
+    assert probe["sni"] == []
+    assert probe["conns"] and probe["conns"][0].closed is True
+
+
+def test_tls_timeout_error_is_deadline_exceeded(monkeypatch: pytest.MonkeyPatch) -> None:
+    probe = _install_https(
+        monkeypatch,
+        response_for=lambda _host: (200, [], _JPEG),
+        wrap_error=TimeoutError("handshake timed out"),
+    )
+    with pytest.raises(BenchError) as exc:
+        corpus_mod._https_get_pinned("media.example.com", 443, "/x", "203.0.113.10")
+    assert exc.value.code == "media_resource_failed"
+    assert "deadline" in str(exc.value).lower()
+    assert probe["socks"] and probe["socks"][0].closed is True
+    assert probe["conns"] and probe["conns"][0].closed is True
+
+
+def test_exhausted_after_tcp_does_not_start_tls(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = _Clock()
+    probe = _install_https(
+        monkeypatch,
+        response_for=lambda _host: (200, [], _JPEG),
+        clock=clock,
+        connect_advance=_REMOTE_DEADLINE_S,
+    )
+    with pytest.raises(BenchError) as exc:
+        corpus_mod._https_get_pinned("media.example.com", 443, "/x", "203.0.113.10")
+    assert exc.value.code == "media_resource_failed"
+    assert "deadline" in str(exc.value).lower()
+    assert probe["sni"] == []
+    assert probe["requests"] == []
+    assert probe["socks"] and probe["socks"][0].closed is True
+    assert probe["conns"] and probe["conns"][0].closed is True
+
+
+def test_exhausted_after_tls_does_not_send_get(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = _Clock()
+    probe = _install_https(
+        monkeypatch,
+        response_for=lambda _host: (200, [], _JPEG),
+        clock=clock,
+        wrap_advance=_REMOTE_DEADLINE_S,
+    )
+    with pytest.raises(BenchError) as exc:
+        corpus_mod._https_get_pinned("media.example.com", 443, "/x", "203.0.113.10")
+    assert exc.value.code == "media_resource_failed"
+    assert "deadline" in str(exc.value).lower()
+    assert probe["sni"] == ["media.example.com"]
+    assert probe["requests"] == []
+    assert probe["socks"] and probe["socks"][0].closed is True
+    assert probe["conns"] and probe["conns"][0].closed is True
+
+
+class _LocalHTTP:
+    """Event-controlled loopback HTTP/1.1 peer. TLS is isolated by the caller."""
+
+    def __init__(self) -> None:
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        listener.settimeout(2.0)
+        self._listener = listener
+        self.port = listener.getsockname()[1]
+        self._thread: threading.Thread | None = None
+        self.accepted = threading.Event()
+        self.done = threading.Event()
+        self.errors: list[BaseException] = []
+
+    def start(self, handler: Callable[[socket.socket], None]) -> None:
+        def run() -> None:
+            conn: socket.socket | None = None
+            try:
+                conn, _addr = self._listener.accept()
+                self.accepted.set()
+                conn.settimeout(2.0)
+                buf = bytearray()
+                while b"\r\n\r\n" not in buf:
+                    chunk = conn.recv(4096)
+                    if not chunk:
+                        break
+                    buf.extend(chunk)
+                handler(conn)
+            except Exception as exc:  # noqa: BLE001 — test peer must not kill pytest
+                self.errors.append(exc)
+            finally:
+                if conn is not None:
+                    try:
+                        conn.shutdown(socket.SHUT_RDWR)
+                    except OSError:
+                        pass
+                    conn.close()
+                self.done.set()
+
+        self._thread = threading.Thread(target=run, name="eval-fallback-http", daemon=True)
+        self._thread.start()
+
+    def close(self) -> None:
+        try:
+            self._listener.close()
+        except OSError:
+            pass
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+
+
+def _isolate_tls(monkeypatch: pytest.MonkeyPatch) -> list[str | None]:
+    sni: list[str | None] = []
+
+    def fake_wrap(self, sock, server_hostname=None):
+        sni.append(server_hostname)
+        return sock
+
+    monkeypatch.setattr(corpus_mod.ssl.SSLContext, "wrap_socket", fake_wrap)
+    return sni
+
+
+def _pinned_get(port: int, *, deadline_s: float, max_bytes: int | None = None):
+    return corpus_mod._https_get_pinned(
+        "media.example.com",
+        port,
+        "/x",
+        "127.0.0.1",
+        deadline_at=time.monotonic() + deadline_s,
+        max_bytes=max_bytes,
+    )
+
+
+def test_real_header_inactivity_timeout_is_deadline_exceeded(monkeypatch: pytest.MonkeyPatch) -> None:
+    sni = _isolate_tls(monkeypatch)
+    server = _LocalHTTP()
+
+    def handler(conn: socket.socket) -> None:
+        conn.sendall(b"HTTP/1.1 200 OK\r\n")
+        time.sleep(1.0)
+
+    server.start(handler)
+    started = time.monotonic()
+    try:
+        with pytest.raises(BenchError) as exc:
+            _pinned_get(server.port, deadline_s=0.25)
+        elapsed = time.monotonic() - started
+        assert exc.value.code == "media_resource_failed"
+        assert "deadline" in str(exc.value).lower()
+        assert elapsed < 1.5
+        assert sni == ["media.example.com"]
+    finally:
+        server.close()
+
+
+def test_real_trickle_headers_hit_absolute_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    sni = _isolate_tls(monkeypatch)
+    server = _LocalHTTP()
+
+    def handler(conn: socket.socket) -> None:
+        conn.sendall(b"HTTP/1.1 200 OK\r\n")
+        for idx in range(20):
+            time.sleep(0.12)
+            conn.sendall(f"X-Pad-{idx}: {idx}\r\n".encode())
+        conn.sendall(b"Connection: close\r\nContent-Length: 4\r\n\r\njpeg")
+
+    server.start(handler)
+    started = time.monotonic()
+    try:
+        with pytest.raises(BenchError) as exc:
+            _pinned_get(server.port, deadline_s=0.4)
+        elapsed = time.monotonic() - started
+        assert exc.value.code == "media_resource_failed"
+        assert "deadline" in str(exc.value).lower()
+        assert elapsed < 1.0
+        assert sni == ["media.example.com"]
+    finally:
+        server.close()
+
+
+def test_real_trickle_body_after_connection_close_hits_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    sni = _isolate_tls(monkeypatch)
+    server = _LocalHTTP()
+
+    def handler(conn: socket.socket) -> None:
+        conn.sendall(
+            b"HTTP/1.1 200 OK\r\n"
+            b"Connection: close\r\n"
+            b"Content-Length: 8\r\n"
+            b"\r\n"
+        )
+        for _ in range(8):
+            time.sleep(0.12)
+            conn.sendall(b"x")
+
+    server.start(handler)
+    started = time.monotonic()
+    try:
+        with pytest.raises(BenchError) as exc:
+            _pinned_get(server.port, deadline_s=0.4)
+        elapsed = time.monotonic() - started
+        assert exc.value.code == "media_resource_failed"
+        assert "deadline" in str(exc.value).lower()
+        assert elapsed < 1.5
+        assert sni == ["media.example.com"]
+    finally:
+        server.close()
+
+
+def test_real_oversize_content_length_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    sni = _isolate_tls(monkeypatch)
+    server = _LocalHTTP()
+
+    def handler(conn: socket.socket) -> None:
+        conn.sendall(
+            b"HTTP/1.1 200 OK\r\n"
+            b"Connection: close\r\n"
+            b"Content-Length: 17\r\n"
+            b"\r\n"
+            + (b"x" * 17)
+        )
+
+    server.start(handler)
+    try:
+        with pytest.raises(BenchError) as exc:
+            _pinned_get(server.port, deadline_s=2.0, max_bytes=16)
+        assert exc.value.code == "media_resource_failed"
+        assert "content-length" in str(exc.value).lower() or "exceeds" in str(exc.value).lower()
+        assert sni == ["media.example.com"]
+    finally:
+        server.close()
+
+
+def test_real_under_limit_body_closes_and_preserves_sni(monkeypatch: pytest.MonkeyPatch) -> None:
+    sni = _isolate_tls(monkeypatch)
+    server = _LocalHTTP()
+
+    def handler(conn: socket.socket) -> None:
+        conn.sendall(
+            b"HTTP/1.1 200 OK\r\n"
+            b"Connection: close\r\n"
+            b"Content-Length: 4\r\n"
+            b"\r\n"
+            b"jpeg"
+        )
+
+    server.start(handler)
+    try:
+        status, headers, body = _pinned_get(server.port, deadline_s=2.0)
+        assert status == 200
+        assert body == b"jpeg"
+        assert headers.get("content-length") == "4"
+        assert sni == ["media.example.com"]
+    finally:
+        server.close()
+

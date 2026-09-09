@@ -708,7 +708,7 @@ def test_automatic_rollbacks_capture_failure_evidence_first() -> None:
     assert helper_evidence in helper
     assert helper_restore in helper
     assert helper.index(helper_evidence) < helper.index(helper_restore)
-    for function_name, env_expression in (("do_deploy", '"$env"'), ("do_promote", '"$to_env"')):
+    for function_name, env_expression in (("_ship_selected_env", '"$env"'), ("do_promote", '"$to_env"')):
         body = _function_body(function_name)
         evidence_marker = f"capture_failure_evidence {env_expression}"
         restore_marker = f"restore_env_tag_to_rollback {env_expression}"
@@ -1092,7 +1092,7 @@ def test_push_and_restart_failures_use_pre_candidate_evidence_phase() -> None:
     """VLMHEAL-1-REV-B-06 / D-02: push is pre_candidate; restart uses post_restart phase."""
     helper = _function_body("handle_failed_verification")
     assert 'capture_failure_evidence "$env" candidate' in helper
-    for function_name, env_expression in (("do_deploy", '"$env"'), ("do_promote", '"$to_env"')):
+    for function_name, env_expression in (("_ship_selected_env", '"$env"'), ("do_promote", '"$to_env"')):
         body = _function_body(function_name)
         assert f"capture_failure_evidence {env_expression} pre_candidate" in body
         assert f'capture_failure_evidence {env_expression} "${{ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}}"' in body
@@ -3488,7 +3488,8 @@ def test_restore_edge_backups_uses_immutable_pre_cutover_snapshot() -> None:
 
 def test_cutover_failure_restart_runtime_ignores_evidence_phase() -> None:
     helper = _function_body("cutover_failure_restart_runtime")
-    deploy = _function_body("do_deploy")
+    deploy = _function_body("_ship_selected_env")
+    assert '_ship_selected_env "$env" aggregate' in _function_body("do_deploy")
     promote = _function_body("do_promote")
     assert "ACX_LIVE_DISRUPTED" in helper
     assert "ACX_TRAFFIC_FLIPPED" in helper

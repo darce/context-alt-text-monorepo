@@ -106,6 +106,13 @@ from .synthetic_occlusion import (
 FACE_BAKEOFF_CANON_VERSION = "0.11.0"
 FACE_BAKEOFF_PROTOCOL_ID = "fir-5-face-bakeoff-v0.11.0"
 
+# Offline scoring is a diagnostic proxy until a blinded product-outcome study
+# links these metrics to user acceptance/edit/error outcomes (VLM-6-CAN-07 /
+# EVAL-22). Keep this as a machine-readable status on every score envelope so
+# downstream adoption tooling cannot mistake a clean offline score for product
+# validation.
+OFFLINE_EVALUATION_STATUS = "unvalidated_proxy"
+
 # Release-surface label (RLSE-11): gate_proposal is never a release artifact.
 GATE_PROPOSAL_RELEASE_SURFACE = "proposal_only_not_release"
 
@@ -368,6 +375,8 @@ _PUBLIC_PROVENANCE_ALLOW_FIELDS: frozenset[str] = frozenset(
         "two_pass",
         "dual_length",
         "face_gate",
+        # EVAL-22: the offline-vs-product validation boundary is safe to expose.
+        "evaluation_status",
         # Face-bakeoff protocol aggregates (no operator paths / free-text).
         "zero_box_corpus",
         "total_gt_boxes",
@@ -1942,6 +1951,9 @@ def build_score_verdict(
         all_reasons = []
     return {
         "verdict": verdict_value,
+        # EVAL-22: a score verdict is an offline proxy until product-outcome
+        # validation exists; this status is deliberately independent of pass/fail.
+        "evaluation_status": OFFLINE_EVALUATION_STATUS,
         "reasons": all_reasons,
         # Display-only rounding — comparisons above use count / unrounded rate.
         # Rate is unique wrong-name images / scored (VLM6-S2A-B-09), not assertions.
@@ -2497,6 +2509,9 @@ def score_run_record(
         # may describe a different revision; live reports must expose the
         # observed metric backing for this score (AUDIT-07 / EVAL-23).
         "coverage_gaps": compute_corpus_coverage_gaps(manifest_entries),
+        # EVAL-22: expose the evidence boundary in the provenance envelope too
+        # so PUBLIC and LOCAL consumers receive the same machine-readable label.
+        "evaluation_status": OFFLINE_EVALUATION_STATUS,
         # RF-15: surface sample-size / chance-floor caveats in operator-facing
         # provenance (constants unchanged — disclosure only, not an sr-001 loosen).
         "quality_floor_caveat": (
@@ -2601,6 +2616,7 @@ def score_run_record(
         "schema": SCHEMA,
         "kind": DocKind.REPORT.value,
         "eval_mode": eval_mode,
+        "evaluation_status": OFFLINE_EVALUATION_STATUS,
         "provenance": provenance,
         # counts is a pinned contract shape {total, scored, failed} (additive-schema
         # proof in test_eval_harness_pipeline). Corpus-integrity multiset fields
@@ -3010,6 +3026,8 @@ def _markdown(scored: dict[str, Any]) -> str:
             )
     verdict = scored.get("verdict") or {}
     if verdict:
+        if scored.get("evaluation_status") is not None:
+            lines.append(f"- evaluation_status: `{_fmt_prov(scored.get('evaluation_status'))}`")
         rate = verdict.get("wrong_name_rate")
         floor = verdict.get("wrong_name_rate_floor")
         lines.append(

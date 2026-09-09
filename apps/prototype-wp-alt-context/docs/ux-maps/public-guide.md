@@ -24,6 +24,14 @@
 | `fallback` | screen | `/guide/` | The walkthrough could not load |
 | `escape` | exit | `/` | Leave the walkthrough |
 
+## Code references
+- `screen:entry` — `apps/prototype-wp-alt-context/js/admin/pages/GuidedPrototypeEntrance.tsx`
+- `screen:walkthrough` — `apps/prototype-wp-alt-context/js/admin/guidedPrototype/RecordedWalkthrough.tsx`
+- `screen:apply` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedDescriptionReview.tsx`
+- `screen:outcome` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedOutcome.tsx`
+- `screen:fallback` — `apps/prototype-wp-alt-context/js/guide/main.tsx`
+- `screen:escape` — `apps/prototype-wp-alt-context/js/admin/guidedPrototype/publicGuideCopy.ts`
+
 ### Review an AI-assisted alt text draft (`entry`)
 
 Purpose: Signed-out public entrance. Scope copy, key scope.public: Try the review workflow using a recorded example. Your changes affect only the demo copy in this tab. Three entry actions (NAV-08): Start the walkthrough, Watch the recording, Read the case study. Escape hatch (NAV-07): Home and Case study. first_time is the first visit with no in-tab state. error is domain disabled_404: AltContext\PublicSite\PublicGuideRoute returns the theme 404 when acx_public_guide_enabled is off — never this guide.
@@ -37,17 +45,17 @@ Purpose: Signed-out public entrance. Scope copy, key scope.public: Try the revie
 ```
 +------------------------------------------------------------+
 | Review an AI-assisted alt text draft  [screen]  /guide/    |
-| Signed-out public entrance.                                |
+| Signed-out public entrance. Scope copy, key scope.public:… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Leave the walkthrough. Home. Case study. (nav) states=…|
-|   - Try the review workflow using a recorded example. Your…|
-|   - Start the walkthrough (primary). Watch the recording. …|
+|   - Leave the walkthrough. Home. Case study. (nav) states… |
+|   - Try the review workflow using a recorded example. You… |
+|   - Start the walkthrough (primary). Watch the recording.… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Start the walkthrough -> walkthrough           |
-|   [secondary] Watch the recording -> escape                |
 |   [secondary] Read the case study -> escape                |
+|   [secondary] Watch the recording -> escape                |
 +------------------------------------------------------------+
 | states: default | first_time | error                       |
 +------------------------------------------------------------+
@@ -61,21 +69,21 @@ Purpose: RecordedWalkthrough scope=public: understand the page, choose names, ed
 | --- | --- | --- | --- |
 | `guided-demo-root` | Public mount. data-scope=public. Recorded example only; changes stay in this tab. | content | default, edge_input, error |
 | `guided-section-understand` | Understand the page. Festival photo, page context, current demo alt text. Review name suggestions. | content | default |
-| `name-choice-left` | Left face native fieldset. Use Justin Trudeau. Leave this person unnamed. No preselection. edge_input: Choose an option for this face. | form | default, edge_input |
-| `name-choice-right` | Right face native fieldset. Use Katy Perry. Leave this person unnamed. No preselection. edge_input: Choose an option for this face. | form | default, edge_input |
+| `name-choice-left` | Left face native fieldset. Use Justin Trudeau. Leave this person unnamed. No preselection. edge_input: Choose an option for this face. Both bundled roster reference photos are visible before a choice. | form | default, edge_input |
+| `name-choice-right` | Right face native fieldset. Use Katy Perry. Leave this person unnamed. No preselection. edge_input: Choose an option for this face. All three bundled roster reference photos are visible before a choice. | form | default, edge_input |
 | `guided-candidate` | Edit the alt text. Sample draft from the recorded example. Preview the change. error: The sample draft for these choices is unavailable. | form | default, error |
 
 ```
 +------------------------------------------------------------+
 | Recorded walkthrough  [screen]  /guide/                    |
-| RecordedWalkthrough scope=public: understand the page, cho…|
+| RecordedWalkthrough scope=public: understand the page, ch… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Public mount. data-scope=public. Recorded example only…|
-|   - Understand the page. Festival photo, page context, cur…|
-|   - Left face native fieldset. Use Justin Trudeau. Leave t…|
-|   - Right face native fieldset. Use Katy Perry. Leave this…|
-|   - Edit the alt text. Sample draft from the recorded exam…|
+|   - Public mount. data-scope=public. Recorded example onl… |
+|   - Understand the page. Festival photo, page context, cu… |
+|   - Left face native fieldset. Use Justin Trudeau. Leave … |
+|   - Right face native fieldset. Use Katy Perry. Leave thi… |
+|   - Edit the alt text. Sample draft from the recorded exa… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Review name suggestions -> apply               |
@@ -97,11 +105,11 @@ Purpose: Compare current alt text with the draft. Apply to demo copy changes onl
 ```
 +------------------------------------------------------------+
 | Apply and undo  [screen]  /guide/                          |
-| Compare current alt text with the draft.                   |
+| Compare current alt text with the draft. Apply to demo co… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Apply and undo. Current alt text beside Will be applie…|
-|   - Demo image preview. Distinct demo image whose alternat…|
+|   - Apply and undo. Current alt text beside Will be appli… |
+|   - Demo image preview. Distinct demo image whose alterna… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Apply to demo copy -> outcome (preview)        |
@@ -122,10 +130,10 @@ Purpose: Completion summary after Apply to demo copy. Applied to the demo copy i
 ```
 +------------------------------------------------------------+
 | Your demo copy is updated  [screen]  /guide/               |
-| Completion summary after Apply to demo copy.               |
+| Completion summary after Apply to demo copy. Applied to t… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Your demo copy is updated. Applied to the demo copy in…|
+|   - Your demo copy is updated. Applied to the demo copy i… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Return to the draft -> walkthrough             |
@@ -145,14 +153,14 @@ Purpose: Domain bundle_failed mapped to error. js/guide/main.tsx hides .acx-publ
 ```
 +------------------------------------------------------------+
 | The walkthrough could not load  [screen]  /guide/          |
-| Domain bundle_failed mapped to error.                      |
+| Domain bundle_failed mapped to error. js/guide/main.tsx h… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - The walkthrough could not load. Reload the page, or wa…|
+|   - The walkthrough could not load. Reload the page, or w… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Reload the page -> entry                       |
-|   [secondary] Watch the recorded video on the case study p…|
+|   [secondary] Watch the recorded video on the case study … |
 +------------------------------------------------------------+
 | states: error                                              |
 +------------------------------------------------------------+
@@ -170,7 +178,7 @@ Purpose: NAV-07 escape hatch from public scope: Home uses escapeHref (site home)
 ```
 +------------------------------------------------------------+
 | Leave the walkthrough  [exit]  /                           |
-| NAV-07 escape hatch from public scope: Home uses escapeHre…|
+| NAV-07 escape hatch from public scope: Home uses escapeHr… |
 +------------------------------------------------------------+
 | ZONES                                                      |
 |   - Home (nav) states=[default]                            |
@@ -202,20 +210,19 @@ Purpose: NAV-07 escape hatch from public scope: Home uses escapeHref (site home)
 | `go-case-study` | Case study | `escape` | secondary | no | no | no | `escape` |
 
 ## Flows
-
 ### Signed-out choose → edit → preview → apply → undo (`signed-out-core`)
 
 ```mermaid
 flowchart TD
   %% flow: Signed-out choose → edit → preview → apply → undo job=try-recorded
   %% steps: [{"screen_id":"entry","branch_label":"start"},{"screen_id":"walkthrough","branch_label":"choose and edit"},{"screen_id":"apply","branch_label":"preview and apply"},{"screen_id":"outcome","branch_label":"undo still in tab"}]
-  n_entry_0["Review an AI-assisted alt text draft (screen)"]
-  n_walkthrough_1["Recorded walkthrough (screen)"]
-  n_apply_2["Apply and undo (screen)"]
-  n_outcome_3["Your demo copy is updated (screen)"]
-  n_entry_0 -->|start| n_walkthrough_1
-  n_walkthrough_1 -->|choose and edit| n_apply_2
-  n_apply_2 -->|preview and apply| n_outcome_3
+  n_entry["Review an AI-assisted alt text draft (screen)"]
+  n_walkthrough["Recorded walkthrough (screen)"]
+  n_entry -->|start| n_walkthrough
+  n_apply["Apply and undo (screen)"]
+  n_walkthrough -->|choose and edit| n_apply
+  n_outcome["Your demo copy is updated (screen)"]
+  n_apply -->|preview and apply| n_outcome
 ```
 
 ### Direct reload of /guide/ keeps the page working (`direct-refresh`)
@@ -224,9 +231,9 @@ flowchart TD
 flowchart TD
   %% flow: Direct reload of /guide/ keeps the page working job=try-recorded
   %% steps: [{"screen_id":"walkthrough","branch_label":"reload"},{"screen_id":"entry","branch_label":"first_time restored"}]
-  n_walkthrough_0["Recorded walkthrough (screen)"]
-  n_entry_1["Review an AI-assisted alt text draft (screen)"]
-  n_walkthrough_0 -->|reload| n_entry_1
+  n_walkthrough["Recorded walkthrough (screen)"]
+  n_entry["Review an AI-assisted alt text draft (screen)"]
+  n_walkthrough -->|reload| n_entry
 ```
 
 ### Pixel 7 keyboard-only completion (`mobile-keyboard`)
@@ -235,13 +242,13 @@ flowchart TD
 flowchart TD
   %% flow: Pixel 7 keyboard-only completion job=try-recorded
   %% steps: [{"screen_id":"entry","branch_label":"keyboard"},{"screen_id":"walkthrough","branch_label":"keyboard"},{"screen_id":"apply","branch_label":"keyboard"},{"screen_id":"outcome","branch_label":null}]
-  n_entry_0["Review an AI-assisted alt text draft (screen)"]
-  n_walkthrough_1["Recorded walkthrough (screen)"]
-  n_apply_2["Apply and undo (screen)"]
-  n_outcome_3["Your demo copy is updated (screen)"]
-  n_entry_0 -->|keyboard| n_walkthrough_1
-  n_walkthrough_1 -->|keyboard| n_apply_2
-  n_apply_2 -->|keyboard| n_outcome_3
+  n_entry["Review an AI-assisted alt text draft (screen)"]
+  n_walkthrough["Recorded walkthrough (screen)"]
+  n_entry -->|keyboard| n_walkthrough
+  n_apply["Apply and undo (screen)"]
+  n_walkthrough -->|keyboard| n_apply
+  n_outcome["Your demo copy is updated (screen)"]
+  n_apply -->|keyboard| n_outcome
 ```
 
 ### Guide bundle aborted; fallback paragraph stays visible (`bundle-failure`)
@@ -250,9 +257,9 @@ flowchart TD
 flowchart TD
   %% flow: Guide bundle aborted; fallback paragraph stays visible job=leave-safely
   %% steps: [{"screen_id":"fallback","branch_label":"bundle_failed"},{"screen_id":"escape","branch_label":"case study"}]
-  n_fallback_0["The walkthrough could not load (screen)"]
-  n_escape_1["Leave the walkthrough (exit)"]
-  n_fallback_0 -->|bundle_failed| n_escape_1
+  n_fallback["The walkthrough could not load (screen)"]
+  n_escape["Leave the walkthrough (exit)"]
+  n_fallback -->|bundle_failed| n_escape
 ```
 
 ### acx_public_guide_enabled off: theme 404, never the guide (`disabled-route-404`)
@@ -261,7 +268,7 @@ flowchart TD
 flowchart TD
   %% flow: acx_public_guide_enabled off: theme 404, never the guide job=leave-safely
   %% steps: [{"screen_id":"entry","branch_label":"disabled_404"}]
-  n_entry_0["Review an AI-assisted alt text draft (screen)"]
+  n_entry["Review an AI-assisted alt text draft (screen)"]
 ```
 
 ## Open questions
@@ -284,7 +291,8 @@ flowchart TD
 
 ## Parity index
 
-Machine-checked by `js/admin/__tests__/uxmap-render-parity.test.ts`: every id, state, and verbatim label
+Machine-checked by `js/admin/__tests__/uxmap-parity.test.ts` and
+`js/admin/__tests__/uxmap-render-parity.test.ts`: every id, state, and verbatim label
 below must exist in the sibling `.uxmap.json`, and no `z-*`/`act-*` id may appear here
 that the JSON does not define. Regenerate with `docs/ux-maps/render_ux_maps.py` — never
 hand-edit one side.
@@ -300,8 +308,8 @@ Zone labels (verbatim; the tables above escape `|` for markdown, this list does 
 - Start the walkthrough (primary). Watch the recording. Read the case study.
 - Public mount. data-scope=public. Recorded example only; changes stay in this tab.
 - Understand the page. Festival photo, page context, current demo alt text. Review name suggestions.
-- Left face native fieldset. Use Justin Trudeau. Leave this person unnamed. No preselection. edge_input: Choose an option for this face.
-- Right face native fieldset. Use Katy Perry. Leave this person unnamed. No preselection. edge_input: Choose an option for this face.
+- Left face native fieldset. Use Justin Trudeau. Leave this person unnamed. No preselection. edge_input: Choose an option for this face. Both bundled roster reference photos are visible before a choice.
+- Right face native fieldset. Use Katy Perry. Leave this person unnamed. No preselection. edge_input: Choose an option for this face. All three bundled roster reference photos are visible before a choice.
 - Edit the alt text. Sample draft from the recorded example. Preview the change. error: The sample draft for these choices is unavailable.
 - Apply and undo. Current alt text beside Will be applied. Apply to demo copy. Undo last application.
 - Demo image preview. Distinct demo image whose alternative is the current demo copy.
@@ -317,3 +325,5 @@ States (all zones and screens): default first_time error edge_input empty
 - REST calls from js/guide/** to acx/v1, including /public/demo/describe.
 - Implicit enable of acx_public_guide_enabled from deploy-demo.
 - Creating AltContext\PublicSite\PublicGuideRoute in this lane (sibling owns src/public/class-public-guide-route.php).
+- Public WordPress toolbar, implementation design notes, or action-history panel.
+- A second required full-photo exercise; independent roster reference captures support the existing name decision.

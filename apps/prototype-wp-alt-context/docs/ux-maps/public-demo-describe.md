@@ -3,8 +3,6 @@
 **Product:** `alt-context WP plugin public demo — [acx_demo_describe] anonymous describe widget`
 **Source fixture:** `apps/prototype-wp-alt-context/src/public/class-public-demo-shortcode.php`
 
-Render status: hand-rendered from the sibling `.uxmap.json` using this repo's `render_ux_maps.py` ASCII/table helpers. Critique 10316 ran the unchanged 8-rule pack via Pydantic `model_validate(extra=allow)` and retained local extensions; official strict `extra=forbid` still fails 4 extras. Do not treat that as an official schema/critique/gate pass. See `public-demo-describe.notes.md`.
-
 ## Goals
 - Inventory OBSERVED-UI public-demo states from the shortcode and client: idle selection, static illustrative example, queued, warming, describing, typed complete labels, 429 limited, error/failed, and the 120-second poll ceiling (INT-10, RES-02, RES-03).
 - Record OBSERVED-FEATURE on this branch (these feature changes have not been deployed): completed nonempty envelopes emit description_tier; parser and pollRun preserve provisional_cpu | final_gpu | null; missing legacy is explicit null; completed UI labels are final_gpu = GPU description complete., provisional_cpu = CPU fallback draft (not GPU final)., null/legacy = Description complete, processing tier unavailable. Do not infer from gpu_state (HAI-05, HAI-08, PROV-06, DATA-13, rg-015).
@@ -20,6 +18,11 @@ Render status: hand-rendered from the sibling `.uxmap.json` using this repo's `r
 | `public-demo-describe` | screen | `[acx_demo_describe]` | Public demo › Describe an image |
 | `public-demo-unavailable` | screen | `[acx_demo_describe]` | Public demo › Unavailable |
 | `refresh-page-drops-retry-key` | exit | `[acx_demo_describe] (browser refresh)` | Refresh page (drops in-memory retry key) |
+
+## Code references
+- `screen:public-demo-describe` — `apps/prototype-wp-alt-context/js/public/demo-describe.js`
+- `screen:public-demo-unavailable` — `apps/prototype-wp-alt-context/src/public/class-public-demo-shortcode.php`
+- `screen:refresh-page-drops-retry-key` — `apps/prototype-wp-alt-context/js/public/demo-describe.js`
 
 ### Public demo › Describe an image (`public-demo-describe`)
 
@@ -37,15 +40,15 @@ Action states: idle, in_flight, completed, failed, limited, timeout
 
 ```
 +------------------------------------------------------------+
-| Public demo › Describe an image  [screen]  [acx_demo_descr…|
-| OBSERVED visitor widget. Domain vocabulary behind canonica…|
+| Public demo › Describe an image  [screen]  [acx_demo_desc… |
+| OBSERVED visitor widget. Domain vocabulary behind canonic… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - OBSERVED image picker — idle radios are instance-scope…|
-|   - OBSERVED primary Describe selected image — enabled in …|
-|   - OBSERVED-FEATURE static illustrative example before De…|
-|   - OBSERVED polite status — idle, queued, warming, descri…|
-|   - OBSERVED-FEATURE completed result is alt_text_draft wi…|
+|   - OBSERVED image picker — idle radios are instance-scop… |
+|   - OBSERVED primary Describe selected image — enabled in… |
+|   - OBSERVED-FEATURE static illustrative example before D… |
+|   - OBSERVED polite status — idle, queued, warming, descr… |
+|   - OBSERVED-FEATURE completed result is alt_text_draft w… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 | when idle                                                  |
@@ -76,13 +79,10 @@ Purpose: OBSERVED PHP shortcode substitutes when the widget cannot run. Demo fla
 ```
 +------------------------------------------------------------+
 | Public demo › Unavailable  [screen]  [acx_demo_describe]   |
-| OBSERVED PHP shortcode substitutes when the widget cannot …|
+| OBSERVED PHP shortcode substitutes when the widget cannot… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - OBSERVED substitute status — limited when the demo is …|
-+------------------------------------------------------------+
-| ACTIONS                                                    |
-|   No action (silent)                                       |
+|   - OBSERVED substitute status — limited when the demo is… |
 +------------------------------------------------------------+
 | states: error | degraded                                   |
 +------------------------------------------------------------+
@@ -98,14 +98,11 @@ Purpose: OBSERVED: a full page load drops the in-memory idempotency key and the 
 
 ```
 +------------------------------------------------------------+
-| Refresh page (drops in-memory retry key)  [exit]  [acx_dem…|
-| OBSERVED: a full page load drops the in-memory idempotency…|
+| Refresh page (drops in-memory retry key)  [exit]  [acx_de… |
+| OBSERVED: a full page load drops the in-memory idempotenc… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - OBSERVED refresh consequence — in-memory retry key is …|
-+------------------------------------------------------------+
-| ACTIONS                                                    |
-|   No action (silent)                                       |
+|   - OBSERVED refresh consequence — in-memory retry key is… |
 +------------------------------------------------------------+
 | states: default                                            |
 +------------------------------------------------------------+
@@ -127,7 +124,6 @@ flowchart TD
   n_public_demo_describe["Public demo › Describe an image (screen)"]
   n_public_demo_describe -->|illustrative example visible; idle selection (instance-scoped radio in this form) → POST describe| n_public_demo_describe
   n_public_demo_describe -->|queued → warming → describing (client poll, 120s ceiling)| n_public_demo_describe
-  n_public_demo_describe -->|completed typed label from description_tier plus live alt text; illustrative example stays| n_public_demo_describe
 ```
 
 ### OBSERVED: HTTP 429 bulkhead or rate limit (`observed-429-limited`)
@@ -137,7 +133,6 @@ flowchart TD
   %% flow: OBSERVED: HTTP 429 bulkhead or rate limit job=describe-allowlisted-image
   %% steps: [{"screen_id":"public-demo-describe","branch_label":"POST or poll returns 429 → data-state=limited; form re-enabled; in-memory key kept"}]
   n_public_demo_describe["Public demo › Describe an image (screen)"]
-  n_public_demo_describe -->|POST or poll returns 429 → data-state=limited; form re-enabled; in-memory key kept| n_public_demo_describe
 ```
 
 ### OBSERVED: failed pipeline, invalid envelope, or 120s poll timeout (`observed-error-or-timeout`)
@@ -147,8 +142,8 @@ flowchart TD
   %% flow: OBSERVED: failed pipeline, invalid envelope, or 120s poll timeout job=describe-allowlisted-image
   %% steps: [{"screen_id":"public-demo-describe","branch_label":"failed / invalid / incomplete → data-state=failed; form re-enabled; in-memory key kept"},{"screen_id":"public-demo-describe","branch_label":"120s client ceiling → poll timeout copy; form re-enabled; in-memory key kept"},{"screen_id":"refresh-page-drops-retry-key","branch_label":"timeout copy currently tells the visitor to refresh, which drops the key"}]
   n_public_demo_describe["Public demo › Describe an image (screen)"]
-  n_refresh_page_drops_retry_key["Refresh page (drops in-memory retry key) (exit)"]
   n_public_demo_describe -->|failed / invalid / incomplete → data-state=failed; form re-enabled; in-memory key kept| n_public_demo_describe
+  n_refresh_page_drops_retry_key["Refresh page (drops in-memory retry key) (exit)"]
   n_public_demo_describe -->|120s client ceiling → poll timeout copy; form re-enabled; in-memory key kept| n_refresh_page_drops_retry_key
 ```
 
@@ -160,7 +155,6 @@ flowchart TD
   %% steps: [{"screen_id":"public-demo-describe","branch_label":"failed, limited, or timeout on the same page with the same media → same idempotency_key"},{"screen_id":"public-demo-describe","branch_label":"completed run clears the key; the next submit mints a new one"}]
   n_public_demo_describe["Public demo › Describe an image (screen)"]
   n_public_demo_describe -->|failed, limited, or timeout on the same page with the same media → same idempotency_key| n_public_demo_describe
-  n_public_demo_describe -->|completed run clears the key; the next submit mints a new one| n_public_demo_describe
 ```
 
 ## Open questions
@@ -183,14 +177,11 @@ flowchart TD
 
 ## Parity index
 
-Consumer-checked (not official `ux-map` / Pydantic schema) by
-`js/admin/__tests__/uxmap-parity.test.ts` and
-`js/admin/__tests__/uxmap-render-parity.test.ts` after this slice's enrollment: every id,
-state, and verbatim label below must exist in the sibling `.uxmap.json`, and no `z-*`/`act-*`
-id may appear here that the JSON does not define. Critique 10316 used extra=allow; official
-strict extra=forbid still fails 4 extras. Do not treat this index as a RULE_PACK or schema
-pass. Hand-rendered; regenerate with `docs/ux-maps/render_ux_maps.py` once the canvas package
-is available — never hand-edit one side.
+Machine-checked by `js/admin/__tests__/uxmap-parity.test.ts` and
+`js/admin/__tests__/uxmap-render-parity.test.ts`: every id, state, and verbatim label
+below must exist in the sibling `.uxmap.json`, and no `z-*`/`act-*` id may appear here
+that the JSON does not define. Regenerate with `docs/ux-maps/render_ux_maps.py` — never
+hand-edit one side.
 
 Zone ids: z-media-choice z-submit z-preview z-status z-result z-unavailable-status z-refresh-consequence
 

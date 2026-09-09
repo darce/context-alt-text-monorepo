@@ -69,8 +69,13 @@ final class PublicGuideRoute {
 
 		add_filter( 'query_vars', array( $this, 'add_query_var' ) );
 		add_filter( 'template_include', array( $this, 'template_include' ) );
+		add_filter( 'show_admin_bar', array( $this, 'filter_admin_bar' ), PHP_INT_MAX );
 		add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_assets' ) );
 		add_action( 'wp_enqueue_scripts', array( $this, 'dequeue_theme_assets' ), 100 );
+	}
+
+	public function filter_admin_bar( bool $show ): bool {
+		return self::is_enabled() && $this->is_public_guide_request() ? false : $show;
 	}
 
 	public function register_rewrite(): void {

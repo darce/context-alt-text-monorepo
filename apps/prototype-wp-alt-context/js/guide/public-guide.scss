@@ -4,11 +4,77 @@
 @use '../admin/styles/tokens/spacing';
 @use '../admin/styles/tokens/typography';
 
+@font-face {
+  font-family: 'Roboto Flex';
+  src: url('./fonts/RobotoFlex.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 100 1000;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('./fonts/GeistMonoVariableVF.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
 .acx-public-guide {
   @include meta.load-css('../admin/styles/components/button');
   @include meta.load-css('../admin/styles/components/guided-prototype');
   @include meta.load-css('../admin/styles/components/dialog');
   @include meta.load-css('../admin/styles/components/radio-group');
+
+  --acx-font-sans: 'Roboto Flex', Roboto, sans-serif;
+  --acx-font-mono: 'Geist Mono', monospace;
+  font-family: var(--acx-font-sans);
+  font-optical-sizing: auto;
+  line-height: 1.5;
+
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+  }
+
+  .acx-guided-guide__eyebrow,
+  .acx-guided-face__gallery-caption {
+    font-family: var(--acx-font-mono);
+    font-size: var(--acx-text-xs);
+  }
+
+  .acx-guided-review__apply {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(12rem, 0.5fr);
+
+    > h2,
+    > p,
+    > .acx-guided-review__actions {
+      grid-column: 1 / -1;
+    }
+  }
+
+  .acx-guided-face__card {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .acx-guided-face__crop {
+    align-items: flex-start;
+  }
+
+  .acx-guided-face__gallery {
+    margin-top: var(--acx-space-12);
+  }
+
+  @media (max-width: 640px) {
+    .acx-guided-review__apply,
+    .acx-guided-review__preview-grid,
+    .acx-guided-face__cards {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
 
   margin: 0;
   background: var(--acx-color-surface);

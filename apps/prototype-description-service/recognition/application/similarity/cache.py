@@ -6,6 +6,10 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from recognition.application.suggestions.embedding_space import (
+    representative_embedding_model,
+    same_space_vector,
+)
 from recognition.domain.repositories import ClusterRepository
 from recognition.shared.similarity import normalize_face_embedding
 
@@ -35,9 +39,23 @@ class RepresentativeCache:
                 continue
 
             embeddings: list[np.ndarray] = []
+            counts: dict[str, int] = {}
             for rep in reps:
-                rep_vec = np.asarray(getattr(rep, "embedding", rep), dtype=np.float32)
-                if rep_vec.size == 0:
+                model = representative_embedding_model(rep)
+                if model:
+                    counts[model] = counts.get(model, 0) + 1
+            chosen = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[0][0] if counts else None
+            for rep in reps:
+                if chosen is not None:
+                    rep_vec = same_space_vector(rep, chosen)
+                else:
+                    if representative_embedding_model(rep) is not None:
+                        continue
+                    raw = getattr(rep, "embedding", rep)
+                    rep_vec = np.asarray(raw, dtype=np.float32)
+                    if rep_vec.size == 0:
+                        rep_vec = None
+                if rep_vec is None:
                     continue
                 embeddings.append(normalize_face_embedding(rep_vec))
 

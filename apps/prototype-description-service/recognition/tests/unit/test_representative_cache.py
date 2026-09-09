@@ -34,3 +34,26 @@ async def test_load_skips_clusters_with_no_representatives() -> None:
     cache = await RepresentativeCache.load(["cluster-a"], repo)
 
     assert cache.get_representatives("cluster-a") is None
+
+
+@pytest.mark.asyncio
+async def test_load_excludes_foreign_embedding_model_reps() -> None:
+    same = type(
+        "Rep",
+        (),
+        {"embedding": np.array([3.0, 4.0], dtype=np.float32), "embedding_model": "space-a"},
+    )()
+    foreign = type(
+        "Rep",
+        (),
+        {"embedding": np.array([0.0, 1.0], dtype=np.float32), "embedding_model": "space-b"},
+    )()
+    repo = ClusterRepoStub({"cluster-a": [same, foreign]})
+
+    cache = await RepresentativeCache.load(["cluster-a"], repo)
+    reps = cache.get_representatives("cluster-a")
+
+    assert reps is not None
+    assert reps.shape == (1, 2)
+    assert reps[0][0] == pytest.approx(0.6)
+    assert reps[0][1] == pytest.approx(0.8)

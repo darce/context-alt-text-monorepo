@@ -46,3 +46,39 @@ def same_space_vector(rep: Any, target_model: str) -> np.ndarray | None:
     if model is None or model != str(target_model):
         return None
     return representative_vector(rep)
+
+
+def models_are_same_space(left: str | None, right: str | None) -> bool:
+    """True when both ids match, including the legacy both-unstamped case.
+
+    Mixed stamped/unstamped or two different stamps are cross-space and must
+    not be cosined (FIR23-01). Two Nones stay comparable so single-model
+    tenants that never stamped provenance keep working.
+    """
+    if left is None and right is None:
+        return True
+    if left is None or right is None:
+        return False
+    return str(left) == str(right)
+
+
+def cluster_embedding_model(cluster: Any) -> str | None:
+    """Resolve a cluster's embedding space without inventing a default.
+
+    Prefer an explicit ``embedding_model`` on the cluster, else the majority
+    of loaded representatives (lex-stable tie-break). Unresolved → None.
+    """
+    explicit = getattr(cluster, "embedding_model", None)
+    if explicit:
+        return str(explicit)
+    counts: dict[str, int] = {}
+    for rep in getattr(cluster, "representatives", None) or []:
+        model = representative_embedding_model(rep)
+        if model is None:
+            continue
+        counts[model] = counts.get(model, 0) + 1
+    if not counts:
+        return None
+    max_n = max(counts.values())
+    tied = sorted(model for model, n in counts.items() if n == max_n)
+    return tied[0]

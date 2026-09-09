@@ -118,8 +118,12 @@ def test_incumbent_manifest_model_id_derives_from_fields() -> None:
     assert manifest.model_id == (
         f"{manifest.framework}-{manifest.name}@{manifest.dimensions}d/{manifest.normalization}/{manifest.metric}"
     )
-    # Pin the incumbent shape for buffalo_l @ 512 / l2 / cosine.
-    assert manifest.model_id == "insightface-buffalo_l@512d/l2/cosine"
+    # Pin the incumbent shape for buffalo_l @ 512 / l2 / cosine, with OpenCV
+    # space_token so a warpAffine numeric bump cannot reuse the same model_id
+    # (CVUP1-GR-03).
+    import cv2
+
+    assert manifest.model_id == f"insightface-buffalo_l+cv{cv2.__version__}@512d/l2/cosine"
     # framework lives in the left segment, not after '@'
     assert not manifest.model_id.endswith("@insightface")
 

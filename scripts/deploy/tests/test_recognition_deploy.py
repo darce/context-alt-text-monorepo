@@ -2500,3 +2500,276 @@ def test_acx_verify_optional_downgrades_when_rollback_succeeds(
     assert result.returncode == 0, combined
     assert "previous image restored" in combined, combined
     assert not (tmp_path / "fail.log").exists()
+
+
+def _run_actual_restart_failure_transaction(
+    tmp_path: Path, *, invoke: str, runtime_mode: str = "candidate"
+) -> subprocess.CompletedProcess[str]:
+    """Run a real deploy/promote restart failure through fake SSH and Docker."""
+    state = tmp_path / "rollback-state"
+    state.mkdir()
+    fake_bin = tmp_path / "rollback-bin"
+    fake_bin.mkdir()
+    base = "iad.ocir.io/idu2kqqe2jxy/acx-backend"
+    env_name = "staging" if "staging" in invoke else "dev"
+    project = "acx-" + env_name
+    rollback_digest = base + "@sha256:" + ("a" * 64)
+    candidate_digest = base + "@sha256:" + ("b" * 64)
+    rollback_id = "sha256:" + ("1" * 64)
+    candidate_id = "sha256:" + ("2" * 64)
+    prior_cid = "5" * 64
+    stopped_cid = "3" * 64
+    rollback_cid = "4" * 64
+    (state / "running-cid").write_text(prior_cid + "\n")
+
+    docker = r"""#!/usr/bin/env bash
+set -euo pipefail
+state="${FAKE_ROLLBACK_STATE:?}"
+base="__BASE__"
+env_tag="__ENV_TAG__"
+project="__PROJECT__"
+runtime_mode="__RUNTIME_MODE__"
+rollback_digest="__ROLLBACK_DIGEST__"
+candidate_digest="__CANDIDATE_DIGEST__"
+rollback_id="__ROLLBACK_ID__"
+candidate_id="__CANDIDATE_ID__"
+stopped_cid="__STOPPED_CID__"
+rollback_cid="__ROLLBACK_CID__"
+wrong_id="sha256:3333333333333333333333333333333333333333333333333333333333333333"
+printf '%s\n' "$*" >>"${state}/docker.log"
+
+if [[ "${1:-}" == "compose" ]]; then
+  ps=0
+  all=0
+  for arg in "$@"; do
+    [[ "$arg" == "ps" ]] && ps=1
+    [[ "$arg" == "-a" || "$arg" == "-aq" || "$arg" == "--all" ]] && all=1
+  done
+  if (( ps )); then
+    if (( all )); then
+      [[ "$runtime_mode" == "unknown" ]] && exit 1
+      if [[ -f "${state}/candidate-stopped" ]]; then
+        printf '%s\n' "$stopped_cid"
+      fi
+    elif [[ -f "${state}/running-cid" ]]; then
+      cat "${state}/running-cid"
+    fi
+    exit 0
+  fi
+  exit 0
+fi
+
+if [[ "${1:-}" == "inspect" || ( "${1:-}" == "image" && "${2:-}" == "inspect" ) ]]; then
+  format=""
+  previous=""
+  for arg in "$@"; do
+    if [[ "$previous" == "--format" ]]; then
+      format="$arg"
+    fi
+    previous="$arg"
+  done
+  target="${@: -1}"
+  if [[ "$format" == *"RepoDigests"* ]]; then
+    case "$target" in
+      "$base:$env_tag") printf '%s\n' "$candidate_digest" ;;
+      "$candidate_digest") printf '%s\n' "$candidate_digest" ;;
+      "$rollback_digest") printf '%s\n' "$rollback_digest" ;;
+      *) printf '%s\n' "$target" ;;
+    esac
+    exit 0
+  fi
+  if [[ "$format" == *"State.Status"* && "$format" == *"Config.Labels"* ]]; then
+    if [[ "$target" == "$stopped_cid" ]]; then
+      stopped_image_id="$candidate_id"
+      [[ "$runtime_mode" == "wrong" ]] && stopped_image_id="$wrong_id"
+      printf 'RUNTIME|%s|%s|exited|%s|api|candidate-generation\n' "$stopped_cid" "$stopped_image_id" "$project"
+    elif [[ "$target" == "$rollback_cid" ]]; then
+      printf 'RUNTIME|%s|%s|running|%s|api|rollback-generation\n' "$rollback_cid" "$rollback_id" "$project"
+    else
+      exit 1
+    fi
+    exit 0
+  fi
+  if [[ "$format" == *"State.Status"* ]]; then
+    [[ "$target" == "$stopped_cid" ]] && printf '%s\n' exited
+    [[ "$target" == "$rollback_cid" ]] && printf '%s\n' running
+    exit 0
+  fi
+  if [[ "$format" == *".Image"* ]]; then
+    [[ "$target" == "$stopped_cid" ]] && printf '%s\n' "$candidate_id"
+    [[ "$target" == "$rollback_cid" ]] && printf '%s\n' "$rollback_id"
+    exit 0
+  fi
+  if [[ "$format" == *".Id"* ]]; then
+    case "$target" in
+      "$rollback_digest") printf '%s\n' "$rollback_id" ;;
+      "$candidate_digest") printf '%s\n' "$candidate_id" ;;
+      *) printf '%s\n' "$target" ;;
+    esac
+    exit 0
+  fi
+fi
+
+case "${1:-}" in
+  pull)
+    exit 0
+    ;;
+  tag)
+    exit 0
+    ;;
+  push)
+    if [[ "${2:-}" == "$base:$env_tag" ]]; then
+      : >"${state}/rollback-pushed"
+    fi
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+"""
+    docker = (
+        docker.replace("__BASE__", base)
+        .replace("__ENV_TAG__", env_name)
+        .replace("__PROJECT__", project)
+        .replace("__RUNTIME_MODE__", runtime_mode)
+        .replace("__ROLLBACK_DIGEST__", rollback_digest)
+        .replace("__CANDIDATE_DIGEST__", candidate_digest)
+        .replace("__ROLLBACK_ID__", rollback_id)
+        .replace("__CANDIDATE_ID__", candidate_id)
+        .replace("__STOPPED_CID__", stopped_cid)
+        .replace("__ROLLBACK_CID__", rollback_cid)
+    )
+    _write_executable(fake_bin / "docker", docker)
+
+    ssh = r"""#!/usr/bin/env bash
+set -euo pipefail
+state="${FAKE_ROLLBACK_STATE:?}"
+runtime_mode="__RUNTIME_MODE__"
+remote="${@: -1}"
+printf '%s\n' "$remote" >>"${state}/ssh.log"
+if [[ "$remote" == *"systemctl restart"* ]]; then
+  if [[ -f "${state}/rollback-pushed" ]]; then
+    printf '%s\n' "__ROLLBACK_CID__" >"${state}/running-cid"
+    exit 0
+  fi
+  rm -f "${state}/running-cid"
+  [[ "$runtime_mode" == "candidate" || "$runtime_mode" == "wrong" ]] && : >"${state}/candidate-stopped"
+  exit 1
+fi
+if [[ "$remote" == cd\ *" && "* ]]; then
+  remote="${remote#* && }"
+fi
+bash -c "$remote"
+""".replace("__ROLLBACK_CID__", rollback_cid).replace("__RUNTIME_MODE__", runtime_mode)
+    _write_executable(fake_bin / "ssh", ssh)
+
+    curl = r"""#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' '{"status":"ok"}'
+"""
+    _write_executable(fake_bin / "curl", curl)
+
+    driver = f'''\
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+ACX_REMOTE_INSPECT_TIMEOUT=5
+ACX_REMOTE_COMMAND_TIMEOUT=5
+ACX_PULL_TIMEOUT=5
+ACX_PUSH_TIMEOUT=5
+ACX_VERIFY_ATTEMPTS=1
+ACX_VERIFY_SLEEP=0
+ACX_IMAGE_REPO="$IMAGE_BASE"
+init_deploy_ocir_docker_config() {{ ACX_DEPLOY_OCIR_CONFIG_DIR="{tmp_path / 'docker-config'}"; mkdir -p "$ACX_DEPLOY_OCIR_CONFIG_DIR"; return 0; }}
+preflight_ssh() {{ return 0; }}
+preflight_remote_face_pipeline_models() {{ return 0; }}
+preflight_git_clean() {{ return 0; }}
+preflight_branch_synced() {{ return 0; }}
+preflight_remote_ocir_auth() {{ return 0; }}
+preflight_remote_docker() {{ return 0; }}
+preflight_docker() {{ return 0; }}
+preflight_ocir_auth() {{ return 0; }}
+assert_remote_disk_headroom_for_pull() {{ return 0; }}
+preserve_rollback_tag() {{
+  ACX_ROLLBACK_DIGEST_REF="$IMAGE_BASE@sha256:{'a' * 64}"
+  ACX_ROLLBACK_IMAGE_BASE="$IMAGE_BASE"
+  ACX_ROLLBACK_TAG="rollback-{'a' * 12}"
+}}
+do_build() {{ return 0; }}
+do_build_remote() {{ return 0; }}
+do_push_sha() {{ ACX_CANDIDATE_DIGEST_REF="$IMAGE_BASE@sha256:{'b' * 64}"; }}
+promote_gate() {{ return 0; }}
+do_push_tag() {{ return 0; }}
+repair_blob_volume_ownership() {{ return 0; }}
+restore_prior_image_repo_env() {{ return 0; }}
+_pull_ref() {{ return 0; }}
+image_digest_ref() {{ printf '%s\\n' "$IMAGE_BASE@sha256:{'b' * 64}"; }}
+do_verify() {{ return 1; }}
+fail() {{ printf 'xx %s\\n' "$*" >&2; exit 1; }}
+{invoke}
+'''
+    driver_path = tmp_path / "actual-rollback-driver.sh"
+    driver_path.write_text(driver)
+    env = dict(os.environ)
+    env.update(
+        {
+            "PATH": f"{fake_bin}{os.pathsep}{env.get('PATH', '')}",
+            "FAKE_ROLLBACK_STATE": str(state),
+            "CONFIRM": "PROMOTE",
+        }
+    )
+    return subprocess.run(
+        ["bash", str(driver_path)],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=SCRIPT.parents[2],
+        env=env,
+        timeout=30,
+    )
+
+
+@pytest.mark.parametrize("invoke", ["do_deploy dev", "do_promote dev staging"])
+def test_actual_restart_failure_restores_after_confirmed_stopped_candidate(
+    tmp_path: Path, invoke: str
+) -> None:
+    """A failed replacement leaves a candidate stopped container as ownership proof."""
+    result = _run_actual_restart_failure_transaction(tmp_path, invoke=invoke)
+    combined = result.stdout + result.stderr
+    state = tmp_path / "rollback-state"
+    env_name = "staging" if "staging" in invoke else "dev"
+    unit = "acx-" + env_name
+    base = "iad.ocir.io/idu2kqqe2jxy/acx-backend"
+    rollback_digest = base + "@sha256:" + "a" * 64
+    docker_log = (state / "docker.log").read_text()
+    ssh_log = (state / "ssh.log").read_text()
+    assert result.returncode != 0, combined
+    assert "Rollback verified healthy" in combined, combined
+    assert "Confirmed stopped api container" in combined, combined
+    assert docker_log.count(f"tag {rollback_digest} {base}:{env_name}") == 1
+    assert docker_log.count(f"push {base}:{env_name}") == 1
+    assert ssh_log.count(f"systemctl restart {unit}") == 2, ssh_log
+    assert (state / "running-cid").read_text().strip() == "4" * 64
+    assert "STALE ROLLBACK REFUSED" not in combined
+
+
+@pytest.mark.parametrize("runtime_mode", ["absent", "unknown", "wrong"])
+def test_actual_restart_failure_refuses_unowned_runtime_observation(
+    tmp_path: Path, runtime_mode: str
+) -> None:
+    """No container or failed inspection cannot authorize automatic rollback."""
+    result = _run_actual_restart_failure_transaction(
+        tmp_path, invoke="do_deploy dev", runtime_mode=runtime_mode
+    )
+    combined = result.stdout + result.stderr
+    state = tmp_path / "rollback-state"
+    docker_log = (state / "docker.log").read_text()
+    ssh_log = (state / "ssh.log").read_text()
+    base = "iad.ocir.io/idu2kqqe2jxy/acx-backend"
+    rollback_digest = base + "@sha256:" + "a" * 64
+    assert result.returncode != 0, combined
+    assert "refusing" in combined.lower(), combined
+    assert f"tag {rollback_digest} {base}:dev" not in docker_log
+    assert f"push {base}:dev" not in docker_log
+    assert ssh_log.count("systemctl restart acx-dev") == 1, ssh_log
+    assert not (state / "running-cid").exists()

@@ -425,7 +425,39 @@ def _write_gate_record(path: Path, *, n: int = 100) -> None:
 def _write_gate_manifest(path: Path, *, n: int = 100) -> None:
     path.write_text(json.dumps({
         "entries": [
-            {"media_id": media_id, "path": f"image-{media_id}.jpg", "present_identities": []}
+            {
+                "media_id": media_id,
+                "path": f"image-{media_id}.jpg",
+                "sha256": f"{media_id:064x}",
+                "subject_ids": [f"subject-{(media_id - 1) % 10}"],
+                "demographic_cohort": f"cohort-{(media_id - 1) % 2}",
+                "domain": "faces",
+                "difficulty": "medium",
+                "capture_device": "fixture-camera",
+                "lighting": "daylight",
+                "environment": "studio",
+                "session": f"session-{(media_id - 1) % 5}",
+                "reference_facts": [{"kind": "visible", "value": f"fact-{media_id}"}],
+                "spatial_facts": [{"relation": "left_of", "value": f"fact-{media_id}"}],
+                "face_boxes": [{"name": f"subject-{(media_id - 1) % 10}"}],
+                "present_identities": [f"subject-{(media_id - 1) % 10}"],
+            }
+            for media_id in range(1, n + 1)
+        ]
+    }))
+
+
+def _write_gate_selection_manifest(path: Path, *, n: int = 10) -> None:
+    """A disjoint selection/calibration corpus for the sealed gate fixture."""
+    path.write_text(json.dumps({
+        "entries": [
+            {
+                "media_id": 1000 + media_id,
+                "path": f"selection-{media_id}.jpg",
+                "sha256": f"{1000 + media_id:064x}",
+                "subject_ids": [f"selection-subject-{(media_id - 1) % 5}"],
+                "present_identities": [f"selection-subject-{(media_id - 1) % 5}"],
+            }
             for media_id in range(1, n + 1)
         ]
     }))
@@ -434,6 +466,8 @@ def _write_gate_manifest(path: Path, *, n: int = 100) -> None:
 def test_bakeoff_gate_passes_only_with_roster_baselines_and_observability(tmp_path: Path) -> None:
     manifest = tmp_path / "golden-100.json"
     _write_gate_manifest(manifest)
+    selection = tmp_path / "selection.json"
+    _write_gate_selection_manifest(selection)
     candidate = tmp_path / "candidate.json"
     incumbent = tmp_path / "incumbent.json"
     _write_gate_record(candidate)
@@ -448,6 +482,7 @@ def test_bakeoff_gate_passes_only_with_roster_baselines_and_observability(tmp_pa
     out = tmp_path / "gate.html"
     argv = [
         "--manifest", str(manifest), "--out", str(out), "--bakeoff-gate",
+        "--selection-manifest", str(selection),
         "--expected-candidate", "candidate", "--expected-incumbent", "incumbent",
         "--run", f"candidate={candidate}", "--run", f"incumbent={incumbent}",
         "--score-ok", f"candidate={score}", "--media-ids", "1",
@@ -457,7 +492,70 @@ def test_bakeoff_gate_passes_only_with_roster_baselines_and_observability(tmp_pa
     assert main(argv) == 0
     doc = out.read_text()
     assert "bakeoff-gate: pass" in doc
-    assert "readiness: data=pass model=pass infra=pass monitoring=pass" in doc
+    assert "readiness: data=pass selection=pass model=pass infra=pass monitoring=pass" in doc
+
+
+def test_bakeoff_gate_rejects_selection_subject_or_image_overlap(tmp_path: Path) -> None:
+    manifest = tmp_path / "golden-100.json"
+    _write_gate_manifest(manifest)
+    selection = tmp_path / "selection.json"
+    _write_gate_selection_manifest(selection)
+    payload = json.loads(selection.read_text())
+    payload["entries"][0]["media_id"] = 1
+    payload["entries"][0]["sha256"] = f"{1:064x}"
+    payload["entries"][0]["subject_ids"] = ["subject-0"]
+    payload["entries"][0]["present_identities"] = ["subject-0"]
+    selection.write_text(json.dumps(payload))
+    evaluation = _gate_evaluation_for_test(manifest, selection)
+    assert evaluation["status"] == "not_ready"
+    assert evaluation["axes"]["selection"] == "not_ready"
+    assert any("selection" in reason and ("media_id" in reason or "sha256" in reason)
+               for reason in evaluation["reasons"])
+    assert any("subject" in reason for reason in evaluation["reasons"])
+
+
+def test_bakeoff_gate_refuses_missing_corpus_strata_and_metric_backing(tmp_path: Path) -> None:
+    manifest = tmp_path / "golden-100.json"
+    _write_gate_manifest(manifest)
+    payload = json.loads(manifest.read_text())
+    for entry in payload["entries"]:
+        entry.pop("reference_facts", None)
+        entry.pop("spatial_facts", None)
+        entry.pop("face_boxes", None)
+        entry.pop("demographic_cohort", None)
+        entry.pop("capture_device", None)
+        entry.pop("lighting", None)
+        entry.pop("environment", None)
+        entry.pop("session", None)
+    manifest.write_text(json.dumps(payload))
+    selection = tmp_path / "selection.json"
+    _write_gate_selection_manifest(selection)
+    evaluation = _gate_evaluation_for_test(manifest, selection)
+    assert evaluation["status"] == "not_ready"
+    assert evaluation["axes"]["data"] == "not_ready"
+    reasons = " ".join(evaluation["reasons"])
+    assert "demographic_cohort" in reasons
+    assert "capture_device" in reasons
+    assert "reference_facts" in reasons
+
+
+def _gate_evaluation_for_test(manifest: Path, selection: Path) -> dict:
+    """Exercise the report gate without duplicating run/baseline boilerplate."""
+    from scripts.eval_harness.build_bakeoff_report import _gate_evaluation, _load_manifest
+
+    entries = _load_manifest(str(manifest))
+    selection_entries = _load_manifest(str(selection))
+    return _gate_evaluation(
+        entries,
+        {},
+        {},
+        {},
+        expected_candidates=(),
+        expected_incumbents=(),
+        required_baselines=(),
+        score_ok={},
+        selection_manifests={str(selection): selection_entries},
+    )
 
 
 def test_bakeoff_gate_rejects_incomplete_media_id_multiset(tmp_path: Path) -> None:

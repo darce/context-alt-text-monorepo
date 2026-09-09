@@ -25,16 +25,29 @@
       "line": 68,
       "literal": "<input id=\"' . esc_attr( $input_id ) . '\" type=\"radio\" name=\"' . esc_attr( $group_name ) . '\" value=\"' . esc_attr( (string) $choice['id'] ) . '\" required>"
     },
-    "js_formdata_lookup": {
+    "js_checked_radio_lookup": {
       "path": "apps/prototype-wp-alt-context/js/public/demo-describe.js",
-      "line": 297,
-      "literal": "const selected = new FormData(form).get('acx-demo-media');"
+      "line": 323,
+      "literal": "const selectedRadio = form.querySelector('input[type=\"radio\"]:checked');"
+    },
+    "js_selected_value": {
+      "path": "apps/prototype-wp-alt-context/js/public/demo-describe.js",
+      "line": 324,
+      "literal": "const selected = selectedRadio instanceof HTMLInputElement ? selectedRadio.value : null;"
+    },
+    "js_formdata_lookup": {
+      "status": "historical",
+      "path": "apps/prototype-wp-alt-context/js/public/demo-describe.js",
+      "line": null,
+      "literal": "const selected = new FormData(form).get('acx-demo-media');",
+      "note": "Retired simplified-harness lookup. Not current. Submit uses js_checked_radio_lookup then js_selected_value on this form only."
     }
   },
   "expected_names": ["acx-demo-media-1", "acx-demo-media-2"],
   "forbidden_simplified_name": "acx-demo-media",
   "notes": [
     "two-instances.html is the literal concatenated output of two sequential render() calls (instance 1 then instance 2).",
-    "Existing Vitest markup that uses name=\"acx-demo-media\" is a simplified polling/retry harness and must not be treated as radio-contract coverage."
+    "Existing Vitest markup that uses name=\"acx-demo-media\" is a simplified polling/retry harness and must not be treated as radio-contract coverage.",
+    "js_formdata_lookup is historical only. Current initializeDemo reads the checked radio in this form (demo-describe.js:323-324)."
   ]
 }

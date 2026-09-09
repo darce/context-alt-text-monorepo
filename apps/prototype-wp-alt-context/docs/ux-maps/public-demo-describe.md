@@ -43,8 +43,9 @@ Action states: idle, in_flight, completed, failed, limited, timeout
 | ZONES                                                      |
 |   - OBSERVED image picker — idle radios are instance-scope…|
 |   - OBSERVED primary Describe selected image — enabled in …|
+|   - OBSERVED-FEATURE static illustrative example before De…|
 |   - OBSERVED polite status — idle, queued, warming, descri…|
-|   - OBSERVED completed result is generic alt_text_draft wi…|
+|   - OBSERVED-FEATURE completed result is alt_text_draft wi…|
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 | when idle                                                  |

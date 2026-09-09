@@ -31,6 +31,11 @@
 #   status                            Snapshot /health for dev, dev-fir, staging, prod.
 #   gpu-lifecycle                     Install and verify the acx-gpu-start/reap timers when
 #                                       ACX_DEPLOY_GPU_LIFECYCLE=1. Requires ACX_GPU_READY_URL.
+#   prepare-producer <env>            First-producer bootstrap: verify the selected image and
+#                                       the effective /run/acx-write/<env>/describe-load.json
+#                                       writer, schema, and freshness. Does not skip verification
+#                                       and does not replace the aggregate GPU snapshot gate used
+#                                       by later deploys once sibling snapshots exist.
 #   clear-image-repo <env>            Remove ACX_IMAGE_REPO from the remote env .env so compose falls
 #                                       back to the recognition default (${OCIR}/.../acx-backend).
 #                                       Use this to roll back sticky VLM/variant repo state after a
@@ -2840,10 +2845,11 @@ restore_runtime_topology() {
 
 flip_edge_alias() {
   local env="$1" target="$2"
-  local alias next_alias from to timeout next_unit
+  local alias next_alias from to timeout next_unit digest
   alias="$(env_to_api_alias "$env")"
   next_alias="${alias}-next"
   next_unit="$(env_to_next_unit "$env")"
+  digest="${ACX_CANDIDATE_DIGEST_REF:-}"
   case "$target" in
     next) from="$alias"; to="$next_alias" ;;
     canonical) from="$next_alias"; to="$alias" ;;
@@ -2853,6 +2859,10 @@ flip_edge_alias() {
       ;;
   esac
   [[ "$alias" =~ ^(dev|dev-fir|staging|prod)-api$ ]] || return 1
+  if [[ "$target" == "next" && ! "${digest}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]]; then
+    warn "traffic flip marker requires a digest-pinned target (got: ${digest:-empty})"
+    return 1
+  fi
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
   log "Flipping Caddy reverse_proxy ${from}:8000 -> ${to}:8000"
   run_with_deadline "${timeout}" "caddy flip ${from} -> ${to}" \
@@ -2885,6 +2895,11 @@ printf '%s\n' "\$snapshot" | sudo tee "\$pointer" >/dev/null
 sudo touch -- "\$transaction_dir/edge-cutover.ready"
 source_count=\$(route_count '${from}')
 [ "\$source_count" -eq 1 ] || { echo 'expected exactly one formatted Caddy reverse_proxy source route' >&2; exit 1; }
+sudo install -d -m 700 -- "\$backup_root/${env}"
+if [ '${target}' = next ]; then
+  printf 'env=${env}\\ndigest=${digest}\\ntimestamp=%s\\ntransaction=${ACX_DEPLOY_TRANSACTION_ID}\\nnext_unit=${next_unit}\\nstatus=traffic_on_next\\n' "\$(date +%s)" | sudo tee "\$backup_root/${env}/cutover-inflight" >/dev/null
+  sudo grep -q '^status=traffic_on_next\$' "\$backup_root/${env}/cutover-inflight" || { echo 'cutover inflight marker write failed' >&2; exit 1; }
+fi
 tmp=\$(mktemp Caddyfile.flip.XXXXXX)
 trap 'rm -f -- "\$tmp"' EXIT
 sudo sed -E 's|(^[[:space:]]*reverse_proxy[[:space:]]+)${from}:8000([[:space:]]*)\$|\\1${to}:8000\\2|' Caddyfile >"\$tmp"
@@ -2892,11 +2907,7 @@ sudo mv -f -- "\$tmp" Caddyfile
 desired_count=\$(route_count '${to}')
 remaining_source_count=\$(route_count '${from}')
 [ "\$desired_count" -eq 1 ] && [ "\$remaining_source_count" -eq 0 ] || { echo 'Caddy reverse_proxy replacement did not converge exactly once' >&2; exit 1; }
-sudo install -d -m 700 -- "\$backup_root/${env}"
-if [ '${target}' = next ]; then
-  printf 'env=${env}\\ntransaction=${ACX_DEPLOY_TRANSACTION_ID}\\nnext_unit=${next_unit}\\nstatus=traffic_on_next\\n' | sudo tee "\$backup_root/${env}/cutover-inflight" >/dev/null
-  sudo grep -q '^status=traffic_on_next\$' "\$backup_root/${env}/cutover-inflight" || { echo 'cutover inflight marker write failed' >&2; exit 1; }
-elif [ '${target}' = canonical ]; then
+if [ '${target}' = canonical ]; then
   sudo rm -f -- "\$backup_root/${env}/cutover-inflight"
   printf 'env=${env}\\ntransaction=${ACX_DEPLOY_TRANSACTION_ID}\\nstatus=canonical\\n' | sudo tee "\$backup_root/${env}/cutover-committed" >/dev/null
   sudo grep -q '^status=canonical\$' "\$backup_root/${env}/cutover-committed" || { echo 'cutover commit marker write failed' >&2; exit 1; }
@@ -2995,6 +3006,7 @@ do_restart() {
     warn "persisted inflight cutover for ${env} could not be recovered; refusing a new candidate"
     return 1
   fi
+  ACX_CANDIDATE_DIGEST_REF="${expected_digest}"
   # ACX_IMAGE_REPO is shipped once in promote_gate (S2-A-06), including the
   # ACX_CONVERGE_RUNTIME=0 image-only path — do not rewrite .env again here.
   # A-11: pull materialises layers on the VM — free-space floor for VLM.
@@ -3297,14 +3309,16 @@ restore_registry_env_tag() {
     return 1
   fi
   if [[ -n "${ACX_CANDIDATE_DIGEST_REF:-}" ]]; then
+    # Compare-and-swap: re-read the shared env tag inside the lock immediately
+    # before retag/push so a concurrent promote cannot be silently overwritten.
     if ! _pull_ref_remote "${rollback_base}:${env_tag}" >/dev/null \
       || ! current_digest="$(remote_image_digest_ref "${rollback_base}:${env_tag}")"; then
-      warn "cannot observe current registry mapping for ${rollback_base}:${env_tag} immediately before rollback push; refusing unfenced rollback"
+      warn "cannot observe current registry mapping for ${env} (${rollback_base}:${env_tag}) immediately before rollback push; refusing unfenced rollback"
       return 1
     fi
     if [[ "${current_digest}" != "${ACX_ROLLBACK_DIGEST_REF}" \
       && "${current_digest}" != "${ACX_CANDIDATE_DIGEST_REF}" ]]; then
-      warn "STALE ROLLBACK REFUSED: ${rollback_base}:${env_tag} now maps to ${current_digest}, not this transaction's ${ACX_CANDIDATE_DIGEST_REF}"
+      warn "ROLLBACK CAS REFUSED: env ${env} observed ${current_digest} does not match planned ${ACX_CANDIDATE_DIGEST_REF}"
       return 1
     fi
   fi
@@ -3964,8 +3978,123 @@ verify_retry_sleep() {
   sleep "${delay}"
 }
 
+sibling_gpu_snapshots_complete() {
+  local env="$1" other timeout conf
+  env_to_unit "$env" >/dev/null
+  conf="${SCRIPT_DIR}/gpu-snapshot-deployments.conf"
+  if [[ ! -r "$conf" ]]; then
+    warn "GPU snapshot deployment registry is missing or unreadable: ${conf}"
+    return 1
+  fi
+  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  while IFS= read -r other || [[ -n "${other}" ]]; do
+    [[ -n "${other}" ]] || {
+      warn "GPU snapshot deployment registry contains an empty entry: ${conf}"
+      return 1
+    }
+    if [[ ! "${other}" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
+      warn "invalid GPU snapshot deployment '${other}' in ${conf}"
+      return 1
+    fi
+    [[ "${other}" != "${env}" ]] || continue
+    if ! run_with_deadline "${timeout}" "sibling snapshot probe ${other}" \
+      ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
+      "sudo test -f $(remote_quote "/run/acx-write/${other}/describe-load.json")"; then
+      return 1
+    fi
+  done < "${conf}"
+  return 0
+}
+
+verify_scoped_producer_snapshots() {
+  local env="$1" remote_dir timeout stale now_epoch env_q remote_q stale_q now_q
+  env_to_unit "$env" >/dev/null
+  remote_dir="$(env_to_remote_dir "$env")"
+  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  stale="${ACX_DESCRIBE_LOAD_STALE_SECONDS:-120}"
+  if ! [[ "${stale}" =~ ^[1-9][0-9]*$ ]]; then
+    warn "ACX_DESCRIBE_LOAD_STALE_SECONDS must be a positive integer (got: ${stale})"
+    return 1
+  fi
+  now_epoch="${ACX_NOW_EPOCH:-}"
+  if [[ -n "${now_epoch}" ]] && ! [[ "${now_epoch}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    warn "ACX_NOW_EPOCH must be numeric (got: ${now_epoch})"
+    return 1
+  fi
+  env_q="$(remote_quote "$env")"
+  remote_q="$(remote_quote "$remote_dir")"
+  stale_q="$(remote_quote "$stale")"
+  now_q="$(remote_quote "$now_epoch")"
+  log "Scoped producer-preparation: verifying ${env} writer/schema/freshness at /run/acx-write/${env}/describe-load.json"
+  run_with_deadline "${timeout}" "scoped producer snapshot ${env}" \
+    ssh -l "${OCI_USER}" -- "${OCI_HOST}" "bash -s" <<SCOPED_PRODUCER
+set -euo pipefail
+env=${env_q}
+remote_dir=${remote_q}
+stale=${stale_q}
+now_epoch=${now_q}
+load_dir="/run/acx-write/\$env"
+load_path="\$load_dir/describe-load.json"
+compose="\$remote_dir/docker-compose.env.yml"
+sudo test -f "\$compose" || {
+  echo "scoped producer-preparation: compose file missing: \$compose" >&2
+  exit 1
+}
+sudo grep -Fq -- 'ACX_DESCRIBE_LOAD_PATH=/run/acx-write/\${ACX_ENV}/describe-load.json' "\$compose" || {
+  echo "scoped producer-preparation: compose ACX_DESCRIBE_LOAD_PATH is not the effective /run/acx-write/<env>/describe-load.json writer" >&2
+  exit 1
+}
+sudo test -d "\$load_dir" || {
+  echo "scoped producer-preparation: missing describe-load writer directory: \$load_dir" >&2
+  exit 1
+}
+sudo test -f "\$load_path" || {
+  echo "scoped producer-preparation: missing describe-load.json at \$load_path" >&2
+  exit 1
+}
+sudo python3 -c '
+import json, math, sys, time
+path, stale_s, now_s = sys.argv[1:]
+stale = float(stale_s)
+now = float(now_s) if now_s else time.time()
+def fail(message):
+    sys.stderr.write("%s: %s\n" % (path, message))
+    raise SystemExit(1)
+try:
+    payload = json.load(open(path, encoding="utf-8"))
+except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+    fail("snapshot must contain valid JSON: %s" % exc)
+if not isinstance(payload, dict):
+    fail("snapshot root must be an object")
+written_at = payload.get("written_at")
+if isinstance(written_at, bool) or not isinstance(written_at, (int, float)) or not math.isfinite(written_at):
+    fail("written_at must be finite epoch seconds")
+for field in ("queue_depth", "in_flight"):
+    if field not in payload:
+        fail("%s is required" % field)
+    value = payload[field]
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        fail("%s must be a non-negative integer" % field)
+if "batch_in_progress" in payload and not isinstance(payload["batch_in_progress"], bool):
+    fail("batch_in_progress must be a boolean when present")
+age = now - written_at
+if age < -5:
+    fail("written_at exceeds 5s future-skew tolerance: %s" % written_at)
+if age > stale:
+    fail("stale describe-load snapshot: age %ss exceeds %ss budget" % (age, stale))
+' "\$load_path" "\$stale" "\$now_epoch"
+echo "OK: scoped producer-preparation for \$env describe-load writer is fresh"
+SCOPED_PRODUCER
+}
+
 verify_live_gpu_snapshots() {
   local env="$1" remote_dir payload expected_bytes expected_sha gate_timeout transport_rc=0
+  env_to_unit "$env" >/dev/null
+  if ! sibling_gpu_snapshots_complete "$env"; then
+    log "Registered GPU snapshot siblings are incomplete; using scoped producer-preparation for ${env}"
+    verify_scoped_producer_snapshots "$env"
+    return
+  fi
   remote_dir="$(env_to_remote_dir "$env")"
   gate_timeout="${ACX_GPU_SNAPSHOT_GATE_TIMEOUT_SECONDS:-60}"
   if ! [[ "${gate_timeout}" =~ ^[1-9][0-9]*$ ]]; then
@@ -4419,6 +4548,21 @@ do_gpu_lifecycle() {
   "${install_cmd[@]}"
 }
 
+do_prepare_producer() {
+  local env="${1:-}"
+  [[ -n "${env}" ]] || fail "prepare-producer requires <env> (dev|dev-fir|staging|prod)"
+  env_to_unit "${env}" >/dev/null
+  preflight_ssh
+  log "Scoped producer-preparation for ${env}: image, effective describe-load writer, schema, freshness"
+  if ! verify_running_image_matches_deployed "${env}"; then
+    fail "scoped producer-preparation refused: image verification failed for ${env}"
+  fi
+  if ! verify_scoped_producer_snapshots "${env}"; then
+    fail "scoped producer-preparation refused: describe-load writer/schema/freshness failed for ${env}"
+  fi
+  log "Scoped producer-preparation passed for ${env}"
+}
+
 #---------------------------------------------------------------- dispatch
 # Skip dispatch when the script is sourced (e.g. by tests calling individual
 # functions), run it only on direct execution.
@@ -4433,6 +4577,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     reset)        [[ -n "${1:-}" ]] || fail "reset requires <env> (dev|dev-fir|staging|prod)"; do_reset "$1" ;;
     clear-image-repo) [[ -n "${1:-}" ]] || fail "clear-image-repo requires <env> (dev|dev-fir|staging|prod)"; clear_remote_image_repo_env "$1" ;;
     gpu-lifecycle) do_gpu_lifecycle ;;
+    prepare-producer) [[ -n "${1:-}" ]] || fail "prepare-producer requires <env> (dev|dev-fir|staging|prod)"; do_prepare_producer "$1" ;;
     verify)       do_verify "${1:-dev}" ;;
     status)       do_status ;;
     ""|-h|--help|help)

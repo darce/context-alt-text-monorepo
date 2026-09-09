@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from db.base import Base
 from db.models import IdentityCluster, MediaIdentity, Tenant
 from db.settings import get_database_settings
+from recognition.application.embedding.manifest import active_embedding_model_id
 from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
 
 
@@ -46,6 +47,7 @@ async def test_singleton_query_excludes_members_with_null_cluster_id() -> None:
         valid_identity_id = uuid.uuid4()
         null_identity_id = uuid.uuid4()
         embedding = [0.0] * int(get_database_settings().pgvector_dimension)
+        embedding_model = active_embedding_model_id()
         with Session(engine) as session:
             session.add(tenant)
             session.flush()
@@ -70,7 +72,7 @@ async def test_singleton_query_excludes_members_with_null_cluster_id() -> None:
                         bbox_height=1,
                         confidence=1.0,
                         embedding=embedding,
-                        embedding_model="test-model",
+                        embedding_model=embedding_model,
                     ),
                     MediaIdentity(
                         id=null_identity_id,
@@ -83,7 +85,7 @@ async def test_singleton_query_excludes_members_with_null_cluster_id() -> None:
                         bbox_height=1,
                         confidence=1.0,
                         embedding=embedding,
-                        embedding_model="test-model",
+                        embedding_model=embedding_model,
                     ),
                 ]
             )

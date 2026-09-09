@@ -669,6 +669,35 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         identities = _filter_rows_to_single_embedding_model(identities)
         return [self._to_domain_identity(model) for model in identities]
 
+    async def get_unclustered_in_embedding_space(
+        self,
+        tenant_id: str,
+        embedding_model: str | None,
+        *,
+        limit: int,
+    ) -> list[DomainIdentity]:
+        """Return unclustered identities in the target gallery space.
+
+        Unlike ``get_unclustered``, this does not force the active runtime model.
+        A ``None`` gallery keeps legacy unstamped rows (``embedding_model IS NULL``).
+        """
+        tenant_uuid = _coerce_uuid(tenant_id)
+        if tenant_uuid is None or limit <= 0:
+            return []
+        stmt: Select[tuple[MediaIdentity]] = (
+            select(MediaIdentity)
+            .where(MediaIdentity.tenant_id == tenant_uuid)
+            .where(~exists(select(IdentityMemberModel.id).where(IdentityMemberModel.identity_id == MediaIdentity.id)))
+            .order_by(MediaIdentity.confidence.desc())
+            .limit(limit)
+        )
+        if embedding_model is not None:
+            stmt = stmt.where(MediaIdentity.embedding_model == embedding_model)
+        else:
+            stmt = stmt.where(MediaIdentity.embedding_model.is_(None))
+        result = await self._session.execute(stmt)
+        return [self._to_domain_identity(model) for model in result.scalars().all()]
+
     async def get_representative_count(self, cluster_id: str) -> int:
         """Count representatives for a cluster."""
         stmt = select(func.count(IdentityClusterRepresentative.id)).where(
@@ -963,7 +992,6 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             .join(IdentityMemberModel, IdentityMemberModel.identity_id == MediaIdentity.id)
             .where(IdentityMemberModel.cluster_id == _coerce_uuid(cluster_id))
             .where(MediaIdentity.embedding.isnot(None))
-            .where(MediaIdentity.embedding_model.isnot(None))
         )
         result = await self._session.execute(stmt)
         rows = [(np.asarray(emb, dtype=np.float32), model) for emb, model in result.all()]
@@ -984,7 +1012,6 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             select(IdentityClusterRepresentative.embedding, MediaIdentity.embedding_model)
             .join(MediaIdentity, MediaIdentity.id == IdentityClusterRepresentative.identity_id)
             .where(IdentityClusterRepresentative.cluster_id == _coerce_uuid(cluster_id))
-            .where(MediaIdentity.embedding_model.isnot(None))
         )
         result = await self._session.execute(stmt)
         rows = [(np.asarray(emb, dtype=np.float32), model) for emb, model in result.all()]
@@ -1024,7 +1051,6 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             )
             .join(MediaIdentity, MediaIdentity.id == IdentityClusterRepresentative.identity_id)
             .where(IdentityClusterRepresentative.cluster_id == _coerce_uuid(cluster_id))
-            .where(MediaIdentity.embedding_model.isnot(None))
         )
         result = await self._session.execute(stmt)
         rows: list[_QualityRow] = [
@@ -1054,7 +1080,6 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             .join(IdentityMemberModel, IdentityMemberModel.identity_id == MediaIdentity.id)
             .where(IdentityMemberModel.cluster_id == _coerce_uuid(cluster_id))
             .where(MediaIdentity.embedding.isnot(None))
-            .where(MediaIdentity.embedding_model.isnot(None))
             .order_by(IdentityMemberModel.similarity.desc(), IdentityMemberModel.assigned_at.asc())
         )
         result = await self._session.execute(stmt)
@@ -1093,7 +1118,6 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             .join(IdentityMemberModel, IdentityMemberModel.identity_id == MediaIdentity.id)
             .where(IdentityMemberModel.cluster_id == _coerce_uuid(cluster_id))
             .where(MediaIdentity.embedding.isnot(None))
-            .where(MediaIdentity.embedding_model.isnot(None))
             .order_by(IdentityMemberModel.similarity.desc(), IdentityMemberModel.assigned_at.asc())
         )
         result = await self._session.execute(stmt)
@@ -1125,7 +1149,11 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         return [self._to_domain_identity(model, cluster_id=cluster_id) for model in models]
 
     async def get_member_identities_for_clusters(self, cluster_ids: Sequence[str]) -> dict[str, list[DomainIdentity]]:
-        """Return identity records for members across multiple clusters, grouped by cluster."""
+        """Return every member with an embedding, grouped by cluster.
+
+        Unlike ``get_member_identities``, this batch API does not majority-filter
+        by embedding_model. Callers apply ``models_are_same_space`` themselves.
+        """
         cluster_uuids = [_coerce_uuid(cluster_id) for cluster_id in cluster_ids]
         cluster_uuids = [cluster_id for cluster_id in cluster_uuids if cluster_id is not None]
         if not cluster_uuids:
@@ -1145,9 +1173,23 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             raw_grouped[str(cluster_id)].append(model)
         grouped: dict[str, list[DomainIdentity]] = {}
         for cluster_key, models in raw_grouped.items():
-            kept = _filter_identity_models_to_single_embedding_model(models)
-            grouped[cluster_key] = [self._to_domain_identity(model, cluster_id=cluster_key) for model in kept]
+            # Callers apply models_are_same_space against the gallery; a
+            # majority-space cut here drops same-space minority members.
+            grouped[cluster_key] = [self._to_domain_identity(model, cluster_id=cluster_key) for model in models]
         return grouped
+
+    async def list_identity_ids_moved_by_merge(self, tenant_id: str, merge_id: str) -> list[str]:
+        """Return identity ids this merge stamped, from the still-open transaction."""
+        tenant_uuid = _coerce_uuid(tenant_id)
+        merge_uuid = _coerce_uuid(merge_id)
+        if tenant_uuid is None or merge_uuid is None:
+            return []
+        stmt = select(MediaIdentity.id).where(
+            MediaIdentity.tenant_id == tenant_uuid,
+            MediaIdentity.moved_by_merge_id == merge_uuid,
+        )
+        result = await self._session.execute(stmt)
+        return [str(identity_id) for identity_id in result.scalars().all()]
 
     async def get_confirmed_labeled(self, tenant_id: str) -> list[IdentityCluster]:
         """Return confirmed clusters with human labels."""

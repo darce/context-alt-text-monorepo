@@ -7,7 +7,7 @@ The InsightFace name folds the OpenCV runtime into a space token so a
 ``cv2.warpAffine`` numeric move partitions FIR23-01 rather than silently
 re-baselining 512d vectors under a byte-identical id.
 
-Example model_id: ``insightface-buffalo_l+cv5.0.0.93@512d/l2/cosine``
+Example model_id: ``insightface-buffalo_l+cv5.0@512d/l2/cosine``
 """
 
 from __future__ import annotations
@@ -61,19 +61,33 @@ class EmbeddingModelManifest:
         return f"{self.framework}-{self.name}@{self.dimensions}d/{self.normalization}/{self.metric}"
 
 
+def _opencv_major_minor(version: str) -> str:
+    """Stable OpenCV space id: major.minor, not the live wheel patch string.
+
+    A token change is a FIR23-01 space migration and must not ride a silent
+    patch/rebuild bump of ``cv2.__version__`` (for example 5.0.0 → 5.0.0.93).
+    """
+    parts = [part for part in str(version).split(".") if part]
+    if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+        return f"{parts[0]}.{parts[1]}"
+    return str(version)
+
+
 def _insightface_space_token() -> str:
-    """OpenCV full version folded into InsightFace ``model_id`` (CVUP1-GR-03).
+    """OpenCV major.minor folded into InsightFace ``model_id`` (CVUP1-GR-03).
 
     buffalo_l alignment runs through ``cv2.warpAffine`` (InsightFace ``norm_crop``).
     That is the same numeric surface whose 4.13→5.0 move forced SFace golden
     regeneration; without this token the incumbent ``model_id`` stays
     byte-identical across the bump and clustering treats old/new 512d vectors
-    as co-spatial. Lazy import keeps the module importable when cv2 is absent
-    in narrow unit tests — those tests must not claim a deployed space id.
+    as co-spatial. Major.minor (not the full ``cv2.__version__``) is the
+    intended partition: a patch or wheel rebuild must not fragment the tenant.
+    Lazy import keeps the module importable when cv2 is absent in narrow unit
+    tests — those tests must not claim a deployed space id.
     """
     import cv2
 
-    return f"cv{cv2.__version__}"
+    return f"cv{_opencv_major_minor(cv2.__version__)}"
 
 
 def incumbent_embedding_model_manifest() -> EmbeddingModelManifest:

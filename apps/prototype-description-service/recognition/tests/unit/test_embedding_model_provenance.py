@@ -123,7 +123,11 @@ def test_incumbent_manifest_model_id_derives_from_fields() -> None:
     # (CVUP1-GR-03).
     import cv2
 
-    assert manifest.model_id == f"insightface-buffalo_l+cv{cv2.__version__}@512d/l2/cosine"
+    from recognition.application.embedding.manifest import _opencv_major_minor
+
+    assert manifest.model_id == (
+        f"insightface-buffalo_l+cv{_opencv_major_minor(cv2.__version__)}@512d/l2/cosine"
+    )
     # framework lives in the left segment, not after '@'
     assert not manifest.model_id.endswith("@insightface")
 

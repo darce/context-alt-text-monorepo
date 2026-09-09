@@ -117,6 +117,33 @@ class SuggestionRefreshService:
     def _build_identity(model: MediaIdentityModel) -> MediaIdentity:
         return media_identity_from_model(model)
 
+    async def _invalidate_cross_space_suggestion(
+        self,
+        suggestion: AssignmentSuggestion,
+        *,
+        identity_model: str | None,
+    ) -> None:
+        """Move a stale pending suggestion to REJECTED so the queue drains."""
+        logger.info(
+            "[suggestions] invalidate_cross_space suggestion_id=%s identity_id=%s "
+            "cluster_id=%s identity_model=%s reason=embedding_space_mismatch",
+            suggestion.id,
+            suggestion.identity_id,
+            suggestion.cluster_id,
+            identity_model,
+        )
+        try:
+            await self._repository.update_status(
+                self._tenant_id,
+                suggestion.id,
+                SuggestionStatus.REJECTED,
+            )
+        except ValueError:
+            logger.warning(
+                "[suggestions] stale cross-space suggestion disappeared before rejection suggestion_id=%s",
+                suggestion.id,
+            )
+
     async def _find_best_cluster_match(
         self,
         identity: MediaIdentity,
@@ -414,20 +441,16 @@ class SuggestionRefreshService:
         total = refreshed
 
         if total == 0 and self._cluster_repository is not None:
-            get_top_unlabeled = getattr(self._cluster_repository, "get_top_unlabeled", None)
-            if callable(get_top_unlabeled):
-                candidate_clusters = await get_top_unlabeled(
-                    self._tenant_id,
-                    limit=1000,
-                    min_identity_count=1,
-                )
-                surfaced = await self.surface_for_newly_labeled_cluster(
-                    cluster_id,
-                    candidate_cluster_ids=[
-                        candidate.id for candidate in candidate_clusters if getattr(candidate, "id", None)
-                    ],
-                )
-                total += surfaced
+            candidate_clusters = await self._cluster_repository.get_top_unlabeled(
+                self._tenant_id,
+                limit=1000,
+                min_identity_count=1,
+            )
+            surfaced = await self.surface_for_newly_labeled_cluster(
+                cluster_id,
+                candidate_cluster_ids=[candidate.id for candidate in candidate_clusters if candidate.id],
+            )
+            total += surfaced
 
         if total == 0:
             for identity_id in dict.fromkeys(identity_ids or []):
@@ -478,17 +501,10 @@ class SuggestionRefreshService:
                 if vec is not None
             ]
             if not same_space:
-                try:
-                    await self._repository.update_status(
-                        self._tenant_id,
-                        suggestion.id,
-                        SuggestionStatus.REJECTED,
-                    )
-                except ValueError:
-                    logger.warning(
-                        "[suggestions] stale cross-space suggestion disappeared before rejection suggestion_id=%s",
-                        suggestion.id,
-                    )
+                await self._invalidate_cross_space_suggestion(
+                    suggestion,
+                    identity_model=identity.embedding_model,
+                )
                 continue
             match = await self._find_best_cluster_match(
                 identity,

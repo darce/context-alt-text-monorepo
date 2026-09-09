@@ -142,7 +142,8 @@ def test_gpu_preflight_runs_once_when_opted_in(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     log = _log(tmp_path)
     assert log.count("--check-reaper") == 1
-    assert "/opt/acx-backend/prod/secrets/.env" in log
+    assert "/opt/acx-backend/prod/.env" in log
+    assert "/opt/acx-backend/prod/secrets/.env" not in log
     assert "/opt/acx-backend/demo/secrets/.env" in log
     assert log.count("docker-compose.demo.yml") >= 1
 

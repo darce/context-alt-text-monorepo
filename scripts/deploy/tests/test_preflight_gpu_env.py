@@ -1919,7 +1919,10 @@ def test_runbook_deploys_the_checksum_bound_artifact_not_newest_mtime(tmp_path: 
     fake_lifecycle = tmp_path / "scripts/deploy/recognition-service.sh"
     fake_lifecycle.parent.mkdir(parents=True)
     fake_lifecycle.write_text(
-        '#!/usr/bin/env bash\n[ "$1" = gpu-lifecycle ] || exit 99\n',
+        '#!/usr/bin/env bash\ncase "$1" in\n'
+        'gpu-lifecycle) exit 0 ;;\n'
+        'prepare-producer) [ "$#" = 2 ] && [ "$2" = prod ] && [ "${CONFIRM:-}" = PROMOTE ] ;;\n'
+        '*) exit 99 ;;\nesac\n',
         encoding="utf-8",
     )
     fake_lifecycle.chmod(0o700)
@@ -2009,7 +2012,10 @@ exit 0
     fake_lifecycle = tmp_path / "scripts/deploy/recognition-service.sh"
     fake_lifecycle.parent.mkdir(parents=True)
     fake_lifecycle.write_text(
-        '#!/usr/bin/env bash\n[ "$1" = gpu-lifecycle ] || exit 99\n',
+        '#!/usr/bin/env bash\ncase "$1" in\n'
+        'gpu-lifecycle) exit 0 ;;\n'
+        'prepare-producer) [ "$#" = 2 ] && [ "$2" = prod ] && [ "${CONFIRM:-}" = PROMOTE ] ;;\n'
+        '*) exit 99 ;;\nesac\n',
         encoding="utf-8",
     )
     fake_lifecycle.chmod(0o700)

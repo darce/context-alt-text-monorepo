@@ -28,6 +28,17 @@ describe('public guide entry', () => {
     expect(viteConfig()).toMatch(/guide:\s*path\.resolve\(__dirname,\s*'js\/guide\/main\.tsx'\)/);
   });
 
+  it('registers a dedicated Vite input for the public guide watch entry', () => {
+    expect(viteConfig()).toMatch(
+      /'guide-watch':\s*path\.resolve\(__dirname,\s*'js\/guide\/publicGuideWatch\.ts'\)/,
+    );
+  });
+
+  it('does not rely on an inline script in the public guide template', () => {
+    const template = readFileSync(resolve(__dirname, '../../../src/public/templates/public-guide.php'), 'utf8');
+    expect(template).not.toMatch(/<script(?![^>]*\bsrc=)/);
+  });
+
   it('hides the fallback, reads data-home-url, and mounts the public walkthrough', () => {
     document.body.innerHTML = `
       <main id="acx-public-guide" data-home-url="https://demo.example/" data-scope="recorded" data-example="bundled">

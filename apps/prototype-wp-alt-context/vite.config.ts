@@ -18,6 +18,7 @@ export default defineConfig(({ mode }) => ({
         admin: path.resolve(__dirname, 'js/admin/main.tsx'),
         'attachment-edit': path.resolve(__dirname, 'js/attachment-edit/main.tsx'),
         guide: path.resolve(__dirname, 'js/guide/main.tsx'),
+        'guide-watch': path.resolve(__dirname, 'js/guide/publicGuideWatch.ts'),
       },
     },
   },

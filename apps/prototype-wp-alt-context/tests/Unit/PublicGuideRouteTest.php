@@ -205,6 +205,7 @@ final class PublicGuideRouteTest extends TestCase
 
         $route->enqueue_assets();
         self::assertArrayNotHasKey('acx-public-guide', $GLOBALS['__ac_scripts']);
+        self::assertArrayNotHasKey('acx-public-guide-watch', $GLOBALS['__ac_scripts']);
     }
 
     /**
@@ -335,8 +336,7 @@ final class PublicGuideRouteTest extends TestCase
         self::assertStringContainsString('role="alert"', $html);
         self::assertStringContainsString('hidden', $html);
         self::assertStringContainsString(self::FALLBACK_COPY, $html);
-        self::assertStringContainsString("addEventListener('error'", $html);
-        self::assertStringContainsString('setTimeout', $html);
+        self::assertDoesNotMatchRegularExpression('/<script(?![^>]*\\bsrc=)/', $html);
         self::assertStringContainsString('rel="canonical"', $html);
         self::assertStringContainsString('href="http://example.test/guide/"', $html);
     }
@@ -354,9 +354,16 @@ final class PublicGuideRouteTest extends TestCase
                 'http://example.test/assets/guide-b.css',
             ],
         ];
+        $watchAssets = [
+            'js' => 'http://example.test/assets/guide-watch.js',
+            'css' => [],
+        ];
         $route = new PublicGuideRoute(
-            static function (string $entry) use (&$seen, $assets): ?array {
+            static function (string $entry) use (&$seen, $assets, $watchAssets): ?array {
                 $seen[] = $entry;
+                if (PublicGuideRoute::WATCH_ENTRY_POINT === $entry) {
+                    return $watchAssets;
+                }
 
                 return $assets;
             }
@@ -365,7 +372,14 @@ final class PublicGuideRouteTest extends TestCase
         $route->template_include('/theme/page.php');
         do_action('wp_enqueue_scripts');
 
-        self::assertSame(['js/guide/main.tsx'], $seen);
+        self::assertSame(
+            [PublicGuideRoute::WATCH_ENTRY_POINT, PublicGuideRoute::ENTRY_POINT],
+            $seen
+        );
+        self::assertSame(
+            [PublicGuideRoute::WATCH_SCRIPT_HANDLE, PublicGuideRoute::SCRIPT_HANDLE],
+            array_keys($GLOBALS['__ac_scripts'])
+        );
         self::assertArrayHasKey('acx-public-guide', $GLOBALS['__ac_scripts']);
         self::assertSame(
             'http://example.test/assets/guide.js',
@@ -373,6 +387,13 @@ final class PublicGuideRouteTest extends TestCase
         );
         self::assertTrue($GLOBALS['__ac_scripts']['acx-public-guide']['in_footer']);
         self::assertSame('module', $GLOBALS['__ac_scripts']['acx-public-guide']['data']['type']);
+        self::assertArrayHasKey('acx-public-guide-watch', $GLOBALS['__ac_scripts']);
+        self::assertSame(
+            'http://example.test/assets/guide-watch.js',
+            $GLOBALS['__ac_scripts']['acx-public-guide-watch']['src']
+        );
+        self::assertTrue($GLOBALS['__ac_scripts']['acx-public-guide-watch']['in_footer']);
+        self::assertSame('module', $GLOBALS['__ac_scripts']['acx-public-guide-watch']['data']['type']);
         self::assertSame(
             'http://example.test/assets/guide-a.css',
             $GLOBALS['__ac_styles']['acx-public-guide-0']['src']
@@ -381,6 +402,33 @@ final class PublicGuideRouteTest extends TestCase
             'http://example.test/assets/guide-b.css',
             $GLOBALS['__ac_styles']['acx-public-guide-1']['src']
         );
+    }
+
+    public function testWatchScriptEnqueuesWhenGuideBundleIsMissing(): void
+    {
+        $this->setOption('acx_public_guide_enabled', true);
+        $this->simulateRewriteMatch();
+
+        $route = new PublicGuideRoute(
+            static function (string $entry): ?array {
+                if (PublicGuideRoute::WATCH_ENTRY_POINT === $entry) {
+                    return [
+                        'js' => 'http://example.test/assets/guide-watch.js',
+                        'css' => [],
+                    ];
+                }
+
+                return null;
+            }
+        );
+        $route->init();
+        $route->template_include('/theme/page.php');
+        do_action('wp_enqueue_scripts');
+
+        self::assertArrayHasKey('acx-public-guide-watch', $GLOBALS['__ac_scripts']);
+        self::assertArrayNotHasKey('acx-public-guide', $GLOBALS['__ac_scripts']);
+        self::assertSame('module', $GLOBALS['__ac_scripts']['acx-public-guide-watch']['data']['type']);
+        self::assertTrue($GLOBALS['__ac_scripts']['acx-public-guide-watch']['in_footer']);
     }
 
     public function testRewriteUpgradeFlushesOnceWhenVersionDiverges(): void

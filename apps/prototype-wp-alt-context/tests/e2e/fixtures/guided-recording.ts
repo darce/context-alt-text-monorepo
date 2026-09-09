@@ -86,7 +86,10 @@ export const renderTranscript = (cues: readonly GuidedRecordingCue[]): string =>
   [...cues]
     .filter((cue) => cue.text.trim().length > 0)
     .sort((a, b) => a.started_at_ms - b.started_at_ms)
-    .map((cue) => `[${formatVttTimestamp(cue.started_at_ms).slice(3, 8)}] ${cue.text.trim()}`)
+    .map((cue) => {
+      const text = cue.text.replace(/\r?\n/g, ' ').trim();
+      return `[${formatVttTimestamp(cue.started_at_ms).slice(3, 8)}] ${text}`;
+    })
     .join('\n')
     .concat('\n');
 

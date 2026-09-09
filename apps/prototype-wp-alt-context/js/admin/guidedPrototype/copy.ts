@@ -9,8 +9,14 @@ export const GUIDED_COPY = {
   "page.eyebrow": "AltContext guided demo",
   "page.intro": "You are editing a photo in a festival gallery. Review two saved name suggestions, edit the alt text, then apply it to a demo copy. You can leave either person unnamed.",
   "page.scope": "This walkthrough uses recorded face suggestions and sample drafts. Your choices change only the demo copy in this tab and reset when you reload.",
+  "scope.public": "Try the review workflow using a recorded example. Your changes affect only the demo copy in this tab.",
   "page.live_scope": "An optional live test at the end runs separately on the server.",
   "page.start": "Start the walkthrough",
+  "entry.watch": "Watch the recording",
+  "entry.read_case_study": "Read the case study",
+  "nav.leave": "Leave the walkthrough",
+  "nav.home": "Home",
+  "nav.case_study": "Case study",
   "page.reset": "Reset demo",
   "page.case_study": "Read the AltContext case study",
   "guide.label": "Demo steps",
@@ -115,6 +121,8 @@ export const GUIDED_COPY = {
   "notes.apply": "Drafting and applying are separate actions. The preview shows exactly what will change, and Undo restores the previous demo alt text.",
   "notes.scope": "This prototype demonstrates the interaction. It does not establish recognition accuracy, user trust, or full accessibility conformance.",
 } as const;
+
+export const CASE_STUDY_URL = 'https://darce.github.io/';
 
 export type GuidedCopyKey = keyof typeof GUIDED_COPY;
 

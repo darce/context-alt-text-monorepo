@@ -8,6 +8,13 @@ recover_interrupted_cutover and recover_persisted_cutover `|| return 0` treat
 timeout/auth/transport as confirmed absence (RLSE-03, DATA-13, TEST-15, AGT-06).
 TEST-15: raw SSH/run_with_deadline rc 1 with no PRESENT/ABSENT token must not
 be classified as confirmed absence (inject transport_one).
+MCP10415 / RLSE-03 / RES-03: abort must not treat systemctl stop rc 5 as
+confirmed not-found. systemd 255.4-1ubuntu8.14 `systemctl show UNIT
+--property=LoadState --property=ActiveState --property=SubState --no-pager`
+returns LoadState=not-found ActiveState=inactive SubState=dead (exit 0).
+Loaded/active + stop rc 5 must refuse unit removal and compose cleanup.
+State query failure/empty/malformed/unknown must not permit failed-stop
+cleanup. TEST-15.
 
 Sandbox isolation: every mutation is under pytest tmp_path. `/etc/systemd/system`
 is rewritten to a tmp unit dir. sudo/systemctl/docker/rm are fail-closed shims.
@@ -36,6 +43,7 @@ def _install_fail_closed_shims(
     *,
     fail_at: str | None = None,
     sudo_fail: bool = False,
+    show_mode: str | None = None,
 ) -> Path:
     """Install sudo/systemctl/docker shims that cannot touch paths outside tmp_path."""
     bin_dir = tmp_path / "bin"
@@ -95,14 +103,17 @@ def _install_fail_closed_shims(
         f"state='{state}'\n"
         f"records='{records}'\n"
         f"fail_at='{fail_at or ''}'\n"
+        f"show_mode='{show_mode or ''}'\n"
         "cmd=\"${1:-}\"; shift || true\n"
+        "printf 'systemctl %s %s\\n' \"$cmd\" \"$*\" >>\"$records\"\n"
         "unit=\"${1:-}\"\n"
         "unit=\"${unit#\\'}\"\n"
         "unit=\"${unit%\\'}\"\n"
-        "printf 'systemctl %s %s\\n' \"$cmd\" \"$unit\" >>\"$records\"\n"
+        "unit=\"${unit%.service}\"\n"
         "case \"$cmd\" in\n"
         "  stop)\n"
         "    if [[ \"$fail_at\" == stop ]]; then echo 'stop failed' >&2; exit 1; fi\n"
+        "    if [[ \"$fail_at\" == stop-5 ]]; then echo \"Failed to stop $unit.service.\" >&2; exit 5; fi\n"
         "    if [[ ! -f \"$state/$unit\" ]]; then echo \"Unit $unit not loaded.\" >&2; exit 5; fi\n"
         "    printf 'inactive\\n' >\"$state/$unit\"\n"
         "    exit 0\n"
@@ -118,6 +129,46 @@ def _install_fail_closed_shims(
         "  daemon-reload)\n"
         "    if [[ \"$fail_at\" == daemon-reload ]]; then echo 'reload failed' >&2; exit 1; fi\n"
         "    printf 'reloaded\\n' >>\"$records\"\n"
+        "    exit 0\n"
+        "    ;;\n"
+        "  show)\n"
+        "    unit=\"\"; have_load=0; have_active=0; have_sub=0; have_pager=0\n"
+        "    for arg in \"$@\"; do\n"
+        "      arg=\"${arg#\\'}\"; arg=\"${arg%\\'}\"\n"
+        "      case \"$arg\" in\n"
+        "        --no-pager) have_pager=1 ;;\n"
+        "        --property=LoadState) have_load=1 ;;\n"
+        "        --property=ActiveState) have_active=1 ;;\n"
+        "        --property=SubState) have_sub=1 ;;\n"
+        "        --property=*|--*)\n"
+        "          echo \"systemctl: refused unsupported show flag: $arg\" >&2\n"
+        "          exit 2\n"
+        "          ;;\n"
+        "        *) unit=\"$arg\" ;;\n"
+        "      esac\n"
+        "    done\n"
+        "    unit=\"${unit%.service}\"\n"
+        "    if [[ \"$have_pager\" != 1 || \"$have_load\" != 1 || \"$have_active\" != 1 || \"$have_sub\" != 1 || -z \"$unit\" ]]; then\n"
+        "      echo 'systemctl: refused show without LoadState,ActiveState,SubState and --no-pager' >&2\n"
+        "      exit 2\n"
+        "    fi\n"
+        "    if [[ \"$show_mode\" == fail ]]; then echo 'Failed to get properties' >&2; exit 1; fi\n"
+        "    if [[ \"$show_mode\" == empty ]]; then exit 0; fi\n"
+        "    if [[ \"$show_mode\" == malformed ]]; then printf 'not-a-property-listing\\n'; exit 0; fi\n"
+        "    if [[ \"$show_mode\" == unknown ]]; then\n"
+        "      printf 'LoadState=unexpected\\nActiveState=unexpected\\nSubState=unexpected\\n'\n"
+        "      exit 0\n"
+        "    fi\n"
+        "    if [[ ! -f \"$state/$unit\" ]]; then\n"
+        "      printf 'LoadState=not-found\\nActiveState=inactive\\nSubState=dead\\n'\n"
+        "      exit 0\n"
+        "    fi\n"
+        "    active_state=\"$(cat \"$state/$unit\")\"\n"
+        "    if [[ \"$active_state\" == active ]]; then\n"
+        "      printf 'LoadState=loaded\\nActiveState=active\\nSubState=running\\n'\n"
+        "    else\n"
+        "      printf 'LoadState=loaded\\nActiveState=inactive\\nSubState=dead\\n'\n"
+        "    fi\n"
         "    exit 0\n"
         "    ;;\n"
         "  *)\n"
@@ -173,11 +224,12 @@ def _run_abort_payload(
     *,
     unit_state: str,
     fail_at: str | None = None,
+    show_mode: str | None = None,
     env: str = "dev",
 ) -> tuple[subprocess.CompletedProcess[str], str]:
     """Execute the captured remote abort payload with fail-closed local shims."""
     _sandbox_abort_payload(tmp_path, env)
-    bin_dir = _install_fail_closed_shims(tmp_path, fail_at=fail_at)
+    bin_dir = _install_fail_closed_shims(tmp_path, fail_at=fail_at, show_mode=show_mode)
     state = tmp_path / "unit-state"
     unit = f"acx-{env}-next"
     if unit_state in ("active", "inactive"):
@@ -231,6 +283,83 @@ def test_abort_payload_propagates_genuine_cleanup_failure(tmp_path: Path, fail_a
     result, logged = _run_abort_payload(tmp_path, unit_state="active", fail_at=fail_at)
     combined = result.stdout + result.stderr + logged
     assert result.returncode != 0, combined
+
+
+def _assert_failed_stop_did_not_cleanup(
+    tmp_path: Path, result: subprocess.CompletedProcess[str], logged: str
+) -> None:
+    combined = result.stdout + result.stderr + logged
+    assert result.returncode != 0, combined
+    assert (tmp_path / "systemd" / "acx-dev-next.service").exists(), combined
+    assert "compose" not in logged, combined
+
+
+def test_abort_refuses_cleanup_when_loaded_active_stop_returns_5(tmp_path: Path) -> None:
+    """Stop rc 5 on a loaded/active unit is not confirmed not-found (MCP10415)."""
+    result, logged = _run_abort_payload(tmp_path, unit_state="active", fail_at="stop-5")
+    _assert_failed_stop_did_not_cleanup(tmp_path, result, logged)
+
+
+def test_abort_cleans_up_when_show_reports_not_found(tmp_path: Path) -> None:
+    """Confirmed LoadState=not-found may clean up even if stop exits 5."""
+    result, logged = _run_abort_payload(tmp_path, unit_state="absent", fail_at="stop-5")
+    combined = result.stdout + result.stderr + logged
+    assert result.returncode == 0, combined
+    assert "compose" in logged and "rm" in logged
+
+
+@pytest.mark.parametrize("show_mode", ["fail", "empty", "malformed", "unknown"])
+def test_abort_refuses_cleanup_when_state_query_is_unconfirmed(
+    tmp_path: Path, show_mode: str
+) -> None:
+    result, logged = _run_abort_payload(
+        tmp_path, unit_state="active", fail_at="stop-5", show_mode=show_mode
+    )
+    _assert_failed_stop_did_not_cleanup(tmp_path, result, logged)
+
+
+def test_systemctl_show_emits_vm_not_found_shape(tmp_path: Path) -> None:
+    bin_dir = _install_fail_closed_shims(tmp_path)
+    env_vars = os.environ.copy()
+    env_vars["PATH"] = f"{bin_dir}:{env_vars.get('PATH', '')}"
+    result = subprocess.run(
+        [
+            "systemctl",
+            "show",
+            "acx-prod-next.service",
+            "--property=LoadState",
+            "--property=ActiveState",
+            "--property=SubState",
+            "--no-pager",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env_vars,
+        cwd=tmp_path,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.splitlines() == [
+        "LoadState=not-found",
+        "ActiveState=inactive",
+        "SubState=dead",
+    ]
+
+
+def test_systemctl_show_refuses_weaker_query(tmp_path: Path) -> None:
+    bin_dir = _install_fail_closed_shims(tmp_path)
+    env_vars = os.environ.copy()
+    env_vars["PATH"] = f"{bin_dir}:{env_vars.get('PATH', '')}"
+    result = subprocess.run(
+        ["systemctl", "show", "acx-prod-next.service"],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env_vars,
+        cwd=tmp_path,
+    )
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "refused" in result.stderr
 
 
 def test_sudo_shim_rejects_outside_paths_without_mutation(tmp_path: Path) -> None:

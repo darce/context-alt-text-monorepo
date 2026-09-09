@@ -211,6 +211,61 @@ async def test_surface_uses_representative_space_not_get_by_id() -> None:
 
 
 @pytest.mark.asyncio
+async def test_surface_rebuilds_gallery_instead_of_using_stale_precomputed_vectors() -> None:
+    """Precomputed numeric arrays must not be cosined when current reps differ.
+
+    Background surfacing preloads representatives_by_cluster in an earlier
+    session. A stale/foreign cache can numerically match a current-space
+    identity even though the live representatives are orthogonal.
+    """
+    tenant_id = str(uuid4())
+    labeled_id = str(uuid4())
+    unlabeled_id = str(uuid4())
+    space = "space-a"
+    labeled_cluster = IdentityCluster(
+        tenant_id=tenant_id,
+        is_labeled=True,
+        identity_count=1,
+        id=labeled_id,
+        label="Ada",
+        user_confirmed=True,
+        representatives=None,
+    )
+    current_rep = ClusterRepresentative(
+        id="r-current",
+        cluster_id=labeled_id,
+        identity_id="i-labeled",
+        embedding=_normalize(np.array([0.0, 1.0, 0.0])),
+        created_at=datetime.now(tz=UTC),
+        embedding_model=space,
+    )
+    same = _stamped_identity("identity-same", tenant_id, space)
+    repo = _SurfaceRepoStub(
+        identities_by_cluster={unlabeled_id: [same]},
+        labeled_cluster=labeled_cluster,
+        labeled_reps=[current_rep],
+    )
+    suggestion_repo = AsyncMock()
+    service = SuggestionRefreshService(
+        repository=suggestion_repo,
+        tenant_id=tenant_id,
+        cluster_repository=repo,
+        session=object(),
+        settings=ClusteringSettings(similarity_threshold=0.5, suggestion_floor=0.5, suggestion_ceiling=1.1),
+    )
+
+    created = await service.surface_for_newly_labeled_cluster(
+        labeled_id,
+        cluster_label="Ada",
+        candidate_cluster_ids=[unlabeled_id],
+        representatives_by_cluster={labeled_id: [same.embedding]},
+    )
+
+    assert created == 0
+    suggestion_repo.upsert_by_identity_cluster.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_refresh_rejects_pending_suggestion_with_foreign_space() -> None:
     tenant_id = str(uuid4())
     cluster_id = str(uuid4())

@@ -238,6 +238,8 @@ async def post_merge_retry_matching(
         )
         if gallery_model is not None:
             stmt = stmt.where(MediaIdentityModel.embedding_model == gallery_model)
+        else:
+            stmt = stmt.where(MediaIdentityModel.embedding_model.is_(None))
         result = await session.execute(stmt)
         unclustered_models = result.scalars().all()
         additional_accepted, additional_suggested, additional_evaluated = await _retry_unclustered_models(

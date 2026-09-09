@@ -125,7 +125,7 @@ def test_redirect_to_rfc1918_is_refused(tmp_path: Path, monkeypatch: pytest.Monk
     url_map.write_text('{"remote.jpg": "https://media.example.com/remote.jpg"}', encoding="utf-8")
     seen: list[str] = []
 
-    def fake_get(host: str, port: int, path: str, pinned_ip: str):
+    def fake_get(host: str, port: int, path: str, pinned_ip: str, **_kwargs):
         seen.append(pinned_ip)
         if pinned_ip == "8.8.8.8":
             return 302, {"location": "https://evil.example/meta"}, b""
@@ -170,9 +170,19 @@ def test_https_get_pinned_connects_to_pinned_ip(monkeypatch: pytest.MonkeyPatch)
         def getresponse(self):
             class _Resp:
                 status = 200
+                _body = b"ok"
 
-                def read(self) -> bytes:
-                    return b"ok"
+                def read(self, amt: int | None = None) -> bytes:
+                    data, self._body = self._body, b""
+                    return data
+
+                def read1(self, n: int = -1) -> bytes:
+                    if not self._body:
+                        return b""
+                    if n is None or n < 0:
+                        return self.read()
+                    chunk, self._body = self._body[:n], self._body[n:]
+                    return chunk
 
                 def getheaders(self) -> list:
                     return []
@@ -228,8 +238,17 @@ def test_redirect_second_hop_connects_to_re_pinned_ip(tmp_path: Path, monkeypatc
                         self._headers = []
                         self._body = _JPEG
 
-                def read(self) -> bytes:
-                    return self._body
+                def read(self, amt: int | None = None) -> bytes:
+                    data, self._body = self._body, b""
+                    return data
+
+                def read1(self, n: int = -1) -> bytes:
+                    if not self._body:
+                        return b""
+                    if n is None or n < 0:
+                        return self.read()
+                    chunk, self._body = self._body[:n], self._body[n:]
+                    return chunk
 
                 def getheaders(self) -> list:
                     return self._headers
@@ -266,7 +285,7 @@ def test_protocol_relative_redirect_is_re_pinned(tmp_path: Path, monkeypatch: py
     url_map.write_text('{"remote.jpg": "https://media.example.com/remote.jpg"}', encoding="utf-8")
     seen_hosts: list[str] = []
 
-    def fake_get(host: str, port: int, path: str, pinned_ip: str):
+    def fake_get(host: str, port: int, path: str, pinned_ip: str, **_kwargs):
         seen_hosts.append(host)
         if host == "media.example.com":
             return 302, {"location": "//cdn.example.com/meta"}, b""
@@ -292,7 +311,7 @@ def test_http_redirect_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     url_map = tmp_path / "urls.json"
     url_map.write_text('{"remote.jpg": "https://media.example.com/remote.jpg"}', encoding="utf-8")
 
-    def fake_get(host: str, port: int, path: str, pinned_ip: str):
+    def fake_get(host: str, port: int, path: str, pinned_ip: str, **_kwargs):
         return 302, {"location": "http://evil.example/x"}, b""
 
     def resolver(_host: str) -> list[str]:
@@ -324,7 +343,7 @@ def test_multi_a_pin_is_deterministic(tmp_path: Path, monkeypatch: pytest.Monkey
     def reverse_pin(host: str, addresses: set[str]) -> set[str]:
         return ReverseIterSet(addresses)
 
-    def fake_get(host: str, port: int, path: str, pinned_ip: str):
+    def fake_get(host: str, port: int, path: str, pinned_ip: str, **_kwargs):
         pinned_seen.append(pinned_ip)
         return 200, {}, _JPEG
 
@@ -359,7 +378,7 @@ def test_pin_cache_first_wins_when_resolver_answer_changes(tmp_path: Path, monke
     pinned_seen: list[str] = []
     n_resolve = 0
 
-    def fake_get(host: str, port: int, path: str, pinned_ip: str):
+    def fake_get(host: str, port: int, path: str, pinned_ip: str, **_kwargs):
         pinned_seen.append(pinned_ip)
         return 200, {}, _JPEG
 

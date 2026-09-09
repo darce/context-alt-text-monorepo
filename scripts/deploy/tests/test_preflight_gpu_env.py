@@ -1743,6 +1743,12 @@ def test_runbook_requires_reaper_fail_fast_and_checksum_bound_reviewed_artifact(
     assert bash_blocks
     assert all(block.startswith("set -euo pipefail\n") for block in bash_blocks)
     assert "preflight-gpu-env.sh --check-reaper" in runbook
+    assert "GPU_SNAPSHOT_ENV=prod make check-gpu-snapshots-live" in runbook
+    deploy_block = runbook.split("## 3. Deploy in producer-then-consumer order", 1)[1]
+    deploy_block = deploy_block.split("```bash\n", 1)[1].split("```", 1)[0]
+    assert deploy_block.index("scripts/deploy/recognition-service.sh gpu-lifecycle") < deploy_block.index(
+        "GPU_SNAPSHOT_ENV=prod make check-gpu-snapshots-live"
+    ) < deploy_block.index("ACX_DEMO_GPU_PREFLIGHT=1")
     assert "MANUAL STOP fallback" in runbook
     assert "ls -t dist/alt-context-*.zip" not in runbook
     assert "PLUGIN_ZIP_SHA256=replace-with-reviewed-sha256" in runbook

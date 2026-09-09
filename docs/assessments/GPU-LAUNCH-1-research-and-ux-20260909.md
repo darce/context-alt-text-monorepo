@@ -1,13 +1,15 @@
 # GPU-LAUNCH-1 — Qwen30B entity-aware burst descriptions: launch evidence and UX inventory
 
 **Date:** 2026-09-09
-**Task / lane:** `GPU-LAUNCH-1` / `launch-research`
-**Status:** evidence-led assessment. **Not a deployment approval. Not a claim that demo.altcontext.com currently returns GPU-named captions.**
+**Task / lane:** `GPU-LAUNCH-1` / original `launch-research`; this correction pass is `gpu-launch-public-preview`
+**Status:** evidence-led assessment. **Not a deployment approval. Not a claim that demo.altcontext.com currently returns GPU-named captions.** Public `description_tier` labels are OBSERVED-FEATURE on this branch (preview implementation complete; GREEN 2105 family); **deployment still unverified.**
 **Audience:** orchestrator + later eval/ops slices. Live OCI, secrets, and production mutation are out of scope.
 
 This document answers one product question: what evidence is required before a visitor at `demo.altcontext.com` can trigger a burst GPU description from Qwen3-VL-30B-A3B that correctly incorporates roster named entities, and what is missing today.
 
-Canon cited at use time: [heuristics-canon](https://github.com/darce/heuristics-canon) `GRPH-01/06/09/31/32/33/34`, `RES-02/03`, `DATA-13`, `API-02/04`, `TEST-15`, `RLSE-03`, `AGT-06`, plus evidence-before-commitment, DDIA, Latency, Release It!, PRINCIPLES.
+**2026-09-09 `gpu-launch-public-preview` correction:** Sections 5/6/8/9 and ASCII were stale versus SSOT `apps/prototype-wp-alt-context/docs/ux-maps/public-demo-describe.{uxmap.json,md,notes.md}`. Existing `pytest scripts/test_vlm3_gpu_bakeoff_artifacts.py` is **runner-admission smoke**, not factual proof of launch claims. Official ux-map schema / critique / renderer are **not** passes. Docs-only; no schema, validator, product, lock, or runner-policy edits.
+
+Canon cited at use time: [heuristics-canon](https://github.com/darce/heuristics-canon) stable IDs `TEST-15`, `RES-02/03`, `DATA-13`, `API-02/04`, `RLSE-03`, `GRPH-31–34` (also `GRPH-01/06/09`, `AGT-06`), plus evidence-before-commitment, [DDIA](https://dataintensive.net/), Latency, Release It!, PRINCIPLES. FIR v11 (2026-09-04) takes precedence over conflicting historical FIR sections; no new training in this pass.
 
 ---
 
@@ -25,7 +27,8 @@ Degradation disclosures [GRPH-01] [AGT-06]:
 - **Graph MCP / `cli search_graph` unavailable.** Names-to-caption and demo-trigger traces used exact source files named by FIR v11, UX maps, and GPUOPS-1. No full-repo scan. Coverage of unopened files is not claimed.
 - **No production probe.** No HTTPS describe, no OCI start/stop, no secrets read. Live image `sha256:b88a09d` and “stale UID 10001 GID 999” remain prior-art until an operator evidence bundle records them.
 - **Handoff MCP Python API not importable** in this sandbox (`workbay_handoff_mcp` missing). Decision IDs from the brief are cited as dispatcher text, not re-queried rows.
-- **Git history is stripped** (sandbox `HEAD` has no parent). `uv.lock` was restored from the coordinator reverse-delta (`ef9f..bc`) to blob `3547d91088c0d85e26505b67a08029b47e376441`. Not restored via `HEAD^` / `git show main:uv.lock`. No `uv lock` regeneration.
+- **Git history is stripped** (sandbox `HEAD` has no parent). `uv.lock` is **present**. This pass measured `git hash-object uv.lock` = `3547d91088c0d85e26505b67a08029b47e376441` and SHA-256 `20cf024791b227f025b7adf2f3c185c566ff64bee5354933b1c2259548533a58`. Restoration path is **uncertain**: stripped history cannot confirm `HEAD^`, `git show main:uv.lock`, or a coordinator reverse-delta (`ef9f..bc`). Do not claim the lockfile is both “restored” and “not restored.” No `uv lock` regeneration and no lock/dependency edits in this pass.
+- **Lane pytest is runner-admission smoke, not factual proof [TEST-15].** `python3 -m pytest scripts/test_vlm3_gpu_bakeoff_artifacts.py -q -p no:cacheprovider` only checks that the VLM-3 candidate JSON is parseable and that placeholders stay `kind=pending_report`. A green run does **not** validate caption quality, demo.altcontext.com, `description_tier` deployment, or any other claim in this file. Factual SSOT comparison against the public UX map, plus `git diff --check`, are the doc-validation steps.
 
 FIR HTML was read in full: `benchmarks/reports/fir-embeddings-dims-detectors-qa-20260723.html` **219586 bytes**, SHA-256 `e13cda3a5d8c6bc8dc4732d5128a9ef466e95adad220069e5b25fad32366895f`. Title is **v11 · 2026-09-04**; the July filename is retained. Linked JSON/manifest/run files were hashed; contents used where they bear on named descriptions.
 
@@ -225,19 +228,28 @@ Browser
 | Guided “Describe it live” | `POST acx/v1/recognition/describe/runs` `{ media_ids: [id] }` | Admin; gated on face decisions + `acx_guided_live_media_id` |
 | Workbench bulk | `POST describe/run` | Authenticated; cost CTA |
 
-Worker GPU wait: `describe_run_worker.py:_wait_for_gpu_ready` — bounded health poll, cancel-aware, remaining-deadline (`RES-02`). Default warmup **510 s** (`ACX_GPU_WARMUP_TIMEOUT_SECONDS`); generation **180 s**.
+Worker GPU wait: `describe_run_worker.py:_wait_for_gpu_ready` — bounded health poll, cancel-aware, remaining-deadline ([RES-02](https://github.com/darce/heuristics-canon)). Defaults: warmup **510 s** (`DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS` / `ACX_GPU_WARMUP_TIMEOUT_SECONDS`); generation **180 s** (`DEFAULT_GENERATION_TIMEOUT_SECONDS` / `ACX_DESCRIPTION_TIMEOUT_SECONDS`). These are **timeout maxima**, not measured durations. This pass did not time a live cold start.
 
-**Deadline mismatch (measured in source, not live):**
+**Deadline contract (source, not live):**
 
-| Client | Wait ceiling | Server warmup + inference |
+| Client | Wait ceiling | Server timeout maxima |
 | --- | --- | --- |
-| Public demo JS | **120 s** (`PUBLIC_DEMO_CLIENT_DEADLINE_CEILING_SECONDS`) | 510 + 180 = 690 s |
-| Guided live | 510 s cold / 180 s if submit reports GPU ready | same |
-| UX-map `public-demo-describe.md` | claims 510+180 | **docs disagree with JS** |
+| Public demo JS | **120 s** (`PUBLIC_DEMO_CLIENT_DEADLINE_CEILING_SECONDS`) — **keep this ceiling** | warmup 510 + generation 180 = 690 s **maxima**, not a measured cold-start |
+| Guided live | 510 s cold / 180 s if submit reports GPU ready | same maxima |
+| SSOT UX map `apps/prototype-wp-alt-context/docs/ux-maps/public-demo-describe.md` | 120 s poll ceiling; do not raise | 510+180 named as timeout maxima |
+| Older inventory `docs/ux-maps/public-demo-describe.md` | still describes polling to the server deadline and a single “Description complete.” | **stale vs JS and vs the apps map**; not SSOT for this correction |
 
-A cold GPU burst **cannot** complete inside the public 120 s poll. The public client then tells the visitor to wait and refresh; it does **not** cancel backend work (comment in the UX map). That is a duplicate-spend and UX-honesty risk [RES-03] [COST-04].
+Do **not** claim a cold GPU burst categorically cannot finish inside 120 s. 510+180 are fail-closed caps ([RES-02](https://github.com/darce/heuristics-canon)); live warmup+inference duration is unmeasured here. A 120 s client stop re-enables the form and keeps the in-memory idempotency key; `POLL_TIMEOUT_MESSAGE` currently tells the visitor to refresh, which drops that key. Backend work is not cancelled. PROPOSED follow-up is same-run resume via the existing inflight owner plus that idempotency key only — no second paid dispatch, no authorization weakening for terminal-run reads ([API-02](https://github.com/darce/heuristics-canon), [RLSE-03](https://github.com/darce/heuristics-canon), Release It! bulkhead). Do not raise the 120 s ceiling.
 
-`tier` is the only result proof: `final_gpu` vs `provisional_cpu` (`describeApi.ts:DESCRIBE_RESULT_TIER`). `gpu_state` is advisory. Public `statusPresentation` maps `complete` → “Description complete.” **It does not mention tier.** A CPU fallback can be shown as success [HAI-12].
+Public completed labels come from **`description_tier`**, never from `gpu_state` ([DATA-13](https://github.com/darce/heuristics-canon)). Envelope `gpu_state` is unused telemetry. OBSERVED-FEATURE on this branch (`demo-describe.js:statusPresentation`); **not deployed**:
+
+| `description_tier` | Completed status copy |
+| --- | --- |
+| `final_gpu` | GPU description complete. |
+| `provisional_cpu` | CPU fallback draft (not GPU final). |
+| `null` / missing legacy | Description complete, processing tier unavailable. |
+
+Workbench `describeApi.ts:DESCRIBE_RESULT_TIER` remains a separate admin surface ([GRPH-31](https://github.com/darce/heuristics-canon)–[GRPH-34](https://github.com/darce/heuristics-canon)). Production is deployed; these public feature changes have not been deployed. Do not treat branch labels as live demo.altcontext.com proof ([RLSE-03](https://github.com/darce/heuristics-canon) [TEST-15](https://github.com/darce/heuristics-canon)).
 
 ---
 
@@ -245,23 +257,29 @@ A cold GPU burst **cannot** complete inside the public 120 s poll. The public cl
 
 | Map | Path | Role |
 | --- | --- | --- |
-| Public demo describe | `docs/ux-maps/public-demo-describe.md` | Anonymous curated picker |
+| Public demo describe (**SSOT for this correction**) | `apps/prototype-wp-alt-context/docs/ux-maps/public-demo-describe.uxmap.json` + `.md` + `.notes.md` | Anonymous curated picker; typed `description_tier` labels |
+| Older public inventory (stale vs JS) | `docs/ux-maps/public-demo-describe.md` | Still shows a single “Description complete.” and server-deadline polling |
 | Guided live description | `docs/ux-maps/guided-prototype-live-description.md` | Additive live run on a saved draft |
-| Describe GPU tier | `apps/prototype-wp-alt-context/docs/ux-maps/describe-gpu-tier.md` + `.notes.md` | Workbench bulk + dashboard provenance |
+| Describe GPU tier | `apps/prototype-wp-alt-context/docs/ux-maps/describe-gpu-tier.md` + `.notes.md` | Workbench bulk + dashboard provenance — do not graft onto public ([GRPH-31](https://github.com/darce/heuristics-canon)–[GRPH-34](https://github.com/darce/heuristics-canon)) |
 | GPU operator control | `apps/prototype-wp-alt-context/docs/ux-maps/gpu-operator-control.md` | Proposed start/stop/auto (GPUOPS) |
 | Guided QM ASCII | `docs/assessments/current/demo/altcontext_guided_demo_qm_v1/ascii-screens.md` | Teaching flow; live run is optional last step |
 
-**Observed UI** = states implemented in JS/PHP/TS named above.
-**Proposed** = UX-map frames not proven live, or operator GPU card.
+**OBSERVED-UI / OBSERVED-FEATURE** = states implemented in JS/PHP on this branch (not deployed).
+**OBSERVED-PRODUCTION** = public demo is deployed; these feature changes have **not** been deployed.
+**Proposed** = refresh-safe same-run resume (owner + idempotency only); not implemented.
 
-### 6.1 Required states — public demo (observed)
+Official ux-map schema / critique / renderer are **not** passes. Critique 10316 ran the 8-rule pack via Pydantic `model_validate(extra=allow)` and retained 4 local extras; official strict `extra=forbid` still fails those extras. `workbay_canvas_mcp` renderer is absent (`OptionalRendererUnavailable`). Consumer TypeScript extra=forbid is a local gate only. Document follow-up; **no schema, validator, or product edits in this pass.**
 
-Source: `class-public-demo-shortcode.php` + `js/public/demo-describe.js`.
+### 6.1 Required states — public demo (OBSERVED-FEATURE on this branch; not deployed)
+
+Source: `class-public-demo-shortcode.php` + `js/public/demo-describe.js` + SSOT notes ASCII.
 
 ```
 IDLE
 +-- Describe an image ------------------------------------------------------+
-| ( ) Garden   ( ) Lake   ( ) Street                                        |
+| Illustrative example — not a live result                                  |
+| Alex stands beside a bicycle outside a cafe.                              |
+| ( ) Lake          ( ) Path                                                |
 | [ Describe selected image ]                                               |
 | ● Select an image, then choose Describe.                                  |
 +--------------------------------------------------------------------------+
@@ -269,24 +287,28 @@ IDLE
 REQUESTED / QUEUED
 | ◌ Your image is queued for description…                                   |
 
-WARMING
+WARMING  (120 s client ceiling kept; 510+180 are server timeout maxima)
 | ◌ The description service is warming up. A cold start can take            |
 |   several minutes…                                                        |
 
 DESCRIBING
 | ◌ Describing the image… 50%                                               |
+|   gpu_state may be on the JSON; it is not shown and is not a tier         |
 
-READY / COMPLETED  (does not distinguish GPU vs CPU)
-| ✓ Description complete.                                                   |
-|   | <draft text> |                                                        |
+COMPLETED  (labels from description_tier only — never gpu_state)
+| ✓ GPU description complete.                         final_gpu             |
+| or ✓ CPU fallback draft (not GPU final).            provisional_cpu       |
+| or ✓ Description complete, processing tier          null / legacy         |
+|      unavailable.                                                         |
+|   | <alt_text_draft; focus moved here> |                                  |
 
 STOP / ERROR / LIMITED
-| ! Too many requests. Please wait and try again.            LIMITED        |
+| ! Another description is already running… (429)            LIMITED        |
 | × The image could not be described. …                      ERROR/FAILED   |
-|   120 s client stop: refresh; backend may still be running                |
+| × 120 s client stop: wait, then refresh (drops in-memory key)             |
 ```
 
-Missing vs launch need: **no CPU-fallback frame, no `final_gpu` badge, no Stop control, 120 s vs 510 s.**
+Implemented on this branch, **not** a missing product slice: typed `final_gpu` / `provisional_cpu` / `null` labels via `description_tier`. Remaining vs launch: **deployment unverified**; no public Stop control; PROPOSED owner+idempotency resume after refresh is not implemented; 120 s ceiling stays. Do not raise the ceiling to 510+180.
 
 ### 6.2 Required states — guided live (observed in reducer + map)
 
@@ -302,15 +324,15 @@ FINAL GPU     same as READY; item.tier is the only proof
 STOP/ERROR    timed_out / unavailable / cancelled; saved draft untouched
 ```
 
-This is the honest state machine for a named GPU demo. Public demo has not adopted it.
+Guided live remains a separate admin/learner surface. Public demo now has its own `description_tier` copy on this branch; do not claim the public widget still has a single untyped “Description complete.” Do not copy Workbench GPU chips onto the public map ([GRPH-31](https://github.com/darce/heuristics-canon)–[GRPH-34](https://github.com/darce/heuristics-canon)).
 
 ### 6.3 Workbench GPU tier (map; parity tests exist)
 
-ASCII in `describe-gpu-tier.notes.md`: cold CTA with cost, warming countdown, provisional CPU then final GPU, degraded-keep-CPU. Open question: no plugin Start/Stop (HAI-04) vs GPUOPS Burst GPU card.
+ASCII in `describe-gpu-tier.notes.md`: cold CTA with cost, warming countdown, provisional CPU then final GPU, degraded-keep-CPU. Open question: no plugin Start/Stop (HAI-04) vs GPUOPS Burst GPU card. Not the public demo.
 
 ### 6.4 Operator control (proposed, not a public-demo requirement)
 
-Settings › Burst GPU: start / stop / auto with load-snapshot freshness. Launch of the **anonymous** describe does not need this card, but trusted start/stop does [RES-02] [DATA-13].
+Settings › Burst GPU: start / stop / auto with load-snapshot freshness. Launch of the **anonymous** describe does not need this card, but trusted start/stop does ([RES-02](https://github.com/darce/heuristics-canon) [DATA-13](https://github.com/darce/heuristics-canon)).
 
 ---
 
@@ -333,7 +355,7 @@ Without all load producers publishing fresh `{queue_depth,in_flight,written_at}`
 
 ## 8. Acceptance evidence for an actual production launch
 
-Do not mark launch complete without a bundle that names SHA, image digest, run_id, and clock times [TEST-15] [RLSE-03]. Pytest `scripts/test_vlm3_gpu_bakeoff_artifacts.py` is **regression smoke on the candidate JSON**, not validation of these claims.
+Do not mark launch complete without a bundle that names SHA, image digest, run_id, and clock times ([TEST-15](https://github.com/darce/heuristics-canon) [RLSE-03](https://github.com/darce/heuristics-canon)). Pytest `scripts/test_vlm3_gpu_bakeoff_artifacts.py` is **runner-admission smoke on the candidate JSON**, not factual proof of these claims.
 
 ### 8.1 Identity-correct GPU caption (product)
 
@@ -355,10 +377,10 @@ Do not mark launch complete without a bundle that names SHA, image digest, run_i
 | --- | --- |
 | Flag | `acx_public_demo_enabled=1` and allowlisted IDs on the deployed WP |
 | Anonymous | Logged-out browser: select curated image → Describe → status → text |
-| Cold start | First request from STOPPED: UI stays honest through warming; deadline ≥ warmup+inference **or** resumable run handle |
-| Warm start | Second request after GPU ready: `final_gpu` without CPU mislabel |
-| Honesty | CPU fallback labelled degraded; missing tier not claimed as GPU [HAI-12] |
-| Bulkhead | Rate / daily / one-run limits hold under double-click and refresh |
+| Cold start | First request from STOPPED: UI stays honest through warming. **Keep the 120 s poll ceiling.** Do not raise it to 510+180 (those are timeout maxima, not measured duration). PROPOSED resume is the existing inflight owner plus the in-memory idempotency key only — no second paid dispatch |
+| Warm start | Second request after GPU ready: completed label is `GPU description complete.` from `description_tier=final_gpu`, never from `gpu_state` |
+| Honesty | Branch labels: `final_gpu` / `provisional_cpu` / `null` via `description_tier`. **Deployment still unverified.** Missing tier must not be claimed as GPU [HAI-12] |
+| Bulkhead | Rate / daily / one-run limits hold under double-click and refresh. Refresh drops the in-memory key; do not weaken `403 run_not_available` after inflight release ([API-02](https://github.com/darce/heuristics-canon)) |
 | Cancel | Public: no silent second spend; guided: Stop cancels wait and best-effort run |
 
 ### 8.3 Start/stop / metering (ops, operator-run)
@@ -375,25 +397,31 @@ Do not mark launch complete without a bundle that names SHA, image digest, run_i
 
 ### 8.4 Explicit non-evidence
 
-- Green `pytest scripts/test_vlm3_gpu_bakeoff_artifacts.py`
+- Green `pytest scripts/test_vlm3_gpu_bakeoff_artifacts.py` (runner-admission smoke only; not factual proof)
+- Critique 10316 `extra=allow` (retained 4 local extras)
+- Official strict ux-map schema `extra=forbid` (still 4 extras FAIL)
+- Absent `workbay_canvas_mcp` renderer (`OptionalRendererUnavailable`)
+- Consumer TypeScript extra=forbid / `uxmap-parity` (local gate, not official RULE_PACK)
 - Insertion rate 0.890 on the superseded ALTQ report
 - FIR M-05 / M-11 / M-12
 - Seeded or CPU drafts
 - Keyword occlusion mining counts
+- Branch `description_tier` labels as if they were deployed to demo.altcontext.com
 - This assessment file
 
 ---
 
 ## 9. Gaps that later slices must close (Qwen30B entity-aware burst)
 
-1. **Do not manufacture a prompt-weave slice from `context=None`.** Names are designed to land via post-hoc fusion. Remaining launch work is live proof that the fused caption on demo.altcontext.com names present enrolled people with zero false names (G1).
+1. **Do not manufacture a prompt-weave slice from `context=None`.** Names are designed to land via post-hoc `naming_inputs` fusion. Remaining launch work is live proof that the fused caption on demo.altcontext.com names present enrolled people with zero false names (G1). Existing fake-GPU positional fusion tests stay; no prompt-weaving repair.
 2. **Score positional fallback as a first-class live error rate** (false-name / wrong-person) on demo images, or add phrase boxes if grounded spans are required. Fake-GPU fusion is already tested (`test_fake_final_gpu_adapter_fuses_positional_names_and_disabled_run_does_not`); live Qwen30B quality is not (G2, G3).
-3. **Adopt or replace the FIR OEC and instrument T-12** on the production path (G5). Until then M-07 stays undefined.
-4. **Align public client deadline with warmup** or keep a resumable handle; 120 s vs 510 s fails cold start (G-deadline).
-5. **Surface `final_gpu` vs `provisional_cpu` on the public shortcode.** Completion text that ignores tier overstates the machine.
+3. **Adopt or replace the FIR OEC and instrument T-12** on the production path (G5). FIR v11 precedence; no new training in this pass. Until then M-07 stays undefined.
+4. **Keep the public 120 s poll ceiling.** 510+180 are timeout maxima, not measured duration; do not treat “cannot finish in 120 s” as a fact. PROPOSED follow-up is same-run resume via existing inflight owner plus idempotency only — no second paid dispatch, no authorization weakening, no ceiling raise ([RES-02](https://github.com/darce/heuristics-canon)/[RES-03](https://github.com/darce/heuristics-canon), [API-02](https://github.com/darce/heuristics-canon), [RLSE-03](https://github.com/darce/heuristics-canon)).
+5. **Do not re-implement public tier labels.** This branch already labels `final_gpu` / `provisional_cpu` / `null` from `description_tier` (never `gpu_state`). Remaining gap is **deployment verification**, not a new product slice from this lane.
 6. **Do not recaption 646 as the first action.** 640 descriptions exist; they are the wrong path for naming proof, but they are paid. Mine / review; new GPU captions only for the sealed demo set.
 7. **Ops: restore UID/GID + load producers + compose env** before trusting start/stop. Caption work cannot greenwash a GPU that will not stop.
 8. **Record a live evidence bundle** (EVID-1 / GPUSMOKE) on the deployed SHA. This lane produced none.
+9. **Official ux-map schema / critique / renderer remain follow-up only.** Strict extra=forbid still fails 4 extras; critique 10316 extra=allow is not an official pass; renderer is absent. No schema or validator edits here.
 
 ---
 
@@ -423,4 +451,4 @@ No review fan-out, no merge, no OCI from this lane.
 
 Deliverable nonempty: this file.
 
-`uv.lock`: **not restored** — history-stripped sandbox has no `HEAD^` / `bc590810d` blob. No relock, no env mutation.
+`uv.lock`: **present**; this pass measured `git hash-object` `3547d91088c0d85e26505b67a08029b47e376441` (SHA-256 `20cf0247…533a58`). Restoration method is uncertain in this history-stripped sandbox (cannot confirm `HEAD^` / `main:uv.lock` / reverse-delta). No relock, no env mutation, no lock/dependency edits.

@@ -536,6 +536,52 @@ class SuggestionRefreshService:
         )
         return refreshed
 
+    async def _resolve_surface_gallery(
+        self,
+        cluster_id: str,
+        *,
+        identities_by_cluster: Mapping[str, Sequence[MediaIdentity]],
+        precomputed: Sequence[np.ndarray] | np.ndarray | None,
+    ) -> tuple[str | None, Mapping[str, Sequence[np.ndarray] | np.ndarray]] | None:
+        """Resolve (gallery_model, search_gallery) from live reps; fail-closed if empty.
+
+        Live representatives are the space of record (FIR23-01). A metadata-free
+        precomputed ndarray cache is never used when the Protocol method exists
+        and returns no same-space vectors.
+        """
+        if self._cluster_repository is None:
+            return None
+        live_loaded = False
+        try:
+            labeled_reps = list(await self._cluster_repository.get_all_representatives(cluster_id))
+            live_loaded = True
+        except AttributeError:
+            # Incomplete structural doubles (e.g. batch-surfacing stubs) omit the
+            # Protocol method. Production SqlAlchemyClusterRepository implements it.
+            if any(
+                identity.embedding_model for identities in identities_by_cluster.values() for identity in identities
+            ):
+                raise
+            labeled_reps = []
+        gallery_model, gallery_vectors = same_space_representative_vectors(labeled_reps)
+        if gallery_vectors:
+            return gallery_model, {
+                cluster_id: [normalize_face_embedding(vector) for vector in gallery_vectors]
+            }
+        if live_loaded:
+            logger.info(
+                "[suggestions] surface_for_newly_labeled_cluster: no same-space representatives cluster_id=%s",
+                cluster_id,
+            )
+            return None
+        if gallery_model is None and _has_reps(precomputed):
+            return None, {cluster_id: precomputed}
+        logger.info(
+            "[suggestions] surface_for_newly_labeled_cluster: no same-space representatives cluster_id=%s",
+            cluster_id,
+        )
+        return None
+
     async def surface_for_newly_labeled_cluster(
         self,
         cluster_id: str,
@@ -642,38 +688,14 @@ class SuggestionRefreshService:
         _total_members = sum(len(identities) for identities in identities_by_cluster.values())
         seen_identity_ids: set[str] = set()
         duplicate_identity_skips = 0
-        # Production get_by_id does not selectinload representatives, and
-        # identity_clusters has no embedding_model column, so cluster_embedding_model
-        # on that path is always None. Derive the gallery space from the repository's
-        # typed representative query (majority model, lex-stable tie-break).
-        try:
-            load_representatives = self._cluster_repository.get_all_representatives
-        except AttributeError:
-            # Keep legacy structural adapters usable for all-unstamped vectors;
-            # a stamped candidate must fail loudly if the protocol is violated,
-            # rather than silently skipping every candidate as cross-space.
-            if any(
-                identity.embedding_model for identities in identities_by_cluster.values() for identity in identities
-            ):
-                raise
-            labeled_reps = []
-        else:
-            labeled_reps = list(await load_representatives(cluster_id))
-        gallery_model, gallery_vectors = same_space_representative_vectors(labeled_reps)
-        if gallery_vectors:
-            # Rebuild from current reps so a stale/foreign precomputed cache
-            # cannot be cosined against a current-space identity (FIR23-01).
-            search_gallery: Mapping[str, Sequence[np.ndarray] | np.ndarray] = {
-                cluster_id: [normalize_face_embedding(vector) for vector in gallery_vectors]
-            }
-        elif gallery_model is None and _has_reps(rep_embeddings):
-            search_gallery = {cluster_id: rep_embeddings}
-        else:
-            logger.info(
-                "[suggestions] surface_for_newly_labeled_cluster: no same-space representatives cluster_id=%s",
-                cluster_id,
-            )
+        resolved_gallery = await self._resolve_surface_gallery(
+            cluster_id,
+            identities_by_cluster=identities_by_cluster,
+            precomputed=rep_embeddings,
+        )
+        if resolved_gallery is None:
             return 0
+        gallery_model, search_gallery = resolved_gallery
         logger.info(
             "[suggestions] surface: loaded %d member identities from %d clusters in %.3fs",
             _total_members,

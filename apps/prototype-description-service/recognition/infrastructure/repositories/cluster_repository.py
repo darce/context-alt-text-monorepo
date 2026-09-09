@@ -55,14 +55,11 @@ _choose_embedding_model = choose_embedding_model
 def _filter_embedding_pairs_to_single_model(
     rows: Sequence[tuple[np.ndarray, str | None]],
 ) -> list[tuple[np.ndarray, str | None]]:
-    """Keep embeddings from one model space; single-model input is a no-op."""
+    """Keep embeddings from one model space; unstamped mix is dropped once stamped."""
     if not rows:
         return []
     chosen = _choose_embedding_model([model for _, model in rows])
     if chosen is None:
-        return list(rows)
-    distinct = {str(model) for _, model in rows if model}
-    if len(distinct) <= 1:
         return list(rows)
     return [(emb, model) for emb, model in rows if model == chosen]
 
@@ -101,16 +98,13 @@ def _quality_triples(rows: Sequence[_QualityRow]) -> list[_QualityTriple]:
 def _filter_identity_models_to_single_embedding_model(
     models: Sequence[MediaIdentity],
 ) -> list[MediaIdentity]:
-    """Keep MediaIdentity rows from one embedding_model; single-model is a no-op."""
+    """Keep MediaIdentity rows from one embedding_model; drop unstamped once stamped."""
     if not models:
         return []
-    chosen = _choose_embedding_model([getattr(m, "embedding_model", None) for m in models])
+    chosen = _choose_embedding_model([m.embedding_model for m in models])
     if chosen is None:
         return list(models)
-    distinct = {str(m.embedding_model) for m in models if getattr(m, "embedding_model", None)}
-    if len(distinct) <= 1:
-        return list(models)
-    return [m for m in models if getattr(m, "embedding_model", None) == chosen]
+    return [m for m in models if m.embedding_model == chosen]
 
 
 def _filter_rows_to_single_embedding_model(

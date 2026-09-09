@@ -136,6 +136,24 @@ def test_filter_identity_models_mixed_majority() -> None:
     assert all(r.embedding_model == "keep" for r in kept)
 
 
+def test_filter_identity_models_drops_unstamped_when_stamp_exists() -> None:
+    """One stamp plus unstamped/empty rows is mixed provenance, not a no-op."""
+    stamped = SimpleNamespace(embedding_model="keep")
+    unstamped = SimpleNamespace(embedding_model=None)
+    empty = SimpleNamespace(embedding_model="")
+    kept = _filter_identity_models_to_single_embedding_model([unstamped, stamped, empty])  # type: ignore[arg-type]
+    assert kept == [stamped]
+
+
+def test_filter_embedding_pairs_drops_unstamped_when_stamp_exists() -> None:
+    stamped = np.array([1.0, 0.0], dtype=np.float32)
+    unstamped = np.array([0.0, 1.0], dtype=np.float32)
+    rows = [(unstamped, None), (stamped, "keep"), (unstamped, "")]
+    kept = _filter_embedding_pairs_to_single_model(rows)
+    assert len(kept) == 1
+    assert kept[0][1] == "keep"
+
+
 def test_filter_rows_unclustered_mixed_prefers_active(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("RECOGNITION_RUNTIME_MODE", "test")
     from recognition.config import get_settings
@@ -222,28 +240,100 @@ def test_centroid_mv_sql_frames_by_embedding_model() -> None:
     assert "ORDER BY cluster_id, n DESC, embedding_model ASC" in text
 
 
-def test_sqlite_refresh_sql_frames_by_embedding_model() -> None:
-    from pathlib import Path
+@pytest.mark.asyncio
+async def test_sqlite_refresh_counts_majority_stamp_and_drops_unstamped() -> None:
+    """SQLite centroid refresh must ignore unstamped rows and minority stamps."""
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+    from sqlalchemy.pool import StaticPool
 
-    src = Path(__file__).resolve().parents[2] / "infrastructure" / "repositories" / "cluster_repository.py"
-    text = src.read_text(encoding="utf-8")
-    assert "chosen_model" in text
-    assert "FIR23-01" in text
+    from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
+
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text("CREATE TABLE identity_clusters (id TEXT PRIMARY KEY, tenant_id TEXT, updated_at TIMESTAMP)")
+            )
+            await conn.execute(
+                text(
+                    "CREATE TABLE media_identities ("
+                    "id TEXT PRIMARY KEY, embedding BLOB, embedding_model TEXT, updated_at TIMESTAMP)"
+                )
+            )
+            await conn.execute(text("CREATE TABLE identity_members (identity_id TEXT, cluster_id TEXT)"))
+            await conn.execute(
+                text(
+                    "CREATE TABLE mv_identity_cluster_centroids ("
+                    "cluster_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, "
+                    "identity_count INTEGER NOT NULL DEFAULT 0, centroid BLOB, refreshed_at TIMESTAMP)"
+                )
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO identity_clusters (id, tenant_id, updated_at) VALUES "
+                    "('c-mixed', 't1', CURRENT_TIMESTAMP), ('c-unstamped', 't1', CURRENT_TIMESTAMP)"
+                )
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO media_identities (id, embedding, embedding_model, updated_at) VALUES "
+                    "('m-keep-1', X'00', 'keep', CURRENT_TIMESTAMP), "
+                    "('m-keep-2', X'00', 'keep', CURRENT_TIMESTAMP), "
+                    "('m-drop', X'00', 'drop', CURRENT_TIMESTAMP), "
+                    "('m-null', X'00', NULL, CURRENT_TIMESTAMP), "
+                    "('m-only-null', X'00', NULL, CURRENT_TIMESTAMP)"
+                )
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO identity_members (identity_id, cluster_id) VALUES "
+                    "('m-keep-1', 'c-mixed'), ('m-keep-2', 'c-mixed'), "
+                    "('m-drop', 'c-mixed'), ('m-null', 'c-mixed'), "
+                    "('m-only-null', 'c-unstamped')"
+                )
+            )
+        session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        async with session_factory() as session:
+            await SqlAlchemyClusterRepository(session).refresh_centroids_view()
+            rows = {
+                str(row[0]): int(row[1])
+                for row in (
+                    await session.execute(text("SELECT cluster_id, identity_count FROM mv_identity_cluster_centroids"))
+                ).all()
+            }
+        assert rows.get("c-mixed") == 2
+        assert "c-unstamped" not in rows
+    finally:
+        await engine.dispose()
 
 
-def test_label_inference_nn_filters_embedding_model() -> None:
-    from pathlib import Path
+@pytest.mark.asyncio
+async def test_orchestrator_fetch_keeps_only_active_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Mixed unclustered ORM rows must keep the active runtime model only."""
+    from unittest.mock import AsyncMock, MagicMock
+    from uuid import uuid4
 
-    src = Path(__file__).resolve().parents[2] / "application" / "suggestions" / "label_inference.py"
-    text = src.read_text(encoding="utf-8")
-    assert "embedding_model ==" in text or "MediaIdentity.embedding_model ==" in text
-    assert "FIR23-01" in text
+    from recognition.application.orchestration.clustering.orchestrator import IncrementalClusteringRunner
+    from recognition.config import get_settings
 
-
-def test_orchestrator_fetch_filters_mixed_models() -> None:
-    from pathlib import Path
-
-    src = Path(__file__).resolve().parents[2] / "application" / "orchestration" / "clustering" / "orchestrator.py"
-    text = src.read_text(encoding="utf-8")
-    assert "active_embedding_model_id" in text
-    assert "FIR23-01" in text
+    monkeypatch.setenv("RECOGNITION_RUNTIME_MODE", "test")
+    get_settings.cache_clear()
+    try:
+        active = SimpleNamespace(embedding_model="stub-detector@test")
+        foreign = SimpleNamespace(embedding_model="legacy-seed")
+        unstamped = SimpleNamespace(embedding_model=None)
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = [unstamped, foreign, active]
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=result)
+        runner = IncrementalClusteringRunner.__new__(IncrementalClusteringRunner)
+        runner._session = session
+        kept = await runner._fetch_unclustered_identities(uuid4())
+        assert kept == [active]
+    finally:
+        get_settings.cache_clear()

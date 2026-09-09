@@ -259,11 +259,16 @@ async def generate_cluster_merge_suggestions(
 
     created = 0
     now = datetime.now(tz=UTC)
+    tenant_has_stamped = any(cluster_embedding_model(cluster) for cluster in clusters)
     for idx, (cluster_a, centroid_a) in enumerate(candidates):
         for cluster_b, centroid_b in candidates[idx + 1 :]:
             if not _is_merge_pair_eligible(cluster_a, cluster_b):
                 continue
-            if not models_are_same_space(cluster_embedding_model(cluster_a), cluster_embedding_model(cluster_b)):
+            if not _pair_shares_embedding_space(
+                cluster_a,
+                cluster_b,
+                tenant_has_stamped=tenant_has_stamped,
+            ):
                 continue
             similarity = compute_similarity(centroid_a, centroid_b)
             if similarity < settings.suggestion_floor:
@@ -310,6 +315,27 @@ def _is_labeled_for_merge_suggestion(cluster: IdentityCluster) -> bool:
 def _is_merge_pair_eligible(cluster_a: IdentityCluster, cluster_b: IdentityCluster) -> bool:
     """A pair is suggestible unless both sides are labeled."""
     return not (_is_labeled_for_merge_suggestion(cluster_a) and _is_labeled_for_merge_suggestion(cluster_b))
+
+
+def _pair_shares_embedding_space(
+    cluster_a: IdentityCluster,
+    cluster_b: IdentityCluster,
+    *,
+    tenant_has_stamped: bool,
+) -> bool:
+    """True when both clusters are comparable in one embedding space.
+
+    Unresolved (None) models are the legacy all-unstamped case. Once any
+    cluster in the tenant carries a stamp, an unresolved side is treated as
+    unknown space and must not be cosined against MV centroids (FIR23-01).
+    """
+    model_a = cluster_embedding_model(cluster_a)
+    model_b = cluster_embedding_model(cluster_b)
+    if model_a is None or model_b is None:
+        if tenant_has_stamped:
+            return False
+        return model_a is None and model_b is None
+    return models_are_same_space(model_a, model_b)
 
 
 def _merge_pair_cluster_ids(cluster_a: IdentityCluster, cluster_b: IdentityCluster) -> tuple[str, str]:

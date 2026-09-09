@@ -3,8 +3,12 @@
   "kind": "pending_report",
   "task_ref": "VLM-3",
   "model_id": "MiMo-VL-7B-RL",
+  "model_version": "BF16",
   "status": "pending_live_gpu_bakeoff",
   "reason": "Requires OCI GPU endpoint and golden images. Canonical acx-eval/v1 kind=report regeneration is locked pending by scripts/test_vlm3_gpu_bakeoff_artifacts.py; measured markdown/run-record siblings are not a substitute for the indexed JSON.",
+  "notes": [
+    "Provenance correction (2026-09-09): the linked run record and markdown report measure BF16. The candidate index and launch command were corrected from AWQ_INT4 to BF16; AWQ_INT4 was not measured, and this pending JSON remains a placeholder rather than AWQ_INT4 evidence."
+  ],
   "measured_markdown": "VLM-3-bakeoff-MiMo-VL-7B-RL-report.md",
   "measured_run_record": "VLM-3-bakeoff-MiMo-VL-7B-RL-run-record.json"
 }

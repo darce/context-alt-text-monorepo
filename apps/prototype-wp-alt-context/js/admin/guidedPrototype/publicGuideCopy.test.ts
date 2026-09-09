@@ -9,6 +9,7 @@ import {
   CASE_STUDY_URL,
   PUBLIC_GUIDE_FALLBACK,
   PUBLIC_GUIDED_COPY,
+  RECORDING_URL,
   guidedCopy,
 } from './publicGuideCopy';
 
@@ -23,6 +24,7 @@ const PUBLIC_KEYS = [
   'nav.leave',
   'nav.home',
   'nav.case_study',
+  'notes.recorded_public',
 ] as const;
 
 const PUBLIC_SCOPE =
@@ -47,9 +49,12 @@ describe('public guide copy overlay', () => {
 
   it('exports the documented case-study URL and public scope copy', () => {
     expect(CASE_STUDY_URL).toBe('https://darce.xyz/projects/altcontext/');
+    expect(RECORDING_URL).toBe(`${CASE_STUDY_URL}#recording`);
+    expect(RECORDING_URL).not.toBe(CASE_STUDY_URL);
     expect(guidedCopy('scope.public')).toBe(PUBLIC_SCOPE);
     expect(PUBLIC_GUIDED_COPY['entry.watch']).toBe('Watch the recording');
     expect(PUBLIC_GUIDED_COPY['entry.read_case_study']).toBe('Read the case study');
+    expect(PUBLIC_GUIDED_COPY['notes.recorded_public']).not.toMatch(/Live generation/);
     expect(guidedCopy('nav.leave')).toBe('Leave the walkthrough');
     expect(PUBLIC_GUIDE_FALLBACK).toMatch(/Reload the page/);
     expect(guidedCopy('page.start')).toBe('Start the walkthrough');

@@ -5,7 +5,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { CASE_STUDY_URL, guidedCopy } from '../../admin/guidedPrototype/publicGuideCopy';
+import { CASE_STUDY_URL, RECORDING_URL, guidedCopy } from '../../admin/guidedPrototype/publicGuideCopy';
 import { RecordedWalkthrough } from '../../admin/guidedPrototype/RecordedWalkthrough';
 import { createGuidedScenario } from '../../admin/guidedPrototype/state';
 
@@ -29,7 +29,7 @@ const collectSources = (dir: string, acc: string[] = []): string[] => {
       collectSources(full, acc);
       continue;
     }
-    if (full.endsWith('.ts') || full.endsWith('.tsx') || full.endsWith('.css')) {
+    if (full.endsWith('.ts') || full.endsWith('.tsx') || full.endsWith('.css') || full.endsWith('.scss')) {
       acc.push(full);
     }
   }
@@ -73,21 +73,22 @@ describe('public recorded walkthrough boundary', () => {
 
     expect(screen.getByTestId('guided-scope')).toHaveTextContent(PUBLIC_SCOPE);
     expect(screen.getByRole('button', { name: guidedCopy('page.start') })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: guidedCopy('entry.watch') })).toHaveAttribute('href', CASE_STUDY_URL);
-    expect(screen.getByRole('link', { name: guidedCopy('entry.read_case_study') })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: `${guidedCopy('entry.watch')} (opens in a new window)` })).toHaveAttribute(
       'href',
-      CASE_STUDY_URL,
+      RECORDING_URL,
     );
+    expect(
+      screen.getByRole('link', { name: `${guidedCopy('entry.read_case_study')} (opens in a new window)` }),
+    ).toHaveAttribute('href', CASE_STUDY_URL);
 
     const escape = screen.getByRole('navigation', { name: guidedCopy('nav.leave') });
     expect(within(escape).getByRole('link', { name: guidedCopy('nav.home') })).toHaveAttribute(
       'href',
       'https://demo.example/',
     );
-    expect(within(escape).getByRole('link', { name: guidedCopy('nav.case_study') })).toHaveAttribute(
-      'href',
-      CASE_STUDY_URL,
-    );
+    expect(
+      within(escape).getByRole('link', { name: `${guidedCopy('nav.case_study')} (opens in a new window)` }),
+    ).toHaveAttribute('href', CASE_STUDY_URL);
     expect(screen.queryByTestId('guided-live')).not.toBeInTheDocument();
   });
 

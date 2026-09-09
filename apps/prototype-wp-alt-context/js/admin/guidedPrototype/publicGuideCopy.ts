@@ -7,6 +7,8 @@
 import { guidedCopy as catalogCopy, type GuidedCopyKey } from './copy';
 
 export const CASE_STUDY_URL = 'https://darce.xyz/projects/altcontext/';
+/** Recording destination on the case study page. Distinct from CASE_STUDY_URL so Watch and Read stay different actions. */
+export const RECORDING_URL = `${CASE_STUDY_URL}#recording`;
 
 export const PUBLIC_GUIDE_FALLBACK =
   'The walkthrough could not load. Reload the page, or watch the recorded video on the case study page.';
@@ -19,6 +21,8 @@ export const PUBLIC_GUIDED_COPY = {
   'nav.leave': 'Leave the walkthrough',
   'nav.home': 'Home',
   'nav.case_study': 'Case study',
+  'notes.recorded_public':
+    'Recorded recognition keeps the core walkthrough repeatable so you can review the same example every time.',
 } as const;
 
 export type PublicGuidedCopyKey = keyof typeof PUBLIC_GUIDED_COPY;

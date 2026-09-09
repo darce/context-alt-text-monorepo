@@ -4,9 +4,12 @@ declare(strict_types=1);
 
 namespace AltContext\Admin;
 
+require_once __DIR__ . '/../support/class-vite-manifest.php';
+
 use AltContext\Api\RecognitionEndpointResolver;
 use AltContext\Api\TenantIdentity;
 use AltContext\Support\BatchLimits;
+use AltContext\Support\ViteManifest;
 
 use function absint;
 use function add_action;
@@ -16,12 +19,9 @@ use function current_user_can;
 use function esc_html;
 use function esc_html__;
 use function esc_url_raw;
-use function file_get_contents;
 use function get_post_type;
 use function in_array;
 use function is_array;
-use function is_readable;
-use function json_decode;
 use function get_option;
 use function plugins_url;
 use function sanitize_key;
@@ -70,6 +70,7 @@ class Admin {
 
 	private string $devServer;
 	private string $manifestPath;
+	private ?ViteManifest $viteManifest = null;
 	private ?string $assetBootstrapFailureMessage = null;
 	private bool $assetBootstrapNoticeHooked = false;
 	private ?bool $devServerReachableCache = null;
@@ -260,9 +261,9 @@ class Admin {
 	}
 
 	private function enqueue_build_assets( string $entryPoint, string $scriptHandle ): ?string {
-		$entry = $this->get_manifest_entry( $entryPoint );
+		$assets = $this->vite_manifest()->entry_assets( $entryPoint );
 
-		if ( ! $entry || empty( $entry['file'] ) ) {
+		if ( null === $assets ) {
 			$this->report_asset_bootstrap_failure(
 				'Missing or invalid build manifest entry for ' . $entryPoint . '.'
 			);
@@ -271,21 +272,17 @@ class Admin {
 
 		wp_enqueue_script(
 			$scriptHandle,
-			$this->build_asset_url( (string) $entry['file'] ),
+			$assets['js'],
 			array( 'wp-element', 'wp-i18n', 'wp-hooks' ),
 			ACX_VERSION,
 			true
 		);
 		wp_script_add_data( $scriptHandle, 'type', 'module' );
 
-		if ( empty( $entry['css'] ) || ! is_array( $entry['css'] ) ) {
-			return $scriptHandle;
-		}
-
-		foreach ( $entry['css'] as $index => $cssFile ) {
+		foreach ( $assets['css'] as $index => $cssFile ) {
 			wp_enqueue_style(
 				$scriptHandle . '-' . $index,
-				$this->build_asset_url( (string) $cssFile ),
+				$cssFile,
 				array(),
 				ACX_VERSION
 			);
@@ -294,25 +291,28 @@ class Admin {
 		return $scriptHandle;
 	}
 
+	private function vite_manifest(): ViteManifest {
+		if ( null === $this->viteManifest ) {
+			// Private build_asset_url is not a valid callable array from outside this class.
+			$this->viteManifest = new ViteManifest(
+				$this->manifestPath,
+				function ( string $relative ): string {
+					return $this->build_asset_url( $relative );
+				}
+			);
+		}
+
+		return $this->viteManifest;
+	}
+
+	/**
+	 * Kept as the AdminEnqueueTest reflection seam; enqueue reads entry_assets().
+	 *
+	 * @return array<string, mixed>|null
+	 * @phpstan-ignore method.unused
+	 */
 	private function get_manifest_entry( string $entryPoint ): ?array {
-		if ( ! is_readable( $this->manifestPath ) ) {
-			return null;
-		}
-
-		$contents = file_get_contents( $this->manifestPath );
-
-		if ( false === $contents ) {
-			return null;
-		}
-
-		$manifest = json_decode( $contents, true );
-		if ( ! is_array( $manifest ) ) {
-			return null;
-		}
-
-		$entry = $manifest[ $entryPoint ] ?? null;
-
-		return is_array( $entry ) ? $entry : null;
+		return $this->vite_manifest()->get_entry( $entryPoint );
 	}
 
 	private function build_asset_url( string $relative ): string {

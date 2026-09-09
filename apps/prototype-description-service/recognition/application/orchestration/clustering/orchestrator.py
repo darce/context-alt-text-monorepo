@@ -264,6 +264,7 @@ class IncrementalClusteringRunner:
             accepted=accept_count,
             suggested=suggest_count,
             rejected=reject_count,
+            probe_space_skip=skip_payload,
         )
 
     @staticmethod
@@ -364,6 +365,7 @@ class IncrementalClusteringRunner:
             completed=0,
             total=0,
             clusters_created=0,
+            probe_space_skip=dict((clustering_job.payload or {}).get("probe_space_skip", {})),
         )
 
     async def _start_run_context(

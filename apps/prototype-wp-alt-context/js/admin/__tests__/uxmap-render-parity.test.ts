@@ -1148,9 +1148,11 @@ describe('ux-map render parity (owned maps)', () => {
   it('distinguishes Unicode version metadata from real property-range drift', () => {
     const result = spawnSync(uxMapPython, [path.join(uxMapsDir, 'test_sync_unicode_width.py')], {
       encoding: 'utf8',
+      // Exhaustive Unicode property mutations take ~63s on the supported laptop.
+      timeout: BOUNDARY_SHARD_DEADLINE_MS,
     });
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-  }, vitestBudget(SHORT_COMMAND_DEADLINE_MS));
+  }, vitestBudget(BOUNDARY_SHARD_DEADLINE_MS));
 
   it('rejects an extra unconditional primary recovery on the same screen', () => {
     const raw = readMapJson('febt-1-job-error-states') as { actions: Record<string, unknown>[] };

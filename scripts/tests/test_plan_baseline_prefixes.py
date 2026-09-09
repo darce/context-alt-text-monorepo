@@ -21,3 +21,18 @@ def test_docs_tasks_are_planning_paths() -> None:
     assert module.is_planning_path("docs/tasks/15.0/example-task-plan.md")
     assert module.is_planning_path("docs/plans/0117-example.md")
     assert not module.is_planning_path("apps/prototype-wp-alt-context/README.md")
+
+
+def test_local_accept_allows_sibling_planning_docs() -> None:
+    module = _load()
+    assert module.is_worktree_clean_or_only_plan(
+        [
+            "docs/tasks/15.0/example-task-plan.md",
+            "docs/plans/0117-example.md",
+        ],
+        plan_path="docs/tasks/15.0/example-task-plan.md",
+    )
+    assert not module.is_worktree_clean_or_only_plan(
+        ["apps/prototype-wp-alt-context/README.md"],
+        plan_path="docs/tasks/15.0/example-task-plan.md",
+    )

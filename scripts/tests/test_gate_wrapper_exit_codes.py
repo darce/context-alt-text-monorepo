@@ -3,10 +3,10 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EXPECTED_WRAPPERS = {
@@ -348,40 +348,232 @@ def test_quarantined_shell_scripts_still_exist() -> None:
     assert missing == [], f"quarantine entries drifted off disk: {missing}"
 
 
+@dataclass(frozen=True)
+class _YamlLine:
+    indent: int
+    content: str
+
+
+def _strip_inline_comment(content: str) -> str:
+    in_single = False
+    in_double = False
+    escaped = False
+    for index, char in enumerate(content):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\" and in_double:
+            escaped = True
+            continue
+        if char == "'" and not in_double:
+            in_single = not in_single
+            continue
+        if char == '"' and not in_single:
+            in_double = not in_double
+            continue
+        if char == "#" and not in_single and not in_double:
+            return content[:index].rstrip()
+    return content.rstrip()
+
+
+def _yaml_lines(text: str) -> list[_YamlLine]:
+    lines: list[_YamlLine] = []
+    for raw in text.splitlines():
+        if not raw.strip():
+            continue
+        indent = len(raw) - len(raw.lstrip(" "))
+        content = _strip_inline_comment(raw.lstrip(" "))
+        if not content or content.startswith("#"):
+            continue
+        lines.append(_YamlLine(indent, content))
+    return lines
+
+
+def _parse_yaml_scalar(raw: str) -> object:
+    token = raw.strip()
+    if token in {"", "~", "null", "Null", "NULL"}:
+        return None
+    if token in {"true", "True", "TRUE"}:
+        return True
+    if token in {"false", "False", "FALSE"}:
+        return False
+    if len(token) >= 2 and token[0] == token[-1] and token[0] in {"'", '"'}:
+        return token[1:-1]
+    if token.startswith("[") and token.endswith("]"):
+        inner = token[1:-1].strip()
+        if not inner:
+            return []
+        parts: list[str] = []
+        buf: list[str] = []
+        in_single = in_double = False
+        for char in inner:
+            if char == "'" and not in_double:
+                in_single = not in_single
+            elif char == '"' and not in_single:
+                in_double = not in_double
+            elif char == "," and not in_single and not in_double:
+                parts.append("".join(buf))
+                buf = []
+                continue
+            buf.append(char)
+        parts.append("".join(buf))
+        return [_parse_yaml_scalar(part) for part in parts]
+    if re.fullmatch(r"-?\d+", token):
+        return int(token)
+    return token
+
+
+def _split_key(content: str) -> tuple[str, str]:
+    if content.startswith("- "):
+        content = content[2:].strip()
+    elif content == "-":
+        return "", ""
+    key, sep, rest = content.partition(":")
+    if not sep:
+        return content, ""
+    return key.strip().strip("'\""), rest.strip()
+
+
+def _parse_yaml_block_scalar(lines: list[_YamlLine], index: int, parent_indent: int) -> tuple[str, int]:
+    body: list[str] = []
+    while index < len(lines) and lines[index].indent > parent_indent:
+        body.append(lines[index].content)
+        index += 1
+    return "\n".join(body), index
+
+
+def _parse_yaml_value(lines: list[_YamlLine], index: int, min_indent: int) -> tuple[object, int]:
+    if index >= len(lines) or lines[index].indent < min_indent:
+        return None, index
+    if lines[index].content.startswith("-"):
+        return _parse_yaml_seq(lines, index, lines[index].indent)
+    return _parse_yaml_map(lines, index, lines[index].indent)
+
+
+def _parse_yaml_map(lines: list[_YamlLine], index: int, indent: int) -> tuple[dict[str, object], int]:
+    mapping: dict[str, object] = {}
+    while index < len(lines) and lines[index].indent == indent:
+        if lines[index].content.startswith("-"):
+            break
+        key, rest = _split_key(lines[index].content)
+        index += 1
+        if rest in {"|", "|-", "|+", ">", ">-", ">+"}:
+            value, index = _parse_yaml_block_scalar(lines, index, indent)
+        elif rest:
+            value = _parse_yaml_scalar(rest)
+        elif index < len(lines) and lines[index].indent > indent:
+            value, index = _parse_yaml_value(lines, index, indent + 1)
+        else:
+            value = None
+        mapping[key] = value
+    return mapping, index
+
+
+def _parse_yaml_seq(lines: list[_YamlLine], index: int, indent: int) -> tuple[list[object], int]:
+    sequence: list[object] = []
+    while index < len(lines) and lines[index].indent == indent and lines[index].content.startswith("-"):
+        item = lines[index].content[1:].strip()
+        index += 1
+        if not item:
+            value, index = _parse_yaml_value(lines, index, indent + 1)
+        elif ":" in item:
+            key, rest = _split_key(item)
+            if rest in {"|", "|-", "|+", ">", ">-", ">+"}:
+                nested_value, index = _parse_yaml_block_scalar(lines, index, indent)
+            elif rest:
+                nested_value = _parse_yaml_scalar(rest)
+            else:
+                nested_value = None
+            mapping: dict[str, object] = {key: nested_value}
+            if index < len(lines) and lines[index].indent > indent:
+                extra, index = _parse_yaml_map(lines, index, lines[index].indent)
+                mapping.update(extra)
+            value = mapping
+        else:
+            value = _parse_yaml_scalar(item)
+        sequence.append(value)
+    return sequence, index
+
+
+def _load_gha_yaml(path: Path) -> dict[str, object]:
+    """Structurally load a GitHub Actions workflow without PyYAML (D5-AR-07)."""
+    lines = _yaml_lines(path.read_text(encoding="utf-8"))
+    value, index = _parse_yaml_value(lines, 0, 0)
+    leftover = lines[index].content if index < len(lines) else ""
+    assert index == len(lines), f"{path} YAML subset parser stopped at {leftover!r}"
+    if not isinstance(value, dict):
+        raise AssertionError(f"{path} did not parse as a mapping")
+    return value
+
+
+def _nested_map(payload: object, *keys: str) -> dict[str, object]:
+    current: object = payload
+    for key in keys:
+        if not isinstance(current, dict):
+            return {}
+        current = current.get(key)
+    return current if isinstance(current, dict) else {}
+
+
 def _workflow_paths_with_run_steps() -> list[Path]:
     paths: list[Path] = []
     workflow_dir = REPO_ROOT / ".github" / "workflows"
     for workflow_path in sorted(workflow_dir.glob("*.y*ml")):
-        with workflow_path.open(encoding="utf-8") as handle:
-            workflow = yaml.safe_load(handle)
-        jobs = workflow.get("jobs", {}) if isinstance(workflow, dict) else {}
+        workflow = _load_gha_yaml(workflow_path)
+        jobs = workflow.get("jobs", {}) if isinstance(workflow.get("jobs"), dict) else {}
         if any(
             isinstance(step, dict) and "run" in step
             for job in jobs.values()
             if isinstance(job, dict)
             for step in job.get("steps", [])
+            if isinstance(job.get("steps"), list)
         ):
             paths.append(workflow_path)
     return paths
 
 
+def _unsafe_run_steps(workflow: dict[str, object], workflow_name: str) -> list[str]:
+    unsafe: list[str] = []
+    workflow_shell = _nested_map(workflow, "defaults", "run").get("shell")
+    jobs = workflow.get("jobs", {})
+    if not isinstance(jobs, dict):
+        return [f"{workflow_name}:<jobs>"]
+    for job_name, job in jobs.items():
+        if not isinstance(job, dict):
+            continue
+        job_shell = _nested_map(job, "defaults", "run").get("shell", workflow_shell)
+        for step in job.get("steps", []) if isinstance(job.get("steps"), list) else []:
+            if not isinstance(step, dict) or "run" not in step:
+                continue
+            effective_shell = step.get("shell", job_shell)
+            if effective_shell != REQUIRED_RUN_SHELL:
+                unsafe.append(f"{workflow_name}:{job_name}:{step.get('name', '<unnamed>')}")
+    return unsafe
+
+
 def test_every_workflow_run_step_uses_fail_closed_bash() -> None:
     unsafe: list[str] = []
     for workflow_path in _workflow_paths_with_run_steps():
-        with workflow_path.open(encoding="utf-8") as handle:
-            workflow = yaml.safe_load(handle)
-        workflow_shell = workflow.get("defaults", {}).get("run", {}).get("shell")
-        for job_name, job in workflow.get("jobs", {}).items():
-            if not isinstance(job, dict):
-                continue
-            job_shell = job.get("defaults", {}).get("run", {}).get("shell", workflow_shell)
-            for step in job.get("steps", []):
-                if not isinstance(step, dict) or "run" not in step:
-                    continue
-                effective_shell = step.get("shell", job_shell)
-                if effective_shell != REQUIRED_RUN_SHELL:
-                    unsafe.append(f"{workflow_path.name}:{job_name}:{step.get('name', '<unnamed>')}")
+        unsafe.extend(_unsafe_run_steps(_load_gha_yaml(workflow_path), workflow_path.name))
     assert unsafe == [], f"workflow run steps without {REQUIRED_RUN_SHELL!r}: {unsafe}"
+
+
+def test_workflow_shell_survives_working_directory_before_shell(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "sample.yml"
+    workflow_path.write_text(
+        "jobs:\n"
+        "  build:\n"
+        "    defaults:\n"
+        "      run:\n"
+        "        working-directory: apps/example\n"
+        "        shell: bash --noprofile --norc -eo pipefail {0}\n"
+        "    steps:\n"
+        "      - name: hello\n"
+        "        working-directory: apps/example\n"
+        "        run: echo hi | cat\n",
+        encoding="utf-8",
+    )
+    assert _unsafe_run_steps(_load_gha_yaml(workflow_path), workflow_path.name) == []
 
 
 def test_remote_gate_no_args_prints_usage_and_does_not_run() -> None:

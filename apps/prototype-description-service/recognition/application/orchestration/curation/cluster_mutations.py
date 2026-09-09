@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import MediaIdentity as MediaIdentityModel
 from recognition.application.events.broadcaster import get_event_broadcaster
+from recognition.application.identity_mapping import media_identity_from_model
 from recognition.application.orchestration.curation.cluster_queries import get_identity_cluster_id
 from recognition.application.orchestration.curation.similarity import (
     check_and_refresh_representatives,
@@ -20,7 +21,6 @@ from recognition.application.orchestration.curation.similarity import (
 from recognition.application.orchestration.protocols import SuggestionServiceProtocol
 from recognition.application.persistence.assignment_writer import AssignmentWriter
 from recognition.domain.cluster import IdentityCluster, ReservedClusterLabelError, is_reserved_label_shape
-from recognition.domain.identity import MediaIdentity
 from recognition.domain.repositories import ClusterRepository, MemberRepository
 from recognition.observability import ClusteringLogger, CurationEventType
 from recognition.shared.tenant import coerce_tenant_uuid
@@ -232,18 +232,7 @@ async def create_cluster_for_identity(
             session=session,
         )
 
-    identity = MediaIdentity(
-        id=str(identity_model.id),
-        tenant_id=str(identity_model.tenant_id),
-        media_id=str(identity_model.media_id),
-        embedding=np.asarray(identity_model.embedding, dtype=np.float32),
-        confidence=float(identity_model.confidence),
-        bbox_width=int(identity_model.bbox_width),
-        bbox_height=int(identity_model.bbox_height),
-        embedding_model=(
-            str(identity_model.embedding_model) if getattr(identity_model, "embedding_model", None) else None
-        ),
-    )
+    identity = media_identity_from_model(identity_model)
 
     cluster = await assignment_writer.persist_new_cluster(
         tenant_id=tenant_id,

@@ -7,7 +7,8 @@ remain the legacy no-op; mixed or foreign stamps never pass through.
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import numpy as np
 import pytest
@@ -227,6 +228,52 @@ def test_filter_rows_unclustered_all_unstamped_is_legacy_noop() -> None:
         SimpleNamespace(embedding_model=None),
     ]
     assert _filter_rows_to_single_embedding_model(rows) == rows  # type: ignore[arg-type]
+
+
+def _batch_member_model(*, embedding_model: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        media_id=1,
+        embedding=np.array([1.0, 0.0], dtype=np.float32),
+        confidence=0.99,
+        bbox_width=10,
+        bbox_height=10,
+        bbox_x=0,
+        bbox_y=0,
+        pose_pitch=None,
+        pose_yaw=None,
+        pose_roll=None,
+        image_phash=None,
+        sharpness=None,
+        embedding_norm=None,
+        occlusion_severity=None,
+        moved_by_merge_id=None,
+        embedding_model=embedding_model,
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_member_identities_for_clusters_keeps_same_space_minority() -> None:
+    """Batch member load must not majority-drop a same-space identity."""
+    from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
+
+    cluster_uuid = uuid4()
+    cluster_id = str(cluster_uuid)
+    gallery = _batch_member_model(embedding_model="space-a")
+    foreign = [_batch_member_model(embedding_model="space-b") for _ in range(3)]
+    result = MagicMock()
+    result.all.return_value = [(model, cluster_uuid) for model in [*foreign, gallery]]
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=result)
+    repo = SqlAlchemyClusterRepository(session)
+
+    grouped = await repo.get_member_identities_for_clusters([cluster_id])
+
+    identities = grouped[cluster_id]
+    assert len(identities) == 4
+    assert {identity.embedding_model for identity in identities} == {"space-a", "space-b"}
+    assert sum(1 for identity in identities if identity.embedding_model == "space-a") == 1
 
 
 def test_centroid_mv_sql_frames_by_embedding_model() -> None:

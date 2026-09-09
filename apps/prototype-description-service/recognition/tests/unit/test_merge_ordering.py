@@ -32,6 +32,7 @@ async def test_merge_cluster_deletes_source_last():
     )
 
     mock_cluster_repo.get_by_id.side_effect = lambda eid: source_cluster if eid == "source-1" else target_cluster
+    mock_cluster_repo.get_all_representatives = AsyncMock(return_value=[])
     mock_cluster_repo.update.return_value = target_cluster
     mock_member_repo.move_members.return_value = 5  # moved 5 members
 

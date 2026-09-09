@@ -114,6 +114,16 @@ class ClusterRepository(Protocol):
     # Clustering helpers
     async def get_unclustered(self, tenant_id: str) -> Sequence[MediaIdentity]: ...
 
+    async def get_unclustered_in_embedding_space(
+        self,
+        tenant_id: str,
+        embedding_model: str | None,
+        *,
+        limit: int,
+    ) -> Sequence[MediaIdentity]:
+        """Fetch unclustered identities in one gallery space, including legacy NULL."""
+        ...
+
     async def get_representative_count(self, cluster_id: str) -> int: ...
 
     async def get_all_representatives(self, cluster_id: str) -> Sequence[ClusterRepresentative]: ...

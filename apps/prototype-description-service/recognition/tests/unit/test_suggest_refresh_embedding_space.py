@@ -211,6 +211,58 @@ async def test_surface_uses_representative_space_not_get_by_id() -> None:
 
 
 @pytest.mark.asyncio
+async def test_surface_keeps_gallery_space_minority_among_foreign_members() -> None:
+    """An unlabeled cluster with 3 foreign + 1 gallery-space member still surfaces the match."""
+    tenant_id = str(uuid4())
+    labeled_id = str(uuid4())
+    unlabeled_id = str(uuid4())
+    space = "space-a"
+    labeled_cluster = IdentityCluster(
+        tenant_id=tenant_id,
+        is_labeled=True,
+        identity_count=1,
+        id=labeled_id,
+        label="Ada",
+        user_confirmed=True,
+        representatives=None,
+    )
+    labeled_rep = ClusterRepresentative(
+        id="r-labeled",
+        cluster_id=labeled_id,
+        identity_id="i-labeled",
+        embedding=_normalize(np.array([1.0, 0.0, 0.0])),
+        created_at=datetime.now(tz=UTC),
+        embedding_model=space,
+    )
+    gallery = _stamped_identity("identity-gallery", tenant_id, space)
+    foreign = [_stamped_identity(f"identity-foreign-{idx}", tenant_id, "space-b") for idx in range(3)]
+    repo = _SurfaceRepoStub(
+        identities_by_cluster={unlabeled_id: [*foreign, gallery]},
+        labeled_cluster=labeled_cluster,
+        labeled_reps=[labeled_rep],
+    )
+    suggestion_repo = AsyncMock()
+    service = SuggestionRefreshService(
+        repository=suggestion_repo,
+        tenant_id=tenant_id,
+        cluster_repository=repo,
+        session=object(),
+        settings=ClusteringSettings(similarity_threshold=0.0, suggestion_floor=0.0, suggestion_ceiling=1.1),
+    )
+
+    created = await service.surface_for_newly_labeled_cluster(
+        labeled_id,
+        cluster_label="Ada",
+        candidate_cluster_ids=[unlabeled_id],
+        representatives_by_cluster={labeled_id: [gallery.embedding]},
+    )
+
+    assert created == 1
+    payload = suggestion_repo.upsert_by_identity_cluster.await_args.args[1]
+    assert payload.identity_id == "identity-gallery"
+
+
+@pytest.mark.asyncio
 async def test_surface_rebuilds_gallery_instead_of_using_stale_precomputed_vectors() -> None:
     """Precomputed numeric arrays must not be cosined when current reps differ.
 

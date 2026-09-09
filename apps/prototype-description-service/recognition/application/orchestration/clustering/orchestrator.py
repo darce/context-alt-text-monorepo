@@ -18,6 +18,7 @@ from db.models import IdentityMember as MemberModel
 from db.models import MediaIdentity as MediaIdentityModel
 from db.tenant_context import enable_rls_bypass, set_tenant_context
 from recognition.application.assignment.joint import group_accepted_by_media, resolve_photo_conflicts
+from recognition.application.identity_mapping import media_identity_from_model
 from recognition.application.orchestration.clustering.chunked_processor import ChunkedIdentityProcessor
 from recognition.application.orchestration.clustering.decision_handler import DecisionHandler
 from recognition.application.orchestration.clustering.dependencies import (
@@ -347,28 +348,7 @@ class IncrementalClusteringRunner:
 
     @staticmethod
     def _build_domain_identities(rows: list[MediaIdentityModel]) -> list[MediaIdentity]:
-        return [
-            MediaIdentity(
-                id=str(row.id),
-                tenant_id=str(row.tenant_id),
-                media_id=str(row.media_id),
-                embedding=np.array(row.embedding, dtype=np.float32),
-                confidence=row.confidence,
-                bbox_width=row.bbox_width,
-                bbox_height=row.bbox_height,
-                bbox_x=row.bbox_x,
-                bbox_y=row.bbox_y,
-                pose_pitch=row.pose_pitch,
-                pose_yaw=row.pose_yaw,
-                pose_roll=row.pose_roll,
-                image_phash=row.image_phash,
-                sharpness=row.sharpness,
-                embedding_norm=row.embedding_norm,
-                occlusion_severity=row.occlusion_severity,
-                embedding_model=str(row.embedding_model) if getattr(row, "embedding_model", None) else None,
-            )
-            for row in rows
-        ]
+        return [media_identity_from_model(row) for row in rows]
 
     @staticmethod
     def _log_batch_media_ids(job_id: str, identities: list[MediaIdentity]) -> None:

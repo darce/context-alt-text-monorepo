@@ -2,7 +2,44 @@
 
 declare(strict_types=1);
 
-namespace AltContext\Tests\Unit;
+namespace AltContext\PublicSite {
+    // WHY: the shared wp_scripts() stub has no queue; this override supplies one from $GLOBALS['__ac_scripts'] so dequeue_theme_assets() is exercisable without editing tests/stubs/wp.php.
+    function wp_scripts(): object
+    {
+        $scripts = new \stdClass();
+        $scripts->queue = array_keys($GLOBALS['__ac_scripts'] ?? []);
+
+        return $scripts;
+    }
+}
+
+namespace {
+    if (!function_exists('wp_styles')) {
+        function wp_styles(): object
+        {
+            $styles = new \stdClass();
+            $styles->queue = array_keys($GLOBALS['__ac_styles'] ?? []);
+
+            return $styles;
+        }
+    }
+
+    if (!function_exists('wp_dequeue_style')) {
+        function wp_dequeue_style($handle): void
+        {
+            unset($GLOBALS['__ac_styles'][$handle]);
+        }
+    }
+
+    if (!function_exists('wp_dequeue_script')) {
+        function wp_dequeue_script($handle): void
+        {
+            unset($GLOBALS['__ac_scripts'][$handle]);
+        }
+    }
+}
+
+namespace AltContext\Tests\Unit {
 
 require_once __DIR__ . '/../../src/public/class-public-guide-route.php';
 
@@ -217,6 +254,60 @@ final class PublicGuideRouteTest extends TestCase
             'option off' => [false],
             'option on' => [true],
         ];
+    }
+
+    public function testGuideRouteSweepKeepsPluginAndCoreChromeHandles(): void
+    {
+        $this->setOption('acx_public_guide_enabled', true);
+        $this->simulateRewriteMatch();
+        $GLOBALS['__ac_styles']['theme-style'] = ['src' => 'http://example.test/theme.css'];
+        $GLOBALS['__ac_styles']['some-other-plugin'] = ['src' => 'http://example.test/other.css'];
+        $GLOBALS['__ac_styles']['admin-bar'] = ['src' => 'http://example.test/admin-bar.css'];
+        $GLOBALS['__ac_styles']['dashicons'] = ['src' => 'http://example.test/dashicons.css'];
+        $GLOBALS['__ac_styles']['acx-public-guide-0'] = ['src' => 'http://example.test/guide.css'];
+        $GLOBALS['__ac_scripts']['theme-script'] = ['src' => 'http://example.test/theme.js'];
+        $GLOBALS['__ac_scripts']['admin-bar'] = ['src' => 'http://example.test/admin-bar.js'];
+        $GLOBALS['__ac_scripts']['acx-public-guide'] = ['src' => 'http://example.test/guide.js'];
+
+        $route = new PublicGuideRoute($this->nullResolver());
+        $route->dequeue_theme_assets();
+
+        $styleHandles = array_keys($GLOBALS['__ac_styles']);
+        sort($styleHandles);
+        self::assertSame(['acx-public-guide-0', 'admin-bar', 'dashicons'], $styleHandles);
+
+        $scriptHandles = array_keys($GLOBALS['__ac_scripts']);
+        sort($scriptHandles);
+        self::assertSame(['acx-public-guide', 'admin-bar'], $scriptHandles);
+    }
+
+    public function testGuideRouteSweepStripsUnknownCoreHandles(): void
+    {
+        $this->setOption('acx_public_guide_enabled', true);
+        $this->simulateRewriteMatch();
+        $GLOBALS['__ac_styles']['theme-style'] = ['src' => 'http://example.test/theme.css'];
+        $GLOBALS['__ac_styles']['wp-block-library'] = ['src' => 'http://example.test/wp-block-library.css'];
+        $GLOBALS['__ac_styles']['admin-bar'] = ['src' => 'http://example.test/admin-bar.css'];
+        $GLOBALS['__ac_styles']['dashicons'] = ['src' => 'http://example.test/dashicons.css'];
+        $GLOBALS['__ac_styles']['acx-public-guide-0'] = ['src' => 'http://example.test/guide.css'];
+        $GLOBALS['__ac_scripts']['theme-script'] = ['src' => 'http://example.test/theme.js'];
+        $GLOBALS['__ac_scripts']['wp-block-library'] = ['src' => 'http://example.test/wp-block-library.js'];
+        $GLOBALS['__ac_scripts']['admin-bar'] = ['src' => 'http://example.test/admin-bar.js'];
+        $GLOBALS['__ac_scripts']['acx-public-guide'] = ['src' => 'http://example.test/guide.js'];
+
+        $route = new PublicGuideRoute($this->nullResolver());
+        $route->dequeue_theme_assets();
+
+        self::assertArrayNotHasKey('wp-block-library', $GLOBALS['__ac_styles']);
+        self::assertArrayNotHasKey('wp-block-library', $GLOBALS['__ac_scripts']);
+
+        $styleHandles = array_keys($GLOBALS['__ac_styles']);
+        sort($styleHandles);
+        self::assertSame(['acx-public-guide-0', 'admin-bar', 'dashicons'], $styleHandles);
+
+        $scriptHandles = array_keys($GLOBALS['__ac_scripts']);
+        sort($scriptHandles);
+        self::assertSame(['acx-public-guide', 'admin-bar'], $scriptHandles);
     }
 
     public function testEnabledOptionChangeRegistersRewrite(): void
@@ -557,4 +648,6 @@ final class PublicGuideRouteTest extends TestCase
 
         return (bool) $method->invoke($route);
     }
+}
+
 }

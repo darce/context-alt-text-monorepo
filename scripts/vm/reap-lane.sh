@@ -1176,6 +1176,30 @@ lane_has_live_process() {
   return 1
 }
 
+# Move $1 aside so new workers cannot enter the original path. Same-filesystem
+# rename is atomic; a worker whose cwd is already inside follows the inode.
+# Prints the quarantine path on success. Hidden so --all's `$root/*` glob does
+# not pick the aside copy up as a fresh lane.
+quarantine_lane() {
+  local real="$1" parent key dest
+  parent="$(dirname "$real")"
+  key="${real##*/}"
+  dest="$parent/.reap-quarantine-${key}.$$"
+  if [[ -e "$dest" || -L "$dest" ]]; then
+    return 1
+  fi
+  mv -- "$real" "$dest" || return 1
+  printf '%s\n' "$dest"
+}
+
+restore_quarantined_lane() {
+  local real="$1" quarantine="$2"
+  if [[ -e "$real" || -L "$real" ]]; then
+    return 1
+  fi
+  mv -- "$quarantine" "$real"
+}
+
 lane_newest_mtime() {
   local dir="$1" newest=0 candidate candidate_mtime git_item
   candidate_mtime="$(path_mtime "$dir" || true)"
@@ -1220,7 +1244,7 @@ process_one() {
   local now newest_mtime min_age generation cleanup_failed=0
   local safety_snapshot safety_ignore_ref="" archive_ref="" partial_archive_ref="" partial_line
   local intent_real="" partial_intent_path="" net_status
-  local partial_verified_tips="" occupant_head="" stale_intent
+  local partial_verified_tips="" occupant_head="" stale_intent quarantine=""
 
   candidates=$((candidates + 1))
   dirty_category=""
@@ -1505,20 +1529,36 @@ process_one() {
     partial_intent_path="$(partial_intent_path_for "$real")"
   fi
 
-  # Archive roots do not have the sandbox materializer's lease. Re-probe the
-  # process/ownership boundary after all archive work and immediately before
-  # rm, closing the window in which a worker can enter after the earlier scan.
-  # Remove a newly written partial intent before returning so this refusal is a
-  # normal retry, not a misleading operator-review tombstone.
+  # Archive roots do not have the sandbox materializer's lease. A final /proc
+  # scan next to rm is not atomic: a worker can enter after the scan and lose
+  # its live worktree. Rename the checkout out of the worker entry path, then
+  # re-probe the quarantine inode, then delete that aside copy. Remove a newly
+  # written partial intent before a live-process refusal so it stays a retry,
+  # not a misleading operator-review tombstone.
   if lane_has_live_process "$real"; then
     [[ -n "$partial_intent_path" ]] && rm -f -- "$partial_intent_path"
-    release_grok_lane_lock
     skip "$path" "lane has a live process"
     return 0
   fi
 
-  if ! rm -rf -- "$real" || [[ -e "$real" ]]; then
-    release_grok_lane_lock
+  quarantine="$(quarantine_lane "$real")" || {
+    [[ -n "$partial_intent_path" ]] && rm -f -- "$partial_intent_path"
+    skip "$path" "could not quarantine lane for deletion"
+    return 1
+  }
+
+  if lane_has_live_process "$quarantine"; then
+    [[ -n "$partial_intent_path" ]] && rm -f -- "$partial_intent_path"
+    if restore_quarantined_lane "$real" "$quarantine"; then
+      skip "$path" "lane has a live process"
+      return 0
+    fi
+    skip "$path" "lane has a live process; quarantine retained at $quarantine"
+    return 1
+  fi
+
+  if ! rm -rf -- "$quarantine" || [[ -e "$quarantine" ]]; then
+    restore_quarantined_lane "$real" "$quarantine" >/dev/null 2>&1 || true
     if [[ -n "$archive_ref" ]]; then
       skip "$path" "rm failed after archive ${archive_ref}; lane partially removed"
     else

@@ -367,9 +367,11 @@ def provision_dependency_trees(*, primary: Path, worktree: Path) -> list[str]:
     for rel in DEPENDENCY_TREES:
         src = primary / rel
         dest = worktree / rel
-        if dest.resolve(strict=False) == src.resolve(strict=False):
-            # Same path (main checkout, or --primary omitted on a normal clone):
-            # never rmtree the live node_modules/vendor tree into a dangling link.
+        if worktree.resolve(strict=False) == primary.resolve(strict=False):
+            # Same checkout root (main tree, or --primary omitted on a normal
+            # clone): never rmtree the live node_modules/vendor tree into a
+            # dangling link. A separate worktree whose dest symlink merely
+            # resolves to primary still needs lock checks and a frozen cache.
             if dest.is_symlink():
                 linked.append(rel)
             continue

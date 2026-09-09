@@ -69,12 +69,20 @@ acx_etime_to_seconds() {
 }
 
 acx_kill_pid() {
-  local kill_bin pid="$1"
+  local kill_bin pid="$1" i=0
   kill_bin="$(type -P kill)" || {
     echo "remote_agent: kill is unavailable on PATH" >&2
     return 1
   }
-  "$kill_bin" -TERM "$pid" 2>/dev/null
+  "$kill_bin" -TERM "$pid" 2>/dev/null || return 1
+  while [ "$i" -lt 5 ]; do
+    "$kill_bin" -0 "$pid" 2>/dev/null || return 0
+    sleep 0.1
+    i=$((i + 1))
+  done
+  "$kill_bin" -KILL "$pid" 2>/dev/null || true
+  "$kill_bin" -0 "$pid" 2>/dev/null && return 1
+  return 0
 }
 
 acx_run_bounded_ping() {

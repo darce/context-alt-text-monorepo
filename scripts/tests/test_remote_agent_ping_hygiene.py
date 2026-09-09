@@ -71,10 +71,32 @@ cat <<'EOF'
 EOF
 """,
     )
+    state_dir = tmp_path / "kill-state"
+    state_dir.mkdir()
     _write_executable(
         fake_bin / "kill",
         f"""#!/usr/bin/env bash
 printf '%s\\n' "$*" >>{shlex.quote(str(kill_log))}
+sig="$1"
+pid="$2"
+state={shlex.quote(str(state_dir))}
+case "$sig" in
+  -TERM)
+    printf 'dead\\n' >"$state/$pid"
+    exit 0
+    ;;
+  -KILL)
+    printf 'dead\\n' >"$state/$pid"
+    exit 0
+    ;;
+  -0)
+    if [[ "$(cat "$state/$pid" 2>/dev/null || true)" == "dead" ]]; then
+      exit 1
+    fi
+    exit 0
+    ;;
+esac
+exit 0
 """,
     )
     completed = subprocess.run(
@@ -90,8 +112,109 @@ printf '%s\\n' "$*" >>{shlex.quote(str(kill_log))}
         timeout=10,
     )
     assert completed.returncode == 0, completed.stderr
-    assert kill_log.read_text(encoding="utf-8").splitlines() == ["-TERM 111"]
+    lines = kill_log.read_text(encoding="utf-8").splitlines()
+    assert lines[0] == "-TERM 111"
+    assert all(line.split()[-1] == "111" for line in lines)
+    assert "-KILL 111" not in lines
     assert "reaped 1 stale orphan ping probe(s)" in completed.stdout
+
+
+def test_orphan_reaper_escalates_term_to_kill_for_stubborn_ping(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    kill_log = tmp_path / "kill.log"
+    state_dir = tmp_path / "kill-state"
+    state_dir.mkdir()
+    _write_executable(
+        fake_bin / "ps",
+        """#!/usr/bin/env bash
+cat <<'EOF'
+  111     1       00:45 codex exec --json ping
+EOF
+""",
+    )
+    _write_executable(
+        fake_bin / "kill",
+        f"""#!/usr/bin/env bash
+printf '%s\\n' "$*" >>{shlex.quote(str(kill_log))}
+sig="$1"
+pid="$2"
+state={shlex.quote(str(state_dir))}
+case "$sig" in
+  -TERM)
+    printf 'alive\\n' >"$state/$pid"
+    exit 0
+    ;;
+  -KILL)
+    printf 'dead\\n' >"$state/$pid"
+    exit 0
+    ;;
+  -0)
+    if [[ "$(cat "$state/$pid" 2>/dev/null || true)" == "dead" ]]; then
+      exit 1
+    fi
+    exit 0
+    ;;
+esac
+exit 0
+""",
+    )
+    completed = subprocess.run(
+        ["bash", "-c", 'source "$1"; acx_reap_orphan_pings', "bash", str(SCRIPT)],
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+            "ORPHAN_PING_STALE_SEC": "30",
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+    assert completed.returncode == 0, completed.stderr
+    lines = kill_log.read_text(encoding="utf-8").splitlines()
+    assert "-TERM 111" in lines
+    assert "-KILL 111" in lines
+    assert lines.index("-TERM 111") < lines.index("-KILL 111")
+    assert "reaped 1 stale orphan ping probe(s)" in completed.stdout
+
+
+def test_orphan_reaper_does_not_count_unkillable_ping(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    kill_log = tmp_path / "kill.log"
+    _write_executable(
+        fake_bin / "ps",
+        """#!/usr/bin/env bash
+cat <<'EOF'
+  111     1       00:45 codex exec --json ping
+EOF
+""",
+    )
+    _write_executable(
+        fake_bin / "kill",
+        f"""#!/usr/bin/env bash
+printf '%s\\n' "$*" >>{shlex.quote(str(kill_log))}
+exit 0
+""",
+    )
+    completed = subprocess.run(
+        ["bash", "-c", 'source "$1"; acx_reap_orphan_pings', "bash", str(SCRIPT)],
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+            "ORPHAN_PING_STALE_SEC": "30",
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+    assert completed.returncode == 0, completed.stderr
+    lines = kill_log.read_text(encoding="utf-8").splitlines()
+    assert "-TERM 111" in lines
+    assert "-KILL 111" in lines
+    assert "reaped 0 stale orphan ping probe(s)" in completed.stdout
 
 
 def test_bounded_ping_times_out_a_sleeping_codex(tmp_path: Path) -> None:

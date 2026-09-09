@@ -27,10 +27,12 @@ def test_inner_watchdog_kills_process_group() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
     assert "acx_kill_tree" in source
     assert "acx_list_descendants" in source
+    assert 'acx_descendants="$(acx_list_descendants "$acx_pid")"' in source
     assert '"$acx_setsid" "$@" &' in source
     assert '"$@" &' in source
     assert 'kill -TERM -- "-$acx_pid"' in source
     assert 'kill -KILL -- "-$acx_pid"' in source
+    assert "required command unavailable: pgrep or ps" in source
 
 
 def _pid_is_alive(pid: int) -> bool:
@@ -154,3 +156,108 @@ test -s {pid_arg}
     grandchild = int(pidfile.read_text(encoding="utf-8").strip())
     assert grandchild > 1
     assert not _pid_is_alive(grandchild), f"grandchild {grandchild} survived without setsid"
+
+
+def test_generated_watchdog_reaps_a_term_ignoring_grandchild_without_setsid(tmp_path: Path) -> None:
+    """TERM-ignoring grandchildren must still die from the captured KILL set."""
+    pidfile = tmp_path / "grandchild.pid"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    bash_bin = shutil.which("bash")
+    assert bash_bin
+    for command in ("awk", "date", "sleep", "kill", "ps", "pgrep", "sh"):
+        target = shutil.which(command)
+        assert target, command
+        (fake_bin / command).symlink_to(target)
+    (fake_bin / "bash").symlink_to(bash_bin)
+    docker = fake_bin / "docker"
+    docker.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    docker.chmod(docker.stat().st_mode | stat.S_IEXEC)
+
+    generated = _render_program()
+    watchdog_prefix, separator, _ = generated.partition('if ! acx_run "Buildx capability probe"')
+    assert separator, "generated program no longer exposes the actual watchdog before build setup"
+    pid_arg = shlex.quote(str(pidfile))
+    harness = (
+        watchdog_prefix
+        + f"""
+set +e
+acx_deadline_epoch=$(( $(date +%s) + 1 ))
+acx_run "synthetic process-tree probe" sh -c '( trap "" TERM; exec sleep 300 ) & echo $! > {pid_arg}; wait'
+rc=$?
+set -e
+test "$rc" -eq 124
+test -s {pid_arg}
+"""
+    )
+    completed = subprocess.run(
+        [
+            bash_bin,
+            "-c",
+            harness,
+            "bash",
+            "builder",
+            "node",
+            "unix:///var/run/docker.sock",
+            "repo/image",
+            "a" * 40,
+            "",
+            "9999999999",
+            str(tmp_path),
+        ],
+        env={"PATH": str(fake_bin)},
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+    )
+    time.sleep(0.2)
+    assert completed.returncode == 0, completed.stderr
+    grandchild = int(pidfile.read_text(encoding="utf-8").strip())
+    assert grandchild > 1
+    assert not _pid_is_alive(grandchild), (
+        f"TERM-ignoring grandchild {grandchild} survived without setsid"
+    )
+
+
+def test_generated_watchdog_fails_closed_without_process_enumeration(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    bash_bin = shutil.which("bash")
+    assert bash_bin
+    for command in ("awk", "date", "sleep", "kill", "sh"):
+        target = shutil.which(command)
+        assert target, command
+        (fake_bin / command).symlink_to(target)
+    (fake_bin / "bash").symlink_to(bash_bin)
+    docker = fake_bin / "docker"
+    docker.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    docker.chmod(docker.stat().st_mode | stat.S_IEXEC)
+
+    generated = _render_program()
+    watchdog_prefix, separator, _ = generated.partition('if ! acx_run "Buildx capability probe"')
+    assert separator, "generated program no longer exposes the actual watchdog before build setup"
+    harness = watchdog_prefix + "\ntrue\n"
+    completed = subprocess.run(
+        [
+            bash_bin,
+            "-c",
+            harness,
+            "bash",
+            "builder",
+            "node",
+            "unix:///var/run/docker.sock",
+            "repo/image",
+            "a" * 40,
+            "",
+            "9999999999",
+            str(tmp_path),
+        ],
+        env={"PATH": str(fake_bin)},
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+    )
+    assert completed.returncode == 125, completed.stderr
+    assert "pgrep or ps" in completed.stderr

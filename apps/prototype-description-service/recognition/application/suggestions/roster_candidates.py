@@ -245,8 +245,8 @@ async def list_roster_candidates(
         for labeled_id, similarity in ranked[:top_k]
     ]
     return RosterCandidatesResult(
-        model_id=str(probe_model),
-        embedding_model=str(probe_model),
+        model_id=model_id,
+        embedding_model=model_id,
         computed_at=computed_at,
         probe_face_count=len(usable_probes),
         reference_face_count=reference_face_count,

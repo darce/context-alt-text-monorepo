@@ -242,24 +242,21 @@ load_snapshots_ready_for_reaper_proof() {
     # host has the directories (tmpfiles) but no producer snapshots yet; starting
     # acx-gpu-reap.service then fails closed and aborts install before deploy
     # prod can publish them. Runtime timer ticks remain fail-closed.
-    local dir snapshot
-    local ready=0
-    for dir in /run/acx-write/*/; do
-        if [ ! -d "$dir" ]; then
-            echo "gpu-lifecycle: no load snapshot directories yet; deferring immediate reaper proof until producer deploy publishes describe-load.json" >&2
-            return 1
-        fi
-        snapshot="${dir}describe-load.json"
+    # Membership comes from LOAD_ENVIRONMENTS (gpu-snapshot-deployments.conf),
+    # not a /run/acx-write glob: leftover sibling dirs must not defer proof.
+    local environment snapshot
+    local load_dir="${ACX_DESCRIBE_LOAD_DIR:-/run/acx-write}"
+    [ -n "${LOAD_ENVIRONMENTS:-}" ] || {
+        echo "gpu-lifecycle: GPU snapshot deployment registry is empty; deferring immediate reaper proof until producer deploy publishes describe-load.json" >&2
+        return 1
+    }
+    for environment in $LOAD_ENVIRONMENTS; do
+        snapshot="${load_dir}/${environment}/describe-load.json"
         if [ ! -s "$snapshot" ]; then
             echo "gpu-lifecycle: missing load snapshot ${snapshot}; deferring immediate reaper proof until producer deploy publishes it" >&2
             return 1
         fi
-        ready=1
     done
-    if [ "$ready" -ne 1 ]; then
-        echo "gpu-lifecycle: no load snapshot directories yet; deferring immediate reaper proof until producer deploy publishes describe-load.json" >&2
-        return 1
-    fi
     return 0
 }
 
@@ -867,6 +864,7 @@ ${api_group_function}
 ${cleanup_function}
 ${snapshot_function}
 ${snapshot_validation_function}
+LOAD_ENVIRONMENTS='${LOAD_ENVIRONMENTS}'
 lifecycle_transaction_complete=0
 unit_stage=''
 trap cleanup_gpu_lifecycle_transaction ERR EXIT

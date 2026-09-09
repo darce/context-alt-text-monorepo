@@ -724,12 +724,90 @@ while raw:
     printf "MANUAL STOP fallback: oci compute instance action --action STOP --instance-id '%s'\n" "$instance_id"
 }
 
+preflight_load_deployments() {
+    local environment line_number=0 source deployments_file
+    local required
+    local load_environments=""
+    local required_deployments="dev dev-fir staging prod"
+    if [ "${ACX_GPU_DEPLOYMENTS+x}" = x ]; then
+        source=ACX_GPU_DEPLOYMENTS
+        while IFS= read -r environment; do
+            [ -n "$environment" ] || {
+                echo "ERROR [12] $source must not contain empty entries." >&2
+                exit 1
+            }
+            case " $load_environments " in
+                *" $environment "*)
+                    echo "ERROR [12] duplicate GPU snapshot deployment '$environment' in $source." >&2
+                    exit 1
+                    ;;
+            esac
+            [[ "$environment" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || {
+                echo "ERROR [12] invalid GPU snapshot deployment '$environment' in $source." >&2
+                exit 1
+            }
+            load_environments="${load_environments:+${load_environments} }${environment}"
+        done < <(tr ',' '\n' <<<"$ACX_GPU_DEPLOYMENTS")
+    else
+        deployments_file="${ACX_GPU_DEPLOYMENTS_FILE:-}"
+        if [ -z "$deployments_file" ]; then
+            if [ -r "${script_dir}/gpu-snapshot-deployments.conf" ]; then
+                deployments_file="${script_dir}/gpu-snapshot-deployments.conf"
+            elif [ -r /opt/acx-gpu/current/scripts/deploy/gpu-snapshot-deployments.conf ]; then
+                deployments_file=/opt/acx-gpu/current/scripts/deploy/gpu-snapshot-deployments.conf
+            fi
+        fi
+        [ -n "$deployments_file" ] || {
+            echo "ERROR [12] no GPU snapshot deployments registry; set ACX_GPU_DEPLOYMENTS or ACX_GPU_DEPLOYMENTS_FILE." >&2
+            exit 1
+        }
+        [ -r "$deployments_file" ] || {
+            echo "ERROR [12] GPU snapshot deployments file is missing or unreadable: $deployments_file." >&2
+            exit 1
+        }
+        source=$deployments_file
+        while IFS= read -r environment || [ -n "$environment" ]; do
+            line_number=$((line_number + 1))
+            [ -n "$environment" ] || {
+                echo "ERROR [12] empty GPU snapshot deployment at ${source}:${line_number}." >&2
+                exit 1
+            }
+            case " $load_environments " in
+                *" $environment "*)
+                    echo "ERROR [12] duplicate GPU snapshot deployment '$environment' in ${source}:${line_number}." >&2
+                    exit 1
+                    ;;
+            esac
+            [[ "$environment" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || {
+                echo "ERROR [12] invalid GPU snapshot deployment '$environment' in ${source}:${line_number}." >&2
+                exit 1
+            }
+            load_environments="${load_environments:+${load_environments} }${environment}"
+        done < "$deployments_file"
+    fi
+    [ -n "$load_environments" ] || {
+        echo "ERROR [12] GPU snapshot deployment registry is empty: $source." >&2
+        exit 1
+    }
+    for required in $required_deployments; do
+        case " $load_environments " in
+            *" $required "*) ;;
+            *)
+                echo "ERROR [12] GPU snapshot deployment registry is missing required environment '$required': $source." >&2
+                exit 1
+                ;;
+        esac
+    done
+    printf '%s\n' "$load_environments"
+}
+
 preflight_published_load_snapshots() {
     local load_dir="${ACX_DESCRIBE_LOAD_DIR:-/run/acx-write}"
     local stale_seconds="${ACX_DESCRIBE_LOAD_STALE_SECONDS:-120}"
     local now_epoch="${ACX_NOW_EPOCH:-$(date +%s)}"
-    local environment snapshot
+    local environment snapshot load_environments
     local future_skew_tolerance_seconds=5
+    local allow_missing="${ACX_GPU_PREFLIGHT_ALLOW_MISSING_LOAD:-0}"
 
     if [[ ! "$stale_seconds" =~ ^[1-9][0-9]*$ ]]; then
         echo "ERROR [12] ACX_DESCRIBE_LOAD_STALE_SECONDS must be a positive integer." >&2
@@ -739,10 +817,23 @@ preflight_published_load_snapshots() {
         echo "ERROR [12] ACX_NOW_EPOCH must be numeric." >&2
         exit 1
     fi
-    [[ -d "$load_dir" ]] || return 0
-    for environment in dev dev-fir staging prod; do
+    load_environments="$(preflight_load_deployments)" || exit 1
+    if [[ ! -d "$load_dir" ]]; then
+        if [[ "$allow_missing" == 1 ]]; then
+            return 0
+        fi
+        echo "ERROR [12] describe-load directory is missing: ${load_dir}." >&2
+        exit 1
+    fi
+    for environment in $load_environments; do
         snapshot="${load_dir}/${environment}/describe-load.json"
-        [[ -e "$snapshot" ]] || continue
+        if [[ ! -e "$snapshot" ]]; then
+            if [[ "$allow_missing" == 1 ]]; then
+                continue
+            fi
+            echo "ERROR [12] missing describe-load snapshot for registered environment ${environment}: ${snapshot}." >&2
+            exit 1
+        fi
         if ! python3 - "$snapshot" "$now_epoch" "$stale_seconds" "$future_skew_tolerance_seconds" <<'PY'
 import json
 import math

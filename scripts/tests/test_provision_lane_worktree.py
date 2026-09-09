@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import importlib.util
 import os
 import subprocess
 import sys
@@ -41,8 +43,14 @@ def test_provision_symlinks_binaries_instead_of_dereferencing(tmp_path: Path) ->
     )
     assert completed.returncode == 0, completed.stderr
     dest = worktree / "apps/prototype-wp-alt-context/node_modules"
+    src = primary / "apps/prototype-wp-alt-context/node_modules"
     assert dest.is_symlink(), "node_modules must be a symlink, not a copied tree"
+    assert dest.resolve() != src.resolve()
+    assert ".acx-dep-cache" in dest.resolve().parts
     vitest = dest / ".bin" / "vitest"
+    assert vitest.is_symlink()
+    (src / ".bin" / "vitest").unlink()
+    (src / ".bin" / "vitest").write_text("dereferenced\n", encoding="utf-8")
     assert vitest.is_symlink()
     assert (worktree / "Makefile.d/lifecycle.mk").read_text(encoding="utf-8") == "# overlay\n"
 
@@ -167,14 +175,42 @@ def test_provision_fails_closed_when_git_manifest_lookup_fails(tmp_path: Path) -
     assert tracked_copy.read_text(encoding="utf-8") == "# branch-owned\n"
 
 
-def test_provision_does_not_copytree_node_modules() -> None:
-    source = PROVISION.read_text(encoding="utf-8")
-    tree_fn = source.split("def provision_dependency_trees")[1].split("def main")[0]
-    freeze_fn = source.split("def _freeze_dependency_tree")[1].split("\ndef ")[0]
-    assert "copytree" not in tree_fn
-    assert "copytree" in freeze_fn
-    assert "symlinks=True" in freeze_fn
-    assert "os.symlink" in source
+def test_provision_does_not_copytree_node_modules(tmp_path: Path) -> None:
+    primary = tmp_path / "primary"
+    worktree = tmp_path / "worktree"
+    src = primary / "apps/prototype-wp-alt-context/node_modules"
+    bin_dir = src / ".bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "vitest").symlink_to(src / "vitest.mjs")
+    (src / "pkg").write_text("from-primary\n", encoding="utf-8")
+    _write_lockfiles(primary, '{"lock":"node"}\n', '{"lock":"vendor"}\n')
+    worktree.mkdir()
+    _write_lockfiles(worktree, '{"lock":"node"}\n', '{"lock":"vendor"}\n')
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(PROVISION),
+            "--worktree",
+            str(worktree),
+            "--primary",
+            str(primary),
+            "--fixture-mode",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    dest = worktree / "apps/prototype-wp-alt-context/node_modules"
+    assert dest.is_symlink()
+    assert dest.resolve() != src.resolve()
+    assert dest.resolve().is_dir()
+    assert not dest.resolve().is_symlink()
+    assert (dest / ".bin" / "vitest").is_symlink()
+    (src / "pkg").write_text("mutated-primary\n", encoding="utf-8")
+    assert (dest / "pkg").read_text(encoding="utf-8") == "from-primary\n"
 
 
 def test_provision_does_not_destroy_same_path_dependency_trees(tmp_path: Path) -> None:
@@ -627,3 +663,129 @@ def test_provision_rejects_direct_primary_symlink_when_lockfiles_differ(tmp_path
     assert not dest.is_symlink()
     assert src.is_dir()
     assert (src / "pkg").read_text(encoding="utf-8") == "from-primary\n"
+
+
+def _load_provisioner():
+    spec = importlib.util.spec_from_file_location("provision_lane_worktree", PROVISION)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _run_provision(worktree: Path, primary: Path, *extra: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            str(PROVISION),
+            "--worktree",
+            str(worktree),
+            "--primary",
+            str(primary),
+            *extra,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_provision_evicts_stale_dep_cache_digests(tmp_path: Path) -> None:
+    primary = tmp_path / "primary"
+    worktree = tmp_path / "worktree"
+    src = primary / "apps/prototype-wp-alt-context/node_modules"
+    src.mkdir(parents=True)
+    (src / "pkg").write_text("from-primary\n", encoding="utf-8")
+    vendor = primary / "apps/prototype-wp-alt-context/vendor"
+    vendor.mkdir(parents=True)
+    (vendor / "pkg").write_text("from-primary-vendor\n", encoding="utf-8")
+    _write_lockfiles(primary, '{"lock":"a"}\n', '{"lock":"b"}\n')
+    worktree.mkdir()
+    _write_lockfiles(worktree, '{"lock":"a"}\n', '{"lock":"b"}\n')
+
+    completed = _run_provision(worktree, primary, "--fixture-mode")
+    assert completed.returncode == 0, completed.stderr
+
+    cache_root = worktree / "apps/prototype-wp-alt-context/.acx-dep-cache"
+    live_before = {path.name for path in cache_root.iterdir() if path.is_dir()}
+    assert live_before
+    stale = cache_root / ("0" * 64)
+    (stale / "node_modules").mkdir(parents=True)
+    (stale / "node_modules" / "old").write_text("stale\n", encoding="utf-8")
+    leftover = cache_root / ".tmp-node_modules.99999"
+    leftover.mkdir()
+    (leftover / "x").write_text("tmp\n", encoding="utf-8")
+
+    completed = _run_provision(worktree, primary, "--fixture-mode")
+    assert completed.returncode == 0, completed.stderr
+    names = {path.name for path in cache_root.iterdir()}
+    assert ("0" * 64) not in names
+    assert not any(name.startswith(".tmp-") for name in names)
+    assert live_before <= names
+    dest = worktree / "apps/prototype-wp-alt-context/node_modules"
+    vendor_dest = worktree / "apps/prototype-wp-alt-context/vendor"
+    assert dest.is_symlink() and ".acx-dep-cache" in dest.resolve().parts
+    assert vendor_dest.is_symlink() and ".acx-dep-cache" in vendor_dest.resolve().parts
+    assert dest.resolve().parent.name in names
+    assert vendor_dest.resolve().parent.name in names
+
+
+def test_provision_replaces_broken_dep_cache_symlink(tmp_path: Path) -> None:
+    primary = tmp_path / "primary"
+    worktree = tmp_path / "worktree"
+    src = primary / "apps/prototype-wp-alt-context/node_modules"
+    src.mkdir(parents=True)
+    (src / "pkg").write_text("from-primary\n", encoding="utf-8")
+    _write_lockfiles(primary, '{"lock":"node"}\n', '{"lock":"vendor"}\n')
+    worktree.mkdir()
+    _write_lockfiles(worktree, '{"lock":"node"}\n', '{"lock":"vendor"}\n')
+    digest = hashlib.sha256(b'{"lock":"node"}\n').hexdigest()
+    cache = worktree / "apps/prototype-wp-alt-context/.acx-dep-cache" / digest / "node_modules"
+    cache.parent.mkdir(parents=True)
+    cache.symlink_to(worktree / "missing-cache")
+
+    completed = _run_provision(worktree, primary, "--fixture-mode")
+    assert completed.returncode == 0, completed.stderr
+    dest = worktree / "apps/prototype-wp-alt-context/node_modules"
+    assert dest.is_symlink()
+    assert cache.is_dir() and not cache.is_symlink()
+    assert (dest / "pkg").read_text(encoding="utf-8") == "from-primary\n"
+
+
+def test_provision_fails_closed_on_malformed_dep_sidecar(tmp_path: Path) -> None:
+    primary = tmp_path / "primary"
+    worktree = tmp_path / "worktree"
+    src = primary / "apps/prototype-wp-alt-context/node_modules"
+    src.mkdir(parents=True)
+    (src / "pkg").write_text("from-primary\n", encoding="utf-8")
+    _write_lockfiles(primary, '{"lock":"node"}\n', '{"lock":"vendor"}\n')
+    worktree.mkdir()
+    _write_lockfiles(worktree, '{"lock":"node"}\n', '{"lock":"vendor"}\n')
+    sidecar = worktree / "apps/prototype-wp-alt-context/.acx-dep-source"
+    sidecar.write_text("{not-json\n", encoding="utf-8")
+
+    completed = _run_provision(worktree, primary, "--fixture-mode")
+    dest = worktree / "apps/prototype-wp-alt-context/node_modules"
+    assert completed.returncode != 0
+    assert "not valid JSON" in completed.stderr
+    assert not dest.exists()
+    assert not dest.is_symlink()
+
+
+def test_overlay_copy_rejects_escaping_relative_entries(tmp_path: Path) -> None:
+    module = _load_provisioner()
+    src = tmp_path / "src"
+    dest = tmp_path / "dest"
+    src.mkdir()
+    dest.mkdir()
+    secret = tmp_path / "secret"
+    secret.write_text("nope\n", encoding="utf-8")
+    raised = False
+    try:
+        module._copy_overlay_entries(src, dest, ["../secret"])
+    except RuntimeError as exc:
+        raised = True
+        assert "escapes" in str(exc)
+    assert raised
+    assert secret.read_text(encoding="utf-8") == "nope\n"
+    assert list(dest.iterdir()) == []

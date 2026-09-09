@@ -46,7 +46,7 @@ export default defineConfig({
     {
       name: 'evidence',
       dependencies: ['auth-setup'],
-      testMatch: /evidence\/.*\.spec\.ts/,
+      testMatch: /evidence\/(?!guided-walkthrough\.spec\.ts$).*\.spec\.ts/,
       outputDir: path.join(artifactRoot, 'evidence'),
       use: {
         headless: false,
@@ -56,6 +56,26 @@ export default defineConfig({
         storageState: storageStatePath,
         trace: 'on',
         video: 'on',
+      },
+    },
+    {
+      // GUIDESEED-1: headless recording of the guided prototype for the public
+      // case-study video. Fixed viewport so recordVideo.size matches the page; no
+      // cursor is rendered headless, so the caption track (VTT) carries the narration.
+      name: 'guided-recording',
+      dependencies: ['auth-setup'],
+      testMatch: /evidence\/guided-walkthrough\.spec\.ts/,
+      outputDir: path.join(artifactRoot, 'guided-recording'),
+      retries: 0,
+      use: {
+        headless: true,
+        viewport: { width: 1440, height: 900 },
+        launchOptions: {
+          slowMo: 350,
+        },
+        storageState: storageStatePath,
+        trace: 'retain-on-failure',
+        video: { mode: 'on', size: { width: 1440, height: 900 } },
       },
     },
     {

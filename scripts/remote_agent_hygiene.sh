@@ -15,18 +15,20 @@ ORPHAN_PING_STALE_MAX=3600
 : "${ORPHAN_PING_MATCH:=codex}"
 
 acx_validate_positive_int() {
-  local name="$1" value="$2" min="$3" max="$4"
+  local name="$1" value="$2" min="$3" max="$4" normalized
   case "$value" in
     ''|*[!0-9]*)
       echo "remote_agent: ${name} must be an integer >= ${min} and <= ${max}" >&2
       return 2
       ;;
-    0)
-      echo "remote_agent: ${name} must be >= ${min} (0 disables the bound)" >&2
-      return 2
-      ;;
   esac
-  if [ "$value" -lt "$min" ] || [ "$value" -gt "$max" ]; then
+  # Force decimal so zero-padded values (08, 00) are not parsed as octal.
+  normalized=$((10#$value))
+  if [ "$normalized" -eq 0 ]; then
+    echo "remote_agent: ${name} must be >= ${min} (0 disables the bound)" >&2
+    return 2
+  fi
+  if [ "$normalized" -lt "$min" ] || [ "$normalized" -gt "$max" ]; then
     echo "remote_agent: ${name} must be an integer >= ${min} and <= ${max} (got ${value})" >&2
     return 2
   fi
@@ -36,13 +38,13 @@ acx_validate_positive_int() {
 acx_validate_ping_timeout() {
   local value="${1:-${PING_TIMEOUT_SEC}}"
   acx_validate_positive_int "PING_TIMEOUT_SEC" "$value" "$PING_TIMEOUT_MIN" "$PING_TIMEOUT_MAX" || return $?
-  PING_TIMEOUT_SEC="$value"
+  PING_TIMEOUT_SEC=$((10#$value))
 }
 
 acx_validate_orphan_ping_stale() {
   local value="${1:-${ORPHAN_PING_STALE_SEC}}"
   acx_validate_positive_int "ORPHAN_PING_STALE_SEC" "$value" "$ORPHAN_PING_STALE_MIN" "$ORPHAN_PING_STALE_MAX" || return $?
-  ORPHAN_PING_STALE_SEC="$value"
+  ORPHAN_PING_STALE_SEC=$((10#$value))
 }
 
 acx_etime_to_seconds() {
@@ -65,7 +67,8 @@ acx_etime_to_seconds() {
   case "$hours" in ''|*[!0-9]*) return 1 ;; esac
   case "$minutes" in ''|*[!0-9]*) return 1 ;; esac
   case "$seconds" in ''|*[!0-9]*) return 1 ;; esac
-  echo $((days * 86400 + hours * 3600 + minutes * 60 + seconds))
+  # ps etime zero-pads fields; unprefixed 08 is invalid octal in $(( )).
+  echo $((10#$days * 86400 + 10#$hours * 3600 + 10#$minutes * 60 + 10#$seconds))
 }
 
 acx_kill_pid() {

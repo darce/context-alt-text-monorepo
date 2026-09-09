@@ -1,8 +1,6 @@
 import React from 'react';
 
-import { CASE_STUDY_URL, guidedCopy } from '../guidedPrototype/copy';
-
-const ADMIN_CASE_STUDY_HREF = 'https://darce.xyz/projects/altcontext/';
+import { CASE_STUDY_URL, guidedCopy } from '../guidedPrototype/publicGuideCopy';
 
 export interface GuidedPrototypeEntranceProps {
   onBegin: () => void;
@@ -54,7 +52,7 @@ export const GuidedPrototypeEntrance = ({
       </button>
 
       <p className="acx-guided-entrance__boundary">
-        <a className="acx-guided-entrance__case-study" href={ADMIN_CASE_STUDY_HREF} target="_blank" rel="noreferrer">
+        <a className="acx-guided-entrance__case-study" href={CASE_STUDY_URL} target="_blank" rel="noreferrer">
           {guidedCopy('page.case_study')}
           <span className="screen-reader-text"> (opens in a new window)</span>
         </a>

@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { act, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { CASE_STUDY_URL, guidedCopy } from '../../admin/guidedPrototype/copy';
+import { CASE_STUDY_URL, PUBLIC_GUIDE_FALLBACK, guidedCopy } from '../../admin/guidedPrototype/publicGuideCopy';
 import { mountPublicGuide } from '../main';
 
 const viteConfig = (): string =>
@@ -33,6 +33,9 @@ describe('public guide entry', () => {
     const fallback = document.querySelector('.acx-public-guide__fallback');
     expect(fallback).toBeInstanceOf(HTMLElement);
     expect((fallback as HTMLElement).hidden).toBe(true);
+    expect(document.querySelectorAll('main')).toHaveLength(1);
+    expect(document.getElementById('acx-public-guide')?.tagName).toBe('MAIN');
+    expect(screen.getByTestId('guided-demo-root').tagName).toBe('DIV');
     expect(screen.getByTestId('guided-scope')).toHaveTextContent(guidedCopy('scope.public'));
     expect(screen.getByRole('navigation', { name: guidedCopy('nav.leave') }).querySelector('a')).toHaveAttribute(
       'href',
@@ -45,7 +48,7 @@ describe('public guide entry', () => {
   });
 
   it('falls back to / when data-home-url is missing', () => {
-    document.body.innerHTML = `<main id="acx-public-guide"></main>`;
+    document.body.innerHTML = '<main id="acx-public-guide"></main>';
     act(() => {
       mountPublicGuide();
     });
@@ -53,5 +56,27 @@ describe('public guide entry', () => {
       'href',
       '/',
     );
+  });
+
+  it('leaves the HTML fallback visible when createRoot throws', () => {
+    document.body.innerHTML = `
+      <main id="acx-public-guide">
+        <p class="acx-public-guide__fallback" role="alert">${PUBLIC_GUIDE_FALLBACK}</p>
+      </main>
+    `;
+
+    act(() => {
+      mountPublicGuide(document.getElementById('acx-public-guide'), {
+        createRoot: () => {
+          throw new Error('createRoot failed');
+        },
+      });
+    });
+
+    const fallback = document.querySelector('.acx-public-guide__fallback');
+    expect(fallback).toBeInstanceOf(HTMLElement);
+    expect((fallback as HTMLElement).hidden).toBe(false);
+    expect(fallback).toHaveTextContent(PUBLIC_GUIDE_FALLBACK);
+    expect(document.body.textContent).not.toMatch(/Something went wrong/);
   });
 });

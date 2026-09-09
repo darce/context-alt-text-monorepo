@@ -627,3 +627,199 @@ exit 0
     assert "skipped 1 ping probe(s) with unparseable etime" in completed.stderr
     assert "reaped 0 stale orphan ping probe(s)" in completed.stdout
 
+
+@pytest.mark.parametrize(
+    ("cmd", "expect_match"),
+    [
+        ("codex exec --json ping", True),
+        ("codex exec ping --json", True),
+        ("ping", True),
+        ("codex exec --json ping ", True),
+        ("codex exec ping-hygiene", False),
+        ("codex mapping --json", False),
+        ("keeping", False),
+        ("codex pingpong", False),
+        ("pinging codex", False),
+    ],
+)
+def test_cmd_has_ping_token(cmd: str, expect_match: bool) -> None:
+    completed = subprocess.run(
+        ["bash", "-c", 'source "$1"; acx_cmd_has_ping_token "$2"', "bash", str(SCRIPT), cmd],
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+    assert (completed.returncode == 0) is expect_match, completed.stderr
+
+
+def test_orphan_reaper_ignores_ping_substring_false_positives(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    kill_log = tmp_path / "kill.log"
+    state_dir = tmp_path / "kill-state"
+    state_dir.mkdir()
+    _write_executable(
+        fake_bin / "ps",
+        """#!/usr/bin/env bash
+cat <<'EOF'
+  111     1       00:45 codex exec --json ping
+  555     1       01:00 codex exec ping-hygiene
+  666     1       01:00 codex mapping --json
+  777     1       01:00 keeping pinging mapping
+EOF
+""",
+    )
+    _write_executable(
+        fake_bin / "kill",
+        f"""#!/usr/bin/env bash
+printf '%s\\n' "$*" >>{shlex.quote(str(kill_log))}
+sig="$1"
+pid="$2"
+state={shlex.quote(str(state_dir))}
+case "$sig" in
+  -TERM|-KILL)
+    printf 'dead\\n' >"$state/$pid"
+    exit 0
+    ;;
+  -0)
+    if [[ "$(cat "$state/$pid" 2>/dev/null || true)" == "dead" ]]; then
+      exit 1
+    fi
+    exit 0
+    ;;
+esac
+exit 0
+""",
+    )
+    completed = subprocess.run(
+        ["bash", "-c", 'source "$1"; acx_reap_orphan_pings', "bash", str(SCRIPT)],
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+            "ORPHAN_PING_STALE_SEC": "30",
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+    assert completed.returncode == 0, completed.stderr
+    lines = kill_log.read_text(encoding="utf-8").splitlines()
+    pids = {line.split()[-1] for line in lines}
+    assert pids == {"111"}
+    assert "reaped 1 stale orphan ping probe(s)" in completed.stdout
+
+
+def test_bounded_ping_under_job_control_reaps_real_child(tmp_path: Path) -> None:
+    pidfile = tmp_path / "child.pid"
+    helper = tmp_path / "hang.sh"
+    _write_executable(
+        helper,
+        f"""#!/usr/bin/env bash
+printf '%s\\n' "$$" >{shlex.quote(str(pidfile))}
+exec sleep 30
+""",
+    )
+    started = time.monotonic()
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'set -m\nsource "$1"\nacx_run_bounded_ping "$2"\n',
+            "bash",
+            str(SCRIPT),
+            str(helper),
+        ],
+        env={**os.environ, "PING_TIMEOUT_SEC": "1"},
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+    elapsed = time.monotonic() - started
+    assert completed.returncode == 124, completed.stderr
+    assert elapsed < 5, f"job-control ping was not bounded: {elapsed:.1f}s"
+    assert pidfile.exists(), "child pid was not recorded"
+    child = int(pidfile.read_text(encoding="utf-8").strip())
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline and _pid_is_alive(child):
+        time.sleep(0.02)
+    assert not _pid_is_alive(child), (
+        f"job-control ping leftover pid {child} still alive (ppid=1 leak)"
+    )
+
+
+def test_help_ignores_invalid_unrelated_knobs() -> None:
+    completed = _run(
+        "--help",
+        env={"PING_TIMEOUT_SEC": "0", "ORPHAN_PING_STALE_SEC": "0"},
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "Usage:" in completed.stderr
+
+
+def test_reap_ignores_invalid_ping_timeout() -> None:
+    completed = _run(
+        "reap-orphan-pings",
+        env={"PING_TIMEOUT_SEC": "0", "ORPHAN_PING_STALE_SEC": "30"},
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "reaped" in completed.stdout
+
+
+def test_ping_ignores_invalid_orphan_stale() -> None:
+    completed = _run(
+        "ping",
+        "true",
+        env={"PING_TIMEOUT_SEC": "1", "ORPHAN_PING_STALE_SEC": "0"},
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_unknown_command_ignores_invalid_knobs() -> None:
+    completed = _run(
+        "not-a-command",
+        env={"PING_TIMEOUT_SEC": "0", "ORPHAN_PING_STALE_SEC": "0"},
+    )
+    assert completed.returncode == 2, completed.stderr
+    assert "unknown command" in completed.stderr
+
+
+def test_overlay_seam_contract(tmp_path: Path) -> None:
+    source = SCRIPT.read_text(encoding="utf-8")
+    assert "OVERLAY_SEAM_CONTRACT" in source
+    assert "acx_run_bounded_ping" in source
+    assert "acx_reap_orphan_pings" in source
+    overlay = REPO_ROOT / "scripts/remote_agent.sh"
+    if overlay.is_file():
+        text = overlay.read_text(encoding="utf-8")
+        assert "remote_agent_hygiene.sh" in text
+        assert "acx_run_bounded_ping" in text
+        assert "acx_reap_orphan_pings" in text
+    fixture = tmp_path / "remote_agent.sh"
+    fixture.write_text(
+        "#!/usr/bin/env bash\n"
+        "# Contract fixture for the plugin-managed overlay.\n"
+        'source "$1"\n'
+        "type acx_run_bounded_ping >/dev/null\n"
+        "type acx_reap_orphan_pings >/dev/null\n"
+        "acx_run_bounded_ping true\n"
+        "acx_reap_orphan_pings\n",
+        encoding="utf-8",
+    )
+    completed = subprocess.run(
+        ["bash", str(fixture), str(SCRIPT)],
+        env={**os.environ, "PING_TIMEOUT_SEC": "2", "ORPHAN_PING_STALE_SEC": "30"},
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "reaped" in completed.stdout
+    help_run = _run("--help")
+    assert help_run.returncode == 0, help_run.stderr
+    assert "ping [--]" in help_run.stderr
+    assert "reap-orphan-pings" in help_run.stderr
+

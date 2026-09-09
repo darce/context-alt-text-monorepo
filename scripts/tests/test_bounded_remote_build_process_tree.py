@@ -26,16 +26,26 @@ def _render_program() -> str:
 def test_inner_watchdog_kills_process_group() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
     assert "acx_kill_tree" in source
-    assert "for acx_command in docker awk date sleep kill setsid; do" in source
+    assert "acx_list_descendants" in source
     assert '"$acx_setsid" "$@" &' in source
-    assert 'else\n    "$@" &' not in source
+    assert '"$@" &' in source
     assert 'kill -TERM -- "-$acx_pid"' in source
     assert 'kill -KILL -- "-$acx_pid"' in source
 
 
+def _pid_is_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def test_generated_watchdog_reaps_a_synthetic_descendant(tmp_path: Path) -> None:
-    """Exercise the watchdog emitted by bounded_remote_build_program itself."""
-    marker = tmp_path / "descendant-lived"
+    """Run the production watchdog against a real grandchild, not a reimplemented killer."""
+    pidfile = tmp_path / "grandchild.pid"
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     docker = fake_bin / "docker"
@@ -45,18 +55,17 @@ def test_generated_watchdog_reaps_a_synthetic_descendant(tmp_path: Path) -> None
     generated = _render_program()
     watchdog_prefix, separator, _ = generated.partition('if ! acx_run "Buildx capability probe"')
     assert separator, "generated program no longer exposes the actual watchdog before build setup"
-    marker_arg = shlex.quote(str(marker))
+    pid_arg = shlex.quote(str(pidfile))
     harness = (
         watchdog_prefix
         + f"""
 set +e
 acx_deadline_epoch=$(( $(date +%s) + 1 ))
-acx_run "synthetic process-tree probe" bash -c 'trap "" TERM; (trap "" TERM; sleep 30; echo lived > {marker_arg}) & wait'
+acx_run "synthetic process-tree probe" sh -c 'sleep 300 & echo $! > {pid_arg}; wait'
 rc=$?
 set -e
 test "$rc" -eq 124
-sleep 1
-test ! -f {marker_arg}
+test -s {pid_arg}
 """
     )
     completed = subprocess.run(
@@ -82,28 +91,48 @@ test ! -f {marker_arg}
     )
     time.sleep(0.2)
     assert completed.returncode == 0, completed.stderr
-    assert not marker.exists()
+    grandchild = int(pidfile.read_text(encoding="utf-8").strip())
+    assert grandchild > 1
+    assert not _pid_is_alive(grandchild), f"grandchild {grandchild} survived the production watchdog"
 
 
-def test_generated_program_refuses_without_setsid(tmp_path: Path) -> None:
-    generated = _render_program()
-    bash_bin = shutil.which("bash")
-    assert bash_bin
+def test_generated_watchdog_reaps_a_grandchild_without_setsid(tmp_path: Path) -> None:
+    """When setsid is hidden, the production killer must still walk descendants."""
+    pidfile = tmp_path / "grandchild.pid"
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
-    for command in ("awk", "date", "sleep", "kill"):
+    bash_bin = shutil.which("bash")
+    assert bash_bin
+    for command in ("awk", "date", "sleep", "kill", "ps", "pgrep", "sh"):
         target = shutil.which(command)
-        assert target
+        assert target, command
         (fake_bin / command).symlink_to(target)
+    (fake_bin / "bash").symlink_to(bash_bin)
     docker = fake_bin / "docker"
     docker.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
     docker.chmod(docker.stat().st_mode | stat.S_IEXEC)
 
+    generated = _render_program()
+    watchdog_prefix, separator, _ = generated.partition('if ! acx_run "Buildx capability probe"')
+    assert separator, "generated program no longer exposes the actual watchdog before build setup"
+    pid_arg = shlex.quote(str(pidfile))
+    harness = (
+        watchdog_prefix
+        + f"""
+set +e
+acx_deadline_epoch=$(( $(date +%s) + 1 ))
+acx_run "synthetic process-tree probe" sh -c 'sleep 300 & echo $! > {pid_arg}; wait'
+rc=$?
+set -e
+test "$rc" -eq 124
+test -s {pid_arg}
+"""
+    )
     completed = subprocess.run(
         [
             bash_bin,
             "-c",
-            generated,
+            harness,
             "bash",
             "builder",
             "node",
@@ -118,6 +147,10 @@ def test_generated_program_refuses_without_setsid(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         check=False,
+        timeout=10,
     )
-    assert completed.returncode == 125
-    assert "required command unavailable: setsid" in completed.stderr
+    time.sleep(0.2)
+    assert completed.returncode == 0, completed.stderr
+    grandchild = int(pidfile.read_text(encoding="utf-8").strip())
+    assert grandchild > 1
+    assert not _pid_is_alive(grandchild), f"grandchild {grandchild} survived without setsid"

@@ -44,14 +44,17 @@ fi
 [[ "$acx_build_dir" == /* && "$acx_build_dir" != *[!A-Za-z0-9_./-]* ]] \
   || acx_bulkhead_fail "unsafe or missing generation directory"
 
-for acx_command in docker awk date sleep kill setsid; do
+for acx_command in docker awk date sleep kill; do
   command -v "$acx_command" >/dev/null 2>&1 \
     || acx_bulkhead_fail "required command unavailable: $acx_command"
 done
-# A process-group boundary is part of the supported remote contract. Running a
-# child directly when setsid is absent lets descendants outlive the deadline;
-# fail closed during admission instead of pretending the watchdog is complete.
-acx_setsid="setsid"
+# Prefer a new session so descendants die with the watchdog. Without setsid,
+# acx_kill_tree walks the process tree instead of killing only the direct child.
+if command -v setsid >/dev/null 2>&1; then
+  acx_setsid="setsid"
+else
+  acx_setsid=""
+fi
 
 acx_remaining() {
   local acx_phase="$1" acx_now acx_left
@@ -75,8 +78,13 @@ acx_run() {
   acx_left="$(acx_remaining "$acx_phase")" || return $?
   # New session/process group so descendants die with the watchdog
   # (OCIR-ASTRA-20260908-04). Killing only the direct child left synthetic
-  # grandchildren running past the deadline.
-  "$acx_setsid" "$@" &
+  # grandchildren running past the deadline. Without setsid, launch the child
+  # directly and walk its descendants in acx_kill_tree.
+  if [[ -n "$acx_setsid" ]]; then
+    "$acx_setsid" "$@" &
+  else
+    "$@" &
+  fi
   acx_pid=$!
   while kill -0 "$acx_pid" 2>/dev/null; do
     acx_now="$(date +%s)" || {
@@ -95,13 +103,45 @@ acx_run() {
   wait "$acx_pid"
 }
 
+acx_children_of() {
+  local acx_parent="$1"
+  if command -v pgrep >/dev/null 2>&1; then
+    pgrep -P "$acx_parent" 2>/dev/null || true
+  else
+    ps -o pid= --ppid "$acx_parent" 2>/dev/null || true
+  fi
+}
+
+acx_list_descendants() {
+  local acx_parent="$1" acx_child
+  while IFS= read -r acx_child; do
+    [[ "$acx_child" =~ ^[0-9]+$ ]] || continue
+    acx_list_descendants "$acx_child"
+    printf '%s\n' "$acx_child"
+  done < <(acx_children_of "$acx_parent")
+}
+
 acx_kill_tree() {
-  local acx_pid="$1"
-  # Negative PGID kills the whole session started by setsid. Admission above
-  # refuses hosts without setsid, so there is no direct-child-only fallback.
-  kill -TERM -- "-$acx_pid" 2>/dev/null || true
+  local acx_pid="$1" acx_child
+  if [[ -n "${acx_setsid:-}" ]]; then
+    # Negative PGID kills the whole session started by setsid.
+    kill -TERM -- "-$acx_pid" 2>/dev/null || true
+    sleep 0.1
+    kill -KILL -- "-$acx_pid" 2>/dev/null || true
+    return
+  fi
+  # Walk children before the parent so they cannot outlive a direct-child kill.
+  while IFS= read -r acx_child; do
+    [[ "$acx_child" =~ ^[0-9]+$ ]] || continue
+    kill -TERM "$acx_child" 2>/dev/null || true
+  done < <(acx_list_descendants "$acx_pid")
+  kill -TERM "$acx_pid" 2>/dev/null || true
   sleep 0.1
-  kill -KILL -- "-$acx_pid" 2>/dev/null || true
+  while IFS= read -r acx_child; do
+    [[ "$acx_child" =~ ^[0-9]+$ ]] || continue
+    kill -KILL "$acx_child" 2>/dev/null || true
+  done < <(acx_list_descendants "$acx_pid")
+  kill -KILL "$acx_pid" 2>/dev/null || true
 }
 
 acx_verify_builder_metadata() {

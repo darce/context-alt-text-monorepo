@@ -6,6 +6,9 @@ never reaches sticky-repo restore.
 Finding 13677 / RES-02: cutover_inflight_present returns raw `sudo test -f` rc;
 recover_interrupted_cutover and recover_persisted_cutover `|| return 0` treat
 timeout/auth/transport as confirmed absence (RLSE-03, DATA-13, TEST-15, AGT-06).
+
+Sandbox isolation: every mutation is under pytest tmp_path. `/etc/systemd/system`
+is rewritten to a tmp unit dir. sudo/systemctl/docker/rm are fail-closed shims.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ from pathlib import Path
 import pytest
 
 SCRIPT = Path(__file__).resolve().parents[1] / "recognition-service.sh"
+SYSTEMD_UNIT_DIR = "/etc/systemd/system"
 
 
 def _write_executable(path: Path, body: str) -> None:
@@ -25,46 +29,61 @@ def _write_executable(path: Path, body: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IEXEC)
 
 
-def _capture_abort_payload(tmp_path: Path, env: str = "dev") -> str:
-    payload = tmp_path / "abort.payload"
-    command = f'''
-source "{SCRIPT}"
-GREEN=; YELLOW=; RED=; RESET=
-run_with_deadline() {{ shift 2; "$@"; }}
-ssh() {{ printf '%s\\n' "${{@: -1}}" >"{payload}"; return 0; }}
-abort_cutover_candidate {env}
-'''
-    result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, check=False)
-    assert payload.is_file(), result.stdout + result.stderr
-    return payload.read_text(encoding="utf-8")
-
-
-def _run_abort_payload(
+def _install_fail_closed_shims(
     tmp_path: Path,
     *,
-    unit_state: str,
     fail_at: str | None = None,
-    env: str = "dev",
-) -> tuple[subprocess.CompletedProcess[str], str]:
-    """Execute the captured remote abort payload with local sudo/systemctl/docker shims."""
-    payload = _capture_abort_payload(tmp_path, env)
-    remote = tmp_path / "remote"
-    remote.mkdir(exist_ok=True)
-    payload = payload.replace("/opt/acx-backend/dev", str(remote))
-    payload = payload.replace(f"/opt/acx-backend/{env}", str(remote))
-    (tmp_path / "abort.payload").write_text(payload, encoding="utf-8")
+    sudo_fail: bool = False,
+) -> Path:
+    """Install sudo/systemctl/docker shims that cannot touch paths outside tmp_path."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
     records = tmp_path / "shim.log"
     state = tmp_path / "unit-state"
     state.mkdir(exist_ok=True)
-    unit = f"acx-{env}-next"
-    if unit_state in ("active", "inactive"):
-        (state / unit).write_text(unit_state, encoding="utf-8")
-        (state / f"{unit}.enabled").write_text("1", encoding="utf-8")
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir(exist_ok=True)
+    allowed = tmp_path.resolve()
     _write_executable(
         bin_dir / "sudo",
-        "#!/usr/bin/env bash\nexec \"$@\"\n",
+        "#!/usr/bin/env bash\n"
+        "set -u\n"
+        f"allowed='{allowed}'\n"
+        f"records='{records}'\n"
+        f"sudo_fail={'1' if sudo_fail else '0'}\n"
+        f"fail_at='{fail_at or ''}'\n"
+        "if [[ \"$sudo_fail\" == 1 ]]; then echo 'sudo: a password is required' >&2; exit 1; fi\n"
+        "under_allowed() {\n"
+        "  local raw=\"$1\" abs prefix\n"
+        "  [[ \"$raw\" == /* ]] || raw=\"$PWD/$raw\"\n"
+        "  abs=\"$(realpath -m -- \"$raw\")\"\n"
+        "  prefix=\"$allowed/\"\n"
+        "  [[ \"$abs\" == \"$allowed\" || \"$abs\" == \"$prefix\"* ]]\n"
+        "}\n"
+        "cmd=\"${1:-}\"; shift || true\n"
+        "printf 'sudo %s %s\\n' \"$cmd\" \"$*\" >>\"$records\"\n"
+        "case \"$cmd\" in\n"
+        "  systemctl|docker)\n"
+        "    exec \"$cmd\" \"$@\"\n"
+        "    ;;\n"
+        "  test)\n"
+        "    for arg in \"$@\"; do\n"
+        "      [[ \"$arg\" == -* ]] && continue\n"
+        "      under_allowed \"$arg\" || { echo \"sudo test: path outside sandbox: $arg\" >&2; exit 2; }\n"
+        "    done\n"
+        "    exec test \"$@\"\n"
+        "    ;;\n"
+        "  rm)\n"
+        "    if [[ \"$fail_at\" == unit-rm ]]; then echo 'rm failed' >&2; exit 1; fi\n"
+        "    for arg in \"$@\"; do\n"
+        "      [[ \"$arg\" == -* ]] && continue\n"
+        "      under_allowed \"$arg\" || { echo \"sudo rm: path outside sandbox: $arg\" >&2; exit 2; }\n"
+        "    done\n"
+        "    exec rm \"$@\"\n"
+        "    ;;\n"
+        "  *)\n"
+        "    echo \"sudo: refused unexpected command: ${cmd:-empty}\" >&2\n"
+        "    exit 2\n"
+        "    ;;\n"
+        "esac\n",
     )
     _write_executable(
         bin_dir / "systemctl",
@@ -98,7 +117,10 @@ def _run_abort_payload(
         "    printf 'reloaded\\n' >>\"$records\"\n"
         "    exit 0\n"
         "    ;;\n"
-        "  *) exit 0 ;;\n"
+        "  *)\n"
+        "    echo \"systemctl: refused unsupported command: ${cmd:-empty}\" >&2\n"
+        "    exit 2\n"
+        "    ;;\n"
         "esac\n",
     )
     _write_executable(
@@ -108,9 +130,57 @@ def _run_abort_payload(
         f"records='{records}'\n"
         f"fail_at='{fail_at or ''}'\n"
         "printf 'docker %s\\n' \"$*\" >>\"$records\"\n"
+        "if [[ \"$1\" != compose ]]; then echo 'docker: refused unexpected command' >&2; exit 2; fi\n"
         "if [[ \"$fail_at\" == compose-rm ]]; then echo 'compose rm failed' >&2; exit 1; fi\n"
         "exit 0\n",
     )
+    return bin_dir
+
+
+def _capture_abort_payload(tmp_path: Path, env: str = "dev") -> str:
+    payload = tmp_path / "abort.payload.raw"
+    command = f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+run_with_deadline() {{ shift 2; "$@"; }}
+ssh() {{ printf '%s\\n' "${{@: -1}}" >"{payload}"; return 0; }}
+abort_cutover_candidate {env}
+'''
+    result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, check=False)
+    assert payload.is_file(), result.stdout + result.stderr
+    return payload.read_text(encoding="utf-8")
+
+
+def _sandbox_abort_payload(tmp_path: Path, env: str = "dev") -> str:
+    """Rewrite host paths in the captured payload onto tmp_path descendants."""
+    payload = _capture_abort_payload(tmp_path, env)
+    remote = tmp_path / "remote"
+    systemd = tmp_path / "systemd"
+    remote.mkdir(exist_ok=True)
+    systemd.mkdir(exist_ok=True)
+    payload = payload.replace("/opt/acx-backend/dev", str(remote))
+    payload = payload.replace(f"/opt/acx-backend/{env}", str(remote))
+    payload = payload.replace(SYSTEMD_UNIT_DIR, str(systemd))
+    (tmp_path / "abort.payload").write_text(payload, encoding="utf-8")
+    return payload
+
+
+def _run_abort_payload(
+    tmp_path: Path,
+    *,
+    unit_state: str,
+    fail_at: str | None = None,
+    env: str = "dev",
+) -> tuple[subprocess.CompletedProcess[str], str]:
+    """Execute the captured remote abort payload with fail-closed local shims."""
+    _sandbox_abort_payload(tmp_path, env)
+    bin_dir = _install_fail_closed_shims(tmp_path, fail_at=fail_at)
+    state = tmp_path / "unit-state"
+    unit = f"acx-{env}-next"
+    if unit_state in ("active", "inactive"):
+        (state / unit).write_text(unit_state, encoding="utf-8")
+        (state / f"{unit}.enabled").write_text("1", encoding="utf-8")
+        (tmp_path / "systemd" / f"{unit}.service").write_text("# fake unit\n", encoding="utf-8")
     env_vars = os.environ.copy()
     env_vars["PATH"] = f"{bin_dir}:{env_vars.get('PATH', '')}"
     result = subprocess.run(
@@ -121,6 +191,7 @@ def _run_abort_payload(
         env=env_vars,
         cwd=tmp_path,
     )
+    records = tmp_path / "shim.log"
     logged = records.read_text(encoding="utf-8") if records.exists() else ""
     return result, logged
 
@@ -149,31 +220,70 @@ def test_abort_payload_drains_active_candidate(tmp_path: Path) -> None:
     assert "daemon-reload" in logged
     assert "docker compose" in logged or "compose" in logged
     assert "rm" in logged
+    assert not (tmp_path / "systemd" / "acx-dev-next.service").exists()
 
 
-@pytest.mark.parametrize("fail_at", ["stop", "compose-rm", "daemon-reload"])
+@pytest.mark.parametrize("fail_at", ["stop", "compose-rm", "daemon-reload", "unit-rm"])
 def test_abort_payload_propagates_genuine_cleanup_failure(tmp_path: Path, fail_at: str) -> None:
     result, logged = _run_abort_payload(tmp_path, unit_state="active", fail_at=fail_at)
     combined = result.stdout + result.stderr + logged
     assert result.returncode != 0, combined
 
 
+def test_sudo_shim_rejects_outside_paths_without_mutation(tmp_path: Path) -> None:
+    bin_dir = _install_fail_closed_shims(tmp_path)
+    env_vars = os.environ.copy()
+    env_vars["PATH"] = f"{bin_dir}:{env_vars.get('PATH', '')}"
+    host_unit = f"{SYSTEMD_UNIT_DIR}/acx-dev-next.service"
+    result = subprocess.run(
+        ["sudo", "rm", "-f", host_unit],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env_vars,
+        cwd=tmp_path,
+    )
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "outside sandbox" in result.stderr
+    log = (tmp_path / "shim.log").read_text(encoding="utf-8")
+    assert host_unit in log
+    assert "sudo rm" in log
+
+
+def test_sudo_shim_rejects_unexpected_commands(tmp_path: Path) -> None:
+    bin_dir = _install_fail_closed_shims(tmp_path)
+    env_vars = os.environ.copy()
+    env_vars["PATH"] = f"{bin_dir}:{env_vars.get('PATH', '')}"
+    result = subprocess.run(
+        ["sudo", "systemctl", "cat", "acx-dev-next"],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env_vars,
+        cwd=tmp_path,
+    )
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "unsupported command" in result.stderr
+    result = subprocess.run(
+        ["sudo", "bash", "-c", "echo pwned"],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env_vars,
+        cwd=tmp_path,
+    )
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "unexpected command" in result.stderr
+
+
 def test_absent_candidate_abort_allows_sticky_repo_restore(tmp_path: Path) -> None:
     """do_deploy rollback only restores sticky repo after abort succeeds (13676)."""
     records = tmp_path / "caller.log"
     remote = tmp_path / "remote"
+    systemd = tmp_path / "systemd"
     remote.mkdir()
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    _write_executable(bin_dir / "sudo", "#!/usr/bin/env bash\nexec \"$@\"\n")
-    _write_executable(
-        bin_dir / "systemctl",
-        "#!/usr/bin/env bash\n"
-        "cmd=\"${1:-}\"\n"
-        "[[ \"$cmd\" == stop ]] && { echo 'Unit acx-dev-next not loaded.' >&2; exit 5; }\n"
-        "exit 0\n",
-    )
-    _write_executable(bin_dir / "docker", "#!/usr/bin/env bash\nexit 0\n")
+    systemd.mkdir()
+    bin_dir = _install_fail_closed_shims(tmp_path)
     command = f'''
 source "{SCRIPT}"
 GREEN=; YELLOW=; RED=; RESET=
@@ -182,6 +292,7 @@ run_with_deadline() {{ shift 2; "$@"; }}
 ssh() {{
   last="${{@: -1}}"
   last="${{last//\\/opt\\/acx-backend\\/dev/{remote}}}"
+  last="${{last//\\/etc\\/systemd\\/system/{systemd}}}"
   bash -c "$last"
 }}
 restore_topology_backups() {{ return 0; }}
@@ -211,19 +322,11 @@ def _run_inflight_callers(
     inflight = inflight_dir / "cutover-inflight"
     if marker:
         inflight.write_text("status=traffic_on_next\n", encoding="utf-8")
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir(exist_ok=True)
-    _write_executable(
-        bin_dir / "sudo",
-        "#!/usr/bin/env bash\n"
-        "if [[ \"${SUDO_FAIL:-0}\" == 1 ]]; then echo 'sudo: a password is required' >&2; exit 1; fi\n"
-        "exec \"$@\"\n",
-    )
+    bin_dir = _install_fail_closed_shims(tmp_path, sudo_fail=(inject == "sudo_fail"))
     command = f'''
 source "{SCRIPT}"
 GREEN=; YELLOW=; RED=; RESET=
 export PATH="{bin_dir}:$PATH"
-export SUDO_FAIL={"1" if inject == "sudo_fail" else "0"}
 ACX_DEPLOY_BACKUP_ROOT="{tmp_path}"
 ACX_CUTOVER_ENV=dev
 ACX_TRAFFIC_FLIPPED=0

@@ -48,10 +48,16 @@ def test_analyze_failure_is_not_ingest_attrition(tmp_path: Path) -> None:
     for stack in ("acx-dev-insightface", "acx-dev-fir"):
         path = run_dir / "legs" / stack / "items.jsonl"
         recs = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+        ingest = next(r for r in recs if r.get("manifest_media_id") == 2 and r.get("phase") == "ingest")
         recs = [r for r in recs if not (r.get("manifest_media_id") == 2 and r.get("phase") == "analyze")]
         recs.append(
             {
                 "manifest_media_id": 2,
+                "manifest_path": ingest["manifest_path"],
+                "content_sha256": ingest["content_sha256"],
+                "stack_media_id": None,
+                "image_width": ingest["image_width"],
+                "image_height": ingest["image_height"],
                 "phase": "analyze",
                 "outcome": "failed",
                 "attempt": 2,
@@ -203,25 +209,27 @@ def _write_leg(run_dir: Path, stack_id: str, ok_ids: list[int], *, zero_export: 
     zero_export = zero_export or set()
     leg = run_dir / "legs" / stack_id
     (leg / "exports").mkdir(parents=True, exist_ok=True)
+    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    entries = {entry["media_id"]: entry for entry in manifest["entries"]}
     lines = []
     identities = []
     for mid in ok_ids:
-        rec = {
+        entry = entries[mid]
+        ingest = {
             "manifest_media_id": mid,
-            "manifest_path": f"img_{mid}.jpg",
-            "content_sha256": "a" * 64,
-            "stack_media_id": mid,
+            "manifest_path": entry["path"],
+            "content_sha256": entry["sha256"],
+            "stack_media_id": None,
             "image_width": 1000,
             "image_height": 1000,
-            "phase": "analyze",
+            "phase": "ingest",
             "outcome": "ok",
+            "error_code": None,
             "attempt": 1,
             "terminal_ingest_outcome": "success",
         }
-        lines.append(json.dumps(rec))
-        lines.append(
-            json.dumps({**rec, "phase": "ingest"})
-        )
+        lines.append(json.dumps(ingest))
+        lines.append(json.dumps({**ingest, "phase": "analyze", "stack_media_id": mid}))
         if mid not in zero_export:
             identities.append(
                 {

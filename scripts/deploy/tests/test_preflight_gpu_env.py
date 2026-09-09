@@ -24,6 +24,45 @@ DESCRIBE_GATE = ROOT / "infra/oci/demo/lib/describe-gate.sh"
 SYNC_DEMO = ROOT / "scripts/deploy/sync-demo.sh"
 PRODUCER_EXAMPLE = ROOT / "apps/prototype-description-service/.env.prod.example"
 DEMO_EXAMPLE = ROOT / "infra/oci/demo/.env.example"
+DEPLOYMENTS = ROOT / "scripts/deploy/gpu-snapshot-deployments.conf"
+
+
+def _registry_environments(path: Path | None = None) -> tuple[str, ...]:
+    registry = path or DEPLOYMENTS
+    return tuple(line.strip() for line in registry.read_text(encoding="utf-8").splitlines() if line.strip())
+
+
+def _write_load_snapshot(root: Path, environment: str, *, written_at: int, queue_depth: int = 0) -> Path:
+    path = root / environment / "describe-load.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "queue_depth": queue_depth,
+                "in_flight": 0,
+                "batch_in_progress": False,
+                "written_at": written_at,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def _write_registry_load_snapshots(
+    load_dir: Path,
+    *,
+    written_at: int,
+    environments: tuple[str, ...] | None = None,
+    stale_environments: dict[str, int] | None = None,
+) -> None:
+    stale_environments = stale_environments or {}
+    for environment in environments or _registry_environments():
+        _write_load_snapshot(
+            load_dir,
+            environment,
+            written_at=written_at - stale_environments.get(environment, 0),
+        )
 
 
 @pytest.mark.parametrize("boot_file", [None, "", " \n"])
@@ -259,6 +298,13 @@ esac
     env.setdefault("ACX_DESCRIBE_LOAD_DIR", str(tmp_path / "no-load-snapshots"))
     if extra_env:
         env.update(extra_env)
+    if check_reaper and "ACX_DESCRIBE_LOAD_DIR" not in (extra_env or {}):
+        load_dir = tmp_path / "default-load-snapshots"
+        now = 1_700_000_000
+        _write_registry_load_snapshots(load_dir, written_at=now)
+        env["ACX_DESCRIBE_LOAD_DIR"] = str(load_dir)
+        env.setdefault("ACX_NOW_EPOCH", str(now))
+        env.setdefault("ACX_DESCRIBE_LOAD_STALE_SECONDS", "120")
     args = [str(SCRIPT)]
     if check_reaper:
         args.append("--check-reaper")
@@ -1786,6 +1832,9 @@ def test_runbook_converges_gpu_lifecycle_before_prod_deploy() -> None:
     assert deploy_block.index("CONFIRM=PROMOTE scripts/deploy/recognition-service.sh deploy prod") < deploy_block.index(
         "Missing describe-load snapshot"
     )
+    assert "for environment in dev dev-fir staging prod" not in deploy_block
+    assert "gpu-snapshot-deployments.conf" in deploy_block
+    assert "while IFS= read -r environment" in deploy_block
 
 
 @pytest.mark.parametrize("tampered", [False, True])
@@ -2726,29 +2775,12 @@ def test_11_reaper_rejects_inaccessible_lease_path(tmp_path: Path) -> None:
     assert "lease" in result.stderr
 
 
-def _write_load_snapshot(root: Path, environment: str, *, written_at: int, queue_depth: int = 0) -> Path:
-    path = root / environment / "describe-load.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(
-            {
-                "queue_depth": queue_depth,
-                "in_flight": 0,
-                "batch_in_progress": False,
-                "written_at": written_at,
-            }
-        ),
-        encoding="utf-8",
-    )
-    return path
-
-
 def test_gpu_lifecycle_preflight_rejects_stale_published_load_snapshot(tmp_path: Path) -> None:
     reaper_env = tmp_path / "gpu-lifecycle.env"
     reaper_env.write_text("GPU_INSTANCE_ID=ocid1.instance.oc1.iad.fakeinstance\nMAX_LEASE_SECONDS=3600\n")
     load_dir = tmp_path / "load"
     now = 1_700_000_000
-    _write_load_snapshot(load_dir, "prod", written_at=now - 121)
+    _write_registry_load_snapshots(load_dir, written_at=now, stale_environments={"prod": 121})
     result = run_preflight(
         tmp_path,
         check_reaper=True,
@@ -2769,7 +2801,7 @@ def test_gpu_lifecycle_preflight_accepts_fresh_published_load_snapshot(tmp_path:
     reaper_env.write_text("GPU_INSTANCE_ID=ocid1.instance.oc1.iad.fakeinstance\nMAX_LEASE_SECONDS=3600\n")
     load_dir = tmp_path / "load"
     now = 1_700_000_000
-    _write_load_snapshot(load_dir, "prod", written_at=now - 30)
+    _write_registry_load_snapshots(load_dir, written_at=now - 30)
     result = run_preflight(
         tmp_path,
         check_reaper=True,
@@ -2784,16 +2816,80 @@ def test_gpu_lifecycle_preflight_accepts_fresh_published_load_snapshot(tmp_path:
     assert "OK: GPU env preflight passed" in result.stdout
 
 
-def test_gpu_lifecycle_preflight_skips_missing_load_snapshots(tmp_path: Path) -> None:
+def test_gpu_lifecycle_preflight_rejects_empty_registered_load_dirs(tmp_path: Path) -> None:
     reaper_env = tmp_path / "gpu-lifecycle.env"
     reaper_env.write_text("GPU_INSTANCE_ID=ocid1.instance.oc1.iad.fakeinstance\nMAX_LEASE_SECONDS=3600\n")
+    load_dir = tmp_path / "load"
+    for environment in _registry_environments():
+        (load_dir / environment).mkdir(parents=True, exist_ok=True)
     result = run_preflight(
         tmp_path,
         check_reaper=True,
         systemctl_script=reaper_systemctl_script(reaper_env),
-        extra_env={"ACX_DESCRIBE_LOAD_DIR": str(tmp_path / "absent-load")},
+        extra_env={"ACX_DESCRIBE_LOAD_DIR": str(load_dir)},
+    )
+    assert result.returncode != 0
+    assert "ERROR [12]" in result.stderr
+    assert "missing describe-load snapshot" in result.stderr
+
+
+def test_gpu_lifecycle_preflight_ignores_unregistered_sibling_load_dir(tmp_path: Path) -> None:
+    reaper_env = tmp_path / "gpu-lifecycle.env"
+    reaper_env.write_text("GPU_INSTANCE_ID=ocid1.instance.oc1.iad.fakeinstance\nMAX_LEASE_SECONDS=3600\n")
+    load_dir = tmp_path / "load"
+    now = 1_700_000_000
+    _write_registry_load_snapshots(load_dir, written_at=now - 30)
+    (load_dir / "leftover-env").mkdir()
+    result = run_preflight(
+        tmp_path,
+        check_reaper=True,
+        systemctl_script=reaper_systemctl_script(reaper_env),
+        extra_env={
+            "ACX_DESCRIBE_LOAD_DIR": str(load_dir),
+            "ACX_NOW_EPOCH": str(now),
+            "ACX_DESCRIBE_LOAD_STALE_SECONDS": "120",
+        },
     )
     assert result.returncode == 0, result.stderr
+    assert "OK: GPU env preflight passed" in result.stdout
+
+
+def test_gpu_lifecycle_preflight_rejects_stale_custom_registry_environment(tmp_path: Path) -> None:
+    reaper_env = tmp_path / "gpu-lifecycle.env"
+    reaper_env.write_text("GPU_INSTANCE_ID=ocid1.instance.oc1.iad.fakeinstance\nMAX_LEASE_SECONDS=3600\n")
+    registry = tmp_path / "deployments.conf"
+    registry.write_text("dev\ndev-fir\nstaging\nprod\ncustom-production\n", encoding="utf-8")
+    load_dir = tmp_path / "load"
+    now = 1_700_000_000
+    environments = _registry_environments(registry)
+    _write_registry_load_snapshots(
+        load_dir,
+        written_at=now,
+        environments=environments,
+        stale_environments={"custom-production": 121},
+    )
+    result = run_preflight(
+        tmp_path,
+        check_reaper=True,
+        systemctl_script=reaper_systemctl_script(reaper_env),
+        extra_env={
+            "ACX_DESCRIBE_LOAD_DIR": str(load_dir),
+            "ACX_GPU_DEPLOYMENTS_FILE": str(registry),
+            "ACX_NOW_EPOCH": str(now),
+            "ACX_DESCRIBE_LOAD_STALE_SECONDS": "120",
+        },
+    )
+    assert result.returncode != 0
+    assert "ERROR [12]" in result.stderr
+    assert "custom-production" in result.stderr
+    assert "stale load snapshot" in result.stderr
+
+
+def test_gpu_lifecycle_preflight_load_gate_follows_deployments_registry() -> None:
+    source = SCRIPT.read_text(encoding="utf-8")
+    assert "for environment in dev dev-fir staging prod" not in source
+    assert "ACX_GPU_DEPLOYMENTS" in source
+    assert "gpu-snapshot-deployments.conf" in source
 
 
 def test_live_gpu_verifier_accepts_unterminated_env(tmp_path: Path) -> None:

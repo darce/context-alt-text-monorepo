@@ -147,12 +147,21 @@ done
 exec_start="$(systemctl show acx-gpu-reap.service --property=ExecStart --value)"
 grep -F -- "--load-dir /run/acx-write" <<<"$exec_start"
 grep -F -- "--running-since-path /var/lib/acx-gpu/running-since.json" <<<"$exec_start"
-for environment in dev dev-fir staging prod; do
+deployments_file=/opt/acx-gpu/current/scripts/deploy/gpu-snapshot-deployments.conf
+[ -r "$deployments_file" ] || {
+  echo "Missing GPU snapshot deployments registry: $deployments_file" >&2
+  exit 1
+}
+while IFS= read -r environment || [ -n "$environment" ]; do
+  [ -n "$environment" ] || {
+    echo "Empty GPU snapshot deployment in $deployments_file" >&2
+    exit 1
+  }
   test -s "/run/acx-write/$environment/describe-load.json" || {
     echo "Missing describe-load snapshot for $environment; redeploy that producer before continuing." >&2
     exit 1
   }
-done'
+done < "$deployments_file"'
 # GNU coreutils uses sha256sum; Homebrew installs that command as gsha256sum
 # on macOS. Select the local payload digest tool before opening SSH.
 if command -v sha256sum >/dev/null 2>&1; then

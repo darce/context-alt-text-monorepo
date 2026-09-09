@@ -53,6 +53,7 @@ def _run_lifecycle(
     groupadd_noop: bool = False,
     existing_groups: tuple[str, ...] = (),
     load_snapshots: bool = True,
+    extra_empty_load_environments: tuple[str, ...] = (),
 ) -> tuple[subprocess.CompletedProcess[str], str]:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir(exist_ok=True)
@@ -103,6 +104,8 @@ def _run_lifecycle(
                 '{"queue_depth":0,"in_flight":0,"batch_in_progress":false,"written_at":1000000000}\n',
                 encoding="utf-8",
             )
+    for environment in extra_empty_load_environments:
+        (fake_host / "run-acx-write" / environment).mkdir(parents=True, exist_ok=True)
     if previous_release and not (fake_host / "opt-acx-gpu/current").is_symlink():
         release_root = fake_host / "opt-acx-gpu"
         old_release = release_root / "old release"
@@ -1217,6 +1220,9 @@ def test_fail_safe_guard_precedes_live_release_and_effective_artifact_mutations(
     assert source.index("sudo systemctl start acx-gpu-reap.service") < rearm_start
     assert "load_snapshots_ready_for_reaper_proof" in source
     assert "${load_snapshot_proof_function}" in transaction
+    assert "LOAD_ENVIRONMENTS='${LOAD_ENVIRONMENTS}'" in transaction
+    assert "for dir in /run/acx-write/*/" not in source
+    assert "for environment in $LOAD_ENVIRONMENTS" in source
     assert source.index("if load_snapshots_ready_for_reaper_proof; then") < source.index(
         "sudo systemctl start acx-gpu-reap.service"
     )
@@ -1317,3 +1323,29 @@ def test_published_load_snapshots_still_prove_the_reaper_before_start(
     assert calls.index("systemctl <start> <acx-gpu-reap.service>") < calls.index(
         "systemctl <enable> <--now> <acx-gpu-start.timer>"
     )
+
+
+def test_published_load_snapshots_ignore_unregistered_sibling_dirs(
+    tmp_path: Path,
+) -> None:
+    """An extra empty /run/acx-write sibling is not a registered environment.
+
+    Proof must follow gpu-snapshot-deployments.conf, not a filesystem glob,
+    so leftover operator paths cannot defer the synchronous reaper start.
+    """
+    result, calls = _run_lifecycle(
+        tmp_path,
+        enabled=True,
+        ready_url="http://10.0.1.36:8000/health",
+        dry_run=False,
+        load_snapshots=True,
+        extra_empty_load_environments=("leftover-env",),
+        reaper_rc=0,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "systemctl <start> <acx-gpu-reap.service>" in calls
+    assert calls.index("systemctl <start> <acx-gpu-reap.service>") < calls.index(
+        "systemctl <enable> <--now> <acx-gpu-start.timer>"
+    )
+    assert "leftover-env" not in result.stderr

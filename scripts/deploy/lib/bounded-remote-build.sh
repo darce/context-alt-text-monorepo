@@ -48,6 +48,10 @@ for acx_command in docker awk date sleep kill; do
   command -v "$acx_command" >/dev/null 2>&1 \
     || acx_bulkhead_fail "required command unavailable: $acx_command"
 done
+acx_setsid=""
+if command -v setsid >/dev/null 2>&1; then
+  acx_setsid="setsid"
+fi
 
 acx_remaining() {
   local acx_phase="$1" acx_now acx_left
@@ -69,18 +73,23 @@ acx_run() {
   local acx_phase="$1" acx_pid acx_left acx_now
   shift
   acx_left="$(acx_remaining "$acx_phase")" || return $?
-  "$@" &
+  # New session/process group so descendants die with the watchdog
+  # (OCIR-ASTRA-20260908-04). kill of the direct child left synthetic
+  # grandchildren running past the deadline.
+  if [[ -n "$acx_setsid" ]]; then
+    $acx_setsid "$@" &
+  else
+    "$@" &
+  fi
   acx_pid=$!
   while kill -0 "$acx_pid" 2>/dev/null; do
     acx_now="$(date +%s)" || {
-      kill -TERM "$acx_pid" 2>/dev/null || true
+      acx_kill_tree "$acx_pid"
       wait "$acx_pid" 2>/dev/null || true
       acx_bulkhead_fail "could not read the remote clock while running $acx_phase"
     }
     if (( acx_now >= acx_deadline_epoch )); then
-      kill -TERM "$acx_pid" 2>/dev/null || true
-      sleep 0.1
-      kill -KILL "$acx_pid" 2>/dev/null || true
+      acx_kill_tree "$acx_pid"
       wait "$acx_pid" 2>/dev/null || true
       printf 'remote BuildKit phase timed out during %s; outcome UNKNOWN\n' "$acx_phase" >&2
       return 124
@@ -88,6 +97,15 @@ acx_run() {
     sleep 0.1
   done
   wait "$acx_pid"
+}
+
+acx_kill_tree() {
+  local acx_pid="$1"
+  # Negative PGID kills the whole session started by setsid. Fall back to the
+  # direct child when the process is not a group leader.
+  kill -TERM -- "-$acx_pid" 2>/dev/null || kill -TERM "$acx_pid" 2>/dev/null || true
+  sleep 0.1
+  kill -KILL -- "-$acx_pid" 2>/dev/null || kill -KILL "$acx_pid" 2>/dev/null || true
 }
 
 acx_verify_builder_metadata() {

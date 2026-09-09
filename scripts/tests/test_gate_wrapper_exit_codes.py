@@ -1,15 +1,28 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EXPECTED_WRAPPERS = {
     REPO_ROOT / "scripts/localwp-gate-status.sh",
     REPO_ROOT / "scripts/remote_gate.sh",
+}
+REQUIRED_RUN_SHELL = "bash --noprofile --norc -eo pipefail {0}"
+_PIPEFAIL_SET = re.compile(r"^set\s+-[^\n]*\bpipefail\b", re.MULTILINE)
+# Sourced libraries inherit the caller's `set` options; POSIX /bin/sh wrappers
+# with no pipelines are documented exclusions, not silent omissions (D5-AR-01).
+QUARANTINED_SHELL_SCRIPTS: dict[Path, str] = {
+    REPO_ROOT / "scripts/consumer-hooks/run-php-characterization.sh": "POSIX /bin/sh, no pipelines, set -eu",
+    REPO_ROOT / "scripts/deploy/lib/smoke-gate.sh": "sourced library; inherits caller pipefail",
+    REPO_ROOT / "scripts/deploy/lib/ocir-auth.sh": "sourced library; inherits caller pipefail",
+    REPO_ROOT / "scripts/deploy/lib/fixture-denylist.sh": "sourced library; inherits caller pipefail",
+    REPO_ROOT / "scripts/deploy/lib/gpu-env-contract.sh": "sourced library; inherits caller pipefail",
 }
 
 
@@ -149,7 +162,7 @@ exit 0
         "ServerAliveCountMax=4",
         "gate@example.invalid",
     ]
-    assert argv[-1].startswith("set -euo pipefail\n")
+    assert _remote_shell_enables_pipefail(argv[-1]), argv[-1][:120]
     assert completed.returncode == injected_exit, (
         f"remote doctor masked {failing_program}'s exit {injected_exit} at the SSH boundary; "
         f"stdout={completed.stdout!r}; stderr={completed.stderr!r}"
@@ -295,5 +308,106 @@ exit "$REMOTE_GATE_TEST_SSH_EXIT"
         "ServerAliveCountMax=4",
         "gate@example.invalid",
     ]
-    assert ssh_argv[-1].startswith("set -euo pipefail\n")
+    assert _remote_shell_enables_pipefail(ssh_argv[-1]), ssh_argv[-1][:120]
     assert f"git checkout -qf {expected_sha} || exit 1" in ssh_argv[-1]
+
+
+def _remote_shell_enables_pipefail(source: str) -> bool:
+    """True when the first executable remote line enables pipefail (D5-AR-03).
+
+    Flag order (`set -euo pipefail` vs `set -uo pipefail`) is not pinned; a
+    commented-out or late `set` does not count.
+    """
+    for line in source.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        return bool(_PIPEFAIL_SET.match(stripped))
+    return False
+
+
+def _iter_shell_scripts() -> list[Path]:
+    return sorted(path for path in (REPO_ROOT / "scripts").rglob("*.sh") if path.is_file())
+
+
+def test_shell_scripts_are_pipefail_or_documented_quarantine() -> None:
+    """OWNED/QUARANTINED ratchet: a new wrapper cannot silently omit pipefail."""
+    missing: list[str] = []
+    for path in _iter_shell_scripts():
+        if path in QUARANTINED_SHELL_SCRIPTS:
+            continue
+        text = path.read_text(encoding="utf-8")
+        if _PIPEFAIL_SET.search(text):
+            continue
+        missing.append(str(path.relative_to(REPO_ROOT)))
+    assert missing == [], f"scripts missing set -o pipefail and not quarantined: {missing}"
+
+
+def test_quarantined_shell_scripts_still_exist() -> None:
+    missing = [str(path.relative_to(REPO_ROOT)) for path in QUARANTINED_SHELL_SCRIPTS if not path.is_file()]
+    assert missing == [], f"quarantine entries drifted off disk: {missing}"
+
+
+def _workflow_paths_with_run_steps() -> list[Path]:
+    paths: list[Path] = []
+    workflow_dir = REPO_ROOT / ".github" / "workflows"
+    for workflow_path in sorted(workflow_dir.glob("*.y*ml")):
+        with workflow_path.open(encoding="utf-8") as handle:
+            workflow = yaml.safe_load(handle)
+        jobs = workflow.get("jobs", {}) if isinstance(workflow, dict) else {}
+        if any(
+            isinstance(step, dict) and "run" in step
+            for job in jobs.values()
+            if isinstance(job, dict)
+            for step in job.get("steps", [])
+        ):
+            paths.append(workflow_path)
+    return paths
+
+
+def test_every_workflow_run_step_uses_fail_closed_bash() -> None:
+    unsafe: list[str] = []
+    for workflow_path in _workflow_paths_with_run_steps():
+        with workflow_path.open(encoding="utf-8") as handle:
+            workflow = yaml.safe_load(handle)
+        workflow_shell = workflow.get("defaults", {}).get("run", {}).get("shell")
+        for job_name, job in workflow.get("jobs", {}).items():
+            if not isinstance(job, dict):
+                continue
+            job_shell = job.get("defaults", {}).get("run", {}).get("shell", workflow_shell)
+            for step in job.get("steps", []):
+                if not isinstance(step, dict) or "run" not in step:
+                    continue
+                effective_shell = step.get("shell", job_shell)
+                if effective_shell != REQUIRED_RUN_SHELL:
+                    unsafe.append(f"{workflow_path.name}:{job_name}:{step.get('name', '<unnamed>')}")
+    assert unsafe == [], f"workflow run steps without {REQUIRED_RUN_SHELL!r}: {unsafe}"
+
+
+def test_remote_gate_no_args_prints_usage_and_does_not_run() -> None:
+    completed = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts/remote_gate.sh")],
+        cwd=REPO_ROOT,
+        env={**os.environ, "WORKBAY_REMOTE_GATE_HOST": "gate@example.invalid"},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "scripts/remote_gate.sh run" in completed.stdout + completed.stderr
+    assert "pushing" not in (completed.stdout + completed.stderr).lower()
+
+
+def test_remote_gate_help_does_not_require_a_host() -> None:
+    env = {**os.environ}
+    env.pop("WORKBAY_REMOTE_GATE_HOST", None)
+    completed = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts/remote_gate.sh"), "--help"],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "Usage:" in completed.stdout + completed.stderr

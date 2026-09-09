@@ -187,7 +187,12 @@ set +e
 SRC="$stale" OUT="$tmp/out2" MANIFEST="$tmp/m2" README="$README" bash "$SELECT" >/dev/null 2>&1; rc=$?
 set -e
 [ "$rc" -eq 2 ] && pass "refuses (exit 2) when a bundled source image is missing" || fail "expected exit 2 on missing source, got $rc"
-[ ! -f "$tmp/m2" ] || [ ! -s "$tmp/m2" ] && pass "no manifest written on refusal" || fail "manifest written despite refusal"
+# GUIDESEED-1-GR-07: empty-file is still a write. Refusal must leave the path absent.
+if [ -e "$tmp/m2" ]; then
+  fail "GR-07 manifest created on refusal ($(wc -c < "$tmp/m2" | tr -d ' ') bytes)"
+else
+  pass "GR-07 no manifest created on refusal"
+fi
 
 if [ "$fails" -ne 0 ]; then echo "test-guided-seed: $fails failure(s)" >&2; exit 1; fi
 echo "test-guided-seed: all assertions passed"

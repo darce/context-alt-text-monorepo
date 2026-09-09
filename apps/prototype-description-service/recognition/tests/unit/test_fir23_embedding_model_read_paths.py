@@ -412,8 +412,8 @@ def test_probe_space_skip_payload_shape() -> None:
     }
 
 
-def test_unstamped_gallery_with_known_active_model_does_not_abort() -> None:
-    """Unstamped reps + known active model must proceed rather than fail the job."""
+def test_unstamped_gallery_with_known_active_model_aborts() -> None:
+    """SVCSRC-R-01: unstamped wipe + known active model must fail closed."""
     from recognition.application.orchestration.clustering.discovery_pipeline import GalleryProvenanceStats
 
     stats = GalleryProvenanceStats(
@@ -424,7 +424,9 @@ def test_unstamped_gallery_with_known_active_model_does_not_abort() -> None:
         centroids_excluded_untrusted=4,
         gallery_wiped=True,
     )
-    assert stats.abort_reason() is None
+    reason = stats.abort_reason()
+    assert reason is not None
+    assert "legacy unstamped gallery excluded" in reason
 
 
 class _FakeResult:

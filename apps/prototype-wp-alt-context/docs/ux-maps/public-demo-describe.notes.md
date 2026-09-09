@@ -26,7 +26,7 @@ Unavailable capabilities remain typed follow-up, not a stall: official strict Ux
 | --- | --- | --- |
 | OBSERVED-UI | idle; queued; warming; describing; generic **Description complete.** plus alt text; HTTP 429; error/failed; 120s poll timeout; live polite; focus on result | this branch (and would be production if deployed) |
 | OBSERVED-FEATURE wire | completed nonempty public envelope emits `description_tier`; parser and `pollRun` preserve `provisional_cpu` \| `final_gpu` \| `null`; missing legacy becomes explicit `null` | this feature branch only |
-| OBSERVED-PRODUCTION | public demo is **not deployed**; no Qwen-on-GPU proof | production |
+| OBSERVED-PRODUCTION | public demo **is deployed**; these feature changes have **not** been deployed. Prior observation: old Florence recognition image; Qwen-on-GPU entity-description proof is absent (not a fresh runtime check). | production |
 | OBSERVED | instance-scoped radios `acx-demo-media-N`, submitting form only | yes |
 | OBSERVED | `gpu_state` may appear and is unused by presentation | yes (telemetry, not a result tier) |
 | OBSERVED | same-page retry reuses in-memory `idempotency_key`; completed run clears it | yes |
@@ -133,7 +133,7 @@ Same-page retry of the same media reuses the key. Refresh (exit `refresh-page-dr
 
 ## Screen 6 — PROPOSED visible-tier labels (NOT SHIPPED UI)
 
-Wire exists on this feature branch. Production is not deployed. Do not treat this sketch as inventory.
+Wire exists on this feature branch and has not been deployed. Production itself is deployed. Do not treat this sketch as inventory.
 
 Keep description text in `z-result`, separate from the status label. Keep existing live polite and focus-on-result behaviour. Never infer from `gpu_state`.
 
@@ -173,7 +173,7 @@ Canon: https://github.com/darce/heuristics-canon (stable IDs; not pinned). Also 
 
 - **INT-07:** `submit-describe.preview_required` is false. Adjudication 10317: allowlist thumbnails are input, not an outcome sample (canon interaction-ux.md ~164). A costly live Describe still has no implemented preview of the *result*. Proposed fix is a clearly marked illustrative example before explicit Describe — documented above, not shipped. Do not set `preview_required` true on the observed action until that ships.
 
-- **HAI-05 / HAI-08 / PROV-06 / DATA-13:** OBSERVED-UI complete is still the generic label. OBSERVED-FEATURE wire now carries `description_tier` on this branch (PHP 2090, parser 2093). A visitor still cannot tell CPU fallback from GPU final in the rendered UI. OBSERVED-PRODUCTION is not deployed and is not Qwen proof. Proposed typed labels stay out of the observed inventory.
+- **HAI-05 / HAI-08 / PROV-06 / DATA-13:** OBSERVED-UI complete is still the generic label. OBSERVED-FEATURE wire now carries `description_tier` on this branch (PHP 2090, parser 2093) and has not been deployed. A visitor still cannot tell CPU fallback from GPU final in the rendered UI. Production is deployed; prior observation used the old Florence recognition image; Qwen-on-GPU entity-description proof is absent (not a fresh runtime check). Proposed typed labels stay out of the observed inventory.
 
 - **INT-10 vs timeout copy:** OBSERVED 120s stop re-enables the form and keeps the in-memory key, but `POLL_TIMEOUT_MESSAGE` tells the visitor to refresh, which drops that key. Same-page retry is implemented; refresh-safe resume is not.
 
@@ -199,4 +199,4 @@ Canon: https://github.com/darce/heuristics-canon (stable IDs; not pinned). Also 
 
 ## What this lane did not do
 
-No UI, PHP, public JS, lockfile, renderer source, snapshot, or validator edits. No merge, deploy, or reviewer substitute. This is UX documentation of on-feature wire vs still-generic UI vs undeployed production.
+No UI, PHP, public JS, lockfile, renderer source, snapshot, or validator edits. No merge, deploy, or reviewer substitute. This is UX documentation of on-feature wire vs still-generic UI vs deployed production that does not yet include these feature changes.

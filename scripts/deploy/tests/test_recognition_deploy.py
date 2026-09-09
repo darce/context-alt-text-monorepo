@@ -3644,6 +3644,7 @@ def _run_prepare_producer(
     env: str = "prod",
     confirm: str | None = "PROMOTE",
     candidate_sha: str = _CANDIDATE_SHA,
+    public_deploy: bool = False,
     sibling_rc: int = 0,
     restart_after_fence_rc: int = 0,
     image_rc: int = 0,
@@ -3740,11 +3741,19 @@ restore_env_tag_to_rollback() {{
   printf 'rollback-fenced:%s\\n' "$1" >>"{records}"
   return 0
 }}
-do_prepare_producer {env}
+{'export _ACX_SHIP_COMPLETION=scoped' if public_deploy else ':'}
+{'do_deploy' if public_deploy else 'do_prepare_producer'} {env}
 '''
     result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, check=False)
     logged = records.read_text() if records.exists() else ""
     return result, logged
+
+
+def test_prepare_producer_setting_cannot_downgrade_public_deploy(tmp_path: Path) -> None:
+    result, logged = _run_prepare_producer(tmp_path, public_deploy=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "verify:prod" in logged.splitlines(), logged
+    assert "scoped:prod" not in logged.splitlines(), logged
 
 
 def _first_line(prefix: str, lines: list[str]) -> str | None:

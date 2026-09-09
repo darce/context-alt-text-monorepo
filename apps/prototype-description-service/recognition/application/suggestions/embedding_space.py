@@ -9,9 +9,13 @@ stays in ``label_inference.py`` and is the deliberate extra width of that caller
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Iterable, Sequence
 from typing import Any
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 def representative_embedding_model(rep: Any) -> str | None:
@@ -62,6 +66,19 @@ def models_are_same_space(left: str | None, right: str | None) -> bool:
     return str(left) == str(right)
 
 
+def choose_embedding_model(models: Iterable[str | None]) -> str | None:
+    """Majority embedding_model with lex-stable tie-break (FIR23-01)."""
+    counts: dict[str, int] = {}
+    for model in models:
+        if not model:
+            continue
+        key = str(model)
+        counts[key] = counts.get(key, 0) + 1
+    if not counts:
+        return None
+    return sorted(counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
+
+
 def cluster_embedding_model(cluster: Any) -> str | None:
     """Resolve a cluster's embedding space without inventing a default.
 
@@ -71,14 +88,49 @@ def cluster_embedding_model(cluster: Any) -> str | None:
     explicit = getattr(cluster, "embedding_model", None)
     if explicit:
         return str(explicit)
-    counts: dict[str, int] = {}
-    for rep in getattr(cluster, "representatives", None) or []:
-        model = representative_embedding_model(rep)
-        if model is None:
-            continue
-        counts[model] = counts.get(model, 0) + 1
-    if not counts:
-        return None
-    max_n = max(counts.values())
-    tied = sorted(model for model, n in counts.items() if n == max_n)
-    return tied[0]
+    return choose_embedding_model(
+        representative_embedding_model(rep) for rep in getattr(cluster, "representatives", None) or []
+    )
+
+
+def filter_to_active_embedding_space(
+    items: Sequence[Any],
+    *,
+    log_prefix: str = "[clustering]",
+) -> list[Any]:
+    """Keep one embedding space: single-model no-op; mixed → active id only.
+
+    If the active runtime id cannot be resolved, fail closed (empty) and log
+    WARNING. Never majority-cluster a foreign space.
+    """
+    if not items:
+        return []
+    distinct = {str(getattr(item, "embedding_model", None)) for item in items if getattr(item, "embedding_model", None)}
+    if len(distinct) <= 1:
+        return list(items)
+    from recognition.application.embedding.manifest import try_active_embedding_model_id
+
+    active = try_active_embedding_model_id()
+    if not active:
+        logger.warning(
+            "%s mixed embedding_model present but active model unresolved; fail-closed empty batch (FIR23-01)",
+            log_prefix,
+        )
+        return []
+    matched = [item for item in items if getattr(item, "embedding_model", None) == active]
+    if not matched:
+        logger.warning(
+            "%s mixed embedding_model=%s none match active=%s; fail-closed empty batch",
+            log_prefix,
+            sorted(distinct),
+            active,
+        )
+    elif len(matched) < len(items):
+        logger.info(
+            "%s embedding_model filter active=%s kept=%d skipped=%d",
+            log_prefix,
+            active,
+            len(matched),
+            len(items) - len(matched),
+        )
+    return matched

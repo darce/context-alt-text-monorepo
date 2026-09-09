@@ -23,6 +23,7 @@ from recognition.application.orchestration.curation import update_cluster
 from recognition.application.orchestration.protocols import MergeSuggestionServiceProtocol, SuggestionServiceProtocol
 from recognition.application.persistence.assignment_writer import AssignmentWriter
 from recognition.application.suggestions.embedding_space import (
+    choose_embedding_model,
     models_are_same_space,
     representative_embedding_model,
     same_space_vector,
@@ -68,12 +69,7 @@ async def post_merge_retry_matching(
     if not reps:
         return
 
-    counts: dict[str, int] = {}
-    for rep in reps:
-        model = representative_embedding_model(rep)
-        if model:
-            counts[model] = counts.get(model, 0) + 1
-    gallery_model = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[0][0] if counts else None
+    gallery_model = choose_embedding_model(representative_embedding_model(rep) for rep in reps)
     rep_face_vecs: list[np.ndarray] = []
     for rep in reps:
         if gallery_model is not None:

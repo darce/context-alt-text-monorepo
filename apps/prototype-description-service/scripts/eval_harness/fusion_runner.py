@@ -59,10 +59,11 @@ from scene.interface_adapters.http.schemas.requests import (
     TaxonomyTermContext,
 )
 
+from ._pathtext import _printable_path
+from .cli import _printable_exc
 from .manifest import GoldenEntry, GoldenManifest, ManifestError, load_manifest
 from .report import Audience, build_reports
 from .schema import SCHEMA, DocKind
-from .cli import _printable_exc
 
 Mode = Literal["staged", "adhoc"]
 
@@ -470,7 +471,8 @@ async def _run_adhoc_item(entry: GoldenEntry, image_bytes: bytes, roster: Sequen
     service_facts = list(response.attachment_provenance.facts) if response.attachment_provenance else []
     if service_facts:  # legacy context must never reach Stage-2 (honest-baseline invariant)
         raise RuntimeError(
-            f"ad-hoc arm unexpectedly produced {len(service_facts)} Stage-2 facts for {entry.path}; "
+            f"ad-hoc arm unexpectedly produced {len(service_facts)} Stage-2 facts for "
+            f"{_printable_path(entry.path)}; "
             "legacy context should not coerce to a typed ContextPack"
         )
     return {
@@ -874,7 +876,10 @@ def main(argv: list[str] | None = None) -> int:
             )
             (out_dir / f"{stem}-report.public.json").write_text(public_json, encoding="utf-8")
             (out_dir / f"{stem}-report.public.md").write_text(public_md, encoding="utf-8")
-        print(f"{mode}: misattachments={mis['misattachments']}/{mis['labeled_facts']} -> {out_dir / stem}-report.md")
+        print(
+            f"{mode}: misattachments={mis['misattachments']}/{mis['labeled_facts']} -> "
+            f"{_printable_path(out_dir / f'{stem}-report.md')}"
+        )
         scored = json.loads(json_report)
         truncation_reasons = [
             str(reason)

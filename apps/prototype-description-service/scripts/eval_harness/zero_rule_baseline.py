@@ -15,12 +15,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from scripts.eval_harness._pathtext import _printable_path
 from scripts.eval_harness.bakeoff import DEFAULT_PROMPT_VARIANT, _stamp_pipeline_provenance
 from scripts.eval_harness.cli import _head_sha, _manifest_sha
 from scripts.eval_harness.manifest import GoldenManifest, load_manifest
@@ -163,7 +163,7 @@ def main(argv: list[str] | None = None) -> int:
     ):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
-        print(path)
+        print(_printable_path(path))
     return 0
 
 

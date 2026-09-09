@@ -82,6 +82,23 @@ Exit **2** is argparse or unreadable operator input (e.g. missing/unreadable `--
 
 The bakeoff command uses this same `<path-text>` wire for its successful run-record path on stdout and for the saved partial-record path in bounded-stall diagnostics.
 
+### Operator path audit
+
+Every path placed in an operator-facing diagnostic has a path slot and must be
+rendered with the shared `_printable_path` encoder. This includes stdout,
+stderr, parser errors, warnings, and exception messages that name a checkpoint
+or output. A machine-readable artifact's JSON `path` field remains the native
+fixture value; encoding that field would change the artifact identity.
+
+`scene/tests/test_eval_harness_operator_path_census.py` walks every current
+`scripts/eval_harness/*.py` module and checks the non-CLI producer frontier:
+the two anchor generators, draft-label/roster seed helpers, fusion runner,
+corpus inventory, face pass, strata, identity exporter, zero-rule baseline, and
+bake-off candidate registry. The
+CLI, scorer/baseline, and report-builder modules are listed as neighbouring
+owners in that census so a new operator sink cannot disappear from the review
+inventory when those slices land.
+
 Round-trip: if the text starts with `undecodable:` (no leading backslash), strip the prefix and decode C-style backslash escapes (`\\` → one backslash, `\xHH` → one byte, including `\b` as backspace) to recover the original bytes. If it starts with one or more backslashes followed by `undecodable:`, strip exactly one leading backslash; the rest is the UTF-8 name. Otherwise the text is the UTF-8 name as-is.
 
 Partial is checked before refusal, so partial+refused exits **1**. `score-face` accepts `--allow-refused [METRIC]` (repeatable; bare form = all); unconsented refused identification/detection exits 3 (S2R5-02); partial still wins with exit 1. Pin: `test_score_face_exits_3_on_refused_identification`.

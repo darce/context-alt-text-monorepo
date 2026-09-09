@@ -45,6 +45,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from scripts.eval_harness._pathtext import _printable_path
 from scripts.eval_harness.cli import _manifest_sha
 from scripts.eval_harness.face_run_record import (
     build_face_detection,
@@ -930,10 +931,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(f"manifest_sha256={manifest_sha}")
     print(f"embedding_dim={_EMBEDDING_DIM}")
-    print(f"manifest={manifest_path}")
-    print(f"run_record={run_path}")
-    print(f"report_json={report_json}")
-    print(f"report_md={report_md}")
+    print(f"manifest={_printable_path(manifest_path)}")
+    print(f"run_record={_printable_path(run_path)}")
+    print(f"report_json={_printable_path(report_json)}")
+    print(f"report_md={_printable_path(report_md)}")
     return 0
 
 

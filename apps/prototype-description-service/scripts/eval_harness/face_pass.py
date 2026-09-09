@@ -41,6 +41,7 @@ from dataclasses import MISSING, asdict, dataclass, fields
 from pathlib import Path
 from typing import Any, Protocol
 
+from scripts.eval_harness._pathtext import _printable_path
 from scripts.eval_harness.cli import _extract_identities, _image_dimensions
 from scripts.eval_harness.corpus_inventory import ImageRecord, dedupe_by_sha256, load_records
 from scripts.eval_harness.face_metrics import latency_summary, sort_identity_rows_by_normalized_centre
@@ -239,7 +240,7 @@ def load_face_pass_rows(path: Path) -> list[FacePassRow]:
         if not isinstance(raw, dict) or not (_REQUIRED_ROW_FIELDS <= set(raw) <= _ROW_FIELDS):
             continue
         raw = dict(raw)
-        raw["names"] = _validate_names_elements(raw.get("names"), context=f"{path}:{line_no}")
+        raw["names"] = _validate_names_elements(raw.get("names"), context=f"{_printable_path(path)}:{line_no}")
         rows.append(FacePassRow(**raw))
     return rows
 
@@ -345,7 +346,7 @@ def run_face_pass(
             if consecutive_failures >= stall_limit:
                 raise FacePassStalledError(
                     f"{consecutive_failures} consecutive item failures (last error: {row.error}); "
-                    f"aborting face pass — {len(done)} rows checkpointed to {out}",
+                    f"aborting face pass — {len(done)} rows checkpointed to {_printable_path(out)}",
                     out,
                     done,
                 )
@@ -431,7 +432,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
     rows: list[tuple[ImageRecord, Source]] = []
     for source, path in args.inventory:
         if not path.is_file():
-            parser.error(f"inventory not found: {path}")
+            parser.error(f"inventory not found: {_printable_path(path)}")
         if source not in roots:
             parser.error(f"no --root given for source {source}")
         rows.extend((record, source) for record in load_records(path))
@@ -444,7 +445,10 @@ def _main(argv: Sequence[str] | None = None) -> int:
         done_sha = frozenset(r.sha256 for r in resume_rows if r.error is None)
         candidates = select_candidates(rows, limit=args.limit, done_sha256=done_sha)
         with_ids = assign_media_ids(candidates, existing={r.sha256: r.media_id for r in resume_rows})
-        print(f"{len(with_ids)} candidates (resumed {len(resume_rows)}) -> {args.out}", flush=True)
+        print(
+            f"{len(with_ids)} candidates (resumed {len(resume_rows)}) -> {_printable_path(args.out)}",
+            flush=True,
+        )
 
         def progress(index: int, row: FacePassRow) -> None:
             if (index + 1) % 25 == 0:

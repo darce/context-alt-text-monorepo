@@ -233,6 +233,7 @@ const terminalFailure = (body) => {
 export const pollRun = async ({
   statusUrl,
   nonce,
+  idempotencyKey,
   fetchImpl = fetch,
   sleep = defaultSleep,
   now = Date.now,
@@ -248,7 +249,7 @@ export const pollRun = async ({
     if (navigationSignal?.aborted) throw requestAbortedError();
     const raw = await requestJson(
       statusUrl,
-      { method: 'GET', credentials: 'same-origin', headers: { 'X-WP-Nonce': nonce } },
+      { method: 'GET', credentials: 'same-origin', headers: { 'X-WP-Nonce': nonce, ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}) } },
       fetchImpl,
       { deadlineAt, now, navigationSignal },
     );
@@ -359,6 +360,7 @@ export const initializeDemo = (root) => {
       const finalState = await pollRun({
         statusUrl: `${root.dataset.submitUrl}/runs/${encodeURIComponent(submitted.run_id)}`,
         nonce: root.dataset.nonce ?? '',
+        idempotencyKey: retryKey,
         timeoutMs: Math.min(
           submitted.deadline_seconds,
           PUBLIC_DEMO_CLIENT_DEADLINE_CEILING_SECONDS,

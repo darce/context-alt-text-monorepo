@@ -1382,7 +1382,7 @@ PHP];
 
         $this->pipeline->status = 'completed';
         $this->pipeline->statusData = ['phase' => 'complete', 'completed' => 1];
-        $completed = $this->controller->status($this->authorizedRequest('GET', ['run_id' => 'public-run-1']));
+        $completed = $this->controller->status($this->statusRequest('public-run-1', $key));
         self::assertInstanceOf(WP_REST_Response::class, $completed);
         self::assertSame(200, $completed->get_status());
         self::assertSame('completed', $completed->get_data()['status']);
@@ -1419,11 +1419,11 @@ PHP];
         ]));
         self::assertSame(202, $submitted->get_status());
         $lease = $GLOBALS['__ac_options']['acx_public_demo_inflight'];
-        $this->failNextIdempotencyMappingWrite($this->idempotencyMappingKey($key));
+        $GLOBALS['__ac_set_transient_fail'] = true;
 
         $this->pipeline->status = 'completed';
         $this->pipeline->statusData = ['phase' => 'complete', 'completed' => 1];
-        $result = $this->controller->status($this->authorizedRequest('GET', ['run_id' => 'public-run-1']));
+        $result = $this->controller->status($this->statusRequest('public-run-1', $key));
 
         self::assertSame(503, $this->httpStatus($result));
         self::assertSame(PublicDemoErrorCode::STATE_UNAVAILABLE, $this->errorCode($result));
@@ -1442,7 +1442,7 @@ PHP];
         self::assertSame(202, $submitted->get_status());
         $this->pipeline->status = 'completed';
         $this->pipeline->statusData = ['phase' => 'complete', 'completed' => 1];
-        $completed = $this->controller->status($this->authorizedRequest('GET', ['run_id' => 'public-run-1']));
+        $completed = $this->controller->status($this->statusRequest('public-run-1', $key));
         self::assertSame(200, $completed->get_status());
         self::assertArrayNotHasKey('acx_public_demo_inflight', $GLOBALS['__ac_options']);
 
@@ -1493,45 +1493,6 @@ PHP];
         $request->set_header('Idempotency-Key', $idempotencyKey);
 
         return $request;
-    }
-
-    private function failNextIdempotencyMappingWrite(string $transient): void
-    {
-        $GLOBALS['__ac_set_transient_fail'][$transient] = true;
-        $current = is_array($GLOBALS['__ac_transients'] ?? null) ? $GLOBALS['__ac_transients'] : [];
-        $GLOBALS['__ac_transients'] = new class($current, $transient) implements \ArrayAccess {
-            /** @param array<string,mixed> $store */
-            public function __construct(private array $store, private string $failKey)
-            {
-            }
-
-            public function offsetExists(mixed $offset): bool
-            {
-                return is_string($offset) && array_key_exists($offset, $this->store);
-            }
-
-            public function offsetGet(mixed $offset): mixed
-            {
-                return is_string($offset) && array_key_exists($offset, $this->store) ? $this->store[$offset] : null;
-            }
-
-            public function offsetSet(mixed $offset, mixed $value): void
-            {
-                if ($offset === $this->failKey) {
-                    return;
-                }
-                if (is_string($offset)) {
-                    $this->store[$offset] = $value;
-                }
-            }
-
-            public function offsetUnset(mixed $offset): void
-            {
-                if (is_string($offset)) {
-                    unset($this->store[$offset]);
-                }
-            }
-        };
     }
 
     private function httpStatus(WP_REST_Response|WP_Error $result): int

@@ -33,6 +33,7 @@ export class PublicDemoClientError extends Error {
 
 export interface PollRunOptions {
   statusUrl: string;
+  idempotencyKey?: string;
   nonce: string;
   fetchImpl?: typeof fetch;
   sleep?: (milliseconds: number) => void | Promise<void>;

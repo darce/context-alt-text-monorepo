@@ -309,6 +309,7 @@ transaction_dir=""
 work_dir=""
 backup_dir=""
 previous_moved=0
+publication_durable=0
 lock_acquired=0
 lock_host="$(hostname 2>/dev/null || printf 'unknown')"
 lock_owner_file=""
@@ -330,8 +331,16 @@ cleanup() {
             preserve_transaction=1
             exit_status=1
         else
-            sync_paths "$out_parent" || exit_status=1
+            if ! sync_paths "$out_parent" "$transaction_dir"; then
+                preserve_transaction=1
+                exit_status=1
+            fi
         fi
+    fi
+    # A visible replacement is not committed until its parent rename barrier
+    # succeeds. Keep the old durable copy if that barrier failed or was interrupted.
+    if [ "$publication_durable" -eq 0 ] && [ -n "$backup_dir" ] && [ -e "$backup_dir" ]; then
+        preserve_transaction=1
     fi
     if [ "$preserve_transaction" -eq 0 ] && [ -n "$transaction_dir" ] && [ -d "$transaction_dir" ]; then
         rm -rf -- "$transaction_dir" || true
@@ -728,6 +737,9 @@ chmod 600 "$work_dir/manifest.json"
 # fsync a durable intent before moving the old bundle, then fsync each parent
 # after the two renames. A later invocation can use the intent to restore the
 # previous bundle if this process dies between the moves.
+# Persist file contents and bundle entries before publishing their durable intent.
+# A parent-directory fsync alone does not persist the files beneath it.
+sync_paths "$work_dir"/* "$work_dir"
 publish_intent="${transaction_dir}/.publish-intent"
 printf '%s\n' 'publish-intent-v1' >"$publish_intent"
 chmod 600 "$publish_intent"
@@ -742,6 +754,7 @@ if [ -e "$out_dir" ]; then
 fi
 mv -- "$work_dir" "$out_dir"
 sync_paths "$out_parent"
+publication_durable=1
 work_dir=""
 if [ -n "$transaction_dir" ]; then
     rm -rf -- "$transaction_dir" || true

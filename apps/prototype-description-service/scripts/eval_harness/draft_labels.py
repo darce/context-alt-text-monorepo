@@ -14,6 +14,7 @@ import re
 import unicodedata
 from pathlib import Path
 
+from ._pathtext import _printable_path
 from .manifest import ManifestError
 from .naming import IMAGE_EXTS, display_name, entity_slug
 
@@ -37,7 +38,7 @@ def generate_draft_manifest(fixtures_dir: str) -> tuple[dict, list[str]]:
     images_dir = root / "mock_images"
     if not entities_dir.is_dir() or not images_dir.is_dir():
         raise ManifestError(
-            f"fixture dirs not found under {root} (need mock_entities/ and mock_images/) — "
+            f"fixture dirs not found under {_printable_path(root)} (need mock_entities/ and mock_images/) — "
             "set GOLDEN_IMAGES_DIR to the rsync-bootstrapped copy (see scene/tests/seed/README.md)"
         )
 

@@ -20,6 +20,7 @@ import itertools
 import warnings
 from dataclasses import dataclass, field
 
+from scripts.eval_harness._pathtext import _printable_path
 from scripts.eval_harness.identity_sources import (
     FaceRegion,
     celeb_identity_from_filename,
@@ -109,7 +110,7 @@ def identities_for_image(image_bytes: bytes, *, source: str, filename: str) -> I
         name = celeb_identity_from_filename(filename)
         if name is None:
             warnings.warn(
-                f"celeb-sourced image {filename!r} has no parseable identity in its filename; "
+                f"celeb-sourced image {_printable_path(filename)} has no parseable identity in its filename; "
                 "the entry will carry zero identity ground truth",
                 CelebIdentityMissingWarning,
                 stacklevel=2,

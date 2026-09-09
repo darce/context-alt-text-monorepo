@@ -36,6 +36,7 @@ from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 
+from scripts.eval_harness._pathtext import _printable_path
 from scripts.eval_harness.corpus_inventory import FEATURE_EDGE_PX, ImageRecord, dedupe_by_sha256, load_records
 from scripts.eval_harness.manifest import Domain, GoldenEntry, SliceTag
 
@@ -569,13 +570,13 @@ def _main(argv: Sequence[str] | None = None) -> int:
     rows: list[tuple[ImageRecord, Source]] = []
     for source, path in args.inventory:
         if not path.is_file():
-            parser.error(f"inventory not found: {path}")
+            parser.error(f"inventory not found: {_printable_path(path)}")
         rows.extend(load_inventory(path, source))
 
     face_counts: dict[str, int] = {}
     if args.face_counts is not None:
         if not args.face_counts.is_file():
-            parser.error(f"face counts not found: {args.face_counts}")
+            parser.error(f"face counts not found: {_printable_path(args.face_counts)}")
         from scripts.eval_harness.face_pass import load_face_counts  # local: avoids an import cycle
 
         face_counts = load_face_counts(args.face_counts)
@@ -585,7 +586,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
     )
     args.out.write_text(json.dumps(report_json(report), indent=2))
 
-    print(f"pool {report.pool_size} images -> {args.out}")
+    print(f"pool {report.pool_size} images -> {_printable_path(args.out)}")
     unlooked = sum(1 for r, _ in rows if face_count_of(r, face_counts)[1] is FaceCountSource.NONE)
     if unlooked:
         # Loud by default: the face strata below are the one place where "no signal"

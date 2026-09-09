@@ -21,6 +21,8 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from scripts.eval_harness._pathtext import _printable_message, _printable_path
+
 SCHEMA = "acx-bakeoff-candidates/v1"
 KNOWN_PROMPT_TEMPLATES = frozenset({"v1", "v2", "v3"})
 # Recipe fields that must match across a generation pair for the comparison
@@ -302,11 +304,14 @@ def load_bakeoff_candidates(path: str | Path | None = None) -> BakeoffCandidateR
 
 def _read_yaml(registry_path: Path) -> Any:
     if not registry_path.is_file():
-        raise RegistryError(f"candidate registry not found: {registry_path}")
+        raise RegistryError(f"candidate registry not found: {_printable_path(registry_path)}")
     try:
         raw = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as exc:
-        raise RegistryError(f"candidate registry unreadable or malformed YAML: {exc}") from exc
+        raise RegistryError(
+            f"candidate registry unreadable or malformed YAML at {_printable_path(registry_path)}: "
+            f"{_printable_message(str(exc))}"
+        ) from exc
     if not isinstance(raw, dict):
         raise RegistryError("candidate registry root must be a mapping")
     return raw

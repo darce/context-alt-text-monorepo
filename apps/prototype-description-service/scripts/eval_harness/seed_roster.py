@@ -65,12 +65,12 @@ def seed(entities_dir: str, client: SeedClient, *, tenant_id: str) -> SeedSummar
     root = Path(entities_dir)
     if not root.is_dir():
         raise ManifestError(
-            f"entities dir not found: {root} — set GOLDEN_IMAGES_DIR and pass "
+            f"entities dir not found: {_printable_path(root)} — set GOLDEN_IMAGES_DIR and pass "
             "<GOLDEN_IMAGES_DIR>/mock_entities (see scene/tests/seed/README.md)"
         )
     crops = _load_crops(root)
     if not crops:
-        raise ManifestError(f"no entity crops found under {root}")
+        raise ManifestError(f"no entity crops found under {_printable_path(root)}")
     roster = sorted({name for _, _, _, name in crops})
 
     existing = {str(c["id"]): str(c["label"]) for c in client.clusters(labeled_only=True) if c.get("label")}

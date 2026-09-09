@@ -26,12 +26,19 @@ from scripts.eval_harness.manifest import load_manifest
 from scripts.eval_harness.report import build_reports
 from scripts.eval_harness.schema import SCHEMA, DocKind
 
-BAKEOFF = Path(__file__).parent / "seed" / "bakeoff_golden.json"
+BAKEOFF = Path(__file__).parent / "seed" / "fusion_regression.json"
 
 
 @pytest.fixture(scope="module")
 def manifest():
-    return load_manifest(str(BAKEOFF))
+    # Metadata-only: run_fusion_eval → _synthetic_image_bytes; tests read labels/
+    # context_pack/policy/expected_attachments only — never open image bytes.
+    return load_manifest(
+        str(BAKEOFF),
+        skip_hash_verification=True,
+        hash_skip_reason="fusion tests read labels/policy only; image bytes never opened",
+        metadata_only=True,
+    )
 
 
 def test_bakeoff_labels_include_expected_attachments(manifest):
@@ -56,6 +63,29 @@ def test_staged_run_record_is_acx_eval_v1(manifest):
         describe = item["describe"]
         assert "alt_text_draft" in describe
         assert "attachment_provenance" in describe
+
+
+def test_fusion_provenance_uses_canonical_manifest_digest_and_counts(manifest):
+    """VLM-6-CAN-03 / FIR-12-CAN-08: fetch identity is canonical and complete."""
+    from scripts.eval_harness.cli import _manifest_sha
+
+    record = run_fusion_eval(
+        manifest,
+        mode="staged",
+        head_sha="a" * 40,
+        started_at="2026-07-09T00:00:00Z",
+        limit=2,
+    )
+    provenance = record["provenance"]
+    assert provenance["manifest_sha256"] == _manifest_sha(manifest)
+    assert provenance["requested_limit"] == 2
+    assert provenance["manifest_entries"] == len(manifest.entries)
+    assert provenance["evaluated_entries"] == 2
+
+
+def test_fusion_limit_zero_is_rejected_instead_of_running_full_corpus(manifest):
+    with pytest.raises(ValueError, match="limit must be >= 1"):
+        run_fusion_eval(manifest, mode="staged", head_sha="a" * 40, limit=0)
 
 
 def test_build_reports_deterministic_on_fusion_records(manifest):
@@ -238,3 +268,47 @@ def test_cli_writes_reports(tmp_path, manifest):
     adhoc_mis = json.loads((tmp_path / "E20-FUSION-adhoc-misattachment.json").read_text())
     assert staged_mis["misattachments"] == 0
     assert adhoc_mis["misattachments"] > 0
+    report = json.loads((tmp_path / "E20-FUSION-staged-report.json").read_text())
+    from scripts.eval_harness.cli import _manifest_sha
+
+    assert report["provenance"]["score_manifest_sha256"] == _manifest_sha(manifest)
+    assert report["provenance"]["manifest_matches_fetch"] is True
+
+
+def test_fusion_main_ignores_empty_golden_images_dir(tmp_path, monkeypatch):
+    """VLM6-RV3-Q4-01 / OBS-04: fusion_runner synthesizes bytes; empty env dir must load.
+
+    Mutation: removing metadata_only=True from fusion_runner.main load_manifest
+    fails with ManifestError: image file missing.
+    """
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(empty))
+    code = fusion_main(
+        [
+            "--manifest",
+            str(BAKEOFF),
+            "--mode",
+            "staged",
+            "--out-dir",
+            str(tmp_path),
+        ]
+    )
+    # roster_only bakeoff_golden refuses detection — reports still written (exit 3).
+    assert code == 3
+    assert (tmp_path / "E20-FUSION-staged-run-record.json").is_file()
+
+
+def test_default_outputs_do_not_overwrite_published_evidence(tmp_path, monkeypatch):
+    from scripts.eval_harness import fusion_runner
+
+    module_path = tmp_path / 'apps/service/scripts/eval_harness/fusion_runner.py'
+    module_path.parent.mkdir(parents=True)
+    monkeypatch.setattr(fusion_runner, '__file__', str(module_path))
+    evidence = tmp_path / 'docs/tasks/20.0/E20-FUSION-staged-report.json'
+    evidence.parent.mkdir(parents=True)
+    evidence.write_text('published evidence')
+    code = fusion_runner.main(['--manifest', str(BAKEOFF), '--mode', 'staged'])
+    assert code == 3
+    assert evidence.read_text() == 'published evidence'
+    assert (module_path.parent / 'out/fusion/E20-FUSION-staged-report.json').is_file()

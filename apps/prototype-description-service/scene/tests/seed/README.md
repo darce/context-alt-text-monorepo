@@ -1,6 +1,6 @@
 # Eval-harness golden seed (VLM-2A corpus, VLM-2C population)
 
-`golden.json` (`manifest_version: 2`) is the golden manifest for the
+`golden.json` (`manifest_version: 3`) is the golden manifest for the
 caption-quality + face-recognition eval harness (`scripts/eval_harness/`): 37
 scene images + a 10-name roster derived from 18 `entity-*` face crops. Per
 entry: relative path, `sha256`, stable synthetic `media_id`, ground-truth
@@ -10,7 +10,7 @@ present-identity labels, a populated `context_pack` (name-injected WP
 title/caption/description), a `base_caption` reference string naming every
 confirmed present identity, Must-Right/Easy-Wrong rubric entries, and policy
 flags. Version 2 added the optional `base_caption` field; the loader accepts
-version 2 only.
+versions 2 and 3.
 
 `face_count` counting rule (operator-confirmed): count each visible human face
 region, **including** a mirror reflection that shows a face (a detector sees it
@@ -68,9 +68,33 @@ idempotently ingests the scene images under their golden `media_id`s so the
 eval tenant holds server-side `MediaIdentity` face regions for E19-4a.
 Zero-face scenes are skipped (they produce no identity rows or bboxes).
 
-Deterministic scoring evidence (seeded stub, `cli score --check-determinism`):
-`docs/tasks/vlm/VLM-2C-seeded-stub-score-20260707-report.md`.
+Deterministic scoring evidence:
+
+- **Do not** use the committed seeded-stub / VLM-2A baseline run-records with
+  `score --check-determinism` as a green copy-paste path. Both exit **1** today
+  (`ReportError` on bare-string `identities` rows — greenfield requires dict
+  rows). See `scripts/eval_harness/README.md` § Score gates, verdict, and
+  `--check-determinism` (rg-006).
+- **Working evidence today:** the unit suite
+  `test_cli_score_check_determinism_runs_cross_process_guard` (matched
+  run-record + score-time manifest, dict identities). Operator reference and
+  pass-line format live in the eval-harness README.
+- Historical seeded-stub score write-up (pre-gate system):
+  `docs/tasks/vlm/VLM-2C-seeded-stub-score-20260707-report.md`.
 
 Florence-2 benchmark note (pre-existing use of this directory): a real .jpg/.png
 dropped here can serve as a checked-in fixture for `scripts/benchmark_local_vlm.py`;
 it accepts arbitrary image paths as args. See the decision memo in docs/tasks/19.0/.
+
+## Frozen evaluation split
+
+`golden.json` retains the full 37-image canonical fixture used by regression
+checks and split verification. `bakeoff_golden.json` contains model-selection
+entries from the train half. `held_out_golden.json` contains the existing
+20-image held-out reporting half, preserved without redrawing the split.
+Use that held-out manifest for reported candidate and zero-rule comparisons;
+do not treat full-corpus regression scores as held-out model-quality evidence.
+
+`fusion_regression.json` preserves the pre-split attachment fixtures for
+synthetic fusion regression tests, including adversarial context and
+multi-person scenes. It is not a model-selection or held-out reporting set.

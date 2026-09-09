@@ -75,12 +75,59 @@ _OVERSHOOT_RECORD = {
                 "alt_text_draft": "Alice Example by the pool.",
                 "visual_facts": {"objects": []},
             },
-            "identities": ["Alice Example"],
+            # Dict identity row (greenfield rejects bare strings — VLM6-PANEL6L-SR-01);
+            # shape mirrors fusion_runner.py::_identity_rows.
+            "identities": [
+                {
+                    "name": "Alice Example",
+                    "bbox": {"x": 0.5, "y": 0.4, "width": 0.2, "height": 0.3},
+                    "unpositioned": False,
+                }
+            ],
             "face_count": 3,
             "error": None,
         }
     ],
 }
+
+
+def _overshoot_record_for(manifest_path: Path, *, n: int = 5) -> dict:
+    """``n``-item run record stamped with the real score-time manifest sha.
+
+    The CLI ``score`` path folds fetch/score manifest drift into the verdict
+    (VLM6-F-03 / EVAL-13) and hard-fails on both a mismatched and a missing
+    fetch-time ``manifest_sha256``. A fixed placeholder can never match a
+    tmp_path-scoped manifest, so compute the real sha the same way cli.py does.
+
+    VLM6-GATE-INT-01: ``n`` items (default 5, matching
+    ``_write_unboxed_manifest``'s corpus size) clear
+    ``SCORE_PASS_MIN_SCORED_IMAGES`` so ``sample_size`` is a genuine non-issue
+    rather than a category-vacuity reason the gate has to suppress. Each
+    item's caption states "in the foreground" — the phrase
+    ``_write_unboxed_manifest`` puts on every entry's ``spatial_facts`` — so
+    ``placement.claims > 0`` for real (score_placement / contains_phrase),
+    not because the gate looked away.
+    """
+    import copy
+
+    from scripts.eval_harness.cli import _manifest_sha
+    from scripts.eval_harness.manifest import load_manifest as _load_manifest
+
+    manifest = _load_manifest(str(manifest_path), skip_hash_verification=True)
+    manifest_sha = _manifest_sha(manifest)
+    template = _OVERSHOOT_RECORD["items"][0]
+    items = []
+    for i in range(1, n + 1):
+        item = copy.deepcopy(template)
+        item["media_id"] = i
+        item["path"] = f"mock_images/alice{i}.jpg"
+        item["describe"]["alt_text_draft"] = "Alice Example in the foreground by the pool."
+        items.append(item)
+    record = copy.deepcopy(_OVERSHOOT_RECORD)
+    record["items"] = items
+    record["provenance"]["manifest_sha256"] = manifest_sha
+    return record
+
 
 EXHAUSTIVE_DETECTION = {"tp": 1, "fp": 2, "fn": 0, "precision": 1 / 3, "recall": 1.0}
 
@@ -89,7 +136,12 @@ def _manifest_doc(mode: str) -> dict:
     return {
         "manifest_version": 3,
         "annotation_mode": mode,
-        "roster": ["Alice Example"],
+        # VLM6-DELTA-17: 2 roster members so easy_wrong can name a real
+        # (non-must_right) roster identity — an empty easy_wrong trips the
+        # CLI's branch-only empty-rubric gate (SCORE_GATE_PREFIX_EMPTY_RUBRIC,
+        # cli.py) ahead of the refusal-consent exit these tests target. Mirrors
+        # the pattern in test_r6d4_cli_score_omits_annotation_mode.py.
+        "roster": ["Alice Example", "Bob Distractor"],
         "entries": [
             {
                 "path": "mock_images/alice.jpg",
@@ -100,7 +152,7 @@ def _manifest_doc(mode: str) -> dict:
                 "context_pack": {"title": "t"},
                 "base_caption": "Alice Example.",
                 "must_right": ["Alice Example"],
-                "easy_wrong": [],
+                "easy_wrong": ["Bob Distractor"],
                 "policy": {"recognition_enabled": True},
                 "provenance": {"source": "fixture", "license": "fixture"},
                 "face_boxes": [
@@ -125,8 +177,72 @@ def _write_manifest(tmp_path: Path, mode: str) -> Path:
     return path
 
 
+def _write_unboxed_manifest(tmp_path: Path, mode: str, *, n: int = 5) -> Path:
+    """``n``-entry, boxless corpus — identification (and roster_only detection)
+    still refuse, but sample_size/placement/fabricated_fact are genuinely
+    non-vacuous.
+
+    VLM6-GATE-INT-01: the CLI's category-vacuity gate (cli.py) now suppresses
+    only the reasons that are pure restatements of a refused
+    identification/detection (``positional``, ``identity_ordering``,
+    ``face_identification.*``, and ``face_detection.*`` when detection also
+    refuses) — every other category-vacuity reason survives and hard-fails.
+    A single boxless image used to reach the exit-3 refusal-consent path
+    (``raise_if_unconsented_refusals``) only because the old, over-broad gate
+    (``not ident_block.get("refused")``) skipped the whole check whenever
+    identification refused; that let ``sample_size`` (1 < 5),
+    ``placement`` (no ``spatial_facts``), and ``fabricated_fact`` (no
+    ``reference_facts`` trap) go unnoticed even though they were genuinely
+    vacuous. This fixture now clears all three for real instead of relying on
+    the gate looking away: ``n=5`` entries clear
+    ``SCORE_PASS_MIN_SCORED_IMAGES``; every entry carries a ``spatial_facts``
+    "foreground" fact whose phrase the paired run-record caption states
+    (``_overshoot_record_for``), giving ``placement.claims > 0``; every entry
+    carries a ``reference_facts`` FALSE-polarity trap the caption never
+    states, giving ``fabricated_fact`` a real (untripped, 0.0) rate instead of
+    ``None``. ``face_boxes`` stays empty on every entry so identification
+    still refuses (and roster_only mode still refuses detection
+    independently), exercising the real refusal-consent contract these CLI
+    tests target — not a category-vacuity bypass. Mirrors the same
+    boxless-corpus pattern in test_regen_eval_report_gate.py (VLM6-DELTA-15)
+    and test_identification_boxed_gt.py (VLM6-DELTA-16); see those files if
+    the gate narrowing also broke their fixtures.
+    """
+    import copy
+
+    doc = _manifest_doc(mode)
+    template = doc["entries"][0]
+    entries = []
+    for i in range(1, n + 1):
+        entry = copy.deepcopy(template)
+        entry["media_id"] = i
+        entry["path"] = f"mock_images/alice{i}.jpg"
+        entry["sha256"] = f"{i:064x}"
+        entry["face_boxes"] = []
+        entry["spatial_facts"] = [
+            {
+                "subject": "Alice Example",
+                "relation": "foreground",
+                "phrases": ["in the foreground"],
+            }
+        ]
+        entry["reference_facts"] = [
+            {
+                "text": "wearing a red hat",
+                "kind": "attribute",
+                "polarity": "false",
+                "phrases": ["red hat"],
+            }
+        ]
+        entries.append(entry)
+    doc["entries"] = entries
+    path = tmp_path / f"{mode}-unboxed.json"
+    path.write_text(json.dumps(doc), encoding="utf-8")
+    return path
+
+
 def test_fusion_flatten_stamps_annotation_mode(tmp_path: Path) -> None:
-    manifest = load_manifest(str(_write_manifest(tmp_path, "roster_only")))
+    manifest = load_manifest(str(_write_manifest(tmp_path, "roster_only")), skip_hash_verification=True)
     entries = manifest_entries_as_dicts(manifest)
     assert entries[0]["annotation_mode"] == "roster_only"
 
@@ -198,7 +314,7 @@ def test_fusion_flatten_projects_scorer_contract_keys_only(tmp_path: Path) -> No
     """
     from scripts.eval_harness.fusion_runner import SCORER_ENTRY_KEYS
 
-    manifest = load_manifest(str(_write_manifest(tmp_path, "roster_only")))
+    manifest = load_manifest(str(_write_manifest(tmp_path, "roster_only")), skip_hash_verification=True)
     entries = manifest_entries_as_dicts(manifest)
     leaked = {"sha256", "expected_attachments", "difficulty", "reference_facts", "base_caption"}
     assert leaked.isdisjoint(entries[0])
@@ -212,7 +328,7 @@ def test_fusion_flatten_preserves_face_boxes(tmp_path: Path) -> None:
     Dropping face_boxes made require_boxed_identification_gt refuse honest,
     fully-boxed ground truth. The CLI flatten keeps boxes via model_dump.
     """
-    manifest = load_manifest(str(_write_manifest(tmp_path, "roster_only")))
+    manifest = load_manifest(str(_write_manifest(tmp_path, "roster_only")), skip_hash_verification=True)
     entries = manifest_entries_as_dicts(manifest)
     assert "face_boxes" in entries[0]
     dumped = manifest.entries[0].model_dump()["face_boxes"]
@@ -231,7 +347,7 @@ def test_fusion_runner_build_reports_refuses_roster_only_detection(tmp_path: Pat
 
     Goes red if the refusal is removed or if flatten drops annotation_mode.
     """
-    manifest = load_manifest(str(_write_manifest(tmp_path, "roster_only")))
+    manifest = load_manifest(str(_write_manifest(tmp_path, "roster_only")), skip_hash_verification=True)
     entries = manifest_entries_as_dicts(manifest)
     json_doc, _md = build_reports(_OVERSHOOT_RECORD, entries)
     det = json.loads(json_doc)["faces"]["detection"]
@@ -264,7 +380,7 @@ def test_score_run_record_without_mode_or_stamp_refuses() -> None:
 
 def test_exhaustive_fusion_flatten_detection_unchanged(tmp_path: Path) -> None:
     """Exhaustive P/R through the same flatten path matches the pre-fix pin."""
-    manifest = load_manifest(str(_write_manifest(tmp_path, "exhaustive")))
+    manifest = load_manifest(str(_write_manifest(tmp_path, "exhaustive")), skip_hash_verification=True)
     entries = manifest_entries_as_dicts(manifest)
     json_doc, _md = build_reports(_OVERSHOOT_RECORD, entries)
     det = json.loads(json_doc)["faces"]["detection"]
@@ -281,12 +397,19 @@ def test_cli_score_refuses_roster_only_detection(tmp_path: Path, monkeypatch: py
 
     S2R3-16: refused detection is exit 3 by default. A CI job that checks
     only process status must not treat a missing detection score as clean.
+
+    VLM6-GATE-INT-01: the category-vacuity gate (cli.py) only suppresses
+    reasons that restate a refused identification/detection; an unboxed,
+    5-image corpus with real spatial_facts/reference_facts (see
+    ``_write_unboxed_manifest``) clears every unrelated vacuity axis for
+    real, so the gate lets this refusal-consent path (exit 3) through on its
+    own merits rather than via a blanket skip.
     """
     import scripts.eval_harness.cli as cli_mod
 
-    man_path = _write_manifest(tmp_path, "roster_only")
+    man_path = _write_unboxed_manifest(tmp_path, "roster_only")
     record_path = tmp_path / "run.json"
-    record_path.write_text(json.dumps(_OVERSHOOT_RECORD), encoding="utf-8")
+    record_path.write_text(json.dumps(_overshoot_record_for(man_path)), encoding="utf-8")
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
     with pytest.raises(SystemExit) as exc:
         cli_mod.main(["score", "--manifest", str(man_path), "--run-record", str(record_path)])
@@ -311,12 +434,18 @@ def test_cli_score_refuses_roster_only_detection(tmp_path: Path, monkeypatch: py
 def test_cli_score_allow_refused_exits_zero(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """S2R3-16: --allow-refused is the explicit opt-in for a refused score."""
+    """S2R3-16: --allow-refused is the explicit opt-in for a refused score.
+
+    VLM6-GATE-INT-01: same non-vacuous unboxed manifest as
+    test_cli_score_refuses_roster_only_detection above — naming both refused
+    metrics must still reach a clean exit 0 once every unrelated
+    category-vacuity axis is genuinely satisfied, not skipped.
+    """
     import scripts.eval_harness.cli as cli_mod
 
-    man_path = _write_manifest(tmp_path, "roster_only")
+    man_path = _write_unboxed_manifest(tmp_path, "roster_only")
     record_path = tmp_path / "run.json"
-    record_path.write_text(json.dumps(_OVERSHOOT_RECORD), encoding="utf-8")
+    record_path.write_text(json.dumps(_overshoot_record_for(man_path)), encoding="utf-8")
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
     cli_mod.main(
         [
@@ -331,6 +460,44 @@ def test_cli_score_allow_refused_exits_zero(
     captured = capsys.readouterr()
     assert f"detection=REFUSED({ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY})" in captured.out
     assert captured.err == ""
+
+
+def test_cli_score_category_vacuity_survives_identification_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """VLM6-GATE-INT-01: a refused identification must not blanket-skip
+    category-vacuity for reasons unrelated to that refusal.
+
+    Regression for the bug this branch fixes: the pre-fix gate
+    (``if verdict_value == NOT_READY and not ident_block.get("refused")``)
+    exempted the ENTIRE category-vacuity check whenever identification
+    refused — including independent, unrelated vacuous categories like
+    sample_size, which have nothing to do with a face refusal. ``n=1``
+    reuses ``_write_unboxed_manifest``'s per-entry spatial_facts/
+    reference_facts (so placement/fabricated_fact are non-vacuous) but
+    stays a single image, below ``SCORE_PASS_MIN_SCORED_IMAGES`` — so
+    sample_size is the one genuinely unrelated vacuity reason left. It must
+    survive the narrowed gate and hard-fail even with no ``--allow-refused``
+    consent requested at all (the pre-fix bug exited 0 here).
+    """
+    import scripts.eval_harness.cli as cli_mod
+
+    man_path = _write_unboxed_manifest(tmp_path, "roster_only", n=1)
+    record_path = tmp_path / "run.json"
+    record_path.write_text(json.dumps(_overshoot_record_for(man_path, n=1)), encoding="utf-8")
+    monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
+    with pytest.raises(SystemExit) as exc:
+        cli_mod.main(["score", "--manifest", str(man_path), "--run-record", str(record_path)])
+    assert isinstance(exc.value.code, str)
+    assert exc.value.code.startswith(cli_mod.SCORE_GATE_PREFIX_CATEGORY_VACUITY)
+    # The surviving reason must be the unrelated category ...
+    assert "sample-size" in exc.value.code
+    # ... never a restatement of the identification/detection refusal, which
+    # must stay suppressed (that suppression is the narrowed gate's job).
+    assert "positional" not in exc.value.code
+    assert "identity_ordering" not in exc.value.code
+    assert "face_identification" not in exc.value.code
+    assert "face_detection" not in exc.value.code
 
 
 def test_cli_score_help_documents_allow_refused_exit_contract(

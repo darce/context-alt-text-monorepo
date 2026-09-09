@@ -362,6 +362,51 @@ def test_resume_preserves_errored_rows_not_retried_this_run(tmp_path):
     assert on_disk["sha-c.jpg"].face_count == 1
 
 
+# --- execution stats -------------------------------------------------------------
+
+
+def test_summarize_reports_latency_percentiles():
+    # Execution stats: per-call analyze latency as PERCENTILES (PERF-01), from open-loop timing.
+    # elapsed_ms is converted to seconds for the shared latency_summary schema (VLM6-RH-04).
+    rows = [
+        FacePassRow("s1", "a.jpg", "localwp_uploads", 900_000, 2, [], None, elapsed_ms=100.0),
+        FacePassRow("s2", "b.jpg", "localwp_uploads", 900_001, 0, [], None, elapsed_ms=300.0),
+        FacePassRow("s3", "c.jpg", "localwp_uploads", 900_002, None, [], "TimeoutError: x", elapsed_ms=50.0),
+    ]
+    s = summarize(rows)
+    assert (s["scanned"], s["ok"], s["errors"]) == (3, 2, 1)
+    lat = s["latency"]
+    assert lat is not None
+    assert lat["unit"] == "s"
+    assert lat["n"] == 3  # latency measured on ok AND errored calls
+    assert lat["p50"] == 0.1 and lat["p95"] == 0.3 and lat["max"] == 0.3
+    assert lat["p99"] == 0.3 and lat["min"] == 0.05
+
+
+def test_summarize_latency_none_on_legacy_rows_without_timing():
+    # Rows from the pre-elapsed_ms schema carry no timing -> latency is None, not a crash.
+    s = summarize([FacePassRow("s1", "a.jpg", "localwp_uploads", 900_000, 2, [], None)])
+    assert s["latency"] is None and s["ok"] == 1
+
+
+def test_load_face_pass_rows_backfills_missing_elapsed_ms(tmp_path):
+    # A checkpoint written by the pre-elapsed_ms schema must still load (elapsed_ms -> None),
+    # or a schema addition would silently drop the whole pass on the next --resume (A-06).
+    out = tmp_path / "faces.jsonl"
+    legacy = {
+        "sha256": "s1",
+        "path": "a.jpg",
+        "source": "localwp_uploads",
+        "media_id": 900_000,
+        "face_count": 2,
+        "names": [],
+        "error": None,  # no elapsed_ms key
+    }
+    out.write_text(json.dumps(legacy) + "\n")
+    rows = load_face_pass_rows(out)
+    assert len(rows) == 1 and rows[0].elapsed_ms is None and rows[0].face_count == 2
+
+
 def test_a_truncated_final_line_is_dropped_rather_than_crashing_the_resume(tmp_path):
     out = tmp_path / "faces.jsonl"
     good = FacePassRow("sha-a.jpg", "a.jpg", "localwp_uploads", 900_000, 1, [], None)
@@ -382,4 +427,62 @@ def test_summary_counts_crowds_and_errors():
         "with_faces": 1,
         "crowds": 1,
         "faces_found": 4,
+        "latency": None,  # these rows carry no elapsed_ms (legacy shape)
     }
+
+
+# --- A-01: names element type (dict rows, not bare strings) -------------------
+
+
+def test_face_pass_row_names_type_is_list_of_dict():
+    """FacePassRow.names is list[dict], matching _extract_identities output."""
+    from typing import get_type_hints
+
+    hints = get_type_hints(FacePassRow)
+    # Annotated as list[dict[str, Any]] (or equivalent); not list[str].
+    assert "dict" in str(hints["names"]).lower()
+    assert "str" not in str(hints["names"]).replace("dict[str", "")
+
+
+def test_load_face_pass_rows_rejects_bare_string_names(tmp_path):
+    """A-01: wrong element shape fails loudly — no silent dual-shape load."""
+    out = tmp_path / "faces.jsonl"
+    out.write_text(
+        json.dumps(
+            {
+                "sha256": "s1",
+                "path": "a.jpg",
+                "source": "localwp_uploads",
+                "media_id": 900_000,
+                "face_count": 1,
+                "names": ["Amy"],  # legacy bare-string shape
+                "error": None,
+            }
+        )
+        + "\n"
+    )
+    with pytest.raises(ValueError, match="names\\[0\\] must be a dict"):
+        load_face_pass_rows(out)
+
+
+def test_load_face_pass_rows_accepts_dict_identity_names(tmp_path):
+    """A-01: positional dict rows load cleanly."""
+    out = tmp_path / "faces.jsonl"
+    names = [{"name": "Amy", "bbox": {"x": 1, "y": 2, "width": 3, "height": 4}, "unpositioned": False}]
+    out.write_text(
+        json.dumps(
+            {
+                "sha256": "s1",
+                "path": "a.jpg",
+                "source": "localwp_uploads",
+                "media_id": 900_000,
+                "face_count": 1,
+                "names": names,
+                "error": None,
+            }
+        )
+        + "\n"
+    )
+    rows = load_face_pass_rows(out)
+    assert len(rows) == 1
+    assert rows[0].names == names

@@ -51,11 +51,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import unicodedata
 import warnings
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from enum import StrEnum
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from pydantic import (
     BaseModel,
@@ -67,7 +70,88 @@ from pydantic import (
     model_validator,
 )
 
+from ._pathtext import _printable_message, _printable_path
+
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _validate_relative_image_path(value: str) -> str:
+    """Require a manifest image path to be relative and traversal-free.
+
+    The manifest is portable across POSIX and Windows workers, so both path
+    syntaxes are checked. Symlink containment is checked at resolution time,
+    when the corpus root is available.
+    """
+    if not isinstance(value, str) or not value:
+        raise ValueError("image path must be a non-empty relative path")
+    if "\x00" in value:
+        raise ValueError("image path must not contain NUL")
+    posix = Path(value)
+    windows = PureWindowsPath(value)
+    # ``PureWindowsPath.is_absolute()`` is false for a rooted path such as
+    # ``\\outside.jpg`` (it has no drive), even though joining it to a Windows
+    # corpus root discards the root's directory. Treat every Windows root or
+    # drive spelling as an absolute escape, including drive-relative ``C:foo``.
+    if posix.is_absolute() or windows.is_absolute() or windows.drive or windows.root:
+        raise ValueError("image path must be relative to the corpus root")
+    if any(part == ".." for part in (*posix.parts, *windows.parts)):
+        raise ValueError("image path must be relative and must not contain parent traversal")
+    if posix == Path(".") or windows == PureWindowsPath("."):
+        raise ValueError("image path must name a relative file below the corpus root")
+    return value
+
+
+def _printable_validation_value(value: object, *, depth: int = 0) -> str:
+    """Render Pydantic error values without ``repr``-flattening surrogates.
+
+    Pydantic's default ``ValidationError.__str__`` uses ``repr(input_value)``.
+    A JSON ``\\udce9`` therefore becomes literal backslash text in an operator
+    message, which is ambiguous and violates the path-text wire contract. Keep
+    the shape of common containers while sending every string leaf through the
+    message encoder.
+    """
+    if depth > 5:
+        return "<nested value>"
+    if isinstance(value, str):
+        return str(_printable_message(value))
+    if isinstance(value, bytes):
+        return str(_printable_message(value.decode("utf-8", errors="backslashreplace")))
+    if isinstance(value, Mapping):
+        items = ", ".join(
+            f"{_printable_validation_value(key, depth=depth + 1)}: "
+            f"{_printable_validation_value(item, depth=depth + 1)}"
+            for key, item in value.items()
+        )
+        return "{" + items + "}"
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return "[" + ", ".join(
+            _printable_validation_value(item, depth=depth + 1) for item in value
+        ) + "]"
+    try:
+        rendered = str(value)
+    except Exception:
+        rendered = f"<{type(value).__name__}>"
+    return str(_printable_message(rendered))
+
+
+def _format_validation_error(error: ValidationError) -> str:
+    """Return a strict-UTF-8, deterministic summary of validation failures."""
+    details: list[str] = []
+    for item in error.errors(include_url=False):
+        location = ".".join(
+            _printable_validation_value(part) for part in item.get("loc", ())
+        ) or "<document>"
+        message = _printable_validation_value(item.get("msg", "validation error"))
+        suffix: list[str] = []
+        if "input" in item:
+            suffix.append(f"input={_printable_validation_value(item['input'])}")
+        if "ctx" in item and item["ctx"]:
+            suffix.append(f"context={_printable_validation_value(item['ctx'])}")
+        details.append(
+            f"{location}: {message}"
+            + (f" ({'; '.join(suffix)})" if suffix else "")
+        )
+    return "; ".join(details) or "validation error"
 
 SUPPORTED_MANIFEST_VERSION = 3
 LEGACY_MANIFEST_VERSION = 2
@@ -90,6 +174,45 @@ LEGACY_IMPORT_CAPTURE_SESSION_ID = "legacy-import-unknown-session"
 # unreachable from any on-disk file and unrecorded outside those remarks.
 # The loader now refuses a per-entry stamp under this named invariant.
 ANNOTATION_MODE_DOCUMENT_LEVEL_INVARIANT = "annotation_mode_is_document_level"
+
+# Stratification / metric-backing fields inventoried for MEAS-09 / EVAL-04.
+# A metric whose backing field is 0/N corpus-wide must refuse certification
+# rather than return a vacuous single-bucket pass (VLM6-R2-03).
+STRATIFICATION_INVENTORY_FIELDS: tuple[str, ...] = (
+    "difficulty",
+    "domain",
+    "tags",
+    "reference_facts",
+    "spatial_facts",
+    "face_boxes",
+    "provenance",
+    "must_right",
+    "easy_wrong",
+    "demographic_cohort",
+)
+
+# Honest coverage gaps on the shipped golden-37 corpus: fields that cannot be
+# populated without viewing image bytes or operator-authored geometry. Each
+# value names the owner and the concrete next action (OBS-04). Do not invent
+# ground truth to silence these gaps (VLM6-R2-03).
+SHIPPED_CORPUS_COVERAGE_GAPS: dict[str, str] = {
+    "reference_facts": (
+        "owner=VLM-6-operator; action=author polarity-tagged reference_facts per image "
+        "after a visual pass — cannot be derived from filename/face_count alone"
+    ),
+    "spatial_facts": (
+        "owner=VLM-6-operator; action=author spatial relations from curated boxes — "
+        "no box geometry is vendored for the full corpus"
+    ),
+    "face_boxes": (
+        "owner=FIR-1/VLM-6-operator; action=author FaceBox x/y/w/h per face — "
+        "phrase_boxes.json has centers only for 6 scenes and is not a substitute"
+    ),
+    "demographic_cohort": (
+        "owner=FIR-5; action=label roster_cohorts / demographic_cohort after "
+        "operator cohort definitions land — no labelled source exists yet"
+    ),
+}
 
 
 # --- Golden-100 stratification vocabulary (VLM-6 S1) -------------------------
@@ -396,6 +519,28 @@ class RubricEmptyWarning(UserWarning):
     """The corpus defines no Must-Right/Easy-Wrong rubric entries (gate vacuous)."""
 
 
+class HashVerificationSkippedWarning(UserWarning):
+    """``load_manifest`` skipped image sha256 verification (metadata-only load)."""
+
+
+@dataclass(frozen=True)
+class FieldPopulation:
+    """Per-field population count for a loaded corpus (VLM6-R2-03 inventory)."""
+
+    field: str
+    populated: int
+    total: int
+
+    @property
+    def empty(self) -> int:
+        return self.total - self.populated
+
+    @property
+    def is_vacuous(self) -> bool:
+        """True when zero entries populate the field (metric would be single-bucket)."""
+        return self.total > 0 and self.populated == 0
+
+
 class ContextPack(BaseModel):
     """WP context echoed to the describe route (title/caption/description).
 
@@ -440,6 +585,50 @@ class ExpectedAttachment(BaseModel):
     fact_id: str | None = None
 
 
+class ConfirmationSource(StrEnum):
+    """Who confirmed a reference fact (sr-007). ``operator`` is human gold;
+    ``agent`` is a machine draft that is not yet a human label.
+    """
+
+    OPERATOR = "operator"
+    AGENT = "agent"
+
+
+class AdjudicationRule(StrEnum):
+    """Written disagreement rules (MLDATA-03). Closed set; free text is not a rule.
+
+    Named in the DESCQUAL-2 scope as the code half of BR-25. Doc lane should
+    cite these tokens, not unconstrained prose.
+    """
+
+    DISAGREEMENT_ESCALATE_TO_SME = "disagreement-escalate-to-sme"
+    MAJORITY_VOTE = "majority-vote"
+    UNANIMOUS = "unanimous"
+
+
+# Allowlist, not complement-of-AGENT: any future ConfirmationSource member must
+# be named here to become human gold. Complement-of-AGENT would silently promote
+# a new non-human member (MLDATA-04).
+HUMAN_CONFIRMATION_SOURCES: frozenset[ConfirmationSource] = frozenset(
+    {ConfirmationSource.OPERATOR}
+)
+
+
+class PreAdjudicationLabel(BaseModel):
+    """A pre-adjudication annotator label (MLDATA-03).
+
+    When two annotators disagree and an SME adjudicates, both original labels
+    survive here. The adjudicated value lives on the parent ``ReferenceFact``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    annotator_id: str
+    polarity: FactPolarity
+    text: str
+    noted_at: str
+
+
 class ReferenceFact(BaseModel):
     """A ground-truth fact about an image (VLM-6 S1).
 
@@ -447,6 +636,13 @@ class ReferenceFact(BaseModel):
     facts are fabrication traps (untrue of the image). ``phrases`` are the
     deterministic word-boundary match variants the hallucination scorer checks.
     ``confirmed_by`` records whether an operator or the agent draft confirmed it.
+
+    Lineage fields (``annotator_id``, ``annotation_batch``, ``annotated_at``,
+    ``source_pool``) are optional on machine drafts. A human-confirmed fact
+    must carry all four (MLDATA-04). Pre-adjudication labels are kept, never
+    overwritten (MLDATA-03). ``adjudicated_by`` records HITL-07 SME
+    escalation and requires a named ``AdjudicationRule`` plus a non-empty
+    ``pre_adjudication`` trail so a disagreement is stored, not erased.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -455,7 +651,14 @@ class ReferenceFact(BaseModel):
     kind: FactKind
     polarity: FactPolarity = FactPolarity.TRUE
     phrases: list[str] = Field(default_factory=list)
-    confirmed_by: str | None = None  # operator | agent
+    confirmed_by: ConfirmationSource | None = None
+    annotator_id: str | None = None
+    annotation_batch: str | None = None
+    annotated_at: str | None = None
+    source_pool: str | None = None
+    pre_adjudication: list[PreAdjudicationLabel] = Field(default_factory=list)
+    adjudicated_by: str | None = None
+    adjudication_rule: AdjudicationRule | None = None
 
     @model_validator(mode="after")
     def _has_a_matchable_phrase(self) -> ReferenceFact:
@@ -464,6 +667,44 @@ class ReferenceFact(BaseModel):
         # would filter them to [""] and match nothing.
         if not any(p.strip() for p in self.phrases) and not self.text.strip():
             raise ValueError("reference_fact needs non-empty text or at least one non-blank phrase")
+        return self
+
+    @model_validator(mode="after")
+    def _human_confirmation_requires_lineage(self) -> ReferenceFact:
+        if self.confirmed_by not in HUMAN_CONFIRMATION_SOURCES:
+            return self
+        required = ("annotator_id", "annotation_batch", "annotated_at", "source_pool")
+        missing = [
+            name
+            for name in required
+            if not (getattr(self, name) and str(getattr(self, name)).strip())
+        ]
+        if missing:
+            raise ValueError(
+                "human-confirmed reference_fact requires "
+                + ", ".join(missing)
+                + f" (confirmed_by={self.confirmed_by!r}; MLDATA-04)"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _adjudication_requires_written_rule(self) -> ReferenceFact:
+        has_adjudicator = bool(self.adjudicated_by and self.adjudicated_by.strip())
+        if has_adjudicator and self.adjudication_rule is None:
+            raise ValueError(
+                "adjudicated_by requires adjudication_rule "
+                "(MLDATA-03 written disagreement rule)"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _adjudication_requires_pre_labels(self) -> ReferenceFact:
+        has_adjudicator = bool(self.adjudicated_by and self.adjudicated_by.strip())
+        if has_adjudicator and not self.pre_adjudication:
+            raise ValueError(
+                "adjudicated_by requires non-empty pre_adjudication "
+                "(HITL-07 / MLDATA-03 disagreement trail)"
+            )
         return self
 
     def match_targets(self) -> list[str]:
@@ -610,6 +851,14 @@ class FaceBox(BaseModel):
     (``name=None``) — so a face-detection bake-off (FIR-1) has box-level ground truth,
     not just ``face_count``. Coords mirror identity_sources.FaceRegion (centre-point).
 
+    ``y`` may be omitted/null (VLM6-R2-G-01 / wF4). L→R ordering uses a per-box
+    missing-y fallback and surfaces ``order_degraded``. Detection association
+    (``associate_detections``) excludes null/invalid-y boxes from IoU matching
+    and stamps ``AssociationResult.geometry_incomplete_gt`` — never invents y,
+    never matches on x alone, never counts incomplete boxes as detector FNs
+    (wG2). A required ``y: float`` made the freeze corpus *structurally*
+    incapable of a non-zero ``labeled_y_missing_images`` counter.
+
     ``lineage`` is required by ``load_manifest`` (v3). It is optional on the
     model so ``load_legacy_manifest`` can return v2 boxes without inventing
     lineage (rg-015). The v3 loader rejects ``None`` — it does not default it.
@@ -618,7 +867,7 @@ class FaceBox(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     x: float
-    y: float
+    y: float | None = None
     w: float
     h: float
     name: str | None = None
@@ -669,6 +918,11 @@ class GoldenEntry(BaseModel):
     tags: list[SliceTag] = Field(default_factory=list)
     # Optional image-level cohort fallback; single-subject celebs01 only (S3d enforces).
     demographic_cohort: str | None = None
+
+    @field_validator("path")
+    @classmethod
+    def _path_is_relative_to_corpus(cls, value: str) -> str:
+        return _validate_relative_image_path(value)
 
     @field_validator("sha256")
     @classmethod
@@ -732,7 +986,7 @@ class GoldenManifest(BaseModel):
             if entry.face_count < n_ids:
                 raise ManifestError(
                     f"present_identities_fit_face_count: entry[{index}] "
-                    f"{entry.path}: face_count={entry.face_count} < "
+                    f"{_printable_path(entry.path)}: face_count={entry.face_count} < "
                     f"len(present_identities)={n_ids}",
                     invariant="present_identities_fit_face_count",
                     entry_index=index,
@@ -752,7 +1006,7 @@ class GoldenManifest(BaseModel):
                 if n_boxes != entry.face_count:
                     raise ManifestError(
                         f"boxes_cover_face_count: exhaustive entry[{index}] "
-                        f"{entry.path}: len(face_boxes)={n_boxes} != "
+                        f"{_printable_path(entry.path)}: len(face_boxes)={n_boxes} != "
                         f"face_count={entry.face_count}",
                         invariant="boxes_cover_face_count",
                         entry_index=index,
@@ -762,7 +1016,7 @@ class GoldenManifest(BaseModel):
                 if n_boxes > entry.face_count:
                     raise ManifestError(
                         f"boxes_cover_face_count: roster_only entry[{index}] "
-                        f"{entry.path}: len(face_boxes)={n_boxes} > "
+                        f"{_printable_path(entry.path)}: len(face_boxes)={n_boxes} > "
                         f"face_count={entry.face_count}",
                         invariant="boxes_cover_face_count",
                         entry_index=index,
@@ -775,7 +1029,7 @@ class GoldenManifest(BaseModel):
             for box_index, box in enumerate(entry.face_boxes):
                 if box.lineage is None:
                     raise ManifestError(
-                        f"label_lineage_required: entry[{index}] {entry.path} "
+                        f"label_lineage_required: entry[{index}] {_printable_path(entry.path)} "
                         f"box[{box_index}] has no LabelLineage",
                         invariant="label_lineage_required",
                         entry_index=index,
@@ -805,7 +1059,7 @@ class GoldenManifest(BaseModel):
                     )
                     raise ManifestError(
                         f"capture_session_id_required: exhaustive entry[{index}] "
-                        f"{entry.path} box[{box_index}] {detail}",
+                        f"{_printable_path(entry.path)} box[{box_index}] {detail}",
                         invariant="capture_session_id_required",
                         entry_index=index,
                         entry_path=entry.path,
@@ -840,22 +1094,271 @@ def _reject_per_entry_annotation_mode(entries_raw: object) -> None:
             continue
         path = raw_entry.get("path")
         entry_path = path if isinstance(path, str) else None
-        label = entry_path if entry_path else f"entry[{index}]"
         raise ManifestError(
             f"annotation_mode is document-level; per-entry stamp is not a "
-            f"persisted contract ({label})",
+            f"persisted contract ("
+            f"{_printable_path(entry_path) if entry_path else f'entry[{index}]'})",
             invariant=ANNOTATION_MODE_DOCUMENT_LEVEL_INVARIANT,
             entry_index=index,
             entry_path=entry_path,
         )
 
 
-def load_manifest(path: str, images_dir: str | None = None) -> GoldenManifest:
-    """Load and validate a v3 golden manifest; optionally verify image hashes.
+def _entry_field_is_populated(entry: GoldenEntry, field: str) -> bool:
+    """True when ``field`` carries non-empty metric-backing content on ``entry``."""
+    value = getattr(entry, field, None)
+    if value is None:
+        return False
+    if isinstance(value, list):
+        return len(value) > 0
+    if isinstance(value, str):
+        return bool(value.strip())
+    return True
+
+
+def inventory_corpus_fields(manifest: GoldenManifest) -> dict[str, FieldPopulation]:
+    """Report per-field population counts for stratification / metric backing.
+
+    Makes empty strata visible (MEAS-09) instead of silently collapsing every
+    per-stratum gate into one bucket (VLM6-R2-03 / EVAL-04).
+    """
+    total = len(manifest.entries)
+    out: dict[str, FieldPopulation] = {}
+    for field in STRATIFICATION_INVENTORY_FIELDS:
+        populated = sum(1 for entry in manifest.entries if _entry_field_is_populated(entry, field))
+        out[field] = FieldPopulation(field=field, populated=populated, total=total)
+    return out
+
+
+def require_metric_backing(manifest: GoldenManifest, field: str) -> FieldPopulation:
+    """Refuse to certify a metric whose backing field is empty corpus-wide.
+
+    Call this before any gate that buckets or scores on ``field``. A vacuous
+    0/N field must not return pass — it must name the field, the 0/N counts,
+    and the remedy (populate the field or declare a coverage gap with owner).
+    """
+    if field not in STRATIFICATION_INVENTORY_FIELDS:
+        raise ManifestError(
+            f"unknown metric-backing field {field!r}; known fields are {', '.join(STRATIFICATION_INVENTORY_FIELDS)}"
+        )
+    pop = inventory_corpus_fields(manifest)[field]
+    if pop.is_vacuous:
+        gap = SHIPPED_CORPUS_COVERAGE_GAPS.get(field)
+        gap_hint = (
+            f" Declared coverage gap: {gap}."
+            if gap
+            else (
+                f" Populate {field!r} on golden entries (derivable labels or operator "
+                "curation) before gating on it, or add it to SHIPPED_CORPUS_COVERAGE_GAPS "
+                "with owner=… and a concrete action."
+            )
+        )
+        raise ManifestError(
+            f"cannot certify metric backed by {field!r}: {pop.populated}/{pop.total} entries "
+            f"populate that field (vacuous corpus-wide; per-stratum gate would collapse to "
+            f"a single bucket).{gap_hint}"
+        )
+    return pop
+
+
+# Minimum populated entries for a critical slice to count as evaluable (EVAL-04).
+# Below this threshold the claim unit is disclosed as under-sampled, not certified.
+METRIC_BACKING_SLICE_THRESHOLD: int = 5
+
+# Scorer-facing consequences when a registry gap field is empty/under-sampled.
+# Kept next to the registry so disclosure cannot drift from SHIPPED_CORPUS_COVERAGE_GAPS.
+_GAP_SCORER_CONSEQUENCES: dict[str, str] = {
+    "face_boxes": (
+        "positional_identification never runs; set-based identity scoring "
+        "cannot catch right-names-on-wrong-faces"
+    ),
+    "spatial_facts": "placement accuracy is vacuous (0 asserted claims)",
+    "reference_facts": "no trap coverage for fabricated-fact scoring (rate is undefined)",
+    "demographic_cohort": "demographic/cohort fairness slices have no sampling frame",
+}
+
+
+def compute_corpus_coverage_gaps(
+    entries: list[GoldenEntry] | list[object],
+    *,
+    threshold: int = METRIC_BACKING_SLICE_THRESHOLD,
+) -> dict[str, dict[str, object]]:
+    """Sampling-frame honesty for every SHIPPED_CORPUS_COVERAGE_GAPS field (AUDIT-07).
+
+    Always reports populated/total and a slice threshold — never a boolean that
+    hides a 1/N under-sampled field (VLM6-C-01). Driven by the package gap
+    registry so demographic_cohort cannot drift out of the anchor (VLM6-C-02).
+    Call from offline generators *and* live score paths (VLM6-E-07).
+
+    Returns a dict keyed by field name. Each value is a structured record::
+
+        {
+          "populated": int,
+          "total": int,
+          "threshold": int,
+          "below_threshold": bool,
+          "pi_zero": bool,
+          "reason": str,   # human-readable summary
+          "registry": str, # owner=… action=… from SHIPPED_CORPUS_COVERAGE_GAPS
+        }
+    """
+    total = len(entries)
+    out: dict[str, dict[str, object]] = {}
+    for field, registry in SHIPPED_CORPUS_COVERAGE_GAPS.items():
+        populated = 0
+        for entry in entries:
+            if isinstance(entry, GoldenEntry):
+                if _entry_field_is_populated(entry, field):
+                    populated += 1
+            else:
+                # Score-time callers pass JSON-shaped mappings rather than
+                # validated GoldenEntry objects. Read the same field from
+                # either representation so live provenance cannot undercount
+                # authored metric backing (AUDIT-07).
+                value = (
+                    entry.get(field)
+                    if isinstance(entry, Mapping)
+                    else getattr(entry, field, None)
+                )
+                if value is None:
+                    continue
+                if isinstance(value, list) and len(value) == 0:
+                    continue
+                if isinstance(value, str) and not value.strip():
+                    continue
+                if value:
+                    populated += 1
+        below = populated < threshold
+        pi_zero = populated == 0
+        consequence = _GAP_SCORER_CONSEQUENCES.get(field, "metric claim units under-sampled")
+        reason = f"{populated}/{total} entries populate it (threshold={threshold}) — {consequence}"
+        out[field] = {
+            "populated": populated,
+            "total": total,
+            "threshold": threshold,
+            "below_threshold": below,
+            "pi_zero": pi_zero,
+            "reason": reason,
+            "registry": registry,
+        }
+    return out
+
+
+def metric_backing_refusals(manifest: GoldenManifest) -> dict[str, str]:
+    """Call ``require_metric_backing`` for every registry gap field; collect refusals.
+
+    Production gates must not treat a vacuous field as pass (EVAL-23). This
+    helper is the single place generators and score paths share (VLM6-C-07).
+    """
+    refusals: dict[str, str] = {}
+    for field in SHIPPED_CORPUS_COVERAGE_GAPS:
+        try:
+            require_metric_backing(manifest, field)
+        except ManifestError as exc:
+            refusals[field] = str(exc)
+    return refusals
+
+
+def resolve_verified_image(entry: GoldenEntry, images_root: Path | str) -> Path:
+    """Resolve ``entry.path`` under ``images_root`` and verify the sha256 pin.
+
+    Any path that reads image bytes must go through this (or ``load_manifest``
+    hash verification) so corpus drift cannot stay silent (VLM6-R2-05 / OBS-04).
+    """
+    root = Path(images_root)
+    # Validate and resolve the entry before checking whether the root exists.
+    # An unsafe spelling must not be treated as an ordinary missing file and
+    # then fall through to another source.
+    image_path = _resolve_image(root, entry.path)
+    if not root.is_dir():
+        raise ManifestError(
+            f"images directory not found: {_printable_path(root)} — set GOLDEN_IMAGES_DIR to the "
+            "rsync-bootstrapped fixture copy (see scene/tests/seed/README.md) before "
+            "reading image bytes"
+        )
+    if image_path is None:
+        raise ManifestError(
+            f"image file missing: {_printable_path(entry.path)} (under {_printable_path(root)}) — re-rsync fixtures or "
+            "fix the manifest path (see scene/tests/seed/README.md)"
+        )
+    try:
+        digest = hashlib.sha256(image_path.read_bytes()).hexdigest()
+    except OSError as exc:
+        filename = exc.filename if exc.filename is not None else image_path
+        if exc.strerror is not None:
+            message = exc.strerror
+        else:
+            message = str(exc.args[0] if exc.args else type(exc).__name__)
+        filename2 = getattr(exc, "filename2", None)
+        filename_display = _printable_path(filename)
+        filename2_display = (
+            _printable_path(filename2) if filename2 is not None else None
+        )
+        message_display = _printable_message(message)
+        details = f"filename={filename_display}"
+        if filename2_display is not None:
+            details = f"{details}, filename2={filename2_display}"
+        error_message = (
+            f"image file unreadable: {_printable_path(entry.path)} "
+            f"(under {_printable_path(root)}): {message_display} ({details})"
+        )
+        raise ManifestError(error_message) from exc
+    if digest != entry.sha256:
+        raise ManifestError(
+            f"sha256 mismatch for {_printable_path(entry.path)}: manifest {entry.sha256}, file {digest} — "
+            "image bytes drifted from the pinned corpus; re-bootstrap GOLDEN_IMAGES_DIR "
+            "or update the manifest pin after an intentional replacement"
+        )
+    return image_path
+
+
+def resolve_image_path(images_root: Path | str, rel_path: str) -> Path | None:
+    """Resolve an optional local corpus file while enforcing root containment.
+
+    A missing root or file returns ``None`` so callers may try an explicitly
+    pinned remote source. An existing symlink that resolves outside the root is
+    an error, because falling through to a remote source would hide a local
+    corpus escape.
+    """
+    # Keep lexical and symlink containment checks active even when the root is
+    # absent. A missing local file is a valid remote-fallback signal, but an
+    # unsafe path must fail closed first.
+    return _resolve_image(Path(images_root), rel_path)
+
+
+def load_manifest(
+    path: str,
+    images_dir: str | None = None,
+    *,
+    skip_hash_verification: bool = False,
+    hash_skip_reason: str | None = None,
+    metadata_only: bool = False,
+) -> GoldenManifest:
+    """Load and validate a v3 golden manifest; verify image hashes by default.
 
     ``face_count`` is an operator-recorded count-first figure, never derived
     from ``len(face_boxes)``. The coverage invariant compares those two
     independently produced numbers (see module docstring).
+
+    Hash verification is the default (VLM6-R2-05 / OBS-04). Resolution rules:
+
+    ``metadata_only=True`` never resolves ``images_dir`` or ``GOLDEN_IMAGES_DIR``
+    and never calls ``_verify_hashes`` or ``resolve_verified_image``.
+    ``metadata_only=True`` requires ``skip_hash_verification=True`` and
+    ``hash_skip_reason`` or it raises ``ManifestError``.
+    ``metadata_only=True`` together with an explicit ``images_dir`` raises
+    ``ManifestError``.
+    ``images_dir=""`` raises ``ManifestError``; pass a real directory or
+    ``metadata_only=True``.
+    Explicit non-empty ``images_dir`` is always verified.
+    Else ``GOLDEN_IMAGES_DIR`` is verified when the directory exists.
+    Else ``skip_hash_verification=True`` is a metadata-only load that emits
+    ``HashVerificationSkippedWarning`` naming ``hash_skip_reason`` (or
+    ``"no reason supplied"``) and the path (OBS-04).
+    Else refuse with an actionable error.
+    ``hash_skip_reason`` raises ``ManifestError`` only when
+    ``skip_hash_verification`` is False; skip=True plus resolvable images
+    verifies silently (VLM6-W2-RV-01).
 
     Raises ManifestError on: missing/unreadable file, malformed JSON, schema
     violations, unsupported version, missing ``annotation_mode``, a
@@ -866,21 +1369,36 @@ def load_manifest(path: str, images_dir: str | None = None) -> GoldenManifest:
     without ``LabelLineage``, an ``exhaustive`` box missing a real
     ``capture_session_id`` (the legacy-import unknown-occasion sentinel
     is rejected, not treated as a session), a coverage mismatch under the declared
-    ``annotation_mode``, and (when ``images_dir`` is given) missing image files
-    or sha256 mismatches. Emits ``RubricEmptyWarning`` if the corpus defines no
+    ``annotation_mode``, missing image files or sha256 mismatches, and silent
+    no-verify attempts. Emits ``RubricEmptyWarning`` if the corpus defines no
     Must-Right/Easy-Wrong entries — the caption hard gate is then vacuous but
     that is surfaced, not silent (S1-02).
 
     Frozen v2 artifacts are not loaded here — use ``load_legacy_manifest``.
+
+    Later-wave ``cli.py`` call sites that currently omit ``images_dir`` must either
+    pass ``images_dir=`` / rely on ``GOLDEN_IMAGES_DIR`` when they read pixels, or
+    pass ``skip_hash_verification=True`` for deliberate metadata-only loads
+    (see ``_cmd_score`` ~1193, determinism helpers ~1109/1137, ``_cmd_score_face``
+    ~1638/1653/1693, face fetch ~1536).
     """
     manifest_path = Path(path)
     if not manifest_path.is_file():
         raise ManifestError(
-            f"golden manifest not found: {manifest_path} (expected scene/tests/seed/golden.json; see seed/README.md)"
+            f"golden manifest not found: {_printable_path(manifest_path)} (expected scene/tests/seed/golden.json; see seed/README.md)"
         )
     try:
-        raw = json.loads(manifest_path.read_text())
-    except (OSError, json.JSONDecodeError) as exc:
+        raw = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+    except OSError as exc:
+        if exc.filename is None:
+            raise ManifestError(
+                f"golden manifest unreadable or malformed JSON: {exc.strerror}"
+            ) from exc
+        raise ManifestError(
+            f"golden manifest unreadable or malformed JSON: "
+            f"{exc.strerror}: {_printable_path(exc.filename)}"
+        ) from exc
+    except ValueError as exc:
         raise ManifestError(f"golden manifest unreadable or malformed JSON: {exc}") from exc
 
     if not isinstance(raw, dict):
@@ -916,16 +1434,19 @@ def load_manifest(path: str, images_dir: str | None = None) -> GoldenManifest:
     # corpus does not author a reference caption (e.g. bake-off subset).
     if raw.get("manifest_version") == SUPPORTED_MANIFEST_VERSION:
         for raw_entry in entries_raw or []:
+            path_slot = raw_entry.get("path")
             if "base_caption" not in raw_entry:
                 raise ManifestError(
                     f"manifest_version {SUPPORTED_MANIFEST_VERSION} requires 'base_caption' on "
                     f"every entry (missing on media_id={raw_entry.get('media_id')!r} path="
-                    f"{raw_entry.get('path')!r}); use empty string when not applicable"
+                    f"{_printable_path(path_slot) if isinstance(path_slot, str) else path_slot}); "
+                    f"use empty string when not applicable"
                 )
             if raw_entry.get("base_caption") is None and not raw_entry.get("base_caption_optional"):
                 raise ManifestError(
                     f"manifest_version {SUPPORTED_MANIFEST_VERSION} rejects null base_caption "
-                    f"(media_id={raw_entry.get('media_id')!r} path={raw_entry.get('path')!r}); "
+                    f"(media_id={raw_entry.get('media_id')!r} path="
+                    f"{_printable_path(path_slot) if isinstance(path_slot, str) else path_slot}); "
                     f"use empty string when not applicable, or set base_caption_optional=true"
                 )
 
@@ -938,9 +1459,9 @@ def load_manifest(path: str, images_dir: str | None = None) -> GoldenManifest:
             entry_path = raw_entry.get("path")
             media_id = raw_entry.get("media_id")
             if isinstance(entry_path, str) and entry_path:
-                label = entry_path
+                label = _printable_path(entry_path)
                 if media_id is not None:
-                    label = f"{entry_path} (media_id={media_id})"
+                    label = f"{label} (media_id={media_id})"
             else:
                 label = f"media_id={media_id!r}"
             missing_provenance.append(label)
@@ -963,28 +1484,34 @@ def load_manifest(path: str, images_dir: str | None = None) -> GoldenManifest:
     except ManifestError:
         raise
     except ValidationError as exc:
-        raise ManifestError(f"golden manifest schema violation: {exc}") from exc
+        raise ManifestError(
+            f"golden manifest schema violation: {_format_validation_error(exc)}"
+        ) from exc
 
     seen_ids: set[int] = set()
     seen_paths: set[str] = set()
     for entry in manifest.entries:
         if entry.media_id in seen_ids:
-            raise ManifestError(f"duplicate media_id {entry.media_id} ({entry.path})")
+            raise ManifestError(
+                f"duplicate media_id {entry.media_id} ({_printable_path(entry.path)})"
+            )
         seen_ids.add(entry.media_id)
         if entry.path in seen_paths:
-            raise ManifestError(f"duplicate path {entry.path!r} (each image must appear once)")
+            raise ManifestError(
+                f"duplicate path {_printable_path(entry.path)} (each image must appear once)"
+            )
         seen_paths.add(entry.path)
 
     roster = set(manifest.roster)
     for entry in manifest.entries:
         for name in (*entry.present_identities, *entry.must_right, *entry.easy_wrong):
             if name not in roster:
-                raise ManifestError(f"identity {name!r} in {entry.path} is not in the roster")
+                raise ManifestError(
+                    f"identity {name!r} in {_printable_path(entry.path)} is not in the roster"
+                )
     for cohort_key in manifest.roster_cohorts:
         if cohort_key not in roster:
-            raise ManifestError(
-                f"roster_cohorts key {cohort_key!r} is not in the roster"
-            )
+            raise ManifestError(f"roster_cohorts key {cohort_key!r} is not in the roster")
 
     if not any(entry.must_right or entry.easy_wrong for entry in manifest.entries):
         warnings.warn(
@@ -994,8 +1521,66 @@ def load_manifest(path: str, images_dir: str | None = None) -> GoldenManifest:
             stacklevel=2,
         )
 
-    if images_dir is not None:
-        _verify_hashes(manifest, Path(images_dir))
+    # A reason without skip_hash_verification=True is a caller bug
+    # (VLM6-DELTA-05 / VLM6-W2-RV-01 / OBS-04). When skip is True and images
+    # resolve, verification still runs and the reason is unused.
+    if hash_skip_reason is not None and not skip_hash_verification:
+        raise ManifestError(
+            f"hash_skip_reason={hash_skip_reason!r} supplied but hash verification "
+            f"is not being skipped (skip_hash_verification={skip_hash_verification}). "
+            "A reason without a skip is a caller bug."
+        )
+    if images_dir == "":
+        raise ManifestError(
+            "images_dir must be a real directory path; use metadata_only=True "
+            "for deliberate metadata-only loads that must not resolve GOLDEN_IMAGES_DIR"
+        )
+    if metadata_only:
+        if images_dir is not None:
+            raise ManifestError(
+                "metadata_only=True cannot be combined with images_dir; "
+                "metadata_only never resolves an images directory"
+            )
+        if not skip_hash_verification or hash_skip_reason is None:
+            raise ManifestError(
+                "metadata_only=True requires skip_hash_verification=True and hash_skip_reason"
+            )
+        warnings.warn(
+            f"load_manifest: hash verification skipped ({hash_skip_reason}) for {_printable_path(path)}",
+            HashVerificationSkippedWarning,
+            stacklevel=2,
+        )
+        return manifest
+    env_images = os.environ.get("GOLDEN_IMAGES_DIR") or None
+    candidate = images_dir if images_dir is not None else env_images
+    images_exist = bool(candidate) and Path(candidate).is_dir()
+    # Explicit images_dir is always verified. Env is verified when the dir
+    # exists; a set-but-missing env does not resolve when skip is True.
+    must_verify = images_dir is not None or (
+        bool(candidate) and (images_exist or not skip_hash_verification)
+    )
+    if must_verify:
+        _verify_hashes(manifest, Path(candidate))
+    elif skip_hash_verification:
+        # Named skip is still a silent no-op unless surfaced (VLM6-PANEL6L-rvM-03
+        # / OBS-04): a caller that flips this on for a real pixel-reading path
+        # would otherwise never learn the pins went unverified. The warning
+        # names the caller reason so metadata-only sites are distinguishable
+        # (VLM6-DELTA-05).
+        reason = hash_skip_reason if hash_skip_reason is not None else "no reason supplied"
+        warnings.warn(
+            f"load_manifest: hash verification skipped ({reason}) for {_printable_path(path)}",
+            HashVerificationSkippedWarning,
+            stacklevel=2,
+        )
+    else:
+        raise ManifestError(
+            "image hash verification is required by default but no images_dir was given "
+            "and GOLDEN_IMAGES_DIR is unset. Pass images_dir=... (or set GOLDEN_IMAGES_DIR) "
+            "to verify every entry's sha256 pin before any path that may read image bytes, "
+            "or pass skip_hash_verification=True only for deliberate metadata-only loads "
+            "that will not open image files (VLM6-R2-05 / OBS-04)."
+        )
     return manifest
 
 
@@ -1018,11 +1603,20 @@ def load_legacy_manifest(path: str, images_dir: str | None = None) -> GoldenMani
     manifest_path = Path(path)
     if not manifest_path.is_file():
         raise ManifestError(
-            f"legacy manifest not found: {manifest_path}"
+            f"legacy manifest not found: {_printable_path(manifest_path)}"
         )
     try:
-        raw = json.loads(manifest_path.read_text())
-    except (OSError, json.JSONDecodeError) as exc:
+        raw = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+    except OSError as exc:
+        if exc.filename is None:
+            raise ManifestError(
+                f"legacy manifest unreadable or malformed JSON: {exc.strerror}"
+            ) from exc
+        raise ManifestError(
+            f"legacy manifest unreadable or malformed JSON: "
+            f"{exc.strerror}: {_printable_path(exc.filename)}"
+        ) from exc
+    except ValueError as exc:
         raise ManifestError(f"legacy manifest unreadable or malformed JSON: {exc}") from exc
 
     if not isinstance(raw, dict):
@@ -1049,16 +1643,19 @@ def load_legacy_manifest(path: str, images_dir: str | None = None) -> GoldenMani
                 )
 
     for raw_entry in entries_raw or []:
+        path_slot = raw_entry.get("path")
         if "base_caption" not in raw_entry:
             raise ManifestError(
                 f"manifest_version {LEGACY_MANIFEST_VERSION} requires 'base_caption' on "
                 f"every entry (missing on media_id={raw_entry.get('media_id')!r} path="
-                f"{raw_entry.get('path')!r}); use empty string when not applicable"
+                f"{_printable_path(path_slot) if isinstance(path_slot, str) else path_slot}); "
+                f"use empty string when not applicable"
             )
         if raw_entry.get("base_caption") is None and not raw_entry.get("base_caption_optional"):
             raise ManifestError(
                 f"manifest_version {LEGACY_MANIFEST_VERSION} rejects null base_caption "
-                f"(media_id={raw_entry.get('media_id')!r} path={raw_entry.get('path')!r}); "
+                f"(media_id={raw_entry.get('media_id')!r} path="
+                f"{_printable_path(path_slot) if isinstance(path_slot, str) else path_slot}); "
                 f"use empty string when not applicable, or set base_caption_optional=true"
             )
 
@@ -1073,23 +1670,31 @@ def load_legacy_manifest(path: str, images_dir: str | None = None) -> GoldenMani
     except ManifestError:
         raise
     except ValidationError as exc:
-        raise ManifestError(f"legacy manifest schema violation: {exc}") from exc
+        raise ManifestError(
+            f"legacy manifest schema violation: {_format_validation_error(exc)}"
+        ) from exc
 
     seen_ids: set[int] = set()
     seen_paths: set[str] = set()
     for entry in manifest.entries:
         if entry.media_id in seen_ids:
-            raise ManifestError(f"duplicate media_id {entry.media_id} ({entry.path})")
+            raise ManifestError(
+                f"duplicate media_id {entry.media_id} ({_printable_path(entry.path)})"
+            )
         seen_ids.add(entry.media_id)
         if entry.path in seen_paths:
-            raise ManifestError(f"duplicate path {entry.path!r} (each image must appear once)")
+            raise ManifestError(
+                f"duplicate path {_printable_path(entry.path)} (each image must appear once)"
+            )
         seen_paths.add(entry.path)
 
     roster = set(manifest.roster)
     for entry in manifest.entries:
         for name in (*entry.present_identities, *entry.must_right, *entry.easy_wrong):
             if name not in roster:
-                raise ManifestError(f"identity {name!r} in {entry.path} is not in the roster")
+                raise ManifestError(
+                    f"identity {name!r} in {_printable_path(entry.path)} is not in the roster"
+                )
     for cohort_key in manifest.roster_cohorts:
         if cohort_key not in roster:
             raise ManifestError(
@@ -1104,16 +1709,11 @@ def load_legacy_manifest(path: str, images_dir: str | None = None) -> GoldenMani
 def _verify_hashes(manifest: GoldenManifest, images_root: Path) -> None:
     if not images_root.is_dir():
         raise ManifestError(
-            f"images directory not found: {images_root} — set GOLDEN_IMAGES_DIR to the "
+            f"images directory not found: {_printable_path(images_root)} — set GOLDEN_IMAGES_DIR to the "
             "rsync-bootstrapped fixture copy (see scene/tests/seed/README.md)"
         )
     for entry in manifest.entries:
-        image_path = _resolve_image(images_root, entry.path)
-        if image_path is None:
-            raise ManifestError(f"image file missing: {entry.path} (under {images_root})")
-        digest = hashlib.sha256(image_path.read_bytes()).hexdigest()
-        if digest != entry.sha256:
-            raise ManifestError(f"sha256 mismatch for {entry.path}: manifest {entry.sha256}, file {digest}")
+        resolve_verified_image(entry, images_root)
 
 
 def _resolve_image(images_root: Path, rel_path: str) -> Path | None:
@@ -1124,10 +1724,81 @@ def _resolve_image(images_root: Path, rel_path: str) -> Path | None:
     exact bytes first, then the NFC and NFD normalizations so a non-ASCII path
     resolves the same on either platform.
     """
+    try:
+        _validate_relative_image_path(rel_path)
+    except (TypeError, ValueError) as exc:
+        raise ManifestError(
+            f"image path is not a safe relative corpus path: {_printable_path(rel_path)}",
+            invariant="image_path_containment",
+            entry_path=rel_path if isinstance(rel_path, str) else None,
+        ) from exc
+    try:
+        root = images_root.resolve(strict=False)
+    except (OSError, RuntimeError, ValueError) as exc:
+        if isinstance(exc, OSError):
+            filename = exc.filename if exc.filename is not None else images_root
+            if exc.strerror is not None:
+                message = exc.strerror
+            else:
+                message = str(exc.args[0] if exc.args else type(exc).__name__)
+            filename2 = getattr(exc, "filename2", None)
+        else:
+            filename = images_root
+            message = str(exc)
+            filename2 = None
+        filename_display = _printable_path(filename)
+        filename2_display = (
+            _printable_path(filename2) if filename2 is not None else None
+        )
+        message_display = _printable_message(message)
+        details = f"filename={filename_display}"
+        if filename2_display is not None:
+            details = f"{details}, filename2={filename2_display}"
+        error_message = (
+            f"image root cannot be resolved: {_printable_path(images_root)} "
+            f"({details}): {message_display}"
+        )
+        raise ManifestError(
+            error_message,
+            invariant="image_path_containment",
+            entry_path=rel_path,
+        ) from exc
     for candidate in dict.fromkeys(
         (rel_path, unicodedata.normalize("NFC", rel_path), unicodedata.normalize("NFD", rel_path))
     ):
         image_path = images_root / candidate
-        if image_path.is_file():
-            return image_path
+        try:
+            resolved = image_path.resolve(strict=False)
+            resolved.relative_to(root)
+            if resolved.is_file():
+                return resolved
+        except (OSError, RuntimeError, ValueError) as exc:
+            if isinstance(exc, OSError):
+                filename = exc.filename if exc.filename is not None else image_path
+                if exc.strerror is not None:
+                    message = exc.strerror
+                else:
+                    message = str(exc.args[0] if exc.args else type(exc).__name__)
+                filename2 = getattr(exc, "filename2", None)
+            else:
+                filename = image_path
+                message = str(exc)
+                filename2 = None
+            filename_display = _printable_path(filename)
+            filename2_display = (
+                _printable_path(filename2) if filename2 is not None else None
+            )
+            message_display = _printable_message(message)
+            details = f"root={_printable_path(images_root)}; filename={filename_display}"
+            if filename2_display is not None:
+                details = f"{details}, filename2={filename2_display}"
+            error_message = (
+                f"image path is outside corpus root: {_printable_path(rel_path)} "
+                f"({details}): {message_display}"
+            )
+            raise ManifestError(
+                error_message,
+                invariant="image_path_containment",
+                entry_path=rel_path,
+            ) from exc
     return None

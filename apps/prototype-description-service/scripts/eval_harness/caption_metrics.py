@@ -130,21 +130,29 @@ class CaptionScores:
     def gated_score(self) -> float | None:
         """Hard gate: a Must-Right miss, policy violation, or wrong name zeroes the image.
 
-        Recognition-disabled images (``insertion_eligible=False``) are excluded
-        from the mean_gated_score denominator (like insertion_rate) rather than
-        injecting 1.0 which diluted the headline metric (VLMFIX-S3-04). Returns
-        ``None`` when not eligible so callers can skip them.
+        Returns ``None`` when the identity-insertion metric does not apply to this
+        image so aggregates can exclude it from the mean denominator rather than
+        treating it as a perfect score (UXR-07: a rate needs a denominator).
+
+        Not applicable when:
+        - recognition is disabled and the caption is clean (VLMFIX-S3-04), or
+        - recognition is enabled but no present identities form a denominator
+          (VLM6-R4-01: empty identity set is not a win — vacuous 1.0 is the bug).
+
+        Hard-gate failures (must-right / policy / wrong-name) still score 0.0 even
+        on otherwise N/A rows so naming violations remain visible.
         """
         # Policy / must-right / wrong-name failures always score 0 (including
         # recognition-disabled images that illegally named someone). Only clean
-        # ineligible rows are excluded from the mean denominator (VLMFIX-S3-04).
+        # N/A rows are excluded from the mean denominator.
         if self.must_right_failures or self.policy_violation or self.named_wrong_person:
             return 0.0
         if not self.insertion_eligible:
             return None
         total = len(self.inserted_identities) + len(self.missing_identities)
         if total == 0:
-            return 1.0
+            # Empty identity set: metric undefined, not a perfect score (VLM6-R4-01).
+            return None
         return len(self.inserted_identities) / total
 
 
@@ -283,6 +291,39 @@ def insertion_rate(scores: Sequence[CaptionScores]) -> float | None:
     return inserted / total
 
 
+@dataclass(frozen=True)
+class GatedScoreAggregate:
+    """Corpus mean of applicable ``gated_score`` values with exclusion accounting.
+
+    ``mean`` is ``None`` when no scored items remain (empty corpus or all N/A).
+    ``scored`` is the mean's denominator; ``excluded`` is how many items were
+    N/A (``gated_score is None``). UXR-15: surfaces components so a composite
+    cannot silently absorb inapplicable rows as successes.
+    """
+
+    mean: float | None
+    scored: int
+    excluded: int
+
+
+def aggregate_gated_scores(scores: Sequence[CaptionScores]) -> GatedScoreAggregate:
+    """Mean gated score excluding N/A items; report how many were excluded.
+
+    Callers (report wiring) must use ``scored``/``excluded`` rather than inventing
+    a denominator from ``len(scores)`` (rg-015). Hard-gate zeros stay in the mean.
+    """
+    values = [g for s in scores if (g := s.gated_score) is not None]
+    scored = len(values)
+    excluded = len(scores) - scored
+    mean = (sum(values) / scored) if scored else None
+    return GatedScoreAggregate(mean=mean, scored=scored, excluded=excluded)
+
+
+def mean_gated_score(scores: Sequence[CaptionScores]) -> float | None:
+    """Corpus mean of applicable gated scores (None when denominator empty)."""
+    return aggregate_gated_scores(scores).mean
+
+
 def name_precision(scores: Sequence[CaptionScores]) -> float | None:
     """Corpus name precision: correct names / all names asserted, over ALL rows.
 
@@ -312,6 +353,8 @@ def wrong_name_image_rate(scores: Sequence[CaptionScores]) -> float | None:
     if not scores:
         return None
     return sum(1 for s in scores if s.named_wrong_person) / len(scores)
+
+
 # --- Fabricated-fact hallucination metric (VLM-6 S1) -------------------------
 # HALLUCINATION-FIRST ranking axis. Precision-first + deterministic (LLM-judge is
 # out of MVP scope): the headline fires only on AUTHORED false-polarity reference
@@ -443,10 +486,18 @@ def fabricated_fact_rate(scores: Sequence[HallucinationScores], *, over: str = "
     many it tripped. ``over='all'`` denominates over every scored image (corpus caught-
     rate); ``over='trapped'`` denominates only over images that authored >=1 false-fact
     (caught-rate AMONG trapped images — NOT a per-trap-instance rate: a 3-trap image that
-    trips 1 counts as fully caught). Returns None when the denominator is empty.
+    trips 1 counts as fully caught).
+
+    Returns ``None`` when there is no trap coverage at all (EVAL-19 / VLM6-C-05): a
+    vacuous 0/N rate over untrapped images would read as "zero hallucination" where
+    the truth is "undefined". Trap coverage is the only honest denominator — do not
+    divide an error by a volume the system controls when π(traps)=0.
     """
     if over not in ("all", "trapped"):
         raise ValueError("over must be 'all' or 'trapped'")
+    # EVAL-19: without any authored traps the rate is non-observable, not 0.0.
+    if sum(s.trap_count for s in scores) == 0:
+        return None
     denom = len(scores) if over == "all" else sum(1 for s in scores if s.trap_count)
     if denom == 0:
         return None

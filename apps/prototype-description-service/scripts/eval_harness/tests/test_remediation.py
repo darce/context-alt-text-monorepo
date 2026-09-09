@@ -126,7 +126,7 @@ def _jsonl(tmp_path: Path, records: list[dict], name: str = "attestation.jsonl")
 
 def test_valid_attestation_file_passes(tmp_path: Path) -> None:
     """Positive: a complete, well-formed jsonl joins the draft."""
-    draft = load_manifest(str(_draft(tmp_path, [1, 2, 3])))
+    draft = load_manifest(str(_draft(tmp_path, [1, 2, 3])), skip_hash_verification=True)
     path = _jsonl(tmp_path, [_record(1), _record(2), _record(3)])
     attested = load_and_validate_attestation(path, draft)
     assert attested.adjudicated == 3
@@ -159,7 +159,7 @@ def test_empty_attested_by_rejected(tmp_path: Path) -> None:
 
 def test_sha256_mismatch_rejected(tmp_path: Path) -> None:
     """Negative: record sha256 must match the manifest entry."""
-    draft = load_manifest(str(_draft(tmp_path, [1])))
+    draft = load_manifest(str(_draft(tmp_path, [1])), skip_hash_verification=True)
     path = _jsonl(tmp_path, [_record(1, sha="f" * 64)])
     records = load_attestation_jsonl(path)
     with pytest.raises(RemediationError, match="sha256"):
@@ -168,7 +168,7 @@ def test_sha256_mismatch_rejected(tmp_path: Path) -> None:
 
 def test_absent_media_id_rejected(tmp_path: Path) -> None:
     """Negative: a record for a media_id not in the manifest is rejected."""
-    draft = load_manifest(str(_draft(tmp_path, [1])))
+    draft = load_manifest(str(_draft(tmp_path, [1])), skip_hash_verification=True)
     path = _jsonl(tmp_path, [_record(1), _record(99)])
     records = load_attestation_jsonl(path)
     with pytest.raises(RemediationError, match="absent from manifest"):
@@ -177,7 +177,7 @@ def test_absent_media_id_rejected(tmp_path: Path) -> None:
 
 def test_duplicate_media_id_rejected(tmp_path: Path) -> None:
     """Negative: two records for one media_id are rejected."""
-    draft = load_manifest(str(_draft(tmp_path, [1])))
+    draft = load_manifest(str(_draft(tmp_path, [1])), skip_hash_verification=True)
     path = _jsonl(tmp_path, [_record(1), _record(1)])
     records = load_attestation_jsonl(path)
     with pytest.raises(RemediationError, match="duplicate"):
@@ -186,7 +186,7 @@ def test_duplicate_media_id_rejected(tmp_path: Path) -> None:
 
 def test_incomplete_pass_rejected(tmp_path: Path) -> None:
     """Negative: a complete pass requires exactly one record per entry."""
-    draft = load_manifest(str(_draft(tmp_path, [1, 2])))
+    draft = load_manifest(str(_draft(tmp_path, [1, 2])), skip_hash_verification=True)
     path = _jsonl(tmp_path, [_record(1)])
     records = load_attestation_jsonl(path)
     with pytest.raises(RemediationError, match="incomplete"):
@@ -205,7 +205,7 @@ def test_closed_vocabularies_are_strenum() -> None:
 
 def test_memory_cap_fails_when_keeps_exceed_one_third(tmp_path: Path) -> None:
     """Negative: >1/3 memory-only keeps fail closed (not a warning)."""
-    draft = load_manifest(str(_draft(tmp_path, [1, 2, 3])))
+    draft = load_manifest(str(_draft(tmp_path, [1, 2, 3])), skip_hash_verification=True)
     records = [
         _record(1, basis="memory", attestation="own_capture"),
         _record(2, basis="memory", attestation="own_repost"),
@@ -222,7 +222,7 @@ def test_memory_cap_fails_when_keeps_exceed_one_third(tmp_path: Path) -> None:
 
 def test_memory_cap_passes_at_or_below_one_third(tmp_path: Path) -> None:
     """Positive: ≤1/3 memory-only keeps are accepted."""
-    draft = load_manifest(str(_draft(tmp_path, [1, 2, 3])))
+    draft = load_manifest(str(_draft(tmp_path, [1, 2, 3])), skip_hash_verification=True)
     records = [
         _record(1, basis="memory", attestation="own_capture"),
         _record(2, basis="pixels", attestation="own_capture"),
@@ -235,7 +235,7 @@ def test_memory_cap_passes_at_or_below_one_third(tmp_path: Path) -> None:
 
 def test_memory_drop_attestations_do_not_count_toward_cap(tmp_path: Path) -> None:
     """Memory + unknown/third_party is a drop, not a memory-only keep."""
-    draft = load_manifest(str(_draft(tmp_path, [1, 2, 3])))
+    draft = load_manifest(str(_draft(tmp_path, [1, 2, 3])), skip_hash_verification=True)
     records = [
         _record(1, basis="memory", attestation="unknown"),
         _record(2, basis="memory", attestation="third_party"),
@@ -250,7 +250,7 @@ def test_memory_drop_attestations_do_not_count_toward_cap(tmp_path: Path) -> Non
 
 def test_emitter_end_to_end_on_synthetic_fixture(tmp_path: Path) -> None:
     """Fixed dispositions apply; unknown drops; retags land; output loads."""
-    draft = load_manifest(str(SYNTHETIC_DRAFT))
+    draft = load_manifest(str(SYNTHETIC_DRAFT), skip_hash_verification=True)
     out = tmp_path / "golden150-remediated-fixture.json"
     sidecar = tmp_path / "golden150-remediated-fixture.gate_drops.json"
     result = emit_remediated_manifest(
@@ -303,7 +303,7 @@ def test_emitter_end_to_end_on_synthetic_fixture(tmp_path: Path) -> None:
     assert bea.provenance.license is LicenseTag.CONSENTED
 
     # Output loads under the (now provenance-required) loader.
-    reloaded = load_manifest(str(out))
+    reloaded = load_manifest(str(out), skip_hash_verification=True)
     assert {e.media_id for e in reloaded.entries} == survivor_ids
     assert all(e.provenance is not None for e in reloaded.entries)
 
@@ -316,7 +316,7 @@ def test_emitter_end_to_end_on_synthetic_fixture(tmp_path: Path) -> None:
 
 def test_retag_id_unknown_attestation_is_dropped(tmp_path: Path) -> None:
     """PROV-01: unknown on a FIXED_RETAG_ID drops; sidecar records the verdict."""
-    draft = load_manifest(str(_draft(tmp_path, [603, 100])))
+    draft = load_manifest(str(_draft(tmp_path, [603, 100])), skip_hash_verification=True)
     records = [
         AttestationRecord.model_validate(_record(603, attestation="unknown")),
         AttestationRecord.model_validate(_record(100, attestation="own_capture")),
@@ -341,7 +341,7 @@ def test_retag_id_third_party_attestation_is_dropped(tmp_path: Path) -> None:
     Kills a mutant that re-inserts a retag keep between the UNKNOWN and
     THIRD_PARTY branches (FIR-11-SL1-R2-02).
     """
-    draft = load_manifest(str(_draft(tmp_path, [633, 100])))
+    draft = load_manifest(str(_draft(tmp_path, [633, 100])), skip_hash_verification=True)
     records = [
         AttestationRecord.model_validate(_record(633, attestation="third_party")),
         AttestationRecord.model_validate(_record(100, attestation="own_capture")),
@@ -363,7 +363,7 @@ def test_retag_id_third_party_attestation_is_dropped(tmp_path: Path) -> None:
 def test_emitter_rejects_pass_bound_to_mutated_draft_sha(tmp_path: Path) -> None:
     """A pass validated against draft A must not emit draft B with a mutated sha256."""
     path_a = _draft(tmp_path, [1])
-    draft_a = load_manifest(str(path_a))
+    draft_a = load_manifest(str(path_a), skip_hash_verification=True)
     attested = validate_attestation_pass(
         [AttestationRecord.model_validate(_record(1))], draft_a
     )
@@ -371,7 +371,7 @@ def test_emitter_rejects_pass_bound_to_mutated_draft_sha(tmp_path: Path) -> None
     doc["entries"][0]["sha256"] = "b" * 64
     path_b = tmp_path / "draft_b.json"
     path_b.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
-    draft_b = load_manifest(str(path_b))
+    draft_b = load_manifest(str(path_b), skip_hash_verification=True)
     with pytest.raises(RemediationError, match="sha256"):
         emit_remediated_manifest(draft_b, attested)
 

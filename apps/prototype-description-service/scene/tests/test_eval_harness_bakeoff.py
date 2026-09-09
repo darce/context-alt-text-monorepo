@@ -20,19 +20,38 @@ from pathlib import Path
 import httpx
 import pytest
 
-from scripts.eval_harness.bakeoff import BakeoffClient, _extract_caption
+from scripts.eval_harness.bakeoff import (
+    BakeoffClient,
+    WeaveBenchRecordError,
+    _clone_bakeoff_client,
+    _extract_caption,
+    weave_bench_run_record,
+)
 from scripts.eval_harness.cli import BoundedStallError, fetch_run_record
+from scripts.eval_harness.depiction_lexicon import DepictionLexicon
 from scripts.eval_harness.manifest import GoldenEntry, GoldenManifest, load_manifest
 from scripts.eval_harness.remote_client import RemoteClientError
 from scripts.eval_harness.report import build_reports
+from scripts.eval_harness.strata import SplitHalf, assign_split
 
 BAKEOFF_MANIFEST = Path(__file__).parent / "seed" / "bakeoff_golden.json"
-GOLDEN_MANIFEST = Path(__file__).parent / "seed" / "golden.json"
+GOLDEN_MANIFEST = Path(__file__).parent / "seed" / "held_out_golden.json"
+SPLIT_SEED = "vlm6-s1-sealed-eval-split-20260818"
+HELD_OUT_FRACTION = 0.5
 
 
 @pytest.fixture(scope="module")
 def manifest() -> GoldenManifest:
-    return load_manifest(str(BAKEOFF_MANIFEST))
+    # These invariants inspect only manifest metadata; they never resolve an
+    # image path or read pixels. Keep the no-image test path explicit so a
+    # missing GOLDEN_IMAGES_DIR cannot turn metadata coverage into collection
+    # errors (OBS-04).
+    return load_manifest(
+        str(BAKEOFF_MANIFEST),
+        metadata_only=True,
+        skip_hash_verification=True,
+        hash_skip_reason="bakeoff manifest invariants inspect metadata only",
+    )
 
 
 def _context_text(entry: GoldenEntry) -> str:
@@ -93,41 +112,263 @@ def test_rubrics_are_not_vacuous(manifest: GoldenManifest) -> None:
     assert any(e.must_right or e.easy_wrong for e in manifest.entries)
 
 
-# main golden.json has no rubrics until VLM-2C populates it; that warning is its, not ours
-@pytest.mark.filterwarnings("ignore::scripts.eval_harness.manifest.RubricEmptyWarning")
-def test_entries_reuse_golden_corpus_images(manifest: GoldenManifest) -> None:
-    golden = load_manifest(str(GOLDEN_MANIFEST))
+def test_warmup_clone_preserves_caption_and_lexicon_configuration() -> None:
+    """Warm-up requests use the same prompt treatment as scored requests."""
+    transport = httpx.MockTransport(lambda request: httpx.Response(200))
+    lexicon = DepictionLexicon(
+        version="test",
+        source_path="/canon/lexicons/depiction.md",
+        sha256="a" * 64,
+        families=("ATTRIB",),
+        tiers=("B",),
+        detail="full",
+        rules=(),
+    )
+    client = BakeoffClient(
+        base_url="http://candidate.test:8080",
+        model_id="m",
+        transport=transport,
+        prompt_variant="v3",
+        caption_length="long",
+        two_pass=True,
+        depiction_lexicon=lexicon,
+    )
+    clone = _clone_bakeoff_client(client)
+    try:
+        assert clone.prompt_variant == client.prompt_variant
+        assert clone.caption_length == client.caption_length
+        assert clone.two_pass is client.two_pass
+        assert clone.depiction_lexicon is client.depiction_lexicon
+    finally:
+        clone.close()
+        client.close()
+
+
+def _weave_bench_manifest() -> GoldenManifest:
+    return GoldenManifest.model_validate(
+        {
+            "manifest_version": 3,
+            "annotation_mode": "roster_only",
+            "roster": ["Russet Fathom"],
+            "entries": [
+                {
+                    "path": "img.jpg",
+                    "sha256": "0" * 64,
+                    "media_id": 7,
+                    "face_count": 1,
+                    "present_identities": ["Russet Fathom"],
+                    "context_pack": {"caption": "Russet Fathom in Antarctica."},
+                    "must_right": ["Russet Fathom"],
+                    "easy_wrong": [],
+                    "policy": {"recognition_enabled": True},
+                    "provenance": {"source": "fixture", "license": "fixture"},
+                }
+            ],
+        }
+    )
+
+
+def test_weave_bench_stall_path_uses_path_text_wire_form() -> None:
+    """Manifest-carried paths cannot leak a PEP 383 surrogate on a stall."""
+
+    class FailingWeaveClient:
+        base_url = "http://candidate.test:8080"
+
+        @staticmethod
+        def weave_bench_describe(**_kwargs: object) -> dict[str, object]:
+            raise RuntimeError("boom")
+
+    raw_path = "caf\udce9.jpg"
+    source = {
+        "provenance": {},
+        "items": [
+            {
+                "media_id": 7,
+                "path": raw_path,
+                "describe": {"passes": [{"pass": "describe_facts", "raw": "{}"}]},
+            }
+        ],
+    }
+    with pytest.raises(BoundedStallError) as excinfo:
+        weave_bench_run_record(
+            source,
+            _weave_bench_manifest(),
+            FailingWeaveClient(),
+            source_path="source.json",
+            source_sha256="a" * 64,
+            head_sha="deadbeef",
+            stall_limit=1,
+        )
+
+    partial = excinfo.value.partial_record
+    assert partial["items"][0]["path"] == "undecodable:caf\\xe9.jpg"
+    assert "undecodable:caf\\xe9.jpg" in str(excinfo.value)
+    assert "udce9" not in json.dumps(partial)
+
+
+def test_weave_bench_malformed_item_excerpt_uses_path_text_wire_form() -> None:
+    raw_path = "caf\udce9.jpg"
+    source = {"provenance": {}, "items": [{"media_id": "bad", "path": raw_path}]}
+    with pytest.raises(WeaveBenchRecordError) as excinfo:
+        weave_bench_run_record(
+            source,
+            _weave_bench_manifest(),
+            object(),
+            source_path="source.json",
+            source_sha256="a" * 64,
+            head_sha="deadbeef",
+        )
+
+    message = str(excinfo.value)
+    assert "undecodable:caf\\xe9.jpg" in message
+    assert "udce9" not in message
+
+
+# This is a metadata-only split invariant: reading pixels would add an unrelated
+# GOLDEN_IMAGES_DIR precondition and cannot strengthen a content-hash membership proof.
+def test_selection_and_reported_corpora_are_disjoint() -> None:
+    selection = json.loads(BAKEOFF_MANIFEST.read_text(encoding="utf-8"))
+    reported = json.loads(GOLDEN_MANIFEST.read_text(encoding="utf-8"))
+    selection_sha256 = {entry["sha256"] for entry in selection["entries"]}
+    reported_sha256 = {entry["sha256"] for entry in reported["entries"]}
+    overlap = selection_sha256 & reported_sha256
+    overlap_percent = 100 * len(overlap) / len(reported_sha256)
+    assert not overlap, (
+        "selection/report leakage: "
+        f"{len(overlap)}/{len(reported_sha256)} reported images overlap selection "
+        f"({overlap_percent:.1f}%); shared sha256={sorted(overlap)}"
+    )
+    wrong_selection_half = [
+        entry["path"]
+        for entry in selection["entries"]
+        if assign_split(
+            entry["sha256"], seed=SPLIT_SEED, held_out_fraction=HELD_OUT_FRACTION
+        )
+        is not SplitHalf.TRAIN
+    ]
+    wrong_reported_half = [
+        entry["path"]
+        for entry in reported["entries"]
+        if assign_split(
+            entry["sha256"], seed=SPLIT_SEED, held_out_fraction=HELD_OUT_FRACTION
+        )
+        is not SplitHalf.HELD_OUT
+    ]
+    assert not wrong_selection_half, f"selection contains held-out images: {wrong_selection_half}"
+    assert not wrong_reported_half, f"reported corpus contains train images: {wrong_reported_half}"
+
+
+def _load_manifest_metadata(path: Path) -> GoldenManifest:
+    return load_manifest(
+        str(path),
+        skip_hash_verification=True,
+        hash_skip_reason="test metadata-only; image bytes never opened",
+        metadata_only=True,
+    )
+
+
+def _assert_multi_person_plus_strangers(entries, *, label: str) -> None:
+    assert any(
+        e.face_count > len(e.present_identities) and len(e.present_identities) >= 2 for e in entries
+    ), f"{label} lost its multi-person-plus-strangers association entry"
+
+
+def _assert_context_conflicts_pixels(entries, *, label: str) -> None:
+    assert any(e.path.endswith("mcm-planecrash.jpg") for e in entries), (
+        f"{label} lost its context-conflicts-pixels (mcm-planecrash) entry"
+    )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "FIR-ORCH-BR-22: after the image-hash split, selection paths are disjoint from "
+        "reported golden, so present_identities cannot be checked against a shared-path "
+        "golden entry. Restored and kept loud; not deleted. The multi-person-plus-strangers "
+        "case and the context-conflicts-pixels case are NOT represented in the current "
+        "selection half."
+    ),
+)
+def test_entries_present_identities_match_golden_corpus() -> None:
+    """FIR-ORCH-BR-22: restore the present_identities drift check deleted in 8b93c473."""
+    selection = _load_manifest_metadata(BAKEOFF_MANIFEST)
+    golden = _load_manifest_metadata(GOLDEN_MANIFEST)
     golden_by_path = {e.path: e for e in golden.entries}
-    for entry in manifest.entries:
-        assert entry.path in golden_by_path, f"{entry.path}: not in golden corpus (new image needs README bootstrap)"
+    for entry in selection.entries:
+        assert entry.path in golden_by_path, (
+            f"{entry.path}: not in golden corpus (new image needs README bootstrap)"
+        )
         gold = golden_by_path[entry.path]
-        # Do not fork ground truth: image bytes AND identity labels must match the golden corpus,
-        # since the analyze contract keys uploads/identity reads by media_id (a drifted id would
-        # misattribute identities in any future non-stub run).
-        assert entry.sha256 == gold.sha256, f"{entry.path}: sha256 drifted from golden corpus"
-        assert entry.media_id == gold.media_id, f"{entry.path}: media_id drifted from golden corpus"
-        assert entry.face_count == gold.face_count, f"{entry.path}: face_count drifted from golden corpus"
         assert entry.present_identities == gold.present_identities, (
             f"{entry.path}: present_identities drifted from golden corpus"
         )
 
 
-def test_manifest_covers_discriminating_classes(manifest: GoldenManifest) -> None:
-    """Pin the §6b discriminating classes so a later 'reuse VLM-2C packs' edit cannot silently
-    delete the entries that give the bake-off its discriminating power."""
-    entries = manifest.entries
-    # two-roster-plus-strangers association: more faces than named present identities.
-    assert any(e.face_count > len(e.present_identities) and len(e.present_identities) >= 2 for e in entries), (
-        "manifest lost its multi-person-plus-strangers association entry"
-    )
+def test_manifest_covers_discriminating_classes_still_in_selection() -> None:
+    """Train-half classes that survived the split stay pinned on the bake-off manifest."""
+    entries = _load_manifest_metadata(BAKEOFF_MANIFEST).entries
     # abstract / hallucination-pressure: no faces but an attribution must_right.
     assert any(e.face_count == 0 and e.must_right for e in entries), (
         "manifest lost its abstract/attribution (face_count 0 + must_right) entry"
     )
-    # context-conflicts-pixels: the plane-crash entry whose context labels a garden picnic.
-    assert any(e.path.endswith("mcm-planecrash.jpg") for e in entries), (
-        "manifest lost its context-conflicts-pixels (mcm-planecrash) entry"
+    # Present in the train half; additional hard-case coverage, not a replacement pin.
+    assert any(e.path.endswith("rrw-mirror.jpg") for e in entries), (
+        "manifest lost its train-half mirror/reflection entry"
     )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "FIR-ORCH-BR-22: multi-person-plus-strangers (ccqw-candid.jpg, 4 faces / 2 named) "
+        "is NOT in the current selection half; it landed held-out. Do not lower >=2."
+    ),
+)
+def test_selection_covers_multi_person_plus_strangers() -> None:
+    _assert_multi_person_plus_strangers(
+        _load_manifest_metadata(BAKEOFF_MANIFEST).entries, label="selection manifest"
+    )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "FIR-ORCH-BR-22: context-conflicts-pixels (mcm-planecrash.jpg) is NOT in the "
+        "current selection half; it landed held-out. Do not swap the pin."
+    ),
+)
+def test_selection_covers_context_conflicts_pixels() -> None:
+    _assert_context_conflicts_pixels(
+        _load_manifest_metadata(BAKEOFF_MANIFEST).entries, label="selection manifest"
+    )
+
+
+def test_reported_corpus_covers_discriminating_classes_absent_from_selection() -> None:
+    """Assertion of record: the classes selection lost live in the reported half."""
+    entries = _load_manifest_metadata(GOLDEN_MANIFEST).entries
+    _assert_multi_person_plus_strangers(entries, label="reported corpus")
+    _assert_context_conflicts_pixels(entries, label="reported corpus")
+
+
+def test_reported_discriminating_class_guards_go_red_on_scratch_drop(tmp_path: Path) -> None:
+    """TEST-15: dropping the held-out carriers from a scratch copy makes the pins fail."""
+    raw = json.loads(GOLDEN_MANIFEST.read_text(encoding="utf-8"))
+    raw["entries"] = [
+        entry
+        for entry in raw["entries"]
+        if not str(entry.get("path", "")).endswith("mcm-planecrash.jpg")
+        and not (
+            int(entry.get("face_count") or 0) > len(entry.get("present_identities") or [])
+            and len(entry.get("present_identities") or []) >= 2
+        )
+    ]
+    scratch = tmp_path / "golden-drop-hard-cases.json"
+    scratch.write_text(json.dumps(raw), encoding="utf-8")
+    entries = _load_manifest_metadata(scratch).entries
+    with pytest.raises(AssertionError, match="multi-person-plus-strangers"):
+        _assert_multi_person_plus_strangers(entries, label="reported corpus")
+    with pytest.raises(AssertionError, match="context-conflicts-pixels"):
+        _assert_context_conflicts_pixels(entries, label="reported corpus")
 
 
 # --- Slice 3: BakeoffClient transport (stubbed endpoint, no network) ---

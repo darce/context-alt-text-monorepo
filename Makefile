@@ -148,6 +148,7 @@ include $(ROOT_MAKEFILE_DIR)/mk/lane-worker.mk
 include $(ROOT_MAKEFILE_DIR)/mk/lane-maintenance.mk
 include $(ROOT_MAKEFILE_DIR)/mk/deploy.mk
 include $(ROOT_MAKEFILE_DIR)/mk/logs.mk
+include $(ROOT_MAKEFILE_DIR)/mk/evals.mk
 # Wave-1 lane-owned modules (EVID-1, GATETOPO-1); optional until the lanes land.
 -include $(ROOT_MAKEFILE_DIR)/mk/gpu-evidence.mk
 -include $(ROOT_MAKEFILE_DIR)/mk/lane-overlaps.mk
@@ -156,7 +157,7 @@ include $(ROOT_MAKEFILE_DIR)/mk/logs.mk
 # Root targets
 # =============================================================================
 
-.PHONY: help check-all check-controlled-vocabulary check-frontend check-mcp check-handoff check-orchestrator lint-all lint-ratchet lint-ratchet-accept lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync check-mcp-pins lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke check-overrides-digest test-overrides-digest test-scripts test-vm-scripts mutation-guard-license-policy test-hooks test-deploy-contract test-gpu-spike-bench test-infra-terraform test-vlm3 test-gpu-lifecycle test-gpu-snapshot-checker check-gpu-snapshots check-gpu-snapshots-live provision-customer provision-demo expire-demo
+.PHONY: help check-all check-controlled-vocabulary check-frontend check-mcp check-handoff check-orchestrator lint-all lint-lane-reports lint-ratchet lint-ratchet-accept lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync check-mcp-pins lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke check-overrides-digest test-overrides-digest test-scripts test-vm-scripts mutation-guard-license-policy test-hooks test-deploy-contract test-gpu-spike-bench test-infra-terraform test-vlm3 test-gpu-lifecycle test-gpu-snapshot-checker check-gpu-snapshots check-gpu-snapshots-live provision-customer provision-demo expire-demo
 
 # Offline half of the GPU snapshot deployment contract. This validates the
 # lifecycle-unit paths against the checked-in rendered compose file without
@@ -852,6 +853,35 @@ dev-stop:
 # (auto-consent greenwashes a no-score report). Consent only at the call
 # site: make eval-captions EVAL_ARGS='--allow-refused'
 #        scripts/eval-captions.sh --allow-refused
+.PHONY: eval-anchor-check
+eval-anchor-check:
+	@status=0; \
+	( cd apps/prototype-description-service && UV_CACHE_DIR=/tmp/acx-eval-anchor-uv-cache uv run --extra dev python -m scripts.eval_harness.cli score \
+		--manifest ../../docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-manifest-20260811.json \
+		--run-record ../../docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-run-20260811.json \
+		--check-determinism \
+		--expect-report ../../docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-run-20260811-report.json \
+		--rubric-gate skip \
+		--freeze-certification ) || status=1; \
+	( cd apps/prototype-description-service && UV_CACHE_DIR=/tmp/acx-eval-anchor-uv-cache uv run --extra dev python -m scripts.eval_harness.cli score-face \
+		--manifest ../../docs/tasks/vlm/bakeoff-results/S2A-face-determinism-anchor-manifest-20260811.json \
+		--run-record ../../docs/tasks/vlm/bakeoff-results/S2A-face-determinism-anchor-run-20260811.json \
+		--check-determinism \
+		--expect-report ../../docs/tasks/vlm/bakeoff-results/S2A-face-determinism-anchor-run-20260811-face-report.json \
+		--freeze-certification ) || status=1; \
+	( cd apps/prototype-description-service && UV_CACHE_DIR=/tmp/acx-eval-anchor-uv-cache uv run --extra dev python -m scripts.eval_harness.cli draw-eval-split \
+		--manifest scene/tests/seed/golden.json \
+		--out ../../docs/tasks/vlm/bakeoff-results/S1-sealed-eval-split-20260818.json \
+		--seed vlm6-s1-sealed-eval-split-20260818 \
+		--held-out-fraction 0.5 \
+		--draw-timestamp 2026-08-18T00:00:00Z \
+		--partition-provenance "per-image roster labels on the VLM-2A fixture corpus (golden.json v3); no cluster partition, disjointness computed on present_identities only" \
+		--exposure-note "golden.json v3 (37 entries) curated pre-split: present_identities non-empty on 34/37 (empty: media_id 27,34,35), face_boxes=0/37, must_right=34/37, annotation_mode=roster_only; held_out half is model-held-out but NOT selection-held-out" \
+		--exposure-note "curation tenant 4ddf8f36 (LocalWP :10018) live with clustered uploads pre-draw" \
+		--exposure-note "determinism-anchor runs S0/S2A (bakeoff-results/) scored the 37 pre-split" \
+		--check ) || status=1; \
+	exit $$status
+
 .PHONY: eval-captions
 eval-captions:
 	@$(ROOT_MAKEFILE_DIR)/scripts/eval-captions.sh $(EVAL_ARGS)

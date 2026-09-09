@@ -28,6 +28,7 @@ FAIR-01/02/03/06, CAL-06, PROV-04, EVAL-04 (S3d).
 
 from __future__ import annotations
 
+import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -66,14 +67,37 @@ UNKNOWN_REJECTION_ERROR_TARGET = (
 )
 
 # Named sampling frames for published rates (AUDIT-01/02).
+# EVAL-16: detection misses count as identification FN (not excluded).
 SAMPLING_FRAME_FACE_ID = (
-    "named_matched_probes_pooled_kfold_decisions: precision over accept/"
-    "confusion; recall over enrolled (≥2 matched faces) only; detection "
-    "misses excluded from FN (EVAL-16)"
+    "named_matched_probes_pooled_kfold_decisions_plus_missed_gt: precision "
+    "over accept/confusion; recall denominator = TP + decision-FN + "
+    "missed_gt (EVAL-16: detector-missed named GT is an identification FN); "
+    "unmatched_detections disclosed via detection_recall_coupling_flag"
 )
+# AUDIT-07 / EVAL-16: observation unit is matched stranger probes PLUS
+# missed_stranger_gt (caller-supplied). Missed strangers enter the
+# denominator as failures so a detector that skips hard strangers cannot
+# keep unknown-rejection perfect by exclusion.
 SAMPLING_FRAME_UNKNOWN_REJECTION = (
-    "stranger_probes_full_corpus_including_unpublishable: correct_reject="
-    "decision=reject; false_accept=decision=accept"
+    "stranger_probes_matched_plus_missed_gt: correct_reject=decision=reject; "
+    "false_accept=decision=accept; missed_stranger_gt counted as failure in "
+    "denominator (EVAL-16 / AUDIT-07); caller must pass missed_stranger_gt "
+    "scoped to the same frame as decisions"
+)
+# AUDIT-07 / EVAL-23: positional claims require box-grounded L→R order.
+# When compared_images=0 every claim unit has π=0 — status=not_evaluable,
+# never a numeric pass/fail accuracy for adoption.
+SAMPLING_FRAME_POSITIONAL = (
+    "box_grounded_LtoR_name_sequences: position i must match; requires "
+    "face_boxes (labeled_order_known) and centre-ordered predicted names "
+    "(predicted_left_to_right); when compared_images=0 status=not_evaluable "
+    "π=0 for box-grounded identity claims (EVAL-23 / AUDIT-07)"
+)
+POSITIONAL_EVAL_SCORED = "scored"
+POSITIONAL_EVAL_NOT_EVALUABLE = "not_evaluable"
+POSITIONAL_VACUITY_SIGNAL = (
+    "positional identification not evaluable on this corpus, "
+    "π=0 for box-grounded identity claims"
 )
 SAMPLING_FRAME_DEMOGRAPHIC_COHORT = (
     "named_matched_probes_in_cohort: roster_cohorts primary, single-subject "
@@ -88,6 +112,42 @@ SAMPLING_FRAME_CLUSTERING = (
     "named_matched_faces_pairwise: P_same/P_diff pair floors; M==0 "
     "all-singletons guard; single-linkage diagnostic (GRPH-18)"
 )
+
+
+def named_box_name(box: Any) -> str | None:
+    """Authoritative namedness predicate for face_metrics (VLM6-R2-A-01 / RA-02 / RA-03).
+
+    **Rule (explicit):** a box is named iff, after normalization, a non-empty
+    string remains. Normalization is:
+
+    1. Read ``name`` from a Mapping or object attribute; missing/``None`` → anonymous.
+    2. Coerce to ``str``.
+    3. Remove Unicode category ``Cf`` (format controls) — zero-width space/joiner/
+       non-joiner, BOM, soft hyphen, and other invisible format chars that
+       ``str.strip()`` does **not** remove (RA-03).
+    4. ``str.strip()`` of Unicode whitespace (ASCII space, NBSP, ideographic
+       space, tabs, …).
+    5. Empty after (3)+(4) → ``None`` (anonymous); else return the remaining text.
+
+    Every face_metrics site that decides "is this box named?" / extracts a
+    display name for ordering **must** call this function — not an inline
+    ``str(name).strip()`` or truthiness check (RA-02). Association still uses
+    ``face_assignment.gt_box_name`` (strip-only); that surface is out of this
+    module's ownership — keep the rules aligned when that module is next open.
+    """
+    if isinstance(box, Mapping):
+        raw = box.get("name")
+    else:
+        raw = getattr(box, "name", None)
+    if raw is None:
+        return None
+    # Cf = format controls (ZWSP U+200B, ZWJ U+200D, ZWNJ U+200C, BOM U+FEFF,
+    # soft hyphen U+00AD, …). Not covered by str.strip() whitespace.
+    without_format = "".join(
+        ch for ch in str(raw) if unicodedata.category(ch) != "Cf"
+    )
+    text = without_format.strip()
+    return text if text else None
 
 
 @dataclass(frozen=True)
@@ -105,6 +165,347 @@ class ImageIdentities:
     labeled: Sequence[str]
     recognition_enabled: bool = True
     stranger_faces: int = 0
+    # False when labeled L→R order cannot be established (legacy entries with
+    # empty/missing face_boxes). Positional scoring excludes these; set-based
+    # identification_pr ignores the flag and still uses ``labeled`` as a set.
+    labeled_order_known: bool = True
+    # Optional wire identity rows + image size for centre-based L→R (VLM6-B-03).
+    # When set, ``positional_identification`` re-orders via
+    # ``predicted_left_to_right`` (centre-x + leftmost-wins dedup). report.py
+    # must populate these; raw ``predicted`` alone cannot recover centre order.
+    predicted_rows: Sequence[Any] | None = None
+    image_width: float | None = None
+    image_height: float | None = None
+
+
+def nearest_rank_percentile(values: Sequence[float], q: float) -> float:
+    """Nearest-rank percentile (q in 0..1). Deterministic, no numpy/interpolation.
+
+    Caller guarantees a non-empty ``values`` sequence.
+    """
+    if not values:
+        raise ValueError("nearest_rank_percentile requires a non-empty values sequence")
+    ordered = sorted(float(v) for v in values)
+    return ordered[min(int(q * len(ordered)), len(ordered) - 1)]
+
+
+def latency_summary(
+    values: Sequence[float],
+    *,
+    unit: str = "s",
+    wall_clock_s: float | None = None,
+    throughput_n: int | None = None,
+    decimals: int = 3,
+) -> dict[str, Any] | None:
+    """Canonical latency/throughput block for eval-harness runners (VLM6-RH-04).
+
+    One schema for face_pass / florence_describe / describe_baseline consumers —
+    seconds preferred, with n/mean/min/p50/p95/p99/max plus optional throughput.
+    Returns ``None`` when ``values`` is empty (no timed samples).
+    """
+    if not values:
+        return None
+    if unit not in ("s", "ms"):
+        raise ValueError(f"latency_summary unit must be 's' or 'ms', got {unit!r}")
+    vals = [float(v) for v in values]
+    n = len(vals)
+    out: dict[str, Any] = {
+        "unit": unit,
+        "n": n,
+        "mean": round(sum(vals) / n, decimals),
+        "min": round(min(vals), decimals),
+        "p50": round(nearest_rank_percentile(vals, 0.50), decimals),
+        "p95": round(nearest_rank_percentile(vals, 0.95), decimals),
+        "p99": round(nearest_rank_percentile(vals, 0.99), decimals),
+        "max": round(max(vals), decimals),
+    }
+    if wall_clock_s is not None:
+        wall = float(wall_clock_s)
+        out["wall_clock_s"] = round(wall, 1)
+        if throughput_n is not None and wall > 0 and throughput_n > 0:
+            out["images_per_min"] = round(float(throughput_n) / (wall / 60.0), 1)
+        else:
+            out["images_per_min"] = None
+    return out
+
+
+def normalized_centre_order_key(
+    centre_x: float,
+    centre_y: float,
+    name: str,
+) -> tuple[float, float, str]:
+    """Canonical L→R sort key for centre-ordered identity sequences (rg-005).
+
+    One pure key shared by ``predicted_left_to_right``,
+    ``sort_identity_rows_by_normalized_centre``, and ``labeled_left_to_right``.
+    Order: increasing centre-x (viewer-left → right), then centre-y, then name.
+    Never rely on input-array stability for metric / freeze byte-stability.
+    """
+    return (float(centre_x), float(centre_y), str(name))
+
+
+def wire_bbox_normalized_centre(
+    bbox: Any,
+    *,
+    image_width: float | None,
+    image_height: float | None,
+) -> tuple[float, float] | None:
+    """Convert wire absolute-pixel corner ``{x,y,width,height}`` → normalized centre.
+
+    Manifest face boxes and ``labeled_left_to_right`` use normalized centre-point
+    coords (0..1). Wire identities from ``/media/identities`` carry absolute-pixel
+    corner bboxes (A-08). Centre-x and corner-x are not order-equivalent when face
+    widths differ (VLM6-RH-03) — normalize with captured image size before sorting.
+    Returns ``None`` when bbox or dimensions are unusable (never invents coords).
+    Degenerate box size (``width <= 0`` or ``height <= 0``) is unpositionable —
+    same as missing dims (S3-07).
+    """
+    if not isinstance(bbox, Mapping):
+        return None
+    if image_width is None or image_height is None:
+        return None
+    try:
+        width_px = float(image_width)
+        height_px = float(image_height)
+        x = float(bbox["x"])
+        y = float(bbox["y"])
+        w = float(bbox["width"])
+        h = float(bbox["height"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if width_px <= 0 or height_px <= 0:
+        return None
+    if w <= 0 or h <= 0:
+        return None
+    return ((x + w / 2.0) / width_px, (y + h / 2.0) / height_px)
+
+
+def predicted_left_to_right(
+    identities: Sequence[Any] | None,
+    *,
+    image_width: float | None = None,
+    image_height: float | None = None,
+) -> list[str] | None:
+    """Canonical predicted L→R for positional scoring (VLM6-B-03 / VLM6-RH-03).
+
+    **Production callers must use this** (not raw name lists / corner-x sorts)
+    when building ``ImageIdentities.predicted`` for ``positional_identification``.
+    Corner-x and centre-x disagree when face widths differ; leftmost-wins name
+    dedup mirrors ``labeled_left_to_right`` so sequence cardinalities match.
+
+    Sorts wire identity rows using ``wire_bbox_normalized_centre`` + the shared
+    ``normalized_centre_order_key`` (cx, cy, name) so both this API and
+    ``sort_identity_rows_by_normalized_centre`` share one centre-x rule (S3-01 /
+    rg-005). **Leftmost-wins duplicate-name dedup** mirrors
+    ``labeled_left_to_right`` (VLM6-R4-08).
+
+    Namedness (VLM6-R2-A-01 / HARM-06 / RA-02): routes every row through
+    ``named_box_name`` — the single face_metrics predicate shared with
+    ``labeled_left_to_right`` and ``sort_identity_rows_by_normalized_centre``.
+    Whitespace-only and format-control-only names are anonymous (skipped);
+    padded names are stripped before ordering.
+
+    Returns:
+    - ``None`` when ``identities`` is None (unknown).
+    - Ordered unique names when rows are present. Unpositioned / unnormalizable
+      named rows sort after positioned ones (stable by name) and still participate
+      in leftmost-wins dedup. Empty input → ``[]``.
+    """
+    if identities is None:
+        return None
+    if not identities:
+        return []
+    positioned: list[tuple[float, float, str]] = []
+    unpositioned: list[str] = []
+    for entry in identities:
+        name = named_box_name(entry)
+        if name is None:
+            continue
+        if isinstance(entry, Mapping):
+            bbox = entry.get("bbox")
+        else:
+            bbox = getattr(entry, "bbox", None)
+        centre = wire_bbox_normalized_centre(bbox, image_width=image_width, image_height=image_height)
+        if centre is None:
+            unpositioned.append(name)
+        else:
+            positioned.append((centre[0], centre[1], name))
+    positioned.sort(key=lambda t: normalized_centre_order_key(t[0], t[1], t[2]))
+    unpositioned.sort()
+    return _leftmost_unique_names([name for _, _, name in positioned] + unpositioned)
+
+
+def _leftmost_unique_names(names: Sequence[str]) -> list[str]:
+    """Leftmost-wins name dedup (single definition for labeled + predicted paths)."""
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for name in names:
+        if name in seen:
+            continue
+        seen.add(name)
+        ordered.append(name)
+    return ordered
+
+
+# Canonical alias — one object identity (RV3-04 / TEST-15). report.py and tests
+# must import this name; a re-clone that agrees on one fixture must not pass.
+predicted_names_for_positional = predicted_left_to_right
+
+
+def sort_identity_rows_by_normalized_centre(
+    identities: Sequence[Any],
+    *,
+    image_width: float | None,
+    image_height: float | None,
+) -> list[dict[str, Any]]:
+    """Re-order wire identity dict rows by normalized centre (no name dedup).
+
+    Used by runners that store full identity rows (face_pass). Keeps every row so
+    face_count/name multiset is preserved; only sort key is corrected (VLM6-RH-03).
+    Sort key is the shared ``normalized_centre_order_key`` (cx, cy, name) — same
+    rule as ``predicted_left_to_right`` before name dedup (S3-01 / rg-005).
+    Unpositioned rows follow positioned ones (stable secondary key = name).
+
+    Namedness (RA-02): the tertiary name component comes from ``named_box_name``
+    (stripped / format-stripped; anonymous → ``""``). Rows are not filtered —
+    storage must keep the full multiset — but the key must not fork an inline
+    ``str(row.get("name") or "")`` that disagrees with L→R paths on padding or
+    invisible names. Row ``name`` fields are left unchanged.
+    """
+    positioned: list[tuple[float, float, str, dict[str, Any]]] = []
+    unpositioned: list[tuple[str, dict[str, Any]]] = []
+    for entry in identities:
+        if not isinstance(entry, Mapping):
+            continue
+        row = dict(entry)
+        # Single namedness predicate — never raw row["name"] for the sort key.
+        name = named_box_name(entry) or ""
+        centre = wire_bbox_normalized_centre(row.get("bbox"), image_width=image_width, image_height=image_height)
+        if centre is None:
+            unpositioned.append((name, row))
+        else:
+            positioned.append((centre[0], centre[1], name, row))
+    positioned.sort(key=lambda t: normalized_centre_order_key(t[0], t[1], t[2]))
+    unpositioned.sort(key=lambda t: t[0])
+    return [t[-1] for t in positioned] + [t[1] for t in unpositioned]
+
+
+@dataclass(frozen=True)
+class LabeledOrderResult:
+    """Labeled L→R names plus degradation disclosure (VLM6-R2-G-01 / HARM-07).
+
+    ``order_degraded`` is True when any named box used the per-box x-only
+    fallback (missing ``y``). Report consumers should aggregate image-level
+    counts into ``faces.identity_ordering`` — suggested field
+    ``labeled_y_missing_images`` (do not overload ``degraded_images``, which
+    means predicted identity_ordering stamp == DEGRADED; S2-07 / rg-015).
+    """
+
+    names: list[str] | None
+    y_missing_count: int = 0
+    order_degraded: bool = False
+
+
+def _labeled_box_order_key(x: float, y: float | None, name: str) -> tuple:
+    """Per-box L→R sort key — never invents y=0.0 (HARM-07 / VLM6-R2-G-01).
+
+    - y present: ``(x, 0, y, name)`` — equivalent to ``normalized_centre_order_key``
+      (x, y, name) with a constant present-flag.
+    - y absent:  ``(x, 1, 0.0, name)`` — primary x only for spatial placement;
+      the missing-flag separates these from a real top-of-frame y=0.0 box at
+      the same x. Name is a determinism tertiary, not a spatial claim; when
+      any box takes this branch the image is ``order_degraded``.
+    """
+    if y is not None:
+        return (float(x), 0, float(y), str(name))
+    return (float(x), 1, 0.0, str(name))
+
+
+def labeled_order(face_boxes: Sequence[Any] | None) -> LabeledOrderResult:
+    """Named L→R with per-box missing-y fallback + degradation counter.
+
+    See ``labeled_left_to_right`` for order semantics. Prefer this entry when
+    the caller must surface ``order_degraded`` / ``y_missing_count`` (anchor
+    report disclosure; VLM6-R2-G-01).
+
+    ``y`` coercion (RA-04 source): ``None``, blank/whitespace string, or any
+    non-numeric value → missing (``None``). Missing y uses the per-box x-only
+    key and sets ``order_degraded=True`` — never raises, never invents ``0.0``.
+    """
+    if not face_boxes:
+        return LabeledOrderResult(names=None)
+    # (x, y|None, name)
+    named: list[tuple[float, float | None, str]] = []
+    named_missing_x = 0
+    for box in face_boxes:
+        # Single namedness predicate (VLM6-R2-A-01 / HARM-06 / RA-02/RA-03).
+        name = named_box_name(box)
+        if name is None:
+            continue
+        if isinstance(box, Mapping):
+            x = box.get("x")
+            y = box.get("y")
+        else:
+            x = getattr(box, "x", None)
+            y = getattr(box, "y", None)
+        if x is None:
+            named_missing_x += 1
+            continue
+        # Blank / whitespace / non-numeric y → missing (None), not ValueError.
+        # Same ordering branch as y is None (order_degraded); no third state (RA-04).
+        y_val: float | None = None
+        if y is not None:
+            try:
+                y_val = float(y)
+            except (TypeError, ValueError):
+                y_val = None
+        named.append((float(x), y_val, name))
+    # Named boxes exist but none carry x → manifest defect, not empty order.
+    if not named and named_missing_x > 0:
+        return LabeledOrderResult(names=None)
+    # Boxes present but none named (all strangers): established empty order.
+    y_missing = sum(1 for _, y, _ in named if y is None)
+    named.sort(key=lambda t: _labeled_box_order_key(t[0], t[1], t[2]))
+    return LabeledOrderResult(
+        names=_leftmost_unique_names([name for _, _, name in named]),
+        y_missing_count=y_missing,
+        order_degraded=y_missing > 0,
+    )
+
+
+def labeled_left_to_right(face_boxes: Sequence[Any] | None) -> list[str] | None:
+    """Named identities left-to-right by face-box centre, or None if unknown.
+
+    ``present_identities`` is stored alphabetically (draft_labels) or in XMP
+    write order (export_identities) — neither is spatial. Curated ``face_boxes``
+    carry centre-point coords; sort named boxes by the shared
+    ``normalized_centre_order_key`` (x, y, name) so ties never depend on input
+    array order (S3-02 / EVAL-04).
+
+    Returns:
+    - ``None`` when ``face_boxes`` is missing/empty — order cannot be
+      established; the image must be excluded from positional scoring (never
+      fall back to stored ``present_identities`` order).
+    - ``None`` when boxes are present and at least one is named but **every**
+      named box lacks an ``x`` coordinate — malformed ground truth, not an
+      empty labeled order. Scoring as ``[]`` would charge every predicted name
+      as a positional miss (VLM6-R4-08).
+    - Ordered unique names when boxes are present. Anonymous boxes (``name``
+      None/empty/whitespace/format-control-only — via ``named_box_name``) are
+      skipped. **Duplicate names keep the leftmost occurrence only** so the
+      sequence cardinality matches what ``predicted`` can hold (one slot per
+      distinct identity, as ``present_identities`` is a set-like list). Later
+      same-name boxes are ignored, not multi-counted.
+    - ``[]`` when boxes are present but all anonymous (order established, nobody
+      named) — distinct from the malformed-GT ``None`` case above.
+
+    HARM-07 / rg-015 / VLM6-R2-G-01: never invent ``y=0.0``. Fallback is
+    **per-box**: boxes with ``y`` keep the centre key; boxes missing ``y`` sort
+    by ``x`` alone in the same pass (missing-flag secondary — not a whole-image
+    collapse to ``(x, name)`` that discards real y on sibling boxes). Use
+    ``labeled_order`` when the degradation counter is required.
+    """
+    return labeled_order(face_boxes).names
 
 
 def _ratio(numerator: int, denominator: int) -> float | None:
@@ -346,6 +747,112 @@ def identification_pr(items: Sequence[ImageIdentities]) -> PrResult:
 
 
 # ---------------------------------------------------------------------------
+# Positional (left-to-right) identification — discriminates swaps (A-02)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PositionalIdResult:
+    """Ordered name-binding score: position i must match, not just the name set.
+
+    ``identification_pr`` reduces predictions to ``sorted(set(...))``, so a
+    left/right swap of two correctly-detected people scores identically to the
+    correct interleave. This metric keeps sequence order and therefore penalises
+    swaps: position_hits drops while the set-based P/R stays the same.
+
+    When ``compared_images == 0`` every box-grounded identity claim has π=0
+    (EVAL-23 / AUDIT-07): ``evaluable`` is False, ``status`` is
+    ``not_evaluable``, and ``vacuity_signal`` carries the machine-readable
+    block reason. Callers must not treat ``position_accuracy is None`` alone
+    as a soft skip — consume ``status`` / ``vacuity_signal`` for the gate.
+    """
+
+    position_hits: int
+    position_total: int
+    exact_order_images: int
+    compared_images: int
+    swap_images: int  # same multiset of names, different order
+    excluded_images: list[str] = field(default_factory=list)
+    # VLM6-B-10: loud vacuity when π=0 (sr-007 centralised status values).
+    evaluable: bool = True
+    status: str = POSITIONAL_EVAL_SCORED
+    vacuity_signal: str | None = None
+    sampling_frame: str = SAMPLING_FRAME_POSITIONAL
+
+    @property
+    def position_accuracy(self) -> float | None:
+        # None when no positions compared (including full-corpus π=0 vacuity).
+        return _ratio(self.position_hits, self.position_total)
+
+    @property
+    def exact_order_rate(self) -> float | None:
+        return _ratio(self.exact_order_images, self.compared_images)
+
+
+def positional_identification(items: Sequence[ImageIdentities]) -> PositionalIdResult:
+    """Score predicted vs labeled name sequences left-to-right (order-sensitive).
+
+    For each recognition-enabled image with known labeled order, pad the shorter
+    sequence with ``None`` and count position-wise equality. An image whose
+    predicted multiset equals the labeled multiset but whose order differs is
+    counted as a ``swap_image``. Empty/empty images are skipped (nothing to
+    order). Images with ``recognition_enabled=False`` or
+    ``labeled_order_known=False`` (no face_boxes to establish L→R) are listed
+    in ``excluded_images`` and never compared in stored alphabetical order.
+
+    Predicted order (VLM6-B-03): when ``item.predicted_rows`` is set, re-order
+    via ``predicted_left_to_right`` (centre-x + leftmost-wins dedup). Otherwise
+    apply leftmost-wins dedup on the stored name sequence so duplicate faces
+    cannot inflate position_total relative to labeled L→R cardinality.
+    """
+    hits = total = exact = compared = swaps = 0
+    excluded: list[str] = []
+    for item in items:
+        if not item.recognition_enabled or not item.labeled_order_known:
+            excluded.append(item.image)
+            continue
+        if item.predicted_rows is not None:
+            ordered = predicted_left_to_right(
+                item.predicted_rows,
+                image_width=item.image_width,
+                image_height=item.image_height,
+            )
+            predicted = list(ordered) if ordered is not None else []
+        else:
+            # Partial B-03 without wire rows: still dedupe leftmost-wins so
+            # [Alice, Alice, Bob] vs labeled [Alice, Bob] is not a 1/3 hit.
+            predicted = _leftmost_unique_names(list(item.predicted))
+        labeled = list(item.labeled)
+        if not predicted and not labeled:
+            continue
+        compared += 1
+        n = max(len(predicted), len(labeled))
+        for i in range(n):
+            total += 1
+            pred_i = predicted[i] if i < len(predicted) else None
+            lab_i = labeled[i] if i < len(labeled) else None
+            if pred_i is not None and pred_i == lab_i:
+                hits += 1
+        if predicted == labeled:
+            exact += 1
+        elif sorted(predicted) == sorted(labeled):
+            swaps += 1
+    evaluable = compared > 0
+    return PositionalIdResult(
+        position_hits=hits,
+        position_total=total,
+        exact_order_images=exact,
+        compared_images=compared,
+        swap_images=swaps,
+        excluded_images=excluded,
+        evaluable=evaluable,
+        status=POSITIONAL_EVAL_SCORED if evaluable else POSITIONAL_EVAL_NOT_EVALUABLE,
+        vacuity_signal=None if evaluable else POSITIONAL_VACUITY_SIGNAL,
+        sampling_frame=SAMPLING_FRAME_POSITIONAL,
+    )
+
+
+# ---------------------------------------------------------------------------
 # FIR-5 S3 §F — face-level identification over pooled decisions
 # ---------------------------------------------------------------------------
 
@@ -354,10 +861,10 @@ def identification_pr(items: Sequence[ImageIdentities]) -> PrResult:
 class FaceLevelIdPr:
     """Face-level identification P/R (0/0 → 0). Coupled to detection recall.
 
-    Report id-recall *alongside* detection-recall: weak detection inflates
-    id-recall on the easy detected subset (coupling caveat, §F / EVAL-16).
-    ``detection_recall_coupling_flag`` is **computed** from required missed GT /
-    unmatched detection counts — never a fail-open default (REF-27).
+    EVAL-16: ``missed_gt`` is folded into ``false_negatives`` so detector-missed
+    named subjects lower id-recall. ``detection_recall_coupling_flag`` remains
+    additional disclosure when misses or unmatched detections are present
+    (never a fail-open default — REF-27).
     """
 
     true_positives: int
@@ -404,14 +911,22 @@ def face_identification_pr(
     - accept & name* == true → TP
     - accept & name* != true → FP on name*; FN on true iff enrolled
     - reject of enrolled → FN
+    - missed_gt (attributed) → FN each (EVAL-16: detector miss is id error)
     - single-face confusion → FP only (excluded_single_face_recall)
     Precision/Recall use 0/0 → 0.
+
+    ``missed_gt`` is **named-only** (S3-04 / EVAL-16 / EVAL-19): count of
+    detector-missed ground-truth boxes whose ``true_name is not None``.
+    Unmatched stranger GT must not enter this FN fold-in — route those to
+    ``face_unknown_rejection(..., missed_stranger_gt=...)`` instead.
+    ``AssignmentResult.missed_gt`` and the headline association path both emit
+    named-only counts so the full-corpus and headline observation units agree.
 
     ``missed_gt`` and ``unmatched_detections`` are **required** (no fail-open
     default of 0 — REF-27 / FIR5V11-05). Pass counts scoped to the same
     sampling frame as ``decisions`` (e.g. celebs01-only for headline).
     ``detection_recall_coupling_flag`` is True when either count is > 0
-    (id-P/R denominators exclude detection failures — EVAL-16).
+    (additional disclosure alongside the FN fold-in — EVAL-16).
     Stranger false-accepts live only in the separate unknown-rejection metric.
 
     FIR5RR-05: a frame that CANNOT attribute detection misses (the per-cohort
@@ -435,9 +950,7 @@ def face_identification_pr(
             continue
         n_named += 1
         decision = d.decision if not isinstance(d, Mapping) else d["decision"]
-        predicted = (
-            d.predicted_name if not isinstance(d, Mapping) else d.get("predicted_name")
-        )
+        predicted = d.predicted_name if not isinstance(d, Mapping) else d.get("predicted_name")
         enrolled = d.enrolled if not isinstance(d, Mapping) else bool(d.get("enrolled"))
 
         if enrolled:
@@ -472,7 +985,8 @@ def face_identification_pr(
         )
     if mg is None and ud is None:
         # Not-attributed frame: coupling is inherited (or unknown), never
-        # derived from fabricated zeros (FIR5RR-05).
+        # derived from fabricated zeros (FIR5RR-05). Missed-GT FN fold-in
+        # is also skipped (cannot invent a count).
         coupling = detection_coupling
     else:
         if detection_coupling is not None:
@@ -482,6 +996,9 @@ def face_identification_pr(
                 "with real counts the flag is computed, not asserted"
             )
         coupling = (mg or 0) > 0 or (ud or 0) > 0
+        # EVAL-16 / VLM6-B-01: detector-missed named GT is an identification FN.
+        # Coupling flag stays as additional disclosure, not the only signal.
+        fn += mg or 0
     return FaceLevelIdPr(
         true_positives=tp,
         false_positives=fp,
@@ -634,21 +1151,42 @@ class UnknownRejectionResult:
     # rate = correct_rejects / n; denominators retained for redaction honesty.
     rate_numerator: int = 0
     rate_denominator: int = 0
+    # EVAL-16 / AUDIT-07: stranger GT boxes the detector never matched.
+    # Counted in n and as rate failures so exclusion cannot keep rate=1.0.
+    missed_stranger_gt: int = 0
 
     @property
     def rate(self) -> float:
-        """correct_rejects / (correct_rejects + false_accepts); 0/0 → 0."""
-        return _ratio_zero(self.correct_rejects, self.correct_rejects + self.false_accepts)
+        """correct_rejects / (correct + false_accept + missed_stranger_gt); 0/0 → 0."""
+        return _ratio_zero(
+            self.correct_rejects,
+            self.correct_rejects + self.false_accepts + self.missed_stranger_gt,
+        )
 
     @property
     def meets_floor(self) -> bool:
         return self.n >= self.n_floor
 
 
-def face_unknown_rejection(decisions: Sequence[Any]) -> UnknownRejectionResult:
+def face_unknown_rejection(
+    decisions: Sequence[Any],
+    *,
+    missed_stranger_gt: int,
+) -> UnknownRejectionResult:
     """Face-level unknown-rejection over stranger probes (pooled decisions).
 
     correct-reject = reject; false-accept = accept any name.
+
+    ``missed_stranger_gt`` is **required** (S3-03 / AUDIT-07 / sr-001): no
+    fail-open default of 0. Callers must pass the frame-scoped count of
+    unmatched GT boxes with ``true_name is None`` (association ``unmatched_gt``
+    whose name is None). Omitting the kwarg is a TypeError — a production call
+    that forgets attribution cannot silently publish rate=1.0.
+
+    Missed strangers enter the denominator as failures so a detector that skips
+    hard strangers cannot keep unknown-rejection perfect by exclusion
+    (EVAL-16 / VLM6-B-08). Pass ``0`` only when the frame truly has zero
+    unmatched stranger GT.
     """
     correct = 0
     false_accept = 0
@@ -661,7 +1199,8 @@ def face_unknown_rejection(decisions: Sequence[Any]) -> UnknownRejectionResult:
             correct += 1
         else:
             false_accept += 1
-    n = correct + false_accept
+    missed = max(0, int(missed_stranger_gt))
+    n = correct + false_accept + missed
     return UnknownRejectionResult(
         correct_rejects=correct,
         false_accepts=false_accept,
@@ -670,6 +1209,7 @@ def face_unknown_rejection(decisions: Sequence[Any]) -> UnknownRejectionResult:
         error_target=UNKNOWN_REJECTION_ERROR_TARGET,
         rate_numerator=correct,
         rate_denominator=n,
+        missed_stranger_gt=missed,
     )
 
 
@@ -854,8 +1394,7 @@ def clustering_sweep(
     # Stable unique cuts from the grid.
     cuts = sorted({round(1.0 - float(t), 4) for t in tau_grid})
     sweep = tuple(
-        clustering_metrics_at_cut(embeddings, identity_labels, d_cut, pair_floor=pair_floor)
-        for d_cut in cuts
+        clustering_metrics_at_cut(embeddings, identity_labels, d_cut, pair_floor=pair_floor) for d_cut in cuts
     )
     headline = clustering_metrics_at_cut(
         embeddings,

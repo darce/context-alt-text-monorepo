@@ -187,4 +187,10 @@ local/*-worktrees.txt
 # Offload lane manifests — regenerated per task by materialize_offload_lane_manifest;
 # embed absolute local worktree paths, so machine-specific (never in repo)
 /config/lane-orchestration/
+
+# Anchor promote runtime artifacts (promote_atomic.py) — pid/timestamp locks,
+# crash-recovery journals, and half-written staging files. Process-local.
+.vlm-*-promote.lock
+.vlm-*-anchor-promote.journal
+.vlm-*-promote-stage-*
 docs/evidence/

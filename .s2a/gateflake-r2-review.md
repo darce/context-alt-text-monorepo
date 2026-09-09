@@ -4,7 +4,7 @@
 **Task:** `MAINT-GATE-FLAKES-20260815`
 **Subject:** s2 fallback — does the poll-for-RUNNING observe a COMMITTED row on a StaticPool shared connection?
 **Posture:** adversarial. s2 report assumed optimistic. Probe first, batteries only if the commit barrier is real.
-**Sandbox note:** this checkout is history-stripped (`87469e5`). `de473ece` / parent `cca32ad1` are not present as distinct SHAs. Review is of the current tree contents matching the claimed fallback (file-backed `_sessionmaker` + `poolclass=StaticPool`, timeout `0.5`, cancel test polls for `RUNNING`).
+**Sandbox note:** this checkout is history-stripped (`87469e5` sha-guard:ignore — foreign sandbox-clone root SHA, does not exist in this repo's history). `de473ece` / parent `cca32ad1` are not present as distinct SHAs. Review is of the current tree contents matching the claimed fallback (file-backed `_sessionmaker` + `poolclass=StaticPool`, timeout `0.5`, cancel test polls for `RUNNING`).
 
 **Verdict:** fail
 
@@ -317,5 +317,5 @@ The 0.5s timeout retune is a different mechanism. On this 4-CPU box under the sa
 - `scene/application/describe_async_worker.py` was not edited. Phase-1 is a short session: `mark_item` flush then `session.commit()` at `:213`.
 - Default file URL without `poolclass` (`AsyncAdaptedQueuePool`) does **not** leak uncommitted writes. The leak is StaticPool sharing one sqlite3 connection, not file-backed SQLite itself.
 - Phase-1 flush-to-commit gap is ~4ms. That is why a dirty-read poll can still go 10/10: it usually misses the window. Luck is not a barrier.
-- `/tmp/acx-describe-async-*` after the battery: no such file. (One unrelated `/tmp/acx-probe-6a6a062640c94` dated Jul 29, owner `ubuntu`, is not from this session.)
+- `/tmp/acx-describe-async-*` after the battery: no such file. (One unrelated `/tmp/acx-probe-6a6a062640c94` sha-guard:ignore — that suffix is a stray host tempfile name, not a commit citation — dated Jul 29, owner `ubuntu`, is not from this session.)
 - Scope of this review: only `.s2a/gateflake-r2-review.md`. Did not touch the test file, the worker, sibling reports, or MCP findings.

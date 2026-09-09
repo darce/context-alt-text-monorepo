@@ -35,13 +35,16 @@ import argparse
 import json
 import os
 import sys
+import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import asdict, dataclass, fields
+from dataclasses import MISSING, asdict, dataclass, fields
 from pathlib import Path
 from typing import Any, Protocol
 
-from scripts.eval_harness.cli import _extract_identities
+from scripts.eval_harness._pathtext import _printable_path
+from scripts.eval_harness.cli import _extract_identities, _image_dimensions
 from scripts.eval_harness.corpus_inventory import ImageRecord, dedupe_by_sha256, load_records
+from scripts.eval_harness.face_metrics import latency_summary, sort_identity_rows_by_normalized_centre
 from scripts.eval_harness.strata import Source, is_eligible
 from shared.secrets import get_secret_provider
 
@@ -92,8 +95,12 @@ class FacePassRow:
     source: str
     media_id: int
     face_count: int | None  # None iff the item errored
-    names: list[str]
+    # Positional identity rows from ``_extract_identities``: each entry is a dict
+    # ``{name, bbox, unpositioned, ...}``. Greenfield — bare-string name lists are
+    # rejected on load (A-01); old checkpoints must be discarded, not shimmmed.
+    names: list[dict[str, Any]]
     error: str | None
+    elapsed_ms: float | None = None  # per-item analyze wall-clock (open-loop, PERF-03); None on legacy rows
 
 
 def assert_scratch_tenant(client: FaceClient) -> None:
@@ -181,14 +188,47 @@ def assign_media_ids(
 
 
 _ROW_FIELDS = {f.name for f in fields(FacePassRow)}
+# Required = fields with no default. Optional fields added later (e.g. elapsed_ms) may be
+# absent on legacy checkpoint rows; those are accepted and backfilled from the dataclass
+# default rather than dropped, so a schema addition never invalidates an existing pass (A-06).
+_REQUIRED_ROW_FIELDS = {f.name for f in fields(FacePassRow) if f.default is MISSING}
+
+
+def _validate_names_elements(names: Any, *, context: str) -> list[dict[str, Any]]:
+    """Require ``names`` to be a list of identity dicts — never bare strings (A-01).
+
+    Greenfield: a checkpoint written under the pre-positional schema is discarded
+    rather than shimmmed. Wrong element type raises so load cannot silently hand
+    dict consumers a list of strings (or vice versa).
+    """
+    if not isinstance(names, list):
+        raise ValueError(f"{context}: names must be a list, got {type(names).__name__}")
+    validated: list[dict[str, Any]] = []
+    for index, entry in enumerate(names):
+        if not isinstance(entry, dict):
+            raise ValueError(
+                f"{context}: names[{index}] must be a dict with at least 'name' "
+                f"(positional identity row); got {type(entry).__name__!r} — "
+                "greenfield rejects bare-string name lists; discard the checkpoint"
+            )
+        if "name" not in entry:
+            raise ValueError(
+                f"{context}: names[{index}] is missing required key 'name' (keys present: {sorted(entry)!r})"
+            )
+        validated.append(entry)
+    return validated
 
 
 def load_face_pass_rows(path: Path) -> list[FacePassRow]:
-    """Read a checkpoint back. A truncated final line (killed mid-write) is dropped."""
+    """Read a checkpoint back. A truncated final line (killed mid-write) is dropped.
+
+    Element-type errors on ``names`` raise (A-01) — wrong shape must not load
+    silently. A torn/malformed JSON line is still skipped.
+    """
     if not path.exists():
         return []
     rows: list[FacePassRow] = []
-    for line in path.read_text().splitlines():
+    for line_no, line in enumerate(path.read_text().splitlines(), start=1):
         line = line.strip()
         if not line:
             continue
@@ -196,8 +236,11 @@ def load_face_pass_rows(path: Path) -> list[FacePassRow]:
             raw = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if not isinstance(raw, dict) or set(raw) != _ROW_FIELDS:
+        # required fields present, no unknown keys; missing optional fields backfill from defaults
+        if not isinstance(raw, dict) or not (_REQUIRED_ROW_FIELDS <= set(raw) <= _ROW_FIELDS):
             continue
+        raw = dict(raw)
+        raw["names"] = _validate_names_elements(raw.get("names"), context=f"{_printable_path(path)}:{line_no}")
         rows.append(FacePassRow(**raw))
     return rows
 
@@ -258,12 +301,19 @@ def run_face_pass(
     consecutive_failures = 0
     with out.open("a") as handle:
         for index, (record, source, media_id) in enumerate(candidates):
+            t0 = time.perf_counter()
             try:
                 image_path = roots[source] / record.path
                 image_bytes = image_path.read_bytes()
+                # A-08 / VLM6-RH-03: absolute-pixel wire bboxes need image size so
+                # L→R order can share the manifest normalized-centre convention.
+                image_width, image_height = _image_dimensions(image_bytes)
                 job_id = client.analyze([(media_id, image_path.name, image_bytes)])
                 client.wait_job(job_id)
-                names, face_count = _extract_identities(client.media_identities([media_id]), media_id)
+                names, face_count, _ordering = _extract_identities(client.media_identities([media_id]), media_id)
+                names = sort_identity_rows_by_normalized_centre(
+                    names, image_width=image_width, image_height=image_height
+                )
                 row = FacePassRow(
                     sha256=record.sha256,
                     path=record.path,
@@ -272,6 +322,7 @@ def run_face_pass(
                     face_count=face_count,
                     names=names,
                     error=None,
+                    elapsed_ms=round((time.perf_counter() - t0) * 1000, 1),
                 )
             except Exception as exc:  # noqa: BLE001 — per-item isolation is the contract
                 row = FacePassRow(
@@ -282,6 +333,7 @@ def run_face_pass(
                     face_count=None,
                     names=[],
                     error=f"{type(exc).__name__}: {exc}",
+                    elapsed_ms=round((time.perf_counter() - t0) * 1000, 1),
                 )
             _append_row(handle, row)
             done.append(row)
@@ -294,16 +346,26 @@ def run_face_pass(
             if consecutive_failures >= stall_limit:
                 raise FacePassStalledError(
                     f"{consecutive_failures} consecutive item failures (last error: {row.error}); "
-                    f"aborting face pass — {len(done)} rows checkpointed to {out}",
+                    f"aborting face pass — {len(done)} rows checkpointed to {_printable_path(out)}",
                     out,
                     done,
                 )
     return done
 
 
-def summarize(rows: Sequence[FacePassRow]) -> dict[str, Any]:
+def summarize(
+    rows: Sequence[FacePassRow],
+    *,
+    wall_clock_s: float | None = None,
+    throughput_n: int | None = None,
+) -> dict[str, Any]:
     ok = [r for r in rows if r.error is None and r.face_count is not None]
     counts = [r.face_count for r in ok]
+    # Execution stats: per-call analyze latency as PERCENTILES (PERF-01 — never an
+    # average), from open-loop per-item timing (PERF-03). Convert ms → seconds so
+    # the shared latency_summary schema matches florence_describe / describe_baseline
+    # (VLM6-RH-04). Absent on legacy rows -> latency is None.
+    latencies_s = [r.elapsed_ms / 1000.0 for r in rows if r.elapsed_ms is not None]
     return {
         "scanned": len(rows),
         "ok": len(ok),
@@ -311,6 +373,13 @@ def summarize(rows: Sequence[FacePassRow]) -> dict[str, Any]:
         "with_faces": sum(1 for c in counts if c >= 1),
         "crowds": sum(1 for c in counts if c >= 3),
         "faces_found": sum(counts),
+        "latency": latency_summary(
+            latencies_s,
+            unit="s",
+            wall_clock_s=wall_clock_s,
+            throughput_n=throughput_n,
+            decimals=3,
+        ),
     }
 
 
@@ -363,7 +432,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
     rows: list[tuple[ImageRecord, Source]] = []
     for source, path in args.inventory:
         if not path.is_file():
-            parser.error(f"inventory not found: {path}")
+            parser.error(f"inventory not found: {_printable_path(path)}")
         if source not in roots:
             parser.error(f"no --root given for source {source}")
         rows.extend((record, source) for record in load_records(path))
@@ -376,12 +445,16 @@ def _main(argv: Sequence[str] | None = None) -> int:
         done_sha = frozenset(r.sha256 for r in resume_rows if r.error is None)
         candidates = select_candidates(rows, limit=args.limit, done_sha256=done_sha)
         with_ids = assign_media_ids(candidates, existing={r.sha256: r.media_id for r in resume_rows})
-        print(f"{len(with_ids)} candidates (resumed {len(resume_rows)}) -> {args.out}", flush=True)
+        print(
+            f"{len(with_ids)} candidates (resumed {len(resume_rows)}) -> {_printable_path(args.out)}",
+            flush=True,
+        )
 
         def progress(index: int, row: FacePassRow) -> None:
             if (index + 1) % 25 == 0:
                 print(f"  {index + 1}/{len(with_ids)} ...", flush=True)
 
+        t_start = time.perf_counter()
         done = run_face_pass(
             with_ids,
             client,
@@ -391,6 +464,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
             stall_limit=args.stall_limit,
             on_progress=progress,
         )
+        wall_s = time.perf_counter() - t_start
     except SeededTenantError as exc:
         print(f"REFUSED: {exc}", file=sys.stderr)
         return 2
@@ -400,7 +474,14 @@ def _main(argv: Sequence[str] | None = None) -> int:
     finally:
         client.close()
 
-    summary = summarize(done)
+    # Wall-clock throughput for THIS run folds into the shared latency schema
+    # (VLM6-RH-04). Resumed rows were timed in their own run; analyzed_this_run
+    # stays under ``run`` as operational metadata.
+    summary = summarize(done, wall_clock_s=wall_s, throughput_n=len(with_ids))
+    summary["run"] = {
+        "analyzed_this_run": len(with_ids),
+        "resumed": len(resume_rows),
+    }
     print(json.dumps(summary, indent=2))
     return 0
 

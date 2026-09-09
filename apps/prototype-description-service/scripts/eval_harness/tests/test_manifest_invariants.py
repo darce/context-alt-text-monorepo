@@ -14,6 +14,7 @@ import pytest
 
 from scripts.eval_harness.manifest import (
     AnnotationMode,
+    HashVerificationSkippedWarning,
     LEGACY_IMPORT_CAPTURE_SESSION_ID,
     ManifestError,
     legacy_import_lineage,
@@ -65,7 +66,8 @@ def _write_manifest(tmp_path: Path, doc: dict, name: str = "manifest.json") -> P
 
 def test_provenanced_fixture_loads() -> None:
     """Positive pair: a fully-provenanced fixture still loads."""
-    manifest = load_manifest(str(PROVENANCED))
+    # Metadata-only fixture load; never opens image bytes (VLM6-PANEL6L-rvM-01).
+    manifest = load_manifest(str(PROVENANCED), skip_hash_verification=True)
     assert len(manifest.entries) == 2
     assert all(entry.provenance is not None for entry in manifest.entries)
     assert {entry.media_id for entry in manifest.entries} == {101, 102}
@@ -146,7 +148,8 @@ def test_aggregate_missing_provenance_names_every_path(tmp_path: Path) -> None:
 
 def test_valid_sha256_loads() -> None:
     """Positive pair: 64 lowercase hex sha256 is accepted."""
-    manifest = load_manifest(str(PROVENANCED))
+    # Metadata-only fixture load; never opens image bytes (VLM6-PANEL6L-rvM-01).
+    manifest = load_manifest(str(PROVENANCED), skip_hash_verification=True)
     assert manifest.entries[0].sha256 == "a" * 64
 
 
@@ -161,7 +164,8 @@ def test_invalid_sha256_form_raises(tmp_path: Path) -> None:
 
 def test_unique_media_id_and_path_load() -> None:
     """Positive pair: distinct media_id and path are accepted."""
-    manifest = load_manifest(str(PROVENANCED))
+    # Metadata-only fixture load; never opens image bytes (VLM6-PANEL6L-rvM-01).
+    manifest = load_manifest(str(PROVENANCED), skip_hash_verification=True)
     ids = [entry.media_id for entry in manifest.entries]
     paths = [entry.path for entry in manifest.entries]
     assert len(ids) == len(set(ids))
@@ -189,7 +193,8 @@ def test_duplicate_path_raises(tmp_path: Path) -> None:
 
 def test_roster_member_loads() -> None:
     """Positive pair: identities on the roster are accepted."""
-    manifest = load_manifest(str(PROVENANCED))
+    # Metadata-only fixture load; never opens image bytes (VLM6-PANEL6L-rvM-01).
+    manifest = load_manifest(str(PROVENANCED), skip_hash_verification=True)
     roster = set(manifest.roster)
     for entry in manifest.entries:
         assert set(entry.present_identities) <= roster
@@ -287,7 +292,8 @@ def test_load_legacy_manifest_rejects_v3() -> None:
 
 
 def test_provenanced_fixture_is_v3_roster_only() -> None:
-    manifest = load_manifest(str(PROVENANCED))
+    # Metadata-only fixture load; never opens image bytes (VLM6-PANEL6L-rvM-01).
+    manifest = load_manifest(str(PROVENANCED), skip_hash_verification=True)
     assert manifest.manifest_version == 3
     assert manifest.annotation_mode is AnnotationMode.ROSTER_ONLY
     assert all(box.lineage is not None for e in manifest.entries for box in e.face_boxes)
@@ -315,7 +321,24 @@ def test_cli_gate_commands_do_not_call_load_legacy_manifest(tmp_path: Path, monk
         monkeypatch.setattr(cli_mod, "load_legacy_manifest", _sentinel)
 
     man_path = tmp_path / "golden.json"
-    man_path.write_text(PROVENANCED.read_text(encoding="utf-8"), encoding="utf-8")
+    # PROVENANCED is the canonical FIR-11 fixture (byte-identical to main's
+    # committed copy) and both its entries carry easy_wrong=[]; that trips the
+    # branch-only empty-rubric gate (SCORE_GATE_PREFIX_EMPTY_RUBRIC, cli.py) on
+    # its own vacuity check before this test's target gate
+    # (raise_if_unconsented_refusals) is ever reached. Mutate a local in-test
+    # copy only — the shared fixture file stays canonical for the other tests
+    # in this module that assert on its literal committed bytes/hash.
+    manifest_doc = json.loads(PROVENANCED.read_text(encoding="utf-8"))
+    # roster_only mode requires every must_right/easy_wrong name to be a
+    # roster member (manifest.py::load_manifest); reuse the other fixture
+    # identity rather than inventing an off-roster name.
+    manifest_doc["entries"][0]["easy_wrong"] = ["Quiet Example"]
+    man_path.write_text(json.dumps(manifest_doc), encoding="utf-8")
+    # Real score-time manifest sha (VLM6-F-03 / EVAL-13 drift gate; metadata-only
+    # load, mirrors cli.py::_manifest_sha).
+    from scripts.eval_harness.cli import _manifest_sha as _cli_manifest_sha
+
+    manifest_sha = _cli_manifest_sha(load_manifest(str(man_path), skip_hash_verification=True))
     record_path = tmp_path / "run.json"
     record_path.write_text(
         json.dumps(
@@ -323,7 +346,7 @@ def test_cli_gate_commands_do_not_call_load_legacy_manifest(tmp_path: Path, monk
                 "schema": "acx-eval/v1",
                 "kind": "run_record",
                 "provenance": {
-                    "manifest_sha256": "m" * 64,
+                    "manifest_sha256": manifest_sha,
                     "base_url": "x",
                     "head_sha": "0" * 40,
                     "started_at": "t",
@@ -333,15 +356,18 @@ def test_cli_gate_commands_do_not_call_load_legacy_manifest(tmp_path: Path, monk
                         "media_id": 101,
                         "path": "fixtures/ada_example_101.jpg",
                         "describe": {"alt_text_draft": "Ada Example.", "visual_facts": {"objects": []}},
-                        "identities": ["Ada Example"],
+                        # Dict identity rows (greenfield rejects bare strings —
+                        # VLM6-PANEL6L-SR-01); shape mirrors
+                        # fusion_runner.py::_identity_rows.
+                        "identities": [{"name": "Ada Example", "unpositioned": True}],
                         "face_count": 1,
                         "error": None,
                     },
                     {
                         "media_id": 102,
                         "path": "fixtures/quiet_example_102.jpg",
-                        "describe": {"alt_text_draft": "Bea Example.", "visual_facts": {"objects": []}},
-                        "identities": ["Bea Example"],
+                        "describe": {"alt_text_draft": "Quiet Example.", "visual_facts": {"objects": []}},
+                        "identities": [{"name": "Quiet Example", "unpositioned": True}],
                         "face_count": 1,
                         "error": None,
                     },
@@ -353,7 +379,22 @@ def test_cli_gate_commands_do_not_call_load_legacy_manifest(tmp_path: Path, monk
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
     with pytest.raises(SystemExit) as exc:
         cli_mod.main(["score", "--manifest", str(man_path), "--run-record", str(record_path)])
-    assert exc.value.code == 3
+    # VLM6-DELTA-12: this branch grew a much larger adoption-quality gate
+    # apparatus on top of FIR-11 (empty-rubric, must-right-failures,
+    # wrong-name-floor, quality-floor, category-vacuity — none of which exist
+    # on main's cli.py, confirmed via `git show main:.../cli.py`, 1082 lines vs
+    # this branch's ~2900). A minimal 2-image toy corpus legitimately trips
+    # category-vacuity (undersized-sample / vacuous-category not_ready) ahead
+    # of this test's original target gate (raise_if_unconsented_refusals,
+    # int exit 3); reaching that specific gate would require constructing a
+    # fully claim-complete corpus (positional/placement/identity_ordering
+    # facts matching manifest GT) that is out of scope for a sentinel test
+    # whose only real invariant is "the legacy manifest loader is never
+    # called on the gate path." Assert the exit is a real, accounted-for
+    # score gate (frozenset membership — not a bare crash/traceback) instead
+    # of pinning to one specific downstream gate's exit code.
+    assert isinstance(exc.value.code, str)
+    assert any(exc.value.code.startswith(prefix) for prefix in cli_mod.SCORE_GATE_PREFIXES)
     assert hits == []
 
 
@@ -390,7 +431,8 @@ def test_corpus646_retag_loads_as_roster_only() -> None:
     """Regression: retagged corpus646 loads clean under the v3 gate loader."""
     path = Path(__file__).resolve().parents[1] / "corpus646-interleave-manifest-20260716.json"
     assert path.is_file()
-    manifest = load_manifest(str(path))
+    # Metadata-only fixture load; never opens image bytes (VLM6-PANEL6L-rvM-01).
+    manifest = load_manifest(str(path), skip_hash_verification=True)
     assert manifest.annotation_mode is AnnotationMode.ROSTER_ONLY
     assert manifest.manifest_version == 3
     assert len(manifest.entries) == 646
@@ -470,3 +512,16 @@ def test_legacy_import_helper_session_does_not_load_exhaustive(tmp_path: Path) -
         load_manifest(str(path))
     assert exc_info.value.invariant == "capture_session_id_required"
     assert LEGACY_IMPORT_CAPTURE_SESSION_ID in str(exc_info.value)
+
+
+def test_skip_hash_verification_warns(tmp_path: Path) -> None:
+    """VLM6-PANEL6L-rvM-03: the metadata-only skip must not be a silent no-op."""
+    with pytest.warns(HashVerificationSkippedWarning, match="hash verification skipped"):
+        load_manifest(str(PROVENANCED), skip_hash_verification=True)
+
+
+def test_verified_load_does_not_warn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recwarn: pytest.WarningsRecorder) -> None:
+    """Paired positive (TEST-15): a real images_dir verified load stays silent."""
+    monkeypatch.setattr("scripts.eval_harness.manifest._verify_hashes", lambda manifest, images_root: None)
+    load_manifest(str(PROVENANCED), images_dir=str(tmp_path))
+    assert not any(issubclass(w.category, HashVerificationSkippedWarning) for w in recwarn.list)

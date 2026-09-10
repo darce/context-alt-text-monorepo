@@ -1,0 +1,103 @@
+@use '../tokens/colors';
+@use '../tokens/radius';
+@use '../tokens/spacing';
+@use '../tokens/typography';
+
+.acx-guided-face-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+
+  /* Keep the controls mounted and keyboard-addressable while the parent figure
+   * is not revealing the overlay. The `hidden` state is intentionally a visual
+   * pointer affordance here; the buttons remain native, enabled tab stops
+   * [INT-04][A11Y-10][A11Y-11]. */
+  &[hidden] {
+    display: block;
+    opacity: var(--acx-opacity-hidden);
+  }
+
+  &__outline {
+    position: absolute;
+    display: block;
+    box-sizing: border-box;
+    min-width: var(--acx-space-24);
+    min-height: var(--acx-space-24);
+    margin: 0;
+    padding: 0;
+    border: 2px solid var(--acx-color-accent);
+    border-radius: var(--acx-radius-sm);
+    background: transparent;
+    color: var(--acx-color-text);
+    cursor: pointer;
+    overflow: visible;
+    pointer-events: auto;
+    transition:
+      border-color 120ms ease-in,
+      border-style 120ms ease-in,
+      box-shadow 120ms ease-in;
+
+    &:focus-visible {
+      outline: var(--acx-space-2) solid var(--acx-color-accent);
+      outline-offset: var(--acx-space-2);
+    }
+
+    &--weak {
+      border-style: dashed;
+      border-color: var(--acx-color-warning-border);
+    }
+
+    &--highlighted {
+      border-width: 3px;
+      box-shadow:
+        0 0 0 1px var(--acx-color-surface-alt),
+        inset 0 0 0 1px var(--acx-color-surface-alt);
+    }
+  }
+
+  &[hidden] &__outline {
+    pointer-events: none;
+  }
+
+  &__chip {
+    position: absolute;
+    top: 0;
+    left: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--acx-space-4);
+    min-height: var(--acx-space-24);
+    max-width: 18rem;
+    padding: var(--acx-space-4) var(--acx-space-8);
+    transform: translateY(-100%);
+    border: 1px solid var(--acx-color-border);
+    border-radius: var(--acx-radius-pill);
+    background: var(--acx-color-surface-alt);
+    color: var(--acx-color-text);
+    box-shadow: var(--acx-shadow-1);
+    font-size: var(--acx-text-xs);
+    font-weight: var(--acx-font-weight-semibold);
+    line-height: var(--acx-leading-tight);
+    pointer-events: none;
+    white-space: nowrap;
+  }
+
+  &__chip--weak {
+    border-color: var(--acx-color-warning-border);
+    background: var(--acx-color-warning-pill-bg);
+    color: var(--acx-color-warning-pill-text);
+  }
+
+  &__warning-icon {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    color: var(--acx-color-warning-border);
+  }
+
+  &__chip-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}

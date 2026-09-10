@@ -85,17 +85,21 @@ describe('GuidedFaceOverlay', () => {
     expect(onHighlightChange).toHaveBeenLastCalledWith(null);
   });
 
-  it('marks the layer hidden while retaining its face buttons in the DOM and tab order', () => {
+  it('keeps hidden-state face buttons queryable and focusable', () => {
     render(<GuidedFaceOverlay faces={faces} naturalSize={naturalSize} visible={false} idPrefix="guided-tribeca" />);
 
     const layer = screen.getByTestId('guided-face-overlay');
-    const buttons = Array.from(layer.querySelectorAll('button'));
-    expect(layer).toHaveAttribute('hidden');
+    const buttons = faces.map((face) =>
+      screen.getByRole('button', { name: `${face.label}, ${face.similarityText}` }),
+    );
+    expect(layer).not.toHaveAttribute('hidden');
     expect(buttons).toHaveLength(faces.length);
     expect(layer.querySelectorAll('[aria-hidden="true"]')).toHaveLength(1);
     buttons.forEach((button) => {
       expect(button).not.toHaveAttribute('hidden');
       expect(button).toHaveAttribute('tabindex', '0');
+      button.focus();
+      expect(button).toHaveFocus();
     });
   });
 

@@ -8,15 +8,6 @@
   inset: 0;
   pointer-events: none;
 
-  /* Keep the controls mounted and keyboard-addressable while the parent figure
-   * is not revealing the overlay. The `hidden` state is intentionally a visual
-   * pointer affordance here; the buttons remain native, enabled tab stops
-   * [INT-04][A11Y-10][A11Y-11]. */
-  &[hidden] {
-    display: block;
-    opacity: var(--acx-opacity-hidden);
-  }
-
   &__outline {
     position: absolute;
     display: block;
@@ -31,13 +22,17 @@
     color: var(--acx-color-text);
     cursor: pointer;
     overflow: visible;
-    pointer-events: auto;
+    pointer-events: none;
+    opacity: var(--acx-opacity-hidden);
     transition:
+      opacity 120ms ease-in,
       border-color 120ms ease-in,
       border-style 120ms ease-in,
       box-shadow 120ms ease-in;
 
     &:focus-visible {
+      pointer-events: auto;
+      opacity: var(--acx-opacity-visible);
       outline: var(--acx-space-2) solid var(--acx-color-accent);
       outline-offset: var(--acx-space-2);
     }
@@ -55,8 +50,17 @@
     }
   }
 
-  &[hidden] &__outline {
-    pointer-events: none;
+  &[data-visible='true'] &__outline,
+  figure:hover & &__outline,
+  figure:focus-within & &__outline {
+    pointer-events: auto;
+    opacity: var(--acx-opacity-visible);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    &__outline {
+      transition: none;
+    }
   }
 
   &__chip {

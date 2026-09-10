@@ -38,8 +38,9 @@ import {
   selectGuidedStep,
   undoGuidedApplication,
   type GuidedDemoState,
-  type GuidedDraftKey,
+  type GuidedImageKey,
   type GuidedNameChoice,
+  type GuidedSampleKey,
   type GuidedScenario,
 } from './state';
 
@@ -50,18 +51,39 @@ const ORIGINAL_ALT = 'A man in a black suit and a woman in a white dress pose to
 const INCLUDE = GUIDED_NAME_CHOICE.INCLUDE;
 const OMIT = GUIDED_NAME_CHOICE.OMIT;
 const UNDECIDED = GUIDED_NAME_CHOICE.UNDECIDED;
+const TRIBECA: GuidedImageKey = 'tribeca';
+const COACHELLA: GuidedImageKey = 'coachella';
 
-const withMissingSample = (scenario: GuidedScenario, key: GuidedDraftKey): GuidedScenario => ({
-  ...scenario,
-  samples: { ...scenario.samples, [key]: null },
-});
+const withMissingSample = (
+  scenario: GuidedScenario,
+  imageKey: GuidedImageKey,
+  key: GuidedSampleKey,
+): GuidedScenario => {
+  const samples = { ...scenario.samples[imageKey] };
+  delete samples[key];
+  return {
+    ...scenario,
+    samples: {
+      ...scenario.samples,
+      [imageKey]: samples,
+    },
+  };
+};
 
 const chooseBoth = (
   state: GuidedDemoState,
   scenario: GuidedScenario,
   left: GuidedNameChoice,
   right: GuidedNameChoice,
-): GuidedDemoState => chooseGuidedName(chooseGuidedName(state, scenario, 'left', left), scenario, 'right', right);
+  imageKey: GuidedImageKey = TRIBECA,
+): GuidedDemoState =>
+  chooseGuidedName(
+    chooseGuidedName(state, scenario, 'left', left, imageKey),
+    scenario,
+    'right',
+    right,
+    imageKey,
+  );
 
 const includeBoth = (scenario: GuidedScenario, state: GuidedDemoState = createGuidedDemoState()): GuidedDemoState =>
   chooseBoth(state, scenario, INCLUDE, INCLUDE);
@@ -159,8 +181,14 @@ describe('guided scenario fixture', () => {
     expect(scenario.pressPhoto.altText).toBe(ORIGINAL_ALT);
     expect(scenario.pressPhoto.credit).toBe('Colleen Sturtevant, CC BY-SA 4.0, resized');
     expect(scenario.pressPhoto.event).toBe('Tribeca Festival, New York, June 2026');
+    expect(scenario.pressPhotos[0].altContextDescription).toEqual({
+      text: 'Justin Trudeau and Katy Perry pose together on the red carpet at the Tribeca Festival in New York in June 2026. Trudeau is wearing a black tuxedo with a white shirt, while Perry is in a white sleeveless dress with a draped design. They are standing in front of a backdrop with the Tribeca Festival and 10 Lives Studios logos.',
+      system: 'altcontext.com',
+      systemUrl: 'https://altcontext.com/',
+      generatedOn: '2026-09-10',
+    });
     expect(scenario.pressPhotos[1]).toMatchObject({
-      key: 'coachella',
+      key: COACHELLA,
       credit: 'https://www.instagram.com/katyperry/',
       source: 'https://www.instagram.com/katyperry/',
       altTextAiCaption: {
@@ -168,10 +196,12 @@ describe('guided scenario fixture', () => {
         providerUrl: 'https://alttext.ai/',
         capturedOn: '10 September 2026',
       },
-      altContextDescription: {
-        model: 'Qwen3-VL-30B-A3B-Instruct',
-        generatedOn: '2026-09-10',
-      },
+    });
+    expect(scenario.pressPhotos[1].altContextDescription).toEqual({
+      text: 'Justin Trudeau and Katy Perry are sitting together outdoors at night, eating from red cups and a yellow noodle container. Trudeau wears a white t-shirt, blue jeans, and a backward blue cap, while Perry wears a white t-shirt, black boots, and holds a red cup. They are surrounded by plants and appear to be at a casual evening event.',
+      system: 'altcontext.com',
+      systemUrl: 'https://altcontext.com/',
+      generatedOn: '2026-09-10',
     });
     expect(scenario.provenance).toEqual({
       service: 'AltContext recognition service (production)',
@@ -183,7 +213,7 @@ describe('guided scenario fixture', () => {
         'The production run also grouped the bundled Coachella press photo of the same two people. Its source is Katy Perry’s Instagram account; no formal reuse licence is recorded.',
     });
     expect(scenario.visualFacts).toHaveLength(4);
-    expect(scenario.samples.none).not.toMatch(/Katy Perry|Justin Trudeau/);
+    expect(scenario.samples[TRIBECA].none).not.toMatch(/Katy Perry|Justin Trudeau/);
   });
 
   it('keeps every bundled photo credit complete and marks Creative Commons edits', () => {
@@ -205,18 +235,26 @@ describe('guided scenario fixture', () => {
 
   it('keeps every recorded sample coherent: names only where included, visual details everywhere', () => {
     const { samples } = createGuidedScenario();
+    const tribecaSamples = samples[TRIBECA];
+    const coachellaSamples = samples[COACHELLA];
 
-    expect(samples.both).toBe(
+    expect(tribecaSamples.both).toBe(
       "Justin Trudeau and Katy Perry pose together on the red carpet at the Tribeca Festival, standing in front of a backdrop with the event's logo. Trudeau is wearing a black tuxedo with a white shirt, while Perry is in a white sleeveless dress with a draped design. Perry has her arm around Trudeau and is smiling, showing off a ring on her left hand.",
     );
-    expect(samples['katy-perry']).toContain('Katy Perry');
-    expect(samples['katy-perry']).not.toContain('Justin Trudeau');
-    expect(samples['justin-trudeau']).toContain('Justin Trudeau');
-    expect(samples['justin-trudeau']).not.toContain('Katy Perry');
-    for (const text of Object.values(samples)) {
+    expect(tribecaSamples['katy-perry']).toContain('Katy Perry');
+    expect(tribecaSamples['katy-perry']).not.toContain('Justin Trudeau');
+    expect(tribecaSamples['justin-trudeau']).toContain('Justin Trudeau');
+    expect(tribecaSamples['justin-trudeau']).not.toContain('Katy Perry');
+    for (const text of Object.values(tribecaSamples)) {
       expect(text).toContain('Tribeca Festival');
       expect(text).toContain('hand');
     }
+    expect(coachellaSamples).toEqual({
+      none: 'A man and a woman are sitting together outdoors at night, eating from red cups and a yellow container of noodles. The man, wearing a white t-shirt and blue jeans, holds chopsticks and a cup, while the woman, in a white top and black boots, eats from a cup. They are surrounded by plants and trees in a relaxed, casual setting.',
+      both: 'Justin Trudeau and Katy Perry are sitting together outdoors at night, eating from red cups and a yellow noodle container. Trudeau wears a white t-shirt, blue jeans, and a backward blue cap, while Perry wears a white t-shirt, black boots, and holds a red cup. They are surrounded by plants and appear to be at a casual evening event.',
+    });
+    expect(coachellaSamples).not.toHaveProperty('katy-perry');
+    expect(coachellaSamples).not.toHaveProperty('justin-trudeau');
   });
 
   it('counts only bundled reference photos per person', () => {
@@ -278,8 +316,13 @@ describe('selectors', () => {
   it('guidedSampleFor returns the matching recorded sample or null', () => {
     const scenario = createGuidedScenario();
     expect(guidedSampleFor(scenario, { left: UNDECIDED, right: INCLUDE })).toBeNull();
-    expect(guidedSampleFor(scenario, { left: INCLUDE, right: INCLUDE })).toBe(scenario.samples.both);
-    expect(guidedSampleFor(withMissingSample(scenario, 'none'), { left: OMIT, right: OMIT })).toBeNull();
+    expect(guidedSampleFor(scenario, { left: INCLUDE, right: INCLUDE })).toBe(scenario.samples[TRIBECA].both);
+    expect(guidedSampleFor(scenario, { left: OMIT, right: OMIT }, COACHELLA)).toBe(scenario.samples[COACHELLA].none);
+    expect(guidedSampleFor(scenario, { left: INCLUDE, right: INCLUDE }, COACHELLA)).toBe(
+      scenario.samples[COACHELLA].both,
+    );
+    expect(guidedSampleFor(withMissingSample(scenario, TRIBECA, 'none'), { left: OMIT, right: OMIT })).toBeNull();
+    expect(guidedSampleFor(scenario, { left: INCLUDE, right: OMIT }, COACHELLA)).toBeNull();
   });
 
   it('guidedStepIndex is the 0-based order of the four steps', () => {
@@ -308,7 +351,7 @@ describe('derived guards', () => {
     expect(canPreview(ready)).toBe(true);
     expect(canPreview(editGuidedDraft(ready, '   '))).toBe(false);
     expect(canPreview(editGuidedDraft(ready, ''))).toBe(false);
-    const missing = chooseBoth(start, withMissingSample(scenario, 'both'), INCLUDE, INCLUDE);
+    const missing = chooseBoth(start, withMissingSample(scenario, TRIBECA, 'both'), INCLUDE, INCLUDE);
     expect(missing.draftStatus).toBe(GUIDED_DRAFT_STATUS.FIXTURE_MISSING);
     expect(canPreview(missing)).toBe(false);
   });
@@ -413,12 +456,23 @@ describe('chooseGuidedName', () => {
     const scenario = createGuidedScenario();
     const previewed = previewGuidedDraft(includeBoth(scenario));
     const changed = chooseGuidedName(previewed, scenario, 'right', OMIT);
-    expect(changed.draftText).toBe(scenario.samples['justin-trudeau']);
+    expect(changed.draftText).toBe(scenario.samples[TRIBECA]['justin-trudeau']);
     expect(changed.draftOrigin).toBe(GUIDED_DRAFT_ORIGIN.RECORDED_SAMPLE);
     expect(changed.draftVersion).toBe(previewed.draftVersion + 1);
     expect(changed.previewedVersion).toBeNull();
     expect(changed.outcome).toBe(GUIDED_OUTCOME.NOT_FINISHED);
     expect(changed.appliedAltText).toBe(previewed.appliedAltText);
+  });
+
+  it('uses the selected image sample and reports absent variants as fixture_missing', () => {
+    const scenario = createGuidedScenario();
+    const coachellaBoth = chooseBoth(createGuidedDemoState(), scenario, INCLUDE, INCLUDE, COACHELLA);
+    expect(coachellaBoth.draftStatus).toBe(GUIDED_DRAFT_STATUS.READY);
+    expect(coachellaBoth.draftText).toBe(scenario.samples[COACHELLA].both);
+
+    const coachellaPartial = chooseBoth(createGuidedDemoState(), scenario, INCLUDE, OMIT, COACHELLA);
+    expect(coachellaPartial.draftStatus).toBe(GUIDED_DRAFT_STATUS.FIXTURE_MISSING);
+    expect(coachellaPartial.draftText).toBeNull();
   });
 
   it('covers every include/omit combination and every one-undecided state (T03)', () => {
@@ -427,7 +481,7 @@ describe('chooseGuidedName', () => {
     const cases: Array<{
       left: GuidedNameChoice;
       right: GuidedNameChoice;
-      key: GuidedDraftKey | null;
+      key: GuidedSampleKey | null;
     }> = [
       { left: UNDECIDED, right: UNDECIDED, key: null },
       { left: INCLUDE, right: UNDECIDED, key: null },
@@ -456,7 +510,7 @@ describe('chooseGuidedName', () => {
         expect(canApply(state)).toBe(false);
       } else {
         expect(state.draftStatus).toBe(GUIDED_DRAFT_STATUS.READY);
-        expect(state.draftText).toBe(scenario.samples[key]);
+        expect(state.draftText).toBe(scenario.samples[TRIBECA][key]);
         expect(state.draftOrigin).toBe(GUIDED_DRAFT_ORIGIN.RECORDED_SAMPLE);
       }
     }
@@ -540,7 +594,7 @@ describe('confirmGuidedChoiceReplacement and cancelGuidedChoiceReplacement', () 
     const confirmed = confirmGuidedChoiceReplacement(chooseGuidedName(edited, scenario, 'right', OMIT), scenario);
     expect(confirmed.pendingChoiceChange).toBeNull();
     expect(confirmed.choices).toEqual({ left: INCLUDE, right: OMIT });
-    expect(confirmed.draftText).toBe(scenario.samples['justin-trudeau']);
+    expect(confirmed.draftText).toBe(scenario.samples[TRIBECA]['justin-trudeau']);
     expect(confirmed.draftOrigin).toBe(GUIDED_DRAFT_ORIGIN.RECORDED_SAMPLE);
     expect(confirmed.draftVersion).toBe(edited.draftVersion + 1);
     expect(confirmed.previewedVersion).toBeNull();
@@ -565,7 +619,7 @@ describe('editGuidedDraft', () => {
   });
 
   it('returns the same reference when the sample is missing', () => {
-    const scenario = withMissingSample(createGuidedScenario(), 'both');
+    const scenario = withMissingSample(createGuidedScenario(), TRIBECA, 'both');
     const missing = chooseBoth(createGuidedDemoState(), scenario, INCLUDE, INCLUDE);
     expect(editGuidedDraft(missing, 'Cannot edit a missing sample.')).toBe(missing);
   });
@@ -707,7 +761,7 @@ describe('keepGuidedCurrentAltText', () => {
   });
 
   it('remains available when the matching sample is missing (T04)', () => {
-    const scenario = withMissingSample(createGuidedScenario(), 'justin-trudeau');
+    const scenario = withMissingSample(createGuidedScenario(), TRIBECA, 'justin-trudeau');
     const missing = chooseBoth(createGuidedDemoState(), scenario, INCLUDE, OMIT);
     const kept = keepGuidedCurrentAltText(missing);
     expect(kept.outcome).toBe(GUIDED_OUTCOME.KEPT);
@@ -788,7 +842,7 @@ describe('resetGuidedDemoState', () => {
 
 describe('retryGuidedFixture', () => {
   it('marks a missing sample as fixture_missing without inventing text or changing applied alt (T04)', () => {
-    const scenario = withMissingSample(createGuidedScenario(), 'justin-trudeau');
+    const scenario = withMissingSample(createGuidedScenario(), TRIBECA, 'justin-trudeau');
     const missing = chooseBoth(createGuidedDemoState(), scenario, INCLUDE, OMIT);
     expect(missing.draftStatus).toBe(GUIDED_DRAFT_STATUS.FIXTURE_MISSING);
     expect(missing.draftText).toBeNull();
@@ -805,20 +859,28 @@ describe('retryGuidedFixture', () => {
     const scenario = createGuidedScenario();
     const ready = includeBoth(scenario);
     expect(retryGuidedFixture(ready, scenario)).toBe(ready);
-    const missingScenario = withMissingSample(scenario, 'both');
+    const missingScenario = withMissingSample(scenario, TRIBECA, 'both');
     const missing = chooseBoth(createGuidedDemoState(), missingScenario, INCLUDE, INCLUDE);
     expect(retryGuidedFixture(missing, missingScenario)).toBe(missing);
   });
 
   it('loads the recorded sample when a retry finds it', () => {
-    const missingScenario = withMissingSample(createGuidedScenario(), 'both');
+    const missingScenario = withMissingSample(createGuidedScenario(), TRIBECA, 'both');
     const missing = chooseBoth(createGuidedDemoState(), missingScenario, INCLUDE, INCLUDE);
     const recovered = retryGuidedFixture(missing, createGuidedScenario());
     expect(recovered.draftStatus).toBe(GUIDED_DRAFT_STATUS.READY);
     expect(recovered.draftOrigin).toBe(GUIDED_DRAFT_ORIGIN.RECORDED_SAMPLE);
-    expect(recovered.draftText).toBe(createGuidedScenario().samples.both);
+    expect(recovered.draftText).toBe(createGuidedScenario().samples[TRIBECA].both);
     expect(recovered.draftVersion).toBe(missing.draftVersion + 1);
     expect(recovered.previewedVersion).toBeNull();
+  });
+
+  it('retries against the selected image sample set', () => {
+    const missingScenario = withMissingSample(createGuidedScenario(), COACHELLA, 'both');
+    const missing = chooseBoth(createGuidedDemoState(), missingScenario, INCLUDE, INCLUDE, COACHELLA);
+    const recovered = retryGuidedFixture(missing, createGuidedScenario(), COACHELLA);
+    expect(recovered.draftStatus).toBe(GUIDED_DRAFT_STATUS.READY);
+    expect(recovered.draftText).toBe(createGuidedScenario().samples[COACHELLA].both);
   });
 });
 

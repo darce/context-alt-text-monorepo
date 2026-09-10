@@ -37,10 +37,11 @@ export const GuidedPrototypeEntrance = ({
           <a href={escapeHref}>{guidedCopy('nav.home')}</a>
           <ExternalGuideLink href={CASE_STUDY_URL}>{guidedCopy('nav.case_study')}</ExternalGuideLink>
         </nav>
+        <h1 id="acx-guided-entrance-title">{guidedCopy('entry.title.public')}</h1>
+        <p className="acx-guided-entrance__intro">{guidedCopy('entry.intro.public')}</p>
         <p className="acx-guided-entrance__scope" data-testid="guided-scope">
           {guidedCopy('scope.public')}
         </p>
-        <h1 id="acx-guided-entrance-title">{guidedCopy('page.title')}</h1>
         <div className="acx-guided-entrance__actions">
           <button type="button" className="acx-button acx-button--primary" onClick={onBegin}>
             {guidedCopy('page.start')}

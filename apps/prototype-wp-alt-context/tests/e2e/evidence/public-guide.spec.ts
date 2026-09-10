@@ -18,9 +18,8 @@ import {
  */
 
 const PUBLIC_SCOPE =
-  'Try the review workflow using a recorded example. Your changes affect only the demo copy in this tab.';
-const FALLBACK =
-  'The walkthrough could not load. Reload the page, or watch the recorded video on the case study page.';
+  'This is a supplied example roster with recorded drafts. Your choices change only the demo copy in this tab; they do not update WordPress or a server roster.';
+const FALLBACK = 'The walkthrough could not load. Reload the page and try again.';
 const STEP_TIMEOUT_MS = 20_000;
 
 const configuredUrl = (process.env.ACX_PUBLIC_GUIDE_URL ?? '').trim();
@@ -120,8 +119,9 @@ test.describe('public guide signed-out', () => {
 
         await expect(page.locator('link[rel="canonical"]')).toHaveAttribute('href', /\/guide\/?$/);
         await expect(page.getByTestId('guided-scope')).toHaveText(PUBLIC_SCOPE);
+        await expect(page.getByRole('heading', { level: 1, name: 'Review a recorded alt text example' })).toBeVisible();
+        await expect(page.getByText(/Inspect the festival photo and its page context/)).toBeVisible();
         await expect(page.getByRole('button', { name: 'Start the walkthrough' })).toBeVisible();
-        await expect(page.getByRole('link', { name: 'Watch the recording' })).toBeVisible();
         await expect(page.getByRole('link', { name: 'Read the case study' })).toBeVisible();
 
         await completeKeyboardWalkthrough(page);

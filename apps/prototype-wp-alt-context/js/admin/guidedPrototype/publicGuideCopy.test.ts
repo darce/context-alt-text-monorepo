@@ -10,7 +10,6 @@ import {
   PUBLIC_GUIDE_FALLBACK,
   PUBLIC_GUIDE_LOADING,
   PUBLIC_GUIDED_COPY,
-  RECORDING_URL,
   guidedCopy,
 } from './publicGuideCopy';
 
@@ -19,17 +18,30 @@ const GENERATED_COPY = resolve(here, 'copy.ts');
 const PUBLIC_COPY = resolve(here, 'publicGuideCopy.ts');
 
 const PUBLIC_KEYS = [
+  'entry.title.public',
+  'entry.intro.public',
   'scope.public',
-  'entry.watch',
   'entry.read_case_study',
   'nav.leave',
   'nav.home',
   'nav.case_study',
+  'roster.explainer.title',
+  'roster.explainer.body',
+  'roster.explainer.purpose',
+  'names.scope.public',
+  'feedback.choices.public',
+  'context.source.summary.public',
+  'context.source.comparison_boundary.public',
+  'draft.origin.public',
+  'draft.context.public',
+  'outcome.scope.public',
+  'outcome.next_batch.public',
+  'outcome.kept_body.public',
   'notes.recorded_public',
 ] as const;
 
 const PUBLIC_SCOPE =
-  'Try the review workflow using a recorded example. Your changes affect only the demo copy in this tab.';
+  'This is a supplied example roster with recorded drafts. Your choices change only the demo copy in this tab; they do not update WordPress or a server roster.';
 
 describe('public guide copy overlay', () => {
   it('keeps public keys and CASE_STUDY_URL out of the generated catalog file', () => {
@@ -50,14 +62,14 @@ describe('public guide copy overlay', () => {
 
   it('exports the documented case-study URL and public scope copy', () => {
     expect(CASE_STUDY_URL).toBe('https://darce.xyz/projects/altcontext/');
-    expect(RECORDING_URL).toBe(`${CASE_STUDY_URL}#recording`);
-    expect(RECORDING_URL).not.toBe(CASE_STUDY_URL);
+    expect(PUBLIC_GUIDED_COPY['entry.title.public']).toBe('Review a recorded alt text example');
+    expect(PUBLIC_GUIDED_COPY['entry.intro.public']).toContain('Inspect the festival photo');
     expect(guidedCopy('scope.public')).toBe(PUBLIC_SCOPE);
-    expect(PUBLIC_GUIDED_COPY['entry.watch']).toBe('Watch the recording');
     expect(PUBLIC_GUIDED_COPY['entry.read_case_study']).toBe('Read the case study');
     expect(PUBLIC_GUIDED_COPY['notes.recorded_public']).not.toMatch(/Live generation/);
     expect(guidedCopy('nav.leave')).toBe('Leave the walkthrough');
     expect(PUBLIC_GUIDE_FALLBACK).toMatch(/Reload the page/);
+    expect(PUBLIC_GUIDE_FALLBACK).toBe('The walkthrough could not load. Reload the page and try again.');
     expect(PUBLIC_GUIDE_LOADING).toBe('Loading the walkthrough.');
     expect(guidedCopy('page.start')).toBe('Start the walkthrough');
   });

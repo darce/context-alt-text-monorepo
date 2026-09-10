@@ -278,9 +278,29 @@ echo "==> Cycle plugin activation so activation-hook dbDelta applies schema chan
 compose run --rm --no-deps wpcli wp plugin deactivate alt-context || true
 compose run --rm --no-deps wpcli wp plugin activate alt-context
 
-# Activation runs after init; flush in a fresh request where the enabled guide
-# has registered its rewrite, so an update cannot leave /guide/ returning 404.
-wpcli wp rewrite flush
+# The rewrite flush above runs BEFORE the plugin exists, so the plugin's own
+# rules (notably ^guide/?$ for the signed-out public guide) are absent from the
+# stored rules array and /guide/ 404s until something flushes again. Flush after
+# activation, then assert the guide rule is present whenever the public guide
+# option is on, so a redeploy fails loudly instead of silently breaking the
+# live demo.
+echo "==> Re-flushing rewrites after plugin activation (plugin rules register on init)"
+wpcli wp rewrite flush --hard
+
+public_guide_enabled="$(wpcli wp option get acx_public_guide_enabled 2>/dev/null | tr -d '[:space:]' || true)"
+case "$public_guide_enabled" in
+  1|true|TRUE|True)
+    if wpcli wp rewrite list --format=csv 2>/dev/null | grep -q '\^guide'; then
+      echo "public guide rewrite rule present"
+    else
+      echo "ERROR: acx_public_guide_enabled=${public_guide_enabled} but no ^guide/?$ rewrite rule after flush; /guide/ would 404." >&2
+      exit 6
+    fi
+    ;;
+  *)
+    echo "acx_public_guide_enabled=${public_guide_enabled:-0}; skipping guide rewrite assertion"
+    ;;
+esac
 
 # wp-cli --format=count -> digits, or "" on failure/non-numeric so the
 # classifier BLOCKs instead of guessing.

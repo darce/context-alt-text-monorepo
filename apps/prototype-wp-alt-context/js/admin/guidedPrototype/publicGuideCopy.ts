@@ -45,7 +45,6 @@ export const PUBLIC_GUIDED_COPY = {
   'context.photo.revision': 'Model revision: {revision}.',
   'context.photo.no_caption': 'No AltText.ai comparison caption has been captured for this photo yet.',
   'context.external_link': '{label} (opens in a new window)',
-  'provenance.recorded': 'Recorded face-match run: 10 September 2026. Recognition is not running during this walkthrough.',
   'names.threshold': 'The displayed recognition threshold is {threshold}.',
   'names.photo.tribeca': 'Tribeca press photo',
   'names.photo.coachella': 'Coachella press photo',

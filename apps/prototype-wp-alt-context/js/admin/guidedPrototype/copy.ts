@@ -27,7 +27,7 @@ export const GUIDED_COPY = {
   "context.purpose": "Names can be useful in this gallery when the editor has enough evidence to include them. Leaving someone unnamed is also a valid choice.",
   "context.next": "Review name suggestions",
   "provenance.disclosure": "Saved example and image credits",
-  "provenance.recorded": "Recorded face-match run: 6 September 2026. Recognition is not running during this walkthrough.",
+  "provenance.recorded": "Recorded face-match run: 10 September 2026. Recognition is not running during this walkthrough.",
   "names.intro": "For each face, compare the saved suggestion with the reference photos. Choose whether to include that name in the sample draft.",
   "names.assisted": "This is an assisted review of saved suggestions, not an independent identity check.",
   "names.suggestion": "Saved suggestion: {name}",

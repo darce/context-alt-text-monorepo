@@ -4,7 +4,7 @@
 **Source fixture:** `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypePage.tsx`
 
 ## Goals
-- Inventory the shipped four-step guided demo after reflow: compact intro plus numbered guide, then context, names, draft, apply, outcome, local history, closed design notes, and optional live test last.
+- Inventory the shipped four-step guided demo after reflow: compact intro plus numbered guide, then the responsive Tribeca and Coachella figure gallery, names, draft, apply, outcome, local history, closed design notes, and optional live test last.
 - Every visitor-visible string is catalog copy from copy.en.json, filled with the shipped people names Justin Trudeau (left) and Katy Perry (right).
 - Name choices start undecided with native radios and no preselection; omit is a valid completion; live generation never competes with Apply and never writes the demo copy.
 - Engine and saved-run provenance stay in notes, not screen copy. Recognition does not run during the walkthrough.
@@ -81,23 +81,23 @@ Purpose: Compact intro plus numbered guide on one page. AltContext guided demo. 
 
 ### Understand the page (`context`)
 
-Purpose: Step 1 of 4: Understand the page. This photo appears in a festival gallery. Review the existing alt text alongside the photo and its page context. Example page: Tribeca Festival 2026: red carpet photos. Current alt text in the demo copy: Two people at a film festival. Names can be useful in this gallery when the editor has enough evidence to include them. Leaving someone unnamed is also a valid choice. Saved example and image credits is a closed disclosure. Review name suggestions is always enabled.
+Purpose: Step 1 of 4: Understand the page. Two press photos appear as responsive figures inside the festival gallery: Tribeca first, then Coachella; the figures sit side by side on wide screens and stack below roughly 900px. Review the existing alt text alongside the Tribeca and Coachella photos and their page context. Each figure keeps its marginal caption metadata collapsed behind native `<details><summary>` disclosures, and the name chooser is rendered next to each photo. Example page: Tribeca Festival 2026: red carpet photos. Current alt text in the demo copy: Two people at a film festival. Names can be useful in this gallery when the editor has enough evidence to include them. Leaving someone unnamed is also a valid choice. Saved example and image credits is a closed disclosure. Review name suggestions is always enabled.
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
-| `guided-section-understand` | Understand the page. This photo appears in a festival gallery. Review the existing alt text alongside the photo and its page context. Example page: Tribeca Festival 2026: red carpet photos. Names can be useful in this gallery when the editor has enough evidence to include them. Leaving someone unnamed is also a valid choice. | content | default |
-| `context-photo` | Evidence photo with Current alt text in the demo copy: Two people at a film festival. Photo credit: Colleen Sturtevant, CC BY-SA 4.0, resized. error: image load failure keeps the descriptive alternative visible as text; decisions stay available. | ai_review | default, error |
-| `context-provenance` | Saved example and image credits (closed details for each photo). When open: Recorded production face-match run: 10 September 2026, threshold 60.0%. Recognition and GPU description generation are not running during this walkthrough. | content | default |
+| `guided-section-understand` | Understand the page. Tribeca and Coachella press photos appear as two responsive figures inside the festival gallery, with the name chooser next to each photo. Review each photo, its credit, cached AltText.ai caption, cached AltContext descriptions, and the supplied page context. The marginal caption metadata is collapsed behind native details disclosures. The Coachella credit links Katy Perry's Instagram account. | content | default |
+| `context-photo` | Two evidence figures inside `.acx-guided-page__media-list`, Tribeca first and Coachella second: Tribeca Festival, New York, June 2026, credited to Colleen Sturtevant, CC BY-SA 4.0, resized, and a Coachella festival photo credited to https://www.instagram.com/katyperry/. Each keeps its image, credit, and name chooser visible next to the photo while marginal AltText.ai comparison and AltContext no-names and with-names descriptions are collapsed behind native `<details><summary>` disclosures, with links to both providers. error: image load failure keeps the descriptive alternative visible as text; decisions stay available. | ai_review | default, error |
+| `context-provenance` | Saved example and image credits (closed details for each figure). When open: Recorded production face-match run: 10 September 2026, threshold 60.0%. Recognition and GPU description generation are not running during this walkthrough. | content | default |
 | `guided-page-feedback` | Single polite status live region for demo events such as Demo reset. WordPress media was not changed. | status | default, empty |
 
 ```
 +------------------------------------------------------------+
 | Understand the page  [screen]  #/guided-prototype          |
-| Step 1 of 4: Understand the page. This photo appears in a… |
+| Step 1 of 4: Understand the page. Two responsive figures…  |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Understand the page. This photo appears in a festival… |
-|   - Evidence photo with Current alt text in the demo copy… |
+|   - Two press-photo figures in the responsive media list…  |
+|   - Marginal metadata disclosures and adjacent name chooser… |
 |   - Saved example and image credits (closed details). Whe… |
 |   - Single polite status live region for demo events such… |
 +------------------------------------------------------------+
@@ -110,26 +110,26 @@ Purpose: Step 1 of 4: Understand the page. This photo appears in a festival gall
 
 ### Choose which names to use (`names`)
 
-Purpose: Step 2 of 4: Choose which names to use. For each face, compare the saved suggestion with the reference photos. Choose whether to include that name in the sample draft. This is an assisted review of saved suggestions, not an independent identity check. Native fieldsets with no preselection. Review the draft is enabled only when both faces have include or omit. The outer section guided-section-face still wraps the cards; guided-section-identity is the inner cards region.
+Purpose: Step 2 of 4: Choose which names to use. The name chooser is rendered next to the relevant press-photo evidence. For each face, compare the saved suggestion with the reference photos. Choose whether to include that name in the sample draft. This is an assisted review of saved suggestions, not an independent identity check. Native fieldsets with no preselection. Review the draft is enabled only when both faces have include or omit. The outer section guided-section-face still wraps the cards; guided-section-identity is the inner cards region.
 
 Action states: both_undecided, left_undecided, right_undecided, include_include, include_omit, omit_include, omit_omit, pending_choice_change
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
-| `guided-section-face` | Choose which names to use. For each face, compare the saved suggestion with the reference photos. Choose whether to include that name in the sample draft. This is an assisted review of saved suggestions, not an independent identity check. | content | default, first_time |
-| `name-choice-left` | Left face native fieldset. Name choice for the left face. Saved suggestion: Justin Trudeau. Use Justin Trudeau. Leave this person unnamed. No option is preselected. both_undecided or left_undecided: Choose an option for this face. include: The sample draft will use Justin Trudeau. omit: The sample draft will describe this person without a name. Compare the left face and reference photos (closed). All 2 reference photos are shown. | form | first_time, default, edge_input |
-| `name-choice-right` | Right face native fieldset. Name choice for the right face. Saved suggestion: Katy Perry. Use Katy Perry. Leave this person unnamed. No option is preselected. both_undecided or right_undecided: Choose an option for this face. include: The sample draft will use Katy Perry. omit: The sample draft will describe this person without a name. Compare the right face and reference photos (closed). 3 of 5 reference photos are included in this demo. | form | first_time, default, edge_input |
+| `guided-section-face` | Choose which names to use. Each name chooser is rendered next to the relevant press-photo evidence. For each face, compare the saved suggestion with the reference photos. Choose whether to include that name in the sample draft. This is an assisted review of saved suggestions, not an independent identity check. | content | default, first_time |
+| `name-choice-left` | Left face native fieldset rendered next to the relevant photo evidence. Name choice for the left face. Saved suggestion: Justin Trudeau. Use Justin Trudeau. Leave this person unnamed. No option is preselected. both_undecided or left_undecided: Choose an option for this face. include: The sample draft will use Justin Trudeau. omit: The sample draft will describe this person without a name. Compare the left face and reference photos (closed). All 2 reference photos are shown. | form | first_time, default, edge_input |
+| `name-choice-right` | Right face native fieldset rendered next to the relevant photo evidence. Name choice for the right face. Saved suggestion: Katy Perry. Use Katy Perry. Leave this person unnamed. No option is preselected. both_undecided or right_undecided: Choose an option for this face. include: The sample draft will use Katy Perry. omit: The sample draft will describe this person without a name. Compare the right face and reference photos (closed). 3 of 5 reference photos are included in this demo. | form | first_time, default, edge_input |
 | `guided-section-identity` | Review the draft. Disabled with Choose an option for both faces. Leaving a person unnamed counts as a choice. until both faces are include or omit. Radios are disabled while Change the name choice? is open. | nav | default, first_time, edge_input |
 
 ```
 +------------------------------------------------------------+
 | Choose which names to use  [screen]  #/guided-prototype    |
-| Step 2 of 4: Choose which names to use. For each face, co… |
+| Step 2 of 4: Choose names beside the photo evidence…      |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Choose which names to use. For each face, compare the… |
-|   - Left face native fieldset. Name choice for the left f… |
-|   - Right face native fieldset. Name choice for the right… |
+|   - Name choosers beside the relevant photo evidence…     |
+|   - Left face native fieldset beside photo evidence…      |
+|   - Right face native fieldset beside photo evidence…     |
 |   - Review the draft. Disabled with Choose an option for … |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
@@ -640,13 +640,13 @@ Zone labels (verbatim; the tables above escape `|` for markdown, this list does 
 - Start the walkthrough (primary) and Read the AltContext case study (secondary link, new tab).
 - Demo steps. Step {stepNumber} of 4: {stepTitle}. Show all steps / Hide steps. Numbered buttons: Understand the page; Choose which names to use; Edit the alt text; Apply and undo. Inspection is always allowed; buttons do not change the route hash.
 - Reset demo trigger in the workspace header. Opens Reset this demo?
-- Understand the page. This photo appears in a festival gallery. Review the existing alt text alongside the photo and its page context. Example page: Tribeca Festival 2026: red carpet photos. Names can be useful in this gallery when the editor has enough evidence to include them. Leaving someone unnamed is also a valid choice.
-- Evidence photo with Current alt text in the demo copy: Two people at a film festival. Photo credit: Colleen Sturtevant, CC BY-SA 4.0, resized. error: image load failure keeps the descriptive alternative visible as text; decisions stay available.
-- Saved example and image credits (closed details for each photo). When open: Recorded production face-match run: 10 September 2026, threshold 60.0%. Recognition and GPU description generation are not running during this walkthrough.
+- Understand the page. Tribeca and Coachella press photos appear as two responsive figures inside the festival gallery, with the name chooser next to each photo. Review each photo, its credit, cached AltText.ai caption, cached AltContext descriptions, and the supplied page context. The marginal caption metadata is collapsed behind native details disclosures. The Coachella credit links Katy Perry's Instagram account.
+- Two evidence figures inside `.acx-guided-page__media-list`, Tribeca first and Coachella second: Tribeca Festival, New York, June 2026, credited to Colleen Sturtevant, CC BY-SA 4.0, resized, and a Coachella festival photo credited to https://www.instagram.com/katyperry/. Each keeps its image, credit, and name chooser visible next to the photo while marginal AltText.ai comparison and AltContext no-names and with-names descriptions are collapsed behind native `<details><summary>` disclosures, with links to both providers. error: image load failure keeps the descriptive alternative visible as text; decisions stay available.
+- Saved example and image credits (closed details for each figure). When open: Recorded production face-match run: 10 September 2026, threshold 60.0%. Recognition and GPU description generation are not running during this walkthrough.
 - Single polite status live region for demo events such as Demo reset. WordPress media was not changed.
-- Choose which names to use. For each face, compare the saved suggestion with the reference photos. Choose whether to include that name in the sample draft. This is an assisted review of saved suggestions, not an independent identity check.
-- Left face native fieldset. Name choice for the left face. Saved suggestion: Justin Trudeau. Use Justin Trudeau. Leave this person unnamed. No option is preselected. both_undecided or left_undecided: Choose an option for this face. include: The sample draft will use Justin Trudeau. omit: The sample draft will describe this person without a name. Compare the left face and reference photos (closed). All 2 reference photos are shown.
-- Right face native fieldset. Name choice for the right face. Saved suggestion: Katy Perry. Use Katy Perry. Leave this person unnamed. No option is preselected. both_undecided or right_undecided: Choose an option for this face. include: The sample draft will use Katy Perry. omit: The sample draft will describe this person without a name. Compare the right face and reference photos (closed). 3 of 5 reference photos are included in this demo.
+- Choose which names to use. The name chooser is rendered next to the relevant press-photo evidence. For each face, compare the saved suggestion with the reference photos. Choose whether to include that name in the sample draft. This is an assisted review of saved suggestions, not an independent identity check.
+- Left face native fieldset rendered next to the relevant photo evidence. Name choice for the left face. Saved suggestion: Justin Trudeau. Use Justin Trudeau. Leave this person unnamed. No option is preselected. both_undecided or left_undecided: Choose an option for this face. include: The sample draft will use Justin Trudeau. omit: The sample draft will describe this person without a name. Compare the left face and reference photos (closed). All 2 reference photos are shown.
+- Right face native fieldset rendered next to the relevant photo evidence. Name choice for the right face. Saved suggestion: Katy Perry. Use Katy Perry. Leave this person unnamed. No option is preselected. both_undecided or right_undecided: Choose an option for this face. include: The sample draft will use Katy Perry. omit: The sample draft will describe this person without a name. Compare the right face and reference photos (closed). 3 of 5 reference photos are included in this demo.
 - Review the draft. Disabled with Choose an option for both faces. Leaving a person unnamed counts as a choice. until both faces are include or omit. Radios are disabled while Change the name choice? is open.
 - Edit the alt text. Check the wording against the photo and the page context. Edit anything you would not publish. Alt text draft textarea. Sample draft from the recorded example. or Your edit, based on the recorded example. Edits stay in this tab. Nothing is applied until you choose Apply to demo copy. blocked: Choose a name option for both faces to load the sample draft. fixture_missing: The sample draft for these choices is unavailable. Your choices and the current demo copy have not changed. preview_invalid: Enter alt text before reviewing the change.
 - Draft history (closed; only when revisions exist). Earlier edits are kept in this tab until you reset or reload. Restore earlier draft when choices match. Otherwise: This earlier draft uses different name choices. Change those choices first, or copy the text and review it as a new edit. plus Copy earlier draft.

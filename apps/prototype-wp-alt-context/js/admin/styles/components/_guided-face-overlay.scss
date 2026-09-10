@@ -14,8 +14,8 @@
     box-sizing: content-box;
     min-width: var(--acx-space-24);
     min-height: var(--acx-space-24);
-    margin: -5px;
-    padding: 5px;
+    margin: calc(var(--acx-space-5) * -1);
+    padding: var(--acx-space-5);
     border: 2px solid var(--acx-color-accent);
     border-radius: var(--acx-radius-sm);
     background: transparent;

@@ -71,7 +71,7 @@
       "id": "walkthrough",
       "kind": "screen",
       "title": "Recorded walkthrough",
-      "purpose": "RecordedWalkthrough scope=public: understand the supplied page context, two bundled press photos, their cached AltText.ai and AltContext captions, and the example roster; choose inclusion or omission, edit the recorded sample, preview, apply, keep, undo, or reset. Bundled example plus in-tab state. Recognition and GPU generation are cached and never run per visitor. No import path from js/guide/** may reach js/admin/api/** or GuidedLiveDescriptionPanel. edge_input: a name choice is still undecided. error: sample draft unavailable. Keyboard completes choose → edit → preview.",
+      "purpose": "RecordedWalkthrough scope=public: understand the supplied page context, two bundled press photos rendered as responsive figures side by side inside .acx-guided-page__media-list on wide screens and stacked below roughly 900px, their cached AltText.ai and AltContext captions, and the example roster; marginal photo metadata is collapsed behind native <details><summary> disclosures, with the name chooser rendered next to each photo; choose inclusion or omission, edit the recorded sample, preview, apply, keep, undo, or reset. Bundled example plus in-tab state. Recognition and GPU generation are cached and never run per visitor. No import path from js/guide/** may reach js/admin/api/** or GuidedLiveDescriptionPanel. edge_input: a name choice is still undecided. error: sample draft unavailable. Keyboard completes choose → edit → preview.",
       "route": "/guide/",
       "wp_page": null,
       "job_entry": false,
@@ -97,7 +97,7 @@
         },
         {
           "id": "guided-section-understand",
-          "label": "Understand the page and provenance. Tribeca and Coachella press photos, current demo alt text, cached AltText.ai and AltContext captions, credits, and recorded source details.",
+          "label": "Understand the page and provenance. Tribeca and Coachella press photos appear as two responsive figures inside .acx-guided-page__media-list, with marginal metadata collapsed behind native details disclosures and the name chooser rendered next to each photo. Review current demo alt text, cached AltText.ai and AltContext captions, credits, and recorded source details.",
           "role": "content",
           "states": [
             "default"
@@ -105,7 +105,7 @@
         },
         {
           "id": "name-choice-left",
-          "label": "Justin Trudeau name-choice fieldset for both press-photo matches. Use Justin Trudeau. Leave this person unnamed. No preselection. edge_input: Choose an option for this person. The Tribeca and Coachella crops are visible with 89.4% and 70.2% strong matches.",
+          "label": "Justin Trudeau name-choice fieldset rendered next to the relevant press-photo evidence. Use Justin Trudeau. Leave this person unnamed. No preselection. edge_input: Choose an option for this person. The Tribeca and Coachella crops are visible with 89.4% and 70.2% strong matches.",
           "role": "form",
           "evidence_linked": true,
           "states": [
@@ -115,7 +115,7 @@
         },
         {
           "id": "name-choice-right",
-          "label": "Katy Perry name-choice fieldset for both press-photo matches. Use Katy Perry. Leave this person unnamed. No preselection. edge_input: Choose an option for this person. The Tribeca crop is 100.0% cluster anchor, strong; the Coachella crop is 56.7% weak and below the 60.0% displayed threshold, but the production clusterer grouped it.",
+          "label": "Katy Perry name-choice fieldset rendered next to the relevant press-photo evidence. Use Katy Perry. Leave this person unnamed. No preselection. edge_input: Choose an option for this person. The Tribeca crop is 100.0% cluster anchor, strong; the Coachella crop is 56.7% weak and below the 60.0% displayed threshold, but the production clusterer grouped it.",
           "role": "form",
           "evidence_linked": true,
           "states": [

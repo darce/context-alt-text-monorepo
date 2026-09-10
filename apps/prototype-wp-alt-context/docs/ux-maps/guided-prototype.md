@@ -87,7 +87,7 @@ Purpose: Step 1 of 4: Understand the page. This photo appears in a festival gall
 | --- | --- | --- | --- |
 | `guided-section-understand` | Understand the page. This photo appears in a festival gallery. Review the existing alt text alongside the photo and its page context. Example page: Tribeca Festival 2026: red carpet photos. Names can be useful in this gallery when the editor has enough evidence to include them. Leaving someone unnamed is also a valid choice. | content | default |
 | `context-photo` | Evidence photo with Current alt text in the demo copy: Two people at a film festival. Photo credit: Colleen Sturtevant, CC BY-SA 4.0, resized. error: image load failure keeps the descriptive alternative visible as text; decisions stay available. | ai_review | default, error |
-| `context-provenance` | Saved example and image credits (closed details). When open: Recorded face-match run: 6 September 2026. Recognition is not running during this walkthrough. | content | default |
+| `context-provenance` | Saved example and image credits (closed details for each photo). When open: Recorded production face-match run: 10 September 2026, threshold 60.0%. Recognition and GPU description generation are not running during this walkthrough. | content | default |
 | `guided-page-feedback` | Single polite status live region for demo events such as Demo reset. WordPress media was not changed. | status | default, empty |
 
 ```
@@ -595,7 +595,7 @@ flowchart TD
 
 ## Open questions
 - DOM divergence from ascii-screens.md: the target sketches fill {name} with Jordan Lee / Rowan Ames; the shipped scenario still uses Justin Trudeau (left) and Katy Perry (right). This map follows the DOM.
-- Saved-run provenance (notes only, never screen copy): recognition engine InsightFace buffalo_l on the AltContext recognition service (dev build); saved run 2026-09-06; threshold 0.6; Tribeca press photo similarities Justin Trudeau left 0.686 and Katy Perry right 0.742.
+- Saved-run provenance (notes only, never screen copy): InsightFace buffalo_l on the production AltContext recognition service; saved run 2026-09-10; threshold 60.0%; Tribeca press photo similarities Justin Trudeau 89.4% and Katy Perry 100.0% (cluster anchor); Coachella press photo similarities Justin Trudeau 70.2% and Katy Perry 56.7% (weak, below threshold, grouped by the production clusterer). Cached AltText.ai and AltContext captions are shown for both photos; no recognition or GPU generation runs during the walkthrough.
 - Cluster ids from the dev tenant (notes only): Katy Perry 68adc97c-f81f-42c3-9e5c-061f16770361 and Justin Trudeau fd0d2b5d-108a-42b7-af25-f028e40d5778.
 - The bundled scenario currently ships all four sample keys (none, katy-perry, justin-trudeau, both), so fixture_missing is implemented and mapped but not reachable with the seed.
 - Keep waiting and the two budget sentences are catalog copy (live.keep_waiting, live.budget_local, live.budget_disclosed). timed_out recovery offers Keep waiting on the same run plus Try live generation again.
@@ -642,7 +642,7 @@ Zone labels (verbatim; the tables above escape `|` for markdown, this list does 
 - Reset demo trigger in the workspace header. Opens Reset this demo?
 - Understand the page. This photo appears in a festival gallery. Review the existing alt text alongside the photo and its page context. Example page: Tribeca Festival 2026: red carpet photos. Names can be useful in this gallery when the editor has enough evidence to include them. Leaving someone unnamed is also a valid choice.
 - Evidence photo with Current alt text in the demo copy: Two people at a film festival. Photo credit: Colleen Sturtevant, CC BY-SA 4.0, resized. error: image load failure keeps the descriptive alternative visible as text; decisions stay available.
-- Saved example and image credits (closed details). When open: Recorded face-match run: 6 September 2026. Recognition is not running during this walkthrough.
+- Saved example and image credits (closed details for each photo). When open: Recorded production face-match run: 10 September 2026, threshold 60.0%. Recognition and GPU description generation are not running during this walkthrough.
 - Single polite status live region for demo events such as Demo reset. WordPress media was not changed.
 - Choose which names to use. For each face, compare the saved suggestion with the reference photos. Choose whether to include that name in the sample draft. This is an assisted review of saved suggestions, not an independent identity check.
 - Left face native fieldset. Name choice for the left face. Saved suggestion: Justin Trudeau. Use Justin Trudeau. Leave this person unnamed. No option is preselected. both_undecided or left_undecided: Choose an option for this face. include: The sample draft will use Justin Trudeau. omit: The sample draft will describe this person without a name. Compare the left face and reference photos (closed). All 2 reference photos are shown.

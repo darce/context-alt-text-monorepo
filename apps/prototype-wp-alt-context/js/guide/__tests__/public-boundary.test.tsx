@@ -32,6 +32,7 @@ const SKIP_IMPORT_EXT = new Set([
   '.png',
   '.gif',
   '.svg',
+  '.webp',
   '.json',
   '.woff',
   '.woff2',

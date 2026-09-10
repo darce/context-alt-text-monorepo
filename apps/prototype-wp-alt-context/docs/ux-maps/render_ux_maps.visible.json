@@ -18,7 +18,7 @@
     },
     "guided-prototype": {
       "projection_sha256": "deab4c2018b9e130924a45d50e11b8576c05afceacf83230ffc43edb92d5783e",
-      "source_sha256": "0e01890562a1a8780f14947384e3e1b25ec5eeb235e7fcee9d6071fa2240c6e4"
+      "source_sha256": "c1ab38783dd9de3a8b7ca50a2d9b9c5f75b8a7d3320959b1a30183a098c84310"
     },
     "public-demo-describe": {
       "projection_sha256": "c36c30e4c5abaade7c4a3b2948bd12369f23a22729c613432da36c0f77f7d1c2",
@@ -26,7 +26,7 @@
     },
     "public-guide": {
       "projection_sha256": "7173d341d3ad1b565fb4e25f5c1fa828c3c7d230ed6837f29353a2597454ee57",
-      "source_sha256": "86590837f8d3b597a5693af1251547f8d749448337937079fe2dbc130728ecab"
+      "source_sha256": "6315e816a423ef89e4cedfdf7b7407421818da0fed56c9c5272cf3884e98acae"
     },
     "roster-people": {
       "projection_sha256": "c3674e305d16520943172b3699073d3603c30a7195d7170114bdbaa78e92206c",

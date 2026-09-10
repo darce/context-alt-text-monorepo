@@ -4,6 +4,7 @@ import guidedJustinTrudeauPhoto2023 from '../assets/guided/guided-justin-trudeau
 import guidedKatyPerryPhoto from '../assets/guided/guided-katy-perry-2026.jpg';
 import guidedKatyPerryPhoto2019 from '../assets/guided/guided-katy-perry-2019.jpg';
 import guidedKatyPerryPhoto2016 from '../assets/guided/guided-katy-perry-2016.jpg';
+import guidedCoachellaPhoto from '../assets/guided/guided-press-coachella-2026.webp';
 import guidedPressPhoto from '../assets/guided/guided-press-tribeca-2026.jpg';
 
 import { guidedCopy, type GuidedCopyKey } from './copy';
@@ -47,10 +48,16 @@ export type GuidedOutcome = (typeof GUIDED_OUTCOME)[keyof typeof GUIDED_OUTCOME]
 export type GuidedRestoreMode = 'full' | 'copy_only';
 export type GuidedMatchStrength = 'strong' | 'weak';
 export type GuidedPersonKey = 'katy-perry' | 'justin-trudeau';
+export type GuidedImageKey = 'tribeca' | 'coachella';
 export const GUIDED_PERSON_KEYS: readonly GuidedPersonKey[] = ['katy-perry', 'justin-trudeau'];
+export const GUIDED_IMAGE_KEYS: readonly GuidedImageKey[] = ['tribeca', 'coachella'];
 export type GuidedFacePosition = 'left' | 'right';
 export type GuidedDraftKey = 'none' | 'katy-perry' | 'justin-trudeau' | 'both';
 export type GuidedFaceSource = 'saved-run' | 'user-supplied';
+
+export const GUIDED_MATCH_THRESHOLD = 0.6;
+
+export const formatGuidedSimilarity = (value: number): string => `${(value * 100).toFixed(1)}%`;
 
 export interface GuidedFaceBox {
   x: number;
@@ -73,8 +80,36 @@ export interface GuidedLabeledPerson {
   galleryPhotos: GuidedGalleryPhoto[];
 }
 
+export interface GuidedPressPhoto {
+  key: GuidedImageKey;
+  src: string;
+  altText: string;
+  credit: string;
+  event: string;
+  source?: string;
+  altTextAiCaption: {
+    text: string | null;
+    provider: string;
+    providerUrl: string;
+    capturedOn: string | null;
+    note: string;
+  };
+  altContextDescription: {
+    noContext: string;
+    withNames: string;
+    system: string;
+    systemUrl: string;
+    model: string;
+    modelRevision: string;
+    quantization: string;
+    generatedOn: string;
+    note: string;
+  };
+}
+
 export interface GuidedFace {
-  id: GuidedPersonKey;
+  id: string;
+  imageKey: GuidedImageKey;
   position: GuidedFacePosition;
   box: GuidedFaceBox;
   matchedPersonKey: GuidedPersonKey;
@@ -114,13 +149,9 @@ export const GUIDED_SCENARIO_ORIGIN_LABELS: Record<GuidedScenarioOrigin, string>
 export interface GuidedScenario {
   origin: GuidedScenarioOrigin;
   scenarioVersion: string;
-  pressPhoto: {
-    src: string;
-    altText: string;
-    credit: string;
-    event: string;
-    source?: string;
-  };
+  pressPhotos: GuidedPressPhoto[];
+  /** Backwards-compatible alias for the first (Tribeca) press photo. */
+  pressPhoto: GuidedPressPhoto;
   pageContext: {
     title: string;
     summary: string;
@@ -190,19 +221,72 @@ export interface GuidedDemoState {
 
 const INITIAL_APPLIED_ALT_TEXT = 'A man in a black suit and a woman in a white dress pose together, smiling, in front of a Tribeca Festival step-and-repeat backdrop.';
 
-const GUIDED_SCENARIO_SEED: GuidedScenario = {
+const GUIDED_SCENARIO_SEED: Omit<GuidedScenario, 'pressPhoto'> = {
   origin: 'saved-build',
-  scenarioVersion: 'guided-people-v4',
-  pressPhoto: {
-    src: guidedPressPhoto,
-    altText: INITIAL_APPLIED_ALT_TEXT,
-    credit: 'Colleen Sturtevant, CC BY-SA 4.0, resized',
-    event: 'Tribeca Festival, New York, June 2026',
-  },
+  scenarioVersion: 'guided-people-v5',
+  pressPhotos: [
+    {
+      key: 'tribeca',
+      src: guidedPressPhoto,
+      altText: INITIAL_APPLIED_ALT_TEXT,
+      credit: 'Colleen Sturtevant, CC BY-SA 4.0, resized',
+      event: 'Tribeca Festival, New York, June 2026',
+      altTextAiCaption: {
+        text: 'A man in a black suit and a woman in a white dress pose together, smiling, in front of a backdrop with “Tribeca Festival” and various logos.',
+        provider: 'AltText.ai',
+        providerUrl: 'https://alttext.ai/',
+        capturedOn: '10 September 2026',
+        note:
+          'Captured from the AltText.ai free web demo (POST https://alttext.ai/demo_images), with no keywords supplied; asset_id 5ae0105fe47338c39767e88da014617c; source file guided-press-tribeca-2026.jpg.',
+      },
+      altContextDescription: {
+        noContext:
+          "Justin Trudeau and Katy Perry pose together on a red carpet at the Tribeca Festival, standing in front of a backdrop with the event's logo and the 10 Lives Studios logo. Trudeau wears a black tuxedo with a white shirt, while Perry is in a white sleeveless dress with a draped design and a large white floral detail on the shoulder. She has her left hand on his chest, showing off a ring on her ring finger.",
+        withNames:
+          'Justin Trudeau and Katy Perry pose together on the red carpet at the Tribeca Festival in New York in June 2026. Trudeau is wearing a black tuxedo with a white shirt, while Perry is in a white sleeveless dress with a draped design. They are standing in front of a backdrop with the Tribeca Festival and 10 Lives Studios logos.',
+        system: 'AltContext burst-GPU',
+        systemUrl: 'https://altcontext.com/',
+        model: 'Qwen3-VL-30B-A3B-Instruct',
+        modelRevision: '0af19e7479857aa7f3246466a4ad16c7e7299639',
+        quantization: 'Q4_K_M',
+        generatedOn: '2026-09-10',
+        note: 'Hub repo unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF; prompt version 3; temperature 0. Cached from the AltContext burst GPU; no GPU request runs per visitor.',
+      },
+    },
+    {
+      key: 'coachella',
+      src: guidedCoachellaPhoto,
+      altText: 'Two people sit on a curb outdoors at night, holding red cups and eating food, with trees and plants in the background.',
+      credit: 'https://www.instagram.com/katyperry/',
+      event: 'Coachella festival photo, 2026',
+      source: 'https://www.instagram.com/katyperry/',
+      altTextAiCaption: {
+        text: 'Two people sit on a curb outdoors at night, holding red cups and eating food. Both appear relaxed and casually dressed, with trees and plants in the background.',
+        provider: 'AltText.ai',
+        providerUrl: 'https://alttext.ai/',
+        capturedOn: '10 September 2026',
+        note:
+          'Captured from the AltText.ai free web demo (POST https://alttext.ai/demo_images), with no keywords supplied; asset_id 7b54b68b4fde9ee3f5257f2ac28d7049; source file guided-press-coachella-2026.webp.',
+      },
+      altContextDescription: {
+        noContext:
+          'A man and a woman are sitting together outdoors at night, eating from red cups and a yellow container of noodles. The man, wearing a white t-shirt and blue jeans, holds chopsticks and a cup, while the woman, in a white top and black boots, eats from a cup. They are surrounded by plants and trees in a relaxed, casual setting.',
+        withNames:
+          'Justin Trudeau and Katy Perry are sitting together outdoors at night, eating from red cups and a yellow noodle container. Trudeau wears a white t-shirt, blue jeans, and a backward blue cap, while Perry wears a white t-shirt, black boots, and holds a red cup. They are surrounded by plants and appear to be at a casual evening event.',
+        system: 'AltContext burst-GPU',
+        systemUrl: 'https://altcontext.com/',
+        model: 'Qwen3-VL-30B-A3B-Instruct',
+        modelRevision: '0af19e7479857aa7f3246466a4ad16c7e7299639',
+        quantization: 'Q4_K_M',
+        generatedOn: '2026-09-10',
+        note: 'Hub repo unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF; prompt version 3; temperature 0. Cached from the AltContext burst GPU; no GPU request runs per visitor.',
+      },
+    },
+  ],
   pageContext: {
     title: 'Tribeca Festival 2026: red carpet photos',
     summary: 'A photo gallery from the opening nights of the Tribeca Festival in New York, June 2026.',
-    runDate: '2026-09-06',
+    runDate: '2026-09-10',
   },
   people: [
     {
@@ -255,22 +339,45 @@ const GUIDED_SCENARIO_SEED: GuidedScenario = {
   ],
   faces: [
     {
-      id: 'justin-trudeau',
+      id: 'tribeca-justin-trudeau',
+      imageKey: 'tribeca',
       position: 'left',
-      box: { x: 514, y: 77, width: 132, height: 189 },
+      box: { x: 513, y: 76, width: 133, height: 189 },
       matchedPersonKey: 'justin-trudeau',
-      similarity: 0.686,
+      similarity: 0.8938,
       strength: 'strong',
       source: 'saved-run',
     },
     {
-      id: 'katy-perry',
+      id: 'tribeca-katy-perry',
+      imageKey: 'tribeca',
       position: 'right',
-      box: { x: 707, y: 140, width: 121, height: 181 },
+      box: { x: 706, y: 139, width: 121, height: 182 },
       matchedPersonKey: 'katy-perry',
-      similarity: 0.742,
+      similarity: 1,
       strength: 'strong',
       note: 'Her face is turned a little to the side.',
+      source: 'saved-run',
+    },
+    {
+      id: 'coachella-justin-trudeau',
+      imageKey: 'coachella',
+      position: 'left',
+      box: { x: 196, y: 182, width: 89, height: 129 },
+      matchedPersonKey: 'justin-trudeau',
+      similarity: 0.7015,
+      strength: 'strong',
+      source: 'saved-run',
+    },
+    {
+      id: 'coachella-katy-perry',
+      imageKey: 'coachella',
+      position: 'right',
+      box: { x: 386, y: 196, width: 80, height: 118 },
+      matchedPersonKey: 'katy-perry',
+      similarity: 0.5666,
+      strength: 'weak',
+      note: 'The production clusterer grouped this face even though its match fell below the displayed threshold.',
       source: 'saved-run',
     },
   ],
@@ -287,37 +394,46 @@ const GUIDED_SCENARIO_SEED: GuidedScenario = {
     "both": "Justin Trudeau and Katy Perry pose together on the red carpet at the Tribeca Festival, standing in front of a backdrop with the event's logo. Trudeau is wearing a black tuxedo with a white shirt, while Perry is in a white sleeveless dress with a draped design. Perry has her arm around Trudeau and is smiling, showing off a ring on her left hand.",
   },
   provenance: {
-    service: 'AltContext recognition service (dev build)',
+    service: 'AltContext recognition service (production)',
     model: 'InsightFace buffalo_l',
-    runDate: '2026-09-06',
-    threshold: 0.6,
-    note: 'Saved from a real run. The demo does not run recognition live.',
+    runDate: '2026-09-10',
+    threshold: GUIDED_MATCH_THRESHOLD,
+    note: 'Saved from a production run. The demo does not run recognition live.',
     alsoChecked:
-      'A Coachella press photo of the same two people matched both, even with a hand over her mouth. It is not bundled because of licensing.',
+      'The production run also grouped the bundled Coachella press photo of the same two people. Its source is Katy Perry’s Instagram account; no formal reuse licence is recorded.',
   },
 };
 
-const cloneScenario = (scenario: GuidedScenario): GuidedScenario => ({
-  ...scenario,
-  pressPhoto: { ...scenario.pressPhoto },
-  pageContext: { ...scenario.pageContext },
-  people: scenario.people.map((person) => ({
-    ...person,
-    galleryPhotos: person.galleryPhotos.map((photo) => ({ ...photo })),
-  })),
-  faces: scenario.faces.map((face) => ({ ...face, box: { ...face.box } })),
-  visualFacts: [...scenario.visualFacts],
-  samples: { ...scenario.samples },
-  provenance: { ...scenario.provenance },
-  ...(scenario.identitySource
-    ? {
-        identitySource: {
-          ...scenario.identitySource,
-          names: { ...scenario.identitySource.names },
-        },
-      }
-    : {}),
-});
+const cloneScenario = (scenario: Omit<GuidedScenario, 'pressPhoto'>): GuidedScenario => {
+  const pressPhotos = scenario.pressPhotos.map((photo) => ({
+    ...photo,
+    altTextAiCaption: { ...photo.altTextAiCaption },
+    altContextDescription: { ...photo.altContextDescription },
+  }));
+
+  return {
+    ...scenario,
+    pressPhotos,
+    pressPhoto: pressPhotos[0],
+    pageContext: { ...scenario.pageContext },
+    people: scenario.people.map((person) => ({
+      ...person,
+      galleryPhotos: person.galleryPhotos.map((photo) => ({ ...photo })),
+    })),
+    faces: scenario.faces.map((face) => ({ ...face, box: { ...face.box } })),
+    visualFacts: [...scenario.visualFacts],
+    samples: { ...scenario.samples },
+    provenance: { ...scenario.provenance },
+    ...(scenario.identitySource
+      ? {
+          identitySource: {
+            ...scenario.identitySource,
+            names: { ...scenario.identitySource.names },
+          },
+        }
+      : {}),
+  };
+};
 
 const assertPresent: <T>(value: T | undefined, description: string) => asserts value is T = (value, description) => {
   if (value === undefined) {
@@ -331,8 +447,10 @@ export const getGuidedPerson = (scenario: GuidedScenario, key: GuidedPersonKey):
   return person;
 };
 
-export const getGuidedFace = (scenario: GuidedScenario, faceId: GuidedPersonKey): GuidedFace => {
-  const face = scenario.faces.find((candidate) => candidate.id === faceId);
+export const getGuidedFace = (scenario: GuidedScenario, faceId: string): GuidedFace => {
+  const face = scenario.faces.find(
+    (candidate) => candidate.id === faceId || candidate.id === `${candidate.imageKey}-${faceId}`,
+  );
   assertPresent(face, `face: ${faceId}`);
   return face;
 };

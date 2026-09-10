@@ -73,14 +73,18 @@ describe('guided scenario fixture', () => {
     const scenario = createGuidedScenario();
 
     expect(scenario.origin).toBe('saved-build');
-    expect(scenario.scenarioVersion).toBe('guided-people-v4');
+    expect(scenario.scenarioVersion).toBe('guided-people-v5');
     expect(GUIDED_PERSON_KEYS).toEqual([KATY, JUSTIN]);
     expect(scenario.people.map((person) => person.key)).toEqual([KATY, JUSTIN]);
     expect(scenario.faces.map((face) => [face.id, face.position])).toEqual([
-      [JUSTIN, 'left'],
-      [KATY, 'right'],
+      ['tribeca-justin-trudeau', 'left'],
+      ['tribeca-katy-perry', 'right'],
+      ['coachella-justin-trudeau', 'left'],
+      ['coachella-katy-perry', 'right'],
     ]);
-    expect(scenario.pageContext.runDate).toBe('2026-09-06');
+    expect(scenario.pressPhotos.map((photo) => photo.key)).toEqual(['tribeca', 'coachella']);
+    expect(scenario.pressPhoto).toBe(scenario.pressPhotos[0]);
+    expect(scenario.pageContext.runDate).toBe('2026-09-10');
     expect(scenario).not.toHaveProperty('identities');
     expect(scenario).not.toHaveProperty('candidate');
     expect(scenario).not.toHaveProperty('appliedText');
@@ -130,20 +134,22 @@ describe('guided scenario fixture', () => {
     }
 
     expect(getGuidedFace(scenario, JUSTIN)).toEqual({
-      id: JUSTIN,
+      id: 'tribeca-justin-trudeau',
+      imageKey: 'tribeca',
       position: 'left',
-      box: { x: 514, y: 77, width: 132, height: 189 },
+      box: { x: 513, y: 76, width: 133, height: 189 },
       matchedPersonKey: JUSTIN,
-      similarity: 0.686,
+      similarity: 0.8938,
       strength: 'strong',
       source: 'saved-run',
     });
     expect(getGuidedFace(scenario, KATY)).toEqual({
-      id: KATY,
+      id: 'tribeca-katy-perry',
+      imageKey: 'tribeca',
       position: 'right',
-      box: { x: 707, y: 140, width: 121, height: 181 },
+      box: { x: 706, y: 139, width: 121, height: 182 },
       matchedPersonKey: KATY,
-      similarity: 0.742,
+      similarity: 1,
       strength: 'strong',
       note: 'Her face is turned a little to the side.',
       source: 'saved-run',
@@ -153,14 +159,28 @@ describe('guided scenario fixture', () => {
     expect(scenario.pressPhoto.altText).toBe(ORIGINAL_ALT);
     expect(scenario.pressPhoto.credit).toBe('Colleen Sturtevant, CC BY-SA 4.0, resized');
     expect(scenario.pressPhoto.event).toBe('Tribeca Festival, New York, June 2026');
+    expect(scenario.pressPhotos[1]).toMatchObject({
+      key: 'coachella',
+      credit: 'https://www.instagram.com/katyperry/',
+      source: 'https://www.instagram.com/katyperry/',
+      altTextAiCaption: {
+        text: 'Two people sit on a curb outdoors at night, holding red cups and eating food. Both appear relaxed and casually dressed, with trees and plants in the background.',
+        providerUrl: 'https://alttext.ai/',
+        capturedOn: '10 September 2026',
+      },
+      altContextDescription: {
+        model: 'Qwen3-VL-30B-A3B-Instruct',
+        generatedOn: '2026-09-10',
+      },
+    });
     expect(scenario.provenance).toEqual({
-      service: 'AltContext recognition service (dev build)',
+      service: 'AltContext recognition service (production)',
       model: 'InsightFace buffalo_l',
-      runDate: '2026-09-06',
+      runDate: '2026-09-10',
       threshold: 0.6,
-      note: 'Saved from a real run. The demo does not run recognition live.',
+      note: 'Saved from a production run. The demo does not run recognition live.',
       alsoChecked:
-        'A Coachella press photo of the same two people matched both, even with a hand over her mouth. It is not bundled because of licensing.',
+        'The production run also grouped the bundled Coachella press photo of the same two people. Its source is Katy Perry’s Instagram account; no formal reuse licence is recorded.',
     });
     expect(scenario.visualFacts).toHaveLength(4);
     expect(scenario.samples.none).not.toMatch(/Katy Perry|Justin Trudeau/);
@@ -180,6 +200,7 @@ describe('guided scenario fixture', () => {
         expect(credit).toMatch(/resized$/);
       }
     }
+    expect(scenario.pressPhotos[1].credit).toBe('https://www.instagram.com/katyperry/');
   });
 
   it('keeps every recorded sample coherent: names only where included, visual details everywhere', () => {

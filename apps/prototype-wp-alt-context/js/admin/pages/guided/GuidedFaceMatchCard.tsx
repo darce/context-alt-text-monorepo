@@ -9,27 +9,39 @@ import {
   DialogTitle,
 } from '../../../components/ui/dialog';
 import { FaceThumbnail } from '../../../components/ui/FaceThumbnail';
-import { guidedCopy } from '../../guidedPrototype/copy';
+import { guidedCopy } from '../../guidedPrototype/publicGuideCopy';
 import {
+  formatGuidedSimilarity,
+  GUIDED_MATCH_THRESHOLD,
   GUIDED_NAME_CHOICE,
   type GuidedFace,
+  type GuidedImageKey,
   type GuidedLabeledPerson,
   type GuidedNameChoice,
   type GuidedNameCoverage,
 } from '../../guidedPrototype/state';
 
-export interface GuidedFaceMatchCardProps {
+export interface GuidedFaceMatch {
   face: GuidedFace;
+  mediaUrl: string;
+}
+
+export interface GuidedFaceMatchCardProps {
+  matches: GuidedFaceMatch[];
   person: GuidedLabeledPerson;
   coverage: GuidedNameCoverage;
   choice: GuidedNameChoice;
-  mediaUrl: string;
   disabled: boolean;
   onChoose: (choice: GuidedNameChoice, origin: HTMLInputElement) => void;
 }
 
 const INLINE_CROP_PX = 80;
 const ENLARGED_CROP_PX = 240;
+
+const IMAGE_COPY_KEYS: Record<GuidedImageKey, 'names.photo.tribeca' | 'names.photo.coachella'> = {
+  tribeca: 'names.photo.tribeca',
+  coachella: 'names.photo.coachella',
+};
 
 const choiceStatus = (choice: GuidedNameChoice, personName: string): string => {
   switch (choice) {
@@ -51,26 +63,51 @@ const coverageCopy = (coverage: GuidedNameCoverage): string =>
     ? guidedCopy('names.coverage_all', { total: coverage.total })
     : guidedCopy('names.coverage_partial', { shown: coverage.shown, total: coverage.total });
 
-const cropAlt = (position: GuidedFace['position']): string => guidedCopy('names.crop_alt', { position });
+const imageLabel = (imageKey: GuidedImageKey): string => guidedCopy(IMAGE_COPY_KEYS[imageKey]);
+
+const cropAlt = (match: GuidedFaceMatch): string =>
+  guidedCopy('names.crop_alt_image', { position: match.face.position, image: imageLabel(match.face.imageKey) });
+
+const strengthLabel = (match: GuidedFaceMatch): string => {
+  const strength = guidedCopy(match.face.strength === 'weak' ? 'names.match.weak' : 'names.match.strong');
+  if (match.face.similarity === 1) {
+    return `${guidedCopy('names.match.cluster_anchor')}, ${strength}`;
+  }
+  return strength;
+};
+
+const matchSummary = (match: GuidedFaceMatch): string =>
+  guidedCopy('names.match', {
+    image: imageLabel(match.face.imageKey),
+    similarity:
+      match.face.similarity === null ? guidedCopy('names.match.unavailable') : formatGuidedSimilarity(match.face.similarity),
+    strength: strengthLabel(match),
+  });
+
+const isWeakMatch = (match: GuidedFaceMatch): boolean =>
+  match.face.strength === 'weak' ||
+  (match.face.similarity !== null && match.face.similarity < GUIDED_MATCH_THRESHOLD);
 
 export const GuidedFaceMatchCard = ({
-  face,
+  matches,
   person,
   coverage,
   choice,
-  mediaUrl,
   disabled,
   onChoose,
 }: GuidedFaceMatchCardProps): React.JSX.Element => {
   const [comparisonOpen, setComparisonOpen] = useState(false);
   const enlargeRef = useRef<HTMLButtonElement>(null);
   const wasComparisonOpenRef = useRef(false);
-  const titleId = `guided-face-${face.id}-title`;
-  const groupName = `guided-name-${face.position}`;
+  const representative = matches[0]?.face;
+  if (representative === undefined) {
+    throw new Error(`Missing guided face matches for ${person.key}.`);
+  }
+  const titleId = `guided-face-${person.key}-title`;
+  const groupName = `guided-name-${representative.position}`;
   const includeId = `${groupName}-include`;
   const omitId = `${groupName}-omit`;
   const enlargeId = `${groupName}-enlarge`;
-  const detectedAlt = cropAlt(face.position);
 
   useEffect(() => {
     if (comparisonOpen) {
@@ -88,26 +125,46 @@ export const GuidedFaceMatchCard = ({
     onChoose(nextChoice, event.currentTarget);
   };
 
-  const thumbnail = (sizePx = INLINE_CROP_PX): React.JSX.Element => (
+  const thumbnail = (match: GuidedFaceMatch, sizePx = INLINE_CROP_PX): React.JSX.Element => (
     <FaceThumbnail
-      mediaUrl={mediaUrl}
-      bbox={{
-        x: face.box.x,
-        y: face.box.y,
-        width: face.box.width,
-        height: face.box.height,
-      }}
+      mediaUrl={match.mediaUrl}
+      bbox={match.face.box}
       size="lg"
       sizePx={sizePx}
       shape="square"
-      alt={detectedAlt}
+      alt={cropAlt(match)}
     />
+  );
+
+  const matchEvidence = (match: GuidedFaceMatch): React.JSX.Element => (
+    <>
+      <p className="acx-guided-face__match-summary">{matchSummary(match)}</p>
+      {match.face.note !== undefined ? <p className="acx-guided-face__note">{match.face.note}</p> : null}
+      {isWeakMatch(match) ? (
+        <p className="acx-guided-face__weak-match">
+          <span role="img" aria-label={guidedCopy('names.match.weak_icon')}>
+            ⚠
+          </span>{' '}
+          {guidedCopy('names.match.below_threshold', {
+            threshold: formatGuidedSimilarity(GUIDED_MATCH_THRESHOLD),
+          })}
+        </p>
+      ) : null}
+    </>
   );
 
   return (
     <article aria-labelledby={titleId} className="acx-guided-face__card">
-      <div className="acx-guided-face__crop">
-        {thumbnail()}
+      <div className="acx-guided-face__matches" data-testid={`face-matches-${person.key}`}>
+        <ul className="acx-guided-face__match-list">
+          {matches.map((match) => (
+            <li key={match.face.id} className="acx-guided-face__match">
+              {thumbnail(match)}
+              <p className="acx-guided-face__match-image">{imageLabel(match.face.imageKey)}</p>
+              {matchEvidence(match)}
+            </li>
+          ))}
+        </ul>
         <button
           ref={enlargeRef}
           id={enlargeId}
@@ -122,7 +179,7 @@ export const GuidedFaceMatchCard = ({
         <h3 id={titleId}>{guidedCopy('names.suggestion', { name: person.name })}</h3>
 
         <details className="acx-guided-face__evidence" open>
-          <summary>{guidedCopy('names.evidence_open', { position: face.position })}</summary>
+          <summary>{guidedCopy('names.evidence_open', { position: representative.position })}</summary>
           <ul className="acx-guided-face__gallery" aria-label={person.name}>
             {person.galleryPhotos.map((photo) => (
               <li key={photo.src}>
@@ -134,8 +191,8 @@ export const GuidedFaceMatchCard = ({
           <p className="acx-guided-face__gallery-caption">{coverageCopy(coverage)}</p>
         </details>
 
-        <fieldset data-testid={`name-choice-${face.position}`} disabled={disabled} className="acx-guided-face__choice">
-          <legend>{guidedCopy('names.legend', { position: face.position })}</legend>
+        <fieldset data-testid={`name-choice-${representative.position}`} disabled={disabled} className="acx-guided-face__choice">
+          <legend>{guidedCopy('names.legend', { position: representative.position })}</legend>
           <div className="acx-guided-face__choice-options">
             <label htmlFor={includeId}>
               <input
@@ -177,11 +234,19 @@ export const GuidedFaceMatchCard = ({
             }}
           >
             <DialogTitle>{guidedCopy('names.enlarge_title')}</DialogTitle>
-            <DialogDescription>{guidedCopy('names.evidence_open', { position: face.position })}</DialogDescription>
-            <div className="acx-guided-face__lightbox-crop">{thumbnail(ENLARGED_CROP_PX)}</div>
+            <DialogDescription>{guidedCopy('names.evidence_open', { position: representative.position })}</DialogDescription>
+            <ul className="acx-guided-face__lightbox-matches">
+              {matches.map((match) => (
+                <li key={`enlarged-${match.face.id}`}>
+                  {thumbnail(match, ENLARGED_CROP_PX)}
+                  <p className="acx-guided-face__match-image">{imageLabel(match.face.imageKey)}</p>
+                  {matchEvidence(match)}
+                </li>
+              ))}
+            </ul>
             <ul className="acx-guided-face__lightbox-gallery" aria-label={person.name}>
               {person.galleryPhotos.map((photo) => (
-                <li key={`enlarged-${photo.src}`}>
+                <li key={`gallery-${photo.src}`}>
                   <img src={photo.src} alt={photo.altText} />
                   <span className="screen-reader-text">{photo.credit}</span>
                 </li>

@@ -8,14 +8,18 @@ import {
   DialogRoot,
   DialogTitle,
 } from '../../../components/ui/dialog';
-import { guidedCopy } from '../../guidedPrototype/copy';
+import { guidedCopy } from '../../guidedPrototype/publicGuideCopy';
 import {
+  formatGuidedSimilarity,
+  GUIDED_MATCH_THRESHOLD,
   getGuidedPerson,
   guidedNameCoverage,
   namesDecided,
   type GuidedDemoState,
+  type GuidedFace,
   type GuidedFacePosition,
   type GuidedNameChoice,
+  type GuidedPersonKey,
   type GuidedScenario,
 } from '../../guidedPrototype/state';
 import { GUIDED_FACE_SECTION_ID } from './GuidedPrototypeGuide';
@@ -41,6 +45,12 @@ export const GuidedFacesPanel = ({
   const decided = namesDecided(state);
   const coverage = guidedNameCoverage(scenario);
   const pending = state.pendingChoiceChange !== null;
+  const facesByPerson = scenario.faces.reduce<Map<GuidedPersonKey, GuidedFace[]>>((groups, face) => {
+    const matches = groups.get(face.matchedPersonKey) ?? [];
+    matches.push(face);
+    groups.set(face.matchedPersonKey, matches);
+    return groups;
+  }, new Map());
 
   return (
     <section id={GUIDED_FACE_SECTION_ID} className="acx-guided-face" aria-labelledby="guided-faces-title" tabIndex={-1}>
@@ -48,26 +58,36 @@ export const GuidedFacesPanel = ({
         <h2 id="guided-faces-title">{guidedCopy('step.names')}</h2>
         <p>{guidedCopy('names.intro')}</p>
         <p>{guidedCopy('names.assisted')}</p>
+        <p>{guidedCopy('names.threshold', { threshold: formatGuidedSimilarity(GUIDED_MATCH_THRESHOLD) })}</p>
       </header>
 
       <div id="guided-section-identity" tabIndex={-1} className="acx-guided-face__cards">
-        {scenario.faces.map((face) => {
-          const person = getGuidedPerson(scenario, face.matchedPersonKey);
+        {[...facesByPerson.entries()].map(([personKey, faces]) => {
+          const person = getGuidedPerson(scenario, personKey);
           const personCoverage = coverage.find((entry) => entry.key === person.key);
           if (personCoverage === undefined) {
             throw new Error(`Missing guided name coverage for ${person.key}.`);
           }
+          const position = faces[0]?.position;
+          if (position === undefined) {
+            throw new Error(`Missing guided face position for ${person.key}.`);
+          }
 
           return (
             <GuidedFaceMatchCard
-              key={face.id}
-              face={face}
+              key={person.key}
+              matches={faces.map((face) => {
+                const photo = scenario.pressPhotos.find((candidate) => candidate.key === face.imageKey);
+                if (photo === undefined) {
+                  throw new Error(`Missing guided press photo for ${face.imageKey}.`);
+                }
+                return { face, mediaUrl: photo.src };
+              })}
               person={person}
               coverage={personCoverage}
-              choice={state.choices[face.position]}
-              mediaUrl={scenario.pressPhoto.src}
+              choice={state.choices[position]}
               disabled={pending}
-              onChoose={(choice, origin) => onChoose(face.position, choice, origin)}
+              onChoose={(choice, origin) => onChoose(position, choice, origin)}
             />
           );
         })}

@@ -2,7 +2,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { FaceThumbnailProps } from '../../../../components/ui/FaceThumbnail';
-import { guidedCopy } from '../../../guidedPrototype/copy';
+import { guidedCopy } from '../../../guidedPrototype/publicGuideCopy';
 import {
   GUIDED_NAME_CHOICE,
   chooseGuidedName,
@@ -101,25 +101,32 @@ describe('GuidedFacesPanel and GuidedFaceMatchCard', () => {
     renderPanel();
 
     const cards = screen.getAllByRole('article');
-    expect(within(cards[0]).getByText(guidedCopy('names.coverage_all', { total: 2 }))).toBeInTheDocument();
+    expect(within(cards[0]).getByText(guidedCopy('names.coverage_all', { total: 3 }))).toBeInTheDocument();
     expect(
       within(cards[1]).getByText(guidedCopy('names.coverage_partial', { shown: 3, total: 5 })),
     ).toBeInTheDocument();
-    expect(within(cards[0]).getAllByRole('img', { name: /Justin Trudeau/ })).toHaveLength(2);
+    expect(within(cards[0]).getAllByRole('img', { name: /Justin Trudeau/ })).toHaveLength(3);
     expect(within(cards[1]).getAllByRole('img', { name: /Katy Perry/ })).toHaveLength(3);
     expect(within(cards[0]).getAllByText('© European Union, 2025, EU reuse licence, resized')).toHaveLength(2);
     expect(within(cards[1]).getByText('Justin Higuchi, CC BY 4.0, resized')).toHaveClass('screen-reader-text');
 
     const thumbnails = screen.getAllByTestId('face-thumbnail');
     expect(thumbnails.map((thumbnail) => thumbnail.getAttribute('data-bbox'))).toEqual([
-      JSON.stringify({ x: 514, y: 77, width: 132, height: 189 }),
-      JSON.stringify({ x: 707, y: 140, width: 121, height: 181 }),
+      JSON.stringify({ x: 513, y: 76, width: 133, height: 189 }),
+      JSON.stringify({ x: 196, y: 182, width: 89, height: 129 }),
+      JSON.stringify({ x: 706, y: 139, width: 121, height: 182 }),
+      JSON.stringify({ x: 386, y: 196, width: 80, height: 118 }),
     ]);
-    expect(thumbnails.every((thumbnail) => thumbnail.getAttribute('data-media-url') === scenario.pressPhoto.src)).toBe(
-      true,
-    );
-    expect(thumbnails[0]).toHaveAttribute('data-alt', 'Detected left face');
-    expect(thumbnails[1]).toHaveAttribute('data-alt', 'Detected right face');
+    expect(thumbnails.map((thumbnail) => thumbnail.getAttribute('data-media-url'))).toEqual([
+      scenario.pressPhotos[0].src,
+      scenario.pressPhotos[1].src,
+      scenario.pressPhotos[0].src,
+      scenario.pressPhotos[1].src,
+    ]);
+    expect(thumbnails[0]).toHaveAttribute('data-alt', 'Detected left face in Tribeca press photo');
+    expect(thumbnails[1]).toHaveAttribute('data-alt', 'Detected left face in Coachella press photo');
+    expect(thumbnails[2]).toHaveAttribute('data-alt', 'Detected right face in Tribeca press photo');
+    expect(thumbnails[3]).toHaveAttribute('data-alt', 'Detected right face in Coachella press photo');
   });
 
   it('reflects include and omit as ordinary selected states', () => {
@@ -154,21 +161,25 @@ describe('GuidedFacesPanel and GuidedFaceMatchCard', () => {
 
     render(
       <GuidedFaceMatchCard
-        face={face}
+        matches={scenario.faces
+          .filter((candidate) => candidate.matchedPersonKey === face.matchedPersonKey)
+          .map((candidate) => ({
+            face: candidate,
+            mediaUrl: scenario.pressPhotos.find((photo) => photo.key === candidate.imageKey)?.src ?? '',
+          }))}
         person={person}
         coverage={coverage}
         choice={GUIDED_NAME_CHOICE.UNDECIDED}
-        mediaUrl={scenario.pressPhoto.src}
         disabled={false}
         onChoose={vi.fn()}
       />,
     );
-    expect(screen.getByRole('article')).toHaveAttribute('aria-labelledby', `guided-face-${face.id}-title`);
+    expect(screen.getByRole('article')).toHaveAttribute('aria-labelledby', `guided-face-${person.key}-title`);
     expect(screen.getByTestId('name-choice-left')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: guidedCopy('names.enlarge') })).toBeInTheDocument();
-    expect(screen.getByTestId('face-thumbnail')).toHaveAttribute(
+    expect(screen.getAllByTestId('face-thumbnail')[0]).toHaveAttribute(
       'data-alt',
-      guidedCopy('names.crop_alt', { position: 'left' }),
+      'Detected left face in Tribeca press photo',
     );
   });
 });

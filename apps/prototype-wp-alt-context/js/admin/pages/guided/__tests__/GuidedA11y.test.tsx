@@ -517,8 +517,8 @@ describe('GuidedA11y (W04)', () => {
     await user.click(screen.getByText(guidedCopy('names.evidence_open', { position: 'left' })));
     const enlargeButtons = screen.getAllByRole('button', { name: guidedCopy('names.enlarge') });
     expect(enlargeButtons).toHaveLength(2);
-    expect(screen.getByRole('img', { name: guidedCopy('names.crop_alt', { position: 'left' }) })).toBeInTheDocument();
-    expect(screen.getByRole('img', { name: guidedCopy('names.crop_alt', { position: 'right' }) })).toBeInTheDocument();
+    expect(screen.getAllByRole('img', { name: /Detected left face in/ })).toHaveLength(2);
+    expect(screen.getAllByRole('img', { name: /Detected right face in/ })).toHaveLength(2);
 
     const enlarge = enlargeButtons[0];
     assertHtmlElement(enlarge, 'left enlarge comparison button');

@@ -58,6 +58,8 @@ export type GuidedSampleKey = (typeof GUIDED_SAMPLE_KEYS)[number];
 export type GuidedDraftKey = GuidedSampleKey;
 export type GuidedFaceSource = 'saved-run' | 'user-supplied';
 
+const GUIDED_DEFAULT_IMAGE_KEY: GuidedImageKey = 'tribeca';
+
 export const GUIDED_MATCH_THRESHOLD = 0.6;
 
 export const formatGuidedSimilarity = (value: number): string => `${(value * 100).toFixed(1)}%`;
@@ -188,6 +190,21 @@ export interface GuidedApplicationRecord {
   sequence: number;
 }
 
+/**
+ * The per-image draft shape is kept structural here to avoid a type-only
+ * cycle with reviewDrafts.ts, which imports the state types for compatibility.
+ */
+export interface GuidedImageDraft {
+  draftText: string | null;
+  draftOrigin: GuidedDraftOrigin;
+  draftStatus: GuidedDraftStatus;
+  draftVersion: number;
+  previewedVersion: number | null;
+  appliedAltText: string;
+  applicationHistory: GuidedApplicationRecord[];
+  draftHistory: GuidedDraftRevision[];
+}
+
 export interface GuidedActionHistoryEntry {
   event: string;
   sequence: number;
@@ -204,6 +221,7 @@ export interface GuidedNameCoverage {
 export interface GuidedDemoState {
   activeStep: GuidedStep;
   choices: GuidedChoices;
+  drafts: Record<GuidedImageKey, GuidedImageDraft>;
   draftText: string | null;
   draftOrigin: GuidedDraftOrigin;
   draftStatus: GuidedDraftStatus;
@@ -456,17 +474,74 @@ const cloneChoices = (choices: GuidedChoices): GuidedChoices => ({
   right: choices.right,
 });
 
+const cloneDraftRevision = (revision: GuidedDraftRevision): GuidedDraftRevision => ({
+  ...revision,
+  choices: cloneChoices(revision.choices),
+});
+
+const cloneApplicationRecord = (record: GuidedApplicationRecord): GuidedApplicationRecord => ({ ...record });
+
+const cloneImageDraft = (draft: GuidedImageDraft): GuidedImageDraft => ({
+  ...draft,
+  applicationHistory: draft.applicationHistory.map(cloneApplicationRecord),
+  draftHistory: draft.draftHistory.map(cloneDraftRevision),
+});
+
+const cloneDrafts = (drafts: Record<GuidedImageKey, GuidedImageDraft>): Record<GuidedImageKey, GuidedImageDraft> =>
+  Object.fromEntries(GUIDED_IMAGE_KEYS.map((imageKey) => [imageKey, cloneImageDraft(drafts[imageKey])])) as Record<
+    GuidedImageKey,
+    GuidedImageDraft
+  >;
+
+const mirrorTribecaDraft = (state: GuidedDemoState): GuidedDemoState => {
+  const tribeca = state.drafts[GUIDED_DEFAULT_IMAGE_KEY];
+  return {
+    ...state,
+    draftText: tribeca.draftText,
+    draftOrigin: tribeca.draftOrigin,
+    draftStatus: tribeca.draftStatus,
+    draftVersion: tribeca.draftVersion,
+    previewedVersion: tribeca.previewedVersion,
+    draftHistory: tribeca.draftHistory.map(cloneDraftRevision),
+    appliedAltText: tribeca.appliedAltText,
+    applicationUndoStack: tribeca.applicationHistory.map(cloneApplicationRecord),
+  };
+};
+
 const cloneState = (state: GuidedDemoState): GuidedDemoState => ({
   ...state,
   choices: cloneChoices(state.choices),
-  draftHistory: state.draftHistory.map((revision) => ({
-    ...revision,
-    choices: cloneChoices(revision.choices),
-  })),
+  drafts: cloneDrafts(state.drafts),
+  draftHistory: state.draftHistory.map(cloneDraftRevision),
   pendingChoiceChange: state.pendingChoiceChange === null ? null : { ...state.pendingChoiceChange },
-  applicationUndoStack: state.applicationUndoStack.map((record) => ({ ...record })),
+  applicationUndoStack: state.applicationUndoStack.map(cloneApplicationRecord),
   actionHistory: state.actionHistory.map((entry) => ({ ...entry })),
 });
+
+type GuidedImageDraftUpdater = (draft: GuidedImageDraft) => GuidedImageDraft;
+type GuidedStateUpdater = (state: GuidedDemoState) => GuidedDemoState;
+
+const withImageDrafts = (
+  state: GuidedDemoState,
+  imageKeys: readonly GuidedImageKey[],
+  updateDraft: GuidedImageDraftUpdater,
+  updateState: GuidedStateUpdater = (next) => next,
+): GuidedDemoState => {
+  const next = cloneState(state);
+  const drafts = { ...next.drafts };
+  for (const imageKey of imageKeys) {
+    drafts[imageKey] = updateDraft(drafts[imageKey]);
+  }
+  next.drafts = drafts;
+  return mirrorTribecaDraft(updateState(next));
+};
+
+const withImageDraft = (
+  state: GuidedDemoState,
+  imageKey: GuidedImageKey,
+  updateDraft: GuidedImageDraftUpdater,
+  updateState: GuidedStateUpdater = (next) => next,
+): GuidedDemoState => withImageDrafts(state, [imageKey], updateDraft, updateState);
 
 const nextSequence = (state: GuidedDemoState): number => {
   const last = state.actionHistory.at(-1);
@@ -503,6 +578,18 @@ const choicesMatch = (left: GuidedChoices, right: GuidedChoices): boolean =>
 export const namesDecided = (state: GuidedDemoState): boolean =>
   state.choices.left !== GUIDED_NAME_CHOICE.UNDECIDED && state.choices.right !== GUIDED_NAME_CHOICE.UNDECIDED;
 
+const canPreviewImageDraft = (state: GuidedDemoState, draft: GuidedImageDraft): boolean =>
+  namesDecided(state) &&
+  draft.draftStatus === GUIDED_DRAFT_STATUS.READY &&
+  draft.draftText !== null &&
+  draft.draftText.trim().length > 0;
+
+const canApplyImageDraft = (state: GuidedDemoState, draft: GuidedImageDraft): boolean =>
+  canPreviewImageDraft(state, draft) &&
+  draft.previewedVersion === draft.draftVersion &&
+  draft.draftText !== draft.appliedAltText &&
+  state.pendingChoiceChange === null;
+
 export const canPreview = (state: GuidedDemoState): boolean =>
   namesDecided(state) &&
   state.draftStatus === GUIDED_DRAFT_STATUS.READY &&
@@ -519,6 +606,14 @@ export const canUndo = (state: GuidedDemoState): boolean => state.applicationUnd
 
 export const canRestoreRevision = (state: GuidedDemoState, revisionId: string): boolean => {
   const revision = state.draftHistory.find((entry) => entry.revisionId === revisionId);
+  if (revision === undefined) {
+    return false;
+  }
+  return choicesMatch(revision.choices, state.choices);
+};
+
+const canRestoreImageRevision = (state: GuidedDemoState, draft: GuidedImageDraft, revisionId: string): boolean => {
+  const revision = draft.draftHistory.find((entry) => entry.revisionId === revisionId);
   if (revision === undefined) {
     return false;
   }
@@ -542,8 +637,6 @@ export const guidedDraftKeyFor = (choices: GuidedChoices): GuidedSampleKey | nul
   }
   return 'none';
 };
-
-const GUIDED_DEFAULT_IMAGE_KEY: GuidedImageKey = 'tribeca';
 
 export const guidedSampleFor = (
   scenario: GuidedScenario,
@@ -608,47 +701,71 @@ const resolveSample = (
   };
 };
 
-const archiveCurrentDraft = (state: GuidedDemoState): GuidedDraftRevision[] => {
-  if (state.draftText === null) {
-    return state.draftHistory;
+const archiveCurrentDraft = (state: GuidedDemoState, draft: GuidedImageDraft): GuidedDraftRevision[] => {
+  if (draft.draftText === null) {
+    return draft.draftHistory;
   }
   return [
-    ...state.draftHistory,
+    ...draft.draftHistory,
     {
-      revisionId: `rev-${state.draftHistory.length + 1}`,
-      text: state.draftText,
-      origin: state.draftOrigin,
+      revisionId: `rev-${draft.draftHistory.length + 1}`,
+      text: draft.draftText,
+      origin: draft.draftOrigin,
       choices: cloneChoices(state.choices),
-      draftVersion: state.draftVersion,
+      draftVersion: draft.draftVersion,
     },
   ];
 };
 
-const archiveManualDraft = (state: GuidedDemoState): GuidedDraftRevision[] => {
-  if (state.draftOrigin !== GUIDED_DRAFT_ORIGIN.VISITOR_EDIT) {
-    return state.draftHistory;
+const archiveManualDraft = (state: GuidedDemoState, draft: GuidedImageDraft): GuidedDraftRevision[] => {
+  if (draft.draftOrigin !== GUIDED_DRAFT_ORIGIN.VISITOR_EDIT) {
+    return draft.draftHistory;
   }
-  return archiveCurrentDraft(state);
+  return archiveCurrentDraft(state, draft);
 };
 
-export const createGuidedDemoState = (): GuidedDemoState => ({
-  activeStep: GUIDED_STEP.CONTEXT,
-  choices: {
-    left: GUIDED_NAME_CHOICE.UNDECIDED,
-    right: GUIDED_NAME_CHOICE.UNDECIDED,
-  },
+const initialAppliedAltTextFor = (imageKey: GuidedImageKey): string => {
+  const photo = GUIDED_SCENARIO_SEED.pressPhotos.find((candidate) => candidate.key === imageKey);
+  assertPresent(photo, `press photo: ${imageKey}`);
+  return photo.altText;
+};
+
+const createGuidedImageDraft = (imageKey: GuidedImageKey): GuidedImageDraft => ({
   draftText: null,
   draftOrigin: GUIDED_DRAFT_ORIGIN.NONE,
   draftStatus: GUIDED_DRAFT_STATUS.BLOCKED,
   draftVersion: 0,
   previewedVersion: null,
+  appliedAltText: initialAppliedAltTextFor(imageKey),
+  applicationHistory: [],
   draftHistory: [],
-  pendingChoiceChange: null,
-  appliedAltText: INITIAL_APPLIED_ALT_TEXT,
-  applicationUndoStack: [],
-  outcome: GUIDED_OUTCOME.NOT_FINISHED,
-  actionHistory: [],
 });
+
+export const createGuidedDemoState = (): GuidedDemoState => {
+  const drafts = Object.fromEntries(
+    GUIDED_IMAGE_KEYS.map((imageKey) => [imageKey, createGuidedImageDraft(imageKey)]),
+  ) as Record<GuidedImageKey, GuidedImageDraft>;
+
+  return mirrorTribecaDraft({
+    activeStep: GUIDED_STEP.CONTEXT,
+    choices: {
+      left: GUIDED_NAME_CHOICE.UNDECIDED,
+      right: GUIDED_NAME_CHOICE.UNDECIDED,
+    },
+    drafts,
+    draftText: null,
+    draftOrigin: GUIDED_DRAFT_ORIGIN.NONE,
+    draftStatus: GUIDED_DRAFT_STATUS.BLOCKED,
+    draftVersion: 0,
+    previewedVersion: null,
+    draftHistory: [],
+    pendingChoiceChange: null,
+    appliedAltText: INITIAL_APPLIED_ALT_TEXT,
+    applicationUndoStack: [],
+    outcome: GUIDED_OUTCOME.NOT_FINISHED,
+    actionHistory: [],
+  });
+};
 
 export const selectGuidedStep = (state: GuidedDemoState, step: GuidedStep): GuidedDemoState => {
   if (state.activeStep === step) {
@@ -656,7 +773,7 @@ export const selectGuidedStep = (state: GuidedDemoState, step: GuidedStep): Guid
   }
   const next = cloneState(state);
   next.activeStep = step;
-  return next;
+  return mirrorTribecaDraft(next);
 };
 
 export const chooseGuidedName = (
@@ -666,18 +783,19 @@ export const chooseGuidedName = (
   choice: GuidedNameChoice,
   imageKey: GuidedImageKey = GUIDED_DEFAULT_IMAGE_KEY,
 ): GuidedDemoState => {
+  const draft = state.drafts[imageKey];
   if (state.pendingChoiceChange !== null) {
     return state;
   }
   if (state.choices[position] === choice) {
     return state;
   }
-  if (state.draftOrigin === GUIDED_DRAFT_ORIGIN.VISITOR_EDIT) {
+  if (draft.draftOrigin === GUIDED_DRAFT_ORIGIN.VISITOR_EDIT) {
     // Park the intended change only. Confirm applies it; cancel is a no-op for
     // outcome, copy, and history of a choice that has not happened yet (T07).
     const next = cloneState(state);
     next.pendingChoiceChange = { position, choice };
-    return next;
+    return mirrorTribecaDraft(next);
   }
 
   const choices = cloneChoices(state.choices);
@@ -694,18 +812,26 @@ export const chooseGuidedName = (
   const summaryValues: Record<string, string | number> =
     choice === GUIDED_NAME_CHOICE.INCLUDE ? { name: personNameForPosition(scenario, position) } : {};
 
-  return withLocalAction(
-    {
-      ...cloneState(state),
-      choices,
+  return withImageDraft(
+    state,
+    imageKey,
+    (current) => ({
+      ...current,
       ...resolved,
-      draftVersion: namesAreDecided ? state.draftVersion + 1 : state.draftVersion,
-      previewedVersion: namesAreDecided ? null : state.previewedVersion,
-      outcome: GUIDED_OUTCOME.NOT_FINISHED,
-    },
-    'choose_name_option',
-    summaryKey,
-    summaryValues,
+      draftVersion: namesAreDecided ? current.draftVersion + 1 : current.draftVersion,
+      previewedVersion: namesAreDecided ? null : current.previewedVersion,
+    }),
+    (next) =>
+      withLocalAction(
+        {
+          ...next,
+          choices,
+          outcome: GUIDED_OUTCOME.NOT_FINISHED,
+        },
+        'choose_name_option',
+        summaryKey,
+        summaryValues,
+      ),
   );
 };
 
@@ -720,20 +846,27 @@ export const confirmGuidedChoiceReplacement = (
   const pending = state.pendingChoiceChange;
   const choices = cloneChoices(state.choices);
   choices[pending.position] = pending.choice;
-  const resolved = resolveSample(scenario, choices, imageKey);
-  return withLocalAction(
-    {
-      ...cloneState(state),
-      choices,
-      ...resolved,
-      draftHistory: archiveCurrentDraft(state),
-      pendingChoiceChange: null,
-      draftVersion: state.draftVersion + 1,
+  return withImageDraft(
+    state,
+    imageKey,
+    (draft) => ({
+      ...draft,
+      ...resolveSample(scenario, choices, imageKey),
+      draftHistory: archiveCurrentDraft(state, draft),
+      draftVersion: draft.draftVersion + 1,
       previewedVersion: null,
-      outcome: GUIDED_OUTCOME.NOT_FINISHED,
-    },
-    'confirm_choice_replacement',
-    'names.change_status',
+    }),
+    (next) =>
+      withLocalAction(
+        {
+          ...next,
+          choices,
+          pendingChoiceChange: null,
+          outcome: GUIDED_OUTCOME.NOT_FINISHED,
+        },
+        'confirm_choice_replacement',
+        'names.change_status',
+      ),
   );
 };
 
@@ -741,141 +874,159 @@ export const cancelGuidedChoiceReplacement = (state: GuidedDemoState): GuidedDem
   if (state.pendingChoiceChange === null) {
     return state;
   }
-  return withLocalAction(
-    {
-      ...cloneState(state),
-      pendingChoiceChange: null,
-    },
-    'cancel_choice_replacement',
-    'names.change_cancel',
+  return mirrorTribecaDraft(
+    withLocalAction(
+      {
+        ...cloneState(state),
+        pendingChoiceChange: null,
+      },
+      'cancel_choice_replacement',
+      'names.change_cancel',
+    ),
   );
 };
 
-export const editGuidedDraft = (state: GuidedDemoState, text: string): GuidedDemoState => {
-  if (!namesDecided(state) || state.draftStatus !== GUIDED_DRAFT_STATUS.READY) {
+export const editGuidedDraftForImage = (
+  state: GuidedDemoState,
+  imageKey: GuidedImageKey,
+  text: string,
+): GuidedDemoState => {
+  const draft = state.drafts[imageKey];
+  if (!namesDecided(state) || draft.draftStatus !== GUIDED_DRAFT_STATUS.READY) {
     return state;
   }
-  return withLocalAction(
-    {
-      ...cloneState(state),
+  return withImageDraft(
+    state,
+    imageKey,
+    (current) => ({
+      ...current,
       draftText: text,
       draftOrigin: GUIDED_DRAFT_ORIGIN.VISITOR_EDIT,
-      draftVersion: state.draftVersion + 1,
+      draftVersion: current.draftVersion + 1,
       previewedVersion: null,
-      outcome: GUIDED_OUTCOME.NOT_FINISHED,
-    },
-    'edit_draft',
-    'draft.origin_edited',
+    }),
+    (next) => withLocalAction({ ...next, outcome: GUIDED_OUTCOME.NOT_FINISHED }, 'edit_draft', 'draft.origin_edited'),
   );
 };
 
-export const previewGuidedDraft = (state: GuidedDemoState): GuidedDemoState => {
-  if (!canPreview(state)) {
+export const previewGuidedDraftForImage = (state: GuidedDemoState, imageKey: GuidedImageKey): GuidedDemoState => {
+  const draft = state.drafts[imageKey];
+  if (!canPreviewImageDraft(state, draft)) {
     return state;
   }
-  return withLocalAction(
-    {
-      ...cloneState(state),
-      previewedVersion: state.draftVersion,
-      activeStep: GUIDED_STEP.APPLY,
-    },
-    'preview_draft',
-    'draft.next',
+  return withImageDraft(
+    state,
+    imageKey,
+    (current) => ({ ...current, previewedVersion: current.draftVersion }),
+    (next) => withLocalAction({ ...next, activeStep: GUIDED_STEP.APPLY }, 'preview_draft', 'draft.next'),
   );
 };
 
-export const keepGuidedCurrentAltText = (state: GuidedDemoState): GuidedDemoState => {
+export const keepGuidedCurrentAltTextForImage = (state: GuidedDemoState, imageKey: GuidedImageKey): GuidedDemoState => {
   // KEPT means "the demo copy is unchanged". After apply, the current alt is
   // the draft; restore the original so the outcome and the copy agree.
-  const originalAlt = state.applicationUndoStack[0]?.previousAltText ?? state.appliedAltText;
-  return withLocalAction(
-    {
-      ...cloneState(state),
-      outcome: GUIDED_OUTCOME.KEPT,
-      appliedAltText: originalAlt,
-      applicationUndoStack: [],
-    },
-    'keep_current_alt_text',
-    'outcome.kept',
+  const draft = state.drafts[imageKey];
+  const originalAlt = draft.applicationHistory[0]?.previousAltText ?? draft.appliedAltText;
+  return withImageDraft(
+    state,
+    imageKey,
+    (current) => ({ ...current, appliedAltText: originalAlt, applicationHistory: [] }),
+    (next) => withLocalAction({ ...next, outcome: GUIDED_OUTCOME.KEPT }, 'keep_current_alt_text', 'outcome.kept'),
   );
 };
 
-export const applyGuidedDraft = (state: GuidedDemoState): GuidedDemoState => {
-  if (!canApply(state) || state.draftText === null) {
+export const applyGuidedDraftForImage = (state: GuidedDemoState, imageKey: GuidedImageKey): GuidedDemoState => {
+  const draft = state.drafts[imageKey];
+  const draftText = draft.draftText;
+  if (!canApplyImageDraft(state, draft) || draftText === null) {
     return state;
   }
   const sequence = nextSequence(state);
-  return {
-    ...cloneState(state),
-    appliedAltText: state.draftText,
-    outcome: GUIDED_OUTCOME.APPLIED,
-    applicationUndoStack: [
-      ...state.applicationUndoStack,
-      {
-        previousAltText: state.appliedAltText,
-        appliedDraftVersion: state.draftVersion,
-        sequence,
-      },
-    ],
-    actionHistory: [
-      ...state.actionHistory,
-      {
-        event: 'apply_draft',
-        sequence,
-        scope: 'local',
-        summary: guidedCopy('apply.success'),
-      },
-    ],
-  };
+  return withImageDraft(
+    state,
+    imageKey,
+    (current) => ({
+      ...current,
+      appliedAltText: draftText,
+      applicationHistory: [
+        ...current.applicationHistory,
+        {
+          previousAltText: current.appliedAltText,
+          appliedDraftVersion: current.draftVersion,
+          sequence,
+        },
+      ],
+    }),
+    (next) => ({
+      ...next,
+      outcome: GUIDED_OUTCOME.APPLIED,
+      actionHistory: [
+        ...next.actionHistory,
+        {
+          event: 'apply_draft',
+          sequence,
+          scope: 'local',
+          summary: guidedCopy('apply.success'),
+        },
+      ],
+    }),
+  );
 };
 
-export const undoGuidedApplication = (state: GuidedDemoState): GuidedDemoState => {
-  if (!canUndo(state)) {
+export const undoGuidedApplicationForImage = (state: GuidedDemoState, imageKey: GuidedImageKey): GuidedDemoState => {
+  const draft = state.drafts[imageKey];
+  if (draft.applicationHistory.length === 0) {
     return state;
   }
-  const stack = state.applicationUndoStack.map((record) => ({ ...record }));
+  const stack = draft.applicationHistory.map(cloneApplicationRecord);
   const restored = stack.pop();
   if (restored === undefined) {
     return state;
   }
-  return withLocalAction(
-    {
-      ...cloneState(state),
-      appliedAltText: restored.previousAltText,
-      applicationUndoStack: stack,
-      outcome: stack.length === 0 ? GUIDED_OUTCOME.NOT_FINISHED : GUIDED_OUTCOME.APPLIED,
-    },
-    'undo_application',
-    'apply.undone',
+  return withImageDraft(
+    state,
+    imageKey,
+    (current) => ({ ...current, appliedAltText: restored.previousAltText, applicationHistory: stack }),
+    (next) =>
+      withLocalAction(
+        {
+          ...next,
+          outcome: stack.length === 0 ? GUIDED_OUTCOME.NOT_FINISHED : GUIDED_OUTCOME.APPLIED,
+        },
+        'undo_application',
+        'apply.undone',
+      ),
   );
 };
 
-export const restoreGuidedRevision = (
+export const restoreGuidedRevisionForImage = (
   state: GuidedDemoState,
+  imageKey: GuidedImageKey,
   revisionId: string,
   mode: GuidedRestoreMode,
 ): GuidedDemoState => {
-  const revision = state.draftHistory.find((entry) => entry.revisionId === revisionId);
+  const draft = state.drafts[imageKey];
+  const revision = draft.draftHistory.find((entry) => entry.revisionId === revisionId);
   if (revision === undefined) {
     return state;
   }
-  if (mode === 'full' && !canRestoreRevision(state, revisionId)) {
+  if (mode === 'full' && !canRestoreImageRevision(state, draft, revisionId)) {
     return state;
   }
   const summaryKey = mode === 'copy_only' ? 'draft.copy_revision' : 'draft.restore_revision';
-  return withLocalAction(
-    {
-      ...cloneState(state),
-      draftHistory: archiveManualDraft(state),
+  return withImageDraft(
+    state,
+    imageKey,
+    (current) => ({
+      ...current,
+      draftHistory: archiveManualDraft(state, current),
       draftText: revision.text,
       draftOrigin: GUIDED_DRAFT_ORIGIN.VISITOR_EDIT,
-      draftStatus: namesDecided(state) ? GUIDED_DRAFT_STATUS.READY : state.draftStatus,
-      draftVersion: state.draftVersion + 1,
+      draftStatus: namesDecided(state) ? GUIDED_DRAFT_STATUS.READY : current.draftStatus,
+      draftVersion: current.draftVersion + 1,
       previewedVersion: null,
-      outcome: GUIDED_OUTCOME.NOT_FINISHED,
-    },
-    'restore_draft_revision',
-    summaryKey,
+    }),
+    (next) => withLocalAction({ ...next, outcome: GUIDED_OUTCOME.NOT_FINISHED }, 'restore_draft_revision', summaryKey),
   );
 };
 
@@ -884,27 +1035,56 @@ export const resetGuidedDemoState = (state: GuidedDemoState): GuidedDemoState =>
   return createGuidedDemoState();
 };
 
-export const retryGuidedFixture = (
+export const retryGuidedFixtureForImage = (
   state: GuidedDemoState,
+  imageKey: GuidedImageKey,
   scenario: GuidedScenario,
-  imageKey: GuidedImageKey = GUIDED_DEFAULT_IMAGE_KEY,
 ): GuidedDemoState => {
-  if (state.draftStatus !== GUIDED_DRAFT_STATUS.FIXTURE_MISSING) {
+  const draft = state.drafts[imageKey];
+  if (draft.draftStatus !== GUIDED_DRAFT_STATUS.FIXTURE_MISSING) {
     return state;
   }
   const resolved = resolveSample(scenario, state.choices, imageKey);
   if (resolved.draftStatus === GUIDED_DRAFT_STATUS.FIXTURE_MISSING) {
     return state;
   }
-  return withLocalAction(
-    {
-      ...cloneState(state),
+  return withImageDraft(
+    state,
+    imageKey,
+    (current) => ({
+      ...current,
       ...resolved,
-      draftVersion: state.draftVersion + 1,
+      draftVersion: current.draftVersion + 1,
       previewedVersion: null,
-      outcome: GUIDED_OUTCOME.NOT_FINISHED,
-    },
-    'retry_fixture',
-    'draft.fixture_retry',
+    }),
+    (next) =>
+      withLocalAction({ ...next, outcome: GUIDED_OUTCOME.NOT_FINISHED }, 'retry_fixture', 'draft.fixture_retry'),
   );
 };
+
+export const editGuidedDraft = (state: GuidedDemoState, text: string): GuidedDemoState =>
+  editGuidedDraftForImage(state, GUIDED_DEFAULT_IMAGE_KEY, text);
+
+export const previewGuidedDraft = (state: GuidedDemoState): GuidedDemoState =>
+  previewGuidedDraftForImage(state, GUIDED_DEFAULT_IMAGE_KEY);
+
+export const keepGuidedCurrentAltText = (state: GuidedDemoState): GuidedDemoState =>
+  keepGuidedCurrentAltTextForImage(state, GUIDED_DEFAULT_IMAGE_KEY);
+
+export const applyGuidedDraft = (state: GuidedDemoState): GuidedDemoState =>
+  applyGuidedDraftForImage(state, GUIDED_DEFAULT_IMAGE_KEY);
+
+export const undoGuidedApplication = (state: GuidedDemoState): GuidedDemoState =>
+  undoGuidedApplicationForImage(state, GUIDED_DEFAULT_IMAGE_KEY);
+
+export const restoreGuidedRevision = (
+  state: GuidedDemoState,
+  revisionId: string,
+  mode: GuidedRestoreMode,
+): GuidedDemoState => restoreGuidedRevisionForImage(state, GUIDED_DEFAULT_IMAGE_KEY, revisionId, mode);
+
+export const retryGuidedFixture = (
+  state: GuidedDemoState,
+  scenario: GuidedScenario,
+  imageKey: GuidedImageKey = GUIDED_DEFAULT_IMAGE_KEY,
+): GuidedDemoState => retryGuidedFixtureForImage(state, imageKey, scenario);

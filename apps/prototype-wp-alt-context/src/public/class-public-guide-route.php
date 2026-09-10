@@ -43,7 +43,7 @@ final class PublicGuideRoute {
 	// WHY: WordPress's own admin-bar chrome; the template emits the bar markup via wp_footer(), so stripping them leaves an unstyled bar.
 	private const CORE_CHROME_HANDLES = array( 'admin-bar', 'dashicons' );
 
-	private const FALLBACK_COPY = 'The walkthrough could not load. Reload the page, or watch the recorded video on the case study page.';
+	private const FALLBACK_COPY = 'The walkthrough could not load. Reload the page and try again.';
 	private const LOADING_COPY = 'Loading the walkthrough.';
 	public const LOAD_TIMEOUT_MS = 8000;
 

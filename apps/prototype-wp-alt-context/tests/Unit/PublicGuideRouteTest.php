@@ -40,7 +40,7 @@ use stdClass;
 
 final class PublicGuideRouteTest extends TestCase
 {
-    private const FALLBACK_COPY = 'The walkthrough could not load. Reload the page, or watch the recorded video on the case study page.';
+    private const FALLBACK_COPY = 'The walkthrough could not load. Reload the page and try again.';
     private const LOADING_COPY = 'Loading the walkthrough.';
 
     protected function setUp(): void

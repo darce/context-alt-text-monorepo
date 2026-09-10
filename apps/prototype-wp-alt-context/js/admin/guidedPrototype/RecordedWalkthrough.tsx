@@ -3,6 +3,7 @@ import React, { useMemo, useRef, useState } from 'react';
 import { GuidedPrototypeEntrance } from '../pages/GuidedPrototypeEntrance';
 import { GuidedDesignNotes } from '../pages/guided/GuidedDesignNotes';
 import { GuidedDescriptionReview } from '../pages/guided/GuidedDescriptionReview';
+import { GuidedFaceMatchCard } from '../pages/guided/GuidedFaceMatchCard';
 import { GuidedFacesPanel } from '../pages/guided/GuidedFacesPanel';
 import { GuidedOutcome } from '../pages/guided/GuidedOutcome';
 import { focusGuidedSection, guidedStepLabel, GuidedPrototypeGuide } from '../pages/guided/GuidedPrototypeGuide';
@@ -23,6 +24,7 @@ import {
   editGuidedDraft,
   editGuidedDraftForImage,
   getGuidedPerson,
+  guidedNameCoverage,
   keepGuidedCurrentAltText,
   keepGuidedCurrentAltTextForImage,
   previewGuidedDraft,
@@ -36,9 +38,11 @@ import {
   undoGuidedApplication,
   undoGuidedApplicationForImage,
   type GuidedDemoState,
+  type GuidedFace,
   type GuidedFacePosition,
   type GuidedImageKey,
   type GuidedNameChoice,
+  type GuidedPersonKey,
   type GuidedRestoreMode,
   type GuidedScenario,
   type GuidedStep,
@@ -118,6 +122,17 @@ const publicSourceSummary = (): React.ReactNode => {
 
 export const RecordedWalkthrough = ({ scope, livePanel, escapeHref }: RecordedWalkthroughProps): React.JSX.Element => {
   const scenario = useMemo(() => createGuidedScenario(), []);
+  const coverage = useMemo(() => guidedNameCoverage(scenario), [scenario]);
+  // A person can appear in more than one photo, but their grouped evidence and decision must have one owner.
+  const firstFaceByPerson = useMemo(() => {
+    const faces = new Map<GuidedPersonKey, GuidedFace>();
+    scenario.faces.forEach((face) => {
+      if (!faces.has(face.matchedPersonKey)) {
+        faces.set(face.matchedPersonKey, face);
+      }
+    });
+    return faces;
+  }, [scenario]);
   const [demo, setDemo] = useState(createGuidedDemoState);
   const [guideOpen, setGuideOpen] = useState(true);
   const [feedback, setFeedback] = useState('');
@@ -234,62 +249,38 @@ export const RecordedWalkthrough = ({ scope, livePanel, escapeHref }: RecordedWa
                   scope={scope}
                   {...(scope === 'public' && index === 0 ? { publicSourceSummary: publicSourceSummary() } : {})}
                 >
-                  <div className="acx-guided-face__decisions">
-                    {scenario.faces
-                      .filter((face) => face.imageKey === photo.key)
-                      .map((face) => {
-                        const person = getGuidedPerson(scenario, face.matchedPersonKey);
-                        const groupName = `guided-name-${photo.key}-${face.position}`;
-                        const includeId = `${groupName}-include`;
-                        const omitId = `${groupName}-omit`;
+                  {scenario.faces
+                    .filter((face) => face.imageKey === photo.key)
+                    .filter((face) => firstFaceByPerson.get(face.matchedPersonKey)?.id === face.id)
+                    .map((face) => {
+                      const person = getGuidedPerson(scenario, face.matchedPersonKey);
+                      const personCoverage = coverage.find((entry) => entry.key === person.key);
+                      if (personCoverage === undefined) {
+                        throw new Error(`Missing guided name coverage for ${person.key}.`);
+                      }
 
-                        return (
-                          <div key={face.id} className="acx-guided-face__decision-row">
-                            <div>
-                              <p>{guidedCopy('names.suggestion', { name: person.name })}</p>
-                              <p className="acx-guided-face__decision">
-                                {choiceLabel(scenario, face.position, demo.choices[face.position])}
-                              </p>
-                            </div>
-                            <fieldset
-                              data-testid={`name-choice-${photo.key}-${face.position}`}
-                              disabled={demo.pendingChoiceChange !== null}
-                              className="acx-guided-face__choice"
-                            >
-                              <legend>{guidedCopy('names.legend', { position: face.position })}</legend>
-                              <div className="acx-guided-face__choice-options">
-                                <label htmlFor={includeId}>
-                                  <input
-                                    id={includeId}
-                                    type="radio"
-                                    name={groupName}
-                                    value={GUIDED_NAME_CHOICE.INCLUDE}
-                                    checked={demo.choices[face.position] === GUIDED_NAME_CHOICE.INCLUDE}
-                                    onChange={(event) =>
-                                      handleChoose(face.position, GUIDED_NAME_CHOICE.INCLUDE, event.currentTarget)
-                                    }
-                                  />
-                                  {guidedCopy('names.include', { name: person.name })}
-                                </label>
-                                <label htmlFor={omitId}>
-                                  <input
-                                    id={omitId}
-                                    type="radio"
-                                    name={groupName}
-                                    value={GUIDED_NAME_CHOICE.OMIT}
-                                    checked={demo.choices[face.position] === GUIDED_NAME_CHOICE.OMIT}
-                                    onChange={(event) =>
-                                      handleChoose(face.position, GUIDED_NAME_CHOICE.OMIT, event.currentTarget)
-                                    }
-                                  />
-                                  {guidedCopy('names.omit')}
-                                </label>
-                              </div>
-                            </fieldset>
-                          </div>
-                        );
-                      })}
-                  </div>
+                      return (
+                        <GuidedFaceMatchCard
+                          key={person.key}
+                          matches={scenario.faces
+                            .filter((candidate) => candidate.matchedPersonKey === face.matchedPersonKey)
+                            .map((match) => {
+                              const matchPhoto = scenario.pressPhotos.find(
+                                (candidate) => candidate.key === match.imageKey,
+                              );
+                              if (matchPhoto === undefined) {
+                                throw new Error(`Missing guided press photo for ${match.imageKey}.`);
+                              }
+                              return { face: match, mediaUrl: matchPhoto.src };
+                            })}
+                          person={person}
+                          coverage={personCoverage}
+                          choice={demo.choices[face.position]}
+                          disabled={demo.pendingChoiceChange !== null}
+                          onChoose={(choice, origin) => handleChoose(face.position, choice, origin)}
+                        />
+                      );
+                    })}
                 </GuidedSamplePhoto>
               ))}
             </div>
@@ -408,8 +399,7 @@ export const RecordedWalkthrough = ({ scope, livePanel, escapeHref }: RecordedWa
               focusGuidedSection(GUIDED_STEP.APPLY);
             },
             onKeepForImage: (imageKey) => commit(keepGuidedCurrentAltTextForImage(demo, imageKey)),
-            onRetryFixtureForImage: (imageKey) =>
-              commit(retryGuidedFixtureForImage(demo, imageKey, scenario)),
+            onRetryFixtureForImage: (imageKey) => commit(retryGuidedFixtureForImage(demo, imageKey, scenario)),
             onRestoreForImage: (imageKey, revisionId, mode) =>
               commit(restoreGuidedRevisionForImage(demo, imageKey, revisionId, mode)),
             onApplyForImage: (imageKey, text) => {

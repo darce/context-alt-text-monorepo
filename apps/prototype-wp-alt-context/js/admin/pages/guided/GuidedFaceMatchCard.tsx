@@ -32,6 +32,7 @@ export interface GuidedFaceMatchCardProps {
   person: GuidedLabeledPerson;
   coverage: GuidedNameCoverage;
   choice: GuidedNameChoice;
+  idScope: string;
   disabled: boolean;
   onChoose: (choice: GuidedNameChoice, origin: HTMLInputElement) => void;
 }
@@ -83,7 +84,9 @@ const matchSummary = (match: GuidedFaceMatch): string =>
   guidedCopy('names.match', {
     image: imageLabel(match.face.imageKey),
     similarity:
-      match.face.similarity === null ? guidedCopy('names.match.unavailable') : formatGuidedSimilarity(match.face.similarity),
+      match.face.similarity === null
+        ? guidedCopy('names.match.unavailable')
+        : formatGuidedSimilarity(match.face.similarity),
     strength: strengthLabel(match),
   });
 
@@ -96,6 +99,7 @@ export const GuidedFaceMatchCard = ({
   person,
   coverage,
   choice,
+  idScope,
   disabled,
   onChoose,
 }: GuidedFaceMatchCardProps): React.JSX.Element => {
@@ -106,8 +110,8 @@ export const GuidedFaceMatchCard = ({
   if (representative === undefined) {
     throw new Error(`Missing guided face matches for ${person.key}.`);
   }
-  const titleId = `guided-face-${person.key}-title`;
-  const groupName = `guided-name-${representative.position}`;
+  const titleId = `guided-face-${idScope}-${person.key}-title`;
+  const groupName = `guided-name-${idScope}-${representative.position}`;
   const includeId = `${groupName}-include`;
   const omitId = `${groupName}-omit`;
   const enlargeId = `${groupName}-enlarge`;
@@ -157,7 +161,7 @@ export const GuidedFaceMatchCard = ({
   );
 
   return (
-    <article aria-labelledby={titleId} className="acx-guided-face__card">
+    <section aria-labelledby={titleId} className="acx-guided-face__card">
       <div className="acx-guided-face__matches" data-testid={`face-matches-${person.key}`}>
         <ul className="acx-guided-face__match-list">
           {matches.map((match) => (
@@ -179,7 +183,7 @@ export const GuidedFaceMatchCard = ({
         </button>
       </div>
       <div className="acx-guided-face__content">
-        <h3 id={titleId}>{guidedCopy('names.suggestion', { name: person.name })}</h3>
+        <h5 id={titleId}>{guidedCopy('names.suggestion', { name: person.name })}</h5>
 
         <details className="acx-guided-face__evidence" open>
           <summary>{guidedCopy('names.evidence_open', { position: representative.position })}</summary>
@@ -194,7 +198,11 @@ export const GuidedFaceMatchCard = ({
           <p className="acx-guided-face__gallery-caption">{coverageCopy(coverage)}</p>
         </details>
 
-        <fieldset data-testid={`name-choice-${representative.position}`} disabled={disabled} className="acx-guided-face__choice">
+        <fieldset
+          data-testid={`name-choice-${idScope}-${representative.position}`}
+          disabled={disabled}
+          className="acx-guided-face__choice"
+        >
           <legend>{guidedCopy('names.legend', { position: representative.position })}</legend>
           <div className="acx-guided-face__choice-options">
             <label htmlFor={includeId}>
@@ -237,7 +245,9 @@ export const GuidedFaceMatchCard = ({
             }}
           >
             <DialogTitle>{guidedCopy('names.enlarge_title')}</DialogTitle>
-            <DialogDescription>{guidedCopy('names.evidence_open', { position: representative.position })}</DialogDescription>
+            <DialogDescription>
+              {guidedCopy('names.evidence_open', { position: representative.position })}
+            </DialogDescription>
             <ul className="acx-guided-face__lightbox-matches">
               {matches.map((match) => (
                 <li key={`enlarged-${match.face.id}`}>
@@ -268,7 +278,7 @@ export const GuidedFaceMatchCard = ({
           </DialogContent>
         </DialogPortal>
       </DialogRoot>
-    </article>
+    </section>
   );
 };
 

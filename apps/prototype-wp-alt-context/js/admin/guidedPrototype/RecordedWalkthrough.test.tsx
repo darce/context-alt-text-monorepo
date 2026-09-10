@@ -42,17 +42,46 @@ describe('RecordedWalkthrough public scope', () => {
     const { container } = render(<RecordedWalkthrough scope="public" />);
     expect(container.querySelector('.acx-guided-notes')).toBeNull();
     expect(container.querySelector('.acx-guided-history')).toBeNull();
-    expect(screen.getByTestId('demo-undo')).toBeInTheDocument();
   });
 
   it('shows every roster reference before a visitor makes a name choice', () => {
     const { container } = render(<RecordedWalkthrough scope="public" />);
-    const galleries = container.querySelectorAll('.acx-guided-face__gallery');
-    expect(galleries).toHaveLength(2);
-    for (const gallery of Array.from(galleries)) {
-      expect(gallery.querySelectorAll('img').length).toBeGreaterThanOrEqual(2);
-      const disclosure = gallery.closest('details');
-      expect(disclosure === null || disclosure.open).toBe(true);
+    for (const photoKey of ['tribeca', 'coachella']) {
+      const faces = container.querySelector(`[data-testid="guided-faces-${photoKey}"]`);
+      expect(faces).not.toBeNull();
+      const galleries = faces?.querySelectorAll('.acx-guided-face__gallery') ?? [];
+      expect(galleries).toHaveLength(2);
+      for (const gallery of Array.from(galleries)) {
+        expect(gallery.querySelectorAll('img').length).toBeGreaterThanOrEqual(2);
+        const disclosure = gallery.closest('details');
+        expect(disclosure === null || disclosure.open).toBe(true);
+      }
+    }
+  });
+
+  it('composes context, per-photo face cards, provenance, and Continue in order', () => {
+    const { container } = render(<RecordedWalkthrough scope="public" />);
+    const scenario = container.querySelector('.acx-guided-page__scenario');
+    const context = scenario?.querySelector('.acx-guided-page__context');
+    const mediaList = scenario?.querySelector('.acx-guided-page__media-list');
+    const footer = scenario?.querySelector('.acx-guided-page__provenance-footer');
+    const continueButton = scenario?.querySelector('button.acx-button--primary');
+
+    expect(scenario).not.toBeNull();
+    expect(scenario?.firstElementChild).toBe(context);
+    expect(context?.children).toHaveLength(1);
+    expect(context?.querySelector('p')).toHaveTextContent(guidedCopy('context.purpose'));
+    expect(context?.querySelector('details, button')).toBeNull();
+    expect(mediaList).not.toBeNull();
+    expect(footer).not.toBeNull();
+    expect(mediaList?.compareDocumentPosition(footer ?? mediaList)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(footer?.compareDocumentPosition(continueButton ?? footer)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+
+    for (const photoKey of ['tribeca', 'coachella']) {
+      const faces = container.querySelector(`[data-testid="guided-faces-${photoKey}"]`);
+      expect(faces?.querySelectorAll('section.acx-guided-face__card')).toHaveLength(2);
+      expect(faces?.querySelectorAll(`input[name="guided-name-${photoKey}-left"]`)).toHaveLength(2);
+      expect(faces?.querySelectorAll(`input[name="guided-name-${photoKey}-right"]`)).toHaveLength(2);
     }
   });
 
@@ -87,7 +116,6 @@ describe('RecordedWalkthrough public scope', () => {
 
   it('gives every public entry action a distinct destination', () => {
     render(<RecordedWalkthrough scope="public" escapeHref="/" />);
-
 
     const read = screen.getByRole('link', { name: opensInNewWindow(READ_CASE_STUDY) });
     const caseStudyNav = screen.getByRole('link', { name: opensInNewWindow(guidedCopy('nav.case_study')) });

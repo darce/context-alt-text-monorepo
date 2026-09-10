@@ -5,6 +5,7 @@ import { GuidedDesignNotes } from '../pages/guided/GuidedDesignNotes';
 import { GuidedDescriptionReview } from '../pages/guided/GuidedDescriptionReview';
 import { GuidedFaceMatchCard } from '../pages/guided/GuidedFaceMatchCard';
 import { GuidedFacesPanel } from '../pages/guided/GuidedFacesPanel';
+import { GuidedPhotoFaces } from '../pages/guided/GuidedPhotoFaces';
 import { GuidedOutcome } from '../pages/guided/GuidedOutcome';
 import { focusGuidedSection, guidedStepLabel, GuidedPrototypeGuide } from '../pages/guided/GuidedPrototypeGuide';
 import { GuidedResetDialog } from '../pages/guided/GuidedResetDialog';
@@ -38,11 +39,9 @@ import {
   undoGuidedApplication,
   undoGuidedApplicationForImage,
   type GuidedDemoState,
-  type GuidedFace,
   type GuidedFacePosition,
   type GuidedImageKey,
   type GuidedNameChoice,
-  type GuidedPersonKey,
   type GuidedRestoreMode,
   type GuidedScenario,
   type GuidedStep,
@@ -123,16 +122,6 @@ const publicSourceSummary = (): React.ReactNode => {
 export const RecordedWalkthrough = ({ scope, livePanel, escapeHref }: RecordedWalkthroughProps): React.JSX.Element => {
   const scenario = useMemo(() => createGuidedScenario(), []);
   const coverage = useMemo(() => guidedNameCoverage(scenario), [scenario]);
-  // A person can appear in more than one photo, but their grouped evidence and decision must have one owner.
-  const firstFaceByPerson = useMemo(() => {
-    const faces = new Map<GuidedPersonKey, GuidedFace>();
-    scenario.faces.forEach((face) => {
-      if (!faces.has(face.matchedPersonKey)) {
-        faces.set(face.matchedPersonKey, face);
-      }
-    });
-    return faces;
-  }, [scenario]);
   const [demo, setDemo] = useState(createGuidedDemoState);
   const [guideOpen, setGuideOpen] = useState(true);
   const [feedback, setFeedback] = useState('');
@@ -236,6 +225,9 @@ export const RecordedWalkthrough = ({ scope, livePanel, escapeHref }: RecordedWa
             <GuidedResetDialog liveWaiting={liveWaiting} onConfirm={handleReset} />
           </header>
           <div className="acx-guided-page__scenario">
+            <div className="acx-guided-page__context">
+              <p>{guidedCopy('context.purpose')}</p>
+            </div>
             <div className="acx-guided-page__media-list">
               {scenario.pressPhotos.map((photo, index) => (
                 <GuidedSamplePhoto
@@ -245,68 +237,64 @@ export const RecordedWalkthrough = ({ scope, livePanel, escapeHref }: RecordedWa
                   {...(index === 0 ? { evidenceAlt: scenario.samples.tribeca.none ?? photo.altText } : {})}
                   currentAltText={demo.appliedAltText}
                   showCurrentAltText={index === 0}
-                  provenance={scenario.provenance}
                   scope={scope}
-                  {...(scope === 'public' && index === 0 ? { publicSourceSummary: publicSourceSummary() } : {})}
                 >
-                  {scenario.faces
-                    .filter((face) => face.imageKey === photo.key)
-                    .filter((face) => firstFaceByPerson.get(face.matchedPersonKey)?.id === face.id)
-                    .map((face) => {
-                      const person = getGuidedPerson(scenario, face.matchedPersonKey);
-                      const personCoverage = coverage.find((entry) => entry.key === person.key);
-                      if (personCoverage === undefined) {
-                        throw new Error(`Missing guided name coverage for ${person.key}.`);
-                      }
+                  <GuidedPhotoFaces photoKey={photo.key} title={guidedCopy('faces.group_title')}>
+                    {scenario.faces
+                      .filter((face) => face.imageKey === photo.key)
+                      .map((face) => {
+                        const person = getGuidedPerson(scenario, face.matchedPersonKey);
+                        const personCoverage = coverage.find((entry) => entry.key === person.key);
+                        if (personCoverage === undefined) {
+                          throw new Error(`Missing guided name coverage for ${person.key}.`);
+                        }
 
-                      return (
-                        <GuidedFaceMatchCard
-                          key={person.key}
-                          matches={scenario.faces
-                            .filter((candidate) => candidate.matchedPersonKey === face.matchedPersonKey)
-                            .map((match) => {
-                              const matchPhoto = scenario.pressPhotos.find(
-                                (candidate) => candidate.key === match.imageKey,
-                              );
-                              if (matchPhoto === undefined) {
-                                throw new Error(`Missing guided press photo for ${match.imageKey}.`);
-                              }
-                              return { face: match, mediaUrl: matchPhoto.src };
-                            })}
-                          person={person}
-                          coverage={personCoverage}
-                          choice={demo.choices[face.position]}
-                          disabled={demo.pendingChoiceChange !== null}
-                          onChoose={(choice, origin) => handleChoose(face.position, choice, origin)}
-                        />
-                      );
-                    })}
+                        return (
+                          <GuidedFaceMatchCard
+                            key={face.id}
+                            idScope={photo.key}
+                            matches={scenario.faces
+                              .filter((candidate) => candidate.matchedPersonKey === face.matchedPersonKey)
+                              .map((match) => {
+                                const matchPhoto = scenario.pressPhotos.find(
+                                  (candidate) => candidate.key === match.imageKey,
+                                );
+                                if (matchPhoto === undefined) {
+                                  throw new Error(`Missing guided press photo for ${match.imageKey}.`);
+                                }
+                                return { face: match, mediaUrl: matchPhoto.src };
+                              })}
+                            person={person}
+                            coverage={personCoverage}
+                            choice={demo.choices[face.position]}
+                            disabled={demo.pendingChoiceChange !== null}
+                            onChoose={(choice, origin) => handleChoose(face.position, choice, origin)}
+                          />
+                        );
+                      })}
+                  </GuidedPhotoFaces>
                 </GuidedSamplePhoto>
               ))}
             </div>
-            <div className="acx-guided-page__context">
-              <p>
-                <strong>{guidedCopy('context.page_label')}</strong>
-                {': '}
-                {scenario.pageContext.title}
-              </p>
-              <details>
-                <summary>About this example</summary>
-                <p>{guidedCopy('context.intro')}</p>
-                <p>{scenario.pageContext.summary}</p>
-                <p>{guidedCopy('context.purpose')}</p>
-              </details>
-              <button
-                type="button"
-                className="acx-button acx-button--primary"
-                onClick={() => {
-                  handleSelectStep(GUIDED_STEP.NAMES);
-                  focusGuidedSection(GUIDED_STEP.NAMES);
-                }}
-              >
-                {guidedCopy('context.next')}
-              </button>
+            <div className="acx-guided-page__provenance-footer">
+              {scope === 'public' ? (
+                <>
+                  <p>{publicSourceSummary()}</p>
+                  <p>{guidedCopy('context.source.comparison_boundary.public')}</p>
+                </>
+              ) : null}
+              <p>{guidedCopy('provenance.recorded')}</p>
             </div>
+            <button
+              type="button"
+              className="acx-button acx-button--primary"
+              onClick={() => {
+                handleSelectStep(GUIDED_STEP.NAMES);
+                focusGuidedSection(GUIDED_STEP.NAMES);
+              }}
+            >
+              {guidedCopy('context.next')}
+            </button>
           </div>
         </section>
 

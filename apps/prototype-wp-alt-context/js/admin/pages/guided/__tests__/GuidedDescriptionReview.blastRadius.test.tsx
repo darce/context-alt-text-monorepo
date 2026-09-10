@@ -3,6 +3,15 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { guidedCopy } from '../../../guidedPrototype/copy';
+import {
+  GUIDED_DRAFT_ORIGIN,
+  GUIDED_DRAFT_STATUS,
+  GUIDED_NAME_CHOICE,
+  createGuidedDemoState,
+  createGuidedScenario,
+  type GuidedDemoState,
+} from '../../../guidedPrototype/state';
+import { GuidedDescriptionReview, type GuidedDescriptionReviewActions } from '../GuidedDescriptionReview';
 
 vi.mock('../GuidedLiveDescriptionPanel', () => ({
   GuidedLiveDescriptionPanel: (): never => {
@@ -12,6 +21,112 @@ vi.mock('../GuidedLiveDescriptionPanel', () => ({
 
 afterEach(() => {
   vi.restoreAllMocks();
+});
+
+const readyState = (
+  draftText: string,
+  draftOrigin: GuidedDemoState['draftOrigin'] = GUIDED_DRAFT_ORIGIN.RECORDED_SAMPLE,
+): GuidedDemoState => ({
+  ...createGuidedDemoState(),
+  choices: {
+    left: GUIDED_NAME_CHOICE.INCLUDE,
+    right: GUIDED_NAME_CHOICE.INCLUDE,
+  },
+  draftText,
+  draftOrigin,
+  draftStatus: GUIDED_DRAFT_STATUS.READY,
+  draftVersion: 1,
+  previewedVersion: 1,
+});
+
+const reviewActions = (): GuidedDescriptionReviewActions => ({
+  onEdit: vi.fn(),
+  onDraftInput: vi.fn(),
+  onPreview: vi.fn(),
+  onKeep: vi.fn(),
+  onRetryFixture: vi.fn(),
+  onRestore: vi.fn(),
+  onApply: vi.fn(),
+  onUndo: vi.fn(),
+});
+
+describe('GuidedDescriptionReview editor', () => {
+  it('starts taller, grows with long edits, and remeasures after a width or text-size change', () => {
+    let contentHeight = 180;
+    const scenario = createGuidedScenario();
+    const actions = reviewActions();
+    const { rerender } = render(
+      <GuidedDescriptionReview scenario={scenario} state={readyState('A short saved draft.')} actions={actions} />,
+    );
+    const editor = screen.getByRole('textbox', { name: guidedCopy('draft.label') });
+    Object.defineProperty(editor, 'scrollHeight', {
+      configurable: true,
+      get: () => contentHeight,
+    });
+
+    expect(editor).toHaveAttribute('rows', '8');
+
+    const longGpuDraft = 'A long GPU draft with enough detail to wrap at narrow widths. '.repeat(12);
+    fireEvent.change(editor, { target: { value: longGpuDraft } });
+    expect(editor).toHaveStyle({ height: '180px' });
+
+    contentHeight = 420;
+    fireEvent(window, new Event('resize'));
+    expect(editor).toHaveStyle({ height: '420px' });
+
+    rerender(<GuidedDescriptionReview scenario={scenario} state={readyState(longGpuDraft)} actions={actions} />);
+    contentHeight = 640;
+    fireEvent(window, new Event('resize'));
+    expect(editor).toHaveStyle({ height: '640px' });
+    expect(actions.onPreview).not.toHaveBeenCalled();
+  });
+
+  it('keeps a manually enlarged editor height while content is remeasured', () => {
+    let contentHeight = 180;
+    const editorHeight = 420;
+    const scenario = createGuidedScenario();
+    const actions = reviewActions();
+    render(<GuidedDescriptionReview scenario={scenario} state={readyState('A saved draft.')} actions={actions} />);
+    const editor = screen.getByRole('textbox', { name: guidedCopy('draft.label') });
+    Object.defineProperty(editor, 'scrollHeight', {
+      configurable: true,
+      get: () => contentHeight,
+    });
+    vi.spyOn(editor, 'getBoundingClientRect').mockReturnValue({ height: editorHeight } as DOMRect);
+    fireEvent.mouseUp(editor);
+
+    contentHeight = 200;
+    fireEvent(window, new Event('resize'));
+    expect(editor).toHaveStyle({ height: `${editorHeight}px` });
+  });
+
+  it('uses a supplied label only for recorded samples, keeping edited origin distinct', () => {
+    const scenario = createGuidedScenario();
+    const actions = reviewActions();
+    const recordedLabel = 'Saved from the public recorded walkthrough.';
+    const { rerender } = render(
+      <GuidedDescriptionReview
+        scenario={scenario}
+        state={readyState('Recorded sample.')}
+        actions={actions}
+        recordedOriginLabel={recordedLabel}
+      />,
+    );
+
+    expect(screen.getByText(recordedLabel)).toBeInTheDocument();
+
+    rerender(
+      <GuidedDescriptionReview
+        scenario={scenario}
+        state={readyState('Visitor edit.', GUIDED_DRAFT_ORIGIN.VISITOR_EDIT)}
+        actions={actions}
+        recordedOriginLabel={recordedLabel}
+      />,
+    );
+
+    expect(screen.getByText(guidedCopy('draft.origin_edited'))).toBeInTheDocument();
+    expect(screen.queryByText(recordedLabel)).not.toBeInTheDocument();
+  });
 });
 
 describe('a failing live panel does not take the lesson with it', () => {

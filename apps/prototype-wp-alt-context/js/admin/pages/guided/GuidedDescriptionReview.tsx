@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { guidedCopy } from '../../guidedPrototype/copy';
 import {
@@ -28,14 +28,15 @@ export interface GuidedDescriptionReviewProps {
   scenario: GuidedScenario;
   state: GuidedDemoState;
   actions: GuidedDescriptionReviewActions;
+  recordedOriginLabel?: string;
 }
 
-const originLabel = (state: GuidedDemoState): string => {
+const originLabel = (state: GuidedDemoState, recordedOriginLabel?: string): string => {
   switch (state.draftOrigin) {
     case GUIDED_DRAFT_ORIGIN.VISITOR_EDIT:
       return guidedCopy('draft.origin_edited');
     case GUIDED_DRAFT_ORIGIN.RECORDED_SAMPLE:
-      return guidedCopy('draft.origin_saved');
+      return recordedOriginLabel ?? guidedCopy('draft.origin_saved');
     case GUIDED_DRAFT_ORIGIN.NONE:
       return '';
     default: {
@@ -71,12 +72,59 @@ export const GuidedDescriptionReview = ({
   scenario,
   state,
   actions,
+  recordedOriginLabel,
 }: GuidedDescriptionReviewProps): React.JSX.Element => {
   const [editValue, setEditValue] = useState(state.draftText ?? '');
   const [emptyError, setEmptyError] = useState(false);
   const editorRef = useRef<HTMLTextAreaElement>(null);
+  const comparisonRef = useRef<HTMLDivElement>(null);
+  const manuallyResizedHeightRef = useRef<number | null>(null);
+  const editorPointerActiveRef = useRef(false);
+  const previousDraftTextRef = useRef(state.draftText);
   const onDraftInputRef = useRef(actions.onDraftInput);
   onDraftInputRef.current = actions.onDraftInput;
+  const ready = state.draftStatus === GUIDED_DRAFT_STATUS.READY;
+  const missing = state.draftStatus === GUIDED_DRAFT_STATUS.FIXTURE_MISSING;
+  const blocked = state.draftStatus === GUIDED_DRAFT_STATUS.BLOCKED;
+
+  const resizeEditor = useCallback((): void => {
+    const editor = editorRef.current;
+    if (editor === null) {
+      return;
+    }
+
+    const previousHeight = editor.style.height;
+    editor.style.height = 'auto';
+    const contentHeight = editor.scrollHeight;
+    const minimumHeight = editor.offsetHeight;
+    const autoHeight = Math.max(contentHeight, minimumHeight);
+    const manualHeight = manuallyResizedHeightRef.current ?? 0;
+    const nextHeight = Math.max(autoHeight, manualHeight);
+
+    // jsdom does not lay out a textarea, so both measurements can be zero in
+    // tests. Leave the browser's rows/min-height sizing intact in that case.
+    if (nextHeight > 0) {
+      editor.style.height = `${nextHeight}px`;
+    } else {
+      editor.style.height = previousHeight;
+    }
+  }, []);
+
+  const rememberManualEditorSize = (): void => {
+    const editor = editorRef.current;
+    if (editor === null) {
+      return;
+    }
+    const measuredHeight = editor.getBoundingClientRect().height || editor.offsetHeight;
+    if (measuredHeight > 0) {
+      manuallyResizedHeightRef.current = measuredHeight;
+    }
+    editorPointerActiveRef.current = false;
+  };
+
+  const beginEditorPointerInteraction = (): void => {
+    editorPointerActiveRef.current = true;
+  };
 
   useEffect(() => {
     const text = state.draftText ?? '';
@@ -85,9 +133,45 @@ export const GuidedDescriptionReview = ({
     onDraftInputRef.current(text);
   }, [state.draftText, state.draftVersion]);
 
-  const ready = state.draftStatus === GUIDED_DRAFT_STATUS.READY;
-  const missing = state.draftStatus === GUIDED_DRAFT_STATUS.FIXTURE_MISSING;
-  const blocked = state.draftStatus === GUIDED_DRAFT_STATUS.BLOCKED;
+  useLayoutEffect(() => {
+    if (previousDraftTextRef.current !== state.draftText) {
+      previousDraftTextRef.current = state.draftText;
+      manuallyResizedHeightRef.current = null;
+    }
+    resizeEditor();
+  }, [editValue, ready, resizeEditor, state.draftText, state.draftVersion]);
+
+  useEffect(() => {
+    if (!ready) {
+      return undefined;
+    }
+
+    const comparison = comparisonRef.current;
+    if (comparison === null) {
+      return undefined;
+    }
+
+    const handleResize = (): void => {
+      if (!editorPointerActiveRef.current) {
+        resizeEditor();
+      }
+    };
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(handleResize);
+    observer?.observe(comparison);
+    window.addEventListener('resize', handleResize);
+
+    const fontSet = document.fonts;
+    fontSet?.addEventListener('loadingdone', handleResize);
+    fontSet?.addEventListener('loadingerror', handleResize);
+
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', handleResize);
+      fontSet?.removeEventListener('loadingdone', handleResize);
+      fontSet?.removeEventListener('loadingerror', handleResize);
+    };
+  }, [ready, resizeEditor]);
+
   const localMatches = editValue === (state.draftText ?? '');
   const previewEnabled = ready && editValue.trim().length > 0;
   const applyEnabled = canApply(state) && localMatches;
@@ -130,8 +214,8 @@ export const GuidedDescriptionReview = ({
         ) : null}
 
         {ready ? (
-          <div className="acx-guided-review__comparison">
-            <p className="acx-guided-review__origin">{originLabel(state)}</p>
+          <div ref={comparisonRef} className="acx-guided-review__comparison">
+            <p className="acx-guided-review__origin">{originLabel(state, recordedOriginLabel)}</p>
             <label htmlFor="guided-description-draft">{guidedCopy('draft.label')}</label>
             <textarea
               ref={editorRef}
@@ -139,7 +223,20 @@ export const GuidedDescriptionReview = ({
               aria-invalid={emptyError ? 'true' : undefined}
               aria-describedby={emptyError ? 'guided-description-draft-error' : undefined}
               value={editValue}
-              rows={4}
+              rows={8}
+              onInput={resizeEditor}
+              onPointerDown={beginEditorPointerInteraction}
+              onPointerUp={rememberManualEditorSize}
+              onPointerCancel={() => {
+                editorPointerActiveRef.current = false;
+              }}
+              onMouseDown={beginEditorPointerInteraction}
+              onMouseUp={rememberManualEditorSize}
+              onTouchStart={beginEditorPointerInteraction}
+              onTouchEnd={rememberManualEditorSize}
+              onTouchCancel={() => {
+                editorPointerActiveRef.current = false;
+              }}
               onChange={(event) => {
                 const text = event.target.value;
                 setEditValue(text);

@@ -11,11 +11,11 @@
   &__outline {
     position: absolute;
     display: block;
-    box-sizing: border-box;
+    box-sizing: content-box;
     min-width: var(--acx-space-24);
     min-height: var(--acx-space-24);
-    margin: 0;
-    padding: 0;
+    margin: -5px;
+    padding: 5px;
     border: 2px solid var(--acx-color-accent);
     border-radius: var(--acx-radius-sm);
     background: transparent;
@@ -37,6 +37,13 @@
       outline-offset: var(--acx-space-2);
     }
 
+    &:hover,
+    &:focus-visible,
+    &--highlighted,
+    &--pinned {
+      z-index: 2;
+    }
+
     &--weak {
       border-style: dashed;
       border-color: var(--acx-color-warning-border);
@@ -53,6 +60,11 @@
   &[data-visible='true'] &__outline,
   figure:hover & &__outline,
   figure:focus-within & &__outline {
+    pointer-events: auto;
+    opacity: var(--acx-opacity-visible);
+  }
+
+  &__outline--pinned {
     pointer-events: auto;
     opacity: var(--acx-opacity-visible);
   }

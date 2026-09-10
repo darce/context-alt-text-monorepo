@@ -2,6 +2,8 @@ import React from 'react';
 
 import { CASE_STUDY_URL, guidedCopy } from '../guidedPrototype/publicGuideCopy';
 
+const PRODUCT_HOME_URL = 'https://altcontext.com/';
+
 export interface GuidedPrototypeEntranceProps {
   onBegin: () => void;
   scope?: 'public' | 'admin';
@@ -34,7 +36,7 @@ export const GuidedPrototypeEntrance = ({
     return (
       <section className="acx-guided-entrance" aria-labelledby="acx-guided-entrance-title">
         <nav className="acx-guided-entrance__escape" aria-label={guidedCopy('nav.leave')}>
-          <a href={escapeHref}>{guidedCopy('nav.home')}</a>
+          <ExternalGuideLink href={PRODUCT_HOME_URL}>{guidedCopy('nav.home')}</ExternalGuideLink>
           <ExternalGuideLink href={CASE_STUDY_URL}>{guidedCopy('nav.case_study')}</ExternalGuideLink>
         </nav>
         <h1 id="acx-guided-entrance-title">{guidedCopy('entry.title.public')}</h1>

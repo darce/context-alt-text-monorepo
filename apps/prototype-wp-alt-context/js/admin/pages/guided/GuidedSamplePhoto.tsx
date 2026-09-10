@@ -66,26 +66,18 @@ const AltTextAiCaption = ({ photo }: { photo: GuidedPressPhoto }): React.JSX.Ele
   const caption = photo.altTextAiCaption;
 
   return (
-    <details className="acx-guided-page__caption">
-      <summary>{guidedCopy('context.photo.alttextai_title')}</summary>
-      <section aria-labelledby={`guided-caption-${photo.key}-alttextai`}>
-        <h4 id={`guided-caption-${photo.key}-alttextai`}>{guidedCopy('context.photo.alttextai_title')}</h4>
-        {caption.text === null ? <p>{guidedCopy('context.photo.no_caption')}</p> : <p>{caption.text}</p>}
-        <p className="acx-guided-page__caption-provenance">
-          <a
-            href={caption.providerUrl}
-            target="_blank"
-            rel="noreferrer"
-            aria-label={externalLinkLabel(caption.provider)}
-          >
-            {caption.provider}
-          </a>
-          {caption.capturedOn === null
-            ? null
-            : ` · ${guidedCopy('context.photo.captured', { date: caption.capturedOn })}`}
-        </p>
-      </section>
-    </details>
+    <section className="acx-guided-page__caption" aria-labelledby={`guided-caption-${photo.key}-alttextai`}>
+      <h4 id={`guided-caption-${photo.key}-alttextai`}>{guidedCopy('context.photo.alttextai_title')}</h4>
+      {caption.text === null ? <p>{guidedCopy('context.photo.no_caption')}</p> : <p>{caption.text}</p>}
+      <p className="acx-guided-page__caption-provenance">
+        <a href={caption.providerUrl} target="_blank" rel="noreferrer" aria-label={externalLinkLabel(caption.provider)}>
+          {caption.provider}
+        </a>
+        {caption.capturedOn === null
+          ? null
+          : ` · ${guidedCopy('context.photo.captured', { date: caption.capturedOn })}`}
+      </p>
+    </section>
   );
 };
 
@@ -93,16 +85,13 @@ const AltContextCaption = ({ photo }: { photo: GuidedPressPhoto }): React.JSX.El
   const caption = photo.altContextDescription;
 
   return (
-    <details className="acx-guided-page__caption">
-      <summary>{guidedCopy('context.photo.altcontext_title')}</summary>
-      <section aria-labelledby={`guided-caption-${photo.key}-altcontext`}>
-        <h4 id={`guided-caption-${photo.key}-altcontext`}>{guidedCopy('context.photo.altcontext_title')}</h4>
-        <p>{caption.text}</p>
-        <p className="acx-guided-page__caption-provenance">
-          <GeneratedAttribution photo={photo} />
-        </p>
-      </section>
-    </details>
+    <section className="acx-guided-page__caption" aria-labelledby={`guided-caption-${photo.key}-altcontext`}>
+      <h4 id={`guided-caption-${photo.key}-altcontext`}>{guidedCopy('context.photo.altcontext_title')}</h4>
+      <p>{caption.text}</p>
+      <p className="acx-guided-page__caption-provenance">
+        <GeneratedAttribution photo={photo} />
+      </p>
+    </section>
   );
 };
 
@@ -212,8 +201,10 @@ export const GuidedSamplePhoto = ({
             {guidedCopy('context.current_label')}: {currentAltText}
           </span>
         ) : null}
-        <AltTextAiCaption photo={photo} />
-        <AltContextCaption photo={photo} />
+        <div className="acx-guided-page__caption-compare">
+          <AltContextCaption photo={photo} />
+          <AltTextAiCaption photo={photo} />
+        </div>
       </figcaption>
       {children}
     </figure>

@@ -41,6 +41,7 @@ from scene.domain.describe_run import (
     RunKind,
     compute_eta_seconds,
     compute_request_digest,
+    describe_job_error,
     normalize_idempotency_key,
 )
 from scene.interface_adapters.http.deps import get_description_adapter
@@ -158,6 +159,7 @@ def _run_items_response(run, items) -> DescribeRunItemsResponse:
                 alt_text_draft=item.alt_text_draft,
                 caption=item.caption,
                 provenance=item.provenance,
+                error=describe_job_error(item),
                 tier=item.tier,
                 result_generation=item.result_generation,
             )
@@ -506,9 +508,7 @@ async def create_describe_run(
             images=images,
             recognition_enabled=recognition_enabled,
             idempotency_key=idempotency_key,
-            request_digest=compute_request_digest(
-                media_ids=media_ids, recognition_enabled=recognition_enabled
-            ),
+            request_digest=compute_request_digest(media_ids=media_ids, recognition_enabled=recognition_enabled),
             deadline_seconds=run_deadline_seconds,
         )
     except IntegrityError as exc:

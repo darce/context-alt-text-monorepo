@@ -192,8 +192,8 @@ class DescribeRunResponse(BaseModel):
 
 class DescribeRunItemResponse(BaseModel):
     """One item's persisted describe output. WBUX-4 INT-01a: the read path that
-    surfaces per-item drafts to the operator. Draft/caption/provenance are null
-    until the worker describes the item; never fabricated."""
+    surfaces per-item drafts and failures to the operator. Draft/caption/
+    provenance are null until the worker describes the item; never fabricated."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -202,6 +202,7 @@ class DescribeRunItemResponse(BaseModel):
     alt_text_draft: str | None = None
     caption: str | None = None
     provenance: dict | None = None
+    error: str | None = None
     tier: DescriptionResultTier | None = None
     result_generation: int = Field(default=0, ge=0)
 

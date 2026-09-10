@@ -6,7 +6,7 @@
     "Inventory the shipped four-step guided demo after reflow: compact intro plus numbered guide, then the context sentence and stacked figure gallery, names, draft, apply, outcome, local history, closed design notes, and optional live test last.",
     "Every visitor-visible string is catalog copy from copy.en.json, filled with the shipped people names Justin Trudeau (left) and Katy Perry (right).",
     "Name choices start undecided with native radios and no preselection; omit is a valid completion; live generation never competes with Apply and never writes the demo copy.",
-    "Engine and saved-run provenance stay in notes, not screen copy. Recognition and GPU descriptions are cached; neither runs during the walkthrough."
+    "Detailed engine metadata stays in the notes while the recorded provenance summary is visible on screen in the section footer. Recognition and GPU descriptions are cached; neither runs during the walkthrough."
   ],
   "jobs": [
     {
@@ -378,7 +378,7 @@
       "zones": [
         {
           "id": "guided-live",
-          "label": "Optional: test live description generation (closed details by default). Generate a separate description of this photo on the server. It will not replace your draft or change the demo copy. The server uses its own saved people. Your name choices in the walkthrough do not change this live test. Request details. Live server result (read-only). Keep waiting continues a timed-out run. No server budget disclosed, so this is how long this page is willing to wait. The service disclosed {generation} of generation time. This page will wait up to {deadline}, which may add GPU warm-up and a short local slack.",
+          "label": "Optional: test live description generation (closed details by default). Generate a separate description of this photo on the server. It will not replace your draft or change the demo copy. The server uses its own saved people. Your name choices in the walkthrough do not change this live test. Request details. Live server result (read-only). Keep waiting continues a timed-out run. No server budget disclosed, so this is how long this page is willing to wait. The service disclosed {generation} of generation time. This page will wait up to {deadline}, which may add service warm-up and a short local slack.",
           "role": "content",
           "states": ["default"]
         },
@@ -961,7 +961,7 @@
   ],
   "open_questions": [
     "DOM divergence from ascii-screens.md: the target sketches fill {name} with Jordan Lee / Rowan Ames; the shipped scenario still uses Justin Trudeau (left) and Katy Perry (right). This map follows the DOM.",
-    "Saved-run provenance (notes only, never screen copy): InsightFace buffalo_l on the production AltContext recognition service; saved run 2026-09-10; threshold 60.0%; Tribeca press photo similarities Justin Trudeau 89.4% and Katy Perry 100.0% (cluster anchor); Coachella press photo similarities Justin Trudeau 70.2% and Katy Perry 56.7% (weak, below threshold, grouped by the production clusterer). Cached AltText.ai and AltContext captions are shown for both photos; no recognition or GPU generation runs during the walkthrough.",
+    "Detailed engine metadata stays in the notes while the recorded provenance summary is visible on screen in the section footer: InsightFace buffalo_l on the production AltContext recognition service; saved run 2026-09-10; threshold 60.0%; Tribeca press photo similarities Justin Trudeau 89.4% and Katy Perry 100.0% (cluster anchor); Coachella press photo similarities Justin Trudeau 70.2% and Katy Perry 56.7% (weak, below threshold, grouped by the production clusterer). Cached AltText.ai and AltContext captions are shown for both photos; no recognition or GPU generation runs during the walkthrough.",
     "Cluster ids from the dev tenant (notes only): Katy Perry 68adc97c-f81f-42c3-9e5c-061f16770361 and Justin Trudeau fd0d2b5d-108a-42b7-af25-f028e40d5778.",
     "The bundled scenario currently ships all four sample keys (none, katy-perry, justin-trudeau, both), so fixture_missing is implemented and mapped but not reachable with the seed.",
     "Keep waiting and the two budget sentences are catalog copy (live.keep_waiting, live.budget_local, live.budget_disclosed). timed_out recovery offers Keep waiting on the same run plus Try live generation again.",

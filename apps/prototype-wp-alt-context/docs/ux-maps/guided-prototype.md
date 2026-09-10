@@ -7,7 +7,7 @@
 - Inventory the shipped four-step guided demo after reflow: compact intro plus numbered guide, then the context sentence and stacked figure gallery, names, draft, apply, outcome, local history, closed design notes, and optional live test last.
 - Every visitor-visible string is catalog copy from copy.en.json, filled with the shipped people names Justin Trudeau (left) and Katy Perry (right).
 - Name choices start undecided with native radios and no preselection; omit is a valid completion; live generation never competes with Apply and never writes the demo copy.
-- Engine and saved-run provenance stay in notes, not screen copy. Recognition and GPU descriptions are cached; neither runs during the walkthrough.
+- Detailed engine metadata stays in the notes while the recorded provenance summary is visible on screen in the section footer. Recognition and GPU descriptions are cached; neither runs during the walkthrough.
 
 ## Jobs
 - `review` — Review saved name suggestions and apply a local demo alt text
@@ -110,7 +110,7 @@ Purpose: Step 1 of 4: Understand the page. A context sentence appears above both
 
 ### Choose which names to use (`names`)
 
-Purpose: Step 2 of 4: Choose which names to use. Each figure's right-hand `.acx-guided-page__faces` column contains a "People recognised in this photo" article with both persons' roster entries, include/omit radios, and grouped Tribeca and Coachella evidence; the faces column collapses below the image below 56.25rem. For each face, compare the saved suggestion with the reference photos. Choose whether to include that name in the sample draft. This is an assisted review of saved suggestions, not an independent identity check. Native fieldsets with no preselection. Review the draft is enabled only when both person choices have include or omit. The displayed threshold is 60.0%; Coachella Katy Perry is explicitly weak at 56.7% and was still grouped by the production clusterer.
+Purpose: Step 2 of 4: Choose which names to use. Each figure's right-hand .acx-guided-page__faces column contains a "People recognised in this photo" article with both persons' roster entries, include/omit radios, and grouped Tribeca and Coachella evidence; the faces column collapses below the image below 56.25rem. For each face, compare the saved suggestion with the reference photos. Choose whether to include that name in the sample draft. This is an assisted review of saved suggestions, not an independent identity check. Native fieldsets with no preselection. Review the draft is enabled only when both person choices have include or omit. The displayed threshold is 60.0%; Coachella Katy Perry is explicitly weak at 56.7% and was still grouped by the production clusterer.
 
 Action states: both_undecided, left_undecided, right_undecided, include_include, include_omit, omit_include, omit_omit, pending_choice_change
 
@@ -408,7 +408,7 @@ Action states: closed, unavailable-unverified, idle, pending, complete, failed, 
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
-| `guided-live` | Optional: test live description generation (closed details by default). Generate a separate description of this photo on the server. It will not replace your draft or change the demo copy. The server uses its own saved people. Your name choices in the walkthrough do not change this live test. Request details. Live server result (read-only). Keep waiting continues a timed-out run. No server budget disclosed, so this is how long this page is willing to wait. The service disclosed {generation} of generation time. This page will wait up to {deadline}, which may add GPU warm-up and a short local slack. | content | default |
+| `guided-live` | Optional: test live description generation (closed details by default). Generate a separate description of this photo on the server. It will not replace your draft or change the demo copy. The server uses its own saved people. Your name choices in the walkthrough do not change this live test. Request details. Live server result (read-only). Keep waiting continues a timed-out run. No server budget disclosed, so this is how long this page is willing to wait. The service disclosed {generation} of generation time. This page will wait up to {deadline}, which may add service warm-up and a short local slack. | content | default |
 | `guided-live-status` | closed: disclosure collapsed, no request. unavailable-unverified: Live generation is unavailable in this build. The recorded walkthrough still works. idle: This sends a live description request for the example photo to the configured AltContext service. See Request details before starting. pending: Waiting for the live description. Your demo copy is unchanged. complete: Live description received. Review it separately from the demo draft. failed: The live description could not be completed. Your demo copy is unchanged. timed_out: The wait limit was reached. The server job may still be running. Keep waiting continues this run; Try live generation again starts a new one. Your demo copy is unchanged. stopped: Stopped waiting for this request. This does not confirm that the server job stopped. no_result: The server returned no description. Your demo copy is unchanged. Status colour is paired with a glyph. | status | default, loading, empty, error, offline, degraded |
 
 ```
@@ -523,12 +523,12 @@ flowchart TD
 ```mermaid
 flowchart TD
   %% flow: Both faces omitted; visual-only sample draft job=review
-  %% steps: [{"screen_id":"entry","branch_label":"Start the walkthrough"},{"screen_id":"names","branch_label":"Leave this person unnamed on both faces (omit_omit)"},{"screen_id":"draft","branch_label":"Sample draft describes both people without names"},{"screen_id":"apply","branch_label":"Apply to demo copy"},{"screen_id":"outcome","branch_label":"Your demo copy is updated"}]
+  %% steps: [{"screen_id":"entry","branch_label":"Start the walkthrough"},{"screen_id":"names","branch_label":"Leave both people unnamed (omit_omit)"},{"screen_id":"draft","branch_label":"Sample draft describes both people without names"},{"screen_id":"apply","branch_label":"Apply to demo copy"},{"screen_id":"outcome","branch_label":"Your demo copy is updated"}]
   n_entry["Review an AI-assisted alt text draft (screen)"]
   n_names["Choose which names to use (screen)"]
   n_entry -->|Start the walkthrough| n_names
   n_draft["Edit the alt text (screen)"]
-  n_names -->|Leave this person unnamed on both faces (omit_omit)| n_draft
+  n_names -->|Leave both people unnamed (omit_omit)| n_draft
   n_apply["Apply and undo (screen)"]
   n_draft -->|Sample draft describes both people without names| n_apply
   n_outcome["Your demo copy is updated (screen)"]
@@ -595,7 +595,7 @@ flowchart TD
 
 ## Open questions
 - DOM divergence from ascii-screens.md: the target sketches fill {name} with Jordan Lee / Rowan Ames; the shipped scenario still uses Justin Trudeau (left) and Katy Perry (right). This map follows the DOM.
-- Saved-run provenance (notes only, never screen copy): InsightFace buffalo_l on the production AltContext recognition service; saved run 2026-09-10; threshold 60.0%; Tribeca press photo similarities Justin Trudeau 89.4% and Katy Perry 100.0% (cluster anchor); Coachella press photo similarities Justin Trudeau 70.2% and Katy Perry 56.7% (weak, below threshold, grouped by the production clusterer). Cached AltText.ai and AltContext captions are shown for both photos; no recognition or GPU generation runs during the walkthrough.
+- Detailed engine metadata stays in the notes while the recorded provenance summary is visible on screen in the section footer: InsightFace buffalo_l on the production AltContext recognition service; saved run 2026-09-10; threshold 60.0%; Tribeca press photo similarities Justin Trudeau 89.4% and Katy Perry 100.0% (cluster anchor); Coachella press photo similarities Justin Trudeau 70.2% and Katy Perry 56.7% (weak, below threshold, grouped by the production clusterer). Cached AltText.ai and AltContext captions are shown for both photos; no recognition or GPU generation runs during the walkthrough.
 - Cluster ids from the dev tenant (notes only): Katy Perry 68adc97c-f81f-42c3-9e5c-061f16770361 and Justin Trudeau fd0d2b5d-108a-42b7-af25-f028e40d5778.
 - The bundled scenario currently ships all four sample keys (none, katy-perry, justin-trudeau, both), so fixture_missing is implemented and mapped but not reachable with the seed.
 - Keep waiting and the two budget sentences are catalog copy (live.keep_waiting, live.budget_local, live.budget_disclosed). timed_out recovery offers Keep waiting on the same run plus Try live generation again.
@@ -660,7 +660,7 @@ Zone labels (verbatim; the tables above escape `|` for markdown, this list does 
 - Reset this demo? This clears name choices, drafts and local history, and restores the original demo alt text. live_waiting: A live server job may continue after this reset.
 - Keep my work (safe default, focused). Reset demo (destructive).
 - Read the AltContext case study
-- Optional: test live description generation (closed details by default). Generate a separate description of this photo on the server. It will not replace your draft or change the demo copy. The server uses its own saved people. Your name choices in the walkthrough do not change this live test. Request details. Live server result (read-only). Keep waiting continues a timed-out run. No server budget disclosed, so this is how long this page is willing to wait. The service disclosed {generation} of generation time. This page will wait up to {deadline}, which may add GPU warm-up and a short local slack.
+- Optional: test live description generation (closed details by default). Generate a separate description of this photo on the server. It will not replace your draft or change the demo copy. The server uses its own saved people. Your name choices in the walkthrough do not change this live test. Request details. Live server result (read-only). Keep waiting continues a timed-out run. No server budget disclosed, so this is how long this page is willing to wait. The service disclosed {generation} of generation time. This page will wait up to {deadline}, which may add service warm-up and a short local slack.
 - closed: disclosure collapsed, no request. unavailable-unverified: Live generation is unavailable in this build. The recorded walkthrough still works. idle: This sends a live description request for the example photo to the configured AltContext service. See Request details before starting. pending: Waiting for the live description. Your demo copy is unchanged. complete: Live description received. Review it separately from the demo draft. failed: The live description could not be completed. Your demo copy is unchanged. timed_out: The wait limit was reached. The server job may still be running. Keep waiting continues this run; Try live generation again starts a new one. Your demo copy is unchanged. stopped: Stopped waiting for this request. This does not confirm that the server job stopped. no_result: The server returned no description. Your demo copy is unchanged. Status colour is paired with a glyph.
 
 States (all zones and screens): default first_time error empty edge_input degraded loading offline

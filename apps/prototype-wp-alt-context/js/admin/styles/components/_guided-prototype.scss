@@ -639,6 +639,14 @@
   font-weight: var(--acx-font-weight-semibold);
 }
 
+.acx-guided-face__content > h5 {
+  margin: 0;
+  color: var(--acx-color-text);
+  font-size: var(--acx-text-sm);
+  font-weight: var(--acx-font-weight-semibold);
+  line-height: var(--acx-leading-tight);
+}
+
 .acx-guided-page__image-wrap {
   position: relative;
   overflow: hidden;

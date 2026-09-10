@@ -73,7 +73,7 @@ describe('guided scenario fixture', () => {
     const scenario = createGuidedScenario();
 
     expect(scenario.origin).toBe('saved-build');
-    expect(scenario.scenarioVersion).toBe('guided-people-v3');
+    expect(scenario.scenarioVersion).toBe('guided-people-v4');
     expect(GUIDED_PERSON_KEYS).toEqual([KATY, JUSTIN]);
     expect(scenario.people.map((person) => person.key)).toEqual([KATY, JUSTIN]);
     expect(scenario.faces.map((face) => [face.id, face.position])).toEqual([
@@ -186,7 +186,7 @@ describe('guided scenario fixture', () => {
     const { samples } = createGuidedScenario();
 
     expect(samples.both).toBe(
-      'Justin Trudeau and Katy Perry pose side by side at the Tribeca Festival. He wears a black tuxedo with a white shirt; she wears a white draped gown with her dark hair pinned up and rests a hand on his chest.',
+      "Justin Trudeau and Katy Perry pose together on the red carpet at the Tribeca Festival, standing in front of a backdrop with the event's logo. Trudeau is wearing a black tuxedo with a white shirt, while Perry is in a white sleeveless dress with a draped design. Perry has her arm around Trudeau and is smiling, showing off a ring on her left hand.",
     );
     expect(samples['katy-perry']).toContain('Katy Perry');
     expect(samples['katy-perry']).not.toContain('Justin Trudeau');

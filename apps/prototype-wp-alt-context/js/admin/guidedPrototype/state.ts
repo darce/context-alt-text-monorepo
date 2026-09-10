@@ -177,7 +177,7 @@ const INITIAL_APPLIED_ALT_TEXT = 'A man in a black suit and a woman in a white d
 
 const GUIDED_SCENARIO_SEED: GuidedScenario = {
   origin: 'saved-build',
-  scenarioVersion: 'guided-people-v3',
+  scenarioVersion: 'guided-people-v4',
   pressPhoto: {
     src: guidedPressPhoto,
     altText: INITIAL_APPLIED_ALT_TEXT,
@@ -266,12 +266,10 @@ const GUIDED_SCENARIO_SEED: GuidedScenario = {
     'Her hand rests on his chest.',
   ],
   samples: {
-    none: 'A man in a black tuxedo and a woman in a white draped gown pose side by side at the Tribeca Festival. Her hand rests on his chest.',
-    'katy-perry':
-      'Katy Perry, in a white draped gown with her dark hair pinned up, poses with a man in a black tuxedo at the Tribeca Festival. Her hand rests on his chest.',
-    'justin-trudeau':
-      'Justin Trudeau, in a black tuxedo and white shirt, poses with a woman in a white draped gown at the Tribeca Festival. Her hand rests on his chest.',
-    both: 'Justin Trudeau and Katy Perry pose side by side at the Tribeca Festival. He wears a black tuxedo with a white shirt; she wears a white draped gown with her dark hair pinned up and rests a hand on his chest.',
+    "none": "A man and a woman pose together on a red carpet in front of a backdrop featuring the Tribeca Festival and 10 Lives Studios logos. The man wears a black tuxedo with a white shirt, and the woman is in a white sleeveless dress with a draped design, smiling as she places her hand on his chest.",
+    "katy-perry": "Katy Perry and a man pose together on a red carpet in front of a backdrop for the Tribeca Festival. Perry, on the right, wears a white dress and smiles while placing her hand on the man's chest. The man, on the left, wears a black tuxedo and white shirt. The background features repeating logos for \"TRIBECA FESTIVAL\" and \"10 LIVES STUDIOS.\"",
+    "justin-trudeau": "Justin Trudeau stands on a red carpet at the Tribeca Festival, posing with a woman in a white dress. He is wearing a black tuxedo with a white shirt, and she has her hand on his chest, showing a ring on her finger. The background is a white wall with repeating \"Tribeca Festival\" and \"10 Lives Studios\" logos.",
+    "both": "Justin Trudeau and Katy Perry pose together on the red carpet at the Tribeca Festival, standing in front of a backdrop with the event's logo. Trudeau is wearing a black tuxedo with a white shirt, while Perry is in a white sleeveless dress with a draped design. Perry has her arm around Trudeau and is smiling, showing off a ring on her left hand.",
   },
   provenance: {
     service: 'AltContext recognition service (dev build)',

@@ -191,7 +191,9 @@ export const GuidedSamplePhoto = ({
           className="acx-guided-page__image-wrap"
           style={{
             position: 'relative',
-            ...(imageLoaded ? { aspectRatio: `${naturalSize.width} / ${naturalSize.height}` } : {}),
+            ...(imageLoaded
+              ? { aspectRatio: `${naturalSize.width} / ${naturalSize.height}` }
+              : { minHeight: '12rem' }),
           }}
         >
           <img

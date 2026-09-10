@@ -89,9 +89,7 @@ describe('GuidedFaceOverlay', () => {
     render(<GuidedFaceOverlay faces={faces} naturalSize={naturalSize} visible={false} idPrefix="guided-tribeca" />);
 
     const layer = screen.getByTestId('guided-face-overlay');
-    const buttons = faces.map((face) =>
-      screen.getByRole('button', { name: `${face.label}, ${face.similarityText}` }),
-    );
+    const buttons = faces.map((face) => screen.getByRole('button', { name: `${face.label}, ${face.similarityText}` }));
     expect(layer).not.toHaveAttribute('hidden');
     expect(buttons).toHaveLength(faces.length);
     expect(layer.querySelectorAll('[aria-hidden="true"]')).toHaveLength(1);
@@ -103,7 +101,63 @@ describe('GuidedFaceOverlay', () => {
     });
   });
 
-  it('supports pointer highlighting without changing the accessible button name', () => {
+  it('pins a face on click, keeps it highlighted after pointer-leave and blur, and unpins on a second click', async () => {
+    const user = userEvent.setup();
+    const onHighlightChange = vi.fn();
+    render(
+      <GuidedFaceOverlay
+        faces={[faces[0]]}
+        naturalSize={naturalSize}
+        visible
+        idPrefix="guided-tribeca"
+        onHighlightChange={onHighlightChange}
+      />,
+    );
+
+    const button = screen.getByRole('button', { name: 'Katy Perry, 56.7% (weak)' });
+    await user.click(button);
+    expect(onHighlightChange).toHaveBeenLastCalledWith('katy');
+    expect(button).toHaveAttribute('aria-pressed', 'true');
+    expect(button).toHaveAttribute('data-pinned', 'true');
+    expect(button).toHaveClass('acx-guided-face-overlay__outline--pinned');
+
+    fireEvent.pointerLeave(button);
+    fireEvent.blur(button);
+    expect(onHighlightChange).toHaveBeenLastCalledWith('katy');
+    expect(button).toHaveAttribute('data-pinned', 'true');
+    expect(button).toHaveClass('acx-guided-face-overlay__outline--pinned');
+
+    await user.click(button);
+    expect(button).toHaveAttribute('aria-pressed', 'false');
+    expect(button).toHaveAttribute('data-pinned', 'false');
+    expect(button).not.toHaveClass('acx-guided-face-overlay__outline--pinned');
+  });
+
+  it('clears a pinned face and the interaction highlight on Escape', async () => {
+    const user = userEvent.setup();
+    const onHighlightChange = vi.fn();
+    render(
+      <GuidedFaceOverlay
+        faces={[faces[0]]}
+        naturalSize={naturalSize}
+        visible
+        idPrefix="guided-tribeca"
+        onHighlightChange={onHighlightChange}
+      />,
+    );
+
+    const button = screen.getByRole('button', { name: 'Katy Perry, 56.7% (weak)' });
+    await user.click(button);
+    await user.keyboard('{Escape}');
+
+    expect(button).toHaveAttribute('aria-pressed', 'false');
+    expect(button).toHaveAttribute('data-pinned', 'false');
+    expect(button).not.toHaveClass('acx-guided-face-overlay__outline--pinned');
+    expect(button).not.toHaveClass('acx-guided-face-overlay__outline--highlighted');
+    expect(onHighlightChange).toHaveBeenLastCalledWith(null);
+  });
+
+  it('supports pointer highlighting without changing the accessible button name or pressed state', () => {
     const onHighlightChange = vi.fn();
     render(
       <GuidedFaceOverlay
@@ -118,7 +172,8 @@ describe('GuidedFaceOverlay', () => {
     const button = screen.getByRole('button', { name: 'Katy Perry, 56.7% (weak)' });
     fireEvent.pointerEnter(button);
     expect(onHighlightChange).toHaveBeenCalledWith('katy');
-    expect(button).toHaveAttribute('aria-pressed', 'true');
+    expect(button).toHaveAttribute('aria-pressed', 'false');
+    expect(button).toHaveAttribute('data-pinned', 'false');
     fireEvent.pointerLeave(button);
     expect(onHighlightChange).toHaveBeenLastCalledWith(null);
   });

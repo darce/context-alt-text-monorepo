@@ -1020,7 +1020,9 @@ const DESCRIBE_RUN_ITEM_REQUIRED_KEYS = [
  * be traced to the exact upstream boundary.
  */
 const parseDescribeRunItemsResponse = (payload: unknown, endpoint: string): DescribeRunItemsResponse => {
-  const malformed = (field: string): never => {
+  // The explicit annotation is what lets control-flow analysis treat a
+  // `malformed(...)` statement as unreachable-after and narrow `payload`.
+  const malformed: (field: string) => never = (field) => {
     throw new MalformedDescribeRunResponseError(`${endpoint} ${field}`);
   };
 

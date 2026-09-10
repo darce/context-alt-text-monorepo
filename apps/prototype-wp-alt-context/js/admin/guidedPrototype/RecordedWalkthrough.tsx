@@ -14,22 +14,30 @@ import {
   GUIDED_STEP,
   guidedStepIndex,
   applyGuidedDraft,
+  applyGuidedDraftForImage,
   cancelGuidedChoiceReplacement,
   chooseGuidedName,
   confirmGuidedChoiceReplacement,
   createGuidedDemoState,
   createGuidedScenario,
   editGuidedDraft,
+  editGuidedDraftForImage,
   getGuidedPerson,
   keepGuidedCurrentAltText,
+  keepGuidedCurrentAltTextForImage,
   previewGuidedDraft,
+  previewGuidedDraftForImage,
   resetGuidedDemoState,
   restoreGuidedRevision,
+  restoreGuidedRevisionForImage,
   retryGuidedFixture,
+  retryGuidedFixtureForImage,
   selectGuidedStep,
   undoGuidedApplication,
+  undoGuidedApplicationForImage,
   type GuidedDemoState,
   type GuidedFacePosition,
+  type GuidedImageKey,
   type GuidedNameChoice,
   type GuidedRestoreMode,
   type GuidedScenario,
@@ -117,9 +125,10 @@ export const RecordedWalkthrough = ({ scope, livePanel, escapeHref }: RecordedWa
   const [liveWaiting, setLiveWaiting] = useState(false);
   const choiceOriginRef = useRef<HTMLInputElement | null>(null);
   const pendingDraftRef = useRef<string | null>(null);
+  const pendingDraftsByImageRef = useRef<Partial<Record<GuidedImageKey, string>>>({});
 
   const flushPendingDraft = (current: GuidedDemoState): GuidedDemoState => {
-    const pending = pendingDraftRef.current;
+    const pending = pendingDraftsByImageRef.current.tribeca ?? pendingDraftRef.current;
     if (pending === null || pending === (current.draftText ?? '')) {
       return current;
     }
@@ -175,6 +184,7 @@ export const RecordedWalkthrough = ({ scope, livePanel, escapeHref }: RecordedWa
 
   const handleReset = (): void => {
     pendingDraftRef.current = null;
+    pendingDraftsByImageRef.current = {};
     choiceOriginRef.current = null;
     setDemo(resetGuidedDemoState(demo));
     setResetVersion((current) => current + 1);
@@ -384,6 +394,32 @@ export const RecordedWalkthrough = ({ scope, livePanel, escapeHref }: RecordedWa
             onUndo: () => {
               commit(undoGuidedApplication(demo));
             },
+            onEditForImage: (imageKey, text) => commit(editGuidedDraftForImage(demo, imageKey, text)),
+            onDraftInputForImage: (imageKey, text) => {
+              pendingDraftsByImageRef.current[imageKey] = text;
+            },
+            onPreviewForImage: (imageKey, text) => {
+              let next = demo;
+              if (text !== (next.drafts[imageKey].draftText ?? '')) {
+                next = editGuidedDraftForImage(next, imageKey, text);
+              }
+              next = previewGuidedDraftForImage(next, imageKey);
+              commit(next);
+              focusGuidedSection(GUIDED_STEP.APPLY);
+            },
+            onKeepForImage: (imageKey) => commit(keepGuidedCurrentAltTextForImage(demo, imageKey)),
+            onRetryFixtureForImage: (imageKey) =>
+              commit(retryGuidedFixtureForImage(demo, imageKey, scenario)),
+            onRestoreForImage: (imageKey, revisionId, mode) =>
+              commit(restoreGuidedRevisionForImage(demo, imageKey, revisionId, mode)),
+            onApplyForImage: (imageKey, text) => {
+              let next = demo;
+              if (text !== (next.drafts[imageKey].draftText ?? '')) {
+                next = editGuidedDraftForImage(next, imageKey, text);
+              }
+              commit(applyGuidedDraftForImage(next, imageKey));
+            },
+            onUndoForImage: (imageKey) => commit(undoGuidedApplicationForImage(demo, imageKey)),
           }}
         />
 

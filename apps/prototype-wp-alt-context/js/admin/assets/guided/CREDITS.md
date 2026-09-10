@@ -10,12 +10,11 @@
 | `guided-justin-trudeau-2023.jpg` | Justin Trudeau, REM opening, Quebec, July 2023 | Wikimedia Commons [`File:Justin Trudeau (2023).jpg`](<https://commons.wikimedia.org/wiki/File:Justin_Trudeau_(2023).jpg>) | Lea-Kim Chateauneuf | CC BY-SA 4.0 | Resized by Wikimedia Commons to 960 px wide; otherwise unchanged |
 
 | `guided-justin-trudeau-2024.jpg` | Justin Trudeau, Ottawa meeting, March 2024 | Wikimedia Commons [`File:Justin Trudeau March 5 2024 (cropped).jpg`](<https://commons.wikimedia.org/wiki/File:Justin_Trudeau_March_5_2024_(cropped).jpg>) | Jonathan Miranda / Presidencia de la República del Ecuador | public domain | Cropped on Commons, resized by Commons to 960 px wide |
+| `guided-press-coachella-2026.webp` | User-supplied festival photo; identity labels supplied by the user | User-supplied fixture [`katy-perry-and-justin-trudeau-at-coachella-v0-z697qk161rug1.webp`](../../../../../../docs/assessments/current/demo/v2/katy-perry-and-justin-trudeau-at-coachella-v0-z697qk161rug1.webp) | Not provided | Original licence and source credit unavailable | Copied without re-encoding; source caption unavailable |
 
 The 2023 Trudeau portrait is licensed under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). It replaces the duplicate crop as an illustrative roster reference; saved recognition scores are unchanged.
 
 The 2024 portrait is an additional illustrative reference; the demo roster now shows three Trudeau references.
 
 Except for the 2023 and 2024 references, images were resized to 700, 900 and 1400 px wide and re-encoded as JPEG q82. The 2019 and 2025 (1) files were cropped on Commons, resized here. The original gallery photos are the clear representative photos that
-built each person's entity in the saved recognition run (Katy Perry: 3 of 5 shown; Justin Trudeau: originally 2 of 2). The Coachella press photos used as recognition evidence
-(hola.com, The Guardian) are not redistributable and are not bundled; their recognition numbers are cited in the
-scenario provenance only.
+built each person's entity in the saved recognition run (Katy Perry: 3 of 5 shown; Justin Trudeau: originally 2 of 2). The unredistributable Coachella press photos cited in the Tribeca scenario provenance (hola.com, The Guardian) remain unbundled; their recognition numbers are cited in that provenance only. The separate user-supplied Coachella fixture above has no source caption or licence record and must not be treated as independently verified evidence.

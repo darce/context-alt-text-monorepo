@@ -16,7 +16,7 @@ const PUBLIC_SCOPE =
   'This is a supplied example roster with recorded drafts. Your choices change only the demo copy in this tab; they do not update WordPress or a server roster.';
 
 const choose = (position: 'left' | 'right', option: 'include' | 'omit'): void => {
-  const fieldset = screen.getByTestId(`name-choice-${position}`);
+  const fieldset = screen.getByTestId(`name-choice-tribeca-${position}`);
   const name =
     option === 'include'
       ? guidedCopy('names.include', { name: position === 'left' ? 'Justin Trudeau' : 'Katy Perry' })
@@ -182,8 +182,8 @@ describe('public recorded walkthrough boundary', () => {
     const editor = screen.getByRole('textbox', { name: guidedCopy('draft.label') });
     fireEvent.change(editor, { target: { value: edited } });
     await user.click(screen.getByRole('button', { name: guidedCopy('draft.next') }));
-    await user.click(screen.getByTestId('demo-apply'));
-    await user.click(screen.getByTestId('demo-undo'));
+    await user.click(screen.getByTestId('demo-apply-tribeca'));
+    await user.click(screen.getByTestId('demo-undo-tribeca'));
 
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(xhrOpen).not.toHaveBeenCalled();
@@ -201,13 +201,13 @@ describe('public recorded walkthrough boundary', () => {
     const editor = screen.getByRole('textbox', { name: guidedCopy('draft.label') });
     fireEvent.change(editor, { target: { value: edited } });
     await user.click(screen.getByRole('button', { name: guidedCopy('draft.next') }));
-    await user.click(screen.getByTestId('demo-apply'));
+    await user.click(screen.getByTestId('demo-apply-tribeca'));
 
-    expect(screen.getByTestId('demo-applied-image')).toHaveAttribute('alt', edited);
+    expect(screen.getByTestId('demo-applied-image-tribeca')).toHaveAttribute('alt', edited);
     expect(editor).toHaveValue(edited);
 
-    await user.click(screen.getByTestId('demo-undo'));
-    expect(screen.getByTestId('demo-applied-image')).toHaveAttribute('alt', SEED_ALT_TEXT);
+    await user.click(screen.getByTestId('demo-undo-tribeca'));
+    expect(screen.getByTestId('demo-applied-image-tribeca')).toHaveAttribute('alt', SEED_ALT_TEXT);
     expect(editor).toHaveValue(edited);
 
     const seedAfter = createGuidedScenario();
@@ -235,25 +235,29 @@ describe('public recorded walkthrough boundary', () => {
 
   it('keeps the full before-source attribution inside the provenance disclosure', () => {
     const { container } = render(<RecordedWalkthrough scope="public" escapeHref="/" />);
-    const provenance = container.querySelector('.acx-guided-page__provenance');
+    const provenance = container.querySelector('.acx-guided-page__provenance-footer');
     expect(provenance).not.toBeNull();
     expect(provenance).toHaveTextContent(guidedCopy('context.source.summary.public'));
     expect(provenance).toHaveTextContent(guidedCopy('context.source.comparison_boundary.public'));
+    expect(provenance).toHaveTextContent(guidedCopy('provenance.recorded'));
     expect(provenance?.querySelector('a[href="https://alttext.ai/"]')).toBeInTheDocument();
-    expect(container.querySelector('.acx-guided-page__context > p:nth-of-type(2)')).not.toHaveTextContent(
-      /starting “before” text/i,
-    );
+    const context = container.querySelector('.acx-guided-page__context');
+    expect(context?.children).toHaveLength(1);
+    expect(context?.querySelector('p')).toHaveTextContent(guidedCopy('context.purpose'));
+    expect(context?.querySelector('details, button')).toBeNull();
   });
 
   it('keeps public-source narration out of admin provenance while retaining recorded attribution', () => {
     const { container } = render(<RecordedWalkthrough scope="admin" />);
-    const provenance = container.querySelector('.acx-guided-page__provenance');
+    const provenance = container.querySelector('.acx-guided-page__provenance-footer');
     expect(provenance).not.toBeNull();
     expect(provenance).toHaveTextContent(guidedCopy('provenance.recorded'));
-    expect(provenance).toHaveTextContent(createGuidedScenario().pressPhoto.credit);
     expect(provenance).not.toHaveTextContent(guidedCopy('context.source.summary.public'));
     expect(provenance).not.toHaveTextContent(guidedCopy('context.source.comparison_boundary.public'));
     expect(provenance?.querySelector('a[href="https://alttext.ai/"]')).not.toBeInTheDocument();
+    expect(container.querySelector('p.acx-guided-page__credit')).toHaveTextContent(
+      createGuidedScenario().pressPhoto.credit,
+    );
   });
 
   it('keeps public completion copy bounded for applied and kept outcomes', async () => {
@@ -266,13 +270,17 @@ describe('public recorded walkthrough boundary', () => {
     await user.clear(editor);
     await user.type(editor, 'A bounded public demo edit.');
     await user.click(screen.getByRole('button', { name: guidedCopy('draft.next') }));
-    await user.click(screen.getByTestId('demo-apply'));
+    await user.click(screen.getByTestId('demo-apply-tribeca'));
     expect(screen.getByTestId('demo-outcome')).toHaveTextContent(guidedCopy('outcome.scope.public'));
     expect(screen.getByTestId('demo-outcome')).toHaveTextContent(guidedCopy('outcome.next_batch.public'));
     expect(screen.getByTestId('demo-outcome')).not.toHaveTextContent(/WordPress media has been updated/i);
 
     await user.click(screen.getByRole('button', { name: guidedCopy('outcome.return') }));
-    await user.click(screen.getByRole('button', { name: guidedCopy('draft.keep') }));
+    await user.click(
+      within(screen.getByTestId('guided-description-review-tribeca')).getByRole('button', {
+        name: guidedCopy('draft.keep'),
+      }),
+    );
     expect(screen.getByTestId('demo-outcome')).toHaveTextContent(guidedCopy('outcome.kept'));
     expect(screen.getByTestId('demo-outcome')).toHaveTextContent(guidedCopy('outcome.scope.public'));
     expect(screen.getByTestId('demo-outcome')).toHaveTextContent(guidedCopy('outcome.next_batch.public'));
@@ -288,11 +296,15 @@ describe('public recorded walkthrough boundary', () => {
     const dialog = screen.getByRole('dialog', { name: guidedCopy('reset.title') });
     await user.click(within(dialog).getByRole('button', { name: guidedCopy('reset.confirm') }));
 
-    expect(within(screen.getByTestId('name-choice-left')).getByRole('radio', { name: /^Use / })).not.toBeChecked();
-    expect(within(screen.getByTestId('name-choice-right')).getByRole('radio', { name: /^Use / })).not.toBeChecked();
+    expect(
+      within(screen.getByTestId('name-choice-tribeca-left')).getByRole('radio', { name: /^Use / }),
+    ).not.toBeChecked();
+    expect(
+      within(screen.getByTestId('name-choice-tribeca-right')).getByRole('radio', { name: /^Use / }),
+    ).not.toBeChecked();
     expect(screen.getByTestId('guided-choice-summary')).toHaveTextContent(guidedCopy('names.pending'));
     expect(screen.queryByTestId('demo-outcome')).not.toBeInTheDocument();
-    expect(screen.getByTestId('demo-applied-image')).toHaveAttribute('alt', SEED_ALT_TEXT);
+    expect(screen.getByTestId('guided-description-review-tribeca')).toHaveTextContent(guidedCopy('draft.blocked'));
   });
 
   it('does not resurrect an unsaved draft or open replacement after reset', async () => {

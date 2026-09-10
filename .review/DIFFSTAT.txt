@@ -1,7 +1,7 @@
- .review/CHANGE.diff                                | 301 +++++++++++++++++++++
- .review/COMMITS.txt                                |   1 +
+ .review/CHANGE.diff                                | 634 +++++++++++++++++++++
+ .review/COMMITS.txt                                |   2 +
  .review/CONTEXT.md                                 |   8 +
- .review/DIFFSTAT.txt                               |   3 +
- .../admin/pages/guided/GuidedDescriptionReview.tsx | 115 +++++++-
- .../GuidedDescriptionReview.blastRadius.test.tsx   | 115 ++++++++
- 6 files changed, 534 insertions(+), 9 deletions(-)
+ .review/DIFFSTAT.txt                               |   7 +
+ .../admin/pages/guided/GuidedDescriptionReview.tsx | 115 +++-
+ .../GuidedDescriptionReview.blastRadius.test.tsx   | 115 ++++
+ 6 files changed, 872 insertions(+), 9 deletions(-)

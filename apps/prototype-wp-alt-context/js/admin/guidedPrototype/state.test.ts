@@ -17,6 +17,7 @@ import {
   createGuidedDemoState,
   createGuidedScenario,
   editGuidedDraft,
+  editGuidedDraftForImage,
   getGuidedFace,
   getGuidedPerson,
   GUIDED_DRAFT_ORIGIN,
@@ -30,13 +31,19 @@ import {
   guidedSampleFor,
   guidedStepIndex,
   keepGuidedCurrentAltText,
+  keepGuidedCurrentAltTextForImage,
   namesDecided,
   previewGuidedDraft,
+  previewGuidedDraftForImage,
   resetGuidedDemoState,
   restoreGuidedRevision,
+  restoreGuidedRevisionForImage,
   retryGuidedFixture,
+  retryGuidedFixtureForImage,
   selectGuidedStep,
   undoGuidedApplication,
+  undoGuidedApplicationForImage,
+  applyGuidedDraftForImage,
   type GuidedDemoState,
   type GuidedImageKey,
   type GuidedNameChoice,
@@ -89,6 +96,18 @@ const includeBoth = (scenario: GuidedScenario, state: GuidedDemoState = createGu
   chooseBoth(state, scenario, INCLUDE, INCLUDE);
 
 const snapshot = (value: unknown): string => JSON.stringify(value);
+
+const expectTribecaMirror = (state: GuidedDemoState): void => {
+  const tribeca = state.drafts[TRIBECA];
+  expect(state.draftText).toBe(tribeca.draftText);
+  expect(state.draftOrigin).toBe(tribeca.draftOrigin);
+  expect(state.draftStatus).toBe(tribeca.draftStatus);
+  expect(state.draftVersion).toBe(tribeca.draftVersion);
+  expect(state.previewedVersion).toBe(tribeca.previewedVersion);
+  expect(state.draftHistory).toEqual(tribeca.draftHistory);
+  expect(state.appliedAltText).toBe(tribeca.appliedAltText);
+  expect(state.applicationUndoStack).toEqual(tribeca.applicationHistory);
+};
 
 describe('guided scenario fixture', () => {
   it('starts from a saved run with two labelled people, two matched faces and no demo decisions', () => {
@@ -279,6 +298,29 @@ describe('createGuidedDemoState', () => {
     expect(state).toEqual({
       activeStep: GUIDED_STEP.CONTEXT,
       choices: { left: UNDECIDED, right: UNDECIDED },
+      drafts: {
+        tribeca: {
+          draftText: null,
+          draftOrigin: GUIDED_DRAFT_ORIGIN.NONE,
+          draftStatus: GUIDED_DRAFT_STATUS.BLOCKED,
+          draftVersion: 0,
+          previewedVersion: null,
+          appliedAltText: ORIGINAL_ALT,
+          applicationHistory: [],
+          draftHistory: [],
+        },
+        coachella: {
+          draftText: null,
+          draftOrigin: GUIDED_DRAFT_ORIGIN.NONE,
+          draftStatus: GUIDED_DRAFT_STATUS.BLOCKED,
+          draftVersion: 0,
+          previewedVersion: null,
+          appliedAltText:
+            'Two people sit on a curb outdoors at night, holding red cups and eating food, with trees and plants in the background.',
+          applicationHistory: [],
+          draftHistory: [],
+        },
+      },
       draftText: null,
       draftOrigin: GUIDED_DRAFT_ORIGIN.NONE,
       draftStatus: GUIDED_DRAFT_STATUS.BLOCKED,
@@ -295,6 +337,90 @@ describe('createGuidedDemoState', () => {
     expect(state).not.toHaveProperty('liveRequestToken');
     expect(state).not.toHaveProperty('liveText');
     expect(state).not.toHaveProperty('liveContractVerified');
+  });
+});
+
+describe('per-image draft transitions', () => {
+  it('keeps coachella draft changes independent while legacy fields mirror tribeca', () => {
+    const scenario = createGuidedScenario();
+    const ready = chooseBoth(createGuidedDemoState(), scenario, INCLUDE, INCLUDE, COACHELLA);
+    const tribecaBefore = ready.drafts[TRIBECA];
+    expect(ready.drafts[COACHELLA].draftText).toBe(scenario.samples[COACHELLA].both);
+    expectTribecaMirror(ready);
+
+    const edited = editGuidedDraftForImage(ready, COACHELLA, 'Coachella custom draft.');
+    expect(edited.drafts[COACHELLA].draftText).toBe('Coachella custom draft.');
+    expect(edited.drafts[COACHELLA].draftOrigin).toBe(GUIDED_DRAFT_ORIGIN.VISITOR_EDIT);
+    expect(edited.drafts[TRIBECA]).toEqual(tribecaBefore);
+    expectTribecaMirror(edited);
+
+    const previewed = previewGuidedDraftForImage(edited, COACHELLA);
+    expect(previewed.drafts[COACHELLA].previewedVersion).toBe(previewed.drafts[COACHELLA].draftVersion);
+    expect(previewed.drafts[TRIBECA]).toEqual(tribecaBefore);
+    expectTribecaMirror(previewed);
+
+    const applied = applyGuidedDraftForImage(previewed, COACHELLA);
+    expect(applied.drafts[COACHELLA].appliedAltText).toBe('Coachella custom draft.');
+    expect(applied.drafts[COACHELLA].applicationHistory).toHaveLength(1);
+    expect(applied.drafts[TRIBECA]).toEqual(tribecaBefore);
+    expectTribecaMirror(applied);
+
+    const undone = undoGuidedApplicationForImage(applied, COACHELLA);
+    expect(undone.drafts[COACHELLA].appliedAltText).toBe(ready.drafts[COACHELLA].appliedAltText);
+    expect(undone.drafts[COACHELLA].applicationHistory).toEqual([]);
+    expectTribecaMirror(undone);
+
+    const kept = keepGuidedCurrentAltTextForImage(applied, COACHELLA);
+    expect(kept.drafts[COACHELLA].appliedAltText).toBe(ready.drafts[COACHELLA].appliedAltText);
+    expect(kept.drafts[COACHELLA].applicationHistory).toEqual([]);
+    expect(kept.outcome).toBe(GUIDED_OUTCOME.KEPT);
+    expectTribecaMirror(kept);
+  });
+
+  it('archives and restores a coachella revision and retries only its missing fixture', () => {
+    const scenario = createGuidedScenario();
+    const first = editGuidedDraftForImage(
+      chooseBoth(createGuidedDemoState(), scenario, INCLUDE, INCLUDE, COACHELLA),
+      COACHELLA,
+      'First coachella draft.',
+    );
+    const pending = chooseGuidedName(first, scenario, 'right', OMIT, COACHELLA);
+    const confirmed = confirmGuidedChoiceReplacement(pending, scenario, COACHELLA);
+    const revision = confirmed.drafts[COACHELLA].draftHistory[0];
+    expect(revision).toBeDefined();
+    if (revision === undefined) {
+      throw new Error('Expected a coachella draft revision.');
+    }
+    const current = editGuidedDraftForImage(confirmed, COACHELLA, 'Current coachella draft.');
+    const restored = restoreGuidedRevisionForImage(current, COACHELLA, revision.revisionId, 'copy_only');
+    expect(restored.drafts[COACHELLA].draftText).toBe('First coachella draft.');
+    expect(restored.drafts[COACHELLA].draftOrigin).toBe(GUIDED_DRAFT_ORIGIN.VISITOR_EDIT);
+    expect(restored.drafts[TRIBECA]).toEqual(confirmed.drafts[TRIBECA]);
+    expectTribecaMirror(restored);
+
+    const missingScenario = withMissingSample(scenario, COACHELLA, 'both');
+    const missing = chooseBoth(createGuidedDemoState(), missingScenario, INCLUDE, INCLUDE, COACHELLA);
+    const recovered = retryGuidedFixtureForImage(missing, COACHELLA, scenario);
+    expect(recovered.drafts[COACHELLA].draftStatus).toBe(GUIDED_DRAFT_STATUS.READY);
+    expect(recovered.drafts[COACHELLA].draftText).toBe(scenario.samples[COACHELLA].both);
+    expect(recovered.drafts[TRIBECA]).toEqual(missing.drafts[TRIBECA]);
+    expectTribecaMirror(recovered);
+  });
+
+  it('keeps the tribeca mirror synchronized through legacy draft transitions', () => {
+    const scenario = createGuidedScenario();
+    let state = includeBoth(scenario);
+    expectTribecaMirror(state);
+    state = editGuidedDraft(state, 'Tribeca custom draft.');
+    expectTribecaMirror(state);
+    state = previewGuidedDraft(state);
+    expectTribecaMirror(state);
+    state = applyGuidedDraft(state);
+    expectTribecaMirror(state);
+    state = undoGuidedApplication(state);
+    expectTribecaMirror(state);
+    state = keepGuidedCurrentAltText(state);
+    expectTribecaMirror(state);
   });
 });
 
@@ -467,12 +593,14 @@ describe('chooseGuidedName', () => {
   it('uses the selected image sample and reports absent variants as fixture_missing', () => {
     const scenario = createGuidedScenario();
     const coachellaBoth = chooseBoth(createGuidedDemoState(), scenario, INCLUDE, INCLUDE, COACHELLA);
-    expect(coachellaBoth.draftStatus).toBe(GUIDED_DRAFT_STATUS.READY);
-    expect(coachellaBoth.draftText).toBe(scenario.samples[COACHELLA].both);
+    expect(coachellaBoth.drafts[COACHELLA].draftStatus).toBe(GUIDED_DRAFT_STATUS.READY);
+    expect(coachellaBoth.drafts[COACHELLA].draftText).toBe(scenario.samples[COACHELLA].both);
+    expect(coachellaBoth.draftStatus).toBe(coachellaBoth.drafts[TRIBECA].draftStatus);
 
     const coachellaPartial = chooseBoth(createGuidedDemoState(), scenario, INCLUDE, OMIT, COACHELLA);
-    expect(coachellaPartial.draftStatus).toBe(GUIDED_DRAFT_STATUS.FIXTURE_MISSING);
-    expect(coachellaPartial.draftText).toBeNull();
+    expect(coachellaPartial.drafts[COACHELLA].draftStatus).toBe(GUIDED_DRAFT_STATUS.FIXTURE_MISSING);
+    expect(coachellaPartial.drafts[COACHELLA].draftText).toBeNull();
+    expect(coachellaPartial.draftStatus).toBe(coachellaPartial.drafts[TRIBECA].draftStatus);
   });
 
   it('covers every include/omit combination and every one-undecided state (T03)', () => {
@@ -879,8 +1007,9 @@ describe('retryGuidedFixture', () => {
     const missingScenario = withMissingSample(createGuidedScenario(), COACHELLA, 'both');
     const missing = chooseBoth(createGuidedDemoState(), missingScenario, INCLUDE, INCLUDE, COACHELLA);
     const recovered = retryGuidedFixture(missing, createGuidedScenario(), COACHELLA);
-    expect(recovered.draftStatus).toBe(GUIDED_DRAFT_STATUS.READY);
-    expect(recovered.draftText).toBe(createGuidedScenario().samples[COACHELLA].both);
+    expect(recovered.drafts[COACHELLA].draftStatus).toBe(GUIDED_DRAFT_STATUS.READY);
+    expect(recovered.drafts[COACHELLA].draftText).toBe(createGuidedScenario().samples[COACHELLA].both);
+    expect(recovered.draftStatus).toBe(recovered.drafts[TRIBECA].draftStatus);
   });
 });
 

@@ -7,9 +7,8 @@ import { CASE_STUDY_URL, guidedCopy } from './publicGuideCopy';
 import { RecordedWalkthrough } from './RecordedWalkthrough';
 
 const PUBLIC_SCOPE =
-  'Try the review workflow using a recorded example. Your changes affect only the demo copy in this tab.';
+  'This is a supplied example roster with recorded drafts. Your choices change only the demo copy in this tab; they do not update WordPress or a server roster.';
 const START_WALKTHROUGH = 'Start the walkthrough';
-const WATCH_RECORDING = 'Watch the recording';
 const READ_CASE_STUDY = 'Read the case study';
 const CANONICAL_CASE_STUDY_URL = 'https://darce.xyz/projects/altcontext/';
 const opensInNewWindow = (label: string): string => `${label} (opens in a new window)`;
@@ -69,16 +68,17 @@ describe('RecordedWalkthrough public scope', () => {
     const scope = screen.getByTestId('guided-scope');
     expect(scope.tagName).toBe('P');
     expect(scope).toHaveTextContent(PUBLIC_SCOPE);
+    expect(screen.getByRole('heading', { level: 1, name: guidedCopy('entry.title.public') })).toBeInTheDocument();
+    expect(screen.getByText(guidedCopy('entry.intro.public'))).toBeInTheDocument();
 
     const entrance = document.querySelector('.acx-guided-entrance');
-    expect(entrance?.querySelector('p')).toBe(scope);
+    expect(entrance?.querySelector('h1')).toHaveTextContent(guidedCopy('entry.title.public'));
 
     const escape = screen.getByRole('navigation', { name: 'Leave the walkthrough' });
     expect(escape.querySelector('a[href="https://example.test/"]')).not.toBeNull();
     expect(escape.querySelector(`a[href="${CASE_STUDY_URL}"]`)).not.toBeNull();
 
     expect(screen.getByRole('button', { name: START_WALKTHROUGH })).toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: opensInNewWindow(WATCH_RECORDING) })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: opensInNewWindow(READ_CASE_STUDY) })).toHaveAttribute(
       'href',
       CASE_STUDY_URL,
@@ -141,10 +141,10 @@ describe('RecordedWalkthrough public scope', () => {
     render(<RecordedWalkthrough scope="admin" />);
 
     expect(screen.queryByTestId('guided-scope')).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: guidedCopy('entry.title.public') })).not.toBeInTheDocument();
     expect(screen.getByText(guidedCopy('page.scope'))).toBeInTheDocument();
     expect(screen.getByText(guidedCopy('page.live_scope'))).toBeInTheDocument();
     expect(screen.queryByRole('navigation', { name: 'Leave the walkthrough' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: WATCH_RECORDING })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: READ_CASE_STUDY })).not.toBeInTheDocument();
     expect(
       screen.getByRole('link', { name: new RegExp(`${guidedCopy('page.case_study')}.*opens in a new window`, 'i') }),

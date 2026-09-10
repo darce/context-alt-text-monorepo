@@ -100,12 +100,7 @@ const publicSourceSummary = (): React.ReactNode => {
   return (
     <>
       {source.slice(0, vendorIndex)}
-      <a
-        href="https://alttext.ai/"
-        target="_blank"
-        rel="noreferrer"
-        aria-label={`${vendor} (opens in a new window)`}
-      >
+      <a href="https://alttext.ai/" target="_blank" rel="noreferrer" aria-label={`${vendor} (opens in a new window)`}>
         {vendor}
       </a>
       {source.slice(vendorIndex + vendor.length)}
@@ -221,24 +216,85 @@ export const RecordedWalkthrough = ({ scope, livePanel, escapeHref }: RecordedWa
                 <GuidedSamplePhoto
                   key={photo.key}
                   photo={photo}
-                  {...(index === 0 ? { evidenceAlt: scenario.samples.none ?? photo.altText } : {})}
+                  headingId={`guided-photo-${photo.key}-title`}
+                  {...(index === 0 ? { evidenceAlt: scenario.samples.tribeca.none ?? photo.altText } : {})}
                   currentAltText={demo.appliedAltText}
                   showCurrentAltText={index === 0}
                   provenance={scenario.provenance}
                   scope={scope}
                   {...(scope === 'public' && index === 0 ? { publicSourceSummary: publicSourceSummary() } : {})}
-                />
+                >
+                  <div className="acx-guided-face__decisions">
+                    {scenario.faces
+                      .filter((face) => face.imageKey === photo.key)
+                      .map((face) => {
+                        const person = getGuidedPerson(scenario, face.matchedPersonKey);
+                        const groupName = `guided-name-${photo.key}-${face.position}`;
+                        const includeId = `${groupName}-include`;
+                        const omitId = `${groupName}-omit`;
+
+                        return (
+                          <div key={face.id} className="acx-guided-face__decision-row">
+                            <div>
+                              <p>{guidedCopy('names.suggestion', { name: person.name })}</p>
+                              <p className="acx-guided-face__decision">
+                                {choiceLabel(scenario, face.position, demo.choices[face.position])}
+                              </p>
+                            </div>
+                            <fieldset
+                              data-testid={`name-choice-${photo.key}-${face.position}`}
+                              disabled={demo.pendingChoiceChange !== null}
+                              className="acx-guided-face__choice"
+                            >
+                              <legend>{guidedCopy('names.legend', { position: face.position })}</legend>
+                              <div className="acx-guided-face__choice-options">
+                                <label htmlFor={includeId}>
+                                  <input
+                                    id={includeId}
+                                    type="radio"
+                                    name={groupName}
+                                    value={GUIDED_NAME_CHOICE.INCLUDE}
+                                    checked={demo.choices[face.position] === GUIDED_NAME_CHOICE.INCLUDE}
+                                    onChange={(event) =>
+                                      handleChoose(face.position, GUIDED_NAME_CHOICE.INCLUDE, event.currentTarget)
+                                    }
+                                  />
+                                  {guidedCopy('names.include', { name: person.name })}
+                                </label>
+                                <label htmlFor={omitId}>
+                                  <input
+                                    id={omitId}
+                                    type="radio"
+                                    name={groupName}
+                                    value={GUIDED_NAME_CHOICE.OMIT}
+                                    checked={demo.choices[face.position] === GUIDED_NAME_CHOICE.OMIT}
+                                    onChange={(event) =>
+                                      handleChoose(face.position, GUIDED_NAME_CHOICE.OMIT, event.currentTarget)
+                                    }
+                                  />
+                                  {guidedCopy('names.omit')}
+                                </label>
+                              </div>
+                            </fieldset>
+                          </div>
+                        );
+                      })}
+                  </div>
+                </GuidedSamplePhoto>
               ))}
             </div>
             <div className="acx-guided-page__context">
-              <p>{guidedCopy('context.intro')}</p>
               <p>
                 <strong>{guidedCopy('context.page_label')}</strong>
                 {': '}
                 {scenario.pageContext.title}
               </p>
-              <p>{scenario.pageContext.summary}</p>
-              <p>{guidedCopy('context.purpose')}</p>
+              <details>
+                <summary>About this example</summary>
+                <p>{guidedCopy('context.intro')}</p>
+                <p>{scenario.pageContext.summary}</p>
+                <p>{guidedCopy('context.purpose')}</p>
+              </details>
               <button
                 type="button"
                 className="acx-button acx-button--primary"
@@ -300,7 +356,9 @@ export const RecordedWalkthrough = ({ scope, livePanel, escapeHref }: RecordedWa
           onCancelReplacement={handleCancelReplacement}
         />
 
-        {scope === 'public' ? <p className="acx-guided-review__explanation">{guidedCopy('draft.context.public')}</p> : null}
+        {scope === 'public' ? (
+          <p className="acx-guided-review__explanation">{guidedCopy('draft.context.public')}</p>
+        ) : null}
 
         <GuidedDescriptionReview
           scenario={scenario}

@@ -9,6 +9,7 @@ import {
   type GuidedPressPhoto,
   type GuidedProvenance,
 } from '../../guidedPrototype/state';
+import { isUsableNaturalSize } from '../../../components/ui/faceGeometry';
 import { GuidedFaceOverlay, type GuidedFaceOverlayFace } from './GuidedFaceOverlay';
 
 export type GuidedSamplePhotoScope = 'public' | 'admin';
@@ -157,7 +158,7 @@ export const GuidedSamplePhoto = ({
   const accessibleAlt = evidenceAlt ?? photo.altText;
   const overlayFaces = useMemo(() => overlayFacesForPhoto(photo), [photo]);
   const overlayVisible = pointerInside || focusWithin;
-  const imageLoaded = naturalSize.width > 0 && naturalSize.height > 0;
+  const imageLoaded = isUsableNaturalSize(naturalSize);
 
   const handleFigureBlur = (event: React.FocusEvent<HTMLElement>): void => {
     if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) {
@@ -186,7 +187,13 @@ export const GuidedSamplePhoto = ({
           <span>{accessibleAlt}</span>
         </div>
       ) : (
-        <div className="acx-guided-page__image-wrap" style={{ position: 'relative' }}>
+        <div
+          className="acx-guided-page__image-wrap"
+          style={{
+            position: 'relative',
+            ...(imageLoaded ? { aspectRatio: `${naturalSize.width} / ${naturalSize.height}` } : {}),
+          }}
+        >
           <img
             className="acx-guided-page__image"
             src={photo.src}

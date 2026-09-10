@@ -254,7 +254,11 @@ export const RecordedWalkthrough = ({ scope, livePanel, escapeHref }: RecordedWa
                             key={face.id}
                             idScope={photo.key}
                             matches={scenario.faces
-                              .filter((candidate) => candidate.matchedPersonKey === face.matchedPersonKey)
+                              .filter(
+                                (candidate) =>
+                                  candidate.imageKey === photo.key &&
+                                  candidate.matchedPersonKey === face.matchedPersonKey,
+                              )
                               .map((match) => {
                                 const matchPhoto = scenario.pressPhotos.find(
                                   (candidate) => candidate.key === match.imageKey,

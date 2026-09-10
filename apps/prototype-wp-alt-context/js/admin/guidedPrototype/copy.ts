@@ -68,7 +68,7 @@ export const GUIDED_COPY = {
   "names.enlarge_title": "Enlarged comparison",
   "names.crop_alt": "Detected {position} face",
   "names.crop_alt_image": "Detected {position} face in {image}",
-  "names.match.below_threshold": "This match fell below the displayed {threshold} threshold; the production clusterer grouped it anyway.",
+  "names.match.below_threshold": "Below the {threshold} match threshold.",
   "names.match.weak_icon": "Weak match warning",
   "names.next": "Review the draft",
   "names.next_blocked": "Choose an option for both people. Leaving a person unnamed counts as a choice.",

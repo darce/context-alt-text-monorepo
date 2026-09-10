@@ -179,6 +179,8 @@ export const RecordedWalkthrough = ({ scope, livePanel, escapeHref }: RecordedWa
   };
 
   const handleReset = (): void => {
+    pendingDraftRef.current = null;
+    choiceOriginRef.current = null;
     setDemo(resetGuidedDemoState(demo));
     setResetVersion((current) => current + 1);
     setFeedback(guidedCopy('reset.status'));
@@ -231,8 +233,12 @@ export const RecordedWalkthrough = ({ scope, livePanel, escapeHref }: RecordedWa
               <p>{guidedCopy('context.purpose')}</p>
               <details className="acx-guided-page__provenance">
                 <summary>{guidedCopy('provenance.disclosure')}</summary>
-                <p>{publicSourceSummary()}</p>
-                <p>{guidedCopy('context.source.comparison_boundary.public')}</p>
+                {scope === 'public' ? (
+                  <>
+                    <p>{publicSourceSummary()}</p>
+                    <p>{guidedCopy('context.source.comparison_boundary.public')}</p>
+                  </>
+                ) : null}
                 <p>{guidedCopy('provenance.recorded')}</p>
                 <p>{scenario.pressPhoto.credit}</p>
               </details>

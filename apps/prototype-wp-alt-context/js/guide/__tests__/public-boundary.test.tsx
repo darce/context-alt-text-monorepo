@@ -244,6 +244,17 @@ describe('public recorded walkthrough boundary', () => {
     );
   });
 
+  it('keeps public-source narration out of admin provenance while retaining recorded attribution', () => {
+    const { container } = render(<RecordedWalkthrough scope="admin" />);
+    const provenance = container.querySelector('.acx-guided-page__provenance');
+    expect(provenance).not.toBeNull();
+    expect(provenance).toHaveTextContent(guidedCopy('provenance.recorded'));
+    expect(provenance).toHaveTextContent(createGuidedScenario().pressPhoto.credit);
+    expect(provenance).not.toHaveTextContent(guidedCopy('context.source.summary.public'));
+    expect(provenance).not.toHaveTextContent(guidedCopy('context.source.comparison_boundary.public'));
+    expect(provenance?.querySelector('a[href="https://alttext.ai/"]')).not.toBeInTheDocument();
+  });
+
   it('keeps public completion copy bounded for applied and kept outcomes', async () => {
     const user = userEvent.setup();
     render(<RecordedWalkthrough scope="public" escapeHref="/" />);
@@ -281,6 +292,31 @@ describe('public recorded walkthrough boundary', () => {
     expect(screen.getByTestId('guided-choice-summary')).toHaveTextContent(guidedCopy('names.pending'));
     expect(screen.queryByTestId('demo-outcome')).not.toBeInTheDocument();
     expect(screen.getByTestId('demo-applied-image')).toHaveAttribute('alt', SEED_ALT_TEXT);
+  });
+
+  it('does not resurrect an unsaved draft or open replacement after reset', async () => {
+    const user = userEvent.setup();
+    render(<RecordedWalkthrough scope="public" escapeHref="/" />);
+
+    const scenario = createGuidedScenario();
+    choose('left', 'include');
+    choose('right', 'include');
+    const editor = screen.getByRole('textbox', { name: guidedCopy('draft.label') });
+    const staleDraft = 'Unsaved draft must not return after reset.';
+    fireEvent.change(editor, { target: { value: staleDraft } });
+
+    await user.click(screen.getByRole('button', { name: guidedCopy('page.reset') }));
+    const dialog = screen.getByRole('dialog', { name: guidedCopy('reset.title') });
+    await user.click(within(dialog).getByRole('button', { name: guidedCopy('reset.confirm') }));
+
+    choose('left', 'include');
+    choose('right', 'omit');
+
+    expect(screen.queryByRole('dialog', { name: guidedCopy('names.change_title') })).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: guidedCopy('draft.label') })).toHaveValue(
+      scenario.samples['justin-trudeau'],
+    );
+    expect(screen.getByRole('textbox', { name: guidedCopy('draft.label') })).not.toHaveValue(staleDraft);
   });
 
   it('walks the public entry import graph and forbids live/API imports', () => {

@@ -40,13 +40,18 @@ export const GUIDED_OUTCOME = {
   KEPT: 'kept',
 } as const;
 
+export const GUIDED_MATCH_STRENGTH = {
+  STRONG: 'strong',
+  WEAK: 'weak',
+} as const;
+
 export type GuidedStep = (typeof GUIDED_STEP)[keyof typeof GUIDED_STEP];
 export type GuidedNameChoice = (typeof GUIDED_NAME_CHOICE)[keyof typeof GUIDED_NAME_CHOICE];
 export type GuidedDraftOrigin = (typeof GUIDED_DRAFT_ORIGIN)[keyof typeof GUIDED_DRAFT_ORIGIN];
 export type GuidedDraftStatus = (typeof GUIDED_DRAFT_STATUS)[keyof typeof GUIDED_DRAFT_STATUS];
 export type GuidedOutcome = (typeof GUIDED_OUTCOME)[keyof typeof GUIDED_OUTCOME];
 export type GuidedRestoreMode = 'full' | 'copy_only';
-export type GuidedMatchStrength = 'strong' | 'weak';
+export type GuidedMatchStrength = (typeof GUIDED_MATCH_STRENGTH)[keyof typeof GUIDED_MATCH_STRENGTH];
 export type GuidedPersonKey = 'katy-perry' | 'justin-trudeau';
 export type GuidedImageKey = 'tribeca' | 'coachella';
 export const GUIDED_PERSON_KEYS: readonly GuidedPersonKey[] = ['katy-perry', 'justin-trudeau'];
@@ -115,6 +120,7 @@ export interface GuidedFace {
   matchedPersonKey: GuidedPersonKey;
   /** Null when a fixture has a user-supplied label but no recognition result. */
   similarity: number | null;
+  isClusterAnchor: boolean;
   /** Null when no recognition confidence/strength was recorded for the fixture. */
   strength: GuidedMatchStrength | null;
   note?: string;
@@ -349,6 +355,7 @@ const GUIDED_SCENARIO_SEED: Omit<GuidedScenario, 'pressPhoto'> = {
       box: { x: 513, y: 76, width: 133, height: 189 },
       matchedPersonKey: 'justin-trudeau',
       similarity: 0.8938,
+      isClusterAnchor: false,
       strength: 'strong',
       source: 'saved-run',
     },
@@ -359,6 +366,7 @@ const GUIDED_SCENARIO_SEED: Omit<GuidedScenario, 'pressPhoto'> = {
       box: { x: 706, y: 139, width: 121, height: 182 },
       matchedPersonKey: 'katy-perry',
       similarity: 1,
+      isClusterAnchor: true,
       strength: 'strong',
       note: 'Her face is turned a little to the side.',
       source: 'saved-run',
@@ -370,6 +378,7 @@ const GUIDED_SCENARIO_SEED: Omit<GuidedScenario, 'pressPhoto'> = {
       box: { x: 196, y: 182, width: 89, height: 129 },
       matchedPersonKey: 'justin-trudeau',
       similarity: 0.7015,
+      isClusterAnchor: false,
       strength: 'strong',
       source: 'saved-run',
     },
@@ -380,6 +389,7 @@ const GUIDED_SCENARIO_SEED: Omit<GuidedScenario, 'pressPhoto'> = {
       box: { x: 386, y: 196, width: 80, height: 118 },
       matchedPersonKey: 'katy-perry',
       similarity: 0.5666,
+      isClusterAnchor: false,
       strength: 'weak',
       note: 'The production clusterer grouped this face even though its match fell below the displayed threshold.',
       source: 'saved-run',
@@ -393,9 +403,9 @@ const GUIDED_SCENARIO_SEED: Omit<GuidedScenario, 'pressPhoto'> = {
   ],
   samples: {
     tribeca: {
-      none: "A man and a woman pose together on a red carpet in front of a backdrop featuring the Tribeca Festival and 10 Lives Studios logos. The man wears a black tuxedo with a white shirt, and the woman is in a white sleeveless dress with a draped design, smiling as she places her hand on his chest.",
-      "katy-perry": "Katy Perry and a man pose together on a red carpet in front of a backdrop for the Tribeca Festival. Perry, on the right, wears a white dress and smiles while placing her hand on the man's chest. The man, on the left, wears a black tuxedo and white shirt. The background features repeating logos for \"TRIBECA FESTIVAL\" and \"10 LIVES STUDIOS.\"",
-      "justin-trudeau": "Justin Trudeau stands on a red carpet at the Tribeca Festival, posing with a woman in a white dress. He is wearing a black tuxedo with a white shirt, and she has her hand on his chest, showing a ring on her finger. The background is a white wall with repeating \"Tribeca Festival\" and \"10 Lives Studios\" logos.",
+      none: 'A man and a woman pose together on a red carpet in front of a backdrop featuring the Tribeca Festival and 10 Lives Studios logos. The man wears a black tuxedo with a white shirt, and the woman is in a white sleeveless dress with a draped design, smiling as she places her hand on his chest.',
+      'katy-perry': "Katy Perry and a man pose together on a red carpet in front of a backdrop for the Tribeca Festival. Perry, on the right, wears a white dress and smiles while placing her hand on the man's chest. The man, on the left, wears a black tuxedo and white shirt. The background features repeating logos for \"TRIBECA FESTIVAL\" and \"10 LIVES STUDIOS.\"",
+      'justin-trudeau': 'Justin Trudeau stands on a red carpet at the Tribeca Festival, posing with a woman in a white dress. He is wearing a black tuxedo with a white shirt, and she has her hand on his chest, showing a ring on her finger. The background is a white wall with repeating "Tribeca Festival" and "10 Lives Studios" logos.',
       both: "Justin Trudeau and Katy Perry pose together on the red carpet at the Tribeca Festival, standing in front of a backdrop with the event's logo. Trudeau is wearing a black tuxedo with a white shirt, while Perry is in a white sleeveless dress with a draped design. Perry has her arm around Trudeau and is smiling, showing off a ring on her left hand.",
     },
     coachella: {
@@ -460,9 +470,7 @@ export const getGuidedPerson = (scenario: GuidedScenario, key: GuidedPersonKey):
 };
 
 export const getGuidedFace = (scenario: GuidedScenario, faceId: string): GuidedFace => {
-  const face = scenario.faces.find(
-    (candidate) => candidate.id === faceId || candidate.id === `${candidate.imageKey}-${faceId}`,
-  );
+  const face = scenario.faces.find((candidate) => candidate.id === faceId);
   assertPresent(face, `face: ${faceId}`);
   return face;
 };

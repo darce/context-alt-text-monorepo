@@ -68,6 +68,14 @@ const applyReason = (state: GuidedDemoState, localText: string): string | null =
   return null;
 };
 
+const readPixelValue = (value: string): number => {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const readEditorHeight = (editor: HTMLTextAreaElement): number =>
+  editor.getBoundingClientRect().height || editor.offsetHeight;
+
 export const GuidedDescriptionReview = ({
   scenario,
   state,
@@ -80,6 +88,7 @@ export const GuidedDescriptionReview = ({
   const comparisonRef = useRef<HTMLDivElement>(null);
   const manuallyResizedHeightRef = useRef<number | null>(null);
   const editorPointerActiveRef = useRef(false);
+  const editorInteractionStartHeightRef = useRef<number | null>(null);
   const previousDraftTextRef = useRef(state.draftText);
   const onDraftInputRef = useRef(actions.onDraftInput);
   onDraftInputRef.current = actions.onDraftInput;
@@ -96,35 +105,55 @@ export const GuidedDescriptionReview = ({
     const previousHeight = editor.style.height;
     editor.style.height = 'auto';
     const contentHeight = editor.scrollHeight;
-    const minimumHeight = editor.offsetHeight;
-    const autoHeight = Math.max(contentHeight, minimumHeight);
+    const computedStyle = window.getComputedStyle(editor);
+    const paddingHeight = readPixelValue(computedStyle.paddingTop) + readPixelValue(computedStyle.paddingBottom);
+    const borderHeight = readPixelValue(computedStyle.borderTopWidth) + readPixelValue(computedStyle.borderBottomWidth);
+    const autoHeight = Math.max(contentHeight + borderHeight, editor.offsetHeight);
     const manualHeight = manuallyResizedHeightRef.current ?? 0;
-    const nextHeight = Math.max(autoHeight, manualHeight);
+    const nextOuterHeight = Math.max(autoHeight, manualHeight);
+    const isBorderBox = (computedStyle.boxSizing || 'border-box') === 'border-box';
+    const nextCssHeight = isBorderBox ? nextOuterHeight : Math.max(nextOuterHeight - paddingHeight - borderHeight, 0);
 
     // jsdom does not lay out a textarea, so both measurements can be zero in
     // tests. Leave the browser's rows/min-height sizing intact in that case.
-    if (nextHeight > 0) {
-      editor.style.height = `${nextHeight}px`;
+    if (nextOuterHeight > 0) {
+      editor.style.height = `${nextCssHeight}px`;
     } else {
       editor.style.height = previousHeight;
     }
   }, []);
 
-  const rememberManualEditorSize = (): void => {
-    const editor = editorRef.current;
-    if (editor === null) {
+  const cancelEditorPointerInteraction = useCallback((): void => {
+    editorPointerActiveRef.current = false;
+    editorInteractionStartHeightRef.current = null;
+  }, []);
+
+  const rememberManualEditorSize = useCallback((): void => {
+    if (!editorPointerActiveRef.current) {
       return;
     }
-    const measuredHeight = editor.getBoundingClientRect().height || editor.offsetHeight;
-    if (measuredHeight > 0) {
+    const editor = editorRef.current;
+    const interactionStartHeight = editorInteractionStartHeightRef.current;
+    editorPointerActiveRef.current = false;
+    editorInteractionStartHeightRef.current = null;
+    if (editor === null || interactionStartHeight === null) {
+      return;
+    }
+
+    const measuredHeight = readEditorHeight(editor);
+    if (measuredHeight > 0 && measuredHeight !== interactionStartHeight) {
       manuallyResizedHeightRef.current = measuredHeight;
     }
-    editorPointerActiveRef.current = false;
-  };
+  }, []);
 
-  const beginEditorPointerInteraction = (): void => {
+  const beginEditorPointerInteraction = useCallback((): void => {
+    if (editorPointerActiveRef.current) {
+      return;
+    }
     editorPointerActiveRef.current = true;
-  };
+    const editor = editorRef.current;
+    editorInteractionStartHeightRef.current = editor === null ? null : readEditorHeight(editor);
+  }, []);
 
   useEffect(() => {
     const text = state.draftText ?? '';
@@ -171,6 +200,35 @@ export const GuidedDescriptionReview = ({
       fontSet?.removeEventListener('loadingerror', handleResize);
     };
   }, [ready, resizeEditor]);
+
+  useEffect(() => {
+    if (!ready) {
+      return undefined;
+    }
+
+    const releaseEvents = ['pointerup', 'mouseup', 'touchend'] as const;
+    const cancelEvents = ['pointercancel', 'touchcancel', 'cancel', 'blur'] as const;
+    const handleRelease = (): void => {
+      rememberManualEditorSize();
+    };
+    const handleCancel = (): void => {
+      cancelEditorPointerInteraction();
+    };
+    const targets: Array<Window | Document> = [window, document];
+
+    targets.forEach((target) => {
+      releaseEvents.forEach((eventName) => target.addEventListener(eventName, handleRelease, true));
+      cancelEvents.forEach((eventName) => target.addEventListener(eventName, handleCancel, true));
+    });
+
+    return () => {
+      targets.forEach((target) => {
+        releaseEvents.forEach((eventName) => target.removeEventListener(eventName, handleRelease, true));
+        cancelEvents.forEach((eventName) => target.removeEventListener(eventName, handleCancel, true));
+      });
+      cancelEditorPointerInteraction();
+    };
+  }, [cancelEditorPointerInteraction, ready, rememberManualEditorSize]);
 
   const localMatches = editValue === (state.draftText ?? '');
   const previewEnabled = ready && editValue.trim().length > 0;
@@ -227,16 +285,12 @@ export const GuidedDescriptionReview = ({
               onInput={resizeEditor}
               onPointerDown={beginEditorPointerInteraction}
               onPointerUp={rememberManualEditorSize}
-              onPointerCancel={() => {
-                editorPointerActiveRef.current = false;
-              }}
+              onPointerCancel={cancelEditorPointerInteraction}
               onMouseDown={beginEditorPointerInteraction}
               onMouseUp={rememberManualEditorSize}
               onTouchStart={beginEditorPointerInteraction}
               onTouchEnd={rememberManualEditorSize}
-              onTouchCancel={() => {
-                editorPointerActiveRef.current = false;
-              }}
+              onTouchCancel={cancelEditorPointerInteraction}
               onChange={(event) => {
                 const text = event.target.value;
                 setEditValue(text);

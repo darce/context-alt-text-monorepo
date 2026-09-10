@@ -7,7 +7,6 @@ const PRODUCT_HOME_URL = 'https://altcontext.com/';
 export interface GuidedPrototypeEntranceProps {
   onBegin: () => void;
   scope?: 'public' | 'admin';
-  escapeHref?: string;
 }
 
 const NEW_WINDOW_HINT = ' (opens in a new window)';
@@ -30,7 +29,6 @@ const ExternalGuideLink = ({
 export const GuidedPrototypeEntrance = ({
   onBegin,
   scope = 'admin',
-  escapeHref = '/',
 }: GuidedPrototypeEntranceProps): React.JSX.Element => {
   if (scope === 'public') {
     return (

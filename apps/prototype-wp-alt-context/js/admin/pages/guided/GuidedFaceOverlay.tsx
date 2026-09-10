@@ -15,7 +15,7 @@ export interface GuidedFaceOverlayFace {
 export interface GuidedFaceOverlayProps {
   faces: GuidedFaceOverlayFace[];
   naturalSize: { width: number; height: number };
-  /** Parent sets this on pointer-enter / focus-within of the figure; overlay is hidden otherwise. */
+  /** Parent sets this on pointer-enter / focus-within of the figure for the CSS reveal state. */
   visible: boolean;
   /** Optional: the face currently focused via the chooser; renders emphasised. */
   highlightedFaceId?: string | null;
@@ -100,7 +100,6 @@ export const GuidedFaceOverlay: React.FC<GuidedFaceOverlayProps> = ({
       id={overlayId}
       className="acx-guided-face-overlay"
       data-testid={GUIDED_FACE_OVERLAY_TEST_ID}
-      hidden={!visible}
       data-visible={visible ? 'true' : 'false'}
       data-natural-size-valid={usableNaturalSize ? 'true' : 'false'}
     >

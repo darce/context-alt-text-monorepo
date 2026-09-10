@@ -2,7 +2,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
-import { guidedCopy } from '../../../guidedPrototype/copy';
+import { guidedCopy } from '../../../guidedPrototype/publicGuideCopy';
 import { createGuidedScenario } from '../../../guidedPrototype/state';
 import { GuidedPrototypePage } from '../GuidedPrototypePage';
 
@@ -61,10 +61,31 @@ describe('GuidedPrototypePage shell', () => {
 
     expect(screen.queryByText(/How two faces become two names/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Matched to Justin Trudeau/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Coachella/)).not.toBeInTheDocument();
+    expect(screen.getAllByText(/Coachella/).length).toBeGreaterThan(0);
     expect(screen.queryByText(/real GPU/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Match strength/)).not.toBeInTheDocument();
     expect(screen.getByText(guidedCopy('history.empty'))).toBeInTheDocument();
+  });
+
+  it('renders both cached press photos, all four face crops, and their honest provenance', () => {
+    render(<GuidedPrototypePage />);
+
+    expect(screen.getByTestId('guided-photo-tribeca')).toBeInTheDocument();
+    expect(screen.getByTestId('guided-photo-coachella')).toBeInTheDocument();
+    expect(screen.getAllByTestId('face-thumbnail')).toHaveLength(4);
+    expect(screen.getAllByRole('radio')).toHaveLength(4);
+    expect(screen.getByText(/89\.4%/)).toBeInTheDocument();
+    expect(screen.getByText(/100\.0% \(cluster anchor, strong\)/)).toBeInTheDocument();
+    expect(screen.getByText(/70\.2%/)).toBeInTheDocument();
+    expect(screen.getByText(/56\.7% \(weak\)/)).toBeInTheDocument();
+    expect(screen.getByText(/below the displayed 60\.0% threshold/i)).toBeInTheDocument();
+    expect(screen.getByText(/production clusterer grouped it anyway/i)).toBeInTheDocument();
+    expect(screen.getAllByRole('link', { name: /AltText\.ai/ })).not.toHaveLength(0);
+    expect(screen.getAllByRole('link', { name: /AltContext burst-GPU/ })).not.toHaveLength(0);
+    expect(screen.getByRole('link', { name: /https:\/\/www\.instagram\.com\/katyperry\// })).toHaveAttribute(
+      'href',
+      'https://www.instagram.com/katyperry/',
+    );
   });
 
   it('keeps the guided-prototype hash when moving between steps', async () => {

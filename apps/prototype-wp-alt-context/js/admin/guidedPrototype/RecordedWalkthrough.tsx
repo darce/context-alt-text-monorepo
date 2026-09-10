@@ -216,12 +216,20 @@ export const RecordedWalkthrough = ({ scope, livePanel, escapeHref }: RecordedWa
             <GuidedResetDialog liveWaiting={liveWaiting} onConfirm={handleReset} />
           </header>
           <div className="acx-guided-page__scenario">
-            <GuidedSamplePhoto
-              src={scenario.pressPhoto.src}
-              evidenceAlt={scenario.samples.none ?? scenario.pressPhoto.altText}
-              currentAltText={demo.appliedAltText}
-              credit={scenario.pressPhoto.credit}
-            />
+            <div className="acx-guided-page__media-list">
+              {scenario.pressPhotos.map((photo, index) => (
+                <GuidedSamplePhoto
+                  key={photo.key}
+                  photo={photo}
+                  {...(index === 0 ? { evidenceAlt: scenario.samples.none ?? photo.altText } : {})}
+                  currentAltText={demo.appliedAltText}
+                  showCurrentAltText={index === 0}
+                  provenance={scenario.provenance}
+                  scope={scope}
+                  {...(scope === 'public' && index === 0 ? { publicSourceSummary: publicSourceSummary() } : {})}
+                />
+              ))}
+            </div>
             <div className="acx-guided-page__context">
               <p>{guidedCopy('context.intro')}</p>
               <p>
@@ -231,17 +239,6 @@ export const RecordedWalkthrough = ({ scope, livePanel, escapeHref }: RecordedWa
               </p>
               <p>{scenario.pageContext.summary}</p>
               <p>{guidedCopy('context.purpose')}</p>
-              <details className="acx-guided-page__provenance">
-                <summary>{guidedCopy('provenance.disclosure')}</summary>
-                {scope === 'public' ? (
-                  <>
-                    <p>{publicSourceSummary()}</p>
-                    <p>{guidedCopy('context.source.comparison_boundary.public')}</p>
-                  </>
-                ) : null}
-                <p>{guidedCopy('provenance.recorded')}</p>
-                <p>{scenario.pressPhoto.credit}</p>
-              </details>
               <button
                 type="button"
                 className="acx-button acx-button--primary"

@@ -6,7 +6,7 @@
     "Inventory the shipped four-step guided demo after reflow: compact intro plus numbered guide, then context, names, draft, apply, outcome, local history, closed design notes, and optional live test last.",
     "Every visitor-visible string is catalog copy from copy.en.json, filled with the shipped people names Justin Trudeau (left) and Katy Perry (right).",
     "Name choices start undecided with native radios and no preselection; omit is a valid completion; live generation never competes with Apply and never writes the demo copy.",
-    "Engine and saved-run provenance stay in notes, not screen copy. Recognition does not run during the walkthrough."
+    "Engine and saved-run provenance stay in notes, not screen copy. Recognition and GPU descriptions are cached; neither runs during the walkthrough."
   ],
   "jobs": [
     {
@@ -63,7 +63,7 @@
       "id": "context",
       "kind": "screen",
       "title": "Understand the page",
-      "purpose": "Step 1 of 4: Understand the page. This photo appears in a festival gallery. Review the existing alt text alongside the photo and its page context. Example page: Tribeca Festival 2026: red carpet photos. Current alt text in the demo copy: Two people at a film festival. Names can be useful in this gallery when the editor has enough evidence to include them. Leaving someone unnamed is also a valid choice. Saved example and image credits is a closed disclosure. Review name suggestions is always enabled.",
+      "purpose": "Step 1 of 4: Understand the page. Two press photos appear in the festival gallery. Review the existing alt text alongside the Tribeca and Coachella photos, their page context, credits, and cached AltText.ai and AltContext captions. Example page: Tribeca Festival 2026: red carpet photos. Current alt text in the demo copy: A man in a black suit and a woman in a white dress pose together, smiling, in front of a Tribeca Festival step-and-repeat backdrop. Names can be useful in this gallery when the editor has enough evidence to include them. Leaving someone unnamed is also a valid choice. Each photo has a saved example and image-credits disclosure. Review name suggestions is always enabled.",
       "route": "#/guided-prototype",
       "job_entry": false,
       "deep_link": true,
@@ -74,20 +74,20 @@
       "zones": [
         {
           "id": "guided-section-understand",
-          "label": "Understand the page. This photo appears in a festival gallery. Review the existing alt text alongside the photo and its page context. Example page: Tribeca Festival 2026: red carpet photos. Names can be useful in this gallery when the editor has enough evidence to include them. Leaving someone unnamed is also a valid choice.",
+          "label": "Understand the page. Tribeca and Coachella press photos appear in the festival gallery. Review each photo, its credit, cached AltText.ai caption, cached AltContext descriptions, and the supplied page context. The Coachella credit links Katy Perry's Instagram account.",
           "role": "content",
           "states": ["default"]
         },
         {
           "id": "context-photo",
-          "label": "Evidence photo with Current alt text in the demo copy: Two people at a film festival. Photo credit: Colleen Sturtevant, CC BY-SA 4.0, resized. error: image load failure keeps the descriptive alternative visible as text; decisions stay available.",
+          "label": "Two evidence photos: Tribeca Festival, New York, June 2026, credited to Colleen Sturtevant under CC BY-SA 4.0, and a Coachella festival photo credited to https://www.instagram.com/katyperry/. Each prints its cached AltText.ai comparison caption and AltContext no-names and with-names descriptions, with links to both providers. error: image load failure keeps each descriptive alternative visible as text; decisions stay available.",
           "role": "ai_review",
           "evidence_linked": true,
           "states": ["default", "error"]
         },
         {
           "id": "context-provenance",
-          "label": "Saved example and image credits (closed details). When open: Recorded face-match run: 6 September 2026. Recognition is not running during this walkthrough.",
+          "label": "Saved example and image credits (closed details for each photo). When open: Recorded production face-match run: 10 September 2026, threshold 60.0%. Recognition and GPU description generation are not running during this walkthrough.",
           "role": "content",
           "states": ["default"]
         },
@@ -103,7 +103,7 @@
       "id": "names",
       "kind": "screen",
       "title": "Choose which names to use",
-      "purpose": "Step 2 of 4: Choose which names to use. For each face, compare the saved suggestion with the reference photos. Choose whether to include that name in the sample draft. This is an assisted review of saved suggestions, not an independent identity check. Native fieldsets with no preselection. Review the draft is enabled only when both faces have include or omit. The outer section guided-section-face still wraps the cards; guided-section-identity is the inner cards region.",
+      "purpose": "Step 2 of 4: Choose which names to use. Group matches by person: compare both the Tribeca and Coachella crop for Justin Trudeau in one card, and both crops for Katy Perry in one card. Choose whether to include each name in the sample draft. This is an assisted review of saved suggestions, not an independent identity check. Native fieldsets with no preselection. Review the draft is enabled only when both person choices have include or omit. The displayed threshold is 60.0%; Coachella Katy Perry is explicitly weak at 56.7% and was still grouped by the production clusterer.",
       "route": "#/guided-prototype",
       "job_entry": false,
       "deep_link": true,
@@ -124,27 +124,27 @@
       "zones": [
         {
           "id": "guided-section-face",
-          "label": "Choose which names to use. For each face, compare the saved suggestion with the reference photos. Choose whether to include that name in the sample draft. This is an assisted review of saved suggestions, not an independent identity check.",
+          "label": "Choose which names to use. Each person card shows both press-photo crops, their image names, one-decision include/omit control, similarities, strengths, and the below-threshold clusterer disclosure.",
           "role": "content",
           "states": ["default", "first_time"]
         },
         {
           "id": "name-choice-left",
-          "label": "Left face native fieldset. Name choice for the left face. Saved suggestion: Justin Trudeau. Use Justin Trudeau. Leave this person unnamed. No option is preselected. both_undecided or left_undecided: Choose an option for this face. include: The sample draft will use Justin Trudeau. omit: The sample draft will describe this person without a name. Compare the left face and reference photos (closed). All 2 reference photos are shown.",
+          "label": "Justin Trudeau name choice for both press-photo matches. Saved suggestion: Justin Trudeau. Use Justin Trudeau. Leave this person unnamed. No option is preselected. both_undecided or left_undecided: Choose an option for this person. include: The sample draft will use Justin Trudeau. omit: The sample draft will describe this person without a name. Both the Tribeca 89.4% strong crop and Coachella 70.2% strong crop are shown.",
           "role": "form",
           "evidence_linked": true,
           "states": ["first_time", "default", "edge_input"]
         },
         {
           "id": "name-choice-right",
-          "label": "Right face native fieldset. Name choice for the right face. Saved suggestion: Katy Perry. Use Katy Perry. Leave this person unnamed. No option is preselected. both_undecided or right_undecided: Choose an option for this face. include: The sample draft will use Katy Perry. omit: The sample draft will describe this person without a name. Compare the right face and reference photos (closed). 3 of 5 reference photos are included in this demo.",
+          "label": "Katy Perry name choice for both press-photo matches. Saved suggestion: Katy Perry. Use Katy Perry. Leave this person unnamed. No option is preselected. both_undecided or right_undecided: Choose an option for this person. include: The sample draft will use Katy Perry. omit: The sample draft will describe this person without a name. Tribeca is 100.0% cluster anchor, strong; Coachella is 56.7% weak, below the 60.0% threshold, and still grouped by the production clusterer. Both crops are shown.",
           "role": "form",
           "evidence_linked": true,
           "states": ["first_time", "default", "edge_input"]
         },
         {
           "id": "guided-section-identity",
-          "label": "Review the draft. Disabled with Choose an option for both faces. Leaving a person unnamed counts as a choice. until both faces are include or omit. Radios are disabled while Change the name choice? is open.",
+          "label": "Review the draft. Disabled with Choose an option for both people. Leaving a person unnamed counts as a choice. until both person choices are include or omit. Radios are disabled while Change the name choice? is open.",
           "role": "nav",
           "states": ["default", "first_time", "edge_input"]
         }
@@ -166,7 +166,7 @@
       "zones": [
         {
           "id": "guided-candidate",
-          "label": "Edit the alt text. Check the wording against the photo and the page context. Edit anything you would not publish. Alt text draft textarea. Sample draft from the recorded example. or Your edit, based on the recorded example. Edits stay in this tab. Nothing is applied until you choose Apply to demo copy. blocked: Choose a name option for both faces to load the sample draft. fixture_missing: The sample draft for these choices is unavailable. Your choices and the current demo copy have not changed. preview_invalid: Enter alt text before reviewing the change.",
+          "label": "Edit the alt text. Check the wording against the photo and the page context. Edit anything you would not publish. Alt text draft textarea. Sample draft from the recorded example. or Your edit, based on the recorded example. Edits stay in this tab. Nothing is applied until you choose Apply to demo copy. blocked: Choose a name option for both people to load the sample draft. fixture_missing: The sample draft for these choices is unavailable. Your choices and the current demo copy have not changed. preview_invalid: Enter alt text before reviewing the change.",
           "role": "form",
           "states": ["default", "empty", "error"]
         },
@@ -782,7 +782,7 @@
         },
         {
           "screen_id": "names",
-          "branch_label": "Leave this person unnamed on both faces (omit_omit)"
+          "branch_label": "Leave both people unnamed (omit_omit)"
         },
         {
           "screen_id": "draft",
@@ -961,7 +961,7 @@
   ],
   "open_questions": [
     "DOM divergence from ascii-screens.md: the target sketches fill {name} with Jordan Lee / Rowan Ames; the shipped scenario still uses Justin Trudeau (left) and Katy Perry (right). This map follows the DOM.",
-    "Saved-run provenance (notes only, never screen copy): recognition engine InsightFace buffalo_l on the AltContext recognition service (dev build); saved run 2026-09-06; threshold 0.6; Tribeca press photo similarities Justin Trudeau left 0.686 and Katy Perry right 0.742.",
+    "Saved-run provenance (notes only, never screen copy): InsightFace buffalo_l on the production AltContext recognition service; saved run 2026-09-10; threshold 60.0%; Tribeca press photo similarities Justin Trudeau 89.4% and Katy Perry 100.0% (cluster anchor); Coachella press photo similarities Justin Trudeau 70.2% and Katy Perry 56.7% (weak, below threshold, grouped by the production clusterer). Cached AltText.ai and AltContext captions are shown for both photos; no recognition or GPU generation runs during the walkthrough.",
     "Cluster ids from the dev tenant (notes only): Katy Perry 68adc97c-f81f-42c3-9e5c-061f16770361 and Justin Trudeau fd0d2b5d-108a-42b7-af25-f028e40d5778.",
     "The bundled scenario currently ships all four sample keys (none, katy-perry, justin-trudeau, both), so fixture_missing is implemented and mapped but not reachable with the seed.",
     "Keep waiting and the two budget sentences are catalog copy (live.keep_waiting, live.budget_local, live.budget_disclosed). timed_out recovery offers Keep waiting on the same run plus Try live generation again.",

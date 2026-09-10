@@ -163,7 +163,7 @@ describe('guided prototype ux-map contract (GUIDEDQM-1 shipped topology)', () =>
     expect(flowIds).toContain('live-failure-does-not-block-core');
   });
 
-  it('would be wrong if InsightFace or the 2026-09-06 saved run appeared in screen copy instead of notes', () => {
+  it('would be wrong if InsightFace or the 2026-09-10 saved run appeared in screen copy instead of notes', () => {
     const map = loadMap();
     const screenCopy = JSON.stringify(map.screens);
     expect(screenCopy).not.toMatch(/insightface|buffalo/i);
@@ -172,7 +172,7 @@ describe('guided prototype ux-map contract (GUIDEDQM-1 shipped topology)', () =>
       not_doing: map.not_doing ?? [],
     });
     expect(notes).toMatch(/insightface/i);
-    expect(notes).toContain('2026-09-06');
+    expect(notes).toContain('2026-09-10');
   });
 
   it('would be wrong if any implementation-brief target_test_hooks id were missing, duplicated, or stored as something other than a hook id', () => {

@@ -7,7 +7,6 @@ import {
   getGuidedPerson,
   GUIDED_MATCH_THRESHOLD,
   type GuidedPressPhoto,
-  type GuidedProvenance,
 } from '../../guidedPrototype/state';
 import { isUsableNaturalSize } from '../../../components/ui/faceGeometry';
 import { GuidedFaceOverlay, type GuidedFaceOverlayFace } from './GuidedFaceOverlay';
@@ -19,9 +18,7 @@ export interface GuidedSamplePhotoProps {
   evidenceAlt?: string;
   currentAltText: string;
   showCurrentAltText: boolean;
-  provenance: GuidedProvenance;
   scope: GuidedSamplePhotoScope;
-  publicSourceSummary?: React.ReactNode;
   headingId?: string;
   children?: React.ReactNode;
 }
@@ -32,7 +29,6 @@ const isExternalUrl = (value: string): boolean => /^https?:\/\//.test(value);
 
 const Credit = ({ photo }: { photo: GuidedPressPhoto }): React.JSX.Element => (
   <span>
-    <strong>{guidedCopy('context.photo.credit_label')}:</strong>{' '}
     {isExternalUrl(photo.credit) ? (
       <a href={photo.credit} target="_blank" rel="noreferrer" aria-label={externalLinkLabel(photo.credit)}>
         {photo.credit}
@@ -83,9 +79,10 @@ const AltTextAiCaption = ({ photo }: { photo: GuidedPressPhoto }): React.JSX.Ele
             aria-label={externalLinkLabel(caption.provider)}
           >
             {caption.provider}
-          </a>{' '}
-          {caption.capturedOn === null ? null : guidedCopy('context.photo.captured', { date: caption.capturedOn })}{' '}
-          {caption.note}
+          </a>
+          {caption.capturedOn === null
+            ? null
+            : ` · ${guidedCopy('context.photo.captured', { date: caption.capturedOn })}`}
         </p>
       </section>
     </details>
@@ -108,14 +105,6 @@ const AltContextCaption = ({ photo }: { photo: GuidedPressPhoto }): React.JSX.El
     </details>
   );
 };
-
-const PhotoCredits = ({ photo }: { photo: GuidedPressPhoto }): React.JSX.Element => (
-  <details className="acx-guided-page__caption">
-    <summary>{guidedCopy('context.photo.credit_label')}</summary>
-    <Credit photo={photo} />
-    {photo.source !== undefined && photo.source !== photo.credit ? <p>{photo.source}</p> : null}
-  </details>
-);
 
 const overlayFacesForPhoto = (photo: GuidedPressPhoto): GuidedFaceOverlayFace[] => {
   const scenario = createGuidedScenario();
@@ -145,9 +134,6 @@ export const GuidedSamplePhoto = ({
   evidenceAlt,
   currentAltText,
   showCurrentAltText,
-  provenance,
-  scope,
-  publicSourceSummary,
   headingId,
   children,
 }: GuidedSamplePhotoProps): React.JSX.Element => {
@@ -159,6 +145,7 @@ export const GuidedSamplePhoto = ({
   const overlayFaces = useMemo(() => overlayFacesForPhoto(photo), [photo]);
   const overlayVisible = pointerInside || focusWithin;
   const imageLoaded = isUsableNaturalSize(naturalSize);
+  const imageOrientation = imageLoaded && naturalSize.width / naturalSize.height < 1 ? 'portrait' : 'landscape';
 
   const handleFigureBlur = (event: React.FocusEvent<HTMLElement>): void => {
     if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) {
@@ -177,7 +164,7 @@ export const GuidedSamplePhoto = ({
       onFocus={() => setFocusWithin(true)}
       onBlur={handleFigureBlur}
     >
-      <h3>{photo.event}</h3>
+      <h3 id={headingId}>{photo.event}</h3>
       {imageFailed ? (
         <div
           className="acx-guided-page__image-placeholder acx-guided-page__image-placeholder--fallback"
@@ -189,30 +176,36 @@ export const GuidedSamplePhoto = ({
       ) : (
         <div
           className="acx-guided-page__image-wrap"
+          data-orientation={imageOrientation}
           style={{
             position: 'relative',
             ...(imageLoaded
-              ? { aspectRatio: `${naturalSize.width} / ${naturalSize.height}` }
-              : { minHeight: '12rem' }),
+              ? ({ '--acx-guided-photo-ratio': `${naturalSize.width} / ${naturalSize.height}` } as React.CSSProperties)
+              : {}),
           }}
         >
-          <img
-            className="acx-guided-page__image"
-            src={photo.src}
-            alt={accessibleAlt}
-            onLoad={(event) =>
-              setNaturalSize({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })
-            }
-            onError={() => setImageFailed(true)}
-          />
-          <GuidedFaceOverlay
-            faces={imageLoaded ? overlayFaces : []}
-            naturalSize={naturalSize}
-            visible={overlayVisible}
-            idPrefix={`guided-${photo.key}`}
-          />
+          <div className="acx-guided-page__image-frame">
+            <img
+              className="acx-guided-page__image"
+              src={photo.src}
+              alt={accessibleAlt}
+              onLoad={(event) =>
+                setNaturalSize({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })
+              }
+              onError={() => setImageFailed(true)}
+            />
+            <GuidedFaceOverlay
+              faces={imageLoaded ? overlayFaces : []}
+              naturalSize={naturalSize}
+              visible={overlayVisible}
+              idPrefix={`guided-${photo.key}`}
+            />
+          </div>
         </div>
       )}
+      <p className="acx-guided-page__credit">
+        {guidedCopy('context.photo.credit_label')}: <Credit photo={photo} />
+      </p>
       <figcaption>
         {showCurrentAltText ? (
           <span>
@@ -221,17 +214,8 @@ export const GuidedSamplePhoto = ({
         ) : null}
         <AltTextAiCaption photo={photo} />
         <AltContextCaption photo={photo} />
-        <PhotoCredits photo={photo} />
-        <details className="acx-guided-page__provenance">
-          <summary>{guidedCopy('provenance.disclosure')}</summary>
-          {scope === 'public' && publicSourceSummary !== undefined ? <p>{publicSourceSummary}</p> : null}
-          {scope === 'public' ? <p>{guidedCopy('context.source.comparison_boundary.public')}</p> : null}
-          <p>{guidedCopy('provenance.recorded')}</p>
-          <p>{photo.event}</p>
-          <p>{provenance.alsoChecked}</p>
-        </details>
-        {children}
       </figcaption>
+      {children}
     </figure>
   );
 };

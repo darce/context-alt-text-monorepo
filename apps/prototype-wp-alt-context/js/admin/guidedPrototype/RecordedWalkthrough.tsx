@@ -205,7 +205,7 @@ export const RecordedWalkthrough = ({ scope, livePanel, escapeHref }: RecordedWa
       data-scope={scope}
       {...(escapeHref !== undefined ? { 'data-escape-href': escapeHref } : {})}
     >
-      <GuidedPrototypeEntrance onBegin={handleBegin} scope={scope} escapeHref={escapeHref} />
+      <GuidedPrototypeEntrance onBegin={handleBegin} scope={scope} />
       <GuidedPrototypeGuide
         activeStep={demo.activeStep}
         open={guideOpen}

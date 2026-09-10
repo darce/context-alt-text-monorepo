@@ -107,7 +107,7 @@ describe('GuidedFacesPanel and GuidedFaceMatchCard', () => {
     ).toBeInTheDocument();
     expect(within(cards[0]).getAllByRole('img', { name: /Justin Trudeau/ })).toHaveLength(3);
     expect(within(cards[1]).getAllByRole('img', { name: /Katy Perry/ })).toHaveLength(3);
-    expect(within(cards[0]).getAllByText('© European Union, 2025, EU reuse licence, resized')).toHaveLength(2);
+    expect(within(cards[0]).getAllByText('© European Union, 2025, EU reuse licence, resized')).toHaveLength(1);
     expect(within(cards[1]).getByText('Justin Higuchi, CC BY 4.0, resized')).toHaveClass('screen-reader-text');
 
     const thumbnails = screen.getAllByTestId('face-thumbnail');

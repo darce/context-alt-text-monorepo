@@ -72,7 +72,7 @@ describe('GuidedPrototypePage shell', () => {
 
     expect(screen.getByTestId('guided-photo-tribeca')).toBeInTheDocument();
     expect(screen.getByTestId('guided-photo-coachella')).toBeInTheDocument();
-    expect(screen.getAllByTestId('face-thumbnail')).toHaveLength(4);
+    expect(screen.getAllByRole('img', { name: /^Detected (left|right) face in / })).toHaveLength(4);
     expect(screen.getAllByRole('radio')).toHaveLength(4);
     expect(screen.getByText(/89\.4%/)).toBeInTheDocument();
     expect(screen.getByText(/100\.0% \(cluster anchor, strong\)/)).toBeInTheDocument();
@@ -82,10 +82,13 @@ describe('GuidedPrototypePage shell', () => {
     expect(screen.getByText(/production clusterer grouped it anyway/i)).toBeInTheDocument();
     expect(screen.getAllByRole('link', { name: /AltText\.ai/ })).not.toHaveLength(0);
     expect(screen.getAllByRole('link', { name: /AltContext burst-GPU/ })).not.toHaveLength(0);
-    expect(screen.getByRole('link', { name: /https:\/\/www\.instagram\.com\/katyperry\// })).toHaveAttribute(
-      'href',
-      'https://www.instagram.com/katyperry/',
-    );
+    const coachellaCredits = screen.getAllByRole('link', {
+      name: /https:\/\/www\.instagram\.com\/katyperry\//,
+    });
+    expect(coachellaCredits).not.toHaveLength(0);
+    coachellaCredits.forEach((credit) => {
+      expect(credit).toHaveAttribute('href', 'https://www.instagram.com/katyperry/');
+    });
   });
 
   it('keeps the guided-prototype hash when moving between steps', async () => {

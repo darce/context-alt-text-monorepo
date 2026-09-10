@@ -7,9 +7,11 @@ import json
 import threading
 from collections.abc import Mapping
 from dataclasses import dataclass
+from io import BytesIO
 from typing import Any
 
 import httpx
+from PIL import Image
 
 from scene.application.description_adapter import AdapterResult
 from scene.domain.description import DescriptionAdapterKind
@@ -68,6 +70,29 @@ def _media_type(image_bytes: bytes) -> str:
     if image_bytes[:4] == b"RIFF" and image_bytes[8:12] == b"WEBP":
         return "image/webp"
     return "image/jpeg"
+
+
+def _image_payload(image_bytes: bytes) -> tuple[str, bytes]:
+    """Return endpoint-safe image bytes and their data-URL media type.
+
+    The burst llama.cpp endpoint accepts WebP-labelled URLs but can decode the
+    payload as a different image. Keep the public API's WebP acceptance intact,
+    while converting WebP to lossless PNG at this adapter boundary.
+    """
+    media_type = _media_type(image_bytes)
+    if media_type != "image/webp":
+        return media_type, image_bytes
+
+    try:
+        with Image.open(BytesIO(image_bytes)) as image:
+            image.load()
+            encoded = BytesIO()
+            image.save(encoded, format="PNG")
+    except Exception as exc:  # noqa: BLE001 - malformed WebP must never reach the endpoint
+        raise GpuRemoteAdapterError(
+            f"GPU adapter could not transcode image/webp to PNG: {type(exc).__name__}: {exc}"
+        ) from exc
+    return "image/png", encoded.getvalue()
 
 
 def _render_context(context: Mapping[str, Any]) -> tuple[str, tuple[str, ...]]:
@@ -185,6 +210,7 @@ class GpuRemoteDescriptionAdapter:
         self, *, image_bytes: bytes, context: Mapping[str, Any] | None, n_probs: int | None
     ) -> tuple[AdapterResult, tuple[GpuRemoteTokenTrace, ...]]:
         user_text, context_sources, context_applied = _user_text(context)
+        media_type, encoded_image = _image_payload(image_bytes)
         payload: dict[str, Any] = {
             "model": self._endpoint_model_id,
             "temperature": 0,
@@ -197,9 +223,7 @@ class GpuRemoteDescriptionAdapter:
                         {
                             "type": "image_url",
                             "image_url": {
-                                "url": (
-                                    f"data:{_media_type(image_bytes)};base64,{base64.b64encode(image_bytes).decode()}"
-                                )
+                                "url": (f"data:{media_type};base64,{base64.b64encode(encoded_image).decode()}")
                             },
                         },
                         {"type": "text", "text": user_text},

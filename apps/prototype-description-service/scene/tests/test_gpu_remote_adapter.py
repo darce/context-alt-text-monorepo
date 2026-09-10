@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import base64
 import json
 import socket
+from io import BytesIO
 
 import httpx
 import pytest
+from PIL import Image
 
 from scene.application.description_adapter import AdapterResult, DescriptionAdapter
 from scene.domain.description import DescriptionAdapterKind
@@ -84,6 +87,31 @@ def test_gpu_remote_adapter_posts_bakeoff_aligned_prompt_and_returns_adapter_res
     assert "<<<END_CONTEXT>>>" in user_text
     assert 'caption: "Launch day"' in user_text
     assert "data:image/png;base64" in json.dumps(user_content)
+
+
+def test_gpu_remote_adapter_transcodes_webp_to_png_before_posting() -> None:
+    captured: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "A WebP caption."}}]},
+        )
+
+    source = BytesIO()
+    Image.new("RGB", (17, 11), color=(24, 96, 180)).save(source, format="WEBP")
+
+    result = _adapter(handler).describe(image_bytes=source.getvalue(), context=None)
+
+    assert result.caption == "A WebP caption."
+    image_url = captured[0]["messages"][1]["content"][0]["image_url"]["url"]
+    media_type, encoded = image_url.split(",", maxsplit=1)
+    assert media_type == "data:image/png;base64"
+    assert media_type != "data:image/webp;base64"
+    with Image.open(BytesIO(base64.b64decode(encoded))) as outgoing:
+        assert outgoing.format == "PNG"
+        assert outgoing.size == (17, 11)
 
 
 def test_gpu_remote_adapter_provenance_names_loaded_revision_not_payload_model() -> None:

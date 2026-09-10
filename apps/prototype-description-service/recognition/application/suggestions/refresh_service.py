@@ -36,7 +36,6 @@ from recognition.application.suggestions.embedding_space import (
     same_space_representative_vectors,
     same_space_vector,
 )
-from recognition.shared.similarity import normalize_face_embedding
 from recognition.config.settings import resolve_effective_clustering_settings
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.repositories import (
@@ -48,6 +47,7 @@ from recognition.domain.repositories import (
 )
 from recognition.domain.suggestion import AssignmentSuggestion, SuggestionRefreshReason, SuggestionStatus
 from recognition.observability.recognition_runs import RecognitionRunContext
+from recognition.shared.similarity import normalize_face_embedding
 
 logger = logging.getLogger(__name__)
 

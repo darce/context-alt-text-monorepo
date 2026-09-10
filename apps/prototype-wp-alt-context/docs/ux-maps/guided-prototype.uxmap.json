@@ -63,7 +63,7 @@
       "id": "context",
       "kind": "screen",
       "title": "Understand the page",
-      "purpose": "Step 1 of 4: Understand the page. Two press photos appear in the festival gallery. Review the existing alt text alongside the Tribeca and Coachella photos, their page context, credits, and cached AltText.ai and AltContext captions. Example page: Tribeca Festival 2026: red carpet photos. Current alt text in the demo copy: A man in a black suit and a woman in a white dress pose together, smiling, in front of a Tribeca Festival step-and-repeat backdrop. Names can be useful in this gallery when the editor has enough evidence to include them. Leaving someone unnamed is also a valid choice. Each photo has a saved example and image-credits disclosure. Review name suggestions is always enabled.",
+      "purpose": "Step 1 of 4: Understand the page. Two press photos appear as responsive figures inside the festival gallery: Tribeca first, then Coachella; the figures sit side by side on wide screens and stack below roughly 900px. Review the existing alt text alongside the Tribeca and Coachella photos, their page context, credits, and cached AltText.ai and AltContext captions. Each figure keeps its marginal caption metadata collapsed behind native <details><summary> disclosures, and the name chooser is rendered next to each photo. Example page: Tribeca Festival 2026: red carpet photos. Current alt text in the demo copy: A man in a black suit and a woman in a white dress pose together, smiling, in front of a Tribeca Festival step-and-repeat backdrop. Names can be useful in this gallery when the editor has enough evidence to include them. Leaving someone unnamed is also a valid choice. Each photo has a saved example and image-credits disclosure. Review name suggestions is always enabled.",
       "route": "#/guided-prototype",
       "job_entry": false,
       "deep_link": true,
@@ -74,20 +74,20 @@
       "zones": [
         {
           "id": "guided-section-understand",
-          "label": "Understand the page. Tribeca and Coachella press photos appear in the festival gallery. Review each photo, its credit, cached AltText.ai caption, cached AltContext descriptions, and the supplied page context. The Coachella credit links Katy Perry's Instagram account.",
+          "label": "Understand the page. Tribeca and Coachella press photos appear as two responsive figures inside the festival gallery, with the name chooser next to each photo. Review each photo, its credit, cached AltText.ai caption, cached AltContext descriptions, and the supplied page context. The marginal caption metadata is collapsed behind native details disclosures. The Coachella credit links Katy Perry's Instagram account.",
           "role": "content",
           "states": ["default"]
         },
         {
           "id": "context-photo",
-          "label": "Two evidence photos: Tribeca Festival, New York, June 2026, credited to Colleen Sturtevant under CC BY-SA 4.0, and a Coachella festival photo credited to https://www.instagram.com/katyperry/. Each prints its cached AltText.ai comparison caption and AltContext no-names and with-names descriptions, with links to both providers. error: image load failure keeps each descriptive alternative visible as text; decisions stay available.",
+          "label": "Two evidence figures inside .acx-guided-page__media-list, Tribeca first and Coachella second: Tribeca Festival, New York, June 2026, credited to Colleen Sturtevant under CC BY-SA 4.0, and a Coachella festival photo credited to https://www.instagram.com/katyperry/. Each keeps its image, credit, and name chooser visible next to the photo while marginal AltText.ai comparison and AltContext no-names and with-names descriptions are collapsed behind native <details><summary> disclosures, with links to both providers. error: image load failure keeps the descriptive alternative visible as text; decisions stay available.",
           "role": "ai_review",
           "evidence_linked": true,
           "states": ["default", "error"]
         },
         {
           "id": "context-provenance",
-          "label": "Saved example and image credits (closed details for each photo). When open: Recorded production face-match run: 10 September 2026, threshold 60.0%. Recognition and GPU description generation are not running during this walkthrough.",
+          "label": "Saved example and image credits (closed details for each figure). When open: Recorded production face-match run: 10 September 2026, threshold 60.0%. Recognition and GPU description generation are not running during this walkthrough.",
           "role": "content",
           "states": ["default"]
         },
@@ -103,7 +103,7 @@
       "id": "names",
       "kind": "screen",
       "title": "Choose which names to use",
-      "purpose": "Step 2 of 4: Choose which names to use. Group matches by person: compare both the Tribeca and Coachella crop for Justin Trudeau in one card, and both crops for Katy Perry in one card. Choose whether to include each name in the sample draft. This is an assisted review of saved suggestions, not an independent identity check. Native fieldsets with no preselection. Review the draft is enabled only when both person choices have include or omit. The displayed threshold is 60.0%; Coachella Katy Perry is explicitly weak at 56.7% and was still grouped by the production clusterer.",
+      "purpose": "Step 2 of 4: Choose which names to use. The name chooser is rendered next to the relevant press-photo evidence. Group matches by person: compare both the Tribeca and Coachella crop for Justin Trudeau in one card, and both crops for Katy Perry in one card. Choose whether to include each name in the sample draft. This is an assisted review of saved suggestions, not an independent identity check. Native fieldsets with no preselection. Review the draft is enabled only when both person choices have include or omit. The displayed threshold is 60.0%; Coachella Katy Perry is explicitly weak at 56.7% and was still grouped by the production clusterer.",
       "route": "#/guided-prototype",
       "job_entry": false,
       "deep_link": true,
@@ -124,20 +124,20 @@
       "zones": [
         {
           "id": "guided-section-face",
-          "label": "Choose which names to use. Each person card shows both press-photo crops, their image names, one-decision include/omit control, similarities, strengths, and the below-threshold clusterer disclosure.",
+          "label": "Choose which names to use. Each name chooser is rendered next to the relevant press-photo evidence. Each person card shows both press-photo crops, their image names, one-decision include/omit control, similarities, strengths, and the below-threshold clusterer disclosure.",
           "role": "content",
           "states": ["default", "first_time"]
         },
         {
           "id": "name-choice-left",
-          "label": "Justin Trudeau name choice for both press-photo matches. Saved suggestion: Justin Trudeau. Use Justin Trudeau. Leave this person unnamed. No option is preselected. both_undecided or left_undecided: Choose an option for this person. include: The sample draft will use Justin Trudeau. omit: The sample draft will describe this person without a name. Both the Tribeca 89.4% strong crop and Coachella 70.2% strong crop are shown.",
+          "label": "Justin Trudeau name chooser for both press-photo matches, rendered next to the relevant photo evidence. Saved suggestion: Justin Trudeau. Use Justin Trudeau. Leave this person unnamed. No option is preselected. both_undecided or left_undecided: Choose an option for this person. include: The sample draft will use Justin Trudeau. omit: The sample draft will describe this person without a name. Both the Tribeca 89.4% strong crop and Coachella 70.2% strong crop are shown.",
           "role": "form",
           "evidence_linked": true,
           "states": ["first_time", "default", "edge_input"]
         },
         {
           "id": "name-choice-right",
-          "label": "Katy Perry name choice for both press-photo matches. Saved suggestion: Katy Perry. Use Katy Perry. Leave this person unnamed. No option is preselected. both_undecided or right_undecided: Choose an option for this person. include: The sample draft will use Katy Perry. omit: The sample draft will describe this person without a name. Tribeca is 100.0% cluster anchor, strong; Coachella is 56.7% weak, below the 60.0% threshold, and still grouped by the production clusterer. Both crops are shown.",
+          "label": "Katy Perry name chooser for both press-photo matches, rendered next to the relevant photo evidence. Saved suggestion: Katy Perry. Use Katy Perry. Leave this person unnamed. No option is preselected. both_undecided or right_undecided: Choose an option for this person. include: The sample draft will use Katy Perry. omit: The sample draft will describe this person without a name. Tribeca is 100.0% cluster anchor, strong; Coachella is 56.7% weak, below the 60.0% threshold, and still grouped by the production clusterer. Both crops are shown.",
           "role": "form",
           "evidence_linked": true,
           "states": ["first_time", "default", "edge_input"]

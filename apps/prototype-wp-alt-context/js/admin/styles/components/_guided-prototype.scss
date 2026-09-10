@@ -278,12 +278,13 @@
 
 .acx-guided-page__scenario {
   display: grid;
-  grid-template-columns: minmax(12rem, 0.8fr) minmax(0, 1.2fr);
+  grid-template-columns: minmax(0, 1fr) minmax(16rem, 0.4fr);
   gap: var(--acx-space-16);
 }
 
 .acx-guided-page__media-list {
   display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
   align-content: start;
   gap: var(--acx-space-16);
   min-width: 0;
@@ -592,6 +593,11 @@
   }
 }
 
+.acx-guided-page__image-wrap {
+  position: relative;
+  display: block;
+}
+
 .acx-guided-page__image {
   display: block;
   width: 100%;
@@ -653,9 +659,58 @@
     font-size: var(--acx-text-sm);
   }
 
-  &-provenance {
-    color: var(--acx-color-text-muted) !important;
-    font-size: var(--acx-text-xs) !important;
+  p.acx-guided-page__caption-provenance {
+    color: var(--acx-color-text-muted);
+    font-size: var(--acx-text-xs);
+  }
+}
+
+.acx-guided-page__media-card figcaption > details {
+  border-top: 1px solid var(--acx-color-border);
+
+  > summary {
+    display: flex;
+    align-items: center;
+    gap: var(--acx-space-8);
+    padding: var(--acx-space-8) 0;
+    color: var(--acx-color-primary);
+    font-size: var(--acx-text-sm);
+    font-weight: var(--acx-font-weight-semibold);
+    cursor: pointer;
+    list-style: none;
+
+    &::-webkit-details-marker {
+      display: none;
+    }
+
+    &::before {
+      display: inline-block;
+      width: var(--acx-space-8);
+      height: var(--acx-space-8);
+      flex: 0 0 auto;
+      border-right: var(--acx-space-2) solid var(--acx-color-primary);
+      border-bottom: var(--acx-space-2) solid var(--acx-color-primary);
+      content: '';
+      transform: rotate(-45deg);
+    }
+
+    &:focus-visible {
+      outline: var(--acx-space-2) solid var(--acx-color-accent);
+      outline-offset: var(--acx-space-2);
+      border-radius: var(--acx-radius-sm);
+    }
+  }
+
+  &[open] {
+    padding-bottom: var(--acx-space-12);
+
+    > summary::before {
+      transform: rotate(45deg);
+    }
+
+    > :not(summary) {
+      margin-top: var(--acx-space-8);
+    }
   }
 }
 
@@ -921,6 +976,12 @@
   .acx-guided-page__hero,
   .acx-guided-review__apply {
     flex-direction: column;
+  }
+}
+
+@media (max-width: 56.25rem) {
+  .acx-guided-page__media-list {
+    grid-template-columns: 1fr;
   }
 }
 

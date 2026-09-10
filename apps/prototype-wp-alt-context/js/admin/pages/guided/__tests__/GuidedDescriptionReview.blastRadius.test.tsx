@@ -67,6 +67,7 @@ describe('GuidedDescriptionReview editor', () => {
     expect(editor).toHaveAttribute('rows', '8');
 
     const longGpuDraft = 'A long GPU draft with enough detail to wrap at narrow widths. '.repeat(12);
+    editor.style.border = '0px';
     fireEvent.change(editor, { target: { value: longGpuDraft } });
     expect(editor).toHaveStyle({ height: '180px' });
 
@@ -81,9 +82,31 @@ describe('GuidedDescriptionReview editor', () => {
     expect(actions.onPreview).not.toHaveBeenCalled();
   });
 
+  it('includes border widths when applying a border-box height', () => {
+    const scenario = createGuidedScenario();
+    const actions = reviewActions();
+    render(<GuidedDescriptionReview scenario={scenario} state={readyState('A saved draft.')} actions={actions} />);
+    const editor = screen.getByRole('textbox', { name: guidedCopy('draft.label') });
+    Object.defineProperty(editor, 'scrollHeight', {
+      configurable: true,
+      get: () => 220,
+    });
+    Object.assign(editor.style, {
+      boxSizing: 'border-box',
+      paddingTop: '12px',
+      paddingBottom: '12px',
+      borderTop: '2px solid black',
+      borderBottom: '3px solid black',
+    });
+
+    fireEvent.input(editor);
+
+    expect(editor).toHaveStyle({ height: '225px' });
+  });
+
   it('keeps a manually enlarged editor height while content is remeasured', () => {
     let contentHeight = 180;
-    const editorHeight = 420;
+    let editorHeight = 180;
     const scenario = createGuidedScenario();
     const actions = reviewActions();
     render(<GuidedDescriptionReview scenario={scenario} state={readyState('A saved draft.')} actions={actions} />);
@@ -92,12 +115,58 @@ describe('GuidedDescriptionReview editor', () => {
       configurable: true,
       get: () => contentHeight,
     });
-    vi.spyOn(editor, 'getBoundingClientRect').mockReturnValue({ height: editorHeight } as DOMRect);
+    editor.style.border = '0px';
+    vi.spyOn(editor, 'getBoundingClientRect').mockImplementation(() => ({ height: editorHeight }) as DOMRect);
+    fireEvent.mouseDown(editor);
+    editorHeight = 420;
     fireEvent.mouseUp(editor);
 
     contentHeight = 200;
     fireEvent(window, new Event('resize'));
     expect(editor).toHaveStyle({ height: `${editorHeight}px` });
+  });
+
+  it('remeasures after a native resize release outside the textarea', () => {
+    let contentHeight = 180;
+    const scenario = createGuidedScenario();
+    const actions = reviewActions();
+    render(<GuidedDescriptionReview scenario={scenario} state={readyState('A saved draft.')} actions={actions} />);
+    const editor = screen.getByRole('textbox', { name: guidedCopy('draft.label') });
+    Object.defineProperty(editor, 'scrollHeight', {
+      configurable: true,
+      get: () => contentHeight,
+    });
+    editor.style.border = '0px';
+
+    fireEvent.pointerDown(editor);
+    contentHeight = 320;
+    fireEvent.pointerUp(window);
+    fireEvent(window, new Event('resize'));
+
+    expect(editor).toHaveStyle({ height: '320px' });
+  });
+
+  it('does not pin autoheight after an ordinary click', () => {
+    let contentHeight = 180;
+    let editorHeight = 180;
+    const scenario = createGuidedScenario();
+    const actions = reviewActions();
+    render(<GuidedDescriptionReview scenario={scenario} state={readyState('A saved draft.')} actions={actions} />);
+    const editor = screen.getByRole('textbox', { name: guidedCopy('draft.label') });
+    Object.defineProperty(editor, 'scrollHeight', {
+      configurable: true,
+      get: () => contentHeight,
+    });
+    editor.style.border = '0px';
+    vi.spyOn(editor, 'getBoundingClientRect').mockImplementation(() => ({ height: editorHeight }) as DOMRect);
+
+    fireEvent.pointerDown(editor);
+    fireEvent.pointerUp(editor);
+    contentHeight = 120;
+    editorHeight = 120;
+    fireEvent(window, new Event('resize'));
+
+    expect(editor).toHaveStyle({ height: '120px' });
   });
 
   it('uses a supplied label only for recorded samples, keeping edited origin distinct', () => {

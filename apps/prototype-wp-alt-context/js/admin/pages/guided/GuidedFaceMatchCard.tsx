@@ -12,6 +12,7 @@ import { FaceThumbnail } from '../../../components/ui/FaceThumbnail';
 import { guidedCopy } from '../../guidedPrototype/publicGuideCopy';
 import {
   formatGuidedSimilarity,
+  GUIDED_MATCH_STRENGTH,
   GUIDED_MATCH_THRESHOLD,
   GUIDED_NAME_CHOICE,
   type GuidedFace,
@@ -69,8 +70,10 @@ const cropAlt = (match: GuidedFaceMatch): string =>
   guidedCopy('names.crop_alt_image', { position: match.face.position, image: imageLabel(match.face.imageKey) });
 
 const strengthLabel = (match: GuidedFaceMatch): string => {
-  const strength = guidedCopy(match.face.strength === 'weak' ? 'names.match.weak' : 'names.match.strong');
-  if (match.face.similarity === 1) {
+  const strength = guidedCopy(
+    match.face.strength === GUIDED_MATCH_STRENGTH.WEAK ? 'names.match.weak' : 'names.match.strong',
+  );
+  if (match.face.isClusterAnchor) {
     return `${guidedCopy('names.match.cluster_anchor')}, ${strength}`;
   }
   return strength;
@@ -85,7 +88,7 @@ const matchSummary = (match: GuidedFaceMatch): string =>
   });
 
 const isWeakMatch = (match: GuidedFaceMatch): boolean =>
-  match.face.strength === 'weak' ||
+  match.face.strength === GUIDED_MATCH_STRENGTH.WEAK ||
   (match.face.similarity !== null && match.face.similarity < GUIDED_MATCH_THRESHOLD);
 
 export const GuidedFaceMatchCard = ({

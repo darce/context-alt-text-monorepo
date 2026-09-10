@@ -174,23 +174,25 @@ describe('guided scenario fixture', () => {
       }
     }
 
-    expect(getGuidedFace(scenario, JUSTIN)).toEqual({
+    expect(getGuidedFace(scenario, 'tribeca-justin-trudeau')).toEqual({
       id: 'tribeca-justin-trudeau',
       imageKey: 'tribeca',
       position: 'left',
       box: { x: 513, y: 76, width: 133, height: 189 },
       matchedPersonKey: JUSTIN,
       similarity: 0.8938,
+      isClusterAnchor: false,
       strength: 'strong',
       source: 'saved-run',
     });
-    expect(getGuidedFace(scenario, KATY)).toEqual({
+    expect(getGuidedFace(scenario, 'tribeca-katy-perry')).toEqual({
       id: 'tribeca-katy-perry',
       imageKey: 'tribeca',
       position: 'right',
       box: { x: 706, y: 139, width: 121, height: 182 },
       matchedPersonKey: KATY,
       similarity: 1,
+      isClusterAnchor: true,
       strength: 'strong',
       note: 'Her face is turned a little to the side.',
       source: 'saved-run',

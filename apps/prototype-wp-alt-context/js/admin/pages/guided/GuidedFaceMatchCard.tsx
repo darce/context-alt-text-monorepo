@@ -146,7 +146,6 @@ export const GuidedFaceMatchCard = ({
   const matchEvidence = (match: GuidedFaceMatch): React.JSX.Element => (
     <>
       <p className="acx-guided-face__match-summary">{matchSummary(match)}</p>
-      {match.face.note !== undefined ? <p className="acx-guided-face__note">{match.face.note}</p> : null}
       {isWeakMatch(match) ? (
         <p className="acx-guided-face__weak-match">
           <span role="img" aria-label={guidedCopy('names.match.weak_icon')}>

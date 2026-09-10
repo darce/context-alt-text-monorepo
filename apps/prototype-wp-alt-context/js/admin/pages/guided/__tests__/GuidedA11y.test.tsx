@@ -63,7 +63,7 @@ const assertNonEmptyString: (value: string | null | undefined, description: stri
 };
 
 const requireSample = (key: 'none' | 'both' | 'justin-trudeau' | 'katy-perry'): string => {
-  const value = SCENARIO.samples[key];
+  const value = SCENARIO.samples.tribeca[key];
   assertNonEmptyString(value, `scenario.samples[${key}]`);
   return value;
 };

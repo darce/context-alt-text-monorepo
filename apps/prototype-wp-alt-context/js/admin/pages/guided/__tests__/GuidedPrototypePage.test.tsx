@@ -8,10 +8,10 @@ import { GuidedPrototypePage } from '../GuidedPrototypePage';
 
 const SEED_ALT_TEXT = 'A man in a black suit and a woman in a white dress pose together, smiling, in front of a Tribeca Festival step-and-repeat backdrop.';
 const SCENARIO = createGuidedScenario();
-const JUSTIN_DRAFT = SCENARIO.samples['justin-trudeau'];
-const BOTH_NAMES_DRAFT = SCENARIO.samples.both;
-const NONE_DRAFT = SCENARIO.samples.none;
-const KATY_DRAFT = SCENARIO.samples['katy-perry'];
+const JUSTIN_DRAFT = SCENARIO.samples.tribeca['justin-trudeau'];
+const BOTH_NAMES_DRAFT = SCENARIO.samples.tribeca.both;
+const NONE_DRAFT = SCENARIO.samples.tribeca.none;
+const KATY_DRAFT = SCENARIO.samples.tribeca['katy-perry'];
 
 const choose = (position: 'left' | 'right', option: 'include' | 'omit'): void => {
   const fieldset = screen.getByTestId(`name-choice-${position}`);

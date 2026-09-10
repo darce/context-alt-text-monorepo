@@ -315,7 +315,7 @@ describe('public recorded walkthrough boundary', () => {
 
     expect(screen.queryByRole('dialog', { name: guidedCopy('names.change_title') })).not.toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: guidedCopy('draft.label') })).toHaveValue(
-      scenario.samples['justin-trudeau'],
+      scenario.samples.tribeca['justin-trudeau'],
     );
     expect(screen.getByRole('textbox', { name: guidedCopy('draft.label') })).not.toHaveValue(staleDraft);
   });

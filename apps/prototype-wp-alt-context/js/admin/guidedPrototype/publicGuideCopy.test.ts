@@ -21,13 +21,6 @@ const PUBLIC_KEYS = [
   'entry.title.public',
   'entry.intro.public',
   'scope.public',
-  'entry.read_case_study',
-  'nav.leave',
-  'nav.home',
-  'nav.case_study',
-  'roster.explainer.title',
-  'roster.explainer.body',
-  'roster.explainer.purpose',
   'names.scope.public',
   'feedback.choices.public',
   'context.source.summary.public',
@@ -37,7 +30,6 @@ const PUBLIC_KEYS = [
   'outcome.scope.public',
   'outcome.next_batch.public',
   'outcome.kept_body.public',
-  'notes.recorded_public',
 ] as const;
 
 const PUBLIC_SCOPE =
@@ -52,6 +44,8 @@ describe('public guide copy overlay', () => {
     expect(overlay).not.toMatch(/Generated from/);
     expect(generated).not.toContain('CASE_STUDY_URL');
     expect(generated).not.toContain('darce.github.io');
+    expect(Object.keys(PUBLIC_GUIDED_COPY).sort()).toEqual([...PUBLIC_KEYS].sort());
+    expect(Object.keys(PUBLIC_GUIDED_COPY).every((key) => key.endsWith('.public'))).toBe(true);
 
     for (const key of PUBLIC_KEYS) {
       expect(GUIDED_COPY).not.toHaveProperty(key);
@@ -65,8 +59,8 @@ describe('public guide copy overlay', () => {
     expect(PUBLIC_GUIDED_COPY['entry.title.public']).toBe('Review a recorded alt text example');
     expect(PUBLIC_GUIDED_COPY['entry.intro.public']).toContain('Inspect the festival photo');
     expect(guidedCopy('scope.public')).toBe(PUBLIC_SCOPE);
-    expect(PUBLIC_GUIDED_COPY['entry.read_case_study']).toBe('Read the case study');
-    expect(PUBLIC_GUIDED_COPY['notes.recorded_public']).not.toMatch(/Live generation/);
+    expect(guidedCopy('entry.read_case_study')).toBe('Read the case study');
+    expect(guidedCopy('notes.recorded_public')).not.toMatch(/Live generation/);
     expect(guidedCopy('nav.leave')).toBe('Leave the walkthrough');
     expect(PUBLIC_GUIDE_FALLBACK).toMatch(/Reload the page/);
     expect(PUBLIC_GUIDE_FALLBACK).toBe('The walkthrough could not load. Reload the page and try again.');

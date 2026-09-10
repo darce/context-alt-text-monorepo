@@ -37,12 +37,8 @@ export const PUBLIC_GUIDED_COPY = {
   'context.photo.credit_label': 'Photo credit',
   'context.photo.alttextai_title': 'AltText.ai comparison caption',
   'context.photo.altcontext_title': 'AltContext cached descriptions',
-  'context.photo.altcontext_no_context': 'Without names',
-  'context.photo.altcontext_with_names': 'With names',
   'context.photo.captured': 'Captured {date}.',
   'context.photo.generated': 'Generated {date} by {system}.',
-  'context.photo.model': 'Model: {model} ({quantization}).',
-  'context.photo.revision': 'Model revision: {revision}.',
   'context.photo.no_caption': 'No AltText.ai comparison caption has been captured for this photo yet.',
   'context.external_link': '{label} (opens in a new window)',
   'names.threshold': 'The displayed recognition threshold is {threshold}.',
@@ -58,7 +54,7 @@ export const PUBLIC_GUIDED_COPY = {
     'This match fell below the displayed {threshold} threshold; the production clusterer grouped it anyway.',
   'names.match.weak_icon': 'Weak match warning',
   'draft.origin.public':
-    'Recorded Qwen3-VL GPU draft from 9 September 2026, using the supplied page context and your selected names. This is not a new request.',
+    'Recorded altcontext.com draft from 9 September 2026, using the supplied page context and your selected names. This is not a new request.',
   'draft.context.public':
     'These recorded samples use the supplied page title and context shown above; editing here changes only this tab.',
   'outcome.scope.public':

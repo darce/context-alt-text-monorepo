@@ -52,7 +52,10 @@ export type GuidedImageKey = 'tribeca' | 'coachella';
 export const GUIDED_PERSON_KEYS: readonly GuidedPersonKey[] = ['katy-perry', 'justin-trudeau'];
 export const GUIDED_IMAGE_KEYS: readonly GuidedImageKey[] = ['tribeca', 'coachella'];
 export type GuidedFacePosition = 'left' | 'right';
-export type GuidedDraftKey = 'none' | 'katy-perry' | 'justin-trudeau' | 'both';
+export const GUIDED_SAMPLE_KEYS = ['none', 'katy-perry', 'justin-trudeau', 'both'] as const;
+export type GuidedSampleKey = (typeof GUIDED_SAMPLE_KEYS)[number];
+/** Backwards-compatible name for callers that still refer to draft keys. */
+export type GuidedDraftKey = GuidedSampleKey;
 export type GuidedFaceSource = 'saved-run' | 'user-supplied';
 
 export const GUIDED_MATCH_THRESHOLD = 0.6;
@@ -95,15 +98,10 @@ export interface GuidedPressPhoto {
     note: string;
   };
   altContextDescription: {
-    noContext: string;
-    withNames: string;
+    text: string;
     system: string;
     systemUrl: string;
-    model: string;
-    modelRevision: string;
-    quantization: string;
     generatedOn: string;
-    note: string;
   };
 }
 
@@ -160,7 +158,7 @@ export interface GuidedScenario {
   people: GuidedLabeledPerson[];
   faces: GuidedFace[];
   visualFacts: string[];
-  samples: Record<GuidedDraftKey, string | null>;
+  samples: Record<GuidedImageKey, Partial<Record<GuidedSampleKey, string>>>;
   provenance: GuidedProvenance;
   /** Optional because the incumbent saved-build fixture predates this field. */
   identitySource?: GuidedScenarioIdentitySource;
@@ -240,17 +238,11 @@ const GUIDED_SCENARIO_SEED: Omit<GuidedScenario, 'pressPhoto'> = {
           'Captured from the AltText.ai free web demo (POST https://alttext.ai/demo_images), with no keywords supplied; asset_id 5ae0105fe47338c39767e88da014617c; source file guided-press-tribeca-2026.jpg.',
       },
       altContextDescription: {
-        noContext:
-          "Justin Trudeau and Katy Perry pose together on a red carpet at the Tribeca Festival, standing in front of a backdrop with the event's logo and the 10 Lives Studios logo. Trudeau wears a black tuxedo with a white shirt, while Perry is in a white sleeveless dress with a draped design and a large white floral detail on the shoulder. She has her left hand on his chest, showing off a ring on her ring finger.",
-        withNames:
+        text:
           'Justin Trudeau and Katy Perry pose together on the red carpet at the Tribeca Festival in New York in June 2026. Trudeau is wearing a black tuxedo with a white shirt, while Perry is in a white sleeveless dress with a draped design. They are standing in front of a backdrop with the Tribeca Festival and 10 Lives Studios logos.',
-        system: 'AltContext burst-GPU',
+        system: 'altcontext.com',
         systemUrl: 'https://altcontext.com/',
-        model: 'Qwen3-VL-30B-A3B-Instruct',
-        modelRevision: '0af19e7479857aa7f3246466a4ad16c7e7299639',
-        quantization: 'Q4_K_M',
         generatedOn: '2026-09-10',
-        note: 'Hub repo unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF; prompt version 3; temperature 0. Cached from the AltContext burst GPU; no GPU request runs per visitor.',
       },
     },
     {
@@ -269,17 +261,11 @@ const GUIDED_SCENARIO_SEED: Omit<GuidedScenario, 'pressPhoto'> = {
           'Captured from the AltText.ai free web demo (POST https://alttext.ai/demo_images), with no keywords supplied; asset_id 7b54b68b4fde9ee3f5257f2ac28d7049; source file guided-press-coachella-2026.webp.',
       },
       altContextDescription: {
-        noContext:
-          'A man and a woman are sitting together outdoors at night, eating from red cups and a yellow container of noodles. The man, wearing a white t-shirt and blue jeans, holds chopsticks and a cup, while the woman, in a white top and black boots, eats from a cup. They are surrounded by plants and trees in a relaxed, casual setting.',
-        withNames:
+        text:
           'Justin Trudeau and Katy Perry are sitting together outdoors at night, eating from red cups and a yellow noodle container. Trudeau wears a white t-shirt, blue jeans, and a backward blue cap, while Perry wears a white t-shirt, black boots, and holds a red cup. They are surrounded by plants and appear to be at a casual evening event.',
-        system: 'AltContext burst-GPU',
+        system: 'altcontext.com',
         systemUrl: 'https://altcontext.com/',
-        model: 'Qwen3-VL-30B-A3B-Instruct',
-        modelRevision: '0af19e7479857aa7f3246466a4ad16c7e7299639',
-        quantization: 'Q4_K_M',
         generatedOn: '2026-09-10',
-        note: 'Hub repo unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF; prompt version 3; temperature 0. Cached from the AltContext burst GPU; no GPU request runs per visitor.',
       },
     },
   ],
@@ -388,10 +374,16 @@ const GUIDED_SCENARIO_SEED: Omit<GuidedScenario, 'pressPhoto'> = {
     'Her hand rests on his chest.',
   ],
   samples: {
-    "none": "A man and a woman pose together on a red carpet in front of a backdrop featuring the Tribeca Festival and 10 Lives Studios logos. The man wears a black tuxedo with a white shirt, and the woman is in a white sleeveless dress with a draped design, smiling as she places her hand on his chest.",
-    "katy-perry": "Katy Perry and a man pose together on a red carpet in front of a backdrop for the Tribeca Festival. Perry, on the right, wears a white dress and smiles while placing her hand on the man's chest. The man, on the left, wears a black tuxedo and white shirt. The background features repeating logos for \"TRIBECA FESTIVAL\" and \"10 LIVES STUDIOS.\"",
-    "justin-trudeau": "Justin Trudeau stands on a red carpet at the Tribeca Festival, posing with a woman in a white dress. He is wearing a black tuxedo with a white shirt, and she has her hand on his chest, showing a ring on her finger. The background is a white wall with repeating \"Tribeca Festival\" and \"10 Lives Studios\" logos.",
-    "both": "Justin Trudeau and Katy Perry pose together on the red carpet at the Tribeca Festival, standing in front of a backdrop with the event's logo. Trudeau is wearing a black tuxedo with a white shirt, while Perry is in a white sleeveless dress with a draped design. Perry has her arm around Trudeau and is smiling, showing off a ring on her left hand.",
+    tribeca: {
+      none: "A man and a woman pose together on a red carpet in front of a backdrop featuring the Tribeca Festival and 10 Lives Studios logos. The man wears a black tuxedo with a white shirt, and the woman is in a white sleeveless dress with a draped design, smiling as she places her hand on his chest.",
+      "katy-perry": "Katy Perry and a man pose together on a red carpet in front of a backdrop for the Tribeca Festival. Perry, on the right, wears a white dress and smiles while placing her hand on the man's chest. The man, on the left, wears a black tuxedo and white shirt. The background features repeating logos for \"TRIBECA FESTIVAL\" and \"10 LIVES STUDIOS.\"",
+      "justin-trudeau": "Justin Trudeau stands on a red carpet at the Tribeca Festival, posing with a woman in a white dress. He is wearing a black tuxedo with a white shirt, and she has her hand on his chest, showing a ring on her finger. The background is a white wall with repeating \"Tribeca Festival\" and \"10 Lives Studios\" logos.",
+      both: "Justin Trudeau and Katy Perry pose together on the red carpet at the Tribeca Festival, standing in front of a backdrop with the event's logo. Trudeau is wearing a black tuxedo with a white shirt, while Perry is in a white sleeveless dress with a draped design. Perry has her arm around Trudeau and is smiling, showing off a ring on her left hand.",
+    },
+    coachella: {
+      none: 'A man and a woman are sitting together outdoors at night, eating from red cups and a yellow container of noodles. The man, wearing a white t-shirt and blue jeans, holds chopsticks and a cup, while the woman, in a white top and black boots, eats from a cup. They are surrounded by plants and trees in a relaxed, casual setting.',
+      both: 'Justin Trudeau and Katy Perry are sitting together outdoors at night, eating from red cups and a yellow noodle container. Trudeau wears a white t-shirt, blue jeans, and a backward blue cap, while Perry wears a white t-shirt, black boots, and holds a red cup. They are surrounded by plants and appear to be at a casual evening event.',
+    },
   },
   provenance: {
     service: 'AltContext recognition service (production)',
@@ -422,7 +414,9 @@ const cloneScenario = (scenario: Omit<GuidedScenario, 'pressPhoto'>): GuidedScen
     })),
     faces: scenario.faces.map((face) => ({ ...face, box: { ...face.box } })),
     visualFacts: [...scenario.visualFacts],
-    samples: { ...scenario.samples },
+    samples: Object.fromEntries(
+      GUIDED_IMAGE_KEYS.map((imageKey) => [imageKey, { ...scenario.samples[imageKey] }]),
+    ) as GuidedScenario['samples'],
     provenance: { ...scenario.provenance },
     ...(scenario.identitySource
       ? {
@@ -531,7 +525,7 @@ export const canRestoreRevision = (state: GuidedDemoState, revisionId: string): 
   return choicesMatch(revision.choices, state.choices);
 };
 
-export const guidedDraftKeyFor = (choices: GuidedChoices): GuidedDraftKey | null => {
+export const guidedDraftKeyFor = (choices: GuidedChoices): GuidedSampleKey | null => {
   if (choices.left === GUIDED_NAME_CHOICE.UNDECIDED || choices.right === GUIDED_NAME_CHOICE.UNDECIDED) {
     return null;
   }
@@ -549,12 +543,18 @@ export const guidedDraftKeyFor = (choices: GuidedChoices): GuidedDraftKey | null
   return 'none';
 };
 
-export const guidedSampleFor = (scenario: GuidedScenario, choices: GuidedChoices): string | null => {
+const GUIDED_DEFAULT_IMAGE_KEY: GuidedImageKey = 'tribeca';
+
+export const guidedSampleFor = (
+  scenario: GuidedScenario,
+  choices: GuidedChoices,
+  imageKey: GuidedImageKey = GUIDED_DEFAULT_IMAGE_KEY,
+): string | null => {
   const key = guidedDraftKeyFor(choices);
   if (key === null) {
     return null;
   }
-  return scenario.samples[key];
+  return scenario.samples[imageKey][key] ?? null;
 };
 
 export const guidedNameCoverage = (scenario: GuidedScenario): GuidedNameCoverage[] =>
@@ -584,6 +584,7 @@ export const guidedStepIndex = (step: GuidedStep): number => {
 const resolveSample = (
   scenario: GuidedScenario,
   choices: GuidedChoices,
+  imageKey: GuidedImageKey = GUIDED_DEFAULT_IMAGE_KEY,
 ): Pick<GuidedDemoState, 'draftText' | 'draftOrigin' | 'draftStatus'> => {
   if (choices.left === GUIDED_NAME_CHOICE.UNDECIDED || choices.right === GUIDED_NAME_CHOICE.UNDECIDED) {
     return {
@@ -592,7 +593,7 @@ const resolveSample = (
       draftStatus: GUIDED_DRAFT_STATUS.BLOCKED,
     };
   }
-  const sample = guidedSampleFor(scenario, choices);
+  const sample = guidedSampleFor(scenario, choices, imageKey);
   if (sample === null) {
     return {
       draftText: null,
@@ -663,6 +664,7 @@ export const chooseGuidedName = (
   scenario: GuidedScenario,
   position: GuidedFacePosition,
   choice: GuidedNameChoice,
+  imageKey: GuidedImageKey = GUIDED_DEFAULT_IMAGE_KEY,
 ): GuidedDemoState => {
   if (state.pendingChoiceChange !== null) {
     return state;
@@ -680,7 +682,7 @@ export const chooseGuidedName = (
 
   const choices = cloneChoices(state.choices);
   choices[position] = choice;
-  const resolved = resolveSample(scenario, choices);
+  const resolved = resolveSample(scenario, choices, imageKey);
   const namesAreDecided =
     choices.left !== GUIDED_NAME_CHOICE.UNDECIDED && choices.right !== GUIDED_NAME_CHOICE.UNDECIDED;
   const summaryKey: GuidedCopyKey =
@@ -707,14 +709,18 @@ export const chooseGuidedName = (
   );
 };
 
-export const confirmGuidedChoiceReplacement = (state: GuidedDemoState, scenario: GuidedScenario): GuidedDemoState => {
+export const confirmGuidedChoiceReplacement = (
+  state: GuidedDemoState,
+  scenario: GuidedScenario,
+  imageKey: GuidedImageKey = GUIDED_DEFAULT_IMAGE_KEY,
+): GuidedDemoState => {
   if (state.pendingChoiceChange === null) {
     return state;
   }
   const pending = state.pendingChoiceChange;
   const choices = cloneChoices(state.choices);
   choices[pending.position] = pending.choice;
-  const resolved = resolveSample(scenario, choices);
+  const resolved = resolveSample(scenario, choices, imageKey);
   return withLocalAction(
     {
       ...cloneState(state),
@@ -878,11 +884,15 @@ export const resetGuidedDemoState = (state: GuidedDemoState): GuidedDemoState =>
   return createGuidedDemoState();
 };
 
-export const retryGuidedFixture = (state: GuidedDemoState, scenario: GuidedScenario): GuidedDemoState => {
+export const retryGuidedFixture = (
+  state: GuidedDemoState,
+  scenario: GuidedScenario,
+  imageKey: GuidedImageKey = GUIDED_DEFAULT_IMAGE_KEY,
+): GuidedDemoState => {
   if (state.draftStatus !== GUIDED_DRAFT_STATUS.FIXTURE_MISSING) {
     return state;
   }
-  const resolved = resolveSample(scenario, state.choices);
+  const resolved = resolveSample(scenario, state.choices, imageKey);
   if (resolved.draftStatus === GUIDED_DRAFT_STATUS.FIXTURE_MISSING) {
     return state;
   }

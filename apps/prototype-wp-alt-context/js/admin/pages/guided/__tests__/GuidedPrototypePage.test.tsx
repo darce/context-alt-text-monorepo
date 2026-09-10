@@ -81,7 +81,7 @@ describe('GuidedPrototypePage shell', () => {
     expect(screen.getByText(/below the displayed 60\.0% threshold/i)).toBeInTheDocument();
     expect(screen.getByText(/production clusterer grouped it anyway/i)).toBeInTheDocument();
     expect(screen.getAllByRole('link', { name: /AltText\.ai/ })).not.toHaveLength(0);
-    expect(screen.getAllByRole('link', { name: /AltContext burst-GPU/ })).not.toHaveLength(0);
+    expect(screen.getAllByRole('link', { name: /altcontext\.com/ })).not.toHaveLength(0);
     const coachellaCredits = screen.getAllByRole('link', {
       name: /https:\/\/www\.instagram\.com\/katyperry\//,
     });

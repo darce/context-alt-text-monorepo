@@ -105,7 +105,7 @@ export const COACHELLA_SCENARIO: GuidedScenario = {
     },
   ],
   visualFacts: [
-    'Two people sit together at a table.',
+    'Two people sit together on a step.',
     'The person on the left wears a light shirt and a backwards cap.',
     'The person on the right has long dark hair and holds a red cup.',
     'A snack packet, cups and plants are visible.',

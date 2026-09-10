@@ -100,8 +100,13 @@ const publicSourceSummary = (): React.ReactNode => {
   return (
     <>
       {source.slice(0, vendorIndex)}
-      <a href="https://alttext.ai/" target="_blank" rel="noreferrer">
-        {vendor} (opens in a new window)
+      <a
+        href="https://alttext.ai/"
+        target="_blank"
+        rel="noreferrer"
+        aria-label={`${vendor} (opens in a new window)`}
+      >
+        {vendor}
       </a>
       {source.slice(vendorIndex + vendor.length)}
     </>
@@ -251,7 +256,12 @@ export const RecordedWalkthrough = ({ scope, livePanel, escapeHref }: RecordedWa
               {publicChoiceSummary(scenario, demo)}
             </span>
           ) : null}
-          <span className="acx-guided-page__feedback-status" role="status" aria-live="polite">
+          <span
+            className="acx-guided-page__feedback-status"
+            data-testid="guided-page-feedback-status"
+            role="status"
+            aria-live="polite"
+          >
             {feedback ? (
               <span
                 className="acx-guided-page__feedback-icon"

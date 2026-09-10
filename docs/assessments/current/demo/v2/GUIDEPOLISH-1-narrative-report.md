@@ -2,7 +2,7 @@
 
 **Lane:** `guidepolish-v2-narrative`  
 **Task:** `GUIDEPOLISH-1`  
-**Source revision inspected:** `96e16792f694fa003f1cea450085aa9c0eae2607`  
+**Source revision inspected:** `f73fc78` adapter checkpoint
 **Scope:** signed-out `/guide/` narrative and composition only. The admin live
 surface, root route, scenario state, generated catalog, and PHP route remain
 owned by sibling lanes or existing sources.
@@ -122,10 +122,19 @@ generation, WordPress writeback, or roster persistence.
 
 ## D6–D7 boundary disposition
 
-D6 root-site copy and PHP route behavior are sibling-owned. D7 targeted Vitest,
-provisioning, map validation, and final commit evidence are recorded in the
-worker handoff and updated here after verification. No screenshot or live
-network capture is claimed from this lane.
+D6 root-site copy and PHP route behavior are sibling-owned. The current UX-map
+schema rejects `domain_state_mappings` and `slices`; those unsupported fields
+were removed while preserving the state and ownership explanation above. The
+map parses as JSON and retains the canonical inventory keys. No WorkBay canvas,
+UX-map, or canvas CLI is installed in this lane, so the ASCII and Mermaid
+diagrams above are hand-rendered evidence rather than a renderer claim.
+
+Provisioning ran separately with `npm ci --ignore-scripts --no-audit --no-fund`
+(657 packages added). Targeted verification passed: RecordedWalkthrough and
+public-boundary, 21/21 tests; publicGuideCopy, 3/3 tests. The first targeted
+run exposed a missing live-status test hook and an external-link hint included
+in the provenance text assertion; both were corrected in the owned
+composition. No screenshot or live network capture is claimed from this lane.
 
 ## Rollback
 

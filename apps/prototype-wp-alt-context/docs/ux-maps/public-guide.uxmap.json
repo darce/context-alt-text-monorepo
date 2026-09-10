@@ -503,26 +503,6 @@
       ]
     }
   ],
-  "domain_state_mappings": [
-    {
-      "domain_states": [
-        "disabled_404"
-      ],
-      "canonical_state": "error"
-    },
-    {
-      "domain_states": [
-        "bundle_failed"
-      ],
-      "canonical_state": "error"
-    }
-  ],
-  "slices": [
-    "Enable route with acx_public_guide_enabled and rewrite flush (deploy-enable).",
-    "Public RecordedWalkthrough scope with escape hatch and two entry actions (sibling TS lane).",
-    "PHP PublicGuideRoute 404 when disabled; standalone template when on (sibling PHP lane).",
-    "Signed-out Playwright acceptance under project public-guide."
-  ],
   "open_questions": [
     "Does a signed-out visitor who bookmarks /guide/#state deep-link anywhere, or is in-tab state always first_time after refresh?",
     "Should the optional workflow-discussion destination be enabled once a verified main-site contact section is available?"

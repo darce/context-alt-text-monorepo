@@ -7,7 +7,8 @@
     "NAV-08: the first screen shows two plain-language entry actions — Start the walkthrough and Read the case study.",
     "NAV-07: public scope renders an escape-hatch link to the site home and to the case study.",
     "SECD-02/03: the public route performs no REST calls; /acx/v1/public/demo/describe stays gated by acx_public_demo_enabled and is expected off unless retained.",
-    "Bundle-failure still returns 200 with canonical and the fallback paragraph from apps/prototype-wp-alt-context/js/admin/guidedPrototype/publicGuideCopy.ts."
+    "Bundle-failure still returns 200 with canonical and the fallback paragraph from apps/prototype-wp-alt-context/js/admin/guidedPrototype/publicGuideCopy.ts.",
+    "Detailed engine metadata stays in the notes while the recorded provenance summary is visible on screen in the section footer."
   ],
   "jobs": [
     {

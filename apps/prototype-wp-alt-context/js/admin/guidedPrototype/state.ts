@@ -123,7 +123,6 @@ export interface GuidedFace {
   isClusterAnchor: boolean;
   /** Null when no recognition confidence/strength was recorded for the fixture. */
   strength: GuidedMatchStrength | null;
-  note?: string;
   source: GuidedFaceSource;
 }
 
@@ -368,7 +367,6 @@ const GUIDED_SCENARIO_SEED: Omit<GuidedScenario, 'pressPhoto'> = {
       similarity: 1,
       isClusterAnchor: true,
       strength: 'strong',
-      note: 'Her face is turned a little to the side.',
       source: 'saved-run',
     },
     {
@@ -391,7 +389,6 @@ const GUIDED_SCENARIO_SEED: Omit<GuidedScenario, 'pressPhoto'> = {
       similarity: 0.5666,
       isClusterAnchor: false,
       strength: 'weak',
-      note: 'The production clusterer grouped this face even though its match fell below the displayed threshold.',
       source: 'saved-run',
     },
   ],

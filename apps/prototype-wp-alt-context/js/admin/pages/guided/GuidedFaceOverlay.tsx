@@ -60,37 +60,63 @@ export const GuidedFaceOverlay: React.FC<GuidedFaceOverlayProps> = ({
   idPrefix,
 }) => {
   const [interactionFaceId, setInteractionFaceId] = useState<string | null>(null);
+  const [pinnedFaceId, setPinnedFaceId] = useState<string | null>(null);
   const interactionFaceRef = useRef<string | null>(null);
+  const pinnedFaceRef = useRef<string | null>(null);
+  const reportedFaceRef = useRef<string | null>(null);
+
+  const reportHighlight = useCallback(
+    (faceId: string | null): void => {
+      if (reportedFaceRef.current === faceId) {
+        return;
+      }
+      reportedFaceRef.current = faceId;
+      onHighlightChange?.(faceId);
+    },
+    [onHighlightChange],
+  );
 
   const highlightFace = useCallback(
     (faceId: string): void => {
+      interactionFaceRef.current = faceId;
       setInteractionFaceId(faceId);
-      if (interactionFaceRef.current !== faceId) {
-        interactionFaceRef.current = faceId;
-        onHighlightChange?.(faceId);
-      }
+      reportHighlight(faceId);
     },
-    [onHighlightChange],
+    [reportHighlight],
   );
 
   const clearInteraction = useCallback(
     (faceId: string): void => {
-      setInteractionFaceId((current) => (current === faceId ? null : current));
-      if (interactionFaceRef.current === faceId) {
-        interactionFaceRef.current = null;
-        onHighlightChange?.(null);
+      if (interactionFaceRef.current !== faceId) {
+        return;
       }
+      interactionFaceRef.current = null;
+      setInteractionFaceId((current) => (current === faceId ? null : current));
+      reportHighlight(pinnedFaceRef.current);
     },
-    [onHighlightChange],
+    [reportHighlight],
   );
 
   const clearHighlight = useCallback((): void => {
-    setInteractionFaceId(null);
     interactionFaceRef.current = null;
+    pinnedFaceRef.current = null;
+    setInteractionFaceId(null);
+    setPinnedFaceId(null);
+    reportedFaceRef.current = null;
     onHighlightChange?.(null);
     // Keep the active button in the tab sequence after Escape. The parent can
     // close the figure-level reveal while focus remains a useful anchor.
   }, [onHighlightChange]);
+
+  const togglePinnedFace = useCallback(
+    (faceId: string): void => {
+      const nextPinnedFaceId = pinnedFaceRef.current === faceId ? null : faceId;
+      pinnedFaceRef.current = nextPinnedFaceId;
+      setPinnedFaceId(nextPinnedFaceId);
+      reportHighlight(interactionFaceRef.current ?? nextPinnedFaceId);
+    },
+    [reportHighlight],
+  );
 
   const usableNaturalSize = isUsableNaturalSize(naturalSize);
   const overlayId = `${idPrefix}-${GUIDED_FACE_OVERLAY_ID_SUFFIX}`;
@@ -105,7 +131,8 @@ export const GuidedFaceOverlay: React.FC<GuidedFaceOverlayProps> = ({
     >
       {faces.map((face) => {
         const isWeak = face.strength === GUIDED_MATCH_STRENGTH.WEAK;
-        const isHighlighted = highlightedFaceId === face.id || interactionFaceId === face.id;
+        const isPinned = pinnedFaceId === face.id;
+        const isHighlighted = highlightedFaceId === face.id || interactionFaceId === face.id || isPinned;
         const chipText = faceChipText(face);
         const accessibleName = faceAccessibleName(face);
 
@@ -118,17 +145,22 @@ export const GuidedFaceOverlay: React.FC<GuidedFaceOverlayProps> = ({
               'acx-guided-face-overlay__outline',
               isWeak ? 'acx-guided-face-overlay__outline--weak' : '',
               isHighlighted ? 'acx-guided-face-overlay__outline--highlighted' : '',
+              isPinned ? 'acx-guided-face-overlay__outline--pinned' : '',
             ]
               .filter(Boolean)
               .join(' ')}
             style={outlineStyle(face.box, naturalSize)}
             aria-label={accessibleName}
-            aria-pressed={isHighlighted}
+            aria-pressed={isPinned}
             tabIndex={0}
             data-face-id={face.id}
             data-strength={face.strength}
             data-highlighted={isHighlighted ? 'true' : 'false'}
-            onClick={() => highlightFace(face.id)}
+            data-pinned={isPinned ? 'true' : 'false'}
+            onClick={() => {
+              highlightFace(face.id);
+              togglePinnedFace(face.id);
+            }}
             onFocus={() => highlightFace(face.id)}
             onBlur={() => clearInteraction(face.id)}
             onPointerEnter={() => highlightFace(face.id)}

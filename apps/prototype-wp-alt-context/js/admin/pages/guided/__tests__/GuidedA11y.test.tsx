@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Mock } from 'vitest';
 
 import { guidedCopy } from '../../../guidedPrototype/copy';
-import { createGuidedScenario } from '../../../guidedPrototype/state';
+import { createGuidedScenario, type GuidedImageKey } from '../../../guidedPrototype/state';
 import type { GuidedLiveDescriptionClient } from '../../../guidedPrototype/useGuidedLiveDescription';
 import type { GuidedLiveDescriptionPanelProps } from '../GuidedLiveDescriptionPanel';
 import { GuidedPrototypePage } from '../GuidedPrototypePage';
@@ -121,10 +121,12 @@ const changedPoliteTexts = (before: Map<string, string>, after: Map<string, stri
 
 const chooseRadio = async (
   user: ReturnType<typeof userEvent.setup>,
+  photoKey: GuidedImageKey,
   position: 'left' | 'right',
   option: 'include' | 'omit',
 ): Promise<HTMLElement> => {
-  const fieldset = screen.getByRole('group', { name: guidedCopy('names.legend', { position }) });
+  const photo = screen.getByTestId(`guided-photo-${photoKey}`);
+  const fieldset = within(photo).getByRole('group', { name: guidedCopy('names.legend', { position }) });
   const name =
     option === 'include'
       ? guidedCopy('names.include', { name: position === 'left' ? 'Justin Trudeau' : 'Katy Perry' })
@@ -140,13 +142,14 @@ const stepButton = (step: 'context' | 'names' | 'draft' | 'apply'): HTMLElement 
   });
 
 const completeCoreDraft = async (user: ReturnType<typeof userEvent.setup>, draft: string): Promise<void> => {
-  await chooseRadio(user, 'left', 'include');
-  await chooseRadio(user, 'right', 'include');
-  const editor = screen.getByRole('textbox', { name: guidedCopy('draft.label') });
+  await chooseRadio(user, 'tribeca', 'left', 'include');
+  await chooseRadio(user, 'tribeca', 'right', 'include');
+  const review = screen.getByTestId('guided-description-review-tribeca');
+  const editor = within(review).getByRole('textbox', { name: guidedCopy('draft.label') });
   await user.clear(editor);
   await user.type(editor, draft);
-  await user.click(screen.getByRole('button', { name: guidedCopy('draft.next') }));
-  await user.click(screen.getByTestId('demo-apply'));
+  await user.click(within(review).getByRole('button', { name: guidedCopy('draft.next') }));
+  await user.click(screen.getByTestId('demo-apply-tribeca'));
 };
 
 describe('GuidedA11y (W04)', () => {
@@ -191,37 +194,50 @@ describe('GuidedA11y (W04)', () => {
     const user = userEvent.setup();
     render(<GuidedPrototypePage />);
 
-    const left = screen.getByRole('group', { name: guidedCopy('names.legend', { position: 'left' }) });
-    const right = screen.getByRole('group', { name: guidedCopy('names.legend', { position: 'right' }) });
-    expect(left.tagName).toBe('FIELDSET');
-    expect(right.tagName).toBe('FIELDSET');
-    expect(left.querySelector('legend')).toHaveTextContent(guidedCopy('names.legend', { position: 'left' }));
-    expect(right.querySelector('legend')).toHaveTextContent(guidedCopy('names.legend', { position: 'right' }));
-    expect(screen.getByRole('group', { name: guidedCopy('names.legend', { position: 'left' }) })).toBe(left);
-    expect(screen.getByRole('group', { name: guidedCopy('names.legend', { position: 'right' }) })).toBe(right);
+    const photoKeys: GuidedImageKey[] = ['tribeca', 'coachella'];
+    photoKeys.forEach((photoKey) => {
+      const photo = screen.getByTestId(`guided-photo-${photoKey}`);
+      const left = within(photo).getByRole('group', { name: guidedCopy('names.legend', { position: 'left' }) });
+      const right = within(photo).getByRole('group', { name: guidedCopy('names.legend', { position: 'right' }) });
+      expect(left.tagName).toBe('FIELDSET');
+      expect(right.tagName).toBe('FIELDSET');
+      expect(left.querySelector('legend')).toHaveTextContent(guidedCopy('names.legend', { position: 'left' }));
+      expect(right.querySelector('legend')).toHaveTextContent(guidedCopy('names.legend', { position: 'right' }));
 
-    const leftRadios = within(left).getAllByRole('radio');
-    const rightRadios = within(right).getAllByRole('radio');
-    expect(leftRadios.every((radio) => (radio as HTMLInputElement).checked === false)).toBe(true);
-    expect(rightRadios.every((radio) => (radio as HTMLInputElement).checked === false)).toBe(true);
+      const leftRadios = within(left).getAllByRole('radio');
+      const rightRadios = within(right).getAllByRole('radio');
+      expect(leftRadios.every((radio) => (radio as HTMLInputElement).checked === false)).toBe(true);
+      expect(rightRadios.every((radio) => (radio as HTMLInputElement).checked === false)).toBe(true);
 
-    const cards = screen.getAllByRole('region', { name: /Saved suggestion:/ });
-    expect(cards).toHaveLength(2);
-    const leftCard = cards[0];
-    const rightCard = cards[1];
-    assertHtmlElement(leftCard, 'left face card');
-    assertHtmlElement(rightCard, 'right face card');
-    expect(within(leftCard).getByText(guidedCopy('names.pending'))).toBeInTheDocument();
-    expect(within(rightCard).getByText(guidedCopy('names.pending'))).toBeInTheDocument();
+      const cards = within(photo).getAllByRole('region', { name: /Saved suggestion:/ });
+      expect(cards).toHaveLength(2);
+      const leftCard = within(photo).getByRole('region', {
+        name: guidedCopy('names.suggestion', { name: 'Justin Trudeau' }),
+      });
+      const rightCard = within(photo).getByRole('region', {
+        name: guidedCopy('names.suggestion', { name: 'Katy Perry' }),
+      });
+      expect(within(leftCard).getByText(guidedCopy('names.pending'))).toBeInTheDocument();
+      expect(within(rightCard).getByText(guidedCopy('names.pending'))).toBeInTheDocument();
+    });
 
-    const includeLeft = await chooseRadio(user, 'left', 'include');
-    expect(includeLeft).toBeChecked();
-    expect((includeLeft as HTMLInputElement).checked).toBe(true);
-    expect(within(leftCard).getByText(guidedCopy('names.included', { name: 'Justin Trudeau' }))).toBeInTheDocument();
+    for (const photoKey of photoKeys) {
+      const photo = screen.getByTestId(`guided-photo-${photoKey}`);
+      const leftCard = within(photo).getByRole('region', {
+        name: guidedCopy('names.suggestion', { name: 'Justin Trudeau' }),
+      });
+      const rightCard = within(photo).getByRole('region', {
+        name: guidedCopy('names.suggestion', { name: 'Katy Perry' }),
+      });
+      const includeLeft = await chooseRadio(user, photoKey, 'left', 'include');
+      expect(includeLeft).toBeChecked();
+      expect((includeLeft as HTMLInputElement).checked).toBe(true);
+      expect(within(leftCard).getByText(guidedCopy('names.included', { name: 'Justin Trudeau' }))).toBeInTheDocument();
 
-    const omitRight = await chooseRadio(user, 'right', 'omit');
-    expect(omitRight).toBeChecked();
-    expect(within(rightCard).getByText(guidedCopy('names.omitted'))).toBeInTheDocument();
+      const omitRight = await chooseRadio(user, photoKey, 'right', 'omit');
+      expect(omitRight).toBeChecked();
+      expect(within(rightCard).getByText(guidedCopy('names.omitted'))).toBeInTheDocument();
+    }
   });
 
   it('would prove the page wrong if Tab order diverged from DOM order, a positive tabindex existed, or a trap appeared outside the reset dialog', async () => {
@@ -270,22 +286,28 @@ describe('GuidedA11y (W04)', () => {
     const user = userEvent.setup();
     render(<GuidedPrototypePage />);
 
-    const includeLeft = await chooseRadio(user, 'left', 'include');
+    const includeLeft = await chooseRadio(user, 'tribeca', 'left', 'include');
     expect(document.activeElement).toBe(includeLeft);
-    await chooseRadio(user, 'right', 'include');
+    await chooseRadio(user, 'tribeca', 'right', 'include');
 
     const edited = 'Visitor-edited festival alt text.';
-    const editor = screen.getByRole('textbox', { name: guidedCopy('draft.label') });
+    const review = screen.getByTestId('guided-description-review-tribeca');
+    const editor = within(review).getByRole('textbox', { name: guidedCopy('draft.label') });
     await user.clear(editor);
     await user.type(editor, edited);
-    await user.click(screen.getByRole('button', { name: guidedCopy('draft.next') }));
+    await user.click(within(review).getByRole('button', { name: guidedCopy('draft.next') }));
 
-    await chooseRadio(user, 'right', 'omit');
+    await chooseRadio(user, 'tribeca', 'right', 'omit');
     const replaceDialog = screen.getByRole('dialog', { name: guidedCopy('names.change_title') });
     await user.click(within(replaceDialog).getByRole('button', { name: guidedCopy('names.change_confirm') }));
 
-    await chooseRadio(user, 'right', 'include');
-    const restore = screen.getByRole('button', { name: guidedCopy('draft.restore_revision') });
+    await chooseRadio(user, 'tribeca', 'right', 'include');
+    await user.click(
+      within(screen.getByRole('dialog', { name: guidedCopy('names.change_title') })).getByRole('button', {
+        name: guidedCopy('names.change_confirm'),
+      }),
+    );
+    const restore = within(review).getByRole('button', { name: guidedCopy('draft.restore_revision') });
     restore.focus();
     await user.click(restore);
     expect(document.activeElement).toBe(restore);
@@ -305,13 +327,14 @@ describe('GuidedA11y (W04)', () => {
     render(<GuidedPrototypePage />);
 
     await completeCoreDraft(user, 'First applied festival sentence.');
-    const editor = screen.getByRole('textbox', { name: guidedCopy('draft.label') });
+    const review = screen.getByTestId('guided-description-review-tribeca');
+    const editor = within(review).getByRole('textbox', { name: guidedCopy('draft.label') });
     await user.clear(editor);
     await user.type(editor, 'Second applied festival sentence.');
-    await user.click(screen.getByRole('button', { name: guidedCopy('draft.next') }));
-    await user.click(screen.getByTestId('demo-apply'));
+    await user.click(within(review).getByRole('button', { name: guidedCopy('draft.next') }));
+    await user.click(screen.getByTestId('demo-apply-tribeca'));
 
-    const undo = screen.getByTestId('demo-undo');
+    const undo = screen.getByTestId('demo-undo-tribeca');
     expect(undo).toBeEnabled();
     undo.focus();
     await user.click(undo);
@@ -335,13 +358,17 @@ describe('GuidedA11y (W04)', () => {
     expect(document.activeElement).toHaveAttribute('id', 'guided-section-face');
     expect(document.activeElement).toHaveAccessibleName(guidedCopy('step.names'));
 
-    await chooseRadio(user, 'left', 'include');
-    await chooseRadio(user, 'right', 'include');
+    await chooseRadio(user, 'tribeca', 'left', 'include');
+    await chooseRadio(user, 'tribeca', 'right', 'include');
     await user.click(screen.getByRole('button', { name: guidedCopy('names.next') }));
     expect(document.activeElement).toHaveAttribute('id', 'guided-section-review');
     expect(document.activeElement).toHaveAccessibleName(guidedCopy('step.draft'));
 
-    await user.click(screen.getByRole('button', { name: guidedCopy('draft.next') }));
+    await user.click(
+      within(screen.getByTestId('guided-description-review-tribeca')).getByRole('button', {
+        name: guidedCopy('draft.next'),
+      }),
+    );
     expect(document.activeElement).toHaveAttribute('id', 'guided-section-apply');
     expect(document.activeElement).toHaveAccessibleName(guidedCopy('step.apply'));
   });
@@ -376,31 +403,32 @@ describe('GuidedA11y (W04)', () => {
     const edited = 'Distinct polite-status festival sentence.';
 
     let before = politeSnapshot();
-    await chooseRadio(user, 'left', 'include');
+    await chooseRadio(user, 'tribeca', 'left', 'include');
     let changed = changedPoliteTexts(before, politeSnapshot());
     expect(changed).toHaveLength(1);
     expect(changed[0]).toBe(guidedCopy('names.included', { name: 'Justin Trudeau' }));
     expect(changed[0]).not.toContain(both);
 
     before = politeSnapshot();
-    await chooseRadio(user, 'right', 'include');
+    await chooseRadio(user, 'tribeca', 'right', 'include');
     changed = changedPoliteTexts(before, politeSnapshot());
     expect(changed).toHaveLength(1);
     expect(changed[0]).not.toContain(both);
 
-    const editor = screen.getByRole('textbox', { name: guidedCopy('draft.label') });
+    const review = screen.getByTestId('guided-description-review-tribeca');
+    const editor = within(review).getByRole('textbox', { name: guidedCopy('draft.label') });
     await user.clear(editor);
     await user.type(editor, edited);
 
     before = politeSnapshot();
-    await user.click(screen.getByRole('button', { name: guidedCopy('draft.next') }));
+    await user.click(within(review).getByRole('button', { name: guidedCopy('draft.next') }));
     changed = changedPoliteTexts(before, politeSnapshot());
     expect(changed).toHaveLength(1);
     expect(changed[0]).toBe(guidedCopy('draft.next'));
     expect(changed[0]).not.toContain(edited);
 
     before = politeSnapshot();
-    await user.click(screen.getByTestId('demo-apply'));
+    await user.click(screen.getByTestId('demo-apply-tribeca'));
     changed = changedPoliteTexts(before, politeSnapshot());
     expect(changed).toHaveLength(1);
     expect(changed[0]).toBe(guidedCopy('apply.success'));
@@ -409,7 +437,7 @@ describe('GuidedA11y (W04)', () => {
     expect(screen.getByTestId('guided-page-feedback')).not.toHaveTextContent(guidedCopy('history.title'));
 
     before = politeSnapshot();
-    await user.click(screen.getByTestId('demo-undo'));
+    await user.click(screen.getByTestId('demo-undo-tribeca'));
     changed = changedPoliteTexts(before, politeSnapshot());
     expect(changed).toHaveLength(1);
     expect(changed[0]).toBe(guidedCopy('apply.undone'));
@@ -446,22 +474,27 @@ describe('GuidedA11y (W04)', () => {
     const edited = 'Byte-for-byte applied festival sentence.';
 
     const evidence = screen.getByRole('img', { name: evidenceAlt });
-    const applied = screen.getByTestId('demo-applied-image');
+    await chooseRadio(user, 'tribeca', 'left', 'include');
+    await chooseRadio(user, 'tribeca', 'right', 'include');
+    const applied = screen.getByTestId('demo-applied-image-tribeca');
     expect(applied).not.toBe(evidence);
     expect(applied).toHaveAttribute('alt', SEED_ALT_TEXT);
     expect(applied).not.toHaveAttribute('aria-label');
 
     await completeCoreDraft(user, edited);
-    expect(screen.getByTestId('demo-applied-image')).toHaveAttribute('alt', edited);
+    expect(screen.getByTestId('demo-applied-image-tribeca')).toHaveAttribute('alt', edited);
     expect(screen.getByRole('img', { name: evidenceAlt })).toHaveAttribute('alt', evidenceAlt);
-    expect(screen.getByRole('img', { name: evidenceAlt })).not.toBe(screen.getByTestId('demo-applied-image'));
+    expect(screen.getByRole('img', { name: evidenceAlt })).not.toBe(screen.getByTestId('demo-applied-image-tribeca'));
   });
 
-  it('would prove the page wrong if demo-applied-image reused the evidence photo src', () => {
+  it('would prove the page wrong if demo-applied-image reused the evidence photo src', async () => {
+    const user = userEvent.setup();
     render(<GuidedPrototypePage />);
     const evidenceAlt = requireSample('none');
     const evidence = screen.getByRole('img', { name: evidenceAlt });
-    const applied = screen.getByTestId('demo-applied-image');
+    await chooseRadio(user, 'tribeca', 'left', 'include');
+    await chooseRadio(user, 'tribeca', 'right', 'include');
+    const applied = screen.getByTestId('demo-applied-image-tribeca');
     expect(applied.getAttribute('src')).not.toBe(evidence.getAttribute('src'));
   });
 
@@ -486,7 +519,7 @@ describe('GuidedA11y (W04)', () => {
     const edited = 'Core path with rejecting live stub.';
 
     await completeCoreDraft(user, edited);
-    expect(screen.getByTestId('demo-applied-image')).toHaveAttribute('alt', edited);
+    expect(screen.getByTestId('demo-applied-image-tribeca')).toHaveAttribute('alt', edited);
     expect(screen.getByTestId('demo-outcome')).toHaveTextContent(guidedCopy('outcome.applied'));
     expect(fetchSpy).not.toHaveBeenCalled();
 
@@ -498,23 +531,30 @@ describe('GuidedA11y (W04)', () => {
     expect(liveClient.submit).toHaveBeenCalledTimes(1);
     expect(liveClient.submit).toHaveBeenCalledWith(LIVE_MEDIA_ID);
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(screen.getByTestId('demo-applied-image')).toHaveAttribute('alt', edited);
-    expect(screen.getByRole('textbox', { name: guidedCopy('draft.label') })).toHaveValue(edited);
+    expect(screen.getByTestId('demo-applied-image-tribeca')).toHaveAttribute('alt', edited);
+    expect(
+      within(screen.getByTestId('guided-description-review-tribeca')).getByRole('textbox', {
+        name: guidedCopy('draft.label'),
+      }),
+    ).toHaveValue(edited);
   });
 
   it('would prove the page wrong if a face comparison could not be opened from the keyboard or omitted an honest coverage count', async () => {
     const user = userEvent.setup();
     render(<GuidedPrototypePage />);
 
-    const leftSummary = screen.getByText(guidedCopy('names.evidence_open', { position: 'left' }));
+    const tribecaPhoto = screen.getByTestId('guided-photo-tribeca');
+    const leftSummary = within(tribecaPhoto).getByText(guidedCopy('names.evidence_open', { position: 'left' }));
     leftSummary.focus();
     await user.keyboard('{Enter}');
-    expect(screen.getByText(guidedCopy('names.coverage_all', { total: 3 }))).toBeInTheDocument();
+    expect(within(tribecaPhoto).getByText(guidedCopy('names.coverage_all', { total: 3 }))).toBeInTheDocument();
 
-    const rightSummary = screen.getByText(guidedCopy('names.evidence_open', { position: 'right' }));
+    const rightSummary = within(tribecaPhoto).getByText(guidedCopy('names.evidence_open', { position: 'right' }));
     rightSummary.focus();
     await user.keyboard('{Enter}');
-    expect(screen.getByText(guidedCopy('names.coverage_partial', { shown: 3, total: 5 }))).toBeInTheDocument();
+    expect(
+      within(tribecaPhoto).getByText(guidedCopy('names.coverage_partial', { shown: 3, total: 5 })),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/Show all 5/)).not.toBeInTheDocument();
   });
 
@@ -522,14 +562,17 @@ describe('GuidedA11y (W04)', () => {
     const user = userEvent.setup();
     render(<GuidedPrototypePage />);
 
-    await user.click(screen.getByText(guidedCopy('names.evidence_open', { position: 'left' })));
-    const enlargeButtons = screen.getAllByRole('button', { name: guidedCopy('names.enlarge') });
+    const tribecaPhoto = screen.getByTestId('guided-photo-tribeca');
+    await user.click(within(tribecaPhoto).getByText(guidedCopy('names.evidence_open', { position: 'left' })));
+    const enlargeButtons = within(tribecaPhoto).getAllByRole('button', { name: guidedCopy('names.enlarge') });
     expect(enlargeButtons).toHaveLength(2);
     expect(screen.getAllByRole('img', { name: /Detected left face in/ })).toHaveLength(2);
     expect(screen.getAllByRole('img', { name: /Detected right face in/ })).toHaveLength(2);
 
-    const enlarge = enlargeButtons[0];
-    assertHtmlElement(enlarge, 'left enlarge comparison button');
+    const leftCard = within(tribecaPhoto).getByRole('region', {
+      name: guidedCopy('names.suggestion', { name: 'Justin Trudeau' }),
+    });
+    const enlarge = within(leftCard).getByRole('button', { name: guidedCopy('names.enlarge') });
     await user.click(enlarge);
     const comparison = screen.getByRole('dialog', { name: guidedCopy('names.enlarge_title') });
     expect(comparison).toHaveAttribute('aria-modal', 'true');

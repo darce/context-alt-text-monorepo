@@ -123,6 +123,7 @@ export interface GuidedFace {
   isClusterAnchor: boolean;
   /** Null when no recognition confidence/strength was recorded for the fixture. */
   strength: GuidedMatchStrength | null;
+  note?: string;
   source: GuidedFaceSource;
 }
 
@@ -367,6 +368,7 @@ const GUIDED_SCENARIO_SEED: Omit<GuidedScenario, 'pressPhoto'> = {
       similarity: 1,
       isClusterAnchor: true,
       strength: 'strong',
+      note: 'Her face is turned a little to the side.',
       source: 'saved-run',
     },
     {
@@ -547,6 +549,11 @@ const withImageDraft = (
   updateDraft: GuidedImageDraftUpdater,
   updateState: GuidedStateUpdater = (next) => next,
 ): GuidedDemoState => withImageDrafts(state, [imageKey], updateDraft, updateState);
+
+const outcomeFromApplicationState = (state: GuidedDemoState, fallback: GuidedOutcome): GuidedOutcome =>
+  GUIDED_IMAGE_KEYS.some((imageKey) => state.drafts[imageKey].applicationHistory.length > 0)
+    ? GUIDED_OUTCOME.APPLIED
+    : fallback;
 
 const nextSequence = (state: GuidedDemoState): number => {
   const last = state.actionHistory.at(-1);
@@ -863,7 +870,7 @@ export const confirmGuidedChoiceReplacement = (
     (draft, currentImageKey) => ({
       ...draft,
       ...resolveSample(scenario, choices, currentImageKey),
-      draftHistory: archiveCurrentDraft(state, draft),
+      draftHistory: archiveManualDraft(state, draft),
       draftVersion: draft.draftVersion + 1,
       previewedVersion: null,
     }),
@@ -942,7 +949,12 @@ export const keepGuidedCurrentAltTextForImage = (state: GuidedDemoState, imageKe
     state,
     imageKey,
     (current) => ({ ...current, appliedAltText: originalAlt, applicationHistory: [] }),
-    (next) => withLocalAction({ ...next, outcome: GUIDED_OUTCOME.KEPT }, 'keep_current_alt_text', 'outcome.kept'),
+    (next) =>
+      withLocalAction(
+        { ...next, outcome: outcomeFromApplicationState(next, GUIDED_OUTCOME.KEPT) },
+        'keep_current_alt_text',
+        'outcome.kept',
+      ),
   );
 };
 
@@ -988,7 +1000,7 @@ export const applyGuidedDraftForImage = (
     }),
     (next) => ({
       ...next,
-      outcome: GUIDED_OUTCOME.APPLIED,
+      outcome: outcomeFromApplicationState(next, GUIDED_OUTCOME.APPLIED),
       actionHistory: [
         ...next.actionHistory,
         {
@@ -1020,7 +1032,10 @@ export const undoGuidedApplicationForImage = (state: GuidedDemoState, imageKey: 
       withLocalAction(
         {
           ...next,
-          outcome: stack.length === 0 ? GUIDED_OUTCOME.NOT_FINISHED : GUIDED_OUTCOME.APPLIED,
+          outcome: outcomeFromApplicationState(
+            next,
+            stack.length === 0 ? GUIDED_OUTCOME.NOT_FINISHED : GUIDED_OUTCOME.APPLIED,
+          ),
         },
         'undo_application',
         'apply.undone',

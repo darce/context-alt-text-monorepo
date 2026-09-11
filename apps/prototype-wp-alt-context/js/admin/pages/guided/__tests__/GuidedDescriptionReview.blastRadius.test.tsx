@@ -26,18 +26,27 @@ afterEach(() => {
 const readyState = (
   draftText: string,
   draftOrigin: GuidedDemoState['draftOrigin'] = GUIDED_DRAFT_ORIGIN.RECORDED_SAMPLE,
-): GuidedDemoState => ({
-  ...createGuidedDemoState(),
-  choices: {
-    left: GUIDED_NAME_CHOICE.INCLUDE,
-    right: GUIDED_NAME_CHOICE.INCLUDE,
-  },
-  draftText,
-  draftOrigin,
-  draftStatus: GUIDED_DRAFT_STATUS.READY,
-  draftVersion: 1,
-  previewedVersion: 1,
-});
+): GuidedDemoState => {
+  const base = createGuidedDemoState();
+  return {
+    ...base,
+    choices: {
+      left: GUIDED_NAME_CHOICE.INCLUDE,
+      right: GUIDED_NAME_CHOICE.INCLUDE,
+    },
+    drafts: {
+      tribeca: {
+        ...base.drafts.tribeca,
+        draftText,
+        draftOrigin,
+        draftStatus: GUIDED_DRAFT_STATUS.READY,
+        draftVersion: 1,
+        previewedVersion: 1,
+      },
+      coachella: base.drafts.coachella,
+    },
+  };
+};
 
 const reviewActions = (): GuidedDescriptionReviewActions => ({
   onEdit: vi.fn(),
@@ -58,7 +67,9 @@ describe('GuidedDescriptionReview editor', () => {
     const { rerender } = render(
       <GuidedDescriptionReview scenario={scenario} state={readyState('A short saved draft.')} actions={actions} />,
     );
-    const editor = screen.getByRole('textbox', { name: guidedCopy('draft.label') });
+    const editor = within(screen.getByTestId('guided-description-review-tribeca')).getByRole('textbox', {
+      name: guidedCopy('draft.label'),
+    });
     Object.defineProperty(editor, 'scrollHeight', {
       configurable: true,
       get: () => contentHeight,
@@ -86,7 +97,9 @@ describe('GuidedDescriptionReview editor', () => {
     const scenario = createGuidedScenario();
     const actions = reviewActions();
     render(<GuidedDescriptionReview scenario={scenario} state={readyState('A saved draft.')} actions={actions} />);
-    const editor = screen.getByRole('textbox', { name: guidedCopy('draft.label') });
+    const editor = within(screen.getByTestId('guided-description-review-tribeca')).getByRole('textbox', {
+      name: guidedCopy('draft.label'),
+    });
     Object.defineProperty(editor, 'scrollHeight', {
       configurable: true,
       get: () => 220,
@@ -110,7 +123,9 @@ describe('GuidedDescriptionReview editor', () => {
     const scenario = createGuidedScenario();
     const actions = reviewActions();
     render(<GuidedDescriptionReview scenario={scenario} state={readyState('A saved draft.')} actions={actions} />);
-    const editor = screen.getByRole('textbox', { name: guidedCopy('draft.label') });
+    const editor = within(screen.getByTestId('guided-description-review-tribeca')).getByRole('textbox', {
+      name: guidedCopy('draft.label'),
+    });
     Object.defineProperty(editor, 'scrollHeight', {
       configurable: true,
       get: () => contentHeight,
@@ -131,7 +146,9 @@ describe('GuidedDescriptionReview editor', () => {
     const scenario = createGuidedScenario();
     const actions = reviewActions();
     render(<GuidedDescriptionReview scenario={scenario} state={readyState('A saved draft.')} actions={actions} />);
-    const editor = screen.getByRole('textbox', { name: guidedCopy('draft.label') });
+    const editor = within(screen.getByTestId('guided-description-review-tribeca')).getByRole('textbox', {
+      name: guidedCopy('draft.label'),
+    });
     Object.defineProperty(editor, 'scrollHeight', {
       configurable: true,
       get: () => contentHeight,
@@ -152,7 +169,9 @@ describe('GuidedDescriptionReview editor', () => {
     const scenario = createGuidedScenario();
     const actions = reviewActions();
     render(<GuidedDescriptionReview scenario={scenario} state={readyState('A saved draft.')} actions={actions} />);
-    const editor = screen.getByRole('textbox', { name: guidedCopy('draft.label') });
+    const editor = within(screen.getByTestId('guided-description-review-tribeca')).getByRole('textbox', {
+      name: guidedCopy('draft.label'),
+    });
     Object.defineProperty(editor, 'scrollHeight', {
       configurable: true,
       get: () => contentHeight,
@@ -208,27 +227,30 @@ describe('a failing live panel does not take the lesson with it', () => {
 
     expect(screen.getByRole('alert')).toHaveTextContent(guidedCopy('live.failed'));
     expect(screen.getByRole('heading', { name: guidedCopy('step.apply') })).toBeInTheDocument();
-    expect(screen.getByTestId('demo-apply')).toBeInTheDocument();
-    expect(screen.getByTestId('demo-applied-image')).toBeInTheDocument();
-
     fireEvent.click(
-      within(screen.getByTestId('name-choice-left')).getByRole('radio', {
+      within(screen.getByTestId('name-choice-tribeca-left')).getByRole('radio', {
         name: guidedCopy('names.include', { name: 'Justin Trudeau' }),
       }),
     );
     fireEvent.click(
-      within(screen.getByTestId('name-choice-right')).getByRole('radio', {
+      within(screen.getByTestId('name-choice-tribeca-right')).getByRole('radio', {
         name: guidedCopy('names.include', { name: 'Katy Perry' }),
       }),
     );
 
-    const edited = 'Draft still works after the live panel crashed.';
-    const editor = screen.getByRole('textbox', { name: guidedCopy('draft.label') });
-    fireEvent.change(editor, { target: { value: edited } });
-    await user.click(screen.getByRole('button', { name: guidedCopy('draft.next') }));
-    await user.click(screen.getByTestId('demo-apply'));
+    expect(screen.getByTestId('demo-apply-tribeca')).toBeInTheDocument();
+    expect(screen.getByTestId('demo-applied-image-tribeca')).toBeInTheDocument();
 
-    expect(screen.getByTestId('demo-applied-image')).toHaveAttribute('alt', edited);
+    const edited = 'Draft still works after the live panel crashed.';
+    const review = screen.getByTestId('guided-description-review-tribeca');
+    const editor = within(review).getByRole('textbox', {
+      name: guidedCopy('draft.label'),
+    });
+    fireEvent.change(editor, { target: { value: edited } });
+    await user.click(within(review).getByRole('button', { name: guidedCopy('draft.next') }));
+    await user.click(screen.getByTestId('demo-apply-tribeca'));
+
+    expect(screen.getByTestId('demo-applied-image-tribeca')).toHaveAttribute('alt', edited);
     expect(screen.getByRole('alert')).toHaveTextContent(guidedCopy('live.failed'));
   });
 });

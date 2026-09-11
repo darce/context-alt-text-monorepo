@@ -2,6 +2,8 @@ import {
   GUIDED_DRAFT_ORIGIN,
   GUIDED_DRAFT_STATUS,
   GUIDED_NAME_CHOICE,
+  GUIDED_OUTCOME,
+  GUIDED_STEP,
   type GuidedApplicationRecord,
   type GuidedChoices,
   type GuidedDemoState,
@@ -117,35 +119,54 @@ export const guidedReviewDraftFor = (state: GuidedReviewState, imageKey: GuidedI
     return null;
   }
 
-  const legacyState = state as Partial<GuidedDemoState>;
   return {
-    draftText: legacyState.draftText ?? null,
-    draftOrigin: legacyState.draftOrigin ?? GUIDED_DRAFT_ORIGIN.NONE,
-    draftStatus: legacyState.draftStatus ?? GUIDED_DRAFT_STATUS.BLOCKED,
-    draftVersion: legacyState.draftVersion ?? 0,
-    previewedVersion: legacyState.previewedVersion ?? null,
-    appliedAltText: legacyState.appliedAltText ?? '',
-    applicationHistory: [...(legacyState.applicationUndoStack ?? [])],
-    draftHistory: [...(legacyState.draftHistory ?? [])],
+    draftText: state.draftText ?? null,
+    draftOrigin: state.draftOrigin ?? GUIDED_DRAFT_ORIGIN.NONE,
+    draftStatus: state.draftStatus ?? GUIDED_DRAFT_STATUS.BLOCKED,
+    draftVersion: state.draftVersion ?? 0,
+    previewedVersion: state.previewedVersion ?? null,
+    appliedAltText: state.appliedAltText ?? '',
+    applicationHistory: [...(state.applicationUndoStack ?? [])],
+    draftHistory: [...(state.draftHistory ?? [])],
   };
 };
 
+const toGuidedDemoDraft = (draft: GuidedImageDraft): GuidedDemoState['drafts'][GuidedImageKey] => ({
+  draftText: draft.draftText,
+  draftOrigin: draft.draftOrigin,
+  draftStatus: draft.draftStatus,
+  draftVersion: draft.draftVersion ?? 0,
+  previewedVersion: draft.previewedVersion ?? null,
+  appliedAltText: draft.appliedAltText,
+  applicationHistory: [...draft.applicationHistory],
+  draftHistory: [...draft.draftHistory],
+});
+
 /**
- * Adapt a per-image state to the legacy selectors used by the existing
- * Tribeca-only branch of GuidedDescriptionReview.
+ * Build the legacy state shape required by the public draft eligibility
+ * predicate while the review state migration is in progress.
  */
 export const guidedReviewLegacyState = (state: GuidedReviewState): GuidedDemoState => {
   const tribeca = guidedReviewDraftFor(state, GUIDED_REVIEW_TRIBECA_KEY) ?? emptyDraft();
+  const coachella = guidedReviewDraftFor(state, GUIDED_REVIEW_COACHELLA_KEY) ?? emptyDraft();
   return {
-    ...(state as unknown as GuidedDemoState),
+    activeStep: GUIDED_STEP.APPLY,
+    choices: state.choices,
+    drafts: {
+      tribeca: toGuidedDemoDraft(tribeca),
+      coachella: toGuidedDemoDraft(coachella),
+    },
     draftText: tribeca.draftText,
     draftOrigin: tribeca.draftOrigin,
     draftStatus: tribeca.draftStatus,
     draftVersion: tribeca.draftVersion ?? 0,
     previewedVersion: tribeca.previewedVersion ?? null,
     draftHistory: [...tribeca.draftHistory],
+    pendingChoiceChange: state.pendingChoiceChange,
     appliedAltText: tribeca.appliedAltText,
     applicationUndoStack: [...tribeca.applicationHistory],
+    outcome: GUIDED_OUTCOME.NOT_FINISHED,
+    actionHistory: [],
   };
 };
 

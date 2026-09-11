@@ -374,15 +374,14 @@
     min-width: 0;
   }
 
-  &__match-image,
-  &__match-summary,
+  &__match-line,
   &__weak-match {
     margin: 0;
     color: var(--acx-color-text-muted);
     font-size: var(--acx-text-xs);
   }
 
-  &__match-image {
+  &__match-line {
     color: var(--acx-color-text);
     font-weight: var(--acx-font-weight-semibold);
   }
@@ -649,10 +648,9 @@
 
 .acx-guided-page__image-wrap {
   position: relative;
-  overflow: hidden;
   display: block;
   align-self: start;
-  aspect-ratio: 1 / 1;
+  aspect-ratio: var(--acx-guided-photo-ratio, 1 / 1);
   background: var(--acx-color-panel);
 }
 
@@ -928,7 +926,7 @@
       display: block;
       width: 100%;
       max-height: 16rem;
-      object-fit: cover;
+      object-fit: contain;
       background: var(--acx-color-panel);
     }
   }

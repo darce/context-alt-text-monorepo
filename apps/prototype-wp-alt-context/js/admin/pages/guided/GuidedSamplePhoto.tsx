@@ -13,6 +13,11 @@ import { GuidedFaceOverlay, type GuidedFaceOverlayFace } from './GuidedFaceOverl
 
 export type GuidedSamplePhotoScope = 'public' | 'admin';
 
+const GUIDED_SAMPLE_PHOTO_SCOPE = {
+  PUBLIC: 'public',
+  ADMIN: 'admin',
+} as const;
+
 export interface GuidedSamplePhotoProps {
   photo: GuidedPressPhoto;
   evidenceAlt?: string;
@@ -62,12 +67,22 @@ const GeneratedAttribution = ({ photo }: { photo: GuidedPressPhoto }): React.JSX
   );
 };
 
-const AltTextAiCaption = ({ photo }: { photo: GuidedPressPhoto }): React.JSX.Element => {
+const AltTextAiCaption = ({
+  photo,
+  scope,
+}: {
+  photo: GuidedPressPhoto;
+  scope: GuidedSamplePhotoScope;
+}): React.JSX.Element => {
   const caption = photo.altTextAiCaption;
+  const title =
+    scope === GUIDED_SAMPLE_PHOTO_SCOPE.PUBLIC
+      ? guidedCopy('comparison.alttextai.public')
+      : guidedCopy('context.photo.alttextai_title');
 
   return (
     <section className="acx-guided-page__caption" aria-labelledby={`guided-caption-${photo.key}-alttextai`}>
-      <h4 id={`guided-caption-${photo.key}-alttextai`}>{guidedCopy('context.photo.alttextai_title')}</h4>
+      <h4 id={`guided-caption-${photo.key}-alttextai`}>{title}</h4>
       {caption.text === null ? <p>{guidedCopy('context.photo.no_caption')}</p> : <p>{caption.text}</p>}
       <p className="acx-guided-page__caption-provenance">
         <a href={caption.providerUrl} target="_blank" rel="noreferrer" aria-label={externalLinkLabel(caption.provider)}>
@@ -81,12 +96,22 @@ const AltTextAiCaption = ({ photo }: { photo: GuidedPressPhoto }): React.JSX.Ele
   );
 };
 
-const AltContextCaption = ({ photo }: { photo: GuidedPressPhoto }): React.JSX.Element => {
+const AltContextCaption = ({
+  photo,
+  scope,
+}: {
+  photo: GuidedPressPhoto;
+  scope: GuidedSamplePhotoScope;
+}): React.JSX.Element => {
   const caption = photo.altContextDescription;
+  const title =
+    scope === GUIDED_SAMPLE_PHOTO_SCOPE.PUBLIC
+      ? guidedCopy('comparison.altcontext.public')
+      : guidedCopy('context.photo.altcontext_title');
 
   return (
     <section className="acx-guided-page__caption" aria-labelledby={`guided-caption-${photo.key}-altcontext`}>
-      <h4 id={`guided-caption-${photo.key}-altcontext`}>{guidedCopy('context.photo.altcontext_title')}</h4>
+      <h4 id={`guided-caption-${photo.key}-altcontext`}>{title}</h4>
       <p>{caption.text}</p>
       <p className="acx-guided-page__caption-provenance">
         <GeneratedAttribution photo={photo} />
@@ -123,6 +148,7 @@ export const GuidedSamplePhoto = ({
   evidenceAlt,
   currentAltText,
   showCurrentAltText,
+  scope,
   headingId,
   children,
 }: GuidedSamplePhotoProps): React.JSX.Element => {
@@ -166,12 +192,11 @@ export const GuidedSamplePhoto = ({
         <div
           className="acx-guided-page__image-wrap"
           data-orientation={imageOrientation}
-          style={{
-            position: 'relative',
-            ...(imageLoaded
+          style={
+            imageLoaded
               ? ({ '--acx-guided-photo-ratio': `${naturalSize.width} / ${naturalSize.height}` } as React.CSSProperties)
-              : {}),
-          }}
+              : undefined
+          }
         >
           <div className="acx-guided-page__image-frame">
             <img
@@ -196,14 +221,14 @@ export const GuidedSamplePhoto = ({
         {guidedCopy('context.photo.credit_label')}: <Credit photo={photo} />
       </p>
       <figcaption>
-        {showCurrentAltText ? (
+        {scope === GUIDED_SAMPLE_PHOTO_SCOPE.ADMIN && showCurrentAltText ? (
           <span>
             {guidedCopy('context.current_label')}: {currentAltText}
           </span>
         ) : null}
         <div className="acx-guided-page__caption-compare">
-          <AltContextCaption photo={photo} />
-          <AltTextAiCaption photo={photo} />
+          <AltContextCaption photo={photo} scope={scope} />
+          <AltTextAiCaption photo={photo} scope={scope} />
         </div>
       </figcaption>
       {children}

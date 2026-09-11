@@ -48,6 +48,7 @@ const deployCommitSha = (process.env.ACX_DEPLOY_COMMIT_SHA ?? '').trim() || null
 const EDITED_DRAFT =
   'Justin Trudeau and Katy Perry pose side by side on the Tribeca Festival red carpet. ' +
   'He wears a black tuxedo; she wears a white draped gown and rests a hand on his chest.';
+const WALKTHROUGH_PHOTO_KEY = 'tribeca';
 
 const beat = async (page: Page, ms = BEAT_MS) => {
   await page.waitForTimeout(ms);
@@ -102,18 +103,22 @@ test.describe('guided walkthrough recording', () => {
     try {
       const root = page.getByTestId('guided-demo-root');
       const feedback = page.getByTestId('guided-page-feedback');
-      const appliedText = page.locator('#guided-section-apply [data-applied-text]');
+      const walkthroughPhoto = page.getByTestId(`guided-photo-${WALKTHROUGH_PHOTO_KEY}`);
+      const walkthroughReview = page.getByTestId(`guided-description-review-${WALKTHROUGH_PHOTO_KEY}`);
+      const appliedText = walkthroughReview.locator('[data-applied-text]');
 
       await timer.cue('opening', GUIDED_RECORDING_OPENING_CAPTION, async () => {
         await page.goto(getAcxAdminHashUrl(baseURL, 'alt-context-dashboard', GUIDED_HASH));
         await root.waitFor({ state: 'visible', timeout: STEP_TIMEOUT_MS });
+        await walkthroughPhoto.waitFor({ state: 'visible', timeout: STEP_TIMEOUT_MS });
         await expect(page.getByTestId('guided-demo-stepper')).toContainText('Step 1 of 4');
         await beat(page, BEAT_MS * 2);
       });
 
       const initialAlt = await timer.cue(
         'context',
-        'Step 1 shows the festival photo, its page context, and the alt text currently on the demo copy.',
+        'Step 1 shows the two festival photos, their page context, and the alt text currently on the Tribeca ' +
+          'demo copy.',
         async () => {
           const current = (await page.locator('#guided-section-understand').innerText()).trim();
           await beat(page);
@@ -126,9 +131,10 @@ test.describe('guided walkthrough recording', () => {
 
       await timer.cue(
         'names-left',
-        'Step 2 lists a saved suggestion for each face. For the left face, the editor chooses to use the suggested name.',
+        'Step 2 lists a saved suggestion for each face. For the left face in the Tribeca photo, the editor chooses ' +
+          'to use the suggested name.',
         async () => {
-          const left = page.getByTestId('name-choice-left');
+          const left = walkthroughPhoto.getByTestId(`name-choice-${WALKTHROUGH_PHOTO_KEY}-left`);
           await left.waitFor({ state: 'visible', timeout: STEP_TIMEOUT_MS });
           await beat(page);
           await left.getByRole('radio', { name: /^Use / }).check();
@@ -136,21 +142,26 @@ test.describe('guided walkthrough recording', () => {
         },
       );
 
-      await timer.cue('names-right', 'For the right face, the editor also uses the suggested name.', async () => {
-        const right = page.getByTestId('name-choice-right');
-        await beat(page);
-        await right.getByRole('radio', { name: /^Use / }).check();
-        await expect(right).toContainText('The sample draft will use');
-        await beat(page);
-        await page.getByRole('button', { name: 'Review the draft' }).click();
-        await expect(page.getByTestId('guided-demo-stepper')).toContainText('Step 3 of 4');
-      });
+      await timer.cue(
+        'names-right',
+        'For the right face in the Tribeca photo, the editor also uses the suggested name.',
+        async () => {
+          const right = walkthroughPhoto.getByTestId(`name-choice-${WALKTHROUGH_PHOTO_KEY}-right`);
+          await beat(page);
+          await right.getByRole('radio', { name: /^Use / }).check();
+          await expect(right).toContainText('The sample draft will use');
+          await beat(page);
+          await page.getByRole('button', { name: 'Review the draft' }).click();
+          await expect(page.getByTestId('guided-demo-stepper')).toContainText('Step 3 of 4');
+        },
+      );
 
       await timer.cue(
         'draft',
-        'Step 3 loads a sample draft that names both people. The editor rewrites it so the wording matches the photo.',
+        'Step 3 loads a sample draft for the Tribeca photo that names both people. The editor rewrites it so the ' +
+          'wording matches that photo.',
         async () => {
-          const draft = page.locator('textarea#guided-description-draft');
+          const draft = walkthroughReview.locator(`textarea#guided-description-draft-${WALKTHROUGH_PHOTO_KEY}`);
           await draft.waitFor({ state: 'visible', timeout: STEP_TIMEOUT_MS });
           await beat(page);
           await draft.fill('');
@@ -163,9 +174,9 @@ test.describe('guided walkthrough recording', () => {
 
       await timer.cue(
         'preview',
-        'Step 4 shows the current alt text beside the text that will be applied to the demo image.',
+        'Step 4 shows the current alt text beside the text that will be applied to the Tribeca demo image.',
         async () => {
-          const apply = page.locator('#guided-section-apply');
+          const apply = walkthroughReview.getByTestId(`guided-apply-${WALKTHROUGH_PHOTO_KEY}`);
           await expect(apply).toContainText('Current alt text');
           await expect(apply).toContainText('Will be applied');
           await expect(apply).toContainText(EDITED_DRAFT);
@@ -175,9 +186,10 @@ test.describe('guided walkthrough recording', () => {
 
       appliedAfterApply = await timer.cue(
         'apply',
-        'Apply updates only the demo copy in this tab. The status line confirms WordPress media was not changed.',
+        'Apply updates only the Tribeca demo copy in this tab. The status line confirms WordPress media was not ' +
+          'changed.',
         async () => {
-          await page.getByTestId('demo-apply').click();
+          await walkthroughReview.getByTestId(`demo-apply-${WALKTHROUGH_PHOTO_KEY}`).click();
           await expect(feedback).toContainText('WordPress media has not been updated', { timeout: STEP_TIMEOUT_MS });
           await expect(appliedText).toHaveText(EDITED_DRAFT);
           await beat(page, BEAT_MS * 2);
@@ -187,9 +199,9 @@ test.describe('guided walkthrough recording', () => {
 
       appliedAfterUndo = await timer.cue(
         'undo',
-        'Undo restores the previous alt text on the demo copy. Nothing outside this tab changed.',
+        'Undo restores the previous alt text on the Tribeca demo copy. Nothing outside this tab changed.',
         async () => {
-          await page.getByTestId('demo-undo').click();
+          await walkthroughReview.getByTestId(`demo-undo-${WALKTHROUGH_PHOTO_KEY}`).click();
           await expect(feedback).toContainText('Restored the previous alt text', { timeout: STEP_TIMEOUT_MS });
           await expect(appliedText).not.toHaveText(EDITED_DRAFT);
           await beat(page, BEAT_MS * 2);

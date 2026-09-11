@@ -14,6 +14,9 @@
   --acx-space-48: 3rem;
   --acx-space-80: 5rem;
 
+  /* Guided photo frame fallback before the image reports its natural size. */
+  --acx-guided-photo-ratio: 1 / 1;
+
   /* Component sizing tokens (--acx-thumb-size-*)
    * Duty: fixed control/thumbnail dimensions (not spacing scale steps).
    * Keep named family; do not rename to space-* (distinct duty). */

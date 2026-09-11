@@ -19,11 +19,6 @@
 | `public-demo-unavailable` | screen | `[acx_demo_describe]` | Public demo › Unavailable |
 | `refresh-page-drops-retry-key` | exit | `[acx_demo_describe] (browser refresh)` | Refresh page (drops in-memory retry key) |
 
-## Code references
-- `screen:public-demo-describe` — `apps/prototype-wp-alt-context/js/public/demo-describe.js`
-- `screen:public-demo-unavailable` — `apps/prototype-wp-alt-context/src/public/class-public-demo-shortcode.php`
-- `screen:refresh-page-drops-retry-key` — `apps/prototype-wp-alt-context/js/public/demo-describe.js`
-
 ### Public demo › Describe an image (`public-demo-describe`)
 
 Purpose: OBSERVED visitor widget. Domain vocabulary behind canonical states: idle selection = default; queued, warming and describing = loading; no allowlisted images is a different screen; 429 limited = degraded; failed, invalid response, incomplete result and 120s poll timeout = error. Complete UI labels come from description_tier. A static illustrative example sits before Describe; it is not the selected image. Production is deployed; these feature changes have not been deployed. Serves job describe-allowlisted-image.

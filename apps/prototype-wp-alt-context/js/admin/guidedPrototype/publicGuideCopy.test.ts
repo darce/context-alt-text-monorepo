@@ -20,20 +20,39 @@ const PUBLIC_COPY = resolve(here, 'publicGuideCopy.ts');
 const PUBLIC_KEYS = [
   'entry.title.public',
   'entry.intro.public',
+  'entry.eyebrow.public',
+  'entry.start.public',
   'scope.public',
+  'step.names.public',
+  'step.review.public',
+  'guide.current.public',
   'names.scope.public',
   'feedback.choices.public',
   'context.source.summary.public',
   'context.source.comparison_boundary.public',
+  'context.source.face_recency.public',
+  'comparison.altcontext.public',
+  'comparison.alttextai.public',
+  'faces.title.public',
+  'context.next.public',
+  'choices.help.public',
   'draft.origin.public',
   'draft.context.public',
+  'draft.field_label.public',
+  'draft.current_alt_label.public',
+  'draft.apply_scope.public',
   'outcome.scope.public',
   'outcome.next_batch.public',
   'outcome.kept_body.public',
+  'outcome.applied_image.public',
+  'outcome.undone_image.public',
+  'error.empty_draft.public',
+  'error.unchanged_draft.public',
+  'error.no_recorded_draft.public',
 ] as const;
 
 const PUBLIC_SCOPE =
-  'This is a supplied example roster with recorded drafts. Your choices change only the demo copy in this tab; they do not update WordPress or a server roster.';
+  'Recorded example. Changes stay in this tab; WordPress and the server roster are unchanged.';
 
 describe('public guide copy overlay', () => {
   it('keeps public keys and CASE_STUDY_URL out of the generated catalog file', () => {
@@ -56,8 +75,8 @@ describe('public guide copy overlay', () => {
 
   it('exports the documented case-study URL and public scope copy', () => {
     expect(CASE_STUDY_URL).toBe('https://darce.xyz/projects/altcontext/');
-    expect(PUBLIC_GUIDED_COPY['entry.title.public']).toBe('Review a recorded alt text example');
-    expect(PUBLIC_GUIDED_COPY['entry.intro.public']).toContain('Inspect the festival photo');
+    expect(PUBLIC_GUIDED_COPY['entry.title.public']).toBe("Who's in the photo belongs in the alt text.");
+    expect(PUBLIC_GUIDED_COPY['entry.intro.public']).toContain('Compare descriptions of two photos');
     expect(guidedCopy('scope.public')).toBe(PUBLIC_SCOPE);
     expect(guidedCopy('entry.read_case_study')).toBe('Read the case study');
     expect(guidedCopy('notes.recorded_public')).not.toMatch(/Live generation/);

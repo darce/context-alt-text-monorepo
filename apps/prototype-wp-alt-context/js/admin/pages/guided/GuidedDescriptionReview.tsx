@@ -441,6 +441,9 @@ const GuidedImageReviewCard = ({
       aria-labelledby={`${editorId}-title`}
     >
       <h3 id={`${editorId}-title`}>{photo.event}</h3>
+      <p role="status" data-testid={`guided-image-status-${photo.key}`}>
+        {publicStatus}
+      </p>
       {draft.draftStatus === GUIDED_DRAFT_STATUS.BLOCKED ? <p>{guidedCopy('draft.blocked')}</p> : null}
       {draft.draftStatus === GUIDED_DRAFT_STATUS.FIXTURE_MISSING ? (
         <div>
@@ -541,9 +544,6 @@ const GuidedImageReviewCard = ({
                     {reason}
                   </p>
                 ) : null}
-                <p role="status" data-testid={`guided-image-status-${photo.key}`}>
-                  {publicStatus}
-                </p>
               </div>
             </div>
           </div>
@@ -698,9 +698,6 @@ const GuidedImageReviewCard = ({
               {reason}
             </p>
           ) : null}
-          <p role="status" data-testid={`guided-image-status-${photo.key}`}>
-            {publicStatus}
-          </p>
         </div>
       ) : (
         <div className="acx-guided-review__actions">

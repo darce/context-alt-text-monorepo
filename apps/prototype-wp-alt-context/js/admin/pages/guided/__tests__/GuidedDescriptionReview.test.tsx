@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -7,6 +7,7 @@ import {
   GUIDED_DRAFT_STATUS,
   GUIDED_NAME_CHOICE,
 } from '../../../guidedPrototype/state';
+import { guidedCopy as publicGuidedCopy } from '../../../guidedPrototype/publicGuideCopy';
 import { GuidedDescriptionReview, type GuidedDescriptionReviewActions } from '../GuidedDescriptionReview';
 import type { GuidedReviewState } from '../../../guidedPrototype/reviewDrafts';
 
@@ -70,6 +71,100 @@ describe('GuidedDescriptionReview per-image drafts', () => {
     expect(screen.getByTestId('demo-apply-coachella')).toBeEnabled();
     expect(screen.getByTestId('demo-undo-tribeca')).toBeDisabled();
     expect(screen.getByTestId('demo-undo-coachella')).toBeDisabled();
+  });
+
+  it('uses the public review heading and gives the apply target real labelled section semantics', () => {
+    const reviewActions = actions();
+    render(
+      <GuidedDescriptionReview scenario={scenario} state={perImageState()} actions={reviewActions} scope="public" />,
+    );
+
+    expect(screen.getByRole('heading', { name: publicGuidedCopy('step.review.public') })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Edit the alt text' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Apply and undo' })).not.toBeInTheDocument();
+
+    const applySection = document.getElementById('guided-section-apply');
+    if (applySection === null) {
+      throw new Error('Expected the per-image apply section.');
+    }
+    expect(applySection.tagName).toBe('SECTION');
+    expect(applySection).toHaveAttribute('aria-labelledby', 'acx-guided-review-title');
+    expect(applySection).toHaveAccessibleName(publicGuidedCopy('step.review.public'));
+
+    for (const imageKey of ['tribeca', 'coachella'] as const) {
+      const apply = screen.getByTestId(`guided-apply-${imageKey}`);
+      expect(within(apply).getByTestId(`guided-image-status-${imageKey}`)).toBeInTheDocument();
+      expect(within(apply).getByTestId(`guided-image-status-${imageKey}`).parentElement).toBe(apply);
+    }
+  });
+
+  it('passes the latest public field value to image apply and announces it in that card', () => {
+    const reviewActions = actions();
+    reviewActions.onApplyForImage = vi.fn();
+    const state = perImageState();
+    const tribecaDraft = state.drafts?.tribeca;
+    if (tribecaDraft === undefined) {
+      throw new Error('Expected a Tribeca draft fixture.');
+    }
+    state.drafts = {
+      ...state.drafts,
+      tribeca: { ...tribecaDraft, previewedVersion: null },
+    };
+    render(<GuidedDescriptionReview scenario={scenario} state={state} actions={reviewActions} scope="public" />);
+
+    const card = screen.getByTestId('guided-description-review-tribeca');
+    const editor = within(card).getByRole('textbox', { name: publicGuidedCopy('draft.field_label.public') });
+    const visibleText = 'Latest public edit, applied without preview.';
+    fireEvent.change(editor, { target: { value: visibleText } });
+
+    const apply = within(card).getByTestId('demo-apply-tribeca');
+    expect(apply).toBeEnabled();
+    fireEvent.click(apply);
+
+    expect(reviewActions.onApplyForImage).toHaveBeenCalledWith('tribeca', visibleText);
+    expect(within(card).getByTestId('guided-image-status-tribeca')).toHaveTextContent(
+      publicGuidedCopy('outcome.applied_image.public'),
+    );
+  });
+
+  it('clears a public card status when reset replaces its draft state', () => {
+    const reviewActions = actions();
+    reviewActions.onApplyForImage = vi.fn();
+    const state = perImageState();
+    const { rerender } = render(
+      <GuidedDescriptionReview scenario={scenario} state={state} actions={reviewActions} scope="public" />,
+    );
+    const card = screen.getByTestId('guided-description-review-tribeca');
+    const editor = within(card).getByRole('textbox', { name: publicGuidedCopy('draft.field_label.public') });
+    fireEvent.change(editor, { target: { value: 'A public status that reset must clear.' } });
+    fireEvent.click(within(card).getByTestId('demo-apply-tribeca'));
+    expect(within(card).getByTestId('guided-image-status-tribeca')).toHaveTextContent(
+      publicGuidedCopy('outcome.applied_image.public'),
+    );
+
+    const resetState = perImageState();
+    resetState.choices = {
+      left: GUIDED_NAME_CHOICE.UNDECIDED,
+      right: GUIDED_NAME_CHOICE.UNDECIDED,
+    };
+    const resetTribecaDraft = resetState.drafts?.tribeca;
+    if (resetTribecaDraft === undefined) {
+      throw new Error('Expected a reset Tribeca draft fixture.');
+    }
+    resetState.drafts = {
+      ...resetState.drafts,
+      tribeca: {
+        ...resetTribecaDraft,
+        draftText: null,
+        draftStatus: GUIDED_DRAFT_STATUS.BLOCKED,
+        draftVersion: 0,
+        previewedVersion: null,
+        applicationHistory: [],
+      },
+    };
+    rerender(<GuidedDescriptionReview scenario={scenario} state={resetState} actions={reviewActions} scope="public" />);
+
+    expect(screen.getByTestId('guided-image-status-tribeca')).toHaveTextContent(/^$/);
   });
 
   it('sends image keys with preview and apply actions', () => {

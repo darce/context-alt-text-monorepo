@@ -12,8 +12,6 @@ import { createGuidedScenario } from '../../admin/guidedPrototype/state';
 
 const SEED_ALT_TEXT =
   'A man in a black suit and a woman in a white dress pose together, smiling, in front of a Tribeca Festival step-and-repeat backdrop.';
-const PUBLIC_SCOPE =
-  'This is a supplied example roster with recorded drafts. Your choices change only the demo copy in this tab; they do not update WordPress or a server roster.';
 
 const choose = (position: 'left' | 'right', option: 'include' | 'omit'): void => {
   const fieldset = screen.getByTestId(`name-choice-tribeca-${position}`);
@@ -153,7 +151,7 @@ describe('public recorded walkthrough boundary', () => {
   it('renders the public scope text, entry actions, and escape hatch', () => {
     render(<RecordedWalkthrough scope="public" escapeHref="https://demo.example/" />);
 
-    expect(screen.getByTestId('guided-scope')).toHaveTextContent(PUBLIC_SCOPE);
+    expect(screen.getByTestId('guided-scope')).toHaveTextContent(guidedCopy('scope.public'));
     expect(screen.getByRole('heading', { level: 1, name: guidedCopy('entry.title.public') })).toBeInTheDocument();
     expect(screen.getByText(guidedCopy('entry.intro.public'))).toBeInTheDocument();
     expect(screen.getByRole('button', { name: guidedCopy('page.start') })).toBeInTheDocument();
@@ -162,26 +160,29 @@ describe('public recorded walkthrough boundary', () => {
     ).toHaveAttribute('href', CASE_STUDY_URL);
 
     const escape = screen.getByRole('navigation', { name: guidedCopy('nav.leave') });
-    expect(within(escape).getByRole('link', { name: guidedCopy('nav.home') })).toHaveAttribute(
-      'href',
-      'https://demo.example/',
-    );
+    const home = within(escape).getByRole('link', {
+      name: `${guidedCopy('nav.home')} (opens in a new window)`,
+    });
+    expect(home).toHaveAttribute('href', 'https://altcontext.com/');
+    expect(home).toHaveAttribute('target', '_blank');
+    expect(home).toHaveAttribute('rel', 'noreferrer');
     expect(
       within(escape).getByRole('link', { name: `${guidedCopy('nav.case_study')} (opens in a new window)` }),
     ).toHaveAttribute('href', CASE_STUDY_URL);
     expect(screen.queryByTestId('guided-live')).not.toBeInTheDocument();
   });
 
-  it('makes no network calls across choose → edit → preview → apply → undo', async () => {
+  it('makes no network calls across choose → edit → apply → undo', async () => {
     const user = userEvent.setup();
     render(<RecordedWalkthrough scope="public" escapeHref="/" />);
 
     choose('left', 'include');
     choose('right', 'include');
     const edited = 'Public-tab festival description.';
-    const editor = screen.getByRole('textbox', { name: guidedCopy('draft.label') });
+    const editor = within(screen.getByTestId('guided-draft-field-tribeca')).getByRole('textbox', {
+      name: guidedCopy('draft.field_label.public'),
+    });
     fireEvent.change(editor, { target: { value: edited } });
-    await user.click(screen.getByRole('button', { name: guidedCopy('draft.next') }));
     await user.click(screen.getByTestId('demo-apply-tribeca'));
     await user.click(screen.getByTestId('demo-undo-tribeca'));
 
@@ -198,9 +199,10 @@ describe('public recorded walkthrough boundary', () => {
     choose('left', 'include');
     choose('right', 'omit');
     const edited = 'Only this tab should keep this draft.';
-    const editor = screen.getByRole('textbox', { name: guidedCopy('draft.label') });
+    const editor = within(screen.getByTestId('guided-draft-field-tribeca')).getByRole('textbox', {
+      name: guidedCopy('draft.field_label.public'),
+    });
     fireEvent.change(editor, { target: { value: edited } });
-    await user.click(screen.getByRole('button', { name: guidedCopy('draft.next') }));
     await user.click(screen.getByTestId('demo-apply-tribeca'));
 
     expect(screen.getByTestId('demo-applied-image-tribeca')).toHaveAttribute('alt', edited);
@@ -266,10 +268,11 @@ describe('public recorded walkthrough boundary', () => {
 
     choose('left', 'include');
     choose('right', 'include');
-    const editor = screen.getByRole('textbox', { name: guidedCopy('draft.label') });
+    const editor = within(screen.getByTestId('guided-draft-field-tribeca')).getByRole('textbox', {
+      name: guidedCopy('draft.field_label.public'),
+    });
     await user.clear(editor);
     await user.type(editor, 'A bounded public demo edit.');
-    await user.click(screen.getByRole('button', { name: guidedCopy('draft.next') }));
     await user.click(screen.getByTestId('demo-apply-tribeca'));
     expect(screen.getByTestId('demo-outcome')).toHaveTextContent(guidedCopy('outcome.scope.public'));
     expect(screen.getByTestId('demo-outcome')).toHaveTextContent(guidedCopy('outcome.next_batch.public'));
@@ -314,7 +317,9 @@ describe('public recorded walkthrough boundary', () => {
     const scenario = createGuidedScenario();
     choose('left', 'include');
     choose('right', 'include');
-    const editor = screen.getByRole('textbox', { name: guidedCopy('draft.label') });
+    const editor = within(screen.getByTestId('guided-draft-field-tribeca')).getByRole('textbox', {
+      name: guidedCopy('draft.field_label.public'),
+    });
     const staleDraft = 'Unsaved draft must not return after reset.';
     fireEvent.change(editor, { target: { value: staleDraft } });
 
@@ -326,10 +331,11 @@ describe('public recorded walkthrough boundary', () => {
     choose('right', 'omit');
 
     expect(screen.queryByRole('dialog', { name: guidedCopy('names.change_title') })).not.toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: guidedCopy('draft.label') })).toHaveValue(
-      scenario.samples.tribeca['justin-trudeau'],
-    );
-    expect(screen.getByRole('textbox', { name: guidedCopy('draft.label') })).not.toHaveValue(staleDraft);
+    const resetEditor = within(screen.getByTestId('guided-draft-field-tribeca')).getByRole('textbox', {
+      name: guidedCopy('draft.field_label.public'),
+    });
+    expect(resetEditor).toHaveValue(scenario.samples.tribeca['justin-trudeau']);
+    expect(resetEditor).not.toHaveValue(staleDraft);
   });
 
   it('walks the public entry import graph and forbids live/API imports', () => {

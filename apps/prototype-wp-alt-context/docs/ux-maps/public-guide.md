@@ -25,14 +25,6 @@
 | `fallback` | screen | `/guide/` | The walkthrough could not load |
 | `escape` | exit | `/` | Leave the walkthrough |
 
-## Code references
-- `screen:entry` — `apps/prototype-wp-alt-context/js/admin/pages/GuidedPrototypeEntrance.tsx`
-- `screen:walkthrough` — `apps/prototype-wp-alt-context/js/admin/guidedPrototype/RecordedWalkthrough.tsx`
-- `screen:apply` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedDescriptionReview.tsx`
-- `screen:outcome` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedOutcome.tsx`
-- `screen:fallback` — `apps/prototype-wp-alt-context/js/guide/main.tsx`
-- `screen:escape` — `apps/prototype-wp-alt-context/js/admin/guidedPrototype/publicGuideCopy.ts`
-
 ### Review a recorded alt text example (`entry`)
 
 Purpose: Signed-out public entrance. Public title and introduction explain the supplied festival example; scope.public: This is a supplied example roster with recorded drafts. Your choices change only the demo copy in this tab; they do not update WordPress or a server roster. Two entry actions (NAV-08): Start the walkthrough and Read the case study. Escape hatch (NAV-07): Home and Case study. first_time is the first visit with no in-tab state. error is domain disabled_404: AltContext\PublicSite\PublicGuideRoute returns the theme 404 when acx_public_guide_enabled is off — never this guide.
@@ -132,7 +124,7 @@ Purpose: Completion summary after Apply to demo copy or Keep current alt text. A
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
-| `demo-outcome` | Your demo copy is updated or unchanged after Keep. Result applies only in this tab; no WordPress media, server roster, or saved library update. A next batch would use another supplied image and page context. | status | applied, kept |
+| `demo-outcome` | Your demo copy is updated or unchanged after Keep. Result applies only in this tab; no WordPress media, server roster, or saved library update. A next batch would use another supplied image and page context. | status | default, empty |
 
 ```
 +------------------------------------------------------------+
@@ -145,7 +137,7 @@ Purpose: Completion summary after Apply to demo copy or Keep current alt text. A
 | ACTIONS                                                    |
 |   [PRIMARY] Return to the draft -> walkthrough             |
 +------------------------------------------------------------+
-| states: applied | kept                                    |
+| states: default | empty                                    |
 +------------------------------------------------------------+
 ```
 
@@ -206,10 +198,10 @@ Purpose: NAV-07 escape hatch from public scope: Home uses escapeHref (site home)
 | `read-case-study` | Read the case study | `escape` | secondary | no | no | no | `entry` |
 | `continue-walkthrough` | Review name suggestions | `apply` | primary | no | no | no | `walkthrough` |
 | `preview-draft` | Preview the change | `apply` | secondary | no | no | yes | `walkthrough` |
+| `keep-current-alt-text` | Keep current alt text | `outcome` | secondary | no | no | no | `walkthrough` |
+| `reset-demo` | Reset demo | `walkthrough` | secondary | no | yes | no | `walkthrough` |
 | `demo-apply` | Apply to demo copy | `outcome` | primary | no | no | yes | `apply` |
 | `demo-undo` | Undo last application | `apply` | secondary | no | no | no | `apply` |
-| `keep-current-alt-text` | Keep current alt text | `outcome` | secondary | no | no | no | `walkthrough` |
-| `reset-demo` | Reset demo | `walkthrough` | secondary | no | no | no | `walkthrough` |
 | `return-to-draft` | Return to the draft | `walkthrough` | primary | no | no | no | `outcome` |
 | `reload-guide` | Reload the page | `entry` | primary | no | no | no | `fallback` |
 | `go-home` | Home | `escape` | primary | no | no | no | `escape` |
@@ -302,20 +294,6 @@ flowchart TD
 ## Open questions
 - Does a signed-out visitor who bookmarks /guide/#state deep-link anywhere, or is in-tab state always first_time after refresh?
 - Should the optional workflow-discussion destination be enabled once a verified main-site contact section is available?
-
-## Suggested task-slice decomposition (from map)
-
-1. Enable route with acx_public_guide_enabled and rewrite flush (deploy-enable).
-2. Public RecordedWalkthrough scope with escape hatch and two entry actions (sibling TS lane).
-3. PHP PublicGuideRoute 404 when disabled; standalone template when on (sibling PHP lane).
-4. Signed-out Playwright acceptance under project public-guide.
-
-## Domain state mapping
-
-| domain state(s) | canonical state |
-| --- | --- |
-| `disabled_404` | `error` |
-| `bundle_failed` | `error` |
 
 ## Parity index
 

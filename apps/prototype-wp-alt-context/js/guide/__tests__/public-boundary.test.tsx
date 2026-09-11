@@ -12,15 +12,29 @@ import { createGuidedScenario } from '../../admin/guidedPrototype/state';
 
 const SEED_ALT_TEXT =
   'A man in a black suit and a woman in a white dress pose together, smiling, in front of a Tribeca Festival step-and-repeat backdrop.';
+const PUBLIC_HOME_URL = 'https://altcontext.com/';
 
-const choose = (position: 'left' | 'right', option: 'include' | 'omit'): void => {
-  const fieldset = screen.getByTestId(`name-choice-tribeca-${position}`);
+const PUBLIC_IMAGE_KEYS = ['tribeca', 'coachella'] as const;
+type PublicImageKey = (typeof PUBLIC_IMAGE_KEYS)[number];
+
+const choose = (
+  position: 'left' | 'right',
+  option: 'include' | 'omit',
+  imageKey: PublicImageKey = 'tribeca',
+): void => {
+  const photo = screen.getByTestId(`guided-photo-${imageKey}`);
+  const fieldset = within(photo).getByTestId(`name-choice-${imageKey}-${position}`);
   const name =
     option === 'include'
       ? guidedCopy('names.include', { name: position === 'left' ? 'Justin Trudeau' : 'Katy Perry' })
       : guidedCopy('names.omit');
   fireEvent.click(within(fieldset).getByRole('radio', { name }));
 };
+
+const publicEditor = (imageKey: PublicImageKey): HTMLElement =>
+  within(screen.getByTestId(`guided-draft-field-${imageKey}`)).getByRole('textbox', {
+    name: guidedCopy('draft.field_label.public'),
+  });
 
 const SKIP_IMPORT_EXT = new Set([
   '.css',
@@ -163,13 +177,110 @@ describe('public recorded walkthrough boundary', () => {
     const home = within(escape).getByRole('link', {
       name: `${guidedCopy('nav.home')} (opens in a new window)`,
     });
-    expect(home).toHaveAttribute('href', 'https://altcontext.com/');
+    const escapeLinks = within(escape).getAllByRole('link');
+    expect(escapeLinks).toHaveLength(2);
+    expect(escapeLinks.map((link) => link.getAttribute('href'))).toEqual([PUBLIC_HOME_URL, CASE_STUDY_URL]);
+    expect(escapeLinks.filter((link) => link.getAttribute('href') === PUBLIC_HOME_URL)).toHaveLength(1);
+    escapeLinks.forEach((link) => {
+      expect(link).toHaveAttribute('target', '_blank');
+      expect(link).toHaveAttribute('rel', 'noreferrer');
+    });
+    expect(home).toHaveAttribute('href', PUBLIC_HOME_URL);
     expect(home).toHaveAttribute('target', '_blank');
     expect(home).toHaveAttribute('rel', 'noreferrer');
     expect(
       within(escape).getByRole('link', { name: `${guidedCopy('nav.case_study')} (opens in a new window)` }),
     ).toHaveAttribute('href', CASE_STUDY_URL);
     expect(screen.queryByTestId('guided-live')).not.toBeInTheDocument();
+  });
+
+  it('keeps the public flow to two stages and guards image actions in the zero state', async () => {
+    const user = userEvent.setup();
+    render(<RecordedWalkthrough scope="public" />);
+
+    const stepper = screen.getByTestId('guided-demo-stepper');
+    const chooseNames = within(stepper).getByRole('button', { name: guidedCopy('step.names.public') });
+    const reviewAndApply = within(stepper).getByRole('button', { name: guidedCopy('step.review.public') });
+    expect(within(stepper).getAllByRole('button')).toHaveLength(3);
+    expect(stepper).toHaveTextContent(
+      guidedCopy('guide.current.public', {
+        stepNumber: 1,
+        stepCount: 2,
+        stepTitle: guidedCopy('step.names.public'),
+      }),
+    );
+    expect(chooseNames).toHaveAttribute('aria-controls', 'guided-section-understand');
+    expect(reviewAndApply).toHaveAttribute('aria-controls', 'guided-section-review');
+    expect(chooseNames).toHaveAttribute('aria-current', 'step');
+    expect(stepper.querySelectorAll('[aria-current="step"]')).toHaveLength(1);
+    const reviewDrafts = screen.getByTestId('guided-review-draft');
+    expect(reviewDrafts).toBeDisabled();
+
+    for (const imageKey of PUBLIC_IMAGE_KEYS) {
+      expect(screen.getByTestId(`demo-apply-${imageKey}`)).toBeDisabled();
+      expect(screen.getByTestId(`demo-undo-${imageKey}`)).toBeDisabled();
+      expect(screen.getByTestId(`guided-image-status-${imageKey}`)).toHaveAttribute('role', 'status');
+    }
+    expect(screen.getByTestId('guided-choices-help')).toHaveTextContent(guidedCopy('choices.help.public'));
+
+    choose('left', 'include');
+    expect(reviewDrafts).toBeDisabled();
+    expect(screen.getByTestId('demo-apply-tribeca')).toBeDisabled();
+    choose('right', 'omit');
+    expect(reviewDrafts).toBeEnabled();
+    expect(screen.getByTestId('demo-apply-tribeca')).toBeEnabled();
+    expect(screen.getByTestId('demo-apply-coachella')).toBeEnabled();
+
+    await user.click(reviewDrafts);
+    expect(document.activeElement).toHaveAttribute('id', 'guided-section-review');
+    expect(stepper).toHaveTextContent(
+      guidedCopy('guide.current.public', {
+        stepNumber: 2,
+        stepCount: 2,
+        stepTitle: guidedCopy('step.review.public'),
+      }),
+    );
+    expect(reviewAndApply).toHaveAttribute('aria-current', 'step');
+    expect(chooseNames).not.toHaveAttribute('aria-current', 'step');
+    expect(stepper.querySelectorAll('[aria-current="step"]')).toHaveLength(1);
+  });
+
+  it('keeps public headings and editor labels scoped to both source images', () => {
+    render(<RecordedWalkthrough scope="public" />);
+
+    expect(screen.getByText(guidedCopy('entry.eyebrow.public'))).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1, name: guidedCopy('entry.title.public') })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 2, name: guidedCopy('step.names.public') })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 2, name: guidedCopy('step.review.public') })).toBeInTheDocument();
+    expect(screen.getAllByRole('heading', { level: 4, name: guidedCopy('faces.title.public') })).toHaveLength(2);
+    expect(
+      screen.getAllByRole('heading', { level: 4, name: guidedCopy('comparison.altcontext.public') }),
+    ).toHaveLength(2);
+    expect(
+      screen.getAllByRole('heading', { level: 4, name: guidedCopy('comparison.alttextai.public') }),
+    ).toHaveLength(2);
+    expect(
+      screen.queryByRole('heading', { name: guidedCopy('context.photo.altcontext_title') }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('heading', { name: guidedCopy('context.photo.alttextai_title') }),
+    ).not.toBeInTheDocument();
+
+    choose('left', 'include');
+    choose('right', 'include');
+    for (const imageKey of PUBLIC_IMAGE_KEYS) {
+      const review = screen.getByTestId(`guided-description-review-${imageKey}`);
+      expect(
+        within(review).getByRole('textbox', { name: guidedCopy('draft.field_label.public') }),
+      ).toBeInTheDocument();
+      expect(within(review).queryByRole('textbox', { name: guidedCopy('draft.label') })).not.toBeInTheDocument();
+      expect(
+        within(review).getByRole('heading', {
+          level: 4,
+          name: guidedCopy('draft.current_alt_label.public'),
+        }),
+      ).toBeInTheDocument();
+    }
   });
 
   it('makes no network calls across choose → edit → apply → undo', async () => {
@@ -215,6 +326,76 @@ describe('public recorded walkthrough boundary', () => {
     const seedAfter = createGuidedScenario();
     expect(seedAfter).toEqual(seedBefore);
     expect(seedAfter.pressPhoto.altText).toBe(SEED_ALT_TEXT);
+  });
+
+  it('keeps each public image status and manual edit independent through apply and undo', async () => {
+    const user = userEvent.setup();
+    const scenario = createGuidedScenario();
+    render(<RecordedWalkthrough scope="public" />);
+
+    choose('left', 'include');
+    choose('right', 'include');
+
+    const tribecaReview = screen.getByTestId('guided-description-review-tribeca');
+    const coachellaReview = screen.getByTestId('guided-description-review-coachella');
+    const tribecaEditor = publicEditor('tribeca');
+    const coachellaEditor = publicEditor('coachella');
+    const tribecaStatus = screen.getByTestId('guided-image-status-tribeca');
+    const coachellaStatus = screen.getByTestId('guided-image-status-coachella');
+    const originalTribecaAlt = scenario.pressPhotos[0].altText;
+    const originalCoachellaAlt = scenario.pressPhotos[1].altText;
+    const tribecaEdit = 'Tribeca manual edit stays local to this image.';
+    const coachellaEdit = 'Coachella manual edit stays local to this image.';
+
+    expect(tribecaStatus.textContent).toBe('');
+    expect(coachellaStatus.textContent).toBe('');
+    await user.clear(coachellaEditor);
+    await user.type(coachellaEditor, coachellaEdit);
+    await user.clear(tribecaEditor);
+    await user.type(tribecaEditor, tribecaEdit);
+
+    await user.click(screen.getByTestId('demo-apply-tribeca'));
+    expect(within(tribecaReview).getByTestId('demo-applied-image-tribeca')).toHaveAttribute('alt', tribecaEdit);
+    expect(within(tribecaReview).getByTestId('guided-current-alt-tribeca')).toHaveTextContent(tribecaEdit);
+    expect(tribecaStatus).toBe(screen.getByTestId('guided-image-status-tribeca'));
+    expect(tribecaStatus).toHaveTextContent(guidedCopy('outcome.applied_image.public'));
+    expect(within(coachellaReview).getByTestId('demo-applied-image-coachella')).toHaveAttribute(
+      'alt',
+      originalCoachellaAlt,
+    );
+    expect(within(coachellaReview).getByTestId('guided-current-alt-coachella')).toHaveTextContent(originalCoachellaAlt);
+    expect(coachellaEditor).toHaveValue(coachellaEdit);
+    expect(coachellaStatus.textContent).toBe('');
+
+    await user.click(screen.getByTestId('demo-undo-tribeca'));
+    expect(within(tribecaReview).getByTestId('demo-applied-image-tribeca')).toHaveAttribute(
+      'alt',
+      originalTribecaAlt,
+    );
+    expect(within(tribecaReview).getByTestId('guided-current-alt-tribeca')).toHaveTextContent(originalTribecaAlt);
+    expect(tribecaEditor).toHaveValue(tribecaEdit);
+    expect(tribecaStatus).toBe(screen.getByTestId('guided-image-status-tribeca'));
+    expect(tribecaStatus).toHaveTextContent(guidedCopy('outcome.undone_image.public'));
+    expect(coachellaStatus.textContent).toBe('');
+
+    await user.click(screen.getByTestId('demo-apply-coachella'));
+    expect(within(coachellaReview).getByTestId('demo-applied-image-coachella')).toHaveAttribute('alt', coachellaEdit);
+    expect(coachellaStatus).toHaveTextContent(guidedCopy('outcome.applied_image.public'));
+    expect(within(tribecaReview).getByTestId('demo-applied-image-tribeca')).toHaveAttribute(
+      'alt',
+      originalTribecaAlt,
+    );
+    expect(tribecaStatus).toHaveTextContent(guidedCopy('outcome.undone_image.public'));
+
+    await user.click(screen.getByTestId('demo-undo-coachella'));
+    expect(within(coachellaReview).getByTestId('demo-applied-image-coachella')).toHaveAttribute(
+      'alt',
+      originalCoachellaAlt,
+    );
+    expect(coachellaEditor).toHaveValue(coachellaEdit);
+    expect(coachellaStatus).toBe(screen.getByTestId('guided-image-status-coachella'));
+    expect(coachellaStatus).toHaveTextContent(guidedCopy('outcome.undone_image.public'));
+    expect(tribecaEditor).toHaveValue(tribecaEdit);
   });
 
   it('shows the complete current name-choice summary separately from live feedback', () => {
@@ -336,6 +517,59 @@ describe('public recorded walkthrough boundary', () => {
     });
     expect(resetEditor).toHaveValue(scenario.samples.tribeca['justin-trudeau']);
     expect(resetEditor).not.toHaveValue(staleDraft);
+  });
+
+  it('resets both public image drafts, applied previews, statuses, and choices', async () => {
+    const user = userEvent.setup();
+    const scenario = createGuidedScenario();
+    render(<RecordedWalkthrough scope="public" />);
+
+    choose('left', 'include');
+    choose('right', 'include');
+    const tribecaEditor = publicEditor('tribeca');
+    const coachellaEditor = publicEditor('coachella');
+    const tribecaEdit = 'Stale Tribeca edit must be cleared by reset.';
+    const coachellaEdit = 'Stale Coachella edit must be cleared by reset.';
+    await user.clear(tribecaEditor);
+    await user.type(tribecaEditor, tribecaEdit);
+    await user.clear(coachellaEditor);
+    await user.type(coachellaEditor, coachellaEdit);
+    await user.click(screen.getByTestId('demo-apply-tribeca'));
+    await user.click(screen.getByTestId('demo-apply-coachella'));
+
+    await user.click(screen.getByRole('button', { name: guidedCopy('page.reset') }));
+    const dialog = screen.getByRole('dialog', { name: guidedCopy('reset.title') });
+    await user.click(within(dialog).getByRole('button', { name: guidedCopy('reset.confirm') }));
+
+    for (const imageKey of PUBLIC_IMAGE_KEYS) {
+      const photo = screen.getByTestId(`guided-photo-${imageKey}`);
+      const fieldsetLeft = within(photo).getByTestId(`name-choice-${imageKey}-left`);
+      const fieldsetRight = within(photo).getByTestId(`name-choice-${imageKey}-right`);
+      expect(
+        within(fieldsetLeft).getAllByRole('radio').every((radio) => !(radio as HTMLInputElement).checked),
+      ).toBe(true);
+      expect(
+        within(fieldsetRight).getAllByRole('radio').every((radio) => !(radio as HTMLInputElement).checked),
+      ).toBe(true);
+      const review = screen.getByTestId(`guided-description-review-${imageKey}`);
+      expect(review).toHaveTextContent(guidedCopy('draft.blocked'));
+      expect(
+        within(review).queryByRole('textbox', { name: guidedCopy('draft.field_label.public') }),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByTestId(`demo-applied-image-${imageKey}`)).not.toBeInTheDocument();
+      expect(screen.getByTestId(`guided-image-status-${imageKey}`).textContent).toBe('');
+    }
+    expect(screen.getByTestId('guided-choice-summary')).toHaveTextContent(guidedCopy('names.pending'));
+    expect(screen.queryByTestId('demo-outcome')).not.toBeInTheDocument();
+
+    choose('left', 'include');
+    choose('right', 'include');
+    expect(publicEditor('tribeca')).toHaveValue(scenario.samples.tribeca.both);
+    expect(publicEditor('tribeca')).not.toHaveValue(tribecaEdit);
+    expect(publicEditor('coachella')).toHaveValue(scenario.samples.coachella.both);
+    expect(publicEditor('coachella')).not.toHaveValue(coachellaEdit);
+    expect(screen.getByTestId('demo-applied-image-tribeca')).toHaveAttribute('alt', scenario.pressPhotos[0].altText);
+    expect(screen.getByTestId('demo-applied-image-coachella')).toHaveAttribute('alt', scenario.pressPhotos[1].altText);
   });
 
   it('walks the public entry import graph and forbids live/API imports', () => {

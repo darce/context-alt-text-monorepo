@@ -216,8 +216,8 @@
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedOutcome.tsx",
       "primary_action_id": "return-to-draft",
       "states": [
-        "applied",
-        "kept"
+        "default",
+        "empty"
       ],
       "zones": [
         {
@@ -225,8 +225,8 @@
           "label": "Your demo copy is updated or unchanged after Keep. Result applies only in this tab; no WordPress media, server roster, or saved library update. A next batch would use another supplied image and page context.",
           "role": "status",
           "states": [
-            "applied",
-            "kept"
+            "default",
+            "empty"
           ]
         }
       ]

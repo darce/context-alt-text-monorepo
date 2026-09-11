@@ -29,20 +29,6 @@
 | `case-study` | exit | `https://darce.xyz/projects/altcontext/` | Read the AltContext case study |
 | `live` | screen | `#/guided-prototype` | Optional: test live description generation |
 
-## Code references
-- `screen:entry` — `apps/prototype-wp-alt-context/js/admin/pages/GuidedPrototypeEntrance.tsx`
-- `screen:context` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypePage.tsx`
-- `screen:names` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedFacesPanel.tsx`
-- `screen:draft` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedDescriptionReview.tsx`
-- `screen:apply` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedDescriptionReview.tsx`
-- `screen:outcome` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedOutcome.tsx`
-- `screen:history` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypePage.tsx`
-- `screen:design-notes` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedDesignNotes.tsx`
-- `screen:names-change` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedFacesPanel.tsx`
-- `screen:reset` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedResetDialog.tsx`
-- `screen:case-study` — `apps/prototype-wp-alt-context/js/admin/pages/GuidedPrototypeEntrance.tsx`
-- `screen:live` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedLiveDescriptionPanel.tsx`
-
 ### Review an AI-assisted alt text draft (`entry`)
 
 Purpose: Compact intro plus numbered guide on one page. AltContext guided demo. You are reviewing two photos in a festival gallery. Review saved name suggestions across both photos, edit each alt text draft, then apply changes to the corresponding demo copy. You can leave either person unnamed. This walkthrough uses recorded face suggestions and per-image sample drafts. Your choices change only the demo copies in this tab and reset when you reload. An optional live test at the end runs separately on the server. Start the walkthrough is the one primary CTA. Read the AltContext case study is a secondary link. Demo steps: Step 1 of 4: Understand the page, with Show all steps / Hide steps. Reset demo opens the reset overlay. Route stays #/guided-prototype.

@@ -102,7 +102,7 @@ describe('GuidedSamplePhoto figure content', () => {
     const captionProvenance = altTextAiCaption.getByText(/Captured 10 September 2026\./, {
       selector: 'p.acx-guided-page__caption-provenance',
     });
-    expect(captionProvenance).toHaveTextContent('AltText.ai · Captured 10 September 2026.');
+    expect(captionProvenance.textContent).toBe('AltText.ai · Captured 10 September 2026.');
     expect(captionProvenance).not.toHaveTextContent(photo.altTextAiCaption.note);
     expect(figure.querySelector('details.acx-guided-page__provenance')).toBeNull();
 

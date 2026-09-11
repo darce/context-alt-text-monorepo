@@ -4,11 +4,7 @@ import { guidedCopy } from '../../guidedPrototype/publicGuideCopy';
 import {
   GUIDED_DRAFT_ORIGIN,
   GUIDED_DRAFT_STATUS,
-  canApply,
   canApplyImageDraftPublic,
-  canPreview,
-  canRestoreRevision,
-  canUndo,
   type GuidedDemoState,
   type GuidedImageKey,
   type GuidedRestoreMode,
@@ -22,8 +18,6 @@ import {
   guidedReviewDraftFor,
   guidedReviewLegacyState,
   guidedReviewNamesDecided,
-  GUIDED_REVIEW_TRIBECA_KEY,
-  hasGuidedImageDrafts,
   type GuidedImageAction,
   type GuidedImageDraft,
   type GuidedRestoreAction,
@@ -57,43 +51,6 @@ export interface GuidedDescriptionReviewProps {
   recordedOriginLabel?: string;
   scope?: 'public' | 'admin';
 }
-
-const originLabel = (state: GuidedDemoState, recordedOriginLabel?: string): string => {
-  switch (state.draftOrigin) {
-    case GUIDED_DRAFT_ORIGIN.VISITOR_EDIT:
-      return guidedCopy('draft.origin_edited');
-    case GUIDED_DRAFT_ORIGIN.RECORDED_SAMPLE:
-      return recordedOriginLabel ?? guidedCopy('draft.origin_saved');
-    case GUIDED_DRAFT_ORIGIN.NONE:
-      return '';
-    default: {
-      const exhaustive: never = state.draftOrigin;
-      return exhaustive;
-    }
-  }
-};
-
-const applyReason = (state: GuidedDemoState, localText: string): string | null => {
-  if (state.draftStatus === GUIDED_DRAFT_STATUS.BLOCKED) {
-    return guidedCopy('draft.blocked');
-  }
-  if (state.draftStatus === GUIDED_DRAFT_STATUS.FIXTURE_MISSING) {
-    return guidedCopy('draft.fixture_missing');
-  }
-  if (localText.trim() === '') {
-    return guidedCopy('draft.empty_error');
-  }
-  if (localText !== (state.draftText ?? '')) {
-    return guidedCopy('apply.stale');
-  }
-  if (state.previewedVersion !== state.draftVersion) {
-    return guidedCopy('apply.stale');
-  }
-  if (state.draftText === state.appliedAltText) {
-    return guidedCopy('apply.no_change');
-  }
-  return null;
-};
 
 const imageOriginLabel = (draft: GuidedImageDraft, recordedOriginLabel?: string): string => {
   switch (draft.draftOrigin) {
@@ -155,20 +112,12 @@ const imagePublicApplyReason = (
   return null;
 };
 
-const callTextAction = (action: GuidedTextAction, imageKey: GuidedImageKey, text: string, perImage: boolean): void => {
-  if (perImage) {
-    action(imageKey, text);
-    return;
-  }
-  (action as (value: string) => void)(text);
+const callTextAction = (action: GuidedTextAction, imageKey: GuidedImageKey, text: string): void => {
+  (action as (key: GuidedImageKey, value: string) => void)(imageKey, text);
 };
 
-const callImageAction = (action: GuidedImageAction, imageKey: GuidedImageKey, perImage: boolean): void => {
-  if (perImage) {
-    action(imageKey);
-    return;
-  }
-  (action as () => void)();
+const callImageAction = (action: GuidedImageAction, imageKey: GuidedImageKey): void => {
+  (action as (key: GuidedImageKey) => void)(imageKey);
 };
 
 const callRestoreAction = (
@@ -176,13 +125,8 @@ const callRestoreAction = (
   imageKey: GuidedImageKey,
   revisionId: string,
   mode: GuidedRestoreMode,
-  perImage: boolean,
 ): void => {
-  if (perImage) {
-    (action as (key: GuidedImageKey, id: string, restoreMode: GuidedRestoreMode) => void)(imageKey, revisionId, mode);
-    return;
-  }
-  (action as (id: string, restoreMode: GuidedRestoreMode) => void)(revisionId, mode);
+  (action as (key: GuidedImageKey, id: string, restoreMode: GuidedRestoreMode) => void)(imageKey, revisionId, mode);
 };
 
 const callTextImageAction = (
@@ -190,26 +134,24 @@ const callTextImageAction = (
   action: GuidedTextAction,
   imageKey: GuidedImageKey,
   text: string,
-  perImage: boolean,
 ): void => {
-  if (perImage && imageAction !== undefined) {
+  if (imageAction !== undefined) {
     imageAction(imageKey, text);
     return;
   }
-  callTextAction(action, imageKey, text, perImage);
+  callTextAction(action, imageKey, text);
 };
 
 const callImageOnlyAction = (
   imageAction: ((imageKey: GuidedImageKey) => void) | undefined,
   action: GuidedImageAction,
   imageKey: GuidedImageKey,
-  perImage: boolean,
 ): void => {
-  if (perImage && imageAction !== undefined) {
+  if (imageAction !== undefined) {
     imageAction(imageKey);
     return;
   }
-  callImageAction(action, imageKey, perImage);
+  callImageAction(action, imageKey);
 };
 
 const callImageRestoreAction = (
@@ -218,13 +160,12 @@ const callImageRestoreAction = (
   imageKey: GuidedImageKey,
   revisionId: string,
   mode: GuidedRestoreMode,
-  perImage: boolean,
 ): void => {
-  if (perImage && imageAction !== undefined) {
+  if (imageAction !== undefined) {
     imageAction(imageKey, revisionId, mode);
     return;
   }
-  callRestoreAction(action, imageKey, revisionId, mode, perImage);
+  callRestoreAction(action, imageKey, revisionId, mode);
 };
 
 const readPixelValue = (value: string): number => {
@@ -449,7 +390,7 @@ const GuidedImageReviewCard = ({
       return;
     }
     setEmptyError(false);
-    callTextImageAction(actions.onPreviewForImage, actions.onPreview, photo.key, editValue, true);
+    callTextImageAction(actions.onPreviewForImage, actions.onPreview, photo.key, editValue);
   };
 
   const handlePublicApply = (): void => {
@@ -467,7 +408,7 @@ const GuidedImageReviewCard = ({
       text: editValue,
       previousHistoryLength: draft.applicationHistory.length,
     };
-    callTextImageAction(actions.onApplyForImage, actions.onApply, photo.key, editValue, true);
+    callTextImageAction(actions.onApplyForImage, actions.onApply, photo.key, editValue);
     setPublicStatus(guidedCopy('outcome.applied_image.public'));
   };
 
@@ -480,7 +421,7 @@ const GuidedImageReviewCard = ({
       previousAltText: draft.appliedAltText,
       previousHistoryLength: draft.applicationHistory.length,
     };
-    callImageOnlyAction(actions.onUndoForImage, actions.onUndo, photo.key, true);
+    callImageOnlyAction(actions.onUndoForImage, actions.onUndo, photo.key);
     setPublicStatus(guidedCopy('outcome.undone_image.public'));
   };
 
@@ -499,7 +440,7 @@ const GuidedImageReviewCard = ({
           <button
             type="button"
             className="acx-button acx-button--secondary"
-            onClick={() => callImageOnlyAction(actions.onRetryFixtureForImage, actions.onRetryFixture, photo.key, true)}
+            onClick={() => callImageOnlyAction(actions.onRetryFixtureForImage, actions.onRetryFixture, photo.key)}
           >
             {guidedCopy('draft.fixture_retry')}
           </button>
@@ -549,7 +490,7 @@ const GuidedImageReviewCard = ({
                     const text = event.target.value;
                     setEditValue(text);
                     setEmptyError(false);
-                    callTextImageAction(actions.onDraftInputForImage, actions.onDraftInput, photo.key, text, true);
+                    callTextImageAction(actions.onDraftInputForImage, actions.onDraftInput, photo.key, text);
                   }}
                 />
                 {emptyError ? (
@@ -574,7 +515,7 @@ const GuidedImageReviewCard = ({
                   type="button"
                   className="acx-button acx-button--tertiary"
                   data-testid={`guided-keep-current-${photo.key}`}
-                  onClick={() => callImageOnlyAction(actions.onKeepForImage, actions.onKeep, photo.key, true)}
+                  onClick={() => callImageOnlyAction(actions.onKeepForImage, actions.onKeep, photo.key)}
                 >
                   {guidedCopy('draft.keep')}
                 </button>
@@ -624,7 +565,7 @@ const GuidedImageReviewCard = ({
                     const text = event.target.value;
                     setEditValue(text);
                     setEmptyError(false);
-                    callTextImageAction(actions.onDraftInputForImage, actions.onDraftInput, photo.key, text, true);
+                    callTextImageAction(actions.onDraftInputForImage, actions.onDraftInput, photo.key, text);
                   }}
                 />
                 {emptyError ? (
@@ -646,7 +587,7 @@ const GuidedImageReviewCard = ({
                   <button
                     type="button"
                     className="acx-button acx-button--tertiary"
-                    onClick={() => callImageOnlyAction(actions.onKeepForImage, actions.onKeep, photo.key, true)}
+                    onClick={() => callImageOnlyAction(actions.onKeepForImage, actions.onKeep, photo.key)}
                   >
                     {guidedCopy('draft.keep')}
                   </button>
@@ -684,7 +625,7 @@ const GuidedImageReviewCard = ({
                   className="acx-button acx-button--primary"
                   data-testid={`demo-apply-${photo.key}`}
                   onClick={() =>
-                    callTextImageAction(actions.onApplyForImage, actions.onApply, photo.key, editValue, true)
+                    callTextImageAction(actions.onApplyForImage, actions.onApply, photo.key, editValue)
                   }
                   disabled={!applyEnabled}
                   aria-describedby={!applyEnabled && reason ? applyReasonId : undefined}
@@ -695,7 +636,7 @@ const GuidedImageReviewCard = ({
                   type="button"
                   className="acx-button acx-button--tertiary"
                   data-testid={`demo-undo-${photo.key}`}
-                  onClick={() => callImageOnlyAction(actions.onUndoForImage, actions.onUndo, photo.key, true)}
+                  onClick={() => callImageOnlyAction(actions.onUndoForImage, actions.onUndo, photo.key)}
                   disabled={!undoEnabled}
                   aria-describedby={!undoEnabled ? undoReasonId : undefined}
                 >
@@ -731,7 +672,7 @@ const GuidedImageReviewCard = ({
             type="button"
             className="acx-button acx-button--tertiary"
             data-testid={`guided-keep-current-${photo.key}`}
-            onClick={() => callImageOnlyAction(actions.onKeepForImage, actions.onKeep, photo.key, true)}
+            onClick={() => callImageOnlyAction(actions.onKeepForImage, actions.onKeep, photo.key)}
           >
             {guidedCopy('draft.keep')}
           </button>
@@ -758,7 +699,7 @@ const GuidedImageReviewCard = ({
           <button
             type="button"
             className="acx-button acx-button--tertiary"
-            onClick={() => callImageOnlyAction(actions.onKeepForImage, actions.onKeep, photo.key, true)}
+            onClick={() => callImageOnlyAction(actions.onKeepForImage, actions.onKeep, photo.key)}
           >
             {guidedCopy('draft.keep')}
           </button>
@@ -786,7 +727,6 @@ const GuidedImageReviewCard = ({
                           photo.key,
                           revision.revisionId,
                           'full',
-                          true,
                         )
                       }
                     >
@@ -805,7 +745,6 @@ const GuidedImageReviewCard = ({
                             photo.key,
                             revision.revisionId,
                             'copy_only',
-                            true,
                           )
                         }
                       >
@@ -830,432 +769,46 @@ export const GuidedDescriptionReview = ({
   recordedOriginLabel,
   scope = 'admin',
 }: GuidedDescriptionReviewProps): React.JSX.Element => {
-  const perImage = hasGuidedImageDrafts(reviewState);
-  const state = guidedReviewLegacyState(reviewState);
-  const [editValue, setEditValue] = useState(state.draftText ?? '');
-  const [emptyError, setEmptyError] = useState(false);
-  const editorRef = useRef<HTMLTextAreaElement>(null);
-  const comparisonRef = useRef<HTMLDivElement>(null);
-  const manuallyResizedHeightRef = useRef<number | null>(null);
-  const editorPointerActiveRef = useRef(false);
-  const editorInteractionStartHeightRef = useRef<number | null>(null);
-  const previousDraftTextRef = useRef(state.draftText);
-  const onDraftInputRef = useRef<(text: string) => void>(() => undefined);
-  onDraftInputRef.current = (text: string): void => {
-    callTextAction(actions.onDraftInput, GUIDED_REVIEW_TRIBECA_KEY, text, false);
-  };
-  const ready = state.draftStatus === GUIDED_DRAFT_STATUS.READY;
-  const missing = state.draftStatus === GUIDED_DRAFT_STATUS.FIXTURE_MISSING;
-  const blocked = state.draftStatus === GUIDED_DRAFT_STATUS.BLOCKED;
-
-  const resizeEditor = useCallback((): void => {
-    const editor = editorRef.current;
-    if (editor === null) {
-      return;
-    }
-
-    const previousHeight = editor.style.height;
-    editor.style.height = 'auto';
-    const contentHeight = editor.scrollHeight;
-    const computedStyle = window.getComputedStyle(editor);
-    const paddingHeight = readPixelValue(computedStyle.paddingTop) + readPixelValue(computedStyle.paddingBottom);
-    const borderHeight = readPixelValue(computedStyle.borderTopWidth) + readPixelValue(computedStyle.borderBottomWidth);
-    const autoHeight = Math.max(contentHeight + borderHeight, editor.offsetHeight);
-    const manualHeight = manuallyResizedHeightRef.current ?? 0;
-    const nextOuterHeight = Math.max(autoHeight, manualHeight);
-    const isBorderBox = (computedStyle.boxSizing || 'border-box') === 'border-box';
-    const nextCssHeight = isBorderBox ? nextOuterHeight : Math.max(nextOuterHeight - paddingHeight - borderHeight, 0);
-
-    // jsdom does not lay out a textarea, so both measurements can be zero in
-    // tests. Leave the browser's rows/min-height sizing intact in that case.
-    if (nextOuterHeight > 0) {
-      editor.style.height = `${nextCssHeight}px`;
-    } else {
-      editor.style.height = previousHeight;
-    }
-  }, []);
-
-  const cancelEditorPointerInteraction = useCallback((): void => {
-    editorPointerActiveRef.current = false;
-    editorInteractionStartHeightRef.current = null;
-  }, []);
-
-  const rememberManualEditorSize = useCallback((): void => {
-    if (!editorPointerActiveRef.current) {
-      return;
-    }
-    const editor = editorRef.current;
-    const interactionStartHeight = editorInteractionStartHeightRef.current;
-    editorPointerActiveRef.current = false;
-    editorInteractionStartHeightRef.current = null;
-    if (editor === null || interactionStartHeight === null) {
-      return;
-    }
-
-    const measuredHeight = readEditorHeight(editor);
-    if (measuredHeight > 0 && measuredHeight !== interactionStartHeight) {
-      manuallyResizedHeightRef.current = measuredHeight;
-    }
-  }, []);
-
-  const beginEditorPointerInteraction = useCallback((): void => {
-    if (editorPointerActiveRef.current) {
-      return;
-    }
-    editorPointerActiveRef.current = true;
-    const editor = editorRef.current;
-    editorInteractionStartHeightRef.current = editor === null ? null : readEditorHeight(editor);
-  }, []);
-
-  useEffect(() => {
-    const text = state.draftText ?? '';
-    setEditValue(text);
-    setEmptyError(false);
-    onDraftInputRef.current(text);
-  }, [state.draftText, state.draftVersion]);
-
-  useLayoutEffect(() => {
-    if (previousDraftTextRef.current !== state.draftText) {
-      previousDraftTextRef.current = state.draftText;
-      manuallyResizedHeightRef.current = null;
-    }
-    resizeEditor();
-  }, [editValue, ready, resizeEditor, state.draftText, state.draftVersion]);
-
-  useEffect(() => {
-    if (!ready) {
-      return undefined;
-    }
-
-    const comparison = comparisonRef.current;
-    if (comparison === null) {
-      return undefined;
-    }
-
-    const handleResize = (): void => {
-      if (!editorPointerActiveRef.current) {
-        resizeEditor();
-      }
-    };
-    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(handleResize);
-    observer?.observe(comparison);
-    window.addEventListener('resize', handleResize);
-
-    const fontSet = document.fonts;
-    fontSet?.addEventListener('loadingdone', handleResize);
-    fontSet?.addEventListener('loadingerror', handleResize);
-
-    return () => {
-      observer?.disconnect();
-      window.removeEventListener('resize', handleResize);
-      fontSet?.removeEventListener('loadingdone', handleResize);
-      fontSet?.removeEventListener('loadingerror', handleResize);
-    };
-  }, [ready, resizeEditor]);
-
-  useEffect(() => {
-    if (!ready) {
-      return undefined;
-    }
-
-    const releaseEvents = ['pointerup', 'mouseup', 'touchend'] as const;
-    const cancelEvents = ['pointercancel', 'touchcancel', 'cancel', 'blur'] as const;
-    const handleRelease = (): void => {
-      rememberManualEditorSize();
-    };
-    const handleCancel = (): void => {
-      cancelEditorPointerInteraction();
-    };
-    const targets: (Window | Document)[] = [window, document];
-
-    targets.forEach((target) => {
-      releaseEvents.forEach((eventName) => target.addEventListener(eventName, handleRelease, true));
-      cancelEvents.forEach((eventName) => target.addEventListener(eventName, handleCancel, true));
-    });
-
-    return () => {
-      targets.forEach((target) => {
-        releaseEvents.forEach((eventName) => target.removeEventListener(eventName, handleRelease, true));
-        cancelEvents.forEach((eventName) => target.removeEventListener(eventName, handleCancel, true));
-      });
-      cancelEditorPointerInteraction();
-    };
-  }, [cancelEditorPointerInteraction, ready, rememberManualEditorSize]);
-
-  const localMatches = editValue === (state.draftText ?? '');
-  const previewEnabled = ready && editValue.trim().length > 0;
-  const applyEnabled = canApply(state) && localMatches;
-  const undoEnabled = canUndo(state);
-  const reason = applyReason(state, editValue);
-  const previewBlocked = !canPreview(state) && localMatches ? reason : null;
-
-  const handlePreview = (): void => {
-    if (editValue.trim() === '') {
-      setEmptyError(true);
-      editorRef.current?.focus();
-      return;
-    }
-    setEmptyError(false);
-    callTextAction(actions.onPreview, GUIDED_REVIEW_TRIBECA_KEY, editValue, false);
-  };
-
-  if (perImage) {
-    return (
-      <section
-        id="guided-section-review"
-        className="acx-guided-review"
-        aria-labelledby="acx-guided-review-title"
-        data-testid="guided-candidate"
-        tabIndex={-1}
-      >
-        <header className="acx-guided-review__header">
-          <h2 id="acx-guided-review-title">
-            {scope === 'public' ? guidedCopy('step.review.public') : guidedCopy('step.draft')}
-          </h2>
-          <p>{guidedCopy('draft.intro')}</p>
-        </header>
-        <section
-          id="guided-section-apply"
-          className="acx-guided-review__image-cards"
-          aria-labelledby={scope === 'public' ? 'acx-guided-review-title' : 'acx-guided-apply-title'}
-          tabIndex={-1}
-        >
-          {scope === 'admin' ? <h2 id="acx-guided-apply-title">{guidedCopy('step.apply')}</h2> : null}
-          {scenario.pressPhotos.map((photo) => {
-            const draft = guidedReviewDraftFor(reviewState, photo.key);
-            if (draft === null) {
-              return null;
-            }
-            return (
-              <GuidedImageReviewCard
-                key={photo.key}
-                photo={photo}
-                state={reviewState}
-                draft={draft}
-                actions={actions}
-                scope={scope}
-                {...(recordedOriginLabel !== undefined ? { recordedOriginLabel } : {})}
-              />
-            );
-          })}
-        </section>
-      </section>
-    );
-  }
-
   return (
-    <>
-      <section
-        id="guided-section-review"
-        className="acx-guided-review"
-        aria-labelledby="acx-guided-review-title"
-        data-testid="guided-candidate"
-        tabIndex={-1}
-      >
-        <header className="acx-guided-review__header">
-          <h2 id="acx-guided-review-title">
-            {scope === 'public' ? guidedCopy('step.review.public') : guidedCopy('step.draft')}
-          </h2>
-          <p>{guidedCopy('draft.intro')}</p>
-        </header>
-
-        {blocked ? <p>{guidedCopy('draft.blocked')}</p> : null}
-        {missing ? (
-          <div>
-            <p>{guidedCopy('draft.fixture_missing')}</p>
-            <button
-              type="button"
-              className="acx-button acx-button--secondary"
-              onClick={() => callImageAction(actions.onRetryFixture, GUIDED_REVIEW_TRIBECA_KEY, false)}
-            >
-              {guidedCopy('draft.fixture_retry')}
-            </button>
-          </div>
-        ) : null}
-
-        {ready ? (
-          <div ref={comparisonRef} className="acx-guided-review__comparison">
-            <p className="acx-guided-review__origin">{originLabel(state, recordedOriginLabel)}</p>
-            <label htmlFor="guided-description-draft">{guidedCopy('draft.label')}</label>
-            <textarea
-              ref={editorRef}
-              id="guided-description-draft"
-              aria-invalid={emptyError ? 'true' : undefined}
-              aria-describedby={emptyError ? 'guided-description-draft-error' : undefined}
-              value={editValue}
-              rows={8}
-              onInput={resizeEditor}
-              onPointerDown={beginEditorPointerInteraction}
-              onPointerUp={rememberManualEditorSize}
-              onPointerCancel={cancelEditorPointerInteraction}
-              onMouseDown={beginEditorPointerInteraction}
-              onMouseUp={rememberManualEditorSize}
-              onTouchStart={beginEditorPointerInteraction}
-              onTouchEnd={rememberManualEditorSize}
-              onTouchCancel={cancelEditorPointerInteraction}
-              onChange={(event) => {
-                const text = event.target.value;
-                setEditValue(text);
-                setEmptyError(false);
-                onDraftInputRef.current(text);
-              }}
-            />
-            {emptyError ? (
-              <p id="guided-description-draft-error" className="acx-guided-review__field-error" role="alert">
-                {guidedCopy('draft.empty_error')}
-              </p>
-            ) : null}
-            <p>{guidedCopy('draft.effect')}</p>
-            <div className="acx-guided-review__actions">
-              <button
-                type="button"
-                className="acx-button acx-button--primary"
-                onClick={handlePreview}
-                disabled={!previewEnabled}
-                aria-describedby={previewBlocked ? 'guided-preview-reason' : undefined}
-              >
-                {guidedCopy('draft.next')}
-              </button>
-              <button
-                type="button"
-                className="acx-button acx-button--tertiary"
-                onClick={() => callImageAction(actions.onKeep, GUIDED_REVIEW_TRIBECA_KEY, false)}
-              >
-                {guidedCopy('draft.keep')}
-              </button>
-            </div>
-            {previewBlocked ? (
-              <p id="guided-preview-reason" className="acx-guided-review__apply-reason">
-                {previewBlocked}
-              </p>
-            ) : null}
-          </div>
-        ) : (
-          <div className="acx-guided-review__actions">
-            <button
-              type="button"
-              className="acx-button acx-button--tertiary"
-              onClick={() => callImageAction(actions.onKeep, GUIDED_REVIEW_TRIBECA_KEY, false)}
-            >
-              {guidedCopy('draft.keep')}
-            </button>
-          </div>
-        )}
-
-        {state.draftHistory.length > 0 ? (
-          <details className="acx-guided-review__history">
-            <summary>{guidedCopy('draft.history')}</summary>
-            <p>{guidedCopy('draft.history_note')}</p>
-            <ul>
-              {state.draftHistory.map((revision) => {
-                const matching = canRestoreRevision(state, revision.revisionId);
-                return (
-                  <li key={revision.revisionId}>
-                    <p>{revision.text}</p>
-                    {matching ? (
-                      <button
-                        type="button"
-                        className="acx-button acx-button--tertiary"
-                        onClick={() =>
-                          callRestoreAction(
-                            actions.onRestore,
-                            GUIDED_REVIEW_TRIBECA_KEY,
-                            revision.revisionId,
-                            'full',
-                            false,
-                          )
-                        }
-                      >
-                        {guidedCopy('draft.restore_revision')}
-                      </button>
-                    ) : (
-                      <>
-                        <p>{guidedCopy('draft.restore_guard')}</p>
-                        <button
-                          type="button"
-                          className="acx-button acx-button--tertiary"
-                          onClick={() =>
-                            callRestoreAction(
-                              actions.onRestore,
-                              GUIDED_REVIEW_TRIBECA_KEY,
-                              revision.revisionId,
-                              'copy_only',
-                              false,
-                            )
-                          }
-                        >
-                          {guidedCopy('draft.copy_revision')}
-                        </button>
-                      </>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          </details>
-        ) : null}
-      </section>
-
+    <section
+      id="guided-section-review"
+      className="acx-guided-review"
+      aria-labelledby="acx-guided-review-title"
+      data-testid="guided-candidate"
+      tabIndex={-1}
+    >
+      <header className="acx-guided-review__header">
+        <h2 id="acx-guided-review-title">
+          {scope === 'public' ? guidedCopy('step.review.public') : guidedCopy('step.draft')}
+        </h2>
+        <p>{guidedCopy('draft.intro')}</p>
+      </header>
       <section
         id="guided-section-apply"
-        className="acx-guided-review acx-guided-review__apply"
+        className="acx-guided-review__image-cards"
         aria-labelledby={scope === 'public' ? 'acx-guided-review-title' : 'acx-guided-apply-title'}
         tabIndex={-1}
       >
         {scope === 'admin' ? <h2 id="acx-guided-apply-title">{guidedCopy('step.apply')}</h2> : null}
-        <p>{guidedCopy('apply.intro')}</p>
-        <div className="acx-guided-review__preview-grid">
-          <div>
-            <h3>{guidedCopy('apply.before')}</h3>
-            <p data-applied-text>{state.appliedAltText}</p>
-          </div>
-          <div>
-            <h3>{guidedCopy('apply.after')}</h3>
-            <p>{localMatches ? (state.draftText ?? '') : editValue}</p>
-          </div>
-        </div>
-        <figure className="acx-guided-review__demo-preview">
-          <figcaption>{guidedCopy('apply.preview_title')}</figcaption>
-          <img
-            data-testid="demo-applied-image"
-            src={`${scenario.pressPhoto.src}#demo-applied-preview`}
-            alt={state.appliedAltText}
-          />
-        </figure>
-        <div className="acx-guided-review__actions">
-          <button
-            type="button"
-            className="acx-button acx-button--primary"
-            data-testid="demo-apply"
-            onClick={() => callTextAction(actions.onApply, GUIDED_REVIEW_TRIBECA_KEY, editValue, false)}
-            disabled={!applyEnabled}
-            aria-describedby={!applyEnabled && reason ? 'guided-apply-reason' : undefined}
-          >
-            {guidedCopy('apply.submit')}
-          </button>
-          <button
-            type="button"
-            className="acx-button acx-button--tertiary"
-            data-testid="demo-undo"
-            onClick={() => callImageAction(actions.onUndo, GUIDED_REVIEW_TRIBECA_KEY, false)}
-            disabled={!undoEnabled}
-            aria-describedby={!undoEnabled ? 'guided-undo-reason' : undefined}
-          >
-            {guidedCopy('apply.undo')}
-          </button>
-        </div>
-        {!applyEnabled && reason ? (
-          <p id="guided-apply-reason" className="acx-guided-review__apply-reason">
-            {reason}
-          </p>
-        ) : null}
-        {!undoEnabled ? (
-          <p id="guided-undo-reason" className="acx-guided-review__apply-reason">
-            {guidedCopy('apply.undo_unavailable')}
-          </p>
-        ) : null}
+        {scenario.pressPhotos.map((photo) => {
+          const draft = guidedReviewDraftFor(reviewState, photo.key);
+          if (draft === null) {
+            return null;
+          }
+          return (
+            <GuidedImageReviewCard
+              key={photo.key}
+              photo={photo}
+              state={reviewState}
+              draft={draft}
+              actions={actions}
+              scope={scope}
+              {...(recordedOriginLabel !== undefined ? { recordedOriginLabel } : {})}
+            />
+          );
+        })}
       </section>
-    </>
+    </section>
   );
 };
 

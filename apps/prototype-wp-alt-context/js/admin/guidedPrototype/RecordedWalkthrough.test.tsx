@@ -89,7 +89,7 @@ describe('RecordedWalkthrough public scope', () => {
   });
 
   it('renders public scope copy first, the escape hatch, and the two entry actions', () => {
-    render(<RecordedWalkthrough scope="public" escapeHref="https://example.test/" />);
+    render(<RecordedWalkthrough scope="public" />);
 
     const scope = screen.getByTestId('guided-scope');
     expect(scope.tagName).toBe('P');
@@ -101,7 +101,7 @@ describe('RecordedWalkthrough public scope', () => {
     expect(entrance?.querySelector('h1')).toHaveTextContent(guidedCopy('entry.title.public'));
 
     const escape = screen.getByRole('navigation', { name: 'Leave the walkthrough' });
-    expect(screen.getByTestId('guided-demo-root')).toHaveAttribute('data-escape-href', 'https://example.test/');
+    expect(escape.querySelector('a[href="https://altcontext.com/"]')).not.toBeNull();
     expect(escape.querySelector(`a[href="${CASE_STUDY_URL}"]`)).not.toBeNull();
 
     expect(screen.getByRole('button', { name: START_WALKTHROUGH })).toBeInTheDocument();
@@ -112,7 +112,7 @@ describe('RecordedWalkthrough public scope', () => {
   });
 
   it('gives every public entry action a distinct destination', () => {
-    render(<RecordedWalkthrough scope="public" escapeHref="/" />);
+    render(<RecordedWalkthrough scope="public" />);
 
     const read = screen.getByRole('link', { name: opensInNewWindow(READ_CASE_STUDY) });
     const caseStudyNav = screen.getByRole('link', { name: opensInNewWindow(guidedCopy('nav.case_study')) });
@@ -129,7 +129,7 @@ describe('RecordedWalkthrough public scope', () => {
   });
 
   it('opens public case-study exits and Home in a new tab', () => {
-    render(<RecordedWalkthrough scope="public" escapeHref="/" />);
+    render(<RecordedWalkthrough scope="public" />);
 
     const read = screen.getByRole('link', { name: opensInNewWindow(READ_CASE_STUDY) });
     const escape = screen.getByRole('navigation', { name: guidedCopy('nav.leave') });
@@ -152,7 +152,7 @@ describe('RecordedWalkthrough public scope', () => {
 
   it('reaches Start, then Read by Tab in that order', async () => {
     const user = userEvent.setup();
-    render(<RecordedWalkthrough scope="public" escapeHref="/" />);
+    render(<RecordedWalkthrough scope="public" />);
 
     const start = screen.getByRole('button', { name: START_WALKTHROUGH });
     start.focus();
@@ -180,7 +180,7 @@ describe('RecordedWalkthrough public scope', () => {
 
 describe('RecordedWalkthrough design notes', () => {
   it('hides live-generation copy on the public surface and keeps it for admin', () => {
-    const { unmount } = render(<RecordedWalkthrough scope="public" escapeHref="/" />);
+    const { unmount } = render(<RecordedWalkthrough scope="public" />);
     expect(document.body.textContent ?? '').not.toContain('Live generation');
     unmount();
 

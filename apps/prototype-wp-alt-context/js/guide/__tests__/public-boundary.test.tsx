@@ -149,7 +149,7 @@ describe('public recorded walkthrough boundary', () => {
   });
 
   it('renders the public scope text, entry actions, and escape hatch', () => {
-    render(<RecordedWalkthrough scope="public" escapeHref="https://demo.example/" />);
+    render(<RecordedWalkthrough scope="public" />);
 
     expect(screen.getByTestId('guided-scope')).toHaveTextContent(guidedCopy('scope.public'));
     expect(screen.getByRole('heading', { level: 1, name: guidedCopy('entry.title.public') })).toBeInTheDocument();
@@ -174,7 +174,7 @@ describe('public recorded walkthrough boundary', () => {
 
   it('makes no network calls across choose → edit → apply → undo', async () => {
     const user = userEvent.setup();
-    render(<RecordedWalkthrough scope="public" escapeHref="/" />);
+    render(<RecordedWalkthrough scope="public" />);
 
     choose('left', 'include');
     choose('right', 'include');
@@ -194,7 +194,7 @@ describe('public recorded walkthrough boundary', () => {
   it('keeps apply/undo in-tab and does not mutate the bundled example', async () => {
     const user = userEvent.setup();
     const seedBefore = structuredClone(createGuidedScenario());
-    render(<RecordedWalkthrough scope="public" escapeHref="/" />);
+    render(<RecordedWalkthrough scope="public" />);
 
     choose('left', 'include');
     choose('right', 'omit');
@@ -218,7 +218,7 @@ describe('public recorded walkthrough boundary', () => {
   });
 
   it('shows the complete current name-choice summary separately from live feedback', () => {
-    render(<RecordedWalkthrough scope="public" escapeHref="/" />);
+    render(<RecordedWalkthrough scope="public" />);
 
     const summary = screen.getByTestId('guided-choice-summary');
     expect(summary).toHaveTextContent('Justin Trudeau');
@@ -236,7 +236,7 @@ describe('public recorded walkthrough boundary', () => {
   });
 
   it('keeps the full before-source attribution inside the provenance disclosure', () => {
-    const { container } = render(<RecordedWalkthrough scope="public" escapeHref="/" />);
+    const { container } = render(<RecordedWalkthrough scope="public" />);
     const provenance = container.querySelector('.acx-guided-page__provenance-footer');
     expect(provenance).not.toBeNull();
     expect(provenance).toHaveTextContent(guidedCopy('context.source.summary.public'));
@@ -264,7 +264,7 @@ describe('public recorded walkthrough boundary', () => {
 
   it('keeps public completion copy bounded for applied and kept outcomes', async () => {
     const user = userEvent.setup();
-    render(<RecordedWalkthrough scope="public" escapeHref="/" />);
+    render(<RecordedWalkthrough scope="public" />);
 
     choose('left', 'include');
     choose('right', 'include');
@@ -291,7 +291,7 @@ describe('public recorded walkthrough boundary', () => {
 
   it('keeps reset local and clears choices, draft state, and outcome', async () => {
     const user = userEvent.setup();
-    render(<RecordedWalkthrough scope="public" escapeHref="/" />);
+    render(<RecordedWalkthrough scope="public" />);
 
     choose('left', 'include');
     choose('right', 'omit');
@@ -312,7 +312,7 @@ describe('public recorded walkthrough boundary', () => {
 
   it('does not resurrect an unsaved draft or open replacement after reset', async () => {
     const user = userEvent.setup();
-    render(<RecordedWalkthrough scope="public" escapeHref="/" />);
+    render(<RecordedWalkthrough scope="public" />);
 
     const scenario = createGuidedScenario();
     choose('left', 'include');

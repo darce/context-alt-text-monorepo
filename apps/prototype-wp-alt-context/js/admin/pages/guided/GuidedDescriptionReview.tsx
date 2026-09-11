@@ -958,7 +958,13 @@ export const GuidedDescriptionReview = ({
           <h2 id="acx-guided-review-title">{guidedCopy('step.draft')}</h2>
           <p>{guidedCopy('draft.intro')}</p>
         </header>
-        <div id="guided-section-apply" className="acx-guided-review__image-cards">
+        <div
+          id="guided-section-apply"
+          className="acx-guided-review__image-cards"
+          aria-labelledby="acx-guided-apply-title"
+          tabIndex={-1}
+        >
+          <h2 id="acx-guided-apply-title">{guidedCopy('step.apply')}</h2>
           {scenario.pressPhotos.map((photo) => {
             const draft = guidedReviewDraftFor(reviewState, photo.key);
             if (draft === null) {

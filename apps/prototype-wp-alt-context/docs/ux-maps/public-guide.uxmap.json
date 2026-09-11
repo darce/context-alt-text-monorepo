@@ -5,7 +5,7 @@
   "goals": [
     "Anyone can try the recorded review workflow at /guide/ signed-out; live generation and WordPress writes stay on the authenticated admin route.",
     "NAV-08: the first screen shows two plain-language entry actions — Start the walkthrough and Read the case study.",
-    "NAV-07: public scope renders an escape-hatch link to the site home and to the case study.",
+    "NAV-07: public scope renders a fixed pair of external product links — Home at https://altcontext.com/ and the case study at https://darce.xyz/projects/altcontext/.",
     "SECD-02/03: the public route performs no REST calls; /acx/v1/public/demo/describe stays gated by acx_public_demo_enabled and is expected off unless retained.",
     "Bundle-failure still returns 200 with canonical and the PUBLIC_GUIDE_FALLBACK paragraph.",
     "Detailed engine metadata stays in the notes while the recorded provenance summary is visible on screen in the section footer."
@@ -235,7 +235,7 @@
       "id": "fallback",
       "kind": "screen",
       "title": "The walkthrough could not load",
-      "purpose": "Domain bundle_failed maps to error. main.tsx hides .acx-public-guide__fallback on mount; if ViteManifest entry_assets returns null, the template still renders 200 plus canonical content and PUBLIC_GUIDE_FALLBACK remains visible.",
+      "purpose": "Domain bundle_failed maps to error. The mounted guide hides .acx-public-guide__fallback; if ViteManifest entry_assets returns null, the template still renders 200 plus canonical content and PUBLIC_GUIDE_FALLBACK remains visible.",
       "route": "/guide/",
       "wp_page": null,
       "job_entry": false,

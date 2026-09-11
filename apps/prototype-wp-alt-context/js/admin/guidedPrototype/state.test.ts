@@ -592,6 +592,48 @@ describe('chooseGuidedName', () => {
     expect(changed.appliedAltText).toBe(previewed.appliedAltText);
   });
 
+  it('resolves every image when both names are included without an image key', () => {
+    const scenario = createGuidedScenario();
+    const state = chooseGuidedName(
+      chooseGuidedName(createGuidedDemoState(), scenario, 'left', INCLUDE),
+      scenario,
+      'right',
+      INCLUDE,
+    );
+
+    expect(state.drafts[TRIBECA].draftStatus).toBe(GUIDED_DRAFT_STATUS.READY);
+    expect(state.drafts[COACHELLA].draftStatus).toBe(GUIDED_DRAFT_STATUS.READY);
+    expect(state.drafts[COACHELLA].draftText).toBe(scenario.samples[COACHELLA].both);
+  });
+
+  it('resolves every image to the none sample when both names are omitted', () => {
+    const scenario = createGuidedScenario();
+    const state = chooseGuidedName(
+      chooseGuidedName(createGuidedDemoState(), scenario, 'left', OMIT),
+      scenario,
+      'right',
+      OMIT,
+    );
+
+    expect(state.drafts[TRIBECA].draftStatus).toBe(GUIDED_DRAFT_STATUS.READY);
+    expect(state.drafts[TRIBECA].draftText).toBe(scenario.samples[TRIBECA].none);
+    expect(state.drafts[COACHELLA].draftStatus).toBe(GUIDED_DRAFT_STATUS.READY);
+    expect(state.drafts[COACHELLA].draftText).toBe(scenario.samples[COACHELLA].none);
+  });
+
+  it('keeps the documented asymmetric coachella fixture gap after global resolution', () => {
+    const scenario = createGuidedScenario();
+    const state = chooseGuidedName(
+      chooseGuidedName(createGuidedDemoState(), scenario, 'left', INCLUDE),
+      scenario,
+      'right',
+      OMIT,
+    );
+
+    expect(state.drafts[TRIBECA].draftStatus).toBe(GUIDED_DRAFT_STATUS.READY);
+    expect(state.drafts[COACHELLA].draftStatus).toBe(GUIDED_DRAFT_STATUS.FIXTURE_MISSING);
+  });
+
   it('uses the selected image sample and reports absent variants as fixture_missing', () => {
     const scenario = createGuidedScenario();
     const coachellaBoth = chooseBoth(createGuidedDemoState(), scenario, INCLUDE, INCLUDE, COACHELLA);
@@ -656,6 +698,33 @@ describe('chooseGuidedName', () => {
     expect(pending.draftOrigin).toBe(GUIDED_DRAFT_ORIGIN.VISITOR_EDIT);
     expect(pending.appliedAltText).toBe(edited.appliedAltText);
   });
+
+  it.each([TRIBECA, COACHELLA])(
+    'parks a choice change when the visitor edited the %s image and confirms it for every image',
+    (editedImageKey: GuidedImageKey) => {
+      const scenario = createGuidedScenario();
+      const edited = editGuidedDraftForImage(
+        includeBoth(scenario),
+        editedImageKey,
+        'A distinctive manually edited draft.',
+      );
+      const pending = chooseGuidedName(edited, scenario, 'right', OMIT);
+
+      expect(pending.pendingChoiceChange).toEqual({ position: 'right', choice: OMIT });
+      const confirmed = confirmGuidedChoiceReplacement(pending, scenario);
+      expect(confirmed.pendingChoiceChange).toBeNull();
+      expect(confirmed.choices).toEqual({ left: INCLUDE, right: OMIT });
+      expect(confirmed.drafts[TRIBECA].draftStatus).toBe(GUIDED_DRAFT_STATUS.READY);
+      expect(confirmed.drafts[COACHELLA].draftStatus).toBe(GUIDED_DRAFT_STATUS.FIXTURE_MISSING);
+      expect(confirmed.drafts[editedImageKey].draftHistory).toEqual([
+        expect.objectContaining({
+          text: 'A distinctive manually edited draft.',
+          origin: GUIDED_DRAFT_ORIGIN.VISITOR_EDIT,
+          choices: { left: INCLUDE, right: INCLUDE },
+        }),
+      ]);
+    },
+  );
 
   it('records a local action summary from guided copy, not hand-written prose', () => {
     const scenario = createGuidedScenario();

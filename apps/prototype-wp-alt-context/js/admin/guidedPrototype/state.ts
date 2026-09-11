@@ -523,7 +523,7 @@ const cloneState = (state: GuidedDemoState): GuidedDemoState => ({
   actionHistory: state.actionHistory.map((entry) => ({ ...entry })),
 });
 
-type GuidedImageDraftUpdater = (draft: GuidedImageDraft) => GuidedImageDraft;
+type GuidedImageDraftUpdater = (draft: GuidedImageDraft, imageKey?: GuidedImageKey) => GuidedImageDraft;
 type GuidedStateUpdater = (state: GuidedDemoState) => GuidedDemoState;
 
 const withImageDrafts = (
@@ -535,7 +535,7 @@ const withImageDrafts = (
   const next = cloneState(state);
   const drafts = { ...next.drafts };
   for (const imageKey of imageKeys) {
-    drafts[imageKey] = updateDraft(drafts[imageKey]);
+    drafts[imageKey] = updateDraft(drafts[imageKey], imageKey);
   }
   next.drafts = drafts;
   return mirrorTribecaDraft(updateState(next));
@@ -788,14 +788,13 @@ export const chooseGuidedName = (
   choice: GuidedNameChoice,
   imageKey: GuidedImageKey = GUIDED_DEFAULT_IMAGE_KEY,
 ): GuidedDemoState => {
-  const draft = state.drafts[imageKey];
   if (state.pendingChoiceChange !== null) {
     return state;
   }
   if (state.choices[position] === choice) {
     return state;
   }
-  if (draft.draftOrigin === GUIDED_DRAFT_ORIGIN.VISITOR_EDIT) {
+  if (GUIDED_IMAGE_KEYS.some((key) => state.drafts[key].draftOrigin === GUIDED_DRAFT_ORIGIN.VISITOR_EDIT)) {
     // Park the intended change only. Confirm applies it; cancel is a no-op for
     // outcome, copy, and history of a choice that has not happened yet (T07).
     const next = cloneState(state);
@@ -805,7 +804,6 @@ export const chooseGuidedName = (
 
   const choices = cloneChoices(state.choices);
   choices[position] = choice;
-  const resolved = resolveSample(scenario, choices, imageKey);
   const namesAreDecided =
     choices.left !== GUIDED_NAME_CHOICE.UNDECIDED && choices.right !== GUIDED_NAME_CHOICE.UNDECIDED;
   const summaryKey: GuidedCopyKey =
@@ -817,12 +815,14 @@ export const chooseGuidedName = (
   const summaryValues: Record<string, string | number> =
     choice === GUIDED_NAME_CHOICE.INCLUDE ? { name: personNameForPosition(scenario, position) } : {};
 
-  return withImageDraft(
+  // Draft resolution is global because choices is global; imageKey remains for API compatibility.
+  void imageKey;
+  return withImageDrafts(
     state,
-    imageKey,
-    (current) => ({
+    GUIDED_IMAGE_KEYS,
+    (current, currentImageKey) => ({
       ...current,
-      ...resolved,
+      ...resolveSample(scenario, choices, currentImageKey),
       draftVersion: namesAreDecided ? current.draftVersion + 1 : current.draftVersion,
       previewedVersion: namesAreDecided ? null : current.previewedVersion,
     }),
@@ -851,12 +851,14 @@ export const confirmGuidedChoiceReplacement = (
   const pending = state.pendingChoiceChange;
   const choices = cloneChoices(state.choices);
   choices[pending.position] = pending.choice;
-  return withImageDraft(
+  // Draft resolution is global because choices is global; imageKey remains for API compatibility.
+  void imageKey;
+  return withImageDrafts(
     state,
-    imageKey,
-    (draft) => ({
+    GUIDED_IMAGE_KEYS,
+    (draft, currentImageKey) => ({
       ...draft,
-      ...resolveSample(scenario, choices, imageKey),
+      ...resolveSample(scenario, choices, currentImageKey),
       draftHistory: archiveCurrentDraft(state, draft),
       draftVersion: draft.draftVersion + 1,
       previewedVersion: null,

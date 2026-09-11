@@ -45,11 +45,11 @@
 
 ### Review an AI-assisted alt text draft (`entry`)
 
-Purpose: Compact intro plus numbered guide on one page. AltContext guided demo. You are editing a photo in a festival gallery. Review two saved name suggestions, edit the alt text, then apply it to a demo copy. You can leave either person unnamed. This walkthrough uses recorded face suggestions and sample drafts. Your choices change only the demo copy in this tab and reset when you reload. An optional live test at the end runs separately on the server. Start the walkthrough is the one primary CTA. Read the AltContext case study is a secondary link. Demo steps: Step 1 of 4: Understand the page, with Show all steps / Hide steps. Reset demo opens the reset overlay. Route stays #/guided-prototype.
+Purpose: Compact intro plus numbered guide on one page. AltContext guided demo. You are reviewing two photos in a festival gallery. Review saved name suggestions across both photos, edit each alt text draft, then apply changes to the corresponding demo copy. You can leave either person unnamed. This walkthrough uses recorded face suggestions and per-image sample drafts. Your choices change only the demo copies in this tab and reset when you reload. An optional live test at the end runs separately on the server. Start the walkthrough is the one primary CTA. Read the AltContext case study is a secondary link. Demo steps: Step 1 of 4: Understand the page, with Show all steps / Hide steps. Reset demo opens the reset overlay. Route stays #/guided-prototype.
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
-| `guided-demo-root` | Page root. AltContext guided demo. Review an AI-assisted alt text draft. You are editing a photo in a festival gallery. Review two saved name suggestions, edit the alt text, then apply it to a demo copy. You can leave either person unnamed. This walkthrough uses recorded face suggestions and sample drafts. Your choices change only the demo copy in this tab and reset when you reload. An optional live test at the end runs separately on the server. | content | default, first_time |
+| `guided-demo-root` | Page root. AltContext guided demo. Review AI-assisted alt text drafts for two photos in a festival gallery. Review saved name suggestions across both photos, edit each alt text draft, then apply changes to the corresponding demo copy. You can leave either person unnamed. This walkthrough uses recorded face suggestions and per-image sample drafts. Your choices change only the demo copies in this tab and reset when you reload. An optional live test at the end runs separately on the server. | content | default, first_time |
 | `entry-cta` | Start the walkthrough (primary) and Read the AltContext case study (secondary link, new tab). | nav | default |
 | `guided-demo-stepper` | Demo steps. Step {stepNumber} of 4: {stepTitle}. Show all steps / Hide steps. Numbered buttons: Understand the page; Choose which names to use; Edit the alt text; Apply and undo. Inspection is always allowed; buttons do not change the route hash. | nav | default, first_time |
 | `entry-reset` | Reset demo trigger in the workspace header. Opens Reset this demo? | nav | default |
@@ -60,7 +60,7 @@ Purpose: Compact intro plus numbered guide on one page. AltContext guided demo. 
 | Compact intro plus numbered guide on one page. AltContext… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Page root. AltContext guided demo. Review an AI-assis… |
+|   - Page root. AltContext guided demo. Review AI-assisted… |
 |   - Start the walkthrough (primary) and Read the AltConte… |
 |   - Demo steps. Step {stepNumber} of 4: {stepTitle}. Show… |
 |   - Reset demo trigger in the workspace header. Opens Res… |
@@ -93,12 +93,12 @@ Purpose: Step 1 of 4: Understand the page. A context sentence appears above both
 ```
 +------------------------------------------------------------+
 | Understand the page  [screen]  #/guided-prototype          |
-| Step 1 of 4: Context sentence above stacked 1 / 1 figures… |
+| Step 1 of 4: Understand the page. A context sentence appe… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Stacked one-column figures with image/faces columns…   |
-|   - Visible credits, captions, click-pinned faces…         |
-|   - Plain three-paragraph provenance footer…               |
+|   - Understand the page. A context sentence appears above… |
+|   - Two evidence figures inside .acx-guided-page__media-l… |
+|   - Plain .acx-guided-page__provenance-footer below both … |
 |   - Single polite status live region for demo events such… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
@@ -117,19 +117,23 @@ Action states: both_undecided, left_undecided, right_undecided, include_include,
 | zone id | label | role | states |
 | --- | --- | --- | --- |
 | `guided-section-face` | Choose which names to use in the "People recognised in this photo" articles in each figure's right-hand .acx-guided-page__faces column. Each article contains both persons' roster entries, grouped press-photo crops, one-decision include/omit controls, similarities, strengths, and the below-threshold clusterer disclosure; the faces column collapses below the image below 56.25rem. | content | default, first_time |
-| `name-choice-left` | Justin Trudeau roster entry for both press-photo matches in the "People recognised in this photo" article in the right-hand .acx-guided-page__faces column. Saved suggestion: Justin Trudeau. Use Justin Trudeau. Leave this person unnamed. No option is preselected. both_undecided or left_undecided: Choose an option for this person. include: The sample draft will use Justin Trudeau. omit: The sample draft will describe this person without a name. Both the Tribeca 89.4% strong crop and Coachella 70.2% strong crop are shown. | form | first_time, default, edge_input |
-| `name-choice-right` | Katy Perry roster entry for both press-photo matches in the "People recognised in this photo" article in the right-hand .acx-guided-page__faces column. Saved suggestion: Katy Perry. Use Katy Perry. Leave this person unnamed. No option is preselected. both_undecided or right_undecided: Choose an option for this person. include: The sample draft will use Katy Perry. omit: The sample draft will describe this person without a name. Tribeca is 100.0% cluster anchor, strong; Coachella is 56.7% weak, below the 60.0% threshold, and still grouped by the production clusterer. Both crops are shown. | form | first_time, default, edge_input |
+| `name-choice-tribeca-left` | Justin Trudeau roster entry for the Tribeca figure's "People recognised in this photo" article in the right-hand .acx-guided-page__faces column. Saved suggestion: Justin Trudeau. Use Justin Trudeau. Leave this person unnamed. No option is preselected. both_undecided or left_undecided: Choose an option for this person. include: the Tribeca sample draft will use Justin Trudeau. omit: the Tribeca sample draft will describe this person without a name. One Tribeca 89.4% strong crop is shown. | form | first_time, default, edge_input |
+| `name-choice-tribeca-right` | Katy Perry roster entry for the Tribeca figure's "People recognised in this photo" article in the right-hand .acx-guided-page__faces column. Saved suggestion: Katy Perry. Use Katy Perry. Leave this person unnamed. No option is preselected. both_undecided or right_undecided: Choose an option for this person. include: the Tribeca sample draft will use Katy Perry. omit: the Tribeca sample draft will describe this person without a name. One Tribeca 100.0% strong cluster-anchor crop is shown. | form | first_time, default, edge_input |
+| `name-choice-coachella-left` | Justin Trudeau roster entry for the Coachella figure's "People recognised in this photo" article in the right-hand .acx-guided-page__faces column. Saved suggestion: Justin Trudeau. Use Justin Trudeau. Leave this person unnamed. No option is preselected. both_undecided or left_undecided: Choose an option for this person. include: the Coachella sample draft will use Justin Trudeau. omit: the Coachella sample draft will describe this person without a name. One Coachella 70.2% strong crop is shown. | form | first_time, default, edge_input |
+| `name-choice-coachella-right` | Katy Perry roster entry for the Coachella figure's "People recognised in this photo" article in the right-hand .acx-guided-page__faces column. Saved suggestion: Katy Perry. Use Katy Perry. Leave this person unnamed. No option is preselected. both_undecided or right_undecided: Choose an option for this person. include: the Coachella sample draft will use Katy Perry. omit: the Coachella sample draft will describe this person without a name. One Coachella 56.7% weak crop is below the 60.0% threshold and is still grouped by the production clusterer. | form | first_time, default, edge_input |
 | `guided-section-identity` | Review the draft. Disabled with Choose an option for both people. Leaving a person unnamed counts as a choice; enabled once both person choices are include or omit. Radios are disabled while Change the name choice? is open. | nav | default, first_time, edge_input |
 
 ```
 +------------------------------------------------------------+
 | Choose which names to use  [screen]  #/guided-prototype    |
-| Step 2 of 4: People roster entries in faces columns…       |
+| Step 2 of 4: Choose which names to use. Each figure's rig… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - People recognised in this photo articles…              |
-|   - Justin Trudeau and Katy Perry include/omit radios…     |
-|   - Grouped evidence and click-to-pin face outlines…       |
+|   - Choose which names to use in the "People recognised i… |
+|   - Justin Trudeau roster entry for the Tribeca figure's … |
+|   - Katy Perry roster entry for the Tribeca figure's "Peo… |
+|   - Justin Trudeau roster entry for the Coachella figure'… |
+|   - Katy Perry roster entry for the Coachella figure's "P… |
 |   - Review the draft. Disabled with Choose an option for … |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
@@ -181,22 +185,22 @@ Action states: both_undecided, left_undecided, right_undecided, include_include,
 
 ### Edit the alt text (`draft`)
 
-Purpose: Step 3 of 4: Edit the alt text. Check the wording against the photo and the page context. Edit anything you would not publish. Preview the change is the one primary action. Keep current alt text is always allowed, including a blocked or missing sample. Draft history is collapsed and only rendered when revisions exist.
+Purpose: Step 3 of 4: Edit the alt text. Check each draft against its photo and the page context. Edit anything you would not publish. Preview the change is the primary action for each photo. Keep current alt text is always allowed for either photo, including a blocked or missing sample. Draft history is collapsed per image and only rendered when revisions exist.
 
 Action states: blocked, fixture_missing, preview_invalid, preview_valid
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
-| `guided-candidate` | Edit the alt text. Check the wording against the photo and the page context. Edit anything you would not publish. Alt text draft textarea. Sample draft from the recorded example. or Your edit, based on the recorded example. Edits stay in this tab. Nothing is applied until you choose Apply to demo copy. blocked: Choose a name option for both faces to load the sample draft. fixture_missing: The sample draft for these choices is unavailable. Your choices and the current demo copy have not changed. preview_invalid: Enter alt text before reviewing the change. | form | default, empty, error |
+| `guided-candidate` | Edit the alt text for each photo. Tribeca and Coachella each have an Alt text draft textarea with a recorded sample or a local visitor edit. Edits stay in this tab. Nothing is applied until you choose Apply to demo copy for that photo. blocked: Choose a name option for both people to load both sample drafts. fixture_missing: The sample draft for this photo and these choices is unavailable; the other photo's draft and both demo copies are unchanged. preview_invalid: Enter alt text before reviewing the change. | form | default, empty, error |
 | `draft-history` | Draft history (closed; only when revisions exist). Earlier edits are kept in this tab until you reset or reload. Restore earlier draft when choices match. Otherwise: This earlier draft uses different name choices. Change those choices first, or copy the text and review it as a new edit. plus Copy earlier draft. | status | default, empty |
 
 ```
 +------------------------------------------------------------+
 | Edit the alt text  [screen]  #/guided-prototype            |
-| Step 3 of 4: Edit the alt text. Check the wording against… |
+| Step 3 of 4: Edit the alt text. Check each draft against … |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Edit the alt text. Check the wording against the phot… |
+|   - Edit the alt text for each photo. Tribeca and Coachel… |
 |   - Draft history (closed; only when revisions exist). Ea… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
@@ -221,14 +225,15 @@ Action states: blocked, fixture_missing, preview_invalid, preview_valid
 
 ### Apply and undo (`apply`)
 
-Purpose: Step 4 of 4: Apply and undo. Compare the current alt text with your draft. Applying changes only the demo image below. Apply to demo copy is enabled only after a current preview that differs from the demo copy. Undo last application restores the previous demo alt text. There is no application to undo yet. when the undo stack is empty.
+Purpose: Step 4 of 4: Apply and undo. Compare the current alt text with each photo's draft. Applying changes only that photo's demo copy. Apply to demo copy is enabled only after a current preview that differs from the corresponding demo copy. Undo last application restores the previous alt text for that photo. There is no application to undo yet when the per-image undo stack is empty.
 
 Action states: apply_disabled_undo_empty, apply_disabled_undo_nonempty, apply_enabled_undo_empty, apply_enabled_undo_nonempty
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
-| `guided-section-apply` | Apply and undo. Compare the current alt text with your draft. Applying changes only the demo image below. Current alt text beside Will be applied. The draft changed. Preview it again before applying. The demo copy already uses this text. | content | default, error |
-| `demo-applied-image` | Demo image preview. Distinct demo image whose alternative is the current demo copy, starting as Two people at a film festival. | ai_review | default |
+| `guided-section-apply` | Apply and undo each per-image draft. For Tribeca and Coachella, compare Current alt text beside Will be applied. Applying changes only that photo's demo copy. The draft changed: preview it again before applying. The demo copy already uses this text when it matches. | content | default, error |
+| `demo-applied-image-tribeca` | Tribeca demo image preview. Distinct applied-preview image whose alternative is the current Tribeca demo copy. This zone is rendered only while the Tribeca draft status is ready. | ai_review | default |
+| `demo-applied-image-coachella` | Coachella demo image preview. Distinct applied-preview image whose alternative is the current Coachella demo copy. This zone is rendered only while the Coachella draft status is ready. | ai_review | default |
 
 ```
 +------------------------------------------------------------+
@@ -236,8 +241,9 @@ Action states: apply_disabled_undo_empty, apply_disabled_undo_nonempty, apply_en
 | Step 4 of 4: Apply and undo. Compare the current alt text… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Apply and undo. Compare the current alt text with you… |
-|   - Demo image preview. Distinct demo image whose alterna… |
+|   - Apply and undo each per-image draft. For Tribeca and … |
+|   - Tribeca demo image preview. Distinct applied-preview … |
+|   - Coachella demo image preview. Distinct applied-previe… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 | when apply_disabled_undo_empty                             |
@@ -630,13 +636,13 @@ below must exist in the sibling `.uxmap.json`, and no `z-*`/`act-*` id may appea
 that the JSON does not define. Regenerate with `docs/ux-maps/render_ux_maps.py` — never
 hand-edit one side.
 
-Zone ids: guided-demo-root entry-cta guided-demo-stepper entry-reset guided-section-understand context-photo context-provenance guided-page-feedback guided-section-face name-choice-left name-choice-right guided-section-identity guided-candidate draft-history guided-section-apply demo-applied-image demo-outcome history-list notes-disclosure names-change-copy names-change-actions reset-copy reset-actions case-study-content guided-live guided-live-status
+Zone ids: guided-demo-root entry-cta guided-demo-stepper entry-reset guided-section-understand context-photo context-provenance guided-page-feedback guided-section-face name-choice-tribeca-left name-choice-tribeca-right name-choice-coachella-left name-choice-coachella-right guided-section-identity guided-candidate draft-history guided-section-apply demo-applied-image-tribeca demo-applied-image-coachella demo-outcome history-list notes-disclosure names-change-copy names-change-actions reset-copy reset-actions case-study-content guided-live guided-live-status
 
 Action ids: start-walkthrough open-case-study toggle-guide select-step-context select-step-names select-step-draft select-step-apply open-reset continue-to-names include-left omit-left include-right omit-right continue-to-draft preview-draft keep-current retry-fixture restore-revision copy-revision demo-apply demo-undo return-to-draft confirm-choice-change cancel-choice-change reset-cancel reset-confirm live-submit live-stop-waiting live-keep-waiting live-retry
 
 Zone labels (verbatim; the tables above escape `|` for markdown, this list does not):
 
-- Page root. AltContext guided demo. Review an AI-assisted alt text draft. You are editing a photo in a festival gallery. Review two saved name suggestions, edit the alt text, then apply it to a demo copy. You can leave either person unnamed. This walkthrough uses recorded face suggestions and sample drafts. Your choices change only the demo copy in this tab and reset when you reload. An optional live test at the end runs separately on the server.
+- Page root. AltContext guided demo. Review AI-assisted alt text drafts for two photos in a festival gallery. Review saved name suggestions across both photos, edit each alt text draft, then apply changes to the corresponding demo copy. You can leave either person unnamed. This walkthrough uses recorded face suggestions and per-image sample drafts. Your choices change only the demo copies in this tab and reset when you reload. An optional live test at the end runs separately on the server.
 - Start the walkthrough (primary) and Read the AltContext case study (secondary link, new tab).
 - Demo steps. Step {stepNumber} of 4: {stepTitle}. Show all steps / Hide steps. Numbered buttons: Understand the page; Choose which names to use; Edit the alt text; Apply and undo. Inspection is always allowed; buttons do not change the route hash.
 - Reset demo trigger in the workspace header. Opens Reset this demo?
@@ -645,13 +651,16 @@ Zone labels (verbatim; the tables above escape `|` for markdown, this list does 
 - Plain .acx-guided-page__provenance-footer below both figures, before Continue: three plain paragraphs for the recorded face-match run, event/source context, and what was checked. Photo credits stay visible beneath each image; the footer is not a details disclosure.
 - Single polite status live region for demo events such as Demo reset. WordPress media was not changed.
 - Choose which names to use in the "People recognised in this photo" articles in each figure's right-hand .acx-guided-page__faces column. Each article contains both persons' roster entries, grouped press-photo crops, one-decision include/omit controls, similarities, strengths, and the below-threshold clusterer disclosure; the faces column collapses below the image below 56.25rem.
-- Justin Trudeau roster entry for both press-photo matches in the "People recognised in this photo" article in the right-hand .acx-guided-page__faces column. Saved suggestion: Justin Trudeau. Use Justin Trudeau. Leave this person unnamed. No option is preselected. both_undecided or left_undecided: Choose an option for this person. include: The sample draft will use Justin Trudeau. omit: The sample draft will describe this person without a name. Both the Tribeca 89.4% strong crop and Coachella 70.2% strong crop are shown.
-- Katy Perry roster entry for both press-photo matches in the "People recognised in this photo" article in the right-hand .acx-guided-page__faces column. Saved suggestion: Katy Perry. Use Katy Perry. Leave this person unnamed. No option is preselected. both_undecided or right_undecided: Choose an option for this person. include: The sample draft will use Katy Perry. omit: The sample draft will describe this person without a name. Tribeca is 100.0% cluster anchor, strong; Coachella is 56.7% weak, below the 60.0% threshold, and still grouped by the production clusterer. Both crops are shown.
+- Justin Trudeau roster entry for the Tribeca figure's "People recognised in this photo" article in the right-hand .acx-guided-page__faces column. Saved suggestion: Justin Trudeau. Use Justin Trudeau. Leave this person unnamed. No option is preselected. both_undecided or left_undecided: Choose an option for this person. include: the Tribeca sample draft will use Justin Trudeau. omit: the Tribeca sample draft will describe this person without a name. One Tribeca 89.4% strong crop is shown.
+- Katy Perry roster entry for the Tribeca figure's "People recognised in this photo" article in the right-hand .acx-guided-page__faces column. Saved suggestion: Katy Perry. Use Katy Perry. Leave this person unnamed. No option is preselected. both_undecided or right_undecided: Choose an option for this person. include: the Tribeca sample draft will use Katy Perry. omit: the Tribeca sample draft will describe this person without a name. One Tribeca 100.0% strong cluster-anchor crop is shown.
+- Justin Trudeau roster entry for the Coachella figure's "People recognised in this photo" article in the right-hand .acx-guided-page__faces column. Saved suggestion: Justin Trudeau. Use Justin Trudeau. Leave this person unnamed. No option is preselected. both_undecided or left_undecided: Choose an option for this person. include: the Coachella sample draft will use Justin Trudeau. omit: the Coachella sample draft will describe this person without a name. One Coachella 70.2% strong crop is shown.
+- Katy Perry roster entry for the Coachella figure's "People recognised in this photo" article in the right-hand .acx-guided-page__faces column. Saved suggestion: Katy Perry. Use Katy Perry. Leave this person unnamed. No option is preselected. both_undecided or right_undecided: Choose an option for this person. include: the Coachella sample draft will use Katy Perry. omit: the Coachella sample draft will describe this person without a name. One Coachella 56.7% weak crop is below the 60.0% threshold and is still grouped by the production clusterer.
 - Review the draft. Disabled with Choose an option for both people. Leaving a person unnamed counts as a choice; enabled once both person choices are include or omit. Radios are disabled while Change the name choice? is open.
-- Edit the alt text. Check the wording against the photo and the page context. Edit anything you would not publish. Alt text draft textarea. Sample draft from the recorded example. or Your edit, based on the recorded example. Edits stay in this tab. Nothing is applied until you choose Apply to demo copy. blocked: Choose a name option for both people to load the sample draft. fixture_missing: The sample draft for these choices is unavailable. Your choices and the current demo copy have not changed. preview_invalid: Enter alt text before reviewing the change.
+- Edit the alt text for each photo. Tribeca and Coachella each have an Alt text draft textarea with a recorded sample or a local visitor edit. Edits stay in this tab. Nothing is applied until you choose Apply to demo copy for that photo. blocked: Choose a name option for both people to load both sample drafts. fixture_missing: The sample draft for this photo and these choices is unavailable; the other photo's draft and both demo copies are unchanged. preview_invalid: Enter alt text before reviewing the change.
 - Draft history (closed; only when revisions exist). Earlier edits are kept in this tab until you reset or reload. Restore earlier draft when choices match. Otherwise: This earlier draft uses different name choices. Change those choices first, or copy the text and review it as a new edit. plus Copy earlier draft.
-- Apply and undo. Compare the current alt text with your draft. Applying changes only the demo image below. Current alt text beside Will be applied. The draft changed. Preview it again before applying. The demo copy already uses this text.
-- Demo image preview. Distinct demo image whose alternative is the current demo copy, starting as Two people at a film festival.
+- Apply and undo each per-image draft. For Tribeca and Coachella, compare Current alt text beside Will be applied. Applying changes only that photo's demo copy. The draft changed: preview it again before applying. The demo copy already uses this text when it matches.
+- Tribeca demo image preview. Distinct applied-preview image whose alternative is the current Tribeca demo copy. This zone is rendered only while the Tribeca draft status is ready.
+- Coachella demo image preview. Distinct applied-preview image whose alternative is the current Coachella demo copy. This zone is rendered only while the Coachella draft status is ready.
 - applied: Your demo copy is updated. Applied to the demo copy in this tab. WordPress media has not been updated. kept: The demo copy is unchanged. You kept the current alt text. You can return to the draft or inspect the design notes below. Return to the draft.
 - Your demo actions. This history is local to this tab. It is not a server audit log. empty: Your choices and changes will appear here.
 - Design notes (closed). Recorded recognition keeps the core walkthrough repeatable. Live generation is separate so a slow or unavailable service does not prevent review. A suggested identity and permission to use a name are different decisions. Either person can remain unnamed. Drafting and applying are separate actions. The preview shows exactly what will change, and Undo restores the previous demo alt text. This prototype demonstrates the interaction. It does not establish recognition accuracy, user trust, or full accessibility conformance.

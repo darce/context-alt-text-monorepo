@@ -17,16 +17,16 @@
       "source_sha256": "1f6743c1276ec031e35b4c78ea14d133fe288ce3f42921cde99a56ac32a99f1d"
     },
     "guided-prototype": {
-      "projection_sha256": "deab4c2018b9e130924a45d50e11b8576c05afceacf83230ffc43edb92d5783e",
-      "source_sha256": "c1ab38783dd9de3a8b7ca50a2d9b9c5f75b8a7d3320959b1a30183a098c84310"
+      "projection_sha256": "19fbbfed27852133db21acc1aa95991bb61b466940e1583dee6466aab7907dd3",
+      "source_sha256": "264e382a0aac38ea840a50e5e1a92e6e3e237fc3c1cfaebd2a18cb24d7d17eb4"
     },
     "public-demo-describe": {
       "projection_sha256": "c36c30e4c5abaade7c4a3b2948bd12369f23a22729c613432da36c0f77f7d1c2",
       "source_sha256": "b0b3761f20ece84f20b512cde30a970277ed831a8f705da77665f76715429257"
     },
     "public-guide": {
-      "projection_sha256": "7173d341d3ad1b565fb4e25f5c1fa828c3c7d230ed6837f29353a2597454ee57",
-      "source_sha256": "6315e816a423ef89e4cedfdf7b7407421818da0fed56c9c5272cf3884e98acae"
+      "projection_sha256": "af1b9d941e7abbca492edac7e5e578acb5f61b000829d55c414ccef727397d0c",
+      "source_sha256": "4e7dc7401b709d6bf317152b587ed2cc9e41a8519ac5f4ea5f7640a4538deb8e"
     },
     "roster-people": {
       "projection_sha256": "c3674e305d16520943172b3699073d3603c30a7195d7170114bdbaa78e92206c",

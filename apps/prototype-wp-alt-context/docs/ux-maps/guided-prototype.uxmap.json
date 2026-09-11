@@ -23,7 +23,7 @@
       "id": "entry",
       "kind": "screen",
       "title": "Review an AI-assisted alt text draft",
-      "purpose": "Compact intro plus numbered guide on one page. AltContext guided demo. You are editing a photo in a festival gallery. Review two saved name suggestions, edit the alt text, then apply it to a demo copy. You can leave either person unnamed. This walkthrough uses recorded face suggestions and sample drafts. Your choices change only the demo copy in this tab and reset when you reload. An optional live test at the end runs separately on the server. Start the walkthrough is the one primary CTA. Read the AltContext case study is a secondary link. Demo steps: Step 1 of 4: Understand the page, with Show all steps / Hide steps. Reset demo opens the reset overlay. Route stays #/guided-prototype.",
+      "purpose": "Compact intro plus numbered guide on one page. AltContext guided demo. You are reviewing two photos in a festival gallery. Review saved name suggestions across both photos, edit each alt text draft, then apply changes to the corresponding demo copy. You can leave either person unnamed. This walkthrough uses recorded face suggestions and per-image sample drafts. Your choices change only the demo copies in this tab and reset when you reload. An optional live test at the end runs separately on the server. Start the walkthrough is the one primary CTA. Read the AltContext case study is a secondary link. Demo steps: Step 1 of 4: Understand the page, with Show all steps / Hide steps. Reset demo opens the reset overlay. Route stays #/guided-prototype.",
       "route": "#/guided-prototype",
       "wp_page": "alt-context-dashboard",
       "job_entry": true,
@@ -35,7 +35,7 @@
       "zones": [
         {
           "id": "guided-demo-root",
-          "label": "Page root. AltContext guided demo. Review an AI-assisted alt text draft. You are editing a photo in a festival gallery. Review two saved name suggestions, edit the alt text, then apply it to a demo copy. You can leave either person unnamed. This walkthrough uses recorded face suggestions and sample drafts. Your choices change only the demo copy in this tab and reset when you reload. An optional live test at the end runs separately on the server.",
+          "label": "Page root. AltContext guided demo. Review AI-assisted alt text drafts for two photos in a festival gallery. Review saved name suggestions across both photos, edit each alt text draft, then apply changes to the corresponding demo copy. You can leave either person unnamed. This walkthrough uses recorded face suggestions and per-image sample drafts. Your choices change only the demo copies in this tab and reset when you reload. An optional live test at the end runs separately on the server.",
           "role": "content",
           "states": ["default", "first_time"]
         },
@@ -129,15 +129,29 @@
           "states": ["default", "first_time"]
         },
         {
-          "id": "name-choice-left",
-          "label": "Justin Trudeau roster entry for both press-photo matches in the \"People recognised in this photo\" article in the right-hand .acx-guided-page__faces column. Saved suggestion: Justin Trudeau. Use Justin Trudeau. Leave this person unnamed. No option is preselected. both_undecided or left_undecided: Choose an option for this person. include: The sample draft will use Justin Trudeau. omit: The sample draft will describe this person without a name. Both the Tribeca 89.4% strong crop and Coachella 70.2% strong crop are shown.",
+          "id": "name-choice-tribeca-left",
+          "label": "Justin Trudeau roster entry for the Tribeca figure's \"People recognised in this photo\" article in the right-hand .acx-guided-page__faces column. Saved suggestion: Justin Trudeau. Use Justin Trudeau. Leave this person unnamed. No option is preselected. both_undecided or left_undecided: Choose an option for this person. include: the Tribeca sample draft will use Justin Trudeau. omit: the Tribeca sample draft will describe this person without a name. One Tribeca 89.4% strong crop is shown.",
           "role": "form",
           "evidence_linked": true,
           "states": ["first_time", "default", "edge_input"]
         },
         {
-          "id": "name-choice-right",
-          "label": "Katy Perry roster entry for both press-photo matches in the \"People recognised in this photo\" article in the right-hand .acx-guided-page__faces column. Saved suggestion: Katy Perry. Use Katy Perry. Leave this person unnamed. No option is preselected. both_undecided or right_undecided: Choose an option for this person. include: The sample draft will use Katy Perry. omit: The sample draft will describe this person without a name. Tribeca is 100.0% cluster anchor, strong; Coachella is 56.7% weak, below the 60.0% threshold, and still grouped by the production clusterer. Both crops are shown.",
+          "id": "name-choice-tribeca-right",
+          "label": "Katy Perry roster entry for the Tribeca figure's \"People recognised in this photo\" article in the right-hand .acx-guided-page__faces column. Saved suggestion: Katy Perry. Use Katy Perry. Leave this person unnamed. No option is preselected. both_undecided or right_undecided: Choose an option for this person. include: the Tribeca sample draft will use Katy Perry. omit: the Tribeca sample draft will describe this person without a name. One Tribeca 100.0% strong cluster-anchor crop is shown.",
+          "role": "form",
+          "evidence_linked": true,
+          "states": ["first_time", "default", "edge_input"]
+        },
+        {
+          "id": "name-choice-coachella-left",
+          "label": "Justin Trudeau roster entry for the Coachella figure's \"People recognised in this photo\" article in the right-hand .acx-guided-page__faces column. Saved suggestion: Justin Trudeau. Use Justin Trudeau. Leave this person unnamed. No option is preselected. both_undecided or left_undecided: Choose an option for this person. include: the Coachella sample draft will use Justin Trudeau. omit: the Coachella sample draft will describe this person without a name. One Coachella 70.2% strong crop is shown.",
+          "role": "form",
+          "evidence_linked": true,
+          "states": ["first_time", "default", "edge_input"]
+        },
+        {
+          "id": "name-choice-coachella-right",
+          "label": "Katy Perry roster entry for the Coachella figure's \"People recognised in this photo\" article in the right-hand .acx-guided-page__faces column. Saved suggestion: Katy Perry. Use Katy Perry. Leave this person unnamed. No option is preselected. both_undecided or right_undecided: Choose an option for this person. include: the Coachella sample draft will use Katy Perry. omit: the Coachella sample draft will describe this person without a name. One Coachella 56.7% weak crop is below the 60.0% threshold and is still grouped by the production clusterer.",
           "role": "form",
           "evidence_linked": true,
           "states": ["first_time", "default", "edge_input"]
@@ -154,7 +168,7 @@
       "id": "draft",
       "kind": "screen",
       "title": "Edit the alt text",
-      "purpose": "Step 3 of 4: Edit the alt text. Check the wording against the photo and the page context. Edit anything you would not publish. Preview the change is the one primary action. Keep current alt text is always allowed, including a blocked or missing sample. Draft history is collapsed and only rendered when revisions exist.",
+      "purpose": "Step 3 of 4: Edit the alt text. Check each draft against its photo and the page context. Edit anything you would not publish. Preview the change is the primary action for each photo. Keep current alt text is always allowed for either photo, including a blocked or missing sample. Draft history is collapsed per image and only rendered when revisions exist.",
       "route": "#/guided-prototype",
       "job_entry": false,
       "deep_link": true,
@@ -166,7 +180,7 @@
       "zones": [
         {
           "id": "guided-candidate",
-          "label": "Edit the alt text. Check the wording against the photo and the page context. Edit anything you would not publish. Alt text draft textarea. Sample draft from the recorded example. or Your edit, based on the recorded example. Edits stay in this tab. Nothing is applied until you choose Apply to demo copy. blocked: Choose a name option for both people to load the sample draft. fixture_missing: The sample draft for these choices is unavailable. Your choices and the current demo copy have not changed. preview_invalid: Enter alt text before reviewing the change.",
+          "label": "Edit the alt text for each photo. Tribeca and Coachella each have an Alt text draft textarea with a recorded sample or a local visitor edit. Edits stay in this tab. Nothing is applied until you choose Apply to demo copy for that photo. blocked: Choose a name option for both people to load both sample drafts. fixture_missing: The sample draft for this photo and these choices is unavailable; the other photo's draft and both demo copies are unchanged. preview_invalid: Enter alt text before reviewing the change.",
           "role": "form",
           "states": ["default", "empty", "error"]
         },
@@ -182,7 +196,7 @@
       "id": "apply",
       "kind": "screen",
       "title": "Apply and undo",
-      "purpose": "Step 4 of 4: Apply and undo. Compare the current alt text with your draft. Applying changes only the demo image below. Apply to demo copy is enabled only after a current preview that differs from the demo copy. Undo last application restores the previous demo alt text. There is no application to undo yet. when the undo stack is empty.",
+      "purpose": "Step 4 of 4: Apply and undo. Compare the current alt text with each photo's draft. Applying changes only that photo's demo copy. Apply to demo copy is enabled only after a current preview that differs from the corresponding demo copy. Undo last application restores the previous alt text for that photo. There is no application to undo yet when the per-image undo stack is empty.",
       "route": "#/guided-prototype",
       "job_entry": false,
       "deep_link": true,
@@ -199,13 +213,20 @@
       "zones": [
         {
           "id": "guided-section-apply",
-          "label": "Apply and undo. Compare the current alt text with your draft. Applying changes only the demo image below. Current alt text beside Will be applied. The draft changed. Preview it again before applying. The demo copy already uses this text.",
+          "label": "Apply and undo each per-image draft. For Tribeca and Coachella, compare Current alt text beside Will be applied. Applying changes only that photo's demo copy. The draft changed: preview it again before applying. The demo copy already uses this text when it matches.",
           "role": "content",
           "states": ["default", "error"]
         },
         {
-          "id": "demo-applied-image",
-          "label": "Demo image preview. Distinct demo image whose alternative is the current demo copy, starting as Two people at a film festival.",
+          "id": "demo-applied-image-tribeca",
+          "label": "Tribeca demo image preview. Distinct applied-preview image whose alternative is the current Tribeca demo copy. This zone is rendered only while the Tribeca draft status is ready.",
+          "role": "ai_review",
+          "evidence_linked": true,
+          "states": ["default"]
+        },
+        {
+          "id": "demo-applied-image-coachella",
+          "label": "Coachella demo image preview. Distinct applied-preview image whose alternative is the current Coachella demo copy. This zone is rendered only while the Coachella draft status is ready.",
           "role": "ai_review",
           "evidence_linked": true,
           "states": ["default"]

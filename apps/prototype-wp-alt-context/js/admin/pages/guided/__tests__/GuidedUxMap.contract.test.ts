@@ -1,7 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+import { fireEvent, render, screen, within } from '@testing-library/react';
+import { createElement } from 'react';
 import { describe, expect, it } from 'vitest';
+
+import { RecordedWalkthrough } from '../../../guidedPrototype/RecordedWalkthrough';
 
 interface UxMapAction {
   id: string;
@@ -47,6 +51,7 @@ interface TargetTestHook {
 }
 
 const MAP_PATH = resolve(__dirname, '../../../../../docs/ux-maps/guided-prototype.uxmap.json');
+const PUBLIC_MAP_PATH = resolve(__dirname, '../../../../../docs/ux-maps/public-guide.uxmap.json');
 const COPY_PATH = resolve(
   __dirname,
   '../../../../../../../docs/assessments/current/demo/altcontext_guided_demo_qm_v1/copy.en.json',
@@ -76,12 +81,28 @@ const LIVE_ACTION_STATES = [
   'stopped',
   'no_result',
 ] as const;
+const deliveredHookIds = (testId: string): string[] => {
+  const nameChoicePrefix = 'name-choice-';
+  if (testId.startsWith(nameChoicePrefix)) {
+    const position = testId.slice(nameChoicePrefix.length);
+    if (position === 'left' || position === 'right') {
+      return [`name-choice-tribeca-${position}`, `name-choice-coachella-${position}`];
+    }
+  }
 
-const loadMap = (): UxMap => JSON.parse(readFileSync(MAP_PATH, 'utf8')) as UxMap;
+  const appliedImagePrefix = 'demo-applied-image';
+  if (testId === appliedImagePrefix) {
+    return [`${appliedImagePrefix}-tribeca`, `${appliedImagePrefix}-coachella`];
+  }
+
+  return [testId];
+};
+
+const loadMap = (mapPath: string = MAP_PATH): UxMap => JSON.parse(readFileSync(mapPath, 'utf8')) as UxMap;
 const loadCopy = (): CopyCatalog => JSON.parse(readFileSync(COPY_PATH, 'utf8')) as CopyCatalog;
 const loadHookIds = (): string[] => {
   const brief = JSON.parse(readFileSync(BRIEF_PATH, 'utf8')) as { target_test_hooks: TargetTestHook[] };
-  return brief.target_test_hooks.map((hook) => hook.test_id);
+  return brief.target_test_hooks.flatMap((hook) => deliveredHookIds(hook.test_id));
 };
 
 const hookIdsFrom = (map: UxMap): string[] => {
@@ -119,8 +140,14 @@ describe('guided prototype ux-map contract (GUIDEDQM-1 shipped topology)', () =>
     const names = map.screens.find((screen) => screen.id === 'names');
     expect(names, 'names screen missing').toBeDefined();
     const zoneIds = (names?.zones ?? []).map((zone) => zone.id);
-    expect(zoneIds).toContain('name-choice-left');
-    expect(zoneIds).toContain('name-choice-right');
+    for (const zoneId of [
+      'name-choice-tribeca-left',
+      'name-choice-tribeca-right',
+      'name-choice-coachella-left',
+      'name-choice-coachella-right',
+    ]) {
+      expect(zoneIds).toContain(zoneId);
+    }
     const namesCopy = JSON.stringify(names);
     for (const person of REAL_NAMES) {
       expect(namesCopy).toContain(person);
@@ -128,6 +155,57 @@ describe('guided prototype ux-map contract (GUIDEDQM-1 shipped topology)', () =>
     expect(namesCopy).not.toContain('Keanu');
     expect(namesCopy).not.toContain('Jordan Lee');
     expect(namesCopy).not.toContain('Rowan Ames');
+  });
+
+  it('would be wrong if per-image map zones did not resolve to the delivered admin and public DOM', () => {
+    const mapFixtures = [
+      { mapPath: MAP_PATH, scope: 'admin' as const, namesScreenId: 'names' },
+      { mapPath: PUBLIC_MAP_PATH, scope: 'public' as const, namesScreenId: 'walkthrough' },
+    ];
+
+    for (const fixture of mapFixtures) {
+      const map = loadMap(fixture.mapPath);
+      const names = map.screens.find((screen) => screen.id === fixture.namesScreenId);
+      const nameChoiceZoneIds = (names?.zones ?? [])
+        .map((zone) => zone.id)
+        .filter((id) => id.startsWith('name-choice-'));
+      expect(nameChoiceZoneIds).toHaveLength(4);
+
+      const { unmount } = render(createElement(RecordedWalkthrough, { scope: fixture.scope }));
+      try {
+        for (const zoneId of nameChoiceZoneIds) {
+          expect(
+            screen.getByTestId(zoneId),
+            `${fixture.mapPath} zone ${zoneId} missing from the DOM`,
+          ).toBeInTheDocument();
+        }
+
+        fireEvent.click(
+          within(screen.getByTestId('name-choice-tribeca-left')).getByRole('radio', {
+            name: 'Use Justin Trudeau',
+          }),
+        );
+        fireEvent.click(
+          within(screen.getByTestId('name-choice-tribeca-right')).getByRole('radio', {
+            name: 'Use Katy Perry',
+          }),
+        );
+
+        const apply = map.screens.find((screen) => screen.id === 'apply');
+        const appliedImageZoneIds = (apply?.zones ?? [])
+          .map((zone) => zone.id)
+          .filter((id) => id.startsWith('demo-applied-image-'));
+        expect(appliedImageZoneIds).toHaveLength(2);
+        for (const zoneId of appliedImageZoneIds) {
+          expect(
+            screen.getByTestId(zoneId),
+            `${fixture.mapPath} zone ${zoneId} missing from the DOM`,
+          ).toBeInTheDocument();
+        }
+      } finally {
+        unmount();
+      }
+    }
   });
 
   it('would be wrong if any screen claimed identities were already matched or done before a visitor choice', () => {

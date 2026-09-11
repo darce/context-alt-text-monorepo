@@ -648,10 +648,9 @@
 
 .acx-guided-page__image-wrap {
   position: relative;
-  overflow: hidden;
   display: block;
   align-self: start;
-  aspect-ratio: 1 / 1;
+  aspect-ratio: var(--acx-guided-photo-ratio, 1 / 1);
   background: var(--acx-color-panel);
 }
 

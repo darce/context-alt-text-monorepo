@@ -3,6 +3,7 @@
 @use '../admin/styles/tokens/radius';
 @use '../admin/styles/tokens/spacing';
 @use '../admin/styles/tokens/typography';
+@use 'theme-darce';
 
 @font-face {
   font-family: 'Roboto Flex';
@@ -21,7 +22,7 @@
 }
 
 .acx-public-guide {
-  @include meta.load-css('theme-darce');
+  @include theme-darce.tokens;
   @include meta.load-css('../admin/styles/components/button');
   @include meta.load-css('../admin/styles/components/guided-prototype');
   @include meta.load-css('../admin/styles/components/guided-face-overlay');

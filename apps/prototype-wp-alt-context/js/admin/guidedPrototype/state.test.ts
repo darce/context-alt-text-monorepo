@@ -498,14 +498,27 @@ describe('derived guards', () => {
     expect(canApply(previewGuidedDraft(pending))).toBe(false);
   });
 
-  it('canApplyImageDraftPublic does not require a preview while canApply keeps the admin gate', () => {
+  it('applyGuidedDraftForImage refuses an unpreviewed draft for admin and accepts the visible text for public', () => {
     const scenario = createGuidedScenario();
     const ready = includeBoth(scenario);
     const draft = ready.drafts[TRIBECA];
+    const visitorText = 'A distinct public visitor description for the Tribeca photograph.';
 
     expect(draft.previewedVersion).not.toBe(draft.draftVersion);
     expect(canApplyImageDraftPublic(ready, draft)).toBe(true);
     expect(canApply(ready)).toBe(false);
+
+    const refusedAdminApply = applyGuidedDraftForImage(ready, TRIBECA);
+    expect(refusedAdminApply.drafts[TRIBECA].appliedAltText).toBe(draft.appliedAltText);
+    expect(refusedAdminApply.drafts[TRIBECA].applicationHistory).toHaveLength(draft.applicationHistory.length);
+
+    const publicApply = applyGuidedDraftForImage(ready, TRIBECA, visitorText);
+    expect(publicApply.drafts[TRIBECA].appliedAltText).toBe(visitorText);
+
+    const previewed = previewGuidedDraft(ready);
+    expect(previewed.drafts[TRIBECA].previewedVersion).toBe(previewed.drafts[TRIBECA].draftVersion);
+    const acceptedAdminApply = applyGuidedDraftForImage(previewed, TRIBECA);
+    expect(acceptedAdminApply.drafts[TRIBECA].appliedAltText).toBe(previewed.drafts[TRIBECA].draftText);
   });
 
   it('canApplyImageDraftPublic rejects incomplete, unchanged, or conflicted drafts', () => {

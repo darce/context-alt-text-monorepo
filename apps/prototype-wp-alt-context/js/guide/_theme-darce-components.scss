@@ -1,12 +1,23 @@
 @mixin acx-dither($offset: var(--acx-guide-dither-offset)) {
   position: relative;
   isolation: isolate;
+  background-color: transparent;
+  --acx-dither-fill: var(--acx-color-surface-alt);
+
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background-color: var(--acx-dither-fill);
+    pointer-events: none;
+  }
 
   &::after {
     content: '';
     position: absolute;
     inset: 0;
-    z-index: -1;
+    z-index: -2;
     background-image: repeating-conic-gradient(currentColor 0% 25%, transparent 0% 50%);
     background-size: var(--acx-guide-dither-size) var(--acx-guide-dither-size);
     opacity: var(--acx-guide-dither-opacity);
@@ -109,10 +120,16 @@
 .acx-guided-notes,
 .acx-guided-history,
 .acx-guided-outcome {
-  background: var(--acx-color-surface-alt);
   border: var(--acx-guide-border-width) solid var(--acx-color-border);
   padding: var(--acx-space-24);
   @include acx-dither;
+}
+
+.acx-guided-page__workspace > .acx-guided-review {
+  background: transparent;
+  max-width: none;
+  margin-inline: 0;
+  padding: 0;
 }
 
 // Media
@@ -128,7 +145,6 @@
 
 // Buttons
 .acx-button {
-  background: var(--acx-color-surface-alt);
   color: var(--acx-color-text);
   border: var(--acx-guide-border-width) solid var(--acx-guide-ink);
   border-radius: 0;
@@ -153,7 +169,8 @@
 
 .acx-button--primary,
 .acx-guided-entrance .acx-button--primary {
-  background: var(--acx-color-accent);
+  background-color: transparent;
+  --acx-dither-fill: var(--acx-color-accent);
   color: var(--acx-color-accent-contrast);
 }
 
@@ -165,6 +182,7 @@
 .acx-button--ghost {
   background: transparent;
 
+  &::before,
   &::after {
     content: none;
   }

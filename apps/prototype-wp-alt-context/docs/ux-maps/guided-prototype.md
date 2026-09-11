@@ -4,10 +4,10 @@
 **Source fixture:** `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypePage.tsx`
 
 ## Goals
-- Inventory the shipped four-step guided demo after reflow: compact intro plus numbered guide, then context, names, draft, apply, outcome, local history, closed design notes, and optional live test last.
+- Inventory the shipped four-step guided demo after reflow: compact intro plus numbered guide, then the context sentence and stacked figure gallery, names, draft, apply, outcome, local history, closed design notes, and optional live test last.
 - Every visitor-visible string is catalog copy from copy.en.json, filled with the shipped people names Justin Trudeau (left) and Katy Perry (right).
 - Name choices start undecided with native radios and no preselection; omit is a valid completion; live generation never competes with Apply and never writes the demo copy.
-- Engine and saved-run provenance stay in notes, not screen copy. Recognition does not run during the walkthrough.
+- Detailed engine metadata stays in the notes while the recorded provenance summary is visible on screen in the section footer. Recognition and GPU descriptions are cached; neither runs during the walkthrough.
 
 ## Jobs
 - `review` — Review saved name suggestions and apply a local demo alt text
@@ -29,6 +29,20 @@
 | `case-study` | exit | `https://darce.xyz/projects/altcontext/` | Read the AltContext case study |
 | `live` | screen | `#/guided-prototype` | Optional: test live description generation |
 
+## Code references
+- `screen:entry` — `apps/prototype-wp-alt-context/js/admin/pages/GuidedPrototypeEntrance.tsx`
+- `screen:context` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypePage.tsx`
+- `screen:names` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedFacesPanel.tsx`
+- `screen:draft` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedDescriptionReview.tsx`
+- `screen:apply` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedDescriptionReview.tsx`
+- `screen:outcome` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedOutcome.tsx`
+- `screen:history` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypePage.tsx`
+- `screen:design-notes` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedDesignNotes.tsx`
+- `screen:names-change` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedFacesPanel.tsx`
+- `screen:reset` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedResetDialog.tsx`
+- `screen:case-study` — `apps/prototype-wp-alt-context/js/admin/pages/GuidedPrototypeEntrance.tsx`
+- `screen:live` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedLiveDescriptionPanel.tsx`
+
 ### Review an AI-assisted alt text draft (`entry`)
 
 Purpose: Compact intro plus numbered guide on one page. AltContext guided demo. You are editing a photo in a festival gallery. Review two saved name suggestions, edit the alt text, then apply it to a demo copy. You can leave either person unnamed. This walkthrough uses recorded face suggestions and sample drafts. Your choices change only the demo copy in this tab and reset when you reload. An optional live test at the end runs separately on the server. Start the walkthrough is the one primary CTA. Read the AltContext case study is a secondary link. Demo steps: Step 1 of 4: Understand the page, with Show all steps / Hide steps. Reset demo opens the reset overlay. Route stays #/guided-prototype.
@@ -40,26 +54,26 @@ Purpose: Compact intro plus numbered guide on one page. AltContext guided demo. 
 | `guided-demo-stepper` | Demo steps. Step {stepNumber} of 4: {stepTitle}. Show all steps / Hide steps. Numbered buttons: Understand the page; Choose which names to use; Edit the alt text; Apply and undo. Inspection is always allowed; buttons do not change the route hash. | nav | default, first_time |
 | `entry-reset` | Reset demo trigger in the workspace header. Opens Reset this demo? | nav | default |
 
-```text
+```
 +------------------------------------------------------------+
-| Review an AI-assisted alt text draft  [screen]  #/guided-p…|
-| Compact intro plus numbered guide on one page. AltContext …|
+| Review an AI-assisted alt text draft  [screen]  #/guided-… |
+| Compact intro plus numbered guide on one page. AltContext… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Page root. AltContext guided demo. Review an AI-assist…|
-|   - Start the walkthrough (primary) and Read the AltContex…|
-|   - Demo steps. Step {stepNumber} of 4: {stepTitle}. Show …|
-|   - Reset demo trigger in the workspace header. Opens Rese…|
+|   - Page root. AltContext guided demo. Review an AI-assis… |
+|   - Start the walkthrough (primary) and Read the AltConte… |
+|   - Demo steps. Step {stepNumber} of 4: {stepTitle}. Show… |
+|   - Reset demo trigger in the workspace header. Opens Res… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
-|   [PRIMARY] Start the walkthrough                          |
-|   [secondary] Read the AltContext case study               |
-|   [secondary] Show all steps                               |
-|   [secondary] Understand the page                          |
-|   [secondary] Choose which names to use                    |
-|   [secondary] Edit the alt text                            |
-|   [secondary] Apply and undo                               |
-|   [tertiary] Reset demo                                    |
+|   [PRIMARY] Start the walkthrough -> context               |
+|   [secondary] Read the AltContext case study -> case-study |
+|   [secondary] Apply and undo -> apply                      |
+|   [secondary] Understand the page -> context               |
+|   [secondary] Edit the alt text -> draft                   |
+|   [secondary] Choose which names to use -> names           |
+|   [secondary] Show all steps -> entry                      |
+|   [tertiary] Reset demo -> reset                           |
 +------------------------------------------------------------+
 | states: default | first_time                               |
 +------------------------------------------------------------+
@@ -67,28 +81,28 @@ Purpose: Compact intro plus numbered guide on one page. AltContext guided demo. 
 
 ### Understand the page (`context`)
 
-Purpose: Step 1 of 4: Understand the page. This photo appears in a festival gallery. Review the existing alt text alongside the photo and its page context. Example page: Tribeca Festival 2026: red carpet photos. Current alt text in the demo copy: Two people at a film festival. Names can be useful in this gallery when the editor has enough evidence to include them. Leaving someone unnamed is also a valid choice. Saved example and image credits is a closed disclosure. Review name suggestions is always enabled.
+Purpose: Step 1 of 4: Understand the page. A context sentence appears above both photos: Names can be useful in this gallery when the editor has enough evidence to include them. Leaving someone unnamed is also a valid choice. Tribeca and Coachella are stacked in one column inside the festival gallery. Each figure is a two-column layout: a 1 / 1 image frame (1:1 crop) with visible Photo credit and two caption disclosures beneath the image on the left, plus one "People recognised in this photo" article in the .acx-guided-page__faces column on the right with both persons' roster entries and include/omit radios; the faces column collapses under the image below 56.25rem. Face outlines pin on click. Review the existing alt text, page context, credits, and cached AltText.ai and AltContext captions. Example page: Tribeca Festival 2026: red carpet photos. Current alt text in the demo copy: A man in a black suit and a woman in a white dress pose together, smiling, in front of a Tribeca Festival step-and-repeat backdrop. A plain .acx-guided-page__provenance-footer with three paragraphs follows both figures before Continue. Review name suggestions is always enabled.
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
-| `guided-section-understand` | Understand the page. This photo appears in a festival gallery. Review the existing alt text alongside the photo and its page context. Example page: Tribeca Festival 2026: red carpet photos. Names can be useful in this gallery when the editor has enough evidence to include them. Leaving someone unnamed is also a valid choice. | content | default |
-| `context-photo` | Evidence photo with Current alt text in the demo copy: Two people at a film festival. Photo credit: Colleen Sturtevant, CC BY-SA 4.0, resized. error: image load failure keeps the descriptive alternative visible as text; decisions stay available. | ai_review | default, error |
-| `context-provenance` | Saved example and image credits (closed details). When open: Recorded face-match run: 6 September 2026. Recognition is not running during this walkthrough. | content | default |
+| `guided-section-understand` | Understand the page. A context sentence appears above Tribeca and Coachella, which are stacked in one column inside the festival gallery. Each figure is a two-column layout: a 1 / 1 image frame (1:1 crop) with visible Photo credit and two AltText.ai/AltContext caption disclosures beneath the image on the left, plus one "People recognised in this photo" article in the .acx-guided-page__faces column on the right with both persons' roster entries and include/omit radios; the faces column collapses under the image below 56.25rem. Face outlines pin on click. Review each photo, its credit, cached captions, and the supplied page context. The Coachella credit links Katy Perry's Instagram account. A plain .acx-guided-page__provenance-footer with three paragraphs follows the figures before Continue. | content | default |
+| `context-photo` | Two evidence figures inside .acx-guided-page__media-list, Tribeca first and Coachella second, stacked in one column: Tribeca Festival, New York, June 2026, credited to Colleen Sturtevant under CC BY-SA 4.0, and a Coachella festival photo credited to https://www.instagram.com/katyperry/. Each has a 1 / 1 image frame (1:1 crop) on the left with visible Photo credit and two caption disclosures beneath it—AltText.ai comparison caption and "AltContext caption, with the people roster set up"—plus one "People recognised in this photo" article in the .acx-guided-page__faces column on the right containing both persons' roster entries and include/omit radios; the faces column collapses under the image below 56.25rem. Tribeca's 1400x933 source crops on the sides; Coachella's 640x852 source crops on height. Face outlines pin on click. error: image load failure keeps the descriptive alternative visible as text; decisions stay available. | ai_review | default, error |
+| `context-provenance` | Plain .acx-guided-page__provenance-footer below both figures, before Continue: three plain paragraphs for the recorded face-match run, event/source context, and what was checked. Photo credits stay visible beneath each image; the footer is not a details disclosure. | content | default |
 | `guided-page-feedback` | Single polite status live region for demo events such as Demo reset. WordPress media was not changed. | status | default, empty |
 
-```text
+```
 +------------------------------------------------------------+
 | Understand the page  [screen]  #/guided-prototype          |
-| Step 1 of 4: Understand the page. This photo appears in a …|
+| Step 1 of 4: Context sentence above stacked 1 / 1 figures… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Understand the page. This photo appears in a festival …|
-|   - Evidence photo with Current alt text in the demo copy:…|
-|   - Saved example and image credits (closed details). When…|
-|   - Single polite status live region for demo events such …|
+|   - Stacked one-column figures with image/faces columns…   |
+|   - Visible credits, captions, click-pinned faces…         |
+|   - Plain three-paragraph provenance footer…               |
+|   - Single polite status live region for demo events such… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
-|   [PRIMARY] Review name suggestions                        |
+|   [PRIMARY] Review name suggestions -> names               |
 +------------------------------------------------------------+
 | states: default | error                                    |
 +------------------------------------------------------------+
@@ -96,27 +110,27 @@ Purpose: Step 1 of 4: Understand the page. This photo appears in a festival gall
 
 ### Choose which names to use (`names`)
 
-Purpose: Step 2 of 4: Choose which names to use. For each face, compare the saved suggestion with the reference photos. Choose whether to include that name in the sample draft. This is an assisted review of saved suggestions, not an independent identity check. Native fieldsets with no preselection. Review the draft is enabled only when both faces have include or omit. The outer section guided-section-face still wraps the cards; guided-section-identity is the inner cards region.
+Purpose: Step 2 of 4: Choose which names to use. Each figure's right-hand .acx-guided-page__faces column contains a "People recognised in this photo" article with both persons' roster entries, include/omit radios, and grouped Tribeca and Coachella evidence; the faces column collapses below the image below 56.25rem. For each face, compare the saved suggestion with the reference photos. Choose whether to include that name in the sample draft. This is an assisted review of saved suggestions, not an independent identity check. Native fieldsets with no preselection. Review the draft is enabled only when both person choices have include or omit. The displayed threshold is 60.0%; Coachella Katy Perry is explicitly weak at 56.7% and was still grouped by the production clusterer.
 
 Action states: both_undecided, left_undecided, right_undecided, include_include, include_omit, omit_include, omit_omit, pending_choice_change
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
-| `guided-section-face` | Choose which names to use. For each face, compare the saved suggestion with the reference photos. Choose whether to include that name in the sample draft. This is an assisted review of saved suggestions, not an independent identity check. | content | default, first_time |
-| `name-choice-left` | Left face native fieldset. Name choice for the left face. Saved suggestion: Justin Trudeau. Use Justin Trudeau. Leave this person unnamed. No option is preselected. both_undecided or left_undecided: Choose an option for this face. include: The sample draft will use Justin Trudeau. omit: The sample draft will describe this person without a name. Compare the left face and reference photos (closed). All 2 reference photos are shown. | form | first_time, default, edge_input |
-| `name-choice-right` | Right face native fieldset. Name choice for the right face. Saved suggestion: Katy Perry. Use Katy Perry. Leave this person unnamed. No option is preselected. both_undecided or right_undecided: Choose an option for this face. include: The sample draft will use Katy Perry. omit: The sample draft will describe this person without a name. Compare the right face and reference photos (closed). 3 of 5 reference photos are included in this demo. | form | first_time, default, edge_input |
-| `guided-section-identity` | Review the draft. Disabled with Choose an option for both faces. Leaving a person unnamed counts as a choice. until both faces are include or omit. Radios are disabled while Change the name choice? is open. | nav | default, first_time, edge_input |
+| `guided-section-face` | Choose which names to use in the "People recognised in this photo" articles in each figure's right-hand .acx-guided-page__faces column. Each article contains both persons' roster entries, grouped press-photo crops, one-decision include/omit controls, similarities, strengths, and the below-threshold clusterer disclosure; the faces column collapses below the image below 56.25rem. | content | default, first_time |
+| `name-choice-left` | Justin Trudeau roster entry for both press-photo matches in the "People recognised in this photo" article in the right-hand .acx-guided-page__faces column. Saved suggestion: Justin Trudeau. Use Justin Trudeau. Leave this person unnamed. No option is preselected. both_undecided or left_undecided: Choose an option for this person. include: The sample draft will use Justin Trudeau. omit: The sample draft will describe this person without a name. Both the Tribeca 89.4% strong crop and Coachella 70.2% strong crop are shown. | form | first_time, default, edge_input |
+| `name-choice-right` | Katy Perry roster entry for both press-photo matches in the "People recognised in this photo" article in the right-hand .acx-guided-page__faces column. Saved suggestion: Katy Perry. Use Katy Perry. Leave this person unnamed. No option is preselected. both_undecided or right_undecided: Choose an option for this person. include: The sample draft will use Katy Perry. omit: The sample draft will describe this person without a name. Tribeca is 100.0% cluster anchor, strong; Coachella is 56.7% weak, below the 60.0% threshold, and still grouped by the production clusterer. Both crops are shown. | form | first_time, default, edge_input |
+| `guided-section-identity` | Review the draft. Disabled with Choose an option for both people. Leaving a person unnamed counts as a choice; enabled once both person choices are include or omit. Radios are disabled while Change the name choice? is open. | nav | default, first_time, edge_input |
 
-```text
+```
 +------------------------------------------------------------+
 | Choose which names to use  [screen]  #/guided-prototype    |
-| Step 2 of 4: Choose which names to use. For each face, com…|
+| Step 2 of 4: People roster entries in faces columns…       |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Choose which names to use. For each face, compare the …|
-|   - Left face native fieldset. Name choice for the left fa…|
-|   - Right face native fieldset. Name choice for the right …|
-|   - Review the draft. Disabled with Choose an option for b…|
+|   - People recognised in this photo articles…              |
+|   - Justin Trudeau and Katy Perry include/omit radios…     |
+|   - Grouped evidence and click-to-pin face outlines…       |
+|   - Review the draft. Disabled with Choose an option for … |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 | when both_undecided                                        |
@@ -176,14 +190,14 @@ Action states: blocked, fixture_missing, preview_invalid, preview_valid
 | `guided-candidate` | Edit the alt text. Check the wording against the photo and the page context. Edit anything you would not publish. Alt text draft textarea. Sample draft from the recorded example. or Your edit, based on the recorded example. Edits stay in this tab. Nothing is applied until you choose Apply to demo copy. blocked: Choose a name option for both faces to load the sample draft. fixture_missing: The sample draft for these choices is unavailable. Your choices and the current demo copy have not changed. preview_invalid: Enter alt text before reviewing the change. | form | default, empty, error |
 | `draft-history` | Draft history (closed; only when revisions exist). Earlier edits are kept in this tab until you reset or reload. Restore earlier draft when choices match. Otherwise: This earlier draft uses different name choices. Change those choices first, or copy the text and review it as a new edit. plus Copy earlier draft. | status | default, empty |
 
-```text
+```
 +------------------------------------------------------------+
 | Edit the alt text  [screen]  #/guided-prototype            |
-| Step 3 of 4: Edit the alt text. Check the wording against …|
+| Step 3 of 4: Edit the alt text. Check the wording against… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Edit the alt text. Check the wording against the photo…|
-|   - Draft history (closed; only when revisions exist). Ear…|
+|   - Edit the alt text. Check the wording against the phot… |
+|   - Draft history (closed; only when revisions exist). Ea… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 | when blocked                                               |
@@ -216,14 +230,14 @@ Action states: apply_disabled_undo_empty, apply_disabled_undo_nonempty, apply_en
 | `guided-section-apply` | Apply and undo. Compare the current alt text with your draft. Applying changes only the demo image below. Current alt text beside Will be applied. The draft changed. Preview it again before applying. The demo copy already uses this text. | content | default, error |
 | `demo-applied-image` | Demo image preview. Distinct demo image whose alternative is the current demo copy, starting as Two people at a film festival. | ai_review | default |
 
-```text
+```
 +------------------------------------------------------------+
 | Apply and undo  [screen]  #/guided-prototype               |
-| Step 4 of 4: Apply and undo. Compare the current alt text …|
+| Step 4 of 4: Apply and undo. Compare the current alt text… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Apply and undo. Compare the current alt text with your…|
-|   - Demo image preview. Distinct demo image whose alternat…|
+|   - Apply and undo. Compare the current alt text with you… |
+|   - Demo image preview. Distinct demo image whose alterna… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 | when apply_disabled_undo_empty                             |
@@ -250,13 +264,13 @@ Action states: applied, kept
 | --- | --- | --- | --- |
 | `demo-outcome` | applied: Your demo copy is updated. Applied to the demo copy in this tab. WordPress media has not been updated. kept: The demo copy is unchanged. You kept the current alt text. You can return to the draft or inspect the design notes below. Return to the draft. | status | default, empty |
 
-```text
+```
 +------------------------------------------------------------+
 | Your demo copy is updated  [screen]  #/guided-prototype    |
-| Completion summary after Apply to demo copy or Keep curren…|
+| Completion summary after Apply to demo copy or Keep curre… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - applied: Your demo copy is updated. Applied to the dem…|
+|   - applied: Your demo copy is updated. Applied to the de… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 | when applied                                               |
@@ -276,16 +290,13 @@ Purpose: Local tab history. Your demo actions. This history is local to this tab
 | --- | --- | --- | --- |
 | `history-list` | Your demo actions. This history is local to this tab. It is not a server audit log. empty: Your choices and changes will appear here. | status | default, empty |
 
-```text
+```
 +------------------------------------------------------------+
 | Your demo actions  [screen]  #/guided-prototype            |
-| Local tab history. Your demo actions. This history is loca…|
+| Local tab history. Your demo actions. This history is loc… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Your demo actions. This history is local to this tab. …|
-+------------------------------------------------------------+
-| ACTIONS                                                    |
-|   No action (silent)                                       |
+|   - Your demo actions. This history is local to this tab.… |
 +------------------------------------------------------------+
 | states: default | empty                                    |
 +------------------------------------------------------------+
@@ -299,16 +310,13 @@ Purpose: Closed disclosure after local history. Design notes. Recorded recogniti
 | --- | --- | --- | --- |
 | `notes-disclosure` | Design notes (closed). Recorded recognition keeps the core walkthrough repeatable. Live generation is separate so a slow or unavailable service does not prevent review. A suggested identity and permission to use a name are different decisions. Either person can remain unnamed. Drafting and applying are separate actions. The preview shows exactly what will change, and Undo restores the previous demo alt text. This prototype demonstrates the interaction. It does not establish recognition accuracy, user trust, or full accessibility conformance. | content | default |
 
-```text
+```
 +------------------------------------------------------------+
 | Design notes  [screen]  #/guided-prototype                 |
-| Closed disclosure after local history. Design notes. Recor…|
+| Closed disclosure after local history. Design notes. Reco… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Design notes (closed). Recorded recognition keeps the …|
-+------------------------------------------------------------+
-| ACTIONS                                                    |
-|   No action (silent)                                       |
+|   - Design notes (closed). Recorded recognition keeps the… |
 +------------------------------------------------------------+
 | states: default                                            |
 +------------------------------------------------------------+
@@ -323,18 +331,18 @@ Purpose: Pending choice-change confirmation when a visitor-edited draft would be
 | `names-change-copy` | Change the name choice? This loads the sample draft for your new choices. Your current edit will remain in Draft history. The demo image will not change until you apply again. | content | default |
 | `names-change-actions` | Change choice and load draft. Keep editing. | form | default |
 
-```text
+```
 +------------------------------------------------------------+
 | Change the name choice?  [overlay]  #/guided-prototype     |
-| Pending choice-change confirmation when a visitor-edited d…|
+| Pending choice-change confirmation when a visitor-edited … |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Change the name choice? This loads the sample draft fo…|
-|   - Change choice and load draft. Keep editing. (form) sta…|
+|   - Change the name choice? This loads the sample draft f… |
+|   - Change choice and load draft. Keep editing. (form) st… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
-|   [PRIMARY] Change choice and load draft                   |
-|   [secondary] Keep editing                                 |
+|   [PRIMARY] Change choice and load draft -> draft          |
+|   [secondary] Keep editing -> names                        |
 +------------------------------------------------------------+
 | states: default                                            |
 +------------------------------------------------------------+
@@ -351,14 +359,14 @@ Action states: idle_reset, live_waiting
 | `reset-copy` | Reset this demo? This clears name choices, drafts and local history, and restores the original demo alt text. live_waiting: A live server job may continue after this reset. | content | default, degraded |
 | `reset-actions` | Keep my work (safe default, focused). Reset demo (destructive). | form | default |
 
-```text
+```
 +------------------------------------------------------------+
 | Reset this demo?  [overlay]  #/guided-prototype            |
-| Confirm reset. Reset this demo? This clears name choices, …|
+| Confirm reset. Reset this demo? This clears name choices,… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Reset this demo? This clears name choices, drafts and …|
-|   - Keep my work (safe default, focused). Reset demo (dest…|
+|   - Reset this demo? This clears name choices, drafts and… |
+|   - Keep my work (safe default, focused). Reset demo (des… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 | when idle_reset                                            |
@@ -380,16 +388,13 @@ Purpose: External case study in a new tab. Browser owns network failure. Closing
 | --- | --- | --- | --- |
 | `case-study-content` | Read the AltContext case study | content | default |
 
-```text
+```
 +------------------------------------------------------------+
-| Read the AltContext case study  [exit]  https://darce.xyz/…|
-| External case study in a new tab. Browser owns network fai…|
+| Read the AltContext case study  [exit]  https://darce.xyz… |
+| External case study in a new tab. Browser owns network fa… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Read the AltContext case study (content) states=[defau…|
-+------------------------------------------------------------+
-| ACTIONS                                                    |
-|   No action (silent)                                       |
+|   - Read the AltContext case study (content) states=[defa… |
 +------------------------------------------------------------+
 | states: default                                            |
 +------------------------------------------------------------+
@@ -403,17 +408,17 @@ Action states: closed, unavailable-unverified, idle, pending, complete, failed, 
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
-| `guided-live` | Optional: test live description generation (closed details by default). Generate a separate description of this photo on the server. It will not replace your draft or change the demo copy. The server uses its own saved people. Your name choices in the walkthrough do not change this live test. Request details. Live server result (read-only). | content | default |
-| `guided-live-status` | closed: disclosure collapsed, no request. unavailable-unverified: Live generation is unavailable in this build. The recorded walkthrough still works. idle: This sends a live description request for the example photo to the configured AltContext service. See Request details before starting. pending: Waiting for the live description. Your demo copy is unchanged. complete: Live description received. Review it separately from the demo draft. failed: The live description could not be completed. Your demo copy is unchanged. timed_out: The wait limit was reached. The server job may still be running. Your demo copy is unchanged. stopped: Stopped waiting for this request. This does not confirm that the server job stopped. no_result: The server returned no description. Your demo copy is unchanged. Status colour is paired with a glyph. | status | default, loading, empty, error, offline, degraded |
+| `guided-live` | Optional: test live description generation (closed details by default). Generate a separate description of this photo on the server. It will not replace your draft or change the demo copy. The server uses its own saved people. Your name choices in the walkthrough do not change this live test. Request details. Live server result (read-only). Keep waiting continues a timed-out run. No server budget disclosed, so this is how long this page is willing to wait. The service disclosed {generation} of generation time. This page will wait up to {deadline}, which may add service warm-up and a short local slack. | content | default |
+| `guided-live-status` | closed: disclosure collapsed, no request. unavailable-unverified: Live generation is unavailable in this build. The recorded walkthrough still works. idle: This sends a live description request for the example photo to the configured AltContext service. See Request details before starting. pending: Waiting for the live description. Your demo copy is unchanged. complete: Live description received. Review it separately from the demo draft. failed: The live description could not be completed. Your demo copy is unchanged. timed_out: The wait limit was reached. The server job may still be running. Keep waiting continues this run; Try live generation again starts a new one. Your demo copy is unchanged. stopped: Stopped waiting for this request. This does not confirm that the server job stopped. no_result: The server returned no description. Your demo copy is unchanged. Status colour is paired with a glyph. | status | default, loading, empty, error, offline, degraded |
 
-```text
+```
 +------------------------------------------------------------+
-| Optional: test live description generation  [screen]  #/gu…|
-| Last screen. Closed by default. Optional: test live descri…|
+| Optional: test live description generation  [screen]  #/g… |
+| Last screen. Closed by default. Optional: test live descr… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Optional: test live description generation (closed det…|
-|   - closed: disclosure collapsed, no request. unavailable-…|
+|   - Optional: test live description generation (closed de… |
+|   - closed: disclosure collapsed, no request. unavailable… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 | when closed                                                |
@@ -425,15 +430,16 @@ Action states: closed, unavailable-unverified, idle, pending, complete, failed, 
 | when pending                                               |
 |   [PRIMARY] Stop waiting                                   |
 | when complete                                              |
-|   [PRIMARY] Try live generation again                      |
+|   [secondary] Try live generation again                    |
 | when failed                                                |
-|   [PRIMARY] Try live generation again                      |
+|   [secondary] Try live generation again                    |
 | when timed_out                                             |
-|   [PRIMARY] Try live generation again                      |
+|   [PRIMARY] Keep waiting                                   |
+|   [secondary] Try live generation again                    |
 | when stopped                                               |
-|   [PRIMARY] Try live generation again                      |
+|   [secondary] Try live generation again                    |
 | when no_result                                             |
-|   [PRIMARY] Try live generation again                      |
+|   [secondary] Try live generation again                    |
 +------------------------------------------------------------+
 | states: default | loading | empty | error | offline        |
 | states+: degraded                                          |
@@ -472,7 +478,8 @@ Action states: closed, unavailable-unverified, idle, pending, complete, failed, 
 | `reset-confirm` | Reset demo | `entry` | destructive | no | yes | yes | `reset` | always |
 | `live-submit` | Generate a separate live description | `live` | primary | yes | no | no | `live` | idle |
 | `live-stop-waiting` | Stop waiting | `live` | primary | no | no | no | `live` | pending |
-| `live-retry` | Try live generation again | `live` | primary | yes | no | no | `live` | complete, failed, timed_out, stopped, no_result |
+| `live-keep-waiting` | Keep waiting | `live` | primary | no | no | no | `live` | timed_out |
+| `live-retry` | Try live generation again | `live` | secondary | yes | no | no | `live` | complete, failed, timed_out, stopped, no_result |
 
 ## Flows
 ### Network-independent core: start, include both saved names, preview, apply (`core-walkthrough`)
@@ -483,15 +490,15 @@ flowchart TD
   %% steps: [{"screen_id":"entry","branch_label":"Start the walkthrough"},{"screen_id":"context","branch_label":"Review name suggestions"},{"screen_id":"names","branch_label":"Use Justin Trudeau and Use Katy Perry (include_include)"},{"screen_id":"draft","branch_label":"Preview the change from the recorded both-names sample"},{"screen_id":"apply","branch_label":"Apply to demo copy"},{"screen_id":"outcome","branch_label":"Your demo copy is updated"}]
   n_entry["Review an AI-assisted alt text draft (screen)"]
   n_context["Understand the page (screen)"]
+  n_entry -->|Start the walkthrough| n_context
   n_names["Choose which names to use (screen)"]
+  n_context -->|Review name suggestions| n_names
   n_draft["Edit the alt text (screen)"]
+  n_names -->|Use Justin Trudeau and Use Katy Perry (include_include)| n_draft
   n_apply["Apply and undo (screen)"]
+  n_draft -->|Preview the change from the recorded both-names sample| n_apply
   n_outcome["Your demo copy is updated (screen)"]
-  n_entry -->|Review name suggestions| n_context
-  n_context -->|Use Justin Trudeau and Use Katy Perry (include_include)| n_names
-  n_names -->|Preview the change from the recorded both-names sample| n_draft
-  n_draft -->|Apply to demo copy| n_apply
-  n_apply -->|Your demo copy is updated| n_outcome
+  n_apply -->|Apply to demo copy| n_outcome
 ```
 
 ### One face included, the other omitted (`one-named`)
@@ -502,13 +509,13 @@ flowchart TD
   %% steps: [{"screen_id":"entry","branch_label":"Start the walkthrough"},{"screen_id":"names","branch_label":"Use Justin Trudeau and Leave this person unnamed (include_omit)"},{"screen_id":"draft","branch_label":"Sample draft uses Justin Trudeau; Katy Perry stays unnamed"},{"screen_id":"apply","branch_label":"Apply to demo copy"},{"screen_id":"outcome","branch_label":"Your demo copy is updated"}]
   n_entry["Review an AI-assisted alt text draft (screen)"]
   n_names["Choose which names to use (screen)"]
+  n_entry -->|Start the walkthrough| n_names
   n_draft["Edit the alt text (screen)"]
+  n_names -->|Use Justin Trudeau and Leave this person unnamed (include_omit)| n_draft
   n_apply["Apply and undo (screen)"]
+  n_draft -->|Sample draft uses Justin Trudeau; Katy Perry stays unnamed| n_apply
   n_outcome["Your demo copy is updated (screen)"]
-  n_entry -->|Use Justin Trudeau and Leave this person unnamed (include_omit)| n_names
-  n_names -->|Sample draft uses Justin Trudeau; Katy Perry stays unnamed| n_draft
-  n_draft -->|Apply to demo copy| n_apply
-  n_apply -->|Your demo copy is updated| n_outcome
+  n_apply -->|Apply to demo copy| n_outcome
 ```
 
 ### Both faces omitted; visual-only sample draft (`both-omitted`)
@@ -516,16 +523,16 @@ flowchart TD
 ```mermaid
 flowchart TD
   %% flow: Both faces omitted; visual-only sample draft job=review
-  %% steps: [{"screen_id":"entry","branch_label":"Start the walkthrough"},{"screen_id":"names","branch_label":"Leave this person unnamed on both faces (omit_omit)"},{"screen_id":"draft","branch_label":"Sample draft describes both people without names"},{"screen_id":"apply","branch_label":"Apply to demo copy"},{"screen_id":"outcome","branch_label":"Your demo copy is updated"}]
+  %% steps: [{"screen_id":"entry","branch_label":"Start the walkthrough"},{"screen_id":"names","branch_label":"Leave both people unnamed (omit_omit)"},{"screen_id":"draft","branch_label":"Sample draft describes both people without names"},{"screen_id":"apply","branch_label":"Apply to demo copy"},{"screen_id":"outcome","branch_label":"Your demo copy is updated"}]
   n_entry["Review an AI-assisted alt text draft (screen)"]
   n_names["Choose which names to use (screen)"]
+  n_entry -->|Start the walkthrough| n_names
   n_draft["Edit the alt text (screen)"]
+  n_names -->|Leave both people unnamed (omit_omit)| n_draft
   n_apply["Apply and undo (screen)"]
+  n_draft -->|Sample draft describes both people without names| n_apply
   n_outcome["Your demo copy is updated (screen)"]
-  n_entry -->|Leave this person unnamed on both faces (omit_omit)| n_names
-  n_names -->|Sample draft describes both people without names| n_draft
-  n_draft -->|Apply to demo copy| n_apply
-  n_apply -->|Your demo copy is updated| n_outcome
+  n_apply -->|Apply to demo copy| n_outcome
 ```
 
 ### Missing sample draft does not change choices or the demo copy (`fixture-missing`)
@@ -536,8 +543,8 @@ flowchart TD
   %% steps: [{"screen_id":"names","branch_label":"Both faces decided"},{"screen_id":"draft","branch_label":"The sample draft for these choices is unavailable. Your choices and the current demo copy have not changed."},{"screen_id":"draft","branch_label":"Retry loading the sample or Keep current alt text"}]
   n_names["Choose which names to use (screen)"]
   n_draft["Edit the alt text (screen)"]
-  n_names -->|The sample draft for these choices is unavailable. Your choices and the current demo copy have not changed.| n_draft
-  n_draft -->|Retry loading the sample or Keep current alt text| n_draft
+  n_names -->|Both faces decided| n_draft
+  n_draft -->|The sample draft for these choices is unavailable. Your choices and the current demo copy have not changed.| n_draft
 ```
 
 ### Cancel keeps the edit; confirm archives it to Draft history (`draft-survives-choice-change`)
@@ -548,12 +555,12 @@ flowchart TD
   %% steps: [{"screen_id":"draft","branch_label":"Visitor edit of the alt text draft"},{"screen_id":"names","branch_label":"Change a name radio while an edit exists"},{"screen_id":"names-change","branch_label":"Keep editing — draft text and choices stay"},{"screen_id":"names","branch_label":"Change a name radio again"},{"screen_id":"names-change","branch_label":"Change choice and load draft — current edit remains in Draft history"},{"screen_id":"draft","branch_label":"Name choice changed. Review the updated draft before applying it."}]
   n_draft["Edit the alt text (screen)"]
   n_names["Choose which names to use (screen)"]
+  n_draft -->|Visitor edit of the alt text draft| n_names
   n_names_change["Change the name choice? (overlay)"]
-  n_draft -->|Change a name radio while an edit exists| n_names
-  n_names -->|Keep editing — draft text and choices stay| n_names_change
-  n_names_change -->|Change a name radio again| n_names
-  n_names -->|Change choice and load draft — current edit remains in Draft history| n_names_change
-  n_names_change -->|Name choice changed. Review the updated draft before applying it.| n_draft
+  n_names -->|Change a name radio while an edit exists| n_names_change
+  n_names_change -->|Keep editing — draft text and choices stay| n_names
+  n_names -->|Change a name radio again| n_names_change
+  n_names_change -->|Change choice and load draft — current edit remains in Draft history| n_draft
 ```
 
 ### Apply twice and undo in reverse order (`repeated-apply-undo`)
@@ -564,12 +571,12 @@ flowchart TD
   %% steps: [{"screen_id":"apply","branch_label":"Apply to demo copy (undo stack empty → nonempty)"},{"screen_id":"outcome","branch_label":"Your demo copy is updated"},{"screen_id":"draft","branch_label":"Edit and Preview the change"},{"screen_id":"apply","branch_label":"Apply to demo copy again"},{"screen_id":"apply","branch_label":"Undo last application"},{"screen_id":"apply","branch_label":"Undo last application again until There is no application to undo yet."}]
   n_apply["Apply and undo (screen)"]
   n_outcome["Your demo copy is updated (screen)"]
+  n_apply -->|Apply to demo copy (undo stack empty → nonempty)| n_outcome
   n_draft["Edit the alt text (screen)"]
-  n_apply -->|Your demo copy is updated| n_outcome
-  n_outcome -->|Edit and Preview the change| n_draft
-  n_draft -->|Apply to demo copy again| n_apply
+  n_outcome -->|Your demo copy is updated| n_draft
+  n_draft -->|Edit and Preview the change| n_apply
+  n_apply -->|Apply to demo copy again| n_apply
   n_apply -->|Undo last application| n_apply
-  n_apply -->|Undo last application again until There is no application to undo yet.| n_apply
 ```
 
 ### Live failure leaves the recorded walkthrough and Apply unchanged (`live-failure-does-not-block-core`)
@@ -579,29 +586,21 @@ flowchart TD
   %% flow: Live failure leaves the recorded walkthrough and Apply unchanged job=review
   %% steps: [{"screen_id":"live","branch_label":"Optional: test live description generation is last and closed"},{"screen_id":"live","branch_label":"unavailable-unverified or failed: Live generation is unavailable in this build. The recorded walkthrough still works. / The live description could not be completed. Your demo copy is unchanged."},{"screen_id":"names","branch_label":"Core name choices still work"},{"screen_id":"apply","branch_label":"Apply to demo copy still writes only the local demo copy"}]
   n_live["Optional: test live description generation (screen)"]
+  n_live -->|Optional: test live description generation is last and closed| n_live
   n_names["Choose which names to use (screen)"]
+  n_live -->|unavailable-unverified or failed: Live generation is unavailable in this build. The recorded walkthrough still works. / The live description could not be completed. Your demo copy is unchanged.| n_names
   n_apply["Apply and undo (screen)"]
-  n_live -->|unavailable-unverified or failed: Live generation is unavailable in this build. The recorded walkthrough still works. / The live description could not be completed. Your demo copy is unchanged.| n_live
-  n_live -->|Core name choices still work| n_names
-  n_names -->|Apply to demo copy still writes only the local demo copy| n_apply
+  n_names -->|Core name choices still work| n_apply
 ```
 
 ## Open questions
 - DOM divergence from ascii-screens.md: the target sketches fill {name} with Jordan Lee / Rowan Ames; the shipped scenario still uses Justin Trudeau (left) and Katy Perry (right). This map follows the DOM.
-- Saved-run provenance (notes only, never screen copy): recognition engine InsightFace buffalo_l on the AltContext recognition service (dev build); saved run 2026-09-06; threshold 0.6; Tribeca press photo similarities Justin Trudeau left 0.686 and Katy Perry right 0.742.
+- Detailed engine metadata stays in the notes while the recorded provenance summary is visible on screen in the section footer: InsightFace buffalo_l on the production AltContext recognition service; saved run 2026-09-10; threshold 60.0%; Tribeca press photo similarities Justin Trudeau 89.4% and Katy Perry 100.0% (cluster anchor); Coachella press photo similarities Justin Trudeau 70.2% and Katy Perry 56.7% (weak, below threshold, grouped by the production clusterer). Cached AltText.ai and AltContext captions are shown for both photos; no recognition or GPU generation runs during the walkthrough.
 - Cluster ids from the dev tenant (notes only): Katy Perry 68adc97c-f81f-42c3-9e5c-061f16770361 and Justin Trudeau fd0d2b5d-108a-42b7-af25-f028e40d5778.
 - The bundled scenario currently ships all four sample keys (none, katy-perry, justin-trudeau, both), so fixture_missing is implemented and mapped but not reachable with the seed.
-- Shipped live panel hardcodes Keep waiting and two budget sentences that are not in copy.en.json; they are omitted from screen copy here and recorded as a DOM divergence.
+- Keep waiting and the two budget sentences are catalog copy (live.keep_waiting, live.budget_local, live.budget_disclosed). timed_out recovery offers Keep waiting on the same run plus Try live generation again.
 - ascii-screens.md places live under Apply on S4; the shipped page mounts the live disclosure last after design notes. This map follows the DOM.
 - guided-section-face still wraps the names step in the DOM even though the numbered guide has four steps and focuses guided-section-identity for names.
-
-## Not doing
-- Public homepage or marketing deployment
-- New routes or endpoints, including /practice
-- Copying a live result into the demo candidate or applying it automatically
-- WordPress media, roster, settings, or user-preference writes from core actions
-- Inventing copy or renaming the shipped people to Jordan Lee, Rowan Ames, or Keanu
-- Full WordPress or screen-reader conformance claim from the map alone
 
 ## Suggested task-slice decomposition (from map)
 
@@ -633,7 +632,7 @@ hand-edit one side.
 
 Zone ids: guided-demo-root entry-cta guided-demo-stepper entry-reset guided-section-understand context-photo context-provenance guided-page-feedback guided-section-face name-choice-left name-choice-right guided-section-identity guided-candidate draft-history guided-section-apply demo-applied-image demo-outcome history-list notes-disclosure names-change-copy names-change-actions reset-copy reset-actions case-study-content guided-live guided-live-status
 
-Action ids: start-walkthrough open-case-study toggle-guide select-step-context select-step-names select-step-draft select-step-apply open-reset continue-to-names include-left omit-left include-right omit-right continue-to-draft preview-draft keep-current retry-fixture restore-revision copy-revision demo-apply demo-undo return-to-draft confirm-choice-change cancel-choice-change reset-cancel reset-confirm live-submit live-stop-waiting live-retry
+Action ids: start-walkthrough open-case-study toggle-guide select-step-context select-step-names select-step-draft select-step-apply open-reset continue-to-names include-left omit-left include-right omit-right continue-to-draft preview-draft keep-current retry-fixture restore-revision copy-revision demo-apply demo-undo return-to-draft confirm-choice-change cancel-choice-change reset-cancel reset-confirm live-submit live-stop-waiting live-keep-waiting live-retry
 
 Zone labels (verbatim; the tables above escape `|` for markdown, this list does not):
 
@@ -641,15 +640,15 @@ Zone labels (verbatim; the tables above escape `|` for markdown, this list does 
 - Start the walkthrough (primary) and Read the AltContext case study (secondary link, new tab).
 - Demo steps. Step {stepNumber} of 4: {stepTitle}. Show all steps / Hide steps. Numbered buttons: Understand the page; Choose which names to use; Edit the alt text; Apply and undo. Inspection is always allowed; buttons do not change the route hash.
 - Reset demo trigger in the workspace header. Opens Reset this demo?
-- Understand the page. This photo appears in a festival gallery. Review the existing alt text alongside the photo and its page context. Example page: Tribeca Festival 2026: red carpet photos. Names can be useful in this gallery when the editor has enough evidence to include them. Leaving someone unnamed is also a valid choice.
-- Evidence photo with Current alt text in the demo copy: Two people at a film festival. Photo credit: Colleen Sturtevant, CC BY-SA 4.0, resized. error: image load failure keeps the descriptive alternative visible as text; decisions stay available.
-- Saved example and image credits (closed details). When open: Recorded face-match run: 6 September 2026. Recognition is not running during this walkthrough.
+- Understand the page. A context sentence appears above Tribeca and Coachella, which are stacked in one column inside the festival gallery. Each figure is a two-column layout: a 1 / 1 image frame (1:1 crop) with visible Photo credit and two AltText.ai/AltContext caption disclosures beneath the image on the left, plus one "People recognised in this photo" article in the .acx-guided-page__faces column on the right with both persons' roster entries and include/omit radios; the faces column collapses under the image below 56.25rem. Face outlines pin on click. Review each photo, its credit, cached captions, and the supplied page context. The Coachella credit links Katy Perry's Instagram account. A plain .acx-guided-page__provenance-footer with three paragraphs follows the figures before Continue.
+- Two evidence figures inside .acx-guided-page__media-list, Tribeca first and Coachella second, stacked in one column: Tribeca Festival, New York, June 2026, credited to Colleen Sturtevant under CC BY-SA 4.0, and a Coachella festival photo credited to https://www.instagram.com/katyperry/. Each has a 1 / 1 image frame (1:1 crop) on the left with visible Photo credit and two caption disclosures beneath it—AltText.ai comparison caption and "AltContext caption, with the people roster set up"—plus one "People recognised in this photo" article in the .acx-guided-page__faces column on the right containing both persons' roster entries and include/omit radios; the faces column collapses under the image below 56.25rem. Tribeca's 1400x933 source crops on the sides; Coachella's 640x852 source crops on height. Face outlines pin on click. error: image load failure keeps the descriptive alternative visible as text; decisions stay available.
+- Plain .acx-guided-page__provenance-footer below both figures, before Continue: three plain paragraphs for the recorded face-match run, event/source context, and what was checked. Photo credits stay visible beneath each image; the footer is not a details disclosure.
 - Single polite status live region for demo events such as Demo reset. WordPress media was not changed.
-- Choose which names to use. For each face, compare the saved suggestion with the reference photos. Choose whether to include that name in the sample draft. This is an assisted review of saved suggestions, not an independent identity check.
-- Left face native fieldset. Name choice for the left face. Saved suggestion: Justin Trudeau. Use Justin Trudeau. Leave this person unnamed. No option is preselected. both_undecided or left_undecided: Choose an option for this face. include: The sample draft will use Justin Trudeau. omit: The sample draft will describe this person without a name. Compare the left face and reference photos (closed). All 2 reference photos are shown.
-- Right face native fieldset. Name choice for the right face. Saved suggestion: Katy Perry. Use Katy Perry. Leave this person unnamed. No option is preselected. both_undecided or right_undecided: Choose an option for this face. include: The sample draft will use Katy Perry. omit: The sample draft will describe this person without a name. Compare the right face and reference photos (closed). 3 of 5 reference photos are included in this demo.
-- Review the draft. Disabled with Choose an option for both faces. Leaving a person unnamed counts as a choice. until both faces are include or omit. Radios are disabled while Change the name choice? is open.
-- Edit the alt text. Check the wording against the photo and the page context. Edit anything you would not publish. Alt text draft textarea. Sample draft from the recorded example. or Your edit, based on the recorded example. Edits stay in this tab. Nothing is applied until you choose Apply to demo copy. blocked: Choose a name option for both faces to load the sample draft. fixture_missing: The sample draft for these choices is unavailable. Your choices and the current demo copy have not changed. preview_invalid: Enter alt text before reviewing the change.
+- Choose which names to use in the "People recognised in this photo" articles in each figure's right-hand .acx-guided-page__faces column. Each article contains both persons' roster entries, grouped press-photo crops, one-decision include/omit controls, similarities, strengths, and the below-threshold clusterer disclosure; the faces column collapses below the image below 56.25rem.
+- Justin Trudeau roster entry for both press-photo matches in the "People recognised in this photo" article in the right-hand .acx-guided-page__faces column. Saved suggestion: Justin Trudeau. Use Justin Trudeau. Leave this person unnamed. No option is preselected. both_undecided or left_undecided: Choose an option for this person. include: The sample draft will use Justin Trudeau. omit: The sample draft will describe this person without a name. Both the Tribeca 89.4% strong crop and Coachella 70.2% strong crop are shown.
+- Katy Perry roster entry for both press-photo matches in the "People recognised in this photo" article in the right-hand .acx-guided-page__faces column. Saved suggestion: Katy Perry. Use Katy Perry. Leave this person unnamed. No option is preselected. both_undecided or right_undecided: Choose an option for this person. include: The sample draft will use Katy Perry. omit: The sample draft will describe this person without a name. Tribeca is 100.0% cluster anchor, strong; Coachella is 56.7% weak, below the 60.0% threshold, and still grouped by the production clusterer. Both crops are shown.
+- Review the draft. Disabled with Choose an option for both people. Leaving a person unnamed counts as a choice; enabled once both person choices are include or omit. Radios are disabled while Change the name choice? is open.
+- Edit the alt text. Check the wording against the photo and the page context. Edit anything you would not publish. Alt text draft textarea. Sample draft from the recorded example. or Your edit, based on the recorded example. Edits stay in this tab. Nothing is applied until you choose Apply to demo copy. blocked: Choose a name option for both people to load the sample draft. fixture_missing: The sample draft for these choices is unavailable. Your choices and the current demo copy have not changed. preview_invalid: Enter alt text before reviewing the change.
 - Draft history (closed; only when revisions exist). Earlier edits are kept in this tab until you reset or reload. Restore earlier draft when choices match. Otherwise: This earlier draft uses different name choices. Change those choices first, or copy the text and review it as a new edit. plus Copy earlier draft.
 - Apply and undo. Compare the current alt text with your draft. Applying changes only the demo image below. Current alt text beside Will be applied. The draft changed. Preview it again before applying. The demo copy already uses this text.
 - Demo image preview. Distinct demo image whose alternative is the current demo copy, starting as Two people at a film festival.
@@ -661,7 +660,15 @@ Zone labels (verbatim; the tables above escape `|` for markdown, this list does 
 - Reset this demo? This clears name choices, drafts and local history, and restores the original demo alt text. live_waiting: A live server job may continue after this reset.
 - Keep my work (safe default, focused). Reset demo (destructive).
 - Read the AltContext case study
-- Optional: test live description generation (closed details by default). Generate a separate description of this photo on the server. It will not replace your draft or change the demo copy. The server uses its own saved people. Your name choices in the walkthrough do not change this live test. Request details. Live server result (read-only).
-- closed: disclosure collapsed, no request. unavailable-unverified: Live generation is unavailable in this build. The recorded walkthrough still works. idle: This sends a live description request for the example photo to the configured AltContext service. See Request details before starting. pending: Waiting for the live description. Your demo copy is unchanged. complete: Live description received. Review it separately from the demo draft. failed: The live description could not be completed. Your demo copy is unchanged. timed_out: The wait limit was reached. The server job may still be running. Your demo copy is unchanged. stopped: Stopped waiting for this request. This does not confirm that the server job stopped. no_result: The server returned no description. Your demo copy is unchanged. Status colour is paired with a glyph.
+- Optional: test live description generation (closed details by default). Generate a separate description of this photo on the server. It will not replace your draft or change the demo copy. The server uses its own saved people. Your name choices in the walkthrough do not change this live test. Request details. Live server result (read-only). Keep waiting continues a timed-out run. No server budget disclosed, so this is how long this page is willing to wait. The service disclosed {generation} of generation time. This page will wait up to {deadline}, which may add service warm-up and a short local slack.
+- closed: disclosure collapsed, no request. unavailable-unverified: Live generation is unavailable in this build. The recorded walkthrough still works. idle: This sends a live description request for the example photo to the configured AltContext service. See Request details before starting. pending: Waiting for the live description. Your demo copy is unchanged. complete: Live description received. Review it separately from the demo draft. failed: The live description could not be completed. Your demo copy is unchanged. timed_out: The wait limit was reached. The server job may still be running. Keep waiting continues this run; Try live generation again starts a new one. Your demo copy is unchanged. stopped: Stopped waiting for this request. This does not confirm that the server job stopped. no_result: The server returned no description. Your demo copy is unchanged. Status colour is paired with a glyph.
 
 States (all zones and screens): default first_time error empty edge_input degraded loading offline
+
+## Not doing
+- Public homepage or marketing deployment
+- New routes or endpoints, including /practice
+- Copying a live result into the demo candidate or applying it automatically
+- WordPress media, roster, settings, or user-preference writes from core actions
+- Inventing copy or renaming the shipped people to Jordan Lee, Rowan Ames, or Keanu
+- Full WordPress or screen-reader conformance claim from the map alone

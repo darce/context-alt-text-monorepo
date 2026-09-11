@@ -118,6 +118,14 @@ const HAND_AUTHORED_MAPS: Record<string, string> = {
     'which is not installable in this environment. Owner: DEMOLAND-1 — regenerate it with ' +
     'docs/ux-maps/render_ux_maps.py once the canvas package is available, which enrolls it here ' +
     'automatically via the snapshot.',
+  'public-demo-describe':
+    'Arrived hand-authored for GPU-LAUNCH-1. Official ux-map CLI and workbay_canvas_mcp are unavailable ' +
+    '(no install/upgrade in this lane), so the sanctioned renderer cannot write a ' +
+    'render_ux_maps.visible.json entry. Sibling Markdown was hand-rendered from the JSON using this ' +
+    "repo's render_ux_maps.py ASCII/table helpers; consumer TypeScript validation covers local " +
+    'extensions the older official package rejects. Owner: GPU-LAUNCH-1 — regenerate with ' +
+    'docs/ux-maps/render_ux_maps.py once the canvas package is available, which enrolls it here ' +
+    'automatically via the snapshot.',
 };
 
 it.each(
@@ -178,6 +186,7 @@ const OWNED_MAPS = [
   'guided-prototype',
   'febt-1-job-error-states',
   'public-guide',
+  'public-demo-describe',
 ] as const;
 
 /**
@@ -191,6 +200,7 @@ const REQUIRED_OWNED_MAPS = [
   'describe-gpu-tier',
   'febt-1-job-error-states',
   'gpu-operator-control',
+  'public-demo-describe',
   'workbench-2pane',
 ] as const;
 
@@ -1138,9 +1148,11 @@ describe('ux-map render parity (owned maps)', () => {
   it('distinguishes Unicode version metadata from real property-range drift', () => {
     const result = spawnSync(uxMapPython, [path.join(uxMapsDir, 'test_sync_unicode_width.py')], {
       encoding: 'utf8',
+      // Exhaustive Unicode property mutations take ~63s on the supported laptop.
+      timeout: BOUNDARY_SHARD_DEADLINE_MS,
     });
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-  }, vitestBudget(SHORT_COMMAND_DEADLINE_MS));
+  }, vitestBudget(BOUNDARY_SHARD_DEADLINE_MS));
 
   it('rejects an extra unconditional primary recovery on the same screen', () => {
     const raw = readMapJson('febt-1-job-error-states') as { actions: Record<string, unknown>[] };

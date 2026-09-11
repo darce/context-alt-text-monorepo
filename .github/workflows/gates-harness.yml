@@ -1,0 +1,59 @@
+name: Gates harness
+
+on:
+  pull_request:
+    paths:
+      - "scripts/**"
+      - "mk/**"
+      - "Makefile.d/lifecycle.mk"
+      - ".gitignore"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/**"
+  push:
+    branches:
+      - main
+    paths:
+      - "scripts/**"
+      - "mk/**"
+      - "Makefile.d/lifecycle.mk"
+      - ".gitignore"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/**"
+
+permissions:
+  contents: read
+
+jobs:
+  harness:
+    name: Run gates harness tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash --noprofile --norc -eo pipefail {0}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: python -m pip install pytest
+
+      - name: Run gates harness tests
+        env:
+          # This job does not build the admin bundle. Live freshness fails
+          # closed unless the operator explicitly marks the bundle optional.
+          ACX_BUNDLE_OPTIONAL: "1"
+        run: python -m pytest scripts/tests -q -p no:cacheprovider
+
+      - name: Run recognition deploy contract tests
+        run: python -m pytest scripts/deploy/tests/test_recognition_deploy.py scripts/deploy/tests/test_recognition_ocir_config.py -q -p no:cacheprovider
+
+      - name: Run reap-lane bash suite
+        run: bash scripts/vm/tests/test_reap_lane.sh

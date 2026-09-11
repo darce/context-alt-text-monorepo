@@ -1,5 +1,5 @@
 # =============================================================================
-# Lane Lifecycle (open, status, inbox, prompt, dispatch)
+# Lane Lifecycle (open, status, inbox, prompt, dispatch, plan-accept)
 # =============================================================================
 
 .PHONY: lane-open lane-status lane-inbox lane-prompt lane-dispatch
@@ -50,6 +50,18 @@ lane-open: lane-guard
 			--task-ref "$(TASK)" \
 			--lane-id "$(LANE)" \
 			--worktree-path "$(LANE_WORKTREE)"; \
+		echo ""; \
+		echo "Provisioning lane worktree overlays..."; \
+		if [ -e "$(LANE_WORKTREE)/.acx-secure-offload" ]; then \
+			echo "Skipping overlay/dependency provision for secure-offload sandbox at $(LANE_WORKTREE)"; \
+		else \
+			SECURE_OFFLOAD_FLAG=""; \
+			case "$(OFFLOAD_BACKEND)" in grok*) SECURE_OFFLOAD_FLAG="--secure-offload" ;; esac; \
+			python3 "$(ORCHESTRATOR_ROOT)/scripts/workstate/provision_lane_worktree.py" \
+				--worktree "$(LANE_WORKTREE)" \
+				--primary "$(ORCHESTRATOR_ROOT)" \
+				$$SECURE_OFFLOAD_FLAG; \
+		fi; \
 		echo ""; \
 		echo "Initial lane inbox:"; \
 		$(MAKE) --no-print-directory lane-inbox TASK="$(TASK)" LANE="$(LANE)"; \
@@ -153,3 +165,25 @@ lane-dispatch: lane-guard lane-orchestrator-guard
 	$(MAKE) task; \
 	echo ""; \
 	echo "Dispatch recorded for $(LANE). Workers can poll it with: make lane-inbox TASK=$(TASK) LANE=$(LANE)"
+
+# =============================================================================
+# Plan Lifecycle (plan-accept)
+# =============================================================================
+
+.PHONY: plan-accept
+
+# plan-accept is deliberately defined here rather than in Makefile.d/. That
+# directory is a bootstrap-materialized, gitignored plugin overlay pulled in by
+# `-include Makefile.d/*.mk` at the foot of the root Makefile; tracking a file
+# inside it makes Git silently overwrite the operator's untracked overlay on
+# merge. plan-accept is the one lifecycle target the overlay does not define,
+# so it belongs on the tracked mk/ surface.
+# ACX_LIFECYCLE_HANDLERS points at the in-repo handler package, not the
+# external plugin's workbay_lifecycle runner.
+ACX_LIFECYCLE_HANDLERS ?= scripts/workstate/lifecycle/handlers
+
+plan-accept:
+	@ACX_LIFECYCLE_HANDLERS="$(ACX_LIFECYCLE_HANDLERS)" \
+		python3 "$(ACX_LIFECYCLE_HANDLERS)/plan_baseline.py" \
+			--task "$(TASK)" \
+			$(if $(PLAN),--plan "$(PLAN)",)

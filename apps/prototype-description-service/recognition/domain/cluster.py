@@ -21,6 +21,28 @@ class ReservedClusterLabelError(ValueError):
         self.label = label
 
 
+class CrossSpaceMergeError(ValueError):
+    """Raised when a merge would compose centroids from distinct embedding spaces."""
+
+    def __init__(
+        self,
+        *,
+        source_cluster_id: str,
+        target_cluster_id: str,
+        source_model: str | None,
+        target_model: str | None,
+    ) -> None:
+        super().__init__(
+            "Cannot merge clusters from different embedding spaces: "
+            f"source={source_cluster_id} space={source_model!r} "
+            f"target={target_cluster_id} space={target_model!r}"
+        )
+        self.source_cluster_id = source_cluster_id
+        self.target_cluster_id = target_cluster_id
+        self.source_model = source_model
+        self.target_model = target_model
+
+
 def is_reserved_label_shape(label: str | None) -> bool:
     """Return whether a label starts with the reserved ``cluster-``/``cluster_`` shape."""
     if label is None:
@@ -44,6 +66,9 @@ class IdentityCluster:
     dismissed_at: datetime | None = None
     representatives: Sequence[ClusterRepresentative] | None = None
     centroid: Any | None = None
+    # FIR23-01: majority embedding_model of loaded representatives. None when
+    # unresolved (legacy unstamped rows). Appended last for positional safety.
+    embedding_model: str | None = None
 
     @property
     def is_auto_label(self) -> bool:

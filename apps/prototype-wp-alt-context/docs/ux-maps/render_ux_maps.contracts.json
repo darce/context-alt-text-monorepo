@@ -27,6 +27,9 @@
         "## Actions",
         "## Operator interaction contract\n\nDeep-link param SSOT: `js/admin/navigation/appLinks.ts` (`APP_LINK_PARAMS`).\n\nThe Review Suggestions header announces `position: 1 of N on this page`. The top group card reports `N of M faces shown` and presents `Is this <name>? Yes/No` when a suggested label is available. While a save is in flight, `busy disables actions`; in the empty-representative edge case, `zero reps still render (Avatar, not empty)`.\n\nComponent pointers:\n\n- `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/WorkbenchFindingsPanel.tsx`\n- `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/TopClusterCard.tsx`"
       ]
-    ]
+    ],
+    "public-guide": [],
+    "public-demo-describe": [],
+    "guided-prototype": []
   }
 }

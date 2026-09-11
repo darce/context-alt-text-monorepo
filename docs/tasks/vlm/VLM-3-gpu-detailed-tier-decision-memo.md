@@ -14,10 +14,11 @@ Do not promote the provisional decision to final until the live OCI bake-off rep
 
 ## Evidence
 
-- Spike artifact: `VLM-3-gpu-spike-2026-07-08.json`
+- Spike artifact (live, 2026-07-14): `VLM-3-gpu-spike-2026-07-14.json` and dated 400gb / 400gb-60vpu / 750gb-balanced siblings. `oci_capacity.a10_quota_confirmed` remains `false` with `source=pending_operator_oci_console_or_cli_check` — do not read narrative "quota granted" as confirmation.
 - Candidate slate: `VLM-3-gpu-bakeoff-candidates-2026-07-08.json`
-- Selected candidate report placeholder: `VLM-3-bakeoff-Qwen3-VL-30B-A3B-Instruct-report.json`
-- Current evidence status: pending live OCI bake-off
+- Selected candidate **canonical** report: `VLM-3-bakeoff-Qwen3-VL-30B-A3B-Instruct-report.json` is still `kind=pending_report` / `status=pending_live_gpu_bakeoff`. `scripts/test_vlm3_gpu_bakeoff_artifacts.py` locks those placeholders; regenerating `kind=report` is blocked until that test is updated in a scripts-owning lane.
+- Measured **non-canonical** evidence already committed: `VLM-3-bakeoff-Qwen3-VL-30B-A3B-Instruct-report.md` and `VLM-3-bakeoff-Qwen3-VL-30B-A3B-Instruct-run-record.json` (and the same pair for InternVL3.5-8B, MiMo-VL-7B-RL, Qwen3-VL-8B-Instruct). Consumers that need numbers must read those files, not the pending JSON stubs.
+- Current evidence status: live spike measured; canonical indexed REPORTs still pending; memo remains provisional.
 
 ## Must-Right
 

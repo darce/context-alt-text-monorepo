@@ -3,12 +3,73 @@
 @use '../admin/styles/tokens/radius';
 @use '../admin/styles/tokens/spacing';
 @use '../admin/styles/tokens/typography';
+@use 'theme-darce';
+
+@font-face {
+  font-family: 'Roboto Flex';
+  src: url('./fonts/RobotoFlex.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 100 1000;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('./fonts/GeistMonoVariableVF.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
 
 .acx-public-guide {
+  @include theme-darce.tokens;
   @include meta.load-css('../admin/styles/components/button');
   @include meta.load-css('../admin/styles/components/guided-prototype');
+  @include meta.load-css('../admin/styles/components/guided-face-overlay');
   @include meta.load-css('../admin/styles/components/dialog');
   @include meta.load-css('../admin/styles/components/radio-group');
+
+  font-family: var(--acx-font-sans);
+  font-optical-sizing: auto;
+  line-height: var(--acx-line-height-base);
+
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+  }
+
+  .acx-guided-review__apply {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(12rem, 0.5fr);
+
+    > h2,
+    > p,
+    > .acx-guided-review__actions {
+      grid-column: 1 / -1;
+    }
+  }
+
+  .acx-guided-face__card {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .acx-guided-face__crop {
+    align-items: flex-start;
+  }
+
+  .acx-guided-face__gallery {
+    margin-top: var(--acx-space-12);
+  }
+
+  @media (max-width: 640px) {
+    .acx-guided-review__apply,
+    .acx-guided-review__preview-grid,
+    .acx-guided-face__cards {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
 
   margin: 0;
   background: var(--acx-color-surface);
@@ -49,15 +110,12 @@
     gap: var(--acx-space-16);
   }
 
-  .acx-guided-entrance__escape a {
-    color: var(--acx-color-accent-contrast);
-    font-weight: var(--acx-font-weight-semibold);
-  }
-
   .acx-guided-entrance__actions {
     display: flex;
     flex-wrap: wrap;
     gap: var(--acx-space-12);
     align-items: center;
   }
+
+  @include meta.load-css('theme-darce-components');
 }

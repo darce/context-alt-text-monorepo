@@ -67,6 +67,7 @@ async def _merge_into(
 ) -> IdentityCluster:
     cluster_repo = AsyncMock()
     cluster_repo.get_by_id.side_effect = [source, target]
+    cluster_repo.get_all_representatives = AsyncMock(return_value=[])
     cluster_repo.update.side_effect = lambda cluster: cluster
     member_repo = AsyncMock()
     member_repo.move_members.return_value = 1

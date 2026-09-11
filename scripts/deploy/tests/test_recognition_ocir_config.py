@@ -335,7 +335,10 @@ fi
     )
     env = os.environ.copy()
     env["PATH"] = f"{bin_dir}:{env['PATH']}"
-    command = f'source "{SCRIPT}"; REMOTE_BUILD=0; do_push_tag latest "${{IMAGE_BASE}}@sha256:{expected}"'
+    command = (
+        f'source "{SCRIPT}"; with_shared_tag_lock() {{ shift; "$@"; }}; '
+        f'REMOTE_BUILD=0; do_push_tag latest "${{IMAGE_BASE}}@sha256:{expected}"'
+    )
     result = subprocess.run(["/bin/bash", "-c", command], env=env, text=True, capture_output=True, check=False)
     assert result.returncode != 0
     assert "DIGEST MISMATCH" in result.stderr
@@ -344,7 +347,7 @@ fi
 def test_rollback_is_captured_before_remote_build_and_used_on_failures() -> None:
     source = SCRIPT.read_text()
     deploy = source[
-        source.index("do_deploy() {") : source.index(
+        source.index("_ship_selected_env() {") : source.index(
             "#---------------------------------------------------------------- promote"
         )
     ]
@@ -414,6 +417,9 @@ def test_repair_failure_recovery_restores_vm_and_registry_tag(tmp_path: Path) ->
 set -euo pipefail
 last=
 for arg in "$@"; do last="$arg"; done
+if [[ "$last" == *".bak"* || "$last" == *"systemctl"* || "$last" == *"Caddyfile"* || "$last" == *"cutover"* ]]; then
+  exit 0
+fi
 bash -c "$last"
 """,
     )
@@ -435,6 +441,7 @@ fi
         f'source "{SCRIPT}"; ACX_DEPLOY_OCIR_CONFIG_DIR=/tmp/acx-test-config; '
         f'env_to_remote_dir() {{ printf "%s" "{remote_dir}"; }}; '
         f'ACX_ROLLBACK_DIGEST_REF="${{IMAGE_BASE}}@sha256:{digest}"; '
+        'with_shared_tag_lock() { shift; "$@"; }; '
         "restore_env_tag_to_rollback prod 0"
     )
     result = subprocess.run(["/bin/bash", "-c", command], env=env, text=True, capture_output=True, check=False)
@@ -545,6 +552,7 @@ source "{SCRIPT}"
 ACX_DEPLOY_OCIR_CONFIG_DIR=/tmp/acx-test-config
 ACX_ROLLBACK_IMAGE_BASE="$IMAGE_BASE"
 ACX_ROLLBACK_DIGEST_REF="$IMAGE_BASE@sha256:{digest}"
+with_shared_tag_lock() {{ shift; "$@"; }}
 remote_docker_with_config() {{
   printf '%s\\n' "$*" >>"{records}"
   [[ "$1" != push ]]

@@ -116,6 +116,14 @@ jobs:
       - name: Upgrade npm
         run: npm install --global npm@11.14.1
 
+      - name: Set up Python for artifact gate
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install artifact gate dependencies
+        run: python -m pip install pytest
+
       # package-plugin.sh (default build mode) runs `npm run build` itself and a
       # staging-dir `composer install --no-dev`, and hard-errors if
       # public/assets/dist is missing/empty — so npm ci MUST land first, and no
@@ -127,6 +135,9 @@ jobs:
       - name: Build plugin zip
         working-directory: apps/prototype-wp-alt-context
         run: bash scripts/release/package-plugin.sh
+
+      - name: Verify admin bundle freshness
+        run: python -m pytest scripts/tests/test_admin_bundle_freshness.py -q -p no:cacheprovider
 
       - name: Join tailnet (ephemeral node)
         uses: tailscale/github-action@v3

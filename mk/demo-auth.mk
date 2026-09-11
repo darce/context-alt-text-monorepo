@@ -1,10 +1,5 @@
-# AUTH-03: issue a CI-scoped demo API credential (least privilege vs viewer).
-# Documented command; must run as written (rg-006). Does not override the
-# existing Makefile provision-demo / expire-demo recipes.
-#
-# Usage:
-#   make issue-demo-ci-account LABEL="ACX CI" ADMIN_USER=acx-demo-admin
-# Optional: SEED=default ENV=local
+# Issue a least-privilege API account for the hosted demo's CI smoke.
+# Usage: make issue-demo-ci-account LABEL="ACX CI" ADMIN_USER=acx-demo-admin
 
 .PHONY: issue-demo-ci-account
 issue-demo-ci-account:

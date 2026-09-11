@@ -34,7 +34,7 @@ def _normalize(vec: np.ndarray) -> np.ndarray:
 def _rep(
     *,
     embedding: np.ndarray,
-    embedding_model: str,
+    embedding_model: str | None,
     quality_score: float = 1.0,
     landmark_quality: float = 1.0,
     det_score: float = 0.99,
@@ -297,6 +297,67 @@ def test_roster_candidates_ranks_labelled_excludes_foreign_tenant_and_validates_
     assert body["probe_face_count"] == 1
     assert body["reference_face_count"] >= 2
     assert fake_cluster_repository.clusters[probe.id].representatives == []
+
+
+def test_roster_candidates_usable_unstamped_probe_does_not_invent_literal_none(
+    api_client, tenant_id, fake_cluster_service, fake_cluster_repository, monkeypatch
+) -> None:
+    """SVCSRC-R-03: usable probe_model=None must agree with the empty-probe empty string."""
+    monkeypatch.setattr(
+        "recognition.application.suggestions.roster_candidates.resolve_effective_clustering_settings",
+        lambda: ClusteringSettings(
+            suggestion_floor=0.40,
+            suggestion_ceiling=0.80,
+            similarity_threshold=0.77,
+            fatal_quality_floor=0.20,
+            fatal_confidence_floor=0.30,
+        ),
+    )
+    probe = seed_cluster(
+        fake_cluster_service,
+        tenant_id,
+        label=None,
+        fake_cluster_repository=fake_cluster_repository,
+    )
+    labeled = seed_cluster(
+        fake_cluster_service,
+        tenant_id,
+        label="Ada",
+        fake_cluster_repository=fake_cluster_repository,
+    )
+    fake_cluster_repository.seed(
+        probe.id,
+        tenant_id,
+        label=None,
+        representatives=[
+            _rep(
+                embedding=_normalize(np.array([1.0, 0.0, 0.0])),
+                embedding_model=None,
+                quality_score=0.95,
+                landmark_quality=0.9,
+            )
+        ],
+    )
+    fake_cluster_repository.seed(
+        labeled.id,
+        tenant_id,
+        label="Ada",
+        representatives=[_rep(embedding=_normalize(np.array([1.0, 0.0, 0.0])), embedding_model=None)],
+    )
+
+    resp = api_client.get(
+        f"/recognition/clusters/{probe.id}/roster-candidates",
+        headers={"X-Tenant-ID": tenant_id},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    jsonschema.validate(body, _schema())
+    assert body["candidates"]
+    assert body["model_id"] == ""
+    assert body["embedding_model"] == ""
+    assert body["model_id"] != "None"
+    assert body["embedding_model"] != "None"
 
 
 def test_roster_candidates_low_quality_flag_caps_strong_band_on_the_wire(

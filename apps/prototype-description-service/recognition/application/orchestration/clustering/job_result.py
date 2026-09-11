@@ -20,3 +20,4 @@ class ClusterJobResult:
     accepted: int = 0
     suggested: int = 0
     rejected: int = 0
+    probe_space_skip: dict[str, object] = field(default_factory=dict)

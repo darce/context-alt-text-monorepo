@@ -2,8 +2,8 @@
 # GUIDESEED-1: add the guided-prototype people (Katy Perry, Justin Trudeau) to the
 # demo seed bundle so the live roster can name them.
 #
-# Copies the six bundled, licence-cleared plugin assets
-# (apps/prototype-wp-alt-context/js/admin/assets/guided/*.jpg, credits in CREDITS.md)
+# Copies the bundled plugin assets
+# (apps/prototype-wp-alt-context/js/admin/assets/guided/*, credits in CREDITS.md)
 # into seed/media/ under the `<person_slug>_<n>.jpg` scheme import.sh and the roster
 # scan expect, writes seed/guided-manifest.txt, and regenerates the provenance rows
 # between the GUIDED-PROVENANCE markers in seed/README.md. The SEED-PROVENANCE
@@ -13,7 +13,8 @@
 # previous guided-manifest counts and the rows about to be written). Never glob-
 # deletes shared-media prefixes — a clustering file like katy_perry_99.jpg must
 # survive a guided rerun.
-# Refuses (exit 2) if any bundled source is missing or is not image/jpeg by content.
+# Refuses (exit 2) if any bundled source is missing or is not image/jpeg or
+# image/webp by content.
 # Portable to bash 3.2 (macOS) and bash 5 (VM): no mapfile / associative arrays /
 # GNU-only find depth flags. Cleanup failures are not suppressed.
 #
@@ -37,8 +38,9 @@ ROWS='guided-katy-perry-2026.jpg|katy_perry|Katy Perry|Wikimedia Commons, Justin
 guided-katy-perry-2019.jpg|katy_perry|Katy Perry|Wikimedia Commons, Glenn Francis (Toglenn) — CC BY-SA 4.0
 guided-katy-perry-2016.jpg|katy_perry|Katy Perry|Wikimedia Commons, Voice of America — public domain
 guided-justin-trudeau-2025.jpg|justin_trudeau|Justin Trudeau|Wikimedia Commons, European Commission — EU reuse licence (Commission Decision 2011/833/EU)
-guided-justin-trudeau-2025-b.jpg|justin_trudeau|Justin Trudeau|Wikimedia Commons, European Commission — EU reuse licence (Commission Decision 2011/833/EU)
-guided-press-tribeca-2026.jpg|tribeca_press|Justin Trudeau and Katy Perry (press photo, walkthrough subject)|Wikimedia Commons, Colleen Sturtevant — CC BY-SA 4.0'
+guided-justin-trudeau-2023.jpg|justin_trudeau|Justin Trudeau|Wikimedia Commons, Lea-Kim Chateauneuf — CC BY-SA 4.0
+guided-press-tribeca-2026.jpg|tribeca_press|Justin Trudeau and Katy Perry (press photo, walkthrough subject)|Wikimedia Commons, Colleen Sturtevant — CC BY-SA 4.0
+guided-press-coachella-2026.webp|coachella_press|Justin Trudeau and Katy Perry (press photo, walkthrough subject)|Katy Perry'\''s Instagram account — no formal reuse licence recorded'
 
 [ -d "$SRC" ] || { echo "ERROR: SRC not found: $SRC" >&2; exit 2; }
 
@@ -50,7 +52,10 @@ while IFS='|' read -r src _slug _label _lic; do
     echo "ERROR: bundled source missing: $SRC/$src" >&2; missing=$((missing + 1)); continue
   fi
   mt=$(file -b --mime-type "$SRC/$src" 2>/dev/null || echo unknown)
-  [ "$mt" = "image/jpeg" ] || { echo "ERROR: $src is '$mt' by content, not image/jpeg" >&2; missing=$((missing + 1)); }
+  case "$mt" in
+    image/jpeg|image/webp) ;;
+    *) echo "ERROR: $src is '$mt' by content, not image/jpeg or image/webp" >&2; missing=$((missing + 1)); ;;
+  esac
 done <<< "$ROWS"
 [ "$missing" -eq 0 ] || exit 2
 

@@ -6,16 +6,17 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { CASE_STUDY_URL, RECORDING_URL, guidedCopy } from '../../admin/guidedPrototype/publicGuideCopy';
+import { CASE_STUDY_URL, guidedCopy } from '../../admin/guidedPrototype/publicGuideCopy';
 import { RecordedWalkthrough } from '../../admin/guidedPrototype/RecordedWalkthrough';
 import { createGuidedScenario } from '../../admin/guidedPrototype/state';
 
-const SEED_ALT_TEXT = 'Two people at a film festival.';
+const SEED_ALT_TEXT =
+  'A man in a black suit and a woman in a white dress pose together, smiling, in front of a Tribeca Festival step-and-repeat backdrop.';
 const PUBLIC_SCOPE =
-  'Try the review workflow using a recorded example. Your changes affect only the demo copy in this tab.';
+  'This is a supplied example roster with recorded drafts. Your choices change only the demo copy in this tab; they do not update WordPress or a server roster.';
 
 const choose = (position: 'left' | 'right', option: 'include' | 'omit'): void => {
-  const fieldset = screen.getByTestId(`name-choice-${position}`);
+  const fieldset = screen.getByTestId(`name-choice-tribeca-${position}`);
   const name =
     option === 'include'
       ? guidedCopy('names.include', { name: position === 'left' ? 'Justin Trudeau' : 'Katy Perry' })
@@ -31,6 +32,7 @@ const SKIP_IMPORT_EXT = new Set([
   '.png',
   '.gif',
   '.svg',
+  '.webp',
   '.json',
   '.woff',
   '.woff2',
@@ -152,11 +154,9 @@ describe('public recorded walkthrough boundary', () => {
     render(<RecordedWalkthrough scope="public" escapeHref="https://demo.example/" />);
 
     expect(screen.getByTestId('guided-scope')).toHaveTextContent(PUBLIC_SCOPE);
+    expect(screen.getByRole('heading', { level: 1, name: guidedCopy('entry.title.public') })).toBeInTheDocument();
+    expect(screen.getByText(guidedCopy('entry.intro.public'))).toBeInTheDocument();
     expect(screen.getByRole('button', { name: guidedCopy('page.start') })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: `${guidedCopy('entry.watch')} (opens in a new window)` })).toHaveAttribute(
-      'href',
-      RECORDING_URL,
-    );
     expect(
       screen.getByRole('link', { name: `${guidedCopy('entry.read_case_study')} (opens in a new window)` }),
     ).toHaveAttribute('href', CASE_STUDY_URL);
@@ -182,8 +182,8 @@ describe('public recorded walkthrough boundary', () => {
     const editor = screen.getByRole('textbox', { name: guidedCopy('draft.label') });
     fireEvent.change(editor, { target: { value: edited } });
     await user.click(screen.getByRole('button', { name: guidedCopy('draft.next') }));
-    await user.click(screen.getByTestId('demo-apply'));
-    await user.click(screen.getByTestId('demo-undo'));
+    await user.click(screen.getByTestId('demo-apply-tribeca'));
+    await user.click(screen.getByTestId('demo-undo-tribeca'));
 
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(xhrOpen).not.toHaveBeenCalled();
@@ -201,18 +201,135 @@ describe('public recorded walkthrough boundary', () => {
     const editor = screen.getByRole('textbox', { name: guidedCopy('draft.label') });
     fireEvent.change(editor, { target: { value: edited } });
     await user.click(screen.getByRole('button', { name: guidedCopy('draft.next') }));
-    await user.click(screen.getByTestId('demo-apply'));
+    await user.click(screen.getByTestId('demo-apply-tribeca'));
 
-    expect(screen.getByTestId('demo-applied-image')).toHaveAttribute('alt', edited);
+    expect(screen.getByTestId('demo-applied-image-tribeca')).toHaveAttribute('alt', edited);
     expect(editor).toHaveValue(edited);
 
-    await user.click(screen.getByTestId('demo-undo'));
-    expect(screen.getByTestId('demo-applied-image')).toHaveAttribute('alt', SEED_ALT_TEXT);
+    await user.click(screen.getByTestId('demo-undo-tribeca'));
+    expect(screen.getByTestId('demo-applied-image-tribeca')).toHaveAttribute('alt', SEED_ALT_TEXT);
     expect(editor).toHaveValue(edited);
 
     const seedAfter = createGuidedScenario();
     expect(seedAfter).toEqual(seedBefore);
     expect(seedAfter.pressPhoto.altText).toBe(SEED_ALT_TEXT);
+  });
+
+  it('shows the complete current name-choice summary separately from live feedback', () => {
+    render(<RecordedWalkthrough scope="public" escapeHref="/" />);
+
+    const summary = screen.getByTestId('guided-choice-summary');
+    expect(summary).toHaveTextContent('Justin Trudeau');
+    expect(summary).toHaveTextContent('Katy Perry');
+    expect(summary).toHaveTextContent(guidedCopy('names.pending'));
+    expect(screen.getByTestId('guided-page-feedback-status')).toHaveAttribute('aria-live', 'polite');
+
+    choose('left', 'include');
+    expect(summary).toHaveTextContent(guidedCopy('names.include', { name: 'Justin Trudeau' }));
+    expect(summary).toHaveTextContent(guidedCopy('names.pending'));
+
+    choose('right', 'omit');
+    expect(summary).toHaveTextContent(guidedCopy('names.include', { name: 'Justin Trudeau' }));
+    expect(summary).toHaveTextContent(guidedCopy('names.omit'));
+  });
+
+  it('keeps the full before-source attribution inside the provenance disclosure', () => {
+    const { container } = render(<RecordedWalkthrough scope="public" escapeHref="/" />);
+    const provenance = container.querySelector('.acx-guided-page__provenance-footer');
+    expect(provenance).not.toBeNull();
+    expect(provenance).toHaveTextContent(guidedCopy('context.source.summary.public'));
+    expect(provenance).toHaveTextContent(guidedCopy('context.source.comparison_boundary.public'));
+    expect(provenance).toHaveTextContent(guidedCopy('provenance.recorded'));
+    expect(provenance?.querySelector('a[href="https://alttext.ai/"]')).toBeInTheDocument();
+    const context = container.querySelector('.acx-guided-page__context');
+    expect(context?.children).toHaveLength(1);
+    expect(context?.querySelector('p')).toHaveTextContent(guidedCopy('context.purpose'));
+    expect(context?.querySelector('details, button')).toBeNull();
+  });
+
+  it('keeps public-source narration out of admin provenance while retaining recorded attribution', () => {
+    const { container } = render(<RecordedWalkthrough scope="admin" />);
+    const provenance = container.querySelector('.acx-guided-page__provenance-footer');
+    expect(provenance).not.toBeNull();
+    expect(provenance).toHaveTextContent(guidedCopy('provenance.recorded'));
+    expect(provenance).not.toHaveTextContent(guidedCopy('context.source.summary.public'));
+    expect(provenance).not.toHaveTextContent(guidedCopy('context.source.comparison_boundary.public'));
+    expect(provenance?.querySelector('a[href="https://alttext.ai/"]')).not.toBeInTheDocument();
+    expect(container.querySelector('p.acx-guided-page__credit')).toHaveTextContent(
+      createGuidedScenario().pressPhoto.credit,
+    );
+  });
+
+  it('keeps public completion copy bounded for applied and kept outcomes', async () => {
+    const user = userEvent.setup();
+    render(<RecordedWalkthrough scope="public" escapeHref="/" />);
+
+    choose('left', 'include');
+    choose('right', 'include');
+    const editor = screen.getByRole('textbox', { name: guidedCopy('draft.label') });
+    await user.clear(editor);
+    await user.type(editor, 'A bounded public demo edit.');
+    await user.click(screen.getByRole('button', { name: guidedCopy('draft.next') }));
+    await user.click(screen.getByTestId('demo-apply-tribeca'));
+    expect(screen.getByTestId('demo-outcome')).toHaveTextContent(guidedCopy('outcome.scope.public'));
+    expect(screen.getByTestId('demo-outcome')).toHaveTextContent(guidedCopy('outcome.next_batch.public'));
+    expect(screen.getByTestId('demo-outcome')).not.toHaveTextContent(/WordPress media has been updated/i);
+
+    await user.click(screen.getByRole('button', { name: guidedCopy('outcome.return') }));
+    await user.click(
+      within(screen.getByTestId('guided-description-review-tribeca')).getByRole('button', {
+        name: guidedCopy('draft.keep'),
+      }),
+    );
+    expect(screen.getByTestId('demo-outcome')).toHaveTextContent(guidedCopy('outcome.kept'));
+    expect(screen.getByTestId('demo-outcome')).toHaveTextContent(guidedCopy('outcome.scope.public'));
+    expect(screen.getByTestId('demo-outcome')).toHaveTextContent(guidedCopy('outcome.next_batch.public'));
+  });
+
+  it('keeps reset local and clears choices, draft state, and outcome', async () => {
+    const user = userEvent.setup();
+    render(<RecordedWalkthrough scope="public" escapeHref="/" />);
+
+    choose('left', 'include');
+    choose('right', 'omit');
+    await user.click(screen.getByRole('button', { name: guidedCopy('page.reset') }));
+    const dialog = screen.getByRole('dialog', { name: guidedCopy('reset.title') });
+    await user.click(within(dialog).getByRole('button', { name: guidedCopy('reset.confirm') }));
+
+    expect(
+      within(screen.getByTestId('name-choice-tribeca-left')).getByRole('radio', { name: /^Use / }),
+    ).not.toBeChecked();
+    expect(
+      within(screen.getByTestId('name-choice-tribeca-right')).getByRole('radio', { name: /^Use / }),
+    ).not.toBeChecked();
+    expect(screen.getByTestId('guided-choice-summary')).toHaveTextContent(guidedCopy('names.pending'));
+    expect(screen.queryByTestId('demo-outcome')).not.toBeInTheDocument();
+    expect(screen.getByTestId('guided-description-review-tribeca')).toHaveTextContent(guidedCopy('draft.blocked'));
+  });
+
+  it('does not resurrect an unsaved draft or open replacement after reset', async () => {
+    const user = userEvent.setup();
+    render(<RecordedWalkthrough scope="public" escapeHref="/" />);
+
+    const scenario = createGuidedScenario();
+    choose('left', 'include');
+    choose('right', 'include');
+    const editor = screen.getByRole('textbox', { name: guidedCopy('draft.label') });
+    const staleDraft = 'Unsaved draft must not return after reset.';
+    fireEvent.change(editor, { target: { value: staleDraft } });
+
+    await user.click(screen.getByRole('button', { name: guidedCopy('page.reset') }));
+    const dialog = screen.getByRole('dialog', { name: guidedCopy('reset.title') });
+    await user.click(within(dialog).getByRole('button', { name: guidedCopy('reset.confirm') }));
+
+    choose('left', 'include');
+    choose('right', 'omit');
+
+    expect(screen.queryByRole('dialog', { name: guidedCopy('names.change_title') })).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: guidedCopy('draft.label') })).toHaveValue(
+      scenario.samples.tribeca['justin-trudeau'],
+    );
+    expect(screen.getByRole('textbox', { name: guidedCopy('draft.label') })).not.toHaveValue(staleDraft);
   });
 
   it('walks the public entry import graph and forbids live/API imports', () => {

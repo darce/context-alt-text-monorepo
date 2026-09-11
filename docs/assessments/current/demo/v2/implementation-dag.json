@@ -1,0 +1,114 @@
+{
+  "task_ref": "GUIDEPOLISH-1",
+  "default_done_definition": "Ready for orchestrator branch review with lane-local verification complete.",
+  "merge_order": [
+    "editor",
+    "narrative",
+    "root",
+    "scenario",
+    "integrate"
+  ],
+  "routing": [],
+  "lanes": {
+    "editor": {
+      "branch": "codex/GUIDEPOLISH-1-editor",
+      "worktree_path": "{orchestrator_root}-GUIDEPOLISH-1-editor",
+      "owned_paths": [
+        "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedDescriptionReview.tsx"
+      ],
+      "test_commands": [],
+      "title": "editor",
+      "objective": "Auto-grow draft and preserve public origin prop",
+      "difficulty": "contract_bearing",
+      "slack": 0,
+      "critical": false,
+      "preferred_tier": "senior",
+      "preferred_backend": "codex-remote"
+    },
+    "integrate": {
+      "branch": "codex/GUIDEPOLISH-1-integrate",
+      "worktree_path": "{orchestrator_root}-GUIDEPOLISH-1-integrate",
+      "owned_paths": [
+        "docs/assessments/current/demo/v2/release-evidence.md"
+      ],
+      "test_commands": [],
+      "title": "integrate",
+      "objective": "Integrate independent slices; remote slice reviews then one harmonizing gate",
+      "difficulty": "contract_bearing",
+      "slack": 0,
+      "critical": false,
+      "preferred_tier": "senior",
+      "preferred_backend": "codex-remote"
+    },
+    "narrative": {
+      "branch": "codex/GUIDEPOLISH-1-narrative",
+      "worktree_path": "{orchestrator_root}-GUIDEPOLISH-1-narrative",
+      "owned_paths": [
+        "apps/prototype-wp-alt-context/js/admin/guidedPrototype/RecordedWalkthrough.tsx",
+        "apps/prototype-wp-alt-context/js/admin/guidedPrototype/publicGuideCopy.ts"
+      ],
+      "test_commands": [],
+      "title": "narrative",
+      "objective": "Public brief, full selection summary, UX inventory",
+      "difficulty": "contract_bearing",
+      "slack": 0,
+      "critical": false,
+      "preferred_tier": "senior",
+      "preferred_backend": "codex-remote"
+    },
+    "root": {
+      "branch": "codex/GUIDEPOLISH-1-root",
+      "worktree_path": "{orchestrator_root}-GUIDEPOLISH-1-root",
+      "owned_paths": [
+        "apps/prototype-wp-alt-context/src/public"
+      ],
+      "test_commands": [],
+      "title": "root",
+      "objective": "Signed-out root and truthful gates",
+      "difficulty": "contract_bearing",
+      "slack": 0,
+      "critical": false,
+      "preferred_tier": "senior",
+      "preferred_backend": "codex-remote"
+    },
+    "scenario": {
+      "branch": "codex/GUIDEPOLISH-1-scenario",
+      "worktree_path": "{orchestrator_root}-GUIDEPOLISH-1-scenario",
+      "owned_paths": [
+        "apps/prototype-wp-alt-context/js/admin/assets/guided/guided-coachella.webp",
+        "apps/prototype-wp-alt-context/js/admin/guidedPrototype/state.ts"
+      ],
+      "test_commands": [],
+      "title": "scenario",
+      "objective": "Second image and actual GPU evidence/timing",
+      "difficulty": "contract_bearing",
+      "slack": 0,
+      "critical": false,
+      "preferred_tier": "senior",
+      "preferred_backend": "codex-remote"
+    }
+  },
+  "downstream": {
+    "editor": [
+      "integrate"
+    ],
+    "integrate": [],
+    "narrative": [
+      "integrate"
+    ],
+    "root": [
+      "integrate"
+    ],
+    "scenario": [
+      "integrate"
+    ]
+  },
+  "depends_on": {
+    "integrate": [
+      "editor",
+      "narrative",
+      "root",
+      "scenario"
+    ]
+  }
+}

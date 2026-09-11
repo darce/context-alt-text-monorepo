@@ -1,0 +1,110 @@
+// Palette
+--acx-color-surface: #e7eaef;
+--acx-color-surface-alt: #f2f4f7;
+--acx-color-panel: #dde1e8;
+--acx-color-panel-border: #171920;
+--acx-color-border: #171920;
+--acx-color-frame-muted: #171920;
+--acx-color-data-placeholder: #dde1e8;
+--acx-color-text: #171920;
+--acx-color-text-muted: #4a4d57;
+--acx-color-accent: #3c00f7;
+--acx-color-accent-contrast: #ffffff;
+--acx-color-accent-soft: #dde1e8;
+--acx-color-primary: #3c00f7;
+--acx-color-primary-subtle: #dde1e8;
+
+// Depth
+--acx-shadow-1: none;
+--acx-shadow-2: none;
+--acx-shadow-3: none;
+--acx-shadow-card: none;
+--acx-shadow-dialog-primary: none;
+--acx-shadow-dialog-secondary: none;
+--acx-shadow-inset-danger: none;
+
+// Shape
+--acx-radius-sm: 0;
+--acx-radius-md: 0;
+--acx-radius-lg: 0;
+--acx-radius-xl: 0;
+--acx-radius-8: 0;
+--acx-radius-10: 0;
+--acx-radius-pill: 0;
+
+// Typography
+--acx-font-sans: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+--acx-font-mono: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+--acx-guide-font-display: 'Roboto Flex', Roboto, 'Helvetica Neue', sans-serif;
+--acx-line-height-base: 1.8;
+--acx-text-2xs: 0.7rem;
+--acx-text-xs: 0.7rem;
+--acx-text-sm: 0.85rem;
+--acx-text-md: 0.85rem;
+--acx-text-base: 1rem;
+--acx-text-lg: 1.1rem;
+--acx-text-xl: 1.25rem;
+--acx-text-2xl: 1.6rem;
+--acx-text-3xl: 3.2rem;
+
+// Spacing
+--acx-space-2: 2px;
+--acx-space-4: 3px;
+--acx-space-5: 3px;
+--acx-space-6: 6px;
+--acx-space-8: 6px;
+--acx-space-10: 6px;
+--acx-space-12: 12px;
+--acx-space-16: 12px;
+--acx-space-20: 24px;
+--acx-space-24: 24px;
+--acx-space-32: 24px;
+--acx-space-40: 48px;
+--acx-space-48: 48px;
+--acx-space-80: 48px;
+
+// Guide-scoped
+--acx-guide-ink: #171920;
+// WHY: coral #e03a50 on #e7eaef measures 3.57:1 and fails WCAG AA 4.5:1 for normal text, so coral is for borders/underlines/rules/markers only, never text; this matches darce.xyz, whose own link hover keeps the blue and raises font weight instead.
+--acx-guide-hover-accent: #e03a50;
+--acx-guide-border-width: 1px;
+--acx-guide-border-strong: 2px;
+--acx-guide-tracking-wide: 0.1em;
+--acx-guide-tracking-badge: 0.08em;
+--acx-guide-measure: 68ch;
+--acx-guide-max-width: 1200px;
+--acx-guide-column-width: 640px;
+--acx-guide-pad: 48px;
+--acx-guide-pad-tight: 24px;
+--acx-guide-dither-size: 4px;
+--acx-guide-dither-opacity: 0.5;
+--acx-guide-dither-offset: 6px;
+--acx-guide-dither-offset-hover: 12px;
+--acx-guide-lift: -6px;
+--acx-guide-motion-fast: 0.2s;
+--acx-guide-motion: 0.3s;
+--acx-guide-ease-rest: cubic-bezier(0.64, 0, 0.78, 0);
+--acx-guide-ease-hover: cubic-bezier(0.22, 1, 0.36, 1);
+--acx-guide-weight-light: 300;
+--acx-guide-weight-quiet: 200;
+
+// Responsive
+@media (max-width: 1024px) {
+  --acx-text-3xl: 1.4rem;
+  --acx-text-2xl: 1.25rem;
+  --acx-guide-pad: 24px;
+}
+
+@media (max-width: 768px) {
+  --acx-guide-pad: 24px;
+  --acx-space-40: 24px;
+  --acx-space-48: 24px;
+  --acx-space-80: 24px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  --acx-guide-motion-fast: 0s;
+  --acx-guide-motion: 0s;
+  --acx-guide-lift: 0px;
+  --acx-guide-dither-offset-hover: var(--acx-guide-dither-offset);
+}

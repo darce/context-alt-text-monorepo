@@ -6,8 +6,6 @@ import { GuidedPrototypePage } from '../pages/guided/GuidedPrototypePage';
 import { CASE_STUDY_URL, guidedCopy } from './publicGuideCopy';
 import { RecordedWalkthrough } from './RecordedWalkthrough';
 
-const PUBLIC_SCOPE =
-  'This is a supplied example roster with recorded drafts. Your choices change only the demo copy in this tab; they do not update WordPress or a server roster.';
 const START_WALKTHROUGH = 'Start the walkthrough';
 const READ_CASE_STUDY = 'Read the case study';
 const CANONICAL_CASE_STUDY_URL = 'https://darce.xyz/projects/altcontext/';
@@ -88,15 +86,14 @@ describe('RecordedWalkthrough public scope', () => {
   it('exports the case-study URL from copy', () => {
     expect(CASE_STUDY_URL).toBe(CANONICAL_CASE_STUDY_URL);
     expect(CASE_STUDY_URL).not.toContain('github.io');
-    expect(guidedCopy('scope.public')).toBe(PUBLIC_SCOPE);
   });
 
   it('renders public scope copy first, the escape hatch, and the two entry actions', () => {
-    render(<RecordedWalkthrough scope="public" escapeHref="https://example.test/" />);
+    render(<RecordedWalkthrough scope="public" />);
 
     const scope = screen.getByTestId('guided-scope');
     expect(scope.tagName).toBe('P');
-    expect(scope).toHaveTextContent(PUBLIC_SCOPE);
+    expect(scope).toHaveTextContent(guidedCopy('scope.public'));
     expect(screen.getByRole('heading', { level: 1, name: guidedCopy('entry.title.public') })).toBeInTheDocument();
     expect(screen.getByText(guidedCopy('entry.intro.public'))).toBeInTheDocument();
 
@@ -104,7 +101,7 @@ describe('RecordedWalkthrough public scope', () => {
     expect(entrance?.querySelector('h1')).toHaveTextContent(guidedCopy('entry.title.public'));
 
     const escape = screen.getByRole('navigation', { name: 'Leave the walkthrough' });
-    expect(escape.querySelector('a[href="https://example.test/"]')).not.toBeNull();
+    expect(escape.querySelector('a[href="https://altcontext.com/"]')).not.toBeNull();
     expect(escape.querySelector(`a[href="${CASE_STUDY_URL}"]`)).not.toBeNull();
 
     expect(screen.getByRole('button', { name: START_WALKTHROUGH })).toBeInTheDocument();
@@ -115,7 +112,7 @@ describe('RecordedWalkthrough public scope', () => {
   });
 
   it('gives every public entry action a distinct destination', () => {
-    render(<RecordedWalkthrough scope="public" escapeHref="/" />);
+    render(<RecordedWalkthrough scope="public" />);
 
     const read = screen.getByRole('link', { name: opensInNewWindow(READ_CASE_STUDY) });
     const caseStudyNav = screen.getByRole('link', { name: opensInNewWindow(guidedCopy('nav.case_study')) });
@@ -131,15 +128,15 @@ describe('RecordedWalkthrough public scope', () => {
     expect(start).not.toHaveAttribute('href');
   });
 
-  it('opens public case-study exits in a new tab and keeps Home in-tab', () => {
-    render(<RecordedWalkthrough scope="public" escapeHref="/" />);
+  it('opens public case-study exits and Home in a new tab', () => {
+    render(<RecordedWalkthrough scope="public" />);
 
     const read = screen.getByRole('link', { name: opensInNewWindow(READ_CASE_STUDY) });
     const escape = screen.getByRole('navigation', { name: guidedCopy('nav.leave') });
     const caseStudyNav = within(escape).getByRole('link', {
       name: opensInNewWindow(guidedCopy('nav.case_study')),
     });
-    const home = within(escape).getByRole('link', { name: guidedCopy('nav.home') });
+    const home = within(escape).getByRole('link', { name: opensInNewWindow(guidedCopy('nav.home')) });
 
     for (const link of [read, caseStudyNav]) {
       expect(link).toHaveAttribute('target', '_blank');
@@ -147,15 +144,15 @@ describe('RecordedWalkthrough public scope', () => {
       expect(link).toHaveAccessibleName(/opens in a new window/i);
     }
 
-    expect(home).not.toHaveAttribute('target', '_blank');
-    expect(home.getAttribute('rel') ?? '').not.toContain('noreferrer');
-    expect(home).toHaveAccessibleName(guidedCopy('nav.home'));
-    expect(home).not.toHaveAccessibleName(/opens in a new window/i);
+    expect(home).toHaveAttribute('href', 'https://altcontext.com/');
+    expect(home).toHaveAttribute('target', '_blank');
+    expect(home.getAttribute('rel') ?? '').toContain('noreferrer');
+    expect(home).toHaveAccessibleName(opensInNewWindow(guidedCopy('nav.home')));
   });
 
   it('reaches Start, then Read by Tab in that order', async () => {
     const user = userEvent.setup();
-    render(<RecordedWalkthrough scope="public" escapeHref="/" />);
+    render(<RecordedWalkthrough scope="public" />);
 
     const start = screen.getByRole('button', { name: START_WALKTHROUGH });
     start.focus();
@@ -183,7 +180,7 @@ describe('RecordedWalkthrough public scope', () => {
 
 describe('RecordedWalkthrough design notes', () => {
   it('hides live-generation copy on the public surface and keeps it for admin', () => {
-    const { unmount } = render(<RecordedWalkthrough scope="public" escapeHref="/" />);
+    const { unmount } = render(<RecordedWalkthrough scope="public" />);
     expect(document.body.textContent ?? '').not.toContain('Live generation');
     unmount();
 

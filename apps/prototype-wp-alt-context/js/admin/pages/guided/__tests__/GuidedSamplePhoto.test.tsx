@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
 import { createGuidedScenario, getGuidedFace } from '../../../guidedPrototype/state';
@@ -98,13 +98,16 @@ describe('GuidedSamplePhoto figure content', () => {
     expect(credit?.closest('details')).toBeNull();
     expect(credit?.querySelector('a')).toHaveAttribute('href', photo.credit);
 
-    const captionProvenance = figure.querySelector('p.acx-guided-page__caption-provenance');
-    expect(captionProvenance?.textContent).toBe('AltText.ai · Captured 10 September 2026.');
+    const altTextAiCaption = within(screen.getByRole('region', { name: /AltText\.ai/ }));
+    const captionProvenance = altTextAiCaption.getByText(/Captured 10 September 2026\./, {
+      selector: 'p.acx-guided-page__caption-provenance',
+    });
+    expect(captionProvenance.textContent).toBe('AltText.ai · Captured 10 September 2026.');
     expect(captionProvenance).not.toHaveTextContent(photo.altTextAiCaption.note);
     expect(figure.querySelector('details.acx-guided-page__provenance')).toBeNull();
 
     expect(figcaption).not.toContainElement(slot);
     expect(figure.lastElementChild).toBe(slot);
-    expect(container.querySelectorAll('details.acx-guided-page__caption')).toHaveLength(2);
+    expect(container.querySelectorAll('section.acx-guided-page__caption')).toHaveLength(2);
   });
 });

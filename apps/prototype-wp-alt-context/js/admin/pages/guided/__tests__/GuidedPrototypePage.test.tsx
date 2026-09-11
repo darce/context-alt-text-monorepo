@@ -6,7 +6,8 @@ import { guidedCopy } from '../../../guidedPrototype/publicGuideCopy';
 import { createGuidedScenario } from '../../../guidedPrototype/state';
 import { GuidedPrototypePage } from '../GuidedPrototypePage';
 
-const SEED_ALT_TEXT = 'A man in a black suit and a woman in a white dress pose together, smiling, in front of a Tribeca Festival step-and-repeat backdrop.';
+const SEED_ALT_TEXT =
+  'A man in a black suit and a woman in a white dress pose together, smiling, in front of a Tribeca Festival step-and-repeat backdrop.';
 const SCENARIO = createGuidedScenario();
 const JUSTIN_DRAFT = SCENARIO.samples.tribeca['justin-trudeau'];
 const BOTH_NAMES_DRAFT = SCENARIO.samples.tribeca.both;
@@ -14,7 +15,7 @@ const NONE_DRAFT = SCENARIO.samples.tribeca.none;
 const KATY_DRAFT = SCENARIO.samples.tribeca['katy-perry'];
 
 const choose = (position: 'left' | 'right', option: 'include' | 'omit'): void => {
-  const fieldset = screen.getByTestId(`name-choice-${position}`);
+  const fieldset = screen.getByTestId(`name-choice-tribeca-${position}`);
   const name =
     option === 'include'
       ? guidedCopy('names.include', { name: position === 'left' ? 'Justin Trudeau' : 'Katy Perry' })
@@ -73,13 +74,21 @@ describe('GuidedPrototypePage shell', () => {
     expect(screen.getByTestId('guided-photo-tribeca')).toBeInTheDocument();
     expect(screen.getByTestId('guided-photo-coachella')).toBeInTheDocument();
     expect(screen.getAllByRole('img', { name: /^Detected (left|right) face in / })).toHaveLength(4);
-    expect(screen.getAllByRole('radio')).toHaveLength(4);
-    expect(screen.getByText(/89\.4%/)).toBeInTheDocument();
-    expect(screen.getByText(/100\.0% \(cluster anchor, strong\)/)).toBeInTheDocument();
-    expect(screen.getByText(/70\.2%/)).toBeInTheDocument();
-    expect(screen.getByText(/56\.7% \(weak\)/)).toBeInTheDocument();
-    expect(screen.getByText(/below the displayed 60\.0% threshold/i)).toBeInTheDocument();
-    expect(screen.getByText(/production clusterer grouped it anyway/i)).toBeInTheDocument();
+    expect(screen.getAllByRole('radio')).toHaveLength(8);
+    expect(
+      screen.getByText(guidedCopy('names.match.line', { name: 'Justin Trudeau', similarity: '89.4%' })),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(guidedCopy('names.match.line', { name: 'Katy Perry', similarity: '100.0%' })),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(guidedCopy('names.match.line', { name: 'Justin Trudeau', similarity: '70.2%' })),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(guidedCopy('names.match.line', { name: 'Katy Perry', similarity: '56.7%' })),
+    ).toBeInTheDocument();
+    expect(screen.getByText(guidedCopy('names.match.below_threshold', { threshold: '60.0%' }))).toBeInTheDocument();
+    expect(screen.getByText(guidedCopy('provenance.recorded'))).toBeInTheDocument();
     expect(screen.getAllByRole('link', { name: /AltText\.ai/ })).not.toHaveLength(0);
     expect(screen.getAllByRole('link', { name: /altcontext\.com/ })).not.toHaveLength(0);
     const coachellaCredits = screen.getAllByRole('link', {
@@ -117,7 +126,9 @@ describe('GuidedPrototypePage shell', () => {
 
     choose('left', 'include');
     choose('right', 'include');
-    const editor = screen.getByRole('textbox', { name: guidedCopy('draft.label') });
+    const editor = within(screen.getByTestId('guided-description-review-tribeca')).getByRole('textbox', {
+      name: guidedCopy('draft.label'),
+    });
     fireEvent.change(editor, { target: { value: 'Pending local demo edit.' } });
 
     const resetButton = screen.getByRole('button', { name: guidedCopy('page.reset') });
@@ -136,23 +147,35 @@ describe('GuidedPrototypePage shell', () => {
       }),
     );
     expect(screen.getByTestId('guided-page-feedback')).toHaveTextContent(guidedCopy('reset.status'));
-    expect(screen.getByTestId('demo-applied-image')).toHaveAttribute('alt', SEED_ALT_TEXT);
     expect(
-      within(screen.getByTestId('name-choice-left')).getByRole('radio', { name: /Use Justin Trudeau/ }),
+      within(screen.getByTestId('guided-photo-tribeca')).getByText(
+        `${guidedCopy('context.current_label')}: ${SEED_ALT_TEXT}`,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId('name-choice-tribeca-left')).getByRole('radio', { name: /Use Justin Trudeau/ }),
     ).not.toBeChecked();
     expect(
-      within(screen.getByTestId('name-choice-right')).getByRole('radio', { name: /Use Katy Perry/ }),
+      within(screen.getByTestId('name-choice-tribeca-right')).getByRole('radio', { name: /Use Katy Perry/ }),
     ).not.toBeChecked();
     expect(document.activeElement).toHaveAttribute('id', 'guided-section-understand');
   });
 
-  it('keeps the evidence image inspectable when the applied preview uses the weak alt', () => {
+  it('keeps the weak-alt evidence image separate from the applied preview', () => {
     render(<GuidedPrototypePage />);
 
     const evidence = screen.getByRole('img', { name: NONE_DRAFT ?? '' });
     expect(evidence).toHaveAttribute('src', expect.stringContaining('guided-press-tribeca-2026'));
-    expect(screen.getByTestId('demo-applied-image')).toHaveAttribute('alt', SEED_ALT_TEXT);
-    expect(screen.getByTestId('demo-applied-image')).not.toBe(evidence);
+    choose('left', 'omit');
+    choose('right', 'omit');
+    const appliedPreview = screen.getByTestId('demo-applied-image-tribeca');
+    expect(appliedPreview).toHaveAttribute('alt', SEED_ALT_TEXT);
+    expect(appliedPreview).not.toBe(evidence);
+    expect(
+      within(screen.getByTestId('guided-photo-tribeca')).getByText(
+        `${guidedCopy('context.current_label')}: ${SEED_ALT_TEXT}`,
+      ),
+    ).toBeInTheDocument();
     fireEvent.error(evidence);
     expect(screen.getByRole('img', { name: NONE_DRAFT ?? '' })).toBeInTheDocument();
   });
@@ -162,8 +185,8 @@ describe('GuidedPrototypePage journey', () => {
   it('leaves both radios unchecked until a visitor chooses, then loads the matching sample', () => {
     render(<GuidedPrototypePage />);
 
-    const left = screen.getByTestId('name-choice-left');
-    const right = screen.getByTestId('name-choice-right');
+    const left = screen.getByTestId('name-choice-tribeca-left');
+    const right = screen.getByTestId('name-choice-tribeca-right');
     expect(
       within(left)
         .getAllByRole('radio')
@@ -176,13 +199,25 @@ describe('GuidedPrototypePage journey', () => {
     ).toBe(true);
     expect(screen.getByRole('button', { name: guidedCopy('names.next') })).toBeDisabled();
     expect(screen.getByText(guidedCopy('names.next_blocked'))).toBeInTheDocument();
-    expect(screen.queryByRole('textbox', { name: guidedCopy('draft.label') })).not.toBeInTheDocument();
+    expect(
+      within(screen.getByTestId('guided-description-review-tribeca')).queryByRole('textbox', {
+        name: guidedCopy('draft.label'),
+      }),
+    ).not.toBeInTheDocument();
 
     choose('left', 'include');
-    expect(screen.queryByRole('textbox', { name: guidedCopy('draft.label') })).not.toBeInTheDocument();
+    expect(
+      within(screen.getByTestId('guided-description-review-tribeca')).queryByRole('textbox', {
+        name: guidedCopy('draft.label'),
+      }),
+    ).not.toBeInTheDocument();
 
     choose('right', 'omit');
-    expect(screen.getByRole('textbox', { name: guidedCopy('draft.label') })).toHaveValue(JUSTIN_DRAFT);
+    expect(
+      within(screen.getByTestId('guided-description-review-tribeca')).getByRole('textbox', {
+        name: guidedCopy('draft.label'),
+      }),
+    ).toHaveValue(JUSTIN_DRAFT);
     expect(screen.getByTestId('guided-candidate')).not.toHaveTextContent('Katy Perry');
     expect(screen.getByRole('button', { name: guidedCopy('names.next') })).toBeEnabled();
   });
@@ -192,11 +227,19 @@ describe('GuidedPrototypePage journey', () => {
 
     choose('left', 'omit');
     choose('right', 'omit');
-    expect(screen.getByRole('textbox', { name: guidedCopy('draft.label') })).toHaveValue(NONE_DRAFT);
+    expect(
+      within(screen.getByTestId('guided-description-review-tribeca')).getByRole('textbox', {
+        name: guidedCopy('draft.label'),
+      }),
+    ).toHaveValue(NONE_DRAFT);
 
     choose('left', 'include');
     choose('right', 'include');
-    expect(screen.getByRole('textbox', { name: guidedCopy('draft.label') })).toHaveValue(BOTH_NAMES_DRAFT);
+    expect(
+      within(screen.getByTestId('guided-description-review-tribeca')).getByRole('textbox', {
+        name: guidedCopy('draft.label'),
+      }),
+    ).toHaveValue(BOTH_NAMES_DRAFT);
     expect(screen.queryByText(/failed step/i)).not.toBeInTheDocument();
   });
 
@@ -207,35 +250,36 @@ describe('GuidedPrototypePage journey', () => {
     choose('left', 'include');
     choose('right', 'include');
     const edited = 'Justin Trudeau and Katy Perry pose at the festival.';
-    const editor = screen.getByRole('textbox', { name: guidedCopy('draft.label') });
+    const review = screen.getByTestId('guided-description-review-tribeca');
+    const editor = within(review).getByRole('textbox', { name: guidedCopy('draft.label') });
     fireEvent.change(editor, { target: { value: edited } });
 
-    const applyButton = screen.getByTestId('demo-apply');
+    const applyButton = screen.getByTestId('demo-apply-tribeca');
     expect(applyButton).toBeDisabled();
-    await user.click(screen.getByRole('button', { name: guidedCopy('draft.next') }));
+    await user.click(within(review).getByRole('button', { name: guidedCopy('draft.next') }));
     expect(document.activeElement).toHaveAttribute('id', 'guided-section-apply');
     await user.click(applyButton);
 
-    expect(screen.getByTestId('demo-applied-image')).toHaveAttribute('alt', edited);
-    expect(document.querySelector('[data-applied-text]')).toHaveTextContent(edited);
+    expect(screen.getByTestId('demo-applied-image-tribeca')).toHaveAttribute('alt', edited);
+    expect(within(review).getByText(edited, { selector: '[data-applied-text]' })).toBeInTheDocument();
     expect(screen.getByTestId('demo-outcome')).toHaveTextContent(guidedCopy('outcome.applied'));
     expect(screen.getByTestId('guided-page-feedback')).toHaveTextContent(guidedCopy('apply.success'));
     expect(screen.getByTestId('guided-page-feedback-icon')).toHaveAttribute('aria-hidden', 'true');
 
     await user.click(applyButton);
-    expect(screen.getByTestId('demo-applied-image')).toHaveAttribute('alt', edited);
+    expect(screen.getByTestId('demo-applied-image-tribeca')).toHaveAttribute('alt', edited);
 
     fireEvent.change(editor, { target: { value: BOTH_NAMES_DRAFT ?? '' } });
-    await user.click(screen.getByRole('button', { name: guidedCopy('draft.next') }));
+    await user.click(within(review).getByRole('button', { name: guidedCopy('draft.next') }));
     await user.click(applyButton);
-    expect(screen.getByTestId('demo-applied-image')).toHaveAttribute('alt', BOTH_NAMES_DRAFT);
+    expect(screen.getByTestId('demo-applied-image-tribeca')).toHaveAttribute('alt', BOTH_NAMES_DRAFT);
 
-    await user.click(screen.getByTestId('demo-undo'));
-    expect(screen.getByTestId('demo-applied-image')).toHaveAttribute('alt', edited);
-    await user.click(screen.getByTestId('demo-undo'));
-    expect(screen.getByTestId('demo-applied-image')).toHaveAttribute('alt', SEED_ALT_TEXT);
-    expect(screen.getByTestId('demo-undo')).toBeDisabled();
-    expect(document.activeElement).toBe(screen.getByTestId('demo-undo'));
+    await user.click(screen.getByTestId('demo-undo-tribeca'));
+    expect(screen.getByTestId('demo-applied-image-tribeca')).toHaveAttribute('alt', edited);
+    await user.click(screen.getByTestId('demo-undo-tribeca'));
+    expect(screen.getByTestId('demo-applied-image-tribeca')).toHaveAttribute('alt', SEED_ALT_TEXT);
+    expect(screen.getByTestId('demo-undo-tribeca')).toBeDisabled();
+    expect(document.activeElement).toBe(screen.getByTestId('demo-undo-tribeca'));
   });
 
   it('asks before replacing a textarea edit that skipped Preview and keeps the typed text', async () => {
@@ -245,7 +289,8 @@ describe('GuidedPrototypePage journey', () => {
     choose('left', 'include');
     choose('right', 'omit');
     const typed = 'Visitor-typed festival sentence without preview.';
-    const editor = screen.getByRole('textbox', { name: guidedCopy('draft.label') });
+    const review = screen.getByTestId('guided-description-review-tribeca');
+    const editor = within(review).getByRole('textbox', { name: guidedCopy('draft.label') });
     fireEvent.change(editor, { target: { value: typed } });
 
     choose('right', 'include');
@@ -255,7 +300,9 @@ describe('GuidedPrototypePage journey', () => {
     await user.click(within(dialog).getByRole('button', { name: guidedCopy('names.change_cancel') }));
     expect(editor).toHaveValue(typed);
     expect(
-      within(screen.getByTestId('name-choice-right')).getByRole('radio', { name: guidedCopy('names.omit') }),
+      within(screen.getByTestId('name-choice-tribeca-right')).getByRole('radio', {
+        name: guidedCopy('names.omit'),
+      }),
     ).toBeChecked();
   });
 
@@ -265,9 +312,10 @@ describe('GuidedPrototypePage journey', () => {
 
     choose('left', 'include');
     choose('right', 'omit');
-    const editor = screen.getByRole('textbox', { name: guidedCopy('draft.label') });
+    const review = screen.getByTestId('guided-description-review-tribeca');
+    const editor = within(review).getByRole('textbox', { name: guidedCopy('draft.label') });
     fireEvent.change(editor, { target: { value: 'A locally edited portrait description.' } });
-    await user.click(screen.getByRole('button', { name: guidedCopy('draft.next') }));
+    await user.click(within(review).getByRole('button', { name: guidedCopy('draft.next') }));
 
     choose('right', 'include');
     const dialog = screen.getByRole('dialog', { name: guidedCopy('names.change_title') });
@@ -275,7 +323,9 @@ describe('GuidedPrototypePage journey', () => {
     await user.click(within(dialog).getByRole('button', { name: guidedCopy('names.change_cancel') }));
     expect(editor).toHaveValue('A locally edited portrait description.');
     expect(
-      within(screen.getByTestId('name-choice-right')).getByRole('radio', { name: guidedCopy('names.omit') }),
+      within(screen.getByTestId('name-choice-tribeca-right')).getByRole('radio', {
+        name: guidedCopy('names.omit'),
+      }),
     ).toBeChecked();
 
     choose('right', 'include');
@@ -284,9 +334,13 @@ describe('GuidedPrototypePage journey', () => {
         name: guidedCopy('names.change_confirm'),
       }),
     );
-    expect(screen.getByRole('textbox', { name: guidedCopy('draft.label') })).toHaveValue(BOTH_NAMES_DRAFT);
+    expect(within(review).getByRole('textbox', { name: guidedCopy('draft.label') })).toHaveValue(BOTH_NAMES_DRAFT);
     expect(screen.getByText('A locally edited portrait description.')).toBeInTheDocument();
-    expect(screen.getByTestId('demo-applied-image')).toHaveAttribute('alt', SEED_ALT_TEXT);
+    expect(
+      within(screen.getByTestId('guided-photo-tribeca')).getByText(
+        `${guidedCopy('context.current_label')}: ${SEED_ALT_TEXT}`,
+      ),
+    ).toBeInTheDocument();
   });
 
   it('rejects a stale preview even after the draft text changes', async () => {
@@ -295,26 +349,39 @@ describe('GuidedPrototypePage journey', () => {
 
     choose('left', 'include');
     choose('right', 'include');
-    await user.click(screen.getByRole('button', { name: guidedCopy('draft.next') }));
-    expect(screen.getByTestId('demo-apply')).toBeEnabled();
+    const review = screen.getByTestId('guided-description-review-tribeca');
+    await user.click(within(review).getByRole('button', { name: guidedCopy('draft.next') }));
+    expect(screen.getByTestId('demo-apply-tribeca')).toBeEnabled();
 
-    fireEvent.change(screen.getByRole('textbox', { name: guidedCopy('draft.label') }), {
+    fireEvent.change(within(review).getByRole('textbox', { name: guidedCopy('draft.label') }), {
       target: { value: 'Stale after preview.' },
     });
-    expect(screen.getByTestId('demo-apply')).toBeDisabled();
-    expect(screen.getByText(guidedCopy('apply.stale'))).toBeInTheDocument();
-    fireEvent.click(screen.getByTestId('demo-apply'));
-    expect(screen.getByTestId('demo-applied-image')).toHaveAttribute('alt', SEED_ALT_TEXT);
+    expect(screen.getByTestId('demo-apply-tribeca')).toBeDisabled();
+    expect(within(review).getByText(guidedCopy('apply.stale'))).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('demo-apply-tribeca'));
+    expect(
+      within(screen.getByTestId('guided-photo-tribeca')).getByText(
+        `${guidedCopy('context.current_label')}: ${SEED_ALT_TEXT}`,
+      ),
+    ).toBeInTheDocument();
   });
 
   it('keeps current alt text as a finished outcome without applying', async () => {
     const user = userEvent.setup();
     render(<GuidedPrototypePage />);
 
-    await user.click(screen.getByRole('button', { name: guidedCopy('draft.keep') }));
+    await user.click(
+      within(screen.getByTestId('guided-description-review-tribeca')).getByRole('button', {
+        name: guidedCopy('draft.keep'),
+      }),
+    );
     expect(screen.getByTestId('demo-outcome')).toHaveTextContent(guidedCopy('outcome.kept'));
     expect(screen.getByTestId('demo-outcome')).toHaveTextContent(guidedCopy('outcome.kept_body'));
-    expect(screen.getByTestId('demo-applied-image')).toHaveAttribute('alt', SEED_ALT_TEXT);
+    expect(
+      within(screen.getByTestId('guided-photo-tribeca')).getByText(
+        `${guidedCopy('context.current_label')}: ${SEED_ALT_TEXT}`,
+      ),
+    ).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: guidedCopy('outcome.return') }));
     expect(document.activeElement).toHaveAttribute('id', 'guided-section-review');
   });
@@ -349,15 +416,39 @@ describe('GuidedPrototypePage journey', () => {
     expect(screen.getByText(guidedCopy('notes.title'))).toBeInTheDocument();
   });
 
-  it('shows honest reference coverage inside each face comparison', async () => {
-    const user = userEvent.setup();
+  it('shows honest reference coverage inside each face comparison', () => {
     render(<GuidedPrototypePage />);
 
-    const summaries = screen.getAllByText(/Compare the (left|right) face and reference photos/);
-    await user.click(summaries[0]);
-    await user.click(summaries[1]);
-    expect(screen.getByText(guidedCopy('names.coverage_all', { total: 3 }))).toBeInTheDocument();
-    expect(screen.getByText(guidedCopy('names.coverage_partial', { shown: 3, total: 5 }))).toBeInTheDocument();
+    const tribecaPhoto = screen.getByTestId('guided-photo-tribeca');
+    const coachellaPhoto = screen.getByTestId('guided-photo-coachella');
+    expect(
+      within(tribecaPhoto)
+        .getByText(guidedCopy('names.evidence_open', { position: 'left' }))
+        .closest('details'),
+    ).toHaveAttribute('open', '');
+    expect(
+      within(tribecaPhoto)
+        .getByText(guidedCopy('names.evidence_open', { position: 'right' }))
+        .closest('details'),
+    ).toHaveAttribute('open', '');
+    expect(
+      within(coachellaPhoto)
+        .getByText(guidedCopy('names.evidence_open', { position: 'left' }))
+        .closest('details'),
+    ).toHaveAttribute('open', '');
+    expect(
+      within(coachellaPhoto)
+        .getByText(guidedCopy('names.evidence_open', { position: 'right' }))
+        .closest('details'),
+    ).toHaveAttribute('open', '');
+    expect(within(tribecaPhoto).getByText(guidedCopy('names.coverage_all', { total: 3 }))).toBeInTheDocument();
+    expect(
+      within(tribecaPhoto).getByText(guidedCopy('names.coverage_partial', { shown: 3, total: 5 })),
+    ).toBeInTheDocument();
+    expect(within(coachellaPhoto).getByText(guidedCopy('names.coverage_all', { total: 3 }))).toBeInTheDocument();
+    expect(
+      within(coachellaPhoto).getByText(guidedCopy('names.coverage_partial', { shown: 3, total: 5 })),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/Show all 5/)).not.toBeInTheDocument();
     expect(screen.getAllByText('© European Union, 2025, EU reuse licence, resized').length).toBeGreaterThan(0);
   });
@@ -367,6 +458,10 @@ describe('GuidedPrototypePage journey', () => {
 
     choose('left', 'omit');
     choose('right', 'include');
-    expect(screen.getByRole('textbox', { name: guidedCopy('draft.label') })).toHaveValue(KATY_DRAFT);
+    expect(
+      within(screen.getByTestId('guided-description-review-tribeca')).getByRole('textbox', {
+        name: guidedCopy('draft.label'),
+      }),
+    ).toHaveValue(KATY_DRAFT);
   });
 });

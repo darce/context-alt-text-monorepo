@@ -5,9 +5,9 @@
   "goals": [
     "Anyone can try the recorded review workflow at /guide/ signed-out; live generation and WordPress writes stay on the authenticated admin route.",
     "NAV-08: the first screen shows two plain-language entry actions — Start the walkthrough and Read the case study.",
-    "NAV-07: public scope renders an escape-hatch link to the site home and to the case study.",
+    "NAV-07: public scope renders a fixed pair of external product links — Home at https://altcontext.com/ and the case study at https://darce.xyz/projects/altcontext/.",
     "SECD-02/03: the public route performs no REST calls; /acx/v1/public/demo/describe stays gated by acx_public_demo_enabled and is expected off unless retained.",
-    "Bundle-failure still returns 200 with canonical and the fallback paragraph from apps/prototype-wp-alt-context/js/admin/guidedPrototype/publicGuideCopy.ts.",
+    "Bundle-failure still returns 200 with canonical and the PUBLIC_GUIDE_FALLBACK paragraph.",
     "Detailed engine metadata stays in the notes while the recorded provenance summary is visible on screen in the section footer."
   ],
   "jobs": [
@@ -72,7 +72,7 @@
       "id": "walkthrough",
       "kind": "screen",
       "title": "Recorded walkthrough",
-      "purpose": "RecordedWalkthrough scope=public: understand the supplied page context, then a context sentence above both bundled press photos; figures are stacked in one column inside .acx-guided-page__media-list. Each figure has a 1 / 1 image frame (1:1 crop), visible Photo credit, and two caption disclosures beneath the image on the left, plus one \"People recognised in this photo\" article in the .acx-guided-page__faces column on the right with both persons' roster entries and include/omit radios; the faces column collapses under the image below 56.25rem. Face outlines pin on click. A plain .acx-guided-page__provenance-footer with three paragraphs sits below the figures before Continue. Review the cached AltText.ai and AltContext captions and the example roster; choose inclusion or omission, edit the recorded sample, preview, apply, keep, undo, or reset. Bundled example plus in-tab state. Recognition and GPU generation are cached and never run per visitor. No import path from js/guide/** may reach js/admin/api/** or GuidedLiveDescriptionPanel. edge_input: a name choice is still undecided. error: sample draft unavailable. Keyboard completes choose → edit → preview.",
+      "purpose": "RecordedWalkthrough scope=public: understand the supplied page context, then a context sentence above both bundled press photos; figures are stacked in one column inside .acx-guided-page__media-list. Each figure has a 1 / 1 image frame (1:1 crop), visible Photo credit, and two caption disclosures beneath the image on the left, plus one \"People recognised in this photo\" article in the .acx-guided-page__faces column on the right with both persons' roster entries and include/omit radios; the faces column collapses under the image below 56.25rem. Face outlines pin on click. A plain .acx-guided-page__provenance-footer with three paragraphs sits below the figures before Continue. Review the cached AltText.ai and AltContext captions and the example roster; choose inclusion or omission, edit each recorded per-image sample, preview, apply, keep, undo, or reset. Bundled examples plus in-tab state. Recognition and GPU generation are cached and never run per visitor. No import path from js/guide/** may reach js/admin/api/** or GuidedLiveDescriptionPanel. edge_input: a name choice is still undecided. error: a photo's sample draft unavailable. Keyboard completes choose → edit → preview.",
       "route": "/guide/",
       "wp_page": null,
       "job_entry": false,
@@ -105,8 +105,8 @@
           ]
         },
         {
-          "id": "name-choice-left",
-          "label": "Justin Trudeau roster entry in the \"People recognised in this photo\" article in the right-hand .acx-guided-page__faces column. Use Justin Trudeau. Leave this person unnamed. No preselection. edge_input: Choose an option for this person. The Tribeca and Coachella crops are visible with 89.4% and 70.2% strong matches.",
+          "id": "name-choice-tribeca-left",
+          "label": "Justin Trudeau roster entry for the Tribeca figure's \"People recognised in this photo\" article in the right-hand .acx-guided-page__faces column. Use Justin Trudeau. Leave this person unnamed. No preselection. edge_input: Choose an option for this person. One Tribeca 89.4% strong crop is visible.",
           "role": "form",
           "evidence_linked": true,
           "states": [
@@ -115,8 +115,28 @@
           ]
         },
         {
-          "id": "name-choice-right",
-          "label": "Katy Perry roster entry in the \"People recognised in this photo\" article in the right-hand .acx-guided-page__faces column. Use Katy Perry. Leave this person unnamed. No preselection. edge_input: Choose an option for this person. The Tribeca crop is 100.0% cluster anchor, strong; the Coachella crop is 56.7% weak and below the 60.0% displayed threshold, but the production clusterer grouped it.",
+          "id": "name-choice-tribeca-right",
+          "label": "Katy Perry roster entry for the Tribeca figure's \"People recognised in this photo\" article in the right-hand .acx-guided-page__faces column. Use Katy Perry. Leave this person unnamed. No preselection. edge_input: Choose an option for this person. One Tribeca 100.0% strong cluster-anchor crop is visible.",
+          "role": "form",
+          "evidence_linked": true,
+          "states": [
+            "default",
+            "edge_input"
+          ]
+        },
+        {
+          "id": "name-choice-coachella-left",
+          "label": "Justin Trudeau roster entry for the Coachella figure's \"People recognised in this photo\" article in the right-hand .acx-guided-page__faces column. Use Justin Trudeau. Leave this person unnamed. No preselection. edge_input: Choose an option for this person. One Coachella 70.2% strong crop is visible.",
+          "role": "form",
+          "evidence_linked": true,
+          "states": [
+            "default",
+            "edge_input"
+          ]
+        },
+        {
+          "id": "name-choice-coachella-right",
+          "label": "Katy Perry roster entry for the Coachella figure's \"People recognised in this photo\" article in the right-hand .acx-guided-page__faces column. Use Katy Perry. Leave this person unnamed. No preselection. edge_input: Choose an option for this person. One Coachella 56.7% weak crop is below the 60.0% displayed threshold and is still grouped by the production clusterer.",
           "role": "form",
           "evidence_linked": true,
           "states": [
@@ -126,7 +146,7 @@
         },
         {
           "id": "guided-candidate",
-          "label": "Edit the alt text. Selected output is a recorded Qwen3-VL GPU draft; a visitor edit is local to this tab. Preview the change. error: The sample draft for these choices is unavailable.",
+          "label": "Edit the alt text for each photo. Tribeca and Coachella each have an Alt text draft textarea with a recorded sample or a local visitor edit. Edits stay in this tab. Nothing is applied until you choose Apply to demo copy for that photo. blocked: Choose a name option for both people to load both sample drafts. fixture_missing: The sample draft for this photo and these choices is unavailable; the other photo's draft and both demo copies are unchanged. preview_invalid: Enter alt text before reviewing the change.",
           "role": "form",
           "states": [
             "default",
@@ -139,7 +159,7 @@
       "id": "apply",
       "kind": "screen",
       "title": "Apply and undo",
-      "purpose": "Compare current alt text with the draft. Apply to demo copy changes only the in-tab demo image. Undo last application restores the previous demo alt text. empty: there is no application to undo yet, or no differing preview. error: stale preview — The draft changed. Preview it again before applying.",
+      "purpose": "Compare current alt text with each per-image draft. Apply to demo copy changes only that photo's in-tab demo image. Undo last application restores the previous alt text for that photo. empty: there is no application to undo yet, or no differing preview. error: stale preview — The draft changed. Preview it again before applying.",
       "route": "/guide/",
       "wp_page": null,
       "job_entry": false,
@@ -155,7 +175,7 @@
       "zones": [
         {
           "id": "guided-section-apply",
-          "label": "Apply and undo. Current alt text beside Will be applied. Apply to demo copy. Undo last application.",
+          "label": "Apply and undo each per-image draft. For Tribeca and Coachella, compare Current alt text beside Will be applied. Applying changes only that photo's demo copy. The draft changed: preview it again before applying. The demo copy already uses this text when it matches.",
           "role": "content",
           "states": [
             "default",
@@ -164,8 +184,17 @@
           ]
         },
         {
-          "id": "demo-applied-image",
-          "label": "Demo image preview. Distinct demo image whose alternative is the current demo copy.",
+          "id": "demo-applied-image-tribeca",
+          "label": "Tribeca demo image preview. Distinct applied-preview image whose alternative is the current Tribeca demo copy. This zone is rendered only while the Tribeca draft status is ready.",
+          "role": "ai_review",
+          "evidence_linked": true,
+          "states": [
+            "default"
+          ]
+        },
+        {
+          "id": "demo-applied-image-coachella",
+          "label": "Coachella demo image preview. Distinct applied-preview image whose alternative is the current Coachella demo copy. This zone is rendered only while the Coachella draft status is ready.",
           "role": "ai_review",
           "evidence_linked": true,
           "states": [
@@ -187,8 +216,8 @@
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedOutcome.tsx",
       "primary_action_id": "return-to-draft",
       "states": [
-        "applied",
-        "kept"
+        "default",
+        "empty"
       ],
       "zones": [
         {
@@ -196,8 +225,8 @@
           "label": "Your demo copy is updated or unchanged after Keep. Result applies only in this tab; no WordPress media, server roster, or saved library update. A next batch would use another supplied image and page context.",
           "role": "status",
           "states": [
-            "applied",
-            "kept"
+            "default",
+            "empty"
           ]
         }
       ]
@@ -206,7 +235,7 @@
       "id": "fallback",
       "kind": "screen",
       "title": "The walkthrough could not load",
-      "purpose": "Domain bundle_failed mapped to error. js/guide/main.tsx hides .acx-public-guide__fallback on mount; if ViteManifest entry_assets returns null the template still renders 200 plus canonical and the paragraph stays visible. Copy from apps/prototype-wp-alt-context/js/admin/guidedPrototype/publicGuideCopy.ts PUBLIC_GUIDE_FALLBACK.",
+      "purpose": "Domain bundle_failed maps to error. The mounted guide hides .acx-public-guide__fallback; if ViteManifest entry_assets returns null, the template still renders 200 plus canonical content and PUBLIC_GUIDE_FALLBACK remains visible.",
       "route": "/guide/",
       "wp_page": null,
       "job_entry": false,
@@ -232,7 +261,7 @@
       "id": "escape",
       "kind": "exit",
       "title": "Leave the walkthrough",
-      "purpose": "NAV-07 escape hatch from public scope: Home uses escapeHref (site home). Case study uses CASE_STUDY_URL in apps/prototype-wp-alt-context/js/admin/guidedPrototype/publicGuideCopy.ts. No authentication required.",
+      "purpose": "NAV-07 escape hatch from public scope: Home is an external link to altcontext.com via escapeHref. Case study uses CASE_STUDY_URL. No authentication required.",
       "route": "/",
       "wp_page": null,
       "job_entry": true,

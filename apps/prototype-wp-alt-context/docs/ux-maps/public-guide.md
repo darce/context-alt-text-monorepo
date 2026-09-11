@@ -6,9 +6,9 @@
 ## Goals
 - Anyone can try the recorded review workflow at /guide/ signed-out; live generation and WordPress writes stay on the authenticated admin route.
 - NAV-08: the first screen shows two plain-language entry actions — Start the walkthrough and Read the case study.
-- NAV-07: public scope renders an escape-hatch link to the site home and to the case study.
+- NAV-07: public scope renders a fixed pair of external product links — Home at https://altcontext.com/ and the case study at https://darce.xyz/projects/altcontext/.
 - SECD-02/03: the public route performs no REST calls; /acx/v1/public/demo/describe stays gated by acx_public_demo_enabled and is expected off unless retained.
-- Bundle-failure still returns 200 with canonical and the fallback paragraph from apps/prototype-wp-alt-context/js/admin/guidedPrototype/publicGuideCopy.ts.
+- Bundle-failure still returns 200 with canonical and the PUBLIC_GUIDE_FALLBACK paragraph.
 - Detailed engine metadata stays in the notes while the recorded provenance summary is visible on screen in the section footer.
 
 ## Jobs
@@ -25,14 +25,6 @@
 | `fallback` | screen | `/guide/` | The walkthrough could not load |
 | `escape` | exit | `/` | Leave the walkthrough |
 
-## Code references
-- `screen:entry` — `apps/prototype-wp-alt-context/js/admin/pages/GuidedPrototypeEntrance.tsx`
-- `screen:walkthrough` — `apps/prototype-wp-alt-context/js/admin/guidedPrototype/RecordedWalkthrough.tsx`
-- `screen:apply` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedDescriptionReview.tsx`
-- `screen:outcome` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedOutcome.tsx`
-- `screen:fallback` — `apps/prototype-wp-alt-context/js/guide/main.tsx`
-- `screen:escape` — `apps/prototype-wp-alt-context/js/admin/guidedPrototype/publicGuideCopy.ts`
-
 ### Review a recorded alt text example (`entry`)
 
 Purpose: Signed-out public entrance. Public title and introduction explain the supplied festival example; scope.public: This is a supplied example roster with recorded drafts. Your choices change only the demo copy in this tab; they do not update WordPress or a server roster. Two entry actions (NAV-08): Start the walkthrough and Read the case study. Escape hatch (NAV-07): Home and Case study. first_time is the first visit with no in-tab state. error is domain disabled_404: AltContext\PublicSite\PublicGuideRoute returns the theme 404 when acx_public_guide_enabled is off — never this guide.
@@ -45,18 +37,17 @@ Purpose: Signed-out public entrance. Public title and introduction explain the s
 
 ```
 +------------------------------------------------------------+
-| Review a recorded alt text example  [screen]  /guide/    |
+| Review a recorded alt text example  [screen]  /guide/      |
 | Signed-out public entrance. Public title and introduction… |
 +------------------------------------------------------------+
 | ZONES                                                      |
 |   - Leave the walkthrough. Home. Case study. (nav) states… |
 |   - Supplied example roster with recorded drafts. Choices… |
-|   - Start the walkthrough (primary). Read the case study. |
+|   - Start the walkthrough (primary). Read the case study.… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Start the walkthrough -> walkthrough           |
 |   [secondary] Read the case study -> escape                |
-|                                                            |
 +------------------------------------------------------------+
 | states: default | first_time | error                       |
 +------------------------------------------------------------+
@@ -64,15 +55,17 @@ Purpose: Signed-out public entrance. Public title and introduction explain the s
 
 ### Recorded walkthrough (`walkthrough`)
 
-Purpose: RecordedWalkthrough scope=public: understand the supplied page context, then a context sentence above both bundled press photos; figures are stacked in one column inside .acx-guided-page__media-list. Each figure has a 1 / 1 image frame (1:1 crop), visible Photo credit, and two caption disclosures beneath the image on the left, plus one "People recognised in this photo" article in the .acx-guided-page__faces column on the right with both persons' roster entries and include/omit radios; the faces column collapses under the image below 56.25rem. Face outlines pin on click. A plain .acx-guided-page__provenance-footer with three paragraphs sits below the figures before Continue. Review the cached AltText.ai and AltContext captions and the example roster; choose inclusion or omission, edit the recorded sample, preview, apply, keep, undo, or reset. Bundled example plus in-tab state. Recognition and GPU generation are cached and never run per visitor. No import path from js/guide/** may reach js/admin/api/** or GuidedLiveDescriptionPanel. edge_input: a name choice is still undecided. error: sample draft unavailable. Keyboard completes choose → edit → preview.
+Purpose: RecordedWalkthrough scope=public: understand the supplied page context, then a context sentence above both bundled press photos; figures are stacked in one column inside .acx-guided-page__media-list. Each figure has a 1 / 1 image frame (1:1 crop), visible Photo credit, and two caption disclosures beneath the image on the left, plus one "People recognised in this photo" article in the .acx-guided-page__faces column on the right with both persons' roster entries and include/omit radios; the faces column collapses under the image below 56.25rem. Face outlines pin on click. A plain .acx-guided-page__provenance-footer with three paragraphs sits below the figures before Continue. Review the cached AltText.ai and AltContext captions and the example roster; choose inclusion or omission, edit each recorded per-image sample, preview, apply, keep, undo, or reset. Bundled examples plus in-tab state. Recognition and GPU generation are cached and never run per visitor. No import path from js/guide/** may reach js/admin/api/** or GuidedLiveDescriptionPanel. edge_input: a name choice is still undecided. error: a photo's sample draft unavailable. Keyboard completes choose → edit → preview.
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
 | `guided-demo-root` | Public mount. data-scope=public. Supplied roster and recorded drafts only; changes stay in this tab. | content | default, edge_input, error |
 | `guided-section-understand` | Understand the page and provenance. The .acx-guided-page__context paragraph appears above .acx-guided-page__media-list, where Tribeca and Coachella are stacked in one column. Each figure is a two-column layout: a 1 / 1 image frame (1:1 crop) with visible Photo credit and two AltText.ai/AltContext caption disclosures beneath the image on the left, and one "People recognised in this photo" article in the .acx-guided-page__faces column on the right with both persons' roster entries and include/omit radios; the faces column collapses under the image below 56.25rem. Face outlines pin on click. A plain .acx-guided-page__provenance-footer with three paragraphs follows the figures before Continue. Review current demo alt text, cached captions, credits, and recorded source details. | content | default |
-| `name-choice-left` | Justin Trudeau roster entry in the "People recognised in this photo" article in the right-hand .acx-guided-page__faces column. Use Justin Trudeau. Leave this person unnamed. No preselection. edge_input: Choose an option for this person. The Tribeca and Coachella crops are visible with 89.4% and 70.2% strong matches. | form | default, edge_input |
-| `name-choice-right` | Katy Perry roster entry in the "People recognised in this photo" article in the right-hand .acx-guided-page__faces column. Use Katy Perry. Leave this person unnamed. No preselection. edge_input: Choose an option for this person. The Tribeca crop is 100.0% cluster anchor, strong; the Coachella crop is 56.7% weak and below the 60.0% displayed threshold, but the production clusterer grouped it. | form | default, edge_input |
-| `guided-candidate` | Edit the alt text. Selected output is a recorded Qwen3-VL GPU draft; a visitor edit is local to this tab. Preview the change. error: The sample draft for these choices is unavailable. | form | default, error |
+| `name-choice-tribeca-left` | Justin Trudeau roster entry for the Tribeca figure's "People recognised in this photo" article in the right-hand .acx-guided-page__faces column. Use Justin Trudeau. Leave this person unnamed. No preselection. edge_input: Choose an option for this person. One Tribeca 89.4% strong crop is visible. | form | default, edge_input |
+| `name-choice-tribeca-right` | Katy Perry roster entry for the Tribeca figure's "People recognised in this photo" article in the right-hand .acx-guided-page__faces column. Use Katy Perry. Leave this person unnamed. No preselection. edge_input: Choose an option for this person. One Tribeca 100.0% strong cluster-anchor crop is visible. | form | default, edge_input |
+| `name-choice-coachella-left` | Justin Trudeau roster entry for the Coachella figure's "People recognised in this photo" article in the right-hand .acx-guided-page__faces column. Use Justin Trudeau. Leave this person unnamed. No preselection. edge_input: Choose an option for this person. One Coachella 70.2% strong crop is visible. | form | default, edge_input |
+| `name-choice-coachella-right` | Katy Perry roster entry for the Coachella figure's "People recognised in this photo" article in the right-hand .acx-guided-page__faces column. Use Katy Perry. Leave this person unnamed. No preselection. edge_input: Choose an option for this person. One Coachella 56.7% weak crop is below the 60.0% displayed threshold and is still grouped by the production clusterer. | form | default, edge_input |
+| `guided-candidate` | Edit the alt text for each photo. Tribeca and Coachella each have an Alt text draft textarea with a recorded sample or a local visitor edit. Edits stay in this tab. Nothing is applied until you choose Apply to demo copy for that photo. blocked: Choose a name option for both people to load both sample drafts. fixture_missing: The sample draft for this photo and these choices is unavailable; the other photo's draft and both demo copies are unchanged. preview_invalid: Enter alt text before reviewing the change. | form | default, error |
 
 ```
 +------------------------------------------------------------+
@@ -80,15 +73,19 @@ Purpose: RecordedWalkthrough scope=public: understand the supplied page context,
 | RecordedWalkthrough scope=public: understand the supplied… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Public mount. data-scope=public. Supplied roster and re… |
-|   - Understand the page and provenance. The .acx-guided-pa… |
-|   - Justin Trudeau roster entry in the "People recognised… |
-|   - Katy Perry roster entry in the "People recognised in t… |
-|   - Edit the alt text. Selected output is a recorded Qwen3… |
+|   - Public mount. data-scope=public. Supplied roster and … |
+|   - Understand the page and provenance. The .acx-guided-p… |
+|   - Justin Trudeau roster entry for the Tribeca figure's … |
+|   - Katy Perry roster entry for the Tribeca figure's "Peo… |
+|   - Justin Trudeau roster entry for the Coachella figure'… |
+|   - Katy Perry roster entry for the Coachella figure's "P… |
+|   - Edit the alt text for each photo. Tribeca and Coachel… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Review name suggestions -> apply               |
+|   [secondary] Keep current alt text -> outcome             |
 |   [secondary] Preview the change -> apply (preview)        |
+|   [secondary] Reset demo -> walkthrough (irreversible)     |
 +------------------------------------------------------------+
 | states: default | edge_input | error                       |
 +------------------------------------------------------------+
@@ -96,21 +93,23 @@ Purpose: RecordedWalkthrough scope=public: understand the supplied page context,
 
 ### Apply and undo (`apply`)
 
-Purpose: Compare current alt text with the draft. Apply to demo copy changes only the in-tab demo image. Undo last application restores the previous demo alt text. empty: there is no application to undo yet, or no differing preview. error: stale preview — The draft changed. Preview it again before applying.
+Purpose: Compare current alt text with each per-image draft. Apply to demo copy changes only that photo's in-tab demo image. Undo last application restores the previous alt text for that photo. empty: there is no application to undo yet, or no differing preview. error: stale preview — The draft changed. Preview it again before applying.
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
-| `guided-section-apply` | Apply and undo. Current alt text beside Will be applied. Apply to demo copy. Undo last application. | content | default, empty, error |
-| `demo-applied-image` | Demo image preview. Distinct demo image whose alternative is the current demo copy. | ai_review | default |
+| `guided-section-apply` | Apply and undo each per-image draft. For Tribeca and Coachella, compare Current alt text beside Will be applied. Applying changes only that photo's demo copy. The draft changed: preview it again before applying. The demo copy already uses this text when it matches. | content | default, empty, error |
+| `demo-applied-image-tribeca` | Tribeca demo image preview. Distinct applied-preview image whose alternative is the current Tribeca demo copy. This zone is rendered only while the Tribeca draft status is ready. | ai_review | default |
+| `demo-applied-image-coachella` | Coachella demo image preview. Distinct applied-preview image whose alternative is the current Coachella demo copy. This zone is rendered only while the Coachella draft status is ready. | ai_review | default |
 
 ```
 +------------------------------------------------------------+
 | Apply and undo  [screen]  /guide/                          |
-| Compare current alt text with the draft. Apply to demo co… |
+| Compare current alt text with each per-image draft. Apply… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Apply and undo. Current alt text beside Will be appli… |
-|   - Demo image preview. Distinct demo image whose alterna… |
+|   - Apply and undo each per-image draft. For Tribeca and … |
+|   - Tribeca demo image preview. Distinct applied-preview … |
+|   - Coachella demo image preview. Distinct applied-previe… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Apply to demo copy -> outcome (preview)        |
@@ -126,7 +125,7 @@ Purpose: Completion summary after Apply to demo copy or Keep current alt text. A
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
-| `demo-outcome` | Your demo copy is updated or unchanged after Keep. Result applies only in this tab; no WordPress media, server roster, or saved library update. A next batch would use another supplied image and page context. | status | applied, kept |
+| `demo-outcome` | Your demo copy is updated or unchanged after Keep. Result applies only in this tab; no WordPress media, server roster, or saved library update. A next batch would use another supplied image and page context. | status | default, empty |
 
 ```
 +------------------------------------------------------------+
@@ -139,13 +138,13 @@ Purpose: Completion summary after Apply to demo copy or Keep current alt text. A
 | ACTIONS                                                    |
 |   [PRIMARY] Return to the draft -> walkthrough             |
 +------------------------------------------------------------+
-| states: applied | kept                                    |
+| states: default | empty                                    |
 +------------------------------------------------------------+
 ```
 
 ### The walkthrough could not load (`fallback`)
 
-Purpose: Domain bundle_failed mapped to error. js/guide/main.tsx hides .acx-public-guide__fallback on mount; if ViteManifest entry_assets returns null the template still renders 200 plus canonical and the paragraph stays visible. Copy from apps/prototype-wp-alt-context/js/admin/guidedPrototype/publicGuideCopy.ts PUBLIC_GUIDE_FALLBACK.
+Purpose: Domain bundle_failed maps to error. The mounted guide hides .acx-public-guide__fallback; if ViteManifest entry_assets returns null, the template still renders 200 plus canonical content and PUBLIC_GUIDE_FALLBACK remains visible.
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
@@ -154,10 +153,10 @@ Purpose: Domain bundle_failed mapped to error. js/guide/main.tsx hides .acx-publ
 ```
 +------------------------------------------------------------+
 | The walkthrough could not load  [screen]  /guide/          |
-| Domain bundle_failed mapped to error. js/guide/main.tsx h… |
+| Domain bundle_failed maps to error. The mounted guide hid… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - The walkthrough could not load. Reload the page and tr… |
+|   - The walkthrough could not load. Reload the page and t… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Reload the page -> entry                       |
@@ -168,7 +167,7 @@ Purpose: Domain bundle_failed mapped to error. js/guide/main.tsx hides .acx-publ
 
 ### Leave the walkthrough (`escape`)
 
-Purpose: NAV-07 escape hatch from public scope: Home uses escapeHref (site home). Case study uses CASE_STUDY_URL in apps/prototype-wp-alt-context/js/admin/guidedPrototype/publicGuideCopy.ts. No authentication required.
+Purpose: NAV-07 escape hatch from public scope: Home is an external link to altcontext.com via escapeHref. Case study uses CASE_STUDY_URL. No authentication required.
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
@@ -178,7 +177,7 @@ Purpose: NAV-07 escape hatch from public scope: Home uses escapeHref (site home)
 ```
 +------------------------------------------------------------+
 | Leave the walkthrough  [exit]  /                           |
-| NAV-07 escape hatch from public scope: Home uses escapeHr… |
+| NAV-07 escape hatch from public scope: Home is an externa… |
 +------------------------------------------------------------+
 | ZONES                                                      |
 |   - Home (nav) states=[default]                            |
@@ -200,10 +199,10 @@ Purpose: NAV-07 escape hatch from public scope: Home uses escapeHref (site home)
 | `read-case-study` | Read the case study | `escape` | secondary | no | no | no | `entry` |
 | `continue-walkthrough` | Review name suggestions | `apply` | primary | no | no | no | `walkthrough` |
 | `preview-draft` | Preview the change | `apply` | secondary | no | no | yes | `walkthrough` |
+| `keep-current-alt-text` | Keep current alt text | `outcome` | secondary | no | no | no | `walkthrough` |
+| `reset-demo` | Reset demo | `walkthrough` | secondary | no | yes | no | `walkthrough` |
 | `demo-apply` | Apply to demo copy | `outcome` | primary | no | no | yes | `apply` |
 | `demo-undo` | Undo last application | `apply` | secondary | no | no | no | `apply` |
-| `keep-current-alt-text` | Keep current alt text | `outcome` | secondary | no | no | no | `walkthrough` |
-| `reset-demo` | Reset demo | `walkthrough` | secondary | no | no | no | `walkthrough` |
 | `return-to-draft` | Return to the draft | `walkthrough` | primary | no | no | no | `outcome` |
 | `reload-guide` | Reload the page | `entry` | primary | no | no | no | `fallback` |
 | `go-home` | Home | `escape` | primary | no | no | no | `escape` |
@@ -297,20 +296,6 @@ flowchart TD
 - Does a signed-out visitor who bookmarks /guide/#state deep-link anywhere, or is in-tab state always first_time after refresh?
 - Should the optional workflow-discussion destination be enabled once a verified main-site contact section is available?
 
-## Suggested task-slice decomposition (from map)
-
-1. Enable route with acx_public_guide_enabled and rewrite flush (deploy-enable).
-2. Public RecordedWalkthrough scope with escape hatch and two entry actions (sibling TS lane).
-3. PHP PublicGuideRoute 404 when disabled; standalone template when on (sibling PHP lane).
-4. Signed-out Playwright acceptance under project public-guide.
-
-## Domain state mapping
-
-| domain state(s) | canonical state |
-| --- | --- |
-| `disabled_404` | `error` |
-| `bundle_failed` | `error` |
-
 ## Parity index
 
 Machine-checked by `js/admin/__tests__/uxmap-parity.test.ts` and
@@ -319,7 +304,7 @@ below must exist in the sibling `.uxmap.json`, and no `z-*`/`act-*` id may appea
 that the JSON does not define. Regenerate with `docs/ux-maps/render_ux_maps.py` — never
 hand-edit one side.
 
-Zone ids: public-escape guided-scope entry-cta guided-demo-root guided-section-understand name-choice-left name-choice-right guided-candidate guided-section-apply demo-applied-image demo-outcome public-guide-fallback escape-home escape-case-study
+Zone ids: public-escape guided-scope entry-cta guided-demo-root guided-section-understand name-choice-tribeca-left name-choice-tribeca-right name-choice-coachella-left name-choice-coachella-right guided-candidate guided-section-apply demo-applied-image-tribeca demo-applied-image-coachella demo-outcome public-guide-fallback escape-home escape-case-study
 
 Action ids: start-walkthrough read-case-study continue-walkthrough preview-draft keep-current-alt-text reset-demo demo-apply demo-undo return-to-draft reload-guide go-home go-case-study
 
@@ -330,11 +315,14 @@ Zone labels (verbatim; the tables above escape `|` for markdown, this list does 
 - Start the walkthrough (primary). Read the case study.
 - Public mount. data-scope=public. Supplied roster and recorded drafts only; changes stay in this tab.
 - Understand the page and provenance. The .acx-guided-page__context paragraph appears above .acx-guided-page__media-list, where Tribeca and Coachella are stacked in one column. Each figure is a two-column layout: a 1 / 1 image frame (1:1 crop) with visible Photo credit and two AltText.ai/AltContext caption disclosures beneath the image on the left, and one "People recognised in this photo" article in the .acx-guided-page__faces column on the right with both persons' roster entries and include/omit radios; the faces column collapses under the image below 56.25rem. Face outlines pin on click. A plain .acx-guided-page__provenance-footer with three paragraphs follows the figures before Continue. Review current demo alt text, cached captions, credits, and recorded source details.
-- Justin Trudeau roster entry in the "People recognised in this photo" article in the right-hand .acx-guided-page__faces column. Use Justin Trudeau. Leave this person unnamed. No preselection. edge_input: Choose an option for this person. The Tribeca and Coachella crops are visible with 89.4% and 70.2% strong matches.
-- Katy Perry roster entry in the "People recognised in this photo" article in the right-hand .acx-guided-page__faces column. Use Katy Perry. Leave this person unnamed. No preselection. edge_input: Choose an option for this person. The Tribeca crop is 100.0% cluster anchor, strong; the Coachella crop is 56.7% weak and below the 60.0% displayed threshold, but the production clusterer grouped it.
-- Edit the alt text. Selected output is a recorded Qwen3-VL GPU draft; a visitor edit is local to this tab. Preview the change. error: The sample draft for these choices is unavailable.
-- Apply and undo. Current alt text beside Will be applied. Apply to demo copy. Undo last application.
-- Demo image preview. Distinct demo image whose alternative is the current demo copy.
+- Justin Trudeau roster entry for the Tribeca figure's "People recognised in this photo" article in the right-hand .acx-guided-page__faces column. Use Justin Trudeau. Leave this person unnamed. No preselection. edge_input: Choose an option for this person. One Tribeca 89.4% strong crop is visible.
+- Katy Perry roster entry for the Tribeca figure's "People recognised in this photo" article in the right-hand .acx-guided-page__faces column. Use Katy Perry. Leave this person unnamed. No preselection. edge_input: Choose an option for this person. One Tribeca 100.0% strong cluster-anchor crop is visible.
+- Justin Trudeau roster entry for the Coachella figure's "People recognised in this photo" article in the right-hand .acx-guided-page__faces column. Use Justin Trudeau. Leave this person unnamed. No preselection. edge_input: Choose an option for this person. One Coachella 70.2% strong crop is visible.
+- Katy Perry roster entry for the Coachella figure's "People recognised in this photo" article in the right-hand .acx-guided-page__faces column. Use Katy Perry. Leave this person unnamed. No preselection. edge_input: Choose an option for this person. One Coachella 56.7% weak crop is below the 60.0% displayed threshold and is still grouped by the production clusterer.
+- Edit the alt text for each photo. Tribeca and Coachella each have an Alt text draft textarea with a recorded sample or a local visitor edit. Edits stay in this tab. Nothing is applied until you choose Apply to demo copy for that photo. blocked: Choose a name option for both people to load both sample drafts. fixture_missing: The sample draft for this photo and these choices is unavailable; the other photo's draft and both demo copies are unchanged. preview_invalid: Enter alt text before reviewing the change.
+- Apply and undo each per-image draft. For Tribeca and Coachella, compare Current alt text beside Will be applied. Applying changes only that photo's demo copy. The draft changed: preview it again before applying. The demo copy already uses this text when it matches.
+- Tribeca demo image preview. Distinct applied-preview image whose alternative is the current Tribeca demo copy. This zone is rendered only while the Tribeca draft status is ready.
+- Coachella demo image preview. Distinct applied-preview image whose alternative is the current Coachella demo copy. This zone is rendered only while the Coachella draft status is ready.
 - Your demo copy is updated or unchanged after Keep. Result applies only in this tab; no WordPress media, server roster, or saved library update. A next batch would use another supplied image and page context.
 - The walkthrough could not load. Reload the page and try again.
 - Home

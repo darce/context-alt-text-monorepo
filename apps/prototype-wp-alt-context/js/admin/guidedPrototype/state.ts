@@ -123,6 +123,7 @@ export interface GuidedFace {
   isClusterAnchor: boolean;
   /** Null when no recognition confidence/strength was recorded for the fixture. */
   strength: GuidedMatchStrength | null;
+  note?: string;
   source: GuidedFaceSource;
 }
 
@@ -165,7 +166,7 @@ export interface GuidedScenario {
   people: GuidedLabeledPerson[];
   faces: GuidedFace[];
   visualFacts: string[];
-  samples: Record<GuidedImageKey, Partial<Record<GuidedSampleKey, string>>>;
+  samples: Record<GuidedImageKey, Record<GuidedSampleKey, string>>;
   provenance: GuidedProvenance;
   /** Optional because the incumbent saved-build fixture predates this field. */
   identitySource?: GuidedScenarioIdentitySource;
@@ -240,7 +241,8 @@ export interface GuidedDemoState {
   actionHistory: GuidedActionHistoryEntry[];
 }
 
-const INITIAL_APPLIED_ALT_TEXT = 'A man in a black suit and a woman in a white dress pose together, smiling, in front of a Tribeca Festival step-and-repeat backdrop.';
+const INITIAL_APPLIED_ALT_TEXT =
+  'A man in a black suit and a woman in a white dress pose together, smiling, in front of a Tribeca Festival step-and-repeat backdrop.';
 
 const GUIDED_SCENARIO_SEED: Omit<GuidedScenario, 'pressPhoto'> = {
   origin: 'saved-build',
@@ -257,12 +259,10 @@ const GUIDED_SCENARIO_SEED: Omit<GuidedScenario, 'pressPhoto'> = {
         provider: 'AltText.ai',
         providerUrl: 'https://alttext.ai/',
         capturedOn: '10 September 2026',
-        note:
-          'Captured from the AltText.ai free web demo (POST https://alttext.ai/demo_images), with no keywords supplied; asset_id 5ae0105fe47338c39767e88da014617c; source file guided-press-tribeca-2026.jpg.',
+        note: 'Captured from the AltText.ai free web demo (POST https://alttext.ai/demo_images), with no keywords supplied; asset_id 5ae0105fe47338c39767e88da014617c; source file guided-press-tribeca-2026.jpg.',
       },
       altContextDescription: {
-        text:
-          'Justin Trudeau and Katy Perry pose together on the red carpet at the Tribeca Festival in New York in June 2026. Trudeau is wearing a black tuxedo with a white shirt, while Perry is in a white sleeveless dress with a draped design. They are standing in front of a backdrop with the Tribeca Festival and 10 Lives Studios logos.',
+        text: 'Justin Trudeau and Katy Perry pose together on the red carpet at the Tribeca Festival in New York in June 2026. Trudeau is wearing a black tuxedo with a white shirt, while Perry is in a white sleeveless dress with a draped design. They are standing in front of a backdrop with the Tribeca Festival and 10 Lives Studios logos.',
         system: 'altcontext.com',
         systemUrl: 'https://altcontext.com/',
         generatedOn: '2026-09-10',
@@ -271,7 +271,8 @@ const GUIDED_SCENARIO_SEED: Omit<GuidedScenario, 'pressPhoto'> = {
     {
       key: 'coachella',
       src: guidedCoachellaPhoto,
-      altText: 'Two people sit on a curb outdoors at night, holding red cups and eating food, with trees and plants in the background.',
+      altText:
+        'Two people sit on a curb outdoors at night, holding red cups and eating food, with trees and plants in the background.',
       credit: 'https://www.instagram.com/katyperry/',
       event: 'Coachella festival photo, 2026',
       source: 'https://www.instagram.com/katyperry/',
@@ -280,12 +281,10 @@ const GUIDED_SCENARIO_SEED: Omit<GuidedScenario, 'pressPhoto'> = {
         provider: 'AltText.ai',
         providerUrl: 'https://alttext.ai/',
         capturedOn: '10 September 2026',
-        note:
-          'Captured from the AltText.ai free web demo (POST https://alttext.ai/demo_images), with no keywords supplied; asset_id 7b54b68b4fde9ee3f5257f2ac28d7049; source file guided-press-coachella-2026.webp.',
+        note: 'Captured from the AltText.ai free web demo (POST https://alttext.ai/demo_images), with no keywords supplied; asset_id 7b54b68b4fde9ee3f5257f2ac28d7049; source file guided-press-coachella-2026.webp.',
       },
       altContextDescription: {
-        text:
-          'Justin Trudeau and Katy Perry are sitting together outdoors at night, eating from red cups and a yellow noodle container. Trudeau wears a white t-shirt, blue jeans, and a backward blue cap, while Perry wears a white t-shirt, black boots, and holds a red cup. They are surrounded by plants and appear to be at a casual evening event.',
+        text: 'Justin Trudeau and Katy Perry are sitting together outdoors at night, eating from red cups and a yellow noodle container. Trudeau wears a white t-shirt, blue jeans, and a backward blue cap, while Perry wears a white t-shirt, black boots, and holds a red cup. They are surrounded by plants and appear to be at a casual evening event.',
         system: 'altcontext.com',
         systemUrl: 'https://altcontext.com/',
         generatedOn: '2026-09-10',
@@ -367,6 +366,7 @@ const GUIDED_SCENARIO_SEED: Omit<GuidedScenario, 'pressPhoto'> = {
       similarity: 1,
       isClusterAnchor: true,
       strength: 'strong',
+      note: 'Her face is turned a little to the side.',
       source: 'saved-run',
     },
     {
@@ -401,12 +401,18 @@ const GUIDED_SCENARIO_SEED: Omit<GuidedScenario, 'pressPhoto'> = {
   samples: {
     tribeca: {
       none: 'A man and a woman pose together on a red carpet in front of a backdrop featuring the Tribeca Festival and 10 Lives Studios logos. The man wears a black tuxedo with a white shirt, and the woman is in a white sleeveless dress with a draped design, smiling as she places her hand on his chest.',
-      'katy-perry': "Katy Perry and a man pose together on a red carpet in front of a backdrop for the Tribeca Festival. Perry, on the right, wears a white dress and smiles while placing her hand on the man's chest. The man, on the left, wears a black tuxedo and white shirt. The background features repeating logos for \"TRIBECA FESTIVAL\" and \"10 LIVES STUDIOS.\"",
-      'justin-trudeau': 'Justin Trudeau stands on a red carpet at the Tribeca Festival, posing with a woman in a white dress. He is wearing a black tuxedo with a white shirt, and she has her hand on his chest, showing a ring on her finger. The background is a white wall with repeating "Tribeca Festival" and "10 Lives Studios" logos.',
+      'katy-perry':
+        'Katy Perry and a man pose together on a red carpet in front of a backdrop for the Tribeca Festival. Perry, on the right, wears a white dress and smiles while placing her hand on the man\'s chest. The man, on the left, wears a black tuxedo and white shirt. The background features repeating logos for "TRIBECA FESTIVAL" and "10 LIVES STUDIOS."',
+      'justin-trudeau':
+        'Justin Trudeau stands on a red carpet at the Tribeca Festival, posing with a woman in a white dress. He is wearing a black tuxedo with a white shirt, and she has her hand on his chest, showing a ring on her finger. The background is a white wall with repeating "Tribeca Festival" and "10 Lives Studios" logos.',
       both: "Justin Trudeau and Katy Perry pose together on the red carpet at the Tribeca Festival, standing in front of a backdrop with the event's logo. Trudeau is wearing a black tuxedo with a white shirt, while Perry is in a white sleeveless dress with a draped design. Perry has her arm around Trudeau and is smiling, showing off a ring on her left hand.",
     },
     coachella: {
       none: 'A man and a woman are sitting together outdoors at night, eating from red cups and a yellow container of noodles. The man, wearing a white t-shirt and blue jeans, holds chopsticks and a cup, while the woman, in a white top and black boots, eats from a cup. They are surrounded by plants and trees in a relaxed, casual setting.',
+      'katy-perry':
+        'Katy Perry and a man are sitting together outdoors at night, eating from red cups and a yellow noodle container. Perry wears a white t-shirt, black boots, and holds a red cup, while the man wears a white t-shirt and blue jeans and holds chopsticks and a cup. They are surrounded by plants and appear to be at a casual evening event.',
+      'justin-trudeau':
+        'Justin Trudeau and a woman are sitting together outdoors at night, eating from red cups and a yellow noodle container. Trudeau wears a white t-shirt, blue jeans, and a backward blue cap, while the woman wears a white t-shirt, black boots, and holds a red cup. They are surrounded by plants and appear to be at a casual evening event.',
       both: 'Justin Trudeau and Katy Perry are sitting together outdoors at night, eating from red cups and a yellow noodle container. Trudeau wears a white t-shirt, blue jeans, and a backward blue cap, while Perry wears a white t-shirt, black boots, and holds a red cup. They are surrounded by plants and appear to be at a casual evening event.',
     },
   },
@@ -548,6 +554,11 @@ const withImageDraft = (
   updateState: GuidedStateUpdater = (next) => next,
 ): GuidedDemoState => withImageDrafts(state, [imageKey], updateDraft, updateState);
 
+const outcomeFromApplicationState = (state: GuidedDemoState, fallback: GuidedOutcome): GuidedOutcome =>
+  GUIDED_IMAGE_KEYS.some((imageKey) => state.drafts[imageKey].applicationHistory.length > 0)
+    ? GUIDED_OUTCOME.APPLIED
+    : fallback;
+
 const nextSequence = (state: GuidedDemoState): number => {
   const last = state.actionHistory.at(-1);
   return (last?.sequence ?? 0) + 1;
@@ -589,11 +600,15 @@ const canPreviewImageDraft = (state: GuidedDemoState, draft: GuidedImageDraft): 
   draft.draftText !== null &&
   draft.draftText.trim().length > 0;
 
+const canApplyImageDraftWithoutPreview = (state: GuidedDemoState, draft: GuidedImageDraft): boolean =>
+  canPreviewImageDraft(state, draft) && draft.draftText !== draft.appliedAltText && state.pendingChoiceChange === null;
+
+/** Public guide eligibility keeps the draft visible without requiring an admin preview action. */
+export const canApplyImageDraftPublic = (state: GuidedDemoState, draft: GuidedImageDraft): boolean =>
+  canApplyImageDraftWithoutPreview(state, draft);
+
 const canApplyImageDraft = (state: GuidedDemoState, draft: GuidedImageDraft): boolean =>
-  canPreviewImageDraft(state, draft) &&
-  draft.previewedVersion === draft.draftVersion &&
-  draft.draftText !== draft.appliedAltText &&
-  state.pendingChoiceChange === null;
+  canApplyImageDraftPublic(state, draft) && draft.previewedVersion === draft.draftVersion;
 
 export const canPreview = (state: GuidedDemoState): boolean =>
   namesDecided(state) &&
@@ -859,7 +874,7 @@ export const confirmGuidedChoiceReplacement = (
     (draft, currentImageKey) => ({
       ...draft,
       ...resolveSample(scenario, choices, currentImageKey),
-      draftHistory: archiveCurrentDraft(state, draft),
+      draftHistory: archiveManualDraft(state, draft),
       draftVersion: draft.draftVersion + 1,
       previewedVersion: null,
     }),
@@ -938,35 +953,58 @@ export const keepGuidedCurrentAltTextForImage = (state: GuidedDemoState, imageKe
     state,
     imageKey,
     (current) => ({ ...current, appliedAltText: originalAlt, applicationHistory: [] }),
-    (next) => withLocalAction({ ...next, outcome: GUIDED_OUTCOME.KEPT }, 'keep_current_alt_text', 'outcome.kept'),
+    (next) =>
+      withLocalAction(
+        { ...next, outcome: outcomeFromApplicationState(next, GUIDED_OUTCOME.KEPT) },
+        'keep_current_alt_text',
+        'outcome.kept',
+      ),
   );
 };
 
-export const applyGuidedDraftForImage = (state: GuidedDemoState, imageKey: GuidedImageKey): GuidedDemoState => {
+export const applyGuidedDraftForImage = (
+  state: GuidedDemoState,
+  imageKey: GuidedImageKey,
+  visibleText?: string,
+): GuidedDemoState => {
   const draft = state.drafts[imageKey];
-  const draftText = draft.draftText;
-  if (!canApplyImageDraft(state, draft) || draftText === null) {
+  // Admin callers omit visibleText and retain the preview gate; public callers
+  // pass the current field value so validation and application happen together.
+  const candidateDraft = visibleText === undefined ? draft : { ...draft, draftText: visibleText };
+  const canApply =
+    visibleText === undefined ? canApplyImageDraft(state, draft) : canApplyImageDraftPublic(state, candidateDraft);
+  const draftText = candidateDraft.draftText;
+  if (!canApply || draftText === null) {
     return state;
   }
+  const hasExplicitTextEdit = visibleText !== undefined && visibleText !== draft.draftText;
   const sequence = nextSequence(state);
   return withImageDraft(
     state,
     imageKey,
     (current) => ({
       ...current,
+      draftText,
+      ...(hasExplicitTextEdit
+        ? {
+            draftOrigin: GUIDED_DRAFT_ORIGIN.VISITOR_EDIT,
+            draftVersion: current.draftVersion + 1,
+            previewedVersion: null,
+          }
+        : {}),
       appliedAltText: draftText,
       applicationHistory: [
         ...current.applicationHistory,
         {
           previousAltText: current.appliedAltText,
-          appliedDraftVersion: current.draftVersion,
+          appliedDraftVersion: current.draftVersion + (hasExplicitTextEdit ? 1 : 0),
           sequence,
         },
       ],
     }),
     (next) => ({
       ...next,
-      outcome: GUIDED_OUTCOME.APPLIED,
+      outcome: outcomeFromApplicationState(next, GUIDED_OUTCOME.APPLIED),
       actionHistory: [
         ...next.actionHistory,
         {
@@ -998,7 +1036,10 @@ export const undoGuidedApplicationForImage = (state: GuidedDemoState, imageKey: 
       withLocalAction(
         {
           ...next,
-          outcome: stack.length === 0 ? GUIDED_OUTCOME.NOT_FINISHED : GUIDED_OUTCOME.APPLIED,
+          outcome: outcomeFromApplicationState(
+            next,
+            stack.length === 0 ? GUIDED_OUTCOME.NOT_FINISHED : GUIDED_OUTCOME.APPLIED,
+          ),
         },
         'undo_application',
         'apply.undone',
@@ -1078,8 +1119,8 @@ export const previewGuidedDraft = (state: GuidedDemoState): GuidedDemoState =>
 export const keepGuidedCurrentAltText = (state: GuidedDemoState): GuidedDemoState =>
   keepGuidedCurrentAltTextForImage(state, GUIDED_DEFAULT_IMAGE_KEY);
 
-export const applyGuidedDraft = (state: GuidedDemoState): GuidedDemoState =>
-  applyGuidedDraftForImage(state, GUIDED_DEFAULT_IMAGE_KEY);
+export const applyGuidedDraft = (state: GuidedDemoState, visibleText?: string): GuidedDemoState =>
+  applyGuidedDraftForImage(state, GUIDED_DEFAULT_IMAGE_KEY, visibleText);
 
 export const undoGuidedApplication = (state: GuidedDemoState): GuidedDemoState =>
   undoGuidedApplicationForImage(state, GUIDED_DEFAULT_IMAGE_KEY);

@@ -103,30 +103,7 @@ const REQUIRED_GENERATED_MAPS = [
  * fails again for a named map that has since acquired a snapshot entry, so the list can only
  * shrink.
  */
-const HAND_AUTHORED_MAPS: Record<string, string> = {
-  'public-guide':
-    'Hand-authored alongside the GUIDEROUTE-1 public /guide/ route. It has no ' +
-    'render_ux_maps.visible.json entry because the sanctioned renderer needs the optional ' +
-    'mcp-workbay-canvas package, which is not installable in this environment. Owner: ' +
-    'GUIDEROUTE-1 — regenerate it with docs/ux-maps/render_ux_maps.py once the canvas ' +
-    'package is available, which enrolls it here automatically via the snapshot.',
-  'guided-prototype':
-    'Arrived on main hand-authored, with its screen inventories in a separate "## Screen inventories" ' +
-    'section and 80-column ASCII frames, so it parses as a Screens table with no detail blocks and its ' +
-    'frames are not 62 columns wide. It has no render_ux_maps.visible.json entry because the sanctioned ' +
-    'renderer has never written it, and generating one needs the optional mcp-workbay-canvas package, ' +
-    'which is not installable in this environment. Owner: DEMOLAND-1 — regenerate it with ' +
-    'docs/ux-maps/render_ux_maps.py once the canvas package is available, which enrolls it here ' +
-    'automatically via the snapshot.',
-  'public-demo-describe':
-    'Arrived hand-authored for GPU-LAUNCH-1. Official ux-map CLI and workbay_canvas_mcp are unavailable ' +
-    '(no install/upgrade in this lane), so the sanctioned renderer cannot write a ' +
-    'render_ux_maps.visible.json entry. Sibling Markdown was hand-rendered from the JSON using this ' +
-    "repo's render_ux_maps.py ASCII/table helpers; consumer TypeScript validation covers local " +
-    'extensions the older official package rejects. Owner: GPU-LAUNCH-1 — regenerate with ' +
-    'docs/ux-maps/render_ux_maps.py once the canvas package is available, which enrolls it here ' +
-    'automatically via the snapshot.',
-};
+const HAND_AUTHORED_MAPS: Record<string, string> = {};
 
 it.each(
   readdirSync(uxMapsDir)

@@ -6,7 +6,7 @@
 ## Goals
 - Anyone can try the recorded review workflow at /guide/ signed-out; live generation and WordPress writes stay on the authenticated admin route.
 - NAV-08: the first screen shows two plain-language entry actions — Start the walkthrough and Read the case study.
-- NAV-07: public scope renders an escape-hatch link to the site home and to the case study.
+- NAV-07: public scope renders a fixed pair of external product links — Home at https://altcontext.com/ and the case study at https://darce.xyz/projects/altcontext/.
 - SECD-02/03: the public route performs no REST calls; /acx/v1/public/demo/describe stays gated by acx_public_demo_enabled and is expected off unless retained.
 - Bundle-failure still returns 200 with canonical and the PUBLIC_GUIDE_FALLBACK paragraph.
 - Detailed engine metadata stays in the notes while the recorded provenance summary is visible on screen in the section footer.
@@ -43,12 +43,11 @@ Purpose: Signed-out public entrance. Public title and introduction explain the s
 | ZONES                                                      |
 |   - Leave the walkthrough. Home. Case study. (nav) states… |
 |   - Supplied example roster with recorded drafts. Choices… |
-|   - Start the walkthrough (primary). Read the case study. |
+|   - Start the walkthrough (primary). Read the case study.… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Start the walkthrough -> walkthrough           |
 |   [secondary] Read the case study -> escape                |
-|                                                            |
 +------------------------------------------------------------+
 | states: default | first_time | error                       |
 +------------------------------------------------------------+
@@ -74,17 +73,19 @@ Purpose: RecordedWalkthrough scope=public: understand the supplied page context,
 | RecordedWalkthrough scope=public: understand the supplied… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Public mount. data-scope=public. Supplied roster and re… |
-|   - Understand the page and provenance. The .acx-guided-pa… |
-|   - Justin Trudeau roster entry in the "People recognised… |
-|   - Katy Perry roster entry in the "People recognised in t… |
-|   - Justin Trudeau roster entry in the "People recognised… |
-|   - Katy Perry roster entry in the "People recognised in t… |
+|   - Public mount. data-scope=public. Supplied roster and … |
+|   - Understand the page and provenance. The .acx-guided-p… |
+|   - Justin Trudeau roster entry for the Tribeca figure's … |
+|   - Katy Perry roster entry for the Tribeca figure's "Peo… |
+|   - Justin Trudeau roster entry for the Coachella figure'… |
+|   - Katy Perry roster entry for the Coachella figure's "P… |
 |   - Edit the alt text for each photo. Tribeca and Coachel… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Review name suggestions -> apply               |
+|   [secondary] Keep current alt text -> outcome             |
 |   [secondary] Preview the change -> apply (preview)        |
+|   [secondary] Reset demo -> walkthrough (irreversible)     |
 +------------------------------------------------------------+
 | states: default | edge_input | error                       |
 +------------------------------------------------------------+
@@ -103,12 +104,12 @@ Purpose: Compare current alt text with each per-image draft. Apply to demo copy 
 ```
 +------------------------------------------------------------+
 | Apply and undo  [screen]  /guide/                          |
-| Compare current alt text with each per-image draft. Apply … |
+| Compare current alt text with each per-image draft. Apply… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Apply and undo. Current alt text beside Will be appli… |
+|   - Apply and undo each per-image draft. For Tribeca and … |
 |   - Tribeca demo image preview. Distinct applied-preview … |
-|   - Coachella demo image preview. Distinct applied-preview… |
+|   - Coachella demo image preview. Distinct applied-previe… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Apply to demo copy -> outcome (preview)        |
@@ -143,7 +144,7 @@ Purpose: Completion summary after Apply to demo copy or Keep current alt text. A
 
 ### The walkthrough could not load (`fallback`)
 
-Purpose: Domain bundle_failed maps to error. main.tsx hides .acx-public-guide__fallback on mount; if ViteManifest entry_assets returns null, the template still renders 200 plus canonical content and PUBLIC_GUIDE_FALLBACK remains visible.
+Purpose: Domain bundle_failed maps to error. The mounted guide hides .acx-public-guide__fallback; if ViteManifest entry_assets returns null, the template still renders 200 plus canonical content and PUBLIC_GUIDE_FALLBACK remains visible.
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
@@ -152,10 +153,10 @@ Purpose: Domain bundle_failed maps to error. main.tsx hides .acx-public-guide__f
 ```
 +------------------------------------------------------------+
 | The walkthrough could not load  [screen]  /guide/          |
-| Domain bundle_failed mapped to error. js/guide/main.tsx h… |
+| Domain bundle_failed maps to error. The mounted guide hid… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - The walkthrough could not load. Reload the page and tr… |
+|   - The walkthrough could not load. Reload the page and t… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Reload the page -> entry                       |
@@ -176,7 +177,7 @@ Purpose: NAV-07 escape hatch from public scope: Home is an external link to altc
 ```
 +------------------------------------------------------------+
 | Leave the walkthrough  [exit]  /                           |
-| NAV-07 escape hatch from public scope: Home uses escapeHr… |
+| NAV-07 escape hatch from public scope: Home is an externa… |
 +------------------------------------------------------------+
 | ZONES                                                      |
 |   - Home (nav) states=[default]                            |

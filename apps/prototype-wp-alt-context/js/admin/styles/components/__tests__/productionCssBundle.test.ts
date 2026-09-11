@@ -42,9 +42,14 @@ const GUIDED_ASSETS = [
   'js/admin/assets/guided/guided-katy-perry-2016.jpg',
   'js/admin/assets/guided/guided-katy-perry-2019.jpg',
   'js/admin/assets/guided/guided-katy-perry-2026.jpg',
+  'js/admin/assets/guided/guided-press-coachella-2026.webp',
   'js/admin/assets/guided/guided-press-tribeca-2026.jpg',
 ] as const;
-const ROLLUP_BUILD_SOURCES = [...ROLLUP_ENTRY_POINTS, ...GUIDED_ASSETS] as const;
+const GUIDE_FONT_ASSETS = [
+  'js/guide/fonts/GeistMonoVariableVF.woff2',
+  'js/guide/fonts/RobotoFlex.woff2',
+] as const;
+const ROLLUP_BUILD_SOURCES = [...ROLLUP_ENTRY_POINTS, ...GUIDED_ASSETS, ...GUIDE_FONT_ASSETS] as const;
 
 describe('build-input fingerprint coverage [FEBT2-LG-NEW-02]', () => {
   it('hashes every non-test file under js/', () => {

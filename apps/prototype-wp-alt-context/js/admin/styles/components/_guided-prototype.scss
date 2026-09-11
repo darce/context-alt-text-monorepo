@@ -374,15 +374,14 @@
     min-width: 0;
   }
 
-  &__match-image,
-  &__match-summary,
+  &__match-line,
   &__weak-match {
     margin: 0;
     color: var(--acx-color-text-muted);
     font-size: var(--acx-text-xs);
   }
 
-  &__match-image {
+  &__match-line {
     color: var(--acx-color-text);
     font-weight: var(--acx-font-weight-semibold);
   }

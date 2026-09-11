@@ -589,11 +589,15 @@ const canPreviewImageDraft = (state: GuidedDemoState, draft: GuidedImageDraft): 
   draft.draftText !== null &&
   draft.draftText.trim().length > 0;
 
+const canApplyImageDraftWithoutPreview = (state: GuidedDemoState, draft: GuidedImageDraft): boolean =>
+  canPreviewImageDraft(state, draft) && draft.draftText !== draft.appliedAltText && state.pendingChoiceChange === null;
+
+/** Public guide eligibility keeps the draft visible without requiring an admin preview action. */
+export const canApplyImageDraftPublic = (state: GuidedDemoState, draft: GuidedImageDraft): boolean =>
+  canApplyImageDraftWithoutPreview(state, draft);
+
 const canApplyImageDraft = (state: GuidedDemoState, draft: GuidedImageDraft): boolean =>
-  canPreviewImageDraft(state, draft) &&
-  draft.previewedVersion === draft.draftVersion &&
-  draft.draftText !== draft.appliedAltText &&
-  state.pendingChoiceChange === null;
+  canApplyImageDraftPublic(state, draft) && draft.previewedVersion === draft.draftVersion;
 
 export const canPreview = (state: GuidedDemoState): boolean =>
   namesDecided(state) &&
@@ -942,24 +946,42 @@ export const keepGuidedCurrentAltTextForImage = (state: GuidedDemoState, imageKe
   );
 };
 
-export const applyGuidedDraftForImage = (state: GuidedDemoState, imageKey: GuidedImageKey): GuidedDemoState => {
+export const applyGuidedDraftForImage = (
+  state: GuidedDemoState,
+  imageKey: GuidedImageKey,
+  visibleText?: string,
+): GuidedDemoState => {
   const draft = state.drafts[imageKey];
-  const draftText = draft.draftText;
-  if (!canApplyImageDraft(state, draft) || draftText === null) {
+  // Admin callers omit visibleText and retain the preview gate; public callers
+  // pass the current field value so validation and application happen together.
+  const candidateDraft = visibleText === undefined ? draft : { ...draft, draftText: visibleText };
+  const canApply =
+    visibleText === undefined ? canApplyImageDraft(state, draft) : canApplyImageDraftPublic(state, candidateDraft);
+  const draftText = candidateDraft.draftText;
+  if (!canApply || draftText === null) {
     return state;
   }
+  const hasExplicitTextEdit = visibleText !== undefined && visibleText !== draft.draftText;
   const sequence = nextSequence(state);
   return withImageDraft(
     state,
     imageKey,
     (current) => ({
       ...current,
+      draftText,
+      ...(hasExplicitTextEdit
+        ? {
+            draftOrigin: GUIDED_DRAFT_ORIGIN.VISITOR_EDIT,
+            draftVersion: current.draftVersion + 1,
+            previewedVersion: null,
+          }
+        : {}),
       appliedAltText: draftText,
       applicationHistory: [
         ...current.applicationHistory,
         {
           previousAltText: current.appliedAltText,
-          appliedDraftVersion: current.draftVersion,
+          appliedDraftVersion: current.draftVersion + (hasExplicitTextEdit ? 1 : 0),
           sequence,
         },
       ],
@@ -1078,8 +1100,8 @@ export const previewGuidedDraft = (state: GuidedDemoState): GuidedDemoState =>
 export const keepGuidedCurrentAltText = (state: GuidedDemoState): GuidedDemoState =>
   keepGuidedCurrentAltTextForImage(state, GUIDED_DEFAULT_IMAGE_KEY);
 
-export const applyGuidedDraft = (state: GuidedDemoState): GuidedDemoState =>
-  applyGuidedDraftForImage(state, GUIDED_DEFAULT_IMAGE_KEY);
+export const applyGuidedDraft = (state: GuidedDemoState, visibleText?: string): GuidedDemoState =>
+  applyGuidedDraftForImage(state, GUIDED_DEFAULT_IMAGE_KEY, visibleText);
 
 export const undoGuidedApplication = (state: GuidedDemoState): GuidedDemoState =>
   undoGuidedApplicationForImage(state, GUIDED_DEFAULT_IMAGE_KEY);

@@ -21,29 +21,22 @@
 }
 
 .acx-public-guide {
+  @include meta.load-css('theme-darce');
   @include meta.load-css('../admin/styles/components/button');
   @include meta.load-css('../admin/styles/components/guided-prototype');
   @include meta.load-css('../admin/styles/components/guided-face-overlay');
   @include meta.load-css('../admin/styles/components/dialog');
   @include meta.load-css('../admin/styles/components/radio-group');
 
-  --acx-font-sans: 'Roboto Flex', Roboto, sans-serif;
-  --acx-font-mono: 'Geist Mono', monospace;
   font-family: var(--acx-font-sans);
   font-optical-sizing: auto;
-  line-height: 1.5;
+  line-height: var(--acx-line-height-base);
 
   button,
   input,
   textarea,
   select {
     font: inherit;
-  }
-
-  .acx-guided-guide__eyebrow,
-  .acx-guided-face__gallery-caption {
-    font-family: var(--acx-font-mono);
-    font-size: var(--acx-text-xs);
   }
 
   .acx-guided-review__apply {
@@ -116,15 +109,12 @@
     gap: var(--acx-space-16);
   }
 
-  .acx-guided-entrance__escape a {
-    color: var(--acx-color-accent-contrast);
-    font-weight: var(--acx-font-weight-semibold);
-  }
-
   .acx-guided-entrance__actions {
     display: flex;
     flex-wrap: wrap;
     gap: var(--acx-space-12);
     align-items: center;
   }
+
+  @include meta.load-css('theme-darce-components');
 }

@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
-import { guidedCopy } from '../../guidedPrototype/copy';
+import { guidedCopy } from '../../guidedPrototype/publicGuideCopy';
 import {
   GUIDED_DRAFT_ORIGIN,
   GUIDED_DRAFT_STATUS,
   canApply,
+  canApplyImageDraftPublic,
   canPreview,
   canRestoreRevision,
   canUndo,
@@ -54,6 +55,7 @@ export interface GuidedDescriptionReviewProps {
   state: GuidedReviewState;
   actions: GuidedDescriptionReviewActions;
   recordedOriginLabel?: string;
+  scope?: 'public' | 'admin';
 }
 
 const originLabel = (state: GuidedDemoState, recordedOriginLabel?: string): string => {
@@ -129,6 +131,22 @@ const imageApplyReason = (state: GuidedReviewState, draft: GuidedImageDraft, loc
   }
   if (!guidedReviewNamesDecided(state)) {
     return guidedCopy('draft.blocked');
+  }
+  return null;
+};
+
+const imagePublicApplyReason = (state: GuidedReviewState, draft: GuidedImageDraft, localText: string): string | null => {
+  if (draft.draftStatus !== GUIDED_DRAFT_STATUS.READY || draft.draftText === null) {
+    return guidedCopy('error.no_recorded_draft.public');
+  }
+  if (localText.trim() === '') {
+    return guidedCopy('error.empty_draft.public');
+  }
+  if (localText === draft.appliedAltText) {
+    return guidedCopy('error.unchanged_draft.public');
+  }
+  if (!guidedReviewNamesDecided(state) || state.pendingChoiceChange !== null) {
+    return guidedCopy('error.no_recorded_draft.public');
   }
   return null;
 };
@@ -219,6 +237,7 @@ interface GuidedImageReviewCardProps {
   draft: GuidedImageDraft;
   actions: GuidedDescriptionReviewActions;
   recordedOriginLabel?: string;
+  scope: 'public' | 'admin';
 }
 
 const GuidedImageReviewCard = ({
@@ -227,9 +246,11 @@ const GuidedImageReviewCard = ({
   draft,
   actions,
   recordedOriginLabel,
+  scope,
 }: GuidedImageReviewCardProps): React.JSX.Element => {
   const [editValue, setEditValue] = useState(draft.draftText ?? '');
   const [emptyError, setEmptyError] = useState(false);
+  const [publicStatus, setPublicStatus] = useState('');
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const comparisonRef = useRef<HTMLDivElement>(null);
   const manuallyResizedHeightRef = useRef<number | null>(null);
@@ -361,10 +382,20 @@ const GuidedImageReviewCard = ({
 
   const localMatches = editValue === (draft.draftText ?? '');
   const previewEnabled = draft.draftStatus === GUIDED_DRAFT_STATUS.READY && editValue.trim().length > 0;
-  const applyEnabled = guidedReviewCanApply(state, draft) && localMatches;
+  const publicApplyDraft: GuidedDemoState['drafts'][GuidedImageKey] = {
+    ...draft,
+    draftVersion: draft.draftVersion ?? 0,
+    previewedVersion: draft.previewedVersion ?? null,
+    draftText: editValue,
+  };
+  const applyEnabled =
+    scope === 'public'
+      ? draft.draftText !== null && canApplyImageDraftPublic(state as unknown as GuidedDemoState, publicApplyDraft)
+      : guidedReviewCanApply(state, draft) && localMatches;
   const undoEnabled = guidedReviewCanUndo(draft);
-  const reason = imageApplyReason(state, draft, editValue);
-  const previewBlocked = !guidedReviewCanPreview(state, draft) && localMatches ? reason : null;
+  const reason =
+    scope === 'public' ? imagePublicApplyReason(state, draft, editValue) : imageApplyReason(state, draft, editValue);
+  const previewBlocked = scope === 'admin' && !guidedReviewCanPreview(state, draft) && localMatches ? reason : null;
   const editorId = `guided-description-draft-${photo.key}`;
   const errorId = `${editorId}-error`;
   const applyReasonId = `${editorId}-apply-reason`;
@@ -380,6 +411,28 @@ const GuidedImageReviewCard = ({
     callTextImageAction(actions.onPreviewForImage, actions.onPreview, photo.key, editValue, true);
   };
 
+  const handlePublicApply = (): void => {
+    if (editValue.trim() === '') {
+      setEmptyError(true);
+      editorRef.current?.focus();
+      return;
+    }
+    if (!applyEnabled) {
+      return;
+    }
+    setEmptyError(false);
+    callTextImageAction(actions.onApplyForImage, actions.onApply, photo.key, editValue, true);
+    setPublicStatus(guidedCopy('outcome.applied_image.public'));
+  };
+
+  const handlePublicUndo = (): void => {
+    if (!undoEnabled) {
+      return;
+    }
+    callImageOnlyAction(actions.onUndoForImage, actions.onUndo, photo.key, true);
+    setPublicStatus(guidedCopy('outcome.undone_image.public'));
+  };
+
   return (
     <article
       className="acx-guided-review__image-card"
@@ -391,7 +444,7 @@ const GuidedImageReviewCard = ({
       {draft.draftStatus === GUIDED_DRAFT_STATUS.BLOCKED ? <p>{guidedCopy('draft.blocked')}</p> : null}
       {draft.draftStatus === GUIDED_DRAFT_STATUS.FIXTURE_MISSING ? (
         <div>
-          <p>{guidedCopy('draft.fixture_missing')}</p>
+          {scope === 'admin' ? <p>{guidedCopy('draft.fixture_missing')}</p> : null}
           <button
             type="button"
             className="acx-button acx-button--secondary"
@@ -403,77 +456,12 @@ const GuidedImageReviewCard = ({
       ) : null}
 
       {draft.draftStatus === GUIDED_DRAFT_STATUS.READY ? (
-        <>
-          <div ref={comparisonRef} className="acx-guided-review__comparison">
-            <div>
-              <p className="acx-guided-review__origin">{imageOriginLabel(draft, recordedOriginLabel)}</p>
-              <label htmlFor={editorId}>{guidedCopy('draft.label')}</label>
-              <textarea
-                ref={editorRef}
-                id={editorId}
-                aria-invalid={emptyError ? 'true' : undefined}
-                aria-describedby={emptyError ? errorId : undefined}
-                value={editValue}
-                rows={8}
-                onInput={resizeEditor}
-                onPointerDown={beginEditorPointerInteraction}
-                onPointerUp={rememberManualEditorSize}
-                onPointerCancel={cancelEditorPointerInteraction}
-                onMouseDown={beginEditorPointerInteraction}
-                onMouseUp={rememberManualEditorSize}
-                onTouchStart={beginEditorPointerInteraction}
-                onTouchEnd={rememberManualEditorSize}
-                onTouchCancel={cancelEditorPointerInteraction}
-                onChange={(event) => {
-                  const text = event.target.value;
-                  setEditValue(text);
-                  setEmptyError(false);
-                  callTextImageAction(actions.onDraftInputForImage, actions.onDraftInput, photo.key, text, true);
-                }}
-              />
-              {emptyError ? (
-                <p id={errorId} className="acx-guided-review__field-error" role="alert">
-                  {guidedCopy('draft.empty_error')}
-                </p>
-              ) : null}
-              <p>{guidedCopy('draft.effect')}</p>
-              <div className="acx-guided-review__actions" aria-label={`${photo.event} draft actions`}>
-                <button
-                  type="button"
-                  className="acx-button acx-button--primary"
-                  onClick={handlePreview}
-                  disabled={!previewEnabled}
-                  aria-describedby={previewBlocked ? `${editorId}-preview-reason` : undefined}
-                >
-                  {guidedCopy('draft.next')}
-                </button>
-                <button
-                  type="button"
-                  className="acx-button acx-button--tertiary"
-                  onClick={() => callImageOnlyAction(actions.onKeepForImage, actions.onKeep, photo.key, true)}
-                >
-                  {guidedCopy('draft.keep')}
-                </button>
-              </div>
-              {previewBlocked ? (
-                <p id={`${editorId}-preview-reason`} className="acx-guided-review__apply-reason">
-                  {previewBlocked}
-                </p>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="acx-guided-review__apply" data-testid={`guided-apply-${photo.key}`}>
-            <div className="acx-guided-review__preview-grid">
-              <div>
-                <h4>{guidedCopy('apply.before')}</h4>
-                <p data-applied-text>{draft.appliedAltText}</p>
-              </div>
-              <div>
-                <h4>{guidedCopy('apply.after')}</h4>
-                <p>{localMatches ? (draft.draftText ?? '') : editValue}</p>
-              </div>
-            </div>
+        scope === 'public' ? (
+          <div
+            ref={comparisonRef}
+            className="acx-guided-review__comparison acx-guided-review__editor-layout"
+            data-testid={`guided-editor-layout-${photo.key}`}
+          >
             <figure className="acx-guided-review__demo-preview">
               <figcaption>{guidedCopy('apply.preview_title')}</figcaption>
               <img
@@ -482,42 +470,238 @@ const GuidedImageReviewCard = ({
                 alt={draft.appliedAltText}
               />
             </figure>
-            <div className="acx-guided-review__actions" aria-label={`${photo.event} apply actions`}>
-              <button
-                type="button"
-                className="acx-button acx-button--primary"
-                data-testid={`demo-apply-${photo.key}`}
-                onClick={() =>
-                  callTextImageAction(actions.onApplyForImage, actions.onApply, photo.key, editValue, true)
-                }
-                disabled={!applyEnabled}
-                aria-describedby={!applyEnabled && reason ? applyReasonId : undefined}
-              >
-                {guidedCopy('apply.submit')}
-              </button>
-              <button
-                type="button"
-                className="acx-button acx-button--tertiary"
-                data-testid={`demo-undo-${photo.key}`}
-                onClick={() => callImageOnlyAction(actions.onUndoForImage, actions.onUndo, photo.key, true)}
-                disabled={!undoEnabled}
-                aria-describedby={!undoEnabled ? undoReasonId : undefined}
-              >
-                {guidedCopy('apply.undo')}
-              </button>
+            <div data-testid={`guided-editor-column-${photo.key}`}>
+              <p className="acx-guided-review__origin">{imageOriginLabel(draft, recordedOriginLabel)}</p>
+              <div data-testid={`guided-current-alt-${photo.key}`}>
+                <h4>{guidedCopy('draft.current_alt_label.public')}</h4>
+                <p data-applied-text>{draft.appliedAltText}</p>
+              </div>
+              <div data-testid={`guided-draft-field-${photo.key}`}>
+                <label htmlFor={editorId}>{guidedCopy('draft.field_label.public')}</label>
+                <textarea
+                  ref={editorRef}
+                  id={editorId}
+                  aria-invalid={emptyError ? 'true' : undefined}
+                  aria-describedby={emptyError ? errorId : undefined}
+                  value={editValue}
+                  rows={8}
+                  onInput={resizeEditor}
+                  onPointerDown={beginEditorPointerInteraction}
+                  onPointerUp={rememberManualEditorSize}
+                  onPointerCancel={cancelEditorPointerInteraction}
+                  onMouseDown={beginEditorPointerInteraction}
+                  onMouseUp={rememberManualEditorSize}
+                  onTouchStart={beginEditorPointerInteraction}
+                  onTouchEnd={rememberManualEditorSize}
+                  onTouchCancel={cancelEditorPointerInteraction}
+                  onChange={(event) => {
+                    const text = event.target.value;
+                    setEditValue(text);
+                    setEmptyError(false);
+                    callTextImageAction(actions.onDraftInputForImage, actions.onDraftInput, photo.key, text, true);
+                  }}
+                />
+                {emptyError ? (
+                  <p id={errorId} className="acx-guided-review__field-error" role="alert">
+                    {guidedCopy('error.empty_draft.public')}
+                  </p>
+                ) : null}
+              </div>
+              <p>{guidedCopy('draft.apply_scope.public')}</p>
+              <div className="acx-guided-review__apply" data-testid={`guided-apply-${photo.key}`}>
+                <button
+                  type="button"
+                  className="acx-button acx-button--primary"
+                  data-testid={`demo-apply-${photo.key}`}
+                  onClick={handlePublicApply}
+                  disabled={!applyEnabled}
+                  aria-describedby={!applyEnabled && reason ? applyReasonId : undefined}
+                >
+                  {guidedCopy('apply.submit')}
+                </button>
+                <button
+                  type="button"
+                  className="acx-button acx-button--tertiary"
+                  data-testid={`guided-keep-current-${photo.key}`}
+                  onClick={() => callImageOnlyAction(actions.onKeepForImage, actions.onKeep, photo.key, true)}
+                >
+                  {guidedCopy('draft.keep')}
+                </button>
+                <button
+                  type="button"
+                  className="acx-button acx-button--tertiary"
+                  data-testid={`demo-undo-${photo.key}`}
+                  onClick={handlePublicUndo}
+                  disabled={!undoEnabled}
+                >
+                  {guidedCopy('apply.undo')}
+                </button>
+                {!applyEnabled && reason ? (
+                  <p id={applyReasonId} className="acx-guided-review__apply-reason">
+                    {reason}
+                  </p>
+                ) : null}
+                <p role="status" data-testid={`guided-image-status-${photo.key}`}>
+                  {publicStatus}
+                </p>
+              </div>
             </div>
-            {!applyEnabled && reason ? (
-              <p id={applyReasonId} className="acx-guided-review__apply-reason">
-                {reason}
-              </p>
-            ) : null}
-            {!undoEnabled ? (
-              <p id={undoReasonId} className="acx-guided-review__apply-reason">
-                {guidedCopy('apply.undo_unavailable')}
-              </p>
-            ) : null}
           </div>
-        </>
+        ) : (
+          <>
+            <div ref={comparisonRef} className="acx-guided-review__comparison">
+              <div>
+                <p className="acx-guided-review__origin">{imageOriginLabel(draft, recordedOriginLabel)}</p>
+                <label htmlFor={editorId}>{guidedCopy('draft.label')}</label>
+                <textarea
+                  ref={editorRef}
+                  id={editorId}
+                  aria-invalid={emptyError ? 'true' : undefined}
+                  aria-describedby={emptyError ? errorId : undefined}
+                  value={editValue}
+                  rows={8}
+                  onInput={resizeEditor}
+                  onPointerDown={beginEditorPointerInteraction}
+                  onPointerUp={rememberManualEditorSize}
+                  onPointerCancel={cancelEditorPointerInteraction}
+                  onMouseDown={beginEditorPointerInteraction}
+                  onMouseUp={rememberManualEditorSize}
+                  onTouchStart={beginEditorPointerInteraction}
+                  onTouchEnd={rememberManualEditorSize}
+                  onTouchCancel={cancelEditorPointerInteraction}
+                  onChange={(event) => {
+                    const text = event.target.value;
+                    setEditValue(text);
+                    setEmptyError(false);
+                    callTextImageAction(actions.onDraftInputForImage, actions.onDraftInput, photo.key, text, true);
+                  }}
+                />
+                {emptyError ? (
+                  <p id={errorId} className="acx-guided-review__field-error" role="alert">
+                    {guidedCopy('draft.empty_error')}
+                  </p>
+                ) : null}
+                <p>{guidedCopy('draft.effect')}</p>
+                <div className="acx-guided-review__actions" aria-label={`${photo.event} draft actions`}>
+                  <button
+                    type="button"
+                    className="acx-button acx-button--primary"
+                    onClick={handlePreview}
+                    disabled={!previewEnabled}
+                    aria-describedby={previewBlocked ? `${editorId}-preview-reason` : undefined}
+                  >
+                    {guidedCopy('draft.next')}
+                  </button>
+                  <button
+                    type="button"
+                    className="acx-button acx-button--tertiary"
+                    onClick={() => callImageOnlyAction(actions.onKeepForImage, actions.onKeep, photo.key, true)}
+                  >
+                    {guidedCopy('draft.keep')}
+                  </button>
+                </div>
+                {previewBlocked ? (
+                  <p id={`${editorId}-preview-reason`} className="acx-guided-review__apply-reason">
+                    {previewBlocked}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="acx-guided-review__apply" data-testid={`guided-apply-${photo.key}`}>
+              <div className="acx-guided-review__preview-grid">
+                <div>
+                  <h4>{guidedCopy('apply.before')}</h4>
+                  <p data-applied-text>{draft.appliedAltText}</p>
+                </div>
+                <div>
+                  <h4>{guidedCopy('apply.after')}</h4>
+                  <p>{localMatches ? (draft.draftText ?? '') : editValue}</p>
+                </div>
+              </div>
+              <figure className="acx-guided-review__demo-preview">
+                <figcaption>{guidedCopy('apply.preview_title')}</figcaption>
+                <img
+                  data-testid={`demo-applied-image-${photo.key}`}
+                  src={`${photo.src}#demo-applied-preview-${photo.key}`}
+                  alt={draft.appliedAltText}
+                />
+              </figure>
+              <div className="acx-guided-review__actions" aria-label={`${photo.event} apply actions`}>
+                <button
+                  type="button"
+                  className="acx-button acx-button--primary"
+                  data-testid={`demo-apply-${photo.key}`}
+                  onClick={() =>
+                    callTextImageAction(actions.onApplyForImage, actions.onApply, photo.key, editValue, true)
+                  }
+                  disabled={!applyEnabled}
+                  aria-describedby={!applyEnabled && reason ? applyReasonId : undefined}
+                >
+                  {guidedCopy('apply.submit')}
+                </button>
+                <button
+                  type="button"
+                  className="acx-button acx-button--tertiary"
+                  data-testid={`demo-undo-${photo.key}`}
+                  onClick={() => callImageOnlyAction(actions.onUndoForImage, actions.onUndo, photo.key, true)}
+                  disabled={!undoEnabled}
+                  aria-describedby={!undoEnabled ? undoReasonId : undefined}
+                >
+                  {guidedCopy('apply.undo')}
+                </button>
+              </div>
+              {!applyEnabled && reason ? (
+                <p id={applyReasonId} className="acx-guided-review__apply-reason">
+                  {reason}
+                </p>
+              ) : null}
+              {!undoEnabled ? (
+                <p id={undoReasonId} className="acx-guided-review__apply-reason">
+                  {guidedCopy('apply.undo_unavailable')}
+                </p>
+              ) : null}
+            </div>
+          </>
+        )
+      ) : scope === 'public' ? (
+        <div className="acx-guided-review__apply" data-testid={`guided-apply-${photo.key}`}>
+          <button
+            type="button"
+            className="acx-button acx-button--primary"
+            data-testid={`demo-apply-${photo.key}`}
+            onClick={handlePublicApply}
+            disabled={!applyEnabled}
+            aria-describedby={reason ? applyReasonId : undefined}
+          >
+            {guidedCopy('apply.submit')}
+          </button>
+          <button
+            type="button"
+            className="acx-button acx-button--tertiary"
+            data-testid={`guided-keep-current-${photo.key}`}
+            onClick={() => callImageOnlyAction(actions.onKeepForImage, actions.onKeep, photo.key, true)}
+          >
+            {guidedCopy('draft.keep')}
+          </button>
+          <button
+            type="button"
+            className="acx-button acx-button--tertiary"
+            data-testid={`demo-undo-${photo.key}`}
+            onClick={handlePublicUndo}
+            disabled={!undoEnabled}
+          >
+            {guidedCopy('apply.undo')}
+          </button>
+          {reason ? (
+            <p id={applyReasonId} className="acx-guided-review__apply-reason">
+              {reason}
+            </p>
+          ) : null}
+          <p role="status" data-testid={`guided-image-status-${photo.key}`}>
+            {publicStatus}
+          </p>
+        </div>
       ) : (
         <div className="acx-guided-review__actions">
           <button
@@ -593,6 +777,7 @@ export const GuidedDescriptionReview = ({
   state: reviewState,
   actions,
   recordedOriginLabel,
+  scope = 'admin',
 }: GuidedDescriptionReviewProps): React.JSX.Element => {
   const perImage = hasGuidedImageDrafts(reviewState);
   const state = guidedReviewLegacyState(reviewState);
@@ -789,6 +974,7 @@ export const GuidedDescriptionReview = ({
                 state={reviewState}
                 draft={draft}
                 actions={actions}
+                scope={scope}
                 {...(recordedOriginLabel !== undefined ? { recordedOriginLabel } : {})}
               />
             );

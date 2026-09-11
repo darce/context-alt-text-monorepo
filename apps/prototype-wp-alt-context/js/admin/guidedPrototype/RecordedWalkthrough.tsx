@@ -26,6 +26,7 @@ import { GuidedSamplePhoto } from '../pages/guided/GuidedSamplePhoto';
 import { guidedCopy } from './publicGuideCopy';
 import {
   GUIDED_NAME_CHOICE,
+  GUIDED_IMAGE_KEYS,
   GUIDED_STEP,
   applyGuidedDraft,
   applyGuidedDraftForImage,
@@ -188,11 +189,25 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
   const pendingDraftsByImageRef = useRef<Partial<Record<GuidedImageKey, string>>>({});
 
   const flushPendingDraft = (current: GuidedDemoState): GuidedDemoState => {
-    const pending = pendingDraftsByImageRef.current.tribeca ?? pendingDraftRef.current;
-    if (pending === null || pending === (current.draftText ?? '')) {
-      return current;
+    let next = current;
+    const pendingDrafts = pendingDraftsByImageRef.current;
+
+    for (const imageKey of GUIDED_IMAGE_KEYS) {
+      const pending = pendingDrafts[imageKey];
+      if (pending === undefined || pending === (next.drafts[imageKey].draftText ?? '')) {
+        continue;
+      }
+      next = editGuidedDraftForImage(next, imageKey, pending);
     }
-    return editGuidedDraft(current, pending);
+
+    if (pendingDrafts.tribeca === undefined) {
+      const pending = pendingDraftRef.current;
+      if (pending !== null && pending !== (next.draftText ?? '')) {
+        next = editGuidedDraft(next, pending);
+      }
+    }
+
+    return next;
   };
 
   const commit = (next: GuidedDemoState, message?: string): void => {
@@ -210,13 +225,13 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
   };
 
   const handleBegin = (): void => {
-    commit(selectGuidedStep(demo, GUIDED_STEP.CONTEXT), guideProgressMessage(GUIDED_STEP.CONTEXT));
+    commit(selectGuidedStep(flushPendingDraft(demo), GUIDED_STEP.CONTEXT), guideProgressMessage(GUIDED_STEP.CONTEXT));
     setGuideOpen(true);
     focusGuidedSection(GUIDED_STEP.CONTEXT);
   };
 
   const handleSelectStep = (step: GuidedStep): void => {
-    commit(selectGuidedStep(demo, step), guideProgressMessage(step));
+    commit(selectGuidedStep(flushPendingDraft(demo), step), guideProgressMessage(step));
   };
 
   const handleChoose = (position: GuidedFacePosition, choice: GuidedNameChoice, origin: HTMLInputElement): void => {
@@ -274,7 +289,7 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
           tabIndex={-1}
         >
           <header className="acx-guided-page__hero">
-            <h2 id="acx-guided-page-title">{guidedCopy('step.context')}</h2>
+            <h2 id="acx-guided-page-title">{guidedStepLabelForScope(GUIDED_STEP.CONTEXT, scope)}</h2>
             <GuidedResetDialog liveWaiting={liveWaiting} onConfirm={handleReset} />
           </header>
           <div className="acx-guided-page__scenario">
@@ -349,6 +364,8 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
               type="button"
               className="acx-button acx-button--primary"
               {...(scope === 'public' ? { 'data-testid': 'guided-review-draft' } : {})}
+              disabled={scope === 'public' && !namesDecided(demo)}
+              aria-describedby={scope === 'public' && !namesDecided(demo) ? 'guided-choices-help' : undefined}
               onClick={() => {
                 const nextStep = scope === 'public' ? GUIDED_STEP.DRAFT : GUIDED_STEP.NAMES;
                 handleSelectStep(nextStep);
@@ -358,7 +375,7 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
               {scope === 'public' ? guidedCopy('context.next.public') : guidedCopy('context.next')}
             </button>
             {scope === 'public' ? (
-              <p data-testid="guided-choices-help">
+              <p id="guided-choices-help" data-testid="guided-choices-help">
                 {namesDecided(demo) ? null : guidedCopy('choices.help.public')}
               </p>
             ) : null}
@@ -403,7 +420,7 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
         <GuidedChoiceReplacementDialog
           open={demo.pendingChoiceChange !== null}
           onConfirmReplacement={() => {
-            commit(confirmGuidedChoiceReplacement(demo, scenario));
+            commit(confirmGuidedChoiceReplacement(flushPendingDraft(demo), scenario));
             focusGuidedSection(GUIDED_STEP.DRAFT);
           }}
           onCancelReplacement={handleCancelReplacement}
@@ -415,31 +432,32 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
           scope={scope}
           {...(scope === 'public' ? { recordedOriginLabel: guidedCopy('draft.origin.public') } : {})}
           actions={{
-            onEdit: (text) => commit(editGuidedDraft(demo, text)),
+            onEdit: (text) => commit(editGuidedDraft(flushPendingDraft(demo), text)),
             onDraftInput: (text) => {
               pendingDraftRef.current = text;
             },
             onPreview: handlePreview,
-            onKeep: () => commit(keepGuidedCurrentAltText(demo)),
-            onRetryFixture: () => commit(retryGuidedFixture(demo, scenario)),
+            onKeep: () => commit(keepGuidedCurrentAltText(flushPendingDraft(demo))),
+            onRetryFixture: () => commit(retryGuidedFixture(flushPendingDraft(demo), scenario)),
             onRestore: (revisionId: string, mode: GuidedRestoreMode) =>
-              commit(restoreGuidedRevision(demo, revisionId, mode)),
+              commit(restoreGuidedRevision(flushPendingDraft(demo), revisionId, mode)),
             onApply: (text) => {
-              let next = demo;
+              let next = flushPendingDraft(demo);
               if (text !== (next.draftText ?? '')) {
                 next = editGuidedDraft(next, text);
               }
               commit(scope === 'public' ? applyGuidedDraft(next, text) : applyGuidedDraft(next));
             },
             onUndo: () => {
-              commit(undoGuidedApplication(demo));
+              commit(undoGuidedApplication(flushPendingDraft(demo)));
             },
-            onEditForImage: (imageKey, text) => commit(editGuidedDraftForImage(demo, imageKey, text)),
+            onEditForImage: (imageKey, text) =>
+              commit(editGuidedDraftForImage(flushPendingDraft(demo), imageKey, text)),
             onDraftInputForImage: (imageKey, text) => {
               pendingDraftsByImageRef.current[imageKey] = text;
             },
             onPreviewForImage: (imageKey, text) => {
-              let next = demo;
+              let next = flushPendingDraft(demo);
               if (text !== (next.drafts[imageKey].draftText ?? '')) {
                 next = editGuidedDraftForImage(next, imageKey, text);
               }
@@ -447,12 +465,13 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
               commit(next);
               focusGuidedSection(GUIDED_STEP.APPLY);
             },
-            onKeepForImage: (imageKey) => commit(keepGuidedCurrentAltTextForImage(demo, imageKey)),
-            onRetryFixtureForImage: (imageKey) => commit(retryGuidedFixtureForImage(demo, imageKey, scenario)),
+            onKeepForImage: (imageKey) => commit(keepGuidedCurrentAltTextForImage(flushPendingDraft(demo), imageKey)),
+            onRetryFixtureForImage: (imageKey) =>
+              commit(retryGuidedFixtureForImage(flushPendingDraft(demo), imageKey, scenario)),
             onRestoreForImage: (imageKey, revisionId, mode) =>
-              commit(restoreGuidedRevisionForImage(demo, imageKey, revisionId, mode)),
+              commit(restoreGuidedRevisionForImage(flushPendingDraft(demo), imageKey, revisionId, mode)),
             onApplyForImage: (imageKey, visibleText) => {
-              let next = demo;
+              let next = flushPendingDraft(demo);
               if (visibleText !== (next.drafts[imageKey].draftText ?? '')) {
                 next = editGuidedDraftForImage(next, imageKey, visibleText);
               }
@@ -462,7 +481,7 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
                   : applyGuidedDraftForImage(next, imageKey),
               );
             },
-            onUndoForImage: (imageKey) => commit(undoGuidedApplicationForImage(demo, imageKey)),
+            onUndoForImage: (imageKey) => commit(undoGuidedApplicationForImage(flushPendingDraft(demo), imageKey)),
           }}
         />
 

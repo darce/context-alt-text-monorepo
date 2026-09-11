@@ -65,7 +65,6 @@ export type RecordedWalkthroughScope = 'public' | 'admin';
 export interface RecordedWalkthroughProps {
   scope: RecordedWalkthroughScope;
   livePanel?: React.ReactNode;
-  escapeHref?: string;
 }
 
 export const RecordedWalkthroughLiveSlot = React.createContext<((waiting: boolean) => void) | null>(null);
@@ -176,7 +175,7 @@ const GuidedChoiceReplacementDialog = ({
 
 GuidedChoiceReplacementDialog.displayName = 'GuidedChoiceReplacementDialog';
 
-export const RecordedWalkthrough = ({ scope, livePanel, escapeHref }: RecordedWalkthroughProps): React.JSX.Element => {
+export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughProps): React.JSX.Element => {
   const scenario = useMemo(() => createGuidedScenario(), []);
   const coverage = useMemo(() => guidedNameCoverage(scenario), [scenario]);
   const [demo, setDemo] = useState(createGuidedDemoState);
@@ -257,7 +256,6 @@ export const RecordedWalkthrough = ({ scope, livePanel, escapeHref }: RecordedWa
       aria-labelledby="acx-guided-entrance-title"
       data-testid="guided-demo-root"
       data-scope={scope}
-      {...(escapeHref !== undefined ? { 'data-escape-href': escapeHref } : {})}
     >
       <GuidedPrototypeEntrance onBegin={handleBegin} scope={scope} />
       <GuidedPrototypeGuide

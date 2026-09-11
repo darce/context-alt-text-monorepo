@@ -271,12 +271,16 @@ describe('guided scenario fixture', () => {
       expect(text).toContain('Tribeca Festival');
       expect(text).toContain('hand');
     }
-    expect(coachellaSamples).toEqual({
-      none: 'A man and a woman are sitting together outdoors at night, eating from red cups and a yellow container of noodles. The man, wearing a white t-shirt and blue jeans, holds chopsticks and a cup, while the woman, in a white top and black boots, eats from a cup. They are surrounded by plants and trees in a relaxed, casual setting.',
-      both: 'Justin Trudeau and Katy Perry are sitting together outdoors at night, eating from red cups and a yellow noodle container. Trudeau wears a white t-shirt, blue jeans, and a backward blue cap, while Perry wears a white t-shirt, black boots, and holds a red cup. They are surrounded by plants and appear to be at a casual evening event.',
-    });
-    expect(coachellaSamples).not.toHaveProperty('katy-perry');
-    expect(coachellaSamples).not.toHaveProperty('justin-trudeau');
+    expect(coachellaSamples['katy-perry']).toContain('Katy Perry');
+    expect(coachellaSamples['katy-perry']).not.toContain('Justin Trudeau');
+    expect(coachellaSamples['justin-trudeau']).toContain('Justin Trudeau');
+    expect(coachellaSamples['justin-trudeau']).not.toContain('Katy Perry');
+    for (const text of Object.values(coachellaSamples)) {
+      expect(text).toContain('outdoors at night');
+      expect(text).toContain('eating from red cups');
+    }
+    expect(coachellaSamples.none).not.toContain('Katy Perry');
+    expect(coachellaSamples.none).not.toContain('Justin Trudeau');
   });
 
   it('counts only bundled reference photos per person', () => {
@@ -451,7 +455,16 @@ describe('selectors', () => {
       scenario.samples[COACHELLA].both,
     );
     expect(guidedSampleFor(withMissingSample(scenario, TRIBECA, 'none'), { left: OMIT, right: OMIT })).toBeNull();
-    expect(guidedSampleFor(scenario, { left: INCLUDE, right: OMIT }, COACHELLA)).toBeNull();
+    expect(
+      guidedSampleFor(
+        withMissingSample(scenario, COACHELLA, 'justin-trudeau'),
+        { left: INCLUDE, right: OMIT },
+        COACHELLA,
+      ),
+    ).toBeNull();
+    expect(guidedSampleFor(scenario, { left: INCLUDE, right: OMIT }, COACHELLA)).toBe(
+      scenario.samples[COACHELLA]['justin-trudeau'],
+    );
   });
 
   it('guidedStepIndex is the 0-based order of the four steps', () => {
@@ -665,7 +678,7 @@ describe('chooseGuidedName', () => {
     expect(state.drafts[COACHELLA].draftText).toBe(scenario.samples[COACHELLA].none);
   });
 
-  it('keeps the documented asymmetric coachella fixture gap after global resolution', () => {
+  it('resolves a ready recorded sample for every image from the shared choices', () => {
     const scenario = createGuidedScenario();
     const state = chooseGuidedName(
       chooseGuidedName(createGuidedDemoState(), scenario, 'left', INCLUDE),
@@ -674,8 +687,10 @@ describe('chooseGuidedName', () => {
       OMIT,
     );
 
+    expect(state.choices).toEqual({ left: INCLUDE, right: OMIT });
     expect(state.drafts[TRIBECA].draftStatus).toBe(GUIDED_DRAFT_STATUS.READY);
-    expect(state.drafts[COACHELLA].draftStatus).toBe(GUIDED_DRAFT_STATUS.FIXTURE_MISSING);
+    expect(state.drafts[COACHELLA].draftStatus).toBe(GUIDED_DRAFT_STATUS.READY);
+    expect(state.drafts[COACHELLA].draftText).toBe(scenario.samples[COACHELLA]['justin-trudeau']);
   });
 
   it('uses the selected image sample and reports absent variants as fixture_missing', () => {
@@ -685,7 +700,8 @@ describe('chooseGuidedName', () => {
     expect(coachellaBoth.drafts[COACHELLA].draftText).toBe(scenario.samples[COACHELLA].both);
     expect(coachellaBoth.draftStatus).toBe(coachellaBoth.drafts[TRIBECA].draftStatus);
 
-    const coachellaPartial = chooseBoth(createGuidedDemoState(), scenario, INCLUDE, OMIT, COACHELLA);
+    const missingScenario = withMissingSample(scenario, COACHELLA, 'justin-trudeau');
+    const coachellaPartial = chooseBoth(createGuidedDemoState(), missingScenario, INCLUDE, OMIT, COACHELLA);
     expect(coachellaPartial.drafts[COACHELLA].draftStatus).toBe(GUIDED_DRAFT_STATUS.FIXTURE_MISSING);
     expect(coachellaPartial.drafts[COACHELLA].draftText).toBeNull();
     expect(coachellaPartial.draftStatus).toBe(coachellaPartial.drafts[TRIBECA].draftStatus);
@@ -759,7 +775,7 @@ describe('chooseGuidedName', () => {
       expect(confirmed.pendingChoiceChange).toBeNull();
       expect(confirmed.choices).toEqual({ left: INCLUDE, right: OMIT });
       expect(confirmed.drafts[TRIBECA].draftStatus).toBe(GUIDED_DRAFT_STATUS.READY);
-      expect(confirmed.drafts[COACHELLA].draftStatus).toBe(GUIDED_DRAFT_STATUS.FIXTURE_MISSING);
+      expect(confirmed.drafts[COACHELLA].draftStatus).toBe(GUIDED_DRAFT_STATUS.READY);
       expect(confirmed.drafts[editedImageKey].draftHistory).toEqual([
         expect.objectContaining({
           text: 'A distinctive manually edited draft.',

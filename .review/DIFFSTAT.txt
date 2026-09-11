@@ -1,12 +1,2 @@
- .review/CHANGE.diff                                | 301 ---------------------
- .review/COMMITS.txt                                |   1 -
- .review/CONTEXT.md                                 |   8 -
- .review/DIFFSTAT.txt                               |   3 -
- apps/prototype-wp-alt-context/alt-context.php      |   2 +-
- .../admin/guidedPrototype/RecordedWalkthrough.tsx  |  10 +-
- .../js/guide/__tests__/public-boundary.test.tsx    |  36 +++
- apps/prototype-wp-alt-context/package-lock.json    |   4 +-
- apps/prototype-wp-alt-context/package.json         |   2 +-
- .../src/public/class-public-guide-route.php        |   2 +-
- .../tests/Unit/PublicGuideRouteTest.php            |   2 +-
- 11 files changed, 50 insertions(+), 321 deletions(-)
+ .../admin/pages/guided/GuidedDescriptionReview.tsx | 386 +++++++++++++++------
+ 1 file changed, 286 insertions(+), 100 deletions(-)

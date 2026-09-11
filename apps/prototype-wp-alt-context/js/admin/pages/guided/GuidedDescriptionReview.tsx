@@ -135,7 +135,11 @@ const imageApplyReason = (state: GuidedReviewState, draft: GuidedImageDraft, loc
   return null;
 };
 
-const imagePublicApplyReason = (state: GuidedReviewState, draft: GuidedImageDraft, localText: string): string | null => {
+const imagePublicApplyReason = (
+  state: GuidedReviewState,
+  draft: GuidedImageDraft,
+  localText: string,
+): string | null => {
   if (draft.draftStatus !== GUIDED_DRAFT_STATUS.READY || draft.draftText === null) {
     return guidedCopy('error.no_recorded_draft.public');
   }
@@ -257,6 +261,11 @@ const GuidedImageReviewCard = ({
   const editorPointerActiveRef = useRef(false);
   const editorInteractionStartHeightRef = useRef<number | null>(null);
   const previousDraftTextRef = useRef(draft.draftText);
+  const publicActionRef = useRef<
+    | { type: 'apply'; text: string; previousHistoryLength: number }
+    | { type: 'undo'; previousAltText: string; previousHistoryLength: number }
+    | null
+  >(null);
 
   const resizeEditor = useCallback((): void => {
     const editor = editorRef.current;
@@ -319,6 +328,38 @@ const GuidedImageReviewCard = ({
     setEditValue(draft.draftText ?? '');
     setEmptyError(false);
   }, [draft.draftText, draft.draftVersion]);
+
+  useEffect(() => {
+    if (scope !== 'public') {
+      publicActionRef.current = null;
+      setPublicStatus('');
+      return;
+    }
+
+    const publicAction = publicActionRef.current;
+    if (publicAction !== null) {
+      const actionSucceeded =
+        draft.draftStatus === GUIDED_DRAFT_STATUS.READY &&
+        (publicAction.type === 'apply'
+          ? draft.appliedAltText === publicAction.text &&
+            draft.applicationHistory.length > publicAction.previousHistoryLength
+          : draft.appliedAltText === publicAction.previousAltText &&
+            draft.applicationHistory.length < publicAction.previousHistoryLength);
+      publicActionRef.current = null;
+      if (actionSucceeded) {
+        return;
+      }
+    }
+    setPublicStatus('');
+  }, [
+    draft.appliedAltText,
+    draft.applicationHistory.length,
+    draft.draftStatus,
+    draft.draftText,
+    draft.draftVersion,
+    scope,
+    state,
+  ]);
 
   useLayoutEffect(() => {
     if (previousDraftTextRef.current !== draft.draftText) {
@@ -390,7 +431,7 @@ const GuidedImageReviewCard = ({
   };
   const applyEnabled =
     scope === 'public'
-      ? draft.draftText !== null && canApplyImageDraftPublic(state as unknown as GuidedDemoState, publicApplyDraft)
+      ? draft.draftText !== null && canApplyImageDraftPublic(guidedReviewLegacyState(state), publicApplyDraft)
       : guidedReviewCanApply(state, draft) && localMatches;
   const undoEnabled = guidedReviewCanUndo(draft);
   const reason =
@@ -421,6 +462,11 @@ const GuidedImageReviewCard = ({
       return;
     }
     setEmptyError(false);
+    publicActionRef.current = {
+      type: 'apply',
+      text: editValue,
+      previousHistoryLength: draft.applicationHistory.length,
+    };
     callTextImageAction(actions.onApplyForImage, actions.onApply, photo.key, editValue, true);
     setPublicStatus(guidedCopy('outcome.applied_image.public'));
   };
@@ -429,6 +475,11 @@ const GuidedImageReviewCard = ({
     if (!undoEnabled) {
       return;
     }
+    publicActionRef.current = {
+      type: 'undo',
+      previousAltText: draft.appliedAltText,
+      previousHistoryLength: draft.applicationHistory.length,
+    };
     callImageOnlyAction(actions.onUndoForImage, actions.onUndo, photo.key, true);
     setPublicStatus(guidedCopy('outcome.undone_image.public'));
   };
@@ -441,9 +492,6 @@ const GuidedImageReviewCard = ({
       aria-labelledby={`${editorId}-title`}
     >
       <h3 id={`${editorId}-title`}>{photo.event}</h3>
-      <p role="status" data-testid={`guided-image-status-${photo.key}`}>
-        {publicStatus}
-      </p>
       {draft.draftStatus === GUIDED_DRAFT_STATUS.BLOCKED ? <p>{guidedCopy('draft.blocked')}</p> : null}
       {draft.draftStatus === GUIDED_DRAFT_STATUS.FIXTURE_MISSING ? (
         <div>
@@ -544,6 +592,9 @@ const GuidedImageReviewCard = ({
                     {reason}
                   </p>
                 ) : null}
+                <p role="status" data-testid={`guided-image-status-${photo.key}`}>
+                  {publicStatus}
+                </p>
               </div>
             </div>
           </div>
@@ -698,6 +749,9 @@ const GuidedImageReviewCard = ({
               {reason}
             </p>
           ) : null}
+          <p role="status" data-testid={`guided-image-status-${photo.key}`}>
+            {publicStatus}
+          </p>
         </div>
       ) : (
         <div className="acx-guided-review__actions">
@@ -955,16 +1009,18 @@ export const GuidedDescriptionReview = ({
         tabIndex={-1}
       >
         <header className="acx-guided-review__header">
-          <h2 id="acx-guided-review-title">{guidedCopy('step.draft')}</h2>
+          <h2 id="acx-guided-review-title">
+            {scope === 'public' ? guidedCopy('step.review.public') : guidedCopy('step.draft')}
+          </h2>
           <p>{guidedCopy('draft.intro')}</p>
         </header>
-        <div
+        <section
           id="guided-section-apply"
           className="acx-guided-review__image-cards"
-          aria-labelledby="acx-guided-apply-title"
+          aria-labelledby={scope === 'public' ? 'acx-guided-review-title' : 'acx-guided-apply-title'}
           tabIndex={-1}
         >
-          <h2 id="acx-guided-apply-title">{guidedCopy('step.apply')}</h2>
+          {scope === 'admin' ? <h2 id="acx-guided-apply-title">{guidedCopy('step.apply')}</h2> : null}
           {scenario.pressPhotos.map((photo) => {
             const draft = guidedReviewDraftFor(reviewState, photo.key);
             if (draft === null) {
@@ -982,7 +1038,7 @@ export const GuidedDescriptionReview = ({
               />
             );
           })}
-        </div>
+        </section>
       </section>
     );
   }
@@ -997,7 +1053,9 @@ export const GuidedDescriptionReview = ({
         tabIndex={-1}
       >
         <header className="acx-guided-review__header">
-          <h2 id="acx-guided-review-title">{guidedCopy('step.draft')}</h2>
+          <h2 id="acx-guided-review-title">
+            {scope === 'public' ? guidedCopy('step.review.public') : guidedCopy('step.draft')}
+          </h2>
           <p>{guidedCopy('draft.intro')}</p>
         </header>
 
@@ -1141,10 +1199,10 @@ export const GuidedDescriptionReview = ({
       <section
         id="guided-section-apply"
         className="acx-guided-review acx-guided-review__apply"
-        aria-labelledby="acx-guided-apply-title"
+        aria-labelledby={scope === 'public' ? 'acx-guided-review-title' : 'acx-guided-apply-title'}
         tabIndex={-1}
       >
-        <h2 id="acx-guided-apply-title">{guidedCopy('step.apply')}</h2>
+        {scope === 'admin' ? <h2 id="acx-guided-apply-title">{guidedCopy('step.apply')}</h2> : null}
         <p>{guidedCopy('apply.intro')}</p>
         <div className="acx-guided-review__preview-grid">
           <div>

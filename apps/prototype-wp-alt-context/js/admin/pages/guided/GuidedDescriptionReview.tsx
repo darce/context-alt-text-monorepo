@@ -18,30 +18,31 @@ import {
   guidedReviewDraftFor,
   guidedReviewLegacyState,
   guidedReviewNamesDecided,
-  type GuidedImageAction,
   type GuidedImageDraft,
-  type GuidedRestoreAction,
   type GuidedReviewState,
-  type GuidedTextAction,
 } from '../../guidedPrototype/reviewDrafts';
 
+type GuidedTextAction = (imageKey: GuidedImageKey, text: string) => void;
+type GuidedImageAction = (imageKey: GuidedImageKey) => void;
+type GuidedRestoreAction = (imageKey: GuidedImageKey, revisionId: string, mode: GuidedRestoreMode) => void;
+
 export interface GuidedDescriptionReviewActions {
-  onEdit: (text: string) => void;
-  onDraftInput: (text: string) => void;
-  onPreview: (text: string) => void;
-  onKeep: () => void;
-  onRetryFixture: () => void;
-  onRestore: (revisionId: string, mode: GuidedRestoreMode) => void;
-  onApply: (text: string) => void;
-  onUndo: () => void;
-  onEditForImage?: (imageKey: GuidedImageKey, text: string) => void;
-  onDraftInputForImage?: (imageKey: GuidedImageKey, text: string) => void;
-  onPreviewForImage?: (imageKey: GuidedImageKey, text: string) => void;
-  onKeepForImage?: (imageKey: GuidedImageKey) => void;
-  onRetryFixtureForImage?: (imageKey: GuidedImageKey) => void;
-  onRestoreForImage?: (imageKey: GuidedImageKey, revisionId: string, mode: GuidedRestoreMode) => void;
-  onApplyForImage?: (imageKey: GuidedImageKey, text: string) => void;
-  onUndoForImage?: (imageKey: GuidedImageKey) => void;
+  onEdit: GuidedTextAction;
+  onDraftInput: GuidedTextAction;
+  onPreview: GuidedTextAction;
+  onKeep: GuidedImageAction;
+  onRetryFixture: GuidedImageAction;
+  onRestore(this: void, imageKey: GuidedImageKey, revisionId: string, mode: GuidedRestoreMode): void;
+  onApply: GuidedTextAction;
+  onUndo: GuidedImageAction;
+  onEditForImage?: GuidedTextAction;
+  onDraftInputForImage?: GuidedTextAction;
+  onPreviewForImage?: GuidedTextAction;
+  onKeepForImage?: GuidedImageAction;
+  onRetryFixtureForImage?: GuidedImageAction;
+  onRestoreForImage?: GuidedRestoreAction;
+  onApplyForImage?: GuidedTextAction;
+  onUndoForImage?: GuidedImageAction;
 }
 
 export interface GuidedDescriptionReviewProps {
@@ -112,60 +113,31 @@ const imagePublicApplyReason = (
   return null;
 };
 
-const callTextAction = (action: GuidedTextAction, imageKey: GuidedImageKey, text: string): void => {
-  (action as (key: GuidedImageKey, value: string) => void)(imageKey, text);
-};
-
-const callImageAction = (action: GuidedImageAction, imageKey: GuidedImageKey): void => {
-  (action as (key: GuidedImageKey) => void)(imageKey);
-};
-
-const callRestoreAction = (
-  action: GuidedRestoreAction,
-  imageKey: GuidedImageKey,
-  revisionId: string,
-  mode: GuidedRestoreMode,
-): void => {
-  (action as (key: GuidedImageKey, id: string, restoreMode: GuidedRestoreMode) => void)(imageKey, revisionId, mode);
-};
-
 const callTextImageAction = (
-  imageAction: ((imageKey: GuidedImageKey, text: string) => void) | undefined,
+  imageAction: GuidedTextAction | undefined,
   action: GuidedTextAction,
   imageKey: GuidedImageKey,
   text: string,
 ): void => {
-  if (imageAction !== undefined) {
-    imageAction(imageKey, text);
-    return;
-  }
-  callTextAction(action, imageKey, text);
+  (imageAction ?? action)(imageKey, text);
 };
 
 const callImageOnlyAction = (
-  imageAction: ((imageKey: GuidedImageKey) => void) | undefined,
+  imageAction: GuidedImageAction | undefined,
   action: GuidedImageAction,
   imageKey: GuidedImageKey,
 ): void => {
-  if (imageAction !== undefined) {
-    imageAction(imageKey);
-    return;
-  }
-  callImageAction(action, imageKey);
+  (imageAction ?? action)(imageKey);
 };
 
 const callImageRestoreAction = (
-  imageAction: ((imageKey: GuidedImageKey, revisionId: string, mode: GuidedRestoreMode) => void) | undefined,
+  imageAction: GuidedRestoreAction | undefined,
   action: GuidedRestoreAction,
   imageKey: GuidedImageKey,
   revisionId: string,
   mode: GuidedRestoreMode,
 ): void => {
-  if (imageAction !== undefined) {
-    imageAction(imageKey, revisionId, mode);
-    return;
-  }
-  callRestoreAction(action, imageKey, revisionId, mode);
+  (imageAction ?? action)(imageKey, revisionId, mode);
 };
 
 const readPixelValue = (value: string): number => {
@@ -204,7 +176,11 @@ const GuidedImageReviewCard = ({
   const previousDraftTextRef = useRef(draft.draftText);
   const publicActionRef = useRef<
     | { type: 'apply'; text: string; previousHistoryLength: number }
-    | { type: 'undo'; previousAltText: string; previousHistoryLength: number }
+    | {
+        type: 'undo';
+        restoredAltText: string;
+        previousHistoryLength: number;
+      }
     | null
   >(null);
 
@@ -284,7 +260,7 @@ const GuidedImageReviewCard = ({
         (publicAction.type === 'apply'
           ? draft.appliedAltText === publicAction.text &&
             draft.applicationHistory.length > publicAction.previousHistoryLength
-          : draft.appliedAltText === publicAction.previousAltText &&
+          : draft.appliedAltText === publicAction.restoredAltText &&
             draft.applicationHistory.length < publicAction.previousHistoryLength);
       publicActionRef.current = null;
       if (actionSucceeded) {
@@ -299,7 +275,6 @@ const GuidedImageReviewCard = ({
     draft.draftText,
     draft.draftVersion,
     scope,
-    state,
   ]);
 
   useLayoutEffect(() => {
@@ -413,12 +388,13 @@ const GuidedImageReviewCard = ({
   };
 
   const handlePublicUndo = (): void => {
-    if (!undoEnabled) {
+    const lastApplication = draft.applicationHistory[draft.applicationHistory.length - 1];
+    if (!undoEnabled || lastApplication === undefined) {
       return;
     }
     publicActionRef.current = {
       type: 'undo',
-      previousAltText: draft.appliedAltText,
+      restoredAltText: lastApplication.previousAltText,
       previousHistoryLength: draft.applicationHistory.length,
     };
     callImageOnlyAction(actions.onUndoForImage, actions.onUndo, photo.key);
@@ -624,9 +600,7 @@ const GuidedImageReviewCard = ({
                   type="button"
                   className="acx-button acx-button--primary"
                   data-testid={`demo-apply-${photo.key}`}
-                  onClick={() =>
-                    callTextImageAction(actions.onApplyForImage, actions.onApply, photo.key, editValue)
-                  }
+                  onClick={() => callTextImageAction(actions.onApplyForImage, actions.onApply, photo.key, editValue)}
                   disabled={!applyEnabled}
                   aria-describedby={!applyEnabled && reason ? applyReasonId : undefined}
                 >

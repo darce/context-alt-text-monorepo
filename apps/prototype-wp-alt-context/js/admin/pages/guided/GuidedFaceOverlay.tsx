@@ -3,13 +3,14 @@ import { AlertTriangle } from 'lucide-react';
 
 import type { BoundingBox } from '../../api/recognition/types/identity';
 import { isUsableNaturalSize, overlayRectFor } from '../../../components/ui/faceGeometry';
+import { GUIDED_MATCH_STRENGTH, type GuidedMatchStrength } from '../../guidedPrototype/state';
 
 export interface GuidedFaceOverlayFace {
   id: string;
   box: BoundingBox;
   label: string;
   similarityText: string;
-  strength: 'strong' | 'weak';
+  strength: GuidedMatchStrength;
 }
 
 export interface GuidedFaceOverlayProps {
@@ -22,11 +23,6 @@ export interface GuidedFaceOverlayProps {
   onHighlightChange?: (faceId: string | null) => void;
   idPrefix: string;
 }
-
-export const GUIDED_MATCH_STRENGTH = {
-  STRONG: 'strong',
-  WEAK: 'weak',
-} as const;
 
 const GUIDED_FACE_OVERLAY_TEST_ID = 'guided-face-overlay';
 const GUIDED_FACE_OVERLAY_ID_SUFFIX = 'face-overlay';

@@ -70,23 +70,28 @@ const requireSample = (key: 'none' | 'both' | 'justin-trudeau' | 'katy-perry'): 
 };
 
 const controlKey = (element: HTMLElement): string => {
+  const photoScope = element.closest<HTMLElement>('[data-testid^="guided-photo-"]')?.getAttribute('data-testid');
+  const scope = (key: string): string =>
+    photoScope === null || photoScope === undefined ? key : `${photoScope}:${key}`;
   const ariaLabel = element.getAttribute('aria-label');
   if (ariaLabel) {
-    return ariaLabel;
+    return scope(ariaLabel);
   }
   if (element instanceof HTMLInputElement && element.labels?.[0] !== undefined) {
-    return (element.labels[0].textContent ?? '').replace(/\s+/g, ' ').trim();
+    return scope((element.labels[0].textContent ?? '').replace(/\s+/g, ' ').trim());
   }
   if (element.id.length > 0) {
-    return `#${element.id}`;
+    return scope(`#${element.id}`);
   }
   const testId = element.getAttribute('data-testid');
   if (testId) {
-    return testId;
+    return scope(testId);
   }
   const text = (element.textContent ?? '').replace(/\s+/g, ' ').trim();
-  return `${element.tagName}:${text.slice(0, 48)}`;
+  return scope(`${element.tagName}:${text.slice(0, 48)}`);
 };
+
+const photoStop = (photoKey: GuidedImageKey, label: string): string => `guided-photo-${photoKey}:${label}`;
 
 const indexOfStop = (stops: string[], needle: string): number => {
   const index = stops.findIndex((stop) => stop.includes(needle));
@@ -268,9 +273,14 @@ describe('GuidedA11y (W04)', () => {
     expect(indexOfStop(stops, guidedCopy('step.draft'))).toBeLessThan(indexOfStop(stops, guidedCopy('step.apply')));
     const leftInclude = guidedCopy('names.include', { name: 'Justin Trudeau' });
     const rightInclude = guidedCopy('names.include', { name: 'Katy Perry' });
-    expect(indexOfStop(stops, guidedCopy('step.apply'))).toBeLessThan(indexOfStop(stops, leftInclude));
-    expect(indexOfStop(stops, leftInclude)).toBeLessThan(indexOfStop(stops, rightInclude));
-    expect(indexOfStop(stops, rightInclude)).toBeLessThan(indexOfStop(stops, guidedCopy('live.submit')));
+    const photoKeys: GuidedImageKey[] = ['tribeca', 'coachella'];
+    for (const photoKey of photoKeys) {
+      const leftStop = photoStop(photoKey, leftInclude);
+      const rightStop = photoStop(photoKey, rightInclude);
+      expect(indexOfStop(stops, guidedCopy('step.apply'))).toBeLessThan(indexOfStop(stops, leftStop));
+      expect(indexOfStop(stops, leftStop)).toBeLessThan(indexOfStop(stops, rightStop));
+      expect(indexOfStop(stops, rightStop)).toBeLessThan(indexOfStop(stops, guidedCopy('live.submit')));
+    }
 
     const resetButton = screen.getByRole('button', { name: guidedCopy('page.reset') });
     await user.click(resetButton);

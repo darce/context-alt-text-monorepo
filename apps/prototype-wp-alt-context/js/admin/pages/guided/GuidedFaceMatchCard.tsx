@@ -70,26 +70,6 @@ const imageLabel = (imageKey: GuidedImageKey): string => guidedCopy(IMAGE_COPY_K
 const cropAlt = (match: GuidedFaceMatch): string =>
   guidedCopy('names.crop_alt_image', { position: match.face.position, image: imageLabel(match.face.imageKey) });
 
-const strengthLabel = (match: GuidedFaceMatch): string => {
-  const strength = guidedCopy(
-    match.face.strength === GUIDED_MATCH_STRENGTH.WEAK ? 'names.match.weak' : 'names.match.strong',
-  );
-  if (match.face.isClusterAnchor) {
-    return `${guidedCopy('names.match.cluster_anchor')}, ${strength}`;
-  }
-  return strength;
-};
-
-const matchSummary = (match: GuidedFaceMatch): string =>
-  guidedCopy('names.match', {
-    image: imageLabel(match.face.imageKey),
-    similarity:
-      match.face.similarity === null
-        ? guidedCopy('names.match.unavailable')
-        : formatGuidedSimilarity(match.face.similarity),
-    strength: strengthLabel(match),
-  });
-
 const isWeakMatch = (match: GuidedFaceMatch): boolean =>
   match.face.strength === GUIDED_MATCH_STRENGTH.WEAK ||
   (match.face.similarity !== null && match.face.similarity < GUIDED_MATCH_THRESHOLD);
@@ -143,9 +123,17 @@ export const GuidedFaceMatchCard = ({
     />
   );
 
+  const matchLine = (match: GuidedFaceMatch): string =>
+    match.face.similarity !== null
+      ? guidedCopy('names.match.line', {
+          name: person.name,
+          similarity: formatGuidedSimilarity(match.face.similarity),
+        })
+      : guidedCopy('names.match.line_unavailable', { name: person.name });
+
   const matchEvidence = (match: GuidedFaceMatch): React.JSX.Element => (
     <>
-      <p className="acx-guided-face__match-summary">{matchSummary(match)}</p>
+      <p className="acx-guided-face__match-line">{matchLine(match)}</p>
       {isWeakMatch(match) ? (
         <p className="acx-guided-face__weak-match">
           <span role="img" aria-label={guidedCopy('names.match.weak_icon')}>
@@ -166,7 +154,6 @@ export const GuidedFaceMatchCard = ({
           {matches.map((match) => (
             <li key={match.face.id} className="acx-guided-face__match">
               {thumbnail(match)}
-              <p className="acx-guided-face__match-image">{imageLabel(match.face.imageKey)}</p>
               {matchEvidence(match)}
             </li>
           ))}
@@ -251,7 +238,6 @@ export const GuidedFaceMatchCard = ({
               {matches.map((match) => (
                 <li key={`enlarged-${match.face.id}`}>
                   {thumbnail(match, ENLARGED_CROP_PX)}
-                  <p className="acx-guided-face__match-image">{imageLabel(match.face.imageKey)}</p>
                   {matchEvidence(match)}
                 </li>
               ))}

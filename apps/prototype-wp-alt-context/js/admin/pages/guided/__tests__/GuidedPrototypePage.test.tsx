@@ -6,7 +6,8 @@ import { guidedCopy } from '../../../guidedPrototype/publicGuideCopy';
 import { createGuidedScenario } from '../../../guidedPrototype/state';
 import { GuidedPrototypePage } from '../GuidedPrototypePage';
 
-const SEED_ALT_TEXT = 'A man in a black suit and a woman in a white dress pose together, smiling, in front of a Tribeca Festival step-and-repeat backdrop.';
+const SEED_ALT_TEXT =
+  'A man in a black suit and a woman in a white dress pose together, smiling, in front of a Tribeca Festival step-and-repeat backdrop.';
 const SCENARIO = createGuidedScenario();
 const JUSTIN_DRAFT = SCENARIO.samples.tribeca['justin-trudeau'];
 const BOTH_NAMES_DRAFT = SCENARIO.samples.tribeca.both;
@@ -74,12 +75,20 @@ describe('GuidedPrototypePage shell', () => {
     expect(screen.getByTestId('guided-photo-coachella')).toBeInTheDocument();
     expect(screen.getAllByRole('img', { name: /^Detected (left|right) face in / })).toHaveLength(4);
     expect(screen.getAllByRole('radio')).toHaveLength(8);
-    expect(screen.getByText(/89\.4%/)).toBeInTheDocument();
-    expect(screen.getByText(/100\.0% \(cluster anchor, strong\)/)).toBeInTheDocument();
-    expect(screen.getByText(/70\.2%/)).toBeInTheDocument();
-    expect(screen.getByText(/56\.7% \(weak\)/)).toBeInTheDocument();
-    expect(screen.getByText(/below the displayed 60\.0% threshold/i)).toBeInTheDocument();
-    expect(screen.getByText(/production clusterer grouped it anyway/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(guidedCopy('names.match.line', { name: 'Justin Trudeau', similarity: '89.4%' })),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(guidedCopy('names.match.line', { name: 'Katy Perry', similarity: '100.0%' })),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(guidedCopy('names.match.line', { name: 'Justin Trudeau', similarity: '70.2%' })),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(guidedCopy('names.match.line', { name: 'Katy Perry', similarity: '56.7%' })),
+    ).toBeInTheDocument();
+    expect(screen.getByText(guidedCopy('names.match.below_threshold', { threshold: '60.0%' }))).toBeInTheDocument();
+    expect(screen.getByText(guidedCopy('provenance.recorded'))).toBeInTheDocument();
     expect(screen.getAllByRole('link', { name: /AltText\.ai/ })).not.toHaveLength(0);
     expect(screen.getAllByRole('link', { name: /altcontext\.com/ })).not.toHaveLength(0);
     const coachellaCredits = screen.getAllByRole('link', {
@@ -138,7 +147,11 @@ describe('GuidedPrototypePage shell', () => {
       }),
     );
     expect(screen.getByTestId('guided-page-feedback')).toHaveTextContent(guidedCopy('reset.status'));
-    expect(screen.getByTestId('demo-applied-image-tribeca')).toHaveAttribute('alt', SEED_ALT_TEXT);
+    expect(
+      within(screen.getByTestId('guided-photo-tribeca')).getByText(
+        `${guidedCopy('context.current_label')}: ${SEED_ALT_TEXT}`,
+      ),
+    ).toBeInTheDocument();
     expect(
       within(screen.getByTestId('name-choice-tribeca-left')).getByRole('radio', { name: /Use Justin Trudeau/ }),
     ).not.toBeChecked();
@@ -153,8 +166,11 @@ describe('GuidedPrototypePage shell', () => {
 
     const evidence = screen.getByRole('img', { name: NONE_DRAFT ?? '' });
     expect(evidence).toHaveAttribute('src', expect.stringContaining('guided-press-tribeca-2026'));
-    expect(screen.getByTestId('demo-applied-image-tribeca')).toHaveAttribute('alt', SEED_ALT_TEXT);
-    expect(screen.getByTestId('demo-applied-image-tribeca')).not.toBe(evidence);
+    expect(
+      within(screen.getByTestId('guided-photo-tribeca')).getByText(
+        `${guidedCopy('context.current_label')}: ${SEED_ALT_TEXT}`,
+      ),
+    ).toBeInTheDocument();
     fireEvent.error(evidence);
     expect(screen.getByRole('img', { name: NONE_DRAFT ?? '' })).toBeInTheDocument();
   });
@@ -315,7 +331,11 @@ describe('GuidedPrototypePage journey', () => {
     );
     expect(within(review).getByRole('textbox', { name: guidedCopy('draft.label') })).toHaveValue(BOTH_NAMES_DRAFT);
     expect(screen.getByText('A locally edited portrait description.')).toBeInTheDocument();
-    expect(screen.getByTestId('demo-applied-image-tribeca')).toHaveAttribute('alt', SEED_ALT_TEXT);
+    expect(
+      within(screen.getByTestId('guided-photo-tribeca')).getByText(
+        `${guidedCopy('context.current_label')}: ${SEED_ALT_TEXT}`,
+      ),
+    ).toBeInTheDocument();
   });
 
   it('rejects a stale preview even after the draft text changes', async () => {
@@ -334,7 +354,11 @@ describe('GuidedPrototypePage journey', () => {
     expect(screen.getByTestId('demo-apply-tribeca')).toBeDisabled();
     expect(within(review).getByText(guidedCopy('apply.stale'))).toBeInTheDocument();
     fireEvent.click(screen.getByTestId('demo-apply-tribeca'));
-    expect(screen.getByTestId('demo-applied-image-tribeca')).toHaveAttribute('alt', SEED_ALT_TEXT);
+    expect(
+      within(screen.getByTestId('guided-photo-tribeca')).getByText(
+        `${guidedCopy('context.current_label')}: ${SEED_ALT_TEXT}`,
+      ),
+    ).toBeInTheDocument();
   });
 
   it('keeps current alt text as a finished outcome without applying', async () => {
@@ -348,7 +372,11 @@ describe('GuidedPrototypePage journey', () => {
     );
     expect(screen.getByTestId('demo-outcome')).toHaveTextContent(guidedCopy('outcome.kept'));
     expect(screen.getByTestId('demo-outcome')).toHaveTextContent(guidedCopy('outcome.kept_body'));
-    expect(screen.getByTestId('demo-applied-image-tribeca')).toHaveAttribute('alt', SEED_ALT_TEXT);
+    expect(
+      within(screen.getByTestId('guided-photo-tribeca')).getByText(
+        `${guidedCopy('context.current_label')}: ${SEED_ALT_TEXT}`,
+      ),
+    ).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: guidedCopy('outcome.return') }));
     expect(document.activeElement).toHaveAttribute('id', 'guided-section-review');
   });

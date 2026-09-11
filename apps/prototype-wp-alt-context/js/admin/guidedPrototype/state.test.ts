@@ -8,6 +8,7 @@ import { guidedCopy } from './copy';
 import {
   applyGuidedDraft,
   canApply,
+  canApplyImageDraftPublic,
   canPreview,
   canRestoreRevision,
   canUndo,
@@ -497,6 +498,36 @@ describe('derived guards', () => {
     expect(canApply(previewGuidedDraft(pending))).toBe(false);
   });
 
+  it('canApplyImageDraftPublic does not require a preview while canApply keeps the admin gate', () => {
+    const scenario = createGuidedScenario();
+    const ready = includeBoth(scenario);
+    const draft = ready.drafts[TRIBECA];
+
+    expect(draft.previewedVersion).not.toBe(draft.draftVersion);
+    expect(canApplyImageDraftPublic(ready, draft)).toBe(true);
+    expect(canApply(ready)).toBe(false);
+  });
+
+  it('canApplyImageDraftPublic rejects incomplete, unchanged, or conflicted drafts', () => {
+    const scenario = createGuidedScenario();
+    const ready = includeBoth(scenario);
+    const draft = ready.drafts[TRIBECA];
+
+    expect(canApplyImageDraftPublic(createGuidedDemoState(), draft)).toBe(false);
+    expect(canApplyImageDraftPublic(ready, { ...draft, draftText: '' })).toBe(false);
+    expect(canApplyImageDraftPublic(ready, { ...draft, draftText: '   ' })).toBe(false);
+    expect(canApplyImageDraftPublic(ready, { ...draft, draftText: draft.appliedAltText })).toBe(false);
+    expect(
+      canApplyImageDraftPublic(
+        {
+          ...ready,
+          pendingChoiceChange: { position: 'right', choice: OMIT },
+        },
+        draft,
+      ),
+    ).toBe(false);
+  });
+
   it('canApply compares draft and applied text without trimming', () => {
     const scenario = createGuidedScenario();
     const padded = `${ORIGINAL_ALT} `;
@@ -897,6 +928,22 @@ describe('applyGuidedDraft', () => {
     const applied = applyGuidedDraft(previewGuidedDraft(includeBoth(scenario)));
     expect(canApply(applied)).toBe(false);
     expect(applyGuidedDraft(applied)).toBe(applied);
+  });
+
+  it('applies explicit visible text without preview and leaves the other image untouched', () => {
+    const scenario = createGuidedScenario();
+    const ready = includeBoth(scenario);
+    const coachellaBefore = ready.drafts[COACHELLA];
+    const visibleText = '  Public draft applied directly.  ';
+
+    const applied = applyGuidedDraftForImage(ready, TRIBECA, visibleText);
+
+    expect(applied.drafts[TRIBECA].draftText).toBe(visibleText);
+    expect(applied.drafts[TRIBECA].appliedAltText).toBe(visibleText);
+    expect(applied.drafts[TRIBECA].applicationHistory).toHaveLength(1);
+    expect(applied.drafts[COACHELLA]).toEqual(coachellaBefore);
+    expect(applied.drafts[COACHELLA].appliedAltText).toBe(coachellaBefore.appliedAltText);
+    expect(applied.drafts[COACHELLA].applicationHistory).toEqual(coachellaBefore.applicationHistory);
   });
 });
 

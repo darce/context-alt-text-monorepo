@@ -195,3 +195,50 @@ No horizontal overflow. Same card. No sticky image over the keyboard.
 | sr-004 design tokens | enforced as a v3-styles non-goal | Grid, gap, radius, colour must come from `--acx-*`; the serialized 317px/288px textarea heights must not be copied into styles. |
 | rg-003 primary controls reachable from zero state | satisfied | `Review drafts` is rendered from the zero state, disabled with a stated reason, not hidden. |
 | rg-004 controlled dialogs wire onOpenChange | must survive the hoist | The replacement Dialog moves out of `GuidedFacesPanel`; its `onOpenChange` -> `onCancelReplacement` wiring is a v3-sections acceptance condition. |
+
+## Addendum — face match line consolidation (lane v3-facematch)
+
+Operator observation: inside `#guided-section-understand > ... > .acx-guided-face__matches > ul > li`, two stacked paragraphs print the photo name twice. Applies to every face card on both routes and to the enlarged comparison dialog.
+
+Before:
+
+```text
+┌ li.acx-guided-face__match ─────────────────────┐
+│  ┌────────┐                                    │
+│  │ [crop] │  80px square                       │
+│  └────────┘                                    │
+│  Tribeca press photo         <- p.__match-image│
+│  Tribeca press photo: 91% (strong).            │
+│                            <- p.__match-summary│
+│  ⚠ Below the 0.62 match threshold.             │
+│                            <- p.__weak-match   │
+└────────────────────────────────────────────────┘
+     3 stacked lines, photo name duplicated,
+     the entity being matched is never named here
+```
+
+After:
+
+```text
+┌ li.acx-guided-face__match ─────────────────────┐
+│  ┌────────┐                                    │
+│  │ [crop] │  80px square                       │
+│  └────────┘                                    │
+│  Katy Perry — 91% match       <- p.__match-line│
+│  ⚠ Below the 0.62 match threshold.             │
+│                            <- p.__weak-match   │
+└────────────────────────────────────────────────┘
+     1 line, names the entity and the score,
+     warning stays its own element with its icon
+```
+
+Null-similarity variant renders `Katy Perry — similarity unavailable` from a second catalog key, so no placeholder is interpolated into a sentence that does not fit it.
+
+| Canon row | Verdict | Evidence |
+| --- | --- | --- |
+| CARD-30 signal density, not length | improved | Two lines carrying one fact collapse to one line carrying two facts. The removed duplication was length without signal. |
+| HAI-01 evidence before label | preserved | The crop is still rendered above the line, so what the system saw precedes the name it assigned. Photo provenance moves into the crop `alt` via `cropAlt`, which keeps `imageLabel` wired. |
+| HAI-08 uncertainty at decision granularity | preserved | The percentage stays on the line next to the include/omit control, and the weak-match warning stays a separate element on the same card. |
+| CARD-18 attribute claims to their bearer | preserved | The line reads as a match score under the `Names suggested by AltContext` heading, not as an identity assertion about the person. |
+| sr-004 status pairs colour with an icon | preserved | The warning icon and its `aria-label` stay on `.acx-guided-face__weak-match`; only the two informational paragraphs merge. |
+| NAV-13 controlled vocabulary | enforced | The new strings live in `copy.en.json` as `names.match.line` and `names.match.line_unavailable`; `copy.ts` is regenerated, never hand-edited. |

@@ -58,6 +58,8 @@ export const GUIDED_COPY = {
   "names.photo.tribeca": "Tribeca press photo",
   "names.photo.coachella": "Coachella press photo",
   "names.match": "{image}: {similarity} ({strength}).",
+  "names.match.line": "{name} — {similarity} match",
+  "names.match.line_unavailable": "{name} — similarity unavailable",
   "names.match.strong": "strong",
   "names.match.weak": "weak",
   "names.match.cluster_anchor": "cluster anchor",

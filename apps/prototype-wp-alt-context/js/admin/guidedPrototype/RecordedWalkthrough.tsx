@@ -1,5 +1,13 @@
 import React, { useMemo, useRef, useState } from 'react';
 
+import {
+  DialogContent,
+  DialogDescription,
+  DialogOverlay,
+  DialogPortal,
+  DialogRoot,
+  DialogTitle,
+} from '../../components/ui/dialog';
 import { GuidedPrototypeEntrance } from '../pages/GuidedPrototypeEntrance';
 import { GuidedDesignNotes } from '../pages/guided/GuidedDesignNotes';
 import { GuidedDescriptionReview } from '../pages/guided/GuidedDescriptionReview';
@@ -7,14 +15,18 @@ import { GuidedFaceMatchCard } from '../pages/guided/GuidedFaceMatchCard';
 import { GuidedFacesPanel } from '../pages/guided/GuidedFacesPanel';
 import { GuidedPhotoFaces } from '../pages/guided/GuidedPhotoFaces';
 import { GuidedOutcome } from '../pages/guided/GuidedOutcome';
-import { focusGuidedSection, guidedStepLabel, GuidedPrototypeGuide } from '../pages/guided/GuidedPrototypeGuide';
+import {
+  focusGuidedSection,
+  guidedStepLabelForScope,
+  guideStepsForScope,
+  GuidedPrototypeGuide,
+} from '../pages/guided/GuidedPrototypeGuide';
 import { GuidedResetDialog } from '../pages/guided/GuidedResetDialog';
 import { GuidedSamplePhoto } from '../pages/guided/GuidedSamplePhoto';
 import { guidedCopy } from './publicGuideCopy';
 import {
   GUIDED_NAME_CHOICE,
   GUIDED_STEP,
-  guidedStepIndex,
   applyGuidedDraft,
   applyGuidedDraftForImage,
   cancelGuidedChoiceReplacement,
@@ -28,6 +40,7 @@ import {
   guidedNameCoverage,
   keepGuidedCurrentAltText,
   keepGuidedCurrentAltTextForImage,
+  namesDecided,
   previewGuidedDraft,
   previewGuidedDraftForImage,
   resetGuidedDemoState,
@@ -119,6 +132,50 @@ const publicSourceSummary = (): React.ReactNode => {
   );
 };
 
+interface GuidedChoiceReplacementDialogProps {
+  open: boolean;
+  onConfirmReplacement: () => void;
+  onCancelReplacement: () => void;
+}
+
+const GuidedChoiceReplacementDialog = ({
+  open,
+  onConfirmReplacement,
+  onCancelReplacement,
+}: GuidedChoiceReplacementDialogProps): React.JSX.Element => (
+  <DialogRoot
+    open={open}
+    onOpenChange={(nextOpen) => {
+      if (!nextOpen) {
+        onCancelReplacement();
+      }
+    }}
+  >
+    <DialogPortal>
+      <DialogOverlay />
+      <DialogContent
+        aria-modal="true"
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+        }}
+      >
+        <DialogTitle>{guidedCopy('names.change_title')}</DialogTitle>
+        <DialogDescription>{guidedCopy('names.change_body')}</DialogDescription>
+        <div className="acx-dialog__actions">
+          <button type="button" className="acx-button acx-button--secondary" onClick={onCancelReplacement}>
+            {guidedCopy('names.change_cancel')}
+          </button>
+          <button type="button" className="acx-button acx-button--primary" onClick={onConfirmReplacement}>
+            {guidedCopy('names.change_confirm')}
+          </button>
+        </div>
+      </DialogContent>
+    </DialogPortal>
+  </DialogRoot>
+);
+
+GuidedChoiceReplacementDialog.displayName = 'GuidedChoiceReplacementDialog';
+
 export const RecordedWalkthrough = ({ scope, livePanel, escapeHref }: RecordedWalkthroughProps): React.JSX.Element => {
   const scenario = useMemo(() => createGuidedScenario(), []);
   const coverage = useMemo(() => guidedNameCoverage(scenario), [scenario]);
@@ -144,26 +201,23 @@ export const RecordedWalkthrough = ({ scope, livePanel, escapeHref }: RecordedWa
     setFeedback(message ?? lastSummary(next));
   };
 
+  const guideProgressMessage = (step: GuidedStep): string => {
+    const steps = guideStepsForScope(scope);
+    const stepNumber = steps.indexOf(step) + 1;
+    const stepTitle = guidedStepLabelForScope(step, scope);
+    return scope === 'public'
+      ? guidedCopy('guide.current.public', { stepNumber, stepCount: steps.length, stepTitle })
+      : guidedCopy('guide.current', { stepNumber, stepTitle });
+  };
+
   const handleBegin = (): void => {
-    commit(
-      selectGuidedStep(demo, GUIDED_STEP.CONTEXT),
-      guidedCopy('guide.current', {
-        stepNumber: 1,
-        stepTitle: guidedCopy('step.context'),
-      }),
-    );
+    commit(selectGuidedStep(demo, GUIDED_STEP.CONTEXT), guideProgressMessage(GUIDED_STEP.CONTEXT));
     setGuideOpen(true);
     focusGuidedSection(GUIDED_STEP.CONTEXT);
   };
 
   const handleSelectStep = (step: GuidedStep): void => {
-    commit(
-      selectGuidedStep(demo, step),
-      guidedCopy('guide.current', {
-        stepNumber: guidedStepIndex(step) + 1,
-        stepTitle: guidedStepLabel(step),
-      }),
-    );
+    commit(selectGuidedStep(demo, step), guideProgressMessage(step));
   };
 
   const handleChoose = (position: GuidedFacePosition, choice: GuidedNameChoice, origin: HTMLInputElement): void => {
@@ -211,6 +265,7 @@ export const RecordedWalkthrough = ({ scope, livePanel, escapeHref }: RecordedWa
         open={guideOpen}
         onToggle={() => setGuideOpen((current) => !current)}
         onSelect={handleSelectStep}
+        scope={scope}
       />
 
       <section className="acx-guided-page__workspace" aria-labelledby="acx-guided-page-title">
@@ -239,7 +294,10 @@ export const RecordedWalkthrough = ({ scope, livePanel, escapeHref }: RecordedWa
                   showCurrentAltText={index === 0}
                   scope={scope}
                 >
-                  <GuidedPhotoFaces photoKey={photo.key} title={guidedCopy('faces.group_title')}>
+                  <GuidedPhotoFaces
+                    photoKey={photo.key}
+                    title={scope === 'public' ? guidedCopy('faces.title.public') : guidedCopy('faces.group_title')}
+                  >
                     {scenario.faces
                       .filter((face) => face.imageKey === photo.key)
                       .map((face) => {
@@ -292,13 +350,20 @@ export const RecordedWalkthrough = ({ scope, livePanel, escapeHref }: RecordedWa
             <button
               type="button"
               className="acx-button acx-button--primary"
+              {...(scope === 'public' ? { 'data-testid': 'guided-review-draft' } : {})}
               onClick={() => {
-                handleSelectStep(GUIDED_STEP.NAMES);
-                focusGuidedSection(GUIDED_STEP.NAMES);
+                const nextStep = scope === 'public' ? GUIDED_STEP.DRAFT : GUIDED_STEP.NAMES;
+                handleSelectStep(nextStep);
+                focusGuidedSection(nextStep);
               }}
             >
-              {guidedCopy('context.next')}
+              {scope === 'public' ? guidedCopy('context.next.public') : guidedCopy('context.next')}
             </button>
+            {scope === 'public' ? (
+              <p data-testid="guided-choices-help">
+                {namesDecided(demo) ? null : guidedCopy('choices.help.public')}
+              </p>
+            ) : null}
           </div>
         </section>
 
@@ -325,23 +390,20 @@ export const RecordedWalkthrough = ({ scope, livePanel, escapeHref }: RecordedWa
           </span>
         </p>
 
-        {scope === 'public' ? (
-          <aside className="acx-guided-review__explanation" data-testid="public-roster-explainer">
-            <h2>{guidedCopy('roster.explainer.title')}</h2>
-            <p>{guidedCopy('roster.explainer.body')}</p>
-            <p>{guidedCopy('roster.explainer.purpose')}</p>
-            <p>{guidedCopy('names.scope.public')}</p>
-          </aside>
+        {scope === 'admin' ? (
+          <GuidedFacesPanel
+            scenario={scenario}
+            state={demo}
+            onChoose={handleChoose}
+            onContinue={() => {
+              handleSelectStep(GUIDED_STEP.DRAFT);
+              focusGuidedSection(GUIDED_STEP.DRAFT);
+            }}
+          />
         ) : null}
 
-        <GuidedFacesPanel
-          scenario={scenario}
-          state={demo}
-          onChoose={handleChoose}
-          onContinue={() => {
-            handleSelectStep(GUIDED_STEP.DRAFT);
-            focusGuidedSection(GUIDED_STEP.DRAFT);
-          }}
+        <GuidedChoiceReplacementDialog
+          open={demo.pendingChoiceChange !== null}
           onConfirmReplacement={() => {
             commit(confirmGuidedChoiceReplacement(demo, scenario));
             focusGuidedSection(GUIDED_STEP.DRAFT);
@@ -349,13 +411,10 @@ export const RecordedWalkthrough = ({ scope, livePanel, escapeHref }: RecordedWa
           onCancelReplacement={handleCancelReplacement}
         />
 
-        {scope === 'public' ? (
-          <p className="acx-guided-review__explanation">{guidedCopy('draft.context.public')}</p>
-        ) : null}
-
         <GuidedDescriptionReview
           scenario={scenario}
           state={demo}
+          scope={scope}
           {...(scope === 'public' ? { recordedOriginLabel: guidedCopy('draft.origin.public') } : {})}
           actions={{
             onEdit: (text) => commit(editGuidedDraft(demo, text)),
@@ -372,7 +431,7 @@ export const RecordedWalkthrough = ({ scope, livePanel, escapeHref }: RecordedWa
               if (text !== (next.draftText ?? '')) {
                 next = editGuidedDraft(next, text);
               }
-              commit(applyGuidedDraft(next));
+              commit(scope === 'public' ? applyGuidedDraft(next, text) : applyGuidedDraft(next));
             },
             onUndo: () => {
               commit(undoGuidedApplication(demo));
@@ -394,12 +453,16 @@ export const RecordedWalkthrough = ({ scope, livePanel, escapeHref }: RecordedWa
             onRetryFixtureForImage: (imageKey) => commit(retryGuidedFixtureForImage(demo, imageKey, scenario)),
             onRestoreForImage: (imageKey, revisionId, mode) =>
               commit(restoreGuidedRevisionForImage(demo, imageKey, revisionId, mode)),
-            onApplyForImage: (imageKey, text) => {
+            onApplyForImage: (imageKey, visibleText) => {
               let next = demo;
-              if (text !== (next.drafts[imageKey].draftText ?? '')) {
-                next = editGuidedDraftForImage(next, imageKey, text);
+              if (visibleText !== (next.drafts[imageKey].draftText ?? '')) {
+                next = editGuidedDraftForImage(next, imageKey, visibleText);
               }
-              commit(applyGuidedDraftForImage(next, imageKey));
+              commit(
+                scope === 'public'
+                  ? applyGuidedDraftForImage(next, imageKey, visibleText)
+                  : applyGuidedDraftForImage(next, imageKey),
+              );
             },
             onUndoForImage: (imageKey) => commit(undoGuidedApplicationForImage(demo, imageKey)),
           }}

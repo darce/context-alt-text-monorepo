@@ -1,13 +1,5 @@
 import React from 'react';
 
-import {
-  DialogContent,
-  DialogDescription,
-  DialogOverlay,
-  DialogPortal,
-  DialogRoot,
-  DialogTitle,
-} from '../../../components/ui/dialog';
 import { guidedCopy } from '../../guidedPrototype/publicGuideCopy';
 import {
   formatGuidedSimilarity,
@@ -25,18 +17,17 @@ export interface GuidedFacesPanelProps {
   state: GuidedDemoState;
   onChoose: (position: GuidedFacePosition, choice: GuidedNameChoice, origin: HTMLInputElement) => void;
   onContinue: () => void;
-  onConfirmReplacement: () => void;
-  onCancelReplacement: () => void;
+  /** @deprecated The replacement dialog is owned by RecordedWalkthrough. */
+  onConfirmReplacement?: () => void;
+  /** @deprecated The replacement dialog is owned by RecordedWalkthrough. */
+  onCancelReplacement?: () => void;
 }
 
 export const GuidedFacesPanel = ({
   state,
   onContinue,
-  onConfirmReplacement,
-  onCancelReplacement,
 }: GuidedFacesPanelProps): React.JSX.Element => {
   const decided = namesDecided(state);
-  const pending = state.pendingChoiceChange !== null;
 
   return (
     <section id={GUIDED_FACE_SECTION_ID} className="acx-guided-face" aria-labelledby="guided-faces-title" tabIndex={-1}>
@@ -53,36 +44,6 @@ export const GuidedFacesPanel = ({
       <button type="button" className="acx-button acx-button--primary" onClick={onContinue} disabled={!decided}>
         {guidedCopy('names.next')}
       </button>
-
-      <DialogRoot
-        open={pending}
-        onOpenChange={(nextOpen) => {
-          if (!nextOpen) {
-            onCancelReplacement();
-          }
-        }}
-      >
-        <DialogPortal>
-          <DialogOverlay />
-          <DialogContent
-            aria-modal="true"
-            onCloseAutoFocus={(event) => {
-              event.preventDefault();
-            }}
-          >
-            <DialogTitle>{guidedCopy('names.change_title')}</DialogTitle>
-            <DialogDescription>{guidedCopy('names.change_body')}</DialogDescription>
-            <div className="acx-dialog__actions">
-              <button type="button" className="acx-button acx-button--secondary" onClick={onCancelReplacement}>
-                {guidedCopy('names.change_cancel')}
-              </button>
-              <button type="button" className="acx-button acx-button--primary" onClick={onConfirmReplacement}>
-                {guidedCopy('names.change_confirm')}
-              </button>
-            </div>
-          </DialogContent>
-        </DialogPortal>
-      </DialogRoot>
     </section>
   );
 };

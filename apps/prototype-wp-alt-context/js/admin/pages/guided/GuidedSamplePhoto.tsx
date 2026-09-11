@@ -13,6 +13,11 @@ import { GuidedFaceOverlay, type GuidedFaceOverlayFace } from './GuidedFaceOverl
 
 export type GuidedSamplePhotoScope = 'public' | 'admin';
 
+const GUIDED_SAMPLE_PHOTO_SCOPE = {
+  PUBLIC: 'public',
+  ADMIN: 'admin',
+} as const;
+
 export interface GuidedSamplePhotoProps {
   photo: GuidedPressPhoto;
   evidenceAlt?: string;
@@ -71,7 +76,9 @@ const AltTextAiCaption = ({
 }): React.JSX.Element => {
   const caption = photo.altTextAiCaption;
   const title =
-    scope === 'public' ? guidedCopy('comparison.alttextai.public') : guidedCopy('context.photo.alttextai_title');
+    scope === GUIDED_SAMPLE_PHOTO_SCOPE.PUBLIC
+      ? guidedCopy('comparison.alttextai.public')
+      : guidedCopy('context.photo.alttextai_title');
 
   return (
     <section className="acx-guided-page__caption" aria-labelledby={`guided-caption-${photo.key}-alttextai`}>
@@ -98,7 +105,9 @@ const AltContextCaption = ({
 }): React.JSX.Element => {
   const caption = photo.altContextDescription;
   const title =
-    scope === 'public' ? guidedCopy('comparison.altcontext.public') : guidedCopy('context.photo.altcontext_title');
+    scope === GUIDED_SAMPLE_PHOTO_SCOPE.PUBLIC
+      ? guidedCopy('comparison.altcontext.public')
+      : guidedCopy('context.photo.altcontext_title');
 
   return (
     <section className="acx-guided-page__caption" aria-labelledby={`guided-caption-${photo.key}-altcontext`}>
@@ -183,12 +192,11 @@ export const GuidedSamplePhoto = ({
         <div
           className="acx-guided-page__image-wrap"
           data-orientation={imageOrientation}
-          style={{
-            position: 'relative',
-            ...(imageLoaded
+          style={
+            imageLoaded
               ? ({ '--acx-guided-photo-ratio': `${naturalSize.width} / ${naturalSize.height}` } as React.CSSProperties)
-              : {}),
-          }}
+              : undefined
+          }
         >
           <div className="acx-guided-page__image-frame">
             <img
@@ -213,7 +221,7 @@ export const GuidedSamplePhoto = ({
         {guidedCopy('context.photo.credit_label')}: <Credit photo={photo} />
       </p>
       <figcaption>
-        {scope === 'admin' && showCurrentAltText ? (
+        {scope === GUIDED_SAMPLE_PHOTO_SCOPE.ADMIN && showCurrentAltText ? (
           <span>
             {guidedCopy('context.current_label')}: {currentAltText}
           </span>

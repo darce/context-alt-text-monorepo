@@ -23,10 +23,7 @@ export interface GuidedFacesPanelProps {
   onCancelReplacement?: () => void;
 }
 
-export const GuidedFacesPanel = ({
-  state,
-  onContinue,
-}: GuidedFacesPanelProps): React.JSX.Element => {
+export const GuidedFacesPanel = ({ state, onContinue }: GuidedFacesPanelProps): React.JSX.Element => {
   const decided = namesDecided(state);
 
   return (
@@ -38,12 +35,12 @@ export const GuidedFacesPanel = ({
         <p>{guidedCopy('names.threshold', { threshold: formatGuidedSimilarity(GUIDED_MATCH_THRESHOLD) })}</p>
       </header>
 
-      <div id="guided-section-identity" tabIndex={-1} className="acx-guided-face__cards" />
-
-      {decided ? null : <p className="acx-guided-face__next-reason">{guidedCopy('names.next_blocked')}</p>}
-      <button type="button" className="acx-button acx-button--primary" onClick={onContinue} disabled={!decided}>
-        {guidedCopy('names.next')}
-      </button>
+      <div id="guided-section-identity" tabIndex={-1}>
+        {decided ? null : <p className="acx-guided-face__next-reason">{guidedCopy('names.next_blocked')}</p>}
+        <button type="button" className="acx-button acx-button--primary" onClick={onContinue} disabled={!decided}>
+          {guidedCopy('names.next')}
+        </button>
+      </div>
     </section>
   );
 };

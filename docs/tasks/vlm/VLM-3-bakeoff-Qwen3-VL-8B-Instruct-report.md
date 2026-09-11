@@ -9,6 +9,7 @@
 - started_at: 2026-07-14T08:05:34Z
 - images: 10/10 scored, 0 failed
 - ⚠ produced by the throwaway `bakeoff` transport (VLM-2B) — face detection/identification sections below are **vacuous by design** (stub `analyze`/`media_identities`); 0% is expected, NOT a recognition regression.
+- Provenance correction (2026-09-09): the linked run record measures `F16`. The candidate index and launch command were corrected from `bf16` to `F16`; the scores below are `F16` measurements, not `bf16` results.
 
 ## Caption metrics (deterministic tier)
 

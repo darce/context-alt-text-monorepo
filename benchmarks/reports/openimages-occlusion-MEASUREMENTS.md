@@ -11,14 +11,25 @@ that is the claim being made, not that they have been independently confirmed.
 
 ## Reproduce
 
-```bash
-benchmarks/tools/openimages_occlusion_measure.sh [ANNOTATION_DIR]
-```
+**There is no committed measure script.** `benchmarks/tools/` is not in this
+tree, and no `openimages_occlusion_measure` command exists. The tables below
+are author-run (2026-07-28) from the shipped Open Images annotation CSVs.
+They are methodology-documented, not script-reproducible ([rg-006]). Do **not**
+treat this file as meeting a committed-reproducer bar, and do not contrast
+COCO against a bar this record does not itself meet.
 
-Runs on the OCI VM (`acx-backend:~/data/open-images`, annotations fetched from
-`storage.googleapis.com/openimages`) or from any local copy. ~10 min single-threaded,
-dominated by two full passes over the 2.26 GB train CSV. Requires `awk` and `numpy`.
-Bootstrap seed is fixed (`20260728`), so intervals reproduce bit-for-bit.
+Author-run method (not a copy-pasteable in-tree command):
+
+- Annotation dir: OCI VM `acx-backend:~/data/open-images`, or any local copy
+  of the Open Images face (`/m/0dzct`) CSVs fetched from
+  `storage.googleapis.com/openimages`. Train CSV is ~2.26 GB; two full passes
+  dominate (~10 min single-threaded). Tools used at the time: `awk` and
+  `numpy`. Bootstrap seed `20260728`, B = 4,000.
+- Exclude `IsOccluded=-1` from rate denominators.
+- Restrict size-ratio bootstrap to single-face images.
+
+Until a committed script lands and is checked against these tables, a
+re-run is a **new measurement**, not a verification of this record.
 
 ## Measurement caveats that changed the conclusions
 
@@ -143,3 +154,30 @@ Nothing here identifies which. The mechanism is **unidentified**, and the decisi
 experiment remains: exhaustively re-annotate a few hundred train images under the val/test
 rubric and compare to the shipped labels. Until that runs, the calibration reading is a
 *preferred hypothesis with unexcluded rivals*, not a result.
+
+## Still-open measurement gates (ISSUEDAG-1, 2026-09-09)
+
+Tracked companion (the HTML register is gitignored):
+`benchmarks/reports/fir-issuedag-1-measurement-gates.md`.
+
+These are not closed by this document. No new counts were taken in this pass.
+
+**COCO licence and keypoint counts are not first-party here.** The HTML report cites
+69.0% NC, 26.1% usable, 30,836 images, 16,513 with a person, 33,193 head-bearing
+instances, 48.6% keypoint coverage. Those COCO numbers have **no persisted
+script in this tree and no pinned annotation-JSON revision**. Do not treat
+them as audited. Closing that gate needs a committed reproducer plus a
+pinned COCO annotation SHA (T-07 / D-05). The Open Images tables above fail
+the same committed-script bar — they are first-party and methodology-documented,
+not independently re-runnable from this checkout.
+
+**Train vs val/test `IsOccluded` mechanism (T-15) is unfunded and unscheduled.**
+Four rivals remain unexcluded. Supervision must stay conservative (positives-only
+with ignore-regions). Do not apply a quantitative calibration correction from this
+record.
+
+**COCO facial keypoint `v=0` cause distribution is unaudited** (occlusion vs
+out-of-frame vs annotator skip vs protocol). `v=0` means "not labelled", not
+"occluded". The usable hard-occlusion pool inside COCO cannot be sized until that
+is measured. Deferred until COCO is actually proposed as an occlusion-stratum
+source.

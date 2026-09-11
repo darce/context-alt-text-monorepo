@@ -994,38 +994,195 @@ export const correctDescriptionHistoryItem = async (
   );
 };
 
+/** Thrown when a describe-run envelope violates the shared schema at runtime. */
+export class MalformedDescribeRunResponseError extends Error {
+  constructor(field: string) {
+    super(`Describe run response is missing or malformed: ${field}`);
+    this.name = 'MalformedDescribeRunResponseError';
+  }
+}
+
+const DESCRIBE_RUN_ITEM_REQUIRED_KEYS = [
+  'media_id',
+  'status',
+  'alt_text_draft',
+  'caption',
+  'provenance',
+  'tier',
+  'result_generation',
+  'existing_alt',
+] as const;
+
+/**
+ * Validate the wire envelope used by GET /describe/runs/{run_id}/items before
+ * the naming normalizer reads any item fields. The endpoint is included in the
+ * field passed to the existing malformed-response error so a proxy failure can
+ * be traced to the exact upstream boundary.
+ */
+const parseDescribeRunItemsResponse = (payload: unknown, endpoint: string): DescribeRunItemsResponse => {
+  // The explicit annotation is what lets control-flow analysis treat a
+  // `malformed(...)` statement as unreachable-after and narrow `payload`.
+  const malformed: (field: string) => never = (field) => {
+    throw new MalformedDescribeRunResponseError(`${endpoint} ${field}`);
+  };
+
+  if (!isRecord(payload)) {
+    malformed('response body');
+  }
+  if (typeof payload.run_id !== 'string') {
+    malformed('response.run_id');
+  }
+  if (!Array.isArray(payload.items)) {
+    malformed('response.items');
+  }
+
+  for (const [index, item] of payload.items.entries()) {
+    const itemPath = `response.items[${index}]`;
+    if (!isRecord(item)) {
+      malformed(itemPath);
+    }
+    const missingKey = DESCRIBE_RUN_ITEM_REQUIRED_KEYS.find((key) => !hasOwn(item, key));
+    if (missingKey) {
+      malformed(`${itemPath}.${missingKey}`);
+    }
+  }
+
+  return payload as unknown as DescribeRunItemsResponse;
+};
+
+const DESCRIBE_RUN_RESPONSE_REQUIRED_KEYS = [
+  'tenant_id',
+  'run_id',
+  'status',
+  'phase',
+  'completed',
+  'failed',
+  'skipped',
+  'total',
+  'cancel_requested',
+  'eta_seconds',
+  'gpu_state',
+  'recognition_enabled',
+] as const;
+
+const DESCRIBE_RUN_RESPONSE_OPTIONAL_KEYS = ['deadline_seconds'] as const;
+
+const DESCRIBE_RUN_RESPONSE_KEYS = [
+  ...DESCRIBE_RUN_RESPONSE_REQUIRED_KEYS,
+  ...DESCRIBE_RUN_RESPONSE_OPTIONAL_KEYS,
+] as const;
+
+const DESCRIBE_RUN_STATUSES: ReadonlySet<string> = new Set(Object.values(DESCRIBE_RUN_STATUS));
+const DESCRIBE_RUN_PHASES: ReadonlySet<string> = new Set(Object.values(DESCRIBE_RUN_PHASE));
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const isUuid = (value: unknown): value is string => typeof value === 'string' && UUID_PATTERN.test(value);
+
+const validateDescribeRunResponse = (payload: unknown): string | null => {
+  if (!isRecord(payload)) {
+    return 'response body';
+  }
+  const missingRequiredKey = DESCRIBE_RUN_RESPONSE_REQUIRED_KEYS.find((key) => !hasOwn(payload, key));
+  if (missingRequiredKey) {
+    return `response.${missingRequiredKey}`;
+  }
+  const unexpectedKey = Object.keys(payload).find((key) => !includesString(DESCRIBE_RUN_RESPONSE_KEYS, key));
+  if (unexpectedKey) {
+    return `response.${unexpectedKey}`;
+  }
+  if (!isUuid(payload.tenant_id)) {
+    return 'response.tenant_id';
+  }
+  if (!isUuid(payload.run_id)) {
+    return 'response.run_id';
+  }
+  if (typeof payload.status !== 'string' || !DESCRIBE_RUN_STATUSES.has(payload.status)) {
+    return 'response.status';
+  }
+  if (typeof payload.phase !== 'string' || !DESCRIBE_RUN_PHASES.has(payload.phase)) {
+    return 'response.phase';
+  }
+  for (const key of ['completed', 'failed', 'skipped'] as const) {
+    if (!isInteger(payload[key]) || payload[key] < 0) {
+      return `response.${key}`;
+    }
+  }
+  if (!isInteger(payload.total) || payload.total < 1) {
+    return 'response.total';
+  }
+  if (typeof payload.cancel_requested !== 'boolean') {
+    return 'response.cancel_requested';
+  }
+  if (payload.eta_seconds !== null && (!isFiniteNumber(payload.eta_seconds) || payload.eta_seconds < 0)) {
+    return 'response.eta_seconds';
+  }
+  if (!isGpuState(payload.gpu_state)) {
+    return 'response.gpu_state';
+  }
+  if (typeof payload.recognition_enabled !== 'boolean') {
+    return 'response.recognition_enabled';
+  }
+  if (
+    hasOwn(payload, 'deadline_seconds') &&
+    payload.deadline_seconds !== null &&
+    (!isFiniteNumber(payload.deadline_seconds) || payload.deadline_seconds <= 0)
+  ) {
+    return 'response.deadline_seconds';
+  }
+  return null;
+};
+
+const assertDescribeRunResponse: (payload: unknown) => asserts payload is DescribeRunResponse = (payload) => {
+  const malformedField = validateDescribeRunResponse(payload);
+  if (malformedField) {
+    throw new MalformedDescribeRunResponseError(malformedField);
+  }
+};
+
+/** Validate the async describe-run envelope before consumers read run_id. */
+export const parseDescribeRunResponse = (payload: unknown): DescribeRunResponse => {
+  assertDescribeRunResponse(payload);
+  return payload;
+};
+
 export const submitBulkDescribeRun = async (mediaIds: number[]): Promise<DescribeRunResponse> =>
-  fetchRequiredApi<DescribeRunResponse>(getEndpoint('recognitionDescribeRuns'), {
-    method: 'POST',
-    body: { media_ids: mediaIds },
-    restNonce: getConfig().nonce,
-    // WP loads attachment bytes and forwards a multipart body under the proxy's
-    // 180s 'description' budget; the browser timeout must exceed it so a slow
-    // bulk upload cannot abort client-side after the run was already created
-    // (which would orphan an untracked run — CLI-01).
-    signal: createRecognitionTimeoutSignal(185_000),
-  });
+  parseDescribeRunResponse(
+    await fetchRequiredApi<unknown>(getEndpoint('recognitionDescribeRuns'), {
+      method: 'POST',
+      body: { media_ids: mediaIds },
+      restNonce: getConfig().nonce,
+      // WP loads attachment bytes and forwards a multipart body under the proxy's
+      // 180s 'description' budget; the browser timeout must exceed it so a slow
+      // bulk upload cannot abort client-side after the run was already created
+      // (which would orphan an untracked run — CLI-01).
+      signal: createRecognitionTimeoutSignal(185_000),
+    }),
+  );
 
 export const fetchBulkDescribeRun = async (runId: string): Promise<DescribeRunResponse> =>
-  fetchRequiredApi<DescribeRunResponse>(
-    `${getEndpoint('recognitionDescribeRuns')}/${encodeURIComponent(runId)}`,
-    {
-      method: 'GET',
-      restNonce: getConfig().nonce,
-      // Status is a cheap read polled every ~2s; a short timeout keeps a slow
-      // poll from hanging and lets the next interval retry (INT-04).
-      signal: createRecognitionTimeoutSignal(10_000),
-    },
+  parseDescribeRunResponse(
+    await fetchRequiredApi<unknown>(
+      `${getEndpoint('recognitionDescribeRuns')}/${encodeURIComponent(runId)}`,
+      {
+        method: 'GET',
+        restNonce: getConfig().nonce,
+        // Status is a cheap read polled every ~2s; a short timeout keeps a slow
+        // poll from hanging and lets the next interval retry (INT-04).
+        signal: createRecognitionTimeoutSignal(10_000),
+      },
+    ),
   );
 
 export const cancelBulkDescribeRun = async (runId: string): Promise<DescribeRunResponse> =>
-  fetchRequiredApi<DescribeRunResponse>(
-    `${getEndpoint('recognitionDescribeRuns')}/${encodeURIComponent(runId)}/cancel`,
-    {
-      method: 'POST',
-      restNonce: getConfig().nonce,
-      signal: createRecognitionTimeoutSignal(30_000),
-    },
+  parseDescribeRunResponse(
+    await fetchRequiredApi<unknown>(
+      `${getEndpoint('recognitionDescribeRuns')}/${encodeURIComponent(runId)}/cancel`,
+      {
+        method: 'POST',
+        restNonce: getConfig().nonce,
+        signal: createRecognitionTimeoutSignal(30_000),
+      },
+    ),
   );
 
 /**
@@ -1034,15 +1191,18 @@ export const cancelBulkDescribeRun = async (runId: string): Promise<DescribeRunR
  * auto-apply from those that need an explicit overwrite. A cheap read like the
  * status poll — short timeout, retried by react-query on failure.
  */
-export const fetchDescribeRunItems = async (runId: string): Promise<DescribeRunItemsResponse> =>
-  fetchRequiredApi<DescribeRunItemsResponse>(
-    `${getEndpoint('recognitionDescribeRuns')}/${encodeURIComponent(runId)}/items`,
-    {
+export const fetchDescribeRunItems = async (runId: string): Promise<DescribeRunItemsResponse> => {
+  const endpoint = `${getEndpoint('recognitionDescribeRuns')}/${encodeURIComponent(runId)}/items`;
+  const response = parseDescribeRunItemsResponse(
+    await fetchRequiredApi<unknown>(endpoint, {
       method: 'GET',
       restNonce: getConfig().nonce,
       signal: createRecognitionTimeoutSignal(10_000),
-    },
-  ).then((response) => ({
+    }),
+    endpoint,
+  );
+
+  return {
     ...response,
     items: response.items.map((item) => {
       const provenance = item.provenance;
@@ -1063,7 +1223,8 @@ export const fetchDescribeRunItems = async (runId: string): Promise<DescribeRunI
 
       return { ...item, provenance: { ...provenance, naming } };
     }),
-  }));
+  };
+};
 
 /**
  * Apply a completed run's drafts to attachment alt text (INT-01d → INT-01c).

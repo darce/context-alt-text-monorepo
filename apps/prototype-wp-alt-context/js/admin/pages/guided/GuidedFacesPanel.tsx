@@ -8,10 +8,10 @@ import {
   DialogRoot,
   DialogTitle,
 } from '../../../components/ui/dialog';
-import { guidedCopy } from '../../guidedPrototype/copy';
+import { guidedCopy } from '../../guidedPrototype/publicGuideCopy';
 import {
-  getGuidedPerson,
-  guidedNameCoverage,
+  formatGuidedSimilarity,
+  GUIDED_MATCH_THRESHOLD,
   namesDecided,
   type GuidedDemoState,
   type GuidedFacePosition,
@@ -19,7 +19,6 @@ import {
   type GuidedScenario,
 } from '../../guidedPrototype/state';
 import { GUIDED_FACE_SECTION_ID } from './GuidedPrototypeGuide';
-import { GuidedFaceMatchCard } from './GuidedFaceMatchCard';
 
 export interface GuidedFacesPanelProps {
   scenario: GuidedScenario;
@@ -31,15 +30,12 @@ export interface GuidedFacesPanelProps {
 }
 
 export const GuidedFacesPanel = ({
-  scenario,
   state,
-  onChoose,
   onContinue,
   onConfirmReplacement,
   onCancelReplacement,
 }: GuidedFacesPanelProps): React.JSX.Element => {
   const decided = namesDecided(state);
-  const coverage = guidedNameCoverage(scenario);
   const pending = state.pendingChoiceChange !== null;
 
   return (
@@ -48,30 +44,10 @@ export const GuidedFacesPanel = ({
         <h2 id="guided-faces-title">{guidedCopy('step.names')}</h2>
         <p>{guidedCopy('names.intro')}</p>
         <p>{guidedCopy('names.assisted')}</p>
+        <p>{guidedCopy('names.threshold', { threshold: formatGuidedSimilarity(GUIDED_MATCH_THRESHOLD) })}</p>
       </header>
 
-      <div id="guided-section-identity" tabIndex={-1} className="acx-guided-face__cards">
-        {scenario.faces.map((face) => {
-          const person = getGuidedPerson(scenario, face.matchedPersonKey);
-          const personCoverage = coverage.find((entry) => entry.key === person.key);
-          if (personCoverage === undefined) {
-            throw new Error(`Missing guided name coverage for ${person.key}.`);
-          }
-
-          return (
-            <GuidedFaceMatchCard
-              key={face.id}
-              face={face}
-              person={person}
-              coverage={personCoverage}
-              choice={state.choices[face.position]}
-              mediaUrl={scenario.pressPhoto.src}
-              disabled={pending}
-              onChoose={(choice, origin) => onChoose(face.position, choice, origin)}
-            />
-          );
-        })}
-      </div>
+      <div id="guided-section-identity" tabIndex={-1} className="acx-guided-face__cards" />
 
       {decided ? null : <p className="acx-guided-face__next-reason">{guidedCopy('names.next_blocked')}</p>}
       <button type="button" className="acx-button acx-button--primary" onClick={onContinue} disabled={!decided}>

@@ -6,6 +6,9 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from recognition.application.suggestions.embedding_space import (
+    same_space_representative_vectors,
+)
 from recognition.domain.repositories import ClusterRepository
 from recognition.shared.similarity import normalize_face_embedding
 
@@ -34,12 +37,8 @@ class RepresentativeCache:
             if not reps:
                 continue
 
-            embeddings: list[np.ndarray] = []
-            for rep in reps:
-                rep_vec = np.asarray(getattr(rep, "embedding", rep), dtype=np.float32)
-                if rep_vec.size == 0:
-                    continue
-                embeddings.append(normalize_face_embedding(rep_vec))
+            _, same_space_vectors = same_space_representative_vectors(reps)
+            embeddings = [normalize_face_embedding(vector) for vector in same_space_vectors]
 
             if embeddings:
                 cache[cluster_id] = np.stack(embeddings)

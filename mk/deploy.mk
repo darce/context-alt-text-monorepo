@@ -27,7 +27,7 @@ DEMO_WALKTHROUGH_APP  := $(ROOT_MAKEFILE_DIR)/apps/prototype-wp-alt-context
         deploy-status deploy-clear-image-repo \
         deploy-compose-dev deploy-compose-staging deploy-compose-prod \
         reset-remote db-reset-remote demo-walkthrough-proof walkthrough-first-visitor guided-walkthrough-record \
-        demo-enable-public-guide demo-public-guide-e2e
+        demo-enable-public-guide demo-public-guide-e2e test-gates-harness
 
 deploy-help:
 	@echo "Recognition service deploy targets:"
@@ -352,3 +352,10 @@ guided-walkthrough-record:
 	@echo "==> Guided walkthrough recording artifacts under:"
 	@echo "    $(DEMO_WALKTHROUGH_APP)/local/playwright/$(ACX_PLAYWRIGHT_TASK_REF)/guided-recording/"
 	@echo "    find $(DEMO_WALKTHROUGH_APP)/local/playwright/$(ACX_PLAYWRIGHT_TASK_REF)/guided-recording -name 'guided-walkthrough*' -o -name '*.webm'"
+
+# ISSUEDAG-1: scripts/tests was omitted from test-scripts, so check-all never
+# ran the admin-bundle freshness, gate-wrapper, provisioning, or TasksMax suites.
+test-gates-harness:
+	@python3 -m pytest scripts/tests -q --tb=short -p no:cacheprovider
+
+test-scripts: test-gates-harness

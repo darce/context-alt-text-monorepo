@@ -14,6 +14,18 @@ acx_bulkhead_fail() {
   exit 125
 }
 
+# 124 means the overall deadline fired. Callers that wrap acx_run with
+# acx_bulkhead_fail would otherwise rewrite that into 125 (wrapper could not
+# run the operation). Keep the two outcomes distinct.
+acx_fail_unless_deadline() {
+  local acx_rc="$1"
+  shift
+  if (( acx_rc == 124 )); then
+    exit 124
+  fi
+  acx_bulkhead_fail "$@"
+}
+
 acx_builder="${1:-}"
 acx_node="${2:-}"
 acx_endpoint="${3:-}"
@@ -48,6 +60,24 @@ for acx_command in docker awk date sleep kill; do
   command -v "$acx_command" >/dev/null 2>&1 \
     || acx_bulkhead_fail "required command unavailable: $acx_command"
 done
+# Primary: setsid + kill -- -PID (process group). One signal reaps the whole
+# tree without racing reparent-to-init. PID-walking is the fallback when
+# setsid is absent (stock macOS); it snapshots descendants before TERM
+# because CON-04 orphans appear exactly when a child is reparented first.
+if command -v setsid >/dev/null 2>&1; then
+  acx_setsid="setsid"
+else
+  acx_setsid=""
+  if ! command -v pgrep >/dev/null 2>&1 && ! command -v ps >/dev/null 2>&1; then
+    acx_bulkhead_fail "required command unavailable: pgrep or ps"
+  fi
+fi
+
+acx_sleep_brief() {
+  # GNU sleep accepts fractions. BSD sleep (macOS bash 3.2 hosts) does not.
+  # Under set -e a failed `sleep 0.1` aborts before KILL and orphans the tree.
+  sleep 0.1 2>/dev/null || sleep 1
+}
 
 acx_remaining() {
   local acx_phase="$1" acx_now acx_left
@@ -66,28 +96,96 @@ acx_remaining() {
 # watchdog makes each Docker phase observe the same absolute deadline after a
 # late lock acquisition, instead of restarting a fresh timeout per phase.
 acx_run() {
-  local acx_phase="$1" acx_pid acx_left acx_now
+  local acx_phase="$1" acx_pid acx_left acx_now acx_state
   shift
-  acx_left="$(acx_remaining "$acx_phase")" || return $?
-  "$@" &
+  acx_left="$(acx_remaining "$acx_phase")" || {
+    acx_run_rc=$?
+    return "$acx_run_rc"
+  }
+  # New session/process group so descendants die with the watchdog
+  # (OCIR-ASTRA-20260908-04 / HARNC-R-07). Killing only the direct child left
+  # synthetic grandchildren running past the deadline. Without setsid, launch
+  # the child directly and walk its descendants in acx_kill_tree.
+  if [[ -n "$acx_setsid" ]]; then
+    "$acx_setsid" "$@" &
+  else
+    "$@" &
+  fi
   acx_pid=$!
   while kill -0 "$acx_pid" 2>/dev/null; do
     acx_now="$(date +%s)" || {
-      kill -TERM "$acx_pid" 2>/dev/null || true
+      acx_kill_tree "$acx_pid"
       wait "$acx_pid" 2>/dev/null || true
       acx_bulkhead_fail "could not read the remote clock while running $acx_phase"
     }
+    # kill -0 also succeeds for an unreaped zombie. Break so each healthy
+    # phase does not pay a poll interval (rg-007 / GATES-HARNESS-R-07).
+    # Empty ps output is "could not read state", not "process is gone";
+    # treating it as done made wait hang on the 300s build grandchild.
+    if command -v ps >/dev/null 2>&1; then
+      acx_state="$(ps -o stat= -p "$acx_pid" 2>/dev/null || true)"
+      acx_state="${acx_state// /}"
+      if [[ "$acx_state" == Z* ]]; then
+        break
+      fi
+    fi
     if (( acx_now >= acx_deadline_epoch )); then
-      kill -TERM "$acx_pid" 2>/dev/null || true
-      sleep 0.1
-      kill -KILL "$acx_pid" 2>/dev/null || true
+      acx_kill_tree "$acx_pid"
       wait "$acx_pid" 2>/dev/null || true
       printf 'remote BuildKit phase timed out during %s; outcome UNKNOWN\n' "$acx_phase" >&2
+      acx_run_rc=124
       return 124
     fi
-    sleep 0.1
+    acx_sleep_brief
   done
-  wait "$acx_pid"
+  wait "$acx_pid" && acx_run_rc=0 || acx_run_rc=$?
+  return "$acx_run_rc"
+}
+
+acx_children_of() {
+  local acx_parent="$1"
+  if command -v pgrep >/dev/null 2>&1; then
+    pgrep -P "$acx_parent" 2>/dev/null || true
+  elif command -v ps >/dev/null 2>&1; then
+    ps -o pid= --ppid "$acx_parent" 2>/dev/null || true
+  else
+    acx_bulkhead_fail "required command unavailable: pgrep or ps"
+  fi
+}
+
+acx_list_descendants() {
+  local acx_parent="$1" acx_child
+  while IFS= read -r acx_child; do
+    [[ "$acx_child" =~ ^[0-9]+$ ]] || continue
+    acx_list_descendants "$acx_child"
+    printf '%s\n' "$acx_child"
+  done < <(acx_children_of "$acx_parent")
+}
+
+acx_kill_tree() {
+  local acx_pid="$1" acx_child acx_descendants
+  if [[ -n "${acx_setsid:-}" ]]; then
+    # Negative PGID kills the whole session started by setsid.
+    # SECD-05: always escalate to KILL; do not assume TERM succeeded.
+    kill -TERM -- "-$acx_pid" 2>/dev/null || true
+    acx_sleep_brief
+    kill -KILL -- "-$acx_pid" 2>/dev/null || true
+    return
+  fi
+  # Capture the tree before signaling. TERM on the parent can reparent a
+  # stubborn descendant to init, hiding it from a later pgrep -P / ps scan.
+  acx_descendants="$(acx_list_descendants "$acx_pid")"
+  while IFS= read -r acx_child; do
+    [[ "$acx_child" =~ ^[0-9]+$ ]] || continue
+    kill -TERM "$acx_child" 2>/dev/null || true
+  done <<<"$acx_descendants"
+  kill -TERM "$acx_pid" 2>/dev/null || true
+  acx_sleep_brief
+  while IFS= read -r acx_child; do
+    [[ "$acx_child" =~ ^[0-9]+$ ]] || continue
+    kill -KILL "$acx_child" 2>/dev/null || true
+  done <<<"$acx_descendants"
+  kill -KILL "$acx_pid" 2>/dev/null || true
 }
 
 acx_verify_builder_metadata() {
@@ -155,14 +253,17 @@ acx_verify_host_config_limits() {
   '
 }
 
-if ! acx_run "Buildx capability probe" docker buildx version >/dev/null 2>&1; then
-  acx_bulkhead_fail "docker buildx is unavailable"
+if ! acx_run "Buildx capability probe" docker buildx version >/dev/null; then
+  acx_fail_unless_deadline "${acx_run_rc:-1}" "docker buildx is unavailable"
 fi
 
 acx_builder_container="buildx_buildkit_${acx_node}"
 acx_builder_info=""
 acx_existing_builder=0
-if acx_builder_info="$(acx_run "builder metadata inspection" docker buildx inspect "$acx_builder")"; then
+acx_builder_info="$(acx_run "builder metadata inspection" docker buildx inspect "$acx_builder")" && acx_inspect_rc=0 || acx_inspect_rc=$?
+if (( acx_inspect_rc == 124 )); then
+  exit 124
+elif (( acx_inspect_rc == 0 )); then
   acx_existing_builder=1
   if ! acx_verify_builder_metadata "$acx_builder_info"; then
     acx_bulkhead_fail "existing builder does not match the required driver, node, and endpoint"
@@ -177,7 +278,7 @@ else
     --driver-opt cpu-period=100000 \
     --driver-opt cpu-quota=200000 \
     "$acx_endpoint" >/dev/null; then
-    acx_bulkhead_fail "could not create the required docker-container builder"
+    acx_fail_unless_deadline "${acx_run_rc:-1}" "could not create the required docker-container builder"
   fi
 fi
 
@@ -195,7 +296,7 @@ if [[ "$acx_existing_builder" == "1" ]]; then
     running|starting|stopped|stopping)
       acx_container_inspect="$(acx_run "existing builder container inspection" \
         docker inspect "$acx_builder_container")" \
-        || acx_bulkhead_fail "existing builder container inspection is unavailable"
+        || acx_fail_unless_deadline $? "existing builder container inspection is unavailable"
       if ! acx_verify_host_config_limits "$acx_container_inspect"; then
         acx_bulkhead_fail "existing builder container HostConfig limits do not match the bulkhead"
       fi
@@ -207,24 +308,24 @@ if [[ "$acx_existing_builder" == "1" ]]; then
 fi
 
 if ! acx_run "builder bootstrap" docker buildx inspect --bootstrap "$acx_builder" >/dev/null; then
-  acx_bulkhead_fail "required builder bootstrap failed"
+  acx_fail_unless_deadline "${acx_run_rc:-1}" "required builder bootstrap failed"
 fi
 acx_builder_info="$(acx_run "post-bootstrap builder inspection" \
   docker buildx inspect "$acx_builder")" \
-  || acx_bulkhead_fail "post-bootstrap builder inspection failed"
+  || acx_fail_unless_deadline $? "post-bootstrap builder inspection failed"
 if ! acx_verify_builder_metadata "$acx_builder_info" 1; then
   acx_bulkhead_fail "post-bootstrap builder metadata does not match the required driver, node, endpoint, and running state"
 fi
 acx_container_inspect="$(acx_run "post-bootstrap builder container inspection" \
   docker inspect "$acx_builder_container")" \
-  || acx_bulkhead_fail "builder container inspection is unavailable"
+  || acx_fail_unless_deadline $? "builder container inspection is unavailable"
 if ! acx_verify_host_config_limits "$acx_container_inspect"; then
   acx_bulkhead_fail "builder container HostConfig limits do not match the bulkhead"
 fi
 
 acx_run "isolated BuildKit cache prune" docker buildx prune \
   --builder "$acx_builder" --force --filter until=72h \
-  || acx_bulkhead_fail "isolated BuildKit cache prune failed"
+  || acx_fail_unless_deadline $? "isolated BuildKit cache prune failed"
 
 [[ -d "$acx_build_dir" ]] \
   || acx_bulkhead_fail "remote generation directory is unavailable"

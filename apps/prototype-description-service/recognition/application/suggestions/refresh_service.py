@@ -26,9 +26,16 @@ from recognition.application.assignment.checks import (
     ConfidenceCheck,
     ConstraintCheck,
 )
+from recognition.application.identity_mapping import media_identity_from_model
 from recognition.application.settings import ClusteringSettings
 from recognition.application.similarity import RepresentativeCache, SimilaritySearch
 from recognition.application.suggestions.eligibility import is_eligible_cluster
+from recognition.application.suggestions.embedding_space import (
+    models_are_same_space,
+    representative_embedding_model,
+    same_space_representative_vectors,
+    same_space_vector,
+)
 from recognition.config.settings import resolve_effective_clustering_settings
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.repositories import (
@@ -40,6 +47,7 @@ from recognition.domain.repositories import (
 )
 from recognition.domain.suggestion import AssignmentSuggestion, SuggestionRefreshReason, SuggestionStatus
 from recognition.observability.recognition_runs import RecognitionRunContext
+from recognition.shared.similarity import normalize_face_embedding
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +58,23 @@ def _has_reps(reps: Sequence[np.ndarray] | np.ndarray | None) -> TypeGuard[Seque
     if isinstance(reps, np.ndarray):
         return reps.size > 0
     return len(reps) > 0
+
+
+def _gallery_vector_for_probe(rep: object, probe_model: str | None) -> np.ndarray | None:
+    """Return a gallery vector only when it shares the probe's embedding space.
+
+    Stamped probe → fail-closed same_space_vector. Unstamped probe (legacy) →
+    only unstamped gallery vectors, so a cv/ort row cannot win the cosine.
+    """
+    if probe_model:
+        return same_space_vector(rep, str(probe_model))
+    if representative_embedding_model(rep) is not None:
+        return None
+    raw = getattr(rep, "embedding", rep)
+    vec = np.asarray(raw, dtype=np.float32)
+    if vec.size == 0:
+        return None
+    return vec
 
 
 class SuggestionRefreshService:
@@ -90,27 +115,34 @@ class SuggestionRefreshService:
 
     @staticmethod
     def _build_identity(model: MediaIdentityModel) -> MediaIdentity:
-        return MediaIdentity(
-            id=str(model.id),
-            tenant_id=str(model.tenant_id),
-            media_id=str(model.media_id),
-            embedding=np.asarray(model.embedding, dtype=np.float32),
-            confidence=float(model.confidence),
-            bbox_width=int(model.bbox_width),
-            bbox_height=int(model.bbox_height),
-            bbox_x=int(model.bbox_x),
-            bbox_y=int(model.bbox_y),
-            pose_pitch=float(model.pose_pitch) if model.pose_pitch is not None else None,
-            pose_yaw=float(model.pose_yaw) if model.pose_yaw is not None else None,
-            pose_roll=float(model.pose_roll) if model.pose_roll is not None else None,
-            image_phash=str(model.image_phash) if model.image_phash is not None else None,
-            sharpness=float(model.sharpness) if model.sharpness is not None else None,
-            embedding_norm=float(model.embedding_norm) if model.embedding_norm is not None else None,
-            occlusion_severity=(
-                float(model.occlusion_severity) if model.occlusion_severity is not None else None
-            ),
-            moved_by_merge_id=str(model.moved_by_merge_id) if getattr(model, "moved_by_merge_id", None) else None,
+        return media_identity_from_model(model)
+
+    async def _invalidate_cross_space_suggestion(
+        self,
+        suggestion: AssignmentSuggestion,
+        *,
+        identity_model: str | None,
+    ) -> None:
+        """Move a stale pending suggestion to REJECTED so the queue drains."""
+        logger.info(
+            "[suggestions] invalidate_cross_space suggestion_id=%s identity_id=%s "
+            "cluster_id=%s identity_model=%s reason=embedding_space_mismatch",
+            suggestion.id,
+            suggestion.identity_id,
+            suggestion.cluster_id,
+            identity_model,
         )
+        try:
+            await self._repository.update_status(
+                self._tenant_id,
+                suggestion.id,
+                SuggestionStatus.REJECTED,
+            )
+        except ValueError:
+            logger.warning(
+                "[suggestions] stale cross-space suggestion disappeared before rejection suggestion_id=%s",
+                suggestion.id,
+            )
 
     async def _find_best_cluster_match(
         self,
@@ -141,9 +173,15 @@ class SuggestionRefreshService:
                 if not reps:
                     continue
 
-                reps_by_cluster[cluster_id] = [
-                    np.asarray(getattr(rep, "embedding", rep), dtype=np.float32) for rep in reps
-                ]
+                probe_model = identity.embedding_model
+                same_space: list[np.ndarray] = []
+                for rep in reps:
+                    vec = _gallery_vector_for_probe(rep, probe_model)
+                    if vec is not None:
+                        same_space.append(vec)
+                if not same_space:
+                    continue
+                reps_by_cluster[cluster_id] = same_space
 
             representatives_by_cluster = reps_by_cluster
 
@@ -308,9 +346,15 @@ class SuggestionRefreshService:
             if not reps:
                 continue
 
-            representatives_by_cluster[cluster_id] = [
-                np.asarray(getattr(rep, "embedding", rep), dtype=np.float32) for rep in reps
-            ]
+            probe_model = identity.embedding_model
+            same_space: list[np.ndarray] = []
+            for rep in reps:
+                vec = _gallery_vector_for_probe(rep, probe_model)
+                if vec is not None:
+                    same_space.append(vec)
+            if not same_space:
+                continue
+            representatives_by_cluster[cluster_id] = same_space
 
         if not representatives_by_cluster:
             return []
@@ -397,20 +441,16 @@ class SuggestionRefreshService:
         total = refreshed
 
         if total == 0 and self._cluster_repository is not None:
-            get_top_unlabeled = getattr(self._cluster_repository, "get_top_unlabeled", None)
-            if callable(get_top_unlabeled):
-                candidate_clusters = await get_top_unlabeled(
-                    self._tenant_id,
-                    limit=1000,
-                    min_identity_count=1,
-                )
-                surfaced = await self.surface_for_newly_labeled_cluster(
-                    cluster_id,
-                    candidate_cluster_ids=[
-                        candidate.id for candidate in candidate_clusters if getattr(candidate, "id", None)
-                    ],
-                )
-                total += surfaced
+            candidate_clusters = await self._cluster_repository.get_top_unlabeled(
+                self._tenant_id,
+                limit=1000,
+                min_identity_count=1,
+            )
+            surfaced = await self.surface_for_newly_labeled_cluster(
+                cluster_id,
+                candidate_cluster_ids=[candidate.id for candidate in candidate_clusters if candidate.id],
+            )
+            total += surfaced
 
         if total == 0:
             for identity_id in dict.fromkeys(identity_ids or []):
@@ -432,13 +472,10 @@ class SuggestionRefreshService:
             logger.warning("[suggestions] refresh_for_cluster: cluster not found cluster_id=%s", cluster_id)
             return 0
 
-        rep_cache = await RepresentativeCache.load([cluster_id], self._cluster_repository)
-        rep_embeddings = rep_cache.get_representatives(cluster_id)
-        if rep_embeddings is None:
+        labeled_reps = list(await self._cluster_repository.get_all_representatives(cluster_id))
+        if not labeled_reps:
             logger.info("[suggestions] refresh_for_cluster: no representatives cluster_id=%s", cluster_id)
             return 0
-
-        representatives_by_cluster = {cluster_id: rep_embeddings}
 
         suggestions = await self._repository.get_by_cluster(self._tenant_id, cluster_id)
         pending = [s for s in suggestions if s.status == SuggestionStatus.PENDING]
@@ -458,7 +495,21 @@ class SuggestionRefreshService:
                 continue
 
             identity = self._build_identity(model)
-            match = await self._find_best_cluster_match(identity, representatives_by_cluster=representatives_by_cluster)
+            same_space = [
+                vec
+                for vec in (_gallery_vector_for_probe(rep, identity.embedding_model) for rep in labeled_reps)
+                if vec is not None
+            ]
+            if not same_space:
+                await self._invalidate_cross_space_suggestion(
+                    suggestion,
+                    identity_model=identity.embedding_model,
+                )
+                continue
+            match = await self._find_best_cluster_match(
+                identity,
+                representatives_by_cluster={cluster_id: same_space},
+            )
             if match is None:
                 continue
             _cluster_id, best_similarity = match
@@ -500,6 +551,53 @@ class SuggestionRefreshService:
             refreshed,
         )
         return refreshed
+
+    async def _resolve_surface_gallery(
+        self,
+        cluster_id: str,
+        *,
+        identities_by_cluster: Mapping[str, Sequence[MediaIdentity]],
+        precomputed: Sequence[np.ndarray] | np.ndarray | None,
+    ) -> tuple[str | None, Mapping[str, Sequence[np.ndarray] | np.ndarray]] | None:
+        """Resolve (gallery_model, search_gallery) from live reps; fail-closed if empty.
+
+        Live representatives are the space of record (FIR23-01). A metadata-free
+        precomputed ndarray cache is never used when the Protocol method exists
+        and returns no same-space vectors.
+        """
+        if self._cluster_repository is None:
+            return None
+        live_loaded = False
+        try:
+            get_all_representatives = self._cluster_repository.get_all_representatives
+        except AttributeError:
+            # Incomplete structural doubles omit the Protocol method. Scope this
+            # compatibility to lookup only; AttributeError from call/await/iteration
+            # is a live-gallery fault (TEST-15, DATA-13 / Release It ch-5).
+            if any(
+                identity.embedding_model for identities in identities_by_cluster.values() for identity in identities
+            ):
+                raise
+            labeled_reps = []
+        else:
+            labeled_reps = list(await get_all_representatives(cluster_id))
+            live_loaded = True
+        gallery_model, gallery_vectors = same_space_representative_vectors(labeled_reps)
+        if gallery_vectors:
+            return gallery_model, {cluster_id: [normalize_face_embedding(vector) for vector in gallery_vectors]}
+        if live_loaded:
+            logger.info(
+                "[suggestions] surface_for_newly_labeled_cluster: no same-space representatives cluster_id=%s",
+                cluster_id,
+            )
+            return None
+        if gallery_model is None and _has_reps(precomputed):
+            return None, {cluster_id: precomputed}
+        logger.info(
+            "[suggestions] surface_for_newly_labeled_cluster: no same-space representatives cluster_id=%s",
+            cluster_id,
+        )
+        return None
 
     async def surface_for_newly_labeled_cluster(
         self,
@@ -607,6 +705,14 @@ class SuggestionRefreshService:
         _total_members = sum(len(identities) for identities in identities_by_cluster.values())
         seen_identity_ids: set[str] = set()
         duplicate_identity_skips = 0
+        resolved_gallery = await self._resolve_surface_gallery(
+            cluster_id,
+            identities_by_cluster=identities_by_cluster,
+            precomputed=rep_embeddings,
+        )
+        if resolved_gallery is None:
+            return 0
+        gallery_model, search_gallery = resolved_gallery
         logger.info(
             "[suggestions] surface: loaded %d member identities from %d clusters in %.3fs",
             _total_members,
@@ -635,7 +741,9 @@ class SuggestionRefreshService:
                     duplicate_identity_skips += 1
                     continue
                 seen_identity_ids.add(identity_id)
-                match = self._search.find_best_match(identity.face_vector, representatives_by_cluster)
+                if not models_are_same_space(identity.embedding_model, gallery_model):
+                    continue
+                match = self._search.find_best_match(identity.face_vector, search_gallery)
                 if match is None:
                     continue
                 best_similarity = match.similarity

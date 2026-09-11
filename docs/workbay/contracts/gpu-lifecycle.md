@@ -59,6 +59,21 @@ Lifecycle semantics:
 | `start` (unexpired) | START allowed with no work; honoured at most once per nonce (RES-01) | idle reap suppressed; **lease cap still stops** (RES-10); boot-failure fallback unchanged |
 | `stop` (unexpired) | START suppressed even with work | STOP when `has_work` is false; when work is in flight publish `intent_status = blocked_work_in_flight` and re-evaluate next cycle |
 
+**Stop with arriving work (COST-10, GPUOPS-1-CANON-07).** A live `stop`
+intent suppresses START even when `has_work` becomes true after the intent was
+published, so queued describe items can sit undescribed for the whole intent
+TTL (up to 7200 s) while the CPU tier is idle. C5's "STOP disabled while
+`has_work`" guard only protects work that is already in flight. Required
+behaviour: when a cycle observes `intent = stop` and `has_work` is true and no
+GPU instance is running, the controller publishes
+`intent_status = stopped_with_work` and emits
+`{action: FALLBACK, profile: florence_small, reason: operator_stop_with_work}`
+so the describe service can route the queue to the CPU floor instead of
+stalling. `operator_stop_with_work` is added to the FALLBACK `reason` set
+below. As of this revision the controller does not emit it; the implementation
+is tracked on the GPU-LIFECYCLE-CODE lane of ISSUEDAG-1, and until it lands a
+deliberate operator stop is a stall path, not a degrade path.
+
 Malformed intent is logged at WARNING with the parse error and treated as
 `auto` (AGT-10, CAL-02). A valid intent whose `expires_at` is more than 7200
 seconds after `requested_at` is clamped to 7200 seconds. The service normally
@@ -238,7 +253,9 @@ back closed: no STOP.
 
 When a started instance does not become ready within the bounded wait, the
 controller emits `{action: FALLBACK, profile: florence_small, instance_id,
-reason}` with `reason` ∈ `{readiness_timeout, readiness_stall, start_failed}`. The decision
+reason}` with `reason` ∈ `{readiness_timeout, readiness_stall, start_failed,
+operator_stop_with_work}` (the last is contract-required, not yet emitted; see
+"Stop with arriving work" above). The decision
 is logged only; no consumer is wired. Profile name is the given CPU floor
 (`florence_small`), not imported from `scene.config.profiles`.
 

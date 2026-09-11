@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -9,6 +12,19 @@ import {
   statusPresentation,
   initializeDemo,
 } from '../demo-describe.js';
+
+const radioFixtureDir = join(dirname(fileURLToPath(import.meta.url)), 'fixtures/public-demo-radio');
+const ACTUAL_SHORTCODE_TWO_INSTANCES = readFileSync(join(radioFixtureDir, 'two-instances.html'), 'utf8');
+const RADIO_SOURCE_ANCHORS = JSON.parse(
+  readFileSync(join(radioFixtureDir, 'source-anchors.json'), 'utf8'),
+) as {
+  expected_names: string[];
+  forbidden_simplified_name: string;
+  source_anchors: {
+    php_group_name: { literal: string };
+    js_formdata_lookup: { literal: string };
+  };
+};
 
 const running = (overrides: Record<string, unknown> = {}) => ({
   run_id: 'run-1',
@@ -23,6 +39,15 @@ const response = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 
 describe('public demo describe polling', () => {
+  it('carries the submit capability on status polls so completion can be replayed', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(response(running({
+      status: 'completed', phase: 'complete', description: 'A lakeside path.',
+    })));
+    await pollRun({ statusUrl: '/status/run-1', nonce: 'nonce', idempotencyKey: 'resume-key-1234', fetchImpl });
+    const options = fetchImpl.mock.calls[0]?.[1];
+    expect(new Headers(options?.headers).get('Idempotency-Key')).toBe('resume-key-1234');
+  });
+
   it('backs off exponentially and stops polling on a terminal response', async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
@@ -234,6 +259,8 @@ describe('public demo describe polling', () => {
 
   it('clamps a large server deadline to the browser contract ceiling', async () => {
     vi.useFakeTimers();
+    // Simplified name="acx-demo-media" harness for deadline/polling only.
+    // GPU-LAUNCH-PUBLIC-RADIO-01 coverage uses fixtures/public-demo-radio/.
     document.body.innerHTML = `
       <div data-acx-demo data-submit-url="/submit" data-nonce="nonce">
         <form class="acx-demo__form">
@@ -272,6 +299,7 @@ describe('public demo describe polling', () => {
   });
 
   it('reuses a trigger key for a retry and mints a new key after completion', async () => {
+    // Simplified name="acx-demo-media" harness for retry-key behaviour only.
     document.body.innerHTML = `
       <div data-acx-demo data-submit-url="/submit" data-nonce="nonce">
         <form class="acx-demo__form">
@@ -342,6 +370,7 @@ describe('public demo describe polling', () => {
 
   it('re-enables form controls after a polling timeout', async () => {
     vi.useFakeTimers();
+    // Simplified name="acx-demo-media" harness for control re-enable only.
     document.body.innerHTML = `
       <div data-acx-demo data-submit-url="/submit" data-nonce="nonce">
         <form class="acx-demo__form">
@@ -380,6 +409,505 @@ describe('public demo describe polling', () => {
     } finally {
       vi.unstubAllGlobals();
       vi.useRealTimers();
+      document.body.innerHTML = '';
+    }
+  });
+});
+
+describe('public demo description_tier envelope contract', () => {
+  const completedDescription = (overrides: Record<string, unknown> = {}) =>
+    running({
+      status: 'completed',
+      phase: 'complete',
+      progress: { done: 1, total: 1 },
+      description: 'A lakeside path.',
+      ...overrides,
+    });
+
+  it.each([
+    ['provisional_cpu', 'provisional_cpu'],
+    ['final_gpu', 'final_gpu'],
+    [null, null],
+  ] as const)(
+    'keeps description_tier %s on a completed description even when gpu_state is ready',
+    (tier, expected) => {
+      const parsed = parsePublicDemoEnvelope(
+        completedDescription({ gpu_state: 'ready', description_tier: tier }),
+      );
+
+      expect(parsed.description).toBe('A lakeside path.');
+      expect(parsed.gpu_state).toBe('ready');
+      expect(Object.prototype.hasOwnProperty.call(parsed, 'description_tier')).toBe(true);
+      expect(parsed.description_tier).toBe(expected);
+    },
+  );
+
+  it('treats a legacy completed description without description_tier as explicit null', () => {
+    const payload = completedDescription({ gpu_state: 'ready' });
+    expect(Object.prototype.hasOwnProperty.call(payload, 'description_tier')).toBe(false);
+
+    const parsed = parsePublicDemoEnvelope(payload);
+
+    expect(parsed.description).toBe('A lakeside path.');
+    expect(parsed.gpu_state).toBe('ready');
+    expect(Object.prototype.hasOwnProperty.call(parsed, 'description_tier')).toBe(true);
+    expect(parsed.description_tier).toBeNull();
+  });
+
+  it.each<[string, unknown]>([
+    ['unknown string', 'unknown'],
+    ['number', 1],
+    ['array', ['final_gpu']],
+  ])('rejects an explicit unknown description_tier with INVALID_RESPONSE (%s)', (_label, tier) => {
+    expect(() => parsePublicDemoEnvelope(completedDescription({ description_tier: tier }))).toThrow(
+      PublicDemoClientError,
+    );
+    try {
+      parsePublicDemoEnvelope(completedDescription({ description_tier: tier }));
+      expect.unreachable('invalid description_tier must not parse');
+    } catch (error) {
+      expect(error).toMatchObject({ code: 'acx_public_demo_invalid_response' });
+    }
+  });
+
+  it.each([
+    running({ description_tier: 'final_gpu' }),
+    running({
+      status: 'failed',
+      phase: 'failed',
+      error: { code: 'acx_public_demo_pipeline_failed', message: 'The image could not be described.' },
+      description_tier: 'provisional_cpu',
+    }),
+    running({
+      status: 'completed',
+      phase: 'complete',
+      progress: { done: 1, total: 1 },
+      description_tier: 'final_gpu',
+    }),
+  ])('does not produce description_tier on noncompleted, error, or no-description payloads', (payload) => {
+    const parsed = parsePublicDemoEnvelope(payload);
+    expect(Object.prototype.hasOwnProperty.call(parsed, 'description_tier')).toBe(false);
+  });
+
+  it('returns the parsed description_tier from pollRun on a completed description', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      response(
+        completedDescription({
+          gpu_state: 'ready',
+          description_tier: 'final_gpu',
+        }),
+      ),
+    );
+
+    const result = await pollRun({ statusUrl: '/status/run-1', nonce: 'nonce', fetchImpl });
+
+    expect(result.status).toBe('completed');
+    expect(result.description).toBe('A lakeside path.');
+    expect(result.gpu_state).toBe('ready');
+    expect(result.description_tier).toBe('final_gpu');
+  });
+});
+
+describe('public demo visible description_tier labels', () => {
+  const DESCRIPTION = 'A lakeside path.';
+  const LABEL = {
+    final_gpu: 'GPU description complete.',
+    provisional_cpu: 'CPU fallback draft (not GPU final).',
+    unknown: 'Description complete, processing tier unavailable.',
+  } as const;
+
+  const completedDescription = (overrides: Record<string, unknown> = {}): Record<string, unknown> =>
+    running({
+      status: 'completed',
+      phase: 'complete',
+      progress: { done: 1, total: 1 },
+      description: DESCRIPTION,
+      ...overrides,
+    });
+
+  const settle = async (predicate: () => boolean): Promise<void> => {
+    for (let tick = 0; tick < 200; tick += 1) {
+      if (predicate()) return;
+      await Promise.resolve();
+      await new Promise((resolve) => { setTimeout(resolve, 0); });
+    }
+    throw new Error('timed out waiting for the demo client to settle');
+  };
+
+  it.each([
+    ['final_gpu', 'stopped', LABEL.final_gpu],
+    ['provisional_cpu', 'ready', LABEL.provisional_cpu],
+    [null, 'ready', LABEL.unknown],
+  ] as const)(
+    'statusPresentation labels parsed description_tier %s even when gpu_state is %s',
+    (tier, gpuState, expected) => {
+      const parsed = parsePublicDemoEnvelope(
+        completedDescription({ gpu_state: gpuState, description_tier: tier }),
+      );
+      const presentation = statusPresentation(parsed);
+
+      expect(parsed.description).toBe(DESCRIPTION);
+      expect(presentation.state).toBe('completed');
+      expect(presentation.message).toBe(expected);
+      expect(presentation.message).not.toBe(DESCRIPTION);
+    },
+  );
+
+  it('statusPresentation labels a legacy completed description without description_tier as unknown', () => {
+    const payload = completedDescription({ gpu_state: 'ready' });
+    expect(Object.prototype.hasOwnProperty.call(payload, 'description_tier')).toBe(false);
+    const presentation = statusPresentation(parsePublicDemoEnvelope(payload));
+
+    expect(presentation.state).toBe('completed');
+    expect(presentation.message).toBe(LABEL.unknown);
+  });
+
+  it('statusPresentation does not apply a GPU-final success label to a failed envelope', () => {
+    const presentation = statusPresentation(
+      parsePublicDemoEnvelope(
+        running({
+          status: 'failed',
+          phase: 'failed',
+          error: { code: 'acx_public_demo_pipeline_failed', message: 'The image could not be described.' },
+        }),
+      ),
+    );
+
+    expect(presentation.state).toBe('failed');
+    expect(presentation.message).toBe('The image could not be described.');
+    expect(presentation.message).not.toBe(LABEL.final_gpu);
+  });
+
+  it.each([
+    ['final_gpu', 'stopped', LABEL.final_gpu],
+    ['provisional_cpu', 'ready', LABEL.provisional_cpu],
+    [null, 'ready', LABEL.unknown],
+  ] as const)(
+    'initializeDemo completed DOM shows %s label after submit+poll (gpu_state %s)',
+    async (tier, gpuState, expected) => {
+      document.body.innerHTML = ACTUAL_SHORTCODE_TWO_INSTANCES;
+      const root = document.querySelectorAll<HTMLElement>('[data-acx-demo]')[0];
+      const form = root.querySelector<HTMLFormElement>('form.acx-demo__form');
+      const lake = document.querySelector<HTMLInputElement>('#acx-demo-media-1-41');
+      const result = root.querySelector<HTMLElement>('[data-acx-demo-result]');
+      const message = root.querySelector<HTMLElement>('[data-acx-demo-message]');
+      expect(root).toBeInstanceOf(HTMLElement);
+      expect(form).toBeInstanceOf(HTMLFormElement);
+      expect(lake).toBeInstanceOf(HTMLInputElement);
+      lake!.checked = true;
+
+      const fetchImpl = vi.fn<typeof fetch>()
+        .mockResolvedValueOnce(
+          response(
+            running({
+              status: 'pending',
+              phase: 'queued',
+              deadline_seconds: 120,
+              run_id: 'run-visible-1',
+            }),
+          ),
+        )
+        .mockResolvedValueOnce(
+          response(
+            completedDescription({
+              run_id: 'run-visible-1',
+              gpu_state: gpuState,
+              description_tier: tier,
+            }),
+          ),
+        );
+      vi.stubGlobal('fetch', fetchImpl);
+
+      try {
+        initializeDemo(root);
+        form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+        await settle(() => form?.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled === false);
+
+        expect(root.dataset.state).toBe('completed');
+        expect(message?.textContent).toBe(expected);
+        expect(message?.textContent).not.toBe(DESCRIPTION);
+        expect(result?.hidden).toBe(false);
+        expect(result?.textContent).toBe(DESCRIPTION);
+        expect(document.activeElement).toBe(result);
+        expect(Array.from(form?.elements ?? []).every((control) => !(control as HTMLInputElement).disabled)).toBe(true);
+      } finally {
+        vi.unstubAllGlobals();
+        document.body.innerHTML = '';
+      }
+    },
+  );
+
+  it('initializeDemo completed DOM labels a legacy missing description_tier as unknown', async () => {
+    document.body.innerHTML = ACTUAL_SHORTCODE_TWO_INSTANCES;
+    const root = document.querySelectorAll<HTMLElement>('[data-acx-demo]')[0];
+    const form = root.querySelector<HTMLFormElement>('form.acx-demo__form');
+    const lake = document.querySelector<HTMLInputElement>('#acx-demo-media-1-41');
+    const result = root.querySelector<HTMLElement>('[data-acx-demo-result]');
+    const message = root.querySelector<HTMLElement>('[data-acx-demo-message]');
+    lake!.checked = true;
+
+    const completed = completedDescription({ run_id: 'run-visible-legacy', gpu_state: 'ready' });
+    expect(Object.prototype.hasOwnProperty.call(completed, 'description_tier')).toBe(false);
+
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        response(running({ status: 'pending', phase: 'queued', deadline_seconds: 120, run_id: 'run-visible-legacy' })),
+      )
+      .mockResolvedValueOnce(response(completed));
+    vi.stubGlobal('fetch', fetchImpl);
+
+    try {
+      initializeDemo(root);
+      form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await settle(() => form?.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled === false);
+
+      expect(root.dataset.state).toBe('completed');
+      expect(message?.textContent).toBe(LABEL.unknown);
+      expect(result?.hidden).toBe(false);
+      expect(result?.textContent).toBe(DESCRIPTION);
+      expect(document.activeElement).toBe(result);
+    } finally {
+      vi.unstubAllGlobals();
+      document.body.innerHTML = '';
+    }
+  });
+
+  it('initializeDemo failed poll does not show a GPU-final success label', async () => {
+    document.body.innerHTML = ACTUAL_SHORTCODE_TWO_INSTANCES;
+    const root = document.querySelectorAll<HTMLElement>('[data-acx-demo]')[0];
+    const form = root.querySelector<HTMLFormElement>('form.acx-demo__form');
+    const lake = document.querySelector<HTMLInputElement>('#acx-demo-media-1-41');
+    const result = root.querySelector<HTMLElement>('[data-acx-demo-result]');
+    const message = root.querySelector<HTMLElement>('[data-acx-demo-message]');
+    lake!.checked = true;
+
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        response(running({ status: 'pending', phase: 'queued', deadline_seconds: 120, run_id: 'run-visible-fail' })),
+      )
+      .mockResolvedValueOnce(
+        response(
+          running({
+            run_id: 'run-visible-fail',
+            status: 'failed',
+            phase: 'failed',
+            error: { code: 'acx_public_demo_pipeline_failed', message: 'The image could not be described.' },
+          }),
+        ),
+      );
+    vi.stubGlobal('fetch', fetchImpl);
+
+    try {
+      initializeDemo(root);
+      form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await settle(() => form?.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled === false);
+
+      expect(root.dataset.state).toBe('failed');
+      expect(message?.textContent).toBe('The image could not be described.');
+      expect(message?.textContent).not.toBe(LABEL.final_gpu);
+      expect(result?.hidden).toBe(true);
+      expect(result?.textContent).toBe('');
+    } finally {
+      vi.unstubAllGlobals();
+      document.body.innerHTML = '';
+    }
+  });
+});
+
+describe('public demo radio contract from actual PHP shortcode markup', () => {
+  const chooseImageMessage = 'Choose an image before requesting a description.';
+  const postBodies = (fetchImpl: ReturnType<typeof vi.fn<typeof fetch>>): Array<{ media_id: number }> =>
+    fetchImpl.mock.calls
+      .filter((call) => (call[1] as RequestInit | undefined)?.method === 'POST')
+      .map((call) => JSON.parse(String((call[1] as RequestInit).body)) as { media_id: number });
+
+  const settle = async (predicate: () => boolean): Promise<void> => {
+    for (let tick = 0; tick < 200; tick += 1) {
+      if (predicate()) return;
+      await Promise.resolve();
+      await new Promise((resolve) => { setTimeout(resolve, 0); });
+    }
+    throw new Error('timed out waiting for the demo client to settle');
+  };
+
+  const messageOf = (root: HTMLElement | undefined): string =>
+    root?.querySelector('[data-acx-demo-message]')?.textContent ?? '';
+
+  it('loads instance-scoped group names from the PHP-rendered fixture, not the simplified harness', () => {
+    expect(RADIO_SOURCE_ANCHORS.expected_names).toEqual(['acx-demo-media-1', 'acx-demo-media-2']);
+    expect(RADIO_SOURCE_ANCHORS.forbidden_simplified_name).toBe('acx-demo-media');
+    expect(RADIO_SOURCE_ANCHORS.source_anchors.php_group_name.literal).toContain("acx-demo-media-' . $instance");
+    expect(RADIO_SOURCE_ANCHORS.source_anchors.js_formdata_lookup.literal).toContain("FormData(form).get('acx-demo-media')");
+    expect(ACTUAL_SHORTCODE_TWO_INSTANCES).toContain('name="acx-demo-media-1"');
+    expect(ACTUAL_SHORTCODE_TWO_INSTANCES).toContain('name="acx-demo-media-2"');
+    expect(ACTUAL_SHORTCODE_TWO_INSTANCES.includes('name="acx-demo-media"')).toBe(false);
+
+    document.body.innerHTML = ACTUAL_SHORTCODE_TWO_INSTANCES;
+    try {
+      const names = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="radio"]')).map((input) => input.name);
+      expect(names).toEqual(['acx-demo-media-1', 'acx-demo-media-1', 'acx-demo-media-2', 'acx-demo-media-2']);
+      expect(document.querySelector('input[name="acx-demo-media"]')).toBeNull();
+    } finally {
+      document.body.innerHTML = '';
+    }
+  });
+
+  it('posts each form\'s selected media_id and does not leak the other instance\'s choice', async () => {
+    document.body.innerHTML = ACTUAL_SHORTCODE_TWO_INSTANCES;
+    const roots = Array.from(document.querySelectorAll<HTMLElement>('[data-acx-demo]'));
+    const forms = roots.map((root) => root.querySelector<HTMLFormElement>('form.acx-demo__form'));
+    const firstLake = document.querySelector<HTMLInputElement>('#acx-demo-media-1-41');
+    const secondPath = document.querySelector<HTMLInputElement>('#acx-demo-media-2-42');
+    expect(firstLake).toBeInstanceOf(HTMLInputElement);
+    expect(secondPath).toBeInstanceOf(HTMLInputElement);
+    firstLake!.checked = true;
+    secondPath!.checked = true;
+
+    const fetchImpl = vi.fn<typeof fetch>().mockRejectedValue(new Error('capture POST only'));
+    vi.stubGlobal('fetch', fetchImpl);
+
+    try {
+      roots.forEach((root) => initializeDemo(root));
+
+      forms[0]?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await settle(() => postBodies(fetchImpl).length >= 1 || messageOf(roots[0]) === chooseImageMessage);
+      expect(
+        postBodies(fetchImpl).map((body) => body.media_id),
+        'selected acx-demo-media-1 value 41 must POST media_id 41',
+      ).toEqual([41]);
+
+      await settle(() => forms[0]?.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled === false);
+      forms[1]?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await settle(() => postBodies(fetchImpl).length >= 2 || messageOf(roots[1]) === chooseImageMessage);
+      expect(
+        postBodies(fetchImpl).map((body) => body.media_id),
+        'selected acx-demo-media-2 value 42 must POST 42 without the other form\'s 41',
+      ).toEqual([41, 42]);
+    } finally {
+      vi.unstubAllGlobals();
+      document.body.innerHTML = '';
+    }
+  });
+
+  it('does not POST when the submitting instance has no radio selected', async () => {
+    document.body.innerHTML = ACTUAL_SHORTCODE_TWO_INSTANCES;
+    const roots = Array.from(document.querySelectorAll<HTMLElement>('[data-acx-demo]'));
+    const firstForm = roots[0]?.querySelector<HTMLFormElement>('form.acx-demo__form');
+    const secondPath = document.querySelector<HTMLInputElement>('#acx-demo-media-2-42');
+    expect(secondPath).toBeInstanceOf(HTMLInputElement);
+    secondPath!.checked = true;
+
+    const fetchImpl = vi.fn<typeof fetch>();
+    vi.stubGlobal('fetch', fetchImpl);
+
+    try {
+      roots.forEach((root) => initializeDemo(root));
+      firstForm?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await settle(() => messageOf(roots[0]) === chooseImageMessage);
+      expect(fetchImpl, 'empty acx-demo-media-1 selection must not POST').not.toHaveBeenCalled();
+      expect(messageOf(roots[0])).toBe(chooseImageMessage);
+    } finally {
+      vi.unstubAllGlobals();
+      document.body.innerHTML = '';
+    }
+  });
+});
+
+describe('public demo illustrative outcome preview', () => {
+  const ILLUSTRATIVE_LABEL = 'Illustrative example — not a live result';
+  const ILLUSTRATIVE_DISCLAIMER =
+    'This example is not a description of your selected image. Your live result may differ.';
+  const ILLUSTRATIVE_EXAMPLE = 'Alex stands beside a bicycle outside a cafe.';
+  const LIVE_DESCRIPTION = 'A lakeside path.';
+
+  const settle = async (predicate: () => boolean): Promise<void> => {
+    for (let tick = 0; tick < 200; tick += 1) {
+      if (predicate()) return;
+      await Promise.resolve();
+      await new Promise((resolve) => { setTimeout(resolve, 0); });
+    }
+    throw new Error('timed out waiting for the demo client to settle');
+  };
+
+  it('shows a static illustrative preview before submit in the PHP-rendered fixture', () => {
+    document.body.innerHTML = ACTUAL_SHORTCODE_TWO_INSTANCES;
+    try {
+      const roots = Array.from(document.querySelectorAll<HTMLElement>('[data-acx-demo]'));
+      expect(roots).toHaveLength(2);
+      for (const root of roots) {
+        const preview = root.querySelector<HTMLElement>('[data-acx-demo-preview]');
+        const submit = root.querySelector<HTMLElement>('.acx-demo__submit');
+        const result = root.querySelector<HTMLElement>('[data-acx-demo-result]');
+        expect(preview, 'INT-07 outcome sample must exist beside input radios').toBeInstanceOf(HTMLElement);
+        expect(preview?.textContent).toContain(ILLUSTRATIVE_LABEL);
+        expect(preview?.textContent).toContain(ILLUSTRATIVE_DISCLAIMER);
+        expect(preview?.textContent).toContain(ILLUSTRATIVE_EXAMPLE);
+        expect(preview?.getAttribute('role')).not.toBe('status');
+        expect(preview?.getAttribute('aria-live')).toBeNull();
+        expect(submit).toBeInstanceOf(HTMLElement);
+        expect(
+          preview!.compareDocumentPosition(submit!) & Node.DOCUMENT_POSITION_FOLLOWING,
+          'illustrative preview must precede expensive submit',
+        ).toBeTruthy();
+        expect(result?.hidden).toBe(true);
+        expect(result?.textContent).toBe('');
+        expect(result?.contains(preview)).toBe(false);
+      }
+    } finally {
+      document.body.innerHTML = '';
+    }
+  });
+
+  it('initializeDemo and image selection do not POST; explicit submit still fills the live result', async () => {
+    document.body.innerHTML = ACTUAL_SHORTCODE_TWO_INSTANCES;
+    const root = document.querySelectorAll<HTMLElement>('[data-acx-demo]')[0];
+    const form = root.querySelector<HTMLFormElement>('form.acx-demo__form');
+    const lake = document.querySelector<HTMLInputElement>('#acx-demo-media-1-41');
+    const result = root.querySelector<HTMLElement>('[data-acx-demo-result]');
+    lake!.checked = true;
+
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        response(running({ status: 'pending', phase: 'queued', deadline_seconds: 120, run_id: 'run-preview-1' })),
+      )
+      .mockResolvedValueOnce(
+        response(
+          running({
+            run_id: 'run-preview-1',
+            status: 'completed',
+            phase: 'complete',
+            progress: { done: 1, total: 1 },
+            description: LIVE_DESCRIPTION,
+            description_tier: 'final_gpu',
+            gpu_state: 'ready',
+          }),
+        ),
+      );
+    vi.stubGlobal('fetch', fetchImpl);
+
+    try {
+      initializeDemo(root);
+      expect(fetchImpl, 'initializeDemo must not POST').not.toHaveBeenCalled();
+      lake?.dispatchEvent(new Event('change', { bubbles: true }));
+      lake?.dispatchEvent(new Event('input', { bubbles: true }));
+      expect(fetchImpl, 'selecting an image must not POST').not.toHaveBeenCalled();
+      expect(result?.hidden).toBe(true);
+      expect(result?.textContent).toBe('');
+
+      form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await settle(() => form?.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled === false);
+
+      expect(fetchImpl.mock.calls.some((call) => (call[1] as RequestInit | undefined)?.method === 'POST')).toBe(true);
+      expect(result?.hidden).toBe(false);
+      expect(result?.textContent).toBe(LIVE_DESCRIPTION);
+      expect(result?.textContent).not.toBe(ILLUSTRATIVE_EXAMPLE);
+      expect(root.querySelector('[data-acx-demo-message]')?.textContent).toBe('GPU description complete.');
+      const preview = root.querySelector<HTMLElement>('[data-acx-demo-preview]');
+      expect(preview, 'illustrative preview must remain after the live result lands').toBeInstanceOf(HTMLElement);
+      expect(preview?.textContent).toContain(ILLUSTRATIVE_EXAMPLE);
+      expect(preview?.textContent).not.toContain(LIVE_DESCRIPTION);
+    } finally {
+      vi.unstubAllGlobals();
       document.body.innerHTML = '';
     }
   });

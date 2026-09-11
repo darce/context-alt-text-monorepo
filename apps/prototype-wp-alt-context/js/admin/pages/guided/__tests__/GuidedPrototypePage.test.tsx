@@ -2,16 +2,16 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
-import { guidedCopy } from '../../../guidedPrototype/copy';
+import { guidedCopy } from '../../../guidedPrototype/publicGuideCopy';
 import { createGuidedScenario } from '../../../guidedPrototype/state';
 import { GuidedPrototypePage } from '../GuidedPrototypePage';
 
-const SEED_ALT_TEXT = 'Two people at a film festival.';
+const SEED_ALT_TEXT = 'A man in a black suit and a woman in a white dress pose together, smiling, in front of a Tribeca Festival step-and-repeat backdrop.';
 const SCENARIO = createGuidedScenario();
-const JUSTIN_DRAFT = SCENARIO.samples['justin-trudeau'];
-const BOTH_NAMES_DRAFT = SCENARIO.samples.both;
-const NONE_DRAFT = SCENARIO.samples.none;
-const KATY_DRAFT = SCENARIO.samples['katy-perry'];
+const JUSTIN_DRAFT = SCENARIO.samples.tribeca['justin-trudeau'];
+const BOTH_NAMES_DRAFT = SCENARIO.samples.tribeca.both;
+const NONE_DRAFT = SCENARIO.samples.tribeca.none;
+const KATY_DRAFT = SCENARIO.samples.tribeca['katy-perry'];
 
 const choose = (position: 'left' | 'right', option: 'include' | 'omit'): void => {
   const fieldset = screen.getByTestId(`name-choice-${position}`);
@@ -61,10 +61,34 @@ describe('GuidedPrototypePage shell', () => {
 
     expect(screen.queryByText(/How two faces become two names/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Matched to Justin Trudeau/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Coachella/)).not.toBeInTheDocument();
+    expect(screen.getAllByText(/Coachella/).length).toBeGreaterThan(0);
     expect(screen.queryByText(/real GPU/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Match strength/)).not.toBeInTheDocument();
     expect(screen.getByText(guidedCopy('history.empty'))).toBeInTheDocument();
+  });
+
+  it('renders both cached press photos, all four face crops, and their honest provenance', () => {
+    render(<GuidedPrototypePage />);
+
+    expect(screen.getByTestId('guided-photo-tribeca')).toBeInTheDocument();
+    expect(screen.getByTestId('guided-photo-coachella')).toBeInTheDocument();
+    expect(screen.getAllByRole('img', { name: /^Detected (left|right) face in / })).toHaveLength(4);
+    expect(screen.getAllByRole('radio')).toHaveLength(4);
+    expect(screen.getByText(/89\.4%/)).toBeInTheDocument();
+    expect(screen.getByText(/100\.0% \(cluster anchor, strong\)/)).toBeInTheDocument();
+    expect(screen.getByText(/70\.2%/)).toBeInTheDocument();
+    expect(screen.getByText(/56\.7% \(weak\)/)).toBeInTheDocument();
+    expect(screen.getByText(/below the displayed 60\.0% threshold/i)).toBeInTheDocument();
+    expect(screen.getByText(/production clusterer grouped it anyway/i)).toBeInTheDocument();
+    expect(screen.getAllByRole('link', { name: /AltText\.ai/ })).not.toHaveLength(0);
+    expect(screen.getAllByRole('link', { name: /altcontext\.com/ })).not.toHaveLength(0);
+    const coachellaCredits = screen.getAllByRole('link', {
+      name: /https:\/\/www\.instagram\.com\/katyperry\//,
+    });
+    expect(coachellaCredits).not.toHaveLength(0);
+    coachellaCredits.forEach((credit) => {
+      expect(credit).toHaveAttribute('href', 'https://www.instagram.com/katyperry/');
+    });
   });
 
   it('keeps the guided-prototype hash when moving between steps', async () => {
@@ -332,7 +356,7 @@ describe('GuidedPrototypePage journey', () => {
     const summaries = screen.getAllByText(/Compare the (left|right) face and reference photos/);
     await user.click(summaries[0]);
     await user.click(summaries[1]);
-    expect(screen.getByText(guidedCopy('names.coverage_all', { total: 2 }))).toBeInTheDocument();
+    expect(screen.getByText(guidedCopy('names.coverage_all', { total: 3 }))).toBeInTheDocument();
     expect(screen.getByText(guidedCopy('names.coverage_partial', { shown: 3, total: 5 }))).toBeInTheDocument();
     expect(screen.queryByText(/Show all 5/)).not.toBeInTheDocument();
     expect(screen.getAllByText('© European Union, 2025, EU reuse licence, resized').length).toBeGreaterThan(0);

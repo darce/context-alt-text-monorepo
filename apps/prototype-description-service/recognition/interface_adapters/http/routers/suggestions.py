@@ -4,16 +4,12 @@ Suggestion management routes.
 
 from __future__ import annotations
 
-import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from typing import TypeVar
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import Field
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import MediaIdentity as MediaIdentityModel
 from recognition.application.orchestration import ClusterService
 from recognition.application.suggestions.roster_candidates import (
     DEFAULT_ROSTER_CANDIDATES_TOP_K,
@@ -22,7 +18,13 @@ from recognition.application.suggestions.roster_candidates import (
 )
 from recognition.application.suggestions.service import SuggestionService
 from recognition.config.security import get_security_settings
-from recognition.domain.cluster import IdentityCluster, ReservedClusterLabelError, is_reserved_label_shape
+from recognition.domain.cluster import (
+    CrossSpaceMergeError,
+    IdentityCluster,
+    ReservedClusterLabelError,
+    is_reserved_label_shape,
+)
+from recognition.domain.repositories import ClusterRepository
 from recognition.domain.suggestion import (
     AssignmentSuggestion,
     BulkAcceptResult,
@@ -62,7 +64,6 @@ from recognition.interface_adapters.http.schemas.responses import (
     SuggestionResponse,
 )
 from recognition.interface_adapters.http.validation import validate_entity_id, validate_paging, validate_top_k
-from recognition.shared.tenant import coerce_tenant_uuid
 
 
 class AcceptMergeSuggestionRequest(SuggestionActionRequest):
@@ -335,12 +336,15 @@ async def accept_suggestion(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Suggestion not found")
 
     cluster_service = await cluster_service_builder(request.tenant_id)
-    assigned = await cluster_service.assign_outlier_to_cluster(
-        identity_id=suggestion.identity_id,
-        target_cluster_id=suggestion.cluster_id,
-        tenant_id=request.tenant_id,
-        similarity=suggestion.representative_similarity,
-    )
+    try:
+        assigned = await cluster_service.assign_outlier_to_cluster(
+            identity_id=suggestion.identity_id,
+            target_cluster_id=suggestion.cluster_id,
+            tenant_id=request.tenant_id,
+            similarity=suggestion.representative_similarity,
+        )
+    except CrossSpaceMergeError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     if assigned is None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Suggestion assignment failed")
 
@@ -530,19 +534,24 @@ async def accept_merge_suggestion(
         requested_target_cluster_id=request.target_cluster_id,
         survivor_cluster_id=getattr(suggestion, "survivor_cluster_id", None),
     )
-    merged = await cluster_service.merge_cluster(
-        source_cluster_id,
-        request.tenant_id,
-        target_cluster_id,
-        target_label=target_label,
-        moved_by_merge_id=str(suggestion.id),
-    )
+    try:
+        merged = await cluster_service.merge_cluster(
+            source_cluster_id,
+            request.tenant_id,
+            target_cluster_id,
+            target_label=target_label,
+            moved_by_merge_id=str(suggestion.id),
+        )
+    except CrossSpaceMergeError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     if merged is None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Merge failed")
 
     # Read the moved set back from the same uncommitted transaction, before the
     # single commit, so it is the rows the merge stamped rather than a guess.
-    moved_identity_ids = await _load_moved_identity_ids(session, request.tenant_id, str(suggestion.id))
+    moved_identity_ids = await cluster_repo.list_identity_ids_moved_by_merge(
+        request.tenant_id, str(suggestion.id)
+    )
 
     await repo.delete_by_cluster(request.tenant_id, source_cluster_id)
     await repo.delete_by_cluster(request.tenant_id, target_cluster_id)
@@ -750,12 +759,16 @@ async def _bulk_accept_assignments(
         if suggestion is None:
             skipped += 1
             continue
-        assigned = await cluster_service.assign_outlier_to_cluster(
-            identity_id=candidate.identity_id,
-            target_cluster_id=candidate.cluster_id,
-            tenant_id=tenant_id,
-            similarity=candidate.representative_similarity,
-        )
+        try:
+            assigned = await cluster_service.assign_outlier_to_cluster(
+                identity_id=candidate.identity_id,
+                target_cluster_id=candidate.cluster_id,
+                tenant_id=tenant_id,
+                similarity=candidate.representative_similarity,
+            )
+        except CrossSpaceMergeError:
+            skipped += 1
+            continue
         if assigned is None:
             skipped += 1
             continue
@@ -799,13 +812,17 @@ async def _bulk_accept_merges(
         except HTTPException:
             skipped += 1
             continue
-        merged = await cluster_service.merge_cluster(
-            source_cluster_id,
-            tenant_id,
-            target_cluster_id,
-            target_label=target_label,
-            moved_by_merge_id=str(candidate.id),
-        )
+        try:
+            merged = await cluster_service.merge_cluster(
+                source_cluster_id,
+                tenant_id,
+                target_cluster_id,
+                target_label=target_label,
+                moved_by_merge_id=str(candidate.id),
+            )
+        except CrossSpaceMergeError:
+            skipped += 1
+            continue
         if merged is None:
             skipped += 1
             continue
@@ -890,28 +907,6 @@ def _resolve_merge_pair(
     return source.id, target.id, selected_label
 
 
-async def _load_moved_identity_ids(session: AsyncSession, tenant_id: str, merge_id: str) -> list[str]:
-    """Read the identities this merge moved, from the still-open transaction.
-
-    ``cluster_merge.merge_cluster`` stamps ``media_identities.moved_by_merge_id``
-    with the merge-suggestion id on exactly the rows it reassigned, so the revert
-    set is read back rather than reconstructed from a convenience guess (rg-015).
-    """
-    try:
-        merge_uuid = uuid.UUID(str(merge_id))
-        tenant_uuid = coerce_tenant_uuid(tenant_id)
-    except ValueError:
-        return []
-
-    result = await session.execute(
-        select(MediaIdentityModel.id).where(
-            MediaIdentityModel.tenant_id == tenant_uuid,
-            MediaIdentityModel.moved_by_merge_id == merge_uuid,
-        )
-    )
-    return [str(identity_id) for identity_id in result.scalars().all()]
-
-
 def _to_accept_merge_response(
     base: MergeSuggestionResponse,
     *,
@@ -926,18 +921,15 @@ def _to_accept_merge_response(
 
 async def _resolve_accepted_merge_ids(
     suggestion: MergeSuggestion | MergeSuggestionDetails,
-    cluster_repo: object,
+    cluster_repo: ClusterRepository,
 ) -> tuple[str | None, str | None]:
     """Stamp source/target on ACCEPTED replay (E215-BR-02).
 
     Prefer existence: the missing side is retired (source), the remaining side is
     survivor (target). When both still exist, re-run ``_select_merge_target``.
     """
-    get_by_id = getattr(cluster_repo, "get_by_id", None)
-    if get_by_id is None:
-        return None, None
-    cluster_a = await get_by_id(suggestion.cluster_a_id)
-    cluster_b = await get_by_id(suggestion.cluster_b_id)
+    cluster_a = await cluster_repo.get_by_id(suggestion.cluster_a_id)
+    cluster_b = await cluster_repo.get_by_id(suggestion.cluster_b_id)
     if cluster_a and not cluster_b:
         return suggestion.cluster_b_id, suggestion.cluster_a_id
     if cluster_b and not cluster_a:

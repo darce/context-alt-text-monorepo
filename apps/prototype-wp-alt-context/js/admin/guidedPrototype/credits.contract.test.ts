@@ -37,7 +37,7 @@ const loadCreditRows = (): CreditRow[] =>
 const bundledPhotos = () => {
   const scenario = createGuidedScenario();
   return [
-    { src: scenario.pressPhoto.src, credit: scenario.pressPhoto.credit },
+    ...scenario.pressPhotos.map((photo) => ({ src: photo.src, credit: photo.credit })),
     ...scenario.people.flatMap((person) =>
       person.galleryPhotos.map((photo) => ({ src: photo.src, credit: photo.credit })),
     ),
@@ -55,12 +55,16 @@ describe('guided demo CREDITS.md contract', () => {
     }
   });
 
-  it('gives every row a Commons file-page link, an author and a modification note', () => {
+  it('gives every row a source, author and modification note', () => {
     for (const row of loadCreditRows()) {
       expect(row.subject.trim()).not.toBe('');
-      expect(row.source).toMatch(/https:\/\/commons\.wikimedia\.org\/wiki\/File:/);
+      if (row.file === 'guided-press-coachella-2026.webp') {
+        expect(row.source).toContain('https://www.instagram.com/katyperry/');
+      } else {
+        expect(row.source).toMatch(/https:\/\/commons\.wikimedia\.org\/wiki\/File:/);
+      }
       expect(row.author.trim()).not.toBe('');
-      expect(row.changes).toMatch(/resized/i);
+      expect(row.changes).toMatch(row.file === 'guided-press-coachella-2026.webp' ? /copied/i : /resized/i);
     }
   });
 
@@ -72,6 +76,12 @@ describe('guided demo CREDITS.md contract', () => {
       expect(row, `no CREDITS.md row for ${photo.src}`).toBeDefined();
 
       const licence = row!.licence;
+      if (photo.src.includes('guided-press-coachella-2026.webp')) {
+        expect(row!.source).toContain('https://www.instagram.com/katyperry/');
+        expect(photo.credit).toBe('https://www.instagram.com/katyperry/');
+        expect(licence).toMatch(/No formal reuse licence recorded/);
+        continue;
+      }
       if (licence.startsWith('EU reuse licence')) {
         // The Commons author is the European Commission; the reuse notice the plugin renders
         // credits the European Union as rights holder, per Commission Decision 2011/833/EU.

@@ -20,7 +20,8 @@ import { GuidedPrototypePage } from '../GuidedPrototypePage';
 const STUB_REJECT = new Error('GUIDEDQM-1 live stub reject');
 const NETWORK_BLOCKED = new Error('GUIDEDQM-1 network blocked');
 const LIVE_MEDIA_ID = 4211;
-const SEED_ALT_TEXT = 'Two people at a film festival.';
+const SEED_ALT_TEXT =
+  'A man in a black suit and a woman in a white dress pose together, smiling, in front of a Tribeca Festival step-and-repeat backdrop.';
 const SCENARIO = createGuidedScenario();
 
 const liveClient = vi.hoisted((): { [K in keyof GuidedLiveDescriptionClient]: Mock } => {
@@ -63,12 +64,19 @@ const assertNonEmptyString: (value: string | null | undefined, description: stri
 };
 
 const requireSample = (key: 'none' | 'both' | 'justin-trudeau' | 'katy-perry'): string => {
-  const value = SCENARIO.samples[key];
+  const value = SCENARIO.samples.tribeca[key];
   assertNonEmptyString(value, `scenario.samples[${key}]`);
   return value;
 };
 
 const controlKey = (element: HTMLElement): string => {
+  const ariaLabel = element.getAttribute('aria-label');
+  if (ariaLabel) {
+    return ariaLabel;
+  }
+  if (element instanceof HTMLInputElement && element.labels?.[0] !== undefined) {
+    return (element.labels[0].textContent ?? '').replace(/\s+/g, ' ').trim();
+  }
   if (element.id.length > 0) {
     return `#${element.id}`;
   }
@@ -116,7 +124,7 @@ const chooseRadio = async (
   position: 'left' | 'right',
   option: 'include' | 'omit',
 ): Promise<HTMLElement> => {
-  const fieldset = screen.getByTestId(`name-choice-${position}`);
+  const fieldset = screen.getByRole('group', { name: guidedCopy('names.legend', { position }) });
   const name =
     option === 'include'
       ? guidedCopy('names.include', { name: position === 'left' ? 'Justin Trudeau' : 'Katy Perry' })
@@ -183,8 +191,8 @@ describe('GuidedA11y (W04)', () => {
     const user = userEvent.setup();
     render(<GuidedPrototypePage />);
 
-    const left = screen.getByTestId('name-choice-left');
-    const right = screen.getByTestId('name-choice-right');
+    const left = screen.getByRole('group', { name: guidedCopy('names.legend', { position: 'left' }) });
+    const right = screen.getByRole('group', { name: guidedCopy('names.legend', { position: 'right' }) });
     expect(left.tagName).toBe('FIELDSET');
     expect(right.tagName).toBe('FIELDSET');
     expect(left.querySelector('legend')).toHaveTextContent(guidedCopy('names.legend', { position: 'left' }));
@@ -197,12 +205,12 @@ describe('GuidedA11y (W04)', () => {
     expect(leftRadios.every((radio) => (radio as HTMLInputElement).checked === false)).toBe(true);
     expect(rightRadios.every((radio) => (radio as HTMLInputElement).checked === false)).toBe(true);
 
-    const cards = screen.getAllByRole('article');
+    const cards = screen.getAllByRole('region', { name: /Saved suggestion:/ });
     expect(cards).toHaveLength(2);
     const leftCard = cards[0];
     const rightCard = cards[1];
-    assertHtmlElement(leftCard, 'left face article');
-    assertHtmlElement(rightCard, 'right face article');
+    assertHtmlElement(leftCard, 'left face card');
+    assertHtmlElement(rightCard, 'right face card');
     expect(within(leftCard).getByText(guidedCopy('names.pending'))).toBeInTheDocument();
     expect(within(rightCard).getByText(guidedCopy('names.pending'))).toBeInTheDocument();
 
@@ -242,11 +250,11 @@ describe('GuidedA11y (W04)', () => {
     expect(indexOfStop(stops, guidedCopy('step.context'))).toBeLessThan(indexOfStop(stops, guidedCopy('step.names')));
     expect(indexOfStop(stops, guidedCopy('step.names'))).toBeLessThan(indexOfStop(stops, guidedCopy('step.draft')));
     expect(indexOfStop(stops, guidedCopy('step.draft'))).toBeLessThan(indexOfStop(stops, guidedCopy('step.apply')));
-    expect(indexOfStop(stops, guidedCopy('step.apply'))).toBeLessThan(indexOfStop(stops, 'guided-name-left-include'));
-    expect(indexOfStop(stops, 'guided-name-left-include')).toBeLessThan(
-      indexOfStop(stops, 'guided-name-right-include'),
-    );
-    expect(indexOfStop(stops, 'guided-name-right-include')).toBeLessThan(indexOfStop(stops, guidedCopy('live.submit')));
+    const leftInclude = guidedCopy('names.include', { name: 'Justin Trudeau' });
+    const rightInclude = guidedCopy('names.include', { name: 'Katy Perry' });
+    expect(indexOfStop(stops, guidedCopy('step.apply'))).toBeLessThan(indexOfStop(stops, leftInclude));
+    expect(indexOfStop(stops, leftInclude)).toBeLessThan(indexOfStop(stops, rightInclude));
+    expect(indexOfStop(stops, rightInclude)).toBeLessThan(indexOfStop(stops, guidedCopy('live.submit')));
 
     const resetButton = screen.getByRole('button', { name: guidedCopy('page.reset') });
     await user.click(resetButton);
@@ -501,7 +509,7 @@ describe('GuidedA11y (W04)', () => {
     const leftSummary = screen.getByText(guidedCopy('names.evidence_open', { position: 'left' }));
     leftSummary.focus();
     await user.keyboard('{Enter}');
-    expect(screen.getByText(guidedCopy('names.coverage_all', { total: 2 }))).toBeInTheDocument();
+    expect(screen.getByText(guidedCopy('names.coverage_all', { total: 3 }))).toBeInTheDocument();
 
     const rightSummary = screen.getByText(guidedCopy('names.evidence_open', { position: 'right' }));
     rightSummary.focus();
@@ -515,18 +523,25 @@ describe('GuidedA11y (W04)', () => {
     render(<GuidedPrototypePage />);
 
     await user.click(screen.getByText(guidedCopy('names.evidence_open', { position: 'left' })));
-    const enlargeButtons = screen.getAllByRole('button', { name: /enlarg|larger|full.?size|expand comparison/i });
+    const enlargeButtons = screen.getAllByRole('button', { name: guidedCopy('names.enlarge') });
     expect(enlargeButtons).toHaveLength(2);
-    expect(screen.getByRole('img', { name: 'Detected left face' })).toBeInTheDocument();
-    expect(screen.getByRole('img', { name: 'Detected right face' })).toBeInTheDocument();
+    expect(screen.getAllByRole('img', { name: /Detected left face in/ })).toHaveLength(2);
+    expect(screen.getAllByRole('img', { name: /Detected right face in/ })).toHaveLength(2);
 
     const enlarge = enlargeButtons[0];
     assertHtmlElement(enlarge, 'left enlarge comparison button');
     await user.click(enlarge);
-    const comparison = screen.getByRole('dialog', { name: /enlarged comparison/i });
+    const comparison = screen.getByRole('dialog', { name: guidedCopy('names.enlarge_title') });
     expect(comparison).toHaveAttribute('aria-modal', 'true');
     await user.click(within(comparison).getByRole('button', { name: guidedCopy('names.evidence_close') }));
-    expect(screen.queryByRole('dialog', { name: /enlarged comparison/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: guidedCopy('names.enlarge_title') })).not.toBeInTheDocument();
+    expect(document.activeElement).toBe(enlarge);
+
+    enlarge.focus();
+    await user.keyboard('{Enter}');
+    expect(screen.getByRole('dialog', { name: guidedCopy('names.enlarge_title') })).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog', { name: guidedCopy('names.enlarge_title') })).not.toBeInTheDocument();
     expect(document.activeElement).toBe(enlarge);
   });
 });

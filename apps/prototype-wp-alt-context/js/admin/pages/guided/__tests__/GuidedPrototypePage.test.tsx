@@ -161,11 +161,16 @@ describe('GuidedPrototypePage shell', () => {
     expect(document.activeElement).toHaveAttribute('id', 'guided-section-understand');
   });
 
-  it('keeps the evidence image inspectable when the applied preview uses the weak alt', () => {
+  it('keeps the weak-alt evidence image separate from the applied preview', () => {
     render(<GuidedPrototypePage />);
 
     const evidence = screen.getByRole('img', { name: NONE_DRAFT ?? '' });
     expect(evidence).toHaveAttribute('src', expect.stringContaining('guided-press-tribeca-2026'));
+    choose('left', 'omit');
+    choose('right', 'omit');
+    const appliedPreview = screen.getByTestId('demo-applied-image-tribeca');
+    expect(appliedPreview).toHaveAttribute('alt', SEED_ALT_TEXT);
+    expect(appliedPreview).not.toBe(evidence);
     expect(
       within(screen.getByTestId('guided-photo-tribeca')).getByText(
         `${guidedCopy('context.current_label')}: ${SEED_ALT_TEXT}`,
@@ -256,7 +261,7 @@ describe('GuidedPrototypePage journey', () => {
     await user.click(applyButton);
 
     expect(screen.getByTestId('demo-applied-image-tribeca')).toHaveAttribute('alt', edited);
-    expect(document.querySelector('[data-applied-text]')).toHaveTextContent(edited);
+    expect(within(review).getByText(edited, { selector: '[data-applied-text]' })).toBeInTheDocument();
     expect(screen.getByTestId('demo-outcome')).toHaveTextContent(guidedCopy('outcome.applied'));
     expect(screen.getByTestId('guided-page-feedback')).toHaveTextContent(guidedCopy('apply.success'));
     expect(screen.getByTestId('guided-page-feedback-icon')).toHaveAttribute('aria-hidden', 'true');
@@ -411,16 +416,31 @@ describe('GuidedPrototypePage journey', () => {
     expect(screen.getByText(guidedCopy('notes.title'))).toBeInTheDocument();
   });
 
-  it('shows honest reference coverage inside each face comparison', async () => {
-    const user = userEvent.setup();
+  it('shows honest reference coverage inside each face comparison', () => {
     render(<GuidedPrototypePage />);
 
     const tribecaPhoto = screen.getByTestId('guided-photo-tribeca');
     const coachellaPhoto = screen.getByTestId('guided-photo-coachella');
-    await user.click(within(tribecaPhoto).getByText(guidedCopy('names.evidence_open', { position: 'left' })));
-    await user.click(within(tribecaPhoto).getByText(guidedCopy('names.evidence_open', { position: 'right' })));
-    await user.click(within(coachellaPhoto).getByText(guidedCopy('names.evidence_open', { position: 'left' })));
-    await user.click(within(coachellaPhoto).getByText(guidedCopy('names.evidence_open', { position: 'right' })));
+    expect(
+      within(tribecaPhoto)
+        .getByText(guidedCopy('names.evidence_open', { position: 'left' }))
+        .closest('details'),
+    ).toHaveAttribute('open', '');
+    expect(
+      within(tribecaPhoto)
+        .getByText(guidedCopy('names.evidence_open', { position: 'right' }))
+        .closest('details'),
+    ).toHaveAttribute('open', '');
+    expect(
+      within(coachellaPhoto)
+        .getByText(guidedCopy('names.evidence_open', { position: 'left' }))
+        .closest('details'),
+    ).toHaveAttribute('open', '');
+    expect(
+      within(coachellaPhoto)
+        .getByText(guidedCopy('names.evidence_open', { position: 'right' }))
+        .closest('details'),
+    ).toHaveAttribute('open', '');
     expect(within(tribecaPhoto).getByText(guidedCopy('names.coverage_all', { total: 3 }))).toBeInTheDocument();
     expect(
       within(tribecaPhoto).getByText(guidedCopy('names.coverage_partial', { shown: 3, total: 5 })),

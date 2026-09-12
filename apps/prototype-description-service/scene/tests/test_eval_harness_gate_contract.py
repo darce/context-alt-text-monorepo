@@ -208,3 +208,24 @@ def test_shipped_manifest_is_unratified() -> None:
     for field in _CONTRACT_FIELDS:
         if field not in {"metric", "rubric_version"}:
             assert getattr(contract, field) is None
+
+
+@pytest.mark.parametrize("tail", [("a", "b\nc"), ("a\nb", "c")])
+def test_exhaustive_subset_sha256_rejects_newline_ambiguity(tail) -> None:
+    from scripts.eval_harness import gate_contract
+
+    shared = {f"z{i:02d}" for i in range(28)}
+    declared = shared | {"a", "b\nc"}
+    replacement = shared | {"a\nb", "c"}
+    assert declared != replacement
+    assert len(declared) == len(replacement) == 30
+    assert "\n".join(sorted(declared)) == "\n".join(sorted(replacement))
+    with pytest.raises(gate_contract.GateContractError, match="must not contain LF"):
+        gate_contract.exhaustive_subset_sha256(shared | set(tail))
+
+
+def test_exhaustive_subset_sha256_preserves_signed_encoding() -> None:
+    from scripts.eval_harness import gate_contract
+
+    ids = ["z", "a", "carriage\rreturn"]
+    assert gate_contract.exhaustive_subset_sha256(ids) == hashlib.sha256(b"a\ncarriage\rreturn\nz").hexdigest()

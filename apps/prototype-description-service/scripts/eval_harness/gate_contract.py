@@ -148,10 +148,13 @@ def threshold_sha256(value: Mapping[str, object]) -> str:
 
 
 def exhaustive_subset_sha256(image_ids: Iterable[str]) -> str:
-    """Hash sorted, newline-separated exhaustive image ids, rejecting duplicates."""
+    """Hash sorted, newline-separated image ids, rejecting duplicates and embedded LF."""
     ids = list(image_ids)
     if any(not isinstance(image_id, str) for image_id in ids):
         raise GateContractError("exhaustive image ids must be strings")
+    # LF is the signed encoding's delimiter; accepting it makes subset identity ambiguous.
+    if any("\n" in image_id for image_id in ids):
+        raise GateContractError("exhaustive image ids must not contain LF")
     if len(set(ids)) != len(ids):
         raise GateContractError("exhaustive image ids must not contain duplicates")
     return hashlib.sha256("\n".join(sorted(ids)).encode("utf-8")).hexdigest()

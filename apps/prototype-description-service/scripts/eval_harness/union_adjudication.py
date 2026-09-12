@@ -17,6 +17,7 @@ import numpy as np
 
 from scripts.eval_harness.gate_contract import (
     GateContract,
+    GateContractError,
     canonical_thresholds,
     exhaustive_subset_sha256,
     threshold_sha256,
@@ -311,7 +312,11 @@ def check_conditions(
                 f"run exhaustive-subset count {len(exhaustive_image_ids)} does not match "
                 f"declared count {declared.t14_exhaustive_subset_count}"
             )
-        if exhaustive_subset_sha256(exhaustive_image_ids) != declared.t14_exhaustive_subset_sha256:
+        try:
+            subset_hash = exhaustive_subset_sha256(exhaustive_image_ids)
+        except GateContractError as exc:
+            raise UnionAdjudicationError(str(exc)) from exc
+        if subset_hash != declared.t14_exhaustive_subset_sha256:
             raise UnionAdjudicationError("run exhaustive-subset hash does not match the declared T-14 subset hash")
     elif declared.t14_exhaustive_subset_count is not None:
         raise UnionAdjudicationError("the ratified exhaustive-image subset requires exhaustive_image_ids")

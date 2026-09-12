@@ -127,12 +127,12 @@ def compute_quality_adjustment(
         }
         base_adjustment = base_adjustment * dampening.get(maturity, 1.0)
 
-    # OACT: undamped -(coeff × severity); maturity damps base band only (see notes).
+    # OACT: undamped +(coeff × severity); maturity damps base band only (see notes).
     oact_term = 0.0
     if occlusion_severity is not None:
         coeff = float(s.oact_coefficient)
         if coeff != 0.0:
             severity = max(0.0, min(1.0, float(occlusion_severity)))
-            oact_term = -(coeff * severity)
+            oact_term = +(coeff * severity)
 
     return base_adjustment + oact_term

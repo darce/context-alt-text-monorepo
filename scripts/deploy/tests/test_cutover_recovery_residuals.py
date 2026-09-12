@@ -64,6 +64,8 @@ def _prepare_marker(inflight: Path, kind: str) -> None:
             inflight.unlink()
     if kind == "file":
         inflight.write_text("status=traffic_on_next\n", encoding="utf-8")
+    elif kind == "missing_parent":
+        parent.rmdir()
     elif kind == "absent":
         return
     elif kind == "directory":
@@ -138,8 +140,9 @@ def test_regular_file_inflight_probe_is_present(tmp_path: Path) -> None:
     assert result.returncode == 0, combined
 
 
-def test_true_absent_inflight_probe_is_absent(tmp_path: Path) -> None:
-    result, logged = _run_extracted(tmp_path, kind="absent", caller="cutover_inflight_present dev")
+@pytest.mark.parametrize("kind", ["absent", "missing_parent"])
+def test_true_absent_inflight_probe_is_absent(tmp_path: Path, kind: str) -> None:
+    result, logged = _run_extracted(tmp_path, kind=kind, caller="cutover_inflight_present dev")
     combined = result.stdout + result.stderr + logged
     assert result.returncode == 1, combined
 
@@ -202,7 +205,9 @@ def test_nonregular_inflight_recover_refuses_commitment_and_new_candidate(
     assert "enabled" not in logged.splitlines(), logged + combined
 
 
-def _run_persisted_replay(tmp_path: Path) -> subprocess.CompletedProcess[str]:
+def _run_persisted_replay(
+    tmp_path: Path, *, abort_succeeds: bool = False
+) -> subprocess.CompletedProcess[str]:
     """Independent recover_persisted_cutover against durable remote marker state."""
     records = tmp_path / "caller.log"
     abort_count = tmp_path / "abort.count"
@@ -229,7 +234,7 @@ abort_cutover_candidate() {{
   n=$((n + 1))
   printf '%s\\n' "$n" >"{abort_count}"
   printf 'abort-%s\\n' "$n" >>"{records}"
-  return 1
+  return {0 if abort_succeeds else 1}
 }}
 recover_persisted_cutover dev
 '''
@@ -260,6 +265,16 @@ def test_failed_abort_keeps_durable_pending_and_retries_cleanup(tmp_path: Path) 
     assert inflight.exists(), second_combined
     committed_text = committed.read_text() if committed.is_file() else ""
     assert "status=canonical" not in committed_text, second_combined
+
+    third = _run_persisted_replay(tmp_path, abort_succeeds=True)
+    assert third.returncode == 0, third.stdout + third.stderr
+    assert not inflight.exists()
+    assert "status=canonical" in committed.read_text()
+    final_log = (tmp_path / "caller.log").read_text()
+    assert "abort-3" in final_log.splitlines()
+    fourth = _run_persisted_replay(tmp_path, abort_succeeds=True)
+    assert fourth.returncode == 0, fourth.stdout + fourth.stderr
+    assert (tmp_path / "caller.log").read_text() == final_log
 
 
 def _run_partial_rollback(tmp_path: Path, invoke: str) -> tuple[subprocess.CompletedProcess[str], str]:

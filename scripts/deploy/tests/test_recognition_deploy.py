@@ -2824,10 +2824,11 @@ remote="${@: -1}"
 printf '%s\n' "$remote" >>"${state}/ssh.log"
 if [[ "$remote" == *"cutover-inflight"* ]]; then
   if [[ -f "${state}/cutover-inflight" ]]; then
-    cat "${state}/cutover-inflight"
+    printf 'PRESENT\n'
     exit 0
   fi
-  exit 1
+  printf 'ABSENT\n'
+  exit 0
 fi
 if [[ "$remote" == *"flock"* || "$remote" == *"/locks/tag-"* ]]; then
   printf 'LOCKED\n'
@@ -3365,7 +3366,7 @@ recover_interrupted_cutover
 
 
 def test_recover_interrupted_cutover_commits_after_successful_restore(tmp_path: Path) -> None:
-    """R-09: successful signal-safe restore may drain the candidate only after commit."""
+    """R-09: successful signal-safe recovery commits only after candidate drain."""
     records = tmp_path / "recover.log"
     command = f'''
 source "{SCRIPT}"
@@ -3382,7 +3383,7 @@ recover_interrupted_cutover
     result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, check=False)
     logged = records.read_text() if records.exists() else ""
     assert result.returncode == 0, result.stdout + result.stderr
-    assert logged.splitlines() == ["committed", "aborted"]
+    assert logged.splitlines() == ["aborted", "committed"]
 
 
 def test_killed_run_flip_marker_recovers_on_next_deploy(tmp_path: Path) -> None:
@@ -3403,7 +3404,7 @@ printf 'traffic=%s\\n' "$ACX_TRAFFIC_FLIPPED" >>"{records}"
     result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, check=False)
     logged = records.read_text() if records.exists() else ""
     assert result.returncode == 0, result.stdout + result.stderr
-    assert logged.splitlines() == ["restored", "committed", "aborted", "traffic=0"]
+    assert logged.splitlines() == ["restored", "aborted", "committed", "traffic=0"]
 
 
 def test_term_after_traffic_flip_invokes_cutover_recovery(tmp_path: Path) -> None:

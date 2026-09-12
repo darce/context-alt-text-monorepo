@@ -44,7 +44,7 @@ No user-visible change until the gate flips. Pre-flip: alt text continues to use
 
 - **FNIR@FPIR**: False Negative Identification Rate at a fixed False Positive Identification Rate — the open-set headline metric (D3; terminology from NIST FRTE 1:N); measured with non-mated probes against an open-set gallery at a swept score threshold.
 - **FPI**: False-Positive-Identification count — an integer, never a rate.
-- **DIAGNOSTIC / DIRECTIONAL / REPORTABLE tiers**: evidence strength tiers a result carries depending on corpus power and exhaustiveness; a DIAGNOSTIC or DIRECTIONAL result cannot gate a decision alone. DIAGNOSTIC/DIRECTIONAL evidence may provisionally PARK a track (e.g. the adapter track, pose rescue); TERMINATING a track requires ADMISSIBLE evidence (post FIR-11 R1).
+- **DIAGNOSTIC / DIRECTIONAL / REPORTABLE tiers**: evidence strength tiers a result carries depending on corpus power and exhaustiveness; a DIAGNOSTIC or DIRECTIONAL result cannot gate a decision alone. DIAGNOSTIC/DIRECTIONAL evidence may provisionally PARK a track (e.g. FIR-17's masking track, pose rescue, FIR-7's adapter track); TERMINATING a track requires ADMISSIBLE evidence (post FIR-11 R1).
 - **Golden-150**: the locked eval corpus; post-FIR-11-R1 remediation, 30 entries / 30 probes / 17 identities are usable for the gating paired non-inferiority check.
 - **acx-dev-fir**: the isolated benchmarking stack (FIR23-STACK) — `PGVECTOR_DIM=128`, DB `alt_context_dev_fir`, standing next to the existing 512D dev stack.
 - **pre-CVUP-1**: any artifact produced before the OpenCV 4.x → 5.0.0.93 upgrade; withdrawn as a comparison arm.
@@ -144,14 +144,14 @@ Exit criteria:
 Deliverables:
 
 - T-01 alignment-vs-embedder split harness (`attribution_split.py`) with a paired-bootstrap interval on each leg's share.
-- Oracle-before-predicted occlusion ladder (`occlusion_ladder.py`); the oracle gap decides whether FIR-17's adapter track is worth building at all.
+- Oracle-before-predicted occlusion ladder (`occlusion_ladder.py`); the oracle gap decides whether FIR-17's masking track (S1) is worth building at all.
 - D-02 decision packet naming the leg (embedder | detector | both | inconclusive).
 - FIR-17 S0 (OACT sign fix): unconditional, lands before the D-02 decision in every branch (EMBEDDER, DETECTOR, INCONCLUSIVE) — `compute_quality_adjustment` (`recognition/application/assignment/quality.py:136`) becomes `oact_term = +(coeff*severity)`, with the leniency assertions in `recognition/tests/unit/test_face_quality_factors.py` updated to the tightening direction; default `0.0` unchanged.
 
 Exit criteria:
 
 - D-02 decision recorded in MCP with the attribution shares and their intervals.
-- If the oracle gap's 95% CI includes 0, the record PARKS the adapter track at $0 (DIAGNOSTIC/DIRECTIONAL evidence may provisionally park a track; only ADMISSIBLE evidence, post FIR-11 R1, can terminate it) and FIR-17 is scoped down accordingly pending that admissible evidence.
+- If the oracle gap's 95% CI includes 0, the record PARKS FIR-17's masking track (S1) at $0 (DIAGNOSTIC/DIRECTIONAL evidence may provisionally park a track; only ADMISSIBLE evidence, post FIR-11 R1, can terminate it) and FIR-17 is scoped down accordingly pending that admissible evidence.
 - FIR-17 S0 merged (OACT sign fix), default `0.0` unchanged, behaviour-neutral until FIR-6 S4.
 
 ### Phase C: Inference-Only Occlusion + Head-to-Head Instrument -- not-started

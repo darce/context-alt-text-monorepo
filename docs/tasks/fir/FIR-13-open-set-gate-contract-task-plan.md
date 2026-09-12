@@ -84,7 +84,7 @@ Three new artifacts land: a frozen face-label rubric doc, a `GateContract` datac
 
 ## Proposed Solution
 
-Add two new pure modules under `scripts/eval_harness/` with zero production-code coupling: `gate_contract.py` (rubric constant + `GateContract` + `select_gate_point` + `GateSummary`) and `union_adjudication.py` (the T-14 bound, bootstrap UCL, dead-zone verdict). Stamp the rubric version into `fir_bakeoff_run.RunReport.to_rows()`. Freeze the two protocol docs the operator will later sign against.
+Add two new pure modules under `scripts/eval_harness/` with zero production-code coupling: `gate_contract.py` (rubric constant + `GateContract` + `select_gate_point`; `GateSummary` is **not** defined here — it is `score_open_set`'s return type in `scripts/bench/score.py`, owned by FIR-16 per DD-05) and `union_adjudication.py` (the T-14 bound, bootstrap UCL, dead-zone verdict). Stamp the rubric version into `fir_bakeoff_run.RunReport.to_rows()`. Freeze the two protocol docs the operator will later sign against.
 
 ## Files and Surfaces to Change
 
@@ -165,14 +165,6 @@ class GateContract:
     t14_thresholds_sha256: str | None  # sha256 of t14_thresholds_declared, frozen pre-run
 
 def load_gate_contract(path: str | Path) -> GateContract: ...
-
-@dataclass(frozen=True)
-class GateSummary:
-    fnir_at_gate: float | None
-    tau_at_gate: float
-    fpi_at_gate: int
-    measured: bool
-    contract: GateContract
 
 def select_gate_point(
     points: Sequence[IETPoint],
@@ -330,7 +322,7 @@ make lane-manifest-init TASK=FIR-13 LANE_IDS='fir-13' TASK_PLAN=docs/tasks/fir/F
 
 ### Checklist for Slice 2: D3 declaration encoded
 
-- [ ] `GateContract`, `GateContractError`, `load_gate_contract`, `GateSummary`, `select_gate_point` implemented in `gate_contract.py`.
+- [ ] `GateContract`, `GateContractError`, `load_gate_contract`, `select_gate_point` implemented in `gate_contract.py` (no `GateSummary` — DD-05 puts it in `scripts/bench/score.py`).
 - [ ] `benchmarks/manifests/fir-gate-contract-v1.json` created with `ratified_by_decision_id: null`.
 - [ ] Load-time validation raises `GateContractError` on each malformed-key case tested.
 - [ ] `select_gate_point` never returns a point for an unmeasured cell; test asserts `None` in that case.

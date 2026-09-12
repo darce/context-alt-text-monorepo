@@ -57,7 +57,7 @@
         },
         {
           "id": "z-review-link",
-          "label": "Review results link — State vocabulary: hidden = empty; final-available = default; provisional-only = degraded.",
+          "label": "Review & apply drafts link — Hidden until the run is terminal; terminal runs link to #/description-history?run=<id>, regardless of item tier.",
           "role": "nav",
           "states": ["default", "empty", "degraded"]
         }
@@ -66,26 +66,26 @@
     {
       "id": "describe-run-apply",
       "kind": "screen",
-      "title": "Workbench › Describe run › Review & apply",
+      "title": "Description History › Review & apply",
       "purpose": "Review per-item drafts, see tier per item, apply to media. Run phases: all-final = default; loading = loading; no items = empty; partial-provisional = degraded. Serves job `gpu-tier-awareness`.",
-      "route": "#/workbench/describe/:run_id",
+      "route": "#/description-history?run=<id>",
       "job_entry": false,
       "deep_link": true,
-      "url_params": ["run_id"],
+      "url_params": ["run"],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/DescribeRunApplyView.tsx",
       "primary_action_id": "apply-descriptions",
       "states": ["default", "loading", "empty", "error", "degraded"],
       "zones": [
         {
           "id": "z-item-tier-badge",
-          "label": "Per-item tier badge — State vocabulary: final_gpu = default; provisional_cpu = degraded; failed = error.",
+          "label": "Per-item compute tier text, separate from naming provenance, in safe, overwrite, history-completion and no-draft rows: final_gpu = Final (GPU); provisional_cpu = Provisional (CPU); null or unrecognized = Unknown. Failure status does not determine tier.",
           "role": "status",
           "evidence_linked": true,
           "states": ["default", "error", "degraded"]
         },
         {
           "id": "z-upgrade-notice",
-          "label": "Final descriptions pending notice — State vocabulary: hidden = empty; gpu-warming and upgrading = loading; done = default.",
+          "label": "Future lifecycle requirement (M03), not implemented in review: any upgrade notice requires explicit item upgrade state; GPU readiness alone never promises final descriptions.",
           "role": "status",
           "states": ["default", "loading", "empty"]
         }
@@ -241,7 +241,7 @@
         },
         {
           "screen_id": "describe-run-apply",
-          "branch_label": "per-item final_gpu badges; apply"
+          "branch_label": "Review per-item compute tiers and separate naming badges; apply safe drafts, explicitly select overwrites, or back out to #/description-history"
         }
       ]
     },
@@ -260,7 +260,7 @@
         },
         {
           "screen_id": "describe-run-apply",
-          "branch_label": "partial-provisional; z-upgrade-notice explains no upgrade coming"
+          "branch_label": "Review reported per-item tiers without an automatic upgrade promise; apply safe drafts, opt in to overwrites, or return to full history"
         }
       ]
     },

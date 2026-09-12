@@ -3,6 +3,7 @@ import { __, sprintf } from '@wordpress/i18n';
 
 import { useDescribeRunApply } from '../hooks/useDescribeRunApply';
 import {
+  DESCRIBE_RESULT_TIER,
   NAMING_PROVENANCE_STATUS,
   NAMING_REALIZER,
   parseNamingProvenance,
@@ -19,6 +20,21 @@ interface DescribeRunApplyViewProps {
 }
 
 const PARTIAL_LABEL_CAP = 5;
+
+const tierBadgeFor = (item: DescribeRunItem): React.JSX.Element => {
+  const label =
+    item.tier === DESCRIBE_RESULT_TIER.FINAL_GPU
+      ? __('Compute tier: Final (GPU)', 'alt-context')
+      : item.tier === DESCRIBE_RESULT_TIER.PROVISIONAL_CPU
+        ? __('Compute tier: Provisional (CPU)', 'alt-context')
+        : __('Compute tier: Unknown', 'alt-context');
+
+  return (
+    <span className="acx-history__badge" data-testid={`acx-run-apply-tier-${item.media_id}`}>
+      {label}
+    </span>
+  );
+};
 
 const itemHeading = (item: DescribeRunItem): string =>
   item.caption && item.caption.trim() !== ''
@@ -460,6 +476,7 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
                       <span className="acx-run-apply__item-heading">{itemHeading(item)}</span>
                       <span className="acx-run-apply__draft">{item.alt_text_draft}</span>
                       <span className="acx-run-apply__media-id">{sprintf(__('Media %d', 'alt-context'), item.media_id)}</span>
+                      {tierBadgeFor(item)}
                       {namingBadgeFor(item)}
                     </li>
                   ))}
@@ -476,6 +493,7 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
                           item.media_id,
                         )}
                       </span>
+                      {tierBadgeFor(item)}
                       {namingBadgeFor(item)}
                     </li>
                   ))}
@@ -529,6 +547,7 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
                         </label>
                         <span className="acx-run-apply__draft">{item.alt_text_draft}</span>
                         <span className="acx-run-apply__media-id">{sprintf(__('Media %d', 'alt-context'), item.media_id)}</span>
+                        {tierBadgeFor(item)}
                         {namingBadgeFor(item)}
                       </li>
                     ))}
@@ -549,6 +568,7 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
                 {noDraft.map((item) => (
                   <li key={item.media_id} className="acx-run-apply__item">
                     <span>{sprintf(__('Media %1$d — %2$s', 'alt-context'), item.media_id, item.status)}</span>
+                    {tierBadgeFor(item)}
                     {namingBadgeFor(item)}
                   </li>
                 ))}

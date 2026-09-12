@@ -86,6 +86,48 @@ describe('DescribeRunApplyView', () => {
     expect(screen.getByLabelText(/Overwrite existing alt text for media 70/)).toBeInTheDocument();
   });
 
+  it('keeps per-item tiers and naming visible across safe, overwrite, no-draft and partial buckets', async () => {
+    const items = mixedItems.items.map((item, index) => ({
+      ...item,
+      tier: index === 0 ? 'final_gpu' as const : index === 3 ? null : 'provisional_cpu' as const,
+      provenance: { naming: { status: 'disabled' as const, realizer: null, names_applied: [] } },
+    }));
+    fetchItemsMock.mockResolvedValue({ run_id: 'run-abc', items });
+    applyMock.mockResolvedValue({
+      run_id: 'run-abc', applied: [71], partial: [90], skipped_existing: [70],
+      skipped_no_draft: [72], skipped_invalid: [], failed: [],
+    });
+    renderView();
+    await screen.findByText('A red flower.');
+    const expectTier = (id: number, label: string) => {
+      const badge = screen.getByTestId(`acx-run-apply-tier-${id}`);
+      expect(badge).toHaveTextContent(label);
+      expect(within(badge.closest('li')!).getByText('No names (disabled)')).toBeInTheDocument();
+    };
+    expectTier(71, 'Compute tier: Final (GPU)');
+    expectTier(90, 'Compute tier: Provisional (CPU)');
+    expectTier(70, 'Compute tier: Provisional (CPU)');
+    expectTier(72, 'Compute tier: Unknown');
+    expect(screen.getByRole('checkbox')).not.toBeChecked();
+    expect(screen.getByRole('link', { name: 'Back to full history' })).toHaveAttribute('href', '#/description-history');
+    fireEvent.click(screen.getByRole('button', { name: 'Apply all 2 without alt text' }));
+    await screen.findByText(/Media 90 — needs history completion/);
+    expectTier(90, 'Compute tier: Provisional (CPU)');
+    expect(applyMock).toHaveBeenCalledWith('run-abc', []);
+    expect(screen.getByRole('checkbox')).not.toBeChecked();
+  });
+
+  it.each([null, 'future_tier'])('does not infer a final tier for a no-draft item with tier %s', async (tier) => {
+    fetchItemsMock.mockResolvedValue({
+      run_id: 'run-abc',
+      items: [{ ...mixedItems.items[3], tier: tier as typeof mixedItems.items[number]['tier'] }],
+    });
+    renderView();
+    expect(await screen.findByText('Compute tier: Unknown')).toBeInTheDocument();
+    expect(screen.queryByText('Compute tier: Final (GPU)')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Apply/ })).not.toBeInTheDocument();
+  });
+
   it('renders each supported naming provenance status and hides absent naming metadata', async () => {
     fetchItemsMock.mockResolvedValue({
       run_id: 'run-naming',

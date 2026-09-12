@@ -46,6 +46,17 @@ reports the 95th percentile upper confidence limit (`resampling_unit =
 image`). The bound is miss-inflated when the exhaustive-image correction is
 available; the correction itself does not alter the retained input rows.
 
+Each detector's true-positive count must be no greater than the human-verified
+union count (`union_boxes`) on that image.
+
+If any sampled replicate has zero total `human_true_faces`, its gap is
+undefined. The harness conservatively raises `UnionAdjudicationError` with
+the replicate number and seed and produces no verdict. This documents the
+existing refusal behavior: retain empty input rows and whole-image replacement
+sampling with `B = 2000`; never discard, condition, retry, or fill undefined
+replicates, select a new seed, or substitute OPEN or DEAD_ZONE. Changing this
+estimator requires a versioned protocol and operator ratification.
+
 - **KILL** only when the miss-inflated bootstrap 95% UCL is `< 0.05`.
 - **DEAD_ZONE** when the UCL is `>= 0.05` and `< 0.10`; this is neither kill
   nor pass.

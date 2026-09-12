@@ -615,7 +615,7 @@ def test_miss_inflate_computed_only_from_exhaustive_subset() -> None:
     )
     excluded_row = union_adjudication.UnionAdjudicationInput(
         image_id="image-excluded",
-        union_boxes=0,
+        union_boxes=80_000,
         human_true_faces=100_000,
         tp_buffalo_i=80_000,
         tp_candidate_i=0,
@@ -790,3 +790,96 @@ def test_check_conditions_rejects_newline_subset_ambiguity(tail) -> None:
             exhaustive_image_ids=ids,
             seed=17,
         )
+
+
+@pytest.mark.parametrize("arm", ["tp_buffalo_i", "tp_candidate_i"])
+def test_m10_refuses_detector_tp_above_union(arm) -> None:
+    from scripts.eval_harness import union_adjudication as ua
+
+    payload = _payload_with_gap("overflow", 0, union_boxes=98)
+    payload[arm] = 100
+    with pytest.raises(ua.UnionAdjudicationError, match=rf"{arm}=100 exceeds union_boxes=98"):
+        ua.detector_gap_bound((ua.UnionAdjudicationInput(**payload),))
+
+
+def test_m10_refuses_reported_impossible_kill() -> None:
+    from scripts.eval_harness import gate_contract
+    from scripts.eval_harness import union_adjudication as ua
+
+    rows = tuple(
+        ua.UnionAdjudicationInput(
+            **{
+                **_payload_with_gap(f"image-{i}", 0, union_boxes=98),
+                "tp_buffalo_i": 100,
+                "tp_candidate_i": 98,
+            }
+        )
+        for i in range(30)
+    )
+    ids = frozenset(row.image_id for row in rows)
+    declared = gate_contract.GateContract(
+        **_declared_kwargs(_THRESHOLDS),
+        t14_exhaustive_subset_count=30,
+        t14_exhaustive_subset_sha256=gate_contract.exhaustive_subset_sha256(ids),
+    )
+    with pytest.raises(ua.UnionAdjudicationError, match="exceeds union_boxes"):
+        ua.check_conditions(
+            rows,
+            declared=declared,
+            signed_decision_id="signed",
+            conditions_met=dict.fromkeys(ua._REQUIRED_CONDITION_KEYS, True),
+            exhaustive_image_ids=ids,
+            seed=17,
+        )
+
+
+def test_m10_accepts_detector_tp_equal_to_union() -> None:
+    from scripts.eval_harness import union_adjudication as ua
+
+    rows = (ua.UnionAdjudicationInput(**_payload_with_gap("equal", 0, union_boxes=80)),)
+    assert ua.detector_gap_bound(rows) == 0.0
+    assert ua.bootstrap_ucl(rows, seed=17) == 0.0
+
+
+@pytest.mark.parametrize("positive_count", [0, 1])
+def test_m11_undefined_replicate_refuses_with_context(positive_count) -> None:
+    from scripts.eval_harness import gate_contract
+    from scripts.eval_harness import union_adjudication as ua
+
+    rows = tuple(
+        ua.UnionAdjudicationInput(
+            **{
+                **_payload_with_gap(f"image-{i}", 20),
+                **(
+                    {}
+                    if i < positive_count
+                    else {"union_boxes": 0, "human_true_faces": 0, "tp_buffalo_i": 0, "tp_candidate_i": 0}
+                ),
+            }
+        )
+        for i in range(30)
+    )
+    declared = gate_contract.GateContract(
+        **_declared_kwargs(_THRESHOLDS), t14_exhaustive_subset_count=None, t14_exhaustive_subset_sha256=None
+    )
+    for adjudicate in (
+        lambda: ua.bootstrap_ucl(rows, seed=17),
+        lambda: ua.check_conditions(
+            rows,
+            declared=declared,
+            signed_decision_id="signed",
+            conditions_met=dict.fromkeys(ua._REQUIRED_CONDITION_KEYS, True),
+            seed=17,
+        ),
+    ):
+        with pytest.raises(
+            ua.UnionAdjudicationError, match=r"bootstrap replicate \d+/2000.*seed=17.*denominator.*no verdict"
+        ):
+            adjudicate()
+
+
+def test_m11_positive_countercase_preserves_ucl() -> None:
+    from scripts.eval_harness import union_adjudication as ua
+
+    rows = tuple(ua.UnionAdjudicationInput(**_payload_with_gap(f"image-{i}", 20)) for i in range(30))
+    assert ua.bootstrap_ucl(rows, seed=17) == 0.2

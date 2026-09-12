@@ -39,7 +39,7 @@ This definition is provisional to this task: it reads FIR-13's gate contract (`s
 - **Withdrawn numbers never cited as evidence**: M-12 (0.865/0.321), recall 0.504, 2.73 faces/image, any pre-CVUP-1 artifact. "Embedder leads detector" stays a hypothesis this task tests, not evidence this task assumes.
 - **Buffalo output ban applies to arms (c)/(d).** Buffalo (`buffalo_bench.BuffaloFusedLeg`) is used only as a comparison arm's embedder, never as a training target or pseudo-label source (mirrors FIR-7's Buffalo Output Ban — Wall 1 license, Wall 2 judge contamination — even though this task trains nothing, the same non-contamination discipline applies to arm selection: buffalo scores here are diagnostic output, never used to filter or re-weight the FIR-17 D-02 decision beyond the share numbers themselves).
 - **Paired-bootstrap discipline on every share and every ladder gap** (B=2000, `resampling_unit="image"`, fixed seed, reported per run).
-- **`masked_cosine` has exactly one definition, in production infrastructure, from the start (D14 — supersedes any eval-local draft).** This task defines `masked_cosine(a, b, mask) -> float` in NEW `apps/prototype-description-service/recognition/infrastructure/embeddings/masked_similarity.py` (settings-independent, no eval-harness or settings imports); `occlusion_ladder.py` imports it rather than redefining it. FIR-17 S1 reuses the same import; FIR-17 S4 only adds the import-isolation confirmation test (`test_masked_similarity.py::test_single_definition_no_settings_import`) — it does not move or duplicate the function. `centroid_utils.py` is explicitly NOT this location (D14).
+- **`masked_cosine` has exactly one definition, in production infrastructure, from the start (DD-14 — supersedes any eval-local draft).** This task defines `masked_cosine(a, b, mask) -> float` in NEW `apps/prototype-description-service/recognition/infrastructure/embeddings/masked_similarity.py` (settings-independent, no eval-harness or settings imports); `occlusion_ladder.py` imports it rather than redefining it. FIR-17 S1 reuses the same import; FIR-17 S4 only adds the import-isolation confirmation test (`test_masked_similarity.py::test_single_definition_no_settings_import`) — it does not move or duplicate the function. `centroid_utils.py` is explicitly NOT this location (DD-14).
 - **No golden-150 figure produced here may be quoted as a live baseline outside this task's own report** — every number cites the FIR-14 CV5 run id and the DIAGNOSTIC tier label.
 
 ## Workflow Principles
@@ -52,16 +52,16 @@ This definition is provisional to this task: it reads FIR-13's gate contract (`s
 ## Terminology
 
 - **Identity error**: per the interim definition above (verbatim, task-scoped).
-- **Alignment share**: `FNIR(a) − FNIR(b)` — the fraction of identity error attributable to using detector-native landmarks vs reference landmarks, holding the embedder fixed at SFace. This is the ONLY cleanly isolated share this task computes (per D11: `BuffaloFusedLeg` re-detects internally and cannot honor externally supplied landmarks, so no arm pair holds landmarks fixed while swapping embedder family — see "Buffalo reference gap" below).
-- **Buffalo reference gap**: `FNIR(a) − FNIR(buffalo_reference)`, where `buffalo_reference = mean(FNIR(c), FNIR(d))` (arms (c)/(d) are expected statistically indistinguishable from each other since `BuffaloFusedLeg.detect` ignores the nominal landmark-source distinction — reporting both is transparency, not two independent measurements). This is a **whole-pipeline reference contrast** (own detection + own alignment + own embedder, all three confounded together), NOT an isolated embedder share. It is never used to assign the D-02 leg by direct isolation, only as elimination evidence in the verdict table below (D11).
-- ~~Embedder share~~ (removed per D11): no arm pair in this task holds landmarks fixed while varying only the embedder, so an isolated "embedder share" is not measurable here. `AttributionResult` therefore does not carry an `embedder_share` field (see S1 below); the D-02 verdict's EMBEDDER branch is inferred by elimination from the buffalo reference gap, never from a direct share.
+- **Alignment share**: `FNIR(a) − FNIR(b)` — the fraction of identity error attributable to using detector-native landmarks vs reference landmarks, holding the embedder fixed at SFace. This is the ONLY cleanly isolated share this task computes (per DD-11: `BuffaloFusedLeg` re-detects internally and cannot honor externally supplied landmarks, so no arm pair holds landmarks fixed while swapping embedder family — see "Buffalo reference gap" below).
+- **Buffalo reference gap**: `FNIR(a) − FNIR(buffalo_reference)`, where `buffalo_reference = mean(FNIR(c), FNIR(d))` (arms (c)/(d) are expected statistically indistinguishable from each other since `BuffaloFusedLeg.detect` ignores the nominal landmark-source distinction — reporting both is transparency, not two independent measurements). This is a **whole-pipeline reference contrast** (own detection + own alignment + own embedder, all three confounded together), NOT an isolated embedder share. It is never used to assign the D-02 leg by direct isolation, only as elimination evidence in the verdict table below (DD-11).
+- ~~Embedder share~~ (removed per DD-11): no arm pair in this task holds landmarks fixed while varying only the embedder, so an isolated "embedder share" is not measurable here. `AttributionResult` therefore does not carry an `embedder_share` field (see S1 below); the D-02 verdict's EMBEDDER branch is inferred by elimination from the buffalo reference gap, never from a direct share.
 - **Reference landmarks**: landmarks NOT produced by the detector under test. **Verified: no such artifact exists for Golden-150 today** — `landmark_cache.py` (`apps/prototype-description-service/scripts/eval_harness/landmark_cache.py`) freezes landmarks from a single **YuNet** detector pass (`LANDMARK_CACHE_MODEL_ID = "yunet"`, `build_landmark_cache()`), i.e. it caches the *candidate detector's own* output for placement geometry, not an independent/GT landmark set. S1a below is therefore operator labour: hand-marked 5-point landmarks for the FIR-11 R1 probe subset.
 - **Oracle mask**: ground-truth occlusion region, known by construction (synthetic twins) or hand-labeled (real occluded probes, ≤30, via `anatomy_region_stats`).
 - **Predicted mask**: the mask a runtime-feasible detector would produce today — `compute_occlusion_severity`'s two-eye-patch proxy (`face_quality_factors.py:82-105`), the only predictor that exists pre-FIR-17.
 - **`LadderRung`**: `{NONE, ORACLE, PREDICTED}` — see S2.
-- **`masked_cosine`** (production, D14): cosine similarity restricted to a dimension support mask on the 128-D SFace vector; single definition in `masked_similarity.py`, imported (not redefined) by the eval harness.
-- **`RegionVisibility`**: a `tuple[float, float, float, float, float]` in fixed `REGION_NAMES` order `("right_eye", "left_eye", "nose", "mouth_right", "mouth_left")`, each value in `[0.0, 1.0]` (D15).
-- **`SupportMap`**: the loaded/validated form of `sface-support-map-v1.json` — exactly 5 region names, 128-D index bounds, no duplicate dims (D13).
+- **`masked_cosine`** (production, DD-14): cosine similarity restricted to a dimension support mask on the 128-D SFace vector; single definition in `masked_similarity.py`, imported (not redefined) by the eval harness.
+- **`RegionVisibility`**: a `tuple[float, float, float, float, float]` in fixed `REGION_NAMES` order `("right_eye", "left_eye", "nose", "mouth_right", "mouth_left")`, each value in `[0.0, 1.0]` (DD-15).
+- **`SupportMap`**: the loaded/validated form of `sface-support-map-v1.json` — exactly 5 region names, 128-D index bounds, no duplicate dims (DD-13).
 
 ## Current State Analysis
 
@@ -84,23 +84,23 @@ Two artifacts land: `benchmarks/results/attribution-t01-<date>/attribution.json`
 
 ## Contract and Boundary Impact
 
-Mostly none: eval-harness-internal work under `apps/prototype-description-service/scripts/eval_harness/`; no production runtime, schema, or cross-service surface is touched. One narrow exception (D14): `recognition/infrastructure/embeddings/masked_similarity.py::masked_cosine` is a new pure-math module in the production source tree (no settings import, no runtime call site added by this task) so FIR-17 S1 can import the same function instead of a second definition landing later. It is dead code from production's point of view until FIR-17 wires a caller.
+Mostly none: eval-harness-internal work under `apps/prototype-description-service/scripts/eval_harness/`; no production runtime, schema, or cross-service surface is touched. One narrow exception (DD-14): `recognition/infrastructure/embeddings/masked_similarity.py::masked_cosine` is a new pure-math module in the production source tree (no settings import, no runtime call site added by this task) so FIR-17 S1 can import the same function instead of a second definition landing later. It is dead code from production's point of view until FIR-17 wires a caller.
 
 ## Proposed Solution
 
-Four fixed-detector arms isolate the alignment share within SFace (arms a/b) and report Buffalo (arms c/d) as a whole-pipeline reference contrast only — never as an isolated embedder share (D11); a three-rung ladder isolates mask-prediction cost from matching-approach ceiling. Both read per-embedding-space operating points from FIR-13's `select_gate_point` (`tau_by_space`, keyed `"sface128"`/`"buffalo512"` — D1, never a single shared tau) and the FIR-14 CV5 run; neither opens a new FIR-13 seal.
+Four fixed-detector arms isolate the alignment share within SFace (arms a/b) and report Buffalo (arms c/d) as a whole-pipeline reference contrast only — never as an isolated embedder share (DD-11); a three-rung ladder isolates mask-prediction cost from matching-approach ceiling. Both read per-embedding-space operating points from FIR-13's `select_gate_point` (`tau_by_space`, keyed `"sface128"`/`"buffalo512"` — DD-01, never a single shared tau) and the FIR-14 CV5 run; neither opens a new FIR-13 seal.
 
 ## Files and Surfaces to Change
 
 | Surface | File | Change |
 | --- | --- | --- |
 | eval harness | `apps/prototype-description-service/scripts/eval_harness/attribution_split.py` (new) | 4-arm T-01 split harness |
-| eval harness | `apps/prototype-description-service/scripts/eval_harness/occlusion_ladder.py` (new) | oracle/predicted ladder; imports `masked_cosine` (does not redefine it, D14) |
-| production (pure math, D14) | `apps/prototype-description-service/recognition/infrastructure/embeddings/masked_similarity.py` (new) | single definition of `masked_cosine(a, b, mask) -> float`, settings-independent |
-| eval harness | `apps/prototype-description-service/scripts/eval_harness/synthetic_occlusion.py` | new `oracle_region_visibility(mask, landmarks_px) -> tuple[float, float, float, float, float]` (D15/D13 five-region conversion) |
-| production | `apps/prototype-description-service/recognition/infrastructure/face_pipeline/face_quality_factors.py` | new `estimate_region_visibility(crop_bgr, landmarks_112) -> RegionVisibility` (D15); `compute_occlusion_severity` unchanged |
-| production (asset, D13) | `apps/prototype-description-service/recognition/infrastructure/face_pipeline/assets/sface-support-map-v1.json` (new) | versioned support-map asset produced by the offline attribution recipe |
-| production (loader, D13) | `apps/prototype-description-service/recognition/infrastructure/face_pipeline/support_map.py` (new) | `load_support_map(path, *, expected_sha256) -> SupportMap`, fail-closed validation |
+| eval harness | `apps/prototype-description-service/scripts/eval_harness/occlusion_ladder.py` (new) | oracle/predicted ladder; imports `masked_cosine` (does not redefine it, DD-14) |
+| production (pure math, DD-14) | `apps/prototype-description-service/recognition/infrastructure/embeddings/masked_similarity.py` (new) | single definition of `masked_cosine(a, b, mask) -> float`, settings-independent |
+| eval harness | `apps/prototype-description-service/scripts/eval_harness/synthetic_occlusion.py` | new `oracle_region_visibility(mask, landmarks_px) -> tuple[float, float, float, float, float]` (DD-15/DD-13 five-region conversion) |
+| production | `apps/prototype-description-service/recognition/infrastructure/face_pipeline/face_quality_factors.py` | new `estimate_region_visibility(crop_bgr, landmarks_112) -> RegionVisibility` (DD-15); `compute_occlusion_severity` unchanged |
+| production (asset, DD-13) | `apps/prototype-description-service/recognition/infrastructure/face_pipeline/assets/sface-support-map-v1.json` (new) | versioned support-map asset produced by the offline attribution recipe |
+| production (loader, DD-13) | `apps/prototype-description-service/recognition/infrastructure/face_pipeline/support_map.py` (new) | `load_support_map(path, *, expected_sha256) -> SupportMap`, fail-closed validation |
 | protocol | `benchmarks/protocols/` (reference-landmark hand-marking procedure, if S1a proceeds) | operator runbook |
 | tests | `apps/prototype-description-service/scene/tests/test_eval_harness_attribution_split.py` (new) | arm math, share formulas, bootstrap determinism, D-02 verdict table |
 | tests | `apps/prototype-description-service/scene/tests/test_eval_harness_occlusion_ladder.py` (new) | `masked_cosine` invariants, `oracle_region_visibility`, ladder rungs, oracle-gap CI, empty-support handling |
@@ -113,7 +113,7 @@ Four fixed-detector arms isolate the alignment share within SFace (arms a/b) and
 | --- | --- |
 | `apps/prototype-description-service/scripts/eval_harness/fir_bakeoff_run.py` | `MatedSearchUnit`, `_is_fnir_miss` — the identity-error unit this task scores |
 | `apps/prototype-description-service/scripts/eval_harness/landmark_cache.py` | source of detector-native landmarks; confirmed NOT a reference/GT source (see Terminology) |
-| `apps/prototype-description-service/scripts/eval_harness/buffalo_bench.py` | `BuffaloFusedLeg` (287–382) — arms (c)/(d) whole-pipeline reference only, never an isolated embedder; CPU-only, re-detects internally (D11, caveat detailed in S1) |
+| `apps/prototype-description-service/scripts/eval_harness/buffalo_bench.py` | `BuffaloFusedLeg` (287–382) — arms (c)/(d) whole-pipeline reference only, never an isolated embedder; CPU-only, re-detects internally (DD-11, caveat detailed in S1) |
 | `apps/prototype-description-service/scripts/eval_harness/synthetic_occlusion.py` | `generate_twin_specs`, `anatomy_region_stats` — oracle-mask source for synthetic + hand-labeled real probes |
 | `apps/prototype-description-service/scripts/eval_harness/gate_contract.py` (FIR-13) | `select_gate_point` — tau this task's FNIR-miss definition reads |
 
@@ -130,7 +130,7 @@ Four fixed-detector arms isolate the alignment share within SFace (arms a/b) and
 ### Slice 1: T-01 alignment-vs-embedder split harness
 
 Implements: FIRG-040, FIRG-041, FIRG-042 (D-02 verdict table lives here).
-**Goal**: Produce `alignment_share` (isolated, SFace-only) and the `buffalo_reference_gap` (whole-pipeline reference, D11) with paired-bootstrap CIs from four fixed-detector arms.
+**Goal**: Produce `alignment_share` (isolated, SFace-only) and the `buffalo_reference_gap` (whole-pipeline reference, DD-11) with paired-bootstrap CIs from four fixed-detector arms.
 
 Changes:
 
@@ -144,7 +144,7 @@ from collections.abc import Sequence
 class AttributionArm:
     """One of the four T-01 arms. Detector is fixed at the FIR-13 declared
     operating point across all four arms; only landmarks and embedder vary.
-    Arms (c)/(d) are whole-pipeline reference arms only (D11) — see caveats."""
+    Arms (c)/(d) are whole-pipeline reference arms only (DD-11) — see caveats."""
     name: str  # "a_detector_landmarks_sface" | "b_reference_landmarks_sface"
                # | "c_detector_landmarks_buffalo" | "d_reference_landmarks_buffalo"
     uses_reference_landmarks: bool
@@ -152,15 +152,15 @@ class AttributionArm:
 
 @dataclass(frozen=True)
 class AttributionResult:
-    alignment_share: float          # FNIR(a) - FNIR(b), SFace arms only (D11)
+    alignment_share: float          # FNIR(a) - FNIR(b), SFace arms only (DD-11)
     alignment_share_ci: tuple[float, float]
     buffalo_reference_gap: float    # FNIR(a) - mean(FNIR(c), FNIR(d)); whole-pipeline
                                      # reference contrast, NEVER an isolated embedder
-                                     # share (D11) — read only by the elimination rule
+                                     # share (DD-11) — read only by the elimination rule
                                      # in the D-02 verdict table below.
     buffalo_reference_gap_ci: tuple[float, float]
     n_units: int
-    tau_by_space: dict[str, float]  # {"sface128": ..., "buffalo512": ...} — D1,
+    tau_by_space: dict[str, float]  # {"sface128": ..., "buffalo512": ...} — DD-01,
                                      # each from FIR-13 gate_contract.select_gate_point
                                      # at the same declared FPI budget; bootstrap
                                      # resampling holds each space's tau fixed.
@@ -171,7 +171,7 @@ def run_attribution_split(
     *,
     mated_units: Sequence["fir_bakeoff_run.MatedSearchUnit"],
     reference_landmarks: dict[tuple[int, int], "np.ndarray"],  # (media_id, box_index) -> (5,2)
-    tau_by_space: dict[str, float],   # D1 — "sface128" / "buffalo512" keys, each a
+    tau_by_space: dict[str, float],   # DD-01 — "sface128" / "buffalo512" keys, each a
                                        # fixed per-space operating point; never a single
                                        # shared tau across the 128-D and 512-D spaces
     seed: int,
@@ -179,9 +179,9 @@ def run_attribution_split(
 ) -> AttributionResult: ...
 ```
 
-- Arms (a) and (b) share the SFace embedder (`OrtSFaceEmbedder` / `OpenCVSFaceEmbedder` — `embed_batch` from `_common.py`) and are scored at `tau_by_space["sface128"]`; arms (c) and (d) route through `buffalo_bench.BuffaloFusedLeg` (287–382) and are scored at `tau_by_space["buffalo512"]`. **State explicitly in code comments and `REPORT.md`**: `BuffaloFusedLeg.detect` (317–341) re-detects internally rather than accepting externally supplied landmarks — arm (c)/(d)'s "detector landmarks"/"reference landmarks" distinction therefore does not hold for the buffalo arms the way it does for arms (a)/(b) (this is the finding D11 fixes). Consequently arms (c)/(d) are reported ONLY as `buffalo_reference_gap`, a whole-pipeline reference contrast against arm (a); they are never combined with arm (b) to form an isolated embedder share, and never feed the D-02 branch by direct isolation — only by the elimination rule in the verdict table below. This is the caveat field in `AttributionResult`; the report must say so in prose, not just in the CI width.
+- Arms (a) and (b) share the SFace embedder (`OrtSFaceEmbedder` / `OpenCVSFaceEmbedder` — `embed_batch` from `_common.py`) and are scored at `tau_by_space["sface128"]`; arms (c) and (d) route through `buffalo_bench.BuffaloFusedLeg` (287–382) and are scored at `tau_by_space["buffalo512"]`. **State explicitly in code comments and `REPORT.md`**: `BuffaloFusedLeg.detect` (317–341) re-detects internally rather than accepting externally supplied landmarks — arm (c)/(d)'s "detector landmarks"/"reference landmarks" distinction therefore does not hold for the buffalo arms the way it does for arms (a)/(b) (this is the finding DD-11 fixes). Consequently arms (c)/(d) are reported ONLY as `buffalo_reference_gap`, a whole-pipeline reference contrast against arm (a); they are never combined with arm (b) to form an isolated embedder share, and never feed the D-02 branch by direct isolation — only by the elimination rule in the verdict table below. This is the caveat field in `AttributionResult`; the report must say so in prose, not just in the CI width.
 - Paired-bootstrap interval procedure (step by step, both quantities):
-  1. Resample images with replacement, `B=2000`, fixed `seed`, holding each arm's `tau_by_space` entry fixed across all resamples (D1 — alignment interventions never re-select tau).
+  1. Resample images with replacement, `B=2000`, fixed `seed`, holding each arm's `tau_by_space` entry fixed across all resamples (DD-01 — alignment interventions never re-select tau).
   2. Recompute both FNIR values in the share formula on the **same** resampled image set each iteration (paired — never resample the two arms independently).
   3. `alignment_share_ci` = 2.5th/97.5th percentile of the resampled `FNIR(a) − FNIR(b)` distribution; `buffalo_reference_gap_ci` = same percentiles of the resampled `FNIR(a) − mean(FNIR(c), FNIR(d))` distribution.
   4. Report `n_units` (mated search units entering the resample) alongside the CI so a narrow interval from a small `n_units` is visible, not hidden.
@@ -214,12 +214,12 @@ Changes:
 ```python
 from enum import StrEnum
 from dataclasses import dataclass
-from recognition.infrastructure.embeddings.masked_similarity import masked_cosine  # D14 — single definition, imported not redefined
+from recognition.infrastructure.embeddings.masked_similarity import masked_cosine  # DD-14 — single definition, imported not redefined
 
 class LadderRung(StrEnum):
     NONE = "none"           # baseline, no occlusion handling
     ORACLE = "oracle"       # ground-truth mask (synthetic twins, or hand-drawn for real probes)
-    PREDICTED = "predicted" # estimate_region_visibility five-region proxy (D15)
+    PREDICTED = "predicted" # estimate_region_visibility five-region proxy (DD-15)
 
 @dataclass(frozen=True)
 class LadderPoint:
@@ -238,7 +238,7 @@ def score_ladder(
 ) -> dict[LadderRung, LadderPoint]: ...
 ```
 
-`masked_cosine` itself is NOT redefined here (D14): `apps/prototype-description-service/recognition/infrastructure/embeddings/masked_similarity.py` (new) is the single production-tree definition —
+`masked_cosine` itself is NOT redefined here (DD-14): `apps/prototype-description-service/recognition/infrastructure/embeddings/masked_similarity.py` (new) is the single production-tree definition —
 
 ```python
 def masked_cosine(
@@ -260,13 +260,13 @@ def masked_cosine(
 
 - **Two conversion functions turn today's two occlusion helpers into the five-region visibility `score_ladder`/`support_mask_recipe` need (neither existing helper produces this shape today):**
   1. **Oracle conversion (ground-truth mask → exact visibility)** — new `synthetic_occlusion.py::oracle_region_visibility(mask: np.ndarray, landmarks_px: np.ndarray | Sequence[Sequence[float]]) -> tuple[float, float, float, float, float]`. For each of the five `REGION_NAMES` points (scaled from `SFACE_CANONICAL_LANDMARKS_112` into `mask`'s pixel space via the same affine used to build the twin, `landmarks_px` gives the five real-image landmark positions directly so no rescale is needed when `mask` is already in image space), extract the `_REGION_PATCH_HALF_PX`-half square patch, clip to `mask` bounds, and return `1.0 − (occluded_pixels_in_patch / clipped_patch_pixel_count)` per region, in `REGION_NAMES` order. This supersedes `anatomy_region_stats` for ladder purposes (`anatomy_region_stats`'s three face-relative *band* fractions — `lower_face_frac`/`eye_band_frac`/`upper_frac`, verified `synthetic_occlusion.py:762-784` — are a different, coarser aggregation kept for its own existing pin tests and NOT reused here, since it cannot report the five discrete regions this ladder needs). Zero-pixel-mask input (`np.where(mask)` empty) returns all-ones (no occlusion) rather than a divide-by-zero.
-  2. **Predicted conversion (crop → estimated visibility)** — new `face_quality_factors.py::estimate_region_visibility(crop_bgr: np.ndarray, landmarks_112: np.ndarray | None) -> tuple[float, float, float, float, float]`. Extends `compute_occlusion_severity`'s existing two-eye-patch activity computation (`_patch_stats`, `_as_gray_u8`, same `base_var`/`base_edge` normalization, `face_quality_factors.py:82-105`) to all five `REGION_NAMES` points instead of averaging just the two eyes into one float: compute `activity = 0.5*(var/base_var) + 0.5*(edge/base_edge)` per region exactly as today's two-eye loop does, then `visibility = clamp(activity, 0.0, 1.0)` per region (activity≥1 → fully visible; activity→0 → fully occluded — same mapping direction `compute_occlusion_severity` already uses, just per-region instead of pre-averaged). `landmarks_112=None` (no landmarks available) returns `(1.0, 1.0, 1.0, 1.0, 1.0)` (all-visible no-op, matching D15's production no-op convention so FIR-17 can promote this function verbatim). `compute_occlusion_severity` itself is unchanged and stays the two-eye-only production severity scalar other callers already depend on; `estimate_region_visibility` is additive.
+  2. **Predicted conversion (crop → estimated visibility)** — new `face_quality_factors.py::estimate_region_visibility(crop_bgr: np.ndarray, landmarks_112: np.ndarray | None) -> tuple[float, float, float, float, float]`. Extends `compute_occlusion_severity`'s existing two-eye-patch activity computation (`_patch_stats`, `_as_gray_u8`, same `base_var`/`base_edge` normalization, `face_quality_factors.py:82-105`) to all five `REGION_NAMES` points instead of averaging just the two eyes into one float: compute `activity = 0.5*(var/base_var) + 0.5*(edge/base_edge)` per region exactly as today's two-eye loop does, then `visibility = clamp(activity, 0.0, 1.0)` per region (activity≥1 → fully visible; activity→0 → fully occluded — same mapping direction `compute_occlusion_severity` already uses, just per-region instead of pre-averaged). `landmarks_112=None` (no landmarks available) returns `(1.0, 1.0, 1.0, 1.0, 1.0)` (all-visible no-op, matching DD-15's production no-op convention so FIR-17 can promote this function verbatim). `compute_occlusion_severity` itself is unchanged and stays the two-eye-only production severity scalar other callers already depend on; `estimate_region_visibility` is additive.
   - Both conversions are covered by `test_eval_harness_occlusion_ladder.py` (oracle) and a matching case in `recognition/tests/unit/test_face_quality_factors.py` (predicted) asserting: output length 5, order matches `REGION_NAMES`, every value in `[0.0, 1.0]`, and the `landmarks=None` all-ones no-op.
 
 - **Rung 0 (NONE)**: baseline FNIR on the occluded stratum, no masking.
 - **Rung 1 (ORACLE)**: exact masks via `oracle_region_visibility` above. Synthetic twins get their mask by construction (`synthetic_occlusion.generate_twin_specs`); real probes in `A_true_occluder`/`B_eyewear` get hand-drawn masks (operator labour, ≤30 probes).
 - **Rung 2 (PREDICTED)**: `estimate_region_visibility` above (five-region extension of the former two-eye-patch proxy). This rung exists to quantify the gap FIR-17's production wiring would need to close, not to ship anything.
-- **Support-mask attribution recipe (spelled out step by step, PDSN-style, constants pinned)**: to build `support_mask_recipe`, (1) take a set of clean (unoccluded) twin bases; (2) for each of the five `REGION_NAMES`, synthetically occlude only that region (using the same patch geometry above) and re-embed; (3) compute the per-dimension absolute delta between the clean and region-occluded embedding vectors; (4) rank the 128 dimensions by delta magnitude per region; (5) a dimension is attributed to a region if that region's delta ranks in its top decile (`ATTRIBUTION_DECILE = 0.10`, pinned) across a fixed sample of clean twins (`N_ATTRIBUTION_TWINS = 30`, pinned — same as the FIR-11 R1 probe-subset size, reusing that sample); if two regions both rank a dimension in their top decile (multi-region overlap), attribute the dimension to BOTH regions (a dimension may support more than one region — this is not a partition); a dimension attributed to zero regions across all twins is left permanently unattributed and `support_mask_recipe` always maps it to `False` (masked out) regardless of any region's visibility, since no region's occlusion measurably moves it; (6) `support_mask_recipe(visibility_scores: tuple[float, float, float, float, float]) -> np.ndarray` (128,) bool) then returns `True` for every dimension whose attributed region(s) have visibility ABOVE `VISIBILITY_FLOOR = 0.5` for AT LEAST ONE of their attributed regions (union rule — a multi-region dimension survives if any one of its regions is visible), `False` otherwise; if `support_mask_recipe`'s output would be all-`False` (every attributed region below the floor and no unattributed dimensions rescue it), `masked_cosine` receives an all-`False` mask and — per `masked_cosine`'s own invariant above — raises `ValueError`; `score_ladder` catches this per-probe and records that probe as `measured=False` for Rung 1/2 rather than crashing the whole run (empty-support handling). This attribution step runs once (offline, seeded) and its output ships as `recognition/infrastructure/face_pipeline/assets/sface-support-map-v1.json` (D13) — this task produces the recipe and a first version of the asset; FIR-17 owns the runtime loader (`support_map.py::load_support_map`, D13) and shipping it behind a knob.
+- **Support-mask attribution recipe (spelled out step by step, PDSN-style, constants pinned)**: to build `support_mask_recipe`, (1) take a set of clean (unoccluded) twin bases; (2) for each of the five `REGION_NAMES`, synthetically occlude only that region (using the same patch geometry above) and re-embed; (3) compute the per-dimension absolute delta between the clean and region-occluded embedding vectors; (4) rank the 128 dimensions by delta magnitude per region; (5) a dimension is attributed to a region if that region's delta ranks in its top decile (`ATTRIBUTION_DECILE = 0.10`, pinned) across a fixed sample of clean twins (`N_ATTRIBUTION_TWINS = 30`, pinned — same as the FIR-11 R1 probe-subset size, reusing that sample); if two regions both rank a dimension in their top decile (multi-region overlap), attribute the dimension to BOTH regions (a dimension may support more than one region — this is not a partition); a dimension attributed to zero regions across all twins is left permanently unattributed and `support_mask_recipe` always maps it to `False` (masked out) regardless of any region's visibility, since no region's occlusion measurably moves it; (6) `support_mask_recipe(visibility_scores: tuple[float, float, float, float, float]) -> np.ndarray` (128,) bool) then returns `True` for every dimension whose attributed region(s) have visibility ABOVE `VISIBILITY_FLOOR = 0.5` for AT LEAST ONE of their attributed regions (union rule — a multi-region dimension survives if any one of its regions is visible), `False` otherwise; if `support_mask_recipe`'s output would be all-`False` (every attributed region below the floor and no unattributed dimensions rescue it), `masked_cosine` receives an all-`False` mask and — per `masked_cosine`'s own invariant above — raises `ValueError`; `score_ladder` catches this per-probe and records that probe as `measured=False` for Rung 1/2 rather than crashing the whole run (empty-support handling). This attribution step runs once (offline, seeded) and its output ships as `recognition/infrastructure/face_pipeline/assets/sface-support-map-v1.json` (DD-13) — this task produces the recipe and a first version of the asset; FIR-17 owns the runtime loader (`support_map.py::load_support_map`, DD-13) and shipping it behind a knob.
 - **Oracle gap** = `FNIR(rung0) − FNIR(rung1 with masked_cosine applied)`. If the oracle gap's 95% CI includes 0, record that verbatim in `REPORT.md` as the reason FIR-17 S1 is PARKED (not terminated) at $0 (per the branch rule FIR-17 opens with) — DIAGNOSTIC-tier oracle evidence may only provisionally park the adapter track; a permanent kill requires ADMISSIBLE-tier evidence post FIR-11 R1.
 
 Proof:
@@ -289,12 +289,12 @@ Changes:
   task_ref: FIR-15
   summary: T-01 attribution split + oracle occlusion ladder, DIAGNOSTIC tier (FIR-14 CV5 run <run-id>)
   alignment_share: <value> CI[<lo>, <hi>]
-  buffalo_reference_gap: <value> CI[<lo>, <hi>]  # whole-pipeline reference only, D11
+  buffalo_reference_gap: <value> CI[<lo>, <hi>]  # whole-pipeline reference only, DD-11
   tau_by_space: {sface128: <value>, buffalo512: <value>}
   oracle_gap: <value> CI[<lo>, <hi>]
   verdict: EMBEDDER | DETECTOR | BOTH | INCONCLUSIVE  # per the D-02 verdict table, S1
   fir17_branch: <slices FIR-17 runs per this verdict, per FIR-17's branch rule>
-  caveats: buffalo whole-pipeline reference is never an isolated embedder share (see S1, D11); EMBEDDER verdict (if any) is by elimination, not isolation; DIAGNOSTIC tier (Golden-150 not yet FIR-11-remediated)
+  caveats: buffalo whole-pipeline reference is never an isolated embedder share (see S1, DD-11); EMBEDDER verdict (if any) is by elimination, not isolation; DIAGNOSTIC tier (Golden-150 not yet FIR-11-remediated)
   ```
 
 - This decision is the sole input FIR-17 branches on — FIR-17's task plan opens with the branch-rule table keyed to this decision's `verdict` field.
@@ -341,8 +341,8 @@ make lane-manifest-init TASK=fir-15 LANE_IDS='fir15-eval' TASK_PLAN=docs/tasks/f
 
 ### Checklist for Slice 1: T-01 alignment-vs-embedder split harness
 
-- [ ] `attribution_split.py` implements the four arms with detector fixed at the FIR-13 operating point, each embedding space scored at its own `tau_by_space` entry (D1).
-- [ ] `AttributionResult` carries `alignment_share` (SFace arms a/b only) and `buffalo_reference_gap` (whole-pipeline reference, arms c/d) — no `embedder_share` field (D11).
+- [ ] `attribution_split.py` implements the four arms with detector fixed at the FIR-13 operating point, each embedding space scored at its own `tau_by_space` entry (DD-01).
+- [ ] `AttributionResult` carries `alignment_share` (SFace arms a/b only) and `buffalo_reference_gap` (whole-pipeline reference, arms c/d) — no `embedder_share` field (DD-11).
 - [ ] Buffalo whole-pipeline caveat (arms c/d re-detect internally, never an isolated embedder share) is recorded in `AttributionResult.caveats` and surfaced in `REPORT.md`.
 - [ ] The deterministic D-02 verdict table (`MATERIAL_SHARE_FLOOR`, `MIN_ATTRIBUTABLE_UNITS`, all five rows) is implemented exactly as specified.
 - [ ] S1a reference-landmark production is scoped as operator labour on the FIR-11 R1 30-probe subset, not silently automated.
@@ -350,10 +350,10 @@ make lane-manifest-init TASK=fir-15 LANE_IDS='fir15-eval' TASK_PLAN=docs/tasks/f
 
 ### Checklist for Slice 2: Oracle-before-predicted occlusion ladder
 
-- [ ] `occlusion_ladder.py` implements `LadderRung` and `score_ladder`, importing production `masked_cosine` from `masked_similarity.py` (D14) rather than redefining it.
-- [ ] `oracle_region_visibility` (`synthetic_occlusion.py`) and `estimate_region_visibility` (`face_quality_factors.py`) both implemented against the pinned `REGION_NAMES` order and `_REGION_PATCH_HALF_PX = 8` geometry (D15).
-- [ ] Support-mask attribution recipe implemented exactly as spelled out (5-region occlusion deltas → per-dimension attribution with `ATTRIBUTION_DECILE`/`N_ATTRIBUTION_TWINS` pinned → `VISIBILITY_FLOOR` union rule → versioned JSON asset), including the all-`False`-mask empty-support path (`measured=False`, D04).
-- [ ] `sface-support-map-v1.json` produced and validated at load time via `support_map.py::load_support_map` (exactly-5 region names, 128-D index bounds, no duplicate dims, sha256 against the external manifest entry, fail-closed) (D13).
+- [ ] `occlusion_ladder.py` implements `LadderRung` and `score_ladder`, importing production `masked_cosine` from `masked_similarity.py` (DD-14) rather than redefining it.
+- [ ] `oracle_region_visibility` (`synthetic_occlusion.py`) and `estimate_region_visibility` (`face_quality_factors.py`) both implemented against the pinned `REGION_NAMES` order and `_REGION_PATCH_HALF_PX = 8` geometry (DD-15).
+- [ ] Support-mask attribution recipe implemented exactly as spelled out (5-region occlusion deltas → per-dimension attribution with `ATTRIBUTION_DECILE`/`N_ATTRIBUTION_TWINS` pinned → `VISIBILITY_FLOOR` union rule → versioned JSON asset), including the all-`False`-mask empty-support path (`measured=False`, DD-04).
+- [ ] `sface-support-map-v1.json` produced and validated at load time via `support_map.py::load_support_map` (exactly-5 region names, 128-D index bounds, no duplicate dims, sha256 against the external manifest entry, fail-closed) (DD-13).
 - [ ] Oracle-gap CI computed and its zero-inclusion case recorded verbatim as FIR-17's kill condition for S1.
 - [ ] `test_eval_harness_occlusion_ladder.py` covers `masked_cosine` invariants, `oracle_region_visibility`'s contract, ladder-rung ordering, and the empty-support path; `test_face_quality_factors.py` covers `estimate_region_visibility`; `test_support_map.py` covers the three fail-closed loader cases.
 
@@ -374,7 +374,7 @@ make lane-manifest-init TASK=fir-15 LANE_IDS='fir15-eval' TASK_PLAN=docs/tasks/f
 
 ## Success Criteria
 
-- [ ] `alignment_share` and `buffalo_reference_gap` each report a paired-bootstrap CI on the FIR-14 CV5 DIAGNOSTIC-tier run; `tau_by_space` carries one independently selected operating point per embedding space (D1).
+- [ ] `alignment_share` and `buffalo_reference_gap` each report a paired-bootstrap CI on the FIR-14 CV5 DIAGNOSTIC-tier run; `tau_by_space` carries one independently selected operating point per embedding space (DD-01).
 - [ ] Oracle-before-predicted ladder reports a gap with a CI; the zero-inclusion case is explicitly actionable for FIR-17.
 - [ ] MCP decision `firplan_d02_attribution_<date>` recorded and cited by FIR-17's branch rule.
 - [ ] `handoff_close_check(enforce=True)` passes; task `done` + archived.

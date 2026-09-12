@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "scripts/**"
+      - "apps/prototype-wp-alt-context/**"
       - "mk/**"
       - "Makefile.d/lifecycle.mk"
       - ".gitignore"
@@ -15,6 +16,7 @@ on:
       - main
     paths:
       - "scripts/**"
+      - "apps/prototype-wp-alt-context/**"
       - "mk/**"
       - "Makefile.d/lifecycle.mk"
       - ".gitignore"
@@ -57,3 +59,37 @@ jobs:
 
       - name: Run reap-lane bash suite
         run: bash scripts/vm/tests/test_reap_lane.sh
+
+  playwright-collection:
+    name: Collect public guide Playwright cases
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash --noprofile --norc -eo pipefail {0}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.18.0"
+
+      - name: Install compatible npm
+        run: npm install --global npm@11.14.1
+
+      - name: Install test dependencies
+        run: python -m pip install pytest
+
+      - name: Provision app dependencies
+        working-directory: apps/prototype-wp-alt-context
+        run: npm ci --ignore-scripts
+
+      - name: Collect public guide cases without a browser
+        run: python -m pytest apps/prototype-wp-alt-context/tests/contracts/test_playwright_collection.py -q -p no:cacheprovider

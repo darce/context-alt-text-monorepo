@@ -115,9 +115,11 @@ test.describe('public guide signed-out', () => {
   );
   test.setTimeout(120_000);
 
+  // defaultBrowserType is worker-scoped and cannot be set in a nested describe.
+  const { defaultBrowserType: _defaultBrowserType, ...pixel7 } = devices['Pixel 7'];
   const viewports = [
     { name: 'desktop 1440x900', use: { viewport: { width: 1440, height: 900 } } },
-    { name: 'mobile Pixel 7', use: devices['Pixel 7'] },
+    { name: 'mobile Pixel 7', use: pixel7 },
   ] as const;
 
   for (const viewport of viewports) {

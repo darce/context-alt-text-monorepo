@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from sqlalchemy import select
@@ -377,14 +377,18 @@ def _replay_or_conflict(run, *, media_ids: list[int], recognition_enabled: bool)
     return _run_response(run)
 
 
-async def _read_image_parts(form, settings: DescriptionSettings) -> Mapping[int, tuple[bytes, str | None]]:
+async def _read_image_parts(
+    form, settings: DescriptionSettings, *, media_ids: Sequence[int]
+) -> Mapping[int, tuple[bytes, str | None]]:
     """Read + bound each image_<media_id> part, mirroring describe.py's caps.
 
-    BE-03: enforce the allowed content-type set (415) and the per-file byte cap
-    (413) so a caller cannot stream unbounded bytes into memory or smuggle a
-    non-image part into the run.
+    Bound reads before materialising bytes so unused or oversized uploads cannot exhaust memory.
     """
     images: dict[int, tuple[bytes, str | None]] = {}
+    requested = set(media_ids)
+    total = 0
+    cap = settings.max_description_image_bytes
+    chunk_size = 1024 * 1024
     for key, value in form.multi_items():
         if not key.startswith(_IMAGE_KEY_PREFIX):
             continue
@@ -395,6 +399,8 @@ async def _read_image_parts(form, settings: DescriptionSettings) -> Mapping[int,
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT, f"image part key '{key}' must be 'image_<media_id>'"
             ) from exc
+        if media_id not in requested or media_id in images:
+            continue
         if not isinstance(value, UploadFile):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, f"form key '{key}' must be a file upload")
         content_type = value.content_type or ""
@@ -403,15 +409,18 @@ async def _read_image_parts(form, settings: DescriptionSettings) -> Mapping[int,
                 status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
                 f"unsupported image content-type '{content_type}' for part '{key}'",
             )
-        data = await value.read()
+        size_error = f"image part '{key}' exceeds the description size cap ({cap} bytes)"
+        if value.size is not None and value.size > cap:
+            raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, size_error)
+        data = bytearray()
+        while chunk := await value.read(chunk_size):
+            data.extend(chunk)
+            total += len(chunk)
+            if len(data) > cap or total > cap * len(requested):
+                raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, size_error)
         if not data:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"image part '{key}' is empty")
-        if len(data) > settings.max_description_image_bytes:
-            raise HTTPException(
-                status.HTTP_413_CONTENT_TOO_LARGE,
-                f"image part '{key}' exceeds the description size cap ({settings.max_description_image_bytes} bytes)",
-            )
-        images[media_id] = (data, content_type)
+        images[media_id] = (bytes(data), content_type)
     return images
 
 
@@ -453,17 +462,17 @@ async def create_describe_run(
         if reserved is not None:
             return _replay_or_conflict(reserved, media_ids=media_ids, recognition_enabled=recognition_enabled)
 
-    images = await _read_image_parts(form, settings)
+    if not media_ids:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "'media_ids' must be non-empty",
+        )
+    images = await _read_image_parts(form, settings, media_ids=media_ids)
     missing = [m for m in media_ids if m not in images]
     if missing:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             f"missing image_<media_id> part(s) for media_ids: {missing}",
-        )
-    if not media_ids:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-            "'media_ids' must be non-empty",
         )
     # Capture the adapter and its GPU execution policy before persisting the
     # run. The worker must use this exact pairing even if process configuration

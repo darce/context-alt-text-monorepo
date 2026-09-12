@@ -47,6 +47,8 @@ class GateContract:
     n_nonmated_declared: int | None
     rubric_version: str
     ratified_by_decision_id: str | None
+    t14_thresholds_declared: dict[str, float] | None  # {"buffalo": ..., "candidate": ...}
+    t14_thresholds_sha256: str | None  # sha256 of t14_thresholds_declared, frozen pre-run
 
 class GateContractError(ValueError):
     """Raised on missing/malformed gate-contract JSON keys (rg-008)."""
@@ -175,7 +177,7 @@ New module `apps/prototype-description-service/scripts/eval_harness/union_adjudi
 **Trace:** FIR-13 S3, QA v8 T-14
 **Priority:** P0
 
-`check_conditions(rows, *, declared: GateContract, signed_decision_id: str | None) -> DeadZoneVerdict` evaluates all four named condition keys (`conditions_met: dict[str, bool]`, four keys required, no fifth/partial set accepted) before `KILL` can be emitted: (i) `U` = human-verified true faces in the union, never the union box count; (ii) both detectors ran at the matched-FPPI operating point D-01 declares (`matched_fppi_declared` equal across rows for a given run); (iii) the kill decision uses the bootstrap UCL, never the point estimate; (iv) `thresholds_declared_before_run` is fixed before scoring and never revised — checked by hashing `declared`'s thresholds and comparing to the pre-run manifest hash. `check_conditions` refuses (raises) when `signed_decision_id is None` (FIRG-015).
+`check_conditions(rows, *, declared: GateContract, signed_decision_id: str | None) -> DeadZoneVerdict` evaluates all four named condition keys (`conditions_met: dict[str, bool]`, four keys required, no fifth/partial set accepted) before `KILL` can be emitted: (i) `U` = human-verified true faces in the union, never the union box count; (ii) both detectors ran at the matched-FPPI operating point D-01 declares (`matched_fppi_declared` equal across rows for a given run); (iii) the kill decision uses the bootstrap UCL, never the point estimate; (iv) `thresholds_declared_before_run` is fixed before scoring and never revised — checked by hashing each row's `thresholds_declared_before_run` and comparing it to `declared.t14_thresholds_sha256`, the hash frozen on the contract before the run. `check_conditions` refuses (raises) when `signed_decision_id is None` (FIRG-015).
 
 **Done when:**
 - `test_eval_harness_union_adjudication.py::test_any_condition_false_forces_open_verdict` passes for each of the four conditions individually violated
@@ -377,7 +379,7 @@ New `apps/prototype-description-service/scripts/eval_harness/attribution_split.p
 **Trace:** FIR-15 S2
 **Priority:** P0
 
-New `apps/prototype-description-service/scripts/eval_harness/occlusion_ladder.py`. `LadderRung` StrEnum {`NONE`, `ORACLE`, `PREDICTED`} (sr-007). Rung 0 (`NONE`) = no occlusion handling. Rung 1 (`ORACLE`) = exact masks: synthetic twins via `synthetic_occlusion.generate_twin_specs` (337–368) by construction, real probes (strata `A_true_occluder`/`B_eyewear`) via hand-drawn masks read through `synthetic_occlusion.anatomy_region_stats(mask, landmarks_px)` (762–784), operator labour, ≤30 probes. Rung 2 (`PREDICTED`) = `face_quality_factors.compute_occlusion_severity` (82–105) eye-patch proxy today; a full per-landmark visibility predictor is FIR-17's deliverable (FIRG-050/052), not this spec's Rung 2. `masked_cosine` (FIRG-044) is first defined in `recognition/infrastructure/embeddings/masked_similarity.py` (settings-independent — see FIRG-055) and this ladder imports it from there rather than defining an eval-local copy. "Oracle gap" = `FNIR(rung0) − FNIR(rung1 with visible-support matching applied)`; if the 95% CI on the oracle gap includes 0, FIR-17's adapter track is **provisionally parked** at $0 (DIAGNOSTIC/DIRECTIONAL evidence parks; it does not terminate — termination requires ADMISSIBLE evidence post FIR-11 R1) and FIR-17 must record that as its exit condition rather than proceeding to S1.
+New `apps/prototype-description-service/scripts/eval_harness/occlusion_ladder.py`. `LadderRung` StrEnum {`NONE`, `ORACLE`, `PREDICTED`} (sr-007). Rung 0 (`NONE`) = no occlusion handling. Rung 1 (`ORACLE`) = exact masks: synthetic twins via `synthetic_occlusion.generate_twin_specs` (337–368) by construction, real probes (strata `A_true_occluder`/`B_eyewear`) via hand-drawn masks read through `synthetic_occlusion.anatomy_region_stats(mask, landmarks_px)` (762–784), operator labour, ≤30 probes. Rung 2 (`PREDICTED`) = `face_quality_factors.compute_occlusion_severity` (82–105) eye-patch proxy today; a full per-landmark visibility predictor is FIR-17's deliverable (FIRG-050/052), not this spec's Rung 2. `masked_cosine` (FIRG-044) is first defined in `recognition/infrastructure/embeddings/masked_similarity.py` (settings-independent — see FIRG-055) and this ladder imports it from there rather than defining an eval-local copy. "Oracle gap" = `FNIR(rung0) − FNIR(rung1 with visible-support matching applied)`; if the 95% CI on the oracle gap includes 0, FIR-17's masking track (S1) is **provisionally parked** at $0 (DIAGNOSTIC/DIRECTIONAL evidence parks; it does not terminate — termination requires ADMISSIBLE evidence post FIR-11 R1) and FIR-17 must record that as its exit condition rather than proceeding to S1.
 
 **Before:** no `occlusion_ladder.py` module exists (new per FIR-15 S2).
 
@@ -714,10 +716,12 @@ The InsightFace (`buffalo_l`) non-commercial licence banner present in FIR-8's e
   "max_fpi": null,
   "n_nonmated_declared": null,
   "rubric_version": "face-label-rule/v1",
-  "ratified_by_decision_id": null
+  "ratified_by_decision_id": null,
+  "t14_thresholds_declared": null,
+  "t14_thresholds_sha256": null
 }
 ```
-`max_fpi` and `ratified_by_decision_id` stay `null` until the operator ratifies the fixed FPIR operating point (program decision #10843).
+All seven keys are required and must be present; `null` means "not yet ratified," never absent (`rg-008` — `load_gate_contract` fails fast on a missing key). `max_fpi`, `n_nonmated_declared` and `ratified_by_decision_id` stay `null` until the operator ratifies the fixed FPIR operating point (program decision #10843, MCP decision `firplan_d3_operating_point_<date>`). `t14_thresholds_declared`/`t14_thresholds_sha256` stay `null` until the separate, independent T-14 ratification (`firplan_t14_thresholds_<date>`); neither ratification implies the other.
 
 ### `attribution-t01-<date>/attribution.json`
 ```json
@@ -738,10 +742,10 @@ The InsightFace (`buffalo_l`) non-commercial licence banner present in FIR-8's e
 ```json
 {
   "version": "sface-support-map-v1",
-  "region_to_dimensions": {"left_eye": [0], "right_eye": [0], "nose": [0], "mouth_left": [0], "mouth_right": [0]}
+  "region_to_dimensions": {"right_eye": [0], "left_eye": [0], "nose": [0], "mouth_right": [0], "mouth_left": [0]}
 }
 ```
-The asset carries no self-hash field — integrity is verified by an external manifest sha256 entry (same scheme as `load_verified_model`, `provenance.py` ~157), never a digest embedded in this file (DD-13) (a self-hash would be circular). `region_to_dimensions` values are index lists into the 128-D SFace embedding — placeholder shape shown; real indices come from the FIR-15 attribution recipe run on clean twins. `load_support_map` (FIRG-051) rejects any region name outside this fixed five-key set and any dimension index outside `[0, 128)`.
+The asset carries no self-hash field — integrity is verified by an external manifest sha256 entry (same scheme as `load_verified_model`, `provenance.py` ~157), never a digest embedded in this file (DD-13) (a self-hash would be circular). `region_to_dimensions` values are index lists into the 128-D SFace embedding — placeholder shape shown; real indices come from the FIR-15 attribution recipe run on clean twins. `load_support_map` (FIRG-051) rejects any region name outside this fixed five-key set (the order is `REGION_NAMES`, FIR-15 / DD-15, matching `aligner.SFACE_CANONICAL_LANDMARKS_112`) and any dimension index outside `[0, 128)`.
 
 ---
 

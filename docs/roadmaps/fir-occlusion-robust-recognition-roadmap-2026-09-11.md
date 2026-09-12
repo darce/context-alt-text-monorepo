@@ -59,7 +59,7 @@ Two-stage face pipeline, unchanged at the detect/align/embed layer, gains one ne
 | --- | --- |
 | D3 gate metric is FNIR@FPIR with FPIR named as a parameter, not hard-coded | Operator must ratify the operating point; a plan that bakes one in pre-empts that decision |
 | No SCRFD/AdaFace retrain, no A10 spend before D-01 | T-09 → T-14 → D-01 is the cheapest kill path (20–34 person-h, $0); GPU spend before that gate is unjustified [PRINCIPLE #15] |
-| Oracle-before-predicted occlusion ladder | Isolates "how much does perfect occlusion knowledge help" from "how good is our occlusion detector," so the adapter track can be killed at $0 if the oracle gap's CI includes 0 [EVAL-19] |
+| Oracle-before-predicted occlusion ladder | Isolates "how much does perfect occlusion knowledge help" from "how good is our occlusion detector," so FIR-17's masking track (S1) can be parked at $0 if the oracle gap's CI includes 0 [EVAL-19] |
 | Toolchain provenance stamped on every report row | Prevents re-litigating pre-CVUP-1-style contamination; `score-face` refuses cross-toolchain comparisons by default [DRIFT-03] |
 | Own-tau per stack in the head-to-head | 128D SFace and 512D buffalo embeddings are not comparable at a shared threshold [EMB-01][IDX-02] |
 | OACT sign flip (FIR-17 S0, occlusion term can only raise the threshold) | Under D3, rewarding occlusion with a lower threshold inflates FPIR; non-negativity of the coefficient is repurposed to mean "never relaxes" instead of "never tightens". Unconditional — lands before D-02 in every branch, so it is scheduled in Phase B, not Phase C |

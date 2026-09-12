@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import importlib
 import json
 import socket
 import threading
@@ -129,6 +130,38 @@ def test_gpu_remote_adapter_rejects_webp_over_pixel_ceiling() -> None:
     message = str(exc_info.value)
     assert "4096x4096" in message
     assert str(gpu_remote_adapter._DEFAULT_MAX_IMAGE_PIXELS) in message
+
+
+def test_gpu_remote_adapter_rejects_oversized_webp_before_decoder_construction(monkeypatch) -> None:
+    image_bytes = bytearray(25)
+    image_bytes[0:4] = b"RIFF"
+    image_bytes[8:12] = b"WEBP"
+    image_bytes[12:16] = b"VP8L"
+    image_bytes[20] = 0x2F
+    image_bytes[21:25] = ((4096 - 1) | ((4096 - 1) << 14)).to_bytes(4, "little")
+
+    def fail_open(*args, **kwargs):
+        raise AssertionError("Image.open must not be reached")
+
+    monkeypatch.setattr(gpu_remote_adapter.Image, "open", fail_open)
+
+    with pytest.raises(GpuRemoteAdapterError) as exc_info:
+        gpu_remote_adapter._image_payload(bytes(image_bytes))
+
+    message = str(exc_info.value)
+    assert "4096x4096" in message
+    assert str(gpu_remote_adapter._DEFAULT_MAX_IMAGE_PIXELS) in message
+
+
+def test_webp_canvas_size_matches_pillow_for_real_webp() -> None:
+    source = BytesIO()
+    Image.new("RGB", (17, 11), color=(24, 96, 180)).save(source, format="WEBP", lossless=True)
+    image_bytes = source.getvalue()
+
+    with Image.open(BytesIO(image_bytes)) as image:
+        expected_size = image.size
+
+    assert gpu_remote_adapter._webp_canvas_size(image_bytes) == expected_size
 
 
 def test_gpu_remote_adapter_rejects_png_output_over_byte_ceiling(monkeypatch) -> None:
@@ -529,3 +562,11 @@ def test_gpu_remote_adapter_applies_connect_and_read_timeouts(monkeypatch) -> No
     assert captured
     assert captured[0].connect == 3.0
     assert captured[0].read == 120.0
+
+
+def test_reloading_gpu_remote_adapter_does_not_change_pillow_pixel_policy() -> None:
+    before = Image.MAX_IMAGE_PIXELS
+
+    importlib.reload(gpu_remote_adapter)
+
+    assert before == Image.MAX_IMAGE_PIXELS

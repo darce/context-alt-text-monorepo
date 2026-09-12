@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 from typing import Any
 
 import pytest
@@ -93,6 +94,23 @@ def _payloads_with_gap(
         }
         for payload in synthetic_images
     )
+
+
+def _payload_with_gap(
+    image_id: str,
+    gap_per_100_faces: int,
+    *,
+    union_boxes: int = 100,
+) -> dict[str, Any]:
+    return {
+        "image_id": image_id,
+        "union_boxes": union_boxes,
+        "human_true_faces": 100,
+        "tp_buffalo_i": 80,
+        "tp_candidate_i": 80 - gap_per_100_faces,
+        "matched_fppi_declared": 0.20,
+        "thresholds_declared_before_run": dict(_THRESHOLDS),
+    }
 
 
 def test_check_conditions_kill_below_005(
@@ -257,8 +275,78 @@ def test_bootstrap_ucl_deterministic_with_seed(
 
     first = union_adjudication.bootstrap_ucl(rows, b=2000, seed=23)
     second = union_adjudication.bootstrap_ucl(rows, b=2000, seed=23)
+    different_seed = union_adjudication.bootstrap_ucl(rows, b=2000, seed=24)
 
+    assert isinstance(first, float)
+    assert math.isfinite(first)
+    assert first > 0.0
     assert first == second
+    assert different_seed != first
+
+
+def test_bootstrap_ucl_rejects_duplicate_caller_image_ids(
+    synthetic_images: tuple[dict[str, Any], ...],
+) -> None:
+    from scripts.eval_harness import union_adjudication
+
+    rows = tuple(
+        union_adjudication.UnionAdjudicationInput(**payload)
+        for payload in synthetic_images
+    )
+    duplicate_rows = rows + (rows[0],)
+
+    with pytest.raises(union_adjudication.UnionAdjudicationError, match="image-1"):
+        union_adjudication.bootstrap_ucl(duplicate_rows, b=32, seed=23)
+
+
+def test_bootstrap_ucl_rejects_duplicate_reproduction_that_would_cross_kill_boundary() -> None:
+    from scripts.eval_harness import union_adjudication
+
+    zero_gap_row = union_adjudication.UnionAdjudicationInput(
+        **_payload_with_gap("image-zero", 0)
+    )
+    gap_row = union_adjudication.UnionAdjudicationInput(
+        **_payload_with_gap("image-gap", 20)
+    )
+    two_image_rows = (zero_gap_row, gap_row)
+    duplicate_rows = (zero_gap_row,) * 99 + (gap_row,)
+
+    ucl = union_adjudication.bootstrap_ucl(two_image_rows, b=2000, seed=23)
+    assert isinstance(ucl, float)
+    assert ucl >= 0.05
+
+    with pytest.raises(union_adjudication.UnionAdjudicationError, match="image-zero"):
+        union_adjudication.bootstrap_ucl(duplicate_rows, b=2000, seed=23)
+
+
+def test_bootstrap_ucl_keeps_replacement_resampling_for_unique_image_rows() -> None:
+    from scripts.eval_harness import union_adjudication
+
+    rows = tuple(
+        union_adjudication.UnionAdjudicationInput(**_payload_with_gap(image_id, gap))
+        for image_id, gap in (("image-zero", 0), ("image-gap", 20))
+    )
+
+    ucl = union_adjudication.bootstrap_ucl(rows, b=256, seed=23)
+
+    assert isinstance(ucl, float)
+    assert math.isfinite(ucl)
+    assert ucl == pytest.approx(0.20)
+
+
+def test_all_caller_adjudicators_reject_duplicate_image_ids() -> None:
+    from scripts.eval_harness import union_adjudication
+
+    row = union_adjudication.UnionAdjudicationInput(**_payload_with_gap("image-duplicate", 10))
+    duplicate_rows = (row, row)
+
+    with pytest.raises(union_adjudication.UnionAdjudicationError, match="image-duplicate"):
+        union_adjudication.detector_gap_bound(duplicate_rows)
+    with pytest.raises(union_adjudication.UnionAdjudicationError, match="image-duplicate"):
+        union_adjudication.miss_inflate(
+            duplicate_rows,
+            exhaustive_image_ids=_EXHAUSTIVE_IMAGE_IDS,
+        )
 
 
 def test_miss_inflate_refuses_under_30_exhaustive_images(
@@ -297,7 +385,32 @@ def test_miss_inflate_zero_denominator_returns_factor_one_with_flag(
         exhaustive_image_ids=_EXHAUSTIVE_IMAGE_IDS,
     )
 
+    assert isinstance(factor, float)
+    assert factor == 1.0
+    assert flag == 1.0
     assert (factor, flag) == (1.0, 1.0)
+
+
+def test_miss_inflate_rejects_factor_below_one_with_operational_details() -> None:
+    from scripts.eval_harness import union_adjudication
+
+    rows = tuple(
+        union_adjudication.UnionAdjudicationInput(
+            **_payload_with_gap(f"image-{number}", 10, union_boxes=110)
+        )
+        for number in range(30)
+    )
+    exhaustive_image_ids = frozenset(row.image_id for row in rows)
+
+    with pytest.raises(union_adjudication.UnionAdjudicationError, match=r"computed miss inflation factor -1\.0000") as exc_info:
+        union_adjudication.miss_inflate(
+            rows,
+            exhaustive_image_ids=exhaustive_image_ids,
+        )
+
+    message = str(exc_info.value)
+    assert "exhaustive miss numerator=-300" in message
+    assert "detector-flagged denominator=300" in message
 
 
 def test_miss_inflate_computed_only_from_exhaustive_subset(
@@ -334,6 +447,8 @@ def test_miss_inflate_computed_only_from_exhaustive_subset(
         exhaustive_image_ids=_EXHAUSTIVE_IMAGE_IDS - {"image-5"},
     )
 
+    assert isinstance(factor, float)
+    assert factor >= 1.0
     assert factor == 1.2346
     assert flag == 0.0
     assert rows == before

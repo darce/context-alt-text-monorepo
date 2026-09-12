@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import copy
-import hashlib
-import json
 import math
 from typing import Any
 
@@ -67,8 +65,9 @@ def synthetic_images() -> tuple[dict[str, Any], ...]:
 
 
 def _threshold_sha256(thresholds: dict[str, float]) -> str:
-    encoded = json.dumps(thresholds, sort_keys=True).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
+    from scripts.eval_harness.gate_contract import threshold_sha256
+
+    return threshold_sha256(thresholds)
 
 
 def _declared_kwargs(thresholds: dict[str, float]) -> dict[str, object]:
@@ -77,7 +76,7 @@ def _declared_kwargs(thresholds: dict[str, float]) -> dict[str, object]:
         "max_fpi": None,
         "n_nonmated_declared": None,
         "rubric_version": "face-label-rule/v1",
-        "ratified_by_decision_id": "firplan_t14_thresholds_20260912",
+        "ratified_by_decision_id": None,
         "t14_thresholds_declared": thresholds,
         "t14_thresholds_sha256": _threshold_sha256(thresholds),
     }
@@ -120,7 +119,11 @@ def test_check_conditions_kill_below_005() -> None:
         union_adjudication.UnionAdjudicationInput(**_payload_with_gap(f"image-{number}", 0)) for number in range(30)
     )
     exhaustive_image_ids = frozenset(row.image_id for row in rows)
-    declared = gate_contract.GateContract(**_declared_kwargs(thresholds))
+    declared = gate_contract.GateContract(
+        **_declared_kwargs(thresholds),
+        t14_exhaustive_subset_count=len(exhaustive_image_ids),
+        t14_exhaustive_subset_sha256=gate_contract.exhaustive_subset_sha256(exhaustive_image_ids),
+    )
     conditions_met = dict.fromkeys(union_adjudication._REQUIRED_CONDITION_KEYS, True)
 
     verdict = union_adjudication.check_conditions(
@@ -153,7 +156,11 @@ def test_check_conditions_miss_inflation_can_lift_would_be_kill() -> None:
     assert factor > 1.0
     assert flag == 0.0
     assert ucl * factor >= 0.05
-    declared = gate_contract.GateContract(**_declared_kwargs(thresholds))
+    declared = gate_contract.GateContract(
+        **_declared_kwargs(thresholds),
+        t14_exhaustive_subset_count=len(exhaustive_image_ids),
+        t14_exhaustive_subset_sha256=gate_contract.exhaustive_subset_sha256(exhaustive_image_ids),
+    )
     conditions_met = dict.fromkeys(union_adjudication._REQUIRED_CONDITION_KEYS, True)
 
     verdict = union_adjudication.check_conditions(
@@ -178,7 +185,11 @@ def test_check_conditions_refuses_kill_without_exhaustive_image_ids(
     rows = tuple(
         union_adjudication.UnionAdjudicationInput(**payload) for payload in _payloads_with_gap(synthetic_images, 4)
     )
-    declared = gate_contract.GateContract(**_declared_kwargs(thresholds))
+    declared = gate_contract.GateContract(
+        **_declared_kwargs(thresholds),
+        t14_exhaustive_subset_count=None,
+        t14_exhaustive_subset_sha256=None,
+    )
     conditions_met = dict.fromkeys(union_adjudication._REQUIRED_CONDITION_KEYS, True)
 
     with pytest.raises(union_adjudication.UnionAdjudicationError, match="exhaustive_image_ids"):
@@ -201,7 +212,11 @@ def test_check_conditions_dead_zone_between_005_and_010(
     rows = tuple(
         union_adjudication.UnionAdjudicationInput(**payload) for payload in _payloads_with_gap(synthetic_images, 7)
     )
-    declared = gate_contract.GateContract(**_declared_kwargs(thresholds))
+    declared = gate_contract.GateContract(
+        **_declared_kwargs(thresholds),
+        t14_exhaustive_subset_count=None,
+        t14_exhaustive_subset_sha256=None,
+    )
     conditions_met = dict.fromkeys(union_adjudication._REQUIRED_CONDITION_KEYS, True)
 
     verdict = union_adjudication.check_conditions(
@@ -225,7 +240,11 @@ def test_check_conditions_open_above_010(
     rows = tuple(
         union_adjudication.UnionAdjudicationInput(**payload) for payload in _payloads_with_gap(synthetic_images, 12)
     )
-    declared = gate_contract.GateContract(**_declared_kwargs(thresholds))
+    declared = gate_contract.GateContract(
+        **_declared_kwargs(thresholds),
+        t14_exhaustive_subset_count=None,
+        t14_exhaustive_subset_sha256=None,
+    )
     conditions_met = dict.fromkeys(union_adjudication._REQUIRED_CONDITION_KEYS, True)
 
     verdict = union_adjudication.check_conditions(
@@ -247,7 +266,11 @@ def test_check_conditions_refuses_without_signed_decision_id(
 
     thresholds = dict(_THRESHOLDS)
     rows = tuple(union_adjudication.UnionAdjudicationInput(**payload) for payload in synthetic_images)
-    declared = gate_contract.GateContract(**_declared_kwargs(thresholds))
+    declared = gate_contract.GateContract(
+        **_declared_kwargs(thresholds),
+        t14_exhaustive_subset_count=None,
+        t14_exhaustive_subset_sha256=None,
+    )
     conditions_met = dict.fromkeys(union_adjudication._REQUIRED_CONDITION_KEYS, True)
 
     with pytest.raises(union_adjudication.UnionAdjudicationError):
@@ -269,8 +292,17 @@ def test_check_conditions_refuses_on_threshold_hash_mismatch(
     thresholds = dict(_THRESHOLDS)
     rows = tuple(union_adjudication.UnionAdjudicationInput(**payload) for payload in synthetic_images)
     declared_kwargs = _declared_kwargs(thresholds)
-    declared_kwargs["t14_thresholds_sha256"] = "0" * 64
-    declared = gate_contract.GateContract(**declared_kwargs)
+    declared = gate_contract.GateContract(
+        **declared_kwargs,
+        t14_exhaustive_subset_count=None,
+        t14_exhaustive_subset_sha256=None,
+    )
+    rows = tuple(
+        union_adjudication.UnionAdjudicationInput(
+            **{**payload, "thresholds_declared_before_run": {"buffalo": 0.83, "candidate": 0.77}}
+        )
+        for payload in synthetic_images
+    )
     conditions_met = dict.fromkeys(union_adjudication._REQUIRED_CONDITION_KEYS, True)
 
     with pytest.raises(union_adjudication.UnionAdjudicationError):
@@ -291,7 +323,11 @@ def test_check_conditions_refuses_on_missing_condition_key(
 
     thresholds = dict(_THRESHOLDS)
     rows = tuple(union_adjudication.UnionAdjudicationInput(**payload) for payload in synthetic_images)
-    declared = gate_contract.GateContract(**_declared_kwargs(thresholds))
+    declared = gate_contract.GateContract(
+        **_declared_kwargs(thresholds),
+        t14_exhaustive_subset_count=None,
+        t14_exhaustive_subset_sha256=None,
+    )
     condition_keys = tuple(union_adjudication._REQUIRED_CONDITION_KEYS)
     conditions_met = dict.fromkeys(condition_keys[:-1], True)
 
@@ -313,7 +349,11 @@ def test_check_conditions_refuses_unknown_condition_key(
 
     thresholds = dict(_THRESHOLDS)
     rows = tuple(union_adjudication.UnionAdjudicationInput(**payload) for payload in synthetic_images)
-    declared = gate_contract.GateContract(**_declared_kwargs(thresholds))
+    declared = gate_contract.GateContract(
+        **_declared_kwargs(thresholds),
+        t14_exhaustive_subset_count=None,
+        t14_exhaustive_subset_sha256=None,
+    )
     conditions_met = dict.fromkeys(union_adjudication._REQUIRED_CONDITION_KEYS, True)
     conditions_met["unratified_fifth_condition"] = True
 
@@ -595,3 +635,129 @@ def test_miss_inflate_computed_only_from_exhaustive_subset() -> None:
     assert factor == 1.2346
     assert flag == 0.0
     assert rows == before
+
+
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [
+        ({"b": 100}, "T-14 b is fixed at 2000"),
+        ({"kill_below": 0.04}, "T-14 kill_below is fixed at 0.05"),
+        ({"dead_zone_upper": 0.11}, "T-14 dead_zone_upper is fixed at 0.1"),
+    ],
+)
+def test_check_conditions_refuses_signed_parameter_override(override, message) -> None:
+    from scripts.eval_harness import gate_contract, union_adjudication
+
+    declared = gate_contract.GateContract(
+        **_declared_kwargs(_THRESHOLDS),
+        t14_exhaustive_subset_count=None,
+        t14_exhaustive_subset_sha256=None,
+    )
+    rows = (union_adjudication.UnionAdjudicationInput(**_payload_with_gap("image", 20)),)
+    with pytest.raises(union_adjudication.UnionAdjudicationError, match=message):
+        union_adjudication.check_conditions(
+            rows,
+            declared=declared,
+            signed_decision_id="signed",
+            conditions_met=dict.fromkeys(union_adjudication._REQUIRED_CONDITION_KEYS, True),
+            seed=17,
+            **override,
+        )
+
+
+@pytest.mark.parametrize("case", ["unratified", "count", "hash", "omitted"])
+def test_check_conditions_requires_exact_signed_subset(case) -> None:
+    from scripts.eval_harness import gate_contract, union_adjudication
+
+    rows = tuple(union_adjudication.UnionAdjudicationInput(**_payload_with_gap(f"image-{i}", 0)) for i in range(30))
+    ids = frozenset(row.image_id for row in rows)
+    declared = gate_contract.GateContract(
+        **_declared_kwargs(_THRESHOLDS),
+        t14_exhaustive_subset_count=None if case == "unratified" else 31 if case == "count" else 30,
+        t14_exhaustive_subset_sha256=None
+        if case == "unratified"
+        else gate_contract.exhaustive_subset_sha256(ids | {"extra"} if case == "hash" else ids),
+    )
+    messages = {
+        "unratified": "subset must be ratified",
+        "count": "count 30 does not match declared count 31",
+        "hash": "run exhaustive-subset hash does not match",
+        "omitted": "ratified exhaustive-image subset requires exhaustive_image_ids",
+    }
+    with pytest.raises(union_adjudication.UnionAdjudicationError, match=messages[case]):
+        union_adjudication.check_conditions(
+            rows,
+            declared=declared,
+            signed_decision_id="signed",
+            conditions_met=dict.fromkeys(union_adjudication._REQUIRED_CONDITION_KEYS, True),
+            exhaustive_image_ids=None if case == "omitted" else ids,
+            seed=17,
+        )
+
+
+def test_check_conditions_matches_integer_thresholds_to_float_rows() -> None:
+    from scripts.eval_harness import gate_contract, union_adjudication
+
+    declared = gate_contract.GateContract(
+        **_declared_kwargs({"buffalo": 0, "candidate": 1}),
+        t14_exhaustive_subset_count=None,
+        t14_exhaustive_subset_sha256=None,
+    )
+    rows = (
+        union_adjudication.UnionAdjudicationInput(
+            **{**_payload_with_gap("image", 20), "thresholds_declared_before_run": {"buffalo": 0.0, "candidate": 1.0}},
+        ),
+    )
+    assert (
+        union_adjudication.check_conditions(
+            rows,
+            declared=declared,
+            signed_decision_id="signed",
+            conditions_met=dict.fromkeys(union_adjudication._REQUIRED_CONDITION_KEYS, True),
+            seed=17,
+        )
+        is union_adjudication.DeadZoneVerdict.OPEN
+    )
+
+
+@pytest.mark.parametrize("ucl", [None, 0.07, 0.12])
+def test_check_conditions_degenerate_correction_with_real_misses(monkeypatch, ucl) -> None:
+    from scripts.eval_harness import gate_contract, union_adjudication
+
+    rows = tuple(
+        union_adjudication.UnionAdjudicationInput(**_payload_with_gap(f"image-{i}", 0, union_boxes=80))
+        for i in range(30)
+    )
+    ids = frozenset(row.image_id for row in rows)
+    declared = gate_contract.GateContract(
+        **_declared_kwargs(_THRESHOLDS),
+        t14_exhaustive_subset_count=len(ids),
+        t14_exhaustive_subset_sha256=gate_contract.exhaustive_subset_sha256(ids),
+    )
+    assert union_adjudication.miss_inflate(rows, exhaustive_image_ids=ids) == (1.0, 1.0)
+    if ucl is not None:
+
+        def fixed_ucl(*args, **kwargs):
+            assert kwargs["b"] == 2000
+            assert kwargs["level"] == 0.95
+            return ucl
+
+        monkeypatch.setattr(union_adjudication, "bootstrap_ucl", fixed_ucl)
+    kwargs = {
+        "declared": declared,
+        "signed_decision_id": "signed",
+        "conditions_met": dict.fromkeys(union_adjudication._REQUIRED_CONDITION_KEYS, True),
+        "exhaustive_image_ids": ids,
+        "seed": 17,
+    }
+    if ucl is None:
+        with pytest.raises(
+            union_adjudication.UnionAdjudicationError,
+            match="unmeasurable .*zero detector-flagged denominator.*T-14 cannot return KILL",
+        ):
+            union_adjudication.check_conditions(rows, **kwargs)
+    else:
+        expected = (
+            union_adjudication.DeadZoneVerdict.OPEN if ucl > 0.10 else union_adjudication.DeadZoneVerdict.DEAD_ZONE
+        )
+        assert union_adjudication.check_conditions(rows, **kwargs) is expected

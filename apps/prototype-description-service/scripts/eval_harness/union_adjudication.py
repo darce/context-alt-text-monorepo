@@ -7,8 +7,6 @@ resample whole rows, never individual faces.
 
 from __future__ import annotations
 
-import hashlib
-import json
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -17,7 +15,18 @@ from enum import StrEnum
 
 import numpy as np
 
-from scripts.eval_harness.gate_contract import GateContract
+from scripts.eval_harness.gate_contract import (
+    GateContract,
+    canonical_thresholds,
+    exhaustive_subset_sha256,
+    threshold_sha256,
+)
+
+# WHY: benchmarks/protocols/t14-dead-zone-rule.md signs these verdict parameters.
+T14_BOOTSTRAP_B = 2000
+T14_KILL_BELOW = 0.05
+T14_DEAD_ZONE_UPPER = 0.10
+T14_BOOTSTRAP_LEVEL = 0.95
 
 
 @dataclass(frozen=True)
@@ -180,7 +189,8 @@ def miss_inflate(
     The numerator is the number of human-verified faces absent from the union
     (``human_true_faces - union_boxes``).  The denominator is the detector-
     flagged Buffalo-minus-candidate miss count.  Both are accumulated only on
-    the declared exhaustive image subset.
+    the declared exhaustive image subset. Returns (factor, degenerate_flag),
+    where the flag is 1.0 exactly when the denominator is zero.
     """
 
     normalised = _rows_tuple(rows, allow_empty=True)
@@ -217,14 +227,6 @@ def miss_inflate(
         )
     factor = ratio.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
     return (float(factor), 0.0)
-
-
-def _threshold_sha256(thresholds: Mapping[str, float]) -> str:
-    try:
-        encoded = json.dumps(thresholds, sort_keys=True).encode("utf-8")
-    except (TypeError, ValueError) as exc:
-        raise UnionAdjudicationError("thresholds_declared_before_run must be JSON serializable") from exc
-    return hashlib.sha256(encoded).hexdigest()
 
 
 def _validate_conditions(conditions_met: Mapping[str, bool]) -> None:
@@ -265,16 +267,16 @@ def check_conditions(
     _validate_conditions(conditions_met)
     normalised = _rows_tuple(rows)
 
-    thresholds = normalised[0].thresholds_declared_before_run
-    if any(row.thresholds_declared_before_run != thresholds for row in normalised[1:]):
+    thresholds = canonical_thresholds(normalised[0].thresholds_declared_before_run)
+    if any(canonical_thresholds(row.thresholds_declared_before_run) != thresholds for row in normalised[1:]):
         raise UnionAdjudicationError("thresholds_declared_before_run must be identical on every row")
     if any(row.matched_fppi_declared != normalised[0].matched_fppi_declared for row in normalised[1:]):
         raise UnionAdjudicationError("matched_fppi_declared must be identical on every row")
     if declared.t14_thresholds_declared is None or declared.t14_thresholds_sha256 is None:
         raise UnionAdjudicationError("T-14 thresholds must be ratified in the declared contract before adjudication")
-    if declared.t14_thresholds_declared != thresholds:
+    if canonical_thresholds(declared.t14_thresholds_declared) != thresholds:
         raise UnionAdjudicationError("run thresholds do not match the declared T-14 thresholds")
-    if _threshold_sha256(thresholds) != declared.t14_thresholds_sha256:
+    if threshold_sha256(thresholds) != declared.t14_thresholds_sha256:
         raise UnionAdjudicationError("run threshold hash does not match the declared T-14 threshold hash")
 
     if (
@@ -288,25 +290,67 @@ def check_conditions(
     ):
         raise UnionAdjudicationError("T-14 bounds must be finite with 0 <= kill_below < dead_zone_upper")
 
-    ucl = bootstrap_ucl(normalised, b=b, seed=seed)
+    _validate_bootstrap_arguments(b=b, seed=seed, resampling_unit="image", level=T14_BOOTSTRAP_LEVEL)
+    for name, value, fixed in (
+        ("b", b, T14_BOOTSTRAP_B),
+        ("kill_below", kill_below, T14_KILL_BELOW),
+        ("dead_zone_upper", dead_zone_upper, T14_DEAD_ZONE_UPPER),
+    ):
+        if value != fixed:
+            raise UnionAdjudicationError(
+                f"T-14 {name} is fixed at {fixed} by the signed protocol; refusing a caller override"
+            )
+
     if exhaustive_image_ids is not None:
-        factor, _ = miss_inflate(normalised, exhaustive_image_ids=exhaustive_image_ids)
+        if declared.t14_exhaustive_subset_count is None or declared.t14_exhaustive_subset_sha256 is None:
+            raise UnionAdjudicationError(
+                "the exhaustive-image subset must be ratified in the declared contract before adjudication"
+            )
+        if len(exhaustive_image_ids) != declared.t14_exhaustive_subset_count:
+            raise UnionAdjudicationError(
+                f"run exhaustive-subset count {len(exhaustive_image_ids)} does not match "
+                f"declared count {declared.t14_exhaustive_subset_count}"
+            )
+        if exhaustive_subset_sha256(exhaustive_image_ids) != declared.t14_exhaustive_subset_sha256:
+            raise UnionAdjudicationError("run exhaustive-subset hash does not match the declared T-14 subset hash")
+    elif declared.t14_exhaustive_subset_count is not None:
+        raise UnionAdjudicationError("the ratified exhaustive-image subset requires exhaustive_image_ids")
+
+    ucl = bootstrap_ucl(normalised, b=T14_BOOTSTRAP_B, seed=seed, level=T14_BOOTSTRAP_LEVEL)
+    degenerate_flag = 0.0
+    if exhaustive_image_ids is not None:
+        factor, degenerate_flag = miss_inflate(normalised, exhaustive_image_ids=exhaustive_image_ids)
         bound = ucl * factor
     else:
         bound = ucl
 
-    if bound < kill_below:
+    if bound < T14_KILL_BELOW:
         if exhaustive_image_ids is None:
             raise UnionAdjudicationError(
                 "KILL requires the exhaustive-image miss-inflation correction; pass exhaustive_image_ids"
             )
+        if (
+            degenerate_flag
+            and sum(
+                row.human_true_faces - row.union_boxes for row in normalised if row.image_id in exhaustive_image_ids
+            )
+            > 0
+        ):
+            raise UnionAdjudicationError(
+                "the miss-inflation correction is unmeasurable (zero detector-flagged denominator) "
+                "while exhaustive misses exist; T-14 cannot return KILL"
+            )
         return DeadZoneVerdict.KILL
-    if bound < dead_zone_upper:
+    if bound < T14_DEAD_ZONE_UPPER:
         return DeadZoneVerdict.DEAD_ZONE
     return DeadZoneVerdict.OPEN
 
 
 __all__ = [
+    "T14_BOOTSTRAP_B",
+    "T14_KILL_BELOW",
+    "T14_DEAD_ZONE_UPPER",
+    "T14_BOOTSTRAP_LEVEL",
     "DeadZoneVerdict",
     "UnionAdjudicationError",
     "UnionAdjudicationInput",

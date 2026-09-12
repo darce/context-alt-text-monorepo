@@ -122,6 +122,8 @@ Add two new pure modules under `scripts/eval_harness/` with zero production-code
 
 ### Slice 1: Face-label rubric (T-09)
 
+Implements: FIRG-003, FIRG-020..021.
+
 **Goal**: Freeze the rubric the operator adjudicates against, and stamp it into every scored row.
 
 Changes:
@@ -141,6 +143,8 @@ Proof:
 
 ### Slice 2: D3 declaration encoded
 
+Implements: FIRG-001..006 (FIRG-006 jointly with FIR-16 S3).
+
 **Goal**: A machine-checkable D3 contract object with the operating point held unset until ratified.
 
 Changes:
@@ -157,6 +161,8 @@ class GateContract:
     n_nonmated_declared: int | None
     rubric_version: str
     ratified_by_decision_id: str | None
+    t14_thresholds_declared: dict[str, float] | None  # {"buffalo": ..., "candidate": ...}
+    t14_thresholds_sha256: str | None  # sha256 of t14_thresholds_declared, frozen pre-run
 
 def load_gate_contract(path: str | Path) -> GateContract: ...
 
@@ -175,14 +181,16 @@ def select_gate_point(
 ) -> IETPoint | None: ...
 ```
 
-  `load_gate_contract` raises `GateContractError` on any missing/malformed required key (`rg-008` — fail fast, no silent default). `select_gate_point` returns the measured point with the lowest `tau` whose `fpi <= max_fpi`, or `None` when no measured point qualifies — **never** `0.0` (mirrors `IETPoint`'s own unmeasured-is-not-zero invariant, `open_set_identification.py:56-99`).
-- `benchmarks/manifests/fir-gate-contract-v1.json` (new): `{"metric": "FNIR@FPIR", "max_fpi": null, "n_nonmated_declared": null, "rubric_version": "face-label-rule/v1", "ratified_by_decision_id": null}`. The plan does not name a fixed FPIR value anywhere — the operator ratification step is `set_handoff_state`/`record_event` recording an MCP decision `firplan_d3_operating_point_<date>` that then edits `max_fpi`/`n_nonmated_declared`/`ratified_by_decision_id` in place.
+  `load_gate_contract` raises `GateContractError` on any missing/malformed required key (`rg-008` — fail fast, no silent default; `t14_thresholds_declared`/`t14_thresholds_sha256` are required keys too — present and `null` until T-14 ratification, never absent). `select_gate_point` returns the measured point with the lowest `tau` whose `fpi <= max_fpi`, or `None` when no measured point qualifies — **never** `0.0` (mirrors `IETPoint`'s own unmeasured-is-not-zero invariant, `open_set_identification.py:56-99`).
+- `benchmarks/manifests/fir-gate-contract-v1.json` (new): `{"metric": "FNIR@FPIR", "max_fpi": null, "n_nonmated_declared": null, "rubric_version": "face-label-rule/v1", "ratified_by_decision_id": null, "t14_thresholds_declared": null, "t14_thresholds_sha256": null}`. The plan does not name a fixed FPIR value anywhere — the operator ratification step is `set_handoff_state`/`record_event` recording an MCP decision `firplan_d3_operating_point_<date>` that then edits `max_fpi`/`n_nonmated_declared`/`ratified_by_decision_id` in place. A separate, later MCP decision (`firplan_t14_thresholds_<date>`) edits `t14_thresholds_declared`/`t14_thresholds_sha256` in place — the two ratifications are independent edits to the one contract file; neither implies the other.
 
 Proof:
 
-- `scene/tests/test_eval_harness_gate_contract.py::test_load_gate_contract_round_trips`, `::test_load_gate_contract_raises_on_missing_metric`, `::test_select_gate_point_never_returns_zero_for_unmeasured`, `::test_select_gate_point_picks_lowest_qualifying_tau`.
+- `scene/tests/test_eval_harness_gate_contract.py::test_load_gate_contract_round_trips`, `::test_load_gate_contract_raises_on_missing_metric`, `::test_load_gate_contract_raises_on_missing_t14_threshold_keys`, `::test_select_gate_point_never_returns_zero_for_unmeasured`, `::test_select_gate_point_picks_lowest_qualifying_tau`.
 
 ### Slice 3: T-14 adjudication rule encoded
+
+Implements: FIRG-010..015.
 
 **Goal**: The union-adjudication bound, its bootstrap UCL, and the kill/dead-zone/open verdict as pure functions the operator's eventual T-14 run can call — this slice never runs T-14 itself.
 
@@ -212,38 +220,72 @@ def bootstrap_ucl(
     resampling_unit: str = "image",
     level: float = 0.95,
 ) -> float: ...
+    # image-level resampling only (rg per D16): draw len(rows) images with
+    # replacement b times (seeded numpy Generator), recompute
+    # detector_gap_bound on each resample, return the `level` percentile
+    # (default 95th) of the resulting distribution.
 
 def miss_inflate(
     rows: Sequence[UnionAdjudicationInput],
-    exhaustive_subset: Sequence[UnionAdjudicationInput],
-) -> list[UnionAdjudicationInput]: ...
+    *,
+    exhaustive_image_ids: frozenset[str],
+) -> tuple[float, float]: ...
+    # factor = (misses found by exhaustive adjudication) / (detector-flagged
+    # misses), both counted ONLY over rows whose image_id is in
+    # exhaustive_image_ids; the resulting factor is what the caller applies
+    # to non-exhaustive rows' miss counts before they feed bootstrap_ucl —
+    # miss_inflate itself never mutates rows, it only returns the factor.
+    # Rounds half-up to 4 dp (Decimal ROUND_HALF_UP). Raises
+    # UnionAdjudicationError if len(exhaustive_image_ids) < 30 (D16 floor).
+    # Zero-denominator (no detector-flagged misses on the exhaustive subset)
+    # returns (1.0, 1.0) — factor 1.0 (no-op) with the second element as an
+    # explicit degenerate-case flag (0.0 in the normal, measured case).
+    # Returns (factor, flag).
 
 class DeadZoneVerdict(StrEnum):
     KILL = "kill"
     DEAD_ZONE = "dead_zone"
     OPEN = "open"
 
-def check_conditions(rows: Sequence[UnionAdjudicationInput]) -> dict[str, bool]: ...
-    # (i) human_true_faces is used, never union_boxes
-    # (ii) both matched_fppi_declared values equal across rows
-    # (iii) verdict is read off the bootstrap UCL, never a point estimate
-    # (iv) thresholds_declared_before_run is identical across every row (never revised mid-run)
+class UnionAdjudicationError(Exception): ...
+    # fail-closed refusal (sr-006/rg-008) — never a silent OPEN downgrade.
 
-def verdict(
-    ucl: float,
-    conditions: dict[str, bool],
+_REQUIRED_CONDITION_KEYS = frozenset({
+    "union_uses_human_true_faces",       # (i) U from human_true_faces, never union_boxes
+    "matched_fppi_equal_across_rows",    # (ii) both detectors at the same declared operating point
+    "verdict_from_bootstrap_ucl",        # (iii) kill/dead-zone/open reads the UCL, never the point estimate
+    "thresholds_frozen_before_run",      # (iv) thresholds_declared_before_run identical on every row
+})
+
+def check_conditions(
+    rows: Sequence[UnionAdjudicationInput],
     *,
+    declared: GateContract,
+    signed_decision_id: str | None,
     kill_below: float = 0.05,
     dead_zone_upper: float = 0.10,
+    b: int = 2000,
+    seed: int,
 ) -> DeadZoneVerdict: ...
-    # returns OPEN with an unmet-condition reason unless all(conditions.values())
+    # Refuses (raises UnionAdjudicationError, never returns) when:
+    #   - signed_decision_id is None (FIRG-015: no unsigned run may be adjudicated).
+    #   - sha256(json.dumps(rows[0].thresholds_declared_before_run, sort_keys=True))
+    #     != declared.t14_thresholds_sha256 (declared.t14_thresholds_sha256 is
+    #     itself None → refuse: T-14 has not been ratified against this
+    #     contract yet).
+    #   - any of the four `_REQUIRED_CONDITION_KEYS` evaluates False (i–iv above).
+    # Only once all four conditions hold and the signature/hash checks pass
+    # does it compute `bootstrap_ucl(rows, b=b, seed=seed)` and return
+    # DeadZoneVerdict.KILL (ucl < kill_below), DEAD_ZONE (kill_below <= ucl <
+    # dead_zone_upper), or OPEN (ucl >= dead_zone_upper) per the executive
+    # summary's bounds.
 ```
 
 - `benchmarks/protocols/t14-dead-zone-rule.md` (new): blanks for the operator's signature, run date, and the four condition confirmations, with the 0.05/0.10 bounds and the "declared before the run, never revised" clause quoted verbatim from the executive summary.
 
 Proof:
 
-- `scene/tests/test_eval_harness_union_adjudication.py` — fixture: 5 synthetic images; `test_kill_verdict_below_005`, `test_dead_zone_verdict_between_005_and_010`, `test_open_verdict_above_010`, `test_condition_violation_forces_open_even_with_low_ucl`, `test_bootstrap_ucl_deterministic_with_seed`.
+- `scene/tests/test_eval_harness_union_adjudication.py` — fixture: 5 synthetic images; `test_check_conditions_kill_below_005`, `test_check_conditions_dead_zone_between_005_and_010`, `test_check_conditions_open_above_010`, `test_check_conditions_refuses_without_signed_decision_id`, `test_check_conditions_refuses_on_threshold_hash_mismatch`, `test_check_conditions_refuses_on_missing_condition_key`, `test_bootstrap_ucl_deterministic_with_seed`, `test_miss_inflate_refuses_under_30_exhaustive_images`, `test_miss_inflate_zero_denominator_returns_factor_one_with_flag`, `test_miss_inflate_computed_only_from_exhaustive_subset`.
 
 ## Lane Decomposition (Multi-Agent)
 
@@ -251,7 +293,7 @@ Proof:
 
 | Lane ID | Owned Paths | Upstream Dependencies | Required Tests |
 | --- | --- | --- | --- |
-| `fir-13` | `apps/prototype-description-service/scripts/eval_harness/gate_contract.py`, `apps/prototype-description-service/scripts/eval_harness/union_adjudication.py`, `apps/prototype-description-service/scripts/eval_harness/fir_bakeoff_run.py`, `apps/prototype-description-service/scene/tests/test_eval_harness_gate_contract.py`, `apps/prototype-description-service/scene/tests/test_eval_harness_union_adjudication.py`, `apps/prototype-description-service/benchmarks/protocols/face-label-rule.md`, `apps/prototype-description-service/benchmarks/protocols/t14-dead-zone-rule.md`, `apps/prototype-description-service/benchmarks/manifests/fir-gate-contract-v1.json` | FIR-12 (merged) | `python3 -m pytest scene/tests/test_eval_harness_gate_contract.py scene/tests/test_eval_harness_union_adjudication.py scene/tests/test_eval_harness_fir_bakeoff_run.py -q` |
+| `fir-13` | `apps/prototype-description-service/scripts/eval_harness/gate_contract.py`, `apps/prototype-description-service/scripts/eval_harness/union_adjudication.py`, `apps/prototype-description-service/scripts/eval_harness/fir_bakeoff_run.py`, `apps/prototype-description-service/scene/tests/test_eval_harness_gate_contract.py`, `apps/prototype-description-service/scene/tests/test_eval_harness_union_adjudication.py`, `apps/prototype-description-service/scene/tests/test_eval_harness_fir_bakeoff_run.py` (existing — Slice 1 adds the `rubric_version` test), `apps/prototype-description-service/benchmarks/protocols/face-label-rule.md`, `apps/prototype-description-service/benchmarks/protocols/t14-dead-zone-rule.md`, `apps/prototype-description-service/benchmarks/manifests/fir-gate-contract-v1.json` | FIR-12 (merged) | `python3 -m pytest scene/tests/test_eval_harness_gate_contract.py scene/tests/test_eval_harness_union_adjudication.py scene/tests/test_eval_harness_fir_bakeoff_run.py -q` |
 
 ### Merge Order
 
@@ -295,9 +337,11 @@ make lane-manifest-init TASK=FIR-13 LANE_IDS='fir-13' TASK_PLAN=docs/tasks/fir/F
 
 ### Checklist for Slice 3: T-14 adjudication rule encoded
 
-- [ ] `UnionAdjudicationInput`, `detector_gap_bound`, `bootstrap_ucl`, `miss_inflate`, `DeadZoneVerdict`, `check_conditions`, `verdict` implemented in `union_adjudication.py`.
+- [ ] `UnionAdjudicationInput`, `detector_gap_bound`, `bootstrap_ucl`, `miss_inflate`, `DeadZoneVerdict`, `UnionAdjudicationError`, `check_conditions` implemented in `union_adjudication.py`.
+- [ ] `check_conditions` refuses (raises) without a `signed_decision_id` and on a `t14_thresholds_sha256` mismatch, before it ever computes a UCL.
+- [ ] `miss_inflate` refuses below the 30-exhaustive-image floor and reports the zero-denominator degenerate case via its flag return, never a silent 1.0.
 - [ ] `benchmarks/protocols/t14-dead-zone-rule.md` written with the 0.05/0.10 bounds and operator sign-off blanks.
-- [ ] Kill / dead-zone / open / condition-violation tests all pass with a deterministic bootstrap seed.
+- [ ] Kill / dead-zone / open / signature-refusal / hash-mismatch-refusal tests all pass with a deterministic bootstrap seed.
 
 ## Review Readiness
 

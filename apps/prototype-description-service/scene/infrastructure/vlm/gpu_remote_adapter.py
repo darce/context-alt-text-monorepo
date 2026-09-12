@@ -24,10 +24,6 @@ _DEFAULT_MAX_ENCODED_IMAGE_BYTES = 25 * 1024 * 1024
 # Per-token top-k logprob width requested from llama.cpp (VLM-4 Slice 2b).
 _DEFAULT_N_PROBS = 10
 
-# Keep Pillow's decompression-bomb guard enabled at the same ceiling enforced by
-# the adapter before a WebP is fully decoded.
-Image.MAX_IMAGE_PIXELS = _DEFAULT_MAX_IMAGE_PIXELS
-
 # Keep in lockstep with scripts/eval_harness/bakeoff.py (VLMRP-HARM-01). Bump
 # ACX_GPU_PROMPT_VERSION / default prompt_or_task_version when this contract changes.
 _CONTEXT_BEGIN = "<<<CONTEXT>>>"
@@ -78,6 +74,37 @@ def _media_type(image_bytes: bytes) -> str:
     return "image/jpeg"
 
 
+def _webp_canvas_size(image_bytes: bytes) -> tuple[int, int]:
+    """Read a WebP canvas size without constructing a Pillow decoder."""
+    if len(image_bytes) < 16 or image_bytes[:4] != b"RIFF" or image_bytes[8:12] != b"WEBP":
+        raise GpuRemoteAdapterError("GPU adapter could not parse image/webp container header")
+
+    chunk_fourcc = image_bytes[12:16]
+    if chunk_fourcc == b"VP8X":
+        if len(image_bytes) < 30:
+            raise GpuRemoteAdapterError("GPU adapter could not parse image/webp container header")
+        width = int.from_bytes(image_bytes[24:27], "little") + 1
+        height = int.from_bytes(image_bytes[27:30], "little") + 1
+        return width, height
+
+    if chunk_fourcc == b"VP8L":
+        if len(image_bytes) < 25 or image_bytes[20] != 0x2F:
+            raise GpuRemoteAdapterError("GPU adapter could not parse image/webp container header")
+        dimensions = int.from_bytes(image_bytes[21:25], "little")
+        width = (dimensions & 0x3FFF) + 1
+        height = ((dimensions >> 14) & 0x3FFF) + 1
+        return width, height
+
+    if chunk_fourcc == b"VP8 ":
+        if len(image_bytes) < 30 or image_bytes[23:26] != b"\x9D\x01\x2A":
+            raise GpuRemoteAdapterError("GPU adapter could not parse image/webp container header")
+        width = int.from_bytes(image_bytes[26:28], "little") & 0x3FFF
+        height = int.from_bytes(image_bytes[28:30], "little") & 0x3FFF
+        return width, height
+
+    raise GpuRemoteAdapterError("GPU adapter could not parse image/webp container header")
+
+
 def _image_payload(image_bytes: bytes) -> tuple[str, bytes]:
     """Return endpoint-safe image bytes and their data-URL media type.
 
@@ -90,15 +117,15 @@ def _image_payload(image_bytes: bytes) -> tuple[str, bytes]:
         return media_type, image_bytes
 
     try:
+        width, height = _webp_canvas_size(image_bytes)
+        pixel_count = width * height
+        if pixel_count > _DEFAULT_MAX_IMAGE_PIXELS:
+            raise GpuRemoteAdapterError(
+                "GPU adapter rejected image/webp dimensions "
+                f"{width}x{height} ({pixel_count} pixels); maximum is "
+                f"{_DEFAULT_MAX_IMAGE_PIXELS} pixels"
+            )
         with Image.open(BytesIO(image_bytes)) as image:
-            width, height = image.size
-            pixel_count = width * height
-            if pixel_count > _DEFAULT_MAX_IMAGE_PIXELS:
-                raise GpuRemoteAdapterError(
-                    "GPU adapter rejected image/webp dimensions "
-                    f"{width}x{height} ({pixel_count} pixels); maximum is "
-                    f"{_DEFAULT_MAX_IMAGE_PIXELS} pixels"
-                )
             image.load()
             encoded = BytesIO()
             image.save(encoded, format="PNG")

@@ -594,4 +594,4 @@ def test_reloading_gpu_remote_adapter_does_not_change_pillow_pixel_policy(monkey
 
     importlib.reload(gpu_remote_adapter)
 
-    assert Image.MAX_IMAGE_PIXELS == sentinel
+    assert sentinel == Image.MAX_IMAGE_PIXELS

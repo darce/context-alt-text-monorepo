@@ -875,12 +875,12 @@ restore_env_tag_to_rollback dev-fir 0
     result = subprocess.run(["/bin/bash", "-c", command], text=True, capture_output=True, check=False)
     logged = records.read_text() if records.exists() else ""
     combined = result.stdout + result.stderr
-    assert result.returncode != 0, combined
+    assert result.returncode == 75, combined
     assert "ROLLBACK CAS REFUSED" in result.stderr
     assert "dev-fir" in result.stderr
     assert candidate in result.stderr
     assert newer in result.stderr
-    assert "push " not in logged
+    assert not logged
 
 
 def test_rollback_push_cas_happy_path_pushes_when_tag_unchanged(tmp_path: Path) -> None:
@@ -4022,3 +4022,74 @@ def test_scoped_producer_accepts_fresh_valid_load(tmp_path: Path) -> None:
     combined = result.stdout + result.stderr
     assert result.returncode == 0, combined
     assert "Scoped producer-preparation" in combined or "scoped producer" in combined.lower()
+
+
+@pytest.mark.parametrize(
+    "invoke,phase",
+    [("do_rollback dev aaaaaaaaaaaa", "manual")]
+    + [
+        (invoke, phase)
+        for invoke in ("do_deploy dev", "do_promote dev staging")
+        for phase in ("push", "restart", "verify")
+    ]
+    + [("handle_failed_verification dev Test", "verify")],
+)
+@pytest.mark.parametrize("cleanup_rc", [0, 1])
+def test_rollback_cas_status_reaches_public_callers(tmp_path: Path, invoke: str, phase: str, cleanup_rc: int) -> None:
+    """Exercise real CAS and wrappers; independent cleanup cannot erase refusal."""
+    records = tmp_path / "effects"
+    command = f'''
+source "{SCRIPT}"
+ACX_VERIFY_OPTIONAL=1
+ACX_ROLLBACK_DIGEST_REF="$IMAGE_BASE@sha256:{"a" * 64}"
+ACX_ROLLBACK_IMAGE_BASE="$IMAGE_BASE"
+ACX_CANDIDATE_DIGEST_REF="$IMAGE_BASE@sha256:{"b" * 64}"
+for fn in init_deploy_ocir_docker_config preflight_ssh preflight_remote_face_pipeline_models preflight_git_clean preflight_branch_synced preflight_remote_ocir_auth preflight_remote_docker preflight_docker preflight_ocir_auth assert_remote_disk_headroom_for_pull preserve_rollback_tag do_build do_build_remote do_push_sha promote_gate _pull_ref _pull_ref_remote capture_failure_evidence capture_prior_runtime_identity assert_rollback_fence; do
+  eval "$fn() {{ :; }}"
+done
+with_shared_tag_lock() {{ shift; "$@"; }}
+image_digest_ref() {{ echo "$IMAGE_BASE@sha256:{"b" * 64}"; }}
+remote_image_id_for_digest() {{ echo "sha256:{"d" * 64}"; }}
+remote_image_digest_ref() {{
+  if [[ "$1" == *:rollback-* ]]; then
+    echo "$ACX_ROLLBACK_DIGEST_REF"
+  elif [[ "{phase}" == manual && ! -e "{records}.snapshot" ]]; then
+    touch "{records}.snapshot"
+    echo "$IMAGE_BASE@sha256:{"b" * 64}"
+  else
+    echo "$IMAGE_BASE@sha256:{"c" * 64}"
+  fi
+}}
+do_push_tag() {{ return {1 if phase == "push" else 0}; }}
+do_restart() {{ return {1 if phase == "restart" else 0}; }}
+do_verify() {{ return 1; }}
+restore_prior_image_repo_env() {{ echo cleanup >>"{records}"; return {cleanup_rc}; }}
+remote_docker_with_config() {{ echo mutation >>"{records}"; }}
+restore_runtime_and_edge() {{ echo runtime >>"{records}"; }}
+{invoke}
+'''
+    result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, timeout=30)
+    combined = result.stdout + result.stderr
+    assert result.returncode == 75, combined
+    assert "ROLLBACK CAS REFUSED" in combined
+    effects = records.read_text().splitlines() if records.exists() else []
+    assert effects == (["cleanup"] if phase in ("push", "restart") else [])
+
+
+@pytest.mark.parametrize("failure", ["observe", "retag", "push"])
+def test_rollback_ordinary_errors_remain_status_one(failure: str) -> None:
+    command = f'''
+source "{SCRIPT}"
+ACX_ROLLBACK_DIGEST_REF="$IMAGE_BASE@sha256:{"a" * 64}"
+ACX_CANDIDATE_DIGEST_REF="$IMAGE_BASE@sha256:{"b" * 64}"
+_pull_ref_remote() {{ return {1 if failure == "observe" else 0}; }}
+remote_image_digest_ref() {{ echo "$ACX_CANDIDATE_DIGEST_REF"; }}
+run_with_deadline() {{ shift 2; "$@"; }}
+remote_docker_with_config() {{
+  [[ "$1" != "{"tag" if failure == "retag" else "push"}" ]]
+}}
+restore_registry_env_tag dev
+'''
+    result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, timeout=30)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "CAS REFUSED" not in result.stderr

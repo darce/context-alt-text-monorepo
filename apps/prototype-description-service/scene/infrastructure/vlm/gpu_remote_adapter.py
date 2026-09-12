@@ -19,8 +19,14 @@ from scene.domain.description import DescriptionAdapterKind
 _DEFAULT_CONNECT_TIMEOUT_S = 5.0
 _DEFAULT_READ_TIMEOUT_S = 175.0
 _DEFAULT_MAX_CONCURRENT_CALLS = 4
+_DEFAULT_MAX_IMAGE_PIXELS = 16_000_000
+_DEFAULT_MAX_ENCODED_IMAGE_BYTES = 25 * 1024 * 1024
 # Per-token top-k logprob width requested from llama.cpp (VLM-4 Slice 2b).
 _DEFAULT_N_PROBS = 10
+
+# Keep Pillow's decompression-bomb guard enabled at the same ceiling enforced by
+# the adapter before a WebP is fully decoded.
+Image.MAX_IMAGE_PIXELS = _DEFAULT_MAX_IMAGE_PIXELS
 
 # Keep in lockstep with scripts/eval_harness/bakeoff.py (VLMRP-HARM-01). Bump
 # ACX_GPU_PROMPT_VERSION / default prompt_or_task_version when this contract changes.
@@ -85,14 +91,32 @@ def _image_payload(image_bytes: bytes) -> tuple[str, bytes]:
 
     try:
         with Image.open(BytesIO(image_bytes)) as image:
+            width, height = image.size
+            pixel_count = width * height
+            if pixel_count > _DEFAULT_MAX_IMAGE_PIXELS:
+                raise GpuRemoteAdapterError(
+                    "GPU adapter rejected image/webp dimensions "
+                    f"{width}x{height} ({pixel_count} pixels); maximum is "
+                    f"{_DEFAULT_MAX_IMAGE_PIXELS} pixels"
+                )
             image.load()
             encoded = BytesIO()
             image.save(encoded, format="PNG")
+            encoded_size = len(encoded.getbuffer())
+            if encoded_size > _DEFAULT_MAX_ENCODED_IMAGE_BYTES:
+                raise GpuRemoteAdapterError(
+                    "GPU adapter rejected image/webp PNG output of "
+                    f"{encoded_size} bytes; maximum is "
+                    f"{_DEFAULT_MAX_ENCODED_IMAGE_BYTES} bytes"
+                )
+            encoded_image = encoded.getvalue()
+    except GpuRemoteAdapterError:
+        raise
     except Exception as exc:  # noqa: BLE001 - malformed WebP must never reach the endpoint
         raise GpuRemoteAdapterError(
             f"GPU adapter could not transcode image/webp to PNG: {type(exc).__name__}: {exc}"
         ) from exc
-    return "image/png", encoded.getvalue()
+    return "image/png", encoded_image
 
 
 def _render_context(context: Mapping[str, Any]) -> tuple[str, tuple[str, ...]]:
@@ -210,37 +234,37 @@ class GpuRemoteDescriptionAdapter:
         self, *, image_bytes: bytes, context: Mapping[str, Any] | None, n_probs: int | None
     ) -> tuple[AdapterResult, tuple[GpuRemoteTokenTrace, ...]]:
         user_text, context_sources, context_applied = _user_text(context)
-        media_type, encoded_image = _image_payload(image_bytes)
-        payload: dict[str, Any] = {
-            "model": self._endpoint_model_id,
-            "temperature": 0,
-            "max_tokens": 512,
-            "messages": [
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": (f"data:{media_type};base64,{base64.b64encode(encoded_image).decode()}")
-                            },
-                        },
-                        {"type": "text", "text": user_text},
-                    ],
-                },
-            ],
-        }
-        if n_probs is not None:
-            # llama.cpp native knob + the OpenAI-compat aliases the same server
-            # accepts on /v1/chat/completions; harmless no-ops elsewhere.
-            payload["n_probs"] = n_probs
-            payload["logprobs"] = True
-            payload["top_logprobs"] = n_probs
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
         semaphore = _get_gpu_call_semaphore(self._max_concurrent_calls)
         try:
             with semaphore:
+                media_type, encoded_image = _image_payload(image_bytes)
+                payload: dict[str, Any] = {
+                    "model": self._endpoint_model_id,
+                    "temperature": 0,
+                    "max_tokens": 512,
+                    "messages": [
+                        {"role": "system", "content": _SYSTEM_PROMPT},
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": (f"data:{media_type};base64,{base64.b64encode(encoded_image).decode()}")
+                                    },
+                                },
+                                {"type": "text", "text": user_text},
+                            ],
+                        },
+                    ],
+                }
+                if n_probs is not None:
+                    # llama.cpp native knob + the OpenAI-compat aliases the same server
+                    # accepts on /v1/chat/completions; harmless no-ops elsewhere.
+                    payload["n_probs"] = n_probs
+                    payload["logprobs"] = True
+                    payload["top_logprobs"] = n_probs
                 response = self._post(json=payload, headers=headers)
                 response.raise_for_status()
                 body = response.json()

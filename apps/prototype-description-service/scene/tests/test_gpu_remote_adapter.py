@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import socket
+import threading
 from io import BytesIO
 
 import httpx
@@ -11,6 +12,7 @@ from PIL import Image
 
 from scene.application.description_adapter import AdapterResult, DescriptionAdapter
 from scene.domain.description import DescriptionAdapterKind
+from scene.infrastructure.vlm import gpu_remote_adapter
 from scene.infrastructure.vlm.gpu_remote_adapter import (
     GpuRemoteAdapterError,
     GpuRemoteDescriptionAdapter,
@@ -112,6 +114,115 @@ def test_gpu_remote_adapter_transcodes_webp_to_png_before_posting() -> None:
     with Image.open(BytesIO(base64.b64decode(encoded))) as outgoing:
         assert outgoing.format == "PNG"
         assert outgoing.size == (17, 11)
+    assert base64.b64decode(encoded).startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_gpu_remote_adapter_rejects_webp_over_pixel_ceiling() -> None:
+    source = BytesIO()
+    Image.new("RGB", (4096, 4096), color=(24, 96, 180)).save(source, format="WEBP", lossless=True)
+
+    with pytest.raises(GpuRemoteAdapterError) as exc_info:
+        _adapter(lambda request: pytest.fail("oversized image reached the endpoint")).describe(
+            image_bytes=source.getvalue(), context=None
+        )
+
+    message = str(exc_info.value)
+    assert "4096x4096" in message
+    assert str(gpu_remote_adapter._DEFAULT_MAX_IMAGE_PIXELS) in message
+
+
+def test_gpu_remote_adapter_rejects_png_output_over_byte_ceiling(monkeypatch) -> None:
+    source = BytesIO()
+    Image.new("RGB", (17, 11), color=(24, 96, 180)).save(source, format="WEBP")
+    monkeypatch.setattr(gpu_remote_adapter, "_DEFAULT_MAX_ENCODED_IMAGE_BYTES", 1)
+    captured: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "unreachable"}}]})
+
+    with pytest.raises(GpuRemoteAdapterError, match="PNG output"):
+        _adapter(handler).describe(image_bytes=source.getvalue(), context=None)
+
+    assert captured == []
+
+
+def test_gpu_remote_adapter_serializes_webp_decode_with_gpu_semaphore(monkeypatch) -> None:
+    source = BytesIO()
+    Image.new("RGB", (17, 11), color=(24, 96, 180)).save(source, format="WEBP")
+    image_bytes = source.getvalue()
+    original_image_payload = gpu_remote_adapter._image_payload
+    first_decode_started = threading.Event()
+    second_decode_started = threading.Event()
+    release_first_decode = threading.Event()
+    second_worker_started = threading.Event()
+    lock = threading.Lock()
+    active_decodes = 0
+    max_active_decodes = 0
+    decode_calls = 0
+
+    def tracked_image_payload(image: bytes) -> tuple[str, bytes]:
+        nonlocal active_decodes, max_active_decodes, decode_calls
+        with lock:
+            decode_calls += 1
+            call_number = decode_calls
+            active_decodes += 1
+            max_active_decodes = max(max_active_decodes, active_decodes)
+        try:
+            if call_number == 1:
+                first_decode_started.set()
+                if not release_first_decode.wait(timeout=5):
+                    raise RuntimeError("test did not release the first decode")
+            else:
+                second_decode_started.set()
+            return original_image_payload(image)
+        finally:
+            with lock:
+                active_decodes -= 1
+
+    monkeypatch.setattr(gpu_remote_adapter, "_image_payload", tracked_image_payload)
+
+    adapter = GpuRemoteDescriptionAdapter(
+        endpoint_url="http://gpu.test:8000",
+        model_id="Qwen3-VL-30B-A3B-Instruct",
+        model_version="Q4_K_M",
+        max_concurrent_calls=1,
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"choices": [{"message": {"content": "Caption."}}]})
+        ),
+    )
+    errors: list[BaseException] = []
+
+    def run_describe(*, mark_worker_started: bool = False) -> None:
+        try:
+            if mark_worker_started:
+                second_worker_started.set()
+            adapter.describe(image_bytes=image_bytes, context=None)
+        except BaseException as exc:  # noqa: BLE001 - surface thread failures below
+            errors.append(exc)
+
+    first = threading.Thread(target=run_describe)
+    second = threading.Thread(target=lambda: run_describe(mark_worker_started=True))
+    second_started = False
+    try:
+        first.start()
+        assert first_decode_started.wait(timeout=2)
+        second.start()
+        second_started = True
+        assert second_worker_started.wait(timeout=2)
+        second_started_before_first_release = second_decode_started.wait(timeout=1)
+    finally:
+        release_first_decode.set()
+        first.join(timeout=5)
+        if second_started:
+            second.join(timeout=5)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert errors == []
+    assert decode_calls == 2
+    assert not second_started_before_first_release
+    assert max_active_decodes == 1
 
 
 def test_gpu_remote_adapter_provenance_names_loaded_revision_not_payload_model() -> None:

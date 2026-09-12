@@ -29,11 +29,11 @@ Encode the three pieces of the open-set gate that exist today only as prose in t
 
 **T-09 (D-09)**: "Written face-label rule — what counts, what is refused, how disputes resolve"; artifact `benchmarks/protocols/face-label-rule.md` (new); covers hand-only, back-of-head, heavy occlusion, depiction, sub-threshold size; disagreement procedure; pre-adjudication labels retained by policy; frozen before any sample is drawn. Canon [MLDATA-03], [HITL-07] escalation queue only.
 
-**T-14 (D-01)**: "Union adjudication — the cheap kill path for D-01"; runs after T-09; input Golden-150 (~410 faces) + candidate detector output at the declared operating point; 20–34 person-h, $0; bound = (TP_b − TP_c)/U. Four mandatory conditions: (i) U = human-verified true faces in the union, not the union box count; (ii) both detectors run at the matched-FPPI operating point D1 declares; (iii) kill on the upper confidence limit of a bootstrap interval (B=2000, resampling_unit=image), not the point estimate; (iv) declare both thresholds before the run and never revise them after (U is partly controlled by the systems under test). Canon [AUDIT-04], [MEAS-07], [EVAL-19], [EXP-24], [EXP-12].
+**T-14 (D-01)**: "Union adjudication — the cheap kill path for D-01"; runs after T-09; input Golden-150 (~410 faces) + candidate detector output at the declared operating point; 20–34 person-h, $0; bound = (TP_b − TP_c)/U. Four mandatory conditions: (i) U = human-verified true faces in the union, not the union box count; (ii) both detectors run at the matched-FPPI operating point DD-01 declares; (iii) kill on the upper confidence limit of a bootstrap interval (B=2000, resampling_unit=image), not the point estimate; (iv) declare both thresholds before the run and never revise them after (U is partly controlled by the systems under test). Canon [AUDIT-04], [MEAS-07], [EVAL-19], [EXP-24], [EXP-12].
 
 ### Dead-zone rule (executive summary, `benchmarks/reports/fir-executive-summary-20260728.md:83–84, 95–96, 111`)
 
-Operator signs the 0.05–0.10 dead-zone rule in writing BEFORE T-14 runs. Kill only if the miss-inflated bootstrap 95% UCL < 0.05 (30 images annotated exhaustively supply the miss inflation). A UCL in 0.05–0.10 is neither kill nor pass. ≥0.10 means D1 is not killed — the detector line stays open.
+Operator signs the 0.05–0.10 dead-zone rule in writing BEFORE T-14 runs. Kill only if the miss-inflated bootstrap 95% UCL < 0.05 (30 images annotated exhaustively supply the miss inflation). A UCL in 0.05–0.10 is neither kill nor pass. ≥0.10 means DD-01 is not killed — the detector line stays open.
 
 ## Problem Statement
 
@@ -220,7 +220,7 @@ def bootstrap_ucl(
     resampling_unit: str = "image",
     level: float = 0.95,
 ) -> float: ...
-    # image-level resampling only (rg per D16): draw len(rows) images with
+    # image-level resampling only (rg per DD-16): draw len(rows) images with
     # replacement b times (seeded numpy Generator), recompute
     # detector_gap_bound on each resample, return the `level` percentile
     # (default 95th) of the resulting distribution.
@@ -236,7 +236,7 @@ def miss_inflate(
     # to non-exhaustive rows' miss counts before they feed bootstrap_ucl —
     # miss_inflate itself never mutates rows, it only returns the factor.
     # Rounds half-up to 4 dp (Decimal ROUND_HALF_UP). Raises
-    # UnionAdjudicationError if len(exhaustive_image_ids) < 30 (D16 floor).
+    # UnionAdjudicationError if len(exhaustive_image_ids) < 30 (DD-16 floor).
     # Zero-denominator (no detector-flagged misses on the exhaustive subset)
     # returns (1.0, 1.0) — factor 1.0 (no-op) with the second element as an
     # explicit degenerate-case flag (0.0 in the normal, measured case).

@@ -48,6 +48,21 @@ These classes are mutually recorded at the point of refusal. If more than one
 class appears applicable, record the primary class and preserve the annotator's
 note describing the ambiguity.
 
+## Adjudication size floor — UNSET
+
+The adjudication size floor is currently **UNSET** (`null`) pending a separate
+operator ratification. No annotation run may proceed until the floor is
+ratified; this requirement is fail-closed. The future floor will be expressed as a scalar
+minimum face bounding-box area in source-image pixels, measured as box width
+times box height on the original source image before any crop, resize, or
+enlargement.
+
+Ratification must edit this file in place, supply the scalar floor, and bump
+the `rubric_version`/`RUBRIC_VERSION` value from the current value
+`face-label-rule/v1` to a new version. Record the ratification decision in the
+`ratified_by_decision_id` field. Until that edit and version bump occur, refusal
+class 5 remains unratifiable and no annotation run may use this floor.
+
 ## Disputes and arbitration
 
 Two annotators label independently before either sees the other's labels or

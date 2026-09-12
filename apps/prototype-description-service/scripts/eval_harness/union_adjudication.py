@@ -57,7 +57,10 @@ _THRESHOLD_KEYS = frozenset({"buffalo", "candidate"})
 
 
 def _rows_tuple(
-    rows: Sequence[UnionAdjudicationInput], *, allow_empty: bool = False
+    rows: Sequence[UnionAdjudicationInput],
+    *,
+    allow_empty: bool = False,
+    require_unique_image_ids: bool = True,
 ) -> tuple[UnionAdjudicationInput, ...]:
     try:
         normalised = tuple(rows)
@@ -66,11 +69,16 @@ def _rows_tuple(
     if not normalised and not allow_empty:
         raise UnionAdjudicationError("rows must contain at least one image")
 
+    seen_image_ids: set[str] = set()
     for index, row in enumerate(normalised):
         if not isinstance(row, UnionAdjudicationInput):
             raise UnionAdjudicationError(f"rows[{index}] must be a UnionAdjudicationInput, got {type(row).__name__}")
         if not isinstance(row.image_id, str) or not row.image_id.strip():
             raise UnionAdjudicationError(f"rows[{index}].image_id must be a non-empty string")
+        if require_unique_image_ids:
+            if row.image_id in seen_image_ids:
+                raise UnionAdjudicationError(f"duplicate image_id in rows: {row.image_id!r}")
+            seen_image_ids.add(row.image_id)
         for name in (
             "union_boxes",
             "human_true_faces",
@@ -103,16 +111,22 @@ def _rows_tuple(
     return normalised
 
 
+def _detector_gap_bound_unvalidated(rows: Sequence[UnionAdjudicationInput]) -> float:
+    """Compute a gap from rows already validated by ``_rows_tuple``."""
+
+    denominator = sum(row.human_true_faces for row in rows)
+    if denominator <= 0:
+        raise UnionAdjudicationError("human_true_faces denominator must be positive")
+    return float(
+        (sum(row.tp_buffalo_i for row in rows) - sum(row.tp_candidate_i for row in rows)) / denominator
+    )
+
+
 def detector_gap_bound(rows: Sequence[UnionAdjudicationInput]) -> float:
     """Return ``(TP_buffalo - TP_candidate) / human_true_faces``."""
 
     normalised = _rows_tuple(rows)
-    denominator = sum(row.human_true_faces for row in normalised)
-    if denominator <= 0:
-        raise UnionAdjudicationError("human_true_faces denominator must be positive")
-    return float(
-        (sum(row.tp_buffalo_i for row in normalised) - sum(row.tp_candidate_i for row in normalised)) / denominator
-    )
+    return _detector_gap_bound_unvalidated(normalised)
 
 
 def _validate_bootstrap_arguments(*, b: int, seed: int, resampling_unit: str, level: float) -> None:
@@ -144,7 +158,9 @@ def bootstrap_ucl(
     indices = rng.integers(0, len(normalised), size=(b, len(normalised)))
     estimates = np.empty(b, dtype=float)
     for sample_index, selected in enumerate(indices):
-        estimates[sample_index] = detector_gap_bound(tuple(normalised[int(row_index)] for row_index in selected))
+        estimates[sample_index] = _detector_gap_bound_unvalidated(
+            tuple(normalised[int(row_index)] for row_index in selected)
+        )
     return float(np.percentile(estimates, float(level) * 100.0))
 
 
@@ -161,9 +177,9 @@ def miss_inflate(
     the declared exhaustive image subset.
     """
 
+    normalised = _rows_tuple(rows, allow_empty=True)
     if len(exhaustive_image_ids) < 30:
         raise UnionAdjudicationError("at least 30 exhaustive image IDs are required for miss inflation")
-    normalised = _rows_tuple(rows, allow_empty=True)
     exhaustive_rows = tuple(row for row in normalised if row.image_id in exhaustive_image_ids)
     exhaustive_misses = sum(row.human_true_faces - row.union_boxes for row in exhaustive_rows)
     detector_flagged_misses = sum(row.tp_buffalo_i - row.tp_candidate_i for row in exhaustive_rows)
@@ -173,6 +189,12 @@ def miss_inflate(
     factor = (Decimal(exhaustive_misses) / Decimal(detector_flagged_misses)).quantize(
         Decimal("0.0001"), rounding=ROUND_HALF_UP
     )
+    if factor < Decimal("1.0"):
+        raise UnionAdjudicationError(
+            "computed miss inflation factor "
+            f"{factor} is below 1.0 (exhaustive miss numerator={exhaustive_misses}, "
+            f"detector-flagged denominator={detector_flagged_misses})"
+        )
     return (float(factor), 0.0)
 
 

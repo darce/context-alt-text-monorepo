@@ -4,7 +4,7 @@
 >
 > - **Date**: 2026-07-23 (v6.2 — aligned-UMAP diagnostics, DCFace packs-first strategy, OCI-A10 training pin, curation-atlas dependency note; v6.1 gate math settled; v6 — harm-direction CI bounds, seal-time p_disc protocol, asset provenance gates, consistency sweep; v5.1 resolved FIR7R4-01..11; v5: Slice-0a freeze/gate-spec/license-policy preflight; proxy-vs-seal; GT-anchored pairing; K=3 units; SAM pack disjunction; PEFT REQUIRED; identity-split; junior stubs; descope denominators; K-exhaustion → retrain)
 > - **Author**: Claude Fable 5
-> - **Owning Epic**: `docs/epics/v0.3.1/self-hosting-epic.md` (E22 face pipeline lineage; FIR series)
+> - **Owning Epic**: `docs/epics/v0.5.0/commercial-face-identity-replacement-epic.md` (E22 face pipeline lineage; FIR series)
 > - **Epic Short ID**: FIR
 > - **Task ID**: FIR-7
 > - **Target Branch**: `feature/fir-7`
@@ -271,7 +271,7 @@ Cheapest-first, gated by a pre-registered fail-closed re-gate. **Slice 0a, Slice
 | training (new) | `scripts/train/occlusion/README.md` (new) | numbered cloud GPU runbook (OCI A10-24GB primary → dry-run → train → export → download → teardown; specialist A100 only if wall-clock demands it; HF excluded for face data) |
 | runtime | `recognition/application/embedding/manifest.py` | **no registry API exists** — add a new `EmbeddingModelManifest(...)` constant for each produced id (analogous to `incumbent_embedding_model_manifest()` / the `sface_embedding_model_manifest()` constructor) and extend the `active_embedding_model_id()` profile switch to resolve it; pin previous-good base ids as constants for rollback (RLSE-10) |
 | runtime | `recognition/infrastructure/embeddings/face_pipeline_adapter.py` | extend `sface_embedding_model_manifest()` + the atomic `OrtYuNetDetector`/`OrtSFaceEmbedder` loader (`ort_adapters.py`) to load the adapted ONNX **by id**; adapter compose; rollback path; load-failure fails readiness |
-| runtime | `recognition/config.py` (settings) | new settings keys selecting the active detector/embedder id (drives `active_embedding_model_id()` and the loader), e.g. `face_pipeline.detector_model_id` / `face_pipeline.embedder_model_id` |
+| runtime | `recognition/config/settings.py` | new settings keys selecting the active detector/embedder id (drives `active_embedding_model_id()` and the loader), e.g. `face_pipeline.detector_model_id` / `face_pipeline.embedder_model_id` |
 | docs | `docs/tasks/fir/FIR-7-occlusion-adapters-task-plan.md` | this plan |
 | provenance | `benchmarks/manifests/occlusion-training-data-provenance.json` (new) | license audit of every training source |
 | gate spec | `benchmarks/gates/fir-7-regate.json` (new) | pre-registered gate spec ([C-GATE]/[C-NONINF]/[C-SEALED]; K=3 unit set; per-floor base/`n`/`n_eff`/`p_disc_prior`/provisional δ; α split; harm-direction rules) committed in **Slice 0a** before any sealed touch |

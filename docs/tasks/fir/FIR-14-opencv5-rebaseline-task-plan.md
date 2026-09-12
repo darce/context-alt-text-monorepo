@@ -119,7 +119,7 @@ Implements: FIRG-030..032; stamps FIRG-003's `rubric_version` (owned by FIR-13 S
 Changes:
 
 - `benchmarks/results/WITHDRAWN.md` (new): lists `golden150-fir-{baseline,v2,final,buffalo,buffalo-baseline}-20260723/` plus M-12 (0.865/0.321), recall 0.504, and 2.73 faces/image, each with a one-line reason (pre-CVUP-1 toolchain / contaminated ground truth / apparent-not-prevalence framing) and canon citations [DRIFT-03], [EVAL-28].
-- `scripts/eval_harness/report.py`: add `from recognition.infrastructure.face_pipeline import provenance` (module-level import, matching `landmark_cache.py`'s existing pattern) and insert into the dict `score_face_run_record` (4224-4987) returns the canonical four-field toolchain block (D8 — matches the spec's `toolchain: {"opencv": str, "onnxruntime": str, "numpy": str, "opencv_major": int}` shape verbatim; every field is read off the typed dataclass, `compact` is never invoked here):
+- `scripts/eval_harness/report.py`: add `from recognition.infrastructure.face_pipeline import provenance` (module-level import, matching `landmark_cache.py`'s existing pattern) and insert into the dict `score_face_run_record` (4224-4987) returns the canonical four-field toolchain block (DD-08 — matches the spec's `toolchain: {"opencv": str, "onnxruntime": str, "numpy": str, "opencv_major": int}` shape verbatim; every field is read off the typed dataclass, `compact` is never invoked here):
 
 ```python
 fingerprint = provenance.numeric_runtime_fingerprint()
@@ -161,7 +161,7 @@ Supports: FIRG-030 (produces the re-baseline evidence rows; the requirement is i
 
 Changes:
 
-- Root `Makefile`, new target near `bakeoff-face` (936-941). `benchmarks/manifests/golden150-draft-20260723.json` lives at the **repo root** (confirmed present there, absent under `apps/prototype-description-service/benchmarks/`), so from the `cd apps/prototype-description-service` working directory the manifest is `../../benchmarks/manifests/golden150-draft-20260723.json` (D19 — one working directory per fenced block, repo-root paths written relative to it):
+- Root `Makefile`, new target near `bakeoff-face` (936-941). `benchmarks/manifests/golden150-draft-20260723.json` lives at the **repo root** (confirmed present there, absent under `apps/prototype-description-service/benchmarks/`), so from the `cd apps/prototype-description-service` working directory the manifest is `../../benchmarks/manifests/golden150-draft-20260723.json` (DD-19 — one working directory per fenced block, repo-root paths written relative to it):
 
 ```make
 .PHONY: bakeoff-face-rebaseline
@@ -208,7 +208,7 @@ Supports: FIRG-032 (toolchain arm for the FIR-11 attribution table; implemented 
 
 FIR-11 rev 7 lines 590-628 describe the `A1″` arm ("golden150 (full) / original (merge-only) labels / original scoring / 5.x toolchain / isolates: toolchain change against A1") and the delta `A1″ − A1 = toolchain` (line 609) only as a conceptual table row inside a report `bias-audit` builds later — it pins **no machine-readable JSON schema** for a hand-off file between this task and that one. This plan therefore defines the shape.
 
-**Scoring path (C02 / D17 — the isolation FIR-11 line ~615 requires):** FIR-11 rev 7 line ~615 states "Every 'original scoring' arm (A1″, A1′, A2) runs through that driver" — the `original_scoring_sha`-pinned scorer (a temporary `git worktree` checked out at the pinned commit) invoked by a **current-tree driver** at function level, never the plain current-tree `score-face` path used for Slice 2's own DIAGNOSTIC-tier legs. Scoring `A1″` with the ordinary `make bakeoff-face-score` current-tree scorer would change *two* things at once relative to `A1` (toolchain **and** scoring code), which defeats the "isolates: toolchain change" claim in FIR-11's own table. This task's Slice 3 therefore invokes FIR-11's pinned-scorer-through-current-tree-driver mechanism against this task's own CV5 buffalo run-record (not FIR-11's `A1` run-record — this task supplies the CV5 *measurement* only), recording the resolved `original_scoring_sha` on the artifact so FIR-11 S5 can confirm it is the same pin FIR-11 itself resolved (today `a5f2bde52da245ca919c69cc3f503e78532fb724`, per FIR-11 line ~615's stated commit). The buffalo run-record itself still comes from this task's ordinary `bakeoff-face-rebaseline` `--leg buffalo` run (Slice 2) — only the *scoring* step for this one artifact swaps drivers.
+**Scoring path (C02 / DD-17 — the isolation FIR-11 line ~615 requires):** FIR-11 rev 7 line ~615 states "Every 'original scoring' arm (A1″, A1′, A2) runs through that driver" — the `original_scoring_sha`-pinned scorer (a temporary `git worktree` checked out at the pinned commit) invoked by a **current-tree driver** at function level, never the plain current-tree `score-face` path used for Slice 2's own DIAGNOSTIC-tier legs. Scoring `A1″` with the ordinary `make bakeoff-face-score` current-tree scorer would change *two* things at once relative to `A1` (toolchain **and** scoring code), which defeats the "isolates: toolchain change" claim in FIR-11's own table. This task's Slice 3 therefore invokes FIR-11's pinned-scorer-through-current-tree-driver mechanism against this task's own CV5 buffalo run-record (not FIR-11's `A1` run-record — this task supplies the CV5 *measurement* only), recording the resolved `original_scoring_sha` on the artifact so FIR-11 S5 can confirm it is the same pin FIR-11 itself resolved (today `a5f2bde52da245ca919c69cc3f503e78532fb724`, per FIR-11 line ~615's stated commit). The buffalo run-record itself still comes from this task's ordinary `bakeoff-face-rebaseline` `--leg buffalo` run (Slice 2) — only the *scoring* step for this one artifact swaps drivers.
 
 Changes:
 
@@ -234,7 +234,7 @@ Changes:
 }
 ```
 
-  `toolchain` uses the same D8 four-field schema as the `report.py` block, so `toolchain-arm.json` and every face report are diffable with the same key set. Note for the FIR-11 S5 implementer: this artifact supplies the CV5-toolchain *measurement*, scored through the same pinned-scorer mechanism FIR-11 S5 itself uses for `A1′`/`A2` — FIR-11 S5 reads `A1` itself from the tracked pre-CVUP-1 QA report, never from this file.
+  `toolchain` uses the same DD-08 four-field schema as the `report.py` block, so `toolchain-arm.json` and every face report are diffable with the same key set. Note for the FIR-11 S5 implementer: this artifact supplies the CV5-toolchain *measurement*, scored through the same pinned-scorer mechanism FIR-11 S5 itself uses for `A1′`/`A2` — FIR-11 S5 reads `A1` itself from the tracked pre-CVUP-1 QA report, never from this file.
 
 Proof:
 

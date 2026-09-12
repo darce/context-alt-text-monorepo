@@ -96,10 +96,10 @@ def compute_quality_adjustment(
         Float adjustment (positive = stricter, negative = more lenient).
 
     Design notes (FIR-6 S1 exact form, FIR6S1-M-09):
-        * OACT term is ``-(oact_coefficient × clamp(severity, 0, 1))`` added
+        * OACT term is ``+(oact_coefficient × clamp(severity, 0, 1))`` added
           **undamped** after maturity scaling of the base quality band only.
           COLD clusters therefore get 0.25× band adjustment but full OACT
-          leniency. Maturity dampening models cluster certainty; occlusion is
+          tightening. Maturity dampening models cluster certainty; occlusion is
           a per-observation property independent of cluster age, so it is not
           double-discounted. Revisit only with S4 measured before/after deltas.
         * Callers that discard ``threshold_adjustment`` (detector score path,

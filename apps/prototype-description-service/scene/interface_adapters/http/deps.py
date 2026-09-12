@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import importlib.util
+import logging
 import os
 import socket
 from fnmatch import fnmatch
@@ -20,6 +22,13 @@ _DEFAULT_GPU_ENDPOINT_ALLOWLIST = (
     "acx-gpu-burst",
     "*.oraclevcn.com",
 )
+
+logger = logging.getLogger(__name__)
+
+
+def _missing_vlm_dependencies() -> tuple[str, ...]:
+    """Find the heavyweight modules supplied by the optional ``[vlm]`` extra."""
+    return tuple(module for module in ("torch", "transformers") if importlib.util.find_spec(module) is None)
 
 
 def _hostname_matches_allowlist(host: str, allowlist: tuple[str, ...]) -> bool:
@@ -116,6 +125,12 @@ def _build_florence_small_adapter(settings: DescriptionSettings) -> DescriptionA
     from scene.infrastructure.vlm import get_shared_local_cpu_adapter
 
     spec = get_profile_spec(DescriptionProfile.FLORENCE_SMALL)
+    missing = _missing_vlm_dependencies()
+    if missing:
+        raise RuntimeError(
+            f"profile '{spec.profile.value}' requires the '[vlm]' extra; missing runtime dependencies: "
+            f"{', '.join(missing)}. Install with `uv sync --extra vlm`."
+        )
     vlm = VlmSettings()
     return get_shared_local_cpu_adapter(
         model_id=spec.model_id,
@@ -142,6 +157,12 @@ def get_cpu_description_adapter() -> DescriptionAdapter:
     try:
         return _build_florence_small_adapter(settings)
     except Exception as exc:  # noqa: BLE001 - degrade uniformly on import/setup failure
+        logger.warning(
+            "explicit CPU adapter resolution failed: profile=%s requires extra=[vlm]; reason=%s",
+            spec.profile.value,
+            exc,
+            exc_info=True,
+        )
         return UnavailableDescriptionAdapter(
             (
                 f"explicit tier=cpu requires a local CPU adapter; default profile "
@@ -215,8 +236,14 @@ def get_description_adapter() -> DescriptionAdapter:
     try:
         return _build_florence_small_adapter(settings)
     except Exception as exc:  # noqa: BLE001 - degrade uniformly on any import/setup failure
+        logger.warning(
+            "description adapter resolution failed: profile=%s requires extra=[vlm]; reason=%s",
+            spec.profile.value,
+            exc,
+            exc_info=True,
+        )
         return UnavailableDescriptionAdapter(
-            str(exc),
+            f"profile '{spec.profile.value}' is unavailable: {exc}",
             kind=spec.adapter_kind,
             model_id=spec.model_id or "unavailable",
             model_version=spec.model_version,

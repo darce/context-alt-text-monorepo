@@ -1,12 +1,14 @@
 """S11: the 4-option description profile switch (seeded / florence_small /
 florence_large / gpu_phi4) and its resolution to a DescriptionAdapter.
 
-No model is loaded here — adapter construction is lazy (torch/transformers import
-only on ``ensure_loaded``), so the suite stays fast and torch-free. The two
-stub profiles (florence_large, gpu_phi4) are fail-closed: selecting them yields
-an UnavailableDescriptionAdapter whose ``describe`` raises a clear error.
+No model is loaded here — profile resolution only checks for the optional
+dependency modules, while model loading remains lazy (on ``ensure_loaded``), so
+the suite stays fast and torch-free. The two stub profiles (florence_large,
+gpu_phi4) are fail-closed: selecting them yields an UnavailableDescriptionAdapter
+whose ``describe`` raises a clear error.
 """
 
+import logging
 import socket
 
 import pytest
@@ -111,20 +113,15 @@ def test_gpu_qwen30b_ensemble_spec_mirrors_gpu_qwen30b():
 def test_available_gpu_profiles_pin_a_non_none_hub_revision():
     """PROV-01a / SEC-10: an available GPU profile without a 40-char hub pin is unauditable."""
     gpu_available = [
-        spec
-        for spec in PROFILE_SPECS.values()
-        if spec.available and spec.adapter_kind is DescriptionAdapterKind.GPU
+        spec for spec in PROFILE_SPECS.values() if spec.available and spec.adapter_kind is DescriptionAdapterKind.GPU
     ]
     assert gpu_available, "expected at least one available GPU profile"
     for spec in gpu_available:
         revision = spec.model_revision
         assert revision is not None, (
-            f"{spec.profile.value} is available=True GPU but model_revision is None "
-            "(unpinned hub pull; SEC-10)"
+            f"{spec.profile.value} is available=True GPU but model_revision is None (unpinned hub pull; SEC-10)"
         )
-        assert len(revision) == 40, (
-            f"{spec.profile.value} model_revision must be a 40-char hub SHA, got {revision!r}"
-        )
+        assert len(revision) == 40, f"{spec.profile.value} model_revision must be a 40-char hub SHA, got {revision!r}"
         assert all(ch in "0123456789abcdef" for ch in revision), (
             f"{spec.profile.value} model_revision is not lowercase hex: {revision!r}"
         )
@@ -155,11 +152,15 @@ def test_resolve_defaults_to_seeded(monkeypatch):
 
 def test_resolve_florence_small_builds_local_cpu_without_loading(monkeypatch):
     monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "florence_small")
-    from scene.interface_adapters.http.deps import get_description_adapter
+    import scene.interface_adapters.http.deps as deps
+
+    # Keep this a construction/laziness test even when the optional extra is not
+    # installed in the test environment.
+    monkeypatch.setattr(deps, "_missing_vlm_dependencies", lambda: ())
 
     _reset_singleton()
     try:
-        adapter = get_description_adapter()
+        adapter = deps.get_description_adapter()
         assert isinstance(adapter, DescriptionAdapter)
         assert adapter.kind is DescriptionAdapterKind.LOCAL_CPU
         assert adapter.model_id == "microsoft/Florence-2-base-ft"
@@ -448,6 +449,22 @@ def test_florence_small_degrades_to_unavailable_when_vlm_missing(monkeypatch):
     assert isinstance(adapter, UnavailableDescriptionAdapter)
     with pytest.raises(DescriptionAdapterUnavailableError):
         adapter.describe(image_bytes=b"x", context=None)
+
+
+def test_florence_small_missing_extra_logs_profile_and_extra_at_resolution(monkeypatch, caplog):
+    monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "florence_small")
+    import scene.interface_adapters.http.deps as deps
+
+    monkeypatch.setattr(deps, "_missing_vlm_dependencies", lambda: ("torch", "transformers"))
+    with caplog.at_level(logging.WARNING, logger="scene.interface_adapters.http.deps"):
+        adapter = deps.get_description_adapter()
+
+    assert isinstance(adapter, UnavailableDescriptionAdapter)
+    assert "missing runtime dependencies: torch, transformers" in adapter.reason
+    messages = "\n".join(record.getMessage() for record in caplog.records)
+    assert "florence_small" in messages
+    assert "[vlm]" in messages
+    assert "transformers" in messages
 
 
 def test_resolve_gpu_qwen30b_rejects_non_allowlisted_hostname_even_if_dns_private(monkeypatch):

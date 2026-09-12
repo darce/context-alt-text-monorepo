@@ -514,3 +514,68 @@ def test_bulk_endpoints_404_for_single_run_kind(monkeypatch):
             assert resp.status_code == 404, (path, resp.text)
         cancel = client.delete(f"/scene/describe/run/{run_id}")
         assert cancel.status_code == 404, cancel.text
+
+
+@pytest.mark.parametrize(
+    "media_ids, part_ids, part_size, unknown_size, expected",
+    [
+        ([1], [1, 999], 31, False, 202),
+        ([1], [1, 1], 31, False, 202),
+        ([1], [999, 998], 31, False, 422),
+        ([1], [1], 2 * 1024 * 1024, True, 413),
+        ([1, 2], [1, 2], 33, False, 413),
+        ([1, 2], [1, 2], 32, False, 202),
+        ([], [999], 31, False, 422),
+    ],
+)
+def test_submit_bounds_image_reads(monkeypatch, media_ids, part_ids, part_size, unknown_size, expected):
+    from starlette.datastructures import UploadFile
+    from starlette.requests import Request
+
+    _no_worker(monkeypatch)
+    cap = 32
+    settings = describe_run_mod.DescriptionSettings(max_description_image_bytes=cap)
+    monkeypatch.setattr(describe_run_mod, "DescriptionSettings", lambda: settings)
+    original_form = Request.form
+    original_read = UploadFile.read
+    reads = []
+    served = 0
+
+    async def bounded_form(self, *args, **kwargs):
+        form = await original_form(self, *args, **kwargs)
+        if unknown_size:
+            for _, value in form.multi_items():
+                if isinstance(value, UploadFile):
+                    value.size = None
+        return form
+
+    async def spy_read(self, size=-1):
+        nonlocal served
+        media_id = int(self.filename.split(".")[0])
+        assert media_id in media_ids, "must not be read"
+        assert size == 1024 * 1024
+        reads.append(self)
+        data = await original_read(self, size)
+        served += len(data)
+        return data
+
+    monkeypatch.setattr(Request, "form", bounded_form)
+    monkeypatch.setattr(UploadFile, "read", spy_read)
+    with _client() as (client, _):
+        response = client.post(
+            "/scene/describe/run",
+            data={"tenant_id": str(TENANT_ID), "media_ids": json.dumps(media_ids)},
+            files=[(f"image_{i}", (f"{i}.png", b"x" * part_size, "image/png")) for i in part_ids],
+        )
+    assert response.status_code == expected, response.text
+    if expected == 413:
+        assert served <= cap + 1024 * 1024
+        if not unknown_size:
+            assert not reads
+    if part_ids == [1, 1]:
+        assert len({id(upload) for upload in reads}) == 1
+    if part_ids == [999, 998]:
+        assert response.json()["detail"] == "missing image_<media_id> part(s) for media_ids: [1]"
+        assert not reads
+    if not media_ids:
+        assert not reads

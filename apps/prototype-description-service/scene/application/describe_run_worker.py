@@ -10,7 +10,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
-from typing import NamedTuple, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, NamedTuple, Protocol, runtime_checkable
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -29,6 +29,9 @@ from scene.config.settings import DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS, Descriptio
 from scene.domain.describe_run import DescribeItemStatus, DescribeRunPhase, DescribeRunStatus
 from scene.domain.description import DescriptionAdapterKind, DescriptionResultTier
 
+if TYPE_CHECKING:
+    from scene.application.identity_merge.policy import NamingPolicy
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS = DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS
@@ -46,7 +49,7 @@ class FusionNamingInputs(NamedTuple):
     """Confirmed faces + naming policy loaded once per bulk item (DATA-19)."""
 
     confirmed_faces: list
-    naming_policy: object | None = None
+    naming_policy: NamingPolicy | None = None
 
 
 EMPTY_NAMING_INPUTS = FusionNamingInputs(confirmed_faces=[], naming_policy=None)
@@ -265,9 +268,7 @@ async def _describe_with_transient_retry(
             raise _RunCancelledError("describe run cancelled before item retry")
         try:
             return await asyncio.wait_for(
-                _call_describe_one(
-                    describe_one, media_id, image_bytes, content_type, naming_inputs=naming_inputs
-                ),
+                _call_describe_one(describe_one, media_id, image_bytes, content_type, naming_inputs=naming_inputs),
                 timeout_seconds,
             )
         except Exception as exc:  # noqa: BLE001 - classify before retrying
@@ -312,7 +313,7 @@ async def _naming_lookup_for_item(
                 timeout=NAMING_BUDGET_SECONDS,
             )
             return FusionNamingInputs(*loaded)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning("naming budget exceeded during lookup media_id=%s; continuing without names", media_id)
         return _NAMING_BUDGET_EXCEEDED
     except Exception:  # noqa: BLE001 - naming lookup must not fail the item
@@ -343,9 +344,7 @@ def _naming_provenance_payload(
         names_applied = payload.get("names_applied")
     if names_applied is None:
         names_applied = [
-            item.get("name")
-            for item in injected_names
-            if isinstance(item, dict) and isinstance(item.get("name"), str)
+            item.get("name") for item in injected_names if isinstance(item, dict) and isinstance(item.get("name"), str)
         ]
     names_applied = list(names_applied)
 
@@ -388,6 +387,7 @@ async def _apply_naming_preview(
     Preview wait_for is ``min(NAMING_BUDGET_SECONDS, remaining_envelope)``. Remaining
     <= 0 skips preview and keeps the generic draft (same path as a lookup timeout).
     """
+
     def with_naming_payload(payload: dict) -> DescribeItemOutcome:
         merged = dict(outcome.provenance or {})
         merged["naming"] = payload
@@ -431,7 +431,7 @@ async def _apply_naming_preview(
             alt_text_draft=named,
             provenance={**dict(outcome.provenance or {}), "naming": payload},
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning("naming budget exceeded during preview media_id=%s; keeping generic draft", media_id)
         return with_naming_payload(_naming_provenance_payload(None, status=NamingStatus.SKIPPED_BUDGET))
     except Exception:  # noqa: BLE001 - a naming fault must not fail the described item

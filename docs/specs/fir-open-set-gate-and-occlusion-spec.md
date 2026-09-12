@@ -19,6 +19,12 @@ Defines the machine-checkable contract for the D3 gate metric (FNIR@FPIR), the T
 
 ---
 
+## Terminology
+
+- **FIRG** means **Face Identity Replacement gate/requirement item**; `FIRG-...` ids enumerate the gate/requirement items for the Face Identity Replacement programme.
+- **OACT** means **occlusion-adaptive confidence threshold**. This is the canonical expansion for this planning set; the PLGSA paper origin uses the phrasing “occlusion-adaptive cosine thresholding.”
+- **D3** (the metric) and **D-03** (the decision) are distinct; never alias one to the other. D-03 is corpus prevalence, and the D3 open-set adoption decision is **D-08**.
+
 ## Spec Items
 
 ### Gate contract (FIRG-001..009)
@@ -169,7 +175,7 @@ New module `apps/prototype-description-service/scripts/eval_harness/union_adjudi
 **Trace:** FIR-13 S3, QA v8 T-14
 **Priority:** P0
 
-`check_conditions(rows, *, declared: GateContract, signed_decision_id: str | None) -> DeadZoneVerdict` evaluates all four named condition keys (`conditions_met: dict[str, bool]`, four keys required, no fifth/partial set accepted) before `KILL` can be emitted: (i) `U` = human-verified true faces in the union, never the union box count; (ii) both detectors ran at the matched-FPPI operating point D1 declares (`matched_fppi_declared` equal across rows for a given run); (iii) the kill decision uses the bootstrap UCL, never the point estimate; (iv) `thresholds_declared_before_run` is fixed before scoring and never revised — checked by hashing `declared`'s thresholds and comparing to the pre-run manifest hash. `check_conditions` refuses (raises) when `signed_decision_id is None` (FIRG-015).
+`check_conditions(rows, *, declared: GateContract, signed_decision_id: str | None) -> DeadZoneVerdict` evaluates all four named condition keys (`conditions_met: dict[str, bool]`, four keys required, no fifth/partial set accepted) before `KILL` can be emitted: (i) `U` = human-verified true faces in the union, never the union box count; (ii) both detectors ran at the matched-FPPI operating point (DD-01) declares (`matched_fppi_declared` equal across rows for a given run); (iii) the kill decision uses the bootstrap UCL, never the point estimate; (iv) `thresholds_declared_before_run` is fixed before scoring and never revised — checked by hashing `declared`'s thresholds and comparing to the pre-run manifest hash. `check_conditions` refuses (raises) when `signed_decision_id is None` (FIRG-015).
 
 **Done when:**
 - `test_eval_harness_union_adjudication.py::test_any_condition_false_forces_open_verdict` passes for each of the four conditions individually violated
@@ -282,7 +288,7 @@ New `benchmarks/results/WITHDRAWN.md` lists the five `golden150-fir-{baseline,v2
 **Trace:** FIR-14 S1
 **Priority:** P0
 
-`score_face_run_record` (`report.py` 4224–4987, the function `build_face_reports` at 5609–5637 calls to produce the scored dict) gains a top-level `toolchain` key with the canonical schema (D8, shared verbatim with FIR-14's task-plan doc): `{"opencv": str, "onnxruntime": str, "numpy": str, "opencv_major": int}`, sourced field-for-field from `provenance.numeric_runtime_fingerprint()` (verified at `provenance.py` 382–401; `NumericRuntimeFingerprint` fields `opencv_version`/`opencv_major`/`onnxruntime_version`/`numpy_version` verified via codemap at `provenance.py` 333–379). `NumericRuntimeFingerprint.compact` IS a `@property` (`provenance.py` 372–379) — where a single human-readable log line is wanted elsewhere (never as a substitute for this structured block), write `fingerprint.compact` with no call parentheses.
+`score_face_run_record` (`report.py` 4224–4987, the function `build_face_reports` at 5609–5637 calls to produce the scored dict) gains a top-level `toolchain` key with the canonical schema (DD-08) (shared verbatim with FIR-14's task-plan doc): `{"opencv": str, "onnxruntime": str, "numpy": str, "opencv_major": int}`, sourced field-for-field from `provenance.numeric_runtime_fingerprint()` (verified at `provenance.py` 382–401; `NumericRuntimeFingerprint` fields `opencv_version`/`opencv_major`/`onnxruntime_version`/`numpy_version` verified via codemap at `provenance.py` 333–379). `NumericRuntimeFingerprint.compact` IS a `@property` (`provenance.py` 372–379) — where a single human-readable log line is wanted elsewhere (never as a substitute for this structured block), write `fingerprint.compact` with no call parentheses.
 
 **Before:** `score_face_run_record`'s returned dict has no `toolchain` key (verified via codemap: function exists at `report.py` 4224–4987; the specific absence of a `toolchain` field was not exhaustively diffed against all 763 lines — treat as `[UNVERIFIED — confirm via codemap]` at implementation time for the exact insertion point, though the anchor itself is verified).
 
@@ -356,7 +362,7 @@ New `apps/prototype-description-service/scripts/eval_harness/attribution_split.p
 **Trace:** FIR-15 S1
 **Priority:** P0
 
-`alignment_share = FNIR(a) − FNIR(b)` is the only isolated share: the SFace embedder is held fixed while the landmark source swaps, so the difference is alignment/landmark-quality error (D11). No arm pair in this task holds landmarks fixed while varying only the embedder, so there is **no `embedder_share` field** — the second quantity is `buffalo_reference_gap = FNIR(a) − mean(FNIR(c), FNIR(d))`, a whole-pipeline reference contrast (different detector-alignment-embedder stack), never an isolated embedder attribution. Each quantity carries a paired-bootstrap interval (`B=2000`, `resampling_unit="image"`, fixed `seed`) computed over the same mated-unit population. No single `tau` spans both embedding spaces (FIRG-005): `AttributionResult.tau_by_space: dict[str, float]` keyed `"sface128"` / `"buffalo512"`, each chosen by `select_gate_point(points, max_fpi=...)` at the same declared FPI budget; bootstrap resampling holds each space's `tau` fixed. Arms (a)/(b) are scored at `tau_by_space["sface128"]`, arms (c)/(d) at `tau_by_space["buffalo512"]`. `run_attribution_split` (FIR-15) returns and persists `tau_by_space`. Output `benchmarks/results/attribution-t01-<date>/attribution.json`: `{alignment_share, buffalo_reference_gap, ci: {alignment: [lo, hi], buffalo_reference: [lo, hi]}, reference_fnir: {c: float, d: float}, n_units, tau_by_space: {sface128: float, buffalo512: float}, toolchain}`. The D-02 leg verdict is derived from these two intervals plus `n_units` by the deterministic five-row table pinned in FIR-15 S1 (`MATERIAL_SHARE_FLOOR = 0.03`, `MIN_ATTRIBUTABLE_UNITS = 10`); an EMBEDDER verdict is reached **by elimination only** and must carry the `embedder_verdict_by_elimination_not_isolation` caveat.
+`alignment_share = FNIR(a) − FNIR(b)` is the only isolated share: the SFace embedder is held fixed while the landmark source swaps, so the difference is alignment/landmark-quality error (DD-11). No arm pair in this task holds landmarks fixed while varying only the embedder, so there is **no `embedder_share` field** — the second quantity is `buffalo_reference_gap = FNIR(a) − mean(FNIR(c), FNIR(d))`, a whole-pipeline reference contrast (different detector-alignment-embedder stack), never an isolated embedder attribution. Each quantity carries a paired-bootstrap interval (`B=2000`, `resampling_unit="image"`, fixed `seed`) computed over the same mated-unit population. No single `tau` spans both embedding spaces (FIRG-005): `AttributionResult.tau_by_space: dict[str, float]` keyed `"sface128"` / `"buffalo512"`, each chosen by `select_gate_point(points, max_fpi=...)` at the same declared FPI budget; bootstrap resampling holds each space's `tau` fixed. Arms (a)/(b) are scored at `tau_by_space["sface128"]`, arms (c)/(d) at `tau_by_space["buffalo512"]`. `run_attribution_split` (FIR-15) returns and persists `tau_by_space`. Output `benchmarks/results/attribution-t01-<date>/attribution.json`: `{alignment_share, buffalo_reference_gap, ci: {alignment: [lo, hi], buffalo_reference: [lo, hi]}, reference_fnir: {c: float, d: float}, n_units, tau_by_space: {sface128: float, buffalo512: float}, toolchain}`. The D-02 leg verdict is derived from these two intervals plus `n_units` by the deterministic five-row table pinned in FIR-15 S1 (`MATERIAL_SHARE_FLOOR = 0.03`, `MIN_ATTRIBUTABLE_UNITS = 10`); an EMBEDDER verdict is reached **by elimination only** and must carry the `embedder_verdict_by_elimination_not_isolation` caveat.
 
 **Done when:**
 - `test_eval_harness_attribution_split.py::test_share_bootstrap_ci_is_deterministic_given_seed` passes
@@ -410,7 +416,7 @@ def masked_cosine(probe_vec: np.ndarray, gallery_vec: np.ndarray, support_mask: 
 **Trace:** FIR-15 S3
 **Priority:** P1
 
-`benchmarks/results/attribution-t01-<date>/REPORT.md` names the attributed leg (`alignment` | `embedder` | `both` | `inconclusive`) with the FIRG-042 intervals inline (the leg follows FIR-15 S1's deterministic D-02 verdict table over `alignment_share_ci`, `buffalo_reference_gap_ci`, and `n_units`; per D11 the buffalo arms enter only as a whole-pipeline reference gap, so an `embedder` leg is by elimination and carries the mandatory caveat), and the MCP decision template text for `firplan_d02_attribution_<date>`. FIR-17's branch rule (FIRG-050 gating; FIRG-053 is ADR-only per D4, so this decision names its follow-up task rather than gating in-tree code) reads this decision, not the raw JSON. This is decision D-02, distinct from D-03 (corpus prevalence) and D-08 (the D3 open-set adoption decision, QA v8 rows 245/250).
+`benchmarks/results/attribution-t01-<date>/REPORT.md` names the attributed leg (`alignment` | `embedder` | `both` | `inconclusive`) with the FIRG-042 intervals inline (the leg follows FIR-15 S1's deterministic D-02 verdict table over `alignment_share_ci`, `buffalo_reference_gap_ci`, and `n_units`; per (DD-11) the buffalo arms enter only as a whole-pipeline reference gap, so an `embedder` leg is by elimination and carries the mandatory caveat), and the MCP decision template text for `firplan_d02_attribution_<date>`. FIR-17's branch rule (FIRG-050 gating; FIRG-053 is ADR-only per (DD-04), so this decision names its follow-up task rather than gating in-tree code) reads this decision, not the raw JSON. This is decision D-02, distinct from D-03 (corpus prevalence) and D-08 (the D3 open-set adoption decision, QA v8 rows 245/250).
 
 **Done when:**
 - `REPORT.md` exists after an attribution run and names exactly one of the four legs
@@ -484,7 +490,7 @@ New `FacePipelineSettings.visible_support_matching: bool` (default `False`, env 
 
 Verified via codemap (2026-09-11): assignment-candidate similarity is **not** computed by a raw pgvector `<=>` operator at the check-evaluation site. `ConfidenceCheck.evaluate` (`confidence.py` 91–242) reads `similarity = candidate.discovery_similarity` (line ~184), a value already computed upstream. The producing site is `CentroidDiscovery._find_best_centroid_match` (`recognition/application/discovery/centroid.py` 62–87): an in-process `float(np.dot(face_vector, centroid_vec))` over `centroids_by_cluster` (already-materialized numpy arrays), called from `CentroidDiscovery.discover` (30–60), which loops over multiple identities in one call. `masked_cosine` (FIRG-044) therefore substitutes directly for the `np.dot(...)` comparison inside `_find_best_centroid_match` when `visible_support_matching` is on — no DB-level re-rank over top-K candidates is required, because the comparison already happens in Python against materialized vectors, not inside the SQL query itself.
 
-**Per-identity mask data flow (D15):** at runtime there is no oracle occlusion mask — `face_quality_factors.py::estimate_region_visibility(crop: np.ndarray, landmarks: np.ndarray | None) -> RegionVisibility` (five floats in `[0,1]`, a texture proxy per region, no oracle mask) produces the per-face visibility used to build the mask. It is transported as `AssignmentCandidate.region_visibility: tuple[float, float, float, float, float] | None`, set by `CentroidDiscovery.discover` once per face (not once per call) and threaded through to `_find_best_centroid_match`; `None` maps to an all-ones mask (no-op — behaviour-neutral when visibility estimation is unavailable). The mask consumed by `masked_cosine` is built **inside** `_find_best_centroid_match` from that per-face `region_visibility` field for the face currently being matched — never from `self.support_mask` alone, since `self.support_mask` (the static region→dimension map, FIRG-051) has no per-face visibility information and `discover`'s loop compares one face against many identities/centroids in a single call. The static `self.support_mask` and the per-face `region_visibility`-derived mask are combined (AND, or equivalent) to produce the mask actually passed to `masked_cosine`.
+**Per-identity mask data flow (DD-15):** at runtime there is no oracle occlusion mask — `face_quality_factors.py::estimate_region_visibility(crop: np.ndarray, landmarks: np.ndarray | None) -> RegionVisibility` (five floats in `[0,1]`, a texture proxy per region, no oracle mask) produces the per-face visibility used to build the mask. It is transported as `AssignmentCandidate.region_visibility: tuple[float, float, float, float, float] | None`, set by `CentroidDiscovery.discover` once per face (not once per call) and threaded through to `_find_best_centroid_match`; `None` maps to an all-ones mask (no-op — behaviour-neutral when visibility estimation is unavailable). The mask consumed by `masked_cosine` is built **inside** `_find_best_centroid_match` from that per-face `region_visibility` field for the face currently being matched — never from `self.support_mask` alone, since `self.support_mask` (the static region→dimension map, FIRG-051) has no per-face visibility information and `discover`'s loop compares one face against many identities/centroids in a single call. The static `self.support_mask` and the per-face `region_visibility`-derived mask are combined (AND, or equivalent) to produce the mask actually passed to `masked_cosine`.
 
 **Before** (`recognition/application/discovery/centroid.py::_find_best_centroid_match`, 62–87):
 ```python
@@ -531,7 +537,7 @@ Event tag `visible_support_applied` is per-face metadata recorded on the assignm
 **Trace:** FIR-17 S2 (ADR-only)
 **Priority:** P1
 
-D4: pose-head rescue's FIR-17 S2 deliverable is the ADR plus a named follow-up task — no settings knob, no runtime code, and no stratum tests land in FIR-17. No COCO-keypoint or person-detector anchor exists in the service today (verified 2026-09-11 via codemap `search_graph` sweep for keypoint|pose|yolo|person: every hit is a landmark-derived proxy or a test fake). A permissively licensed CPU keypoint model has not been selected (Ultralytics AGPL is banned per FIR-7 `license_policy`), so implementing even a no-op stub ahead of that choice would be runtime code with no model to eventually back it — out of scope for S2. `RECOGNITION_FACE_POSE_HEAD_RESCUE` and `FacePipelineSettings.pose_head_rescue` are therefore **not** added by FIR-17; they may be *mentioned* in the ADR as a proposed future knob, and its stratum-isolation contract (rescued crops tagged `rescue=pose_head`, scored as their own eval stratum, never merged into the headline FNIR@FPIR row, FPI reported separately) is *specified* in the ADR for whichever task eventually implements it.
+(DD-04): pose-head rescue's FIR-17 S2 deliverable is the ADR plus a named follow-up task — no settings knob, no runtime code, and no stratum tests land in FIR-17. No COCO-keypoint or person-detector anchor exists in the service today (verified 2026-09-11 via codemap `search_graph` sweep for keypoint|pose|yolo|person: every hit is a landmark-derived proxy or a test fake). A permissively licensed CPU keypoint model has not been selected (Ultralytics AGPL is banned per FIR-7 `license_policy`), so implementing even a no-op stub ahead of that choice would be runtime code with no model to eventually back it — out of scope for S2. `RECOGNITION_FACE_POSE_HEAD_RESCUE` and `FacePipelineSettings.pose_head_rescue` are therefore **not** added by FIR-17; they may be *mentioned* in the ADR as a proposed future knob, and its stratum-isolation contract (rescued crops tagged `rescue=pose_head`, scored as their own eval stratum, never merged into the headline FNIR@FPIR row, FPI reported separately) is *specified* in the ADR for whichever task eventually implements it.
 
 **Done when:**
 - The ADR exists, names the proposed knob (`pose_head_rescue` / `RECOGNITION_FACE_POSE_HEAD_RESCUE`) and its stratum-isolation contract as *proposed*, and names a concrete follow-up task id
@@ -589,7 +595,7 @@ S0 owns `recognition/application/assignment/quality.py::compute_quality_adjustme
 **Trace:** FIR-17 S4
 **Priority:** P1
 
-The `masked_cosine` used by FIR-15's `occlusion_ladder.py` (FIRG-044) and the one used by FIR-17's `_find_best_centroid_match` (FIRG-052) must be the same function, imported from one shared pure module, `recognition/infrastructure/embeddings/masked_similarity.py` (D14; `face_pipeline/_common.py`, home to `SFACE_METRIC="cosine"` and `embed_batch` at 27–171, is the settings-free precedent but not the location), that does not import `recognition.config.settings`, preserving `buffalo_bench`'s negative-import isolation pattern (`buffalo_bench.py`'s guarded import at 55–66 is the precedent for "importable by the harness without pulling settings").
+The `masked_cosine` used by FIR-15's `occlusion_ladder.py` (FIRG-044) and the one used by FIR-17's `_find_best_centroid_match` (FIRG-052) must be the same function, imported from one shared pure module, `recognition/infrastructure/embeddings/masked_similarity.py` (DD-14) (`face_pipeline/_common.py`, home to `SFACE_METRIC="cosine"` and `embed_batch` at 27–171, is the settings-free precedent but not the location), that does not import `recognition.config.settings`, preserving `buffalo_bench`'s negative-import isolation pattern (`buffalo_bench.py`'s guarded import at 55–66 is the precedent for "importable by the harness without pulling settings").
 
 **Done when:**
 - `grep -rn "def masked_cosine" apps/prototype-description-service/` returns exactly one definition
@@ -726,7 +732,7 @@ The InsightFace (`buffalo_l`) non-commercial licence banner present in FIR-8's e
   "identity_error_definition": "string (verbatim FIRG-040 text)"
 }
 ```
-`alignment_share`/`ci.alignment` are computed from the SFace arms alone at `tau_by_space["sface128"]` (D11); `buffalo_reference_gap`/`ci.buffalo_reference` contrast arm (a) against the mean of arms c/d, which are measured at `tau_by_space["buffalo512"]` and reported raw in `reference_fnir` (no CI of their own).
+`alignment_share`/`ci.alignment` are computed from the SFace arms alone at `tau_by_space["sface128"]` (DD-11); `buffalo_reference_gap`/`ci.buffalo_reference` contrast arm (a) against the mean of arms c/d, which are measured at `tau_by_space["buffalo512"]` and reported raw in `reference_fnir` (no CI of their own).
 
 ### `sface-support-map-v1.json` (`recognition/infrastructure/face_pipeline/assets/`)
 ```json
@@ -735,7 +741,7 @@ The InsightFace (`buffalo_l`) non-commercial licence banner present in FIR-8's e
   "region_to_dimensions": {"left_eye": [0], "right_eye": [0], "nose": [0], "mouth_left": [0], "mouth_right": [0]}
 }
 ```
-The asset carries no self-hash field — integrity is verified by an external manifest sha256 entry (same scheme as `load_verified_model`, `provenance.py` ~157), never a digest embedded in this file (D13 — a self-hash would be circular). `region_to_dimensions` values are index lists into the 128-D SFace embedding — placeholder shape shown; real indices come from the FIR-15 attribution recipe run on clean twins. `load_support_map` (FIRG-051) rejects any region name outside this fixed five-key set and any dimension index outside `[0, 128)`.
+The asset carries no self-hash field — integrity is verified by an external manifest sha256 entry (same scheme as `load_verified_model`, `provenance.py` ~157), never a digest embedded in this file (DD-13) (a self-hash would be circular). `region_to_dimensions` values are index lists into the 128-D SFace embedding — placeholder shape shown; real indices come from the FIR-15 attribution recipe run on clean twins. `load_support_map` (FIRG-051) rejects any region name outside this fixed five-key set and any dimension index outside `[0, 128)`.
 
 ---
 
@@ -759,7 +765,7 @@ FIRG-020  face-label-rule.md                                independent, docs-on
 FIRG-021  five refusal classes + disagreement procedure     depends on FIRG-020, FIRG-003
 ```
 
-FIRG-001/002/003 and FIRG-010–014 are independent tracks and can be parallelized (D6: FIRG-003 depends on FIRG-001, not the reverse — FIRG-021 depends on FIRG-003, so FIRG-003 freezes first and there is no cycle). FIRG-015 (dead-zone rule signing) and T-14 execution itself are operator labour, not implementation — out of Tier 1.
+FIRG-001/002/003 and FIRG-010–014 are independent tracks and can be parallelized (DD-06) (FIRG-003 depends on FIRG-001, not the reverse — FIRG-021 depends on FIRG-003, so FIRG-003 freezes first and there is no cycle). FIRG-015 (dead-zone rule signing) and T-14 execution itself are operator labour, not implementation — out of Tier 1.
 
 ### Tier 2 — Ready after Tier 1
 
@@ -775,7 +781,7 @@ FIRG-031 must land before FIRG-032 (the flag compares a field FIRG-031 introduce
 
 ### Tier 2 — Attribution and robustness (Phase B/C, CPU, $0)
 
-Phases A–C are corpus-remediation-independent only for scaffolding and DIAGNOSTIC-tier measurement; anything ADMISSIBLE (calibration tagged REPORTABLE in Phase C, D-02/D3 ratification) still waits for FIR-11 R1's remediated manifest (D9).
+Phases A–C are corpus-remediation-independent only for scaffolding and DIAGNOSTIC-tier measurement; anything ADMISSIBLE (calibration tagged REPORTABLE in Phase C, D-02/D3 ratification) still waits for FIR-11 R1's remediated manifest (DD-09).
 
 Task plans: `docs/tasks/fir/FIR-15-attribution-split-and-oracle-ladder-task-plan.md`, `docs/tasks/fir/FIR-17-inference-only-occlusion-robustness-task-plan.md`
 
@@ -831,7 +837,7 @@ Reviews of this spec run on codex-remote gpt-6-astra, low effort, per program de
 
 ## Validation
 
-Each block below declares its working directory once (`cd apps/prototype-description-service`); every subsequent command in that block runs relative to it. Repo-root paths (e.g. `benchmarks/`) are written relative to that same working directory as `../../benchmarks/...`, or accessed via an explicit subshell that does not disturb the block's cwd (D19).
+Each block below declares its working directory once (`cd apps/prototype-description-service`); every subsequent command in that block runs relative to it. Repo-root paths (e.g. `benchmarks/`) are written relative to that same working directory as `../../benchmarks/...`, or accessed via an explicit subshell that does not disturb the block's cwd (DD-19).
 
 ### Tier 1 validation
 
@@ -914,3 +920,32 @@ python -m pytest \
 | FIRG-062, FIRG-065 | FIR-16 S2 |
 | FIRG-063..064 | FIR-16 S3 |
 | FIRG-006 | FIR-16 S3 / FIR-13 S2 (joint) |
+
+## Appendix: Drafting decisions (DD-01..DD-22)
+
+These are cross-document drafting decisions applied uniformly across the FIR planning set during the 2026-09-11 revision; they are not QA decisions (`D-01..D-08`) and not the gate metric (`D3`).
+
+| ID | Meaning |
+| --- | --- |
+| DD-01 | Per-space operating points; `AttributionResult.tau_by_space` keyed `sface128`/`buffalo512`; no single tau across spaces. |
+| DD-02 | OACT sign fix is unconditional and becomes FIR-17 **S0**, running before D-02 in every branch. |
+| DD-03 | Open-set export score: persist BOTH `MediaIdentity.match_score` and `match_cluster_id` (pre-gate best centroid) captured in `CentroidDiscovery.discover` before the `similarity_threshold` filter; fix `_find_best_centroid_match` to init `best_similarity = -inf` and return `(None, None)` on an empty gallery. |
+| DD-04 | Pose rescue (FIRG-053) is ADR-only in FIR-17 S2; no settings knob, no runtime code. |
+| DD-05 | `score_open_set(...)` returns one `GateSummary` per stack carrying `points`, `selected`, `tau`, `probe_outcomes`; `RunReport` is not extended. |
+| DD-06 | FIRG-003 (RUBRIC_VERSION constant + row stamping) is FIR-13 S1; FIRG-021 depends on FIRG-003; no reverse edge. |
+| DD-07 | FIR-16 S3 (propose-gate) is Phase C; only S4 (live run) is Phase D. |
+| DD-08 | Canonical toolchain block = `{"opencv", "onnxruntime", "numpy", "opencv_major"}`; `NumericRuntimeFingerprint.compact` is a `@property` — no call parentheses. |
+| DD-09 | Roadmap adopts the epic's phase gates verbatim; Phases A–C are corpus-remediation-independent for scaffolding and DIAGNOSTIC measurement only; anything ADMISSIBLE waits for FIR-11 R1. |
+| DD-10 | DIAGNOSTIC/DIRECTIONAL evidence may PROVISIONALLY PARK a track; TERMINATING a track requires ADMISSIBLE evidence. |
+| DD-11 | `BuffaloFusedLeg` is inseparable; buffalo pairs are a WHOLE-PIPELINE reference contrast only; attribution shares and the D-02 branch come from the SFace arms alone; arms c/d are labelled reference. |
+| DD-12 | Occlusion severity lives at `recognition/infrastructure/embeddings/face_quality_factors.py::compute_occlusion_severity`; there is no face_pipeline/ or application/scan/ copy. |
+| DD-13 | Support-map asset `recognition/infrastructure/face_pipeline/assets/sface-support-map-v1.json`; integrity via the existing model-manifest sha256 scheme, not a self-hash field; loader `support_map.py::load_support_map`. |
+| DD-14 | Exactly one `masked_cosine(a, b, mask) -> float` in `recognition/infrastructure/embeddings/masked_similarity.py`; FIR-17 S1 reuses it. |
+| DD-15 | Inference-time visibility: `face_quality_factors.py::estimate_region_visibility`; transported as `AssignmentCandidate.region_visibility`; `None` → all-ones mask. |
+| DD-16 | The four T-14 conditions: `check_conditions(...)` refuses when `signed_decision_id` is None; `miss_inflate(...)` refuses below 30 exhaustive images. |
+| DD-17 | FIR-14 A1″ uses the FIR-11 `original_scoring_sha`-pinned scorer through the current-tree driver; drift override at the expected-report comparison boundary. |
+| DD-18 | FIR-16 live run enrols an explicit enrollment-only gallery reproducing the frozen `RunPlan` G1; probes never update centroids; add a leakage test. |
+| DD-19 | Spec validation blocks use one working directory per fenced block. |
+| DD-20 | FIR-8 = recognition-profile bench toggle; escalation ladder is parked and unowned. |
+| DD-21 | License isolation is a POST-cutover requirement; success criterion = remove `--extra bench` from the production Dockerfile stage. |
+| DD-22 | D-03 is corpus prevalence; the D3 open-set adoption decision is **D-08**. Replace any "D-03 = D3 declaration" alias with D-08. |

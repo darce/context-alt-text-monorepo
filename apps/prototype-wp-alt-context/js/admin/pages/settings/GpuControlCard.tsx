@@ -227,7 +227,8 @@ export const GpuControlCard = (): React.JSX.Element => {
           </div>
           <div id="z-gpu-load" data-testid="z-gpu-load" className="acx-gpu-control__row">
             <strong>{__('Load:', 'alt-context')}</strong>{' '}
-            {data.load.has_work ? __('describe run in flight', 'alt-context') : __('no work in flight', 'alt-context')} ({loadAgeLabel(data)})
+            {data.load.has_work ? __('describe run in flight', 'alt-context') : __('no work in flight', 'alt-context')}{' '}
+            ({loadAgeLabel(data)})
           </div>
           <div id="z-gpu-cost" data-testid="z-gpu-cost" className="acx-gpu-control__row">
             {__('Cost: ≈$2.00 / GPU-hour · warm-up ≈2 min · never runs longer than the 60 min cap', 'alt-context')}
@@ -235,7 +236,10 @@ export const GpuControlCard = (): React.JSX.Element => {
 
           {!data.snapshot_fresh ? (
             <p className="notice inline notice-warning" data-testid="gpu-stale-notice">
-              {__('Lifecycle telemetry is stale. Controls stay available; results may be delayed.', 'alt-context')}
+              {__(
+                'Lifecycle telemetry is stale. Refresh before starting the GPU. Stop and automatic requests may be delayed.',
+                'alt-context',
+              )}
             </p>
           ) : null}
 
@@ -288,12 +292,27 @@ export const GpuControlCard = (): React.JSX.Element => {
 
           {confirmation === GpuIntentAction.START ? (
             <div id="z-start-preview" data-testid="z-start-preview" className="notice inline notice-warning">
-              <p>{__('Starts the A10 now (≈$2.00/h). Ready in about 2 min. Returns to automatic after 30 min unless work keeps it busy; the 60 min lease cap still applies.', 'alt-context')}</p>
+              <p>
+                {__(
+                  'Starts the A10 now (≈$2.00/h). Ready in about 2 min. Returns to automatic after 30 min unless work keeps it busy; the 60 min lease cap still applies.',
+                  'alt-context',
+                )}
+              </p>
               <div id="z-start-actions" data-testid="z-start-actions">
-                <button type="button" className="acx-button acx-button--primary" onClick={confirm} disabled={isIntentPending}>
+                <button
+                  type="button"
+                  className="acx-button acx-button--primary"
+                  onClick={confirm}
+                  disabled={isIntentPending}
+                >
                   {__('Confirm start', 'alt-context')}
                 </button>{' '}
-                <button type="button" className="acx-button acx-button--secondary" onClick={() => setConfirmation(null)} disabled={isIntentPending}>
+                <button
+                  type="button"
+                  className="acx-button acx-button--secondary"
+                  onClick={() => setConfirmation(null)}
+                  disabled={isIntentPending}
+                >
                   {__('Cancel', 'alt-context')}
                 </button>
               </div>
@@ -302,12 +321,27 @@ export const GpuControlCard = (): React.JSX.Element => {
 
           {confirmation === GpuIntentAction.STOP ? (
             <div id="z-stop-preview" data-testid="z-stop-preview" className="notice inline notice-warning">
-              <p>{__('Stops immediately when idle. If a describe run is in flight, the request is deferred and remains visible until the run ends.', 'alt-context')}</p>
+              <p>
+                {__(
+                  'Requests shutdown when idle. If a describe run is in flight, shutdown is deferred. The separate lease cap can still stop the GPU to limit costs.',
+                  'alt-context',
+                )}
+              </p>
               <div id="z-stop-actions" data-testid="z-stop-actions">
-                <button type="button" className="acx-button acx-button--primary" onClick={confirm} disabled={isIntentPending}>
+                <button
+                  type="button"
+                  className="acx-button acx-button--primary"
+                  onClick={confirm}
+                  disabled={isIntentPending}
+                >
                   {__('Confirm stop', 'alt-context')}
                 </button>{' '}
-                <button type="button" className="acx-button acx-button--secondary" onClick={() => setConfirmation(null)} disabled={isIntentPending}>
+                <button
+                  type="button"
+                  className="acx-button acx-button--secondary"
+                  onClick={() => setConfirmation(null)}
+                  disabled={isIntentPending}
+                >
                   {__('Cancel', 'alt-context')}
                 </button>
               </div>

@@ -6,7 +6,7 @@
     "Operator can start a bulk describe run and always see whether the GPU tier is stopped, warming, ready, or degraded (INT-10 status–predict–stop).",
     "A cold GPU start (~90–100 s measured, VLM-3B decision 2266) is a bounded, cancellable wait, never a silent hang (INT-08, CARD-09).",
     "Provisional CPU drafts and final GPU descriptions are visibly distinct at the item and run level (HAI-05, HAI-08, PROV-06).",
-    "GPU cost boundary is disclosed before commitment; user is never surprised by a $2/GPU-hr start (INT-07, CARD-15, COST-10)."
+    "Before Describe, disclose possible GPU warm-up and infrastructure charges separately from credits, with a Settings link (INT-07, NAV-11). Read failures retain saved rows and apply recovery, show a stale notice, and offer a read-only Retry (INT-10)."
   ],
   "jobs": [
     {

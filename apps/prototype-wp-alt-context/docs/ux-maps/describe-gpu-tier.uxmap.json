@@ -67,7 +67,7 @@
       "id": "describe-run-apply",
       "kind": "screen",
       "title": "Description History › Review & apply",
-      "purpose": "Review per-item drafts, see tier per item, apply to media. Run phases: all-final = default; loading = loading; no items = empty; partial-provisional = degraded. Serves job `gpu-tier-awareness`.",
+      "purpose": "Review per-item drafts, see tier per item, apply to media. The canonical Description History route selects the run with the run query parameter; Back to full history clears that selection. Run phases: all-final = default; loading = loading; no items = empty; partial-provisional = degraded. Serves job `gpu-tier-awareness`.",
       "route": "#/description-history?run=<id>",
       "job_entry": false,
       "deep_link": true,

@@ -11,8 +11,6 @@
 
 ---
 
-# FIR Open-Set Gate and Occlusion Specification
-
 Defines the machine-checkable contract for the D3 gate metric (FNIR@FPIR), the T-14 detector-kill adjudication rule, toolchain-provenance discipline for the pre-CVUP-1 withdrawal, alignment-vs-embedder attribution, and inference-only occlusion robustness (visible-support matching, pose-head rescue, OACT sign fix). No item in this spec authorizes GPU spend or training; that gate is D-01, reached only via T-09 → T-14 → D-01 per the program decision. Heuristics canon: [PRINCIPLE #15](https://github.com/darce/heuristics-canon), [AUDIT-04], [EVAL-01/16/18/19/28], [EMB-01/11/12], [MLDATA-02/03/04/09/16], [DRIFT-03], [IDX-02], [CAL-01/04], [PROV-01], [TEST-03], [DBG-03].
 
 **Constraints:** Greenfield policy — no backward-compat shims. CPU-only ($0) for Phases A/B/C; acx-dev-fir head-to-head (Phase D) is public-API only, no GPU spend before D-01. `oact_coefficient` stays non-negative post sign-flip (sr-006/rg-008 apply: load-time validation, no assert for production paths). Withdrawn numbers (M-12 0.865/0.321, recall 0.504, 2.73 faces/image, all pre-CVUP-1 artifacts) may appear only under the label "withdrawn," never as evidence.
@@ -23,7 +21,9 @@ Defines the machine-checkable contract for the D3 gate metric (FNIR@FPIR), the T
 
 - **FIRG** means **Face Identity Replacement gate/requirement item**; `FIRG-...` ids enumerate the gate/requirement items for the Face Identity Replacement programme.
 - **OACT** means **occlusion-adaptive confidence threshold**. This is the canonical expansion for this planning set; the PLGSA paper origin uses the phrasing “occlusion-adaptive cosine thresholding.”
-- **D3** (the metric) and **D-03** (the decision) are distinct; never alias one to the other. D-03 is corpus prevalence, and the D3 open-set adoption decision is **D-08**.
+- **D3** (the metric) and **D-03** (the decision) are distinct; never alias one to the other. The D3 open-set adoption decision is **D-08** (QA v8 rows 245/250).
+- **D-03** asks “what is the true face prevalence of the deployment corpus?” (QA v8 row 245). That is the estimand; the occlusion-prevalence reading is a derived sub-question, not a substitute. D-03 is deferred behind T-02/T-04, which require a design-based random sample — curated additions cannot close it. Owner: operator. The design-based n is set when T-02 scopes the sample. This is the single source for D-03; other documents cite it rather than restating it.
+- **FNIR@FPIR** is defined once in the [epic terminology](../epics/v0.5.0/commercial-face-identity-replacement-epic.md) against NIST FRTE 1:N; other documents cite that definition rather than re-expanding it.
 
 ## Spec Items
 
@@ -942,7 +942,7 @@ These are cross-document drafting decisions applied uniformly across the FIR pla
 | DD-13 | Support-map asset `recognition/infrastructure/face_pipeline/assets/sface-support-map-v1.json`; integrity via the existing model-manifest sha256 scheme, not a self-hash field; loader `support_map.py::load_support_map`. |
 | DD-14 | Exactly one `masked_cosine(a, b, mask) -> float` in `recognition/infrastructure/embeddings/masked_similarity.py`; FIR-17 S1 reuses it. |
 | DD-15 | Inference-time visibility: `face_quality_factors.py::estimate_region_visibility`; transported as `AssignmentCandidate.region_visibility`; `None` → all-ones mask. |
-| DD-16 | The four T-14 conditions: `check_conditions(...)` refuses when `signed_decision_id` is None; `miss_inflate(...)` refuses below 30 exhaustive images. |
+| DD-16 | The four T-14 conditions: `check_conditions(...)` refuses when `signed_decision_id` is None and hashes the declared thresholds against the pre-run manifest; `miss_inflate(...)` applies the exhaustive-image inflation factor to non-exhaustive rows only, rounds half-up to 4 dp, and refuses below 30 exhaustive images; the bootstrap resamples **images**, never faces. |
 | DD-17 | FIR-14 A1″ uses the FIR-11 `original_scoring_sha`-pinned scorer through the current-tree driver; drift override at the expected-report comparison boundary. |
 | DD-18 | FIR-16 live run enrols an explicit enrollment-only gallery reproducing the frozen `RunPlan` G1; probes never update centroids; add a leakage test. |
 | DD-19 | Spec validation blocks use one working directory per fenced block. |

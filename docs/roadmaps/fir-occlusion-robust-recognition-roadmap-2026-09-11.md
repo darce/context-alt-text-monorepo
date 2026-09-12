@@ -25,13 +25,13 @@ FIR-12's open-set harness and FIR-5's face bake-off are merged (`d567a341c`, `fa
 
 ## Terminology
 
-- **FNIR@FPIR**: false-negative identification rate at a fixed false-positive identification rate, measured with non-mated probes on an open-set gallery, score threshold swept.
+- **FNIR@FPIR**: the open-set headline metric — defined once in the [epic terminology](../epics/v0.5.0/commercial-face-identity-replacement-epic.md) against NIST FRTE 1:N; measured with non-mated probes on an open-set gallery, score threshold swept.
 - **FPI**: integer false-positive-identification count (never a rate).
 - **DIAGNOSTIC / DIRECTIONAL / REPORTABLE**: evidence tiers — DIAGNOSTIC = instrument-only or under-remediated corpus; DIRECTIONAL = under-powered but suggestive; REPORTABLE = powered, ratified-gate evidence.
 - **Golden-150**: the FIR-11 R1 remediated corpus (150 − 7 − 3 → 30 entries / 30 probes / 17 identities, Product A/B split).
 - **acx-dev-fir**: the FIR23-STACK environment (`ACX_ENV=dev-fir`, DB `alt_context_dev_fir` @ `PGVECTOR_DIM=128`) where the head-to-head runs.
 - **pre-CVUP-1**: any artifact produced under the OpenCV 4.x toolchain, withdrawn wholesale.
-- **T-01/T-09/T-14, D-01/D-02/D-03/D-08**: QA v8 task and decision IDs (`benchmarks/reports/fir-embeddings-dims-detectors-qa-20260723.html`, rev 2026-07-28). D-03 asks “what is the true face prevalence of the deployment corpus?” (QA v8 row 245); the occlusion-prevalence reading is a derived sub-question, not the estimand. D-03 is deferred behind T-02/T-04, which require a design-based random sample; the design-based n is set when T-02 scopes the sample; owner: operator. D-08 is the D3 open-set gate metric adoption decision (QA v8 rows 245/250) — the two are never aliased.
+- **T-01/T-09/T-14, D-01/D-02/D-03/D-08**: QA v8 task and decision IDs (`benchmarks/reports/fir-embeddings-dims-detectors-qa-20260723.html`, rev 2026-07-28). D-03's estimand, deferral behind T-02/T-04 and operator ownership are pinned in the [spec terminology](../specs/fir-open-set-gate-and-occlusion-spec.md#terminology). D-08 is the D3 open-set gate metric adoption decision (QA v8 rows 245/250) — the two are never aliased.
 
 ## Current State
 

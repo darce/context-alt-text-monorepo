@@ -352,7 +352,7 @@ make lane-manifest-init TASK=fir-15 LANE_IDS='fir15-eval' TASK_PLAN=docs/tasks/f
 
 - [ ] `occlusion_ladder.py` implements `LadderRung` and `score_ladder`, importing production `masked_cosine` from `masked_similarity.py` (DD-14) rather than redefining it.
 - [ ] `oracle_region_visibility` (`synthetic_occlusion.py`) and `estimate_region_visibility` (`face_quality_factors.py`) both implemented against the pinned `REGION_NAMES` order and `_REGION_PATCH_HALF_PX = 8` geometry (DD-15).
-- [ ] Support-mask attribution recipe implemented exactly as spelled out (5-region occlusion deltas → per-dimension attribution with `ATTRIBUTION_DECILE`/`N_ATTRIBUTION_TWINS` pinned → `VISIBILITY_FLOOR` union rule → versioned JSON asset), including the all-`False`-mask empty-support path (`measured=False`, DD-04).
+- [ ] Support-mask attribution recipe implemented exactly as spelled out (5-region occlusion deltas → per-dimension attribution with `ATTRIBUTION_DECILE`/`N_ATTRIBUTION_TWINS` pinned → `VISIBILITY_FLOOR` union rule → versioned JSON asset), including the all-`False`-mask empty-support path (`measured=False`, DD-13).
 - [ ] `sface-support-map-v1.json` produced and validated at load time via `support_map.py::load_support_map` (exactly-5 region names, 128-D index bounds, no duplicate dims, sha256 against the external manifest entry, fail-closed) (DD-13).
 - [ ] Oracle-gap CI computed and its zero-inclusion case recorded verbatim as FIR-17's kill condition for S1.
 - [ ] `test_eval_harness_occlusion_ladder.py` covers `masked_cosine` invariants, `oracle_region_visibility`'s contract, ladder-rung ordering, and the empty-support path; `test_face_quality_factors.py` covers `estimate_region_visibility`; `test_support_map.py` covers the three fail-closed loader cases.

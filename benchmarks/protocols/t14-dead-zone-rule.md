@@ -32,6 +32,12 @@ Declared Buffalo threshold: `________________`<br>
 Declared candidate threshold: `______________`<br>
 Threshold declaration SHA-256: `______________________________`
 
+Declared exhaustive-image subset count: `________________`<br>
+Sorted exhaustive image-id list SHA-256: `______________________________`<br>
+
+The exhaustive-image subset and its hash are declared before the run and never
+revised after a result is observed.
+
 ## Decision rule
 
 The detector-gap bound is evaluated over human-verified true faces in the

@@ -1,16 +1,4 @@
-"""Cutover recovery residuals (CUTOVER80B-R01/R02/R03). Tests-only RED.
-
-Source identity (recognition-service.sh, sha256
-af22193ef3c89ab6e00e562b720900edd294b845012e962f970a4c6d98ff9ef1):
-- cutover_inflight_present L2822: privileged `sudo test ! -f` prints ABSENT
-  for any non-regular path (directory, symlink, fifo) and for stat failure.
-- recover_interrupted_cutover L2851/L2874: commit_cutover_state removes the
-  inflight marker and writes status=canonical *before* abort_cutover_candidate.
-- _ship_selected_env L3786 / do_promote L3891: restore_prior_image_repo_env
-  runs only inside the restore_env_tag_to_rollback success branch.
-
-SSH doubles and fail-closed sudo/test/rm shims match test_cutover_recovery_safety.py.
-"""
+"""Executable cutover recovery and sticky repository ownership regressions."""
 
 from __future__ import annotations
 
@@ -20,7 +8,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
 from test_cutover_recovery_safety import SCRIPT, _install_fail_closed_shims
 
 NONREGULAR_KINDS = (
@@ -268,7 +255,7 @@ def test_failed_abort_keeps_durable_pending_and_retries_cleanup(tmp_path: Path) 
 
 
 def _run_partial_rollback(
-    tmp_path: Path, invoke: str, *, stale_initial_fence: bool = False
+    tmp_path: Path, invoke: str, *, stale_initial_fence: bool = False, cleanup_rc: int = 0
 ) -> tuple[subprocess.CompletedProcess[str], str]:
     records = tmp_path / "caller.log"
     digest = "b" * 64
@@ -314,7 +301,7 @@ remote_image_digest_ref() {{
 }}
 restore_registry_env_tag() {{ record registry; return 0; }}
 restore_runtime_and_edge() {{ record topology-fail; return 1; }}
-restore_prior_image_repo_env() {{ record sticky; return 0; }}
+restore_prior_image_repo_env() {{ record sticky; return {cleanup_rc}; }}
 fail() {{ printf 'xx %s\\n' "$*" >&2; exit 1; }}
 {invoke}
 '''
@@ -324,11 +311,14 @@ fail() {{ printf 'xx %s\\n' "$*" >&2; exit 1; }}
 
 
 @pytest.mark.parametrize("invoke", ["do_deploy dev", "do_promote dev staging"])
-def test_partial_rollback_restores_prior_sticky_repo_while_preserving_failure(tmp_path: Path, invoke: str) -> None:
+@pytest.mark.parametrize("cleanup_rc", [0, 1])
+def test_partial_rollback_restores_prior_sticky_repo_while_preserving_failure(
+    tmp_path: Path, invoke: str, cleanup_rc: int
+) -> None:
     """CUTOVER80B-R03: registry success + topology/edge/abort fail still restores ACX_IMAGE_REPO."""
-    result, logged = _run_partial_rollback(tmp_path, invoke)
+    result, logged = _run_partial_rollback(tmp_path, invoke, cleanup_rc=cleanup_rc)
     combined = result.stdout + result.stderr + logged
-    assert result.returncode != 0, combined
+    assert result.returncode == 1, combined
     assert "registry" in logged.splitlines(), combined
     assert "topology-fail" in logged.splitlines(), combined
     assert "sticky" in logged.splitlines(), combined
@@ -360,13 +350,13 @@ env_to_remote_dir() {{ printf '%s\\n' "{tmp_path}"; }}
 run_with_deadline() {{ shift 2; "$@"; }}
 ssh() {{ bash -c "${{@: -1}}"; }}
 preflight_ssh() {{ :; }}
-ACX_DEPLOY_TRANSACTION_ID=owner-a
+ACX_IMAGE_REPO_OWNER_ID="$(image_repo_resource claim "{tmp_path}" "" "")"
 ACX_PRIOR_IMAGE_REPO_ENV=dev
 ACX_PRIOR_IMAGE_REPO=example.test/prior
 ACX_IMAGE_REPO=example.test/shared
 ship_remote_image_repo_env "{tmp_path}"
 (
-  ACX_DEPLOY_TRANSACTION_ID=owner-b
+  ACX_IMAGE_REPO_OWNER_ID="$(image_repo_resource claim "{tmp_path}" "" "")"
   ship_remote_image_repo_env "{tmp_path}"
 )
 restore_prior_image_repo_env
@@ -374,5 +364,250 @@ restore_prior_image_repo_env
     result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, timeout=30)
     combined = result.stdout + result.stderr
     assert result.returncode == 75, combined
-    assert env_file.read_text() == "SECRET=preserved\nACX_IMAGE_REPO=example.test/shared\n"
+    assert env_file.read_text().startswith("SECRET=preserved\nACX_IMAGE_REPO=example.test/shared\n")
     assert stat.S_IMODE(env_file.stat().st_mode) == 0o640
+
+
+def _sticky_shell(tmp_path: Path, command: str) -> str:
+    """Use the real producer and deadline wrapper; SSH only redirects to a local host."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    sudo = bin_dir / "sudo"
+    sudo.write_text('#!/bin/bash\nexec "$@"\n')
+    sudo.chmod(0o755)
+    return f'''
+source "{SCRIPT}"
+export PATH="{bin_dir}:$PATH"
+env_to_remote_dir() {{ printf '%s\\n' "{tmp_path}"; }}
+ssh() {{ bash -c "${{@: -1}}"; }}
+preflight_ssh() {{ :; }}
+ACX_PRIOR_IMAGE_REPO_ENV=dev
+{command}
+'''
+
+
+def _sticky_run(tmp_path: Path, command: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["bash", "-c", _sticky_shell(tmp_path, command)], text=True, capture_output=True, timeout=10)
+
+
+def _sticky_claim(tmp_path: Path) -> str:
+    result = _sticky_run(tmp_path, f'image_repo_resource claim "{tmp_path}" "" ""')
+    assert result.returncode == 0, result.stdout + result.stderr
+    return result.stdout.strip()
+
+
+def _sticky_ship(tmp_path: Path, owner: str) -> subprocess.CompletedProcess[str]:
+    return _sticky_run(
+        tmp_path,
+        f'ACX_IMAGE_REPO_OWNER_ID={owner}; ACX_IMAGE_REPO=example.test/shared; ship_remote_image_repo_env "{tmp_path}"',
+    )
+
+
+@pytest.mark.parametrize("prior", ["", "ACX_IMAGE_REPO=example.test/prior\n"])
+def test_sticky_owned_cleanup_is_idempotent_and_preserves_secrets(tmp_path: Path, prior: str) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text("SECRET=do-not-log\n" + prior)
+    env_file.chmod(0o640)
+    owner = _sticky_claim(tmp_path)
+    assert _sticky_ship(tmp_path, owner).returncode == 0
+    command = f"ACX_IMAGE_REPO_OWNER_ID={owner}; restore_prior_image_repo_env"
+    result = _sticky_run(tmp_path, command)
+    assert result.returncode == 0, result.stderr
+    after = env_file.read_bytes()
+    result = _sticky_run(tmp_path, command)
+    assert result.returncode == 0, result.stderr
+    assert env_file.read_bytes() == after
+    assert after.startswith(("SECRET=do-not-log\n" + prior).encode())
+    assert "do-not-log" not in result.stdout + result.stderr
+    assert stat.S_IMODE(env_file.stat().st_mode) == 0o640
+    assert _sticky_ship(tmp_path, owner).returncode == 75
+
+
+@pytest.mark.parametrize("action", ["ship", "restore"])
+def test_sticky_clear_invalidates_prior_owner(tmp_path: Path, action: str) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text("SECRET=preserved\n")
+    owner = _sticky_claim(tmp_path)
+    assert _sticky_ship(tmp_path, owner).returncode == 0
+    result = _sticky_run(tmp_path, "clear_remote_image_repo_env dev")
+    assert result.returncode == 0, result.stderr
+    cleared = env_file.read_bytes()
+    result = _sticky_run(tmp_path, f'image_repo_resource {action} "{tmp_path}" {owner} example.test/shared')
+    assert result.returncode == 75, result.stderr
+    assert env_file.read_bytes() == cleared
+    assert b"ACX_IMAGE_REPO=" not in cleared
+
+
+@pytest.mark.parametrize("corruption", ["missing", "malformed", "changed_repo", "symlink", "directory"])
+def test_sticky_unknown_resource_refuses_cleanup(tmp_path: Path, corruption: str) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text("SECRET=preserved\n")
+    owner = _sticky_claim(tmp_path)
+    assert _sticky_ship(tmp_path, owner).returncode == 0
+    if corruption == "missing":
+        env_file.write_text("SECRET=preserved\nACX_IMAGE_REPO=example.test/shared\n")
+    elif corruption == "malformed":
+        env_file.write_text("SECRET=preserved\n# ACX_IMAGE_REPO_OWNER={bad}\n")
+    elif corruption == "changed_repo":
+        env_file.write_text(env_file.read_text().replace("ACX_IMAGE_REPO=example.test/shared", "ACX_IMAGE_REPO=other"))
+    else:
+        env_file.rename(tmp_path / "original")
+        if corruption == "symlink":
+            env_file.symlink_to(tmp_path / "original")
+        else:
+            env_file.mkdir()
+    before = env_file.read_bytes() if env_file.is_file() else None
+    result = _sticky_run(tmp_path, f"ACX_IMAGE_REPO_OWNER_ID={owner}; restore_prior_image_repo_env")
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (env_file.read_bytes() if env_file.is_file() else None) == before
+    assert "SECRET" not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("action", ["ship", "restore"])
+def test_sticky_waiting_writer_rechecks_owner_inside_resource_lock(tmp_path: Path, action: str) -> None:
+    """Pause before actual flock; a new real owner writes before the waiter enters."""
+    import fcntl
+    import time
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("SECRET=preserved\n")
+    owner = _sticky_claim(tmp_path)
+    assert _sticky_ship(tmp_path, owner).returncode == 0
+    # SSH signals that the old request was sent, before running the real producer.
+    ready = tmp_path / "ready"
+    release = tmp_path / "release"
+    command = f'''
+ssh() {{
+  touch "{ready}"
+  while [[ ! -e "{release}" ]]; do sleep 0.01; done
+  bash -c "${{@: -1}}"
+}}
+image_repo_resource {action} "{tmp_path}" {owner} example.test/shared
+'''
+    process = subprocess.Popen(
+        ["bash", "-c", _sticky_shell(tmp_path, command)], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
+    try:
+        deadline = time.monotonic() + 5
+        while not ready.exists():
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        new_owner = _sticky_claim(tmp_path)
+        assert new_owner != owner
+        assert _sticky_ship(tmp_path, new_owner).returncode == 0
+        newer = env_file.read_bytes()
+        # Also prove no mutation can enter while another process holds the lock.
+        with (tmp_path / ".env.acx-image-repo.lock").open("rb") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            release.touch()
+            time.sleep(0.15)
+            assert process.poll() is None
+            assert env_file.read_bytes() == newer
+        stdout, stderr = process.communicate(timeout=5)
+        assert process.returncode == 75, stdout + stderr
+        assert env_file.read_bytes() == newer
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.communicate(timeout=5)
+
+
+def test_sticky_resource_lock_wait_is_bounded(tmp_path: Path) -> None:
+    import fcntl
+
+    (tmp_path / ".env").write_text("SECRET=preserved\n")
+    owner = _sticky_claim(tmp_path)
+    before = (tmp_path / ".env").read_bytes()
+    with (tmp_path / ".env.acx-image-repo.lock").open("rb") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        result = _sticky_run(
+            tmp_path,
+            f'ACX_REMOTE_COMMAND_TIMEOUT=1; image_repo_resource ship "{tmp_path}" {owner} example.test/shared',
+        )
+    assert result.returncode in (1, 124), result.stdout + result.stderr
+    assert (tmp_path / ".env").read_bytes() == before
+
+
+def test_sticky_owner_check_and_mutation_share_lock(tmp_path: Path) -> None:
+    """Pause the real guard at replace, after validation; a clear must wait."""
+    import sys
+    import time
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("SECRET=preserved\n")
+    owner = _sticky_claim(tmp_path)
+    ready = tmp_path / "checked"
+    release = tmp_path / "replace"
+    shim = tmp_path / "bin" / "python3"
+    shim.write_text(
+        f"#!{sys.executable}\n"
+        "import os, sys, time\n"
+        "replace = os.replace\n"
+        "def paused_replace(source, target):\n"
+        f"    open({str(ready)!r}, 'w').close()\n"
+        "    deadline = time.monotonic() + 5\n"
+        f"    while not os.path.exists({str(release)!r}):\n"
+        "        if time.monotonic() >= deadline: raise TimeoutError()\n"
+        "        time.sleep(0.01)\n"
+        "    replace(source, target)\n"
+        "if sys.argv[4] == 'ship': os.replace = paused_replace\n"
+        "program = sys.argv[2]\n"
+        "sys.argv = ['-c'] + sys.argv[3:]\n"
+        "exec(compile(program, '<real-sticky-producer>', 'exec'))\n"
+    )
+    shim.chmod(0o755)
+    ship = subprocess.Popen(
+        ["bash", "-c", _sticky_shell(tmp_path, f'image_repo_resource ship "{tmp_path}" {owner} example.test/shared')],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    clear = None
+    try:
+        deadline = time.monotonic() + 5
+        while not ready.exists():
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        clear = subprocess.Popen(
+            ["bash", "-c", _sticky_shell(tmp_path, "clear_remote_image_repo_env dev")],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        time.sleep(0.15)
+        assert clear.poll() is None
+        assert b"ACX_IMAGE_REPO=example.test/shared" not in env_file.read_bytes()
+        release.touch()
+        stdout, stderr = ship.communicate(timeout=5)
+        assert ship.returncode == 0, stdout + stderr
+        stdout, stderr = clear.communicate(timeout=5)
+        assert clear.returncode == 0, stdout + stderr
+        cleared = env_file.read_bytes()
+        assert b"ACX_IMAGE_REPO=" not in cleared
+        result = _sticky_run(tmp_path, f"ACX_IMAGE_REPO_OWNER_ID={owner}; restore_prior_image_repo_env")
+        assert result.returncode == 75, result.stderr
+        assert env_file.read_bytes() == cleared
+    finally:
+        release.touch()
+        for process in (ship, clear):
+            if process is not None:
+                if process.poll() is None:
+                    process.kill()
+                process.communicate(timeout=5)
+
+
+def test_sticky_real_owned_cleanup_survives_downstream_rollback_failure(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text("SECRET=preserved\nACX_IMAGE_REPO=example.test/prior\n")
+    owner = _sticky_claim(tmp_path)
+    assert _sticky_ship(tmp_path, owner).returncode == 0
+    result = _sticky_run(
+        tmp_path,
+        f"""
+ACX_IMAGE_REPO_OWNER_ID={owner}
+restore_topology_backups() {{ return 1; }}
+restore_runtime_and_edge dev 1
+""",
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert env_file.read_text().startswith("SECRET=preserved\nACX_IMAGE_REPO=example.test/prior\n")

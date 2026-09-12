@@ -42,7 +42,7 @@ No user-visible change until the gate flips. Pre-flip: alt text continues to use
 
 ## Terminology
 
-- **FNIR@FPIR**: False Non-Identification Rate at a fixed False Positive Identification Rate — the open-set headline metric (D3); measured with non-mated probes against an open-set gallery at a swept score threshold.
+- **FNIR@FPIR**: False Negative Identification Rate at a fixed False Positive Identification Rate — the open-set headline metric (D3; terminology from NIST FRTE 1:N); measured with non-mated probes against an open-set gallery at a swept score threshold.
 - **FPI**: False-Positive-Identification count — an integer, never a rate.
 - **DIAGNOSTIC / DIRECTIONAL / REPORTABLE tiers**: evidence strength tiers a result carries depending on corpus power and exhaustiveness; a DIAGNOSTIC or DIRECTIONAL result cannot gate a decision alone. DIAGNOSTIC/DIRECTIONAL evidence may provisionally PARK a track (e.g. the adapter track, pose rescue); TERMINATING a track requires ADMISSIBLE evidence (post FIR-11 R1).
 - **Golden-150**: the locked eval corpus; post-FIR-11-R1 remediation, 30 entries / 30 probes / 17 identities are usable for the gating paired non-inferiority check.

@@ -7,6 +7,7 @@ from recognition.application.assignment.quality import (
     compute_quality_adjustment,
 )
 from recognition.application.embedding.detector import _compute_detection_quality
+from recognition.application.settings import QualitySettings
 from recognition.domain.maturity import ClusterMaturityLevel
 
 
@@ -132,3 +133,18 @@ class TestComputeQualityAdjustment:
     def test_adjustment_dampened_for_cold_clusters(self) -> None:
         adjustment = compute_quality_adjustment(0.3, maturity=ClusterMaturityLevel.COLD)
         assert adjustment == pytest.approx(0.0125, abs=0.0001)
+
+    def test_positive_oact_coefficient_tightens_with_occlusion(self) -> None:
+        settings = QualitySettings(oact_coefficient=0.2)
+        without_occlusion = compute_quality_adjustment(
+            0.85,
+            settings=settings,
+            occlusion_severity=0.0,
+        )
+        with_occlusion = compute_quality_adjustment(
+            0.85,
+            settings=settings,
+            occlusion_severity=0.5,
+        )
+
+        assert with_occlusion > without_occlusion

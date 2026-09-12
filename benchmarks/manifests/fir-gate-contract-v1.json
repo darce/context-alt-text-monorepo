@@ -1,0 +1,9 @@
+{
+  "metric": "FNIR@FPIR",
+  "max_fpi": null,
+  "n_nonmated_declared": null,
+  "rubric_version": "face-label-rule/v1",
+  "ratified_by_decision_id": null,
+  "t14_thresholds_declared": null,
+  "t14_thresholds_sha256": null
+}

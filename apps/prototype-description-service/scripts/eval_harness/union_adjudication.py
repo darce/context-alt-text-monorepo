@@ -1,0 +1,258 @@
+"""Pure arithmetic and bootstrap helpers for the FIR T-14 gate.
+
+T-14 compares detector true-positive counts over the human-verified faces in
+the detector proposal union.  Rows are image-level units: the bootstrap must
+resample whole rows, never individual faces.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import math
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from decimal import ROUND_HALF_UP, Decimal
+from enum import StrEnum
+
+import numpy as np
+
+from scripts.eval_harness.gate_contract import GateContract
+
+
+@dataclass(frozen=True)
+class UnionAdjudicationInput:
+    """One image-level T-14 adjudication row."""
+
+    image_id: str
+    union_boxes: int
+    human_true_faces: int
+    tp_buffalo_i: int
+    tp_candidate_i: int
+    matched_fppi_declared: float
+    thresholds_declared_before_run: dict[str, float]
+
+
+class DeadZoneVerdict(StrEnum):
+    """T-14's three possible outcomes at the declared UCL bounds."""
+
+    KILL = "kill"
+    DEAD_ZONE = "dead_zone"
+    OPEN = "open"
+
+
+class UnionAdjudicationError(Exception):
+    """Fail-closed validation or protocol error for T-14."""
+
+
+_REQUIRED_CONDITION_KEYS = frozenset(
+    {
+        "union_uses_human_true_faces",
+        "matched_fppi_equal_across_rows",
+        "verdict_from_bootstrap_ucl",
+        "thresholds_frozen_before_run",
+    }
+)
+_THRESHOLD_KEYS = frozenset({"buffalo", "candidate"})
+
+
+def _rows_tuple(
+    rows: Sequence[UnionAdjudicationInput], *, allow_empty: bool = False
+) -> tuple[UnionAdjudicationInput, ...]:
+    try:
+        normalised = tuple(rows)
+    except TypeError as exc:
+        raise UnionAdjudicationError("rows must be a sequence of image rows") from exc
+    if not normalised and not allow_empty:
+        raise UnionAdjudicationError("rows must contain at least one image")
+
+    for index, row in enumerate(normalised):
+        if not isinstance(row, UnionAdjudicationInput):
+            raise UnionAdjudicationError(f"rows[{index}] must be a UnionAdjudicationInput, got {type(row).__name__}")
+        if not isinstance(row.image_id, str) or not row.image_id.strip():
+            raise UnionAdjudicationError(f"rows[{index}].image_id must be a non-empty string")
+        for name in (
+            "union_boxes",
+            "human_true_faces",
+            "tp_buffalo_i",
+            "tp_candidate_i",
+        ):
+            value = getattr(row, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise UnionAdjudicationError(f"rows[{index}].{name} must be a non-negative integer")
+        fppi = row.matched_fppi_declared
+        if isinstance(fppi, bool) or not isinstance(fppi, (int, float)) or not math.isfinite(float(fppi)):
+            raise UnionAdjudicationError(f"rows[{index}].matched_fppi_declared must be a finite number")
+        if fppi < 0:
+            raise UnionAdjudicationError(f"rows[{index}].matched_fppi_declared must be non-negative")
+        thresholds = row.thresholds_declared_before_run
+        if not isinstance(thresholds, Mapping) or set(thresholds) != _THRESHOLD_KEYS:
+            raise UnionAdjudicationError(
+                f"rows[{index}].thresholds_declared_before_run must contain exactly 'buffalo' and 'candidate'"
+            )
+        for key in ("buffalo", "candidate"):
+            value = thresholds[key]
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise UnionAdjudicationError(
+                    f"rows[{index}].thresholds_declared_before_run.{key} must be a finite number"
+                )
+            if not math.isfinite(float(value)):
+                raise UnionAdjudicationError(
+                    f"rows[{index}].thresholds_declared_before_run.{key} must be a finite number"
+                )
+    return normalised
+
+
+def detector_gap_bound(rows: Sequence[UnionAdjudicationInput]) -> float:
+    """Return ``(TP_buffalo - TP_candidate) / human_true_faces``."""
+
+    normalised = _rows_tuple(rows)
+    denominator = sum(row.human_true_faces for row in normalised)
+    if denominator <= 0:
+        raise UnionAdjudicationError("human_true_faces denominator must be positive")
+    return float(
+        (sum(row.tp_buffalo_i for row in normalised) - sum(row.tp_candidate_i for row in normalised)) / denominator
+    )
+
+
+def _validate_bootstrap_arguments(*, b: int, seed: int, resampling_unit: str, level: float) -> None:
+    if isinstance(b, bool) or not isinstance(b, int) or b <= 0:
+        raise UnionAdjudicationError("b must be a positive integer")
+    if isinstance(seed, bool) or not isinstance(seed, int):
+        raise UnionAdjudicationError("seed must be an integer")
+    if resampling_unit != "image":
+        raise UnionAdjudicationError("resampling_unit must be 'image'")
+    if isinstance(level, bool) or not isinstance(level, (int, float)) or not math.isfinite(float(level)):
+        raise UnionAdjudicationError("level must be a finite number in (0, 1]")
+    if not 0 < level <= 1:
+        raise UnionAdjudicationError("level must be a finite number in (0, 1]")
+
+
+def bootstrap_ucl(
+    rows: Sequence[UnionAdjudicationInput],
+    *,
+    b: int = 2000,
+    seed: int,
+    resampling_unit: str = "image",
+    level: float = 0.95,
+) -> float:
+    """Return the percentile UCL from an image-level seeded bootstrap."""
+
+    normalised = _rows_tuple(rows)
+    _validate_bootstrap_arguments(b=b, seed=seed, resampling_unit=resampling_unit, level=level)
+    rng = np.random.default_rng(seed)
+    indices = rng.integers(0, len(normalised), size=(b, len(normalised)))
+    estimates = np.empty(b, dtype=float)
+    for sample_index, selected in enumerate(indices):
+        estimates[sample_index] = detector_gap_bound(tuple(normalised[int(row_index)] for row_index in selected))
+    return float(np.percentile(estimates, float(level) * 100.0))
+
+
+def miss_inflate(
+    rows: Sequence[UnionAdjudicationInput],
+    *,
+    exhaustive_image_ids: frozenset[str],
+) -> tuple[float, float]:
+    """Estimate the union-miss inflation factor from an exhaustive subset.
+
+    The numerator is the number of human-verified faces absent from the union
+    (``human_true_faces - union_boxes``).  The denominator is the detector-
+    flagged Buffalo-minus-candidate miss count.  Both are accumulated only on
+    the declared exhaustive image subset.
+    """
+
+    if len(exhaustive_image_ids) < 30:
+        raise UnionAdjudicationError("at least 30 exhaustive image IDs are required for miss inflation")
+    normalised = _rows_tuple(rows, allow_empty=True)
+    exhaustive_rows = tuple(row for row in normalised if row.image_id in exhaustive_image_ids)
+    exhaustive_misses = sum(row.human_true_faces - row.union_boxes for row in exhaustive_rows)
+    detector_flagged_misses = sum(row.tp_buffalo_i - row.tp_candidate_i for row in exhaustive_rows)
+    if detector_flagged_misses == 0:
+        return (1.0, 1.0)
+
+    factor = (Decimal(exhaustive_misses) / Decimal(detector_flagged_misses)).quantize(
+        Decimal("0.0001"), rounding=ROUND_HALF_UP
+    )
+    return (float(factor), 0.0)
+
+
+def _threshold_sha256(thresholds: Mapping[str, float]) -> str:
+    try:
+        encoded = json.dumps(thresholds, sort_keys=True).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise UnionAdjudicationError("thresholds_declared_before_run must be JSON serializable") from exc
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _validate_conditions(conditions_met: Mapping[str, bool]) -> None:
+    if not isinstance(conditions_met, Mapping):
+        raise UnionAdjudicationError("conditions_met must be a mapping")
+    missing = _REQUIRED_CONDITION_KEYS - set(conditions_met)
+    if missing:
+        raise UnionAdjudicationError(f"missing required T-14 condition confirmations: {sorted(missing)}")
+    failed = sorted(key for key in _REQUIRED_CONDITION_KEYS if conditions_met[key] is not True)
+    if failed:
+        raise UnionAdjudicationError(f"T-14 condition confirmations are not all true: {failed}")
+
+
+def check_conditions(
+    rows: Sequence[UnionAdjudicationInput],
+    *,
+    declared: GateContract,
+    signed_decision_id: str | None,
+    conditions_met: Mapping[str, bool],
+    kill_below: float = 0.05,
+    dead_zone_upper: float = 0.10,
+    b: int = 2000,
+    seed: int,
+) -> DeadZoneVerdict:
+    """Validate the signed T-14 preconditions and classify its bootstrap UCL."""
+
+    if not isinstance(signed_decision_id, str) or not signed_decision_id.strip():
+        raise UnionAdjudicationError("a signed_decision_id is required before T-14 can be adjudicated")
+    if not isinstance(declared, GateContract):
+        raise UnionAdjudicationError("declared must be a GateContract")
+    _validate_conditions(conditions_met)
+    normalised = _rows_tuple(rows)
+
+    thresholds = normalised[0].thresholds_declared_before_run
+    if any(row.thresholds_declared_before_run != thresholds for row in normalised[1:]):
+        raise UnionAdjudicationError("thresholds_declared_before_run must be identical on every row")
+    if any(row.matched_fppi_declared != normalised[0].matched_fppi_declared for row in normalised[1:]):
+        raise UnionAdjudicationError("matched_fppi_declared must be identical on every row")
+    if declared.t14_thresholds_declared is None or declared.t14_thresholds_sha256 is None:
+        raise UnionAdjudicationError("T-14 thresholds must be ratified in the declared contract before adjudication")
+    if declared.t14_thresholds_declared != thresholds:
+        raise UnionAdjudicationError("run thresholds do not match the declared T-14 thresholds")
+    if _threshold_sha256(thresholds) != declared.t14_thresholds_sha256:
+        raise UnionAdjudicationError("run threshold hash does not match the declared T-14 threshold hash")
+
+    if (
+        isinstance(kill_below, bool)
+        or not isinstance(kill_below, (int, float))
+        or not math.isfinite(float(kill_below))
+        or isinstance(dead_zone_upper, bool)
+        or not isinstance(dead_zone_upper, (int, float))
+        or not math.isfinite(float(dead_zone_upper))
+        or not 0 <= kill_below < dead_zone_upper
+    ):
+        raise UnionAdjudicationError("T-14 bounds must be finite with 0 <= kill_below < dead_zone_upper")
+
+    ucl = bootstrap_ucl(normalised, b=b, seed=seed)
+    if ucl < kill_below:
+        return DeadZoneVerdict.KILL
+    if ucl < dead_zone_upper:
+        return DeadZoneVerdict.DEAD_ZONE
+    return DeadZoneVerdict.OPEN
+
+
+__all__ = [
+    "DeadZoneVerdict",
+    "UnionAdjudicationError",
+    "UnionAdjudicationInput",
+    "_REQUIRED_CONDITION_KEYS",
+    "bootstrap_ucl",
+    "check_conditions",
+    "detector_gap_bound",
+    "miss_inflate",
+]

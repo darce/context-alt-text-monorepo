@@ -67,7 +67,7 @@ Two-stage face pipeline, unchanged at the detect/align/embed layer, gains one ne
 
 ### Data Model
 
-- **`GateContract`** (frozen dataclass, `gate_contract.py`, loaded from `benchmarks/manifests/fir-gate-contract-v1.json`): `metric="FNIR@FPIR"`, `max_fpi: int | None`, `n_nonmated_declared: int | None`, `rubric_version`, `ratified_by_decision_id: str | None`. Operating point stays `null` until the operator ratifies it (rg-008 load-time validation; `GateContractError` on malformed/missing keys).
+- **`GateContract`** (frozen dataclass, `gate_contract.py`, loaded from `benchmarks/manifests/fir-gate-contract-v1.json`): `metric="FNIR@FPIR"`, `max_fpi: int | None`, `n_nonmated_declared: int | None`, `rubric_version`, `ratified_by_decision_id: str | None`, `t14_thresholds_declared: dict[str, float] | None`, `t14_thresholds_sha256: str | None` — all seven keys required. Operating point and the T-14 threshold fields stay `null` until the operator ratifies it (rg-008 load-time validation; `GateContractError` on malformed/missing keys).
 - **`RunReport.to_rows()`** (`fir_bakeoff_run.py:183-260`) gains one new column: the `rubric_version` (`face-label-rule/v1`) each row was adjudicated under, plus a `toolchain` block (`{opencv, onnxruntime, numeric_runtime_fingerprint}`) on every face report.
 - **`attribution.json`** (FIR-15 output, `benchmarks/results/attribution-t01-<date>/`): `{alignment_share, buffalo_reference_gap, ci: {alignment, buffalo_reference}, reference_fnir, n_units, tau_by_space: {sface128, buffalo512}, toolchain}` — no `embedder_share` and no single `tau` (DD-01/DD-11).
 - **`benchmarks/results/WITHDRAWN.md`**: register of the five `golden150-fir-*-20260723/` result dirs + M-12 + recall 0.504 + 2.73 faces/image, each with a reason.

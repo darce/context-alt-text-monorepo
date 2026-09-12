@@ -60,7 +60,7 @@ Operator signs the 0.05–0.10 dead-zone rule in writing BEFORE T-14 runs. Kill 
 ## Terminology
 
 - **D3**: the headline gate metric, FNIR at a fixed FPIR, measured with non-mated probes on an open-set gallery, score threshold swept, FPI reported as an integer count.
-- **FPI**: integer false-positive-identification count (never a rate) — see `open_set_identification.IETPoint.fpi`.
+- **FPI**: defined once in the [epic terminology](../../epics/v0.5.0/commercial-face-identity-replacement-epic.md#terminology); carried by `open_set_identification.IETPoint.fpi`.
 - **Rubric version**: `RUBRIC_VERSION = "face-label-rule/v1"`, the frozen version tag every adjudicated row must carry.
 - **Dead zone**: the T-14 UCL band 0.05–0.10 in which the detector-gap-bound bootstrap upper confidence limit is neither a kill nor a pass signal.
 - **DIAGNOSTIC / DIRECTIONAL / REPORTABLE**: existing eval-harness evidence tiers; this task produces no scored run, so no tier is claimed by its own artifacts.

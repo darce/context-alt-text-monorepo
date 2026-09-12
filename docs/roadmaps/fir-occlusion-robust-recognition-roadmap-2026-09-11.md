@@ -26,7 +26,7 @@ FIR-12's open-set harness and FIR-5's face bake-off are merged (`d567a341c`, `fa
 ## Terminology
 
 - **FNIR@FPIR**: the open-set headline metric — defined once in the [epic terminology](../epics/v0.5.0/commercial-face-identity-replacement-epic.md) against NIST FRTE 1:N; measured with non-mated probes on an open-set gallery, score threshold swept.
-- **FPI**: integer false-positive-identification count (never a rate).
+- **FPI**: defined once in the [epic terminology](../epics/v0.5.0/commercial-face-identity-replacement-epic.md#terminology).
 - **DIAGNOSTIC / DIRECTIONAL / REPORTABLE**: evidence tiers — DIAGNOSTIC = instrument-only or under-remediated corpus; DIRECTIONAL = under-powered but suggestive; REPORTABLE = powered, ratified-gate evidence.
 - **Golden-150**: the FIR-11 R1 remediated corpus (150 − 7 − 3 → 30 entries / 30 probes / 17 identities, Product A/B split).
 - **acx-dev-fir**: the FIR23-STACK environment (`ACX_ENV=dev-fir`, DB `alt_context_dev_fir` @ `PGVECTOR_DIM=128`) where the head-to-head runs.

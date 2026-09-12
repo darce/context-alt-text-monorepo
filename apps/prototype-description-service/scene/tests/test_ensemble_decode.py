@@ -246,6 +246,26 @@ def test_ensemble_adapter_satisfies_protocol_and_delegates_identity():
     assert adapter.prompt_or_task_version == stub.prompt_or_task_version
 
 
+def test_async_gpu_resolver_wraps_available_adapter_and_preserves_unavailable(monkeypatch):
+    from scene.infrastructure.vlm.unavailable_adapter import UnavailableDescriptionAdapter
+    from scene.interface_adapters.http import deps
+
+    monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "gpu_qwen30b_ensemble")
+    stub = _StubGpuAdapter(["only"])
+    monkeypatch.setattr(deps, "get_gpu_description_adapter", lambda: stub)
+
+    adapter = deps.get_async_gpu_description_adapter()
+
+    assert isinstance(adapter, EnsembleDescriptionAdapter)
+    adapter.describe(image_bytes=b"unreadable-image", context=None)
+    assert stub.calls == [b"unreadable-image"]
+
+    unavailable = UnavailableDescriptionAdapter("GPU offline", kind=DescriptionAdapterKind.GPU)
+    monkeypatch.setattr(deps, "get_gpu_description_adapter", lambda: unavailable)
+
+    assert deps.get_async_gpu_description_adapter() is unavailable
+
+
 def test_ensemble_adapter_runs_one_pass_per_view_full_image_first():
     stub = _StubGpuAdapter(["a", "b", "b", "c"])
     adapter = EnsembleDescriptionAdapter(wrapped=stub, config=EnsembleDecodeConfig(n_views=4))

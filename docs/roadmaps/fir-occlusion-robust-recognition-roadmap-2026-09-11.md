@@ -31,7 +31,7 @@ FIR-12's open-set harness and FIR-5's face bake-off are merged (`d567a341c`, `fa
 - **Golden-150**: the FIR-11 R1 remediated corpus (150 − 7 − 3 → 30 entries / 30 probes / 17 identities, Product A/B split).
 - **acx-dev-fir**: the FIR23-STACK environment (`ACX_ENV=dev-fir`, DB `alt_context_dev_fir` @ `PGVECTOR_DIM=128`) where the head-to-head runs.
 - **pre-CVUP-1**: any artifact produced under the OpenCV 4.x toolchain, withdrawn wholesale.
-- **T-01/T-09/T-14, D-01/D-02/D-03**: QA v8 task and decision IDs (`benchmarks/reports/fir-embeddings-dims-detectors-qa-20260723.html`, rev 2026-07-28).
+- **T-01/T-09/T-14, D-01/D-02/D-03/D-08**: QA v8 task and decision IDs (`benchmarks/reports/fir-embeddings-dims-detectors-qa-20260723.html`, rev 2026-07-28). D-03 is the corpus-prevalence decision; D-08 is the D3 open-set gate metric adoption decision (QA v8 rows 245/250) — the two are never aliased.
 
 ## Current State
 
@@ -62,17 +62,17 @@ Two-stage face pipeline, unchanged at the detect/align/embed layer, gains one ne
 | Oracle-before-predicted occlusion ladder | Isolates "how much does perfect occlusion knowledge help" from "how good is our occlusion detector," so the adapter track can be killed at $0 if the oracle gap's CI includes 0 [EVAL-19] |
 | Toolchain provenance stamped on every report row | Prevents re-litigating pre-CVUP-1-style contamination; `score-face` refuses cross-toolchain comparisons by default [DRIFT-03] |
 | Own-tau per stack in the head-to-head | 128D SFace and 512D buffalo embeddings are not comparable at a shared threshold [EMB-01][IDX-02] |
-| OACT sign flip (occlusion term can only raise the threshold) | Under D3, rewarding occlusion with a lower threshold inflates FPIR; non-negativity of the coefficient is repurposed to mean "never relaxes" instead of "never tightens" |
+| OACT sign flip (FIR-17 S0, occlusion term can only raise the threshold) | Under D3, rewarding occlusion with a lower threshold inflates FPIR; non-negativity of the coefficient is repurposed to mean "never relaxes" instead of "never tightens". Unconditional — lands before D-02 in every branch, so it is scheduled in Phase B, not Phase C |
 | `masked_cosine` implemented once, imported by both eval and production | Prevents the eval harness and the production re-rank from silently diverging on the visible-support definition |
 
 ### Data Model
 
 - **`GateContract`** (frozen dataclass, `gate_contract.py`, loaded from `benchmarks/manifests/fir-gate-contract-v1.json`): `metric="FNIR@FPIR"`, `max_fpi: int | None`, `n_nonmated_declared: int | None`, `rubric_version`, `ratified_by_decision_id: str | None`. Operating point stays `null` until the operator ratifies it (rg-008 load-time validation; `GateContractError` on malformed/missing keys).
 - **`RunReport.to_rows()`** (`fir_bakeoff_run.py:183-260`) gains one new column: the `rubric_version` (`face-label-rule/v1`) each row was adjudicated under, plus a `toolchain` block (`{opencv, onnxruntime, numeric_runtime_fingerprint}`) on every face report.
-- **`attribution.json`** (FIR-15 output, `benchmarks/results/attribution-t01-<date>/`): `{alignment_share, embedder_share, ci, n_units, tau, toolchain}`.
+- **`attribution.json`** (FIR-15 output, `benchmarks/results/attribution-t01-<date>/`): `{alignment_share, buffalo_reference_gap, ci: {alignment, buffalo_reference}, reference_fnir, n_units, tau_by_space: {sface128, buffalo512}, toolchain}` — no `embedder_share` and no single `tau` (D1/D11).
 - **`benchmarks/results/WITHDRAWN.md`**: register of the five `golden150-fir-*-20260723/` result dirs + M-12 + recall 0.504 + 2.73 faces/image, each with a reason.
 - **`sface-support-map-v1.json`** (`recognition/infrastructure/face_pipeline/assets/`): versioned, sha256-verified (same pattern as `provenance.py`'s `MODEL_MANIFEST`) landmark-region → embedding-dimension support map consumed by `masked_cosine`.
-- **`MediaIdentity.match_score: float | None`** (FIR-16 S1a, `db/models/identity.py`, greenfield edit of `001_identity_schema.py`): best-centroid similarity persisted for every detected face regardless of the accept decision and exported by `_serialize_identity`; the only per-face score the open-set leg may consume [rg-015].
+- **`MediaIdentity.match_score: float | None`** and **`MediaIdentity.match_cluster_id: str | None`** (FIR-16 S1a, `db/models/identity.py`, greenfield edit of `001_identity_schema.py`): the pre-gate best centroid match — captured in `CentroidDiscovery.discover` (`recognition/application/discovery/centroid.py:30-60`) before the `similarity_threshold` filter, not in `ConfidenceCheck` — persisted for every detected face regardless of the accept decision and exported by `_serialize_identity`; the only per-face score/cluster the open-set leg may consume [rg-015]. `_find_best_centroid_match` (62–87) initialises `best_similarity = -inf` / `best_cluster = None` and returns `(None, None)` for an empty gallery so negative best matches are preserved. Export path: `MediaIdentityService.list_by_media_ids` → `RemoteSceneClient.media_identities` → `scripts/bench/export_map.py` rows gain both fields; `top1_name` for the gate metric is the enrollment-gallery name of `match_cluster_id` (GT-derived optimistic labels are prohibited for the gate metric).
 - **`benchmarks/results/crossbench-<stamp>/open_set.json` / `.md`**: FIR-16's per-stack `{fnir_at_gate, tau, fpi, n_mated, n_nonmated, coverage_gaps, toolchain, contract}` plus the paired non-inferiority result.
 
 ### Task Dependency Diagram
@@ -101,9 +101,9 @@ graph LR
 | Phase | Tasks | Entry Gate | Exit Evidence | Cost |
 | --- | --- | --- | --- | --- |
 | A — Contract + re-baseline | FIR-13, FIR-14 | FIR-12 merged | `gate_contract.py` + `union_adjudication.py` merged with tests green; `benchmarks/protocols/face-label-rule.md` + `t14-dead-zone-rule.md` written; `benchmarks/results/WITHDRAWN.md` published; CV5 re-baseline (both legs) run and scored, DIAGNOSTIC tier, toolchain block attached; face determinism anchor passes on CV5 | CPU, $0 |
-| B — Attribution | FIR-15 | Phase A done | `attribution.json` + `REPORT.md` naming the leg (alignment / embedder / both / inconclusive) with bootstrap intervals; oracle-vs-predicted occlusion-ladder result with CI on the oracle gap; D-02 decision recorded in MCP | CPU, $0 (+ operator labour: reference landmarks / hand-drawn masks, ≤30 probes) |
-| C — Inference-only occlusion + instrument | FIR-17 (branch-gated on D-02), FIR-16 S1–S2 | FIR-15's D-02 decision (FIR-17 branch rule); FIR-13 contract + FIR-14 toolchain + FIR-8 `scripts/bench` existing (FIR-16 instrument) | FIR-17 knobs (`visible_support_matching`, `pose_head_rescue`) merged dark, default `False`, behaviour-neutral; OACT sign flip merged with updated `TestOactDarkScaffold` + `test_confidence_check.py`, default `0.0` unchanged; FIR-16 `score_open_set` / `score_report` `open_set` section / `propose-gate` merged with mocked-export tests green — no live run yet | CPU, $0 |
-| D — Head-to-head + gate flip | FIR-16 S3–S4, FIR-6 S4/S5/S6 | acx-dev-fir stood up (FIR23-STACK); FIR-11 R1 remediated manifest; FIR-6 S4 calibration (with FIR-17's OACT fix) done | `open_set.json`/`.md` report with FNIR@FPIR per stack at its own swept tau, `paired_ni_score_test` non-inferiority result, `propose-gate` proposal block, operator `fir_gate_decision_<date>` MCP decision; FIR-6 S6 switch-over executed citing that decision; `.[bench]` extra removed | A1 (ARM CPU) on acx-dev-fir, $0 GPU spend; requires FIR23-STACK |
+| B — Attribution | FIR-15, FIR-17 S0 | Phase A done | `attribution.json` + `REPORT.md` naming the leg (alignment / embedder / both / inconclusive) with bootstrap intervals; oracle-vs-predicted occlusion-ladder result with CI on the oracle gap; D-02 decision recorded in MCP; FIR-17 S0 (OACT sign fix) merged — unconditional, lands before D-02 in every branch, default `0.0` unchanged, with `TestOactDarkScaffold` + `test_confidence_check.py` + `test_face_quality_factors.py` leniency assertions updated | CPU, $0 (+ operator labour: reference landmarks / hand-drawn masks, ≤30 probes) |
+| C — Inference-only occlusion + instrument | FIR-17 S1/S2/S3 (branch-gated on D-02), FIR-16 S1–S3 | FIR-15's D-02 decision (FIR-17 branch rule); FIR-13 contract + FIR-14 toolchain + FIR-8 `scripts/bench` existing (FIR-16 instrument) | FIR-17 `visible_support_matching` knob merged dark, default `False`, behaviour-neutral (EMBEDDER branch, S1); pose-head rescue is ADR-only (S2) — ADR + follow-up task, no knob, no runtime code; DETECTOR/INCONCLUSIVE branches close with a docs-only handoff (S3); FIR-16 `score_open_set` / `score_report` `open_set` section / `propose-gate` CLI merged with mocked-export tests green — no live run yet | CPU, $0 |
+| D — Head-to-head + gate flip | FIR-16 S4, FIR-6 S4/S5/S6 | acx-dev-fir stood up (FIR23-STACK); FIR-11 R1 remediated manifest; FIR-6 S4 calibration (with FIR-17's OACT fix) done | `open_set.json`/`.md` report with FNIR@FPIR per stack at its own swept tau, `paired_ni_score_test` non-inferiority result, `propose-gate` proposal block, operator `fir_gate_decision_<date>` MCP decision; FIR-6 S6 switch-over executed citing that decision; `bench` extra install removed from the production Dockerfile stage (the `bench` extra itself stays in `pyproject.toml` for evaluation) | A1 (ARM CPU) on acx-dev-fir, $0 GPU spend; requires FIR23-STACK |
 
 ## External Dependencies
 
@@ -112,8 +112,8 @@ graph LR
 | FIR-11 R1 corpus remediation + operator labelling (~20–34 person-h for T-14; reference landmarks / hand-drawn masks for FIR-15, ≤30 probes) | Operator + FIR-11 | In progress (rev 7) | Phase B full attribution, Phase D head-to-head |
 | FIR23-STACK stand-up (`acx-dev-fir`) | Infra | Slices 1–3 unmerged, stack never stood up | Phase D entry gate |
 | OpenCV 5.0.0.93 toolchain pin (`pyproject.toml:43`) | Backend | Done (dependency pinned) | Phase A re-baseline validity |
-| `insightface` `[bench]` extra licence isolation | Backend | Enforced structurally (bench-only, eval env only) | FIR-16 buffalo leg, FIR-15 arm (d) |
-| FIR-8 `scripts/bench/` cross-stack orchestration | Backend | 56/59 done, no open-set leg | FIR-16 S1–S2 |
+| `insightface` `[bench]` extra licence isolation | Backend | NOT yet isolated: today's production Dockerfile installs the `bench` extra (with InsightFace) into the production image (`apps/prototype-description-service/Dockerfile` ~70–80); eval-only isolation is a POST-cutover requirement — success is removing the `bench` install from the production stage, keeping the `bench` extra in `pyproject.toml` for evaluation | FIR-16 buffalo leg, FIR-15 arm (d) |
+| FIR-8 `scripts/bench/` cross-stack orchestration | Backend | 56/59 done, no open-set leg | FIR-16 S1–S3 |
 | FIR-6 S4 calibration on remediated corpus (consumes FIR-17's OACT fix) | Backend | Corpus-gated | Phase D entry gate |
 
 ## Code Anchors
@@ -128,12 +128,12 @@ graph LR
 | Eval — new occlusion ladder | `apps/prototype-description-service/scripts/eval_harness/occlusion_ladder.py` | NEW (FIR-15 S2) — hosts `masked_cosine` until moved to a shared module (FIR-17 S4) |
 | Eval — synthetic occlusion twins | `apps/prototype-description-service/scripts/eval_harness/synthetic_occlusion.py` | `generate_twin_specs`, `anatomy_region_stats`, `WALK_STABILITY_DELTA_BOUND=0.05` — FIR-15 rung 1 oracle masks |
 | Eval — buffalo reference leg | `apps/prototype-description-service/scripts/eval_harness/buffalo_bench.py` | `BuffaloFusedLeg`, gated by `ACX_EVAL_BENCH=1` — FIR-15 arm (c)/(d), FIR-16 buffalo leg |
-| Eval — calibration CLI | `apps/prototype-description-service/scripts/eval_harness/calibrate_face_thresholds.py` | `--oact-coefficient` flag semantics documented as "stricter-with-occlusion" (FIR-17 S3) |
+| Eval — calibration CLI | `apps/prototype-description-service/scripts/eval_harness/calibrate_face_thresholds.py` | `--oact-coefficient` flag semantics documented as "stricter-with-occlusion" (FIR-17 S0) |
 | Cross-stack bench | `apps/prototype-description-service/scripts/bench/` | 34-module package (`score.py`, `score_report.py`, `cross_stack_bench.py`, ...); FIR-16 S1–S3 extend it with an `open_set` leg — inner function anchors not yet codemap-verified |
-| Production — quality/OACT | `apps/prototype-description-service/recognition/application/assignment/quality.py` | `compute_quality_adjustment` line 136 `oact_term` — sign flip target (FIR-17 S3) |
+| Production — quality/OACT | `apps/prototype-description-service/recognition/application/assignment/quality.py` | `compute_quality_adjustment` line 136 `oact_term` — sign flip target (FIR-17 S0) |
 | Production — confidence gate | `apps/prototype-description-service/recognition/application/assignment/checks/confidence.py` | `ConfidenceCheck.evaluate` (91–242) — verified: positive `oact_coefficient` currently lowers the accept threshold under occlusion |
-| Production — face pipeline settings | `apps/prototype-description-service/recognition/config/settings.py` | `FacePipelineSettings.oact_coefficient` (377–384); new `visible_support_matching`, `pose_head_rescue` fields land here (FIR-17 S1/S2) |
-| Production — face quality factors | `apps/prototype-description-service/recognition/infrastructure/face_pipeline/face_quality_factors.py` | `compute_occlusion_severity` (82–105) extended to `compute_landmark_visibility` (FIR-17 S1) |
+| Production — face pipeline settings | `apps/prototype-description-service/recognition/config/settings.py` | `FacePipelineSettings.oact_coefficient` (377–384); new `visible_support_matching` field lands here (FIR-17 S1). No `pose_head_rescue` settings field — pose-head rescue is ADR-only (FIR-17 S2), no runtime code |
+| Production — face quality factors | `apps/prototype-description-service/recognition/infrastructure/embeddings/face_quality_factors.py` | `compute_occlusion_severity` (line ~82) extended to `estimate_region_visibility` (FIR-17 S1); no `face_pipeline/` or `application/scan/` copy exists |
 | Production — model provenance | `apps/prototype-description-service/recognition/infrastructure/face_pipeline/provenance.py` | `MODEL_MANIFEST`, `load_verified_model` — pattern reused for the new support-map asset |
 
 ## Risks and Mitigations
@@ -141,17 +141,17 @@ graph LR
 - **Risk**: T-14's union-adjudication bound comes in under 0.05 and the detector line closes.
   Mitigation: this is a valid, cheap outcome — FIR-15/FIR-17 detector-side arms simply drop; the four mandatory T-14 conditions (union defined on human-verified faces, matched-FPPI operating points, bootstrap UCL not point estimate, thresholds declared before the run) guard against a gamed result either direction.
 - **Risk**: the oracle-vs-predicted occlusion gap's 95% CI includes 0.
-  Mitigation: FIR-15 records this as an explicit exit; FIR-17's branch rule collapses to S3-only (OACT sign fix), so no adapter-track GPU or engineering spend follows a null result.
+  Mitigation: FIR-15 records this as an explicit exit; FIR-17's branch rule collapses to INCONCLUSIVE (S0 OACT sign fix, already landed in Phase B, plus S2 pose-rescue ADR and S3 docs-only handoff — no new production code), so no adapter-track GPU or engineering spend follows a null result.
 - **Risk**: FIR-11 R1 operator labelling slips past this roadmap's timeline.
-  Mitigation: Phases A–C are corpus-independent (DIAGNOSTIC tier, CPU $0); only Phase D's head-to-head needs the remediated corpus, so upstream work is not blocked.
+  Mitigation: Phases A–C are corpus-remediation-independent for scaffolding and DIAGNOSTIC measurement (CPU $0) — but anything ADMISSIBLE (FIR-6 S4 calibration inside Phase C, the D-02/D3 ratification) still waits for FIR-11 R1; only that admissible-evidence subset is blocked, not the scaffolding.
 - **Risk**: toolchain drift (OpenCV version bump) silently invalidates a re-baseline comparison.
   Mitigation: FIR-14's toolchain block + `score-face --allow-toolchain-drift` guard refuses a cross-toolchain compare by default.
 - **Risk**: `U` (the union-adjudication denominator) is partly controlled by the systems under test, inviting a gamed union.
   Mitigation: T-14 condition (iv) — both thresholds declared before the run and never revised afterward.
 - **Risk**: FIR23-STACK stays unmerged and Phase D never gets an entry gate.
   Mitigation: Phase C ships FIR-16's instrument against mocked exports regardless, so the live-run slice is the only one stalled.
-- **Risk**: the OACT sign flip (FIR-17 S3) regresses production behaviour.
-  Mitigation: default stays `0.0` (dark) so the flip is behaviour-neutral until FIR-6 S4 sets a nonzero value on the remediated corpus; the same slice updates `TestOactDarkScaffold` and `test_confidence_check.py`.
+- **Risk**: the OACT sign flip (FIR-17 S0) regresses production behaviour.
+  Mitigation: default stays `0.0` (dark) so the flip is behaviour-neutral until FIR-6 S4 sets a nonzero value on the remediated corpus; the same slice updates `TestOactDarkScaffold`, `test_confidence_check.py`, and the leniency assertions in `test_face_quality_factors.py`.
 - **Risk**: the head-to-head is under-powered per FIR-11's power ceiling.
   Mitigation: `propose-gate` surfaces `coverage_gaps` and tiers the report DIRECTIONAL at best; the operator decision must name the tier, never silently upgrade it.
 
@@ -183,22 +183,24 @@ graph LR
 - [ ] FIR-15 S1: `attribution_split.py` four-arm split implemented; `attribution.json` produced with shares + CIs.
 - [ ] FIR-15 S2: `occlusion_ladder.py` (oracle-before-predicted rungs, `masked_cosine`) implemented; oracle gap + CI computed.
 - [ ] FIR-15 S3: `REPORT.md` written naming the leg; D-02 decision (`firplan_d02_attribution_<date>`) recorded in MCP.
+- [ ] FIR-17 S0: OACT sign fix merged in `compute_quality_adjustment` (unconditional, before D-02 in every branch; default `0.0` unchanged; `test_face_quality_factors.py` leniency assertions retightened).
 
 ## Phase C: Inference-only occlusion + instrument
 
-- [ ] FIR-17 S1 (if branch includes embedder leg): `visible_support_matching` knob + `compute_landmark_visibility` + support-map asset merged dark.
-- [ ] FIR-17 S2 (if branch includes detector leg): pose head-region rescue implemented or scoped down to a spike/ADR if no licensed keypoint model exists.
-- [ ] FIR-17 S3: OACT sign flip merged, default unchanged at `0.0`, tests updated.
+- [ ] FIR-17 S1 (EMBEDDER branch): `visible_support_matching` knob + `estimate_region_visibility` + support-map asset merged dark.
+- [ ] FIR-17 S2 (INCONCLUSIVE branch): pose-head rescue — ADR + named follow-up task only; no settings knob, no runtime code, no stratum tests in FIR-17.
+- [ ] FIR-17 S3 (DETECTOR and INCONCLUSIVE branches): docs-only handoff — no runtime code.
+- [ ] FIR-17 S4 (EMBEDDER branch): `masked_cosine` single-definition + import-isolation test confirmed in `recognition/infrastructure/embeddings/masked_similarity.py`.
 - [ ] FIR-16 S1: `scripts/bench/score.py` open-set leg (`score_open_set`) merged with mocked-export tests.
 - [ ] FIR-16 S2: `score_report.py` `open_set` section + paired non-inferiority test merged.
+- [ ] FIR-16 S3: `propose-gate` CLI merged; `fir_gate_decision_<date>` decision template validated (no live run yet).
 
 ## Phase D: Head-to-head + gate flip
 
-- [ ] FIR-16 S3: `propose-gate` CLI merged; `fir_gate_decision_<date>` decision template validated.
 - [ ] FIR-16 S4: live run on acx-dev-fir executed; report published.
 - [ ] FIR-6 S4/S5: calibration + re-baseline on remediated corpus with FIR-17's OACT fix.
 - [ ] Operator MCP gate decision recorded.
-- [ ] FIR-6 S6: switch-over executed citing the gate decision; `.[bench]` extra removed.
+- [ ] FIR-6 S6: switch-over executed citing the gate decision; `bench` extra removed from the production Dockerfile install (extra stays in `pyproject.toml` for evaluation).
 
 ## Deferred (Post-v1)
 
@@ -210,5 +212,5 @@ graph LR
 
 - [ ] A ratified `GateContract` operating point exists and every published open-set report cites it.
 - [ ] FIR-16's head-to-head report shows FNIR@FPIR for both stacks, own-tau, with an explicit evidence tier and a recorded operator gate decision.
-- [ ] FIR-6 S6 switch-over is complete and `.[bench]` is removed from `pyproject.toml`.
+- [ ] FIR-6 S6 switch-over is complete and the `bench` install is removed from the production Dockerfile stage (the `bench` extra remains in `pyproject.toml` for evaluation).
 - [ ] No withdrawn number appears anywhere as evidence in a merged report.

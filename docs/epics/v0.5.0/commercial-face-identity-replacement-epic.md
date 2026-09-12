@@ -24,7 +24,7 @@ The identity half of the pipeline is the blocker to commercial launch, and it is
 
 ## UX Vision
 
-No user-visible change until the gate flips. Pre-flip: alt text continues to use the incumbent buffalo_l pipeline; occlusion-mitigation work (visible-support matching, pose-head rescue) ships dark behind knobs and is scored only in the eval harness. Post-flip (Phase D, operator-gated): captions continue naming confirmed people, now sourced from the licensed stack, with an equal-or-better rate of "declines to name a stranger" (FNIR@FPIR) than the incumbent — the failure mode a user notices (a wrong name in their caption) must not get worse.
+No user-visible change until the gate flips. Pre-flip: alt text continues to use the incumbent buffalo_l pipeline; occlusion-mitigation work (visible-support matching) ships dark behind a knob and is scored only in the eval harness; pose-head rescue is ADR-only in this epic (no runtime code, no knob). Post-flip (Phase D, operator-gated): captions continue naming confirmed people, now sourced from the licensed stack, with an equal-or-better rate of "declines to name a stranger" (FNIR@FPIR) than the incumbent — the failure mode a user notices (a wrong name in their caption) must not get worse.
 
 ## Constraints
 
@@ -44,12 +44,12 @@ No user-visible change until the gate flips. Pre-flip: alt text continues to use
 
 - **FNIR@FPIR**: False Non-Identification Rate at a fixed False Positive Identification Rate — the open-set headline metric (D3); measured with non-mated probes against an open-set gallery at a swept score threshold.
 - **FPI**: False-Positive-Identification count — an integer, never a rate.
-- **DIAGNOSTIC / DIRECTIONAL / REPORTABLE tiers**: evidence strength tiers a result carries depending on corpus power and exhaustiveness; a DIAGNOSTIC or DIRECTIONAL result cannot gate a decision alone.
+- **DIAGNOSTIC / DIRECTIONAL / REPORTABLE tiers**: evidence strength tiers a result carries depending on corpus power and exhaustiveness; a DIAGNOSTIC or DIRECTIONAL result cannot gate a decision alone. DIAGNOSTIC/DIRECTIONAL evidence may provisionally PARK a track (e.g. the adapter track, pose rescue); TERMINATING a track requires ADMISSIBLE evidence (post FIR-11 R1).
 - **Golden-150**: the locked eval corpus; post-FIR-11-R1 remediation, 30 entries / 30 probes / 17 identities are usable for the gating paired non-inferiority check.
 - **acx-dev-fir**: the isolated benchmarking stack (FIR23-STACK) — `PGVECTOR_DIM=128`, DB `alt_context_dev_fir`, standing next to the existing 512D dev stack.
 - **pre-CVUP-1**: any artifact produced before the OpenCV 4.x → 5.0.0.93 upgrade; withdrawn as a comparison arm.
 - **T-01 / T-09 / T-14**: QA v8 task IDs — T-01 alignment-vs-embedder split (feeds D-02); T-09 face-label rubric (feeds D-09, gates all adjudication); T-14 union adjudication (feeds D-01, the detector-line kill decision).
-- **D-01 / D-02 / D-03**: QA v8 decision IDs — D-01 detector-line kill/keep; D-02 alignment-vs-embedder attribution verdict; D-03 (alias D3 in this epic) the open-set gate metric declaration.
+- **D-01 / D-02 / D-03 / D-08**: QA v8 decision IDs — D-01 detector-line kill/keep; D-02 alignment-vs-embedder attribution verdict; D-03 corpus prevalence (not the gate metric); D-08 the D3 open-set gate metric adoption decision (QA v8 rows 245/250). D3 (the metric) and D-03 (the decision) are distinct; never alias one to the other.
 
 ## Current State
 
@@ -146,32 +146,34 @@ Deliverables:
 - T-01 alignment-vs-embedder split harness (`attribution_split.py`) with a paired-bootstrap interval on each leg's share.
 - Oracle-before-predicted occlusion ladder (`occlusion_ladder.py`); the oracle gap decides whether FIR-17's adapter track is worth building at all.
 - D-02 decision packet naming the leg (embedder | detector | both | inconclusive).
+- FIR-17 S0 (OACT sign fix): unconditional, lands before the D-02 decision in every branch (EMBEDDER, DETECTOR, INCONCLUSIVE) — `compute_quality_adjustment` (`recognition/application/assignment/quality.py:136`) becomes `oact_term = +(coeff*severity)`, with the leniency assertions in `recognition/tests/unit/test_face_quality_factors.py` updated to the tightening direction; default `0.0` unchanged.
 
 Exit criteria:
 
 - D-02 decision recorded in MCP with the attribution shares and their intervals.
-- If the oracle gap's 95% CI includes 0, the record states the adapter track is dead at $0 and FIR-17 is scoped down accordingly.
+- If the oracle gap's 95% CI includes 0, the record PARKS the adapter track at $0 (DIAGNOSTIC/DIRECTIONAL evidence may provisionally park a track; only ADMISSIBLE evidence, post FIR-11 R1, can terminate it) and FIR-17 is scoped down accordingly pending that admissible evidence.
+- FIR-17 S0 merged (OACT sign fix), default `0.0` unchanged, behaviour-neutral until FIR-6 S4.
 
 ### Phase C: Inference-Only Occlusion + Head-to-Head Instrument -- not-started
 
 > **Status**: not-started; plans drafted 2026-09-11 (blocked on Phase B's D-02 decision for FIR-17's branch; FIR-16's instrument work does not need D-02)
-> **Task plans**: FIR-16 (S1a adds `MediaIdentity.match_score` to the production export so the open-set leg has a real `top1_score`): `docs/tasks/fir/FIR-16-open-set-head-to-head-task-plan.md` · FIR-17 drafted 2026-09-11 (pending planning review): `docs/tasks/fir/FIR-17-inference-only-occlusion-robustness-task-plan.md` · FIR-6 `docs/tasks/fir/FIR-6-calibration-quality-switchover-task-plan.md` (existing, S4) · FIR23-STACK `docs/tasks/fir23-stack/FIR23-STACK-task-plan.md` (existing, rev 2)
+> **Task plans**: FIR-16 (S1a adds `MediaIdentity.match_score` and `MediaIdentity.match_cluster_id` to the production export so the open-set leg has a real `top1_score`/`top1_name`): `docs/tasks/fir/FIR-16-open-set-head-to-head-task-plan.md` · FIR-17 drafted 2026-09-11 (pending planning review): `docs/tasks/fir/FIR-17-inference-only-occlusion-robustness-task-plan.md` · FIR-6 `docs/tasks/fir/FIR-6-calibration-quality-switchover-task-plan.md` (existing, S4) · FIR23-STACK `docs/tasks/fir23-stack/FIR23-STACK-task-plan.md` (existing, rev 2)
 
 **Goal**: build what D-02 justified, stand up the second stack, and build the head-to-head scoring instrument — without running the live comparison or spending GPU.
 
 Deliverables:
 
-- Visible-support (periocular) matching and/or pose-head rescue, each behind a default-off knob, per the D-02 branch rule; OACT direction fix (positive coefficient now stricter under occlusion, non-negativity preserved).
+- Visible-support (periocular) matching behind a default-off knob (FIR-17 S1), per the D-02 branch rule; pose-head rescue is ADR-only (FIR-17 S2) — the deliverable is the ADR plus a named follow-up task, no settings knob and no runtime code in FIR-17. (FIR-17 S0, the OACT sign fix, already landed in Phase B — see above.)
 - `acx-dev-fir` stood up per FIR23-STACK (compose project `acx-dev-fir`, DB `alt_context_dev_fir` @ `PGVECTOR_DIM=128`).
 - Open-set leg added to the cross-stack bench (`scripts/bench/score.py` `score_open_set`, `score_report.py` open-set section) against mocked exports — no live run yet.
 - FIR-6 S4 calibration (including the OACT sign fix) on the remediated corpus.
 
 Exit criteria:
 
-- New knobs merged dark (default off) with unit coverage; `resolve_face_pipeline_knobs` continues to force them off under the `insightface` profile.
+- New knob (`visible_support_matching`) merged dark (default off) with unit coverage; `resolve_face_pipeline_knobs` continues to force it off under the `insightface` profile. Pose-head rescue has no knob to force off — it stays ADR-only.
 - `acx-dev-fir` `/health` and `/ready` green.
 - `scripts/bench/test_score_open_set.py` and `test_score_report_open_set.py` green against mocked exports.
-- FIR-6 S4 threshold set (including OACT sign) recorded as a decision.
+- FIR-6 S4 threshold set (using the sign already fixed in FIR-17 S0) recorded as a decision.
 
 ### Phase D: Run + Flip -- not-started
 
@@ -215,7 +217,7 @@ Task definitions, dependency edges, and deliverables are canonical in the scope 
 | --- | --- | --- |
 | Profile resolution | `recognition/config/settings.py` `_resolve_face_pipeline_profile()` (62–69) | Env `RECOGNITION_FACE_PIPELINE_PROFILE`, default `"insightface"`, fails closed on unknown |
 | Runtime factory | `recognition/infrastructure/embeddings/runtime_factory.py` `build_embedding_runtime()` (37–110) | Branches on `settings.face_pipeline.profile` (line 59–60) |
-| OACT term (to be sign-flipped in FIR-17 S3) | `recognition/application/assignment/quality.py` `compute_quality_adjustment()` (80–138, line 136) | Currently `oact_term = -(coeff * severity)`; positive coefficient lowers the threshold under occlusion |
+| OACT term (to be sign-flipped in FIR-17 S0) | `recognition/application/assignment/quality.py` `compute_quality_adjustment()` (80–138, line 136) | Currently `oact_term = -(coeff * severity)`; positive coefficient lowers the threshold under occlusion |
 | Occlusion severity proxy | `recognition/infrastructure/embeddings/face_quality_factors.py` `compute_occlusion_severity()` (82–105) | Two fixed eye patches vs whole-crop baseline; no spatial mask |
 | Open-set instrument | `scripts/eval_harness/open_set_identification.py` `fnir_fpi_at_threshold()` (128–167), `IETPoint` (56–99) | FNIR = misses/n_mated or `None`; FPI raw integer count, never a rate |
 | Bake-off run scoring | `scripts/eval_harness/fir_bakeoff_run.py` `score_run()` (410–536) | Consumes `SearchResult` lists; no CLI in-module |
@@ -240,11 +242,12 @@ Task definitions, dependency edges, and deliverables are canonical in the scope 
 - [ ] T-01 alignment-vs-embedder split harness + report
 - [ ] Oracle-before-predicted occlusion ladder scored
 - [ ] D-02 decision recorded (embedder | detector | both | inconclusive)
+- [ ] FIR-17 S0: OACT sign fix merged (unconditional, before D-02 in every branch; default `0.0` unchanged)
 
 ## Phase C: Inference-Only Occlusion + Head-to-Head Instrument -- not-started
 
-- [ ] Visible-support matching and/or pose-head rescue merged dark, per D-02 branch rule
-- [ ] OACT direction fix merged (default 0.0 unchanged, behaviour-neutral until FIR-6 S4)
+- [ ] Visible-support matching merged dark, per D-02 branch rule (FIR-17 S1)
+- [ ] Pose-head rescue: ADR + named follow-up task recorded, no runtime code or settings knob (FIR-17 S2)
 - [ ] `acx-dev-fir` stood up (FIR23-STACK)
 - [ ] Open-set leg added to cross-stack bench, tested against mocked exports
 - [ ] FIR-6 S4 calibration landed on remediated corpus
@@ -259,5 +262,5 @@ Task definitions, dependency edges, and deliverables are canonical in the scope 
 ## Deferred (Post-v0.5.0)
 
 - [ ] Head/torso secondary channel (C4) — association only, never an identity claim on its own
-- [ ] Trained detector/embedder (SCRFD, AdaFace, DCFace-synthesised occlusion) — behind FIR-8's contingent escalation ladder only, on a failed gate
+- [ ] Trained detector/embedder (SCRFD, AdaFace, DCFace-synthesised occlusion) — behind the failed-gate escalation ladder only (unowned, parked; see scope doc Not-Doing — not FIR-8, which is the recognition-profile bench toggle), on a failed gate
 - [ ] VLM-6 caption bake-off — separate program; shared eval manifest schema is the only coupling

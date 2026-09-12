@@ -761,3 +761,32 @@ def test_check_conditions_degenerate_correction_with_real_misses(monkeypatch, uc
             union_adjudication.DeadZoneVerdict.OPEN if ucl > 0.10 else union_adjudication.DeadZoneVerdict.DEAD_ZONE
         )
         assert union_adjudication.check_conditions(rows, **kwargs) is expected
+
+
+@pytest.mark.parametrize("tail", [("a", "b\nc"), ("a\nb", "c")])
+def test_check_conditions_rejects_newline_subset_ambiguity(tail) -> None:
+    import hashlib
+
+    from scripts.eval_harness import gate_contract, union_adjudication
+
+    shared = {f"z{i:02d}" for i in range(28)}
+    signed_ids = shared | {"a", "b\nc"}
+    ids = frozenset(shared | set(tail))
+    # Reproduce an already-signed ambiguous artifact without using the validator.
+    declared = gate_contract.GateContract(
+        **_declared_kwargs(_THRESHOLDS),
+        t14_exhaustive_subset_count=30,
+        t14_exhaustive_subset_sha256=hashlib.sha256("\n".join(sorted(signed_ids)).encode()).hexdigest(),
+    )
+    rows = tuple(
+        union_adjudication.UnionAdjudicationInput(**_payload_with_gap(image_id, 0)) for image_id in sorted(ids)
+    )
+    with pytest.raises(union_adjudication.UnionAdjudicationError, match="must not contain LF"):
+        union_adjudication.check_conditions(
+            rows,
+            declared=declared,
+            signed_decision_id="signed",
+            conditions_met=dict.fromkeys(union_adjudication._REQUIRED_CONDITION_KEYS, True),
+            exhaustive_image_ids=ids,
+            seed=17,
+        )

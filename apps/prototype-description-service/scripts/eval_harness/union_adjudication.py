@@ -106,6 +106,13 @@ def _rows_tuple(
                     "T-14 counts are restricted to human-verified true faces "
                     "(signed condition 'union_uses_human_true_faces')"
                 )
+        for name in ("tp_buffalo_i", "tp_candidate_i"):
+            value = getattr(row, name)
+            if value > row.union_boxes:
+                raise UnionAdjudicationError(
+                    f"rows[{index}].{name}={value} exceeds union_boxes={row.union_boxes}; "
+                    "detector true positives must belong to the human-verified union"
+                )
         fppi = row.matched_fppi_declared
         if isinstance(fppi, bool) or not isinstance(fppi, (int, float)) or not math.isfinite(float(fppi)):
             raise UnionAdjudicationError(f"rows[{index}].matched_fppi_declared must be a finite number")
@@ -166,7 +173,12 @@ def bootstrap_ucl(
     resampling_unit: str = "image",
     level: float = 0.95,
 ) -> float:
-    """Return the percentile UCL from an image-level seeded bootstrap."""
+    """Return the percentile UCL from an image-level seeded bootstrap.
+
+    Conservatively refuse with no verdict if any sampled replicate has a zero
+    human-face denominator. Empty input rows remain eligible for replacement
+    sampling; undefined replicates are never discarded, retried, or filled.
+    """
 
     normalised = _rows_tuple(rows)
     _validate_bootstrap_arguments(b=b, seed=seed, resampling_unit=resampling_unit, level=level)
@@ -174,9 +186,14 @@ def bootstrap_ucl(
     indices = rng.integers(0, len(normalised), size=(b, len(normalised)))
     estimates = np.empty(b, dtype=float)
     for sample_index, selected in enumerate(indices):
-        estimates[sample_index] = _detector_gap_bound_unvalidated(
-            tuple(normalised[int(row_index)] for row_index in selected)
-        )
+        try:
+            estimates[sample_index] = _detector_gap_bound_unvalidated(
+                tuple(normalised[int(row_index)] for row_index in selected)
+            )
+        except UnionAdjudicationError as exc:
+            raise UnionAdjudicationError(
+                f"bootstrap replicate {sample_index + 1}/{b} (seed={seed}): {exc}; no verdict"
+            ) from exc
     return float(np.percentile(estimates, float(level) * 100.0))
 
 

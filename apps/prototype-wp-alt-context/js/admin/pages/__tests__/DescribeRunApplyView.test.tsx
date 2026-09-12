@@ -839,6 +839,31 @@ describe('DescribeRunApplyView', () => {
     expect(screen.getByTestId('acx-run-apply-status')).toBeInTheDocument();
   });
 
+  it('retries only the read after successful apply and a failed refresh', async () => {
+    applyMock.mockResolvedValue({
+      run_id: 'run-abc',
+      applied: [71, 90],
+      partial: [],
+      skipped_existing: [70],
+      skipped_no_draft: [72],
+      skipped_invalid: [],
+      failed: [],
+    });
+    fetchItemsMock.mockResolvedValueOnce(mixedItems).mockRejectedValue(new Error('502'));
+    renderView();
+    await screen.findByText('A red flower.');
+    fireEvent.click(screen.getByRole('button', { name: /Apply all 2 without alt text/ }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Showing saved drafts');
+    expect(screen.getByRole('status')).toHaveTextContent('Applied 2 descriptions.');
+    expect(screen.getByText('A red flower.')).toBeInTheDocument();
+    const reads = fetchItemsMock.mock.calls.length;
+    fetchItemsMock.mockResolvedValue(mixedItems);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(fetchItemsMock.mock.calls.length).toBeGreaterThan(reads));
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+    expect(applyMock).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps recovery affordance when post-apply items refetch fails [BR-127][INT-11]', async () => {
     applyMock.mockResolvedValue({
       run_id: 'run-abc',
@@ -869,5 +894,10 @@ describe('DescribeRunApplyView', () => {
     expect(screen.getByRole('button', { name: /Apply 2 descriptions/ })).toBeEnabled();
     // Must not collapse to the cold load-error panel.
     expect(screen.queryByText('Could not load this run’s drafts.')).not.toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent('Showing saved drafts');
+    const reads = fetchItemsMock.mock.calls.length;
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(fetchItemsMock.mock.calls.length).toBeGreaterThan(reads));
+    expect(applyMock).toHaveBeenCalledTimes(1);
   });
 });

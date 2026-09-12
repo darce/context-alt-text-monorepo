@@ -406,6 +406,22 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
 
       {showLoading ? <p>{__('Loading run drafts…', 'alt-context')}</p> : null}
 
+      {preferRetainedOnError ? (
+        <div className="notice inline notice-warning" role="alert">
+          <p>
+            {__('Could not refresh this run’s drafts. Showing saved drafts; they may be out of date.', 'alt-context')}
+          </p>
+          <button
+            type="button"
+            className="acx-button acx-button--secondary"
+            disabled={itemsQuery.isFetching}
+            onClick={() => void itemsQuery.refetch()}
+          >
+            {__('Retry', 'alt-context')}
+          </button>
+        </div>
+      ) : null}
+
       {showItemsError ? (
         <section className="acx-dashboard__panel acx-history__panel">
           <h2>{__('Could not load this run’s drafts.', 'alt-context')}</h2>

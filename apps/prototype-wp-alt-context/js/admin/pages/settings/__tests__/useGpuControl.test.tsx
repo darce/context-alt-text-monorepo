@@ -112,7 +112,7 @@ describe('useGpuControl', () => {
     expect(result.current.startBlockedReason).toBe('GPU state is unknown — refresh before starting the GPU.');
   });
 
-  it('blocks stop with an explicit in-flight-work reason', async () => {
+  it('allows a deferred stop while work is in flight', async () => {
     fetchGpuStatusMock.mockResolvedValue(
       statusResponse({
         gpu_state: { state: 'ready', instance_running_since: '2026-09-07T11:00:00Z' },
@@ -123,8 +123,8 @@ describe('useGpuControl', () => {
     const { result } = renderHook(() => useGpuControl(), { wrapper });
     await waitFor(() => expect(result.current.data).toBeDefined());
     expect(result.current.canStart).toBe(false);
-    expect(result.current.canStop).toBe(false);
-    expect(result.current.stopBlockedReason).toContain('describe run is in flight');
+    expect(result.current.canStop).toBe(true);
+    expect(result.current.stopBlockedReason).toBeNull();
   });
 
   it('optimistically marks an intent pending and restores the snapshot on error', async () => {

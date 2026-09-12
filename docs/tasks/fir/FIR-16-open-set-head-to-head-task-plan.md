@@ -51,7 +51,7 @@ FIR-8's `scripts/bench/` package (v6.7, 56/59 checklist items done) scores detec
 ## Terminology
 
 - **D3**: headline gate metric, FNIR at a fixed FPIR (decision #10843).
-- **FNIR@FPIR**: False Negative Identification Rate (NIST FRTE 1:N terminology) at a fixed False Positive Identification Rate, score threshold swept; FPI is an integer count, never a rate [EVAL-19].
+- **FNIR@FPIR**: defined once in the [epic terminology](../../epics/v0.5.0/commercial-face-identity-replacement-epic.md) against NIST FRTE 1:N; score threshold swept, and FPI is an integer count, never a rate [EVAL-19].
 - **Golden-150 R1**: FIR-11's remediated corpus — 30 entries / 30 probes / 17 identities usable for the paired non-inferiority check.
 - **acx-dev-fir**: the isolated `face_pipeline` stack (FIR23-STACK): `PGVECTOR_DIM=128`, `RECOGNITION_FACE_PIPELINE_PROFILE=face_pipeline`.
 - **Non-inferiority (NI)**: Nam/Tango (1998) paired score test comparing candidate FNIR to incumbent FNIR; `H0: Δ ≤ −δ`, one-sided α=0.025, `π₀ = (p_d − δ)/(2·p_d) = 0.25` at p_d=0.20/δ=0.10 [FIR-11 rev 7].

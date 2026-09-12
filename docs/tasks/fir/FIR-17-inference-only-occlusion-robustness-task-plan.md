@@ -34,7 +34,7 @@ FIR-15's D-02 decision (`firplan_d02_attribution_<date>`) names the leg identity
 
 ## Objective
 
-Ship inference-only occlusion robustness gated by FIR-15's attribution verdict: an OACT (occlusion-adaptive confidence threshold) sign fix that ships regardless of verdict (S0), masked (visible-support) cosine matching where the embedder leg has evidence (S1), and a pose-head-rescue feasibility spike where no leg has usable evidence (S2). No training; PEFT/adapter work stays out of scope and stays frozen behind FIR-7's existing D-01 gate.
+Ship inference-only occlusion robustness gated by FIR-15's attribution verdict: an OACT sign fix that ships regardless of verdict (S0), masked (visible-support) cosine matching where the embedder leg has evidence (S1), and a pose-head-rescue feasibility spike where no leg has usable evidence (S2). No training; PEFT/adapter work stays out of scope and stays frozen behind FIR-7's existing D-01 gate.
 
 ## Problem Statement
 
@@ -210,7 +210,7 @@ Proof:
 
 - `cd apps/prototype-description-service && python3 -m pytest recognition/tests/unit/test_face_quality_factors.py -q` — new cases for `estimate_region_visibility`: all-visible crop, one-region-occluded crop, `landmarks=None` fallback (asserts eyes computed, nose/mouth default to `1.0`).
 - New `apps/prototype-description-service/recognition/tests/unit/test_settings_face_pipeline_knobs.py`: asserts `visible_support_matching` defaults `False`, is settable via its env var, and is force-disabled under the `insightface` profile in `resolve_face_pipeline_knobs`; asserts `pose_head_rescue` is NOT present on `FacePipelineSettings`/`ResolvedFacePipelineKnobs`.
-- New `apps/prototype-description-service/recognition/tests/unit/test_support_map.py`: `test_rejects_bad_sha256`, `test_rejects_out_of_range_dim`, `test_rejects_unknown_region` (all fail-closed, per D13).
+- New `apps/prototype-description-service/recognition/tests/unit/test_support_map.py`: `test_rejects_bad_sha256`, `test_rejects_out_of_range_dim`, `test_rejects_unknown_region` (all fail-closed, per DD-13).
 - New `apps/prototype-description-service/recognition/tests/unit/test_masked_similarity.py::test_single_definition_no_settings_import`: this test's real assertion in S1 is scoped to `masked_similarity.py`'s own top-level imports (no `recognition.config.settings` symbol). The transitive check (walking every module `masked_similarity.py` imports, including function-body/late-bound imports) is deferred to, and required by, S4 below — see S4's Proof section.
 - Extend `apps/prototype-description-service/recognition/tests/unit/test_centroid_discovery.py`: assert `_find_best_centroid_match` returns the unmasked result when `visible_support_matching=False` or `region_visibility=None` (no-op parity with the pre-existing behavior), and returns a masked result with `visible_support_applied=True` when both are present and at least one region is below the visibility threshold.
 

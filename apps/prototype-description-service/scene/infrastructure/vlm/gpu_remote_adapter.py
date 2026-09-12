@@ -96,7 +96,7 @@ def _webp_canvas_size(image_bytes: bytes) -> tuple[int, int]:
         return width, height
 
     if chunk_fourcc == b"VP8 ":
-        if len(image_bytes) < 30 or image_bytes[23:26] != b"\x9D\x01\x2A":
+        if len(image_bytes) < 30 or image_bytes[23:26] != b"\x9d\x01\x2a":
             raise GpuRemoteAdapterError("GPU adapter could not parse image/webp container header")
         width = int.from_bytes(image_bytes[26:28], "little") & 0x3FFF
         height = int.from_bytes(image_bytes[28:30], "little") & 0x3FFF

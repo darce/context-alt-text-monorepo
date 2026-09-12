@@ -374,6 +374,7 @@ class FacePipelineSettings(BaseModel):
             "Env: RECOGNITION_FACE_DETECTION_DEFAULT_THRESHOLD."
         ),
     )
+    # FIR-17 S0: runtime applies this coefficient as tightening, matching the calibration harness.
     oact_coefficient: float = Field(
         default_factory=_resolve_face_oact_coefficient,
         description=(

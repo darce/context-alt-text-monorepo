@@ -3368,6 +3368,17 @@ assert_rollback_fence() {
   fi
 }
 
+# Rollback interface: 0 = restored, 1 = ordinary failure, 75 = CAS refusal.
+# Status 75 requires a fresh generation observation, never a blind retry.
+rollback_failure() {
+  local status="$1"; shift
+  if [[ "${status}" == "75" ]]; then
+    warn "$*"
+    exit 75
+  fi
+  fail "$*"
+}
+
 restore_registry_env_tag() {
   local env="$1" env_tag timeout inspect_timeout rollback_base current_digest
   if [[ ! "${ACX_ROLLBACK_DIGEST_REF:-}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]]; then
@@ -3393,7 +3404,7 @@ restore_registry_env_tag() {
     if [[ "${current_digest}" != "${ACX_ROLLBACK_DIGEST_REF}" \
       && "${current_digest}" != "${ACX_CANDIDATE_DIGEST_REF}" ]]; then
       warn "ROLLBACK CAS REFUSED: env ${env} observed ${current_digest} does not match planned ${ACX_CANDIDATE_DIGEST_REF}"
-      return 1
+      return 75
     fi
   fi
   if ! run_with_deadline "${inspect_timeout}" "rollback VM-local retag for ${env}" \
@@ -3514,7 +3525,7 @@ restore_env_tag_to_rollback() {
   restart_runtime="${2:-0}"
   env_tag="$(env_to_tag "${env}")"
   assert_rollback_fence "${env}" "${restart_runtime}" || return 1
-  restore_registry_env_tag "${env}" || return 1
+  restore_registry_env_tag "${env}" || return $?
   restore_runtime_and_edge "${env}" "${restart_runtime}" || return 1
   rollback_base="${ACX_ROLLBACK_IMAGE_BASE:-${ACX_ROLLBACK_DIGEST_REF%@sha256:*}}"
   log "Restored ${rollback_base}:${env_tag} to ${ACX_ROLLBACK_DIGEST_REF}"
@@ -3573,7 +3584,7 @@ do_rollback() {
     || fail "Current ${env} runtime generation could not be captured; refusing unfenced rollback"
   ACX_CANDIDATE_DIGEST_REF="${current_digest}"
   restore_env_tag_to_rollback "${env}" 1 \
-    || fail "Rollback failed; ${IMAGE_BASE}:${env_tag} outcome is unknown"
+    || rollback_failure "$?" "Rollback failed; ${IMAGE_BASE}:${env_tag} outcome is unknown"
   # restore_env_tag_to_rollback already requires both /health and immutable
   # image-ID evidence. GIT_REF may intentionally differ from the old rollback
   # commit, so a current-GIT_REF do_verify here would reject a healthy rollback.
@@ -3718,11 +3729,12 @@ capture_failure_evidence() {
 # successful runtime rollback; a failed rollback stays fail-closed.
 handle_failed_verification() {
   local env="$1" label="$2"
-  local rollback_ok=0
+  local rollback_ok=0 rollback_status=0
   capture_failure_evidence "$env" candidate || warn "automatic failure evidence capture failed; continuing with rollback"
   if restore_env_tag_to_rollback "$env" 1; then
     rollback_ok=1
   else
+    rollback_status=$?
     rollback_ok=0
     warn "automatic runtime rollback failed; run: $(rollback_command_hint "$env")"
   fi
@@ -3731,7 +3743,7 @@ handle_failed_verification() {
   elif [[ "$rollback_ok" == "1" ]]; then
     fail "${label} verification failed; previous image restored where possible. Recovery: $(rollback_command_hint "$env")"
   else
-    fail "${label} verification failed AND automatic rollback failed; runtime state unknown. Recovery: $(rollback_command_hint "$env")"
+    rollback_failure "${rollback_status}" "${label} verification failed AND automatic rollback failed; runtime state unknown. Recovery: $(rollback_command_hint "$env")"
   fi
 }
 
@@ -3790,21 +3802,29 @@ _ship_selected_env() {
   # S2-A-06: if tag promotion fails after ship, restore prior sticky repo.
   if ! do_push_tag "$tag" "${ACX_CANDIDATE_DIGEST_REF}"; then
     capture_failure_evidence "$env" pre_candidate || warn "automatic failure evidence capture failed; continuing with rollback"
-    if ! restore_env_tag_to_rollback "$env" 0; then
+    local rollback_status=0
+    if restore_env_tag_to_rollback "$env" 0; then
+      :
+    else
+      rollback_status=$?
       warn "automatic env-tag restore failed; refusing further runtime compensation; run: $(rollback_command_hint "$env")"
     fi
     restore_prior_image_repo_env || warn "prior sticky repository restore failed"
-    fail "Push of env tag failed after shipping ACX_IMAGE_REPO. Recovery: $(rollback_command_hint "$env")"
+    rollback_failure "${rollback_status}" "Push of env tag failed after shipping ACX_IMAGE_REPO. Recovery: $(rollback_command_hint "$env")"
   fi
 
   if ! do_restart "$env" "${ACX_CANDIDATE_DIGEST_REF}"; then
     capture_failure_evidence "$env" "${ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}" || warn "automatic failure evidence capture failed; continuing with rollback"
     restart_runtime="$(cutover_failure_restart_runtime)"
-    if ! restore_env_tag_to_rollback "$env" "${restart_runtime}"; then
+    local rollback_status=0
+    if restore_env_tag_to_rollback "$env" "${restart_runtime}"; then
+      :
+    else
+      rollback_status=$?
       warn "automatic env-tag restore failed; refusing further runtime compensation; run: $(rollback_command_hint "$env")"
     fi
     restore_prior_image_repo_env || warn "prior sticky repository restore failed"
-    fail "Restart failed; the previous env tag was restored where possible. Recovery: $(rollback_command_hint "$env")"
+    rollback_failure "${rollback_status}" "Restart failed; the previous env tag was restored where possible. Recovery: $(rollback_command_hint "$env")"
   fi
 
   if [[ "${completion}" == "aggregate" ]]; then
@@ -3893,22 +3913,30 @@ do_promote() {
 
   if ! do_push_tag "$to_tag" "${ACX_CANDIDATE_DIGEST_REF}"; then
     capture_failure_evidence "$to_env" pre_candidate || warn "automatic failure evidence capture failed; continuing with rollback"
-    if ! restore_env_tag_to_rollback "$to_env" 0; then
+    local rollback_status=0
+    if restore_env_tag_to_rollback "$to_env" 0; then
+      :
+    else
+      rollback_status=$?
       warn "automatic env-tag restore failed; refusing further runtime compensation; run: $(rollback_command_hint "$to_env")"
     fi
     restore_prior_image_repo_env || warn "prior sticky repository restore failed"
-    fail "Promotion tag/push failed. Recovery: $(rollback_command_hint "$to_env")"
+    rollback_failure "${rollback_status}" "Promotion tag/push failed. Recovery: $(rollback_command_hint "$to_env")"
   fi
 
   if ! do_restart "$to_env" "${ACX_CANDIDATE_DIGEST_REF}"; then
     capture_failure_evidence "$to_env" "${ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}" || warn "automatic failure evidence capture failed; continuing with rollback"
     local restart_runtime
     restart_runtime="$(cutover_failure_restart_runtime)"
-    if ! restore_env_tag_to_rollback "$to_env" "${restart_runtime}"; then
+    local rollback_status=0
+    if restore_env_tag_to_rollback "$to_env" "${restart_runtime}"; then
+      :
+    else
+      rollback_status=$?
       warn "automatic env-tag restore failed; refusing further runtime compensation; run: $(rollback_command_hint "$to_env")"
     fi
     restore_prior_image_repo_env || warn "prior sticky repository restore failed"
-    fail "Restart failed; previous env tag restored where possible. Recovery: $(rollback_command_hint "$to_env")"
+    rollback_failure "${rollback_status}" "Restart failed; previous env tag restored where possible. Recovery: $(rollback_command_hint "$to_env")"
   fi
 
   log "Promotion submitted. Verifying..."

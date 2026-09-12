@@ -88,6 +88,14 @@ def _rows_tuple(
             value = getattr(row, name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise UnionAdjudicationError(f"rows[{index}].{name} must be a non-negative integer")
+        for name in ("union_boxes", "tp_buffalo_i", "tp_candidate_i"):
+            value = getattr(row, name)
+            if value > row.human_true_faces:
+                raise UnionAdjudicationError(
+                    f"rows[{index}].{name}={value} exceeds human_true_faces={row.human_true_faces}; "
+                    "T-14 counts are restricted to human-verified true faces "
+                    "(signed condition 'union_uses_human_true_faces')"
+                )
         fppi = row.matched_fppi_declared
         if isinstance(fppi, bool) or not isinstance(fppi, (int, float)) or not math.isfinite(float(fppi)):
             raise UnionAdjudicationError(f"rows[{index}].matched_fppi_declared must be a finite number")
@@ -117,9 +125,7 @@ def _detector_gap_bound_unvalidated(rows: Sequence[UnionAdjudicationInput]) -> f
     denominator = sum(row.human_true_faces for row in rows)
     if denominator <= 0:
         raise UnionAdjudicationError("human_true_faces denominator must be positive")
-    return float(
-        (sum(row.tp_buffalo_i for row in rows) - sum(row.tp_candidate_i for row in rows)) / denominator
-    )
+    return float((sum(row.tp_buffalo_i for row in rows) - sum(row.tp_candidate_i for row in rows)) / denominator)
 
 
 def detector_gap_bound(rows: Sequence[UnionAdjudicationInput]) -> float:
@@ -178,23 +184,38 @@ def miss_inflate(
     """
 
     normalised = _rows_tuple(rows, allow_empty=True)
-    if len(exhaustive_image_ids) < 30:
-        raise UnionAdjudicationError("at least 30 exhaustive image IDs are required for miss inflation")
+    matched_ids = {row.image_id for row in normalised} & exhaustive_image_ids
+    unmatched = exhaustive_image_ids - matched_ids
+    if unmatched:
+        raise UnionAdjudicationError(
+            "declared exhaustive image IDs are absent from the input rows: "
+            f"{sorted(unmatched)[:5]}{'...' if len(unmatched) > 5 else ''} "
+            f"({len(unmatched)} of {len(exhaustive_image_ids)})"
+        )
     exhaustive_rows = tuple(row for row in normalised if row.image_id in exhaustive_image_ids)
+    if len(exhaustive_rows) < 30:
+        raise UnionAdjudicationError(
+            f"at least 30 exhaustive image rows are required for miss inflation, matched {len(exhaustive_rows)}"
+        )
     exhaustive_misses = sum(row.human_true_faces - row.union_boxes for row in exhaustive_rows)
     detector_flagged_misses = sum(row.tp_buffalo_i - row.tp_candidate_i for row in exhaustive_rows)
     if detector_flagged_misses == 0:
         return (1.0, 1.0)
 
-    factor = (Decimal(exhaustive_misses) / Decimal(detector_flagged_misses)).quantize(
-        Decimal("0.0001"), rounding=ROUND_HALF_UP
-    )
-    if factor < Decimal("1.0"):
+    ratio = Decimal(exhaustive_misses) / Decimal(detector_flagged_misses)
+    if ratio < Decimal("1.0"):
+        ratio_display = format(ratio, "f")
+        if "." not in ratio_display:
+            ratio_display += ".0000"
+        else:
+            fractional_digits = len(ratio_display.partition(".")[2])
+            ratio_display += "0" * max(0, 4 - fractional_digits)
         raise UnionAdjudicationError(
             "computed miss inflation factor "
-            f"{factor} is below 1.0 (exhaustive miss numerator={exhaustive_misses}, "
+            f"{ratio_display} is below 1.0 (exhaustive miss numerator={exhaustive_misses}, "
             f"detector-flagged denominator={detector_flagged_misses})"
         )
+    factor = ratio.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
     return (float(factor), 0.0)
 
 
@@ -212,6 +233,9 @@ def _validate_conditions(conditions_met: Mapping[str, bool]) -> None:
     missing = _REQUIRED_CONDITION_KEYS - set(conditions_met)
     if missing:
         raise UnionAdjudicationError(f"missing required T-14 condition confirmations: {sorted(missing)}")
+    unknown = sorted(set(conditions_met) - _REQUIRED_CONDITION_KEYS)
+    if unknown:
+        raise UnionAdjudicationError(f"unrecognised T-14 condition confirmations: {unknown}")
     failed = sorted(key for key in _REQUIRED_CONDITION_KEYS if conditions_met[key] is not True)
     if failed:
         raise UnionAdjudicationError(f"T-14 condition confirmations are not all true: {failed}")
@@ -223,12 +247,16 @@ def check_conditions(
     declared: GateContract,
     signed_decision_id: str | None,
     conditions_met: Mapping[str, bool],
+    exhaustive_image_ids: frozenset[str] | None = None,
     kill_below: float = 0.05,
     dead_zone_upper: float = 0.10,
     b: int = 2000,
     seed: int,
 ) -> DeadZoneVerdict:
-    """Validate the signed T-14 preconditions and classify its bootstrap UCL."""
+    """Validate the signed T-14 preconditions and classify its miss-inflated bootstrap UCL.
+
+    The optional ``exhaustive_image_ids`` supplies the miss-inflation correction.
+    """
 
     if not isinstance(signed_decision_id, str) or not signed_decision_id.strip():
         raise UnionAdjudicationError("a signed_decision_id is required before T-14 can be adjudicated")
@@ -261,9 +289,19 @@ def check_conditions(
         raise UnionAdjudicationError("T-14 bounds must be finite with 0 <= kill_below < dead_zone_upper")
 
     ucl = bootstrap_ucl(normalised, b=b, seed=seed)
-    if ucl < kill_below:
+    if exhaustive_image_ids is not None:
+        factor, _ = miss_inflate(normalised, exhaustive_image_ids=exhaustive_image_ids)
+        bound = ucl * factor
+    else:
+        bound = ucl
+
+    if bound < kill_below:
+        if exhaustive_image_ids is None:
+            raise UnionAdjudicationError(
+                "KILL requires the exhaustive-image miss-inflation correction; pass exhaustive_image_ids"
+            )
         return DeadZoneVerdict.KILL
-    if ucl < dead_zone_upper:
+    if bound < dead_zone_upper:
         return DeadZoneVerdict.DEAD_ZONE
     return DeadZoneVerdict.OPEN
 

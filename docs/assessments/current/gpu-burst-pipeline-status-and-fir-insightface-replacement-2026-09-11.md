@@ -74,14 +74,14 @@ Not stubbed: the core GPU describe path. `florence_large` and `gpu_phi4` are exp
 | FIR-2 | Model-neutral seam (`FaceDetection`/`DetectedFace`, embedding-model provenance) | Merged |
 | FIR-3 | YuNet detector + SFace embedder adapters, OpenCV golden-parity tests | Merged — `recognition/infrastructure/face_pipeline/{aligner,ort_adapters,opencv_ref,provenance}.py`, models `face_detection_yunet_2026may.onnx`, `face_recognition_sface_2021dec.onnx` |
 | FIR-4 | Dark runtime integration (ORT bump, boot-time hash verification, ScanService observability) | Merged (S1); S2–S5 review docs present |
-| FIR-5 | Bake-off harness extension (occlusion slices) | Docs only; no standalone code landing confirmed |
+| FIR-5 | Bake-off harness extension (occlusion slices) | Merged — `apps/prototype-description-service/scripts/eval_harness/{face_bakeoff,synthetic_occlusion,strata,gallery_split}.py` (feature/fir-5 merge `c10eac1d8` is an ancestor of `main`) |
 | FIR-6 | Calibration + quality rework + **gated switch-over** | S1 (quality factors, OACT scaffold) and S3a (calibration CLI) merged. **S2, S3b, S4, S5, S6 blocked** — S6 is "operator-gated; blocked until the MCP gate decision row exists" |
 | FIR-7 | GPU/CUDA production path + occlusion adapters + licence policy | Merged (v6.2 plan carries the QA v8 re-gate block) |
 | FIR-8 | Cross-stack bench orchestration | Bench tooling merged; **live E2E blocked** pending FIR23-STACK |
 | FIR-9 | Workbench curation atlas | Merged |
 | FIR-10 | — | Does not exist; number skipped |
 | FIR-11 | Gate-corpus remediation + FIR re-baseline | Plan only (rev 7) |
-| FIR-12 | Open-set identification eval harness | **Not on `main`.** Lives on `r7int/fir12-r7-int`; `scripts/eval_harness/` is absent from this checkout. The report is real; the code is unmerged. |
+| FIR-12 | Open-set identification eval harness | Merged — `apps/prototype-description-service/scripts/eval_harness/{open_set_identification,fir_bakeoff_run,fir_search_adapter}.py` (merge `d567a341c` 2026-08-22, exemption rule `fa3341409`). No bake-off has been run; the instrument exists, the number does not. Rows corrected 2026-09-11 (earlier draft said unmerged). |
 | FIR23-STACK | Isolated `acx-dev-fir` benchmarking backend | Same-space guards merged (`f1bb3918b`, `49c3ddf46`); **the stack itself was never stood up** |
 | CVUP-1 | OpenCV 4.13 → 5.0 | Merged — `opencv-python==5.0.0.93` (`pyproject.toml:43`), headless pin `:110`, ADR `docs/adrs/ADR-ARCH-07-opencv-pin-for-face-pipeline-reference.md` |
 
@@ -181,7 +181,7 @@ Guardrails for anyone citing this program externally or in a product decision:
 | --- | --- | --- | --- |
 | 1 | Write the D-09 face-definition rubric (T-09) | ~1 eng-h | all adjudication |
 | 2 | Declare D3 = FNIR@fixed FPIR, non-mated probes, score threshold (D-08) | decision only | every embedder comparison |
-| 3 | Merge FIR-12 eval harness from `r7int/fir12-r7-int` to `main` | eng only | any reportable number |
+| 3 | ~~Merge FIR-12 eval harness to `main`~~ — done (`d567a341c`); replaced by: re-baseline the harness on OpenCV 5 and withdraw pre-CVUP-1 artifacts (FIR-14) | eng only | any reportable number |
 | 4 | Run T-01 alignment-vs-embedder split (D-02) | $0, ~1 day | the choice of what to fix at all |
 | 5 | Stand up `acx-dev-fir` (FIR23-STACK) | eng only | FIR-8 live leg, all head-to-heads |
 | 6 | Land FIR-11 corpus remediation (R1) | ~1 week | admissible ground truth |

@@ -106,3 +106,46 @@ Written before ship, staged by phase:
 - Detector or embedder retraining in the MVP (Depth-Copy-Paste augmentation and occlusion-aware embedder training live behind the FIR-8 gate).
 - TensorRT / native engine work (post-FIR-7 at earliest).
 - Migration/shadow-mode tooling in production (greenfield; shadow comparison lives in the eval harness).
+
+## Re-plan addendum 2026-09-11
+
+Decision #10843 (session `firplan-1-replan-20260911`). No new epic — E22 is revised in place; see the epic's [Status 2026-09-11 Re-plan](../epics/v0.5.0/commercial-face-identity-replacement-epic.md#status-2026-09-11-re-plan).
+
+### What changed
+
+- Headline gate metric is now explicitly **D3 = FNIR at a fixed FPIR** (open-set, non-mated probes, score threshold swept), FPI reported as an integer count, never a rate. The operator ratifies the fixed FPIR operating point; plans name the parameter and the ratification step, never a hard-coded value.
+- Corpus locked at **Golden-150 as remediated by FIR-11 R1** (150 − 7 − 3 → 30 entries / 30 probes / 17 identities usable for the paired Nam/Tango non-inferiority check; Product A/B split). FIR-11 rev 7 is the corpus plan of record; new plans consume it, never restate it.
+- **No A10 spend and no SCRFD/AdaFace retrain before D-01**, reached only via T-09 → T-14 → D-01. Occlusion work is inference-only (no training) until D-01 says otherwise.
+- **`acx-dev-fir` (FIR23-STACK) must exist before any head-to-head**; the head-to-head runs both stacks over public APIs — two embedding spaces require two databases.
+- Ledger fact: the FIR-12 open-set harness and the FIR-5 face bake-off are on `main` (FIR-12 merge `d567a341c` 2026-08-22, exemption rule `fa3341409`; FIR-5 merge `c10eac1d8`). No bake-off has been run.
+- Withdrawn numbers (never cite as evidence): M-12 0.865/0.321, recall 0.504, 2.73 faces/image, every pre-CVUP-1 (OpenCV 4.x) artifact. "Embedder leads detector" is a hypothesis, not a result, pending FIR-15.
+
+### New task rows (Epic Short ID FIR; titles are canonical)
+
+| Task | Title | Depends on | Core deliverables |
+| --- | --- | --- | --- |
+| **FIR-13** | Open-set gate contract: face rubric, D3 declaration, T-14 adjudication rule | FIR-12 (merged) | `benchmarks/protocols/face-label-rule.md` (T-09 rubric, frozen, versioned); `gate_contract.py` (`GateContract`, `select_gate_point`, D3 declaration, operating point held `null` pending operator ratification); `union_adjudication.py` (T-14 bound, bootstrap UCL, `DeadZoneVerdict`, all four mandatory conditions) |
+| **FIR-14** | OpenCV-5 re-baseline and pre-CVUP-1 artifact withdrawal | FIR-13 | `benchmarks/results/WITHDRAWN.md` withdrawal register; toolchain provenance block on face reports; CV5 re-baseline run on both legs (DIAGNOSTIC tier, corpus not yet remediated); toolchain arm artifact for FIR-11 S5 |
+| **FIR-15** | Attribution: alignment-vs-embedder split and oracle occlusion ladder | FIR-13, FIR-14 | T-01 four-arm split harness (`attribution_split.py`) with paired-bootstrap share intervals; oracle-before-predicted occlusion ladder (`occlusion_ladder.py`); D-02 decision packet |
+| **FIR-16** | Open-set head-to-head: face_pipeline vs buffalo_l on acx-dev-fir | FIR-13, FIR-14, FIR-11 R1, FIR23-STACK, FIR-8 | Persisted per-face `MediaIdentity.match_score` exported (S1a, greenfield schema edit); open-set leg in the cross-stack bench (`score_open_set`, open-set report section); `propose-gate` CLI + operator decision template; live run on `acx-dev-fir` |
+| **FIR-17** | Inference-only occlusion robustness: visible-support matching, pose head rescue, OACT direction fix | FIR-15 (attribution verdict) | Visible-support (periocular) matching behind a knob; pose head-region rescue behind a knob (or a spike + ADR if no keypoint model exists in-tree); OACT sign fix (never relax the threshold under occlusion) |
+
+### Dependency edges
+
+- FIR-13 → FIR-14 → FIR-15 → FIR-17
+- FIR-16 depends on FIR-13, FIR-14, FIR-11 R1, FIR23-STACK, FIR-8
+- FIR-6 S4 (calibration on the remediated corpus, including the FIR-17 OACT direction fix) runs **before** the FIR-16 live run
+- FIR-6 S5/S6 (final threshold, switch-over) run **after** the FIR-16 gate decision
+
+### New Not-Doing items
+
+- SCRFD/AdaFace retrain of any kind before an operator-recorded D-01 kill/keep decision.
+- A10 (GPU) spend of any kind before D-01.
+- VLM-6 caption bake-off work — separate program; the only coupling is the shared eval manifest schema.
+- Head/torso secondary channel (C4) as an identity claim — association-only if ever built, deferred.
+- `PGVECTOR_DIM` flip outside FIR-6 S6 — the dimension default moves only in the gated switch-over slice, never earlier.
+
+### Pointers
+
+- Spec: `docs/specs/fir-open-set-gate-and-occlusion-spec.md` (item prefix `FIRG-001…`)
+- Roadmap: `docs/roadmaps/fir-occlusion-robust-recognition-roadmap-2026-09-11.md`

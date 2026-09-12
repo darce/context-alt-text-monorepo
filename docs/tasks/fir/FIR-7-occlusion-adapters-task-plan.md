@@ -4,7 +4,7 @@
 >
 > - **Date**: 2026-07-23 (v6.2 — aligned-UMAP diagnostics, DCFace packs-first strategy, OCI-A10 training pin, curation-atlas dependency note; v6.1 gate math settled; v6 — harm-direction CI bounds, seal-time p_disc protocol, asset provenance gates, consistency sweep; v5.1 resolved FIR7R4-01..11; v5: Slice-0a freeze/gate-spec/license-policy preflight; proxy-vs-seal; GT-anchored pairing; K=3 units; SAM pack disjunction; PEFT REQUIRED; identity-split; junior stubs; descope denominators; K-exhaustion → retrain)
 > - **Author**: Claude Fable 5
-> - **Owning Epic**: `docs/epics/v0.3.1/self-hosting-epic.md` (E22 face pipeline lineage; FIR series)
+> - **Owning Epic**: `docs/epics/v0.5.0/commercial-face-identity-replacement-epic.md` (E22 face pipeline lineage; FIR series)
 > - **Epic Short ID**: FIR
 > - **Task ID**: FIR-7
 > - **Target Branch**: `feature/fir-7`

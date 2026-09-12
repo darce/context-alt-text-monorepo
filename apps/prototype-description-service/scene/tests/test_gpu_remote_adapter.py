@@ -164,6 +164,30 @@ def test_webp_canvas_size_matches_pillow_for_real_webp() -> None:
     assert gpu_remote_adapter._webp_canvas_size(image_bytes) == expected_size
 
 
+def test_webp_canvas_size_matches_pillow_for_lossy_vp8_webp() -> None:
+    source = BytesIO()
+    Image.new("RGB", (19, 13), color=(24, 96, 180)).save(source, format="WEBP", lossless=False)
+    image_bytes = source.getvalue()
+
+    assert image_bytes[12:16] == b"VP8 "
+    with Image.open(BytesIO(image_bytes)) as image:
+        expected_size = image.size
+
+    assert gpu_remote_adapter._webp_canvas_size(image_bytes) == expected_size
+
+
+def test_webp_canvas_size_matches_pillow_for_vp8x_webp() -> None:
+    source = BytesIO()
+    Image.new("RGBA", (19, 13), color=(24, 96, 180, 127)).save(source, format="WEBP")
+    image_bytes = source.getvalue()
+
+    assert image_bytes[12:16] == b"VP8X"
+    with Image.open(BytesIO(image_bytes)) as image:
+        expected_size = image.size
+
+    assert gpu_remote_adapter._webp_canvas_size(image_bytes) == expected_size
+
+
 def test_gpu_remote_adapter_rejects_png_output_over_byte_ceiling(monkeypatch) -> None:
     source = BytesIO()
     Image.new("RGB", (17, 11), color=(24, 96, 180)).save(source, format="WEBP")
@@ -564,9 +588,10 @@ def test_gpu_remote_adapter_applies_connect_and_read_timeouts(monkeypatch) -> No
     assert captured[0].read == 120.0
 
 
-def test_reloading_gpu_remote_adapter_does_not_change_pillow_pixel_policy() -> None:
-    before = Image.MAX_IMAGE_PIXELS
+def test_reloading_gpu_remote_adapter_does_not_change_pillow_pixel_policy(monkeypatch) -> None:
+    sentinel = 123456789
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", sentinel)
 
     importlib.reload(gpu_remote_adapter)
 
-    assert before == Image.MAX_IMAGE_PIXELS
+    assert Image.MAX_IMAGE_PIXELS == sentinel

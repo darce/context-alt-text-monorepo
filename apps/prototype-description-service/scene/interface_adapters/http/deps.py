@@ -53,8 +53,6 @@ def _resolved_addresses_are_private(host: str) -> bool:
         return False
     for info in infos:
         sockaddr = info[4]
-        if not sockaddr:
-            return False
         try:
             addr = ip_address(sockaddr[0])
         except ValueError:

@@ -2812,16 +2812,22 @@ cutover_inflight_present() {
   env_to_unit "${env}" >/dev/null
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
   inflight="${ACX_DEPLOY_BACKUP_ROOT}/${env}/cutover-inflight"
-  # Privileged probe must print PRESENT or ABSENT only after sudo test
-  # succeeds. Do not treat raw test-f rc 1 as confirmed absence (sudo/auth
-  # also returns 1). RES-02 / DATA-13.
+  # lstat distinguishes true ENOENT from inaccessible/nonregular state and
+  # never follows a marker symlink. Only a successful envelope licenses absence.
   output="$(
     run_with_deadline "${timeout}" "cutover inflight probe ${env}" \
       ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
-      "if sudo test -f $(remote_quote "${inflight}"); then printf 'PRESENT\\n'
-       elif sudo test ! -f $(remote_quote "${inflight}"); then printf 'ABSENT\\n'
-       else exit 2
-       fi"
+      "sudo python3 -c 'import os, stat, sys
+try:
+    mode = os.lstat(sys.argv[1]).st_mode
+except FileNotFoundError:
+    print(\"ABSENT\")
+except OSError:
+    sys.exit(2)
+else:
+    if not stat.S_ISREG(mode):
+        sys.exit(2)
+    print(\"PRESENT\")' $(remote_quote "${inflight}")"
   )" || rc=$?
   if (( rc != 0 )); then
     # 1 is reserved for successful decoded ABSENT. Operational probe
@@ -2848,7 +2854,7 @@ commit_cutover_state() {
   committed="${ACX_DEPLOY_BACKUP_ROOT}/${env}/cutover-committed"
   run_with_deadline "${timeout}" "commit cutover ${env}" \
     ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
-    "sudo rm -f -- $(remote_quote "${inflight}") && printf 'status=canonical\ntransaction=%s\n' $(remote_quote "${ACX_DEPLOY_TRANSACTION_ID}") | sudo tee $(remote_quote "${committed}") >/dev/null" \
+    "printf 'status=canonical\ntransaction=%s\n' $(remote_quote "${ACX_DEPLOY_TRANSACTION_ID}") | sudo tee $(remote_quote "${committed}") >/dev/null && sudo rm -f -- $(remote_quote "${inflight}")" \
     || return 1
   ACX_CUTOVER_COMMITTED=1
   ACX_TRAFFIC_FLIPPED=0
@@ -2871,13 +2877,14 @@ recover_interrupted_cutover() {
   fi
   log "Interrupted cutover for ${env}; restoring canonical routing while keeping the candidate recoverable"
   if restore_edge_backups "${env}"; then
-    if ! commit_cutover_state "${env}"; then
-      warn "canonical restore succeeded but commit marker failed; refusing to drain candidate"
-      enable_cutover_candidate "${env}" || true
-      return 1
-    fi
+    # Keep durable inflight evidence until candidate cleanup succeeds. A fresh
+    # recovery can safely repeat canonical restoration and retry the drain.
     if ! abort_cutover_candidate "${env}"; then
       warn "candidate cleanup after interrupted cutover failed"
+      return 1
+    fi
+    if ! commit_cutover_state "${env}"; then
+      warn "canonical restore and drain succeeded but commit marker failed"
       return 1
     fi
     return 0
@@ -3783,22 +3790,20 @@ _ship_selected_env() {
   # S2-A-06: if tag promotion fails after ship, restore prior sticky repo.
   if ! do_push_tag "$tag" "${ACX_CANDIDATE_DIGEST_REF}"; then
     capture_failure_evidence "$env" pre_candidate || warn "automatic failure evidence capture failed; continuing with rollback"
-    if restore_env_tag_to_rollback "$env" 0; then
-      restore_prior_image_repo_env || warn "env tag restored but prior sticky repository restore failed"
-    else
-      warn "automatic env-tag restore failed; refusing further unfenced compensation; run: $(rollback_command_hint "$env")"
+    if ! restore_env_tag_to_rollback "$env" 0; then
+      warn "automatic env-tag restore failed; refusing further runtime compensation; run: $(rollback_command_hint "$env")"
     fi
+    restore_prior_image_repo_env || warn "prior sticky repository restore failed"
     fail "Push of env tag failed after shipping ACX_IMAGE_REPO. Recovery: $(rollback_command_hint "$env")"
   fi
 
   if ! do_restart "$env" "${ACX_CANDIDATE_DIGEST_REF}"; then
     capture_failure_evidence "$env" "${ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}" || warn "automatic failure evidence capture failed; continuing with rollback"
     restart_runtime="$(cutover_failure_restart_runtime)"
-    if restore_env_tag_to_rollback "$env" "${restart_runtime}"; then
-      restore_prior_image_repo_env || warn "env tag restored but prior sticky repository restore failed"
-    else
-      warn "automatic env-tag restore failed; refusing further unfenced compensation; run: $(rollback_command_hint "$env")"
+    if ! restore_env_tag_to_rollback "$env" "${restart_runtime}"; then
+      warn "automatic env-tag restore failed; refusing further runtime compensation; run: $(rollback_command_hint "$env")"
     fi
+    restore_prior_image_repo_env || warn "prior sticky repository restore failed"
     fail "Restart failed; the previous env tag was restored where possible. Recovery: $(rollback_command_hint "$env")"
   fi
 
@@ -3888,11 +3893,10 @@ do_promote() {
 
   if ! do_push_tag "$to_tag" "${ACX_CANDIDATE_DIGEST_REF}"; then
     capture_failure_evidence "$to_env" pre_candidate || warn "automatic failure evidence capture failed; continuing with rollback"
-    if restore_env_tag_to_rollback "$to_env" 0; then
-      restore_prior_image_repo_env || warn "env tag restored but prior sticky repository restore failed"
-    else
-      warn "automatic env-tag restore failed; refusing further unfenced compensation; run: $(rollback_command_hint "$to_env")"
+    if ! restore_env_tag_to_rollback "$to_env" 0; then
+      warn "automatic env-tag restore failed; refusing further runtime compensation; run: $(rollback_command_hint "$to_env")"
     fi
+    restore_prior_image_repo_env || warn "prior sticky repository restore failed"
     fail "Promotion tag/push failed. Recovery: $(rollback_command_hint "$to_env")"
   fi
 
@@ -3900,11 +3904,10 @@ do_promote() {
     capture_failure_evidence "$to_env" "${ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}" || warn "automatic failure evidence capture failed; continuing with rollback"
     local restart_runtime
     restart_runtime="$(cutover_failure_restart_runtime)"
-    if restore_env_tag_to_rollback "$to_env" "${restart_runtime}"; then
-      restore_prior_image_repo_env || warn "env tag restored but prior sticky repository restore failed"
-    else
-      warn "automatic env-tag restore failed; refusing further unfenced compensation; run: $(rollback_command_hint "$to_env")"
+    if ! restore_env_tag_to_rollback "$to_env" "${restart_runtime}"; then
+      warn "automatic env-tag restore failed; refusing further runtime compensation; run: $(rollback_command_hint "$to_env")"
     fi
+    restore_prior_image_repo_env || warn "prior sticky repository restore failed"
     fail "Restart failed; previous env tag restored where possible. Recovery: $(rollback_command_hint "$to_env")"
   fi
 

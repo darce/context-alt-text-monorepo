@@ -1,1 +1,1 @@
-4e72f73127a6 offload: Implemented and committed matview-only repair and verification;
+34924c3449a2 offload: Fixed stale centroid matview unique-index repair and committed

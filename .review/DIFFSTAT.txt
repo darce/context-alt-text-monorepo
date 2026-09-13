@@ -1,5 +1,3 @@
- .../db/migrations/versions/001_identity_schema.py  |   8 ++
- .../unit/test_sync_identity_schema_matview_only.py | 135 +++++++++++++++++++++
- .../scripts/sync_identity_schema.py                |  38 +++++-
- .../scripts/verify_identity_schema.py              |  98 ++++++++++++++-
- 4 files changed, 273 insertions(+), 6 deletions(-)
+ .../db/migrations/versions/001_identity_schema.py  | 25 ++++++++++++++++
+ .../tests/unit/test_ensure_matview_stale_index.py  | 35 ++++++++++++++++++++++
+ 2 files changed, 60 insertions(+)

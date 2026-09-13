@@ -1,6 +1,7 @@
 :root {
   --acx-space-2: 0.125rem;
   --acx-space-4: 0.25rem;
+  --acx-space-5: 0.3125rem;
   --acx-space-6: 0.375rem;
   --acx-space-8: 0.5rem;
   --acx-space-10: 0.625rem;
@@ -12,6 +13,9 @@
   --acx-space-40: 2.5rem;
   --acx-space-48: 3rem;
   --acx-space-80: 5rem;
+
+  /* Guided photo frame fallback before the image reports its natural size. */
+  --acx-guided-photo-ratio: 1 / 1;
 
   /* Component sizing tokens (--acx-thumb-size-*)
    * Duty: fixed control/thumbnail dimensions (not spacing scale steps).

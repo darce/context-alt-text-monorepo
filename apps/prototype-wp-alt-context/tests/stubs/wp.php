@@ -1523,11 +1523,18 @@ if (!function_exists('get_transient')) {
 if (!function_exists('set_transient')) {
     function set_transient($transient, $value, $expiration = 0): bool
     {
+        $fail = $GLOBALS['__ac_set_transient_fail'] ?? null;
+        if (true === $fail || (is_string($fail) && $fail === $transient)) {
+            $GLOBALS['__ac_set_transient_fail'] = false;
+            return false;
+        }
+
         if (!isset($GLOBALS['__ac_transients'])) {
             $GLOBALS['__ac_transients'] = [];
         }
 
         $GLOBALS['__ac_transients'][$transient] = $value;
+        $GLOBALS['__ac_transient_ttls'][$transient] = (int) $expiration;
 
         return true;
     }

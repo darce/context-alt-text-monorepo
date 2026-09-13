@@ -16,6 +16,7 @@ export const PUBLIC_DEMO_ERROR_CODE = Object.freeze({
 const STATUSES = new Set(['pending', 'running', 'completed', 'completed_with_errors', 'failed', 'cancelled']);
 const PHASES = new Set(['queued', 'warming', 'describing', 'complete', 'failed', 'cancelled']);
 const GPU_STATES = new Set(['unknown', 'stopped', 'starting', 'warming', 'ready', 'degraded']);
+const DESCRIPTION_RESULT_TIERS = new Set(['provisional_cpu', 'final_gpu']);
 
 export class PublicDemoClientError extends Error {
   constructor(code, message, status = 0) {
@@ -96,6 +97,23 @@ export const parsePublicDemoEnvelope = (body) => {
     throw invalidResponse();
   }
 
+  const description = typeof body.description === 'string' ? body.description.trim() : '';
+  const hasCompletedDescription = body.status === 'completed' && description !== '';
+  let descriptionTier;
+  if (hasCompletedDescription) {
+    if (Object.prototype.hasOwnProperty.call(body, 'description_tier')) {
+      descriptionTier = body.description_tier;
+      if (
+        descriptionTier !== null
+        && (typeof descriptionTier !== 'string' || !DESCRIPTION_RESULT_TIERS.has(descriptionTier))
+      ) {
+        throw invalidResponse();
+      }
+    } else {
+      descriptionTier = null;
+    }
+  }
+
   return {
     run_id: body.run_id,
     status: body.status,
@@ -103,7 +121,8 @@ export const parsePublicDemoEnvelope = (body) => {
     progress: { done: body.progress.done, total: body.progress.total },
     ...(hasGpuState ? { gpu_state: body.gpu_state } : {}),
     ...(typeof body.deadline_seconds === 'number' ? { deadline_seconds: body.deadline_seconds } : {}),
-    ...(typeof body.description === 'string' ? { description: body.description.trim() } : {}),
+    ...(typeof body.description === 'string' ? { description } : {}),
+    ...(hasCompletedDescription ? { description_tier: descriptionTier } : {}),
     ...(isRecord(body.error) ? { error: { code: body.error.code, message: body.error.message } } : {}),
   };
 };
@@ -214,6 +233,7 @@ const terminalFailure = (body) => {
 export const pollRun = async ({
   statusUrl,
   nonce,
+  idempotencyKey,
   fetchImpl = fetch,
   sleep = defaultSleep,
   now = Date.now,
@@ -229,7 +249,7 @@ export const pollRun = async ({
     if (navigationSignal?.aborted) throw requestAbortedError();
     const raw = await requestJson(
       statusUrl,
-      { method: 'GET', credentials: 'same-origin', headers: { 'X-WP-Nonce': nonce } },
+      { method: 'GET', credentials: 'same-origin', headers: { 'X-WP-Nonce': nonce, ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}) } },
       fetchImpl,
       { deadlineAt, now, navigationSignal },
     );
@@ -269,7 +289,13 @@ export const statusPresentation = (body) => {
     return { state: 'describing', message: progress === null ? 'Describing the image…' : `Describing the image… ${progress}%` };
   }
   if (body.phase === 'complete' && body.status === 'completed') {
-    return { state: 'completed', message: 'Description complete.' };
+    let message = 'Description complete, processing tier unavailable.';
+    if (body.description_tier === 'final_gpu') {
+      message = 'GPU description complete.';
+    } else if (body.description_tier === 'provisional_cpu') {
+      message = 'CPU fallback draft (not GPU final).';
+    }
+    return { state: 'completed', message };
   }
   return { state: 'failed', message: body.error?.message ?? 'The image could not be described. Please try again later.' };
 };
@@ -294,7 +320,9 @@ export const initializeDemo = (root) => {
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    const selected = new FormData(form).get('acx-demo-media');
+    // PHP unique groups are `acx-demo-media-<instance>`; query only this form.
+    const selectedRadio = form.querySelector('input[type="radio"]:checked');
+    const selected = selectedRadio instanceof HTMLInputElement ? selectedRadio.value : null;
     if (typeof selected !== 'string' || !/^\d+$/.test(selected)) {
       setState('error', 'Choose an image before requesting a description.');
       return;
@@ -332,6 +360,7 @@ export const initializeDemo = (root) => {
       const finalState = await pollRun({
         statusUrl: `${root.dataset.submitUrl}/runs/${encodeURIComponent(submitted.run_id)}`,
         nonce: root.dataset.nonce ?? '',
+        idempotencyKey: retryKey,
         timeoutMs: Math.min(
           submitted.deadline_seconds,
           PUBLIC_DEMO_CLIENT_DEADLINE_CEILING_SECONDS,
@@ -346,7 +375,8 @@ export const initializeDemo = (root) => {
       result.textContent = finalState.description;
       result.hidden = false;
       result.focus();
-      setState('completed', 'Description complete.');
+      const presentation = statusPresentation(finalState);
+      setState(presentation.state, presentation.message);
       retryKey = null;
       retryMedia = null;
     } catch (error) {

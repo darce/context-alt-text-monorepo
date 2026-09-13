@@ -1002,6 +1002,54 @@ export class MalformedDescribeRunResponseError extends Error {
   }
 }
 
+const DESCRIBE_RUN_ITEM_REQUIRED_KEYS = [
+  'media_id',
+  'status',
+  'alt_text_draft',
+  'caption',
+  'provenance',
+  'tier',
+  'result_generation',
+  'existing_alt',
+] as const;
+
+/**
+ * Validate the wire envelope used by GET /describe/runs/{run_id}/items before
+ * the naming normalizer reads any item fields. The endpoint is included in the
+ * field passed to the existing malformed-response error so a proxy failure can
+ * be traced to the exact upstream boundary.
+ */
+const parseDescribeRunItemsResponse = (payload: unknown, endpoint: string): DescribeRunItemsResponse => {
+  // The explicit annotation is what lets control-flow analysis treat a
+  // `malformed(...)` statement as unreachable-after and narrow `payload`.
+  const malformed: (field: string) => never = (field) => {
+    throw new MalformedDescribeRunResponseError(`${endpoint} ${field}`);
+  };
+
+  if (!isRecord(payload)) {
+    malformed('response body');
+  }
+  if (typeof payload.run_id !== 'string') {
+    malformed('response.run_id');
+  }
+  if (!Array.isArray(payload.items)) {
+    malformed('response.items');
+  }
+
+  for (const [index, item] of payload.items.entries()) {
+    const itemPath = `response.items[${index}]`;
+    if (!isRecord(item)) {
+      malformed(itemPath);
+    }
+    const missingKey = DESCRIBE_RUN_ITEM_REQUIRED_KEYS.find((key) => !hasOwn(item, key));
+    if (missingKey) {
+      malformed(`${itemPath}.${missingKey}`);
+    }
+  }
+
+  return payload as unknown as DescribeRunItemsResponse;
+};
+
 const DESCRIBE_RUN_RESPONSE_REQUIRED_KEYS = [
   'tenant_id',
   'run_id',
@@ -1143,15 +1191,18 @@ export const cancelBulkDescribeRun = async (runId: string): Promise<DescribeRunR
  * auto-apply from those that need an explicit overwrite. A cheap read like the
  * status poll — short timeout, retried by react-query on failure.
  */
-export const fetchDescribeRunItems = async (runId: string): Promise<DescribeRunItemsResponse> =>
-  fetchRequiredApi<DescribeRunItemsResponse>(
-    `${getEndpoint('recognitionDescribeRuns')}/${encodeURIComponent(runId)}/items`,
-    {
+export const fetchDescribeRunItems = async (runId: string): Promise<DescribeRunItemsResponse> => {
+  const endpoint = `${getEndpoint('recognitionDescribeRuns')}/${encodeURIComponent(runId)}/items`;
+  const response = parseDescribeRunItemsResponse(
+    await fetchRequiredApi<unknown>(endpoint, {
       method: 'GET',
       restNonce: getConfig().nonce,
       signal: createRecognitionTimeoutSignal(10_000),
-    },
-  ).then((response) => ({
+    }),
+    endpoint,
+  );
+
+  return {
     ...response,
     items: response.items.map((item) => {
       const provenance = item.provenance;
@@ -1172,7 +1223,8 @@ export const fetchDescribeRunItems = async (runId: string): Promise<DescribeRunI
 
       return { ...item, provenance: { ...provenance, naming } };
     }),
-  }));
+  };
+};
 
 /**
  * Apply a completed run's drafts to attachment alt text (INT-01d → INT-01c).

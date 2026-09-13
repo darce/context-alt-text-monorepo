@@ -16,6 +16,18 @@
       "projection_sha256": "a4872d6a83b24f264eb102498e8397e47e648b73685a8efffc28da9ac3e1beeb",
       "source_sha256": "b7169a5ebfbee18ae8c9d76148fcac99acf0a9b62c3f71c8ba2eb3547f45865a"
     },
+    "guided-prototype": {
+      "projection_sha256": "19fbbfed27852133db21acc1aa95991bb61b466940e1583dee6466aab7907dd3",
+      "source_sha256": "264e382a0aac38ea840a50e5e1a92e6e3e237fc3c1cfaebd2a18cb24d7d17eb4"
+    },
+    "public-demo-describe": {
+      "projection_sha256": "c36c30e4c5abaade7c4a3b2948bd12369f23a22729c613432da36c0f77f7d1c2",
+      "source_sha256": "b0b3761f20ece84f20b512cde30a970277ed831a8f705da77665f76715429257"
+    },
+    "public-guide": {
+      "projection_sha256": "f0c71e17f9a2b37e70ccf89e3163f9c4f354a830662a16ae379de2fd5c4070e1",
+      "source_sha256": "c72fd56915c164611bc81d44d033cda4a427cbc97578544b74428696bbfb8932"
+    },
     "roster-people": {
       "projection_sha256": "c3674e305d16520943172b3699073d3603c30a7195d7170114bdbaa78e92206c",
       "source_sha256": "efe7921ce053f3f8a671a8f28b23aedd0076a1bffc32fef4ae96e8698a9ec8c0"

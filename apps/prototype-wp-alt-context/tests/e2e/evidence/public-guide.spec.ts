@@ -13,14 +13,22 @@ import {
  * ACX_PUBLIC_GUIDE_URL is unset. Wire it with `npm run e2e:public-guide` or
  * `make demo-public-guide-e2e SITE_URL=...` (not implied by deploy-enable).
  * Desktop 1440×900 and mobile Pixel 7 both complete choose → edit →
- * preview → apply → undo from the keyboard only, with zero privileged acx/v1
+ * apply → undo from the keyboard only, with zero privileged acx/v1
  * traffic and zero describe calls.
  */
 
-const PUBLIC_SCOPE =
-  'Try the review workflow using a recorded example. Your changes affect only the demo copy in this tab.';
-const FALLBACK =
-  'The walkthrough could not load. Reload the page, or watch the recorded video on the case study page.';
+const PUBLIC_SCOPE = 'Recorded example. Changes stay in this tab; WordPress and the server roster are unchanged.';
+const PUBLIC_TITLE = "Who's in the photo belongs in the alt text.";
+const PUBLIC_CONTEXT_PURPOSE =
+  'Names can be useful in this gallery when the editor has enough evidence to include them. ' +
+  'Leaving someone unnamed is also a valid choice.';
+const PUBLIC_START = 'Start the walkthrough';
+const PUBLIC_REVIEW_DRAFTS = 'Review drafts';
+const PUBLIC_DRAFT_LABEL = 'Alt text to apply';
+const APPLY_SUBMIT = 'Apply to demo copy';
+const APPLY_UNDO = 'Undo last application';
+const WALKTHROUGH_PHOTO_KEY = 'tribeca';
+const FALLBACK = 'The walkthrough could not load. Reload the page and try again.';
 const STEP_TIMEOUT_MS = 20_000;
 
 const configuredUrl = (process.env.ACX_PUBLIC_GUIDE_URL ?? '').trim();
@@ -61,33 +69,42 @@ const pressControl = async (locator: Locator, key: 'Enter' | 'Space' = 'Enter'):
 };
 
 const completeKeyboardWalkthrough = async (page: Page): Promise<void> => {
-  const appliedText = page.locator('#guided-section-apply [data-applied-text]');
+  const walkthroughPhoto = page.getByTestId(`guided-photo-${WALKTHROUGH_PHOTO_KEY}`);
+  const walkthroughReview = page.getByTestId(`guided-description-review-${WALKTHROUGH_PHOTO_KEY}`);
+
+  await pressControl(page.getByRole('button', { name: PUBLIC_START }));
+  await expect(page.getByTestId('guided-demo-stepper')).toContainText('Step 1 of 2', { timeout: STEP_TIMEOUT_MS });
+
+  await pressControl(
+    walkthroughPhoto.getByTestId(`name-choice-${WALKTHROUGH_PHOTO_KEY}-left`).getByRole('radio', { name: /^Use / }),
+    'Space',
+  );
+  await pressControl(
+    walkthroughPhoto.getByTestId(`name-choice-${WALKTHROUGH_PHOTO_KEY}-right`).getByRole('radio', { name: /^Use / }),
+    'Space',
+  );
+  await pressControl(page.getByRole('button', { name: PUBLIC_REVIEW_DRAFTS }));
+  await expect(page.getByTestId('guided-demo-stepper')).toContainText('Step 2 of 2', { timeout: STEP_TIMEOUT_MS });
+
+  const appliedText = walkthroughReview.locator('[data-applied-text]');
   const before = (await appliedText.textContent()) ?? '';
-
-  await pressControl(page.getByRole('button', { name: 'Start the walkthrough' }));
-  await expect(page.getByTestId('guided-demo-stepper')).toContainText('Step 1 of 4', { timeout: STEP_TIMEOUT_MS });
-
-  await pressControl(page.getByRole('button', { name: 'Review name suggestions' }));
-  await expect(page.getByTestId('guided-demo-stepper')).toContainText('Step 2 of 4', { timeout: STEP_TIMEOUT_MS });
-
-  await pressControl(page.getByTestId('name-choice-left').getByRole('radio', { name: /^Use / }), 'Space');
-  await pressControl(page.getByTestId('name-choice-right').getByRole('radio', { name: /^Use / }), 'Space');
-  await pressControl(page.getByRole('button', { name: 'Review the draft' }));
-  await expect(page.getByTestId('guided-demo-stepper')).toContainText('Step 3 of 4', { timeout: STEP_TIMEOUT_MS });
-
-  const draft = page.getByRole('textbox', { name: /Alt text draft/i });
+  const draft = walkthroughReview
+    .getByTestId(`guided-draft-field-${WALKTHROUGH_PHOTO_KEY}`)
+    .getByRole('textbox', { name: PUBLIC_DRAFT_LABEL });
   await draft.focus();
   await page.keyboard.press('End');
   await page.keyboard.type(' ');
-  await pressControl(page.getByRole('button', { name: 'Preview the change' }));
-  await expect(page.getByTestId('guided-demo-stepper')).toContainText('Step 4 of 4', { timeout: STEP_TIMEOUT_MS });
 
-  await pressControl(page.getByRole('button', { name: 'Apply to demo copy' }));
+  const applyButton = walkthroughReview.getByTestId(`demo-apply-${WALKTHROUGH_PHOTO_KEY}`);
+  await expect(applyButton).toHaveAccessibleName(APPLY_SUBMIT);
+  await pressControl(applyButton);
   await expect(appliedText).not.toHaveText(before, { timeout: STEP_TIMEOUT_MS });
   const afterApply = (await appliedText.textContent()) ?? '';
   expect(afterApply.length).toBeGreaterThan(0);
 
-  await pressControl(page.getByRole('button', { name: 'Undo last application' }));
+  const undoButton = walkthroughReview.getByTestId(`demo-undo-${WALKTHROUGH_PHOTO_KEY}`);
+  await expect(undoButton).toHaveAccessibleName(APPLY_UNDO);
+  await pressControl(undoButton);
   await expect(appliedText).toHaveText(before, { timeout: STEP_TIMEOUT_MS });
 };
 
@@ -98,9 +115,11 @@ test.describe('public guide signed-out', () => {
   );
   test.setTimeout(120_000);
 
+  // defaultBrowserType is worker-scoped and cannot be set in a nested describe.
+  const { defaultBrowserType: _defaultBrowserType, ...pixel7 } = devices['Pixel 7'];
   const viewports = [
     { name: 'desktop 1440x900', use: { viewport: { width: 1440, height: 900 } } },
-    { name: 'mobile Pixel 7', use: devices['Pixel 7'] },
+    { name: 'mobile Pixel 7', use: pixel7 },
   ] as const;
 
   for (const viewport of viewports) {
@@ -120,8 +139,11 @@ test.describe('public guide signed-out', () => {
 
         await expect(page.locator('link[rel="canonical"]')).toHaveAttribute('href', /\/guide\/?$/);
         await expect(page.getByTestId('guided-scope')).toHaveText(PUBLIC_SCOPE);
-        await expect(page.getByRole('button', { name: 'Start the walkthrough' })).toBeVisible();
-        await expect(page.getByRole('link', { name: 'Watch the recording' })).toBeVisible();
+        await expect(page.getByRole('heading', { level: 1, name: PUBLIC_TITLE })).toBeVisible();
+        await expect(page.getByText(PUBLIC_CONTEXT_PURPOSE)).toBeVisible();
+        await expect(page.getByTestId('guided-photo-tribeca')).toBeVisible();
+        await expect(page.getByTestId('guided-photo-coachella')).toBeVisible();
+        await expect(page.getByRole('button', { name: PUBLIC_START })).toBeVisible();
         await expect(page.getByRole('link', { name: 'Read the case study' })).toBeVisible();
 
         await completeKeyboardWalkthrough(page);
@@ -138,7 +160,7 @@ test.describe('public guide signed-out', () => {
         expect(reloaded?.status()).toBe(200);
         await expect(page.getByTestId('guided-demo-root')).toBeVisible({ timeout: STEP_TIMEOUT_MS });
         await expect(page.getByTestId('guided-scope')).toHaveText(PUBLIC_SCOPE);
-        await expect(page.getByRole('button', { name: 'Start the walkthrough' })).toBeVisible();
+        await expect(page.getByRole('button', { name: PUBLIC_START })).toBeVisible();
         assertNoPrivilegedOrDescribe(acxRequests);
       });
 

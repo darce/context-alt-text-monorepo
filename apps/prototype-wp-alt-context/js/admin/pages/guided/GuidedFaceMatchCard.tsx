@@ -9,26 +9,41 @@ import {
   DialogTitle,
 } from '../../../components/ui/dialog';
 import { FaceThumbnail } from '../../../components/ui/FaceThumbnail';
-import { guidedCopy } from '../../guidedPrototype/copy';
+import { guidedCopy } from '../../guidedPrototype/publicGuideCopy';
 import {
+  formatGuidedSimilarity,
+  GUIDED_MATCH_STRENGTH,
+  GUIDED_MATCH_THRESHOLD,
   GUIDED_NAME_CHOICE,
   type GuidedFace,
+  type GuidedImageKey,
   type GuidedLabeledPerson,
   type GuidedNameChoice,
   type GuidedNameCoverage,
 } from '../../guidedPrototype/state';
 
-export interface GuidedFaceMatchCardProps {
+export interface GuidedFaceMatch {
   face: GuidedFace;
+  mediaUrl: string;
+}
+
+export interface GuidedFaceMatchCardProps {
+  matches: GuidedFaceMatch[];
   person: GuidedLabeledPerson;
   coverage: GuidedNameCoverage;
   choice: GuidedNameChoice;
-  mediaUrl: string;
+  idScope: string;
   disabled: boolean;
   onChoose: (choice: GuidedNameChoice, origin: HTMLInputElement) => void;
 }
 
+const INLINE_CROP_PX = 80;
 const ENLARGED_CROP_PX = 240;
+
+const IMAGE_COPY_KEYS: Record<GuidedImageKey, 'names.photo.tribeca' | 'names.photo.coachella'> = {
+  tribeca: 'names.photo.tribeca',
+  coachella: 'names.photo.coachella',
+};
 
 const choiceStatus = (choice: GuidedNameChoice, personName: string): string => {
   switch (choice) {
@@ -50,26 +65,36 @@ const coverageCopy = (coverage: GuidedNameCoverage): string =>
     ? guidedCopy('names.coverage_all', { total: coverage.total })
     : guidedCopy('names.coverage_partial', { shown: coverage.shown, total: coverage.total });
 
-const cropAlt = (position: GuidedFace['position']): string => guidedCopy('names.crop_alt', { position });
+const imageLabel = (imageKey: GuidedImageKey): string => guidedCopy(IMAGE_COPY_KEYS[imageKey]);
+
+const cropAlt = (match: GuidedFaceMatch): string =>
+  guidedCopy('names.crop_alt_image', { position: match.face.position, image: imageLabel(match.face.imageKey) });
+
+const isWeakMatch = (match: GuidedFaceMatch): boolean =>
+  match.face.strength === GUIDED_MATCH_STRENGTH.WEAK ||
+  (match.face.similarity !== null && match.face.similarity < GUIDED_MATCH_THRESHOLD);
 
 export const GuidedFaceMatchCard = ({
-  face,
+  matches,
   person,
   coverage,
   choice,
-  mediaUrl,
+  idScope,
   disabled,
   onChoose,
 }: GuidedFaceMatchCardProps): React.JSX.Element => {
   const [comparisonOpen, setComparisonOpen] = useState(false);
   const enlargeRef = useRef<HTMLButtonElement>(null);
   const wasComparisonOpenRef = useRef(false);
-  const titleId = `guided-face-${face.id}-title`;
-  const groupName = `guided-name-${face.position}`;
+  const representative = matches[0]?.face;
+  if (representative === undefined) {
+    throw new Error(`Missing guided face matches for ${person.key}.`);
+  }
+  const titleId = `guided-face-${idScope}-${person.key}-title`;
+  const groupName = `guided-name-${idScope}-${representative.position}`;
   const includeId = `${groupName}-include`;
   const omitId = `${groupName}-omit`;
   const enlargeId = `${groupName}-enlarge`;
-  const detectedAlt = cropAlt(face.position);
 
   useEffect(() => {
     if (comparisonOpen) {
@@ -87,26 +112,52 @@ export const GuidedFaceMatchCard = ({
     onChoose(nextChoice, event.currentTarget);
   };
 
-  const thumbnail = (sizePx?: number): React.JSX.Element => (
+  const thumbnail = (match: GuidedFaceMatch, sizePx = INLINE_CROP_PX): React.JSX.Element => (
     <FaceThumbnail
-      mediaUrl={mediaUrl}
-      bbox={{
-        x: face.box.x,
-        y: face.box.y,
-        width: face.box.width,
-        height: face.box.height,
-      }}
+      mediaUrl={match.mediaUrl}
+      bbox={match.face.box}
       size="lg"
       sizePx={sizePx}
       shape="square"
-      alt={detectedAlt}
+      alt={cropAlt(match)}
     />
   );
 
+  const matchLine = (match: GuidedFaceMatch): string =>
+    match.face.similarity !== null
+      ? guidedCopy('names.match.line', {
+          name: person.name,
+          similarity: formatGuidedSimilarity(match.face.similarity),
+        })
+      : guidedCopy('names.match.line_unavailable', { name: person.name });
+
+  const matchEvidence = (match: GuidedFaceMatch): React.JSX.Element => (
+    <>
+      <p className="acx-guided-face__match-line">{matchLine(match)}</p>
+      {isWeakMatch(match) ? (
+        <p className="acx-guided-face__weak-match">
+          <span role="img" aria-label={guidedCopy('names.match.weak_icon')}>
+            ⚠
+          </span>{' '}
+          {guidedCopy('names.match.below_threshold', {
+            threshold: formatGuidedSimilarity(GUIDED_MATCH_THRESHOLD),
+          })}
+        </p>
+      ) : null}
+    </>
+  );
+
   return (
-    <article aria-labelledby={titleId} className="acx-guided-face__card">
-      <div className="acx-guided-face__crop">
-        {thumbnail()}
+    <section aria-labelledby={titleId} className="acx-guided-face__card">
+      <div className="acx-guided-face__matches" data-testid={`face-matches-${person.key}`}>
+        <ul className="acx-guided-face__match-list">
+          {matches.map((match) => (
+            <li key={match.face.id} className="acx-guided-face__match">
+              {thumbnail(match)}
+              {matchEvidence(match)}
+            </li>
+          ))}
+        </ul>
         <button
           ref={enlargeRef}
           id={enlargeId}
@@ -118,10 +169,10 @@ export const GuidedFaceMatchCard = ({
         </button>
       </div>
       <div className="acx-guided-face__content">
-        <h3 id={titleId}>{guidedCopy('names.suggestion', { name: person.name })}</h3>
+        <h5 id={titleId}>{guidedCopy('names.suggestion', { name: person.name })}</h5>
 
-        <details className="acx-guided-face__evidence">
-          <summary>{guidedCopy('names.evidence_open', { position: face.position })}</summary>
+        <details className="acx-guided-face__evidence" open>
+          <summary>{guidedCopy('names.evidence_open', { position: representative.position })}</summary>
           <ul className="acx-guided-face__gallery" aria-label={person.name}>
             {person.galleryPhotos.map((photo) => (
               <li key={photo.src}>
@@ -133,8 +184,12 @@ export const GuidedFaceMatchCard = ({
           <p className="acx-guided-face__gallery-caption">{coverageCopy(coverage)}</p>
         </details>
 
-        <fieldset data-testid={`name-choice-${face.position}`} disabled={disabled} className="acx-guided-face__choice">
-          <legend>{guidedCopy('names.legend', { position: face.position })}</legend>
+        <fieldset
+          data-testid={`name-choice-${idScope}-${representative.position}`}
+          disabled={disabled}
+          className="acx-guided-face__choice"
+        >
+          <legend>{guidedCopy('names.legend', { position: representative.position })}</legend>
           <div className="acx-guided-face__choice-options">
             <label htmlFor={includeId}>
               <input
@@ -176,11 +231,20 @@ export const GuidedFaceMatchCard = ({
             }}
           >
             <DialogTitle>{guidedCopy('names.enlarge_title')}</DialogTitle>
-            <DialogDescription>{guidedCopy('names.evidence_open', { position: face.position })}</DialogDescription>
-            <div className="acx-guided-face__lightbox-crop">{thumbnail(ENLARGED_CROP_PX)}</div>
+            <DialogDescription>
+              {guidedCopy('names.evidence_open', { position: representative.position })}
+            </DialogDescription>
+            <ul className="acx-guided-face__lightbox-matches">
+              {matches.map((match) => (
+                <li key={`enlarged-${match.face.id}`}>
+                  {thumbnail(match, ENLARGED_CROP_PX)}
+                  {matchEvidence(match)}
+                </li>
+              ))}
+            </ul>
             <ul className="acx-guided-face__lightbox-gallery" aria-label={person.name}>
               {person.galleryPhotos.map((photo) => (
-                <li key={`enlarged-${photo.src}`}>
+                <li key={`gallery-${photo.src}`}>
                   <img src={photo.src} alt={photo.altText} />
                   <span className="screen-reader-text">{photo.credit}</span>
                 </li>
@@ -199,7 +263,7 @@ export const GuidedFaceMatchCard = ({
           </DialogContent>
         </DialogPortal>
       </DialogRoot>
-    </article>
+    </section>
   );
 };
 

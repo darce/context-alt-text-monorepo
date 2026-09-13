@@ -452,7 +452,7 @@ def test_missing_deployment_registry_is_rejected(tmp_path: Path) -> None:
 def test_default_registry_supplies_the_expected_producer_set(tmp_path: Path) -> None:
     source = AggregateJobLoadSource(directory=tmp_path, stale_seconds=120)
 
-    assert source.expected_environments == ("dev", "dev-fir", "prod", "staging")
+    assert source.expected_environments == ("dev", "prod", "staging")
 
 
 def test_compare_and_act_holds_every_producer_lock_through_stop(tmp_path: Path) -> None:

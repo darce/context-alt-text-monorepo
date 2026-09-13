@@ -74,6 +74,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 	private const IDEMPOTENCY_KEY_MIN_LENGTH = 16;
 	private const IDEMPOTENCY_KEY_MAX_LENGTH = 128;
 	private const IDEMPOTENCY_TRANSIENT_PREFIX = 'acx_public_demo_idempotency_';
+	private const TERMINAL_TRANSIENT_PREFIX = 'acx_public_demo_terminal_';
 	private const IDEMPOTENCY_LOCK_PREFIX = 'acx_public_demo_idempotency_lock_';
 	private const DEFAULT_RATE_PER_MIN  = 3;
 	private const DEFAULT_DAILY_CAP     = 50;
@@ -83,6 +84,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 	private const LIVE_STATUSES         = array( 'pending', 'running' );
 	private const PHASES                = array( 'queued', 'warming', 'describing', 'complete', 'failed', 'cancelled' );
 	private const GPU_STATES            = array( 'unknown', 'stopped', 'starting', 'warming', 'ready', 'degraded' );
+	private const DESCRIPTION_RESULT_TIERS = array( 'provisional_cpu', 'final_gpu' );
 
 	private DescribeController $pipeline;
 	private ?string $inflight_token = null;
@@ -313,9 +315,22 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 	}
 
 	public function status( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		$run_id   = sanitize_text_field( (string) $request->get_param( 'run_id' ) );
+		$run_id = sanitize_text_field( (string) $request->get_param( 'run_id' ) );
+		if ( '' === $run_id ) {
+			return new WP_Error(
+				PublicDemoErrorCode::RUN_NOT_AVAILABLE,
+				'That public demo run is not available.',
+				array( 'status' => 403 )
+			);
+		}
+
+		$replay = $this->replay_terminal_envelope( $request, $run_id );
+		if ( $replay instanceof WP_REST_Response ) {
+			return $replay;
+		}
+
 		$inflight = get_option( self::INFLIGHT_OPTION, false );
-		if ( '' === $run_id || ! is_array( $inflight ) || ! is_string( $inflight['run_id'] ?? null ) || ! hash_equals( $inflight['run_id'], $run_id ) ) {
+		if ( ! is_array( $inflight ) || ! is_string( $inflight['run_id'] ?? null ) || ! hash_equals( $inflight['run_id'], $run_id ) ) {
 			return new WP_Error(
 				PublicDemoErrorCode::RUN_NOT_AVAILABLE,
 				'That public demo run is not available.',
@@ -359,17 +374,25 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 
 		$status = $public_response->get_data()['status'];
 		if ( 'completed' === $status ) {
-			$description = $this->public_description( $pipeline_request, absint( $inflight['media_id'] ?? 0 ), $run_id, $lease_token );
-			if ( $description instanceof WP_Error ) {
-				return $description;
+			$described = $this->public_description( $pipeline_request, absint( $inflight['media_id'] ?? 0 ), $run_id, $lease_token );
+			if ( $described instanceof WP_Error ) {
+				return $described;
 			}
-			$public_response = $this->public_envelope_response( $response, false, $description );
+			$public_response = $this->public_envelope_response(
+				$response,
+				false,
+				$described['description'],
+				$described['description_tier']
+			);
 			if ( $public_response instanceof WP_Error ) {
 				return $public_response;
 			}
 		}
 
 		if ( in_array( $status, self::TERMINAL_STATUSES, true ) ) {
+			if ( ! $this->store_terminal_envelope( $request, $public_response, absint( $inflight['media_id'] ?? 0 ), $run_id ) ) {
+				return $this->terminal_cache_unavailable_response();
+			}
 			$this->release_inflight_bulkhead( $run_id, $lease_token );
 		}
 
@@ -511,6 +534,123 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 		}
 
 		return set_transient( $transient_key, $mapping, self::IDEMPOTENCY_TTL_SECONDS );
+	}
+
+	private function terminal_transient_key( string $client_key, string $idempotency_key ): string {
+		return self::TERMINAL_TRANSIENT_PREFIX . hash( 'sha256', $client_key . ':' . $idempotency_key );
+	}
+
+	private function replay_terminal_envelope( WP_REST_Request $request, string $run_id ): ?WP_REST_Response {
+		$capability = $this->matching_terminal_capability( $request, $run_id );
+		if ( null === $capability ) {
+			return null;
+		}
+
+		$cache = get_transient( $capability['terminal_key'] );
+		if ( ! is_array( $cache ) ) {
+			return null;
+		}
+
+		$cache_expires = (int) ( $cache['expires_at'] ?? 0 );
+		if ( $cache_expires <= time() || $cache_expires !== $capability['expires_at'] ) {
+			return null;
+		}
+
+		$cached_run = is_string( $cache['run_id'] ?? null ) ? sanitize_text_field( $cache['run_id'] ) : '';
+		if ( '' === $cached_run || ! hash_equals( $run_id, $cached_run ) ) {
+			return null;
+		}
+		if ( $capability['media_id'] !== absint( $cache['media_id'] ?? 0 ) ) {
+			return null;
+		}
+		if ( ! is_array( $cache['response'] ?? null ) ) {
+			return null;
+		}
+
+		return new WP_REST_Response(
+			$cache['response'],
+			max( 200, (int) ( $cache['response_status'] ?? 200 ) )
+		);
+	}
+
+	private function store_terminal_envelope(
+		WP_REST_Request $request,
+		WP_REST_Response $public_response,
+		int $media_id,
+		string $run_id
+	): bool {
+		$idempotency_key = $this->request_idempotency_key( $request );
+		if ( is_wp_error( $idempotency_key ) || '' === $idempotency_key ) {
+			return true;
+		}
+
+		$capability = $this->matching_terminal_capability( $request, $run_id );
+		if ( null === $capability || $media_id !== $capability['media_id'] ) {
+			return false;
+		}
+
+		$payload = array(
+			'run_id'           => $run_id,
+			'media_id'         => $media_id,
+			'expires_at'       => $capability['expires_at'],
+			'response'         => $public_response->get_data(),
+			'response_status'  => $public_response->get_status(),
+		);
+		$remaining = max( 1, $capability['expires_at'] - time() );
+
+		return set_transient( $capability['terminal_key'], $payload, $remaining );
+	}
+
+	/**
+	 * @return array{client_key:string,idempotency_key:string,mapping_key:string,terminal_key:string,media_id:int,expires_at:int}|null
+	 */
+	private function matching_terminal_capability( WP_REST_Request $request, string $run_id ): ?array {
+		$idempotency_key = $this->request_idempotency_key( $request );
+		if ( is_wp_error( $idempotency_key ) || '' === $idempotency_key ) {
+			return null;
+		}
+
+		$client_key = $this->client_rate_key();
+		if ( is_wp_error( $client_key ) ) {
+			return null;
+		}
+
+		$mapping_key = $this->idempotency_transient_key( $client_key, $idempotency_key );
+		$mapping     = get_transient( $mapping_key );
+		$expires_at  = is_array( $mapping ) ? (int) ( $mapping['expires_at'] ?? 0 ) : 0;
+		if ( ! is_array( $mapping ) || $expires_at <= time() ) {
+			return null;
+		}
+
+		$mapped_run = is_string( $mapping['run_id'] ?? null ) ? sanitize_text_field( $mapping['run_id'] ) : '';
+		if ( '' === $mapped_run || 'pending' === $mapped_run || ! hash_equals( $run_id, $mapped_run ) ) {
+			return null;
+		}
+
+		$media_id = absint( $mapping['media_id'] ?? 0 );
+		if ( $media_id <= 0 ) {
+			return null;
+		}
+
+		return array(
+			'client_key'      => $client_key,
+			'idempotency_key' => $idempotency_key,
+			'mapping_key'     => $mapping_key,
+			'terminal_key'    => $this->terminal_transient_key( $client_key, $idempotency_key ),
+			'media_id'        => $media_id,
+			'expires_at'      => $expires_at,
+		);
+	}
+
+	private function terminal_cache_unavailable_response(): WP_REST_Response {
+		return new WP_REST_Response(
+			array(
+				'code'    => PublicDemoErrorCode::STATE_UNAVAILABLE,
+				'message' => 'The demo state is temporarily unavailable. Please retry.',
+				'data'    => array( 'status' => 503 ),
+			),
+			503
+		);
 	}
 
 	private function consume_rate_token( string $client_key ): bool|WP_REST_Response {
@@ -841,7 +981,10 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 		wp_cache_delete( $option, 'options' );
 	}
 
-	private function public_description( WP_REST_Request $pipeline_request, int $media_id, string $expected_run_id, string $expected_token ): string|WP_Error {
+	/**
+	 * @return array{description: string, description_tier: string|null}|WP_Error
+	 */
+	private function public_description( WP_REST_Request $pipeline_request, int $media_id, string $expected_run_id, string $expected_token ): array|WP_Error {
 		$items_response = $this->pipeline->get_describe_run_items( $pipeline_request );
 		if ( ! $items_response instanceof WP_REST_Response || $items_response->get_status() >= 400 ) {
 			return $this->invalid_pipeline_response();
@@ -871,13 +1014,27 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 			if ( '' === $description ) {
 				continue;
 			}
-			return $description;
+			return array(
+				'description' => $description,
+				'description_tier' => $this->normalize_public_description_tier( $item['tier'] ?? null ),
+			);
 		}
 
-		return '';
+		return array(
+			'description' => '',
+			'description_tier' => null,
+		);
 	}
 
-	private function public_envelope_response( WP_REST_Response $upstream, bool $include_deadline, string $description = '' ): WP_REST_Response|WP_Error {
+	private function normalize_public_description_tier( mixed $tier ): ?string {
+		if ( ! is_string( $tier ) || ! in_array( $tier, self::DESCRIPTION_RESULT_TIERS, true ) ) {
+			return null;
+		}
+
+		return $tier;
+	}
+
+	private function public_envelope_response( WP_REST_Response $upstream, bool $include_deadline, string $description = '', ?string $description_tier = null ): WP_REST_Response|WP_Error {
 		$data = $upstream->get_data();
 		if ( ! is_array( $data ) ) {
 			return $this->invalid_pipeline_response();
@@ -931,6 +1088,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 		}
 		if ( 'completed' === $status && '' !== $description ) {
 			$public['description'] = $description;
+			$public['description_tier'] = $this->normalize_public_description_tier( $description_tier );
 		}
 		if ( 'completed_with_errors' === $status ) {
 			$public['error'] = array(

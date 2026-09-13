@@ -197,3 +197,6 @@ local/*-worktrees.txt
 .vlm-*-anchor-promote.journal
 .vlm-*-promote-stage-*
 docs/evidence/
+
+# Review-lane scratch capsule procured by the remote harness; never a deliverable.
+.review/

@@ -103,22 +103,7 @@ const REQUIRED_GENERATED_MAPS = [
  * fails again for a named map that has since acquired a snapshot entry, so the list can only
  * shrink.
  */
-const HAND_AUTHORED_MAPS: Record<string, string> = {
-  'public-guide':
-    'Hand-authored alongside the GUIDEROUTE-1 public /guide/ route. It has no ' +
-    'render_ux_maps.visible.json entry because the sanctioned renderer needs the optional ' +
-    'mcp-workbay-canvas package, which is not installable in this environment. Owner: ' +
-    'GUIDEROUTE-1 — regenerate it with docs/ux-maps/render_ux_maps.py once the canvas ' +
-    'package is available, which enrolls it here automatically via the snapshot.',
-  'guided-prototype':
-    'Arrived on main hand-authored, with its screen inventories in a separate "## Screen inventories" ' +
-    'section and 80-column ASCII frames, so it parses as a Screens table with no detail blocks and its ' +
-    'frames are not 62 columns wide. It has no render_ux_maps.visible.json entry because the sanctioned ' +
-    'renderer has never written it, and generating one needs the optional mcp-workbay-canvas package, ' +
-    'which is not installable in this environment. Owner: DEMOLAND-1 — regenerate it with ' +
-    'docs/ux-maps/render_ux_maps.py once the canvas package is available, which enrolls it here ' +
-    'automatically via the snapshot.',
-};
+const HAND_AUTHORED_MAPS: Record<string, string> = {};
 
 it.each(
   readdirSync(uxMapsDir)
@@ -178,6 +163,7 @@ const OWNED_MAPS = [
   'guided-prototype',
   'febt-1-job-error-states',
   'public-guide',
+  'public-demo-describe',
 ] as const;
 
 /**
@@ -191,6 +177,7 @@ const REQUIRED_OWNED_MAPS = [
   'describe-gpu-tier',
   'febt-1-job-error-states',
   'gpu-operator-control',
+  'public-demo-describe',
   'workbench-2pane',
 ] as const;
 
@@ -1138,9 +1125,11 @@ describe('ux-map render parity (owned maps)', () => {
   it('distinguishes Unicode version metadata from real property-range drift', () => {
     const result = spawnSync(uxMapPython, [path.join(uxMapsDir, 'test_sync_unicode_width.py')], {
       encoding: 'utf8',
+      // Exhaustive Unicode property mutations take ~63s on the supported laptop.
+      timeout: BOUNDARY_SHARD_DEADLINE_MS,
     });
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-  }, vitestBudget(SHORT_COMMAND_DEADLINE_MS));
+  }, vitestBudget(BOUNDARY_SHARD_DEADLINE_MS));
 
   it('rejects an extra unconditional primary recovery on the same screen', () => {
     const raw = readMapJson('febt-1-job-error-states') as { actions: Record<string, unknown>[] };

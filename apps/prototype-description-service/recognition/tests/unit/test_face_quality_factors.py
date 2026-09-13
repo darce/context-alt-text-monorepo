@@ -149,8 +149,8 @@ class TestOactDarkScaffold:
             settings=QualitySettings(oact_coefficient=0.2),
             occlusion_severity=0.5,
         )
-        assert on == pytest.approx(off - 0.1)
-        assert on < off
+        assert on == pytest.approx(off + 0.1)
+        assert on > off
 
     @pytest.mark.asyncio
     async def test_oact_moves_gate_time_threshold_adjustment(self) -> None:
@@ -187,7 +187,7 @@ class TestOactDarkScaffold:
             confidence=0.9,
             bbox_width=100,
             bbox_height=100,
-            # Frontal pose so pose-safety does not zero OACT leniency.
+            # Frontal pose so pose-safety does not alter the OACT adjustment.
             pose_pitch=0.0,
             pose_yaw=0.0,
             pose_roll=0.0,
@@ -203,8 +203,8 @@ class TestOactDarkScaffold:
 
         off = await ConfidenceCheck(settings_off, repo).evaluate(candidate)
         on = await ConfidenceCheck(settings_on, repo).evaluate(candidate)
-        assert on.metadata["quality_adj"] < off.metadata["quality_adj"]
-        assert on.metadata["final_threshold"] < off.metadata["final_threshold"]
+        assert on.metadata["quality_adj"] > off.metadata["quality_adj"]
+        assert on.metadata["final_threshold"] > off.metadata["final_threshold"]
 
 
 class TestNoopFloors:

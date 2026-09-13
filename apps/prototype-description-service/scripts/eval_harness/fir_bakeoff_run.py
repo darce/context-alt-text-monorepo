@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from scripts.eval_harness import gate_contract
 from scripts.eval_harness.gallery_split import (
     GalleryName,
     GallerySplit,
@@ -212,6 +213,7 @@ class RunReport:
                 rows.append(
                     {
                         "stratum": base["stratum"],
+                        "rubric_version": gate_contract.RUBRIC_VERSION,
                         "n_images": base["n_images"],
                         "unique_subjects": base["unique_subjects"],
                         "fnir": "enrolled, not probed",
@@ -238,6 +240,7 @@ class RunReport:
             rows.append(
                 {
                     "stratum": base["stratum"],
+                    "rubric_version": gate_contract.RUBRIC_VERSION,
                     "n_images": base["n_images"],
                     "unique_subjects": base["unique_subjects"],
                     "fnir": point.format_fnir(),

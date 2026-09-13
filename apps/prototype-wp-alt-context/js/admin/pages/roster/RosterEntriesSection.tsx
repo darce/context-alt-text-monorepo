@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { __, sprintf } from '@wordpress/i18n';
 import { useSearchParams } from 'react-router-dom';
-import type { RosterEntry } from '../../api/rosterApi';
+import { listRosterEntries, type RosterEntry } from '../../api/rosterApi';
+import { useQueryClient } from '@tanstack/react-query';
+import { queryKeys } from '../../api/queryKeys';
 import { PersonMergeDialog } from './PersonMergeDialog';
 import { usePersonMerge } from '../../hooks/usePersonMerge';
 import { isPersonMergeConflict, personMergeErrorMessage, type PersonMergePreview } from '../../api/personMergeApi';
@@ -550,6 +552,46 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
 // Exported for direct testing of the close/undo-expiry lifecycle (IDCHIP-1-MUI-R-04/R-05).
 export const PersonMergeFlow = ({ loser, entries, onDismiss }: { loser: RosterEntry; entries: RosterEntry[]; onDismiss: () => void }) => {
   const merge = usePersonMerge();
+  const client = useQueryClient();
+  const attempts = React.useRef(0);
+  const [checking, setChecking] = useState(false);
+  const [reconciled, setReconciled] = useState<string | null>(null);
+  const [checkFailed, setCheckFailed] = useState(false);
+  const reconcileUndo = async () => {
+    setChecking(true);
+    setCheckFailed(false);
+    setReconciled('Checking the roster to confirm the undo outcome…');
+    try {
+      await Promise.all([
+        client.invalidateQueries({ queryKey: queryKeys.roster.all, refetchType: 'none' }),
+        client.invalidateQueries({ queryKey: queryKeys.clusters.all }),
+        client.invalidateQueries({ queryKey: queryKeys.media.identities() }),
+      ]);
+      const current = await client.fetchQuery({
+        queryKey: queryKeys.roster.entries(), queryFn: listRosterEntries, staleTime: 0,
+      });
+      setReconciled(current.some(person => person.id === loser.id)
+        ? 'Roster refreshed: the person is present.'
+        : 'Roster refreshed: the person is not present. The undo outcome could not be confirmed.');
+    } catch {
+      setReconciled('Unable to refresh the roster to confirm the undo outcome. Try checking again.');
+      setCheckFailed(true);
+    } finally {
+      setChecking(false);
+    }
+  };
+  const undo = () => {
+    if (merge.undoToken === null) return;
+    const isRetry = attempts.current > 0;
+    attempts.current += 1;
+    merge.undo.mutate(merge.undoToken, {
+      onError: error => {
+        if (isRetry && isPersonMergeConflict(error)) void reconcileUndo();
+      },
+    });
+  };
+  const pending = merge.undo.isPending || checking;
+  const retryableFailure = checkFailed || (!!merge.undo.error && !isPersonMergeConflict(merge.undo.error));
   const [open, setOpen] = useState(true);
   const [merged, setMerged] = useState<PersonMergePreview | null>(null);
   // Synchronous mirror of `merged`: the dialog's onSuccess handler calls
@@ -560,10 +602,10 @@ export const PersonMergeFlow = ({ loser, entries, onDismiss }: { loser: RosterEn
   onDismissRef.current = onDismiss;
   // IDCHIP-1-MUI-R-04: bound the undo banner's lifetime once a merge lands.
   useEffect(() => {
-    if (!merged) return;
+    if (!merged || pending || retryableFailure) return;
     const timer = window.setTimeout(() => onDismissRef.current(), UNDO_BANNER_TTL_MS);
     return () => window.clearTimeout(timer);
-  }, [merged]);
+  }, [merged, pending, retryableFailure]);
   return <>
     <PersonMergeDialog open={open} loser={loser} entries={entries} merge={merge}
       onMerged={preview => { mergedRef.current = true; setMerged(preview); }} onOpenChange={next => {
@@ -574,15 +616,20 @@ export const PersonMergeFlow = ({ loser, entries, onDismiss }: { loser: RosterEn
         if (!next && !mergedRef.current) onDismiss();
       }} />
     {merged && <div className="acx-person-merge-banner" role="status">
-      {merge.undo.error ? <p><AlertCircle aria-hidden="true" />
+      {reconciled ? <p>{reconciled}</p> : merge.undo.error ? <p><AlertCircle aria-hidden="true" />
         {isPersonMergeConflict(merge.undo.error) ? 'This merge can no longer be undone. ' : 'Undo failed: '}
         {personMergeErrorMessage(merge.undo.error)}</p> : <p><CheckCircle2 aria-hidden="true" />
         {merge.undo.isSuccess ? 'Person restored.' : `Merged ${merged.loser.name} into ${merged.survivor.name}.`}</p>}
-      {!merge.undo.isSuccess && !isPersonMergeConflict(merge.undo.error) && <button type="button"
-        disabled={merge.undo.isPending || merge.undoToken === null}
-        onClick={() => { if (merge.undoToken !== null) merge.undo.mutate(merge.undoToken); }}>
+      {!reconciled && !merge.undo.isSuccess && !isPersonMergeConflict(merge.undo.error) && <button type="button"
+        disabled={pending || merge.undoToken === null}
+        onClick={undo}>
         {merge.undo.isPending ? 'Undoing…' : 'Undo'}</button>}
-      <button type="button" disabled={merge.undo.isPending} onClick={onDismiss} aria-label="Dismiss merge notification"><X aria-hidden="true" /></button>
+      {checkFailed && <button type="button" disabled={checking} onClick={() => void reconcileUndo()}>Check roster again</button>}
+      {!merge.undo.isSuccess && !reconciled && !isPersonMergeConflict(merge.undo.error) && <p>
+        Undo is available only while this notification remains on this page. It closes after {UNDO_BANNER_TTL_MS / 1000} seconds,
+        except while undo is pending or needs a retry. Dismissing it ends access to undo.
+      </p>}
+      <button type="button" disabled={pending} onClick={onDismiss} aria-label="Dismiss merge notification"><X aria-hidden="true" /></button>
     </div>}
   </>;
 };

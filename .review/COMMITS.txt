@@ -1,1 +1,2 @@
-3b34835d3292 offload: Committed B05 provenance fix; full verification is blocked by
+ddd718154f8a style(a11y): prettier format GpuControlCard test (ISSUEDAG-1 UXMAP-01)
+51ab996bfcc3 offload: Implemented the accessibility fix and regression tests;

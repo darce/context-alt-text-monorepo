@@ -1,1 +1,31 @@
+baf52e68f855 style(suggestions): sort refresh_service imports
+218588404bb5 test(suggestions): give batch-surfacing stub live representatives
+d434d0ed2202 Merge issuedag-mvr02: repair stale centroid matview unique index (MVR-02)
+767dc1f0dfda chore(review): procure governed context payload
 34924c3449a2 offload: Fixed stale centroid matview unique-index repair and committed
+ae0a8525eed2 Merge issuedag-uxmap01: GpuControlCard held-state a11y (UXMAP-01), aria-disabled styling + pending reason (UXR-01/02)
+75f04d3ccbc3 Merge issuedag-uxlow: Retry pending hold, coherent optimistic GPU Start state, tier badge icon (UXMAP-02/03/04)
+bc8397e02c08 chore(review): procure governed context payload
+aba317524bb4 style(ui): prettier format _button.scss (ISSUEDAG-1 UXR-01)
+8c7c4cd14476 offload: Committed UXR-01/02 fixes; tests and formatting were blocked by
+1f5600789517 offload: Fixed retry pending holds, optimistic GPU Start state, and tier
+d2ac357d307f Merge issuedag-matview-repair: matview-only centroid repair entry point + verifier mode (D1 plan)
+f249996c44b0 chore(review): procure governed context payload
+ddd718154f8a style(a11y): prettier format GpuControlCard test (ISSUEDAG-1 UXMAP-01)
+87c20ade8db0 chore(review): procure governed context payload
+51ab996bfcc3 offload: Implemented the accessibility fix and regression tests;
+4e72f73127a6 offload: Implemented and committed matview-only repair and verification;
+df5db19ca9f8 Merge issuedag-m02: fail-closed gallery representative resolution (SVCEMB-M-02)
+5bdaf761b742 offload: Committed the narrow centroid matview rebuild plan as d34e26c.
+ea1e6d3316ea offload: Removed the AttributeError compatibility fallback and preserved
+fd875d5681cb chore(review): procure governed context payload
+3b34835d3292 offload: Committed B05 provenance fix; full verification is blocked by
+923eece608fe chore(review): procure governed context payload
+ff8ee6cc7ea2 offload: Committed GPU UX corrections and read-only Retry recovery; all
+6448d758a6f2 offload: Committed the preserved H02 completion across all four owned
+8fe04cc3c7e5 wip(offload): issuedag-admin-ux checkpoint 1
+e195ec9dc683 offload: Committed resource-side ownership recovery; 80 focused tests
+bfa3b1378ce7 wip(offload): issuedag-deploy checkpoint 1
+e2bc35469ade offload: Reserved rollback CAS refusal status 75 and preserved it
+139306dab1c5 offload: Committed the three scoped recovery fixes; all 296 lane tests
+d134a13661f5 test(remote-agent): cover consumer origin guard

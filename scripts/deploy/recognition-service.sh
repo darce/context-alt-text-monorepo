@@ -741,18 +741,25 @@ preflight_remote_ocir_auth() {
 preflight_rsync() {
   command -v rsync >/dev/null 2>&1 || fail "rsync not found in PATH (required for remote-build mode)"
 }
+# Only paths that reach the image (rsync build context) or drive the deploy itself.
+# Edits elsewhere (harness config, docs) cannot change what ships, so they must not
+# train operators to reach for ACX_ALLOW_DIRTY. Untracked files count: rsync ships them.
+DEPLOY_CLEAN_PATHS=("apps/prototype-description-service" "scripts/deploy")
 preflight_git_clean() {
-  local env="$1"
-  # dev-fir is a dev-tier env (feature-branch workflow): same dirty-tree policy as dev.
-  if ! git -C "${REPO_ROOT}" diff --quiet HEAD -- 2>/dev/null \
-     || [[ -n "$(git -C "${REPO_ROOT}" status --porcelain --untracked-files=no 2>/dev/null)" ]]; then
+  local env="$1" dirty
+  dirty="$(git -C "${REPO_ROOT}" status --porcelain --untracked-files=normal -- "${DEPLOY_CLEAN_PATHS[@]}" 2>&1)" \
+    || fail "git status failed for deploy inputs: ${dirty}"
+  if [[ -n "$dirty" ]]; then
+    warn "Deploy inputs have uncommitted changes:"
+    printf '%s\n' "$dirty" | head -20 >&2
+    # dev-fir is a dev-tier env (feature-branch workflow): same dirty-tree policy as dev.
     if [[ "$env" == "dev" || "$env" == "dev-fir" ]] && [[ "${ACX_ALLOW_DIRTY:-0}" == "1" ]]; then
-      warn "Working tree is dirty (ACX_ALLOW_DIRTY=1, continuing for ${env})."
+      warn "Continuing for ${env} (ACX_ALLOW_DIRTY=1)."
     elif [[ "$env" == "dev" || "$env" == "dev-fir" ]]; then
-      warn "Working tree is dirty. Re-run with ACX_ALLOW_DIRTY=1 to override."
-      fail "dirty tree (${env})"
+      warn "Commit them, or re-run with ACX_ALLOW_DIRTY=1 to override."
+      fail "dirty deploy inputs (${env})"
     else
-      fail "Working tree must be clean for ${env} deploys."
+      fail "Deploy inputs must be clean for ${env} deploys."
     fi
   fi
 }

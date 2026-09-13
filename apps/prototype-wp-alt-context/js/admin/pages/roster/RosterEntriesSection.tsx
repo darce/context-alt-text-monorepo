@@ -3,6 +3,7 @@ import { __, sprintf } from '@wordpress/i18n';
 import { useSearchParams } from 'react-router-dom';
 import type { RosterEntry } from '../../api/rosterApi';
 import { RosterEntriesTable } from './RosterEntriesTable';
+import { getEntryPersonUuid, ROSTER_ROUTE_PARAM_KEYS } from './rosterRoute';
 import { useDebouncedValue } from './hooks/useDebouncedValue';
 import { useCreatePerson } from '../../hooks/useRosterHooks';
 import { Filter, UserPlus, Plus, X } from 'lucide-react';
@@ -211,6 +212,20 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
           trimmedSearch,
         )
     : null;
+
+  const handleOpenPerson = (entry: RosterEntry) => {
+    const personUuid = getEntryPersonUuid(entry);
+    if (personUuid === null) return;
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous);
+      next.delete('tab');
+      for (const key of ROSTER_ROUTE_PARAM_KEYS) {
+        next.delete(key);
+      }
+      next.set('person', personUuid);
+      return next;
+    });
+  };
 
   const clearFilter = () => {
     setSearchParams(
@@ -508,7 +523,7 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
             )}
           </div>
         ) : isEmptyFilterResult ? null : (
-          <RosterEntriesTable entries={visibleEntries} />
+          <RosterEntriesTable entries={visibleEntries} onOpenPerson={handleOpenPerson} />
         ))}
     </div>
   );

@@ -16,11 +16,7 @@ import { getClusterMutationErrorMessage } from './clusterMutationUtils';
 import { invalidateSuggestionProjection, type ProjectedSuggestion } from './suggestionProjection';
 import type { ClusterGroup } from './types';
 import { isMeaningfulMergeLabel } from './resolveMergeSurvivor';
-import {
-  TWIN_CHIP_ACCEPT_TEMPLATE,
-  TWIN_CHIP_PROMPT_TEMPLATE,
-  TWIN_CHIP_REJECT_LABEL,
-} from './twinChipCopy';
+import { TWIN_CHIP_ACCEPT_TEMPLATE, TWIN_CHIP_PROMPT_TEMPLATE, TWIN_CHIP_REJECT_LABEL } from './twinChipCopy';
 import { filterEditableClusterMatch, formatClusterLabel, getEditableClusterId } from './utils';
 import { useClusterEditState } from './useClusterEditState';
 import { useClusterMutations } from './useClusterMutations';
@@ -96,7 +92,9 @@ export const IdentityClusterItem = ({
     const groups = new Map<string, ClusterGroup['members']>();
     for (const member of cluster.members) {
       const id = cluster.identityClusterIds?.[member.identity_id] ?? member.cluster_id;
-      if (!id) continue;
+      if (!id) {
+        continue;
+      }
       groups.set(id, [...(groups.get(id) ?? []), member]);
     }
     return [...groups.entries()].filter(([, members]) => members.length >= 2);
@@ -351,13 +349,17 @@ export const IdentityClusterItem = ({
   };
 
   const handleSplit = () => {
-    if (!splittableGroups.length) return;
+    if (!splittableGroups.length) {
+      return;
+    }
     setSplitGroupId(splittableGroups.length === 1 ? splittableGroups[0][0] : null);
     setIsAnchorModalOpen(true);
   };
 
   const handleAnchorSelect = (identityId: string) => {
-    if (!splitGroupId || !splitMembers.some((member) => member.identity_id === identityId)) return;
+    if (!splitGroupId || !splitMembers.some((member) => member.identity_id === identityId)) {
+      return;
+    }
     mutations.split(splitGroupId, 2, identityId);
     setIsAnchorModalOpen(false);
   };
@@ -367,14 +369,11 @@ export const IdentityClusterItem = ({
     mergeTwin != null &&
     cluster.clusterId !== mergeTwin.survivorClusterId &&
     isMeaningfulMergeLabel(mergeTwin.survivorLabel);
-  const twinPendingTitle =
-    mergeTwin?.isPending && mergeTwin.disabledReason ? mergeTwin.disabledReason : undefined;
+  const twinPendingTitle = mergeTwin?.isPending && mergeTwin.disabledReason ? mergeTwin.disabledReason : undefined;
   const twinPendingDescId = mergeTwin ? `acx-twin-pending-${mergeTwin.suggestionId}` : undefined;
   // Inline "Is this X?" prompt renders only for unlabeled, mutable clusters
   // that are not already showing a merge twin (INT-03: one confirm cluster).
-  const showInlinePrompt = Boolean(
-    !showTwinChip && !cluster.label && anchorIdentityId && canMutate,
-  );
+  const showInlinePrompt = Boolean(!showTwinChip && !cluster.label && anchorIdentityId && canMutate);
 
   const saveLabel = React.useMemo(() => {
     if (saveStatus === 'queued') {
@@ -446,16 +445,12 @@ export const IdentityClusterItem = ({
                     alt={mergeTwin.survivorLabel}
                     className="acx-identity-clusters__twin-chip-thumb"
                   />
-                ) : (
-                  // WHY (HAI-01): mapped merge payload omitted the survivor crop — do not invent one.
-                  null
-                )}
+                ) : // WHY (HAI-01): mapped merge payload omitted the survivor crop — do not invent one.
+                null}
                 <span className="acx-identity-clusters__twin-chip-icon" aria-hidden="true">
                   ⇢
                 </span>
-                <span>
-                  {sprintf(TWIN_CHIP_PROMPT_TEMPLATE, mergeTwin.survivorLabel)}
-                </span>
+                <span>{sprintf(TWIN_CHIP_PROMPT_TEMPLATE, mergeTwin.survivorLabel)}</span>
                 <button
                   type="button"
                   className="button button-primary button-small"
@@ -482,11 +477,7 @@ export const IdentityClusterItem = ({
                 canSearchForMatch={canSearchForMatch}
                 hasLabel={Boolean(cluster.label)}
                 isAutoLabel={cluster.isAutoLabel}
-                canSplit={
-                  canMutate &&
-                  Boolean(cluster.clusterId) &&
-                  splittableGroups.length > 0
-                }
+                canSplit={canMutate && Boolean(cluster.clusterId) && splittableGroups.length > 0}
                 canReject={canMutate && cluster.members.length === 1}
                 isPending={mutations.isPending}
                 splitDisabled={mutations.splitGate.disabled}
@@ -554,7 +545,10 @@ export const IdentityClusterItem = ({
             <div className="acx-anchor-modal">
               <DialogTitle>{__('Split a face group', 'alt-context')}</DialogTitle>
               <DialogDescription>
-                {__('Choose a face to keep the label. Other faces in this face group will move to a new face group.', 'alt-context')}
+                {__(
+                  'Choose a face to keep the label. Other faces in this face group will move to a new face group.',
+                  'alt-context',
+                )}
               </DialogDescription>
               {splittableGroups.length > 1 && (
                 <label>
@@ -562,7 +556,9 @@ export const IdentityClusterItem = ({
                   <select value={splitGroupId ?? ''} onChange={(event) => setSplitGroupId(event.target.value || null)}>
                     <option value="">{__('Choose a face group', 'alt-context')}</option>
                     {splittableGroups.map(([id], index) => (
-                      <option key={id} value={id}>{sprintf(__('Face group %d', 'alt-context'), index + 1)}</option>
+                      <option key={id} value={id}>
+                        {sprintf(__('Face group %d', 'alt-context'), index + 1)}
+                      </option>
                     ))}
                   </select>
                 </label>
@@ -571,13 +567,27 @@ export const IdentityClusterItem = ({
                 {splitMembers.map((member) => {
                   const label = sprintf(__('Use face from media #%d', 'alt-context'), member.media_id);
                   return (
-                    <button key={member.identity_id} type="button" className="acx-anchor-modal__option"
-                      aria-label={label} onClick={() => handleAnchorSelect(member.identity_id)}>
+                    <button
+                      key={member.identity_id}
+                      type="button"
+                      className="acx-anchor-modal__option"
+                      aria-label={label}
+                      onClick={() => handleAnchorSelect(member.identity_id)}
+                    >
                       {member.media_url && member.bbox ? (
-                        <FaceThumbnail mediaUrl={member.media_url} bbox={member.bbox} size="lg"
-                          alt={label} className="acx-anchor-modal__thumb" />
-                      ) : <span className="acx-anchor-modal__thumb acx-anchor-modal__thumb--placeholder" />}
-                      <span className="acx-anchor-modal__meta">{sprintf(__('Media #%d', 'alt-context'), member.media_id)}</span>
+                        <FaceThumbnail
+                          mediaUrl={member.media_url}
+                          bbox={member.bbox}
+                          size="lg"
+                          alt={label}
+                          className="acx-anchor-modal__thumb"
+                        />
+                      ) : (
+                        <span className="acx-anchor-modal__thumb acx-anchor-modal__thumb--placeholder" />
+                      )}
+                      <span className="acx-anchor-modal__meta">
+                        {sprintf(__('Media #%d', 'alt-context'), member.media_id)}
+                      </span>
                     </button>
                   );
                 })}
@@ -603,9 +613,7 @@ export const IdentityClusterItem = ({
           <DialogContent>
             <div className="acx-queue-modal">
               <DialogTitle>{__('Remove this face from the group', 'alt-context')}</DialogTitle>
-              <DialogDescription>
-                {__('Remove this face from the group?', 'alt-context')}
-              </DialogDescription>
+              <DialogDescription>{__('Remove this face from the group?', 'alt-context')}</DialogDescription>
               <div className="acx-queue-modal__actions">
                 <button type="button" className="button" onClick={handleCancelWrongPerson}>
                   {__('Cancel', 'alt-context')}

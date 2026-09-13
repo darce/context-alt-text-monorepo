@@ -2300,6 +2300,29 @@ def _restore_matview_owner_and_grants(
             ) from exc
 
 
+def _matview_stale_cluster_id_index(op) -> bool:
+    """Detect the named index when it fails the verifier's unique-index predicate."""
+    return bool(
+        op.get_bind()
+        .execute(
+            sa.text(
+                "SELECT EXISTS (SELECT 1 FROM pg_index i "
+                "JOIN pg_class c ON c.oid = i.indrelid "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "JOIN pg_class idx ON idx.oid = i.indexrelid "
+                "JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'cluster_id' "
+                "WHERE n.nspname = current_schema() "
+                "AND c.relname = 'mv_identity_cluster_centroids' "
+                "AND idx.relname = 'mv_cluster_centroids_cluster_id' "
+                "AND NOT (i.indisunique AND i.indisvalid AND i.indisready AND i.indimmediate "
+                "AND i.indpred IS NULL AND i.indexprs IS NULL "
+                "AND i.indnkeyatts = 1 AND i.indkey[0] = a.attnum))"
+            )
+        )
+        .scalar()
+    )
+
+
 def ensure_matview(op) -> None:
     """Create the centroid materialized view + indexes; fail loudly on a plain-table impostor.
 
@@ -2360,6 +2383,8 @@ def ensure_matview(op) -> None:
                 )
             restore = (current_role, owner, grants)
             op.execute("DROP MATERIALIZED VIEW mv_identity_cluster_centroids")
+        elif _matview_stale_cluster_id_index(op):
+            op.execute("DROP INDEX IF EXISTS mv_cluster_centroids_cluster_id")
     else:
         gaps = _matview_create_privilege_gaps(op)
         if gaps:

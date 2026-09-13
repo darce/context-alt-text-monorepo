@@ -1,8 +1,3 @@
- .review/CHANGE.diff                                | 171 +++++++++++++++------
- .review/COMMITS.txt                                |   3 +-
- .review/CONTEXT.md                                 |   8 +-
- .review/DIFFSTAT.txt                               |   7 +-
- .../js/admin/pages/settings/GpuControlCard.tsx     |   5 +-
- .../settings/__tests__/GpuControlCard.test.tsx     |   7 +
- .../js/admin/styles/components/_button.scss        |  11 +-
- 7 files changed, 153 insertions(+), 59 deletions(-)
+ .../db/migrations/versions/001_identity_schema.py  | 25 ++++++++++++++++
+ .../tests/unit/test_ensure_matview_stale_index.py  | 35 ++++++++++++++++++++++
+ 2 files changed, 60 insertions(+)

@@ -22,12 +22,6 @@
 | `gpu-stop-confirm` | overlay | `#/settings (inline strip; no dedicated route)` | Confirm Stop GPU |
 | `exit-workbench` | exit | `#/workbench` | Workbench |
 
-## Code references
-- `screen:settings-burst-gpu` — `apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx`
-- `screen:gpu-start-confirm` — `apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx`
-- `screen:gpu-stop-confirm` — `apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx`
-- `screen:exit-workbench` — `apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelection.tsx`
-
 ### Settings › Burst GPU (`settings-burst-gpu`)
 
 Purpose: Card on the Settings page showing GPU state, intent, lease and load, with Start / Stop / Return to automatic controls. Domain vocabulary behind the canonical states: stopped and ready = default; starting and warming = loading; snapshot missing = empty; service unreachable = error; lifecycle degraded or intent blocked = degraded.

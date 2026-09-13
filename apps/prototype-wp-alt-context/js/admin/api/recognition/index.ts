@@ -23,6 +23,7 @@ export type {
   ClusterIdentity,
   DebugMetrics,
   DetectedIdentity,
+  RepresentativeFace,
   MediaIdentitiesResponse,
   ClusterSummary,
   ClusterListResponse,

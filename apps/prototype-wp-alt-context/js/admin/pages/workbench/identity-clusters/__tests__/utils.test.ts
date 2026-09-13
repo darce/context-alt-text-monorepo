@@ -65,6 +65,17 @@ describe('groupIdentitiesByClusters person grouping', () => {
     expect(group.isAutoLabel).toBe(false);
   });
 
+  it.each([false, undefined])('prefers a later human label over a machine label with is_auto_label=%s', (isAutoLabel) => {
+    const [group] = groupIdentitiesByClusters([
+      identity({ person_id: '9', cluster_label: 'cluster-7', is_auto_label: isAutoLabel }),
+      identity({ identity_id: 'id-2', person_id: '9', cluster_label: 'Jane Doe', is_auto_label: false }),
+    ]);
+
+    expect(group.label).toBe('Jane Doe');
+    expect(group.isAutoLabel).toBe(false);
+    expect(formatClusterLabel(group.clusterId, group.label, group.isAutoLabel)).toBe('Jane Doe');
+  });
+
   it('keeps unbound members grouped by cluster and singleton keys in distinct namespaces', () => {
     const members = [
       identity({ person_id: 'same', cluster_id: 'same' }),

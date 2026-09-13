@@ -84,7 +84,7 @@ export const groupIdentitiesByClusters = (identities: DetectedIdentity[]): Clust
     }
 
     const trimmedLabel = identity.cluster_label?.trim() ?? '';
-    const isHumanCandidate = trimmedLabel.length > 0 && !identity.is_auto_label;
+    const isHumanCandidate = !identity.is_auto_label && isHumanLabeledTarget(trimmedLabel);
     if (isHumanCandidate && !hasHumanLabel.get(clusterKey)) {
       group.label = identity.cluster_label;
       group.isAutoLabel = false;

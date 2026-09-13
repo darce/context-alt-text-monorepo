@@ -43,7 +43,8 @@ export interface FaceThumbnailProps {
   onError?: () => void;
 }
 
-type LoadingState = 'loading' | 'loaded' | 'error';
+const LOAD_STATE = { loading: 'loading', loaded: 'loaded', error: 'error' } as const;
+type LoadingState = (typeof LOAD_STATE)[keyof typeof LOAD_STATE];
 
 /**
  * Renders a face thumbnail by CSS-cropping a region from the source image.
@@ -67,7 +68,11 @@ export const FaceThumbnail = React.forwardRef<HTMLDivElement, FaceThumbnailProps
     },
     ref,
   ) => {
-    const [loadState, setLoadState] = React.useState<LoadingState>('loading');
+    const [sourceState, setSourceState] = React.useState<{ source: string; status: LoadingState }>({
+      source: mediaUrl,
+      status: LOAD_STATE.loading,
+    });
+    const loadState = sourceState.source === mediaUrl ? sourceState.status : LOAD_STATE.loading;
     const imgRef = React.useRef<HTMLImageElement | null>(null);
     const displaySize = sizePx ?? sizeMap[size];
     const iconSize = Math.max(12, Math.round(displaySize * 0.35));
@@ -75,28 +80,30 @@ export const FaceThumbnail = React.forwardRef<HTMLDivElement, FaceThumbnailProps
     const { scale, offsetX, offsetY } = cropTransformFor(bbox, displaySize);
 
     const handleLoad = React.useCallback<React.ReactEventHandler<HTMLImageElement>>(
-      () => {
-        setLoadState('loaded');
+      (event) => {
+        if (event.currentTarget !== imgRef.current) {
+          return;
+        }
+        setSourceState({ source: mediaUrl, status: LOAD_STATE.loaded });
         onLoad?.();
       },
-      [onLoad],
+      [mediaUrl, onLoad],
     );
 
     const handleError = React.useCallback<React.ReactEventHandler<HTMLImageElement>>(
-      () => {
-        setLoadState('error');
+      (event) => {
+        if (event.currentTarget !== imgRef.current) {
+          return;
+        }
+        setSourceState({ source: mediaUrl, status: LOAD_STATE.error });
         onError?.();
       },
-      [onError],
+      [mediaUrl, onError],
     );
 
     React.useEffect(() => {
-      setLoadState('loading');
-    }, [mediaUrl]);
-
-    React.useEffect(() => {
       const img = imgRef.current;
-      if (!img || loadState !== 'loading') {
+      if (!img || loadState !== LOAD_STATE.loading) {
         return;
       }
 
@@ -104,16 +111,19 @@ export const FaceThumbnail = React.forwardRef<HTMLDivElement, FaceThumbnailProps
         return;
       }
 
-      setLoadState(img.naturalWidth > 0 ? 'loaded' : 'error');
+      setSourceState({
+        source: mediaUrl,
+        status: img.naturalWidth > 0 ? LOAD_STATE.loaded : LOAD_STATE.error,
+      });
     }, [loadState, mediaUrl]);
 
     const baseClass = 'acx-face-thumbnail';
     const sizeClass = `${baseClass}--${size}`;
-    const stateClass = loadState !== 'loaded' ? `${baseClass}--${loadState}` : '';
+    const stateClass = loadState !== LOAD_STATE.loaded ? `${baseClass}--${loadState}` : '';
     const classes = [baseClass, sizeClass, stateClass, className].filter(Boolean).join(' ');
 
     // Show placeholder on error
-    if (loadState === 'error') {
+    if (loadState === LOAD_STATE.error) {
       const errorLabel = __('Face image unavailable', 'alt-context');
       const accessibleErrorLabel = alt ? `${errorLabel}. ${alt}` : errorLabel;
       return (
@@ -147,7 +157,7 @@ export const FaceThumbnail = React.forwardRef<HTMLDivElement, FaceThumbnailProps
           position: 'relative',
         }}
       >
-        {loadState === 'loading' && (
+        {loadState === LOAD_STATE.loading && (
           <span
             className={`${baseClass}__placeholder`}
             aria-hidden="true"
@@ -173,7 +183,7 @@ export const FaceThumbnail = React.forwardRef<HTMLDivElement, FaceThumbnailProps
             transformOrigin: 'top left',
             maxWidth: 'none',
             // Hide while loading to prevent flash
-            opacity: loadState === 'loaded' ? 1 : 0,
+            opacity: loadState === LOAD_STATE.loaded ? 1 : 0,
             transition: 'opacity 150ms ease-in',
           }}
         />

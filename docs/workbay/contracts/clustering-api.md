@@ -853,17 +853,26 @@ Cluster UUIDs and person IDs remain separate identifiers.
   Request: `{"survivor_id":1,"loser_id":2}`. Clients should show the preview
   before requesting commit. Commit revalidates current state transactionally,
   moves every loser cluster binding, unions tags, deletes the loser and marks
-  the tenant projection stale. Response (200):
+  the tenant projection stale (a failed marker write rolls back the whole
+  commit and returns 500). Response (200):
   `{"survivor_id":1,"merged_cluster_ids":["cluster-uuid"],"undo_token":"uuid"}`.
+  If the loser is already gone (e.g. a retried request after a lost 200), the
+  original merge result and undo token are returned again instead of a fresh
+  404, provided the retry still targets the same survivor/loser pair.
 - `POST /wp-json/acx/v1/roster/persons/merge/undo`
   Request: `{"undo_token":"uuid"}`. Response (200):
   `{"restored_person_id":2,"restored_cluster_ids":["cluster-uuid"]}`.
   Restores the original loser row and ID, prior bindings and survivor tags,
-  then consumes the tenant-scoped token in the same transaction. Invalid token
-  syntax returns 400. Unknown, foreign-tenant or consumed tokens return 409.
-  Undo also returns 409 if the loser ID is occupied, the survivor disappeared,
-  survivor tags changed, or a moved cluster disappeared or changed person.
-  No partial undo is applied. Database failures return 500.
+  then consumes the tenant-scoped token in the same transaction. The token
+  must be a syntactically valid UUID v4 (`xxxxxxxx-xxxx-4xxx-[89ab]xxx-xxxxxxxxxxxx`,
+  hex digits); invalid syntax returns 400. Unknown, foreign-tenant or consumed
+  tokens return 409. Undo tokens expire 24 hours after commit; an expired
+  token is deleted and returns 409 `person_merge_undo_expired`. A corrupt or
+  malformed stored undo record (unreadable JSON or an unexpected shape) is
+  deleted and returns 500 `person_merge_undo_corrupt`. Undo also returns 409
+  if the loser ID is occupied, the survivor disappeared, survivor tags
+  changed, or a moved cluster disappeared or changed person. No partial undo
+  is applied. Database failures return 500.
 
 Undo records are local, non-autoloaded options stored with transactional SQL;
 these endpoints do not claim backend replay or synchronization completion.

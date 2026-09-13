@@ -1,3 +1,8 @@
- .../js/admin/pages/settings/GpuControlCard.tsx     | 26 +++++++++---
- .../settings/__tests__/GpuControlCard.test.tsx     | 48 ++++++++++++++++++++--
- 2 files changed, 65 insertions(+), 9 deletions(-)
+ .review/CHANGE.diff                                | 171 +++++++++++++++------
+ .review/COMMITS.txt                                |   3 +-
+ .review/CONTEXT.md                                 |   8 +-
+ .review/DIFFSTAT.txt                               |   7 +-
+ .../js/admin/pages/settings/GpuControlCard.tsx     |   5 +-
+ .../settings/__tests__/GpuControlCard.test.tsx     |   7 +
+ .../js/admin/styles/components/_button.scss        |  11 +-
+ 7 files changed, 153 insertions(+), 59 deletions(-)

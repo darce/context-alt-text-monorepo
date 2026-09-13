@@ -1,2 +1,3 @@
-ddd718154f8a style(a11y): prettier format GpuControlCard test (ISSUEDAG-1 UXMAP-01)
-51ab996bfcc3 offload: Implemented the accessibility fix and regression tests;
+aba317524bb4 style(ui): prettier format _button.scss (ISSUEDAG-1 UXR-01)
+8c7c4cd14476 offload: Committed UXR-01/02 fixes; tests and formatting were blocked by
+f249996c44b0 chore(review): procure governed context payload

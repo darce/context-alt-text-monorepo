@@ -76,14 +76,35 @@ describe('person merge undo recovery', () => {
     const { invalidate } = await setup();
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
     await screen.findByText(/Undo failed/);
-    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    });
     await screen.findByText('Roster refreshed: the person is present.');
+    expect(screen.getByRole('button', { name: 'Dismiss merge notification' })).toBeEnabled();
     expect(screen.queryByText(/can no longer be undone/)).not.toBeInTheDocument();
     for (const queryKey of [queryKeys.roster.all, queryKeys.clusters.all, queryKeys.media.identities()]) {
       expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey }));
     }
     expect(listRosterEntries).toHaveBeenCalledTimes(1);
     expect(undoPersonMerge).toHaveBeenCalledTimes(2);
+  });
+
+  it('allows dismissal and another check when the roster read fails', async () => {
+    vi.mocked(undoPersonMerge).mockRejectedValueOnce(new Error('Network error')).mockRejectedValueOnce({ status: 409 });
+    vi.mocked(listRosterEntries).mockRejectedValueOnce(new Error('Roster unavailable')).mockResolvedValueOnce([loser]);
+    await setup();
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    await screen.findByText(/Undo failed/);
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    });
+    await screen.findByText('Unable to refresh the roster to confirm the undo outcome. Try checking again.');
+    expect(screen.getByRole('button', { name: 'Dismiss merge notification' })).toBeEnabled();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Check roster again' }));
+    });
+    await screen.findByText('Roster refreshed: the person is present.');
+    expect(listRosterEntries).toHaveBeenCalledTimes(2);
   });
 
   it('keeps the existing error for a first-attempt conflict', async () => {

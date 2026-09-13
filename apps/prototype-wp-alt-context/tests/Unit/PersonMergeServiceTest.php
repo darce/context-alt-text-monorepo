@@ -268,7 +268,7 @@ class PersonMergeServiceTest extends TestCase {
         $valid = ['loser' => $this->person(2), 'survivor_id' => 1, 'survivor_tags' => null,
             'merged_tags' => '[]', 'clusters' => [], 'expires_at' => time() + 100];
         $cases = [];
-        foreach (['1.5', '1e3', '-2', '0', ' 3'] as $id) {
+        foreach (['1.5', '1e3', '-2', '0', ' 3', '99999999999999999999'] as $id) {
             $record = $valid;
             $record['loser']['id'] = $id;
             $cases[] = $record;
@@ -282,6 +282,11 @@ class PersonMergeServiceTest extends TestCase {
         $record = $valid;
         unset($record['loser']['person_uuid']);
         $cases[] = $record;
+        foreach (['local_revision' => '1.5', 'cluster_count' => -1, 'reference_thumb_path' => [], 'person_uuid' => '', 'normalized_name' => ''] as $field => $value) {
+            $record = $valid;
+            $record['loser'][$field] = $value;
+            $cases[] = $record;
+        }
         foreach ($cases as $record) {
             $repo = $this->createMock(PersonMergeRepository::class);
             $repo->method('load_undo')->willReturn($record);
@@ -303,8 +308,57 @@ class PersonMergeServiceTest extends TestCase {
         $repo->method('restore_person')->willThrowException(new \TypeError('collaborator failure'));
         $repo->expects($this->never())->method('consume_undo');
         $result = (new PersonMergeService($repo))->undo('tenant', '00000001-0000-4000-8000-000000000001');
+        $this->assertSame('acx_db_error', $result->get_error_code());
         $this->assertSame(500, $result->get_error_data()['status']);
         $this->assertContains('ROLLBACK', $wpdb->queries);
+    }
+
+    public function testCommitRecoversWhenLoserDisappearsDuringLockedInspect(): void {
+        $repo = $this->createMock(PersonMergeRepository::class);
+        $repo->method('person')->willReturnCallback(fn($id, $lock) => $id === 2 && $lock ? null : $this->person($id));
+        $repo->method('clusters')->willReturn([]);
+        $token = '00000001-0000-4000-8000-000000000001';
+        $repo->method('load_merge_idempotency')->willReturn($token);
+        $repo->method('load_undo')->willReturn(['loser' => $this->person(2), 'survivor_id' => 1,
+            'survivor_tags' => null, 'merged_tags' => '[]', 'clusters' => [], 'expires_at' => time() + 100]);
+        $repo->expects($this->never())->method('save_undo');
+        $result = (new PersonMergeService($repo))->commit('tenant', 1, 2);
+        $this->assertSame(['survivor_id' => 1, 'merged_cluster_ids' => [], 'undo_token' => $token], $result);
+    }
+
+    public function testInvalidRecoveryTokenFailsBeforeLoadingUndo(): void {
+        $repo = $this->createMock(PersonMergeRepository::class);
+        $repo->method('person')->willReturnCallback(fn($id) => $id === 1 ? $this->person(1) : null);
+        $repo->method('load_merge_idempotency')->willReturn('invalid');
+        $repo->expects($this->never())->method('load_undo');
+        $result = (new PersonMergeService($repo))->commit('tenant', 1, 2);
+        $this->assertSame('acx_db_error', $result->get_error_code());
+    }
+
+    public function testRecoveryLoadingFailuresAreDatabaseErrors(): void {
+        foreach ([new \TypeError('load failed'), new \JsonException('load failed')] as $error) {
+            $repo = $this->createMock(PersonMergeRepository::class);
+            $repo->method('person')->willReturnCallback(fn($id) => $id === 1 ? $this->person(1) : null);
+            $repo->method('load_merge_idempotency')->willReturn('00000001-0000-4000-8000-000000000001');
+            $repo->method('load_undo')->willThrowException($error);
+            $repo->expects($this->never())->method('consume_undo');
+            $result = (new PersonMergeService($repo))->commit('tenant', 1, 2);
+            $this->assertSame('acx_db_error', $result->get_error_code());
+        }
+    }
+
+    public function testRejectedRecordCleanupTypeErrorReturnsDatabaseError(): void {
+        global $wpdb;
+        $repo = $this->createMock(PersonMergeRepository::class);
+        $record = [];
+        $repo->method('load_undo')->willReturnCallback(static fn() => $record);
+        $repo->expects($this->once())->method('consume_undo')->willReturnCallback(function () use (&$record, $wpdb) {
+            $this->assertContains('ROLLBACK', $wpdb->queries);
+            throw new \TypeError('cleanup failed');
+        });
+        $result = (new PersonMergeService($repo))->undo('tenant', '00000001-0000-4000-8000-000000000001');
+        $this->assertSame('acx_db_error', $result->get_error_code());
+        $this->assertSame([], $record);
     }
 
     public function testExpiredCommitCannotBeRecovered(): void {

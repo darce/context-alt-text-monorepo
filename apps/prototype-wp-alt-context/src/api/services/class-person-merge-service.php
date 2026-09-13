@@ -91,6 +91,12 @@ class PersonMergeService {
 			}
 			$preview = $this->inspect( $tenant_id, $survivor_id, $loser_id, true );
 			if ( is_wp_error( $preview ) ) {
+				if ( 'person_not_found' === $preview->get_error_code() ) {
+					$recovered = $this->recover_idempotent_commit( $tenant_id, $survivor_id, $loser_id );
+					if ( null !== $recovered ) {
+						return $recovered;
+					}
+				}
 				return $preview;
 			}
 			$moved = array_values( array_filter( $preview['clusters'], static fn( $row ) => (int) $row['person_id'] === $loser_id ) );
@@ -129,11 +135,10 @@ class PersonMergeService {
 		if ( null === $token ) {
 			return null;
 		}
-		try {
-			$record = $this->repository->load_undo( $tenant_id, $token );
-		} catch ( \JsonException $error ) {
-			return null;
+		if ( ! preg_match( self::UNDO_TOKEN_PATTERN, $token ) ) {
+			throw new \RuntimeException( 'Invalid stored merge token.' );
 		}
+		$record = $this->repository->load_undo( $tenant_id, $token );
 		if ( ! $this->is_valid_undo_record( $record, $tenant_id ) || $record['expires_at'] <= time() || $record['loser']['tenant_id'] !== $tenant_id || (int) $record['survivor_id'] !== $survivor_id || (int) $record['loser']['id'] !== $loser_id ) {
 			return null;
 		}
@@ -203,7 +208,7 @@ class PersonMergeService {
 		if ( $reject_record ) {
 			try {
 				$this->repository->consume_undo( $tenant_id, $undo_token );
-			} catch ( \RuntimeException $error ) {
+			} catch ( \Throwable $error ) {
 				return $this->error( 'acx_db_error', 500 );
 			}
 		}
@@ -236,10 +241,18 @@ class PersonMergeService {
 				return false;
 			}
 		}
-		foreach ( array( 'local_revision', 'cluster_count', 'reference_thumb_path' ) as $field ) {
-			if ( ! array_key_exists( $field, $loser ) ) {
+		foreach ( array( 'person_uuid', 'normalized_name' ) as $field ) {
+			if ( '' === trim( $loser[ $field ] ) ) {
 				return false;
 			}
+		}
+		foreach ( array( 'local_revision', 'cluster_count' ) as $field ) {
+			if ( ! $this->is_integer_in_range( $loser[ $field ] ?? null, 0 ) ) {
+				return false;
+			}
+		}
+		if ( ! array_key_exists( 'reference_thumb_path', $loser ) || ( null !== $loser['reference_thumb_path'] && ! is_string( $loser['reference_thumb_path'] ) ) ) {
+			return false;
 		}
 		foreach ( $loser as $value ) {
 			if ( null !== $value && ! is_scalar( $value ) ) {
@@ -258,7 +271,12 @@ class PersonMergeService {
 	}
 
 	private function is_positive_id( mixed $id ): bool {
-		return ( is_int( $id ) && $id > 0 ) || ( is_string( $id ) && 1 === preg_match( '/^[1-9][0-9]*$/D', $id ) );
+		return $this->is_integer_in_range( $id, 1 );
+	}
+
+	private function is_integer_in_range( mixed $value, int $minimum ): bool {
+		return ( is_int( $value ) || ( is_string( $value ) && 1 === preg_match( '/^(0|[1-9][0-9]*)$/D', $value ) ) )
+			&& false !== filter_var( $value, FILTER_VALIDATE_INT, array( 'options' => array( 'min_range' => $minimum ) ) );
 	}
 
 	/** Called only after acquiring the undo option lock on recovery and undo. */
@@ -279,9 +297,7 @@ class PersonMergeService {
 	private function transaction( callable $operation ): array|WP_Error {
 		try {
 			return $this->run_transactional( $operation );
-		} catch ( \JsonException | \TypeError $error ) {
-			return $this->error( self::UNDO_CORRUPT, 500 );
-		} catch ( \RuntimeException $error ) {
+		} catch ( \JsonException | \TypeError | \RuntimeException $error ) {
 			return $this->error( 'acx_db_error', 500 );
 		}
 	}

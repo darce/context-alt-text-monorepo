@@ -1,0 +1,346 @@
+{
+  "map_ref": "workbench-identity-chips",
+  "product": "prototype-wp-alt-context",
+  "source_fixture": "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/IdentityClusterItem.tsx",
+  "goals": [
+    "Show one person chip per person in each media row; a person's face-group membership stays in the +N count instead of becoming duplicate chips.",
+    "Render the store's representative face crop before the person label (HAI-01/HAI-17); use the current face only when representative evidence is unavailable.",
+    "Keep optional person_id and representative_face absence unresolved and visible without fabricating a person or representative image (rg-015, DDIA).",
+    "Expose an N face groups badge when one person spans more than one face group, and let the chip expand into the existing face review panel.",
+    "Let chip name, avatar, and face-group-count buttons open the person workspace while preserving reversible roster merge behavior (INT-07, INT-09)."
+  ],
+  "jobs": [
+    {
+      "id": "job-media-person-chips",
+      "label": "Read person chips in a media row and verify face evidence"
+    },
+    {
+      "id": "job-review-person-evidence",
+      "label": "Expand a person chip into face-group review or the person workspace"
+    }
+  ],
+  "screens": [
+    {
+      "id": "workbench-media-row-person-chips",
+      "kind": "screen",
+      "title": "Media row — person chips",
+      "purpose": "A media row renders one chip per resolved person: the representative face evidence comes first, followed by the person label and member +N count; unresolved faces remain available for face-group review.",
+      "route": "#/workbench?media=",
+      "wp_page": "alt-context-workbench",
+      "job_entry": true,
+      "deep_link": true,
+      "url_params": ["media"],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/IdentityClusterItem.tsx",
+      "primary_action_id": null,
+      "states": ["default", "loading", "empty", "error", "degraded"],
+      "zones": [
+        {
+          "id": "z-media-row",
+          "label": "Selected media row (title, description status, and person chip rail)",
+          "role": "content",
+          "states": ["default", "loading", "empty", "error"]
+        },
+        {
+          "id": "z-person-chip-rail",
+          "label": "One person chip per person (no duplicate chip for each face group)",
+          "role": "ai_review",
+          "evidence_linked": true,
+          "states": ["default", "loading", "empty", "error", "degraded"]
+        },
+        {
+          "id": "z-representative-avatar",
+          "label": "Representative face avatar (store reference crop rendered before the person's label)",
+          "role": "ai_review",
+          "evidence_linked": true,
+          "states": ["default", "error", "degraded"]
+        },
+        {
+          "id": "z-member-count",
+          "label": "Member count (+N faces on this person chip)",
+          "role": "status",
+          "states": ["default", "loading", "empty", "error"]
+        },
+        {
+          "id": "z-chip-actions",
+          "label": "Person chip buttons (expand face-group review or open person workspace)",
+          "role": "form",
+          "states": ["default", "loading", "error"]
+        }
+      ]
+    },
+    {
+      "id": "workbench-media-row-face-group-badge",
+      "kind": "screen",
+      "title": "Media row — person with multiple face groups",
+      "purpose": "The same person keeps one chip when person_id spans several face groups; the chip adds an N face groups badge while retaining the representative avatar and member +N count.",
+      "route": "#/workbench?media=",
+      "wp_page": "alt-context-workbench",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": ["media"],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/IdentityClusterItem.tsx",
+      "primary_action_id": null,
+      "states": ["default", "loading", "error", "degraded"],
+      "zones": [
+        {
+          "id": "z-multi-group-chip",
+          "label": "One person chip spanning multiple face groups (person_id is the grouping key)",
+          "role": "ai_review",
+          "evidence_linked": true,
+          "states": ["default", "loading", "error", "degraded"]
+        },
+        {
+          "id": "z-face-group-badge",
+          "label": "N face groups badge when the person spans more than one face group",
+          "role": "status",
+          "states": ["default", "error", "degraded"]
+        },
+        {
+          "id": "z-multi-group-avatar",
+          "label": "Representative face avatar shared by the person chip",
+          "role": "ai_review",
+          "evidence_linked": true,
+          "states": ["default", "error", "degraded"]
+        },
+        {
+          "id": "z-multi-group-member-count",
+          "label": "Member count (+N faces across this person's face groups)",
+          "role": "status",
+          "states": ["default", "loading", "error"]
+        },
+        {
+          "id": "z-multi-group-actions",
+          "label": "Person chip buttons (review the face groups or open the person workspace)",
+          "role": "form",
+          "states": ["default", "loading", "error"]
+        }
+      ]
+    },
+    {
+      "id": "workbench-media-row-current-face-fallback",
+      "kind": "screen",
+      "title": "Media row — current-face fallback",
+      "purpose": "When representative_face is absent or its image fields are unavailable, show the current face as a fallback and expose the representativeVocabulary copy “Representative image unavailable”; never synthesize representative evidence.",
+      "route": "#/workbench?media=",
+      "wp_page": "alt-context-workbench",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": ["media"],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/IdentityClusterItem.tsx",
+      "primary_action_id": null,
+      "states": ["default", "loading", "error", "degraded"],
+      "zones": [
+        {
+          "id": "z-current-face-avatar",
+          "label": "Current face fallback avatar (used only when representative evidence is unavailable)",
+          "role": "ai_review",
+          "evidence_linked": true,
+          "states": ["default", "loading", "error", "degraded"]
+        },
+        {
+          "id": "z-representative-unavailable-copy",
+          "label": "Fallback copy: Representative image unavailable (canonical representativeVocabulary text)",
+          "role": "status",
+          "states": ["default", "error", "degraded"]
+        },
+        {
+          "id": "z-fallback-member-count",
+          "label": "Member count remains visible (+N faces) while representative evidence is unavailable",
+          "role": "status",
+          "states": ["default", "loading", "error"]
+        },
+        {
+          "id": "z-fallback-actions",
+          "label": "Fallback chip buttons (expand face-group review or open person workspace)",
+          "role": "form",
+          "states": ["default", "loading", "error"]
+        }
+      ]
+    },
+    {
+      "id": "workbench-person-chip-expanded",
+      "kind": "overlay",
+      "title": "Expanded person chip — review faces",
+      "purpose": "The expanded chip enters the existing member review panel so the operator can inspect face evidence, show all members, remove a face, close the panel, or open the person workspace.",
+      "route": "#/workbench?media=&cluster=",
+      "wp_page": "alt-context-workbench",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": ["media", "cluster"],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/ClusterReviewPanel.tsx",
+      "primary_action_id": null,
+      "states": ["default", "loading", "empty", "error", "degraded"],
+      "zones": [
+        {
+          "id": "z-expanded-face-evidence",
+          "label": "Expanded face evidence (representative and current faces remain linked to their media)",
+          "role": "ai_review",
+          "evidence_linked": true,
+          "states": ["default", "loading", "empty", "error", "degraded"]
+        },
+        {
+          "id": "z-expanded-face-members",
+          "label": "Expanded face members (show all members or remove this face)",
+          "role": "forced_choice",
+          "evidence_linked": true,
+          "max_candidates": 8,
+          "states": ["default", "loading", "empty", "error", "degraded"]
+        },
+        {
+          "id": "z-expanded-actions",
+          "label": "Close face review / open person workspace",
+          "role": "form",
+          "states": ["default", "loading", "error"]
+        }
+      ]
+    },
+    {
+      "id": "exit-roster",
+      "kind": "exit",
+      "title": "Person workspace",
+      "purpose": "Person chip name, avatar, or face-group-count button opens the named person's workspace and preserves the media-row context when the operator returns.",
+      "route": "#/roster?person=",
+      "wp_page": "alt-context-roster",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": ["person", "media"],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/roster/PersonWorkspacePanel.tsx",
+      "states": ["default", "loading", "error"],
+      "zones": [
+        {
+          "id": "z-roster-person-entry",
+          "label": "Person workspace entry from a chip button",
+          "role": "nav",
+          "states": ["default"]
+        }
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "id": "act-expand-person-chip",
+      "verb": "Expand face-group review",
+      "target": "workbench-person-chip-expanded",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-media-row-person-chips"
+    },
+    {
+      "id": "act-open-person-workspace-from-chip",
+      "verb": "Open person workspace",
+      "target": "exit-roster",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-media-row-person-chips"
+    },
+    {
+      "id": "act-review-multi-group-person",
+      "verb": "Review N face groups",
+      "target": "workbench-person-chip-expanded",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-media-row-face-group-badge"
+    },
+    {
+      "id": "act-open-person-workspace-from-multi-group-chip",
+      "verb": "Open person workspace",
+      "target": "exit-roster",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-media-row-face-group-badge"
+    },
+    {
+      "id": "act-review-current-face-fallback",
+      "verb": "Review current face evidence",
+      "target": "workbench-person-chip-expanded",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-media-row-current-face-fallback"
+    },
+    {
+      "id": "act-open-person-workspace-from-fallback",
+      "verb": "Open person workspace",
+      "target": "exit-roster",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-media-row-current-face-fallback"
+    },
+    {
+      "id": "act-close-person-chip-review",
+      "verb": "Close face review",
+      "target": "workbench-media-row-person-chips",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-person-chip-expanded"
+    },
+    {
+      "id": "act-open-person-workspace-from-review",
+      "verb": "Open person workspace",
+      "target": "exit-roster",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-person-chip-expanded"
+    }
+  ],
+  "flows": [
+    {
+      "id": "flow-person-chip-evidence",
+      "job": "job-review-person-evidence",
+      "label": "Media row person chip → evidence review → person workspace",
+      "steps": [
+        {
+          "screen_id": "workbench-media-row-person-chips",
+          "branch_label": "one chip per person; representative face and member +N count are visible"
+        },
+        {
+          "screen_id": "workbench-media-row-face-group-badge",
+          "branch_label": "if the person spans groups, show N face groups without duplicating the chip"
+        },
+        {
+          "screen_id": "workbench-media-row-current-face-fallback",
+          "branch_label": "if representative evidence is unavailable, show current face + Representative image unavailable"
+        },
+        {
+          "screen_id": "workbench-person-chip-expanded",
+          "branch_label": "expand the chip into the existing face review panel"
+        },
+        {
+          "screen_id": "exit-roster",
+          "branch_label": "chip name, avatar, or face-group-count button opens the person workspace"
+        }
+      ]
+    }
+  ],
+  "open_questions": [
+    "When person_id is absent, should the unresolved face-group result show a neutral chip action or remain only in the review queue?",
+    "Should returning from the person workspace restore the expanded face review panel or only the media row scroll position?"
+  ],
+  "not_doing": [
+    "Creating one person chip per face group",
+    "Showing a guessed representative image when representative_face is absent",
+    "Auto-merging people from a matching label without a preview",
+    "Pixel or token design; implementation uses the existing --acx-* system"
+  ],
+  "slices": [
+    "Group media identities by optional person_id while preserving unresolved face groups",
+    "Render representative face evidence, N face groups, and member +N chip states",
+    "Render current-face fallback with canonical Representative image unavailable copy",
+    "Connect chip actions to face review and the person workspace"
+  ]
+}

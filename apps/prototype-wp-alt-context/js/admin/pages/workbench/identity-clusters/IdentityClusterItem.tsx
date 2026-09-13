@@ -31,7 +31,6 @@ import { ClusterEditForm } from './ClusterEditForm';
 import { MergeUndoBanner } from './MergeUndoBanner';
 import { DebugMetricsPanel } from './DebugMetricsPanel';
 import { InlineSuggestionPrompt } from './InlineSuggestionPrompt';
-import { AnchorSelectionModal } from './AnchorSelectionModal';
 import { ClusterConfirmDialog } from './ClusterConfirmDialog';
 import { useClusterConfirmDialog } from './useClusterConfirmDialog';
 import { useClusterSaveHandlers } from './useClusterSaveHandlers';
@@ -93,19 +92,17 @@ export const IdentityClusterItem = ({
 
   const editableClusterId = React.useMemo(() => getEditableClusterId(cluster), [cluster]);
 
-  // A person-group can span multiple clusters; any mapped cluster with at least
-  // two members can be split. Single-cluster groups keep the legacy gate.
-  const clusterSpansMultiple = (cluster.clusterIds?.length ?? 0) > 1;
-  const hasSplittableCluster = React.useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const clusterId of Object.values(cluster.identityClusterIds ?? {})) {
-      if (!clusterId) continue;
-      const count = (counts.get(clusterId) ?? 0) + 1;
-      if (count >= 2) return true;
-      counts.set(clusterId, count);
+  const splittableGroups = React.useMemo(() => {
+    const groups = new Map<string, ClusterGroup['members']>();
+    for (const member of cluster.members) {
+      const id = cluster.identityClusterIds?.[member.identity_id] ?? member.cluster_id;
+      if (!id) continue;
+      groups.set(id, [...(groups.get(id) ?? []), member]);
     }
-    return false;
+    return [...groups.entries()].filter(([, members]) => members.length >= 2);
   }, [cluster]);
+  const [splitGroupId, setSplitGroupId] = React.useState<string | null>(null);
+  const splitMembers = splittableGroups.find(([id]) => id === splitGroupId)?.[1] ?? [];
 
   // For singletons without a cluster, we still allow naming/merging via identity ID
   const isSingleton = !editableClusterId && cluster.members.length === 1;
@@ -353,33 +350,17 @@ export const IdentityClusterItem = ({
     setIsWrongPersonDialogOpen(false);
   };
 
-  // Handle "Split cluster" action
   const handleSplit = () => {
-    if (!cluster.clusterId) {
-      return;
-    }
-
-    if (cluster.members.length < 2) {
-      setError(__('Need at least two faces to split.', 'alt-context'));
-      return;
-    }
+    if (!splittableGroups.length) return;
+    setSplitGroupId(splittableGroups.length === 1 ? splittableGroups[0][0] : null);
     setIsAnchorModalOpen(true);
   };
 
-  const handleAnchorSelect = React.useCallback(
-    (selectedIdentityId: string) => {
-      // A person-group can span multiple clusters (IDCHIP-1); route the split to the
-      // selected identity's own cluster, not the group's first/anchor clusterId, or a
-      // face from cluster B can be issued as split(clusterA, ..., faceInB) (BR-02).
-      const targetClusterId = cluster.identityClusterIds?.[selectedIdentityId];
-      if (!targetClusterId) {
-        setError(__('Cannot split: this face is not in a face group yet.', 'alt-context'));
-        return;
-      }
-      mutations.split(targetClusterId, 2, selectedIdentityId);
-    },
-    [cluster, mutations, setError],
-  );
+  const handleAnchorSelect = (identityId: string) => {
+    if (!splitGroupId || !splitMembers.some((member) => member.identity_id === identityId)) return;
+    mutations.split(splitGroupId, 2, identityId);
+    setIsAnchorModalOpen(false);
+  };
 
   const showTwinChip =
     canMutate &&
@@ -504,7 +485,7 @@ export const IdentityClusterItem = ({
                 canSplit={
                   canMutate &&
                   Boolean(cluster.clusterId) &&
-                  (!clusterSpansMultiple || hasSplittableCluster)
+                  splittableGroups.length > 0
                 }
                 canReject={canMutate && cluster.members.length === 1}
                 isPending={mutations.isPending}
@@ -566,13 +547,48 @@ export const IdentityClusterItem = ({
 
       <DebugMetricsPanel metrics={representative?.debug_metrics} />
 
-      <AnchorSelectionModal
-        isOpen={isAnchorModalOpen}
-        label={cluster.label}
-        members={cluster.members}
-        onClose={() => setIsAnchorModalOpen(false)}
-        onSelectAnchor={handleAnchorSelect}
-      />
+      <DialogRoot open={isAnchorModalOpen} onOpenChange={setIsAnchorModalOpen}>
+        <DialogPortal>
+          <DialogOverlay />
+          <DialogContent>
+            <div className="acx-anchor-modal">
+              <DialogTitle>{__('Split a face group', 'alt-context')}</DialogTitle>
+              <DialogDescription>
+                {__('Choose a face to keep the label. Other faces in this face group will move to a new face group.', 'alt-context')}
+              </DialogDescription>
+              {splittableGroups.length > 1 && (
+                <label>
+                  {__('Face group', 'alt-context')}
+                  <select value={splitGroupId ?? ''} onChange={(event) => setSplitGroupId(event.target.value || null)}>
+                    <option value="">{__('Choose a face group', 'alt-context')}</option>
+                    {splittableGroups.map(([id], index) => (
+                      <option key={id} value={id}>{sprintf(__('Face group %d', 'alt-context'), index + 1)}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              <div className="acx-anchor-modal__grid">
+                {splitMembers.map((member) => {
+                  const label = sprintf(__('Use face from media #%d', 'alt-context'), member.media_id);
+                  return (
+                    <button key={member.identity_id} type="button" className="acx-anchor-modal__option"
+                      aria-label={label} onClick={() => handleAnchorSelect(member.identity_id)}>
+                      {member.media_url && member.bbox ? (
+                        <FaceThumbnail mediaUrl={member.media_url} bbox={member.bbox} size="lg"
+                          alt={label} className="acx-anchor-modal__thumb" />
+                      ) : <span className="acx-anchor-modal__thumb acx-anchor-modal__thumb--placeholder" />}
+                      <span className="acx-anchor-modal__meta">{sprintf(__('Media #%d', 'alt-context'), member.media_id)}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <button type="button" className="button" onClick={() => setIsAnchorModalOpen(false)}>
+                {__('Cancel', 'alt-context')}
+              </button>
+            </div>
+          </DialogContent>
+        </DialogPortal>
+      </DialogRoot>
 
       <DialogRoot
         open={isWrongPersonDialogOpen}

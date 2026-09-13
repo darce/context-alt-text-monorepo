@@ -2470,6 +2470,14 @@ def ensure_matview(op) -> None:
         _restore_matview_owner_and_grants(op, current_role=current_role, owner=owner, grants=grants)
 
 
+def repair_centroids_matview(connection) -> None:
+    """Repair only the derived centroid view; source objects are preconditions."""
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+
+    ensure_matview(Operations(MigrationContext.configure(connection)))
+
+
 def heal(connection) -> None:
     """Boot-time reconciliation: converge any partial schema to the full one.
 

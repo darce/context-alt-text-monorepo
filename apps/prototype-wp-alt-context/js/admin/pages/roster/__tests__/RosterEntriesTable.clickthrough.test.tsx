@@ -97,10 +97,10 @@ describe('roster workspace navigation', () => {
     expect(params.has('face')).toBe(false);
   });
 
-  it('renders a non-actionable label and count when the entry has no resolvable person uuid', async () => {
+  it.each([null, '   '])('renders a non-actionable label and count for unresolved person uuid %j', async (personUuid) => {
     const user = userEvent.setup();
     const open = vi.fn();
-    const unresolved: RosterEntry = { ...entry, person_uuid: null as unknown as string };
+    const unresolved: RosterEntry = { ...entry, person_uuid: personUuid as unknown as string };
     render(<RosterEntriesTable entries={[unresolved]} onOpenPerson={open} />);
     expect(screen.queryByRole('button', { name: entry.name })).not.toBeInTheDocument();
     expect(screen.getByText(entry.name)).toBeInTheDocument();

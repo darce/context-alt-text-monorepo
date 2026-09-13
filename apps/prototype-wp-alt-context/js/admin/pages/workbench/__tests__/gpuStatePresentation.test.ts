@@ -68,7 +68,7 @@ describe('gpuStatePresentation', () => {
   it('owns the stopped and degraded consequence copy', () => {
     expect(gpuStateNotice(GPU_STATE.STOPPED, 0)).toBe('Will warm on start (~2 min)');
     expect(gpuStateNotice(GPU_STATE.DEGRADED, 3)).toBe(
-      'GPU unavailable — kept 3 CPU drafts. Final descriptions will not upgrade.',
+      'GPU unavailable. Existing results remain available; review each description’s compute tier.',
     );
   });
 

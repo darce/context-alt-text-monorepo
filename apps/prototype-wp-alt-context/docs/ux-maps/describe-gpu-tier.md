@@ -7,7 +7,7 @@
 - Operator can start a bulk describe run and always see whether the GPU tier is stopped, warming, ready, or degraded (INT-10 status–predict–stop).
 - A cold GPU start (~90–100 s measured, VLM-3B decision 2266) is a bounded, cancellable wait, never a silent hang (INT-08, CARD-09).
 - Provisional CPU drafts and final GPU descriptions are visibly distinct at the item and run level (HAI-05, HAI-08, PROV-06).
-- GPU cost boundary is disclosed before commitment; user is never surprised by a $2/GPU-hr start (INT-07, CARD-15, COST-10).
+- Before Describe, disclose possible GPU warm-up and infrastructure charges separately from credits, with a Settings link (INT-07, NAV-11). Read failures retain saved rows and apply recovery, show a stale notice, and offer a read-only Retry (INT-10).
 
 ## Jobs
 - `bulk-describe` — Describe selected media with AI and apply results
@@ -18,7 +18,7 @@
 | id | kind | route | title |
 | --- | --- | --- | --- |
 | `workbench-media-selection` | screen | `#/workbench` | Workbench › Media selection |
-| `describe-run-apply` | screen | `#/workbench/describe/:run_id` | Workbench › Describe run › Review & apply |
+| `describe-run-apply` | screen | `#/description-history?run=<id>` | Description History › Review & apply |
 | `dashboard-describe-panel` | screen | `#/` | Dashboard › Describe with AI |
 | `toast-gpu-transition` | overlay | `#/workbench (transient toast; no dedicated route)` | Toast — GPU tier transition |
 
@@ -33,7 +33,7 @@ url_params: `run_id`
 | `z-bulk-cta` | Describe selected CTA — State vocabulary: default (selection ready) / gpu-cold-preview (default, CTA hint shows the warm-up cost) / pending = loading / disabled-empty-selection = empty. | job | default, loading, empty |
 | `z-bulk-progress` | Bulk describe progress — State vocabulary: starting, gpu-stopped, gpu-starting, gpu-warming, describing-provisional, describing-final and waiting-cooldown = loading; complete and cancelled = default; failed = error; degraded-cpu = degraded. | status | default, loading, error, degraded |
 | `z-gpu-tier-chip` | GPU tier chip — State vocabulary: hidden-no-run = empty; unknown, stopped and ready = default; starting and warming = loading; degraded = degraded. | status | default, loading, empty, degraded |
-| `z-review-link` | Review results link — State vocabulary: hidden = empty; final-available = default; provisional-only = degraded. | nav | default, empty, degraded |
+| `z-review-link` | Review & apply drafts link — Hidden until the run is terminal; terminal runs link to #/description-history?run=<id>, regardless of item tier. | nav | default, empty, degraded |
 
 ```
 +------------------------------------------------------------+
@@ -44,7 +44,7 @@ url_params: `run_id`
 |   - Describe selected CTA — State vocabulary: default (se… |
 |   - Bulk describe progress — State vocabulary: starting, … |
 |   - GPU tier chip — State vocabulary: hidden-no-run = emp… |
-|   - Review results link — State vocabulary: hidden = empt… |
+|   - Review & apply drafts link — Hidden until the run is … |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Describe N selected -> POST describe/run (cos… |
@@ -56,25 +56,25 @@ url_params: `run_id`
 +------------------------------------------------------------+
 ```
 
-### Workbench › Describe run › Review & apply (`describe-run-apply`)
+### Description History › Review & apply (`describe-run-apply`)
 
-Purpose: Review per-item drafts, see tier per item, apply to media. Run phases: all-final = default; loading = loading; no items = empty; partial-provisional = degraded. Serves job `gpu-tier-awareness`.
+Purpose: Review per-item drafts, see tier per item, apply to media. The canonical Description History route selects the run with the run query parameter; Back to full history clears that selection. Run phases: all-final = default; loading = loading; no items = empty; partial-provisional = degraded. Serves job `gpu-tier-awareness`.
 
-url_params: `run_id`
+url_params: `run`
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
-| `z-item-tier-badge` | Per-item tier badge — State vocabulary: final_gpu = default; provisional_cpu = degraded; failed = error. | status | default, error, degraded |
-| `z-upgrade-notice` | Final descriptions pending notice — State vocabulary: hidden = empty; gpu-warming and upgrading = loading; done = default. | status | default, loading, empty |
+| `z-item-tier-badge` | Per-item compute tier text, separate from naming provenance, in safe, overwrite, history-completion and no-draft rows: final_gpu = Final (GPU); provisional_cpu = Provisional (CPU); null or unrecognized = Unknown. Failure status does not determine tier. | status | default, error, degraded |
+| `z-upgrade-notice` | Future lifecycle requirement (M03), not implemented in review: any upgrade notice requires explicit item upgrade state; GPU readiness alone never promises final descriptions. | status | default, loading, empty |
 
 ```
 +------------------------------------------------------------+
-| Workbench › Describe run › Review & apply  [screen]  #/wo… |
+| Description History › Review & apply  [screen]  #/descrip… |
 | Review per-item drafts, see tier per item, apply to media… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Per-item tier badge — State vocabulary: final_gpu = d… |
-|   - Final descriptions pending notice — State vocabulary:… |
+|   - Per-item compute tier text, separate from naming prov… |
+|   - Future lifecycle requirement (M03), not implemented i… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Apply -> POST describe/run/:id/apply (preview) |
@@ -149,14 +149,14 @@ Purpose: One-shot notification for a tier transition the operator is NOT looking
 ```mermaid
 flowchart TD
   %% flow: Bulk describe when GPU is stopped job=bulk-describe
-  %% steps: [{"screen_id":"workbench-media-selection","branch_label":"select → CTA shows 'GPU will warm (~2 min)' (gpu-cold-preview)"},{"screen_id":"workbench-media-selection","branch_label":"run queued → gpu-starting → gpu-warming (bounded ETA, Cancel)"},{"screen_id":"workbench-media-selection","branch_label":"CPU provisional drafts arrive → describing-provisional; 'Use CPU drafts now' offered"},{"screen_id":"workbench-media-selection","branch_label":"GPU ready → describing-final → complete"},{"screen_id":"toast-gpu-transition","branch_label":"only if operator left the screen: success-final-ready"},{"screen_id":"describe-run-apply","branch_label":"per-item final_gpu badges; apply"}]
+  %% steps: [{"screen_id":"workbench-media-selection","branch_label":"select → CTA shows 'GPU will warm (~2 min)' (gpu-cold-preview)"},{"screen_id":"workbench-media-selection","branch_label":"run queued → gpu-starting → gpu-warming (bounded ETA, Cancel)"},{"screen_id":"workbench-media-selection","branch_label":"CPU provisional drafts arrive → describing-provisional; 'Use CPU drafts now' offered"},{"screen_id":"workbench-media-selection","branch_label":"GPU ready → describing-final → complete"},{"screen_id":"toast-gpu-transition","branch_label":"only if operator left the screen: success-final-ready"},{"screen_id":"describe-run-apply","branch_label":"Review per-item compute tiers and separate naming badges; apply safe drafts, explicitly select overwrites, or back out to #/description-history"}]
   n_workbench_media_selection["Workbench › Media selection (screen)"]
   n_workbench_media_selection -->|select → CTA shows 'GPU will warm (~2 min)' (gpu-cold-preview)| n_workbench_media_selection
   n_workbench_media_selection -->|run queued → gpu-starting → gpu-warming (bounded ETA, Cancel)| n_workbench_media_selection
   n_workbench_media_selection -->|CPU provisional drafts arrive → describing-provisional; 'Use CPU drafts now' offered| n_workbench_media_selection
   n_toast_gpu_transition["Toast — GPU tier transition (overlay)"]
   n_workbench_media_selection -->|GPU ready → describing-final → complete| n_toast_gpu_transition
-  n_describe_run_apply["Workbench › Describe run › Review &amp; apply (screen)"]
+  n_describe_run_apply["Description History › Review &amp; apply (screen)"]
   n_toast_gpu_transition -->|only if operator left the screen: success-final-ready| n_describe_run_apply
 ```
 
@@ -165,11 +165,11 @@ flowchart TD
 ```mermaid
 flowchart TD
   %% flow: GPU fails to come up / unreachable job=bulk-describe
-  %% steps: [{"screen_id":"workbench-media-selection","branch_label":"gpu-warming exceeds bound (>180 s) or endpoint unreachable → degraded-cpu"},{"screen_id":"toast-gpu-transition","branch_label":"error-gpu-unavailable (once), CPU drafts kept"},{"screen_id":"describe-run-apply","branch_label":"partial-provisional; z-upgrade-notice explains no upgrade coming"}]
+  %% steps: [{"screen_id":"workbench-media-selection","branch_label":"gpu-warming exceeds bound (>180 s) or endpoint unreachable → degraded-cpu"},{"screen_id":"toast-gpu-transition","branch_label":"error-gpu-unavailable (once), CPU drafts kept"},{"screen_id":"describe-run-apply","branch_label":"Review reported per-item tiers without an automatic upgrade promise; apply safe drafts, opt in to overwrites, or return to full history"}]
   n_workbench_media_selection["Workbench › Media selection (screen)"]
   n_toast_gpu_transition["Toast — GPU tier transition (overlay)"]
   n_workbench_media_selection -->|gpu-warming exceeds bound (>180 s) or endpoint unreachable → degraded-cpu| n_toast_gpu_transition
-  n_describe_run_apply["Workbench › Describe run › Review &amp; apply (screen)"]
+  n_describe_run_apply["Description History › Review &amp; apply (screen)"]
   n_toast_gpu_transition -->|error-gpu-unavailable (once), CPU drafts kept| n_describe_run_apply
 ```
 
@@ -205,9 +205,9 @@ Zone labels (verbatim; the tables above escape `|` for markdown, this list does 
 - Describe selected CTA — State vocabulary: default (selection ready) / gpu-cold-preview (default, CTA hint shows the warm-up cost) / pending = loading / disabled-empty-selection = empty.
 - Bulk describe progress — State vocabulary: starting, gpu-stopped, gpu-starting, gpu-warming, describing-provisional, describing-final and waiting-cooldown = loading; complete and cancelled = default; failed = error; degraded-cpu = degraded.
 - GPU tier chip — State vocabulary: hidden-no-run = empty; unknown, stopped and ready = default; starting and warming = loading; degraded = degraded.
-- Review results link — State vocabulary: hidden = empty; final-available = default; provisional-only = degraded.
-- Per-item tier badge — State vocabulary: final_gpu = default; provisional_cpu = degraded; failed = error.
-- Final descriptions pending notice — State vocabulary: hidden = empty; gpu-warming and upgrading = loading; done = default.
+- Review & apply drafts link — Hidden until the run is terminal; terminal runs link to #/description-history?run=<id>, regardless of item tier.
+- Per-item compute tier text, separate from naming provenance, in safe, overwrite, history-completion and no-draft rows: final_gpu = Final (GPU); provisional_cpu = Provisional (CPU); null or unrecognized = Unknown. Failure status does not determine tier.
+- Future lifecycle requirement (M03), not implemented in review: any upgrade notice requires explicit item upgrade state; GPU readiness alone never promises final descriptions.
 - Provenance (Adapter / Model / Source / Latency) — State vocabulary: gpu and seeded = default; cpu (provisional tier) = degraded.
 - Inline error (role=alert) — State vocabulary: hidden = empty; generic = error; gpu-unreachable = offline.
 - Toast body — State vocabulary: info and success = default; error = error.

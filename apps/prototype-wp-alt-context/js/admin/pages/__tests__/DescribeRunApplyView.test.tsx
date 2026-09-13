@@ -30,9 +30,30 @@ const runItemContract = { tier: 'final_gpu', result_generation: 1 } as const;
 const mixedItems = {
   run_id: 'run-abc',
   items: [
-    { media_id: 71, status: 'completed', alt_text_draft: 'A red flower.', caption: 'A flower.', provenance: null, existing_alt: false },
-    { media_id: 90, status: 'completed', alt_text_draft: 'A blue car.', caption: 'A car.', provenance: null, existing_alt: false },
-    { media_id: 70, status: 'completed', alt_text_draft: 'A stone bridge.', caption: 'A bridge.', provenance: null, existing_alt: true },
+    {
+      media_id: 71,
+      status: 'completed',
+      alt_text_draft: 'A red flower.',
+      caption: 'A flower.',
+      provenance: null,
+      existing_alt: false,
+    },
+    {
+      media_id: 90,
+      status: 'completed',
+      alt_text_draft: 'A blue car.',
+      caption: 'A car.',
+      provenance: null,
+      existing_alt: false,
+    },
+    {
+      media_id: 70,
+      status: 'completed',
+      alt_text_draft: 'A stone bridge.',
+      caption: 'A bridge.',
+      provenance: null,
+      existing_alt: true,
+    },
     { media_id: 72, status: 'failed', alt_text_draft: null, caption: null, provenance: null, existing_alt: false },
   ].map((item) => ({ ...item, ...runItemContract })),
 };
@@ -41,9 +62,30 @@ const mixedItems = {
 const afterPartialItems = {
   run_id: 'run-abc',
   items: [
-    { media_id: 71, status: 'completed', alt_text_draft: 'A red flower.', caption: 'A flower.', provenance: null, existing_alt: true },
-    { media_id: 90, status: 'completed', alt_text_draft: 'A blue car.', caption: 'A car.', provenance: null, existing_alt: true },
-    { media_id: 70, status: 'completed', alt_text_draft: 'A stone bridge.', caption: 'A bridge.', provenance: null, existing_alt: true },
+    {
+      media_id: 71,
+      status: 'completed',
+      alt_text_draft: 'A red flower.',
+      caption: 'A flower.',
+      provenance: null,
+      existing_alt: true,
+    },
+    {
+      media_id: 90,
+      status: 'completed',
+      alt_text_draft: 'A blue car.',
+      caption: 'A car.',
+      provenance: null,
+      existing_alt: true,
+    },
+    {
+      media_id: 70,
+      status: 'completed',
+      alt_text_draft: 'A stone bridge.',
+      caption: 'A bridge.',
+      provenance: null,
+      existing_alt: true,
+    },
     { media_id: 72, status: 'failed', alt_text_draft: null, caption: null, provenance: null, existing_alt: false },
   ].map((item) => ({ ...item, ...runItemContract })),
 };
@@ -84,6 +126,55 @@ describe('DescribeRunApplyView', () => {
     // The existing-alt draft is bucketed separately behind an overwrite opt-in.
     expect(screen.getByText('A stone bridge.')).toBeInTheDocument();
     expect(screen.getByLabelText(/Overwrite existing alt text for media 70/)).toBeInTheDocument();
+  });
+
+  it('keeps per-item tiers and naming visible across safe, overwrite, no-draft and partial buckets', async () => {
+    const items = mixedItems.items.map((item, index) => ({
+      ...item,
+      tier: index === 0 ? ('final_gpu' as const) : index === 3 ? null : ('provisional_cpu' as const),
+      provenance: { naming: { status: 'disabled' as const, realizer: null, names_applied: [] } },
+    }));
+    fetchItemsMock.mockResolvedValue({ run_id: 'run-abc', items });
+    applyMock.mockResolvedValue({
+      run_id: 'run-abc',
+      applied: [71],
+      partial: [90],
+      skipped_existing: [70],
+      skipped_no_draft: [72],
+      skipped_invalid: [],
+      failed: [],
+    });
+    renderView();
+    await screen.findByText('A red flower.');
+    const expectTier = (id: number, label: string) => {
+      const badge = screen.getByTestId(`acx-run-apply-tier-${id}`);
+      expect(badge).toHaveTextContent(label);
+      expect(badge.querySelector('[aria-hidden="true"]')).toHaveTextContent(/\S/);
+      expect(within(badge).getByText(label)).toBeVisible();
+      expect(within(badge.closest('li')!).getByText('No names (disabled)')).toBeInTheDocument();
+    };
+    expectTier(71, 'Compute tier: Final (GPU)');
+    expectTier(90, 'Compute tier: Provisional (CPU)');
+    expectTier(70, 'Compute tier: Provisional (CPU)');
+    expectTier(72, 'Compute tier: Unknown');
+    expect(screen.getByRole('checkbox')).not.toBeChecked();
+    expect(screen.getByRole('link', { name: 'Back to full history' })).toHaveAttribute('href', '#/description-history');
+    fireEvent.click(screen.getByRole('button', { name: 'Apply all 2 without alt text' }));
+    await screen.findByText(/Media 90 — needs history completion/);
+    expectTier(90, 'Compute tier: Provisional (CPU)');
+    expect(applyMock).toHaveBeenCalledWith('run-abc', []);
+    expect(screen.getByRole('checkbox')).not.toBeChecked();
+  });
+
+  it.each([null, 'future_tier'])('does not infer a final tier for a no-draft item with tier %s', async (tier) => {
+    fetchItemsMock.mockResolvedValue({
+      run_id: 'run-abc',
+      items: [{ ...mixedItems.items[3], tier: tier as (typeof mixedItems.items)[number]['tier'] }],
+    });
+    renderView();
+    expect(await screen.findByText('Compute tier: Unknown')).toBeInTheDocument();
+    expect(screen.queryByText('Compute tier: Final (GPU)')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Apply/ })).not.toBeInTheDocument();
   });
 
   it('renders each supported naming provenance status and hides absent naming metadata', async () => {
@@ -172,10 +263,7 @@ describe('DescribeRunApplyView', () => {
     expect(screen.queryByTestId('acx-run-apply-naming-85')).not.toBeInTheDocument();
 
     const positionalBadge = screen.getByTestId('acx-run-apply-naming-81');
-    expect(positionalBadge).toHaveAttribute(
-      'aria-label',
-      'Names were applied using positional fallback.',
-    );
+    expect(positionalBadge).toHaveAttribute('aria-label', 'Names were applied using positional fallback.');
     expect(positionalBadge).toHaveAttribute('title', 'Names were applied using positional fallback.');
   });
 
@@ -203,9 +291,7 @@ describe('DescribeRunApplyView', () => {
     });
     // After apply, items refetch with existing_alt true (alt landed) so the
     // safe bucket empties — partial recovery must still enable Apply again.
-    fetchItemsMock
-      .mockResolvedValueOnce(mixedItems)
-      .mockResolvedValue(afterPartialItems);
+    fetchItemsMock.mockResolvedValueOnce(mixedItems).mockResolvedValue(afterPartialItems);
     renderView();
     await screen.findByText('A red flower.');
 
@@ -255,9 +341,7 @@ describe('DescribeRunApplyView', () => {
       skipped_invalid: [],
       failed: [],
     });
-    fetchItemsMock
-      .mockResolvedValueOnce(mixedItems)
-      .mockResolvedValue(afterPartialItems);
+    fetchItemsMock.mockResolvedValueOnce(mixedItems).mockResolvedValue(afterPartialItems);
     renderView();
     await screen.findByText('A red flower.');
 
@@ -304,9 +388,7 @@ describe('DescribeRunApplyView', () => {
       skipped_invalid: [],
       failed: [],
     });
-    fetchItemsMock
-      .mockResolvedValueOnce(mixedItems)
-      .mockResolvedValue(afterPartialItems);
+    fetchItemsMock.mockResolvedValueOnce(mixedItems).mockResolvedValue(afterPartialItems);
     renderView();
     const status = await screen.findByTestId('acx-run-apply-status');
     await screen.findByText('A red flower.');
@@ -326,9 +408,7 @@ describe('DescribeRunApplyView', () => {
       skipped_invalid: [],
       failed: [],
     });
-    fetchItemsMock
-      .mockResolvedValueOnce(mixedItems)
-      .mockResolvedValue(afterPartialItems);
+    fetchItemsMock.mockResolvedValueOnce(mixedItems).mockResolvedValue(afterPartialItems);
     renderView();
     await screen.findByText('A red flower.');
 
@@ -359,13 +439,9 @@ describe('DescribeRunApplyView', () => {
     // replacing — retry primary, history-completion heading, and write count
     // would keep counting media 90 forever.
     await waitFor(() =>
-      expect(
-        screen.queryByRole('button', { name: /Apply again to complete history for 1/ }),
-      ).not.toBeInTheDocument(),
+      expect(screen.queryByRole('button', { name: /Apply again to complete history for 1/ })).not.toBeInTheDocument(),
     );
-    expect(
-      screen.queryByRole('heading', { level: 2, name: /need history completion/ }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { level: 2, name: /need history completion/ })).not.toBeInTheDocument();
     // Write count no longer includes the recovered id (0 selected overwrites).
     expect(screen.getByRole('button', { name: /Apply 0 descriptions/ })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Apply 1 descriptions/ })).not.toBeInTheDocument();
@@ -382,9 +458,7 @@ describe('DescribeRunApplyView', () => {
       skipped_invalid: [],
       failed: [],
     });
-    fetchItemsMock
-      .mockResolvedValueOnce(mixedItems)
-      .mockResolvedValue(afterPartialItems);
+    fetchItemsMock.mockResolvedValueOnce(mixedItems).mockResolvedValue(afterPartialItems);
     renderView();
     await screen.findByText('A red flower.');
 
@@ -407,9 +481,7 @@ describe('DescribeRunApplyView', () => {
     fireEvent.click(screen.getByRole('button', { name: /Apply again to complete history for 1/ }));
 
     const status = await screen.findByRole('status');
-    await waitFor(() =>
-      expect(status).toHaveTextContent(/History is still incomplete/),
-    );
+    await waitFor(() => expect(status).toHaveTextContent(/History is still incomplete/));
     expect(status).toHaveTextContent(/Media 90/);
     expect(status).toHaveTextContent(/Skipped 3 with existing alt text/);
     expect(status).not.toHaveTextContent(/History is now complete/);
@@ -425,9 +497,7 @@ describe('DescribeRunApplyView', () => {
       skipped_invalid: [],
       failed: [],
     });
-    fetchItemsMock
-      .mockResolvedValueOnce(mixedItems)
-      .mockResolvedValue(afterPartialItems);
+    fetchItemsMock.mockResolvedValueOnce(mixedItems).mockResolvedValue(afterPartialItems);
     renderView();
     await screen.findByText('A red flower.');
 
@@ -491,9 +561,30 @@ describe('DescribeRunApplyView', () => {
     const colliding = {
       run_id: 'run-collide',
       items: [
-        { media_id: 11, status: 'completed' as const, alt_text_draft: 'Draft A', caption: 'Untitled', provenance: null, existing_alt: false },
-        { media_id: 12, status: 'completed' as const, alt_text_draft: 'Draft B', caption: 'Untitled', provenance: null, existing_alt: false },
-        { media_id: 13, status: 'completed' as const, alt_text_draft: 'Draft C', caption: 'Untitled', provenance: null, existing_alt: false },
+        {
+          media_id: 11,
+          status: 'completed' as const,
+          alt_text_draft: 'Draft A',
+          caption: 'Untitled',
+          provenance: null,
+          existing_alt: false,
+        },
+        {
+          media_id: 12,
+          status: 'completed' as const,
+          alt_text_draft: 'Draft B',
+          caption: 'Untitled',
+          provenance: null,
+          existing_alt: false,
+        },
+        {
+          media_id: 13,
+          status: 'completed' as const,
+          alt_text_draft: 'Draft C',
+          caption: 'Untitled',
+          provenance: null,
+          existing_alt: false,
+        },
       ].map((item) => ({ ...item, ...runItemContract })),
     };
     const afterCollide = {
@@ -574,17 +665,36 @@ describe('DescribeRunApplyView', () => {
       skipped_invalid: [],
       failed: [],
     });
-    fetchItemsMock
-      .mockResolvedValueOnce(mixedItems)
-      .mockResolvedValue({
-        run_id: 'run-abc',
-        items: [
-          { media_id: 71, status: 'completed', alt_text_draft: 'A red flower.', caption: 'A flower.', provenance: null, existing_alt: true },
-          { media_id: 90, status: 'completed', alt_text_draft: 'A blue car.', caption: 'A car.', provenance: null, existing_alt: true },
-          { media_id: 70, status: 'completed', alt_text_draft: 'A stone bridge.', caption: 'A bridge.', provenance: null, existing_alt: true },
-          { media_id: 72, status: 'failed', alt_text_draft: null, caption: null, provenance: null, existing_alt: false },
-        ].map((item) => ({ ...item, ...runItemContract })),
-      });
+    fetchItemsMock.mockResolvedValueOnce(mixedItems).mockResolvedValue({
+      run_id: 'run-abc',
+      items: [
+        {
+          media_id: 71,
+          status: 'completed',
+          alt_text_draft: 'A red flower.',
+          caption: 'A flower.',
+          provenance: null,
+          existing_alt: true,
+        },
+        {
+          media_id: 90,
+          status: 'completed',
+          alt_text_draft: 'A blue car.',
+          caption: 'A car.',
+          provenance: null,
+          existing_alt: true,
+        },
+        {
+          media_id: 70,
+          status: 'completed',
+          alt_text_draft: 'A stone bridge.',
+          caption: 'A bridge.',
+          provenance: null,
+          existing_alt: true,
+        },
+        { media_id: 72, status: 'failed', alt_text_draft: null, caption: null, provenance: null, existing_alt: false },
+      ].map((item) => ({ ...item, ...runItemContract })),
+    });
     renderView();
     await screen.findByText('A red flower.');
 
@@ -616,9 +726,7 @@ describe('DescribeRunApplyView', () => {
     const refetchPromise = new Promise<typeof afterPartialItems>((resolve) => {
       resolveRefetch = resolve;
     });
-    fetchItemsMock
-      .mockResolvedValueOnce(mixedItems)
-      .mockImplementationOnce(() => refetchPromise);
+    fetchItemsMock.mockResolvedValueOnce(mixedItems).mockImplementationOnce(() => refetchPromise);
     renderView();
     await screen.findByText('A red flower.');
 
@@ -628,9 +736,7 @@ describe('DescribeRunApplyView', () => {
     // existing_alt is false for both 71 and 90. Without the fix, 90 sits in
     // withoutAlt AND outstanding → totalWriteCount 3. With the fix: withoutAlt
     // drops 90, count is 1 (stale 71) + 1 (partial 90) = 2 — never 3.
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: /Apply 2 descriptions/ })).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByRole('button', { name: /Apply 2 descriptions/ })).toBeInTheDocument());
     expect(screen.queryByRole('button', { name: /Apply 3 descriptions/ })).not.toBeInTheDocument();
     // Media 90 listed once as history-completion, not also as a plain safe row.
     expect(screen.getAllByText(/Media 90 — needs history completion \(no overwrite\)/)).toHaveLength(1);
@@ -669,9 +775,7 @@ describe('DescribeRunApplyView', () => {
 
     // After the write lands the overwrite selection resets, so the checkbox is
     // unchecked and a repeat apply sends the safe bucket only ([] overwrites).
-    await waitFor(() =>
-      expect(screen.getByLabelText(/Overwrite existing alt text for media 70/)).not.toBeChecked(),
-    );
+    await waitFor(() => expect(screen.getByLabelText(/Overwrite existing alt text for media 70/)).not.toBeChecked());
 
     applyMock.mockClear();
     fireEvent.click(screen.getByRole('button', { name: /Apply all 2 without alt text/ }));
@@ -703,7 +807,17 @@ describe('DescribeRunApplyView', () => {
   it('shows a zero state when the run has no applicable drafts', async () => {
     fetchItemsMock.mockResolvedValue({
       run_id: 'run-empty',
-      items: [{ media_id: 5, status: 'failed', alt_text_draft: null, caption: null, provenance: null, ...runItemContract, existing_alt: false }],
+      items: [
+        {
+          media_id: 5,
+          status: 'failed',
+          alt_text_draft: null,
+          caption: null,
+          provenance: null,
+          ...runItemContract,
+          existing_alt: false,
+        },
+      ],
     });
 
     renderView('run-empty');
@@ -714,6 +828,24 @@ describe('DescribeRunApplyView', () => {
       'href',
       '#/description-history',
     );
+  });
+
+  it('holds the error Retry while a read is pending', async () => {
+    let resolveRetry: ((value: typeof mixedItems) => void) | undefined;
+    fetchItemsMock.mockRejectedValueOnce(new Error('boom')).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveRetry = resolve;
+      }),
+    );
+    renderView();
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry' }));
+    const retry = await screen.findByRole('button', { name: 'Retrying…' });
+    expect(retry).toHaveAttribute('aria-disabled', 'true');
+    expect(retry).toBeEnabled();
+    fireEvent.click(retry);
+    expect(fetchItemsMock).toHaveBeenCalledTimes(2);
+    resolveRetry?.(mixedItems);
+    await screen.findByText('A red flower.');
   });
 
   it('shows an error state with retry when items fail to load', async () => {
@@ -727,6 +859,31 @@ describe('DescribeRunApplyView', () => {
     expect(screen.getByTestId('acx-run-apply-status')).toBeInTheDocument();
   });
 
+  it('retries only the read after successful apply and a failed refresh', async () => {
+    applyMock.mockResolvedValue({
+      run_id: 'run-abc',
+      applied: [71, 90],
+      partial: [],
+      skipped_existing: [70],
+      skipped_no_draft: [72],
+      skipped_invalid: [],
+      failed: [],
+    });
+    fetchItemsMock.mockResolvedValueOnce(mixedItems).mockRejectedValue(new Error('502'));
+    renderView();
+    await screen.findByText('A red flower.');
+    fireEvent.click(screen.getByRole('button', { name: /Apply all 2 without alt text/ }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Showing saved drafts');
+    expect(screen.getByRole('status')).toHaveTextContent('Applied 2 descriptions.');
+    expect(screen.getByText('A red flower.')).toBeInTheDocument();
+    const reads = fetchItemsMock.mock.calls.length;
+    fetchItemsMock.mockResolvedValue(mixedItems);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(fetchItemsMock.mock.calls.length).toBeGreaterThan(reads));
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+    expect(applyMock).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps recovery affordance when post-apply items refetch fails [BR-127][INT-11]', async () => {
     applyMock.mockResolvedValue({
       run_id: 'run-abc',
@@ -738,9 +895,7 @@ describe('DescribeRunApplyView', () => {
       failed: [],
     });
     // Initial load succeeds; post-apply invalidate/refetch rejects (502).
-    fetchItemsMock
-      .mockResolvedValueOnce(mixedItems)
-      .mockRejectedValue(new Error('502'));
+    fetchItemsMock.mockResolvedValueOnce(mixedItems).mockRejectedValue(new Error('502'));
     renderView();
     await screen.findByText('A red flower.');
 
@@ -759,5 +914,10 @@ describe('DescribeRunApplyView', () => {
     expect(screen.getByRole('button', { name: /Apply 2 descriptions/ })).toBeEnabled();
     // Must not collapse to the cold load-error panel.
     expect(screen.queryByText('Could not load this run’s drafts.')).not.toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent('Showing saved drafts');
+    const reads = fetchItemsMock.mock.calls.length;
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(fetchItemsMock.mock.calls.length).toBeGreaterThan(reads));
+    expect(applyMock).toHaveBeenCalledTimes(1);
   });
 });

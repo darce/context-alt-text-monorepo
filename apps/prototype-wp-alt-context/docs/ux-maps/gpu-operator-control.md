@@ -7,7 +7,7 @@
 - Operator can always see the burst GPU state, the effective intent, the lease expiry and load freshness in one place (INT-10 status–predict–stop, OBS-08 stale is shown as unknown with age).
 - Operator can request Start, Stop or Return to automatic; each request is acknowledged within one poll and its outcome (honoured, pending, blocked) is visible (HAI-04 activate–operate–override).
 - Cost is disclosed before commitment and the lease cap is named; the user is never surprised by a GPU-hour charge (INT-07, CARD-15, COST-10).
-- Stop never discards in-flight work: a stop while a describe run is running is deferred and the reason is shown (FLOW-08, A11Y-18).
+- Stop intent can be requested while busy and shutdown is deferred until idle; the separate hard lease remains a cost backstop. Stale or unknown telemetry blocks Start (INT-10, FLOW-08, A11Y-18).
 
 ## Jobs
 - `job-prewarm-gpu` — Pre-warm the GPU before a demo so the first describe run is fast
@@ -56,7 +56,6 @@ Action states: stopped, unknown, starting, warming, ready, degraded
 |   [secondary] Return to automatic                          |
 |   [tertiary] Refresh status                                |
 | when unknown                                               |
-|   [PRIMARY] Start GPU                                      |
 |   [secondary] Return to automatic                          |
 |   [tertiary] Refresh status                                |
 | when starting                                              |
@@ -159,7 +158,7 @@ url_params: `run_id`
 
 | id | verb | target | hierarchy | costly | irreversible | preview required | screen id | when (recovery state) |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `act-gpu-start` | Start GPU | `gpu-start-confirm` | primary | yes | no | yes | `settings-burst-gpu` | stopped, unknown, degraded |
+| `act-gpu-start` | Start GPU | `gpu-start-confirm` | primary | yes | no | yes | `settings-burst-gpu` | stopped, degraded |
 | `act-gpu-confirm-start` | Confirm start | `POST recognition/gpu/intent {action: start}` | primary | yes | no | no | `gpu-start-confirm` | always |
 | `act-gpu-stop` | Stop GPU | `gpu-stop-confirm` | secondary | no | no | yes | `settings-burst-gpu` | starting, warming, ready, degraded |
 | `act-gpu-confirm-stop` | Confirm stop | `POST recognition/gpu/intent {action: stop}` | primary | no | no | no | `gpu-stop-confirm` | always |

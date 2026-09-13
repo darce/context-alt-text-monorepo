@@ -576,7 +576,7 @@ source "{SCRIPT}"
 ACX_BOOT_SMOKE=0
 ACX_CONVERGE_RUNTIME=1
 ACX_IMAGE_REPO="$IMAGE_BASE"
-read_remote_image_repo() {{ printf '%s\\n' "$IMAGE_BASE-vlm"; }}
+image_repo_resource() {{ if [[ "$1" == claim ]]; then echo owner; else printf '%s\\n' "$IMAGE_BASE-vlm" >>"{records}"; fi; }}
 ship_remote_image_repo_env() {{ printf '%s\\n' "$ACX_IMAGE_REPO" >>"{records}"; }}
 converge_runtime() {{ fail "synthetic convergence failure"; }}
 restore_runtime_topology() {{ printf 'topology\\n' >>"{records}"; }}
@@ -716,7 +716,7 @@ def test_automatic_rollbacks_capture_failure_evidence_first() -> None:
         restore_positions = [index for index in range(len(body)) if body.startswith(restore_marker, index)]
         assert len(evidence_positions) == 2
         assert len(restore_positions) == 2
-        assert all(evidence < restore for evidence, restore in zip(evidence_positions, restore_positions))
+        assert all(evidence < restore for evidence, restore in zip(evidence_positions, restore_positions, strict=True))
         assert f"handle_failed_verification {env_expression}" in body
 
 
@@ -805,7 +805,7 @@ def test_rollback_success_requires_post_restart_health_evidence() -> None:
     assert "restore_topology_backups" in body
     assert "restore_edge_backups" in body
     assert "abort_cutover_candidate" in body
-    assert body.index("restore_topology_backups") < body.index("restore_prior_image_repo_env")
+    assert body.index("restore_prior_image_repo_env") < body.index("restore_topology_backups")
     assert body.index("restore_prior_image_repo_env") < body.index('"rollback systemctl restart')
     assert body.index('"rollback systemctl restart') < body.index("restore_edge_backups")
     assert body.index("restore_edge_backups") < body.index("abort_cutover_candidate")
@@ -875,12 +875,12 @@ restore_env_tag_to_rollback dev-fir 0
     result = subprocess.run(["/bin/bash", "-c", command], text=True, capture_output=True, check=False)
     logged = records.read_text() if records.exists() else ""
     combined = result.stdout + result.stderr
-    assert result.returncode != 0, combined
+    assert result.returncode == 75, combined
     assert "ROLLBACK CAS REFUSED" in result.stderr
     assert "dev-fir" in result.stderr
     assert candidate in result.stderr
     assert newer in result.stderr
-    assert "push " not in logged
+    assert not logged
 
 
 def test_rollback_push_cas_happy_path_pushes_when_tag_unchanged(tmp_path: Path) -> None:
@@ -2824,10 +2824,11 @@ remote="${@: -1}"
 printf '%s\n' "$remote" >>"${state}/ssh.log"
 if [[ "$remote" == *"cutover-inflight"* ]]; then
   if [[ -f "${state}/cutover-inflight" ]]; then
-    cat "${state}/cutover-inflight"
+    printf 'PRESENT\n'
     exit 0
   fi
-  exit 1
+  printf 'ABSENT\n'
+  exit 0
 fi
 if [[ "$remote" == *"flock"* || "$remote" == *"/locks/tag-"* ]]; then
   printf 'LOCKED\n'
@@ -3003,8 +3004,10 @@ def test_actual_restart_failure_restores_after_confirmed_stopped_candidate(tmp_p
     assert docker_log.count(f"push {base}:{env_name}") == 1
     assert ssh_log.count(f"systemctl start {unit}-next") == 1, ssh_log
     assert (state / "candidate-recreated").is_file(), ssh_log
-    assert ssh_log.index(f"systemctl stop {unit}-next") < ssh_log.index("rm -fs api") < ssh_log.index(
-        f"systemctl start {unit}-next"
+    assert (
+        ssh_log.index(f"systemctl stop {unit}-next")
+        < ssh_log.index("rm -fs api")
+        < ssh_log.index(f"systemctl start {unit}-next")
     )
     assert ssh_log.count(f"systemctl restart {unit}") == 2, ssh_log
     assert "-p acx-" + env_name + "-next" in docker_log, docker_log
@@ -3365,7 +3368,7 @@ recover_interrupted_cutover
 
 
 def test_recover_interrupted_cutover_commits_after_successful_restore(tmp_path: Path) -> None:
-    """R-09: successful signal-safe restore may drain the candidate only after commit."""
+    """R-09: successful signal-safe recovery commits only after candidate drain."""
     records = tmp_path / "recover.log"
     command = f'''
 source "{SCRIPT}"
@@ -3382,7 +3385,7 @@ recover_interrupted_cutover
     result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, check=False)
     logged = records.read_text() if records.exists() else ""
     assert result.returncode == 0, result.stdout + result.stderr
-    assert logged.splitlines() == ["committed", "aborted"]
+    assert logged.splitlines() == ["aborted", "committed"]
 
 
 def test_killed_run_flip_marker_recovers_on_next_deploy(tmp_path: Path) -> None:
@@ -3403,7 +3406,7 @@ printf 'traffic=%s\\n' "$ACX_TRAFFIC_FLIPPED" >>"{records}"
     result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, check=False)
     logged = records.read_text() if records.exists() else ""
     assert result.returncode == 0, result.stdout + result.stderr
-    assert logged.splitlines() == ["restored", "committed", "aborted", "traffic=0"]
+    assert logged.splitlines() == ["restored", "aborted", "committed", "traffic=0"]
 
 
 def test_term_after_traffic_flip_invokes_cutover_recovery(tmp_path: Path) -> None:
@@ -3570,9 +3573,7 @@ def test_normal_verify_uses_aggregate_not_scoped_when_siblings_incomplete(
     check for the registry-wide gate (RLSE-03, DATA-13). Scoped success is
     stubbed so a bypass would still return 0 (TEST-15).
     """
-    result, logged = _run_verify_live_gpu_snapshots(
-        tmp_path, sibling_rc=1, timeout_rc=0, scoped_rc=0
-    )
+    result, logged = _run_verify_live_gpu_snapshots(tmp_path, sibling_rc=1, timeout_rc=0, scoped_rc=0)
     combined = result.stdout + result.stderr
     lines = logged.splitlines()
     assert "aggregate:0" in lines, combined
@@ -3583,9 +3584,7 @@ def test_normal_verify_uses_aggregate_not_scoped_when_siblings_incomplete(
 
 def test_subsequent_deploy_keeps_aggregate_snapshot_gate(tmp_path: Path) -> None:
     """Once every sibling has a snapshot, the aggregate gate still governs."""
-    result, logged = _run_verify_live_gpu_snapshots(
-        tmp_path, sibling_rc=0, timeout_rc=0, scoped_rc=0
-    )
+    result, logged = _run_verify_live_gpu_snapshots(tmp_path, sibling_rc=0, timeout_rc=0, scoped_rc=0)
     combined = result.stdout + result.stderr
     lines = logged.splitlines()
     assert "aggregate:0" in lines, combined
@@ -3600,9 +3599,7 @@ def test_subsequent_deploy_keeps_aggregate_snapshot_gate(tmp_path: Path) -> None
     [1, 255, 124],
     ids=["missing", "ssh_error", "deadline"],
 )
-def test_normal_verify_propagates_aggregate_checker_failure(
-    tmp_path: Path, timeout_rc: int
-) -> None:
+def test_normal_verify_propagates_aggregate_checker_failure(tmp_path: Path, timeout_rc: int) -> None:
     """Aggregate checker failure must propagate; scoped success must not bypass.
 
     RES-02 / RES-03: missing snapshots (1), SSH error (255), and GNU timeout
@@ -3610,23 +3607,17 @@ def test_normal_verify_propagates_aggregate_checker_failure(
     not be replaced by a scoped writer check. TEST-15: scoped stub returns 0
     so a silent substitute would turn this green for the wrong reason.
     """
-    result, logged = _run_verify_live_gpu_snapshots(
-        tmp_path, sibling_rc=1, timeout_rc=timeout_rc, scoped_rc=0
-    )
+    result, logged = _run_verify_live_gpu_snapshots(tmp_path, sibling_rc=1, timeout_rc=timeout_rc, scoped_rc=0)
     combined = result.stdout + result.stderr
     lines = logged.splitlines()
     assert f"aggregate:{timeout_rc}" in lines, combined
     assert "scoped:prod" not in lines
-    assert result.returncode == timeout_rc, (
-        f"expected aggregate rc {timeout_rc}, got {result.returncode}: {combined}"
-    )
+    assert result.returncode == timeout_rc, f"expected aggregate rc {timeout_rc}, got {result.returncode}: {combined}"
 
 
 def test_normal_verify_runs_aggregate_on_sibling_probe_error(tmp_path: Path) -> None:
     """Sibling probe errors must not substitute scoped producer snapshots."""
-    result, logged = _run_verify_live_gpu_snapshots(
-        tmp_path, sibling_rc=255, timeout_rc=1, scoped_rc=0
-    )
+    result, logged = _run_verify_live_gpu_snapshots(tmp_path, sibling_rc=255, timeout_rc=1, scoped_rc=0)
     combined = result.stdout + result.stderr
     lines = logged.splitlines()
     assert "aggregate:1" in lines, combined
@@ -3666,8 +3657,7 @@ def _run_prepare_producer(
     records = tmp_path / records_name
     confirm_line = f'export CONFIRM="{confirm}"' if confirm is not None else "unset CONFIRM || true"
     preserve_body = (
-        f'  ACX_ROLLBACK_DIGEST_REF="$IMAGE_BASE@sha256:{_ROLLBACK_SHA}"\n'
-        '  ACX_ROLLBACK_IMAGE_BASE="$IMAGE_BASE"\n'
+        f'  ACX_ROLLBACK_DIGEST_REF="$IMAGE_BASE@sha256:{_ROLLBACK_SHA}"\n  ACX_ROLLBACK_IMAGE_BASE="$IMAGE_BASE"\n'
         if preserve_sets_rollback
         else ""
     )
@@ -3742,8 +3732,8 @@ restore_env_tag_to_rollback() {{
   printf 'rollback-fenced:%s\\n' "$1" >>"{records}"
   return 0
 }}
-{'export _ACX_SHIP_COMPLETION=scoped' if public_deploy else ':'}
-{'do_deploy' if public_deploy else 'do_prepare_producer'} {env}
+{"export _ACX_SHIP_COMPLETION=scoped" if public_deploy else ":"}
+{"do_deploy" if public_deploy else "do_prepare_producer"} {env}
 '''
     result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, check=False)
     logged = records.read_text() if records.exists() else ""
@@ -3801,15 +3791,11 @@ def test_prepare_producer_convergence_does_not_require_missing_siblings(
     tmp_path: Path,
 ) -> None:
     """Bootstrap the selected env whether sibling snapshots exist or not."""
-    result, logged = _run_prepare_producer(
-        tmp_path, sibling_rc=0, records_name="sib-complete.log"
-    )
+    result, logged = _run_prepare_producer(tmp_path, sibling_rc=0, records_name="sib-complete.log")
     combined = result.stdout + result.stderr
     assert "restart-accepted:prod" in logged.splitlines(), combined
     assert result.returncode == 0, combined
-    result_missing, logged_missing = _run_prepare_producer(
-        tmp_path, sibling_rc=1, records_name="sib-missing.log"
-    )
+    result_missing, logged_missing = _run_prepare_producer(tmp_path, sibling_rc=1, records_name="sib-missing.log")
     combined_missing = result_missing.stdout + result_missing.stderr
     assert "restart-accepted:prod" in logged_missing.splitlines(), combined_missing
     assert result_missing.returncode == 0, combined_missing
@@ -3818,9 +3804,7 @@ def test_prepare_producer_convergence_does_not_require_missing_siblings(
 
 def test_prepare_producer_prod_requires_confirm_promote(tmp_path: Path) -> None:
     """Prod prepare-producer must not bypass CONFIRM=PROMOTE (do_deploy 3684)."""
-    result, logged = _run_prepare_producer(
-        tmp_path, confirm=None, records_name="no-confirm.log"
-    )
+    result, logged = _run_prepare_producer(tmp_path, confirm=None, records_name="no-confirm.log")
     combined = result.stdout + result.stderr
     assert result.returncode != 0, combined
     assert "passed" not in combined.lower()
@@ -3830,9 +3814,7 @@ def test_prepare_producer_prod_requires_confirm_promote(tmp_path: Path) -> None:
 
 def test_prepare_producer_restart_without_fenced_digest_is_refused(tmp_path: Path) -> None:
     """A restart with no smoke-fenced digest must fail, not skip to scoped success."""
-    result, logged = _run_prepare_producer(
-        tmp_path, candidate_sha="malformed", records_name="unfenced-restart.log"
-    )
+    result, logged = _run_prepare_producer(tmp_path, candidate_sha="malformed", records_name="unfenced-restart.log")
     combined = result.stdout + result.stderr
     lines = logged.splitlines()
     assert result.returncode != 0, combined
@@ -3918,9 +3900,7 @@ def test_prepare_producer_leaves_aggregate_refusal_for_missing_siblings(
     tmp_path: Path,
 ) -> None:
     """NORMAL verify still fails closed on missing siblings (RLSE-03, TEST-15)."""
-    result, logged = _run_verify_live_gpu_snapshots(
-        tmp_path, sibling_rc=1, timeout_rc=1, scoped_rc=0
-    )
+    result, logged = _run_verify_live_gpu_snapshots(tmp_path, sibling_rc=1, timeout_rc=1, scoped_rc=0)
     combined = result.stdout + result.stderr
     lines = logged.splitlines()
     assert "aggregate:1" in lines, combined
@@ -3929,10 +3909,7 @@ def test_prepare_producer_leaves_aggregate_refusal_for_missing_siblings(
 
 
 def _fresh_load_snapshot(written_at: int = 1000) -> str:
-    return (
-        '{"queue_depth":1,"in_flight":0,"batch_in_progress":false,'
-        f'"written_at":{written_at}}}\n'
-    )
+    return f'{{"queue_depth":1,"in_flight":0,"batch_in_progress":false,"written_at":{written_at}}}\n'
 
 
 def _run_scoped_producer(
@@ -3999,7 +3976,7 @@ def test_scoped_producer_refuses_missing_describe_load(tmp_path: Path) -> None:
     combined = result.stdout + result.stderr
     assert result.returncode != 0, combined
     assert "describe-load.json" in combined
-    assert "queue_depth\":0" not in combined
+    assert 'queue_depth":0' not in combined
 
 
 def test_scoped_producer_refuses_stale_describe_load(tmp_path: Path) -> None:
@@ -4021,3 +3998,118 @@ def test_scoped_producer_accepts_fresh_valid_load(tmp_path: Path) -> None:
     combined = result.stdout + result.stderr
     assert result.returncode == 0, combined
     assert "Scoped producer-preparation" in combined or "scoped producer" in combined.lower()
+
+
+@pytest.mark.parametrize(
+    "invoke,phase",
+    [("do_rollback dev aaaaaaaaaaaa", "manual")]
+    + [
+        (invoke, phase)
+        for invoke in ("do_deploy dev", "do_promote dev staging")
+        for phase in ("push", "restart", "verify")
+    ]
+    + [("handle_failed_verification dev Test", "verify")],
+)
+@pytest.mark.parametrize("cleanup_rc", [0, 1])
+@pytest.mark.parametrize("fence_kind", ["initial", "late"])
+def test_rollback_cas_status_reaches_public_callers(
+    tmp_path: Path, invoke: str, phase: str, cleanup_rc: int, fence_kind: str
+) -> None:
+    """Exercise real CAS and wrappers; independent cleanup cannot erase refusal."""
+    records = tmp_path / "effects"
+    command = f'''
+source "{SCRIPT}"
+ACX_VERIFY_OPTIONAL=1
+ACX_ROLLBACK_DIGEST_REF="$IMAGE_BASE@sha256:{"a" * 64}"
+ACX_ROLLBACK_IMAGE_BASE="$IMAGE_BASE"
+ACX_CANDIDATE_DIGEST_REF="$IMAGE_BASE@sha256:{"b" * 64}"
+for fn in init_deploy_ocir_docker_config preflight_ssh preflight_remote_face_pipeline_models preflight_git_clean preflight_branch_synced preflight_remote_ocir_auth preflight_remote_docker preflight_docker preflight_ocir_auth assert_remote_disk_headroom_for_pull preserve_rollback_tag do_build do_build_remote do_push_sha promote_gate _pull_ref _pull_ref_remote capture_failure_evidence capture_prior_runtime_identity {"assert_rollback_fence" if fence_kind == "late" else ""}; do
+  eval "$fn() {{ :; }}"
+done
+with_shared_tag_lock() {{ shift; "$@"; }}
+image_digest_ref() {{ echo "$IMAGE_BASE@sha256:{"b" * 64}"; }}
+remote_image_id_for_digest() {{ echo "sha256:{"d" * 64}"; }}
+remote_image_digest_ref() {{
+  if [[ "$1" == *@sha256:* ]]; then
+    echo "$1"
+  elif [[ "$1" == *:rollback-* ]]; then
+    echo "$ACX_ROLLBACK_DIGEST_REF"
+  elif [[ "{phase}" == manual && ! -e "{records}.snapshot" ]]; then
+    touch "{records}.snapshot"
+    echo "$IMAGE_BASE@sha256:{"b" * 64}"
+  else
+    echo "$IMAGE_BASE@sha256:{"c" * 64}"
+  fi
+}}
+do_push_tag() {{ return {1 if phase == "push" else 0}; }}
+do_restart() {{ return {1 if phase == "restart" else 0}; }}
+do_verify() {{ return 1; }}
+restore_prior_image_repo_env() {{ echo cleanup >>"{records}"; return {cleanup_rc}; }}
+remote_docker_with_config() {{ echo mutation >>"{records}"; }}
+restore_runtime_and_edge() {{ echo runtime >>"{records}"; }}
+{invoke}
+'''
+    result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, timeout=30)
+    combined = result.stdout + result.stderr
+    assert result.returncode == 75, combined
+    assert ("ROLLBACK CAS REFUSED" if fence_kind == "late" else "STALE ROLLBACK REFUSED") in combined
+    effects = records.read_text().splitlines() if records.exists() else []
+    assert effects == []
+
+
+@pytest.mark.parametrize("failure", ["observe", "retag", "push"])
+def test_rollback_ordinary_errors_remain_status_one(failure: str) -> None:
+    command = f'''
+source "{SCRIPT}"
+ACX_ROLLBACK_DIGEST_REF="$IMAGE_BASE@sha256:{"a" * 64}"
+ACX_CANDIDATE_DIGEST_REF="$IMAGE_BASE@sha256:{"b" * 64}"
+_pull_ref_remote() {{ return {1 if failure == "observe" else 0}; }}
+remote_image_digest_ref() {{ echo "$ACX_CANDIDATE_DIGEST_REF"; }}
+run_with_deadline() {{ shift 2; "$@"; }}
+remote_docker_with_config() {{
+  [[ "$1" != "{"tag" if failure == "retag" else "push"}" ]]
+}}
+restore_registry_env_tag dev
+'''
+    result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, timeout=30)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "CAS REFUSED" not in result.stderr
+
+
+@pytest.mark.parametrize("producer", ["assert_rollback_fence dev 0", "restore_registry_env_tag dev"])
+@pytest.mark.parametrize("observation", ["", "unparseable", "repo@sha256:1234"])
+def test_rollback_unknown_registry_mapping_is_not_stale_owner(producer: str, observation: str) -> None:
+    command = f'''
+source "{SCRIPT}"
+ACX_ROLLBACK_DIGEST_REF="$IMAGE_BASE@sha256:{"a" * 64}"
+ACX_CANDIDATE_DIGEST_REF="$IMAGE_BASE@sha256:{"b" * 64}"
+_pull_ref_remote() {{ :; }}
+remote_image_digest_ref() {{
+  if [[ "$1" == *@sha256:* ]]; then echo "$1"; else echo "{observation}"; fi
+}}
+remote_docker_with_config() {{ echo unexpected-mutation; return 0; }}
+{producer}
+'''
+    result = subprocess.run(["bash", "-c", command], capture_output=True, text=True, timeout=10)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "unexpected-mutation" not in result.stdout
+    assert "CAS REFUSED" not in result.stderr
+
+
+@pytest.mark.parametrize("runtime", ["unknown", "newer"])
+def test_rollback_runtime_fence_distinguishes_unknown_from_newer(runtime: str) -> None:
+    record = f"RUNNING|{'c' * 64}|sha256:{'d' * 64}|running|acx-dev|api|config" if runtime == "newer" else "malformed"
+    command = f'''
+source "{SCRIPT}"
+ACX_ROLLBACK_DIGEST_REF="$IMAGE_BASE@sha256:{"a" * 64}"
+ACX_CANDIDATE_DIGEST_REF="$IMAGE_BASE@sha256:{"b" * 64}"
+_pull_ref_remote() {{ :; }}
+remote_image_digest_ref() {{
+  if [[ "$1" == *@sha256:* ]]; then echo "$1"; else echo "$ACX_CANDIDATE_DIGEST_REF"; fi
+}}
+remote_image_id_for_digest() {{ echo "sha256:{"e" * 64}"; }}
+read_api_runtime_evidence() {{ echo "{record}"; }}
+assert_rollback_fence dev 1
+'''
+    result = subprocess.run(["bash", "-c", command], capture_output=True, text=True, timeout=10)
+    assert result.returncode == (75 if runtime == "newer" else 1), result.stdout + result.stderr

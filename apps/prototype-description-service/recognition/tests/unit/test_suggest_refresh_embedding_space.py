@@ -112,6 +112,33 @@ async def test_find_best_cluster_match_skips_foreign_space_gallery() -> None:
     assert match[0] == same_cluster_id
 
 
+@pytest.mark.asyncio
+async def test_surface_gallery_rejects_missing_protocol_method() -> None:
+    service = SuggestionRefreshService(
+        repository=AsyncMock(),
+        tenant_id=str(uuid4()),
+        cluster_repository=SimpleNamespace(),  # Deliberately invalid repository.
+    )
+
+    with pytest.raises(AttributeError, match="get_all_representatives"):
+        await service._resolve_surface_gallery("labeled", identities_by_cluster={}, precomputed=np.array([[1.0, 0.0]]))
+
+
+@pytest.mark.asyncio
+async def test_surface_gallery_propagates_repository_attribute_error() -> None:
+    get_reps = AsyncMock(side_effect=AttributeError("live gallery fault"))
+    service = SuggestionRefreshService(
+        repository=AsyncMock(),
+        tenant_id=str(uuid4()),
+        cluster_repository=SimpleNamespace(get_all_representatives=get_reps),
+    )
+
+    with pytest.raises(AttributeError, match="live gallery fault"):
+        await service._resolve_surface_gallery("labeled", identities_by_cluster={}, precomputed=np.array([[1.0, 0.0]]))
+
+    get_reps.assert_awaited_once_with("labeled")
+
+
 class _SurfaceRepoStub:
     """Production-shaped stub: get_by_id has no representatives loaded."""
 

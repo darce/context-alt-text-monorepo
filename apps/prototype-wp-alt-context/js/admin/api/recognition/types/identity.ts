@@ -16,6 +16,18 @@ export interface RepresentativeBounds {
   bbox: BoundingBox;
 }
 
+/**
+ * Cluster representative face crop, resolved server-side from the cluster's
+ * representative member. Identical for every member of one cluster (IDCHIP-1).
+ */
+export interface RepresentativeFace {
+  identity_id: string;
+  media_id: number | null;
+  media_url: string | null;
+  attachment_url?: string | null;
+  bbox: BoundingBox | null;
+}
+
 export interface ClusterIdentity {
   identity_id: string;
   media_id: number;
@@ -66,8 +78,12 @@ export interface DebugMetrics {
 export interface DetectedIdentity {
   identity_id: string;
   representative_id?: string | null;
+  /** Cluster representative crop; null/absent when unresolved (IDCHIP-1). */
+  representative_face?: RepresentativeFace | null;
   media_id: number;
   cluster_id: string | null;
+  /** Stringified acx_persons.id bound to this identity's cluster; null when unbound (IDCHIP-1). */
+  person_id?: string | null;
   cluster_label: string | null;
   is_auto_label: boolean;
   is_pinned?: boolean;

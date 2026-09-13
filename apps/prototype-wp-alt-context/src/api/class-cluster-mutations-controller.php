@@ -313,7 +313,7 @@ class ClusterMutationsController extends AbstractRecognitionProxyController impl
 	private function run_mutation( string $surface, callable $callback ): WP_REST_Response|WP_Error {
 		try {
 			return $callback();
-		} catch ( ProjectionQueryException $exception ) {
+		} catch ( \RuntimeException $exception ) {
 			return ProjectionQueryException::to_rest_error( $surface );
 		}
 	}

@@ -41,6 +41,41 @@ class MemberResponseMapperTest extends TestCase
         $this->assertFalse($payload[0]['is_pinned']);
     }
 
+    public function testMediaIdentityUsesRepresentativeMediaAndBbox(): void
+    {
+        $GLOBALS['__ac_attachment_urls'][99] = 'http://example.test/media/99.jpg';
+        $payload = $this->mapper->map_media_identities([[
+            'identity_uuid' => 'current',
+            'attachment_id' => 1,
+            'person_id' => 7,
+            'representative_member' => [
+                'identity_uuid' => 'representative',
+                'attachment_id' => 99,
+                'bbox_json' => '{"pixels":{"x":2,"y":3,"width":4,"height":5}}',
+            ],
+        ]]);
+        $this->assertSame('7', $payload[1][0]['person_id']);
+        $this->assertSame([
+            'identity_id' => 'representative',
+            'media_id' => 99,
+            'media_url' => 'http://example.test/media/99.jpg',
+            'attachment_url' => 'http://example.test/media/99.jpg',
+            'bbox' => ['x' => 2, 'y' => 3, 'width' => 4, 'height' => 5],
+        ], $payload[1][0]['representative_face']);
+    }
+
+    public function testMediaIdentityEmitsNullForUnresolvedPersonAndRepresentative(): void
+    {
+        foreach ([null, '', 0] as $personId) {
+            $payload = $this->mapper->map_media_identities([[
+                'identity_uuid' => 'current', 'attachment_id' => 1,
+                'person_id' => $personId, 'representative_id' => 'missing',
+            ]]);
+            $this->assertNull($payload[1][0]['person_id']);
+            $this->assertNull($payload[1][0]['representative_face']);
+        }
+    }
+
     public function testMapMediaIdentitiesGroupsByMediaId(): void
     {
         $rows = [

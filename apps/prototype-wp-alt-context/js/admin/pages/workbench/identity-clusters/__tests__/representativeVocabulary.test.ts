@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { gatedClusterCopy, repairGatedCount } from '../representativeVocabulary';
+import { faceGroupsBadge, gatedClusterCopy, repairGatedCount } from '../representativeVocabulary';
 
 describe('repairGatedCount', () => {
   it('R3-03: zero evidence and zero unlabeled does not invent a group', () => {
@@ -35,5 +35,11 @@ describe('repairGatedCount', () => {
     expect(repairGatedCount(3, 7)).toBe(3);
     expect(repairGatedCount(0, 7)).toBe(7);
     expect(repairGatedCount(3, 7)).not.toBe(7);
+  });
+});
+
+describe('faceGroupsBadge', () => {
+  it.each([[0, '0 face groups'], [1, '1 face group'], [2, '2 face groups']])('formats %i groups', (count, expected) => {
+    expect(faceGroupsBadge(count)).toBe(expected);
   });
 });

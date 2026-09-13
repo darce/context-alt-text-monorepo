@@ -55,7 +55,11 @@ export const getEntryProjectionStatus = (entry: RosterEntry): ProjectionStatus |
 
 export const getEntryPersonUuid = (entry: RosterEntry): string | null => {
   const raw: unknown = entry.person_uuid;
-  return typeof raw === 'string' && raw.length > 0 ? raw : null;
+  if (typeof raw !== 'string') {
+    return null;
+  }
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
 };
 
 const DETERMINISTIC_COMPARE_LOCALE = 'en';

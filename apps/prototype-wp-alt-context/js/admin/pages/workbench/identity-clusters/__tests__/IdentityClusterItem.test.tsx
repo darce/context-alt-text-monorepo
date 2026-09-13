@@ -8,6 +8,7 @@ import type { ClusterGroup } from '../types';
 const MATCH_DEBOUNCE_MS = 300;
 
 const findClusterByLabel = vi.fn();
+const splitMock = vi.fn();
 
 vi.mock('../useClusterSuggestions', () => ({
   useClusterSuggestions: () => ({
@@ -30,7 +31,7 @@ vi.mock('../useClusterMutations', () => ({
     rename: vi.fn(),
     createClusterForIdentity: vi.fn(),
     reassign: vi.fn(),
-    split: vi.fn(),
+    split: splitMock,
     revertMerge: vi.fn(),
     rejectSuggestion: vi.fn(),
     splitGate: { disabled: false, title: undefined, 'aria-disabled': false },
@@ -229,9 +230,7 @@ describe('IdentityClusterItem at-rest hint wiring (REV2-01)', () => {
 
     const hint = screen.getByText(/Showing \d+ of 80 labels/);
     expect(hint).toBeInTheDocument();
-    expect(screen.getByRole('combobox', { name: 'Person name' })).toHaveAccessibleDescription(
-      hint.textContent ?? '',
-    );
+    expect(screen.getByRole('combobox', { name: 'Person name' })).toHaveAccessibleDescription(hint.textContent ?? '');
   });
 });
 
@@ -287,7 +286,7 @@ describe('IdentityClusterItem mutation affordance gates (WBUX6-W3-L6-02 / WBUX6-
   });
 
   it('offers Split only when the group itself carries a cluster id', () => {
-    renderItem(bobCluster());
+    renderItem(twoMemberCluster());
     expect(splitButton()).toBeInTheDocument();
 
     cleanup();
@@ -316,5 +315,116 @@ describe('IdentityClusterItem mutation affordance gates (WBUX6-W3-L6-02 / WBUX6-
     expect(screen.getByRole('button', { name: /edit label/i })).toBeInTheDocument();
     expect(splitButton()).not.toBeInTheDocument();
     expect(removeButton()).not.toBeInTheDocument();
+  });
+});
+
+describe('IdentityClusterItem split routing across a person-spanning group (IDCHIP-1-GROUP-R-02)', () => {
+  afterEach(() => {
+    cleanup();
+    splitMock.mockReset();
+  });
+
+  const personSpanningCluster = (): ClusterGroup => ({
+    key: 'person:7',
+    clusterId: 'cluster-a',
+    personId: '7',
+    clusterIds: ['cluster-a', 'cluster-b'],
+    identityClusterIds: { 'id-1': 'cluster-a', 'id-2': 'cluster-a', 'id-3': 'cluster-b' },
+    label: 'bob',
+    isAutoLabel: false,
+    clusteringPending: false,
+    members: [
+      member({ identity_id: 'id-1', media_id: 1, cluster_id: 'cluster-a' }),
+      member({ identity_id: 'id-2', media_id: 2, cluster_id: 'cluster-a' }),
+      member({ identity_id: 'id-3', media_id: 3, cluster_id: 'cluster-b' }),
+    ],
+  });
+
+  it('preselects the only eligible face group and excludes singleton anchors', () => {
+    renderItem(personSpanningCluster());
+    fireEvent.click(screen.getByRole('button', { name: /split group/i }));
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Use face from media #3/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/Choose a face to keep the label “bob”/)).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: /Use face from media #2/i }));
+    expect(splitMock).toHaveBeenCalledWith('cluster-a', 2, 'id-2');
+  });
+
+  it('requires a face group choice and filters anchors to that group', () => {
+    const cluster = personSpanningCluster();
+    cluster.members.push(
+      member({ identity_id: 'id-4', media_id: 4, cluster_id: 'cluster-b' }),
+      member({ identity_id: 'id-5', media_id: 5, cluster_id: 'cluster-b' }),
+    );
+    cluster.identityClusterIds = { ...cluster.identityClusterIds, 'id-4': 'cluster-b', 'id-5': 'cluster-b' };
+    cluster.members[0].media_url = 'https://example.test/face-a.jpg';
+    renderItem(cluster);
+    fireEvent.click(screen.getByRole('button', { name: /split group/i }));
+    expect(
+      screen.getByRole('radio', { name: 'Face group 1 · 2 faces' }).closest('label')?.querySelector('img'),
+    ).toHaveAttribute('src', 'https://example.test/face-a.jpg');
+    expect(screen.queryByRole('button', { name: /Use face from media/i })).not.toBeInTheDocument();
+    expect(screen.getByText('Choose a face group to pick the face that keeps it')).toBeVisible();
+    expect(screen.getByRole('radio', { name: 'Face group 1 · 2 faces' })).not.toBeChecked();
+    fireEvent.click(screen.getByRole('radio', { name: 'Face group 2 · 3 faces' }));
+    expect(screen.getByRole('radio', { name: 'Face group 2 · 3 faces' })).toBeChecked();
+    expect(screen.queryByText('Choose a face group to pick the face that keeps it')).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /Use face from media/i })).toHaveLength(3);
+    expect(screen.queryByRole('button', { name: /Use face from media #1/i })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Use face from media #3/i }));
+    expect(splitMock).toHaveBeenCalledWith('cluster-b', 2, 'id-3');
+  });
+
+  it('describes an unlabeled split without promising to keep a label', () => {
+    const cluster = personSpanningCluster();
+    cluster.label = null;
+    renderItem(cluster);
+    fireEvent.click(screen.getByRole('button', { name: /split group/i }));
+    expect(screen.getByRole('heading', { name: 'Split a face group' })).toBeVisible();
+    expect(
+      screen.getByText('The chosen face stays in this face group; other faces move to a new face group.'),
+    ).toBeVisible();
+  });
+
+  it('offers Split when only a secondary face group has two members', () => {
+    const cluster = personSpanningCluster();
+    cluster.identityClusterIds = { 'id-1': 'cluster-a', 'id-2': 'cluster-b', 'id-3': 'cluster-b' };
+    cluster.members[1] = member({ identity_id: 'id-2', media_id: 2, cluster_id: 'cluster-b' });
+    renderItem(cluster);
+
+    expect(screen.getByRole('button', { name: /split group/i })).toBeVisible();
+  });
+
+  it('withholds Split when all mapped face groups are singletons', () => {
+    const cluster = personSpanningCluster();
+    cluster.identityClusterIds = { 'id-1': 'cluster-a', 'id-3': 'cluster-b' };
+    cluster.members.splice(1, 1);
+    renderItem(cluster);
+
+    expect(screen.queryByRole('button', { name: /split group/i })).not.toBeInTheDocument();
+  });
+
+  it('withholds Split for a single face', () => {
+    renderItem(bobCluster());
+    expect(screen.queryByRole('button', { name: /split group/i })).not.toBeInTheDocument();
+  });
+});
+
+describe('IdentityClusterItem face-group badge', () => {
+  afterEach(cleanup);
+
+  it('shows face groups alongside the member count', () => {
+    renderItem({
+      ...bobCluster(),
+      clusterIds: ['first', 'second'],
+      members: [member(), member({ identity_id: 'id-2' }), member({ identity_id: 'id-3' })],
+    });
+    expect(screen.getByRole('img', { name: '2 face groups' })).toBeVisible();
+    expect(screen.getByText('+2')).toBeVisible();
+  });
+
+  it.each([undefined, [], ['first']])('omits the badge unless multiple groups are supplied', (clusterIds) => {
+    renderItem({ ...bobCluster(), clusterIds });
+    expect(screen.queryByRole('img', { name: /face groups?/ })).not.toBeInTheDocument();
   });
 });

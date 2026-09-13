@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
-import { __ } from '@wordpress/i18n';
+import { __, sprintf } from '@wordpress/i18n';
 import type { RosterEntry } from '../../api/rosterApi';
 import type { RosterEntryInstance } from '../../api/generated/roster-entry';
 import { useUpdatePerson, useDeletePerson } from '../../hooks/useRosterHooks';
-import { AlertCircle, Check, CheckCircle2, Pencil, Trash2, UserRound, X } from 'lucide-react';
+import { AlertCircle, Check, CheckCircle2, Pencil, Merge, Trash2, UserRound, X } from 'lucide-react';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { IdentityThumbnail } from './IdentityThumbnail';
 import { derivePersonState, PERSON_STATES, type PersonState } from './personState';
 import { isHumanLabeledTarget } from '../workbench/identity-clusters/suggestionProjection';
+import { getEntryPersonUuid } from './rosterRoute';
 
 const RESERVED_LABEL_MESSAGE = __(
   'This name format is reserved for automatic face group IDs. Choose a descriptive name.',
@@ -16,10 +17,14 @@ const RESERVED_LABEL_MESSAGE = __(
 
 export interface RosterEntriesTableProps {
   entries: RosterEntry[];
+  onOpenPerson?: (entry: RosterEntry) => void;
+  onMergePerson?: (entry: RosterEntry) => void;
 }
 
 interface EditableRowProps {
   entry: RosterEntry;
+  onOpenPerson?: (entry: RosterEntry) => void;
+  onMergePerson?: (entry: RosterEntry) => void;
 }
 
 /** Dense table-row size — not the drawer default (96/128). */
@@ -133,7 +138,8 @@ const PersonStateCell = ({ entry }: { entry: RosterEntry }): React.JSX.Element =
   );
 };
 
-const EditableRow = ({ entry }: EditableRowProps) => {
+const EditableRow = ({ entry, onOpenPerson, onMergePerson }: EditableRowProps) => {
+  const displayName = entry.name.trim() || __('Unnamed person', 'alt-context');
   const [isEditing, setIsEditing] = useState(false);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [name, setName] = useState(entry.name);
@@ -142,6 +148,7 @@ const EditableRow = ({ entry }: EditableRowProps) => {
 
   const updatePerson = useUpdatePerson();
   const deletePerson = useDeletePerson();
+  const canOpenPerson = getEntryPersonUuid(entry) !== null;
 
   const handleSave = () => {
     const trimmedName = name.trim();
@@ -258,12 +265,49 @@ const EditableRow = ({ entry }: EditableRowProps) => {
     <>
       <tr>
         <td>
-          <DirectoryFace entry={entry} />{' '}
-          <strong>{entry.name}</strong>
+          {canOpenPerson ? (
+            <button
+              type="button"
+              className="acx-roster-entries__open"
+              aria-label={displayName}
+              onClick={() => onOpenPerson?.(entry)}
+            >
+              <DirectoryFace entry={entry} />
+              <strong>{displayName}</strong>
+            </button>
+          ) : (
+            <span className="acx-roster-entries__open acx-roster-entries__open--static">
+              <DirectoryFace entry={entry} />
+              <strong>{displayName}</strong>
+            </span>
+          )}
         </td>
         <PersonStateCell entry={entry} />
         <td>{entry.tags.length === 0 ? __('No tags', 'alt-context') : entry.tags.join(', ')}</td>
-        <td>{entry.cluster_count}</td>
+        <td>
+          {canOpenPerson ? (
+            <button
+              type="button"
+              className="acx-roster-entries__open"
+              aria-label={sprintf(
+                /* translators: 1: face group count, 2: person name */
+                __('Open %1$d face groups for %2$s', 'alt-context'),
+                entry.cluster_count,
+                displayName,
+              )}
+              onClick={() => onOpenPerson?.(entry)}
+            >
+              {entry.cluster_count}
+            </button>
+          ) : (
+            <span
+              className="acx-roster-entries__open acx-roster-entries__open--static"
+              title={__('Person workspace unavailable for this entry yet.', 'alt-context')}
+            >
+              {entry.cluster_count}
+            </span>
+          )}
+        </td>
         <td className="acx-roster-entries__actions">
           <button
             type="button"
@@ -272,6 +316,11 @@ const EditableRow = ({ entry }: EditableRowProps) => {
             title={__('Edit person', 'alt-context')}
           >
             <Pencil size={16} />
+          </button>
+          <button type="button" className="acx-icon-button" title={__('Merge into…', 'alt-context')}
+            aria-label={sprintf(__('Merge %s into another person', 'alt-context'), displayName)}
+            onClick={() => onMergePerson?.(entry)}>
+            <Merge size={16} aria-hidden="true" />
           </button>
           <button
             type="button"
@@ -301,7 +350,7 @@ const EditableRow = ({ entry }: EditableRowProps) => {
   );
 };
 
-export const RosterEntriesTable = ({ entries }: RosterEntriesTableProps): React.JSX.Element => {
+export const RosterEntriesTable = ({ entries, onOpenPerson, onMergePerson }: RosterEntriesTableProps): React.JSX.Element => {
   if (entries.length === 0) {
     return <p>{__('No people yet. Add one manually or assign a face group.', 'alt-context')}</p>;
   }
@@ -320,7 +369,7 @@ export const RosterEntriesTable = ({ entries }: RosterEntriesTableProps): React.
         </thead>
         <tbody>
           {entries.map((entry) => (
-            <EditableRow key={entry.id} entry={entry} />
+            <EditableRow key={entry.id} entry={entry} onOpenPerson={onOpenPerson} onMergePerson={onMergePerson} />
           ))}
         </tbody>
       </table>

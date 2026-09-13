@@ -1,4 +1,5 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import * as React from 'react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 
 import { FaceThumbnail } from '../FaceThumbnail';
@@ -94,9 +95,7 @@ describe('FaceThumbnail', () => {
     });
 
     it('forwards loading prop to the img and omits the attribute when unset', () => {
-      const { rerender } = render(
-        <FaceThumbnail mediaUrl={mockMediaUrl} bbox={mockBbox} loading="lazy" />,
-      );
+      const { rerender } = render(<FaceThumbnail mediaUrl={mockMediaUrl} bbox={mockBbox} loading="lazy" />);
       expect(screen.getByRole('img')).toHaveAttribute('loading', 'lazy');
 
       rerender(<FaceThumbnail mediaUrl={mockMediaUrl} bbox={mockBbox} loading="eager" />);
@@ -119,6 +118,53 @@ describe('FaceThumbnail', () => {
   });
 
   describe('loading states', () => {
+    it('paints loading on the first commit after a loaded source changes', () => {
+      const observations: string[] = [];
+      function Probe({ source }: { source: string }) {
+        const ref = React.useRef<HTMLDivElement>(null);
+        React.useLayoutEffect(() => {
+          observations.push(ref.current?.querySelector('img')?.style.opacity ?? 'missing');
+        }, [source]);
+        return <FaceThumbnail ref={ref} mediaUrl={source} bbox={mockBbox} />;
+      }
+      const { rerender } = render(<Probe source={mockMediaUrl} />);
+      fireEvent.load(screen.getByRole('img'));
+      rerender(<Probe source="/recognition/next.jpg" />);
+      expect(observations).toEqual(['0', '0']);
+    });
+
+    it('ignores retained load and error handlers from the previous source', () => {
+      const onLoad = vi.fn();
+      const onError = vi.fn();
+      const { rerender } = render(
+        <FaceThumbnail mediaUrl={mockMediaUrl} bbox={mockBbox} onLoad={onLoad} onError={onError} />,
+      );
+      const previousImg = screen.getByRole('img');
+      // Retain the actual handlers: dispatching on a detached node skips React delegation.
+      const propsKey = Object.keys(previousImg).find((key) => key.startsWith('__reactProps$'));
+      if (!propsKey) {
+        throw new Error('React image event props were not found');
+      }
+      const props = (
+        previousImg as unknown as Record<
+          string,
+          {
+            onLoad: React.ReactEventHandler<HTMLImageElement>;
+            onError: React.ReactEventHandler<HTMLImageElement>;
+          }
+        >
+      )[propsKey];
+      rerender(<FaceThumbnail mediaUrl="/recognition/next.jpg" bbox={mockBbox} onLoad={onLoad} onError={onError} />);
+      const staleEvent = { currentTarget: previousImg } as React.SyntheticEvent<HTMLImageElement>;
+      act(() => props.onLoad(staleEvent));
+      expect(screen.getByRole('img')).toHaveStyle({ opacity: '0' });
+      fireEvent.load(screen.getByRole('img'));
+      act(() => props.onError(staleEvent));
+      expect(screen.getByRole('img')).toHaveStyle({ opacity: '1' });
+      expect(onLoad).toHaveBeenCalledOnce();
+      expect(onError).not.toHaveBeenCalled();
+    });
+
     it('shows loading state initially', () => {
       const { container } = render(<FaceThumbnail mediaUrl={mockMediaUrl} bbox={mockBbox} />);
       const wrapper = container.firstChild as HTMLElement;
@@ -185,9 +231,7 @@ describe('FaceThumbnail', () => {
         expect(wrapper).toHaveClass('acx-face-thumbnail--error');
         expect(wrapper.querySelector('.acx-face-thumbnail__warning-icon')).not.toBeNull();
         expect(wrapper.querySelector('.acx-face-thumbnail__broken-icon')).not.toBeNull();
-        expect(wrapper.querySelector('.acx-face-thumbnail__error-label')).toHaveTextContent(
-          'Face image unavailable',
-        );
+        expect(wrapper.querySelector('.acx-face-thumbnail__error-label')).toHaveTextContent('Face image unavailable');
       });
     });
 
@@ -200,6 +244,65 @@ describe('FaceThumbnail', () => {
         // After error, the img element is replaced with the error div
         expect(container.querySelector('img')).not.toBeInTheDocument();
       });
+    });
+
+    it('loads a relative media URL', () => {
+      const onLoad = vi.fn();
+      const { container } = render(<FaceThumbnail mediaUrl="/recognition/face.jpg" bbox={mockBbox} onLoad={onLoad} />);
+
+      fireEvent.load(screen.getByRole('img'));
+
+      expect(container.firstChild).not.toHaveClass('acx-face-thumbnail--loading');
+      expect(screen.getByRole('img')).toHaveStyle({ opacity: '1' });
+      expect(onLoad).toHaveBeenCalledOnce();
+    });
+
+    it('remounts the image and resets loading after a source swap', () => {
+      const onLoad = vi.fn();
+      const onError = vi.fn();
+      const { container, rerender } = render(
+        <FaceThumbnail mediaUrl={mockMediaUrl} bbox={mockBbox} onLoad={onLoad} onError={onError} />,
+      );
+      const previousImg = screen.getByRole('img');
+      fireEvent.load(previousImg);
+      expect(previousImg).toHaveStyle({ opacity: '1' });
+      onLoad.mockClear();
+
+      rerender(<FaceThumbnail mediaUrl="/recognition/next.jpg" bbox={mockBbox} onLoad={onLoad} onError={onError} />);
+      const nextImg = screen.getByRole('img');
+      expect(nextImg).not.toBe(previousImg);
+      expect(previousImg).not.toBeInTheDocument();
+      expect(container.firstChild).toHaveClass('acx-face-thumbnail--loading');
+      expect(nextImg).toHaveStyle({ opacity: '0' });
+
+      fireEvent.error(previousImg);
+      fireEvent.load(previousImg);
+      expect(container.firstChild).toHaveClass('acx-face-thumbnail--loading');
+      expect(onLoad).not.toHaveBeenCalled();
+      expect(onError).not.toHaveBeenCalled();
+
+      fireEvent.load(nextImg);
+      expect(container.firstChild).not.toHaveClass('acx-face-thumbnail--loading');
+      expect(nextImg).toHaveStyle({ opacity: '1' });
+      expect(onLoad).toHaveBeenCalledOnce();
+    });
+
+    it('resets an error to loading when the source changes', () => {
+      const onError = vi.fn();
+      const { container, rerender } = render(
+        <FaceThumbnail mediaUrl={mockMediaUrl} bbox={mockBbox} onError={onError} />,
+      );
+      fireEvent.error(screen.getByRole('img'));
+      expect(container.firstChild).toHaveClass('acx-face-thumbnail--error');
+      expect(onError).toHaveBeenCalledOnce();
+
+      rerender(<FaceThumbnail mediaUrl="/recognition/next.jpg" bbox={mockBbox} />);
+      expect(container.firstChild).toHaveClass('acx-face-thumbnail--loading');
+      expect(container.firstChild).not.toHaveClass('acx-face-thumbnail--error');
+      const nextImg = screen.getByRole('img');
+      expect(nextImg).toHaveAttribute('src', '/recognition/next.jpg');
+      fireEvent.load(nextImg);
+      expect(nextImg).toHaveStyle({ opacity: '1' });
     });
   });
 

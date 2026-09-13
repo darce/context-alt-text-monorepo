@@ -32,6 +32,8 @@ const NO_PRIMARY_SCREENS: Record<string, string> = {
     'Layout host: it renders the control and library panes, each of which owns its own primary; the shell asks the operator to commit to nothing.',
   'describe-gpu-tier:toast-gpu-transition':
     'Transient notification: its only control is a tertiary Dismiss; a toast that claims a primary would compete with the screen underneath it (COG-03).',
+  'roster-people:roster-person-merge-success':
+    'Post-commit status banner: Undo and Dismiss are recovery affordances, not a commitment; the roster shell underneath keeps its own primary (COG-03, INT-09).',
 };
 
 interface UxAction {

@@ -16,6 +16,10 @@ export interface ClusterGroup {
   personId?: string | null;
   /** Every distinct cluster id collapsed into this group; length > 1 means unmerged face groups (IDCHIP-1). */
   clusterIds?: string[];
+  /** Per-identity cluster id lookup; lets consumers resolve the cluster a specific selected
+   * member actually belongs to instead of assuming the group's (possibly different) clusterId
+   * (IDCHIP-1-GROUP-R-02). */
+  identityClusterIds?: Record<string, string>;
   /** User-assigned or auto-generated label */
   label: string | null;
   /** Whether the label was auto-generated */

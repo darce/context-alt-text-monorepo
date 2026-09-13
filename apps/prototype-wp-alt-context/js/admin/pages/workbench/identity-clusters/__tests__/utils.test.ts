@@ -30,7 +30,7 @@ const identityWithOmittedAutoFlag = (): DetectedIdentity => {
 };
 
 describe('groupIdentitiesByClusters person grouping', () => {
-  it('collects distinct clusters in order and uses the first non-null label', () => {
+  it('collects distinct clusters in order and prefers the first human label over an earlier empty/auto one', () => {
     const members = [
       identity({ person_id: '7', cluster_id: null, cluster_label: null }),
       identity({ identity_id: 'id-2', person_id: '7', cluster_id: 'b', cluster_label: '', is_auto_label: true }),
@@ -41,13 +41,28 @@ describe('groupIdentitiesByClusters person grouping', () => {
     expect(groupIdentitiesByClusters(members)).toEqual([{
       key: 'person:7',
       personId: '7',
-      clusterId: null,
+      // clusterId was null on the first member; falls back to the first collected cluster id
+      // so display gating (formatClusterLabel) still applies (BR-01).
+      clusterId: 'b',
       clusterIds: ['b', 'a'],
-      label: '',
-      isAutoLabel: true,
+      label: 'Jane',
+      isAutoLabel: false,
       clusteringPending: true,
       members,
+      identityClusterIds: { 'id-2': 'b', 'id-3': 'a', 'id-4': 'b' },
     }]);
+  });
+
+  it('picks the first non-empty human label even when it arrives after an empty/auto one', () => {
+    const members = [
+      identity({ identity_id: 'id-1', person_id: '9', cluster_id: 'x', cluster_label: '', is_auto_label: true }),
+      identity({ identity_id: 'id-2', person_id: '9', cluster_id: 'x', cluster_label: 'Jane Doe', is_auto_label: false }),
+      identity({ identity_id: 'id-3', person_id: '9', cluster_id: 'x', cluster_label: 'cluster-9', is_auto_label: true }),
+    ];
+
+    const [group] = groupIdentitiesByClusters(members);
+    expect(group.label).toBe('Jane Doe');
+    expect(group.isAutoLabel).toBe(false);
   });
 
   it('keeps unbound members grouped by cluster and singleton keys in distinct namespaces', () => {

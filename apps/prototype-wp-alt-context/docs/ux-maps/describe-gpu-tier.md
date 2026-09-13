@@ -22,12 +22,6 @@
 | `dashboard-describe-panel` | screen | `#/` | Dashboard › Describe with AI |
 | `toast-gpu-transition` | overlay | `#/workbench (transient toast; no dedicated route)` | Toast — GPU tier transition |
 
-## Code references
-- `screen:workbench-media-selection` — `apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelection.tsx`
-- `screen:describe-run-apply` — `apps/prototype-wp-alt-context/js/admin/pages/DescribeRunApplyView.tsx`
-- `screen:dashboard-describe-panel` — `apps/prototype-wp-alt-context/js/admin/pages/dashboard/DescribePanel.tsx`
-- `screen:toast-gpu-transition` — `apps/prototype-wp-alt-context/js/admin/context/ToastContext.tsx`
-
 ### Workbench › Media selection (`workbench-media-selection`)
 
 Purpose: Select media, launch a bulk describe run, watch progress including GPU tier state. Run phases (domain vocabulary behind the canonical states): selecting = default; describe-running = loading; describe-terminal = default; no selection = empty; degraded-cpu = degraded. Serves job `bulk-describe`.

@@ -581,15 +581,15 @@ export const PersonMergeFlow = ({
     setCheckFailed(false);
     setReconciled('Checking the roster to confirm the undo outcome…');
     try {
-      await Promise.all([
-        client.invalidateQueries({ queryKey: queryKeys.roster.all, refetchType: 'none' }),
-        client.invalidateQueries({ queryKey: queryKeys.clusters.all }),
-        client.invalidateQueries({ queryKey: queryKeys.media.identities() }),
-      ]);
+      // Refresh related views without making undo recovery wait for their requests.
+      void client.invalidateQueries({ queryKey: queryKeys.clusters.all }).catch(() => undefined);
+      void client.invalidateQueries({ queryKey: queryKeys.media.identities() }).catch(() => undefined);
+      await client.invalidateQueries({ queryKey: queryKeys.roster.all, refetchType: 'none' });
       const current = await client.fetchQuery({
         queryKey: queryKeys.roster.entries(),
         queryFn: listRosterEntries,
         staleTime: 0,
+        retry: false,
       });
       setReconciled(
         current.some((person) => person.id === loser.id)

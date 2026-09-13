@@ -214,7 +214,7 @@ Action states: ready, preview_ready, conflict, committing
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 | when ready                                                 |
-|   [PRIMARY] Preview person merge                           |
+|   [secondary] Preview person merge                         |
 |   [secondary] Cancel merge                                 |
 | when preview_ready                                         |
 |   [PRIMARY] Confirm person merge                           |
@@ -285,7 +285,7 @@ Action states: success, undoing, undone, error
 | `act-goto-workbench` | Go to Workbench | `exit-workbench` | secondary | no | no | no | `roster-shell` | always |
 | `act-open-lightbox` | Open evidence lightbox | `roster-face-lightbox` | secondary | no | no | no | `roster-person-workspace` | always |
 | `act-close-lightbox` | Close lightbox | `roster-person-workspace` | primary | no | no | no | `roster-face-lightbox` | always |
-| `act-preview-person-merge` | Preview person merge | `roster-person-merge-dialog` | primary | no | no | no | `roster-person-merge-dialog` | ready |
+| `act-preview-person-merge` | Preview person merge | `roster-person-merge-dialog` | secondary | no | no | no | `roster-person-merge-dialog` | ready |
 | `act-retry-person-merge-preview` | Retry merge preview | `roster-person-merge-dialog` | secondary | no | no | no | `roster-person-merge-dialog` | conflict |
 | `act-confirm-person-merge` | Confirm person merge | `roster-person-merge-success` | primary | yes | no | yes | `roster-person-merge-dialog` | preview_ready |
 | `act-cancel-person-merge` | Cancel merge | `roster-shell` | secondary | no | no | no | `roster-person-merge-dialog` | ready, preview_ready, conflict |

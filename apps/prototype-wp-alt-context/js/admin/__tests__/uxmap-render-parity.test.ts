@@ -93,6 +93,7 @@ const REQUIRED_GENERATED_MAPS = [
   'gpu-operator-control',
   'roster-people',
   'workbench-2pane',
+  'workbench-identity-chips',
   'workbench-operator-loop',
 ] as const;
 
@@ -164,6 +165,7 @@ const OWNED_MAPS = [
   'febt-1-job-error-states',
   'public-guide',
   'public-demo-describe',
+  'workbench-identity-chips',
 ] as const;
 
 /**

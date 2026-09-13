@@ -200,7 +200,7 @@
       "deep_link": true,
       "url_params": ["person", "mergeInto"],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/roster/RosterEntriesTable.tsx",
-      "primary_action_id": "act-preview-person-merge",
+      "primary_action_id": "act-confirm-person-merge",
       "action_states": ["ready", "preview_ready", "conflict", "committing"],
       "states": ["default", "loading", "error", "degraded"],
       "zones": [
@@ -396,7 +396,7 @@
       "id": "act-preview-person-merge",
       "verb": "Preview person merge",
       "target": "roster-person-merge-dialog",
-      "hierarchy": "primary",
+      "hierarchy": "secondary",
       "costly": false,
       "irreversible": false,
       "preview_required": false,

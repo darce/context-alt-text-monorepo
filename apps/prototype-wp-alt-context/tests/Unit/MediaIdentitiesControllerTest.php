@@ -43,6 +43,10 @@ class MediaIdentitiesControllerTest extends TestCase
                     [
                         'identity_uuid' => 'identity-1',
                         'attachment_id' => 22,
+                        'person_id' => 7,
+                        'representative_member' => [
+                            'identity_uuid' => 'rep', 'attachment_id' => 99, 'bbox_json' => null,
+                        ],
                         'bbox_json' => '{"pixels":{"x":1,"y":1,"width":2,"height":2}}',
                     ],
                 ];
@@ -67,6 +71,39 @@ class MediaIdentitiesControllerTest extends TestCase
         $data = $response->get_data();
         $this->assertArrayHasKey('22', $data['identities_by_media']);
         $this->assertSame('local_projection', $data['data_source'] ?? null);
+        $this->assertSame('7', $data['identities_by_media'][22][0]['person_id']);
+        $this->assertSame([
+            'identity_id' => 'rep', 'media_id' => 99,
+            'media_url' => null, 'attachment_url' => null, 'bbox' => null,
+        ], $data['identities_by_media'][22][0]['representative_face']);
+    }
+
+    public function testBackendNormalizationPreservesOptionalIdentityFieldsOnlyWhenPresent(): void
+    {
+        $controller = new MediaIdentitiesController(
+            new NullIdentityMembersRepository(), new NullSyncStateRepository(), new MemberResponseMapper()
+        );
+        $method = new \ReflectionMethod($controller, 'normalize_backend_media_identities_response');
+        $method->setAccessible(true);
+        $face = [
+            'identity_id' => 'rep', 'media_id' => 99,
+            'media_url' => 'https://example.test/99.jpg', 'attachment_url' => null, 'bbox' => null,
+        ];
+        foreach ([[], ['person_id' => null, 'representative_face' => null], ['person_id' => '7', 'representative_face' => $face]] as $fields) {
+            $identity = array_merge(['identity_id' => 'one', 'media_id' => 22, 'extra' => 'retained'], $fields);
+            foreach ([[$identity], ['identities_by_media' => [22 => [$identity]]]] as $payload) {
+                $response = $method->invoke($controller, new \WP_REST_Response($payload));
+                $groups = (array) $response->get_data()['identities_by_media'];
+                $result = $groups[22][0];
+                $this->assertSame('retained', $result['extra']);
+                foreach (['person_id', 'representative_face'] as $key) {
+                    $this->assertSame(array_key_exists($key, $fields), array_key_exists($key, $result));
+                    if (array_key_exists($key, $fields)) {
+                        $this->assertSame($fields[$key], $result[$key]);
+                    }
+                }
+            }
+        }
     }
 
     public function testMediaIdentitiesMapsUnboundHumanAutoAndBoundLabels(): void

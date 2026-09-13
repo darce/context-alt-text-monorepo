@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { GPU_INTENT_ACTION, GPU_INTENT_STATUS, type GpuStatusResponse } from '../../../api/gpuApi';
+import { GPU_STATE, GPU_INTENT_ACTION, GPU_INTENT_STATUS, type GpuStatusResponse } from '../../../api/gpuApi';
 import * as gpuApi from '../../../api/gpuApi';
 import {
   GPU_WARMUP_POLL_INTERVAL_MS,
@@ -125,6 +125,19 @@ describe('useGpuControl', () => {
     expect(result.current.canStart).toBe(false);
     expect(result.current.canStop).toBe(true);
     expect(result.current.stopBlockedReason).toBeNull();
+  });
+
+  it('presents starting with the optimistic pending start intent', async () => {
+    fetchGpuStatusMock.mockResolvedValue(statusResponse());
+    postGpuIntentMock.mockReturnValue(new Promise(() => {}));
+    const { result } = renderHook(() => useGpuControl(), { wrapper });
+    await waitFor(() => expect(result.current.data).toBeDefined());
+    act(() => {
+      result.current.requestIntent(GPU_INTENT_ACTION.START);
+    });
+    await waitFor(() => expect(result.current.data?.gpu_state.intent_status).toBe(GPU_INTENT_STATUS.PENDING));
+    expect(result.current.data?.gpu_state.intent).toBe(GPU_INTENT_ACTION.START);
+    expect(result.current.data?.gpu_state.state).toBe(GPU_STATE.STARTING);
   });
 
   it('optimistically marks an intent pending and restores the snapshot on error', async () => {

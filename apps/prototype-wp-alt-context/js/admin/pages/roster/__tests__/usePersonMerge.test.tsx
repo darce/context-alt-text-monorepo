@@ -30,11 +30,15 @@ describe('usePersonMerge', () => {
     expect(api.commitPersonMerge).toHaveBeenCalled();
     expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.roster.all });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.clusters.all });
+    // IDCHIP-1-MUI-R-02: merge rebinds clusters to another person, so media
+    // identity projections must be invalidated too, not just roster/clusters.
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.media.identities() });
     invalidate.mockClear();
     await act(async () => { await result.current.undo.mutateAsync('server-token'); });
     expect(api.undoPersonMerge).toHaveBeenCalled();
     expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.roster.all });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.clusters.all });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.media.identities() });
     expect(result.current.undoToken).toBe('server-token');
   });
 });

@@ -18,13 +18,20 @@ export const PersonMergeDialog = ({ open, onOpenChange, loser, entries, merge, o
   const [loserId, setLoserId] = useState(loser.id);
   const [survivorId, setSurvivorId] = useState<number | null>(null);
   const [search, setSearch] = useState('');
+  // rg-004 / IDCHIP-1-MUI-R-01: capture the row's Merge trigger before Radix moves
+  // focus into the dialog, so Cancel/Escape/backdrop/successful merge can restore it.
+  const [triggerElement] = useState<HTMLElement | null>(() =>
+    document.activeElement instanceof HTMLElement ? document.activeElement : null);
   const preview = merge.preview.data;
   const pending = merge.preview.isPending || merge.commit.isPending;
   const error = merge.commit.error ?? merge.preview.error;
   const reset = () => { merge.preview.reset(); merge.commit.reset(); };
   const close = (next: boolean) => { if (!pending) onOpenChange(next); };
   return <DialogRoot open={open} onOpenChange={close}>
-    <DialogPortal><DialogOverlay /><DialogContent className="acx-person-merge">
+    <DialogPortal><DialogOverlay /><DialogContent className="acx-person-merge" onCloseAutoFocus={event => {
+      event.preventDefault();
+      triggerElement?.focus();
+    }}>
       <DialogTitle>Merge people</DialogTitle>
       <DialogDescription>Choose the person to keep, then review the merge.</DialogDescription>
       {!preview ? <fieldset disabled={pending}>

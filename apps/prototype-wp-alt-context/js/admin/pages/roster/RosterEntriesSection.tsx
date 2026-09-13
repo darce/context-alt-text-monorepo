@@ -40,6 +40,11 @@ const SEARCH_PARAM = 's';
 /** Quiet period before the search summary is copied into role=status [ROSTER-W-03]. */
 export const SEARCH_STATUS_DEBOUNCE_MS = 300;
 
+// IDCHIP-1-MUI-R-04: the undo banner must not linger forever once a merge
+// completes; auto-dismiss it after a bounded window while still allowing
+// manual dismissal before then.
+export const UNDO_BANNER_TTL_MS = 30_000;
+
 const isQueueFilterId = (value: string | null): value is QueueFilterId =>
   value === 'singleton-proposals' || value === 'hard-examples' || value === 'needs-confirmation-after-merge';
 
@@ -537,13 +542,30 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
 };
 
 // Mount mutations only when a row action starts a merge; retain them for undo after closing.
-const PersonMergeFlow = ({ loser, entries, onDismiss }: { loser: RosterEntry; entries: RosterEntry[]; onDismiss: () => void }) => {
+// Exported for direct testing of the close/undo-expiry lifecycle (IDCHIP-1-MUI-R-04/R-05).
+export const PersonMergeFlow = ({ loser, entries, onDismiss }: { loser: RosterEntry; entries: RosterEntry[]; onDismiss: () => void }) => {
   const merge = usePersonMerge();
   const [open, setOpen] = useState(true);
   const [merged, setMerged] = useState<PersonMergePreview | null>(null);
+  // Synchronous mirror of `merged`: the dialog's onSuccess handler calls
+  // onMerged() then onOpenChange(false) in the same tick, so the onOpenChange
+  // closure below would otherwise see the pre-update (stale) `merged` state.
+  const mergedRef = React.useRef(false);
+  // IDCHIP-1-MUI-R-04: bound the undo banner's lifetime once a merge lands.
+  useEffect(() => {
+    if (!merged) return;
+    const timer = window.setTimeout(onDismiss, UNDO_BANNER_TTL_MS);
+    return () => window.clearTimeout(timer);
+  }, [merged, onDismiss]);
   return <>
     <PersonMergeDialog open={open} loser={loser} entries={entries} merge={merge}
-      onMerged={setMerged} onOpenChange={next => { setOpen(next); }} />
+      onMerged={preview => { mergedRef.current = true; setMerged(preview); }} onOpenChange={next => {
+        setOpen(next);
+        // IDCHIP-1-MUI-R-05: a session closed without a completed merge (cancel,
+        // Escape, backdrop) has nothing left to show — unmount it immediately
+        // instead of leaving a dead session in the list.
+        if (!next && !mergedRef.current) onDismiss();
+      }} />
     {merged && <div className="acx-person-merge-banner" role="status">
       {merge.undo.error ? <p><AlertCircle aria-hidden="true" />
         {isPersonMergeConflict(merge.undo.error) ? 'This merge can no longer be undone. ' : 'Undo failed: '}

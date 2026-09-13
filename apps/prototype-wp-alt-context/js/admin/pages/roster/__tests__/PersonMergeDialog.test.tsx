@@ -65,4 +65,24 @@ describe('person merge flow', () => {
     await user.click(screen.getByRole('button', { name: 'Merge Ally into another person' }));
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
+  it('restores focus to the row trigger on cancel (IDCHIP-1-MUI-R-01)', async () => {
+    const user = setup();
+    const trigger = screen.getByRole('button', { name: 'Merge Ally into another person' });
+    await user.click(trigger);
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+  it('restores focus to the row trigger after a successful merge (IDCHIP-1-MUI-R-01)', async () => {
+    const user = setup();
+    const trigger = screen.getByRole('button', { name: 'Merge Ally into another person' });
+    await user.click(trigger);
+    await user.selectOptions(screen.getByLabelText('Person to keep'), '1');
+    await user.click(screen.getByRole('button', { name: 'Preview merge' }));
+    await screen.findByText('Server Ally will be removed; its 5 face groups move to Server Alice. You can undo.');
+    await user.click(screen.getByRole('button', { name: 'Merge' }));
+    await screen.findByText('Merged Server Ally into Server Alice.');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
 });

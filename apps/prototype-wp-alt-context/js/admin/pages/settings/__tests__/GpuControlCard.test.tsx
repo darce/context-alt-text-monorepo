@@ -103,6 +103,13 @@ describe('GpuControlCard', () => {
     const button = screen.getByRole('button', { name: action + ' GPU' });
     expect(button).not.toHaveAttribute('disabled');
     expect(button).toHaveAttribute('aria-disabled', 'true');
+    expect(button.tabIndex).toBe(0);
+    button.focus();
+    expect(button).toHaveFocus();
+    expect(button).toHaveAttribute('aria-describedby', `z-gpu-${action.toLowerCase()}-reason`);
+    const description = document.getElementById(button.getAttribute('aria-describedby') ?? '');
+    expect(description).toBeVisible();
+    expect(description).toHaveTextContent('disabled: a GPU request is already in flight');
     fireEvent.click(button);
     expect(screen.queryByRole('button', { name: /Confirm/ })).not.toBeInTheDocument();
   });

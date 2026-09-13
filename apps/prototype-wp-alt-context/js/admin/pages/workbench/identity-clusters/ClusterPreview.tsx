@@ -36,6 +36,7 @@ export const ClusterPreview = ({ representative, representativeFace = representa
     <div className="acx-identity-cluster__preview">
       {hasValidThumbnail && mediaUrl && bbox ? (
         <FaceThumbnail
+          key={mediaUrl}
           mediaUrl={mediaUrl}
           bbox={bbox}
           size="md"

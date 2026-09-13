@@ -8,7 +8,8 @@
 #   - OCIR auth token missing/expired (local or remote)
 #   - SSH key not loaded / public-IP allowlist drift
 #   - HEAD diverged from origin/main (staging/prod only; skipped for dev + dev-fir)
-#   - dirty working tree (warned for dev/dev-fir, blocked for staging/prod)
+#   - dirty deploy inputs: apps/prototype-description-service, scripts/deploy
+#     (overridable for dev/dev-fir, blocked for staging/prod)
 #
 # Subcommands:
 #   build          [tag]              Build :SHA + :tag locally (no push). tag default = dev.
@@ -65,7 +66,7 @@
 #   ACX_REMOTE_BUILDER_NODE  default acx-deploy-builder-v1-node (single explicit node)
 #   ACX_REMOTE_BUILDER_ENDPOINT
 #                            default unix:///var/run/docker.sock; other endpoints are refused
-#   ACX_ALLOW_DIRTY          set to 1 to skip dirty-tree check (dev and dev-fir only)
+#   ACX_ALLOW_DIRTY          set to 1 to allow dirty deploy inputs (dev and dev-fir only)
 #   ACX_VERIFY_ATTEMPTS      default 5  (post-deploy verify retry count for warm-up)
 #   ACX_VERIFY_SLEEP         default 5  (seconds between verify attempts)
 #   ACX_VERIFY_OPTIONAL      set to 1 to downgrade verify failure from fail to warn after deploy/promote
@@ -743,15 +744,19 @@ preflight_rsync() {
 }
 # Only paths that reach the image (rsync build context) or drive the deploy itself.
 # Edits elsewhere (harness config, docs) cannot change what ships, so they must not
-# train operators to reach for ACX_ALLOW_DIRTY. Untracked files count: rsync ships them.
+# train operators to reach for ACX_ALLOW_DIRTY. Untracked non-ignored files count: rsync
+# ships them. Gitignored files (e.g. a stray *.onnx) are not detected and can still ship.
 DEPLOY_CLEAN_PATHS=("apps/prototype-description-service" "scripts/deploy")
 preflight_git_clean() {
   local env="$1" dirty
-  dirty="$(git -C "${REPO_ROOT}" status --porcelain --untracked-files=normal -- "${DEPLOY_CLEAN_PATHS[@]}" 2>&1)" \
-    || fail "git status failed for deploy inputs: ${dirty}"
+  # stderr stays out of $dirty so a git warning on success is not read as a change.
+  dirty="$(git -C "${REPO_ROOT}" status --porcelain --untracked-files=normal -- "${DEPLOY_CLEAN_PATHS[@]}" 2>/dev/null)" || {
+    git -C "${REPO_ROOT}" status --porcelain -- "${DEPLOY_CLEAN_PATHS[@]}" >/dev/null || true
+    fail "git status failed for deploy inputs (${REPO_ROOT})"
+  }
   if [[ -n "$dirty" ]]; then
     warn "Deploy inputs have uncommitted changes:"
-    printf '%s\n' "$dirty" | head -20 >&2
+    printf '%s\n' "$dirty" | head -20 >&2 || true
     # dev-fir is a dev-tier env (feature-branch workflow): same dirty-tree policy as dev.
     if [[ "$env" == "dev" || "$env" == "dev-fir" ]] && [[ "${ACX_ALLOW_DIRTY:-0}" == "1" ]]; then
       warn "Continuing for ${env} (ACX_ALLOW_DIRTY=1)."

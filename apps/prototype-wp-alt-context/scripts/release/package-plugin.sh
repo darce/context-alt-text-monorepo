@@ -7,6 +7,7 @@ REPO_ROOT="${ACX_PACKAGE_REPO_ROOT:-$(cd "${PLUGIN_DIR}/../.." && pwd)}"
 PLUGIN_SLUG="alt-context"
 PLUGIN_FILE="${PLUGIN_DIR}/alt-context.php"
 PACKAGE_JSON_FILE="${PLUGIN_DIR}/package.json"
+PACKAGE_LOCK_FILE="${PLUGIN_DIR}/package-lock.json"
 DIST_DIR="${ACX_PACKAGE_DIST_DIR:-${REPO_ROOT}/dist}"
 
 show_usage() {
@@ -82,14 +83,68 @@ extract_package_json_version() {
     echo "${package_version}"
 }
 
+extract_package_lock_version() {
+    local package_lock_file="$1"
+    local lock_version=""
+
+    if [[ ! -f "${package_lock_file}" ]]; then
+        echo "ERROR: package-lock.json not found at ${package_lock_file}" >&2
+        exit 1
+    fi
+
+    ensure_command node
+
+    lock_version="$(node -e "
+        const fs = require('fs');
+        const filePath = process.argv[1];
+        const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+        const rootVersion = typeof parsed.version === 'string' ? parsed.version.trim() : '';
+        const rootPackage = parsed.packages && parsed.packages[''];
+        const rootPackageVersion = rootPackage && typeof rootPackage.version === 'string' ? rootPackage.version.trim() : '';
+        if (rootVersion !== rootPackageVersion) {
+            process.stderr.write('MISMATCH:' + rootVersion + ':' + rootPackageVersion);
+            process.exit(1);
+        }
+        process.stdout.write(rootVersion);
+    " "${package_lock_file}" 2>/tmp/acx-lock-version-err.$$)"
+    local node_exit=$?
+
+    if [[ ${node_exit} -ne 0 ]]; then
+        local err_content
+        err_content="$(cat /tmp/acx-lock-version-err.$$ 2>/dev/null)"
+        rm -f "/tmp/acx-lock-version-err.$$"
+        if [[ "${err_content}" == MISMATCH:* ]]; then
+            local rest="${err_content#MISMATCH:}"
+            local root_v="${rest%%:*}"
+            local pkg_v="${rest#*:}"
+            echo "ERROR: package-lock.json internal version mismatch." >&2
+            echo "  package-lock.json version:              ${root_v}" >&2
+            echo "  package-lock.json packages[\"\"].version: ${pkg_v}" >&2
+            exit 1
+        fi
+        echo "ERROR: Could not extract version from ${package_lock_file}" >&2
+        exit 1
+    fi
+    rm -f "/tmp/acx-lock-version-err.$$"
+
+    if [[ -z "${lock_version}" ]]; then
+        echo "ERROR: Could not extract version from ${package_lock_file}" >&2
+        exit 1
+    fi
+
+    echo "${lock_version}"
+}
+
 validate_version_consistency() {
     local plugin_version="$1"
     local package_version="$2"
+    local package_lock_version="$3"
 
-    if [[ "${plugin_version}" != "${package_version}" ]]; then
+    if [[ "${plugin_version}" != "${package_version}" || "${plugin_version}" != "${package_lock_version}" ]]; then
         echo "ERROR: Version mismatch detected." >&2
-        echo "  alt-context.php Version: ${plugin_version}" >&2
-        echo "  package.json version:   ${package_version}" >&2
+        echo "  alt-context.php Version:     ${plugin_version}" >&2
+        echo "  package.json version:        ${package_version}" >&2
+        echo "  package-lock.json version:   ${package_lock_version}" >&2
         exit 1
     fi
 }
@@ -240,7 +295,8 @@ fi
 
 VERSION="$(extract_plugin_version)"
 PACKAGE_VERSION="$(extract_package_json_version)"
-validate_version_consistency "${VERSION}" "${PACKAGE_VERSION}"
+PACKAGE_LOCK_VERSION="$(extract_package_lock_version "${PACKAGE_LOCK_FILE}")"
+validate_version_consistency "${VERSION}" "${PACKAGE_VERSION}" "${PACKAGE_LOCK_VERSION}"
 
 # Reuse the validated plugin version as Composer's root version so `composer
 # install` does not warn "could not detect the root package version" and default

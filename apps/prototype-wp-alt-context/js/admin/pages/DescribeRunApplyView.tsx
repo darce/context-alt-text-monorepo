@@ -3,6 +3,7 @@ import { __, sprintf } from '@wordpress/i18n';
 
 import { useDescribeRunApply } from '../hooks/useDescribeRunApply';
 import {
+  DESCRIBE_RESULT_TIER,
   NAMING_PROVENANCE_STATUS,
   NAMING_REALIZER,
   parseNamingProvenance,
@@ -20,10 +21,29 @@ interface DescribeRunApplyViewProps {
 
 const PARTIAL_LABEL_CAP = 5;
 
+const tierBadgeFor = (item: DescribeRunItem): React.JSX.Element => {
+  const label =
+    item.tier === DESCRIBE_RESULT_TIER.FINAL_GPU
+      ? __('Compute tier: Final (GPU)', 'alt-context')
+      : item.tier === DESCRIBE_RESULT_TIER.PROVISIONAL_CPU
+        ? __('Compute tier: Provisional (CPU)', 'alt-context')
+        : __('Compute tier: Unknown', 'alt-context');
+
+  const icon =
+    item.tier === DESCRIBE_RESULT_TIER.FINAL_GPU ? '✓' : item.tier === DESCRIBE_RESULT_TIER.PROVISIONAL_CPU ? '◷' : '○';
+
+  return (
+    <span className="acx-history__badge acx-history__recovery" data-testid={`acx-run-apply-tier-${item.media_id}`}>
+      <span className="acx-history__recovery-icon" aria-hidden="true">
+        {icon}
+      </span>
+      <span>{label}</span>
+    </span>
+  );
+};
+
 const itemHeading = (item: DescribeRunItem): string =>
-  item.caption && item.caption.trim() !== ''
-    ? item.caption
-    : sprintf(__('Media %d', 'alt-context'), item.media_id);
+  item.caption && item.caption.trim() !== '' ? item.caption : sprintf(__('Media %d', 'alt-context'), item.media_id);
 
 interface NamingBadgeCopy {
   label: string;
@@ -135,11 +155,7 @@ const formatPartialLabels = (partialIds: number[], itemsById: Map<number, Descri
     return labels.join(', ');
   }
   const head = labels.slice(0, PARTIAL_LABEL_CAP).join(', ');
-  return sprintf(
-    __('%1$s, and %2$d more', 'alt-context'),
-    head,
-    labels.length - PARTIAL_LABEL_CAP,
-  );
+  return sprintf(__('%1$s, and %2$d more', 'alt-context'), head, labels.length - PARTIAL_LABEL_CAP);
 };
 
 /**
@@ -171,9 +187,7 @@ const buildApplyResultText = (
       ),
     );
   } else if (historyRecovered) {
-    parts.push(
-      __('History is now complete for items that needed a second apply.', 'alt-context'),
-    );
+    parts.push(__('History is now complete for items that needed a second apply.', 'alt-context'));
   } else if (historyIncompleteIds.length > 0) {
     // Prior partials left the outstanding set without landing in applied
     // (failed / skipped_*) — never claim recovery. [BR-103][RLSE-05]
@@ -186,9 +200,7 @@ const buildApplyResultText = (
   }
 
   if (data.skipped_existing.length > 0) {
-    parts.push(
-      sprintf(__('Skipped %d with existing alt text.', 'alt-context'), data.skipped_existing.length),
-    );
+    parts.push(sprintf(__('Skipped %d with existing alt text.', 'alt-context'), data.skipped_existing.length));
   }
   if (data.skipped_no_draft.length > 0) {
     parts.push(sprintf(__('%d had no draft.', 'alt-context'), data.skipped_no_draft.length));
@@ -204,9 +216,7 @@ const buildApplyResultText = (
     );
   }
   if (data.skipped_invalid.length > 0) {
-    parts.push(
-      sprintf(__('%d were not valid attachments.', 'alt-context'), data.skipped_invalid.length),
-    );
+    parts.push(sprintf(__('%d were not valid attachments.', 'alt-context'), data.skipped_invalid.length));
   }
 
   return parts.join(' ').trim();
@@ -266,12 +276,9 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
     // History is complete only when every previously outstanding id is present
     // in applied — not merely when the partial bucket emptied into skipped/failed.
     // [BR-103][RLSE-05]
-    const recovered =
-      prev.length > 0 && prev.every((id) => appliedSet.has(id));
+    const recovered = prev.length > 0 && prev.every((id) => appliedSet.has(id));
     setHistoryRecovered(recovered);
-    const incomplete = prev.filter(
-      (id) => !appliedSet.has(id) && !next.includes(id),
-    );
+    const incomplete = prev.filter((id) => !appliedSet.has(id) && !next.includes(id));
     setHistoryIncompleteIds(incomplete);
   };
 
@@ -304,10 +311,10 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
   // failure cannot strip the retry affordance. [BR-127][INT-11]
   const hasRecoveryContext = lastResult !== null || outstandingPartialIds.length > 0;
   const retainedData = itemsQuery.data;
-  const preferRetainedOnError =
-    itemsQuery.isError && hasRecoveryContext && retainedData !== undefined;
-  const showLoading = itemsQuery.isLoading && retainedData === undefined;
-  const showItemsError = itemsQuery.isError && !preferRetainedOnError;
+  const preferRetainedOnError = itemsQuery.isError && hasRecoveryContext && retainedData !== undefined;
+  const retryingItemsError = itemsQuery.isFetching && retainedData === undefined && itemsQuery.errorUpdatedAt > 0;
+  const showLoading = itemsQuery.isLoading && retainedData === undefined && !retryingItemsError;
+  const showItemsError = (itemsQuery.isError && !preferRetainedOnError) || retryingItemsError;
   const showMain = retainedData !== undefined && !showItemsError;
 
   const { withoutAlt: withoutAltRaw, withExistingAlt, noDraft } = buckets;
@@ -326,17 +333,14 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
   const historyCompletionItems = outstandingPartialIds
     .map((id) => itemsById.get(id))
     .filter((item): item is DescribeRunItem => item !== undefined);
-  const overwriteCandidates = withExistingAlt.filter(
-    (item) => !outstandingPartialSet.has(item.media_id),
-  );
+  const overwriteCandidates = withExistingAlt.filter((item) => !outstandingPartialSet.has(item.media_id));
 
   // Real set difference: only count outstanding ids not already in the safe
   // write set so a stale items query cannot double-count. [BR-110]
   const withoutAltSet = new Set(withoutAlt.map((item) => item.media_id));
   const partialCompletionIds = outstandingPartialIds.filter((id) => !withoutAltSet.has(id));
 
-  const hasApplicable =
-    withoutAlt.length > 0 || overwriteCandidates.length > 0 || outstandingPartialIds.length > 0;
+  const hasApplicable = withoutAlt.length > 0 || overwriteCandidates.length > 0 || outstandingPartialIds.length > 0;
   const selectedOverwrites = overwriteCandidates.filter((item) => overwriteIds.has(item.media_id));
   // Explicit selections (safe + overwrite). Outstanding partials are completed
   // implicitly by the server on the same request — count them in the label. [BR-91]
@@ -361,9 +365,12 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
     if (!canApply || apply.isPending) {
       return;
     }
-    apply.mutate(selectedOverwrites.map((item) => item.media_id), {
-      onSuccess: onApplySuccess,
-    });
+    apply.mutate(
+      selectedOverwrites.map((item) => item.media_id),
+      {
+        onSuccess: onApplySuccess,
+      },
+    );
   };
 
   const resultText = lastResult
@@ -374,10 +381,7 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
     withoutAlt.length > 0
       ? sprintf(__('%d descriptions ready to apply', 'alt-context'), withoutAlt.length)
       : historyCompletionItems.length > 0
-        ? sprintf(
-            __('%d need history completion', 'alt-context'),
-            historyCompletionItems.length,
-          )
+        ? sprintf(__('%d need history completion', 'alt-context'), historyCompletionItems.length)
         : __('No new descriptions without existing alt text', 'alt-context');
 
   const safePanelBody =
@@ -388,10 +392,7 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
             'Alt text was already saved for these images. Apply again so they appear in history — this does not overwrite alt text.',
             'alt-context',
           )
-        : __(
-            'All drafts for this run already have alt text. Check images below to overwrite.',
-            'alt-context',
-          );
+        : __('All drafts for this run already have alt text. Check images below to overwrite.', 'alt-context');
 
   const liveRegion = (
     <div
@@ -412,11 +413,40 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
 
       {showLoading ? <p>{__('Loading run drafts…', 'alt-context')}</p> : null}
 
+      {preferRetainedOnError ? (
+        <div className="notice inline notice-warning" role="alert">
+          <p>
+            {__('Could not refresh this run’s drafts. Showing saved drafts; they may be out of date.', 'alt-context')}
+          </p>
+          <button
+            type="button"
+            className="acx-button acx-button--secondary"
+            aria-disabled={itemsQuery.isFetching || undefined}
+            onClick={() => {
+              if (!itemsQuery.isFetching) {
+                void itemsQuery.refetch();
+              }
+            }}
+          >
+            {itemsQuery.isFetching ? __('Retrying…', 'alt-context') : __('Retry', 'alt-context')}
+          </button>
+        </div>
+      ) : null}
+
       {showItemsError ? (
         <section className="acx-dashboard__panel acx-history__panel">
           <h2>{__('Could not load this run’s drafts.', 'alt-context')}</h2>
-          <button type="button" className="acx-button acx-button--secondary" onClick={() => void itemsQuery.refetch()}>
-            {__('Retry', 'alt-context')}
+          <button
+            type="button"
+            className="acx-button acx-button--secondary"
+            aria-disabled={itemsQuery.isFetching || undefined}
+            onClick={() => {
+              if (!itemsQuery.isFetching) {
+                void itemsQuery.refetch();
+              }
+            }}
+          >
+            {itemsQuery.isFetching ? __('Retrying…', 'alt-context') : __('Retry', 'alt-context')}
           </button>
         </section>
       ) : null}
@@ -425,8 +455,7 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
         <>
           {apply.isError ? (
             <div className="acx-error-state" role="alert">
-              <span aria-hidden="true">⚠</span>{' '}
-              {__('Could not apply the run drafts. Try again.', 'alt-context')}
+              <span aria-hidden="true">⚠</span> {__('Could not apply the run drafts. Try again.', 'alt-context')}
               {outstandingPartialIds.length > 0
                 ? ` ${sprintf(
                     __('History is still incomplete for %s.', 'alt-context'),
@@ -451,7 +480,10 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
             </section>
           ) : (
             <>
-              <section className="acx-dashboard__panel acx-run-apply__safe" aria-label={__('Ready to apply', 'alt-context')}>
+              <section
+                className="acx-dashboard__panel acx-run-apply__safe"
+                aria-label={__('Ready to apply', 'alt-context')}
+              >
                 <h2>{safePanelHeading}</h2>
                 <p>{safePanelBody}</p>
                 <ul className="acx-run-apply__list">
@@ -459,7 +491,10 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
                     <li key={item.media_id} className="acx-run-apply__item">
                       <span className="acx-run-apply__item-heading">{itemHeading(item)}</span>
                       <span className="acx-run-apply__draft">{item.alt_text_draft}</span>
-                      <span className="acx-run-apply__media-id">{sprintf(__('Media %d', 'alt-context'), item.media_id)}</span>
+                      <span className="acx-run-apply__media-id">
+                        {sprintf(__('Media %d', 'alt-context'), item.media_id)}
+                      </span>
+                      {tierBadgeFor(item)}
                       {namingBadgeFor(item)}
                     </li>
                   ))}
@@ -476,16 +511,14 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
                           item.media_id,
                         )}
                       </span>
+                      {tierBadgeFor(item)}
                       {namingBadgeFor(item)}
                     </li>
                   ))}
                 </ul>
                 {nothingSelectedIdle ? (
                   <span id={disabledReasonId} className="screen-reader-text">
-                    {__(
-                      'Nothing selected to apply. Check an image below to overwrite its alt text.',
-                      'alt-context',
-                    )}
+                    {__('Nothing selected to apply. Check an image below to overwrite its alt text.', 'alt-context')}
                   </span>
                 ) : null}
                 <button
@@ -508,10 +541,10 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
                   className="acx-dashboard__panel acx-run-apply__existing"
                   aria-label={__('Existing alt text', 'alt-context')}
                 >
-                  <h2>
-                    {sprintf(__('%d images already have alt text', 'alt-context'), overwriteCandidates.length)}
-                  </h2>
-                  <p>{__('Check an image to overwrite its alt text with the new draft when you apply.', 'alt-context')}</p>
+                  <h2>{sprintf(__('%d images already have alt text', 'alt-context'), overwriteCandidates.length)}</h2>
+                  <p>
+                    {__('Check an image to overwrite its alt text with the new draft when you apply.', 'alt-context')}
+                  </p>
                   <ul className="acx-run-apply__list">
                     {overwriteCandidates.map((item) => (
                       <li key={item.media_id} className="acx-run-apply__item acx-run-apply__item--existing">
@@ -528,7 +561,10 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
                           <span className="acx-run-apply__item-heading">{itemHeading(item)}</span>
                         </label>
                         <span className="acx-run-apply__draft">{item.alt_text_draft}</span>
-                        <span className="acx-run-apply__media-id">{sprintf(__('Media %d', 'alt-context'), item.media_id)}</span>
+                        <span className="acx-run-apply__media-id">
+                          {sprintf(__('Media %d', 'alt-context'), item.media_id)}
+                        </span>
+                        {tierBadgeFor(item)}
                         {namingBadgeFor(item)}
                       </li>
                     ))}
@@ -549,6 +585,7 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
                 {noDraft.map((item) => (
                   <li key={item.media_id} className="acx-run-apply__item">
                     <span>{sprintf(__('Media %1$d — %2$s', 'alt-context'), item.media_id, item.status)}</span>
+                    {tierBadgeFor(item)}
                     {namingBadgeFor(item)}
                   </li>
                 ))}

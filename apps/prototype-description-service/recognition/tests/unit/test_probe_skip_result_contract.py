@@ -266,6 +266,16 @@ def test_cluster_job_result_probe_space_skip_defaults_to_empty_mapping() -> None
         clusters_created=0,
     )
     assert result.probe_space_skip == {}
+    other = ClusterJobResult(
+        job_id="other",
+        started_at=now,
+        finished_at=now,
+        completed=0,
+        total=0,
+        clusters_created=0,
+    )
+    result.probe_space_skip["skipped_count"] = 1
+    assert other.probe_space_skip == {}
 
 
 @pytest.mark.asyncio

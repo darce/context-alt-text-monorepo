@@ -58,9 +58,6 @@ const stateStopReason = (data: GpuStatusResponse): string | null => {
   if (data.gpu_state.intent === GpuIntentAction.STOP) {
     return 'stop already requested';
   }
-  if (data.load.has_work) {
-    return 'a describe run is in flight — stops once it finishes';
-  }
   return null;
 };
 
@@ -90,6 +87,8 @@ export const useGpuControl = () => {
           ...previous,
           gpu_state: {
             ...previous.gpu_state,
+            // STOP has no transitional enum state and can be deferred by active work.
+            state: action === GpuIntentAction.START ? GPU_STATE.STARTING : previous.gpu_state.state,
             intent: action,
             intent_status: GpuIntentStatus.PENDING,
           },
@@ -112,9 +111,7 @@ export const useGpuControl = () => {
   const canStart = data
     ? effectiveState !== undefined && stateCanStart(effectiveState) && data.gpu_state.intent !== GpuIntentAction.START
     : false;
-  const canStop = data
-    ? stateCanStop(data.gpu_state.state) && !data.load.has_work && data.gpu_state.intent !== GpuIntentAction.STOP
-    : false;
+  const canStop = data ? stateCanStop(data.gpu_state.state) && data.gpu_state.intent !== GpuIntentAction.STOP : false;
 
   return {
     ...statusQuery,

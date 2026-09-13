@@ -198,10 +198,7 @@ export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): R
               detailIsLoading={detailQuery.isPending || detailQuery.isFetching}
               onToggleRow={onToggleRow}
               selection={selection}
-              identitiesDataSource={deriveIdentitiesPresentationSource(
-                identityQuery.isError,
-                identityQuery.data,
-              )}
+              identitiesDataSource={deriveIdentitiesPresentationSource(identityQuery.isError, identityQuery.data)}
               onRetryIdentities={() => void identityQuery.refetch()}
               searchQuery={searchQuery}
               statusFilter={statusFilter}
@@ -243,7 +240,9 @@ export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): R
                 recognitionPolicy,
                 selectedCount: selectedMediaIds.length,
               });
-              if (action === DESCRIBE_SUBMIT_ACTION.HOLD) return;
+              if (action === DESCRIBE_SUBMIT_ACTION.HOLD) {
+                return;
+              }
               const ids = selectedMediaIds;
               // OFF and UNAVAILABLE both skip the identify pass. UNAVAILABLE is the
               // degraded path: describe still runs, recognition is simply not applied.
@@ -381,8 +380,14 @@ export const MediaSelectionToolbar = ({
       />
       <div className="acx-media-selection__status-filter">
         <span id="acx-media-status-label">{__('Status', 'alt-context')}</span>
-        <Select.Root value={statusFilter} onValueChange={(value) => onStatusFilterChange(value as WorkbenchMediaStatus)}>
-          <Select.Trigger className="acx-media-selection__status-filter-trigger" aria-labelledby="acx-media-status-label">
+        <Select.Root
+          value={statusFilter}
+          onValueChange={(value) => onStatusFilterChange(value as WorkbenchMediaStatus)}
+        >
+          <Select.Trigger
+            className="acx-media-selection__status-filter-trigger"
+            aria-labelledby="acx-media-status-label"
+          >
             <Select.Value />
             <Select.Icon className="acx-media-selection__status-filter-icon">
               <ChevronDown aria-hidden="true" size={16} />
@@ -427,9 +432,7 @@ export const MediaSelectionToolbar = ({
             {announcedStatus}
           </span>
         </span>
-        {isStatusPending ? (
-          <p data-testid="acx-zone-z-filters-loading">{__('Loading media…', 'alt-context')}</p>
-        ) : null}
+        {isStatusPending ? <p data-testid="acx-zone-z-filters-loading">{__('Loading media…', 'alt-context')}</p> : null}
         {isError ? (
           <p role="alert" data-testid="acx-zone-z-filters-error">
             {__('Unable to load media.', 'alt-context')}
@@ -525,9 +528,7 @@ export const BulkDescribeCta = ({
   // new run can start from the terminal state (FE-01, rg-003). Complete-phase
   // dismiss lives on the named done-state in BulkDescribeProgress.
   const canDismiss =
-    isPanelVisible &&
-    (progress.isTerminal || progress.isError) &&
-    progress.run?.phase !== DESCRIBE_RUN_PHASE.COMPLETE;
+    isPanelVisible && (progress.isTerminal || progress.isError) && progress.run?.phase !== DESCRIBE_RUN_PHASE.COMPLETE;
   const offlineGated = Boolean(remoteActionAriaDisabled);
   // rg-003: an empty selection HOLDS the primary (aria-disabled + no-op click) but
   // never removes it from the tab order, so the control and its reason stay
@@ -548,10 +549,7 @@ export const BulkDescribeCta = ({
   const recognitionUnavailableNotice =
     recognitionPolicy === RECOGNITION_POLICY.UNAVAILABLE
       ? sprintf(
-          __(
-            'Recognition settings unavailable — describing without identifying people · ~%d credits',
-            'alt-context',
-          ),
+          __('Recognition settings unavailable — describing without identifying people · ~%d credits', 'alt-context'),
           selectedCount,
         )
       : '';
@@ -562,11 +560,7 @@ export const BulkDescribeCta = ({
 
   return (
     <div className="acx-media-selection__bulk-describe">
-      <GpuTierStatus
-        gpuState={gpuState}
-        cpuDraftCount={progress.run?.completed ?? 0}
-        isRunRelevant={runId !== null || isRunning}
-      />
+      <GpuTierStatus gpuState={gpuState} isRunRelevant={runId !== null || isRunning} />
       <div className="acx-media-selection__bulk-describe-actions">
         <button
           type="button"
@@ -687,8 +681,7 @@ export const BulkDescribeCta = ({
               // node DESCRIBES only — the announcement lives in its own region below.
               return (
                 <>
-                  <AlertTriangle aria-hidden="true" size={16} />{' '}
-                  {recognitionUnavailableNotice}
+                  <AlertTriangle aria-hidden="true" size={16} /> {recognitionUnavailableNotice}
                 </>
               );
             case RECOGNITION_POLICY.LOADING:
@@ -699,6 +692,13 @@ export const BulkDescribeCta = ({
             }
           }
         })()}
+      </p>
+      <p className="acx-media-selection__bulk-describe-disclosure" data-testid="acx-bulk-describe-gpu-cost">
+        {__(
+          'Describe may start the GPU and require warm-up. GPU infrastructure charges are separate from description credits. Review lease limits in',
+          'alt-context',
+        )}{' '}
+        <a href={toSettings()}>{__('GPU controls', 'alt-context')}</a>.
       </p>
       {/*
         WBUX6-W4-B-02 announcement surface. Deliberately a SEPARATE node from the
@@ -759,11 +759,11 @@ const gpuStateToneClass = (tone: GpuStateTone): string => {
 /** GPU tier never gates the primary action; it only reports tier consequences. */
 export const GpuTierStatus = ({
   gpuState,
-  cpuDraftCount,
   isRunRelevant = true,
 }: {
   gpuState: GpuState | null;
-  cpuDraftCount: number;
+  /** @deprecated Lifecycle totals are not evidence of an item's compute tier. */
+  cpuDraftCount?: number;
   /** Unknown telemetry is meaningful only while a describe run exists or starts. */
   isRunRelevant?: boolean;
 }): React.JSX.Element | null => {
@@ -811,7 +811,7 @@ export const GpuTierStatus = ({
         <Icon className={spin ? 'acx-media-selection__bulk-describe-spin' : undefined} aria-hidden="true" size={16} />
         {GPU_STATE_VOCABULARY.tierPrefix} {presentation.label}
       </span>
-      <span className="acx-sync-status__label">{gpuStateNotice(displayedState, cpuDraftCount)}</span>
+      <span className="acx-sync-status__label">{gpuStateNotice(displayedState)}</span>
     </div>
   );
 };
@@ -1004,18 +1004,11 @@ export const BulkDescribeProgress = ({
 
   if (run.phase === DESCRIBE_RUN_PHASE.COMPLETE) {
     const draftsReady = sprintf(
-      _n(
-        '✔ %1$d draft ready to review',
-        '✔ %1$d drafts ready to review',
-        run.completed,
-        'alt-context',
-      ),
+      _n('✔ %1$d draft ready to review', '✔ %1$d drafts ready to review', run.completed, 'alt-context'),
       run.completed,
     );
     const failedSegment =
-      run.failed > 0
-        ? sprintf(_n(' · %1$d failed', ' · %1$d failed', run.failed, 'alt-context'), run.failed)
-        : '';
+      run.failed > 0 ? sprintf(_n(' · %1$d failed', ' · %1$d failed', run.failed, 'alt-context'), run.failed) : '';
     return (
       <div className="acx-media-selection__bulk-describe-progress" role="status" aria-live="polite">
         <span className="acx-media-selection__bulk-describe-status acx-media-selection__bulk-describe-status--success">

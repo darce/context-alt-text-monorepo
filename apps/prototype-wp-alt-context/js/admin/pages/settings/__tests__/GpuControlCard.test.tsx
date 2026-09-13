@@ -2,7 +2,7 @@ import React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { GPU_INTENT_ACTION, GPU_INTENT_STATUS, type GpuStatusResponse } from '../../../api/gpuApi';
+import { GPU_INTENT_ACTION, GPU_INTENT_STATUS, GPU_STATE, type GpuStatusResponse } from '../../../api/gpuApi';
 import { GPU_STATE_VOCABULARY } from '../../workbench/gpuStatePresentation';
 import { GpuControlCard } from '../GpuControlCard';
 import * as gpuControl from '../useGpuControl';
@@ -65,6 +65,55 @@ describe('GpuControlCard', () => {
     vi.clearAllMocks();
   });
 
+  it.each([
+    ['Start', 'starting', 'already starting'],
+    ['Stop', 'stopped', 'already stopped'],
+  ] as const)(
+    'keeps held %s reachable and describes its reason without opening confirmation',
+    (action, state, reason) => {
+      mockControl(statusResponse({ state }));
+      render(<GpuControlCard />);
+      const button = screen.getByRole('button', { name: action + ' GPU' });
+      expect(button).not.toHaveAttribute('disabled');
+      expect(button).toHaveAttribute('aria-disabled', 'true');
+      expect(button.tabIndex).toBe(0);
+      button.focus();
+      expect(button).toHaveFocus();
+      const description = document.getElementById(button.getAttribute('aria-describedby') ?? '');
+      expect(description).toBeVisible();
+      expect(description).toHaveTextContent('disabled: ' + reason);
+      fireEvent.click(button);
+      expect(screen.queryByRole('button', { name: /Confirm/ })).not.toBeInTheDocument();
+    },
+  );
+
+  it.each(['Start', 'Stop'] as const)('opens confirmation for eligible %s', (action) => {
+    mockControl(statusResponse({ state: action === 'Start' ? 'stopped' : 'ready' }));
+    render(<GpuControlCard />);
+    const button = screen.getByRole('button', { name: action + ' GPU' });
+    expect(button).not.toHaveAttribute('aria-disabled');
+    expect(button).not.toHaveAttribute('aria-describedby');
+    fireEvent.click(button);
+    expect(screen.getByRole('button', { name: 'Confirm ' + action.toLowerCase() })).toBeInTheDocument();
+  });
+
+  it.each(['Start', 'Stop'] as const)('holds eligible %s while an intent is pending', (action) => {
+    mockControl(statusResponse({ state: action === 'Start' ? 'stopped' : 'ready' }), { isIntentPending: true });
+    render(<GpuControlCard />);
+    const button = screen.getByRole('button', { name: action + ' GPU' });
+    expect(button).not.toHaveAttribute('disabled');
+    expect(button).toHaveAttribute('aria-disabled', 'true');
+    expect(button.tabIndex).toBe(0);
+    button.focus();
+    expect(button).toHaveFocus();
+    expect(button).toHaveAttribute('aria-describedby', `z-gpu-${action.toLowerCase()}-reason`);
+    const description = document.getElementById(button.getAttribute('aria-describedby') ?? '');
+    expect(description).toBeVisible();
+    expect(description).toHaveTextContent('disabled: a GPU request is already in flight');
+    fireEvent.click(button);
+    expect(screen.queryByRole('button', { name: /Confirm/ })).not.toBeInTheDocument();
+  });
+
   it('renders the stopped automatic zero state with cost disclosure and Start enabled', () => {
     mockControl(statusResponse());
     render(<GpuControlCard />);
@@ -72,7 +121,7 @@ describe('GpuControlCard', () => {
     expect(screen.getByRole('heading', { name: 'Settings › Burst GPU' })).toBeInTheDocument();
     expect(screen.getByText(`${GPU_STATE_VOCABULARY.tierPrefix} ${GPU_STATE_VOCABULARY.stopped}`)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Start GPU' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: /Stop GPU/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /Stop GPU/ })).toHaveAttribute('aria-disabled', 'true');
     expect(screen.getByText(/\$2\.00 \/ GPU-hour/)).toBeInTheDocument();
     expect(screen.getByTestId('z-gpu-state-chip')).toHaveAttribute('role', 'status');
     expect(screen.getAllByRole('status')).toHaveLength(1);
@@ -115,7 +164,7 @@ describe('GpuControlCard', () => {
     });
     render(<GpuControlCard />);
 
-    expect(screen.getByRole('button', { name: /Stop GPU/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /Stop GPU/ })).toHaveAttribute('aria-disabled', 'true');
     expect(screen.getByText(/a describe run is in flight/)).toBeInTheDocument();
   });
 
@@ -147,8 +196,40 @@ describe('GpuControlCard', () => {
       screen.getByText(`${GPU_STATE_VOCABULARY.tierPrefix} ${GPU_STATE_VOCABULARY.notReported}`),
     ).toBeInTheDocument();
     expect(screen.getByText(/last snapshot 4 min ago \(stale\)/)).toBeInTheDocument();
-    expect(screen.getByText(/Lifecycle telemetry is stale/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Start GPU' })).toBeDisabled();
+    expect(screen.getByTestId('gpu-stale-notice')).toHaveTextContent('Lifecycle telemetry is stale');
+    expect(screen.getByRole('button', { name: 'Start GPU' })).toHaveAttribute('aria-disabled', 'true');
+  });
+
+  it.each([
+    [GPU_STATE.STOPPED, false, false, 'Lifecycle telemetry is stale'],
+    [GPU_STATE.DEGRADED, false, false, 'Lifecycle telemetry is stale'],
+    [GPU_STATE.UNKNOWN, true, false, 'GPU state is unknown'],
+    [GPU_STATE.STOPPED, false, true, 'a GPU request is already in flight'],
+    [GPU_STATE.STARTING, true, true, 'a GPU request is already in flight'],
+  ] as const)('explains held Start for %s (fresh: %s, pending: %s)', (state, snapshotFresh, pending, expected) => {
+    mockControl(
+      { ...statusResponse({ state }), snapshot_fresh: snapshotFresh },
+      {
+        canStart: false,
+        startBlockedReason: !snapshotFresh
+          ? 'Lifecycle telemetry is stale — refresh before starting the GPU.'
+          : state === GPU_STATE.UNKNOWN
+            ? 'GPU state is unknown — refresh before starting the GPU.'
+            : null,
+        isIntentPending: pending,
+      },
+    );
+    render(<GpuControlCard />);
+
+    const button = screen.getByRole('button', { name: 'Start GPU' });
+    expect(button).toHaveAttribute('aria-disabled', 'true');
+    expect(button).toHaveAttribute('aria-describedby', 'z-gpu-start-reason');
+    const description = document.getElementById('z-gpu-start-reason');
+    expect(description).toBeVisible();
+    expect(description).toHaveTextContent(`disabled: ${expected}`);
+    expect(description).not.toHaveTextContent('already stopped');
+    fireEvent.click(button);
+    expect(screen.queryByRole('button', { name: /Confirm/ })).not.toBeInTheDocument();
   });
 
   it('renders a 502 error with a retry control', () => {

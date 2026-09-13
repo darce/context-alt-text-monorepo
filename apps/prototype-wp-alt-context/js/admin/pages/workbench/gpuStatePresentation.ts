@@ -5,7 +5,7 @@
  * presentation table is exhaustive over the frontend GpuState union; unknown
  * wire values are narrowed to UNKNOWN at the describeApi boundary.
  */
-import { __, sprintf } from '@wordpress/i18n';
+import { __ } from '@wordpress/i18n';
 
 import { GPU_STATE, type GpuState } from '../../api/describeApi';
 
@@ -49,15 +49,12 @@ export const GPU_STATE_VOCABULARY = {
   notReportedNotice: __('GPU tier not reported. Describing can still continue on CPU.', 'alt-context'),
   stoppedNotice: __('Will warm on start (~2 min)', 'alt-context'),
   startingNotice: __('GPU is starting. CPU drafts stay available while it gets ready.', 'alt-context'),
-  warmingNotice: __('GPU is warming. CPU drafts stay available while final descriptions prepare.', 'alt-context'),
-  readyNotice: __('GPU ready. Final descriptions can upgrade.', 'alt-context'),
-  degradedNotice: (draftCount: number): string =>
-    sprintf(
-      __('GPU unavailable — kept %d CPU drafts. Final descriptions will not upgrade.', 'alt-context'),
-      draftCount,
-    ),
+  warmingNotice: __('GPU is warming. Review results for each description’s compute tier.', 'alt-context'),
+  readyNotice: __('GPU ready. Review results for each description’s compute tier.', 'alt-context'),
+  degradedNotice: (_draftCount: number): string =>
+    __('GPU unavailable. Existing results remain available; review each description’s compute tier.', 'alt-context'),
   warmingToast: __('GPU warming — CPU drafts first', 'alt-context'),
-  readyToast: __('GPU ready — Final descriptions in progress', 'alt-context'),
+  readyToast: __('GPU ready — review results for compute tiers', 'alt-context'),
   degradedToast: __('GPU unavailable — CPU drafts kept', 'alt-context'),
   backToRun: __('Back to run', 'alt-context'),
   backToRunAltText: __('Return to the active describe run', 'alt-context'),
@@ -108,7 +105,7 @@ export const GPU_STATE_PRESENTATION = {
 export const gpuStatePresentation = (state: GpuState | null): GpuStatePresentation =>
   GPU_STATE_PRESENTATION[state ?? GPU_STATE.UNKNOWN];
 
-export const gpuStateNotice = (state: GpuState | null, cpuDraftCount: number): string => {
+export const gpuStateNotice = (state: GpuState | null, cpuDraftCount = 0): string => {
   switch (state ?? GPU_STATE.UNKNOWN) {
     case GPU_STATE.UNKNOWN:
       return GPU_STATE_VOCABULARY.notReportedNotice;

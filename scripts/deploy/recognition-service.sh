@@ -1324,7 +1324,7 @@ do_push_tag() {
 # into remote .env (before any env-tag promotion), converge compose+unit.
 # Used by both do_deploy and do_promote so the prod path is uniform.
 promote_gate() {
-  local env="$1" image="$2" remote_dir prior_rc=0
+  local env="$1" image="$2" remote_dir ship_status=0
   remote_dir="$(env_to_remote_dir "$env")"
   if [[ ! "${image}" =~ ^${IMAGE_BASE}@sha256:[a-f0-9]{64}$ ]]; then
     fail "promote gate requires a digest-pinned candidate (got: ${image})"
@@ -1337,24 +1337,15 @@ promote_gate() {
     warn "ACX_BOOT_SMOKE=0: skipping pre-promote boot smoke"
   fi
 
-  # D6 / S2-A-06: ship ACX_IMAGE_REPO exactly once here (before env-tag promotion)
-  # so a ship failure never leaves OCIR :latest pointing at an image whose remote
-  # .env never updated, and so converge_runtime / do_restart do not rewrite .env
-  # again (three independent mid-rewrite windows). Snapshot prior value for restore.
-  # Runs even when ACX_CONVERGE_RUNTIME=0 (image-only path).
-  ACX_PRIOR_IMAGE_REPO="$(read_remote_image_repo "$env")" || prior_rc=$?
+  # Claim and capture prior state together on the target before any sticky write.
   ACX_PRIOR_IMAGE_REPO_ENV="$env"
-  if (( prior_rc != 0 )); then
-    warn "Could not observe prior ACX_IMAGE_REPO on ${env}; refusing to overwrite unknown state"
-    return "${prior_rc}"
-  fi
-  if [[ "${ACX_PRIOR_IMAGE_REPO}" == "__INVALID_REPO__" ]]; then
-    fail "remote ACX_IMAGE_REPO on ${env} failed charset validation; refusing to deploy over a hostile/malformed sticky repo"
-  fi
-  if ! ship_remote_image_repo_env "${remote_dir}"; then
-    warn "Shipping ACX_IMAGE_REPO failed for ${env}; restoring the prior sticky repository"
-    restore_prior_image_repo_env
-    return 1
+  ACX_IMAGE_REPO_OWNER_ID="$(image_repo_resource claim "${remote_dir}" "" "")" || return $?
+  ship_remote_image_repo_env "${remote_dir}" || ship_status=$?
+  if (( ship_status != 0 )); then
+    if (( ship_status != 75 )); then
+      restore_prior_image_repo_env || warn "prior sticky repository restore failed"
+    fi
+    return "${ship_status}"
   fi
 
   if [[ "${ACX_CONVERGE_RUNTIME:-1}" == "1" ]]; then
@@ -1383,15 +1374,9 @@ promote_gate() {
 # Restore sticky ACX_IMAGE_REPO after a post-ship failure (S2-A-06). Empty prior
 # means the key was absent — clear it rather than leave the newly shipped value.
 restore_prior_image_repo_env() {
-  local env="${ACX_PRIOR_IMAGE_REPO_ENV:-}" prior="${ACX_PRIOR_IMAGE_REPO:-}"
+  local env="${ACX_PRIOR_IMAGE_REPO_ENV:-}"
   [[ -n "${env}" ]] || return 0
-  if [[ -z "${prior}" || "${prior}" == "__INVALID_REPO__" ]]; then
-    warn "Restoring prior ACX_IMAGE_REPO on ${env}: key was absent — clearing sticky repo"
-    clear_remote_image_repo_env "$env"
-    return
-  fi
-  warn "Restoring prior ACX_IMAGE_REPO=${prior} on ${env} after post-ship failure"
-  ACX_IMAGE_REPO="${prior}" ship_remote_image_repo_env "$(env_to_remote_dir "$env")"
+  image_repo_resource restore "$(env_to_remote_dir "$env")" "${ACX_IMAGE_REPO_OWNER_ID:-}" ""
 }
 
 # Read-only topology match (same diffs as converge_check) but returns 1 on drift
@@ -1507,56 +1492,160 @@ WantedBy=multi-user.target
 EOF
 }
 
-# Write ACX_IMAGE_REPO into the remote env .env so compose substitutes the same
-# repository resolve_image_repo_name() selected for build/push (variant parity).
-# D6: use sudo (secrets .env is often root-owned) and ensure a trailing newline
-# before append so we never concatenate onto the previous secret line.
-ship_remote_image_repo_env() {
-  local remote_dir="$1" env_file timeout
-  env_file="${remote_dir}/.env"
+# Cooperative writers on one target use a persistent inode lock; the process
+# checking ownership holds it through mutation (no detached expiring holder).
+# Owner state is embedded in .env so owner, prior repo and value commit in one
+# atomic rename. Never remove the lock file. Noncooperating/root writers are
+# outside this protocol; this does not make registry tag updates linearizable.
+image_repo_resource() {
+  local action="$1" remote_dir="$2" owner="$3" value="$4" timeout program
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
-  assert_safe_image_repo "ACX_IMAGE_REPO" "${ACX_IMAGE_REPO}"
-  log "Shipping ACX_IMAGE_REPO=${ACX_IMAGE_REPO} into ${env_file} on ${SSH_TARGET}"
-  # Upsert the key without rewriting other secrets. Value is charset-validated OCIR path.
-  # Remote path env_file is from env_to_remote_dir (fixed allowlist); value is validated above.
-  run_with_deadline "${timeout}" "shipping ACX_IMAGE_REPO to ${remote_dir}" \
+  program="$(cat <<'PY_RESOURCE'
+import fcntl
+import json
+import os
+import re
+import stat
+import sys
+import tempfile
+import time
+import uuid
+
+root, action, owner, value, timeout = sys.argv[1:]
+path = os.path.join(root, ".env")
+prefix = b"# ACX_IMAGE_REPO_OWNER="
+repo_re = re.compile(r"[A-Za-z0-9_.:/-]+")
+
+
+def refuse(code=1):
+    print("sticky repository ownership refused" if code == 75 else "sticky repository state unknown", file=sys.stderr)
+    raise SystemExit(code)
+
+
+def repo_ok(v):
+    return isinstance(v, str) and (not v or repo_re.fullmatch(v))
+
+
+try:
+    lock = os.open(path + ".acx-image-repo.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    if not stat.S_ISREG(os.fstat(lock).st_mode):
+        refuse()
+    deadline = time.monotonic() + int(timeout)
+    while True:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                refuse()
+            time.sleep(0.05)
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        refuse()
+    with os.fdopen(fd, "rb") as stream:
+        metadata = os.fstat(stream.fileno())
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+            refuse()
+        content = stream.read()
+    lines = content.splitlines(keepends=True)
+    states = [line[len(prefix) :] for line in lines if line.startswith(prefix)]
+    repos = [
+        line[len(b"ACX_IMAGE_REPO=") :].rstrip(b"\r\n").decode("ascii")
+        for line in lines
+        if line.startswith(b"ACX_IMAGE_REPO=")
+    ]
+    if len(states) > 1 or len(repos) > 1 or (repos and not repo_ok(repos[0])):
+        refuse()
+    current = repos[0] if repos else ""
+    state = json.loads(states[0]) if states else None
+    if states and state is None:
+        refuse()
+    if state is not None and (
+        not isinstance(state, dict)
+        or set(state) != {"owner", "prior", "current", "phase"}
+        or not isinstance(state["owner"], str)
+        or not re.fullmatch(r"[a-f0-9]{32}", state["owner"])
+        or not repo_ok(state["prior"])
+        or not repo_ok(state["current"])
+        or state["phase"] not in ("claimed", "shipped", "restored", "cleared")
+        or state["current"] != current
+    ):
+        refuse()
+    if action in ("claim", "clear"):
+        owner = uuid.uuid4().hex
+        state = {"owner": owner, "prior": current, "current": current, "phase": "claimed"}
+        if action == "clear":
+            state.update(current="", phase="cleared")
+    elif action in ("ship", "restore"):
+        if state is None or not re.fullmatch(r"[a-f0-9]{32}", owner):
+            refuse()
+        if state["owner"] != owner:
+            refuse(75)
+        if action == "ship":
+            if not value or not repo_ok(value):
+                refuse()
+            if state["phase"] == "shipped" and state["current"] == value:
+                raise SystemExit(0)
+            if state["phase"] != "claimed":
+                refuse(75)
+            state.update(current=value, phase="shipped")
+        else:
+            if state["phase"] == "restored":
+                raise SystemExit(0)
+            if state["phase"] not in ("claimed", "shipped"):
+                refuse(75)
+            state.update(current=state["prior"], phase="restored")
+    else:
+        refuse()
+    kept = b"".join(line for line in lines if not line.startswith(prefix) and not line.startswith(b"ACX_IMAGE_REPO="))
+    if kept and not kept.endswith(b"\n"):
+        kept += b"\n"
+    if state["current"]:
+        kept += b"ACX_IMAGE_REPO=" + state["current"].encode("ascii") + b"\n"
+    kept += prefix + json.dumps(state, separators=(",", ":")).encode("ascii") + b"\n"
+    staged = None
+    try:
+        fd, staged = tempfile.mkstemp(prefix=".env.acx-", dir=root)
+        with os.fdopen(fd, "wb") as stream:
+            os.fchown(stream.fileno(), metadata.st_uid, metadata.st_gid)
+            os.fchmod(stream.fileno(), stat.S_IMODE(metadata.st_mode))
+            stream.write(kept)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(staged, path)
+        staged = None
+        directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if staged is not None:
+            os.unlink(staged)
+    if action == "claim":
+        print(owner)
+except (OSError, ValueError, TypeError, KeyError, UnicodeError):
+    refuse()
+PY_RESOURCE
+)"
+  run_with_deadline "${timeout}" "sticky repository ${action}" \
     ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
-    "f='${env_file}'; v='${ACX_IMAGE_REPO}'; \
-     sudo test -e \"\$f\" || sudo touch \"\$f\"; \
-     if sudo test -s \"\$f\" && [ \"\$(sudo tail -c1 \"\$f\" | wc -l)\" -eq 0 ]; then \
-       printf '\\n' | sudo tee -a \"\$f\" >/dev/null; \
-     fi; \
-     if sudo grep -q '^ACX_IMAGE_REPO=' \"\$f\" 2>/dev/null; then \
-       sudo sed -i \"s|^ACX_IMAGE_REPO=.*|ACX_IMAGE_REPO=\${v}|\" \"\$f\"; \
-     else \
-       printf 'ACX_IMAGE_REPO=%s\\n' \"\$v\" | sudo tee -a \"\$f\" >/dev/null; \
-     fi"
+    "sudo python3 -c $(remote_quote "${program}") $(remote_quote "${remote_dir}") $(remote_quote "${action}") $(remote_quote "${owner}") $(remote_quote "${value}") ${timeout}"
 }
 
-# D9: remove sticky ACX_IMAGE_REPO from remote .env so compose falls back to the
-# recognition default (${OCIR}/.../acx-backend). Does not restart the unit —
-# operator restarts or re-deploys after clearing.
+ship_remote_image_repo_env() {
+  assert_safe_image_repo "ACX_IMAGE_REPO" "${ACX_IMAGE_REPO}"
+  image_repo_resource ship "$1" "${ACX_IMAGE_REPO_OWNER_ID:-}" "${ACX_IMAGE_REPO}"
+}
+
 clear_remote_image_repo_env() {
-  local env="$1" remote_dir env_file timeout
-  remote_dir="$(env_to_remote_dir "$env")"
-  env_file="${remote_dir}/.env"
-  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
-  # S2-A-10: prod sticky-repo clear is latent (no restart) — require CONFIRM=PROMOTE.
+  local env="$1"
   if [[ "$env" == "prod" && "${CONFIRM:-}" != "PROMOTE" ]]; then
     fail "clear-image-repo prod requires CONFIRM=PROMOTE (sticky-repo clear is latent until next unit restart). Re-run: CONFIRM=PROMOTE $0 clear-image-repo prod"
   fi
   preflight_ssh
-  log "Removing ACX_IMAGE_REPO from ${env_file} on ${SSH_TARGET} (compose → recognition default)"
-  run_with_deadline "${timeout}" "clearing ACX_IMAGE_REPO from ${remote_dir}" \
-    ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
-    "f='${env_file}'; \
-     if sudo test -f \"\$f\" && sudo grep -q '^ACX_IMAGE_REPO=' \"\$f\" 2>/dev/null; then \
-       sudo sed -i '/^ACX_IMAGE_REPO=/d' \"\$f\"; \
-       echo 'removed ACX_IMAGE_REPO'; \
-     else \
-       echo 'ACX_IMAGE_REPO not present (already default)'; \
-     fi"
-  log "clear-image-repo done for ${env}. Restart the unit (or re-deploy) to pick up the recognition default."
+  image_repo_resource clear "$(env_to_remote_dir "$env")" "" ""
 }
 
 # Converge the deployed compose file(s) + systemd unit + shared Caddy edge with
@@ -2812,16 +2901,22 @@ cutover_inflight_present() {
   env_to_unit "${env}" >/dev/null
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
   inflight="${ACX_DEPLOY_BACKUP_ROOT}/${env}/cutover-inflight"
-  # Privileged probe must print PRESENT or ABSENT only after sudo test
-  # succeeds. Do not treat raw test-f rc 1 as confirmed absence (sudo/auth
-  # also returns 1). RES-02 / DATA-13.
+  # lstat distinguishes true ENOENT from inaccessible/nonregular state and
+  # never follows a marker symlink. Only a successful envelope licenses absence.
   output="$(
     run_with_deadline "${timeout}" "cutover inflight probe ${env}" \
       ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
-      "if sudo test -f $(remote_quote "${inflight}"); then printf 'PRESENT\\n'
-       elif sudo test ! -f $(remote_quote "${inflight}"); then printf 'ABSENT\\n'
-       else exit 2
-       fi"
+      "sudo python3 -c 'import os, stat, sys
+try:
+    mode = os.lstat(sys.argv[1]).st_mode
+except FileNotFoundError:
+    print(\"ABSENT\")
+except OSError:
+    sys.exit(2)
+else:
+    if not stat.S_ISREG(mode):
+        sys.exit(2)
+    print(\"PRESENT\")' $(remote_quote "${inflight}")"
   )" || rc=$?
   if (( rc != 0 )); then
     # 1 is reserved for successful decoded ABSENT. Operational probe
@@ -2848,7 +2943,7 @@ commit_cutover_state() {
   committed="${ACX_DEPLOY_BACKUP_ROOT}/${env}/cutover-committed"
   run_with_deadline "${timeout}" "commit cutover ${env}" \
     ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
-    "sudo rm -f -- $(remote_quote "${inflight}") && printf 'status=canonical\ntransaction=%s\n' $(remote_quote "${ACX_DEPLOY_TRANSACTION_ID}") | sudo tee $(remote_quote "${committed}") >/dev/null" \
+    "printf 'status=canonical\ntransaction=%s\n' $(remote_quote "${ACX_DEPLOY_TRANSACTION_ID}") | sudo tee $(remote_quote "${committed}") >/dev/null && sudo rm -f -- $(remote_quote "${inflight}")" \
     || return 1
   ACX_CUTOVER_COMMITTED=1
   ACX_TRAFFIC_FLIPPED=0
@@ -2871,13 +2966,14 @@ recover_interrupted_cutover() {
   fi
   log "Interrupted cutover for ${env}; restoring canonical routing while keeping the candidate recoverable"
   if restore_edge_backups "${env}"; then
-    if ! commit_cutover_state "${env}"; then
-      warn "canonical restore succeeded but commit marker failed; refusing to drain candidate"
-      enable_cutover_candidate "${env}" || true
-      return 1
-    fi
+    # Keep durable inflight evidence until candidate cleanup succeeds. A fresh
+    # recovery can safely repeat canonical restoration and retry the drain.
     if ! abort_cutover_candidate "${env}"; then
       warn "candidate cleanup after interrupted cutover failed"
+      return 1
+    fi
+    if ! commit_cutover_state "${env}"; then
+      warn "canonical restore and drain succeeded but commit marker failed"
       return 1
     fi
     return 0
@@ -3219,7 +3315,7 @@ assert_rollback_fence() {
   local runtime_cid runtime_image_id runtime_state runtime_project runtime_service runtime_hash
   local prior_runtime_kind prior_runtime_cid prior_runtime_image_id prior_runtime_state
   local prior_runtime_project prior_runtime_service prior_runtime_hash prior_runtime_extra
-  local runtime_owner="" canonical_project next_project
+  local runtime_owner="" known_runtime=0 canonical_project next_project
   if [[ ! "${ACX_ROLLBACK_DIGEST_REF:-}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]]; then
     warn "ROLLBACK REQUIRED but no previous serving digest was captured"
     return 1
@@ -3266,10 +3362,14 @@ assert_rollback_fence() {
       warn "cannot observe current registry mapping for ${rollback_base}:${env_tag}; refusing unfenced rollback"
       return 1
     fi
+    if [[ ! "${current_digest}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]]; then
+      warn "current registry mapping is malformed; refusing rollback"
+      return 1
+    fi
     if [[ "${current_digest}" != "${ACX_ROLLBACK_DIGEST_REF}" ]]; then
       if [[ "${candidate_base}" != "${rollback_base}" || "${current_digest}" != "${candidate_digest}" ]]; then
         warn "STALE ROLLBACK REFUSED: ${rollback_base}:${env_tag} now maps to ${current_digest}, not this transaction's ${candidate_digest}"
-        return 1
+        return 75
       fi
     fi
   fi
@@ -3311,6 +3411,9 @@ assert_rollback_fence() {
       && "${runtime_project}" != "${next_project}" ]]; then
       continue
     fi
+    if [[ "${runtime_image_id}" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+      known_runtime=1
+    fi
     case "${runtime_kind}" in
       RUNNING)
         if [[ "${runtime_image_id}" == "${candidate_image_id}" ]]; then
@@ -3349,7 +3452,11 @@ assert_rollback_fence() {
     [[ -n "${runtime_owner}" ]] && break
   done <<< "${runtime_evidence}"
   if [[ -z "${runtime_owner}" ]]; then
-    warn "STALE ROLLBACK REFUSED: ${env} runtime generation is outside this transaction's candidate/rollback fence"
+    if (( known_runtime == 1 )); then
+      warn "STALE ROLLBACK REFUSED: ${env} runtime generation is outside this transaction's candidate/rollback fence"
+      return 75
+    fi
+    warn "runtime generation is unknown; refusing rollback"
     return 1
   fi
   if [[ "${runtime_owner}" == "running" ]]; then
@@ -3359,6 +3466,17 @@ assert_rollback_fence() {
   elif [[ "${runtime_owner}" == "stopped-prior" ]]; then
     log "Confirmed stopped prior api container ${runtime_cid:0:12} belongs to the captured previous generation; proceeding with rollback"
   fi
+}
+
+# Rollback interface: 0 = restored, 1 = ordinary failure, 75 = CAS refusal.
+# Status 75 requires a fresh generation observation, never a blind retry.
+rollback_failure() {
+  local status="$1"; shift
+  if [[ "${status}" == "75" ]]; then
+    warn "$*"
+    exit 75
+  fi
+  fail "$*"
 }
 
 restore_registry_env_tag() {
@@ -3376,17 +3494,23 @@ restore_registry_env_tag() {
     return 1
   fi
   if [[ -n "${ACX_CANDIDATE_DIGEST_REF:-}" ]]; then
-    # Compare-and-swap: re-read the shared env tag inside the lock immediately
-    # before retag/push so a concurrent promote cannot be silently overwritten.
+    # Recheck the generation immediately before retag/push. This is not an
+    # atomic registry CAS: the detached shared-tag lock can expire while this
+    # client is paused. Registry linearizability needs a separate coordinator
+    # gate; the target-local sticky resource lock does not close that gap.
     if ! _pull_ref_remote "${rollback_base}:${env_tag}" >/dev/null \
       || ! current_digest="$(remote_image_digest_ref "${rollback_base}:${env_tag}")"; then
       warn "cannot observe current registry mapping for ${env} (${rollback_base}:${env_tag}) immediately before rollback push; refusing unfenced rollback"
       return 1
     fi
+    if [[ ! "${current_digest}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]]; then
+      warn "current registry mapping is malformed; refusing rollback"
+      return 1
+    fi
     if [[ "${current_digest}" != "${ACX_ROLLBACK_DIGEST_REF}" \
       && "${current_digest}" != "${ACX_CANDIDATE_DIGEST_REF}" ]]; then
       warn "ROLLBACK CAS REFUSED: env ${env} observed ${current_digest} does not match planned ${ACX_CANDIDATE_DIGEST_REF}"
-      return 1
+      return 75
     fi
   fi
   if ! run_with_deadline "${inspect_timeout}" "rollback VM-local retag for ${env}" \
@@ -3404,18 +3528,20 @@ restore_registry_env_tag() {
 restore_runtime_and_edge() {
   local env="$1" restart_runtime="${2:-0}" unit inspect_timeout
   inspect_timeout="$(validated_deadline ACX_REMOTE_INSPECT_TIMEOUT 60)"
+  # Check ownership at the sticky resource before any runtime compensation.
+  # This also keeps sticky cleanup independent of downstream topology failures.
+  local sticky_status=0
+  restore_prior_image_repo_env || sticky_status=$?
+  if (( sticky_status != 0 )); then
+    warn "could not restore prior ACX_IMAGE_REPO before runtime rollback"
+    return "${sticky_status}"
+  fi
   if ! restore_topology_backups "${env}"; then
     warn "could not restore compose/unit topology from .bak before rollback"
     return 1
   fi
   if [[ "${restart_runtime}" == "1" ]]; then
     unit="$(env_to_unit "${env}")"
-    # Sticky repository state participates in compose image resolution, so it
-    # must be compensated before restart, not afterward.
-    if ! restore_prior_image_repo_env; then
-      warn "could not restore prior ACX_IMAGE_REPO before rollback restart"
-      return 1
-    fi
     if ! run_with_deadline "${inspect_timeout}" "rollback systemctl restart ${unit}" \
       ssh -l "${OCI_USER}" -- "${OCI_HOST}" "sudo systemctl restart $(remote_quote "${unit}")"; then
       warn "could not restart ${unit} on the restored image"
@@ -3506,9 +3632,9 @@ restore_env_tag_to_rollback() {
   env="$1"
   restart_runtime="${2:-0}"
   env_tag="$(env_to_tag "${env}")"
-  assert_rollback_fence "${env}" "${restart_runtime}" || return 1
-  restore_registry_env_tag "${env}" || return 1
-  restore_runtime_and_edge "${env}" "${restart_runtime}" || return 1
+  assert_rollback_fence "${env}" "${restart_runtime}" || return $?
+  restore_registry_env_tag "${env}" || return $?
+  restore_runtime_and_edge "${env}" "${restart_runtime}" || return $?
   rollback_base="${ACX_ROLLBACK_IMAGE_BASE:-${ACX_ROLLBACK_DIGEST_REF%@sha256:*}}"
   log "Restored ${rollback_base}:${env_tag} to ${ACX_ROLLBACK_DIGEST_REF}"
 }
@@ -3566,7 +3692,7 @@ do_rollback() {
     || fail "Current ${env} runtime generation could not be captured; refusing unfenced rollback"
   ACX_CANDIDATE_DIGEST_REF="${current_digest}"
   restore_env_tag_to_rollback "${env}" 1 \
-    || fail "Rollback failed; ${IMAGE_BASE}:${env_tag} outcome is unknown"
+    || rollback_failure "$?" "Rollback failed; ${IMAGE_BASE}:${env_tag} outcome is unknown"
   # restore_env_tag_to_rollback already requires both /health and immutable
   # image-ID evidence. GIT_REF may intentionally differ from the old rollback
   # commit, so a current-GIT_REF do_verify here would reject a healthy rollback.
@@ -3711,11 +3837,12 @@ capture_failure_evidence() {
 # successful runtime rollback; a failed rollback stays fail-closed.
 handle_failed_verification() {
   local env="$1" label="$2"
-  local rollback_ok=0
+  local rollback_ok=0 rollback_status=0
   capture_failure_evidence "$env" candidate || warn "automatic failure evidence capture failed; continuing with rollback"
   if restore_env_tag_to_rollback "$env" 1; then
     rollback_ok=1
   else
+    rollback_status=$?
     rollback_ok=0
     warn "automatic runtime rollback failed; run: $(rollback_command_hint "$env")"
   fi
@@ -3724,7 +3851,7 @@ handle_failed_verification() {
   elif [[ "$rollback_ok" == "1" ]]; then
     fail "${label} verification failed; previous image restored where possible. Recovery: $(rollback_command_hint "$env")"
   else
-    fail "${label} verification failed AND automatic rollback failed; runtime state unknown. Recovery: $(rollback_command_hint "$env")"
+    rollback_failure "${rollback_status}" "${label} verification failed AND automatic rollback failed; runtime state unknown. Recovery: $(rollback_command_hint "$env")"
   fi
 }
 
@@ -3783,23 +3910,33 @@ _ship_selected_env() {
   # S2-A-06: if tag promotion fails after ship, restore prior sticky repo.
   if ! do_push_tag "$tag" "${ACX_CANDIDATE_DIGEST_REF}"; then
     capture_failure_evidence "$env" pre_candidate || warn "automatic failure evidence capture failed; continuing with rollback"
+    local rollback_status=0
     if restore_env_tag_to_rollback "$env" 0; then
-      restore_prior_image_repo_env || warn "env tag restored but prior sticky repository restore failed"
+      :
     else
-      warn "automatic env-tag restore failed; refusing further unfenced compensation; run: $(rollback_command_hint "$env")"
+      rollback_status=$?
+      warn "automatic env-tag restore failed; refusing further runtime compensation; run: $(rollback_command_hint "$env")"
     fi
-    fail "Push of env tag failed after shipping ACX_IMAGE_REPO. Recovery: $(rollback_command_hint "$env")"
+    if (( rollback_status != 75 )); then
+      restore_prior_image_repo_env || warn "prior sticky repository restore failed"
+    fi
+    rollback_failure "${rollback_status}" "Push of env tag failed after shipping ACX_IMAGE_REPO. Recovery: $(rollback_command_hint "$env")"
   fi
 
   if ! do_restart "$env" "${ACX_CANDIDATE_DIGEST_REF}"; then
     capture_failure_evidence "$env" "${ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}" || warn "automatic failure evidence capture failed; continuing with rollback"
     restart_runtime="$(cutover_failure_restart_runtime)"
+    local rollback_status=0
     if restore_env_tag_to_rollback "$env" "${restart_runtime}"; then
-      restore_prior_image_repo_env || warn "env tag restored but prior sticky repository restore failed"
+      :
     else
-      warn "automatic env-tag restore failed; refusing further unfenced compensation; run: $(rollback_command_hint "$env")"
+      rollback_status=$?
+      warn "automatic env-tag restore failed; refusing further runtime compensation; run: $(rollback_command_hint "$env")"
     fi
-    fail "Restart failed; the previous env tag was restored where possible. Recovery: $(rollback_command_hint "$env")"
+    if (( rollback_status != 75 )); then
+      restore_prior_image_repo_env || warn "prior sticky repository restore failed"
+    fi
+    rollback_failure "${rollback_status}" "Restart failed; the previous env tag was restored where possible. Recovery: $(rollback_command_hint "$env")"
   fi
 
   if [[ "${completion}" == "aggregate" ]]; then
@@ -3888,24 +4025,34 @@ do_promote() {
 
   if ! do_push_tag "$to_tag" "${ACX_CANDIDATE_DIGEST_REF}"; then
     capture_failure_evidence "$to_env" pre_candidate || warn "automatic failure evidence capture failed; continuing with rollback"
+    local rollback_status=0
     if restore_env_tag_to_rollback "$to_env" 0; then
-      restore_prior_image_repo_env || warn "env tag restored but prior sticky repository restore failed"
+      :
     else
-      warn "automatic env-tag restore failed; refusing further unfenced compensation; run: $(rollback_command_hint "$to_env")"
+      rollback_status=$?
+      warn "automatic env-tag restore failed; refusing further runtime compensation; run: $(rollback_command_hint "$to_env")"
     fi
-    fail "Promotion tag/push failed. Recovery: $(rollback_command_hint "$to_env")"
+    if (( rollback_status != 75 )); then
+      restore_prior_image_repo_env || warn "prior sticky repository restore failed"
+    fi
+    rollback_failure "${rollback_status}" "Promotion tag/push failed. Recovery: $(rollback_command_hint "$to_env")"
   fi
 
   if ! do_restart "$to_env" "${ACX_CANDIDATE_DIGEST_REF}"; then
     capture_failure_evidence "$to_env" "${ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}" || warn "automatic failure evidence capture failed; continuing with rollback"
     local restart_runtime
     restart_runtime="$(cutover_failure_restart_runtime)"
+    local rollback_status=0
     if restore_env_tag_to_rollback "$to_env" "${restart_runtime}"; then
-      restore_prior_image_repo_env || warn "env tag restored but prior sticky repository restore failed"
+      :
     else
-      warn "automatic env-tag restore failed; refusing further unfenced compensation; run: $(rollback_command_hint "$to_env")"
+      rollback_status=$?
+      warn "automatic env-tag restore failed; refusing further runtime compensation; run: $(rollback_command_hint "$to_env")"
     fi
-    fail "Restart failed; previous env tag restored where possible. Recovery: $(rollback_command_hint "$to_env")"
+    if (( rollback_status != 75 )); then
+      restore_prior_image_repo_env || warn "prior sticky repository restore failed"
+    fi
+    rollback_failure "${rollback_status}" "Restart failed; previous env tag restored where possible. Recovery: $(rollback_command_hint "$to_env")"
   fi
 
   log "Promotion submitted. Verifying..."

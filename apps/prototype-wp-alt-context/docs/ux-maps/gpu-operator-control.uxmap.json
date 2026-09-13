@@ -6,7 +6,7 @@
     "Operator can always see the burst GPU state, the effective intent, the lease expiry and load freshness in one place (INT-10 status–predict–stop, OBS-08 stale is shown as unknown with age).",
     "Operator can request Start, Stop or Return to automatic; each request is acknowledged within one poll and its outcome (honoured, pending, blocked) is visible (HAI-04 activate–operate–override).",
     "Cost is disclosed before commitment and the lease cap is named; the user is never surprised by a GPU-hour charge (INT-07, CARD-15, COST-10).",
-    "Stop never discards in-flight work: a stop while a describe run is running is deferred and the reason is shown (FLOW-08, A11Y-18)."
+    "Stop intent can be requested while busy and shutdown is deferred until idle; the separate hard lease remains a cost backstop. Stale or unknown telemetry blocks Start (INT-10, FLOW-08, A11Y-18)."
   ],
   "jobs": [
     { "id": "job-prewarm-gpu", "label": "Pre-warm the GPU before a demo so the first describe run is fast" },
@@ -81,7 +81,7 @@
     }
   ],
   "actions": [
-    { "id": "act-gpu-start", "verb": "Start GPU", "target": "gpu-start-confirm", "hierarchy": "primary", "costly": true, "irreversible": false, "preview_required": true, "screen_id": "settings-burst-gpu", "when": ["stopped", "unknown", "degraded"] },
+    { "id": "act-gpu-start", "verb": "Start GPU", "target": "gpu-start-confirm", "hierarchy": "primary", "costly": true, "irreversible": false, "preview_required": true, "screen_id": "settings-burst-gpu", "when": ["stopped", "degraded"] },
     { "id": "act-gpu-confirm-start", "verb": "Confirm start", "target": "POST recognition/gpu/intent {action: start}", "hierarchy": "primary", "costly": true, "irreversible": false, "preview_required": false, "screen_id": "gpu-start-confirm" },
     { "id": "act-gpu-stop", "verb": "Stop GPU", "target": "gpu-stop-confirm", "hierarchy": "secondary", "costly": false, "irreversible": false, "preview_required": true, "screen_id": "settings-burst-gpu", "when": ["starting", "warming", "ready", "degraded"] },
     { "id": "act-gpu-confirm-stop", "verb": "Confirm stop", "target": "POST recognition/gpu/intent {action: stop}", "hierarchy": "primary", "costly": false, "irreversible": false, "preview_required": false, "screen_id": "gpu-stop-confirm" },

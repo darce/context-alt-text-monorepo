@@ -354,3 +354,22 @@ describe('IdentityClusterItem split routing across a person-spanning group (IDCH
     expect(splitMock).toHaveBeenCalledWith('cluster-b', 2, 'id-3');
   });
 });
+
+describe('IdentityClusterItem face-group badge', () => {
+  afterEach(cleanup);
+
+  it('shows face groups alongside the member count', () => {
+    renderItem({
+      ...bobCluster(),
+      clusterIds: ['first', 'second'],
+      members: [member(), member({ identity_id: 'id-2' }), member({ identity_id: 'id-3' })],
+    });
+    expect(screen.getByRole('img', { name: '2 face groups' })).toBeVisible();
+    expect(screen.getByText('+2')).toBeVisible();
+  });
+
+  it.each([undefined, [], ['first']])('omits the badge unless multiple groups are supplied', (clusterIds) => {
+    renderItem({ ...bobCluster(), clusterIds });
+    expect(screen.queryByRole('img', { name: /face groups?/ })).not.toBeInTheDocument();
+  });
+});

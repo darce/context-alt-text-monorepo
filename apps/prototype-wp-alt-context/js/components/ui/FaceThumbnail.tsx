@@ -74,15 +74,21 @@ export const FaceThumbnail = React.forwardRef<HTMLDivElement, FaceThumbnailProps
     const borderRadius = shape === 'square' ? '0' : '50%';
     const { scale, offsetX, offsetY } = cropTransformFor(bbox, displaySize);
 
-    const handleLoad = React.useCallback(() => {
-      setLoadState('loaded');
-      onLoad?.();
-    }, [onLoad]);
+    const handleLoad = React.useCallback<React.ReactEventHandler<HTMLImageElement>>(
+      () => {
+        setLoadState('loaded');
+        onLoad?.();
+      },
+      [onLoad],
+    );
 
-    const handleError = React.useCallback(() => {
-      setLoadState('error');
-      onError?.();
-    }, [onError]);
+    const handleError = React.useCallback<React.ReactEventHandler<HTMLImageElement>>(
+      () => {
+        setLoadState('error');
+        onError?.();
+      },
+      [onError],
+    );
 
     React.useEffect(() => {
       setLoadState('loading');
@@ -154,6 +160,7 @@ export const FaceThumbnail = React.forwardRef<HTMLDivElement, FaceThumbnailProps
           />
         )}
         <img
+          key={mediaUrl}
           ref={imgRef}
           src={mediaUrl}
           alt={alt}

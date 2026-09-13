@@ -3,6 +3,8 @@
  */
 
 import React from 'react';
+import { Layers } from 'lucide-react';
+import { faceGroupsBadge } from './representativeVocabulary';
 import { useQueryClient } from '@tanstack/react-query';
 import { __, sprintf } from '@wordpress/i18n';
 
@@ -410,7 +412,21 @@ export const IdentityClusterItem = ({
 
   return (
     <div className={`acx-identity-cluster ${editState.isEditing ? 'acx-identity-cluster--editing' : ''}`}>
-      <ClusterPreview representative={representative} memberCount={cluster.members.length} />
+      <ClusterPreview
+        representative={representative}
+        representativeFace={representative?.representative_face}
+        memberCount={cluster.members.length}
+      />
+      {cluster.clusterIds && cluster.clusterIds.length > 1 && (
+        <span
+          className="acx-identity-cluster__face-groups"
+          role="img"
+          aria-label={faceGroupsBadge(cluster.clusterIds.length)}
+        >
+          <Layers aria-hidden="true" size="1em" />
+          <span aria-hidden="true">{faceGroupsBadge(cluster.clusterIds.length)}</span>
+        </span>
+      )}
 
       <div className="acx-identity-cluster__info">
         {!editState.isEditing ? (

@@ -87,6 +87,8 @@ export const useGpuControl = () => {
           ...previous,
           gpu_state: {
             ...previous.gpu_state,
+            // STOP has no transitional enum state and can be deferred by active work.
+            state: action === GpuIntentAction.START ? GPU_STATE.STARTING : previous.gpu_state.state,
             intent: action,
             intent_status: GpuIntentStatus.PENDING,
           },

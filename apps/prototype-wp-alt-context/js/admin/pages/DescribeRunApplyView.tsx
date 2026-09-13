@@ -29,9 +29,15 @@ const tierBadgeFor = (item: DescribeRunItem): React.JSX.Element => {
         ? __('Compute tier: Provisional (CPU)', 'alt-context')
         : __('Compute tier: Unknown', 'alt-context');
 
+  const icon =
+    item.tier === DESCRIBE_RESULT_TIER.FINAL_GPU ? '✓' : item.tier === DESCRIBE_RESULT_TIER.PROVISIONAL_CPU ? '◷' : '○';
+
   return (
-    <span className="acx-history__badge" data-testid={`acx-run-apply-tier-${item.media_id}`}>
-      {label}
+    <span className="acx-history__badge acx-history__recovery" data-testid={`acx-run-apply-tier-${item.media_id}`}>
+      <span className="acx-history__recovery-icon" aria-hidden="true">
+        {icon}
+      </span>
+      <span>{label}</span>
     </span>
   );
 };
@@ -306,8 +312,9 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
   const hasRecoveryContext = lastResult !== null || outstandingPartialIds.length > 0;
   const retainedData = itemsQuery.data;
   const preferRetainedOnError = itemsQuery.isError && hasRecoveryContext && retainedData !== undefined;
-  const showLoading = itemsQuery.isLoading && retainedData === undefined;
-  const showItemsError = itemsQuery.isError && !preferRetainedOnError;
+  const retryingItemsError = itemsQuery.isFetching && retainedData === undefined && itemsQuery.errorUpdatedAt > 0;
+  const showLoading = itemsQuery.isLoading && retainedData === undefined && !retryingItemsError;
+  const showItemsError = (itemsQuery.isError && !preferRetainedOnError) || retryingItemsError;
   const showMain = retainedData !== undefined && !showItemsError;
 
   const { withoutAlt: withoutAltRaw, withExistingAlt, noDraft } = buckets;
@@ -414,10 +421,14 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
           <button
             type="button"
             className="acx-button acx-button--secondary"
-            disabled={itemsQuery.isFetching}
-            onClick={() => void itemsQuery.refetch()}
+            aria-disabled={itemsQuery.isFetching || undefined}
+            onClick={() => {
+              if (!itemsQuery.isFetching) {
+                void itemsQuery.refetch();
+              }
+            }}
           >
-            {__('Retry', 'alt-context')}
+            {itemsQuery.isFetching ? __('Retrying…', 'alt-context') : __('Retry', 'alt-context')}
           </button>
         </div>
       ) : null}
@@ -425,8 +436,17 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
       {showItemsError ? (
         <section className="acx-dashboard__panel acx-history__panel">
           <h2>{__('Could not load this run’s drafts.', 'alt-context')}</h2>
-          <button type="button" className="acx-button acx-button--secondary" onClick={() => void itemsQuery.refetch()}>
-            {__('Retry', 'alt-context')}
+          <button
+            type="button"
+            className="acx-button acx-button--secondary"
+            aria-disabled={itemsQuery.isFetching || undefined}
+            onClick={() => {
+              if (!itemsQuery.isFetching) {
+                void itemsQuery.refetch();
+              }
+            }}
+          >
+            {itemsQuery.isFetching ? __('Retrying…', 'alt-context') : __('Retry', 'alt-context')}
           </button>
         </section>
       ) : null}

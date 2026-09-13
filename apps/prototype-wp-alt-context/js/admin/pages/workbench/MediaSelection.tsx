@@ -691,12 +691,14 @@ export const BulkDescribeCta = ({
               return unreachable;
             }
           }
-        })()}{' '}
+        })()}
+      </p>
+      <p className="acx-media-selection__bulk-describe-disclosure" data-testid="acx-bulk-describe-gpu-cost">
         {__(
-          'Describe may start the GPU and require warm-up. GPU infrastructure charges are separate from description credits. Review GPU controls and lease limits in',
+          'Describe may start the GPU and require warm-up. GPU infrastructure charges are separate from description credits. Review lease limits in',
           'alt-context',
         )}{' '}
-        <a href={toSettings()}>{__('Settings', 'alt-context')}</a>.
+        <a href={toSettings()}>{__('GPU controls', 'alt-context')}</a>.
       </p>
       {/*
         WBUX6-W4-B-02 announcement surface. Deliberately a SEPARATE node from the

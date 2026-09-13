@@ -79,6 +79,21 @@ describe('BulkDescribeCta recognition disclosure (HAI-04 / HAI-05 / RLSE-04)', (
     expect(disclosure).toContainElement(settings);
   });
 
+  it('keeps GPU cost disclosure separate with a GPU controls link and one recognition Settings link', () => {
+    render(<BulkDescribeCta {...baseProps()} recognitionPolicy={RECOGNITION_POLICY.ON} />);
+
+    const disclosure = screen.getByTestId('acx-bulk-describe-gpu-cost');
+    const controls = screen.getByRole('link', { name: 'GPU controls' });
+    expect(disclosure).toHaveTextContent('Describe may start the GPU and require warm-up.');
+    expect(disclosure).toHaveTextContent('GPU infrastructure charges are separate from description credits.');
+    expect(disclosure).toContainElement(controls);
+    expect(controls).toHaveAttribute('href', '#/settings');
+    expect(screen.getAllByRole('link', { name: 'Settings' })).toHaveLength(1);
+    expect(describedTargets(screen.getByRole('button', { name: 'Describe 2 selected' })))
+      .not.toContain(disclosure);
+    expect(disclosure.closest('[aria-live], [role="status"]')).toBeNull();
+  });
+
   it('discloses OFF wording and credits without a Settings link when recognition is known off', () => {
     render(<BulkDescribeCta {...baseProps()} selectedCount={4} recognitionPolicy={RECOGNITION_POLICY.OFF} />);
 

@@ -288,7 +288,7 @@ describe('IdentityClusterItem mutation affordance gates (WBUX6-W3-L6-02 / WBUX6-
   });
 
   it('offers Split only when the group itself carries a cluster id', () => {
-    renderItem(bobCluster());
+    renderItem(twoMemberCluster());
     expect(splitButton()).toBeInTheDocument();
 
     cleanup();
@@ -326,9 +326,6 @@ describe('IdentityClusterItem split routing across a person-spanning group (IDCH
     splitMock.mockReset();
   });
 
-  // Person group spans two clusters: id-1/id-2 in "cluster-a" (the group's primary
-  // clusterId), id-3 in "cluster-b". Picking id-3 as the split anchor must route to
-  // cluster-b, not the group's clusterId, or the wrong cluster gets split.
   const personSpanningCluster = (): ClusterGroup => ({
     key: 'person:7',
     clusterId: 'cluster-a',
@@ -345,29 +342,31 @@ describe('IdentityClusterItem split routing across a person-spanning group (IDCH
     ],
   });
 
-  it('splits the selected identity\'s own cluster, not the group\'s primary clusterId', () => {
+  it('preselects the only eligible face group and excludes singleton anchors', () => {
     renderItem(personSpanningCluster());
-
     fireEvent.click(screen.getByRole('button', { name: /split group/i }));
-    fireEvent.click(screen.getByRole('button', { name: /Use face from media #3/i }));
-
-    expect(splitMock).toHaveBeenCalledWith('cluster-b', 2, 'id-3');
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Use face from media #3/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/Other faces in this face group will move/)).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: /Use face from media #2/i }));
+    expect(splitMock).toHaveBeenCalledWith('cluster-a', 2, 'id-2');
   });
 
-  it.each([false, true])('refuses an unmapped face (mapping absent: %s)', (mappingAbsent) => {
+  it('requires a face group choice and filters anchors to that group', () => {
     const cluster = personSpanningCluster();
-    cluster.clusterIds = ['cluster-a'];
-    cluster.members[2] = member({ identity_id: 'id-3', media_id: 3, cluster_id: null });
-    cluster.identityClusterIds = mappingAbsent
-      ? undefined
-      : { 'id-1': 'cluster-a', 'id-2': 'cluster-a' };
+    cluster.members.push(
+      member({ identity_id: 'id-4', media_id: 4, cluster_id: 'cluster-b' }),
+      member({ identity_id: 'id-5', media_id: 5, cluster_id: 'cluster-b' }),
+    );
+    cluster.identityClusterIds = { ...cluster.identityClusterIds, 'id-4': 'cluster-b', 'id-5': 'cluster-b' };
     renderItem(cluster);
-
     fireEvent.click(screen.getByRole('button', { name: /split group/i }));
+    expect(screen.queryByRole('button', { name: /Use face from media/i })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Face group' }), { target: { value: 'cluster-b' } });
+    expect(screen.getAllByRole('button', { name: /Use face from media/i })).toHaveLength(3);
+    expect(screen.queryByRole('button', { name: /Use face from media #1/i })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Use face from media #3/i }));
-
-    expect(splitMock).not.toHaveBeenCalled();
-    expect(screen.getByText('Cannot split: this face is not in a face group yet.')).toBeVisible();
+    expect(splitMock).toHaveBeenCalledWith('cluster-b', 2, 'id-3');
   });
 
   it('offers Split when only a secondary face group has two members', () => {
@@ -388,13 +387,11 @@ describe('IdentityClusterItem split routing across a person-spanning group (IDCH
     expect(screen.queryByRole('button', { name: /split group/i })).not.toBeInTheDocument();
   });
 
-  it('uses face vocabulary when there are too few members to split', () => {
+  it('withholds Split for a single face', () => {
     renderItem(bobCluster());
-    fireEvent.click(screen.getByRole('button', { name: /split group/i }));
-
-    expect(screen.getByText('Need at least two faces to split.')).toBeVisible();
-    expect(splitMock).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: /split group/i })).not.toBeInTheDocument();
   });
+
 });
 
 describe('IdentityClusterItem face-group badge', () => {

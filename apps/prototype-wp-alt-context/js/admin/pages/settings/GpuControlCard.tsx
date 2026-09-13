@@ -169,8 +169,9 @@ export const GpuControlCard = (): React.JSX.Element => {
   const [confirmation, setConfirmation] = React.useState<ConfirmationAction | null>(null);
   const startHeld = !canStart || isIntentPending;
   const stopHeld = !canStop || isIntentPending;
-  const startReason = data && !canStart ? startDisabledReason(data) : null;
-  const stopReason = !canStop ? stopBlockedReason : null;
+  const pendingReason = isIntentPending ? __('a GPU request is already in flight', 'alt-context') : null;
+  const startReason = data && !canStart ? startDisabledReason(data) : pendingReason;
+  const stopReason = !canStop ? stopBlockedReason : pendingReason;
   const displayedState = data && data.snapshot_fresh ? data.gpu_state.state : GPU_STATE.UNKNOWN;
 
   const confirm = (): void => {

@@ -230,9 +230,7 @@ describe('IdentityClusterItem at-rest hint wiring (REV2-01)', () => {
 
     const hint = screen.getByText(/Showing \d+ of 80 labels/);
     expect(hint).toBeInTheDocument();
-    expect(screen.getByRole('combobox', { name: 'Person name' })).toHaveAccessibleDescription(
-      hint.textContent ?? '',
-    );
+    expect(screen.getByRole('combobox', { name: 'Person name' })).toHaveAccessibleDescription(hint.textContent ?? '');
   });
 });
 
@@ -391,7 +389,6 @@ describe('IdentityClusterItem split routing across a person-spanning group (IDCH
     renderItem(bobCluster());
     expect(screen.queryByRole('button', { name: /split group/i })).not.toBeInTheDocument();
   });
-
 });
 
 describe('IdentityClusterItem face-group badge', () => {

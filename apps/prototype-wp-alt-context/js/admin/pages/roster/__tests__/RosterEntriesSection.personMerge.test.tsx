@@ -6,28 +6,44 @@ import { commitPersonMerge, undoPersonMerge } from '../../../api/personMergeApi'
 import { listRosterEntries, type RosterEntry } from '../../../api/rosterApi';
 import { queryKeys } from '../../../api/queryKeys';
 
-vi.mock('../../../api/personMergeApi', async importOriginal => ({
-  ...await importOriginal<typeof import('../../../api/personMergeApi')>(),
+vi.mock('../../../api/personMergeApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../api/personMergeApi')>()),
   commitPersonMerge: vi.fn(),
   undoPersonMerge: vi.fn(),
 }));
-vi.mock('../../../api/rosterApi', async importOriginal => ({
-  ...await importOriginal<typeof import('../../../api/rosterApi')>(),
+vi.mock('../../../api/rosterApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../api/rosterApi')>()),
   listRosterEntries: vi.fn(),
 }));
 vi.mock('../PersonMergeDialog', () => ({
-  PersonMergeDialog: ({ open, merge, onMerged, onOpenChange }: {
+  PersonMergeDialog: ({
+    open,
+    merge,
+    onMerged,
+    onOpenChange,
+  }: {
     open: boolean;
     merge: ReturnType<typeof import('../../../hooks/usePersonMerge').usePersonMerge>;
     onMerged: (preview: unknown) => void;
     onOpenChange: (open: boolean) => void;
-  }) => open ? <button onClick={() => merge.commit.mutate(
-    { loser_id: 1, survivor_id: 2 },
-    { onSuccess: () => {
-      onMerged({ loser: { id: 1, name: 'Alice' }, survivor: { id: 2, name: 'Bob' } });
-      onOpenChange(false);
-    } },
-  )}>Complete merge</button> : null,
+  }) =>
+    open ? (
+      <button
+        onClick={() =>
+          merge.commit.mutate(
+            { loser_id: 1, survivor_id: 2 },
+            {
+              onSuccess: () => {
+                onMerged({ loser: { id: 1, name: 'Alice' }, survivor: { id: 2, name: 'Bob' } });
+                onOpenChange(false);
+              },
+            },
+          )
+        }
+      >
+        Complete merge
+      </button>
+    ) : null,
 }));
 
 const loser = { id: 1, name: 'Alice' } as RosterEntry;
@@ -36,9 +52,11 @@ const setup = async () => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const invalidate = vi.spyOn(client, 'invalidateQueries');
   const onDismiss = vi.fn();
-  render(<QueryClientProvider client={client}>
-    <PersonMergeFlow loser={loser} entries={[loser]} onDismiss={onDismiss} />
-  </QueryClientProvider>);
+  render(
+    <QueryClientProvider client={client}>
+      <PersonMergeFlow loser={loser} entries={[loser]} onDismiss={onDismiss} />
+    </QueryClientProvider>,
+  );
   fireEvent.click(screen.getByText('Complete merge'));
   await screen.findByRole('button', { name: 'Undo' });
   invalidate.mockClear();
@@ -79,16 +97,27 @@ describe('person merge undo recovery', () => {
   it('keeps the banner while pending and restarts dismissal after success', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let resolveUndo: ((value: { restored_person_id: number; restored_cluster_ids: string[] }) => void) | undefined;
-    vi.mocked(undoPersonMerge).mockImplementation(() => new Promise(resolve => { resolveUndo = resolve; }));
+    vi.mocked(undoPersonMerge).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveUndo = resolve;
+        }),
+    );
     const { onDismiss } = await setup();
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
     await screen.findByRole('button', { name: 'Undoing…' });
-    act(() => { vi.advanceTimersByTime(UNDO_BANNER_TTL_MS * 2); });
+    act(() => {
+      vi.advanceTimersByTime(UNDO_BANNER_TTL_MS * 2);
+    });
     expect(onDismiss).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: 'Undoing…' })).toBeDisabled();
-    await act(async () => { resolveUndo?.({ restored_person_id: 1, restored_cluster_ids: [] }); });
+    await act(async () => {
+      resolveUndo?.({ restored_person_id: 1, restored_cluster_ids: [] });
+    });
     await waitFor(() => expect(screen.getByText('Person restored.')).toBeVisible());
-    act(() => { vi.advanceTimersByTime(UNDO_BANNER_TTL_MS); });
+    act(() => {
+      vi.advanceTimersByTime(UNDO_BANNER_TTL_MS);
+    });
     expect(onDismiss).toHaveBeenCalledTimes(1);
   });
 
@@ -98,7 +127,9 @@ describe('person merge undo recovery', () => {
     const { onDismiss } = await setup();
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
     await screen.findByText(/Undo failed/);
-    act(() => { vi.advanceTimersByTime(UNDO_BANNER_TTL_MS * 2); });
+    act(() => {
+      vi.advanceTimersByTime(UNDO_BANNER_TTL_MS * 2);
+    });
     expect(onDismiss).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: 'Undo' })).toBeEnabled();
   });

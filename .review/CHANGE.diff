@@ -1,132 +1,294 @@
+diff --git a/.review/CHANGE.diff b/.review/CHANGE.diff
+--- a/.review/CHANGE.diff
++++ b/.review/CHANGE.diff
+@@ -1,47 +1,132 @@
+-diff --git a/apps/prototype-description-service/recognition/application/orchestration/clustering/job_result.py b/apps/prototype-description-service/recognition/application/orchestration/clustering/job_result.py
+---- a/apps/prototype-description-service/recognition/application/orchestration/clustering/job_result.py
+-+++ b/apps/prototype-description-service/recognition/application/orchestration/clustering/job_result.py
+-@@ -20,3 +20,4 @@ class ClusterJobResult:
+-     accepted: int = 0
+-     suggested: int = 0
+-     rejected: int = 0
+-+    probe_space_skip: dict[str, object] = field(default_factory=dict)
+-diff --git a/apps/prototype-description-service/recognition/application/orchestration/clustering/orchestrator.py b/apps/prototype-description-service/recognition/application/orchestration/clustering/orchestrator.py
+---- a/apps/prototype-description-service/recognition/application/orchestration/clustering/orchestrator.py
+-+++ b/apps/prototype-description-service/recognition/application/orchestration/clustering/orchestrator.py
+-@@ -264,6 +264,7 @@ class IncrementalClusteringRunner:
+-             accepted=accept_count,
+-             suggested=suggest_count,
+-             rejected=reject_count,
+-+            probe_space_skip=(clustering_job.payload or {}).get("probe_space_skip", {}),
+-         )
++diff --git a/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx b/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx
++--- a/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx
+++++ b/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx
++@@ -167,6 +167,10 @@ export const GpuControlCard = (): React.JSX.Element => {
++     isIntentPending,
++   } = useGpuControl();
++   const [confirmation, setConfirmation] = React.useState<ConfirmationAction | null>(null);
+++  const startHeld = !canStart || isIntentPending;
+++  const stopHeld = !canStop || isIntentPending;
+++  const startReason = data && !canStart ? startDisabledReason(data) : null;
+++  const stopReason = !canStop ? stopBlockedReason : null;
++   const displayedState = data && data.snapshot_fresh ? data.gpu_state.state : GPU_STATE.UNKNOWN;
+  
+-     @staticmethod
+-@@ -364,6 +365,7 @@ class IncrementalClusteringRunner:
+-             completed=0,
+-             total=0,
+-             clusters_created=0,
+-+            probe_space_skip=(clustering_job.payload or {}).get("probe_space_skip", {}),
+-         )
++   const confirm = (): void => {
++@@ -251,22 +255,32 @@ export const GpuControlCard = (): React.JSX.Element => {
++             <button
++               type="button"
++               className="acx-button acx-button--primary"
++-              onClick={() => setConfirmation(GpuIntentAction.START)}
++-              disabled={!canStart || isIntentPending}
+++              onClick={() => {
+++                if (!startHeld) {
+++                  setConfirmation(GpuIntentAction.START);
+++                }
+++              }}
+++              aria-disabled={startHeld ? true : undefined}
+++              aria-describedby={startReason ? 'z-gpu-start-reason' : undefined}
++             >
++               <span aria-hidden="true">▶</span> {__('Start GPU', 'alt-context')}
++             </button>
++-            {!canStart && startDisabledReason(data) ? <span>disabled: {startDisabledReason(data)}</span> : null}
+++            {startReason ? <span id="z-gpu-start-reason">disabled: {startReason}</span> : null}
+  
+-     async def _start_run_context(
+-diff --git a/apps/prototype-description-service/recognition/tests/unit/test_probe_skip_result_contract.py b/apps/prototype-description-service/recognition/tests/unit/test_probe_skip_result_contract.py
+---- a/apps/prototype-description-service/recognition/tests/unit/test_probe_skip_result_contract.py
+-+++ b/apps/prototype-description-service/recognition/tests/unit/test_probe_skip_result_contract.py
+-@@ -266,6 +266,16 @@ def test_cluster_job_result_probe_space_skip_defaults_to_empty_mapping() -> None
+-         clusters_created=0,
+-     )
+-     assert result.probe_space_skip == {}
+-+    other = ClusterJobResult(
+-+        job_id="other",
+-+        started_at=now,
+-+        finished_at=now,
+-+        completed=0,
+-+        total=0,
+-+        clusters_created=0,
+-+    )
+-+    result.probe_space_skip["skipped_count"] = 1
+-+    assert other.probe_space_skip == {}
++             <button
++               type="button"
++               className="acx-button acx-button--secondary"
++-              onClick={() => setConfirmation(GpuIntentAction.STOP)}
++-              disabled={!canStop || isIntentPending}
+++              onClick={() => {
+++                if (!stopHeld) {
+++                  setConfirmation(GpuIntentAction.STOP);
+++                }
+++              }}
+++              aria-disabled={stopHeld ? true : undefined}
+++              aria-describedby={stopReason ? 'z-gpu-stop-reason' : undefined}
++             >
++               <span aria-hidden="true">■</span> {__('Stop GPU', 'alt-context')}
++             </button>
++-            {!canStop && stopBlockedReason ? <span>disabled: {stopBlockedReason}</span> : null}
+++            {stopReason ? <span id="z-gpu-stop-reason">disabled: {stopReason}</span> : null}
+  
++             {canReturnToAuto ? (
++               <button
++diff --git a/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx b/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx
++--- a/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx
+++++ b/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx
++@@ -65,6 +65,48 @@ describe('GpuControlCard', () => {
++     vi.clearAllMocks();
++   });
+  
+- @pytest.mark.asyncio
+++  it.each([
+++    ['Start', 'starting', 'already starting'],
+++    ['Stop', 'stopped', 'already stopped'],
+++  ] as const)(
+++    'keeps held %s reachable and describes its reason without opening confirmation',
+++    (action, state, reason) => {
+++      mockControl(statusResponse({ state }));
+++      render(<GpuControlCard />);
+++      const button = screen.getByRole('button', { name: action + ' GPU' });
+++      expect(button).not.toHaveAttribute('disabled');
+++      expect(button).toHaveAttribute('aria-disabled', 'true');
+++      expect(button.tabIndex).toBe(0);
+++      button.focus();
+++      expect(button).toHaveFocus();
+++      const description = document.getElementById(button.getAttribute('aria-describedby') ?? '');
+++      expect(description).toBeVisible();
+++      expect(description).toHaveTextContent('disabled: ' + reason);
+++      fireEvent.click(button);
+++      expect(screen.queryByRole('button', { name: /Confirm/ })).not.toBeInTheDocument();
+++    },
+++  );
+++
+++  it.each(['Start', 'Stop'] as const)('opens confirmation for eligible %s', (action) => {
+++    mockControl(statusResponse({ state: action === 'Start' ? 'stopped' : 'ready' }));
+++    render(<GpuControlCard />);
+++    const button = screen.getByRole('button', { name: action + ' GPU' });
+++    expect(button).not.toHaveAttribute('aria-disabled');
+++    expect(button).not.toHaveAttribute('aria-describedby');
+++    fireEvent.click(button);
+++    expect(screen.getByRole('button', { name: 'Confirm ' + action.toLowerCase() })).toBeInTheDocument();
+++  });
+++
+++  it.each(['Start', 'Stop'] as const)('holds eligible %s while an intent is pending', (action) => {
+++    mockControl(statusResponse({ state: action === 'Start' ? 'stopped' : 'ready' }), { isIntentPending: true });
+++    render(<GpuControlCard />);
+++    const button = screen.getByRole('button', { name: action + ' GPU' });
+++    expect(button).not.toHaveAttribute('disabled');
+++    expect(button).toHaveAttribute('aria-disabled', 'true');
+++    fireEvent.click(button);
+++    expect(screen.queryByRole('button', { name: /Confirm/ })).not.toBeInTheDocument();
+++  });
+++
++   it('renders the stopped automatic zero state with cost disclosure and Start enabled', () => {
++     mockControl(statusResponse());
++     render(<GpuControlCard />);
++@@ -72,7 +114,7 @@ describe('GpuControlCard', () => {
++     expect(screen.getByRole('heading', { name: 'Settings › Burst GPU' })).toBeInTheDocument();
++     expect(screen.getByText(`${GPU_STATE_VOCABULARY.tierPrefix} ${GPU_STATE_VOCABULARY.stopped}`)).toBeInTheDocument();
++     expect(screen.getByRole('button', { name: 'Start GPU' })).toBeEnabled();
++-    expect(screen.getByRole('button', { name: /Stop GPU/ })).toBeDisabled();
+++    expect(screen.getByRole('button', { name: /Stop GPU/ })).toHaveAttribute('aria-disabled', 'true');
++     expect(screen.getByText(/\$2\.00 \/ GPU-hour/)).toBeInTheDocument();
++     expect(screen.getByTestId('z-gpu-state-chip')).toHaveAttribute('role', 'status');
++     expect(screen.getAllByRole('status')).toHaveLength(1);
++@@ -115,7 +157,7 @@ describe('GpuControlCard', () => {
++     });
++     render(<GpuControlCard />);
++ 
++-    expect(screen.getByRole('button', { name: /Stop GPU/ })).toBeDisabled();
+++    expect(screen.getByRole('button', { name: /Stop GPU/ })).toHaveAttribute('aria-disabled', 'true');
++     expect(screen.getByText(/a describe run is in flight/)).toBeInTheDocument();
++   });
++ 
++@@ -148,7 +190,7 @@ describe('GpuControlCard', () => {
++     ).toBeInTheDocument();
++     expect(screen.getByText(/last snapshot 4 min ago \(stale\)/)).toBeInTheDocument();
++     expect(screen.getByText(/Lifecycle telemetry is stale/)).toBeInTheDocument();
++-    expect(screen.getByRole('button', { name: 'Start GPU' })).toBeDisabled();
+++    expect(screen.getByRole('button', { name: 'Start GPU' })).toHaveAttribute('aria-disabled', 'true');
++   });
++ 
++   it('renders a 502 error with a retry control', () => {
+diff --git a/.review/COMMITS.txt b/.review/COMMITS.txt
+--- a/.review/COMMITS.txt
++++ b/.review/COMMITS.txt
+@@ -1 +1,2 @@
+-3b34835d3292 offload: Committed B05 provenance fix; full verification is blocked by
++ddd718154f8a style(a11y): prettier format GpuControlCard test (ISSUEDAG-1 UXMAP-01)
++51ab996bfcc3 offload: Implemented the accessibility fix and regression tests;
+diff --git a/.review/CONTEXT.md b/.review/CONTEXT.md
+--- a/.review/CONTEXT.md
++++ b/.review/CONTEXT.md
+@@ -1,8 +1,8 @@
+ # Orchestrator review context
+ 
+-- Base ref: `923eece608fec5b13ff3793a0f5f3afc20f6fe7b` (`923eece608fec5b13ff3793a0f5f3afc20f6fe7b`)
+-- Tip ref: `3b34835d3292e4864e467fef920c8402ac40c69e` (`3b34835d3292e4864e467fef920c8402ac40c69e`)
+-- Merge base: `923eece608fec5b13ff3793a0f5f3afc20f6fe7b`
+-- Scope: complete `923eece608fec5b13ff3793a0f5f3afc20f6fe7b..3b34835d3292e4864e467fef920c8402ac40c69e` diff; paths are derived, never requested by a brief
++- Base ref: `df5db19ca9f8f99d5471625893958a5fb11cab1b` (`df5db19ca9f8f99d5471625893958a5fb11cab1b`)
++- Tip ref: `ddd718154f8aa8488ade5faab4315c5c7c40eb3c` (`ddd718154f8aa8488ade5faab4315c5c7c40eb3c`)
++- Merge base: `df5db19ca9f8f99d5471625893958a5fb11cab1b`
++- Scope: complete `df5db19ca9f8f99d5471625893958a5fb11cab1b..ddd718154f8aa8488ade5faab4315c5c7c40eb3c` diff; paths are derived, never requested by a brief
+ - Redaction policy: `sha-subject-only+strip-index-blob-oids-v1`
+ - Resolved backend trust tier: `trusted_remote`
+diff --git a/.review/DIFFSTAT.txt b/.review/DIFFSTAT.txt
+--- a/.review/DIFFSTAT.txt
++++ b/.review/DIFFSTAT.txt
+@@ -1,4 +1,3 @@
+- .../application/orchestration/clustering/job_result.py         |  1 +
+- .../application/orchestration/clustering/orchestrator.py       |  2 ++
+- .../recognition/tests/unit/test_probe_skip_result_contract.py  | 10 ++++++++++
+- 3 files changed, 13 insertions(+)
++ .../js/admin/pages/settings/GpuControlCard.tsx     | 26 +++++++++---
++ .../settings/__tests__/GpuControlCard.test.tsx     | 48 ++++++++++++++++++++--
++ 2 files changed, 65 insertions(+), 9 deletions(-)
 diff --git a/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx b/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx
 --- a/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx
 +++ b/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx
-@@ -167,6 +167,10 @@ export const GpuControlCard = (): React.JSX.Element => {
-     isIntentPending,
-   } = useGpuControl();
+@@ -169,8 +169,9 @@ export const GpuControlCard = (): React.JSX.Element => {
    const [confirmation, setConfirmation] = React.useState<ConfirmationAction | null>(null);
-+  const startHeld = !canStart || isIntentPending;
-+  const stopHeld = !canStop || isIntentPending;
-+  const startReason = data && !canStart ? startDisabledReason(data) : null;
-+  const stopReason = !canStop ? stopBlockedReason : null;
+   const startHeld = !canStart || isIntentPending;
+   const stopHeld = !canStop || isIntentPending;
+-  const startReason = data && !canStart ? startDisabledReason(data) : null;
+-  const stopReason = !canStop ? stopBlockedReason : null;
++  const pendingReason = isIntentPending ? __('a GPU request is already in flight', 'alt-context') : null;
++  const startReason = data && !canStart ? startDisabledReason(data) : pendingReason;
++  const stopReason = !canStop ? stopBlockedReason : pendingReason;
    const displayedState = data && data.snapshot_fresh ? data.gpu_state.state : GPU_STATE.UNKNOWN;
  
    const confirm = (): void => {
-@@ -251,22 +255,32 @@ export const GpuControlCard = (): React.JSX.Element => {
-             <button
-               type="button"
-               className="acx-button acx-button--primary"
--              onClick={() => setConfirmation(GpuIntentAction.START)}
--              disabled={!canStart || isIntentPending}
-+              onClick={() => {
-+                if (!startHeld) {
-+                  setConfirmation(GpuIntentAction.START);
-+                }
-+              }}
-+              aria-disabled={startHeld ? true : undefined}
-+              aria-describedby={startReason ? 'z-gpu-start-reason' : undefined}
-             >
-               <span aria-hidden="true">▶</span> {__('Start GPU', 'alt-context')}
-             </button>
--            {!canStart && startDisabledReason(data) ? <span>disabled: {startDisabledReason(data)}</span> : null}
-+            {startReason ? <span id="z-gpu-start-reason">disabled: {startReason}</span> : null}
- 
-             <button
-               type="button"
-               className="acx-button acx-button--secondary"
--              onClick={() => setConfirmation(GpuIntentAction.STOP)}
--              disabled={!canStop || isIntentPending}
-+              onClick={() => {
-+                if (!stopHeld) {
-+                  setConfirmation(GpuIntentAction.STOP);
-+                }
-+              }}
-+              aria-disabled={stopHeld ? true : undefined}
-+              aria-describedby={stopReason ? 'z-gpu-stop-reason' : undefined}
-             >
-               <span aria-hidden="true">■</span> {__('Stop GPU', 'alt-context')}
-             </button>
--            {!canStop && stopBlockedReason ? <span>disabled: {stopBlockedReason}</span> : null}
-+            {stopReason ? <span id="z-gpu-stop-reason">disabled: {stopReason}</span> : null}
- 
-             {canReturnToAuto ? (
-               <button
 diff --git a/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx b/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx
 --- a/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx
 +++ b/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx
-@@ -65,6 +65,48 @@ describe('GpuControlCard', () => {
-     vi.clearAllMocks();
+@@ -103,6 +103,13 @@ describe('GpuControlCard', () => {
+     const button = screen.getByRole('button', { name: action + ' GPU' });
+     expect(button).not.toHaveAttribute('disabled');
+     expect(button).toHaveAttribute('aria-disabled', 'true');
++    expect(button.tabIndex).toBe(0);
++    button.focus();
++    expect(button).toHaveFocus();
++    expect(button).toHaveAttribute('aria-describedby', `z-gpu-${action.toLowerCase()}-reason`);
++    const description = document.getElementById(button.getAttribute('aria-describedby') ?? '');
++    expect(description).toBeVisible();
++    expect(description).toHaveTextContent('disabled: a GPU request is already in flight');
+     fireEvent.click(button);
+     expect(screen.queryByRole('button', { name: /Confirm/ })).not.toBeInTheDocument();
    });
+diff --git a/apps/prototype-wp-alt-context/js/admin/styles/components/_button.scss b/apps/prototype-wp-alt-context/js/admin/styles/components/_button.scss
+--- a/apps/prototype-wp-alt-context/js/admin/styles/components/_button.scss
++++ b/apps/prototype-wp-alt-context/js/admin/styles/components/_button.scss
+@@ -12,7 +12,7 @@
+   &--primary {
+     background: var(--acx-color-accent);
+     color: var(--acx-color-accent-contrast);
+-    &:hover {
++    &:hover:not(:disabled):not([aria-disabled='true']) {
+       filter: brightness(1.1);
+     }
+   }
+@@ -21,7 +21,7 @@
+     background: var(--acx-color-surface-alt);
+     border-color: var(--acx-color-border);
+     color: var(--acx-color-text);
+-    &:hover {
++    &:hover:not(:disabled):not([aria-disabled='true']) {
+       background: var(--acx-color-surface);
+     }
+   }
+@@ -32,7 +32,7 @@
+     color: var(--acx-color-text);
+     text-decoration: underline;
+     text-underline-offset: var(--acx-space-2);
+-    &:hover {
++    &:hover:not(:disabled):not([aria-disabled='true']) {
+       background: var(--acx-color-surface-alt);
+     }
+   }
+@@ -41,7 +41,7 @@
+     background: var(--acx-color-danger);
+     border-color: var(--acx-color-danger);
+     color: var(--acx-color-accent-contrast);
+-    &:hover {
++    &:hover:not(:disabled):not([aria-disabled='true']) {
+       background: var(--acx-color-danger-hover);
+     }
+   }
+@@ -51,7 +51,8 @@
+     outline-offset: var(--acx-space-2);
+   }
  
-+  it.each([
-+    ['Start', 'starting', 'already starting'],
-+    ['Stop', 'stopped', 'already stopped'],
-+  ] as const)(
-+    'keeps held %s reachable and describes its reason without opening confirmation',
-+    (action, state, reason) => {
-+      mockControl(statusResponse({ state }));
-+      render(<GpuControlCard />);
-+      const button = screen.getByRole('button', { name: action + ' GPU' });
-+      expect(button).not.toHaveAttribute('disabled');
-+      expect(button).toHaveAttribute('aria-disabled', 'true');
-+      expect(button.tabIndex).toBe(0);
-+      button.focus();
-+      expect(button).toHaveFocus();
-+      const description = document.getElementById(button.getAttribute('aria-describedby') ?? '');
-+      expect(description).toBeVisible();
-+      expect(description).toHaveTextContent('disabled: ' + reason);
-+      fireEvent.click(button);
-+      expect(screen.queryByRole('button', { name: /Confirm/ })).not.toBeInTheDocument();
-+    },
-+  );
-+
-+  it.each(['Start', 'Stop'] as const)('opens confirmation for eligible %s', (action) => {
-+    mockControl(statusResponse({ state: action === 'Start' ? 'stopped' : 'ready' }));
-+    render(<GpuControlCard />);
-+    const button = screen.getByRole('button', { name: action + ' GPU' });
-+    expect(button).not.toHaveAttribute('aria-disabled');
-+    expect(button).not.toHaveAttribute('aria-describedby');
-+    fireEvent.click(button);
-+    expect(screen.getByRole('button', { name: 'Confirm ' + action.toLowerCase() })).toBeInTheDocument();
-+  });
-+
-+  it.each(['Start', 'Stop'] as const)('holds eligible %s while an intent is pending', (action) => {
-+    mockControl(statusResponse({ state: action === 'Start' ? 'stopped' : 'ready' }), { isIntentPending: true });
-+    render(<GpuControlCard />);
-+    const button = screen.getByRole('button', { name: action + ' GPU' });
-+    expect(button).not.toHaveAttribute('disabled');
-+    expect(button).toHaveAttribute('aria-disabled', 'true');
-+    fireEvent.click(button);
-+    expect(screen.queryByRole('button', { name: /Confirm/ })).not.toBeInTheDocument();
-+  });
-+
-   it('renders the stopped automatic zero state with cost disclosure and Start enabled', () => {
-     mockControl(statusResponse());
-     render(<GpuControlCard />);
-@@ -72,7 +114,7 @@ describe('GpuControlCard', () => {
-     expect(screen.getByRole('heading', { name: 'Settings › Burst GPU' })).toBeInTheDocument();
-     expect(screen.getByText(`${GPU_STATE_VOCABULARY.tierPrefix} ${GPU_STATE_VOCABULARY.stopped}`)).toBeInTheDocument();
-     expect(screen.getByRole('button', { name: 'Start GPU' })).toBeEnabled();
--    expect(screen.getByRole('button', { name: /Stop GPU/ })).toBeDisabled();
-+    expect(screen.getByRole('button', { name: /Stop GPU/ })).toHaveAttribute('aria-disabled', 'true');
-     expect(screen.getByText(/\$2\.00 \/ GPU-hour/)).toBeInTheDocument();
-     expect(screen.getByTestId('z-gpu-state-chip')).toHaveAttribute('role', 'status');
-     expect(screen.getAllByRole('status')).toHaveLength(1);
-@@ -115,7 +157,7 @@ describe('GpuControlCard', () => {
-     });
-     render(<GpuControlCard />);
- 
--    expect(screen.getByRole('button', { name: /Stop GPU/ })).toBeDisabled();
-+    expect(screen.getByRole('button', { name: /Stop GPU/ })).toHaveAttribute('aria-disabled', 'true');
-     expect(screen.getByText(/a describe run is in flight/)).toBeInTheDocument();
-   });
- 
-@@ -148,7 +190,7 @@ describe('GpuControlCard', () => {
-     ).toBeInTheDocument();
-     expect(screen.getByText(/last snapshot 4 min ago \(stale\)/)).toBeInTheDocument();
-     expect(screen.getByText(/Lifecycle telemetry is stale/)).toBeInTheDocument();
--    expect(screen.getByRole('button', { name: 'Start GPU' })).toBeDisabled();
-+    expect(screen.getByRole('button', { name: 'Start GPU' })).toHaveAttribute('aria-disabled', 'true');
-   });
- 
-   it('renders a 502 error with a retry control', () => {
+-  &:disabled {
++  &:disabled,
++  &[aria-disabled='true'] {
+     opacity: 0.5;
+     cursor: not-allowed;
+   }

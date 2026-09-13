@@ -201,6 +201,40 @@ describe('FaceThumbnail', () => {
         expect(container.querySelector('img')).not.toBeInTheDocument();
       });
     });
+
+    it('ignores a stale load/error event whose src does not match the current mediaUrl (source swap race)', async () => {
+      const staleUrl = 'https://example.com/representative.jpg';
+      const nextUrl = 'https://example.com/fallback.jpg';
+
+      const { container, rerender } = render(<FaceThumbnail mediaUrl={staleUrl} bbox={mockBbox} />);
+
+      // Swap the source on the same mounted instance (e.g. representative -> fallback member).
+      rerender(<FaceThumbnail mediaUrl={nextUrl} bbox={mockBbox} />);
+
+      const img = screen.getByRole('img') as HTMLImageElement;
+      expect(img.src).toBe(nextUrl);
+
+      // Simulate an in-flight request for the previous src resolving after the swap.
+      Object.defineProperty(img, 'src', { value: staleUrl, configurable: true });
+      fireEvent.error(img);
+
+      // The stale error must not flip the thumbnail into the error state for the new source.
+      const wrapper = container.firstChild as HTMLElement;
+      expect(wrapper).not.toHaveClass('acx-face-thumbnail--error');
+      expect(wrapper).toHaveClass('acx-face-thumbnail--loading');
+
+      // A stale load event must likewise not mark the new source as loaded.
+      fireEvent.load(img);
+      expect(wrapper).toHaveClass('acx-face-thumbnail--loading');
+
+      // Restore the current src and confirm a genuine event for it is still honored.
+      Object.defineProperty(img, 'src', { value: nextUrl, configurable: true });
+      fireEvent.load(img);
+
+      await waitFor(() => {
+        expect(wrapper).not.toHaveClass('acx-face-thumbnail--loading');
+      });
+    });
   });
 
   describe('forwardRef', () => {

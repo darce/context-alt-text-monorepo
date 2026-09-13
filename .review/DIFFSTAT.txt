@@ -1,14 +1,4 @@
- .../docs/ux-maps/describe-gpu-tier.md              |  2 +-
- .../docs/ux-maps/describe-gpu-tier.uxmap.json      |  2 +-
- .../docs/ux-maps/gpu-operator-control.md           | 11 +++-
- .../docs/ux-maps/gpu-operator-control.uxmap.json   |  4 +-
- .../docs/ux-maps/render_ux_maps.visible.json       |  8 +--
- .../js/admin/pages/DescribeRunApplyView.tsx        | 16 ++++++
- .../pages/__tests__/DescribeRunApplyView.test.tsx  | 30 ++++++++++
- .../js/admin/pages/settings/GpuControlCard.tsx     | 50 ++++++++++++++---
- .../settings/__tests__/useGpuControl.test.tsx      |  6 +-
- .../js/admin/pages/settings/useGpuControl.ts       |  7 +--
- .../js/admin/pages/workbench/MediaSelection.tsx    | 65 ++++++++++------------
- .../__tests__/gpuStatePresentation.test.ts         |  2 +-
- .../admin/pages/workbench/gpuStatePresentation.ts  | 17 +++---
- 13 files changed, 144 insertions(+), 76 deletions(-)
+ .../application/orchestration/clustering/job_result.py         |  1 +
+ .../application/orchestration/clustering/orchestrator.py       |  2 ++
+ .../recognition/tests/unit/test_probe_skip_result_contract.py  | 10 ++++++++++
+ 3 files changed, 13 insertions(+)

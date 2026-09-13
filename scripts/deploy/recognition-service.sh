@@ -259,15 +259,19 @@ validate_deploy_tmpdir() {
 validate_deploy_tmpdir
 
 _purge_deploy_ocir_docker_config() {
-  local config_dir="${ACX_DEPLOY_OCIR_CONFIG_DIR:-}" config_q
+  local config_dir="${ACX_DEPLOY_OCIR_CONFIG_DIR:-}" config_q remote_dir
   if [[ -n "${config_dir}" ]]; then
     if [[ "${ACX_DEPLOY_OCIR_REMOTE_CONFIG:-0}" == "1" ]]; then
-      config_q="$(remote_quote "$(remote_ocir_config_dir)")"
-      if ! ssh -o BatchMode=yes -o ConnectTimeout=5 -o ConnectionAttempts=1 \
-        -o ServerAliveInterval=2 -o ServerAliveCountMax=2 \
-        -l "${OCI_USER}" -- "${OCI_HOST}" \
-        "rm -rf -- ${config_q}" >/dev/null; then
-        warn "Remote OCIR credential cleanup failed for $(remote_ocir_config_dir); the remote expiry reaper remains armed"
+      if ! remote_dir="$(remote_ocir_config_dir)"; then
+        warn "Skipping remote OCIR credential cleanup for unrecognized dir ${config_dir}; the remote expiry reaper remains armed"
+      else
+        config_q="$(remote_quote "${remote_dir}")"
+        if ! ssh -o BatchMode=yes -o ConnectTimeout=5 -o ConnectionAttempts=1 \
+          -o ServerAliveInterval=2 -o ServerAliveCountMax=2 \
+          -l "${OCI_USER}" -- "${OCI_HOST}" \
+          "rm -rf -- ${config_q}" >/dev/null; then
+          warn "Remote OCIR credential cleanup failed for ${remote_dir}; the remote expiry reaper remains armed"
+        fi
       fi
     fi
     rm -rf -- "${config_dir}"
@@ -316,8 +320,13 @@ init_deploy_ocir_docker_config() {
 
 # The local dir lives under the laptop's TMPDIR (macOS: /var/folders/...), which does not
 # exist on the VM. The remote copy shares only the random mktemp suffix, under /tmp.
+# Returns 1 unless the local dir is a real mktemp result, so no caller can ever
+# hand the VM a bare /tmp/ (DOCKER_CONFIG or rm -rf target). Check the status:
+# fail inside $(...) only exits the subshell.
 remote_ocir_config_dir() {
-  printf '/tmp/%s\n' "${ACX_DEPLOY_OCIR_CONFIG_DIR##*/}"
+  local base="${ACX_DEPLOY_OCIR_CONFIG_DIR##*/}"
+  [[ "${base}" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]] || return 1
+  printf '/tmp/%s\n' "${base}"
 }
 
 init_remote_ocir_docker_config() {
@@ -327,16 +336,17 @@ init_remote_ocir_docker_config() {
   fi
   # Arm cleanup before the create attempt: ssh may create the directory and
   # still return non-zero (for example, if a following chmod fails).
-  local config_q ttl ttl_q
+  local config_q ttl ttl_q remote_dir
   ttl="${ACX_OCIR_REMOTE_CONFIG_TTL:-3600}"
   if [[ ! "${ttl}" =~ ^[1-9][0-9]*$ ]]; then
     fail "ACX_OCIR_REMOTE_CONFIG_TTL must be a positive integer (got: ${ttl})"
   fi
-  config_q="$(remote_quote "$(remote_ocir_config_dir)")"
+  remote_dir="$(remote_ocir_config_dir)" || fail "Remote OCIR credential dir is not initialized"
+  config_q="$(remote_quote "${remote_dir}")"
   ttl_q="$(remote_quote "${ttl}")"
   ACX_DEPLOY_OCIR_REMOTE_CONFIG=1
   if ! ssh -o BatchMode=yes -o ConnectTimeout=5 -l "${OCI_USER}" -- "${OCI_HOST}" \
-    "umask 077; config=${config_q}; if [ ! -d \"\$config\" ]; then mkdir -p -- \"\$config\"; fi; chmod 700 \"\$config\"; nohup bash -c 'sleep \"\$1\"; rm -rf -- \"\$2\"' acx-ocir-reaper ${ttl_q} \"\$config\" >/dev/null 2>&1 </dev/null &"; then
+    "umask 077; config=${config_q}; if [ -L \"\$config\" ]; then exit 1; fi; if [ ! -d \"\$config\" ]; then mkdir -p -- \"\$config\"; fi; chmod 700 \"\$config\"; nohup bash -c 'sleep \"\$1\"; rm -rf -- \"\$2\"' acx-ocir-reaper ${ttl_q} \"\$config\" >/dev/null 2>&1 </dev/null &"; then
     fail "Could not create remote deploy-scoped Docker credential directory on ${SSH_TARGET}"
   fi
 }
@@ -734,12 +744,13 @@ preflight_remote_ocir_auth() {
   # ACX_REMOTE_OCI_BIN carries a literal $HOME for the remote shell to expand, so
   # the snippet is fed to `bash -s` over stdin rather than interpolated into
   # argv. The here-string binds to the function call; ssh inherits that stdin.
-  local snippet
+  local snippet remote_dir
   if [[ "${ACX_DEPLOY_OCIR_REMOTE_AUTHENTICATED}" == "1" ]]; then
     return 0
   fi
   init_remote_ocir_docker_config
-  snippet="$(ACX_OCIR_DOCKER_CONFIG_DIR="$(remote_ocir_config_dir)" \
+  remote_dir="$(remote_ocir_config_dir)" || fail "Remote OCIR credential dir is not initialized"
+  snippet="$(ACX_OCIR_DOCKER_CONFIG_DIR="${remote_dir}" \
     ocir_login_snippet "${ACX_REMOTE_OCI_BIN}" instance_principal "${OCIR_REGISTRY}")"
   ocir_login_or_fail "${SSH_TARGET}" \
     ssh -o BatchMode=yes -o ConnectTimeout=5 -l "${OCI_USER}" -- "${OCI_HOST}" \
@@ -1170,8 +1181,9 @@ local_docker_with_config() {
 }
 
 remote_docker_with_config() {
-  local config_q arg quoted_args=""
-  config_q="$(remote_quote "$(remote_ocir_config_dir)")"
+  local config_q arg quoted_args="" remote_dir
+  remote_dir="$(remote_ocir_config_dir)" || fail "Remote OCIR credential dir is not initialized"
+  config_q="$(remote_quote "${remote_dir}")"
   for arg in "$@"; do
     quoted_args+=" $(remote_quote "${arg}")"
   done

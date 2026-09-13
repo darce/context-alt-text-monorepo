@@ -255,11 +255,36 @@ esac
 def test_all_remote_registry_commands_carry_the_deploy_config() -> None:
     source = SCRIPT.read_text()
     assert "remote_docker_with_config()" in source
-    assert 'config_q="$(remote_quote "$(remote_ocir_config_dir)")"' in source
+    assert 'remote_dir="$(remote_ocir_config_dir)" || fail' in source
+    assert 'config_q="$(remote_quote "${remote_dir}")"' in source
     assert '_pull_ref_remote "${image}"' in source
     assert '_pull_ref "${IMAGE_BASE}:${from_tag}"' in source
     assert 'remote_docker_with_config push "${rollback_ref}"' in source
     assert "DOCKER_CONFIG='${ACX_DEPLOY_OCIR_CONFIG_DIR}'" not in source
+
+
+@pytest.mark.parametrize("config_dir", ["", "/", "/tmp/", "/tmp/.."])
+def test_uninitialized_config_dir_never_reaches_the_vm(tmp_path: Path, config_dir: str) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    marker = tmp_path / "ssh.called"
+    _executable(bin_dir / "ssh", f'#!/usr/bin/env bash\ntouch "{marker}"\n')
+    env = os.environ.copy()
+    env.update({"PATH": f"{bin_dir}:{env['PATH']}", "TMPDIR": str(tmp_path)})
+    result = subprocess.run(
+        [
+            "/bin/bash",
+            "-c",
+            f'source "{SCRIPT}"; ACX_DEPLOY_OCIR_CONFIG_DIR="{config_dir}"; remote_docker_with_config ps',
+        ],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "Remote OCIR credential dir is not initialized" in result.stdout + result.stderr
+    assert not marker.exists()
 
 
 def test_hostile_tmpdir_is_rejected_before_any_remote_command(tmp_path: Path) -> None:

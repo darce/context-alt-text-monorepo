@@ -21,7 +21,9 @@ Exit codes distinguish who can fix the gap:
 
 from __future__ import annotations
 
+import argparse
 import importlib
+import json
 import sys
 from collections.abc import Iterable, Mapping
 from typing import TypedDict
@@ -188,9 +190,7 @@ def _validate_schema_state(
             continue
         named = f"{table_name}.{column_name}"
         table_vector_gaps.append(named)
-        operator_actions.append(
-            identity_schema.table_vector_typmod_operator_action(table_name, column_name, observed)
-        )
+        operator_actions.append(identity_schema.table_vector_typmod_operator_action(table_name, column_name, observed))
 
     if (
         not revision_matches
@@ -434,11 +434,101 @@ def collect_and_validate(connection) -> SchemaStateReport:
     )
 
 
-def main() -> int:
+def collect_matview_state(connection, *, expected_owner: str, expected_acl: list) -> dict:
+    """Dedicated derived-state verification, never a full-schema health signal.
+
+    Owner and non-owner ACL expectations come from the pre-repair snapshot or
+    the intended policy for a new view. Source constraints (including
+    cluster_merge_survivor_in_pair) are outside this report's scope.
+    """
+    op = _BindOp(connection)
+    row = connection.execute(
+        text(
+            "SELECT c.relkind, pg_get_userbyid(c.relowner) FROM pg_class c "
+            "JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname = current_schema() AND c.relname = :name"
+        ),
+        {"name": MATVIEW_NAME},
+    ).one_or_none()
+    kind, owner = row if row else (None, None)
+    typmod = identity_schema._matview_centroid_typmod(op) if kind == "m" else None
+    grants = identity_schema._matview_nonowner_grants(op) if kind == "m" else ()
+    unique_index = (
+        bool(
+            connection.execute(
+                text(
+                    "SELECT EXISTS (SELECT 1 FROM pg_index i "
+                    "JOIN pg_class c ON c.oid = i.indrelid "
+                    "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                    "JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'cluster_id' "
+                    "WHERE n.nspname = current_schema() AND c.relname = :name "
+                    "AND i.indisunique AND i.indisvalid AND i.indisready AND i.indimmediate "
+                    "AND i.indpred IS NULL AND i.indexprs IS NULL "
+                    "AND i.indnkeyatts = 1 AND i.indkey[0] = a.attnum)"
+                ),
+                {"name": MATVIEW_NAME},
+            ).scalar()
+        )
+        if kind == "m"
+        else False
+    )
+    code = EXIT_OK
+    if kind not in (None, "m"):
+        code = EXIT_OPERATOR_REQUIRED
+    elif kind is None:
+        code = EXIT_HEAL_REPAIRABLE
+    elif owner != expected_owner or sorted(grants) != sorted(tuple(g) for g in expected_acl):
+        code = EXIT_OPERATOR_REQUIRED
+    elif typmod != EMBEDDING_DIMENSION or not unique_index:
+        code = EXIT_HEAL_REPAIRABLE
+    return {
+        "scope": "matview-only",
+        "exit_code": code,
+        "relkind": kind,
+        "centroid_typmod": typmod,
+        "unique_cluster_id_index": unique_index,
+        "owner": owner,
+        "acl": sorted(grants),
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--matview-only", action="store_true")
+    parser.add_argument("--expected-owner")
+    parser.add_argument(
+        "--expected-acl", help='JSON non-owner grants: [["role", "SELECT", false]]; public denotes PUBLIC'
+    )
+    args = parser.parse_args(argv)
+    expected_acl = None
+    if args.matview_only:
+        if not args.expected_owner or args.expected_acl is None:
+            parser.error("--matview-only requires --expected-owner and --expected-acl")
+        try:
+            expected_acl = json.loads(args.expected_acl)
+            if not isinstance(expected_acl, list) or any(
+                not isinstance(g, list)
+                or len(g) != 3
+                or not isinstance(g[0], str)
+                or not isinstance(g[1], str)
+                or not isinstance(g[2], bool)
+                for g in expected_acl
+            ):
+                raise ValueError("expected a list of [role, privilege, grantable] entries")
+        except (ValueError, TypeError) as exc:
+            parser.error(f"invalid --expected-acl: {exc}")
+    elif args.expected_owner is not None or args.expected_acl is not None:
+        parser.error("owner/ACL expectations require --matview-only")
     dsn = get_database_settings().postgres_sync_dsn
     engine = create_engine(dsn)
     try:
         with engine.connect() as connection:
+            if args.matview_only:
+                report = collect_matview_state(
+                    connection, expected_owner=args.expected_owner, expected_acl=expected_acl
+                )
+                print(json.dumps(report, sort_keys=True))
+                return report["exit_code"]
             report = collect_and_validate(connection)
     except Exception as exc:  # infra failure, not schema drift — distinct exit code
         print(f"identity schema verification could not run: {exc}", file=sys.stderr)

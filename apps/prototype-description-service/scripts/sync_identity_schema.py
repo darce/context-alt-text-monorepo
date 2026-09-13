@@ -14,11 +14,15 @@ truth (replaces the E15-33 interim heal; findings E15-33-BR2-01/02/04).
 
 from __future__ import annotations
 
+import argparse
 import importlib
 import logging
+import random
 import sys
+import time
 
 from sqlalchemy import Engine, create_engine, text
+from sqlalchemy.exc import DBAPIError
 
 from db.settings import get_database_settings
 
@@ -58,11 +62,41 @@ def sync_schema(engine: Engine) -> list[str]:
     return created
 
 
-def main() -> int:
+# Only lock-not-available (55P03) is retried, in a fresh transaction.
+_MATVIEW_LOCK_ATTEMPTS = 3
+
+
+def sync_centroids_matview(engine: Engine) -> None:
+    """Repair the matview atomically under the boot healer's lock and deadlines."""
+    migration = importlib.import_module(_MIGRATION_MODULE)
+    for attempt in range(_MATVIEW_LOCK_ATTEMPTS):
+        try:
+            with engine.begin() as conn:
+                if conn.dialect.name != "postgresql":
+                    raise ValueError("matview-only repair requires PostgreSQL")
+                conn.execute(text("SET LOCAL lock_timeout = '5s'"))
+                conn.execute(text("SET LOCAL statement_timeout = '5min'"))
+                conn.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": _ADVISORY_LOCK_KEY})
+                migration.repair_centroids_matview(conn)
+            return
+        except DBAPIError as exc:
+            code = getattr(exc.orig, "sqlstate", None) or getattr(exc.orig, "pgcode", None)
+            if code != "55P03" or attempt + 1 == _MATVIEW_LOCK_ATTEMPTS:
+                raise
+            time.sleep(0.25 * (2**attempt) + random.uniform(0, 0.25))
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--matview-only", action="store_true", help="Repair only the centroid materialized view")
+    args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     engine = create_engine(get_database_settings().postgres_sync_dsn)
     try:
-        sync_schema(engine)
+        if args.matview_only:
+            sync_centroids_matview(engine)
+        else:
+            sync_schema(engine)
     except Exception as exc:  # fail closed at the entrypoint — no worse than verify failing
         logger.exception("identity schema heal failed: %s", exc)
         return 1

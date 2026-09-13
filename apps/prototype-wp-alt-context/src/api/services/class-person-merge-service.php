@@ -77,7 +77,7 @@ class PersonMergeService {
 
 	public function commit( string $tenant_id, int $survivor_id, int $loser_id ): array|WP_Error {
 		return $this->transaction( function () use ( $tenant_id, $survivor_id, $loser_id ) {
-			$preview = $this->inspect( $tenant_id, $survivor_id, $loser_id, true );
+			$preview = $this->inspect( $tenant_id, $survivor_id, $loser_id, false );
 			if ( is_wp_error( $preview ) ) {
 				if ( 'person_not_found' === $preview->get_error_code() ) {
 					// IDCHIP-1-API-R-05: a retried commit after a lost 200 finds the loser
@@ -87,6 +87,10 @@ class PersonMergeService {
 						return $recovered;
 					}
 				}
+				return $preview;
+			}
+			$preview = $this->inspect( $tenant_id, $survivor_id, $loser_id, true );
+			if ( is_wp_error( $preview ) ) {
 				return $preview;
 			}
 			$moved = array_values( array_filter( $preview['clusters'], static fn( $row ) => (int) $row['person_id'] === $loser_id ) );
@@ -121,10 +125,6 @@ class PersonMergeService {
 	 * idempotency record exists so the caller falls back to the 404.
 	 */
 	private function recover_idempotent_commit( string $tenant_id, int $survivor_id, int $loser_id ): ?array {
-		$survivor = $this->repository->person( $survivor_id, true );
-		if ( null === $survivor || $survivor['tenant_id'] !== $tenant_id || null !== $this->repository->person( $loser_id, true ) ) {
-			return null;
-		}
 		$token = $this->repository->load_merge_idempotency( $tenant_id, $survivor_id, $loser_id );
 		if ( null === $token ) {
 			return null;
@@ -134,7 +134,12 @@ class PersonMergeService {
 		} catch ( \JsonException $error ) {
 			return null;
 		}
-		if ( ! $this->is_valid_undo_record( $record ) || $record['expires_at'] <= time() || $record['loser']['tenant_id'] !== $tenant_id || (int) $record['survivor_id'] !== $survivor_id || (int) $record['loser']['id'] !== $loser_id ) {
+		if ( ! $this->is_valid_undo_record( $record, $tenant_id ) || $record['expires_at'] <= time() || $record['loser']['tenant_id'] !== $tenant_id || (int) $record['survivor_id'] !== $survivor_id || (int) $record['loser']['id'] !== $loser_id ) {
+			return null;
+		}
+		$people = $this->lock_people( array( $survivor_id, $loser_id ) );
+		$survivor = $people[ $survivor_id ];
+		if ( null === $survivor || $survivor['tenant_id'] !== $tenant_id || null !== $people[ $loser_id ] ) {
 			return null;
 		}
 		return array(
@@ -148,30 +153,32 @@ class PersonMergeService {
 		if ( '' === trim( $tenant_id ) || ! preg_match( self::UNDO_TOKEN_PATTERN, $undo_token ) ) {
 			return $this->error( 'invalid_undo_token', 400 );
 		}
-		$result = $this->transaction( function () use ( $tenant_id, $undo_token ) {
+		$reject_record = false;
+		$result = $this->transaction( function () use ( $tenant_id, $undo_token, &$reject_record ) {
 			try {
 				$record = $this->repository->load_undo( $tenant_id, $undo_token );
-			} catch ( \JsonException $error ) {
+			} catch ( \JsonException | \TypeError $error ) {
+				$reject_record = true;
 				return $this->error( self::UNDO_CORRUPT, 500 );
 			}
 			if ( null === $record ) {
 				if ( $this->repository->has_undo( $tenant_id, $undo_token ) ) {
+					$reject_record = true;
 					return $this->error( self::UNDO_CORRUPT, 500 );
 				}
 				return $this->error( 'person_merge_undo_conflict', 409 );
 			}
-			if ( ! $this->is_valid_undo_record( $record ) ) {
+			if ( ! $this->is_valid_undo_record( $record, $tenant_id ) ) {
+				$reject_record = true;
 				return $this->error( self::UNDO_CORRUPT, 500 );
 			}
 			if ( (int) $record['expires_at'] <= time() ) {
+				$reject_record = true;
 				return $this->error( self::UNDO_EXPIRED, 409 );
 			}
 			$ids = array( (int) $record['survivor_id'], (int) $record['loser']['id'] );
 			sort( $ids );
-			$people = array();
-			foreach ( $ids as $id ) {
-				$people[ $id ] = $this->repository->person( $id, true );
-			}
+			$people = $this->lock_people( $ids );
 			$survivor = $people[ $record['survivor_id'] ];
 			if ( null === $survivor || $survivor['tenant_id'] !== $tenant_id || $survivor['tags'] !== $record['merged_tags'] || null !== $people[ $record['loser']['id'] ] ) {
 				return $this->error( 'person_merge_undo_conflict', 409 );
@@ -193,7 +200,7 @@ class PersonMergeService {
 			return array( 'restored_person_id' => (int) $record['loser']['id'], 'restored_cluster_ids' => array_column( $record['clusters'], 'cluster_uuid' ) );
 		} );
 		// Rejected records must be deleted after run_transactional has rolled back.
-		if ( is_wp_error( $result ) && in_array( $result->get_error_code(), array( self::UNDO_CORRUPT, self::UNDO_EXPIRED ), true ) ) {
+		if ( $reject_record ) {
 			try {
 				$this->repository->consume_undo( $tenant_id, $undo_token );
 			} catch ( \RuntimeException $error ) {
@@ -207,19 +214,32 @@ class PersonMergeService {
 	 * Validate the stored undo record shape before trusting its fields.
 	 * IDCHIP-1-API-R-03: malformed/truncated records must not throw uncaught.
 	 */
-	private function is_valid_undo_record( mixed $record ): bool {
+	private function is_valid_undo_record( mixed $record, string $tenant_id ): bool {
 		if ( ! is_array( $record ) ) {
 			return false;
 		}
-		if ( ! is_int( $record['survivor_id'] ?? null ) || ! is_int( $record['expires_at'] ?? null ) || ! is_string( $record['merged_tags'] ?? null ) ) {
+		if ( ! $this->is_positive_id( $record['survivor_id'] ?? null ) || ! is_int( $record['expires_at'] ?? null ) || ! is_string( $record['merged_tags'] ?? null ) ) {
 			return false;
 		}
 		if ( ! array_key_exists( 'survivor_tags', $record ) || ( null !== $record['survivor_tags'] && ! is_string( $record['survivor_tags'] ) ) ) {
 			return false;
 		}
 		$loser = $record['loser'] ?? null;
-		if ( ! is_array( $loser ) || ! is_numeric( $loser['id'] ?? null ) || ! is_string( $loser['tenant_id'] ?? null ) || ! is_string( $loser['name'] ?? null ) || ! array_key_exists( 'tags', $loser ) || ( null !== $loser['tags'] && ! is_string( $loser['tags'] ) ) ) {
+		if ( ! is_array( $loser ) || ! $this->is_positive_id( $loser['id'] ?? null ) || ( $loser['tenant_id'] ?? null ) !== $tenant_id || ! is_string( $loser['name'] ?? null ) || ! array_key_exists( 'tags', $loser ) || ( null !== $loser['tags'] && ! is_string( $loser['tags'] ) ) ) {
 			return false;
+		}
+		if ( (int) $record['survivor_id'] === (int) $loser['id'] ) {
+			return false;
+		}
+		foreach ( array( 'person_uuid', 'normalized_name', 'created_at', 'updated_at' ) as $field ) {
+			if ( ! is_string( $loser[ $field ] ?? null ) ) {
+				return false;
+			}
+		}
+		foreach ( array( 'local_revision', 'cluster_count', 'reference_thumb_path' ) as $field ) {
+			if ( ! array_key_exists( $field, $loser ) ) {
+				return false;
+			}
 		}
 		foreach ( $loser as $value ) {
 			if ( null !== $value && ! is_scalar( $value ) ) {
@@ -230,11 +250,25 @@ class PersonMergeService {
 			return false;
 		}
 		foreach ( $record['clusters'] as $row ) {
-			if ( ! is_array( $row ) || ! is_int( $row['person_id'] ?? null ) || ! is_string( $row['cluster_uuid'] ?? null ) || ! is_string( $row['tenant_id'] ?? null ) || $row['person_id'] !== (int) $loser['id'] || $row['tenant_id'] !== $loser['tenant_id'] ) {
+			if ( ! is_array( $row ) || ! $this->is_positive_id( $row['person_id'] ?? null ) || ! is_string( $row['cluster_uuid'] ?? null ) || ! is_string( $row['tenant_id'] ?? null ) || (int) $row['person_id'] !== (int) $loser['id'] || $row['tenant_id'] !== $loser['tenant_id'] ) {
 				return false;
 			}
 		}
 		return true;
+	}
+
+	private function is_positive_id( mixed $id ): bool {
+		return ( is_int( $id ) && $id > 0 ) || ( is_string( $id ) && 1 === preg_match( '/^[1-9][0-9]*$/D', $id ) );
+	}
+
+	/** Called only after acquiring the undo option lock on recovery and undo. */
+	private function lock_people( array $ids ): array {
+		sort( $ids, SORT_NUMERIC );
+		$people = array();
+		foreach ( $ids as $id ) {
+			$people[ $id ] = $this->repository->person( (int) $id, true );
+		}
+		return $people;
 	}
 
 	private function tags( array $person ): array {

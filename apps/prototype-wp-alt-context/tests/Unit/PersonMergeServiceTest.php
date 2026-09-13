@@ -13,7 +13,7 @@ use AltContext\Tests\TestCase;
 
 class PersonMergeServiceTest extends TestCase {
     private function person(int $id, string $tenant = 'tenant'): array {
-        return ['id' => $id, 'tenant_id' => $tenant, 'name' => 'Same name', 'tags' => $id === 1 ? '["a"]' : '["b","a"]'];
+        return ['id' => $id, 'tenant_id' => $tenant, 'name' => 'Same name', 'person_uuid' => 'person-' . $id, 'normalized_name' => 'same name', 'created_at' => '2026-01-01 00:00:00', 'updated_at' => '2026-01-01 00:00:00', 'local_revision' => 0, 'cluster_count' => 0, 'reference_thumb_path' => null, 'tags' => $id === 1 ? '["a"]' : '["b","a"]'];
     }
 
     public function testPreviewIsReadOnlyAndUnionsTags(): void {
@@ -235,9 +235,76 @@ class PersonMergeServiceTest extends TestCase {
     public function testMissingSurvivorNeverRecoversCommit(): void {
         $repo = $this->createMock(PersonMergeRepository::class);
         $repo->method('person')->willReturn(null);
-        $repo->expects($this->never())->method('load_merge_idempotency');
+        $repo->method('load_merge_idempotency')->willReturn(null);
         $result = (new PersonMergeService($repo))->commit('tenant', 1, 2);
         $this->assertSame('person_not_found', $result->get_error_code());
+    }
+
+    public function testRecoveryAndUndoLockOptionBeforePeopleInIdOrder(): void {
+        foreach (['commit', 'undo'] as $operation) {
+            $locks = [];
+            $repo = $this->createMock(PersonMergeRepository::class);
+            $record = ['loser' => $this->person(1), 'survivor_id' => 2, 'survivor_tags' => null,
+                'merged_tags' => $this->person(2)['tags'], 'clusters' => [], 'expires_at' => time() + 100];
+            $repo->method('person')->willReturnCallback(function ($id, $lock) use (&$locks) {
+                if ($lock) { $locks[] = $id; }
+                return $id === 2 ? $this->person(2) : null;
+            });
+            $token = '00000001-0000-4000-8000-000000000001';
+            $repo->method('load_merge_idempotency')->willReturn($token);
+            $repo->method('load_undo')->willReturnCallback(function () use (&$locks, $record) {
+                $locks[] = 'undo';
+                return $record;
+            });
+            $repo->method('clusters')->willReturn([]);
+            $service = new PersonMergeService($repo, $this->createMock(SyncStateRepositoryInterface::class));
+            $result = $operation === 'commit' ? $service->commit('tenant', 2, 1) : $service->undo('tenant', $token);
+            $this->assertIsArray($result);
+            $this->assertSame(['undo', 1, 2], $locks);
+        }
+    }
+
+    public function testCorruptTenantIdsAndIncompleteLoserAreConsumedWithoutRestoration(): void {
+        $valid = ['loser' => $this->person(2), 'survivor_id' => 1, 'survivor_tags' => null,
+            'merged_tags' => '[]', 'clusters' => [], 'expires_at' => time() + 100];
+        $cases = [];
+        foreach (['1.5', '1e3', '-2', '0', ' 3'] as $id) {
+            $record = $valid;
+            $record['loser']['id'] = $id;
+            $cases[] = $record;
+        }
+        $record = $valid;
+        $record['loser']['tenant_id'] = 'other';
+        $cases[] = $record;
+        $record = $valid;
+        $record['clusters'] = [['cluster_uuid' => 'cluster', 'person_id' => 2, 'tenant_id' => 'other']];
+        $cases[] = $record;
+        $record = $valid;
+        unset($record['loser']['person_uuid']);
+        $cases[] = $record;
+        foreach ($cases as $record) {
+            $repo = $this->createMock(PersonMergeRepository::class);
+            $repo->method('load_undo')->willReturn($record);
+            $repo->expects($this->never())->method('restore_person');
+            $repo->expects($this->once())->method('consume_undo');
+            $result = (new PersonMergeService($repo))->undo('tenant', '00000001-0000-4000-8000-000000000001');
+            $this->assertSame('person_merge_undo_corrupt', $result->get_error_code());
+        }
+    }
+
+    public function testApplyTypeErrorRollsBackWithoutConsumingToken(): void {
+        global $wpdb;
+        $repo = $this->createMock(PersonMergeRepository::class);
+        $record = ['loser' => $this->person(2), 'survivor_id' => 1, 'survivor_tags' => null,
+            'merged_tags' => $this->person(1)['tags'], 'clusters' => [], 'expires_at' => time() + 100];
+        $repo->method('load_undo')->willReturn($record);
+        $repo->method('person')->willReturnCallback(fn($id) => $id === 1 ? $this->person(1) : null);
+        $repo->method('clusters')->willReturn([]);
+        $repo->method('restore_person')->willThrowException(new \TypeError('collaborator failure'));
+        $repo->expects($this->never())->method('consume_undo');
+        $result = (new PersonMergeService($repo))->undo('tenant', '00000001-0000-4000-8000-000000000001');
+        $this->assertSame(500, $result->get_error_data()['status']);
+        $this->assertContains('ROLLBACK', $wpdb->queries);
     }
 
     public function testExpiredCommitCannotBeRecovered(): void {

@@ -313,8 +313,10 @@ class ClusterMutationsController extends AbstractRecognitionProxyController impl
 	private function run_mutation( string $surface, callable $callback ): WP_REST_Response|WP_Error {
 		try {
 			return $callback();
-		} catch ( \RuntimeException $exception ) {
+		} catch ( ProjectionQueryException $exception ) {
 			return ProjectionQueryException::to_rest_error( $surface );
+		} catch ( \RuntimeException $exception ) {
+			return new WP_Error( 'acx_db_error', 'Cluster mutation could not be completed.', array( 'status' => 500 ) );
 		}
 	}
 

@@ -46,7 +46,7 @@ class ClusterMutationsControllerDualWriteTest extends TestCase
             throw new \RuntimeException('marker write failed');
         });
         $this->assertInstanceOf(\WP_Error::class, $result);
-        $this->assertSame('acx_projection_query_failed', $result->get_error_code());
+        $this->assertSame('acx_db_error', $result->get_error_code());
         $this->assertSame(500, $result->get_error_data()['status']);
     }
 

@@ -27,7 +27,7 @@ DEMO_WALKTHROUGH_APP  := $(ROOT_MAKEFILE_DIR)/apps/prototype-wp-alt-context
         deploy-status deploy-clear-image-repo \
         deploy-compose-dev deploy-compose-staging deploy-compose-prod \
         reset-remote db-reset-remote demo-walkthrough-proof walkthrough-first-visitor guided-walkthrough-record \
-        demo-enable-public-guide demo-public-guide-e2e test-gates-harness
+        demo-enable-public-guide demo-public-guide-e2e test-gates-harness plugin-bump
 
 deploy-help:
 	@echo "Recognition service deploy targets:"
@@ -359,3 +359,26 @@ test-gates-harness:
 	@python3 -m pytest scripts/tests -q --tb=short -p no:cacheprovider
 
 test-scripts: test-gates-harness
+
+# Plugin version SSOT bump: rewrites alt-context.php header, package.json, and
+# package-lock.json to VERSION in one shot. Does not commit or tag; package-plugin.sh
+# validates the three surfaces agree at package time.
+plugin-bump:
+	@if [ -z "$(VERSION)" ]; then \
+		echo "plugin-bump: VERSION is required, e.g. make plugin-bump VERSION=0.0.21" >&2; \
+		exit 2; \
+	fi
+	@if ! echo "$(VERSION)" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$$'; then \
+		echo "plugin-bump: VERSION must be semver-shaped (x.y.z[-pre][+build]), got '$(VERSION)'" >&2; \
+		exit 2; \
+	fi
+	@cd "$(DEMO_WALKTHROUGH_APP)" && npm version --no-git-tag-version "$(VERSION)" --allow-same-version >/dev/null
+	@if sed --version >/dev/null 2>&1; then \
+		sed -i -E 's/^ \* Version: .*/ * Version: $(VERSION)/' "$(DEMO_WALKTHROUGH_APP)/alt-context.php"; \
+	else \
+		sed -i '' -E 's/^ \* Version: .*/ * Version: $(VERSION)/' "$(DEMO_WALKTHROUGH_APP)/alt-context.php"; \
+	fi
+	@echo "plugin-bump: bumped to $(VERSION)"
+	@echo "  alt-context.php Version:   $$(sed -n 's/^ \* Version:[[:space:]]*//p' "$(DEMO_WALKTHROUGH_APP)/alt-context.php" | head -n 1)"
+	@echo "  package.json version:      $$(node -e "process.stdout.write(require('$(DEMO_WALKTHROUGH_APP)/package.json').version)")"
+	@echo "  package-lock.json version: $$(node -e "process.stdout.write(require('$(DEMO_WALKTHROUGH_APP)/package-lock.json').version)")"

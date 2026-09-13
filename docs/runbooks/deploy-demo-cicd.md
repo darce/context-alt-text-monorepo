@@ -17,6 +17,11 @@ ephemeral CI identity (`tag:ci`), so a laptop-bound `make deploy-demo` required 
 specific operator on a specific machine. This pipeline moves the existing deploy
 onto the already-trusted CI identity without widening VM access.
 
+**Plugin version bump:** bump the plugin version via `make plugin-bump VERSION=x.y.z`
+(rewrites the `alt-context.php` header, `package.json`, and `package-lock.json`
+together). `scripts/release/package-plugin.sh` validates all three agree before
+building the zip and fails closed on any mismatch.
+
 ## Trigger policy
 
 | Event | Gate |

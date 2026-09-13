@@ -345,7 +345,7 @@ describe('IdentityClusterItem split routing across a person-spanning group (IDCH
     fireEvent.click(screen.getByRole('button', { name: /split group/i }));
     expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Use face from media #3/i })).not.toBeInTheDocument();
-    expect(screen.getByText(/Other faces in this face group will move/)).toBeVisible();
+    expect(screen.getByText(/Choose a face to keep the label “bob”/)).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: /Use face from media #2/i }));
     expect(splitMock).toHaveBeenCalledWith('cluster-a', 2, 'id-2');
   });
@@ -357,14 +357,29 @@ describe('IdentityClusterItem split routing across a person-spanning group (IDCH
       member({ identity_id: 'id-5', media_id: 5, cluster_id: 'cluster-b' }),
     );
     cluster.identityClusterIds = { ...cluster.identityClusterIds, 'id-4': 'cluster-b', 'id-5': 'cluster-b' };
+    cluster.members[0].media_url = 'https://example.test/face-a.jpg';
     renderItem(cluster);
     fireEvent.click(screen.getByRole('button', { name: /split group/i }));
+    expect(screen.getByRole('radio', { name: 'Face group 1 · 2 faces' }).closest('label')?.querySelector('img')).toHaveAttribute('src', 'https://example.test/face-a.jpg');
     expect(screen.queryByRole('button', { name: /Use face from media/i })).not.toBeInTheDocument();
-    fireEvent.change(screen.getByRole('combobox', { name: 'Face group' }), { target: { value: 'cluster-b' } });
+    expect(screen.getByText('Choose a face group to pick the face that keeps it')).toBeVisible();
+    expect(screen.getByRole('radio', { name: 'Face group 1 · 2 faces' })).not.toBeChecked();
+    fireEvent.click(screen.getByRole('radio', { name: 'Face group 2 · 3 faces' }));
+    expect(screen.getByRole('radio', { name: 'Face group 2 · 3 faces' })).toBeChecked();
+    expect(screen.queryByText('Choose a face group to pick the face that keeps it')).not.toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: /Use face from media/i })).toHaveLength(3);
     expect(screen.queryByRole('button', { name: /Use face from media #1/i })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Use face from media #3/i }));
     expect(splitMock).toHaveBeenCalledWith('cluster-b', 2, 'id-3');
+  });
+
+  it('describes an unlabeled split without promising to keep a label', () => {
+    const cluster = personSpanningCluster();
+    cluster.label = null;
+    renderItem(cluster);
+    fireEvent.click(screen.getByRole('button', { name: /split group/i }));
+    expect(screen.getByRole('heading', { name: 'Split a face group' })).toBeVisible();
+    expect(screen.getByText('The chosen face stays in this face group; other faces move to a new face group.')).toBeVisible();
   });
 
   it('offers Split when only a secondary face group has two members', () => {

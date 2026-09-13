@@ -149,6 +149,8 @@ describe('DescribeRunApplyView', () => {
     const expectTier = (id: number, label: string) => {
       const badge = screen.getByTestId(`acx-run-apply-tier-${id}`);
       expect(badge).toHaveTextContent(label);
+      expect(badge.querySelector('[aria-hidden="true"]')).toHaveTextContent(/\S/);
+      expect(within(badge).getByText(label)).toBeVisible();
       expect(within(badge.closest('li')!).getByText('No names (disabled)')).toBeInTheDocument();
     };
     expectTier(71, 'Compute tier: Final (GPU)');
@@ -826,6 +828,24 @@ describe('DescribeRunApplyView', () => {
       'href',
       '#/description-history',
     );
+  });
+
+  it('holds the error Retry while a read is pending', async () => {
+    let resolveRetry: ((value: typeof mixedItems) => void) | undefined;
+    fetchItemsMock.mockRejectedValueOnce(new Error('boom')).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveRetry = resolve;
+      }),
+    );
+    renderView();
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry' }));
+    const retry = await screen.findByRole('button', { name: 'Retrying…' });
+    expect(retry).toHaveAttribute('aria-disabled', 'true');
+    expect(retry).toBeEnabled();
+    fireEvent.click(retry);
+    expect(fetchItemsMock).toHaveBeenCalledTimes(2);
+    resolveRetry?.(mixedItems);
+    await screen.findByText('A red flower.');
   });
 
   it('shows an error state with retry when items fail to load', async () => {

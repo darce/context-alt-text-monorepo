@@ -220,6 +220,11 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
       const next = new URLSearchParams(previous);
       next.delete('tab');
       for (const key of ROSTER_ROUTE_PARAM_KEYS) {
+        // `queue` is the user-selected roster filter, not workspace-drawer
+        // state; preserve it so navigating into a person keeps the filter.
+        if (key === 'queue') {
+          continue;
+        }
         next.delete(key);
       }
       next.set('person', personUuid);

@@ -8,6 +8,7 @@ import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { IdentityThumbnail } from './IdentityThumbnail';
 import { derivePersonState, PERSON_STATES, type PersonState } from './personState';
 import { isHumanLabeledTarget } from '../workbench/identity-clusters/suggestionProjection';
+import { getEntryPersonUuid } from './rosterRoute';
 
 const RESERVED_LABEL_MESSAGE = __(
   'This name format is reserved for automatic face group IDs. Choose a descriptive name.',
@@ -145,6 +146,7 @@ const EditableRow = ({ entry, onOpenPerson }: EditableRowProps) => {
 
   const updatePerson = useUpdatePerson();
   const deletePerson = useDeletePerson();
+  const canOpenPerson = getEntryPersonUuid(entry) !== null;
 
   const handleSave = () => {
     const trimmedName = name.trim();
@@ -261,32 +263,48 @@ const EditableRow = ({ entry, onOpenPerson }: EditableRowProps) => {
     <>
       <tr>
         <td>
-          <button
-            type="button"
-            className="acx-roster-entries__open"
-            aria-label={displayName}
-            onClick={() => onOpenPerson?.(entry)}
-          >
-            <DirectoryFace entry={entry} />
-            <strong>{displayName}</strong>
-          </button>
+          {canOpenPerson ? (
+            <button
+              type="button"
+              className="acx-roster-entries__open"
+              aria-label={displayName}
+              onClick={() => onOpenPerson?.(entry)}
+            >
+              <DirectoryFace entry={entry} />
+              <strong>{displayName}</strong>
+            </button>
+          ) : (
+            <span className="acx-roster-entries__open acx-roster-entries__open--static">
+              <DirectoryFace entry={entry} />
+              <strong>{displayName}</strong>
+            </span>
+          )}
         </td>
         <PersonStateCell entry={entry} />
         <td>{entry.tags.length === 0 ? __('No tags', 'alt-context') : entry.tags.join(', ')}</td>
         <td>
-          <button
-            type="button"
-            className="acx-roster-entries__open"
-            aria-label={sprintf(
-              /* translators: 1: face group count, 2: person name */
-              __('Open %1$d face groups for %2$s', 'alt-context'),
-              entry.cluster_count,
-              displayName,
-            )}
-            onClick={() => onOpenPerson?.(entry)}
-          >
-            {entry.cluster_count}
-          </button>
+          {canOpenPerson ? (
+            <button
+              type="button"
+              className="acx-roster-entries__open"
+              aria-label={sprintf(
+                /* translators: 1: face group count, 2: person name */
+                __('Open %1$d face groups for %2$s', 'alt-context'),
+                entry.cluster_count,
+                displayName,
+              )}
+              onClick={() => onOpenPerson?.(entry)}
+            >
+              {entry.cluster_count}
+            </button>
+          ) : (
+            <span
+              className="acx-roster-entries__open acx-roster-entries__open--static"
+              title={__('Person workspace unavailable for this entry yet.', 'alt-context')}
+            >
+              {entry.cluster_count}
+            </span>
+          )}
         </td>
         <td className="acx-roster-entries__actions">
           <button

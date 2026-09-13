@@ -185,6 +185,17 @@ afterEach(() => {
 });
 
 describe('IdentityClusterList split affordance (WBUX6-W3-L6-03)', () => {
+  it('renders one chip for a person spanning two clusters', async () => {
+    renderList([
+      identity({ person_id: '7' }),
+      identity({ identity_id: 'id-2', person_id: '7', cluster_id: 'another-cluster' }),
+    ]);
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Edit label' })).toHaveLength(1);
+    });
+  });
+
   it('offers Split for a clustered group (positive control)', async () => {
     renderList([identity(), identity({ identity_id: 'id-2' })]);
 

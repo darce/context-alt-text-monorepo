@@ -38,7 +38,7 @@ export const formatClusterLabel = (
 };
 
 /**
- * Group identities by their cluster ID.
+ * Group identities by person, falling back to cluster ID.
  *
  * Identities without a cluster ID are grouped individually.
  *
@@ -49,12 +49,19 @@ export const groupIdentitiesByClusters = (identities: DetectedIdentity[]): Clust
   const groups = new Map<string, ClusterGroup>();
 
   identities.forEach((identity) => {
-    const clusterKey = identity.cluster_id ?? `identity-${identity.identity_id}`;
+    const personId = identity.person_id || null;
+    const clusterKey = personId !== null
+      ? `person:${personId}`
+      : identity.cluster_id != null
+        ? `cluster:${identity.cluster_id}`
+        : `identity:${identity.identity_id}`;
 
     if (!groups.has(clusterKey)) {
       groups.set(clusterKey, {
         key: clusterKey,
         clusterId: identity.cluster_id ?? null,
+        personId,
+        clusterIds: [],
         label: identity.cluster_label ?? null,
         isAutoLabel: Boolean(identity.is_auto_label),
         clusteringPending: Boolean(identity.clustering_pending),
@@ -64,6 +71,13 @@ export const groupIdentitiesByClusters = (identities: DetectedIdentity[]): Clust
 
     // If any member is pending, mark the whole group as pending
     const group = groups.get(clusterKey)!;
+    if (identity.cluster_id != null && !group.clusterIds!.includes(identity.cluster_id)) {
+      group.clusterIds!.push(identity.cluster_id);
+    }
+    if (group.label === null && identity.cluster_label != null) {
+      group.label = identity.cluster_label;
+      group.isAutoLabel = Boolean(identity.is_auto_label);
+    }
     if (identity.clustering_pending) {
       group.clusteringPending = true;
     }

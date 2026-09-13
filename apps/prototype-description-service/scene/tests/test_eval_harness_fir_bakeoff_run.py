@@ -2342,3 +2342,23 @@ def test_internal_whitespace_subject_is_not_collapsed_into_a_mate(
     assert 12 in mated_ids
     assert 11 in foil_ids
     assert 11 not in mated_ids
+
+
+def test_to_rows_carries_rubric_version_on_gallery_and_points(tmp_path: Path) -> None:
+    """FIR-13: every published row names the face-label rubric used to score it."""
+    plan = _plan(tmp_path)
+    searches, overall_foils = _complete_probe_searches(plan)
+    report = score_run(
+        plan=plan,
+        searches=searches,
+        tau=0.50,
+        overall_nonmated=overall_foils,
+    )
+
+    rows = report.to_rows()
+    by_stratum = {row["stratum"]: row for row in rows}
+    assert by_stratum[GALLERY_STRATUM]["rubric_version"] == "face-label-rule/v1"
+    point_rows = [row for row in rows if row["stratum"] != GALLERY_STRATUM]
+    assert point_rows
+    assert all(row["rubric_version"] == "face-label-rule/v1" for row in point_rows)
+    assert all(row["rubric_version"] == "face-label-rule/v1" for row in rows)

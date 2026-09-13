@@ -10,7 +10,6 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 $acx_guide_canonical = home_url( '/guide/' );
-$acx_guide_home      = home_url( '/' );
 $acx_guide_fallback  = \AltContext\PublicSite\PublicGuideRoute::fallback_copy();
 $acx_guide_loading   = \AltContext\PublicSite\PublicGuideRoute::loading_copy();
 $acx_guide_timeout   = \AltContext\PublicSite\PublicGuideRoute::LOAD_TIMEOUT_MS;
@@ -24,7 +23,7 @@ $acx_guide_timeout   = \AltContext\PublicSite\PublicGuideRoute::LOAD_TIMEOUT_MS;
 	<?php wp_head(); ?>
 </head>
 <body <?php body_class( 'acx-public-guide' ); ?>>
-<main id="acx-public-guide" data-scope="recorded" data-example="bundled" data-home-url="<?php echo esc_url( $acx_guide_home ); ?>" data-acx-load-timeout="<?php echo esc_attr( (string) $acx_guide_timeout ); ?>">
+<main id="acx-public-guide" data-scope="recorded" data-example="bundled" data-acx-load-timeout="<?php echo esc_attr( (string) $acx_guide_timeout ); ?>">
 	<p class="acx-public-guide__loading" aria-live="polite"><?php echo esc_html( $acx_guide_loading ); ?></p>
 	<p class="acx-public-guide__fallback" role="alert" hidden><?php echo esc_html( $acx_guide_fallback ); ?></p>
 	<noscript>

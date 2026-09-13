@@ -1,11 +1,12 @@
 import React from 'react';
 
-import { CASE_STUDY_URL, RECORDING_URL, guidedCopy } from '../guidedPrototype/publicGuideCopy';
+import { CASE_STUDY_URL, guidedCopy } from '../guidedPrototype/publicGuideCopy';
+
+const PRODUCT_HOME_URL = 'https://altcontext.com/';
 
 export interface GuidedPrototypeEntranceProps {
   onBegin: () => void;
   scope?: 'public' | 'admin';
-  escapeHref?: string;
 }
 
 const NEW_WINDOW_HINT = ' (opens in a new window)';
@@ -28,26 +29,24 @@ const ExternalGuideLink = ({
 export const GuidedPrototypeEntrance = ({
   onBegin,
   scope = 'admin',
-  escapeHref = '/',
 }: GuidedPrototypeEntranceProps): React.JSX.Element => {
   if (scope === 'public') {
     return (
       <section className="acx-guided-entrance" aria-labelledby="acx-guided-entrance-title">
         <nav className="acx-guided-entrance__escape" aria-label={guidedCopy('nav.leave')}>
-          <a href={escapeHref}>{guidedCopy('nav.home')}</a>
+          <ExternalGuideLink href={PRODUCT_HOME_URL}>{guidedCopy('nav.home')}</ExternalGuideLink>
           <ExternalGuideLink href={CASE_STUDY_URL}>{guidedCopy('nav.case_study')}</ExternalGuideLink>
         </nav>
+        <p className="acx-guided-entrance__eyebrow">{guidedCopy('entry.eyebrow.public')}</p>
+        <h1 id="acx-guided-entrance-title">{guidedCopy('entry.title.public')}</h1>
+        <p className="acx-guided-entrance__intro">{guidedCopy('entry.intro.public')}</p>
         <p className="acx-guided-entrance__scope" data-testid="guided-scope">
           {guidedCopy('scope.public')}
         </p>
-        <h1 id="acx-guided-entrance-title">{guidedCopy('page.title')}</h1>
         <div className="acx-guided-entrance__actions">
           <button type="button" className="acx-button acx-button--primary" onClick={onBegin}>
             {guidedCopy('page.start')}
           </button>
-          <ExternalGuideLink className="acx-button acx-button--secondary" href={RECORDING_URL}>
-            {guidedCopy('entry.watch')}
-          </ExternalGuideLink>
           <ExternalGuideLink className="acx-button acx-button--secondary" href={CASE_STUDY_URL}>
             {guidedCopy('entry.read_case_study')}
           </ExternalGuideLink>

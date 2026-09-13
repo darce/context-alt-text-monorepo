@@ -42,6 +42,20 @@ fir.dev.api.altcontext.com {
 # A-record — no Caddy edit needed at cutover. WordPress' canonical WP_HOME/
 # WP_SITEURL points at the interim until then (set in demo secrets/.env).
 demo.altcontext.com, 129-213-40-111.sslip.io {
+	# Demo root is the walkthrough itself: a visitor who reaches the demo
+	# host already wants the product, so skip the intermediate homepage.
+	# Scoped to the bare root of the public hostname, GET/HEAD, empty query
+	# string, so /wp-admin/, /wp-login.php, /wp-json/, assets and WordPress
+	# query-based routes are untouched. `path /` is an exact match in Caddy,
+	# not a prefix. 302 while the site structure is still settling.
+	@demo_root {
+		host demo.altcontext.com
+		method GET HEAD
+		path /
+		expression {query} == ""
+	}
+	redir @demo_root /guide/ 302
+
 	@xmlrpc path /xmlrpc.php
 	respond @xmlrpc "Forbidden" 403
 
@@ -51,4 +65,22 @@ demo.altcontext.com, 129-213-40-111.sslip.io {
 	# xcaddy build — deferred (E15-28 hardening note).
 
 	reverse_proxy demo-wp:80
+}
+
+# dl.darce.xyz is the portfolio's download rail, not an altcontext surface: it
+# shares this proxy because the proxy is here, but the NAME belongs to the
+# domain the portfolio itself lives on, so parking or selling altcontext.com
+# never breaks a published download link.
+#
+# 302, not 301: a permanent redirect is cached by browsers effectively forever,
+# which would forfeit the only thing this vhost buys — the ability to move the
+# bytes (GitHub Releases today, object storage or anything else tomorrow) by
+# editing one line here instead of editing every page that ever linked it.
+#
+# The target is the `latest` release PAGE, deliberately not a versioned asset
+# path: GitHub resolves `latest` itself, so cutting a new release needs no edit
+# to this file, and the reader lands beside the SHA256SUMS file the download
+# instructions tell them to check.
+dl.darce.xyz {
+	redir https://github.com/darce/visual-search-workbench/releases/latest 302
 }

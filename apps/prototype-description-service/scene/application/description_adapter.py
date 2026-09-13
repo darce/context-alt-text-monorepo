@@ -38,9 +38,16 @@ class AdapterResult:
 class DescriptionAdapter(Protocol):
     """Produces visual facts for one image. Identity fields are cache-key inputs."""
 
-    kind: DescriptionAdapterKind
-    model_id: str
-    model_version: str
-    prompt_or_task_version: str
+    @property
+    def kind(self) -> DescriptionAdapterKind: ...
+
+    @property
+    def model_id(self) -> str: ...
+
+    @property
+    def model_version(self) -> str: ...
+
+    @property
+    def prompt_or_task_version(self) -> str: ...
 
     def describe(self, *, image_bytes: bytes, context: Mapping[str, Any] | None) -> AdapterResult: ...

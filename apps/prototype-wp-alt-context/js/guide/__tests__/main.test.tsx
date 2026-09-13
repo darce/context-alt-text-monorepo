@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { type Root } from 'react-dom/client';
-import { act, screen } from '@testing-library/react';
+import { act, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -39,7 +39,7 @@ describe('public guide entry', () => {
     expect(template).not.toMatch(/<script(?![^>]*\bsrc=)/);
   });
 
-  it('hides the fallback, reads data-home-url, and mounts the public walkthrough', () => {
+  it('hides the fallback, mounts the public walkthrough, and uses the external Home link', () => {
     document.body.innerHTML = `
       <main id="acx-public-guide" data-home-url="https://demo.example/" data-scope="recorded" data-example="bundled">
         <p class="acx-public-guide__loading" aria-live="polite">${PUBLIC_GUIDE_LOADING}</p>
@@ -63,24 +63,28 @@ describe('public guide entry', () => {
     expect(document.getElementById('acx-public-guide')).toHaveClass('acx-public-guide');
     expect(screen.getByTestId('guided-demo-root').tagName).toBe('DIV');
     expect(screen.getByTestId('guided-scope')).toHaveTextContent(guidedCopy('scope.public'));
-    expect(screen.getByRole('navigation', { name: guidedCopy('nav.leave') }).querySelector('a')).toHaveAttribute(
-      'href',
-      'https://demo.example/',
-    );
+    const home = within(screen.getByRole('navigation', { name: guidedCopy('nav.leave') })).getByRole('link', {
+      name: `${guidedCopy('nav.home')} (opens in a new window)`,
+    });
+    expect(home).toHaveAttribute('href', 'https://altcontext.com/');
+    expect(home).toHaveAttribute('target', '_blank');
+    expect(home).toHaveAttribute('rel', 'noreferrer');
     expect(
       screen.getByRole('link', { name: `${guidedCopy('entry.read_case_study')} (opens in a new window)` }),
     ).toHaveAttribute('href', CASE_STUDY_URL);
   });
 
-  it('falls back to / when data-home-url is missing', () => {
-    document.body.innerHTML = '<main id="acx-public-guide"></main>';
+  it('ignores data-home-url when rendering the external Home link', () => {
+    document.body.innerHTML = '<main id="acx-public-guide" data-home-url="https://demo.example/"></main>';
     act(() => {
       mountPublicGuide();
     });
-    expect(screen.getByRole('navigation', { name: guidedCopy('nav.leave') }).querySelector('a')).toHaveAttribute(
-      'href',
-      '/',
-    );
+    const home = within(screen.getByRole('navigation', { name: guidedCopy('nav.leave') })).getByRole('link', {
+      name: `${guidedCopy('nav.home')} (opens in a new window)`,
+    });
+    expect(home).toHaveAttribute('href', 'https://altcontext.com/');
+    expect(home).toHaveAttribute('target', '_blank');
+    expect(home).toHaveAttribute('rel', 'noreferrer');
   });
 
   it('leaves the HTML fallback visible when createRoot throws', () => {

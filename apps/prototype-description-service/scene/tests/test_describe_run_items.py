@@ -72,6 +72,8 @@ def test_items_route_returns_persisted_drafts(monkeypatch):
         assert items[71]["status"] == DescribeItemStatus.FAILED
         # item 71 never described: draft is null, not fabricated.
         assert items[71]["alt_text_draft"] is None
+        assert items[70]["error"] is None
+        assert items[71]["error"] == "adapter boom"
 
 
 def test_items_route_orders_by_media_id(monkeypatch):

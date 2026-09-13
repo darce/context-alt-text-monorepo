@@ -252,7 +252,6 @@ fi
 # --hard also rewrites .htaccess inside the Apache-based wordpress image.
 echo "==> Ensuring pretty permalink structure (path-form /wp-json REST)"
 wpcli wp rewrite structure '/%postname%/' --hard
-wpcli wp rewrite flush --hard
 
 if [[ -z "$PLUGIN_ZIP" ]]; then
   echo "ERROR: PLUGIN_ZIP must point at dist/alt-context-<version>.zip" >&2
@@ -277,6 +276,28 @@ compose run --rm --no-deps \
 echo "==> Cycle plugin activation so activation-hook dbDelta applies schema changes"
 compose run --rm --no-deps wpcli wp plugin deactivate alt-context || true
 compose run --rm --no-deps wpcli wp plugin activate alt-context
+
+# The plugin registers its own rules (notably ^guide/?$ for the signed-out
+# public guide) during activation. Flush after activation cycling, then assert
+# the guide rule is present whenever the public guide option is on, so a
+# redeploy fails loudly instead of silently breaking the live demo.
+echo "==> Flushing rewrites after plugin activation (plugin rules register on init)"
+wpcli wp rewrite flush --hard
+
+public_guide_enabled="$(wpcli wp option get acx_public_guide_enabled 2>/dev/null | tr -d '[:space:]' || true)"
+case "$public_guide_enabled" in
+  1|true|TRUE|True)
+    if wpcli wp rewrite list --format=csv 2>/dev/null | grep -q '\^guide'; then
+      echo "public guide rewrite rule present"
+    else
+      echo "ERROR: acx_public_guide_enabled=${public_guide_enabled} but no ^guide/?$ rewrite rule after flush; /guide/ would 404." >&2
+      exit 6
+    fi
+    ;;
+  *)
+    echo "acx_public_guide_enabled=${public_guide_enabled:-0}; skipping guide rewrite assertion"
+    ;;
+esac
 
 # wp-cli --format=count -> digits, or "" on failure/non-numeric so the
 # classifier BLOCKs instead of guessing.

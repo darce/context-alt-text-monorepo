@@ -45,9 +45,9 @@ An ACX-owned face pipeline — YuNet 2026may (MIT) detection + 5 landmarks → f
 | **FIR-3** | YuNet+SFace adapters | FIR-2 | OpenCV CPU reference impl (semantic golden); ORT CPU adapters with identical preprocessing; model files pinned by sha256 + license files + source URLs in a provenance manifest; OpenCV 4.12-vs-5 pin decision; golden tests (landmark order, affine, normalization) |
 | **FIR-4** | Runtime integration (dark) + license isolation | FIR-3 | scan_worker/inline wiring **behind a face-pipeline profile flag — production default stays on the current pipeline until the FIR-6 switch-over** (RLSE-07); `FacePipelineSettings`; `check_model_cache` extended to sha256-verify at boot (fail-closed) + build-time verification; observability surface (per-scan detection count, assignment/unknown ratio, quality-gate rejections, `embedding_model` in logs/metrics); **no dimension-default change** (dev/eval exercise the 128D pipeline via the `PGVECTOR_DIM` env — keeps every FIR-4 slice mergeable dark, no slice hostage to FIR-6's gate); Docker/deps rework; insightface → `[bench]` extra (out of `[face]`/`[gpu]`); mac install script replacement; repo-wide docs/runbooks sweep for buffalo/insightface references |
 | **FIR-5** | Bake-off harness extension | FIR-2 (scaffolding); **FIR-3 for candidate legs** (adapters supply preprocessing-parity YuNet+SFace candidates — duplicating preprocessing in the harness would invalidate the bake-off) | Offline candidate leg (in-process detector+embedder over golden corpus) or env-selected eval-instance profile; false-merge/false-split + cluster-purity + unknown-rejection metrics; **throughput/cost leg + recorded perf budget** (PERF-01/06/07); per-slice rollups with the **occlusion family first-class as three tags — `masked`, `sunglasses`, `occlusion_other`** (real occluders + deterministic synthetic-occlusion paired protocol per tag); slice floors per the [sizing table](#fir-5-slice-sizing-ci-target-driven); demographic slices (Fair-SA); buffalo_l reference leg confined to eval env + run artifacts; corpus hard-slice extension |
-| **FIR-6** | Calibration + quality rework + hard-case recovery + switch-over | FIR-4, FIR-5 | Quality signals: landmark pose proxies, sharpness, embedding magnitude (AdaFace/MagFace), **occlusion-severity proxy** (landmark confidence + eye-region patch stats); occlusion-adaptive threshold adjustment via existing `compute_identity_quality().threshold_adjustment` (OACT pattern, 2607.03581 concept); **Hungarian within-photo one-to-one assignment** (2606.23230, `linear_sum_assignment`) — applied after the quality gate, disabled for mirror/collage cases per the mirrors-stratum measurement; representative/medoid aggregation tuning; similarity/unknown/ambiguity-margin calibration on ACX data; bake-off report **proposing** gate criteria; **operator records the gate decision in MCP; switch-over slice is blocked until it exists** — the switch-over slice flips the flag default, flips the dimension defaults (`EMBEDDING_DIMENSION` in `001_identity_schema.py:14` + `PGVECTOR_DIM` in `db/settings.py` + enumerated deploy configs: `.env*`, `docker-compose*.yml`, `infra/oci`, reset scripts), and removes buffalo from prod images |
+| **FIR-6** | Calibration + quality rework + hard-case recovery + switch-over | FIR-4, FIR-5 | Quality signals: landmark pose proxies, sharpness, embedding magnitude (AdaFace/MagFace), **occlusion-severity proxy** (landmark confidence + eye-region patch stats); OACT adjustment via existing `compute_identity_quality().threshold_adjustment` (expanded in the [spec terminology](../specs/fir-open-set-gate-and-occlusion-spec.md#terminology); 2607.03581 concept); **Hungarian within-photo one-to-one assignment** (2606.23230, `linear_sum_assignment`) — applied after the quality gate, disabled for mirror/collage cases per the mirrors-stratum measurement; representative/medoid aggregation tuning; similarity/unknown/ambiguity-margin calibration on ACX data; bake-off report **proposing** gate criteria; **operator records the gate decision in MCP; switch-over slice is blocked until it exists** — the switch-over slice flips the flag default, flips the dimension defaults (`EMBEDDING_DIMENSION` in `001_identity_schema.py:14` + `PGVECTOR_DIM` in `db/settings.py` + enumerated deploy configs: `.env*`, `docker-compose*.yml`, `infra/oci`, reset scripts), and removes buffalo from prod images |
 | FIR-7 (follow-on) | A10 GPU production path | FIR-6 | ORT-CUDA providers, FP16 + threshold recheck, engine caching |
-| FIR-8 (contingent) | Escalation ladder | Entry: an **operator-recorded gate decision with a `fail` verdict** on any gating metric/slice (the gate decision itself defines which slices gate) | SFIQA-class learned quality model (2602.07403) → SeetaFace6 audit → licensed InsightFace quote → commercial SDK comparison → (last) occlusion-aware embedder training (synthetic-data SFace / LaCoVL / OccFace as references); YuNet retrain with depth-aware occlusion compositing (2512.11683) only if the bake-off attributes occlusion losses to *detection misses* |
+| **FIR-8** | Recognition-profile bench toggle | FIR-5 | Cross-stack bench toggle infrastructure (`scripts/bench/`) enabling profile-selected comparison runs, consumed by FIR-16's open-set leg; see `docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md` |
 
 ### FIR-5 slice sizing (CI-target-driven)
 
@@ -91,18 +91,62 @@ Written before ship, staged by phase:
 
 - **Pre-switch-over** (FIR-2..FIR-5, pipeline dark): full revert is trivial — the flag never flipped, production never left the current pipeline, dimension defaults never changed (they flip only inside FIR-6's gated switch-over slice). FIR-2's additive provenance column and age/gender drops revert via branch revert + the standard greenfield reset.
 - **At switch-over** (FIR-6): the deploy that flips the flag keeps the previous release image tagged; rollback = redeploy previous image + restore `PGVECTOR_DIM`/schema via the standard greenfield reset (embeddings regenerate by re-scan; no data restore needed by design). Buffalo weights may still exist in the *previous* image at this point — lawful because the product is not yet switched commercially; the launch checklist orders weight removal **before** commercial exposure.
-- **Post-launch** (buffalo removed, product commercial): the embedder is **roll-forward-only** — reverting to buffalo is license-barred. Degradation path instead of rollback: the face-pipeline flag can disable recognition entirely; scan intake fails closed (existing `UnavailableFaceDetector`/capability-heartbeat machinery), alt-text captioning and the rest of the product continue. Escalation then follows FIR-8, not a weight revert.
+- **Post-launch** (buffalo removed, product commercial): the embedder is **roll-forward-only** — reverting to buffalo is license-barred. Degradation path instead of rollback: the face-pipeline flag can disable recognition entirely; scan intake fails closed (existing `UnavailableFaceDetector`/capability-heartbeat machinery), alt-text captioning and the rest of the product continue. Escalation then follows the failed-gate escalation ladder (see Not-Doing; unowned, parked — not FIR-8), not a weight revert.
 - **Old-build/new-data compatibility** (DATA-03): a rolled-back build reading a 128D schema (or vice versa) fails loudly at the unit-norm/dimension boundary — acceptable under greenfield reset semantics and stated here so nobody expects dual-read.
 
 ## Not-Doing
 
 - Video/track pipeline (companion doc exists; separate future epic).
 - age/gender attribute model (follow-up only after recognition is stable).
-- Custom model training, dataset licensing, or fine-tuning **in the MVP** (exists only as FIR-8's last rung, behind a failed operator-recorded gate).
+- Custom model training, dataset licensing, or fine-tuning **in the MVP**.
+- Failed-gate escalation ladder (unowned, parked): SFIQA-class learned quality model (2602.07403) → SeetaFace6 audit → licensed InsightFace quote → commercial SDK comparison → (last) occlusion-aware embedder training (synthetic-data SFace / LaCoVL / OccFace as references); YuNet retrain with depth-aware occlusion compositing (2512.11683) only if the bake-off attributes occlusion losses to *detection misses*. Entry: an operator-recorded gate decision with a `fail` verdict on any gating metric/slice. No task number assigned; not FIR-8 (FIR-8 is the recognition-profile bench toggle, a Phase C dependency that must exist before the gate decision — assigning the escalation ladder to FIR-8 would create a dependency cycle).
 - HNSW indexes (exact ivfflat/cosine is fine at current roster sizes; add only on measured latency need).
-- Commercial SDK or managed-API integration (bake-off comparator at most, behind FIR-8).
+- Commercial SDK or managed-API integration (bake-off comparator at most, behind the failed-gate escalation ladder, unowned/parked).
 - Model-registry service or multi-dimension vector query layer (provenance column only — REF-12).
 - GPU-class hard-case models in the live path: diffusion super-resolution (2607.05702), GAN-inversion/SAM occlusion segmentation (2602.00635), CLIP-based fusion (2605.19821), LRM 3D reconstruction (2601.12736). S3POT-class segmentation at most as offline GPU curation labeling.
-- Detector or embedder retraining in the MVP (Depth-Copy-Paste augmentation and occlusion-aware embedder training live behind the FIR-8 gate).
+- Detector or embedder retraining in the MVP (Depth-Copy-Paste augmentation and occlusion-aware embedder training live behind the failed-gate escalation ladder, unowned/parked).
 - TensorRT / native engine work (post-FIR-7 at earliest).
 - Migration/shadow-mode tooling in production (greenfield; shadow comparison lives in the eval harness).
+
+## Re-plan addendum 2026-09-11
+
+Decision #10843 (session `firplan-1-replan-20260911`). No new epic — E22 is revised in place; see the epic's [Status 2026-09-11 Re-plan](../epics/v0.5.0/commercial-face-identity-replacement-epic.md#status-2026-09-11-re-plan).
+
+### What changed
+
+- Headline gate metric is now explicitly **D3 = FNIR at a fixed FPIR** (open-set, non-mated probes, score threshold swept), FPI reported as an integer count, never a rate. The operator ratifies the fixed FPIR operating point; plans name the parameter and the ratification step, never a hard-coded value.
+- Corpus locked at **Golden-150 as remediated by FIR-11 R1** (150 − 7 − 3 → 30 entries / 30 probes / 17 identities usable for the paired Nam/Tango non-inferiority check; Product A/B split). FIR-11 rev 7 is the corpus plan of record; new plans consume it, never restate it.
+- **No A10 spend and no SCRFD/AdaFace retrain before D-01**, reached only via T-09 → T-14 → D-01. Occlusion work is inference-only (no training) until D-01 says otherwise.
+- **`acx-dev-fir` (FIR23-STACK) must exist before any head-to-head**; the head-to-head runs both stacks over public APIs — two embedding spaces require two databases.
+- Ledger fact: the FIR-12 open-set harness and the FIR-5 face bake-off are on `main` (FIR-12 merge `d567a341c` 2026-08-22, exemption rule `fa3341409`; FIR-5 merge `c10eac1d8`). No bake-off has been run.
+- Withdrawn numbers (never cite as evidence): M-12 0.865/0.321, recall 0.504, 2.73 faces/image, every pre-CVUP-1 (OpenCV 4.x) artifact. "Embedder leads detector" is a hypothesis, not a result, pending FIR-15.
+
+### New task rows (Epic Short ID FIR; titles are canonical)
+
+| Task | Title | Depends on | Core deliverables |
+| --- | --- | --- | --- |
+| **FIR-13** | Open-set gate contract: face rubric, D3 declaration, T-14 adjudication rule | FIR-12 (merged) | `benchmarks/protocols/face-label-rule.md` (T-09 rubric, frozen, versioned); `gate_contract.py` (`GateContract`, `select_gate_point`, D3 declaration, operating point held `null` pending operator ratification); `union_adjudication.py` (T-14 bound, bootstrap UCL, `DeadZoneVerdict`, all four mandatory conditions) |
+| **FIR-14** | OpenCV-5 re-baseline and pre-CVUP-1 artifact withdrawal | FIR-13 | `benchmarks/results/WITHDRAWN.md` withdrawal register; toolchain provenance block on face reports; CV5 re-baseline run on both legs (DIAGNOSTIC tier, corpus not yet remediated); toolchain arm artifact for FIR-11 S5 |
+| **FIR-15** | Attribution: alignment-vs-embedder split and oracle occlusion ladder | FIR-13, FIR-14 | T-01 four-arm split harness (`attribution_split.py`) with paired-bootstrap share intervals; oracle-before-predicted occlusion ladder (`occlusion_ladder.py`); D-02 decision packet |
+| **FIR-16** | Open-set head-to-head: face_pipeline vs buffalo_l on acx-dev-fir | FIR-13, FIR-14, FIR-11 R1, FIR23-STACK, FIR-8 | Persisted per-face `MediaIdentity.match_score` and `MediaIdentity.match_cluster_id` exported (S1a, greenfield schema edit; pre-gate best centroid, captured before the similarity-threshold filter); open-set leg in the cross-stack bench (`score_open_set`, open-set report section); `propose-gate` CLI + operator decision template; live run on `acx-dev-fir` |
+| **FIR-17** | Inference-only occlusion robustness: OACT sign fix (S0), visible-support matching (S1), pose head rescue (S2), branch handoff (S3) | S0 unconditional; S1–S4 depend on FIR-15's D-02 (attribution verdict) | S0 OACT sign fix (`compute_quality_adjustment`, never relax the threshold under occlusion) — runs before D-02 in every branch (EMBEDDER, DETECTOR, INCONCLUSIVE); S1 visible-support (periocular) matching behind a knob (EMBEDDER branch); S2 pose head-region rescue is ADR-only (no knob, no runtime code — deliverable is the ADR plus a named follow-up task); S3 docs-only handoff (DETECTOR/INCONCLUSIVE branches); S4 confirms `masked_cosine`'s single definition (EMBEDDER branch) |
+
+### Dependency edges
+
+- FIR-13 → FIR-14 → FIR-15 → FIR-17 S1–S4 (branch-gated on D-02); FIR-17 S0 is unconditional and lands before D-02, so it does not wait on FIR-15's attribution verdict
+- FIR-16 depends on FIR-13, FIR-14, FIR-11 R1, FIR23-STACK, FIR-8
+- FIR-6 S4 (calibration on the remediated corpus, including the FIR-17 S0 OACT direction fix) runs **before** the FIR-16 live run
+- FIR-6 S5/S6 (final threshold, switch-over) run **after** the FIR-16 gate decision
+
+### New Not-Doing items
+
+- SCRFD/AdaFace retrain of any kind before an operator-recorded D-01 kill/keep decision.
+- A10 (GPU) spend of any kind before D-01.
+- VLM-6 caption bake-off work — separate program; the only coupling is the shared eval manifest schema.
+- Head/torso secondary channel (C4) as an identity claim — association-only if ever built, deferred.
+- `PGVECTOR_DIM` flip outside FIR-6 S6 — the dimension default moves only in the gated switch-over slice, never earlier.
+
+### Pointers
+
+- Spec: `docs/specs/fir-open-set-gate-and-occlusion-spec.md` (item prefix `FIRG-001…`; see the spec's [Terminology](../specs/fir-open-set-gate-and-occlusion-spec.md#terminology) for the FIRG expansion)
+- Roadmap: `docs/roadmaps/fir-occlusion-robust-recognition-roadmap-2026-09-11.md`

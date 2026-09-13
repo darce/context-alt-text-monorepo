@@ -14,11 +14,6 @@ const assertMountNode: (value: HTMLElement | null) => asserts value is HTMLEleme
   }
 };
 
-const homeUrlFrom = (root: HTMLElement): string => {
-  const value = root.getAttribute('data-home-url');
-  return value && value.length > 0 ? value : '/';
-};
-
 export interface MountPublicGuideOptions {
   createRoot?: (container: Element | DocumentFragment) => Root;
 }
@@ -47,7 +42,7 @@ export const mountPublicGuide = (
 
   const tree = (
     <ErrorBoundary fallback={publicGuideFallback}>
-      <RecordedWalkthrough scope="public" escapeHref={homeUrlFrom(root)} />
+      <RecordedWalkthrough scope="public" />
     </ErrorBoundary>
   );
 

@@ -84,6 +84,20 @@ class MemberResponseMapper {
 			&& $this->looks_like_system_defined_label( (string) $cluster_label );
 
 		$source = $this->resolve_face_source_fields( $member_row, $media_id, $member_row['bbox_json'] ?? null );
+		$person_id = (int) ( $member_row['person_id'] ?? 0 );
+		$representative_face = null;
+		$representative = $member_row['representative_member'] ?? null;
+		if ( is_array( $representative ) ) {
+			$representative_media_id = absint( $representative['attachment_id'] ?? $representative['media_id'] ?? 0 );
+			$representative_source = $this->resolve_face_source_fields( $representative, $representative_media_id, $representative['bbox_json'] ?? null );
+			$representative_face = array(
+				'identity_id' => (string) $representative['identity_uuid'],
+				'media_id' => $representative_media_id > 0 ? $representative_media_id : null,
+				'media_url' => $representative_source['media_url'],
+				'attachment_url' => $representative_source['attachment_url'],
+				'bbox' => $representative_source['bbox'],
+			);
+		}
 
 		return array(
 			'identity_id' => $identity_id,
@@ -103,6 +117,8 @@ class MemberResponseMapper {
 			'detected_at' => null,
 			'representative_id' => '' !== $representative_id ? $representative_id : null,
 			'debug_metrics' => null,
+			'person_id' => $person_id > 0 ? (string) $person_id : null,
+			'representative_face' => $representative_face,
 		);
 	}
 

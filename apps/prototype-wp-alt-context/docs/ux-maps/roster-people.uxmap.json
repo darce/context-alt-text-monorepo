@@ -6,6 +6,8 @@
     "Six ACX submenus are MECE and frequency-ordered (NAV-05/NAV-06): Overview orients; Review Queue is the one home to name a person from a photo (highest-frequency demo task); People manages named people only; Description Runs is the one home to see what the describer did; Data Retention is keep/delete/export policy (not description history); Settings configures the service (rare, last). WordPress parent slug stays Overview.",
     "One primary action per screen (NAV-01), reachable from zero state (rg-003); other CTAs are secondary.",
     "Operator manages named people and person workspace without losing roster place",
+    "Name, avatar, and face-group-count buttons open the person workspace; the pencil is the only rename entry point.",
+    "Preview a person merge with survivor, loser, tag union, face-group counts, and conflicts before confirming; keep the success banner reversible with Undo.",
     "Decompose Roster UI tasks from screens/zones/states/flows (people-first surface; clusters tab retired)"
   ],
   "jobs": [
@@ -16,6 +18,10 @@
     {
       "id": "job-cluster-review",
       "label": "Review face-group deep-link (shim)"
+    },
+    {
+      "id": "job-merge-people",
+      "label": "Preview, confirm, and undo a person merge"
     }
   ],
   "screens": [
@@ -35,7 +41,7 @@
       "zones": [
         {
           "id": "z-entries",
-          "label": "Roster entries table",
+          "label": "Roster entries table (name, avatar, and face-group-count buttons open person workspace; rename is pencil-only; Merge into... is a row action)",
           "role": "content",
           "states": ["default", "loading", "empty", "error"]
         },
@@ -182,6 +188,77 @@
           "states": ["default"]
         }
       ]
+    },
+    {
+      "id": "roster-person-merge-dialog",
+      "kind": "overlay",
+      "title": "Merge people dialog",
+      "purpose": "PersonMergeDialog previews the survivor, loser, tag union, face-group counts, and conflicts before the operator confirms a reversible merge.",
+      "route": "#/roster?person=&mergeInto=",
+      "wp_page": "alt-context-roster",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": ["person", "mergeInto"],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/roster/RosterEntriesTable.tsx",
+      "primary_action_id": "act-confirm-person-merge",
+      "action_states": ["ready", "preview_ready", "conflict", "committing"],
+      "states": ["default", "loading", "error", "degraded"],
+      "zones": [
+        {
+          "id": "z-person-merge-preview",
+          "label": "Merge preview (survivor, loser, tag union, face-group counts, and conflicts)",
+          "role": "forced_choice",
+          "evidence_linked": true,
+          "states": ["default", "loading", "error", "degraded"]
+        },
+        {
+          "id": "z-person-merge-confirm",
+          "label": "Confirm merge only after the preview is current; cancel leaves both people unchanged",
+          "role": "form",
+          "states": ["default", "loading", "error"]
+        },
+        {
+          "id": "z-person-merge-conflicts",
+          "label": "Conflict details (tag or face-group conflict blocks an unreviewed commit)",
+          "role": "status",
+          "states": ["default", "error", "degraded"]
+        }
+      ]
+    },
+    {
+      "id": "roster-person-merge-success",
+      "kind": "overlay",
+      "title": "Person merge result",
+      "purpose": "Success banner confirms the person merge and offers Undo; the undone state restores the prior survivor, loser, tags, and face-group bindings.",
+      "route": "#/roster?person=&mergeResult=",
+      "wp_page": "alt-context-roster",
+      "job_entry": false,
+      "deep_link": false,
+      "url_params": ["person", "mergeResult"],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/roster/RosterEntriesTable.tsx",
+      "primary_action_id": null,
+      "action_states": ["success", "undoing", "undone", "error"],
+      "states": ["default", "loading", "error", "degraded"],
+      "zones": [
+        {
+          "id": "z-person-merge-success-banner",
+          "label": "Success banner (people merged) with Undo",
+          "role": "status",
+          "states": ["default", "loading", "error"]
+        },
+        {
+          "id": "z-person-merge-undo",
+          "label": "Undo merge restores the prior person and face-group bindings",
+          "role": "form",
+          "states": ["default", "loading", "error"]
+        },
+        {
+          "id": "z-person-merge-undone",
+          "label": "Undone state (original people, tags, and face-group counts are visible again)",
+          "role": "content",
+          "states": ["default", "error", "degraded"]
+        }
+      ]
     }
   ],
   "actions": [
@@ -199,6 +276,56 @@
       "id": "act-open-person",
       "verb": "Open person workspace",
       "target": "roster-person-workspace",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "roster-shell"
+    },
+    {
+      "id": "act-open-person-from-name",
+      "verb": "Open person workspace from name button",
+      "target": "roster-person-workspace",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "roster-shell"
+    },
+    {
+      "id": "act-open-person-from-avatar",
+      "verb": "Open person workspace from avatar button",
+      "target": "roster-person-workspace",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "roster-shell"
+    },
+    {
+      "id": "act-open-person-from-face-group-count",
+      "verb": "Open person workspace from face-group-count button",
+      "target": "roster-person-workspace",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "roster-shell"
+    },
+    {
+      "id": "act-rename-person-pencil",
+      "verb": "Rename person via pencil",
+      "target": "roster-person-workspace",
+      "hierarchy": "secondary",
+      "costly": true,
+      "irreversible": false,
+      "preview_required": true,
+      "screen_id": "roster-shell"
+    },
+    {
+      "id": "act-open-person-merge",
+      "verb": "Merge into...",
+      "target": "roster-person-merge-dialog",
       "hierarchy": "secondary",
       "costly": false,
       "irreversible": false,
@@ -264,6 +391,72 @@
       "irreversible": false,
       "preview_required": false,
       "screen_id": "roster-face-lightbox"
+    },
+    {
+      "id": "act-preview-person-merge",
+      "verb": "Preview person merge",
+      "target": "roster-person-merge-dialog",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "roster-person-merge-dialog",
+      "when": ["ready"]
+    },
+    {
+      "id": "act-retry-person-merge-preview",
+      "verb": "Retry merge preview",
+      "target": "roster-person-merge-dialog",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "roster-person-merge-dialog",
+      "when": ["conflict"]
+    },
+    {
+      "id": "act-confirm-person-merge",
+      "verb": "Confirm person merge",
+      "target": "roster-person-merge-success",
+      "hierarchy": "primary",
+      "costly": true,
+      "irreversible": false,
+      "preview_required": true,
+      "screen_id": "roster-person-merge-dialog",
+      "when": ["preview_ready"]
+    },
+    {
+      "id": "act-cancel-person-merge",
+      "verb": "Cancel merge",
+      "target": "roster-shell",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "roster-person-merge-dialog",
+      "when": ["ready", "preview_ready", "conflict"]
+    },
+    {
+      "id": "act-undo-person-merge",
+      "verb": "Undo merge",
+      "target": "roster-person-merge-success",
+      "hierarchy": "secondary",
+      "costly": true,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "roster-person-merge-success",
+      "when": ["success"]
+    },
+    {
+      "id": "act-dismiss-person-merge-result",
+      "verb": "Close merge result",
+      "target": "roster-shell",
+      "hierarchy": "tertiary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "roster-person-merge-success",
+      "when": ["success", "undone", "error"]
     }
   ],
   "flows": [
@@ -298,6 +491,29 @@
         {
           "screen_id": "exit-workbench",
           "branch_label": "continue media queue"
+        }
+      ]
+    },
+    {
+      "id": "flow-person-merge-undo",
+      "job": "job-merge-people",
+      "label": "Roster row → preview person merge → confirm → Undo",
+      "steps": [
+        {
+          "screen_id": "roster-shell",
+          "branch_label": "name, avatar, and face-group-count buttons open workspace; pencil is rename-only; choose Merge into... for a merge"
+        },
+        {
+          "screen_id": "roster-person-merge-dialog",
+          "branch_label": "preview survivor, loser, tag union, face-group counts, and conflicts before commit"
+        },
+        {
+          "screen_id": "roster-person-merge-success",
+          "branch_label": "confirm shows a success banner with Undo"
+        },
+        {
+          "screen_id": "roster-person-merge-success",
+          "branch_label": "Undo restores the prior people, tags, and face-group bindings; show undone state"
         }
       ]
     }

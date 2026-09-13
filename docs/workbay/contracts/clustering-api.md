@@ -835,3 +835,44 @@ The WordPress plugin exposes additional REST endpoints outside the `/recognition
 - **Sovereign Sync (outbox, conflict, dead-letter, sync health):** [curation-sync-api.md](curation-sync-api.md)
 - **Snapshot projection and conflict detection:** [cluster-snapshot-api.md](cluster-snapshot-api.md)
 - **Endpoint authorization (capability requirements):** [security.md](security.md)
+
+## Explicit roster person merge (IDCHIP-1)
+
+These local WordPress endpoints require the same `can_manage_roster` permission
+as `/roster/persons`. The tenant comes from the server, never the request.
+Merges are explicitly requested by person ID; matching names do not trigger them.
+Cluster UUIDs and person IDs remain separate identifiers.
+
+- `POST /wp-json/acx/v1/roster/persons/merge/preview`
+  Request: `{"survivor_id":1,"loser_id":2}`. Positive integer IDs (including
+  decimal strings) must differ. Read-only response (200):
+  `{"survivor":{"id":1,"name":"Ada","cluster_count":2},"loser":{"id":2,"name":"Ada L.","cluster_count":1},"tags":["team","speaker"],"conflicts":[]}`.
+  Invalid IDs return 400, missing persons 404, and tenant conflicts 409 as
+  WordPress errors, without exposing the other tenant's person details.
+- `POST /wp-json/acx/v1/roster/persons/merge`
+  Request: `{"survivor_id":1,"loser_id":2}`. Clients should show the preview
+  before requesting commit. Commit revalidates current state transactionally,
+  moves every loser cluster binding, unions tags, deletes the loser and marks
+  the tenant projection stale (a failed marker write rolls back the whole
+  commit and returns 500). Response (200):
+  `{"survivor_id":1,"merged_cluster_ids":["cluster-uuid"],"undo_token":"uuid"}`.
+  If the loser is already gone (e.g. a retried request after a lost 200), the
+  original merge result and undo token are returned again instead of a fresh
+  404, provided the retry still targets the same survivor/loser pair.
+- `POST /wp-json/acx/v1/roster/persons/merge/undo`
+  Request: `{"undo_token":"uuid"}`. Response (200):
+  `{"restored_person_id":2,"restored_cluster_ids":["cluster-uuid"]}`.
+  Restores the original loser row and ID, prior bindings and survivor tags,
+  then consumes the tenant-scoped token in the same transaction. The token
+  must be a syntactically valid UUID v4 (`xxxxxxxx-xxxx-4xxx-[89ab]xxx-xxxxxxxxxxxx`,
+  hex digits); invalid syntax returns 400. Unknown, foreign-tenant or consumed
+  tokens return 409. Undo tokens expire 24 hours after commit; an expired
+  token is deleted and returns 409 `person_merge_undo_expired`. A corrupt or
+  malformed stored undo record (unreadable JSON or an unexpected shape) is
+  deleted and returns 500 `person_merge_undo_corrupt`. Undo also returns 409
+  if the loser ID is occupied, the survivor disappeared, survivor tags
+  changed, or a moved cluster disappeared or changed person. No partial undo
+  is applied. Database failures return 500.
+
+Undo records are local, non-autoloaded options stored with transactional SQL;
+these endpoints do not claim backend replay or synchronization completion.

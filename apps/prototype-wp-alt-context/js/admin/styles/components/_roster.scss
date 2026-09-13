@@ -108,6 +108,40 @@
 }
 
 .acx-roster-entries {
+  &__open {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--acx-space-8);
+    padding: var(--acx-space-4);
+    border: 0;
+    border-radius: var(--acx-radius-md);
+    background: transparent;
+    color: var(--acx-color-text);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+
+    &:hover {
+      background: var(--acx-color-surface);
+      color: var(--acx-color-accent);
+    }
+
+    &:focus-visible {
+      outline: var(--acx-space-2) solid var(--acx-color-accent);
+      outline-offset: var(--acx-space-2);
+    }
+
+    &--static {
+      cursor: default;
+      color: var(--acx-color-text);
+
+      &:hover {
+        background: transparent;
+        color: var(--acx-color-text);
+      }
+    }
+  }
+
   &__table {
     width: 100%;
     border-collapse: separate;
@@ -639,4 +673,28 @@
     margin: 0;
     color: var(--acx-color-text);
   }
+}
+
+.acx-person-merge {
+  fieldset {
+    display: grid;
+    gap: var(--acx-space-12);
+    border: none;
+    padding: var(--acx-space-4);
+  }
+
+  p {
+    color: var(--acx-color-text-secondary);
+  }
+}
+
+.acx-person-merge-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--acx-space-12);
+  padding: var(--acx-space-12);
+  margin-bottom: var(--acx-space-24);
+  background: var(--acx-color-surface);
+  color: var(--acx-color-text-secondary);
 }

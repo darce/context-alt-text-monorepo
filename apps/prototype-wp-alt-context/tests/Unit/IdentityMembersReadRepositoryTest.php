@@ -39,6 +39,43 @@ class IdentityMembersReadRepositoryTest extends TestCase
         $this->assertStringContainsString('INNER JOIN `wp_acx_clusters` c', $sql);
     }
 
+    public function testMediaIdentitiesBatchResolvesDistinctRepresentativesWithinTenant(): void
+    {
+        global $wpdb;
+        $representative = ['identity_uuid' => 'rep-a', 'attachment_id' => 99, 'bbox_json' => null];
+        $wpdb->onGetResults = static function (string $sql) use ($representative): array {
+            if (str_contains($sql, 'm.identity_uuid IN')) {
+                return [$representative];
+            }
+            return [
+                ['identity_uuid' => 'one', 'representative_id' => 'rep-a', 'person_id' => '7'],
+                ['identity_uuid' => 'two', 'representative_id' => 'rep-a'],
+                ['identity_uuid' => 'three', 'representative_id' => 'missing'],
+                ['identity_uuid' => 'four', 'representative_id' => null],
+            ];
+        };
+
+        $rows = $this->repository->list_for_media_ids('tenant-a', [1, 2]);
+
+        $this->assertCount(2, $wpdb->queries);
+        $this->assertStringContainsString('c.person_id', $wpdb->queries[0]);
+        $this->assertStringContainsString("c.tenant_id = 'tenant-a'", $wpdb->queries[1]);
+        $this->assertStringContainsString("m.identity_uuid IN ('rep-a', 'missing')", $wpdb->queries[1]);
+        $this->assertSame($representative, $rows[0]['representative_member']);
+        $this->assertSame($representative, $rows[1]['representative_member']);
+        $this->assertNull($rows[2]['representative_member']);
+        $this->assertNull($rows[3]['representative_member']);
+    }
+
+    public function testMediaIdentitiesSkipsRepresentativeQueryWhenUnresolved(): void
+    {
+        global $wpdb;
+        $wpdb->mockResults = [['identity_uuid' => 'one', 'representative_id' => '']];
+        $rows = $this->repository->list_for_media_ids('tenant-a', [1]);
+        $this->assertCount(1, $wpdb->queries);
+        $this->assertNull($rows[0]['representative_member']);
+    }
+
     /**
      * rg-005: members list order must match recognition source-of-truth
      * (assigned_at ASC, identity_uuid). Rows sharing an identical assigned_at

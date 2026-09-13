@@ -3,6 +3,8 @@
  */
 
 import React from 'react';
+import { Layers } from 'lucide-react';
+import { faceGroupsBadge } from './representativeVocabulary';
 import { useQueryClient } from '@tanstack/react-query';
 import { __, sprintf } from '@wordpress/i18n';
 
@@ -14,11 +16,7 @@ import { getClusterMutationErrorMessage } from './clusterMutationUtils';
 import { invalidateSuggestionProjection, type ProjectedSuggestion } from './suggestionProjection';
 import type { ClusterGroup } from './types';
 import { isMeaningfulMergeLabel } from './resolveMergeSurvivor';
-import {
-  TWIN_CHIP_ACCEPT_TEMPLATE,
-  TWIN_CHIP_PROMPT_TEMPLATE,
-  TWIN_CHIP_REJECT_LABEL,
-} from './twinChipCopy';
+import { TWIN_CHIP_ACCEPT_TEMPLATE, TWIN_CHIP_PROMPT_TEMPLATE, TWIN_CHIP_REJECT_LABEL } from './twinChipCopy';
 import { filterEditableClusterMatch, formatClusterLabel, getEditableClusterId } from './utils';
 import { useClusterEditState } from './useClusterEditState';
 import { useClusterMutations } from './useClusterMutations';
@@ -29,7 +27,6 @@ import { ClusterEditForm } from './ClusterEditForm';
 import { MergeUndoBanner } from './MergeUndoBanner';
 import { DebugMetricsPanel } from './DebugMetricsPanel';
 import { InlineSuggestionPrompt } from './InlineSuggestionPrompt';
-import { AnchorSelectionModal } from './AnchorSelectionModal';
 import { ClusterConfirmDialog } from './ClusterConfirmDialog';
 import { useClusterConfirmDialog } from './useClusterConfirmDialog';
 import { useClusterSaveHandlers } from './useClusterSaveHandlers';
@@ -90,6 +87,20 @@ export const IdentityClusterItem = ({
   );
 
   const editableClusterId = React.useMemo(() => getEditableClusterId(cluster), [cluster]);
+
+  const splittableGroups = React.useMemo(() => {
+    const groups = new Map<string, ClusterGroup['members']>();
+    for (const member of cluster.members) {
+      const id = cluster.identityClusterIds?.[member.identity_id] ?? member.cluster_id;
+      if (!id) {
+        continue;
+      }
+      groups.set(id, [...(groups.get(id) ?? []), member]);
+    }
+    return [...groups.entries()].filter(([, members]) => members.length >= 2);
+  }, [cluster]);
+  const [splitGroupId, setSplitGroupId] = React.useState<string | null>(null);
+  const splitMembers = splittableGroups.find(([id]) => id === splitGroupId)?.[1] ?? [];
 
   // For singletons without a cluster, we still allow naming/merging via identity ID
   const isSingleton = !editableClusterId && cluster.members.length === 1;
@@ -337,42 +348,32 @@ export const IdentityClusterItem = ({
     setIsWrongPersonDialogOpen(false);
   };
 
-  // Handle "Split cluster" action
   const handleSplit = () => {
-    if (!cluster.clusterId) {
+    if (!splittableGroups.length) {
       return;
     }
-
-    if (cluster.members.length < 2) {
-      setError(__('Need at least two identities to split.', 'alt-context'));
-      return;
-    }
+    setSplitGroupId(splittableGroups.length === 1 ? splittableGroups[0][0] : null);
     setIsAnchorModalOpen(true);
   };
 
-  const handleAnchorSelect = React.useCallback(
-    (selectedIdentityId: string) => {
-      if (!cluster.clusterId) {
-        return;
-      }
-      mutations.split(cluster.clusterId, 2, selectedIdentityId);
-    },
-    [cluster, mutations],
-  );
+  const handleAnchorSelect = (identityId: string) => {
+    if (!splitGroupId || !splitMembers.some((member) => member.identity_id === identityId)) {
+      return;
+    }
+    mutations.split(splitGroupId, 2, identityId);
+    setIsAnchorModalOpen(false);
+  };
 
   const showTwinChip =
     canMutate &&
     mergeTwin != null &&
     cluster.clusterId !== mergeTwin.survivorClusterId &&
     isMeaningfulMergeLabel(mergeTwin.survivorLabel);
-  const twinPendingTitle =
-    mergeTwin?.isPending && mergeTwin.disabledReason ? mergeTwin.disabledReason : undefined;
+  const twinPendingTitle = mergeTwin?.isPending && mergeTwin.disabledReason ? mergeTwin.disabledReason : undefined;
   const twinPendingDescId = mergeTwin ? `acx-twin-pending-${mergeTwin.suggestionId}` : undefined;
   // Inline "Is this X?" prompt renders only for unlabeled, mutable clusters
   // that are not already showing a merge twin (INT-03: one confirm cluster).
-  const showInlinePrompt = Boolean(
-    !showTwinChip && !cluster.label && anchorIdentityId && canMutate,
-  );
+  const showInlinePrompt = Boolean(!showTwinChip && !cluster.label && anchorIdentityId && canMutate);
 
   const saveLabel = React.useMemo(() => {
     if (saveStatus === 'queued') {
@@ -391,7 +392,21 @@ export const IdentityClusterItem = ({
 
   return (
     <div className={`acx-identity-cluster ${editState.isEditing ? 'acx-identity-cluster--editing' : ''}`}>
-      <ClusterPreview representative={representative} memberCount={cluster.members.length} />
+      <ClusterPreview
+        representative={representative}
+        representativeFace={representative?.representative_face}
+        memberCount={cluster.members.length}
+      />
+      {cluster.clusterIds && cluster.clusterIds.length > 1 && (
+        <span
+          className="acx-identity-cluster__face-groups"
+          role="img"
+          aria-label={faceGroupsBadge(cluster.clusterIds.length)}
+        >
+          <Layers aria-hidden="true" size="1em" />
+          <span aria-hidden="true">{faceGroupsBadge(cluster.clusterIds.length)}</span>
+        </span>
+      )}
 
       <div className="acx-identity-cluster__info">
         {!editState.isEditing ? (
@@ -430,16 +445,12 @@ export const IdentityClusterItem = ({
                     alt={mergeTwin.survivorLabel}
                     className="acx-identity-clusters__twin-chip-thumb"
                   />
-                ) : (
-                  // WHY (HAI-01): mapped merge payload omitted the survivor crop — do not invent one.
-                  null
-                )}
+                ) : // WHY (HAI-01): mapped merge payload omitted the survivor crop — do not invent one.
+                null}
                 <span className="acx-identity-clusters__twin-chip-icon" aria-hidden="true">
                   ⇢
                 </span>
-                <span>
-                  {sprintf(TWIN_CHIP_PROMPT_TEMPLATE, mergeTwin.survivorLabel)}
-                </span>
+                <span>{sprintf(TWIN_CHIP_PROMPT_TEMPLATE, mergeTwin.survivorLabel)}</span>
                 <button
                   type="button"
                   className="button button-primary button-small"
@@ -466,7 +477,7 @@ export const IdentityClusterItem = ({
                 canSearchForMatch={canSearchForMatch}
                 hasLabel={Boolean(cluster.label)}
                 isAutoLabel={cluster.isAutoLabel}
-                canSplit={canMutate && Boolean(cluster.clusterId)}
+                canSplit={canMutate && Boolean(cluster.clusterId) && splittableGroups.length > 0}
                 canReject={canMutate && cluster.members.length === 1}
                 isPending={mutations.isPending}
                 splitDisabled={mutations.splitGate.disabled}
@@ -527,13 +538,90 @@ export const IdentityClusterItem = ({
 
       <DebugMetricsPanel metrics={representative?.debug_metrics} />
 
-      <AnchorSelectionModal
-        isOpen={isAnchorModalOpen}
-        label={cluster.label}
-        members={cluster.members}
-        onClose={() => setIsAnchorModalOpen(false)}
-        onSelectAnchor={handleAnchorSelect}
-      />
+      <DialogRoot open={isAnchorModalOpen} onOpenChange={setIsAnchorModalOpen}>
+        <DialogPortal>
+          <DialogOverlay />
+          <DialogContent>
+            <div className="acx-anchor-modal">
+              <DialogTitle>
+                {derivedLabel
+                  ? __('Choose a face to keep the label', 'alt-context')
+                  : __('Split a face group', 'alt-context')}
+              </DialogTitle>
+              <DialogDescription>
+                {derivedLabel
+                  ? sprintf(
+                      __(
+                        'Choose a face to keep the label “%s”. Other faces in this face group will move to a new face group.',
+                        'alt-context',
+                      ),
+                      derivedLabel,
+                    )
+                  : __(
+                      'The chosen face stays in this face group; other faces move to a new face group.',
+                      'alt-context',
+                    )}
+              </DialogDescription>
+              {splittableGroups.length > 1 && (
+                <fieldset>
+                  <legend>{__('Face group', 'alt-context')}</legend>
+                  {splittableGroups.map(([id, members], index) => {
+                    const preview = members[0];
+                    return (
+                      <label key={id}>
+                        <input
+                          type="radio"
+                          name="split-face-group"
+                          value={id}
+                          checked={splitGroupId === id}
+                          onChange={() => setSplitGroupId(id)}
+                        />
+                        {preview.media_url && preview.bbox && (
+                          <FaceThumbnail mediaUrl={preview.media_url} bbox={preview.bbox} size="lg" alt="" />
+                        )}
+                        {sprintf(__('Face group %d · %d faces', 'alt-context'), index + 1, members.length)}
+                      </label>
+                    );
+                  })}
+                </fieldset>
+              )}
+              {!splitGroupId && <p>{__('Choose a face group to pick the face that keeps it', 'alt-context')}</p>}
+              <div className="acx-anchor-modal__grid">
+                {splitMembers.map((member) => {
+                  const label = sprintf(__('Use face from media #%d', 'alt-context'), member.media_id);
+                  return (
+                    <button
+                      key={member.identity_id}
+                      type="button"
+                      className="acx-anchor-modal__option"
+                      aria-label={label}
+                      onClick={() => handleAnchorSelect(member.identity_id)}
+                    >
+                      {member.media_url && member.bbox ? (
+                        <FaceThumbnail
+                          mediaUrl={member.media_url}
+                          bbox={member.bbox}
+                          size="lg"
+                          alt={label}
+                          className="acx-anchor-modal__thumb"
+                        />
+                      ) : (
+                        <span className="acx-anchor-modal__thumb acx-anchor-modal__thumb--placeholder" />
+                      )}
+                      <span className="acx-anchor-modal__meta">
+                        {sprintf(__('Media #%d', 'alt-context'), member.media_id)}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <button type="button" className="button" onClick={() => setIsAnchorModalOpen(false)}>
+                {__('Cancel', 'alt-context')}
+              </button>
+            </div>
+          </DialogContent>
+        </DialogPortal>
+      </DialogRoot>
 
       <DialogRoot
         open={isWrongPersonDialogOpen}
@@ -548,9 +636,7 @@ export const IdentityClusterItem = ({
           <DialogContent>
             <div className="acx-queue-modal">
               <DialogTitle>{__('Remove this face from the group', 'alt-context')}</DialogTitle>
-              <DialogDescription>
-                {__('Remove this face from the group?', 'alt-context')}
-              </DialogDescription>
+              <DialogDescription>{__('Remove this face from the group?', 'alt-context')}</DialogDescription>
               <div className="acx-queue-modal__actions">
                 <button type="button" className="button" onClick={handleCancelWrongPerson}>
                   {__('Cancel', 'alt-context')}

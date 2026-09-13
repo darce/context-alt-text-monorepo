@@ -29,12 +29,16 @@
       "source_sha256": "c72fd56915c164611bc81d44d033cda4a427cbc97578544b74428696bbfb8932"
     },
     "roster-people": {
-      "projection_sha256": "c3674e305d16520943172b3699073d3603c30a7195d7170114bdbaa78e92206c",
-      "source_sha256": "efe7921ce053f3f8a671a8f28b23aedd0076a1bffc32fef4ae96e8698a9ec8c0"
+      "projection_sha256": "28b5f730204a1fcd6c877eb44a8c04556af60e87c37a9d4ae7c7314d7def21a1",
+      "source_sha256": "3e4cb3a201bf6c691e452d6cc67efbb38722fdd0a9eee2e1cf2555dc24167a66"
     },
     "workbench-2pane": {
       "projection_sha256": "1e4b27e6b40e976ca3fad27623e9b88626fb79cab3d520a68bcb32b4d673fc6c",
       "source_sha256": "41ea3a91f0c157b70e15b3efcfb2259d42453eb931f8e51fc69a3b41ce518dfc"
+    },
+    "workbench-identity-chips": {
+      "projection_sha256": "b4b692ef54842aebbab4be66065a2a956945eed0c3e9d6e7db69d27034b8d2e0",
+      "source_sha256": "69ce968ece5cc0912396fd7344194ac4e11baf0d38411a3c969229283b35d521"
     },
     "workbench-operator-loop": {
       "projection_sha256": "7fec3c6b231ce9b1f96d0200db2233abd8669f8991cff1688c76fc6333118c56",

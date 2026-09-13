@@ -95,9 +95,7 @@ describe('FaceThumbnail', () => {
     });
 
     it('forwards loading prop to the img and omits the attribute when unset', () => {
-      const { rerender } = render(
-        <FaceThumbnail mediaUrl={mockMediaUrl} bbox={mockBbox} loading="lazy" />,
-      );
+      const { rerender } = render(<FaceThumbnail mediaUrl={mockMediaUrl} bbox={mockBbox} loading="lazy" />);
       expect(screen.getByRole('img')).toHaveAttribute('loading', 'lazy');
 
       rerender(<FaceThumbnail mediaUrl={mockMediaUrl} bbox={mockBbox} loading="eager" />);
@@ -144,14 +142,19 @@ describe('FaceThumbnail', () => {
       const previousImg = screen.getByRole('img');
       // Retain the actual handlers: dispatching on a detached node skips React delegation.
       const propsKey = Object.keys(previousImg).find((key) => key.startsWith('__reactProps$'));
-      if (!propsKey) throw new Error('React image event props were not found');
-      const props = (previousImg as unknown as Record<string, {
-        onLoad: React.ReactEventHandler<HTMLImageElement>;
-        onError: React.ReactEventHandler<HTMLImageElement>;
-      }>)[propsKey];
-      rerender(
-        <FaceThumbnail mediaUrl="/recognition/next.jpg" bbox={mockBbox} onLoad={onLoad} onError={onError} />,
-      );
+      if (!propsKey) {
+        throw new Error('React image event props were not found');
+      }
+      const props = (
+        previousImg as unknown as Record<
+          string,
+          {
+            onLoad: React.ReactEventHandler<HTMLImageElement>;
+            onError: React.ReactEventHandler<HTMLImageElement>;
+          }
+        >
+      )[propsKey];
+      rerender(<FaceThumbnail mediaUrl="/recognition/next.jpg" bbox={mockBbox} onLoad={onLoad} onError={onError} />);
       const staleEvent = { currentTarget: previousImg } as React.SyntheticEvent<HTMLImageElement>;
       act(() => props.onLoad(staleEvent));
       expect(screen.getByRole('img')).toHaveStyle({ opacity: '0' });
@@ -228,9 +231,7 @@ describe('FaceThumbnail', () => {
         expect(wrapper).toHaveClass('acx-face-thumbnail--error');
         expect(wrapper.querySelector('.acx-face-thumbnail__warning-icon')).not.toBeNull();
         expect(wrapper.querySelector('.acx-face-thumbnail__broken-icon')).not.toBeNull();
-        expect(wrapper.querySelector('.acx-face-thumbnail__error-label')).toHaveTextContent(
-          'Face image unavailable',
-        );
+        expect(wrapper.querySelector('.acx-face-thumbnail__error-label')).toHaveTextContent('Face image unavailable');
       });
     });
 
@@ -247,9 +248,7 @@ describe('FaceThumbnail', () => {
 
     it('loads a relative media URL', () => {
       const onLoad = vi.fn();
-      const { container } = render(
-        <FaceThumbnail mediaUrl="/recognition/face.jpg" bbox={mockBbox} onLoad={onLoad} />,
-      );
+      const { container } = render(<FaceThumbnail mediaUrl="/recognition/face.jpg" bbox={mockBbox} onLoad={onLoad} />);
 
       fireEvent.load(screen.getByRole('img'));
 
@@ -269,9 +268,7 @@ describe('FaceThumbnail', () => {
       expect(previousImg).toHaveStyle({ opacity: '1' });
       onLoad.mockClear();
 
-      rerender(
-        <FaceThumbnail mediaUrl="/recognition/next.jpg" bbox={mockBbox} onLoad={onLoad} onError={onError} />,
-      );
+      rerender(<FaceThumbnail mediaUrl="/recognition/next.jpg" bbox={mockBbox} onLoad={onLoad} onError={onError} />);
       const nextImg = screen.getByRole('img');
       expect(nextImg).not.toBe(previousImg);
       expect(previousImg).not.toBeInTheDocument();

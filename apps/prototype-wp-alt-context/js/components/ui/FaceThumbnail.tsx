@@ -81,7 +81,9 @@ export const FaceThumbnail = React.forwardRef<HTMLDivElement, FaceThumbnailProps
 
     const handleLoad = React.useCallback<React.ReactEventHandler<HTMLImageElement>>(
       (event) => {
-        if (event.currentTarget !== imgRef.current) return;
+        if (event.currentTarget !== imgRef.current) {
+          return;
+        }
         setSourceState({ source: mediaUrl, status: LOAD_STATE.loaded });
         onLoad?.();
       },
@@ -90,7 +92,9 @@ export const FaceThumbnail = React.forwardRef<HTMLDivElement, FaceThumbnailProps
 
     const handleError = React.useCallback<React.ReactEventHandler<HTMLImageElement>>(
       (event) => {
-        if (event.currentTarget !== imgRef.current) return;
+        if (event.currentTarget !== imgRef.current) {
+          return;
+        }
         setSourceState({ source: mediaUrl, status: LOAD_STATE.error });
         onError?.();
       },

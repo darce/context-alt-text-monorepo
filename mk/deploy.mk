@@ -27,7 +27,7 @@ DEMO_WALKTHROUGH_APP  := $(ROOT_MAKEFILE_DIR)/apps/prototype-wp-alt-context
         deploy-status deploy-clear-image-repo \
         deploy-compose-dev deploy-compose-staging deploy-compose-prod \
         reset-remote db-reset-remote demo-walkthrough-proof walkthrough-first-visitor guided-walkthrough-record \
-        demo-enable-public-guide demo-public-guide-e2e test-gates-harness
+        demo-enable-public-guide demo-public-guide-e2e test-gates-harness plugin-bump
 
 deploy-help:
 	@echo "Recognition service deploy targets:"
@@ -359,3 +359,51 @@ test-gates-harness:
 	@python3 -m pytest scripts/tests -q --tb=short -p no:cacheprovider
 
 test-scripts: test-gates-harness
+
+# Plugin version SSOT bump: rewrites alt-context.php header, package.json, and
+# package-lock.json to VERSION in one shot. Does not commit or tag; package-plugin.sh
+# validates the three surfaces agree at package time.
+# SSOT-R-04: VERSION is passed to the recipe's shell via the process
+# environment (target-specific `export`), never textually substituted with
+# $(VERSION) in the recipe body, so a VERSION value containing quotes cannot
+# break out of a make-generated shell line and inject commands. The semver
+# check runs before any other use of $$VERSION.
+plugin-bump: export VERSION := $(VERSION)
+plugin-bump:
+	@if [ -z "$$VERSION" ]; then \
+		echo "plugin-bump: VERSION is required, e.g. make plugin-bump VERSION=0.0.21" >&2; \
+		exit 2; \
+	fi
+	@if ! printf '%s' "$$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$$'; then \
+		echo "plugin-bump: VERSION must be semver-shaped (x.y.z[-pre][+build]), got '$$VERSION'" >&2; \
+		exit 2; \
+	fi; \
+	cd "$(DEMO_WALKTHROUGH_APP)" && npm version --no-git-tag-version "$$VERSION" --allow-same-version >/dev/null; \
+	if sed --version >/dev/null 2>&1; then \
+		sed -i -E "s/^ \* Version: .*/ * Version: $$VERSION/" "$(DEMO_WALKTHROUGH_APP)/alt-context.php"; \
+	else \
+		sed -i '' -E "s/^ \* Version: .*/ * Version: $$VERSION/" "$(DEMO_WALKTHROUGH_APP)/alt-context.php"; \
+	fi; \
+	header_version="$$(sed -n 's/^ \* Version:[[:space:]]*//p' "$(DEMO_WALKTHROUGH_APP)/alt-context.php" | head -n 1)"; \
+	if [ "$$header_version" != "$$VERSION" ]; then \
+		echo "plugin-bump: alt-context.php Version header is '$$header_version', expected '$$VERSION'" >&2; \
+		exit 1; \
+	fi; \
+	if ! node -e " \
+		const fs = require('fs'); \
+		const path = process.argv[1]; \
+		const expected = process.argv[2]; \
+		const parsed = JSON.parse(fs.readFileSync(path, 'utf8')); \
+		const rootVersion = parsed.version; \
+		const rootPackageVersion = parsed.packages && parsed.packages[''] && parsed.packages[''].version; \
+		if (rootVersion !== expected || rootPackageVersion !== expected) { \
+			process.exit(1); \
+		} \
+	" "$(DEMO_WALKTHROUGH_APP)/package-lock.json" "$$VERSION"; then \
+		echo "plugin-bump: package-lock.json version or packages[''].version does not equal '$$VERSION'" >&2; \
+		exit 1; \
+	fi; \
+	echo "plugin-bump: bumped to $$VERSION"; \
+	echo "  alt-context.php Version:   $$header_version"; \
+	echo "  package.json version:      $$(node -e "process.stdout.write(require('$(DEMO_WALKTHROUGH_APP)/package.json').version)")"; \
+	echo "  package-lock.json version: $$(node -e "process.stdout.write(require('$(DEMO_WALKTHROUGH_APP)/package-lock.json').version)")"

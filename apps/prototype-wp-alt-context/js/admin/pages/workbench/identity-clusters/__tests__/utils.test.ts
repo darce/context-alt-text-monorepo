@@ -29,6 +29,43 @@ const identityWithOmittedAutoFlag = (): DetectedIdentity => {
   return rest as DetectedIdentity;
 };
 
+describe('groupIdentitiesByClusters person grouping', () => {
+  it('collects distinct clusters in order and uses the first non-null label', () => {
+    const members = [
+      identity({ person_id: '7', cluster_id: null, cluster_label: null }),
+      identity({ identity_id: 'id-2', person_id: '7', cluster_id: 'b', cluster_label: '', is_auto_label: true }),
+      identity({ identity_id: 'id-3', person_id: '7', cluster_id: 'a', cluster_label: 'Jane', clustering_pending: true }),
+      identity({ identity_id: 'id-4', person_id: '7', cluster_id: 'b' }),
+    ];
+
+    expect(groupIdentitiesByClusters(members)).toEqual([{
+      key: 'person:7',
+      personId: '7',
+      clusterId: null,
+      clusterIds: ['b', 'a'],
+      label: '',
+      isAutoLabel: true,
+      clusteringPending: true,
+      members,
+    }]);
+  });
+
+  it('keeps unbound members grouped by cluster and singleton keys in distinct namespaces', () => {
+    const members = [
+      identity({ person_id: 'same', cluster_id: 'same' }),
+      identity({ identity_id: 'id-2', person_id: null, cluster_id: 'same' }),
+      identity({ identity_id: 'id-3', person_id: '', cluster_id: 'same' }),
+      identity({ identity_id: 'same', cluster_id: null }),
+    ];
+    const groups = groupIdentitiesByClusters(members);
+
+    expect(groups.map((group) => group.key)).toEqual(['person:same', 'cluster:same', 'identity:same']);
+    expect(groups.map((group) => group.personId)).toEqual(['same', null, null]);
+    expect(groups.map((group) => group.clusterIds)).toEqual([['same'], ['same'], []]);
+    expect(groups.map((group) => group.members)).toEqual([[members[0]], [members[1], members[2]], [members[3]]]);
+  });
+});
+
 describe('formatClusterLabel (E21-15-BR-27)', () => {
   it('does not treat auto-shape cluster-7 as a confirmed human name when isAutoLabel is false', () => {
     expect(formatClusterLabel(CLUSTER_ID, 'cluster-7', false)).not.toBe('cluster-7');

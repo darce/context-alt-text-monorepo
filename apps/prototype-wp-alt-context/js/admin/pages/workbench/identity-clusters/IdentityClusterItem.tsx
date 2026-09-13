@@ -543,14 +543,24 @@ export const IdentityClusterItem = ({
           <DialogOverlay />
           <DialogContent>
             <div className="acx-anchor-modal">
-              <DialogTitle>{derivedLabel ? __('Choose a face to keep the label', 'alt-context') : __('Split a face group', 'alt-context')}</DialogTitle>
+              <DialogTitle>
+                {derivedLabel
+                  ? __('Choose a face to keep the label', 'alt-context')
+                  : __('Split a face group', 'alt-context')}
+              </DialogTitle>
               <DialogDescription>
                 {derivedLabel
                   ? sprintf(
-                      __('Choose a face to keep the label “%s”. Other faces in this face group will move to a new face group.', 'alt-context'),
+                      __(
+                        'Choose a face to keep the label “%s”. Other faces in this face group will move to a new face group.',
+                        'alt-context',
+                      ),
                       derivedLabel,
                     )
-                  : __('The chosen face stays in this face group; other faces move to a new face group.', 'alt-context')}
+                  : __(
+                      'The chosen face stays in this face group; other faces move to a new face group.',
+                      'alt-context',
+                    )}
               </DialogDescription>
               {splittableGroups.length > 1 && (
                 <fieldset>
@@ -575,9 +585,7 @@ export const IdentityClusterItem = ({
                   })}
                 </fieldset>
               )}
-              {!splitGroupId && (
-                <p>{__('Choose a face group to pick the face that keeps it', 'alt-context')}</p>
-              )}
+              {!splitGroupId && <p>{__('Choose a face group to pick the face that keeps it', 'alt-context')}</p>}
               <div className="acx-anchor-modal__grid">
                 {splitMembers.map((member) => {
                   const label = sprintf(__('Use face from media #%d', 'alt-context'), member.media_id);

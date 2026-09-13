@@ -360,7 +360,9 @@ describe('IdentityClusterItem split routing across a person-spanning group (IDCH
     cluster.members[0].media_url = 'https://example.test/face-a.jpg';
     renderItem(cluster);
     fireEvent.click(screen.getByRole('button', { name: /split group/i }));
-    expect(screen.getByRole('radio', { name: 'Face group 1 · 2 faces' }).closest('label')?.querySelector('img')).toHaveAttribute('src', 'https://example.test/face-a.jpg');
+    expect(
+      screen.getByRole('radio', { name: 'Face group 1 · 2 faces' }).closest('label')?.querySelector('img'),
+    ).toHaveAttribute('src', 'https://example.test/face-a.jpg');
     expect(screen.queryByRole('button', { name: /Use face from media/i })).not.toBeInTheDocument();
     expect(screen.getByText('Choose a face group to pick the face that keeps it')).toBeVisible();
     expect(screen.getByRole('radio', { name: 'Face group 1 · 2 faces' })).not.toBeChecked();
@@ -379,7 +381,9 @@ describe('IdentityClusterItem split routing across a person-spanning group (IDCH
     renderItem(cluster);
     fireEvent.click(screen.getByRole('button', { name: /split group/i }));
     expect(screen.getByRole('heading', { name: 'Split a face group' })).toBeVisible();
-    expect(screen.getByText('The chosen face stays in this face group; other faces move to a new face group.')).toBeVisible();
+    expect(
+      screen.getByText('The chosen face stays in this face group; other faces move to a new face group.'),
+    ).toBeVisible();
   });
 
   it('offers Split when only a secondary face group has two members', () => {

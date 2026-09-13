@@ -37,14 +37,14 @@ describe('person merge flow', () => {
     const user = setup();
     await user.click(screen.getByRole('button', { name: 'Merge Ally into another person' }));
     await user.selectOptions(screen.getByLabelText('Person to keep'), '1');
-    expect(screen.queryByRole('button', { name: 'Merge', exact: true })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Merge' })).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Preview merge' }));
     expect(await screen.findByText('Server Ally will be removed; its 5 face groups move to Server Alice. You can undo.')).toBeInTheDocument();
     expect(screen.getByText('Tags: server tag')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Merge', exact: true }));
+    await user.click(screen.getByRole('button', { name: 'Merge' }));
     await screen.findByText('Merged Server Ally into Server Alice.');
     expect(vi.mocked(api.commitPersonMerge).mock.calls[0][0]).toEqual({ survivor_id: 1, loser_id: 2 });
-    await user.click(screen.getByRole('button', { name: 'Undo', exact: true }));
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
     await screen.findByText('Person restored.');
     expect(vi.mocked(api.undoPersonMerge).mock.calls[0][0]).toBe('token');
   });
@@ -60,7 +60,7 @@ describe('person merge flow', () => {
   it('closes through controlled cancel and can reopen the same row', async () => {
     const user = setup();
     await user.click(screen.getByRole('button', { name: 'Merge Ally into another person' }));
-    await user.click(screen.getByRole('button', { name: 'Cancel', exact: true }));
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     await user.click(screen.getByRole('button', { name: 'Merge Ally into another person' }));
     expect(screen.getByRole('dialog')).toBeInTheDocument();

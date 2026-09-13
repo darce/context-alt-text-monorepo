@@ -551,12 +551,14 @@ export const PersonMergeFlow = ({ loser, entries, onDismiss }: { loser: RosterEn
   // onMerged() then onOpenChange(false) in the same tick, so the onOpenChange
   // closure below would otherwise see the pre-update (stale) `merged` state.
   const mergedRef = React.useRef(false);
+  const onDismissRef = React.useRef(onDismiss);
+  onDismissRef.current = onDismiss;
   // IDCHIP-1-MUI-R-04: bound the undo banner's lifetime once a merge lands.
   useEffect(() => {
     if (!merged) return;
-    const timer = window.setTimeout(onDismiss, UNDO_BANNER_TTL_MS);
+    const timer = window.setTimeout(() => onDismissRef.current(), UNDO_BANNER_TTL_MS);
     return () => window.clearTimeout(timer);
-  }, [merged, onDismiss]);
+  }, [merged]);
   return <>
     <PersonMergeDialog open={open} loser={loser} entries={entries} merge={merge}
       onMerged={preview => { mergedRef.current = true; setMerged(preview); }} onOpenChange={next => {

@@ -1,8 +1,8 @@
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as api from '../../../api/personMergeApi';
 import type { RosterEntry } from '../../../api/rosterApi';
 import { PersonMergeFlow, UNDO_BANNER_TTL_MS } from '../RosterEntriesSection';
@@ -58,24 +58,33 @@ describe('PersonMergeFlow session cleanup (IDCHIP-1-MUI-R-05)', () => {
 });
 
 describe('PersonMergeFlow undo banner expiry (IDCHIP-1-MUI-R-04)', () => {
-  it('auto-dismisses the banner after the TTL elapses', async () => {
+  afterEach(() => vi.useRealTimers());
+
+  it.each([false, true])('keeps the original expiry across callback changes (unmount: %s)', async unmountBeforeExpiry => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const onDismiss = vi.fn();
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
-    render(
+    const view = (dismiss: () => void) => (
       <QueryClientProvider client={client}>
-        <PersonMergeFlow loser={entry(2, 'Ally')} entries={[entry(1, 'Alice'), entry(2, 'Ally')]} onDismiss={onDismiss} />
-      </QueryClientProvider>,
+        <PersonMergeFlow loser={entry(2, 'Ally')} entries={[entry(1, 'Alice'), entry(2, 'Ally')]} onDismiss={dismiss} />
+      </QueryClientProvider>
     );
+    const { rerender, unmount } = render(view(onDismiss));
     await user.selectOptions(screen.getByLabelText('Person to keep'), '1');
     await user.click(screen.getByRole('button', { name: 'Preview merge' }));
     await screen.findByText('Ally will be removed; its 5 face groups move to Alice. You can undo.');
     await user.click(screen.getByRole('button', { name: 'Merge' }));
     await screen.findByText('Merged Ally into Alice.');
     expect(onDismiss).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(UNDO_BANNER_TTL_MS);
-    expect(onDismiss).toHaveBeenCalledTimes(1);
-    vi.useRealTimers();
+    await act(() => vi.advanceTimersByTimeAsync(20_000));
+    const latestDismiss = vi.fn();
+    rerender(view(latestDismiss));
+    if (unmountBeforeExpiry) unmount();
+    await act(() => vi.advanceTimersByTimeAsync(UNDO_BANNER_TTL_MS - 20_000 + 1_000));
+    expect(onDismiss).not.toHaveBeenCalled();
+    expect(latestDismiss).toHaveBeenCalledTimes(unmountBeforeExpiry ? 0 : 1);
+    await act(() => vi.advanceTimersByTimeAsync(UNDO_BANNER_TTL_MS));
+    expect(latestDismiss).toHaveBeenCalledTimes(unmountBeforeExpiry ? 0 : 1);
   });
 });

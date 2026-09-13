@@ -10,8 +10,12 @@ import type { DetectedIdentity, MergeClusterResponse } from '../../../api/recogn
 export interface ClusterGroup {
   /** Unique key for React rendering */
   key: string;
-  /** Cluster ID (null for unclustered identities) */
+  /** Cluster ID (null for unclustered identities). When the group spans several clusters bound to one person this is the first one. */
   clusterId: string | null;
+  /** Roster person this group is keyed on; null when grouped by cluster or singleton (IDCHIP-1). */
+  personId?: string | null;
+  /** Every distinct cluster id collapsed into this group; length > 1 means unmerged face groups (IDCHIP-1). */
+  clusterIds?: string[];
   /** User-assigned or auto-generated label */
   label: string | null;
   /** Whether the label was auto-generated */

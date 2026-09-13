@@ -1,4 +1,5 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import * as React from 'react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 
 import { FaceThumbnail } from '../FaceThumbnail';
@@ -119,6 +120,48 @@ describe('FaceThumbnail', () => {
   });
 
   describe('loading states', () => {
+    it('paints loading on the first commit after a loaded source changes', () => {
+      const observations: string[] = [];
+      function Probe({ source }: { source: string }) {
+        const ref = React.useRef<HTMLDivElement>(null);
+        React.useLayoutEffect(() => {
+          observations.push(ref.current?.querySelector('img')?.style.opacity ?? 'missing');
+        }, [source]);
+        return <FaceThumbnail ref={ref} mediaUrl={source} bbox={mockBbox} />;
+      }
+      const { rerender } = render(<Probe source={mockMediaUrl} />);
+      fireEvent.load(screen.getByRole('img'));
+      rerender(<Probe source="/recognition/next.jpg" />);
+      expect(observations).toEqual(['0', '0']);
+    });
+
+    it('ignores retained load and error handlers from the previous source', () => {
+      const onLoad = vi.fn();
+      const onError = vi.fn();
+      const { rerender } = render(
+        <FaceThumbnail mediaUrl={mockMediaUrl} bbox={mockBbox} onLoad={onLoad} onError={onError} />,
+      );
+      const previousImg = screen.getByRole('img');
+      // Retain the actual handlers: dispatching on a detached node skips React delegation.
+      const propsKey = Object.keys(previousImg).find((key) => key.startsWith('__reactProps$'));
+      if (!propsKey) throw new Error('React image event props were not found');
+      const props = (previousImg as unknown as Record<string, {
+        onLoad: React.ReactEventHandler<HTMLImageElement>;
+        onError: React.ReactEventHandler<HTMLImageElement>;
+      }>)[propsKey];
+      rerender(
+        <FaceThumbnail mediaUrl="/recognition/next.jpg" bbox={mockBbox} onLoad={onLoad} onError={onError} />,
+      );
+      const staleEvent = { currentTarget: previousImg } as React.SyntheticEvent<HTMLImageElement>;
+      act(() => props.onLoad(staleEvent));
+      expect(screen.getByRole('img')).toHaveStyle({ opacity: '0' });
+      fireEvent.load(screen.getByRole('img'));
+      act(() => props.onError(staleEvent));
+      expect(screen.getByRole('img')).toHaveStyle({ opacity: '1' });
+      expect(onLoad).toHaveBeenCalledOnce();
+      expect(onError).not.toHaveBeenCalled();
+    });
+
     it('shows loading state initially', () => {
       const { container } = render(<FaceThumbnail mediaUrl={mockMediaUrl} bbox={mockBbox} />);
       const wrapper = container.firstChild as HTMLElement;

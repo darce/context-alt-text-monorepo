@@ -31,6 +31,7 @@ import type { ClusterGroup } from '../types';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
+  _n: (single: string, plural: string, count: number) => (count === 1 ? single : plural),
   sprintf: (template: string, ...args: (string | number)[]) => {
     let idx = 0;
     return template.replace(/%(\d+\$)?[sd]/g, () => String(args[idx++] ?? ''));

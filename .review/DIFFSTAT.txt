@@ -1,5 +1,8 @@
- .../db/migrations/versions/001_identity_schema.py  |   8 ++
- .../unit/test_sync_identity_schema_matview_only.py | 135 +++++++++++++++++++++
- .../scripts/sync_identity_schema.py                |  38 +++++-
- .../scripts/verify_identity_schema.py              |  98 ++++++++++++++-
- 4 files changed, 273 insertions(+), 6 deletions(-)
+ .review/CHANGE.diff                                | 171 +++++++++++++++------
+ .review/COMMITS.txt                                |   3 +-
+ .review/CONTEXT.md                                 |   8 +-
+ .review/DIFFSTAT.txt                               |   7 +-
+ .../js/admin/pages/settings/GpuControlCard.tsx     |   5 +-
+ .../settings/__tests__/GpuControlCard.test.tsx     |   7 +
+ .../js/admin/styles/components/_button.scss        |  11 +-
+ 7 files changed, 153 insertions(+), 59 deletions(-)

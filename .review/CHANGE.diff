@@ -1,348 +1,294 @@
-diff --git a/apps/prototype-description-service/db/migrations/versions/001_identity_schema.py b/apps/prototype-description-service/db/migrations/versions/001_identity_schema.py
---- a/apps/prototype-description-service/db/migrations/versions/001_identity_schema.py
-+++ b/apps/prototype-description-service/db/migrations/versions/001_identity_schema.py
-@@ -2470,6 +2470,14 @@ def ensure_matview(op) -> None:
-         _restore_matview_owner_and_grants(op, current_role=current_role, owner=owner, grants=grants)
+diff --git a/.review/CHANGE.diff b/.review/CHANGE.diff
+--- a/.review/CHANGE.diff
++++ b/.review/CHANGE.diff
+@@ -1,47 +1,132 @@
+-diff --git a/apps/prototype-description-service/recognition/application/orchestration/clustering/job_result.py b/apps/prototype-description-service/recognition/application/orchestration/clustering/job_result.py
+---- a/apps/prototype-description-service/recognition/application/orchestration/clustering/job_result.py
+-+++ b/apps/prototype-description-service/recognition/application/orchestration/clustering/job_result.py
+-@@ -20,3 +20,4 @@ class ClusterJobResult:
+-     accepted: int = 0
+-     suggested: int = 0
+-     rejected: int = 0
+-+    probe_space_skip: dict[str, object] = field(default_factory=dict)
+-diff --git a/apps/prototype-description-service/recognition/application/orchestration/clustering/orchestrator.py b/apps/prototype-description-service/recognition/application/orchestration/clustering/orchestrator.py
+---- a/apps/prototype-description-service/recognition/application/orchestration/clustering/orchestrator.py
+-+++ b/apps/prototype-description-service/recognition/application/orchestration/clustering/orchestrator.py
+-@@ -264,6 +264,7 @@ class IncrementalClusteringRunner:
+-             accepted=accept_count,
+-             suggested=suggest_count,
+-             rejected=reject_count,
+-+            probe_space_skip=(clustering_job.payload or {}).get("probe_space_skip", {}),
+-         )
++diff --git a/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx b/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx
++--- a/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx
+++++ b/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx
++@@ -167,6 +167,10 @@ export const GpuControlCard = (): React.JSX.Element => {
++     isIntentPending,
++   } = useGpuControl();
++   const [confirmation, setConfirmation] = React.useState<ConfirmationAction | null>(null);
+++  const startHeld = !canStart || isIntentPending;
+++  const stopHeld = !canStop || isIntentPending;
+++  const startReason = data && !canStart ? startDisabledReason(data) : null;
+++  const stopReason = !canStop ? stopBlockedReason : null;
++   const displayedState = data && data.snapshot_fresh ? data.gpu_state.state : GPU_STATE.UNKNOWN;
+  
+-     @staticmethod
+-@@ -364,6 +365,7 @@ class IncrementalClusteringRunner:
+-             completed=0,
+-             total=0,
+-             clusters_created=0,
+-+            probe_space_skip=(clustering_job.payload or {}).get("probe_space_skip", {}),
+-         )
++   const confirm = (): void => {
++@@ -251,22 +255,32 @@ export const GpuControlCard = (): React.JSX.Element => {
++             <button
++               type="button"
++               className="acx-button acx-button--primary"
++-              onClick={() => setConfirmation(GpuIntentAction.START)}
++-              disabled={!canStart || isIntentPending}
+++              onClick={() => {
+++                if (!startHeld) {
+++                  setConfirmation(GpuIntentAction.START);
+++                }
+++              }}
+++              aria-disabled={startHeld ? true : undefined}
+++              aria-describedby={startReason ? 'z-gpu-start-reason' : undefined}
++             >
++               <span aria-hidden="true">▶</span> {__('Start GPU', 'alt-context')}
++             </button>
++-            {!canStart && startDisabledReason(data) ? <span>disabled: {startDisabledReason(data)}</span> : null}
+++            {startReason ? <span id="z-gpu-start-reason">disabled: {startReason}</span> : null}
+  
+-     async def _start_run_context(
+-diff --git a/apps/prototype-description-service/recognition/tests/unit/test_probe_skip_result_contract.py b/apps/prototype-description-service/recognition/tests/unit/test_probe_skip_result_contract.py
+---- a/apps/prototype-description-service/recognition/tests/unit/test_probe_skip_result_contract.py
+-+++ b/apps/prototype-description-service/recognition/tests/unit/test_probe_skip_result_contract.py
+-@@ -266,6 +266,16 @@ def test_cluster_job_result_probe_space_skip_defaults_to_empty_mapping() -> None
+-         clusters_created=0,
+-     )
+-     assert result.probe_space_skip == {}
+-+    other = ClusterJobResult(
+-+        job_id="other",
+-+        started_at=now,
+-+        finished_at=now,
+-+        completed=0,
+-+        total=0,
+-+        clusters_created=0,
+-+    )
+-+    result.probe_space_skip["skipped_count"] = 1
+-+    assert other.probe_space_skip == {}
++             <button
++               type="button"
++               className="acx-button acx-button--secondary"
++-              onClick={() => setConfirmation(GpuIntentAction.STOP)}
++-              disabled={!canStop || isIntentPending}
+++              onClick={() => {
+++                if (!stopHeld) {
+++                  setConfirmation(GpuIntentAction.STOP);
+++                }
+++              }}
+++              aria-disabled={stopHeld ? true : undefined}
+++              aria-describedby={stopReason ? 'z-gpu-stop-reason' : undefined}
++             >
++               <span aria-hidden="true">■</span> {__('Stop GPU', 'alt-context')}
++             </button>
++-            {!canStop && stopBlockedReason ? <span>disabled: {stopBlockedReason}</span> : null}
+++            {stopReason ? <span id="z-gpu-stop-reason">disabled: {stopReason}</span> : null}
+  
++             {canReturnToAuto ? (
++               <button
++diff --git a/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx b/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx
++--- a/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx
+++++ b/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx
++@@ -65,6 +65,48 @@ describe('GpuControlCard', () => {
++     vi.clearAllMocks();
++   });
+  
+- @pytest.mark.asyncio
+++  it.each([
+++    ['Start', 'starting', 'already starting'],
+++    ['Stop', 'stopped', 'already stopped'],
+++  ] as const)(
+++    'keeps held %s reachable and describes its reason without opening confirmation',
+++    (action, state, reason) => {
+++      mockControl(statusResponse({ state }));
+++      render(<GpuControlCard />);
+++      const button = screen.getByRole('button', { name: action + ' GPU' });
+++      expect(button).not.toHaveAttribute('disabled');
+++      expect(button).toHaveAttribute('aria-disabled', 'true');
+++      expect(button.tabIndex).toBe(0);
+++      button.focus();
+++      expect(button).toHaveFocus();
+++      const description = document.getElementById(button.getAttribute('aria-describedby') ?? '');
+++      expect(description).toBeVisible();
+++      expect(description).toHaveTextContent('disabled: ' + reason);
+++      fireEvent.click(button);
+++      expect(screen.queryByRole('button', { name: /Confirm/ })).not.toBeInTheDocument();
+++    },
+++  );
+++
+++  it.each(['Start', 'Stop'] as const)('opens confirmation for eligible %s', (action) => {
+++    mockControl(statusResponse({ state: action === 'Start' ? 'stopped' : 'ready' }));
+++    render(<GpuControlCard />);
+++    const button = screen.getByRole('button', { name: action + ' GPU' });
+++    expect(button).not.toHaveAttribute('aria-disabled');
+++    expect(button).not.toHaveAttribute('aria-describedby');
+++    fireEvent.click(button);
+++    expect(screen.getByRole('button', { name: 'Confirm ' + action.toLowerCase() })).toBeInTheDocument();
+++  });
+++
+++  it.each(['Start', 'Stop'] as const)('holds eligible %s while an intent is pending', (action) => {
+++    mockControl(statusResponse({ state: action === 'Start' ? 'stopped' : 'ready' }), { isIntentPending: true });
+++    render(<GpuControlCard />);
+++    const button = screen.getByRole('button', { name: action + ' GPU' });
+++    expect(button).not.toHaveAttribute('disabled');
+++    expect(button).toHaveAttribute('aria-disabled', 'true');
+++    fireEvent.click(button);
+++    expect(screen.queryByRole('button', { name: /Confirm/ })).not.toBeInTheDocument();
+++  });
+++
++   it('renders the stopped automatic zero state with cost disclosure and Start enabled', () => {
++     mockControl(statusResponse());
++     render(<GpuControlCard />);
++@@ -72,7 +114,7 @@ describe('GpuControlCard', () => {
++     expect(screen.getByRole('heading', { name: 'Settings › Burst GPU' })).toBeInTheDocument();
++     expect(screen.getByText(`${GPU_STATE_VOCABULARY.tierPrefix} ${GPU_STATE_VOCABULARY.stopped}`)).toBeInTheDocument();
++     expect(screen.getByRole('button', { name: 'Start GPU' })).toBeEnabled();
++-    expect(screen.getByRole('button', { name: /Stop GPU/ })).toBeDisabled();
+++    expect(screen.getByRole('button', { name: /Stop GPU/ })).toHaveAttribute('aria-disabled', 'true');
++     expect(screen.getByText(/\$2\.00 \/ GPU-hour/)).toBeInTheDocument();
++     expect(screen.getByTestId('z-gpu-state-chip')).toHaveAttribute('role', 'status');
++     expect(screen.getAllByRole('status')).toHaveLength(1);
++@@ -115,7 +157,7 @@ describe('GpuControlCard', () => {
++     });
++     render(<GpuControlCard />);
++ 
++-    expect(screen.getByRole('button', { name: /Stop GPU/ })).toBeDisabled();
+++    expect(screen.getByRole('button', { name: /Stop GPU/ })).toHaveAttribute('aria-disabled', 'true');
++     expect(screen.getByText(/a describe run is in flight/)).toBeInTheDocument();
++   });
++ 
++@@ -148,7 +190,7 @@ describe('GpuControlCard', () => {
++     ).toBeInTheDocument();
++     expect(screen.getByText(/last snapshot 4 min ago \(stale\)/)).toBeInTheDocument();
++     expect(screen.getByText(/Lifecycle telemetry is stale/)).toBeInTheDocument();
++-    expect(screen.getByRole('button', { name: 'Start GPU' })).toBeDisabled();
+++    expect(screen.getByRole('button', { name: 'Start GPU' })).toHaveAttribute('aria-disabled', 'true');
++   });
++ 
++   it('renders a 502 error with a retry control', () => {
+diff --git a/.review/COMMITS.txt b/.review/COMMITS.txt
+--- a/.review/COMMITS.txt
++++ b/.review/COMMITS.txt
+@@ -1 +1,2 @@
+-3b34835d3292 offload: Committed B05 provenance fix; full verification is blocked by
++ddd718154f8a style(a11y): prettier format GpuControlCard test (ISSUEDAG-1 UXMAP-01)
++51ab996bfcc3 offload: Implemented the accessibility fix and regression tests;
+diff --git a/.review/CONTEXT.md b/.review/CONTEXT.md
+--- a/.review/CONTEXT.md
++++ b/.review/CONTEXT.md
+@@ -1,8 +1,8 @@
+ # Orchestrator review context
  
+-- Base ref: `923eece608fec5b13ff3793a0f5f3afc20f6fe7b` (`923eece608fec5b13ff3793a0f5f3afc20f6fe7b`)
+-- Tip ref: `3b34835d3292e4864e467fef920c8402ac40c69e` (`3b34835d3292e4864e467fef920c8402ac40c69e`)
+-- Merge base: `923eece608fec5b13ff3793a0f5f3afc20f6fe7b`
+-- Scope: complete `923eece608fec5b13ff3793a0f5f3afc20f6fe7b..3b34835d3292e4864e467fef920c8402ac40c69e` diff; paths are derived, never requested by a brief
++- Base ref: `df5db19ca9f8f99d5471625893958a5fb11cab1b` (`df5db19ca9f8f99d5471625893958a5fb11cab1b`)
++- Tip ref: `ddd718154f8aa8488ade5faab4315c5c7c40eb3c` (`ddd718154f8aa8488ade5faab4315c5c7c40eb3c`)
++- Merge base: `df5db19ca9f8f99d5471625893958a5fb11cab1b`
++- Scope: complete `df5db19ca9f8f99d5471625893958a5fb11cab1b..ddd718154f8aa8488ade5faab4315c5c7c40eb3c` diff; paths are derived, never requested by a brief
+ - Redaction policy: `sha-subject-only+strip-index-blob-oids-v1`
+ - Resolved backend trust tier: `trusted_remote`
+diff --git a/.review/DIFFSTAT.txt b/.review/DIFFSTAT.txt
+--- a/.review/DIFFSTAT.txt
++++ b/.review/DIFFSTAT.txt
+@@ -1,4 +1,3 @@
+- .../application/orchestration/clustering/job_result.py         |  1 +
+- .../application/orchestration/clustering/orchestrator.py       |  2 ++
+- .../recognition/tests/unit/test_probe_skip_result_contract.py  | 10 ++++++++++
+- 3 files changed, 13 insertions(+)
++ .../js/admin/pages/settings/GpuControlCard.tsx     | 26 +++++++++---
++ .../settings/__tests__/GpuControlCard.test.tsx     | 48 ++++++++++++++++++++--
++ 2 files changed, 65 insertions(+), 9 deletions(-)
+diff --git a/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx b/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx
+--- a/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx
++++ b/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx
+@@ -169,8 +169,9 @@ export const GpuControlCard = (): React.JSX.Element => {
+   const [confirmation, setConfirmation] = React.useState<ConfirmationAction | null>(null);
+   const startHeld = !canStart || isIntentPending;
+   const stopHeld = !canStop || isIntentPending;
+-  const startReason = data && !canStart ? startDisabledReason(data) : null;
+-  const stopReason = !canStop ? stopBlockedReason : null;
++  const pendingReason = isIntentPending ? __('a GPU request is already in flight', 'alt-context') : null;
++  const startReason = data && !canStart ? startDisabledReason(data) : pendingReason;
++  const stopReason = !canStop ? stopBlockedReason : pendingReason;
+   const displayedState = data && data.snapshot_fresh ? data.gpu_state.state : GPU_STATE.UNKNOWN;
  
-+def repair_centroids_matview(connection) -> None:
-+    """Repair only the derived centroid view; source objects are preconditions."""
-+    from alembic.migration import MigrationContext
-+    from alembic.operations import Operations
-+
-+    ensure_matview(Operations(MigrationContext.configure(connection)))
-+
-+
- def heal(connection) -> None:
-     """Boot-time reconciliation: converge any partial schema to the full one.
+   const confirm = (): void => {
+diff --git a/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx b/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx
+--- a/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx
++++ b/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx
+@@ -103,6 +103,13 @@ describe('GpuControlCard', () => {
+     const button = screen.getByRole('button', { name: action + ' GPU' });
+     expect(button).not.toHaveAttribute('disabled');
+     expect(button).toHaveAttribute('aria-disabled', 'true');
++    expect(button.tabIndex).toBe(0);
++    button.focus();
++    expect(button).toHaveFocus();
++    expect(button).toHaveAttribute('aria-describedby', `z-gpu-${action.toLowerCase()}-reason`);
++    const description = document.getElementById(button.getAttribute('aria-describedby') ?? '');
++    expect(description).toBeVisible();
++    expect(description).toHaveTextContent('disabled: a GPU request is already in flight');
+     fireEvent.click(button);
+     expect(screen.queryByRole('button', { name: /Confirm/ })).not.toBeInTheDocument();
+   });
+diff --git a/apps/prototype-wp-alt-context/js/admin/styles/components/_button.scss b/apps/prototype-wp-alt-context/js/admin/styles/components/_button.scss
+--- a/apps/prototype-wp-alt-context/js/admin/styles/components/_button.scss
++++ b/apps/prototype-wp-alt-context/js/admin/styles/components/_button.scss
+@@ -12,7 +12,7 @@
+   &--primary {
+     background: var(--acx-color-accent);
+     color: var(--acx-color-accent-contrast);
+-    &:hover {
++    &:hover:not(:disabled):not([aria-disabled='true']) {
+       filter: brightness(1.1);
+     }
+   }
+@@ -21,7 +21,7 @@
+     background: var(--acx-color-surface-alt);
+     border-color: var(--acx-color-border);
+     color: var(--acx-color-text);
+-    &:hover {
++    &:hover:not(:disabled):not([aria-disabled='true']) {
+       background: var(--acx-color-surface);
+     }
+   }
+@@ -32,7 +32,7 @@
+     color: var(--acx-color-text);
+     text-decoration: underline;
+     text-underline-offset: var(--acx-space-2);
+-    &:hover {
++    &:hover:not(:disabled):not([aria-disabled='true']) {
+       background: var(--acx-color-surface-alt);
+     }
+   }
+@@ -41,7 +41,7 @@
+     background: var(--acx-color-danger);
+     border-color: var(--acx-color-danger);
+     color: var(--acx-color-accent-contrast);
+-    &:hover {
++    &:hover:not(:disabled):not([aria-disabled='true']) {
+       background: var(--acx-color-danger-hover);
+     }
+   }
+@@ -51,7 +51,8 @@
+     outline-offset: var(--acx-space-2);
+   }
  
-diff --git a/apps/prototype-description-service/recognition/tests/unit/test_sync_identity_schema_matview_only.py b/apps/prototype-description-service/recognition/tests/unit/test_sync_identity_schema_matview_only.py
-new file mode 100644
---- /dev/null
-+++ b/apps/prototype-description-service/recognition/tests/unit/test_sync_identity_schema_matview_only.py
-@@ -0,0 +1,135 @@
-+"""Centroid repair stays inside the canonical matview transaction; no database IO."""
-+
-+from contextlib import contextmanager
-+from types import SimpleNamespace
-+from unittest.mock import Mock
-+
-+import pytest
-+
-+from scripts import sync_identity_schema as sync
-+from scripts import verify_identity_schema as verify
-+
-+
-+class Engine:
-+    def __init__(self):
-+        self.conn = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"), execute=Mock())
-+        self.events = []
-+
-+    @contextmanager
-+    def begin(self):
-+        self.events.append("begin")
-+        try:
-+            yield self.conn
-+        except Exception:
-+            self.events.append("rollback")
-+            raise
-+        else:
-+            self.events.append("commit")
-+
-+
-+def test_repair_delegates_only_to_matview(monkeypatch):
-+    migration = verify.identity_schema
-+    conn = Engine().conn
-+    monkeypatch.setattr("alembic.migration.MigrationContext.configure", lambda connection: connection)
-+    monkeypatch.setattr("alembic.operations.Operations", lambda context: context)
-+    narrow = Mock()
-+    monkeypatch.setattr(migration, "ensure_matview", narrow)
-+    for name in (
-+        "ensure_tables",
-+        "ensure_identity_vector_typmods",
-+        "ensure_rls",
-+        "ensure_refresh_queue",
-+        "ensure_triggers",
-+        "heal",
-+    ):
-+        monkeypatch.setattr(migration, name, Mock(side_effect=AssertionError(name)))
-+    migration.repair_centroids_matview(conn)
-+    narrow.assert_called_once_with(conn)
-+    conn.execute.assert_not_called()
-+
-+
-+def test_sync_lock_and_transaction(monkeypatch):
-+    engine = Engine()
-+
-+    def repair(conn):
-+        assert engine.events == ["begin"]
-+        assert "pg_advisory_xact_lock" in str(conn.execute.call_args.args[0])
-+        assert conn.execute.call_args.args[1] == {"key": sync._ADVISORY_LOCK_KEY}
-+
-+    monkeypatch.setattr(sync.importlib, "import_module", lambda _: SimpleNamespace(repair_centroids_matview=repair))
-+    sync.sync_centroids_matview(engine)
-+    assert engine.events == ["begin", "commit"]
-+
-+
-+@pytest.mark.parametrize("args,selected", [([], "sync_schema"), (["--matview-only"], "sync_centroids_matview")])
-+def test_sync_dispatch(monkeypatch, args, selected):
-+    engine = SimpleNamespace(dispose=Mock())
-+    monkeypatch.setattr(sync, "create_engine", lambda _: engine)
-+    monkeypatch.setattr(sync, "get_database_settings", lambda: SimpleNamespace(postgres_sync_dsn="fake"))
-+    calls = {name: Mock() for name in ("sync_schema", "sync_centroids_matview")}
-+    for name, call in calls.items():
-+        monkeypatch.setattr(sync, name, call, raising=False)
-+    assert sync.main(args) == 0
-+    calls[selected].assert_called_once_with(engine)
-+    calls[next(name for name in calls if name != selected)].assert_not_called()
-+    engine.dispose.assert_called_once()
-+
-+
-+@pytest.mark.parametrize("code", [0, 1, 2])
-+def test_verifier_dispatch(monkeypatch, code):
-+    engine = Engine()
-+    engine.connect = engine.begin
-+    engine.dispose = Mock()
-+    monkeypatch.setattr(verify, "create_engine", lambda _: engine)
-+    monkeypatch.setattr(verify, "get_database_settings", lambda: SimpleNamespace(postgres_sync_dsn="fake"))
-+    monkeypatch.setattr(verify, "collect_and_validate", Mock(side_effect=AssertionError("full verifier")))
-+    monkeypatch.setattr(verify, "collect_matview_state", lambda *a, **kw: {"exit_code": code}, raising=False)
-+    assert verify.main(["--matview-only", "--expected-owner", "owner", "--expected-acl", "[]"]) == code
-+
-+
-+@pytest.mark.parametrize(
-+    "kind,typmod,index,owner,acl,code",
-+    [
-+        ("m", verify.EMBEDDING_DIMENSION, True, "owner", (), 0),
-+        (None, None, False, None, (), 1),
-+        ("r", None, False, "owner", (), 2),
-+        ("m", -1, True, "owner", (), 1),
-+        ("m", verify.EMBEDDING_DIMENSION, False, "owner", (), 1),
-+        ("m", verify.EMBEDDING_DIMENSION, True, "other", (), 2),
-+        ("m", verify.EMBEDDING_DIMENSION, True, "owner", (("reader", "SELECT", False),), 2),
-+    ],
-+)
-+def test_scoped_facts(monkeypatch, kind, typmod, index, owner, acl, code):
-+    conn = SimpleNamespace(
-+        execute=Mock(
-+            side_effect=[
-+                SimpleNamespace(one_or_none=lambda: (kind, owner) if kind else None),
-+                SimpleNamespace(scalar=lambda: index),
-+            ]
-+        )
-+    )
-+    monkeypatch.setattr(verify.identity_schema, "_matview_centroid_typmod", lambda _: typmod)
-+    monkeypatch.setattr(verify.identity_schema, "_matview_nonowner_grants", lambda _: acl)
-+    report = verify.collect_matview_state(conn, expected_owner="owner", expected_acl=[])
-+    assert report["exit_code"] == code
-+    assert report["scope"] == "matview-only"
-+
-+
-+@pytest.mark.parametrize("sqlstate,attempts", [("55P03", 3), ("42501", 1), ("57014", 1)])
-+def test_retry_budget_and_rollback(monkeypatch, sqlstate, attempts):
-+    from sqlalchemy.exc import DBAPIError
-+
-+    engine = Engine()
-+    error = DBAPIError("repair", {}, SimpleNamespace(sqlstate=sqlstate))
-+    repair = Mock(side_effect=error)
-+    monkeypatch.setattr(sync.importlib, "import_module", lambda _: SimpleNamespace(repair_centroids_matview=repair))
-+    sleep = Mock()
-+    monkeypatch.setattr(sync.time, "sleep", sleep)
-+    with pytest.raises(DBAPIError):
-+        sync.sync_centroids_matview(engine)
-+    assert repair.call_count == attempts
-+    assert engine.events == ["begin", "rollback"] * attempts
-+    assert sleep.call_count == attempts - 1
-+    statements = [str(call.args[0]) for call in engine.conn.execute.call_args_list]
-+    assert "SET LOCAL lock_timeout = '5s'" in statements
-+    assert "SET LOCAL statement_timeout = '5min'" in statements
-diff --git a/apps/prototype-description-service/scripts/sync_identity_schema.py b/apps/prototype-description-service/scripts/sync_identity_schema.py
---- a/apps/prototype-description-service/scripts/sync_identity_schema.py
-+++ b/apps/prototype-description-service/scripts/sync_identity_schema.py
-@@ -14,11 +14,15 @@ truth (replaces the E15-33 interim heal; findings E15-33-BR2-01/02/04).
- 
- from __future__ import annotations
- 
-+import argparse
- import importlib
- import logging
-+import random
- import sys
-+import time
- 
- from sqlalchemy import Engine, create_engine, text
-+from sqlalchemy.exc import DBAPIError
- 
- from db.settings import get_database_settings
- 
-@@ -58,11 +62,41 @@ def sync_schema(engine: Engine) -> list[str]:
-     return created
- 
- 
--def main() -> int:
-+# Only lock-not-available (55P03) is retried, in a fresh transaction.
-+_MATVIEW_LOCK_ATTEMPTS = 3
-+
-+
-+def sync_centroids_matview(engine: Engine) -> None:
-+    """Repair the matview atomically under the boot healer's lock and deadlines."""
-+    migration = importlib.import_module(_MIGRATION_MODULE)
-+    for attempt in range(_MATVIEW_LOCK_ATTEMPTS):
-+        try:
-+            with engine.begin() as conn:
-+                if conn.dialect.name != "postgresql":
-+                    raise ValueError("matview-only repair requires PostgreSQL")
-+                conn.execute(text("SET LOCAL lock_timeout = '5s'"))
-+                conn.execute(text("SET LOCAL statement_timeout = '5min'"))
-+                conn.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": _ADVISORY_LOCK_KEY})
-+                migration.repair_centroids_matview(conn)
-+            return
-+        except DBAPIError as exc:
-+            code = getattr(exc.orig, "sqlstate", None) or getattr(exc.orig, "pgcode", None)
-+            if code != "55P03" or attempt + 1 == _MATVIEW_LOCK_ATTEMPTS:
-+                raise
-+            time.sleep(0.25 * (2**attempt) + random.uniform(0, 0.25))
-+
-+
-+def main(argv: list[str] | None = None) -> int:
-+    parser = argparse.ArgumentParser(description=__doc__)
-+    parser.add_argument("--matview-only", action="store_true", help="Repair only the centroid materialized view")
-+    args = parser.parse_args(argv)
-     logging.basicConfig(level=logging.INFO, format="%(message)s")
-     engine = create_engine(get_database_settings().postgres_sync_dsn)
-     try:
--        sync_schema(engine)
-+        if args.matview_only:
-+            sync_centroids_matview(engine)
-+        else:
-+            sync_schema(engine)
-     except Exception as exc:  # fail closed at the entrypoint — no worse than verify failing
-         logger.exception("identity schema heal failed: %s", exc)
-         return 1
-diff --git a/apps/prototype-description-service/scripts/verify_identity_schema.py b/apps/prototype-description-service/scripts/verify_identity_schema.py
---- a/apps/prototype-description-service/scripts/verify_identity_schema.py
-+++ b/apps/prototype-description-service/scripts/verify_identity_schema.py
-@@ -21,7 +21,9 @@ Exit codes distinguish who can fix the gap:
- 
- from __future__ import annotations
- 
-+import argparse
- import importlib
-+import json
- import sys
- from collections.abc import Iterable, Mapping
- from typing import TypedDict
-@@ -188,9 +190,7 @@ def _validate_schema_state(
-             continue
-         named = f"{table_name}.{column_name}"
-         table_vector_gaps.append(named)
--        operator_actions.append(
--            identity_schema.table_vector_typmod_operator_action(table_name, column_name, observed)
--        )
-+        operator_actions.append(identity_schema.table_vector_typmod_operator_action(table_name, column_name, observed))
- 
-     if (
-         not revision_matches
-@@ -434,11 +434,101 @@ def collect_and_validate(connection) -> SchemaStateReport:
-     )
- 
- 
--def main() -> int:
-+def collect_matview_state(connection, *, expected_owner: str, expected_acl: list) -> dict:
-+    """Dedicated derived-state verification, never a full-schema health signal.
-+
-+    Owner and non-owner ACL expectations come from the pre-repair snapshot or
-+    the intended policy for a new view. Source constraints (including
-+    cluster_merge_survivor_in_pair) are outside this report's scope.
-+    """
-+    op = _BindOp(connection)
-+    row = connection.execute(
-+        text(
-+            "SELECT c.relkind, pg_get_userbyid(c.relowner) FROM pg_class c "
-+            "JOIN pg_namespace n ON n.oid = c.relnamespace "
-+            "WHERE n.nspname = current_schema() AND c.relname = :name"
-+        ),
-+        {"name": MATVIEW_NAME},
-+    ).one_or_none()
-+    kind, owner = row if row else (None, None)
-+    typmod = identity_schema._matview_centroid_typmod(op) if kind == "m" else None
-+    grants = identity_schema._matview_nonowner_grants(op) if kind == "m" else ()
-+    unique_index = (
-+        bool(
-+            connection.execute(
-+                text(
-+                    "SELECT EXISTS (SELECT 1 FROM pg_index i "
-+                    "JOIN pg_class c ON c.oid = i.indrelid "
-+                    "JOIN pg_namespace n ON n.oid = c.relnamespace "
-+                    "JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'cluster_id' "
-+                    "WHERE n.nspname = current_schema() AND c.relname = :name "
-+                    "AND i.indisunique AND i.indisvalid AND i.indisready AND i.indimmediate "
-+                    "AND i.indpred IS NULL AND i.indexprs IS NULL "
-+                    "AND i.indnkeyatts = 1 AND i.indkey[0] = a.attnum)"
-+                ),
-+                {"name": MATVIEW_NAME},
-+            ).scalar()
-+        )
-+        if kind == "m"
-+        else False
-+    )
-+    code = EXIT_OK
-+    if kind not in (None, "m"):
-+        code = EXIT_OPERATOR_REQUIRED
-+    elif kind is None:
-+        code = EXIT_HEAL_REPAIRABLE
-+    elif owner != expected_owner or sorted(grants) != sorted(tuple(g) for g in expected_acl):
-+        code = EXIT_OPERATOR_REQUIRED
-+    elif typmod != EMBEDDING_DIMENSION or not unique_index:
-+        code = EXIT_HEAL_REPAIRABLE
-+    return {
-+        "scope": "matview-only",
-+        "exit_code": code,
-+        "relkind": kind,
-+        "centroid_typmod": typmod,
-+        "unique_cluster_id_index": unique_index,
-+        "owner": owner,
-+        "acl": sorted(grants),
-+    }
-+
-+
-+def main(argv: list[str] | None = None) -> int:
-+    parser = argparse.ArgumentParser(description=__doc__)
-+    parser.add_argument("--matview-only", action="store_true")
-+    parser.add_argument("--expected-owner")
-+    parser.add_argument(
-+        "--expected-acl", help='JSON non-owner grants: [["role", "SELECT", false]]; public denotes PUBLIC'
-+    )
-+    args = parser.parse_args(argv)
-+    expected_acl = None
-+    if args.matview_only:
-+        if not args.expected_owner or args.expected_acl is None:
-+            parser.error("--matview-only requires --expected-owner and --expected-acl")
-+        try:
-+            expected_acl = json.loads(args.expected_acl)
-+            if not isinstance(expected_acl, list) or any(
-+                not isinstance(g, list)
-+                or len(g) != 3
-+                or not isinstance(g[0], str)
-+                or not isinstance(g[1], str)
-+                or not isinstance(g[2], bool)
-+                for g in expected_acl
-+            ):
-+                raise ValueError("expected a list of [role, privilege, grantable] entries")
-+        except (ValueError, TypeError) as exc:
-+            parser.error(f"invalid --expected-acl: {exc}")
-+    elif args.expected_owner is not None or args.expected_acl is not None:
-+        parser.error("owner/ACL expectations require --matview-only")
-     dsn = get_database_settings().postgres_sync_dsn
-     engine = create_engine(dsn)
-     try:
-         with engine.connect() as connection:
-+            if args.matview_only:
-+                report = collect_matview_state(
-+                    connection, expected_owner=args.expected_owner, expected_acl=expected_acl
-+                )
-+                print(json.dumps(report, sort_keys=True))
-+                return report["exit_code"]
-             report = collect_and_validate(connection)
-     except Exception as exc:  # infra failure, not schema drift — distinct exit code
-         print(f"identity schema verification could not run: {exc}", file=sys.stderr)
+-  &:disabled {
++  &:disabled,
++  &[aria-disabled='true'] {
+     opacity: 0.5;
+     cursor: not-allowed;
+   }

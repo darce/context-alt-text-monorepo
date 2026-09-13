@@ -75,27 +75,19 @@ export const FaceThumbnail = React.forwardRef<HTMLDivElement, FaceThumbnailProps
     const { scale, offsetX, offsetY } = cropTransformFor(bbox, displaySize);
 
     const handleLoad = React.useCallback<React.ReactEventHandler<HTMLImageElement>>(
-      (event) => {
-        // Ignore stale load events from a previous mediaUrl (source swap race).
-        if (event.currentTarget.src !== mediaUrl) {
-          return;
-        }
+      () => {
         setLoadState('loaded');
         onLoad?.();
       },
-      [onLoad, mediaUrl],
+      [onLoad],
     );
 
     const handleError = React.useCallback<React.ReactEventHandler<HTMLImageElement>>(
-      (event) => {
-        // Ignore stale error events from a previous mediaUrl (source swap race).
-        if (event.currentTarget.src !== mediaUrl) {
-          return;
-        }
+      () => {
         setLoadState('error');
         onError?.();
       },
-      [onError, mediaUrl],
+      [onError],
     );
 
     React.useEffect(() => {
@@ -168,6 +160,7 @@ export const FaceThumbnail = React.forwardRef<HTMLDivElement, FaceThumbnailProps
           />
         )}
         <img
+          key={mediaUrl}
           ref={imgRef}
           src={mediaUrl}
           alt={alt}

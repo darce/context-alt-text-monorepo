@@ -202,38 +202,67 @@ describe('FaceThumbnail', () => {
       });
     });
 
-    it('ignores a stale load/error event whose src does not match the current mediaUrl (source swap race)', async () => {
-      const staleUrl = 'https://example.com/representative.jpg';
-      const nextUrl = 'https://example.com/fallback.jpg';
+    it('loads a relative media URL', () => {
+      const onLoad = vi.fn();
+      const { container } = render(
+        <FaceThumbnail mediaUrl="/recognition/face.jpg" bbox={mockBbox} onLoad={onLoad} />,
+      );
 
-      const { container, rerender } = render(<FaceThumbnail mediaUrl={staleUrl} bbox={mockBbox} />);
+      fireEvent.load(screen.getByRole('img'));
 
-      // Swap the source on the same mounted instance (e.g. representative -> fallback member).
-      rerender(<FaceThumbnail mediaUrl={nextUrl} bbox={mockBbox} />);
+      expect(container.firstChild).not.toHaveClass('acx-face-thumbnail--loading');
+      expect(screen.getByRole('img')).toHaveStyle({ opacity: '1' });
+      expect(onLoad).toHaveBeenCalledOnce();
+    });
 
-      const img = screen.getByRole('img') as HTMLImageElement;
-      expect(img.src).toBe(nextUrl);
+    it('remounts the image and resets loading after a source swap', () => {
+      const onLoad = vi.fn();
+      const onError = vi.fn();
+      const { container, rerender } = render(
+        <FaceThumbnail mediaUrl={mockMediaUrl} bbox={mockBbox} onLoad={onLoad} onError={onError} />,
+      );
+      const previousImg = screen.getByRole('img');
+      fireEvent.load(previousImg);
+      expect(previousImg).toHaveStyle({ opacity: '1' });
+      onLoad.mockClear();
 
-      // Simulate an in-flight request for the previous src resolving after the swap.
-      Object.defineProperty(img, 'src', { value: staleUrl, configurable: true });
-      fireEvent.error(img);
+      rerender(
+        <FaceThumbnail mediaUrl="/recognition/next.jpg" bbox={mockBbox} onLoad={onLoad} onError={onError} />,
+      );
+      const nextImg = screen.getByRole('img');
+      expect(nextImg).not.toBe(previousImg);
+      expect(previousImg).not.toBeInTheDocument();
+      expect(container.firstChild).toHaveClass('acx-face-thumbnail--loading');
+      expect(nextImg).toHaveStyle({ opacity: '0' });
 
-      // The stale error must not flip the thumbnail into the error state for the new source.
-      const wrapper = container.firstChild as HTMLElement;
-      expect(wrapper).not.toHaveClass('acx-face-thumbnail--error');
-      expect(wrapper).toHaveClass('acx-face-thumbnail--loading');
+      fireEvent.error(previousImg);
+      fireEvent.load(previousImg);
+      expect(container.firstChild).toHaveClass('acx-face-thumbnail--loading');
+      expect(onLoad).not.toHaveBeenCalled();
+      expect(onError).not.toHaveBeenCalled();
 
-      // A stale load event must likewise not mark the new source as loaded.
-      fireEvent.load(img);
-      expect(wrapper).toHaveClass('acx-face-thumbnail--loading');
+      fireEvent.load(nextImg);
+      expect(container.firstChild).not.toHaveClass('acx-face-thumbnail--loading');
+      expect(nextImg).toHaveStyle({ opacity: '1' });
+      expect(onLoad).toHaveBeenCalledOnce();
+    });
 
-      // Restore the current src and confirm a genuine event for it is still honored.
-      Object.defineProperty(img, 'src', { value: nextUrl, configurable: true });
-      fireEvent.load(img);
+    it('resets an error to loading when the source changes', () => {
+      const onError = vi.fn();
+      const { container, rerender } = render(
+        <FaceThumbnail mediaUrl={mockMediaUrl} bbox={mockBbox} onError={onError} />,
+      );
+      fireEvent.error(screen.getByRole('img'));
+      expect(container.firstChild).toHaveClass('acx-face-thumbnail--error');
+      expect(onError).toHaveBeenCalledOnce();
 
-      await waitFor(() => {
-        expect(wrapper).not.toHaveClass('acx-face-thumbnail--loading');
-      });
+      rerender(<FaceThumbnail mediaUrl="/recognition/next.jpg" bbox={mockBbox} />);
+      expect(container.firstChild).toHaveClass('acx-face-thumbnail--loading');
+      expect(container.firstChild).not.toHaveClass('acx-face-thumbnail--error');
+      const nextImg = screen.getByRole('img');
+      expect(nextImg).toHaveAttribute('src', '/recognition/next.jpg');
+      fireEvent.load(nextImg);
+      expect(nextImg).toHaveStyle({ opacity: '1' });
     });
   });
 

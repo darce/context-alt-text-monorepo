@@ -315,6 +315,8 @@ class ClusterMutationsController extends AbstractRecognitionProxyController impl
 			return $callback();
 		} catch ( ProjectionQueryException $exception ) {
 			return ProjectionQueryException::to_rest_error( $surface );
+		} catch ( \RuntimeException $exception ) {
+			return new WP_Error( 'acx_db_error', 'Cluster mutation could not be completed.', array( 'status' => 500 ) );
 		}
 	}
 

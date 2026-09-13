@@ -38,6 +38,18 @@ class ClusterMutationsControllerDualWriteTest extends TestCase
         $this->controller = new ClusterMutationsController($this->repository, $this->syncStateRepository, $this->membersRepository, null, $this->topologyCommandRepository);
     }
 
+    public function testMutationRuntimeFailureReturnsExistingErrorEnvelope(): void
+    {
+        $method = new \ReflectionMethod(ClusterMutationsController::class, 'run_mutation');
+        $method->setAccessible(true);
+        $result = $method->invoke($this->controller, 'update_cluster_label', static function () {
+            throw new \RuntimeException('marker write failed');
+        });
+        $this->assertInstanceOf(\WP_Error::class, $result);
+        $this->assertSame('acx_projection_query_failed', $result->get_error_code());
+        $this->assertSame(500, $result->get_error_data()['status']);
+    }
+
     public function testRegisterRoutesIncludesRepresentativePinEndpoint(): void
     {
         $this->controller->register_routes();

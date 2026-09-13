@@ -22,6 +22,9 @@ class PersonMergeService {
 	/** Undo tokens expire 24h after commit (IDCHIP-1-API-R-01). */
 	public const UNDO_TOKEN_TTL_SECONDS = 86400;
 
+	private const UNDO_CORRUPT = 'person_merge_undo_corrupt';
+	private const UNDO_EXPIRED = 'person_merge_undo_expired';
+
 	private PersonMergeRepository $repository;
 	private SyncStateRepositoryInterface $sync;
 
@@ -87,6 +90,10 @@ class PersonMergeService {
 				return $preview;
 			}
 			$moved = array_values( array_filter( $preview['clusters'], static fn( $row ) => (int) $row['person_id'] === $loser_id ) );
+			foreach ( $moved as &$row ) {
+				$row['person_id'] = (int) $row['person_id'];
+			}
+			unset( $row );
 			$tags = wp_json_encode( $preview['tags'] );
 			$token = wp_generate_uuid4();
 			$this->repository->save_undo( $tenant_id, $token, array(
@@ -114,6 +121,10 @@ class PersonMergeService {
 	 * idempotency record exists so the caller falls back to the 404.
 	 */
 	private function recover_idempotent_commit( string $tenant_id, int $survivor_id, int $loser_id ): ?array {
+		$survivor = $this->repository->person( $survivor_id, true );
+		if ( null === $survivor || $survivor['tenant_id'] !== $tenant_id || null !== $this->repository->person( $loser_id, true ) ) {
+			return null;
+		}
 		$token = $this->repository->load_merge_idempotency( $tenant_id, $survivor_id, $loser_id );
 		if ( null === $token ) {
 			return null;
@@ -123,7 +134,7 @@ class PersonMergeService {
 		} catch ( \JsonException $error ) {
 			return null;
 		}
-		if ( ! $this->is_valid_undo_record( $record ) || (int) $record['survivor_id'] !== $survivor_id || (int) $record['loser']['id'] !== $loser_id ) {
+		if ( ! $this->is_valid_undo_record( $record ) || $record['expires_at'] <= time() || $record['loser']['tenant_id'] !== $tenant_id || (int) $record['survivor_id'] !== $survivor_id || (int) $record['loser']['id'] !== $loser_id ) {
 			return null;
 		}
 		return array(
@@ -137,22 +148,23 @@ class PersonMergeService {
 		if ( '' === trim( $tenant_id ) || ! preg_match( self::UNDO_TOKEN_PATTERN, $undo_token ) ) {
 			return $this->error( 'invalid_undo_token', 400 );
 		}
-		return $this->transaction( function () use ( $tenant_id, $undo_token ) {
+		$result = $this->transaction( function () use ( $tenant_id, $undo_token ) {
 			try {
 				$record = $this->repository->load_undo( $tenant_id, $undo_token );
 			} catch ( \JsonException $error ) {
-				return $this->error( 'person_merge_undo_corrupt', 500 );
+				return $this->error( self::UNDO_CORRUPT, 500 );
 			}
 			if ( null === $record ) {
+				if ( $this->repository->has_undo( $tenant_id, $undo_token ) ) {
+					return $this->error( self::UNDO_CORRUPT, 500 );
+				}
 				return $this->error( 'person_merge_undo_conflict', 409 );
 			}
 			if ( ! $this->is_valid_undo_record( $record ) ) {
-				$this->repository->consume_undo( $tenant_id, $undo_token );
-				return $this->error( 'person_merge_undo_corrupt', 500 );
+				return $this->error( self::UNDO_CORRUPT, 500 );
 			}
-			if ( (int) $record['expires_at'] < time() ) {
-				$this->repository->consume_undo( $tenant_id, $undo_token );
-				return $this->error( 'person_merge_undo_expired', 409 );
+			if ( (int) $record['expires_at'] <= time() ) {
+				return $this->error( self::UNDO_EXPIRED, 409 );
 			}
 			$ids = array( (int) $record['survivor_id'], (int) $record['loser']['id'] );
 			sort( $ids );
@@ -180,6 +192,15 @@ class PersonMergeService {
 			$this->sync->touch_local_curation_marker( $tenant_id );
 			return array( 'restored_person_id' => (int) $record['loser']['id'], 'restored_cluster_ids' => array_column( $record['clusters'], 'cluster_uuid' ) );
 		} );
+		// Rejected records must be deleted after run_transactional has rolled back.
+		if ( is_wp_error( $result ) && in_array( $result->get_error_code(), array( self::UNDO_CORRUPT, self::UNDO_EXPIRED ), true ) ) {
+			try {
+				$this->repository->consume_undo( $tenant_id, $undo_token );
+			} catch ( \RuntimeException $error ) {
+				return $this->error( 'acx_db_error', 500 );
+			}
+		}
+		return $result;
 	}
 
 	/**
@@ -190,17 +211,28 @@ class PersonMergeService {
 		if ( ! is_array( $record ) ) {
 			return false;
 		}
-		if ( ! isset( $record['survivor_id'], $record['loser'], $record['survivor_tags'], $record['merged_tags'], $record['clusters'], $record['expires_at'] ) ) {
+		if ( ! is_int( $record['survivor_id'] ?? null ) || ! is_int( $record['expires_at'] ?? null ) || ! is_string( $record['merged_tags'] ?? null ) ) {
 			return false;
 		}
-		if ( ! is_numeric( $record['survivor_id'] ) || ! is_numeric( $record['expires_at'] ) ) {
+		if ( ! array_key_exists( 'survivor_tags', $record ) || ( null !== $record['survivor_tags'] && ! is_string( $record['survivor_tags'] ) ) ) {
 			return false;
 		}
-		if ( ! is_array( $record['loser'] ) || ! isset( $record['loser']['id'], $record['loser']['tenant_id'] ) ) {
+		$loser = $record['loser'] ?? null;
+		if ( ! is_array( $loser ) || ! is_numeric( $loser['id'] ?? null ) || ! is_string( $loser['tenant_id'] ?? null ) || ! is_string( $loser['name'] ?? null ) || ! array_key_exists( 'tags', $loser ) || ( null !== $loser['tags'] && ! is_string( $loser['tags'] ) ) ) {
 			return false;
 		}
-		if ( ! is_array( $record['clusters'] ) ) {
+		foreach ( $loser as $value ) {
+			if ( null !== $value && ! is_scalar( $value ) ) {
+				return false;
+			}
+		}
+		if ( ! is_array( $record['clusters'] ?? null ) ) {
 			return false;
+		}
+		foreach ( $record['clusters'] as $row ) {
+			if ( ! is_array( $row ) || ! is_int( $row['person_id'] ?? null ) || ! is_string( $row['cluster_uuid'] ?? null ) || ! is_string( $row['tenant_id'] ?? null ) || $row['person_id'] !== (int) $loser['id'] || $row['tenant_id'] !== $loser['tenant_id'] ) {
+				return false;
+			}
 		}
 		return true;
 	}
@@ -213,6 +245,8 @@ class PersonMergeService {
 	private function transaction( callable $operation ): array|WP_Error {
 		try {
 			return $this->run_transactional( $operation );
+		} catch ( \JsonException | \TypeError $error ) {
+			return $this->error( self::UNDO_CORRUPT, 500 );
 		} catch ( \RuntimeException $error ) {
 			return $this->error( 'acx_db_error', 500 );
 		}
@@ -293,7 +327,15 @@ class PersonMergeRepository {
 		global $wpdb;
 		$value = $wpdb->get_var( $wpdb->prepare( 'SELECT option_value FROM %i WHERE option_name = %s FOR UPDATE', $wpdb->prefix . 'options', $this->key( $tenant, $token ) ) );
 		$this->check_read();
-		return null === $value ? null : json_decode( $value, true, 512, JSON_THROW_ON_ERROR );
+		$record = null === $value ? null : json_decode( $value, true, 512, JSON_THROW_ON_ERROR );
+		return is_array( $record ) ? $record : null;
+	}
+
+	public function has_undo( string $tenant, string $token ): bool {
+		global $wpdb;
+		$value = $wpdb->get_var( $wpdb->prepare( 'SELECT option_value FROM %i WHERE option_name = %s', $wpdb->prefix . 'options', $this->key( $tenant, $token ) ) );
+		$this->check_read();
+		return null !== $value;
 	}
 
 	public function consume_undo( string $tenant, string $token ): void {

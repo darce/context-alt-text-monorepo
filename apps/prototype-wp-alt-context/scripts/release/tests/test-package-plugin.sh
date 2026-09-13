@@ -78,6 +78,8 @@ create_common_fixture() {
  */
 PHP
     printf '%s\n' '{"version":"0.0.1"}' >"${fixture_dir}/package.json"
+    printf '%s\n' '{"name":"fixture-alt-context","version":"0.0.1","lockfileVersion":3,"requires":true,"packages":{"":{"name":"fixture-alt-context","version":"0.0.1"}}}' \
+        >"${fixture_dir}/package-lock.json"
     printf '%s\n' '{"name":"fixture/alt-context"}' >"${fixture_dir}/composer.json"
     printf '%s\n' '<?php' >"${fixture_dir}/vendor/autoload.php"
     printf '%s\n' '<?php // fixture source' >"${fixture_dir}/src/x.php"
@@ -263,6 +265,26 @@ if [[ "${failures}" -eq "${case_five_before}" ]]; then
     pass "case 5 regression"
 else
     printf 'FAIL: case 5 regression\n' >&2
+fi
+
+# --- Case 6: abort when package-lock.json disagrees with package.json. ------
+case_six_fixture="${TEST_ROOT}/lock-mismatch"
+case_six_dist="${TEST_ROOT}/dist-lock-mismatch"
+create_common_fixture "${case_six_fixture}"
+printf '%s\n' '{"name":"fixture-alt-context","version":"0.0.2","lockfileVersion":3,"requires":true,"packages":{"":{"name":"fixture-alt-context","version":"0.0.2"}}}' \
+    >"${case_six_fixture}/package-lock.json"
+
+case_six_before=$failures
+run_packager "${case_six_fixture}" "${case_six_dist}"
+if [[ "${last_rc}" -ne 0 ]]; then
+    pass "case 6 rejects a package-lock.json version mismatch"
+else
+    fail "case 6 rejects a package-lock.json version mismatch (unexpected exit 0; output: ${last_output})"
+fi
+if [[ "${failures}" -eq "${case_six_before}" ]]; then
+    pass "case 6 regression"
+else
+    printf 'FAIL: case 6 regression\n' >&2
 fi
 
 if [[ "${failures}" -ne 0 ]]; then

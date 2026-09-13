@@ -91,6 +91,20 @@ export const IdentityClusterItem = ({
 
   const editableClusterId = React.useMemo(() => getEditableClusterId(cluster), [cluster]);
 
+  // A person-group can span multiple clusters (IDCHIP-1). When it does, only offer Split
+  // if the group's primary clusterId actually has >=2 members in it — otherwise the
+  // anchor picker would let an operator "split" a cluster that's already singleton-sized
+  // from this group's point of view. Single-cluster groups keep the cheap legacy gate.
+  const clusterSpansMultiple = (cluster.clusterIds?.length ?? 0) > 1;
+  const primaryClusterMemberCount = React.useMemo(() => {
+    if (!cluster.clusterId || !cluster.identityClusterIds) {
+      return cluster.members.length;
+    }
+    return cluster.members.filter(
+      (member) => (cluster.identityClusterIds?.[member.identity_id] ?? cluster.clusterId) === cluster.clusterId,
+    ).length;
+  }, [cluster]);
+
   // For singletons without a cluster, we still allow naming/merging via identity ID
   const isSingleton = !editableClusterId && cluster.members.length === 1;
   const canEdit = canLabel && Boolean(editableClusterId) && !cluster.clusteringPending;
@@ -352,12 +366,17 @@ export const IdentityClusterItem = ({
 
   const handleAnchorSelect = React.useCallback(
     (selectedIdentityId: string) => {
-      if (!cluster.clusterId) {
+      // A person-group can span multiple clusters (IDCHIP-1); route the split to the
+      // selected identity's own cluster, not the group's first/anchor clusterId, or a
+      // face from cluster B can be issued as split(clusterA, ..., faceInB) (BR-02).
+      const targetClusterId = cluster.identityClusterIds?.[selectedIdentityId] ?? cluster.clusterId;
+      if (!targetClusterId) {
+        setError(__('Cannot split: missing cluster for the selected face.', 'alt-context'));
         return;
       }
-      mutations.split(cluster.clusterId, 2, selectedIdentityId);
+      mutations.split(targetClusterId, 2, selectedIdentityId);
     },
-    [cluster, mutations],
+    [cluster, mutations, setError],
   );
 
   const showTwinChip =
@@ -466,7 +485,11 @@ export const IdentityClusterItem = ({
                 canSearchForMatch={canSearchForMatch}
                 hasLabel={Boolean(cluster.label)}
                 isAutoLabel={cluster.isAutoLabel}
-                canSplit={canMutate && Boolean(cluster.clusterId)}
+                canSplit={
+                  canMutate &&
+                  Boolean(cluster.clusterId) &&
+                  (!clusterSpansMultiple || primaryClusterMemberCount >= 2)
+                }
                 canReject={canMutate && cluster.members.length === 1}
                 isPending={mutations.isPending}
                 splitDisabled={mutations.splitGate.disabled}

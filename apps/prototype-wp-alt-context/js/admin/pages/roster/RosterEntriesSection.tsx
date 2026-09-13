@@ -7,7 +7,7 @@ import { getEntryPersonUuid, ROSTER_ROUTE_PARAM_KEYS } from './rosterRoute';
 import { useDebouncedValue } from './hooks/useDebouncedValue';
 import { useCreatePerson } from '../../hooks/useRosterHooks';
 import { Filter, UserPlus, Plus, X } from 'lucide-react';
-import { toWorkbench } from '../../navigation/appLinks';
+import { APP_LINK_PARAMS, toWorkbench } from '../../navigation/appLinks';
 import { isHumanLabeledTarget } from '../workbench/identity-clusters/suggestionProjection';
 import { EmptyState, EmptyStateVariant } from '../../components/ui/EmptyState';
 
@@ -222,7 +222,7 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
       for (const key of ROSTER_ROUTE_PARAM_KEYS) {
         // `queue` is the user-selected roster filter, not workspace-drawer
         // state; preserve it so navigating into a person keeps the filter.
-        if (key === 'queue') {
+        if (key === APP_LINK_PARAMS.queue) {
           continue;
         }
         next.delete(key);

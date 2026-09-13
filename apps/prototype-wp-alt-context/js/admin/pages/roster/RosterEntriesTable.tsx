@@ -3,7 +3,7 @@ import { __, sprintf } from '@wordpress/i18n';
 import type { RosterEntry } from '../../api/rosterApi';
 import type { RosterEntryInstance } from '../../api/generated/roster-entry';
 import { useUpdatePerson, useDeletePerson } from '../../hooks/useRosterHooks';
-import { AlertCircle, Check, CheckCircle2, Pencil, Trash2, UserRound, X } from 'lucide-react';
+import { AlertCircle, Check, CheckCircle2, Pencil, Merge, Trash2, UserRound, X } from 'lucide-react';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { IdentityThumbnail } from './IdentityThumbnail';
 import { derivePersonState, PERSON_STATES, type PersonState } from './personState';
@@ -18,11 +18,13 @@ const RESERVED_LABEL_MESSAGE = __(
 export interface RosterEntriesTableProps {
   entries: RosterEntry[];
   onOpenPerson?: (entry: RosterEntry) => void;
+  onMergePerson?: (entry: RosterEntry) => void;
 }
 
 interface EditableRowProps {
   entry: RosterEntry;
   onOpenPerson?: (entry: RosterEntry) => void;
+  onMergePerson?: (entry: RosterEntry) => void;
 }
 
 /** Dense table-row size — not the drawer default (96/128). */
@@ -136,7 +138,7 @@ const PersonStateCell = ({ entry }: { entry: RosterEntry }): React.JSX.Element =
   );
 };
 
-const EditableRow = ({ entry, onOpenPerson }: EditableRowProps) => {
+const EditableRow = ({ entry, onOpenPerson, onMergePerson }: EditableRowProps) => {
   const displayName = entry.name.trim() || __('Unnamed person', 'alt-context');
   const [isEditing, setIsEditing] = useState(false);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
@@ -315,6 +317,11 @@ const EditableRow = ({ entry, onOpenPerson }: EditableRowProps) => {
           >
             <Pencil size={16} />
           </button>
+          <button type="button" className="acx-icon-button" title={__('Merge into…', 'alt-context')}
+            aria-label={sprintf(__('Merge %s into another person', 'alt-context'), displayName)}
+            onClick={() => onMergePerson?.(entry)}>
+            <Merge size={16} aria-hidden="true" />
+          </button>
           <button
             type="button"
             className="acx-icon-button acx-icon-button--danger"
@@ -343,7 +350,7 @@ const EditableRow = ({ entry, onOpenPerson }: EditableRowProps) => {
   );
 };
 
-export const RosterEntriesTable = ({ entries, onOpenPerson }: RosterEntriesTableProps): React.JSX.Element => {
+export const RosterEntriesTable = ({ entries, onOpenPerson, onMergePerson }: RosterEntriesTableProps): React.JSX.Element => {
   if (entries.length === 0) {
     return <p>{__('No people yet. Add one manually or assign a face group.', 'alt-context')}</p>;
   }
@@ -362,7 +369,7 @@ export const RosterEntriesTable = ({ entries, onOpenPerson }: RosterEntriesTable
         </thead>
         <tbody>
           {entries.map((entry) => (
-            <EditableRow key={entry.id} entry={entry} onOpenPerson={onOpenPerson} />
+            <EditableRow key={entry.id} entry={entry} onOpenPerson={onOpenPerson} onMergePerson={onMergePerson} />
           ))}
         </tbody>
       </table>

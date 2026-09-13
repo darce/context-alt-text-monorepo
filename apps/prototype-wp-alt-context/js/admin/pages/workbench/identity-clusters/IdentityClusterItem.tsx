@@ -93,18 +93,18 @@ export const IdentityClusterItem = ({
 
   const editableClusterId = React.useMemo(() => getEditableClusterId(cluster), [cluster]);
 
-  // A person-group can span multiple clusters (IDCHIP-1). When it does, only offer Split
-  // if the group's primary clusterId actually has >=2 members in it — otherwise the
-  // anchor picker would let an operator "split" a cluster that's already singleton-sized
-  // from this group's point of view. Single-cluster groups keep the cheap legacy gate.
+  // A person-group can span multiple clusters; any mapped cluster with at least
+  // two members can be split. Single-cluster groups keep the legacy gate.
   const clusterSpansMultiple = (cluster.clusterIds?.length ?? 0) > 1;
-  const primaryClusterMemberCount = React.useMemo(() => {
-    if (!cluster.clusterId || !cluster.identityClusterIds) {
-      return cluster.members.length;
+  const hasSplittableCluster = React.useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const clusterId of Object.values(cluster.identityClusterIds ?? {})) {
+      if (!clusterId) continue;
+      const count = (counts.get(clusterId) ?? 0) + 1;
+      if (count >= 2) return true;
+      counts.set(clusterId, count);
     }
-    return cluster.members.filter(
-      (member) => (cluster.identityClusterIds?.[member.identity_id] ?? cluster.clusterId) === cluster.clusterId,
-    ).length;
+    return false;
   }, [cluster]);
 
   // For singletons without a cluster, we still allow naming/merging via identity ID
@@ -360,7 +360,7 @@ export const IdentityClusterItem = ({
     }
 
     if (cluster.members.length < 2) {
-      setError(__('Need at least two identities to split.', 'alt-context'));
+      setError(__('Need at least two faces to split.', 'alt-context'));
       return;
     }
     setIsAnchorModalOpen(true);
@@ -371,9 +371,9 @@ export const IdentityClusterItem = ({
       // A person-group can span multiple clusters (IDCHIP-1); route the split to the
       // selected identity's own cluster, not the group's first/anchor clusterId, or a
       // face from cluster B can be issued as split(clusterA, ..., faceInB) (BR-02).
-      const targetClusterId = cluster.identityClusterIds?.[selectedIdentityId] ?? cluster.clusterId;
+      const targetClusterId = cluster.identityClusterIds?.[selectedIdentityId];
       if (!targetClusterId) {
-        setError(__('Cannot split: missing cluster for the selected face.', 'alt-context'));
+        setError(__('Cannot split: this face is not in a face group yet.', 'alt-context'));
         return;
       }
       mutations.split(targetClusterId, 2, selectedIdentityId);
@@ -504,7 +504,7 @@ export const IdentityClusterItem = ({
                 canSplit={
                   canMutate &&
                   Boolean(cluster.clusterId) &&
-                  (!clusterSpansMultiple || primaryClusterMemberCount >= 2)
+                  (!clusterSpansMultiple || hasSplittableCluster)
                 }
                 canReject={canMutate && cluster.members.length === 1}
                 isPending={mutations.isPending}

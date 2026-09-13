@@ -353,6 +353,48 @@ describe('IdentityClusterItem split routing across a person-spanning group (IDCH
 
     expect(splitMock).toHaveBeenCalledWith('cluster-b', 2, 'id-3');
   });
+
+  it.each([false, true])('refuses an unmapped face (mapping absent: %s)', (mappingAbsent) => {
+    const cluster = personSpanningCluster();
+    cluster.clusterIds = ['cluster-a'];
+    cluster.members[2] = member({ identity_id: 'id-3', media_id: 3, cluster_id: null });
+    cluster.identityClusterIds = mappingAbsent
+      ? undefined
+      : { 'id-1': 'cluster-a', 'id-2': 'cluster-a' };
+    renderItem(cluster);
+
+    fireEvent.click(screen.getByRole('button', { name: /split group/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Use face from media #3/i }));
+
+    expect(splitMock).not.toHaveBeenCalled();
+    expect(screen.getByText('Cannot split: this face is not in a face group yet.')).toBeVisible();
+  });
+
+  it('offers Split when only a secondary face group has two members', () => {
+    const cluster = personSpanningCluster();
+    cluster.identityClusterIds = { 'id-1': 'cluster-a', 'id-2': 'cluster-b', 'id-3': 'cluster-b' };
+    cluster.members[1] = member({ identity_id: 'id-2', media_id: 2, cluster_id: 'cluster-b' });
+    renderItem(cluster);
+
+    expect(screen.getByRole('button', { name: /split group/i })).toBeVisible();
+  });
+
+  it('withholds Split when all mapped face groups are singletons', () => {
+    const cluster = personSpanningCluster();
+    cluster.identityClusterIds = { 'id-1': 'cluster-a', 'id-3': 'cluster-b' };
+    cluster.members.splice(1, 1);
+    renderItem(cluster);
+
+    expect(screen.queryByRole('button', { name: /split group/i })).not.toBeInTheDocument();
+  });
+
+  it('uses face vocabulary when there are too few members to split', () => {
+    renderItem(bobCluster());
+    fireEvent.click(screen.getByRole('button', { name: /split group/i }));
+
+    expect(screen.getByText('Need at least two faces to split.')).toBeVisible();
+    expect(splitMock).not.toHaveBeenCalled();
+  });
 });
 
 describe('IdentityClusterItem face-group badge', () => {

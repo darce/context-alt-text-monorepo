@@ -89,4 +89,117 @@ class PersonMergeServiceTest extends TestCase {
         $this->assertContains('ROLLBACK', $wpdb->queries);
         $this->assertNotContains('COMMIT', $wpdb->queries);
     }
+
+    // IDCHIP-1-API-R-02: a failed curation-marker write must roll back the whole commit/undo.
+    public function testMarkerWriteFailureRollsBackCommit(): void {
+        global $wpdb;
+        $repo = $this->createMock(PersonMergeRepository::class);
+        $repo->method('person')->willReturnCallback(fn($id) => $this->person($id));
+        $repo->method('clusters')->willReturn([]);
+        $sync = $this->createMock(SyncStateRepositoryInterface::class);
+        $sync->method('touch_local_curation_marker')->willThrowException(new \RuntimeException('marker write failed'));
+        $result = (new PersonMergeService($repo, $sync))->commit('tenant', 1, 2);
+        $this->assertSame(500, $result->get_error_data()['status']);
+        $this->assertContains('ROLLBACK', $wpdb->queries);
+        $this->assertNotContains('COMMIT', $wpdb->queries);
+    }
+
+    public function testMarkerWriteFailureRollsBackUndo(): void {
+        global $wpdb;
+        $record = [
+            'loser' => $this->person(2),
+            'survivor_id' => 1,
+            'survivor_tags' => $this->person(1)['tags'],
+            'merged_tags' => $this->person(1)['tags'],
+            'clusters' => [],
+            'expires_at' => time() + PersonMergeService::UNDO_TOKEN_TTL_SECONDS,
+        ];
+        $repo = $this->createMock(PersonMergeRepository::class);
+        $repo->method('load_undo')->willReturn($record);
+        $repo->method('person')->willReturnCallback(fn($id) => $id === 1 ? $this->person(1) : null);
+        $repo->method('clusters')->willReturn([]);
+        $sync = $this->createMock(SyncStateRepositoryInterface::class);
+        $sync->method('touch_local_curation_marker')->willThrowException(new \RuntimeException('marker write failed'));
+        $result = (new PersonMergeService($repo, $sync))->undo('tenant', '00000001-0000-4000-8000-000000000001');
+        $this->assertSame(500, $result->get_error_data()['status']);
+        $this->assertContains('ROLLBACK', $wpdb->queries);
+        $this->assertNotContains('COMMIT', $wpdb->queries);
+    }
+
+    // IDCHIP-1-API-R-01: expired undo tokens are rejected and deleted.
+    public function testExpiredUndoTokenIsRejectedAndDeleted(): void {
+        $record = [
+            'loser' => $this->person(2),
+            'survivor_id' => 1,
+            'survivor_tags' => $this->person(1)['tags'],
+            'merged_tags' => $this->person(1)['tags'],
+            'clusters' => [],
+            'expires_at' => time() - 1,
+        ];
+        $repo = $this->createMock(PersonMergeRepository::class);
+        $repo->method('load_undo')->willReturn($record);
+        $repo->expects($this->once())->method('consume_undo')->with('tenant', '00000001-0000-4000-8000-000000000001');
+        $result = (new PersonMergeService($repo))->undo('tenant', '00000001-0000-4000-8000-000000000001');
+        $this->assertSame('person_merge_undo_expired', $result->get_error_code());
+        $this->assertSame(409, $result->get_error_data()['status']);
+    }
+
+    // IDCHIP-1-API-R-03: malformed/corrupt undo JSON returns a WP_Error, never an uncaught exception.
+    public function testMalformedUndoJsonReturnsWpError(): void {
+        $repo = $this->createMock(PersonMergeRepository::class);
+        $repo->method('load_undo')->willThrowException(new \JsonException('malformed json'));
+        $result = (new PersonMergeService($repo))->undo('tenant', '00000001-0000-4000-8000-000000000001');
+        $this->assertInstanceOf(\WP_Error::class, $result);
+        $this->assertSame('person_merge_undo_corrupt', $result->get_error_code());
+        $this->assertSame(500, $result->get_error_data()['status']);
+    }
+
+    public function testUndoRecordWithMissingFieldsIsRejectedAsCorrupt(): void {
+        $repo = $this->createMock(PersonMergeRepository::class);
+        $repo->method('load_undo')->willReturn(['survivor_id' => 1]);
+        $repo->expects($this->once())->method('consume_undo');
+        $result = (new PersonMergeService($repo))->undo('tenant', '00000001-0000-4000-8000-000000000001');
+        $this->assertSame('person_merge_undo_corrupt', $result->get_error_code());
+        $this->assertSame(500, $result->get_error_data()['status']);
+    }
+
+    // IDCHIP-1-API-R-05: a retried commit after a lost 200 recovers the original result.
+    public function testRetriedCommitRecoversOriginalUndoToken(): void {
+        $people = [1 => $this->person(1), 2 => $this->person(2)];
+        $records = [];
+        $idempotency = [];
+        $repo = $this->createMock(PersonMergeRepository::class);
+        $repo->method('person')->willReturnCallback(static function ($id) use (&$people) { return $people[$id] ?? null; });
+        $repo->method('clusters')->willReturn([]);
+        $repo->method('save_undo')->willReturnCallback(static function ($tenant, $token, $record) use (&$records) { $records[$tenant][$token] = $record; });
+        $repo->method('load_undo')->willReturnCallback(static function ($tenant, $token) use (&$records) { return $records[$tenant][$token] ?? null; });
+        $repo->method('save_merge_idempotency')->willReturnCallback(static function ($tenant, $survivor, $loser, $token) use (&$idempotency) { $idempotency["$tenant:$survivor:$loser"] = $token; });
+        $repo->method('load_merge_idempotency')->willReturnCallback(static function ($tenant, $survivor, $loser) use (&$idempotency) { return $idempotency["$tenant:$survivor:$loser"] ?? null; });
+        $repo->method('remove_person')->willReturnCallback(static function ($tenant, $id) use (&$people) { unset($people[$id]); });
+        $service = new PersonMergeService($repo);
+        $first = $service->commit('tenant', 1, 2);
+        $this->assertIsArray($first);
+        // Simulate the loser already deleted by the original (lost-response) commit.
+        $retry = $service->commit('tenant', 1, 2);
+        $this->assertIsArray($retry);
+        $this->assertSame($first['undo_token'], $retry['undo_token']);
+        $this->assertSame($first['merged_cluster_ids'], $retry['merged_cluster_ids']);
+    }
+
+    public function testRetriedCommitWithNoIdempotencyRecordStays404(): void {
+        $repo = $this->createMock(PersonMergeRepository::class);
+        $repo->method('person')->willReturnCallback(fn($id) => $id === 1 ? $this->person(1) : null);
+        $repo->method('clusters')->willReturn([]);
+        $result = (new PersonMergeService($repo))->commit('tenant', 1, 2);
+        $this->assertSame(404, $result->get_error_data()['status']);
+    }
+
+    // IDCHIP-1-API-R-04: undo-token syntax must be a real UUID v4, in one shared place.
+    public function testUndoTokenSyntaxRejectsNonUuidV4(): void {
+        $repo = $this->createMock(PersonMergeRepository::class);
+        $repo->expects($this->never())->method('load_undo');
+        $result = (new PersonMergeService($repo))->undo('tenant', str_repeat('a', 36));
+        $this->assertSame('invalid_undo_token', $result->get_error_code());
+        $this->assertSame(400, $result->get_error_data()['status']);
+    }
 }

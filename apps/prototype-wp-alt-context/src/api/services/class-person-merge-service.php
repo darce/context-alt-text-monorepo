@@ -16,6 +16,12 @@ use WP_Error;
 class PersonMergeService {
 	use RunsTransactional;
 
+	/** Proper UUID v4 syntax (8-4-4-4-12); shared by the controller and this service (IDCHIP-1-API-R-04). */
+	public const UNDO_TOKEN_PATTERN = '/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/Di';
+
+	/** Undo tokens expire 24h after commit (IDCHIP-1-API-R-01). */
+	public const UNDO_TOKEN_TTL_SECONDS = 86400;
+
 	private PersonMergeRepository $repository;
 	private SyncStateRepositoryInterface $sync;
 
@@ -70,6 +76,14 @@ class PersonMergeService {
 		return $this->transaction( function () use ( $tenant_id, $survivor_id, $loser_id ) {
 			$preview = $this->inspect( $tenant_id, $survivor_id, $loser_id, true );
 			if ( is_wp_error( $preview ) ) {
+				if ( 'person_not_found' === $preview->get_error_code() ) {
+					// IDCHIP-1-API-R-05: a retried commit after a lost 200 finds the loser
+					// already gone. Recover the original result instead of 404ing forever.
+					$recovered = $this->recover_idempotent_commit( $tenant_id, $survivor_id, $loser_id );
+					if ( null !== $recovered ) {
+						return $recovered;
+					}
+				}
 				return $preview;
 			}
 			$moved = array_values( array_filter( $preview['clusters'], static fn( $row ) => (int) $row['person_id'] === $loser_id ) );
@@ -81,7 +95,9 @@ class PersonMergeService {
 				'survivor_tags' => $preview['people'][ $survivor_id ]['tags'],
 				'merged_tags' => $tags,
 				'clusters' => $moved,
+				'expires_at' => time() + self::UNDO_TOKEN_TTL_SECONDS,
 			) );
+			$this->repository->save_merge_idempotency( $tenant_id, $survivor_id, $loser_id, $token );
 			foreach ( $moved as $row ) {
 				$this->repository->bind( $tenant_id, $row['cluster_uuid'], $survivor_id );
 			}
@@ -92,14 +108,51 @@ class PersonMergeService {
 		} );
 	}
 
+	/**
+	 * Recover the original commit result for a retried request whose loser
+	 * row is already gone (IDCHIP-1-API-R-05). Returns null when no matching
+	 * idempotency record exists so the caller falls back to the 404.
+	 */
+	private function recover_idempotent_commit( string $tenant_id, int $survivor_id, int $loser_id ): ?array {
+		$token = $this->repository->load_merge_idempotency( $tenant_id, $survivor_id, $loser_id );
+		if ( null === $token ) {
+			return null;
+		}
+		try {
+			$record = $this->repository->load_undo( $tenant_id, $token );
+		} catch ( \JsonException $error ) {
+			return null;
+		}
+		if ( ! $this->is_valid_undo_record( $record ) || (int) $record['survivor_id'] !== $survivor_id || (int) $record['loser']['id'] !== $loser_id ) {
+			return null;
+		}
+		return array(
+			'survivor_id' => $survivor_id,
+			'merged_cluster_ids' => array_column( $record['clusters'], 'cluster_uuid' ),
+			'undo_token' => $token,
+		);
+	}
+
 	public function undo( string $tenant_id, string $undo_token ): array|WP_Error {
-		if ( '' === trim( $tenant_id ) || ! preg_match( '/^[a-f0-9-]{36}$/D', $undo_token ) ) {
+		if ( '' === trim( $tenant_id ) || ! preg_match( self::UNDO_TOKEN_PATTERN, $undo_token ) ) {
 			return $this->error( 'invalid_undo_token', 400 );
 		}
 		return $this->transaction( function () use ( $tenant_id, $undo_token ) {
-			$record = $this->repository->load_undo( $tenant_id, $undo_token );
+			try {
+				$record = $this->repository->load_undo( $tenant_id, $undo_token );
+			} catch ( \JsonException $error ) {
+				return $this->error( 'person_merge_undo_corrupt', 500 );
+			}
 			if ( null === $record ) {
 				return $this->error( 'person_merge_undo_conflict', 409 );
+			}
+			if ( ! $this->is_valid_undo_record( $record ) ) {
+				$this->repository->consume_undo( $tenant_id, $undo_token );
+				return $this->error( 'person_merge_undo_corrupt', 500 );
+			}
+			if ( (int) $record['expires_at'] < time() ) {
+				$this->repository->consume_undo( $tenant_id, $undo_token );
+				return $this->error( 'person_merge_undo_expired', 409 );
 			}
 			$ids = array( (int) $record['survivor_id'], (int) $record['loser']['id'] );
 			sort( $ids );
@@ -127,6 +180,29 @@ class PersonMergeService {
 			$this->sync->touch_local_curation_marker( $tenant_id );
 			return array( 'restored_person_id' => (int) $record['loser']['id'], 'restored_cluster_ids' => array_column( $record['clusters'], 'cluster_uuid' ) );
 		} );
+	}
+
+	/**
+	 * Validate the stored undo record shape before trusting its fields.
+	 * IDCHIP-1-API-R-03: malformed/truncated records must not throw uncaught.
+	 */
+	private function is_valid_undo_record( mixed $record ): bool {
+		if ( ! is_array( $record ) ) {
+			return false;
+		}
+		if ( ! isset( $record['survivor_id'], $record['loser'], $record['survivor_tags'], $record['merged_tags'], $record['clusters'], $record['expires_at'] ) ) {
+			return false;
+		}
+		if ( ! is_numeric( $record['survivor_id'] ) || ! is_numeric( $record['expires_at'] ) ) {
+			return false;
+		}
+		if ( ! is_array( $record['loser'] ) || ! isset( $record['loser']['id'], $record['loser']['tenant_id'] ) ) {
+			return false;
+		}
+		if ( ! is_array( $record['clusters'] ) ) {
+			return false;
+		}
+		return true;
 	}
 
 	private function tags( array $person ): array {
@@ -191,6 +267,26 @@ class PersonMergeRepository {
 	public function save_undo( string $tenant, string $token, array $record ): void {
 		global $wpdb;
 		$this->check( $wpdb->insert( $wpdb->prefix . 'options', array( 'option_name' => $this->key( $tenant, $token ), 'option_value' => wp_json_encode( $record ), 'autoload' => 'no' ) ) );
+	}
+
+	// IDCHIP-1-API-R-05: indexes the undo token by merge participants so a retried
+	// commit can recover the original result instead of re-running the merge.
+	private function idempotency_key( string $tenant, int $survivor, int $loser ): string {
+		return 'acx_person_merge_idem_' . hash( 'sha256', $tenant . ':' . $survivor . ':' . $loser );
+	}
+
+	public function save_merge_idempotency( string $tenant, int $survivor, int $loser, string $token ): void {
+		global $wpdb;
+		$key = $this->idempotency_key( $tenant, $survivor, $loser );
+		$wpdb->delete( $wpdb->prefix . 'options', array( 'option_name' => $key ) );
+		$this->check( $wpdb->insert( $wpdb->prefix . 'options', array( 'option_name' => $key, 'option_value' => $token, 'autoload' => 'no' ) ) );
+	}
+
+	public function load_merge_idempotency( string $tenant, int $survivor, int $loser ): ?string {
+		global $wpdb;
+		$value = $wpdb->get_var( $wpdb->prepare( 'SELECT option_value FROM %i WHERE option_name = %s', $wpdb->prefix . 'options', $this->idempotency_key( $tenant, $survivor, $loser ) ) );
+		$this->check_read();
+		return is_string( $value ) && '' !== $value ? $value : null;
 	}
 
 	public function load_undo( string $tenant, string $token ): ?array {

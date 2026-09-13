@@ -65,25 +65,27 @@ describe('GpuControlCard', () => {
     vi.clearAllMocks();
   });
 
-
   it.each([
     ['Start', 'starting', 'already starting'],
     ['Stop', 'stopped', 'already stopped'],
-  ] as const)('keeps held %s reachable and describes its reason without opening confirmation', (action, state, reason) => {
-    mockControl(statusResponse({ state }));
-    render(<GpuControlCard />);
-    const button = screen.getByRole('button', { name: action + ' GPU' });
-    expect(button).not.toHaveAttribute('disabled');
-    expect(button).toHaveAttribute('aria-disabled', 'true');
-    expect(button.tabIndex).toBe(0);
-    button.focus();
-    expect(button).toHaveFocus();
-    const description = document.getElementById(button.getAttribute('aria-describedby') ?? '');
-    expect(description).toBeVisible();
-    expect(description).toHaveTextContent('disabled: ' + reason);
-    fireEvent.click(button);
-    expect(screen.queryByRole('button', { name: /Confirm/ })).not.toBeInTheDocument();
-  });
+  ] as const)(
+    'keeps held %s reachable and describes its reason without opening confirmation',
+    (action, state, reason) => {
+      mockControl(statusResponse({ state }));
+      render(<GpuControlCard />);
+      const button = screen.getByRole('button', { name: action + ' GPU' });
+      expect(button).not.toHaveAttribute('disabled');
+      expect(button).toHaveAttribute('aria-disabled', 'true');
+      expect(button.tabIndex).toBe(0);
+      button.focus();
+      expect(button).toHaveFocus();
+      const description = document.getElementById(button.getAttribute('aria-describedby') ?? '');
+      expect(description).toBeVisible();
+      expect(description).toHaveTextContent('disabled: ' + reason);
+      fireEvent.click(button);
+      expect(screen.queryByRole('button', { name: /Confirm/ })).not.toBeInTheDocument();
+    },
+  );
 
   it.each(['Start', 'Stop'] as const)('opens confirmation for eligible %s', (action) => {
     mockControl(statusResponse({ state: action === 'Start' ? 'stopped' : 'ready' }));

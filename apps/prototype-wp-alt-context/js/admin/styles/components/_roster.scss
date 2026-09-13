@@ -664,3 +664,27 @@
     color: var(--acx-color-text);
   }
 }
+
+.acx-person-merge {
+  fieldset {
+    display: grid;
+    gap: var(--acx-space-12);
+    border: none;
+    padding: var(--acx-space-4);
+  }
+
+  p {
+    color: var(--acx-color-text-secondary);
+  }
+}
+
+.acx-person-merge-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--acx-space-12);
+  padding: var(--acx-space-12);
+  margin-bottom: var(--acx-space-24);
+  background: var(--acx-color-surface);
+  color: var(--acx-color-text-secondary);
+}

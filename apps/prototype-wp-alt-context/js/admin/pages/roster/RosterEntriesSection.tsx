@@ -2,11 +2,14 @@ import React, { useEffect, useState } from 'react';
 import { __, sprintf } from '@wordpress/i18n';
 import { useSearchParams } from 'react-router-dom';
 import type { RosterEntry } from '../../api/rosterApi';
+import { PersonMergeDialog } from './PersonMergeDialog';
+import { usePersonMerge } from '../../hooks/usePersonMerge';
+import { isPersonMergeConflict, personMergeErrorMessage, type PersonMergePreview } from '../../api/personMergeApi';
 import { RosterEntriesTable } from './RosterEntriesTable';
 import { getEntryPersonUuid, ROSTER_ROUTE_PARAM_KEYS } from './rosterRoute';
 import { useDebouncedValue } from './hooks/useDebouncedValue';
 import { useCreatePerson } from '../../hooks/useRosterHooks';
-import { Filter, UserPlus, Plus, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Filter, UserPlus, Plus, X } from 'lucide-react';
 import { toWorkbench } from '../../navigation/appLinks';
 import { isHumanLabeledTarget } from '../workbench/identity-clusters/suggestionProjection';
 import { EmptyState, EmptyStateVariant } from '../../components/ui/EmptyState';
@@ -121,6 +124,8 @@ export interface RosterEntriesSectionProps {
 }
 
 export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntriesSectionProps): React.JSX.Element => {
+  const [mergeSequence, setMergeSequence] = useState(0);
+  const [mergeSessions, setMergeSessions] = useState<{ id: number; person: RosterEntry }[]>([]);
   const [isAdding, setIsAdding] = useState(false);
   const [newName, setNewName] = useState('');
   const [nameError, setNameError] = useState<string | null>(null);
@@ -345,6 +350,8 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
 
   return (
     <div className="acx-roster-section" data-testid="roster-entries-section">
+      {mergeSessions.map(session => <PersonMergeFlow key={session.id} loser={session.person} entries={entries}
+        onDismiss={() => setMergeSessions(current => current.filter(item => item.id !== session.id))} />)}
       <header className="acx-roster-section__header">
         <div className="acx-roster-section__title-group">
           <h2>{__('People', 'alt-context')}</h2>
@@ -523,8 +530,30 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
             )}
           </div>
         ) : isEmptyFilterResult ? null : (
-          <RosterEntriesTable entries={visibleEntries} onOpenPerson={handleOpenPerson} />
+          <RosterEntriesTable entries={visibleEntries} onOpenPerson={handleOpenPerson} onMergePerson={entry => { setMergeSessions(current => [...current, { id: mergeSequence, person: entry }]); setMergeSequence(value => value + 1); }} />
         ))}
     </div>
   );
+};
+
+// Mount mutations only when a row action starts a merge; retain them for undo after closing.
+const PersonMergeFlow = ({ loser, entries, onDismiss }: { loser: RosterEntry; entries: RosterEntry[]; onDismiss: () => void }) => {
+  const merge = usePersonMerge();
+  const [open, setOpen] = useState(true);
+  const [merged, setMerged] = useState<PersonMergePreview | null>(null);
+  return <>
+    <PersonMergeDialog open={open} loser={loser} entries={entries} merge={merge}
+      onMerged={setMerged} onOpenChange={next => { setOpen(next); }} />
+    {merged && <div className="acx-person-merge-banner" role="status">
+      {merge.undo.error ? <p><AlertCircle aria-hidden="true" />
+        {isPersonMergeConflict(merge.undo.error) ? 'This merge can no longer be undone. ' : 'Undo failed: '}
+        {personMergeErrorMessage(merge.undo.error)}</p> : <p><CheckCircle2 aria-hidden="true" />
+        {merge.undo.isSuccess ? 'Person restored.' : `Merged ${merged.loser.name} into ${merged.survivor.name}.`}</p>}
+      {!merge.undo.isSuccess && !isPersonMergeConflict(merge.undo.error) && <button type="button"
+        disabled={merge.undo.isPending || merge.undoToken === null}
+        onClick={() => { if (merge.undoToken !== null) merge.undo.mutate(merge.undoToken); }}>
+        {merge.undo.isPending ? 'Undoing…' : 'Undo'}</button>}
+      <button type="button" disabled={merge.undo.isPending} onClick={onDismiss} aria-label="Dismiss merge notification"><X aria-hidden="true" /></button>
+    </div>}
+  </>;
 };

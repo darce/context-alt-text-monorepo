@@ -543,25 +543,40 @@ export const IdentityClusterItem = ({
           <DialogOverlay />
           <DialogContent>
             <div className="acx-anchor-modal">
-              <DialogTitle>{__('Split a face group', 'alt-context')}</DialogTitle>
+              <DialogTitle>{derivedLabel ? __('Choose a face to keep the label', 'alt-context') : __('Split a face group', 'alt-context')}</DialogTitle>
               <DialogDescription>
-                {__(
-                  'Choose a face to keep the label. Other faces in this face group will move to a new face group.',
-                  'alt-context',
-                )}
+                {derivedLabel
+                  ? sprintf(
+                      __('Choose a face to keep the label “%s”. Other faces in this face group will move to a new face group.', 'alt-context'),
+                      derivedLabel,
+                    )
+                  : __('The chosen face stays in this face group; other faces move to a new face group.', 'alt-context')}
               </DialogDescription>
               {splittableGroups.length > 1 && (
-                <label>
-                  {__('Face group', 'alt-context')}
-                  <select value={splitGroupId ?? ''} onChange={(event) => setSplitGroupId(event.target.value || null)}>
-                    <option value="">{__('Choose a face group', 'alt-context')}</option>
-                    {splittableGroups.map(([id], index) => (
-                      <option key={id} value={id}>
-                        {sprintf(__('Face group %d', 'alt-context'), index + 1)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <fieldset>
+                  <legend>{__('Face group', 'alt-context')}</legend>
+                  {splittableGroups.map(([id, members], index) => {
+                    const preview = members[0];
+                    return (
+                      <label key={id}>
+                        <input
+                          type="radio"
+                          name="split-face-group"
+                          value={id}
+                          checked={splitGroupId === id}
+                          onChange={() => setSplitGroupId(id)}
+                        />
+                        {preview.media_url && preview.bbox && (
+                          <FaceThumbnail mediaUrl={preview.media_url} bbox={preview.bbox} size="lg" alt="" />
+                        )}
+                        {sprintf(__('Face group %d · %d faces', 'alt-context'), index + 1, members.length)}
+                      </label>
+                    );
+                  })}
+                </fieldset>
+              )}
+              {!splitGroupId && (
+                <p>{__('Choose a face group to pick the face that keeps it', 'alt-context')}</p>
               )}
               <div className="acx-anchor-modal__grid">
                 {splitMembers.map((member) => {

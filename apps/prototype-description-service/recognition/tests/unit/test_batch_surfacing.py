@@ -14,6 +14,7 @@ from recognition.application.settings import ClusteringSettings
 from recognition.application.suggestions.refresh_service import SuggestionRefreshService
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.repositories import SuggestionCreateData
+from recognition.domain.representative import ClusterRepresentative
 from recognition.domain.suggestion import AssignmentSuggestion, SuggestionStatus
 
 TENANT_ID = "00000000-0000-0000-0000-000000000001"
@@ -37,13 +38,30 @@ class StubSuggestionRepository:
 
 
 class StubClusterRepository:
-    def __init__(self, identities_by_cluster: dict[str, list[MediaIdentity]]) -> None:
+    def __init__(
+        self,
+        identities_by_cluster: dict[str, list[MediaIdentity]],
+        representatives_by_cluster: dict[str, list[np.ndarray]] | None = None,
+    ) -> None:
         self.identities_by_cluster = identities_by_cluster
+        self.representatives_by_cluster = representatives_by_cluster or {}
         self.calls: list[list[str]] = []
 
     async def get_member_identities_for_clusters(self, cluster_ids: Sequence[str]) -> dict[str, list[MediaIdentity]]:
         self.calls.append(list(cluster_ids))
         return {cid: self.identities_by_cluster.get(cid, []) for cid in cluster_ids}
+
+    async def get_all_representatives(self, cluster_id: str) -> list[ClusterRepresentative]:
+        return [
+            ClusterRepresentative(
+                id=f"rep-{cluster_id}-{index}",
+                cluster_id=cluster_id,
+                identity_id=f"identity-{cluster_id}-{index}",
+                embedding=vector,
+                created_at=datetime.now(tz=UTC),
+            )
+            for index, vector in enumerate(self.representatives_by_cluster.get(cluster_id, []))
+        ]
 
 
 def _make_identity(identity_id: str) -> MediaIdentity:
@@ -62,7 +80,7 @@ def _make_identity(identity_id: str) -> MediaIdentity:
 @pytest.mark.asyncio
 async def test_batch_surfacing_groups_by_cluster() -> None:
     identity = _make_identity("identity-1")
-    cluster_repo = StubClusterRepository({"cluster-2": [identity]})
+    cluster_repo = StubClusterRepository({"cluster-2": [identity]}, {"cluster-1": [identity.embedding]})
     suggestion_repo = StubSuggestionRepository()
     settings = ClusteringSettings(
         similarity_threshold=0.0,
@@ -93,7 +111,7 @@ async def test_batch_surfacing_groups_by_cluster() -> None:
 
 @pytest.mark.asyncio
 async def test_batch_surfacing_handles_empty_clusters() -> None:
-    cluster_repo = StubClusterRepository({})
+    cluster_repo = StubClusterRepository({}, {"cluster-1": [np.array([1.0, 0.0, 0.0], dtype=np.float32)]})
     suggestion_repo = StubSuggestionRepository()
     settings = ClusteringSettings(
         similarity_threshold=0.0,
@@ -124,7 +142,7 @@ async def test_batch_surfacing_handles_empty_clusters() -> None:
 @pytest.mark.asyncio
 async def test_batch_surfacing_requires_explicit_candidate_partition() -> None:
     identity = _make_identity("identity-implicit-scan")
-    cluster_repo = StubClusterRepository({"cluster-2": [identity]})
+    cluster_repo = StubClusterRepository({"cluster-2": [identity]}, {"cluster-1": [identity.embedding]})
     suggestion_repo = StubSuggestionRepository()
     settings = ClusteringSettings(
         similarity_threshold=0.0,
@@ -162,7 +180,9 @@ async def test_batch_surfacing_handles_large_cluster_sets() -> None:
             _make_identity(f"identity-{idx}-b"),
         ]
 
-    cluster_repo = StubClusterRepository(identities_by_cluster)
+    cluster_repo = StubClusterRepository(
+        identities_by_cluster, {"cluster-0": [np.array([1.0, 0.0, 0.0], dtype=np.float32)]}
+    )
     suggestion_repo = StubSuggestionRepository()
     settings = ClusteringSettings(
         similarity_threshold=0.0,
@@ -194,7 +214,7 @@ async def test_batch_surfacing_handles_large_cluster_sets() -> None:
 @pytest.mark.asyncio
 async def test_batch_surfacing_creates_suggestions_when_gate_accepts() -> None:
     identity = _make_identity("identity-accept")
-    cluster_repo = StubClusterRepository({"cluster-2": [identity]})
+    cluster_repo = StubClusterRepository({"cluster-2": [identity]}, {"cluster-1": [identity.embedding]})
     suggestion_repo = StubSuggestionRepository()
     settings = ClusteringSettings(
         similarity_threshold=0.0,
@@ -239,7 +259,8 @@ async def test_batch_surfacing_dedupes_same_identity_across_clusters() -> None:
         {
             "cluster-2": [repeated_identity],
             "cluster-3": [repeated_identity],
-        }
+        },
+        {"cluster-1": [repeated_identity.embedding]},
     )
     suggestion_repo = StubSuggestionRepository()
     settings = ClusteringSettings(

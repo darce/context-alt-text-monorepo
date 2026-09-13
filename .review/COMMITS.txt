@@ -1,1 +1,1 @@
-3b34835d3292 offload: Committed B05 provenance fix; full verification is blocked by
+4e72f73127a6 offload: Implemented and committed matview-only repair and verification;

@@ -1,4 +1,5 @@
- .../application/orchestration/clustering/job_result.py         |  1 +
- .../application/orchestration/clustering/orchestrator.py       |  2 ++
- .../recognition/tests/unit/test_probe_skip_result_contract.py  | 10 ++++++++++
- 3 files changed, 13 insertions(+)
+ .../db/migrations/versions/001_identity_schema.py  |   8 ++
+ .../unit/test_sync_identity_schema_matview_only.py | 135 +++++++++++++++++++++
+ .../scripts/sync_identity_schema.py                |  38 +++++-
+ .../scripts/verify_identity_schema.py              |  98 ++++++++++++++-
+ 4 files changed, 273 insertions(+), 6 deletions(-)

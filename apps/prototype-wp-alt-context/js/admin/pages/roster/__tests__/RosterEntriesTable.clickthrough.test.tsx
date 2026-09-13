@@ -80,4 +80,27 @@ describe('roster workspace navigation', () => {
     expect(params.get('s')).toBe('Alice');
     for (const key of ['tab', 'face', 'cluster']) expect(params.has(key)).toBe(false);
   });
+
+  it('preserves the queue filter when opening a person', async () => {
+    const user = userEvent.setup();
+    const queuedEntry: RosterEntry = { ...entry, queue_memberships: ['hard-examples'] };
+    render(
+      <MemoryRouter initialEntries={['/?queue=hard-examples&face=old']}>
+        <RosterEntriesSection query={{ data: [queuedEntry], isLoading: false, isError: false, refetch: vi.fn() }} />
+        <Location />
+      </MemoryRouter>,
+    );
+    await user.click(screen.getByRole('button', { name: entry.name }));
+    const params = new URLSearchParams(screen.getByTestId('location').textContent ?? '');
+    expect(params.get('person')).toBe(entry.person_uuid);
+    expect(params.get('queue')).toBe('hard-examples');
+    expect(params.has('face')).toBe(false);
+  });
+
+  it('renders a non-actionable label when the entry has no resolvable person uuid', () => {
+    const unresolved: RosterEntry = { ...entry, person_uuid: null as unknown as string };
+    render(<RosterEntriesTable entries={[unresolved]} onOpenPerson={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: entry.name })).not.toBeInTheDocument();
+    expect(screen.getByText(entry.name)).toBeInTheDocument();
+  });
 });

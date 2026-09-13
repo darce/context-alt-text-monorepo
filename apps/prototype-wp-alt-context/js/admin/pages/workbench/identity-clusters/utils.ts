@@ -38,7 +38,7 @@ export const formatClusterLabel = (
 };
 
 /**
- * Group identities by their cluster ID.
+ * Group identities by person, falling back to cluster ID.
  *
  * Identities without a cluster ID are grouped individually.
  *
@@ -47,28 +47,67 @@ export const formatClusterLabel = (
  */
 export const groupIdentitiesByClusters = (identities: DetectedIdentity[]): ClusterGroup[] => {
   const groups = new Map<string, ClusterGroup>();
+  // Tracks whether a group has already locked in a human label so a later
+  // auto/empty label can never displace it (IDCHIP-1-GROUP-R-01).
+  const hasHumanLabel = new Map<string, boolean>();
 
   identities.forEach((identity) => {
-    const clusterKey = identity.cluster_id ?? `identity-${identity.identity_id}`;
+    const personId = identity.person_id || null;
+    const clusterKey = personId !== null
+      ? `person:${personId}`
+      : identity.cluster_id != null
+        ? `cluster:${identity.cluster_id}`
+        : `identity:${identity.identity_id}`;
 
     if (!groups.has(clusterKey)) {
       groups.set(clusterKey, {
         key: clusterKey,
         clusterId: identity.cluster_id ?? null,
-        label: identity.cluster_label ?? null,
-        isAutoLabel: Boolean(identity.is_auto_label),
+        personId,
+        clusterIds: [],
+        label: null,
+        isAutoLabel: false,
         clusteringPending: Boolean(identity.clustering_pending),
         members: [],
+        identityClusterIds: {},
       });
+      hasHumanLabel.set(clusterKey, false);
     }
 
     // If any member is pending, mark the whole group as pending
     const group = groups.get(clusterKey)!;
+    if (identity.cluster_id != null) {
+      group.identityClusterIds![identity.identity_id] = identity.cluster_id;
+      if (!group.clusterIds!.includes(identity.cluster_id)) {
+        group.clusterIds!.push(identity.cluster_id);
+      }
+    }
+
+    const trimmedLabel = identity.cluster_label?.trim() ?? '';
+    const isHumanCandidate = trimmedLabel.length > 0 && !identity.is_auto_label;
+    if (isHumanCandidate && !hasHumanLabel.get(clusterKey)) {
+      group.label = identity.cluster_label;
+      group.isAutoLabel = false;
+      hasHumanLabel.set(clusterKey, true);
+    } else if (!hasHumanLabel.get(clusterKey) && group.label === null && trimmedLabel.length > 0) {
+      group.label = identity.cluster_label;
+      group.isAutoLabel = Boolean(identity.is_auto_label);
+    }
+
     if (identity.clustering_pending) {
       group.clusteringPending = true;
     }
 
     group.members.push(identity);
+  });
+
+  // A group formed from an unbound first member (clusterId null) but later
+  // members that do carry a cluster id should still resolve to one of those
+  // ids so display/auto-label gating (formatClusterLabel) applies (BR-01).
+  groups.forEach((group) => {
+    if (group.clusterId === null && group.clusterIds && group.clusterIds.length > 0) {
+      group.clusterId = group.clusterIds[0];
+    }
   });
 
   return Array.from(groups.values());

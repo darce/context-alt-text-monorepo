@@ -8,6 +8,7 @@ import type { ClusterGroup } from '../types';
 const MATCH_DEBOUNCE_MS = 300;
 
 const findClusterByLabel = vi.fn();
+const splitMock = vi.fn();
 
 vi.mock('../useClusterSuggestions', () => ({
   useClusterSuggestions: () => ({
@@ -30,7 +31,7 @@ vi.mock('../useClusterMutations', () => ({
     rename: vi.fn(),
     createClusterForIdentity: vi.fn(),
     reassign: vi.fn(),
-    split: vi.fn(),
+    split: splitMock,
     revertMerge: vi.fn(),
     rejectSuggestion: vi.fn(),
     splitGate: { disabled: false, title: undefined, 'aria-disabled': false },
@@ -316,5 +317,40 @@ describe('IdentityClusterItem mutation affordance gates (WBUX6-W3-L6-02 / WBUX6-
     expect(screen.getByRole('button', { name: /edit label/i })).toBeInTheDocument();
     expect(splitButton()).not.toBeInTheDocument();
     expect(removeButton()).not.toBeInTheDocument();
+  });
+});
+
+describe('IdentityClusterItem split routing across a person-spanning group (IDCHIP-1-GROUP-R-02)', () => {
+  afterEach(() => {
+    cleanup();
+    splitMock.mockReset();
+  });
+
+  // Person group spans two clusters: id-1/id-2 in "cluster-a" (the group's primary
+  // clusterId), id-3 in "cluster-b". Picking id-3 as the split anchor must route to
+  // cluster-b, not the group's clusterId, or the wrong cluster gets split.
+  const personSpanningCluster = (): ClusterGroup => ({
+    key: 'person:7',
+    clusterId: 'cluster-a',
+    personId: '7',
+    clusterIds: ['cluster-a', 'cluster-b'],
+    identityClusterIds: { 'id-1': 'cluster-a', 'id-2': 'cluster-a', 'id-3': 'cluster-b' },
+    label: 'bob',
+    isAutoLabel: false,
+    clusteringPending: false,
+    members: [
+      member({ identity_id: 'id-1', media_id: 1, cluster_id: 'cluster-a' }),
+      member({ identity_id: 'id-2', media_id: 2, cluster_id: 'cluster-a' }),
+      member({ identity_id: 'id-3', media_id: 3, cluster_id: 'cluster-b' }),
+    ],
+  });
+
+  it('splits the selected identity\'s own cluster, not the group\'s primary clusterId', () => {
+    renderItem(personSpanningCluster());
+
+    fireEvent.click(screen.getByRole('button', { name: /split group/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Use face from media #3/i }));
+
+    expect(splitMock).toHaveBeenCalledWith('cluster-b', 2, 'id-3');
   });
 });

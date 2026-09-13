@@ -214,7 +214,7 @@ class IdentityMembersReadRepository {
 		$placeholders  = implode( ', ', array_fill( 0, count( $normalized_ids ), '%d' ) );
 		$persons_table = $this->resolve_persons_table_name();
 		$sql           = $this->prepare_projection_read_query(
-			"SELECT m.*, {$this->projected_cluster_label_select_sql( 'p.name', 'c.label' )}, p.name AS person_name, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned
+			"SELECT m.*, {$this->projected_cluster_label_select_sql( 'p.name', 'c.label' )}, p.name AS person_name, c.curation_state, c.is_user_confirmed, c.representative_id, c.person_id, c.is_pinned
 			FROM %i m
 			INNER JOIN %i c ON c.cluster_uuid = m.cluster_uuid
 			LEFT JOIN %i p ON p.id = c.person_id
@@ -235,7 +235,40 @@ class IdentityMembersReadRepository {
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$rows = $wpdb->get_results( $sql, ARRAY_A );
 		$this->guard_query_error( 'identity_members.list_for_media_ids', $rows, true );
-		return is_array( $rows ) ? $rows : array();
+		if ( ! is_array( $rows ) ) {
+			return array();
+		}
+
+		$representative_ids = array();
+		foreach ( $rows as $row ) {
+			$id = trim( (string) ( $row['representative_id'] ?? '' ) );
+			if ( '' !== $id ) {
+				$representative_ids[ $id ] = $id;
+			}
+		}
+		$representatives = array();
+		if ( ! empty( $representative_ids ) ) {
+			$placeholders = implode( ', ', array_fill( 0, count( $representative_ids ), '%s' ) );
+			$sql = $this->prepare_projection_read_query(
+				"SELECT m.* FROM %i m
+				INNER JOIN %i c ON c.cluster_uuid = m.cluster_uuid
+				WHERE c.tenant_id = %s AND m.identity_uuid IN ($placeholders)",
+				array_merge( array( $this->members_table_name, $this->clusters_table_name, $normalized_tenant_id ), array_values( $representative_ids ) )
+			);
+			$this->clear_query_error();
+			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+			$representative_rows = $wpdb->get_results( $sql, ARRAY_A );
+			$this->guard_query_error( 'identity_members.list_for_media_ids.representatives', $representative_rows, true );
+			foreach ( is_array( $representative_rows ) ? $representative_rows : array() as $row ) {
+				$representatives[ (string) $row['identity_uuid'] ] = $row;
+			}
+		}
+		foreach ( $rows as &$row ) {
+			$id = trim( (string) ( $row['representative_id'] ?? '' ) );
+			$row['representative_member'] = $representatives[ $id ] ?? null;
+		}
+		unset( $row );
+		return $rows;
 	}
 
 	public function has_projection_rows_for_tenant( string $tenant_id ): bool {

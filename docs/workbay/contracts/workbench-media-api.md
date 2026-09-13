@@ -2,6 +2,15 @@
 
 Canonical owner: `wp-proxy`
 
+## GET /acx/v1/recognition/media-identities
+
+The `identities_by_media` envelope groups identities by media ID. Each identity may additionally carry:
+
+- `person_id?: string | null`: stringified `acx_persons.id` bound to the identity's cluster; null when unbound.
+- `representative_face?: { identity_id: string; media_id: number | null; media_url: string | null; attachment_url?: string | null; bbox: { x: number; y: number; width: number; height: number } | null } | null`: the cluster representative member's face, which may belong to another attachment. The URLs and bbox are resolved together in the served image's coordinate space. Null means the representative member could not be resolved.
+
+Both fields are optional; absence means unresolved. Local projection responses emit both fields, while backend proxy responses preserve them only when supplied upstream. Existing identity fields retain their semantics.
+
 This contract documents the WordPress workbench media endpoint consumed by the React admin UI for deferred row enrichment. The runtime owner is the REST surface under `apps/prototype-wp-alt-context/src/api/`.
 
 ## GET /acx/v1/workbench/media/detail

@@ -4,6 +4,7 @@ import { DEFAULT_QUEUE_STATE, parseQueueState } from '../../../hooks/workbenchQu
 import type { RosterEntry } from '../../../api/rosterApi';
 import {
   ROSTER_SURFACE,
+  getEntryPersonUuid,
   parseRosterRoute,
   selectDeterministicDefaultWorkspaceEntry,
   workbenchReviewQueueUrl,
@@ -27,6 +28,16 @@ const projectionEntry = (overrides: Partial<RosterEntry> = {}): RosterEntry => (
   projection_status: 'current',
   projection_refreshed_at: '2026-05-07T12:00:00Z',
   ...overrides,
+});
+
+describe('getEntryPersonUuid', () => {
+  it('rejects whitespace-only person UUIDs', () => {
+    expect(getEntryPersonUuid(projectionEntry({ person_uuid: '   ' }))).toBeNull();
+  });
+
+  it('trims surrounding whitespace from person UUIDs', () => {
+    expect(getEntryPersonUuid(projectionEntry({ person_uuid: ' abc ' }))).toBe('abc');
+  });
 });
 
 describe('selectDeterministicDefaultWorkspaceEntry', () => {

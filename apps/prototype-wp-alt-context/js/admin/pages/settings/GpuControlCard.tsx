@@ -160,6 +160,7 @@ export const GpuControlCard = (): React.JSX.Element => {
     error,
     refetch,
     canStart,
+    startBlockedReason,
     canStop,
     stopBlockedReason,
     canReturnToAuto,
@@ -170,7 +171,12 @@ export const GpuControlCard = (): React.JSX.Element => {
   const startHeld = !canStart || isIntentPending;
   const stopHeld = !canStop || isIntentPending;
   const pendingReason = isIntentPending ? __('a GPU request is already in flight', 'alt-context') : null;
-  const startReason = data && !canStart ? startDisabledReason(data) : pendingReason;
+  const startReason = startHeld
+    ? pendingReason ||
+      startBlockedReason ||
+      (data && startDisabledReason(data)) ||
+      __('GPU start is unavailable', 'alt-context')
+    : null;
   const stopReason = !canStop ? stopBlockedReason : pendingReason;
   const displayedState = data && data.snapshot_fresh ? data.gpu_state.state : GPU_STATE.UNKNOWN;
 

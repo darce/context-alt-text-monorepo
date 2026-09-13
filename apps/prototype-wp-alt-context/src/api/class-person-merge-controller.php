@@ -39,7 +39,7 @@ class PersonMergeController {
 
 	public function undo( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		$token = $request->get_param( 'undo_token' );
-		if ( ! is_string( $token ) || ! preg_match( '/^[a-f0-9-]{36}$/D', $token ) ) {
+		if ( ! is_string( $token ) || ! preg_match( PersonMergeService::UNDO_TOKEN_PATTERN, $token ) ) {
 			return new WP_Error( 'invalid_undo_token', 'A valid undo token is required.', array( 'status' => 400 ) );
 		}
 		return $this->response( $this->service->undo( TenantIdentity::resolve()['value'] ?? '', $token ) );

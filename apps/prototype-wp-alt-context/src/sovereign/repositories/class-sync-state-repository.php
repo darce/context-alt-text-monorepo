@@ -236,6 +236,16 @@ class SyncStateRepository implements SyncStateRepositoryInterface {
 		}
 	}
 
+	/**
+	 * Mark the tenant projection stale so the next sync pull refreshes it.
+	 *
+	 * IDCHIP-1-API-R-02: callers (person merge commit/undo) run this write inside
+	 * a DB transaction and must roll back on failure rather than COMMIT with a
+	 * silently-lost marker. $wpdb->query returns false on a write error; treat
+	 * that as fatal instead of swallowing it.
+	 *
+	 * @throws \RuntimeException When the write errors (query === false) or wpdb is unavailable.
+	 */
 	public function touch_local_curation_marker( string $tenant_id ): void {
 		global $wpdb;
 
@@ -246,7 +256,7 @@ class SyncStateRepository implements SyncStateRepositoryInterface {
 		}
 
 		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'query' ) ) {
-			return;
+			throw new \RuntimeException( 'Could not touch local curation marker: wpdb unavailable.' );
 		}
 
 		$stream_name = $this->stream_name_for_tenant( $normalized_tenant_id );
@@ -261,9 +271,14 @@ class SyncStateRepository implements SyncStateRepositoryInterface {
 			)
 		);
 
-		if ( is_string( $sql ) && '' !== $sql ) {
-			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
-			$wpdb->query( $sql );
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			throw new \RuntimeException( 'Could not prepare local curation marker write.' );
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$query_result = $wpdb->query( $sql );
+		if ( false === $query_result ) {
+			throw new \RuntimeException( 'Could not touch local curation marker (write error).' );
 		}
 	}
 

@@ -208,6 +208,7 @@ printf 'ARGS:%s\n' "$*" >>"$OCIR_TEST_RECORD_DIR/ssh.commands"
 printf '%s\n' "$last" >>"$OCIR_TEST_RECORD_DIR/ssh.commands"
 case "$last" in
   *"docker push"*) [[ "${OCIR_TEST_PUSH_FAIL:-0}" != 1 ]] || exit 42 ;;
+  "bash -s") cat >>"$OCIR_TEST_RECORD_DIR/ssh.stdin" ;;
 esac
 """,
     )
@@ -236,8 +237,15 @@ esac
     config_path = Path((records / "config.path").read_text())
     commands = (records / "ssh.commands").read_text()
     assert result.returncode == expected_rc, result.stderr
-    assert f"DOCKER_CONFIG={config_path} exec docker push iad.ocir.io/test/image:sha" in commands
-    assert f"rm -rf -- {config_path}" in commands
+    # The laptop TMPDIR (macOS /var/folders/...) does not exist on the VM: remote paths
+    # keep only the mktemp suffix under /tmp, and the local path never reaches ssh.
+    remote_path = f"/tmp/{config_path.name}"
+    assert str(tmp_path) not in commands
+    assert str(tmp_path) not in (records / "ssh.stdin").read_text()
+    assert remote_path in (records / "ssh.stdin").read_text()
+    assert f"config={remote_path};" in commands
+    assert f"DOCKER_CONFIG={remote_path} exec docker push iad.ocir.io/test/image:sha" in commands
+    assert f"rm -rf -- {remote_path}" in commands
     assert "acx-ocir-reaper" in commands
     assert "ConnectTimeout=5" in commands
     assert "ServerAliveInterval=15" in commands
@@ -247,7 +255,7 @@ esac
 def test_all_remote_registry_commands_carry_the_deploy_config() -> None:
     source = SCRIPT.read_text()
     assert "remote_docker_with_config()" in source
-    assert 'config_q="$(remote_quote "${ACX_DEPLOY_OCIR_CONFIG_DIR}")"' in source
+    assert 'config_q="$(remote_quote "$(remote_ocir_config_dir)")"' in source
     assert '_pull_ref_remote "${image}"' in source
     assert '_pull_ref "${IMAGE_BASE}:${from_tag}"' in source
     assert 'remote_docker_with_config push "${rollback_ref}"' in source

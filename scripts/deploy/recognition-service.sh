@@ -262,12 +262,12 @@ _purge_deploy_ocir_docker_config() {
   local config_dir="${ACX_DEPLOY_OCIR_CONFIG_DIR:-}" config_q
   if [[ -n "${config_dir}" ]]; then
     if [[ "${ACX_DEPLOY_OCIR_REMOTE_CONFIG:-0}" == "1" ]]; then
-      config_q="$(remote_quote "${config_dir}")"
+      config_q="$(remote_quote "$(remote_ocir_config_dir)")"
       if ! ssh -o BatchMode=yes -o ConnectTimeout=5 -o ConnectionAttempts=1 \
         -o ServerAliveInterval=2 -o ServerAliveCountMax=2 \
         -l "${OCI_USER}" -- "${OCI_HOST}" \
         "rm -rf -- ${config_q}" >/dev/null; then
-        warn "Remote OCIR credential cleanup failed for ${config_dir}; the remote expiry reaper remains armed"
+        warn "Remote OCIR credential cleanup failed for $(remote_ocir_config_dir); the remote expiry reaper remains armed"
       fi
     fi
     rm -rf -- "${config_dir}"
@@ -314,6 +314,12 @@ init_deploy_ocir_docker_config() {
   trap 'deploy_interrupt_cleanup 143' TERM
 }
 
+# The local dir lives under the laptop's TMPDIR (macOS: /var/folders/...), which does not
+# exist on the VM. The remote copy shares only the random mktemp suffix, under /tmp.
+remote_ocir_config_dir() {
+  printf '/tmp/%s\n' "${ACX_DEPLOY_OCIR_CONFIG_DIR##*/}"
+}
+
 init_remote_ocir_docker_config() {
   init_deploy_ocir_docker_config
   if [[ "${ACX_DEPLOY_OCIR_REMOTE_CONFIG}" == "1" ]]; then
@@ -326,7 +332,7 @@ init_remote_ocir_docker_config() {
   if [[ ! "${ttl}" =~ ^[1-9][0-9]*$ ]]; then
     fail "ACX_OCIR_REMOTE_CONFIG_TTL must be a positive integer (got: ${ttl})"
   fi
-  config_q="$(remote_quote "${ACX_DEPLOY_OCIR_CONFIG_DIR}")"
+  config_q="$(remote_quote "$(remote_ocir_config_dir)")"
   ttl_q="$(remote_quote "${ttl}")"
   ACX_DEPLOY_OCIR_REMOTE_CONFIG=1
   if ! ssh -o BatchMode=yes -o ConnectTimeout=5 -l "${OCI_USER}" -- "${OCI_HOST}" \
@@ -733,7 +739,8 @@ preflight_remote_ocir_auth() {
     return 0
   fi
   init_remote_ocir_docker_config
-  snippet="$(ocir_login_snippet "${ACX_REMOTE_OCI_BIN}" instance_principal "${OCIR_REGISTRY}")"
+  snippet="$(ACX_OCIR_DOCKER_CONFIG_DIR="$(remote_ocir_config_dir)" \
+    ocir_login_snippet "${ACX_REMOTE_OCI_BIN}" instance_principal "${OCIR_REGISTRY}")"
   ocir_login_or_fail "${SSH_TARGET}" \
     ssh -o BatchMode=yes -o ConnectTimeout=5 -l "${OCI_USER}" -- "${OCI_HOST}" \
       'bash -s' <<<"$snippet"
@@ -1164,7 +1171,7 @@ local_docker_with_config() {
 
 remote_docker_with_config() {
   local config_q arg quoted_args=""
-  config_q="$(remote_quote "${ACX_DEPLOY_OCIR_CONFIG_DIR}")"
+  config_q="$(remote_quote "$(remote_ocir_config_dir)")"
   for arg in "$@"; do
     quoted_args+=" $(remote_quote "${arg}")"
   done

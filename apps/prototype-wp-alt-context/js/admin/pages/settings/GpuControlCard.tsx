@@ -167,6 +167,10 @@ export const GpuControlCard = (): React.JSX.Element => {
     isIntentPending,
   } = useGpuControl();
   const [confirmation, setConfirmation] = React.useState<ConfirmationAction | null>(null);
+  const startHeld = !canStart || isIntentPending;
+  const stopHeld = !canStop || isIntentPending;
+  const startReason = data && !canStart ? startDisabledReason(data) : null;
+  const stopReason = !canStop ? stopBlockedReason : null;
   const displayedState = data && data.snapshot_fresh ? data.gpu_state.state : GPU_STATE.UNKNOWN;
 
   const confirm = (): void => {
@@ -251,22 +255,32 @@ export const GpuControlCard = (): React.JSX.Element => {
             <button
               type="button"
               className="acx-button acx-button--primary"
-              onClick={() => setConfirmation(GpuIntentAction.START)}
-              disabled={!canStart || isIntentPending}
+              onClick={() => {
+                if (!startHeld) {
+                  setConfirmation(GpuIntentAction.START);
+                }
+              }}
+              aria-disabled={startHeld ? true : undefined}
+              aria-describedby={startReason ? 'z-gpu-start-reason' : undefined}
             >
               <span aria-hidden="true">▶</span> {__('Start GPU', 'alt-context')}
             </button>
-            {!canStart && startDisabledReason(data) ? <span>disabled: {startDisabledReason(data)}</span> : null}
+            {startReason ? <span id="z-gpu-start-reason">disabled: {startReason}</span> : null}
 
             <button
               type="button"
               className="acx-button acx-button--secondary"
-              onClick={() => setConfirmation(GpuIntentAction.STOP)}
-              disabled={!canStop || isIntentPending}
+              onClick={() => {
+                if (!stopHeld) {
+                  setConfirmation(GpuIntentAction.STOP);
+                }
+              }}
+              aria-disabled={stopHeld ? true : undefined}
+              aria-describedby={stopReason ? 'z-gpu-stop-reason' : undefined}
             >
               <span aria-hidden="true">■</span> {__('Stop GPU', 'alt-context')}
             </button>
-            {!canStop && stopBlockedReason ? <span>disabled: {stopBlockedReason}</span> : null}
+            {stopReason ? <span id="z-gpu-stop-reason">disabled: {stopReason}</span> : null}
 
             {canReturnToAuto ? (
               <button

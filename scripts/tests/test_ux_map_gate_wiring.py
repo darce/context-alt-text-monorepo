@@ -49,6 +49,30 @@ def _ux_map_parity_step(job: str) -> str:
     return match.group(0)
 
 
+def _path_filters_by_trigger(text: str) -> dict[str, list[str]]:
+    filters: dict[str, list[str]] = {}
+    trigger: str | None = None
+    in_paths = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped in {"pull_request:", "push:"}:
+            trigger = stripped[:-1]
+            in_paths = False
+            continue
+        if trigger is not None and stripped == "paths:":
+            filters.setdefault(trigger, [])
+            in_paths = True
+            continue
+        if in_paths:
+            match = re.fullmatch(r'- "([^"]+)"', stripped)
+            if match:
+                filters[trigger].append(match.group(1))
+                continue
+            if stripped and not stripped.startswith("#"):
+                in_paths = False
+    return filters
+
+
 def test_makefile_declares_ux_map_parity_target() -> None:
     makefile = MAKEFILE.read_text(encoding="utf-8")
     recipe = _recipe_for(makefile, "lint-ux-maps")
@@ -79,3 +103,26 @@ def test_harness_runs_ux_map_parity_in_the_app_working_directory() -> None:
     assert "working-directory: apps/prototype-wp-alt-context" in step
     assert "python docs/ux-maps/render_ux_maps.py --check" in step
     assert "python docs/ux-maps/sync_unicode_width.py --check" in step
+
+
+def test_harness_job_provisions_node_for_render_parity() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    job = _harness_job(workflow)
+    node_match = re.search(
+        r"(?ms)^      - name: Set up Node\n(.*?)(?=^      - name:|\Z)",
+        job,
+    )
+    assert node_match is not None, "missing Node setup step in harness job"
+    node_step = node_match.group(0)
+
+    assert "uses: actions/setup-node@v4" in node_step
+    assert 'node-version: "22.18.0"' in node_step
+    assert node_match.start() < job.index("      - name: Check UX-map render parity")
+
+
+def test_workflow_path_filters_include_root_makefile() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    filters = _path_filters_by_trigger(workflow)
+
+    assert "Makefile" in filters.get("pull_request", [])
+    assert "Makefile" in filters.get("push", [])

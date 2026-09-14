@@ -751,7 +751,7 @@ preflight_load_deployments() {
     local environment line_number=0 source deployments_file
     local required
     local load_environments=""
-    local required_deployments="dev dev-fir staging prod"
+    local required_deployments="dev staging prod"
     if [ "${ACX_GPU_DEPLOYMENTS+x}" = x ]; then
         source=ACX_GPU_DEPLOYMENTS
         while IFS= read -r environment; do

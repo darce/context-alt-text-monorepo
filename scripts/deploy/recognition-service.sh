@@ -8,7 +8,8 @@
 #   - OCIR auth token missing/expired (local or remote)
 #   - SSH key not loaded / public-IP allowlist drift
 #   - HEAD diverged from origin/main (staging/prod only; skipped for dev + dev-fir)
-#   - dirty working tree (warned for dev/dev-fir, blocked for staging/prod)
+#   - dirty deploy inputs: apps/prototype-description-service, scripts/deploy
+#     (overridable for dev/dev-fir, blocked for staging/prod)
 #
 # Subcommands:
 #   build          [tag]              Build :SHA + :tag locally (no push). tag default = dev.
@@ -65,7 +66,7 @@
 #   ACX_REMOTE_BUILDER_NODE  default acx-deploy-builder-v1-node (single explicit node)
 #   ACX_REMOTE_BUILDER_ENDPOINT
 #                            default unix:///var/run/docker.sock; other endpoints are refused
-#   ACX_ALLOW_DIRTY          set to 1 to skip dirty-tree check (dev and dev-fir only)
+#   ACX_ALLOW_DIRTY          set to 1 to allow dirty deploy inputs (dev and dev-fir only)
 #   ACX_VERIFY_ATTEMPTS      default 5  (post-deploy verify retry count for warm-up)
 #   ACX_VERIFY_SLEEP         default 5  (seconds between verify attempts)
 #   ACX_VERIFY_OPTIONAL      set to 1 to downgrade verify failure from fail to warn after deploy/promote
@@ -258,15 +259,19 @@ validate_deploy_tmpdir() {
 validate_deploy_tmpdir
 
 _purge_deploy_ocir_docker_config() {
-  local config_dir="${ACX_DEPLOY_OCIR_CONFIG_DIR:-}" config_q
+  local config_dir="${ACX_DEPLOY_OCIR_CONFIG_DIR:-}" config_q remote_dir
   if [[ -n "${config_dir}" ]]; then
     if [[ "${ACX_DEPLOY_OCIR_REMOTE_CONFIG:-0}" == "1" ]]; then
-      config_q="$(remote_quote "${config_dir}")"
-      if ! ssh -o BatchMode=yes -o ConnectTimeout=5 -o ConnectionAttempts=1 \
-        -o ServerAliveInterval=2 -o ServerAliveCountMax=2 \
-        -l "${OCI_USER}" -- "${OCI_HOST}" \
-        "rm -rf -- ${config_q}" >/dev/null; then
-        warn "Remote OCIR credential cleanup failed for ${config_dir}; the remote expiry reaper remains armed"
+      if ! remote_dir="$(remote_ocir_config_dir)"; then
+        warn "Skipping remote OCIR credential cleanup for unrecognized dir ${config_dir}; the remote expiry reaper remains armed"
+      else
+        config_q="$(remote_quote "${remote_dir}")"
+        if ! ssh -o BatchMode=yes -o ConnectTimeout=5 -o ConnectionAttempts=1 \
+          -o ServerAliveInterval=2 -o ServerAliveCountMax=2 \
+          -l "${OCI_USER}" -- "${OCI_HOST}" \
+          "rm -rf -- ${config_q}" >/dev/null; then
+          warn "Remote OCIR credential cleanup failed for ${remote_dir}; the remote expiry reaper remains armed"
+        fi
       fi
     fi
     rm -rf -- "${config_dir}"
@@ -313,6 +318,17 @@ init_deploy_ocir_docker_config() {
   trap 'deploy_interrupt_cleanup 143' TERM
 }
 
+# The local dir lives under the laptop's TMPDIR (macOS: /var/folders/...), which does not
+# exist on the VM. The remote copy shares only the random mktemp suffix, under /tmp.
+# Returns 1 unless the local dir is a real mktemp result, so no caller can ever
+# hand the VM a bare /tmp/ (DOCKER_CONFIG or rm -rf target). Check the status:
+# fail inside $(...) only exits the subshell.
+remote_ocir_config_dir() {
+  local base="${ACX_DEPLOY_OCIR_CONFIG_DIR##*/}"
+  [[ "${base}" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]] || return 1
+  printf '/tmp/%s\n' "${base}"
+}
+
 init_remote_ocir_docker_config() {
   init_deploy_ocir_docker_config
   if [[ "${ACX_DEPLOY_OCIR_REMOTE_CONFIG}" == "1" ]]; then
@@ -320,16 +336,17 @@ init_remote_ocir_docker_config() {
   fi
   # Arm cleanup before the create attempt: ssh may create the directory and
   # still return non-zero (for example, if a following chmod fails).
-  local config_q ttl ttl_q
+  local config_q ttl ttl_q remote_dir
   ttl="${ACX_OCIR_REMOTE_CONFIG_TTL:-3600}"
   if [[ ! "${ttl}" =~ ^[1-9][0-9]*$ ]]; then
     fail "ACX_OCIR_REMOTE_CONFIG_TTL must be a positive integer (got: ${ttl})"
   fi
-  config_q="$(remote_quote "${ACX_DEPLOY_OCIR_CONFIG_DIR}")"
+  remote_dir="$(remote_ocir_config_dir)" || fail "Remote OCIR credential dir is not initialized"
+  config_q="$(remote_quote "${remote_dir}")"
   ttl_q="$(remote_quote "${ttl}")"
   ACX_DEPLOY_OCIR_REMOTE_CONFIG=1
   if ! ssh -o BatchMode=yes -o ConnectTimeout=5 -l "${OCI_USER}" -- "${OCI_HOST}" \
-    "umask 077; config=${config_q}; if [ ! -d \"\$config\" ]; then mkdir -p -- \"\$config\"; fi; chmod 700 \"\$config\"; nohup bash -c 'sleep \"\$1\"; rm -rf -- \"\$2\"' acx-ocir-reaper ${ttl_q} \"\$config\" >/dev/null 2>&1 </dev/null &"; then
+    "umask 077; config=${config_q}; if [ -L \"\$config\" ]; then exit 1; fi; if [ ! -d \"\$config\" ]; then mkdir -p -- \"\$config\"; fi; chmod 700 \"\$config\"; nohup bash -c 'sleep \"\$1\"; rm -rf -- \"\$2\"' acx-ocir-reaper ${ttl_q} \"\$config\" >/dev/null 2>&1 </dev/null &"; then
     fail "Could not create remote deploy-scoped Docker credential directory on ${SSH_TARGET}"
   fi
 }
@@ -727,12 +744,14 @@ preflight_remote_ocir_auth() {
   # ACX_REMOTE_OCI_BIN carries a literal $HOME for the remote shell to expand, so
   # the snippet is fed to `bash -s` over stdin rather than interpolated into
   # argv. The here-string binds to the function call; ssh inherits that stdin.
-  local snippet
+  local snippet remote_dir
   if [[ "${ACX_DEPLOY_OCIR_REMOTE_AUTHENTICATED}" == "1" ]]; then
     return 0
   fi
   init_remote_ocir_docker_config
-  snippet="$(ocir_login_snippet "${ACX_REMOTE_OCI_BIN}" instance_principal "${OCIR_REGISTRY}")"
+  remote_dir="$(remote_ocir_config_dir)" || fail "Remote OCIR credential dir is not initialized"
+  snippet="$(ACX_OCIR_DOCKER_CONFIG_DIR="${remote_dir}" \
+    ocir_login_snippet "${ACX_REMOTE_OCI_BIN}" instance_principal "${OCIR_REGISTRY}")"
   ocir_login_or_fail "${SSH_TARGET}" \
     ssh -o BatchMode=yes -o ConnectTimeout=5 -l "${OCI_USER}" -- "${OCI_HOST}" \
       'bash -s' <<<"$snippet"
@@ -743,15 +762,19 @@ preflight_rsync() {
 }
 # Only paths that reach the image (rsync build context) or drive the deploy itself.
 # Edits elsewhere (harness config, docs) cannot change what ships, so they must not
-# train operators to reach for ACX_ALLOW_DIRTY. Untracked files count: rsync ships them.
+# train operators to reach for ACX_ALLOW_DIRTY. Untracked non-ignored files count: rsync
+# ships them. Gitignored files (e.g. a stray *.onnx) are not detected and can still ship.
 DEPLOY_CLEAN_PATHS=("apps/prototype-description-service" "scripts/deploy")
 preflight_git_clean() {
   local env="$1" dirty
-  dirty="$(git -C "${REPO_ROOT}" status --porcelain --untracked-files=normal -- "${DEPLOY_CLEAN_PATHS[@]}" 2>&1)" \
-    || fail "git status failed for deploy inputs: ${dirty}"
+  # stderr stays out of $dirty so a git warning on success is not read as a change.
+  dirty="$(git -C "${REPO_ROOT}" status --porcelain --untracked-files=normal -- "${DEPLOY_CLEAN_PATHS[@]}" 2>/dev/null)" || {
+    git -C "${REPO_ROOT}" status --porcelain -- "${DEPLOY_CLEAN_PATHS[@]}" >/dev/null || true
+    fail "git status failed for deploy inputs (${REPO_ROOT})"
+  }
   if [[ -n "$dirty" ]]; then
     warn "Deploy inputs have uncommitted changes:"
-    printf '%s\n' "$dirty" | head -20 >&2
+    printf '%s\n' "$dirty" | head -20 >&2 || true
     # dev-fir is a dev-tier env (feature-branch workflow): same dirty-tree policy as dev.
     if [[ "$env" == "dev" || "$env" == "dev-fir" ]] && [[ "${ACX_ALLOW_DIRTY:-0}" == "1" ]]; then
       warn "Continuing for ${env} (ACX_ALLOW_DIRTY=1)."
@@ -1158,8 +1181,12 @@ local_docker_with_config() {
 }
 
 remote_docker_with_config() {
-  local config_q arg quoted_args=""
-  config_q="$(remote_quote "${ACX_DEPLOY_OCIR_CONFIG_DIR}")"
+  local config_q arg quoted_args="" remote_dir=""
+  # An uninitialized config keeps DOCKER_CONFIG empty (docker's default), never a bare /tmp/.
+  if [[ -n "${ACX_DEPLOY_OCIR_CONFIG_DIR}" ]]; then
+    remote_dir="$(remote_ocir_config_dir)" || fail "Remote OCIR credential dir is not initialized"
+  fi
+  config_q="$(remote_quote "${remote_dir}")"
   for arg in "$@"; do
     quoted_args+=" $(remote_quote "${arg}")"
   done
@@ -2467,18 +2494,18 @@ if ! [[ "${port}" =~ ^[0-9]+$ ]]; then
   echo "smoke setup failed: no published port" >&2
   exit 1
 fi
-# EXIT trap: timeout 2 × 6 docker ops; trap_docker_s reserves health-loop tail.
+# EXIT trap: timeout 2 × 6 docker ops; composite_deadline reserves its wall
+# clock separately from this full health window.
 # Outer composite adds +1s kill-grace per op (GR-262).
-diag_reserve=$((trap_docker_s + poll_s))
-health_budget=$((budget_s - diag_reserve))
+health_budget="$budget_s"
 if (( health_budget < 1 )); then
   health_budget=1
 fi
 health_end=$((SECONDS + health_budget))
 probe_n=0
 while (( SECONDS < health_end )); do
-  # Skip a curl that would eat the diag reserve, but always allow the first
-  # probe so a tiny clamped health_budget still observes /health.
+  # Skip a probe when only one poll interval remains, but always allow the
+  # first probe so a tiny clamped health_budget still observes /health.
   if (( probe_n > 0 && health_end - SECONDS <= poll_s )); then
     break
   fi
@@ -3088,9 +3115,51 @@ fi
 FLIP_EDGE
 }
 
+health_probe_program() {
+  cat <<'PYPROBE'
+import json
+import socket
+import sys
+import urllib.error
+import urllib.request
+
+def probe():
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=4) as r:
+            if r.status != 200:
+                print("HTTP " + str(r.status))
+                return 1
+            if len(sys.argv) > 1:
+                body = json.load(r)
+                actual = body.get("commit_sha") or body.get("git_commit_sha") or body.get("version") or ""
+                if not actual == sys.argv[1]:
+                    print(" ".join(("SHA mismatch: expected " + sys.argv[1] + ", actual " + str(actual)).split()))
+                    return 1
+            return 0
+    except urllib.error.HTTPError as exc:
+        cause = "HTTP " + str(exc.code)
+    except (TimeoutError, socket.timeout):
+        cause = "timeout"
+    except urllib.error.URLError as exc:
+        if isinstance(exc.reason, (TimeoutError, socket.timeout)):
+            cause = "timeout"
+        elif isinstance(exc.reason, ConnectionRefusedError):
+            cause = "connection refused"
+        else:
+            cause = "connection failed: " + str(exc.reason)
+    except Exception as exc:
+        cause = type(exc).__name__ + ": " + str(exc)
+    print(" ".join(cause.split()))
+    return 1
+
+sys.exit(probe())
+PYPROBE
+}
+
 probe_cutover_api_health() {
   local env="$1" expected_digest expected_sha next_project remote_dir timeout attempt max_attempts sleep_s
-  local expected_image_id
+  local expected_image_id cause rc program
+  program="$(health_probe_program)"
   expected_digest="${2:-${ACX_CANDIDATE_DIGEST_REF:-}}"
   expected_sha="${3:-}"
   remote_dir="$(env_to_remote_dir "$env")"
@@ -3117,20 +3186,26 @@ probe_cutover_api_health() {
   [[ "${max_attempts}" =~ ^[1-9][0-9]*$ ]] || return 1
   [[ "${sleep_s}" =~ ^[0-9]+$ ]] || return 1
   for attempt in $(seq 1 "${max_attempts}"); do
-    if run_with_deadline "${timeout}" "cutover health probe ${env} attempt ${attempt}" \
+    if cause="$(run_with_deadline "${timeout}" "cutover health probe ${env} attempt ${attempt}" \
       ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
-      "cd '${remote_dir}' && cid=\$(docker compose -p '${next_project}' -f docker-compose.cutover.yml ps -q api | head -1) && [ -n \"\$cid\" ] && image_id=\$(docker inspect --format '{{.Image}}' \"\$cid\") && [ \"\$image_id\" = '${expected_image_id}' ] && docker exec \"\$cid\" python -c 'import json, sys, urllib.request; r=urllib.request.urlopen(\"http://127.0.0.1:8000/health\", timeout=4); body=json.load(r); actual=body.get(\"commit_sha\") or body.get(\"git_commit_sha\") or body.get(\"version\") or \"\"; sys.exit(0 if r.status == 200 and actual == sys.argv[1] else 1)' '${expected_sha}'"; then
+      "cd '${remote_dir}' && cid=\$(docker compose -p '${next_project}' -f docker-compose.cutover.yml ps -q api | head -1) && { [ -n \"\$cid\" ] || { echo container missing; exit 1; }; } && image_id=\$(docker inspect --format '{{.Image}}' \"\$cid\") && { [ \"\$image_id\" = '${expected_image_id}' ] || { echo image mismatch; exit 1; }; } && docker exec \"\$cid\" python -c '${program}' '${expected_sha}'" 2>&1)"; then
       log "Cutover candidate ${next_project} is healthy"
       return 0
+    else
+      rc=$?
     fi
-    warn "Cutover candidate health failed on attempt ${attempt}/${max_attempts}"
+    if [[ "$rc" == 124 ]]; then cause="deadline exceeded"; fi
+    cause="${cause//$'\n'/ }"
+    cause="${cause//$'\r'/ }"
+    warn "Cutover candidate health failed on attempt ${attempt}/${max_attempts}: ${cause:-remote probe failed (exit $rc)}"
     verify_retry_sleep "${attempt}" "${max_attempts}" "${sleep_s}"
   done
   return 1
 }
 
 probe_canonical_api_health() {
-  local env="$1" remote_dir compose_files timeout attempt max_attempts sleep_s
+  local env="$1" remote_dir compose_files timeout attempt max_attempts sleep_s cause rc program
+  program="$(health_probe_program)"
   remote_dir="$(env_to_remote_dir "$env")"
   compose_files="$(env_to_compose_files "$env")"
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
@@ -3140,13 +3215,18 @@ probe_canonical_api_health() {
   [[ "${sleep_s}" =~ ^[0-9]+$ ]] || return 1
   for attempt in $(seq 1 "${max_attempts}"); do
     # shellcheck disable=SC2086 # compose_files is intentionally word-split remotely.
-    if run_with_deadline "${timeout}" "canonical health probe ${env} attempt ${attempt}" \
+    if cause="$(run_with_deadline "${timeout}" "canonical health probe ${env} attempt ${attempt}" \
       ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
-      "cd '${remote_dir}' && cid=\$(docker compose ${compose_files} ps -q api | head -1) && [ -n \"\$cid\" ] && docker exec \"\$cid\" python -c 'import sys, urllib.request; r=urllib.request.urlopen(\"http://127.0.0.1:8000/health\", timeout=4); sys.exit(0 if r.status==200 else 1)'"; then
+      "cd '${remote_dir}' && cid=\$(docker compose ${compose_files} ps -q api | head -1) && { [ -n \"\$cid\" ] || { echo container missing; exit 1; }; } && docker exec \"\$cid\" python -c '${program}'" 2>&1)"; then
       log "Canonical api ${env} is healthy"
       return 0
+    else
+      rc=$?
     fi
-    warn "Canonical api health failed on attempt ${attempt}/${max_attempts}"
+    if [[ "$rc" == 124 ]]; then cause="deadline exceeded"; fi
+    cause="${cause//$'\n'/ }"
+    cause="${cause//$'\r'/ }"
+    warn "Canonical api health failed on attempt ${attempt}/${max_attempts}: ${cause:-remote probe failed (exit $rc)}"
     verify_retry_sleep "${attempt}" "${max_attempts}" "${sleep_s}"
   done
   return 1
@@ -3282,12 +3362,12 @@ do_restart() {
     warn "cutover candidate lost health after canonical api/worker restart; traffic remains on ${next_unit}"
     return 1
   fi
-  if ! verify_running_image_digest "$env" "${expected_digest}"; then
-    warn "live unit ${unit} came up on the wrong image; traffic remains on ${next_unit}"
-    return 1
-  fi
   if ! probe_canonical_api_health "$env"; then
     warn "canonical api never became healthy after restart; traffic remains on ${next_unit}"
+    return 1
+  fi
+  if ! verify_running_image_digest "$env" "${expected_digest}"; then
+    warn "live unit ${unit} came up on the wrong image; traffic remains on ${next_unit}"
     return 1
   fi
   if ! flip_edge_alias "$env" canonical; then
@@ -3584,7 +3664,7 @@ restore_runtime_and_edge() {
 # when digest staging succeeds but a later repair/restart/verify step fails.
 with_shared_tag_lock() {
   local tag="$1"; shift
-  local timeout lock_path holder_pid holder_out rc=0 waited=0
+  local timeout lock_path holder_pid holder_stdin_pid holder_out holder_err holder_diag rc=0 waited=0
   assert_safe_shell_token "image tag" "${tag}"
   if [[ "${ACX_ENV_TAG_LOCK_HELD:-}" == "${tag}" ]]; then
     "$@"
@@ -3593,24 +3673,43 @@ with_shared_tag_lock() {
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
   lock_path="${ACX_DEPLOY_BACKUP_ROOT}/locks/tag-${tag}.lock"
   holder_out="$(mktemp "${TMPDIR:-/tmp}/acx-tag-lock.XXXXXX")" || return 1
+  mkfifo "${holder_out}.stdin" || { rm -f "${holder_out}"; return 1; }
+  # The remote cat holds the flock until its stdin closes: keep the writer
+  # alive for the whole wrapped command, not just the acquire timeout.
+  (while kill -0 "$$" 2>/dev/null; do sleep 1 >/dev/null; done) </dev/null >"${holder_out}.stdin" 2>/dev/null &
+  holder_stdin_pid=$!
   ssh -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
     -o ServerAliveInterval=5 -o ServerAliveCountMax=2 \
     -l "${OCI_USER}" -- "${OCI_HOST}" \
-    "sudo install -d -m 700 $(remote_quote "${ACX_DEPLOY_BACKUP_ROOT}/locks") && exec 9>$(remote_quote "${lock_path}") && flock -w ${timeout} 9 && printf 'LOCKED\n' && cat >/dev/null" \
-    < <(sleep "${timeout}") >"${holder_out}" 2>"${holder_out}.err" &
+    "sudo install -d -m 700 $(remote_quote "${ACX_DEPLOY_BACKUP_ROOT}/locks") && sudo flock -w ${timeout} $(remote_quote "${lock_path}") sh -c 'printf \"LOCKED\\n\"; exec cat >/dev/null'" \
+    <"${holder_out}.stdin" >"${holder_out}" 2>"${holder_out}.err" &
   holder_pid=$!
   while ! grep -q '^LOCKED$' "${holder_out}" 2>/dev/null; do
     if ! kill -0 "${holder_pid}" 2>/dev/null; then
       wait "${holder_pid}" || true
-      warn "could not acquire shared env-tag lock for ${tag}"
-      rm -f "${holder_out}" "${holder_out}.err"
+      holder_err="$(sed -n '1,5p' "${holder_out}.err" 2>/dev/null || true)"
+      holder_diag="${holder_err}"
+      if [[ -n "${holder_err}" ]] && declare -F sanitize_deploy_diagnostic >/dev/null 2>&1; then
+        holder_diag="$(printf '%s\n' "${holder_err}" | sanitize_deploy_diagnostic)" || holder_diag="${holder_err}"
+      fi
+      warn "could not acquire shared env-tag lock for ${tag}; holder stderr (first 5 lines): ${holder_diag:-<empty>}"
+      kill "${holder_stdin_pid}" 2>/dev/null || true
+      wait "${holder_stdin_pid}" 2>/dev/null || true
+      rm -f "${holder_out}" "${holder_out}.err" "${holder_out}.stdin"
       return 1
     fi
     if (( waited >= timeout )); then
-      warn "timed out acquiring shared env-tag lock for ${tag}"
+      holder_err="$(sed -n '1,5p' "${holder_out}.err" 2>/dev/null || true)"
+      holder_diag="${holder_err}"
+      if [[ -n "${holder_err}" ]] && declare -F sanitize_deploy_diagnostic >/dev/null 2>&1; then
+        holder_diag="$(printf '%s\n' "${holder_err}" | sanitize_deploy_diagnostic)" || holder_diag="${holder_err}"
+      fi
+      warn "timed out acquiring shared env-tag lock for ${tag}; holder stderr (first 5 lines): ${holder_diag:-<empty>}"
       kill "${holder_pid}" 2>/dev/null || true
       wait "${holder_pid}" 2>/dev/null || true
-      rm -f "${holder_out}" "${holder_out}.err"
+      kill "${holder_stdin_pid}" 2>/dev/null || true
+      wait "${holder_stdin_pid}" 2>/dev/null || true
+      rm -f "${holder_out}" "${holder_out}.err" "${holder_out}.stdin"
       return 1
     fi
     sleep 1
@@ -3621,7 +3720,9 @@ with_shared_tag_lock() {
   ACX_ENV_TAG_LOCK_HELD=""
   kill "${holder_pid}" 2>/dev/null || true
   wait "${holder_pid}" 2>/dev/null || true
-  rm -f "${holder_out}" "${holder_out}.err"
+  kill "${holder_stdin_pid}" 2>/dev/null || true
+  wait "${holder_stdin_pid}" 2>/dev/null || true
+  rm -f "${holder_out}" "${holder_out}.err" "${holder_out}.stdin"
   return "${rc}"
 }
 

@@ -6,9 +6,13 @@ import os
 import re
 import shutil
 import signal
+import socket
 import stat
 import subprocess
+import sys
+import threading
 import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import pytest
@@ -236,6 +240,18 @@ if [[ -n "${FAKE_HEALTH_SLEEP:-}" ]]; then
   fi
 fi
 code="${FAKE_HEALTH_CODE:-000}"
+if [[ -n "${FAKE_HEALTH_READY_AFTER:-}" ]]; then
+  health_started="${state}/health-started"
+  if [[ ! -f "${health_started}" ]]; then
+    date +%s >"${health_started}"
+  fi
+  health_elapsed=$(( $(date +%s) - $(<"${health_started}") ))
+  if (( health_elapsed >= FAKE_HEALTH_READY_AFTER )); then
+    code=200
+  else
+    code=000
+  fi
+fi
 body="${FAKE_HEALTH_BODY-}"
 if [[ "$code" =~ ^[23][0-9][0-9]$ ]]; then
   printf '%s\n%s' "${body:-{\"status\":\"ok\"}}" "$code"
@@ -679,11 +695,9 @@ def test_boot_smoke_has_outer_deadlines_and_curl_request_timeout() -> None:
 
 @pytest.mark.parametrize("budget_s", [16, 24])
 def test_boot_smoke_computed_health_loop_budget(tmp_path: Path, budget_s: int) -> None:
-    """GR-37 / GR-38: health window is budget minus trap reserve plus last-curl guard."""
+    """GR-37 / GR-38: health window is the full budget plus last-curl guard."""
     poll_s = 2
-    trap_docker_s = 10  # logs+rm+rm+volume+network, each timeout 2
-    diag_reserve = trap_docker_s + poll_s
-    health_budget = max(1, budget_s - diag_reserve)
+    health_budget = budget_s
     started = time.monotonic()
     result = _run_boot_smoke(
         tmp_path,
@@ -696,7 +710,7 @@ def test_boot_smoke_computed_health_loop_budget(tmp_path: Path, budget_s: int) -
     combined = result.stdout + result.stderr
     assert result.returncode != 0, combined
     # GR-05 stops the last curl when remaining <= poll_s, so elapsed is
-    # health_budget minus about one poll, never the full outer budget.
+    # health_budget minus about one poll, never beyond the full health budget.
     assert elapsed >= max(0, health_budget - poll_s) - 1
     assert elapsed < budget_s + 4
 
@@ -1803,11 +1817,10 @@ def test_do_boot_smoke_passes_pg_ready_budget_as_eighth_arg(tmp_path: Path) -> N
 
 
 def test_boot_smoke_health_loop_uses_full_wall_clock(tmp_path: Path) -> None:
-    """SB-01: instant ECONNREFUSED still polls for health_budget minus last-curl guard."""
+    """SB-01: instant ECONNREFUSED still polls for the full budget minus last-curl guard."""
     budget_s = 24
     poll_s = 2
-    trap_docker_s = 10
-    health_budget = max(1, budget_s - (trap_docker_s + poll_s))
+    health_budget = budget_s
     started = time.monotonic()
     result = _run_boot_smoke(
         tmp_path,
@@ -1821,6 +1834,29 @@ def test_boot_smoke_health_loop_uses_full_wall_clock(tmp_path: Path) -> None:
     combined = result.stdout + result.stderr
     assert result.returncode != 0, combined
     assert elapsed >= max(0, health_budget - poll_s) - 1
+    assert elapsed < budget_s + 4
+
+
+def test_boot_smoke_health_passes_after_removed_diag_reserve(tmp_path: Path) -> None:
+    """SB-04: /health can become ready after the old diagnostic reserve window."""
+    budget_s = 8
+    poll_s = 1
+    trap_docker_s = 3
+    health_ready_after = budget_s - trap_docker_s - poll_s + 2
+    started = time.monotonic()
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=budget_s,
+        poll_s=poll_s,
+        trap_docker_s=trap_docker_s,
+        pg_budget=1,
+        extra_env={"FAKE_HEALTH_READY_AFTER": str(health_ready_after)},
+    )
+    elapsed = time.monotonic() - started
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+    assert "smoke health OK (HTTP 200)" in combined
+    assert elapsed >= health_ready_after - 1
     assert elapsed < budget_s + 4
 
 
@@ -2081,9 +2117,9 @@ def test_cid_capture_uses_last_64_hex_line(tmp_path: Path) -> None:
 
 
 def test_boot_smoke_last_curl_does_not_eat_diag_reserve(tmp_path: Path) -> None:
-    """GR-05: do not start a health curl that would overrun the diag reserve."""
+    """GR-05: do not start a health curl when only the final poll interval remains."""
     poll_s = 2
-    budget_s = 16  # health_budget = 16 - 12 = 4; second curl would eat the reserve
+    budget_s = 6  # after one poll-sized curl and sleep, remaining <= poll_s
     started = time.monotonic()
     result = _run_boot_smoke(
         tmp_path,
@@ -2096,7 +2132,8 @@ def test_boot_smoke_last_curl_does_not_eat_diag_reserve(tmp_path: Path) -> None:
     combined = result.stdout + result.stderr
     assert result.returncode != 0, combined
     assert "smoke container logs" in combined
-    # One curl of poll_s plus setup/trap, not a second curl of poll_s.
+    assert _curl_max_times(result) == [budget_s]
+    # One curl of poll_s plus one final poll interval, not a second curl.
     assert elapsed < (poll_s * 2) + 2
 
 
@@ -2354,8 +2391,7 @@ def test_boot_smoke_first_probe_max_time_capped_by_remaining(tmp_path: Path) -> 
     """GR-82 / A5: first health curl --max-time is remaining budget, not a full poll_s."""
     budget_s = 5
     poll_s = 2
-    trap_docker_s = 10
-    health_budget = max(1, budget_s - (trap_docker_s + poll_s))
+    health_budget = budget_s
     started = time.monotonic()
     result = _run_boot_smoke(
         tmp_path,
@@ -2667,6 +2703,7 @@ stopped_cid="__STOPPED_CID__"
 rollback_cid="__ROLLBACK_CID__"
 prior_cid="__PRIOR_CID__"
 wrong_id="sha256:3333333333333333333333333333333333333333333333333333333333333333"
+fail_at="__FAIL_AT__"
 printf '%s\n' "$*" >>"${state}/docker.log"
 
 if [[ "${1:-}" == "compose" ]]; then
@@ -2702,6 +2739,15 @@ if [[ "${1:-}" == "compose" ]]; then
       fi
     elif [[ -f "${state}/running-cid" ]]; then
       cat "${state}/running-cid"
+    elif [[ "$fail_at" == "canonical_digest_race" && -f "${state}/canonical-api-start-pending" ]]; then
+      if [[ ! -f "${state}/canonical-health-requested" ]]; then
+        : >"${state}/canonical-digest-read-empty"
+      elif [[ ! -f "${state}/canonical-health-ps-empty" ]]; then
+        : >"${state}/canonical-health-ps-empty"
+      else
+        printf '%s\n' "$stopped_cid" >"${state}/running-cid"
+        printf '%s\n' "$stopped_cid"
+      fi
     fi
     exit 0
   fi
@@ -2809,6 +2855,7 @@ esac
         .replace("__STOPPED_CID__", stopped_cid)
         .replace("__ROLLBACK_CID__", rollback_cid)
         .replace("__PRIOR_CID__", prior_cid)
+        .replace("__FAIL_AT__", fail_at)
     )
     _write_executable(fake_bin / "docker", docker)
 
@@ -2819,9 +2866,14 @@ state="${FAKE_ROLLBACK_STATE:?}"
 runtime_mode="__RUNTIME_MODE__"
 fail_at="__FAIL_AT__"
 stopped_cid="__STOPPED_CID__"
-cat >/dev/null || true
 remote="${@: -1}"
 printf '%s\n' "$remote" >>"${state}/ssh.log"
+if [[ "$remote" == *"flock"* || "$remote" == *"/locks/tag-"* ]]; then
+  printf 'LOCKED\n'
+  cat >/dev/null || true
+  exit 0
+fi
+cat >/dev/null || true
 if [[ "$remote" == *"cutover-inflight"* ]]; then
   if [[ -f "${state}/cutover-inflight" ]]; then
     printf 'PRESENT\n'
@@ -2858,6 +2910,11 @@ if [[ "$remote" == *"systemctl restart"* ]]; then
     printf '%s\n' "$stopped_cid" >"${state}/running-cid"
     exit 0
   fi
+  if [[ "$fail_at" == "canonical_digest_race" ]]; then
+    rm -f "${state}/running-cid"
+    : >"${state}/canonical-api-start-pending"
+    exit 0
+  fi
   if [[ "$fail_at" == "live_restart" ]]; then
     rm -f "${state}/running-cid"
     if [[ "$runtime_mode" == "absent" || "$runtime_mode" == "unknown" ]]; then
@@ -2876,6 +2933,10 @@ fi
 remote="${remote//\/opt\/acx-backend\/dev/${state}/remote}"
 remote="${remote//\/opt\/acx-backend\/staging/${state}/remote}"
 remote="${remote//\/opt\/acx-backend\/prod/${state}/remote}"
+if [[ "$fail_at" == "canonical_digest_race" && "$remote" == *"docker-compose.env.yml"* \
+     && "$remote" == *"/health"* && "$remote" != *"cutover"* ]]; then
+  : >"${state}/canonical-health-requested"
+fi
 # Edge/topology sudo scripts must not run on the host. Match them before the
 # compose-ps executor: a flip script contains both "docker compose" and the
 # substring "ps" inside "snapshot", which used to leak `sudo` to the operator.
@@ -2931,7 +2992,7 @@ ACX_REMOTE_INSPECT_TIMEOUT=5
 ACX_REMOTE_COMMAND_TIMEOUT=5
 ACX_PULL_TIMEOUT=5
 ACX_PUSH_TIMEOUT=5
-ACX_VERIFY_ATTEMPTS=1
+ACX_VERIFY_ATTEMPTS={"2" if fail_at == "canonical_digest_race" else "1"}
 ACX_VERIFY_SLEEP=0
 ACX_IMAGE_REPO="$IMAGE_BASE"
 init_deploy_ocir_docker_config() {{ ACX_DEPLOY_OCIR_CONFIG_DIR="{tmp_path / "docker-config"}"; mkdir -p "$ACX_DEPLOY_OCIR_CONFIG_DIR"; return 0; }}
@@ -3119,8 +3180,10 @@ def test_cutover_candidate_probe_requires_immutable_image_and_commit() -> None:
     assert "remote_image_id_for_digest" in body
     assert "docker inspect --format '{{.Image}}'" in body
     assert "expected_image_id" in body
-    assert "commit_sha" in body
-    assert "actual == sys.argv[1]" in body
+    assert "health_probe_program" in body
+    program = _function_body("health_probe_program")
+    assert "commit_sha" in program
+    assert "actual == sys.argv[1]" in program
 
 
 def test_abort_cutover_candidate_fails_closed_on_remote_cleanup_error(tmp_path: Path) -> None:
@@ -3148,7 +3211,7 @@ def test_do_restart_gates_canonical_health_before_flip_back() -> None:
     digest_at = body.index("verify_running_image_digest")
     canonical_flip = body.index('flip_edge_alias "$env" canonical', restart_at)
     abort_at = body.index("abort_cutover_candidate", restart_at)
-    assert restart_at < digest_at < canonical_flip
+    assert restart_at < health_at < digest_at < canonical_flip
     assert restart_at < health_at < canonical_flip < abort_at
     assert "probe_cutover_api_health" in body[restart_at:canonical_flip]
 
@@ -3169,6 +3232,25 @@ def test_canonical_health_failure_keeps_candidate_serving(tmp_path: Path) -> Non
     assert ssh_log.count("systemctl restart acx-dev") == 1, ssh_log
     assert "systemctl stop 'acx-dev-next'" not in ssh_log
     assert (tmp_path / "rollback-state" / "next-running-cid").exists()
+
+
+def test_canonical_digest_waits_for_health_ready_api(tmp_path: Path) -> None:
+    """A delayed canonical API must not be mistaken for an immutable image mismatch."""
+    result = _run_actual_restart_failure_transaction(
+        tmp_path,
+        invoke='do_restart dev "$IMAGE_BASE@sha256:' + ("b" * 64) + '"',
+        fail_at="canonical_digest_race",
+    )
+    combined = result.stdout + result.stderr
+    state = tmp_path / "rollback-state"
+    ssh_log = (state / "ssh.log").read_text()
+
+    assert result.returncode == 0, combined
+    assert "IMMUTABLE IMAGE MISMATCH" not in combined, combined
+    assert (state / "canonical-health-ps-empty").is_file(), ssh_log
+    assert not (state / "canonical-digest-read-empty").exists(), ssh_log
+    assert "Canonical api dev is healthy" in combined, combined
+    assert "Flipping Caddy reverse_proxy dev-api-next:8000 -> dev-api:8000" in combined, combined
 
 
 def test_promote_gate_restores_topology_on_converge_failure() -> None:
@@ -4113,3 +4195,136 @@ assert_rollback_fence dev 1
 '''
     result = subprocess.run(["bash", "-c", command], capture_output=True, text=True, timeout=10)
     assert result.returncode == (75 if runtime == "newer" else 1), result.stdout + result.stderr
+
+
+def _health_program() -> str:
+    result = subprocess.run(
+        ["bash", "-c", _function_body("health_probe_program") + "\nhealth_probe_program"],
+        text=True, capture_output=True, check=True,
+    )
+    assert "'" not in result.stdout
+    return result.stdout
+
+
+@pytest.mark.parametrize("expected_sha", ["", "a" * 40])
+@pytest.mark.parametrize("status,actual", [(503, ""), (200, "a" * 40), (200, "b" * 40)])
+def test_health_program_http(status: int, actual: str, expected_sha: str) -> None:
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self.send_response(status)
+            self.end_headers()
+            self.wfile.write(('{"commit_sha": "' + actual + '"}').encode())
+
+        def log_message(self, *args: object) -> None:
+            pass
+
+    server = None
+    try:
+        server = HTTPServer(("127.0.0.1", 0), Handler, bind_and_activate=False)
+        server.server_bind()
+    except PermissionError:
+        if server is not None:
+            server.server_close()
+        pytest.skip("sandbox forbids AF_INET loopback bind")
+    server.server_activate()
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        program = _health_program().replace(
+            "127.0.0.1:8000", f"127.0.0.1:{server.server_port}"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", program] + ([expected_sha] if expected_sha else []),
+            text=True, capture_output=True, check=False,
+        )
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()
+    output = result.stdout + result.stderr
+    if status == 200 and (not expected_sha or expected_sha == actual):
+        assert result.returncode == 0
+        assert output == ""
+    else:
+        assert result.returncode == 1
+        assert len(output.splitlines()) == 1
+        assert "Traceback" not in output
+        if status == 503:
+            assert "HTTP 503" in output
+        else:
+            assert "SHA mismatch" in output
+            assert expected_sha in output and actual in output
+
+
+@pytest.mark.parametrize("expected_sha", ["", "a" * 40])
+def test_health_program_connection_refused(expected_sha: str) -> None:
+    sock = None
+    try:
+        sock = socket.socket()
+        sock.bind(("127.0.0.1", 0))
+    except PermissionError:
+        if sock is not None:
+            sock.close()
+        pytest.skip("sandbox forbids AF_INET loopback bind")
+    with sock:
+        port = sock.getsockname()[1]
+        program = _health_program().replace("127.0.0.1:8000", f"127.0.0.1:{port}")
+        result = subprocess.run(
+            [sys.executable, "-c", program] + ([expected_sha] if expected_sha else []),
+            text=True, capture_output=True, check=False,
+        )
+    output = result.stdout + result.stderr
+    assert result.returncode == 1
+    assert len(output.splitlines()) == 1
+    assert "refused" in output
+    assert "Traceback" not in output
+
+
+@pytest.mark.parametrize("probe", ["canonical", "cutover"])
+@pytest.mark.parametrize("rc,cause", [(1, "connection refused"), (124, "deadline exceeded")])
+def test_health_attempt_has_one_warning(probe: str, rc: int, cause: str) -> None:
+    command = f"""
+source "{SCRIPT}"
+env_to_remote_dir() {{ echo /tmp; }}
+env_to_compose_files() {{ echo -f compose.yml; }}
+remote_image_id_for_digest() {{ echo sha256:{'b' * 64}; }}
+run_with_deadline() {{ printf 'connection refused\nextra noise\n' >&2; return {rc}; }}
+warn() {{ echo "$*"; }}
+ACX_VERIFY_ATTEMPTS=2
+ACX_VERIFY_SLEEP=0
+OCI_USER=test
+OCI_HOST=test
+probe_{probe}_api_health dev image@sha256:{'b' * 64} {'a' * 40}
+"""
+    result = subprocess.run(["bash", "-c", command], text=True, capture_output=True)
+    assert result.returncode == 1
+    assert result.stderr == ""
+    lines = result.stdout.splitlines()
+    assert len(lines) == 2
+    for attempt, line in enumerate(lines, 1):
+        assert f"attempt {attempt}/2: " in line
+        assert cause in line
+
+
+@pytest.mark.parametrize("exception", [
+    "TimeoutError()",
+    "urllib.error.URLError(TimeoutError())",
+    'ValueError("invalid body\\nsecond line")',
+])
+def test_health_program_exceptions_are_one_line(exception: str) -> None:
+    program = _health_program()
+    harness = (
+        "import urllib.request, urllib.error\n"
+        "def fail(*args, **kwargs):\n"
+        f"    raise {exception}\n"
+        "urllib.request.urlopen = fail\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", harness + program],
+        text=True, capture_output=True,
+    )
+    assert result.returncode == 1
+    output = result.stdout + result.stderr
+    assert len(output.splitlines()) == 1
+    assert "Traceback" not in output
+    assert ("timeout" if "TimeoutError" in exception else "invalid body") in output

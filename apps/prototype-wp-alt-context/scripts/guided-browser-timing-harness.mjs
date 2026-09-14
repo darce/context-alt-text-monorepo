@@ -39,18 +39,22 @@ const elapsed = (start, end) => (start === null || end === null ? null : Math.ma
 export const waitForRenderedText = async ({
   readRenderedText,
   isTextReady = defaultTextReady,
-  maxWaitMs = DEFAULT_RENDER_TIMEOUT_MS,
+  maxWaitMs,
+  deadlineMs,
   now = defaultClock,
   requestAnimationFrame = defaultRequestAnimationFrame,
   cancelAnimationFrame = defaultCancelAnimationFrame,
   setTimer = (callback, delayMs) => setTimeout(callback, delayMs),
   clearTimer = (handle) => clearTimeout(handle),
 }) => {
-  if (!Number.isFinite(maxWaitMs) || maxWaitMs <= 0) {
+  if (maxWaitMs !== undefined && (!Number.isFinite(maxWaitMs) || maxWaitMs <= 0)) {
     throw new Error('maxWaitMs must be a finite number greater than zero');
   }
-
-  const deadline = now() + maxWaitMs;
+  if (deadlineMs !== undefined && !Number.isFinite(deadlineMs)) {
+    throw new Error('deadlineMs must be a finite number');
+  }
+  const effectiveMaxWaitMs = maxWaitMs ?? DEFAULT_RENDER_TIMEOUT_MS;
+  const deadline = deadlineMs ?? now() + effectiveMaxWaitMs;
 
   return new Promise((resolve) => {
     let frameHandle = null;
@@ -79,26 +83,39 @@ export const waitForRenderedText = async ({
       if (settled) {
         return;
       }
-      const observedAt = now();
+      if (now() >= deadline) {
+        finish({ ok: false, text: null, renderedAtMs: null, timedOut: true });
+        return;
+      }
       let text;
       try {
         text = String(readRenderedText() ?? '');
       } catch (error) {
+        if (now() >= deadline) {
+          finish({ ok: false, text: null, renderedAtMs: null, timedOut: true });
+          return;
+        }
         finish({ ok: false, text: null, renderedAtMs: null, error: errorText(error) });
         return;
       }
-      if (isTextReady(text)) {
-        finish({ ok: true, text, renderedAtMs: observedAt });
-        return;
-      }
+      const observedAt = now();
       if (observedAt >= deadline) {
         finish({ ok: false, text: null, renderedAtMs: null, timedOut: true });
+        return;
+      }
+      const ready = isTextReady(text);
+      const completedAt = now();
+      if (completedAt >= deadline) {
+        finish({ ok: false, text: null, renderedAtMs: null, timedOut: true });
+        return;
+      }
+      if (ready) {
+        finish({ ok: true, text, renderedAtMs: completedAt });
         return;
       }
       frameHandle = requestAnimationFrame(inspect);
     };
 
-    frameHandle = requestAnimationFrame(inspect);
     const finishAtDeadline = () => {
       if (settled) {
         return;
@@ -110,12 +127,18 @@ export const waitForRenderedText = async ({
       }
       timerHandle = setTimer(finishAtDeadline, remainingMs);
     };
-    timerHandle = setTimer(finishAtDeadline, maxWaitMs);
+    const remainingMs = deadline - now();
+    if (remainingMs <= 0) {
+      finish({ ok: false, text: null, renderedAtMs: null, timedOut: true });
+      return;
+    }
+    timerHandle = setTimer(finishAtDeadline, remainingMs);
+    frameHandle = requestAnimationFrame(inspect);
   });
 };
 
-const awaitWithinDeadline = async ({ operation, maxWaitMs, now, setTimer, clearTimer }) => {
-  const deadline = now() + maxWaitMs;
+const awaitWithinDeadline = async ({ operation, maxWaitMs, deadlineMs, now, setTimer, clearTimer }) => {
+  const deadline = deadlineMs ?? now() + maxWaitMs;
   return new Promise((resolve) => {
     let timerHandle = null;
     let settled = false;
@@ -145,14 +168,31 @@ const awaitWithinDeadline = async ({ operation, maxWaitMs, now, setTimer, clearT
       timerHandle = setTimer(finishAtDeadline, remainingMs);
     };
 
-    timerHandle = setTimer(finishAtDeadline, maxWaitMs);
+    const finishOperationFailure = (error) => {
+      if (now() >= deadline) {
+        finish({ ok: false, timedOut: true, error: `operation exceeded ${maxWaitMs}ms` });
+        return;
+      }
+      finish({ ok: false, error: errorText(error) });
+    };
+
+    const finishOperationSuccess = () => {
+      if (now() >= deadline) {
+        finish({ ok: false, timedOut: true, error: `operation exceeded ${maxWaitMs}ms` });
+        return;
+      }
+      finish({ ok: true });
+    };
+
+    const remainingMs = deadline - now();
+    timerHandle = setTimer(finishAtDeadline, Math.max(0, remainingMs));
     try {
       Promise.resolve(operation()).then(
-        () => finish({ ok: true }),
-        (error) => finish({ ok: false, error: errorText(error) }),
+        finishOperationSuccess,
+        finishOperationFailure,
       );
     } catch (error) {
-      finish({ ok: false, error: errorText(error) });
+      finishOperationFailure(error);
     }
   });
 };
@@ -191,11 +231,13 @@ export const measureTrueInference = async ({
 }) => {
   const record = baseRecord({ mode: 'true_inference', label, maxWaitMs });
   const requestSentAt = now();
+  const deadline = requestSentAt + maxWaitMs;
   record.request_sent_at_ms = requestSentAt;
   try {
     const request = await awaitWithinDeadline({
       operation: sendRequest,
       maxWaitMs,
+      deadlineMs: deadline,
       now,
       setTimer: setTimer ?? ((callback, delayMs) => setTimeout(callback, delayMs)),
       clearTimer: clearTimer ?? ((handle) => clearTimeout(handle)),
@@ -206,11 +248,17 @@ export const measureTrueInference = async ({
       return record;
     }
     const responseReceivedAt = now();
+    if (responseReceivedAt >= deadline) {
+      record.status = 'request_timeout';
+      record.error = `operation exceeded ${maxWaitMs}ms`;
+      return record;
+    }
     record.response_received_at_ms = responseReceivedAt;
     const rendered = await waitForRenderedText({
       readRenderedText,
       isTextReady,
       maxWaitMs,
+      deadlineMs: deadline,
       now,
       requestAnimationFrame,
       cancelAnimationFrame,
@@ -220,6 +268,11 @@ export const measureTrueInference = async ({
     if (!rendered.ok) {
       record.status = rendered.error ? 'render_failed' : 'render_timeout';
       record.error = rendered.error ?? null;
+      return record;
+    }
+    if (rendered.renderedAtMs === null || rendered.renderedAtMs >= deadline) {
+      record.status = 'render_timeout';
+      record.error = null;
       return record;
     }
     record.status = 'rendered';
@@ -254,11 +307,13 @@ export const measureRecordedReplay = async ({
 }) => {
   const record = baseRecord({ mode: 'recorded_replay', label, maxWaitMs });
   const replayStartedAt = now();
+  const deadline = replayStartedAt + maxWaitMs;
   record.replay_started_at_ms = replayStartedAt;
   try {
     const replay = await awaitWithinDeadline({
       operation: triggerReplay,
       maxWaitMs,
+      deadlineMs: deadline,
       now,
       setTimer: setTimer ?? ((callback, delayMs) => setTimeout(callback, delayMs)),
       clearTimer: clearTimer ?? ((handle) => clearTimeout(handle)),
@@ -268,10 +323,16 @@ export const measureRecordedReplay = async ({
       record.error = replay.error;
       return record;
     }
+    if (now() >= deadline) {
+      record.status = 'replay_timeout';
+      record.error = `operation exceeded ${maxWaitMs}ms`;
+      return record;
+    }
     const rendered = await waitForRenderedText({
       readRenderedText,
       isTextReady,
       maxWaitMs,
+      deadlineMs: deadline,
       now,
       requestAnimationFrame,
       cancelAnimationFrame,
@@ -281,6 +342,11 @@ export const measureRecordedReplay = async ({
     if (!rendered.ok) {
       record.status = rendered.error ? 'render_failed' : 'render_timeout';
       record.error = rendered.error ?? null;
+      return record;
+    }
+    if (rendered.renderedAtMs === null || rendered.renderedAtMs >= deadline) {
+      record.status = 'render_timeout';
+      record.error = null;
       return record;
     }
     record.status = 'rendered';

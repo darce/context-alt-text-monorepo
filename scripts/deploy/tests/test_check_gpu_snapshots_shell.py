@@ -152,7 +152,7 @@ def test_remote_snapshot_callsite_executes_without_repo_checkout(
     state_dir = tmp_path / "run/acx"
     load_dir = tmp_path / "run/acx-write"
     state_dir.mkdir(parents=True)
-    for env_name in ("dev", "dev-fir", "staging", "prod"):
+    for env_name in DEPLOYMENTS.read_text(encoding="utf-8").split():
         (load_dir / env_name).mkdir(parents=True)
         (load_dir / env_name / "describe-load.json").write_text(
             '{"queue_depth":0,"in_flight":0,"batch_in_progress":false,"written_at":900}\n',

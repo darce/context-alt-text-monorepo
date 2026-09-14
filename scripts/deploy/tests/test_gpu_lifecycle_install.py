@@ -142,8 +142,12 @@ def test_intent_path_unit_watches_only_contract_environments_and_starts_gpu() ->
     assert "GPU_INTENT_ENVIRONMENTS" in append_deployment
     assert "PathChanged=/run/acx-write/${environment}/gpu-intent.json" in append_deployment
     registered_environments = set(DEPLOYMENTS.read_text(encoding="utf-8").split())
+    assert registered_environments, "GPU snapshot deployment registry must not be empty"
     assert {"dev", "staging", "prod"} <= registered_environments
-    assert "dev-fir" in registered_environments
+    # Every registered environment gets its tmpfiles rule from one template the
+    # installer expands per registry line, so the registry is the only list.
+    assert "d /run/acx-write/${environment} 0775 root" in script
+    assert 'done < "$DEPLOYMENTS_FILE"' in script
     assert "Unit=acx-gpu-start.service" in content
     assert "acx-gpu-intent.path" in script
     assert "systemctl enable --now acx-gpu-intent.path" in script

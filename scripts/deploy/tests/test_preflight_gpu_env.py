@@ -2951,6 +2951,55 @@ def test_gpu_lifecycle_preflight_rejects_stale_custom_registry_environment(tmp_p
     assert "stale load snapshot" in result.stderr
 
 
+def test_gpu_lifecycle_preflight_accepts_exact_required_registry_with_fresh_snapshots(tmp_path: Path) -> None:
+    reaper_env = tmp_path / "gpu-lifecycle.env"
+    reaper_env.write_text("GPU_INSTANCE_ID=ocid1.instance.oc1.iad.fakeinstance\nMAX_LEASE_SECONDS=3600\n")
+    registry = tmp_path / "deployments.conf"
+    registry.write_text("dev\nstaging\nprod\n", encoding="utf-8")
+    load_dir = tmp_path / "load"
+    now = 1_700_000_000
+    environments = _registry_environments(registry)
+    _write_registry_load_snapshots(load_dir, written_at=now, environments=environments)
+    result = run_preflight(
+        tmp_path,
+        check_reaper=True,
+        systemctl_script=reaper_systemctl_script(reaper_env),
+        extra_env={
+            "ACX_DESCRIBE_LOAD_DIR": str(load_dir),
+            "ACX_GPU_DEPLOYMENTS_FILE": str(registry),
+            "ACX_NOW_EPOCH": str(now),
+            "ACX_DESCRIBE_LOAD_STALE_SECONDS": "120",
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    assert "OK: GPU env preflight passed" in result.stdout
+
+
+def test_gpu_lifecycle_preflight_rejects_registry_missing_prod(tmp_path: Path) -> None:
+    reaper_env = tmp_path / "gpu-lifecycle.env"
+    reaper_env.write_text("GPU_INSTANCE_ID=ocid1.instance.oc1.iad.fakeinstance\nMAX_LEASE_SECONDS=3600\n")
+    registry = tmp_path / "deployments.conf"
+    registry.write_text("dev\nstaging\n", encoding="utf-8")
+    load_dir = tmp_path / "load"
+    now = 1_700_000_000
+    environments = _registry_environments(registry)
+    _write_registry_load_snapshots(load_dir, written_at=now, environments=environments)
+    result = run_preflight(
+        tmp_path,
+        check_reaper=True,
+        systemctl_script=reaper_systemctl_script(reaper_env),
+        extra_env={
+            "ACX_DESCRIBE_LOAD_DIR": str(load_dir),
+            "ACX_GPU_DEPLOYMENTS_FILE": str(registry),
+            "ACX_NOW_EPOCH": str(now),
+            "ACX_DESCRIBE_LOAD_STALE_SECONDS": "120",
+        },
+    )
+    assert result.returncode != 0
+    assert "ERROR [12]" in result.stderr
+    assert "missing required environment 'prod'" in result.stderr
+
+
 def test_gpu_lifecycle_preflight_load_gate_follows_deployments_registry() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
     assert "for environment in dev dev-fir staging prod" not in source

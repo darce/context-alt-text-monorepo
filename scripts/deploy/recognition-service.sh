@@ -3115,9 +3115,51 @@ fi
 FLIP_EDGE
 }
 
+health_probe_program() {
+  cat <<'PYPROBE'
+import json
+import socket
+import sys
+import urllib.error
+import urllib.request
+
+def probe():
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=4) as r:
+            if r.status != 200:
+                print("HTTP " + str(r.status))
+                return 1
+            if len(sys.argv) > 1:
+                body = json.load(r)
+                actual = body.get("commit_sha") or body.get("git_commit_sha") or body.get("version") or ""
+                if not actual == sys.argv[1]:
+                    print(" ".join(("SHA mismatch: expected " + sys.argv[1] + ", actual " + str(actual)).split()))
+                    return 1
+            return 0
+    except urllib.error.HTTPError as exc:
+        cause = "HTTP " + str(exc.code)
+    except (TimeoutError, socket.timeout):
+        cause = "timeout"
+    except urllib.error.URLError as exc:
+        if isinstance(exc.reason, (TimeoutError, socket.timeout)):
+            cause = "timeout"
+        elif isinstance(exc.reason, ConnectionRefusedError):
+            cause = "connection refused"
+        else:
+            cause = "connection failed: " + str(exc.reason)
+    except Exception as exc:
+        cause = type(exc).__name__ + ": " + str(exc)
+    print(" ".join(cause.split()))
+    return 1
+
+sys.exit(probe())
+PYPROBE
+}
+
 probe_cutover_api_health() {
   local env="$1" expected_digest expected_sha next_project remote_dir timeout attempt max_attempts sleep_s
-  local expected_image_id
+  local expected_image_id cause rc program
+  program="$(health_probe_program)"
   expected_digest="${2:-${ACX_CANDIDATE_DIGEST_REF:-}}"
   expected_sha="${3:-}"
   remote_dir="$(env_to_remote_dir "$env")"
@@ -3144,20 +3186,26 @@ probe_cutover_api_health() {
   [[ "${max_attempts}" =~ ^[1-9][0-9]*$ ]] || return 1
   [[ "${sleep_s}" =~ ^[0-9]+$ ]] || return 1
   for attempt in $(seq 1 "${max_attempts}"); do
-    if run_with_deadline "${timeout}" "cutover health probe ${env} attempt ${attempt}" \
+    if cause="$(run_with_deadline "${timeout}" "cutover health probe ${env} attempt ${attempt}" \
       ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
-      "cd '${remote_dir}' && cid=\$(docker compose -p '${next_project}' -f docker-compose.cutover.yml ps -q api | head -1) && [ -n \"\$cid\" ] && image_id=\$(docker inspect --format '{{.Image}}' \"\$cid\") && [ \"\$image_id\" = '${expected_image_id}' ] && docker exec \"\$cid\" python -c 'import json, sys, urllib.request; r=urllib.request.urlopen(\"http://127.0.0.1:8000/health\", timeout=4); body=json.load(r); actual=body.get(\"commit_sha\") or body.get(\"git_commit_sha\") or body.get(\"version\") or \"\"; sys.exit(0 if r.status == 200 and actual == sys.argv[1] else 1)' '${expected_sha}'"; then
+      "cd '${remote_dir}' && cid=\$(docker compose -p '${next_project}' -f docker-compose.cutover.yml ps -q api | head -1) && { [ -n \"\$cid\" ] || { echo container missing; exit 1; }; } && image_id=\$(docker inspect --format '{{.Image}}' \"\$cid\") && { [ \"\$image_id\" = '${expected_image_id}' ] || { echo image mismatch; exit 1; }; } && docker exec \"\$cid\" python -c '${program}' '${expected_sha}'" 2>&1)"; then
       log "Cutover candidate ${next_project} is healthy"
       return 0
+    else
+      rc=$?
     fi
-    warn "Cutover candidate health failed on attempt ${attempt}/${max_attempts}"
+    if [[ "$rc" == 124 ]]; then cause="deadline exceeded"; fi
+    cause="${cause//$'\n'/ }"
+    cause="${cause//$'\r'/ }"
+    warn "Cutover candidate health failed on attempt ${attempt}/${max_attempts}: ${cause:-remote probe failed (exit $rc)}"
     verify_retry_sleep "${attempt}" "${max_attempts}" "${sleep_s}"
   done
   return 1
 }
 
 probe_canonical_api_health() {
-  local env="$1" remote_dir compose_files timeout attempt max_attempts sleep_s
+  local env="$1" remote_dir compose_files timeout attempt max_attempts sleep_s cause rc program
+  program="$(health_probe_program)"
   remote_dir="$(env_to_remote_dir "$env")"
   compose_files="$(env_to_compose_files "$env")"
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
@@ -3167,13 +3215,18 @@ probe_canonical_api_health() {
   [[ "${sleep_s}" =~ ^[0-9]+$ ]] || return 1
   for attempt in $(seq 1 "${max_attempts}"); do
     # shellcheck disable=SC2086 # compose_files is intentionally word-split remotely.
-    if run_with_deadline "${timeout}" "canonical health probe ${env} attempt ${attempt}" \
+    if cause="$(run_with_deadline "${timeout}" "canonical health probe ${env} attempt ${attempt}" \
       ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
-      "cd '${remote_dir}' && cid=\$(docker compose ${compose_files} ps -q api | head -1) && [ -n \"\$cid\" ] && docker exec \"\$cid\" python -c 'import sys, urllib.request; r=urllib.request.urlopen(\"http://127.0.0.1:8000/health\", timeout=4); sys.exit(0 if r.status==200 else 1)'"; then
+      "cd '${remote_dir}' && cid=\$(docker compose ${compose_files} ps -q api | head -1) && { [ -n \"\$cid\" ] || { echo container missing; exit 1; }; } && docker exec \"\$cid\" python -c '${program}'" 2>&1)"; then
       log "Canonical api ${env} is healthy"
       return 0
+    else
+      rc=$?
     fi
-    warn "Canonical api health failed on attempt ${attempt}/${max_attempts}"
+    if [[ "$rc" == 124 ]]; then cause="deadline exceeded"; fi
+    cause="${cause//$'\n'/ }"
+    cause="${cause//$'\r'/ }"
+    warn "Canonical api health failed on attempt ${attempt}/${max_attempts}: ${cause:-remote probe failed (exit $rc)}"
     verify_retry_sleep "${attempt}" "${max_attempts}" "${sleep_s}"
   done
   return 1

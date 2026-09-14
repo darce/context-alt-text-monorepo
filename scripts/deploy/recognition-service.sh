@@ -3611,7 +3611,7 @@ restore_runtime_and_edge() {
 # when digest staging succeeds but a later repair/restart/verify step fails.
 with_shared_tag_lock() {
   local tag="$1"; shift
-  local timeout lock_path holder_pid holder_out holder_err holder_diag rc=0 waited=0
+  local timeout lock_path holder_pid holder_stdin_pid holder_out holder_err holder_diag rc=0 waited=0
   assert_safe_shell_token "image tag" "${tag}"
   if [[ "${ACX_ENV_TAG_LOCK_HELD:-}" == "${tag}" ]]; then
     "$@"
@@ -3620,11 +3620,16 @@ with_shared_tag_lock() {
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
   lock_path="${ACX_DEPLOY_BACKUP_ROOT}/locks/tag-${tag}.lock"
   holder_out="$(mktemp "${TMPDIR:-/tmp}/acx-tag-lock.XXXXXX")" || return 1
+  mkfifo "${holder_out}.stdin" || { rm -f "${holder_out}"; return 1; }
+  # The remote cat holds the flock until its stdin closes: keep the writer
+  # alive for the whole wrapped command, not just the acquire timeout.
+  (while kill -0 "$$" 2>/dev/null; do sleep 1 >/dev/null; done) </dev/null >"${holder_out}.stdin" 2>/dev/null &
+  holder_stdin_pid=$!
   ssh -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
     -o ServerAliveInterval=5 -o ServerAliveCountMax=2 \
     -l "${OCI_USER}" -- "${OCI_HOST}" \
     "sudo install -d -m 700 $(remote_quote "${ACX_DEPLOY_BACKUP_ROOT}/locks") && sudo flock -w ${timeout} $(remote_quote "${lock_path}") sh -c 'printf \"LOCKED\\n\"; exec cat >/dev/null'" \
-    < <(sleep "${timeout}") >"${holder_out}" 2>"${holder_out}.err" &
+    <"${holder_out}.stdin" >"${holder_out}" 2>"${holder_out}.err" &
   holder_pid=$!
   while ! grep -q '^LOCKED$' "${holder_out}" 2>/dev/null; do
     if ! kill -0 "${holder_pid}" 2>/dev/null; then
@@ -3635,7 +3640,9 @@ with_shared_tag_lock() {
         holder_diag="$(printf '%s\n' "${holder_err}" | sanitize_deploy_diagnostic)" || holder_diag="${holder_err}"
       fi
       warn "could not acquire shared env-tag lock for ${tag}; holder stderr (first 5 lines): ${holder_diag:-<empty>}"
-      rm -f "${holder_out}" "${holder_out}.err"
+      kill "${holder_stdin_pid}" 2>/dev/null || true
+      wait "${holder_stdin_pid}" 2>/dev/null || true
+      rm -f "${holder_out}" "${holder_out}.err" "${holder_out}.stdin"
       return 1
     fi
     if (( waited >= timeout )); then
@@ -3647,7 +3654,9 @@ with_shared_tag_lock() {
       warn "timed out acquiring shared env-tag lock for ${tag}; holder stderr (first 5 lines): ${holder_diag:-<empty>}"
       kill "${holder_pid}" 2>/dev/null || true
       wait "${holder_pid}" 2>/dev/null || true
-      rm -f "${holder_out}" "${holder_out}.err"
+      kill "${holder_stdin_pid}" 2>/dev/null || true
+      wait "${holder_stdin_pid}" 2>/dev/null || true
+      rm -f "${holder_out}" "${holder_out}.err" "${holder_out}.stdin"
       return 1
     fi
     sleep 1
@@ -3658,7 +3667,9 @@ with_shared_tag_lock() {
   ACX_ENV_TAG_LOCK_HELD=""
   kill "${holder_pid}" 2>/dev/null || true
   wait "${holder_pid}" 2>/dev/null || true
-  rm -f "${holder_out}" "${holder_out}.err"
+  kill "${holder_stdin_pid}" 2>/dev/null || true
+  wait "${holder_stdin_pid}" 2>/dev/null || true
+  rm -f "${holder_out}" "${holder_out}.err" "${holder_out}.stdin"
   return "${rc}"
 }
 

@@ -225,7 +225,21 @@ chmod +x "${fixture_root}/fake-deploy.sh"
 cat >"${fixture_root}/verify-harness.sh" <<'EOF'
 source "$1"
 curl() {
-    printf '{"commit_sha":"%s"}\n' "$(git -C "$REPO_ROOT" rev-parse "$GIT_REF")"
+    local write_out="" url=""
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --write-out) write_out="$2"; shift 2 ;;
+            --max-time) shift 2 ;;
+            --silent|--show-error) shift ;;
+            *) url="$1"; shift ;;
+        esac
+    done
+    case "$url" in
+        */ready) printf '{"ready":true}' ;;
+        *) printf '{"commit_sha":"%s"}' "$(git -C "$REPO_ROOT" rev-parse "$GIT_REF")" ;;
+    esac
+    # Match curl's body followed by the requested HTTP status write-out.
+    printf '%s' "${write_out//\%\{http_code\}/200}"
 }
 read_remote_image_repo() { :; }
 verify_running_image_matches_deployed() { return 0; }

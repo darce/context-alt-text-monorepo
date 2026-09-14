@@ -8,6 +8,8 @@ import shlex
 import subprocess
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "scripts" / "deploy" / "sync-demo.sh"
 
@@ -62,6 +64,8 @@ def _run_sync(
     unset_plugin_zip: bool = False,
     execute_remote_smoke: bool = False,
     cwd: Path | None = None,
+    build_source_stamp: Path | None = None,
+    package_plugin_script: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -137,6 +141,11 @@ def _run_sync(
         (bin_dir / "curl").chmod(0o755)
 
     env = os.environ.copy()
+    env["ACX_BUILD_SOURCE_STAMP"] = str(build_source_stamp or tmp_path / "missing-stamp")
+    if package_plugin_script is None:
+        package_plugin_script = tmp_path / "digest-stub.sh"
+        package_plugin_script.write_text("printf '%s\\n' current-digest\n", encoding="utf-8")
+    env["PACKAGE_PLUGIN_SCRIPT"] = str(package_plugin_script)
     env["PATH"] = f"{bin_dir}:{env['PATH']}"
     if with_plugin and unset_plugin_zip:
         raise ValueError("with_plugin and unset_plugin_zip are mutually exclusive")
@@ -259,16 +268,68 @@ def test_unset_plugin_zip_auto_discovers_newest_dist_zip(tmp_path: Path) -> None
     workspace = _isolated_repo(tmp_path)
     older, newer = _plant_stale_and_newest_dist_zips(workspace)
 
-    result = _run_sync(tmp_path, unset_plugin_zip=True, cwd=workspace)
+    stamp = tmp_path / "build-source-stamp"
+    stamp.write_text("current-digest\n", encoding="utf-8")
+    os.utime(stamp, (_OLDER_MTIME, _OLDER_MTIME))
+    result = _run_sync(
+        tmp_path, unset_plugin_zip=True, cwd=workspace, build_source_stamp=stamp
+    )
 
     assert result.returncode == 0, result.stdout + result.stderr
     log = _log(tmp_path)
     assert f"Auto-discovered plugin artifact: dist/{newer.name}" in result.stdout
+    assert "Plugin artifact freshness verified against build source stamp" in result.stdout
     assert str(newer) in log or f"dist/{newer.name}" in log
     assert older.name not in log
     assert _plugin_bootstrap_invoked(tmp_path)
     assert 'BOOTSTRAP_RAN="1"' in _stdin(tmp_path)
     assert _repo_dist_zip_names() == before
+
+
+@pytest.mark.parametrize("failure", ["missing", "mismatch", "older", "digest-command"])
+def test_auto_discovered_zip_fails_closed(tmp_path: Path, failure: str) -> None:
+    workspace = _isolated_repo(tmp_path)
+    _plant_stale_and_newest_dist_zips(workspace)
+    stamp = tmp_path / "build source stamp"
+    script = tmp_path / "digest stub.sh"
+    script.write_text(
+        "exit 1\n" if failure == "digest-command" else "printf '%s\\n' current-digest\n",
+        encoding="utf-8",
+    )
+    if failure != "missing":
+        stamp.write_text(
+            "stale-digest\n" if failure == "mismatch" else "current-digest\n",
+            encoding="utf-8",
+        )
+        mtime = _NEWER_MTIME + 1 if failure == "older" else _OLDER_MTIME
+        os.utime(stamp, (mtime, mtime))
+
+    result = _run_sync(
+        tmp_path, unset_plugin_zip=True, cwd=workspace,
+        build_source_stamp=stamp, package_plugin_script=script,
+    )
+
+    assert result.returncode == 3, result.stdout + result.stderr
+    assert result.stderr.count("ERROR:") == 1
+    assert "bash apps/prototype-wp-alt-context/scripts/release/package-plugin.sh" in result.stderr
+    assert "PLUGIN_ZIP=<path>" in result.stderr
+    if failure == "missing":
+        assert "Missing build source stamp" in result.stderr
+    elif failure == "mismatch":
+        assert "expected current-digest, found stale-digest" in result.stderr
+    elif failure == "older":
+        assert "older than stamp" in result.stderr
+    else:
+        assert "Cannot compute build source digest" in result.stderr
+    assert not (tmp_path / "commands.log").exists()
+
+
+def test_unset_plugin_zip_without_dist_zip_skips_freshness_check(tmp_path: Path) -> None:
+    workspace = _isolated_repo(tmp_path)
+    result = _run_sync(tmp_path, unset_plugin_zip=True, cwd=workspace)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "No plugin artifact auto-discovered" in result.stdout
+    assert not _plugin_bootstrap_invoked(tmp_path)
 
 
 def test_explicit_plugin_zip_ignores_dist_zips(tmp_path: Path) -> None:

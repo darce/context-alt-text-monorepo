@@ -104,6 +104,7 @@ def get_gpu_description_adapter() -> DescriptionAdapter:
             model_revision=spec.model_revision,
             hub_repo=spec.hub_repo,
             model_version=spec.model_version,
+            quantization=spec.quantization,
             prompt_or_task_version=settings.gpu_prompt_or_task_version,
             connect_timeout_s=settings.gpu_connect_timeout_seconds,
             read_timeout_s=settings.gpu_read_timeout_seconds,

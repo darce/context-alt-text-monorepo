@@ -52,6 +52,7 @@ class ProfileSpec:
     hub_repo: str | None = None
     model_revision: str | None = None
     model_version: str = "1"
+    quantization: str | None = None
     num_beams: int | None = None
     max_new_tokens: int | None = None
     unavailable_reason: str | None = None
@@ -112,6 +113,7 @@ PROFILE_SPECS: dict[DescriptionProfile, ProfileSpec] = {
         hub_repo="unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF",
         model_revision="0af19e7479857aa7f3246466a4ad16c7e7299639",
         model_version="Q4_K_M",
+        quantization="Q4_K_M",
     ),
     # VLM-4 Slice 2b: same endpoint/model as GPU_QWEN30B. Only the ASYNC
     # GPU-final resolver (get_async_gpu_description_adapter) wraps this profile
@@ -124,6 +126,7 @@ PROFILE_SPECS: dict[DescriptionProfile, ProfileSpec] = {
         hub_repo="unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF",
         model_revision="0af19e7479857aa7f3246466a4ad16c7e7299639",
         model_version="Q4_K_M",
+        quantization="Q4_K_M",
     ),
     DescriptionProfile.HOSTED_GPT4O: ProfileSpec(
         profile=DescriptionProfile.HOSTED_GPT4O,

@@ -3611,7 +3611,7 @@ restore_runtime_and_edge() {
 # when digest staging succeeds but a later repair/restart/verify step fails.
 with_shared_tag_lock() {
   local tag="$1"; shift
-  local timeout lock_path holder_pid holder_out rc=0 waited=0
+  local timeout lock_path holder_pid holder_out holder_err holder_diag rc=0 waited=0
   assert_safe_shell_token "image tag" "${tag}"
   if [[ "${ACX_ENV_TAG_LOCK_HELD:-}" == "${tag}" ]]; then
     "$@"
@@ -3623,18 +3623,28 @@ with_shared_tag_lock() {
   ssh -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
     -o ServerAliveInterval=5 -o ServerAliveCountMax=2 \
     -l "${OCI_USER}" -- "${OCI_HOST}" \
-    "sudo install -d -m 700 $(remote_quote "${ACX_DEPLOY_BACKUP_ROOT}/locks") && exec 9>$(remote_quote "${lock_path}") && flock -w ${timeout} 9 && printf 'LOCKED\n' && cat >/dev/null" \
+    "sudo install -d -m 700 $(remote_quote "${ACX_DEPLOY_BACKUP_ROOT}/locks") && sudo flock -w ${timeout} $(remote_quote "${lock_path}") sh -c 'printf \"LOCKED\\n\"; exec cat >/dev/null'" \
     < <(sleep "${timeout}") >"${holder_out}" 2>"${holder_out}.err" &
   holder_pid=$!
   while ! grep -q '^LOCKED$' "${holder_out}" 2>/dev/null; do
     if ! kill -0 "${holder_pid}" 2>/dev/null; then
       wait "${holder_pid}" || true
-      warn "could not acquire shared env-tag lock for ${tag}"
+      holder_err="$(sed -n '1,5p' "${holder_out}.err" 2>/dev/null || true)"
+      holder_diag="${holder_err}"
+      if [[ -n "${holder_err}" ]] && declare -F sanitize_deploy_diagnostic >/dev/null 2>&1; then
+        holder_diag="$(printf '%s\n' "${holder_err}" | sanitize_deploy_diagnostic)" || holder_diag="${holder_err}"
+      fi
+      warn "could not acquire shared env-tag lock for ${tag}; holder stderr (first 5 lines): ${holder_diag:-<empty>}"
       rm -f "${holder_out}" "${holder_out}.err"
       return 1
     fi
     if (( waited >= timeout )); then
-      warn "timed out acquiring shared env-tag lock for ${tag}"
+      holder_err="$(sed -n '1,5p' "${holder_out}.err" 2>/dev/null || true)"
+      holder_diag="${holder_err}"
+      if [[ -n "${holder_err}" ]] && declare -F sanitize_deploy_diagnostic >/dev/null 2>&1; then
+        holder_diag="$(printf '%s\n' "${holder_err}" | sanitize_deploy_diagnostic)" || holder_diag="${holder_err}"
+      fi
+      warn "timed out acquiring shared env-tag lock for ${tag}; holder stderr (first 5 lines): ${holder_diag:-<empty>}"
       kill "${holder_pid}" 2>/dev/null || true
       wait "${holder_pid}" 2>/dev/null || true
       rm -f "${holder_out}" "${holder_out}.err"

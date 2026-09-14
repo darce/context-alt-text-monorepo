@@ -3309,12 +3309,12 @@ do_restart() {
     warn "cutover candidate lost health after canonical api/worker restart; traffic remains on ${next_unit}"
     return 1
   fi
-  if ! verify_running_image_digest "$env" "${expected_digest}"; then
-    warn "live unit ${unit} came up on the wrong image; traffic remains on ${next_unit}"
-    return 1
-  fi
   if ! probe_canonical_api_health "$env"; then
     warn "canonical api never became healthy after restart; traffic remains on ${next_unit}"
+    return 1
+  fi
+  if ! verify_running_image_digest "$env" "${expected_digest}"; then
+    warn "live unit ${unit} came up on the wrong image; traffic remains on ${next_unit}"
     return 1
   fi
   if ! flip_edge_alias "$env" canonical; then

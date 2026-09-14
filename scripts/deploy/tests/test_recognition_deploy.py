@@ -2699,6 +2699,7 @@ stopped_cid="__STOPPED_CID__"
 rollback_cid="__ROLLBACK_CID__"
 prior_cid="__PRIOR_CID__"
 wrong_id="sha256:3333333333333333333333333333333333333333333333333333333333333333"
+fail_at="__FAIL_AT__"
 printf '%s\n' "$*" >>"${state}/docker.log"
 
 if [[ "${1:-}" == "compose" ]]; then
@@ -2734,6 +2735,15 @@ if [[ "${1:-}" == "compose" ]]; then
       fi
     elif [[ -f "${state}/running-cid" ]]; then
       cat "${state}/running-cid"
+    elif [[ "$fail_at" == "canonical_digest_race" && -f "${state}/canonical-api-start-pending" ]]; then
+      if [[ ! -f "${state}/canonical-health-requested" ]]; then
+        : >"${state}/canonical-digest-read-empty"
+      elif [[ ! -f "${state}/canonical-health-ps-empty" ]]; then
+        : >"${state}/canonical-health-ps-empty"
+      else
+        printf '%s\n' "$stopped_cid" >"${state}/running-cid"
+        printf '%s\n' "$stopped_cid"
+      fi
     fi
     exit 0
   fi
@@ -2841,6 +2851,7 @@ esac
         .replace("__STOPPED_CID__", stopped_cid)
         .replace("__ROLLBACK_CID__", rollback_cid)
         .replace("__PRIOR_CID__", prior_cid)
+        .replace("__FAIL_AT__", fail_at)
     )
     _write_executable(fake_bin / "docker", docker)
 
@@ -2895,6 +2906,11 @@ if [[ "$remote" == *"systemctl restart"* ]]; then
     printf '%s\n' "$stopped_cid" >"${state}/running-cid"
     exit 0
   fi
+  if [[ "$fail_at" == "canonical_digest_race" ]]; then
+    rm -f "${state}/running-cid"
+    : >"${state}/canonical-api-start-pending"
+    exit 0
+  fi
   if [[ "$fail_at" == "live_restart" ]]; then
     rm -f "${state}/running-cid"
     if [[ "$runtime_mode" == "absent" || "$runtime_mode" == "unknown" ]]; then
@@ -2913,6 +2929,10 @@ fi
 remote="${remote//\/opt\/acx-backend\/dev/${state}/remote}"
 remote="${remote//\/opt\/acx-backend\/staging/${state}/remote}"
 remote="${remote//\/opt\/acx-backend\/prod/${state}/remote}"
+if [[ "$fail_at" == "canonical_digest_race" && "$remote" == *"docker-compose.env.yml"* \
+     && "$remote" == *"/health"* && "$remote" != *"cutover"* ]]; then
+  : >"${state}/canonical-health-requested"
+fi
 # Edge/topology sudo scripts must not run on the host. Match them before the
 # compose-ps executor: a flip script contains both "docker compose" and the
 # substring "ps" inside "snapshot", which used to leak `sudo` to the operator.
@@ -2968,7 +2988,7 @@ ACX_REMOTE_INSPECT_TIMEOUT=5
 ACX_REMOTE_COMMAND_TIMEOUT=5
 ACX_PULL_TIMEOUT=5
 ACX_PUSH_TIMEOUT=5
-ACX_VERIFY_ATTEMPTS=1
+ACX_VERIFY_ATTEMPTS={"2" if fail_at == "canonical_digest_race" else "1"}
 ACX_VERIFY_SLEEP=0
 ACX_IMAGE_REPO="$IMAGE_BASE"
 init_deploy_ocir_docker_config() {{ ACX_DEPLOY_OCIR_CONFIG_DIR="{tmp_path / "docker-config"}"; mkdir -p "$ACX_DEPLOY_OCIR_CONFIG_DIR"; return 0; }}
@@ -3185,7 +3205,7 @@ def test_do_restart_gates_canonical_health_before_flip_back() -> None:
     digest_at = body.index("verify_running_image_digest")
     canonical_flip = body.index('flip_edge_alias "$env" canonical', restart_at)
     abort_at = body.index("abort_cutover_candidate", restart_at)
-    assert restart_at < digest_at < canonical_flip
+    assert restart_at < health_at < digest_at < canonical_flip
     assert restart_at < health_at < canonical_flip < abort_at
     assert "probe_cutover_api_health" in body[restart_at:canonical_flip]
 
@@ -3206,6 +3226,25 @@ def test_canonical_health_failure_keeps_candidate_serving(tmp_path: Path) -> Non
     assert ssh_log.count("systemctl restart acx-dev") == 1, ssh_log
     assert "systemctl stop 'acx-dev-next'" not in ssh_log
     assert (tmp_path / "rollback-state" / "next-running-cid").exists()
+
+
+def test_canonical_digest_waits_for_health_ready_api(tmp_path: Path) -> None:
+    """A delayed canonical API must not be mistaken for an immutable image mismatch."""
+    result = _run_actual_restart_failure_transaction(
+        tmp_path,
+        invoke='do_restart dev "$IMAGE_BASE@sha256:' + ("b" * 64) + '"',
+        fail_at="canonical_digest_race",
+    )
+    combined = result.stdout + result.stderr
+    state = tmp_path / "rollback-state"
+    ssh_log = (state / "ssh.log").read_text()
+
+    assert result.returncode == 0, combined
+    assert "IMMUTABLE IMAGE MISMATCH" not in combined, combined
+    assert (state / "canonical-health-ps-empty").is_file(), ssh_log
+    assert not (state / "canonical-digest-read-empty").exists(), ssh_log
+    assert "Canonical api dev is healthy" in combined, combined
+    assert "Flipping Caddy reverse_proxy dev-api-next:8000 -> dev-api:8000" in combined, combined
 
 
 def test_promote_gate_restores_topology_on_converge_failure() -> None:

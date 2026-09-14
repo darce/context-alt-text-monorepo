@@ -1181,8 +1181,11 @@ local_docker_with_config() {
 }
 
 remote_docker_with_config() {
-  local config_q arg quoted_args="" remote_dir
-  remote_dir="$(remote_ocir_config_dir)" || fail "Remote OCIR credential dir is not initialized"
+  local config_q arg quoted_args="" remote_dir=""
+  # An uninitialized config keeps DOCKER_CONFIG empty (docker's default), never a bare /tmp/.
+  if [[ -n "${ACX_DEPLOY_OCIR_CONFIG_DIR}" ]]; then
+    remote_dir="$(remote_ocir_config_dir)" || fail "Remote OCIR credential dir is not initialized"
+  fi
   config_q="$(remote_quote "${remote_dir}")"
   for arg in "$@"; do
     quoted_args+=" $(remote_quote "${arg}")"

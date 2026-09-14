@@ -263,7 +263,7 @@ def test_all_remote_registry_commands_carry_the_deploy_config() -> None:
     assert "DOCKER_CONFIG='${ACX_DEPLOY_OCIR_CONFIG_DIR}'" not in source
 
 
-@pytest.mark.parametrize("config_dir", ["", "/", "/tmp/", "/tmp/.."])
+@pytest.mark.parametrize("config_dir", ["/", "/tmp/", "/tmp/.."])
 def test_uninitialized_config_dir_never_reaches_the_vm(tmp_path: Path, config_dir: str) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()

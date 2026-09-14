@@ -206,6 +206,7 @@ class GpuRemoteDescriptionAdapter:
         endpoint_url: str,
         model_id: str,
         model_version: str,
+        quantization: str | None = None,
         prompt_or_task_version: str = "3",
         model_revision: str | None = None,
         hub_repo: str | None = None,
@@ -227,6 +228,7 @@ class GpuRemoteDescriptionAdapter:
         else:
             self.model_id = model_id
         self.model_version = model_version
+        self.quantization = quantization
         self.prompt_or_task_version = prompt_or_task_version
         self._connect_timeout_s = connect_timeout_s
         self._read_timeout_s = read_timeout_s

@@ -44,6 +44,27 @@ Compose would decode them.
 GPU addresses must be private and cannot be loopback, unspecified, multicast,
 or link-local, including IPv4-mapped IPv6 and allowlisted DNS answers.
 
+## 1b. Re-adding `dev-fir` on the day its stack ships
+
+`dev-fir` is deliberately absent from
+`scripts/deploy/gpu-snapshot-deployments.conf`. The in-house facial-recognition
+stack it belongs to is still in development and publishes no
+`describe-load.json`, and the aggregate load source escalates the whole
+snapshot when any single declared producer is missing, so listing it holds the
+GPU START gate closed for every other environment. The registry rejects
+comment lines, which is why this note lives here.
+
+On deploy day, once the `dev-fir` API container is actually publishing:
+
+1. Add `dev-fir` back as a line in `scripts/deploy/gpu-snapshot-deployments.conf`.
+2. Reinstall the lifecycle so the VM picks up the registry:
+   `ACX_DEPLOY_GPU_LIFECYCLE=1 ACX_GPU_READY_URL=<ready-url> scripts/deploy/recognition-service.sh gpu-lifecycle`
+3. Confirm `/run/acx-write/dev-fir/describe-load.json` exists, is fresh, and
+   carries `batch_in_progress`, then check `journalctl -u acx-gpu-start.service`
+   for a cycle with no `describe load evidence` warning.
+
+Adding `dev-fir` to the registry before step 3 can hold, re-blocks START.
+
 ## 2. Stage and optionally prove the preflight contract
 
 Stage the validator in a private temporary directory on the VM, then optionally

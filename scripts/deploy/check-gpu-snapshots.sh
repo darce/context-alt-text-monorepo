@@ -45,7 +45,7 @@ config_only=${ACX_GPU_SNAPSHOT_CONFIG_ONLY:-0}
 future_skew_tolerance_seconds=5
 # This independently reviewed minimum prevents a shortened registry from
 # narrowing the deployment gate while still permitting future environments.
-required_deployments="dev dev-fir staging prod"
+required_deployments="dev staging prod"
 load_environments=
 deployment_count=0
 

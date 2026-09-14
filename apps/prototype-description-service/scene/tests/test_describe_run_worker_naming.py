@@ -552,6 +552,7 @@ def test_naming_lookup_timeout_persists_generic_draft_without_reload(monkeypatch
     assert items[0].status == DescribeItemStatus.COMPLETED
     assert items[0].alt_text_draft == GENERIC_DRAFT
     assert items[0].caption == "cap 1"
+    assert items[0].provenance["naming"]["status"] == wmod.NamingStatus.SKIPPED_BUDGET.value
     assert calls == ["load"]
 
 

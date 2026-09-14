@@ -4218,11 +4218,13 @@ def test_health_program_http(status: int, actual: str, expected_sha: str) -> Non
         def log_message(self, *args: object) -> None:
             pass
 
-    server = HTTPServer(("127.0.0.1", 0), Handler, bind_and_activate=False)
+    server = None
     try:
+        server = HTTPServer(("127.0.0.1", 0), Handler, bind_and_activate=False)
         server.server_bind()
     except PermissionError:
-        server.server_close()
+        if server is not None:
+            server.server_close()
         pytest.skip("sandbox forbids AF_INET loopback bind")
     server.server_activate()
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -4256,11 +4258,15 @@ def test_health_program_http(status: int, actual: str, expected_sha: str) -> Non
 
 @pytest.mark.parametrize("expected_sha", ["", "a" * 40])
 def test_health_program_connection_refused(expected_sha: str) -> None:
-    with socket.socket() as sock:
-        try:
-            sock.bind(("127.0.0.1", 0))
-        except PermissionError:
-            pytest.skip("sandbox forbids AF_INET loopback bind")
+    sock = None
+    try:
+        sock = socket.socket()
+        sock.bind(("127.0.0.1", 0))
+    except PermissionError:
+        if sock is not None:
+            sock.close()
+        pytest.skip("sandbox forbids AF_INET loopback bind")
+    with sock:
         port = sock.getsockname()[1]
         program = _health_program().replace("127.0.0.1:8000", f"127.0.0.1:{port}")
         result = subprocess.run(

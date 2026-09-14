@@ -3,9 +3,10 @@
 #
 # Order matters: bring up acx-demo first so acx-demo-net exists, then recreate
 # Caddy (network join requires container recreate — reload-only is insufficient).
-# When PLUGIN_ZIP is unset, auto-discovers the newest dist/alt-context-*.zip and
+# When PLUGIN_ZIP is unset, freshness-gates the newest dist/alt-context-*.zip and
 # runs bootstrap-wp.sh after the stack is healthy. An explicitly empty PLUGIN_ZIP
 # means no artifact: skip the plugin rsync, skip bootstrap, leave BOOTSTRAP_RAN=0.
+# Explicit non-empty PLUGIN_ZIP pins a reviewed artifact without freshness checks.
 #
 # Usage:
 #   scripts/deploy/sync-demo.sh
@@ -52,7 +53,28 @@ shell_quote() {
 if [[ -z ${PLUGIN_ZIP+x} ]]; then
   PLUGIN_ZIP="$(ls -t dist/alt-context-*.zip 2>/dev/null | head -1 || true)"
   if [[ -n "${PLUGIN_ZIP}" ]]; then
+    ACX_BUILD_SOURCE_STAMP="${ACX_BUILD_SOURCE_STAMP:-apps/prototype-wp-alt-context/public/assets/dist/.acx-build-source.sha256}"
+    PACKAGE_PLUGIN_SCRIPT="${PACKAGE_PLUGIN_SCRIPT:-apps/prototype-wp-alt-context/scripts/release/package-plugin.sh}"
+    remediation="Rerun bash apps/prototype-wp-alt-context/scripts/release/package-plugin.sh, or pin a reviewed artifact with PLUGIN_ZIP=<path>."
+    if [[ ! -f "${ACX_BUILD_SOURCE_STAMP}" ]]; then
+      echo "ERROR: Missing build source stamp: ${ACX_BUILD_SOURCE_STAMP}. ${remediation}" >&2
+      exit 3
+    fi
+    if ! expected_digest="$(bash "${PACKAGE_PLUGIN_SCRIPT}" --print-source-digest 2>/dev/null)"; then
+      echo "ERROR: Cannot compute build source digest with ${PACKAGE_PLUGIN_SCRIPT}. ${remediation}" >&2
+      exit 3
+    fi
+    found_digest="$(<"${ACX_BUILD_SOURCE_STAMP}")"
+    if [[ -z "${expected_digest}" || "${expected_digest}" != "${found_digest}" ]]; then
+      echo "ERROR: Build source stamp digest mismatch: expected ${expected_digest}, found ${found_digest}. ${remediation}" >&2
+      exit 3
+    fi
+    if [[ "${PLUGIN_ZIP}" -ot "${ACX_BUILD_SOURCE_STAMP}" ]]; then
+      echo "ERROR: Plugin ZIP ${PLUGIN_ZIP} is older than stamp ${ACX_BUILD_SOURCE_STAMP}. ${remediation}" >&2
+      exit 3
+    fi
     echo "==> Auto-discovered plugin artifact: ${PLUGIN_ZIP}"
+    echo "==> Plugin artifact freshness verified against build source stamp"
   else
     echo "==> No plugin artifact auto-discovered (no dist/alt-context-*.zip)"
   fi

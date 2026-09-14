@@ -9,7 +9,6 @@ import pytest
 from scene.config.profiles import PROFILE_SPECS, DescriptionProfile
 from scene.domain.description import DescriptionAdapterKind
 
-
 _SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "generate_coachella_gpu_drafts.py"
 _SCRIPT_SPEC = importlib.util.spec_from_file_location("generate_coachella_gpu_drafts", _SCRIPT_PATH)
 assert _SCRIPT_SPEC is not None and _SCRIPT_SPEC.loader is not None
@@ -46,3 +45,36 @@ def test_model_metadata_fails_closed_when_quantization_is_missing() -> None:
 
 def test_gpu_qwen30b_profile_declares_quantization() -> None:
     assert PROFILE_SPECS[DescriptionProfile.GPU_QWEN30B].quantization == "Q4_K_M"
+
+
+def test_resolver_passes_profile_quantization_to_gpu_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", "http://10.0.1.42:8000")
+
+    from scene.infrastructure.vlm.gpu_remote_adapter import GpuRemoteDescriptionAdapter
+    from scene.interface_adapters.http.deps import get_gpu_description_adapter
+
+    spec = PROFILE_SPECS[DescriptionProfile.GPU_QWEN30B]
+    adapter = get_gpu_description_adapter()
+
+    assert isinstance(adapter, GpuRemoteDescriptionAdapter)
+    assert adapter.quantization == spec.quantization == "Q4_K_M"
+
+    metadata = _model_metadata(adapter)
+    assert metadata["quantization"] == "Q4_K_M"
+    assert metadata["model_version"] == spec.model_version
+
+
+def test_ensemble_route_resolves_gpu_adapter_with_profile_quantization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "gpu_qwen30b_ensemble")
+    monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", "http://10.0.1.42:8000")
+
+    from scene.infrastructure.vlm.gpu_remote_adapter import GpuRemoteDescriptionAdapter
+    from scene.interface_adapters.http.deps import get_description_adapter
+
+    spec = PROFILE_SPECS[DescriptionProfile.GPU_QWEN30B_ENSEMBLE]
+    adapter = get_description_adapter()
+
+    assert isinstance(adapter, GpuRemoteDescriptionAdapter)
+    assert adapter.quantization == spec.quantization == "Q4_K_M"

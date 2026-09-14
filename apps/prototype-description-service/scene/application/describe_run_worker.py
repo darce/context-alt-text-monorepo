@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import enum
 import inspect
 import logging
 import os
@@ -10,7 +11,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, NamedTuple, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Final, Literal, NamedTuple, Protocol, runtime_checkable
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -53,7 +54,13 @@ class FusionNamingInputs(NamedTuple):
 
 
 EMPTY_NAMING_INPUTS = FusionNamingInputs(confirmed_faces=[], naming_policy=None)
-_NAMING_BUDGET_EXCEEDED = object()
+
+
+class _NamingBudget(enum.Enum):
+    EXCEEDED = enum.auto()
+
+
+_NAMING_BUDGET_EXCEEDED: Final = _NamingBudget.EXCEEDED
 
 
 class MissingNamingSnapshotError(RuntimeError):
@@ -295,7 +302,7 @@ async def _naming_lookup_for_item(
     tenant_id: uuid.UUID,
     media_id: int,
     image_bytes: bytes | None,
-) -> FusionNamingInputs | None:
+) -> FusionNamingInputs | Literal[_NamingBudget.EXCEEDED] | None:
     """Load faces/policy independently of describe I/O; never raises to the run."""
     if not enabled or tenant is None or not image_bytes:
         return None
@@ -344,7 +351,7 @@ def _naming_provenance_payload(
         names_applied = payload.get("names_applied")
     if names_applied is None:
         names_applied = [
-            item.get("name") for item in injected_names if isinstance(item, dict) and isinstance(item.get("name"), str)
+            name for item in injected_names if isinstance(item, dict) and isinstance(name := item.get("name"), str)
         ]
     names_applied = list(names_applied)
 
@@ -377,7 +384,7 @@ async def _apply_naming_preview(
     media_id: int,
     image_bytes: bytes | None,
     outcome: DescribeItemOutcome,
-    naming_inputs: FusionNamingInputs | None,
+    naming_inputs: FusionNamingInputs | Literal[_NamingBudget.EXCEEDED] | None,
     item_started: float,
     item_envelope: float,
     naming_budget_exceeded: bool = False,
@@ -545,7 +552,7 @@ async def run_describe_job(
                         image_bytes=image_bytes,
                     )
                     naming_budget_exceeded = naming_inputs is _NAMING_BUDGET_EXCEEDED
-                    if naming_inputs is not None and not naming_budget_exceeded:
+                    if naming_inputs is not None and naming_inputs is not _NAMING_BUDGET_EXCEEDED:
                         describe_naming_inputs: FusionNamingInputs | None = naming_inputs
                     elif run is not None and run.recognition_enabled:
                         describe_naming_inputs = EMPTY_NAMING_INPUTS

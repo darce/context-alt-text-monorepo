@@ -236,6 +236,18 @@ if [[ -n "${FAKE_HEALTH_SLEEP:-}" ]]; then
   fi
 fi
 code="${FAKE_HEALTH_CODE:-000}"
+if [[ -n "${FAKE_HEALTH_READY_AFTER:-}" ]]; then
+  health_started="${state}/health-started"
+  if [[ ! -f "${health_started}" ]]; then
+    date +%s >"${health_started}"
+  fi
+  health_elapsed=$(( $(date +%s) - $(<"${health_started}") ))
+  if (( health_elapsed >= FAKE_HEALTH_READY_AFTER )); then
+    code=200
+  else
+    code=000
+  fi
+fi
 body="${FAKE_HEALTH_BODY-}"
 if [[ "$code" =~ ^[23][0-9][0-9]$ ]]; then
   printf '%s\n%s' "${body:-{\"status\":\"ok\"}}" "$code"
@@ -679,11 +691,9 @@ def test_boot_smoke_has_outer_deadlines_and_curl_request_timeout() -> None:
 
 @pytest.mark.parametrize("budget_s", [16, 24])
 def test_boot_smoke_computed_health_loop_budget(tmp_path: Path, budget_s: int) -> None:
-    """GR-37 / GR-38: health window is budget minus trap reserve plus last-curl guard."""
+    """GR-37 / GR-38: health window is the full budget plus last-curl guard."""
     poll_s = 2
-    trap_docker_s = 10  # logs+rm+rm+volume+network, each timeout 2
-    diag_reserve = trap_docker_s + poll_s
-    health_budget = max(1, budget_s - diag_reserve)
+    health_budget = budget_s
     started = time.monotonic()
     result = _run_boot_smoke(
         tmp_path,
@@ -696,7 +706,7 @@ def test_boot_smoke_computed_health_loop_budget(tmp_path: Path, budget_s: int) -
     combined = result.stdout + result.stderr
     assert result.returncode != 0, combined
     # GR-05 stops the last curl when remaining <= poll_s, so elapsed is
-    # health_budget minus about one poll, never the full outer budget.
+    # health_budget minus about one poll, never beyond the full health budget.
     assert elapsed >= max(0, health_budget - poll_s) - 1
     assert elapsed < budget_s + 4
 
@@ -1803,11 +1813,10 @@ def test_do_boot_smoke_passes_pg_ready_budget_as_eighth_arg(tmp_path: Path) -> N
 
 
 def test_boot_smoke_health_loop_uses_full_wall_clock(tmp_path: Path) -> None:
-    """SB-01: instant ECONNREFUSED still polls for health_budget minus last-curl guard."""
+    """SB-01: instant ECONNREFUSED still polls for the full budget minus last-curl guard."""
     budget_s = 24
     poll_s = 2
-    trap_docker_s = 10
-    health_budget = max(1, budget_s - (trap_docker_s + poll_s))
+    health_budget = budget_s
     started = time.monotonic()
     result = _run_boot_smoke(
         tmp_path,
@@ -1821,6 +1830,29 @@ def test_boot_smoke_health_loop_uses_full_wall_clock(tmp_path: Path) -> None:
     combined = result.stdout + result.stderr
     assert result.returncode != 0, combined
     assert elapsed >= max(0, health_budget - poll_s) - 1
+    assert elapsed < budget_s + 4
+
+
+def test_boot_smoke_health_passes_after_removed_diag_reserve(tmp_path: Path) -> None:
+    """SB-04: /health can become ready after the old diagnostic reserve window."""
+    budget_s = 8
+    poll_s = 1
+    trap_docker_s = 3
+    health_ready_after = budget_s - trap_docker_s - poll_s + 2
+    started = time.monotonic()
+    result = _run_boot_smoke(
+        tmp_path,
+        budget_s=budget_s,
+        poll_s=poll_s,
+        trap_docker_s=trap_docker_s,
+        pg_budget=1,
+        extra_env={"FAKE_HEALTH_READY_AFTER": str(health_ready_after)},
+    )
+    elapsed = time.monotonic() - started
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+    assert "smoke health OK (HTTP 200)" in combined
+    assert elapsed >= health_ready_after - 1
     assert elapsed < budget_s + 4
 
 
@@ -2081,9 +2113,9 @@ def test_cid_capture_uses_last_64_hex_line(tmp_path: Path) -> None:
 
 
 def test_boot_smoke_last_curl_does_not_eat_diag_reserve(tmp_path: Path) -> None:
-    """GR-05: do not start a health curl that would overrun the diag reserve."""
+    """GR-05: do not start a health curl when only the final poll interval remains."""
     poll_s = 2
-    budget_s = 16  # health_budget = 16 - 12 = 4; second curl would eat the reserve
+    budget_s = 6  # after one poll-sized curl and sleep, remaining <= poll_s
     started = time.monotonic()
     result = _run_boot_smoke(
         tmp_path,
@@ -2096,7 +2128,8 @@ def test_boot_smoke_last_curl_does_not_eat_diag_reserve(tmp_path: Path) -> None:
     combined = result.stdout + result.stderr
     assert result.returncode != 0, combined
     assert "smoke container logs" in combined
-    # One curl of poll_s plus setup/trap, not a second curl of poll_s.
+    assert _curl_max_times(result) == [budget_s]
+    # One curl of poll_s plus one final poll interval, not a second curl.
     assert elapsed < (poll_s * 2) + 2
 
 
@@ -2354,8 +2387,7 @@ def test_boot_smoke_first_probe_max_time_capped_by_remaining(tmp_path: Path) -> 
     """GR-82 / A5: first health curl --max-time is remaining budget, not a full poll_s."""
     budget_s = 5
     poll_s = 2
-    trap_docker_s = 10
-    health_budget = max(1, budget_s - (trap_docker_s + poll_s))
+    health_budget = budget_s
     started = time.monotonic()
     result = _run_boot_smoke(
         tmp_path,

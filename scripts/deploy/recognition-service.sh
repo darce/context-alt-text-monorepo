@@ -2494,10 +2494,10 @@ if ! [[ "${port}" =~ ^[0-9]+$ ]]; then
   echo "smoke setup failed: no published port" >&2
   exit 1
 fi
-# EXIT trap: timeout 2 × 6 docker ops; trap_docker_s reserves health-loop tail.
+# EXIT trap: timeout 2 × 6 docker ops; composite_deadline reserves its wall
+# clock separately from this full health window.
 # Outer composite adds +1s kill-grace per op (GR-262).
-diag_reserve=$((trap_docker_s + poll_s))
-health_budget=$((budget_s - diag_reserve))
+health_budget="$budget_s"
 if (( health_budget < 1 )); then
   health_budget=1
 fi

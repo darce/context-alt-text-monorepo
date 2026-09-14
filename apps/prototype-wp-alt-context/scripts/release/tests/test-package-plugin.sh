@@ -63,10 +63,15 @@ assert_zip_excludes() {
     fi
 }
 
+stamp_fixture() {
+    ACX_PACKAGE_PLUGIN_DIR="$1" bash "${PACKAGER}" --print-source-digest \
+        > "$1/public/assets/dist/.acx-build-source.sha256"
+}
+
 create_common_fixture() {
     local fixture_dir="$1"
 
-    mkdir -p "${fixture_dir}/src" \
+    mkdir -p "${fixture_dir}/js" "${fixture_dir}/src" \
         "${fixture_dir}/public/assets/dist" \
         "${fixture_dir}/vendor"
 
@@ -84,6 +89,8 @@ PHP
     printf '%s\n' '<?php' >"${fixture_dir}/vendor/autoload.php"
     printf '%s\n' '<?php // fixture source' >"${fixture_dir}/src/x.php"
     printf '%s\n' '{}' >"${fixture_dir}/public/assets/dist/manifest.json"
+    printf '%s\n' 'export const fixture = 1;' >"${fixture_dir}/js/app.ts"
+    stamp_fixture "${fixture_dir}"
 }
 
 run_packager() {
@@ -118,6 +125,7 @@ printf '%s\n' 'test("spec", () => {});' >"${case_one_fixture}/js/public/demo-des
 printf '%s\n' 'export const helper = 1;' >"${case_one_fixture}/js/public/__tests__/helpers.ts"
 printf '%s\n' 'test("nested", () => {});' >"${case_one_fixture}/js/public/__tests__/x.test.ts"
 
+stamp_fixture "${case_one_fixture}"
 case_one_before=$failures
 run_packager "${case_one_fixture}" "${case_one_dist}"
 if [[ "${last_rc}" -eq 0 ]]; then
@@ -175,6 +183,7 @@ create_common_fixture "${case_three_fixture}"
 mkdir -p "${case_three_fixture}/js/public"
 printf '%s\n' '.demo {}' >"${case_three_fixture}/js/public/demo-describe.css"
 
+stamp_fixture "${case_three_fixture}"
 case_three_before=$failures
 run_packager "${case_three_fixture}" "${case_three_dist}"
 if [[ "${last_rc}" -ne 0 ]]; then
@@ -201,6 +210,7 @@ printf '%s\n' 'test("excluded", () => {});' >"${case_four_fixture}/js/public/dem
 printf '%s\n' 'test("excluded", () => {});' >"${case_four_fixture}/js/public/demo.spec.js"
 printf '%s\n' 'test("excluded", () => {});' >"${case_four_fixture}/js/public/__tests__/x.js"
 
+stamp_fixture "${case_four_fixture}"
 case_four_before=$failures
 run_packager "${case_four_fixture}" "${case_four_dist}"
 if [[ "${last_rc}" -ne 0 ]]; then
@@ -242,6 +252,7 @@ exec "${ACX_TEST_REAL_CP}" "$@"
 CP
 chmod +x "${fake_bin}/cp"
 
+stamp_fixture "${case_five_fixture}"
 case_five_before=$failures
 last_output=""
 last_rc=0
@@ -285,6 +296,75 @@ if [[ "${failures}" -eq "${case_six_before}" ]]; then
     pass "case 6 regression"
 else
     printf 'FAIL: case 6 regression\n' >&2
+fi
+
+# Source stamps reject missing provenance and source drift before packaging.
+stamp_fixture_dir="${TEST_ROOT}/source-stamp"
+stamp_dist="${TEST_ROOT}/dist-source-stamp"
+create_common_fixture "${stamp_fixture_dir}"
+stamp_path="${stamp_fixture_dir}/public/assets/dist/.acx-build-source.sha256"
+original_digest="$(<"${stamp_path}")"
+rm "${stamp_path}"
+run_packager "${stamp_fixture_dir}" "${stamp_dist}"
+if [[ "${last_rc}" -eq 0 ]]; then
+    fail "missing source stamp rejects packaging"
+fi
+assert_output_contains "missing stamp names provenance file" "${stamp_path}" "${last_output}"
+assert_output_contains "missing stamp reports expected digest" "expected ${original_digest}" "${last_output}"
+assert_output_contains "missing stamp reports absence" "found <missing>" "${last_output}"
+assert_output_contains "missing stamp offers rebuild remedy" "Rerun without --no-build" "${last_output}"
+
+stamp_fixture "${stamp_fixture_dir}"
+printf '%s\n' 'export const fixture = 2;' >"${stamp_fixture_dir}/js/app.ts"
+run_packager "${stamp_fixture_dir}" "${stamp_dist}"
+if [[ "${last_rc}" -eq 0 ]]; then
+    fail "changed source rejects packaging"
+fi
+assert_output_contains "source drift reports mismatch" "stamp mismatch" "${last_output}"
+assert_output_contains "source drift reports old digest" "found ${original_digest}" "${last_output}"
+
+stamp_fixture "${stamp_fixture_dir}"
+original_digest="$(<"${stamp_path}")"
+mkdir -p "${stamp_fixture_dir}/js/nested/__tests__"
+printf '%s\n' 'test helper' >"${stamp_fixture_dir}/js/nested/__tests__/helper.ts"
+printf '%s\n' 'test' >"${stamp_fixture_dir}/js/app.test.ts"
+printf '%s\n' 'spec' >"${stamp_fixture_dir}/js/app.spec.ts"
+ignored_digest="$(ACX_PACKAGE_PLUGIN_DIR="${stamp_fixture_dir}" bash "${PACKAGER}" --print-source-digest)"
+if [[ "${original_digest}" == "${ignored_digest}" && "${ignored_digest}" =~ ^[0-9a-f]{64}$ ]]; then
+    pass "digest ignores nested tests and test/spec files"
+else
+    fail "digest ignores nested tests and test/spec files"
+fi
+run_packager "${stamp_fixture_dir}" "${stamp_dist}"
+if [[ "${last_rc}" -eq 0 ]]; then
+    assert_zip_contains "matching stamp ships as provenance" "${stamp_dist}/alt-context-0.0.1.zip" \
+        "alt-context/public/assets/dist/.acx-build-source.sha256"
+else
+    fail "matching stamp permits packaging: ${last_output}"
+fi
+
+# Exercise the build branch with isolated build tools.
+build_bin="${TEST_ROOT}/build-bin"
+mkdir -p "${build_bin}"
+cat >"${build_bin}/npm" <<'NPM'
+#!/usr/bin/env bash
+set -eu
+[[ "$*" == 'run build' ]]
+rm -rf public/assets/dist
+mkdir -p public/assets/dist
+printf '%s\n' '{}' >public/assets/dist/manifest.json
+NPM
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"${build_bin}/composer"
+chmod +x "${build_bin}/npm" "${build_bin}/composer"
+last_rc=0
+last_output="$(PATH="${build_bin}:${PATH}" ACX_PACKAGE_PLUGIN_DIR="${stamp_fixture_dir}" \
+    ACX_PACKAGE_DIST_DIR="${TEST_ROOT}/dist-build" bash "${PACKAGER}" 2>&1)" || last_rc=$?
+if [[ "${last_rc}" -eq 0 && "$(<"${stamp_path}")" == "${original_digest}" ]]; then
+    pass "successful build writes matching source stamp"
+    assert_zip_contains "build packages source stamp" "${TEST_ROOT}/dist-build/alt-context-0.0.1.zip" \
+        "alt-context/public/assets/dist/.acx-build-source.sha256"
+else
+    fail "successful build writes matching source stamp: ${last_output}"
 fi
 
 if [[ "${failures}" -ne 0 ]]; then

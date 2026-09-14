@@ -84,6 +84,16 @@
         ]
       },
       {
+        "matcher": "Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/guard-agent-remote-only-implementation.py\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
         "matcher": "mcp__workbay-handoff-mcp__record_event|mcp__workbay-handoff-mcp__close_slice",
         "hooks": [
           {

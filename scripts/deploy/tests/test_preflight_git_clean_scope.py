@@ -86,6 +86,18 @@ def test_override_applies_to_dev_only(repo: Path) -> None:
     assert "PREFLIGHT_OK" not in _run(repo, "prod", allow_dirty="1").stdout
 
 
+def test_long_dirty_list_does_not_abort_overridden_dev(repo: Path) -> None:
+    for i in range(5000):
+        (repo / f"apps/prototype-description-service/scene/gen_{i}.py").write_text("x = 1\n")
+    driver_env = "set -euo pipefail; "
+    result = subprocess.run(
+        ["bash", "-c", driver_env + f'source "{SCRIPT}"; GREEN=; YELLOW=; RED=; RESET=; REPO_ROOT="{repo}"; '
+         "ACX_ALLOW_DIRTY=1; preflight_git_clean dev; echo PREFLIGHT_OK"],
+        capture_output=True, text=True, env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"},
+    )
+    assert "PREFLIGHT_OK" in result.stdout, result.stderr[-500:]
+
+
 def test_git_failure_fails_closed(tmp_path: Path) -> None:
     result = _run(tmp_path / "not-a-repo", "dev")
     assert "PREFLIGHT_OK" not in result.stdout

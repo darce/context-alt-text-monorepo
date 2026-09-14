@@ -10,6 +10,16 @@ set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 checker="${root}/scripts/deploy/check-gpu-snapshots.sh"
 deployments_file="${root}/scripts/deploy/gpu-snapshot-deployments.conf"
+# The registry is the single list of declared producers; hardcoding a second
+# copy here makes every registry change a two-file edit that silently rots.
+registered_environments=()
+while read -r registered_environment; do
+    [ -n "$registered_environment" ] && registered_environments+=("$registered_environment")
+done <"$deployments_file"
+[ "${#registered_environments[@]}" -gt 0 ] ||
+    { echo "GPU snapshot deployment registry is empty: $deployments_file" >&2; exit 2; }
+# Per-environment failure probes run against one registered producer.
+probe_environment="${registered_environments[0]}"
 recognition_deploy="${root}/scripts/deploy/recognition-service.sh"
 checker_bash=${ACX_GPU_TEST_BASH:-/bin/bash}
 prod_compose="${root}/apps/prototype-description-service/docker-compose.prod.yml"
@@ -149,13 +159,12 @@ expect_failure() {
     fi
 }
 
-mkdir -p "${fixture_root}/run/acx" \
-    "${fixture_root}/run/acx-write/dev" \
-    "${fixture_root}/run/acx-write/dev-fir" \
-    "${fixture_root}/run/acx-write/staging" \
-    "${fixture_root}/run/acx-write/prod"
+mkdir -p "${fixture_root}/run/acx"
+for environment in "${registered_environments[@]}"; do
+    mkdir -p "${fixture_root}/run/acx-write/${environment}"
+done
 printf '{"state":"ready","written_at":900}\n' >"${fixture_root}/run/acx/gpu-state.json"
-for environment in dev dev-fir staging prod; do
+for environment in "${registered_environments[@]}"; do
     printf '{"queue_depth":0,"in_flight":0,"batch_in_progress":false,"written_at":900}\n' \
         >"${fixture_root}/run/acx-write/${environment}/describe-load.json"
 done
@@ -216,7 +225,21 @@ chmod +x "${fixture_root}/fake-deploy.sh"
 cat >"${fixture_root}/verify-harness.sh" <<'EOF'
 source "$1"
 curl() {
-    printf '{"commit_sha":"%s"}\n' "$(git -C "$REPO_ROOT" rev-parse "$GIT_REF")"
+    local write_out="" url=""
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --write-out) write_out="$2"; shift 2 ;;
+            --max-time) shift 2 ;;
+            --silent|--show-error) shift ;;
+            *) url="$1"; shift ;;
+        esac
+    done
+    case "$url" in
+        */ready) printf '{"ready":true}' ;;
+        *) printf '{"commit_sha":"%s"}' "$(git -C "$REPO_ROOT" rev-parse "$GIT_REF")" ;;
+    esac
+    # Match curl's body followed by the requested HTTP status write-out.
+    printf '%s' "${write_out//\%\{http_code\}/200}"
 }
 read_remote_image_repo() { :; }
 verify_running_image_matches_deployed() { return 0; }
@@ -336,22 +359,19 @@ fi
 
 expect_success "fresh readable snapshots and agreeing mount pass"
 
-mv "${fixture_root}/run/acx-write/dev-fir/describe-load.json" \
-    "${fixture_root}/run/acx-write/dev-fir/describe-load.missing"
-expect_failure "missing dev-fir describe-load fails closed" \
-    "missing describe load (dev-fir) snapshot"
-mv "${fixture_root}/run/acx-write/dev-fir/describe-load.missing" \
-    "${fixture_root}/run/acx-write/dev-fir/describe-load.json"
+probe_load="${fixture_root}/run/acx-write/${probe_environment}/describe-load.json"
+mv "$probe_load" "${probe_load%.json}.missing"
+expect_failure "missing ${probe_environment} describe-load fails closed" \
+    "missing describe load (${probe_environment}) snapshot"
+mv "${probe_load%.json}.missing" "$probe_load"
 
-printf '{not-json}\n' >"${fixture_root}/run/acx-write/dev-fir/describe-load.json"
-expect_failure "corrupt dev-fir describe-load fails closed" \
-    "describe load (dev-fir) snapshot failed schema validation"
-printf '{"queue_depth":0,"in_flight":0,"written_at":879}\n' \
-    >"${fixture_root}/run/acx-write/dev-fir/describe-load.json"
-expect_failure "stale dev-fir describe-load fails closed" \
-    "stale describe load (dev-fir) snapshot"
-printf '{"queue_depth":0,"in_flight":0,"batch_in_progress":false,"written_at":900}\n' \
-    >"${fixture_root}/run/acx-write/dev-fir/describe-load.json"
+printf '{not-json}\n' >"$probe_load"
+expect_failure "corrupt ${probe_environment} describe-load fails closed" \
+    "describe load (${probe_environment}) snapshot failed schema validation"
+printf '{"queue_depth":0,"in_flight":0,"written_at":879}\n' >"$probe_load"
+expect_failure "stale ${probe_environment} describe-load fails closed" \
+    "stale describe load (${probe_environment}) snapshot"
+printf '{"queue_depth":0,"in_flight":0,"batch_in_progress":false,"written_at":900}\n' >"$probe_load"
 
 cp "$deployments_file" "${fixture_root}/deployments-with-future.conf"
 printf 'future-preview\n' >>"${fixture_root}/deployments-with-future.conf"
@@ -569,14 +589,14 @@ fi
 # the resolution must die rather than fall back to the reader uid -- the exact
 # guess that made WBUX6-MRG-01 unfalsifiable. The root-only block below asserts
 # this too, but only where it can run; this one runs everywhere.
-for env_name in dev dev-fir staging prod; do
+for env_name in "${registered_environments[@]}"; do
     mv "${fixture_root}/run/acx-write/${env_name}/describe-load.json" \
         "${fixture_root}/${env_name}-unobservable.json"
 done
 expect_failure "an unobservable container gid is never guessed from the reader uid" \
     "cannot determine the api container identity" \
     PATH="${shim_bin}:${PATH}" ACX_GPU_READER_UID=0
-for env_name in dev dev-fir staging prod; do
+for env_name in "${registered_environments[@]}"; do
     mv "${fixture_root}/${env_name}-unobservable.json" \
         "${fixture_root}/run/acx-write/${env_name}/describe-load.json"
 done
@@ -656,14 +676,14 @@ if [ "$(id -u)" -eq 0 ] && command -v setpriv >/dev/null 2>&1; then
 
     # With nothing published there is no observable container identity. The
     # gate must say so rather than invent one.
-    for env_name in dev dev-fir staging prod; do
+    for env_name in "${registered_environments[@]}"; do
         mv "${fixture_root}/run/acx-write/${env_name}/describe-load.json" \
             "${fixture_root}/${env_name}-load.json"
     done
     expect_failure "an unobservable container identity fails closed" \
         "cannot determine the api container identity" \
         ACX_GPU_READER_UID=10001
-    for env_name in dev dev-fir staging prod; do
+    for env_name in "${registered_environments[@]}"; do
         mv "${fixture_root}/${env_name}-load.json" \
             "${fixture_root}/run/acx-write/${env_name}/describe-load.json"
     done

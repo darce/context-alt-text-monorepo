@@ -141,7 +141,7 @@ def test_clean_prefix_that_only_loads_the_registry_fails_completion_guard(
 
 @pytest.mark.parametrize(
     ("deployments", "missing"),
-    [("dev", "dev-fir"), ("dev,dev-fir,staging", "prod")],
+    [("dev", "staging"), ("dev,staging", "prod")],
 )
 def test_shortened_registry_names_the_missing_required_environment(
     fixture_env: dict[str, str],

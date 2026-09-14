@@ -12,10 +12,11 @@ DIST_DIR="${ACX_PACKAGE_DIST_DIR:-${REPO_ROOT}/dist}"
 
 show_usage() {
     cat <<'USAGE'
-Usage: bash scripts/release/package-plugin.sh [--no-build] [--help]
+Usage: bash scripts/release/package-plugin.sh [--no-build] [--print-source-digest] [--help]
 
 Options:
   --no-build  Skip npm/composer build steps and package pre-built artifacts only.
+  --print-source-digest  Print the current bundle source digest and exit.
   --help      Show this usage message.
 
 Runtime files:
@@ -25,9 +26,14 @@ USAGE
 }
 
 NO_BUILD=0
+PRINT_SOURCE_DIGEST=0
 
 while (($# > 0)); do
     case "$1" in
+        --print-source-digest)
+            PRINT_SOURCE_DIGEST=1
+            shift
+            ;;
         --no-build)
             NO_BUILD=1
             shift
@@ -163,7 +169,7 @@ ensure_runtime_inputs() {
         exit 1
     fi
 
-    if [[ -z "$(find "${PLUGIN_DIR}/public/assets/dist" -maxdepth 5 -type f | head -n 1)" ]]; then
+    if [[ -z "$(find "${PLUGIN_DIR}/public/assets/dist" -maxdepth 5 -type f ! -name '.acx-build-source.sha256' | head -n 1)" ]]; then
         echo "ERROR: Build output directory is empty: ${PLUGIN_DIR}/public/assets/dist." >&2
         exit 1
     fi
@@ -288,6 +294,35 @@ checksum_file() {
     exit 1
 }
 
+source_digest() (
+    cd "${PLUGIN_DIR}"
+    export LC_ALL=C
+    local hash_command=(sha256sum)
+    if ! command -v sha256sum >/dev/null 2>&1; then
+        ensure_command shasum
+        hash_command=(shasum -a 256)
+    fi
+    {
+        if [[ -d js ]]; then
+            find js -type d -name '__tests__' -prune -o \
+                -type f ! -name '*.test.*' ! -name '*.spec.*' -print
+        fi
+        for input in package.json package-lock.json vite.config.ts tsconfig.json; do
+            if [[ -f "${input}" ]]; then
+                printf '%s\n' "${input}"
+            fi
+        done
+    } | sort | while IFS= read -r input; do
+        digest="$("${hash_command[@]}" < "${input}")"
+        printf '%s  %s\n' "${digest%% *}" "${input}"
+    done | "${hash_command[@]}" | awk '{print $1}'
+)
+
+if [[ "${PRINT_SOURCE_DIGEST}" -eq 1 ]]; then
+    source_digest
+    exit 0
+fi
+
 if [[ ! -f "${PLUGIN_FILE}" ]]; then
     echo "ERROR: Plugin file not found: ${PLUGIN_FILE}" >&2
     exit 1
@@ -313,12 +348,25 @@ STAGING_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/acx-package.XXXXXX")"
 STAGING_PLUGIN_DIR="${STAGING_ROOT}/${PLUGIN_SLUG}"
 trap 'rm -rf "${STAGING_ROOT}"' EXIT
 
+SOURCE_STAMP="${PLUGIN_DIR}/public/assets/dist/.acx-build-source.sha256"
 if [[ "${NO_BUILD}" -eq 0 ]]; then
     echo "Running production build steps..."
     (
         cd "${PLUGIN_DIR}"
         npm run build
     )
+    ensure_runtime_inputs
+    source_digest > "${SOURCE_STAMP}"
+else
+    expected_digest="$(source_digest)"
+    found_digest="<missing>"
+    if [[ -f "${SOURCE_STAMP}" ]]; then
+        found_digest="$(<"${SOURCE_STAMP}")"
+    fi
+    if [[ "${expected_digest}" != "${found_digest}" ]]; then
+        echo "ERROR: Build source stamp mismatch at ${SOURCE_STAMP}: expected ${expected_digest}, found ${found_digest}. Rerun without --no-build." >&2
+        exit 1
+    fi
 fi
 
 ensure_runtime_inputs

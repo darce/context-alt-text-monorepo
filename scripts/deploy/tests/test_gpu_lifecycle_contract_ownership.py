@@ -151,10 +151,18 @@ def test_contract_does_not_claim_the_state_dir_is_api_owned() -> None:
     assert "`/run/acx` is `10001:10001" not in CONTRACT.read_text(encoding="utf-8")
 
 
+def _checker_required_deployments() -> set[str]:
+    """The floor the checker enforces, read from check-gpu-snapshots.sh."""
+    checker = (REPO_ROOT / "scripts/deploy/check-gpu-snapshots.sh").read_text(encoding="utf-8")
+    match = re.search(r'^required_deployments="([^"]+)"', checker, flags=re.MULTILINE)
+    assert match is not None, "check-gpu-snapshots.sh must declare required_deployments"
+    return set(match.group(1).split())
+
+
 def test_each_registered_deployment_uses_api_writable_tmpfiles_template() -> None:
     """The validated registry must drive one root:image-gid 0775 tmpfiles rule."""
     deployments = DEPLOYMENTS.read_text(encoding="utf-8").splitlines()
-    required_deployments = {"dev", "dev-fir", "staging", "prod"}
+    required_deployments = _checker_required_deployments()
     assert deployments, "GPU snapshot deployment registry must not be empty"
     assert len(deployments) == len(set(deployments)), "deployments must be unique"
     assert all(re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", item) for item in deployments)

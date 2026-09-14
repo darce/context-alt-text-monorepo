@@ -31,6 +31,20 @@ def _adapter(handler) -> GpuRemoteDescriptionAdapter:
     )
 
 
+def test_gpu_remote_adapter_stores_quantization_and_defaults_to_none() -> None:
+    default_adapter = _adapter(lambda request: httpx.Response(200, json={}))
+    assert default_adapter.quantization is None
+
+    explicit_adapter = GpuRemoteDescriptionAdapter(
+        endpoint_url="http://gpu.test:8000",
+        model_id="Qwen3-VL-30B-A3B-Instruct",
+        model_version="1",
+        quantization="Q4_K_M",
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={})),
+    )
+    assert explicit_adapter.quantization == "Q4_K_M"
+
+
 @pytest.fixture(autouse=True)
 def _reset_gpu_adapter_state():
     reset_gpu_remote_adapter_state_for_tests()

@@ -2504,8 +2504,8 @@ fi
 health_end=$((SECONDS + health_budget))
 probe_n=0
 while (( SECONDS < health_end )); do
-  # Skip a curl that would eat the diag reserve, but always allow the first
-  # probe so a tiny clamped health_budget still observes /health.
+  # Skip a probe when only one poll interval remains, but always allow the
+  # first probe so a tiny clamped health_budget still observes /health.
   if (( probe_n > 0 && health_end - SECONDS <= poll_s )); then
     break
   fi

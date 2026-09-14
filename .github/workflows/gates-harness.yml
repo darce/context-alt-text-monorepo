@@ -7,6 +7,7 @@ on:
       - "apps/prototype-wp-alt-context/**"
       - "mk/**"
       - "Makefile.d/lifecycle.mk"
+      - "Makefile"
       - ".gitignore"
       - "pyproject.toml"
       - "uv.lock"
@@ -19,6 +20,7 @@ on:
       - "apps/prototype-wp-alt-context/**"
       - "mk/**"
       - "Makefile.d/lifecycle.mk"
+      - "Makefile"
       - ".gitignore"
       - "pyproject.toml"
       - "uv.lock"
@@ -43,6 +45,11 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.18.0"
 
       - name: Install test dependencies
         run: python -m pip install pytest

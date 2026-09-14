@@ -269,7 +269,13 @@ def test_holder_failure_warning_includes_sanitized_stderr(tmp_path: Path) -> Non
 def test_reentrant_call_does_not_open_a_second_holder(tmp_path: Path) -> None:
     fake_bin, state = _make_fake_tools(tmp_path)
     marker = shlex.quote(str(tmp_path / "reentrant"))
-    body = f"inner() {{ printf 'inner\\n' >{marker}; }}\nwith_shared_tag_lock shared inner"
+    body = "\n".join(
+        [
+            f"innermost() {{ printf 'inner\\n' >{marker}; }}",
+            "inner() { with_shared_tag_lock shared innermost; }",
+            "with_shared_tag_lock shared inner",
+        ]
+    )
     result = _run_driver(tmp_path, fake_bin, state, body)
 
     assert result.returncode == 0, result.stderr
@@ -319,3 +325,42 @@ def test_second_holder_waits_until_first_releases(tmp_path: Path) -> None:
             first.terminate()
         if first.poll() is None:
             first.communicate(timeout=5)
+
+
+def test_lock_is_held_past_acquire_timeout_until_wrapped_command_finishes(tmp_path: Path) -> None:
+    fake_bin, state = _make_fake_tools(tmp_path)
+    events = shlex.quote(str(tmp_path / "events"))
+    first_body = "\n".join(
+        [
+            f"first() {{ printf 'first-started\\n' >>{events}; sleep 5; printf 'first-released\\n' >>{events}; }}",
+            "with_shared_tag_lock shared first",
+        ]
+    )
+    second_body = f"second() {{ printf 'second-started\\n' >>{events}; }}\nwith_shared_tag_lock shared second"
+    first = _start_driver(tmp_path, fake_bin, state, first_body, timeout=2)
+    second: subprocess.Popen[str] | None = None
+    try:
+        deadline = time.monotonic() + 6
+        while not (tmp_path / "events").exists():
+            if first.poll() is not None:
+                stdout, stderr = first.communicate()
+                pytest.fail(f"first holder exited early: {stdout}{stderr}")
+            if time.monotonic() >= deadline:
+                pytest.fail("first holder never acquired the shared lock")
+            time.sleep(0.05)
+
+        second = _start_driver(tmp_path, fake_bin, state, second_body, timeout=10)
+        _, second_stderr = second.communicate(timeout=15)
+        assert second.returncode == 0, second_stderr
+        _, first_stderr = first.communicate(timeout=15)
+        assert first.returncode == 0, first_stderr
+        assert (tmp_path / "events").read_text().splitlines() == [
+            "first-started",
+            "first-released",
+            "second-started",
+        ]
+    finally:
+        for proc in (second, first):
+            if proc is not None and proc.poll() is None:
+                proc.terminate()
+                proc.communicate(timeout=5)

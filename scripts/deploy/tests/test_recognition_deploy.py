@@ -2851,9 +2851,14 @@ state="${FAKE_ROLLBACK_STATE:?}"
 runtime_mode="__RUNTIME_MODE__"
 fail_at="__FAIL_AT__"
 stopped_cid="__STOPPED_CID__"
-cat >/dev/null || true
 remote="${@: -1}"
 printf '%s\n' "$remote" >>"${state}/ssh.log"
+if [[ "$remote" == *"flock"* || "$remote" == *"/locks/tag-"* ]]; then
+  printf 'LOCKED\n'
+  cat >/dev/null || true
+  exit 0
+fi
+cat >/dev/null || true
 if [[ "$remote" == *"cutover-inflight"* ]]; then
   if [[ -f "${state}/cutover-inflight" ]]; then
     printf 'PRESENT\n'

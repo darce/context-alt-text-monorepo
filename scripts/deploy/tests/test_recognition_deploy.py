@@ -6,9 +6,13 @@ import os
 import re
 import shutil
 import signal
+import socket
 import stat
 import subprocess
+import sys
+import threading
 import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import pytest
@@ -3176,8 +3180,10 @@ def test_cutover_candidate_probe_requires_immutable_image_and_commit() -> None:
     assert "remote_image_id_for_digest" in body
     assert "docker inspect --format '{{.Image}}'" in body
     assert "expected_image_id" in body
-    assert "commit_sha" in body
-    assert "actual == sys.argv[1]" in body
+    assert "health_probe_program" in body
+    program = _function_body("health_probe_program")
+    assert "commit_sha" in program
+    assert "actual == sys.argv[1]" in program
 
 
 def test_abort_cutover_candidate_fails_closed_on_remote_cleanup_error(tmp_path: Path) -> None:
@@ -4189,3 +4195,136 @@ assert_rollback_fence dev 1
 '''
     result = subprocess.run(["bash", "-c", command], capture_output=True, text=True, timeout=10)
     assert result.returncode == (75 if runtime == "newer" else 1), result.stdout + result.stderr
+
+
+def _health_program() -> str:
+    result = subprocess.run(
+        ["bash", "-c", _function_body("health_probe_program") + "\nhealth_probe_program"],
+        text=True, capture_output=True, check=True,
+    )
+    assert "'" not in result.stdout
+    return result.stdout
+
+
+@pytest.mark.parametrize("expected_sha", ["", "a" * 40])
+@pytest.mark.parametrize("status,actual", [(503, ""), (200, "a" * 40), (200, "b" * 40)])
+def test_health_program_http(status: int, actual: str, expected_sha: str) -> None:
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self.send_response(status)
+            self.end_headers()
+            self.wfile.write(('{"commit_sha": "' + actual + '"}').encode())
+
+        def log_message(self, *args: object) -> None:
+            pass
+
+    server = None
+    try:
+        server = HTTPServer(("127.0.0.1", 0), Handler, bind_and_activate=False)
+        server.server_bind()
+    except PermissionError:
+        if server is not None:
+            server.server_close()
+        pytest.skip("sandbox forbids AF_INET loopback bind")
+    server.server_activate()
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        program = _health_program().replace(
+            "127.0.0.1:8000", f"127.0.0.1:{server.server_port}"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", program] + ([expected_sha] if expected_sha else []),
+            text=True, capture_output=True, check=False,
+        )
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()
+    output = result.stdout + result.stderr
+    if status == 200 and (not expected_sha or expected_sha == actual):
+        assert result.returncode == 0
+        assert output == ""
+    else:
+        assert result.returncode == 1
+        assert len(output.splitlines()) == 1
+        assert "Traceback" not in output
+        if status == 503:
+            assert "HTTP 503" in output
+        else:
+            assert "SHA mismatch" in output
+            assert expected_sha in output and actual in output
+
+
+@pytest.mark.parametrize("expected_sha", ["", "a" * 40])
+def test_health_program_connection_refused(expected_sha: str) -> None:
+    sock = None
+    try:
+        sock = socket.socket()
+        sock.bind(("127.0.0.1", 0))
+    except PermissionError:
+        if sock is not None:
+            sock.close()
+        pytest.skip("sandbox forbids AF_INET loopback bind")
+    with sock:
+        port = sock.getsockname()[1]
+        program = _health_program().replace("127.0.0.1:8000", f"127.0.0.1:{port}")
+        result = subprocess.run(
+            [sys.executable, "-c", program] + ([expected_sha] if expected_sha else []),
+            text=True, capture_output=True, check=False,
+        )
+    output = result.stdout + result.stderr
+    assert result.returncode == 1
+    assert len(output.splitlines()) == 1
+    assert "refused" in output
+    assert "Traceback" not in output
+
+
+@pytest.mark.parametrize("probe", ["canonical", "cutover"])
+@pytest.mark.parametrize("rc,cause", [(1, "connection refused"), (124, "deadline exceeded")])
+def test_health_attempt_has_one_warning(probe: str, rc: int, cause: str) -> None:
+    command = f"""
+source "{SCRIPT}"
+env_to_remote_dir() {{ echo /tmp; }}
+env_to_compose_files() {{ echo -f compose.yml; }}
+remote_image_id_for_digest() {{ echo sha256:{'b' * 64}; }}
+run_with_deadline() {{ printf 'connection refused\nextra noise\n' >&2; return {rc}; }}
+warn() {{ echo "$*"; }}
+ACX_VERIFY_ATTEMPTS=2
+ACX_VERIFY_SLEEP=0
+OCI_USER=test
+OCI_HOST=test
+probe_{probe}_api_health dev image@sha256:{'b' * 64} {'a' * 40}
+"""
+    result = subprocess.run(["bash", "-c", command], text=True, capture_output=True)
+    assert result.returncode == 1
+    assert result.stderr == ""
+    lines = result.stdout.splitlines()
+    assert len(lines) == 2
+    for attempt, line in enumerate(lines, 1):
+        assert f"attempt {attempt}/2: " in line
+        assert cause in line
+
+
+@pytest.mark.parametrize("exception", [
+    "TimeoutError()",
+    "urllib.error.URLError(TimeoutError())",
+    'ValueError("invalid body\\nsecond line")',
+])
+def test_health_program_exceptions_are_one_line(exception: str) -> None:
+    program = _health_program()
+    harness = (
+        "import urllib.request, urllib.error\n"
+        "def fail(*args, **kwargs):\n"
+        f"    raise {exception}\n"
+        "urllib.request.urlopen = fail\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", harness + program],
+        text=True, capture_output=True,
+    )
+    assert result.returncode == 1
+    output = result.stdout + result.stderr
+    assert len(output.splitlines()) == 1
+    assert "Traceback" not in output
+    assert ("timeout" if "TimeoutError" in exception else "invalid body") in output

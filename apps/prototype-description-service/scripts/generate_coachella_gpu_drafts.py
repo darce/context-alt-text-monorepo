@@ -179,7 +179,7 @@ def _model_metadata(adapter: Any) -> dict[str, Any]:
         "model_revision": getattr(adapter, "model_revision", None),
         "hub_repo": getattr(adapter, "hub_repo", None),
         "model_version": getattr(adapter, "model_version", None),
-        "quantization": getattr(adapter, "model_version", None),
+        "quantization": getattr(adapter, "quantization", None),
         "prompt_or_task_version": getattr(adapter, "prompt_or_task_version", None),
     }
     required = ("model_id", "model_revision", "quantization", "prompt_or_task_version")

@@ -47,6 +47,12 @@ jobs:
       - name: Install test dependencies
         run: python -m pip install pytest
 
+      - name: Check UX-map render parity
+        working-directory: apps/prototype-wp-alt-context
+        run: |
+          python docs/ux-maps/render_ux_maps.py --check
+          python docs/ux-maps/sync_unicode_width.py --check
+
       - name: Run gates harness tests
         env:
           # This job does not build the admin bundle. Live freshness fails

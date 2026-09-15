@@ -176,3 +176,70 @@ def test_utc_observations_validate_clock_order_without_fabricated_zero():
     assert validate_duration_ms(0) == 0
     with pytest.raises(ValueError):
         elapsed_ms(start, start - timedelta(milliseconds=1))
+
+
+def test_write_guards_and_purge_lock_order():
+    from sqlalchemy import event
+    from scene.domain.describe_run import utc_observation
+
+    async def body():
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with engine.begin() as connection:
+            await connection.run_sync(
+                Base.metadata.create_all,
+                tables=[DescribeStartup.__table__, DescribeOperation.__table__, DescribeDemandLease.__table__],
+            )
+        sf = async_sessionmaker(engine, expire_on_commit=False)
+        tenant = uuid.uuid4()
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        from datetime import timezone
+        local = start.astimezone(timezone(timedelta(hours=5)))
+        statements = []
+        event.listen(engine.sync_engine, "before_cursor_execute",
+                     lambda conn, cursor, statement, parameters, context, executemany: statements.append(statement))
+        async with sf() as session:
+            repo = DescribeOperationRepository(session, lease_seconds=60)
+            for digest in ["A" * 64, "z" * 64, 123, None]:
+                with pytest.raises(ValueError, match="SHA-256"):
+                    await repo.accept(tenant_id=tenant, request_digest=digest, now=start)
+            with pytest.raises(ValueError, match="timezone-aware"):
+                await repo.accept(tenant_id=tenant, request_digest="a" * 64, now=start.replace(tzinfo=None))
+            op = await repo.accept(tenant_id=tenant, request_digest="a" * 64, now=local)
+            token = op.operation_id
+            with pytest.raises(ValueError, match="timezone-aware"):
+                await repo.associate_startup(tenant_id=tenant, operation_id=token, startup_id="boot",
+                                             started_at=start.replace(tzinfo=None), now=start)
+            await repo.associate_startup(tenant_id=tenant, operation_id=token, startup_id="boot",
+                                         started_at=local, now=local)
+            await session.commit()
+        async with sf() as session:
+            repo = DescribeOperationRepository(session, lease_seconds=60)
+            startup = await session.get(DescribeStartup, "boot")
+            assert utc_observation(startup.started_at) == start
+            statements.clear()
+            op = await repo.accept(tenant_id=tenant, request_digest="a" * 64,
+                                   operation_id=token, now=start + timedelta(seconds=1))
+            renewal = list(statements)
+            lease = await session.get(DescribeDemandLease, (tenant, token))
+            assert utc_observation(op.accepted_at) == start
+            assert utc_observation(lease.expires_at) == utc_observation(op.expires_at)
+            assert utc_observation(lease.retain_until) == utc_observation(op.retain_until)
+            lease.retain_until = utc_observation(op.retain_until) + timedelta(seconds=1)
+            await session.flush()
+            with pytest.raises(ValueError, match="retention exceeds"):
+                await repo.accept(tenant_id=tenant, request_digest="a" * 64,
+                                  operation_id=token, now=start + timedelta(seconds=2))
+            lease.retain_until = op.retain_until
+            await session.flush()
+            statements.clear()
+            assert await repo.purge_expired(now=start + timedelta(days=2)) == 1
+            purge = list(statements)
+            operation_table = DescribeOperation.__tablename__
+            lease_table = DescribeDemandLease.__tablename__
+            assert operation_table in renewal[0] and lease_table in renewal[1]
+            assert purge[0].startswith("SELECT") and operation_table in purge[0]
+            deletes = [statement for statement in purge if statement.startswith("DELETE")]
+            assert lease_table in deletes[0] and operation_table in deletes[1]
+        await engine.dispose()
+
+    asyncio.run(body())

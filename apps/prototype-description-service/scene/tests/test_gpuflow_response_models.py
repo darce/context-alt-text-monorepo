@@ -236,6 +236,11 @@ def test_multipart_requires_operation_id_and_timing():
         MultipartDescribeResponse(**_VISUAL_FACTS_PAYLOAD, operation_id="opaque-operation", timing=_VISUAL_TIMING)
 
 
+def test_multipart_omitting_startup_id_is_rejected():
+    with pytest.raises(ValidationError):
+        MultipartDescribeResponse(**_VISUAL_FACTS_PAYLOAD, operation_id="opaque-operation", timing=_VISUAL_TIMING)
+
+
 def test_multipart_emits_null_startup_id_and_validates():
     response = MultipartDescribeResponse(
         **_VISUAL_FACTS_PAYLOAD,
@@ -249,6 +254,24 @@ def test_multipart_emits_null_startup_id_and_validates():
         assert "startup_id" in wire
         assert wire["startup_id"] is None
         assert wire["operation_id"] == "opaque-operation"
+        assert wire["timing"] == _VISUAL_TIMING
+        validator.validate(wire)
+
+
+def test_multipart_accepts_null_operation_id():
+    response = MultipartDescribeResponse(
+        **_VISUAL_FACTS_PAYLOAD,
+        operation_id=None,
+        startup_id=None,
+        timing=_VISUAL_TIMING,
+    )
+    dumped, encoded = _dumped_payloads(response)
+    validator = _multipart_validator()
+    for wire in (dumped, encoded):
+        assert "operation_id" in wire
+        assert wire["operation_id"] is None
+        assert "startup_id" in wire
+        assert wire["startup_id"] is None
         assert wire["timing"] == _VISUAL_TIMING
         validator.validate(wire)
 

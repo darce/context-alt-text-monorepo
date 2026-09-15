@@ -27,3 +27,17 @@ FINDINGS: [{"id":"GPUFLOW-1-SPASUGGESTWARMINGTIMING-R-01","severity":"low","file
 - **Fix:** Carry a rounded 60-second remainder into the minute count (or round total seconds before splitting), and add a `119500 ms` boundary regression.
 
 Verdict: pass_with_findings
+
+## Re-review r2 (b16198ec3..1d88cb512)
+
+VERIFIED: {"GPUFLOW-1-SPASUGGESTWARMINGTIMING-R-02":"fixed"}
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| `GPUFLOW-1-SPASUGGESTWARMINGTIMING-R-02` | `fixed` | `formatMeasuredDuration` now rounds milliseconds to whole seconds before deriving minutes and the seconds remainder, so a 119500 ms value carries into `2 m` rather than emitting `1 m 60 s` (`.review/CHANGE.diff:L89-L103`). The added regression assertions cover 119500 ms plus both sides of the minute boundary and a multi-minute value (`.review/CHANGE.diff:L122-L127`). |
+
+### FINDINGS
+
+FINDINGS: []
+
+Verdict: pass

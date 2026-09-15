@@ -1,2 +1,1 @@
-95066e81fa09 test(bulk-timing): phases test expects duration-free warming label
-825a362f4128 offload: Fix-4 warming label no longer uses eta_seconds; lane tests are
+8cdd13fbeefc offload: Suggest warming now auto-retries to a 120s ceiling, then a

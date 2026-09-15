@@ -278,7 +278,8 @@ export const MediaAltSuggest = ({
   // [S7-BR-02]. Local flag only drives "Marking as decorative…" labels while
   // isAccepting covers the shared in-flight disable + focus park [BR-13][BR-56].
   const [isMarkingDecorative, setIsMarkingDecorative] = useState(false);
-  const { mutate, isPending, isError, error, data, reset, retry, warming, timing } = useDescribeMedia();
+  const { mutate, isPending, isError, error, data, reset, retry, warming, warmingTimedOut, timing } =
+    useDescribeMedia();
   const {
     mutate: acceptDraft,
     isPending: isAccepting,
@@ -421,7 +422,7 @@ export const MediaAltSuggest = ({
     const active = document.activeElement;
     const ownsFocus = !active || active === document.body || containerRef.current?.contains(active);
 
-    if (warming || isError) {
+    if (warming || warmingTimedOut || isError) {
       if (ownsFocus) {
         retryButtonRef.current?.focus();
       }
@@ -444,7 +445,7 @@ export const MediaAltSuggest = ({
         suggestButtonRef.current?.focus();
       }
     }
-  }, [isError, data, warming]);
+  }, [isError, data, warming, warmingTimedOut]);
 
   // Separate from the draft-landing focus effect: entering edit must not re-key
   // that effect, and Cancel must land on Edit rather than Dismiss.
@@ -599,7 +600,15 @@ export const MediaAltSuggest = ({
     if (next instanceof Node && containerRef.current?.contains(next)) {
       return;
     }
-    if (!data && !isPending && !isAccepting && !isMarkingDecorative && !isError && !warming) {
+    if (
+      !data &&
+      !isPending &&
+      !isAccepting &&
+      !isMarkingDecorative &&
+      !isError &&
+      !warming &&
+      !warmingTimedOut
+    ) {
       clearStatus();
     }
   };
@@ -620,6 +629,63 @@ export const MediaAltSuggest = ({
   );
 
   const body = (() => {
+    if (warming) {
+      const warmingText = formatWarmingStatus(warming.warmupEtaSeconds);
+      return (
+        <div
+          ref={containerRef}
+          className="acx-media-selection__media-alt-suggest"
+          role="group"
+          tabIndex={-1}
+          aria-label={warmingText}
+          onBlur={handleContainerBlur}
+        >
+          <p className="acx-media-selection__media-alt-warming" data-testid="media-alt-suggest-warming">
+            <Loader2 aria-hidden="true" size={16} />
+            {warmingText}
+          </p>
+          <button
+            type="button"
+            ref={retryButtonRef}
+            className="button acx-media-selection__media-alt-suggest-retry"
+            disabled={isPending}
+            onClick={retryWarming}
+          >
+            {__('Retry', 'alt-context')}
+          </button>
+        </div>
+      );
+    }
+
+    if (warmingTimedOut && !isPending) {
+      const timeoutText = __('Still starting — try again', 'alt-context');
+      return (
+        <div
+          ref={containerRef}
+          className="acx-media-selection__media-alt-suggest"
+          role="group"
+          tabIndex={-1}
+          aria-label={timeoutText}
+          onBlur={handleContainerBlur}
+        >
+          <p
+            className="acx-media-selection__media-alt-warming-timeout"
+            data-testid="media-alt-suggest-warming-timeout"
+          >
+            {timeoutText}
+          </p>
+          <button
+            type="button"
+            ref={retryButtonRef}
+            className="button acx-media-selection__media-alt-suggest-retry"
+            onClick={generate}
+          >
+            {__('Retry', 'alt-context')}
+          </button>
+        </div>
+      );
+    }
+
     if (isPending) {
       // BR-38: explicit name + busy on the focus-park target. Without them an
       // unnamed div derives its name from the disabled button text (and, before
@@ -641,33 +707,6 @@ export const MediaAltSuggest = ({
         >
           <button type="button" className="button acx-media-selection__media-alt-suggest-trigger" disabled>
             {__('Generating…', 'alt-context')}
-          </button>
-        </div>
-      );
-    }
-
-    if (warming) {
-      const warmingText = formatWarmingStatus(warming.warmupEtaSeconds);
-      return (
-        <div
-          ref={containerRef}
-          className="acx-media-selection__media-alt-suggest"
-          role="group"
-          tabIndex={-1}
-          aria-label={warmingText}
-          onBlur={handleContainerBlur}
-        >
-          <p className="acx-media-selection__media-alt-warming" data-testid="media-alt-suggest-warming">
-            <Loader2 aria-hidden="true" size={16} />
-            {warmingText}
-          </p>
-          <button
-            type="button"
-            ref={retryButtonRef}
-            className="button acx-media-selection__media-alt-suggest-retry"
-            onClick={retryWarming}
-          >
-            {__('Retry', 'alt-context')}
           </button>
         </div>
       );

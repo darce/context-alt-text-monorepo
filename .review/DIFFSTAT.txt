@@ -1,5 +1,6 @@
- .../js/admin/hooks/useDescribeRunProgress.ts                |  2 +-
- .../js/admin/pages/workbench/MediaSelection.tsx             | 11 +++--------
- .../__tests__/BulkDescribeProgress.phases.test.tsx          |  4 ++--
- .../__tests__/MediaSelection.statusAnnouncement.test.tsx    | 13 ++++++++-----
- 4 files changed, 14 insertions(+), 16 deletions(-)
+ .../hooks/__tests__/useDescribeMedia.test.tsx      | 233 ++++++++++++++++++++-
+ .../js/admin/hooks/useDescribeMedia.ts             | 118 ++++++++++-
+ .../js/admin/pages/workbench/MediaAltSuggest.tsx   |  87 +++++---
+ .../workbench/__tests__/MediaAltSuggest.test.tsx   | 112 +++++++++-
+ .../__tests__/fixtures/gpuflow-suggest-states.json |   9 +
+ 5 files changed, 526 insertions(+), 33 deletions(-)

@@ -1,4 +1,8 @@
- .../__tests__/NameFaceControl.test.tsx             | 62 ++++++++++++----------
- .../__tests__/buildNamingOptions.test.ts           | 10 ++++
- .../identity-clusters/buildNamingOptions.ts        | 40 ++++++++++++++
- 3 files changed, 83 insertions(+), 29 deletions(-)
+ .../__tests__/ClusterEditForm.test.tsx             | 21 ++++++++++++
+ .../__tests__/ClusterLabelingPanel.test.tsx        |  8 +++++
+ .../__tests__/NameFaceControl.test.tsx             | 35 +++++++++++++++++++
+ .../__tests__/PersonCommitControl.test.tsx         | 18 ++++++++--
+ .../__tests__/ReviewQueue.test.tsx                 |  5 ++-
+ .../__tests__/buildNamingOptions.test.ts           | 10 ------
+ .../identity-clusters/buildNamingOptions.ts        | 40 ----------------------
+ 7 files changed, 83 insertions(+), 54 deletions(-)

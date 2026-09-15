@@ -20,6 +20,12 @@ vi.mock('../NameFaceControl', async (importOriginal) => {
   };
 });
 
+const openNamingList = (input?: HTMLElement): void => {
+  const combobox = input ?? screen.getByRole('combobox');
+  combobox.focus();
+  fireEvent.keyDown(combobox, { key: 'ArrowDown' });
+};
+
 describe('ClusterEditForm', () => {
   const defaultProps = {
     labelInput: 'Test Cluster',
@@ -86,6 +92,7 @@ describe('ClusterEditForm', () => {
 
   it('shows suggestions overlay when typing a partial match', () => {
     render(<ClusterEditForm {...defaultProps} labelInput="Per" />);
+    openNamingList();
 
     expect(document.querySelector('.acx-identity-cluster__suggestion-row')).not.toBeNull();
     expect(screen.getByText(/95%/)).toBeInTheDocument();
@@ -102,6 +109,7 @@ describe('ClusterEditForm', () => {
         ]}
       />,
     );
+    openNamingList();
 
     const high = document.querySelector('.acx-identity-cluster__match-score--high');
     const medium = document.querySelector('.acx-identity-cluster__match-score--medium');
@@ -124,6 +132,7 @@ describe('ClusterEditForm', () => {
         onConfirmSuggestion={onConfirmSuggestion}
       />,
     );
+    openNamingList();
 
     fireEvent.click(screen.getAllByRole('option', { name: /confirm match/i })[1]);
     expect(onLabelChange).toHaveBeenCalledWith('Person B');
@@ -144,6 +153,7 @@ describe('ClusterEditForm', () => {
         onConfirmSuggestion={onConfirmSuggestion}
       />,
     );
+    openNamingList();
 
     const confirmOption = screen.getAllByRole('option', { name: /confirm match/i })[1]; // Index 1 for Person B
     fireEvent.click(confirmOption);
@@ -179,6 +189,7 @@ describe('ClusterEditForm', () => {
         onPersonSelect={onPersonSelect}
       />,
     );
+    openNamingList();
 
     const confirmOptions = screen.getAllByRole('option', { name: /Confirm match with/ });
     expect(confirmOptions).toHaveLength(2);
@@ -203,6 +214,7 @@ describe('ClusterEditForm', () => {
         onConfirmSuggestion={onConfirmSuggestion}
       />,
     );
+    openNamingList();
 
     fireEvent.click(screen.getByRole('option', { name: /confirm match/i }));
     await waitFor(() => expect(onPersonSelect).toHaveBeenCalledWith('Pat Roster', 42));
@@ -220,6 +232,7 @@ describe('ClusterEditForm', () => {
         onSave={onSave}
       />,
     );
+    openNamingList();
 
     fireEvent.click(screen.getByRole('option', { name: /confirm match/i }));
     await waitFor(() => expect(onSave).toHaveBeenCalledWith('Pat Roster'));
@@ -238,6 +251,7 @@ describe('ClusterEditForm', () => {
       { value: 'person:1', label: 'Alice Person', source: 'person' as const, group: 'All Labels' },
     ];
     render(<ClusterEditForm {...defaultProps} labelInput="A" options={options} />);
+    openNamingList();
 
     expect(screen.getByRole('option', { name: /Alice Person/ })).toBeInTheDocument();
     expect(screen.queryByText('Suggested 3')).not.toBeInTheDocument();
@@ -275,6 +289,7 @@ describe('ClusterEditForm', () => {
         options={[{ value: 'cluster:1', label: 'Person A', source: 'cluster', group: 'Suggested', similarity: 0.95 }]}
       />,
     );
+    openNamingList();
 
     expect(screen.getByRole('option', { name: /Person A \(Group\)/i })).toBeInTheDocument();
   });
@@ -291,6 +306,7 @@ describe('ClusterEditForm', () => {
         onConfirmSuggestion={onConfirmSuggestion}
       />,
     );
+    openNamingList();
 
     fireEvent.click(screen.getByRole('option', { name: /confirm match/i }));
     expect(onConfirmSuggestion).not.toHaveBeenCalled();
@@ -317,6 +333,7 @@ describe('ClusterEditForm', () => {
         options={[{ value: 'person:42', label: 'Pat Roster', source: 'person', group: 'All Labels' }]}
       />,
     );
+    openNamingList();
     expect(document.querySelector('.acx-identity-cluster__suggestions-header')).toHaveTextContent('People');
     expect(screen.queryByText('Suggested')).not.toBeInTheDocument();
   });
@@ -384,6 +401,7 @@ describe('ClusterEditForm', () => {
         onRejectSuggestion={onRejectSuggestion}
       />,
     );
+    openNamingList();
 
     const rejectButton = screen.getByRole('button', { name: /reject/i });
     fireEvent.click(rejectButton);
@@ -419,6 +437,7 @@ describe('ClusterEditForm', () => {
         onRejectSuggestion={onRejectSuggestion}
       />,
     );
+    openNamingList();
 
     fireEvent.click(screen.getByRole('button', { name: /reject/i }));
     expect(onRejectSuggestion).toHaveBeenCalledWith('sug-real-alice');
@@ -456,6 +475,7 @@ describe('ClusterEditForm', () => {
         isAtRestMode
       />,
     );
+    openNamingList();
 
     const renderedOptionRows = screen.getAllByRole('option', { name: /confirm match/i });
     expect(screen.getByText(`Showing ${renderedOptionRows.length} of 80 labels — type to search for more`)).toBeInTheDocument();
@@ -550,6 +570,7 @@ describe('ClusterEditForm', () => {
         onConfirmSuggestion={onConfirmSuggestion}
       />,
     );
+    openNamingList();
 
     fireEvent.click(screen.getByRole('option', { name: /confirm match/i }));
     expect(onConfirmSuggestion).not.toHaveBeenCalled();

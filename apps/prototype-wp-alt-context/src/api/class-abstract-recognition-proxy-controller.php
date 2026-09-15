@@ -19,15 +19,26 @@ use WP_REST_Response;
 
 use function apply_filters;
 use function add_query_arg;
+use function array_key_exists;
 use function current_user_can;
 use function delete_transient;
 use function esc_url_raw;
 use function get_transient;
 use function get_option;
+use function array_diff;
+use function array_keys;
 use function in_array;
+use function is_array;
+use function is_finite;
+use function is_float;
+use function is_int;
+use function is_numeric;
+use function is_string;
 use function is_wp_error;
+use function ltrim;
 use function md5;
 use function set_transient;
+use function str_starts_with;
 use function strtotime;
 use function strtolower;
 use function time;
@@ -51,6 +62,54 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 	 * and status so blob response behaviour stays identical (R6L-BR-04 / [sr-007]).
 	 */
 	public const ERROR_CODE_BLOB_REDIRECT_REFUSED = 'recognition_blob_redirect_refused';
+
+	public const TYPED_CODE_STARTING            = 'description_service_starting';
+	public const TYPED_CODE_UNAVAILABLE         = 'description_service_unavailable';
+	public const TYPED_CODE_ERROR               = 'description_service_error';
+	public const TYPED_CODE_OPERATION_MISMATCH  = 'operation_mismatch';
+	public const TYPED_CODE_OPERATION_EXPIRED   = 'operation_expired';
+
+	public const ROUTE_FAMILY_DESCRIBE = 'describe';
+	public const ROUTE_FAMILY_UI_READ  = 'ui_read';
+	public const ROUTE_FAMILY_CONTROL  = 'control';
+
+	/**
+	 * image-description-response.schema.json#/properties/timing required keys.
+	 *
+	 * @var list<string>
+	 */
+	private const TIMING_KEYS = array(
+		'queue_ms',
+		'ramp_up_ms',
+		'processing_ms',
+		'startup_ms',
+		'server_elapsed_ms',
+	);
+
+	/**
+	 * scene-describe-multipart.schema.json error branch top-level properties
+	 * (additionalProperties: false).
+	 *
+	 * @var list<string>
+	 */
+	private const TYPED_ERROR_TOP_LEVEL_KEYS = array(
+		'detail',
+	);
+
+	/**
+	 * scene-describe-multipart.schema.json error-branch detail properties
+	 * (additionalProperties: false).
+	 *
+	 * @var list<string>
+	 */
+	private const TYPED_ERROR_DETAIL_KEYS = array(
+		'code',
+		'message',
+		'operation_id',
+		'startup_id',
+		'warmup_eta_seconds',
+		'timing',
+	);
 
 	private ?RecognitionProxyPolicy $proxy_policy = null;
 	private ?RecognitionEndpointResolver $endpoint_resolver = null;
@@ -112,16 +171,16 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 		}
 		$headers['X-API-Key'] = $api_key;
 
-		$policy = $this->get_proxy_policy()->resolve( $method, $request_class );
-		$circuit_key = $this->build_circuit_breaker_key( $base_url );
-		$failure_key = RecognitionCircuitKeys::failure_key_for_base_url( $base_url );
+		$policy       = $this->get_proxy_policy()->resolve( $method, $request_class );
+		$route_family = $this->classify_proxy_route_family( $path );
+		if ( self::ROUTE_FAMILY_DESCRIBE === $route_family ) {
+			$policy['circuit_enabled'] = true;
+		}
+		$circuit_key = $this->build_circuit_breaker_key( $base_url, $route_family );
+		$failure_key = $this->build_failure_key( $base_url, $route_family );
 
 		if ( $policy['circuit_enabled'] && false !== get_transient( $circuit_key ) ) {
-			return new WP_Error(
-				'recognition_circuit_open',
-				'Recognition service temporarily unavailable; try again shortly.',
-				array( 'status' => 503 )
-			);
+			return $this->open_circuit_response( $route_family );
 		}
 
 		if ( 'multipart' === $body_kind ) {
@@ -197,12 +256,23 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 				);
 			}
 
-			if ( $status >= 500 ) {
+			$response_headers = wp_remote_retrieve_headers( $response );
+			$response_body    = wp_remote_retrieve_body( $response );
+			$decoded          = json_decode( $response_body, true );
+			$typed_code       = $this->typed_operation_error_code( $decoded );
+			$is_typed_warmup  = $this->is_validated_warming_response( $status, $decoded, $response_headers );
+			$is_typed_unavail = $this->is_typed_unavailable_response( $status, $typed_code );
+
+			// Validated warming and typed unavailable are not breaker failures
+			// and must pass through unchanged (never collapsed to 500).
+			if ( ! $is_typed_warmup && ! $is_typed_unavail && $status >= 500 ) {
 				$this->record_proxy_failure( $policy, $failure_key, $circuit_key );
 			}
 
-			$response_headers = wp_remote_retrieve_headers( $response );
-			if ( $status >= 500 && ! $this->is_backend_retry_after( $status, $response_headers ) && $attempt < $max_retries - 1 ) {
+			$skip_retry = $is_typed_warmup
+				|| $is_typed_unavail
+				|| $this->is_backend_retry_after( $status, $response_headers );
+			if ( $status >= 500 && ! $skip_retry && $attempt < $max_retries - 1 ) {
 				$delay_ms = $base_delay_ms * ( 2 ** $attempt );
 				usleep( $delay_ms * 1000 );
 				continue;
@@ -212,9 +282,7 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 				$this->record_proxy_success( $policy, $failure_key, $circuit_key );
 			}
 
-			$response_body    = wp_remote_retrieve_body( $response );
-			$decoded          = json_decode( $response_body, true );
-			$rewritten_body   = BlobUrlRewriter::rewrite( $decoded );
+			$rewritten_body = BlobUrlRewriter::rewrite( $decoded );
 			return new WP_REST_Response( $rewritten_body, $status, $this->normalize_response_headers( $response_headers ) );
 		}
 
@@ -481,8 +549,245 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 		return $normalized;
 	}
 
-	private function build_circuit_breaker_key( string $base_url ): string {
-		return RecognitionCircuitKeys::for_base_url( $base_url );
+	private function classify_proxy_route_family( string $path ): string {
+		$normalized = '/' . ltrim( strtolower( trim( $path ) ), '/' );
+		if ( str_starts_with( $normalized, '/scene/describe' ) ) {
+			return self::ROUTE_FAMILY_DESCRIBE;
+		}
+		if ( str_starts_with( $normalized, '/scene/gpu' ) ) {
+			return self::ROUTE_FAMILY_CONTROL;
+		}
+
+		return self::ROUTE_FAMILY_UI_READ;
+	}
+
+	private function build_circuit_breaker_key( string $base_url, string $route_family ): string {
+		return RecognitionCircuitKeys::for_base_url( $base_url ) . '_' . $route_family;
+	}
+
+	private function build_failure_key( string $base_url, string $route_family ): string {
+		return RecognitionCircuitKeys::failure_key_for_base_url( $base_url ) . '_' . $route_family;
+	}
+
+	/**
+	 * @param mixed $decoded JSON-decoded upstream body.
+	 */
+	private function typed_operation_error_code( mixed $decoded ): ?string {
+		if ( ! is_array( $decoded ) ) {
+			return null;
+		}
+
+		$detail = $decoded['detail'] ?? null;
+		if ( ! is_array( $detail ) ) {
+			return null;
+		}
+
+		$code = $detail['code'] ?? null;
+		if ( ! is_string( $code ) || '' === trim( $code ) ) {
+			return null;
+		}
+
+		$allowed = array(
+			self::TYPED_CODE_STARTING,
+			self::TYPED_CODE_UNAVAILABLE,
+			self::TYPED_CODE_ERROR,
+			self::TYPED_CODE_OPERATION_MISMATCH,
+			self::TYPED_CODE_OPERATION_EXPIRED,
+		);
+
+		return in_array( $code, $allowed, true ) ? $code : null;
+	}
+
+	/**
+	 * Warming exemption is all-or-nothing: only a complete
+	 * description_service_starting envelope may skip breaker accounting.
+	 *
+	 * @param mixed $decoded           JSON-decoded upstream body.
+	 * @param mixed $response_headers  Case-insensitive header dictionary.
+	 */
+	private function is_validated_warming_response( int $status, mixed $decoded, mixed $response_headers ): bool {
+		if ( 503 !== $status || ! is_array( $decoded ) ) {
+			return false;
+		}
+
+		if ( ! $this->has_closed_key_set( $decoded, self::TYPED_ERROR_TOP_LEVEL_KEYS ) ) {
+			return false;
+		}
+
+		$detail = $decoded['detail'] ?? null;
+		if ( ! is_array( $detail ) ) {
+			return false;
+		}
+
+		if ( ! $this->has_closed_key_set( $detail, self::TYPED_ERROR_DETAIL_KEYS ) ) {
+			return false;
+		}
+
+		if ( self::TYPED_CODE_STARTING !== ( $detail['code'] ?? null ) ) {
+			return false;
+		}
+
+		$message = $detail['message'] ?? null;
+		if ( ! is_string( $message ) || '' === $message ) {
+			return false;
+		}
+
+		if ( ! array_key_exists( 'operation_id', $detail ) || ! $this->is_opaque_id( $detail['operation_id'] ) ) {
+			return false;
+		}
+
+		if ( ! array_key_exists( 'startup_id', $detail ) || ! $this->is_nullable_opaque_id( $detail['startup_id'] ) ) {
+			return false;
+		}
+
+		if ( ! $this->is_validated_timing( $detail['timing'] ?? null ) ) {
+			return false;
+		}
+
+		if ( ! array_key_exists( 'warmup_eta_seconds', $detail ) ) {
+			return false;
+		}
+		$eta = $detail['warmup_eta_seconds'];
+		if ( null !== $eta && ( ! $this->is_finite_number( $eta ) || $eta < 0 ) ) {
+			return false;
+		}
+
+		$retry_after = $this->retry_after_integer( $response_headers );
+		return null !== $retry_after && $retry_after >= 1 && $retry_after <= 120;
+	}
+
+	/**
+	 * Opaque ids are non-empty strings of at most 128 bytes.
+	 * Typed error `detail.operation_id` is never null.
+	 */
+	private function is_opaque_id( mixed $value ): bool {
+		if ( ! is_string( $value ) ) {
+			return false;
+		}
+		$length = strlen( $value );
+
+		return $length >= 1 && $length <= 128;
+	}
+
+	/**
+	 * Opaque ids are string|null; strings must be non-empty and <= 128 bytes.
+	 * Used for `startup_id` only.
+	 */
+	private function is_nullable_opaque_id( mixed $value ): bool {
+		return null === $value || $this->is_opaque_id( $value );
+	}
+
+	/**
+	 * Timing object keys must match image-description-response.schema.json
+	 * exactly, with number|null values (unknown => null).
+	 *
+	 * @param mixed $timing JSON-decoded timing object.
+	 */
+	private function is_validated_timing( mixed $timing ): bool {
+		if ( ! is_array( $timing ) ) {
+			return false;
+		}
+
+		$keys = array_keys( $timing );
+		sort( $keys );
+		$sorted_expected = self::TIMING_KEYS;
+		sort( $sorted_expected );
+		if ( $keys !== $sorted_expected ) {
+			return false;
+		}
+
+		foreach ( $timing as $value ) {
+			if ( null === $value ) {
+				continue;
+			}
+			if ( ! $this->is_finite_number( $value ) || $value < 0 ) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	/**
+	 * @param list<string> $allowed
+	 */
+	private function has_closed_key_set( array $value, array $allowed ): bool {
+		return array() === array_diff( array_keys( $value ), $allowed );
+	}
+
+	private function is_finite_number( mixed $value ): bool {
+		return ( is_int( $value ) || is_float( $value ) ) && is_finite( (float) $value );
+	}
+
+	private function is_typed_unavailable_response( int $status, ?string $typed_code ): bool {
+		return 503 === $status && self::TYPED_CODE_UNAVAILABLE === $typed_code;
+	}
+
+	/**
+	 * @param mixed $response_headers Case-insensitive header dictionary.
+	 */
+	private function retry_after_integer( mixed $response_headers ): ?int {
+		$headers = array();
+		if ( is_array( $response_headers ) ) {
+			$headers = $response_headers;
+		} elseif ( $response_headers instanceof Traversable ) {
+			foreach ( $response_headers as $key => $value ) {
+				$headers[ (string) $key ] = $value;
+			}
+		}
+
+		foreach ( $headers as $key => $value ) {
+			if ( 'retry-after' !== strtolower( trim( (string) $key ) ) ) {
+				continue;
+			}
+			if ( $this->is_finite_number( $value ) ) {
+				if ( is_int( $value ) ) {
+					return $value;
+				}
+				if ( is_float( $value ) && (float) (int) $value === $value ) {
+					return (int) $value;
+				}
+				return null;
+			}
+			if ( is_string( $value ) && '' !== $value && is_numeric( $value ) && (string) (int) $value === trim( $value ) ) {
+				$parsed = (int) $value;
+				return $this->is_finite_number( $parsed ) ? $parsed : null;
+			}
+		}
+
+		return null;
+	}
+
+	private function open_circuit_local_timing(): array {
+		$timing = array();
+		foreach ( self::TIMING_KEYS as $key ) {
+			$timing[ $key ] = null;
+		}
+
+		return $timing;
+	}
+
+	private function open_circuit_response( string $route_family ): WP_REST_Response|WP_Error {
+		if ( self::ROUTE_FAMILY_DESCRIBE === $route_family ) {
+			return new WP_REST_Response(
+				array(
+					'detail' => array(
+						'code'         => self::TYPED_CODE_UNAVAILABLE,
+						'message'      => 'Description service temporarily unavailable; try again shortly.',
+						'operation_id' => null,
+						'startup_id'   => null,
+						'timing'       => $this->open_circuit_local_timing(),
+					),
+				),
+				503
+			);
+		}
+
+		return new WP_Error(
+			'recognition_circuit_open',
+			'Recognition service temporarily unavailable; try again shortly.',
+			array( 'status' => 503 )
+		);
 	}
 
 	/**

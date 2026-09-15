@@ -7,6 +7,7 @@ namespace AltContext\Api;
 require_once __DIR__ . '/class-alt-style.php';
 require_once __DIR__ . '/../settings/class-recognition-policy.php';
 require_once __DIR__ . '/class-probe-outcome.php';
+require_once __DIR__ . '/class-abstract-recognition-proxy-controller.php';
 require_once __DIR__ . '/class-recognition-endpoint-resolver.php';
 require_once __DIR__ . '/class-tenant-identity.php';
 require_once __DIR__ . '/services/class-description-budget-service.php';
@@ -32,6 +33,7 @@ use function in_array;
 use function intval;
 use function is_array;
 use function is_bool;
+use function is_float;
 use function is_int;
 use function is_numeric;
 use function is_string;
@@ -69,6 +71,8 @@ class SettingsController {
 	public const SAVE_RESULT_OK      = 'ok';
 	public const SAVE_RESULT_PARTIAL = 'partial';
 	public const SAVE_RESULT_ERROR   = 'error';
+
+	public const PROBE_OUTCOME_STARTING = 'starting';
 
 	private RecognitionEndpointResolver $endpoint_resolver;
 
@@ -143,6 +147,9 @@ class SettingsController {
 				'recognition_enabled'       => RecognitionPolicy::enabled(),
 				'allow_person_names'        => $naming_resolution['value'],
 				'allow_person_names_error'  => $naming_resolution['error'],
+				'allow_person_names_status' => $naming_resolution['status'],
+				'allow_person_names_code'   => $naming_resolution['code'],
+				'description_service_title' => 'Description Service',
 				'description_budget'        => $this->get_description_budget_payload(),
 			),
 			200
@@ -366,20 +373,34 @@ class SettingsController {
 	 * surfaced to the settings UI as null so it cannot imply that names are
 	 * enabled or disabled when the authoritative value is unknown.
 	 *
-	 * @return array{value: ?bool, error: ?string}
+	 * @return array{value: ?bool, error: ?string, status: ?int, code: ?string}
 	 */
 	private function resolve_naming_agreement(): array {
 		$response = $this->request_naming_agreement( 'GET' );
 		if ( is_wp_error( $response ) ) {
+			$data = $response->get_error_data();
+			$status = null;
+			if ( is_array( $data ) ) {
+				if ( isset( $data['upstream_status'] ) && is_int( $data['upstream_status'] ) ) {
+					$status = $data['upstream_status'];
+				} elseif ( isset( $data['status'] ) && is_int( $data['status'] ) ) {
+					$status = $data['status'];
+				}
+			}
+
 			return array(
-				'value' => null,
-				'error' => $response->get_error_message(),
+				'value'  => null,
+				'error'  => $response->get_error_message(),
+				'status' => $status,
+				'code'   => (string) $response->get_error_code(),
 			);
 		}
 
 		return array(
-			'value' => $response['enabled'],
-			'error' => null,
+			'value'  => $response['enabled'],
+			'error'  => null,
+			'status' => 200,
+			'code'   => null,
 		);
 	}
 
@@ -424,11 +445,25 @@ class SettingsController {
 
 		$response_status = (int) wp_remote_retrieve_response_code( $response );
 		if ( $response_status < 200 || $response_status >= 300 ) {
+			$decoded = json_decode( wp_remote_retrieve_body( $response ), true );
+			$code    = 'allow_person_names_service_error';
+			$message = sprintf( 'Recognition service returned HTTP %d.', $response_status );
+			if ( is_array( $decoded ) && is_array( $decoded['detail'] ?? null ) ) {
+				$detail_code = $decoded['detail']['code'] ?? null;
+				if ( is_string( $detail_code ) && '' !== trim( $detail_code ) ) {
+					$code = $detail_code;
+				}
+				$detail_message = $decoded['detail']['message'] ?? null;
+				if ( is_string( $detail_message ) && '' !== $detail_message ) {
+					$message = $detail_message;
+				}
+			}
+
 			return new WP_Error(
-				'allow_person_names_service_error',
-				sprintf( 'Recognition service returned HTTP %d.', $response_status ),
+				$code,
+				$message,
 				array(
-					'status'          => 502,
+					'status'          => $response_status,
 					'upstream_status' => $response_status,
 				)
 			);
@@ -487,6 +522,7 @@ class SettingsController {
 		$payload = $this->build_probe_payload( $response );
 		$payload['probe_mode'] = 'service_auth';
 		$payload['probed_url'] = $health_url;
+		$payload = $this->maybe_start_description_service( $payload, $url, $headers );
 
 		// A mismatched key (403 -> TENANT_MISMATCH) is a first-time / paired-elsewhere pairing signal,
 		// not a terminal error: attempt pairing so a never-paired auto-derived site can auto-adopt and
@@ -714,11 +750,27 @@ class SettingsController {
 		$status_code = (int) wp_remote_retrieve_response_code( $response );
 		$body        = wp_remote_retrieve_body( $response );
 		$decoded     = json_decode( $body, true );
-		$detail      = is_array( $decoded ) && isset( $decoded['detail'] ) && is_string( $decoded['detail'] )
-			? $decoded['detail']
-			: null;
+		$detail      = null;
+		$typed_code  = null;
+		$warmup_eta  = null;
+		if ( is_array( $decoded ) && isset( $decoded['detail'] ) && is_string( $decoded['detail'] ) ) {
+			$detail = $decoded['detail'];
+		} elseif ( is_array( $decoded ) && is_array( $decoded['detail'] ?? null ) ) {
+			$detail_code = $decoded['detail']['code'] ?? null;
+			if ( is_string( $detail_code ) && '' !== trim( $detail_code ) ) {
+				$typed_code = $detail_code;
+			}
+			$detail_message = $decoded['detail']['message'] ?? null;
+			if ( is_string( $detail_message ) && '' !== $detail_message ) {
+				$detail = $detail_message;
+			}
+			$eta = $decoded['detail']['warmup_eta_seconds'] ?? null;
+			if ( is_int( $eta ) || is_float( $eta ) ) {
+				$warmup_eta = $eta;
+			}
+		}
 
-		$outcome = $this->classify_http_status( $status_code, $detail );
+		$outcome = $this->classify_http_status( $status_code, $detail, $decoded, $typed_code );
 		$payload = array(
 			'outcome'     => $outcome,
 			'status_code' => $status_code,
@@ -727,13 +779,64 @@ class SettingsController {
 		if ( null !== $detail ) {
 			$payload['detail'] = $detail;
 		}
-		if ( ProbeOutcome::RATE_LIMITED === $outcome ) {
+		if ( null !== $typed_code ) {
+			$payload['code'] = $typed_code;
+		}
+		if ( null !== $warmup_eta ) {
+			$payload['warmup_eta_seconds'] = $warmup_eta;
+		}
+		if (
+			ProbeOutcome::RATE_LIMITED === $outcome
+			|| self::PROBE_OUTCOME_STARTING === $outcome
+			|| 503 === $status_code
+			|| 202 === $status_code
+		) {
 			$retry_after = $this->parse_retry_after( $this->retrieve_retry_after_header( $response ) );
 			if ( null !== $retry_after ) {
 				$payload['retry_after_seconds'] = $retry_after;
 			}
 		}
 		return $payload;
+	}
+
+	/**
+	 * Recognition-check on a 404 path must start the description service via
+	 * the lifecycle endpoint and report the typed starting state with ETA.
+	 *
+	 * @param array<string, mixed>  $payload
+	 * @param array<string, string> $headers
+	 * @return array<string, mixed>
+	 */
+	private function maybe_start_description_service( array $payload, string $base_url, array $headers ): array {
+		$outcome = is_string( $payload['outcome'] ?? null ) ? (string) $payload['outcome'] : null;
+		if ( ProbeOutcome::CONNECTED === $outcome || self::PROBE_OUTCOME_STARTING === $outcome ) {
+			return $payload;
+		}
+
+		$status_code = (int) ( $payload['status_code'] ?? 0 );
+		$typed_code  = is_string( $payload['code'] ?? null ) ? (string) $payload['code'] : null;
+		if ( 404 !== $status_code && AbstractRecognitionProxyController::TYPED_CODE_UNAVAILABLE !== $typed_code ) {
+			return $payload;
+		}
+
+		$lifecycle = RecognitionTransport::request(
+			rtrim( $base_url, '/' ) . '/scene/gpu/intent',
+			array(
+				'method'  => 'POST',
+				'headers' => array_merge(
+					$headers,
+					array( 'Content-Type' => 'application/json' )
+				),
+				'timeout' => 10,
+				'body'    => wp_json_encode( array( 'action' => 'start' ) ),
+			)
+		);
+
+		$lifecycle_payload               = $this->build_probe_payload( $lifecycle );
+		$lifecycle_payload['probe_mode'] = $payload['probe_mode'] ?? 'service_auth';
+		$lifecycle_payload['probed_url'] = rtrim( $base_url, '/' ) . '/scene/gpu/intent';
+
+		return $lifecycle_payload;
 	}
 
 	/**
@@ -757,9 +860,15 @@ class SettingsController {
 		return null;
 	}
 
-	private function classify_http_status( int $status_code, ?string $detail ): string {
-		if ( $status_code >= 200 && $status_code < 300 ) {
+	/**
+	 * @param mixed $decoded JSON-decoded probe body.
+	 */
+	private function classify_http_status( int $status_code, ?string $detail, mixed $decoded, ?string $typed_code ): string {
+		if ( 200 === $status_code && $this->is_ready_health_body( $decoded ) ) {
 			return ProbeOutcome::CONNECTED;
+		}
+		if ( 202 === $status_code || AbstractRecognitionProxyController::TYPED_CODE_STARTING === $typed_code ) {
+			return self::PROBE_OUTCOME_STARTING;
 		}
 		if ( 401 === $status_code ) {
 			if ( 'api key expired' === $detail ) {
@@ -783,6 +892,13 @@ class SettingsController {
 			return ProbeOutcome::SERVER_ERROR;
 		}
 		return ProbeOutcome::SERVER_ERROR;
+	}
+
+	/**
+	 * @param mixed $decoded JSON-decoded /health/detailed body.
+	 */
+	private function is_ready_health_body( mixed $decoded ): bool {
+		return is_array( $decoded ) && true === ( $decoded['ready'] ?? null );
 	}
 
 	private function is_tls_failure( string $message ): bool {

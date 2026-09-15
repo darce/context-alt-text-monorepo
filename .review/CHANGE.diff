@@ -1,182 +1,97 @@
-diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/SuggestionCards.tsx b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/SuggestionCards.tsx
---- a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/SuggestionCards.tsx
-+++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/SuggestionCards.tsx
-@@ -65,6 +65,14 @@ const assertTruthyLabel: (
-   }
- };
+diff --git a/apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php b/apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php
+--- a/apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php
++++ b/apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php
+@@ -632,7 +632,7 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
+ 			return false;
+ 		}
  
-+const SuggestionFacePlaceholder = (): React.JSX.Element => (
-+  <Avatar
-+    size="lg"
-+    className="acx-suggestion-card__thumb"
-+    missingLabel={REPRESENTATIVE_VOCABULARY.imageUnavailable}
-+  />
-+);
-+
- const FaceCropControl = ({
-   mediaUrl,
-   bbox,
-@@ -80,6 +88,10 @@ const FaceCropControl = ({
-   mediaId?: number;
-   identityId?: string;
- }): React.JSX.Element => {
-+  if (!isCroppableBbox(bbox)) {
-+    return <SuggestionFacePlaceholder />;
-+  }
-+
-   if (!onOpen) {
-     return (
-       <FaceThumbnail
-@@ -154,9 +166,8 @@ export const SuggestionCard = ({
-           bbox: suggestion.enrichment.representativeBbox,
-         }
-       : null;
--  const identityThumbUrl = suggestion.enrichment?.identityThumbUrl ?? suggestion.enrichment?.identityMediaUrl ?? null;
--  const representativeThumbUrl =
--    suggestion.enrichment?.representativeThumbUrl ?? suggestion.enrichment?.representativeMediaUrl ?? null;
-+  const identityThumbUrl = suggestion.enrichment?.identityThumbUrl ?? null;
-+  const representativeThumbUrl = suggestion.enrichment?.representativeThumbUrl ?? null;
-   const storedFaceCount =
-     typeof suggestion.identityCount === 'number' &&
-     Number.isInteger(suggestion.identityCount) &&
-@@ -226,11 +237,7 @@ export const SuggestionCard = ({
-               className="acx-suggestion-card__thumb"
-             />
-           ) : (
--            <Avatar
--              size="lg"
--              className="acx-suggestion-card__thumb"
--              missingLabel={REPRESENTATIVE_VOCABULARY.imageUnavailable}
--            />
-+            <SuggestionFacePlaceholder />
-           )}
-           <span className="acx-suggestion-card__face-label">{__('Candidate', 'alt-context')}</span>
-         </div>
-@@ -251,11 +258,7 @@ export const SuggestionCard = ({
-               className="acx-suggestion-card__thumb"
-             />
-           ) : (
--            <Avatar
--              size="lg"
--              className="acx-suggestion-card__thumb"
--              missingLabel={REPRESENTATIVE_VOCABULARY.imageUnavailable}
--            />
-+            <SuggestionFacePlaceholder />
-           )}
-           <span className="acx-suggestion-card__face-label">{displayLabel}</span>
-         </div>
-diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/SuggestionCards.test.tsx b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/SuggestionCards.test.tsx
---- a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/SuggestionCards.test.tsx
-+++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/SuggestionCards.test.tsx
-@@ -45,20 +45,58 @@ const baseSuggestion: ReviewSuggestion = {
-   identityCount: 3,
- };
+-		if ( ! array_key_exists( 'operation_id', $detail ) || ! $this->is_nullable_opaque_id( $detail['operation_id'] ) ) {
++		if ( ! array_key_exists( 'operation_id', $detail ) || ! $this->is_opaque_id( $detail['operation_id'] ) ) {
+ 			return false;
+ 		}
  
-+const imageSrcCount = (src: string): number =>
-+  screen.queryAllByRole('img').filter((element) => element.getAttribute('src') === src).length;
-+
- describe('SuggestionCard GPUFLOW-1 candidate preview', () => {
-+  it('renders distinct candidate and representative avatars', () => {
-+    render(
-+      <SuggestionCard
-+        suggestion={{
-+          ...baseSuggestion,
-+          enrichment: { ...preview.candidate, ...preview.representative },
-+        }}
-+        onAccept={vi.fn()}
-+        onReject={vi.fn()}
-+        isPending={false}
-+        lowConfidenceThreshold={0.5}
-+      />,
-+    );
-+
-+    expect(screen.getByAltText('Candidate face, position 1 of 1')).toHaveAttribute(
-+      'src',
-+      preview.candidate.identityMediaUrl,
-+    );
-+    expect(screen.getByAltText('Alex stored face, position 1 of 3')).toHaveAttribute(
-+      'src',
-+      preview.representative.representativeMediaUrl,
-+    );
-+    expect(preview.candidate.identityMediaUrl).not.toBe(preview.representative.representativeMediaUrl);
-+    expect(imageSrcCount(preview.candidate.identityMediaUrl)).toBe(1);
-+    expect(imageSrcCount(preview.representative.representativeMediaUrl)).toBe(1);
-+  });
-+
-   it('shows an explicit placeholder when no noncandidate representative exists', () => {
-     render(
-       <SuggestionCard
--        suggestion={{ ...baseSuggestion, enrichment: { ...preview.candidate, ...preview.nullRepresentative } }}
-+        suggestion={{
-+          ...baseSuggestion,
-+          enrichment: { ...preview.candidate, ...preview.nullRepresentative },
-+        }}
-         onAccept={vi.fn()}
-         onReject={vi.fn()}
-         isPending={false}
-         lowConfidenceThreshold={0.5}
-       />,
-     );
--    expect(screen.getByAltText('Candidate face, position 1 of 1')).toHaveAttribute('src', preview.candidate.identityMediaUrl);
-+
-+    expect(screen.getByAltText('Candidate face, position 1 of 1')).toHaveAttribute(
-+      'src',
-+      preview.candidate.identityMediaUrl,
-+    );
-     expect(screen.getByRole('img', { name: 'Representative image unavailable' })).toBeInTheDocument();
-     expect(screen.queryByAltText('Alex stored face, position 1 of 3')).toBeNull();
-+    expect(imageSrcCount(preview.candidate.identityMediaUrl)).toBe(1);
-   });
+@@ -657,12 +657,10 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
+ 	}
  
-   it.each([
-@@ -84,11 +122,48 @@ describe('SuggestionCard GPUFLOW-1 candidate preview', () => {
-         lowConfidenceThreshold={0.5}
-       />,
-     );
-+
-     expect(screen.queryByRole('button', { name: 'View original photo' })).toBeNull();
-     expect(container.querySelector('.acx-face-thumbnail')).toBeNull();
--    expect(screen.getByAltText('Candidate face, position 1 of 1')).toHaveAttribute('src', preview.candidate.identityMediaUrl);
--    expect(screen.getByAltText('Alex stored face, position 1 of 3')).toHaveAttribute('src', preview.representative.representativeMediaUrl);
-+    expect(screen.queryByAltText('Candidate face, position 1 of 1')).toBeNull();
-+    expect(screen.queryByAltText('Alex stored face, position 1 of 3')).toBeNull();
-+    expect(screen.getAllByRole('img', { name: 'Representative image unavailable' })).toHaveLength(2);
-+    expect(imageSrcCount(preview.candidate.identityMediaUrl)).toBe(0);
-+    expect(imageSrcCount(preview.representative.representativeMediaUrl)).toBe(0);
-   });
-+
-+  it.each(preview.nonCroppableBboxes)(
-+    'falls back to a placeholder when the representative bbox is not croppable %j',
-+    (bbox) => {
-+      const { container } = render(
-+        <SuggestionCard
-+          suggestion={{
-+            ...baseSuggestion,
-+            enrichment: {
-+              ...preview.candidate,
-+              ...preview.representative,
-+              representativeBbox: bbox,
-+            },
-+          }}
-+          onAccept={vi.fn()}
-+          onReject={vi.fn()}
-+          onOpenOriginal={vi.fn()}
-+          isPending={false}
-+          lowConfidenceThreshold={0.5}
-+        />,
-+      );
-+
-+      expect(screen.getByAltText('Candidate face, position 1 of 1')).toHaveAttribute(
-+        'src',
-+        preview.candidate.identityMediaUrl,
-+      );
-+      expect(container.querySelectorAll('.acx-face-thumbnail')).toHaveLength(1);
-+      expect(screen.getByRole('img', { name: 'Representative image unavailable' })).toBeInTheDocument();
-+      expect(screen.queryByAltText('Alex stored face, position 1 of 3')).toBeNull();
-+      expect(imageSrcCount(preview.candidate.identityMediaUrl)).toBe(1);
-+      expect(imageSrcCount(preview.representative.representativeMediaUrl)).toBe(0);
-+    },
-+  );
- });
+ 	/**
+-	 * Opaque ids are string|null; strings must be non-empty and <= 128 chars.
++	 * Opaque ids are non-empty strings of at most 128 bytes.
++	 * Typed error `detail.operation_id` is never null.
+ 	 */
+-	private function is_nullable_opaque_id( mixed $value ): bool {
+-		if ( null === $value ) {
+-			return true;
+-		}
++	private function is_opaque_id( mixed $value ): bool {
+ 		if ( ! is_string( $value ) ) {
+ 			return false;
+ 		}
+@@ -671,6 +669,14 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
+ 		return $length >= 1 && $length <= 128;
+ 	}
  
- describe('SuggestionCard BR-41 group accname', () => {
++	/**
++	 * Opaque ids are string|null; strings must be non-empty and <= 128 bytes.
++	 * Used for `startup_id` only.
++	 */
++	private function is_nullable_opaque_id( mixed $value ): bool {
++		return null === $value || $this->is_opaque_id( $value );
++	}
++
+ 	/**
+ 	 * Timing object keys must match image-description-response.schema.json
+ 	 * exactly, with number|null values (unknown => null).
+diff --git a/apps/prototype-wp-alt-context/tests/Unit/ProxyRequestTest.php b/apps/prototype-wp-alt-context/tests/Unit/ProxyRequestTest.php
+--- a/apps/prototype-wp-alt-context/tests/Unit/ProxyRequestTest.php
++++ b/apps/prototype-wp-alt-context/tests/Unit/ProxyRequestTest.php
+@@ -1666,6 +1666,11 @@ PHP;
+                 'headers' => ['Retry-After' => '5'],
+                 'body' => json_encode(['detail' => $overlongId]),
+             ]],
++            'null_operation_id' => [[
++                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
++                'headers' => ['Retry-After' => '5'],
++                'body' => json_encode(['detail' => array_merge($validDetail, ['operation_id' => null])]),
++            ]],
+             'retry_after_zero' => [[
+                 'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+                 'headers' => ['Retry-After' => '0'],
+@@ -1733,6 +1738,38 @@ PHP;
+         $this->assertFalse(get_transient($describeFailures), 'null ETA warming must not increment describe');
+     }
+ 
++    public function testNullOperationIdStartingEnvelopeIsNotWarmingExempt(): void
++    {
++        global $wpdb;
++        $wpdb->mockVar = '1';
++
++        $harness = $this->makeFamilyHarness();
++        $describeCircuit = $this->familyCircuitKey($harness->resolvedBaseUrl(), 'describe');
++        $describeFailures = $this->familyFailureKey($harness->resolvedBaseUrl(), 'describe');
++
++        $valid = $this->validatedWarmingHttp();
++        $this->queueHttpResponse($valid);
++        $this->queueHttpResponse($valid);
++        $harness->call('POST', '/scene/describe/multipart', 'description');
++        $harness->call('POST', '/scene/describe/multipart', 'description');
++        $this->assertFalse(get_transient($describeCircuit), 'valid operation_id warming remains exempt');
++        $this->assertFalse(get_transient($describeFailures), 'valid operation_id warming must not increment describe');
++
++        $nullId = $valid;
++        $body = json_decode((string) $valid['body'], true);
++        $this->assertIsArray($body);
++        $body['detail']['operation_id'] = null;
++        $nullId['body'] = json_encode($body);
++
++        $this->queueHttpResponse($nullId);
++        $this->queueHttpResponse($nullId);
++        $harness->call('POST', '/scene/describe/multipart', 'description');
++        $harness->call('POST', '/scene/describe/multipart', 'description');
++
++        $this->assertNotFalse(get_transient($describeCircuit), 'null operation_id starting envelope must open describe');
++        $this->assertNotFalse(get_transient($describeFailures), 'null operation_id must increment describe failures');
++    }
++
+     /**
+      * @dataProvider typedOperationErrorProvider
+      */

@@ -1,1 +1,1 @@
-604f92c5fd39 offload: C2 SPA cards now show a placeholder instead of reusing the
+773589b94e2f offload: Fix-4 landed: warming exemption requires a non-null opaque

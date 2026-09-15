@@ -1,4 +1,4 @@
- .../scene/application/describe_async_worker.py     |   9 +-
- .../scene/application/describe_run_worker.py       | 301 ++++++++++++---------
- .../scene/tests/test_describe_run_worker_phases.py | 227 +++++++++++++++-
- 3 files changed, 396 insertions(+), 141 deletions(-)
+ .../scene/application/describe_async_worker.py     |  21 ++-
+ .../scene/application/describe_run_worker.py       | 113 ++++++++++++----
+ .../scene/tests/test_describe_run_worker_phases.py | 150 +++++++++++++++++----
+ 3 files changed, 235 insertions(+), 49 deletions(-)

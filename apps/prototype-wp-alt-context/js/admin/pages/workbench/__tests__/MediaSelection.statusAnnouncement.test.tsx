@@ -10,7 +10,7 @@ import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { DescribeRunProgress } from '../../../hooks/useDescribeRunProgress';
-import type { DescribeRunResponse, DescribeRunTiming } from '../../../api/describeApi';
+import { GPU_STATE, type DescribeRunResponse, type DescribeRunTiming } from '../../../api/describeApi';
 import { BulkDescribeProgress, MediaSelection } from '../MediaSelection';
 import { MARK_DECORATIVE_SUCCESS_MESSAGE } from '../MediaAltSuggest';
 import gpuflowBulkTiming from './fixtures/gpuflow-bulk-timing.json';
@@ -335,6 +335,59 @@ describe('MediaSelection toolbar status announcement [WBUX-5-D-02][B-01][B-02]',
 
 const TERMINAL_STATUSES = new Set(['completed', 'completed_with_errors', 'failed', 'cancelled']);
 
+const GPUFLOW_TIMING: DescribeRunTiming = {
+  queue_ms: gpuflowBulkTiming.run.timing.queue_ms,
+  ramp_up_ms: gpuflowBulkTiming.run.timing.ramp_up_ms,
+  processing_ms_p50: gpuflowBulkTiming.run.timing.processing_ms_p50,
+  processing_ms_max: gpuflowBulkTiming.run.timing.processing_ms_max,
+  startup_ms: gpuflowBulkTiming.run.timing.startup_ms,
+  server_elapsed_ms: gpuflowBulkTiming.run.timing.server_elapsed_ms,
+  items_timed: gpuflowBulkTiming.run.timing.items_timed,
+};
+
+const gpuflowRun = (overrides: Partial<DescribeRunResponse> = {}): DescribeRunResponse => ({
+  tenant_id: gpuflowBulkTiming.run.tenant_id,
+  run_id: gpuflowBulkTiming.run.run_id,
+  status: 'completed_with_errors',
+  phase: 'complete',
+  completed: gpuflowBulkTiming.run.completed,
+  failed: gpuflowBulkTiming.run.failed,
+  skipped: gpuflowBulkTiming.run.skipped,
+  total: gpuflowBulkTiming.run.total,
+  cancel_requested: gpuflowBulkTiming.run.cancel_requested,
+  eta_seconds: gpuflowBulkTiming.run.eta_seconds,
+  gpu_state: GPU_STATE.READY,
+  recognition_enabled: gpuflowBulkTiming.run.recognition_enabled,
+  deadline_seconds: gpuflowBulkTiming.run.deadline_seconds,
+  operation_id: gpuflowBulkTiming.run.operation_id,
+  startup_id: gpuflowBulkTiming.run.startup_id,
+  timing: GPUFLOW_TIMING,
+  ...overrides,
+});
+
+const gpuflowRunWithoutTiming = (): DescribeRunResponse => {
+  const run = gpuflowRun();
+  delete run.timing;
+  return run;
+};
+
+const gpuflowWarmingRun = (): DescribeRunResponse => {
+  const run = gpuflowRun({
+    status: 'running',
+    phase: 'describing',
+    completed: gpuflowBulkTiming.run_warming.completed,
+    failed: gpuflowBulkTiming.run_warming.failed,
+    skipped: gpuflowBulkTiming.run_warming.skipped,
+    total: gpuflowBulkTiming.run_warming.total,
+    gpu_state: GPU_STATE.STARTING,
+    eta_seconds: gpuflowBulkTiming.run_warming.eta_seconds,
+    operation_id: gpuflowBulkTiming.run_warming.operation_id,
+    startup_id: gpuflowBulkTiming.run_warming.startup_id,
+  });
+  Object.assign(run, { timing: gpuflowBulkTiming.run_warming.timing });
+  return run;
+};
+
 const progressFromRun = (
   run: DescribeRunResponse,
   overrides: Partial<DescribeRunProgress> = {},
@@ -359,7 +412,7 @@ const progressFromRun = (
 
 describe('MediaSelection bulk-describe timing announcement [GPUFLOW-1 B2]', () => {
   it('announces measured elapsed time on a terminal run without fabricating startup', () => {
-    const run = gpuflowBulkTiming.run as DescribeRunResponse;
+    const run = gpuflowRun();
     render(<BulkDescribeProgress progress={progressFromRun(run)} onRetry={vi.fn()} />);
 
     const live = screen.getByRole('status');
@@ -372,8 +425,8 @@ describe('MediaSelection bulk-describe timing announcement [GPUFLOW-1 B2]', () =
   });
 
   it('appends GPU startup seconds only when startup_ms is non-null', () => {
-    const run = gpuflowBulkTiming.run as DescribeRunResponse;
-    const timing: DescribeRunTiming = { ...run.timing!, startup_ms: 2500 };
+    const timing: DescribeRunTiming = { ...GPUFLOW_TIMING, startup_ms: 2500 };
+    const run = gpuflowRun({ timing });
     render(
       <BulkDescribeProgress
         progress={progressFromRun({ ...run, timing }, { timing })}
@@ -387,7 +440,7 @@ describe('MediaSelection bulk-describe timing announcement [GPUFLOW-1 B2]', () =
 
   it('keeps the legacy complete announcement when timing is absent', () => {
     expect(gpuflowBulkTiming.run_no_timing).not.toHaveProperty('timing');
-    const run = gpuflowBulkTiming.run_no_timing as DescribeRunResponse;
+    const run = gpuflowRunWithoutTiming();
     render(<BulkDescribeProgress progress={progressFromRun(run, { timing: null })} onRetry={vi.fn()} />);
 
     expect(screen.getByRole('status')).toHaveTextContent('✔ 1 draft ready to review · 1 failed');
@@ -396,7 +449,7 @@ describe('MediaSelection bulk-describe timing announcement [GPUFLOW-1 B2]', () =
   });
 
   it('announces Description service is starting once while isWarming, with no fabricated ETA', () => {
-    const run = gpuflowBulkTiming.run_warming as DescribeRunResponse;
+    const run = gpuflowWarmingRun();
     const warming = progressFromRun(run, { isWarming: true, isTerminal: false, isPolling: true });
     const { rerender } = render(<BulkDescribeProgress progress={warming} onRetry={vi.fn()} />);
 

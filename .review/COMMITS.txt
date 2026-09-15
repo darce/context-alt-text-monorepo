@@ -1,1 +1,1 @@
-7e848307baf3 offload: gpu-operator-control now uses Description Service copy,
+5655adc8ffb1 offload: remote turn

@@ -26,3 +26,27 @@ The five changed paths are all within the lane-owned list; no sibling-lane path 
 - **Impact:** When a refetch fails, the operator still receives no actionable last-error detail, making the Retry path opaque and leaving the promised retention recovery feedback unproved.
 - **Fix:** Project the query error through the existing safe/localized error-message policy and render it after fetching completes alongside the retry action; add tests with an actual error payload and for the generic fallback when no safe detail exists.
 
+
+## Re-review r2 (bff71580f..631795ff1)
+
+Reviewer: gpt-5.6-luna (max), codex-remote run `spa-description-service-review-m6fvrblj`. The reviewer could not commit this section (report path outside its effective owned scope); appended verbatim by the orchestrator.
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| `GPUFLOW-1-UXSERVICE-R-08` | `fixed` | `GpuControlCard.test.tsx` has_work case now keeps Stop enabled, confirms STOP is issued, and asserts the "Stopping after the current work finishes" copy; component only changed intent/stop-preview copy (no has_work gating). Sandbox vitest: 5 files / 60 tests passed after `npm ci`. |
+
+### FINDINGS
+
+#### GPUFLOW-1-SPADESCRIPTIONSERVICE-R-03 — low
+
+- File: `apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx:353`
+- Evidence: `.review/CHANGE.diff:26-30` adds a 131-column literal; `.prettierrc:2` sets printWidth to 120.
+- Impact: lint(prettier) only.
+
+#### GPUFLOW-1-SPADESCRIPTIONSERVICE-R-04 — low
+
+- File: `apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx:357`
+- Evidence: `.review/CHANGE.diff:31-35` reintroduces the 172-column literal; `.prettierrc:2` sets printWidth to 120.
+- Impact: lint(prettier) only.
+
+Verdict: pass_with_findings

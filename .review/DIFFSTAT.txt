@@ -1,3 +1,4 @@
- .../scene/tests/test_response_schema_parity.py     | 34 +++++++++++++++++-----
- .../scene/tests/test_schemas.py                    | 22 ++++++++++++--
- 2 files changed, 45 insertions(+), 11 deletions(-)
+ .../js/admin/pages/settings/GpuControlCard.tsx     | 39 +++++++++-----
+ .../settings/__tests__/GpuControlCard.test.tsx     | 63 ++++++++++++++++++++--
+ .../settings/__tests__/useGpuControl.test.tsx      | 39 ++++++++++----
+ 3 files changed, 115 insertions(+), 26 deletions(-)

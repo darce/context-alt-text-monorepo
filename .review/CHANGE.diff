@@ -1,272 +1,908 @@
-diff --git a/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx b/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx
---- a/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx
-+++ b/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx
-@@ -178,11 +178,24 @@ export const GpuControlCard = (): React.JSX.Element => {
-   const stopReason = !canStop ? stopBlockedReason : pendingReason;
-   const displayedState = data && data.snapshot_fresh ? data.gpu_state.state : GPU_STATE.UNKNOWN;
- 
--  const confirm = (): void => {
-+  React.useEffect(() => {
-     if (confirmation === null) {
-       return;
-     }
--    requestIntent(confirmation);
-+    const startStillAllowed = confirmation === GpuIntentAction.START && canStart;
-+    const stopStillAllowed = confirmation === GpuIntentAction.STOP && canStop;
-+    if (displayedState === GPU_STATE.UNKNOWN || (!startStillAllowed && !stopStillAllowed)) {
-+      setConfirmation(null);
-+    }
-+  }, [confirmation, displayedState, canStart, canStop]);
-+
-+  const confirm = (): void => {
-+    const action = confirmation;
-+    if (action === GpuIntentAction.START && canStart) {
-+      requestIntent(action);
-+    } else if (action === GpuIntentAction.STOP && canStop) {
-+      requestIntent(action);
-+    }
-     setConfirmation(null);
-   };
- 
-@@ -295,17 +308,6 @@ export const GpuControlCard = (): React.JSX.Element => {
-                 </button>
-                 {stopReason ? <span id="z-gpu-stop-reason">disabled: {stopReason}</span> : null}
- 
--                {canReturnToAuto ? (
--                  <button
--                    type="button"
--                    className="acx-button acx-button--secondary"
--                    onClick={() => requestIntent(GpuIntentAction.AUTO)}
--                    disabled={isIntentPending}
--                  >
--                    <span aria-hidden="true">↺</span> {__('Return to automatic', 'alt-context')}
--                  </button>
--                ) : null}
--
-                 {displayedState === GPU_STATE.READY ? (
-                   <a className="acx-button acx-button--secondary" href={toWorkbench()}>
-                     <span aria-hidden="true">→</span> {__('Go to Workbench', 'alt-context')}
-@@ -314,6 +316,17 @@ export const GpuControlCard = (): React.JSX.Element => {
-               </>
-             ) : null}
- 
-+            {canReturnToAuto ? (
-+              <button
-+                type="button"
-+                className="acx-button acx-button--secondary"
-+                onClick={() => requestIntent(GpuIntentAction.AUTO)}
-+                disabled={isIntentPending}
-+              >
-+                <span aria-hidden="true">↺</span> {__('Return to automatic', 'alt-context')}
-+              </button>
-+            ) : null}
-+
-             <button type="button" className="acx-button acx-button--tertiary" onClick={() => void refetch()}>
-               <span aria-hidden="true">↻</span> {__('Refresh', 'alt-context')}
-             </button>
-diff --git a/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx b/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx
---- a/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx
-+++ b/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx
-@@ -1,12 +1,11 @@
--import React from 'react';
- import { fireEvent, render, screen } from '@testing-library/react';
- import { beforeEach, describe, expect, it, vi } from 'vitest';
- 
- import { GPU_INTENT_ACTION, GPU_INTENT_STATUS, GPU_STATE, type GpuStatusResponse } from '../../../api/gpuApi';
- import { GPU_STATE_VOCABULARY } from '../../workbench/gpuStatePresentation';
--import serviceStates from './fixtures/gpuflow-service-states.json';
- import { GpuControlCard } from '../GpuControlCard';
- import * as gpuControl from '../useGpuControl';
-+import serviceStates from './fixtures/gpuflow-service-states.json';
- 
- vi.mock('../useGpuControl', async (importOriginal) => {
-   const actual = await importOriginal<typeof gpuControl>();
-@@ -267,7 +266,7 @@ describe('GpuControlCard', () => {
-     expect(screen.getByTestId('gpu-stale-notice')).toHaveTextContent('Service status is out of date');
-     expect(screen.queryByRole('button', { name: 'Start service' })).not.toBeInTheDocument();
-     expect(screen.queryByRole('button', { name: /Stop service/ })).not.toBeInTheDocument();
--    expect(screen.queryByRole('button', { name: 'Return to automatic' })).not.toBeInTheDocument();
-+    expect(screen.getByRole('button', { name: 'Return to automatic' })).toBeInTheDocument();
-     expect(screen.getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
+diff --git a/apps/prototype-wp-alt-context/js/admin/api/__tests__/describeApi.test.ts b/apps/prototype-wp-alt-context/js/admin/api/__tests__/describeApi.test.ts
+--- a/apps/prototype-wp-alt-context/js/admin/api/__tests__/describeApi.test.ts
++++ b/apps/prototype-wp-alt-context/js/admin/api/__tests__/describeApi.test.ts
+@@ -605,10 +605,9 @@ describe('describeApi', () => {
+     expect(options?.body).toEqual({ media_id: 42, operation_id: 'op-lease-1' });
    });
  
-@@ -280,12 +279,70 @@ describe('GpuControlCard', () => {
-     render(<GpuControlCard />);
- 
-     expect(screen.getByText(`Service: ${GPU_STATE_VOCABULARY.notReported}`)).toBeInTheDocument();
-+    expect(screen.queryByRole('button', { name: 'Start service' })).not.toBeInTheDocument();
-+    expect(screen.queryByRole('button', { name: /Stop service/ })).not.toBeInTheDocument();
-+    expect(screen.getByRole('button', { name: 'Return to automatic' })).toBeInTheDocument();
-+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
-+  });
-+
-+  it('omits Return to automatic on unknown when intent is already automatic', () => {
-+    mockControl(statusResponse({ state: 'unknown' }), {
-+      canStart: false,
-+      canStop: false,
-+      canReturnToAuto: false,
-+    });
-+    render(<GpuControlCard />);
-+
-     expect(screen.queryByRole('button', { name: 'Start service' })).not.toBeInTheDocument();
-     expect(screen.queryByRole('button', { name: /Stop service/ })).not.toBeInTheDocument();
-     expect(screen.queryByRole('button', { name: 'Return to automatic' })).not.toBeInTheDocument();
-     expect(screen.getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
+-  it('accepts GPUFLOW multipart success keys including a null operation_id and nested timing', () => {
++  it('rejects a null operation_id on describe success while accepting an absent key', () => {
+     const payload = {
+       ...sampleResponse,
+-      operation_id: null,
+       startup_id: null,
+       timing: {
+         queue_ms: 1,
+@@ -618,7 +617,11 @@ describe('describeApi', () => {
+         server_elapsed_ms: 20,
+       },
+     };
++    expect(() => parseVisualFactsResponse({ ...payload, operation_id: null })).toThrow(
++      new MalformedVisualFactsResponseError('response.operation_id'),
++    );
+     expect(parseVisualFactsResponse(payload)).toEqual(payload);
++    expect(parseVisualFactsResponse(payload).operation_id).toBeUndefined();
    });
  
-+  it('clears an open stop confirmation when the snapshot becomes stale', () => {
-+    const requestIntent = vi.fn();
-+    mockControl(statusResponse({ state: 'ready' }), { requestIntent });
-+    const { rerender } = render(<GpuControlCard />);
-+    fireEvent.click(screen.getByRole('button', { name: /Stop service/ }));
-+    expect(screen.getByRole('button', { name: 'Confirm stop' })).toBeInTheDocument();
+   it('accepts a minted operation_id and startup_id on the describe success envelope', () => {
+@@ -1013,6 +1016,20 @@ describe('resolveDescribeErrorDetailNumberField', () => {
+     expect(resolveDescribeErrorDetailNumberField(new Error('network down'), 'warmup_eta_seconds')).toBeNull();
+     expect(resolveDescribeErrorDetailNumberField(null, 'warmup_eta_seconds')).toBeNull();
+   });
 +
-+    mockControl(
-+      {
-+        ...statusResponse({ state: 'ready' }),
-+        snapshot_age_seconds: 240,
-+        snapshot_fresh: false,
-+      },
-+      { requestIntent, canStart: false, canStop: false },
++  it('returns null for a negative warmup_eta_seconds', () => {
++    const err = new Error(
++      'Request to .../describe failed (503): {"detail":{"code":"description_service_starting","message":"Description service is starting.","operation_id":"op-lease-1","startup_id":null,"warmup_eta_seconds":-3,"timing":{"queue_ms":0,"ramp_up_ms":null,"processing_ms":null,"startup_ms":null,"server_elapsed_ms":1}}}',
 +    );
-+    rerender(<GpuControlCard />);
-+
-+    expect(screen.queryByTestId('z-stop-preview')).not.toBeInTheDocument();
-+    expect(screen.queryByRole('button', { name: 'Confirm stop' })).not.toBeInTheDocument();
-+    expect(requestIntent).not.toHaveBeenCalled();
++    expect(resolveDescribeErrorDetailNumberField(err, 'warmup_eta_seconds')).toBeNull();
 +  });
 +
-+  it('clears an open start confirmation when the snapshot becomes stale', () => {
-+    const requestIntent = vi.fn();
-+    mockControl(statusResponse(), { requestIntent });
-+    const { rerender } = render(<GpuControlCard />);
-+    fireEvent.click(screen.getByRole('button', { name: 'Start service' }));
-+    expect(screen.getByRole('button', { name: 'Confirm start' })).toBeInTheDocument();
-+
-+    mockControl(
-+      {
-+        ...statusResponse(),
-+        snapshot_age_seconds: 240,
-+        snapshot_fresh: false,
-+      },
-+      { requestIntent, canStart: false, canStop: false },
++  it('treats -0 warmup_eta_seconds as 0', () => {
++    const err = new Error(
++      'Request to .../describe failed (503): {"detail":{"code":"description_service_starting","message":"Description service is starting.","operation_id":"op-lease-1","startup_id":null,"warmup_eta_seconds":-0,"timing":{"queue_ms":0,"ramp_up_ms":null,"processing_ms":null,"startup_ms":null,"server_elapsed_ms":1}}}',
 +    );
-+    rerender(<GpuControlCard />);
-+
-+    expect(screen.queryByTestId('z-start-preview')).not.toBeInTheDocument();
-+    expect(screen.queryByRole('button', { name: 'Confirm start' })).not.toBeInTheDocument();
-+    expect(requestIntent).not.toHaveBeenCalled();
++    expect(resolveDescribeErrorDetailNumberField(err, 'warmup_eta_seconds')).toBe(0);
 +  });
-+
-   it.each([
-     [GPU_STATE.STOPPED, true, 'a service request is already in flight'],
-     [GPU_STATE.STARTING, true, 'a service request is already in flight'],
-diff --git a/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/useGpuControl.test.tsx b/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/useGpuControl.test.tsx
---- a/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/useGpuControl.test.tsx
-+++ b/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/useGpuControl.test.tsx
-@@ -57,11 +57,14 @@ const statusResponse = ({
-   ...overrides,
  });
  
--const wrapper = ({ children }: { children: ReactNode }) => {
-+const createWrapper = () => {
-   const client = new QueryClient({
-     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+ describe('resolveDescribeErrorDataBooleanField', () => {
+diff --git a/apps/prototype-wp-alt-context/js/admin/api/__tests__/describeRunResponseContract.test.ts b/apps/prototype-wp-alt-context/js/admin/api/__tests__/describeRunResponseContract.test.ts
+--- a/apps/prototype-wp-alt-context/js/admin/api/__tests__/describeRunResponseContract.test.ts
++++ b/apps/prototype-wp-alt-context/js/admin/api/__tests__/describeRunResponseContract.test.ts
+@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
+ 
+ import { describe, expect, expectTypeOf, it } from 'vitest';
+ 
+-import type { DescribeRunResponse } from '../describeApi';
++import type { DescribeRunResponse, DescribeRunTiming } from '../describeApi';
+ 
+ /**
+  * The GATE referenced by the WBUX6-MRG-03 comment on DescribeRunResponse. That
+@@ -35,7 +35,12 @@ interface DescribeRunSchema {
+  * silent fall-through to whatever local default that consumer invented
+  * (rg-005, rg-015).
+  */
+-const DESCRIBE_RUN_RESPONSE_OPTIONAL_KEYS = ['deadline_seconds'] as const;
++const DESCRIBE_RUN_RESPONSE_OPTIONAL_KEYS = [
++  'deadline_seconds',
++  'operation_id',
++  'startup_id',
++  'timing',
++] as const;
+ 
+ /** Single canonical key list for the envelope (sr-007), mirrored against the schema. */
+ const DESCRIBE_RUN_RESPONSE_KEYS = [
+@@ -114,12 +119,18 @@ describe('DescribeRunResponse contract', () => {
+     // Optional AND nullable on the wire, so the TS field has to admit both.
+     expect(schema.properties?.deadline_seconds?.type).toEqual(['number', 'null']);
+     expectTypeOf<DescribeRunResponse['deadline_seconds']>().toEqualTypeOf<number | null | undefined>();
++    expect(schema.properties?.operation_id?.type).toBe('string');
++    expectTypeOf<DescribeRunResponse['operation_id']>().toEqualTypeOf<string | undefined>();
++    expect(schema.properties?.startup_id?.type).toEqual(['string', 'null']);
++    expectTypeOf<DescribeRunResponse['startup_id']>().toEqualTypeOf<string | null | undefined>();
++    expect(schema.properties?.timing?.type).toBe('object');
++    expectTypeOf<DescribeRunResponse['timing']>().toEqualTypeOf<DescribeRunTiming | undefined>();
+ 
+     // The envelope is still exactly required + the optional keys, so a new
+     // schema property added without a TS field fails here rather than silently.
+-    expect([...declared].sort()).toEqual(
+-      [...DESCRIBE_RUN_RESPONSE_KEYS, ...DESCRIBE_RUN_RESPONSE_OPTIONAL_KEYS].sort(),
+-    );
++    const expectedKeys = [...DESCRIBE_RUN_RESPONSE_KEYS, ...DESCRIBE_RUN_RESPONSE_OPTIONAL_KEYS];
++    expect(expectedKeys).toHaveLength(16);
++    expect([...declared].sort()).toEqual(expectedKeys.sort());
    });
--  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
-+  const wrapper = ({ children }: { children: ReactNode }) => (
-+    <QueryClientProvider client={client}>{children}</QueryClientProvider>
-+  );
-+  return wrapper;
+ 
+   it('accepts a disclosed budget without disturbing the required envelope', () => {
+diff --git a/apps/prototype-wp-alt-context/js/admin/api/describeApi.ts b/apps/prototype-wp-alt-context/js/admin/api/describeApi.ts
+--- a/apps/prototype-wp-alt-context/js/admin/api/describeApi.ts
++++ b/apps/prototype-wp-alt-context/js/admin/api/describeApi.ts
+@@ -150,10 +150,11 @@ export interface VisualFactsResponse {
+   alt_text_long?: string | null;
+   alt_text_write?: AltTextWriteResult;
+   /**
+-   * Opaque service-minted lease id. Null means no lease to poll
+-   * (GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-01). Absent on older adapters.
++   * Opaque service-minted lease id. Optional; when present it is a non-empty
++   * string (1..128) and never null. The service drops the key when unset
++   * (GPUFLOW-1-SPADESCRIBECLIENT-R-01). Absent means no lease to poll.
+    */
+-  operation_id?: string | null;
++  operation_id?: string;
+   /** Opaque shared startup id; null for warm/cache work. Absent on older adapters. */
+   startup_id?: string | null;
+   /** Measured milliseconds; unknown values are null. Absent on older adapters. */
+@@ -672,7 +673,7 @@ const validateVisualFactsResponse = (payload: unknown): string | null => {
+       return altTextWriteError;
+     }
+   }
+-  const operationIdError = validateOptionalOpaqueId(payload, 'operation_id', 'response', true);
++  const operationIdError = validateOptionalOpaqueId(payload, 'operation_id', 'response', false);
+   if (operationIdError) {
+     return operationIdError;
+   }
+@@ -1534,10 +1535,11 @@ export const resolveDescribeErrorDataField = (error: unknown, field: string): st
  };
  
- describe('useGpuControl', () => {
-@@ -83,7 +86,7 @@ describe('useGpuControl', () => {
-   it('derives start from the stopped zero state and keeps stop disabled', async () => {
-     fetchGpuStatusMock.mockResolvedValue(statusResponse());
+ /**
+- * Resolve a finite number from a typed FastAPI `detail` object when present.
++ * Resolve a nonnegative finite number from a typed FastAPI `detail` object.
+  * Returns null when the error is unstructured, `detail` is not an object, or
+- * the named field is absent / not a finite number — callers must not invent
+- * a value ([rg-015]). Used for `warmup_eta_seconds`.
++ * the named field is absent / not a finite number / negative — callers must
++ * not invent a value ([rg-015]). `-0` is treated as `0`. Used for
++ * `warmup_eta_seconds`.
+  */
+ export const resolveDescribeErrorDetailNumberField = (
+   error: unknown,
+@@ -1551,10 +1553,10 @@ export const resolveDescribeErrorDetailNumberField = (
+     return null;
+   }
+   const value = payload.detail[field];
+-  if (typeof value === 'number' && Number.isFinite(value)) {
+-    return value;
++  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
++    return null;
+   }
+-  return null;
++  return value === 0 ? 0 : value;
+ };
  
--    const { result } = renderHook(() => useGpuControl(), { wrapper });
-+    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
-     await waitFor(() => expect(result.current.data).toBeDefined());
+ /**
+diff --git a/apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useDescribeMedia.test.tsx b/apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useDescribeMedia.test.tsx
+--- a/apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useDescribeMedia.test.tsx
++++ b/apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useDescribeMedia.test.tsx
+@@ -6,11 +6,23 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
+ import { useDescribeMedia } from '../useDescribeMedia';
+ import * as describeApi from '../../api/describeApi';
+ import type { VisualFactsResponse } from '../../api/describeApi';
++import suggestStates from '../../pages/workbench/__tests__/fixtures/gpuflow-suggest-states.json';
  
-     expect(result.current.canStart).toBe(true);
-@@ -95,7 +98,7 @@ describe('useGpuControl', () => {
-   it('keeps Start disabled when a stopped-looking snapshot is stale', async () => {
-     fetchGpuStatusMock.mockResolvedValue(statusResponse({ snapshot_age_seconds: 240, snapshot_fresh: false }));
+-vi.mock('../../api/describeApi', () => ({ describeMedia: vi.fn() }));
++vi.mock('../../api/describeApi', async (importOriginal) => {
++  const actual = await importOriginal<typeof describeApi>();
++  return {
++    ...actual,
++    describeMedia: vi.fn(),
++  };
++});
  
--    const { result } = renderHook(() => useGpuControl(), { wrapper });
-+    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
-     await waitFor(() => expect(result.current.data).toBeDefined());
+ const describeMediaMock = vi.mocked(describeApi.describeMedia);
  
-     expect(result.current.canStart).toBe(false);
-@@ -113,7 +116,7 @@ describe('useGpuControl', () => {
-       }),
-     );
++const describeErrorFromFixture = (fixture: { status: number; detail: object }): Error =>
++  new Error(
++    `Request to .../describe failed (${fixture.status}): ${JSON.stringify({ detail: fixture.detail })}`,
++  );
++
+ const sample: VisualFactsResponse = {
+   tenant_id: '00000000-0000-4000-8000-000000000001',
+   media_id: 42,
+@@ -74,5 +86,127 @@ describe('useDescribeMedia', () => {
  
--    const { result } = renderHook(() => useGpuControl(), { wrapper });
-+    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
-     await waitFor(() => expect(result.current.data).toBeDefined());
+     await waitFor(() => expect(result.current.isError).toBe(true));
+     expect(result.current.error?.message).toBe('boom');
++    expect(result.current.warming).toBeNull();
++  });
++
++  it('stores a starting lease and retry sends operation_id', async () => {
++    describeMediaMock
++      .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.starting_with_eta))
++      .mockResolvedValueOnce(suggestStates.success_with_timing);
++    const { result } = renderHook(() => useDescribeMedia(), { wrapper });
++
++    result.current.mutate(42);
++
++    await waitFor(() => expect(result.current.warming).not.toBeNull());
++    expect(result.current.warming).toEqual({
++      operationId: 'op-lease-1',
++      warmupEtaSeconds: 12,
++    });
++    expect(describeMediaMock).toHaveBeenCalledWith(42);
++
++    result.current.retry();
++
++    await waitFor(() => expect(result.current.isSuccess).toBe(true));
++    expect(describeMediaMock).toHaveBeenNthCalledWith(2, 42, { operationId: 'op-lease-1' });
++    expect(result.current.warming).toBeNull();
++    expect(result.current.timing).toEqual(suggestStates.success_with_timing.timing);
++  });
++
++  it('stores a null ETA from the wire and a null operationId when the starting envelope omits it', async () => {
++    describeMediaMock
++      .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.starting_no_eta))
++      .mockRejectedValueOnce(
++        describeErrorFromFixture({
++          status: 503,
++          detail: {
++            code: 'description_service_starting',
++            message: 'Description service is starting.',
++            warmup_eta_seconds: 12,
++          },
++        }),
++      );
++    const { result } = renderHook(() => useDescribeMedia(), { wrapper });
++
++    result.current.mutate(42);
++    await waitFor(() => expect(result.current.warming).not.toBeNull());
++    expect(result.current.warming).toEqual({
++      operationId: 'op-lease-1',
++      warmupEtaSeconds: null,
++    });
++
++    result.current.reset();
++    result.current.mutate(42);
++    await waitFor(() => expect(result.current.warming?.warmupEtaSeconds).toBe(12));
++    expect(result.current.warming?.operationId).toBeNull();
++  });
++
++  it('retries mismatch once without operation_id, then surfaces a repeated mismatch', async () => {
++    describeMediaMock
++      .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.starting_with_eta))
++      .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.mismatch))
++      .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.mismatch));
++    const { result } = renderHook(() => useDescribeMedia(), { wrapper });
++
++    result.current.mutate(42);
++    await waitFor(() => expect(result.current.warming?.operationId).toBe('op-lease-1'));
++
++    result.current.retry();
++
++    await waitFor(() => expect(result.current.isError).toBe(true));
++    expect(describeMediaMock).toHaveBeenNthCalledWith(2, 42, { operationId: 'op-lease-1' });
++    expect(describeMediaMock).toHaveBeenNthCalledWith(3, 42);
++    expect(describeMediaMock).toHaveBeenCalledTimes(3);
++    expect(result.current.warming).toBeNull();
++    expect(describeApi.resolveDescribeErrorCode(result.current.error)).toBe(
++      describeApi.DESCRIBE_OPERATION_ERROR_CODE.MISMATCH,
++    );
++  });
++
++  it('clears the lease on success after a mismatch retry without id', async () => {
++    describeMediaMock
++      .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.starting_with_eta))
++      .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.mismatch))
++      .mockResolvedValueOnce(suggestStates.success_no_timing);
++    const { result } = renderHook(() => useDescribeMedia(), { wrapper });
++
++    result.current.mutate(42);
++    await waitFor(() => expect(result.current.warming).not.toBeNull());
++
++    result.current.retry();
++
++    await waitFor(() => expect(result.current.isSuccess).toBe(true));
++    expect(describeMediaMock).toHaveBeenNthCalledWith(3, 42);
++    expect(result.current.warming).toBeNull();
++    expect(result.current.timing).toBeNull();
++  });
++
++  it('clears the lease on description_service_unavailable', async () => {
++    describeMediaMock
++      .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.starting_with_eta))
++      .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.unavailable));
++    const { result } = renderHook(() => useDescribeMedia(), { wrapper });
++
++    result.current.mutate(42);
++    await waitFor(() => expect(result.current.warming).not.toBeNull());
++
++    result.current.retry();
++
++    await waitFor(() => expect(result.current.isError).toBe(true));
++    expect(result.current.warming).toBeNull();
++    expect(result.current.timing).toBeNull();
++  });
++
++  it('exposes timing from the last success payload and null when the key is absent', async () => {
++    describeMediaMock
++      .mockResolvedValueOnce(suggestStates.success_with_timing)
++      .mockResolvedValueOnce(suggestStates.success_no_timing);
++    const { result } = renderHook(() => useDescribeMedia(), { wrapper });
++
++    result.current.mutate(42);
++    await waitFor(() => expect(result.current.timing).toEqual(suggestStates.success_with_timing.timing));
++
++    result.current.mutate(42);
++    await waitFor(() => expect(result.current.data).toEqual(suggestStates.success_no_timing));
++    expect(result.current.timing).toBeNull();
+   });
+ });
+diff --git a/apps/prototype-wp-alt-context/js/admin/hooks/useDescribeMedia.ts b/apps/prototype-wp-alt-context/js/admin/hooks/useDescribeMedia.ts
+--- a/apps/prototype-wp-alt-context/js/admin/hooks/useDescribeMedia.ts
++++ b/apps/prototype-wp-alt-context/js/admin/hooks/useDescribeMedia.ts
+@@ -1,6 +1,16 @@
+-import { useMutation } from '@tanstack/react-query';
++import { useRef, useState } from 'react';
++import { useMutation, type MutateOptions } from '@tanstack/react-query';
  
-     expect(result.current.canStart).toBe(false);
-@@ -123,7 +126,7 @@ describe('useGpuControl', () => {
-   it('keeps Start disabled for a fresh snapshot that reports an unknown machine state', async () => {
-     fetchGpuStatusMock.mockResolvedValue(statusResponse({ gpu_state: { state: 'unknown' } }));
+-import { describeMedia, type DescribeMediaWriteOptions, type VisualFactsResponse } from '../api/describeApi';
++import {
++  describeMedia,
++  DESCRIBE_OPERATION_ERROR_CODE,
++  resolveDescribeErrorCode,
++  resolveDescribeErrorDataField,
++  resolveDescribeErrorDetailNumberField,
++  type DescribeMediaWriteOptions,
++  type DescribeOperationTiming,
++  type VisualFactsResponse,
++} from '../api/describeApi';
  
--    const { result } = renderHook(() => useGpuControl(), { wrapper });
-+    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
-     await waitFor(() => expect(result.current.data).toBeDefined());
+ export type DescribeMediaMutationInput =
+   | number
+@@ -8,19 +18,104 @@ export type DescribeMediaMutationInput =
+       mediaId: number;
+     } & DescribeMediaWriteOptions);
  
-     expect(result.current.canStart).toBe(false);
-@@ -139,7 +142,7 @@ describe('useGpuControl', () => {
-       }),
-     );
- 
--    const { result } = renderHook(() => useGpuControl(), { wrapper });
-+    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
-     await waitFor(() => expect(result.current.data).toBeDefined());
-     expect(result.current.canStart).toBe(false);
-     expect(result.current.canStop).toBe(true);
-@@ -149,7 +152,7 @@ describe('useGpuControl', () => {
-   it('presents starting with the optimistic pending start intent', async () => {
-     fetchGpuStatusMock.mockResolvedValue(statusResponse());
-     postGpuIntentMock.mockReturnValue(new Promise(() => {}));
--    const { result } = renderHook(() => useGpuControl(), { wrapper });
-+    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
-     await waitFor(() => expect(result.current.data).toBeDefined());
-     act(() => {
-       result.current.requestIntent(GPU_INTENT_ACTION.START);
-@@ -169,7 +172,7 @@ describe('useGpuControl', () => {
-       }),
-     );
- 
--    const { result } = renderHook(() => useGpuControl(), { wrapper });
-+    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
-     await waitFor(() => expect(result.current.data).toBeDefined());
- 
-     act(() => {
-@@ -188,8 +191,24 @@ describe('useGpuControl', () => {
-   it('enables Return to automatic only when the effective intent is not automatic', async () => {
-     fetchGpuStatusMock.mockResolvedValue(statusResponse({ gpu_state: { intent: GPU_INTENT_ACTION.START } }));
- 
--    const { result } = renderHook(() => useGpuControl(), { wrapper });
-+    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
-     await waitFor(() => expect(result.current.data).toBeDefined());
-     expect(result.current.canReturnToAuto).toBe(true);
++export type DescribeWarmingState = {
++  operationId: string | null;
++  warmupEtaSeconds: number | null;
++};
++
++const mediaIdOf = (input: DescribeMediaMutationInput): number =>
++  typeof input === 'number' ? input : input.mediaId;
++
++const writeOptionsOf = (input: DescribeMediaMutationInput): DescribeMediaWriteOptions =>
++  typeof input === 'number' ? {} : { writeAlt: input.writeAlt, force: input.force ?? false };
++
++const isMismatchOrExpired = (code: string | null): boolean =>
++  code === DESCRIBE_OPERATION_ERROR_CODE.MISMATCH || code === DESCRIBE_OPERATION_ERROR_CODE.EXPIRED;
++
++const describeWithLease = (
++  input: DescribeMediaMutationInput,
++  operationId: string | null,
++): Promise<VisualFactsResponse> => {
++  const mediaId = mediaIdOf(input);
++  if (typeof input === 'number' && operationId === null) {
++    return describeMedia(mediaId);
++  }
++  return describeMedia(mediaId, {
++    ...writeOptionsOf(input),
++    ...(operationId !== null ? { operationId } : {}),
++  });
++};
++
+ /**
+  * Describe a single attachment through the WP proxy (E19-1 S12). One-shot
+  * mutation: callers `mutate(mediaId)` or `mutate({ mediaId, writeAlt })`.
++ * GPUFLOW-1 lease: starting errors store operation_id for retry(); mismatch
++ * and expired drop the id and retry once without it.
+  */
+-export const useDescribeMedia = () =>
+-  useMutation<VisualFactsResponse, Error, DescribeMediaMutationInput>({
+-    mutationFn: (input: DescribeMediaMutationInput) => {
+-      if (typeof input === 'number') {
+-        return describeMedia(input);
++export const useDescribeMedia = () => {
++  const lastInputRef = useRef<DescribeMediaMutationInput | null>(null);
++  const leaseOperationIdRef = useRef<string | null>(null);
++  const mismatchRetriedRef = useRef(false);
++  const [warming, setWarming] = useState<DescribeWarmingState | null>(null);
++  const [timing, setTiming] = useState<DescribeOperationTiming | null>(null);
++
++  const clearLease = (): void => {
++    leaseOperationIdRef.current = null;
++    mismatchRetriedRef.current = false;
++    setWarming(null);
++  };
++
++  const mutation = useMutation<VisualFactsResponse, Error, DescribeMediaMutationInput>({
++    mutationFn: async (input: DescribeMediaMutationInput) => {
++      lastInputRef.current = input;
++      try {
++        return await describeWithLease(input, leaseOperationIdRef.current);
++      } catch (error) {
++        const code = resolveDescribeErrorCode(error);
++        if (isMismatchOrExpired(code) && !mismatchRetriedRef.current) {
++          leaseOperationIdRef.current = null;
++          mismatchRetriedRef.current = true;
++          return await describeWithLease(input, null);
++        }
++        throw error;
++      }
++    },
++    onSuccess: (response) => {
++      clearLease();
++      setTiming(response.timing ?? null);
++    },
++    onError: (error) => {
++      const code = resolveDescribeErrorCode(error);
++      if (code === DESCRIBE_OPERATION_ERROR_CODE.STARTING) {
++        const operationId = resolveDescribeErrorDataField(error, 'operation_id');
++        const warmupEtaSeconds = resolveDescribeErrorDetailNumberField(error, 'warmup_eta_seconds');
++        leaseOperationIdRef.current = operationId;
++        mismatchRetriedRef.current = false;
++        setWarming({ operationId, warmupEtaSeconds });
++        setTiming(null);
++        return;
+       }
+-      return describeMedia(input.mediaId, {
+-        writeAlt: input.writeAlt,
+-        force: input.force ?? false,
+-      });
++      clearLease();
++      setTiming(null);
+     },
    });
 +
-+  it('keeps Return to automatic available when a non-automatic snapshot is stale or unknown', async () => {
-+    fetchGpuStatusMock.mockResolvedValue(
-+      statusResponse({
-+        gpu_state: { state: 'ready', intent: GPU_INTENT_ACTION.START },
-+        snapshot_age_seconds: 240,
-+        snapshot_fresh: false,
-+      }),
-+    );
++  const retry = (
++    options?: MutateOptions<VisualFactsResponse, Error, DescribeMediaMutationInput>,
++  ): void => {
++    const lastInput = lastInputRef.current;
++    if (lastInput === null) {
++      return;
++    }
++    mutation.mutate(lastInput, options);
++  };
 +
-+    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
-+    await waitFor(() => expect(result.current.data).toBeDefined());
-+    expect(result.current.canStart).toBe(false);
-+    expect(result.current.canStop).toBe(false);
-+    expect(result.current.canReturnToAuto).toBe(true);
-+  });
++  const reset = (): void => {
++    lastInputRef.current = null;
++    clearLease();
++    setTiming(null);
++    mutation.reset();
++  };
++
++  return { ...mutation, reset, retry, warming, timing };
++};
+diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaAltSuggest.tsx b/apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaAltSuggest.tsx
+--- a/apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaAltSuggest.tsx
++++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaAltSuggest.tsx
+@@ -1,11 +1,16 @@
+ import { __, sprintf } from '@wordpress/i18n';
++import { Clock, Loader2 } from 'lucide-react';
+ import { useEffect, useId, useRef, useState } from 'react';
+ 
+ import {
+   DESCRIPTION_CORRECTION_CODE,
++  DESCRIBE_OPERATION_ERROR_CODE,
+   resolveDescribeErrorCode,
+   resolveDescribeErrorDataField,
++  resolveDescribeErrorDetailNumberField,
+   resolveDescribeErrorMessage,
++  type DescribeOperationTiming,
++  type VisualFactsResponse,
+ } from '../../api/describeApi';
+ import { useCorrectMediaAlt } from '../../hooks/useCorrectMediaAlt';
+ import { useDescribeMedia } from '../../hooks/useDescribeMedia';
+@@ -151,6 +156,69 @@ export const formatOverLengthReadyAnnouncement = (length: number): string =>
+ export const formatWithinLengthAnnouncement = (): string =>
+   __('Draft is within the recommended maximum length.', 'alt-context');
+ 
++const formatMeasuredDuration = (milliseconds: number): string => {
++  const totalSeconds = milliseconds / 1000;
++  if (totalSeconds >= 60) {
++    const minutes = Math.floor(totalSeconds / 60);
++    const remainder = Math.round(totalSeconds % 60);
++    return remainder === 0 ? `${minutes} m` : `${minutes} m ${remainder} s`;
++  }
++  const roundedTenths = Math.round(totalSeconds * 10) / 10;
++  return Number.isInteger(roundedTenths) ? `${roundedTenths} s` : `${roundedTenths.toFixed(1)} s`;
++};
++
++/** Warming copy: ETA suffix only when the service supplied a number ([rg-015]). */
++export const formatWarmingStatus = (warmupEtaSeconds: number | null): string => {
++  const starting = __('Description service is starting', 'alt-context');
++  if (warmupEtaSeconds === null) {
++    return starting;
++  }
++  return `${starting}${sprintf(
++    /* translators: 1: warmup ETA in seconds from the service */
++    __(' (about %d s)', 'alt-context'),
++    warmupEtaSeconds,
++  )}`;
++};
++
++/**
++ * Compact measured timing line from wire values only. Omits the whole line when
++ * timing is absent or every display field is null.
++ */
++export const formatSuggestTimingLine = (timing: DescribeOperationTiming | null): string | null => {
++  if (timing == null) {
++    return null;
++  }
++  const parts: string[] = [];
++  if (timing.processing_ms !== null) {
++    parts.push(
++      sprintf(
++        /* translators: 1: measured processing duration, e.g. "1.2 s" */
++        __('Generated in %s', 'alt-context'),
++        formatMeasuredDuration(timing.processing_ms),
++      ),
++    );
++  }
++  if (timing.ramp_up_ms !== null) {
++    parts.push(
++      sprintf(
++        /* translators: 1: measured wait for service, e.g. "1 m 42 s" */
++        __('Waited for service %s', 'alt-context'),
++        formatMeasuredDuration(timing.ramp_up_ms),
++      ),
++    );
++  }
++  if (timing.startup_ms !== null) {
++    parts.push(
++      sprintf(
++        /* translators: 1: measured startup duration when known, e.g. "38 s" */
++        __('Started in %s', 'alt-context'),
++        formatMeasuredDuration(timing.startup_ms),
++      ),
++    );
++  }
++  return parts.length === 0 ? null : parts.join(', ');
++};
++
+ export const MediaAltSuggest = ({
+   mediaId,
+   committedAlt = null,
+@@ -209,7 +277,7 @@ export const MediaAltSuggest = ({
+   // [S7-BR-02]. Local flag only drives "Marking as decorative…" labels while
+   // isAccepting covers the shared in-flight disable + focus park [BR-13][BR-56].
+   const [isMarkingDecorative, setIsMarkingDecorative] = useState(false);
+-  const { mutate, isPending, isError, error, data, reset } = useDescribeMedia();
++  const { mutate, isPending, isError, error, data, reset, retry, warming, timing } = useDescribeMedia();
+   const {
+     mutate: acceptDraft,
+     isPending: isAccepting,
+@@ -270,6 +338,37 @@ export const MediaAltSuggest = ({
+     }
+   };
+ 
++  const handleDescribeSuccess = (response: VisualFactsResponse): void => {
++    // Capture the committed alt we are working from at draft generation
++    // (CAS baseline). Re-captured again when edit-draft mode opens.
++    committedAltBaselineRef.current = committedAltRef.current;
++    // [A11Y-34] branch (c): when the generated draft exceeds the recommended
++    // maximum, announce the length check once via the existing polite region
++    // (composed with the ready cue). Do not add a second live region [A11Y-19].
++    const draftText = response.alt_text_draft;
++    const isOver = isOverRecommendedAltLength(draftText);
++    wasOverLengthRef.current = isOver;
++    if (isOver) {
++      announceStatus(formatOverLengthReadyAnnouncement(draftText.length));
++    } else {
++      announceStatus(__('Draft ready. Review before saving.', 'alt-context'));
++    }
++  };
++
++  const handleDescribeError = (err: Error): void => {
++    if (resolveDescribeErrorCode(err) === DESCRIBE_OPERATION_ERROR_CODE.STARTING) {
++      announceStatus(
++        formatWarmingStatus(resolveDescribeErrorDetailNumberField(err, 'warmup_eta_seconds')),
++      );
++      return;
++    }
++    // BR-46: after the live-region hoist the region is always mounted, so this
++    // clear is load-bearing — without it a stale "Generating…" polite cue sits
++    // beside the assertive generate-failure alert (same two-regions defect as
++    // accept onError clear — BR-39).
++    clearStatus();
++  };
++
+   const generate = (): void => {
+     // Announce generating immediately so the pending branch's live region has
+     // distinct text from a prior "Draft ready…" (regenerate re-announce path).
+@@ -278,29 +377,16 @@ export const MediaAltSuggest = ({
+     setConflictMessage(null);
+     setIsEditing(false);
+     mutate(mediaId, {
+-      onSuccess: (response) => {
+-        // Capture the committed alt we are working from at draft generation
+-        // (CAS baseline). Re-captured again when edit-draft mode opens.
+-        committedAltBaselineRef.current = committedAltRef.current;
+-        // [A11Y-34] branch (c): when the generated draft exceeds the recommended
+-        // maximum, announce the length check once via the existing polite region
+-        // (composed with the ready cue). Do not add a second live region [A11Y-19].
+-        const draftText = response.alt_text_draft;
+-        const isOver = isOverRecommendedAltLength(draftText);
+-        wasOverLengthRef.current = isOver;
+-        if (isOver) {
+-          announceStatus(formatOverLengthReadyAnnouncement(draftText.length));
+-        } else {
+-          announceStatus(__('Draft ready. Review before saving.', 'alt-context'));
+-        }
+-      },
+-      // BR-46: after the live-region hoist the region is always mounted, so this
+-      // clear is load-bearing — without it a stale "Generating…" polite cue sits
+-      // beside the assertive generate-failure alert (same two-regions defect as
+-      // accept onError clear — BR-39).
+-      onError: () => {
+-        clearStatus();
+-      },
++      onSuccess: handleDescribeSuccess,
++      onError: handleDescribeError,
++    });
++  };
++
++  const retryWarming = (): void => {
++    announceStatus(__('Generating…', 'alt-context'));
++    retry({
++      onSuccess: handleDescribeSuccess,
++      onError: handleDescribeError,
+     });
+   };
+ 
+@@ -334,7 +420,7 @@ export const MediaAltSuggest = ({
+     const active = document.activeElement;
+     const ownsFocus = !active || active === document.body || containerRef.current?.contains(active);
+ 
+-    if (isError) {
++    if (warming || isError) {
+       if (ownsFocus) {
+         retryButtonRef.current?.focus();
+       }
+@@ -357,7 +443,7 @@ export const MediaAltSuggest = ({
+         suggestButtonRef.current?.focus();
+       }
+     }
+-  }, [isError, data]);
++  }, [isError, data, warming]);
+ 
+   // Separate from the draft-landing focus effect: entering edit must not re-key
+   // that effect, and Cancel must land on Edit rather than Dismiss.
+@@ -512,7 +598,7 @@ export const MediaAltSuggest = ({
+     if (next instanceof Node && containerRef.current?.contains(next)) {
+       return;
+     }
+-    if (!data && !isPending && !isAccepting && !isMarkingDecorative && !isError) {
++    if (!data && !isPending && !isAccepting && !isMarkingDecorative && !isError && !warming) {
+       clearStatus();
+     }
+   };
+@@ -559,6 +645,33 @@ export const MediaAltSuggest = ({
+       );
+     }
+ 
++    if (warming) {
++      const warmingText = formatWarmingStatus(warming.warmupEtaSeconds);
++      return (
++        <div
++          ref={containerRef}
++          className="acx-media-selection__media-alt-suggest"
++          role="group"
++          tabIndex={-1}
++          aria-label={warmingText}
++          onBlur={handleContainerBlur}
++        >
++          <p className="acx-media-selection__media-alt-warming" data-testid="media-alt-suggest-warming">
++            <Loader2 aria-hidden="true" size={16} />
++            {warmingText}
++          </p>
++          <button
++            type="button"
++            ref={retryButtonRef}
++            className="button acx-media-selection__media-alt-suggest-retry"
++            onClick={retryWarming}
++          >
++            {__('Retry', 'alt-context')}
++          </button>
++        </div>
++      );
++    }
++
+     if (isError) {
+       return (
+         <div
+@@ -717,6 +830,7 @@ export const MediaAltSuggest = ({
+       // Assess the string the author would actually commit — re-evaluates live as
+       // they type in edit mode (editDraft) or from the generated draft otherwise.
+       const commitCandidate = isEditing ? editDraft : data.alt_text_draft;
++      const timingLine = formatSuggestTimingLine(timing);
+       const isOverLength = isOverRecommendedAltLength(commitCandidate);
+       const showCommitError = conflictMessage != null || isAcceptError;
+       // Extend editDescribedBy composition; do not replace. Keep error id when set.
+@@ -773,6 +887,12 @@ export const MediaAltSuggest = ({
+           ) : (
+             <p className="acx-media-selection__media-alt-draft">{data.alt_text_draft}</p>
+           )}
++          {timingLine == null ? null : (
++            <p className="acx-media-selection__media-alt-timing" data-testid="media-alt-suggest-timing">
++              <Clock aria-hidden="true" size={16} />
++              {timingLine}
++            </p>
++          )}
+           <p id={disclosureId} className="acx-media-selection__media-alt-disclosure">
+             {__('Drafted by AI — review before saving.', 'alt-context')}
+           </p>
+diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/MediaAltSuggest.test.tsx b/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/MediaAltSuggest.test.tsx
+--- a/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/MediaAltSuggest.test.tsx
++++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/MediaAltSuggest.test.tsx
+@@ -8,6 +8,8 @@ import {
+   ALT_SUGGEST_COMMIT_CONFLICT_MESSAGE,
+   formatAltLengthAdvisory,
+   formatOverLengthReadyAnnouncement,
++  formatSuggestTimingLine,
++  formatWarmingStatus,
+   MARK_DECORATIVE_LABEL,
+   MediaAltSuggest,
+   RECOMMENDED_ALT_TEXT_MAX_LENGTH,
+@@ -16,6 +18,7 @@ import {
+ } from '../MediaAltSuggest';
+ import { correctDescriptionHistoryItem, describeMedia } from '../../../api/describeApi';
+ import type { DescriptionHistoryItem, VisualFactsResponse } from '../../../api/describeApi';
++import suggestStates from './fixtures/gpuflow-suggest-states.json';
+ import { queryKeys } from '../../../api/queryKeys';
+ import type { WorkbenchMediaItem, WorkbenchMediaResponse } from '../../../api/workbenchMediaApi';
+ 
+@@ -2753,3 +2756,97 @@ describe('MediaAltSuggest', () => {
+     expect(screen.getByTestId('media-alt-suggest-status')).toHaveTextContent(/to-do list|missing/i);
+   });
  });
++
++const describeErrorFromFixture = (fixture: { status: number; detail: object }): Error =>
++  new Error(
++    `Request to /wp-json/acx/v1/recognition/describe failed (${fixture.status}): ${JSON.stringify({
++      detail: fixture.detail,
++    })}`,
++  );
++
++describe('MediaAltSuggest GPUFLOW warming and timing', () => {
++  beforeEach(() => {
++    vi.resetAllMocks();
++  });
++
++  it('renders starting as warming with ETA and a Retry control, not a failure alert', async () => {
++    describeMock.mockRejectedValueOnce(describeErrorFromFixture(suggestStates.starting_with_eta));
++    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
++
++    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
++
++    const warming = await screen.findByTestId('media-alt-suggest-warming');
++    expect(warming).toHaveTextContent('Description service is starting (about 12 s)');
++    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
++    expect(screen.getByRole('button', { name: /^retry$/i })).toBeEnabled();
++    expect(screen.getAllByRole('status')).toHaveLength(1);
++  });
++
++  it('omits a numeric ETA when warmup_eta_seconds is null', async () => {
++    describeMock.mockRejectedValueOnce(describeErrorFromFixture(suggestStates.starting_no_eta));
++    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
++
++    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
++
++    const warming = await screen.findByTestId('media-alt-suggest-warming');
++    expect(warming).toHaveTextContent('Description service is starting');
++    expect(warming).not.toHaveTextContent(/\d/);
++    expect(warming).not.toHaveTextContent(/about/i);
++  });
++
++  it('retry after warming resubmits the stored operation_id', async () => {
++    describeMock
++      .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.starting_with_eta))
++      .mockResolvedValueOnce(suggestStates.success_with_timing as VisualFactsResponse);
++    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
++
++    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
++    fireEvent.click(await screen.findByRole('button', { name: /^retry$/i }));
++
++    await screen.findByText(suggestStates.success_with_timing.alt_text_draft);
++    expect(describeMock).toHaveBeenNthCalledWith(1, 42);
++    expect(describeMock).toHaveBeenNthCalledWith(2, 42, { operationId: 'op-lease-1' });
++  });
++
++  it('renders the measured timing line from wire values including zero ramp-up', async () => {
++    describeMock.mockResolvedValueOnce(suggestStates.success_with_timing as VisualFactsResponse);
++    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
++
++    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
++
++    const timingLine = await screen.findByTestId('media-alt-suggest-timing');
++    expect(timingLine).toHaveTextContent('Generated in 1.2 s, Waited for service 0 s, Started in 38 s');
++    expect(screen.getAllByRole('status')).toHaveLength(1);
++  });
++
++  it('hides the timing line when timing is absent', async () => {
++    describeMock.mockResolvedValueOnce(suggestStates.success_no_timing as VisualFactsResponse);
++    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
++
++    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
++
++    await screen.findByText(suggestStates.success_no_timing.alt_text_draft);
++    expect(screen.queryByTestId('media-alt-suggest-timing')).not.toBeInTheDocument();
++  });
++
++  it('still shows unavailable as a failure, not warming', async () => {
++    describeMock.mockRejectedValueOnce(describeErrorFromFixture(suggestStates.unavailable));
++    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
++
++    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
++
++    const alert = await screen.findByRole('alert');
++    expect(alert).toHaveTextContent('Description service is unavailable.');
++    expect(screen.queryByTestId('media-alt-suggest-warming')).not.toBeInTheDocument();
++    expect(screen.getByRole('button', { name: /try again|retry/i })).toBeInTheDocument();
++  });
++
++  it('formats warming and timing helpers from fixture values', () => {
++    expect(formatWarmingStatus(12)).toBe('Description service is starting (about 12 s)');
++    expect(formatWarmingStatus(null)).toBe('Description service is starting');
++    expect(formatSuggestTimingLine(null)).toBeNull();
++    expect(formatSuggestTimingLine(suggestStates.success_with_timing.timing)).toBe(
++      'Generated in 1.2 s, Waited for service 0 s, Started in 38 s',
++    );
++  });
++});
+diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/fixtures/gpuflow-suggest-states.json b/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/fixtures/gpuflow-suggest-states.json
+new file mode 100644
+--- /dev/null
++++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/fixtures/gpuflow-suggest-states.json
+@@ -0,0 +1,82 @@
++{
++  "starting_with_eta": {
++    "status": 503,
++    "detail": {
++      "code": "description_service_starting",
++      "message": "Description service is starting.",
++      "operation_id": "op-lease-1",
++      "warmup_eta_seconds": 12
++    }
++  },
++  "starting_no_eta": {
++    "status": 503,
++    "detail": {
++      "code": "description_service_starting",
++      "message": "Description service is starting.",
++      "operation_id": "op-lease-1",
++      "warmup_eta_seconds": null
++    }
++  },
++  "unavailable": {
++    "status": 503,
++    "detail": {
++      "code": "description_service_unavailable",
++      "message": "Description service is unavailable."
++    }
++  },
++  "mismatch": {
++    "status": 409,
++    "detail": {
++      "code": "operation_mismatch",
++      "message": "operation mismatch",
++      "operation_id": "op-stale"
++    }
++  },
++  "success_with_timing": {
++    "tenant_id": "00000000-0000-4000-8000-000000000001",
++    "media_id": 42,
++    "image_hash": "sha256:abc",
++    "context_hash": "ctx",
++    "adapter": "local_cpu",
++    "model_id": "microsoft/Florence-2-base-ft",
++    "model_version": "florence-2-base-ft",
++    "prompt_or_task_version": "v1",
++    "visual_facts": { "caption": "A stone bridge over a calm river at dusk.", "objects": ["bridge"], "ocr_text": null },
++    "alt_text_draft": "A stone bridge over a calm river at dusk.",
++    "context_used": { "sources": [], "applied": false },
++    "provider_disclosure": { "provider": "local", "left_service_boundary": false },
++    "cached": false,
++    "duration_ms": 13800,
++    "retention_class": "retain_all",
++    "tier": "provisional_cpu",
++    "result_generation": 1,
++    "operation_id": "op-lease-1",
++    "startup_id": "startup-1",
++    "timing": {
++      "queue_ms": 4,
++      "ramp_up_ms": 0,
++      "processing_ms": 1200,
++      "startup_ms": 38000,
++      "server_elapsed_ms": 39204
++    }
++  },
++  "success_no_timing": {
++    "tenant_id": "00000000-0000-4000-8000-000000000001",
++    "media_id": 42,
++    "image_hash": "sha256:abc",
++    "context_hash": "ctx",
++    "adapter": "local_cpu",
++    "model_id": "microsoft/Florence-2-base-ft",
++    "model_version": "florence-2-base-ft",
++    "prompt_or_task_version": "v1",
++    "visual_facts": { "caption": "A stone bridge over a calm river at dusk.", "objects": ["bridge"], "ocr_text": null },
++    "alt_text_draft": "A stone bridge over a calm river at dusk.",
++    "context_used": { "sources": [], "applied": false },
++    "provider_disclosure": { "provider": "local", "left_service_boundary": false },
++    "cached": false,
++    "duration_ms": 13800,
++    "retention_class": "retain_all",
++    "tier": "provisional_cpu",
++    "result_generation": 1
++  }
++}

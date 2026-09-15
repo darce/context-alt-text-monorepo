@@ -1,4 +1,9 @@
- .../js/admin/pages/settings/GpuControlCard.tsx     | 39 +++++++++-----
- .../settings/__tests__/GpuControlCard.test.tsx     | 63 ++++++++++++++++++++--
- .../settings/__tests__/useGpuControl.test.tsx      | 39 ++++++++++----
- 3 files changed, 115 insertions(+), 26 deletions(-)
+ .../js/admin/api/__tests__/describeApi.test.ts     |  21 ++-
+ .../__tests__/describeRunResponseContract.test.ts  |  21 ++-
+ .../js/admin/api/describeApi.ts                    |  22 +--
+ .../hooks/__tests__/useDescribeMedia.test.tsx      | 136 +++++++++++++++-
+ .../js/admin/hooks/useDescribeMedia.ts             | 117 ++++++++++++--
+ .../js/admin/pages/workbench/MediaAltSuggest.tsx   | 174 +++++++++++++++++----
+ .../workbench/__tests__/MediaAltSuggest.test.tsx   |  97 ++++++++++++
+ .../__tests__/fixtures/gpuflow-suggest-states.json |  82 ++++++++++
+ 8 files changed, 614 insertions(+), 56 deletions(-)

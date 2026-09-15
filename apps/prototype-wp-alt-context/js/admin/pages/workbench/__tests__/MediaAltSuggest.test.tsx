@@ -7,6 +7,7 @@ import { MediaAltInlineEditor } from '../MediaAltInlineEditor';
 import {
   ALT_SUGGEST_COMMIT_CONFLICT_MESSAGE,
   formatAltLengthAdvisory,
+  formatMeasuredDuration,
   formatOverLengthReadyAnnouncement,
   formatSuggestTimingLine,
   formatWarmingStatus,
@@ -2848,5 +2849,30 @@ describe('MediaAltSuggest GPUFLOW warming and timing', () => {
     expect(formatSuggestTimingLine(suggestStates.success_with_timing.timing)).toBe(
       'Generated in 1.2 s, Waited for service 0 s, Started in 38 s',
     );
+  });
+
+  it('rounds measured durations to whole seconds before splitting minutes', () => {
+    expect(formatMeasuredDuration(119500)).toBe('2 m');
+    expect(formatMeasuredDuration(59600)).toBe('1 m');
+    expect(formatMeasuredDuration(60400)).toBe('1 m');
+    expect(formatMeasuredDuration(90000)).toBe('1 m 30 s');
+  });
+
+  it('retries mismatch once without operation_id then surfaces the error', async () => {
+    describeMock
+      .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.starting_with_eta))
+      .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.mismatch))
+      .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.mismatch));
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^retry$/i }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('operation mismatch');
+    expect(screen.queryByTestId('media-alt-suggest-warming')).not.toBeInTheDocument();
+    expect(describeMock).toHaveBeenNthCalledWith(2, 42, { operationId: 'op-lease-1' });
+    expect(describeMock).toHaveBeenNthCalledWith(3, 42);
+    expect(describeMock).toHaveBeenCalledTimes(3);
   });
 });

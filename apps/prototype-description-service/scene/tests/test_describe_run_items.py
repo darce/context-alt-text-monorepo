@@ -74,6 +74,8 @@ def test_items_route_returns_persisted_drafts(monkeypatch):
         assert items[71]["alt_text_draft"] is None
         assert items[70]["error"] is None
         assert items[71]["error"] == "adapter boom"
+        assert items[70]["processing_ms"] is None
+        assert items[71]["processing_ms"] is None
 
 
 def test_items_route_orders_by_media_id(monkeypatch):
@@ -136,3 +138,68 @@ def test_items_route_404_for_unknown_run(monkeypatch):
         missing = uuid.uuid4()
         resp = client.get(f"/scene/describe/run/{missing}/items")
         assert resp.status_code == 404
+
+
+def test_items_route_returns_measured_and_untimed_processing(monkeypatch):
+    import json
+    from pathlib import Path
+
+    from jsonschema import Draft7Validator, FormatChecker
+    from referencing import Registry, Resource
+
+    from scene.interface_adapters.http.schemas.responses import DescribeRunItemsResponse
+
+    _no_worker(monkeypatch)
+    with _client() as (client, sf):
+        run_id = _submit(client, [70, 71, 72]).json()["run_id"]
+
+        async def seed():
+            async with sf() as s:
+                repo = DescribeRunRepository(s)
+                rid = uuid.UUID(run_id)
+                await repo.record_item_result(
+                    tenant_id=TENANT_ID,
+                    run_id=rid,
+                    media_id=70,
+                    alt_text_draft="A dog resting on green grass",
+                    caption="a dog on grass",
+                    provenance={"adapter": "gpu"},
+                )
+                await repo.record_item_processing(tenant_id=TENANT_ID, run_id=rid, media_id=70, processing_ms=12.5)
+                await repo.mark_item(tenant_id=TENANT_ID, run_id=rid, media_id=70, status=DescribeItemStatus.COMPLETED)
+                await repo.record_item_processing(tenant_id=TENANT_ID, run_id=rid, media_id=71, processing_ms=30)
+                await repo.mark_item(
+                    tenant_id=TENANT_ID,
+                    run_id=rid,
+                    media_id=71,
+                    status=DescribeItemStatus.FAILED,
+                    error_message="adapter boom",
+                )
+                await repo.mark_item(tenant_id=TENANT_ID, run_id=rid, media_id=72, status=DescribeItemStatus.SKIPPED)
+                await s.commit()
+
+        asyncio.run(seed())
+        resp = client.get(f"/scene/describe/run/{run_id}/items")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        items = {i["media_id"]: i for i in body["items"]}
+        assert items[70]["processing_ms"] == 12.5
+        assert items[71]["processing_ms"] == 30
+        assert items[72]["processing_ms"] is None
+        schema = json.loads(
+            (
+                Path(__file__).resolve().parents[4]
+                / "packages"
+                / "shared-contracts"
+                / "schemas"
+                / "scene-describe-run.schema.json"
+            ).read_text(encoding="utf-8")
+        )
+        registry = Registry().with_resources([(schema["$id"], Resource.from_contents(schema))])
+        Draft7Validator(
+            {"$ref": schema["$id"] + "#/definitions/items"},
+            format_checker=FormatChecker(),
+            registry=registry,
+        ).validate(body)
+        restored = DescribeRunItemsResponse.model_validate(body)
+        assert restored.items[0].processing_ms == 12.5

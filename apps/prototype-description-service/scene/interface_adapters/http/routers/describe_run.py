@@ -21,7 +21,6 @@ from recognition.interface_adapters.http.deps.demo_quota import (
     hash_api_key_for_quota,
     maybe_consume_demo_quota,
 )
-from scene.application.describe_load import dump_load_snapshot
 from scene.application.describe_run_repository import DescribeRunRepository
 from scene.application.describe_run_worker import (
     DescribeItemOutcome,
@@ -29,6 +28,7 @@ from scene.application.describe_run_worker import (
     MissingNamingSnapshotError,
     gpu_run_policy,
     item_envelope_seconds,
+    publish_demand_snapshot,
     run_describe_job,
 )
 from scene.application.description_repository import ImageDescriptionRepository
@@ -55,6 +55,7 @@ from scene.interface_adapters.http.schemas.responses import (
     DescribeRunItemResponse,
     DescribeRunItemsResponse,
     DescribeRunResponse,
+    DescribeRunTiming,
 )
 
 router = APIRouter(tags=["describe-runs"])
@@ -130,6 +131,31 @@ async def _reject_when_demo_quota_is_already_spent(auth, session, *, units: int)
         )
 
 
+def _observed_run_timing(run) -> DescribeRunTiming | None:
+    """Build timing only from persisted observations; omit when nothing was measured."""
+    if all(
+        getattr(run, name) is None
+        for name in (
+            "queue_ms",
+            "ramp_up_ms",
+            "processing_ms_p50",
+            "processing_ms_max",
+            "startup_ms",
+            "server_elapsed_ms",
+        )
+    ):
+        return None
+    return DescribeRunTiming(
+        queue_ms=run.queue_ms,
+        ramp_up_ms=run.ramp_up_ms,
+        processing_ms_p50=run.processing_ms_p50,
+        processing_ms_max=run.processing_ms_max,
+        startup_ms=run.startup_ms,
+        server_elapsed_ms=run.server_elapsed_ms,
+        items_timed=run.items_timed,
+    )
+
+
 def _run_response(run) -> DescribeRunResponse:
     return DescribeRunResponse(
         tenant_id=str(run.tenant_id),
@@ -145,6 +171,9 @@ def _run_response(run) -> DescribeRunResponse:
         gpu_state=read_gpu_state(),
         recognition_enabled=bool(run.recognition_enabled),
         deadline_seconds=run.deadline_seconds,
+        operation_id=run.operation_id or None,
+        startup_id=run.startup_id,
+        timing=_observed_run_timing(run),
     )
 
 
@@ -162,6 +191,7 @@ def _run_items_response(run, items) -> DescribeRunItemsResponse:
                 error=describe_job_error(item),
                 tier=item.tier,
                 result_generation=item.result_generation,
+                processing_ms=item.processing_ms,
             )
             for item in items
         ],
@@ -265,6 +295,7 @@ def _build_describe_one(
             "cached": response.cached,
             "duration_ms": response.duration_ms,
         }
+        attempt_ms = getattr(getattr(response, "attempt_timing", None), "processing_ms", None)
         return DescribeItemOutcome(
             alt_text_draft=response.alt_text_draft,
             caption=response.visual_facts.caption,
@@ -272,6 +303,7 @@ def _build_describe_one(
             phrase_boxes=tuple(service.last_phrase_boxes or ()),
             attachments=tuple(service.last_attachments or ()),
             tier=response.tier,
+            processing_ms=None if attempt_ms is None else float(attempt_ms),
         )
 
     return describe_one
@@ -565,7 +597,7 @@ async def create_describe_run(
     # GPUW-1: publish the load dump *before* the job is queued, so the burst-GPU
     # start cycle sees batch_in_progress on its next tick rather than a tick
     # after the first item already needed the GPU.
-    await dump_load_snapshot(session_factory)
+    await publish_demand_snapshot(session_factory)
     background_tasks.add_task(
         run_describe_job,
         tenant_id=tenant_id,

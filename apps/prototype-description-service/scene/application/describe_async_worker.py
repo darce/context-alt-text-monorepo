@@ -118,9 +118,17 @@ async def _describe_adapter(
     image_bytes: bytes,
     context: Mapping[str, Any] | None,
 ) -> tuple[AdapterResult, int]:
-    start = time.perf_counter()
-    result = await asyncio.to_thread(adapter.describe, image_bytes=image_bytes, context=context)
-    return result, _elapsed_ms(start)
+    def _dispatch() -> tuple[AdapterResult, int]:
+        start = time.perf_counter()
+        try:
+            result = adapter.describe(image_bytes=image_bytes, context=context)
+            return result, _elapsed_ms(start)
+        except Exception as exc:
+            with contextlib.suppress(Exception):
+                exc.processing_ms = _elapsed_ms(start)  # type: ignore[attr-defined]
+            raise
+
+    return await asyncio.to_thread(_dispatch)
 
 
 async def run_async_describe_job(
@@ -179,6 +187,7 @@ async def run_async_describe_job(
         provisional_set = False
         media_id: int | None = None
         image_bytes = b""
+        cpu_duration_ms = 0
 
         try:
             # Phase: mark running + load image bytes (short session).
@@ -210,6 +219,8 @@ async def run_async_describe_job(
                     await session.commit()
                     return
                 image_bytes = item.image_bytes
+                await repo.record_pickup(tenant_id=tenant_id, run_id=run_id)
+                await repo.record_readiness(tenant_id=tenant_id, run_id=run_id)
                 await session.commit()
 
             if media_id is None:
@@ -241,6 +252,12 @@ async def run_async_describe_job(
                     run_id=run_id,
                     media_id=media_id,
                     visual_facts=provisional_envelope,
+                )
+                await repo.record_item_processing(
+                    tenant_id=tenant_id,
+                    run_id=run_id,
+                    media_id=media_id,
+                    processing_ms=float(cpu_duration_ms),
                 )
                 await session.commit()
             provisional_set = True
@@ -291,6 +308,12 @@ async def run_async_describe_job(
                     # the cache and the durable item row cannot diverge
                     # (VLM5-S2A-BR-02, VLM5-S1A-BR-02) [DATA-14].
                     await cache_repo.insert_or_get_existing(_envelope_to_cache_row(final_envelope, result=gpu_result))
+                    await repo.record_item_processing(
+                        tenant_id=tenant_id,
+                        run_id=run_id,
+                        media_id=media_id,
+                        processing_ms=float(cpu_duration_ms + gpu_duration_ms),
+                    )
                 await session.commit()
             if audit_sink is not None:
                 with contextlib.suppress(Exception):
@@ -333,6 +356,17 @@ async def run_async_describe_job(
                     if item is None:
                         return
                     media_id = item.media_id
+                failed_ms = getattr(exc, "processing_ms", None)
+                if failed_ms is not None:
+                    total = float(failed_ms)
+                    if provisional_set:
+                        total += float(cpu_duration_ms)
+                    await repo.record_item_processing(
+                        tenant_id=tenant_id,
+                        run_id=run_id,
+                        media_id=media_id,
+                        processing_ms=total,
+                    )
                 if provisional_set:
                     await repo.set_item_degraded(
                         tenant_id=tenant_id,

@@ -1,295 +1,139 @@
 diff --git a/apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php b/apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php
 --- a/apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php
 +++ b/apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php
-@@ -19,6 +19,7 @@ use WP_REST_Response;
+@@ -583,32 +583,75 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
+ 			return false;
+ 		}
  
- use function apply_filters;
- use function add_query_arg;
-+use function array_key_exists;
- use function current_user_can;
- use function delete_transient;
- use function esc_url_raw;
-@@ -26,6 +27,9 @@ use function get_transient;
- use function get_option;
- use function in_array;
- use function is_array;
-+use function is_float;
-+use function is_int;
-+use function is_numeric;
- use function is_string;
- use function is_wp_error;
- use function ltrim;
-@@ -215,7 +219,7 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
- 			$response_body    = wp_remote_retrieve_body( $response );
- 			$decoded          = json_decode( $response_body, true );
- 			$typed_code       = $this->typed_operation_error_code( $decoded );
--			$is_typed_warmup  = $this->is_validated_warming_response( $status, $typed_code );
-+			$is_typed_warmup  = $this->is_validated_warming_response( $status, $decoded, $response_headers );
- 			$is_typed_unavail = $this->is_typed_unavailable_response( $status, $typed_code );
+-		if ( ! array_key_exists( 'operation_id', $detail ) ) {
++		if ( ! array_key_exists( 'operation_id', $detail ) || ! $this->is_nullable_opaque_id( $detail['operation_id'] ) ) {
+ 			return false;
+ 		}
+-		$operation_id = $detail['operation_id'];
+-		if ( ! is_string( $operation_id ) && null !== $operation_id ) {
++
++		if ( ! array_key_exists( 'startup_id', $detail ) || ! $this->is_nullable_opaque_id( $detail['startup_id'] ) ) {
++			return false;
++		}
++
++		if ( ! $this->is_validated_timing( $detail['timing'] ?? null ) ) {
+ 			return false;
+ 		}
  
- 			// Validated warming and typed unavailable are not breaker failures
-@@ -553,21 +557,112 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
- 		return in_array( $code, $allowed, true ) ? $code : null;
- 	}
+-		if ( ! array_key_exists( 'startup_id', $detail ) ) {
++		if ( ! array_key_exists( 'warmup_eta_seconds', $detail ) ) {
+ 			return false;
+ 		}
+-		$startup_id = $detail['startup_id'];
+-		if ( ! is_string( $startup_id ) && null !== $startup_id ) {
++		$eta = $detail['warmup_eta_seconds'];
++		if ( null !== $eta && ( ( ! is_int( $eta ) && ! is_float( $eta ) ) || $eta < 0 ) ) {
+ 			return false;
+ 		}
  
--	private function is_validated_warming_response( int $status, ?string $typed_code ): bool {
--		return 503 === $status && self::TYPED_CODE_STARTING === $typed_code;
+-		if ( ! is_array( $detail['timing'] ?? null ) ) {
++		$retry_after = $this->retry_after_integer( $response_headers );
++		return null !== $retry_after && $retry_after >= 1 && $retry_after <= 120;
++	}
++
 +	/**
-+	 * Warming exemption is all-or-nothing: only a complete
-+	 * description_service_starting envelope may skip breaker accounting.
-+	 *
-+	 * @param mixed $decoded           JSON-decoded upstream body.
-+	 * @param mixed $response_headers  Case-insensitive header dictionary.
++	 * Opaque ids are string|null; strings must be non-empty and <= 128 chars.
 +	 */
-+	private function is_validated_warming_response( int $status, mixed $decoded, mixed $response_headers ): bool {
-+		if ( 503 !== $status || ! is_array( $decoded ) ) {
++	private function is_nullable_opaque_id( mixed $value ): bool {
++		if ( null === $value ) {
++			return true;
++		}
++		if ( ! is_string( $value ) ) {
+ 			return false;
+ 		}
++		$length = strlen( $value );
++
++		return $length >= 1 && $length <= 128;
++	}
+ 
+-		$eta = $detail['warmup_eta_seconds'] ?? null;
+-		if ( ( ! is_int( $eta ) && ! is_float( $eta ) ) || $eta < 0 ) {
++	/**
++	 * Timing object keys must match image-description-response.schema.json
++	 * exactly, with number|null values (unknown => null).
++	 *
++	 * @param mixed $timing JSON-decoded timing object.
++	 */
++	private function is_validated_timing( mixed $timing ): bool {
++		if ( ! is_array( $timing ) ) {
 +			return false;
 +		}
 +
-+		$detail = $decoded['detail'] ?? null;
-+		if ( ! is_array( $detail ) ) {
-+			return false;
++		$expected = array( 'queue_ms', 'ramp_up_ms', 'processing_ms', 'startup_ms', 'server_elapsed_ms' );
++		$keys     = array_keys( $timing );
++		sort( $keys );
++		$sorted_expected = $expected;
++		sort( $sorted_expected );
++		if ( $keys !== $sorted_expected ) {
+ 			return false;
+ 		}
+ 
+-		return null !== $this->retry_after_integer( $response_headers );
++		foreach ( $timing as $value ) {
++			if ( null === $value ) {
++				continue;
++			}
++			if ( ( ! is_int( $value ) && ! is_float( $value ) ) || $value < 0 ) {
++				return false;
++			}
 +		}
 +
-+		if ( self::TYPED_CODE_STARTING !== ( $detail['code'] ?? null ) ) {
-+			return false;
-+		}
-+
-+		$message = $detail['message'] ?? null;
-+		if ( ! is_string( $message ) || '' === $message ) {
-+			return false;
-+		}
-+
-+		if ( ! array_key_exists( 'operation_id', $detail ) ) {
-+			return false;
-+		}
-+		$operation_id = $detail['operation_id'];
-+		if ( ! is_string( $operation_id ) && null !== $operation_id ) {
-+			return false;
-+		}
-+
-+		if ( ! array_key_exists( 'startup_id', $detail ) ) {
-+			return false;
-+		}
-+		$startup_id = $detail['startup_id'];
-+		if ( ! is_string( $startup_id ) && null !== $startup_id ) {
-+			return false;
-+		}
-+
-+		if ( ! is_array( $detail['timing'] ?? null ) ) {
-+			return false;
-+		}
-+
-+		$eta = $detail['warmup_eta_seconds'] ?? null;
-+		if ( ( ! is_int( $eta ) && ! is_float( $eta ) ) || $eta < 0 ) {
-+			return false;
-+		}
-+
-+		return null !== $this->retry_after_integer( $response_headers );
++		return true;
  	}
  
  	private function is_typed_unavailable_response( int $status, ?string $typed_code ): bool {
- 		return 503 === $status && self::TYPED_CODE_UNAVAILABLE === $typed_code;
+@@ -645,11 +688,11 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
+ 
+ 	private function open_circuit_local_timing(): array {
+ 		return array(
+-			'queue_ms'          => 0,
+-			'ramp_up_ms'        => 0,
+-			'processing_ms'     => 0,
++			'queue_ms'          => null,
++			'ramp_up_ms'        => null,
++			'processing_ms'     => null,
+ 			'startup_ms'        => null,
+-			'server_elapsed_ms' => 0,
++			'server_elapsed_ms' => null,
+ 		);
  	}
  
-+	/**
-+	 * @param mixed $response_headers Case-insensitive header dictionary.
-+	 */
-+	private function retry_after_integer( mixed $response_headers ): ?int {
-+		$headers = array();
-+		if ( is_array( $response_headers ) ) {
-+			$headers = $response_headers;
-+		} elseif ( $response_headers instanceof Traversable ) {
-+			foreach ( $response_headers as $key => $value ) {
-+				$headers[ (string) $key ] = $value;
-+			}
-+		}
-+
-+		foreach ( $headers as $key => $value ) {
-+			if ( 'retry-after' !== strtolower( trim( (string) $key ) ) ) {
-+				continue;
-+			}
-+			if ( is_int( $value ) ) {
-+				return $value;
-+			}
-+			if ( is_string( $value ) && '' !== $value && is_numeric( $value ) && (string) (int) $value === trim( $value ) ) {
-+				return (int) $value;
-+			}
-+		}
-+
-+		return null;
-+	}
-+
-+	private function open_circuit_local_timing(): array {
-+		return array(
-+			'queue_ms'          => 0,
-+			'ramp_up_ms'        => 0,
-+			'processing_ms'     => 0,
-+			'startup_ms'        => null,
-+			'server_elapsed_ms' => 0,
-+		);
-+	}
-+
- 	private function open_circuit_response( string $route_family ): WP_REST_Response|WP_Error {
- 		if ( self::ROUTE_FAMILY_DESCRIBE === $route_family ) {
- 			return new WP_REST_Response(
- 				array(
- 					'detail' => array(
--						'code'    => self::TYPED_CODE_UNAVAILABLE,
--						'message' => 'Description service temporarily unavailable; try again shortly.',
-+						'code'         => self::TYPED_CODE_UNAVAILABLE,
-+						'message'      => 'Description service temporarily unavailable; try again shortly.',
-+						'operation_id' => null,
-+						'startup_id'   => null,
-+						'timing'       => $this->open_circuit_local_timing(),
- 					),
- 				),
- 				503
-diff --git a/apps/prototype-wp-alt-context/src/api/class-settings-controller.php b/apps/prototype-wp-alt-context/src/api/class-settings-controller.php
---- a/apps/prototype-wp-alt-context/src/api/class-settings-controller.php
-+++ b/apps/prototype-wp-alt-context/src/api/class-settings-controller.php
-@@ -7,6 +7,7 @@ namespace AltContext\Api;
- require_once __DIR__ . '/class-alt-style.php';
- require_once __DIR__ . '/../settings/class-recognition-policy.php';
- require_once __DIR__ . '/class-probe-outcome.php';
-+require_once __DIR__ . '/class-abstract-recognition-proxy-controller.php';
- require_once __DIR__ . '/class-recognition-endpoint-resolver.php';
- require_once __DIR__ . '/class-tenant-identity.php';
- require_once __DIR__ . '/services/class-description-budget-service.php';
-@@ -71,6 +72,8 @@ class SettingsController {
- 	public const SAVE_RESULT_PARTIAL = 'partial';
- 	public const SAVE_RESULT_ERROR   = 'error';
- 
-+	public const PROBE_OUTCOME_STARTING = 'starting';
-+
- 	private RecognitionEndpointResolver $endpoint_resolver;
- 
- 	private DescriptionBudgetService $description_budget_service;
-@@ -767,7 +770,7 @@ class SettingsController {
- 			}
- 		}
- 
--		$outcome = $this->classify_http_status( $status_code, $detail );
-+		$outcome = $this->classify_http_status( $status_code, $detail, $decoded, $typed_code );
- 		$payload = array(
- 			'outcome'     => $outcome,
- 			'status_code' => $status_code,
-@@ -782,7 +785,12 @@ class SettingsController {
- 		if ( null !== $warmup_eta ) {
- 			$payload['warmup_eta_seconds'] = $warmup_eta;
- 		}
--		if ( ProbeOutcome::RATE_LIMITED === $outcome || 503 === $status_code ) {
-+		if (
-+			ProbeOutcome::RATE_LIMITED === $outcome
-+			|| self::PROBE_OUTCOME_STARTING === $outcome
-+			|| 503 === $status_code
-+			|| 202 === $status_code
-+		) {
- 			$retry_after = $this->parse_retry_after( $this->retrieve_retry_after_header( $response ) );
- 			if ( null !== $retry_after ) {
- 				$payload['retry_after_seconds'] = $retry_after;
-@@ -800,9 +808,14 @@ class SettingsController {
- 	 * @return array<string, mixed>
- 	 */
- 	private function maybe_start_description_service( array $payload, string $base_url, array $headers ): array {
-+		$outcome = is_string( $payload['outcome'] ?? null ) ? (string) $payload['outcome'] : null;
-+		if ( ProbeOutcome::CONNECTED === $outcome || self::PROBE_OUTCOME_STARTING === $outcome ) {
-+			return $payload;
-+		}
-+
- 		$status_code = (int) ( $payload['status_code'] ?? 0 );
- 		$typed_code  = is_string( $payload['code'] ?? null ) ? (string) $payload['code'] : null;
--		if ( 404 !== $status_code && 'description_service_unavailable' !== $typed_code ) {
-+		if ( 404 !== $status_code && AbstractRecognitionProxyController::TYPED_CODE_UNAVAILABLE !== $typed_code ) {
- 			return $payload;
- 		}
- 
-@@ -847,10 +860,16 @@ class SettingsController {
- 		return null;
- 	}
- 
--	private function classify_http_status( int $status_code, ?string $detail ): string {
--		if ( $status_code >= 200 && $status_code < 300 ) {
-+	/**
-+	 * @param mixed $decoded JSON-decoded probe body.
-+	 */
-+	private function classify_http_status( int $status_code, ?string $detail, mixed $decoded, ?string $typed_code ): string {
-+		if ( 200 === $status_code && $this->is_ready_health_body( $decoded ) ) {
- 			return ProbeOutcome::CONNECTED;
- 		}
-+		if ( 202 === $status_code || AbstractRecognitionProxyController::TYPED_CODE_STARTING === $typed_code ) {
-+			return self::PROBE_OUTCOME_STARTING;
-+		}
- 		if ( 401 === $status_code ) {
- 			if ( 'api key expired' === $detail ) {
- 				return ProbeOutcome::EXPIRED;
-@@ -875,6 +894,13 @@ class SettingsController {
- 		return ProbeOutcome::SERVER_ERROR;
- 	}
- 
-+	/**
-+	 * @param mixed $decoded JSON-decoded /health/detailed body.
-+	 */
-+	private function is_ready_health_body( mixed $decoded ): bool {
-+		return is_array( $decoded ) && true === ( $decoded['ready'] ?? null );
-+	}
-+
- 	private function is_tls_failure( string $message ): bool {
- 		if ( '' === $message ) {
- 			return false;
 diff --git a/apps/prototype-wp-alt-context/src/api/services/class-describe-media-service.php b/apps/prototype-wp-alt-context/src/api/services/class-describe-media-service.php
 --- a/apps/prototype-wp-alt-context/src/api/services/class-describe-media-service.php
 +++ b/apps/prototype-wp-alt-context/src/api/services/class-describe-media-service.php
-@@ -302,25 +302,21 @@ class DescribeMediaService {
- 	}
- 
+@@ -304,6 +304,7 @@ class DescribeMediaService {
  	/**
--	 * Optional multipart retry token. Opaque string, 1–128 chars; omitted on
--	 * first acceptance so the service can mint one. Never invent a value.
-+	 * Optional multipart retry token. Read only from the form body field;
-+	 * query/default params are ignored. Forwarded verbatim — no trim.
+ 	 * Optional multipart retry token. Read only from the form body field;
+ 	 * query/default params are ignored. Forwarded verbatim — no trim.
++	 * Empty or >128-char strings are treated as absent (not forwarded, not an error).
  	 */
  	private function resolve_operation_id( WP_REST_Request $request ): ?string {
--		$raw = $request->get_param( 'operation_id' );
--		if ( ! is_string( $raw ) ) {
--			$json = $request->get_json_params();
--			$raw  = is_array( $json ) ? ( $json['operation_id'] ?? null ) : null;
--		}
--		if ( ! is_string( $raw ) ) {
-+		$body_params = $request->get_body_params();
-+		if ( ! is_array( $body_params ) || ! array_key_exists( 'operation_id', $body_params ) ) {
+ 		$body_params = $request->get_body_params();
+@@ -316,6 +317,11 @@ class DescribeMediaService {
  			return null;
  		}
  
--		$value = trim( $raw );
--		if ( '' === $value || strlen( $value ) > 128 ) {
-+		$raw = $body_params['operation_id'];
-+		if ( ! is_string( $raw ) ) {
- 			return null;
- 		}
- 
--		return $value;
-+		return $raw;
++		$length = strlen( $raw );
++		if ( $length < 1 || $length > 128 ) {
++			return null;
++		}
++
+ 		return $raw;
  	}
  
- 	private function should_write_alt_text( WP_REST_Request $request ): bool {
 diff --git a/apps/prototype-wp-alt-context/tests/Unit/DescribeMediaServiceTest.php b/apps/prototype-wp-alt-context/tests/Unit/DescribeMediaServiceTest.php
 --- a/apps/prototype-wp-alt-context/tests/Unit/DescribeMediaServiceTest.php
 +++ b/apps/prototype-wp-alt-context/tests/Unit/DescribeMediaServiceTest.php
-@@ -1378,7 +1378,7 @@ class DescribeMediaServiceTest extends TestCase
-         $req->set_param('media_id', 42);
-         $operationId = $fixture['request']['operation_id'] ?? null;
-         if (is_string($operationId)) {
--            $req->set_param('operation_id', $operationId);
-+            $req->set_body_params(['operation_id' => $operationId]);
-         }
- 
-         $result = $this->controller->describe_media($req);
-@@ -1420,6 +1420,68 @@ class DescribeMediaServiceTest extends TestCase
+@@ -1482,6 +1482,66 @@ class DescribeMediaServiceTest extends TestCase
          $this->assertStringNotContainsString('name="operation_id"', $body);
      }
  
-+    public function testQueryStringOperationIdIsIgnoredAndBodyFieldIsForwardedByteForByte(): void
++    public function testEmptyStringBodyOperationIdIsDropped(): void
 +    {
 +        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
 +        $this->queueHttpResponse([
@@ -297,10 +141,48 @@ diff --git a/apps/prototype-wp-alt-context/tests/Unit/DescribeMediaServiceTest.p
 +            'body' => (string) json_encode($this->validBackendBody(42)),
 +        ]);
 +
-+        $verbatim = " op-pad\t";
 +        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
 +        $req->set_param('media_id', 42);
-+        $req->set_param('operation_id', 'from-query');
++        $req->set_body_params(['operation_id' => '']);
++
++        $this->controller->describe_media($req);
++
++        $body = $this->getHttpCalls()[0]['args']['body'];
++        $this->assertIsString($body);
++        $this->assertStringNotContainsString('name="operation_id"', $body);
++    }
++
++    public function testOverlongBodyOperationIdIsDropped(): void
++    {
++        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
++        $this->queueHttpResponse([
++            'response' => ['code' => 200, 'message' => 'OK'],
++            'body' => (string) json_encode($this->validBackendBody(42)),
++        ]);
++
++        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
++        $req->set_param('media_id', 42);
++        $req->set_body_params(['operation_id' => str_repeat('a', 129)]);
++
++        $this->controller->describe_media($req);
++
++        $body = $this->getHttpCalls()[0]['args']['body'];
++        $this->assertIsString($body);
++        $this->assertStringNotContainsString('name="operation_id"', $body);
++        $this->assertStringNotContainsString(str_repeat('a', 129), $body);
++    }
++
++    public function testMaxLengthBodyOperationIdIsForwardedByteForByte(): void
++    {
++        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
++        $this->queueHttpResponse([
++            'response' => ['code' => 200, 'message' => 'OK'],
++            'body' => (string) json_encode($this->validBackendBody(42)),
++        ]);
++
++        $verbatim = str_repeat('b', 128);
++        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
++        $req->set_param('media_id', 42);
 +        $req->set_body_params(['operation_id' => $verbatim]);
 +
 +        $this->controller->describe_media($req);
@@ -309,46 +191,6 @@ diff --git a/apps/prototype-wp-alt-context/tests/Unit/DescribeMediaServiceTest.p
 +        $this->assertIsString($body);
 +        $this->assertStringContainsString('name="operation_id"', $body);
 +        $this->assertStringContainsString($verbatim, $body);
-+        $this->assertStringNotContainsString('from-query', $body);
-+    }
-+
-+    public function testQueryStringOperationIdAloneIsNotForwarded(): void
-+    {
-+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
-+        $this->queueHttpResponse([
-+            'response' => ['code' => 200, 'message' => 'OK'],
-+            'body' => (string) json_encode($this->validBackendBody(42)),
-+        ]);
-+
-+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
-+        $req->set_param('media_id', 42);
-+        $req->set_param('operation_id', 'from-query');
-+
-+        $this->controller->describe_media($req);
-+
-+        $body = $this->getHttpCalls()[0]['args']['body'];
-+        $this->assertIsString($body);
-+        $this->assertStringNotContainsString('name="operation_id"', $body);
-+        $this->assertStringNotContainsString('from-query', $body);
-+    }
-+
-+    public function testNonStringBodyOperationIdIsAbsent(): void
-+    {
-+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
-+        $this->queueHttpResponse([
-+            'response' => ['code' => 200, 'message' => 'OK'],
-+            'body' => (string) json_encode($this->validBackendBody(42)),
-+        ]);
-+
-+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
-+        $req->set_param('media_id', 42);
-+        $req->set_body_params(['operation_id' => ['not' => 'string']]);
-+
-+        $this->controller->describe_media($req);
-+
-+        $body = $this->getHttpCalls()[0]['args']['body'];
-+        $this->assertIsString($body);
-+        $this->assertStringNotContainsString('name="operation_id"', $body);
 +    }
 +
      /**
@@ -357,328 +199,107 @@ diff --git a/apps/prototype-wp-alt-context/tests/Unit/DescribeMediaServiceTest.p
 diff --git a/apps/prototype-wp-alt-context/tests/Unit/ProxyRequestTest.php b/apps/prototype-wp-alt-context/tests/Unit/ProxyRequestTest.php
 --- a/apps/prototype-wp-alt-context/tests/Unit/ProxyRequestTest.php
 +++ b/apps/prototype-wp-alt-context/tests/Unit/ProxyRequestTest.php
-@@ -1450,19 +1450,7 @@ PHP;
-         $describeFailures = $this->familyFailureKey($baseUrl, 'describe');
-         $uiReadCircuit = $this->familyCircuitKey($baseUrl, 'ui_read');
+@@ -1618,6 +1618,18 @@ PHP;
+         $wrongCode = $validDetail;
+         $wrongCode['code'] = 'description_service_error';
  
--        $starting = [
--            'response' => ['code' => 503, 'message' => 'Service Unavailable'],
--            'headers' => ['Retry-After' => '5'],
--            'body' => json_encode([
--                'detail' => [
--                    'code' => 'description_service_starting',
--                    'message' => 'Description service is starting.',
--                    'operation_id' => 'op-retry-opaque',
--                    'startup_id' => 'startup-opaque',
--                    'warmup_eta_seconds' => 5,
--                ],
--            ]),
--        ];
-+        $starting = $this->validatedWarmingHttp();
- 
-         for ($i = 0; $i < 3; $i++) {
-             $this->queueHttpResponse($starting);
-@@ -1528,6 +1516,7 @@ PHP;
-         );
-         $this->assertArrayNotHasKey('Retry-After', $open->get_headers());
-         $this->assertCount(2, $this->getHttpCalls(), 'open describe breaker must not dispatch');
-+        $this->assertTypedUnavailableOpenCircuit($open->get_data());
++        $emptyTiming = $validDetail;
++        $emptyTiming['timing'] = [];
++
++        $bogusTiming = $validDetail;
++        $bogusTiming['timing'] = array_merge($validDetail['timing'], ['bogus_ms' => 1]);
++
++        $overlongId = $validDetail;
++        $overlongId['operation_id'] = str_repeat('a', 129);
++
++        $negativeEta = $validDetail;
++        $negativeEta['warmup_eta_seconds'] = -1;
++
+         return [
+             'missing_eta' => [[
+                 'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+@@ -1634,9 +1646,68 @@ PHP;
+                 'headers' => ['Retry-After' => '5'],
+                 'body' => json_encode(['detail' => $wrongCode]),
+             ]],
++            'empty_timing' => [[
++                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
++                'headers' => ['Retry-After' => '5'],
++                'body' => json_encode(['detail' => $emptyTiming]),
++            ]],
++            'bogus_timing_key' => [[
++                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
++                'headers' => ['Retry-After' => '5'],
++                'body' => json_encode(['detail' => $bogusTiming]),
++            ]],
++            'overlong_id' => [[
++                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
++                'headers' => ['Retry-After' => '5'],
++                'body' => json_encode(['detail' => $overlongId]),
++            ]],
++            'retry_after_zero' => [[
++                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
++                'headers' => ['Retry-After' => '0'],
++                'body' => json_encode(['detail' => $validDetail]),
++            ]],
++            'retry_after_121' => [[
++                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
++                'headers' => ['Retry-After' => '121'],
++                'body' => json_encode(['detail' => $validDetail]),
++            ]],
++            'negative_eta' => [[
++                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
++                'headers' => ['Retry-After' => '5'],
++                'body' => json_encode(['detail' => $negativeEta]),
++            ]],
+         ];
      }
  
-     public function testUiReadSuccessDoesNotResetDescribeBreaker(): void
-@@ -1582,6 +1571,72 @@ PHP;
-         $this->assertNotFalse(get_transient($describeCircuit), 'malformed warming must still open describe');
-     }
- 
-+    /**
-+     * @dataProvider malformedWarmingProvider
-+     * @param array<string, mixed> $http
-+     */
-+    #[DataProvider('malformedWarmingProvider')]
-+    public function testIncompleteWarmingEnvelopeCountsTowardDescribeBreaker(array $http): void
++    public function testNullWarmupEtaDoesNotCountTowardDescribeBreaker(): void
 +    {
 +        global $wpdb;
 +        $wpdb->mockVar = '1';
 +
 +        $harness = $this->makeFamilyHarness();
 +        $describeCircuit = $this->familyCircuitKey($harness->resolvedBaseUrl(), 'describe');
++        $describeFailures = $this->familyFailureKey($harness->resolvedBaseUrl(), 'describe');
 +
-+        $this->queueHttpResponse($http);
-+        $this->queueHttpResponse($http);
-+        $harness->call('POST', '/scene/describe/multipart', 'description');
-+        $harness->call('POST', '/scene/describe/multipart', 'description');
++        $starting = $this->validatedWarmingHttp();
++        $body = json_decode((string) $starting['body'], true);
++        $this->assertIsArray($body);
++        $body['detail']['warmup_eta_seconds'] = null;
++        $starting['body'] = json_encode($body);
 +
-+        $this->assertNotFalse(get_transient($describeCircuit), 'incomplete warming must still open describe');
-+    }
++        $this->queueHttpResponse($starting);
++        $this->queueHttpResponse($starting);
++        $first = $harness->call('POST', '/scene/describe/multipart', 'description');
++        $second = $harness->call('POST', '/scene/describe/multipart', 'description');
 +
-+    /**
-+     * @return array<string, array{0: array<string, mixed>}>
-+     */
-+    public static function malformedWarmingProvider(): array
-+    {
-+        $validDetail = [
-+            'code' => 'description_service_starting',
-+            'message' => 'Description service is starting.',
-+            'operation_id' => 'op-retry-opaque',
-+            'startup_id' => 'startup-opaque',
-+            'warmup_eta_seconds' => 5,
-+            'timing' => [
-+                'queue_ms' => 0,
-+                'ramp_up_ms' => 40,
-+                'processing_ms' => null,
-+                'startup_ms' => null,
-+                'server_elapsed_ms' => 40,
-+            ],
-+        ];
-+
-+        $missingEta = $validDetail;
-+        unset($missingEta['warmup_eta_seconds']);
-+
-+        $wrongCode = $validDetail;
-+        $wrongCode['code'] = 'description_service_error';
-+
-+        return [
-+            'missing_eta' => [[
-+                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
-+                'headers' => ['Retry-After' => '5'],
-+                'body' => json_encode(['detail' => $missingEta]),
-+            ]],
-+            'missing_retry_after' => [[
-+                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
-+                'headers' => [],
-+                'body' => json_encode(['detail' => $validDetail]),
-+            ]],
-+            'wrong_code' => [[
-+                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
-+                'headers' => ['Retry-After' => '5'],
-+                'body' => json_encode(['detail' => $wrongCode]),
-+            ]],
-+        ];
++        $this->assertInstanceOf(WP_REST_Response::class, $first);
++        $this->assertSame(503, $first->get_status());
++        $this->assertArrayHasKey('warmup_eta_seconds', $first->get_data()['detail']);
++        $this->assertNull($first->get_data()['detail']['warmup_eta_seconds']);
++        $this->assertInstanceOf(WP_REST_Response::class, $second);
++        $this->assertFalse(get_transient($describeCircuit), 'null warmup_eta_seconds is contract-valid warming');
++        $this->assertFalse(get_transient($describeFailures), 'null ETA warming must not increment describe');
 +    }
 +
      /**
       * @dataProvider typedOperationErrorProvider
       */
-@@ -1638,6 +1693,62 @@ PHP;
-         return $decoded[$case];
-     }
- 
-+    /**
-+     * @return array<string, mixed>
-+     */
-+    private function validatedWarmingHttp(): array
-+    {
-+        $fixture = $this->describeWireFixture('starting');
-+        $headers = [];
-+        foreach (($fixture['response']['headers'] ?? []) as $name => $value) {
-+            $headers[$name] = $value;
-+        }
-+
-+        return [
-+            'response' => ['code' => $fixture['response']['status'], 'message' => 'Service Unavailable'],
-+            'headers' => $headers,
-+            'body' => json_encode($fixture['response']['body']),
-+        ];
-+    }
-+
-+    /**
-+     * Structural check of scene-describe-multipart.schema.json error branch
-+     * for a locally generated open-circuit envelope (operation_id is null
-+     * because no durable operation was accepted).
-+     *
-+     * @param mixed $body
-+     */
-+    private function assertTypedUnavailableOpenCircuit(mixed $body): void
-+    {
-+        $this->assertIsArray($body);
-+        $this->assertSame(['detail'], array_keys($body));
-+        $detail = $body['detail'];
-+        $this->assertIsArray($detail);
-+        $this->assertSame('description_service_unavailable', $detail['code'] ?? null);
-+        $this->assertIsString($detail['message'] ?? null);
-+        $this->assertNotSame('', $detail['message']);
-+        $this->assertArrayHasKey('operation_id', $detail);
-+        $this->assertNull($detail['operation_id']);
-+        $this->assertArrayHasKey('startup_id', $detail);
-+        $this->assertNull($detail['startup_id']);
-+        $this->assertArrayNotHasKey('warmup_eta_seconds', $detail);
-+        $timing = $detail['timing'] ?? null;
-+        $this->assertIsArray($timing);
-+        $this->assertEqualsCanonicalizing(
-+            ['queue_ms', 'ramp_up_ms', 'processing_ms', 'startup_ms', 'server_elapsed_ms'],
-+            array_keys($timing)
-+        );
-+        $this->assertSame(0, $timing['queue_ms']);
-+        $this->assertSame(0, $timing['ramp_up_ms']);
-+        $this->assertSame(0, $timing['processing_ms']);
-+        $this->assertNull($timing['startup_ms']);
-+        $this->assertSame(0, $timing['server_elapsed_ms']);
-+        $this->assertEqualsCanonicalizing(
-+            ['code', 'message', 'operation_id', 'startup_id', 'timing'],
-+            array_keys($detail)
-+        );
-+    }
-+
-     private function familyCircuitKey(string $baseUrl, string $family = 'ui_read'): string
-     {
-         return RecognitionCircuitKeys::for_base_url($baseUrl) . '_' . $family;
-diff --git a/apps/prototype-wp-alt-context/tests/Unit/RetentionControllerTest.php b/apps/prototype-wp-alt-context/tests/Unit/RetentionControllerTest.php
---- a/apps/prototype-wp-alt-context/tests/Unit/RetentionControllerTest.php
-+++ b/apps/prototype-wp-alt-context/tests/Unit/RetentionControllerTest.php
-@@ -139,6 +139,46 @@ class RetentionControllerTest extends TestCase
-         $this->assertArrayNotHasKey('acx_retention_status_' . $this->tenantId(), $GLOBALS['__ac_transients']);
-     }
- 
-+    public function testGetStatusTypedUnavailableIsRetryablePayload(): void
-+    {
-+        $this->queueHttpResponse([
-+            'response' => ['code' => 503, 'message' => 'Service Unavailable'],
-+            'body' => json_encode([
-+                'detail' => [
-+                    'code' => 'description_service_unavailable',
-+                    'message' => 'Description service is unavailable.',
-+                    'operation_id' => null,
-+                    'startup_id' => null,
-+                    'timing' => [
-+                        'queue_ms' => null,
-+                        'ramp_up_ms' => null,
-+                        'processing_ms' => null,
-+                        'startup_ms' => null,
-+                        'server_elapsed_ms' => null,
-+                    ],
-+                ],
-+            ]),
-+        ]);
-+        $this->queueHttpResponse([
-+            'response' => ['code' => 200, 'message' => 'OK'],
-+            'body' => json_encode(['items' => []]),
-+        ]);
-+
-+        $controller = new RetentionController();
-+        $response = $controller->get_status(new WP_REST_Request('GET', '/acx/v1/retention/status'));
-+
-+        $this->assertSame(200, $response->get_status());
-+        $this->assertSame(
-+            [
-+                'available' => false,
-+                'policy' => null,
-+                'recent_audit_events' => [],
-+            ],
-+            $response->get_data()
-+        );
-+        $this->assertArrayNotHasKey('acx_retention_status_' . $this->tenantId(), $GLOBALS['__ac_transients']);
-+    }
-+
-     public function testDescribeBreakerDoesNotBlankRetentionStatus(): void
-     {
-         global $wpdb;
-diff --git a/apps/prototype-wp-alt-context/tests/Unit/SettingsControllerTest.php b/apps/prototype-wp-alt-context/tests/Unit/SettingsControllerTest.php
---- a/apps/prototype-wp-alt-context/tests/Unit/SettingsControllerTest.php
-+++ b/apps/prototype-wp-alt-context/tests/Unit/SettingsControllerTest.php
-@@ -1174,6 +1174,7 @@ class SettingsControllerTest extends TestCase
-         $this->assertStringEndsWith('/scene/gpu/intent', $calls[1]['url']);
-         $this->assertSame('POST', $calls[1]['method']);
-         $this->assertSame('{"action":"start"}', $calls[1]['args']['body'] ?? null);
-+        $this->assertSame(SettingsController::PROBE_OUTCOME_STARTING, $data['outcome'] ?? null);
-         $this->assertSame('description_service_starting', $data['code'] ?? null);
-         $this->assertSame(9, $data['warmup_eta_seconds'] ?? null);
-         $this->assertSame(9, $data['retry_after_seconds'] ?? null);
-@@ -1182,6 +1183,89 @@ class SettingsControllerTest extends TestCase
-         $this->assertStringEndsWith('/scene/gpu/intent', (string) ($data['probed_url'] ?? ''));
-     }
- 
-+    public function testProbe200ReadyReportsConnected(): void
-+    {
-+        $this->configureProbe();
-+        $keyTenant = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
-+        $this->setOption('acx_recognition_tenant_id', $keyTenant);
-+        $this->queueHttpResponse($this->buildOkResponse());
-+        $this->queueHttpResponse($this->buildWhoamiResponse($keyTenant));
-+
-+        $data = $this->controller
-+            ->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'))
-+            ->get_data();
-+
-+        $this->assertSame(ProbeOutcome::CONNECTED, $data['outcome']);
-+        $this->assertSame(200, $data['status_code'] ?? null);
-+        $this->assertStringEndsWith('/health/detailed', (string) ($data['probed_url'] ?? ''));
-+    }
-+
-+    public function testProbe202StartingReportsStartingWithEta(): void
-+    {
-+        $this->configureProbe();
-+        $this->queueHttpResponse([
-+            'response' => ['code' => 202, 'message' => 'Accepted'],
-+            'headers' => ['Retry-After' => '8'],
-+            'body' => json_encode([
-+                'detail' => [
-+                    'code' => 'description_service_starting',
-+                    'message' => 'Description service is starting.',
-+                    'warmup_eta_seconds' => 8,
-+                ],
-+            ]),
-+        ]);
-+
-+        $data = $this->controller
-+            ->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'))
-+            ->get_data();
-+
-+        $calls = $this->getHttpCalls();
-+        $this->assertCount(1, $calls);
-+        $this->assertStringEndsWith('/health/detailed', $calls[0]['url']);
-+        $this->assertSame(SettingsController::PROBE_OUTCOME_STARTING, $data['outcome'] ?? null);
-+        $this->assertNotSame(ProbeOutcome::CONNECTED, $data['outcome'] ?? null);
-+        $this->assertSame('description_service_starting', $data['code'] ?? null);
-+        $this->assertSame(8, $data['warmup_eta_seconds'] ?? null);
-+        $this->assertSame(8, $data['retry_after_seconds'] ?? null);
-+        $this->assertSame(202, $data['status_code'] ?? null);
-+    }
-+
-+    public function testProbe503UnavailableReportsServerErrorWithTypedCode(): void
-+    {
-+        $this->configureProbe();
-+        $this->queueHttpResponse([
-+            'response' => ['code' => 503, 'message' => 'Service Unavailable'],
-+            'body' => json_encode([
-+                'detail' => [
-+                    'code' => 'description_service_unavailable',
-+                    'message' => 'Description service is unavailable.',
-+                ],
-+            ]),
-+        ]);
-+        $this->queueHttpResponse([
-+            'response' => ['code' => 503, 'message' => 'Service Unavailable'],
-+            'body' => json_encode([
-+                'detail' => [
-+                    'code' => 'description_service_unavailable',
-+                    'message' => 'Description service is unavailable.',
-+                ],
-+            ]),
-+        ]);
-+
-+        $data = $this->controller
-+            ->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'))
-+            ->get_data();
-+
-+        $calls = $this->getHttpCalls();
-+        $this->assertCount(2, $calls);
-+        $this->assertStringEndsWith('/health/detailed', $calls[0]['url']);
-+        $this->assertStringEndsWith('/scene/gpu/intent', $calls[1]['url']);
-+        $this->assertSame(ProbeOutcome::SERVER_ERROR, $data['outcome'] ?? null);
-+        $this->assertSame('description_service_unavailable', $data['code'] ?? null);
-+        $this->assertSame(503, $data['status_code'] ?? null);
-+        $this->assertArrayNotHasKey('warmup_eta_seconds', $data);
-+    }
-+
-     /**
-      * BR-139: after LoopbackHost extraction, save-path rejection matrix is
-      * unchanged — private IP / docker-style names / suffix lookalikes still
-@@ -1821,7 +1905,7 @@ class SettingsControllerTest extends TestCase
-     {
-         return [
-             'response' => ['code' => 200, 'message' => 'OK'],
--            'body'     => '{"pool":"healthy"}',
-+            'body'     => '{"pool":"healthy","ready":true}',
-         ];
-     }
- 
+@@ -1738,11 +1809,11 @@ PHP;
+             ['queue_ms', 'ramp_up_ms', 'processing_ms', 'startup_ms', 'server_elapsed_ms'],
+             array_keys($timing)
+         );
+-        $this->assertSame(0, $timing['queue_ms']);
+-        $this->assertSame(0, $timing['ramp_up_ms']);
+-        $this->assertSame(0, $timing['processing_ms']);
++        $this->assertNull($timing['queue_ms']);
++        $this->assertNull($timing['ramp_up_ms']);
++        $this->assertNull($timing['processing_ms']);
+         $this->assertNull($timing['startup_ms']);
+-        $this->assertSame(0, $timing['server_elapsed_ms']);
++        $this->assertNull($timing['server_elapsed_ms']);
+         $this->assertEqualsCanonicalizing(
+             ['code', 'message', 'operation_id', 'startup_id', 'timing'],
+             array_keys($detail)

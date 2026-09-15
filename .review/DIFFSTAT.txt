@@ -1,8 +1,5 @@
- ...class-abstract-recognition-proxy-controller.php | 105 +++++++++++++++-
- .../src/api/class-settings-controller.php          |  36 +++++-
- .../api/services/class-describe-media-service.php  |  18 ++-
- .../tests/Unit/DescribeMediaServiceTest.php        |  64 +++++++++-
- .../tests/Unit/ProxyRequestTest.php                | 137 +++++++++++++++++++--
- .../tests/Unit/RetentionControllerTest.php         |  40 ++++++
- .../tests/Unit/SettingsControllerTest.php          |  86 ++++++++++++-
- 7 files changed, 450 insertions(+), 36 deletions(-)
+ ...class-abstract-recognition-proxy-controller.php | 71 +++++++++++++++----
+ .../api/services/class-describe-media-service.php  |  6 ++
+ .../tests/Unit/DescribeMediaServiceTest.php        | 60 ++++++++++++++++
+ .../tests/Unit/ProxyRequestTest.php                | 79 ++++++++++++++++++++--
+ 4 files changed, 198 insertions(+), 18 deletions(-)

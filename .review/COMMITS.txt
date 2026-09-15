@@ -1,1 +1,2 @@
-99cf1d247235 offload: Landed Fix-4 GPU control confirmation and Return-to-automatic
+f9cc4c8faebb offload: Fix-2: typed GPUFLOW run builders remove TS2352 fixture casts;
+8cb69f851a7a offload: Landed GPUFLOW-1 B2 spa-bulk-timing: wire timing passthrough,

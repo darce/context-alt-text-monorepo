@@ -861,12 +861,7 @@ const formatEtaLabel = (etaSeconds: number | null): string => {
 
 const formatTimingSeconds = (ms: number): string => String(ms / 1000);
 
-const formatWarmingGpuLabel = (etaSeconds: number | null): string => {
-  if (etaSeconds === null) {
-    return __('Warming GPU (about 2 min, first run only)…', 'alt-context');
-  }
-  return sprintf(__('Warming GPU (%s)…', 'alt-context'), formatEtaLabel(etaSeconds));
-};
+const formatWarmingGpuLabel = (): string => __('Warming GPU (first run only)…', 'alt-context');
 
 /**
  * Wire-only terminal summary. `server_elapsed_ms` is evidence-only and is never
@@ -1002,7 +997,7 @@ export const BulkDescribeProgress = ({
       <div className="acx-media-selection__bulk-describe-progress" role="status" aria-live="polite">
         <span className="acx-media-selection__bulk-describe-status acx-media-selection__bulk-describe-status--running">
           <Loader2 className="acx-media-selection__bulk-describe-spin" aria-hidden="true" size={16} />
-          {formatWarmingGpuLabel(etaSeconds)}
+          {formatWarmingGpuLabel()}
         </span>
         {cancelControl}
         {waitingNotice}
@@ -1028,7 +1023,7 @@ export const BulkDescribeProgress = ({
       <div className="acx-media-selection__bulk-describe-progress" role="status" aria-live="polite">
         <span className="acx-media-selection__bulk-describe-status acx-media-selection__bulk-describe-status--running">
           <Loader2 className="acx-media-selection__bulk-describe-spin" aria-hidden="true" size={16} />
-          {formatWarmingGpuLabel(etaSeconds)}
+          {formatWarmingGpuLabel()}
         </span>
         {cancelControl}
         {waitingNotice}

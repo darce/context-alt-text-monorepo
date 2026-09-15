@@ -1633,8 +1633,7 @@ def test_cpu_no_session_success_omits_durable_operation_id(monkeypatch):
         response = _post(client, TENANT_ID)
         assert response.status_code == 200, response.text
         body = response.json()
-        assert "operation_id" in body
-        assert body["operation_id"] is None
+        assert "operation_id" not in body
         assert "startup_id" in body
         assert "timing" in body
         assert accepts == []

@@ -304,6 +304,7 @@ class DescribeMediaService {
 	/**
 	 * Optional multipart retry token. Read only from the form body field;
 	 * query/default params are ignored. Forwarded verbatim — no trim.
+	 * Empty or >128-char strings are treated as absent (not forwarded, not an error).
 	 */
 	private function resolve_operation_id( WP_REST_Request $request ): ?string {
 		$body_params = $request->get_body_params();
@@ -313,6 +314,11 @@ class DescribeMediaService {
 
 		$raw = $body_params['operation_id'];
 		if ( ! is_string( $raw ) ) {
+			return null;
+		}
+
+		$length = strlen( $raw );
+		if ( $length < 1 || $length > 128 ) {
 			return null;
 		}
 

@@ -1482,6 +1482,66 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertStringNotContainsString('name="operation_id"', $body);
     }
 
+    public function testEmptyStringBodyOperationIdIsDropped(): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => (string) json_encode($this->validBackendBody(42)),
+        ]);
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $req->set_param('media_id', 42);
+        $req->set_body_params(['operation_id' => '']);
+
+        $this->controller->describe_media($req);
+
+        $body = $this->getHttpCalls()[0]['args']['body'];
+        $this->assertIsString($body);
+        $this->assertStringNotContainsString('name="operation_id"', $body);
+    }
+
+    public function testOverlongBodyOperationIdIsDropped(): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => (string) json_encode($this->validBackendBody(42)),
+        ]);
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $req->set_param('media_id', 42);
+        $req->set_body_params(['operation_id' => str_repeat('a', 129)]);
+
+        $this->controller->describe_media($req);
+
+        $body = $this->getHttpCalls()[0]['args']['body'];
+        $this->assertIsString($body);
+        $this->assertStringNotContainsString('name="operation_id"', $body);
+        $this->assertStringNotContainsString(str_repeat('a', 129), $body);
+    }
+
+    public function testMaxLengthBodyOperationIdIsForwardedByteForByte(): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => (string) json_encode($this->validBackendBody(42)),
+        ]);
+
+        $verbatim = str_repeat('b', 128);
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $req->set_param('media_id', 42);
+        $req->set_body_params(['operation_id' => $verbatim]);
+
+        $this->controller->describe_media($req);
+
+        $body = $this->getHttpCalls()[0]['args']['body'];
+        $this->assertIsString($body);
+        $this->assertStringContainsString('name="operation_id"', $body);
+        $this->assertStringContainsString($verbatim, $body);
+    }
+
     /**
      * @return array<string, array{0: string}>
      */

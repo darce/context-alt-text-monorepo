@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { ReactElement } from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { MediaAltInlineEditor } from '../MediaAltInlineEditor';
 import {
@@ -2874,5 +2874,115 @@ describe('MediaAltSuggest GPUFLOW warming and timing', () => {
     expect(describeMock).toHaveBeenNthCalledWith(2, 42, { operationId: 'op-lease-1' });
     expect(describeMock).toHaveBeenNthCalledWith(3, 42);
     expect(describeMock).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('MediaAltSuggest warming auto-retry and ceiling', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-15T12:00:00.000Z'));
+    vi.resetAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('auto-retries after the warmup ETA with the stored operation_id', async () => {
+    describeMock
+      .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.starting_with_eta))
+      .mockResolvedValueOnce(suggestStates.success_with_timing as VisualFactsResponse);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByTestId('media-alt-suggest-warming')).toHaveTextContent(
+      'Description service is starting (about 12 s)',
+    );
+    expect(describeMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(12_000);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(describeMock).toHaveBeenNthCalledWith(2, 42, { operationId: 'op-lease-1' });
+    expect(screen.getByText(suggestStates.success_with_timing.alt_text_draft)).toBeInTheDocument();
+  });
+
+  it('shows the warming timeout state at the 120 s ceiling with no further auto-retries', async () => {
+    describeMock.mockRejectedValue(describeErrorFromFixture(suggestStates.starting_eta_60));
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByTestId('media-alt-suggest-warming')).toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(describeMock).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId('media-alt-suggest-warming')).toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const timeout = screen.getByTestId('media-alt-suggest-warming-timeout');
+    expect(timeout).toHaveTextContent('Still starting — try again');
+    expect(screen.queryByTestId('media-alt-suggest-warming')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^retry$/i })).toBeEnabled();
+    expect(describeMock).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(describeMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('manual retry from timeout starts a fresh operation without operation_id', async () => {
+    describeMock.mockRejectedValue(describeErrorFromFixture(suggestStates.starting_eta_60));
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByTestId('media-alt-suggest-warming-timeout')).toBeInTheDocument();
+    expect(describeMock).toHaveBeenCalledTimes(2);
+
+    describeMock.mockReset();
+    describeMock.mockResolvedValueOnce(suggestStates.success_with_timing as VisualFactsResponse);
+    fireEvent.click(screen.getByRole('button', { name: /^retry$/i }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(describeMock).toHaveBeenCalledTimes(1);
+    expect(describeMock).toHaveBeenCalledWith(42);
+    expect(screen.getByText(suggestStates.success_with_timing.alt_text_draft)).toBeInTheDocument();
+    expect(screen.queryByTestId('media-alt-suggest-warming-timeout')).not.toBeInTheDocument();
   });
 });

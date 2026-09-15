@@ -14,16 +14,23 @@ import tempfile
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
 import pytest
-from sqlalchemy import Table
+from sqlalchemy import Table, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import scene.application.describe_load as load_mod
 from db.models.base_imports import Base
-from db.models.scene import DescribeRun, DescribeRunItem
+from db.models.scene import (
+    DescribeDemandLease,
+    DescribeOperation,
+    DescribeRun,
+    DescribeRunItem,
+    DescribeStartup,
+)
 from scene.application.describe_load import (
     batch_in_progress,
     dump_load_snapshot,
@@ -34,11 +41,30 @@ from scene.application.describe_load import (
     run_startup_load_snapshot,
     write_load_snapshot,
 )
+from scene.application.describe_operation_repository import DescribeOperationRepository
 from scene.application.describe_run_repository import (
     DescribeRunRepository,
     run_startup_retention_purge,
 )
-from scene.domain.describe_run import DescribeItemStatus, DescribeRunStatus
+from scene.domain.describe_run import (
+    DemandLeaseState,
+    DescribeItemStatus,
+    DescribeRunStatus,
+    OperationExpiredError,
+)
+
+_LOAD_SNAPSHOT_KEYS = {
+    "queue_depth",
+    "in_flight",
+    "batch_in_progress",
+    "written_at",
+    "lease_demand",
+    "revision",
+}
+_PUBLIC_RETRY_AFTER_CEILING = 120
+_DIGEST_A = "a" * 64
+_DIGEST_B = "b" * 64
+_DIGEST_C = "c" * 64
 
 
 async def _sessionmaker():
@@ -46,9 +72,29 @@ async def _sessionmaker():
     async with engine.begin() as conn:
         await conn.run_sync(
             Base.metadata.create_all,
-            tables=cast(list[Table], [DescribeRun.__table__, DescribeRunItem.__table__]),
+            tables=cast(
+                list[Table],
+                [
+                    DescribeStartup.__table__,
+                    DescribeOperation.__table__,
+                    DescribeDemandLease.__table__,
+                    DescribeRun.__table__,
+                    DescribeRunItem.__table__,
+                ],
+            ),
+        )
+        await conn.execute(
+            text(
+                "CREATE TABLE describe_load_snapshot_revisions ("
+                "singleton INTEGER PRIMARY KEY CHECK (singleton = 1), "
+                "revision INTEGER NOT NULL)"
+            )
         )
     return engine, async_sessionmaker(engine, expire_on_commit=False)
+
+
+def _has_work(snapshot: dict) -> bool:
+    return ((snapshot["queue_depth"] + snapshot["in_flight"]) > 0) or bool(snapshot["batch_in_progress"])
 
 
 def test_write_load_snapshot_keys_and_atomic_replace(tmp_path: Path):
@@ -97,19 +143,17 @@ def test_load_snapshot_counts_single_runs_only_across_tenants():
 
         async with sf() as s:
             snap = await load_snapshot(s)
-            assert set(snap) == {
-                "queue_depth",
-                "in_flight",
-                "batch_in_progress",
-                "written_at",
-            }
+            assert set(snap) == _LOAD_SNAPSHOT_KEYS
             assert snap["queue_depth"] == 2
             assert snap["in_flight"] == 1
+            assert snap["lease_demand"] == 0
+            assert snap["revision"] == 1
             # The bulk run above is still non-terminal: excluded from the item
             # counts, but it must surface on its own key (GPUW-1).
             assert snap["batch_in_progress"] is True
             assert isinstance(snap["written_at"], float)
             assert snap["written_at"] > 0
+            assert _has_work(snap) is True
 
         await engine.dispose()
 
@@ -226,14 +270,11 @@ def test_run_startup_load_snapshot_writes_file_with_counts(tmp_path: Path):
 
         assert target.is_file()
         loaded = json.loads(target.read_text())
-        assert set(loaded) == {
-            "queue_depth",
-            "in_flight",
-            "batch_in_progress",
-            "written_at",
-        }
+        assert set(loaded) == _LOAD_SNAPSHOT_KEYS
         assert loaded["queue_depth"] == 1
         assert loaded["in_flight"] == 1
+        assert loaded["lease_demand"] == 0
+        assert loaded["revision"] == 1
         # Only single runs above, so the batch flag must read False (GPUW-1).
         assert loaded["batch_in_progress"] is False
         assert isinstance(loaded["written_at"], (int, float))
@@ -256,14 +297,11 @@ def test_run_startup_load_snapshot_resolves_env_path_when_path_none(tmp_path: Pa
 
         assert target.is_file()
         loaded = json.loads(target.read_text())
-        assert set(loaded) == {
-            "queue_depth",
-            "in_flight",
-            "batch_in_progress",
-            "written_at",
-        }
+        assert set(loaded) == _LOAD_SNAPSHOT_KEYS
         assert loaded["queue_depth"] == 0
         assert loaded["in_flight"] == 0
+        assert loaded["lease_demand"] == 0
+        assert loaded["revision"] == 1
         assert loaded["batch_in_progress"] is False
         await engine.dispose()
 
@@ -556,5 +594,457 @@ def test_lifespan_supervisor_rearms_refresher_and_propagates_cancel(monkeypatch)
             await task
 
         assert starts == 3
+
+    asyncio.run(body())
+
+
+def test_load_snapshot_counts_cross_tenant_leases_as_in_flight():
+    async def body():
+        engine, sf = await _sessionmaker()
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        tenant_a = uuid.uuid4()
+        tenant_b = uuid.uuid4()
+        async with sf() as session:
+            repo = DescribeOperationRepository(session, lease_seconds=180)
+            await repo.accept(tenant_id=tenant_a, request_digest=_DIGEST_A, now=start)
+            await repo.accept(tenant_id=tenant_b, request_digest=_DIGEST_B, now=start)
+            await session.commit()
+        async with sf() as session:
+            snap = await load_snapshot(session, now=start)
+            assert set(snap) == _LOAD_SNAPSHOT_KEYS
+            assert snap["queue_depth"] == 0
+            assert snap["in_flight"] == 2
+            assert snap["lease_demand"] == 2
+            assert snap["batch_in_progress"] is False
+            assert snap["revision"] == 1
+            assert _has_work(snap) is True
+        await engine.dispose()
+
+    asyncio.run(body())
+
+
+def test_load_snapshot_stop_and_max_lease_exclude_demand_without_deleting():
+    async def body():
+        engine, sf = await _sessionmaker()
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        tenant_a = uuid.uuid4()
+        tenant_b = uuid.uuid4()
+        async with sf() as session:
+            repo = DescribeOperationRepository(session, lease_seconds=180)
+            first = await repo.accept(tenant_id=tenant_a, request_digest=_DIGEST_A, now=start)
+            second = await repo.accept(tenant_id=tenant_b, request_digest=_DIGEST_B, now=start)
+            await session.commit()
+            first_id, second_id = first.operation_id, second.operation_id
+        async with sf() as session:
+            one_blocked = await load_snapshot(session, now=start, stop_requested=True)
+            assert one_blocked["in_flight"] == 0
+            assert one_blocked["lease_demand"] == 0
+            assert _has_work(one_blocked) is False
+            both_blocked = await load_snapshot(session, now=start, max_lease_reached=True)
+            assert both_blocked["in_flight"] == 0
+            assert both_blocked["lease_demand"] == 0
+            first_lease = await session.get(DescribeDemandLease, (tenant_a, first_id))
+            second_lease = await session.get(DescribeDemandLease, (tenant_b, second_id))
+            assert first_lease is not None and first_lease.state == DemandLeaseState.ACTIVE
+            assert second_lease is not None and second_lease.state == DemandLeaseState.ACTIVE
+        await engine.dispose()
+
+    asyncio.run(body())
+
+
+def test_load_snapshot_drops_expired_lease_and_keeps_the_other():
+    async def body():
+        engine, sf = await _sessionmaker()
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        tenant_a = uuid.uuid4()
+        tenant_b = uuid.uuid4()
+        async with sf() as session:
+            short = DescribeOperationRepository(session, lease_seconds=30)
+            long = DescribeOperationRepository(session, lease_seconds=180)
+            await short.accept(tenant_id=tenant_a, request_digest=_DIGEST_A, now=start)
+            await long.accept(tenant_id=tenant_b, request_digest=_DIGEST_B, now=start)
+            await session.commit()
+        later = start + timedelta(seconds=60)
+        async with sf() as session:
+            snap = await load_snapshot(session, now=later)
+            assert snap["queue_depth"] == 0
+            assert snap["in_flight"] == 1
+            assert snap["lease_demand"] == 1
+            assert _has_work(snap) is True
+        await engine.dispose()
+
+    asyncio.run(body())
+
+
+def test_load_snapshot_does_not_double_count_lease_and_async_work():
+    async def body():
+        engine, sf = await _sessionmaker()
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        tenant = uuid.uuid4()
+        async with sf() as session:
+            await DescribeOperationRepository(session, lease_seconds=180).accept(
+                tenant_id=tenant, request_digest=_DIGEST_A, now=start
+            )
+            runs = DescribeRunRepository(session)
+            await runs.create_single_run(tenant_id=tenant, media_id=1, image_bytes=b"q")
+            running = await runs.create_single_run(tenant_id=tenant, media_id=2, image_bytes=b"r")
+            await runs.mark_item(
+                tenant_id=tenant,
+                run_id=running,
+                media_id=2,
+                status=DescribeItemStatus.RUNNING,
+            )
+            await session.commit()
+        async with sf() as session:
+            snap = await load_snapshot(session, now=start)
+            assert snap["queue_depth"] == 1
+            assert snap["lease_demand"] == 1
+            assert snap["in_flight"] == 2
+            assert _has_work(snap) is True
+        await engine.dispose()
+
+    asyncio.run(body())
+
+
+def test_fake_clock_retry_after_ceiling_retains_warming_demand():
+    async def body():
+        engine, sf = await _sessionmaker()
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        tenant = uuid.uuid4()
+        async with sf() as session:
+            await DescribeOperationRepository(session, lease_seconds=_PUBLIC_RETRY_AFTER_CEILING + 1).accept(
+                tenant_id=tenant, request_digest=_DIGEST_A, now=start
+            )
+            await session.commit()
+        retry_at = start + timedelta(seconds=_PUBLIC_RETRY_AFTER_CEILING)
+        async with sf() as session:
+            snap = await load_snapshot(session, now=retry_at)
+            assert snap["lease_demand"] == 1
+            assert snap["in_flight"] == 1
+            assert _has_work(snap) is True
+        await engine.dispose()
+
+    asyncio.run(body())
+
+
+def test_write_load_snapshot_drops_older_and_equal_revisions(tmp_path: Path):
+    target = tmp_path / "describe-load.json"
+    newer = {
+        "queue_depth": 0,
+        "in_flight": 2,
+        "lease_demand": 2,
+        "revision": 11,
+        "written_at": 100.0,
+    }
+    write_load_snapshot(newer, target)
+    assert json.loads(target.read_text())["written_at"] == 100.0
+    write_load_snapshot({**newer, "revision": 10, "written_at": 200.0, "in_flight": 0}, target)
+    loaded = json.loads(target.read_text())
+    assert loaded["revision"] == 11
+    assert loaded["in_flight"] == 2
+    assert loaded["written_at"] == 100.0
+    write_load_snapshot({**newer, "revision": 11, "written_at": 300.0}, target)
+    assert json.loads(target.read_text())["written_at"] == 100.0
+    write_load_snapshot({**newer, "revision": 12, "written_at": 400.0, "in_flight": 3}, target)
+    updated = json.loads(target.read_text())
+    assert updated["revision"] == 12
+    assert updated["in_flight"] == 3
+    assert updated["written_at"] == 400.0
+
+
+def test_write_load_snapshot_fails_closed_on_malformed_published_revision(tmp_path: Path):
+    target = tmp_path / "describe-load.json"
+    target.write_text("{not-json", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="unreadable published load snapshot"):
+        write_load_snapshot({"revision": 1, "written_at": 1.0}, target)
+    for malformed in ("11", None, True, False, [11], {"nested": 1}, -1):
+        target.write_text(json.dumps({"revision": malformed}), encoding="utf-8")
+        with pytest.raises(RuntimeError, match="malformed published load snapshot revision"):
+            write_load_snapshot({"revision": 12, "written_at": 2.0}, target)
+        assert json.loads(target.read_text()) == {"revision": malformed}
+
+
+def test_write_load_snapshot_treats_missing_revision_key_as_initial_file(tmp_path: Path):
+    target = tmp_path / "describe-load.json"
+    target.write_text(json.dumps({"queue_depth": 1, "written_at": 1.0}), encoding="utf-8")
+    write_load_snapshot({"revision": 1, "written_at": 2.0, "queue_depth": 0}, target)
+    loaded = json.loads(target.read_text())
+    assert loaded["revision"] == 1
+    assert loaded["written_at"] == 2.0
+
+
+def test_dump_load_snapshot_commits_before_stale_publication_is_dropped(tmp_path: Path):
+    async def body():
+        engine, sf = await _sessionmaker()
+        target = tmp_path / "describe-load.json"
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        tenant = uuid.uuid4()
+        async with sf() as session:
+            repo = DescribeOperationRepository(session, lease_seconds=180)
+            await repo.accept(tenant_id=tenant, request_digest=_DIGEST_A, now=start)
+            await repo.accept(tenant_id=uuid.uuid4(), request_digest=_DIGEST_B, now=start)
+            await session.commit()
+        await dump_load_snapshot(sf, path=target, now=start, raise_on_error=True)
+        first = json.loads(target.read_text())
+        assert first["revision"] == 1
+        assert first["lease_demand"] == 2
+        await dump_load_snapshot(sf, path=target, now=start, raise_on_error=True)
+        published = json.loads(target.read_text())
+        assert published["revision"] == 2
+        write_load_snapshot({**first, "written_at": 9_999.0, "lease_demand": 0, "in_flight": 0}, target)
+        dropped = json.loads(target.read_text())
+        assert dropped["revision"] == 2
+        assert dropped["lease_demand"] == 2
+        assert dropped["written_at"] == published["written_at"]
+        await engine.dispose()
+
+    asyncio.run(body())
+
+
+def test_dump_load_snapshot_observes_stop_intent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from scene.application.gpu_intent import IntentAction, write_gpu_intent
+
+    intent_path = tmp_path / "gpu-intent.json"
+    monkeypatch.setenv("ACX_GPU_INTENT_PATH", str(intent_path))
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    write_gpu_intent(
+        intent_path,
+        action=IntentAction.STOP,
+        ttl_seconds=1800,
+        requested_by="operator",
+        now=start,
+    )
+
+    async def body():
+        engine, sf = await _sessionmaker()
+        target = tmp_path / "describe-load.json"
+        async with sf() as session:
+            await DescribeOperationRepository(session, lease_seconds=180).accept(
+                tenant_id=uuid.uuid4(), request_digest=_DIGEST_A, now=start
+            )
+            await session.commit()
+        await dump_load_snapshot(sf, path=target, now=start, raise_on_error=True)
+        loaded = json.loads(target.read_text())
+        assert loaded["lease_demand"] == 0
+        assert loaded["in_flight"] == 0
+        assert _has_work(loaded) is False
+        await engine.dispose()
+
+    asyncio.run(body())
+
+
+def test_periodic_pass_persists_first_ready_while_gpu_is_ready(monkeypatch: pytest.MonkeyPatch):
+    from scene.application.gpu_state import GpuState
+
+    monkeypatch.setattr(
+        "scene.application.gpu_state.read_gpu_state",
+        lambda **_kwargs: GpuState.READY,
+    )
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    ready_at = start + timedelta(seconds=8)
+
+    async def body():
+        engine, sf = await _sessionmaker()
+        tenant = uuid.uuid4()
+        async with sf() as session:
+            repo = DescribeOperationRepository(session, lease_seconds=180)
+            op = await repo.accept(tenant_id=tenant, request_digest=_DIGEST_A, now=start)
+            await repo.associate_startup(
+                tenant_id=tenant,
+                operation_id=op.operation_id,
+                startup_id="boot",
+                started_at=start,
+                now=start,
+            )
+            token = op.operation_id
+            await session.commit()
+        async with sf() as session:
+            snap = await load_snapshot(session, now=ready_at)
+            assert snap["lease_demand"] == 1
+            stored = await session.get(DescribeOperation, (tenant, token))
+            startup = await session.get(DescribeStartup, "boot")
+            assert stored is not None and stored.first_ready_at is not None
+            assert startup is not None and startup.first_ready_at is not None
+        await engine.dispose()
+
+    asyncio.run(body())
+
+
+def test_sync_style_caller_stop_excludes_demand_without_deleting(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from scene.application.gpu_intent import IntentAction, write_gpu_intent
+
+    intent_path = tmp_path / "gpu-intent.json"
+    monkeypatch.setenv("ACX_GPU_INTENT_PATH", str(intent_path))
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    write_gpu_intent(
+        intent_path,
+        action=IntentAction.STOP,
+        ttl_seconds=1800,
+        requested_by="operator",
+        now=start,
+    )
+
+    async def body():
+        engine, sf = await _sessionmaker()
+        target = tmp_path / "describe-load.json"
+        tenant = uuid.uuid4()
+        async with sf() as session:
+            op = await DescribeOperationRepository(session, lease_seconds=180).accept(
+                tenant_id=tenant, request_digest=_DIGEST_A, now=start
+            )
+            token = op.operation_id
+            await session.commit()
+        async with sf() as session:
+            snap = await load_snapshot(session, now=start)
+            write_load_snapshot(snap, target)
+            await session.commit()
+        loaded = json.loads(target.read_text())
+        assert loaded["lease_demand"] == 0
+        assert loaded["in_flight"] == 0
+        assert _has_work(loaded) is False
+        async with sf() as session:
+            lease = await session.get(DescribeDemandLease, (tenant, token))
+            assert lease is not None and lease.state == DemandLeaseState.ACTIVE
+        await engine.dispose()
+
+    asyncio.run(body())
+
+
+def test_sync_style_caller_lease_cap_excludes_demand_without_deleting(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    state_path = tmp_path / "gpu-state.json"
+    monkeypatch.setenv("ACX_GPU_STATE_PATH", str(state_path))
+    state_path.write_text(json.dumps({"last_transition_reason": "lease_cap"}), encoding="utf-8")
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+
+    async def body():
+        engine, sf = await _sessionmaker()
+        target = tmp_path / "describe-load.json"
+        tenant = uuid.uuid4()
+        async with sf() as session:
+            op = await DescribeOperationRepository(session, lease_seconds=180).accept(
+                tenant_id=tenant, request_digest=_DIGEST_A, now=start
+            )
+            token = op.operation_id
+            await session.commit()
+        async with sf() as session:
+            snap = await load_snapshot(session, now=start)
+            write_load_snapshot(snap, target)
+            await session.commit()
+        loaded = json.loads(target.read_text())
+        assert loaded["lease_demand"] == 0
+        assert loaded["in_flight"] == 0
+        assert _has_work(loaded) is False
+        async with sf() as session:
+            lease = await session.get(DescribeDemandLease, (tenant, token))
+            assert lease is not None and lease.state == DemandLeaseState.ACTIVE
+        await engine.dispose()
+
+    asyncio.run(body())
+
+
+def test_load_snapshot_commit_failure_leaves_file_untouched_and_next_revision_publishes(
+    tmp_path: Path,
+):
+    async def body():
+        engine, sf = await _sessionmaker()
+        target = tmp_path / "describe-load.json"
+        seed = {"queue_depth": 9, "in_flight": 0, "written_at": 1.0}
+        target.write_text(json.dumps(seed), encoding="utf-8")
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        async with sf() as session:
+            await DescribeOperationRepository(session, lease_seconds=180).accept(
+                tenant_id=uuid.uuid4(), request_digest=_DIGEST_A, now=start
+            )
+            await session.commit()
+        async with sf() as session:
+
+            async def boom() -> None:
+                raise RuntimeError("injected commit failure")
+
+            session.commit = boom  # type: ignore[method-assign]
+            with pytest.raises(RuntimeError, match="injected commit failure"):
+                await load_snapshot(session, now=start)
+        assert json.loads(target.read_text()) == seed
+        await dump_load_snapshot(sf, path=target, now=start, raise_on_error=True)
+        loaded = json.loads(target.read_text())
+        assert loaded["revision"] == 1
+        assert loaded["lease_demand"] == 1
+        assert loaded["in_flight"] == 1
+        await engine.dispose()
+
+    asyncio.run(body())
+
+
+def test_older_publisher_write_is_dropped_after_newer_publish(tmp_path: Path):
+    async def body():
+        engine, sf = await _sessionmaker()
+        target = tmp_path / "describe-load.json"
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        async with sf() as session:
+            await DescribeOperationRepository(session, lease_seconds=180).accept(
+                tenant_id=uuid.uuid4(), request_digest=_DIGEST_A, now=start
+            )
+            await session.commit()
+        a_read = asyncio.Event()
+        b_published = asyncio.Event()
+
+        async def publisher_a() -> None:
+            async with sf() as session:
+                snap = await load_snapshot(session, now=start)
+            a_read.set()
+            await b_published.wait()
+            write_load_snapshot(snap, target)
+
+        async def publisher_b() -> None:
+            await a_read.wait()
+            async with sf() as session:
+                snap = await load_snapshot(session, now=start)
+            write_load_snapshot(snap, target)
+            b_published.set()
+
+        await asyncio.gather(publisher_a(), publisher_b())
+        loaded = json.loads(target.read_text())
+        assert loaded["revision"] == 2
+        assert loaded["lease_demand"] == 1
+        assert loaded["in_flight"] == 1
+        await engine.dispose()
+
+    asyncio.run(body())
+
+
+def test_completed_and_rejected_leases_do_not_count():
+    async def body():
+        engine, sf = await _sessionmaker()
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        tenant = uuid.uuid4()
+        async with sf() as session:
+            repo = DescribeOperationRepository(session, lease_seconds=60)
+            completed = await repo.accept(tenant_id=tenant, request_digest=_DIGEST_A, now=start)
+            await repo.observe_ready(
+                tenant_id=tenant, operation_id=completed.operation_id, now=start + timedelta(seconds=1)
+            )
+            await repo.complete(
+                tenant_id=tenant,
+                operation_id=completed.operation_id,
+                processing_ms=1,
+                server_elapsed_ms=2,
+                now=start + timedelta(seconds=2),
+            )
+            expired = await repo.accept(tenant_id=tenant, request_digest=_DIGEST_B, now=start)
+            await repo.active_demand_count(now=start + timedelta(seconds=60))
+            with pytest.raises(OperationExpiredError):
+                await repo.accept(
+                    tenant_id=tenant,
+                    request_digest=_DIGEST_B,
+                    operation_id=expired.operation_id,
+                    now=start + timedelta(seconds=61),
+                )
+            await repo.accept(tenant_id=uuid.uuid4(), request_digest=_DIGEST_C, now=start + timedelta(seconds=2))
+            await session.commit()
+        async with sf() as session:
+            snap = await load_snapshot(session, now=start + timedelta(seconds=2))
+            assert snap["lease_demand"] == 1
+            assert snap["in_flight"] == 1
+        await engine.dispose()
 
     asyncio.run(body())

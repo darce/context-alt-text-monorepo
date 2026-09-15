@@ -77,12 +77,14 @@ HEAL_UNIQUE_CONSTRAINTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
 # tooling) can never produce them. Consumed by the truth-consistency ratchet.
 RAW_SQL_TABLES = [
     "identity_cluster_refresh_queue",
+    "describe_load_snapshot_revisions",
 ]
 
 EXPECTED_SCHEMA_TABLES = [
     "describe_startups",
     "describe_operations",
     "describe_demand_leases",
+    "describe_load_snapshot_revisions",
     "tenants",
     "api_keys",
     "demo_instances",
@@ -118,6 +120,7 @@ EXPECTED_SCHEMA_TABLES = [
 ]
 
 DOWNGRADE_TABLE_ORDER = [
+    "describe_load_snapshot_revisions",
     "describe_demand_leases",
     "describe_operations",
     "describe_startups",
@@ -1720,6 +1723,13 @@ def ensure_tables(op) -> None:
     )
     _ensure_index(op, "idx_describe_demand_leases_retention", "describe_demand_leases", ["retain_until"])
     _ensure_index(op, "idx_describe_demand_leases_active", "describe_demand_leases", ["state", "expires_at"])
+    _ensure_table(
+        op,
+        "describe_load_snapshot_revisions",
+        sa.Column("singleton", sa.Integer(), primary_key=True),
+        sa.Column("revision", sa.Integer(), nullable=False, server_default=sa.text("0")),
+        sa.CheckConstraint("singleton = 1", name="ck_describe_load_snapshot_revisions_singleton"),
+    )
 
     _ensure_table(
         op,

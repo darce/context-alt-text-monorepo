@@ -16,16 +16,24 @@ import math
 import os
 import tempfile
 import threading
-import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models.scene import DescribeRun, DescribeRunItem
+from db.models.scene import DescribeDemandLease, DescribeOperation, DescribeRun, DescribeRunItem
 from recognition.shared.db.dialect import is_sqlite
-from scene.domain.describe_run import DescribeItemStatus, DescribeRunStatus, RunKind
+from scene.application.describe_operation_repository import DescribeOperationRepository
+from scene.domain.describe_run import (
+    DemandLeaseState,
+    DescribeItemStatus,
+    DescribeRunStatus,
+    RunKind,
+    as_utc,
+    utc_observation,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -49,6 +57,11 @@ MAX_LOAD_REFRESH_SECONDS = min(
 # temp names make concurrent/multi-process writers safe; this in-process lock
 # additionally keeps their replacements ordered and prevents needless overlap.
 _LOAD_SNAPSHOT_WRITE_LOCK = threading.Lock()
+
+# Counting-only repository construction; lease lifetime is stored on each row.
+_COUNTING_LEASE_SECONDS = 1.0
+_SNAPSHOT_REVISION_TABLE = "describe_load_snapshot_revisions"
+_MAX_LEASE_REASON = "lease_cap"
 
 # A bulk run occupying the GPU. Enumerated as the non-terminal set rather than
 # "not in (COMPLETED, ...)" so a newly added status defaults to *not* holding
@@ -125,6 +138,96 @@ async def _require_rls_bypass(session: AsyncSession) -> None:
         )
 
 
+async def _allocate_snapshot_revision(session: AsyncSession) -> int:
+    """Allocate the next publication revision under the demand-read transaction.
+
+    A singleton row lock serializes allocation with the subsequent demand read
+    so an older database view cannot receive a newer revision. The table is the
+    publication sequence declared by the identity schema; this path never
+    creates it at runtime.
+    """
+    if is_sqlite(session):
+        await session.execute(
+            text(f"INSERT OR IGNORE INTO {_SNAPSHOT_REVISION_TABLE} (singleton, revision) VALUES (1, 0)")
+        )
+    else:
+        await session.execute(
+            text(
+                f"INSERT INTO {_SNAPSHOT_REVISION_TABLE} (singleton, revision) VALUES (1, 0) "
+                "ON CONFLICT (singleton) DO NOTHING"
+            )
+        )
+    result = await session.execute(
+        text(f"UPDATE {_SNAPSHOT_REVISION_TABLE} SET revision = revision + 1 WHERE singleton = 1 RETURNING revision")
+    )
+    revision = result.scalar()
+    if isinstance(revision, bool) or not isinstance(revision, int) or revision < 1:
+        raise RuntimeError("failed to allocate load snapshot revision")
+    return revision
+
+
+def _published_revision(payload: object) -> int:
+    """Return the currently published revision; a missing key is revision 0."""
+    if not isinstance(payload, dict):
+        raise RuntimeError("published load snapshot is not an object")
+    if "revision" not in payload:
+        return 0
+    revision = payload["revision"]
+    if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0:
+        raise RuntimeError("malformed published load snapshot revision")
+    return revision
+
+
+def _max_lease_reached() -> bool:
+    from scene.application.gpu_state import resolve_gpu_state_path
+
+    path = Path(resolve_gpu_state_path())
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    return payload.get("last_transition_reason") == _MAX_LEASE_REASON
+
+
+def _demand_policy_flags(*, now: datetime) -> tuple[bool, bool]:
+    from scene.application.gpu_intent import IntentAction, read_gpu_intent, resolve_gpu_intent_path
+
+    stop_requested = False
+    intent = read_gpu_intent(resolve_gpu_intent_path())
+    if intent is not None and intent.action is IntentAction.STOP and utc_observation(intent.expires_at) > now:
+        stop_requested = True
+    return stop_requested, _max_lease_reached()
+
+
+async def _persist_first_ready(session: AsyncSession, *, now: datetime) -> None:
+    from scene.application.gpu_state import GpuState, read_gpu_state
+
+    if read_gpu_state(now=now.timestamp()) is not GpuState.READY:
+        return
+    rows = (
+        await session.execute(
+            select(DescribeOperation.tenant_id, DescribeOperation.operation_id)
+            .join(
+                DescribeDemandLease,
+                (DescribeDemandLease.tenant_id == DescribeOperation.tenant_id)
+                & (DescribeDemandLease.operation_id == DescribeOperation.operation_id),
+            )
+            .where(
+                DescribeDemandLease.state == DemandLeaseState.ACTIVE,
+                DescribeDemandLease.expires_at > now,
+                DescribeOperation.first_ready_at.is_(None),
+            )
+        )
+    ).all()
+    if not rows:
+        return
+    repo = DescribeOperationRepository(session, lease_seconds=_COUNTING_LEASE_SECONDS)
+    for tenant_id, operation_id in rows:
+        await repo.observe_ready(tenant_id=tenant_id, operation_id=operation_id, now=now)
+
+
 async def batch_in_progress(session: AsyncSession) -> bool:
     """True while any tenant holds a non-terminal ``run_kind=bulk`` run (GPUW-1).
 
@@ -150,16 +253,42 @@ async def batch_in_progress(session: AsyncSession) -> bool:
     return int(result.scalar() or 0) > 0
 
 
-async def load_snapshot(session: AsyncSession) -> dict[str, int | float | bool]:
+async def load_snapshot(
+    session: AsyncSession,
+    *,
+    now: datetime | None = None,
+    stop_requested: bool | None = None,
+    max_lease_reached: bool | None = None,
+) -> dict[str, int | float | bool]:
     """Count non-terminal work for the GPU lifecycle controller.
 
     ``queue_depth`` = single-run items with status ``queued``; ``in_flight`` =
     status ``running`` (includes provisional, which stays ``running`` until
-    final). Bulk-run *items* stay excluded from both counts -- the wire meaning
-    of those two keys is unchanged -- and bulk work is reported separately as
-    ``batch_in_progress`` (GPUW-1). Callers must use a bypass session [DIAG-02].
+    final) plus eligible demand leases. Bulk-run *items* stay excluded from
+    both counts -- the wire meaning of those two keys is unchanged -- and bulk
+    work is reported separately as ``batch_in_progress`` (GPUW-1). Eligible
+    leases are also reported as additive ``lease_demand``. Callers must use a
+    bypass session [DIAG-02].
+
+    STOP and lease-cap are resolved from the same policy files the periodic
+    publisher uses unless a caller passes an explicit override. The demand
+    transaction (revision allocation, expiry, first-ready) commits before this
+    returns so a later file write cannot publish an undurable revision.
     """
     await _require_rls_bypass(session)
+    observed_at = as_utc(now or datetime.now(UTC))
+    policy_stop, policy_max_lease = _demand_policy_flags(now=observed_at)
+    blocked_by_stop = policy_stop if stop_requested is None else stop_requested
+    blocked_by_max_lease = policy_max_lease if max_lease_reached is None else max_lease_reached
+    revision = await _allocate_snapshot_revision(session)
+    await _persist_first_ready(session, now=observed_at)
+    lease_demand = await DescribeOperationRepository(
+        session, lease_seconds=_COUNTING_LEASE_SECONDS
+    ).active_demand_count(
+        now=observed_at,
+        stop_requested=blocked_by_stop,
+        max_lease_reached=blocked_by_max_lease,
+    )
     result = await session.execute(
         select(DescribeRunItem.status, func.count())
         .join(DescribeRun, DescribeRun.id == DescribeRunItem.run_id)
@@ -170,18 +299,37 @@ async def load_snapshot(session: AsyncSession) -> dict[str, int | float | bool]:
         .group_by(DescribeRunItem.status)
     )
     counts: dict[str, int] = {str(status): int(n) for status, n in result.all()}
-    return {
+    running = counts.get(DescribeItemStatus.RUNNING, 0)
+    snapshot: dict[str, int | float | bool] = {
         "queue_depth": counts.get(DescribeItemStatus.QUEUED, 0),
-        "in_flight": counts.get(DescribeItemStatus.RUNNING, 0),
+        "in_flight": running + lease_demand,
         "batch_in_progress": await batch_in_progress(session),
-        "written_at": time.time(),
+        "lease_demand": lease_demand,
+        "revision": revision,
+        "written_at": observed_at.timestamp(),
     }
+    await session.commit()
+    return snapshot
 
 
 def write_load_snapshot(snapshot: dict[str, Any], path: str | Path) -> None:
-    """Atomically dump load while holding the reaper's process fence."""
+    """Atomically dump load while holding the reaper's process fence.
+
+    Snapshots that carry ``revision`` use write-if-newer: equal or older
+    candidates are dropped without refreshing ``written_at``. Payloads without
+    ``revision`` keep the legacy unconditional replace used by unit writers.
+    Unreadable or malformed published revisions fail closed and never bypass
+    the fence.
+    """
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
+    write_if_newer = "revision" in snapshot
+    candidate_revision: int | None = None
+    if write_if_newer:
+        raw_revision = snapshot["revision"]
+        if isinstance(raw_revision, bool) or not isinstance(raw_revision, int) or raw_revision < 1:
+            raise RuntimeError("load snapshot revision must be a positive integer")
+        candidate_revision = raw_revision
     payload = json.dumps(snapshot, separators=(",", ":"))
 
     with _LOAD_SNAPSHOT_WRITE_LOCK:
@@ -190,6 +338,15 @@ def write_load_snapshot(snapshot: dict[str, Any], path: str | Path) -> None:
         tmp: Path | None = None
         try:
             fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            if write_if_newer:
+                published = 0
+                if target.exists():
+                    try:
+                        published = _published_revision(json.loads(target.read_text(encoding="utf-8")))
+                    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                        raise RuntimeError("unreadable published load snapshot") from exc
+                if candidate_revision is not None and candidate_revision <= published:
+                    return
             fd, tmp_name = tempfile.mkstemp(
                 dir=target.parent,
                 prefix=f".{target.name}.",
@@ -219,6 +376,9 @@ async def dump_load_snapshot(
     path: str | Path | None = None,
     *,
     raise_on_error: bool = False,
+    now: datetime | None = None,
+    stop_requested: bool | None = None,
+    max_lease_reached: bool | None = None,
 ) -> None:
     """Best-effort load write on a dedicated RLS-bypassed session (GPUW-1).
 
@@ -230,7 +390,8 @@ async def dump_load_snapshot(
     snapshot must not fail the describe operation that triggered it. The
     periodic refresher opts into ``raise_on_error`` so its cycle-level warning
     and timeout supervision can observe failures instead of silently treating
-    them as successful refreshes.
+    them as successful refreshes. The demand transaction commits before the
+    write-if-newer publication.
     """
     from db.tenant_context import enable_rls_bypass
 
@@ -239,10 +400,16 @@ async def dump_load_snapshot(
             raise RuntimeError("describe load snapshot session factory is unavailable")
         return
     target = path or resolve_load_path()
+    observed_at = as_utc(now or datetime.now(UTC))
     try:
         async with session_factory() as session:
             await enable_rls_bypass(session)
-            snap = await load_snapshot(session)
+            snap = await load_snapshot(
+                session,
+                now=observed_at,
+                stop_requested=stop_requested,
+                max_lease_reached=max_lease_reached,
+            )
             await session.commit()
         write_load_snapshot(snap, target)
     except Exception:  # noqa: BLE001 - reaper snapshot is best-effort

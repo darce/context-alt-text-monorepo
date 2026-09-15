@@ -11,7 +11,7 @@ from typing import cast
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import Table, select, text
+from sqlalchemy import Table, select, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from db.models.base_imports import _DB_SETTINGS, Base
@@ -1110,10 +1110,12 @@ def test_gpu_stopped_auto_returns_starting_503(monkeypatch, tmp_path):
         assert "timing" in detail
         assert "warmup_eta_seconds" in detail
         assert adapter.calls == 0
+        assert _lease_state(client, detail["operation_id"]) == "active"
         retry = _post(client, TENANT_ID, extra_data={"operation_id": detail["operation_id"]})
         assert retry.status_code == 503, retry.text
         assert retry.json()["detail"]["operation_id"] == detail["operation_id"]
         assert retry.headers.get("Retry-After")
+        assert _lease_state(client, detail["operation_id"]) == "active"
 
 
 def test_gpu_stop_intent_returns_unavailable_without_retry_after(monkeypatch, tmp_path):
@@ -1138,6 +1140,7 @@ def test_gpu_stop_intent_returns_unavailable_without_retry_after(monkeypatch, tm
         assert detail["code"] == "description_service_unavailable"
         assert "warmup_eta_seconds" not in detail
         assert adapter.calls == 0
+        assert _lease_state(client, detail["operation_id"]) == "active"
 
 
 def test_gpu_unknown_state_returns_unavailable(monkeypatch, tmp_path):
@@ -1147,8 +1150,10 @@ def test_gpu_unknown_state_returns_unavailable(monkeypatch, tmp_path):
         response = _post(client, TENANT_ID)
         assert response.status_code == 503, response.text
         assert "Retry-After" not in response.headers
-        assert response.json()["detail"]["code"] == "description_service_unavailable"
+        detail = response.json()["detail"]
+        assert detail["code"] == "description_service_unavailable"
         assert adapter.calls == 0
+        assert _lease_state(client, detail["operation_id"]) == "active"
 
 
 def test_gpu_ready_warm_request_has_no_startup(monkeypatch, tmp_path):
@@ -1263,7 +1268,8 @@ def test_gpu_adapter_unavailable_is_typed_503(monkeypatch, tmp_path):
         assert "warmup_eta_seconds" not in detail
         assert detail["operation_id"]
         assert adapter.calls == 1
-        assert _lease_state(client, detail["operation_id"]) == "active"
+        assert _lease_state(client, detail["operation_id"]) == "completed"
+        assert _active_lease_count(client) == 0
 
 
 class _RaisingOperationRepo:
@@ -1337,6 +1343,9 @@ def test_gpu_complete_failure_is_typed_502_not_success(monkeypatch, tmp_path):
         assert detail["code"] == "description_service_error"
         assert adapter.calls == 1
         assert "operation_id" in detail
+        assert detail["operation_id"]
+        assert _lease_state(client, detail["operation_id"]) == "completed"
+        assert _active_lease_count(client) == 0
 
 
 def test_operation_expired_commits_rejected_transition(monkeypatch, tmp_path):
@@ -1394,6 +1403,8 @@ def test_gpu_ready_adapter_failure_is_typed_502(monkeypatch, tmp_path):
         assert detail["operation_id"]
         assert "warmup_eta_seconds" not in detail
         assert adapter.calls == 1
+        assert _lease_state(client, detail["operation_id"]) == "completed"
+        assert _active_lease_count(client) == 0
 
 
 def test_operation_id_mismatch_is_409(monkeypatch, tmp_path):
@@ -1690,6 +1701,8 @@ def test_gpu_quota_http_exception_after_accept_releases_lease(monkeypatch, tmp_p
 
 
 def test_preflight_miss_wrapper_delegates_after_first_lookup():
+    from scene.application.description_repository import ImageDescriptionRepository
+
     class _Inner:
         def __init__(self):
             self.calls: list[dict] = []
@@ -1700,6 +1713,7 @@ def test_preflight_miss_wrapper_delegates_after_first_lookup():
 
     inner = _Inner()
     wrapped = _PreflightMissCacheRepository(inner)
+    assert isinstance(wrapped, ImageDescriptionRepository)
     first = asyncio.run(wrapped.get_by_cache_key(image_hash="a"))
     second = asyncio.run(wrapped.get_by_cache_key(image_hash="b"))
     third = asyncio.run(wrapped.get_by_cache_key(image_hash="c"))
@@ -1707,3 +1721,81 @@ def test_preflight_miss_wrapper_delegates_after_first_lookup():
     assert inner.calls == [{"image_hash": "b"}, {"image_hash": "c"}]
     assert second == {"hit": 1}
     assert third == {"hit": 2}
+
+
+def test_downstream_unavailable_http_exception_releases_lease(monkeypatch, tmp_path):
+    from fastapi import HTTPException, status
+
+    from scene.interface_adapters.http.routers import describe as describe_module
+
+    _gpu_env(monkeypatch, tmp_path, state="ready")
+
+    async def reject_dep(*args, **kwargs):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "description_service_unavailable",
+                "message": "dependency unavailable",
+            },
+        )
+
+    monkeypatch.setattr(describe_module, "maybe_consume_demo_quota", reject_dep)
+    adapter = _GpuAdapter()
+    with _client(adapter=adapter) as client:
+        response = _post(client, TENANT_ID)
+        assert response.status_code == 503, response.text
+        detail = response.json()["detail"]
+        assert detail == {
+            "code": "description_service_unavailable",
+            "message": "dependency unavailable",
+        }
+        assert adapter.calls == 0
+        rows = _lease_rows(client)
+        assert rows
+        assert all(state == "completed" for _operation_id, state in rows)
+        assert _active_lease_count(client) == 0
+
+
+def test_concurrent_ready_does_not_complete_failing_request(monkeypatch, tmp_path):
+    from datetime import UTC, datetime
+
+    from scene.application.visual_facts_service import VisualFactsService
+    from scene.interface_adapters.http.routers import describe as describe_module
+
+    _gpu_env(monkeypatch, tmp_path, state="ready")
+    real_release = describe_module._release_unready_operation
+
+    async def raced_release(*, session, tenant_uuid, op, server_elapsed_ms, caller_ready):
+        assert caller_ready is False
+        await session.execute(
+            update(DescribeOperation)
+            .where(
+                DescribeOperation.tenant_id == tenant_uuid,
+                DescribeOperation.operation_id == op.operation_id,
+            )
+            .values(first_ready_at=datetime.now(UTC))
+        )
+        await describe_module._commit_and_rescope(session, tenant_uuid)
+        await real_release(
+            session=session,
+            tenant_uuid=tenant_uuid,
+            op=op,
+            server_elapsed_ms=server_elapsed_ms,
+            caller_ready=caller_ready,
+        )
+
+    async def boom(self, **kwargs):
+        raise RuntimeError("service boom before dispatch")
+
+    monkeypatch.setattr(describe_module, "_release_unready_operation", raced_release)
+    monkeypatch.setattr(VisualFactsService, "describe", boom)
+    adapter = _GpuAdapter()
+    with _client(adapter=adapter) as client:
+        response = _post(client, TENANT_ID)
+        assert response.status_code == 502, response.text
+        detail = response.json()["detail"]
+        assert detail["code"] == "description_service_error"
+        assert detail["operation_id"]
+        assert adapter.calls == 0
+        assert _lease_state(client, detail["operation_id"]) == "active"
+        assert _operation_first_ready_at(client, detail["operation_id"]) is not None

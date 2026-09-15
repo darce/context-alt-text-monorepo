@@ -1630,6 +1630,7 @@ def ensure_tables(op) -> None:
         sa.Column("first_ready_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("retain_until", sa.TIMESTAMP(timezone=True), nullable=False),
         sa.CheckConstraint("first_ready_at >= started_at", name="ck_describe_startup_observations"),
+        heal_constraints=("ck_describe_startup_observations",),
     )
     _ensure_index(op, "idx_describe_startups_retention", "describe_startups", ["retain_until"])
     _ensure_table(
@@ -1650,7 +1651,7 @@ def ensure_tables(op) -> None:
         sa.Column("startup_ms", sa.Float(), nullable=True),
         sa.Column("server_elapsed_ms", sa.Float(), nullable=True),
         sa.CheckConstraint(
-            "(startup_id IS NOT NULL) OR (startup_ms IS NULL AND COALESCE(ramp_up_ms, 0) = 0)",
+            "(startup_id IS NOT NULL) OR (startup_ms IS NULL)",
             name="ck_describe_operation_startup_association",
         ),
         sa.CheckConstraint(
@@ -1681,6 +1682,18 @@ def ensure_tables(op) -> None:
         sa.CheckConstraint("completed_at >= accepted_at", name="ck_describe_operation_completed"),
         sa.ForeignKeyConstraint(["tenant_id"], ["tenants.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["startup_id"], ["describe_startups.startup_id"]),
+        heal_constraints=(
+            "ck_describe_operation_startup_association",
+            "ck_describe_operation_queue_ms",
+            "ck_describe_operation_ramp_up_ms",
+            "ck_describe_operation_processing_ms",
+            "ck_describe_operation_startup_ms",
+            "ck_describe_operation_server_elapsed_ms",
+            "ck_describe_operation_id",
+            "ck_describe_operation_expiry",
+            "ck_describe_operation_ready",
+            "ck_describe_operation_completed",
+        ),
     )
     _ensure_index(op, "idx_describe_operations_retention", "describe_operations", ["retain_until"])
     _ensure_table(
@@ -1700,6 +1713,10 @@ def ensure_tables(op) -> None:
             ["describe_operations.tenant_id", "describe_operations.operation_id"],
             ondelete="CASCADE",
         ),
+        heal_constraints=(
+            "ck_describe_demand_lease_state",
+            "ck_describe_demand_lease_expiry",
+        ),
     )
     _ensure_index(op, "idx_describe_demand_leases_retention", "describe_demand_leases", ["retain_until"])
     _ensure_index(op, "idx_describe_demand_leases_active", "describe_demand_leases", ["state", "expires_at"])
@@ -1718,7 +1735,7 @@ def ensure_tables(op) -> None:
         sa.Column("startup_id", sa.String(128), nullable=True),
         sa.Column("first_ready_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.CheckConstraint(
-            "(startup_id IS NOT NULL) OR (startup_ms IS NULL AND COALESCE(ramp_up_ms, 0) = 0)",
+            "(startup_id IS NOT NULL) OR (startup_ms IS NULL)",
             name="ck_image_description_runs_startup_association",
         ),
         sa.CheckConstraint(

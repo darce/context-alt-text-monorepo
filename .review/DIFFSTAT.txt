@@ -1,4 +1,4 @@
- .../identity-clusters/SuggestionCards.tsx          |  1 +
- .../__tests__/SuggestionCards.test.tsx             | 92 ++++++++++++++++++++++
- .../fixtures/gpuflow-candidate-preview.json        |  6 +-
- 3 files changed, 97 insertions(+), 2 deletions(-)
+ .../hooks/__tests__/useDescribeMedia.test.tsx      | 32 +++++++++++++++-------
+ .../js/admin/pages/workbench/MediaAltSuggest.tsx   | 11 ++++----
+ .../workbench/__tests__/MediaAltSuggest.test.tsx   | 26 ++++++++++++++++++
+ 3 files changed, 54 insertions(+), 15 deletions(-)

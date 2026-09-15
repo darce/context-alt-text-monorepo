@@ -1,2 +1,1 @@
-b690b1b4035b offload: Committed SV-01 fix; full test verification requires the
-bc12a83706a5 offload: Committed timing persistence as 2a67c76; database verification
+ce1053796834 offload: Committed fixes as 2266ac1; runtime verification requires the

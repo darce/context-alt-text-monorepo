@@ -1,6 +1,6 @@
- .../application/describe_operation_repository.py   | 278 +++++++++++++++++++++
- .../scene/application/describe_run_repository.py   |  94 ++++++-
- .../scene/domain/describe_run.py                   |  38 +++
- .../scene/tests/test_describe_run_repository.py    |  44 ++++
- .../tests/test_gpuflow_operation_repository.py     | 178 +++++++++++++
- 5 files changed, 628 insertions(+), 4 deletions(-)
+ .../application/describe_operation_repository.py   | 34 +++++++----
+ .../scene/application/describe_run_repository.py   | 26 +++++----
+ .../scene/domain/describe_run.py                   |  7 +++
+ .../scene/tests/test_describe_run_repository.py    | 36 ++++++++++++
+ .../tests/test_gpuflow_operation_repository.py     | 67 ++++++++++++++++++++++
+ 5 files changed, 150 insertions(+), 20 deletions(-)

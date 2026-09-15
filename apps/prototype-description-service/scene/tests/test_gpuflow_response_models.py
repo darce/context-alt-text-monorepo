@@ -13,6 +13,17 @@ from scene.interface_adapters.http.schemas.responses import (
     VisualFactsResponse,
 )
 
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+_SCHEMAS = {
+    VisualFactsResponse: json.loads(
+        (_REPO_ROOT / "packages/shared-contracts/schemas/image-description-response.schema.json").read_text()
+    ),
+    DescribeRunResponse: json.loads(
+        (_REPO_ROOT / "packages/shared-contracts/schemas/scene-describe-run.schema.json").read_text()
+    ),
+}
+_ABSENT_OPERATION_KEYS = ("operation_id", "startup_id", "timing")
+
 
 @pytest.fixture(params=[VisualFactsResponse, DescribeRunResponse])
 def response_case(request):
@@ -33,18 +44,24 @@ def response_case(request):
             "cached": False,
             "duration_ms": 12,
             "retention_class": "retain_all",
+            "tier": "provisional_cpu",
+            "result_generation": 1,
         }
         timing = {"queue_ms": None, "ramp_up_ms": 0, "processing_ms": 12.5, "startup_ms": None, "server_elapsed_ms": 15}
     else:
         payload = {
-            "tenant_id": "tenant",
-            "run_id": "run",
+            "tenant_id": "11111111-1111-4111-8111-111111111111",
+            "run_id": "22222222-2222-4222-8222-222222222222",
             "status": "cancelled",
             "phase": "cancelled",
             "completed": 1,
             "failed": 1,
             "skipped": 1,
             "total": 3,
+            "cancel_requested": False,
+            "eta_seconds": None,
+            "gpu_state": "unknown",
+            "recognition_enabled": True,
         }
         timing = {
             "queue_ms": None,
@@ -58,6 +75,20 @@ def response_case(request):
     return request.param, payload, timing
 
 
+def _dumped_payloads(response):
+    return response.model_dump(mode="json"), json.loads(response.model_dump_json())
+
+
+def _assert_omits_operation_metadata(payload):
+    for key in _ABSENT_OPERATION_KEYS:
+        assert key not in payload
+        assert payload.get(key) is None
+
+
+def _validate_shared_schema(model, payload):
+    jsonschema.validate(payload, _SCHEMAS[model])
+
+
 def test_timing_and_opaque_correlation_round_trip(response_case):
     model, payload, timing = response_case
     response = model(**payload, operation_id="opaque-operation", startup_id=None, timing=timing)
@@ -67,39 +98,40 @@ def test_timing_and_opaque_correlation_round_trip(response_case):
     assert wire["startup_id"] is None
 
 
-@pytest.mark.parametrize("field", ["operation_id", "startup_id", "timing"])
-def test_response_requires_explicit_operation_metadata(response_case, field):
+def test_builder_shaped_response_omits_absent_operation_metadata(response_case):
+    model, payload, _timing = response_case
+    response = model(**payload)
+    dumped, encoded = _dumped_payloads(response)
+    _assert_omits_operation_metadata(dumped)
+    _assert_omits_operation_metadata(encoded)
+    _validate_shared_schema(model, dumped)
+    _validate_shared_schema(model, encoded)
+
+
+def test_explicit_none_operation_metadata_is_omitted(response_case):
+    model, payload, _timing = response_case
+    response = model(**payload, operation_id=None, startup_id=None, timing=None)
+    dumped, encoded = _dumped_payloads(response)
+    _assert_omits_operation_metadata(dumped)
+    _assert_omits_operation_metadata(encoded)
+    _validate_shared_schema(model, dumped)
+    _validate_shared_schema(model, encoded)
+
+
+def test_populated_operation_metadata_validates_against_shared_schema(response_case):
     model, payload, timing = response_case
-    complete = {**payload, "operation_id": "opaque-operation", "startup_id": None, "timing": timing}
-    del complete[field]
-    with pytest.raises(ValidationError) as exc_info:
-        model(**complete)
-    assert [(error["loc"], error["type"]) for error in exc_info.value.errors()] == [
-        ((field,), "missing"),
-    ]
-
-
-@pytest.mark.parametrize("field", ["operation_id", "timing"])
-def test_response_rejects_null_required_values(response_case, field):
-    model, payload, timing = response_case
-    complete = {**payload, "operation_id": "opaque-operation", "startup_id": None, "timing": timing}
-    complete[field] = None
-    with pytest.raises(ValidationError) as exc_info:
-        model(**complete)
-    assert [error["loc"] for error in exc_info.value.errors()] == [(field,)]
-
-
-def test_serialized_accepted_response_matches_shared_contract(response_case):
-    model, payload, timing = response_case
-    if model is not VisualFactsResponse:
-        return
-    response = model(**payload, operation_id="opaque-operation", startup_id=None, timing=timing)
-    schema_path = (
-        Path(__file__).resolve().parents[4]
-        / "packages/shared-contracts/schemas/image-description-response.schema.json"
+    response = model(
+        **payload,
+        operation_id="opaque-operation",
+        startup_id="opaque-startup",
+        timing=timing,
     )
-    jsonschema.validate(json.loads(response.model_dump_json()), json.loads(schema_path.read_text()))
-
+    dumped, encoded = _dumped_payloads(response)
+    for wire in (dumped, encoded):
+        assert wire["operation_id"] == "opaque-operation"
+        assert wire["startup_id"] == "opaque-startup"
+        assert wire["timing"] == timing
+        _validate_shared_schema(model, wire)
 
 
 def test_timing_rejects_unknown_missing_and_invalid_measurements(response_case):

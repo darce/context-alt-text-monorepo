@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_serializer
 
 from scene.application.gpu_state import GpuState
 from scene.application.identity_merge import NamingRealizer
@@ -138,7 +138,29 @@ class DescribeRunTiming(BaseModel):
     items_timed: Annotated[int, Field(ge=0, strict=True)] | None
 
 
-class VisualFactsResponse(BaseModel):
+class OmitAbsentOperationMetadata(BaseModel):
+    """Drop unobserved operation metadata instead of emitting JSON nulls.
+
+    ``startup_id`` may be JSON null only when ``operation_id`` or ``timing`` is
+    present (unobserved start). When all three are unobserved, omit them.
+    """
+
+    @model_serializer(mode="wrap")
+    def _omit_absent_operation_metadata(self, handler):
+        payload = handler(self)
+        if not isinstance(payload, dict):
+            return payload
+        keep_null_startup = payload.get("operation_id") is not None or payload.get("timing") is not None
+        for key in ("operation_id", "startup_id", "timing"):
+            if payload.get(key) is not None:
+                continue
+            if key == "startup_id" and keep_null_startup:
+                continue
+            payload.pop(key, None)
+        return payload
+
+
+class VisualFactsResponse(OmitAbsentOperationMetadata):
     """The 15 contract-locked core fields plus additive optional preview /
     fusion fields (``generic_draft``/``named_draft``/``naming_provenance``/
     ``attachment_provenance``).
@@ -146,8 +168,9 @@ class VisualFactsResponse(BaseModel):
     Preview fields are draft-only: nothing here writes
     ``_wp_attachment_image_alt`` (that write path is E19-2).
 
-    Builders MUST supply operation_id, startup_id (nullable), and timing.
-    Unknown timing observations must be explicit nulls; timing itself is required.
+    ``operation_id``, ``startup_id``, and ``timing`` are additive optional.
+    Unknown timing observations stay explicit nulls inside ``timing``; older
+    builders may omit the three fields entirely. Never fabricate values.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -178,10 +201,10 @@ class VisualFactsResponse(BaseModel):
     # ALTQ-1 additive optional long-form surface (dual-length prompting).
     # None when the adapter produces only the short draft; never required.
     alt_text_long: str | None = None
-    # Builders supply correlation and measurements; unknown observations stay null.
-    operation_id: str = Field(min_length=1, max_length=128)
-    startup_id: str | None
-    timing: DescribeTiming
+    # Additive optional: omit on the wire when unobserved; never fabricate.
+    operation_id: str | None = Field(default=None, min_length=1, max_length=128)
+    startup_id: str | None = None
+    timing: DescribeTiming | None = None
 
 
 class DescribeJobResult(BaseModel):
@@ -197,11 +220,12 @@ class DescribeJobResult(BaseModel):
     error: str | None = None
 
 
-class DescribeRunResponse(BaseModel):
+class DescribeRunResponse(OmitAbsentOperationMetadata):
     """Async describe-run status returned by submit/status endpoints.
 
-    Builders MUST supply operation_id, startup_id (nullable), and timing.
-    Unknown timing observations must be explicit nulls; timing itself is required.
+    ``operation_id``, ``startup_id``, and ``timing`` are additive optional.
+    Unknown timing observations stay explicit nulls inside ``timing``; older
+    builders may omit the three fields entirely. Never fabricate values.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -230,9 +254,9 @@ class DescribeRunResponse(BaseModel):
     # snapshotted, so a later config change never moves an accepted run's number.
     # Null only for runs created outside the submit route (never via POST).
     deadline_seconds: float | None = None
-    operation_id: str = Field(min_length=1, max_length=128)
-    startup_id: str | None
-    timing: DescribeRunTiming
+    operation_id: str | None = Field(default=None, min_length=1, max_length=128)
+    startup_id: str | None = None
+    timing: DescribeRunTiming | None = None
 
 
 class DescribeRunItemResponse(BaseModel):

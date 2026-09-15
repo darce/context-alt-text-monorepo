@@ -16,7 +16,7 @@ tuples are `(action, instance_id)` with `action` ∈ `{START, STOP}`.
 `python -m infra.oci.gpu_lifecycle --mode reap|start` (default `reap`).
 
 `--mode start` emits START for STOPPED instances when the load snapshot has
-work (`queue_depth > 0` or `in_flight > 0`). `--mode reap` remains the idle
+work (`queue_depth > 0` or `in_flight > 0` or `batch_in_progress`). `--mode reap` remains the idle
 STOP path.
 
 Instance states:
@@ -381,9 +381,9 @@ async GPU count plus eligible lease count. Do not count a lease again as async
 work. The additive `lease_demand` field is a nonnegative nullable integer:
 the eligible lease count (zero when measured empty), or null for an unknown
 breakdown; null must never erase demand from `in_flight`.
-Count-based `has_work := (queue_depth + in_flight) > 0`; the existing
-`batch_in_progress` STOP guard remains independently authoritative across batch
-gaps. Readers ignoring `lease_demand` therefore retain correct demand protection.
+`has_work := ((queue_depth + in_flight) > 0) OR batch_in_progress` governs
+START and STOP, including batch gaps with both counts zero. Readers ignoring
+the informative `lease_demand` field therefore retain correct demand protection.
 Global `load_snapshot` aggregation MUST use the dedicated RLS-bypassed system
 session and count all tenants; a tenant-scoped session fails closed.
 

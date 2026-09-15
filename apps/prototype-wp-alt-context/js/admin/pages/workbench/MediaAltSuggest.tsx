@@ -1,11 +1,16 @@
 import { __, sprintf } from '@wordpress/i18n';
+import { Clock, Loader2 } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 
 import {
   DESCRIPTION_CORRECTION_CODE,
+  DESCRIBE_OPERATION_ERROR_CODE,
   resolveDescribeErrorCode,
   resolveDescribeErrorDataField,
+  resolveDescribeErrorDetailNumberField,
   resolveDescribeErrorMessage,
+  type DescribeOperationTiming,
+  type VisualFactsResponse,
 } from '../../api/describeApi';
 import { useCorrectMediaAlt } from '../../hooks/useCorrectMediaAlt';
 import { useDescribeMedia } from '../../hooks/useDescribeMedia';
@@ -151,6 +156,69 @@ export const formatOverLengthReadyAnnouncement = (length: number): string =>
 export const formatWithinLengthAnnouncement = (): string =>
   __('Draft is within the recommended maximum length.', 'alt-context');
 
+const formatMeasuredDuration = (milliseconds: number): string => {
+  const totalSeconds = milliseconds / 1000;
+  if (totalSeconds >= 60) {
+    const minutes = Math.floor(totalSeconds / 60);
+    const remainder = Math.round(totalSeconds % 60);
+    return remainder === 0 ? `${minutes} m` : `${minutes} m ${remainder} s`;
+  }
+  const roundedTenths = Math.round(totalSeconds * 10) / 10;
+  return Number.isInteger(roundedTenths) ? `${roundedTenths} s` : `${roundedTenths.toFixed(1)} s`;
+};
+
+/** Warming copy: ETA suffix only when the service supplied a number ([rg-015]). */
+export const formatWarmingStatus = (warmupEtaSeconds: number | null): string => {
+  const starting = __('Description service is starting', 'alt-context');
+  if (warmupEtaSeconds === null) {
+    return starting;
+  }
+  return `${starting}${sprintf(
+    /* translators: 1: warmup ETA in seconds from the service */
+    __(' (about %d s)', 'alt-context'),
+    warmupEtaSeconds,
+  )}`;
+};
+
+/**
+ * Compact measured timing line from wire values only. Omits the whole line when
+ * timing is absent or every display field is null.
+ */
+export const formatSuggestTimingLine = (timing: DescribeOperationTiming | null): string | null => {
+  if (timing == null) {
+    return null;
+  }
+  const parts: string[] = [];
+  if (timing.processing_ms !== null) {
+    parts.push(
+      sprintf(
+        /* translators: 1: measured processing duration, e.g. "1.2 s" */
+        __('Generated in %s', 'alt-context'),
+        formatMeasuredDuration(timing.processing_ms),
+      ),
+    );
+  }
+  if (timing.ramp_up_ms !== null) {
+    parts.push(
+      sprintf(
+        /* translators: 1: measured wait for service, e.g. "1 m 42 s" */
+        __('Waited for service %s', 'alt-context'),
+        formatMeasuredDuration(timing.ramp_up_ms),
+      ),
+    );
+  }
+  if (timing.startup_ms !== null) {
+    parts.push(
+      sprintf(
+        /* translators: 1: measured startup duration when known, e.g. "38 s" */
+        __('Started in %s', 'alt-context'),
+        formatMeasuredDuration(timing.startup_ms),
+      ),
+    );
+  }
+  return parts.length === 0 ? null : parts.join(', ');
+};
+
 export const MediaAltSuggest = ({
   mediaId,
   committedAlt = null,
@@ -209,7 +277,7 @@ export const MediaAltSuggest = ({
   // [S7-BR-02]. Local flag only drives "Marking as decorative…" labels while
   // isAccepting covers the shared in-flight disable + focus park [BR-13][BR-56].
   const [isMarkingDecorative, setIsMarkingDecorative] = useState(false);
-  const { mutate, isPending, isError, error, data, reset } = useDescribeMedia();
+  const { mutate, isPending, isError, error, data, reset, retry, warming, timing } = useDescribeMedia();
   const {
     mutate: acceptDraft,
     isPending: isAccepting,
@@ -270,6 +338,37 @@ export const MediaAltSuggest = ({
     }
   };
 
+  const handleDescribeSuccess = (response: VisualFactsResponse): void => {
+    // Capture the committed alt we are working from at draft generation
+    // (CAS baseline). Re-captured again when edit-draft mode opens.
+    committedAltBaselineRef.current = committedAltRef.current;
+    // [A11Y-34] branch (c): when the generated draft exceeds the recommended
+    // maximum, announce the length check once via the existing polite region
+    // (composed with the ready cue). Do not add a second live region [A11Y-19].
+    const draftText = response.alt_text_draft;
+    const isOver = isOverRecommendedAltLength(draftText);
+    wasOverLengthRef.current = isOver;
+    if (isOver) {
+      announceStatus(formatOverLengthReadyAnnouncement(draftText.length));
+    } else {
+      announceStatus(__('Draft ready. Review before saving.', 'alt-context'));
+    }
+  };
+
+  const handleDescribeError = (err: Error): void => {
+    if (resolveDescribeErrorCode(err) === DESCRIBE_OPERATION_ERROR_CODE.STARTING) {
+      announceStatus(
+        formatWarmingStatus(resolveDescribeErrorDetailNumberField(err, 'warmup_eta_seconds')),
+      );
+      return;
+    }
+    // BR-46: after the live-region hoist the region is always mounted, so this
+    // clear is load-bearing — without it a stale "Generating…" polite cue sits
+    // beside the assertive generate-failure alert (same two-regions defect as
+    // accept onError clear — BR-39).
+    clearStatus();
+  };
+
   const generate = (): void => {
     // Announce generating immediately so the pending branch's live region has
     // distinct text from a prior "Draft ready…" (regenerate re-announce path).
@@ -278,29 +377,16 @@ export const MediaAltSuggest = ({
     setConflictMessage(null);
     setIsEditing(false);
     mutate(mediaId, {
-      onSuccess: (response) => {
-        // Capture the committed alt we are working from at draft generation
-        // (CAS baseline). Re-captured again when edit-draft mode opens.
-        committedAltBaselineRef.current = committedAltRef.current;
-        // [A11Y-34] branch (c): when the generated draft exceeds the recommended
-        // maximum, announce the length check once via the existing polite region
-        // (composed with the ready cue). Do not add a second live region [A11Y-19].
-        const draftText = response.alt_text_draft;
-        const isOver = isOverRecommendedAltLength(draftText);
-        wasOverLengthRef.current = isOver;
-        if (isOver) {
-          announceStatus(formatOverLengthReadyAnnouncement(draftText.length));
-        } else {
-          announceStatus(__('Draft ready. Review before saving.', 'alt-context'));
-        }
-      },
-      // BR-46: after the live-region hoist the region is always mounted, so this
-      // clear is load-bearing — without it a stale "Generating…" polite cue sits
-      // beside the assertive generate-failure alert (same two-regions defect as
-      // accept onError clear — BR-39).
-      onError: () => {
-        clearStatus();
-      },
+      onSuccess: handleDescribeSuccess,
+      onError: handleDescribeError,
+    });
+  };
+
+  const retryWarming = (): void => {
+    announceStatus(__('Generating…', 'alt-context'));
+    retry({
+      onSuccess: handleDescribeSuccess,
+      onError: handleDescribeError,
     });
   };
 
@@ -334,7 +420,7 @@ export const MediaAltSuggest = ({
     const active = document.activeElement;
     const ownsFocus = !active || active === document.body || containerRef.current?.contains(active);
 
-    if (isError) {
+    if (warming || isError) {
       if (ownsFocus) {
         retryButtonRef.current?.focus();
       }
@@ -357,7 +443,7 @@ export const MediaAltSuggest = ({
         suggestButtonRef.current?.focus();
       }
     }
-  }, [isError, data]);
+  }, [isError, data, warming]);
 
   // Separate from the draft-landing focus effect: entering edit must not re-key
   // that effect, and Cancel must land on Edit rather than Dismiss.
@@ -512,7 +598,7 @@ export const MediaAltSuggest = ({
     if (next instanceof Node && containerRef.current?.contains(next)) {
       return;
     }
-    if (!data && !isPending && !isAccepting && !isMarkingDecorative && !isError) {
+    if (!data && !isPending && !isAccepting && !isMarkingDecorative && !isError && !warming) {
       clearStatus();
     }
   };
@@ -554,6 +640,33 @@ export const MediaAltSuggest = ({
         >
           <button type="button" className="button acx-media-selection__media-alt-suggest-trigger" disabled>
             {__('Generating…', 'alt-context')}
+          </button>
+        </div>
+      );
+    }
+
+    if (warming) {
+      const warmingText = formatWarmingStatus(warming.warmupEtaSeconds);
+      return (
+        <div
+          ref={containerRef}
+          className="acx-media-selection__media-alt-suggest"
+          role="group"
+          tabIndex={-1}
+          aria-label={warmingText}
+          onBlur={handleContainerBlur}
+        >
+          <p className="acx-media-selection__media-alt-warming" data-testid="media-alt-suggest-warming">
+            <Loader2 aria-hidden="true" size={16} />
+            {warmingText}
+          </p>
+          <button
+            type="button"
+            ref={retryButtonRef}
+            className="button acx-media-selection__media-alt-suggest-retry"
+            onClick={retryWarming}
+          >
+            {__('Retry', 'alt-context')}
           </button>
         </div>
       );
@@ -717,6 +830,7 @@ export const MediaAltSuggest = ({
       // Assess the string the author would actually commit — re-evaluates live as
       // they type in edit mode (editDraft) or from the generated draft otherwise.
       const commitCandidate = isEditing ? editDraft : data.alt_text_draft;
+      const timingLine = formatSuggestTimingLine(timing);
       const isOverLength = isOverRecommendedAltLength(commitCandidate);
       const showCommitError = conflictMessage != null || isAcceptError;
       // Extend editDescribedBy composition; do not replace. Keep error id when set.
@@ -772,6 +886,12 @@ export const MediaAltSuggest = ({
             </>
           ) : (
             <p className="acx-media-selection__media-alt-draft">{data.alt_text_draft}</p>
+          )}
+          {timingLine == null ? null : (
+            <p className="acx-media-selection__media-alt-timing" data-testid="media-alt-suggest-timing">
+              <Clock aria-hidden="true" size={16} />
+              {timingLine}
+            </p>
           )}
           <p id={disclosureId} className="acx-media-selection__media-alt-disclosure">
             {__('Drafted by AI — review before saving.', 'alt-context')}

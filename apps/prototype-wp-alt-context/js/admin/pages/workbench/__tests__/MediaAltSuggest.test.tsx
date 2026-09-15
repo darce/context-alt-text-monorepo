@@ -8,6 +8,8 @@ import {
   ALT_SUGGEST_COMMIT_CONFLICT_MESSAGE,
   formatAltLengthAdvisory,
   formatOverLengthReadyAnnouncement,
+  formatSuggestTimingLine,
+  formatWarmingStatus,
   MARK_DECORATIVE_LABEL,
   MediaAltSuggest,
   RECOMMENDED_ALT_TEXT_MAX_LENGTH,
@@ -16,6 +18,7 @@ import {
 } from '../MediaAltSuggest';
 import { correctDescriptionHistoryItem, describeMedia } from '../../../api/describeApi';
 import type { DescriptionHistoryItem, VisualFactsResponse } from '../../../api/describeApi';
+import suggestStates from './fixtures/gpuflow-suggest-states.json';
 import { queryKeys } from '../../../api/queryKeys';
 import type { WorkbenchMediaItem, WorkbenchMediaResponse } from '../../../api/workbenchMediaApi';
 
@@ -2751,5 +2754,99 @@ describe('MediaAltSuggest', () => {
       );
     });
     expect(screen.getByTestId('media-alt-suggest-status')).toHaveTextContent(/to-do list|missing/i);
+  });
+});
+
+const describeErrorFromFixture = (fixture: { status: number; detail: object }): Error =>
+  new Error(
+    `Request to /wp-json/acx/v1/recognition/describe failed (${fixture.status}): ${JSON.stringify({
+      detail: fixture.detail,
+    })}`,
+  );
+
+describe('MediaAltSuggest GPUFLOW warming and timing', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('renders starting as warming with ETA and a Retry control, not a failure alert', async () => {
+    describeMock.mockRejectedValueOnce(describeErrorFromFixture(suggestStates.starting_with_eta));
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+
+    const warming = await screen.findByTestId('media-alt-suggest-warming');
+    expect(warming).toHaveTextContent('Description service is starting (about 12 s)');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^retry$/i })).toBeEnabled();
+    expect(screen.getAllByRole('status')).toHaveLength(1);
+  });
+
+  it('omits a numeric ETA when warmup_eta_seconds is null', async () => {
+    describeMock.mockRejectedValueOnce(describeErrorFromFixture(suggestStates.starting_no_eta));
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+
+    const warming = await screen.findByTestId('media-alt-suggest-warming');
+    expect(warming).toHaveTextContent('Description service is starting');
+    expect(warming).not.toHaveTextContent(/\d/);
+    expect(warming).not.toHaveTextContent(/about/i);
+  });
+
+  it('retry after warming resubmits the stored operation_id', async () => {
+    describeMock
+      .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.starting_with_eta))
+      .mockResolvedValueOnce(suggestStates.success_with_timing as VisualFactsResponse);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^retry$/i }));
+
+    await screen.findByText(suggestStates.success_with_timing.alt_text_draft);
+    expect(describeMock).toHaveBeenNthCalledWith(1, 42);
+    expect(describeMock).toHaveBeenNthCalledWith(2, 42, { operationId: 'op-lease-1' });
+  });
+
+  it('renders the measured timing line from wire values including zero ramp-up', async () => {
+    describeMock.mockResolvedValueOnce(suggestStates.success_with_timing as VisualFactsResponse);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+
+    const timingLine = await screen.findByTestId('media-alt-suggest-timing');
+    expect(timingLine).toHaveTextContent('Generated in 1.2 s, Waited for service 0 s, Started in 38 s');
+    expect(screen.getAllByRole('status')).toHaveLength(1);
+  });
+
+  it('hides the timing line when timing is absent', async () => {
+    describeMock.mockResolvedValueOnce(suggestStates.success_no_timing as VisualFactsResponse);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+
+    await screen.findByText(suggestStates.success_no_timing.alt_text_draft);
+    expect(screen.queryByTestId('media-alt-suggest-timing')).not.toBeInTheDocument();
+  });
+
+  it('still shows unavailable as a failure, not warming', async () => {
+    describeMock.mockRejectedValueOnce(describeErrorFromFixture(suggestStates.unavailable));
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Description service is unavailable.');
+    expect(screen.queryByTestId('media-alt-suggest-warming')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /try again|retry/i })).toBeInTheDocument();
+  });
+
+  it('formats warming and timing helpers from fixture values', () => {
+    expect(formatWarmingStatus(12)).toBe('Description service is starting (about 12 s)');
+    expect(formatWarmingStatus(null)).toBe('Description service is starting');
+    expect(formatSuggestTimingLine(null)).toBeNull();
+    expect(formatSuggestTimingLine(suggestStates.success_with_timing.timing)).toBe(
+      'Generated in 1.2 s, Waited for service 0 s, Started in 38 s',
+    );
   });
 });

@@ -1,0 +1,82 @@
+{
+  "starting_with_eta": {
+    "status": 503,
+    "detail": {
+      "code": "description_service_starting",
+      "message": "Description service is starting.",
+      "operation_id": "op-lease-1",
+      "warmup_eta_seconds": 12
+    }
+  },
+  "starting_no_eta": {
+    "status": 503,
+    "detail": {
+      "code": "description_service_starting",
+      "message": "Description service is starting.",
+      "operation_id": "op-lease-1",
+      "warmup_eta_seconds": null
+    }
+  },
+  "unavailable": {
+    "status": 503,
+    "detail": {
+      "code": "description_service_unavailable",
+      "message": "Description service is unavailable."
+    }
+  },
+  "mismatch": {
+    "status": 409,
+    "detail": {
+      "code": "operation_mismatch",
+      "message": "operation mismatch",
+      "operation_id": "op-stale"
+    }
+  },
+  "success_with_timing": {
+    "tenant_id": "00000000-0000-4000-8000-000000000001",
+    "media_id": 42,
+    "image_hash": "sha256:abc",
+    "context_hash": "ctx",
+    "adapter": "local_cpu",
+    "model_id": "microsoft/Florence-2-base-ft",
+    "model_version": "florence-2-base-ft",
+    "prompt_or_task_version": "v1",
+    "visual_facts": { "caption": "A stone bridge over a calm river at dusk.", "objects": ["bridge"], "ocr_text": null },
+    "alt_text_draft": "A stone bridge over a calm river at dusk.",
+    "context_used": { "sources": [], "applied": false },
+    "provider_disclosure": { "provider": "local", "left_service_boundary": false },
+    "cached": false,
+    "duration_ms": 13800,
+    "retention_class": "retain_all",
+    "tier": "provisional_cpu",
+    "result_generation": 1,
+    "operation_id": "op-lease-1",
+    "startup_id": "startup-1",
+    "timing": {
+      "queue_ms": 4,
+      "ramp_up_ms": 0,
+      "processing_ms": 1200,
+      "startup_ms": 38000,
+      "server_elapsed_ms": 39204
+    }
+  },
+  "success_no_timing": {
+    "tenant_id": "00000000-0000-4000-8000-000000000001",
+    "media_id": 42,
+    "image_hash": "sha256:abc",
+    "context_hash": "ctx",
+    "adapter": "local_cpu",
+    "model_id": "microsoft/Florence-2-base-ft",
+    "model_version": "florence-2-base-ft",
+    "prompt_or_task_version": "v1",
+    "visual_facts": { "caption": "A stone bridge over a calm river at dusk.", "objects": ["bridge"], "ocr_text": null },
+    "alt_text_draft": "A stone bridge over a calm river at dusk.",
+    "context_used": { "sources": [], "applied": false },
+    "provider_disclosure": { "provider": "local", "left_service_boundary": false },
+    "cached": false,
+    "duration_ms": 13800,
+    "retention_class": "retain_all",
+    "tier": "provisional_cpu",
+    "result_generation": 1
+  }
+}

@@ -1556,3 +1556,52 @@ def test_gpu_service_exception_after_accept_terminalizes_operation(monkeypatch, 
         assert adapter.calls == 0
         assert _lease_state(client, detail["operation_id"]) == "completed"
         assert _active_lease_count(client) == 0
+
+
+def test_gpu_preflight_miss_does_not_repeat_cache_lookup(monkeypatch, tmp_path):
+    _gpu_env(monkeypatch, tmp_path, state="ready")
+    from scene.application.description_repository import ImageDescriptionRepository
+
+    lookups: list[int] = []
+    real = ImageDescriptionRepository.get_by_cache_key
+
+    async def counted(self, **kwargs):
+        lookups.append(1)
+        if len(lookups) > 1:
+            raise RuntimeError("second cache lookup must not run")
+        return await real(self, **kwargs)
+
+    monkeypatch.setattr(ImageDescriptionRepository, "get_by_cache_key", counted)
+    adapter = _GpuAdapter()
+    with _client(adapter=adapter) as client:
+        response = _post(client, TENANT_ID)
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["cached"] is False
+        assert body["operation_id"]
+        assert len(lookups) == 1
+        assert adapter.calls == 1
+        assert _lease_state(client, body["operation_id"]) == "completed"
+        assert _active_lease_count(client) == 0
+
+
+def test_cpu_no_session_success_omits_durable_operation_id(monkeypatch):
+    from scene.application.describe_operation_repository import DescribeOperationRepository
+
+    accepts: list[int] = []
+    real_accept = DescribeOperationRepository.accept
+
+    async def spy_accept(self, **kwargs):
+        accepts.append(1)
+        return await real_accept(self, **kwargs)
+
+    monkeypatch.setattr(DescribeOperationRepository, "accept", spy_accept)
+    with _client(db_absent=True) as client:
+        response = _post(client, TENANT_ID)
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert "operation_id" in body
+        assert body["operation_id"] is None
+        assert "startup_id" in body
+        assert "timing" in body
+        assert accepts == []

@@ -213,12 +213,14 @@ class VisualFactsResponse(OmitAbsentOperationMetadata):
 class MultipartDescribeResponse(VisualFactsResponse):
     """Strict multipart success envelope for ``/scene/describe/multipart``.
 
-    ``operation_id`` and ``timing`` are required and non-null; ``startup_id`` is
-    a required key that may be JSON null for warm/cache work. Base
+    ``operation_id`` is required and may be JSON null when no durable
+    DescribeOperation was accepted (CPU/hosted, no session); clients must not
+    poll a lease. ``timing`` is required and non-null; ``startup_id`` is a
+    required key that may be JSON null for warm/cache work. Base
     ``VisualFactsResponse`` omission behaviour is unchanged.
     """
 
-    operation_id: str = Field(min_length=1, max_length=128)
+    operation_id: str | None = Field(min_length=1, max_length=128)
     startup_id: str | None
     timing: DescribeTiming
 

@@ -1,272 +1,182 @@
-diff --git a/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx b/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx
---- a/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx
-+++ b/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx
-@@ -178,11 +178,24 @@ export const GpuControlCard = (): React.JSX.Element => {
-   const stopReason = !canStop ? stopBlockedReason : pendingReason;
-   const displayedState = data && data.snapshot_fresh ? data.gpu_state.state : GPU_STATE.UNKNOWN;
- 
--  const confirm = (): void => {
-+  React.useEffect(() => {
-     if (confirmation === null) {
-       return;
-     }
--    requestIntent(confirmation);
-+    const startStillAllowed = confirmation === GpuIntentAction.START && canStart;
-+    const stopStillAllowed = confirmation === GpuIntentAction.STOP && canStop;
-+    if (displayedState === GPU_STATE.UNKNOWN || (!startStillAllowed && !stopStillAllowed)) {
-+      setConfirmation(null);
-+    }
-+  }, [confirmation, displayedState, canStart, canStop]);
-+
-+  const confirm = (): void => {
-+    const action = confirmation;
-+    if (action === GpuIntentAction.START && canStart) {
-+      requestIntent(action);
-+    } else if (action === GpuIntentAction.STOP && canStop) {
-+      requestIntent(action);
-+    }
-     setConfirmation(null);
-   };
- 
-@@ -295,17 +308,6 @@ export const GpuControlCard = (): React.JSX.Element => {
-                 </button>
-                 {stopReason ? <span id="z-gpu-stop-reason">disabled: {stopReason}</span> : null}
- 
--                {canReturnToAuto ? (
--                  <button
--                    type="button"
--                    className="acx-button acx-button--secondary"
--                    onClick={() => requestIntent(GpuIntentAction.AUTO)}
--                    disabled={isIntentPending}
--                  >
--                    <span aria-hidden="true">↺</span> {__('Return to automatic', 'alt-context')}
--                  </button>
--                ) : null}
--
-                 {displayedState === GPU_STATE.READY ? (
-                   <a className="acx-button acx-button--secondary" href={toWorkbench()}>
-                     <span aria-hidden="true">→</span> {__('Go to Workbench', 'alt-context')}
-@@ -314,6 +316,17 @@ export const GpuControlCard = (): React.JSX.Element => {
-               </>
-             ) : null}
- 
-+            {canReturnToAuto ? (
-+              <button
-+                type="button"
-+                className="acx-button acx-button--secondary"
-+                onClick={() => requestIntent(GpuIntentAction.AUTO)}
-+                disabled={isIntentPending}
-+              >
-+                <span aria-hidden="true">↺</span> {__('Return to automatic', 'alt-context')}
-+              </button>
-+            ) : null}
-+
-             <button type="button" className="acx-button acx-button--tertiary" onClick={() => void refetch()}>
-               <span aria-hidden="true">↻</span> {__('Refresh', 'alt-context')}
-             </button>
-diff --git a/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx b/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx
---- a/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx
-+++ b/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx
-@@ -1,12 +1,11 @@
--import React from 'react';
- import { fireEvent, render, screen } from '@testing-library/react';
- import { beforeEach, describe, expect, it, vi } from 'vitest';
- 
- import { GPU_INTENT_ACTION, GPU_INTENT_STATUS, GPU_STATE, type GpuStatusResponse } from '../../../api/gpuApi';
- import { GPU_STATE_VOCABULARY } from '../../workbench/gpuStatePresentation';
--import serviceStates from './fixtures/gpuflow-service-states.json';
- import { GpuControlCard } from '../GpuControlCard';
- import * as gpuControl from '../useGpuControl';
-+import serviceStates from './fixtures/gpuflow-service-states.json';
- 
- vi.mock('../useGpuControl', async (importOriginal) => {
-   const actual = await importOriginal<typeof gpuControl>();
-@@ -267,7 +266,7 @@ describe('GpuControlCard', () => {
-     expect(screen.getByTestId('gpu-stale-notice')).toHaveTextContent('Service status is out of date');
-     expect(screen.queryByRole('button', { name: 'Start service' })).not.toBeInTheDocument();
-     expect(screen.queryByRole('button', { name: /Stop service/ })).not.toBeInTheDocument();
--    expect(screen.queryByRole('button', { name: 'Return to automatic' })).not.toBeInTheDocument();
-+    expect(screen.getByRole('button', { name: 'Return to automatic' })).toBeInTheDocument();
-     expect(screen.getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
-   });
- 
-@@ -280,12 +279,70 @@ describe('GpuControlCard', () => {
-     render(<GpuControlCard />);
- 
-     expect(screen.getByText(`Service: ${GPU_STATE_VOCABULARY.notReported}`)).toBeInTheDocument();
-+    expect(screen.queryByRole('button', { name: 'Start service' })).not.toBeInTheDocument();
-+    expect(screen.queryByRole('button', { name: /Stop service/ })).not.toBeInTheDocument();
-+    expect(screen.getByRole('button', { name: 'Return to automatic' })).toBeInTheDocument();
-+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
-+  });
-+
-+  it('omits Return to automatic on unknown when intent is already automatic', () => {
-+    mockControl(statusResponse({ state: 'unknown' }), {
-+      canStart: false,
-+      canStop: false,
-+      canReturnToAuto: false,
-+    });
-+    render(<GpuControlCard />);
-+
-     expect(screen.queryByRole('button', { name: 'Start service' })).not.toBeInTheDocument();
-     expect(screen.queryByRole('button', { name: /Stop service/ })).not.toBeInTheDocument();
-     expect(screen.queryByRole('button', { name: 'Return to automatic' })).not.toBeInTheDocument();
-     expect(screen.getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
-   });
- 
-+  it('clears an open stop confirmation when the snapshot becomes stale', () => {
-+    const requestIntent = vi.fn();
-+    mockControl(statusResponse({ state: 'ready' }), { requestIntent });
-+    const { rerender } = render(<GpuControlCard />);
-+    fireEvent.click(screen.getByRole('button', { name: /Stop service/ }));
-+    expect(screen.getByRole('button', { name: 'Confirm stop' })).toBeInTheDocument();
-+
-+    mockControl(
-+      {
-+        ...statusResponse({ state: 'ready' }),
-+        snapshot_age_seconds: 240,
-+        snapshot_fresh: false,
-+      },
-+      { requestIntent, canStart: false, canStop: false },
-+    );
-+    rerender(<GpuControlCard />);
-+
-+    expect(screen.queryByTestId('z-stop-preview')).not.toBeInTheDocument();
-+    expect(screen.queryByRole('button', { name: 'Confirm stop' })).not.toBeInTheDocument();
-+    expect(requestIntent).not.toHaveBeenCalled();
-+  });
-+
-+  it('clears an open start confirmation when the snapshot becomes stale', () => {
-+    const requestIntent = vi.fn();
-+    mockControl(statusResponse(), { requestIntent });
-+    const { rerender } = render(<GpuControlCard />);
-+    fireEvent.click(screen.getByRole('button', { name: 'Start service' }));
-+    expect(screen.getByRole('button', { name: 'Confirm start' })).toBeInTheDocument();
-+
-+    mockControl(
-+      {
-+        ...statusResponse(),
-+        snapshot_age_seconds: 240,
-+        snapshot_fresh: false,
-+      },
-+      { requestIntent, canStart: false, canStop: false },
-+    );
-+    rerender(<GpuControlCard />);
-+
-+    expect(screen.queryByTestId('z-start-preview')).not.toBeInTheDocument();
-+    expect(screen.queryByRole('button', { name: 'Confirm start' })).not.toBeInTheDocument();
-+    expect(requestIntent).not.toHaveBeenCalled();
-+  });
-+
-   it.each([
-     [GPU_STATE.STOPPED, true, 'a service request is already in flight'],
-     [GPU_STATE.STARTING, true, 'a service request is already in flight'],
-diff --git a/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/useGpuControl.test.tsx b/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/useGpuControl.test.tsx
---- a/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/useGpuControl.test.tsx
-+++ b/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/useGpuControl.test.tsx
-@@ -57,11 +57,14 @@ const statusResponse = ({
-   ...overrides,
- });
- 
--const wrapper = ({ children }: { children: ReactNode }) => {
-+const createWrapper = () => {
-   const client = new QueryClient({
-     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-   });
--  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
-+  const wrapper = ({ children }: { children: ReactNode }) => (
-+    <QueryClientProvider client={client}>{children}</QueryClientProvider>
-+  );
-+  return wrapper;
+diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/SuggestionCards.tsx b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/SuggestionCards.tsx
+--- a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/SuggestionCards.tsx
++++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/SuggestionCards.tsx
+@@ -65,6 +65,14 @@ const assertTruthyLabel: (
+   }
  };
  
- describe('useGpuControl', () => {
-@@ -83,7 +86,7 @@ describe('useGpuControl', () => {
-   it('derives start from the stopped zero state and keeps stop disabled', async () => {
-     fetchGpuStatusMock.mockResolvedValue(statusResponse());
- 
--    const { result } = renderHook(() => useGpuControl(), { wrapper });
-+    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
-     await waitFor(() => expect(result.current.data).toBeDefined());
- 
-     expect(result.current.canStart).toBe(true);
-@@ -95,7 +98,7 @@ describe('useGpuControl', () => {
-   it('keeps Start disabled when a stopped-looking snapshot is stale', async () => {
-     fetchGpuStatusMock.mockResolvedValue(statusResponse({ snapshot_age_seconds: 240, snapshot_fresh: false }));
- 
--    const { result } = renderHook(() => useGpuControl(), { wrapper });
-+    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
-     await waitFor(() => expect(result.current.data).toBeDefined());
- 
-     expect(result.current.canStart).toBe(false);
-@@ -113,7 +116,7 @@ describe('useGpuControl', () => {
-       }),
-     );
- 
--    const { result } = renderHook(() => useGpuControl(), { wrapper });
-+    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
-     await waitFor(() => expect(result.current.data).toBeDefined());
- 
-     expect(result.current.canStart).toBe(false);
-@@ -123,7 +126,7 @@ describe('useGpuControl', () => {
-   it('keeps Start disabled for a fresh snapshot that reports an unknown machine state', async () => {
-     fetchGpuStatusMock.mockResolvedValue(statusResponse({ gpu_state: { state: 'unknown' } }));
- 
--    const { result } = renderHook(() => useGpuControl(), { wrapper });
-+    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
-     await waitFor(() => expect(result.current.data).toBeDefined());
- 
-     expect(result.current.canStart).toBe(false);
-@@ -139,7 +142,7 @@ describe('useGpuControl', () => {
-       }),
-     );
- 
--    const { result } = renderHook(() => useGpuControl(), { wrapper });
-+    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
-     await waitFor(() => expect(result.current.data).toBeDefined());
-     expect(result.current.canStart).toBe(false);
-     expect(result.current.canStop).toBe(true);
-@@ -149,7 +152,7 @@ describe('useGpuControl', () => {
-   it('presents starting with the optimistic pending start intent', async () => {
-     fetchGpuStatusMock.mockResolvedValue(statusResponse());
-     postGpuIntentMock.mockReturnValue(new Promise(() => {}));
--    const { result } = renderHook(() => useGpuControl(), { wrapper });
-+    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
-     await waitFor(() => expect(result.current.data).toBeDefined());
-     act(() => {
-       result.current.requestIntent(GPU_INTENT_ACTION.START);
-@@ -169,7 +172,7 @@ describe('useGpuControl', () => {
-       }),
-     );
- 
--    const { result } = renderHook(() => useGpuControl(), { wrapper });
-+    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
-     await waitFor(() => expect(result.current.data).toBeDefined());
- 
-     act(() => {
-@@ -188,8 +191,24 @@ describe('useGpuControl', () => {
-   it('enables Return to automatic only when the effective intent is not automatic', async () => {
-     fetchGpuStatusMock.mockResolvedValue(statusResponse({ gpu_state: { intent: GPU_INTENT_ACTION.START } }));
- 
--    const { result } = renderHook(() => useGpuControl(), { wrapper });
-+    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
-     await waitFor(() => expect(result.current.data).toBeDefined());
-     expect(result.current.canReturnToAuto).toBe(true);
-   });
++const SuggestionFacePlaceholder = (): React.JSX.Element => (
++  <Avatar
++    size="lg"
++    className="acx-suggestion-card__thumb"
++    missingLabel={REPRESENTATIVE_VOCABULARY.imageUnavailable}
++  />
++);
 +
-+  it('keeps Return to automatic available when a non-automatic snapshot is stale or unknown', async () => {
-+    fetchGpuStatusMock.mockResolvedValue(
-+      statusResponse({
-+        gpu_state: { state: 'ready', intent: GPU_INTENT_ACTION.START },
-+        snapshot_age_seconds: 240,
-+        snapshot_fresh: false,
-+      }),
+ const FaceCropControl = ({
+   mediaUrl,
+   bbox,
+@@ -80,6 +88,10 @@ const FaceCropControl = ({
+   mediaId?: number;
+   identityId?: string;
+ }): React.JSX.Element => {
++  if (!isCroppableBbox(bbox)) {
++    return <SuggestionFacePlaceholder />;
++  }
++
+   if (!onOpen) {
+     return (
+       <FaceThumbnail
+@@ -154,9 +166,8 @@ export const SuggestionCard = ({
+           bbox: suggestion.enrichment.representativeBbox,
+         }
+       : null;
+-  const identityThumbUrl = suggestion.enrichment?.identityThumbUrl ?? suggestion.enrichment?.identityMediaUrl ?? null;
+-  const representativeThumbUrl =
+-    suggestion.enrichment?.representativeThumbUrl ?? suggestion.enrichment?.representativeMediaUrl ?? null;
++  const identityThumbUrl = suggestion.enrichment?.identityThumbUrl ?? null;
++  const representativeThumbUrl = suggestion.enrichment?.representativeThumbUrl ?? null;
+   const storedFaceCount =
+     typeof suggestion.identityCount === 'number' &&
+     Number.isInteger(suggestion.identityCount) &&
+@@ -226,11 +237,7 @@ export const SuggestionCard = ({
+               className="acx-suggestion-card__thumb"
+             />
+           ) : (
+-            <Avatar
+-              size="lg"
+-              className="acx-suggestion-card__thumb"
+-              missingLabel={REPRESENTATIVE_VOCABULARY.imageUnavailable}
+-            />
++            <SuggestionFacePlaceholder />
+           )}
+           <span className="acx-suggestion-card__face-label">{__('Candidate', 'alt-context')}</span>
+         </div>
+@@ -251,11 +258,7 @@ export const SuggestionCard = ({
+               className="acx-suggestion-card__thumb"
+             />
+           ) : (
+-            <Avatar
+-              size="lg"
+-              className="acx-suggestion-card__thumb"
+-              missingLabel={REPRESENTATIVE_VOCABULARY.imageUnavailable}
+-            />
++            <SuggestionFacePlaceholder />
+           )}
+           <span className="acx-suggestion-card__face-label">{displayLabel}</span>
+         </div>
+diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/SuggestionCards.test.tsx b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/SuggestionCards.test.tsx
+--- a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/SuggestionCards.test.tsx
++++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/SuggestionCards.test.tsx
+@@ -45,20 +45,58 @@ const baseSuggestion: ReviewSuggestion = {
+   identityCount: 3,
+ };
+ 
++const imageSrcCount = (src: string): number =>
++  screen.queryAllByRole('img').filter((element) => element.getAttribute('src') === src).length;
++
+ describe('SuggestionCard GPUFLOW-1 candidate preview', () => {
++  it('renders distinct candidate and representative avatars', () => {
++    render(
++      <SuggestionCard
++        suggestion={{
++          ...baseSuggestion,
++          enrichment: { ...preview.candidate, ...preview.representative },
++        }}
++        onAccept={vi.fn()}
++        onReject={vi.fn()}
++        isPending={false}
++        lowConfidenceThreshold={0.5}
++      />,
 +    );
 +
-+    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
-+    await waitFor(() => expect(result.current.data).toBeDefined());
-+    expect(result.current.canStart).toBe(false);
-+    expect(result.current.canStop).toBe(false);
-+    expect(result.current.canReturnToAuto).toBe(true);
++    expect(screen.getByAltText('Candidate face, position 1 of 1')).toHaveAttribute(
++      'src',
++      preview.candidate.identityMediaUrl,
++    );
++    expect(screen.getByAltText('Alex stored face, position 1 of 3')).toHaveAttribute(
++      'src',
++      preview.representative.representativeMediaUrl,
++    );
++    expect(preview.candidate.identityMediaUrl).not.toBe(preview.representative.representativeMediaUrl);
++    expect(imageSrcCount(preview.candidate.identityMediaUrl)).toBe(1);
++    expect(imageSrcCount(preview.representative.representativeMediaUrl)).toBe(1);
 +  });
++
+   it('shows an explicit placeholder when no noncandidate representative exists', () => {
+     render(
+       <SuggestionCard
+-        suggestion={{ ...baseSuggestion, enrichment: { ...preview.candidate, ...preview.nullRepresentative } }}
++        suggestion={{
++          ...baseSuggestion,
++          enrichment: { ...preview.candidate, ...preview.nullRepresentative },
++        }}
+         onAccept={vi.fn()}
+         onReject={vi.fn()}
+         isPending={false}
+         lowConfidenceThreshold={0.5}
+       />,
+     );
+-    expect(screen.getByAltText('Candidate face, position 1 of 1')).toHaveAttribute('src', preview.candidate.identityMediaUrl);
++
++    expect(screen.getByAltText('Candidate face, position 1 of 1')).toHaveAttribute(
++      'src',
++      preview.candidate.identityMediaUrl,
++    );
+     expect(screen.getByRole('img', { name: 'Representative image unavailable' })).toBeInTheDocument();
+     expect(screen.queryByAltText('Alex stored face, position 1 of 3')).toBeNull();
++    expect(imageSrcCount(preview.candidate.identityMediaUrl)).toBe(1);
+   });
+ 
+   it.each([
+@@ -84,11 +122,48 @@ describe('SuggestionCard GPUFLOW-1 candidate preview', () => {
+         lowConfidenceThreshold={0.5}
+       />,
+     );
++
+     expect(screen.queryByRole('button', { name: 'View original photo' })).toBeNull();
+     expect(container.querySelector('.acx-face-thumbnail')).toBeNull();
+-    expect(screen.getByAltText('Candidate face, position 1 of 1')).toHaveAttribute('src', preview.candidate.identityMediaUrl);
+-    expect(screen.getByAltText('Alex stored face, position 1 of 3')).toHaveAttribute('src', preview.representative.representativeMediaUrl);
++    expect(screen.queryByAltText('Candidate face, position 1 of 1')).toBeNull();
++    expect(screen.queryByAltText('Alex stored face, position 1 of 3')).toBeNull();
++    expect(screen.getAllByRole('img', { name: 'Representative image unavailable' })).toHaveLength(2);
++    expect(imageSrcCount(preview.candidate.identityMediaUrl)).toBe(0);
++    expect(imageSrcCount(preview.representative.representativeMediaUrl)).toBe(0);
+   });
++
++  it.each(preview.nonCroppableBboxes)(
++    'falls back to a placeholder when the representative bbox is not croppable %j',
++    (bbox) => {
++      const { container } = render(
++        <SuggestionCard
++          suggestion={{
++            ...baseSuggestion,
++            enrichment: {
++              ...preview.candidate,
++              ...preview.representative,
++              representativeBbox: bbox,
++            },
++          }}
++          onAccept={vi.fn()}
++          onReject={vi.fn()}
++          onOpenOriginal={vi.fn()}
++          isPending={false}
++          lowConfidenceThreshold={0.5}
++        />,
++      );
++
++      expect(screen.getByAltText('Candidate face, position 1 of 1')).toHaveAttribute(
++        'src',
++        preview.candidate.identityMediaUrl,
++      );
++      expect(container.querySelectorAll('.acx-face-thumbnail')).toHaveLength(1);
++      expect(screen.getByRole('img', { name: 'Representative image unavailable' })).toBeInTheDocument();
++      expect(screen.queryByAltText('Alex stored face, position 1 of 3')).toBeNull();
++      expect(imageSrcCount(preview.candidate.identityMediaUrl)).toBe(1);
++      expect(imageSrcCount(preview.representative.representativeMediaUrl)).toBe(0);
++    },
++  );
  });
+ 
+ describe('SuggestionCard BR-41 group accname', () => {

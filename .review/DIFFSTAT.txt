@@ -1,4 +1,3 @@
- .../js/admin/pages/settings/GpuControlCard.tsx     | 39 +++++++++-----
- .../settings/__tests__/GpuControlCard.test.tsx     | 63 ++++++++++++++++++++--
- .../settings/__tests__/useGpuControl.test.tsx      | 39 ++++++++++----
- 3 files changed, 115 insertions(+), 26 deletions(-)
+ .../identity-clusters/SuggestionCards.tsx          | 29 ++++----
+ .../__tests__/SuggestionCards.test.tsx             | 83 ++++++++++++++++++++--
+ 2 files changed, 95 insertions(+), 17 deletions(-)

@@ -1701,7 +1701,8 @@ PHP;
 
         $this->assertInstanceOf(WP_REST_Response::class, $first);
         $this->assertSame(503, $first->get_status());
-        $this->assertNull($first->get_data()['detail']['warmup_eta_seconds'] ?? 'missing');
+        $this->assertArrayHasKey('warmup_eta_seconds', $first->get_data()['detail']);
+        $this->assertNull($first->get_data()['detail']['warmup_eta_seconds']);
         $this->assertInstanceOf(WP_REST_Response::class, $second);
         $this->assertFalse(get_transient($describeCircuit), 'null warmup_eta_seconds is contract-valid warming');
         $this->assertFalse(get_transient($describeFailures), 'null ETA warming must not increment describe');

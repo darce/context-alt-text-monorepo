@@ -1,97 +1,152 @@
-diff --git a/apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php b/apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php
---- a/apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php
-+++ b/apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php
-@@ -632,7 +632,7 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
- 			return false;
- 		}
+diff --git a/apps/prototype-wp-alt-context/js/admin/api/__tests__/describeApi.test.ts b/apps/prototype-wp-alt-context/js/admin/api/__tests__/describeApi.test.ts
+--- a/apps/prototype-wp-alt-context/js/admin/api/__tests__/describeApi.test.ts
++++ b/apps/prototype-wp-alt-context/js/admin/api/__tests__/describeApi.test.ts
+@@ -605,10 +605,9 @@ describe('describeApi', () => {
+     expect(options?.body).toEqual({ media_id: 42, operation_id: 'op-lease-1' });
+   });
  
--		if ( ! array_key_exists( 'operation_id', $detail ) || ! $this->is_nullable_opaque_id( $detail['operation_id'] ) ) {
-+		if ( ! array_key_exists( 'operation_id', $detail ) || ! $this->is_opaque_id( $detail['operation_id'] ) ) {
- 			return false;
- 		}
+-  it('accepts GPUFLOW multipart success keys including a null operation_id and nested timing', () => {
++  it('rejects a null operation_id on describe success while accepting an absent key', () => {
+     const payload = {
+       ...sampleResponse,
+-      operation_id: null,
+       startup_id: null,
+       timing: {
+         queue_ms: 1,
+@@ -618,7 +617,11 @@ describe('describeApi', () => {
+         server_elapsed_ms: 20,
+       },
+     };
++    expect(() => parseVisualFactsResponse({ ...payload, operation_id: null })).toThrow(
++      new MalformedVisualFactsResponseError('response.operation_id'),
++    );
+     expect(parseVisualFactsResponse(payload)).toEqual(payload);
++    expect(parseVisualFactsResponse(payload).operation_id).toBeUndefined();
+   });
  
-@@ -657,12 +657,10 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
- 	}
- 
- 	/**
--	 * Opaque ids are string|null; strings must be non-empty and <= 128 chars.
-+	 * Opaque ids are non-empty strings of at most 128 bytes.
-+	 * Typed error `detail.operation_id` is never null.
- 	 */
--	private function is_nullable_opaque_id( mixed $value ): bool {
--		if ( null === $value ) {
--			return true;
--		}
-+	private function is_opaque_id( mixed $value ): bool {
- 		if ( ! is_string( $value ) ) {
- 			return false;
- 		}
-@@ -671,6 +669,14 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
- 		return $length >= 1 && $length <= 128;
- 	}
- 
-+	/**
-+	 * Opaque ids are string|null; strings must be non-empty and <= 128 bytes.
-+	 * Used for `startup_id` only.
-+	 */
-+	private function is_nullable_opaque_id( mixed $value ): bool {
-+		return null === $value || $this->is_opaque_id( $value );
-+	}
+   it('accepts a minted operation_id and startup_id on the describe success envelope', () => {
+@@ -1013,6 +1016,20 @@ describe('resolveDescribeErrorDetailNumberField', () => {
+     expect(resolveDescribeErrorDetailNumberField(new Error('network down'), 'warmup_eta_seconds')).toBeNull();
+     expect(resolveDescribeErrorDetailNumberField(null, 'warmup_eta_seconds')).toBeNull();
+   });
 +
- 	/**
- 	 * Timing object keys must match image-description-response.schema.json
- 	 * exactly, with number|null values (unknown => null).
-diff --git a/apps/prototype-wp-alt-context/tests/Unit/ProxyRequestTest.php b/apps/prototype-wp-alt-context/tests/Unit/ProxyRequestTest.php
---- a/apps/prototype-wp-alt-context/tests/Unit/ProxyRequestTest.php
-+++ b/apps/prototype-wp-alt-context/tests/Unit/ProxyRequestTest.php
-@@ -1666,6 +1666,11 @@ PHP;
-                 'headers' => ['Retry-After' => '5'],
-                 'body' => json_encode(['detail' => $overlongId]),
-             ]],
-+            'null_operation_id' => [[
-+                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
-+                'headers' => ['Retry-After' => '5'],
-+                'body' => json_encode(['detail' => array_merge($validDetail, ['operation_id' => null])]),
-+            ]],
-             'retry_after_zero' => [[
-                 'response' => ['code' => 503, 'message' => 'Service Unavailable'],
-                 'headers' => ['Retry-After' => '0'],
-@@ -1733,6 +1738,38 @@ PHP;
-         $this->assertFalse(get_transient($describeFailures), 'null ETA warming must not increment describe');
++  it('returns null for a negative warmup_eta_seconds', () => {
++    const err = new Error(
++      'Request to .../describe failed (503): {"detail":{"code":"description_service_starting","message":"Description service is starting.","operation_id":"op-lease-1","startup_id":null,"warmup_eta_seconds":-3,"timing":{"queue_ms":0,"ramp_up_ms":null,"processing_ms":null,"startup_ms":null,"server_elapsed_ms":1}}}',
++    );
++    expect(resolveDescribeErrorDetailNumberField(err, 'warmup_eta_seconds')).toBeNull();
++  });
++
++  it('treats -0 warmup_eta_seconds as 0', () => {
++    const err = new Error(
++      'Request to .../describe failed (503): {"detail":{"code":"description_service_starting","message":"Description service is starting.","operation_id":"op-lease-1","startup_id":null,"warmup_eta_seconds":-0,"timing":{"queue_ms":0,"ramp_up_ms":null,"processing_ms":null,"startup_ms":null,"server_elapsed_ms":1}}}',
++    );
++    expect(resolveDescribeErrorDetailNumberField(err, 'warmup_eta_seconds')).toBe(0);
++  });
+ });
+ 
+ describe('resolveDescribeErrorDataBooleanField', () => {
+diff --git a/apps/prototype-wp-alt-context/js/admin/api/__tests__/describeRunResponseContract.test.ts b/apps/prototype-wp-alt-context/js/admin/api/__tests__/describeRunResponseContract.test.ts
+--- a/apps/prototype-wp-alt-context/js/admin/api/__tests__/describeRunResponseContract.test.ts
++++ b/apps/prototype-wp-alt-context/js/admin/api/__tests__/describeRunResponseContract.test.ts
+@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
+ 
+ import { describe, expect, expectTypeOf, it } from 'vitest';
+ 
+-import type { DescribeRunResponse } from '../describeApi';
++import type { DescribeRunResponse, DescribeRunTiming } from '../describeApi';
+ 
+ /**
+  * The GATE referenced by the WBUX6-MRG-03 comment on DescribeRunResponse. That
+@@ -35,7 +35,12 @@ interface DescribeRunSchema {
+  * silent fall-through to whatever local default that consumer invented
+  * (rg-005, rg-015).
+  */
+-const DESCRIBE_RUN_RESPONSE_OPTIONAL_KEYS = ['deadline_seconds'] as const;
++const DESCRIBE_RUN_RESPONSE_OPTIONAL_KEYS = [
++  'deadline_seconds',
++  'operation_id',
++  'startup_id',
++  'timing',
++] as const;
+ 
+ /** Single canonical key list for the envelope (sr-007), mirrored against the schema. */
+ const DESCRIBE_RUN_RESPONSE_KEYS = [
+@@ -114,12 +119,18 @@ describe('DescribeRunResponse contract', () => {
+     // Optional AND nullable on the wire, so the TS field has to admit both.
+     expect(schema.properties?.deadline_seconds?.type).toEqual(['number', 'null']);
+     expectTypeOf<DescribeRunResponse['deadline_seconds']>().toEqualTypeOf<number | null | undefined>();
++    expect(schema.properties?.operation_id?.type).toBe('string');
++    expectTypeOf<DescribeRunResponse['operation_id']>().toEqualTypeOf<string | undefined>();
++    expect(schema.properties?.startup_id?.type).toEqual(['string', 'null']);
++    expectTypeOf<DescribeRunResponse['startup_id']>().toEqualTypeOf<string | null | undefined>();
++    expect(schema.properties?.timing?.type).toBe('object');
++    expectTypeOf<DescribeRunResponse['timing']>().toEqualTypeOf<DescribeRunTiming | undefined>();
+ 
+     // The envelope is still exactly required + the optional keys, so a new
+     // schema property added without a TS field fails here rather than silently.
+-    expect([...declared].sort()).toEqual(
+-      [...DESCRIBE_RUN_RESPONSE_KEYS, ...DESCRIBE_RUN_RESPONSE_OPTIONAL_KEYS].sort(),
+-    );
++    const expectedKeys = [...DESCRIBE_RUN_RESPONSE_KEYS, ...DESCRIBE_RUN_RESPONSE_OPTIONAL_KEYS];
++    expect(expectedKeys).toHaveLength(16);
++    expect([...declared].sort()).toEqual(expectedKeys.sort());
+   });
+ 
+   it('accepts a disclosed budget without disturbing the required envelope', () => {
+diff --git a/apps/prototype-wp-alt-context/js/admin/api/describeApi.ts b/apps/prototype-wp-alt-context/js/admin/api/describeApi.ts
+--- a/apps/prototype-wp-alt-context/js/admin/api/describeApi.ts
++++ b/apps/prototype-wp-alt-context/js/admin/api/describeApi.ts
+@@ -150,10 +150,11 @@ export interface VisualFactsResponse {
+   alt_text_long?: string | null;
+   alt_text_write?: AltTextWriteResult;
+   /**
+-   * Opaque service-minted lease id. Null means no lease to poll
+-   * (GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-01). Absent on older adapters.
++   * Opaque service-minted lease id. Optional; when present it is a non-empty
++   * string (1..128) and never null. The service drops the key when unset
++   * (GPUFLOW-1-SPADESCRIBECLIENT-R-01). Absent means no lease to poll.
+    */
+-  operation_id?: string | null;
++  operation_id?: string;
+   /** Opaque shared startup id; null for warm/cache work. Absent on older adapters. */
+   startup_id?: string | null;
+   /** Measured milliseconds; unknown values are null. Absent on older adapters. */
+@@ -672,7 +673,7 @@ const validateVisualFactsResponse = (payload: unknown): string | null => {
+       return altTextWriteError;
      }
+   }
+-  const operationIdError = validateOptionalOpaqueId(payload, 'operation_id', 'response', true);
++  const operationIdError = validateOptionalOpaqueId(payload, 'operation_id', 'response', false);
+   if (operationIdError) {
+     return operationIdError;
+   }
+@@ -1534,10 +1535,11 @@ export const resolveDescribeErrorDataField = (error: unknown, field: string): st
+ };
  
-+    public function testNullOperationIdStartingEnvelopeIsNotWarmingExempt(): void
-+    {
-+        global $wpdb;
-+        $wpdb->mockVar = '1';
-+
-+        $harness = $this->makeFamilyHarness();
-+        $describeCircuit = $this->familyCircuitKey($harness->resolvedBaseUrl(), 'describe');
-+        $describeFailures = $this->familyFailureKey($harness->resolvedBaseUrl(), 'describe');
-+
-+        $valid = $this->validatedWarmingHttp();
-+        $this->queueHttpResponse($valid);
-+        $this->queueHttpResponse($valid);
-+        $harness->call('POST', '/scene/describe/multipart', 'description');
-+        $harness->call('POST', '/scene/describe/multipart', 'description');
-+        $this->assertFalse(get_transient($describeCircuit), 'valid operation_id warming remains exempt');
-+        $this->assertFalse(get_transient($describeFailures), 'valid operation_id warming must not increment describe');
-+
-+        $nullId = $valid;
-+        $body = json_decode((string) $valid['body'], true);
-+        $this->assertIsArray($body);
-+        $body['detail']['operation_id'] = null;
-+        $nullId['body'] = json_encode($body);
-+
-+        $this->queueHttpResponse($nullId);
-+        $this->queueHttpResponse($nullId);
-+        $harness->call('POST', '/scene/describe/multipart', 'description');
-+        $harness->call('POST', '/scene/describe/multipart', 'description');
-+
-+        $this->assertNotFalse(get_transient($describeCircuit), 'null operation_id starting envelope must open describe');
-+        $this->assertNotFalse(get_transient($describeFailures), 'null operation_id must increment describe failures');
-+    }
-+
-     /**
-      * @dataProvider typedOperationErrorProvider
-      */
+ /**
+- * Resolve a finite number from a typed FastAPI `detail` object when present.
++ * Resolve a nonnegative finite number from a typed FastAPI `detail` object.
+  * Returns null when the error is unstructured, `detail` is not an object, or
+- * the named field is absent / not a finite number — callers must not invent
+- * a value ([rg-015]). Used for `warmup_eta_seconds`.
++ * the named field is absent / not a finite number / negative — callers must
++ * not invent a value ([rg-015]). `-0` is treated as `0`. Used for
++ * `warmup_eta_seconds`.
+  */
+ export const resolveDescribeErrorDetailNumberField = (
+   error: unknown,
+@@ -1551,10 +1553,10 @@ export const resolveDescribeErrorDetailNumberField = (
+     return null;
+   }
+   const value = payload.detail[field];
+-  if (typeof value === 'number' && Number.isFinite(value)) {
+-    return value;
++  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
++    return null;
+   }
+-  return null;
++  return value === 0 ? 0 : value;
+ };
+ 
+ /**

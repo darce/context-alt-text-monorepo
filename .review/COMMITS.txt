@@ -1,1 +1,1 @@
-fc30e30308d3 offload: Committed all three fixes; standard verification needs a
+b879db1f1155 offload: C1 closed-on-load naming control is committed; sibling overlay

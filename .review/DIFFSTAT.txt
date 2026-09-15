@@ -1,5 +1,8 @@
- .../recognition/tests/api/test_metrics.py          | 16 +++--
- .../scene/application/visual_facts_service.py      | 78 ++++++++++++++++------
- .../interface_adapters/http/routers/describe.py    |  3 +
- .../scene/tests/test_visual_facts_service.py       | 77 ++++++++++++++++++---
- 4 files changed, 138 insertions(+), 36 deletions(-)
+ .../__tests__/ClusterEditForm.test.tsx             | 21 ++++++++++++
+ .../__tests__/ClusterLabelingPanel.test.tsx        |  8 +++++
+ .../__tests__/NameFaceControl.test.tsx             | 35 +++++++++++++++++++
+ .../__tests__/PersonCommitControl.test.tsx         | 18 ++++++++--
+ .../__tests__/ReviewQueue.test.tsx                 |  5 ++-
+ .../__tests__/buildNamingOptions.test.ts           | 10 ------
+ .../identity-clusters/buildNamingOptions.ts        | 40 ----------------------
+ 7 files changed, 83 insertions(+), 54 deletions(-)

@@ -1,292 +1,399 @@
-diff --git a/apps/prototype-description-service/recognition/tests/api/test_metrics.py b/apps/prototype-description-service/recognition/tests/api/test_metrics.py
---- a/apps/prototype-description-service/recognition/tests/api/test_metrics.py
-+++ b/apps/prototype-description-service/recognition/tests/api/test_metrics.py
-@@ -209,12 +209,20 @@ def test_production_app_exposes_metrics_endpoint(monkeypatch) -> None:
-     assert 'path="/health"' in body
+diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/ClusterEditForm.test.tsx b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/ClusterEditForm.test.tsx
+--- a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/ClusterEditForm.test.tsx
++++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/ClusterEditForm.test.tsx
+@@ -20,6 +20,12 @@ vi.mock('../NameFaceControl', async (importOriginal) => {
+   };
+ });
  
++const openNamingList = (input?: HTMLElement): void => {
++  const combobox = input ?? screen.getByRole('combobox');
++  combobox.focus();
++  fireEvent.keyDown(combobox, { key: 'ArrowDown' });
++};
++
+ describe('ClusterEditForm', () => {
+   const defaultProps = {
+     labelInput: 'Test Cluster',
+@@ -86,6 +92,7 @@ describe('ClusterEditForm', () => {
  
--def test_description_readiness_and_processing_histograms_are_independent():
-+def test_description_readiness_and_processing_histograms_are_independent(monkeypatch):
-     from recognition.interface_adapters.http.middleware.metrics import MetricsRegistry
+   it('shows suggestions overlay when typing a partial match', () => {
+     render(<ClusterEditForm {...defaultProps} labelInput="Per" />);
++    openNamingList();
  
-     metrics = MetricsRegistry()
--    metrics.description_readiness_wait_seconds.labels(adapter="gpu").observe(30)
--    metrics.description_adapter_duration_seconds.labels(adapter="gpu").observe(2)
-+    from scene.interface_adapters.http.routers import describe as route
-+    from scene.application.visual_facts_service import VisualFactsService
-+    from scene.tests.test_visual_facts_service import PinRevisionAdapter
-+
-+    monkeypatch.setattr(route, "get_default_metrics", lambda: metrics)
-+    sink = route._DescriptionMetricsSink()
-+    service = VisualFactsService(adapter=PinRevisionAdapter(model_id="test", caption="test"), metrics=sink)
-+    service.record_readiness_wait(30000)
-+    service.record_readiness_wait(0)
-+    sink.observe_adapter_duration(adapter="gpu", duration_seconds=2)
-     assert metrics.registry.get_sample_value(
-         "acx_description_readiness_wait_seconds_sum", {"adapter": "gpu"}
-     ) == 30
-@@ -224,4 +232,4 @@ def test_description_readiness_and_processing_histograms_are_independent():
-     for name in ("readiness_wait", "adapter_duration"):
-         assert metrics.registry.get_sample_value(
-             f"acx_description_{name}_seconds_count", {"adapter": "gpu"}
--        ) == 1
-+        ) == (2 if name == "readiness_wait" else 1)
-diff --git a/apps/prototype-description-service/scene/application/visual_facts_service.py b/apps/prototype-description-service/scene/application/visual_facts_service.py
---- a/apps/prototype-description-service/scene/application/visual_facts_service.py
-+++ b/apps/prototype-description-service/scene/application/visual_facts_service.py
-@@ -13,9 +13,10 @@ import logging
- import time
- import uuid
- from collections.abc import Awaitable, Callable, Mapping, Sequence
-+from dataclasses import dataclass
- from typing import Any, Protocol
+     expect(document.querySelector('.acx-identity-cluster__suggestion-row')).not.toBeNull();
+     expect(screen.getByText(/95%/)).toBeInTheDocument();
+@@ -102,6 +109,7 @@ describe('ClusterEditForm', () => {
+         ]}
+       />,
+     );
++    openNamingList();
  
--from pydantic import ValidationError
-+from pydantic import Field, ValidationError
+     const high = document.querySelector('.acx-identity-cluster__match-score--high');
+     const medium = document.querySelector('.acx-identity-cluster__match-score--medium');
+@@ -124,6 +132,7 @@ describe('ClusterEditForm', () => {
+         onConfirmSuggestion={onConfirmSuggestion}
+       />,
+     );
++    openNamingList();
  
- from db.models.scene import ImageDescription
- from scene.application.description_adapter import AdapterResult, DescriptionAdapter
-@@ -63,6 +64,27 @@ class DescriptionMetrics(Protocol):
+     fireEvent.click(screen.getAllByRole('option', { name: /confirm match/i })[1]);
+     expect(onLabelChange).toHaveBeenCalledWith('Person B');
+@@ -144,6 +153,7 @@ describe('ClusterEditForm', () => {
+         onConfirmSuggestion={onConfirmSuggestion}
+       />,
+     );
++    openNamingList();
  
-     def observe_adapter_duration(self, *, adapter: str, duration_seconds: float) -> None: ...
+     const confirmOption = screen.getAllByRole('option', { name: /confirm match/i })[1]; // Index 1 for Person B
+     fireEvent.click(confirmOption);
+@@ -179,6 +189,7 @@ describe('ClusterEditForm', () => {
+         onPersonSelect={onPersonSelect}
+       />,
+     );
++    openNamingList();
  
-+    def observe_readiness_wait(self, *, adapter: str, seconds: float) -> None: ...
-+
-+
-+@dataclass
-+class AdapterAttemptTiming:
-+    """Per-attempt state; a cancelled worker publishes completion here later.
-+
-+    Consumers retain this object across retries and sum completed processing_ms,
-+    never response.duration_ms. None means no completed measurement yet;
-+    entered_adapter distinguishes running work from work never dispatched.
-+    """
-+
-+    processing_ms: int | None = None
-+    entered_adapter: bool = False
-+
-+
-+class VisualFactsServiceResult(VisualFactsResponse):
-+    """Service-only timing, excluded from the public response envelope."""
-+
-+    attempt_timing: AdapterAttemptTiming = Field(exclude=True)
-+
+     const confirmOptions = screen.getAllByRole('option', { name: /Confirm match with/ });
+     expect(confirmOptions).toHaveLength(2);
+@@ -203,6 +214,7 @@ describe('ClusterEditForm', () => {
+         onConfirmSuggestion={onConfirmSuggestion}
+       />,
+     );
++    openNamingList();
  
- def _elapsed_ms(start: float) -> int:
-     return max(0, int((time.perf_counter() - start) * 1000))
-@@ -171,9 +193,6 @@ class VisualFactsService:
-         # E19-4a S4: the freshly generated AdapterResult (None on cache hits).
-         # The service is constructed per request, so this is request-scoped.
-         self.last_adapter_result: AdapterResult | None = None
--        # Per-call measured attempt, including failures; consumers sum retries.
--        # None means no dispatch observed; a cache bypass explicitly sets zero.
--        self.last_processing_ms: float | None = None
-         # Phrase-grounding boxes for the naming preview — from the adapter on
-         # generation, restored from the cached row on cache hits so both paths
-         # produce the same named draft (E19-4A-S4-BR-03).
-@@ -191,8 +210,33 @@ class VisualFactsService:
-         confirmed_faces: Sequence[ConfirmedFace] = (),
-         naming_policy: NamingPolicy | None = None,
-         before_compute: Callable[[], Awaitable[None]] | None = None,
-+    ) -> VisualFactsServiceResult:
-+        """Return attempt timing on success; preserve it as exc.attempt_timing on failure."""
-+        timing = AdapterAttemptTiming()
-+        try:
-+            response = await self._describe(
-+                tenant_id=tenant_id, media_id=media_id, image_bytes=image_bytes,
-+                context=context, confirmed_faces=confirmed_faces,
-+                naming_policy=naming_policy, before_compute=before_compute,
-+                timing=timing,
-+            )
-+        except BaseException as exc:
-+            exc.attempt_timing = timing  # type: ignore[attr-defined]
-+            raise
-+        return VisualFactsServiceResult(**response.model_dump(), attempt_timing=timing)
+     fireEvent.click(screen.getByRole('option', { name: /confirm match/i }));
+     await waitFor(() => expect(onPersonSelect).toHaveBeenCalledWith('Pat Roster', 42));
+@@ -220,6 +232,7 @@ describe('ClusterEditForm', () => {
+         onSave={onSave}
+       />,
+     );
++    openNamingList();
+ 
+     fireEvent.click(screen.getByRole('option', { name: /confirm match/i }));
+     await waitFor(() => expect(onSave).toHaveBeenCalledWith('Pat Roster'));
+@@ -238,6 +251,7 @@ describe('ClusterEditForm', () => {
+       { value: 'person:1', label: 'Alice Person', source: 'person' as const, group: 'All Labels' },
+     ];
+     render(<ClusterEditForm {...defaultProps} labelInput="A" options={options} />);
++    openNamingList();
+ 
+     expect(screen.getByRole('option', { name: /Alice Person/ })).toBeInTheDocument();
+     expect(screen.queryByText('Suggested 3')).not.toBeInTheDocument();
+@@ -275,6 +289,7 @@ describe('ClusterEditForm', () => {
+         options={[{ value: 'cluster:1', label: 'Person A', source: 'cluster', group: 'Suggested', similarity: 0.95 }]}
+       />,
+     );
++    openNamingList();
+ 
+     expect(screen.getByRole('option', { name: /Person A \(Group\)/i })).toBeInTheDocument();
+   });
+@@ -291,6 +306,7 @@ describe('ClusterEditForm', () => {
+         onConfirmSuggestion={onConfirmSuggestion}
+       />,
+     );
++    openNamingList();
+ 
+     fireEvent.click(screen.getByRole('option', { name: /confirm match/i }));
+     expect(onConfirmSuggestion).not.toHaveBeenCalled();
+@@ -317,6 +333,7 @@ describe('ClusterEditForm', () => {
+         options={[{ value: 'person:42', label: 'Pat Roster', source: 'person', group: 'All Labels' }]}
+       />,
+     );
++    openNamingList();
+     expect(document.querySelector('.acx-identity-cluster__suggestions-header')).toHaveTextContent('People');
+     expect(screen.queryByText('Suggested')).not.toBeInTheDocument();
+   });
+@@ -384,6 +401,7 @@ describe('ClusterEditForm', () => {
+         onRejectSuggestion={onRejectSuggestion}
+       />,
+     );
++    openNamingList();
+ 
+     const rejectButton = screen.getByRole('button', { name: /reject/i });
+     fireEvent.click(rejectButton);
+@@ -419,6 +437,7 @@ describe('ClusterEditForm', () => {
+         onRejectSuggestion={onRejectSuggestion}
+       />,
+     );
++    openNamingList();
+ 
+     fireEvent.click(screen.getByRole('button', { name: /reject/i }));
+     expect(onRejectSuggestion).toHaveBeenCalledWith('sug-real-alice');
+@@ -456,6 +475,7 @@ describe('ClusterEditForm', () => {
+         isAtRestMode
+       />,
+     );
++    openNamingList();
+ 
+     const renderedOptionRows = screen.getAllByRole('option', { name: /confirm match/i });
+     expect(screen.getByText(`Showing ${renderedOptionRows.length} of 80 labels — type to search for more`)).toBeInTheDocument();
+@@ -550,6 +570,7 @@ describe('ClusterEditForm', () => {
+         onConfirmSuggestion={onConfirmSuggestion}
+       />,
+     );
++    openNamingList();
+ 
+     fireEvent.click(screen.getByRole('option', { name: /confirm match/i }));
+     expect(onConfirmSuggestion).not.toHaveBeenCalled();
+diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/ClusterLabelingPanel.test.tsx b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/ClusterLabelingPanel.test.tsx
+--- a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/ClusterLabelingPanel.test.tsx
++++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/ClusterLabelingPanel.test.tsx
+@@ -197,6 +197,13 @@ describe('ClusterLabelingPanel', () => {
+     return user;
+   };
+ 
++  const openNamingList = async (): Promise<HTMLElement> => {
++    const input = await screen.findByRole('combobox', { name: 'Name' });
++    input.focus();
++    fireEvent.keyDown(input, { key: 'ArrowDown' });
++    return input;
++  };
 +
-+    def record_readiness_wait(self, ms: float) -> None:
-+        """Record one operation's readiness wait, including zero for warm paths."""
-+        if self._metrics is not None:
-+            self._metrics.observe_readiness_wait(adapter=self._adapter.kind.value, seconds=ms / 1000)
+   it('blocks save with pre-save duplicate guard for an existing cluster and merges with named target (PR-18/23/24)', async () => {
+     // Predicted first failure: save calls updateClusterLabel without showing guard UI
+     const onLabel = vi.fn();
+@@ -1417,6 +1424,7 @@ describe('ClusterLabelingPanel', () => {
+       }),
+     );
+     renderPanel();
++    await openNamingList();
+     expect(screen.getByText('Suggested')).toBeInTheDocument();
+     await typePanelName('Ada');
+     expect(screen.getByText('Matches')).toBeInTheDocument();
+diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/NameFaceControl.test.tsx b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/NameFaceControl.test.tsx
+--- a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/NameFaceControl.test.tsx
++++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/NameFaceControl.test.tsx
+@@ -4,6 +4,8 @@ import userEvent from '@testing-library/user-event';
+ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+ 
+ import type { ComboboxOption } from '../../../../../components/ui/combobox';
++import type { DetectedIdentity, RepresentativeFace } from '../../../../api/recognition';
++import { ClusterPreview } from '../ClusterPreview';
+ import {
+   NameFaceControl,
+   normalizeNameFaceLabel,
+@@ -11,6 +13,7 @@ import {
+   type NameFaceResolution,
+ } from '../NameFaceControl';
+ import { NAMING_GROUP_SUGGESTED, namingOptionValue } from '../buildNamingOptions';
++import previewFixture from './fixtures/gpuflow-naming-preview.json';
+ 
+ vi.mock('@wordpress/i18n', () => ({
+   __: (text: string) => text,
+@@ -26,6 +29,14 @@ vi.mock('@wordpress/i18n', () => ({
+   },
+ }));
+ 
++vi.mock('../../../../../components/ui/FaceThumbnail', () => ({
++  FaceThumbnail: ({ alt, mediaUrl, bbox }: { alt: string; mediaUrl: string; bbox: unknown }) => (
++    <div data-testid="face-thumbnail" data-url={mediaUrl} data-bbox={JSON.stringify(bbox)}>
++      {alt}
++    </div>
++  ),
++}));
 +
-+    async def _describe(
-+        self, *, tenant_id: uuid.UUID, media_id: int, image_bytes: bytes,
-+        context: Mapping[str, Any] | None, confirmed_faces: Sequence[ConfirmedFace],
-+        naming_policy: NamingPolicy | None,
-+        before_compute: Callable[[], Awaitable[None]] | None,
-+        timing: AdapterAttemptTiming,
-     ) -> VisualFactsResponse:
--        self.last_processing_ms = None
-         self.last_adapter_result = None
-         start = time.perf_counter()
-         image_hash = compute_image_hash(image_bytes)
-@@ -209,7 +253,7 @@ class VisualFactsService:
-                 context_hash=context_hash,
-             )
-             if row is not None:
--                self.last_processing_ms = 0.0
-+                timing.processing_ms = 0
-                 response = self._cache_hit_response(
-                     row,
-                     start=start,
-@@ -232,28 +276,18 @@ class VisualFactsService:
-         # negligible. (A dedicated worker/queue is the heavier production option.)
-         # Start inside the executor: its queue is not adapter processing.
-         # Keep observations local so a timed-out thread cannot overwrite a retry.
--        attempt: dict[str, float] = {}
+ const person = (id: number, label: string, extra: Partial<ComboboxOption> = {}): ComboboxOption => ({
+   value: namingOptionValue('person', String(id)),
+   label,
+@@ -610,6 +621,7 @@ describe('GPUFLOW-1 naming intent', () => {
+     const input = screen.getByRole('combobox', { name: 'Name this person' });
+     expect(input).toHaveFocus();
+     expect(input).toHaveAttribute('aria-expanded', 'false');
++    expect(input).not.toHaveAttribute('aria-activedescendant');
+     expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+     expect(screen.queryByRole('option')).not.toBeInTheDocument();
+   });
+@@ -646,3 +658,26 @@ describe('GPUFLOW-1 naming intent', () => {
+     expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+   });
+ });
++
++describe('GPUFLOW-1 group preview fallback (IDCHIP-1 AV-R-04)', () => {
++  it.each(previewFixture.cases)('ClusterPreview fallback: $name', (fixture) => {
++    render(
++      <ClusterPreview
++        representative={(fixture.member ?? undefined) as DetectedIdentity | undefined}
++        representativeFace={fixture.representative_face as RepresentativeFace | null}
++        memberCount={1}
++      />,
++    );
++    if (fixture.expected) {
++      const thumb = screen.getByTestId('face-thumbnail');
++      expect(thumb).toHaveAttribute('data-url', fixture.expected.media_url);
++      expect(thumb).toHaveAttribute('data-bbox', JSON.stringify(fixture.expected.bbox));
++      return;
++    }
++    expect(screen.queryByTestId('face-thumbnail')).not.toBeInTheDocument();
++    expect(screen.getByRole('img', { name: 'Representative image unavailable' })).toHaveAttribute(
++      'data-avatar-state',
++      'data-missing',
++    );
++  });
++});
+diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/PersonCommitControl.test.tsx b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/PersonCommitControl.test.tsx
+--- a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/PersonCommitControl.test.tsx
++++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/PersonCommitControl.test.tsx
+@@ -1,6 +1,6 @@
+ import React from 'react';
+ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+-import { render, screen, waitFor } from '@testing-library/react';
++import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+ import userEvent from '@testing-library/user-event';
+ import { beforeEach, describe, expect, it, vi } from 'vitest';
+ 
+@@ -66,6 +66,14 @@ const renderControl = (
+   return { onCommit, queryClient };
+ };
+ 
++const openNamingList = async (input?: HTMLElement): Promise<HTMLElement> => {
++  const combobox = input ?? screen.getByRole('combobox', { name: INPUT_NAME });
++  await waitFor(() => expect(combobox).not.toBeDisabled());
++  combobox.focus();
++  fireEvent.keyDown(combobox, { key: 'ArrowDown' });
++  return combobox;
++};
++
+ describe('PersonCommitControl single-gesture naming (UXW2-3)', () => {
+   beforeEach(() => {
+     vi.mocked(listRosterEntries).mockResolvedValue([]);
+@@ -89,8 +97,8 @@ describe('PersonCommitControl single-gesture naming (UXW2-3)', () => {
+     const user = userEvent.setup();
+ 
+     // Wait for the roster typeahead to load before typing.
++    const input = await openNamingList();
+     await screen.findByText('Alex Carter');
+-    const input = screen.getByRole('combobox', { name: INPUT_NAME });
+     await user.type(input, 'Alex Carter{Enter}');
+ 
+     expect(onCommit).toHaveBeenCalledWith({
+@@ -103,8 +111,8 @@ describe('PersonCommitControl single-gesture naming (UXW2-3)', () => {
+     const { onCommit } = renderControl({}, [rosterEntry(42, 'Alex Carter')]);
+     const user = userEvent.setup();
+ 
++    const input = await openNamingList();
+     await screen.findByText('Alex Carter');
+-    const input = screen.getByRole('combobox', { name: INPUT_NAME });
+     await user.type(input, '  alex carter {Enter}');
+ 
+     expect(onCommit).toHaveBeenCalledWith({
+@@ -181,6 +189,7 @@ describe('PersonCommitControl single-gesture naming (UXW2-3)', () => {
+     const { onCommit } = renderControl({}, [rosterEntry(42, 'Alex Carter')]);
+     const user = userEvent.setup();
+ 
++    await openNamingList();
+     const option = await screen.findByRole('option', { name: /Confirm match with Alex Carter/ });
+     await user.click(option);
+ 
+@@ -202,6 +211,7 @@ describe('PersonCommitControl single-gesture naming (UXW2-3)', () => {
+ 
+     const input = screen.getByRole('combobox', { name: INPUT_NAME });
+     await waitFor(() => expect(input).toHaveValue('Alex Carter'));
++    await openNamingList(input);
+     await screen.findByRole('option', { name: /Alex Carter/ });
+     await user.type(input, '{Enter}');
+ 
+@@ -216,6 +226,7 @@ describe('PersonCommitControl single-gesture naming (UXW2-3)', () => {
+ 
+   it('overlay header is People on a roster-only list (UXW2-3-R1-16b)', async () => {
+     renderControl({}, [rosterEntry(42, 'Alex Carter')]);
++    await openNamingList();
+     await screen.findByRole('option', { name: /Alex Carter/ });
+     expect(screen.getByText('People')).toBeInTheDocument();
+     expect(screen.queryByText('Suggested')).not.toBeInTheDocument();
+@@ -223,6 +234,7 @@ describe('PersonCommitControl single-gesture naming (UXW2-3)', () => {
+ 
+   it('omits whitespace-only roster names via buildNamingOptions (UXW2-3-R1-07)', async () => {
+     renderControl({}, [rosterEntry(42, 'Alex Carter'), rosterEntry(7, '   ')]);
++    await openNamingList();
+     await screen.findByRole('option', { name: /Alex Carter/ });
+     expect(screen.getAllByRole('option')).toHaveLength(1);
+   });
+diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/ReviewQueue.test.tsx b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/ReviewQueue.test.tsx
+--- a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/ReviewQueue.test.tsx
++++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/ReviewQueue.test.tsx
+@@ -90,8 +90,11 @@ const typePersonName = async (
+   name: string,
+ ): Promise<void> => {
+   const commit = await screen.findByTestId('acx-person-commit');
+-  await within(commit).findByText(name);
+   const input = within(commit).getByRole('combobox', { name: PERSON_COMMIT_COMBOBOX_ARIA });
++  await waitFor(() => expect(input).not.toBeDisabled());
++  input.focus();
++  fireEvent.keyDown(input, { key: 'ArrowDown' });
++  await within(commit).findByText(name);
+   await user.type(input, `${name}{Enter}`);
+ };
+ 
+diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/buildNamingOptions.test.ts b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/buildNamingOptions.test.ts
+--- a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/buildNamingOptions.test.ts
++++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/buildNamingOptions.test.ts
+@@ -6,11 +6,9 @@ import {
+   findCollisionsForLabel,
+   namingOptionValue,
+   parseNamingOptionValue,
+-  selectGroupPreviewSource,
+   uniqueClusterCollisionTarget,
+   unwrapClusterOptionId,
+ } from '../buildNamingOptions';
+-import previewFixture from './fixtures/gpuflow-naming-preview.json';
+ 
+ describe('buildNamingOptions', () => {
+   const roster = [
+@@ -247,11 +245,3 @@ describe('naming option value helpers', () => {
+     expect(parseNamingOptionValue('bare-id')).toBeNull();
+   });
+ });
 -
-         def dispatch() -> AdapterResult:
--            attempt["start"] = time.perf_counter()
-+            start = time.perf_counter()
-+            timing.entered_adapter = True
-             try:
-                 return self._adapter.describe(image_bytes=image_bytes, context=context)
-             finally:
--                attempt["end"] = time.perf_counter()
-+                elapsed = max(0.0, time.perf_counter() - start)
-+                timing.processing_ms = int(elapsed * 1000)
-+                self._observe_adapter_duration(elapsed)
- 
-         call = asyncio.to_thread(dispatch)
--        try:
--            result = await (asyncio.wait_for(call, self._timeout) if self._timeout else call)
--        finally:
--            if "start" in attempt:
--                # Cancellation measures the observed dispatch interval only;
--                # executor work can continue, but must not publish twice.
--                end = attempt.get("end")
--                if end is None:
--                    end = time.perf_counter()
--                elapsed = max(0.0, end - attempt["start"])
--                self.last_processing_ms = elapsed * 1000
--                self._observe_adapter_duration(elapsed)
-+        result = await (asyncio.wait_for(call, self._timeout) if self._timeout else call)
-         self.last_adapter_result = result
-         self.last_phrase_boxes = tuple(result.phrase_boxes)
- 
-diff --git a/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py b/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py
---- a/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py
-+++ b/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py
-@@ -197,6 +197,9 @@ class _DescriptionMetricsSink:
-     def record_cache_hit(self, *, adapter: str) -> None:
-         self._metrics.description_cache_hits_total.labels(adapter=adapter).inc()
- 
-+    def observe_readiness_wait(self, *, adapter: str, seconds: float) -> None:
-+        self._metrics.description_readiness_wait_seconds.labels(adapter=adapter).observe(seconds)
-+
-     def observe_adapter_duration(self, *, adapter: str, duration_seconds: float) -> None:
-         self._metrics.description_adapter_duration_seconds.labels(adapter=adapter).observe(duration_seconds)
- 
-diff --git a/apps/prototype-description-service/scene/tests/test_visual_facts_service.py b/apps/prototype-description-service/scene/tests/test_visual_facts_service.py
---- a/apps/prototype-description-service/scene/tests/test_visual_facts_service.py
-+++ b/apps/prototype-description-service/scene/tests/test_visual_facts_service.py
-@@ -136,7 +136,8 @@ def test_first_call_generates_persists_audits_then_cache_hit_skips_adapter():
-             )
-             r2 = await svc2.describe(tenant_id=tenant, media_id=8, image_bytes=IMG, context=CTX)
-             assert r2.cached is True
--            assert svc2.last_processing_ms == 0
-+            assert r2.attempt_timing.processing_ms == 0
-+            assert r2.attempt_timing.entered_adapter is False
-             assert len(metrics.adapter_durations) == 1
-             assert r2.media_id == 8
-             assert adapter.calls == 1  # NOT called again on cache hit
-@@ -341,23 +342,26 @@ def test_processing_measures_dispatch_only_and_records_failed_retries(monkeypatc
-         monkeypatch.setattr(svc, "_run_fusion_stage", fusion)
-         for attempt in range(2):
-             if attempt == 0:
--                with pytest.raises(RuntimeError, match="retry"):
-+                with pytest.raises(RuntimeError, match="retry") as failed:
-                     await svc.describe(tenant_id=uuid.uuid4(), media_id=1,
-                                        image_bytes=IMG, context=None, before_compute=readiness)
-             else:
-                 clock[0] += 60  # Retry backoff is outside adapter processing.
--                await svc.describe(tenant_id=uuid.uuid4(), media_id=1,
--                                   image_bytes=IMG, context=None, before_compute=readiness)
--            assert svc.last_processing_ms == 2000
-+                response = await svc.describe(tenant_id=uuid.uuid4(), media_id=1,
-+                                              image_bytes=IMG, context=None, before_compute=readiness)
-+                assert response.attempt_timing.processing_ms == 2000
-+                assert response.duration_ms == 42000
-+            assert failed.value.attempt_timing.processing_ms == 2000
-         assert metrics.adapter_durations == [("hosted_provider", 2.0)] * 2
- 
-         async def unavailable():
-             raise RuntimeError("not ready")
- 
--        with pytest.raises(RuntimeError, match="not ready"):
-+        with pytest.raises(RuntimeError, match="not ready") as unavailable_error:
-             await svc.describe(tenant_id=uuid.uuid4(), media_id=1,
-                                image_bytes=IMG, context=None, before_compute=unavailable)
--        assert svc.last_processing_ms is None
-+        assert unavailable_error.value.attempt_timing.processing_ms is None
-+        assert unavailable_error.value.attempt_timing.entered_adapter is False
-         assert len(metrics.adapter_durations) == 2
- 
-     asyncio.run(body())
-@@ -391,11 +395,64 @@ def test_cancelled_dispatch_is_measured_once(monkeypatch):
-             await asyncio.wait_for(started.wait(), timeout=2)
-             clock[0] = 3
-             task.cancel()
--            with pytest.raises(asyncio.CancelledError):
-+            with pytest.raises(asyncio.CancelledError) as cancelled:
-                 await task
--            assert svc.last_processing_ms == 3000
-+            assert cancelled.value.attempt_timing.entered_adapter is True
-+            assert cancelled.value.attempt_timing.processing_ms is None
-+            return cancelled.value.attempt_timing
-         finally:
-             release.set()
- 
--    asyncio.run(body())  # Also joins the executor's remaining work.
-+    timing = asyncio.run(body())  # Also joins the executor's remaining work.
-+    assert timing.processing_ms == 3000
-     assert metrics.adapter_durations == [("hosted_provider", 3.0)]
-+
-+
-+def test_cancel_before_worker_start_marker_still_publishes_once(monkeypatch):
-+    import threading
-+    import pytest
-+    from scene.application import visual_facts_service as module
-+
-+    gated = threading.Event()
-+    release = threading.Event()
-+    metrics = FakeMetrics()
-+    main_thread = threading.get_ident()
-+    clock = [0.0]
-+
-+    def perf_counter():
-+        if threading.get_ident() != main_thread and not gated.is_set():
-+            gated.set()
-+            assert release.wait(timeout=5)
-+        return clock[0]
-+
-+    monkeypatch.setattr(module.time, "perf_counter", perf_counter)
-+
-+    class Adapter(HostedAdapter):
-+        def describe(self, **kwargs):
-+            clock[0] += 2
-+            return super().describe(**kwargs)
-+
-+    async def body():
-+        svc = VisualFactsService(adapter=Adapter(), metrics=metrics)
-+        task = asyncio.create_task(svc.describe(
-+            tenant_id=uuid.uuid4(), media_id=1, image_bytes=IMG, context=None,
-+        ))
-+        try:
-+            async with asyncio.timeout(2):
-+                while not gated.is_set():
-+                    await asyncio.sleep(0.001)
-+            task.cancel()
-+            with pytest.raises(asyncio.CancelledError) as cancelled:
-+                await task
-+            timing = cancelled.value.attempt_timing
-+            assert timing.entered_adapter is False
-+            assert timing.processing_ms is None
-+            assert metrics.adapter_durations == []
-+            return timing
-+        finally:
-+            release.set()
-+
-+    timing = asyncio.run(body())
-+    assert timing.entered_adapter is True
-+    assert timing.processing_ms == 2000
-+    assert metrics.adapter_durations == [("hosted_provider", 2.0)]
+-describe('selectGroupPreviewSource (IDCHIP-1 AV-R-04)', () => {
+-  it.each(previewFixture.cases)('preview fallback: $name', (fixture) => {
+-    expect(selectGroupPreviewSource(fixture.representative_face, fixture.member)).toEqual(
+-      fixture.expected,
+-    );
+-  });
+-});
+diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/buildNamingOptions.ts b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/buildNamingOptions.ts
+--- a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/buildNamingOptions.ts
++++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/buildNamingOptions.ts
+@@ -264,43 +264,3 @@ export const buildNamingOptions = ({
+     collisionsByLabel: collisions,
+   };
+ };
+-
+-/** URL + bbox must come from the same source (IDCHIP-1 AV-R-04 / ClusterPreview). */
+-export interface GroupPreviewBbox {
+-  readonly x: number;
+-  readonly y: number;
+-  readonly width: number;
+-  readonly height: number;
+-}
+-
+-export interface GroupPreviewFace {
+-  readonly media_url?: string | null;
+-  readonly attachment_url?: string | null;
+-  readonly bbox?: GroupPreviewBbox | null;
+-}
+-
+-const groupPreviewUrl = (face: GroupPreviewFace | null | undefined): string | null => {
+-  const mediaUrl = face?.media_url;
+-  if (typeof mediaUrl === 'string' && mediaUrl.length > 0) {
+-    return mediaUrl;
+-  }
+-  const attachmentUrl = face?.attachment_url;
+-  if (typeof attachmentUrl === 'string' && attachmentUrl.length > 0) {
+-    return attachmentUrl;
+-  }
+-  return null;
+-};
+-
+-/**
+- * Group preview source: representative_face → first member → placeholder (null).
+- * Consume ClusterPreview for rendering; do not duplicate its JSX.
+- */
+-export const selectGroupPreviewSource = (
+-  representativeFace?: GroupPreviewFace | null,
+-  member?: GroupPreviewFace | null,
+-): GroupPreviewFace | null => {
+-  const referenceUrl = groupPreviewUrl(representativeFace);
+-  const source = referenceUrl && representativeFace?.bbox ? representativeFace : member ?? null;
+-  const mediaUrl = groupPreviewUrl(source);
+-  return mediaUrl && source?.bbox ? source : null;
+-};

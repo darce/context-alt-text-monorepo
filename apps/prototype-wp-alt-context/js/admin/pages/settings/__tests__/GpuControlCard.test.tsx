@@ -1,12 +1,11 @@
-import React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { GPU_INTENT_ACTION, GPU_INTENT_STATUS, GPU_STATE, type GpuStatusResponse } from '../../../api/gpuApi';
 import { GPU_STATE_VOCABULARY } from '../../workbench/gpuStatePresentation';
-import serviceStates from './fixtures/gpuflow-service-states.json';
 import { GpuControlCard } from '../GpuControlCard';
 import * as gpuControl from '../useGpuControl';
+import serviceStates from './fixtures/gpuflow-service-states.json';
 
 vi.mock('../useGpuControl', async (importOriginal) => {
   const actual = await importOriginal<typeof gpuControl>();
@@ -267,7 +266,7 @@ describe('GpuControlCard', () => {
     expect(screen.getByTestId('gpu-stale-notice')).toHaveTextContent('Service status is out of date');
     expect(screen.queryByRole('button', { name: 'Start service' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Stop service/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Return to automatic' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Return to automatic' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
   });
 
@@ -282,8 +281,66 @@ describe('GpuControlCard', () => {
     expect(screen.getByText(`Service: ${GPU_STATE_VOCABULARY.notReported}`)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Start service' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Stop service/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Return to automatic' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
+  });
+
+  it('omits Return to automatic on unknown when intent is already automatic', () => {
+    mockControl(statusResponse({ state: 'unknown' }), {
+      canStart: false,
+      canStop: false,
+      canReturnToAuto: false,
+    });
+    render(<GpuControlCard />);
+
+    expect(screen.queryByRole('button', { name: 'Start service' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Stop service/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Return to automatic' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
+  });
+
+  it('clears an open stop confirmation when the snapshot becomes stale', () => {
+    const requestIntent = vi.fn();
+    mockControl(statusResponse({ state: 'ready' }), { requestIntent });
+    const { rerender } = render(<GpuControlCard />);
+    fireEvent.click(screen.getByRole('button', { name: /Stop service/ }));
+    expect(screen.getByRole('button', { name: 'Confirm stop' })).toBeInTheDocument();
+
+    mockControl(
+      {
+        ...statusResponse({ state: 'ready' }),
+        snapshot_age_seconds: 240,
+        snapshot_fresh: false,
+      },
+      { requestIntent, canStart: false, canStop: false },
+    );
+    rerender(<GpuControlCard />);
+
+    expect(screen.queryByTestId('z-stop-preview')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Confirm stop' })).not.toBeInTheDocument();
+    expect(requestIntent).not.toHaveBeenCalled();
+  });
+
+  it('clears an open start confirmation when the snapshot becomes stale', () => {
+    const requestIntent = vi.fn();
+    mockControl(statusResponse(), { requestIntent });
+    const { rerender } = render(<GpuControlCard />);
+    fireEvent.click(screen.getByRole('button', { name: 'Start service' }));
+    expect(screen.getByRole('button', { name: 'Confirm start' })).toBeInTheDocument();
+
+    mockControl(
+      {
+        ...statusResponse(),
+        snapshot_age_seconds: 240,
+        snapshot_fresh: false,
+      },
+      { requestIntent, canStart: false, canStop: false },
+    );
+    rerender(<GpuControlCard />);
+
+    expect(screen.queryByTestId('z-start-preview')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Confirm start' })).not.toBeInTheDocument();
+    expect(requestIntent).not.toHaveBeenCalled();
   });
 
   it.each([

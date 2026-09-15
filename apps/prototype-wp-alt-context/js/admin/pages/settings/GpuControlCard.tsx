@@ -178,11 +178,24 @@ export const GpuControlCard = (): React.JSX.Element => {
   const stopReason = !canStop ? stopBlockedReason : pendingReason;
   const displayedState = data && data.snapshot_fresh ? data.gpu_state.state : GPU_STATE.UNKNOWN;
 
-  const confirm = (): void => {
+  React.useEffect(() => {
     if (confirmation === null) {
       return;
     }
-    requestIntent(confirmation);
+    const startStillAllowed = confirmation === GpuIntentAction.START && canStart;
+    const stopStillAllowed = confirmation === GpuIntentAction.STOP && canStop;
+    if (displayedState === GPU_STATE.UNKNOWN || (!startStillAllowed && !stopStillAllowed)) {
+      setConfirmation(null);
+    }
+  }, [confirmation, displayedState, canStart, canStop]);
+
+  const confirm = (): void => {
+    const action = confirmation;
+    if (action === GpuIntentAction.START && canStart) {
+      requestIntent(action);
+    } else if (action === GpuIntentAction.STOP && canStop) {
+      requestIntent(action);
+    }
     setConfirmation(null);
   };
 
@@ -295,23 +308,23 @@ export const GpuControlCard = (): React.JSX.Element => {
                 </button>
                 {stopReason ? <span id="z-gpu-stop-reason">disabled: {stopReason}</span> : null}
 
-                {canReturnToAuto ? (
-                  <button
-                    type="button"
-                    className="acx-button acx-button--secondary"
-                    onClick={() => requestIntent(GpuIntentAction.AUTO)}
-                    disabled={isIntentPending}
-                  >
-                    <span aria-hidden="true">↺</span> {__('Return to automatic', 'alt-context')}
-                  </button>
-                ) : null}
-
                 {displayedState === GPU_STATE.READY ? (
                   <a className="acx-button acx-button--secondary" href={toWorkbench()}>
                     <span aria-hidden="true">→</span> {__('Go to Workbench', 'alt-context')}
                   </a>
                 ) : null}
               </>
+            ) : null}
+
+            {canReturnToAuto ? (
+              <button
+                type="button"
+                className="acx-button acx-button--secondary"
+                onClick={() => requestIntent(GpuIntentAction.AUTO)}
+                disabled={isIntentPending}
+              >
+                <span aria-hidden="true">↺</span> {__('Return to automatic', 'alt-context')}
+              </button>
             ) : null}
 
             <button type="button" className="acx-button acx-button--tertiary" onClick={() => void refetch()}>

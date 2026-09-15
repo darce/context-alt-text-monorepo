@@ -1,114 +1,272 @@
-diff --git a/apps/prototype-description-service/scene/tests/test_response_schema_parity.py b/apps/prototype-description-service/scene/tests/test_response_schema_parity.py
---- a/apps/prototype-description-service/scene/tests/test_response_schema_parity.py
-+++ b/apps/prototype-description-service/scene/tests/test_response_schema_parity.py
-@@ -8,13 +8,9 @@ import pytest
+diff --git a/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx b/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx
+--- a/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx
++++ b/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx
+@@ -178,11 +178,24 @@ export const GpuControlCard = (): React.JSX.Element => {
+   const stopReason = !canStop ? stopBlockedReason : pendingReason;
+   const displayedState = data && data.snapshot_fresh ? data.gpu_state.state : GPU_STATE.UNKNOWN;
  
- from scene.interface_adapters.http.schemas.responses import VisualFactsResponse
- 
--SCHEMA_PATH = (
--    Path(__file__).resolve().parents[4]
--    / "packages"
--    / "shared-contracts"
--    / "schemas"
--    / "image-description-response.schema.json"
--)
-+_SCHEMA_DIR = Path(__file__).resolve().parents[4] / "packages" / "shared-contracts" / "schemas"
-+SCHEMA_PATH = _SCHEMA_DIR / "image-description-response.schema.json"
-+MULTIPART_SCHEMA_PATH = _SCHEMA_DIR / "scene-describe-multipart.schema.json"
- 
- 
- def _schema() -> dict:
-@@ -54,6 +50,13 @@ PREVIEW_FIELDS = {
-     "attachment_provenance",
-     "alt_text_long",
- }
-+# GPUFLOW-1: defined on VisualFactsResponse / image-description-response, not
-+# in `required`; omitted from the serialized body when unobserved.
-+OPERATION_FIELDS = {
-+    "operation_id",
-+    "startup_id",
-+    "timing",
-+}
- 
- 
- def test_schema_model_id_documents_gpu_hub_pin_format():
-@@ -66,9 +69,24 @@ def test_schema_model_id_documents_gpu_hub_pin_format():
- 
- def test_schema_required_matches_model_fields():
-     schema = _schema()
--    assert set(schema["required"]) == set(VisualFactsResponse.model_fields) - PREVIEW_FIELDS
-+    assert set(schema["required"]) == set(VisualFactsResponse.model_fields) - PREVIEW_FIELDS - OPERATION_FIELDS
-     assert len(schema["required"]) == 17
-     assert set(schema["properties"]) == set(VisualFactsResponse.model_fields)
-+    assert OPERATION_FIELDS.isdisjoint(schema["required"])
-+    assert set(schema["properties"]) >= OPERATION_FIELDS
+-  const confirm = (): void => {
++  React.useEffect(() => {
+     if (confirmation === null) {
+       return;
+     }
+-    requestIntent(confirmation);
++    const startStillAllowed = confirmation === GpuIntentAction.START && canStart;
++    const stopStillAllowed = confirmation === GpuIntentAction.STOP && canStop;
++    if (displayedState === GPU_STATE.UNKNOWN || (!startStillAllowed && !stopStillAllowed)) {
++      setConfirmation(null);
++    }
++  }, [confirmation, displayedState, canStart, canStop]);
 +
++  const confirm = (): void => {
++    const action = confirmation;
++    if (action === GpuIntentAction.START && canStart) {
++      requestIntent(action);
++    } else if (action === GpuIntentAction.STOP && canStop) {
++      requestIntent(action);
++    }
+     setConfirmation(null);
+   };
+ 
+@@ -295,17 +308,6 @@ export const GpuControlCard = (): React.JSX.Element => {
+                 </button>
+                 {stopReason ? <span id="z-gpu-stop-reason">disabled: {stopReason}</span> : null}
+ 
+-                {canReturnToAuto ? (
+-                  <button
+-                    type="button"
+-                    className="acx-button acx-button--secondary"
+-                    onClick={() => requestIntent(GpuIntentAction.AUTO)}
+-                    disabled={isIntentPending}
+-                  >
+-                    <span aria-hidden="true">↺</span> {__('Return to automatic', 'alt-context')}
+-                  </button>
+-                ) : null}
+-
+                 {displayedState === GPU_STATE.READY ? (
+                   <a className="acx-button acx-button--secondary" href={toWorkbench()}>
+                     <span aria-hidden="true">→</span> {__('Go to Workbench', 'alt-context')}
+@@ -314,6 +316,17 @@ export const GpuControlCard = (): React.JSX.Element => {
+               </>
+             ) : null}
+ 
++            {canReturnToAuto ? (
++              <button
++                type="button"
++                className="acx-button acx-button--secondary"
++                onClick={() => requestIntent(GpuIntentAction.AUTO)}
++                disabled={isIntentPending}
++              >
++                <span aria-hidden="true">↺</span> {__('Return to automatic', 'alt-context')}
++              </button>
++            ) : null}
 +
-+def test_base_dump_omits_absent_operation_metadata():
-+    response = VisualFactsResponse.model_validate(_sample())
-+    for payload in (response.model_dump(mode="json"), json.loads(response.model_dump_json())):
-+        assert OPERATION_FIELDS.isdisjoint(payload)
-+        jsonschema.validate(payload, _schema())
+             <button type="button" className="acx-button acx-button--tertiary" onClick={() => void refetch()}>
+               <span aria-hidden="true">↻</span> {__('Refresh', 'alt-context')}
+             </button>
+diff --git a/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx b/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx
+--- a/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx
++++ b/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx
+@@ -1,12 +1,11 @@
+-import React from 'react';
+ import { fireEvent, render, screen } from '@testing-library/react';
+ import { beforeEach, describe, expect, it, vi } from 'vitest';
+ 
+ import { GPU_INTENT_ACTION, GPU_INTENT_STATUS, GPU_STATE, type GpuStatusResponse } from '../../../api/gpuApi';
+ import { GPU_STATE_VOCABULARY } from '../../workbench/gpuStatePresentation';
+-import serviceStates from './fixtures/gpuflow-service-states.json';
+ import { GpuControlCard } from '../GpuControlCard';
+ import * as gpuControl from '../useGpuControl';
++import serviceStates from './fixtures/gpuflow-service-states.json';
+ 
+ vi.mock('../useGpuControl', async (importOriginal) => {
+   const actual = await importOriginal<typeof gpuControl>();
+@@ -267,7 +266,7 @@ describe('GpuControlCard', () => {
+     expect(screen.getByTestId('gpu-stale-notice')).toHaveTextContent('Service status is out of date');
+     expect(screen.queryByRole('button', { name: 'Start service' })).not.toBeInTheDocument();
+     expect(screen.queryByRole('button', { name: /Stop service/ })).not.toBeInTheDocument();
+-    expect(screen.queryByRole('button', { name: 'Return to automatic' })).not.toBeInTheDocument();
++    expect(screen.getByRole('button', { name: 'Return to automatic' })).toBeInTheDocument();
+     expect(screen.getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
+   });
+ 
+@@ -280,12 +279,70 @@ describe('GpuControlCard', () => {
+     render(<GpuControlCard />);
+ 
+     expect(screen.getByText(`Service: ${GPU_STATE_VOCABULARY.notReported}`)).toBeInTheDocument();
++    expect(screen.queryByRole('button', { name: 'Start service' })).not.toBeInTheDocument();
++    expect(screen.queryByRole('button', { name: /Stop service/ })).not.toBeInTheDocument();
++    expect(screen.getByRole('button', { name: 'Return to automatic' })).toBeInTheDocument();
++    expect(screen.getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
++  });
 +
++  it('omits Return to automatic on unknown when intent is already automatic', () => {
++    mockControl(statusResponse({ state: 'unknown' }), {
++      canStart: false,
++      canStop: false,
++      canReturnToAuto: false,
++    });
++    render(<GpuControlCard />);
 +
-+def test_multipart_success_branch_requires_operation_metadata():
-+    schema = json.loads(MULTIPART_SCHEMA_PATH.read_text())
-+    success_required = set(schema["oneOf"][0]["allOf"][1]["required"])
-+    assert success_required == OPERATION_FIELDS
+     expect(screen.queryByRole('button', { name: 'Start service' })).not.toBeInTheDocument();
+     expect(screen.queryByRole('button', { name: /Stop service/ })).not.toBeInTheDocument();
+     expect(screen.queryByRole('button', { name: 'Return to automatic' })).not.toBeInTheDocument();
+     expect(screen.getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
+   });
  
++  it('clears an open stop confirmation when the snapshot becomes stale', () => {
++    const requestIntent = vi.fn();
++    mockControl(statusResponse({ state: 'ready' }), { requestIntent });
++    const { rerender } = render(<GpuControlCard />);
++    fireEvent.click(screen.getByRole('button', { name: /Stop service/ }));
++    expect(screen.getByRole('button', { name: 'Confirm stop' })).toBeInTheDocument();
++
++    mockControl(
++      {
++        ...statusResponse({ state: 'ready' }),
++        snapshot_age_seconds: 240,
++        snapshot_fresh: false,
++      },
++      { requestIntent, canStart: false, canStop: false },
++    );
++    rerender(<GpuControlCard />);
++
++    expect(screen.queryByTestId('z-stop-preview')).not.toBeInTheDocument();
++    expect(screen.queryByRole('button', { name: 'Confirm stop' })).not.toBeInTheDocument();
++    expect(requestIntent).not.toHaveBeenCalled();
++  });
++
++  it('clears an open start confirmation when the snapshot becomes stale', () => {
++    const requestIntent = vi.fn();
++    mockControl(statusResponse(), { requestIntent });
++    const { rerender } = render(<GpuControlCard />);
++    fireEvent.click(screen.getByRole('button', { name: 'Start service' }));
++    expect(screen.getByRole('button', { name: 'Confirm start' })).toBeInTheDocument();
++
++    mockControl(
++      {
++        ...statusResponse(),
++        snapshot_age_seconds: 240,
++        snapshot_fresh: false,
++      },
++      { requestIntent, canStart: false, canStop: false },
++    );
++    rerender(<GpuControlCard />);
++
++    expect(screen.queryByTestId('z-start-preview')).not.toBeInTheDocument();
++    expect(screen.queryByRole('button', { name: 'Confirm start' })).not.toBeInTheDocument();
++    expect(requestIntent).not.toHaveBeenCalled();
++  });
++
+   it.each([
+     [GPU_STATE.STOPPED, true, 'a service request is already in flight'],
+     [GPU_STATE.STARTING, true, 'a service request is already in flight'],
+diff --git a/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/useGpuControl.test.tsx b/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/useGpuControl.test.tsx
+--- a/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/useGpuControl.test.tsx
++++ b/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/useGpuControl.test.tsx
+@@ -57,11 +57,14 @@ const statusResponse = ({
+   ...overrides,
+ });
  
- def test_sample_validates_against_schema():
-diff --git a/apps/prototype-description-service/scene/tests/test_schemas.py b/apps/prototype-description-service/scene/tests/test_schemas.py
---- a/apps/prototype-description-service/scene/tests/test_schemas.py
-+++ b/apps/prototype-description-service/scene/tests/test_schemas.py
-@@ -7,7 +7,11 @@ from pydantic import ValidationError
+-const wrapper = ({ children }: { children: ReactNode }) => {
++const createWrapper = () => {
+   const client = new QueryClient({
+     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+   });
+-  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
++  const wrapper = ({ children }: { children: ReactNode }) => (
++    <QueryClientProvider client={client}>{children}</QueryClientProvider>
++  );
++  return wrapper;
+ };
  
- from scene.domain.description import DescriptionAdapterKind, DescriptionResultTier, ProviderMode, RetentionClass
- from scene.interface_adapters.http.schemas.requests import DescribeImageEnvelope
--from scene.interface_adapters.http.schemas.responses import DescribeRunItemResponse, VisualFactsResponse
-+from scene.interface_adapters.http.schemas.responses import (
-+    DescribeRunItemResponse,
-+    MultipartDescribeResponse,
-+    VisualFactsResponse,
-+)
+ describe('useGpuControl', () => {
+@@ -83,7 +86,7 @@ describe('useGpuControl', () => {
+   it('derives start from the stopped zero state and keeps stop disabled', async () => {
+     fetchGpuStatusMock.mockResolvedValue(statusResponse());
  
- # 15 contract-locked core fields + additive optional preview/fusion fields.
- PREVIEW_FIELDS = {
-@@ -38,6 +42,12 @@ EXPECTED_FIELDS = {
-     "tier",
-     "result_generation",
- }
-+# GPUFLOW-1: optional on VisualFactsResponse; required keys on MultipartDescribeResponse.
-+OPERATION_FIELDS = {
-+    "operation_id",
-+    "startup_id",
-+    "timing",
-+}
+-    const { result } = renderHook(() => useGpuControl(), { wrapper });
++    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
+     await waitFor(() => expect(result.current.data).toBeDefined());
  
+     expect(result.current.canStart).toBe(true);
+@@ -95,7 +98,7 @@ describe('useGpuControl', () => {
+   it('keeps Start disabled when a stopped-looking snapshot is stale', async () => {
+     fetchGpuStatusMock.mockResolvedValue(statusResponse({ snapshot_age_seconds: 240, snapshot_fresh: false }));
  
- def _sample_response() -> dict:
-@@ -63,8 +73,11 @@ def _sample_response() -> dict:
+-    const { result } = renderHook(() => useGpuControl(), { wrapper });
++    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
+     await waitFor(() => expect(result.current.data).toBeDefined());
  
+     expect(result.current.canStart).toBe(false);
+@@ -113,7 +116,7 @@ describe('useGpuControl', () => {
+       }),
+     );
  
- def test_response_has_exactly_15_contract_fields():
--    assert set(VisualFactsResponse.model_fields) == EXPECTED_FIELDS | PREVIEW_FIELDS
-+    assert set(VisualFactsResponse.model_fields) == EXPECTED_FIELDS | PREVIEW_FIELDS | OPERATION_FIELDS
-     assert len(EXPECTED_FIELDS) == 17
-+    for name in OPERATION_FIELDS:
-+        assert not VisualFactsResponse.model_fields[name].is_required()
-+        assert MultipartDescribeResponse.model_fields[name].is_required()
+-    const { result } = renderHook(() => useGpuControl(), { wrapper });
++    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
+     await waitFor(() => expect(result.current.data).toBeDefined());
  
+     expect(result.current.canStart).toBe(false);
+@@ -123,7 +126,7 @@ describe('useGpuControl', () => {
+   it('keeps Start disabled for a fresh snapshot that reports an unknown machine state', async () => {
+     fetchGpuStatusMock.mockResolvedValue(statusResponse({ gpu_state: { state: 'unknown' } }));
  
- def test_response_round_trip_typed_provenance():
-@@ -72,7 +85,10 @@ def test_response_round_trip_typed_provenance():
-     assert r.adapter is DescriptionAdapterKind.SEEDED
-     assert r.retention_class is RetentionClass.RETAIN_ALL
-     assert r.provider_disclosure.provider is ProviderMode.NONE
--    assert set(r.model_dump().keys()) == EXPECTED_FIELDS | PREVIEW_FIELDS
-+    dumped = r.model_dump()
-+    assert set(dumped.keys()) == EXPECTED_FIELDS | PREVIEW_FIELDS
-+    assert OPERATION_FIELDS.isdisjoint(dumped)
-+    assert OPERATION_FIELDS.isdisjoint(r.model_dump(mode="json"))
-     # Preview fields default to None when the merge layer is not run.
-     assert r.generic_draft is None and r.named_draft is None and r.naming_provenance is None
-     # ALTQ-1: absent long surface defaults to None — old payloads stay valid.
+-    const { result } = renderHook(() => useGpuControl(), { wrapper });
++    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
+     await waitFor(() => expect(result.current.data).toBeDefined());
+ 
+     expect(result.current.canStart).toBe(false);
+@@ -139,7 +142,7 @@ describe('useGpuControl', () => {
+       }),
+     );
+ 
+-    const { result } = renderHook(() => useGpuControl(), { wrapper });
++    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
+     await waitFor(() => expect(result.current.data).toBeDefined());
+     expect(result.current.canStart).toBe(false);
+     expect(result.current.canStop).toBe(true);
+@@ -149,7 +152,7 @@ describe('useGpuControl', () => {
+   it('presents starting with the optimistic pending start intent', async () => {
+     fetchGpuStatusMock.mockResolvedValue(statusResponse());
+     postGpuIntentMock.mockReturnValue(new Promise(() => {}));
+-    const { result } = renderHook(() => useGpuControl(), { wrapper });
++    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
+     await waitFor(() => expect(result.current.data).toBeDefined());
+     act(() => {
+       result.current.requestIntent(GPU_INTENT_ACTION.START);
+@@ -169,7 +172,7 @@ describe('useGpuControl', () => {
+       }),
+     );
+ 
+-    const { result } = renderHook(() => useGpuControl(), { wrapper });
++    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
+     await waitFor(() => expect(result.current.data).toBeDefined());
+ 
+     act(() => {
+@@ -188,8 +191,24 @@ describe('useGpuControl', () => {
+   it('enables Return to automatic only when the effective intent is not automatic', async () => {
+     fetchGpuStatusMock.mockResolvedValue(statusResponse({ gpu_state: { intent: GPU_INTENT_ACTION.START } }));
+ 
+-    const { result } = renderHook(() => useGpuControl(), { wrapper });
++    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
+     await waitFor(() => expect(result.current.data).toBeDefined());
+     expect(result.current.canReturnToAuto).toBe(true);
+   });
++
++  it('keeps Return to automatic available when a non-automatic snapshot is stale or unknown', async () => {
++    fetchGpuStatusMock.mockResolvedValue(
++      statusResponse({
++        gpu_state: { state: 'ready', intent: GPU_INTENT_ACTION.START },
++        snapshot_age_seconds: 240,
++        snapshot_fresh: false,
++      }),
++    );
++
++    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
++    await waitFor(() => expect(result.current.data).toBeDefined());
++    expect(result.current.canStart).toBe(false);
++    expect(result.current.canStop).toBe(false);
++    expect(result.current.canReturnToAuto).toBe(true);
++  });
+ });

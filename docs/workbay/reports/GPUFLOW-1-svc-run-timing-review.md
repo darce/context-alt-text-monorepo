@@ -155,3 +155,19 @@ Impact: Concurrent callers can lose durable startup correlation and `startup_ms`
 Fix: Coordinate startup association and run readiness in one locking/transaction protocol, or re-read and reconcile the operation association immediately before commit; add a concurrent association/readiness regression.
 
 Verdict: fail
+
+## Re-review r4 (16a393fdc..40985abd9)
+
+VERIFIED: {"GPUFLOW-1-SVCRUNTIMING-R-08":"partially_fixed","GPUFLOW-1-SVCRUNTIMING-R-09":"fixed","GPUFLOW-1-SVCRUNTIMING-R-10":"partially_fixed"}
+
+FINDINGS: []
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| GPUFLOW-1-SVCRUNTIMING-R-08 | partially_fixed | The post-record repair is now gated by `first_ready_before is None and run.first_ready_at is not None`, and the added sequential warm-retry regression preserves the first positive ramp (`.review/CHANGE.diff:82-99,163-193`). The snapshot is still captured before the locked repository write (`.review/CHANGE.diff:49-58`), so a concurrent cold invocation can persist first readiness after that snapshot; a warm invocation can then satisfy `newly_recorded` and write `0.0` through `_measured_ramp_up_ms(cold=False)` (`.review/CHANGE.diff:89-95`). |
+| GPUFLOW-1-SVCRUNTIMING-R-09 | fixed | `_adapter_was_dispatched()` now gates elapsed-time fallback on `attempt_timing.entered_adapter` or an equivalent result marker, returning `None` for unmarked pre-dispatch failures (`.review/CHANGE.diff:102-125`). The new pre-dispatch regression asserts a failed item keeps `processing_ms` null and `items_timed == 0` (`.review/CHANGE.diff:196-227`). |
+| GPUFLOW-1-SVCRUNTIMING-R-10 | partially_fixed | The delta adds a second operation/startup lookup and a dialect-gated `FOR UPDATE` operation read (`.review/CHANGE.diff:8-43,49-64`), which closes an association committed before that reread. The operation lock/read still occurs before `record_readiness()` (`.review/CHANGE.diff:59-79`), so an association committed after the reread can still be omitted; the added regression mutates the operation in the same session rather than interleaving a committed concurrent transaction (`.review/CHANGE.diff:230-298`). |
+
+### FINDINGS
+
+Verdict: pass_with_findings

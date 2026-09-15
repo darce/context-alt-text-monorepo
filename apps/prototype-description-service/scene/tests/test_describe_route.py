@@ -7,10 +7,13 @@ import tempfile
 import time
 import uuid
 from contextlib import contextmanager, suppress
+from pathlib import Path
 from typing import cast
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from jsonschema import Draft7Validator
+from referencing import Registry, Resource
 from sqlalchemy import Table, select, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -47,6 +50,26 @@ from scene.tests.demo_quota_harness import demo_quota_client as _demo_quota_clie
 from scene.tests.demo_quota_harness import recognition_used as _recognition_used
 
 TENANT_ID = "00000000-0000-0000-0000-0000000000bb"
+_SCHEMA_DIR = Path(__file__).resolve().parents[4] / "packages/shared-contracts/schemas"
+_SCHEMA_FILES = (
+    "image-description-response.schema.json",
+    "scene-describe-multipart.schema.json",
+)
+
+
+def _load_shared_schema(name: str):
+    return json.loads((_SCHEMA_DIR / name).read_text())
+
+
+def _retrieve_shared_schema(uri: str):
+    return Resource.from_contents(_load_shared_schema(Path(uri).name))
+
+
+def _multipart_schema_validator():
+    registry = Registry(retrieve=_retrieve_shared_schema).with_resources(
+        (name, Resource.from_contents(_load_shared_schema(name))) for name in _SCHEMA_FILES
+    )
+    return Draft7Validator(_load_shared_schema("scene-describe-multipart.schema.json"), registry=registry)
 
 
 class _Auth:
@@ -1263,11 +1286,16 @@ def test_gpu_adapter_unavailable_is_typed_503(monkeypatch, tmp_path):
         response = _post(client, TENANT_ID)
         assert response.status_code == 503, response.text
         assert "Retry-After" not in response.headers
-        detail = response.json()["detail"]
+        body = response.json()
+        _multipart_schema_validator().validate(body)
+        detail = body["detail"]
         assert detail["code"] == "description_service_unavailable"
         assert "warmup_eta_seconds" not in detail
         assert detail["operation_id"]
+        assert "startup_id" in detail
+        assert "timing" in detail
         assert adapter.calls == 1
+        assert adapter.kind is DescriptionAdapterKind.GPU
         assert _lease_state(client, detail["operation_id"]) == "completed"
         assert _active_lease_count(client) == 0
 
@@ -1743,16 +1771,22 @@ def test_downstream_unavailable_http_exception_releases_lease(monkeypatch, tmp_p
     with _client(adapter=adapter) as client:
         response = _post(client, TENANT_ID)
         assert response.status_code == 503, response.text
-        detail = response.json()["detail"]
-        assert detail == {
-            "code": "description_service_unavailable",
-            "message": "dependency unavailable",
-        }
+        assert "Retry-After" not in response.headers
+        body = response.json()
+        _multipart_schema_validator().validate(body)
+        detail = body["detail"]
+        assert detail["code"] == "description_service_unavailable"
+        assert detail["message"] == "dependency unavailable"
+        assert detail["operation_id"]
+        assert "startup_id" in detail
+        assert "timing" in detail
+        assert "warmup_eta_seconds" not in detail
         assert adapter.calls == 0
         rows = _lease_rows(client)
         assert rows
         assert all(state == "completed" for _operation_id, state in rows)
         assert _active_lease_count(client) == 0
+        assert _lease_state(client, detail["operation_id"]) == "completed"
 
 
 def test_concurrent_ready_does_not_complete_failing_request(monkeypatch, tmp_path):

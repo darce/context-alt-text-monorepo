@@ -93,3 +93,38 @@ Verdict: fail
 - **Fix:** Add a migration recorder assertion for the revision table's columns/check constraint and downgrade position, plus a non-Postgres test that runs the migration helper against a scratch schema or explicitly include this table in an always-on migration regression.
 
 Verdict: fail
+
+## Re-review r3b (cd3d66908..973fc1028)
+
+VERIFIED: {"SVCDEM-H-01":"fixed","SVCDEM-M-02":"partially_fixed","SVCDEM-M-03":"partially_fixed","SVCDEM-M-05":"not_fixed","GPUFLOW-1-SVCDEMAND-R-05":"partially_fixed","GPUFLOW-1-SVCDEMAND-R-06":"fixed","GPUFLOW-1-SVCDEMAND-R-07":"fixed","GPUFLOW-1-SVCDEMAND-R-08":"fixed"}
+FINDINGS: [{"id":"GPUFLOW-1-SVCDEMAND-R-09","severity":"high","file_path":"apps/prototype-description-service/scene/application/describe_load.py","line":319,"summary":"Policy flags and GPU state are read from separate lifecycle snapshot generations.","evidence":"The fix reads last_transition_reason through _max_lease_reached() and then calls read_gpu_state() independently in _gpu_excludes_lease_demand(); a lifecycle write between those reads can leave a lease-cap transition unobserved while the second read returns an allowlisted stopped state, so has_work is republished after max-lease. This violates authoritative policy and the single-generation fencing requirement. [CON-11] [RES-10]"},{"id":"GPUFLOW-1-SVCDEMAND-R-10","severity":"low","file_path":"apps/prototype-description-service/recognition/tests/test_identity_schema_migration.py","line":144,"summary":"The fix delta changes a recognition migration test outside the svc-demand lane paths.","evidence":"The inlined delta adds the migration recorder tests in .review/CHANGE.diff:1-44, while the lane row assigns svc-demand scene/application/describe_load.py and its scene test proof. The migration change may be needed for R-08, but it is an out-of-lane path that requires explicit owner coordination."}]
+Verdict: fail
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| SVCDEM-H-01 | fixed | `.review/CHANGE.diff:187-229` changes malformed/unreadable max-lease state to fail closed and adds a live `read_gpu_state()` gate; `.review/CHANGE.diff:766-871` covers missing, stale, unreadable, lease-cap-then-unknown, and stopped/Auto snapshots. The separate-generation race is a new R-09. |
+| SVCDEM-M-02 | partially_fixed | `.review/CHANGE.diff:96-161` adds finite/inequality checks and `.review/CHANGE.diff:279-286` gates the initial snapshot. It does not wire the bound into `DescribeOperationRepository` construction (`scene/application/describe_operation_repository.py:35-44` still accepts caller-supplied lease seconds), uses a hardcoded retention constant while the repository reads an environment value, falls back from invalid refresh configuration (`scene/application/describe_load.py:196-214`), and the periodic loop (`:545-560`) does not validate. Those gaps violate the contract's explicit-deployed-bound/fail-closed requirement. |
+| SVCDEM-M-03 | partially_fixed | `.review/CHANGE.diff:270-275` changes `dump_load_snapshot()` to WARNING and `.review/CHANGE.diff:421-444` asserts that log level. The production synchronous `_maybe_dump_describe_load()` still catches broad exceptions and logs DEBUG at `scene/interface_adapters/http/routers/describe.py:457-470`; the added sync test (`.review/CHANGE.diff:627-681`) covers stale-drop only, so the original failed sync publication remains weakly observable. [AGT-10] |
+| SVCDEM-M-05 | not_fixed | `.review/CHANGE.diff:463-493` replaces the old global STOP assertion with all-two-counted/global-zero assertions, but `DescribeOperationRepository.active_demand_count()` still returns zero for any global block (`scene/application/describe_operation_repository.py:232-258`). No behavior or regression holds one of two leases while the other remains counted; the added test is therefore insufficient by itself. [TEST-15] |
+| GPUFLOW-1-SVCDEMAND-R-05 | partially_fixed | `.review/CHANGE.diff:627-681` now pauses publisher A after its read, changes demand through B, exercises `_maybe_dump_describe_load()`, and verifies A's older revision is dropped. It remains a same-process SQLite test with no equal-revision or separate-process repeat required by `gpu-lifecycle.md:410-413`. [CON-05] [TEST-15] |
+| GPUFLOW-1-SVCDEMAND-R-06 | fixed | `.review/CHANGE.diff:219-229` ORs explicit overrides with live STOP/max-lease policy, and `.review/CHANGE.diff:684-736` verifies both `False` override cases retain the active lease while publishing zero demand. |
+| GPUFLOW-1-SVCDEMAND-R-07 | fixed | `.review/CHANGE.diff:170-184` rejects explicit revision zero by changing the lower bound to one; `.review/CHANGE.diff:549-557` adds zero to the malformed revision loop and `.review/CHANGE.diff:856-866` asserts the malformed target remains untouched. |
+| GPUFLOW-1-SVCDEMAND-R-08 | fixed | `.review/CHANGE.diff:8-39` adds recorder assertions for the migration-created columns, primary key, named singleton check, and downgrade order; the test calls `identity_schema.upgrade()`/`downgrade()` rather than only listing the table. |
+
+### FINDINGS
+
+#### GPUFLOW-1-SVCDEMAND-R-09 — high
+
+- **File:line:** `apps/prototype-description-service/scene/application/describe_load.py:276-322`; `.review/CHANGE.diff:187-229`.
+- **Evidence:** `_max_lease_reached()` reads and parses the lifecycle file to extract `last_transition_reason`, then `_gpu_excludes_lease_demand()` performs a separate `read_gpu_state()` call. The producer publishes the policy fields in one atomic snapshot, but this consumer does not carry a generation or lock across both reads. If the lifecycle writes a fresh `lease_cap` snapshot after the first read and before the second, the second read can still be the allowlisted `stopped` state; `active_demand_count()` then counts active leases and publishes `has_work` after the max-lease transition. This is a check-then-act authority violation under `[CON-11]` and stale distributed state under `[RES-10]`.
+- **Impact:** A controller max-lease stop can be followed by one demand publication that immediately re-arms automatic START, defeating the cost backstop and the contract's “STOP and lifecycle max-lease remain authoritative” rule.
+- **Fix:** Read one validated lifecycle snapshot generation and derive state plus transition reason from it, coordinating with the existing lifecycle publication fence or exposing one atomic reader API; add a barrier regression that interleaves a lease-cap write between the policy fields.
+
+#### GPUFLOW-1-SVCDEMAND-R-10 — low
+
+- **File:line:** `apps/prototype-description-service/recognition/tests/test_identity_schema_migration.py:144-175`; `.review/CHANGE.diff:1-44`.
+- **Evidence:** The fix delta changes a recognition migration test path in addition to the svc-demand implementation and scene test paths named by the lane plan. This is needed to prove the R-08 schema repair, but it is outside this lane's owned path set and should be coordinated with the recognition/migration owner rather than silently carried by the svc-demand lane.
+- **Impact:** The lane can merge a sibling-owned path or conflict with the migration lane's concurrent changes, making ownership and review provenance ambiguous.
+- **Fix:** Land the migration assertion in its owning lane or record an explicit cross-lane ownership handoff before merging this delta.
+
+Verdict: fail

@@ -7,10 +7,11 @@ Lease deployment bounds are validated by the demand service before construction.
 from __future__ import annotations
 
 import math
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, select, tuple_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models.scene import DescribeDemandLease, DescribeOperation, DescribeStartup
@@ -22,6 +23,7 @@ from scene.domain.describe_run import (
 from scene.domain.describe_run import (
     OperationExpiredError,
     OperationMismatchError,
+    as_utc,
     async_job_retention_hours,
     elapsed_ms,
     utc_observation,
@@ -58,13 +60,15 @@ class DescribeOperationRepository:
         )
         if lease is None:
             raise RuntimeError("operation has no demand lease")
+        if utc_observation(lease.retain_until) > utc_observation(op.retain_until):
+            raise ValueError("lease retention exceeds operation retention")
         return lease
 
     async def accept(
         self, *, tenant_id: uuid.UUID, request_digest: str, operation_id: str | None = None, now: datetime | None = None
     ) -> DescribeOperation:
-        now = utc_observation(now or datetime.now(UTC))
-        if len(request_digest) != 64:
+        now = as_utc(now or datetime.now(UTC))
+        if not isinstance(request_digest, str) or re.fullmatch(r"[0-9a-f]{64}", request_digest) is None:
             raise ValueError("request_digest must be a SHA-256 digest")
         if operation_id is None:
             op = DescribeOperation(
@@ -109,6 +113,7 @@ class DescribeOperationRepository:
             await self._session.flush()
             raise OperationExpiredError("operation expired; start a new operation")
         elapsed_ms(op.accepted_at, now)
+        lease.retain_until = op.retain_until = utc_observation(op.retain_until)
         lease.expires_at = op.expires_at = min(now + self._lease, utc_observation(op.retain_until))
         await self._session.flush()
         return op
@@ -134,9 +139,11 @@ class DescribeOperationRepository:
         started_at: datetime | None = None,
         now: datetime | None = None,
     ) -> DescribeOperation:
+        if started_at is not None:
+            started_at = as_utc(started_at)
         if not 1 <= len(startup_id) <= 128:
             raise ValueError("invalid startup id")
-        op, lease = await self._active(tenant_id, operation_id, utc_observation(now or datetime.now(UTC)))
+        op, lease = await self._active(tenant_id, operation_id, as_utc(now or datetime.now(UTC)))
         if lease.state != State.ACTIVE or op.first_ready_at is not None:
             self.unadmitted_events += 1
             return op
@@ -170,7 +177,7 @@ class DescribeOperationRepository:
     async def observe_ready(
         self, *, tenant_id: uuid.UUID, operation_id: str, now: datetime | None = None
     ) -> DescribeOperation:
-        now = utc_observation(now or datetime.now(UTC))
+        now = as_utc(now or datetime.now(UTC))
         op, lease = await self._active(tenant_id, operation_id, now)
         if lease.state != State.ACTIVE or op.first_ready_at is not None:
             self.unadmitted_events += 1
@@ -206,7 +213,7 @@ class DescribeOperationRepository:
     ) -> DescribeOperation:
         for value in (processing_ms, queue_ms, server_elapsed_ms):
             validate_duration_ms(value)
-        now = utc_observation(now or datetime.now(UTC))
+        now = as_utc(now or datetime.now(UTC))
         op, lease = await self._active(tenant_id, operation_id, now)
         if lease.state != State.ACTIVE:
             self.unadmitted_events += 1
@@ -226,7 +233,7 @@ class DescribeOperationRepository:
         self, *, now: datetime | None = None, stop_requested: bool = False, max_lease_reached: bool = False
     ) -> int:
         await DescribeRunRepository(self._session)._require_rls_bypass()
-        now = utc_observation(now or datetime.now(UTC))
+        now = as_utc(now or datetime.now(UTC))
         await self._session.execute(
             update(DescribeDemandLease)
             .where(
@@ -252,16 +259,23 @@ class DescribeOperationRepository:
 
     async def purge_expired(self, *, now: datetime | None = None) -> int:
         await DescribeRunRepository(self._session)._require_rls_bypass()
-        now = utc_observation(now or datetime.now(UTC))
+        now = as_utc(now or datetime.now(UTC))
+        # Match renewal lock order: parent operation before demand lease.
+        candidates = (await self._session.execute(
+            select(DescribeOperation.tenant_id, DescribeOperation.operation_id)
+            .where(DescribeOperation.retain_until <= now)
+            .with_for_update(skip_locked=True)
+        )).all()
+        identities = [(row.tenant_id, row.operation_id) for row in candidates]
         # Evaluate expiry in SQL: SQLite-loaded identity-map timestamps are naive.
         await self._session.execute(
             delete(DescribeDemandLease)
-            .where(DescribeDemandLease.retain_until <= now)
+            .where(tuple_(DescribeDemandLease.tenant_id, DescribeDemandLease.operation_id).in_(identities))
             .execution_options(synchronize_session="fetch")
         )
         result = await self._session.execute(
             delete(DescribeOperation)
-            .where(DescribeOperation.retain_until <= now)
+            .where(tuple_(DescribeOperation.tenant_id, DescribeOperation.operation_id).in_(identities))
             .execution_options(synchronize_session="fetch")
         )
         await self._session.execute(

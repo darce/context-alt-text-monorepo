@@ -319,6 +319,13 @@ def utc_observation(value: datetime) -> datetime:
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
+def as_utc(value: datetime) -> datetime:
+    """Validate caller observations before persisting; database reads use utc_observation."""
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("observation must be timezone-aware")
+    return value.astimezone(UTC)
+
+
 def validate_duration_ms(value: float | None) -> float | None:
     import math
 

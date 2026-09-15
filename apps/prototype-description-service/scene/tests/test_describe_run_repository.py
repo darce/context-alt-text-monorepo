@@ -301,3 +301,39 @@ def test_timing_round_trip_counts_failed_and_cancelled_measured_items_only():
         await engine.dispose()
 
     asyncio.run(body())
+
+
+def test_untimed_runs_and_non_utc_observations():
+    from datetime import UTC, datetime, timedelta, timezone
+    from scene.domain.describe_run import utc_observation
+
+    async def body():
+        engine, sf = await _sessionmaker()
+        tenant = uuid.uuid4()
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        local = start.astimezone(timezone(timedelta(hours=-5)))
+        async with sf() as session:
+            repo = DescribeRunRepository(session)
+            run_id = await repo.create_run(tenant_id=tenant, media_ids=[1, 2])
+            run = await repo.get_run(tenant_id=tenant, run_id=run_id)
+            assert run.items_timed == 0
+            run.created_at = start
+            for method in (repo.record_pickup, repo.record_readiness):
+                with pytest.raises(ValueError, match="timezone-aware"):
+                    await method(tenant_id=tenant, run_id=run_id, now=start.replace(tzinfo=None))
+            await repo.record_pickup(tenant_id=tenant, run_id=run_id, now=local + timedelta(seconds=1))
+            await repo.record_readiness(tenant_id=tenant, run_id=run_id, now=local + timedelta(seconds=2))
+            run.items_timed = None  # Legacy rows must be repaired by status recomputation.
+            for media_id, status in [(1, DescribeItemStatus.FAILED), (2, DescribeItemStatus.SKIPPED)]:
+                await repo.mark_item(tenant_id=tenant, run_id=run_id, media_id=media_id,
+                                     status=status, now=local + timedelta(seconds=3))
+            await session.commit()
+        async with sf() as session:
+            run = await DescribeRunRepository(session).get_run(tenant_id=tenant, run_id=run_id)
+            assert run.items_timed == 0
+            assert utc_observation(run.started_at) == start + timedelta(seconds=1)
+            assert utc_observation(run.first_ready_at) == start + timedelta(seconds=2)
+            assert run.server_elapsed_ms == 3000
+        await engine.dispose()
+
+    asyncio.run(body())

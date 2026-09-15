@@ -2,18 +2,93 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 from sqlalchemy import func, select
 
+from db.models import IdentityCluster as ClusterModel
 from db.models import IdentityClusteringJob, IdentityClusterRepresentative, IdentityMember, MediaIdentity, Tenant
 from db.models.constraints import IdentitySuggestion
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.repositories import SuggestionCreateData
 from recognition.domain.suggestion import SuggestionStatus
 from recognition.infrastructure.repositories import SqlAlchemyClusterRepository, SqlAlchemySuggestionRepository
+
+_REPRESENTATIVE_CASES = json.loads(
+    (Path(__file__).parents[1] / "fixtures/gpuflow-suggestion-representatives.json").read_text()
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", _REPRESENTATIVE_CASES, ids=lambda case: case["name"])
+async def test_details_exclude_candidate_representative(db_session, tenant, case) -> None:
+    identities = []
+    for index, quality in enumerate([1.0, *case["member_qualities"]]):
+        identity = MediaIdentity(
+            tenant_id=tenant.id,
+            media_id=9500 + index,
+            media_url=f"http://example.test/{9500 + index}.jpg",
+            bbox_x=0,
+            bbox_y=0,
+            bbox_width=20,
+            bbox_height=20,
+            confidence=0.99,
+            quality_score=quality,
+            embedding=_embedding(),
+            embedding_model="buffalo_l@insightface",
+        )
+        db_session.add(identity)
+        identities.append(identity)
+    await db_session.flush()
+    cluster = ClusterModel(
+        tenant_id=tenant.id,
+        label="Target",
+        user_confirmed=True,
+        identity_count=len(identities) - 1,
+        representative_identity_id=identities[case["primary_index"]].id,
+    )
+    db_session.add(cluster)
+    await db_session.flush()
+    member_start = 0 if case.get("candidate_is_member", False) else 1
+    for identity in identities[member_start:]:
+        db_session.add(
+            IdentityMember(
+                tenant_id=tenant.id,
+                cluster_id=cluster.id,
+                identity_id=identity.id,
+                similarity=0.8,
+            )
+        )
+    suggestion = IdentitySuggestion(
+        tenant_id=tenant.id,
+        identity_id=identities[0].id,
+        suggested_cluster_id=cluster.id,
+        representative_similarity=0.8,
+        avg_member_similarity=0.8,
+        confidence_score=0.8,
+        resolution=case["resolution"],
+    )
+    db_session.add(suggestion)
+    await db_session.flush()
+    details = await SqlAlchemySuggestionRepository(db_session).list_pending_with_details(str(tenant.id), 10, 0)
+    assert len(details) == 1
+    detail = details[0]
+    assert detail.status == SuggestionStatus.PENDING.value
+    assert detail.identity_media_id == 9500
+    expected = case["expected_index"]
+    assert detail.representative_media_id == (9500 + expected if expected is not None else None)
+    assert detail.representative_media_url == (
+        f"http://example.test/{9500 + expected}.jpg" if expected is not None else None
+    )
+    if expected is None:
+        assert detail.representative_bbox is None
+    else:
+        assert detail.representative_bbox is not None
+    assert suggestion.resolution == case["resolution"]
 
 
 @pytest.mark.asyncio

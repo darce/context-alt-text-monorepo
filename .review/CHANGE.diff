@@ -1,272 +1,1237 @@
-diff --git a/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx b/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx
---- a/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx
-+++ b/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx
-@@ -178,11 +178,24 @@ export const GpuControlCard = (): React.JSX.Element => {
-   const stopReason = !canStop ? stopBlockedReason : pendingReason;
-   const displayedState = data && data.snapshot_fresh ? data.gpu_state.state : GPU_STATE.UNKNOWN;
+diff --git a/apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php b/apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php
+--- a/apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php
++++ b/apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php
+@@ -25,9 +25,13 @@ use function esc_url_raw;
+ use function get_transient;
+ use function get_option;
+ use function in_array;
++use function is_array;
++use function is_string;
+ use function is_wp_error;
++use function ltrim;
+ use function md5;
+ use function set_transient;
++use function str_starts_with;
+ use function strtotime;
+ use function strtolower;
+ use function time;
+@@ -52,6 +56,16 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
+ 	 */
+ 	public const ERROR_CODE_BLOB_REDIRECT_REFUSED = 'recognition_blob_redirect_refused';
  
--  const confirm = (): void => {
-+  React.useEffect(() => {
-     if (confirmation === null) {
-       return;
++	public const TYPED_CODE_STARTING            = 'description_service_starting';
++	public const TYPED_CODE_UNAVAILABLE         = 'description_service_unavailable';
++	public const TYPED_CODE_ERROR               = 'description_service_error';
++	public const TYPED_CODE_OPERATION_MISMATCH  = 'operation_mismatch';
++	public const TYPED_CODE_OPERATION_EXPIRED   = 'operation_expired';
++
++	public const ROUTE_FAMILY_DESCRIBE = 'describe';
++	public const ROUTE_FAMILY_UI_READ  = 'ui_read';
++	public const ROUTE_FAMILY_CONTROL  = 'control';
++
+ 	private ?RecognitionProxyPolicy $proxy_policy = null;
+ 	private ?RecognitionEndpointResolver $endpoint_resolver = null;
+ 
+@@ -112,16 +126,16 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
+ 		}
+ 		$headers['X-API-Key'] = $api_key;
+ 
+-		$policy = $this->get_proxy_policy()->resolve( $method, $request_class );
+-		$circuit_key = $this->build_circuit_breaker_key( $base_url );
+-		$failure_key = RecognitionCircuitKeys::failure_key_for_base_url( $base_url );
++		$policy       = $this->get_proxy_policy()->resolve( $method, $request_class );
++		$route_family = $this->classify_proxy_route_family( $path );
++		if ( self::ROUTE_FAMILY_DESCRIBE === $route_family ) {
++			$policy['circuit_enabled'] = true;
++		}
++		$circuit_key = $this->build_circuit_breaker_key( $base_url, $route_family );
++		$failure_key = $this->build_failure_key( $base_url, $route_family );
+ 
+ 		if ( $policy['circuit_enabled'] && false !== get_transient( $circuit_key ) ) {
+-			return new WP_Error(
+-				'recognition_circuit_open',
+-				'Recognition service temporarily unavailable; try again shortly.',
+-				array( 'status' => 503 )
+-			);
++			return $this->open_circuit_response( $route_family );
+ 		}
+ 
+ 		if ( 'multipart' === $body_kind ) {
+@@ -197,12 +211,23 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
+ 				);
+ 			}
+ 
+-			if ( $status >= 500 ) {
++			$response_headers = wp_remote_retrieve_headers( $response );
++			$response_body    = wp_remote_retrieve_body( $response );
++			$decoded          = json_decode( $response_body, true );
++			$typed_code       = $this->typed_operation_error_code( $decoded );
++			$is_typed_warmup  = $this->is_validated_warming_response( $status, $typed_code );
++			$is_typed_unavail = $this->is_typed_unavailable_response( $status, $typed_code );
++
++			// Validated warming and typed unavailable are not breaker failures
++			// and must pass through unchanged (never collapsed to 500).
++			if ( ! $is_typed_warmup && ! $is_typed_unavail && $status >= 500 ) {
+ 				$this->record_proxy_failure( $policy, $failure_key, $circuit_key );
+ 			}
+ 
+-			$response_headers = wp_remote_retrieve_headers( $response );
+-			if ( $status >= 500 && ! $this->is_backend_retry_after( $status, $response_headers ) && $attempt < $max_retries - 1 ) {
++			$skip_retry = $is_typed_warmup
++				|| $is_typed_unavail
++				|| $this->is_backend_retry_after( $status, $response_headers );
++			if ( $status >= 500 && ! $skip_retry && $attempt < $max_retries - 1 ) {
+ 				$delay_ms = $base_delay_ms * ( 2 ** $attempt );
+ 				usleep( $delay_ms * 1000 );
+ 				continue;
+@@ -212,9 +237,7 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
+ 				$this->record_proxy_success( $policy, $failure_key, $circuit_key );
+ 			}
+ 
+-			$response_body    = wp_remote_retrieve_body( $response );
+-			$decoded          = json_decode( $response_body, true );
+-			$rewritten_body   = BlobUrlRewriter::rewrite( $decoded );
++			$rewritten_body = BlobUrlRewriter::rewrite( $decoded );
+ 			return new WP_REST_Response( $rewritten_body, $status, $this->normalize_response_headers( $response_headers ) );
+ 		}
+ 
+@@ -481,8 +504,81 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
+ 		return $normalized;
+ 	}
+ 
+-	private function build_circuit_breaker_key( string $base_url ): string {
+-		return RecognitionCircuitKeys::for_base_url( $base_url );
++	private function classify_proxy_route_family( string $path ): string {
++		$normalized = '/' . ltrim( strtolower( trim( $path ) ), '/' );
++		if ( str_starts_with( $normalized, '/scene/describe' ) ) {
++			return self::ROUTE_FAMILY_DESCRIBE;
++		}
++		if ( str_starts_with( $normalized, '/scene/gpu' ) ) {
++			return self::ROUTE_FAMILY_CONTROL;
++		}
++
++		return self::ROUTE_FAMILY_UI_READ;
++	}
++
++	private function build_circuit_breaker_key( string $base_url, string $route_family ): string {
++		return RecognitionCircuitKeys::for_base_url( $base_url ) . '_' . $route_family;
++	}
++
++	private function build_failure_key( string $base_url, string $route_family ): string {
++		return RecognitionCircuitKeys::failure_key_for_base_url( $base_url ) . '_' . $route_family;
++	}
++
++	/**
++	 * @param mixed $decoded JSON-decoded upstream body.
++	 */
++	private function typed_operation_error_code( mixed $decoded ): ?string {
++		if ( ! is_array( $decoded ) ) {
++			return null;
++		}
++
++		$detail = $decoded['detail'] ?? null;
++		if ( ! is_array( $detail ) ) {
++			return null;
++		}
++
++		$code = $detail['code'] ?? null;
++		if ( ! is_string( $code ) || '' === trim( $code ) ) {
++			return null;
++		}
++
++		$allowed = array(
++			self::TYPED_CODE_STARTING,
++			self::TYPED_CODE_UNAVAILABLE,
++			self::TYPED_CODE_ERROR,
++			self::TYPED_CODE_OPERATION_MISMATCH,
++			self::TYPED_CODE_OPERATION_EXPIRED,
++		);
++
++		return in_array( $code, $allowed, true ) ? $code : null;
++	}
++
++	private function is_validated_warming_response( int $status, ?string $typed_code ): bool {
++		return 503 === $status && self::TYPED_CODE_STARTING === $typed_code;
++	}
++
++	private function is_typed_unavailable_response( int $status, ?string $typed_code ): bool {
++		return 503 === $status && self::TYPED_CODE_UNAVAILABLE === $typed_code;
++	}
++
++	private function open_circuit_response( string $route_family ): WP_REST_Response|WP_Error {
++		if ( self::ROUTE_FAMILY_DESCRIBE === $route_family ) {
++			return new WP_REST_Response(
++				array(
++					'detail' => array(
++						'code'    => self::TYPED_CODE_UNAVAILABLE,
++						'message' => 'Description service temporarily unavailable; try again shortly.',
++					),
++				),
++				503
++			);
++		}
++
++		return new WP_Error(
++			'recognition_circuit_open',
++			'Recognition service temporarily unavailable; try again shortly.',
++			array( 'status' => 503 )
++		);
+ 	}
+ 
+ 	/**
+diff --git a/apps/prototype-wp-alt-context/src/api/class-settings-controller.php b/apps/prototype-wp-alt-context/src/api/class-settings-controller.php
+--- a/apps/prototype-wp-alt-context/src/api/class-settings-controller.php
++++ b/apps/prototype-wp-alt-context/src/api/class-settings-controller.php
+@@ -32,6 +32,7 @@ use function in_array;
+ use function intval;
+ use function is_array;
+ use function is_bool;
++use function is_float;
+ use function is_int;
+ use function is_numeric;
+ use function is_string;
+@@ -143,6 +144,9 @@ class SettingsController {
+ 				'recognition_enabled'       => RecognitionPolicy::enabled(),
+ 				'allow_person_names'        => $naming_resolution['value'],
+ 				'allow_person_names_error'  => $naming_resolution['error'],
++				'allow_person_names_status' => $naming_resolution['status'],
++				'allow_person_names_code'   => $naming_resolution['code'],
++				'description_service_title' => 'Description Service',
+ 				'description_budget'        => $this->get_description_budget_payload(),
+ 			),
+ 			200
+@@ -366,20 +370,34 @@ class SettingsController {
+ 	 * surfaced to the settings UI as null so it cannot imply that names are
+ 	 * enabled or disabled when the authoritative value is unknown.
+ 	 *
+-	 * @return array{value: ?bool, error: ?string}
++	 * @return array{value: ?bool, error: ?string, status: ?int, code: ?string}
+ 	 */
+ 	private function resolve_naming_agreement(): array {
+ 		$response = $this->request_naming_agreement( 'GET' );
+ 		if ( is_wp_error( $response ) ) {
++			$data = $response->get_error_data();
++			$status = null;
++			if ( is_array( $data ) ) {
++				if ( isset( $data['upstream_status'] ) && is_int( $data['upstream_status'] ) ) {
++					$status = $data['upstream_status'];
++				} elseif ( isset( $data['status'] ) && is_int( $data['status'] ) ) {
++					$status = $data['status'];
++				}
++			}
++
+ 			return array(
+-				'value' => null,
+-				'error' => $response->get_error_message(),
++				'value'  => null,
++				'error'  => $response->get_error_message(),
++				'status' => $status,
++				'code'   => (string) $response->get_error_code(),
+ 			);
+ 		}
+ 
+ 		return array(
+-			'value' => $response['enabled'],
+-			'error' => null,
++			'value'  => $response['enabled'],
++			'error'  => null,
++			'status' => 200,
++			'code'   => null,
+ 		);
+ 	}
+ 
+@@ -424,11 +442,25 @@ class SettingsController {
+ 
+ 		$response_status = (int) wp_remote_retrieve_response_code( $response );
+ 		if ( $response_status < 200 || $response_status >= 300 ) {
++			$decoded = json_decode( wp_remote_retrieve_body( $response ), true );
++			$code    = 'allow_person_names_service_error';
++			$message = sprintf( 'Recognition service returned HTTP %d.', $response_status );
++			if ( is_array( $decoded ) && is_array( $decoded['detail'] ?? null ) ) {
++				$detail_code = $decoded['detail']['code'] ?? null;
++				if ( is_string( $detail_code ) && '' !== trim( $detail_code ) ) {
++					$code = $detail_code;
++				}
++				$detail_message = $decoded['detail']['message'] ?? null;
++				if ( is_string( $detail_message ) && '' !== $detail_message ) {
++					$message = $detail_message;
++				}
++			}
++
+ 			return new WP_Error(
+-				'allow_person_names_service_error',
+-				sprintf( 'Recognition service returned HTTP %d.', $response_status ),
++				$code,
++				$message,
+ 				array(
+-					'status'          => 502,
++					'status'          => $response_status,
+ 					'upstream_status' => $response_status,
+ 				)
+ 			);
+@@ -487,6 +519,7 @@ class SettingsController {
+ 		$payload = $this->build_probe_payload( $response );
+ 		$payload['probe_mode'] = 'service_auth';
+ 		$payload['probed_url'] = $health_url;
++		$payload = $this->maybe_start_description_service( $payload, $url, $headers );
+ 
+ 		// A mismatched key (403 -> TENANT_MISMATCH) is a first-time / paired-elsewhere pairing signal,
+ 		// not a terminal error: attempt pairing so a never-paired auto-derived site can auto-adopt and
+@@ -714,9 +747,25 @@ class SettingsController {
+ 		$status_code = (int) wp_remote_retrieve_response_code( $response );
+ 		$body        = wp_remote_retrieve_body( $response );
+ 		$decoded     = json_decode( $body, true );
+-		$detail      = is_array( $decoded ) && isset( $decoded['detail'] ) && is_string( $decoded['detail'] )
+-			? $decoded['detail']
+-			: null;
++		$detail      = null;
++		$typed_code  = null;
++		$warmup_eta  = null;
++		if ( is_array( $decoded ) && isset( $decoded['detail'] ) && is_string( $decoded['detail'] ) ) {
++			$detail = $decoded['detail'];
++		} elseif ( is_array( $decoded ) && is_array( $decoded['detail'] ?? null ) ) {
++			$detail_code = $decoded['detail']['code'] ?? null;
++			if ( is_string( $detail_code ) && '' !== trim( $detail_code ) ) {
++				$typed_code = $detail_code;
++			}
++			$detail_message = $decoded['detail']['message'] ?? null;
++			if ( is_string( $detail_message ) && '' !== $detail_message ) {
++				$detail = $detail_message;
++			}
++			$eta = $decoded['detail']['warmup_eta_seconds'] ?? null;
++			if ( is_int( $eta ) || is_float( $eta ) ) {
++				$warmup_eta = $eta;
++			}
++		}
+ 
+ 		$outcome = $this->classify_http_status( $status_code, $detail );
+ 		$payload = array(
+@@ -727,7 +776,13 @@ class SettingsController {
+ 		if ( null !== $detail ) {
+ 			$payload['detail'] = $detail;
+ 		}
+-		if ( ProbeOutcome::RATE_LIMITED === $outcome ) {
++		if ( null !== $typed_code ) {
++			$payload['code'] = $typed_code;
++		}
++		if ( null !== $warmup_eta ) {
++			$payload['warmup_eta_seconds'] = $warmup_eta;
++		}
++		if ( ProbeOutcome::RATE_LIMITED === $outcome || 503 === $status_code ) {
+ 			$retry_after = $this->parse_retry_after( $this->retrieve_retry_after_header( $response ) );
+ 			if ( null !== $retry_after ) {
+ 				$payload['retry_after_seconds'] = $retry_after;
+@@ -736,6 +791,41 @@ class SettingsController {
+ 		return $payload;
+ 	}
+ 
++	/**
++	 * Recognition-check on a 404 path must start the description service via
++	 * the lifecycle endpoint and report the typed starting state with ETA.
++	 *
++	 * @param array<string, mixed>  $payload
++	 * @param array<string, string> $headers
++	 * @return array<string, mixed>
++	 */
++	private function maybe_start_description_service( array $payload, string $base_url, array $headers ): array {
++		$status_code = (int) ( $payload['status_code'] ?? 0 );
++		$typed_code  = is_string( $payload['code'] ?? null ) ? (string) $payload['code'] : null;
++		if ( 404 !== $status_code && 'description_service_unavailable' !== $typed_code ) {
++			return $payload;
++		}
++
++		$lifecycle = RecognitionTransport::request(
++			rtrim( $base_url, '/' ) . '/scene/gpu/intent',
++			array(
++				'method'  => 'POST',
++				'headers' => array_merge(
++					$headers,
++					array( 'Content-Type' => 'application/json' )
++				),
++				'timeout' => 10,
++				'body'    => wp_json_encode( array( 'action' => 'start' ) ),
++			)
++		);
++
++		$lifecycle_payload               = $this->build_probe_payload( $lifecycle );
++		$lifecycle_payload['probe_mode'] = $payload['probe_mode'] ?? 'service_auth';
++		$lifecycle_payload['probed_url'] = rtrim( $base_url, '/' ) . '/scene/gpu/intent';
++
++		return $lifecycle_payload;
++	}
++
+ 	/**
+ 	 * @param array<string, mixed> $response
+ 	 */
+diff --git a/apps/prototype-wp-alt-context/src/api/services/class-describe-media-service.php b/apps/prototype-wp-alt-context/src/api/services/class-describe-media-service.php
+--- a/apps/prototype-wp-alt-context/src/api/services/class-describe-media-service.php
++++ b/apps/prototype-wp-alt-context/src/api/services/class-describe-media-service.php
+@@ -195,6 +195,11 @@ class DescribeMediaService {
+ 			),
+ 		);
+ 
++		$operation_id = $this->resolve_operation_id( $request );
++		if ( is_string( $operation_id ) ) {
++			$multipart_body['operation_id'] = $operation_id;
++		}
++
+ 		$response = $this->host->proxy_recognition_request(
+ 			'POST',
+ 			'/scene/describe/multipart',
+@@ -296,6 +301,28 @@ class DescribeMediaService {
+ 		return sanitize_text_field( $value );
+ 	}
+ 
++	/**
++	 * Optional multipart retry token. Opaque string, 1–128 chars; omitted on
++	 * first acceptance so the service can mint one. Never invent a value.
++	 */
++	private function resolve_operation_id( WP_REST_Request $request ): ?string {
++		$raw = $request->get_param( 'operation_id' );
++		if ( ! is_string( $raw ) ) {
++			$json = $request->get_json_params();
++			$raw  = is_array( $json ) ? ( $json['operation_id'] ?? null ) : null;
++		}
++		if ( ! is_string( $raw ) ) {
++			return null;
++		}
++
++		$value = trim( $raw );
++		if ( '' === $value || strlen( $value ) > 128 ) {
++			return null;
++		}
++
++		return $value;
++	}
++
+ 	private function should_write_alt_text( WP_REST_Request $request ): bool {
+ 		return $this->truthy_request_param( $request->get_param( 'write_alt' ) );
+ 	}
+@@ -848,6 +875,11 @@ class DescribeMediaService {
+ 		$message = sprintf( 'Upstream description request failed with HTTP %d.', $status );
+ 		if ( is_array( $data ) && is_string( $data['detail'] ?? null ) && '' !== $data['detail'] ) {
+ 			$message = $data['detail'];
++		} elseif ( is_array( $data ) && is_array( $data['detail'] ?? null ) ) {
++			$detail_message = $data['detail']['message'] ?? null;
++			if ( is_string( $detail_message ) && '' !== $detail_message ) {
++				$message = $detail_message;
++			}
+ 		}
+ 
+ 		$this->budget_service->record_error(
+diff --git a/apps/prototype-wp-alt-context/src/api/tests/fixtures/gpuflow-describe-wire.json b/apps/prototype-wp-alt-context/src/api/tests/fixtures/gpuflow-describe-wire.json
+new file mode 100644
+--- /dev/null
++++ b/apps/prototype-wp-alt-context/src/api/tests/fixtures/gpuflow-describe-wire.json
+@@ -0,0 +1,257 @@
++{
++  "success_warm": {
++    "request": {
++      "operation_id": null
++    },
++    "response": {
++      "status": 200,
++      "headers": {},
++      "body": {
++        "tenant_id": "00000000-0000-0000-0000-000000000001",
++        "media_id": 42,
++        "image_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
++        "context_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
++        "adapter": "gpu",
++        "model_id": "gpu-model@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
++        "model_version": "1",
++        "prompt_or_task_version": "1",
++        "visual_facts": {
++          "caption": "A dog resting on green grass",
++          "objects": [],
++          "ocr_text": null
++        },
++        "alt_text_draft": "A dog resting on green grass",
++        "context_used": {
++          "sources": [],
++          "applied": false
++        },
++        "provider_disclosure": {
++          "provider": "none",
++          "left_service_boundary": false
++        },
++        "cached": false,
++        "duration_ms": 12,
++        "retention_class": "retain_all",
++        "tier": "final_gpu",
++        "result_generation": 1,
++        "operation_id": "op-warm-opaque",
++        "startup_id": null,
++        "timing": {
++          "queue_ms": 1,
++          "ramp_up_ms": 0,
++          "processing_ms": 12,
++          "startup_ms": null,
++          "server_elapsed_ms": 14
++        }
++      }
++    }
++  },
++  "success_omitted_timing": {
++    "request": {
++      "operation_id": null
++    },
++    "response": {
++      "status": 200,
++      "headers": {},
++      "body": {
++        "tenant_id": "00000000-0000-0000-0000-000000000001",
++        "media_id": 42,
++        "image_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
++        "context_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
++        "adapter": "gpu",
++        "model_id": "gpu-model@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
++        "model_version": "1",
++        "prompt_or_task_version": "1",
++        "visual_facts": {
++          "caption": "A dog resting on green grass"
++        },
++        "alt_text_draft": "A dog resting on green grass",
++        "context_used": {
++          "sources": [],
++          "applied": false
++        },
++        "provider_disclosure": {
++          "provider": "none",
++          "left_service_boundary": false
++        },
++        "cached": false,
++        "duration_ms": 12,
++        "retention_class": "retain_all",
++        "tier": "final_gpu",
++        "result_generation": 1,
++        "operation_id": "op-legacy-opaque",
++        "startup_id": null
++      }
++    }
++  },
++  "starting": {
++    "request": {
++      "operation_id": "op-retry-opaque"
++    },
++    "response": {
++      "status": 503,
++      "headers": {
++        "Retry-After": "5"
++      },
++      "body": {
++        "detail": {
++          "code": "description_service_starting",
++          "message": "Description service is starting.",
++          "operation_id": "op-retry-opaque",
++          "startup_id": "startup-opaque",
++          "warmup_eta_seconds": 5,
++          "timing": {
++            "queue_ms": 0,
++            "ramp_up_ms": 40,
++            "processing_ms": null,
++            "startup_ms": null,
++            "server_elapsed_ms": 40
++          }
++        }
++      }
++    }
++  },
++  "unavailable": {
++    "request": {
++      "operation_id": "op-retry-opaque"
++    },
++    "response": {
++      "status": 503,
++      "headers": {},
++      "body": {
++        "detail": {
++          "code": "description_service_unavailable",
++          "message": "Description service is unavailable.",
++          "operation_id": "op-retry-opaque",
++          "startup_id": null,
++          "timing": {
++            "queue_ms": null,
++            "ramp_up_ms": null,
++            "processing_ms": null,
++            "startup_ms": null,
++            "server_elapsed_ms": null
++          }
++        }
++      }
++    }
++  },
++  "service_error": {
++    "request": {
++      "operation_id": "op-retry-opaque"
++    },
++    "response": {
++      "status": 502,
++      "headers": {},
++      "body": {
++        "detail": {
++          "code": "description_service_error",
++          "message": "Description adapter failed after ready.",
++          "operation_id": "op-retry-opaque",
++          "startup_id": "startup-opaque",
++          "timing": {
++            "queue_ms": 2,
++            "ramp_up_ms": 0,
++            "processing_ms": 30,
++            "startup_ms": null,
++            "server_elapsed_ms": 35
++          }
++        }
++      }
++    }
++  },
++  "operation_mismatch": {
++    "request": {
++      "operation_id": "op-wrong-digest"
++    },
++    "response": {
++      "status": 409,
++      "headers": {},
++      "body": {
++        "detail": {
++          "code": "operation_mismatch",
++          "message": "operation_id does not match the request digest.",
++          "operation_id": "op-wrong-digest",
++          "startup_id": null,
++          "timing": {
++            "queue_ms": null,
++            "ramp_up_ms": null,
++            "processing_ms": null,
++            "startup_ms": null,
++            "server_elapsed_ms": null
++          }
++        }
++      }
++    }
++  },
++  "operation_expired": {
++    "request": {
++      "operation_id": "op-expired"
++    },
++    "response": {
++      "status": 410,
++      "headers": {},
++      "body": {
++        "detail": {
++          "code": "operation_expired",
++          "message": "operation_id has expired; start a new operation.",
++          "operation_id": "op-expired",
++          "startup_id": null,
++          "timing": {
++            "queue_ms": null,
++            "ramp_up_ms": null,
++            "processing_ms": null,
++            "startup_ms": null,
++            "server_elapsed_ms": null
++          }
++        }
++      }
++    }
++  },
++  "starting_malformed": {
++    "request": {
++      "operation_id": null
++    },
++    "response": {
++      "status": 503,
++      "headers": {
++        "Retry-After": "5"
++      },
++      "body": {
++        "error": "backend_overloaded"
++      }
++    }
++  },
++  "run_completed_with_errors": {
++    "request": {},
++    "response": {
++      "status": 200,
++      "headers": {},
++      "body": {
++        "tenant_id": "00000000-0000-0000-0000-000000000001",
++        "run_id": "00000000-0000-0000-0000-000000000002",
++        "status": "completed_with_errors",
++        "phase": "complete",
++        "completed": 1,
++        "failed": 1,
++        "skipped": 1,
++        "total": 3,
++        "cancel_requested": false,
++        "eta_seconds": null,
++        "gpu_state": "ready",
++        "recognition_enabled": true,
++        "deadline_seconds": 90.0,
++        "operation_id": "run-operation-opaque",
++        "startup_id": null,
++        "timing": {
++          "queue_ms": 10,
++          "ramp_up_ms": 0,
++          "processing_ms_p50": 12.5,
++          "processing_ms_max": 30,
++          "startup_ms": null,
++          "server_elapsed_ms": 40,
++          "items_timed": 2
++        }
++      }
++    }
++  }
++}
+diff --git a/apps/prototype-wp-alt-context/tests/Unit/DescribeMediaServiceTest.php b/apps/prototype-wp-alt-context/tests/Unit/DescribeMediaServiceTest.php
+--- a/apps/prototype-wp-alt-context/tests/Unit/DescribeMediaServiceTest.php
++++ b/apps/prototype-wp-alt-context/tests/Unit/DescribeMediaServiceTest.php
+@@ -1355,6 +1355,99 @@ class DescribeMediaServiceTest extends TestCase
+         $this->assertSame('upstream_http_415', $errors[0]['error_code']);
      }
--    requestIntent(confirmation);
-+    const startStillAllowed = confirmation === GpuIntentAction.START && canStart;
-+    const stopStillAllowed = confirmation === GpuIntentAction.STOP && canStop;
-+    if (displayedState === GPU_STATE.UNKNOWN || (!startStillAllowed && !stopStillAllowed)) {
-+      setConfirmation(null);
+ 
++    /**
++     * @dataProvider gpuflowDescribeWireCases
++     */
++    #[DataProvider('gpuflowDescribeWireCases')]
++    public function testGpuflowWirePairsPassThroughVerbatim(string $case): void
++    {
++        $fixture = $this->gpuflowDescribeWire($case);
++        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
++
++        $headers = [];
++        foreach (($fixture['response']['headers'] ?? []) as $name => $value) {
++            $headers[$name] = $value;
++        }
++        $this->queueHttpResponse([
++            'response' => ['code' => $fixture['response']['status'], 'message' => 'OK'],
++            'headers' => $headers,
++            'body' => (string) json_encode($fixture['response']['body']),
++        ]);
++
++        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
++        $req->set_param('media_id', 42);
++        $operationId = $fixture['request']['operation_id'] ?? null;
++        if (is_string($operationId)) {
++            $req->set_param('operation_id', $operationId);
++        }
++
++        $result = $this->controller->describe_media($req);
++        $this->assertInstanceOf(WP_REST_Response::class, $result);
++        $this->assertSame($fixture['response']['status'], $result->get_status());
++        $this->assertSame($fixture['response']['body'], $result->get_data());
++        if (isset($headers['Retry-After'])) {
++            $this->assertSame($headers['Retry-After'], $result->get_headers()['Retry-After'] ?? null);
++        } else {
++            $this->assertArrayNotHasKey('Retry-After', $result->get_headers());
++        }
++
++        $calls = $this->getHttpCalls();
++        $this->assertCount(1, $calls);
++        $body = $calls[0]['args']['body'];
++        $this->assertIsString($body);
++        if (is_string($operationId)) {
++            $this->assertStringContainsString('name="operation_id"', $body);
++            $this->assertStringContainsString($operationId, $body);
++        } else {
++            $this->assertStringNotContainsString('name="operation_id"', $body);
++        }
 +    }
-+  }, [confirmation, displayedState, canStart, canStop]);
 +
-+  const confirm = (): void => {
-+    const action = confirmation;
-+    if (action === GpuIntentAction.START && canStart) {
-+      requestIntent(action);
-+    } else if (action === GpuIntentAction.STOP && canStop) {
-+      requestIntent(action);
++    public function testOmittedOperationIdIsNotInventedOnRetryField(): void
++    {
++        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
++        $this->queueHttpResponse([
++            'response' => ['code' => 200, 'message' => 'OK'],
++            'body' => (string) json_encode($this->validBackendBody(42)),
++        ]);
++
++        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
++        $req->set_param('media_id', 42);
++        $this->controller->describe_media($req);
++
++        $body = $this->getHttpCalls()[0]['args']['body'];
++        $this->assertIsString($body);
++        $this->assertStringNotContainsString('name="operation_id"', $body);
 +    }
-     setConfirmation(null);
-   };
- 
-@@ -295,17 +308,6 @@ export const GpuControlCard = (): React.JSX.Element => {
-                 </button>
-                 {stopReason ? <span id="z-gpu-stop-reason">disabled: {stopReason}</span> : null}
- 
--                {canReturnToAuto ? (
--                  <button
--                    type="button"
--                    className="acx-button acx-button--secondary"
--                    onClick={() => requestIntent(GpuIntentAction.AUTO)}
--                    disabled={isIntentPending}
--                  >
--                    <span aria-hidden="true">↺</span> {__('Return to automatic', 'alt-context')}
--                  </button>
--                ) : null}
--
-                 {displayedState === GPU_STATE.READY ? (
-                   <a className="acx-button acx-button--secondary" href={toWorkbench()}>
-                     <span aria-hidden="true">→</span> {__('Go to Workbench', 'alt-context')}
-@@ -314,6 +316,17 @@ export const GpuControlCard = (): React.JSX.Element => {
-               </>
-             ) : null}
- 
-+            {canReturnToAuto ? (
-+              <button
-+                type="button"
-+                className="acx-button acx-button--secondary"
-+                onClick={() => requestIntent(GpuIntentAction.AUTO)}
-+                disabled={isIntentPending}
-+              >
-+                <span aria-hidden="true">↺</span> {__('Return to automatic', 'alt-context')}
-+              </button>
-+            ) : null}
 +
-             <button type="button" className="acx-button acx-button--tertiary" onClick={() => void refetch()}>
-               <span aria-hidden="true">↻</span> {__('Refresh', 'alt-context')}
-             </button>
-diff --git a/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx b/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx
---- a/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx
-+++ b/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx
-@@ -1,12 +1,11 @@
--import React from 'react';
- import { fireEvent, render, screen } from '@testing-library/react';
- import { beforeEach, describe, expect, it, vi } from 'vitest';
- 
- import { GPU_INTENT_ACTION, GPU_INTENT_STATUS, GPU_STATE, type GpuStatusResponse } from '../../../api/gpuApi';
- import { GPU_STATE_VOCABULARY } from '../../workbench/gpuStatePresentation';
--import serviceStates from './fixtures/gpuflow-service-states.json';
- import { GpuControlCard } from '../GpuControlCard';
- import * as gpuControl from '../useGpuControl';
-+import serviceStates from './fixtures/gpuflow-service-states.json';
- 
- vi.mock('../useGpuControl', async (importOriginal) => {
-   const actual = await importOriginal<typeof gpuControl>();
-@@ -267,7 +266,7 @@ describe('GpuControlCard', () => {
-     expect(screen.getByTestId('gpu-stale-notice')).toHaveTextContent('Service status is out of date');
-     expect(screen.queryByRole('button', { name: 'Start service' })).not.toBeInTheDocument();
-     expect(screen.queryByRole('button', { name: /Stop service/ })).not.toBeInTheDocument();
--    expect(screen.queryByRole('button', { name: 'Return to automatic' })).not.toBeInTheDocument();
-+    expect(screen.getByRole('button', { name: 'Return to automatic' })).toBeInTheDocument();
-     expect(screen.getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
-   });
- 
-@@ -280,12 +279,70 @@ describe('GpuControlCard', () => {
-     render(<GpuControlCard />);
- 
-     expect(screen.getByText(`Service: ${GPU_STATE_VOCABULARY.notReported}`)).toBeInTheDocument();
-+    expect(screen.queryByRole('button', { name: 'Start service' })).not.toBeInTheDocument();
-+    expect(screen.queryByRole('button', { name: /Stop service/ })).not.toBeInTheDocument();
-+    expect(screen.getByRole('button', { name: 'Return to automatic' })).toBeInTheDocument();
-+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
-+  });
++    /**
++     * @return array<string, array{0: string}>
++     */
++    public static function gpuflowDescribeWireCases(): array
++    {
++        return [
++            'success_warm' => ['success_warm'],
++            'success_omitted_timing' => ['success_omitted_timing'],
++            'starting' => ['starting'],
++            'unavailable' => ['unavailable'],
++            'service_error' => ['service_error'],
++            'operation_mismatch' => ['operation_mismatch'],
++            'operation_expired' => ['operation_expired'],
++        ];
++    }
 +
-+  it('omits Return to automatic on unknown when intent is already automatic', () => {
-+    mockControl(statusResponse({ state: 'unknown' }), {
-+      canStart: false,
-+      canStop: false,
-+      canReturnToAuto: false,
-+    });
-+    render(<GpuControlCard />);
++    /**
++     * @return array<string, mixed>
++     */
++    private function gpuflowDescribeWire(string $case): array
++    {
++        $path = __DIR__ . '/../../src/api/tests/fixtures/gpuflow-describe-wire.json';
++        $decoded = json_decode((string) file_get_contents($path), true);
++        $this->assertIsArray($decoded);
++        $this->assertArrayHasKey($case, $decoded);
++        return $decoded[$case];
++    }
 +
-     expect(screen.queryByRole('button', { name: 'Start service' })).not.toBeInTheDocument();
-     expect(screen.queryByRole('button', { name: /Stop service/ })).not.toBeInTheDocument();
-     expect(screen.queryByRole('button', { name: 'Return to automatic' })).not.toBeInTheDocument();
-     expect(screen.getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
-   });
+     /**
+      * BR-02: alt write failure → status not written/forced_overwrite, provenance
+      * not stamped. Assert storage.
+diff --git a/apps/prototype-wp-alt-context/tests/Unit/ProxyRequestTest.php b/apps/prototype-wp-alt-context/tests/Unit/ProxyRequestTest.php
+--- a/apps/prototype-wp-alt-context/tests/Unit/ProxyRequestTest.php
++++ b/apps/prototype-wp-alt-context/tests/Unit/ProxyRequestTest.php
+@@ -9,6 +9,7 @@ use AltContext\Api\AnalysisJobsController;
+ use AltContext\Api\RecognitionController;
+ use AltContext\Api\RecognitionCircuitKeys;
+ use AltContext\Tests\TestCase;
++use PHPUnit\Framework\Attributes\DataProvider;
+ use WP_REST_Request;
+ use WP_REST_Response;
+ use WP_Error;
+@@ -911,7 +912,7 @@ PHP;
+         global $wpdb;
  
-+  it('clears an open stop confirmation when the snapshot becomes stale', () => {
-+    const requestIntent = vi.fn();
-+    mockControl(statusResponse({ state: 'ready' }), { requestIntent });
-+    const { rerender } = render(<GpuControlCard />);
-+    fireEvent.click(screen.getByRole('button', { name: /Stop service/ }));
-+    expect(screen.getByRole('button', { name: 'Confirm stop' })).toBeInTheDocument();
+         $harness    = $this->makeUiReadHarness();
+-        $failureKey = RecognitionCircuitKeys::failure_key_for_base_url($harness->resolvedBaseUrl());
++        $failureKey = $this->familyFailureKey($harness->resolvedBaseUrl());
+ 
+         // Snapshot the failure-counter transient at the moment GET_LOCK and
+         // RELEASE_LOCK are issued. set_transient never touches $wpdb, so this is
+@@ -983,7 +984,7 @@ PHP;
+         $wpdb->mockVar = '1'; // GET_LOCK(...) acquired.
+ 
+         $harness = $this->makeUiReadHarness();
+-        $circuitKey = RecognitionCircuitKeys::for_base_url($harness->resolvedBaseUrl());
++        $circuitKey = $this->familyCircuitKey($harness->resolvedBaseUrl());
+ 
+         $this->queueHttpResponse(new WP_Error('http_request_failed', 'down'));
+         $this->queueHttpResponse(new WP_Error('http_request_failed', 'down'));
+@@ -1020,8 +1021,8 @@ PHP;
+         $wpdb->mockVar = '0'; // GET_LOCK(...) timed out -> lock not acquired.
+ 
+         $harness    = $this->makeUiReadHarness();
+-        $failureKey = RecognitionCircuitKeys::failure_key_for_base_url($harness->resolvedBaseUrl());
+-        $circuitKey = RecognitionCircuitKeys::for_base_url($harness->resolvedBaseUrl());
++        $failureKey = $this->familyFailureKey($harness->resolvedBaseUrl());
++        $circuitKey = $this->familyCircuitKey($harness->resolvedBaseUrl());
+ 
+         $this->queueHttpResponse(new WP_Error('http_request_failed', 'down'));
+         $this->queueHttpResponse(new WP_Error('http_request_failed', 'down'));
+@@ -1070,8 +1071,8 @@ PHP;
+     public function testUiReadCounterStillIncrementsWhenWpdbUnavailable(): void
+     {
+         $harness    = $this->makeUiReadHarness();
+-        $failureKey = RecognitionCircuitKeys::failure_key_for_base_url($harness->resolvedBaseUrl());
+-        $circuitKey = RecognitionCircuitKeys::for_base_url($harness->resolvedBaseUrl());
++        $failureKey = $this->familyFailureKey($harness->resolvedBaseUrl());
++        $circuitKey = $this->familyCircuitKey($harness->resolvedBaseUrl());
+ 
+         $savedWpdb = $GLOBALS['wpdb'] ?? null;
+         // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited -- Negative-path test simulates missing wpdb so acquire_named_lock bails to the unguarded path.
+@@ -1289,8 +1290,8 @@ PHP;
+ 
+         $harness = $this->makeUiReadHarness();
+         $baseUrl = $harness->resolvedBaseUrl();
+-        $failureKey = RecognitionCircuitKeys::failure_key_for_base_url($baseUrl);
+-        $circuitKey = RecognitionCircuitKeys::for_base_url($baseUrl);
++        $failureKey = $this->familyFailureKey($baseUrl);
++        $circuitKey = $this->familyCircuitKey($baseUrl);
+ 
+         for ($i = 0; $i < 2; $i++) {
+             $this->queueHttpResponse([
+@@ -1438,6 +1439,233 @@ PHP;
+         );
+     }
+ 
++    public function testDescribeWarmingDoesNotOpenCircuitAndPreservesTypedEnvelope(): void
++    {
++        global $wpdb;
++        $wpdb->mockVar = '1';
 +
-+    mockControl(
-+      {
-+        ...statusResponse({ state: 'ready' }),
-+        snapshot_age_seconds: 240,
-+        snapshot_fresh: false,
-+      },
-+      { requestIntent, canStart: false, canStop: false },
-+    );
-+    rerender(<GpuControlCard />);
++        $harness = $this->makeFamilyHarness();
++        $baseUrl = $harness->resolvedBaseUrl();
++        $describeCircuit = $this->familyCircuitKey($baseUrl, 'describe');
++        $describeFailures = $this->familyFailureKey($baseUrl, 'describe');
++        $uiReadCircuit = $this->familyCircuitKey($baseUrl, 'ui_read');
 +
-+    expect(screen.queryByTestId('z-stop-preview')).not.toBeInTheDocument();
-+    expect(screen.queryByRole('button', { name: 'Confirm stop' })).not.toBeInTheDocument();
-+    expect(requestIntent).not.toHaveBeenCalled();
-+  });
++        $starting = [
++            'response' => ['code' => 503, 'message' => 'Service Unavailable'],
++            'headers' => ['Retry-After' => '5'],
++            'body' => json_encode([
++                'detail' => [
++                    'code' => 'description_service_starting',
++                    'message' => 'Description service is starting.',
++                    'operation_id' => 'op-retry-opaque',
++                    'startup_id' => 'startup-opaque',
++                    'warmup_eta_seconds' => 5,
++                ],
++            ]),
++        ];
 +
-+  it('clears an open start confirmation when the snapshot becomes stale', () => {
-+    const requestIntent = vi.fn();
-+    mockControl(statusResponse(), { requestIntent });
-+    const { rerender } = render(<GpuControlCard />);
-+    fireEvent.click(screen.getByRole('button', { name: 'Start service' }));
-+    expect(screen.getByRole('button', { name: 'Confirm start' })).toBeInTheDocument();
++        for ($i = 0; $i < 3; $i++) {
++            $this->queueHttpResponse($starting);
++            $result = $harness->call('POST', '/scene/describe/multipart', 'description');
++            $this->assertInstanceOf(WP_REST_Response::class, $result);
++            $this->assertSame(503, $result->get_status());
++            $this->assertSame('5', $result->get_headers()['Retry-After'] ?? null);
++            $this->assertSame(
++                'description_service_starting',
++                $result->get_data()['detail']['code'] ?? null
++            );
++            $this->assertSame(5, $result->get_data()['detail']['warmup_eta_seconds'] ?? null);
++        }
 +
-+    mockControl(
-+      {
-+        ...statusResponse(),
-+        snapshot_age_seconds: 240,
-+        snapshot_fresh: false,
-+      },
-+      { requestIntent, canStart: false, canStop: false },
-+    );
-+    rerender(<GpuControlCard />);
++        $this->assertFalse(get_transient($describeCircuit), 'validated warming must not open describe');
++        $this->assertFalse(get_transient($describeFailures), 'validated warming must not increment describe');
++        $this->assertFalse(get_transient($uiReadCircuit), 'warming must not open ui_read');
++        $this->assertCount(3, $this->getHttpCalls());
++    }
 +
-+    expect(screen.queryByTestId('z-start-preview')).not.toBeInTheDocument();
-+    expect(screen.queryByRole('button', { name: 'Confirm start' })).not.toBeInTheDocument();
-+    expect(requestIntent).not.toHaveBeenCalled();
-+  });
++    public function testDescribeFailuresOpenOnlyDescribeFamily(): void
++    {
++        global $wpdb;
++        $wpdb->mockVar = '1';
 +
-   it.each([
-     [GPU_STATE.STOPPED, true, 'a service request is already in flight'],
-     [GPU_STATE.STARTING, true, 'a service request is already in flight'],
-diff --git a/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/useGpuControl.test.tsx b/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/useGpuControl.test.tsx
---- a/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/useGpuControl.test.tsx
-+++ b/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/useGpuControl.test.tsx
-@@ -57,11 +57,14 @@ const statusResponse = ({
-   ...overrides,
- });
- 
--const wrapper = ({ children }: { children: ReactNode }) => {
-+const createWrapper = () => {
-   const client = new QueryClient({
-     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-   });
--  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
-+  const wrapper = ({ children }: { children: ReactNode }) => (
-+    <QueryClientProvider client={client}>{children}</QueryClientProvider>
-+  );
-+  return wrapper;
- };
- 
- describe('useGpuControl', () => {
-@@ -83,7 +86,7 @@ describe('useGpuControl', () => {
-   it('derives start from the stopped zero state and keeps stop disabled', async () => {
-     fetchGpuStatusMock.mockResolvedValue(statusResponse());
- 
--    const { result } = renderHook(() => useGpuControl(), { wrapper });
-+    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
-     await waitFor(() => expect(result.current.data).toBeDefined());
- 
-     expect(result.current.canStart).toBe(true);
-@@ -95,7 +98,7 @@ describe('useGpuControl', () => {
-   it('keeps Start disabled when a stopped-looking snapshot is stale', async () => {
-     fetchGpuStatusMock.mockResolvedValue(statusResponse({ snapshot_age_seconds: 240, snapshot_fresh: false }));
- 
--    const { result } = renderHook(() => useGpuControl(), { wrapper });
-+    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
-     await waitFor(() => expect(result.current.data).toBeDefined());
- 
-     expect(result.current.canStart).toBe(false);
-@@ -113,7 +116,7 @@ describe('useGpuControl', () => {
-       }),
-     );
- 
--    const { result } = renderHook(() => useGpuControl(), { wrapper });
-+    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
-     await waitFor(() => expect(result.current.data).toBeDefined());
- 
-     expect(result.current.canStart).toBe(false);
-@@ -123,7 +126,7 @@ describe('useGpuControl', () => {
-   it('keeps Start disabled for a fresh snapshot that reports an unknown machine state', async () => {
-     fetchGpuStatusMock.mockResolvedValue(statusResponse({ gpu_state: { state: 'unknown' } }));
- 
--    const { result } = renderHook(() => useGpuControl(), { wrapper });
-+    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
-     await waitFor(() => expect(result.current.data).toBeDefined());
- 
-     expect(result.current.canStart).toBe(false);
-@@ -139,7 +142,7 @@ describe('useGpuControl', () => {
-       }),
-     );
- 
--    const { result } = renderHook(() => useGpuControl(), { wrapper });
-+    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
-     await waitFor(() => expect(result.current.data).toBeDefined());
-     expect(result.current.canStart).toBe(false);
-     expect(result.current.canStop).toBe(true);
-@@ -149,7 +152,7 @@ describe('useGpuControl', () => {
-   it('presents starting with the optimistic pending start intent', async () => {
-     fetchGpuStatusMock.mockResolvedValue(statusResponse());
-     postGpuIntentMock.mockReturnValue(new Promise(() => {}));
--    const { result } = renderHook(() => useGpuControl(), { wrapper });
-+    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
-     await waitFor(() => expect(result.current.data).toBeDefined());
-     act(() => {
-       result.current.requestIntent(GPU_INTENT_ACTION.START);
-@@ -169,7 +172,7 @@ describe('useGpuControl', () => {
-       }),
-     );
- 
--    const { result } = renderHook(() => useGpuControl(), { wrapper });
-+    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
-     await waitFor(() => expect(result.current.data).toBeDefined());
- 
-     act(() => {
-@@ -188,8 +191,24 @@ describe('useGpuControl', () => {
-   it('enables Return to automatic only when the effective intent is not automatic', async () => {
-     fetchGpuStatusMock.mockResolvedValue(statusResponse({ gpu_state: { intent: GPU_INTENT_ACTION.START } }));
- 
--    const { result } = renderHook(() => useGpuControl(), { wrapper });
-+    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
-     await waitFor(() => expect(result.current.data).toBeDefined());
-     expect(result.current.canReturnToAuto).toBe(true);
-   });
++        $harness = $this->makeFamilyHarness();
++        $baseUrl = $harness->resolvedBaseUrl();
++        $describeCircuit = $this->familyCircuitKey($baseUrl, 'describe');
++        $uiReadCircuit = $this->familyCircuitKey($baseUrl, 'ui_read');
++        $controlCircuit = $this->familyCircuitKey($baseUrl, 'control');
 +
-+  it('keeps Return to automatic available when a non-automatic snapshot is stale or unknown', async () => {
-+    fetchGpuStatusMock.mockResolvedValue(
-+      statusResponse({
-+        gpu_state: { state: 'ready', intent: GPU_INTENT_ACTION.START },
-+        snapshot_age_seconds: 240,
-+        snapshot_fresh: false,
-+      }),
-+    );
++        $error = [
++            'response' => ['code' => 502, 'message' => 'Bad Gateway'],
++            'body' => json_encode([
++                'detail' => [
++                    'code' => 'description_service_error',
++                    'message' => 'adapter failed',
++                    'operation_id' => 'op-retry-opaque',
++                    'startup_id' => null,
++                ],
++            ]),
++        ];
++        $this->queueHttpResponse($error);
++        $this->queueHttpResponse($error);
 +
-+    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
-+    await waitFor(() => expect(result.current.data).toBeDefined());
-+    expect(result.current.canStart).toBe(false);
-+    expect(result.current.canStop).toBe(false);
-+    expect(result.current.canReturnToAuto).toBe(true);
-+  });
- });
++        $harness->call('POST', '/scene/describe/multipart', 'description');
++        $harness->call('POST', '/scene/describe/multipart', 'description');
++
++        $this->assertNotFalse(get_transient($describeCircuit), 'real describe 502 must open describe');
++        $this->assertFalse(get_transient($uiReadCircuit), 'describe failures must not open ui_read');
++        $this->assertFalse(get_transient($controlCircuit), 'describe failures must not open control');
++
++        $this->queueHttpResponse([
++            'response' => ['code' => 200, 'message' => 'OK'],
++            'body' => '{"ok":true}',
++        ]);
++        $open = $harness->call('POST', '/scene/describe/multipart', 'description');
++        $this->assertInstanceOf(WP_REST_Response::class, $open);
++        $this->assertSame(503, $open->get_status());
++        $this->assertSame(
++            'description_service_unavailable',
++            $open->get_data()['detail']['code'] ?? null
++        );
++        $this->assertArrayNotHasKey('Retry-After', $open->get_headers());
++        $this->assertCount(2, $this->getHttpCalls(), 'open describe breaker must not dispatch');
++    }
++
++    public function testUiReadSuccessDoesNotResetDescribeBreaker(): void
++    {
++        global $wpdb;
++        $wpdb->mockVar = '1';
++
++        $harness = $this->makeFamilyHarness();
++        $baseUrl = $harness->resolvedBaseUrl();
++        $describeCircuit = $this->familyCircuitKey($baseUrl, 'describe');
++        $uiReadCircuit = $this->familyCircuitKey($baseUrl, 'ui_read');
++
++        $error = [
++            'response' => ['code' => 500, 'message' => 'Internal Server Error'],
++            'body' => '{"error":"boom"}',
++        ];
++        $this->queueHttpResponse($error);
++        $this->queueHttpResponse($error);
++        $harness->call('POST', '/scene/describe/multipart', 'description');
++        $harness->call('POST', '/scene/describe/multipart', 'description');
++        $this->assertNotFalse(get_transient($describeCircuit));
++
++        $this->queueHttpResponse([
++            'response' => ['code' => 200, 'message' => 'OK'],
++            'body' => '{"ok":true}',
++        ]);
++        $harness->call('GET', '/ping', 'ui_read');
++
++        $this->assertNotFalse(get_transient($describeCircuit), 'ui_read success must not reset describe');
++        $this->assertFalse(get_transient($uiReadCircuit));
++    }
++
++    public function testMalformedWarmingStillCountsTowardDescribeBreaker(): void
++    {
++        global $wpdb;
++        $wpdb->mockVar = '1';
++
++        $harness = $this->makeFamilyHarness();
++        $describeCircuit = $this->familyCircuitKey($harness->resolvedBaseUrl(), 'describe');
++
++        $malformed = [
++            'response' => ['code' => 503, 'message' => 'Service Unavailable'],
++            'headers' => ['Retry-After' => '5'],
++            'body' => '{"error":"backend_overloaded"}',
++        ];
++        $this->queueHttpResponse($malformed);
++        $this->queueHttpResponse($malformed);
++
++        $harness->call('POST', '/scene/describe/multipart', 'description');
++        $harness->call('POST', '/scene/describe/multipart', 'description');
++
++        $this->assertNotFalse(get_transient($describeCircuit), 'malformed warming must still open describe');
++    }
++
++    /**
++     * @dataProvider typedOperationErrorProvider
++     */
++    #[DataProvider('typedOperationErrorProvider')]
++    public function testTypedOperationErrorsPassThroughUnchanged(string $case, int $status, ?string $retryAfter): void
++    {
++        $fixture = $this->describeWireFixture($case);
++        $harness = $this->makeFamilyHarness();
++        $headers = [];
++        if (is_string($retryAfter)) {
++            $headers['Retry-After'] = $retryAfter;
++        }
++        $this->queueHttpResponse([
++            'response' => ['code' => $status, 'message' => 'Error'],
++            'headers' => $headers,
++            'body' => json_encode($fixture['response']['body']),
++        ]);
++
++        $result = $harness->call('POST', '/scene/describe/multipart', 'description');
++        $this->assertInstanceOf(WP_REST_Response::class, $result);
++        $this->assertSame($status, $result->get_status());
++        $this->assertSame($fixture['response']['body'], $result->get_data());
++        if (is_string($retryAfter)) {
++            $this->assertSame($retryAfter, $result->get_headers()['Retry-After'] ?? null);
++        } else {
++            $this->assertArrayNotHasKey('Retry-After', $result->get_headers());
++        }
++        $this->assertCount(1, $this->getHttpCalls());
++    }
++
++    /**
++     * @return array<string, array{0: string, 1: int, 2: ?string}>
++     */
++    public static function typedOperationErrorProvider(): array
++    {
++        return [
++            'starting' => ['starting', 503, '5'],
++            'unavailable' => ['unavailable', 503, null],
++            'service_error' => ['service_error', 502, null],
++            'operation_mismatch' => ['operation_mismatch', 409, null],
++            'operation_expired' => ['operation_expired', 410, null],
++        ];
++    }
++
++    /**
++     * @return array<string, mixed>
++     */
++    private function describeWireFixture(string $case): array
++    {
++        $path = __DIR__ . '/../../src/api/tests/fixtures/gpuflow-describe-wire.json';
++        $decoded = json_decode((string) file_get_contents($path), true);
++        $this->assertIsArray($decoded);
++        $this->assertArrayHasKey($case, $decoded);
++        return $decoded[$case];
++    }
++
++    private function familyCircuitKey(string $baseUrl, string $family = 'ui_read'): string
++    {
++        return RecognitionCircuitKeys::for_base_url($baseUrl) . '_' . $family;
++    }
++
++    private function familyFailureKey(string $baseUrl, string $family = 'ui_read'): string
++    {
++        return RecognitionCircuitKeys::failure_key_for_base_url($baseUrl) . '_' . $family;
++    }
++
++    private function makeFamilyHarness(): object
++    {
++        return new class() extends AnalysisJobsController {
++            /**
++             * @return \WP_REST_Response|\WP_Error
++             */
++            public function call(string $method, string $path, string $requestClass)
++            {
++                return $this->proxy_request($method, $path, [], [], $requestClass);
++            }
++
++            public function resolvedBaseUrl(): string
++            {
++                return \untrailingslashit($this->get_recognition_base_url());
++            }
++        };
++    }
++
+     private function makeUiReadHarness(): object
+     {
+         return new class() extends AnalysisJobsController {
+diff --git a/apps/prototype-wp-alt-context/tests/Unit/RetentionControllerTest.php b/apps/prototype-wp-alt-context/tests/Unit/RetentionControllerTest.php
+--- a/apps/prototype-wp-alt-context/tests/Unit/RetentionControllerTest.php
++++ b/apps/prototype-wp-alt-context/tests/Unit/RetentionControllerTest.php
+@@ -139,6 +139,57 @@ class RetentionControllerTest extends TestCase
+         $this->assertArrayNotHasKey('acx_retention_status_' . $this->tenantId(), $GLOBALS['__ac_transients']);
+     }
+ 
++    public function testDescribeBreakerDoesNotBlankRetentionStatus(): void
++    {
++        global $wpdb;
++        $wpdb->mockVar = '1';
++        $this->setOption('acx_recognition_api_key', 'test-key');
++
++        $describe = new class() extends RetentionController {
++            public function failDescribe()
++            {
++                return $this->proxy_request('POST', '/scene/describe/multipart', [], [], 'description');
++            }
++        };
++        $error = [
++            'response' => ['code' => 502, 'message' => 'Bad Gateway'],
++            'body' => json_encode([
++                'detail' => [
++                    'code' => 'description_service_error',
++                    'message' => 'adapter failed',
++                    'operation_id' => 'op-retry-opaque',
++                    'startup_id' => null,
++                ],
++            ]),
++        ];
++        $this->queueHttpResponse($error);
++        $this->queueHttpResponse($error);
++        $describe->failDescribe();
++        $describe->failDescribe();
++
++        $this->queueHttpResponse([
++            'response' => ['code' => 200, 'message' => 'OK'],
++            'body' => json_encode([
++                'retention_mode' => 'dispose_after_ack',
++                'last_export_at' => null,
++                'last_purge_at' => null,
++                'retention_updated_at' => '2026-03-12T10:00:00Z',
++            ]),
++        ]);
++        $this->queueHttpResponse([
++            'response' => ['code' => 200, 'message' => 'OK'],
++            'body' => json_encode(['items' => []]),
++        ]);
++
++        $response = (new RetentionController())->get_status(
++            new WP_REST_Request('GET', '/acx/v1/retention/status')
++        );
++
++        $this->assertSame(200, $response->get_status());
++        $this->assertTrue($response->get_data()['available'] ?? false);
++        $this->assertSame('dispose_after_ack', $response->get_data()['policy']['retention_mode'] ?? null);
++    }
++
+     public function testUpdatePolicyForwardsToBackendAndInvalidatesCache(): void
+     {
+         $tenantId = $this->tenantId();
+diff --git a/apps/prototype-wp-alt-context/tests/Unit/SettingsControllerTest.php b/apps/prototype-wp-alt-context/tests/Unit/SettingsControllerTest.php
+--- a/apps/prototype-wp-alt-context/tests/Unit/SettingsControllerTest.php
++++ b/apps/prototype-wp-alt-context/tests/Unit/SettingsControllerTest.php
+@@ -92,6 +92,9 @@ class SettingsControllerTest extends TestCase
+ 
+         $this->assertTrue($data['allow_person_names']);
+         $this->assertNull($data['allow_person_names_error']);
++        $this->assertSame(200, $data['allow_person_names_status']);
++        $this->assertNull($data['allow_person_names_code']);
++        $this->assertSame('Description Service', $data['description_service_title']);
+         $calls = $this->getHttpCalls();
+         $this->assertCount(1, $calls);
+         $this->assertSame('https://api.example.com/recognition/tenant/naming-agreement', $calls[0]['url']);
+@@ -112,6 +115,36 @@ class SettingsControllerTest extends TestCase
+ 
+         $this->assertNull($data['allow_person_names']);
+         $this->assertSame('Connection refused', $data['allow_person_names_error']);
++        $this->assertNull($data['allow_person_names_status']);
++        $this->assertSame('http_request_failed', $data['allow_person_names_code']);
++        $this->assertSame('Description Service', $data['description_service_title']);
++    }
++
++    public function testGetSettingsReportsUpstreamNamingStatusAndTypedCode(): void
++    {
++        $this->setUserCapability('manage_options', true);
++        $this->setOption('acx_recognition_url', 'https://api.example.com');
++        $this->setOption('acx_recognition_api_key', 'test-key');
++        $this->queueHttpResponse([
++            'response' => ['code' => 503, 'message' => 'Service Unavailable'],
++            'headers' => ['Retry-After' => '7'],
++            'body' => json_encode([
++                'detail' => [
++                    'code' => 'description_service_starting',
++                    'message' => 'Description service is starting.',
++                    'warmup_eta_seconds' => 7,
++                ],
++            ]),
++        ]);
++
++        $data = $this->controller
++            ->get_settings(new WP_REST_Request('GET', '/acx/v1/settings'))
++            ->get_data();
++
++        $this->assertNull($data['allow_person_names']);
++        $this->assertSame('Description service is starting.', $data['allow_person_names_error']);
++        $this->assertSame(503, $data['allow_person_names_status']);
++        $this->assertSame('description_service_starting', $data['allow_person_names_code']);
+     }
+ 
+     /**
+@@ -1112,6 +1145,43 @@ class SettingsControllerTest extends TestCase
+         $this->assertArrayNotHasKey('error', $data);
+     }
+ 
++    public function testProbe404StartsDescriptionServiceViaLifecycleEndpoint(): void
++    {
++        $this->configureProbe();
++        $this->queueHttpResponse([
++            'response' => ['code' => 404, 'message' => 'Not Found'],
++            'body' => '{"detail":"Not Found"}',
++        ]);
++        $this->queueHttpResponse([
++            'response' => ['code' => 503, 'message' => 'Service Unavailable'],
++            'headers' => ['Retry-After' => '9'],
++            'body' => json_encode([
++                'detail' => [
++                    'code' => 'description_service_starting',
++                    'message' => 'Description service is starting.',
++                    'warmup_eta_seconds' => 9,
++                ],
++            ]),
++        ]);
++
++        $data = $this->controller
++            ->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'))
++            ->get_data();
++
++        $calls = $this->getHttpCalls();
++        $this->assertCount(2, $calls);
++        $this->assertStringEndsWith('/health/detailed', $calls[0]['url']);
++        $this->assertStringEndsWith('/scene/gpu/intent', $calls[1]['url']);
++        $this->assertSame('POST', $calls[1]['method']);
++        $this->assertSame('{"action":"start"}', $calls[1]['args']['body'] ?? null);
++        $this->assertSame('description_service_starting', $data['code'] ?? null);
++        $this->assertSame(9, $data['warmup_eta_seconds'] ?? null);
++        $this->assertSame(9, $data['retry_after_seconds'] ?? null);
++        $this->assertSame(503, $data['status_code'] ?? null);
++        $this->assertSame('Description service is starting.', $data['detail'] ?? null);
++        $this->assertStringEndsWith('/scene/gpu/intent', (string) ($data['probed_url'] ?? ''));
++    }
++
+     /**
+      * BR-139: after LoopbackHost extraction, save-path rejection matrix is
+      * unchanged — private IP / docker-style names / suffix lookalikes still

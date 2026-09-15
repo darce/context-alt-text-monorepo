@@ -1,4 +1,9 @@
- .../js/admin/pages/settings/GpuControlCard.tsx     | 39 +++++++++-----
- .../settings/__tests__/GpuControlCard.test.tsx     | 63 ++++++++++++++++++++--
- .../settings/__tests__/useGpuControl.test.tsx      | 39 ++++++++++----
- 3 files changed, 115 insertions(+), 26 deletions(-)
+ ...class-abstract-recognition-proxy-controller.php | 128 ++++++++--
+ .../src/api/class-settings-controller.php          | 114 ++++++++-
+ .../api/services/class-describe-media-service.php  |  32 +++
+ .../api/tests/fixtures/gpuflow-describe-wire.json  | 257 +++++++++++++++++++++
+ .../tests/Unit/DescribeMediaServiceTest.php        |  93 ++++++++
+ .../tests/Unit/ProxyRequestTest.php                | 244 ++++++++++++++++++-
+ .../tests/Unit/RetentionControllerTest.php         |  51 ++++
+ .../tests/Unit/SettingsControllerTest.php          |  70 ++++++
+ 8 files changed, 953 insertions(+), 36 deletions(-)

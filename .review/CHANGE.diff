@@ -1,144 +1,359 @@
-diff --git a/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx b/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx
---- a/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx
-+++ b/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx
-@@ -85,8 +85,11 @@ const formatWarmupEta = (data: GpuStatusResponse): string => {
+diff --git a/apps/prototype-description-service/scene/application/describe_run_worker.py b/apps/prototype-description-service/scene/application/describe_run_worker.py
+--- a/apps/prototype-description-service/scene/application/describe_run_worker.py
++++ b/apps/prototype-description-service/scene/application/describe_run_worker.py
+@@ -278,8 +278,18 @@ def _terminal_transition(previous: DescribeItemStatus, marked: bool) -> bool:
+     return bool(marked) and previous not in TERMINAL_ITEM_STATUSES
  
- const intentLabel = (data: GpuStatusResponse): string => {
-   const { intent, intent_status: intentStatus } = data.gpu_state;
--  if (intentStatus === GpuIntentStatus.BLOCKED_WORK_IN_FLIGHT) {
--    return 'Stop pending — a describe run is in flight; the service stops when it ends.';
-+  if (
-+    intentStatus === GpuIntentStatus.BLOCKED_WORK_IN_FLIGHT ||
-+    (intent === GpuIntentAction.STOP && data.load.has_work)
-+  ) {
-+    return 'Stopping after the current work finishes';
-   }
-   if (intent === GpuIntentAction.AUTO) {
-     return data.snapshot_fresh
-@@ -345,10 +348,15 @@ export const GpuControlCard = (): React.JSX.Element => {
-           {confirmation === GpuIntentAction.STOP ? (
-             <div id="z-stop-preview" data-testid="z-stop-preview" className="notice inline notice-warning">
-               <p>
--                {__(
--                  'Requests shutdown when idle. If a describe run is in flight, shutdown is deferred. The service run limit can still stop the service to limit costs.',
--                  'alt-context',
--                )}
-+                {data.load.has_work
-+                  ? __(
-+                      'Stopping after the current work finishes. The service run limit can still stop the service to limit costs.',
-+                      'alt-context',
+ 
++def _session_supports_row_lock(session: AsyncSession) -> bool:
++    bind = session.get_bind()
++    name = getattr(getattr(bind, "dialect", None), "name", "") or ""
++    return bool(name) and name != "sqlite"
++
++
+ async def _observed_startup(
+-    session: AsyncSession, *, tenant_id: uuid.UUID, operation_id: str | None
++    session: AsyncSession,
++    *,
++    tenant_id: uuid.UUID,
++    operation_id: str | None,
++    for_update: bool = False,
+ ) -> tuple[str | None, float | None]:
+     """Reuse the startup bound to this run's operation; never pick a global row.
+ 
+@@ -289,13 +299,14 @@ async def _observed_startup(
+     """
+     if not operation_id:
+         return None, None
++    stmt = select(DescribeOperation).where(
++        DescribeOperation.tenant_id == tenant_id,
++        DescribeOperation.operation_id == operation_id,
++    )
++    if for_update:
++        stmt = stmt.with_for_update()
+     try:
+-        operation = await session.scalar(
+-            select(DescribeOperation).where(
+-                DescribeOperation.tenant_id == tenant_id,
+-                DescribeOperation.operation_id == operation_id,
+-            )
+-        )
++        operation = await session.scalar(stmt)
+     except (OperationalError, ProgrammingError):
+         return None, None
+     if operation is None or not operation.startup_id:
+@@ -333,13 +344,24 @@ async def _record_run_readiness(
+         await set_tenant_context(session, tenant_id)
+         repo = DescribeRunRepository(session)
+         run = await repo.get_run(tenant_id=tenant_id, run_id=run_id)
+-        associated_operation_id = run.operation_id if run is not None else None
++        first_ready_before = None if run is None else run.first_ready_at
++        associated_operation_id = None if run is None else run.operation_id
++        # Stale snapshot: association may land before the locked re-read below.
++        await _observed_startup(session, tenant_id=tenant_id, operation_id=associated_operation_id)
++        run = await repo.get_run(tenant_id=tenant_id, run_id=run_id)
++        if run is not None:
++            associated_operation_id = run.operation_id
++            if first_ready_before is None:
++                first_ready_before = run.first_ready_at
++        observed_id, observed_ms = await _observed_startup(
++            session,
++            tenant_id=tenant_id,
++            operation_id=associated_operation_id,
++            for_update=_session_supports_row_lock(session),
++        )
+         operation_id = associated_operation_id or uuid.uuid4().hex
+-        startup_id, startup_ms = (None, None)
+-        if cold:
+-            startup_id, startup_ms = await _observed_startup(
+-                session, tenant_id=tenant_id, operation_id=associated_operation_id
+-            )
++        startup_id = observed_id if cold else None
++        startup_ms = observed_ms if cold else None
+         kwargs: dict = {
+             "tenant_id": tenant_id,
+             "run_id": run_id,
+@@ -355,12 +377,20 @@ async def _record_run_readiness(
+             kwargs["now"] = now
+             kwargs["ramp_up_ms"] = elapsed_ms(run.started_at, now) if cold else 0.0
+         await repo.record_readiness(**kwargs)
+-        # Repository currently maps null startup_id → ramp_up_ms=0; restore the
+-        # measured readiness wait for cold runs independently of association.
+         run = await repo.get_run(tenant_id=tenant_id, run_id=run_id)
+-        ramp_up_ms = _measured_ramp_up_ms(run, cold=cold)
+-        if run is not None and ramp_up_ms is not None:
+-            run.ramp_up_ms = ramp_up_ms
++        if run is None:
++            await session.commit()
++            return
++        newly_recorded = first_ready_before is None and run.first_ready_at is not None
++        if newly_recorded:
++            # Repository maps null startup_id → ramp_up_ms=0; restore the measured
++            # wait only when this invocation newly recorded first readiness.
++            ramp_up_ms = _measured_ramp_up_ms(run, cold=cold)
++            if ramp_up_ms is not None:
++                run.ramp_up_ms = ramp_up_ms
++        if run.startup_id is None and observed_id is not None and (cold or first_ready_before is not None):
++            run.startup_id = observed_id
++            run.startup_ms = observed_ms
+         await session.commit()
+ 
+ 
+@@ -424,6 +454,13 @@ def _attempt_processing_ms(result: object) -> float | None:
+     return None if value is None else float(value)
+ 
+ 
++def _adapter_was_dispatched(result: object) -> bool:
++    timing = getattr(result, "attempt_timing", None)
++    if timing is not None and bool(getattr(timing, "entered_adapter", False)):
++        return True
++    return bool(getattr(result, "entered_adapter", False))
++
++
+ def _sum_processing_ms(values: list[float | None]) -> float | None:
+     measured = [value for value in values if value is not None]
+     if not measured:
+@@ -453,7 +490,11 @@ async def _describe_with_transient_retry(
+ 
+     def _measured_attempt_ms(result: object, started: float) -> float | None:
+         attempt_ms = _attempt_processing_ms(result)
+-        return _dispatch_elapsed_ms(started) if attempt_ms is None else attempt_ms
++        if attempt_ms is not None:
++            return attempt_ms
++        if _adapter_was_dispatched(result):
++            return _dispatch_elapsed_ms(started)
++        return None
+ 
+     for attempt in range(1, max_attempts + 1):
+         if cancel_requested is not None and await cancel_requested():
+diff --git a/apps/prototype-description-service/scene/tests/test_describe_run_worker_phases.py b/apps/prototype-description-service/scene/tests/test_describe_run_worker_phases.py
+--- a/apps/prototype-description-service/scene/tests/test_describe_run_worker_phases.py
++++ b/apps/prototype-description-service/scene/tests/test_describe_run_worker_phases.py
+@@ -15,7 +15,7 @@ import httpx
+ import pytest
+ from jsonschema import Draft7Validator, FormatChecker
+ from referencing import Registry, Resource
+-from sqlalchemy import Table
++from sqlalchemy import Table, select
+ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+ 
+ from db.models.base_imports import Base
+@@ -562,10 +562,14 @@ def test_cancel_during_retry_backoff_keeps_measured_attempt_ms(monkeypatch):
+     attempts = {"n": 0}
+ 
+     async def describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
++        from scene.application.visual_facts_service import AdapterAttemptTiming
++
+         attempts["n"] += 1
+         if attempts["n"] == 1:
+             clock["t"] += attempt_s
+-            raise httpx.ConnectError("transient")
++            exc = httpx.ConnectError("transient")
++            exc.attempt_timing = AdapterAttemptTiming(entered_adapter=True)
++            raise exc
+         raise AssertionError("retry must not dispatch after cancel")
+ 
+     async def already_ready(**kwargs):
+@@ -759,3 +763,202 @@ def test_async_adapter_failure_persists_dispatch_ms_excluding_queue(monkeypatch)
+         os.unlink(path)
+ 
+     asyncio.run(body())
++
++
++def test_warm_retry_keeps_retained_first_ramp_up():
++    import scene.application.describe_run_worker as wmod
++
++    async def body():
++        path, url = await _make_db_async()
++        engine = create_async_engine(url)
++        sf = async_sessionmaker(engine, expire_on_commit=False)
++        async with sf() as s:
++            run_id = await DescribeRunRepository(s).create_run(
++                tenant_id=TENANT_ID, media_ids=[1], images={1: (b"x", "image/png")}
++            )
++            await s.commit()
++        await wmod._record_run_pickup(session_factory=sf, tenant_id=TENANT_ID, run_id=run_id)
++        await asyncio.sleep(0.02)
++        await wmod._record_run_readiness(session_factory=sf, tenant_id=TENANT_ID, run_id=run_id, cold=True)
++        async with sf() as s:
++            run = await DescribeRunRepository(s).get_run(tenant_id=TENANT_ID, run_id=run_id)
++        assert run is not None
++        first_ramp = run.ramp_up_ms
++        assert first_ramp is not None and first_ramp > 0
++        await asyncio.sleep(0.02)
++        await wmod._record_run_readiness(session_factory=sf, tenant_id=TENANT_ID, run_id=run_id, cold=False)
++        async with sf() as s:
++            run = await DescribeRunRepository(s).get_run(tenant_id=TENANT_ID, run_id=run_id)
++        assert run is not None
++        assert run.ramp_up_ms == first_ramp
++        assert run.startup_id is None
++        await engine.dispose()
++        os.unlink(path)
++
++    asyncio.run(body())
++
++
++def test_pre_dispatch_failure_leaves_processing_ms_null():
++    async def describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
++        raise RuntimeError("quota exceeded")
++
++    async def body():
++        path, url = await _make_db_async()
++        engine = create_async_engine(url)
++        sf = async_sessionmaker(engine, expire_on_commit=False)
++        async with sf() as s:
++            run_id = await DescribeRunRepository(s).create_run(
++                tenant_id=TENANT_ID, media_ids=[1], images={1: (b"x", "image/png")}
++            )
++            await s.commit()
++        await run_describe_job(
++            tenant_id=TENANT_ID,
++            run_id=run_id,
++            session_factory=sf,
++            describe_one=describe_one,
++            timeout_seconds=1.0,
++        )
++        async with sf() as s:
++            repo = DescribeRunRepository(s)
++            run = await repo.get_run(tenant_id=TENANT_ID, run_id=run_id)
++            items = await repo.list_run_items(tenant_id=TENANT_ID, run_id=run_id)
++        assert run is not None
++        assert items[0].status == DescribeItemStatus.FAILED
++        assert items[0].processing_ms is None
++        assert run.items_timed == 0
++        await engine.dispose()
++        os.unlink(path)
++
++    asyncio.run(body())
++
++
++def test_readiness_uses_startup_associated_between_lookup_and_write(monkeypatch):
++    import scene.application.describe_run_worker as wmod
++
++    async def body():
++        path, url = await _make_db_async()
++        engine = create_async_engine(url)
++        await _ensure_startup_table(engine)
++        sf = async_sessionmaker(engine, expire_on_commit=False)
++        started_at = datetime(2026, 1, 1, tzinfo=UTC)
++        first_ready_at = started_at + timedelta(seconds=5)
++        retain_until = datetime.now(UTC) + timedelta(hours=1)
++        async with sf() as s:
++            run_id = await DescribeRunRepository(s).create_run(
++                tenant_id=TENANT_ID, media_ids=[1], images={1: (b"x", "image/png")}
++            )
++            s.add(
++                DescribeStartup(
++                    startup_id="raced-boot",
++                    started_at=started_at,
++                    first_ready_at=first_ready_at,
++                    retain_until=retain_until,
++                )
++            )
++            s.add(
++                DescribeOperation(
++                    tenant_id=TENANT_ID,
++                    operation_id="op-race",
++                    request_digest="ab" * 32,
++                    accepted_at=started_at,
++                    expires_at=started_at + timedelta(minutes=30),
++                    retain_until=retain_until,
++                    startup_id=None,
++                )
++            )
++            run = await DescribeRunRepository(s).get_run(tenant_id=TENANT_ID, run_id=run_id)
++            assert run is not None
++            run.operation_id = "op-race"
++            await s.commit()
++
++        calls = {"n": 0}
++        original = wmod._observed_startup
++
++        async def spy(session, *, tenant_id, operation_id, for_update=False):
++            calls["n"] += 1
++            if calls["n"] == 1:
++                op = await session.scalar(
++                    select(DescribeOperation).where(
++                        DescribeOperation.tenant_id == TENANT_ID,
++                        DescribeOperation.operation_id == operation_id,
 +                    )
-+                  : __(
-+                      'Requests shutdown when idle. If a describe run is in flight, shutdown is deferred. The service run limit can still stop the service to limit costs.',
-+                      'alt-context',
-+                    )}
-               </p>
-               <div id="z-stop-actions" data-testid="z-stop-actions">
-                 <button
-diff --git a/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx b/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx
---- a/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx
-+++ b/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx
-@@ -38,6 +38,8 @@ const statusResponse = (overrides: Partial<GpuStatusResponse['gpu_state']> = {})
-   server_time: '2026-09-07T12:00:00Z',
- });
- 
-+const STOPPABLE_STATES = new Set(['starting', 'warming', 'ready', 'degraded']);
++                )
++                assert op is not None
++                op.startup_id = "raced-boot"
++                return None, None
++            return await original(session, tenant_id=tenant_id, operation_id=operation_id, for_update=for_update)
 +
- const mockControl = (data: GpuStatusResponse, overrides: Partial<ReturnType<typeof gpuControl.useGpuControl>> = {}) => {
-   useGpuControlMock.mockReturnValue({
-     data,
-@@ -47,12 +49,12 @@ const mockControl = (data: GpuStatusResponse, overrides: Partial<ReturnType<type
-     refetch: vi.fn(),
-     canStart: data.gpu_state.state === 'stopped',
-     startBlockedReason: null,
--    canStop: data.gpu_state.state !== 'stopped' && !data.load.has_work,
-+    canStop: STOPPABLE_STATES.has(data.gpu_state.state) && data.gpu_state.intent !== GPU_INTENT_ACTION.STOP,
-     stopBlockedReason:
-       data.gpu_state.state === 'stopped'
-         ? 'already stopped'
--        : data.load.has_work
--          ? 'a describe run is in flight — stops once it finishes'
-+        : data.gpu_state.intent === GPU_INTENT_ACTION.STOP
-+          ? 'stop already requested'
-           : null,
-     canReturnToAuto: data.gpu_state.intent !== GPU_INTENT_ACTION.AUTO,
-     requestIntent: vi.fn(),
-@@ -176,29 +178,65 @@ describe('GpuControlCard', () => {
-     expect(screen.getByText(/polling every 5 s/)).toBeInTheDocument();
-   });
- 
--  it('disables Stop with the work-in-flight reason', () => {
--    mockControl(statusResponse({ state: 'ready' }), {
--      canStop: false,
--      stopBlockedReason: 'a describe run is in flight — stops once it finishes',
--    });
--    render(<GpuControlCard />);
-+  it('keeps Stop enabled during work in flight and shows deferred-stop copy', () => {
-+    const requestIntent = vi.fn();
-+    const busy = {
-+      ...statusResponse({
-+        state: 'ready',
-+        instance_running_since: '2026-09-07T11:59:00Z',
-+      }),
-+      load: { has_work: true, written_at: 1_700_000_004, fresh: true },
-+    };
-+    mockControl(busy, { requestIntent });
-+    const { rerender } = render(<GpuControlCard />);
- 
--    expect(screen.getByRole('button', { name: /Stop service/ })).toHaveAttribute('aria-disabled', 'true');
--    expect(screen.getByText(/a describe run is in flight/)).toBeInTheDocument();
-+    const stop = screen.getByRole('button', { name: /Stop service/ });
-+    expect(stop).not.toHaveAttribute('disabled');
-+    expect(stop).not.toHaveAttribute('aria-disabled');
-+    fireEvent.click(stop);
-+    expect(screen.getByText(/Stopping after the current work finishes/)).toBeInTheDocument();
-+    fireEvent.click(screen.getByRole('button', { name: 'Confirm stop' }));
-+    expect(requestIntent).toHaveBeenCalledWith(GPU_INTENT_ACTION.STOP);
++        monkeypatch.setattr(wmod, "_observed_startup", spy)
++        await wmod._record_run_pickup(session_factory=sf, tenant_id=TENANT_ID, run_id=run_id)
++        await wmod._record_run_readiness(session_factory=sf, tenant_id=TENANT_ID, run_id=run_id, cold=True)
++        assert calls["n"] >= 2
++        async with sf() as s:
++            run = await DescribeRunRepository(s).get_run(tenant_id=TENANT_ID, run_id=run_id)
++        assert run is not None
++        assert run.startup_id == "raced-boot"
++        assert run.startup_ms == elapsed_ms(started_at, first_ready_at)
++        await engine.dispose()
++        os.unlink(path)
 +
-+    mockControl(
-+      {
-+        ...busy,
-+        gpu_state: {
-+          ...busy.gpu_state,
-+          intent: GPU_INTENT_ACTION.STOP,
-+          intent_status: GPU_INTENT_STATUS.BLOCKED_WORK_IN_FLIGHT,
-+        },
-+      },
-+      { requestIntent },
-+    );
-+    rerender(<GpuControlCard />);
-+    expect(screen.getByText(`Service: ${GPU_STATE_VOCABULARY.ready}`)).toBeInTheDocument();
-+    expect(screen.getByText(/Stopping after the current work finishes/)).toBeInTheDocument();
-   });
- 
-   it('renders a pending stop notice for blocked work', () => {
--    mockControl(
--      statusResponse({
-+    mockControl({
-+      ...statusResponse({
-         state: 'degraded',
-         intent: GPU_INTENT_ACTION.STOP,
-         intent_status: GPU_INTENT_STATUS.BLOCKED_WORK_IN_FLIGHT,
-       }),
--    );
-+      load: { has_work: true, written_at: 1_700_000_004, fresh: true },
-+    });
-     render(<GpuControlCard />);
- 
--    expect(screen.getByText(/Stop pending/)).toBeInTheDocument();
--    expect(screen.getByText(/stops when it ends/)).toBeInTheDocument();
-+    expect(screen.getByText(/Stopping after the current work finishes/)).toBeInTheDocument();
-+    expect(screen.getByText(`Service: ${GPU_STATE_VOCABULARY.degraded}`)).toBeInTheDocument();
-+  });
++    asyncio.run(body())
 +
-+  it('disables Stop when the service is already stopped or unknown', () => {
-+    mockControl(statusResponse({ state: 'unknown' }));
-+    const { rerender } = render(<GpuControlCard />);
-+    expect(screen.getByRole('button', { name: /Stop service/ })).toHaveAttribute('aria-disabled', 'true');
 +
-+    mockControl(statusResponse({ state: 'stopped' }));
-+    rerender(<GpuControlCard />);
-+    expect(screen.getByRole('button', { name: /Stop service/ })).toHaveAttribute('aria-disabled', 'true');
-   });
- 
-   it('renders stale telemetry as not reported and disables Start with its age', () => {
++def test_later_readiness_repairs_null_startup_id():
++    import scene.application.describe_run_worker as wmod
++
++    async def body():
++        path, url = await _make_db_async()
++        engine = create_async_engine(url)
++        await _ensure_startup_table(engine)
++        sf = async_sessionmaker(engine, expire_on_commit=False)
++        async with sf() as s:
++            run_id = await DescribeRunRepository(s).create_run(
++                tenant_id=TENANT_ID, media_ids=[1], images={1: (b"x", "image/png")}
++            )
++            await s.commit()
++        await wmod._record_run_pickup(session_factory=sf, tenant_id=TENANT_ID, run_id=run_id)
++        await asyncio.sleep(0.02)
++        await wmod._record_run_readiness(session_factory=sf, tenant_id=TENANT_ID, run_id=run_id, cold=True)
++        async with sf() as s:
++            run = await DescribeRunRepository(s).get_run(tenant_id=TENANT_ID, run_id=run_id)
++        assert run is not None
++        assert run.startup_id is None
++        first_ramp = run.ramp_up_ms
++        assert first_ramp is not None and first_ramp > 0
++
++        started_at = datetime(2026, 1, 1, tzinfo=UTC)
++        first_ready_at = started_at + timedelta(seconds=9)
++        retain_until = datetime.now(UTC) + timedelta(hours=1)
++        async with sf() as s:
++            s.add(
++                DescribeStartup(
++                    startup_id="late-boot",
++                    started_at=started_at,
++                    first_ready_at=first_ready_at,
++                    retain_until=retain_until,
++                )
++            )
++            s.add(
++                _operation(
++                    operation_id="op-late",
++                    startup_id="late-boot",
++                    accepted_at=started_at,
++                    retain_until=retain_until,
++                )
++            )
++            run = await DescribeRunRepository(s).get_run(tenant_id=TENANT_ID, run_id=run_id)
++            assert run is not None
++            run.operation_id = "op-late"
++            await s.commit()
++
++        await wmod._record_run_readiness(session_factory=sf, tenant_id=TENANT_ID, run_id=run_id, cold=False)
++        async with sf() as s:
++            run = await DescribeRunRepository(s).get_run(tenant_id=TENANT_ID, run_id=run_id)
++        assert run is not None
++        assert run.startup_id == "late-boot"
++        assert run.startup_ms == elapsed_ms(started_at, first_ready_at)
++        assert run.ramp_up_ms == first_ramp
++        await engine.dispose()
++        os.unlink(path)
++
++    asyncio.run(body())

@@ -166,3 +166,19 @@ Impact: A malformed upstream 503 can be accepted as validated warming and skip b
 Fix: Require `is_finite()` for every non-null timing and ETA number; add an oversized-exponent regression.
 
 Verdict: fail
+
+## Re-review r4 (cfb38fc79..983471fc1)
+
+VERIFIED: {"GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-04":"partially_fixed","GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-12":"fixed","GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-13":"fixed"}
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-04 | partially_fixed | The fix now checks the 503 starting envelope's closed key sets, message, timing, ETA, and Retry-After (`.review/CHANGE.diff:61-89,90-125,130-149`), but the existing `operation_id` path still calls the nullable helper, whose null branch remains accepted (`class-abstract-recognition-proxy-controller.php:635-636,662-665`). A schema-invalid starting body can therefore still bypass breaker accounting. |
+| GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-12 | fixed | `TYPED_ERROR_TOP_LEVEL_KEYS` and `TYPED_ERROR_DETAIL_KEYS` plus `has_closed_key_set()` reject unknown envelope/detail properties before exemption (`.review/CHANGE.diff:16-56,61-79,116-125`); the provider adds both extra-key regressions (`.review/CHANGE.diff:179-200`). |
+| GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-13 | fixed | ETA and every non-null timing value now pass through `is_finite_number()`, which calls `is_finite()` (`.review/CHANGE.diff:81-89,103-125`); oversized-exponent ETA and timing regressions are included (`.review/CHANGE.diff:201-210`). |
+
+### FINDINGS
+
+FINDINGS: []
+
+Verdict: fail

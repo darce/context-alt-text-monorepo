@@ -48,6 +48,63 @@ const runResponse = (overrides: Partial<DescribeRunResponse> = {}): DescribeRunR
   ...overrides,
 });
 
+const GPUFLOW_TIMING: DescribeRunTiming = {
+  queue_ms: gpuflowBulkTiming.run.timing.queue_ms,
+  ramp_up_ms: gpuflowBulkTiming.run.timing.ramp_up_ms,
+  processing_ms_p50: gpuflowBulkTiming.run.timing.processing_ms_p50,
+  processing_ms_max: gpuflowBulkTiming.run.timing.processing_ms_max,
+  startup_ms: gpuflowBulkTiming.run.timing.startup_ms,
+  server_elapsed_ms: gpuflowBulkTiming.run.timing.server_elapsed_ms,
+  items_timed: gpuflowBulkTiming.run.timing.items_timed,
+};
+
+const gpuflowRun = (overrides: Partial<DescribeRunResponse> = {}): DescribeRunResponse =>
+  runResponse({
+    tenant_id: gpuflowBulkTiming.run.tenant_id,
+    run_id: gpuflowBulkTiming.run.run_id,
+    status: 'completed_with_errors',
+    phase: 'complete',
+    completed: gpuflowBulkTiming.run.completed,
+    failed: gpuflowBulkTiming.run.failed,
+    skipped: gpuflowBulkTiming.run.skipped,
+    total: gpuflowBulkTiming.run.total,
+    cancel_requested: gpuflowBulkTiming.run.cancel_requested,
+    eta_seconds: gpuflowBulkTiming.run.eta_seconds,
+    gpu_state: GPU_STATE.READY,
+    recognition_enabled: gpuflowBulkTiming.run.recognition_enabled,
+    deadline_seconds: gpuflowBulkTiming.run.deadline_seconds,
+    operation_id: gpuflowBulkTiming.run.operation_id,
+    startup_id: gpuflowBulkTiming.run.startup_id,
+    timing: GPUFLOW_TIMING,
+    ...overrides,
+  });
+
+const gpuflowRunWithoutTiming = (): DescribeRunResponse => {
+  const run = gpuflowRun();
+  delete run.timing;
+  return run;
+};
+
+const gpuflowWarmingRun = (overrides: Partial<DescribeRunResponse> = {}): DescribeRunResponse => {
+  const run = gpuflowRun({
+    status: 'running',
+    phase: 'describing',
+    completed: gpuflowBulkTiming.run_warming.completed,
+    failed: gpuflowBulkTiming.run_warming.failed,
+    skipped: gpuflowBulkTiming.run_warming.skipped,
+    total: gpuflowBulkTiming.run_warming.total,
+    gpu_state: GPU_STATE.STARTING,
+    eta_seconds: gpuflowBulkTiming.run_warming.eta_seconds,
+    operation_id: gpuflowBulkTiming.run_warming.operation_id,
+    startup_id: gpuflowBulkTiming.run_warming.startup_id,
+    ...overrides,
+  });
+  if (!Object.hasOwn(overrides, 'timing')) {
+    Object.assign(run, { timing: gpuflowBulkTiming.run_warming.timing });
+  }
+  return run;
+};
+
 const wrapper = ({ children }: React.PropsWithChildren): React.JSX.Element => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
@@ -508,7 +565,7 @@ describe('useDescribeRunProgress GPUFLOW timing passthrough', () => {
   });
 
   it('passes timing and startupId through verbatim from the polled run', async () => {
-    const fixtureRun = gpuflowBulkTiming.run as DescribeRunResponse;
+    const fixtureRun = gpuflowRun();
     fetchBulkDescribeRunMock.mockResolvedValue(fixtureRun);
 
     const { result } = renderHook(() => useDescribeRunProgress(fixtureRun.run_id), { wrapper });
@@ -532,7 +589,7 @@ describe('useDescribeRunProgress GPUFLOW timing passthrough', () => {
 
   it('returns null timing and startupId when those keys are absent', async () => {
     expect(gpuflowBulkTiming.run_no_timing).not.toHaveProperty('timing');
-    fetchBulkDescribeRunMock.mockResolvedValue(gpuflowBulkTiming.run_no_timing as DescribeRunResponse);
+    fetchBulkDescribeRunMock.mockResolvedValue(gpuflowRunWithoutTiming());
 
     const { result } = renderHook(() => useDescribeRunProgress('run-1'), { wrapper });
 
@@ -543,7 +600,7 @@ describe('useDescribeRunProgress GPUFLOW timing passthrough', () => {
   });
 
   it('returns null timing when the run reports timing: null', async () => {
-    fetchBulkDescribeRunMock.mockResolvedValue(gpuflowBulkTiming.run_warming as DescribeRunResponse);
+    fetchBulkDescribeRunMock.mockResolvedValue(gpuflowWarmingRun());
 
     const { result } = renderHook(() => useDescribeRunProgress('run-1'), { wrapper });
 
@@ -553,7 +610,7 @@ describe('useDescribeRunProgress GPUFLOW timing passthrough', () => {
   });
 
   it('sets isWarming when gpu_state is starting and the run has no eta', async () => {
-    fetchBulkDescribeRunMock.mockResolvedValue(gpuflowBulkTiming.run_warming as DescribeRunResponse);
+    fetchBulkDescribeRunMock.mockResolvedValue(gpuflowWarmingRun());
 
     const { result } = renderHook(() => useDescribeRunProgress('run-1'), { wrapper });
 
@@ -567,10 +624,7 @@ describe('useDescribeRunProgress GPUFLOW timing passthrough', () => {
   });
 
   it('does not set isWarming when a starting GPU already reports an eta', async () => {
-    fetchBulkDescribeRunMock.mockResolvedValue({
-      ...gpuflowBulkTiming.run_warming,
-      eta_seconds: 12,
-    } as DescribeRunResponse);
+    fetchBulkDescribeRunMock.mockResolvedValue(gpuflowWarmingRun({ eta_seconds: 12 }));
 
     const { result } = renderHook(() => useDescribeRunProgress('run-1'), { wrapper });
 
@@ -580,10 +634,7 @@ describe('useDescribeRunProgress GPUFLOW timing passthrough', () => {
   });
 
   it('passes a non-null startupId through unchanged', async () => {
-    fetchBulkDescribeRunMock.mockResolvedValue({
-      ...gpuflowBulkTiming.run,
-      startup_id: 'startup-opaque',
-    } as DescribeRunResponse);
+    fetchBulkDescribeRunMock.mockResolvedValue(gpuflowRun({ startup_id: 'startup-opaque' }));
 
     const { result } = renderHook(() => useDescribeRunProgress('run-1'), { wrapper });
 

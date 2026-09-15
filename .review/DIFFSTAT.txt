@@ -1,5 +1,5 @@
- .../interface_adapters/http/routers/describe.py    | 86 +++++++++++++++++++++-
- .../interface_adapters/http/schemas/responses.py   | 11 ++-
- .../scene/tests/test_describe_route.py             | 46 ++++++++++--
- .../scene/tests/test_gpuflow_response_models.py    | 16 +++-
- 4 files changed, 148 insertions(+), 11 deletions(-)
+ .../js/admin/hooks/useDescribeRunProgress.ts                |  2 +-
+ .../js/admin/pages/workbench/MediaSelection.tsx             | 11 +++--------
+ .../__tests__/BulkDescribeProgress.phases.test.tsx          |  4 ++--
+ .../__tests__/MediaSelection.statusAnnouncement.test.tsx    | 13 ++++++++-----
+ 4 files changed, 14 insertions(+), 16 deletions(-)

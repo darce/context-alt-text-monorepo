@@ -861,28 +861,34 @@ const formatEtaLabel = (etaSeconds: number | null): string => {
 
 const formatTimingSeconds = (ms: number): string => String(ms / 1000);
 
-/** Wire-only terminal summary; null when elapsed time was not measured. */
+const formatWarmingGpuLabel = (): string => __('Warming GPU (first run only)…', 'alt-context');
+
+/**
+ * Wire-only terminal summary. `server_elapsed_ms` is evidence-only and is never
+ * rendered as "described in" (R-02). Always at least the count line.
+ */
 const formatTerminalTimingAnnouncement = (
   completed: number,
   failed: number,
   timing: DescribeRunTiming,
-): string | null => {
-  if (timing.server_elapsed_ms === null) {
-    return null;
+): string => {
+  const segments: string[] = [
+    sprintf(__('%1$d described, %2$d failed', 'alt-context'), completed, failed),
+  ];
+  if (timing.ramp_up_ms !== null) {
+    segments.push(
+      sprintf(__('Waited for service %s s', 'alt-context'), formatTimingSeconds(timing.ramp_up_ms)),
+    );
   }
-  const summary = sprintf(
-    __('%1$d described, %2$d failed in %3$s s', 'alt-context'),
-    completed,
-    failed,
-    formatTimingSeconds(timing.server_elapsed_ms),
-  );
-  if (timing.startup_ms === null) {
-    return summary;
+  if (timing.startup_ms !== null) {
+    segments.push(
+      sprintf(__('Started in %s s', 'alt-context'), formatTimingSeconds(timing.startup_ms)),
+    );
   }
-  return `${summary}${sprintf(
-    __(' (GPU startup %s s)', 'alt-context'),
-    formatTimingSeconds(timing.startup_ms),
-  )}`;
+  if (timing.queue_ms !== null) {
+    segments.push(sprintf(__('Queue %s s', 'alt-context'), formatTimingSeconds(timing.queue_ms)));
+  }
+  return segments.join('. ');
 };
 
 export const BulkDescribeProgress = ({
@@ -991,7 +997,7 @@ export const BulkDescribeProgress = ({
       <div className="acx-media-selection__bulk-describe-progress" role="status" aria-live="polite">
         <span className="acx-media-selection__bulk-describe-status acx-media-selection__bulk-describe-status--running">
           <Loader2 className="acx-media-selection__bulk-describe-spin" aria-hidden="true" size={16} />
-          {__('Description service is starting', 'alt-context')}
+          {formatWarmingGpuLabel()}
         </span>
         {cancelControl}
         {waitingNotice}
@@ -1017,7 +1023,7 @@ export const BulkDescribeProgress = ({
       <div className="acx-media-selection__bulk-describe-progress" role="status" aria-live="polite">
         <span className="acx-media-selection__bulk-describe-status acx-media-selection__bulk-describe-status--running">
           <Loader2 className="acx-media-selection__bulk-describe-spin" aria-hidden="true" size={16} />
-          {__('Warming GPU (about 2 min, first run only)…', 'alt-context')}
+          {formatWarmingGpuLabel()}
         </span>
         {cancelControl}
         {waitingNotice}

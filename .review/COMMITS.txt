@@ -1,1 +1,2 @@
-88832950b7b1 offload: svc-demand A1 committed: leases aggregate into load snapshots
+cd3d66908502 test(gpuflow-1): declare describe_load_snapshot_revisions in expected schema table set
+ff7f26863489 offload: Committed update svc-demand: load_snapshot now commits

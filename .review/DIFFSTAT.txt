@@ -1,3 +1,5 @@
- .../scene/application/describe_load.py             | 191 ++++++++++-
- .../scene/tests/test_describe_load.py              | 373 +++++++++++++++++++--
- 2 files changed, 531 insertions(+), 33 deletions(-)
+ .../db/migrations/versions/001_identity_schema.py  |  10 ++
+ .../tests/test_identity_schema_migration.py        |   1 +
+ .../scene/application/describe_load.py             |  46 +++---
+ .../scene/tests/test_describe_load.py              | 169 ++++++++++++++++++++-
+ 4 files changed, 198 insertions(+), 28 deletions(-)

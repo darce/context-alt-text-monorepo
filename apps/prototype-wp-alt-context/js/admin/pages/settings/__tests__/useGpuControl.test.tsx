@@ -57,11 +57,14 @@ const statusResponse = ({
   ...overrides,
 });
 
-const wrapper = ({ children }: { children: ReactNode }) => {
+const createWrapper = () => {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+  );
+  return wrapper;
 };
 
 describe('useGpuControl', () => {
@@ -83,7 +86,7 @@ describe('useGpuControl', () => {
   it('derives start from the stopped zero state and keeps stop disabled', async () => {
     fetchGpuStatusMock.mockResolvedValue(statusResponse());
 
-    const { result } = renderHook(() => useGpuControl(), { wrapper });
+    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.data).toBeDefined());
 
     expect(result.current.canStart).toBe(true);
@@ -95,7 +98,7 @@ describe('useGpuControl', () => {
   it('keeps Start disabled when a stopped-looking snapshot is stale', async () => {
     fetchGpuStatusMock.mockResolvedValue(statusResponse({ snapshot_age_seconds: 240, snapshot_fresh: false }));
 
-    const { result } = renderHook(() => useGpuControl(), { wrapper });
+    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.data).toBeDefined());
 
     expect(result.current.canStart).toBe(false);
@@ -113,7 +116,7 @@ describe('useGpuControl', () => {
       }),
     );
 
-    const { result } = renderHook(() => useGpuControl(), { wrapper });
+    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.data).toBeDefined());
 
     expect(result.current.canStart).toBe(false);
@@ -123,7 +126,7 @@ describe('useGpuControl', () => {
   it('keeps Start disabled for a fresh snapshot that reports an unknown machine state', async () => {
     fetchGpuStatusMock.mockResolvedValue(statusResponse({ gpu_state: { state: 'unknown' } }));
 
-    const { result } = renderHook(() => useGpuControl(), { wrapper });
+    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.data).toBeDefined());
 
     expect(result.current.canStart).toBe(false);
@@ -139,7 +142,7 @@ describe('useGpuControl', () => {
       }),
     );
 
-    const { result } = renderHook(() => useGpuControl(), { wrapper });
+    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.data).toBeDefined());
     expect(result.current.canStart).toBe(false);
     expect(result.current.canStop).toBe(true);
@@ -149,7 +152,7 @@ describe('useGpuControl', () => {
   it('presents starting with the optimistic pending start intent', async () => {
     fetchGpuStatusMock.mockResolvedValue(statusResponse());
     postGpuIntentMock.mockReturnValue(new Promise(() => {}));
-    const { result } = renderHook(() => useGpuControl(), { wrapper });
+    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.data).toBeDefined());
     act(() => {
       result.current.requestIntent(GPU_INTENT_ACTION.START);
@@ -169,7 +172,7 @@ describe('useGpuControl', () => {
       }),
     );
 
-    const { result } = renderHook(() => useGpuControl(), { wrapper });
+    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.data).toBeDefined());
 
     act(() => {
@@ -188,8 +191,24 @@ describe('useGpuControl', () => {
   it('enables Return to automatic only when the effective intent is not automatic', async () => {
     fetchGpuStatusMock.mockResolvedValue(statusResponse({ gpu_state: { intent: GPU_INTENT_ACTION.START } }));
 
-    const { result } = renderHook(() => useGpuControl(), { wrapper });
+    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.data).toBeDefined());
+    expect(result.current.canReturnToAuto).toBe(true);
+  });
+
+  it('keeps Return to automatic available when a non-automatic snapshot is stale or unknown', async () => {
+    fetchGpuStatusMock.mockResolvedValue(
+      statusResponse({
+        gpu_state: { state: 'ready', intent: GPU_INTENT_ACTION.START },
+        snapshot_age_seconds: 240,
+        snapshot_fresh: false,
+      }),
+    );
+
+    const { result } = renderHook(() => useGpuControl(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.data).toBeDefined());
+    expect(result.current.canStart).toBe(false);
+    expect(result.current.canStop).toBe(false);
     expect(result.current.canReturnToAuto).toBe(true);
   });
 });

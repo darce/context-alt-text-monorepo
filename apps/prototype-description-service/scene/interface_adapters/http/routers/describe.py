@@ -16,11 +16,11 @@ import math
 import os
 import time
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
-from collections.abc import Mapping
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
@@ -512,7 +512,9 @@ def _elapsed_ms(start: float) -> float:
     return max(0.0, (time.perf_counter() - start) * 1000)
 
 
-def _timing_from_operation(*, op, processing_ms: float | None, server_elapsed_ms: float | None, cached: bool) -> DescribeTiming:
+def _timing_from_operation(
+    *, op, processing_ms: float | None, server_elapsed_ms: float | None, cached: bool
+) -> DescribeTiming:
     if cached:
         return DescribeTiming(
             queue_ms=None,
@@ -552,6 +554,7 @@ async def _accept_operation(
                 operation_id=minted,
                 startup_id=None,
                 timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
+                retry_after=_retry_after_seconds(None),
             )
         return None, operation_id or _mint_operation_id()
     repo = _operation_repo(session)
@@ -573,6 +576,8 @@ async def _accept_operation(
             timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
         ) from exc
     except OperationExpiredError as exc:
+        # get_optional_session skips commit on HTTPException; persist rejection first.
+        await _commit_and_rescope(session, tenant_uuid)
         minted = operation_id or _mint_operation_id()
         raise _typed_describe_error(
             status_code=status.HTTP_410_GONE,
@@ -590,6 +595,7 @@ async def _accept_operation(
             await set_tenant_context(session, tenant_uuid)
         if gpu_compute:
             minted = operation_id or _mint_operation_id()
+            _logger.error("operation accept failed operation_id=%s", minted, exc_info=True)
             raise _typed_describe_error(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 code="description_service_unavailable",
@@ -597,6 +603,7 @@ async def _accept_operation(
                 operation_id=minted,
                 startup_id=None,
                 timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
+                retry_after=_retry_after_seconds(None),
             )
         _logger.debug("non-GPU operation persistence skipped", exc_info=True)
         return None, operation_id or _mint_operation_id()
@@ -614,15 +621,23 @@ async def _ensure_gpu_ready(
     now = datetime.now(UTC)
     state = read_gpu_state(now=now.timestamp())
     instance_id, since = _gpu_snapshot_fields()
-    blocked = _stop_requested(now=now) or _max_lease_reached() or state in (
-        GpuState.UNKNOWN,
-        GpuState.DEGRADED,
+    blocked = (
+        _stop_requested(now=now)
+        or _max_lease_reached()
+        or state
+        in (
+            GpuState.UNKNOWN,
+            GpuState.DEGRADED,
+        )
     )
+    waiting = state in (GpuState.STOPPED, GpuState.STARTING, GpuState.WARMING)
     repo = _operation_repo(session)
-    if instance_id is not None and not blocked:
+    # Warm READY arrivals must not join a startup; only waits through
+    # STARTING/WARMING (or STOPPED auto-start) carry startup_id + ramp_up_ms.
+    if instance_id is not None and not blocked and waiting:
         started_at = datetime.fromtimestamp(since, tz=UTC) if since is not None else None
         try:
-            await repo.associate_startup(
+            op = await repo.associate_startup(
                 tenant_id=tenant_uuid,
                 operation_id=op.operation_id,
                 startup_id=instance_id,
@@ -692,7 +707,8 @@ async def _complete_operation(
         return op
     repo = _operation_repo(session)
     try:
-        if gpu_compute and not cached and op.first_ready_at is None:
+        if op.first_ready_at is None:
+            # Cache hits never wait on GPU ready; still terminalize the lease.
             await repo.observe_ready(tenant_id=tenant_uuid, operation_id=op.operation_id)
         completed = await repo.complete(
             tenant_id=tenant_uuid,
@@ -702,9 +718,22 @@ async def _complete_operation(
         )
         await _commit_and_rescope(session, tenant_uuid)
         return completed
+    except HTTPException:
+        raise
     except Exception:
-        _logger.debug("operation complete skipped", exc_info=True)
-        return op
+        operation_id = op.operation_id
+        startup_id = op.startup_id
+        _logger.error("operation complete failed operation_id=%s", operation_id, exc_info=True)
+        await session.rollback()
+        await set_tenant_context(session, tenant_uuid)
+        raise _typed_describe_error(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            code="description_service_error",
+            message="Description service error",
+            operation_id=operation_id,
+            startup_id=startup_id,
+            timing=_untimed_with_elapsed(server_elapsed_ms),
+        )
 
 
 @router.post(
@@ -758,9 +787,7 @@ async def describe_image_multipart(
     else:
         effective_adapter = adapter
     gpu_compute = effective_adapter.kind is DescriptionAdapterKind.GPU
-    digest = _multipart_request_digest(
-        media_id=envelope.media_id, image_bytes=image_bytes, context=submission.context
-    )
+    digest = _multipart_request_digest(media_id=envelope.media_id, image_bytes=image_bytes, context=submission.context)
     op, operation_id = await _accept_operation(
         session=session,
         tenant_uuid=tenant_uuid,
@@ -823,7 +850,19 @@ async def describe_image_multipart(
             status.HTTP_504_GATEWAY_TIMEOUT,
             f"description generation exceeded {effective_timeout}s",
         ) from exc
-    except (GpuRemoteAdapterError, DescriptionAdapterUnavailableError, HostedProviderError) as exc:
+    except DescriptionAdapterUnavailableError as exc:
+        if gpu_compute:
+            raise _typed_describe_error(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                code="description_service_unavailable",
+                message=str(exc),
+                operation_id=operation_id,
+                startup_id=None if op is None else op.startup_id,
+                timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
+                retry_after=_retry_after_seconds(None),
+            ) from exc
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+    except (GpuRemoteAdapterError, HostedProviderError) as exc:
         processing_ms = getattr(getattr(exc, "attempt_timing", None), "processing_ms", None)
         server_elapsed_ms = _elapsed_ms(server_start)
         if gpu_compute:
@@ -850,8 +889,6 @@ async def describe_image_multipart(
                 startup_id=None if completed is None else completed.startup_id,
                 timing=timing,
             ) from exc
-        if isinstance(exc, DescriptionAdapterUnavailableError):
-            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
     # HARM-02: derive positional naming from the Stage-2 decision — identities
     # whose fact was dropped must not be named by the fallback.

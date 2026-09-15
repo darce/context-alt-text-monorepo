@@ -11,7 +11,7 @@ from typing import cast
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import Table, text
+from sqlalchemy import Table, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from db.models.base_imports import _DB_SETTINGS, Base
@@ -142,6 +142,7 @@ def _client(auth_tenant=None, adapter=None, naming_agreement_enabled=True, db_ab
             yield s
 
     app = FastAPI()
+    app.state.session_factory = sf
     app.include_router(scene_router, prefix="/scene")
     app.dependency_overrides[require_write_access] = lambda: _Auth(tenant_claim=auth_tenant)
     # Existing harness fakes write-access; skip quota dep so require_auth is not
@@ -178,6 +179,31 @@ def _post(
         data=data,
         files={image_key: ("x.jpg", payload, content_type)},
     )
+
+
+def _lease_state(client, operation_id: str) -> str | None:
+    async def _read():
+        async with client.app.state.session_factory() as session:
+            lease = await session.get(DescribeDemandLease, (uuid.UUID(TENANT_ID), operation_id))
+            return None if lease is None else lease.state
+
+    return asyncio.run(_read())
+
+
+def _active_lease_count(client) -> int:
+    async def _read():
+        async with client.app.state.session_factory() as session:
+            leases = (
+                await session.scalars(
+                    select(DescribeDemandLease).where(
+                        DescribeDemandLease.tenant_id == uuid.UUID(TENANT_ID),
+                        DescribeDemandLease.state == "active",
+                    )
+                )
+            ).all()
+            return len(leases)
+
+    return asyncio.run(_read())
 
 
 def _post_async(client, tenant, *, media_id=42, image_key="image_42", content_type="image/jpeg", body=b"image-bytes"):
@@ -1082,7 +1108,7 @@ def test_gpu_unknown_state_returns_unavailable(monkeypatch, tmp_path):
         assert adapter.calls == 0
 
 
-def test_gpu_ready_returns_real_operation_startup_and_timing(monkeypatch, tmp_path):
+def test_gpu_ready_warm_request_has_no_startup(monkeypatch, tmp_path):
     _gpu_env(monkeypatch, tmp_path, state="ready")
     adapter = _GpuAdapter()
     with _client(adapter=adapter) as client:
@@ -1090,11 +1116,193 @@ def test_gpu_ready_returns_real_operation_startup_and_timing(monkeypatch, tmp_pa
         assert response.status_code == 200, response.text
         body = response.json()
         assert body["operation_id"]
-        assert body["startup_id"] == "ocid1.instance.test"
-        assert body["timing"]["ramp_up_ms"] is not None
+        assert body["startup_id"] is None
+        assert body["timing"]["ramp_up_ms"] == 0
+        assert body["timing"]["startup_ms"] is None
         assert body["timing"]["processing_ms"] is not None
         assert body["timing"]["server_elapsed_ms"] is not None
         assert adapter.calls == 1
+        assert _lease_state(client, body["operation_id"]) == "completed"
+
+
+def test_gpu_cold_wait_then_ready_records_startup_and_ramp_up(monkeypatch, tmp_path):
+    state_path, _, _, _now = _gpu_env(monkeypatch, tmp_path, state="stopped")
+    adapter = _GpuAdapter()
+    with _client(adapter=adapter) as client:
+        first = _post(client, TENANT_ID)
+        assert first.status_code == 503, first.text
+        detail = first.json()["detail"]
+        operation_id = detail["operation_id"]
+        assert detail["code"] == "description_service_starting"
+        assert detail["startup_id"] == "ocid1.instance.test"
+        time.sleep(0.02)
+        from scene.application import gpu_state as gpu_state_mod
+
+        gpu_state_mod.reset_gpu_state_observation_for_tests()
+        _write_gpu_state(state_path, state="ready", now=time.time())
+        retry = _post(client, TENANT_ID, extra_data={"operation_id": operation_id})
+        assert retry.status_code == 200, retry.text
+        body = retry.json()
+        assert body["startup_id"] == "ocid1.instance.test"
+        assert body["timing"]["ramp_up_ms"] > 0
+        assert adapter.calls == 1
+        assert _lease_state(client, operation_id) == "completed"
+
+
+def test_gpu_cache_hit_completes_operation_without_active_lease(monkeypatch, tmp_path):
+    _gpu_env(monkeypatch, tmp_path, state="ready")
+    adapter = _GpuAdapter()
+    with _client(adapter=adapter) as client:
+        first = _post(client, TENANT_ID)
+        assert first.status_code == 200, first.text
+        cached = _post(client, TENANT_ID)
+        assert cached.status_code == 200, cached.text
+        body = cached.json()
+        assert body["cached"] is True
+        assert body["startup_id"] is None
+        assert body["timing"]["ramp_up_ms"] == 0
+        assert body["timing"]["processing_ms"] == 0
+        assert body["timing"]["startup_ms"] is None
+        assert adapter.calls == 1
+        assert _active_lease_count(client) == 0
+        assert _lease_state(client, body["operation_id"]) == "completed"
+
+
+class _UnavailableGpuAdapter:
+    kind = DescriptionAdapterKind.GPU
+    model_id = "gpu-unavailable"
+    model_version = "1"
+    prompt_or_task_version = "1"
+
+    def __init__(self):
+        self.calls = 0
+
+    def describe(self, *, image_bytes, context):
+        self.calls += 1
+        from scene.infrastructure.vlm.unavailable_adapter import DescriptionAdapterUnavailableError
+
+        raise DescriptionAdapterUnavailableError("gpu adapter unavailable")
+
+
+def test_gpu_adapter_unavailable_is_typed_503(monkeypatch, tmp_path):
+    _gpu_env(monkeypatch, tmp_path, state="ready")
+    adapter = _UnavailableGpuAdapter()
+    with _client(adapter=adapter) as client:
+        response = _post(client, TENANT_ID)
+        assert response.status_code == 503, response.text
+        assert response.headers.get("Retry-After")
+        detail = response.json()["detail"]
+        assert detail["code"] == "description_service_unavailable"
+        assert "warmup_eta_seconds" not in detail
+        assert detail["operation_id"]
+        assert adapter.calls == 1
+        assert _lease_state(client, detail["operation_id"]) == "active"
+
+
+class _RaisingOperationRepo:
+    def __init__(self, inner, *, fail_accept=False, fail_complete=False):
+        self._inner = inner
+        self._fail_accept = fail_accept
+        self._fail_complete = fail_complete
+
+    async def accept(self, **kwargs):
+        if self._fail_accept:
+            raise RuntimeError("accept boom")
+        return await self._inner.accept(**kwargs)
+
+    async def observe_ready(self, **kwargs):
+        return await self._inner.observe_ready(**kwargs)
+
+    async def associate_startup(self, **kwargs):
+        return await self._inner.associate_startup(**kwargs)
+
+    async def complete(self, **kwargs):
+        if self._fail_complete:
+            raise RuntimeError("complete boom")
+        return await self._inner.complete(**kwargs)
+
+
+def test_gpu_accept_failure_is_typed_503_without_adapter_work(monkeypatch, tmp_path):
+    _gpu_env(monkeypatch, tmp_path, state="ready")
+    from scene.interface_adapters.http.routers import describe as describe_module
+
+    real_repo = describe_module._operation_repo
+
+    def boom_repo(session):
+        return _RaisingOperationRepo(real_repo(session), fail_accept=True)
+
+    monkeypatch.setattr(describe_module, "_operation_repo", boom_repo)
+    adapter = _GpuAdapter()
+    with _client(adapter=adapter) as client:
+        response = _post(client, TENANT_ID)
+        assert response.status_code == 503, response.text
+        assert response.headers.get("Retry-After")
+        detail = response.json()["detail"]
+        assert detail["code"] == "description_service_unavailable"
+        assert adapter.calls == 0
+
+
+def test_gpu_complete_failure_is_typed_502_not_success(monkeypatch, tmp_path):
+    _gpu_env(monkeypatch, tmp_path, state="ready")
+    from scene.interface_adapters.http.routers import describe as describe_module
+
+    real_repo = describe_module._operation_repo
+
+    def boom_repo(session):
+        return _RaisingOperationRepo(real_repo(session), fail_complete=True)
+
+    monkeypatch.setattr(describe_module, "_operation_repo", boom_repo)
+    adapter = _GpuAdapter()
+    with _client(adapter=adapter) as client:
+        response = _post(client, TENANT_ID)
+        assert response.status_code == 502, response.text
+        detail = response.json()["detail"]
+        assert detail["code"] == "description_service_error"
+        assert adapter.calls == 1
+        assert "operation_id" in detail
+
+
+def test_operation_expired_commits_rejected_transition(monkeypatch, tmp_path):
+    from datetime import UTC, datetime, timedelta
+
+    from scene.domain.describe_run import DemandLeaseState
+    from scene.interface_adapters.http.routers.describe import _multipart_request_digest
+
+    _gpu_env(monkeypatch, tmp_path, state="ready")
+    image_bytes = b"image-bytes-payload"
+    digest = _multipart_request_digest(media_id=42, image_bytes=image_bytes, context=None)
+    now = datetime.now(UTC)
+    operation_id = "expired-operation-id"
+
+    async def seed(session):
+        session.add(
+            DescribeOperation(
+                tenant_id=uuid.UUID(TENANT_ID),
+                operation_id=operation_id,
+                request_digest=digest,
+                accepted_at=now - timedelta(seconds=30),
+                expires_at=now - timedelta(seconds=5),
+                retain_until=now + timedelta(hours=1),
+            )
+        )
+        await session.flush()
+        session.add(
+            DescribeDemandLease(
+                tenant_id=uuid.UUID(TENANT_ID),
+                operation_id=operation_id,
+                state=DemandLeaseState.ACTIVE,
+                expires_at=now - timedelta(seconds=5),
+                retain_until=now + timedelta(hours=1),
+            )
+        )
+
+    adapter = _GpuAdapter()
+    with _client(adapter=adapter, seed=seed) as client:
+        response = _post(client, TENANT_ID, extra_data={"operation_id": operation_id})
+        assert response.status_code == 410, response.text
+        assert response.json()["detail"]["code"] == "operation_expired"
+        assert adapter.calls == 0
+        assert _lease_state(client, operation_id) == DemandLeaseState.REJECTED
 
 
 def test_gpu_ready_adapter_failure_is_typed_502(monkeypatch, tmp_path):

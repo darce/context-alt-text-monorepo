@@ -75,3 +75,18 @@ Verdict: pass_with_findings
 - **Fix:** Keep Return to automatic available as the safe recovery action when `canReturnToAuto` is true, or revise the map and provide an equivalent recovery path; test stale/unknown non-AUTO intents.
 
 Verdict: pass_with_findings
+
+## Re-review r4 (87c03bd04..99cf1d247)
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| `UXSERV-M-05` | `partially_fixed` | The r4 component hunks address confirmation safety and action placement only (`.review/CHANGE.diff:1-66`); they add no `eta_seconds` field, prop, or rendering branch. The existing no-countdown warming copy therefore remains, but a legitimate upstream ETA is still unavailable. |
+| `UXSERV-M-06` | `fixed` | The confirmation effect and click-time guard now prevent Start/Stop submission after the effective state becomes unknown or the action is no longer allowed (`.review/CHANGE.diff:8-29`), while the direct controls remain hidden for unknown/stale display state in the resulting component. The new stale/unknown assertions cover the control boundary (`.review/CHANGE.diff:84-115,117-159`). |
+| `GPUFLOW-1-SPADESCRIPTIONSERVICE-R-09` | `fixed` | The effect clears an open confirmation when the snapshot becomes unknown/stale or the selected action loses eligibility, and `confirm()` rechecks `canStart`/`canStop` before requesting an intent (`.review/CHANGE.diff:8-29`). Fresh-to-stale Start and Stop transition tests assert both strips disappear and no intent is sent (`.review/CHANGE.diff:117-159`). |
+| `GPUFLOW-1-SPADESCRIPTIONSERVICE-R-10` | `fixed` | `Return to automatic` is moved outside the `displayedState !== GPU_STATE.UNKNOWN` block, so `canReturnToAuto` controls it independently on stale/unknown snapshots (`.review/CHANGE.diff:31-66`); card and hook tests cover non-AUTO stale/unknown recovery (`.review/CHANGE.diff:84-115,247-275`). |
+
+### FINDINGS
+
+FINDINGS: []
+
+Verdict: pass_with_findings

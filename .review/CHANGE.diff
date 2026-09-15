@@ -1,438 +1,672 @@
 diff --git a/apps/prototype-description-service/db/migrations/versions/001_identity_schema.py b/apps/prototype-description-service/db/migrations/versions/001_identity_schema.py
 --- a/apps/prototype-description-service/db/migrations/versions/001_identity_schema.py
 +++ b/apps/prototype-description-service/db/migrations/versions/001_identity_schema.py
-@@ -29,6 +29,8 @@ IDENTITY_VECTOR_COLUMNS: tuple[tuple[str, str], ...] = (
- )
+@@ -267,7 +267,7 @@ def _ensure_unique_constraint(op, table_name: str, constraint) -> bool:
+     GUIDEDFIX-2 [S02]: a UniqueConstraint newly declared on a table that already
+     exists in a provisioned database can never land through ``create_table``,
+     and ``_ensure_table_constraints`` would raise on every subsequent migrate.
+-    UNIQUE is the one table-level constraint that is genuinely additive: Postgres
++    For this additive UNIQUE constraint, Postgres
+     builds the backing index and fails loudly (23505) if live rows already
+     violate it, so there is no value to guess and no silent half-heal.
  
- TENANT_TABLES = [
-+    "describe_operations",
-+    "describe_demand_leases",
-     "media_identities",
-     "identity_clusters",
-     "identity_members",
-@@ -78,6 +80,9 @@ RAW_SQL_TABLES = [
- ]
+@@ -317,6 +317,24 @@ def _is_unique_violation(exc: BaseException) -> bool:
+     return False
  
- EXPECTED_SCHEMA_TABLES = [
-+    "describe_startups",
-+    "describe_operations",
-+    "describe_demand_leases",
-     "tenants",
-     "api_keys",
-     "demo_instances",
-@@ -113,6 +118,9 @@ EXPECTED_SCHEMA_TABLES = [
- ]
  
- DOWNGRADE_TABLE_ORDER = [
-+    "describe_demand_leases",
-+    "describe_operations",
-+    "describe_startups",
-     "identity_atlas_queue_dispositions",
-     "identity_atlas_points",
-     "identity_atlas_runs",
-@@ -1590,9 +1598,89 @@ def ensure_tables(op) -> None:
-     )
-     _ensure_index(op, "idx_image_descriptions_tenant", "image_descriptions", ["tenant_id"])
- 
-+    _ensure_table(
-+        op,
-+        "describe_startups",
-+        sa.Column("startup_id", sa.String(128), primary_key=True),
-+        sa.Column("started_at", sa.TIMESTAMP(timezone=True), nullable=True),
-+        sa.Column("first_ready_at", sa.TIMESTAMP(timezone=True), nullable=True),
-+        sa.Column("retain_until", sa.TIMESTAMP(timezone=True), nullable=False),
-+        sa.CheckConstraint("first_ready_at >= started_at", name="ck_describe_startup_observations"),
-+    )
-+    _ensure_index(op, "idx_describe_startups_retention", "describe_startups", ["retain_until"])
-+    _ensure_table(
-+        op,
-+        "describe_operations",
-+        sa.Column("tenant_id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
-+        sa.Column("operation_id", sa.String(128), primary_key=True),
-+        sa.Column("request_digest", sa.String(64), nullable=False),
-+        sa.Column("accepted_at", sa.TIMESTAMP(timezone=True), nullable=False),
-+        sa.Column("expires_at", sa.TIMESTAMP(timezone=True), nullable=False),
-+        sa.Column("retain_until", sa.TIMESTAMP(timezone=True), nullable=False),
-+        sa.Column("startup_id", sa.String(128), nullable=True),
-+        sa.Column("first_ready_at", sa.TIMESTAMP(timezone=True), nullable=True),
-+        sa.Column("completed_at", sa.TIMESTAMP(timezone=True), nullable=True),
-+        sa.Column("queue_ms", sa.Float(), nullable=True),
-+        sa.Column("ramp_up_ms", sa.Float(), nullable=True),
-+        sa.Column("processing_ms", sa.Float(), nullable=True),
-+        sa.Column("startup_ms", sa.Float(), nullable=True),
-+        sa.Column("server_elapsed_ms", sa.Float(), nullable=True),
-+        sa.CheckConstraint("queue_ms >= 0", name="ck_describe_operation_queue_ms"),
-+        sa.CheckConstraint("ramp_up_ms >= 0", name="ck_describe_operation_ramp_up_ms"),
-+        sa.CheckConstraint("processing_ms >= 0", name="ck_describe_operation_processing_ms"),
-+        sa.CheckConstraint("startup_ms >= 0", name="ck_describe_operation_startup_ms"),
-+        sa.CheckConstraint("server_elapsed_ms >= 0", name="ck_describe_operation_server_elapsed_ms"),
-+        sa.CheckConstraint("length(operation_id) BETWEEN 1 AND 128", name="ck_describe_operation_id"),
-+        sa.CheckConstraint(
-+            "expires_at >= accepted_at AND expires_at <= retain_until", name="ck_describe_operation_expiry"
-+        ),
-+        sa.CheckConstraint("first_ready_at >= accepted_at", name="ck_describe_operation_ready"),
-+        sa.CheckConstraint("completed_at >= accepted_at", name="ck_describe_operation_completed"),
-+        sa.ForeignKeyConstraint(["tenant_id"], ["tenants.id"], ondelete="CASCADE"),
-+        sa.ForeignKeyConstraint(["startup_id"], ["describe_startups.startup_id"]),
-+    )
-+    _ensure_index(op, "idx_describe_operations_retention", "describe_operations", ["retain_until"])
-+    _ensure_table(
-+        op,
-+        "describe_demand_leases",
-+        sa.Column("tenant_id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
-+        sa.Column("operation_id", sa.String(128), primary_key=True),
-+        sa.Column("state", sa.String(16), nullable=False, server_default=sa.text("'active'")),
-+        sa.Column("expires_at", sa.TIMESTAMP(timezone=True), nullable=False),
-+        sa.Column("retain_until", sa.TIMESTAMP(timezone=True), nullable=False),
-+        sa.CheckConstraint(
-+            "state IN ('active', 'completed', 'expired', 'rejected')", name="ck_describe_demand_lease_state"
-+        ),
-+        sa.CheckConstraint("expires_at <= retain_until", name="ck_describe_demand_lease_expiry"),
-+        sa.ForeignKeyConstraint(
-+            ["tenant_id", "operation_id"],
-+            ["describe_operations.tenant_id", "describe_operations.operation_id"],
-+            ondelete="CASCADE",
-+        ),
-+    )
-+    _ensure_index(op, "idx_describe_demand_leases_retention", "describe_demand_leases", ["retain_until"])
-+    _ensure_index(op, "idx_describe_demand_leases_active", "describe_demand_leases", ["state", "expires_at"])
++def _ensure_check_constraint(op, table_name: str, constraint: sa.CheckConstraint) -> bool:
++    """Validate live rows before adding an explicitly opted-in CHECK."""
++    bind = op.get_bind()
++    if bind.dialect.name != "postgresql":
++        return False
++    predicate = str(constraint.sqltext)
++    # CHECK accepts UNKNOWN, so only FALSE is a violation. ADD CONSTRAINT
++    # validates again under PostgreSQL's DDL lock, closing the probe/write race.
++    invalid = bind.execute(sa.text(f'SELECT 1 FROM "{table_name}" WHERE NOT ({predicate}) LIMIT 1')).scalar()
++    if invalid is not None:
++        raise RuntimeError(
++            f"cannot add check constraint {constraint.name} on {table_name}: "
++            "live rows violate the predicate (operator remediation required)"
++        )
++    op.create_check_constraint(constraint.name, table_name, constraint.sqltext)
++    return True
 +
-     _ensure_table(
-         op,
-         "image_description_runs",
-+        sa.Column("queue_ms", sa.Float(), nullable=True),
-+        sa.Column("ramp_up_ms", sa.Float(), nullable=True),
-+        sa.Column("processing_ms_p50", sa.Float(), nullable=True),
-+        sa.Column("processing_ms_max", sa.Float(), nullable=True),
-+        sa.Column("startup_ms", sa.Float(), nullable=True),
-+        sa.Column("server_elapsed_ms", sa.Float(), nullable=True),
-+        sa.Column("items_timed", sa.Integer(), nullable=True),
-+        sa.Column("operation_id", sa.String(128), nullable=True),
-+        sa.Column("startup_id", sa.String(128), nullable=True),
-+        sa.Column("first_ready_at", sa.TIMESTAMP(timezone=True), nullable=True),
-+        sa.CheckConstraint("queue_ms >= 0", name="ck_image_description_runs_queue_ms"),
-+        sa.CheckConstraint("ramp_up_ms >= 0", name="ck_image_description_runs_ramp_up_ms"),
-+        sa.CheckConstraint("processing_ms_p50 >= 0", name="ck_image_description_runs_processing_ms_p50"),
-+        sa.CheckConstraint("processing_ms_max >= 0", name="ck_image_description_runs_processing_ms_max"),
-+        sa.CheckConstraint("startup_ms >= 0", name="ck_image_description_runs_startup_ms"),
-+        sa.CheckConstraint("server_elapsed_ms >= 0", name="ck_image_description_runs_server_elapsed_ms"),
-+        sa.CheckConstraint("items_timed >= 0", name="ck_image_description_runs_items_timed"),
++
+ def _ensure_table_constraints(op, table_name: str, *elements, heal_constraints: Sequence[str] = ()) -> None:
+     """Fail loudly when an existing table is missing declared table-level constraints.
+ 
+@@ -327,8 +345,8 @@ def _ensure_table_constraints(op, table_name: str, *elements, heal_constraints:
+     recreate or apply the constraints rather than running with a half-healed
+     schema (FL30-B-01).
+ 
+-    ``heal_constraints`` opts named UNIQUE constraints out of that refusal: they
+-    are added additively via ``_ensure_unique_constraint`` instead. Opt-in by
++    ``heal_constraints`` opts named UNIQUE and CHECK constraints out of that refusal: they
++    are added additively after validating live rows. Opt-in by
+     name so adding a constraint to an already-provisioned table is a deliberate
+     declaration at the call site, not a blanket relaxation of the guard.
+     """
+@@ -355,6 +373,12 @@ def _ensure_table_constraints(op, table_name: str, *elements, heal_constraints:
+             and _ensure_unique_constraint(op, table_name, element)
+         ):
+             continue
++        if (
++            name in healable
++            and isinstance(element, sa.CheckConstraint)
++            and _ensure_check_constraint(op, table_name, element)
++        ):
++            continue
+         unhealed.append(name)
+     if unhealed:
+         raise RuntimeError(
+@@ -382,7 +406,7 @@ def _ensure_table(op, table_name: str, *columns, **kw) -> None:
+         _ensure_columns(op, table_name, *columns)
+         # Table-level constraints are not additive via create_table; detect
+         # and refuse silent partial heals (FL30-B-01 / FIR-9 composite FK),
+-        # except for UNIQUE constraints explicitly declared heal-additive.
++        # except for UNIQUE and CHECK constraints explicitly declared heal-additive.
+         _ensure_table_constraints(op, table_name, *columns, heal_constraints=heal_constraints)
+ 
+ 
+@@ -1625,11 +1649,30 @@ def ensure_tables(op) -> None:
+         sa.Column("processing_ms", sa.Float(), nullable=True),
+         sa.Column("startup_ms", sa.Float(), nullable=True),
+         sa.Column("server_elapsed_ms", sa.Float(), nullable=True),
+-        sa.CheckConstraint("queue_ms >= 0", name="ck_describe_operation_queue_ms"),
+-        sa.CheckConstraint("ramp_up_ms >= 0", name="ck_describe_operation_ramp_up_ms"),
+-        sa.CheckConstraint("processing_ms >= 0", name="ck_describe_operation_processing_ms"),
+-        sa.CheckConstraint("startup_ms >= 0", name="ck_describe_operation_startup_ms"),
+-        sa.CheckConstraint("server_elapsed_ms >= 0", name="ck_describe_operation_server_elapsed_ms"),
++        sa.CheckConstraint(
++            "(startup_id IS NOT NULL) OR (startup_ms IS NULL AND COALESCE(ramp_up_ms, 0) = 0)",
++            name="ck_describe_operation_startup_association",
++        ),
++        sa.CheckConstraint(
++            "(queue_ms IS NULL OR (queue_ms >= 0 AND queue_ms = queue_ms AND queue_ms < 1e308))",
++            name="ck_describe_operation_queue_ms",
++        ),
++        sa.CheckConstraint(
++            "(ramp_up_ms IS NULL OR (ramp_up_ms >= 0 AND ramp_up_ms = ramp_up_ms AND ramp_up_ms < 1e308))",
++            name="ck_describe_operation_ramp_up_ms",
++        ),
++        sa.CheckConstraint(
++            "(processing_ms IS NULL OR (processing_ms >= 0 AND processing_ms = processing_ms AND processing_ms < 1e308))",
++            name="ck_describe_operation_processing_ms",
++        ),
++        sa.CheckConstraint(
++            "(startup_ms IS NULL OR (startup_ms >= 0 AND startup_ms = startup_ms AND startup_ms < 1e308))",
++            name="ck_describe_operation_startup_ms",
++        ),
++        sa.CheckConstraint(
++            "(server_elapsed_ms IS NULL OR (server_elapsed_ms >= 0 AND server_elapsed_ms = server_elapsed_ms AND server_elapsed_ms < 1e308))",
++            name="ck_describe_operation_server_elapsed_ms",
++        ),
+         sa.CheckConstraint("length(operation_id) BETWEEN 1 AND 128", name="ck_describe_operation_id"),
+         sa.CheckConstraint(
+             "expires_at >= accepted_at AND expires_at <= retain_until", name="ck_describe_operation_expiry"
+@@ -1674,12 +1717,34 @@ def ensure_tables(op) -> None:
+         sa.Column("operation_id", sa.String(128), nullable=True),
+         sa.Column("startup_id", sa.String(128), nullable=True),
+         sa.Column("first_ready_at", sa.TIMESTAMP(timezone=True), nullable=True),
+-        sa.CheckConstraint("queue_ms >= 0", name="ck_image_description_runs_queue_ms"),
+-        sa.CheckConstraint("ramp_up_ms >= 0", name="ck_image_description_runs_ramp_up_ms"),
+-        sa.CheckConstraint("processing_ms_p50 >= 0", name="ck_image_description_runs_processing_ms_p50"),
+-        sa.CheckConstraint("processing_ms_max >= 0", name="ck_image_description_runs_processing_ms_max"),
+-        sa.CheckConstraint("startup_ms >= 0", name="ck_image_description_runs_startup_ms"),
+-        sa.CheckConstraint("server_elapsed_ms >= 0", name="ck_image_description_runs_server_elapsed_ms"),
++        sa.CheckConstraint(
++            "(startup_id IS NOT NULL) OR (startup_ms IS NULL AND COALESCE(ramp_up_ms, 0) = 0)",
++            name="ck_image_description_runs_startup_association",
++        ),
++        sa.CheckConstraint(
++            "(queue_ms IS NULL OR (queue_ms >= 0 AND queue_ms = queue_ms AND queue_ms < 1e308))",
++            name="ck_image_description_runs_queue_ms",
++        ),
++        sa.CheckConstraint(
++            "(ramp_up_ms IS NULL OR (ramp_up_ms >= 0 AND ramp_up_ms = ramp_up_ms AND ramp_up_ms < 1e308))",
++            name="ck_image_description_runs_ramp_up_ms",
++        ),
++        sa.CheckConstraint(
++            "(processing_ms_p50 IS NULL OR (processing_ms_p50 >= 0 AND processing_ms_p50 = processing_ms_p50 AND processing_ms_p50 < 1e308))",
++            name="ck_image_description_runs_processing_ms_p50",
++        ),
++        sa.CheckConstraint(
++            "(processing_ms_max IS NULL OR (processing_ms_max >= 0 AND processing_ms_max = processing_ms_max AND processing_ms_max < 1e308))",
++            name="ck_image_description_runs_processing_ms_max",
++        ),
++        sa.CheckConstraint(
++            "(startup_ms IS NULL OR (startup_ms >= 0 AND startup_ms = startup_ms AND startup_ms < 1e308))",
++            name="ck_image_description_runs_startup_ms",
++        ),
++        sa.CheckConstraint(
++            "(server_elapsed_ms IS NULL OR (server_elapsed_ms >= 0 AND server_elapsed_ms = server_elapsed_ms AND server_elapsed_ms < 1e308))",
++            name="ck_image_description_runs_server_elapsed_ms",
++        ),
+         sa.CheckConstraint("items_timed >= 0", name="ck_image_description_runs_items_timed"),
          sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
          sa.Column(
-             "tenant_id",
-@@ -1674,6 +1762,8 @@ def ensure_tables(op) -> None:
-     _ensure_table(
+@@ -1727,6 +1792,16 @@ def ensure_tables(op) -> None:
+         # CONSTRAINT UNIQUE instead of a RuntimeError on every migrate.
+         heal_constraints=tuple(
+             name for table, name, _cols in HEAL_UNIQUE_CONSTRAINTS if table == "image_description_runs"
++        )
++        + (
++            "ck_image_description_runs_queue_ms",
++            "ck_image_description_runs_ramp_up_ms",
++            "ck_image_description_runs_processing_ms_p50",
++            "ck_image_description_runs_processing_ms_max",
++            "ck_image_description_runs_startup_ms",
++            "ck_image_description_runs_server_elapsed_ms",
++            "ck_image_description_runs_items_timed",
++            "ck_image_description_runs_startup_association",
+         ),
+     )
+     _ensure_index(op, "idx_image_description_runs_tenant", "image_description_runs", ["tenant_id"])
+@@ -1763,7 +1838,10 @@ def ensure_tables(op) -> None:
          op,
          "image_description_run_items",
-+        sa.Column("processing_ms", sa.Float(), nullable=True),
-+        sa.CheckConstraint("processing_ms >= 0", name="ck_image_description_run_items_processing_ms"),
+         sa.Column("processing_ms", sa.Float(), nullable=True),
+-        sa.CheckConstraint("processing_ms >= 0", name="ck_image_description_run_items_processing_ms"),
++        sa.CheckConstraint(
++            "(processing_ms IS NULL OR (processing_ms >= 0 AND processing_ms = processing_ms AND processing_ms < 1e308))",
++            name="ck_image_description_run_items_processing_ms",
++        ),
          sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
          sa.Column(
              "run_id",
+@@ -1799,6 +1877,7 @@ def ensure_tables(op) -> None:
+             "status IN ('queued', 'running', 'completed', 'failed', 'skipped')",
+             name="valid_describe_item_status",
+         ),
++        heal_constraints=("ck_image_description_run_items_processing_ms",),
+     )
+     _ensure_index(op, "idx_image_description_run_items_run", "image_description_run_items", ["run_id"])
+     _ensure_index(
+@@ -2333,19 +2412,25 @@ def _matview_owner_restore_blockers(op, *, owner: str, current_role: str) -> lis
+     if owner == current_role:
+         return []
+     blockers: list[str] = []
+-    exists = op.get_bind().execute(
+-        sa.text("SELECT 1 FROM pg_roles WHERE rolname = :name"),
+-        {"name": owner},
+-    ).scalar()
++    exists = (
++        op.get_bind()
++        .execute(
++            sa.text("SELECT 1 FROM pg_roles WHERE rolname = :name"),
++            {"name": owner},
++        )
++        .scalar()
++    )
+     if not exists:
+         blockers.append(f"owner role {owner} does not exist in pg_roles")
+         return blockers
+-    row = op.get_bind().execute(
+-        sa.text(
+-            "SELECT current_schema(), has_schema_privilege(:owner, current_schema(), 'CREATE')"
+-        ),
+-        {"owner": owner},
+-    ).one()
++    row = (
++        op.get_bind()
++        .execute(
++            sa.text("SELECT current_schema(), has_schema_privilege(:owner, current_schema(), 'CREATE')"),
++            {"owner": owner},
++        )
++        .one()
++    )
+     schema_name, owner_create = row
+     if not owner_create:
+         blockers.append(f"CREATE on schema {schema_name} for owner {owner}")
 diff --git a/apps/prototype-description-service/db/models/scene.py b/apps/prototype-description-service/db/models/scene.py
 --- a/apps/prototype-description-service/db/models/scene.py
 +++ b/apps/prototype-description-service/db/models/scene.py
-@@ -10,6 +10,8 @@ generation cost (provenance).
+@@ -10,7 +10,11 @@ generation cost (provenance).
  
  from __future__ import annotations
  
-+from sqlalchemy import ForeignKeyConstraint
++import math
 +
+ from sqlalchemy import ForeignKeyConstraint
++from sqlalchemy.engine import Dialect
++from sqlalchemy.types import TypeDecorator
+ 
  from db.models.base_imports import (
      JSON,
-     JSONB,
-@@ -84,6 +86,90 @@ class ImageDescription(Base):
-     )
+@@ -38,6 +42,18 @@ from db.models.base_imports import (
+ )
  
  
-+class DescribeStartup(Base):
-+    """Global startup observations; an unobserved start stays NULL (rg-015)."""
++class _TimingFloat(TypeDecorator[float]):
++    """Reject nonfinite binds before SQLite can silently turn NaN into NULL."""
 +
-+    __tablename__ = "describe_startups"
++    impl = Float
++    cache_ok = True
 +
-+    startup_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-+    started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-+    first_ready_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-+    retain_until: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
-+
-+    __table_args__ = (
-+        CheckConstraint("first_ready_at >= started_at", name="ck_describe_startup_observations"),
-+        Index("idx_describe_startups_retention", "retain_until"),
-+    )
++    def process_bind_param(self, value: float | None, dialect: Dialect) -> float | None:
++        if value is not None and not math.isfinite(value):
++            raise ValueError("timing must be finite")
++        return value
 +
 +
-+class DescribeOperation(Base):
-+    """Tenant/request binding and retained first observations across retries."""
-+
-+    __tablename__ = "describe_operations"
-+
-+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
-+    operation_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-+    request_digest: Mapped[str] = mapped_column(String(64), nullable=False)
-+    accepted_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
-+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
-+    retain_until: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
-+    startup_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-+    first_ready_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-+    queue_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
-+    ramp_up_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
-+    processing_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
-+    startup_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
-+    server_elapsed_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
-+
-+    __table_args__ = (
-+        CheckConstraint("queue_ms >= 0", name="ck_describe_operation_queue_ms"),
-+        CheckConstraint("ramp_up_ms >= 0", name="ck_describe_operation_ramp_up_ms"),
-+        CheckConstraint("processing_ms >= 0", name="ck_describe_operation_processing_ms"),
-+        CheckConstraint("startup_ms >= 0", name="ck_describe_operation_startup_ms"),
-+        CheckConstraint("server_elapsed_ms >= 0", name="ck_describe_operation_server_elapsed_ms"),
-+        CheckConstraint("length(operation_id) BETWEEN 1 AND 128", name="ck_describe_operation_id"),
+ def _json_col():
+     """JSONB on Postgres, JSON on sqlite (test) — a fresh type per column."""
+     return JSONB().with_variant(JSON(), "sqlite")
+@@ -116,18 +132,37 @@ class DescribeOperation(Base):
+     startup_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+     first_ready_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+     completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+-    queue_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+-    ramp_up_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+-    processing_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+-    startup_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+-    server_elapsed_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
++    queue_ms: Mapped[float | None] = mapped_column(_TimingFloat, nullable=True)
++    ramp_up_ms: Mapped[float | None] = mapped_column(_TimingFloat, nullable=True)
++    processing_ms: Mapped[float | None] = mapped_column(_TimingFloat, nullable=True)
++    startup_ms: Mapped[float | None] = mapped_column(_TimingFloat, nullable=True)
++    server_elapsed_ms: Mapped[float | None] = mapped_column(_TimingFloat, nullable=True)
+ 
+     __table_args__ = (
+-        CheckConstraint("queue_ms >= 0", name="ck_describe_operation_queue_ms"),
+-        CheckConstraint("ramp_up_ms >= 0", name="ck_describe_operation_ramp_up_ms"),
+-        CheckConstraint("processing_ms >= 0", name="ck_describe_operation_processing_ms"),
+-        CheckConstraint("startup_ms >= 0", name="ck_describe_operation_startup_ms"),
+-        CheckConstraint("server_elapsed_ms >= 0", name="ck_describe_operation_server_elapsed_ms"),
 +        CheckConstraint(
-+            "expires_at >= accepted_at AND expires_at <= retain_until", name="ck_describe_operation_expiry"
++            "(startup_id IS NOT NULL) OR (startup_ms IS NULL AND COALESCE(ramp_up_ms, 0) = 0)",
++            name="ck_describe_operation_startup_association",
 +        ),
-+        CheckConstraint("first_ready_at >= accepted_at", name="ck_describe_operation_ready"),
-+        CheckConstraint("completed_at >= accepted_at", name="ck_describe_operation_completed"),
-+        ForeignKeyConstraint(["tenant_id"], ["tenants.id"], ondelete="CASCADE"),
-+        ForeignKeyConstraint(["startup_id"], ["describe_startups.startup_id"]),
-+        Index("idx_describe_operations_retention", "retain_until"),
-+    )
-+
-+
-+class DescribeDemandLease(Base):
-+    """One demand state per operation, separate from retained timing.
-+
-+    The repository snapshots the operation retention deadline here and renews
-+    both expiry fields atomically; terminal state transitions belong there.
-+    """
-+
-+    __tablename__ = "describe_demand_leases"
-+
-+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
-+    operation_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-+    state: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'active'"))
-+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
-+    retain_until: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
-+
-+    __table_args__ = (
 +        CheckConstraint(
-+            "state IN ('active', 'completed', 'expired', 'rejected')", name="ck_describe_demand_lease_state"
++            "(queue_ms IS NULL OR (queue_ms >= 0 AND queue_ms = queue_ms AND queue_ms < 1e308))",
++            name="ck_describe_operation_queue_ms",
 +        ),
-+        CheckConstraint("expires_at <= retain_until", name="ck_describe_demand_lease_expiry"),
-+        ForeignKeyConstraint(
-+            ["tenant_id", "operation_id"],
-+            ["describe_operations.tenant_id", "describe_operations.operation_id"],
-+            ondelete="CASCADE",
++        CheckConstraint(
++            "(ramp_up_ms IS NULL OR (ramp_up_ms >= 0 AND ramp_up_ms = ramp_up_ms AND ramp_up_ms < 1e308))",
++            name="ck_describe_operation_ramp_up_ms",
 +        ),
-+        Index("idx_describe_demand_leases_retention", "retain_until"),
-+        Index("idx_describe_demand_leases_active", "state", "expires_at"),
-+    )
-+
-+
- class DescribeRun(Base):
-     __tablename__ = "image_description_runs"
- 
-@@ -142,7 +228,26 @@ class DescribeRun(Base):
++        CheckConstraint(
++            "(processing_ms IS NULL OR (processing_ms >= 0 AND processing_ms = processing_ms AND processing_ms < 1e308))",
++            name="ck_describe_operation_processing_ms",
++        ),
++        CheckConstraint(
++            "(startup_ms IS NULL OR (startup_ms >= 0 AND startup_ms = startup_ms AND startup_ms < 1e308))",
++            name="ck_describe_operation_startup_ms",
++        ),
++        CheckConstraint(
++            "(server_elapsed_ms IS NULL OR (server_elapsed_ms >= 0 AND server_elapsed_ms = server_elapsed_ms AND server_elapsed_ms < 1e308))",
++            name="ck_describe_operation_server_elapsed_ms",
++        ),
+         CheckConstraint("length(operation_id) BETWEEN 1 AND 128", name="ck_describe_operation_id"),
+         CheckConstraint(
+             "expires_at >= accepted_at AND expires_at <= retain_until", name="ck_describe_operation_expiry"
+@@ -228,12 +263,12 @@ class DescribeRun(Base):
          lazy="selectin",
      )
  
-+    queue_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
-+    ramp_up_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
-+    processing_ms_p50: Mapped[float | None] = mapped_column(Float, nullable=True)
-+    processing_ms_max: Mapped[float | None] = mapped_column(Float, nullable=True)
-+    startup_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
-+    server_elapsed_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
-+    items_timed: Mapped[int | None] = mapped_column(Integer, nullable=True)
-+    # Snapshot IDs survive operation retention cleanup for long-lived bulk runs.
-+    operation_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-+    startup_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-+    first_ready_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-+
+-    queue_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+-    ramp_up_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+-    processing_ms_p50: Mapped[float | None] = mapped_column(Float, nullable=True)
+-    processing_ms_max: Mapped[float | None] = mapped_column(Float, nullable=True)
+-    startup_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+-    server_elapsed_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
++    queue_ms: Mapped[float | None] = mapped_column(_TimingFloat, nullable=True)
++    ramp_up_ms: Mapped[float | None] = mapped_column(_TimingFloat, nullable=True)
++    processing_ms_p50: Mapped[float | None] = mapped_column(_TimingFloat, nullable=True)
++    processing_ms_max: Mapped[float | None] = mapped_column(_TimingFloat, nullable=True)
++    startup_ms: Mapped[float | None] = mapped_column(_TimingFloat, nullable=True)
++    server_elapsed_ms: Mapped[float | None] = mapped_column(_TimingFloat, nullable=True)
+     items_timed: Mapped[int | None] = mapped_column(Integer, nullable=True)
+     # Snapshot IDs survive operation retention cleanup for long-lived bulk runs.
+     operation_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+@@ -241,12 +276,34 @@ class DescribeRun(Base):
+     first_ready_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+ 
      __table_args__ = (
-+        CheckConstraint("queue_ms >= 0", name="ck_image_description_runs_queue_ms"),
-+        CheckConstraint("ramp_up_ms >= 0", name="ck_image_description_runs_ramp_up_ms"),
-+        CheckConstraint("processing_ms_p50 >= 0", name="ck_image_description_runs_processing_ms_p50"),
-+        CheckConstraint("processing_ms_max >= 0", name="ck_image_description_runs_processing_ms_max"),
-+        CheckConstraint("startup_ms >= 0", name="ck_image_description_runs_startup_ms"),
-+        CheckConstraint("server_elapsed_ms >= 0", name="ck_image_description_runs_server_elapsed_ms"),
-+        CheckConstraint("items_timed >= 0", name="ck_image_description_runs_items_timed"),
+-        CheckConstraint("queue_ms >= 0", name="ck_image_description_runs_queue_ms"),
+-        CheckConstraint("ramp_up_ms >= 0", name="ck_image_description_runs_ramp_up_ms"),
+-        CheckConstraint("processing_ms_p50 >= 0", name="ck_image_description_runs_processing_ms_p50"),
+-        CheckConstraint("processing_ms_max >= 0", name="ck_image_description_runs_processing_ms_max"),
+-        CheckConstraint("startup_ms >= 0", name="ck_image_description_runs_startup_ms"),
+-        CheckConstraint("server_elapsed_ms >= 0", name="ck_image_description_runs_server_elapsed_ms"),
++        CheckConstraint(
++            "(startup_id IS NOT NULL) OR (startup_ms IS NULL AND COALESCE(ramp_up_ms, 0) = 0)",
++            name="ck_image_description_runs_startup_association",
++        ),
++        CheckConstraint(
++            "(queue_ms IS NULL OR (queue_ms >= 0 AND queue_ms = queue_ms AND queue_ms < 1e308))",
++            name="ck_image_description_runs_queue_ms",
++        ),
++        CheckConstraint(
++            "(ramp_up_ms IS NULL OR (ramp_up_ms >= 0 AND ramp_up_ms = ramp_up_ms AND ramp_up_ms < 1e308))",
++            name="ck_image_description_runs_ramp_up_ms",
++        ),
++        CheckConstraint(
++            "(processing_ms_p50 IS NULL OR (processing_ms_p50 >= 0 AND processing_ms_p50 = processing_ms_p50 AND processing_ms_p50 < 1e308))",
++            name="ck_image_description_runs_processing_ms_p50",
++        ),
++        CheckConstraint(
++            "(processing_ms_max IS NULL OR (processing_ms_max >= 0 AND processing_ms_max = processing_ms_max AND processing_ms_max < 1e308))",
++            name="ck_image_description_runs_processing_ms_max",
++        ),
++        CheckConstraint(
++            "(startup_ms IS NULL OR (startup_ms >= 0 AND startup_ms = startup_ms AND startup_ms < 1e308))",
++            name="ck_image_description_runs_startup_ms",
++        ),
++        CheckConstraint(
++            "(server_elapsed_ms IS NULL OR (server_elapsed_ms >= 0 AND server_elapsed_ms = server_elapsed_ms AND server_elapsed_ms < 1e308))",
++            name="ck_image_description_runs_server_elapsed_ms",
++        ),
+         CheckConstraint("items_timed >= 0", name="ck_image_description_runs_items_timed"),
          CheckConstraint(
              "status IN ('pending', 'running', 'completed', 'completed_with_errors', 'failed', 'cancelled')",
-             name="valid_describe_run_status",
-@@ -204,7 +309,10 @@ class DescribeRunItem(Base):
+@@ -309,10 +366,13 @@ class DescribeRunItem(Base):
  
      run: Mapped[DescribeRun] = relationship(back_populates="items")
  
-+    processing_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
-+
+-    processing_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
++    processing_ms: Mapped[float | None] = mapped_column(_TimingFloat, nullable=True)
+ 
      __table_args__ = (
-+        CheckConstraint("processing_ms >= 0", name="ck_image_description_run_items_processing_ms"),
+-        CheckConstraint("processing_ms >= 0", name="ck_image_description_run_items_processing_ms"),
++        CheckConstraint(
++            "(processing_ms IS NULL OR (processing_ms >= 0 AND processing_ms = processing_ms AND processing_ms < 1e308))",
++            name="ck_image_description_run_items_processing_ms",
++        ),
          UniqueConstraint("run_id", "media_id", name="uq_image_description_run_item_media"),
          CheckConstraint(
              "status IN ('queued', 'running', 'completed', 'failed', 'skipped')",
-diff --git a/apps/prototype-description-service/scene/tests/test_gpuflow_timing_models.py b/apps/prototype-description-service/scene/tests/test_gpuflow_timing_models.py
-new file mode 100644
---- /dev/null
-+++ b/apps/prototype-description-service/scene/tests/test_gpuflow_timing_models.py
-@@ -0,0 +1,161 @@
-+"""Storage contracts for durable GPU timing (no service or external DB required)."""
-+
-+import uuid
-+from datetime import UTC, datetime, timedelta
-+from importlib import import_module
-+
-+import pytest
-+import sqlalchemy as sa
-+
-+from db.models import scene
-+
-+
-+@pytest.fixture
-+def storage():
-+    metadata = sa.MetaData()
-+    sa.Table("tenants", metadata, sa.Column("id", sa.UUID, primary_key=True))
-+    for name in ("DescribeStartup", "DescribeOperation", "DescribeDemandLease", "DescribeRun", "DescribeRunItem"):
-+        getattr(scene, name).__table__.to_metadata(metadata)
-+    engine = sa.create_engine("sqlite://")
-+    with engine.connect() as connection:
-+        connection.exec_driver_sql("PRAGMA foreign_keys=ON")
-+    metadata.create_all(engine)
-+    with engine.begin() as connection:
-+        yield connection, metadata.tables
-+    engine.dispose()
-+
-+
-+def test_restart_retains_individual_waits_and_shared_startup(storage):
-+    connection, tables = storage
-+    tenant = uuid.uuid4()
-+    now = datetime.now(UTC)
-+    connection.execute(tables["tenants"].insert(), {"id": tenant})
-+    connection.execute(
-+        tables["describe_startups"].insert(),
-+        {"startup_id": "shared", "started_at": now, "retain_until": now + timedelta(hours=1)},
-+    )
-+    for number in range(2):
-+        connection.execute(
-+            tables["describe_operations"].insert(),
-+            {
-+                "tenant_id": tenant,
-+                "operation_id": f"op-{number}",
-+                "request_digest": "a" * 64,
-+                "accepted_at": now + timedelta(seconds=number),
-+                "expires_at": now + timedelta(minutes=1),
-+                "retain_until": now + timedelta(hours=1),
-+                "startup_id": "shared",
-+                "first_ready_at": now + timedelta(seconds=10),
-+            },
-+        )
-+        connection.execute(
-+            tables["describe_demand_leases"].insert(),
-+            {
-+                "tenant_id": tenant,
-+                "operation_id": f"op-{number}",
-+                "expires_at": now + timedelta(minutes=1),
-+                "retain_until": now + timedelta(hours=1),
-+            },
-+        )
-+    rows = connection.execute(sa.select(tables["describe_operations"])).mappings().all()
-+    assert [int((row["first_ready_at"] - row["accepted_at"]).total_seconds()) for row in rows] == [10, 9]
-+    assert {row["startup_id"] for row in rows} == {"shared"}
+diff --git a/apps/prototype-description-service/recognition/tests/test_identity_schema_migration.py b/apps/prototype-description-service/recognition/tests/test_identity_schema_migration.py
+--- a/apps/prototype-description-service/recognition/tests/test_identity_schema_migration.py
++++ b/apps/prototype-description-service/recognition/tests/test_identity_schema_migration.py
+@@ -89,6 +89,9 @@ def test_identity_schema_upgrade_creates_demo_instances_table(monkeypatch) -> No
+ 
+ def test_identity_schema_declares_expected_table_set() -> None:
+     assert identity_schema.EXPECTED_SCHEMA_TABLES == [
++        "describe_startups",
++        "describe_operations",
++        "describe_demand_leases",
+         "tenants",
+         "api_keys",
+         "demo_instances",
+@@ -223,12 +226,9 @@ def test_ensure_table_fails_loudly_when_existing_table_missing_named_constraint(
+     assert "uq_identity_atlas_points_id_run" in str(exc_info.value)
+     assert "identity_atlas_points" in str(exc_info.value)
+ 
+-    constraint_calls = [
+-        (sql, params) for sql, params in op.executed if "pg_constraint" in sql.lower()
+-    ]
++    constraint_calls = [(sql, params) for sql, params in op.executed if "pg_constraint" in sql.lower()]
+     assert constraint_calls, (
+-        "expected _existing_constraint_names to query pg_constraint; "
+-        f"executed={[sql for sql, _ in op.executed]}"
++        f"expected _existing_constraint_names to query pg_constraint; executed={[sql for sql, _ in op.executed]}"
+     )
+     sql, params = constraint_calls[0]
+     sql_l = sql.lower()
+@@ -298,12 +298,8 @@ def test_existing_constraint_names_contract_on_real_postgres(pg_empty_engine) ->
+ 
+         assert uq_a in names_a, f"unique on A missing; got {sorted(names_a)}"
+         assert ck_a in names_a, f"check on A missing; got {sorted(names_a)}"
+-        assert uq_b not in names_a, (
+-            f"table A query must not return B's unique {uq_b!r}; got {sorted(names_a)}"
+-        )
+-        assert ck_b not in names_a, (
+-            f"table A query must not return B's check {ck_b!r}; got {sorted(names_a)}"
+-        )
++        assert uq_b not in names_a, f"table A query must not return B's unique {uq_b!r}; got {sorted(names_a)}"
++        assert ck_b not in names_a, f"table A query must not return B's check {ck_b!r}; got {sorted(names_a)}"
+ 
+         assert uq_b in names_b and ck_b in names_b, f"B missing constraints; got {sorted(names_b)}"
+         assert uq_a not in names_b and ck_a not in names_b, (
+@@ -312,9 +308,7 @@ def test_existing_constraint_names_contract_on_real_postgres(pg_empty_engine) ->
+ 
+         conn.execute(text(f"ALTER TABLE {table_a} DROP CONSTRAINT {ck_a}"))
+         after_drop = identity_schema._existing_constraint_names(op, table_a)
+-        assert ck_a not in after_drop, (
+-            f"after DROP CONSTRAINT, {ck_a!r} must not appear; got {sorted(after_drop)}"
+-        )
++        assert ck_a not in after_drop, f"after DROP CONSTRAINT, {ck_a!r} must not appear; got {sorted(after_drop)}"
+         assert uq_a in after_drop, "unrelated unique must still be visible after check drop"
+ 
+         ghost = identity_schema._existing_constraint_names(op, "no_such_table_b01")
+@@ -491,3 +485,101 @@ def test_non_postgres_dialects_emit_no_alter_and_do_not_raise(monkeypatch) -> No
+     )
+     identity_schema._ensure_table(op, "image_description_runs", *columns, **kw)
+     assert not [sql for sql in op.executed if "add constraint" in sql.lower()]
 +
 +
-+@pytest.mark.parametrize("status", ["failed", "cancelled", "completed"])
-+def test_run_and_item_timing_preserves_null_and_zero(storage, status):
-+    connection, tables = storage
-+    tenant, run = uuid.uuid4(), uuid.uuid4()
-+    connection.execute(tables["tenants"].insert(), {"id": tenant})
-+    connection.execute(
-+        tables["image_description_runs"].insert(),
-+        {
-+            "id": run,
-+            "tenant_id": tenant,
-+            "media_ids": [1, 2],
-+            "total_items": 2,
-+            "status": status,
-+            "queue_ms": 0,
-+            "ramp_up_ms": 0,
-+        },
-+    )
-+    for media, value in [(1, None), (2, 0)]:
-+        connection.execute(
-+            tables["image_description_run_items"].insert(),
-+            {
-+                "id": uuid.uuid4(),
-+                "tenant_id": tenant,
-+                "run_id": run,
-+                "media_id": media,
-+                "status": "failed",
-+                "processing_ms": value,
-+            },
-+        )
-+    row = connection.execute(sa.select(tables["image_description_runs"])).mappings().one()
-+    assert row["queue_ms"] == 0
-+    assert row["processing_ms_p50"] is None
-+    assert row["startup_id"] is None
-+    assert connection.execute(sa.select(tables["image_description_run_items"].c.processing_ms)).scalars().all() == [
-+        None,
-+        0,
-+    ]
-+    with pytest.raises(sa.exc.IntegrityError):
-+        connection.execute(tables["image_description_runs"].update().values(queue_ms=-1))
++@pytest.mark.parametrize("table_name", ["image_description_runs", "image_description_run_items"])
++def test_pre_timing_schema_heals_checks_and_columns_on_postgres(monkeypatch, pg_empty_engine, table_name):
++    """H-01 RED: the original healer raised on missing timing CHECKs."""
++    import sqlalchemy as sa
++    from alembic.migration import MigrationContext
++    from alembic.operations import Operations
 +
-+
-+def test_canonical_schema_matches_models(monkeypatch):
-+    migration = import_module("db.migrations.versions.001_identity_schema")
 +    captured = {}
-+    monkeypatch.setattr(migration, "_ensure_table", lambda op, name, *elements, **kw: captured.update({name: elements}))
-+    monkeypatch.setattr(migration, "_ensure_index", lambda *args, **kwargs: None)
-+    monkeypatch.setattr(migration, "ensure_identity_vector_typmods", lambda op: None)
-+    migration.ensure_tables(None)
-+    for model in (
-+        scene.DescribeStartup,
-+        scene.DescribeOperation,
-+        scene.DescribeDemandLease,
-+        scene.DescribeRun,
-+        scene.DescribeRunItem,
-+    ):
-+        table = model.__table__
-+        columns = {c.name: c for c in captured[table.name] if isinstance(c, sa.Column)}
-+        assert set(columns) == set(table.c.keys())
-+        for column in table.c:
-+            assert columns[column.name].nullable == column.nullable
-+        checks = {str(c.sqltext) for c in captured[table.name] if isinstance(c, sa.CheckConstraint)}
-+        assert checks == {str(c.sqltext) for c in table.constraints if isinstance(c, sa.CheckConstraint)}
-+        assert table.name in migration.EXPECTED_SCHEMA_TABLES
-+        assert table.name in migration.DOWNGRADE_TABLE_ORDER
-+    assert "describe_startups" not in migration.TENANT_TABLES
-+    assert {"describe_operations", "describe_demand_leases"} <= set(migration.TENANT_TABLES)
++    with monkeypatch.context() as patch:
++        patch.setattr(
++            identity_schema, "_ensure_table", lambda op, name, *args, **kw: captured.update({name: (args, kw)})
++        )
++        patch.setattr(identity_schema, "_ensure_index", lambda *args, **kw: None)
++        patch.setattr(identity_schema, "ensure_identity_vector_typmods", lambda op: None)
++        identity_schema.ensure_tables(None)
++    elements, kw = captured[table_name]
++    timing_columns = {
++        "queue_ms",
++        "ramp_up_ms",
++        "processing_ms",
++        "processing_ms_p50",
++        "processing_ms_max",
++        "startup_ms",
++        "server_elapsed_ms",
++        "items_timed",
++        "operation_id",
++        "startup_id",
++        "first_ready_at",
++    }
++    checks = {c.name for c in elements if isinstance(c, sa.CheckConstraint) and c.name in kw["heal_constraints"]}
++    # A transaction-local schema keeps this probe isolated from fixture tables.
++    with pg_empty_engine.begin() as connection:
++        connection.exec_driver_sql("CREATE SCHEMA timing_heal_probe")
++        connection.exec_driver_sql("SET LOCAL search_path TO timing_heal_probe, public")
++        op = Operations(MigrationContext.configure(connection))
++        metadata = sa.MetaData()
++        columns = [c for c in elements if isinstance(c, sa.Column)]
++        # FK parents are immaterial to additive timing healing.
++        old = sa.Table(
++            table_name,
++            metadata,
++            *(
++                sa.Column(
++                    c.name, c.type, nullable=c.nullable, primary_key=c.primary_key, server_default=c.server_default
++                )
++                for c in columns
++                if c.name not in timing_columns
++            ),
++            *(
++                sa.CheckConstraint(str(c.sqltext), name=c.name)
++                for c in elements
++                if isinstance(c, sa.CheckConstraint) and c.name not in checks
++            ),
++        )
++        for element in elements:
++            if isinstance(element, sa.UniqueConstraint):
++                names = identity_schema._constraint_column_names(element)
++                if not names:
++                    names = ["run_id", "media_id"]
++                old.append_constraint(sa.UniqueConstraint(*names, name=element.name))
++        metadata.create_all(connection)
++        identity_schema._ensure_table(op, table_name, *elements, **kw)
++        inspector = sa.inspect(connection)
++        actual = {c["name"]: c for c in inspector.get_columns(table_name, schema="timing_heal_probe")}
++        assert set(actual) == {c.name for c in columns}
++        assert all(actual[c.name]["nullable"] for c in columns if c.name in timing_columns)
++        assert checks <= identity_schema._existing_constraint_names(op, table_name)
++        identity_schema._ensure_table(op, table_name, *elements, **kw)
++        assert checks <= identity_schema._existing_constraint_names(op, table_name)
++        connection.exec_driver_sql("DROP SCHEMA timing_heal_probe CASCADE")
 +
 +
-+@pytest.mark.parametrize("invalid", ["tenant", "state", "retention", "ready"])
-+def test_invalid_correlation_and_observations_are_rejected(storage, invalid):
-+    connection, tables = storage
-+    tenant, other = uuid.uuid4(), uuid.uuid4()
-+    now = datetime.now(UTC)
-+    connection.execute(tables["tenants"].insert(), [{"id": tenant}, {"id": other}])
-+    operation = {
-+        "tenant_id": tenant,
-+        "operation_id": "opaque-token",
-+        "request_digest": "b" * 64,
-+        "accepted_at": now,
-+        "expires_at": now + timedelta(minutes=1),
-+        "retain_until": now + timedelta(hours=1),
-+    }
-+    if invalid == "ready":
-+        operation["first_ready_at"] = now - timedelta(seconds=1)
-+        with pytest.raises(sa.exc.IntegrityError):
-+            connection.execute(tables["describe_operations"].insert(), operation)
-+        return
-+    connection.execute(tables["describe_operations"].insert(), operation)
-+    lease = {
-+        "tenant_id": other if invalid == "tenant" else tenant,
-+        "operation_id": "opaque-token",
-+        "state": "invalid" if invalid == "state" else "active",
-+        "expires_at": now + timedelta(minutes=1),
-+        "retain_until": now if invalid == "retention" else now + timedelta(hours=1),
-+    }
-+    with pytest.raises(sa.exc.IntegrityError):
-+        connection.execute(tables["describe_demand_leases"].insert(), lease)
++def test_timing_checks_reject_nonfinite_sql_on_postgres(pg_empty_engine):
++    """M-03: PostgreSQL NaN equals itself, so the upper bound is essential."""
++    import sqlalchemy as sa
++    from db.models import scene
++
++    with pg_empty_engine.begin() as connection:
++        for model in (scene.DescribeOperation, scene.DescribeRun, scene.DescribeRunItem):
++            for check in model.__table__.constraints:
++                if not isinstance(check, sa.CheckConstraint) or "1e308" not in str(check.sqltext):
++                    continue
++                column = str(check.sqltext).split()[0].lstrip("(")
++                connection.exec_driver_sql(
++                    f'CREATE TEMP TABLE timing_finite_probe ("{column}" double precision, '
++                    f"CHECK ({check.sqltext})) ON COMMIT DROP"
++                )
++                for value in ("Infinity", "-Infinity", "NaN"):
++                    with pytest.raises(sa.exc.IntegrityError):
++                        with connection.begin_nested():
++                            connection.execute(
++                                sa.text(f"INSERT INTO timing_finite_probe VALUES (CAST(:value AS double precision))"),
++                                {"value": value},
++                            )
++                connection.exec_driver_sql("INSERT INTO timing_finite_probe VALUES (NULL), (0), (42)")
++                connection.exec_driver_sql("DROP TABLE timing_finite_probe")
+diff --git a/apps/prototype-description-service/scene/tests/test_gpuflow_timing_models.py b/apps/prototype-description-service/scene/tests/test_gpuflow_timing_models.py
+--- a/apps/prototype-description-service/scene/tests/test_gpuflow_timing_models.py
++++ b/apps/prototype-description-service/scene/tests/test_gpuflow_timing_models.py
+@@ -159,3 +159,123 @@ def test_invalid_correlation_and_observations_are_rejected(storage, invalid):
+     }
+     with pytest.raises(sa.exc.IntegrityError):
+         connection.execute(tables["describe_demand_leases"].insert(), lease)
++
++
++@pytest.mark.parametrize("model", [scene.DescribeOperation, scene.DescribeRun, scene.DescribeRunItem])
++@pytest.mark.parametrize("value", [float("inf"), float("-inf"), float("nan"), -1, 1e308])
++def test_invalid_timing_values_are_rejected(model, value):
++    # RED: the original Float binds and nonnegative checks accepted inf/NaN.
++    columns = [c for c in model.__table__.c if isinstance(c.type, (sa.Float, sa.TypeDecorator))]
++    columns = [c for c in columns if c.name.endswith("_ms") or c.name.startswith("processing_ms_")]
++    engine = sa.create_engine("sqlite://")
++    try:
++        for column in columns:
++            metadata = sa.MetaData()
++            check = next(
++                c
++                for c in model.__table__.constraints
++                if isinstance(c, sa.CheckConstraint) and c.name.endswith("_" + column.name)
++            )
++            table = sa.Table(
++                "timing_probe",
++                metadata,
++                sa.Column(column.name, column.type, nullable=True),
++                sa.CheckConstraint(str(check.sqltext)),
++            )
++            metadata.create_all(engine)
++            with engine.begin() as connection:
++                connection.execute(table.insert(), {column.name: None})
++                connection.execute(table.insert(), {column.name: 0})
++                with pytest.raises((sa.exc.IntegrityError, sa.exc.StatementError)):
++                    connection.execute(table.insert(), {column.name: value})
++                # Raw SQL still enforces the finite bound independently of the binder.
++                with pytest.raises(sa.exc.IntegrityError):
++                    connection.exec_driver_sql(f'INSERT INTO timing_probe ("{column.name}") VALUES (?)', ("NaN",))
++            metadata.drop_all(engine)
++    finally:
++        engine.dispose()
++
++
++@pytest.mark.parametrize("model", [scene.DescribeOperation, scene.DescribeRun])
++def test_startup_association_requires_observation(model):
++    check = next(
++        c
++        for c in model.__table__.constraints
++        if isinstance(c, sa.CheckConstraint) and c.name.endswith("_startup_association")
++    )
++    metadata = sa.MetaData()
++    table = sa.Table(
++        "association_probe",
++        metadata,
++        sa.Column("startup_id", sa.String),
++        sa.Column("startup_ms", sa.Float),
++        sa.Column("ramp_up_ms", sa.Float),
++        sa.CheckConstraint(str(check.sqltext)),
++    )
++    engine = sa.create_engine("sqlite://")
++    try:
++        metadata.create_all(engine)
++        with engine.begin() as connection:
++            connection.execute(table.insert(), {"startup_id": None, "startup_ms": None, "ramp_up_ms": 0})
++            connection.execute(table.insert(), {"startup_id": "observed", "startup_ms": 10, "ramp_up_ms": 5})
++            for values in ({"startup_ms": 0}, {"ramp_up_ms": 1}):
++                with pytest.raises(sa.exc.IntegrityError):
++                    connection.execute(table.insert(), values)
++    finally:
++        engine.dispose()
++
++
++def test_rls_runbook_covers_canonical_tenant_tables():
++    from pathlib import Path
++    import re
++
++    migration = import_module("db.migrations.versions.001_identity_schema")
++    root = next(p for p in Path(__file__).resolve().parents if (p / "docs/runbooks").is_dir())
++    runbook = (root / "docs/runbooks/prod-identity-rls-remediation.md").read_text()
++    audit = runbook.split("FROM unnest(ARRAY[", 1)[1].split("])", 1)[0]
++    assert set(re.findall(r"'([^']+)'", audit)) == set(migration.TENANT_TABLES)
++
++
++@pytest.mark.parametrize("invalid", [False, True])
++def test_check_healer_validates_live_rows_and_is_idempotent(monkeypatch, invalid):
++    migration = import_module("db.migrations.versions.001_identity_schema")
++    existing = set()
++    probes = []
++    added = []
++
++    class Bind:
++        dialect = sa.dialects.postgresql.dialect()
++
++        def execute(self, statement):
++            probes.append(str(statement))
++
++            class Result:
++                def scalar(self):
++                    return 1 if invalid else None
++
++            return Result()
++
++    class Op:
++        def get_bind(self):
++            return Bind()
++
++        def create_check_constraint(self, name, table, predicate):
++            added.append(name)
++            existing.add(name)
++
++    monkeypatch.setattr(migration, "_existing_constraint_names", lambda op, table: existing)
++    check = sa.CheckConstraint("queue_ms >= 0", name="timing_check")
++
++    def heal():
++        migration._ensure_table_constraints(Op(), "image_description_runs", check, heal_constraints=("timing_check",))
++
++    if invalid:
++        with pytest.raises(RuntimeError, match="live rows violate"):
++            heal()
++        assert not added
++    else:
++        heal()
++        heal()
++        assert added == ["timing_check"]
++        assert len(probes) == 1
++    assert "WHERE NOT (queue_ms >= 0)" in probes[0]
+diff --git a/docs/runbooks/prod-identity-rls-remediation.md b/docs/runbooks/prod-identity-rls-remediation.md
+--- a/docs/runbooks/prod-identity-rls-remediation.md
++++ b/docs/runbooks/prod-identity-rls-remediation.md
+@@ -34,6 +34,7 @@ SELECT t.relname,
+        (SELECT count(*) FROM pg_policies p
+          WHERE p.schemaname = 'public' AND p.tablename = t.relname) AS policies
+ FROM unnest(ARRAY[
++  'describe_operations','describe_demand_leases',
+     'media_identities','identity_clusters','identity_members','identity_name_suppressions',
+     'identity_scan_jobs','identity_scan_job_items','identity_cluster_representatives','identity_clustering_jobs',
+     'identity_suggestions','cluster_merge_suggestions','name_suggestions',

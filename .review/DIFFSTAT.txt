@@ -1,4 +1,6 @@
- .../db/migrations/versions/001_identity_schema.py  |  90 ++++++++++++
- .../db/models/scene.py                             | 108 ++++++++++++++
- .../scene/tests/test_gpuflow_timing_models.py      | 161 +++++++++++++++++++++
- 3 files changed, 359 insertions(+)
+ .../db/migrations/versions/001_identity_schema.py  | 137 +++++++++++++++++----
+ .../db/models/scene.py                             | 108 ++++++++++++----
+ .../tests/test_identity_schema_migration.py        | 120 +++++++++++++++---
+ .../scene/tests/test_gpuflow_timing_models.py      | 120 ++++++++++++++++++
+ docs/runbooks/prod-identity-rls-remediation.md     |   1 +
+ 5 files changed, 422 insertions(+), 64 deletions(-)

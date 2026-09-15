@@ -29,6 +29,8 @@ IDENTITY_VECTOR_COLUMNS: tuple[tuple[str, str], ...] = (
 )
 
 TENANT_TABLES = [
+    "describe_operations",
+    "describe_demand_leases",
     "media_identities",
     "identity_clusters",
     "identity_members",
@@ -78,6 +80,9 @@ RAW_SQL_TABLES = [
 ]
 
 EXPECTED_SCHEMA_TABLES = [
+    "describe_startups",
+    "describe_operations",
+    "describe_demand_leases",
     "tenants",
     "api_keys",
     "demo_instances",
@@ -113,6 +118,9 @@ EXPECTED_SCHEMA_TABLES = [
 ]
 
 DOWNGRADE_TABLE_ORDER = [
+    "describe_demand_leases",
+    "describe_operations",
+    "describe_startups",
     "identity_atlas_queue_dispositions",
     "identity_atlas_points",
     "identity_atlas_runs",
@@ -1592,7 +1600,87 @@ def ensure_tables(op) -> None:
 
     _ensure_table(
         op,
+        "describe_startups",
+        sa.Column("startup_id", sa.String(128), primary_key=True),
+        sa.Column("started_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("first_ready_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("retain_until", sa.TIMESTAMP(timezone=True), nullable=False),
+        sa.CheckConstraint("first_ready_at >= started_at", name="ck_describe_startup_observations"),
+    )
+    _ensure_index(op, "idx_describe_startups_retention", "describe_startups", ["retain_until"])
+    _ensure_table(
+        op,
+        "describe_operations",
+        sa.Column("tenant_id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column("operation_id", sa.String(128), primary_key=True),
+        sa.Column("request_digest", sa.String(64), nullable=False),
+        sa.Column("accepted_at", sa.TIMESTAMP(timezone=True), nullable=False),
+        sa.Column("expires_at", sa.TIMESTAMP(timezone=True), nullable=False),
+        sa.Column("retain_until", sa.TIMESTAMP(timezone=True), nullable=False),
+        sa.Column("startup_id", sa.String(128), nullable=True),
+        sa.Column("first_ready_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("completed_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("queue_ms", sa.Float(), nullable=True),
+        sa.Column("ramp_up_ms", sa.Float(), nullable=True),
+        sa.Column("processing_ms", sa.Float(), nullable=True),
+        sa.Column("startup_ms", sa.Float(), nullable=True),
+        sa.Column("server_elapsed_ms", sa.Float(), nullable=True),
+        sa.CheckConstraint("queue_ms >= 0", name="ck_describe_operation_queue_ms"),
+        sa.CheckConstraint("ramp_up_ms >= 0", name="ck_describe_operation_ramp_up_ms"),
+        sa.CheckConstraint("processing_ms >= 0", name="ck_describe_operation_processing_ms"),
+        sa.CheckConstraint("startup_ms >= 0", name="ck_describe_operation_startup_ms"),
+        sa.CheckConstraint("server_elapsed_ms >= 0", name="ck_describe_operation_server_elapsed_ms"),
+        sa.CheckConstraint("length(operation_id) BETWEEN 1 AND 128", name="ck_describe_operation_id"),
+        sa.CheckConstraint(
+            "expires_at >= accepted_at AND expires_at <= retain_until", name="ck_describe_operation_expiry"
+        ),
+        sa.CheckConstraint("first_ready_at >= accepted_at", name="ck_describe_operation_ready"),
+        sa.CheckConstraint("completed_at >= accepted_at", name="ck_describe_operation_completed"),
+        sa.ForeignKeyConstraint(["tenant_id"], ["tenants.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["startup_id"], ["describe_startups.startup_id"]),
+    )
+    _ensure_index(op, "idx_describe_operations_retention", "describe_operations", ["retain_until"])
+    _ensure_table(
+        op,
+        "describe_demand_leases",
+        sa.Column("tenant_id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column("operation_id", sa.String(128), primary_key=True),
+        sa.Column("state", sa.String(16), nullable=False, server_default=sa.text("'active'")),
+        sa.Column("expires_at", sa.TIMESTAMP(timezone=True), nullable=False),
+        sa.Column("retain_until", sa.TIMESTAMP(timezone=True), nullable=False),
+        sa.CheckConstraint(
+            "state IN ('active', 'completed', 'expired', 'rejected')", name="ck_describe_demand_lease_state"
+        ),
+        sa.CheckConstraint("expires_at <= retain_until", name="ck_describe_demand_lease_expiry"),
+        sa.ForeignKeyConstraint(
+            ["tenant_id", "operation_id"],
+            ["describe_operations.tenant_id", "describe_operations.operation_id"],
+            ondelete="CASCADE",
+        ),
+    )
+    _ensure_index(op, "idx_describe_demand_leases_retention", "describe_demand_leases", ["retain_until"])
+    _ensure_index(op, "idx_describe_demand_leases_active", "describe_demand_leases", ["state", "expires_at"])
+
+    _ensure_table(
+        op,
         "image_description_runs",
+        sa.Column("queue_ms", sa.Float(), nullable=True),
+        sa.Column("ramp_up_ms", sa.Float(), nullable=True),
+        sa.Column("processing_ms_p50", sa.Float(), nullable=True),
+        sa.Column("processing_ms_max", sa.Float(), nullable=True),
+        sa.Column("startup_ms", sa.Float(), nullable=True),
+        sa.Column("server_elapsed_ms", sa.Float(), nullable=True),
+        sa.Column("items_timed", sa.Integer(), nullable=True),
+        sa.Column("operation_id", sa.String(128), nullable=True),
+        sa.Column("startup_id", sa.String(128), nullable=True),
+        sa.Column("first_ready_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.CheckConstraint("queue_ms >= 0", name="ck_image_description_runs_queue_ms"),
+        sa.CheckConstraint("ramp_up_ms >= 0", name="ck_image_description_runs_ramp_up_ms"),
+        sa.CheckConstraint("processing_ms_p50 >= 0", name="ck_image_description_runs_processing_ms_p50"),
+        sa.CheckConstraint("processing_ms_max >= 0", name="ck_image_description_runs_processing_ms_max"),
+        sa.CheckConstraint("startup_ms >= 0", name="ck_image_description_runs_startup_ms"),
+        sa.CheckConstraint("server_elapsed_ms >= 0", name="ck_image_description_runs_server_elapsed_ms"),
+        sa.CheckConstraint("items_timed >= 0", name="ck_image_description_runs_items_timed"),
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
             "tenant_id",
@@ -1674,6 +1762,8 @@ def ensure_tables(op) -> None:
     _ensure_table(
         op,
         "image_description_run_items",
+        sa.Column("processing_ms", sa.Float(), nullable=True),
+        sa.CheckConstraint("processing_ms >= 0", name="ck_image_description_run_items_processing_ms"),
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
             "run_id",

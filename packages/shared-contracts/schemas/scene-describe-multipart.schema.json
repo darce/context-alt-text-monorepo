@@ -37,10 +37,13 @@
               "type": "string"
             },
             "operation_id": {
-              "type": "string",
+              "type": [
+                "string",
+                "null"
+              ],
               "minLength": 1,
               "maxLength": 128,
-              "description": "Opaque service-minted id bound to tenant and request digest."
+              "description": "Opaque service-minted id bound to tenant and request digest. Null only when the failure occurred before an operation was durably accepted (no session, accept persistence failure)."
             },
             "startup_id": {
               "type": [

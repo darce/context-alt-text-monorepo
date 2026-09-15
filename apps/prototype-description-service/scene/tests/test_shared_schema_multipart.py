@@ -74,6 +74,16 @@ def test_typed_error_envelopes_validate():
         }
     }
     validator.validate(unavailable)
+    unavailable_null = {
+        "detail": {
+            "code": "description_service_unavailable",
+            "message": "Description service is unavailable",
+            "operation_id": None,
+            "startup_id": None,
+            "timing": TIMING,
+        }
+    }
+    validator.validate(unavailable_null)
     assert not validator.is_valid(
         {
             "detail": {
@@ -82,6 +92,12 @@ def test_typed_error_envelopes_validate():
             }
         }
     )
+
+
+def test_success_envelope_rejects_null_operation_id():
+    payload = json.loads(_FIXTURE.read_text())
+    payload["operation_id"] = None
+    assert not _multipart_validator().is_valid(payload)
 
 
 _NAMING_PROVENANCE_SCHEMA_KEYS = {"injected_names", "naming_allowed", "reason", "mode"}
@@ -142,7 +158,8 @@ def test_production_route_unavailable_error_validates_against_shared_schema(monk
         body = response.json()
         validator.validate(body)
         assert body["detail"]["code"] == "description_service_unavailable"
-        assert body["detail"]["operation_id"]
+        assert "operation_id" in body["detail"]
+        assert body["detail"]["operation_id"] is None
         assert "startup_id" in body["detail"]
         assert body["detail"]["startup_id"] is None
         assert "timing" in body["detail"]

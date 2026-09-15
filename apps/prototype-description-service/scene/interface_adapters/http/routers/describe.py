@@ -56,7 +56,11 @@ from scene.application.naming_preview_service import (
     naming_preview as _naming_preview,
 )
 from scene.application.settings.vlm import VlmSettings
-from scene.application.visual_facts_service import VisualFactsService
+from scene.application.visual_facts_service import (
+    AdapterAttemptTiming,
+    VisualFactsService,
+    VisualFactsServiceResult,
+)
 from scene.config.settings import DescriptionSettings
 from scene.domain.describe_run import (
     DescribeJobStatus,
@@ -320,8 +324,7 @@ def _typed_describe_error(
     detail: dict[str, Any] = {
         "code": code,
         "message": message,
-        # Schema requires both ids; mint only when no durable operation exists.
-        "operation_id": operation_id or _mint_operation_id(),
+        "operation_id": operation_id,
         "startup_id": startup_id,
         "timing": _timing_payload(timing),
     }
@@ -586,7 +589,10 @@ async def _accept_operation(
                 code="description_service_unavailable",
                 message="Description service is unavailable",
                 timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
+                operation_id=None,
+                startup_id=None,
             )
+        # CPU/hosted/default stay usable without demand when the DB is down.
         return None, None
     repo = _operation_repo(session)
     try:
@@ -597,50 +603,45 @@ async def _accept_operation(
         await _commit_and_rescope(session, tenant_uuid)
         return op, op.operation_id
     except OperationMismatchError as exc:
-        minted = operation_id or _mint_operation_id()
         raise _typed_describe_error(
             status_code=status.HTTP_409_CONFLICT,
             code=OperationMismatchError.code,
             message=str(exc) or "operation does not match this tenant and request",
-            operation_id=minted,
+            operation_id=operation_id,
             startup_id=None,
             timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
         ) from exc
     except OperationExpiredError as exc:
         # get_optional_session skips commit on HTTPException; persist rejection first.
         await _commit_and_rescope(session, tenant_uuid)
-        minted = operation_id or _mint_operation_id()
         raise _typed_describe_error(
             status_code=status.HTTP_410_GONE,
             code=OperationExpiredError.code,
             message=str(exc) or "operation expired; start a new operation",
-            operation_id=minted,
+            operation_id=operation_id,
             startup_id=None,
             timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
         ) from exc
     except HTTPException:
         raise
     except Exception:
-        if session is not None:
-            await session.rollback()
-            await set_tenant_context(session, tenant_uuid)
+        await session.rollback()
+        await set_tenant_context(session, tenant_uuid)
         if gpu_compute:
             _logger.error("operation accept failed", exc_info=True)
-            raise _typed_describe_error(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                code="description_service_unavailable",
-                message="Description service is unavailable",
-                operation_id=operation_id,
-                startup_id=None,
-                timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
+        else:
+            _logger.warning(
+                "non-GPU operation persistence skipped; continuing without a durable operation",
+                exc_info=True,
             )
-        # CPU/hosted/default stay usable without demand. Do not echo an
-        # unaccepted client token; the success envelope still needs an id.
-        _logger.warning(
-            "non-GPU operation persistence skipped; continuing without a durable operation",
-            exc_info=True,
+        raise _typed_describe_error(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            code="description_service_unavailable",
+            message="Description service is unavailable",
+            operation_id=None,
+            startup_id=None,
+            timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
         )
-        return None, None
 
 
 async def _ensure_gpu_ready(
@@ -684,7 +685,7 @@ async def _ensure_gpu_ready(
     timing = _untimed_with_elapsed(_elapsed_ms(server_start))
     startup_id = op.startup_id
     if blocked:
-        await _maybe_dump_describe_load(session_factory)
+        await dump_load_snapshot(session_factory)
         raise _typed_describe_error(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             code="description_service_unavailable",
@@ -700,7 +701,7 @@ async def _ensure_gpu_ready(
             now=now.timestamp(),
             warmup_timeout=settings.gpu_warmup_timeout_seconds,
         )
-        await _maybe_dump_describe_load(session_factory)
+        await dump_load_snapshot(session_factory)
         raise _typed_describe_error(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             code="description_service_starting",
@@ -714,9 +715,9 @@ async def _ensure_gpu_ready(
     if state is GpuState.READY:
         await repo.observe_ready(tenant_id=tenant_uuid, operation_id=op.operation_id, now=now)
         await _commit_and_rescope(session, tenant_uuid)
-        await _maybe_dump_describe_load(session_factory)
+        await dump_load_snapshot(session_factory)
         return
-    await _maybe_dump_describe_load(session_factory)
+    await dump_load_snapshot(session_factory)
     raise _typed_describe_error(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         code="description_service_unavailable",
@@ -768,6 +769,62 @@ async def _complete_operation(
             startup_id=startup_id,
             timing=_untimed_with_elapsed(server_elapsed_ms),
         )
+
+
+async def _terminalize_accepted_operation(
+    *,
+    session: AsyncSession | None,
+    tenant_uuid: uuid.UUID,
+    op,
+    server_elapsed_ms: float | None,
+    gpu_compute: bool,
+) -> None:
+    if session is None or op is None:
+        return
+    try:
+        await _complete_operation(
+            session=session,
+            tenant_uuid=tenant_uuid,
+            op=op,
+            processing_ms=None,
+            server_elapsed_ms=server_elapsed_ms,
+            gpu_compute=gpu_compute,
+            cached=False,
+        )
+    except HTTPException:
+        return
+    except Exception:
+        _logger.error("failed to terminalize operation_id=%s", op.operation_id, exc_info=True)
+
+
+async def _response_from_cached_row(
+    *,
+    service: VisualFactsService,
+    cached_row,
+    server_start: float,
+    media_id: int,
+    context: Mapping[str, Any] | None,
+    confirmed_faces,
+    naming_policy,
+    tenant_uuid: uuid.UUID,
+) -> VisualFactsServiceResult:
+    cache_response = service._cache_hit_response(
+        cached_row,
+        start=server_start,
+        media_id=media_id,
+        context=context,
+        confirmed_faces=confirmed_faces,
+        naming_policy=naming_policy,
+    )
+    await service._record_cache_hit(
+        tenant_id=tenant_uuid,
+        media_id=media_id,
+        image_hash=cached_row.image_hash,
+    )
+    return VisualFactsServiceResult(
+        **cache_response.model_dump(),
+        attempt_timing=AdapterAttemptTiming(processing_ms=0),
+    )
 
 
 @router.post(
@@ -822,7 +879,7 @@ async def describe_image_multipart(
         effective_adapter = adapter
     gpu_compute = effective_adapter.kind is DescriptionAdapterKind.GPU
     digest = _multipart_request_digest(media_id=envelope.media_id, image_bytes=image_bytes, context=submission.context)
-    cached_gpu = False
+    cached_row = None
     op = None
     if gpu_compute:
         cached_row = await _cached_gpu_description_row(
@@ -833,7 +890,6 @@ async def describe_image_multipart(
             adapter=effective_adapter,
             server_start=server_start,
         )
-        cached_gpu = cached_row is not None
     op, operation_id = await _accept_operation(
         session=session,
         tenant_uuid=tenant_uuid,
@@ -842,18 +898,6 @@ async def describe_image_multipart(
         gpu_compute=gpu_compute,
         server_start=server_start,
     )
-    if cached_gpu:
-        # Cache hits still bind/validate the operation token (mismatch/expiry)
-        # and terminalize any active lease before returning the cached body.
-        op = await _complete_operation(
-            session=session,
-            tenant_uuid=tenant_uuid,
-            op=op,
-            processing_ms=0,
-            server_elapsed_ms=_elapsed_ms(server_start),
-            gpu_compute=True,
-            cached=True,
-        )
     session_factory = worker_session_factory(session) if session is not None else None
     effective_timeout = _generation_timeout_seconds(settings, effective_adapter)
     service = VisualFactsService(
@@ -890,18 +934,105 @@ async def describe_image_multipart(
         await _charge_demo_quota()
 
     try:
-        response = await service.describe(
-            tenant_id=tenant_uuid,
+        if cached_row is not None:
+            response = await _response_from_cached_row(
+                service=service,
+                cached_row=cached_row,
+                server_start=server_start,
+                media_id=envelope.media_id,
+                context=submission.context,
+                confirmed_faces=confirmed_faces,
+                naming_policy=naming_policy,
+                tenant_uuid=tenant_uuid,
+            )
+        else:
+            response = await service.describe(
+                tenant_id=tenant_uuid,
+                media_id=envelope.media_id,
+                image_bytes=image_bytes,
+                context=submission.context,
+                confirmed_faces=confirmed_faces,
+                naming_policy=naming_policy,
+                before_compute=_before_compute,
+            )
+        # HARM-02: derive positional naming from the Stage-2 decision — identities
+        # whose fact was dropped must not be named by the fallback.
+        preview_faces = _faces_for_naming_preview(confirmed_faces, service.last_attachments, service.last_phrase_boxes)
+        named_draft, naming_provenance = await _naming_preview(
+            session=session,
+            tenant=tenant_record,
+            tenant_uuid=tenant_uuid,
             media_id=envelope.media_id,
             image_bytes=image_bytes,
-            context=submission.context,
-            confirmed_faces=confirmed_faces,
+            generic_draft=response.alt_text_draft,
+            # Adapter output on generation; restored from the cached row on cache
+            # hits — both paths yield the same named draft (E19-4A-S4-BR-03).
+            phrase_boxes=service.last_phrase_boxes,
+            confirmed_faces=preview_faces,
             naming_policy=naming_policy,
-            before_compute=_before_compute,
+        )
+        response = response.model_copy(
+            update={
+                "generic_draft": response.alt_text_draft,
+                "named_draft": named_draft,
+                "naming_provenance": naming_provenance,
+            }
+        )
+        server_elapsed_ms = _elapsed_ms(server_start)
+        processing_ms = response.attempt_timing.processing_ms
+        completed = await _complete_operation(
+            session=session,
+            tenant_uuid=tenant_uuid,
+            op=op,
+            processing_ms=processing_ms,
+            server_elapsed_ms=server_elapsed_ms,
+            gpu_compute=gpu_compute,
+            cached=response.cached,
+        )
+        if session is not None:
+            await session.commit()
+        if completed is not None and completed.ramp_up_ms is not None:
+            service.record_readiness_wait(completed.ramp_up_ms)
+        elif not gpu_compute or response.cached:
+            service.record_readiness_wait(0)
+        startup_id = None if completed is None else completed.startup_id
+        if response.cached:
+            startup_id = None
+        timing = _timing_from_operation(
+            op=completed,
+            processing_ms=processing_ms,
+            server_elapsed_ms=server_elapsed_ms,
+            cached=response.cached,
+        )
+        dumped = response.model_dump(exclude={"operation_id", "startup_id", "timing", "attempt_timing"})
+        accepted = completed if completed is not None else op
+        if accepted is None:
+            # CPU/hosted with no session: compute still runs, but there is no
+            # durable DescribeOperation to advertise.
+            if gpu_compute:
+                raise RuntimeError("gpu describe succeeded without an accepted operation")
+            return MultipartDescribeResponse(
+                **dumped,
+                operation_id=_mint_operation_id(),
+                startup_id=startup_id,
+                timing=timing,
+            )
+        return MultipartDescribeResponse(
+            **dumped,
+            operation_id=accepted.operation_id,
+            startup_id=startup_id,
+            timing=timing,
         )
     except HTTPException:
         raise
     except TimeoutError as exc:
+        await _terminalize_accepted_operation(
+            session=session,
+            tenant_uuid=tenant_uuid,
+            op=op,
+            server_elapsed_ms=_elapsed_ms(server_start),
+            gpu_compute=gpu_compute,
+        )
         raise HTTPException(
             status.HTTP_504_GATEWAY_TIMEOUT,
             f"description generation exceeded {effective_timeout}s",
@@ -945,62 +1076,22 @@ async def describe_image_multipart(
                 timing=timing,
             ) from exc
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
-    # HARM-02: derive positional naming from the Stage-2 decision — identities
-    # whose fact was dropped must not be named by the fallback.
-    preview_faces = _faces_for_naming_preview(confirmed_faces, service.last_attachments, service.last_phrase_boxes)
-    named_draft, naming_provenance = await _naming_preview(
-        session=session,
-        tenant=tenant_record,
-        tenant_uuid=tenant_uuid,
-        media_id=envelope.media_id,
-        image_bytes=image_bytes,
-        generic_draft=response.alt_text_draft,
-        # Adapter output on generation; restored from the cached row on cache
-        # hits — both paths yield the same named draft (E19-4A-S4-BR-03).
-        phrase_boxes=service.last_phrase_boxes,
-        confirmed_faces=preview_faces,
-        naming_policy=naming_policy,
-    )
-    response = response.model_copy(
-        update={
-            "generic_draft": response.alt_text_draft,
-            "named_draft": named_draft,
-            "naming_provenance": naming_provenance,
-        }
-    )
-    server_elapsed_ms = _elapsed_ms(server_start)
-    processing_ms = response.attempt_timing.processing_ms
-    completed = await _complete_operation(
-        session=session,
-        tenant_uuid=tenant_uuid,
-        op=op,
-        processing_ms=processing_ms,
-        server_elapsed_ms=server_elapsed_ms,
-        gpu_compute=gpu_compute,
-        cached=response.cached,
-    )
-    if session is not None:
-        await session.commit()
-    if completed is not None and completed.ramp_up_ms is not None:
-        service.record_readiness_wait(completed.ramp_up_ms)
-    elif not gpu_compute or response.cached:
-        service.record_readiness_wait(0)
-    startup_id = None if completed is None else completed.startup_id
-    if response.cached:
-        startup_id = None
-    timing = _timing_from_operation(
-        op=completed,
-        processing_ms=processing_ms,
-        server_elapsed_ms=server_elapsed_ms,
-        cached=response.cached,
-    )
-    dumped = response.model_dump(exclude={"operation_id", "startup_id", "timing", "attempt_timing"})
-    return MultipartDescribeResponse(
-        **dumped,
-        operation_id=operation_id or _mint_operation_id(),
-        startup_id=startup_id,
-        timing=timing,
-    )
+    except Exception as exc:
+        await _terminalize_accepted_operation(
+            session=session,
+            tenant_uuid=tenant_uuid,
+            op=op,
+            server_elapsed_ms=_elapsed_ms(server_start),
+            gpu_compute=gpu_compute,
+        )
+        raise _typed_describe_error(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            code="description_service_error",
+            message="Description service error",
+            operation_id=operation_id,
+            startup_id=None if op is None else op.startup_id,
+            timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
+        ) from exc
 
 
 async def _with_bypass_session(session_factory: async_sessionmaker[AsyncSession], op):
@@ -1010,11 +1101,6 @@ async def _with_bypass_session(session_factory: async_sessionmaker[AsyncSession]
         result = await op(bypass_session)
         await bypass_session.commit()
         return result
-
-
-async def _maybe_dump_describe_load(session_factory: async_sessionmaker[AsyncSession] | None) -> None:
-    """Best-effort DB-derived load write for the GPU idle reaper (VLMFIX-S2-01)."""
-    await dump_load_snapshot(session_factory)
 
 
 async def _maybe_purge_expired_single_runs(session_factory: async_sessionmaker[AsyncSession]) -> None:
@@ -1091,7 +1177,7 @@ async def enqueue_describe_image(
         ) from exc
 
     await _maybe_purge_expired_single_runs(session_factory)
-    await _maybe_dump_describe_load(session_factory)
+    await dump_load_snapshot(session_factory)
 
     background_tasks.add_task(
         _run_async_describe_job_and_release,
@@ -1132,7 +1218,7 @@ async def _run_async_describe_job_and_release(
         )
     finally:
         _ASYNC_ADMISSION.release(image_len)
-        await _maybe_dump_describe_load(session_factory)
+        await dump_load_snapshot(session_factory)
 
 
 @router.get("/describe/jobs/{job_id}", response_model=DescribeJobResult)
@@ -1163,5 +1249,5 @@ async def get_describe_job(
 
     result = _job_result_from_item(run_id=run_id, item=item)
     if describe_job_status(item) in _TERMINAL_POLL_STATUSES:
-        await _maybe_dump_describe_load(worker_session_factory(session))
+        await dump_load_snapshot(worker_session_factory(session))
     return result

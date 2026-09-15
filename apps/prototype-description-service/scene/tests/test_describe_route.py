@@ -181,6 +181,26 @@ def _post(
     )
 
 
+def _ensure_describe_operation_tables(session_factory) -> None:
+    """Demo-quota harness omits operation/lease tables; multipart accept needs them."""
+
+    async def _create():
+        engine = session_factory.kw["bind"]
+        async with engine.begin() as conn:
+            await conn.run_sync(
+                lambda sync_conn: Base.metadata.create_all(
+                    sync_conn,
+                    tables=[
+                        DescribeStartup.__table__,
+                        DescribeOperation.__table__,
+                        DescribeDemandLease.__table__,
+                    ],
+                )
+            )
+
+    asyncio.run(_create())
+
+
 def _lease_state(client, operation_id: str) -> str | None:
     async def _read():
         async with client.app.state.session_factory() as session:
@@ -831,6 +851,7 @@ def test_async_enqueue_requires_tenant_claim(monkeypatch):
 def test_demo_quota_multipart_below_cap_increments_and_at_cap_429():
     # Distinct image bytes per request so cache hits cannot skip compute/charge.
     with _demo_quota_client(recognition_quota=1) as (client, sf, _prov, tenant_id, slug):
+        _ensure_describe_operation_tables(sf)
         r1 = _post(client, tenant_id, media_id=1, image_key="image_1", body=b"quota-img-1")
         assert r1.status_code == 200, r1.text
         assert _recognition_used(sf, slug) == 1
@@ -869,6 +890,7 @@ def test_demo_quota_shared_pool_across_surfaces():
     from recognition.application.services.demo_provisioning_service import try_consume_demo_quota
 
     with _demo_quota_client(recognition_quota=5) as (client, sf, provisioned, tenant_id, slug):
+        _ensure_describe_operation_tables(sf)
 
         async def _consume_one():
             async with sf() as s:
@@ -903,6 +925,7 @@ def test_demo_quota_non_demo_key_multipart_and_async_unaffected(monkeypatch):
         tenant_id,
         slug,
     ):
+        _ensure_describe_operation_tables(sf)
         r1 = _post(client, tenant_id, media_id=1, image_key="image_1", body=b"non-demo-1")
         assert r1.status_code == 200, r1.text
         r2 = _post_async(client, tenant_id, media_id=2, image_key="image_2", body=b"non-demo-2")
@@ -944,6 +967,7 @@ def test_demo_quota_decorative_204_does_not_charge():
 def test_demo_quota_cache_hit_does_not_charge():
     """Cache hit is zero-compute — charge only on real adapter dispatch (DS2B-PM-S2-01)."""
     with _demo_quota_client(recognition_quota=5) as (client, sf, _prov, tenant_id, slug):
+        _ensure_describe_operation_tables(sf)
         body = b"cache-hit-unique-bytes"
         r1 = _post(client, tenant_id, media_id=1, image_key="image_1", body=body)
         assert r1.status_code == 200, r1.text
@@ -964,6 +988,7 @@ def test_demo_quota_survives_post_consume_http_error():
     see the spent unit after a validation failure on another path.
     """
     with _demo_quota_client(recognition_quota=2) as (client, sf, _prov, tenant_id, slug):
+        _ensure_describe_operation_tables(sf)
         ok = _post(client, tenant_id, media_id=1, image_key="image_1", body=b"durable-1")
         assert ok.status_code == 200, ok.text
         assert _recognition_used(sf, slug) == 1
@@ -1152,20 +1177,29 @@ def test_gpu_cold_wait_then_ready_records_startup_and_ramp_up(monkeypatch, tmp_p
 def test_gpu_cache_hit_completes_operation_without_active_lease(monkeypatch, tmp_path):
     _gpu_env(monkeypatch, tmp_path, state="ready")
     from scene.application.describe_operation_repository import DescribeOperationRepository
+    from scene.application.visual_facts_service import VisualFactsService
 
     accepts: list[int] = []
+    describes: list[int] = []
     real_accept = DescribeOperationRepository.accept
+    real_describe = VisualFactsService.describe
 
     async def spy_accept(self, **kwargs):
         accepts.append(1)
         return await real_accept(self, **kwargs)
 
+    async def spy_describe(self, **kwargs):
+        describes.append(1)
+        return await real_describe(self, **kwargs)
+
     monkeypatch.setattr(DescribeOperationRepository, "accept", spy_accept)
+    monkeypatch.setattr(VisualFactsService, "describe", spy_describe)
     adapter = _GpuAdapter()
     with _client(adapter=adapter) as client:
         first = _post(client, TENANT_ID)
         assert first.status_code == 200, first.text
         assert len(accepts) == 1
+        assert len(describes) == 1
         cached = _post(client, TENANT_ID)
         assert cached.status_code == 200, cached.text
         body = cached.json()
@@ -1177,6 +1211,7 @@ def test_gpu_cache_hit_completes_operation_without_active_lease(monkeypatch, tmp
         assert body["timing"]["startup_ms"] is None
         assert adapter.calls == 1
         assert len(accepts) == 2
+        assert describes == [1]
         assert _active_lease_count(client) == 0
         assert _lease_state(client, first.json()["operation_id"]) == "completed"
         assert _lease_state(client, body["operation_id"]) == "completed"
@@ -1253,8 +1288,10 @@ def test_gpu_accept_failure_is_typed_503_without_adapter_work(monkeypatch, tmp_p
         assert "Retry-After" not in response.headers
         detail = response.json()["detail"]
         assert detail["code"] == "description_service_unavailable"
-        assert detail["operation_id"]
+        assert "operation_id" in detail
+        assert detail["operation_id"] is None
         assert "startup_id" in detail
+        assert detail["startup_id"] is None
         assert "timing" in detail
         assert adapter.calls == 0
         monkeypatch.setattr(describe_module, "_operation_repo", real_repo)
@@ -1374,14 +1411,16 @@ def test_gpu_cache_exception_does_not_leak_active_operation(monkeypatch, tmp_pat
         assert "Retry-After" not in response.headers
         detail = response.json()["detail"]
         assert detail["code"] == "description_service_unavailable"
-        assert detail["operation_id"]
+        assert "operation_id" in detail
+        assert detail["operation_id"] is None
         assert "startup_id" in detail
+        assert detail["startup_id"] is None
         assert "timing" in detail
         assert adapter.calls == 0
         assert _active_lease_count(client) == 0
 
 
-def test_gpu_no_session_unavailable_includes_operation_ids(monkeypatch, tmp_path):
+def test_gpu_no_session_unavailable_omits_durable_operation_id(monkeypatch, tmp_path):
     _gpu_env(monkeypatch, tmp_path, state="ready")
     adapter = _GpuAdapter()
     with _client(adapter=adapter, db_absent=True) as client:
@@ -1390,19 +1429,20 @@ def test_gpu_no_session_unavailable_includes_operation_ids(monkeypatch, tmp_path
         assert "Retry-After" not in response.headers
         detail = response.json()["detail"]
         assert detail["code"] == "description_service_unavailable"
-        assert detail["operation_id"]
+        assert "operation_id" in detail
+        assert detail["operation_id"] is None
         assert "startup_id" in detail
         assert detail["startup_id"] is None
         assert "timing" in detail
         retry = _post(client, TENANT_ID)
         assert retry.status_code == 503, retry.text
         retry_detail = retry.json()["detail"]
-        assert retry_detail["operation_id"]
+        assert retry_detail["operation_id"] is None
         assert "startup_id" in retry_detail
         assert adapter.calls == 0
 
 
-def test_non_gpu_accept_failure_logs_warning_and_does_not_echo_token(monkeypatch, caplog):
+def test_non_gpu_accept_failure_is_typed_503_without_minted_id(monkeypatch, caplog):
     import logging
 
     from scene.interface_adapters.http.routers import describe as describe_module
@@ -1418,11 +1458,12 @@ def test_non_gpu_accept_failure_logs_warning_and_does_not_echo_token(monkeypatch
         _client() as client,
     ):
         response = _post(client, TENANT_ID, extra_data={"operation_id": "client-token"})
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["operation_id"]
-    assert body["operation_id"] != "client-token"
-    assert body["adapter"] == "seeded"
+    assert response.status_code == 503, response.text
+    detail = response.json()["detail"]
+    assert detail["code"] == "description_service_unavailable"
+    assert "operation_id" in detail
+    assert detail["operation_id"] is None
+    assert detail["startup_id"] is None
     records = [rec for rec in caplog.records if "non-GPU operation persistence skipped" in rec.getMessage()]
     assert records
     assert all(rec.levelno >= logging.WARNING for rec in records)
@@ -1493,3 +1534,25 @@ def test_gpu_starting_uses_canonical_dump_load_snapshot(monkeypatch, tmp_path):
         assert response.json()["detail"]["code"] == "description_service_starting"
     assert calls
     assert adapter.calls == 0
+
+
+def test_gpu_service_exception_after_accept_terminalizes_operation(monkeypatch, tmp_path):
+    _gpu_env(monkeypatch, tmp_path, state="ready")
+    from scene.application.visual_facts_service import VisualFactsService
+
+    async def boom(self, **kwargs):
+        raise RuntimeError("service boom")
+
+    monkeypatch.setattr(VisualFactsService, "describe", boom)
+    adapter = _GpuAdapter()
+    with _client(adapter=adapter) as client:
+        response = _post(client, TENANT_ID)
+        assert response.status_code == 502, response.text
+        detail = response.json()["detail"]
+        assert detail["code"] == "description_service_error"
+        assert detail["operation_id"]
+        assert "startup_id" in detail
+        assert "timing" in detail
+        assert adapter.calls == 0
+        assert _lease_state(client, detail["operation_id"]) == "completed"
+        assert _active_lease_count(client) == 0

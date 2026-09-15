@@ -136,6 +136,8 @@ def test_first_call_generates_persists_audits_then_cache_hit_skips_adapter():
             )
             r2 = await svc2.describe(tenant_id=tenant, media_id=8, image_bytes=IMG, context=CTX)
             assert r2.cached is True
+            assert svc2.last_processing_ms == 0
+            assert len(metrics.adapter_durations) == 1
             assert r2.media_id == 8
             assert adapter.calls == 1  # NOT called again on cache hit
             assert len(audit.events) == 2
@@ -309,3 +311,91 @@ def test_hosted_provider_disclosure_marks_service_boundary_left():
         assert r.provider_disclosure.left_service_boundary is True
 
     asyncio.run(body())
+
+
+def test_processing_measures_dispatch_only_and_records_failed_retries(monkeypatch):
+    import pytest
+    from scene.application import visual_facts_service as module
+
+    clock = [0.0]
+    monkeypatch.setattr(module.time, "perf_counter", lambda: clock[0])
+    metrics = FakeMetrics()
+
+    class Adapter(HostedAdapter):
+        def describe(self, **kwargs):
+            clock[0] += 2
+            if len(metrics.adapter_durations) == 0:
+                raise RuntimeError("retry")
+            return super().describe(**kwargs)
+
+    async def body():
+        svc = VisualFactsService(adapter=Adapter(), metrics=metrics)
+
+        async def readiness():
+            clock[0] += 30
+
+        async def fusion(**kwargs):
+            clock[0] += 10
+            return None
+
+        monkeypatch.setattr(svc, "_run_fusion_stage", fusion)
+        for attempt in range(2):
+            if attempt == 0:
+                with pytest.raises(RuntimeError, match="retry"):
+                    await svc.describe(tenant_id=uuid.uuid4(), media_id=1,
+                                       image_bytes=IMG, context=None, before_compute=readiness)
+            else:
+                clock[0] += 60  # Retry backoff is outside adapter processing.
+                await svc.describe(tenant_id=uuid.uuid4(), media_id=1,
+                                   image_bytes=IMG, context=None, before_compute=readiness)
+            assert svc.last_processing_ms == 2000
+        assert metrics.adapter_durations == [("hosted_provider", 2.0)] * 2
+
+        async def unavailable():
+            raise RuntimeError("not ready")
+
+        with pytest.raises(RuntimeError, match="not ready"):
+            await svc.describe(tenant_id=uuid.uuid4(), media_id=1,
+                               image_bytes=IMG, context=None, before_compute=unavailable)
+        assert svc.last_processing_ms is None
+        assert len(metrics.adapter_durations) == 2
+
+    asyncio.run(body())
+
+
+def test_cancelled_dispatch_is_measured_once(monkeypatch):
+    import threading
+    import pytest
+    from scene.application import visual_facts_service as module
+
+    clock = [0.0]
+    monkeypatch.setattr(module.time, "perf_counter", lambda: clock[0])
+    release = threading.Event()
+    metrics = FakeMetrics()
+
+    async def body():
+        started = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        class Adapter(HostedAdapter):
+            def describe(self, **kwargs):
+                loop.call_soon_threadsafe(started.set)
+                release.wait(timeout=5)
+                return super().describe(**kwargs)
+
+        svc = VisualFactsService(adapter=Adapter(), metrics=metrics)
+        task = asyncio.create_task(svc.describe(
+            tenant_id=uuid.uuid4(), media_id=1, image_bytes=IMG, context=None,
+        ))
+        try:
+            await asyncio.wait_for(started.wait(), timeout=2)
+            clock[0] = 3
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert svc.last_processing_ms == 3000
+        finally:
+            release.set()
+
+    asyncio.run(body())  # Also joins the executor's remaining work.
+    assert metrics.adapter_durations == [("hosted_provider", 3.0)]

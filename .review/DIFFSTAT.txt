@@ -1,9 +1,4 @@
- .../js/admin/api/__tests__/describeApi.test.ts     |  21 ++-
- .../__tests__/describeRunResponseContract.test.ts  |  21 ++-
- .../js/admin/api/describeApi.ts                    |  22 +--
- .../hooks/__tests__/useDescribeMedia.test.tsx      | 136 +++++++++++++++-
- .../js/admin/hooks/useDescribeMedia.ts             | 117 ++++++++++++--
- .../js/admin/pages/workbench/MediaAltSuggest.tsx   | 174 +++++++++++++++++----
- .../workbench/__tests__/MediaAltSuggest.test.tsx   |  97 ++++++++++++
- .../__tests__/fixtures/gpuflow-suggest-states.json |  82 ++++++++++
- 8 files changed, 614 insertions(+), 56 deletions(-)
+ .../hooks/__tests__/useDescribeMedia.test.tsx      | 32 +++++++++++++++-------
+ .../js/admin/pages/workbench/MediaAltSuggest.tsx   | 11 ++++----
+ .../workbench/__tests__/MediaAltSuggest.test.tsx   | 26 ++++++++++++++++++
+ 3 files changed, 54 insertions(+), 15 deletions(-)

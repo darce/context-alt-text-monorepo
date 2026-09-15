@@ -1,4 +1,4 @@
- .../js/admin/pages/settings/GpuControlCard.tsx     |  80 +++++++++-----
- .../settings/__tests__/GpuControlCard.test.tsx     | 122 ++++++++++++++++-----
- .../settings/__tests__/useGpuControl.test.tsx      |   6 +-
- 3 files changed, 145 insertions(+), 63 deletions(-)
+ .../identity-clusters/SuggestionCards.tsx          |  1 +
+ .../__tests__/SuggestionCards.test.tsx             | 92 ++++++++++++++++++++++
+ .../fixtures/gpuflow-candidate-preview.json        |  6 +-
+ 3 files changed, 97 insertions(+), 2 deletions(-)

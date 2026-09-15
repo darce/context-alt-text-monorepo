@@ -156,14 +156,15 @@ export const formatOverLengthReadyAnnouncement = (length: number): string =>
 export const formatWithinLengthAnnouncement = (): string =>
   __('Draft is within the recommended maximum length.', 'alt-context');
 
-const formatMeasuredDuration = (milliseconds: number): string => {
-  const totalSeconds = milliseconds / 1000;
+/** Round whole seconds first so 119500 ms is "2 m", never "1 m 60 s". */
+export const formatMeasuredDuration = (milliseconds: number): string => {
+  const totalSeconds = Math.round(milliseconds / 1000);
   if (totalSeconds >= 60) {
     const minutes = Math.floor(totalSeconds / 60);
-    const remainder = Math.round(totalSeconds % 60);
-    return remainder === 0 ? `${minutes} m` : `${minutes} m ${remainder} s`;
+    const seconds = totalSeconds % 60;
+    return seconds === 0 ? `${minutes} m` : `${minutes} m ${seconds} s`;
   }
-  const roundedTenths = Math.round(totalSeconds * 10) / 10;
+  const roundedTenths = Math.round((milliseconds / 1000) * 10) / 10;
   return Number.isInteger(roundedTenths) ? `${roundedTenths} s` : `${roundedTenths.toFixed(1)} s`;
 };
 

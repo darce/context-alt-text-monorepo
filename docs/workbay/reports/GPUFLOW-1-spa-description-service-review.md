@@ -128,3 +128,26 @@ VERIFIED: {"GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-08":"fixed"}
 FINDINGS: [{"id":"GPUFLOW-1-SPADESCRIPTIONSERVICE-R-11","severity":"low","file_path":"apps/prototype-wp-alt-context/js/admin/pages/settings/testConnectionBanner.ts","line":63,"summary":"lint(prettier): newly added unknown-outcome message exceeds the 120-column print width","evidence":".review/CHANGE.diff:216-225 adds the 140-column line; .prettierrc:2 sets printWidth to 120."}]
 
 Verdict: pass_with_findings
+
+## Re-review r6 (6192796d5..d10728f08)
+
+VERIFIED: {"CALIBR-M-05":"fixed","SVCCOL-M-01":"fixed","SPADES-M-11":"fixed"}
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| `CALIBR-M-05` | `fixed` | `GpuControlCard` factors Refresh into a control disabled by `isFetching` (`.review/CHANGE.diff:97-106`) and renders it for `isError && !data` outside the data branch (`.review/CHANGE.diff:176-184`); the added tests cover initial-error retry and the disabled fetching state (`.review/CHANGE.diff:307-341`). |
+| `SVCCOL-M-01` | `fixed` | `intentLabel` now emits `Stopping after the current work finishes until idle` for blocked/deferred STOP state (`.review/CHANGE.diff:27-39`), while the has-work confirmation emits the distinct `Stop after the current run finishes?` question (`.review/CHANGE.diff:159-168`); tests assert both strings (`.review/CHANGE.diff:274-300`). |
+| `SPADES-M-11` | `fixed` | The invalidation effect checks only the selected action's eligibility, records a reason, and clears that confirmation when it becomes disallowed (`.review/CHANGE.diff:68-89`). The added transition test changes Start from allowed to disallowed while Stop remains allowed and verifies the preview/request are absent (`.review/CHANGE.diff:344-370`). |
+
+### FINDINGS
+
+#### GPUFLOW-1-SPADESCRIPTIONSERVICE-R-12 — low
+
+- File: `apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx:278`
+- Evidence: The fix collapses the load ternary into a 125-character line (`.review/CHANGE.diff:121-130`), while the lane Prettier configuration sets `printWidth` to 120 (`apps/prototype-wp-alt-context/.prettierrc:2`).
+- Impact: lint(prettier) only; the changed card will fail the configured formatting check until the expression is wrapped.
+- Fix: Wrap the load expression at the configured print width.
+
+FINDINGS: [{"id":"GPUFLOW-1-SPADESCRIPTIONSERVICE-R-12","severity":"low","file_path":"apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx","line":278,"summary":"lint(prettier): the changed load-row expression exceeds the 120-column print width","evidence":".review/CHANGE.diff:121-130 adds the 125-character line; apps/prototype-wp-alt-context/.prettierrc:2 sets printWidth to 120."}]
+
+Verdict: pass_with_findings

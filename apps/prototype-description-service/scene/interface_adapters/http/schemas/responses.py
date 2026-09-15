@@ -5,11 +5,16 @@ retention state are unavoidable on the wire; future adapters (local_cpu,
 hosted_provider) never change the shape (roadmap "Core Contract"). The seeded
 adapter fills expansion fields (``context_used``, ``provider_disclosure``) with
 typed placeholders rather than nulls.
+
+svc-cold-gpu consumes ``MultipartDescribeResponse`` as ``response_model`` on
+``/scene/describe/multipart``.
 """
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Annotated
+
+from pydantic import BaseModel, ConfigDict, Field, model_serializer
 
 from scene.application.gpu_state import GpuState
 from scene.application.identity_merge import NamingRealizer
@@ -107,13 +112,68 @@ class AttachmentProvenance(BaseModel):
     facts: list[AttachmentFactProvenance] = Field(default_factory=list)
 
 
-class VisualFactsResponse(BaseModel):
+MeasuredMilliseconds = Annotated[float, Field(ge=0, allow_inf_nan=False, strict=True)]
+
+
+class DescribeTiming(BaseModel):
+    """Measured operation phases; unknown observations must be explicit nulls."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    queue_ms: MeasuredMilliseconds | None
+    ramp_up_ms: MeasuredMilliseconds | None
+    processing_ms: MeasuredMilliseconds | None
+    startup_ms: MeasuredMilliseconds | None
+    server_elapsed_ms: MeasuredMilliseconds | None
+
+
+class DescribeRunTiming(BaseModel):
+    """Run wall timing and processing statistics over measured items only."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    queue_ms: MeasuredMilliseconds | None
+    ramp_up_ms: MeasuredMilliseconds | None
+    processing_ms_p50: MeasuredMilliseconds | None
+    processing_ms_max: MeasuredMilliseconds | None
+    startup_ms: MeasuredMilliseconds | None
+    server_elapsed_ms: MeasuredMilliseconds | None
+    items_timed: Annotated[int, Field(ge=0, strict=True)] | None
+
+
+class OmitAbsentOperationMetadata(BaseModel):
+    """Drop unobserved operation metadata instead of emitting JSON nulls.
+
+    ``startup_id`` may be JSON null only when ``operation_id`` or ``timing`` is
+    present (unobserved start). When all three are unobserved, omit them.
+    """
+
+    @model_serializer(mode="wrap")
+    def _omit_absent_operation_metadata(self, handler):
+        payload = handler(self)
+        if not isinstance(payload, dict):
+            return payload
+        keep_null_startup = payload.get("operation_id") is not None or payload.get("timing") is not None
+        for key in ("operation_id", "startup_id", "timing"):
+            if payload.get(key) is not None:
+                continue
+            if key == "startup_id" and keep_null_startup:
+                continue
+            payload.pop(key, None)
+        return payload
+
+
+class VisualFactsResponse(OmitAbsentOperationMetadata):
     """The 15 contract-locked core fields plus additive optional preview /
     fusion fields (``generic_draft``/``named_draft``/``naming_provenance``/
     ``attachment_provenance``).
 
     Preview fields are draft-only: nothing here writes
     ``_wp_attachment_image_alt`` (that write path is E19-2).
+
+    ``operation_id``, ``startup_id``, and ``timing`` are additive optional.
+    Unknown timing observations stay explicit nulls inside ``timing``; older
+    builders may omit the three fields entirely. Never fabricate values.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -144,6 +204,34 @@ class VisualFactsResponse(BaseModel):
     # ALTQ-1 additive optional long-form surface (dual-length prompting).
     # None when the adapter produces only the short draft; never required.
     alt_text_long: str | None = None
+    # Additive optional: omit on the wire when unobserved; never fabricate.
+    operation_id: str | None = Field(default=None, min_length=1, max_length=128)
+    startup_id: str | None = None
+    timing: DescribeTiming | None = None
+
+
+class MultipartDescribeResponse(VisualFactsResponse):
+    """Strict multipart success envelope for ``/scene/describe/multipart``.
+
+    ``operation_id`` and ``timing`` are required and non-null; ``startup_id`` is
+    a required key that may be JSON null for warm/cache work. Base
+    ``VisualFactsResponse`` omission behaviour is unchanged.
+    """
+
+    operation_id: str = Field(min_length=1, max_length=128)
+    startup_id: str | None
+    timing: DescribeTiming
+
+    @model_serializer(mode="wrap")
+    def _emit_required_operation_metadata(self, handler):
+        payload = handler(self)
+        if not isinstance(payload, dict):
+            return payload
+        payload["operation_id"] = self.operation_id
+        payload["startup_id"] = self.startup_id
+        if payload.get("timing") is None:
+            payload["timing"] = self.timing.model_dump(mode="json")
+        return payload
 
 
 class DescribeJobResult(BaseModel):
@@ -159,8 +247,13 @@ class DescribeJobResult(BaseModel):
     error: str | None = None
 
 
-class DescribeRunResponse(BaseModel):
-    """Async describe-run status returned by submit/status endpoints."""
+class DescribeRunResponse(OmitAbsentOperationMetadata):
+    """Async describe-run status returned by submit/status endpoints.
+
+    ``operation_id``, ``startup_id``, and ``timing`` are additive optional.
+    Unknown timing observations stay explicit nulls inside ``timing``; older
+    builders may omit the three fields entirely. Never fabricate values.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -188,6 +281,9 @@ class DescribeRunResponse(BaseModel):
     # snapshotted, so a later config change never moves an accepted run's number.
     # Null only for runs created outside the submit route (never via POST).
     deadline_seconds: float | None = None
+    operation_id: str | None = Field(default=None, min_length=1, max_length=128)
+    startup_id: str | None = None
+    timing: DescribeRunTiming | None = None
 
 
 class DescribeRunItemResponse(BaseModel):
@@ -205,6 +301,7 @@ class DescribeRunItemResponse(BaseModel):
     error: str | None = None
     tier: DescriptionResultTier | None = None
     result_generation: int = Field(default=0, ge=0)
+    processing_ms: MeasuredMilliseconds | None = None
 
 
 class DescribeRunItemsResponse(BaseModel):

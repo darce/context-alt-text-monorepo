@@ -1,399 +1,394 @@
-diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/ClusterEditForm.test.tsx b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/ClusterEditForm.test.tsx
---- a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/ClusterEditForm.test.tsx
-+++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/ClusterEditForm.test.tsx
-@@ -20,6 +20,12 @@ vi.mock('../NameFaceControl', async (importOriginal) => {
-   };
- });
+diff --git a/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx b/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx
+--- a/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx
++++ b/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx
+@@ -3,11 +3,7 @@ import { __ } from '@wordpress/i18n';
  
-+const openNamingList = (input?: HTMLElement): void => {
-+  const combobox = input ?? screen.getByRole('combobox');
-+  combobox.focus();
-+  fireEvent.keyDown(combobox, { key: 'ArrowDown' });
+ import { GPU_STATE, GpuIntentAction, GpuIntentStatus, type GpuStatusResponse } from '../../api/gpuApi';
+ import { toWorkbench } from '../../navigation/appLinks';
+-import {
+-  GPU_STATE_ICON,
+-  GPU_STATE_TONE,
+-  gpuStatePresentation,
+-} from '../workbench/gpuStatePresentation';
++import { GPU_STATE_ICON, GPU_STATE_TONE, gpuStatePresentation } from '../workbench/gpuStatePresentation';
+ import { useGpuControl } from './useGpuControl';
+ 
+ type ConfirmationAction = typeof GpuIntentAction.START | typeof GpuIntentAction.STOP;
+@@ -76,13 +72,23 @@ const formatClock = (value: string | null): string | null => {
+   return new Date(milliseconds).toISOString().slice(11, 19);
+ };
+ 
++const toOperatorReason = (reason: string | null | undefined): string | null => {
++  if (!reason) {
++    return null;
++  }
++  return reason
++    .replace(/GPU/g, 'service')
++    .replace('service state is unknown', 'Service state is unknown')
++    .replace('Lifecycle telemetry is stale', 'Service status is out of date');
 +};
 +
- describe('ClusterEditForm', () => {
-   const defaultProps = {
-     labelInput: 'Test Cluster',
-@@ -86,6 +92,7 @@ describe('ClusterEditForm', () => {
+ const intentLabel = (data: GpuStatusResponse): string => {
+   const { intent, intent_status: intentStatus } = data.gpu_state;
+   if (
+     intentStatus === GpuIntentStatus.BLOCKED_WORK_IN_FLIGHT ||
+     (intent === GpuIntentAction.STOP && data.load.has_work)
+   ) {
+-    return 'Stopping after the current work finishes';
++    return 'Stopping after the current work finishes until idle';
+   }
+   if (intent === GpuIntentAction.AUTO) {
+     return data.snapshot_fresh
+@@ -151,6 +157,7 @@ export const GpuControlCard = (): React.JSX.Element => {
+   const {
+     data,
+     isLoading,
++    isFetching,
+     isError,
+     error,
+     refetch,
+@@ -163,15 +170,13 @@ export const GpuControlCard = (): React.JSX.Element => {
+     isIntentPending,
+   } = useGpuControl();
+   const [confirmation, setConfirmation] = React.useState<ConfirmationAction | null>(null);
++  const [clearedConfirmationReason, setClearedConfirmationReason] = React.useState<string | null>(null);
+   const startHeld = !canStart || isIntentPending;
+   const stopHeld = !canStop || isIntentPending;
+   const pendingReason = isIntentPending ? __('a service request is already in flight', 'alt-context') : null;
+   const startReason = startHeld
+     ? pendingReason ||
+-      startBlockedReason
+-        ?.replace(/GPU/g, 'service')
+-        .replace('service state is unknown', 'Service state is unknown')
+-        .replace('Lifecycle telemetry is stale', 'Service status is out of date') ||
++      toOperatorReason(startBlockedReason) ||
+       (data && startDisabledReason(data)) ||
+       __('Service start is unavailable', 'alt-context')
+     : null;
+@@ -182,12 +187,19 @@ export const GpuControlCard = (): React.JSX.Element => {
+     if (confirmation === null) {
+       return;
+     }
+-    const startStillAllowed = confirmation === GpuIntentAction.START && canStart;
+-    const stopStillAllowed = confirmation === GpuIntentAction.STOP && canStop;
+-    if (displayedState === GPU_STATE.UNKNOWN || (!startStillAllowed && !stopStillAllowed)) {
+-      setConfirmation(null);
++    const selectedStillAllowed = confirmation === GpuIntentAction.START ? canStart : canStop;
++    if (selectedStillAllowed) {
++      return;
+     }
+-  }, [confirmation, displayedState, canStart, canStop]);
++    const reason =
++      confirmation === GpuIntentAction.START
++        ? toOperatorReason(startBlockedReason) ||
++          (data ? startDisabledReason(data) : null) ||
++          __('Service start is unavailable', 'alt-context')
++        : stopBlockedReason || __('Service stop is unavailable', 'alt-context');
++    setClearedConfirmationReason(reason);
++    setConfirmation(null);
++  }, [confirmation, canStart, canStop, startBlockedReason, stopBlockedReason, data]);
  
-   it('shows suggestions overlay when typing a partial match', () => {
-     render(<ClusterEditForm {...defaultProps} labelInput="Per" />);
-+    openNamingList();
- 
-     expect(document.querySelector('.acx-identity-cluster__suggestion-row')).not.toBeNull();
-     expect(screen.getByText(/95%/)).toBeInTheDocument();
-@@ -102,6 +109,7 @@ describe('ClusterEditForm', () => {
-         ]}
-       />,
-     );
-+    openNamingList();
- 
-     const high = document.querySelector('.acx-identity-cluster__match-score--high');
-     const medium = document.querySelector('.acx-identity-cluster__match-score--medium');
-@@ -124,6 +132,7 @@ describe('ClusterEditForm', () => {
-         onConfirmSuggestion={onConfirmSuggestion}
-       />,
-     );
-+    openNamingList();
- 
-     fireEvent.click(screen.getAllByRole('option', { name: /confirm match/i })[1]);
-     expect(onLabelChange).toHaveBeenCalledWith('Person B');
-@@ -144,6 +153,7 @@ describe('ClusterEditForm', () => {
-         onConfirmSuggestion={onConfirmSuggestion}
-       />,
-     );
-+    openNamingList();
- 
-     const confirmOption = screen.getAllByRole('option', { name: /confirm match/i })[1]; // Index 1 for Person B
-     fireEvent.click(confirmOption);
-@@ -179,6 +189,7 @@ describe('ClusterEditForm', () => {
-         onPersonSelect={onPersonSelect}
-       />,
-     );
-+    openNamingList();
- 
-     const confirmOptions = screen.getAllByRole('option', { name: /Confirm match with/ });
-     expect(confirmOptions).toHaveLength(2);
-@@ -203,6 +214,7 @@ describe('ClusterEditForm', () => {
-         onConfirmSuggestion={onConfirmSuggestion}
-       />,
-     );
-+    openNamingList();
- 
-     fireEvent.click(screen.getByRole('option', { name: /confirm match/i }));
-     await waitFor(() => expect(onPersonSelect).toHaveBeenCalledWith('Pat Roster', 42));
-@@ -220,6 +232,7 @@ describe('ClusterEditForm', () => {
-         onSave={onSave}
-       />,
-     );
-+    openNamingList();
- 
-     fireEvent.click(screen.getByRole('option', { name: /confirm match/i }));
-     await waitFor(() => expect(onSave).toHaveBeenCalledWith('Pat Roster'));
-@@ -238,6 +251,7 @@ describe('ClusterEditForm', () => {
-       { value: 'person:1', label: 'Alice Person', source: 'person' as const, group: 'All Labels' },
-     ];
-     render(<ClusterEditForm {...defaultProps} labelInput="A" options={options} />);
-+    openNamingList();
- 
-     expect(screen.getByRole('option', { name: /Alice Person/ })).toBeInTheDocument();
-     expect(screen.queryByText('Suggested 3')).not.toBeInTheDocument();
-@@ -275,6 +289,7 @@ describe('ClusterEditForm', () => {
-         options={[{ value: 'cluster:1', label: 'Person A', source: 'cluster', group: 'Suggested', similarity: 0.95 }]}
-       />,
-     );
-+    openNamingList();
- 
-     expect(screen.getByRole('option', { name: /Person A \(Group\)/i })).toBeInTheDocument();
-   });
-@@ -291,6 +306,7 @@ describe('ClusterEditForm', () => {
-         onConfirmSuggestion={onConfirmSuggestion}
-       />,
-     );
-+    openNamingList();
- 
-     fireEvent.click(screen.getByRole('option', { name: /confirm match/i }));
-     expect(onConfirmSuggestion).not.toHaveBeenCalled();
-@@ -317,6 +333,7 @@ describe('ClusterEditForm', () => {
-         options={[{ value: 'person:42', label: 'Pat Roster', source: 'person', group: 'All Labels' }]}
-       />,
-     );
-+    openNamingList();
-     expect(document.querySelector('.acx-identity-cluster__suggestions-header')).toHaveTextContent('People');
-     expect(screen.queryByText('Suggested')).not.toBeInTheDocument();
-   });
-@@ -384,6 +401,7 @@ describe('ClusterEditForm', () => {
-         onRejectSuggestion={onRejectSuggestion}
-       />,
-     );
-+    openNamingList();
- 
-     const rejectButton = screen.getByRole('button', { name: /reject/i });
-     fireEvent.click(rejectButton);
-@@ -419,6 +437,7 @@ describe('ClusterEditForm', () => {
-         onRejectSuggestion={onRejectSuggestion}
-       />,
-     );
-+    openNamingList();
- 
-     fireEvent.click(screen.getByRole('button', { name: /reject/i }));
-     expect(onRejectSuggestion).toHaveBeenCalledWith('sug-real-alice');
-@@ -456,6 +475,7 @@ describe('ClusterEditForm', () => {
-         isAtRestMode
-       />,
-     );
-+    openNamingList();
- 
-     const renderedOptionRows = screen.getAllByRole('option', { name: /confirm match/i });
-     expect(screen.getByText(`Showing ${renderedOptionRows.length} of 80 labels — type to search for more`)).toBeInTheDocument();
-@@ -550,6 +570,7 @@ describe('ClusterEditForm', () => {
-         onConfirmSuggestion={onConfirmSuggestion}
-       />,
-     );
-+    openNamingList();
- 
-     fireEvent.click(screen.getByRole('option', { name: /confirm match/i }));
-     expect(onConfirmSuggestion).not.toHaveBeenCalled();
-diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/ClusterLabelingPanel.test.tsx b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/ClusterLabelingPanel.test.tsx
---- a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/ClusterLabelingPanel.test.tsx
-+++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/ClusterLabelingPanel.test.tsx
-@@ -197,6 +197,13 @@ describe('ClusterLabelingPanel', () => {
-     return user;
+   const confirm = (): void => {
+     const action = confirmation;
+@@ -199,6 +211,17 @@ export const GpuControlCard = (): React.JSX.Element => {
+     setConfirmation(null);
    };
  
-+  const openNamingList = async (): Promise<HTMLElement> => {
-+    const input = await screen.findByRole('combobox', { name: 'Name' });
-+    input.focus();
-+    fireEvent.keyDown(input, { key: 'ArrowDown' });
-+    return input;
-+  };
++  const refreshControl = (
++    <button
++      type="button"
++      className="acx-button acx-button--tertiary"
++      onClick={() => void refetch()}
++      disabled={isFetching}
++    >
++      <span aria-hidden="true">↻</span> {__('Refresh', 'alt-context')}
++    </button>
++  );
 +
-   it('blocks save with pre-save duplicate guard for an existing cluster and merges with named target (PR-18/23/24)', async () => {
-     // Predicted first failure: save calls updateClusterLabel without showing guard UI
-     const onLabel = vi.fn();
-@@ -1417,6 +1424,7 @@ describe('ClusterLabelingPanel', () => {
-       }),
-     );
-     renderPanel();
-+    await openNamingList();
-     expect(screen.getByText('Suggested')).toBeInTheDocument();
-     await typePanelName('Ada');
-     expect(screen.getByText('Matches')).toBeInTheDocument();
-diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/NameFaceControl.test.tsx b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/NameFaceControl.test.tsx
---- a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/NameFaceControl.test.tsx
-+++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/NameFaceControl.test.tsx
-@@ -4,6 +4,8 @@ import userEvent from '@testing-library/user-event';
- import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+   return (
+     <section className="acx-target-card acx-gpu-control" aria-labelledby="acx-gpu-control-title">
+       <h3 id="acx-gpu-control-title" className="acx-settings__section-title">
+@@ -215,6 +238,9 @@ export const GpuControlCard = (): React.JSX.Element => {
+       >
+         {isLoading && !data ? <span>{__('Loading service status…', 'alt-context')}</span> : null}
+         {isError ? <span className="notice-error">{errorCopy(error)}</span> : null}
++        {clearedConfirmationReason ? (
++          <span data-testid="gpu-confirmation-cleared-reason">{clearedConfirmationReason}</span>
++        ) : null}
+         {data
+           ? (() => {
+               const presentation = gpuStatePresentation(displayedState);
+@@ -249,9 +275,7 @@ export const GpuControlCard = (): React.JSX.Element => {
+           </div>
+           <div id="z-gpu-load" data-testid="z-gpu-load" className="acx-gpu-control__row">
+             <strong>{__('Load:', 'alt-context')}</strong>{' '}
+-            {data.load.has_work
+-              ? __('describe run in flight', 'alt-context')
+-              : __('no work in flight', 'alt-context')}{' '}
++            {data.load.has_work ? __('describe run in flight', 'alt-context') : __('no work in flight', 'alt-context')}{' '}
+             ({loadAgeLabel(data)})
+           </div>
+           <div id="z-gpu-cost" data-testid="z-gpu-cost" className="acx-gpu-control__row">
+@@ -283,6 +307,7 @@ export const GpuControlCard = (): React.JSX.Element => {
+                   className="acx-button acx-button--primary"
+                   onClick={() => {
+                     if (!startHeld) {
++                      setClearedConfirmationReason(null);
+                       setConfirmation(GpuIntentAction.START);
+                     }
+                   }}
+@@ -298,6 +323,7 @@ export const GpuControlCard = (): React.JSX.Element => {
+                   className="acx-button acx-button--secondary"
+                   onClick={() => {
+                     if (!stopHeld) {
++                      setClearedConfirmationReason(null);
+                       setConfirmation(GpuIntentAction.STOP);
+                     }
+                   }}
+@@ -327,9 +353,7 @@ export const GpuControlCard = (): React.JSX.Element => {
+               </button>
+             ) : null}
  
- import type { ComboboxOption } from '../../../../../components/ui/combobox';
-+import type { DetectedIdentity, RepresentativeFace } from '../../../../api/recognition';
-+import { ClusterPreview } from '../ClusterPreview';
- import {
-   NameFaceControl,
-   normalizeNameFaceLabel,
-@@ -11,6 +13,7 @@ import {
-   type NameFaceResolution,
- } from '../NameFaceControl';
- import { NAMING_GROUP_SUGGESTED, namingOptionValue } from '../buildNamingOptions';
-+import previewFixture from './fixtures/gpuflow-naming-preview.json';
+-            <button type="button" className="acx-button acx-button--tertiary" onClick={() => void refetch()}>
+-              <span aria-hidden="true">↻</span> {__('Refresh', 'alt-context')}
+-            </button>
++            {refreshControl}
+           </div>
  
- vi.mock('@wordpress/i18n', () => ({
-   __: (text: string) => text,
-@@ -26,6 +29,14 @@ vi.mock('@wordpress/i18n', () => ({
-   },
- }));
+           {confirmation === GpuIntentAction.START ? (
+@@ -366,11 +390,7 @@ export const GpuControlCard = (): React.JSX.Element => {
+             <div id="z-stop-preview" data-testid="z-stop-preview" className="notice inline notice-warning">
+               <p>
+                 {data.load.has_work
+-                  ? __(
+-                      'Stopping after the current work finishes. ' +
+-                        'The service run limit can still stop the service to limit costs.',
+-                      'alt-context',
+-                    )
++                  ? __('Stop after the current run finishes?', 'alt-context')
+                   : __(
+                       'Requests shutdown when idle. If a describe run is in flight, shutdown is deferred. ' +
+                         'The service run limit can still stop the service to limit costs.',
+@@ -400,10 +420,10 @@ export const GpuControlCard = (): React.JSX.Element => {
+         </>
+       ) : null}
  
-+vi.mock('../../../../../components/ui/FaceThumbnail', () => ({
-+  FaceThumbnail: ({ alt, mediaUrl, bbox }: { alt: string; mediaUrl: string; bbox: unknown }) => (
-+    <div data-testid="face-thumbnail" data-url={mediaUrl} data-bbox={JSON.stringify(bbox)}>
-+      {alt}
-+    </div>
-+  ),
+-      {isError ? (
+-        <button type="button" className="acx-button acx-button--secondary" onClick={() => void refetch()}>
+-          {__('Retry', 'alt-context')}
+-        </button>
++      {isError && !data ? (
++        <div id="z-gpu-controls" data-testid="z-gpu-controls" className="acx-gpu-control__actions">
++          {refreshControl}
++        </div>
+       ) : null}
+     </section>
+   );
+diff --git a/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx b/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx
+--- a/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx
++++ b/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx
+@@ -7,6 +7,19 @@ import { GpuControlCard } from '../GpuControlCard';
+ import * as gpuControl from '../useGpuControl';
+ import serviceStates from './fixtures/gpuflow-service-states.json';
+ 
++vi.mock('@wordpress/i18n', () => ({
++  __: (text: string) => text,
++  sprintf: (format: string, ...args: (string | number)[]) => {
++    let sequentialIndex = 0;
++    return format.replace(/%((\d+)\$)?[sd]/g, (_match, _positional, explicitIndex) => {
++      if (explicitIndex) {
++        return String(args[Number(explicitIndex) - 1] ?? '');
++      }
++      return String(args[sequentialIndex++] ?? '');
++    });
++  },
 +}));
 +
- const person = (id: number, label: string, extra: Partial<ComboboxOption> = {}): ComboboxOption => ({
-   value: namingOptionValue('person', String(id)),
-   label,
-@@ -610,6 +621,7 @@ describe('GPUFLOW-1 naming intent', () => {
-     const input = screen.getByRole('combobox', { name: 'Name this person' });
-     expect(input).toHaveFocus();
-     expect(input).toHaveAttribute('aria-expanded', 'false');
-+    expect(input).not.toHaveAttribute('aria-activedescendant');
-     expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
-     expect(screen.queryByRole('option')).not.toBeInTheDocument();
+ vi.mock('../useGpuControl', async (importOriginal) => {
+   const actual = await importOriginal<typeof gpuControl>();
+   return { ...actual, useGpuControl: vi.fn() };
+@@ -44,6 +57,7 @@ const mockControl = (data: GpuStatusResponse, overrides: Partial<ReturnType<type
+   useGpuControlMock.mockReturnValue({
+     data,
+     isLoading: false,
++    isFetching: false,
+     isError: false,
+     error: null,
+     refetch: vi.fn(),
+@@ -143,11 +157,13 @@ describe('GpuControlCard', () => {
    });
-@@ -646,3 +658,26 @@ describe('GPUFLOW-1 naming intent', () => {
-     expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+ 
+   it.each(['Start', 'Stop'] as const)('uses plain operator copy in the %s confirmation', (action) => {
+-    mockControl(statusResponse({
+-      state: action === 'Start' ? 'stopped' : 'ready',
+-      instance_running_since: '2026-09-07T11:59:00Z',
+-      lease_expires_at: '2026-09-07T12:59:00Z',
+-    }));
++    mockControl(
++      statusResponse({
++        state: action === 'Start' ? 'stopped' : 'ready',
++        instance_running_since: '2026-09-07T11:59:00Z',
++        lease_expires_at: '2026-09-07T12:59:00Z',
++      }),
++    );
+     const { container } = render(<GpuControlCard />);
+     fireEvent.click(screen.getByRole('button', { name: action + ' service' }));
+     expect(screen.getByTestId('z-gpu-lease')).toHaveTextContent('Run limit:');
+@@ -169,24 +185,21 @@ describe('GpuControlCard', () => {
+     expect(requestIntent).toHaveBeenCalledWith(GPU_INTENT_ACTION.START);
    });
- });
-+
-+describe('GPUFLOW-1 group preview fallback (IDCHIP-1 AV-R-04)', () => {
-+  it.each(previewFixture.cases)('ClusterPreview fallback: $name', (fixture) => {
-+    render(
-+      <ClusterPreview
-+        representative={(fixture.member ?? undefined) as DetectedIdentity | undefined}
-+        representativeFace={fixture.representative_face as RepresentativeFace | null}
-+        memberCount={1}
-+      />,
+ 
+-  it.each(['starting', 'warming'] as const)(
+-    'shows warming copy without an invented countdown while %s',
+-    (state) => {
+-      mockControl(
+-        statusResponse({
+-          state,
+-          intent: GPU_INTENT_ACTION.START,
+-          instance_running_since: '2026-09-07T11:59:00Z',
+-        }),
+-      );
+-      render(<GpuControlCard />);
++  it.each(['starting', 'warming'] as const)('shows warming copy without an invented countdown while %s', (state) => {
++    mockControl(
++      statusResponse({
++        state,
++        intent: GPU_INTENT_ACTION.START,
++        instance_running_since: '2026-09-07T11:59:00Z',
++      }),
 +    );
-+    if (fixture.expected) {
-+      const thumb = screen.getByTestId('face-thumbnail');
-+      expect(thumb).toHaveAttribute('data-url', fixture.expected.media_url);
-+      expect(thumb).toHaveAttribute('data-bbox', JSON.stringify(fixture.expected.bbox));
-+      return;
-+    }
-+    expect(screen.queryByTestId('face-thumbnail')).not.toBeInTheDocument();
-+    expect(screen.getByRole('img', { name: 'Representative image unavailable' })).toHaveAttribute(
-+      'data-avatar-state',
-+      'data-missing',
-+    );
++    render(<GpuControlCard />);
+ 
+-      expect(screen.getByText(`Service: ${GPU_STATE_VOCABULARY[state]}`)).toBeInTheDocument();
+-      const warmup = screen.getByTestId('gpu-warmup-eta');
+-      expect(warmup).toHaveTextContent('Warming up, this can take a few minutes');
+-      expect(warmup).not.toHaveTextContent(/\d/);
+-    },
+-  );
++    expect(screen.getByText(`Service: ${GPU_STATE_VOCABULARY[state]}`)).toBeInTheDocument();
++    const warmup = screen.getByTestId('gpu-warmup-eta');
++    expect(warmup).toHaveTextContent('Warming up, this can take a few minutes');
++    expect(warmup).not.toHaveTextContent(/\d/);
 +  });
-+});
-diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/PersonCommitControl.test.tsx b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/PersonCommitControl.test.tsx
---- a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/PersonCommitControl.test.tsx
-+++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/PersonCommitControl.test.tsx
-@@ -1,6 +1,6 @@
- import React from 'react';
- import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
--import { render, screen, waitFor } from '@testing-library/react';
-+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
- import userEvent from '@testing-library/user-event';
- import { beforeEach, describe, expect, it, vi } from 'vitest';
  
-@@ -66,6 +66,14 @@ const renderControl = (
-   return { onCommit, queryClient };
- };
+   it('keeps Stop enabled during work in flight and shows deferred-stop copy', () => {
+     const requestIntent = vi.fn();
+@@ -204,7 +217,7 @@ describe('GpuControlCard', () => {
+     expect(stop).not.toHaveAttribute('disabled');
+     expect(stop).not.toHaveAttribute('aria-disabled');
+     fireEvent.click(stop);
+-    expect(screen.getByText(/Stopping after the current work finishes/)).toBeInTheDocument();
++    expect(screen.getByText('Stop after the current run finishes?')).toBeInTheDocument();
+     fireEvent.click(screen.getByRole('button', { name: 'Confirm stop' }));
+     expect(requestIntent).toHaveBeenCalledWith(GPU_INTENT_ACTION.STOP);
  
-+const openNamingList = async (input?: HTMLElement): Promise<HTMLElement> => {
-+  const combobox = input ?? screen.getByRole('combobox', { name: INPUT_NAME });
-+  await waitFor(() => expect(combobox).not.toBeDisabled());
-+  combobox.focus();
-+  fireEvent.keyDown(combobox, { key: 'ArrowDown' });
-+  return combobox;
-+};
+@@ -221,7 +234,7 @@ describe('GpuControlCard', () => {
+     );
+     rerender(<GpuControlCard />);
+     expect(screen.getByText(`Service: ${GPU_STATE_VOCABULARY.ready}`)).toBeInTheDocument();
+-    expect(screen.getByText(/Stopping after the current work finishes/)).toBeInTheDocument();
++    expect(screen.getByText('Stopping after the current work finishes until idle')).toBeInTheDocument();
+   });
+ 
+   it('renders a pending stop notice for blocked work', () => {
+@@ -235,7 +248,7 @@ describe('GpuControlCard', () => {
+     });
+     render(<GpuControlCard />);
+ 
+-    expect(screen.getByText(/Stopping after the current work finishes/)).toBeInTheDocument();
++    expect(screen.getByText('Stopping after the current work finishes until idle')).toBeInTheDocument();
+     expect(screen.getByText(`Service: ${GPU_STATE_VOCABULARY.degraded}`)).toBeInTheDocument();
+   });
+ 
+@@ -368,16 +381,67 @@ describe('GpuControlCard', () => {
+     expect(screen.queryByRole('button', { name: /Confirm/ })).not.toBeInTheDocument();
+   });
+ 
+-  it('renders a 502 error with a retry control', () => {
++  it('renders an initial fetch error with Refresh and announces it', () => {
+     const refetch = vi.fn();
+-    mockControl(statusResponse(), { data: undefined, isError: true, error: new Error('502 Bad Gateway'), refetch });
++    mockControl(statusResponse(), {
++      data: undefined,
++      isError: true,
++      error: new Error('502 Bad Gateway'),
++      refetch,
++    });
+     render(<GpuControlCard />);
+ 
+-    expect(screen.getByText(/Could not reach the description service \(502\)/)).toBeInTheDocument();
+-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
++    const chip = screen.getByTestId('z-gpu-state-chip');
++    expect(chip).toHaveAttribute('aria-live', 'polite');
++    expect(chip).toHaveTextContent(/Could not reach the description service \(502\)/);
++    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
++    const refresh = screen.getByRole('button', { name: 'Refresh' });
++    expect(refresh).toBeEnabled();
++    fireEvent.click(refresh);
+     expect(refetch).toHaveBeenCalledOnce();
+   });
+ 
++  it('disables Refresh while refetching after an initial fetch error', () => {
++    mockControl(statusResponse(), {
++      data: undefined,
++      isError: true,
++      isFetching: true,
++      error: new Error('502 Bad Gateway'),
++      refetch: vi.fn(),
++    });
++    render(<GpuControlCard />);
 +
- describe('PersonCommitControl single-gesture naming (UXW2-3)', () => {
-   beforeEach(() => {
-     vi.mocked(listRosterEntries).mockResolvedValue([]);
-@@ -89,8 +97,8 @@ describe('PersonCommitControl single-gesture naming (UXW2-3)', () => {
-     const user = userEvent.setup();
- 
-     // Wait for the roster typeahead to load before typing.
-+    const input = await openNamingList();
-     await screen.findByText('Alex Carter');
--    const input = screen.getByRole('combobox', { name: INPUT_NAME });
-     await user.type(input, 'Alex Carter{Enter}');
- 
-     expect(onCommit).toHaveBeenCalledWith({
-@@ -103,8 +111,8 @@ describe('PersonCommitControl single-gesture naming (UXW2-3)', () => {
-     const { onCommit } = renderControl({}, [rosterEntry(42, 'Alex Carter')]);
-     const user = userEvent.setup();
- 
-+    const input = await openNamingList();
-     await screen.findByText('Alex Carter');
--    const input = screen.getByRole('combobox', { name: INPUT_NAME });
-     await user.type(input, '  alex carter {Enter}');
- 
-     expect(onCommit).toHaveBeenCalledWith({
-@@ -181,6 +189,7 @@ describe('PersonCommitControl single-gesture naming (UXW2-3)', () => {
-     const { onCommit } = renderControl({}, [rosterEntry(42, 'Alex Carter')]);
-     const user = userEvent.setup();
- 
-+    await openNamingList();
-     const option = await screen.findByRole('option', { name: /Confirm match with Alex Carter/ });
-     await user.click(option);
- 
-@@ -202,6 +211,7 @@ describe('PersonCommitControl single-gesture naming (UXW2-3)', () => {
- 
-     const input = screen.getByRole('combobox', { name: INPUT_NAME });
-     await waitFor(() => expect(input).toHaveValue('Alex Carter'));
-+    await openNamingList(input);
-     await screen.findByRole('option', { name: /Alex Carter/ });
-     await user.type(input, '{Enter}');
- 
-@@ -216,6 +226,7 @@ describe('PersonCommitControl single-gesture naming (UXW2-3)', () => {
- 
-   it('overlay header is People on a roster-only list (UXW2-3-R1-16b)', async () => {
-     renderControl({}, [rosterEntry(42, 'Alex Carter')]);
-+    await openNamingList();
-     await screen.findByRole('option', { name: /Alex Carter/ });
-     expect(screen.getByText('People')).toBeInTheDocument();
-     expect(screen.queryByText('Suggested')).not.toBeInTheDocument();
-@@ -223,6 +234,7 @@ describe('PersonCommitControl single-gesture naming (UXW2-3)', () => {
- 
-   it('omits whitespace-only roster names via buildNamingOptions (UXW2-3-R1-07)', async () => {
-     renderControl({}, [rosterEntry(42, 'Alex Carter'), rosterEntry(7, '   ')]);
-+    await openNamingList();
-     await screen.findByRole('option', { name: /Alex Carter/ });
-     expect(screen.getAllByRole('option')).toHaveLength(1);
++    expect(screen.getByRole('button', { name: 'Refresh' })).toBeDisabled();
++  });
++
++  it('clears a start confirmation when start becomes disallowed even if stop remains allowed', () => {
++    const requestIntent = vi.fn();
++    mockControl(statusResponse(), { requestIntent, canStart: true, canStop: false });
++    const { rerender } = render(<GpuControlCard />);
++    fireEvent.click(screen.getByRole('button', { name: 'Start service' }));
++    expect(screen.getByRole('button', { name: 'Confirm start' })).toBeInTheDocument();
++
++    mockControl(
++      {
++        ...statusResponse({ state: 'ready', instance_running_since: '2026-09-07T11:00:00Z' }),
++        load: { has_work: true, written_at: 1_700_000_004, fresh: true },
++      },
++      {
++        requestIntent,
++        canStart: false,
++        canStop: true,
++        startBlockedReason: 'already running',
++      },
++    );
++    rerender(<GpuControlCard />);
++
++    expect(screen.queryByTestId('z-start-preview')).not.toBeInTheDocument();
++    expect(screen.queryByRole('button', { name: 'Confirm start' })).not.toBeInTheDocument();
++    expect(screen.getByTestId('gpu-confirmation-cleared-reason')).toHaveTextContent('already running');
++    expect(screen.getByTestId('z-gpu-state-chip')).toHaveTextContent('already running');
++    expect(requestIntent).not.toHaveBeenCalled();
++  });
++
+   it('only shows Return to automatic when intent is not automatic', () => {
+     mockControl(statusResponse({ intent: GPU_INTENT_ACTION.START }));
+     render(<GpuControlCard />);
+diff --git a/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/useGpuControl.test.tsx b/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/useGpuControl.test.tsx
+--- a/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/useGpuControl.test.tsx
++++ b/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/useGpuControl.test.tsx
+@@ -1,4 +1,4 @@
+-import type { ReactNode } from 'react';
++import { createElement, type ReactNode } from 'react';
+ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+ import { act, renderHook, waitFor } from '@testing-library/react';
+ import { beforeEach, describe, expect, it, vi } from 'vitest';
+@@ -61,9 +61,7 @@ const createWrapper = () => {
+   const client = new QueryClient({
+     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
    });
-diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/ReviewQueue.test.tsx b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/ReviewQueue.test.tsx
---- a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/ReviewQueue.test.tsx
-+++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/ReviewQueue.test.tsx
-@@ -90,8 +90,11 @@ const typePersonName = async (
-   name: string,
- ): Promise<void> => {
-   const commit = await screen.findByTestId('acx-person-commit');
--  await within(commit).findByText(name);
-   const input = within(commit).getByRole('combobox', { name: PERSON_COMMIT_COMBOBOX_ARIA });
-+  await waitFor(() => expect(input).not.toBeDisabled());
-+  input.focus();
-+  fireEvent.keyDown(input, { key: 'ArrowDown' });
-+  await within(commit).findByText(name);
-   await user.type(input, `${name}{Enter}`);
+-  const wrapper = ({ children }: { children: ReactNode }) => (
+-    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+-  );
++  const wrapper = ({ children }: { children: ReactNode }) => createElement(QueryClientProvider, { client }, children);
+   return wrapper;
  };
  
-diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/buildNamingOptions.test.ts b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/buildNamingOptions.test.ts
---- a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/buildNamingOptions.test.ts
-+++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/buildNamingOptions.test.ts
-@@ -6,11 +6,9 @@ import {
-   findCollisionsForLabel,
-   namingOptionValue,
-   parseNamingOptionValue,
--  selectGroupPreviewSource,
-   uniqueClusterCollisionTarget,
-   unwrapClusterOptionId,
- } from '../buildNamingOptions';
--import previewFixture from './fixtures/gpuflow-naming-preview.json';
- 
- describe('buildNamingOptions', () => {
-   const roster = [
-@@ -247,11 +245,3 @@ describe('naming option value helpers', () => {
-     expect(parseNamingOptionValue('bare-id')).toBeNull();
-   });
- });
--
--describe('selectGroupPreviewSource (IDCHIP-1 AV-R-04)', () => {
--  it.each(previewFixture.cases)('preview fallback: $name', (fixture) => {
--    expect(selectGroupPreviewSource(fixture.representative_face, fixture.member)).toEqual(
--      fixture.expected,
--    );
--  });
--});
-diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/buildNamingOptions.ts b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/buildNamingOptions.ts
---- a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/buildNamingOptions.ts
-+++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/buildNamingOptions.ts
-@@ -264,43 +264,3 @@ export const buildNamingOptions = ({
-     collisionsByLabel: collisions,
-   };
- };
--
--/** URL + bbox must come from the same source (IDCHIP-1 AV-R-04 / ClusterPreview). */
--export interface GroupPreviewBbox {
--  readonly x: number;
--  readonly y: number;
--  readonly width: number;
--  readonly height: number;
--}
--
--export interface GroupPreviewFace {
--  readonly media_url?: string | null;
--  readonly attachment_url?: string | null;
--  readonly bbox?: GroupPreviewBbox | null;
--}
--
--const groupPreviewUrl = (face: GroupPreviewFace | null | undefined): string | null => {
--  const mediaUrl = face?.media_url;
--  if (typeof mediaUrl === 'string' && mediaUrl.length > 0) {
--    return mediaUrl;
--  }
--  const attachmentUrl = face?.attachment_url;
--  if (typeof attachmentUrl === 'string' && attachmentUrl.length > 0) {
--    return attachmentUrl;
--  }
--  return null;
--};
--
--/**
-- * Group preview source: representative_face → first member → placeholder (null).
-- * Consume ClusterPreview for rendering; do not duplicate its JSX.
-- */
--export const selectGroupPreviewSource = (
--  representativeFace?: GroupPreviewFace | null,
--  member?: GroupPreviewFace | null,
--): GroupPreviewFace | null => {
--  const referenceUrl = groupPreviewUrl(representativeFace);
--  const source = referenceUrl && representativeFace?.bbox ? representativeFace : member ?? null;
--  const mediaUrl = groupPreviewUrl(source);
--  return mediaUrl && source?.bbox ? source : null;
--};

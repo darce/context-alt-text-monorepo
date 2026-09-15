@@ -17,6 +17,15 @@
       "warmup_eta_seconds": null
     }
   },
+  "starting_eta_60": {
+    "status": 503,
+    "detail": {
+      "code": "description_service_starting",
+      "message": "Description service is starting.",
+      "operation_id": "op-lease-1",
+      "warmup_eta_seconds": 60
+    }
+  },
   "unavailable": {
     "status": 503,
     "detail": {

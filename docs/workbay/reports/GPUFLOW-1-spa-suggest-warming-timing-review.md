@@ -41,3 +41,17 @@ VERIFIED: {"GPUFLOW-1-SPASUGGESTWARMINGTIMING-R-02":"fixed"}
 FINDINGS: []
 
 Verdict: pass
+
+## Re-review r3 (dbcc60f5a..8cdd13fbe)
+
+VERIFIED: {"SPASUG-H-01":"partially_fixed"}
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| `SPASUG-H-01` | `partially_fixed` | The fix adds a 120 s ceiling constant, stores the warming start time, schedules delayed lease retries, clears the lease at timeout, and renders a terminal `Still starting — try again` branch (`.review/CHANGE.diff:L273-L278,L345-L359,L368-L408,L538-L567`). The complete contract is still not closed: `warmingRetryDelayMs` selects `warmupEtaSeconds` before `retryAfterSeconds`, so a valid starting response carrying both fields ignores the required header-driven retry delay (`.review/CHANGE.diff:L303-L305`; the contract requires `Retry-After` on every starting 503 and the Suggest timer to be header-driven). Also, the effect returns while `mutation.isPending`, so a retry request that remains pending past 120 s has no watchdog and cannot reach the timeout state until that request settles (`.review/CHANGE.diff:L384-L404`). The added Retry-After test covers only the no-ETA case and the ceiling tests use immediate rejected promises (`.review/CHANGE.diff:L201-L221,L121-L150`), leaving both gaps untested. [RES-06] [INT-08] |
+
+### FINDINGS
+
+FINDINGS: []
+
+Verdict: pass_with_findings

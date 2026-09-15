@@ -47,3 +47,37 @@ Review is limited to the supplied `112f262cd..c83b0594f` delta. The changed path
 - **Evidence:** The production RLS pre-audit SQL hard-codes the old tenant-table array and omits `describe_operations` and `describe_demand_leases`, even though the delta adds both to `TENANT_TABLES`. The schema-truth consistency test fails on this mismatch.
 - **Impact:** The prescribed production audit reports no row for the new tenant tables and can miss an RLS/policy gap during remediation.
 - **Fix:** Add both tables to the runbook's audit array (or generate the list from the migration source) and rerun the schema-truth check.
+
+## Re-review r5 (c83b0594f..853aafcdc)
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| TIMING-H-01 | fixed | `001_identity_schema.py:320-335` adds an idempotent PostgreSQL CHECK-healing path with live-row validation; the existing run and item declarations opt the timing checks into it at `:1793-1805` and `:1880`. |
+| TIMING-M-03 | partially_fixed | The delta rejects non-finite/nonnegative violations with `_TimingFloat` (`db/models/scene.py:45-54`) and finite CHECKs (`001_identity_schema.py:1656-1674`), and disallows timing without a non-null startup id at `:1652-1655`/`:1721-1724`; however `DescribeStartup.started_at` remains nullable (`db/models/scene.py:106-117`), so a non-null startup id can still point to an unobserved start while `startup_ms` is persisted. |
+| TIMING-L-05 | fixed | `test_identity_schema_declares_expected_table_set` now includes `describe_startups`, `describe_operations`, and `describe_demand_leases` in the exact expected order (`test_identity_schema_migration.py:90-92`). |
+| TIMING-L-06 | fixed | The production audit array now includes `describe_operations` and `describe_demand_leases` (`docs/runbooks/prod-identity-rls-remediation.md:36-38`). |
+
+### FINDINGS
+
+#### GPUFLOW-1-TIMINGMODELS-R-06 — medium
+
+- **File:** `apps/prototype-description-service/db/migrations/versions/001_identity_schema.py:320-324, 1793-1805, 1880`
+- **Evidence:** `_ensure_check_constraint` returns `False` for every non-PostgreSQL dialect, and `_ensure_table_constraints` then appends the opted-in CHECK to `unhealed` and raises. Both existing-table timing declarations opt their new checks into `heal_constraints`, so a pre-timing SQLite schema cannot be healed even though the existing non-PostgreSQL contract expects no ALTER/constraint exception.
+- **Impact:** Test/development databases that already contain the run tables fail schema synchronization rather than converging, and the existing dialect abstraction has a new unsupported-dialect failure mode.
+- **Fix:** Define an explicit non-PostgreSQL policy for additive CHECKs (dialect-specific rebuild or a tested no-op when the dialect already materializes the constraint), and cover a pre-timing SQLite table with the same healer path.
+
+#### GPUFLOW-1-TIMINGMODELS-R-07 — low
+
+- **File:** `apps/prototype-description-service/recognition/tests/test_identity_schema_migration.py:562-575`
+- **Evidence:** The new PostgreSQL non-finite test imports `db.models.scene` and iterates ORM model constraints; it never instantiates the separate `sa.CheckConstraint` declarations emitted by `ensure_tables`. A future model/migration drift could therefore make the deployed migration accept infinity while this regression test remains green.
+- **Impact:** The proof does not pin the actual upgrade/healing schema that production uses.
+- **Fix:** Build the probe from the migration declarations (or apply `ensure_tables` to a scratch schema) and exercise the exact database constraints.
+
+#### GPUFLOW-1-TIMINGMODELS-R-08 — low
+
+- **File:** `apps/prototype-description-service/recognition/tests/test_identity_schema_migration.py` and `docs/runbooks/prod-identity-rls-remediation.md`
+- **Evidence:** The lane ownership row names the migration, `db/models/scene.py`, and the scene timing test, but this fix delta also changes the recognition migration test and the production runbook. Those paths are outside the declared `timing-models` owned list, so the fix commit crosses lane ownership without an ownership/merge update.
+- **Impact:** Parallel merge review cannot attribute or safely reconcile these edits from the lane manifest alone.
+- **Fix:** Add both paths to the lane ownership/dependency manifest or split the test/runbook repairs into their owning lane before merge.
+
+Verdict: pass_with_findings

@@ -26,10 +26,11 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.responses import Response
 from pydantic import ValidationError
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.datastructures import FormData, UploadFile
 
-from db.models.scene import DescribeDemandLease
+from db.models.scene import DescribeDemandLease, DescribeOperation
 from db.tenant_context import enable_rls_bypass, require_tenant_record, set_tenant_context
 from recognition.infrastructure.repositories.audit_repository import AuditRepository
 from recognition.interface_adapters.http.deps import (
@@ -317,6 +318,10 @@ def _timing_payload(timing: DescribeTiming) -> dict[str, float | None]:
     return timing.model_dump(mode="json")
 
 
+class _LifecycleHoldHTTPException(HTTPException):
+    """Readiness-gate 503 that must keep the demand lease for retry."""
+
+
 def _typed_describe_error(
     *,
     status_code: int,
@@ -327,6 +332,7 @@ def _typed_describe_error(
     startup_id: str | None = None,
     warmup_eta_seconds: float | None = None,
     retry_after: int | None = None,
+    preserve_lease: bool = False,
 ) -> HTTPException:
     detail: dict[str, Any] = {
         "code": code,
@@ -338,7 +344,8 @@ def _typed_describe_error(
     if code == "description_service_starting":
         detail["warmup_eta_seconds"] = warmup_eta_seconds
     headers = {"Retry-After": str(retry_after)} if retry_after is not None else None
-    return HTTPException(status_code=status_code, detail=detail, headers=headers)
+    exc_cls = _LifecycleHoldHTTPException if preserve_lease else HTTPException
+    return exc_cls(status_code=status_code, detail=detail, headers=headers)
 
 
 def _gpu_snapshot_fields() -> tuple[str | None, float | None]:
@@ -398,7 +405,7 @@ def _untimed_with_elapsed(server_elapsed_ms: float | None) -> DescribeTiming:
     )
 
 
-class _PreflightMissCacheRepository:
+class _PreflightMissCacheRepository(ImageDescriptionRepository):
     """Skip VisualFactsService's first cache read after a GPU preflight miss.
 
     Only the pre-compute lookup is suppressed. Later ``get_by_cache_key`` calls
@@ -406,17 +413,19 @@ class _PreflightMissCacheRepository:
     """
 
     def __init__(self, inner: ImageDescriptionRepository) -> None:
+        session = getattr(inner, "_session", None)
+        if session is not None:
+            super().__init__(session)
+        else:
+            self._session = None  # type: ignore[assignment]
         self._inner = inner
         self._preflight_miss_consumed = False
 
-    async def get_by_cache_key(self, **kwargs):
+    async def get_by_cache_key(self, **kwargs: Any) -> Any:
         if not self._preflight_miss_consumed:
             self._preflight_miss_consumed = True
             return None
         return await self._inner.get_by_cache_key(**kwargs)
-
-    def __getattr__(self, name: str):
-        return getattr(self._inner, name)
 
 
 async def _validated_describe_multipart_submission(
@@ -657,7 +666,7 @@ async def _accept_operation(
             _logger.error("operation accept failed", exc_info=True)
         else:
             _logger.warning(
-                "non-GPU operation persistence skipped; continuing without a durable operation",
+                "non-GPU operation persistence skipped; failing closed without a durable operation",
                 exc_info=True,
             )
         raise _typed_describe_error(
@@ -719,6 +728,7 @@ async def _ensure_gpu_ready(
             operation_id=op.operation_id,
             startup_id=startup_id,
             timing=timing,
+            preserve_lease=True,
         )
     if state in (GpuState.STOPPED, GpuState.STARTING, GpuState.WARMING):
         eta = _warmup_eta_seconds(
@@ -737,6 +747,7 @@ async def _ensure_gpu_ready(
             timing=timing,
             warmup_eta_seconds=eta,
             retry_after=_retry_after_seconds(eta),
+            preserve_lease=True,
         )
     if state is GpuState.READY:
         await repo.observe_ready(tenant_id=tenant_uuid, operation_id=op.operation_id, now=now)
@@ -751,6 +762,7 @@ async def _ensure_gpu_ready(
         operation_id=op.operation_id,
         startup_id=startup_id,
         timing=timing,
+        preserve_lease=True,
     )
 
 
@@ -798,17 +810,8 @@ async def _complete_operation(
 
 
 def _preserves_demand_lease(exc: HTTPException) -> bool:
-    """503 starting/unavailable keep the lease so retries can renew demand."""
-    detail = exc.detail
-    if not isinstance(detail, dict):
-        return False
-    return detail.get("code") in {"description_service_starting", "description_service_unavailable"}
-
-
-def _http_exception_already_terminalized(exc: HTTPException) -> bool:
-    """502 from ``_complete_operation`` already attempted the terminal transition."""
-    detail = exc.detail
-    return isinstance(detail, dict) and detail.get("code") == "description_service_error"
+    """Keep demand only for the readiness gate's own lifecycle 503."""
+    return isinstance(exc, _LifecycleHoldHTTPException) and exc.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
 
 
 async def _release_unready_operation(
@@ -817,21 +820,38 @@ async def _release_unready_operation(
     tenant_uuid: uuid.UUID,
     op,
     server_elapsed_ms: float | None,
+    caller_ready: bool,
 ) -> None:
-    """Release demand without fabricating a readiness observation."""
+    """Release demand without fabricating a readiness observation.
+
+    Re-reads the operation row and lease together under row locks. If this
+    request never observed ready but a concurrent writer did, leave the lease
+    active so the ready request can finish (CON-02).
+    """
     now = datetime.now(UTC)
-    lease = await session.get(
-        DescribeDemandLease,
-        (op.tenant_id, op.operation_id),
+    identity = sa_inspect(op).identity
+    if identity is None:
+        return
+    locked = await session.get(
+        DescribeOperation,
+        identity,
         populate_existing=True,
         with_for_update=True,
     )
-    if lease is None or lease.state != DemandLeaseState.ACTIVE:
+    lease = await session.get(
+        DescribeDemandLease,
+        identity,
+        populate_existing=True,
+        with_for_update=True,
+    )
+    if locked is None or lease is None or lease.state != DemandLeaseState.ACTIVE:
+        return
+    if not caller_ready and locked.first_ready_at is not None:
         return
     lease.state = DemandLeaseState.COMPLETED
-    op.completed_at = now
+    locked.completed_at = now
     if server_elapsed_ms is not None:
-        op.server_elapsed_ms = server_elapsed_ms
+        locked.server_elapsed_ms = server_elapsed_ms
     await _commit_and_rescope(session, tenant_uuid)
 
 
@@ -842,31 +862,22 @@ async def _terminalize_accepted_operation(
     op,
     server_elapsed_ms: float | None,
     gpu_compute: bool,
+    caller_ready: bool,
 ) -> None:
+    del gpu_compute
     if session is None or op is None:
         return
+    operation_id = sa_inspect(op).identity[1] if sa_inspect(op).identity is not None else "?"
     try:
-        if op.first_ready_at is None:
-            await _release_unready_operation(
-                session=session,
-                tenant_uuid=tenant_uuid,
-                op=op,
-                server_elapsed_ms=server_elapsed_ms,
-            )
-            return
-        await _complete_operation(
+        await _release_unready_operation(
             session=session,
             tenant_uuid=tenant_uuid,
             op=op,
-            processing_ms=None,
             server_elapsed_ms=server_elapsed_ms,
-            gpu_compute=gpu_compute,
-            cached=False,
+            caller_ready=caller_ready,
         )
-    except HTTPException:
-        return
     except Exception:
-        _logger.error("failed to terminalize operation_id=%s", op.operation_id, exc_info=True)
+        _logger.error("failed to terminalize operation_id=%s", operation_id, exc_info=True)
 
 
 async def _response_from_cached_row(
@@ -989,7 +1000,10 @@ async def describe_image_multipart(
         await maybe_consume_demo_quota(auth, session, units=1)
         await _rescope(session, tenant_uuid)
 
+    observed_ready_here = False
+
     async def _before_compute() -> None:
+        nonlocal observed_ready_here
         if gpu_compute:
             if session is None or op is None:
                 raise _typed_describe_error(
@@ -1008,7 +1022,24 @@ async def describe_image_multipart(
                 session_factory=session_factory,
                 server_start=server_start,
             )
+            observed_ready_here = True
         await _charge_demo_quota()
+
+    terminalized = False
+
+    async def _cleanup_accepted() -> None:
+        nonlocal terminalized
+        if terminalized:
+            return
+        await _terminalize_accepted_operation(
+            session=session,
+            tenant_uuid=tenant_uuid,
+            op=op,
+            server_elapsed_ms=_elapsed_ms(server_start),
+            gpu_compute=gpu_compute,
+            caller_ready=observed_ready_here,
+        )
+        terminalized = True
 
     try:
         if cached_row is not None:
@@ -1057,15 +1088,20 @@ async def describe_image_multipart(
         )
         server_elapsed_ms = _elapsed_ms(server_start)
         processing_ms = response.attempt_timing.processing_ms
-        completed = await _complete_operation(
-            session=session,
-            tenant_uuid=tenant_uuid,
-            op=op,
-            processing_ms=processing_ms,
-            server_elapsed_ms=server_elapsed_ms,
-            gpu_compute=gpu_compute,
-            cached=response.cached,
-        )
+        try:
+            completed = await _complete_operation(
+                session=session,
+                tenant_uuid=tenant_uuid,
+                op=op,
+                processing_ms=processing_ms,
+                server_elapsed_ms=server_elapsed_ms,
+                gpu_compute=gpu_compute,
+                cached=response.cached,
+            )
+            terminalized = True
+        except HTTPException:
+            await _cleanup_accepted()
+            raise
         if session is not None:
             await session.commit()
         if completed is not None and completed.ramp_up_ms is not None:
@@ -1101,28 +1137,17 @@ async def describe_image_multipart(
             timing=timing,
         )
     except HTTPException as exc:
-        if not _preserves_demand_lease(exc) and not _http_exception_already_terminalized(exc):
-            await _terminalize_accepted_operation(
-                session=session,
-                tenant_uuid=tenant_uuid,
-                op=op,
-                server_elapsed_ms=_elapsed_ms(server_start),
-                gpu_compute=gpu_compute,
-            )
+        if not _preserves_demand_lease(exc):
+            await _cleanup_accepted()
         raise
     except TimeoutError as exc:
-        await _terminalize_accepted_operation(
-            session=session,
-            tenant_uuid=tenant_uuid,
-            op=op,
-            server_elapsed_ms=_elapsed_ms(server_start),
-            gpu_compute=gpu_compute,
-        )
+        await _cleanup_accepted()
         raise HTTPException(
             status.HTTP_504_GATEWAY_TIMEOUT,
             f"description generation exceeded {effective_timeout}s",
         ) from exc
     except DescriptionAdapterUnavailableError as exc:
+        await _cleanup_accepted()
         if gpu_compute:
             raise _typed_describe_error(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1137,15 +1162,20 @@ async def describe_image_multipart(
         processing_ms = getattr(getattr(exc, "attempt_timing", None), "processing_ms", None)
         server_elapsed_ms = _elapsed_ms(server_start)
         if gpu_compute:
-            completed = await _complete_operation(
-                session=session,
-                tenant_uuid=tenant_uuid,
-                op=op,
-                processing_ms=processing_ms,
-                server_elapsed_ms=server_elapsed_ms,
-                gpu_compute=True,
-                cached=False,
-            )
+            try:
+                completed = await _complete_operation(
+                    session=session,
+                    tenant_uuid=tenant_uuid,
+                    op=op,
+                    processing_ms=processing_ms,
+                    server_elapsed_ms=server_elapsed_ms,
+                    gpu_compute=True,
+                    cached=False,
+                )
+                terminalized = True
+            except HTTPException:
+                await _cleanup_accepted()
+                raise
             timing = _timing_from_operation(
                 op=completed,
                 processing_ms=processing_ms,
@@ -1162,13 +1192,7 @@ async def describe_image_multipart(
             ) from exc
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
     except Exception as exc:
-        await _terminalize_accepted_operation(
-            session=session,
-            tenant_uuid=tenant_uuid,
-            op=op,
-            server_elapsed_ms=_elapsed_ms(server_start),
-            gpu_compute=gpu_compute,
-        )
+        await _cleanup_accepted()
         raise _typed_describe_error(
             status_code=status.HTTP_502_BAD_GATEWAY,
             code="description_service_error",

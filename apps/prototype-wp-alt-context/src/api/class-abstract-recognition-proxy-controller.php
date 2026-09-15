@@ -583,32 +583,75 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 			return false;
 		}
 
-		if ( ! array_key_exists( 'operation_id', $detail ) ) {
-			return false;
-		}
-		$operation_id = $detail['operation_id'];
-		if ( ! is_string( $operation_id ) && null !== $operation_id ) {
+		if ( ! array_key_exists( 'operation_id', $detail ) || ! $this->is_nullable_opaque_id( $detail['operation_id'] ) ) {
 			return false;
 		}
 
-		if ( ! array_key_exists( 'startup_id', $detail ) ) {
-			return false;
-		}
-		$startup_id = $detail['startup_id'];
-		if ( ! is_string( $startup_id ) && null !== $startup_id ) {
+		if ( ! array_key_exists( 'startup_id', $detail ) || ! $this->is_nullable_opaque_id( $detail['startup_id'] ) ) {
 			return false;
 		}
 
-		if ( ! is_array( $detail['timing'] ?? null ) ) {
+		if ( ! $this->is_validated_timing( $detail['timing'] ?? null ) ) {
 			return false;
 		}
 
-		$eta = $detail['warmup_eta_seconds'] ?? null;
-		if ( ( ! is_int( $eta ) && ! is_float( $eta ) ) || $eta < 0 ) {
+		if ( ! array_key_exists( 'warmup_eta_seconds', $detail ) ) {
+			return false;
+		}
+		$eta = $detail['warmup_eta_seconds'];
+		if ( null !== $eta && ( ( ! is_int( $eta ) && ! is_float( $eta ) ) || $eta < 0 ) ) {
 			return false;
 		}
 
-		return null !== $this->retry_after_integer( $response_headers );
+		$retry_after = $this->retry_after_integer( $response_headers );
+		return null !== $retry_after && $retry_after >= 1 && $retry_after <= 120;
+	}
+
+	/**
+	 * Opaque ids are string|null; strings must be non-empty and <= 128 chars.
+	 */
+	private function is_nullable_opaque_id( mixed $value ): bool {
+		if ( null === $value ) {
+			return true;
+		}
+		if ( ! is_string( $value ) ) {
+			return false;
+		}
+		$length = strlen( $value );
+
+		return $length >= 1 && $length <= 128;
+	}
+
+	/**
+	 * Timing object keys must match image-description-response.schema.json
+	 * exactly, with number|null values (unknown => null).
+	 *
+	 * @param mixed $timing JSON-decoded timing object.
+	 */
+	private function is_validated_timing( mixed $timing ): bool {
+		if ( ! is_array( $timing ) ) {
+			return false;
+		}
+
+		$expected = array( 'queue_ms', 'ramp_up_ms', 'processing_ms', 'startup_ms', 'server_elapsed_ms' );
+		$keys     = array_keys( $timing );
+		sort( $keys );
+		$sorted_expected = $expected;
+		sort( $sorted_expected );
+		if ( $keys !== $sorted_expected ) {
+			return false;
+		}
+
+		foreach ( $timing as $value ) {
+			if ( null === $value ) {
+				continue;
+			}
+			if ( ( ! is_int( $value ) && ! is_float( $value ) ) || $value < 0 ) {
+				return false;
+			}
+		}
+
+		return true;
 	}
 
 	private function is_typed_unavailable_response( int $status, ?string $typed_code ): bool {
@@ -645,11 +688,11 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 
 	private function open_circuit_local_timing(): array {
 		return array(
-			'queue_ms'          => 0,
-			'ramp_up_ms'        => 0,
-			'processing_ms'     => 0,
+			'queue_ms'          => null,
+			'ramp_up_ms'        => null,
+			'processing_ms'     => null,
 			'startup_ms'        => null,
-			'server_elapsed_ms' => 0,
+			'server_elapsed_ms' => null,
 		);
 	}
 

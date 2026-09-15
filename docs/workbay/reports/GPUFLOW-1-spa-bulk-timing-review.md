@@ -76,3 +76,17 @@ FINDINGS: [{"id":"GPUFLOW-1-SPABULKTIMING-R-05","severity":"low","file_path":"ap
 - **Fix:** Add the semicolon and rerun the app's format check.
 
 Verdict: pass_with_findings
+
+## Re-review r3 (bef8a8ee0..95066e81f)
+
+VERIFIED: {"GPUFLOW-1-SPABULKTIMING-R-03":"fixed"}
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| GPUFLOW-1-SPABULKTIMING-R-03 | fixed | The phase-based warmup gate remains tied to the nonterminal run phase (`run?.phase === DESCRIBE_RUN_PHASE.WARMING`) in the changed hunk (`.review/CHANGE.diff:4-12`), while the remaining false-duration behavior is removed: `formatWarmingGpuLabel` no longer accepts or reads an ETA and returns duration-free copy (`.review/CHANGE.diff:16-26`), and both warming branches call it without an ETA (`.review/CHANGE.diff:30-45`). The updated tests assert no hard-coded `about 2 min` or wire `eta_seconds`/`remaining` text (`.review/CHANGE.diff:76-112`). This closes the prior partial fix; the duration-free unknown state follows `[INT-08]` and the no-fabricated-value guard `[CAL-02]`. |
+
+### FINDINGS
+
+FINDINGS: []
+
+Verdict: pass

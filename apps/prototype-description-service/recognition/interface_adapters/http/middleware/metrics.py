@@ -96,9 +96,18 @@ class MetricsRegistry:
             labelnames=("adapter",),
             registry=self.registry,
         )
+        # Durable readiness owners observe each operation's wait once here.
+        # Never feed total HTTP duration or adapter processing into this series.
+        self.description_readiness_wait_seconds = Histogram(
+            "acx_description_readiness_wait_seconds",
+            "Image-description operation readiness wait in seconds",
+            labelnames=("adapter",),
+            buckets=DEFAULT_BUCKETS,
+            registry=self.registry,
+        )
         self.description_adapter_duration_seconds = Histogram(
             "acx_description_adapter_duration_seconds",
-            "Image-description adapter generation duration in seconds",
+            "Image-description adapter processing per attempt in seconds (excludes readiness)",
             labelnames=("adapter",),
             buckets=DEFAULT_BUCKETS,
             registry=self.registry,

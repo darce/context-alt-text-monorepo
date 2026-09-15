@@ -1,144 +1,114 @@
-diff --git a/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx b/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx
---- a/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx
-+++ b/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx
-@@ -85,8 +85,11 @@ const formatWarmupEta = (data: GpuStatusResponse): string => {
+diff --git a/apps/prototype-description-service/scene/tests/test_response_schema_parity.py b/apps/prototype-description-service/scene/tests/test_response_schema_parity.py
+--- a/apps/prototype-description-service/scene/tests/test_response_schema_parity.py
++++ b/apps/prototype-description-service/scene/tests/test_response_schema_parity.py
+@@ -8,13 +8,9 @@ import pytest
  
- const intentLabel = (data: GpuStatusResponse): string => {
-   const { intent, intent_status: intentStatus } = data.gpu_state;
--  if (intentStatus === GpuIntentStatus.BLOCKED_WORK_IN_FLIGHT) {
--    return 'Stop pending — a describe run is in flight; the service stops when it ends.';
-+  if (
-+    intentStatus === GpuIntentStatus.BLOCKED_WORK_IN_FLIGHT ||
-+    (intent === GpuIntentAction.STOP && data.load.has_work)
-+  ) {
-+    return 'Stopping after the current work finishes';
-   }
-   if (intent === GpuIntentAction.AUTO) {
-     return data.snapshot_fresh
-@@ -345,10 +348,15 @@ export const GpuControlCard = (): React.JSX.Element => {
-           {confirmation === GpuIntentAction.STOP ? (
-             <div id="z-stop-preview" data-testid="z-stop-preview" className="notice inline notice-warning">
-               <p>
--                {__(
--                  'Requests shutdown when idle. If a describe run is in flight, shutdown is deferred. The service run limit can still stop the service to limit costs.',
--                  'alt-context',
--                )}
-+                {data.load.has_work
-+                  ? __(
-+                      'Stopping after the current work finishes. The service run limit can still stop the service to limit costs.',
-+                      'alt-context',
-+                    )
-+                  : __(
-+                      'Requests shutdown when idle. If a describe run is in flight, shutdown is deferred. The service run limit can still stop the service to limit costs.',
-+                      'alt-context',
-+                    )}
-               </p>
-               <div id="z-stop-actions" data-testid="z-stop-actions">
-                 <button
-diff --git a/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx b/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx
---- a/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx
-+++ b/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx
-@@ -38,6 +38,8 @@ const statusResponse = (overrides: Partial<GpuStatusResponse['gpu_state']> = {})
-   server_time: '2026-09-07T12:00:00Z',
- });
+ from scene.interface_adapters.http.schemas.responses import VisualFactsResponse
  
-+const STOPPABLE_STATES = new Set(['starting', 'warming', 'ready', 'degraded']);
+-SCHEMA_PATH = (
+-    Path(__file__).resolve().parents[4]
+-    / "packages"
+-    / "shared-contracts"
+-    / "schemas"
+-    / "image-description-response.schema.json"
+-)
++_SCHEMA_DIR = Path(__file__).resolve().parents[4] / "packages" / "shared-contracts" / "schemas"
++SCHEMA_PATH = _SCHEMA_DIR / "image-description-response.schema.json"
++MULTIPART_SCHEMA_PATH = _SCHEMA_DIR / "scene-describe-multipart.schema.json"
+ 
+ 
+ def _schema() -> dict:
+@@ -54,6 +50,13 @@ PREVIEW_FIELDS = {
+     "attachment_provenance",
+     "alt_text_long",
+ }
++# GPUFLOW-1: defined on VisualFactsResponse / image-description-response, not
++# in `required`; omitted from the serialized body when unobserved.
++OPERATION_FIELDS = {
++    "operation_id",
++    "startup_id",
++    "timing",
++}
+ 
+ 
+ def test_schema_model_id_documents_gpu_hub_pin_format():
+@@ -66,9 +69,24 @@ def test_schema_model_id_documents_gpu_hub_pin_format():
+ 
+ def test_schema_required_matches_model_fields():
+     schema = _schema()
+-    assert set(schema["required"]) == set(VisualFactsResponse.model_fields) - PREVIEW_FIELDS
++    assert set(schema["required"]) == set(VisualFactsResponse.model_fields) - PREVIEW_FIELDS - OPERATION_FIELDS
+     assert len(schema["required"]) == 17
+     assert set(schema["properties"]) == set(VisualFactsResponse.model_fields)
++    assert OPERATION_FIELDS.isdisjoint(schema["required"])
++    assert set(schema["properties"]) >= OPERATION_FIELDS
 +
- const mockControl = (data: GpuStatusResponse, overrides: Partial<ReturnType<typeof gpuControl.useGpuControl>> = {}) => {
-   useGpuControlMock.mockReturnValue({
-     data,
-@@ -47,12 +49,12 @@ const mockControl = (data: GpuStatusResponse, overrides: Partial<ReturnType<type
-     refetch: vi.fn(),
-     canStart: data.gpu_state.state === 'stopped',
-     startBlockedReason: null,
--    canStop: data.gpu_state.state !== 'stopped' && !data.load.has_work,
-+    canStop: STOPPABLE_STATES.has(data.gpu_state.state) && data.gpu_state.intent !== GPU_INTENT_ACTION.STOP,
-     stopBlockedReason:
-       data.gpu_state.state === 'stopped'
-         ? 'already stopped'
--        : data.load.has_work
--          ? 'a describe run is in flight — stops once it finishes'
-+        : data.gpu_state.intent === GPU_INTENT_ACTION.STOP
-+          ? 'stop already requested'
-           : null,
-     canReturnToAuto: data.gpu_state.intent !== GPU_INTENT_ACTION.AUTO,
-     requestIntent: vi.fn(),
-@@ -176,29 +178,65 @@ describe('GpuControlCard', () => {
-     expect(screen.getByText(/polling every 5 s/)).toBeInTheDocument();
-   });
- 
--  it('disables Stop with the work-in-flight reason', () => {
--    mockControl(statusResponse({ state: 'ready' }), {
--      canStop: false,
--      stopBlockedReason: 'a describe run is in flight — stops once it finishes',
--    });
--    render(<GpuControlCard />);
-+  it('keeps Stop enabled during work in flight and shows deferred-stop copy', () => {
-+    const requestIntent = vi.fn();
-+    const busy = {
-+      ...statusResponse({
-+        state: 'ready',
-+        instance_running_since: '2026-09-07T11:59:00Z',
-+      }),
-+      load: { has_work: true, written_at: 1_700_000_004, fresh: true },
-+    };
-+    mockControl(busy, { requestIntent });
-+    const { rerender } = render(<GpuControlCard />);
- 
--    expect(screen.getByRole('button', { name: /Stop service/ })).toHaveAttribute('aria-disabled', 'true');
--    expect(screen.getByText(/a describe run is in flight/)).toBeInTheDocument();
-+    const stop = screen.getByRole('button', { name: /Stop service/ });
-+    expect(stop).not.toHaveAttribute('disabled');
-+    expect(stop).not.toHaveAttribute('aria-disabled');
-+    fireEvent.click(stop);
-+    expect(screen.getByText(/Stopping after the current work finishes/)).toBeInTheDocument();
-+    fireEvent.click(screen.getByRole('button', { name: 'Confirm stop' }));
-+    expect(requestIntent).toHaveBeenCalledWith(GPU_INTENT_ACTION.STOP);
 +
-+    mockControl(
-+      {
-+        ...busy,
-+        gpu_state: {
-+          ...busy.gpu_state,
-+          intent: GPU_INTENT_ACTION.STOP,
-+          intent_status: GPU_INTENT_STATUS.BLOCKED_WORK_IN_FLIGHT,
-+        },
-+      },
-+      { requestIntent },
-+    );
-+    rerender(<GpuControlCard />);
-+    expect(screen.getByText(`Service: ${GPU_STATE_VOCABULARY.ready}`)).toBeInTheDocument();
-+    expect(screen.getByText(/Stopping after the current work finishes/)).toBeInTheDocument();
-   });
- 
-   it('renders a pending stop notice for blocked work', () => {
--    mockControl(
--      statusResponse({
-+    mockControl({
-+      ...statusResponse({
-         state: 'degraded',
-         intent: GPU_INTENT_ACTION.STOP,
-         intent_status: GPU_INTENT_STATUS.BLOCKED_WORK_IN_FLIGHT,
-       }),
--    );
-+      load: { has_work: true, written_at: 1_700_000_004, fresh: true },
-+    });
-     render(<GpuControlCard />);
- 
--    expect(screen.getByText(/Stop pending/)).toBeInTheDocument();
--    expect(screen.getByText(/stops when it ends/)).toBeInTheDocument();
-+    expect(screen.getByText(/Stopping after the current work finishes/)).toBeInTheDocument();
-+    expect(screen.getByText(`Service: ${GPU_STATE_VOCABULARY.degraded}`)).toBeInTheDocument();
-+  });
++def test_base_dump_omits_absent_operation_metadata():
++    response = VisualFactsResponse.model_validate(_sample())
++    for payload in (response.model_dump(mode="json"), json.loads(response.model_dump_json())):
++        assert OPERATION_FIELDS.isdisjoint(payload)
++        jsonschema.validate(payload, _schema())
 +
-+  it('disables Stop when the service is already stopped or unknown', () => {
-+    mockControl(statusResponse({ state: 'unknown' }));
-+    const { rerender } = render(<GpuControlCard />);
-+    expect(screen.getByRole('button', { name: /Stop service/ })).toHaveAttribute('aria-disabled', 'true');
 +
-+    mockControl(statusResponse({ state: 'stopped' }));
-+    rerender(<GpuControlCard />);
-+    expect(screen.getByRole('button', { name: /Stop service/ })).toHaveAttribute('aria-disabled', 'true');
-   });
++def test_multipart_success_branch_requires_operation_metadata():
++    schema = json.loads(MULTIPART_SCHEMA_PATH.read_text())
++    success_required = set(schema["oneOf"][0]["allOf"][1]["required"])
++    assert success_required == OPERATION_FIELDS
  
-   it('renders stale telemetry as not reported and disables Start with its age', () => {
+ 
+ def test_sample_validates_against_schema():
+diff --git a/apps/prototype-description-service/scene/tests/test_schemas.py b/apps/prototype-description-service/scene/tests/test_schemas.py
+--- a/apps/prototype-description-service/scene/tests/test_schemas.py
++++ b/apps/prototype-description-service/scene/tests/test_schemas.py
+@@ -7,7 +7,11 @@ from pydantic import ValidationError
+ 
+ from scene.domain.description import DescriptionAdapterKind, DescriptionResultTier, ProviderMode, RetentionClass
+ from scene.interface_adapters.http.schemas.requests import DescribeImageEnvelope
+-from scene.interface_adapters.http.schemas.responses import DescribeRunItemResponse, VisualFactsResponse
++from scene.interface_adapters.http.schemas.responses import (
++    DescribeRunItemResponse,
++    MultipartDescribeResponse,
++    VisualFactsResponse,
++)
+ 
+ # 15 contract-locked core fields + additive optional preview/fusion fields.
+ PREVIEW_FIELDS = {
+@@ -38,6 +42,12 @@ EXPECTED_FIELDS = {
+     "tier",
+     "result_generation",
+ }
++# GPUFLOW-1: optional on VisualFactsResponse; required keys on MultipartDescribeResponse.
++OPERATION_FIELDS = {
++    "operation_id",
++    "startup_id",
++    "timing",
++}
+ 
+ 
+ def _sample_response() -> dict:
+@@ -63,8 +73,11 @@ def _sample_response() -> dict:
+ 
+ 
+ def test_response_has_exactly_15_contract_fields():
+-    assert set(VisualFactsResponse.model_fields) == EXPECTED_FIELDS | PREVIEW_FIELDS
++    assert set(VisualFactsResponse.model_fields) == EXPECTED_FIELDS | PREVIEW_FIELDS | OPERATION_FIELDS
+     assert len(EXPECTED_FIELDS) == 17
++    for name in OPERATION_FIELDS:
++        assert not VisualFactsResponse.model_fields[name].is_required()
++        assert MultipartDescribeResponse.model_fields[name].is_required()
+ 
+ 
+ def test_response_round_trip_typed_provenance():
+@@ -72,7 +85,10 @@ def test_response_round_trip_typed_provenance():
+     assert r.adapter is DescriptionAdapterKind.SEEDED
+     assert r.retention_class is RetentionClass.RETAIN_ALL
+     assert r.provider_disclosure.provider is ProviderMode.NONE
+-    assert set(r.model_dump().keys()) == EXPECTED_FIELDS | PREVIEW_FIELDS
++    dumped = r.model_dump()
++    assert set(dumped.keys()) == EXPECTED_FIELDS | PREVIEW_FIELDS
++    assert OPERATION_FIELDS.isdisjoint(dumped)
++    assert OPERATION_FIELDS.isdisjoint(r.model_dump(mode="json"))
+     # Preview fields default to None when the merge layer is not run.
+     assert r.generic_draft is None and r.named_draft is None and r.naming_provenance is None
+     # ALTQ-1: absent long surface defaults to None — old payloads stay valid.

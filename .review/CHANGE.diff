@@ -357,6 +357,49 @@ diff --git a/apps/prototype-description-service/scene/interface_adapters/http/ro
          raise _typed_describe_error(
              status_code=status.HTTP_502_BAD_GATEWAY,
              code="description_service_error",
+diff --git a/apps/prototype-description-service/scene/interface_adapters/http/schemas/responses.py b/apps/prototype-description-service/scene/interface_adapters/http/schemas/responses.py
+--- a/apps/prototype-description-service/scene/interface_adapters/http/schemas/responses.py
++++ b/apps/prototype-description-service/scene/interface_adapters/http/schemas/responses.py
+@@ -213,14 +213,21 @@ class VisualFactsResponse(OmitAbsentOperationMetadata):
+ class MultipartDescribeResponse(VisualFactsResponse):
+     """Strict multipart success envelope for ``/scene/describe/multipart``.
+ 
+-    ``operation_id`` is required and may be JSON null when no durable
+-    DescribeOperation was accepted (CPU/hosted, no session); clients must not
+-    poll a lease. ``timing`` is required and non-null; ``startup_id`` is a
+-    required key that may be JSON null for warm/cache work. Base
+-    ``VisualFactsResponse`` omission behaviour is unchanged.
++    ``operation_id`` is omitted on the wire when no durable DescribeOperation
++    was accepted (CPU/hosted, no session); clients must not poll a lease.
++    ``timing`` is required and non-null; ``startup_id`` is a required key that
++    may be JSON null for warm/cache work. Base ``VisualFactsResponse``
++    omission behaviour is unchanged.
+     """
+ 
+-    operation_id: str | None = Field(min_length=1, max_length=128)
++    operation_id: str | None = Field(
++        min_length=1,
++        max_length=128,
++        description=(
++            "Omitted when no durable DescribeOperation was accepted "
++            "(CPU/hosted, no session); clients must not poll a lease"
++        ),
++    )
+     startup_id: str | None
+     timing: DescribeTiming
+ 
+@@ -229,7 +236,10 @@ class MultipartDescribeResponse(VisualFactsResponse):
+         payload = handler(self)
+         if not isinstance(payload, dict):
+             return payload
+-        payload["operation_id"] = self.operation_id
++        if self.operation_id is None:
++            payload.pop("operation_id", None)
++        else:
++            payload["operation_id"] = self.operation_id
+         payload["startup_id"] = self.startup_id
+         if payload.get("timing") is None:
+             payload["timing"] = self.timing.model_dump(mode="json")
 diff --git a/apps/prototype-description-service/scene/tests/test_describe_route.py b/apps/prototype-description-service/scene/tests/test_describe_route.py
 --- a/apps/prototype-description-service/scene/tests/test_describe_route.py
 +++ b/apps/prototype-description-service/scene/tests/test_describe_route.py
@@ -431,7 +474,17 @@ diff --git a/apps/prototype-description-service/scene/tests/test_describe_route.
  
  
  def test_operation_id_mismatch_is_409(monkeypatch, tmp_path):
-@@ -1690,6 +1701,8 @@ def test_gpu_quota_http_exception_after_accept_releases_lease(monkeypatch, tmp_p
+@@ -1622,8 +1633,7 @@ def test_cpu_no_session_success_omits_durable_operation_id(monkeypatch):
+         response = _post(client, TENANT_ID)
+         assert response.status_code == 200, response.text
+         body = response.json()
+-        assert "operation_id" in body
+-        assert body["operation_id"] is None
++        assert "operation_id" not in body
+         assert "startup_id" in body
+         assert "timing" in body
+         assert accepts == []
+@@ -1690,6 +1700,8 @@ def test_gpu_quota_http_exception_after_accept_releases_lease(monkeypatch, tmp_p
  
  
  def test_preflight_miss_wrapper_delegates_after_first_lookup():
@@ -440,7 +493,7 @@ diff --git a/apps/prototype-description-service/scene/tests/test_describe_route.
      class _Inner:
          def __init__(self):
              self.calls: list[dict] = []
-@@ -1700,6 +1713,7 @@ def test_preflight_miss_wrapper_delegates_after_first_lookup():
+@@ -1700,6 +1712,7 @@ def test_preflight_miss_wrapper_delegates_after_first_lookup():
  
      inner = _Inner()
      wrapped = _PreflightMissCacheRepository(inner)
@@ -448,7 +501,7 @@ diff --git a/apps/prototype-description-service/scene/tests/test_describe_route.
      first = asyncio.run(wrapped.get_by_cache_key(image_hash="a"))
      second = asyncio.run(wrapped.get_by_cache_key(image_hash="b"))
      third = asyncio.run(wrapped.get_by_cache_key(image_hash="c"))
-@@ -1707,3 +1721,81 @@ def test_preflight_miss_wrapper_delegates_after_first_lookup():
+@@ -1707,3 +1720,81 @@ def test_preflight_miss_wrapper_delegates_after_first_lookup():
      assert inner.calls == [{"image_hash": "b"}, {"image_hash": "c"}]
      assert second == {"hit": 1}
      assert third == {"hit": 2}
@@ -530,3 +583,316 @@ diff --git a/apps/prototype-description-service/scene/tests/test_describe_route.
 +        assert adapter.calls == 0
 +        assert _lease_state(client, detail["operation_id"]) == "active"
 +        assert _operation_first_ready_at(client, detail["operation_id"]) is not None
+diff --git a/apps/prototype-description-service/scene/tests/test_gpuflow_response_models.py b/apps/prototype-description-service/scene/tests/test_gpuflow_response_models.py
+--- a/apps/prototype-description-service/scene/tests/test_gpuflow_response_models.py
++++ b/apps/prototype-description-service/scene/tests/test_gpuflow_response_models.py
+@@ -258,7 +258,7 @@ def test_multipart_emits_null_startup_id_and_validates():
+         validator.validate(wire)
+ 
+ 
+-def test_multipart_accepts_null_operation_id():
++def test_multipart_omits_null_operation_id():
+     response = MultipartDescribeResponse(
+         **_VISUAL_FACTS_PAYLOAD,
+         operation_id=None,
+@@ -268,8 +268,7 @@ def test_multipart_accepts_null_operation_id():
+     dumped, encoded = _dumped_payloads(response)
+     validator = _multipart_validator()
+     for wire in (dumped, encoded):
+-        assert "operation_id" in wire
+-        assert wire["operation_id"] is None
++        assert "operation_id" not in wire
+         assert "startup_id" in wire
+         assert wire["startup_id"] is None
+         assert wire["timing"] == _VISUAL_TIMING
+diff --git a/apps/prototype-description-service/scene/tests/test_shared_schema_multipart.py b/apps/prototype-description-service/scene/tests/test_shared_schema_multipart.py
+--- a/apps/prototype-description-service/scene/tests/test_shared_schema_multipart.py
++++ b/apps/prototype-description-service/scene/tests/test_shared_schema_multipart.py
+@@ -84,6 +84,13 @@ def test_typed_error_envelopes_validate():
+         }
+     }
+     validator.validate(unavailable_null)
++    starting_null = {
++        "detail": {
++            **starting["detail"],
++            "operation_id": None,
++        }
++    }
++    assert not validator.is_valid(starting_null)
+     assert not validator.is_valid(
+         {
+             "detail": {
+@@ -94,12 +101,16 @@ def test_typed_error_envelopes_validate():
+     )
+ 
+ 
+-def test_success_envelope_allows_null_operation_id_and_rejects_empty():
++def test_success_envelope_allows_absent_operation_id_and_rejects_null():
+     payload = json.loads(_FIXTURE.read_text())
++    validator = _multipart_validator()
++    absent = dict(payload)
++    del absent["operation_id"]
++    validator.validate(absent)
+     payload["operation_id"] = None
+-    _multipart_validator().validate(payload)
++    assert not validator.is_valid(payload)
+     payload["operation_id"] = ""
+-    assert not _multipart_validator().is_valid(payload)
++    assert not validator.is_valid(payload)
+ 
+ 
+ _NAMING_PROVENANCE_SCHEMA_KEYS = {"injected_names", "naming_allowed", "reason", "mode"}
+@@ -170,13 +181,13 @@ def test_production_route_unavailable_error_validates_against_shared_schema(monk
+         assert "warmup_eta_seconds" not in body["detail"]
+ 
+ 
+-def test_production_cpu_no_session_success_validates_null_operation_id():
++def test_production_cpu_no_session_success_omits_operation_id():
+     validator = _multipart_validator()
+     with _client(db_absent=True) as client:
+         response = _post(client, TENANT_ID)
+         assert response.status_code == 200, response.text
+         body = response.json()
+         validator.validate(_schema_body(body))
+-        assert body["operation_id"] is None
++        assert "operation_id" not in body
+         assert "startup_id" in body
+         assert "timing" in body
+diff --git a/packages/shared-contracts/schemas/scene-describe-multipart.schema.json b/packages/shared-contracts/schemas/scene-describe-multipart.schema.json
+--- a/packages/shared-contracts/schemas/scene-describe-multipart.schema.json
++++ b/packages/shared-contracts/schemas/scene-describe-multipart.schema.json
+@@ -69,6 +69,13 @@
+                   }
+                 }
+               },
++              "then": {
++                "properties": {
++                  "operation_id": {
++                    "type": "string"
++                  }
++                }
++              },
+               "else": {
+                 "not": {
+                   "required": [
+@@ -88,113 +95,116 @@
+   ],
+   "definitions": {
+     "success": {
+-      "type": "object",
+-      "additionalProperties": false,
+-      "required": [
+-        "tenant_id",
+-        "media_id",
+-        "image_hash",
+-        "context_hash",
+-        "adapter",
+-        "model_id",
+-        "model_version",
+-        "prompt_or_task_version",
+-        "visual_facts",
+-        "alt_text_draft",
+-        "context_used",
+-        "provider_disclosure",
+-        "cached",
+-        "duration_ms",
+-        "retention_class",
+-        "tier",
+-        "result_generation",
+-        "operation_id",
+-        "startup_id",
+-        "timing"
+-      ],
+-      "properties": {
+-        "tenant_id": {
+-          "$ref": "image-description-response.schema.json#/properties/tenant_id"
+-        },
+-        "media_id": {
+-          "$ref": "image-description-response.schema.json#/properties/media_id"
+-        },
+-        "image_hash": {
+-          "$ref": "image-description-response.schema.json#/properties/image_hash"
+-        },
+-        "context_hash": {
+-          "$ref": "image-description-response.schema.json#/properties/context_hash"
+-        },
+-        "adapter": {
+-          "$ref": "image-description-response.schema.json#/properties/adapter"
+-        },
+-        "model_id": {
+-          "$ref": "image-description-response.schema.json#/properties/model_id"
+-        },
+-        "model_version": {
+-          "$ref": "image-description-response.schema.json#/properties/model_version"
+-        },
+-        "prompt_or_task_version": {
+-          "$ref": "image-description-response.schema.json#/properties/prompt_or_task_version"
+-        },
+-        "visual_facts": {
+-          "$ref": "image-description-response.schema.json#/properties/visual_facts"
+-        },
+-        "alt_text_draft": {
+-          "$ref": "image-description-response.schema.json#/properties/alt_text_draft"
+-        },
+-        "context_used": {
+-          "$ref": "image-description-response.schema.json#/properties/context_used"
++      "allOf": [
++        {
++          "$ref": "image-description-response.schema.json"
+         },
+-        "provider_disclosure": {
+-          "$ref": "image-description-response.schema.json#/properties/provider_disclosure"
+-        },
+-        "cached": {
+-          "$ref": "image-description-response.schema.json#/properties/cached"
+-        },
+-        "duration_ms": {
+-          "$ref": "image-description-response.schema.json#/properties/duration_ms"
+-        },
+-        "retention_class": {
+-          "$ref": "image-description-response.schema.json#/properties/retention_class"
+-        },
+-        "tier": {
+-          "$ref": "image-description-response.schema.json#/properties/tier"
+-        },
+-        "result_generation": {
+-          "$ref": "image-description-response.schema.json#/properties/result_generation"
+-        },
+-        "alt_text_long": {
+-          "$ref": "image-description-response.schema.json#/properties/alt_text_long"
+-        },
+-        "generic_draft": {
+-          "$ref": "image-description-response.schema.json#/properties/generic_draft"
+-        },
+-        "named_draft": {
+-          "$ref": "image-description-response.schema.json#/properties/named_draft"
+-        },
+-        "naming_provenance": {
+-          "$ref": "image-description-response.schema.json#/properties/naming_provenance"
+-        },
+-        "attachment_provenance": {
+-          "$ref": "image-description-response.schema.json#/properties/attachment_provenance"
+-        },
+-        "operation_id": {
+-          "type": [
+-            "string",
+-            "null"
++        {
++          "type": "object",
++          "additionalProperties": false,
++          "required": [
++            "tenant_id",
++            "media_id",
++            "image_hash",
++            "context_hash",
++            "adapter",
++            "model_id",
++            "model_version",
++            "prompt_or_task_version",
++            "visual_facts",
++            "alt_text_draft",
++            "context_used",
++            "provider_disclosure",
++            "cached",
++            "duration_ms",
++            "retention_class",
++            "tier",
++            "result_generation",
++            "startup_id",
++            "timing"
+           ],
+-          "minLength": 1,
+-          "maxLength": 128,
+-          "description": "null when no durable DescribeOperation was accepted (CPU/hosted, no session); clients must not poll a lease"
+-        },
+-        "startup_id": {
+-          "$ref": "image-description-response.schema.json#/properties/startup_id"
+-        },
+-        "timing": {
+-          "$ref": "image-description-response.schema.json#/properties/timing"
++          "properties": {
++            "tenant_id": {
++              "$ref": "image-description-response.schema.json#/properties/tenant_id"
++            },
++            "media_id": {
++              "$ref": "image-description-response.schema.json#/properties/media_id"
++            },
++            "image_hash": {
++              "$ref": "image-description-response.schema.json#/properties/image_hash"
++            },
++            "context_hash": {
++              "$ref": "image-description-response.schema.json#/properties/context_hash"
++            },
++            "adapter": {
++              "$ref": "image-description-response.schema.json#/properties/adapter"
++            },
++            "model_id": {
++              "$ref": "image-description-response.schema.json#/properties/model_id"
++            },
++            "model_version": {
++              "$ref": "image-description-response.schema.json#/properties/model_version"
++            },
++            "prompt_or_task_version": {
++              "$ref": "image-description-response.schema.json#/properties/prompt_or_task_version"
++            },
++            "visual_facts": {
++              "$ref": "image-description-response.schema.json#/properties/visual_facts"
++            },
++            "alt_text_draft": {
++              "$ref": "image-description-response.schema.json#/properties/alt_text_draft"
++            },
++            "context_used": {
++              "$ref": "image-description-response.schema.json#/properties/context_used"
++            },
++            "provider_disclosure": {
++              "$ref": "image-description-response.schema.json#/properties/provider_disclosure"
++            },
++            "cached": {
++              "$ref": "image-description-response.schema.json#/properties/cached"
++            },
++            "duration_ms": {
++              "$ref": "image-description-response.schema.json#/properties/duration_ms"
++            },
++            "retention_class": {
++              "$ref": "image-description-response.schema.json#/properties/retention_class"
++            },
++            "tier": {
++              "$ref": "image-description-response.schema.json#/properties/tier"
++            },
++            "result_generation": {
++              "$ref": "image-description-response.schema.json#/properties/result_generation"
++            },
++            "alt_text_long": {
++              "$ref": "image-description-response.schema.json#/properties/alt_text_long"
++            },
++            "generic_draft": {
++              "$ref": "image-description-response.schema.json#/properties/generic_draft"
++            },
++            "named_draft": {
++              "$ref": "image-description-response.schema.json#/properties/named_draft"
++            },
++            "naming_provenance": {
++              "$ref": "image-description-response.schema.json#/properties/naming_provenance"
++            },
++            "attachment_provenance": {
++              "$ref": "image-description-response.schema.json#/properties/attachment_provenance"
++            },
++            "operation_id": {
++              "type": "string",
++              "minLength": 1,
++              "maxLength": 128,
++              "description": "Opaque service-minted id bound to tenant and request digest. Omitted when no durable DescribeOperation was accepted (CPU/hosted, no session); clients must not poll a lease."
++            },
++            "startup_id": {
++              "$ref": "image-description-response.schema.json#/properties/startup_id"
++            },
++            "timing": {
++              "$ref": "image-description-response.schema.json#/properties/timing"
++            }
++          }
+         }
+-      }
++      ]
+     },
+     "retryFields": {
+       "type": "object",

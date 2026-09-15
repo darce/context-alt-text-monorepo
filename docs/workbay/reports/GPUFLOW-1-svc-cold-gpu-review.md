@@ -160,3 +160,46 @@ FINDINGS: [
 - **Fix:** Re-read/lock the operation and lease together and decide readiness under that lock before completing the lease.
 
 Verdict: fail
+
+## Re-review r8 (3aa601740..35d7a3b85)
+
+VERIFIED: {"GPUFLOW-1-SVCCOLDGPU-R-10":"fixed","GPUFLOW-1-SVCCOLDGPU-R-17":"fixed","GPUFLOW-1-SVCCOLDGPU-R-18":"fixed","GPUFLOW-1-SVCCOLDGPU-R-19":"not_fixed","GPUFLOW-1-SVCCOLDGPU-R-20":"fixed"}
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| GPUFLOW-1-SVCCOLDGPU-R-10 | fixed | The route now carries the preflight cache row directly to the cached response and installs a miss wrapper that suppresses only the service's first lookup while delegating duplicate-insert recovery (`.review/CHANGE.diff:50-72,214-247`). Every post-accept exception class either cleans up or completes the operation (`.review/CHANGE.diff:265-357`). |
+| GPUFLOW-1-SVCCOLDGPU-R-17 | fixed | The HTTP-code sentinel is removed; a completion-raised `HTTPException` now invokes `_cleanup_accepted()` before being re-raised, and the outer HTTP path also cleans non-lifecycle exceptions (`.review/CHANGE.diff:113-130,265-296`). |
+| GPUFLOW-1-SVCCOLDGPU-R-18 | fixed | Lease retention is now tied to the private `_LifecycleHoldHTTPException` emitted only by `_ensure_gpu_ready` with status 503; downstream plain `HTTPException` values take cleanup (`.review/CHANGE.diff:21-42,89-110,116-130,285-296`). |
+| GPUFLOW-1-SVCCOLDGPU-R-19 | not_fixed | The new cleanup locks the operation and lease and rereads `first_ready_at` (`.review/CHANGE.diff:132-175`), but if it obtains the operation lock first, a concurrent retry's `observe_ready()` sees the now-completed lease as a no-op; `_ensure_gpu_ready()` ignores that result, sets `observed_ready_here`, and dispatches (`.review/CHANGE.diff:219-231`). The added regression mutates and commits `first_ready_at` in the same cleanup session rather than interleaving a concurrent transaction (`.review/CHANGE.diff:543-585`), so it misses the reverse ordering ([CON-02]). |
+| GPUFLOW-1-SVCCOLDGPU-R-20 | fixed | The success definition again composes the base `image-description-response` schema with a strict multipart overlay, keeps `operation_id` a non-null optional string, and omits it from the overlay's required list (`.review/CHANGE.diff:664-678,680-895`). The producer tests now accept absence and reject null (`.review/CHANGE.diff:629-641`); the focused schema checks pass. |
+
+### FINDINGS
+
+FINDINGS: [
+  {"id":"GPUFLOW-1-SVCCOLDGPU-R-21","severity":"high","file_path":"apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py","line":1137,"summary":"Post-accept typed-code HTTP errors bypass the required envelope","evidence":"The outer handler cleans a plain HTTPException and then re-raises it unchanged (`.review/CHANGE.diff:285-296`). The new regression deliberately raises a plain 503 whose detail code is `description_service_unavailable` and asserts the two-field raw body (`.review/CHANGE.diff:510-540`), although that code belongs to the multipart typed-error branch requiring operation_id, startup_id, and timing (`.review/CHANGE.diff:611-626`). A quota/dependency failure can therefore publish a schema-invalid response that looks like a lifecycle error."},
+  {"id":"GPUFLOW-1-SVCCOLDGPU-R-22","severity":"medium","file_path":"apps/prototype-description-service/scene/interface_adapters/http/schemas/responses.py","line":223,"summary":"Multipart model rejects the wire form with omitted operation_id","evidence":"The fix makes the serializer remove `operation_id` when it is None (`.review/CHANGE.diff:363-402`) and the shared success schema accepts that key as absent (`.review/CHANGE.diff:680-895`), but `MultipartDescribeResponse.operation_id` is redeclared with `Field(...)` and no default (`.review/CHANGE.diff:379-387`). Pydantic therefore still marks the field required, so `MultipartDescribeResponse.model_validate()` cannot round-trip the valid CPU/hosted no-session payload produced by this serializer ([API-09])."},
+  {"id":"GPUFLOW-1-SVCCOLDGPU-R-23","severity":"low","file_path":"packages/shared-contracts/schemas/scene-describe-multipart.schema.json","line":1,"summary":"Fix delta repeats edits to producer paths outside this lane's ownership","evidence":"The delta changes six files, including the response-model producer, its tests, and the shared contract schema (`.review/DIFFSTAT.txt:1-7`; `.review/CHANGE.diff:360-402,586-677`). The lane row identifies the schema and response models as read-only dependencies, while only the route and designated route/fixture test paths are owned by svc-cold-gpu."}
+]
+
+#### GPUFLOW-1-SVCCOLDGPU-R-21 — high
+
+- **File:** `apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py:1137`.
+- **Evidence:** The new outer handler performs cleanup for a plain `HTTPException` but re-raises its original detail unchanged (`.review/CHANGE.diff:285-296`). The added downstream regression raises `description_service_unavailable` with only `code` and `message`, and asserts that raw body (`.review/CHANGE.diff:510-540`). Because that code is one of the multipart operation-error codes whose detail requires `operation_id`, `startup_id`, and `timing` (`.review/CHANGE.diff:611-626`), a post-accept quota/dependency error can be schema-invalid while presenting as a lifecycle response.
+- **Impact:** Typed-error consumers can receive an envelope they cannot validate or safely classify, violating the A1/B1 response contract.
+- **Fix:** Normalize post-accept HTTP exceptions using the operation-error builder, or reject/rename dependency codes before re-raising; only lifecycle exceptions created by the readiness gate should pass through as lifecycle responses.
+
+#### GPUFLOW-1-SVCCOLDGPU-R-22 — medium
+
+- **File:** `apps/prototype-description-service/scene/interface_adapters/http/schemas/responses.py:223`.
+- **Evidence:** The serializer now intentionally removes `operation_id` when it is None (`.review/CHANGE.diff:391-402`), and the success schema permits the key to be absent (`.review/CHANGE.diff:680-895`). However, the subclass redeclares `operation_id` with `Field(...)` and no `default=None` (`.review/CHANGE.diff:379-387`), leaving it required to Pydantic input validation. A valid CPU/hosted no-session wire payload therefore cannot be parsed back into `MultipartDescribeResponse`.
+- **Impact:** Internal response round-trips and any strict consumer reusing the server model reject the exact absent-operation form that the fix publishes.
+- **Fix:** Give the subclass field an explicit `default=None` while retaining its non-null constraint when present, and add a model-validation test with the operation key omitted.
+
+#### GPUFLOW-1-SVCCOLDGPU-R-23 — low
+
+- **File:** `packages/shared-contracts/schemas/scene-describe-multipart.schema.json:1`.
+- **Evidence:** This fix delta changes the shared schema, response model, and their producer tests in addition to the route-owned files (`.review/DIFFSTAT.txt:1-7`; `.review/CHANGE.diff:360-402,586-677`). The lane plan marks contracts and response-models as read-only dependencies of svc-cold-gpu, so the commit still carries producer-path ownership drift.
+- **Impact:** Merging the lane requires unrelated producer changes and can create cross-lane conflicts or bypass the intended artifact handoff.
+- **Fix:** Land the schema/model/test changes in their owning producer lanes and consume the committed artifacts here.
+
+Verdict: fail

@@ -213,14 +213,21 @@ class VisualFactsResponse(OmitAbsentOperationMetadata):
 class MultipartDescribeResponse(VisualFactsResponse):
     """Strict multipart success envelope for ``/scene/describe/multipart``.
 
-    ``operation_id`` is required and may be JSON null when no durable
-    DescribeOperation was accepted (CPU/hosted, no session); clients must not
-    poll a lease. ``timing`` is required and non-null; ``startup_id`` is a
-    required key that may be JSON null for warm/cache work. Base
-    ``VisualFactsResponse`` omission behaviour is unchanged.
+    ``operation_id`` is omitted on the wire when no durable DescribeOperation
+    was accepted (CPU/hosted, no session); clients must not poll a lease.
+    ``timing`` is required and non-null; ``startup_id`` is a required key that
+    may be JSON null for warm/cache work. Base ``VisualFactsResponse``
+    omission behaviour is unchanged.
     """
 
-    operation_id: str | None = Field(min_length=1, max_length=128)
+    operation_id: str | None = Field(
+        min_length=1,
+        max_length=128,
+        description=(
+            "Omitted when no durable DescribeOperation was accepted "
+            "(CPU/hosted, no session); clients must not poll a lease"
+        ),
+    )
     startup_id: str | None
     timing: DescribeTiming
 
@@ -229,7 +236,10 @@ class MultipartDescribeResponse(VisualFactsResponse):
         payload = handler(self)
         if not isinstance(payload, dict):
             return payload
-        payload["operation_id"] = self.operation_id
+        if self.operation_id is None:
+            payload.pop("operation_id", None)
+        else:
+            payload["operation_id"] = self.operation_id
         payload["startup_id"] = self.startup_id
         if payload.get("timing") is None:
             payload["timing"] = self.timing.model_dump(mode="json")

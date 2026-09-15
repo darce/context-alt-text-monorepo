@@ -232,6 +232,8 @@ def test_multipart_requires_operation_id_and_timing():
         MultipartDescribeResponse(**_VISUAL_FACTS_PAYLOAD, operation_id="opaque-operation", startup_id=None)
     with pytest.raises(ValidationError):
         MultipartDescribeResponse(**_VISUAL_FACTS_PAYLOAD)
+    with pytest.raises(ValidationError):
+        MultipartDescribeResponse(**_VISUAL_FACTS_PAYLOAD, operation_id="opaque-operation", timing=_VISUAL_TIMING)
 
 
 def test_multipart_emits_null_startup_id_and_validates():

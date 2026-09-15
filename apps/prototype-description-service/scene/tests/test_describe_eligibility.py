@@ -20,7 +20,12 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from db.models.base_imports import Base
 from db.models.observability import AuditEvent
-from db.models.scene import ImageDescription
+from db.models.scene import (
+    DescribeDemandLease,
+    DescribeOperation,
+    DescribeStartup,
+    ImageDescription,
+)
 from db.models.tenant import Tenant
 from recognition.interface_adapters.http.deps import (
     get_optional_session,
@@ -80,6 +85,9 @@ def _make_db():
                         Tenant.__table__,
                         ImageDescription.__table__,
                         AuditEvent.__table__,
+                        DescribeStartup.__table__,
+                        DescribeOperation.__table__,
+                        DescribeDemandLease.__table__,
                     ],
                 ),
             )

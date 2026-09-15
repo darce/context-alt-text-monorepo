@@ -7,6 +7,7 @@ namespace AltContext\Api;
 require_once __DIR__ . '/class-alt-style.php';
 require_once __DIR__ . '/../settings/class-recognition-policy.php';
 require_once __DIR__ . '/class-probe-outcome.php';
+require_once __DIR__ . '/class-abstract-recognition-proxy-controller.php';
 require_once __DIR__ . '/class-recognition-endpoint-resolver.php';
 require_once __DIR__ . '/class-tenant-identity.php';
 require_once __DIR__ . '/services/class-description-budget-service.php';
@@ -70,6 +71,8 @@ class SettingsController {
 	public const SAVE_RESULT_OK      = 'ok';
 	public const SAVE_RESULT_PARTIAL = 'partial';
 	public const SAVE_RESULT_ERROR   = 'error';
+
+	public const PROBE_OUTCOME_STARTING = 'starting';
 
 	private RecognitionEndpointResolver $endpoint_resolver;
 
@@ -767,7 +770,7 @@ class SettingsController {
 			}
 		}
 
-		$outcome = $this->classify_http_status( $status_code, $detail );
+		$outcome = $this->classify_http_status( $status_code, $detail, $decoded, $typed_code );
 		$payload = array(
 			'outcome'     => $outcome,
 			'status_code' => $status_code,
@@ -782,7 +785,12 @@ class SettingsController {
 		if ( null !== $warmup_eta ) {
 			$payload['warmup_eta_seconds'] = $warmup_eta;
 		}
-		if ( ProbeOutcome::RATE_LIMITED === $outcome || 503 === $status_code ) {
+		if (
+			ProbeOutcome::RATE_LIMITED === $outcome
+			|| self::PROBE_OUTCOME_STARTING === $outcome
+			|| 503 === $status_code
+			|| 202 === $status_code
+		) {
 			$retry_after = $this->parse_retry_after( $this->retrieve_retry_after_header( $response ) );
 			if ( null !== $retry_after ) {
 				$payload['retry_after_seconds'] = $retry_after;
@@ -800,9 +808,14 @@ class SettingsController {
 	 * @return array<string, mixed>
 	 */
 	private function maybe_start_description_service( array $payload, string $base_url, array $headers ): array {
+		$outcome = is_string( $payload['outcome'] ?? null ) ? (string) $payload['outcome'] : null;
+		if ( ProbeOutcome::CONNECTED === $outcome || self::PROBE_OUTCOME_STARTING === $outcome ) {
+			return $payload;
+		}
+
 		$status_code = (int) ( $payload['status_code'] ?? 0 );
 		$typed_code  = is_string( $payload['code'] ?? null ) ? (string) $payload['code'] : null;
-		if ( 404 !== $status_code && 'description_service_unavailable' !== $typed_code ) {
+		if ( 404 !== $status_code && AbstractRecognitionProxyController::TYPED_CODE_UNAVAILABLE !== $typed_code ) {
 			return $payload;
 		}
 
@@ -847,9 +860,15 @@ class SettingsController {
 		return null;
 	}
 
-	private function classify_http_status( int $status_code, ?string $detail ): string {
-		if ( $status_code >= 200 && $status_code < 300 ) {
+	/**
+	 * @param mixed $decoded JSON-decoded probe body.
+	 */
+	private function classify_http_status( int $status_code, ?string $detail, mixed $decoded, ?string $typed_code ): string {
+		if ( 200 === $status_code && $this->is_ready_health_body( $decoded ) ) {
 			return ProbeOutcome::CONNECTED;
+		}
+		if ( 202 === $status_code || AbstractRecognitionProxyController::TYPED_CODE_STARTING === $typed_code ) {
+			return self::PROBE_OUTCOME_STARTING;
 		}
 		if ( 401 === $status_code ) {
 			if ( 'api key expired' === $detail ) {
@@ -873,6 +892,13 @@ class SettingsController {
 			return ProbeOutcome::SERVER_ERROR;
 		}
 		return ProbeOutcome::SERVER_ERROR;
+	}
+
+	/**
+	 * @param mixed $decoded JSON-decoded /health/detailed body.
+	 */
+	private function is_ready_health_body( mixed $decoded ): bool {
+		return is_array( $decoded ) && true === ( $decoded['ready'] ?? null );
 	}
 
 	private function is_tls_failure( string $message ): bool {

@@ -302,25 +302,21 @@ class DescribeMediaService {
 	}
 
 	/**
-	 * Optional multipart retry token. Opaque string, 1–128 chars; omitted on
-	 * first acceptance so the service can mint one. Never invent a value.
+	 * Optional multipart retry token. Read only from the form body field;
+	 * query/default params are ignored. Forwarded verbatim — no trim.
 	 */
 	private function resolve_operation_id( WP_REST_Request $request ): ?string {
-		$raw = $request->get_param( 'operation_id' );
-		if ( ! is_string( $raw ) ) {
-			$json = $request->get_json_params();
-			$raw  = is_array( $json ) ? ( $json['operation_id'] ?? null ) : null;
+		$body_params = $request->get_body_params();
+		if ( ! is_array( $body_params ) || ! array_key_exists( 'operation_id', $body_params ) ) {
+			return null;
 		}
+
+		$raw = $body_params['operation_id'];
 		if ( ! is_string( $raw ) ) {
 			return null;
 		}
 
-		$value = trim( $raw );
-		if ( '' === $value || strlen( $value ) > 128 ) {
-			return null;
-		}
-
-		return $value;
+		return $raw;
 	}
 
 	private function should_write_alt_text( WP_REST_Request $request ): bool {

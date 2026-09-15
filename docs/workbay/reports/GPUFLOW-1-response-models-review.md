@@ -71,3 +71,24 @@ Verdict: fail
 - Fix: Validate the actual multipart success envelope (including its `$ref` registry) and exercise the production multipart builder; reserve the base image schema test for legacy/non-operation payloads.
 
 Verdict: fail
+
+## Re-review r6 (38cd11e65..7b38245e3)
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| `RESPON-H-01` | `not_fixed` | The delta adds only a separate `MultipartDescribeResponse` subclass with strict fields (`responses.py:210-234`). It leaves `VisualFactsResponse` optional/omitting operation metadata (`responses.py:144-210`) and does not change the multipart route or any production builder, so the direct endpoint can still use the base model and emit a success body without the IDs required by `scene-describe-multipart.schema.json:8-17`. |
+| `GPUFLOW-1-RESPONSEMODELS-R-02` | `partially_fixed` | The new subclass prevents missing metadata only when callers explicitly choose it (`responses.py:213-234`); no hunk changes `DescribeRunResponse` or the existing VisualFacts/run builders. The earlier construction failure remains avoided by optional base/run fields, but accepted responses still carry no real operation/startup/timing values. |
+| `GPUFLOW-1-RESPONSEMODELS-R-03` | `partially_fixed` | The tests now register the run schema and exercise both dump forms for a hand-built `DescribeRunResponse` (`test_gpuflow_response_models.py:17-42,123-139`), removing the old early return. They still never call `_run_response` or another production builder; the new multipart cases also instantiate models directly (`test_gpuflow_response_models.py:212-251`). |
+| `GPUFLOW-1-RESPONSEMODELS-R-04` | `not_fixed` | The strict subclass's serializer is not wired into the endpoint: the unchanged route still declares `response_model=VisualFactsResponse` (`describe.py:328-338`), whose omission serializer remains in the delta's base model (`responses.py:144-210`). The new test even confirms that this base-shaped payload is accepted by the weaker image schema while failing the multipart schema (`test_gpuflow_response_models.py:254-263`). This remains a published success-contract break under [API-09]. |
+| `GPUFLOW-1-RESPONSEMODELS-R-05` | `partially_fixed` | The delta adds a multipart schema registry plus success/null-startup validation for synthetic `MultipartDescribeResponse` payloads (`test_gpuflow_response_models.py:17-42,212-251`). It does not exercise the production route/builder, and the base omission test still validates the invalid production shape only against the weaker image schema (`test_gpuflow_response_models.py:254-263`), so the exact R-04 wiring regression can stay green under [TEST-15]. |
+
+### FINDINGS
+
+#### GPUFLOW-1-RESPONSEMODELS-R-06 — medium
+
+- File: `apps/prototype-description-service/scene/tests/test_gpuflow_response_models.py:228-251`
+- Evidence: The negative cases at `:230` and `:232` supply `startup_id=None` while omitting `operation_id` or `timing`; the case at `:234` omits all three, so no assertion isolates the required-key behavior for `startup_id`. The positive cases at `:213-217` and `:238-243` always provide the key. A regression to `startup_id: str | None = None` would therefore leave these tests green even though the multipart success schema requires the key (nullable) at `scene-describe-multipart.schema.json:13-16`.
+- Impact: The model test suite does not prove the strict nullable-key invariant and can certify a payload shape that violates the published multipart contract; this is a downstream correctness gap under [TEST-15].
+- Fix: Add a case that supplies `operation_id` and `timing` while omitting `startup_id`, and assert `ValidationError`; retain the explicit `startup_id=None` success case.
+
+Verdict: fail

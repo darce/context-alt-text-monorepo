@@ -38,3 +38,17 @@ Fix: Return `null` for negative values as well as non-finite/non-number values, 
 - Changed-path check over `.review/CHANGE.diff`: exactly the two declared SPA-owned source/test paths.
 - `lane_root="$(git rev-parse --show-toplevel)"; resolved_python="$lane_root/.venv/bin/python"; "$resolved_python" -m pytest scripts/tests/test_composer_lock_tracked.py -q -p no:cacheprovider` — 1 passed.
 - The lane row’s Vitest command is `vitest run`; it was not executable in this sandbox because `apps/prototype-wp-alt-context/node_modules/.bin/vitest` is absent. No SPA test pass is claimed.
+
+## Re-review r2 (39332bdba..06469a0d7)
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| GPUFLOW-1-SPADESCRIBECLIENT-R-01 | fixed | The fix changes `VisualFactsResponse.operation_id` to an optional non-null string and passes `allowNull=false` to `validateOptionalOpaqueId` (`.review/CHANGE.diff:103-120`). The updated test rejects an explicit `operation_id: null` while retaining the absent-key case (`.review/CHANGE.diff:8-24`). This restores the published success-envelope type boundary ([API-09]). |
+| GPUFLOW-1-SPADESCRIBECLIENT-R-02 | fixed | The numeric resolver now rejects non-numbers, non-finite values, and negatives, while preserving zero (`.review/CHANGE.diff:127-149`). The added regressions cover `-3` and `-0` (`.review/CHANGE.diff:33-45`), matching the nonnegative ETA contract ([API-09], [TEST-15]). |
+| GPUFLOW-1-SPADESCRIBECLIENT-H-01 | fixed | The contract test mirrors `operation_id`, `startup_id`, and `timing` alongside `deadline_seconds`, asserts their schema/TS types, and checks the required-plus-optional total of 16 (`.review/CHANGE.diff:52-93`). |
+
+### FINDINGS
+
+FINDINGS: []
+
+Verdict: pass

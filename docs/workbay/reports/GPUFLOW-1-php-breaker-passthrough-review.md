@@ -86,3 +86,37 @@ Fix: Move these tests to the lane that owns them or update the orchestration own
 - Changed-path audit: 8 paths in the delta; 4 are in the declared production/fixture owned list and 4 are PHPUnit files outside it.
 - Required lock verification passed with the lane interpreter: `.venv/bin/python -m pytest scripts/tests/test_composer_lock_tracked.py -q -p no:cacheprovider` — `1 passed`.
 - The lane-row PHPUnit command was not executable in this sandbox because neither `apps/prototype-wp-alt-context/vendor/bin/phpunit` nor repository `vendor/bin/phpunit` exists. The diff does add the requested Proxy/DescribeMedia/Settings tests and fixture, but no PHPUnit pass is claimed.
+
+## Re-review r2 (0adafea11..872dcb23b)
+
+VERIFIED: {"GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-03":"fixed","GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-04":"partially_fixed","GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-05":"partially_fixed","GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-06":"fixed","GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-07":"not_fixed"}
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-03 | fixed | `class-abstract-recognition-proxy-controller.php:646-669` adds `operation_id`, `startup_id`, and all five timing fields to the locally generated describe unavailable envelope; `ProxyRequestTest.php:1715-1749` checks the complete key set and pre-accept null IDs. |
+| GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-04 | partially_fixed | `class-abstract-recognition-proxy-controller.php:567-611` now checks status, nested code/message, ID presence/types, timing array presence, ETA numeric/nonnegative shape, and an integer Retry-After. It still accepts an empty/wrong-shaped timing object, does not enforce ID bounds or Retry-After [1,120], and rejects the contract-permitted null ETA; `ProxyRequestTest.php:1598-1637` does not cover those cases. |
+| GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-05 | partially_fixed | `class-settings-controller.php:866-902` stops treating every 2xx as connected and requires `ready:true` for a 200 health response; however `:810-839` still POSTs `{"action":"start"}` for 404 or typed unavailable health results, and `SettingsControllerTest.php:1233-1266` asserts the unavailable path makes that lifecycle call. |
+| GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-06 | fixed | `class-describe-media-service.php:308-319` reads only `get_body_params()` and returns the string without trimming; `DescribeMediaServiceTest.php:1423-1483` covers query exclusion, byte-for-byte body forwarding, and non-string omission. |
+| GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-07 | not_fixed | The fix delta still changes the four PHPUnit paths outside the four declared production/fixture paths: `DescribeMediaServiceTest.php`, `ProxyRequestTest.php`, `RetentionControllerTest.php`, and `SettingsControllerTest.php`. |
+
+### FINDINGS
+
+#### GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-08 — high
+
+File: `apps/prototype-wp-alt-context/src/api/class-settings-controller.php:870-871`; downstream `apps/prototype-wp-alt-context/js/admin/api/settingsApi.ts:122-141` and `js/admin/pages/settings/testConnectionBanner.ts:38-43`
+
+Evidence: The fix introduces the new wire outcome `starting` via `PROBE_OUTCOME_STARTING` and returns it for HTTP 202 or typed starting responses, but the SPA's `TestConnectionOutcome` object and `KNOWN_TEST_CONNECTION_OUTCOMES` contain no `starting` member. `renderBanner()` therefore routes the valid response to `unknownOutcomeBanner()` instead of a starting state. This is a published enum change with a strict consumer and violates [API-09].
+
+#### GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-09 — medium
+
+File: `apps/prototype-wp-alt-context/src/api/services/class-describe-media-service.php:308-319`; contract `packages/shared-contracts/schemas/scene-describe-multipart.schema.json:98-109`
+
+Evidence: The replacement resolver returns every string present in the body, but removes the previous empty-string and 128-character upper-bound checks. The request contract requires a nonempty opaque `operation_id` of at most 128 characters, so empty or overlong body fields are now forwarded as contract-invalid retry tokens.
+
+#### GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-10 — medium
+
+File: `apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php:646-665`; regression `apps/prototype-wp-alt-context/tests/Unit/ProxyRequestTest.php:1715-1745`
+
+Evidence: A locally generated open-breaker error has no accepted operation and no measured upstream work, yet `open_circuit_local_timing()` reports `queue_ms`, `ramp_up_ms`, `processing_ms`, and `server_elapsed_ms` as zero. The timing contract says unknown/untimed values are null and zeroes must not be invented; the new test codifies the fabricated zeroes instead of catching them.
+
+Verdict: fail

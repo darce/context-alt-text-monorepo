@@ -632,7 +632,7 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 			return false;
 		}
 
-		if ( ! array_key_exists( 'operation_id', $detail ) || ! $this->is_nullable_opaque_id( $detail['operation_id'] ) ) {
+		if ( ! array_key_exists( 'operation_id', $detail ) || ! $this->is_opaque_id( $detail['operation_id'] ) ) {
 			return false;
 		}
 
@@ -657,18 +657,24 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 	}
 
 	/**
-	 * Opaque ids are string|null; strings must be non-empty and <= 128 chars.
+	 * Opaque ids are non-empty strings of at most 128 bytes.
+	 * Typed error `detail.operation_id` is never null.
 	 */
-	private function is_nullable_opaque_id( mixed $value ): bool {
-		if ( null === $value ) {
-			return true;
-		}
+	private function is_opaque_id( mixed $value ): bool {
 		if ( ! is_string( $value ) ) {
 			return false;
 		}
 		$length = strlen( $value );
 
 		return $length >= 1 && $length <= 128;
+	}
+
+	/**
+	 * Opaque ids are string|null; strings must be non-empty and <= 128 bytes.
+	 * Used for `startup_id` only.
+	 */
+	private function is_nullable_opaque_id( mixed $value ): bool {
+		return null === $value || $this->is_opaque_id( $value );
 	}
 
 	/**

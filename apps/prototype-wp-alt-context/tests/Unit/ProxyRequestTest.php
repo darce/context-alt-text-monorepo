@@ -1666,6 +1666,11 @@ PHP;
                 'headers' => ['Retry-After' => '5'],
                 'body' => json_encode(['detail' => $overlongId]),
             ]],
+            'null_operation_id' => [[
+                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+                'headers' => ['Retry-After' => '5'],
+                'body' => json_encode(['detail' => array_merge($validDetail, ['operation_id' => null])]),
+            ]],
             'retry_after_zero' => [[
                 'response' => ['code' => 503, 'message' => 'Service Unavailable'],
                 'headers' => ['Retry-After' => '0'],
@@ -1731,6 +1736,38 @@ PHP;
         $this->assertInstanceOf(WP_REST_Response::class, $second);
         $this->assertFalse(get_transient($describeCircuit), 'null warmup_eta_seconds is contract-valid warming');
         $this->assertFalse(get_transient($describeFailures), 'null ETA warming must not increment describe');
+    }
+
+    public function testNullOperationIdStartingEnvelopeIsNotWarmingExempt(): void
+    {
+        global $wpdb;
+        $wpdb->mockVar = '1';
+
+        $harness = $this->makeFamilyHarness();
+        $describeCircuit = $this->familyCircuitKey($harness->resolvedBaseUrl(), 'describe');
+        $describeFailures = $this->familyFailureKey($harness->resolvedBaseUrl(), 'describe');
+
+        $valid = $this->validatedWarmingHttp();
+        $this->queueHttpResponse($valid);
+        $this->queueHttpResponse($valid);
+        $harness->call('POST', '/scene/describe/multipart', 'description');
+        $harness->call('POST', '/scene/describe/multipart', 'description');
+        $this->assertFalse(get_transient($describeCircuit), 'valid operation_id warming remains exempt');
+        $this->assertFalse(get_transient($describeFailures), 'valid operation_id warming must not increment describe');
+
+        $nullId = $valid;
+        $body = json_decode((string) $valid['body'], true);
+        $this->assertIsArray($body);
+        $body['detail']['operation_id'] = null;
+        $nullId['body'] = json_encode($body);
+
+        $this->queueHttpResponse($nullId);
+        $this->queueHttpResponse($nullId);
+        $harness->call('POST', '/scene/describe/multipart', 'description');
+        $harness->call('POST', '/scene/describe/multipart', 'description');
+
+        $this->assertNotFalse(get_transient($describeCircuit), 'null operation_id starting envelope must open describe');
+        $this->assertNotFalse(get_transient($describeFailures), 'null operation_id must increment describe failures');
     }
 
     /**

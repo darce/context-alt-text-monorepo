@@ -92,6 +92,9 @@ class SettingsControllerTest extends TestCase
 
         $this->assertTrue($data['allow_person_names']);
         $this->assertNull($data['allow_person_names_error']);
+        $this->assertSame(200, $data['allow_person_names_status']);
+        $this->assertNull($data['allow_person_names_code']);
+        $this->assertSame('Description Service', $data['description_service_title']);
         $calls = $this->getHttpCalls();
         $this->assertCount(1, $calls);
         $this->assertSame('https://api.example.com/recognition/tenant/naming-agreement', $calls[0]['url']);
@@ -112,6 +115,36 @@ class SettingsControllerTest extends TestCase
 
         $this->assertNull($data['allow_person_names']);
         $this->assertSame('Connection refused', $data['allow_person_names_error']);
+        $this->assertNull($data['allow_person_names_status']);
+        $this->assertSame('http_request_failed', $data['allow_person_names_code']);
+        $this->assertSame('Description Service', $data['description_service_title']);
+    }
+
+    public function testGetSettingsReportsUpstreamNamingStatusAndTypedCode(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $this->setOption('acx_recognition_url', 'https://api.example.com');
+        $this->setOption('acx_recognition_api_key', 'test-key');
+        $this->queueHttpResponse([
+            'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+            'headers' => ['Retry-After' => '7'],
+            'body' => json_encode([
+                'detail' => [
+                    'code' => 'description_service_starting',
+                    'message' => 'Description service is starting.',
+                    'warmup_eta_seconds' => 7,
+                ],
+            ]),
+        ]);
+
+        $data = $this->controller
+            ->get_settings(new WP_REST_Request('GET', '/acx/v1/settings'))
+            ->get_data();
+
+        $this->assertNull($data['allow_person_names']);
+        $this->assertSame('Description service is starting.', $data['allow_person_names_error']);
+        $this->assertSame(503, $data['allow_person_names_status']);
+        $this->assertSame('description_service_starting', $data['allow_person_names_code']);
     }
 
     /**
@@ -1110,6 +1143,43 @@ class SettingsControllerTest extends TestCase
         $this->assertSame(200, $data['status_code']);
         $this->assertArrayNotHasKey('connected', $data);
         $this->assertArrayNotHasKey('error', $data);
+    }
+
+    public function testProbe404StartsDescriptionServiceViaLifecycleEndpoint(): void
+    {
+        $this->configureProbe();
+        $this->queueHttpResponse([
+            'response' => ['code' => 404, 'message' => 'Not Found'],
+            'body' => '{"detail":"Not Found"}',
+        ]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+            'headers' => ['Retry-After' => '9'],
+            'body' => json_encode([
+                'detail' => [
+                    'code' => 'description_service_starting',
+                    'message' => 'Description service is starting.',
+                    'warmup_eta_seconds' => 9,
+                ],
+            ]),
+        ]);
+
+        $data = $this->controller
+            ->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'))
+            ->get_data();
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(2, $calls);
+        $this->assertStringEndsWith('/health/detailed', $calls[0]['url']);
+        $this->assertStringEndsWith('/scene/gpu/intent', $calls[1]['url']);
+        $this->assertSame('POST', $calls[1]['method']);
+        $this->assertSame('{"action":"start"}', $calls[1]['args']['body'] ?? null);
+        $this->assertSame('description_service_starting', $data['code'] ?? null);
+        $this->assertSame(9, $data['warmup_eta_seconds'] ?? null);
+        $this->assertSame(9, $data['retry_after_seconds'] ?? null);
+        $this->assertSame(503, $data['status_code'] ?? null);
+        $this->assertSame('Description service is starting.', $data['detail'] ?? null);
+        $this->assertStringEndsWith('/scene/gpu/intent', (string) ($data['probed_url'] ?? ''));
     }
 
     /**

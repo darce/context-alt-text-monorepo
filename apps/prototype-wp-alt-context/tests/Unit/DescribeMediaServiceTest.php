@@ -1356,6 +1356,99 @@ class DescribeMediaServiceTest extends TestCase
     }
 
     /**
+     * @dataProvider gpuflowDescribeWireCases
+     */
+    #[DataProvider('gpuflowDescribeWireCases')]
+    public function testGpuflowWirePairsPassThroughVerbatim(string $case): void
+    {
+        $fixture = $this->gpuflowDescribeWire($case);
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+
+        $headers = [];
+        foreach (($fixture['response']['headers'] ?? []) as $name => $value) {
+            $headers[$name] = $value;
+        }
+        $this->queueHttpResponse([
+            'response' => ['code' => $fixture['response']['status'], 'message' => 'OK'],
+            'headers' => $headers,
+            'body' => (string) json_encode($fixture['response']['body']),
+        ]);
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $req->set_param('media_id', 42);
+        $operationId = $fixture['request']['operation_id'] ?? null;
+        if (is_string($operationId)) {
+            $req->set_param('operation_id', $operationId);
+        }
+
+        $result = $this->controller->describe_media($req);
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $this->assertSame($fixture['response']['status'], $result->get_status());
+        $this->assertSame($fixture['response']['body'], $result->get_data());
+        if (isset($headers['Retry-After'])) {
+            $this->assertSame($headers['Retry-After'], $result->get_headers()['Retry-After'] ?? null);
+        } else {
+            $this->assertArrayNotHasKey('Retry-After', $result->get_headers());
+        }
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $body = $calls[0]['args']['body'];
+        $this->assertIsString($body);
+        if (is_string($operationId)) {
+            $this->assertStringContainsString('name="operation_id"', $body);
+            $this->assertStringContainsString($operationId, $body);
+        } else {
+            $this->assertStringNotContainsString('name="operation_id"', $body);
+        }
+    }
+
+    public function testOmittedOperationIdIsNotInventedOnRetryField(): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => (string) json_encode($this->validBackendBody(42)),
+        ]);
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $req->set_param('media_id', 42);
+        $this->controller->describe_media($req);
+
+        $body = $this->getHttpCalls()[0]['args']['body'];
+        $this->assertIsString($body);
+        $this->assertStringNotContainsString('name="operation_id"', $body);
+    }
+
+    /**
+     * @return array<string, array{0: string}>
+     */
+    public static function gpuflowDescribeWireCases(): array
+    {
+        return [
+            'success_warm' => ['success_warm'],
+            'success_omitted_timing' => ['success_omitted_timing'],
+            'starting' => ['starting'],
+            'unavailable' => ['unavailable'],
+            'service_error' => ['service_error'],
+            'operation_mismatch' => ['operation_mismatch'],
+            'operation_expired' => ['operation_expired'],
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function gpuflowDescribeWire(string $case): array
+    {
+        $path = __DIR__ . '/../../src/api/tests/fixtures/gpuflow-describe-wire.json';
+        $decoded = json_decode((string) file_get_contents($path), true);
+        $this->assertIsArray($decoded);
+        $this->assertArrayHasKey($case, $decoded);
+        return $decoded[$case];
+    }
+
+    /**
      * BR-02: alt write failure → status not written/forced_overwrite, provenance
      * not stamped. Assert storage.
      */

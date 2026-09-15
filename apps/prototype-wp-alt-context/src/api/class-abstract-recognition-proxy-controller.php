@@ -25,9 +25,13 @@ use function esc_url_raw;
 use function get_transient;
 use function get_option;
 use function in_array;
+use function is_array;
+use function is_string;
 use function is_wp_error;
+use function ltrim;
 use function md5;
 use function set_transient;
+use function str_starts_with;
 use function strtotime;
 use function strtolower;
 use function time;
@@ -51,6 +55,16 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 	 * and status so blob response behaviour stays identical (R6L-BR-04 / [sr-007]).
 	 */
 	public const ERROR_CODE_BLOB_REDIRECT_REFUSED = 'recognition_blob_redirect_refused';
+
+	public const TYPED_CODE_STARTING            = 'description_service_starting';
+	public const TYPED_CODE_UNAVAILABLE         = 'description_service_unavailable';
+	public const TYPED_CODE_ERROR               = 'description_service_error';
+	public const TYPED_CODE_OPERATION_MISMATCH  = 'operation_mismatch';
+	public const TYPED_CODE_OPERATION_EXPIRED   = 'operation_expired';
+
+	public const ROUTE_FAMILY_DESCRIBE = 'describe';
+	public const ROUTE_FAMILY_UI_READ  = 'ui_read';
+	public const ROUTE_FAMILY_CONTROL  = 'control';
 
 	private ?RecognitionProxyPolicy $proxy_policy = null;
 	private ?RecognitionEndpointResolver $endpoint_resolver = null;
@@ -112,16 +126,16 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 		}
 		$headers['X-API-Key'] = $api_key;
 
-		$policy = $this->get_proxy_policy()->resolve( $method, $request_class );
-		$circuit_key = $this->build_circuit_breaker_key( $base_url );
-		$failure_key = RecognitionCircuitKeys::failure_key_for_base_url( $base_url );
+		$policy       = $this->get_proxy_policy()->resolve( $method, $request_class );
+		$route_family = $this->classify_proxy_route_family( $path );
+		if ( self::ROUTE_FAMILY_DESCRIBE === $route_family ) {
+			$policy['circuit_enabled'] = true;
+		}
+		$circuit_key = $this->build_circuit_breaker_key( $base_url, $route_family );
+		$failure_key = $this->build_failure_key( $base_url, $route_family );
 
 		if ( $policy['circuit_enabled'] && false !== get_transient( $circuit_key ) ) {
-			return new WP_Error(
-				'recognition_circuit_open',
-				'Recognition service temporarily unavailable; try again shortly.',
-				array( 'status' => 503 )
-			);
+			return $this->open_circuit_response( $route_family );
 		}
 
 		if ( 'multipart' === $body_kind ) {
@@ -197,12 +211,23 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 				);
 			}
 
-			if ( $status >= 500 ) {
+			$response_headers = wp_remote_retrieve_headers( $response );
+			$response_body    = wp_remote_retrieve_body( $response );
+			$decoded          = json_decode( $response_body, true );
+			$typed_code       = $this->typed_operation_error_code( $decoded );
+			$is_typed_warmup  = $this->is_validated_warming_response( $status, $typed_code );
+			$is_typed_unavail = $this->is_typed_unavailable_response( $status, $typed_code );
+
+			// Validated warming and typed unavailable are not breaker failures
+			// and must pass through unchanged (never collapsed to 500).
+			if ( ! $is_typed_warmup && ! $is_typed_unavail && $status >= 500 ) {
 				$this->record_proxy_failure( $policy, $failure_key, $circuit_key );
 			}
 
-			$response_headers = wp_remote_retrieve_headers( $response );
-			if ( $status >= 500 && ! $this->is_backend_retry_after( $status, $response_headers ) && $attempt < $max_retries - 1 ) {
+			$skip_retry = $is_typed_warmup
+				|| $is_typed_unavail
+				|| $this->is_backend_retry_after( $status, $response_headers );
+			if ( $status >= 500 && ! $skip_retry && $attempt < $max_retries - 1 ) {
 				$delay_ms = $base_delay_ms * ( 2 ** $attempt );
 				usleep( $delay_ms * 1000 );
 				continue;
@@ -212,9 +237,7 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 				$this->record_proxy_success( $policy, $failure_key, $circuit_key );
 			}
 
-			$response_body    = wp_remote_retrieve_body( $response );
-			$decoded          = json_decode( $response_body, true );
-			$rewritten_body   = BlobUrlRewriter::rewrite( $decoded );
+			$rewritten_body = BlobUrlRewriter::rewrite( $decoded );
 			return new WP_REST_Response( $rewritten_body, $status, $this->normalize_response_headers( $response_headers ) );
 		}
 
@@ -481,8 +504,81 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 		return $normalized;
 	}
 
-	private function build_circuit_breaker_key( string $base_url ): string {
-		return RecognitionCircuitKeys::for_base_url( $base_url );
+	private function classify_proxy_route_family( string $path ): string {
+		$normalized = '/' . ltrim( strtolower( trim( $path ) ), '/' );
+		if ( str_starts_with( $normalized, '/scene/describe' ) ) {
+			return self::ROUTE_FAMILY_DESCRIBE;
+		}
+		if ( str_starts_with( $normalized, '/scene/gpu' ) ) {
+			return self::ROUTE_FAMILY_CONTROL;
+		}
+
+		return self::ROUTE_FAMILY_UI_READ;
+	}
+
+	private function build_circuit_breaker_key( string $base_url, string $route_family ): string {
+		return RecognitionCircuitKeys::for_base_url( $base_url ) . '_' . $route_family;
+	}
+
+	private function build_failure_key( string $base_url, string $route_family ): string {
+		return RecognitionCircuitKeys::failure_key_for_base_url( $base_url ) . '_' . $route_family;
+	}
+
+	/**
+	 * @param mixed $decoded JSON-decoded upstream body.
+	 */
+	private function typed_operation_error_code( mixed $decoded ): ?string {
+		if ( ! is_array( $decoded ) ) {
+			return null;
+		}
+
+		$detail = $decoded['detail'] ?? null;
+		if ( ! is_array( $detail ) ) {
+			return null;
+		}
+
+		$code = $detail['code'] ?? null;
+		if ( ! is_string( $code ) || '' === trim( $code ) ) {
+			return null;
+		}
+
+		$allowed = array(
+			self::TYPED_CODE_STARTING,
+			self::TYPED_CODE_UNAVAILABLE,
+			self::TYPED_CODE_ERROR,
+			self::TYPED_CODE_OPERATION_MISMATCH,
+			self::TYPED_CODE_OPERATION_EXPIRED,
+		);
+
+		return in_array( $code, $allowed, true ) ? $code : null;
+	}
+
+	private function is_validated_warming_response( int $status, ?string $typed_code ): bool {
+		return 503 === $status && self::TYPED_CODE_STARTING === $typed_code;
+	}
+
+	private function is_typed_unavailable_response( int $status, ?string $typed_code ): bool {
+		return 503 === $status && self::TYPED_CODE_UNAVAILABLE === $typed_code;
+	}
+
+	private function open_circuit_response( string $route_family ): WP_REST_Response|WP_Error {
+		if ( self::ROUTE_FAMILY_DESCRIBE === $route_family ) {
+			return new WP_REST_Response(
+				array(
+					'detail' => array(
+						'code'    => self::TYPED_CODE_UNAVAILABLE,
+						'message' => 'Description service temporarily unavailable; try again shortly.',
+					),
+				),
+				503
+			);
+		}
+
+		return new WP_Error(
+			'recognition_circuit_open',
+			'Recognition service temporarily unavailable; try again shortly.',
+			array( 'status' => 503 )
+		);
 	}
 
 	/**

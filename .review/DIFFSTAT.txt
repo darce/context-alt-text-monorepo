@@ -1,3 +1,7 @@
- .../js/admin/pages/settings/GpuControlCard.tsx     | 20 +++++--
- .../settings/__tests__/GpuControlCard.test.tsx     | 70 +++++++++++++++++-----
- 2 files changed, 68 insertions(+), 22 deletions(-)
+ .../interface_adapters/http/routers/describe.py    | 506 ++++++++++++++++++++-
+ .../scene/tests/fixtures/gpuflow-multipart.json    |  36 ++
+ .../scene/tests/test_describe_eligibility.py       |  10 +-
+ .../scene/tests/test_describe_route.py             | 232 +++++++++-
+ .../scene/tests/test_gpuflow_response_models.py    |   2 +
+ .../scene/tests/test_shared_schema_multipart.py    | 119 +++++
+ 6 files changed, 876 insertions(+), 29 deletions(-)

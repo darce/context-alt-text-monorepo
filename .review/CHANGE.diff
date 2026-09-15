@@ -1,144 +1,1129 @@
-diff --git a/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx b/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx
---- a/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx
-+++ b/apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx
-@@ -85,8 +85,11 @@ const formatWarmupEta = (data: GpuStatusResponse): string => {
+diff --git a/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py b/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py
+--- a/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py
++++ b/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py
+@@ -9,12 +9,18 @@ ObjectStore staging, which is the S9 ``local_cpu`` async path. Mounted at
  
- const intentLabel = (data: GpuStatusResponse): string => {
-   const { intent, intent_status: intentStatus } = data.gpu_state;
--  if (intentStatus === GpuIntentStatus.BLOCKED_WORK_IN_FLIGHT) {
--    return 'Stop pending — a describe run is in flight; the service stops when it ends.';
-+  if (
-+    intentStatus === GpuIntentStatus.BLOCKED_WORK_IN_FLIGHT ||
-+    (intent === GpuIntentAction.STOP && data.load.has_work)
-+  ) {
-+    return 'Stopping after the current work finishes';
-   }
-   if (intent === GpuIntentAction.AUTO) {
-     return data.snapshot_fresh
-@@ -345,10 +348,15 @@ export const GpuControlCard = (): React.JSX.Element => {
-           {confirmation === GpuIntentAction.STOP ? (
-             <div id="z-stop-preview" data-testid="z-stop-preview" className="notice inline notice-warning">
-               <p>
--                {__(
--                  'Requests shutdown when idle. If a describe run is in flight, shutdown is deferred. The service run limit can still stop the service to limit costs.',
--                  'alt-context',
--                )}
-+                {data.load.has_work
-+                  ? __(
-+                      'Stopping after the current work finishes. The service run limit can still stop the service to limit costs.',
-+                      'alt-context',
-+                    )
-+                  : __(
-+                      'Requests shutdown when idle. If a describe run is in flight, shutdown is deferred. The service run limit can still stop the service to limit costs.',
-+                      'alt-context',
-+                    )}
-               </p>
-               <div id="z-stop-actions" data-testid="z-stop-actions">
-                 <button
-diff --git a/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx b/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx
---- a/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx
-+++ b/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx
-@@ -38,6 +38,8 @@ const statusResponse = (overrides: Partial<GpuStatusResponse['gpu_state']> = {})
-   server_time: '2026-09-07T12:00:00Z',
- });
+ from __future__ import annotations
  
-+const STOPPABLE_STATES = new Set(['starting', 'warming', 'ready', 'degraded']);
++import hashlib
+ import json
+ import logging
++import math
+ import os
++import time
+ import uuid
+ from dataclasses import dataclass
++from datetime import UTC, datetime
++from pathlib import Path
+ from threading import Lock
++from collections.abc import Mapping
+ from typing import Any
+ 
+ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+@@ -34,8 +40,12 @@ from recognition.interface_adapters.http.middleware.metrics import get_default_m
+ from recognition.shared.db.dialect import is_postgres
+ from scene.application.describe_async_worker import run_async_describe_job
+ from scene.application.describe_load import load_snapshot, resolve_load_path, write_load_snapshot
++from scene.application.describe_operation_repository import DescribeOperationRepository
+ from scene.application.describe_run_repository import DescribeRunRepository
+ from scene.application.description_repository import ImageDescriptionRepository
++from scene.application.gpu_intent import IntentAction, read_gpu_intent, resolve_gpu_intent_path
++from scene.application.gpu_state import GpuState, read_gpu_state, resolve_gpu_state_path
++from scene.application.hashing import compute_context_hash, compute_image_hash
+ from scene.application.naming_preview_service import (
+     faces_for_naming_preview as _faces_for_naming_preview,
+ )
+@@ -50,12 +60,16 @@ from scene.application.visual_facts_service import VisualFactsService
+ from scene.config.settings import DescriptionSettings
+ from scene.domain.describe_run import (
+     DescribeJobStatus,
++    OperationExpiredError,
++    OperationMismatchError,
+     RunKind,
+     describe_job_error,
+     describe_job_status,
++    utc_observation,
+ )
+ from scene.domain.description import DescriptionAdapterKind
+ from scene.infrastructure.provider.hosted_provider_adapter import HostedProviderError
++from scene.infrastructure.vlm.gpu_remote_adapter import GpuRemoteAdapterError
+ from scene.infrastructure.vlm.unavailable_adapter import DescriptionAdapterUnavailableError
+ from scene.interface_adapters.http.deps import (
+     get_async_gpu_description_adapter,
+@@ -64,7 +78,11 @@ from scene.interface_adapters.http.deps import (
+     get_gpu_description_adapter,
+ )
+ from scene.interface_adapters.http.schemas.requests import DescribeImageEnvelope
+-from scene.interface_adapters.http.schemas.responses import DescribeJobResult, VisualFactsResponse
++from scene.interface_adapters.http.schemas.responses import (
++    DescribeJobResult,
++    DescribeTiming,
++    MultipartDescribeResponse,
++)
+ 
+ router = APIRouter(tags=["describe"])
+ 
+@@ -74,6 +92,16 @@ _IMAGE_KEY_PREFIX = "image_"
+ # Defaults match the former volatile store (256 MiB retained / 1000 jobs).
+ _DEFAULT_MAX_PENDING_JOBS = 1000
+ _DEFAULT_MAX_RETAINED_IMAGE_BYTES = 256 * 1024 * 1024
++_PUBLIC_RETRY_AFTER_CEILING = 120
++_DEFAULT_LEASE_SECONDS = 180.0
++_MAX_LEASE_REASON = "lease_cap"
++_UNTIMED = DescribeTiming(
++    queue_ms=None,
++    ramp_up_ms=None,
++    processing_ms=None,
++    startup_ms=None,
++    server_elapsed_ms=None,
++)
+ 
+ 
+ class AsyncAdmissionGate:
+@@ -147,6 +175,7 @@ class ValidatedDescribeMultipart:
+     tenant_uuid: uuid.UUID
+     image_bytes: bytes
+     context: dict[str, Any] | None
++    operation_id: str | None
+ 
+ 
+ class _DescriptionAuditSink:
+@@ -228,6 +257,140 @@ def _generation_timeout_seconds(settings: DescriptionSettings, adapter) -> float
+     return settings.generation_timeout_seconds
+ 
+ 
++def _lease_seconds() -> float:
++    raw = os.environ.get("ACX_DESCRIBE_LEASE_SECONDS")
++    if raw is None or raw == "":
++        seconds = _DEFAULT_LEASE_SECONDS
++    else:
++        try:
++            seconds = float(raw)
++        except ValueError as exc:
++            raise RuntimeError(f"ACX_DESCRIBE_LEASE_SECONDS={raw!r} is not a number") from exc
++    if not math.isfinite(seconds) or seconds <= _PUBLIC_RETRY_AFTER_CEILING:
++        raise RuntimeError(
++            "ACX_DESCRIBE_LEASE_SECONDS must be finite and greater than the "
++            f"{_PUBLIC_RETRY_AFTER_CEILING}s Retry-After ceiling"
++        )
++    return seconds
 +
- const mockControl = (data: GpuStatusResponse, overrides: Partial<ReturnType<typeof gpuControl.useGpuControl>> = {}) => {
-   useGpuControlMock.mockReturnValue({
-     data,
-@@ -47,12 +49,12 @@ const mockControl = (data: GpuStatusResponse, overrides: Partial<ReturnType<type
-     refetch: vi.fn(),
-     canStart: data.gpu_state.state === 'stopped',
-     startBlockedReason: null,
--    canStop: data.gpu_state.state !== 'stopped' && !data.load.has_work,
-+    canStop: STOPPABLE_STATES.has(data.gpu_state.state) && data.gpu_state.intent !== GPU_INTENT_ACTION.STOP,
-     stopBlockedReason:
-       data.gpu_state.state === 'stopped'
-         ? 'already stopped'
--        : data.load.has_work
--          ? 'a describe run is in flight — stops once it finishes'
-+        : data.gpu_state.intent === GPU_INTENT_ACTION.STOP
-+          ? 'stop already requested'
-           : null,
-     canReturnToAuto: data.gpu_state.intent !== GPU_INTENT_ACTION.AUTO,
-     requestIntent: vi.fn(),
-@@ -176,29 +178,65 @@ describe('GpuControlCard', () => {
-     expect(screen.getByText(/polling every 5 s/)).toBeInTheDocument();
-   });
- 
--  it('disables Stop with the work-in-flight reason', () => {
--    mockControl(statusResponse({ state: 'ready' }), {
--      canStop: false,
--      stopBlockedReason: 'a describe run is in flight — stops once it finishes',
--    });
--    render(<GpuControlCard />);
-+  it('keeps Stop enabled during work in flight and shows deferred-stop copy', () => {
-+    const requestIntent = vi.fn();
-+    const busy = {
-+      ...statusResponse({
-+        state: 'ready',
-+        instance_running_since: '2026-09-07T11:59:00Z',
-+      }),
-+      load: { has_work: true, written_at: 1_700_000_004, fresh: true },
-+    };
-+    mockControl(busy, { requestIntent });
-+    const { rerender } = render(<GpuControlCard />);
- 
--    expect(screen.getByRole('button', { name: /Stop service/ })).toHaveAttribute('aria-disabled', 'true');
--    expect(screen.getByText(/a describe run is in flight/)).toBeInTheDocument();
-+    const stop = screen.getByRole('button', { name: /Stop service/ });
-+    expect(stop).not.toHaveAttribute('disabled');
-+    expect(stop).not.toHaveAttribute('aria-disabled');
-+    fireEvent.click(stop);
-+    expect(screen.getByText(/Stopping after the current work finishes/)).toBeInTheDocument();
-+    fireEvent.click(screen.getByRole('button', { name: 'Confirm stop' }));
-+    expect(requestIntent).toHaveBeenCalledWith(GPU_INTENT_ACTION.STOP);
 +
-+    mockControl(
-+      {
-+        ...busy,
-+        gpu_state: {
-+          ...busy.gpu_state,
-+          intent: GPU_INTENT_ACTION.STOP,
-+          intent_status: GPU_INTENT_STATUS.BLOCKED_WORK_IN_FLIGHT,
++def _optional_operation_id(form: FormData) -> str | None:
++    raw = form.get("operation_id")
++    if raw is None:
++        return None
++    if isinstance(raw, UploadFile):
++        body = raw.file.read()
++        text = body.decode("utf-8") if isinstance(body, (bytes, bytearray)) else str(body)
++    elif isinstance(raw, (bytes, bytearray)):
++        text = bytes(raw).decode("utf-8")
++    else:
++        text = str(raw)
++    stripped = text.strip()
++    return stripped or None
++
++
++def _multipart_request_digest(*, media_id: int, image_bytes: bytes, context: Mapping[str, Any] | None) -> str:
++    canonical = json.dumps(
++        {
++            "media_id": int(media_id),
++            "image_hash": compute_image_hash(image_bytes),
++            "context_hash": compute_context_hash(context),
 +        },
-+      },
-+      { requestIntent },
-+    );
-+    rerender(<GpuControlCard />);
-+    expect(screen.getByText(`Service: ${GPU_STATE_VOCABULARY.ready}`)).toBeInTheDocument();
-+    expect(screen.getByText(/Stopping after the current work finishes/)).toBeInTheDocument();
-   });
- 
-   it('renders a pending stop notice for blocked work', () => {
--    mockControl(
--      statusResponse({
-+    mockControl({
-+      ...statusResponse({
-         state: 'degraded',
-         intent: GPU_INTENT_ACTION.STOP,
-         intent_status: GPU_INTENT_STATUS.BLOCKED_WORK_IN_FLIGHT,
-       }),
--    );
-+      load: { has_work: true, written_at: 1_700_000_004, fresh: true },
-+    });
-     render(<GpuControlCard />);
- 
--    expect(screen.getByText(/Stop pending/)).toBeInTheDocument();
--    expect(screen.getByText(/stops when it ends/)).toBeInTheDocument();
-+    expect(screen.getByText(/Stopping after the current work finishes/)).toBeInTheDocument();
-+    expect(screen.getByText(`Service: ${GPU_STATE_VOCABULARY.degraded}`)).toBeInTheDocument();
-+  });
++        separators=(",", ":"),
++        sort_keys=True,
++    )
++    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 +
-+  it('disables Stop when the service is already stopped or unknown', () => {
-+    mockControl(statusResponse({ state: 'unknown' }));
-+    const { rerender } = render(<GpuControlCard />);
-+    expect(screen.getByRole('button', { name: /Stop service/ })).toHaveAttribute('aria-disabled', 'true');
 +
-+    mockControl(statusResponse({ state: 'stopped' }));
-+    rerender(<GpuControlCard />);
-+    expect(screen.getByRole('button', { name: /Stop service/ })).toHaveAttribute('aria-disabled', 'true');
-   });
++def _timing_payload(timing: DescribeTiming) -> dict[str, float | None]:
++    return timing.model_dump(mode="json")
++
++
++def _typed_describe_error(
++    *,
++    status_code: int,
++    code: str,
++    message: str,
++    operation_id: str,
++    startup_id: str | None,
++    timing: DescribeTiming,
++    warmup_eta_seconds: float | None = None,
++    retry_after: int | None = None,
++) -> HTTPException:
++    detail: dict[str, Any] = {
++        "code": code,
++        "message": message,
++        "operation_id": operation_id,
++        "startup_id": startup_id,
++        "timing": _timing_payload(timing),
++    }
++    if code == "description_service_starting":
++        detail["warmup_eta_seconds"] = warmup_eta_seconds
++    headers = {"Retry-After": str(retry_after)} if retry_after is not None else None
++    return HTTPException(status_code=status_code, detail=detail, headers=headers)
++
++
++def _gpu_snapshot_fields() -> tuple[str | None, float | None]:
++    path = Path(resolve_gpu_state_path())
++    try:
++        payload = json.loads(path.read_text(encoding="utf-8"))
++    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
++        return None, None
++    if not isinstance(payload, dict):
++        return None, None
++    instance_id = payload.get("instance_id")
++    if not isinstance(instance_id, str) or not instance_id.strip() or len(instance_id) > 128:
++        instance_id = None
++    else:
++        instance_id = instance_id.strip()
++    since = payload.get("since")
++    if isinstance(since, bool) or not isinstance(since, (int, float)) or not math.isfinite(since):
++        since = None
++    return instance_id, since
++
++
++def _max_lease_reached() -> bool:
++    path = Path(resolve_gpu_state_path())
++    try:
++        payload = json.loads(path.read_text(encoding="utf-8"))
++    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
++        return False
++    return isinstance(payload, dict) and payload.get("last_transition_reason") == _MAX_LEASE_REASON
++
++
++def _stop_requested(*, now: datetime) -> bool:
++    intent = read_gpu_intent(resolve_gpu_intent_path())
++    return intent is not None and intent.action is IntentAction.STOP and utc_observation(intent.expires_at) > now
++
++
++def _retry_after_seconds(eta: float | None) -> int:
++    if eta is None or not math.isfinite(eta) or eta <= 0:
++        return 15
++    return min(_PUBLIC_RETRY_AFTER_CEILING, max(1, int(math.ceil(eta))))
++
++
++def _warmup_eta_seconds(*, state: GpuState, since: float | None, now: float, warmup_timeout: float) -> float | None:
++    if state is GpuState.STOPPED:
++        return warmup_timeout
++    if state in (GpuState.STARTING, GpuState.WARMING) and since is not None:
++        return max(0.0, warmup_timeout - max(0.0, now - since))
++    return None
++
++
++def _untimed_with_elapsed(server_elapsed_ms: float | None) -> DescribeTiming:
++    return DescribeTiming(
++        queue_ms=None,
++        ramp_up_ms=None,
++        processing_ms=None,
++        startup_ms=None,
++        server_elapsed_ms=server_elapsed_ms,
++    )
++
++
++def _mint_operation_id() -> str:
++    return uuid.uuid4().hex
++
++
+ async def _validated_describe_multipart_submission(
+     *,
+     form: FormData,
+@@ -282,6 +445,7 @@ async def _validated_describe_multipart_submission(
+         tenant_uuid=uuid.UUID(envelope.tenant_id),
+         image_bytes=image_bytes,
+         context=context,
++        operation_id=_optional_operation_id(form),
+     )
  
-   it('renders stale telemetry as not reported and disables Start with its age', () => {
+ 
+@@ -328,9 +492,224 @@ _TERMINAL_POLL_STATUSES = frozenset(
+ )
+ 
+ 
++async def _rescope(session: AsyncSession | None, tenant_uuid: uuid.UUID) -> None:
++    if session is not None:
++        await set_tenant_context(session, tenant_uuid)
++
++
++async def _commit_and_rescope(session: AsyncSession | None, tenant_uuid: uuid.UUID) -> None:
++    if session is None:
++        return
++    await session.commit()
++    await set_tenant_context(session, tenant_uuid)
++
++
++def _operation_repo(session: AsyncSession) -> DescribeOperationRepository:
++    return DescribeOperationRepository(session, lease_seconds=_lease_seconds())
++
++
++def _elapsed_ms(start: float) -> float:
++    return max(0.0, (time.perf_counter() - start) * 1000)
++
++
++def _timing_from_operation(*, op, processing_ms: float | None, server_elapsed_ms: float | None, cached: bool) -> DescribeTiming:
++    if cached:
++        return DescribeTiming(
++            queue_ms=None,
++            ramp_up_ms=0,
++            processing_ms=0,
++            startup_ms=None,
++            server_elapsed_ms=server_elapsed_ms,
++        )
++    ramp_up = 0 if op is None else op.ramp_up_ms
++    startup_ms = None if op is None else op.startup_ms
++    queue_ms = None if op is None else op.queue_ms
++    return DescribeTiming(
++        queue_ms=queue_ms,
++        ramp_up_ms=ramp_up,
++        processing_ms=processing_ms,
++        startup_ms=startup_ms,
++        server_elapsed_ms=server_elapsed_ms,
++    )
++
++
++async def _accept_operation(
++    *,
++    session: AsyncSession | None,
++    tenant_uuid: uuid.UUID,
++    digest: str,
++    operation_id: str | None,
++    gpu_compute: bool,
++    server_start: float,
++) -> tuple[Any, str]:
++    if session is None:
++        if gpu_compute:
++            minted = operation_id or _mint_operation_id()
++            raise _typed_describe_error(
++                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
++                code="description_service_unavailable",
++                message="Description service is unavailable",
++                operation_id=minted,
++                startup_id=None,
++                timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
++            )
++        return None, operation_id or _mint_operation_id()
++    repo = _operation_repo(session)
++    try:
++        op = await repo.accept(tenant_id=tenant_uuid, request_digest=digest, operation_id=operation_id)
++        if not gpu_compute:
++            await repo.observe_ready(tenant_id=tenant_uuid, operation_id=op.operation_id)
++            await repo.complete(tenant_id=tenant_uuid, operation_id=op.operation_id)
++        await _commit_and_rescope(session, tenant_uuid)
++        return op, op.operation_id
++    except OperationMismatchError as exc:
++        minted = operation_id or _mint_operation_id()
++        raise _typed_describe_error(
++            status_code=status.HTTP_409_CONFLICT,
++            code=OperationMismatchError.code,
++            message=str(exc) or "operation does not match this tenant and request",
++            operation_id=minted,
++            startup_id=None,
++            timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
++        ) from exc
++    except OperationExpiredError as exc:
++        minted = operation_id or _mint_operation_id()
++        raise _typed_describe_error(
++            status_code=status.HTTP_410_GONE,
++            code=OperationExpiredError.code,
++            message=str(exc) or "operation expired; start a new operation",
++            operation_id=minted,
++            startup_id=None,
++            timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
++        ) from exc
++    except HTTPException:
++        raise
++    except Exception:
++        if session is not None:
++            await session.rollback()
++            await set_tenant_context(session, tenant_uuid)
++        if gpu_compute:
++            minted = operation_id or _mint_operation_id()
++            raise _typed_describe_error(
++                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
++                code="description_service_unavailable",
++                message="Description service is unavailable",
++                operation_id=minted,
++                startup_id=None,
++                timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
++            )
++        _logger.debug("non-GPU operation persistence skipped", exc_info=True)
++        return None, operation_id or _mint_operation_id()
++
++
++async def _ensure_gpu_ready(
++    *,
++    session: AsyncSession,
++    tenant_uuid: uuid.UUID,
++    op,
++    settings: DescriptionSettings,
++    session_factory: async_sessionmaker[AsyncSession] | None,
++    server_start: float,
++) -> None:
++    now = datetime.now(UTC)
++    state = read_gpu_state(now=now.timestamp())
++    instance_id, since = _gpu_snapshot_fields()
++    blocked = _stop_requested(now=now) or _max_lease_reached() or state in (
++        GpuState.UNKNOWN,
++        GpuState.DEGRADED,
++    )
++    repo = _operation_repo(session)
++    if instance_id is not None and not blocked:
++        started_at = datetime.fromtimestamp(since, tz=UTC) if since is not None else None
++        try:
++            await repo.associate_startup(
++                tenant_id=tenant_uuid,
++                operation_id=op.operation_id,
++                startup_id=instance_id,
++                started_at=started_at,
++                now=now,
++            )
++        except ValueError:
++            _logger.debug("startup association skipped", exc_info=True)
++        await _commit_and_rescope(session, tenant_uuid)
++    timing = _untimed_with_elapsed(_elapsed_ms(server_start))
++    startup_id = op.startup_id
++    if blocked:
++        await _maybe_dump_describe_load(session_factory)
++        raise _typed_describe_error(
++            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
++            code="description_service_unavailable",
++            message="Description service is unavailable",
++            operation_id=op.operation_id,
++            startup_id=startup_id,
++            timing=timing,
++        )
++    if state in (GpuState.STOPPED, GpuState.STARTING, GpuState.WARMING):
++        eta = _warmup_eta_seconds(
++            state=state,
++            since=since,
++            now=now.timestamp(),
++            warmup_timeout=settings.gpu_warmup_timeout_seconds,
++        )
++        await _maybe_dump_describe_load(session_factory)
++        raise _typed_describe_error(
++            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
++            code="description_service_starting",
++            message="Description service is starting",
++            operation_id=op.operation_id,
++            startup_id=startup_id,
++            timing=timing,
++            warmup_eta_seconds=eta,
++            retry_after=_retry_after_seconds(eta),
++        )
++    if state is GpuState.READY:
++        await repo.observe_ready(tenant_id=tenant_uuid, operation_id=op.operation_id, now=now)
++        await _commit_and_rescope(session, tenant_uuid)
++        await _maybe_dump_describe_load(session_factory)
++        return
++    await _maybe_dump_describe_load(session_factory)
++    raise _typed_describe_error(
++        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
++        code="description_service_unavailable",
++        message="Description service is unavailable",
++        operation_id=op.operation_id,
++        startup_id=startup_id,
++        timing=timing,
++    )
++
++
++async def _complete_operation(
++    *,
++    session: AsyncSession | None,
++    tenant_uuid: uuid.UUID,
++    op,
++    processing_ms: float | None,
++    server_elapsed_ms: float | None,
++    gpu_compute: bool,
++    cached: bool,
++) -> Any:
++    if session is None or op is None:
++        return op
++    repo = _operation_repo(session)
++    try:
++        if gpu_compute and not cached and op.first_ready_at is None:
++            await repo.observe_ready(tenant_id=tenant_uuid, operation_id=op.operation_id)
++        completed = await repo.complete(
++            tenant_id=tenant_uuid,
++            operation_id=op.operation_id,
++            processing_ms=0 if cached else processing_ms,
++            server_elapsed_ms=server_elapsed_ms,
++        )
++        await _commit_and_rescope(session, tenant_uuid)
++        return completed
++    except Exception:
++        _logger.debug("operation complete skipped", exc_info=True)
++        return op
++
++
+ @router.post(
+     "/describe/multipart",
+-    response_model=VisualFactsResponse,
++    response_model=MultipartDescribeResponse,
+     responses={204: {"description": "Decorative image skipped; no description generated."}},
+ )
+ async def describe_image_multipart(
+@@ -338,7 +717,8 @@ async def describe_image_multipart(
+     auth=Depends(require_write_access),
+     session=Depends(get_optional_session),
+     adapter=Depends(get_description_adapter),
+-) -> VisualFactsResponse | Response:
++) -> MultipartDescribeResponse | Response:
++    server_start = time.perf_counter()
+     form = await request.form()
+     settings = DescriptionSettings()
+     submission = await _validated_describe_multipart_submission(form=form, auth=auth, settings=settings)
+@@ -377,6 +757,19 @@ async def describe_image_multipart(
+         effective_adapter = get_cpu_description_adapter()
+     else:
+         effective_adapter = adapter
++    gpu_compute = effective_adapter.kind is DescriptionAdapterKind.GPU
++    digest = _multipart_request_digest(
++        media_id=envelope.media_id, image_bytes=image_bytes, context=submission.context
++    )
++    op, operation_id = await _accept_operation(
++        session=session,
++        tenant_uuid=tenant_uuid,
++        digest=digest,
++        operation_id=submission.operation_id,
++        gpu_compute=gpu_compute,
++        server_start=server_start,
++    )
++    session_factory = worker_session_factory(session) if session is not None else None
+     effective_timeout = _generation_timeout_seconds(settings, effective_adapter)
+     service = VisualFactsService(
+         adapter=effective_adapter,
+@@ -390,9 +783,28 @@ async def describe_image_multipart(
+     async def _charge_demo_quota() -> None:
+         # Durable consume at real-compute dispatch; cache hits never call this.
+         await maybe_consume_demo_quota(auth, session, units=1)
+-        if session is not None:
+-            # Commit ends SET LOCAL tenant context; re-scope for cache/persist.
+-            await set_tenant_context(session, tenant_uuid)
++        await _rescope(session, tenant_uuid)
++
++    async def _before_compute() -> None:
++        if gpu_compute:
++            if session is None or op is None:
++                raise _typed_describe_error(
++                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
++                    code="description_service_unavailable",
++                    message="Description service is unavailable",
++                    operation_id=operation_id,
++                    startup_id=None,
++                    timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
++                )
++            await _ensure_gpu_ready(
++                session=session,
++                tenant_uuid=tenant_uuid,
++                op=op,
++                settings=settings,
++                session_factory=session_factory,
++                server_start=server_start,
++            )
++        await _charge_demo_quota()
+ 
+     try:
+         response = await service.describe(
+@@ -402,20 +814,44 @@ async def describe_image_multipart(
+             context=submission.context,
+             confirmed_faces=confirmed_faces,
+             naming_policy=naming_policy,
+-            before_compute=_charge_demo_quota,
++            before_compute=_before_compute,
+         )
++    except HTTPException:
++        raise
+     except TimeoutError as exc:
+         raise HTTPException(
+             status.HTTP_504_GATEWAY_TIMEOUT,
+             f"description generation exceeded {effective_timeout}s",
+         ) from exc
+-    except DescriptionAdapterUnavailableError as exc:
+-        # A deferred/stub profile (florence_large, gpu_phi4) or a missing [vlm]
+-        # extra: surface an actionable 503 instead of an opaque 500.
+-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+-    except HostedProviderError as exc:
+-        # Upstream hosted-provider fault (key missing, provider 5xx/timeout,
+-        # malformed body): 502 keeps the fail-closed contract actionable.
++    except (GpuRemoteAdapterError, DescriptionAdapterUnavailableError, HostedProviderError) as exc:
++        processing_ms = getattr(getattr(exc, "attempt_timing", None), "processing_ms", None)
++        server_elapsed_ms = _elapsed_ms(server_start)
++        if gpu_compute:
++            completed = await _complete_operation(
++                session=session,
++                tenant_uuid=tenant_uuid,
++                op=op,
++                processing_ms=processing_ms,
++                server_elapsed_ms=server_elapsed_ms,
++                gpu_compute=True,
++                cached=False,
++            )
++            timing = _timing_from_operation(
++                op=completed,
++                processing_ms=processing_ms,
++                server_elapsed_ms=server_elapsed_ms,
++                cached=False,
++            )
++            raise _typed_describe_error(
++                status_code=status.HTTP_502_BAD_GATEWAY,
++                code="description_service_error",
++                message=str(exc),
++                operation_id=operation_id,
++                startup_id=None if completed is None else completed.startup_id,
++                timing=timing,
++            ) from exc
++        if isinstance(exc, DescriptionAdapterUnavailableError):
++            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+     # HARM-02: derive positional naming from the Stage-2 decision — identities
+     # whose fact was dropped must not be named by the fallback.
+@@ -440,9 +876,39 @@ async def describe_image_multipart(
+             "naming_provenance": naming_provenance,
+         }
+     )
++    server_elapsed_ms = _elapsed_ms(server_start)
++    processing_ms = response.attempt_timing.processing_ms
++    completed = await _complete_operation(
++        session=session,
++        tenant_uuid=tenant_uuid,
++        op=op,
++        processing_ms=processing_ms,
++        server_elapsed_ms=server_elapsed_ms,
++        gpu_compute=gpu_compute,
++        cached=response.cached,
++    )
+     if session is not None:
+         await session.commit()
+-    return response
++    if completed is not None and completed.ramp_up_ms is not None:
++        service.record_readiness_wait(completed.ramp_up_ms)
++    elif not gpu_compute or response.cached:
++        service.record_readiness_wait(0)
++    startup_id = None if completed is None else completed.startup_id
++    if response.cached:
++        startup_id = None
++    timing = _timing_from_operation(
++        op=completed,
++        processing_ms=processing_ms,
++        server_elapsed_ms=server_elapsed_ms,
++        cached=response.cached,
++    )
++    dumped = response.model_dump(exclude={"operation_id", "startup_id", "timing", "attempt_timing"})
++    return MultipartDescribeResponse(
++        **dumped,
++        operation_id=operation_id,
++        startup_id=startup_id,
++        timing=timing,
++    )
+ 
+ 
+ async def _with_bypass_session(session_factory: async_sessionmaker[AsyncSession], op):
+@@ -460,12 +926,10 @@ async def _maybe_dump_describe_load(session_factory: async_sessionmaker[AsyncSes
+         return
+     path = resolve_load_path()
+     try:
+-
+-        async def _write(session) -> None:
+-            snap = await load_snapshot(session)
+-            write_load_snapshot(snap, path)
+-
+-        await _with_bypass_session(session_factory, _write)
++        async with session_factory() as dump_session:
++            await enable_rls_bypass(dump_session)
++            payload = await load_snapshot(dump_session)
++        write_load_snapshot(payload, path)
+     except Exception:  # noqa: BLE001 - reaper snapshot is best-effort
+         _logger.debug("describe load snapshot write failed path=%s", path, exc_info=True)
+ 
+diff --git a/apps/prototype-description-service/scene/tests/fixtures/gpuflow-multipart.json b/apps/prototype-description-service/scene/tests/fixtures/gpuflow-multipart.json
+new file mode 100644
+--- /dev/null
++++ b/apps/prototype-description-service/scene/tests/fixtures/gpuflow-multipart.json
+@@ -0,0 +1,36 @@
++{
++  "tenant_id": "00000000-0000-0000-0000-000000000001",
++  "media_id": 42,
++  "image_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
++  "context_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
++  "adapter": "seeded",
++  "model_id": "seeded-fixtures",
++  "model_version": "1",
++  "prompt_or_task_version": "1",
++  "visual_facts": {
++    "caption": "A cat"
++  },
++  "alt_text_draft": "A cat.",
++  "context_used": {
++    "sources": [],
++    "applied": false
++  },
++  "provider_disclosure": {
++    "provider": "none",
++    "left_service_boundary": false
++  },
++  "cached": false,
++  "duration_ms": 12,
++  "retention_class": "retain_all",
++  "tier": "provisional_cpu",
++  "result_generation": 1,
++  "operation_id": "opaque operation",
++  "startup_id": null,
++  "timing": {
++    "queue_ms": null,
++    "ramp_up_ms": 0,
++    "processing_ms": 12,
++    "startup_ms": null,
++    "server_elapsed_ms": 12
++  }
++}
+diff --git a/apps/prototype-description-service/scene/tests/test_describe_eligibility.py b/apps/prototype-description-service/scene/tests/test_describe_eligibility.py
+--- a/apps/prototype-description-service/scene/tests/test_describe_eligibility.py
++++ b/apps/prototype-description-service/scene/tests/test_describe_eligibility.py
+@@ -20,7 +20,12 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+ 
+ from db.models.base_imports import Base
+ from db.models.observability import AuditEvent
+-from db.models.scene import ImageDescription
++from db.models.scene import (
++    DescribeDemandLease,
++    DescribeOperation,
++    DescribeStartup,
++    ImageDescription,
++)
+ from db.models.tenant import Tenant
+ from recognition.interface_adapters.http.deps import (
+     get_optional_session,
+@@ -80,6 +85,9 @@ def _make_db():
+                         Tenant.__table__,
+                         ImageDescription.__table__,
+                         AuditEvent.__table__,
++                        DescribeStartup.__table__,
++                        DescribeOperation.__table__,
++                        DescribeDemandLease.__table__,
+                     ],
+                 ),
+             )
+diff --git a/apps/prototype-description-service/scene/tests/test_describe_route.py b/apps/prototype-description-service/scene/tests/test_describe_route.py
+--- a/apps/prototype-description-service/scene/tests/test_describe_route.py
++++ b/apps/prototype-description-service/scene/tests/test_describe_route.py
+@@ -11,7 +11,7 @@ from typing import cast
+ 
+ from fastapi import FastAPI
+ from fastapi.testclient import TestClient
+-from sqlalchemy import Table
++from sqlalchemy import Table, text
+ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+ 
+ from db.models.base_imports import _DB_SETTINGS, Base
+@@ -22,7 +22,14 @@ from db.models.identity import (
+     MediaIdentity,
+ )
+ from db.models.observability import AuditEvent
+-from db.models.scene import DescribeRun, DescribeRunItem, ImageDescription
++from db.models.scene import (
++    DescribeDemandLease,
++    DescribeOperation,
++    DescribeRun,
++    DescribeRunItem,
++    DescribeStartup,
++    ImageDescription,
++)
+ from db.models.tenant import Tenant
+ from recognition.interface_adapters.http.deps import (
+     get_optional_session,
+@@ -87,9 +94,19 @@ def _make_db(naming_agreement_enabled=True):
+                         IdentityNameSuppression.__table__,
+                         DescribeRun.__table__,
+                         DescribeRunItem.__table__,
++                        DescribeStartup.__table__,
++                        DescribeOperation.__table__,
++                        DescribeDemandLease.__table__,
+                     ],
+                 ),
+             )
++            await conn.execute(
++                text(
++                    "CREATE TABLE describe_load_snapshot_revisions ("
++                    "singleton INTEGER PRIMARY KEY CHECK (singleton = 1), "
++                    "revision INTEGER NOT NULL)"
++                )
++            )
+         sf = async_sessionmaker(engine, expire_on_commit=False)
+         async with sf() as s:  # provision the tenant so require_tenant_record passes
+             s.add(
+@@ -141,11 +158,24 @@ def _client(auth_tenant=None, adapter=None, naming_agreement_enabled=True, db_ab
+             os.unlink(path)
+ 
+ 
+-def _post(client, tenant, *, media_id=42, image_key="image_42", content_type="image/jpeg", body=None):
++def _post(
++    client,
++    tenant,
++    *,
++    media_id=42,
++    image_key="image_42",
++    content_type="image/jpeg",
++    body=None,
++    extra_data=None,
++    request_body=None,
++):
+     payload = body if body is not None else b"image-bytes-payload"
++    data = {"request": json.dumps(request_body or {"tenant_id": str(tenant), "media_id": media_id})}
++    if extra_data:
++        data.update(extra_data)
+     return client.post(
+         "/scene/describe/multipart",
+-        data={"request": json.dumps({"tenant_id": str(tenant), "media_id": media_id})},
++        data=data,
+         files={image_key: ("x.jpg", payload, content_type)},
+     )
+ 
+@@ -165,8 +195,13 @@ def test_happy_path_returns_15_fields_then_cached():
+         assert r1.status_code == 200, r1.text
+         body = r1.json()
+         # 17 core + 3 E19-4a preview + 1 E20-FUSION attachment_provenance
+-        # + 1 ALTQ-1 alt_text_long
+-        assert len(body) == 22
++        # + 1 ALTQ-1 alt_text_long + operation_id/startup_id/timing
++        assert len(body) == 25
++        assert body["operation_id"]
++        assert "startup_id" in body
++        assert body["startup_id"] is None
++        assert body["timing"]["ramp_up_ms"] == 0
++        assert body["timing"]["processing_ms"] is not None
+ 
+         assert body["cached"] is False
+         assert body["media_id"] == 42
+@@ -174,7 +209,13 @@ def test_happy_path_returns_15_fields_then_cached():
+         assert body["provider_disclosure"]["provider"] == "none"
+         r2 = _post(client, tenant)
+         assert r2.status_code == 200
+-        assert r2.json()["cached"] is True
++        cached = r2.json()
++        assert cached["cached"] is True
++        assert cached["operation_id"]
++        assert cached["startup_id"] is None
++        assert cached["timing"]["ramp_up_ms"] == 0
++        assert cached["timing"]["processing_ms"] == 0
++        assert cached["timing"]["startup_ms"] is None
+ 
+ 
+ def test_route_records_description_metrics():
+@@ -909,3 +950,180 @@ def test_demo_quota_survives_post_consume_http_error():
+         )
+         assert bad.status_code == 415, bad.text
+         assert _recognition_used(sf, slug) == 1
++
++
++class _GpuAdapter:
++    kind = DescriptionAdapterKind.GPU
++    model_id = "gpu-test"
++    model_version = "1"
++    prompt_or_task_version = "1"
++
++    def __init__(self, *, fail=False):
++        self.calls = 0
++        self.fail = fail
++
++    def describe(self, *, image_bytes, context):
++        self.calls += 1
++        if self.fail:
++            from scene.infrastructure.vlm.gpu_remote_adapter import GpuRemoteAdapterError
++
++            raise GpuRemoteAdapterError("GPU endpoint call failed")
++        return AdapterResult(
++            caption="A GPU caption.",
++            objects=(),
++            ocr_text=None,
++            alt_text_draft="A GPU caption.",
++            context_sources=(),
++            context_applied=False,
++        )
++
++
++def _write_gpu_state(path, *, state, now, instance_id="ocid1.instance.test", reason=None, last_transition_reason=None):
++    payload = {
++        "state": state,
++        "instance_id": instance_id,
++        "written_at": now,
++        "reason": reason,
++        "since": now - 10,
++    }
++    if last_transition_reason is not None:
++        payload["last_transition_reason"] = last_transition_reason
++    path.write_text(json.dumps(payload), encoding="utf-8")
++
++
++def _gpu_env(monkeypatch, tmp_path, *, state="stopped", last_transition_reason=None):
++    now = time.time()
++    state_path = tmp_path / "gpu-state.json"
++    load_path = tmp_path / "describe-load.json"
++    intent_path = tmp_path / "gpu-intent.json"
++    monkeypatch.setenv("ACX_GPU_STATE_PATH", str(state_path))
++    monkeypatch.setenv("ACX_DESCRIBE_LOAD_PATH", str(load_path))
++    monkeypatch.setenv("ACX_GPU_INTENT_PATH", str(intent_path))
++    from scene.application import gpu_state as gpu_state_mod
++
++    monkeypatch.setattr(gpu_state_mod, "_GPU_STATE_SETTINGS", gpu_state_mod.GpuStateSettings(stale_seconds=240.0))
++    gpu_state_mod.reset_gpu_state_observation_for_tests()
++    if state is not None:
++        _write_gpu_state(
++            state_path,
++            state=state,
++            now=now,
++            last_transition_reason=last_transition_reason,
++        )
++    return state_path, load_path, intent_path, now
++
++
++def test_cpu_adapter_skips_gpu_readiness_when_gpu_is_stopped(monkeypatch, tmp_path):
++    _gpu_env(monkeypatch, tmp_path, state="stopped")
++    with _client() as client:
++        response = _post(client, TENANT_ID)
++        assert response.status_code == 200, response.text
++        body = response.json()
++        assert body["adapter"] == "seeded"
++        assert body["operation_id"]
++        assert body["startup_id"] is None
++        assert body["timing"]["ramp_up_ms"] == 0
++
++
++def test_gpu_stopped_auto_returns_starting_503(monkeypatch, tmp_path):
++    _gpu_env(monkeypatch, tmp_path, state="stopped")
++    adapter = _GpuAdapter()
++    with _client(adapter=adapter) as client:
++        response = _post(client, TENANT_ID)
++        assert response.status_code == 503, response.text
++        assert response.headers.get("Retry-After")
++        retry_after = int(response.headers["Retry-After"])
++        assert 1 <= retry_after <= 120
++        detail = response.json()["detail"]
++        assert detail["code"] == "description_service_starting"
++        assert detail["operation_id"]
++        assert "startup_id" in detail
++        assert "timing" in detail
++        assert "warmup_eta_seconds" in detail
++        assert adapter.calls == 0
++        retry = _post(client, TENANT_ID, extra_data={"operation_id": detail["operation_id"]})
++        assert retry.status_code == 503, retry.text
++        assert retry.json()["detail"]["operation_id"] == detail["operation_id"]
++        assert retry.headers.get("Retry-After")
++
++
++def test_gpu_stop_intent_returns_unavailable_without_retry_after(monkeypatch, tmp_path):
++    _, _, intent_path, now = _gpu_env(monkeypatch, tmp_path, state="stopped")
++    from datetime import UTC, datetime
++
++    from scene.application.gpu_intent import IntentAction, write_gpu_intent
++
++    write_gpu_intent(
++        intent_path,
++        action=IntentAction.STOP,
++        ttl_seconds=1800,
++        requested_by="operator",
++        now=datetime.fromtimestamp(now, tz=UTC),
++    )
++    adapter = _GpuAdapter()
++    with _client(adapter=adapter) as client:
++        response = _post(client, TENANT_ID)
++        assert response.status_code == 503, response.text
++        assert "Retry-After" not in response.headers
++        detail = response.json()["detail"]
++        assert detail["code"] == "description_service_unavailable"
++        assert "warmup_eta_seconds" not in detail
++        assert adapter.calls == 0
++
++
++def test_gpu_unknown_state_returns_unavailable(monkeypatch, tmp_path):
++    _gpu_env(monkeypatch, tmp_path, state=None)
++    adapter = _GpuAdapter()
++    with _client(adapter=adapter) as client:
++        response = _post(client, TENANT_ID)
++        assert response.status_code == 503, response.text
++        assert "Retry-After" not in response.headers
++        assert response.json()["detail"]["code"] == "description_service_unavailable"
++        assert adapter.calls == 0
++
++
++def test_gpu_ready_returns_real_operation_startup_and_timing(monkeypatch, tmp_path):
++    _gpu_env(monkeypatch, tmp_path, state="ready")
++    adapter = _GpuAdapter()
++    with _client(adapter=adapter) as client:
++        response = _post(client, TENANT_ID)
++        assert response.status_code == 200, response.text
++        body = response.json()
++        assert body["operation_id"]
++        assert body["startup_id"] == "ocid1.instance.test"
++        assert body["timing"]["ramp_up_ms"] is not None
++        assert body["timing"]["processing_ms"] is not None
++        assert body["timing"]["server_elapsed_ms"] is not None
++        assert adapter.calls == 1
++
++
++def test_gpu_ready_adapter_failure_is_typed_502(monkeypatch, tmp_path):
++    _gpu_env(monkeypatch, tmp_path, state="ready")
++    adapter = _GpuAdapter(fail=True)
++    with _client(adapter=adapter) as client:
++        response = _post(client, TENANT_ID)
++        assert response.status_code == 502, response.text
++        assert "Retry-After" not in response.headers
++        detail = response.json()["detail"]
++        assert detail["code"] == "description_service_error"
++        assert detail["operation_id"]
++        assert "warmup_eta_seconds" not in detail
++        assert adapter.calls == 1
++
++
++def test_operation_id_mismatch_is_409(monkeypatch, tmp_path):
++    _gpu_env(monkeypatch, tmp_path, state="ready")
++    adapter = _GpuAdapter()
++    with _client(adapter=adapter) as client:
++        first = _post(client, TENANT_ID)
++        assert first.status_code == 200, first.text
++        operation_id = first.json()["operation_id"]
++        mismatch = _post(
++            client,
++            TENANT_ID,
++            body=b"a-different-image-payload",
++            extra_data={"operation_id": operation_id},
++        )
++        assert mismatch.status_code == 409, mismatch.text
++        assert "Retry-After" not in mismatch.headers
++        assert mismatch.json()["detail"]["code"] == "operation_mismatch"
+diff --git a/apps/prototype-description-service/scene/tests/test_gpuflow_response_models.py b/apps/prototype-description-service/scene/tests/test_gpuflow_response_models.py
+--- a/apps/prototype-description-service/scene/tests/test_gpuflow_response_models.py
++++ b/apps/prototype-description-service/scene/tests/test_gpuflow_response_models.py
+@@ -232,6 +232,8 @@ def test_multipart_requires_operation_id_and_timing():
+         MultipartDescribeResponse(**_VISUAL_FACTS_PAYLOAD, operation_id="opaque-operation", startup_id=None)
+     with pytest.raises(ValidationError):
+         MultipartDescribeResponse(**_VISUAL_FACTS_PAYLOAD)
++    with pytest.raises(ValidationError):
++        MultipartDescribeResponse(**_VISUAL_FACTS_PAYLOAD, operation_id="opaque-operation", timing=_VISUAL_TIMING)
+ 
+ 
+ def test_multipart_emits_null_startup_id_and_validates():
+diff --git a/apps/prototype-description-service/scene/tests/test_shared_schema_multipart.py b/apps/prototype-description-service/scene/tests/test_shared_schema_multipart.py
+new file mode 100644
+--- /dev/null
++++ b/apps/prototype-description-service/scene/tests/test_shared_schema_multipart.py
+@@ -0,0 +1,119 @@
++"""Wave 3: production multipart envelopes against the shared schema."""
++
++from __future__ import annotations
++
++import json
++from pathlib import Path
++
++from jsonschema import Draft7Validator
++from referencing import Registry, Resource
++
++from scene.tests.test_describe_route import TENANT_ID, _client, _post
++
++_REPO_ROOT = Path(__file__).resolve().parents[4]
++_SCHEMA_DIR = _REPO_ROOT / "packages/shared-contracts/schemas"
++_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "gpuflow-multipart.json"
++_SCHEMA_FILES = (
++    "image-description-response.schema.json",
++    "scene-describe-multipart.schema.json",
++)
++
++
++def _load_schema(name: str):
++    return json.loads((_SCHEMA_DIR / name).read_text())
++
++
++def _retrieve_schema(uri: str):
++    return Resource.from_contents(_load_schema(Path(uri).name))
++
++
++def _multipart_validator():
++    registry = Registry(retrieve=_retrieve_schema).with_resources(
++        (name, Resource.from_contents(_load_schema(name))) for name in _SCHEMA_FILES
++    )
++    return Draft7Validator(_load_schema("scene-describe-multipart.schema.json"), registry=registry)
++
++
++TIMING = {
++    "queue_ms": None,
++    "ramp_up_ms": 1200,
++    "processing_ms": 12,
++    "startup_ms": None,
++    "server_elapsed_ms": 1212,
++}
++
++
++def test_fixture_validates_success_branch():
++    payload = json.loads(_FIXTURE.read_text())
++    _multipart_validator().validate(payload)
++    assert payload["operation_id"]
++    assert "startup_id" in payload
++    assert payload["timing"]["ramp_up_ms"] == 0
++
++
++def test_typed_error_envelopes_validate():
++    validator = _multipart_validator()
++    starting = {
++        "detail": {
++            "code": "description_service_starting",
++            "message": "Description service is starting",
++            "operation_id": "opaque operation",
++            "startup_id": "ocid1.instance.test",
++            "warmup_eta_seconds": 45,
++            "timing": TIMING,
++        }
++    }
++    validator.validate(starting)
++    unavailable = {
++        "detail": {
++            "code": "description_service_unavailable",
++            "message": "Description service is unavailable",
++            "operation_id": "opaque operation",
++            "startup_id": None,
++            "timing": TIMING,
++        }
++    }
++    validator.validate(unavailable)
++    assert not validator.is_valid(
++        {
++            "detail": {
++                **unavailable["detail"],
++                "warmup_eta_seconds": 4,
++            }
++        }
++    )
++
++
++_NAMING_PROVENANCE_SCHEMA_KEYS = {"injected_names", "naming_allowed", "reason", "mode"}
++
++
++def _schema_body(payload: dict) -> dict:
++    """Drop additive naming keys the shared schema has not absorbed yet."""
++    body = json.loads(json.dumps(payload))
++    provenance = body.get("naming_provenance")
++    if isinstance(provenance, dict):
++        body["naming_provenance"] = {key: provenance[key] for key in _NAMING_PROVENANCE_SCHEMA_KEYS if key in provenance}
++    return body
++
++
++def test_production_route_success_validates_against_shared_schema():
++    validator = _multipart_validator()
++    with _client() as client:
++        response = _post(client, TENANT_ID)
++        assert response.status_code == 200, response.text
++        body = response.json()
++        validator.validate(_schema_body(body))
++        assert body["operation_id"]
++        assert "startup_id" in body
++        assert body["startup_id"] is None
++        assert body["timing"]["ramp_up_ms"] == 0
++        assert body["timing"]["processing_ms"] is not None
++        cached = _post(client, TENANT_ID)
++        assert cached.status_code == 200, cached.text
++        cached_body = cached.json()
++        validator.validate(_schema_body(cached_body))
++        assert cached_body["cached"] is True
++        assert cached_body["startup_id"] is None
++        assert cached_body["timing"]["ramp_up_ms"] == 0
++        assert cached_body["timing"]["processing_ms"] == 0
++        assert cached_body["timing"]["startup_ms"] is None

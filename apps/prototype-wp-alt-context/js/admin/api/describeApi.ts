@@ -113,6 +113,15 @@ export interface VisualFacts {
   ocr_text: string | null;
 }
 
+/** Measured milliseconds on a single describe; unknown values are null. */
+export interface DescribeOperationTiming {
+  queue_ms: number | null;
+  ramp_up_ms: number | null;
+  processing_ms: number | null;
+  startup_ms: number | null;
+  server_elapsed_ms: number | null;
+}
+
 export interface VisualFactsResponse {
   tenant_id: string;
   media_id: number;
@@ -140,6 +149,15 @@ export interface VisualFactsResponse {
   /** ALTQ-1 additive long-form description, omitted by short-only adapters. */
   alt_text_long?: string | null;
   alt_text_write?: AltTextWriteResult;
+  /**
+   * Opaque service-minted lease id. Null means no lease to poll
+   * (GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-01). Absent on older adapters.
+   */
+  operation_id?: string | null;
+  /** Opaque shared startup id; null for warm/cache work. Absent on older adapters. */
+  startup_id?: string | null;
+  /** Measured milliseconds; unknown values are null. Absent on older adapters. */
+  timing?: DescribeOperationTiming;
 }
 
 /**
@@ -281,7 +299,99 @@ const VISUAL_FACTS_RESPONSE_OPTIONAL_KEYS = [
   'naming_provenance',
   'attachment_provenance',
   'alt_text_write',
+  'operation_id',
+  'startup_id',
+  'timing',
 ] as const;
+
+const OPAQUE_ID_MAX_LENGTH = 128;
+
+const DESCRIBE_OPERATION_TIMING_KEYS = [
+  'queue_ms',
+  'ramp_up_ms',
+  'processing_ms',
+  'startup_ms',
+  'server_elapsed_ms',
+] as const;
+
+const DESCRIBE_RUN_TIMING_KEYS = [
+  'queue_ms',
+  'ramp_up_ms',
+  'processing_ms_p50',
+  'processing_ms_max',
+  'startup_ms',
+  'server_elapsed_ms',
+  'items_timed',
+] as const;
+
+const DESCRIBE_RUN_TIMING_INTEGER_KEYS: ReadonlySet<string> = new Set(['items_timed']);
+
+const isOpaqueId = (value: unknown): value is string =>
+  typeof value === 'string' && value.length >= 1 && value.length <= OPAQUE_ID_MAX_LENGTH;
+
+const validateNullableNonNegativeNumber = (value: unknown, path: string): string | null => {
+  if (value === null) {
+    return null;
+  }
+  if (!isFiniteNumber(value) || value < 0) {
+    return path;
+  }
+  return null;
+};
+
+const validateNullableNonNegativeInteger = (value: unknown, path: string): string | null => {
+  if (value === null) {
+    return null;
+  }
+  if (!isInteger(value) || value < 0) {
+    return path;
+  }
+  return null;
+};
+
+const validateTimingObject = (
+  value: unknown,
+  path: string,
+  keys: readonly string[],
+  integerKeys: ReadonlySet<string> = new Set(),
+): string | null => {
+  if (!isRecord(value)) {
+    return path;
+  }
+  const keyError = firstContractKeyError(value, keys, path);
+  if (keyError) {
+    return keyError;
+  }
+  for (const key of keys) {
+    const fieldPath = `${path}.${key}`;
+    const fieldError = integerKeys.has(key)
+      ? validateNullableNonNegativeInteger(value[key], fieldPath)
+      : validateNullableNonNegativeNumber(value[key], fieldPath);
+    if (fieldError) {
+      return fieldError;
+    }
+  }
+  return null;
+};
+
+const validateOptionalOpaqueId = (
+  payload: Record<string, unknown>,
+  key: 'operation_id' | 'startup_id',
+  pathPrefix: string,
+  allowNull: boolean,
+): string | null => {
+  if (!hasOwn(payload, key)) {
+    return null;
+  }
+  const value = payload[key];
+  if (value === null && allowNull) {
+    return null;
+  }
+  if (!isOpaqueId(value)) {
+    return `${pathPrefix}.${key}`;
+  }
+  return null;
+};
 
 const VISUAL_FACTS_RESPONSE_KEYS = [
   ...VISUAL_FACTS_RESPONSE_REQUIRED_KEYS,
@@ -562,6 +672,24 @@ const validateVisualFactsResponse = (payload: unknown): string | null => {
       return altTextWriteError;
     }
   }
+  const operationIdError = validateOptionalOpaqueId(payload, 'operation_id', 'response', true);
+  if (operationIdError) {
+    return operationIdError;
+  }
+  const startupIdError = validateOptionalOpaqueId(payload, 'startup_id', 'response', true);
+  if (startupIdError) {
+    return startupIdError;
+  }
+  if (hasOwn(payload, 'timing')) {
+    const timingError = validateTimingObject(
+      payload.timing,
+      'response.timing',
+      DESCRIBE_OPERATION_TIMING_KEYS,
+    );
+    if (timingError) {
+      return timingError;
+    }
+  }
   return null;
 };
 
@@ -589,6 +717,8 @@ export const parseVisualFactsResponse = (payload: unknown): VisualFactsResponse 
 export interface DescribeMediaWriteOptions {
   writeAlt?: boolean;
   force?: boolean;
+  /** Opaque service-minted id; omit on first attempt (REBASE-M-02). */
+  operationId?: string;
 }
 
 export type DescriptionCandidateReason =
@@ -796,6 +926,18 @@ export const DESCRIPTION_CORRECTION_CODE = {
   FAILED: 'description_correction_failed',
 } as const;
 
+/** Canonical typed GPU/operation error codes on the describe path (sr-007). */
+export const DESCRIBE_OPERATION_ERROR_CODE = {
+  STARTING: 'description_service_starting',
+  UNAVAILABLE: 'description_service_unavailable',
+  ERROR: 'description_service_error',
+  MISMATCH: 'operation_mismatch',
+  EXPIRED: 'operation_expired',
+} as const;
+
+export type DescribeOperationErrorCode =
+  (typeof DESCRIBE_OPERATION_ERROR_CODE)[keyof typeof DESCRIBE_OPERATION_ERROR_CODE];
+
 export type DescriptionCorrectionCode =
   (typeof DESCRIPTION_CORRECTION_CODE)[keyof typeof DESCRIPTION_CORRECTION_CODE];
 
@@ -870,6 +1012,23 @@ export interface DescribeRunResponse {
    * default (rg-005, rg-015).
    */
   deadline_seconds?: number | null;
+  /** Opaque service-minted id bound to tenant and request digest. */
+  operation_id?: string;
+  /** Opaque shared startup id; null for warm/cache work. */
+  startup_id?: string | null;
+  /** Run-level measured milliseconds; unknown values are null. */
+  timing?: DescribeRunTiming;
+}
+
+/** Measured milliseconds on a describe-run envelope; unknown values are null. */
+export interface DescribeRunTiming {
+  queue_ms: number | null;
+  ramp_up_ms: number | null;
+  processing_ms_p50: number | null;
+  processing_ms_max: number | null;
+  startup_ms: number | null;
+  server_elapsed_ms: number | null;
+  items_timed: number | null;
 }
 
 /** One describe-run item as the operator reviews it before write-back (INT-01d).
@@ -884,6 +1043,8 @@ export interface DescribeRunItem {
   tier: DescribeResultTier | null;
   result_generation: number;
   existing_alt: boolean;
+  /** Per-item processing milliseconds; null when the item was not timed. */
+  processing_ms?: number | null;
 }
 
 export interface DescribeRunItemsResponse {
@@ -912,12 +1073,17 @@ export const describeMedia = async (
   mediaId: number,
   options: DescribeMediaWriteOptions = {},
 ): Promise<VisualFactsResponse> => {
-  const body: { media_id: number; write_alt?: boolean; force?: boolean } = { media_id: mediaId };
+  const body: { media_id: number; write_alt?: boolean; force?: boolean; operation_id?: string } = {
+    media_id: mediaId,
+  };
   if (options.writeAlt !== undefined) {
     body.write_alt = options.writeAlt;
   }
   if (options.force !== undefined) {
     body.force = options.force;
+  }
+  if (options.operationId !== undefined) {
+    body.operation_id = options.operationId;
   }
 
   return parseVisualFactsResponse(
@@ -1045,6 +1211,15 @@ const parseDescribeRunItemsResponse = (payload: unknown, endpoint: string): Desc
     if (missingKey) {
       malformed(`${itemPath}.${missingKey}`);
     }
+    if (hasOwn(item, 'processing_ms')) {
+      const processingError = validateNullableNonNegativeNumber(
+        item.processing_ms,
+        `${itemPath}.processing_ms`,
+      );
+      if (processingError) {
+        malformed(processingError);
+      }
+    }
   }
 
   return payload as unknown as DescribeRunItemsResponse;
@@ -1065,7 +1240,12 @@ const DESCRIBE_RUN_RESPONSE_REQUIRED_KEYS = [
   'recognition_enabled',
 ] as const;
 
-const DESCRIBE_RUN_RESPONSE_OPTIONAL_KEYS = ['deadline_seconds'] as const;
+const DESCRIBE_RUN_RESPONSE_OPTIONAL_KEYS = [
+  'deadline_seconds',
+  'operation_id',
+  'startup_id',
+  'timing',
+] as const;
 
 const DESCRIBE_RUN_RESPONSE_KEYS = [
   ...DESCRIBE_RUN_RESPONSE_REQUIRED_KEYS,
@@ -1128,6 +1308,25 @@ const validateDescribeRunResponse = (payload: unknown): string | null => {
     (!isFiniteNumber(payload.deadline_seconds) || payload.deadline_seconds <= 0)
   ) {
     return 'response.deadline_seconds';
+  }
+  const operationIdError = validateOptionalOpaqueId(payload, 'operation_id', 'response', false);
+  if (operationIdError) {
+    return operationIdError;
+  }
+  const startupIdError = validateOptionalOpaqueId(payload, 'startup_id', 'response', true);
+  if (startupIdError) {
+    return startupIdError;
+  }
+  if (hasOwn(payload, 'timing')) {
+    const timingError = validateTimingObject(
+      payload.timing,
+      'response.timing',
+      DESCRIBE_RUN_TIMING_KEYS,
+      DESCRIBE_RUN_TIMING_INTEGER_KEYS,
+    );
+    if (timingError) {
+      return timingError;
+    }
   }
   return null;
 };
@@ -1256,8 +1455,18 @@ export const applyDescribeRunDrafts = async (
  * (E19-1-REV-C-4): that resolver special-cases `embedding_runtime_unavailable`
  * and only reads `detail`.
  */
-export const resolveDescribeErrorMessage = (error: unknown, fallback: string): string =>
-  resolveWpErrorMessage(error, fallback);
+export const resolveDescribeErrorMessage = (error: unknown, fallback: string): string => {
+  if (error instanceof Error) {
+    const payload = parseWpErrorPayload(error.message);
+    if (payload && isRecord(payload.detail)) {
+      const message = payload.detail.message;
+      if (typeof message === 'string' && message.trim() !== '') {
+        return message;
+      }
+    }
+  }
+  return resolveWpErrorMessage(error, fallback);
+};
 
 /**
  * Resolve the WP_Error `code` from a describe/correction rejection when present.
@@ -1275,6 +1484,13 @@ export const resolveDescribeErrorCode = (error: unknown): string | null => {
   }
   const payload = parseWpErrorPayload(error.message);
   if (!payload) {
+    return null;
+  }
+  if (isRecord(payload.detail)) {
+    const detailCode = payload.detail.code;
+    if (typeof detailCode === 'string' && detailCode.trim() !== '') {
+      return detailCode;
+    }
     return null;
   }
   const code = payload.code;
@@ -1302,12 +1518,40 @@ export const resolveDescribeErrorDataField = (error: unknown, field: string): st
   if (!payload) {
     return null;
   }
+  if (isRecord(payload.detail) && hasOwn(payload.detail, field)) {
+    const detailValue = payload.detail[field];
+    return typeof detailValue === 'string' ? detailValue : null;
+  }
   const data = payload.data;
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
     return null;
   }
   const value = (data as Record<string, unknown>)[field];
   if (typeof value === 'string') {
+    return value;
+  }
+  return null;
+};
+
+/**
+ * Resolve a finite number from a typed FastAPI `detail` object when present.
+ * Returns null when the error is unstructured, `detail` is not an object, or
+ * the named field is absent / not a finite number — callers must not invent
+ * a value ([rg-015]). Used for `warmup_eta_seconds`.
+ */
+export const resolveDescribeErrorDetailNumberField = (
+  error: unknown,
+  field: string,
+): number | null => {
+  if (!(error instanceof Error)) {
+    return null;
+  }
+  const payload = parseWpErrorPayload(error.message);
+  if (!payload || !isRecord(payload.detail)) {
+    return null;
+  }
+  const value = payload.detail[field];
+  if (typeof value === 'number' && Number.isFinite(value)) {
     return value;
   }
   return null;

@@ -5,11 +5,14 @@ import {
   applyDescribeRunDrafts,
   correctDescriptionHistoryItem,
   describeMedia,
+  DESCRIBE_OPERATION_ERROR_CODE,
   DESCRIPTION_CORRECTION_CODE,
   GPU_STATE,
+  MalformedDescribeRunResponseError,
   MalformedVisualFactsResponseError,
   NAMING_PROVENANCE_STATUS,
   NAMING_REALIZER,
+  parseDescribeRunResponse,
   parseVisualFactsResponse,
   type NamingProvenance,
   fetchDescribeRunItems,
@@ -20,6 +23,7 @@ import {
   resolveDescribeErrorCode,
   resolveDescribeErrorDataBooleanField,
   resolveDescribeErrorDataField,
+  resolveDescribeErrorDetailNumberField,
   resolveDescribeErrorMessage,
   type DescriptionCandidateRow,
   type DescribeRunItemsResponse,
@@ -585,6 +589,262 @@ describe('describeApi', () => {
     const result = await fetchDescriptionCandidates({ limit: 10, offset: 0 });
     expect(result.exclusions[0]?.reason).toBe('decorative');
   });
+
+  it('omits operation_id on the first describe request', async () => {
+    fetchApiMock.mockResolvedValue(sampleResponse);
+    await describeMedia(42);
+    const [, options] = fetchApiMock.mock.calls[0];
+    expect(options?.body).toEqual({ media_id: 42 });
+    expect(options?.body).not.toHaveProperty('operation_id');
+  });
+
+  it('posts operation_id as a body field when retrying the same operation', async () => {
+    fetchApiMock.mockResolvedValue(sampleResponse);
+    await describeMedia(42, { operationId: 'op-lease-1' });
+    const [, options] = fetchApiMock.mock.calls[0];
+    expect(options?.body).toEqual({ media_id: 42, operation_id: 'op-lease-1' });
+  });
+
+  it('accepts GPUFLOW multipart success keys including a null operation_id and nested timing', () => {
+    const payload = {
+      ...sampleResponse,
+      operation_id: null,
+      startup_id: null,
+      timing: {
+        queue_ms: 1,
+        ramp_up_ms: 0,
+        processing_ms: 12.5,
+        startup_ms: null,
+        server_elapsed_ms: 20,
+      },
+    };
+    expect(parseVisualFactsResponse(payload)).toEqual(payload);
+  });
+
+  it('accepts a minted operation_id and startup_id on the describe success envelope', () => {
+    const payload = {
+      ...sampleResponse,
+      operation_id: 'op-lease-1',
+      startup_id: 'startup-1',
+      timing: {
+        queue_ms: 4,
+        ramp_up_ms: 80,
+        processing_ms: 12,
+        startup_ms: 75,
+        server_elapsed_ms: 96,
+      },
+    };
+    expect(parseVisualFactsResponse(payload).operation_id).toBe('op-lease-1');
+    expect(parseVisualFactsResponse(payload).startup_id).toBe('startup-1');
+  });
+
+  it('rejects an unknown top-level describe key instead of loosening the allow-list', () => {
+    expect(() => parseVisualFactsResponse({ ...sampleResponse, extra: true })).toThrow(
+      /response\.extra/,
+    );
+  });
+
+  it('rejects malformed operation_id, startup_id, and timing types on describe success', () => {
+    expect(() => parseVisualFactsResponse({ ...sampleResponse, operation_id: 12 })).toThrow(
+      /response\.operation_id/,
+    );
+    expect(() => parseVisualFactsResponse({ ...sampleResponse, operation_id: '' })).toThrow(
+      /response\.operation_id/,
+    );
+    expect(() =>
+      parseVisualFactsResponse({ ...sampleResponse, operation_id: 'x'.repeat(129) }),
+    ).toThrow(/response\.operation_id/);
+    expect(() => parseVisualFactsResponse({ ...sampleResponse, startup_id: 1 })).toThrow(
+      /response\.startup_id/,
+    );
+    expect(() => parseVisualFactsResponse({ ...sampleResponse, timing: null })).toThrow(
+      /response\.timing/,
+    );
+    expect(() =>
+      parseVisualFactsResponse({
+        ...sampleResponse,
+        timing: {
+          queue_ms: 1,
+          ramp_up_ms: 0,
+          processing_ms: 12.5,
+          startup_ms: null,
+          server_elapsed_ms: 20,
+          extra_ms: 3,
+        },
+      }),
+    ).toThrow(/response\.timing\.extra_ms/);
+    expect(() =>
+      parseVisualFactsResponse({
+        ...sampleResponse,
+        timing: {
+          queue_ms: -1,
+          ramp_up_ms: 0,
+          processing_ms: 12.5,
+          startup_ms: null,
+          server_elapsed_ms: 20,
+        },
+      }),
+    ).toThrow(/response\.timing\.queue_ms/);
+  });
+});
+
+/** Copied from scene/tests/fixtures/gpuflow-run-items.json (svc-run-timing). */
+const GPUFLOW_RUN_ITEMS_FIXTURE = {
+  run: {
+    tenant_id: '00000000-0000-0000-0000-000000000001',
+    run_id: '00000000-0000-0000-0000-000000000002',
+    status: 'completed_with_errors',
+    phase: 'complete',
+    completed: 1,
+    failed: 1,
+    skipped: 1,
+    total: 3,
+    cancel_requested: false,
+    eta_seconds: null,
+    gpu_state: 'ready',
+    recognition_enabled: true,
+    deadline_seconds: 90.0,
+    operation_id: 'run-operation-opaque',
+    startup_id: null,
+    timing: {
+      queue_ms: 10,
+      ramp_up_ms: 0,
+      processing_ms_p50: 12.5,
+      processing_ms_max: 30,
+      startup_ms: null,
+      server_elapsed_ms: 40,
+      items_timed: 2,
+    },
+  },
+  items: {
+    tenant_id: '00000000-0000-0000-0000-000000000001',
+    run_id: '00000000-0000-0000-0000-000000000002',
+    items: [
+      {
+        media_id: 70,
+        status: 'completed',
+        alt_text_draft: 'A dog resting on green grass',
+        caption: 'a dog on grass',
+        provenance: { adapter: 'gpu' },
+        error: null,
+        tier: 'final_gpu',
+        result_generation: 1,
+        processing_ms: 12.5,
+      },
+      {
+        media_id: 71,
+        status: 'failed',
+        alt_text_draft: null,
+        caption: null,
+        provenance: null,
+        error: 'adapter boom',
+        tier: null,
+        result_generation: 0,
+        processing_ms: 30,
+      },
+      {
+        media_id: 72,
+        status: 'skipped',
+        alt_text_draft: null,
+        caption: null,
+        provenance: null,
+        error: null,
+        tier: null,
+        result_generation: 0,
+        processing_ms: null,
+      },
+    ],
+  },
+};
+
+describe('parseDescribeRunResponse GPUFLOW timing', () => {
+  it('parses the svc-run-timing run envelope including nested timing and null startup_id', () => {
+    const parsed = parseDescribeRunResponse(GPUFLOW_RUN_ITEMS_FIXTURE.run);
+    expect(parsed.operation_id).toBe('run-operation-opaque');
+    expect(parsed.startup_id).toBeNull();
+    expect(parsed.timing).toEqual({
+      queue_ms: 10,
+      ramp_up_ms: 0,
+      processing_ms_p50: 12.5,
+      processing_ms_max: 30,
+      startup_ms: null,
+      server_elapsed_ms: 40,
+      items_timed: 2,
+    });
+  });
+
+  it('still accepts a legacy run envelope that omits operation_id, startup_id, and timing', () => {
+    const legacyRun: Record<string, unknown> = { ...GPUFLOW_RUN_ITEMS_FIXTURE.run };
+    delete legacyRun.operation_id;
+    delete legacyRun.startup_id;
+    delete legacyRun.timing;
+    expect(parseDescribeRunResponse(legacyRun).run_id).toBe(GPUFLOW_RUN_ITEMS_FIXTURE.run.run_id);
+  });
+
+  it('rejects unknown run keys and malformed timing instead of accepting any extra field', () => {
+    expect(() => parseDescribeRunResponse({ ...GPUFLOW_RUN_ITEMS_FIXTURE.run, extra: true })).toThrow(
+      /response\.extra/,
+    );
+    expect(() => parseDescribeRunResponse({ ...GPUFLOW_RUN_ITEMS_FIXTURE.run, operation_id: null })).toThrow(
+      /response\.operation_id/,
+    );
+    expect(() =>
+      parseDescribeRunResponse({
+        ...GPUFLOW_RUN_ITEMS_FIXTURE.run,
+        timing: { ...GPUFLOW_RUN_ITEMS_FIXTURE.run.timing, extra_ms: 1 },
+      }),
+    ).toThrow(/response\.timing\.extra_ms/);
+    expect(() =>
+      parseDescribeRunResponse({
+        ...GPUFLOW_RUN_ITEMS_FIXTURE.run,
+        timing: { ...GPUFLOW_RUN_ITEMS_FIXTURE.run.timing, items_timed: 2.5 },
+      }),
+    ).toThrow(/response\.timing\.items_timed/);
+  });
+});
+
+describe('fetchDescribeRunItems GPUFLOW processing_ms', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('preserves per-item processing_ms from the svc-run-timing items envelope', async () => {
+    fetchApiMock.mockResolvedValue({
+      ...GPUFLOW_RUN_ITEMS_FIXTURE.items,
+      items: GPUFLOW_RUN_ITEMS_FIXTURE.items.items.map((item) => ({
+        ...item,
+        existing_alt: false,
+      })),
+    });
+
+    const result = await fetchDescribeRunItems(GPUFLOW_RUN_ITEMS_FIXTURE.items.run_id);
+    expect(result.items.map((item) => item.processing_ms)).toEqual([12.5, 30, null]);
+  });
+
+  it('rejects a non-numeric per-item processing_ms', async () => {
+    fetchApiMock.mockResolvedValue({
+      run_id: 'run-abc',
+      items: [
+        {
+          media_id: 70,
+          status: 'completed',
+          alt_text_draft: 'A described bridge.',
+          caption: 'A bridge.',
+          provenance: sampleResponse,
+          tier: 'final_gpu',
+          result_generation: 1,
+          existing_alt: false,
+          processing_ms: '12',
+        },
+      ],
+    });
+
+    await expect(fetchDescribeRunItems('run-abc')).rejects.toThrow(
+      new MalformedDescribeRunResponseError(
+        'https://example.com/acx/v1/recognition/describe/runs/run-abc/items response.items[0].processing_ms',
+      ),
+    );
+  });
 });
 
 describe('resolveDescribeErrorMessage', () => {
@@ -606,6 +866,13 @@ describe('resolveDescribeErrorMessage', () => {
     expect(resolveDescribeErrorMessage(err, 'Could not save.')).toBe(
       'Alt text was saved, but the human-edit record could not be stored. Please try again so history stays accurate.',
     );
+  });
+
+  it('reads typed GPU detail.message instead of a top-level WP message', () => {
+    const err = new Error(
+      'Request to .../describe failed (503): {"code":"rest_error","message":"Could not generate a draft","detail":{"code":"description_service_starting","message":"Description service is starting.","operation_id":"op-lease-1","startup_id":null,"warmup_eta_seconds":12,"timing":{"queue_ms":0,"ramp_up_ms":null,"processing_ms":null,"startup_ms":null,"server_elapsed_ms":1}}}',
+    );
+    expect(resolveDescribeErrorMessage(err, 'fallback')).toBe('Description service is starting.');
   });
 });
 
@@ -630,12 +897,38 @@ describe('resolveDescribeErrorCode', () => {
     const err = new Error('Request failed (500): {"code":"  ","message":"something"}');
     expect(resolveDescribeErrorCode(err)).toBeNull();
   });
+
+  it('reads typed GPU detail.code instead of a top-level WP code', () => {
+    const err = new Error(
+      'Request to .../describe failed (409): {"code":"rest_error","message":"Could not generate a draft","detail":{"code":"operation_mismatch","message":"operation mismatch","operation_id":"op-stale","startup_id":null,"timing":{"queue_ms":0,"ramp_up_ms":null,"processing_ms":null,"startup_ms":null,"server_elapsed_ms":1}}}',
+    );
+    expect(resolveDescribeErrorCode(err)).toBe(DESCRIBE_OPERATION_ERROR_CODE.MISMATCH);
+  });
+
+  it('reads description_service_starting from detail.code', () => {
+    const err = new Error(
+      'Request to .../describe failed (503): {"detail":{"code":"description_service_starting","message":"Description service is starting.","operation_id":"op-lease-1","startup_id":null,"warmup_eta_seconds":12,"timing":{"queue_ms":0,"ramp_up_ms":null,"processing_ms":null,"startup_ms":null,"server_elapsed_ms":1}}}',
+    );
+    expect(resolveDescribeErrorCode(err)).toBe(DESCRIBE_OPERATION_ERROR_CODE.STARTING);
+  });
 });
 
 describe('DESCRIPTION_CORRECTION_CODE', () => {
   it('exports the stable correction rejection codes [sr-007]', () => {
     expect(DESCRIPTION_CORRECTION_CODE.PARTIAL).toBe('description_correction_partial');
     expect(DESCRIPTION_CORRECTION_CODE.FAILED).toBe('description_correction_failed');
+  });
+});
+
+describe('DESCRIBE_OPERATION_ERROR_CODE', () => {
+  it('exports the stable typed GPU/operation error codes [sr-007]', () => {
+    expect(Object.values(DESCRIBE_OPERATION_ERROR_CODE)).toEqual([
+      'description_service_starting',
+      'description_service_unavailable',
+      'description_service_error',
+      'operation_mismatch',
+      'operation_expired',
+    ]);
   });
 });
 
@@ -675,6 +968,50 @@ describe('resolveDescribeErrorDataField', () => {
       'Request failed (500): {"code":"description_correction_partial","message":"x","data":{"status":500,"stored_alt_text":42}}',
     );
     expect(resolveDescribeErrorDataField(err, 'stored_alt_text')).toBeNull();
+  });
+
+  it('reads detail.operation_id from a typed GPU starting envelope', () => {
+    const err = new Error(
+      'Request to .../describe failed (503): {"detail":{"code":"description_service_starting","message":"Description service is starting.","operation_id":"op-lease-1","startup_id":null,"warmup_eta_seconds":12,"timing":{"queue_ms":0,"ramp_up_ms":null,"processing_ms":null,"startup_ms":null,"server_elapsed_ms":1}}}',
+    );
+    expect(resolveDescribeErrorDataField(err, 'operation_id')).toBe('op-lease-1');
+  });
+
+  it('returns null operation_id for unavailable without inventing a token', () => {
+    const err = new Error(
+      'Request to .../describe failed (503): {"detail":{"code":"description_service_unavailable","message":"Description service is unavailable.","startup_id":null,"timing":{"queue_ms":0,"ramp_up_ms":null,"processing_ms":null,"startup_ms":null,"server_elapsed_ms":1}}}',
+    );
+    expect(resolveDescribeErrorCode(err)).toBe(DESCRIBE_OPERATION_ERROR_CODE.UNAVAILABLE);
+    expect(resolveDescribeErrorDataField(err, 'operation_id')).toBeNull();
+  });
+
+  it('returns null operation_id when the typed detail explicitly sets it to null', () => {
+    const err = new Error(
+      'Request to .../describe failed (410): {"detail":{"code":"operation_expired","message":"operation expired","operation_id":null,"startup_id":null,"timing":{"queue_ms":0,"ramp_up_ms":null,"processing_ms":null,"startup_ms":null,"server_elapsed_ms":1}}}',
+    );
+    expect(resolveDescribeErrorCode(err)).toBe(DESCRIBE_OPERATION_ERROR_CODE.EXPIRED);
+    expect(resolveDescribeErrorDataField(err, 'operation_id')).toBeNull();
+  });
+});
+
+describe('resolveDescribeErrorDetailNumberField', () => {
+  it('reads warmup_eta_seconds from a typed starting envelope', () => {
+    const err = new Error(
+      'Request to .../describe failed (503): {"detail":{"code":"description_service_starting","message":"Description service is starting.","operation_id":"op-lease-1","startup_id":null,"warmup_eta_seconds":12,"timing":{"queue_ms":0,"ramp_up_ms":null,"processing_ms":null,"startup_ms":null,"server_elapsed_ms":1}}}',
+    );
+    expect(resolveDescribeErrorDetailNumberField(err, 'warmup_eta_seconds')).toBe(12);
+  });
+
+  it('returns null when warmup_eta_seconds is absent', () => {
+    const err = new Error(
+      'Request to .../describe failed (409): {"detail":{"code":"operation_mismatch","message":"operation mismatch","operation_id":"op-stale","startup_id":null,"timing":{"queue_ms":0,"ramp_up_ms":null,"processing_ms":null,"startup_ms":null,"server_elapsed_ms":1}}}',
+    );
+    expect(resolveDescribeErrorDetailNumberField(err, 'warmup_eta_seconds')).toBeNull();
+  });
+
+  it('returns null for unstructured errors', () => {
+    expect(resolveDescribeErrorDetailNumberField(new Error('network down'), 'warmup_eta_seconds')).toBeNull();
+    expect(resolveDescribeErrorDetailNumberField(null, 'warmup_eta_seconds')).toBeNull();
   });
 });
 

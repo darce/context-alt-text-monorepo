@@ -84,6 +84,13 @@ def test_typed_error_envelopes_validate():
         }
     }
     validator.validate(unavailable_null)
+    starting_null = {
+        "detail": {
+            **starting["detail"],
+            "operation_id": None,
+        }
+    }
+    assert not validator.is_valid(starting_null)
     assert not validator.is_valid(
         {
             "detail": {
@@ -94,12 +101,16 @@ def test_typed_error_envelopes_validate():
     )
 
 
-def test_success_envelope_allows_null_operation_id_and_rejects_empty():
+def test_success_envelope_allows_absent_operation_id_and_rejects_null():
     payload = json.loads(_FIXTURE.read_text())
+    validator = _multipart_validator()
+    absent = dict(payload)
+    del absent["operation_id"]
+    validator.validate(absent)
     payload["operation_id"] = None
-    _multipart_validator().validate(payload)
+    assert not validator.is_valid(payload)
     payload["operation_id"] = ""
-    assert not _multipart_validator().is_valid(payload)
+    assert not validator.is_valid(payload)
 
 
 _NAMING_PROVENANCE_SCHEMA_KEYS = {"injected_names", "naming_allowed", "reason", "mode"}
@@ -170,13 +181,13 @@ def test_production_route_unavailable_error_validates_against_shared_schema(monk
         assert "warmup_eta_seconds" not in body["detail"]
 
 
-def test_production_cpu_no_session_success_validates_null_operation_id():
+def test_production_cpu_no_session_success_omits_operation_id():
     validator = _multipart_validator()
     with _client(db_absent=True) as client:
         response = _post(client, TENANT_ID)
         assert response.status_code == 200, response.text
         body = response.json()
         validator.validate(_schema_body(body))
-        assert body["operation_id"] is None
+        assert "operation_id" not in body
         assert "startup_id" in body
         assert "timing" in body

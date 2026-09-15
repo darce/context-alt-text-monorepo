@@ -258,7 +258,7 @@ def test_multipart_emits_null_startup_id_and_validates():
         validator.validate(wire)
 
 
-def test_multipart_accepts_null_operation_id():
+def test_multipart_omits_null_operation_id():
     response = MultipartDescribeResponse(
         **_VISUAL_FACTS_PAYLOAD,
         operation_id=None,
@@ -268,8 +268,7 @@ def test_multipart_accepts_null_operation_id():
     dumped, encoded = _dumped_payloads(response)
     validator = _multipart_validator()
     for wire in (dumped, encoded):
-        assert "operation_id" in wire
-        assert wire["operation_id"] is None
+        assert "operation_id" not in wire
         assert "startup_id" in wire
         assert wire["startup_id"] is None
         assert wire["timing"] == _VISUAL_TIMING

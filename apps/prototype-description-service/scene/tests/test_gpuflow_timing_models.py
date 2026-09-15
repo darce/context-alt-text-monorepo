@@ -159,3 +159,123 @@ def test_invalid_correlation_and_observations_are_rejected(storage, invalid):
     }
     with pytest.raises(sa.exc.IntegrityError):
         connection.execute(tables["describe_demand_leases"].insert(), lease)
+
+
+@pytest.mark.parametrize("model", [scene.DescribeOperation, scene.DescribeRun, scene.DescribeRunItem])
+@pytest.mark.parametrize("value", [float("inf"), float("-inf"), float("nan"), -1, 1e308])
+def test_invalid_timing_values_are_rejected(model, value):
+    # RED: the original Float binds and nonnegative checks accepted inf/NaN.
+    columns = [c for c in model.__table__.c if isinstance(c.type, (sa.Float, sa.TypeDecorator))]
+    columns = [c for c in columns if c.name.endswith("_ms") or c.name.startswith("processing_ms_")]
+    engine = sa.create_engine("sqlite://")
+    try:
+        for column in columns:
+            metadata = sa.MetaData()
+            check = next(
+                c
+                for c in model.__table__.constraints
+                if isinstance(c, sa.CheckConstraint) and c.name.endswith("_" + column.name)
+            )
+            table = sa.Table(
+                "timing_probe",
+                metadata,
+                sa.Column(column.name, column.type, nullable=True),
+                sa.CheckConstraint(str(check.sqltext)),
+            )
+            metadata.create_all(engine)
+            with engine.begin() as connection:
+                connection.execute(table.insert(), {column.name: None})
+                connection.execute(table.insert(), {column.name: 0})
+                with pytest.raises((sa.exc.IntegrityError, sa.exc.StatementError)):
+                    connection.execute(table.insert(), {column.name: value})
+                # Raw SQL still enforces the finite bound independently of the binder.
+                with pytest.raises(sa.exc.IntegrityError):
+                    connection.exec_driver_sql(f'INSERT INTO timing_probe ("{column.name}") VALUES (?)', ("NaN",))
+            metadata.drop_all(engine)
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize("model", [scene.DescribeOperation, scene.DescribeRun])
+def test_startup_association_requires_observation(model):
+    check = next(
+        c
+        for c in model.__table__.constraints
+        if isinstance(c, sa.CheckConstraint) and c.name.endswith("_startup_association")
+    )
+    metadata = sa.MetaData()
+    table = sa.Table(
+        "association_probe",
+        metadata,
+        sa.Column("startup_id", sa.String),
+        sa.Column("startup_ms", sa.Float),
+        sa.Column("ramp_up_ms", sa.Float),
+        sa.CheckConstraint(str(check.sqltext)),
+    )
+    engine = sa.create_engine("sqlite://")
+    try:
+        metadata.create_all(engine)
+        with engine.begin() as connection:
+            connection.execute(table.insert(), {"startup_id": None, "startup_ms": None, "ramp_up_ms": 0})
+            connection.execute(table.insert(), {"startup_id": "observed", "startup_ms": 10, "ramp_up_ms": 5})
+            for values in ({"startup_ms": 0}, {"ramp_up_ms": 1}):
+                with pytest.raises(sa.exc.IntegrityError):
+                    connection.execute(table.insert(), values)
+    finally:
+        engine.dispose()
+
+
+def test_rls_runbook_covers_canonical_tenant_tables():
+    from pathlib import Path
+    import re
+
+    migration = import_module("db.migrations.versions.001_identity_schema")
+    root = next(p for p in Path(__file__).resolve().parents if (p / "docs/runbooks").is_dir())
+    runbook = (root / "docs/runbooks/prod-identity-rls-remediation.md").read_text()
+    audit = runbook.split("FROM unnest(ARRAY[", 1)[1].split("])", 1)[0]
+    assert set(re.findall(r"'([^']+)'", audit)) == set(migration.TENANT_TABLES)
+
+
+@pytest.mark.parametrize("invalid", [False, True])
+def test_check_healer_validates_live_rows_and_is_idempotent(monkeypatch, invalid):
+    migration = import_module("db.migrations.versions.001_identity_schema")
+    existing = set()
+    probes = []
+    added = []
+
+    class Bind:
+        dialect = sa.dialects.postgresql.dialect()
+
+        def execute(self, statement):
+            probes.append(str(statement))
+
+            class Result:
+                def scalar(self):
+                    return 1 if invalid else None
+
+            return Result()
+
+    class Op:
+        def get_bind(self):
+            return Bind()
+
+        def create_check_constraint(self, name, table, predicate):
+            added.append(name)
+            existing.add(name)
+
+    monkeypatch.setattr(migration, "_existing_constraint_names", lambda op, table: existing)
+    check = sa.CheckConstraint("queue_ms >= 0", name="timing_check")
+
+    def heal():
+        migration._ensure_table_constraints(Op(), "image_description_runs", check, heal_constraints=("timing_check",))
+
+    if invalid:
+        with pytest.raises(RuntimeError, match="live rows violate"):
+            heal()
+        assert not added
+    else:
+        heal()
+        heal()
+        assert added == ["timing_check"]
+        assert len(probes) == 1
+    assert "WHERE NOT (queue_ms >= 0)" in probes[0]

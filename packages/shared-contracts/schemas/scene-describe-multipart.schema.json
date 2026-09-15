@@ -5,32 +5,7 @@
   "description": "POST /scene/describe/multipart response body. 200 success; 503 starting/unavailable; 502 service error after ready; 409 operation_mismatch; 410 operation_expired. Retry-After is an HTTP header, never a body field. Validation/auth/upload errors retain their existing envelopes and are outside this operation-response schema. Request operation_id is an optional multipart form field, never a header or query parameter.",
   "oneOf": [
     {
-      "allOf": [
-        {
-          "$ref": "image-description-response.schema.json"
-        },
-        {
-          "required": [
-            "operation_id",
-            "startup_id",
-            "timing"
-          ],
-          "properties": {
-            "operation_id": {
-              "type": [
-                "string",
-                "null"
-              ],
-              "minLength": 1,
-              "maxLength": 128,
-              "description": "null when no durable DescribeOperation was accepted (CPU/hosted, no session); clients must not poll a lease"
-            }
-          }
-        }
-      ]
-    },
-    {
-      "$ref": "#/definitions/successWithNullOperationId"
+      "$ref": "#/definitions/success"
     },
     {
       "type": "object",
@@ -112,7 +87,7 @@
     }
   ],
   "definitions": {
-    "successWithNullOperationId": {
+    "success": {
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -205,7 +180,12 @@
           "$ref": "image-description-response.schema.json#/properties/attachment_provenance"
         },
         "operation_id": {
-          "type": "null",
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 128,
           "description": "null when no durable DescribeOperation was accepted (CPU/hosted, no session); clients must not poll a lease"
         },
         "startup_id": {

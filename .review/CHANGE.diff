@@ -1,659 +1,67 @@
 diff --git a/apps/prototype-wp-alt-context/js/admin/api/__tests__/describeApi.test.ts b/apps/prototype-wp-alt-context/js/admin/api/__tests__/describeApi.test.ts
 --- a/apps/prototype-wp-alt-context/js/admin/api/__tests__/describeApi.test.ts
 +++ b/apps/prototype-wp-alt-context/js/admin/api/__tests__/describeApi.test.ts
-@@ -5,11 +5,14 @@ import {
-   applyDescribeRunDrafts,
-   correctDescriptionHistoryItem,
-   describeMedia,
-+  DESCRIBE_OPERATION_ERROR_CODE,
-   DESCRIPTION_CORRECTION_CODE,
-   GPU_STATE,
-+  MalformedDescribeRunResponseError,
-   MalformedVisualFactsResponseError,
-   NAMING_PROVENANCE_STATUS,
-   NAMING_REALIZER,
-+  parseDescribeRunResponse,
-   parseVisualFactsResponse,
-   type NamingProvenance,
-   fetchDescribeRunItems,
-@@ -20,6 +23,7 @@ import {
-   resolveDescribeErrorCode,
-   resolveDescribeErrorDataBooleanField,
-   resolveDescribeErrorDataField,
-+  resolveDescribeErrorDetailNumberField,
-   resolveDescribeErrorMessage,
-   type DescriptionCandidateRow,
-   type DescribeRunItemsResponse,
-@@ -585,6 +589,262 @@ describe('describeApi', () => {
-     const result = await fetchDescriptionCandidates({ limit: 10, offset: 0 });
-     expect(result.exclusions[0]?.reason).toBe('decorative');
+@@ -605,10 +605,9 @@ describe('describeApi', () => {
+     expect(options?.body).toEqual({ media_id: 42, operation_id: 'op-lease-1' });
    });
-+
-+  it('omits operation_id on the first describe request', async () => {
-+    fetchApiMock.mockResolvedValue(sampleResponse);
-+    await describeMedia(42);
-+    const [, options] = fetchApiMock.mock.calls[0];
-+    expect(options?.body).toEqual({ media_id: 42 });
-+    expect(options?.body).not.toHaveProperty('operation_id');
-+  });
-+
-+  it('posts operation_id as a body field when retrying the same operation', async () => {
-+    fetchApiMock.mockResolvedValue(sampleResponse);
-+    await describeMedia(42, { operationId: 'op-lease-1' });
-+    const [, options] = fetchApiMock.mock.calls[0];
-+    expect(options?.body).toEqual({ media_id: 42, operation_id: 'op-lease-1' });
-+  });
-+
-+  it('accepts GPUFLOW multipart success keys including a null operation_id and nested timing', () => {
-+    const payload = {
-+      ...sampleResponse,
-+      operation_id: null,
-+      startup_id: null,
-+      timing: {
-+        queue_ms: 1,
-+        ramp_up_ms: 0,
-+        processing_ms: 12.5,
-+        startup_ms: null,
-+        server_elapsed_ms: 20,
-+      },
-+    };
-+    expect(parseVisualFactsResponse(payload)).toEqual(payload);
-+  });
-+
-+  it('accepts a minted operation_id and startup_id on the describe success envelope', () => {
-+    const payload = {
-+      ...sampleResponse,
-+      operation_id: 'op-lease-1',
-+      startup_id: 'startup-1',
-+      timing: {
-+        queue_ms: 4,
-+        ramp_up_ms: 80,
-+        processing_ms: 12,
-+        startup_ms: 75,
-+        server_elapsed_ms: 96,
-+      },
-+    };
-+    expect(parseVisualFactsResponse(payload).operation_id).toBe('op-lease-1');
-+    expect(parseVisualFactsResponse(payload).startup_id).toBe('startup-1');
-+  });
-+
-+  it('rejects an unknown top-level describe key instead of loosening the allow-list', () => {
-+    expect(() => parseVisualFactsResponse({ ...sampleResponse, extra: true })).toThrow(
-+      /response\.extra/,
-+    );
-+  });
-+
-+  it('rejects malformed operation_id, startup_id, and timing types on describe success', () => {
-+    expect(() => parseVisualFactsResponse({ ...sampleResponse, operation_id: 12 })).toThrow(
-+      /response\.operation_id/,
-+    );
-+    expect(() => parseVisualFactsResponse({ ...sampleResponse, operation_id: '' })).toThrow(
-+      /response\.operation_id/,
-+    );
-+    expect(() =>
-+      parseVisualFactsResponse({ ...sampleResponse, operation_id: 'x'.repeat(129) }),
-+    ).toThrow(/response\.operation_id/);
-+    expect(() => parseVisualFactsResponse({ ...sampleResponse, startup_id: 1 })).toThrow(
-+      /response\.startup_id/,
-+    );
-+    expect(() => parseVisualFactsResponse({ ...sampleResponse, timing: null })).toThrow(
-+      /response\.timing/,
-+    );
-+    expect(() =>
-+      parseVisualFactsResponse({
-+        ...sampleResponse,
-+        timing: {
-+          queue_ms: 1,
-+          ramp_up_ms: 0,
-+          processing_ms: 12.5,
-+          startup_ms: null,
-+          server_elapsed_ms: 20,
-+          extra_ms: 3,
-+        },
-+      }),
-+    ).toThrow(/response\.timing\.extra_ms/);
-+    expect(() =>
-+      parseVisualFactsResponse({
-+        ...sampleResponse,
-+        timing: {
-+          queue_ms: -1,
-+          ramp_up_ms: 0,
-+          processing_ms: 12.5,
-+          startup_ms: null,
-+          server_elapsed_ms: 20,
-+        },
-+      }),
-+    ).toThrow(/response\.timing\.queue_ms/);
-+  });
-+});
-+
-+/** Copied from scene/tests/fixtures/gpuflow-run-items.json (svc-run-timing). */
-+const GPUFLOW_RUN_ITEMS_FIXTURE = {
-+  run: {
-+    tenant_id: '00000000-0000-0000-0000-000000000001',
-+    run_id: '00000000-0000-0000-0000-000000000002',
-+    status: 'completed_with_errors',
-+    phase: 'complete',
-+    completed: 1,
-+    failed: 1,
-+    skipped: 1,
-+    total: 3,
-+    cancel_requested: false,
-+    eta_seconds: null,
-+    gpu_state: 'ready',
-+    recognition_enabled: true,
-+    deadline_seconds: 90.0,
-+    operation_id: 'run-operation-opaque',
-+    startup_id: null,
-+    timing: {
-+      queue_ms: 10,
-+      ramp_up_ms: 0,
-+      processing_ms_p50: 12.5,
-+      processing_ms_max: 30,
-+      startup_ms: null,
-+      server_elapsed_ms: 40,
-+      items_timed: 2,
-+    },
-+  },
-+  items: {
-+    tenant_id: '00000000-0000-0000-0000-000000000001',
-+    run_id: '00000000-0000-0000-0000-000000000002',
-+    items: [
-+      {
-+        media_id: 70,
-+        status: 'completed',
-+        alt_text_draft: 'A dog resting on green grass',
-+        caption: 'a dog on grass',
-+        provenance: { adapter: 'gpu' },
-+        error: null,
-+        tier: 'final_gpu',
-+        result_generation: 1,
-+        processing_ms: 12.5,
-+      },
-+      {
-+        media_id: 71,
-+        status: 'failed',
-+        alt_text_draft: null,
-+        caption: null,
-+        provenance: null,
-+        error: 'adapter boom',
-+        tier: null,
-+        result_generation: 0,
-+        processing_ms: 30,
-+      },
-+      {
-+        media_id: 72,
-+        status: 'skipped',
-+        alt_text_draft: null,
-+        caption: null,
-+        provenance: null,
-+        error: null,
-+        tier: null,
-+        result_generation: 0,
-+        processing_ms: null,
-+      },
-+    ],
-+  },
-+};
-+
-+describe('parseDescribeRunResponse GPUFLOW timing', () => {
-+  it('parses the svc-run-timing run envelope including nested timing and null startup_id', () => {
-+    const parsed = parseDescribeRunResponse(GPUFLOW_RUN_ITEMS_FIXTURE.run);
-+    expect(parsed.operation_id).toBe('run-operation-opaque');
-+    expect(parsed.startup_id).toBeNull();
-+    expect(parsed.timing).toEqual({
-+      queue_ms: 10,
-+      ramp_up_ms: 0,
-+      processing_ms_p50: 12.5,
-+      processing_ms_max: 30,
-+      startup_ms: null,
-+      server_elapsed_ms: 40,
-+      items_timed: 2,
-+    });
-+  });
-+
-+  it('still accepts a legacy run envelope that omits operation_id, startup_id, and timing', () => {
-+    const legacyRun: Record<string, unknown> = { ...GPUFLOW_RUN_ITEMS_FIXTURE.run };
-+    delete legacyRun.operation_id;
-+    delete legacyRun.startup_id;
-+    delete legacyRun.timing;
-+    expect(parseDescribeRunResponse(legacyRun).run_id).toBe(GPUFLOW_RUN_ITEMS_FIXTURE.run.run_id);
-+  });
-+
-+  it('rejects unknown run keys and malformed timing instead of accepting any extra field', () => {
-+    expect(() => parseDescribeRunResponse({ ...GPUFLOW_RUN_ITEMS_FIXTURE.run, extra: true })).toThrow(
-+      /response\.extra/,
-+    );
-+    expect(() => parseDescribeRunResponse({ ...GPUFLOW_RUN_ITEMS_FIXTURE.run, operation_id: null })).toThrow(
-+      /response\.operation_id/,
-+    );
-+    expect(() =>
-+      parseDescribeRunResponse({
-+        ...GPUFLOW_RUN_ITEMS_FIXTURE.run,
-+        timing: { ...GPUFLOW_RUN_ITEMS_FIXTURE.run.timing, extra_ms: 1 },
-+      }),
-+    ).toThrow(/response\.timing\.extra_ms/);
-+    expect(() =>
-+      parseDescribeRunResponse({
-+        ...GPUFLOW_RUN_ITEMS_FIXTURE.run,
-+        timing: { ...GPUFLOW_RUN_ITEMS_FIXTURE.run.timing, items_timed: 2.5 },
-+      }),
-+    ).toThrow(/response\.timing\.items_timed/);
-+  });
-+});
-+
-+describe('fetchDescribeRunItems GPUFLOW processing_ms', () => {
-+  beforeEach(() => {
-+    vi.clearAllMocks();
-+  });
-+
-+  it('preserves per-item processing_ms from the svc-run-timing items envelope', async () => {
-+    fetchApiMock.mockResolvedValue({
-+      ...GPUFLOW_RUN_ITEMS_FIXTURE.items,
-+      items: GPUFLOW_RUN_ITEMS_FIXTURE.items.items.map((item) => ({
-+        ...item,
-+        existing_alt: false,
-+      })),
-+    });
-+
-+    const result = await fetchDescribeRunItems(GPUFLOW_RUN_ITEMS_FIXTURE.items.run_id);
-+    expect(result.items.map((item) => item.processing_ms)).toEqual([12.5, 30, null]);
-+  });
-+
-+  it('rejects a non-numeric per-item processing_ms', async () => {
-+    fetchApiMock.mockResolvedValue({
-+      run_id: 'run-abc',
-+      items: [
-+        {
-+          media_id: 70,
-+          status: 'completed',
-+          alt_text_draft: 'A described bridge.',
-+          caption: 'A bridge.',
-+          provenance: sampleResponse,
-+          tier: 'final_gpu',
-+          result_generation: 1,
-+          existing_alt: false,
-+          processing_ms: '12',
-+        },
-+      ],
-+    });
-+
-+    await expect(fetchDescribeRunItems('run-abc')).rejects.toThrow(
-+      new MalformedDescribeRunResponseError(
-+        'https://example.com/acx/v1/recognition/describe/runs/run-abc/items response.items[0].processing_ms',
-+      ),
-+    );
-+  });
- });
  
- describe('resolveDescribeErrorMessage', () => {
-@@ -607,6 +867,13 @@ describe('resolveDescribeErrorMessage', () => {
-       'Alt text was saved, but the human-edit record could not be stored. Please try again so history stays accurate.',
-     );
-   });
-+
-+  it('reads typed GPU detail.message instead of a top-level WP message', () => {
-+    const err = new Error(
-+      'Request to .../describe failed (503): {"code":"rest_error","message":"Could not generate a draft","detail":{"code":"description_service_starting","message":"Description service is starting.","operation_id":"op-lease-1","startup_id":null,"warmup_eta_seconds":12,"timing":{"queue_ms":0,"ramp_up_ms":null,"processing_ms":null,"startup_ms":null,"server_elapsed_ms":1}}}',
+-  it('accepts GPUFLOW multipart success keys including a null operation_id and nested timing', () => {
++  it('rejects a null operation_id on describe success while accepting an absent key', () => {
+     const payload = {
+       ...sampleResponse,
+-      operation_id: null,
+       startup_id: null,
+       timing: {
+         queue_ms: 1,
+@@ -618,7 +617,11 @@ describe('describeApi', () => {
+         server_elapsed_ms: 20,
+       },
+     };
++    expect(() => parseVisualFactsResponse({ ...payload, operation_id: null })).toThrow(
++      new MalformedVisualFactsResponseError('response.operation_id'),
 +    );
-+    expect(resolveDescribeErrorMessage(err, 'fallback')).toBe('Description service is starting.');
-+  });
- });
+     expect(parseVisualFactsResponse(payload)).toEqual(payload);
++    expect(parseVisualFactsResponse(payload).operation_id).toBeUndefined();
+   });
  
- describe('resolveDescribeErrorCode', () => {
-@@ -630,6 +897,20 @@ describe('resolveDescribeErrorCode', () => {
-     const err = new Error('Request failed (500): {"code":"  ","message":"something"}');
-     expect(resolveDescribeErrorCode(err)).toBeNull();
+   it('accepts a minted operation_id and startup_id on the describe success envelope', () => {
+@@ -1013,6 +1016,20 @@ describe('resolveDescribeErrorDetailNumberField', () => {
+     expect(resolveDescribeErrorDetailNumberField(new Error('network down'), 'warmup_eta_seconds')).toBeNull();
+     expect(resolveDescribeErrorDetailNumberField(null, 'warmup_eta_seconds')).toBeNull();
    });
 +
-+  it('reads typed GPU detail.code instead of a top-level WP code', () => {
++  it('returns null for a negative warmup_eta_seconds', () => {
 +    const err = new Error(
-+      'Request to .../describe failed (409): {"code":"rest_error","message":"Could not generate a draft","detail":{"code":"operation_mismatch","message":"operation mismatch","operation_id":"op-stale","startup_id":null,"timing":{"queue_ms":0,"ramp_up_ms":null,"processing_ms":null,"startup_ms":null,"server_elapsed_ms":1}}}',
-+    );
-+    expect(resolveDescribeErrorCode(err)).toBe(DESCRIBE_OPERATION_ERROR_CODE.MISMATCH);
-+  });
-+
-+  it('reads description_service_starting from detail.code', () => {
-+    const err = new Error(
-+      'Request to .../describe failed (503): {"detail":{"code":"description_service_starting","message":"Description service is starting.","operation_id":"op-lease-1","startup_id":null,"warmup_eta_seconds":12,"timing":{"queue_ms":0,"ramp_up_ms":null,"processing_ms":null,"startup_ms":null,"server_elapsed_ms":1}}}',
-+    );
-+    expect(resolveDescribeErrorCode(err)).toBe(DESCRIBE_OPERATION_ERROR_CODE.STARTING);
-+  });
- });
- 
- describe('DESCRIPTION_CORRECTION_CODE', () => {
-@@ -639,6 +920,18 @@ describe('DESCRIPTION_CORRECTION_CODE', () => {
-   });
- });
- 
-+describe('DESCRIBE_OPERATION_ERROR_CODE', () => {
-+  it('exports the stable typed GPU/operation error codes [sr-007]', () => {
-+    expect(Object.values(DESCRIBE_OPERATION_ERROR_CODE)).toEqual([
-+      'description_service_starting',
-+      'description_service_unavailable',
-+      'description_service_error',
-+      'operation_mismatch',
-+      'operation_expired',
-+    ]);
-+  });
-+});
-+
- describe('resolveDescribeErrorDataField', () => {
-   it('extracts stored_alt_text from a partial correction rejection body', () => {
-     const err = new Error(
-@@ -676,6 +969,50 @@ describe('resolveDescribeErrorDataField', () => {
-     );
-     expect(resolveDescribeErrorDataField(err, 'stored_alt_text')).toBeNull();
-   });
-+
-+  it('reads detail.operation_id from a typed GPU starting envelope', () => {
-+    const err = new Error(
-+      'Request to .../describe failed (503): {"detail":{"code":"description_service_starting","message":"Description service is starting.","operation_id":"op-lease-1","startup_id":null,"warmup_eta_seconds":12,"timing":{"queue_ms":0,"ramp_up_ms":null,"processing_ms":null,"startup_ms":null,"server_elapsed_ms":1}}}',
-+    );
-+    expect(resolveDescribeErrorDataField(err, 'operation_id')).toBe('op-lease-1');
-+  });
-+
-+  it('returns null operation_id for unavailable without inventing a token', () => {
-+    const err = new Error(
-+      'Request to .../describe failed (503): {"detail":{"code":"description_service_unavailable","message":"Description service is unavailable.","startup_id":null,"timing":{"queue_ms":0,"ramp_up_ms":null,"processing_ms":null,"startup_ms":null,"server_elapsed_ms":1}}}',
-+    );
-+    expect(resolveDescribeErrorCode(err)).toBe(DESCRIBE_OPERATION_ERROR_CODE.UNAVAILABLE);
-+    expect(resolveDescribeErrorDataField(err, 'operation_id')).toBeNull();
-+  });
-+
-+  it('returns null operation_id when the typed detail explicitly sets it to null', () => {
-+    const err = new Error(
-+      'Request to .../describe failed (410): {"detail":{"code":"operation_expired","message":"operation expired","operation_id":null,"startup_id":null,"timing":{"queue_ms":0,"ramp_up_ms":null,"processing_ms":null,"startup_ms":null,"server_elapsed_ms":1}}}',
-+    );
-+    expect(resolveDescribeErrorCode(err)).toBe(DESCRIBE_OPERATION_ERROR_CODE.EXPIRED);
-+    expect(resolveDescribeErrorDataField(err, 'operation_id')).toBeNull();
-+  });
-+});
-+
-+describe('resolveDescribeErrorDetailNumberField', () => {
-+  it('reads warmup_eta_seconds from a typed starting envelope', () => {
-+    const err = new Error(
-+      'Request to .../describe failed (503): {"detail":{"code":"description_service_starting","message":"Description service is starting.","operation_id":"op-lease-1","startup_id":null,"warmup_eta_seconds":12,"timing":{"queue_ms":0,"ramp_up_ms":null,"processing_ms":null,"startup_ms":null,"server_elapsed_ms":1}}}',
-+    );
-+    expect(resolveDescribeErrorDetailNumberField(err, 'warmup_eta_seconds')).toBe(12);
-+  });
-+
-+  it('returns null when warmup_eta_seconds is absent', () => {
-+    const err = new Error(
-+      'Request to .../describe failed (409): {"detail":{"code":"operation_mismatch","message":"operation mismatch","operation_id":"op-stale","startup_id":null,"timing":{"queue_ms":0,"ramp_up_ms":null,"processing_ms":null,"startup_ms":null,"server_elapsed_ms":1}}}',
++      'Request to .../describe failed (503): {"detail":{"code":"description_service_starting","message":"Description service is starting.","operation_id":"op-lease-1","startup_id":null,"warmup_eta_seconds":-3,"timing":{"queue_ms":0,"ramp_up_ms":null,"processing_ms":null,"startup_ms":null,"server_elapsed_ms":1}}}',
 +    );
 +    expect(resolveDescribeErrorDetailNumberField(err, 'warmup_eta_seconds')).toBeNull();
 +  });
 +
-+  it('returns null for unstructured errors', () => {
-+    expect(resolveDescribeErrorDetailNumberField(new Error('network down'), 'warmup_eta_seconds')).toBeNull();
-+    expect(resolveDescribeErrorDetailNumberField(null, 'warmup_eta_seconds')).toBeNull();
++  it('treats -0 warmup_eta_seconds as 0', () => {
++    const err = new Error(
++      'Request to .../describe failed (503): {"detail":{"code":"description_service_starting","message":"Description service is starting.","operation_id":"op-lease-1","startup_id":null,"warmup_eta_seconds":-0,"timing":{"queue_ms":0,"ramp_up_ms":null,"processing_ms":null,"startup_ms":null,"server_elapsed_ms":1}}}',
++    );
++    expect(resolveDescribeErrorDetailNumberField(err, 'warmup_eta_seconds')).toBe(0);
 +  });
  });
  
  describe('resolveDescribeErrorDataBooleanField', () => {
-diff --git a/apps/prototype-wp-alt-context/js/admin/api/describeApi.ts b/apps/prototype-wp-alt-context/js/admin/api/describeApi.ts
---- a/apps/prototype-wp-alt-context/js/admin/api/describeApi.ts
-+++ b/apps/prototype-wp-alt-context/js/admin/api/describeApi.ts
-@@ -113,6 +113,15 @@ export interface VisualFacts {
-   ocr_text: string | null;
- }
+diff --git a/apps/prototype-wp-alt-context/js/admin/api/__tests__/describeRunResponseContract.test.ts b/apps/prototype-wp-alt-context/js/admin/api/__tests__/describeRunResponseContract.test.ts
+--- a/apps/prototype-wp-alt-context/js/admin/api/__tests__/describeRunResponseContract.test.ts
++++ b/apps/prototype-wp-alt-context/js/admin/api/__tests__/describeRunResponseContract.test.ts
+@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
  
-+/** Measured milliseconds on a single describe; unknown values are null. */
-+export interface DescribeOperationTiming {
-+  queue_ms: number | null;
-+  ramp_up_ms: number | null;
-+  processing_ms: number | null;
-+  startup_ms: number | null;
-+  server_elapsed_ms: number | null;
-+}
-+
- export interface VisualFactsResponse {
-   tenant_id: string;
-   media_id: number;
-@@ -140,6 +149,15 @@ export interface VisualFactsResponse {
-   /** ALTQ-1 additive long-form description, omitted by short-only adapters. */
-   alt_text_long?: string | null;
-   alt_text_write?: AltTextWriteResult;
-+  /**
-+   * Opaque service-minted lease id. Null means no lease to poll
-+   * (GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-01). Absent on older adapters.
-+   */
-+  operation_id?: string | null;
-+  /** Opaque shared startup id; null for warm/cache work. Absent on older adapters. */
-+  startup_id?: string | null;
-+  /** Measured milliseconds; unknown values are null. Absent on older adapters. */
-+  timing?: DescribeOperationTiming;
- }
+ import { describe, expect, expectTypeOf, it } from 'vitest';
+ 
+-import type { DescribeRunResponse } from '../describeApi';
++import type { DescribeRunResponse, DescribeRunTiming } from '../describeApi';
  
  /**
-@@ -281,8 +299,100 @@ const VISUAL_FACTS_RESPONSE_OPTIONAL_KEYS = [
-   'naming_provenance',
-   'attachment_provenance',
-   'alt_text_write',
-+  'operation_id',
-+  'startup_id',
-+  'timing',
-+] as const;
-+
-+const OPAQUE_ID_MAX_LENGTH = 128;
-+
-+const DESCRIBE_OPERATION_TIMING_KEYS = [
-+  'queue_ms',
-+  'ramp_up_ms',
-+  'processing_ms',
-+  'startup_ms',
-+  'server_elapsed_ms',
-+] as const;
-+
-+const DESCRIBE_RUN_TIMING_KEYS = [
-+  'queue_ms',
-+  'ramp_up_ms',
-+  'processing_ms_p50',
-+  'processing_ms_max',
-+  'startup_ms',
-+  'server_elapsed_ms',
-+  'items_timed',
- ] as const;
- 
-+const DESCRIBE_RUN_TIMING_INTEGER_KEYS: ReadonlySet<string> = new Set(['items_timed']);
-+
-+const isOpaqueId = (value: unknown): value is string =>
-+  typeof value === 'string' && value.length >= 1 && value.length <= OPAQUE_ID_MAX_LENGTH;
-+
-+const validateNullableNonNegativeNumber = (value: unknown, path: string): string | null => {
-+  if (value === null) {
-+    return null;
-+  }
-+  if (!isFiniteNumber(value) || value < 0) {
-+    return path;
-+  }
-+  return null;
-+};
-+
-+const validateNullableNonNegativeInteger = (value: unknown, path: string): string | null => {
-+  if (value === null) {
-+    return null;
-+  }
-+  if (!isInteger(value) || value < 0) {
-+    return path;
-+  }
-+  return null;
-+};
-+
-+const validateTimingObject = (
-+  value: unknown,
-+  path: string,
-+  keys: readonly string[],
-+  integerKeys: ReadonlySet<string> = new Set(),
-+): string | null => {
-+  if (!isRecord(value)) {
-+    return path;
-+  }
-+  const keyError = firstContractKeyError(value, keys, path);
-+  if (keyError) {
-+    return keyError;
-+  }
-+  for (const key of keys) {
-+    const fieldPath = `${path}.${key}`;
-+    const fieldError = integerKeys.has(key)
-+      ? validateNullableNonNegativeInteger(value[key], fieldPath)
-+      : validateNullableNonNegativeNumber(value[key], fieldPath);
-+    if (fieldError) {
-+      return fieldError;
-+    }
-+  }
-+  return null;
-+};
-+
-+const validateOptionalOpaqueId = (
-+  payload: Record<string, unknown>,
-+  key: 'operation_id' | 'startup_id',
-+  pathPrefix: string,
-+  allowNull: boolean,
-+): string | null => {
-+  if (!hasOwn(payload, key)) {
-+    return null;
-+  }
-+  const value = payload[key];
-+  if (value === null && allowNull) {
-+    return null;
-+  }
-+  if (!isOpaqueId(value)) {
-+    return `${pathPrefix}.${key}`;
-+  }
-+  return null;
-+};
-+
- const VISUAL_FACTS_RESPONSE_KEYS = [
-   ...VISUAL_FACTS_RESPONSE_REQUIRED_KEYS,
-   ...VISUAL_FACTS_RESPONSE_OPTIONAL_KEYS,
-@@ -562,6 +672,24 @@ const validateVisualFactsResponse = (payload: unknown): string | null => {
-       return altTextWriteError;
-     }
-   }
-+  const operationIdError = validateOptionalOpaqueId(payload, 'operation_id', 'response', true);
-+  if (operationIdError) {
-+    return operationIdError;
-+  }
-+  const startupIdError = validateOptionalOpaqueId(payload, 'startup_id', 'response', true);
-+  if (startupIdError) {
-+    return startupIdError;
-+  }
-+  if (hasOwn(payload, 'timing')) {
-+    const timingError = validateTimingObject(
-+      payload.timing,
-+      'response.timing',
-+      DESCRIBE_OPERATION_TIMING_KEYS,
-+    );
-+    if (timingError) {
-+      return timingError;
-+    }
-+  }
-   return null;
- };
- 
-@@ -589,6 +717,8 @@ export const parseVisualFactsResponse = (payload: unknown): VisualFactsResponse
- export interface DescribeMediaWriteOptions {
-   writeAlt?: boolean;
-   force?: boolean;
-+  /** Opaque service-minted id; omit on first attempt (REBASE-M-02). */
-+  operationId?: string;
- }
- 
- export type DescriptionCandidateReason =
-@@ -796,6 +926,18 @@ export const DESCRIPTION_CORRECTION_CODE = {
-   FAILED: 'description_correction_failed',
- } as const;
- 
-+/** Canonical typed GPU/operation error codes on the describe path (sr-007). */
-+export const DESCRIBE_OPERATION_ERROR_CODE = {
-+  STARTING: 'description_service_starting',
-+  UNAVAILABLE: 'description_service_unavailable',
-+  ERROR: 'description_service_error',
-+  MISMATCH: 'operation_mismatch',
-+  EXPIRED: 'operation_expired',
-+} as const;
-+
-+export type DescribeOperationErrorCode =
-+  (typeof DESCRIBE_OPERATION_ERROR_CODE)[keyof typeof DESCRIBE_OPERATION_ERROR_CODE];
-+
- export type DescriptionCorrectionCode =
-   (typeof DESCRIPTION_CORRECTION_CODE)[keyof typeof DESCRIPTION_CORRECTION_CODE];
- 
-@@ -870,6 +1012,23 @@ export interface DescribeRunResponse {
-    * default (rg-005, rg-015).
-    */
-   deadline_seconds?: number | null;
-+  /** Opaque service-minted id bound to tenant and request digest. */
-+  operation_id?: string;
-+  /** Opaque shared startup id; null for warm/cache work. */
-+  startup_id?: string | null;
-+  /** Run-level measured milliseconds; unknown values are null. */
-+  timing?: DescribeRunTiming;
-+}
-+
-+/** Measured milliseconds on a describe-run envelope; unknown values are null. */
-+export interface DescribeRunTiming {
-+  queue_ms: number | null;
-+  ramp_up_ms: number | null;
-+  processing_ms_p50: number | null;
-+  processing_ms_max: number | null;
-+  startup_ms: number | null;
-+  server_elapsed_ms: number | null;
-+  items_timed: number | null;
- }
- 
- /** One describe-run item as the operator reviews it before write-back (INT-01d).
-@@ -884,6 +1043,8 @@ export interface DescribeRunItem {
-   tier: DescribeResultTier | null;
-   result_generation: number;
-   existing_alt: boolean;
-+  /** Per-item processing milliseconds; null when the item was not timed. */
-+  processing_ms?: number | null;
- }
- 
- export interface DescribeRunItemsResponse {
-@@ -912,13 +1073,18 @@ export const describeMedia = async (
-   mediaId: number,
-   options: DescribeMediaWriteOptions = {},
- ): Promise<VisualFactsResponse> => {
--  const body: { media_id: number; write_alt?: boolean; force?: boolean } = { media_id: mediaId };
-+  const body: { media_id: number; write_alt?: boolean; force?: boolean; operation_id?: string } = {
-+    media_id: mediaId,
-+  };
-   if (options.writeAlt !== undefined) {
-     body.write_alt = options.writeAlt;
-   }
-   if (options.force !== undefined) {
-     body.force = options.force;
-   }
-+  if (options.operationId !== undefined) {
-+    body.operation_id = options.operationId;
-+  }
- 
-   return parseVisualFactsResponse(
-     await fetchRequiredApi<unknown>(getEndpoint('recognitionDescribe'), {
-@@ -1045,6 +1211,15 @@ const parseDescribeRunItemsResponse = (payload: unknown, endpoint: string): Desc
-     if (missingKey) {
-       malformed(`${itemPath}.${missingKey}`);
-     }
-+    if (hasOwn(item, 'processing_ms')) {
-+      const processingError = validateNullableNonNegativeNumber(
-+        item.processing_ms,
-+        `${itemPath}.processing_ms`,
-+      );
-+      if (processingError) {
-+        malformed(processingError);
-+      }
-+    }
-   }
- 
-   return payload as unknown as DescribeRunItemsResponse;
-@@ -1065,7 +1240,12 @@ const DESCRIBE_RUN_RESPONSE_REQUIRED_KEYS = [
-   'recognition_enabled',
- ] as const;
- 
+  * The GATE referenced by the WBUX6-MRG-03 comment on DescribeRunResponse. That
+@@ -35,7 +35,12 @@ interface DescribeRunSchema {
+  * silent fall-through to whatever local default that consumer invented
+  * (rg-005, rg-015).
+  */
 -const DESCRIBE_RUN_RESPONSE_OPTIONAL_KEYS = ['deadline_seconds'] as const;
 +const DESCRIBE_RUN_RESPONSE_OPTIONAL_KEYS = [
 +  'deadline_seconds',
@@ -662,108 +70,83 @@ diff --git a/apps/prototype-wp-alt-context/js/admin/api/describeApi.ts b/apps/pr
 +  'timing',
 +] as const;
  
+ /** Single canonical key list for the envelope (sr-007), mirrored against the schema. */
  const DESCRIBE_RUN_RESPONSE_KEYS = [
-   ...DESCRIBE_RUN_RESPONSE_REQUIRED_KEYS,
-@@ -1129,6 +1309,25 @@ const validateDescribeRunResponse = (payload: unknown): string | null => {
-   ) {
-     return 'response.deadline_seconds';
+@@ -114,12 +119,18 @@ describe('DescribeRunResponse contract', () => {
+     // Optional AND nullable on the wire, so the TS field has to admit both.
+     expect(schema.properties?.deadline_seconds?.type).toEqual(['number', 'null']);
+     expectTypeOf<DescribeRunResponse['deadline_seconds']>().toEqualTypeOf<number | null | undefined>();
++    expect(schema.properties?.operation_id?.type).toBe('string');
++    expectTypeOf<DescribeRunResponse['operation_id']>().toEqualTypeOf<string | undefined>();
++    expect(schema.properties?.startup_id?.type).toEqual(['string', 'null']);
++    expectTypeOf<DescribeRunResponse['startup_id']>().toEqualTypeOf<string | null | undefined>();
++    expect(schema.properties?.timing?.type).toBe('object');
++    expectTypeOf<DescribeRunResponse['timing']>().toEqualTypeOf<DescribeRunTiming | undefined>();
+ 
+     // The envelope is still exactly required + the optional keys, so a new
+     // schema property added without a TS field fails here rather than silently.
+-    expect([...declared].sort()).toEqual(
+-      [...DESCRIBE_RUN_RESPONSE_KEYS, ...DESCRIBE_RUN_RESPONSE_OPTIONAL_KEYS].sort(),
+-    );
++    const expectedKeys = [...DESCRIBE_RUN_RESPONSE_KEYS, ...DESCRIBE_RUN_RESPONSE_OPTIONAL_KEYS];
++    expect(expectedKeys).toHaveLength(16);
++    expect([...declared].sort()).toEqual(expectedKeys.sort());
+   });
+ 
+   it('accepts a disclosed budget without disturbing the required envelope', () => {
+diff --git a/apps/prototype-wp-alt-context/js/admin/api/describeApi.ts b/apps/prototype-wp-alt-context/js/admin/api/describeApi.ts
+--- a/apps/prototype-wp-alt-context/js/admin/api/describeApi.ts
++++ b/apps/prototype-wp-alt-context/js/admin/api/describeApi.ts
+@@ -150,10 +150,11 @@ export interface VisualFactsResponse {
+   alt_text_long?: string | null;
+   alt_text_write?: AltTextWriteResult;
+   /**
+-   * Opaque service-minted lease id. Null means no lease to poll
+-   * (GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-01). Absent on older adapters.
++   * Opaque service-minted lease id. Optional; when present it is a non-empty
++   * string (1..128) and never null. The service drops the key when unset
++   * (GPUFLOW-1-SPADESCRIBECLIENT-R-01). Absent means no lease to poll.
+    */
+-  operation_id?: string | null;
++  operation_id?: string;
+   /** Opaque shared startup id; null for warm/cache work. Absent on older adapters. */
+   startup_id?: string | null;
+   /** Measured milliseconds; unknown values are null. Absent on older adapters. */
+@@ -672,7 +673,7 @@ const validateVisualFactsResponse = (payload: unknown): string | null => {
+       return altTextWriteError;
+     }
    }
+-  const operationIdError = validateOptionalOpaqueId(payload, 'operation_id', 'response', true);
 +  const operationIdError = validateOptionalOpaqueId(payload, 'operation_id', 'response', false);
-+  if (operationIdError) {
-+    return operationIdError;
-+  }
-+  const startupIdError = validateOptionalOpaqueId(payload, 'startup_id', 'response', true);
-+  if (startupIdError) {
-+    return startupIdError;
-+  }
-+  if (hasOwn(payload, 'timing')) {
-+    const timingError = validateTimingObject(
-+      payload.timing,
-+      'response.timing',
-+      DESCRIBE_RUN_TIMING_KEYS,
-+      DESCRIBE_RUN_TIMING_INTEGER_KEYS,
-+    );
-+    if (timingError) {
-+      return timingError;
-+    }
-+  }
-   return null;
+   if (operationIdError) {
+     return operationIdError;
+   }
+@@ -1534,10 +1535,11 @@ export const resolveDescribeErrorDataField = (error: unknown, field: string): st
  };
  
-@@ -1256,8 +1455,18 @@ export const applyDescribeRunDrafts = async (
-  * (E19-1-REV-C-4): that resolver special-cases `embedding_runtime_unavailable`
-  * and only reads `detail`.
+ /**
+- * Resolve a finite number from a typed FastAPI `detail` object when present.
++ * Resolve a nonnegative finite number from a typed FastAPI `detail` object.
+  * Returns null when the error is unstructured, `detail` is not an object, or
+- * the named field is absent / not a finite number — callers must not invent
+- * a value ([rg-015]). Used for `warmup_eta_seconds`.
++ * the named field is absent / not a finite number / negative — callers must
++ * not invent a value ([rg-015]). `-0` is treated as `0`. Used for
++ * `warmup_eta_seconds`.
   */
--export const resolveDescribeErrorMessage = (error: unknown, fallback: string): string =>
--  resolveWpErrorMessage(error, fallback);
-+export const resolveDescribeErrorMessage = (error: unknown, fallback: string): string => {
-+  if (error instanceof Error) {
-+    const payload = parseWpErrorPayload(error.message);
-+    if (payload && isRecord(payload.detail)) {
-+      const message = payload.detail.message;
-+      if (typeof message === 'string' && message.trim() !== '') {
-+        return message;
-+      }
-+    }
-+  }
-+  return resolveWpErrorMessage(error, fallback);
-+};
- 
- /**
-  * Resolve the WP_Error `code` from a describe/correction rejection when present.
-@@ -1277,6 +1486,13 @@ export const resolveDescribeErrorCode = (error: unknown): string | null => {
-   if (!payload) {
+ export const resolveDescribeErrorDetailNumberField = (
+   error: unknown,
+@@ -1551,10 +1553,10 @@ export const resolveDescribeErrorDetailNumberField = (
      return null;
    }
-+  if (isRecord(payload.detail)) {
-+    const detailCode = payload.detail.code;
-+    if (typeof detailCode === 'string' && detailCode.trim() !== '') {
-+      return detailCode;
-+    }
+   const value = payload.detail[field];
+-  if (typeof value === 'number' && Number.isFinite(value)) {
+-    return value;
++  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
 +    return null;
-+  }
-   const code = payload.code;
-   if (typeof code === 'string' && code.trim() !== '') {
-     return code;
-@@ -1302,6 +1518,10 @@ export const resolveDescribeErrorDataField = (error: unknown, field: string): st
-   if (!payload) {
-     return null;
    }
-+  if (isRecord(payload.detail) && hasOwn(payload.detail, field)) {
-+    const detailValue = payload.detail[field];
-+    return typeof detailValue === 'string' ? detailValue : null;
-+  }
-   const data = payload.data;
-   if (!data || typeof data !== 'object' || Array.isArray(data)) {
-     return null;
-@@ -1313,6 +1533,30 @@ export const resolveDescribeErrorDataField = (error: unknown, field: string): st
-   return null;
+-  return null;
++  return value === 0 ? 0 : value;
  };
  
-+/**
-+ * Resolve a finite number from a typed FastAPI `detail` object when present.
-+ * Returns null when the error is unstructured, `detail` is not an object, or
-+ * the named field is absent / not a finite number — callers must not invent
-+ * a value ([rg-015]). Used for `warmup_eta_seconds`.
-+ */
-+export const resolveDescribeErrorDetailNumberField = (
-+  error: unknown,
-+  field: string,
-+): number | null => {
-+  if (!(error instanceof Error)) {
-+    return null;
-+  }
-+  const payload = parseWpErrorPayload(error.message);
-+  if (!payload || !isRecord(payload.detail)) {
-+    return null;
-+  }
-+  const value = payload.detail[field];
-+  if (typeof value === 'number' && Number.isFinite(value)) {
-+    return value;
-+  }
-+  return null;
-+};
-+
  /**
-  * Resolve a boolean field from the WP_Error `data` object when present.
-  * Returns null when the error is unstructured, `data` is missing, or the named

@@ -244,7 +244,7 @@ export const NameFaceControl = ({
   const [activeIndex, setActiveIndex] = useState(-1);
   const [announcedTotal, setAnnouncedTotal] = useState<number | null>(null);
   const [chosenOptionValue, setChosenOptionValue] = useState<string | null>(null);
-  const [listOpen, setListOpen] = useState(true);
+  const [listOpen, setListOpen] = useState(false);
   const isDisabled = isPending || disabled || isLoading;
   const isInputDisabled = disabled || isLoading || (inputDisabled ?? isPending);
 

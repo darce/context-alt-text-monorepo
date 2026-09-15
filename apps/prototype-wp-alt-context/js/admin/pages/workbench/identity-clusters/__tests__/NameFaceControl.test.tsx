@@ -1,5 +1,5 @@
 import React from 'react';
-import { act, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -10,6 +10,8 @@ import {
   resolveNameFaceInput,
   type NameFaceResolution,
 } from '../NameFaceControl';
+import { ClusterPreview } from '../ClusterPreview';
+import previewFixture from './fixtures/gpuflow-naming-preview.json';
 import { NAMING_GROUP_SUGGESTED, namingOptionValue } from '../buildNamingOptions';
 
 vi.mock('@wordpress/i18n', () => ({
@@ -91,9 +93,9 @@ describe('NameFaceControl combobox pattern (UXW2-3-R1-01)', () => {
 
     expect(input).toHaveAttribute('aria-autocomplete', 'list');
     expect(input).toHaveAttribute('aria-haspopup', 'listbox');
-    expect(input).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByRole('listbox')).toBeInTheDocument();
-    expect(screen.getAllByRole('option')).toHaveLength(3);
+    expect(input).toHaveAttribute('aria-expanded', 'false');
+    expect(input).not.toHaveAttribute('aria-controls');
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
 
     input.focus();
     await user.keyboard('{ArrowDown}{ArrowDown}{Enter}');
@@ -125,7 +127,7 @@ describe('NameFaceControl combobox pattern (UXW2-3-R1-01)', () => {
     const input = screen.getByRole('combobox');
 
     input.focus();
-    await user.keyboard('{End}');
+    await user.keyboard('{ArrowDown}{End}');
     expect(input).toHaveAttribute(
       'aria-activedescendant',
       screen.getByRole('option', { name: /Alan Turing/ }).id,
@@ -156,6 +158,7 @@ describe('NameFaceControl create-vs-bind (UXW2-3-R1-07)', () => {
 
   it('typed Hopper (mid-label) shows Grace Hopper (UXW2-3-R1-07 includes)', () => {
     renderControl({ value: 'Hopper' });
+    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' });
     expect(screen.getByRole('option', { name: /Grace Hopper/ })).toBeInTheDocument();
   });
 
@@ -166,6 +169,7 @@ describe('NameFaceControl create-vs-bind (UXW2-3-R1-07)', () => {
     ];
     const { rerender, onCommit } = renderControl({ options, value: 'Zed' });
 
+    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' });
     expect(screen.getByRole('option', { name: /Zed Offslice/ })).toBeInTheDocument();
 
     rerender(
@@ -189,6 +193,7 @@ describe('NameFaceControl create-vs-bind (UXW2-3-R1-07)', () => {
     const { onCommit } = renderControl({ options, value: 'zed offslice' });
     const user = userEvent.setup();
 
+    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' });
     expect(screen.getByRole('option', { name: /Zed Offslice/ })).toBeInTheDocument();
     await user.type(screen.getByRole('combobox'), '{Enter}');
 
@@ -235,6 +240,7 @@ describe('NameFaceControl create-vs-bind (UXW2-3-R1-07)', () => {
     });
     const user = userEvent.setup();
 
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Alex Carter' } });
     const confirmOptions = screen.getAllByRole('option', { name: /Confirm match with/ });
     expect(confirmOptions).toHaveLength(2);
     await user.click(confirmOptions[1]);
@@ -258,6 +264,7 @@ describe('NameFaceControl create-vs-bind (UXW2-3-R1-07)', () => {
     });
     const user = userEvent.setup();
 
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Alex Carter' } });
     const confirmOptions = screen.getAllByRole('option', { name: /Confirm match with/ });
     await user.click(confirmOptions[1]);
     onCommit.mockClear();
@@ -284,6 +291,7 @@ describe('NameFaceControl create-vs-bind (UXW2-3-R1-07)', () => {
 
   it('highlights the matched substring in each row', () => {
     renderControl({ value: 'ada' });
+    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' });
     const mark = document.querySelector('mark');
     expect(mark).not.toBeNull();
     expect(mark).toHaveTextContent(/ada/i);
@@ -333,6 +341,7 @@ describe('NameFaceControl distinct confirm names (UXW2-3-R1-15)', () => {
       onRejectSuggestion: vi.fn(),
     });
 
+    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' });
     expect(screen.getByRole('option', { name: 'Confirm match with Ada Lovelace (Person)' })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: 'Confirm match with Grace Hopper (Person)' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Reject Ada Lovelace' })).toBeInTheDocument();
@@ -351,6 +360,7 @@ describe('NameFaceControl APG overlay (UXW2-3-R2-03)', () => {
     });
     const user = userEvent.setup();
     const input = screen.getByRole('combobox', { name: 'Name this person' });
+    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' });
     const listbox = screen.getByRole('listbox');
 
     expect(input).toHaveAttribute('aria-controls', listbox.id);
@@ -363,7 +373,7 @@ describe('NameFaceControl APG overlay (UXW2-3-R2-03)', () => {
     }
 
     input.focus();
-    await user.keyboard('{Escape}');
+    await user.keyboard('{ArrowDown}{Escape}');
     expect(onCancel).not.toHaveBeenCalled();
     expect(input).toHaveAttribute('aria-expanded', 'false');
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
@@ -381,6 +391,7 @@ describe('NameFaceControl APG overlay (UXW2-3-R2-03)', () => {
       onRejectSuggestion: vi.fn(),
       onCancel: vi.fn(),
     });
+    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' });
     const listbox = screen.getByRole('listbox');
     for (const child of Array.from(listbox.children)) {
       if (!child.classList.contains('acx-name-face__suggestions-header')) {
@@ -400,7 +411,7 @@ describe('NameFaceControl APG overlay (UXW2-3-R2-03)', () => {
     const user = userEvent.setup();
     const input = screen.getByRole('combobox', { name: 'Name this person' });
     input.focus();
-    await user.keyboard('{Escape}');
+    await user.keyboard('{ArrowDown}{Escape}');
     expect(onCancel).not.toHaveBeenCalled();
     expect(input).toHaveAttribute('aria-expanded', 'false');
     expect(input).not.toHaveAttribute('aria-controls');
@@ -544,12 +555,14 @@ describe('NameFaceControl create-vs-bind preview (UXW2-3-R1-07)', () => {
 describe('NameFaceControl header + loading (UXW2-3-R1-16)', () => {
   it('uses a configurable suggestions header', () => {
     renderControl({ suggestionsHeader: 'People' });
+    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' });
     expect(screen.getByText('People')).toBeInTheDocument();
     expect(screen.queryByText('Suggested')).not.toBeInTheDocument();
   });
 
   it('defaults the overlay header to People when no Suggested group is present (UXW2-3-R1-16b)', () => {
     renderControl();
+    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' });
     expect(screen.getByText('People')).toBeInTheDocument();
     expect(screen.queryByText('Suggested')).not.toBeInTheDocument();
   });
@@ -558,6 +571,7 @@ describe('NameFaceControl header + loading (UXW2-3-R1-16)', () => {
     renderControl({
       options: [{ ...person(1, 'Ada Lovelace'), group: NAMING_GROUP_SUGGESTED }],
     });
+    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' });
     expect(screen.getByText('Suggested')).toBeInTheDocument();
   });
 
@@ -591,3 +605,40 @@ describe('NameFaceControl accessible name (UXW2-3-R6-08)', () => {
     expect(input).toHaveAttribute('aria-label', 'Beta');
   });
 });
+
+describe('GPUFLOW-1 naming intent and preview', () => {
+  it('opens on typing and stays closed when only focused', async () => {
+    render(<TypedNameFace onCommit={vi.fn()} />);
+    const input = screen.getByRole('combobox');
+    expect(input).toHaveFocus();
+    expect(input).toHaveAttribute('aria-expanded', 'false');
+    expect(input).not.toHaveAttribute('aria-activedescendant');
+    await userEvent.setup().type(input, 'Gra');
+    expect(input).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('option', { name: /Grace Hopper/ })).toBeInTheDocument();
+  });
+
+  it.each(previewFixture.cases)('preview fallback: $name', (fixture) => {
+    render(
+      <ClusterPreview
+        representative={fixture.member ?? undefined}
+        representativeFace={fixture.representative_face}
+        memberCount={fixture.member ? 1 : 0}
+      />,
+    );
+    if (fixture.expected === null) {
+      expect(screen.getByRole('img', { name: 'Representative image unavailable' }))
+        .toHaveAttribute('data-avatar-state', 'data-missing');
+      expect(screen.queryByTestId('preview-face')).not.toBeInTheDocument();
+    } else {
+      expect(screen.getByTestId('preview-face')).toHaveAttribute('data-url', fixture.expected.media_url);
+      expect(screen.getByTestId('preview-face')).toHaveAttribute('data-bbox', JSON.stringify(fixture.expected.bbox));
+    }
+  });
+});
+
+vi.mock('../../../../../components/ui/FaceThumbnail', () => ({
+  FaceThumbnail: ({ mediaUrl, bbox }: { mediaUrl: string; bbox: unknown }) => (
+    <div data-testid="preview-face" data-url={mediaUrl} data-bbox={JSON.stringify(bbox)} />
+  ),
+}));

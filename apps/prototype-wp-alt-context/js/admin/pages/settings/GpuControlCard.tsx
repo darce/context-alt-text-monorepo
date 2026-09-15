@@ -3,11 +3,7 @@ import { __ } from '@wordpress/i18n';
 
 import { GPU_STATE, GpuIntentAction, GpuIntentStatus, type GpuStatusResponse } from '../../api/gpuApi';
 import { toWorkbench } from '../../navigation/appLinks';
-import {
-  GPU_STATE_ICON,
-  GPU_STATE_TONE,
-  gpuStatePresentation,
-} from '../workbench/gpuStatePresentation';
+import { GPU_STATE_ICON, GPU_STATE_TONE, gpuStatePresentation } from '../workbench/gpuStatePresentation';
 import { useGpuControl } from './useGpuControl';
 
 type ConfirmationAction = typeof GpuIntentAction.START | typeof GpuIntentAction.STOP;
@@ -76,13 +72,23 @@ const formatClock = (value: string | null): string | null => {
   return new Date(milliseconds).toISOString().slice(11, 19);
 };
 
+const toOperatorReason = (reason: string | null | undefined): string | null => {
+  if (!reason) {
+    return null;
+  }
+  return reason
+    .replace(/GPU/g, 'service')
+    .replace('service state is unknown', 'Service state is unknown')
+    .replace('Lifecycle telemetry is stale', 'Service status is out of date');
+};
+
 const intentLabel = (data: GpuStatusResponse): string => {
   const { intent, intent_status: intentStatus } = data.gpu_state;
   if (
     intentStatus === GpuIntentStatus.BLOCKED_WORK_IN_FLIGHT ||
     (intent === GpuIntentAction.STOP && data.load.has_work)
   ) {
-    return 'Stopping after the current work finishes';
+    return 'Stopping after the current work finishes until idle';
   }
   if (intent === GpuIntentAction.AUTO) {
     return data.snapshot_fresh
@@ -151,6 +157,7 @@ export const GpuControlCard = (): React.JSX.Element => {
   const {
     data,
     isLoading,
+    isFetching,
     isError,
     error,
     refetch,
@@ -163,15 +170,13 @@ export const GpuControlCard = (): React.JSX.Element => {
     isIntentPending,
   } = useGpuControl();
   const [confirmation, setConfirmation] = React.useState<ConfirmationAction | null>(null);
+  const [clearedConfirmationReason, setClearedConfirmationReason] = React.useState<string | null>(null);
   const startHeld = !canStart || isIntentPending;
   const stopHeld = !canStop || isIntentPending;
   const pendingReason = isIntentPending ? __('a service request is already in flight', 'alt-context') : null;
   const startReason = startHeld
     ? pendingReason ||
-      startBlockedReason
-        ?.replace(/GPU/g, 'service')
-        .replace('service state is unknown', 'Service state is unknown')
-        .replace('Lifecycle telemetry is stale', 'Service status is out of date') ||
+      toOperatorReason(startBlockedReason) ||
       (data && startDisabledReason(data)) ||
       __('Service start is unavailable', 'alt-context')
     : null;
@@ -182,12 +187,19 @@ export const GpuControlCard = (): React.JSX.Element => {
     if (confirmation === null) {
       return;
     }
-    const startStillAllowed = confirmation === GpuIntentAction.START && canStart;
-    const stopStillAllowed = confirmation === GpuIntentAction.STOP && canStop;
-    if (displayedState === GPU_STATE.UNKNOWN || (!startStillAllowed && !stopStillAllowed)) {
-      setConfirmation(null);
+    const selectedStillAllowed = confirmation === GpuIntentAction.START ? canStart : canStop;
+    if (selectedStillAllowed) {
+      return;
     }
-  }, [confirmation, displayedState, canStart, canStop]);
+    const reason =
+      confirmation === GpuIntentAction.START
+        ? toOperatorReason(startBlockedReason) ||
+          (data ? startDisabledReason(data) : null) ||
+          __('Service start is unavailable', 'alt-context')
+        : stopBlockedReason || __('Service stop is unavailable', 'alt-context');
+    setClearedConfirmationReason(reason);
+    setConfirmation(null);
+  }, [confirmation, canStart, canStop, startBlockedReason, stopBlockedReason, data]);
 
   const confirm = (): void => {
     const action = confirmation;
@@ -198,6 +210,17 @@ export const GpuControlCard = (): React.JSX.Element => {
     }
     setConfirmation(null);
   };
+
+  const refreshControl = (
+    <button
+      type="button"
+      className="acx-button acx-button--tertiary"
+      onClick={() => void refetch()}
+      disabled={isFetching}
+    >
+      <span aria-hidden="true">↻</span> {__('Refresh', 'alt-context')}
+    </button>
+  );
 
   return (
     <section className="acx-target-card acx-gpu-control" aria-labelledby="acx-gpu-control-title">
@@ -215,6 +238,9 @@ export const GpuControlCard = (): React.JSX.Element => {
       >
         {isLoading && !data ? <span>{__('Loading service status…', 'alt-context')}</span> : null}
         {isError ? <span className="notice-error">{errorCopy(error)}</span> : null}
+        {clearedConfirmationReason ? (
+          <span data-testid="gpu-confirmation-cleared-reason">{clearedConfirmationReason}</span>
+        ) : null}
         {data
           ? (() => {
               const presentation = gpuStatePresentation(displayedState);
@@ -249,9 +275,7 @@ export const GpuControlCard = (): React.JSX.Element => {
           </div>
           <div id="z-gpu-load" data-testid="z-gpu-load" className="acx-gpu-control__row">
             <strong>{__('Load:', 'alt-context')}</strong>{' '}
-            {data.load.has_work
-              ? __('describe run in flight', 'alt-context')
-              : __('no work in flight', 'alt-context')}{' '}
+            {data.load.has_work ? __('describe run in flight', 'alt-context') : __('no work in flight', 'alt-context')}{' '}
             ({loadAgeLabel(data)})
           </div>
           <div id="z-gpu-cost" data-testid="z-gpu-cost" className="acx-gpu-control__row">
@@ -283,6 +307,7 @@ export const GpuControlCard = (): React.JSX.Element => {
                   className="acx-button acx-button--primary"
                   onClick={() => {
                     if (!startHeld) {
+                      setClearedConfirmationReason(null);
                       setConfirmation(GpuIntentAction.START);
                     }
                   }}
@@ -298,6 +323,7 @@ export const GpuControlCard = (): React.JSX.Element => {
                   className="acx-button acx-button--secondary"
                   onClick={() => {
                     if (!stopHeld) {
+                      setClearedConfirmationReason(null);
                       setConfirmation(GpuIntentAction.STOP);
                     }
                   }}
@@ -327,9 +353,7 @@ export const GpuControlCard = (): React.JSX.Element => {
               </button>
             ) : null}
 
-            <button type="button" className="acx-button acx-button--tertiary" onClick={() => void refetch()}>
-              <span aria-hidden="true">↻</span> {__('Refresh', 'alt-context')}
-            </button>
+            {refreshControl}
           </div>
 
           {confirmation === GpuIntentAction.START ? (
@@ -366,11 +390,7 @@ export const GpuControlCard = (): React.JSX.Element => {
             <div id="z-stop-preview" data-testid="z-stop-preview" className="notice inline notice-warning">
               <p>
                 {data.load.has_work
-                  ? __(
-                      'Stopping after the current work finishes. ' +
-                        'The service run limit can still stop the service to limit costs.',
-                      'alt-context',
-                    )
+                  ? __('Stop after the current run finishes?', 'alt-context')
                   : __(
                       'Requests shutdown when idle. If a describe run is in flight, shutdown is deferred. ' +
                         'The service run limit can still stop the service to limit costs.',
@@ -400,10 +420,10 @@ export const GpuControlCard = (): React.JSX.Element => {
         </>
       ) : null}
 
-      {isError ? (
-        <button type="button" className="acx-button acx-button--secondary" onClick={() => void refetch()}>
-          {__('Retry', 'alt-context')}
-        </button>
+      {isError && !data ? (
+        <div id="z-gpu-controls" data-testid="z-gpu-controls" className="acx-gpu-control__actions">
+          {refreshControl}
+        </div>
       ) : null}
     </section>
   );

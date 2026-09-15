@@ -7,6 +7,19 @@ import { GpuControlCard } from '../GpuControlCard';
 import * as gpuControl from '../useGpuControl';
 import serviceStates from './fixtures/gpuflow-service-states.json';
 
+vi.mock('@wordpress/i18n', () => ({
+  __: (text: string) => text,
+  sprintf: (format: string, ...args: (string | number)[]) => {
+    let sequentialIndex = 0;
+    return format.replace(/%((\d+)\$)?[sd]/g, (_match, _positional, explicitIndex) => {
+      if (explicitIndex) {
+        return String(args[Number(explicitIndex) - 1] ?? '');
+      }
+      return String(args[sequentialIndex++] ?? '');
+    });
+  },
+}));
+
 vi.mock('../useGpuControl', async (importOriginal) => {
   const actual = await importOriginal<typeof gpuControl>();
   return { ...actual, useGpuControl: vi.fn() };
@@ -44,6 +57,7 @@ const mockControl = (data: GpuStatusResponse, overrides: Partial<ReturnType<type
   useGpuControlMock.mockReturnValue({
     data,
     isLoading: false,
+    isFetching: false,
     isError: false,
     error: null,
     refetch: vi.fn(),
@@ -143,11 +157,13 @@ describe('GpuControlCard', () => {
   });
 
   it.each(['Start', 'Stop'] as const)('uses plain operator copy in the %s confirmation', (action) => {
-    mockControl(statusResponse({
-      state: action === 'Start' ? 'stopped' : 'ready',
-      instance_running_since: '2026-09-07T11:59:00Z',
-      lease_expires_at: '2026-09-07T12:59:00Z',
-    }));
+    mockControl(
+      statusResponse({
+        state: action === 'Start' ? 'stopped' : 'ready',
+        instance_running_since: '2026-09-07T11:59:00Z',
+        lease_expires_at: '2026-09-07T12:59:00Z',
+      }),
+    );
     const { container } = render(<GpuControlCard />);
     fireEvent.click(screen.getByRole('button', { name: action + ' service' }));
     expect(screen.getByTestId('z-gpu-lease')).toHaveTextContent('Run limit:');
@@ -169,24 +185,21 @@ describe('GpuControlCard', () => {
     expect(requestIntent).toHaveBeenCalledWith(GPU_INTENT_ACTION.START);
   });
 
-  it.each(['starting', 'warming'] as const)(
-    'shows warming copy without an invented countdown while %s',
-    (state) => {
-      mockControl(
-        statusResponse({
-          state,
-          intent: GPU_INTENT_ACTION.START,
-          instance_running_since: '2026-09-07T11:59:00Z',
-        }),
-      );
-      render(<GpuControlCard />);
+  it.each(['starting', 'warming'] as const)('shows warming copy without an invented countdown while %s', (state) => {
+    mockControl(
+      statusResponse({
+        state,
+        intent: GPU_INTENT_ACTION.START,
+        instance_running_since: '2026-09-07T11:59:00Z',
+      }),
+    );
+    render(<GpuControlCard />);
 
-      expect(screen.getByText(`Service: ${GPU_STATE_VOCABULARY[state]}`)).toBeInTheDocument();
-      const warmup = screen.getByTestId('gpu-warmup-eta');
-      expect(warmup).toHaveTextContent('Warming up, this can take a few minutes');
-      expect(warmup).not.toHaveTextContent(/\d/);
-    },
-  );
+    expect(screen.getByText(`Service: ${GPU_STATE_VOCABULARY[state]}`)).toBeInTheDocument();
+    const warmup = screen.getByTestId('gpu-warmup-eta');
+    expect(warmup).toHaveTextContent('Warming up, this can take a few minutes');
+    expect(warmup).not.toHaveTextContent(/\d/);
+  });
 
   it('keeps Stop enabled during work in flight and shows deferred-stop copy', () => {
     const requestIntent = vi.fn();
@@ -204,7 +217,7 @@ describe('GpuControlCard', () => {
     expect(stop).not.toHaveAttribute('disabled');
     expect(stop).not.toHaveAttribute('aria-disabled');
     fireEvent.click(stop);
-    expect(screen.getByText(/Stopping after the current work finishes/)).toBeInTheDocument();
+    expect(screen.getByText('Stop after the current run finishes?')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Confirm stop' }));
     expect(requestIntent).toHaveBeenCalledWith(GPU_INTENT_ACTION.STOP);
 
@@ -221,7 +234,7 @@ describe('GpuControlCard', () => {
     );
     rerender(<GpuControlCard />);
     expect(screen.getByText(`Service: ${GPU_STATE_VOCABULARY.ready}`)).toBeInTheDocument();
-    expect(screen.getByText(/Stopping after the current work finishes/)).toBeInTheDocument();
+    expect(screen.getByText('Stopping after the current work finishes until idle')).toBeInTheDocument();
   });
 
   it('renders a pending stop notice for blocked work', () => {
@@ -235,7 +248,7 @@ describe('GpuControlCard', () => {
     });
     render(<GpuControlCard />);
 
-    expect(screen.getByText(/Stopping after the current work finishes/)).toBeInTheDocument();
+    expect(screen.getByText('Stopping after the current work finishes until idle')).toBeInTheDocument();
     expect(screen.getByText(`Service: ${GPU_STATE_VOCABULARY.degraded}`)).toBeInTheDocument();
   });
 
@@ -368,14 +381,65 @@ describe('GpuControlCard', () => {
     expect(screen.queryByRole('button', { name: /Confirm/ })).not.toBeInTheDocument();
   });
 
-  it('renders a 502 error with a retry control', () => {
+  it('renders an initial fetch error with Refresh and announces it', () => {
     const refetch = vi.fn();
-    mockControl(statusResponse(), { data: undefined, isError: true, error: new Error('502 Bad Gateway'), refetch });
+    mockControl(statusResponse(), {
+      data: undefined,
+      isError: true,
+      error: new Error('502 Bad Gateway'),
+      refetch,
+    });
     render(<GpuControlCard />);
 
-    expect(screen.getByText(/Could not reach the description service \(502\)/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    const chip = screen.getByTestId('z-gpu-state-chip');
+    expect(chip).toHaveAttribute('aria-live', 'polite');
+    expect(chip).toHaveTextContent(/Could not reach the description service \(502\)/);
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    const refresh = screen.getByRole('button', { name: 'Refresh' });
+    expect(refresh).toBeEnabled();
+    fireEvent.click(refresh);
     expect(refetch).toHaveBeenCalledOnce();
+  });
+
+  it('disables Refresh while refetching after an initial fetch error', () => {
+    mockControl(statusResponse(), {
+      data: undefined,
+      isError: true,
+      isFetching: true,
+      error: new Error('502 Bad Gateway'),
+      refetch: vi.fn(),
+    });
+    render(<GpuControlCard />);
+
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeDisabled();
+  });
+
+  it('clears a start confirmation when start becomes disallowed even if stop remains allowed', () => {
+    const requestIntent = vi.fn();
+    mockControl(statusResponse(), { requestIntent, canStart: true, canStop: false });
+    const { rerender } = render(<GpuControlCard />);
+    fireEvent.click(screen.getByRole('button', { name: 'Start service' }));
+    expect(screen.getByRole('button', { name: 'Confirm start' })).toBeInTheDocument();
+
+    mockControl(
+      {
+        ...statusResponse({ state: 'ready', instance_running_since: '2026-09-07T11:00:00Z' }),
+        load: { has_work: true, written_at: 1_700_000_004, fresh: true },
+      },
+      {
+        requestIntent,
+        canStart: false,
+        canStop: true,
+        startBlockedReason: 'already running',
+      },
+    );
+    rerender(<GpuControlCard />);
+
+    expect(screen.queryByTestId('z-start-preview')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Confirm start' })).not.toBeInTheDocument();
+    expect(screen.getByTestId('gpu-confirmation-cleared-reason')).toHaveTextContent('already running');
+    expect(screen.getByTestId('z-gpu-state-chip')).toHaveTextContent('already running');
+    expect(requestIntent).not.toHaveBeenCalled();
   });
 
   it('only shows Return to automatic when intent is not automatic', () => {

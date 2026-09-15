@@ -21,3 +21,15 @@ Verdict: pass_with_findings
 - **Evidence:** Both `FaceCropControl` call sites receive `identityFace`/`representativeFace` objects constructed only after `isCroppableBbox` succeeds at `SuggestionCards.tsx:158-168`. The invalid-geometry test therefore reaches the parent fallback and never invokes the new `FaceCropControl` guard; removing lines 91-93 leaves that test green.
 - **Impact:** The added proof does not protect the defensive `FaceCropControl` gate itself ([TEST-15]); a future caller that passes an invalid bbox directly could regress to mounting `FaceThumbnail` without a test detecting it.
 - **Fix:** Either remove the redundant private guard and keep one tested gate at face-object construction, or expose a small test seam/directly exercise `FaceCropControl` with invalid geometry while retaining the guard.
+
+## Re-review r2 (6192796d5..aae2980e1)
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| CALIBR-M-06 | fixed | `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/SuggestionCards.tsx:249-252` adds `suggestion.enrichment?.representativeMediaId` to the representative `FaceCropControl` target. The added callback assertion at `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/SuggestionCards.test.tsx:364-370` requires the representative media ID, and the fixture supplies it at `gpuflow-candidate-preview.json:12-15`; the missing-ID test also preserves omission when no ID is available. |
+
+### FINDINGS
+
+FINDINGS: []
+
+Verdict: pass

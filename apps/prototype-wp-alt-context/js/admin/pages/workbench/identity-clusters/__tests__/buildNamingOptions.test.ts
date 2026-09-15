@@ -6,9 +6,11 @@ import {
   findCollisionsForLabel,
   namingOptionValue,
   parseNamingOptionValue,
+  selectGroupPreviewSource,
   uniqueClusterCollisionTarget,
   unwrapClusterOptionId,
 } from '../buildNamingOptions';
+import previewFixture from './fixtures/gpuflow-naming-preview.json';
 
 describe('buildNamingOptions', () => {
   const roster = [
@@ -243,5 +245,13 @@ describe('naming option value helpers', () => {
     expect(unwrapClusterOptionId('cluster:abc')).toBe('abc');
     expect(unwrapClusterOptionId('person:42')).toBeNull();
     expect(parseNamingOptionValue('bare-id')).toBeNull();
+  });
+});
+
+describe('selectGroupPreviewSource (IDCHIP-1 AV-R-04)', () => {
+  it.each(previewFixture.cases)('preview fallback: $name', (fixture) => {
+    expect(selectGroupPreviewSource(fixture.representative_face, fixture.member)).toEqual(
+      fixture.expected,
+    );
   });
 });

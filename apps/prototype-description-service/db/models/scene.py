@@ -140,7 +140,7 @@ class DescribeOperation(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "(startup_id IS NOT NULL) OR (startup_ms IS NULL AND COALESCE(ramp_up_ms, 0) = 0)",
+            "(startup_id IS NOT NULL) OR (startup_ms IS NULL)",
             name="ck_describe_operation_startup_association",
         ),
         CheckConstraint(
@@ -277,7 +277,7 @@ class DescribeRun(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "(startup_id IS NOT NULL) OR (startup_ms IS NULL AND COALESCE(ramp_up_ms, 0) = 0)",
+            "(startup_id IS NOT NULL) OR (startup_ms IS NULL)",
             name="ck_image_description_runs_startup_association",
         ),
         CheckConstraint(

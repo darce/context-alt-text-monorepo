@@ -216,18 +216,17 @@ def test_startup_association_requires_observation(model):
     try:
         metadata.create_all(engine)
         with engine.begin() as connection:
-            connection.execute(table.insert(), {"startup_id": None, "startup_ms": None, "ramp_up_ms": 0})
+            connection.execute(table.insert(), {"startup_id": None, "startup_ms": None, "ramp_up_ms": 1200})
             connection.execute(table.insert(), {"startup_id": "observed", "startup_ms": 10, "ramp_up_ms": 5})
-            for values in ({"startup_ms": 0}, {"ramp_up_ms": 1}):
-                with pytest.raises(sa.exc.IntegrityError):
-                    connection.execute(table.insert(), values)
+            with pytest.raises(sa.exc.IntegrityError):
+                connection.execute(table.insert(), {"startup_id": None, "startup_ms": 0})
     finally:
         engine.dispose()
 
 
 def test_rls_runbook_covers_canonical_tenant_tables():
-    from pathlib import Path
     import re
+    from pathlib import Path
 
     migration = import_module("db.migrations.versions.001_identity_schema")
     root = next(p for p in Path(__file__).resolve().parents if (p / "docs/runbooks").is_dir())
@@ -279,3 +278,65 @@ def test_check_healer_validates_live_rows_and_is_idempotent(monkeypatch, invalid
         assert added == ["timing_check"]
         assert len(probes) == 1
     assert "WHERE NOT (queue_ms >= 0)" in probes[0]
+
+
+@pytest.mark.parametrize("table_name", ["describe_operations", "describe_startups", "describe_demand_leases"])
+@pytest.mark.parametrize("invalid", [False, True])
+def test_preexisting_describe_tables_heal_checks_idempotently(monkeypatch, table_name, invalid):
+    """TIMING-H-01: pre-existing describe_* tables must opt CHECKs into heal_constraints."""
+    migration = import_module("db.migrations.versions.001_identity_schema")
+    captured = {}
+
+    def capture(op, name, *elements, **kw):
+        captured[name] = (elements, kw)
+
+    monkeypatch.setattr(migration, "_ensure_table", capture)
+    monkeypatch.setattr(migration, "_ensure_index", lambda *args, **kwargs: None)
+    monkeypatch.setattr(migration, "ensure_identity_vector_typmods", lambda op: None)
+    migration.ensure_tables(None)
+
+    elements, kw = captured[table_name]
+    checks = [element for element in elements if isinstance(element, sa.CheckConstraint)]
+    check_names = {check.name for check in checks}
+    assert check_names
+    assert set(kw.get("heal_constraints", ())) == check_names
+
+    existing = set()
+    probes = []
+    added = []
+
+    class Bind:
+        dialect = sa.dialects.postgresql.dialect()
+
+        def execute(self, statement):
+            probes.append(str(statement))
+
+            class Result:
+                def scalar(self):
+                    return 1 if invalid else None
+
+            return Result()
+
+    class Op:
+        def get_bind(self):
+            return Bind()
+
+        def create_check_constraint(self, name, table, predicate):
+            added.append(name)
+            existing.add(name)
+
+    monkeypatch.setattr(migration, "_existing_constraint_names", lambda op, table: existing)
+
+    def heal():
+        migration._ensure_table_constraints(Op(), table_name, *elements, heal_constraints=kw["heal_constraints"])
+
+    if invalid:
+        with pytest.raises(RuntimeError, match="live rows violate"):
+            heal()
+        assert not added
+    else:
+        heal()
+        heal()
+        assert added == sorted(check_names)
+        assert existing == check_names
+        assert len(probes) == len(check_names)

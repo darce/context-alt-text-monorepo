@@ -81,3 +81,16 @@ Review is limited to the supplied `112f262cd..c83b0594f` delta. The changed path
 - **Fix:** Add both paths to the lane ownership/dependency manifest or split the test/runbook repairs into their owning lane before merge.
 
 Verdict: pass_with_findings
+
+## Re-review r6 (48ade66b2..8e47d5994)
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| TIMING-H-01 | fixed | `001_identity_schema.py:1685-1696` now opts `ck_describe_operation_startup_association` and the other named operation checks into `heal_constraints`; the added `test_preexisting_describe_tables_heal_checks_idempotently` covers missing-check validation and idempotent re-entry (`test_gpuflow_timing_models.py:283-342`). `[DATA-03]` `[TEST-06]` |
+| TIMING-M-03 | partially_fixed | The migration and ORM predicates now allow `startup_id IS NULL` with positive `ramp_up_ms` while still requiring `startup_ms IS NULL` (`001_identity_schema.py:1653-1655,1737-1739`; `db/models/scene.py:142-145,279-282`), and the test persists `ramp_up_ms=1200` in that shape (`test_gpuflow_timing_models.py:216-222`). However, the delta does not replace an already-present old same-named CHECK: `_ensure_table_constraints` only computes missing constraints by name (`001_identity_schema.py:365-379`), so an existing deployment can retain the rejecting predicate. `[DATA-03]` `[TEST-06]` |
+
+### FINDINGS
+
+FINDINGS: []
+
+Verdict: pass_with_findings

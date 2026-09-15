@@ -136,7 +136,8 @@ def test_first_call_generates_persists_audits_then_cache_hit_skips_adapter():
             )
             r2 = await svc2.describe(tenant_id=tenant, media_id=8, image_bytes=IMG, context=CTX)
             assert r2.cached is True
-            assert svc2.last_processing_ms == 0
+            assert r2.attempt_timing.processing_ms == 0
+            assert r2.attempt_timing.entered_adapter is False
             assert len(metrics.adapter_durations) == 1
             assert r2.media_id == 8
             assert adapter.calls == 1  # NOT called again on cache hit
@@ -341,23 +342,26 @@ def test_processing_measures_dispatch_only_and_records_failed_retries(monkeypatc
         monkeypatch.setattr(svc, "_run_fusion_stage", fusion)
         for attempt in range(2):
             if attempt == 0:
-                with pytest.raises(RuntimeError, match="retry"):
+                with pytest.raises(RuntimeError, match="retry") as failed:
                     await svc.describe(tenant_id=uuid.uuid4(), media_id=1,
                                        image_bytes=IMG, context=None, before_compute=readiness)
             else:
                 clock[0] += 60  # Retry backoff is outside adapter processing.
-                await svc.describe(tenant_id=uuid.uuid4(), media_id=1,
-                                   image_bytes=IMG, context=None, before_compute=readiness)
-            assert svc.last_processing_ms == 2000
+                response = await svc.describe(tenant_id=uuid.uuid4(), media_id=1,
+                                              image_bytes=IMG, context=None, before_compute=readiness)
+                assert response.attempt_timing.processing_ms == 2000
+                assert response.duration_ms == 42000
+            assert failed.value.attempt_timing.processing_ms == 2000
         assert metrics.adapter_durations == [("hosted_provider", 2.0)] * 2
 
         async def unavailable():
             raise RuntimeError("not ready")
 
-        with pytest.raises(RuntimeError, match="not ready"):
+        with pytest.raises(RuntimeError, match="not ready") as unavailable_error:
             await svc.describe(tenant_id=uuid.uuid4(), media_id=1,
                                image_bytes=IMG, context=None, before_compute=unavailable)
-        assert svc.last_processing_ms is None
+        assert unavailable_error.value.attempt_timing.processing_ms is None
+        assert unavailable_error.value.attempt_timing.entered_adapter is False
         assert len(metrics.adapter_durations) == 2
 
     asyncio.run(body())
@@ -391,11 +395,64 @@ def test_cancelled_dispatch_is_measured_once(monkeypatch):
             await asyncio.wait_for(started.wait(), timeout=2)
             clock[0] = 3
             task.cancel()
-            with pytest.raises(asyncio.CancelledError):
+            with pytest.raises(asyncio.CancelledError) as cancelled:
                 await task
-            assert svc.last_processing_ms == 3000
+            assert cancelled.value.attempt_timing.entered_adapter is True
+            assert cancelled.value.attempt_timing.processing_ms is None
+            return cancelled.value.attempt_timing
         finally:
             release.set()
 
-    asyncio.run(body())  # Also joins the executor's remaining work.
+    timing = asyncio.run(body())  # Also joins the executor's remaining work.
+    assert timing.processing_ms == 3000
     assert metrics.adapter_durations == [("hosted_provider", 3.0)]
+
+
+def test_cancel_before_worker_start_marker_still_publishes_once(monkeypatch):
+    import threading
+    import pytest
+    from scene.application import visual_facts_service as module
+
+    gated = threading.Event()
+    release = threading.Event()
+    metrics = FakeMetrics()
+    main_thread = threading.get_ident()
+    clock = [0.0]
+
+    def perf_counter():
+        if threading.get_ident() != main_thread and not gated.is_set():
+            gated.set()
+            assert release.wait(timeout=5)
+        return clock[0]
+
+    monkeypatch.setattr(module.time, "perf_counter", perf_counter)
+
+    class Adapter(HostedAdapter):
+        def describe(self, **kwargs):
+            clock[0] += 2
+            return super().describe(**kwargs)
+
+    async def body():
+        svc = VisualFactsService(adapter=Adapter(), metrics=metrics)
+        task = asyncio.create_task(svc.describe(
+            tenant_id=uuid.uuid4(), media_id=1, image_bytes=IMG, context=None,
+        ))
+        try:
+            async with asyncio.timeout(2):
+                while not gated.is_set():
+                    await asyncio.sleep(0.001)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError) as cancelled:
+                await task
+            timing = cancelled.value.attempt_timing
+            assert timing.entered_adapter is False
+            assert timing.processing_ms is None
+            assert metrics.adapter_durations == []
+            return timing
+        finally:
+            release.set()
+
+    timing = asyncio.run(body())
+    assert timing.entered_adapter is True
+    assert timing.processing_ms == 2000
+    assert metrics.adapter_durations == [("hosted_provider", 2.0)]

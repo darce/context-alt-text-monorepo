@@ -92,3 +92,20 @@ Verdict: fail
 - Fix: Add a case that supplies `operation_id` and `timing` while omitting `startup_id`, and assert `ValidationError`; retain the explicit `startup_id=None` success case.
 
 Verdict: fail
+
+## Re-review r7 (2b38de112..71400b9cb)
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| `RESPON-M-03` | `fixed` | The parity gate now subtracts the three optional operation fields while retaining the 17 required core fields and asserting those fields remain properties (`test_response_schema_parity.py:69-77`). The schema test updates the expected model field set and separately asserts optional base fields versus required multipart fields (`test_schemas.py:65-80`), so the stale old-shape assertions are removed. |
+
+### FINDINGS
+
+#### GPUFLOW-1-RESPONSEMODELS-R-07 — low
+
+- File: `apps/prototype-description-service/scene/tests/test_response_schema_parity.py:11-13,69-89`; `apps/prototype-description-service/scene/tests/test_schemas.py:10-14,65-80`
+- Evidence: The B1 lane row owns `scene/interface_adapters/http/schemas/responses.py` and the new `scene/tests/test_gpuflow_response_models.py` test, but this fix delta also edits the two existing parity/schema test files. That crosses the published lane ownership boundary without an ownership update or handoff ([TEAM-01]).
+- Impact: The change can collide with the owning test lane or be merged without that lane’s review, weakening the lane DAG’s file-conflict guarantees. This is scope hygiene, not a new runtime contract break.
+- Fix: Move these test updates to their owning lane or amend the lane ownership contract before merging; keep the response-models delta within its declared paths.
+
+Verdict: pass_with_findings

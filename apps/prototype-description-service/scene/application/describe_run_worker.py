@@ -15,8 +15,11 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final, Literal, NamedTuple, Protocol, runtime_checkable
 
 import httpx
+from sqlalchemy import select
+from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from db.models.scene import DescribeStartup
 from db.tenant_context import get_tenant_record, set_tenant_context
 from scene.application.describe_load import load_snapshot, resolve_load_path, write_load_snapshot
 from scene.application.describe_run_repository import DescribeRunRepository
@@ -108,6 +111,10 @@ class GpuRunPolicy:
 
 class _RunCancelledError(RuntimeError):
     """Internal control-flow signal; cancellation is not a run failure."""
+
+    def __init__(self, message: str = "describe run cancelled", *, processing_ms: float | None = None):
+        super().__init__(message)
+        self.processing_ms = processing_ms
 
 
 class _GpuCircuitOpenError(RuntimeError):
@@ -260,6 +267,29 @@ async def _record_run_pickup(
         await session.commit()
 
 
+async def _observed_startup(session: AsyncSession) -> tuple[str | None, float | None]:
+    """Reuse the durable GPU startup row; never mint a per-run id.
+
+    ``startup_ms`` is defined only when both start and first-ready UTC
+    observations exist. A missing table or unobserved row is untimed.
+    """
+    try:
+        startup = await session.scalar(
+            select(DescribeStartup)
+            .where(DescribeStartup.retain_until > datetime.now(UTC))
+            .order_by(DescribeStartup.started_at.desc().nulls_last())
+            .limit(1)
+        )
+    except (OperationalError, ProgrammingError):
+        return None, None
+    if startup is None:
+        return None, None
+    startup_ms = None
+    if startup.started_at is not None and startup.first_ready_at is not None:
+        startup_ms = elapsed_ms(startup.started_at, startup.first_ready_at)
+    return startup.startup_id, startup_ms
+
+
 async def _record_run_readiness(
     *,
     session_factory: async_sessionmaker[AsyncSession],
@@ -267,15 +297,12 @@ async def _record_run_readiness(
     run_id: uuid.UUID,
     cold: bool,
 ) -> None:
-    operation_id = uuid.uuid4().hex
-    startup_id = uuid.uuid4().hex if cold else None
     async with session_factory() as session:
         await set_tenant_context(session, tenant_id)
         repo = DescribeRunRepository(session)
         run = await repo.get_run(tenant_id=tenant_id, run_id=run_id)
-        startup_ms = None
-        if cold and run is not None and run.started_at is not None and run.first_ready_at is None:
-            startup_ms = elapsed_ms(run.started_at, datetime.now(UTC))
+        operation_id = (run.operation_id if run is not None else None) or uuid.uuid4().hex
+        startup_id, startup_ms = await _observed_startup(session) if cold else (None, None)
         await repo.record_readiness(
             tenant_id=tenant_id,
             run_id=run_id,
@@ -366,9 +393,13 @@ async def _describe_with_transient_retry(
 ) -> DescribeItemOutcome | None:
     max_attempts = _GPU_ITEM_MAX_ATTEMPTS if retry_transient else 1
     measured: list[float | None] = []
+
+    def _cancel_error(message: str) -> _RunCancelledError:
+        return _RunCancelledError(message, processing_ms=_sum_processing_ms(measured))
+
     for attempt in range(1, max_attempts + 1):
         if cancel_requested is not None and await cancel_requested():
-            raise _RunCancelledError("describe run cancelled before item retry")
+            raise _cancel_error("describe run cancelled before item retry")
         try:
             outcome = await asyncio.wait_for(
                 _call_describe_one(describe_one, media_id, image_bytes, content_type, naming_inputs=naming_inputs),
@@ -380,6 +411,8 @@ async def _describe_with_transient_retry(
             if total is not None and outcome.processing_ms != total:
                 return replace(outcome, processing_ms=total)
             return outcome
+        except _RunCancelledError:
+            raise
         except Exception as exc:  # noqa: BLE001 - classify before retrying
             measured.append(_attempt_processing_ms(exc))
             total = _sum_processing_ms(measured)
@@ -397,6 +430,8 @@ async def _describe_with_transient_retry(
             )
             if delay:
                 await asyncio.sleep(delay)
+                if cancel_requested is not None and await cancel_requested():
+                    raise _cancel_error("describe run cancelled during item retry backoff")
     raise RuntimeError("unreachable")  # pragma: no cover
 
 
@@ -638,147 +673,143 @@ async def run_describe_job(
             for item in items:
                 progressed = False
                 if await cancel_requested():
-                    await repo.mark_item(
+                    progressed = await repo.mark_item(
                         tenant_id=tenant_id,
                         run_id=run_id,
                         media_id=item.media_id,
                         status=DescribeItemStatus.SKIPPED,
                     )
                     await session.commit()
-                    no_progress = 0
-                    continue
-
-                image_bytes = item.image_bytes
-                content_type = item.image_content_type
-                await repo.mark_item(
-                    tenant_id=tenant_id,
-                    run_id=run_id,
-                    media_id=item.media_id,
-                    status=DescribeItemStatus.RUNNING,
-                )
-                processing_ms: float | None = None
-                try:
-                    if gpu_breaker_error is not None:
-                        raise _GpuCircuitOpenError(gpu_breaker_error)
-                    # HARM-F3 / DATA-19: one naming snapshot per item. Load first,
-                    # then share with Stage-2 fusion and Stage-3 preview so a
-                    # label/merge between two sessions cannot diverge the draft.
-                    # PERF-10 traded for DATA-19 (WBUX-6 S9-F1): serial envelope
-                    # is item_envelope_seconds(timeout), not max(naming, describe).
-                    # S9R2-F1: Stage-3 preview is charged against remaining envelope.
-                    item_started = time.monotonic()
-                    naming_inputs = await _naming_lookup_for_item(
-                        enabled=naming_enabled,
-                        session_factory=session_factory,
-                        tenant=tenant,
-                        tenant_id=tenant_id,
-                        media_id=item.media_id,
-                        image_bytes=image_bytes,
-                    )
-                    naming_budget_exceeded = naming_inputs is _NAMING_BUDGET_EXCEEDED
-                    if naming_inputs is not None and naming_inputs is not _NAMING_BUDGET_EXCEEDED:
-                        describe_naming_inputs: FusionNamingInputs | None = naming_inputs
-                    elif run is not None and run.recognition_enabled:
-                        describe_naming_inputs = EMPTY_NAMING_INPUTS
-                    else:
-                        describe_naming_inputs = None
-                    outcome = await _describe_with_transient_retry(
-                        describe_one=describe_one,
-                        media_id=item.media_id,
-                        image_bytes=image_bytes,
-                        content_type=content_type,
-                        timeout_seconds=timeout,
-                        retry_transient=gpu_policy is not None,
-                        cancel_requested=cancel_requested,
-                        naming_inputs=describe_naming_inputs,
-                    )
-                    processing_ms = None if outcome is None else outcome.processing_ms
-                    outcome = await _apply_naming_preview(
-                        enabled=naming_enabled,
-                        session=session,
-                        tenant=tenant,
-                        tenant_id=tenant_id,
-                        media_id=item.media_id,
-                        image_bytes=image_bytes,
-                        outcome=outcome or DescribeItemOutcome(),
-                        naming_inputs=naming_inputs,
-                        item_started=item_started,
-                        item_envelope=item_envelope,
-                        naming_budget_exceeded=naming_budget_exceeded,
-                    )
-                except _RunCancelledError:
-                    await _record_item_processing_ms(
-                        repo=repo,
-                        tenant_id=tenant_id,
-                        run_id=run_id,
-                        media_id=item.media_id,
-                        processing_ms=processing_ms,
-                    )
-                    await repo.mark_item(
-                        tenant_id=tenant_id,
-                        run_id=run_id,
-                        media_id=item.media_id,
-                        status=DescribeItemStatus.SKIPPED,
-                    )
-                    progressed = True
-                except Exception as exc:  # noqa: BLE001 - per-item failure must not abort the run
-                    logger.warning(
-                        "describe run item failed run_id=%s media_id=%s", run_id, item.media_id, exc_info=True
-                    )
-                    processing_ms = getattr(exc, "processing_ms", processing_ms)
-                    await _record_item_processing_ms(
-                        repo=repo,
-                        tenant_id=tenant_id,
-                        run_id=run_id,
-                        media_id=item.media_id,
-                        processing_ms=processing_ms,
-                    )
-                    await repo.record_item_result(
-                        tenant_id=tenant_id,
-                        run_id=run_id,
-                        media_id=item.media_id,
-                        alt_text_draft=None,
-                        caption=None,
-                        provenance=None,
-                    )
-                    await repo.mark_item(
-                        tenant_id=tenant_id,
-                        run_id=run_id,
-                        media_id=item.media_id,
-                        status=DescribeItemStatus.FAILED,
-                        error_message=str(exc),
-                    )
-                    if gpu_policy is not None and _is_transient_describe_error(exc):
-                        gpu_breaker_error = (
-                            f"GPU circuit open after transient retries were exhausted: {type(exc).__name__}: {exc}"
-                        )
-                    progressed = True
                 else:
-                    outcome = outcome or DescribeItemOutcome()
-                    await _record_item_processing_ms(
-                        repo=repo,
-                        tenant_id=tenant_id,
-                        run_id=run_id,
-                        media_id=item.media_id,
-                        processing_ms=processing_ms if processing_ms is not None else outcome.processing_ms,
-                    )
-                    await repo.record_item_result(
-                        tenant_id=tenant_id,
-                        run_id=run_id,
-                        media_id=item.media_id,
-                        alt_text_draft=outcome.alt_text_draft,
-                        caption=outcome.caption,
-                        provenance=outcome.provenance or None,
-                        tier=outcome.tier,
-                    )
+                    image_bytes = item.image_bytes
+                    content_type = item.image_content_type
                     await repo.mark_item(
                         tenant_id=tenant_id,
                         run_id=run_id,
                         media_id=item.media_id,
-                        status=DescribeItemStatus.COMPLETED,
+                        status=DescribeItemStatus.RUNNING,
                     )
-                    progressed = True
-                await session.commit()
+                    processing_ms: float | None = None
+                    try:
+                        if gpu_breaker_error is not None:
+                            raise _GpuCircuitOpenError(gpu_breaker_error)
+                        # HARM-F3 / DATA-19: one naming snapshot per item. Load first,
+                        # then share with Stage-2 fusion and Stage-3 preview so a
+                        # label/merge between two sessions cannot diverge the draft.
+                        # PERF-10 traded for DATA-19 (WBUX-6 S9-F1): serial envelope
+                        # is item_envelope_seconds(timeout), not max(naming, describe).
+                        # S9R2-F1: Stage-3 preview is charged against remaining envelope.
+                        item_started = time.monotonic()
+                        naming_inputs = await _naming_lookup_for_item(
+                            enabled=naming_enabled,
+                            session_factory=session_factory,
+                            tenant=tenant,
+                            tenant_id=tenant_id,
+                            media_id=item.media_id,
+                            image_bytes=image_bytes,
+                        )
+                        naming_budget_exceeded = naming_inputs is _NAMING_BUDGET_EXCEEDED
+                        if naming_inputs is not None and naming_inputs is not _NAMING_BUDGET_EXCEEDED:
+                            describe_naming_inputs: FusionNamingInputs | None = naming_inputs
+                        elif run is not None and run.recognition_enabled:
+                            describe_naming_inputs = EMPTY_NAMING_INPUTS
+                        else:
+                            describe_naming_inputs = None
+                        outcome = await _describe_with_transient_retry(
+                            describe_one=describe_one,
+                            media_id=item.media_id,
+                            image_bytes=image_bytes,
+                            content_type=content_type,
+                            timeout_seconds=timeout,
+                            retry_transient=gpu_policy is not None,
+                            cancel_requested=cancel_requested,
+                            naming_inputs=describe_naming_inputs,
+                        )
+                        processing_ms = None if outcome is None else outcome.processing_ms
+                        outcome = await _apply_naming_preview(
+                            enabled=naming_enabled,
+                            session=session,
+                            tenant=tenant,
+                            tenant_id=tenant_id,
+                            media_id=item.media_id,
+                            image_bytes=image_bytes,
+                            outcome=outcome or DescribeItemOutcome(),
+                            naming_inputs=naming_inputs,
+                            item_started=item_started,
+                            item_envelope=item_envelope,
+                            naming_budget_exceeded=naming_budget_exceeded,
+                        )
+                    except _RunCancelledError as exc:
+                        processing_ms = getattr(exc, "processing_ms", processing_ms)
+                        await _record_item_processing_ms(
+                            repo=repo,
+                            tenant_id=tenant_id,
+                            run_id=run_id,
+                            media_id=item.media_id,
+                            processing_ms=processing_ms,
+                        )
+                        progressed = await repo.mark_item(
+                            tenant_id=tenant_id,
+                            run_id=run_id,
+                            media_id=item.media_id,
+                            status=DescribeItemStatus.SKIPPED,
+                        )
+                    except Exception as exc:  # noqa: BLE001 - per-item failure must not abort the run
+                        logger.warning(
+                            "describe run item failed run_id=%s media_id=%s", run_id, item.media_id, exc_info=True
+                        )
+                        processing_ms = getattr(exc, "processing_ms", processing_ms)
+                        await _record_item_processing_ms(
+                            repo=repo,
+                            tenant_id=tenant_id,
+                            run_id=run_id,
+                            media_id=item.media_id,
+                            processing_ms=processing_ms,
+                        )
+                        await repo.record_item_result(
+                            tenant_id=tenant_id,
+                            run_id=run_id,
+                            media_id=item.media_id,
+                            alt_text_draft=None,
+                            caption=None,
+                            provenance=None,
+                        )
+                        progressed = await repo.mark_item(
+                            tenant_id=tenant_id,
+                            run_id=run_id,
+                            media_id=item.media_id,
+                            status=DescribeItemStatus.FAILED,
+                            error_message=str(exc),
+                        )
+                        if gpu_policy is not None and _is_transient_describe_error(exc):
+                            gpu_breaker_error = (
+                                f"GPU circuit open after transient retries were exhausted: {type(exc).__name__}: {exc}"
+                            )
+                    else:
+                        outcome = outcome or DescribeItemOutcome()
+                        await _record_item_processing_ms(
+                            repo=repo,
+                            tenant_id=tenant_id,
+                            run_id=run_id,
+                            media_id=item.media_id,
+                            processing_ms=processing_ms if processing_ms is not None else outcome.processing_ms,
+                        )
+                        await repo.record_item_result(
+                            tenant_id=tenant_id,
+                            run_id=run_id,
+                            media_id=item.media_id,
+                            alt_text_draft=outcome.alt_text_draft,
+                            caption=outcome.caption,
+                            provenance=outcome.provenance or None,
+                            tier=outcome.tier,
+                        )
+                        progressed = await repo.mark_item(
+                            tenant_id=tenant_id,
+                            run_id=run_id,
+                            media_id=item.media_id,
+                            status=DescribeItemStatus.COMPLETED,
+                        )
+                    await session.commit()
                 if progressed:
                     no_progress = 0
                     continue

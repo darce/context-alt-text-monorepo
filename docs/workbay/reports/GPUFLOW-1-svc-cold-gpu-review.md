@@ -203,3 +203,28 @@ FINDINGS: [
 - **Fix:** Land the schema/model/test changes in their owning producer lanes and consume the committed artifacts here.
 
 Verdict: fail
+
+## Re-review r9 (35d7a3b85..670740157)
+
+VERIFIED: {"GPUFLOW-1-SVCCOLDGPU-R-21":"fixed","GPUFLOW-1-SVCCOLDGPU-R-22":"fixed","GPUFLOW-1-SVCCOLDGPU-R-04":"not_fixed"}
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| GPUFLOW-1-SVCCOLDGPU-R-21 | fixed | The new post-accept HTTPException path still exempts only `_LifecycleHoldHTTPException`, then rebuilds recognized typed-error codes with the accepted operation's operation_id, startup_id, and measured timing (`.review/CHANGE.diff:56-95,109-115`). The downstream regression now validates the rebuilt body against the multipart schema and checks all required metadata (`.review/CHANGE.diff:215-239`). |
+| GPUFLOW-1-SVCCOLDGPU-R-22 | fixed | The redeclared multipart `operation_id` now has `default=None` while retaining its non-null constraints when supplied, and the new test round-trips a payload with the key omitted (`.review/CHANGE.diff:130-148,259-269`). |
+| GPUFLOW-1-SVCCOLDGPU-R-04 | not_fixed | The delta has no behavior hunk for `DescriptionAdapterUnavailableError`; the route changes only the success constructor and generic `HTTPException` handling (`.review/CHANGE.diff:101-116`). The added unavailable-adapter test is coverage only (`.review/CHANGE.diff:197-213`), so it cannot establish a newly corrected GPU 503 path. |
+
+### FINDINGS
+
+FINDINGS: [
+  {"id":"GPUFLOW-1-SVCCOLDGPU-R-24","severity":"low","file_path":"apps/prototype-description-service/scene/interface_adapters/http/schemas/responses.py","line":223,"summary":"Fix delta still edits producer paths outside the svc-cold-gpu lane","evidence":"The delta modifies the response-model producer and its dedicated producer test in addition to the route tests (`.review/CHANGE.diff:118-152,243-282`; `.review/DIFFSTAT.txt:1-5`). The lane row assigns response-models and those producer tests as read-only dependencies, while svc-cold-gpu owns the route plus its fixture/shared-schema test."}
+]
+
+#### GPUFLOW-1-SVCCOLDGPU-R-24 — low
+
+- **File:** `apps/prototype-description-service/scene/interface_adapters/http/schemas/responses.py:223`.
+- **Evidence:** This fix delta edits `responses.py` and `test_gpuflow_response_models.py` alongside the route/test changes (`.review/CHANGE.diff:118-152,243-282`; `.review/DIFFSTAT.txt:1-5`). The lane plan marks response-models and producer tests as read-only dependencies of svc-cold-gpu; its owned paths are the route and designated fixture/shared-schema test.
+- **Impact:** The fix cannot be merged as a lane-local change without taking producer-owned edits, preserving cross-lane conflict and ownership drift.
+- **Fix:** Move the response-model and producer-test edits to their owning lane and consume the committed artifact here.
+
+Verdict: pass_with_findings

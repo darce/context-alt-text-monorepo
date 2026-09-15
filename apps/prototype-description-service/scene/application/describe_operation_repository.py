@@ -234,6 +234,7 @@ class DescribeOperationRepository:
                 DescribeDemandLease.expires_at <= now,
             )
             .values(state=State.EXPIRED)
+            .execution_options(synchronize_session="fetch")
         )
         if stop_requested or max_lease_reached:
             return 0
@@ -252,15 +253,26 @@ class DescribeOperationRepository:
     async def purge_expired(self, *, now: datetime | None = None) -> int:
         await DescribeRunRepository(self._session)._require_rls_bypass()
         now = utc_observation(now or datetime.now(UTC))
-        await self._session.execute(delete(DescribeDemandLease).where(DescribeDemandLease.retain_until <= now))
-        result = await self._session.execute(delete(DescribeOperation).where(DescribeOperation.retain_until <= now))
+        # Evaluate expiry in SQL: SQLite-loaded identity-map timestamps are naive.
         await self._session.execute(
-            delete(DescribeStartup).where(
+            delete(DescribeDemandLease)
+            .where(DescribeDemandLease.retain_until <= now)
+            .execution_options(synchronize_session="fetch")
+        )
+        result = await self._session.execute(
+            delete(DescribeOperation)
+            .where(DescribeOperation.retain_until <= now)
+            .execution_options(synchronize_session="fetch")
+        )
+        await self._session.execute(
+            delete(DescribeStartup)
+            .where(
                 DescribeStartup.retain_until <= now,
                 ~select(DescribeOperation.operation_id)
                 .where(DescribeOperation.startup_id == DescribeStartup.startup_id)
                 .exists(),
             )
+            .execution_options(synchronize_session="fetch")
         )
         await self._session.flush()
         return result.rowcount

@@ -119,9 +119,13 @@ def test_warm_cache_expiry_and_retention_bound():
             )
             assert op.processing_ms == 0
             expiring = await repo.accept(tenant_id=tenant, request_digest="b" * 64, now=start)
+            # Retain the SQLite-loaded lease so bulk expiry must synchronize it.
+            lease = await session.get(DescribeDemandLease, (tenant, expiring.operation_id))
+            assert lease.expires_at.tzinfo is None
             assert await repo.active_demand_count(now=start, stop_requested=True) == 0
             assert await repo.active_demand_count(now=start) == 1
             assert await repo.active_demand_count(now=start + timedelta(seconds=60)) == 0
+            assert lease.state == "expired"
             with pytest.raises(OperationExpiredError):
                 await repo.accept(
                     tenant_id=tenant,
@@ -144,6 +148,8 @@ def test_warm_cache_expiry_and_retention_bound():
             assert utc_observation(bounded.expires_at) == start + timedelta(hours=1)
             assert utc_observation(bounded.retain_until) == start + timedelta(hours=1)
             assert await repo.purge_expired(now=start + timedelta(hours=1, seconds=4)) == 3
+            assert lease not in session
+            assert all(operation not in session for operation in (op, expiring, bounded))
             with pytest.raises(ValueError):
                 await repo.complete(
                     tenant_id=tenant, operation_id=op.operation_id, processing_ms=float("nan"), now=start

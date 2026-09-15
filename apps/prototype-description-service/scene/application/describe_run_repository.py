@@ -23,6 +23,7 @@ from scene.domain.describe_run import (
     DescribeRunRequest,
     DescribeRunStatus,
     RunKind,
+    as_utc,
     async_job_retention_hours,
     compute_request_digest,
     describe_run_max_items,
@@ -72,7 +73,7 @@ class DescribeRunRepository:
         if run is None:
             return False
         if run.queue_ms is None:
-            now = now or datetime.now(UTC)
+            now = as_utc(now or datetime.now(UTC))
             run.queue_ms = elapsed_ms(run.created_at, now)
             run.started_at = run.started_at or now
             await self._session.flush()
@@ -99,7 +100,7 @@ class DescribeRunRepository:
         if run is None:
             return False
         if run.first_ready_at is None:
-            now = now or datetime.now(UTC)
+            now = as_utc(now or datetime.now(UTC))
             if run.started_at is None:
                 raise ValueError("readiness requires worker pickup")
             wait = elapsed_ms(run.started_at, now)
@@ -180,6 +181,7 @@ class DescribeRunRepository:
             completed_items=0,
             failed_items=0,
             skipped_items=0,
+            items_timed=0,
             created_by_user_id=created_by_user_id,
             recognition_enabled=request.recognition_enabled,
             idempotency_key=idempotency_key,
@@ -228,6 +230,7 @@ class DescribeRunRepository:
             completed_items=0,
             failed_items=0,
             skipped_items=0,
+            items_timed=0,
             created_by_user_id=created_by_user_id,
         )
         run.items = [
@@ -262,7 +265,7 @@ class DescribeRunRepository:
         now: datetime | None = None,
     ) -> bool:
         """Persist CPU provisional envelope; keep image_bytes for GPU supersede."""
-        now = now or datetime.now(tz=UTC)
+        now = as_utc(now or datetime.now(tz=UTC))
         item = await self._get_item(tenant_id=tenant_id, run_id=run_id, media_id=media_id)
         if item is None:
             return False
@@ -297,7 +300,7 @@ class DescribeRunRepository:
         False WITHOUT writing: the envelope is dropped, and callers must gate
         the image_descriptions cache write on this return (VLM5-S1A-BR-02).
         """
-        now = now or datetime.now(tz=UTC)
+        now = as_utc(now or datetime.now(tz=UTC))
         item = await self._get_item(tenant_id=tenant_id, run_id=run_id, media_id=media_id)
         if item is None:
             return False
@@ -335,7 +338,7 @@ class DescribeRunRepository:
         facts-less item can never project DEGRADED with a null result payload
         (VLM5-S1A-BR-03).
         """
-        now = now or datetime.now(tz=UTC)
+        now = as_utc(now or datetime.now(tz=UTC))
         item = await self._get_item(tenant_id=tenant_id, run_id=run_id, media_id=media_id)
         if item is None:
             return False
@@ -392,7 +395,7 @@ class DescribeRunRepository:
         :meth:`reclaim_interrupted_runs` [SEC-01], [RES-07].
         """
         await self._require_rls_bypass()
-        now = now or datetime.now(tz=UTC)
+        now = as_utc(now or datetime.now(tz=UTC))
         hours = retention_hours if retention_hours is not None else async_job_retention_hours()
         cutoff = now - timedelta(hours=hours)
         result = await self._session.execute(
@@ -499,7 +502,7 @@ class DescribeRunRepository:
             return False
         if DescribeRunStatus(run.status) in TERMINAL_RUN_STATUSES:
             return False
-        now = now or datetime.now(tz=UTC)
+        now = as_utc(now or datetime.now(tz=UTC))
         for item in await self.list_run_items(tenant_id=tenant_id, run_id=run_id):
             if DescribeItemStatus(item.status) in TERMINAL_ITEM_STATUSES:
                 continue
@@ -605,7 +608,7 @@ class DescribeRunRepository:
         error_message: str | None = None,
         now: datetime | None = None,
     ) -> bool:
-        now = now or datetime.now(tz=UTC)
+        now = as_utc(now or datetime.now(tz=UTC))
         item = await self._get_item(tenant_id=tenant_id, run_id=run_id, media_id=media_id)
         if item is None:
             return False
@@ -679,7 +682,7 @@ class DescribeRunRepository:
         assumption.
         """
         await self._require_rls_bypass()
-        now = now or datetime.now(tz=UTC)
+        now = as_utc(now or datetime.now(tz=UTC))
         result = await self._session.execute(
             select(DescribeRun).where(DescribeRun.status.in_([DescribeRunStatus.PENDING, DescribeRunStatus.RUNNING]))
         )
@@ -703,6 +706,7 @@ class DescribeRunRepository:
                         item.completed_at = now
                         item.last_error = item.last_error or _RECLAIM_INTERRUPT_ERROR
                 item.image_bytes = None
+            run.items_timed = sum(item.processing_ms is not None for item in items)
             statuses = Counter(item.status for item in items)
             completed = statuses[DescribeItemStatus.COMPLETED]
             failed = statuses[DescribeItemStatus.FAILED]
@@ -760,7 +764,9 @@ class DescribeRunRepository:
         if run is None:
             return
 
-        statuses = Counter(item.status for item in await self.list_run_items(tenant_id=tenant_id, run_id=run_id))
+        items = await self.list_run_items(tenant_id=tenant_id, run_id=run_id)
+        run.items_timed = sum(item.processing_ms is not None for item in items)
+        statuses = Counter(item.status for item in items)
         completed = statuses[DescribeItemStatus.COMPLETED]
         failed = statuses[DescribeItemStatus.FAILED]
         skipped = statuses[DescribeItemStatus.SKIPPED]

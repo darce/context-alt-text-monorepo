@@ -102,3 +102,56 @@ Impact: The test suite can stay green while cancelled retries persist a syntheti
 Fix: Use a fake monotonic clock around a dispatched attempt (or the real adapter timing hook), raise a transient error after advancing it, cancel during backoff, and assert the persisted value is the measured elapsed duration.
 
 Verdict: fail
+
+## Re-review r3 (3601dc287..16a393fdc)
+
+VERIFIED: {"GPUFLOW-1-SVCRUNTIMING-R-01":"fixed","GPUFLOW-1-SVCRUNTIMING-R-04":"fixed","GPUFLOW-1-SVCRUNTIMING-R-05":"fixed","GPUFLOW-1-SVCRUNTIMING-R-06":"fixed","GPUFLOW-1-SVCRUNTIMING-R-07":"fixed"}
+
+FINDINGS: [{"id":"GPUFLOW-1-SVCRUNTIMING-R-08","severity":"high","file_path":"apps/prototype-description-service/scene/application/describe_run_worker.py","line":361,"summary":"A warm retry overwrites retained cold readiness timing.","evidence":"The new post-record repair calls _measured_ramp_up_ms(run, cold=cold) and assigns its result unconditionally (.review/CHANGE.diff:167-173). A restarted worker that finds the GPU immediately ready passes cold=False and writes 0.0 even when a prior cold invocation already persisted first_ready_at and a positive ramp_up_ms; no retry-after-readiness regression covers this path [TEST-15]."},{"id":"GPUFLOW-1-SVCRUNTIMING-R-09","severity":"medium","file_path":"apps/prototype-description-service/scene/application/describe_run_worker.py","line":454,"summary":"Retry fallback counts pre-dispatch failures as adapter processing.","evidence":"_measured_attempt_ms() falls back to elapsed wait_for time whenever _attempt_processing_ms() returns None (.review/CHANGE.diff:180-198). That also covers VisualFactsService errors before its adapter dispatch marker or plain pre-dispatch failures, so cache/DB/quota/setup time is persisted as adapter work instead of remaining untimed; the fallback never checks entered_adapter [TEST-15] [rg-015]."},{"id":"GPUFLOW-1-SVCRUNTIMING-R-10","severity":"medium","file_path":"apps/prototype-description-service/scene/application/describe_run_worker.py","line":293,"summary":"Startup association can race the run readiness write.","evidence":"The fix reads the operation and its startup in separate non-locking scalar queries (.review/CHANGE.diff:96-114), then records run readiness later (.review/CHANGE.diff:145-166). If associate_startup commits after the lookup sees no startup_id but before or during record_readiness, the run stores a null startup association and is never repaired; the test seeds an already-associated operation but does not interleave the association [CON-05]."}]
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| GPUFLOW-1-SVCRUNTIMING-R-01 | fixed | `describe_run_worker.py:281-314` now resolves the run's operation within its tenant, follows that durable operation's `startup_id`, and derives `startup_ms` only from observed startup timestamps; the added fixture seeds an older and newer startup and asserts the operation-bound older one (`.review/CHANGE.diff:84-114,336-384`). |
+| GPUFLOW-1-SVCRUNTIMING-R-04 | fixed | `_describe_adapter()` starts `perf_counter()` inside the dispatched callable and attaches elapsed timing on ordinary adapter exceptions; the async failure path persists that measurement, and the new failure test holds dispatch behind a queue delay (`.review/CHANGE.diff:4-18,28-43,475-525`). |
+| GPUFLOW-1-SVCRUNTIMING-R-05 | fixed | Terminal branches now retain each `mark_item()` result and derive progress only when the prior item was non-terminal; the replacement regression uses real terminal no-op behavior across three items (`.review/CHANGE.diff:79-81,211-274,432-466`). |
+| GPUFLOW-1-SVCRUNTIMING-R-06 | fixed | The helper now restores a cold run's `ramp_up_ms` from persisted `started_at`/`first_ready_at` even when `startup_id` is null, and the regression asserts a positive value (`.review/CHANGE.diff:121-126,167-173,387-393`). |
+| GPUFLOW-1-SVCRUNTIMING-R-07 | fixed | The retry path measures each attempt with the monotonic clock when no producer timing exists, carries the cumulative value through cancellation, and the test advances a fake clock rather than injecting `processing_ms` (`.review/CHANGE.diff:176-210,395-425`). |
+| GPUFLOW-1-SVCRUNTIMING-R-08 | not_fixed | The same post-record assignment returns `0.0` for every `cold=False` invocation (`.review/CHANGE.diff:121-126,167-173`), overwriting a retained positive cold wait on a warm restart/retry. |
+| GPUFLOW-1-SVCRUNTIMING-R-09 | not_fixed | The fallback treats missing producer timing as proof of an adapter attempt and measures the entire `wait_for` call (`.review/CHANGE.diff:180-198`); it has no `entered_adapter` guard for pre-dispatch errors. |
+| GPUFLOW-1-SVCRUNTIMING-R-10 | not_fixed | Operation/startup lookup is non-locking and separated from the later readiness write (`.review/CHANGE.diff:96-114,145-166`), leaving a race in which a concurrently associated startup is omitted from the run. |
+
+Scope check: the supplied fix delta contains only the three worker/test paths in this review scope; no additional out-of-scope path is changed.
+
+### FINDINGS
+
+#### GPUFLOW-1-SVCRUNTIMING-R-08 — high
+
+File: `apps/prototype-description-service/scene/application/describe_run_worker.py:317-363`; changed hunk `.review/CHANGE.diff:121-173`.
+
+Evidence: `_measured_ramp_up_ms()` returns `0.0` whenever `cold` is false, and `_record_run_readiness()` assigns that result after every `record_readiness()` call. `DescribeRunRepository.record_readiness()` is first-observation-only, so a later warm health probe can leave the existing `first_ready_at` and positive cold `ramp_up_ms` intact until this new assignment erases it. A retry after readiness must retain the operation's first observation under the published timing contract. This is a silent data-loss/contract failure [TEST-15].
+
+Impact: Restarted or retried runs can report zero readiness wait after genuinely waiting for a cold GPU, making run timing and downstream p50/diagnostic data understate the operation's lifecycle.
+
+Fix: Reconcile `ramp_up_ms` only when the first readiness observation is newly recorded, or preserve the persisted value when `first_ready_at` already exists; add a second invocation regression where the first call is cold and the retry is warm.
+
+#### GPUFLOW-1-SVCRUNTIMING-R-09 — medium
+
+File: `apps/prototype-description-service/scene/application/describe_run_worker.py:416-456`; changed hunk `.review/CHANGE.diff:180-210`.
+
+Evidence: The new `_measured_attempt_ms()` uses local elapsed time whenever `_attempt_processing_ms()` returns null. The upstream `AdapterAttemptTiming` contract distinguishes `entered_adapter=False` for cache, quota, DB, and other pre-dispatch failures, but this fallback ignores that marker and records the whole `_call_describe_one()`/`wait_for()` interval as adapter processing. The result contaminates item processing totals with non-adapter work instead of preserving an untimed null [rg-015] [TEST-15].
+
+Impact: Failed items can be counted in `items_timed` and run p50/max even though no model attempt ran, while cache/setup or database latency is mislabeled as GPU/CPU processing.
+
+Fix: Fall back to a monotonic interval only for a call that proves adapter dispatch; otherwise preserve null. Add a pre-dispatch failure regression alongside the actual dispatched-failure timing test.
+
+#### GPUFLOW-1-SVCRUNTIMING-R-10 — medium
+
+File: `apps/prototype-description-service/scene/application/describe_run_worker.py:281-357`; changed hunk `.review/CHANGE.diff:84-114,145-166`.
+
+Evidence: `_observed_startup()` performs an ordinary operation read and startup read, then `_record_run_readiness()` later persists the run observation. `DescribeOperationRepository.associate_startup()` can update the operation between those awaits. If the lookup observes `startup_id=None`, the worker records `startup_id=None` even when the operation is associated before readiness commits, and no later repair links the run to the shared startup. The added test covers only an already-associated operation, not this interleaving [CON-05].
+
+Impact: Concurrent callers can lose durable startup correlation and `startup_ms` despite a valid shared startup observation, weakening the restart/concurrency timing contract for affected runs.
+
+Fix: Coordinate startup association and run readiness in one locking/transaction protocol, or re-read and reconcile the operation association immediately before commit; add a concurrent association/readiness regression.
+
+Verdict: fail

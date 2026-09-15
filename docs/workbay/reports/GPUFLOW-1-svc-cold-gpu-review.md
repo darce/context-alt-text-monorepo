@@ -117,3 +117,46 @@ Verdict: fail
 - **Fix:** Move producer/schema edits to their owning lanes and leave this lane consuming the committed artifacts.
 
 Verdict: fail
+
+## Re-review r6 (529bf75aa..3aa601740)
+
+VERIFIED: {"GPUFLOW-1-SVCCOLDGPU-R-10":"partially_fixed","GPUFLOW-1-SVCCOLDGPU-R-12":"fixed","GPUFLOW-1-SVCCOLDGPU-R-13":"fixed","GPUFLOW-1-SVCCOLDGPU-R-14":"fixed","GPUFLOW-1-SVCCOLDGPU-R-15":"fixed"}
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| GPUFLOW-1-SVCCOLDGPU-R-10 | partially_fixed | The preflight row is now authoritative for hits and the miss wrapper delegates later duplicate-key lookups (`.review/CHANGE.diff:49-66,214-220`), while the route attempts cleanup for timeout, generic, and non-lifecycle HTTP failures (`.review/CHANGE.diff:121-153`). However, the new cleanup classifier can skip terminalization for a completion-generated 502 and the unready path is not concurrency-safe (new R-17/R-19). |
+| GPUFLOW-1-SVCCOLDGPU-R-12 | fixed | `_terminalize_accepted_operation` now routes operations with no readiness observation to `_release_unready_operation`, which completes only the lease and operation completion timestamp without calling `observe_ready` (`.review/CHANGE.diff:97-135`). The regression asserts `first_ready_at` remains null (`.review/CHANGE.diff:214-219`). |
+| GPUFLOW-1-SVCCOLDGPU-R-13 | fixed | The route now handles post-accept `HTTPException` values before re-raising and the quota regression verifies the accepted lease is completed on a 429 (`.review/CHANGE.diff:139-153,254-285`). Lifecycle starting/unavailable errors remain intentionally retained. |
+| GPUFLOW-1-SVCCOLDGPU-R-14 | fixed | The miss repository suppresses only its first lookup and delegates subsequent lookups to the inner repository, preserving duplicate-insert recovery (`.review/CHANGE.diff:49-66`). The added unit test verifies the first miss followed by delegated calls (`.review/CHANGE.diff:288-305`). |
+| GPUFLOW-1-SVCCOLDGPU-R-15 | fixed | Multipart operation IDs are now rejected when empty or over 128 characters, and mismatch errors no longer echo an unverified token (`.review/CHANGE.diff:23-42,70-78`). The new tests cover empty, oversized, and bounded unknown IDs (`.review/CHANGE.diff:228-251`). |
+
+### FINDINGS
+
+FINDINGS: [
+  {"id":"GPUFLOW-1-SVCCOLDGPU-R-17","severity":"high","file_path":"apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py","line":808,"summary":"Completion-error sentinel can leave an accepted lease active","evidence":"The new `_http_exception_already_terminalized` helper treats any `HTTPException` with code `description_service_error` as already cleaned and the route skips `_terminalize_accepted_operation` for it (`.review/CHANGE.diff:91-95,139-153`). `_complete_operation` can emit that 502 after rolling back a failed readiness/completion write, so the accepted lease remains active while the request returns an error."},
+  {"id":"GPUFLOW-1-SVCCOLDGPU-R-18","severity":"high","file_path":"apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py","line":800,"summary":"Lifecycle-retention decision trusts an unscoped error code","evidence":"`_preserves_demand_lease` keeps the lease whenever any post-accept `HTTPException` detail has code `description_service_starting` or `description_service_unavailable`, without checking status, phase, or that the error came from `_ensure_gpu_ready` (`.review/CHANGE.diff:83-89,139-153`). A later dependency failure reusing either code therefore bypasses cleanup and can publish a non-lifecycle failure with active demand."},
+  {"id":"GPUFLOW-1-SVCCOLDGPU-R-19","severity":"high","file_path":"apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py","line":849,"summary":"Unready terminalization races a concurrent readiness transition","evidence":"The terminalizer branches on the caller's possibly stale `op.first_ready_at` before `_release_unready_operation` locks only the lease (`.review/CHANGE.diff:97-118,121-135`). Another retry can commit `first_ready_at` and proceed to adapter dispatch between those actions; the stale failure path then marks the lease completed, allowing compute to continue without active demand ([CON-02])."}
+]
+
+#### GPUFLOW-1-SVCCOLDGPU-R-17 — high
+
+- **File:** `apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py:808`.
+- **Evidence:** `_http_exception_already_terminalized` classifies every `description_service_error` HTTP exception as already cleaned, and the route consequently skips `_terminalize_accepted_operation` (`.review/CHANGE.diff:91-95,139-153`). The completion helper can raise that same typed 502 after a rollback when its persistence write fails, leaving the accepted lease active while the client receives an error.
+- **Impact:** A database failure during completion turns a cleanup attempt into a silent demand leak.
+- **Fix:** Track whether terminalization committed successfully rather than using the response code as a sentinel; retry/fallback terminalization while preserving the original error.
+
+#### GPUFLOW-1-SVCCOLDGPU-R-18 — high
+
+- **File:** `apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py:800`.
+- **Evidence:** The new helper preserves demand solely from `detail.code`, with no status, origin, or lifecycle-phase check (`.review/CHANGE.diff:83-89,139-153`). Any post-accept dependency that emits one of the lifecycle strings is re-raised without terminalizing the lease, even if it is not the readiness gate's intentional 503.
+- **Impact:** A non-lifecycle failure can leave GPU demand active until lease expiry and mislead retry/lifecycle consumers.
+- **Fix:** Mark lifecycle exceptions at the readiness boundary (or require the expected 503 shape and operation identity) and clean up all other post-accept failures.
+
+#### GPUFLOW-1-SVCCOLDGPU-R-19 — high
+
+- **File:** `apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py:849`.
+- **Evidence:** The new unready branch tests `op.first_ready_at` before acquiring a lock, while `_release_unready_operation` locks only `DescribeDemandLease` and never refreshes the operation row (`.review/CHANGE.diff:97-118,121-135`). A concurrent retry can record readiness and begin compute after the stale test but before the lease is marked completed, so the failing request removes the only active demand lease from work that is still running ([CON-02]).
+- **Impact:** Concurrent retries can execute GPU work after demand has been terminalized, breaking lifecycle admission accounting.
+- **Fix:** Re-read/lock the operation and lease together and decide readiness under that lock before completing the lease.
+
+Verdict: fail

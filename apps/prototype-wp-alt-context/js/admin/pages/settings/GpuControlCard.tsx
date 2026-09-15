@@ -8,7 +8,7 @@ import {
   GPU_STATE_TONE,
   gpuStatePresentation,
 } from '../workbench/gpuStatePresentation';
-import { getGpuControlPollInterval, useGpuControl } from './useGpuControl';
+import { useGpuControl } from './useGpuControl';
 
 type ConfirmationAction = typeof GpuIntentAction.START | typeof GpuIntentAction.STOP;
 
@@ -74,13 +74,6 @@ const formatClock = (value: string | null): string | null => {
     return null;
   }
   return new Date(milliseconds).toISOString().slice(11, 19);
-};
-
-const formatWarmupEta = (data: GpuStatusResponse): string => {
-  const elapsed = secondsSinceServerTime(data.server_time, data.gpu_state.since);
-  const remaining = elapsed === null ? 120 : Math.max(0, 120 - elapsed);
-  const pollSeconds = Math.round(getGpuControlPollInterval(data) / 1000);
-  return `Warming… about ${formatDuration(remaining)} left · polling every ${pollSeconds} s`;
 };
 
 const intentLabel = (data: GpuStatusResponse): string => {
@@ -243,72 +236,82 @@ export const GpuControlCard = (): React.JSX.Element => {
           </div>
           <div id="z-gpu-load" data-testid="z-gpu-load" className="acx-gpu-control__row">
             <strong>{__('Load:', 'alt-context')}</strong>{' '}
-            {data.load.has_work ? __('describe run in flight', 'alt-context') : __('no work in flight', 'alt-context')}{' '}
+            {data.load.has_work
+              ? __('describe run in flight', 'alt-context')
+              : __('no work in flight', 'alt-context')}{' '}
             ({loadAgeLabel(data)})
           </div>
           <div id="z-gpu-cost" data-testid="z-gpu-cost" className="acx-gpu-control__row">
-            {__('Cost: ≈$2.00 / service-hour · warm-up ≈2 min · never runs longer than the 60-minute maximum', 'alt-context')}
+            {__(
+              'Cost: ≈$2.00 / service-hour · warm-up ≈2 min · never runs longer than the 60-minute maximum',
+              'alt-context',
+            )}
           </div>
 
           {!data.snapshot_fresh ? (
             <p className="notice inline notice-warning" data-testid="gpu-stale-notice">
               {__(
-                'Service status is out of date. Refresh before starting the service. Stop and automatic requests may be delayed.',
+                'Service status is out of date. Refresh before starting the service. ' +
+                  'Stop and automatic requests may be delayed.',
                 'alt-context',
               )}
             </p>
           ) : null}
 
           {displayedState === GPU_STATE.STARTING || displayedState === GPU_STATE.WARMING ? (
-            <p data-testid="gpu-warmup-eta">{formatWarmupEta(data)}</p>
+            <p data-testid="gpu-warmup-eta">{__('Warming up, this can take a few minutes', 'alt-context')}</p>
           ) : null}
 
           <div id="z-gpu-controls" data-testid="z-gpu-controls" className="acx-gpu-control__actions">
-            <button
-              type="button"
-              className="acx-button acx-button--primary"
-              onClick={() => {
-                if (!startHeld) {
-                  setConfirmation(GpuIntentAction.START);
-                }
-              }}
-              aria-disabled={startHeld ? true : undefined}
-              aria-describedby={startReason ? 'z-gpu-start-reason' : undefined}
-            >
-              <span aria-hidden="true">▶</span> {__('Start service', 'alt-context')}
-            </button>
-            {startReason ? <span id="z-gpu-start-reason">disabled: {startReason}</span> : null}
+            {displayedState !== GPU_STATE.UNKNOWN ? (
+              <>
+                <button
+                  type="button"
+                  className="acx-button acx-button--primary"
+                  onClick={() => {
+                    if (!startHeld) {
+                      setConfirmation(GpuIntentAction.START);
+                    }
+                  }}
+                  aria-disabled={startHeld ? true : undefined}
+                  aria-describedby={startReason ? 'z-gpu-start-reason' : undefined}
+                >
+                  <span aria-hidden="true">▶</span> {__('Start service', 'alt-context')}
+                </button>
+                {startReason ? <span id="z-gpu-start-reason">disabled: {startReason}</span> : null}
 
-            <button
-              type="button"
-              className="acx-button acx-button--secondary"
-              onClick={() => {
-                if (!stopHeld) {
-                  setConfirmation(GpuIntentAction.STOP);
-                }
-              }}
-              aria-disabled={stopHeld ? true : undefined}
-              aria-describedby={stopReason ? 'z-gpu-stop-reason' : undefined}
-            >
-              <span aria-hidden="true">■</span> {__('Stop service', 'alt-context')}
-            </button>
-            {stopReason ? <span id="z-gpu-stop-reason">disabled: {stopReason}</span> : null}
+                <button
+                  type="button"
+                  className="acx-button acx-button--secondary"
+                  onClick={() => {
+                    if (!stopHeld) {
+                      setConfirmation(GpuIntentAction.STOP);
+                    }
+                  }}
+                  aria-disabled={stopHeld ? true : undefined}
+                  aria-describedby={stopReason ? 'z-gpu-stop-reason' : undefined}
+                >
+                  <span aria-hidden="true">■</span> {__('Stop service', 'alt-context')}
+                </button>
+                {stopReason ? <span id="z-gpu-stop-reason">disabled: {stopReason}</span> : null}
 
-            {canReturnToAuto ? (
-              <button
-                type="button"
-                className="acx-button acx-button--secondary"
-                onClick={() => requestIntent(GpuIntentAction.AUTO)}
-                disabled={isIntentPending}
-              >
-                <span aria-hidden="true">↺</span> {__('Return to automatic', 'alt-context')}
-              </button>
-            ) : null}
+                {canReturnToAuto ? (
+                  <button
+                    type="button"
+                    className="acx-button acx-button--secondary"
+                    onClick={() => requestIntent(GpuIntentAction.AUTO)}
+                    disabled={isIntentPending}
+                  >
+                    <span aria-hidden="true">↺</span> {__('Return to automatic', 'alt-context')}
+                  </button>
+                ) : null}
 
-            {displayedState === GPU_STATE.READY ? (
-              <a className="acx-button acx-button--secondary" href={toWorkbench()}>
-                <span aria-hidden="true">→</span> {__('Go to Workbench', 'alt-context')}
-              </a>
+                {displayedState === GPU_STATE.READY ? (
+                  <a className="acx-button acx-button--secondary" href={toWorkbench()}>
+                    <span aria-hidden="true">→</span> {__('Go to Workbench', 'alt-context')}
+                  </a>
+                ) : null}
+              </>
             ) : null}
 
             <button type="button" className="acx-button acx-button--tertiary" onClick={() => void refetch()}>
@@ -320,7 +323,8 @@ export const GpuControlCard = (): React.JSX.Element => {
             <div id="z-start-preview" data-testid="z-start-preview" className="notice inline notice-warning">
               <p>
                 {__(
-                  'Starts the description service now (≈$2.00/h). Ready in about 2 min. Returns to automatic after 30 min unless work keeps it busy; the 60-minute maximum still applies.',
+                  'Starts the description service now (≈$2.00/h). Ready in about 2 min. ' +
+                    'Returns to automatic after 30 min unless work keeps it busy; the 60-minute maximum still applies.',
                   'alt-context',
                 )}
               </p>
@@ -350,11 +354,13 @@ export const GpuControlCard = (): React.JSX.Element => {
               <p>
                 {data.load.has_work
                   ? __(
-                      'Stopping after the current work finishes. The service run limit can still stop the service to limit costs.',
+                      'Stopping after the current work finishes. ' +
+                        'The service run limit can still stop the service to limit costs.',
                       'alt-context',
                     )
                   : __(
-                      'Requests shutdown when idle. If a describe run is in flight, shutdown is deferred. The service run limit can still stop the service to limit costs.',
+                      'Requests shutdown when idle. If a describe run is in flight, shutdown is deferred. ' +
+                        'The service run limit can still stop the service to limit costs.',
                       'alt-context',
                     )}
               </p>

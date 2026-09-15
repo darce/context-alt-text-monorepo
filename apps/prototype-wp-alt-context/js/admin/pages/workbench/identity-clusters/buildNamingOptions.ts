@@ -264,3 +264,43 @@ export const buildNamingOptions = ({
     collisionsByLabel: collisions,
   };
 };
+
+/** URL + bbox must come from the same source (IDCHIP-1 AV-R-04 / ClusterPreview). */
+export interface GroupPreviewBbox {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+export interface GroupPreviewFace {
+  readonly media_url?: string | null;
+  readonly attachment_url?: string | null;
+  readonly bbox?: GroupPreviewBbox | null;
+}
+
+const groupPreviewUrl = (face: GroupPreviewFace | null | undefined): string | null => {
+  const mediaUrl = face?.media_url;
+  if (typeof mediaUrl === 'string' && mediaUrl.length > 0) {
+    return mediaUrl;
+  }
+  const attachmentUrl = face?.attachment_url;
+  if (typeof attachmentUrl === 'string' && attachmentUrl.length > 0) {
+    return attachmentUrl;
+  }
+  return null;
+};
+
+/**
+ * Group preview source: representative_face → first member → placeholder (null).
+ * Consume ClusterPreview for rendering; do not duplicate its JSX.
+ */
+export const selectGroupPreviewSource = (
+  representativeFace?: GroupPreviewFace | null,
+  member?: GroupPreviewFace | null,
+): GroupPreviewFace | null => {
+  const referenceUrl = groupPreviewUrl(representativeFace);
+  const source = referenceUrl && representativeFace?.bbox ? representativeFace : member ?? null;
+  const mediaUrl = groupPreviewUrl(source);
+  return mediaUrl && source?.bbox ? source : null;
+};

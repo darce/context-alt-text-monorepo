@@ -391,8 +391,17 @@ def _untimed_with_elapsed(server_elapsed_ms: float | None) -> DescribeTiming:
     )
 
 
-def _mint_operation_id() -> str:
-    return uuid.uuid4().hex
+class _PreflightMissCacheRepository:
+    """Skip VisualFactsService's second cache read after a GPU preflight miss."""
+
+    def __init__(self, inner: ImageDescriptionRepository) -> None:
+        self._inner = inner
+
+    async def get_by_cache_key(self, **kwargs):
+        return None
+
+    def __getattr__(self, name: str):
+        return getattr(self._inner, name)
 
 
 async def _validated_describe_multipart_submission(
@@ -569,6 +578,8 @@ async def _cached_gpu_description_row(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             code="description_service_unavailable",
             message="Description service is unavailable",
+            operation_id=None,
+            startup_id=None,
             timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
         )
 
@@ -900,9 +911,12 @@ async def describe_image_multipart(
     )
     session_factory = worker_session_factory(session) if session is not None else None
     effective_timeout = _generation_timeout_seconds(settings, effective_adapter)
+    describe_repository = repository
+    if gpu_compute and cached_row is None and repository is not None:
+        describe_repository = _PreflightMissCacheRepository(repository)
     service = VisualFactsService(
         adapter=effective_adapter,
-        repository=repository,
+        repository=describe_repository,
         audit_sink=audit_sink,
         metrics=_DescriptionMetricsSink(),
         generation_timeout_seconds=effective_timeout,
@@ -921,6 +935,8 @@ async def describe_image_multipart(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     code="description_service_unavailable",
                     message="Description service is unavailable",
+                    operation_id=None,
+                    startup_id=None,
                     timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
                 )
             await _ensure_gpu_ready(
@@ -1013,7 +1029,7 @@ async def describe_image_multipart(
                 raise RuntimeError("gpu describe succeeded without an accepted operation")
             return MultipartDescribeResponse(
                 **dumped,
-                operation_id=_mint_operation_id(),
+                operation_id=None,
                 startup_id=startup_id,
                 timing=timing,
             )

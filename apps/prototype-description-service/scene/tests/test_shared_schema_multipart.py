@@ -8,7 +8,7 @@ from pathlib import Path
 from jsonschema import Draft7Validator
 from referencing import Registry, Resource
 
-from scene.tests.test_describe_route import TENANT_ID, _GpuAdapter, _client, _gpu_env, _post
+from scene.tests.test_describe_route import TENANT_ID, _client, _gpu_env, _GpuAdapter, _post
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _SCHEMA_DIR = _REPO_ROOT / "packages/shared-contracts/schemas"
@@ -94,9 +94,11 @@ def test_typed_error_envelopes_validate():
     )
 
 
-def test_success_envelope_rejects_null_operation_id():
+def test_success_envelope_allows_null_operation_id_and_rejects_empty():
     payload = json.loads(_FIXTURE.read_text())
     payload["operation_id"] = None
+    _multipart_validator().validate(payload)
+    payload["operation_id"] = ""
     assert not _multipart_validator().is_valid(payload)
 
 
@@ -108,7 +110,9 @@ def _schema_body(payload: dict) -> dict:
     body = json.loads(json.dumps(payload))
     provenance = body.get("naming_provenance")
     if isinstance(provenance, dict):
-        body["naming_provenance"] = {key: provenance[key] for key in _NAMING_PROVENANCE_SCHEMA_KEYS if key in provenance}
+        body["naming_provenance"] = {
+            key: provenance[key] for key in _NAMING_PROVENANCE_SCHEMA_KEYS if key in provenance
+        }
     return body
 
 
@@ -164,3 +168,15 @@ def test_production_route_unavailable_error_validates_against_shared_schema(monk
         assert body["detail"]["startup_id"] is None
         assert "timing" in body["detail"]
         assert "warmup_eta_seconds" not in body["detail"]
+
+
+def test_production_cpu_no_session_success_validates_null_operation_id():
+    validator = _multipart_validator()
+    with _client(db_absent=True) as client:
+        response = _post(client, TENANT_ID)
+        assert response.status_code == 200, response.text
+        body = response.json()
+        validator.validate(_schema_body(body))
+        assert body["operation_id"] is None
+        assert "startup_id" in body
+        assert "timing" in body

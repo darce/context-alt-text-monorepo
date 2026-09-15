@@ -1,236 +1,221 @@
 diff --git a/apps/prototype-description-service/scene/interface_adapters/http/schemas/responses.py b/apps/prototype-description-service/scene/interface_adapters/http/schemas/responses.py
 --- a/apps/prototype-description-service/scene/interface_adapters/http/schemas/responses.py
 +++ b/apps/prototype-description-service/scene/interface_adapters/http/schemas/responses.py
-@@ -11,7 +11,7 @@ from __future__ import annotations
- 
- from typing import Annotated
- 
--from pydantic import BaseModel, ConfigDict, Field
-+from pydantic import BaseModel, ConfigDict, Field, model_serializer
- 
- from scene.application.gpu_state import GpuState
- from scene.application.identity_merge import NamingRealizer
-@@ -138,7 +138,29 @@ class DescribeRunTiming(BaseModel):
-     items_timed: Annotated[int, Field(ge=0, strict=True)] | None
- 
- 
--class VisualFactsResponse(BaseModel):
-+class OmitAbsentOperationMetadata(BaseModel):
-+    """Drop unobserved operation metadata instead of emitting JSON nulls.
+@@ -5,6 +5,9 @@ retention state are unavoidable on the wire; future adapters (local_cpu,
+ hosted_provider) never change the shape (roadmap "Core Contract"). The seeded
+ adapter fills expansion fields (``context_used``, ``provider_disclosure``) with
+ typed placeholders rather than nulls.
 +
-+    ``startup_id`` may be JSON null only when ``operation_id`` or ``timing`` is
-+    present (unobserved start). When all three are unobserved, omit them.
++svc-cold-gpu consumes ``MultipartDescribeResponse`` as ``response_model`` on
++``/scene/describe/multipart``.
+ """
+ 
+ from __future__ import annotations
+@@ -207,6 +210,30 @@ class VisualFactsResponse(OmitAbsentOperationMetadata):
+     timing: DescribeTiming | None = None
+ 
+ 
++class MultipartDescribeResponse(VisualFactsResponse):
++    """Strict multipart success envelope for ``/scene/describe/multipart``.
++
++    ``operation_id`` and ``timing`` are required and non-null; ``startup_id`` is
++    a required key that may be JSON null for warm/cache work. Base
++    ``VisualFactsResponse`` omission behaviour is unchanged.
 +    """
 +
++    operation_id: str = Field(min_length=1, max_length=128)
++    startup_id: str | None
++    timing: DescribeTiming
++
 +    @model_serializer(mode="wrap")
-+    def _omit_absent_operation_metadata(self, handler):
++    def _emit_required_operation_metadata(self, handler):
 +        payload = handler(self)
 +        if not isinstance(payload, dict):
 +            return payload
-+        keep_null_startup = payload.get("operation_id") is not None or payload.get("timing") is not None
-+        for key in ("operation_id", "startup_id", "timing"):
-+            if payload.get(key) is not None:
-+                continue
-+            if key == "startup_id" and keep_null_startup:
-+                continue
-+            payload.pop(key, None)
++        payload["operation_id"] = self.operation_id
++        payload["startup_id"] = self.startup_id
++        if payload.get("timing") is None:
++            payload["timing"] = self.timing.model_dump(mode="json")
 +        return payload
 +
 +
-+class VisualFactsResponse(OmitAbsentOperationMetadata):
-     """The 15 contract-locked core fields plus additive optional preview /
-     fusion fields (``generic_draft``/``named_draft``/``naming_provenance``/
-     ``attachment_provenance``).
-@@ -146,8 +168,9 @@ class VisualFactsResponse(BaseModel):
-     Preview fields are draft-only: nothing here writes
-     ``_wp_attachment_image_alt`` (that write path is E19-2).
- 
--    Builders MUST supply operation_id, startup_id (nullable), and timing.
--    Unknown timing observations must be explicit nulls; timing itself is required.
-+    ``operation_id``, ``startup_id``, and ``timing`` are additive optional.
-+    Unknown timing observations stay explicit nulls inside ``timing``; older
-+    builders may omit the three fields entirely. Never fabricate values.
-     """
- 
-     model_config = ConfigDict(extra="forbid")
-@@ -178,10 +201,10 @@ class VisualFactsResponse(BaseModel):
-     # ALTQ-1 additive optional long-form surface (dual-length prompting).
-     # None when the adapter produces only the short draft; never required.
-     alt_text_long: str | None = None
--    # Builders supply correlation and measurements; unknown observations stay null.
--    operation_id: str = Field(min_length=1, max_length=128)
--    startup_id: str | None
--    timing: DescribeTiming
-+    # Additive optional: omit on the wire when unobserved; never fabricate.
-+    operation_id: str | None = Field(default=None, min_length=1, max_length=128)
-+    startup_id: str | None = None
-+    timing: DescribeTiming | None = None
- 
- 
  class DescribeJobResult(BaseModel):
-@@ -197,11 +220,12 @@ class DescribeJobResult(BaseModel):
-     error: str | None = None
+     """Async describe job poll result."""
  
- 
--class DescribeRunResponse(BaseModel):
-+class DescribeRunResponse(OmitAbsentOperationMetadata):
-     """Async describe-run status returned by submit/status endpoints.
- 
--    Builders MUST supply operation_id, startup_id (nullable), and timing.
--    Unknown timing observations must be explicit nulls; timing itself is required.
-+    ``operation_id``, ``startup_id``, and ``timing`` are additive optional.
-+    Unknown timing observations stay explicit nulls inside ``timing``; older
-+    builders may omit the three fields entirely. Never fabricate values.
-     """
- 
-     model_config = ConfigDict(extra="forbid")
-@@ -230,9 +254,9 @@ class DescribeRunResponse(BaseModel):
-     # snapshotted, so a later config change never moves an accepted run's number.
-     # Null only for runs created outside the submit route (never via POST).
-     deadline_seconds: float | None = None
--    operation_id: str = Field(min_length=1, max_length=128)
--    startup_id: str | None
--    timing: DescribeRunTiming
-+    operation_id: str | None = Field(default=None, min_length=1, max_length=128)
-+    startup_id: str | None = None
-+    timing: DescribeRunTiming | None = None
- 
- 
- class DescribeRunItemResponse(BaseModel):
 diff --git a/apps/prototype-description-service/scene/tests/test_gpuflow_response_models.py b/apps/prototype-description-service/scene/tests/test_gpuflow_response_models.py
 --- a/apps/prototype-description-service/scene/tests/test_gpuflow_response_models.py
 +++ b/apps/prototype-description-service/scene/tests/test_gpuflow_response_models.py
-@@ -13,6 +13,17 @@ from scene.interface_adapters.http.schemas.responses import (
+@@ -5,49 +5,76 @@ from pathlib import Path
+ 
+ import jsonschema
+ import pytest
++from jsonschema import Draft7Validator
+ from pydantic import ValidationError
++from referencing import Registry, Resource
+ 
+ from scene.interface_adapters.http.schemas.responses import (
+     DescribeRunItemsResponse,
+     DescribeRunResponse,
++    MultipartDescribeResponse,
      VisualFactsResponse,
  )
  
-+_REPO_ROOT = Path(__file__).resolve().parents[4]
-+_SCHEMAS = {
-+    VisualFactsResponse: json.loads(
-+        (_REPO_ROOT / "packages/shared-contracts/schemas/image-description-response.schema.json").read_text()
-+    ),
-+    DescribeRunResponse: json.loads(
-+        (_REPO_ROOT / "packages/shared-contracts/schemas/scene-describe-run.schema.json").read_text()
-+    ),
-+}
-+_ABSENT_OPERATION_KEYS = ("operation_id", "startup_id", "timing")
+ _REPO_ROOT = Path(__file__).resolve().parents[4]
++_SCHEMA_DIR = _REPO_ROOT / "packages/shared-contracts/schemas"
++_SCHEMA_FILES = (
++    "image-description-response.schema.json",
++    "scene-describe-multipart.schema.json",
++    "scene-describe-run.schema.json",
++)
 +
++
++def _load_schema(name):
++    return json.loads((_SCHEMA_DIR / name).read_text())
++
++
++def _retrieve_schema(uri):
++    return Resource.from_contents(_load_schema(Path(uri).name))
++
++
++_REGISTRY = Registry(retrieve=_retrieve_schema).with_resources(
++    (name, Resource.from_contents(_load_schema(name))) for name in _SCHEMA_FILES
++)
+ _SCHEMAS = {
+-    VisualFactsResponse: json.loads(
+-        (_REPO_ROOT / "packages/shared-contracts/schemas/image-description-response.schema.json").read_text()
+-    ),
+-    DescribeRunResponse: json.loads(
+-        (_REPO_ROOT / "packages/shared-contracts/schemas/scene-describe-run.schema.json").read_text()
+-    ),
++    VisualFactsResponse: _load_schema("image-description-response.schema.json"),
++    DescribeRunResponse: _load_schema("scene-describe-run.schema.json"),
++    MultipartDescribeResponse: _load_schema("scene-describe-multipart.schema.json"),
+ }
+ _ABSENT_OPERATION_KEYS = ("operation_id", "startup_id", "timing")
++_VISUAL_FACTS_PAYLOAD = {
++    "tenant_id": "tenant",
++    "media_id": 1,
++    "image_hash": "hash",
++    "context_hash": "context",
++    "adapter": "seeded",
++    "model_id": "model",
++    "model_version": "1",
++    "prompt_or_task_version": "1",
++    "visual_facts": {"caption": "A tree"},
++    "alt_text_draft": "A tree",
++    "context_used": {},
++    "provider_disclosure": {},
++    "cached": False,
++    "duration_ms": 12,
++    "retention_class": "retain_all",
++    "tier": "provisional_cpu",
++    "result_generation": 1,
++}
++_VISUAL_TIMING = {
++    "queue_ms": None,
++    "ramp_up_ms": 0,
++    "processing_ms": 12.5,
++    "startup_ms": None,
++    "server_elapsed_ms": 15,
++}
+ 
  
  @pytest.fixture(params=[VisualFactsResponse, DescribeRunResponse])
  def response_case(request):
-@@ -33,18 +44,24 @@ def response_case(request):
-             "cached": False,
-             "duration_ms": 12,
-             "retention_class": "retain_all",
-+            "tier": "provisional_cpu",
-+            "result_generation": 1,
-         }
-         timing = {"queue_ms": None, "ramp_up_ms": 0, "processing_ms": 12.5, "startup_ms": None, "server_elapsed_ms": 15}
+     if request.param is VisualFactsResponse:
+-        payload = {
+-            "tenant_id": "tenant",
+-            "media_id": 1,
+-            "image_hash": "hash",
+-            "context_hash": "context",
+-            "adapter": "seeded",
+-            "model_id": "model",
+-            "model_version": "1",
+-            "prompt_or_task_version": "1",
+-            "visual_facts": {"caption": "A tree"},
+-            "alt_text_draft": "A tree",
+-            "context_used": {},
+-            "provider_disclosure": {},
+-            "cached": False,
+-            "duration_ms": 12,
+-            "retention_class": "retain_all",
+-            "tier": "provisional_cpu",
+-            "result_generation": 1,
+-        }
+-        timing = {"queue_ms": None, "ramp_up_ms": 0, "processing_ms": 12.5, "startup_ms": None, "server_elapsed_ms": 15}
++        payload = dict(_VISUAL_FACTS_PAYLOAD)
++        timing = dict(_VISUAL_TIMING)
      else:
          payload = {
--            "tenant_id": "tenant",
--            "run_id": "run",
-+            "tenant_id": "11111111-1111-4111-8111-111111111111",
-+            "run_id": "22222222-2222-4222-8222-222222222222",
-             "status": "cancelled",
-             "phase": "cancelled",
-             "completed": 1,
-             "failed": 1,
-             "skipped": 1,
-             "total": 3,
-+            "cancel_requested": False,
-+            "eta_seconds": None,
-+            "gpu_state": "unknown",
-+            "recognition_enabled": True,
-         }
-         timing = {
-             "queue_ms": None,
-@@ -58,6 +75,20 @@ def response_case(request):
-     return request.param, payload, timing
+             "tenant_id": "11111111-1111-4111-8111-111111111111",
+@@ -86,7 +113,11 @@ def _assert_omits_operation_metadata(payload):
  
  
-+def _dumped_payloads(response):
-+    return response.model_dump(mode="json"), json.loads(response.model_dump_json())
+ def _validate_shared_schema(model, payload):
+-    jsonschema.validate(payload, _SCHEMAS[model])
++    Draft7Validator(_SCHEMAS[model], registry=_REGISTRY).validate(payload)
 +
 +
-+def _assert_omits_operation_metadata(payload):
-+    for key in _ABSENT_OPERATION_KEYS:
-+        assert key not in payload
-+        assert payload.get(key) is None
-+
-+
-+def _validate_shared_schema(model, payload):
-+    jsonschema.validate(payload, _SCHEMAS[model])
-+
-+
++def _multipart_validator():
++    return Draft7Validator(_SCHEMAS[MultipartDescribeResponse], registry=_REGISTRY)
+ 
+ 
  def test_timing_and_opaque_correlation_round_trip(response_case):
-     model, payload, timing = response_case
-     response = model(**payload, operation_id="opaque-operation", startup_id=None, timing=timing)
-@@ -67,39 +98,40 @@ def test_timing_and_opaque_correlation_round_trip(response_case):
-     assert wire["startup_id"] is None
- 
- 
--@pytest.mark.parametrize("field", ["operation_id", "startup_id", "timing"])
--def test_response_requires_explicit_operation_metadata(response_case, field):
--    model, payload, timing = response_case
--    complete = {**payload, "operation_id": "opaque-operation", "startup_id": None, "timing": timing}
--    del complete[field]
--    with pytest.raises(ValidationError) as exc_info:
--        model(**complete)
--    assert [(error["loc"], error["type"]) for error in exc_info.value.errors()] == [
--        ((field,), "missing"),
--    ]
-+def test_builder_shaped_response_omits_absent_operation_metadata(response_case):
-+    model, payload, _timing = response_case
-+    response = model(**payload)
-+    dumped, encoded = _dumped_payloads(response)
-+    _assert_omits_operation_metadata(dumped)
-+    _assert_omits_operation_metadata(encoded)
-+    _validate_shared_schema(model, dumped)
-+    _validate_shared_schema(model, encoded)
- 
- 
--@pytest.mark.parametrize("field", ["operation_id", "timing"])
--def test_response_rejects_null_required_values(response_case, field):
--    model, payload, timing = response_case
--    complete = {**payload, "operation_id": "opaque-operation", "startup_id": None, "timing": timing}
--    complete[field] = None
--    with pytest.raises(ValidationError) as exc_info:
--        model(**complete)
--    assert [error["loc"] for error in exc_info.value.errors()] == [(field,)]
-+def test_explicit_none_operation_metadata_is_omitted(response_case):
-+    model, payload, _timing = response_case
-+    response = model(**payload, operation_id=None, startup_id=None, timing=None)
-+    dumped, encoded = _dumped_payloads(response)
-+    _assert_omits_operation_metadata(dumped)
-+    _assert_omits_operation_metadata(encoded)
-+    _validate_shared_schema(model, dumped)
-+    _validate_shared_schema(model, encoded)
- 
- 
--def test_serialized_accepted_response_matches_shared_contract(response_case):
-+def test_populated_operation_metadata_validates_against_shared_schema(response_case):
-     model, payload, timing = response_case
--    if model is not VisualFactsResponse:
--        return
--    response = model(**payload, operation_id="opaque-operation", startup_id=None, timing=timing)
--    schema_path = (
--        Path(__file__).resolve().parents[4]
--        / "packages/shared-contracts/schemas/image-description-response.schema.json"
-+    response = model(
-+        **payload,
+@@ -176,3 +207,57 @@ def test_invalid_item_timing_rejected(processing_ms):
+                 {"media_id": 1, "status": "failed", "processing_ms": processing_ms},
+             ],
+         )
++
++
++def test_multipart_populated_payload_validates_success_branch():
++    response = MultipartDescribeResponse(
++        **_VISUAL_FACTS_PAYLOAD,
 +        operation_id="opaque-operation",
 +        startup_id="opaque-startup",
-+        timing=timing,
-     )
--    jsonschema.validate(json.loads(response.model_dump_json()), json.loads(schema_path.read_text()))
--
++        timing=_VISUAL_TIMING,
++    )
 +    dumped, encoded = _dumped_payloads(response)
++    validator = _multipart_validator()
 +    for wire in (dumped, encoded):
 +        assert wire["operation_id"] == "opaque-operation"
 +        assert wire["startup_id"] == "opaque-startup"
-+        assert wire["timing"] == timing
-+        _validate_shared_schema(model, wire)
- 
- 
- def test_timing_rejects_unknown_missing_and_invalid_measurements(response_case):
++        assert wire["timing"] == _VISUAL_TIMING
++        validator.validate(wire)
++
++
++def test_multipart_requires_operation_id_and_timing():
++    with pytest.raises(ValidationError):
++        MultipartDescribeResponse(**_VISUAL_FACTS_PAYLOAD, startup_id=None, timing=_VISUAL_TIMING)
++    with pytest.raises(ValidationError):
++        MultipartDescribeResponse(**_VISUAL_FACTS_PAYLOAD, operation_id="opaque-operation", startup_id=None)
++    with pytest.raises(ValidationError):
++        MultipartDescribeResponse(**_VISUAL_FACTS_PAYLOAD)
++
++
++def test_multipart_emits_null_startup_id_and_validates():
++    response = MultipartDescribeResponse(
++        **_VISUAL_FACTS_PAYLOAD,
++        operation_id="opaque-operation",
++        startup_id=None,
++        timing=_VISUAL_TIMING,
++    )
++    dumped, encoded = _dumped_payloads(response)
++    validator = _multipart_validator()
++    for wire in (dumped, encoded):
++        assert "startup_id" in wire
++        assert wire["startup_id"] is None
++        assert wire["operation_id"] == "opaque-operation"
++        assert wire["timing"] == _VISUAL_TIMING
++        validator.validate(wire)
++
++
++def test_base_omission_validates_base_schema_but_fails_multipart_schema():
++    response = VisualFactsResponse(**_VISUAL_FACTS_PAYLOAD)
++    dumped, encoded = _dumped_payloads(response)
++    multipart = _multipart_validator()
++    for wire in (dumped, encoded):
++        _assert_omits_operation_metadata(wire)
++        _validate_shared_schema(VisualFactsResponse, wire)
++        assert not multipart.is_valid(wire)
++        with pytest.raises(jsonschema.ValidationError):
++            multipart.validate(wire)

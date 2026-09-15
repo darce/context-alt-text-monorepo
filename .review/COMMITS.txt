@@ -1,1 +1,1 @@
-38cd11e65889 offload: Fix-2 restores optional operation metadata and omits null keys
+7b38245e3225 offload: Fix-3 landed: MultipartDescribeResponse always emits operation

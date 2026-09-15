@@ -1,4 +1,4 @@
- .../docs/ux-maps/gpu-operator-control.md           | 146 +++++++++++++++++----
- .../docs/ux-maps/gpu-operator-control.uxmap.json   |  34 ++---
- .../docs/ux-maps/render_ux_maps.visible.json       |   4 +-
- 3 files changed, 138 insertions(+), 46 deletions(-)
+ .../docs/ux-maps/gpu-operator-control.md           | 51 +++++++++++++---------
+ .../docs/ux-maps/gpu-operator-control.uxmap.json   | 17 ++++----
+ .../docs/ux-maps/render_ux_maps.visible.json       |  4 +-
+ 3 files changed, 41 insertions(+), 31 deletions(-)

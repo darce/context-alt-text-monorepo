@@ -1450,19 +1450,7 @@ PHP;
         $describeFailures = $this->familyFailureKey($baseUrl, 'describe');
         $uiReadCircuit = $this->familyCircuitKey($baseUrl, 'ui_read');
 
-        $starting = [
-            'response' => ['code' => 503, 'message' => 'Service Unavailable'],
-            'headers' => ['Retry-After' => '5'],
-            'body' => json_encode([
-                'detail' => [
-                    'code' => 'description_service_starting',
-                    'message' => 'Description service is starting.',
-                    'operation_id' => 'op-retry-opaque',
-                    'startup_id' => 'startup-opaque',
-                    'warmup_eta_seconds' => 5,
-                ],
-            ]),
-        ];
+        $starting = $this->validatedWarmingHttp();
 
         for ($i = 0; $i < 3; $i++) {
             $this->queueHttpResponse($starting);
@@ -1528,6 +1516,7 @@ PHP;
         );
         $this->assertArrayNotHasKey('Retry-After', $open->get_headers());
         $this->assertCount(2, $this->getHttpCalls(), 'open describe breaker must not dispatch');
+        $this->assertTypedUnavailableOpenCircuit($open->get_data());
     }
 
     public function testUiReadSuccessDoesNotResetDescribeBreaker(): void
@@ -1580,6 +1569,72 @@ PHP;
         $harness->call('POST', '/scene/describe/multipart', 'description');
 
         $this->assertNotFalse(get_transient($describeCircuit), 'malformed warming must still open describe');
+    }
+
+    /**
+     * @dataProvider malformedWarmingProvider
+     * @param array<string, mixed> $http
+     */
+    #[DataProvider('malformedWarmingProvider')]
+    public function testIncompleteWarmingEnvelopeCountsTowardDescribeBreaker(array $http): void
+    {
+        global $wpdb;
+        $wpdb->mockVar = '1';
+
+        $harness = $this->makeFamilyHarness();
+        $describeCircuit = $this->familyCircuitKey($harness->resolvedBaseUrl(), 'describe');
+
+        $this->queueHttpResponse($http);
+        $this->queueHttpResponse($http);
+        $harness->call('POST', '/scene/describe/multipart', 'description');
+        $harness->call('POST', '/scene/describe/multipart', 'description');
+
+        $this->assertNotFalse(get_transient($describeCircuit), 'incomplete warming must still open describe');
+    }
+
+    /**
+     * @return array<string, array{0: array<string, mixed>}>
+     */
+    public static function malformedWarmingProvider(): array
+    {
+        $validDetail = [
+            'code' => 'description_service_starting',
+            'message' => 'Description service is starting.',
+            'operation_id' => 'op-retry-opaque',
+            'startup_id' => 'startup-opaque',
+            'warmup_eta_seconds' => 5,
+            'timing' => [
+                'queue_ms' => 0,
+                'ramp_up_ms' => 40,
+                'processing_ms' => null,
+                'startup_ms' => null,
+                'server_elapsed_ms' => 40,
+            ],
+        ];
+
+        $missingEta = $validDetail;
+        unset($missingEta['warmup_eta_seconds']);
+
+        $wrongCode = $validDetail;
+        $wrongCode['code'] = 'description_service_error';
+
+        return [
+            'missing_eta' => [[
+                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+                'headers' => ['Retry-After' => '5'],
+                'body' => json_encode(['detail' => $missingEta]),
+            ]],
+            'missing_retry_after' => [[
+                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+                'headers' => [],
+                'body' => json_encode(['detail' => $validDetail]),
+            ]],
+            'wrong_code' => [[
+                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+                'headers' => ['Retry-After' => '5'],
+                'body' => json_encode(['detail' => $wrongCode]),
+            ]],
+        ];
     }
 
     /**
@@ -1636,6 +1691,62 @@ PHP;
         $this->assertIsArray($decoded);
         $this->assertArrayHasKey($case, $decoded);
         return $decoded[$case];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function validatedWarmingHttp(): array
+    {
+        $fixture = $this->describeWireFixture('starting');
+        $headers = [];
+        foreach (($fixture['response']['headers'] ?? []) as $name => $value) {
+            $headers[$name] = $value;
+        }
+
+        return [
+            'response' => ['code' => $fixture['response']['status'], 'message' => 'Service Unavailable'],
+            'headers' => $headers,
+            'body' => json_encode($fixture['response']['body']),
+        ];
+    }
+
+    /**
+     * Structural check of scene-describe-multipart.schema.json error branch
+     * for a locally generated open-circuit envelope (operation_id is null
+     * because no durable operation was accepted).
+     *
+     * @param mixed $body
+     */
+    private function assertTypedUnavailableOpenCircuit(mixed $body): void
+    {
+        $this->assertIsArray($body);
+        $this->assertSame(['detail'], array_keys($body));
+        $detail = $body['detail'];
+        $this->assertIsArray($detail);
+        $this->assertSame('description_service_unavailable', $detail['code'] ?? null);
+        $this->assertIsString($detail['message'] ?? null);
+        $this->assertNotSame('', $detail['message']);
+        $this->assertArrayHasKey('operation_id', $detail);
+        $this->assertNull($detail['operation_id']);
+        $this->assertArrayHasKey('startup_id', $detail);
+        $this->assertNull($detail['startup_id']);
+        $this->assertArrayNotHasKey('warmup_eta_seconds', $detail);
+        $timing = $detail['timing'] ?? null;
+        $this->assertIsArray($timing);
+        $this->assertEqualsCanonicalizing(
+            ['queue_ms', 'ramp_up_ms', 'processing_ms', 'startup_ms', 'server_elapsed_ms'],
+            array_keys($timing)
+        );
+        $this->assertSame(0, $timing['queue_ms']);
+        $this->assertSame(0, $timing['ramp_up_ms']);
+        $this->assertSame(0, $timing['processing_ms']);
+        $this->assertNull($timing['startup_ms']);
+        $this->assertSame(0, $timing['server_elapsed_ms']);
+        $this->assertEqualsCanonicalizing(
+            ['code', 'message', 'operation_id', 'startup_id', 'timing'],
+            array_keys($detail)
+        );
     }
 
     private function familyCircuitKey(string $baseUrl, string $family = 'ui_read'): string

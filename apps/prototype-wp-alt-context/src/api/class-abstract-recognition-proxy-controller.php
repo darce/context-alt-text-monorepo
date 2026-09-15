@@ -19,6 +19,7 @@ use WP_REST_Response;
 
 use function apply_filters;
 use function add_query_arg;
+use function array_key_exists;
 use function current_user_can;
 use function delete_transient;
 use function esc_url_raw;
@@ -26,6 +27,9 @@ use function get_transient;
 use function get_option;
 use function in_array;
 use function is_array;
+use function is_float;
+use function is_int;
+use function is_numeric;
 use function is_string;
 use function is_wp_error;
 use function ltrim;
@@ -215,7 +219,7 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 			$response_body    = wp_remote_retrieve_body( $response );
 			$decoded          = json_decode( $response_body, true );
 			$typed_code       = $this->typed_operation_error_code( $decoded );
-			$is_typed_warmup  = $this->is_validated_warming_response( $status, $typed_code );
+			$is_typed_warmup  = $this->is_validated_warming_response( $status, $decoded, $response_headers );
 			$is_typed_unavail = $this->is_typed_unavailable_response( $status, $typed_code );
 
 			// Validated warming and typed unavailable are not breaker failures
@@ -553,12 +557,100 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 		return in_array( $code, $allowed, true ) ? $code : null;
 	}
 
-	private function is_validated_warming_response( int $status, ?string $typed_code ): bool {
-		return 503 === $status && self::TYPED_CODE_STARTING === $typed_code;
+	/**
+	 * Warming exemption is all-or-nothing: only a complete
+	 * description_service_starting envelope may skip breaker accounting.
+	 *
+	 * @param mixed $decoded           JSON-decoded upstream body.
+	 * @param mixed $response_headers  Case-insensitive header dictionary.
+	 */
+	private function is_validated_warming_response( int $status, mixed $decoded, mixed $response_headers ): bool {
+		if ( 503 !== $status || ! is_array( $decoded ) ) {
+			return false;
+		}
+
+		$detail = $decoded['detail'] ?? null;
+		if ( ! is_array( $detail ) ) {
+			return false;
+		}
+
+		if ( self::TYPED_CODE_STARTING !== ( $detail['code'] ?? null ) ) {
+			return false;
+		}
+
+		$message = $detail['message'] ?? null;
+		if ( ! is_string( $message ) || '' === $message ) {
+			return false;
+		}
+
+		if ( ! array_key_exists( 'operation_id', $detail ) ) {
+			return false;
+		}
+		$operation_id = $detail['operation_id'];
+		if ( ! is_string( $operation_id ) && null !== $operation_id ) {
+			return false;
+		}
+
+		if ( ! array_key_exists( 'startup_id', $detail ) ) {
+			return false;
+		}
+		$startup_id = $detail['startup_id'];
+		if ( ! is_string( $startup_id ) && null !== $startup_id ) {
+			return false;
+		}
+
+		if ( ! is_array( $detail['timing'] ?? null ) ) {
+			return false;
+		}
+
+		$eta = $detail['warmup_eta_seconds'] ?? null;
+		if ( ( ! is_int( $eta ) && ! is_float( $eta ) ) || $eta < 0 ) {
+			return false;
+		}
+
+		return null !== $this->retry_after_integer( $response_headers );
 	}
 
 	private function is_typed_unavailable_response( int $status, ?string $typed_code ): bool {
 		return 503 === $status && self::TYPED_CODE_UNAVAILABLE === $typed_code;
+	}
+
+	/**
+	 * @param mixed $response_headers Case-insensitive header dictionary.
+	 */
+	private function retry_after_integer( mixed $response_headers ): ?int {
+		$headers = array();
+		if ( is_array( $response_headers ) ) {
+			$headers = $response_headers;
+		} elseif ( $response_headers instanceof Traversable ) {
+			foreach ( $response_headers as $key => $value ) {
+				$headers[ (string) $key ] = $value;
+			}
+		}
+
+		foreach ( $headers as $key => $value ) {
+			if ( 'retry-after' !== strtolower( trim( (string) $key ) ) ) {
+				continue;
+			}
+			if ( is_int( $value ) ) {
+				return $value;
+			}
+			if ( is_string( $value ) && '' !== $value && is_numeric( $value ) && (string) (int) $value === trim( $value ) ) {
+				return (int) $value;
+			}
+		}
+
+		return null;
+	}
+
+	private function open_circuit_local_timing(): array {
+		return array(
+			'queue_ms'          => 0,
+			'ramp_up_ms'        => 0,
+			'processing_ms'     => 0,
+			'startup_ms'        => null,
+			'server_elapsed_ms' => 0,
+		);
 	}
 
 	private function open_circuit_response( string $route_family ): WP_REST_Response|WP_Error {
@@ -566,8 +658,11 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 			return new WP_REST_Response(
 				array(
 					'detail' => array(
-						'code'    => self::TYPED_CODE_UNAVAILABLE,
-						'message' => 'Description service temporarily unavailable; try again shortly.',
+						'code'         => self::TYPED_CODE_UNAVAILABLE,
+						'message'      => 'Description service temporarily unavailable; try again shortly.',
+						'operation_id' => null,
+						'startup_id'   => null,
+						'timing'       => $this->open_circuit_local_timing(),
 					),
 				),
 				503

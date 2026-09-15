@@ -505,24 +505,25 @@ describe('MediaSelection bulk-describe timing announcement [GPUFLOW-1 B2]', () =
     expect(screen.getAllByRole('status')).toHaveLength(1);
   });
 
-  it('announces Warming GPU with the about-2-min fallback while isWarming and eta is null', () => {
+  it('announces Warming GPU (first run only) while isWarming and never fabricates a duration', () => {
     const run = gpuflowWarmingRun();
     const warming = progressFromRun(run, { isWarming: true, isTerminal: false, isPolling: true });
     const { rerender } = render(<BulkDescribeProgress progress={warming} onRetry={vi.fn()} />);
 
     const live = screen.getByRole('status');
-    expect(live).toHaveTextContent('Warming GPU (about 2 min, first run only)…');
+    expect(live).toHaveTextContent('Warming GPU (first run only)…');
     expect(live).not.toHaveTextContent('remaining');
     expect(live).not.toHaveTextContent('calculating');
+    expect(live).not.toHaveTextContent('about 2 min');
     expect(screen.queryByRole('progressbar')).toBeNull();
     expect(screen.getAllByRole('status')).toHaveLength(1);
 
     rerender(<BulkDescribeProgress progress={warming} onRetry={vi.fn()} />);
     expect(screen.getAllByRole('status')).toHaveLength(1);
-    expect(screen.getByRole('status')).toHaveTextContent('Warming GPU (about 2 min, first run only)…');
+    expect(screen.getByRole('status')).toHaveTextContent('Warming GPU (first run only)…');
   });
 
-  it('uses the wire eta in warming copy when eta_seconds is present', () => {
+  it('does not render eta_seconds in the warming label', () => {
     const run = gpuflowWarmingRun({ eta_seconds: 12 });
     const warming = progressFromRun(run, {
       isWarming: true,
@@ -533,8 +534,10 @@ describe('MediaSelection bulk-describe timing announcement [GPUFLOW-1 B2]', () =
     render(<BulkDescribeProgress progress={warming} onRetry={vi.fn()} />);
 
     const live = screen.getByRole('status');
-    expect(live).toHaveTextContent('Warming GPU (~12s remaining)…');
+    expect(live).toHaveTextContent('Warming GPU (first run only)…');
     expect(live).not.toHaveTextContent('about 2 min');
+    expect(live).not.toHaveTextContent('~12s remaining');
+    expect(live).not.toHaveTextContent('remaining');
     expect(screen.getAllByRole('status')).toHaveLength(1);
   });
 });

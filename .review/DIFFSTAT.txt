@@ -1,3 +1,5 @@
- .../js/admin/pages/settings/GpuControlCard.tsx     | 20 +++++--
- .../settings/__tests__/GpuControlCard.test.tsx     | 70 +++++++++++++++++-----
- 2 files changed, 68 insertions(+), 22 deletions(-)
+ .../js/admin/pages/settings/GpuControlCard.tsx     | 120 +++++++++++----------
+ .../settings/__tests__/GpuControlCard.test.tsx     | 100 ++++++++++-------
+ .../settings/__tests__/useGpuControl.test.tsx      |  23 +++-
+ .../js/admin/pages/settings/useGpuControl.ts       |   4 +-
+ 4 files changed, 148 insertions(+), 99 deletions(-)

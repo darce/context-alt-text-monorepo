@@ -182,3 +182,17 @@ VERIFIED: {"GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-04":"partially_fixed","GPUFLOW-1-P
 FINDINGS: []
 
 Verdict: fail
+
+## Re-review r5 (983471fc1..773589b94)
+
+VERIFIED: {"GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-04":"fixed"}
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-04 | fixed | The fix changes the warming validator to require `operation_id` through the non-null `is_opaque_id()` path (`.review/CHANGE.diff:8-9`), while retaining nullable validation only for `startup_id` via the newly separated helper (`.review/CHANGE.diff:21-42`). The added regression sends a valid warming response and then a `null`-operation response twice, asserting valid warming remains exempt but the malformed response increments and opens the describe breaker (`.review/CHANGE.diff:51-92`). |
+
+### FINDINGS
+
+FINDINGS: []
+
+Verdict: pass

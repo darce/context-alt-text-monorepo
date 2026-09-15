@@ -34,4 +34,13 @@ describe('healthStatusForService', () => {
 
     expect(healthStatusForService(result)).toBe(HealthStatus.UNREACHABLE);
   });
+
+  it('does not treat a starting probe as a reachable connected pool', () => {
+    const result: TestConnectionResponse = {
+      outcome: TestConnectionOutcome.STARTING,
+      probe_mode: 'service_auth',
+    };
+
+    expect(healthStatusForService(result)).not.toBe(HealthStatus.REACHABLE);
+  });
 });

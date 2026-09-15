@@ -197,6 +197,9 @@ class _DescriptionMetricsSink:
     def record_cache_hit(self, *, adapter: str) -> None:
         self._metrics.description_cache_hits_total.labels(adapter=adapter).inc()
 
+    def observe_readiness_wait(self, *, adapter: str, seconds: float) -> None:
+        self._metrics.description_readiness_wait_seconds.labels(adapter=adapter).observe(seconds)
+
     def observe_adapter_duration(self, *, adapter: str, duration_seconds: float) -> None:
         self._metrics.description_adapter_duration_seconds.labels(adapter=adapter).observe(duration_seconds)
 

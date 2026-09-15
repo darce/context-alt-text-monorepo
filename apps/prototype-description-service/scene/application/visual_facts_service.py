@@ -13,9 +13,10 @@ import logging
 import time
 import uuid
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, Protocol
 
-from pydantic import ValidationError
+from pydantic import Field, ValidationError
 
 from db.models.scene import ImageDescription
 from scene.application.description_adapter import AdapterResult, DescriptionAdapter
@@ -62,6 +63,27 @@ class DescriptionMetrics(Protocol):
     def record_cache_hit(self, *, adapter: str) -> None: ...
 
     def observe_adapter_duration(self, *, adapter: str, duration_seconds: float) -> None: ...
+
+    def observe_readiness_wait(self, *, adapter: str, seconds: float) -> None: ...
+
+
+@dataclass
+class AdapterAttemptTiming:
+    """Per-attempt state; a cancelled worker publishes completion here later.
+
+    Consumers retain this object across retries and sum completed processing_ms,
+    never response.duration_ms. None means no completed measurement yet;
+    entered_adapter distinguishes running work from work never dispatched.
+    """
+
+    processing_ms: int | None = None
+    entered_adapter: bool = False
+
+
+class VisualFactsServiceResult(VisualFactsResponse):
+    """Service-only timing, excluded from the public response envelope."""
+
+    attempt_timing: AdapterAttemptTiming = Field(exclude=True)
 
 
 def _elapsed_ms(start: float) -> int:
@@ -171,9 +193,6 @@ class VisualFactsService:
         # E19-4a S4: the freshly generated AdapterResult (None on cache hits).
         # The service is constructed per request, so this is request-scoped.
         self.last_adapter_result: AdapterResult | None = None
-        # Per-call measured attempt, including failures; consumers sum retries.
-        # None means no dispatch observed; a cache bypass explicitly sets zero.
-        self.last_processing_ms: float | None = None
         # Phrase-grounding boxes for the naming preview — from the adapter on
         # generation, restored from the cached row on cache hits so both paths
         # produce the same named draft (E19-4A-S4-BR-03).
@@ -191,8 +210,33 @@ class VisualFactsService:
         confirmed_faces: Sequence[ConfirmedFace] = (),
         naming_policy: NamingPolicy | None = None,
         before_compute: Callable[[], Awaitable[None]] | None = None,
+    ) -> VisualFactsServiceResult:
+        """Return attempt timing on success; preserve it as exc.attempt_timing on failure."""
+        timing = AdapterAttemptTiming()
+        try:
+            response = await self._describe(
+                tenant_id=tenant_id, media_id=media_id, image_bytes=image_bytes,
+                context=context, confirmed_faces=confirmed_faces,
+                naming_policy=naming_policy, before_compute=before_compute,
+                timing=timing,
+            )
+        except BaseException as exc:
+            exc.attempt_timing = timing  # type: ignore[attr-defined]
+            raise
+        return VisualFactsServiceResult(**response.model_dump(), attempt_timing=timing)
+
+    def record_readiness_wait(self, ms: float) -> None:
+        """Record one operation's readiness wait, including zero for warm paths."""
+        if self._metrics is not None:
+            self._metrics.observe_readiness_wait(adapter=self._adapter.kind.value, seconds=ms / 1000)
+
+    async def _describe(
+        self, *, tenant_id: uuid.UUID, media_id: int, image_bytes: bytes,
+        context: Mapping[str, Any] | None, confirmed_faces: Sequence[ConfirmedFace],
+        naming_policy: NamingPolicy | None,
+        before_compute: Callable[[], Awaitable[None]] | None,
+        timing: AdapterAttemptTiming,
     ) -> VisualFactsResponse:
-        self.last_processing_ms = None
         self.last_adapter_result = None
         start = time.perf_counter()
         image_hash = compute_image_hash(image_bytes)
@@ -209,7 +253,7 @@ class VisualFactsService:
                 context_hash=context_hash,
             )
             if row is not None:
-                self.last_processing_ms = 0.0
+                timing.processing_ms = 0
                 response = self._cache_hit_response(
                     row,
                     start=start,
@@ -232,28 +276,18 @@ class VisualFactsService:
         # negligible. (A dedicated worker/queue is the heavier production option.)
         # Start inside the executor: its queue is not adapter processing.
         # Keep observations local so a timed-out thread cannot overwrite a retry.
-        attempt: dict[str, float] = {}
-
         def dispatch() -> AdapterResult:
-            attempt["start"] = time.perf_counter()
+            start = time.perf_counter()
+            timing.entered_adapter = True
             try:
                 return self._adapter.describe(image_bytes=image_bytes, context=context)
             finally:
-                attempt["end"] = time.perf_counter()
+                elapsed = max(0.0, time.perf_counter() - start)
+                timing.processing_ms = int(elapsed * 1000)
+                self._observe_adapter_duration(elapsed)
 
         call = asyncio.to_thread(dispatch)
-        try:
-            result = await (asyncio.wait_for(call, self._timeout) if self._timeout else call)
-        finally:
-            if "start" in attempt:
-                # Cancellation measures the observed dispatch interval only;
-                # executor work can continue, but must not publish twice.
-                end = attempt.get("end")
-                if end is None:
-                    end = time.perf_counter()
-                elapsed = max(0.0, end - attempt["start"])
-                self.last_processing_ms = elapsed * 1000
-                self._observe_adapter_duration(elapsed)
+        result = await (asyncio.wait_for(call, self._timeout) if self._timeout else call)
         self.last_adapter_result = result
         self.last_phrase_boxes = tuple(result.phrase_boxes)
 

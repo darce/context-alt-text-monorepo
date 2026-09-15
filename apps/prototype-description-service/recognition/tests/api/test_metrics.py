@@ -209,12 +209,20 @@ def test_production_app_exposes_metrics_endpoint(monkeypatch) -> None:
     assert 'path="/health"' in body
 
 
-def test_description_readiness_and_processing_histograms_are_independent():
+def test_description_readiness_and_processing_histograms_are_independent(monkeypatch):
     from recognition.interface_adapters.http.middleware.metrics import MetricsRegistry
 
     metrics = MetricsRegistry()
-    metrics.description_readiness_wait_seconds.labels(adapter="gpu").observe(30)
-    metrics.description_adapter_duration_seconds.labels(adapter="gpu").observe(2)
+    from scene.interface_adapters.http.routers import describe as route
+    from scene.application.visual_facts_service import VisualFactsService
+    from scene.tests.test_visual_facts_service import PinRevisionAdapter
+
+    monkeypatch.setattr(route, "get_default_metrics", lambda: metrics)
+    sink = route._DescriptionMetricsSink()
+    service = VisualFactsService(adapter=PinRevisionAdapter(model_id="test", caption="test"), metrics=sink)
+    service.record_readiness_wait(30000)
+    service.record_readiness_wait(0)
+    sink.observe_adapter_duration(adapter="gpu", duration_seconds=2)
     assert metrics.registry.get_sample_value(
         "acx_description_readiness_wait_seconds_sum", {"adapter": "gpu"}
     ) == 30
@@ -224,4 +232,4 @@ def test_description_readiness_and_processing_histograms_are_independent():
     for name in ("readiness_wait", "adapter_duration"):
         assert metrics.registry.get_sample_value(
             f"acx_description_{name}_seconds_count", {"adapter": "gpu"}
-        ) == 1
+        ) == (2 if name == "readiness_wait" else 1)

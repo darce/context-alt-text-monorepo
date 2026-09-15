@@ -51,3 +51,69 @@ VERIFIED: {"GPUFLOW-1-SVCCOLDGPU-R-03":"not_fixed","GPUFLOW-1-SVCCOLDGPU-R-06":"
 - **Fix:** Do not mint operation metadata unless an operation was durably accepted; either make the schema permit absent IDs for pre-accept failures or persist the operation before publishing the typed error.
 
 Verdict: fail
+
+## Re-review r5 (2927c23fb..529bf75aa)
+
+VERIFIED: {"GPUFLOW-1-SVCCOLDGPU-R-01":"fixed","GPUFLOW-1-SVCCOLDGPU-R-02":"fixed","GPUFLOW-1-SVCCOLDGPU-R-03":"fixed","GPUFLOW-1-SVCCOLDGPU-R-04":"fixed","GPUFLOW-1-SVCCOLDGPU-R-05":"fixed","GPUFLOW-1-SVCCOLDGPU-R-06":"fixed","GPUFLOW-1-SVCCOLDGPU-R-07":"fixed","GPUFLOW-1-SVCCOLDGPU-R-08":"fixed","GPUFLOW-1-SVCCOLDGPU-R-10":"partially_fixed","GPUFLOW-1-SVCCOLDGPU-R-11":"fixed"}
+
+FINDINGS: [
+  {"id":"GPUFLOW-1-SVCCOLDGPU-R-12","severity":"high","file_path":"apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py","line":796,"summary":"Failure cleanup fabricates a readiness observation","evidence":"The new terminalizer calls _complete_operation(..., cached=False) (.review/CHANGE.diff:167-190), while that routine observes ready whenever first_ready_at is null; the generic cleanup is invoked for a service exception before adapter dispatch (.review/CHANGE.diff:451-466,715-734)."},
+  {"id":"GPUFLOW-1-SVCCOLDGPU-R-13","severity":"high","file_path":"apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py","line":1042,"summary":"Post-accept HTTPException paths bypass lease cleanup","evidence":"The route keeps `except HTTPException: raise` ahead of the new timeout/generic terminalizer (.review/CHANGE.diff:378-394,451-466). GPU before_compute performs readiness before quota consumption (.review/CHANGE.diff:297-306), and the quota gate can raise HTTPException, leaving the accepted lease active."},
+  {"id":"GPUFLOW-1-SVCCOLDGPU-R-14","severity":"medium","file_path":"apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py","line":396,"summary":"Miss-cache proxy breaks duplicate-insert recovery","evidence":"_PreflightMissCacheRepository.get_by_cache_key always returns None (.review/CHANGE.diff:33-43) and is installed for every GPU preflight miss (.review/CHANGE.diff:261-267). ImageDescriptionRepository.insert_or_get_existing uses get_by_cache_key after an IntegrityError, so a concurrent identical GPU miss re-raises instead of returning the winner's cache row and becomes a 502."},
+  {"id":"GPUFLOW-1-SVCCOLDGPU-R-15","severity":"high","file_path":"apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py","line":621,"summary":"Mismatch errors echo unvalidated client operation IDs","evidence":"The r5 hunk changes OperationMismatchError handling to return operation_id=operation_id (.review/CHANGE.diff:67-80). _optional_operation_id accepts arbitrary length strings, while the repository rejects values over 128 and the shared error schema caps operation_id at 128 (.review/CHANGE.diff:983-992); unknown IDs are also not service-minted or durably bound."},
+  {"id":"GPUFLOW-1-SVCCOLDGPU-R-16","severity":"low","file_path":"packages/shared-contracts/schemas/scene-describe-multipart.schema.json","line":1,"summary":"Delta changes dependency/producer paths outside the lane-owned list","evidence":"The delta changes responses.py, the shared multipart schema, and several producer/schema tests in addition to the route/test paths (.review/CHANGE.diff:507-526,784-873,951-996; .review/DIFFSTAT.txt:1-9), although the lane row lists contracts and response-models as read-only dependencies."}
+]
+
+Verdict: fail
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| GPUFLOW-1-SVCCOLDGPU-R-01 | fixed | The resulting `_ensure_gpu_ready` keeps startup association behind the waiting-state guard and the READY branch only observes readiness; the r5 hunk changes only the snapshot publisher (`.review/CHANGE.diff:132-160`). |
+| GPUFLOW-1-SVCCOLDGPU-R-02 | fixed | The route now carries the preflight row into `_response_from_cached_row`, bypasses the service cache read on hits, then completes the accepted operation with `cached=True` (`.review/CHANGE.diff:193-220,226-377`). |
+| GPUFLOW-1-SVCCOLDGPU-R-03 | fixed | Accept persistence failures now roll back and raise a typed 503 for both adapter classes instead of returning success, and post-service failures are translated rather than silently succeeding (`.review/CHANGE.diff:67-129,378-466`). |
+| GPUFLOW-1-SVCCOLDGPU-R-04 | fixed | The resulting route retains a separate GPU `DescriptionAdapterUnavailableError` 503 path and the GPU remote-error 502 path; the tail replacement does not recombine them (`.review/CHANGE.diff:391-394,451-466`). |
+| GPUFLOW-1-SVCCOLDGPU-R-05 | fixed | The rejected expiry transition is committed/rescoped before the typed exception is raised (`.review/CHANGE.diff:81-93`). |
+| GPUFLOW-1-SVCCOLDGPU-R-06 | fixed | Acceptance follows the single preflight lookup; cache hits use the fetched row and misses install a repository wrapper that prevents a second pre-compute lookup (`.review/CHANGE.diff:193-220,226-306`). The duplicate-insert consequence is reported as new R-14. |
+| GPUFLOW-1-SVCCOLDGPU-R-07 | fixed | The mint helper and all no-session/accept-failure minting are removed; pre-accept errors and no-session CPU success carry null operation metadata (`.review/CHANGE.diff:17-43,47-64,67-129,359-370`). |
+| GPUFLOW-1-SVCCOLDGPU-R-08 | fixed | Non-starting unavailable paths do not add `Retry-After`; only the starting branch retains the retry header (`.review/CHANGE.diff:47-64,132-160`). |
+| GPUFLOW-1-SVCCOLDGPU-R-10 | partially_fixed | The authoritative row and miss wrapper resolve the stated second-read miss/hit race (`.review/CHANGE.diff:193-220,226-306`), and generic/timeout failures attempt cleanup (`.review/CHANGE.diff:378-466`); however, HTTPException paths still bypass cleanup, and the cleanup itself observes readiness on an unready operation (new R-12/R-13). |
+| GPUFLOW-1-SVCCOLDGPU-R-11 | fixed | `_typed_describe_error` now preserves nullable operation metadata, `_mint_operation_id` is deleted, and no-session/accept-failure success/error paths explicitly use null (`.review/CHANGE.diff:17-43,47-64,121-129,359-370`). |
+
+### FINDINGS
+
+#### GPUFLOW-1-SVCCOLDGPU-R-12 — high
+
+- **File:** `apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py:796`.
+- **Evidence:** The new `_terminalize_accepted_operation` calls `_complete_operation` with `cached=False` (`.review/CHANGE.diff:167-190`). `_complete_operation` first calls `repo.observe_ready` whenever the accepted operation has no `first_ready_at`; therefore a generic exception before `_before_compute` or adapter dispatch is recorded as readiness and then completed. The new service-exception test deliberately raises before adapter work (`.review/CHANGE.diff:715-734`) but checks only completed lease state, not the false `first_ready_at`/startup timing.
+- **Impact:** A failed request can persist a fabricated first-ready transition and ramp-up/startup timing, violating the durable readiness and phase-timing contract ([API-09]).
+- **Fix:** Terminalize pre-readiness failures through a state transition that does not call `observe_ready` (or retain them as rejected/active according to the error class), and assert no readiness observation on a pre-dispatch failure.
+
+#### GPUFLOW-1-SVCCOLDGPU-R-13 — high
+
+- **File:** `apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py:1042`.
+- **Evidence:** `except HTTPException: raise` remains before the new cleanup handlers (`.review/CHANGE.diff:378-394,451-466`). For a GPU miss, `_before_compute` runs `_ensure_gpu_ready` and then `_charge_demo_quota` (`.review/CHANGE.diff:297-306`); the quota gate can raise a 422/429 `HTTPException` after the operation was accepted, so the active lease is returned without terminalization. The same gap applies to any non-lifecycle HTTPException raised after acceptance.
+- **Impact:** Rejected requests can keep GPU demand active until expiry, skewing `has_work`/lifecycle state and making cleanup depend on lease timeout rather than the request outcome.
+- **Fix:** Distinguish lifecycle 503s that intentionally retain demand from post-accept quota/HTTP failures and terminalize the latter before re-raising.
+
+#### GPUFLOW-1-SVCCOLDGPU-R-14 — medium
+
+- **File:** `apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py:396`.
+- **Evidence:** `_PreflightMissCacheRepository.get_by_cache_key` unconditionally returns `None` (`.review/CHANGE.diff:33-43`) and is attached whenever the preflight misses (`.review/CHANGE.diff:261-267`). The unchanged `ImageDescriptionRepository.insert_or_get_existing` calls `get_by_cache_key` after catching a duplicate-key `IntegrityError`; the wrapper returns `None`, causing it to re-raise and the route to return a typed 502 instead of using the concurrently inserted cache row.
+- **Impact:** Concurrent identical GPU requests fail spuriously despite a valid cache result, so normal duplicate-work races become user-visible errors.
+- **Fix:** Make only the initial service cache read authoritative, while preserving the repository’s duplicate-insert recovery lookup, or pass the fetched row/result through an explicit service API.
+
+#### GPUFLOW-1-SVCCOLDGPU-R-15 — high
+
+- **File:** `apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py:621`.
+- **Evidence:** The r5 change replaces the fabricated mismatch ID with the raw submitted token (`.review/CHANGE.diff:67-80`). The form parser does not enforce the 128-character bound, and the repository rejects overlong tokens before any durable operation is found; the resulting error can therefore carry an operation_id longer than the shared schema’s maxLength 128 (`.review/CHANGE.diff:983-992`). Even within the bound, an unknown client token is not service-minted or tenant/request-bound.
+- **Impact:** Operation-mismatch errors can violate the strict multipart schema and publish correlation metadata that callers cannot renew or correlate ([API-09]).
+- **Fix:** Return null for an operation ID that the repository did not verify as durable, or validate/canonicalize the token before constructing the typed error; never echo an unbound token into the service-minted field.
+
+#### GPUFLOW-1-SVCCOLDGPU-R-16 — low
+
+- **File:** `packages/shared-contracts/schemas/scene-describe-multipart.schema.json:1`.
+- **Evidence:** The complete delta changes eight files (`.review/DIFFSTAT.txt:1-9`), including `scene/interface_adapters/http/schemas/responses.py`, the shared schema, and producer/schema tests (`.review/CHANGE.diff:507-526,784-873,951-996`). Those are dependency/producer paths marked read-only in the lane row; only the route and designated lane tests/fixture are lane-owned.
+- **Impact:** The fix cannot be cleanly merged as a lane-local change without taking unrelated producer changes or resolving ownership conflicts.
+- **Fix:** Move producer/schema edits to their owning lanes and leave this lane consuming the committed artifacts.
+
+Verdict: fail

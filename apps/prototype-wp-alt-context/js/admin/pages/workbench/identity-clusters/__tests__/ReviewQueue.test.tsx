@@ -90,8 +90,11 @@ const typePersonName = async (
   name: string,
 ): Promise<void> => {
   const commit = await screen.findByTestId('acx-person-commit');
-  await within(commit).findByText(name);
   const input = within(commit).getByRole('combobox', { name: PERSON_COMMIT_COMBOBOX_ARIA });
+  await waitFor(() => expect(input).not.toBeDisabled());
+  input.focus();
+  fireEvent.keyDown(input, { key: 'ArrowDown' });
+  await within(commit).findByText(name);
   await user.type(input, `${name}{Enter}`);
 };
 

@@ -4,15 +4,16 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ComboboxOption } from '../../../../../components/ui/combobox';
+import type { DetectedIdentity, RepresentativeFace } from '../../../../api/recognition';
+import { ClusterPreview } from '../ClusterPreview';
 import {
   NameFaceControl,
   normalizeNameFaceLabel,
   resolveNameFaceInput,
   type NameFaceResolution,
 } from '../NameFaceControl';
-import { ClusterPreview } from '../ClusterPreview';
-import previewFixture from './fixtures/gpuflow-naming-preview.json';
 import { NAMING_GROUP_SUGGESTED, namingOptionValue } from '../buildNamingOptions';
+import previewFixture from './fixtures/gpuflow-naming-preview.json';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -26,6 +27,14 @@ vi.mock('@wordpress/i18n', () => ({
       return String(args[sequential++] ?? '');
     });
   },
+}));
+
+vi.mock('../../../../../components/ui/FaceThumbnail', () => ({
+  FaceThumbnail: ({ alt, mediaUrl, bbox }: { alt: string; mediaUrl: string; bbox: unknown }) => (
+    <div data-testid="face-thumbnail" data-url={mediaUrl} data-bbox={JSON.stringify(bbox)}>
+      {alt}
+    </div>
+  ),
 }));
 
 const person = (id: number, label: string, extra: Partial<ComboboxOption> = {}): ComboboxOption => ({
@@ -606,39 +615,69 @@ describe('NameFaceControl accessible name (UXW2-3-R6-08)', () => {
   });
 });
 
-describe('GPUFLOW-1 naming intent and preview', () => {
-  it('opens on typing and stays closed when only focused', async () => {
-    render(<TypedNameFace onCommit={vi.fn()} />);
-    const input = screen.getByRole('combobox');
+describe('GPUFLOW-1 naming intent', () => {
+  it('keeps the listbox closed on mount, including autofocus', () => {
+    renderControl();
+    const input = screen.getByRole('combobox', { name: 'Name this person' });
     expect(input).toHaveFocus();
     expect(input).toHaveAttribute('aria-expanded', 'false');
     expect(input).not.toHaveAttribute('aria-activedescendant');
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    expect(screen.queryByRole('option')).not.toBeInTheDocument();
+  });
+
+  it('opens on typing', async () => {
+    render(<TypedNameFace onCommit={vi.fn()} />);
+    const input = screen.getByRole('combobox', { name: 'Name this person' });
+    expect(input).toHaveAttribute('aria-expanded', 'false');
     await userEvent.setup().type(input, 'Gra');
     expect(input).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('listbox')).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /Grace Hopper/ })).toBeInTheDocument();
   });
 
-  it.each(previewFixture.cases)('preview fallback: $name', (fixture) => {
-    render(
-      <ClusterPreview
-        representative={fixture.member ?? undefined}
-        representativeFace={fixture.representative_face}
-        memberCount={fixture.member ? 1 : 0}
-      />,
-    );
-    if (fixture.expected === null) {
-      expect(screen.getByRole('img', { name: 'Representative image unavailable' }))
-        .toHaveAttribute('data-avatar-state', 'data-missing');
-      expect(screen.queryByTestId('preview-face')).not.toBeInTheDocument();
-    } else {
-      expect(screen.getByTestId('preview-face')).toHaveAttribute('data-url', fixture.expected.media_url);
-      expect(screen.getByTestId('preview-face')).toHaveAttribute('data-bbox', JSON.stringify(fixture.expected.bbox));
-    }
+  it('opens on ArrowDown', () => {
+    renderControl();
+    const input = screen.getByRole('combobox', { name: 'Name this person' });
+    expect(input).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    expect(input).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('listbox')).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /Ada Lovelace/ })).toBeInTheDocument();
+  });
+
+  it('closes on Escape', async () => {
+    renderControl();
+    const user = userEvent.setup();
+    const input = screen.getByRole('combobox', { name: 'Name this person' });
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    expect(screen.getByRole('listbox')).toBeInTheDocument();
+    input.focus();
+    await user.keyboard('{Escape}');
+    expect(input).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
   });
 });
 
-vi.mock('../../../../../components/ui/FaceThumbnail', () => ({
-  FaceThumbnail: ({ mediaUrl, bbox }: { mediaUrl: string; bbox: unknown }) => (
-    <div data-testid="preview-face" data-url={mediaUrl} data-bbox={JSON.stringify(bbox)} />
-  ),
-}));
+describe('GPUFLOW-1 group preview fallback (IDCHIP-1 AV-R-04)', () => {
+  it.each(previewFixture.cases)('ClusterPreview fallback: $name', (fixture) => {
+    render(
+      <ClusterPreview
+        representative={(fixture.member ?? undefined) as DetectedIdentity | undefined}
+        representativeFace={fixture.representative_face as RepresentativeFace | null}
+        memberCount={1}
+      />,
+    );
+    if (fixture.expected) {
+      const thumb = screen.getByTestId('face-thumbnail');
+      expect(thumb).toHaveAttribute('data-url', fixture.expected.media_url);
+      expect(thumb).toHaveAttribute('data-bbox', JSON.stringify(fixture.expected.bbox));
+      return;
+    }
+    expect(screen.queryByTestId('face-thumbnail')).not.toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Representative image unavailable' })).toHaveAttribute(
+      'data-avatar-state',
+      'data-missing',
+    );
+  });
+});

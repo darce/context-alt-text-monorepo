@@ -54,6 +54,11 @@ PREVIEW_FIELDS = {
     "attachment_provenance",
     "alt_text_long",
 }
+OPERATION_FIELDS = {
+    "operation_id",
+    "startup_id",
+    "timing",
+}
 
 
 def test_schema_model_id_documents_gpu_hub_pin_format():
@@ -66,7 +71,8 @@ def test_schema_model_id_documents_gpu_hub_pin_format():
 
 def test_schema_required_matches_model_fields():
     schema = _schema()
-    assert set(schema["required"]) == set(VisualFactsResponse.model_fields) - PREVIEW_FIELDS
+    additive = PREVIEW_FIELDS | OPERATION_FIELDS
+    assert set(schema["required"]) == set(VisualFactsResponse.model_fields) - additive
     assert len(schema["required"]) == 17
     assert set(schema["properties"]) == set(VisualFactsResponse.model_fields)
 

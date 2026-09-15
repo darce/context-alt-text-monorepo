@@ -19,6 +19,11 @@ PREVIEW_FIELDS = {
     # the adapter produces only the short draft.
     "alt_text_long",
 }
+OPERATION_FIELDS = {
+    "operation_id",
+    "startup_id",
+    "timing",
+}
 EXPECTED_FIELDS = {
     "tenant_id",
     "media_id",
@@ -63,7 +68,7 @@ def _sample_response() -> dict:
 
 
 def test_response_has_exactly_15_contract_fields():
-    assert set(VisualFactsResponse.model_fields) == EXPECTED_FIELDS | PREVIEW_FIELDS
+    assert set(VisualFactsResponse.model_fields) == EXPECTED_FIELDS | PREVIEW_FIELDS | OPERATION_FIELDS
     assert len(EXPECTED_FIELDS) == 17
 
 

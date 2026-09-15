@@ -108,11 +108,11 @@ const leaseLabel = (data: GpuStatusResponse): string => {
   const runningSince = formatClock(data.gpu_state.instance_running_since);
   const expiresAt = formatClock(data.gpu_state.lease_expires_at);
   if (!runningSince) {
-    return 'Lease: —';
+    return 'Run limit: —';
   }
   return expiresAt
-    ? `Lease: running since ${runningSince} · auto-stops by ${expiresAt.slice(0, 5)} (lease cap)`
-    : `Lease: running since ${runningSince}`;
+    ? `Run limit: running since ${runningSince} · auto-stops by ${expiresAt.slice(0, 5)} (service run limit)`
+    : `Run limit: running since ${runningSince}`;
 };
 
 const loadAgeLabel = (data: GpuStatusResponse): string => {
@@ -244,7 +244,7 @@ export const GpuControlCard = (): React.JSX.Element => {
             ({loadAgeLabel(data)})
           </div>
           <div id="z-gpu-cost" data-testid="z-gpu-cost" className="acx-gpu-control__row">
-            {__('Cost: ≈$2.00 / service-hour · warm-up ≈2 min · never runs longer than the 60 min cap', 'alt-context')}
+            {__('Cost: ≈$2.00 / service-hour · warm-up ≈2 min · never runs longer than the 60-minute maximum', 'alt-context')}
           </div>
 
           {!data.snapshot_fresh ? (
@@ -317,7 +317,7 @@ export const GpuControlCard = (): React.JSX.Element => {
             <div id="z-start-preview" data-testid="z-start-preview" className="notice inline notice-warning">
               <p>
                 {__(
-                  'Starts the description service now (≈$2.00/h). Ready in about 2 min. Returns to automatic after 30 min unless work keeps it busy; the 60 min lease cap still applies.',
+                  'Starts the description service now (≈$2.00/h). Ready in about 2 min. Returns to automatic after 30 min unless work keeps it busy; the 60-minute maximum still applies.',
                   'alt-context',
                 )}
               </p>
@@ -346,7 +346,7 @@ export const GpuControlCard = (): React.JSX.Element => {
             <div id="z-stop-preview" data-testid="z-stop-preview" className="notice inline notice-warning">
               <p>
                 {__(
-                  'Requests shutdown when idle. If a describe run is in flight, shutdown is deferred. The separate lease cap can still stop the service to limit costs.',
+                  'Requests shutdown when idle. If a describe run is in flight, shutdown is deferred. The service run limit can still stop the service to limit costs.',
                   'alt-context',
                 )}
               </p>

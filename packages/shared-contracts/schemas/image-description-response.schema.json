@@ -408,6 +408,9 @@
           },
           "processing_ms": {
             "const": 0
+          },
+          "startup_ms": {
+            "type": "null"
           }
         }
       }

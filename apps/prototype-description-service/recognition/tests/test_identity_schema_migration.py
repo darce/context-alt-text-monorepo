@@ -92,6 +92,7 @@ def test_identity_schema_declares_expected_table_set() -> None:
         "describe_startups",
         "describe_operations",
         "describe_demand_leases",
+        "describe_load_snapshot_revisions",
         "tenants",
         "api_keys",
         "demo_instances",

@@ -1,5 +1,6 @@
- .../interface_adapters/http/routers/describe.py    | 86 +++++++++++++++++++++-
- .../interface_adapters/http/schemas/responses.py   | 11 ++-
- .../scene/tests/test_describe_route.py             | 46 ++++++++++--
- .../scene/tests/test_gpuflow_response_models.py    | 16 +++-
- 4 files changed, 148 insertions(+), 11 deletions(-)
+ .../hooks/__tests__/useDescribeMedia.test.tsx      | 233 ++++++++++++++++++++-
+ .../js/admin/hooks/useDescribeMedia.ts             | 118 ++++++++++-
+ .../js/admin/pages/workbench/MediaAltSuggest.tsx   |  87 +++++---
+ .../workbench/__tests__/MediaAltSuggest.test.tsx   | 112 +++++++++-
+ .../__tests__/fixtures/gpuflow-suggest-states.json |   9 +
+ 5 files changed, 526 insertions(+), 33 deletions(-)

@@ -1,1 +1,1 @@
-670740157381 offload: Fix-10 rebuilds post-accept typed 503 envelopes and accepts
+8cdd13fbeefc offload: Suggest warming now auto-retries to a 120s ceiling, then a

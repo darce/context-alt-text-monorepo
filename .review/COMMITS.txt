@@ -1,1 +1,1 @@
-2201468a616a offload: Lane spa-description-service committed starting-outcome banner
+604f92c5fd39 offload: C2 SPA cards now show a placeholder instead of reusing the

@@ -8,7 +8,7 @@ from pathlib import Path
 from jsonschema import Draft7Validator
 from referencing import Registry, Resource
 
-from scene.tests.test_describe_route import TENANT_ID, _client, _post
+from scene.tests.test_describe_route import TENANT_ID, _GpuAdapter, _client, _gpu_env, _post
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _SCHEMA_DIR = _REPO_ROOT / "packages/shared-contracts/schemas"
@@ -117,3 +117,33 @@ def test_production_route_success_validates_against_shared_schema():
         assert cached_body["timing"]["ramp_up_ms"] == 0
         assert cached_body["timing"]["processing_ms"] == 0
         assert cached_body["timing"]["startup_ms"] is None
+
+
+def test_production_route_starting_error_validates_against_shared_schema(monkeypatch, tmp_path):
+    _gpu_env(monkeypatch, tmp_path, state="stopped")
+    validator = _multipart_validator()
+    with _client(adapter=_GpuAdapter()) as client:
+        response = _post(client, TENANT_ID)
+        assert response.status_code == 503, response.text
+        body = response.json()
+        validator.validate(body)
+        assert body["detail"]["code"] == "description_service_starting"
+        assert body["detail"]["operation_id"]
+        assert "startup_id" in body["detail"]
+        assert "timing" in body["detail"]
+
+
+def test_production_route_unavailable_error_validates_against_shared_schema(monkeypatch, tmp_path):
+    _gpu_env(monkeypatch, tmp_path, state="ready")
+    validator = _multipart_validator()
+    with _client(adapter=_GpuAdapter(), db_absent=True) as client:
+        response = _post(client, TENANT_ID)
+        assert response.status_code == 503, response.text
+        body = response.json()
+        validator.validate(body)
+        assert body["detail"]["code"] == "description_service_unavailable"
+        assert body["detail"]["operation_id"]
+        assert "startup_id" in body["detail"]
+        assert body["detail"]["startup_id"] is None
+        assert "timing" in body["detail"]
+        assert "warmup_eta_seconds" not in body["detail"]

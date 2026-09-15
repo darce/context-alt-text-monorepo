@@ -257,3 +257,47 @@ def test_create_run_rejects_empty_and_oversize_lists():
         await engine.dispose()
 
     asyncio.run(body())
+
+
+def test_timing_round_trip_counts_failed_and_cancelled_measured_items_only():
+    from datetime import UTC, datetime, timedelta
+
+    async def body():
+        engine, sf = await _sessionmaker()
+        tenant = uuid.uuid4()
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        async with sf() as session:
+            repo = DescribeRunRepository(session)
+            run_id = await repo.create_run(tenant_id=tenant, media_ids=[1, 2, 3])
+            run = await repo.get_run(tenant_id=tenant, run_id=run_id)
+            run.created_at = start
+            await repo.record_pickup(tenant_id=tenant, run_id=run_id, now=start + timedelta(seconds=2))
+            await repo.record_pickup(tenant_id=tenant, run_id=run_id, now=start + timedelta(seconds=9))
+            await repo.record_readiness(tenant_id=tenant, run_id=run_id, now=start + timedelta(seconds=3))
+            await repo.record_item_processing(tenant_id=tenant, run_id=run_id, media_id=1, processing_ms=10)
+            await repo.record_item_processing(tenant_id=tenant, run_id=run_id, media_id=1, processing_ms=30)
+            await repo.record_item_processing(tenant_id=tenant, run_id=run_id, media_id=2, processing_ms=0)
+            for media_id, status in [
+                (1, DescribeItemStatus.FAILED),
+                (2, DescribeItemStatus.SKIPPED),
+                (3, DescribeItemStatus.COMPLETED),
+            ]:
+                await repo.mark_item(
+                    tenant_id=tenant, run_id=run_id, media_id=media_id, status=status, now=start + timedelta(seconds=4)
+                )
+            await session.commit()
+        async with sf() as session:
+            repo = DescribeRunRepository(session)
+            run = await repo.get_run(tenant_id=tenant, run_id=run_id)
+            assert run.queue_ms == 2000
+            assert run.ramp_up_ms == 0
+            assert run.startup_id is None
+            assert run.items_timed == 2
+            assert run.processing_ms_p50 == 15
+            assert run.processing_ms_max == 30
+            assert run.server_elapsed_ms == 4000
+            items = await repo.list_run_items(tenant_id=tenant, run_id=run_id)
+            assert [item.processing_ms for item in items] == [30, 0, None]
+        await engine.dispose()
+
+    asyncio.run(body())

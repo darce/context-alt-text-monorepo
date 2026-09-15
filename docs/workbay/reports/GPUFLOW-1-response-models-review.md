@@ -45,3 +45,29 @@ Verdict: fail
 - Fix: Add actual multipart and run builder fixtures, serialize them with the ordinary response path, and validate each against its designated shared schema.
 
 Verdict: fail
+
+## Re-review r5b (c6e5f7aa2..38cd11e65)
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| `RESPON-H-01` | `partially_fixed` | `OmitAbsentOperationMetadata` now strips null operation metadata (`responses.py:141-160`) and both response models default the fields to `None` (`responses.py:205-207, 257-259`), so the unchanged builders no longer raise `ValidationError`. The delta still does not thread real operation/startup/timing values into those builders, and the multipart success contract still requires `operation_id` and `startup_id`. |
+| `GPUFLOW-1-RESPONSEMODELS-R-02` | `partially_fixed` | The optional defaults and serializer remove the construction failure, but no production builder is changed in the delta; the existing VisualFacts and run builders therefore still serialize accepted responses without the operation metadata that this slice promises. |
+| `GPUFLOW-1-RESPONSEMODELS-R-03` | `partially_fixed` | The parameterized populated-metadata test now covers `DescribeRunResponse` and validates both dump forms against the run schema (`test_gpuflow_response_models.py:121-134`), removing the early return. The “builder-shaped” tests still call `model(**payload)` directly (`test_gpuflow_response_models.py:101-118`) and never invoke an actual service or router builder. |
+
+### FINDINGS
+
+#### GPUFLOW-1-RESPONSEMODELS-R-04 — high
+
+- File: `apps/prototype-description-service/scene/interface_adapters/http/schemas/responses.py:141-160, 205-207`
+- Evidence: The fix makes `operation_id` and `startup_id` optional and removes them from the serialized payload when they are absent. `VisualFactsResponse` is the `/scene/describe/multipart` response model, but the success branch of `scene-describe-multipart.schema.json` requires both fields (`scene-describe-multipart.schema.json:8-16`). The unchanged builders can now pass response-model serialization and return a contract-invalid success body instead of failing loudly. This violates [API-09]: a published API boundary must not be weakened in a way that callers can observe as a different shape.
+- Impact: Accepted multipart responses can lose the opaque correlation identifiers required for retry binding and startup correlation while still looking successful to FastAPI; consumers validating the outer shared contract reject the body or cannot safely retry it. The fix converts the prior construction error into a silent release-level contract break.
+- Fix: Keep the operation response strict at the multipart boundary and populate real service-minted metadata in every accepted builder. If legacy base-model payloads must remain readable, use a context-specific wrapper/adapter rather than globally omitting required success fields.
+
+#### GPUFLOW-1-RESPONSEMODELS-R-05 — medium
+
+- File: `apps/prototype-description-service/scene/tests/test_gpuflow_response_models.py:17-23, 101-118`
+- Evidence: `_SCHEMAS` maps `VisualFactsResponse` to `image-description-response.schema.json`, and the omission tests explicitly assert that all three operation keys are absent before validating only that weaker schema. They never validate `scene-describe-multipart.schema.json`, whose success branch requires `operation_id` and `startup_id`. The green test therefore cannot detect the R-04 regression; [TEST-15] requires a passing invariant test to be able to go red for the production failure it claims to guard.
+- Impact: Lane verification can report contract compliance while the actual multipart endpoint emits a body rejected by the designated shared schema, leaving downstream consumers and retry behavior untested.
+- Fix: Validate the actual multipart success envelope (including its `$ref` registry) and exercise the production multipart builder; reserve the base image schema test for legacy/non-operation payloads.
+
+Verdict: fail

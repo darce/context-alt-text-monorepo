@@ -323,3 +323,80 @@ Rules:
     Note the API image pins the same GID as `acx`
     (`apps/prototype-description-service/Dockerfile`) — a separate namespace
     from the host, and every chown on both sides is numeric.
+
+## GPUFLOW-1 synchronous demand and timing
+
+The service registers demand at `before_compute`, after validation, adapter
+selection, and cache/decorative bypasses, only for actual GPU compute. CPU,
+hosted and non-GPU default adapters do not acquire GPU demand or await readiness.
+A known, policy-permitted stopped/Auto or in-progress startup returns promptly
+with `503 description_service_starting`. STOP, max-lease, stopping, unavailable,
+and stale/unknown state return `503 description_service_unavailable`, with no ETA
+or promise of automatic startup. A GPU adapter failure after ready is
+`502 description_service_error`. STOP and lifecycle max-lease remain authoritative.
+
+### Operation transport and durable control
+
+`operation_id` is an optional multipart **form field**, an opaque nonempty string
+of at most 128 characters, never a header or query parameter. On first acceptance
+the service mints it and returns it at success top level or `detail.operation_id`.
+Retry the same multipart body with this field; bind it to tenant and request
+digest. A mismatch returns `409 operation_mismatch`; expiry returns
+`410 operation_expired`. Both carry typed detail without ETA and require a new
+operation, omitting the field. PHP passes it verbatim; SPA retains it per pending
+Suggest and clears it on terminal success, failure, or the public retry ceiling.
+
+Persist acceptance, expiry, startup association and first readiness observation
+in the shared database before publication or response. A 503 never releases the
+lease in cleanup. Concurrent operations have distinct leases and may join one
+startup. Restart must preserve correlation. Completed timing is retained for the
+existing async-job retention window; active renewal is bounded by that window.
+
+Finite control states (GRPH-27) are separate from expiry, `startup_id`, and
+`first_ready_at` data (GRPH-26). The schema's `definitions.leaseState` declares the
+internal vocabulary; it is not an extra HTTP response property.
+
+| state | event | next | effect |
+| --- | --- | --- | --- |
+| active | same-operation renew before expiry | active | expiry := now + L, bounded by retention; cannot extend lifecycle max-lease or override STOP |
+| active | expiry passed on read or publisher pass | expired | remove demand from has_work |
+| active | describe completed (2xx or 502 after ready) | completed | retain timing |
+| active | STOP / max-lease observed | active | retain lease; exclude its demand while the policy block holds; return unavailable |
+| expired | renew | rejected | operation_expired; start a new operation |
+| completed / expired / rejected | other event | unchanged | no-op, count as unadmitted event |
+
+Completed, expired and rejected are terminal for demand; the explicit
+expired/renew rejection transition takes precedence over the terminal no-op rule.
+Every unlisted state/event pair is a counted unadmitted no-op.
+
+### Publication and deployment bounds
+
+Every periodic, async and sync publication aggregates unexpired eligible leases
+with queued/running async GPU work under the existing service writer/fence.
+Global `load_snapshot` aggregation MUST use the dedicated RLS-bypassed system
+session and count all tenants; a tenant-scoped session fails closed. Serialize
+database snapshot and file publication so an older snapshot cannot overwrite
+newer demand. Do not add a lifecycle-state writer. Periodic publication also
+persists the first observed ready transition for active startup/operation records,
+including readiness between HTTP retries.
+
+At startup validate finite, explicit deployment bounds in seconds:
+
+- L > P + J + D (lease lifetime, controller poll period, worst scheduling jitter,
+  maximum publication delay).
+- L > maximum advertised Retry-After + bounded additional client retry gap.
+- R + D < F (publisher refresh interval and load-reader freshness).
+- L and active renewal must fit within the async retention bound.
+
+| bound | deployed evidence available to this contract lane |
+| --- | --- |
+| P, J, D, F, R | unavailable; operator must record each per environment |
+| maximum advertised Retry-After | must be at most the 120 s public ceiling; deployed maximum unavailable |
+| additional client retry gap | unavailable; must be explicitly bounded |
+| L and retention bound | unavailable; explicit bounded values required |
+
+These are missing measurements, not deployment defaults. Fail closed when any
+bound is unavailable or an inequality fails. Contract publication may proceed,
+but dispatch of automatic-start lease implementation remains blocked until the
+operator supplies and records these bounds. A client retrying exactly at the
+maximum advertised Retry-After must retain demand throughout warming.

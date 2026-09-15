@@ -1,255 +1,72 @@
 diff --git a/apps/prototype-description-service/scene/tests/test_shared_schema_documents.py b/apps/prototype-description-service/scene/tests/test_shared_schema_documents.py
 --- a/apps/prototype-description-service/scene/tests/test_shared_schema_documents.py
 +++ b/apps/prototype-description-service/scene/tests/test_shared_schema_documents.py
-@@ -80,7 +80,7 @@ def test_schema_is_well_formed(name):
- def test_success(name):
-     validator(name).validate(SUCCESS)
-     older = {k: v for k, v in SUCCESS.items() if k != "timing"}
--    validator(name).validate(older)
-+    assert validator(name).is_valid(older) == (name == "image-description-response")
-     bad = copy.deepcopy(SUCCESS)
-     bad["timing"]["processing_ms"] = -1
-     assert not validator(name).is_valid(bad)
-@@ -102,6 +102,7 @@ def test_typed_errors(code):
-     )
-     v = validator("scene-describe-multipart")
-     v.validate({"detail": detail})
-+    assert not v.is_valid({"detail": {k: value for k, value in detail.items() if k != "timing"}})
-     detail["warmup_eta_seconds"] = None
-     assert v.is_valid({"detail": detail}) == (code == "description_service_starting")
-     detail["warmup_eta_seconds"] = 4
-@@ -147,7 +148,7 @@ def test_strict_errors_and_correlation():
-         bad = copy.deepcopy(SUCCESS)
-         bad[key] = value
-         assert not v.is_valid(bad)
--    detail = dict(code="unrecognized", message="error", operation_id="op", startup_id=None)
-+    detail = dict(code="unrecognized", message="error", operation_id="op", startup_id=None, timing=TIMING)
-     assert not v.is_valid({"detail": detail})
-     detail["code"] = "description_service_starting"
-     detail["warmup_eta_seconds"] = -1
-@@ -168,4 +169,62 @@ def test_item_status_vocabulary():
-     item_validator = validator("scene-describe-run", "item")
-     for status in ("queued", "running", "completed", "failed", "skipped"):
-         item_validator.validate(dict(media_id=42, status=status, processing_ms=0))
--    assert not item_validator.is_valid(dict(media_id=42, status="cancelled"))
-+    assert not item_validator.is_valid(dict(media_id=42, status="cancelled", processing_ms=None))
+@@ -189,7 +189,8 @@ def test_cache_timing_consistency(name):
+     v = validator(name)
+     v.validate(payload)
+     for field, value in (("startup_id", "startup"), ("ramp_up_ms", 1),
+-                         ("processing_ms", 1), ("ramp_up_ms", None), ("processing_ms", None)):
++                         ("processing_ms", 1), ("startup_ms", 7),
++                         ("ramp_up_ms", None), ("processing_ms", None)):
+         bad = copy.deepcopy(payload)
+         target = bad if field == "startup_id" else bad["timing"]
+         target[field] = value
+@@ -207,7 +208,7 @@ def test_cache_timing_consistency(name):
+             "Each active, unexpired, policy-eligible lease contributes one to `in_flight`",
+             "`lease_demand` field is a nonnegative nullable integer",
+             "STOP-held and max-lease-blocked",
+-            "has_work := (queue_depth + in_flight) > 0",
++            "has_work := ((queue_depth + in_flight) > 0) OR batch_in_progress",
+         )),
+         ("gpu-lifecycle", (
+             "sequence inside the same transaction as the demand read",
+@@ -228,3 +229,11 @@ def test_documented_publisher_and_retry_requirements(document, requirements):
+     text = " ".join(path.read_text().split())
+     for requirement in requirements:
+         assert requirement in text
 +
 +
-+@pytest.mark.parametrize("status", ["queued", "running", "completed", "failed", "skipped"])
-+def test_item_requires_explicit_processing_timing(status):
-+    v = validator("scene-describe-run", "item")
-+    item = dict(media_id=42, status=status, processing_ms=None)
-+    v.validate(item)
-+    del item["processing_ms"]
-+    assert not v.is_valid(item)
-+
-+
-+@pytest.mark.parametrize("name", NAMES[:2])
-+def test_cache_timing_consistency(name):
-+    payload = copy.deepcopy(SUCCESS)
-+    payload["cached"] = True
-+    payload["timing"].update(ramp_up_ms=0, processing_ms=0)
-+    v = validator(name)
-+    v.validate(payload)
-+    for field, value in (("startup_id", "startup"), ("ramp_up_ms", 1),
-+                         ("processing_ms", 1), ("ramp_up_ms", None), ("processing_ms", None)):
-+        bad = copy.deepcopy(payload)
-+        target = bad if field == "startup_id" else bad["timing"]
-+        target[field] = value
-+        assert not v.is_valid(bad)
-+    if name == "image-description-response":
-+        del payload["timing"]
-+        del payload["startup_id"]
-+        v.validate(payload)
-+
-+
-+@pytest.mark.parametrize(
-+    "document, requirements",
-+    [
-+        ("gpu-lifecycle", (
-+            "Each active, unexpired, policy-eligible lease contributes one to `in_flight`",
-+            "`lease_demand` field is a nonnegative nullable integer",
-+            "STOP-held and max-lease-blocked",
-+            "has_work := (queue_depth + in_flight) > 0",
-+        )),
-+        ("gpu-lifecycle", (
-+            "sequence inside the same transaction as the demand read",
-+            "write-if-newer under the existing cross-process writer lock",
-+            "candidate `revision` is greater than the currently published one",
-+            "A must be dropped, leaving revision 11",
-+        )),
-+        ("image-description-api", (
-+            "REQUIRED on every `description_service_starting` 503",
-+            "integer delta-seconds in [1, 120]",
-+            "MUST be absent on all other typed errors",
-+        )),
-+    ],
-+)
-+def test_documented_publisher_and_retry_requirements(document, requirements):
-+    """Guard the normative clauses; runtime scenarios belong to producer lanes."""
-+    path = ROOT.parents[2] / "docs/workbay/contracts" / f"{document}.md"
-+    text = " ".join(path.read_text().split())
-+    for requirement in requirements:
-+        assert requirement in text
++def test_publication_has_work_includes_batch_gaps():
++    path = ROOT.parents[2] / "docs/workbay/contracts/gpu-lifecycle.md"
++    section = path.read_text().split("### Publication and deployment bounds", 1)[1]
++    text = " ".join(section.split())
++    assert "has_work := ((queue_depth + in_flight) > 0) OR batch_in_progress" in text
++    assert "START and STOP, including batch gaps with both counts zero" in text
 diff --git a/docs/workbay/contracts/gpu-lifecycle.md b/docs/workbay/contracts/gpu-lifecycle.md
 --- a/docs/workbay/contracts/gpu-lifecycle.md
 +++ b/docs/workbay/contracts/gpu-lifecycle.md
-@@ -373,12 +373,44 @@ Every unlisted state/event pair is a counted unadmitted no-op.
+@@ -16,7 +16,7 @@ tuples are `(action, instance_id)` with `action` ∈ `{START, STOP}`.
+ `python -m infra.oci.gpu_lifecycle --mode reap|start` (default `reap`).
  
- Every periodic, async and sync publication aggregates unexpired eligible leases
- with queued/running async GPU work under the existing service writer/fence.
-+Each active, unexpired, policy-eligible lease contributes one to `in_flight`,
-+using the same tenant scope as async work. STOP-held and max-lease-blocked
-+leases contribute zero, as do completed, expired and rejected leases.
-+`queue_depth` remains the queued async GPU count; `in_flight` is the running
-+async GPU count plus eligible lease count. Do not count a lease again as async
-+work. The additive `lease_demand` field is a nonnegative nullable integer:
-+the eligible lease count (zero when measured empty), or null for an unknown
-+breakdown; null must never erase demand from `in_flight`.
-+Count-based `has_work := (queue_depth + in_flight) > 0`; the existing
-+`batch_in_progress` STOP guard remains independently authoritative across batch
-+gaps. Readers ignoring `lease_demand` therefore retain correct demand protection.
+ `--mode start` emits START for STOPPED instances when the load snapshot has
+-work (`queue_depth > 0` or `in_flight > 0`). `--mode reap` remains the idle
++work (`queue_depth > 0` or `in_flight > 0` or `batch_in_progress`). `--mode reap` remains the idle
+ STOP path.
+ 
+ Instance states:
+@@ -381,9 +381,9 @@ async GPU count plus eligible lease count. Do not count a lease again as async
+ work. The additive `lease_demand` field is a nonnegative nullable integer:
+ the eligible lease count (zero when measured empty), or null for an unknown
+ breakdown; null must never erase demand from `in_flight`.
+-Count-based `has_work := (queue_depth + in_flight) > 0`; the existing
+-`batch_in_progress` STOP guard remains independently authoritative across batch
+-gaps. Readers ignoring `lease_demand` therefore retain correct demand protection.
++`has_work := ((queue_depth + in_flight) > 0) OR batch_in_progress` governs
++START and STOP, including batch gaps with both counts zero. Readers ignoring
++the informative `lease_demand` field therefore retain correct demand protection.
  Global `load_snapshot` aggregation MUST use the dedicated RLS-bypassed system
--session and count all tenants; a tenant-scoped session fails closed. Serialize
--database snapshot and file publication so an older snapshot cannot overwrite
--newer demand. Do not add a lifecycle-state writer. Periodic publication also
--persists the first observed ready transition for active startup/operation records,
--including readiness between HTTP retries.
-+session and count all tenants; a tenant-scoped session fails closed.
-+
-+Every snapshot carries a monotonic integer `revision`, allocated from the database
-+sequence inside the same transaction as the demand read. Serialize revision
-+allocation with acquisition of the demand snapshot, so an older database view
-+cannot receive a newer revision. Commit that transaction before publication.
-+All periodic, async and sync publishers use write-if-newer under the existing
-+cross-process writer lock, scoped to the destination load file: read the currently
-+published revision, compare, and atomically replace (temporary file plus rename)
-+while holding that lock. Write only if the candidate `revision` is greater than
-+the currently published one; drop equal or older candidates without refreshing
-+`written_at`. A missing initial file has revision zero; revisions start at one.
-+An unreadable file or malformed revision fails closed, never bypassing the fence.
-+Do not add a lifecycle-state writer. Periodic publication also persists the first
-+observed ready transition for active startup/operation records, including readiness
-+between HTTP retries.
-+
-+Required implementation regression scenarios:
-+- With zero async work and two eligible leases in different tenants, the global
-+  snapshot has `queue_depth = 0`, `in_flight = 2`, `lease_demand = 2` and true
-+  `has_work`. Holding one lease under STOP reduces both counts to one; holding
-+  both reduces them to zero without deleting either lease.
-+- Pause publisher A after its older demand read at revision 10. Publisher B reads
-+  new demand at revision 11 and publishes it. Resume A after B's publication:
-+  A must be dropped, leaving revision 11, its demand counts and `written_at`
-+  unchanged. Repeat with equal revisions and across separate writer processes.
+ session and count all tenants; a tenant-scoped session fails closed.
  
- At startup validate finite, explicit deployment bounds in seconds:
- 
-diff --git a/docs/workbay/contracts/image-description-api.md b/docs/workbay/contracts/image-description-api.md
---- a/docs/workbay/contracts/image-description-api.md
-+++ b/docs/workbay/contracts/image-description-api.md
-@@ -272,7 +272,9 @@ Canonical multipart response schema:
- [scene-describe-multipart.schema.json](../../../packages/shared-contracts/schemas/scene-describe-multipart.schema.json).
- Success retains the 17 core fields and carries top-level `operation_id`,
- `startup_id`, and `timing`. IDs are opaque strings, not UUID-constrained;
--`startup_id` is nullable. Older responses may omit timing entirely.
-+`startup_id` is nullable. The legacy base response schema permits older responses to omit timing; accepted
-+GPUFLOW-1 multipart operations require it, including explicit null values for
-+unknown measurements.
- 
- | HTTP status | detail.code | meaning |
- | --- | --- | --- |
-@@ -285,7 +287,12 @@ Success retains the 17 core fields and carries top-level `operation_id`,
- Typed errors have `detail: {code, message, operation_id, startup_id, timing}`.
- Only starting may also carry `warmup_eta_seconds` (nonnegative or null when
- unknown). Unavailable, mismatch, expired and adapter-failure errors omit ETA.
--`Retry-After` is an HTTP header, never JSON. PHP and SPA preserve status, header
-+`Retry-After` is an HTTP header, never JSON. It is REQUIRED on every
-+`description_service_starting` 503 as integer delta-seconds in [1, 120], and
-+MUST be absent on all other typed errors. HTTP-date values are not admitted.
-+Required transport regression cases: starting with 1 and 120 succeeds; missing,
-+0, 121, fractional and HTTP-date values fail; any Retry-After on another typed
-+error fails. PHP and SPA preserve status, header
- and detail nesting verbatim (rg-015); these errors must bypass generic 5xx
- envelope rewriting.
- 
-@@ -313,7 +320,7 @@ retains run status at its root. It adds optional correlation IDs and `timing`:
- worker pickup. p50/max count measured items only; with no measurements they are
- null and a known measured-item count is zero. Unknown count is null.
- Never use summed parallel processing as wall elapsed.
--`#/definitions/item` describes an item, including nullable `processing_ms`
-+`#/definitions/item` describes an item, including required-nullable `processing_ms`
- (the sum of measured attempts), and `#/definitions/items` describes the
- tenant/run/items wrapper. Failed, skipped and items in cancelled runs preserve
- persisted timing; untimed items remain null. Existing item status vocabulary
 diff --git a/packages/shared-contracts/schemas/image-description-response.schema.json b/packages/shared-contracts/schemas/image-description-response.schema.json
 --- a/packages/shared-contracts/schemas/image-description-response.schema.json
 +++ b/packages/shared-contracts/schemas/image-description-response.schema.json
-@@ -385,5 +385,32 @@
-       "additionalProperties": false,
-       "description": "Measured milliseconds; unknown values are null. Readiness and adapter attempts do not overlap; server elapsed excludes client rendering."
-     }
-+  },
-+  "if": {
-+    "properties": {
-+      "cached": {
-+        "const": true
-+      }
-+    },
-+    "required": [
-+      "cached"
-+    ]
-+  },
-+  "then": {
-+    "properties": {
-+      "startup_id": {
-+        "type": "null"
-+      },
-+      "timing": {
-+        "properties": {
-+          "ramp_up_ms": {
-+            "const": 0
+@@ -408,6 +408,9 @@
+           },
+           "processing_ms": {
+             "const": 0
 +          },
-+          "processing_ms": {
-+            "const": 0
-+          }
-+        }
-+      }
-+    }
-   }
- }
-diff --git a/packages/shared-contracts/schemas/scene-describe-multipart.schema.json b/packages/shared-contracts/schemas/scene-describe-multipart.schema.json
---- a/packages/shared-contracts/schemas/scene-describe-multipart.schema.json
-+++ b/packages/shared-contracts/schemas/scene-describe-multipart.schema.json
-@@ -12,7 +12,8 @@
-         {
-           "required": [
-             "operation_id",
--            "startup_id"
-+            "startup_id",
-+            "timing"
-           ]
++          "startup_ms": {
++            "type": "null"
+           }
          }
-       ]
-@@ -63,7 +64,8 @@
-             "code",
-             "message",
-             "operation_id",
--            "startup_id"
-+            "startup_id",
-+            "timing"
-           ],
-           "additionalProperties": false,
-           "allOf": [
-diff --git a/packages/shared-contracts/schemas/scene-describe-run.schema.json b/packages/shared-contracts/schemas/scene-describe-run.schema.json
---- a/packages/shared-contracts/schemas/scene-describe-run.schema.json
-+++ b/packages/shared-contracts/schemas/scene-describe-run.schema.json
-@@ -240,7 +240,8 @@
-       },
-       "required": [
-         "media_id",
--        "status"
-+        "status",
-+        "processing_ms"
-       ],
-       "additionalProperties": false
-     },
+       }

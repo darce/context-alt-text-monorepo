@@ -45,20 +45,58 @@ const baseSuggestion: ReviewSuggestion = {
   identityCount: 3,
 };
 
+const imageSrcCount = (src: string): number =>
+  screen.queryAllByRole('img').filter((element) => element.getAttribute('src') === src).length;
+
 describe('SuggestionCard GPUFLOW-1 candidate preview', () => {
-  it('shows an explicit placeholder when no noncandidate representative exists', () => {
+  it('renders distinct candidate and representative avatars', () => {
     render(
       <SuggestionCard
-        suggestion={{ ...baseSuggestion, enrichment: { ...preview.candidate, ...preview.nullRepresentative } }}
+        suggestion={{
+          ...baseSuggestion,
+          enrichment: { ...preview.candidate, ...preview.representative },
+        }}
         onAccept={vi.fn()}
         onReject={vi.fn()}
         isPending={false}
         lowConfidenceThreshold={0.5}
       />,
     );
-    expect(screen.getByAltText('Candidate face, position 1 of 1')).toHaveAttribute('src', preview.candidate.identityMediaUrl);
+
+    expect(screen.getByAltText('Candidate face, position 1 of 1')).toHaveAttribute(
+      'src',
+      preview.candidate.identityMediaUrl,
+    );
+    expect(screen.getByAltText('Alex stored face, position 1 of 3')).toHaveAttribute(
+      'src',
+      preview.representative.representativeMediaUrl,
+    );
+    expect(preview.candidate.identityMediaUrl).not.toBe(preview.representative.representativeMediaUrl);
+    expect(imageSrcCount(preview.candidate.identityMediaUrl)).toBe(1);
+    expect(imageSrcCount(preview.representative.representativeMediaUrl)).toBe(1);
+  });
+
+  it('shows an explicit placeholder when no noncandidate representative exists', () => {
+    render(
+      <SuggestionCard
+        suggestion={{
+          ...baseSuggestion,
+          enrichment: { ...preview.candidate, ...preview.nullRepresentative },
+        }}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        isPending={false}
+        lowConfidenceThreshold={0.5}
+      />,
+    );
+
+    expect(screen.getByAltText('Candidate face, position 1 of 1')).toHaveAttribute(
+      'src',
+      preview.candidate.identityMediaUrl,
+    );
     expect(screen.getByRole('img', { name: 'Representative image unavailable' })).toBeInTheDocument();
     expect(screen.queryByAltText('Alex stored face, position 1 of 3')).toBeNull();
+    expect(imageSrcCount(preview.candidate.identityMediaUrl)).toBe(1);
   });
 
   it.each([
@@ -84,11 +122,48 @@ describe('SuggestionCard GPUFLOW-1 candidate preview', () => {
         lowConfidenceThreshold={0.5}
       />,
     );
+
     expect(screen.queryByRole('button', { name: 'View original photo' })).toBeNull();
     expect(container.querySelector('.acx-face-thumbnail')).toBeNull();
-    expect(screen.getByAltText('Candidate face, position 1 of 1')).toHaveAttribute('src', preview.candidate.identityMediaUrl);
-    expect(screen.getByAltText('Alex stored face, position 1 of 3')).toHaveAttribute('src', preview.representative.representativeMediaUrl);
+    expect(screen.queryByAltText('Candidate face, position 1 of 1')).toBeNull();
+    expect(screen.queryByAltText('Alex stored face, position 1 of 3')).toBeNull();
+    expect(screen.getAllByRole('img', { name: 'Representative image unavailable' })).toHaveLength(2);
+    expect(imageSrcCount(preview.candidate.identityMediaUrl)).toBe(0);
+    expect(imageSrcCount(preview.representative.representativeMediaUrl)).toBe(0);
   });
+
+  it.each(preview.nonCroppableBboxes)(
+    'falls back to a placeholder when the representative bbox is not croppable %j',
+    (bbox) => {
+      const { container } = render(
+        <SuggestionCard
+          suggestion={{
+            ...baseSuggestion,
+            enrichment: {
+              ...preview.candidate,
+              ...preview.representative,
+              representativeBbox: bbox,
+            },
+          }}
+          onAccept={vi.fn()}
+          onReject={vi.fn()}
+          onOpenOriginal={vi.fn()}
+          isPending={false}
+          lowConfidenceThreshold={0.5}
+        />,
+      );
+
+      expect(screen.getByAltText('Candidate face, position 1 of 1')).toHaveAttribute(
+        'src',
+        preview.candidate.identityMediaUrl,
+      );
+      expect(container.querySelectorAll('.acx-face-thumbnail')).toHaveLength(1);
+      expect(screen.getByRole('img', { name: 'Representative image unavailable' })).toBeInTheDocument();
+      expect(screen.queryByAltText('Alex stored face, position 1 of 3')).toBeNull();
+      expect(imageSrcCount(preview.candidate.identityMediaUrl)).toBe(1);
+      expect(imageSrcCount(preview.representative.representativeMediaUrl)).toBe(0);
+    },
+  );
 });
 
 describe('SuggestionCard BR-41 group accname', () => {

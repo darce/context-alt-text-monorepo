@@ -1,898 +1,282 @@
 diff --git a/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py b/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py
 --- a/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py
 +++ b/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py
-@@ -26,10 +26,11 @@ from typing import Any
- from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
- from fastapi.responses import Response
- from pydantic import ValidationError
-+from sqlalchemy import inspect as sa_inspect
- from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
- from starlette.datastructures import FormData, UploadFile
- 
--from db.models.scene import DescribeDemandLease
-+from db.models.scene import DescribeDemandLease, DescribeOperation
- from db.tenant_context import enable_rls_bypass, require_tenant_record, set_tenant_context
- from recognition.infrastructure.repositories.audit_repository import AuditRepository
- from recognition.interface_adapters.http.deps import (
-@@ -317,6 +318,10 @@ def _timing_payload(timing: DescribeTiming) -> dict[str, float | None]:
-     return timing.model_dump(mode="json")
+@@ -322,6 +322,17 @@ class _LifecycleHoldHTTPException(HTTPException):
+     """Readiness-gate 503 that must keep the demand lease for retry."""
  
  
-+class _LifecycleHoldHTTPException(HTTPException):
-+    """Readiness-gate 503 that must keep the demand lease for retry."""
++_MULTIPART_TYPED_ERROR_CODES = frozenset(
++    {
++        "description_service_starting",
++        "description_service_unavailable",
++        "description_service_error",
++        "operation_mismatch",
++        "operation_expired",
++    }
++)
 +
 +
  def _typed_describe_error(
      *,
      status_code: int,
-@@ -327,6 +332,7 @@ def _typed_describe_error(
-     startup_id: str | None = None,
-     warmup_eta_seconds: float | None = None,
-     retry_after: int | None = None,
-+    preserve_lease: bool = False,
- ) -> HTTPException:
-     detail: dict[str, Any] = {
-         "code": code,
-@@ -338,7 +344,8 @@ def _typed_describe_error(
-     if code == "description_service_starting":
-         detail["warmup_eta_seconds"] = warmup_eta_seconds
-     headers = {"Retry-After": str(retry_after)} if retry_after is not None else None
--    return HTTPException(status_code=status_code, detail=detail, headers=headers)
-+    exc_cls = _LifecycleHoldHTTPException if preserve_lease else HTTPException
-+    return exc_cls(status_code=status_code, detail=detail, headers=headers)
+@@ -348,6 +359,78 @@ def _typed_describe_error(
+     return exc_cls(status_code=status_code, detail=detail, headers=headers)
  
  
- def _gpu_snapshot_fields() -> tuple[str | None, float | None]:
-@@ -398,7 +405,7 @@ def _untimed_with_elapsed(server_elapsed_ms: float | None) -> DescribeTiming:
-     )
- 
- 
--class _PreflightMissCacheRepository:
-+class _PreflightMissCacheRepository(ImageDescriptionRepository):
-     """Skip VisualFactsService's first cache read after a GPU preflight miss.
- 
-     Only the pre-compute lookup is suppressed. Later ``get_by_cache_key`` calls
-@@ -406,18 +413,20 @@ class _PreflightMissCacheRepository:
-     """
- 
-     def __init__(self, inner: ImageDescriptionRepository) -> None:
-+        session = getattr(inner, "_session", None)
-+        if session is not None:
-+            super().__init__(session)
-+        else:
-+            self._session = None  # type: ignore[assignment]
-         self._inner = inner
-         self._preflight_miss_consumed = False
- 
--    async def get_by_cache_key(self, **kwargs):
-+    async def get_by_cache_key(self, **kwargs: Any) -> Any:
-         if not self._preflight_miss_consumed:
-             self._preflight_miss_consumed = True
-             return None
-         return await self._inner.get_by_cache_key(**kwargs)
- 
--    def __getattr__(self, name: str):
--        return getattr(self._inner, name)
--
- 
- async def _validated_describe_multipart_submission(
-     *,
-@@ -657,7 +666,7 @@ async def _accept_operation(
-             _logger.error("operation accept failed", exc_info=True)
-         else:
-             _logger.warning(
--                "non-GPU operation persistence skipped; continuing without a durable operation",
-+                "non-GPU operation persistence skipped; failing closed without a durable operation",
-                 exc_info=True,
-             )
-         raise _typed_describe_error(
-@@ -719,6 +728,7 @@ async def _ensure_gpu_ready(
-             operation_id=op.operation_id,
-             startup_id=startup_id,
-             timing=timing,
-+            preserve_lease=True,
-         )
-     if state in (GpuState.STOPPED, GpuState.STARTING, GpuState.WARMING):
-         eta = _warmup_eta_seconds(
-@@ -737,6 +747,7 @@ async def _ensure_gpu_ready(
-             timing=timing,
-             warmup_eta_seconds=eta,
-             retry_after=_retry_after_seconds(eta),
-+            preserve_lease=True,
-         )
-     if state is GpuState.READY:
-         await repo.observe_ready(tenant_id=tenant_uuid, operation_id=op.operation_id, now=now)
-@@ -751,6 +762,7 @@ async def _ensure_gpu_ready(
-         operation_id=op.operation_id,
-         startup_id=startup_id,
-         timing=timing,
-+        preserve_lease=True,
-     )
- 
- 
-@@ -798,17 +810,8 @@ async def _complete_operation(
- 
- 
- def _preserves_demand_lease(exc: HTTPException) -> bool:
--    """503 starting/unavailable keep the lease so retries can renew demand."""
--    detail = exc.detail
--    if not isinstance(detail, dict):
--        return False
--    return detail.get("code") in {"description_service_starting", "description_service_unavailable"}
--
--
--def _http_exception_already_terminalized(exc: HTTPException) -> bool:
--    """502 from ``_complete_operation`` already attempted the terminal transition."""
--    detail = exc.detail
--    return isinstance(detail, dict) and detail.get("code") == "description_service_error"
-+    """Keep demand only for the readiness gate's own lifecycle 503."""
-+    return isinstance(exc, _LifecycleHoldHTTPException) and exc.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
- 
- 
- async def _release_unready_operation(
-@@ -817,21 +820,38 @@ async def _release_unready_operation(
-     tenant_uuid: uuid.UUID,
-     op,
-     server_elapsed_ms: float | None,
-+    caller_ready: bool,
- ) -> None:
--    """Release demand without fabricating a readiness observation."""
-+    """Release demand without fabricating a readiness observation.
++def _http_exception_code(detail: Any) -> str | None:
++    if not isinstance(detail, dict):
++        return None
++    code = detail.get("code")
++    return code if isinstance(code, str) else None
 +
-+    Re-reads the operation row and lease together under row locks. If this
-+    request never observed ready but a concurrent writer did, leave the lease
-+    active so the ready request can finish (CON-02).
-+    """
-     now = datetime.now(UTC)
-+    identity = sa_inspect(op).identity
-+    if identity is None:
-+        return
-+    locked = await session.get(
-+        DescribeOperation,
-+        identity,
-+        populate_existing=True,
-+        with_for_update=True,
++
++def _http_exception_message(detail: Any, *, fallback: str) -> str:
++    if isinstance(detail, dict):
++        message = detail.get("message")
++        if isinstance(message, str) and message:
++            return message
++    if isinstance(detail, str) and detail:
++        return detail
++    return fallback
++
++
++def _retry_after_header(exc: HTTPException) -> int | None:
++    if not exc.headers:
++        return None
++    raw = exc.headers.get("Retry-After")
++    if raw is None:
++        return None
++    try:
++        value = int(raw)
++    except (TypeError, ValueError):
++        return None
++    return value
++
++
++def _plain_typed_error_missing_operation_fields(exc: HTTPException) -> bool:
++    """True when a post-accept typed-error code lacks the multipart envelope."""
++    if isinstance(exc, _LifecycleHoldHTTPException):
++        return False
++    detail = exc.detail
++    code = _http_exception_code(detail)
++    if code not in _MULTIPART_TYPED_ERROR_CODES:
++        return False
++    if not isinstance(detail, dict):
++        return True
++    return any(key not in detail for key in ("operation_id", "startup_id", "timing"))
++
++
++def _rebuild_post_accept_typed_error(
++    exc: HTTPException,
++    *,
++    op,
++    server_start: float,
++) -> HTTPException:
++    detail = exc.detail
++    code = _http_exception_code(detail)
++    if code not in _MULTIPART_TYPED_ERROR_CODES:
++        return exc
++    warmup_eta_seconds = None
++    retry_after = None
++    if code == "description_service_starting" and isinstance(detail, dict):
++        eta = detail.get("warmup_eta_seconds")
++        if isinstance(eta, (int, float)) and not isinstance(eta, bool) and math.isfinite(eta):
++            warmup_eta_seconds = float(eta)
++        retry_after = _retry_after_header(exc)
++    return _typed_describe_error(
++        status_code=exc.status_code,
++        code=code,
++        message=_http_exception_message(detail, fallback="Description service error"),
++        operation_id=op.operation_id,
++        startup_id=op.startup_id,
++        timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
++        warmup_eta_seconds=warmup_eta_seconds,
++        retry_after=retry_after,
 +    )
-     lease = await session.get(
-         DescribeDemandLease,
--        (op.tenant_id, op.operation_id),
-+        identity,
-         populate_existing=True,
-         with_for_update=True,
-     )
--    if lease is None or lease.state != DemandLeaseState.ACTIVE:
-+    if locked is None or lease is None or lease.state != DemandLeaseState.ACTIVE:
-+        return
-+    if not caller_ready and locked.first_ready_at is not None:
-         return
-     lease.state = DemandLeaseState.COMPLETED
--    op.completed_at = now
-+    locked.completed_at = now
-     if server_elapsed_ms is not None:
--        op.server_elapsed_ms = server_elapsed_ms
-+        locked.server_elapsed_ms = server_elapsed_ms
-     await _commit_and_rescope(session, tenant_uuid)
- 
- 
-@@ -842,31 +862,22 @@ async def _terminalize_accepted_operation(
-     op,
-     server_elapsed_ms: float | None,
-     gpu_compute: bool,
-+    caller_ready: bool,
- ) -> None:
-+    del gpu_compute
-     if session is None or op is None:
-         return
-+    operation_id = sa_inspect(op).identity[1] if sa_inspect(op).identity is not None else "?"
-     try:
--        if op.first_ready_at is None:
--            await _release_unready_operation(
--                session=session,
--                tenant_uuid=tenant_uuid,
--                op=op,
--                server_elapsed_ms=server_elapsed_ms,
--            )
--            return
--        await _complete_operation(
-+        await _release_unready_operation(
-             session=session,
-             tenant_uuid=tenant_uuid,
-             op=op,
--            processing_ms=None,
-             server_elapsed_ms=server_elapsed_ms,
--            gpu_compute=gpu_compute,
--            cached=False,
-+            caller_ready=caller_ready,
-         )
--    except HTTPException:
--        return
-     except Exception:
--        _logger.error("failed to terminalize operation_id=%s", op.operation_id, exc_info=True)
-+        _logger.error("failed to terminalize operation_id=%s", operation_id, exc_info=True)
- 
- 
- async def _response_from_cached_row(
-@@ -989,7 +1000,10 @@ async def describe_image_multipart(
-         await maybe_consume_demo_quota(auth, session, units=1)
-         await _rescope(session, tenant_uuid)
- 
-+    observed_ready_here = False
 +
-     async def _before_compute() -> None:
-+        nonlocal observed_ready_here
-         if gpu_compute:
-             if session is None or op is None:
-                 raise _typed_describe_error(
-@@ -1008,8 +1022,25 @@ async def describe_image_multipart(
-                 session_factory=session_factory,
-                 server_start=server_start,
++
+ def _gpu_snapshot_fields() -> tuple[str | None, float | None]:
+     path = Path(resolve_gpu_state_path())
+     try:
+@@ -1126,7 +1209,6 @@ async def describe_image_multipart(
+                 raise RuntimeError("gpu describe succeeded without an accepted operation")
+             return MultipartDescribeResponse(
+                 **dumped,
+-                operation_id=None,
+                 startup_id=startup_id,
+                 timing=timing,
              )
-+            observed_ready_here = True
-         await _charge_demo_quota()
- 
-+    terminalized = False
-+
-+    async def _cleanup_accepted() -> None:
-+        nonlocal terminalized
-+        if terminalized:
-+            return
-+        await _terminalize_accepted_operation(
-+            session=session,
-+            tenant_uuid=tenant_uuid,
-+            op=op,
-+            server_elapsed_ms=_elapsed_ms(server_start),
-+            gpu_compute=gpu_compute,
-+            caller_ready=observed_ready_here,
-+        )
-+        terminalized = True
-+
-     try:
-         if cached_row is not None:
-             response = await _response_from_cached_row(
-@@ -1057,15 +1088,20 @@ async def describe_image_multipart(
-         )
-         server_elapsed_ms = _elapsed_ms(server_start)
-         processing_ms = response.attempt_timing.processing_ms
--        completed = await _complete_operation(
--            session=session,
--            tenant_uuid=tenant_uuid,
--            op=op,
--            processing_ms=processing_ms,
--            server_elapsed_ms=server_elapsed_ms,
--            gpu_compute=gpu_compute,
--            cached=response.cached,
--        )
-+        try:
-+            completed = await _complete_operation(
-+                session=session,
-+                tenant_uuid=tenant_uuid,
-+                op=op,
-+                processing_ms=processing_ms,
-+                server_elapsed_ms=server_elapsed_ms,
-+                gpu_compute=gpu_compute,
-+                cached=response.cached,
-+            )
-+            terminalized = True
-+        except HTTPException:
-+            await _cleanup_accepted()
-+            raise
-         if session is not None:
-             await session.commit()
-         if completed is not None and completed.ramp_up_ms is not None:
-@@ -1101,28 +1137,17 @@ async def describe_image_multipart(
-             timing=timing,
-         )
+@@ -1139,6 +1221,8 @@ async def describe_image_multipart(
      except HTTPException as exc:
--        if not _preserves_demand_lease(exc) and not _http_exception_already_terminalized(exc):
--            await _terminalize_accepted_operation(
--                session=session,
--                tenant_uuid=tenant_uuid,
--                op=op,
--                server_elapsed_ms=_elapsed_ms(server_start),
--                gpu_compute=gpu_compute,
--            )
-+        if not _preserves_demand_lease(exc):
-+            await _cleanup_accepted()
+         if not _preserves_demand_lease(exc):
+             await _cleanup_accepted()
++        if op is not None and _plain_typed_error_missing_operation_fields(exc):
++            raise _rebuild_post_accept_typed_error(exc, op=op, server_start=server_start) from exc
          raise
      except TimeoutError as exc:
--        await _terminalize_accepted_operation(
--            session=session,
--            tenant_uuid=tenant_uuid,
--            op=op,
--            server_elapsed_ms=_elapsed_ms(server_start),
--            gpu_compute=gpu_compute,
--        )
-+        await _cleanup_accepted()
-         raise HTTPException(
-             status.HTTP_504_GATEWAY_TIMEOUT,
-             f"description generation exceeded {effective_timeout}s",
-         ) from exc
-     except DescriptionAdapterUnavailableError as exc:
-+        await _cleanup_accepted()
-         if gpu_compute:
-             raise _typed_describe_error(
-                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-@@ -1137,15 +1162,20 @@ async def describe_image_multipart(
-         processing_ms = getattr(getattr(exc, "attempt_timing", None), "processing_ms", None)
-         server_elapsed_ms = _elapsed_ms(server_start)
-         if gpu_compute:
--            completed = await _complete_operation(
--                session=session,
--                tenant_uuid=tenant_uuid,
--                op=op,
--                processing_ms=processing_ms,
--                server_elapsed_ms=server_elapsed_ms,
--                gpu_compute=True,
--                cached=False,
--            )
-+            try:
-+                completed = await _complete_operation(
-+                    session=session,
-+                    tenant_uuid=tenant_uuid,
-+                    op=op,
-+                    processing_ms=processing_ms,
-+                    server_elapsed_ms=server_elapsed_ms,
-+                    gpu_compute=True,
-+                    cached=False,
-+                )
-+                terminalized = True
-+            except HTTPException:
-+                await _cleanup_accepted()
-+                raise
-             timing = _timing_from_operation(
-                 op=completed,
-                 processing_ms=processing_ms,
-@@ -1162,13 +1192,7 @@ async def describe_image_multipart(
-             ) from exc
-         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
-     except Exception as exc:
--        await _terminalize_accepted_operation(
--            session=session,
--            tenant_uuid=tenant_uuid,
--            op=op,
--            server_elapsed_ms=_elapsed_ms(server_start),
--            gpu_compute=gpu_compute,
--        )
-+        await _cleanup_accepted()
-         raise _typed_describe_error(
-             status_code=status.HTTP_502_BAD_GATEWAY,
-             code="description_service_error",
+         await _cleanup_accepted()
 diff --git a/apps/prototype-description-service/scene/interface_adapters/http/schemas/responses.py b/apps/prototype-description-service/scene/interface_adapters/http/schemas/responses.py
 --- a/apps/prototype-description-service/scene/interface_adapters/http/schemas/responses.py
 +++ b/apps/prototype-description-service/scene/interface_adapters/http/schemas/responses.py
-@@ -213,14 +213,21 @@ class VisualFactsResponse(OmitAbsentOperationMetadata):
- class MultipartDescribeResponse(VisualFactsResponse):
-     """Strict multipart success envelope for ``/scene/describe/multipart``.
+@@ -14,7 +14,7 @@ from __future__ import annotations
  
--    ``operation_id`` is required and may be JSON null when no durable
--    DescribeOperation was accepted (CPU/hosted, no session); clients must not
--    poll a lease. ``timing`` is required and non-null; ``startup_id`` is a
--    required key that may be JSON null for warm/cache work. Base
--    ``VisualFactsResponse`` omission behaviour is unchanged.
-+    ``operation_id`` is omitted on the wire when no durable DescribeOperation
-+    was accepted (CPU/hosted, no session); clients must not poll a lease.
-+    ``timing`` is required and non-null; ``startup_id`` is a required key that
-+    may be JSON null for warm/cache work. Base ``VisualFactsResponse``
-+    omission behaviour is unchanged.
+ from typing import Annotated
+ 
+-from pydantic import BaseModel, ConfigDict, Field, model_serializer
++from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer
+ 
+ from scene.application.gpu_state import GpuState
+ from scene.application.identity_merge import NamingRealizer
+@@ -221,6 +221,7 @@ class MultipartDescribeResponse(VisualFactsResponse):
      """
  
--    operation_id: str | None = Field(min_length=1, max_length=128)
-+    operation_id: str | None = Field(
-+        min_length=1,
-+        max_length=128,
-+        description=(
-+            "Omitted when no durable DescribeOperation was accepted "
-+            "(CPU/hosted, no session); clients must not poll a lease"
-+        ),
-+    )
+     operation_id: str | None = Field(
++        default=None,
+         min_length=1,
+         max_length=128,
+         description=(
+@@ -231,6 +232,14 @@ class MultipartDescribeResponse(VisualFactsResponse):
      startup_id: str | None
      timing: DescribeTiming
  
-@@ -229,7 +236,10 @@ class MultipartDescribeResponse(VisualFactsResponse):
++    @field_validator("operation_id", mode="before")
++    @classmethod
++    def _reject_explicit_null_operation_id(cls, value: object) -> object:
++        # Omitted keys use default=None (validator skipped). JSON null is present.
++        if value is None:
++            raise ValueError("operation_id must be omitted rather than null")
++        return value
++
+     @model_serializer(mode="wrap")
+     def _emit_required_operation_metadata(self, handler):
          payload = handler(self)
-         if not isinstance(payload, dict):
-             return payload
--        payload["operation_id"] = self.operation_id
-+        if self.operation_id is None:
-+            payload.pop("operation_id", None)
-+        else:
-+            payload["operation_id"] = self.operation_id
-         payload["startup_id"] = self.startup_id
-         if payload.get("timing") is None:
-             payload["timing"] = self.timing.model_dump(mode="json")
 diff --git a/apps/prototype-description-service/scene/tests/test_describe_route.py b/apps/prototype-description-service/scene/tests/test_describe_route.py
 --- a/apps/prototype-description-service/scene/tests/test_describe_route.py
 +++ b/apps/prototype-description-service/scene/tests/test_describe_route.py
-@@ -11,7 +11,7 @@ from typing import cast
+@@ -7,10 +7,13 @@ import tempfile
+ import time
+ import uuid
+ from contextlib import contextmanager, suppress
++from pathlib import Path
+ from typing import cast
  
  from fastapi import FastAPI
  from fastapi.testclient import TestClient
--from sqlalchemy import Table, select, text
-+from sqlalchemy import Table, select, text, update
++from jsonschema import Draft7Validator
++from referencing import Registry, Resource
+ from sqlalchemy import Table, select, text, update
  from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
  
- from db.models.base_imports import _DB_SETTINGS, Base
-@@ -1110,10 +1110,12 @@ def test_gpu_stopped_auto_returns_starting_503(monkeypatch, tmp_path):
-         assert "timing" in detail
-         assert "warmup_eta_seconds" in detail
-         assert adapter.calls == 0
-+        assert _lease_state(client, detail["operation_id"]) == "active"
-         retry = _post(client, TENANT_ID, extra_data={"operation_id": detail["operation_id"]})
-         assert retry.status_code == 503, retry.text
-         assert retry.json()["detail"]["operation_id"] == detail["operation_id"]
-         assert retry.headers.get("Retry-After")
-+        assert _lease_state(client, detail["operation_id"]) == "active"
+@@ -47,6 +50,26 @@ from scene.tests.demo_quota_harness import demo_quota_client as _demo_quota_clie
+ from scene.tests.demo_quota_harness import recognition_used as _recognition_used
+ 
+ TENANT_ID = "00000000-0000-0000-0000-0000000000bb"
++_SCHEMA_DIR = Path(__file__).resolve().parents[4] / "packages/shared-contracts/schemas"
++_SCHEMA_FILES = (
++    "image-description-response.schema.json",
++    "scene-describe-multipart.schema.json",
++)
++
++
++def _load_shared_schema(name: str):
++    return json.loads((_SCHEMA_DIR / name).read_text())
++
++
++def _retrieve_shared_schema(uri: str):
++    return Resource.from_contents(_load_shared_schema(Path(uri).name))
++
++
++def _multipart_schema_validator():
++    registry = Registry(retrieve=_retrieve_shared_schema).with_resources(
++        (name, Resource.from_contents(_load_shared_schema(name))) for name in _SCHEMA_FILES
++    )
++    return Draft7Validator(_load_shared_schema("scene-describe-multipart.schema.json"), registry=registry)
  
  
- def test_gpu_stop_intent_returns_unavailable_without_retry_after(monkeypatch, tmp_path):
-@@ -1138,6 +1140,7 @@ def test_gpu_stop_intent_returns_unavailable_without_retry_after(monkeypatch, tm
-         assert detail["code"] == "description_service_unavailable"
-         assert "warmup_eta_seconds" not in detail
-         assert adapter.calls == 0
-+        assert _lease_state(client, detail["operation_id"]) == "active"
- 
- 
- def test_gpu_unknown_state_returns_unavailable(monkeypatch, tmp_path):
-@@ -1147,8 +1150,10 @@ def test_gpu_unknown_state_returns_unavailable(monkeypatch, tmp_path):
+ class _Auth:
+@@ -1263,11 +1286,16 @@ def test_gpu_adapter_unavailable_is_typed_503(monkeypatch, tmp_path):
          response = _post(client, TENANT_ID)
          assert response.status_code == 503, response.text
          assert "Retry-After" not in response.headers
--        assert response.json()["detail"]["code"] == "description_service_unavailable"
-+        detail = response.json()["detail"]
-+        assert detail["code"] == "description_service_unavailable"
-         assert adapter.calls == 0
-+        assert _lease_state(client, detail["operation_id"]) == "active"
- 
- 
- def test_gpu_ready_warm_request_has_no_startup(monkeypatch, tmp_path):
-@@ -1263,7 +1268,8 @@ def test_gpu_adapter_unavailable_is_typed_503(monkeypatch, tmp_path):
+-        detail = response.json()["detail"]
++        body = response.json()
++        _multipart_schema_validator().validate(body)
++        detail = body["detail"]
+         assert detail["code"] == "description_service_unavailable"
          assert "warmup_eta_seconds" not in detail
          assert detail["operation_id"]
++        assert "startup_id" in detail
++        assert "timing" in detail
          assert adapter.calls == 1
--        assert _lease_state(client, detail["operation_id"]) == "active"
-+        assert _lease_state(client, detail["operation_id"]) == "completed"
-+        assert _active_lease_count(client) == 0
++        assert adapter.kind is DescriptionAdapterKind.GPU
+         assert _lease_state(client, detail["operation_id"]) == "completed"
+         assert _active_lease_count(client) == 0
  
- 
- class _RaisingOperationRepo:
-@@ -1337,6 +1343,9 @@ def test_gpu_complete_failure_is_typed_502_not_success(monkeypatch, tmp_path):
-         assert detail["code"] == "description_service_error"
-         assert adapter.calls == 1
-         assert "operation_id" in detail
-+        assert detail["operation_id"]
-+        assert _lease_state(client, detail["operation_id"]) == "completed"
-+        assert _active_lease_count(client) == 0
- 
- 
- def test_operation_expired_commits_rejected_transition(monkeypatch, tmp_path):
-@@ -1394,6 +1403,8 @@ def test_gpu_ready_adapter_failure_is_typed_502(monkeypatch, tmp_path):
-         assert detail["operation_id"]
-         assert "warmup_eta_seconds" not in detail
-         assert adapter.calls == 1
-+        assert _lease_state(client, detail["operation_id"]) == "completed"
-+        assert _active_lease_count(client) == 0
- 
- 
- def test_operation_id_mismatch_is_409(monkeypatch, tmp_path):
-@@ -1622,8 +1633,7 @@ def test_cpu_no_session_success_omits_durable_operation_id(monkeypatch):
+@@ -1743,16 +1771,22 @@ def test_downstream_unavailable_http_exception_releases_lease(monkeypatch, tmp_p
+     with _client(adapter=adapter) as client:
          response = _post(client, TENANT_ID)
-         assert response.status_code == 200, response.text
-         body = response.json()
--        assert "operation_id" in body
--        assert body["operation_id"] is None
-+        assert "operation_id" not in body
-         assert "startup_id" in body
-         assert "timing" in body
-         assert accepts == []
-@@ -1690,6 +1700,8 @@ def test_gpu_quota_http_exception_after_accept_releases_lease(monkeypatch, tmp_p
- 
- 
- def test_preflight_miss_wrapper_delegates_after_first_lookup():
-+    from scene.application.description_repository import ImageDescriptionRepository
-+
-     class _Inner:
-         def __init__(self):
-             self.calls: list[dict] = []
-@@ -1700,6 +1712,7 @@ def test_preflight_miss_wrapper_delegates_after_first_lookup():
- 
-     inner = _Inner()
-     wrapped = _PreflightMissCacheRepository(inner)
-+    assert isinstance(wrapped, ImageDescriptionRepository)
-     first = asyncio.run(wrapped.get_by_cache_key(image_hash="a"))
-     second = asyncio.run(wrapped.get_by_cache_key(image_hash="b"))
-     third = asyncio.run(wrapped.get_by_cache_key(image_hash="c"))
-@@ -1707,3 +1720,81 @@ def test_preflight_miss_wrapper_delegates_after_first_lookup():
-     assert inner.calls == [{"image_hash": "b"}, {"image_hash": "c"}]
-     assert second == {"hit": 1}
-     assert third == {"hit": 2}
-+
-+
-+def test_downstream_unavailable_http_exception_releases_lease(monkeypatch, tmp_path):
-+    from fastapi import HTTPException, status
-+
-+    from scene.interface_adapters.http.routers import describe as describe_module
-+
-+    _gpu_env(monkeypatch, tmp_path, state="ready")
-+
-+    async def reject_dep(*args, **kwargs):
-+        raise HTTPException(
-+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-+            detail={
-+                "code": "description_service_unavailable",
-+                "message": "dependency unavailable",
-+            },
-+        )
-+
-+    monkeypatch.setattr(describe_module, "maybe_consume_demo_quota", reject_dep)
-+    adapter = _GpuAdapter()
-+    with _client(adapter=adapter) as client:
-+        response = _post(client, TENANT_ID)
-+        assert response.status_code == 503, response.text
-+        detail = response.json()["detail"]
-+        assert detail == {
-+            "code": "description_service_unavailable",
-+            "message": "dependency unavailable",
-+        }
-+        assert adapter.calls == 0
-+        rows = _lease_rows(client)
-+        assert rows
-+        assert all(state == "completed" for _operation_id, state in rows)
-+        assert _active_lease_count(client) == 0
-+
-+
-+def test_concurrent_ready_does_not_complete_failing_request(monkeypatch, tmp_path):
-+    from datetime import UTC, datetime
-+
-+    from scene.application.visual_facts_service import VisualFactsService
-+    from scene.interface_adapters.http.routers import describe as describe_module
-+
-+    _gpu_env(monkeypatch, tmp_path, state="ready")
-+    real_release = describe_module._release_unready_operation
-+
-+    async def raced_release(*, session, tenant_uuid, op, server_elapsed_ms, caller_ready):
-+        assert caller_ready is False
-+        await session.execute(
-+            update(DescribeOperation)
-+            .where(
-+                DescribeOperation.tenant_id == tenant_uuid,
-+                DescribeOperation.operation_id == op.operation_id,
-+            )
-+            .values(first_ready_at=datetime.now(UTC))
-+        )
-+        await describe_module._commit_and_rescope(session, tenant_uuid)
-+        await real_release(
-+            session=session,
-+            tenant_uuid=tenant_uuid,
-+            op=op,
-+            server_elapsed_ms=server_elapsed_ms,
-+            caller_ready=caller_ready,
-+        )
-+
-+    async def boom(self, **kwargs):
-+        raise RuntimeError("service boom before dispatch")
-+
-+    monkeypatch.setattr(describe_module, "_release_unready_operation", raced_release)
-+    monkeypatch.setattr(VisualFactsService, "describe", boom)
-+    adapter = _GpuAdapter()
-+    with _client(adapter=adapter) as client:
-+        response = _post(client, TENANT_ID)
-+        assert response.status_code == 502, response.text
-+        detail = response.json()["detail"]
-+        assert detail["code"] == "description_service_error"
+         assert response.status_code == 503, response.text
+-        detail = response.json()["detail"]
+-        assert detail == {
+-            "code": "description_service_unavailable",
+-            "message": "dependency unavailable",
+-        }
++        assert "Retry-After" not in response.headers
++        body = response.json()
++        _multipart_schema_validator().validate(body)
++        detail = body["detail"]
++        assert detail["code"] == "description_service_unavailable"
++        assert detail["message"] == "dependency unavailable"
 +        assert detail["operation_id"]
-+        assert adapter.calls == 0
-+        assert _lease_state(client, detail["operation_id"]) == "active"
-+        assert _operation_first_ready_at(client, detail["operation_id"]) is not None
++        assert "startup_id" in detail
++        assert "timing" in detail
++        assert "warmup_eta_seconds" not in detail
+         assert adapter.calls == 0
+         rows = _lease_rows(client)
+         assert rows
+         assert all(state == "completed" for _operation_id, state in rows)
+         assert _active_lease_count(client) == 0
++        assert _lease_state(client, detail["operation_id"]) == "completed"
+ 
+ 
+ def test_concurrent_ready_does_not_complete_failing_request(monkeypatch, tmp_path):
 diff --git a/apps/prototype-description-service/scene/tests/test_gpuflow_response_models.py b/apps/prototype-description-service/scene/tests/test_gpuflow_response_models.py
 --- a/apps/prototype-description-service/scene/tests/test_gpuflow_response_models.py
 +++ b/apps/prototype-description-service/scene/tests/test_gpuflow_response_models.py
-@@ -258,7 +258,7 @@ def test_multipart_emits_null_startup_id_and_validates():
-         validator.validate(wire)
+@@ -226,8 +226,6 @@ def test_multipart_populated_payload_validates_success_branch():
  
  
--def test_multipart_accepts_null_operation_id():
-+def test_multipart_omits_null_operation_id():
+ def test_multipart_requires_operation_id_and_timing():
+-    with pytest.raises(ValidationError):
+-        MultipartDescribeResponse(**_VISUAL_FACTS_PAYLOAD, startup_id=None, timing=_VISUAL_TIMING)
+     with pytest.raises(ValidationError):
+         MultipartDescribeResponse(**_VISUAL_FACTS_PAYLOAD, operation_id="opaque-operation", startup_id=None)
+     with pytest.raises(ValidationError):
+@@ -236,6 +234,19 @@ def test_multipart_requires_operation_id_and_timing():
+         MultipartDescribeResponse(**_VISUAL_FACTS_PAYLOAD, operation_id="opaque-operation", timing=_VISUAL_TIMING)
+ 
+ 
++def test_multipart_model_validate_omitted_operation_id_and_rejects_null():
++    payload = {**_VISUAL_FACTS_PAYLOAD, "startup_id": None, "timing": _VISUAL_TIMING}
++    response = MultipartDescribeResponse.model_validate(payload)
++    assert response.operation_id is None
++    dumped, encoded = _dumped_payloads(response)
++    validator = _multipart_validator()
++    for wire in (dumped, encoded):
++        assert "operation_id" not in wire
++        validator.validate(wire)
++    with pytest.raises(ValidationError):
++        MultipartDescribeResponse.model_validate({**payload, "operation_id": None})
++
++
+ def test_multipart_omitting_startup_id_is_rejected():
+     with pytest.raises(ValidationError):
+         MultipartDescribeResponse(**_VISUAL_FACTS_PAYLOAD, operation_id="opaque-operation", timing=_VISUAL_TIMING)
+@@ -261,7 +272,6 @@ def test_multipart_emits_null_startup_id_and_validates():
+ def test_multipart_omits_null_operation_id():
      response = MultipartDescribeResponse(
          **_VISUAL_FACTS_PAYLOAD,
-         operation_id=None,
-@@ -268,8 +268,7 @@ def test_multipart_accepts_null_operation_id():
-     dumped, encoded = _dumped_payloads(response)
-     validator = _multipart_validator()
-     for wire in (dumped, encoded):
--        assert "operation_id" in wire
--        assert wire["operation_id"] is None
-+        assert "operation_id" not in wire
-         assert "startup_id" in wire
-         assert wire["startup_id"] is None
-         assert wire["timing"] == _VISUAL_TIMING
-diff --git a/apps/prototype-description-service/scene/tests/test_shared_schema_multipart.py b/apps/prototype-description-service/scene/tests/test_shared_schema_multipart.py
---- a/apps/prototype-description-service/scene/tests/test_shared_schema_multipart.py
-+++ b/apps/prototype-description-service/scene/tests/test_shared_schema_multipart.py
-@@ -84,6 +84,13 @@ def test_typed_error_envelopes_validate():
-         }
-     }
-     validator.validate(unavailable_null)
-+    starting_null = {
-+        "detail": {
-+            **starting["detail"],
-+            "operation_id": None,
-+        }
-+    }
-+    assert not validator.is_valid(starting_null)
-     assert not validator.is_valid(
-         {
-             "detail": {
-@@ -94,12 +101,16 @@ def test_typed_error_envelopes_validate():
+-        operation_id=None,
+         startup_id=None,
+         timing=_VISUAL_TIMING,
      )
- 
- 
--def test_success_envelope_allows_null_operation_id_and_rejects_empty():
-+def test_success_envelope_allows_absent_operation_id_and_rejects_null():
-     payload = json.loads(_FIXTURE.read_text())
-+    validator = _multipart_validator()
-+    absent = dict(payload)
-+    del absent["operation_id"]
-+    validator.validate(absent)
-     payload["operation_id"] = None
--    _multipart_validator().validate(payload)
-+    assert not validator.is_valid(payload)
-     payload["operation_id"] = ""
--    assert not _multipart_validator().is_valid(payload)
-+    assert not validator.is_valid(payload)
- 
- 
- _NAMING_PROVENANCE_SCHEMA_KEYS = {"injected_names", "naming_allowed", "reason", "mode"}
-@@ -170,13 +181,13 @@ def test_production_route_unavailable_error_validates_against_shared_schema(monk
-         assert "warmup_eta_seconds" not in body["detail"]
- 
- 
--def test_production_cpu_no_session_success_validates_null_operation_id():
-+def test_production_cpu_no_session_success_omits_operation_id():
-     validator = _multipart_validator()
-     with _client(db_absent=True) as client:
-         response = _post(client, TENANT_ID)
-         assert response.status_code == 200, response.text
-         body = response.json()
-         validator.validate(_schema_body(body))
--        assert body["operation_id"] is None
-+        assert "operation_id" not in body
-         assert "startup_id" in body
-         assert "timing" in body
-diff --git a/packages/shared-contracts/schemas/scene-describe-multipart.schema.json b/packages/shared-contracts/schemas/scene-describe-multipart.schema.json
---- a/packages/shared-contracts/schemas/scene-describe-multipart.schema.json
-+++ b/packages/shared-contracts/schemas/scene-describe-multipart.schema.json
-@@ -69,6 +69,13 @@
-                   }
-                 }
-               },
-+              "then": {
-+                "properties": {
-+                  "operation_id": {
-+                    "type": "string"
-+                  }
-+                }
-+              },
-               "else": {
-                 "not": {
-                   "required": [
-@@ -88,113 +95,116 @@
-   ],
-   "definitions": {
-     "success": {
--      "type": "object",
--      "additionalProperties": false,
--      "required": [
--        "tenant_id",
--        "media_id",
--        "image_hash",
--        "context_hash",
--        "adapter",
--        "model_id",
--        "model_version",
--        "prompt_or_task_version",
--        "visual_facts",
--        "alt_text_draft",
--        "context_used",
--        "provider_disclosure",
--        "cached",
--        "duration_ms",
--        "retention_class",
--        "tier",
--        "result_generation",
--        "operation_id",
--        "startup_id",
--        "timing"
--      ],
--      "properties": {
--        "tenant_id": {
--          "$ref": "image-description-response.schema.json#/properties/tenant_id"
--        },
--        "media_id": {
--          "$ref": "image-description-response.schema.json#/properties/media_id"
--        },
--        "image_hash": {
--          "$ref": "image-description-response.schema.json#/properties/image_hash"
--        },
--        "context_hash": {
--          "$ref": "image-description-response.schema.json#/properties/context_hash"
--        },
--        "adapter": {
--          "$ref": "image-description-response.schema.json#/properties/adapter"
--        },
--        "model_id": {
--          "$ref": "image-description-response.schema.json#/properties/model_id"
--        },
--        "model_version": {
--          "$ref": "image-description-response.schema.json#/properties/model_version"
--        },
--        "prompt_or_task_version": {
--          "$ref": "image-description-response.schema.json#/properties/prompt_or_task_version"
--        },
--        "visual_facts": {
--          "$ref": "image-description-response.schema.json#/properties/visual_facts"
--        },
--        "alt_text_draft": {
--          "$ref": "image-description-response.schema.json#/properties/alt_text_draft"
--        },
--        "context_used": {
--          "$ref": "image-description-response.schema.json#/properties/context_used"
-+      "allOf": [
-+        {
-+          "$ref": "image-description-response.schema.json"
-         },
--        "provider_disclosure": {
--          "$ref": "image-description-response.schema.json#/properties/provider_disclosure"
--        },
--        "cached": {
--          "$ref": "image-description-response.schema.json#/properties/cached"
--        },
--        "duration_ms": {
--          "$ref": "image-description-response.schema.json#/properties/duration_ms"
--        },
--        "retention_class": {
--          "$ref": "image-description-response.schema.json#/properties/retention_class"
--        },
--        "tier": {
--          "$ref": "image-description-response.schema.json#/properties/tier"
--        },
--        "result_generation": {
--          "$ref": "image-description-response.schema.json#/properties/result_generation"
--        },
--        "alt_text_long": {
--          "$ref": "image-description-response.schema.json#/properties/alt_text_long"
--        },
--        "generic_draft": {
--          "$ref": "image-description-response.schema.json#/properties/generic_draft"
--        },
--        "named_draft": {
--          "$ref": "image-description-response.schema.json#/properties/named_draft"
--        },
--        "naming_provenance": {
--          "$ref": "image-description-response.schema.json#/properties/naming_provenance"
--        },
--        "attachment_provenance": {
--          "$ref": "image-description-response.schema.json#/properties/attachment_provenance"
--        },
--        "operation_id": {
--          "type": [
--            "string",
--            "null"
-+        {
-+          "type": "object",
-+          "additionalProperties": false,
-+          "required": [
-+            "tenant_id",
-+            "media_id",
-+            "image_hash",
-+            "context_hash",
-+            "adapter",
-+            "model_id",
-+            "model_version",
-+            "prompt_or_task_version",
-+            "visual_facts",
-+            "alt_text_draft",
-+            "context_used",
-+            "provider_disclosure",
-+            "cached",
-+            "duration_ms",
-+            "retention_class",
-+            "tier",
-+            "result_generation",
-+            "startup_id",
-+            "timing"
-           ],
--          "minLength": 1,
--          "maxLength": 128,
--          "description": "null when no durable DescribeOperation was accepted (CPU/hosted, no session); clients must not poll a lease"
--        },
--        "startup_id": {
--          "$ref": "image-description-response.schema.json#/properties/startup_id"
--        },
--        "timing": {
--          "$ref": "image-description-response.schema.json#/properties/timing"
-+          "properties": {
-+            "tenant_id": {
-+              "$ref": "image-description-response.schema.json#/properties/tenant_id"
-+            },
-+            "media_id": {
-+              "$ref": "image-description-response.schema.json#/properties/media_id"
-+            },
-+            "image_hash": {
-+              "$ref": "image-description-response.schema.json#/properties/image_hash"
-+            },
-+            "context_hash": {
-+              "$ref": "image-description-response.schema.json#/properties/context_hash"
-+            },
-+            "adapter": {
-+              "$ref": "image-description-response.schema.json#/properties/adapter"
-+            },
-+            "model_id": {
-+              "$ref": "image-description-response.schema.json#/properties/model_id"
-+            },
-+            "model_version": {
-+              "$ref": "image-description-response.schema.json#/properties/model_version"
-+            },
-+            "prompt_or_task_version": {
-+              "$ref": "image-description-response.schema.json#/properties/prompt_or_task_version"
-+            },
-+            "visual_facts": {
-+              "$ref": "image-description-response.schema.json#/properties/visual_facts"
-+            },
-+            "alt_text_draft": {
-+              "$ref": "image-description-response.schema.json#/properties/alt_text_draft"
-+            },
-+            "context_used": {
-+              "$ref": "image-description-response.schema.json#/properties/context_used"
-+            },
-+            "provider_disclosure": {
-+              "$ref": "image-description-response.schema.json#/properties/provider_disclosure"
-+            },
-+            "cached": {
-+              "$ref": "image-description-response.schema.json#/properties/cached"
-+            },
-+            "duration_ms": {
-+              "$ref": "image-description-response.schema.json#/properties/duration_ms"
-+            },
-+            "retention_class": {
-+              "$ref": "image-description-response.schema.json#/properties/retention_class"
-+            },
-+            "tier": {
-+              "$ref": "image-description-response.schema.json#/properties/tier"
-+            },
-+            "result_generation": {
-+              "$ref": "image-description-response.schema.json#/properties/result_generation"
-+            },
-+            "alt_text_long": {
-+              "$ref": "image-description-response.schema.json#/properties/alt_text_long"
-+            },
-+            "generic_draft": {
-+              "$ref": "image-description-response.schema.json#/properties/generic_draft"
-+            },
-+            "named_draft": {
-+              "$ref": "image-description-response.schema.json#/properties/named_draft"
-+            },
-+            "naming_provenance": {
-+              "$ref": "image-description-response.schema.json#/properties/naming_provenance"
-+            },
-+            "attachment_provenance": {
-+              "$ref": "image-description-response.schema.json#/properties/attachment_provenance"
-+            },
-+            "operation_id": {
-+              "type": "string",
-+              "minLength": 1,
-+              "maxLength": 128,
-+              "description": "Opaque service-minted id bound to tenant and request digest. Omitted when no durable DescribeOperation was accepted (CPU/hosted, no session); clients must not poll a lease."
-+            },
-+            "startup_id": {
-+              "$ref": "image-description-response.schema.json#/properties/startup_id"
-+            },
-+            "timing": {
-+              "$ref": "image-description-response.schema.json#/properties/timing"
-+            }
-+          }
-         }
--      }
-+      ]
-     },
-     "retryFields": {
-       "type": "object",

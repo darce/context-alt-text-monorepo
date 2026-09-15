@@ -1,7 +1,5 @@
- .../interface_adapters/http/routers/describe.py    | 182 +++++++++--------
- .../interface_adapters/http/schemas/responses.py   |  24 ++-
- .../scene/tests/test_describe_route.py             | 101 +++++++++-
- .../scene/tests/test_gpuflow_response_models.py    |   5 +-
- .../scene/tests/test_shared_schema_multipart.py    |  21 +-
- .../schemas/scene-describe-multipart.schema.json   | 218 +++++++++++----------
- 6 files changed, 348 insertions(+), 203 deletions(-)
+ .../interface_adapters/http/routers/describe.py    | 86 +++++++++++++++++++++-
+ .../interface_adapters/http/schemas/responses.py   | 11 ++-
+ .../scene/tests/test_describe_route.py             | 46 ++++++++++--
+ .../scene/tests/test_gpuflow_response_models.py    | 16 +++-
+ 4 files changed, 148 insertions(+), 11 deletions(-)

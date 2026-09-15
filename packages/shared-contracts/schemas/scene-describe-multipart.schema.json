@@ -12,7 +12,8 @@
         {
           "required": [
             "operation_id",
-            "startup_id"
+            "startup_id",
+            "timing"
           ]
         }
       ]
@@ -63,7 +64,8 @@
             "code",
             "message",
             "operation_id",
-            "startup_id"
+            "startup_id",
+            "timing"
           ],
           "additionalProperties": false,
           "allOf": [

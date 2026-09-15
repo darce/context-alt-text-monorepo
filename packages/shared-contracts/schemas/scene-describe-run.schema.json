@@ -240,7 +240,8 @@
       },
       "required": [
         "media_id",
-        "status"
+        "status",
+        "processing_ms"
       ],
       "additionalProperties": false
     },

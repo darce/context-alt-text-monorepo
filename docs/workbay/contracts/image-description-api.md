@@ -272,7 +272,9 @@ Canonical multipart response schema:
 [scene-describe-multipart.schema.json](../../../packages/shared-contracts/schemas/scene-describe-multipart.schema.json).
 Success retains the 17 core fields and carries top-level `operation_id`,
 `startup_id`, and `timing`. IDs are opaque strings, not UUID-constrained;
-`startup_id` is nullable. Older responses may omit timing entirely.
+`startup_id` is nullable. The legacy base response schema permits older responses to omit timing; accepted
+GPUFLOW-1 multipart operations require it, including explicit null values for
+unknown measurements.
 
 | HTTP status | detail.code | meaning |
 | --- | --- | --- |
@@ -285,7 +287,12 @@ Success retains the 17 core fields and carries top-level `operation_id`,
 Typed errors have `detail: {code, message, operation_id, startup_id, timing}`.
 Only starting may also carry `warmup_eta_seconds` (nonnegative or null when
 unknown). Unavailable, mismatch, expired and adapter-failure errors omit ETA.
-`Retry-After` is an HTTP header, never JSON. PHP and SPA preserve status, header
+`Retry-After` is an HTTP header, never JSON. It is REQUIRED on every
+`description_service_starting` 503 as integer delta-seconds in [1, 120], and
+MUST be absent on all other typed errors. HTTP-date values are not admitted.
+Required transport regression cases: starting with 1 and 120 succeeds; missing,
+0, 121, fractional and HTTP-date values fail; any Retry-After on another typed
+error fails. PHP and SPA preserve status, header
 and detail nesting verbatim (rg-015); these errors must bypass generic 5xx
 envelope rewriting.
 
@@ -313,7 +320,7 @@ retains run status at its root. It adds optional correlation IDs and `timing`:
 worker pickup. p50/max count measured items only; with no measurements they are
 null and a known measured-item count is zero. Unknown count is null.
 Never use summed parallel processing as wall elapsed.
-`#/definitions/item` describes an item, including nullable `processing_ms`
+`#/definitions/item` describes an item, including required-nullable `processing_ms`
 (the sum of measured attempts), and `#/definitions/items` describes the
 tenant/run/items wrapper. Failed, skipped and items in cancelled runs preserve
 persisted timing; untimed items remain null. Existing item status vocabulary

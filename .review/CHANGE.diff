@@ -1,286 +1,875 @@
 diff --git a/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py b/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py
 --- a/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py
 +++ b/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py
-@@ -39,7 +39,7 @@ from recognition.interface_adapters.http.deps.demo_quota import maybe_consume_de
- from recognition.interface_adapters.http.middleware.metrics import get_default_metrics
- from recognition.shared.db.dialect import is_postgres
- from scene.application.describe_async_worker import run_async_describe_job
--from scene.application.describe_load import load_snapshot, resolve_load_path, write_load_snapshot
-+from scene.application.describe_load import dump_load_snapshot
- from scene.application.describe_operation_repository import DescribeOperationRepository
- from scene.application.describe_run_repository import DescribeRunRepository
- from scene.application.description_repository import ImageDescriptionRepository
-@@ -320,12 +320,11 @@ def _typed_describe_error(
+@@ -56,7 +56,11 @@ from scene.application.naming_preview_service import (
+     naming_preview as _naming_preview,
+ )
+ from scene.application.settings.vlm import VlmSettings
+-from scene.application.visual_facts_service import VisualFactsService
++from scene.application.visual_facts_service import (
++    AdapterAttemptTiming,
++    VisualFactsService,
++    VisualFactsServiceResult,
++)
+ from scene.config.settings import DescriptionSettings
+ from scene.domain.describe_run import (
+     DescribeJobStatus,
+@@ -320,8 +324,7 @@ def _typed_describe_error(
      detail: dict[str, Any] = {
          "code": code,
          "message": message,
-+        # Schema requires both ids; mint only when no durable operation exists.
-+        "operation_id": operation_id or _mint_operation_id(),
-+        "startup_id": startup_id,
+-        # Schema requires both ids; mint only when no durable operation exists.
+-        "operation_id": operation_id or _mint_operation_id(),
++        "operation_id": operation_id,
+         "startup_id": startup_id,
          "timing": _timing_payload(timing),
      }
--    # Only emit ids that were persisted. No-session / accept-failure 503s omit both.
--    if operation_id is not None:
--        detail["operation_id"] = operation_id
--        detail["startup_id"] = startup_id
-     if code == "description_service_starting":
-         detail["warmup_eta_seconds"] = warmup_eta_seconds
-     headers = {"Retry-After": str(retry_after)} if retry_after is not None else None
-@@ -579,7 +578,7 @@ async def _accept_operation(
-     operation_id: str | None,
-     gpu_compute: bool,
-     server_start: float,
--) -> tuple[Any, str]:
-+) -> tuple[Any, str | None]:
-     if session is None:
-         if gpu_compute:
-             raise _typed_describe_error(
-@@ -588,7 +587,7 @@ async def _accept_operation(
-                 message="Description service is unavailable",
-                 timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
-             )
--        return None, operation_id or _mint_operation_id()
-+        return None, None
-     repo = _operation_repo(session)
-     try:
-         op = await repo.accept(tenant_id=tenant_uuid, request_digest=digest, operation_id=operation_id)
-@@ -631,14 +630,17 @@ async def _accept_operation(
-                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+@@ -388,8 +391,17 @@ def _untimed_with_elapsed(server_elapsed_ms: float | None) -> DescribeTiming:
+     )
+ 
+ 
+-def _mint_operation_id() -> str:
+-    return uuid.uuid4().hex
++class _PreflightMissCacheRepository:
++    """Skip VisualFactsService's second cache read after a GPU preflight miss."""
++
++    def __init__(self, inner: ImageDescriptionRepository) -> None:
++        self._inner = inner
++
++    async def get_by_cache_key(self, **kwargs):
++        return None
++
++    def __getattr__(self, name: str):
++        return getattr(self._inner, name)
+ 
+ 
+ async def _validated_describe_multipart_submission(
+@@ -566,6 +578,8 @@ async def _cached_gpu_description_row(
+             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+             code="description_service_unavailable",
+             message="Description service is unavailable",
++            operation_id=None,
++            startup_id=None,
+             timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
+         )
+ 
+@@ -586,7 +600,10 @@ async def _accept_operation(
                  code="description_service_unavailable",
                  message="Description service is unavailable",
-+                operation_id=operation_id,
-+                startup_id=None,
                  timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
++                operation_id=None,
++                startup_id=None,
              )
--        # Non-GPU adapters stay usable without a demand lease (CPU/hosted/default).
-+        # CPU/hosted/default stay usable without demand. Do not echo an
-+        # unaccepted client token; the success envelope still needs an id.
-         _logger.warning(
-             "non-GPU operation persistence skipped; continuing without a durable operation",
-             exc_info=True,
++        # CPU/hosted/default stay usable without demand when the DB is down.
+         return None, None
+     repo = _operation_repo(session)
+     try:
+@@ -597,50 +614,45 @@ async def _accept_operation(
+         await _commit_and_rescope(session, tenant_uuid)
+         return op, op.operation_id
+     except OperationMismatchError as exc:
+-        minted = operation_id or _mint_operation_id()
+         raise _typed_describe_error(
+             status_code=status.HTTP_409_CONFLICT,
+             code=OperationMismatchError.code,
+             message=str(exc) or "operation does not match this tenant and request",
+-            operation_id=minted,
++            operation_id=operation_id,
+             startup_id=None,
+             timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
+         ) from exc
+     except OperationExpiredError as exc:
+         # get_optional_session skips commit on HTTPException; persist rejection first.
+         await _commit_and_rescope(session, tenant_uuid)
+-        minted = operation_id or _mint_operation_id()
+         raise _typed_describe_error(
+             status_code=status.HTTP_410_GONE,
+             code=OperationExpiredError.code,
+             message=str(exc) or "operation expired; start a new operation",
+-            operation_id=minted,
++            operation_id=operation_id,
+             startup_id=None,
+             timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
+         ) from exc
+     except HTTPException:
+         raise
+     except Exception:
+-        if session is not None:
+-            await session.rollback()
+-            await set_tenant_context(session, tenant_uuid)
++        await session.rollback()
++        await set_tenant_context(session, tenant_uuid)
+         if gpu_compute:
+             _logger.error("operation accept failed", exc_info=True)
+-            raise _typed_describe_error(
+-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+-                code="description_service_unavailable",
+-                message="Description service is unavailable",
+-                operation_id=operation_id,
+-                startup_id=None,
+-                timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
++        else:
++            _logger.warning(
++                "non-GPU operation persistence skipped; continuing without a durable operation",
++                exc_info=True,
+             )
+-        # CPU/hosted/default stay usable without demand. Do not echo an
+-        # unaccepted client token; the success envelope still needs an id.
+-        _logger.warning(
+-            "non-GPU operation persistence skipped; continuing without a durable operation",
+-            exc_info=True,
++        raise _typed_describe_error(
++            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
++            code="description_service_unavailable",
++            message="Description service is unavailable",
++            operation_id=None,
++            startup_id=None,
++            timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
          )
--        return None, operation_id or _mint_operation_id()
-+        return None, None
+-        return None, None
  
  
  async def _ensure_gpu_ready(
-@@ -822,7 +824,6 @@ async def describe_image_multipart(
+@@ -684,7 +696,7 @@ async def _ensure_gpu_ready(
+     timing = _untimed_with_elapsed(_elapsed_ms(server_start))
+     startup_id = op.startup_id
+     if blocked:
+-        await _maybe_dump_describe_load(session_factory)
++        await dump_load_snapshot(session_factory)
+         raise _typed_describe_error(
+             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+             code="description_service_unavailable",
+@@ -700,7 +712,7 @@ async def _ensure_gpu_ready(
+             now=now.timestamp(),
+             warmup_timeout=settings.gpu_warmup_timeout_seconds,
+         )
+-        await _maybe_dump_describe_load(session_factory)
++        await dump_load_snapshot(session_factory)
+         raise _typed_describe_error(
+             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+             code="description_service_starting",
+@@ -714,9 +726,9 @@ async def _ensure_gpu_ready(
+     if state is GpuState.READY:
+         await repo.observe_ready(tenant_id=tenant_uuid, operation_id=op.operation_id, now=now)
+         await _commit_and_rescope(session, tenant_uuid)
+-        await _maybe_dump_describe_load(session_factory)
++        await dump_load_snapshot(session_factory)
+         return
+-    await _maybe_dump_describe_load(session_factory)
++    await dump_load_snapshot(session_factory)
+     raise _typed_describe_error(
+         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+         code="description_service_unavailable",
+@@ -770,6 +782,62 @@ async def _complete_operation(
+         )
+ 
+ 
++async def _terminalize_accepted_operation(
++    *,
++    session: AsyncSession | None,
++    tenant_uuid: uuid.UUID,
++    op,
++    server_elapsed_ms: float | None,
++    gpu_compute: bool,
++) -> None:
++    if session is None or op is None:
++        return
++    try:
++        await _complete_operation(
++            session=session,
++            tenant_uuid=tenant_uuid,
++            op=op,
++            processing_ms=None,
++            server_elapsed_ms=server_elapsed_ms,
++            gpu_compute=gpu_compute,
++            cached=False,
++        )
++    except HTTPException:
++        return
++    except Exception:
++        _logger.error("failed to terminalize operation_id=%s", op.operation_id, exc_info=True)
++
++
++async def _response_from_cached_row(
++    *,
++    service: VisualFactsService,
++    cached_row,
++    server_start: float,
++    media_id: int,
++    context: Mapping[str, Any] | None,
++    confirmed_faces,
++    naming_policy,
++    tenant_uuid: uuid.UUID,
++) -> VisualFactsServiceResult:
++    cache_response = service._cache_hit_response(
++        cached_row,
++        start=server_start,
++        media_id=media_id,
++        context=context,
++        confirmed_faces=confirmed_faces,
++        naming_policy=naming_policy,
++    )
++    await service._record_cache_hit(
++        tenant_id=tenant_uuid,
++        media_id=media_id,
++        image_hash=cached_row.image_hash,
++    )
++    return VisualFactsServiceResult(
++        **cache_response.model_dump(),
++        attempt_timing=AdapterAttemptTiming(processing_ms=0),
++    )
++
++
+ @router.post(
+     "/describe/multipart",
+     response_model=MultipartDescribeResponse,
+@@ -822,7 +890,7 @@ async def describe_image_multipart(
+         effective_adapter = adapter
+     gpu_compute = effective_adapter.kind is DescriptionAdapterKind.GPU
      digest = _multipart_request_digest(media_id=envelope.media_id, image_bytes=image_bytes, context=submission.context)
-     cached_gpu = False
+-    cached_gpu = False
++    cached_row = None
      op = None
--    operation_id = submission.operation_id or _mint_operation_id()
      if gpu_compute:
          cached_row = await _cached_gpu_description_row(
-             repository=repository,
-@@ -833,14 +834,25 @@ async def describe_image_multipart(
+@@ -833,7 +901,6 @@ async def describe_image_multipart(
+             adapter=effective_adapter,
              server_start=server_start,
          )
-         cached_gpu = cached_row is not None
--    if not cached_gpu:
--        op, operation_id = await _accept_operation(
-+    op, operation_id = await _accept_operation(
-+        session=session,
-+        tenant_uuid=tenant_uuid,
-+        digest=digest,
-+        operation_id=submission.operation_id,
-+        gpu_compute=gpu_compute,
-+        server_start=server_start,
-+    )
-+    if cached_gpu:
-+        # Cache hits still bind/validate the operation token (mismatch/expiry)
-+        # and terminalize any active lease before returning the cached body.
-+        op = await _complete_operation(
-             session=session,
-             tenant_uuid=tenant_uuid,
--            digest=digest,
--            operation_id=submission.operation_id,
--            gpu_compute=gpu_compute,
--            server_start=server_start,
-+            op=op,
-+            processing_ms=0,
-+            server_elapsed_ms=_elapsed_ms(server_start),
-+            gpu_compute=True,
-+            cached=True,
-         )
+-        cached_gpu = cached_row is not None
+     op, operation_id = await _accept_operation(
+         session=session,
+         tenant_uuid=tenant_uuid,
+@@ -842,23 +909,14 @@ async def describe_image_multipart(
+         gpu_compute=gpu_compute,
+         server_start=server_start,
+     )
+-    if cached_gpu:
+-        # Cache hits still bind/validate the operation token (mismatch/expiry)
+-        # and terminalize any active lease before returning the cached body.
+-        op = await _complete_operation(
+-            session=session,
+-            tenant_uuid=tenant_uuid,
+-            op=op,
+-            processing_ms=0,
+-            server_elapsed_ms=_elapsed_ms(server_start),
+-            gpu_compute=True,
+-            cached=True,
+-        )
      session_factory = worker_session_factory(session) if session is not None else None
      effective_timeout = _generation_timeout_seconds(settings, effective_adapter)
-@@ -985,7 +997,7 @@ async def describe_image_multipart(
-     dumped = response.model_dump(exclude={"operation_id", "startup_id", "timing", "attempt_timing"})
-     return MultipartDescribeResponse(
-         **dumped,
--        operation_id=operation_id,
-+        operation_id=operation_id or _mint_operation_id(),
-         startup_id=startup_id,
-         timing=timing,
-     )
-@@ -1002,16 +1014,7 @@ async def _with_bypass_session(session_factory: async_sessionmaker[AsyncSession]
++    describe_repository = repository
++    if gpu_compute and cached_row is None and repository is not None:
++        describe_repository = _PreflightMissCacheRepository(repository)
+     service = VisualFactsService(
+         adapter=effective_adapter,
+-        repository=repository,
++        repository=describe_repository,
+         audit_sink=audit_sink,
+         metrics=_DescriptionMetricsSink(),
+         generation_timeout_seconds=effective_timeout,
+@@ -877,6 +935,8 @@ async def describe_image_multipart(
+                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                     code="description_service_unavailable",
+                     message="Description service is unavailable",
++                    operation_id=None,
++                    startup_id=None,
+                     timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
+                 )
+             await _ensure_gpu_ready(
+@@ -890,18 +950,105 @@ async def describe_image_multipart(
+         await _charge_demo_quota()
  
- async def _maybe_dump_describe_load(session_factory: async_sessionmaker[AsyncSession] | None) -> None:
-     """Best-effort DB-derived load write for the GPU idle reaper (VLMFIX-S2-01)."""
--    if session_factory is None:
--        return
--    path = resolve_load_path()
--    try:
--        async with session_factory() as dump_session:
--            await enable_rls_bypass(dump_session)
--            payload = await load_snapshot(dump_session)
--        write_load_snapshot(payload, path)
--    except Exception:  # noqa: BLE001 - reaper snapshot is best-effort
--        _logger.debug("describe load snapshot write failed path=%s", path, exc_info=True)
+     try:
+-        response = await service.describe(
+-            tenant_id=tenant_uuid,
++        if cached_row is not None:
++            response = await _response_from_cached_row(
++                service=service,
++                cached_row=cached_row,
++                server_start=server_start,
++                media_id=envelope.media_id,
++                context=submission.context,
++                confirmed_faces=confirmed_faces,
++                naming_policy=naming_policy,
++                tenant_uuid=tenant_uuid,
++            )
++        else:
++            response = await service.describe(
++                tenant_id=tenant_uuid,
++                media_id=envelope.media_id,
++                image_bytes=image_bytes,
++                context=submission.context,
++                confirmed_faces=confirmed_faces,
++                naming_policy=naming_policy,
++                before_compute=_before_compute,
++            )
++        # HARM-02: derive positional naming from the Stage-2 decision — identities
++        # whose fact was dropped must not be named by the fallback.
++        preview_faces = _faces_for_naming_preview(confirmed_faces, service.last_attachments, service.last_phrase_boxes)
++        named_draft, naming_provenance = await _naming_preview(
++            session=session,
++            tenant=tenant_record,
++            tenant_uuid=tenant_uuid,
+             media_id=envelope.media_id,
+             image_bytes=image_bytes,
+-            context=submission.context,
+-            confirmed_faces=confirmed_faces,
++            generic_draft=response.alt_text_draft,
++            # Adapter output on generation; restored from the cached row on cache
++            # hits — both paths yield the same named draft (E19-4A-S4-BR-03).
++            phrase_boxes=service.last_phrase_boxes,
++            confirmed_faces=preview_faces,
+             naming_policy=naming_policy,
+-            before_compute=_before_compute,
++        )
++        response = response.model_copy(
++            update={
++                "generic_draft": response.alt_text_draft,
++                "named_draft": named_draft,
++                "naming_provenance": naming_provenance,
++            }
++        )
++        server_elapsed_ms = _elapsed_ms(server_start)
++        processing_ms = response.attempt_timing.processing_ms
++        completed = await _complete_operation(
++            session=session,
++            tenant_uuid=tenant_uuid,
++            op=op,
++            processing_ms=processing_ms,
++            server_elapsed_ms=server_elapsed_ms,
++            gpu_compute=gpu_compute,
++            cached=response.cached,
++        )
++        if session is not None:
++            await session.commit()
++        if completed is not None and completed.ramp_up_ms is not None:
++            service.record_readiness_wait(completed.ramp_up_ms)
++        elif not gpu_compute or response.cached:
++            service.record_readiness_wait(0)
++        startup_id = None if completed is None else completed.startup_id
++        if response.cached:
++            startup_id = None
++        timing = _timing_from_operation(
++            op=completed,
++            processing_ms=processing_ms,
++            server_elapsed_ms=server_elapsed_ms,
++            cached=response.cached,
++        )
++        dumped = response.model_dump(exclude={"operation_id", "startup_id", "timing", "attempt_timing"})
++        accepted = completed if completed is not None else op
++        if accepted is None:
++            # CPU/hosted with no session: compute still runs, but there is no
++            # durable DescribeOperation to advertise.
++            if gpu_compute:
++                raise RuntimeError("gpu describe succeeded without an accepted operation")
++            return MultipartDescribeResponse(
++                **dumped,
++                operation_id=None,
++                startup_id=startup_id,
++                timing=timing,
++            )
++        return MultipartDescribeResponse(
++            **dumped,
++            operation_id=accepted.operation_id,
++            startup_id=startup_id,
++            timing=timing,
+         )
+     except HTTPException:
+         raise
+     except TimeoutError as exc:
++        await _terminalize_accepted_operation(
++            session=session,
++            tenant_uuid=tenant_uuid,
++            op=op,
++            server_elapsed_ms=_elapsed_ms(server_start),
++            gpu_compute=gpu_compute,
++        )
+         raise HTTPException(
+             status.HTTP_504_GATEWAY_TIMEOUT,
+             f"description generation exceeded {effective_timeout}s",
+@@ -945,62 +1092,22 @@ async def describe_image_multipart(
+                 timing=timing,
+             ) from exc
+         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+-    # HARM-02: derive positional naming from the Stage-2 decision — identities
+-    # whose fact was dropped must not be named by the fallback.
+-    preview_faces = _faces_for_naming_preview(confirmed_faces, service.last_attachments, service.last_phrase_boxes)
+-    named_draft, naming_provenance = await _naming_preview(
+-        session=session,
+-        tenant=tenant_record,
+-        tenant_uuid=tenant_uuid,
+-        media_id=envelope.media_id,
+-        image_bytes=image_bytes,
+-        generic_draft=response.alt_text_draft,
+-        # Adapter output on generation; restored from the cached row on cache
+-        # hits — both paths yield the same named draft (E19-4A-S4-BR-03).
+-        phrase_boxes=service.last_phrase_boxes,
+-        confirmed_faces=preview_faces,
+-        naming_policy=naming_policy,
+-    )
+-    response = response.model_copy(
+-        update={
+-            "generic_draft": response.alt_text_draft,
+-            "named_draft": named_draft,
+-            "naming_provenance": naming_provenance,
+-        }
+-    )
+-    server_elapsed_ms = _elapsed_ms(server_start)
+-    processing_ms = response.attempt_timing.processing_ms
+-    completed = await _complete_operation(
+-        session=session,
+-        tenant_uuid=tenant_uuid,
+-        op=op,
+-        processing_ms=processing_ms,
+-        server_elapsed_ms=server_elapsed_ms,
+-        gpu_compute=gpu_compute,
+-        cached=response.cached,
+-    )
+-    if session is not None:
+-        await session.commit()
+-    if completed is not None and completed.ramp_up_ms is not None:
+-        service.record_readiness_wait(completed.ramp_up_ms)
+-    elif not gpu_compute or response.cached:
+-        service.record_readiness_wait(0)
+-    startup_id = None if completed is None else completed.startup_id
+-    if response.cached:
+-        startup_id = None
+-    timing = _timing_from_operation(
+-        op=completed,
+-        processing_ms=processing_ms,
+-        server_elapsed_ms=server_elapsed_ms,
+-        cached=response.cached,
+-    )
+-    dumped = response.model_dump(exclude={"operation_id", "startup_id", "timing", "attempt_timing"})
+-    return MultipartDescribeResponse(
+-        **dumped,
+-        operation_id=operation_id or _mint_operation_id(),
+-        startup_id=startup_id,
+-        timing=timing,
+-    )
++    except Exception as exc:
++        await _terminalize_accepted_operation(
++            session=session,
++            tenant_uuid=tenant_uuid,
++            op=op,
++            server_elapsed_ms=_elapsed_ms(server_start),
++            gpu_compute=gpu_compute,
++        )
++        raise _typed_describe_error(
++            status_code=status.HTTP_502_BAD_GATEWAY,
++            code="description_service_error",
++            message="Description service error",
++            operation_id=operation_id,
++            startup_id=None if op is None else op.startup_id,
++            timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
++        ) from exc
+ 
+ 
+ async def _with_bypass_session(session_factory: async_sessionmaker[AsyncSession], op):
+@@ -1012,11 +1119,6 @@ async def _with_bypass_session(session_factory: async_sessionmaker[AsyncSession]
+         return result
+ 
+ 
+-async def _maybe_dump_describe_load(session_factory: async_sessionmaker[AsyncSession] | None) -> None:
+-    """Best-effort DB-derived load write for the GPU idle reaper (VLMFIX-S2-01)."""
+-    await dump_load_snapshot(session_factory)
+-
+-
+ async def _maybe_purge_expired_single_runs(session_factory: async_sessionmaker[AsyncSession]) -> None:
+     """Opportunistic retention sweep on a dedicated bypass session (design (d))."""
+     try:
+@@ -1091,7 +1193,7 @@ async def enqueue_describe_image(
+         ) from exc
+ 
+     await _maybe_purge_expired_single_runs(session_factory)
+-    await _maybe_dump_describe_load(session_factory)
 +    await dump_load_snapshot(session_factory)
  
+     background_tasks.add_task(
+         _run_async_describe_job_and_release,
+@@ -1132,7 +1234,7 @@ async def _run_async_describe_job_and_release(
+         )
+     finally:
+         _ASYNC_ADMISSION.release(image_len)
+-        await _maybe_dump_describe_load(session_factory)
++        await dump_load_snapshot(session_factory)
  
- async def _maybe_purge_expired_single_runs(session_factory: async_sessionmaker[AsyncSession]) -> None:
+ 
+ @router.get("/describe/jobs/{job_id}", response_model=DescribeJobResult)
+@@ -1163,5 +1265,5 @@ async def get_describe_job(
+ 
+     result = _job_result_from_item(run_id=run_id, item=item)
+     if describe_job_status(item) in _TERMINAL_POLL_STATUSES:
+-        await _maybe_dump_describe_load(worker_session_factory(session))
++        await dump_load_snapshot(worker_session_factory(session))
+     return result
+diff --git a/apps/prototype-description-service/scene/interface_adapters/http/schemas/responses.py b/apps/prototype-description-service/scene/interface_adapters/http/schemas/responses.py
+--- a/apps/prototype-description-service/scene/interface_adapters/http/schemas/responses.py
++++ b/apps/prototype-description-service/scene/interface_adapters/http/schemas/responses.py
+@@ -213,12 +213,14 @@ class VisualFactsResponse(OmitAbsentOperationMetadata):
+ class MultipartDescribeResponse(VisualFactsResponse):
+     """Strict multipart success envelope for ``/scene/describe/multipart``.
+ 
+-    ``operation_id`` and ``timing`` are required and non-null; ``startup_id`` is
+-    a required key that may be JSON null for warm/cache work. Base
++    ``operation_id`` is required and may be JSON null when no durable
++    DescribeOperation was accepted (CPU/hosted, no session); clients must not
++    poll a lease. ``timing`` is required and non-null; ``startup_id`` is a
++    required key that may be JSON null for warm/cache work. Base
+     ``VisualFactsResponse`` omission behaviour is unchanged.
+     """
+ 
+-    operation_id: str = Field(min_length=1, max_length=128)
++    operation_id: str | None = Field(min_length=1, max_length=128)
+     startup_id: str | None
+     timing: DescribeTiming
+ 
 diff --git a/apps/prototype-description-service/scene/tests/test_describe_route.py b/apps/prototype-description-service/scene/tests/test_describe_route.py
 --- a/apps/prototype-description-service/scene/tests/test_describe_route.py
 +++ b/apps/prototype-description-service/scene/tests/test_describe_route.py
-@@ -1176,9 +1176,10 @@ def test_gpu_cache_hit_completes_operation_without_active_lease(monkeypatch, tmp
-         assert body["timing"]["processing_ms"] == 0
+@@ -181,6 +181,26 @@ def _post(
+     )
+ 
+ 
++def _ensure_describe_operation_tables(session_factory) -> None:
++    """Demo-quota harness omits operation/lease tables; multipart accept needs them."""
++
++    async def _create():
++        engine = session_factory.kw["bind"]
++        async with engine.begin() as conn:
++            await conn.run_sync(
++                lambda sync_conn: Base.metadata.create_all(
++                    sync_conn,
++                    tables=[
++                        DescribeStartup.__table__,
++                        DescribeOperation.__table__,
++                        DescribeDemandLease.__table__,
++                    ],
++                )
++            )
++
++    asyncio.run(_create())
++
++
+ def _lease_state(client, operation_id: str) -> str | None:
+     async def _read():
+         async with client.app.state.session_factory() as session:
+@@ -831,6 +851,7 @@ def test_async_enqueue_requires_tenant_claim(monkeypatch):
+ def test_demo_quota_multipart_below_cap_increments_and_at_cap_429():
+     # Distinct image bytes per request so cache hits cannot skip compute/charge.
+     with _demo_quota_client(recognition_quota=1) as (client, sf, _prov, tenant_id, slug):
++        _ensure_describe_operation_tables(sf)
+         r1 = _post(client, tenant_id, media_id=1, image_key="image_1", body=b"quota-img-1")
+         assert r1.status_code == 200, r1.text
+         assert _recognition_used(sf, slug) == 1
+@@ -869,6 +890,7 @@ def test_demo_quota_shared_pool_across_surfaces():
+     from recognition.application.services.demo_provisioning_service import try_consume_demo_quota
+ 
+     with _demo_quota_client(recognition_quota=5) as (client, sf, provisioned, tenant_id, slug):
++        _ensure_describe_operation_tables(sf)
+ 
+         async def _consume_one():
+             async with sf() as s:
+@@ -903,6 +925,7 @@ def test_demo_quota_non_demo_key_multipart_and_async_unaffected(monkeypatch):
+         tenant_id,
+         slug,
+     ):
++        _ensure_describe_operation_tables(sf)
+         r1 = _post(client, tenant_id, media_id=1, image_key="image_1", body=b"non-demo-1")
+         assert r1.status_code == 200, r1.text
+         r2 = _post_async(client, tenant_id, media_id=2, image_key="image_2", body=b"non-demo-2")
+@@ -944,6 +967,7 @@ def test_demo_quota_decorative_204_does_not_charge():
+ def test_demo_quota_cache_hit_does_not_charge():
+     """Cache hit is zero-compute — charge only on real adapter dispatch (DS2B-PM-S2-01)."""
+     with _demo_quota_client(recognition_quota=5) as (client, sf, _prov, tenant_id, slug):
++        _ensure_describe_operation_tables(sf)
+         body = b"cache-hit-unique-bytes"
+         r1 = _post(client, tenant_id, media_id=1, image_key="image_1", body=body)
+         assert r1.status_code == 200, r1.text
+@@ -964,6 +988,7 @@ def test_demo_quota_survives_post_consume_http_error():
+     see the spent unit after a validation failure on another path.
+     """
+     with _demo_quota_client(recognition_quota=2) as (client, sf, _prov, tenant_id, slug):
++        _ensure_describe_operation_tables(sf)
+         ok = _post(client, tenant_id, media_id=1, image_key="image_1", body=b"durable-1")
+         assert ok.status_code == 200, ok.text
+         assert _recognition_used(sf, slug) == 1
+@@ -1152,20 +1177,29 @@ def test_gpu_cold_wait_then_ready_records_startup_and_ramp_up(monkeypatch, tmp_p
+ def test_gpu_cache_hit_completes_operation_without_active_lease(monkeypatch, tmp_path):
+     _gpu_env(monkeypatch, tmp_path, state="ready")
+     from scene.application.describe_operation_repository import DescribeOperationRepository
++    from scene.application.visual_facts_service import VisualFactsService
+ 
+     accepts: list[int] = []
++    describes: list[int] = []
+     real_accept = DescribeOperationRepository.accept
++    real_describe = VisualFactsService.describe
+ 
+     async def spy_accept(self, **kwargs):
+         accepts.append(1)
+         return await real_accept(self, **kwargs)
+ 
++    async def spy_describe(self, **kwargs):
++        describes.append(1)
++        return await real_describe(self, **kwargs)
++
+     monkeypatch.setattr(DescribeOperationRepository, "accept", spy_accept)
++    monkeypatch.setattr(VisualFactsService, "describe", spy_describe)
+     adapter = _GpuAdapter()
+     with _client(adapter=adapter) as client:
+         first = _post(client, TENANT_ID)
+         assert first.status_code == 200, first.text
+         assert len(accepts) == 1
++        assert len(describes) == 1
+         cached = _post(client, TENANT_ID)
+         assert cached.status_code == 200, cached.text
+         body = cached.json()
+@@ -1177,6 +1211,7 @@ def test_gpu_cache_hit_completes_operation_without_active_lease(monkeypatch, tmp
          assert body["timing"]["startup_ms"] is None
          assert adapter.calls == 1
--        assert len(accepts) == 1
-+        assert len(accepts) == 2
+         assert len(accepts) == 2
++        assert describes == [1]
          assert _active_lease_count(client) == 0
          assert _lease_state(client, first.json()["operation_id"]) == "completed"
-+        assert _lease_state(client, body["operation_id"]) == "completed"
- 
- 
- class _UnavailableGpuAdapter:
-@@ -1252,8 +1253,9 @@ def test_gpu_accept_failure_is_typed_503_without_adapter_work(monkeypatch, tmp_p
+         assert _lease_state(client, body["operation_id"]) == "completed"
+@@ -1253,8 +1288,10 @@ def test_gpu_accept_failure_is_typed_503_without_adapter_work(monkeypatch, tmp_p
          assert "Retry-After" not in response.headers
          detail = response.json()["detail"]
          assert detail["code"] == "description_service_unavailable"
--        assert "operation_id" not in detail
--        assert "startup_id" not in detail
-+        assert detail["operation_id"]
-+        assert "startup_id" in detail
-+        assert "timing" in detail
+-        assert detail["operation_id"]
++        assert "operation_id" in detail
++        assert detail["operation_id"] is None
+         assert "startup_id" in detail
++        assert detail["startup_id"] is None
+         assert "timing" in detail
          assert adapter.calls == 0
          monkeypatch.setattr(describe_module, "_operation_repo", real_repo)
-         retry = _post(client, TENANT_ID)
-@@ -1372,13 +1374,14 @@ def test_gpu_cache_exception_does_not_leak_active_operation(monkeypatch, tmp_pat
+@@ -1374,14 +1411,16 @@ def test_gpu_cache_exception_does_not_leak_active_operation(monkeypatch, tmp_pat
          assert "Retry-After" not in response.headers
          detail = response.json()["detail"]
          assert detail["code"] == "description_service_unavailable"
--        assert "operation_id" not in detail
--        assert "startup_id" not in detail
-+        assert detail["operation_id"]
-+        assert "startup_id" in detail
-+        assert "timing" in detail
+-        assert detail["operation_id"]
++        assert "operation_id" in detail
++        assert detail["operation_id"] is None
+         assert "startup_id" in detail
++        assert detail["startup_id"] is None
+         assert "timing" in detail
          assert adapter.calls == 0
          assert _active_lease_count(client) == 0
  
  
--def test_gpu_no_session_unavailable_omits_operation_id(monkeypatch, tmp_path):
-+def test_gpu_no_session_unavailable_includes_operation_ids(monkeypatch, tmp_path):
+-def test_gpu_no_session_unavailable_includes_operation_ids(monkeypatch, tmp_path):
++def test_gpu_no_session_unavailable_omits_durable_operation_id(monkeypatch, tmp_path):
      _gpu_env(monkeypatch, tmp_path, state="ready")
      adapter = _GpuAdapter()
      with _client(adapter=adapter, db_absent=True) as client:
-@@ -1387,15 +1390,19 @@ def test_gpu_no_session_unavailable_omits_operation_id(monkeypatch, tmp_path):
+@@ -1390,19 +1429,20 @@ def test_gpu_no_session_unavailable_includes_operation_ids(monkeypatch, tmp_path
          assert "Retry-After" not in response.headers
          detail = response.json()["detail"]
          assert detail["code"] == "description_service_unavailable"
--        assert "operation_id" not in detail
--        assert "startup_id" not in detail
-+        assert detail["operation_id"]
-+        assert "startup_id" in detail
-+        assert detail["startup_id"] is None
-+        assert "timing" in detail
+-        assert detail["operation_id"]
++        assert "operation_id" in detail
++        assert detail["operation_id"] is None
+         assert "startup_id" in detail
+         assert detail["startup_id"] is None
+         assert "timing" in detail
          retry = _post(client, TENANT_ID)
          assert retry.status_code == 503, retry.text
--        assert "operation_id" not in retry.json()["detail"]
-+        retry_detail = retry.json()["detail"]
-+        assert retry_detail["operation_id"]
-+        assert "startup_id" in retry_detail
+         retry_detail = retry.json()["detail"]
+-        assert retry_detail["operation_id"]
++        assert retry_detail["operation_id"] is None
+         assert "startup_id" in retry_detail
          assert adapter.calls == 0
  
  
--def test_non_gpu_accept_failure_logs_warning_and_continues(monkeypatch, caplog):
-+def test_non_gpu_accept_failure_logs_warning_and_does_not_echo_token(monkeypatch, caplog):
+-def test_non_gpu_accept_failure_logs_warning_and_does_not_echo_token(monkeypatch, caplog):
++def test_non_gpu_accept_failure_is_typed_503_without_minted_id(monkeypatch, caplog):
      import logging
  
      from scene.interface_adapters.http.routers import describe as describe_module
-@@ -1410,10 +1417,11 @@ def test_non_gpu_accept_failure_logs_warning_and_continues(monkeypatch, caplog):
-         caplog.at_level(logging.DEBUG, logger="scene.interface_adapters.http.routers.describe"),
+@@ -1418,11 +1458,12 @@ def test_non_gpu_accept_failure_logs_warning_and_does_not_echo_token(monkeypatch
          _client() as client,
      ):
--        response = _post(client, TENANT_ID)
-+        response = _post(client, TENANT_ID, extra_data={"operation_id": "client-token"})
-     assert response.status_code == 200, response.text
-     body = response.json()
-     assert body["operation_id"]
-+    assert body["operation_id"] != "client-token"
-     assert body["adapter"] == "seeded"
+         response = _post(client, TENANT_ID, extra_data={"operation_id": "client-token"})
+-    assert response.status_code == 200, response.text
+-    body = response.json()
+-    assert body["operation_id"]
+-    assert body["operation_id"] != "client-token"
+-    assert body["adapter"] == "seeded"
++    assert response.status_code == 503, response.text
++    detail = response.json()["detail"]
++    assert detail["code"] == "description_service_unavailable"
++    assert "operation_id" in detail
++    assert detail["operation_id"] is None
++    assert detail["startup_id"] is None
      records = [rec for rec in caplog.records if "non-GPU operation persistence skipped" in rec.getMessage()]
      assert records
-@@ -1421,3 +1429,67 @@ def test_non_gpu_accept_failure_logs_warning_and_continues(monkeypatch, caplog):
-     assert not any(
-         rec.levelno < logging.WARNING and "operation persistence skipped" in rec.getMessage() for rec in caplog.records
-     )
+     assert all(rec.levelno >= logging.WARNING for rec in records)
+@@ -1493,3 +1534,74 @@ def test_gpu_starting_uses_canonical_dump_load_snapshot(monkeypatch, tmp_path):
+         assert response.json()["detail"]["code"] == "description_service_starting"
+     assert calls
+     assert adapter.calls == 0
 +
 +
-+def test_gpu_cache_hit_retry_completes_existing_lease(monkeypatch, tmp_path):
-+    state_path, _, _, _now = _gpu_env(monkeypatch, tmp_path, state="stopped")
-+    adapter = _GpuAdapter()
-+    with _client(adapter=adapter) as client:
-+        first = _post(client, TENANT_ID)
-+        assert first.status_code == 503, first.text
-+        operation_id = first.json()["detail"]["operation_id"]
-+        assert _lease_state(client, operation_id) == "active"
-+        from scene.application import gpu_state as gpu_state_mod
-+
-+        gpu_state_mod.reset_gpu_state_observation_for_tests()
-+        _write_gpu_state(state_path, state="ready", now=time.time())
-+        warm = _post(client, TENANT_ID)
-+        assert warm.status_code == 200, warm.text
-+        assert warm.json()["cached"] is False
-+        assert _lease_state(client, operation_id) == "active"
-+        retry = _post(client, TENANT_ID, extra_data={"operation_id": operation_id})
-+        assert retry.status_code == 200, retry.text
-+        body = retry.json()
-+        assert body["cached"] is True
-+        assert body["operation_id"] == operation_id
-+        assert body["startup_id"] is None
-+        assert adapter.calls == 1
-+        assert _lease_state(client, operation_id) == "completed"
-+        assert _active_lease_count(client) == 0
-+
-+
-+def test_gpu_cache_hit_mismatch_is_409(monkeypatch, tmp_path):
++def test_gpu_service_exception_after_accept_terminalizes_operation(monkeypatch, tmp_path):
 +    _gpu_env(monkeypatch, tmp_path, state="ready")
-+    adapter = _GpuAdapter()
-+    with _client(adapter=adapter) as client:
-+        first = _post(client, TENANT_ID)
-+        assert first.status_code == 200, first.text
-+        mismatch = _post(client, TENANT_ID, extra_data={"operation_id": "not-this-operation"})
-+        assert mismatch.status_code == 409, mismatch.text
-+        detail = mismatch.json()["detail"]
-+        assert detail["code"] == "operation_mismatch"
-+        assert detail["operation_id"]
-+        assert "startup_id" in detail
-+        assert "timing" in detail
-+        assert adapter.calls == 1
++    from scene.application.visual_facts_service import VisualFactsService
 +
++    async def boom(self, **kwargs):
++        raise RuntimeError("service boom")
 +
-+def test_gpu_starting_uses_canonical_dump_load_snapshot(monkeypatch, tmp_path):
-+    _gpu_env(monkeypatch, tmp_path, state="stopped")
-+    from scene.application.describe_load import dump_load_snapshot
-+    from scene.interface_adapters.http.routers import describe as describe_module
-+
-+    calls: list[object] = []
-+
-+    async def spy(session_factory, *args, **kwargs):
-+        calls.append(session_factory)
-+        return await dump_load_snapshot(session_factory, *args, **kwargs)
-+
-+    monkeypatch.setattr(describe_module, "dump_load_snapshot", spy)
++    monkeypatch.setattr(VisualFactsService, "describe", boom)
 +    adapter = _GpuAdapter()
 +    with _client(adapter=adapter) as client:
 +        response = _post(client, TENANT_ID)
-+        assert response.status_code == 503, response.text
-+        assert response.json()["detail"]["code"] == "description_service_starting"
-+    assert calls
-+    assert adapter.calls == 0
++        assert response.status_code == 502, response.text
++        detail = response.json()["detail"]
++        assert detail["code"] == "description_service_error"
++        assert detail["operation_id"]
++        assert "startup_id" in detail
++        assert "timing" in detail
++        assert adapter.calls == 0
++        assert _lease_state(client, detail["operation_id"]) == "completed"
++        assert _active_lease_count(client) == 0
++
++
++def test_gpu_preflight_miss_does_not_repeat_cache_lookup(monkeypatch, tmp_path):
++    _gpu_env(monkeypatch, tmp_path, state="ready")
++    from scene.application.description_repository import ImageDescriptionRepository
++
++    lookups: list[int] = []
++    real = ImageDescriptionRepository.get_by_cache_key
++
++    async def counted(self, **kwargs):
++        lookups.append(1)
++        if len(lookups) > 1:
++            raise RuntimeError("second cache lookup must not run")
++        return await real(self, **kwargs)
++
++    monkeypatch.setattr(ImageDescriptionRepository, "get_by_cache_key", counted)
++    adapter = _GpuAdapter()
++    with _client(adapter=adapter) as client:
++        response = _post(client, TENANT_ID)
++        assert response.status_code == 200, response.text
++        body = response.json()
++        assert body["cached"] is False
++        assert body["operation_id"]
++        assert len(lookups) == 1
++        assert adapter.calls == 1
++        assert _lease_state(client, body["operation_id"]) == "completed"
++        assert _active_lease_count(client) == 0
++
++
++def test_cpu_no_session_success_omits_durable_operation_id(monkeypatch):
++    from scene.application.describe_operation_repository import DescribeOperationRepository
++
++    accepts: list[int] = []
++    real_accept = DescribeOperationRepository.accept
++
++    async def spy_accept(self, **kwargs):
++        accepts.append(1)
++        return await real_accept(self, **kwargs)
++
++    monkeypatch.setattr(DescribeOperationRepository, "accept", spy_accept)
++    with _client(db_absent=True) as client:
++        response = _post(client, TENANT_ID)
++        assert response.status_code == 200, response.text
++        body = response.json()
++        assert "operation_id" in body
++        assert body["operation_id"] is None
++        assert "startup_id" in body
++        assert "timing" in body
++        assert accepts == []
+diff --git a/apps/prototype-description-service/scene/tests/test_gpuflow_response_models.py b/apps/prototype-description-service/scene/tests/test_gpuflow_response_models.py
+--- a/apps/prototype-description-service/scene/tests/test_gpuflow_response_models.py
++++ b/apps/prototype-description-service/scene/tests/test_gpuflow_response_models.py
+@@ -236,6 +236,11 @@ def test_multipart_requires_operation_id_and_timing():
+         MultipartDescribeResponse(**_VISUAL_FACTS_PAYLOAD, operation_id="opaque-operation", timing=_VISUAL_TIMING)
+ 
+ 
++def test_multipart_omitting_startup_id_is_rejected():
++    with pytest.raises(ValidationError):
++        MultipartDescribeResponse(**_VISUAL_FACTS_PAYLOAD, operation_id="opaque-operation", timing=_VISUAL_TIMING)
++
++
+ def test_multipart_emits_null_startup_id_and_validates():
+     response = MultipartDescribeResponse(
+         **_VISUAL_FACTS_PAYLOAD,
+@@ -253,6 +258,24 @@ def test_multipart_emits_null_startup_id_and_validates():
+         validator.validate(wire)
+ 
+ 
++def test_multipart_accepts_null_operation_id():
++    response = MultipartDescribeResponse(
++        **_VISUAL_FACTS_PAYLOAD,
++        operation_id=None,
++        startup_id=None,
++        timing=_VISUAL_TIMING,
++    )
++    dumped, encoded = _dumped_payloads(response)
++    validator = _multipart_validator()
++    for wire in (dumped, encoded):
++        assert "operation_id" in wire
++        assert wire["operation_id"] is None
++        assert "startup_id" in wire
++        assert wire["startup_id"] is None
++        assert wire["timing"] == _VISUAL_TIMING
++        validator.validate(wire)
++
++
+ def test_base_omission_validates_base_schema_but_fails_multipart_schema():
+     response = VisualFactsResponse(**_VISUAL_FACTS_PAYLOAD)
+     dumped, encoded = _dumped_payloads(response)
+diff --git a/apps/prototype-description-service/scene/tests/test_response_schema_parity.py b/apps/prototype-description-service/scene/tests/test_response_schema_parity.py
+--- a/apps/prototype-description-service/scene/tests/test_response_schema_parity.py
++++ b/apps/prototype-description-service/scene/tests/test_response_schema_parity.py
+@@ -54,6 +54,11 @@ PREVIEW_FIELDS = {
+     "attachment_provenance",
+     "alt_text_long",
+ }
++OPERATION_FIELDS = {
++    "operation_id",
++    "startup_id",
++    "timing",
++}
+ 
+ 
+ def test_schema_model_id_documents_gpu_hub_pin_format():
+@@ -66,7 +71,8 @@ def test_schema_model_id_documents_gpu_hub_pin_format():
+ 
+ def test_schema_required_matches_model_fields():
+     schema = _schema()
+-    assert set(schema["required"]) == set(VisualFactsResponse.model_fields) - PREVIEW_FIELDS
++    additive = PREVIEW_FIELDS | OPERATION_FIELDS
++    assert set(schema["required"]) == set(VisualFactsResponse.model_fields) - additive
+     assert len(schema["required"]) == 17
+     assert set(schema["properties"]) == set(VisualFactsResponse.model_fields)
+ 
+diff --git a/apps/prototype-description-service/scene/tests/test_schemas.py b/apps/prototype-description-service/scene/tests/test_schemas.py
+--- a/apps/prototype-description-service/scene/tests/test_schemas.py
++++ b/apps/prototype-description-service/scene/tests/test_schemas.py
+@@ -19,6 +19,11 @@ PREVIEW_FIELDS = {
+     # the adapter produces only the short draft.
+     "alt_text_long",
+ }
++OPERATION_FIELDS = {
++    "operation_id",
++    "startup_id",
++    "timing",
++}
+ EXPECTED_FIELDS = {
+     "tenant_id",
+     "media_id",
+@@ -63,7 +68,7 @@ def _sample_response() -> dict:
+ 
+ 
+ def test_response_has_exactly_15_contract_fields():
+-    assert set(VisualFactsResponse.model_fields) == EXPECTED_FIELDS | PREVIEW_FIELDS
++    assert set(VisualFactsResponse.model_fields) == EXPECTED_FIELDS | PREVIEW_FIELDS | OPERATION_FIELDS
+     assert len(EXPECTED_FIELDS) == 17
+ 
+ 
 diff --git a/apps/prototype-description-service/scene/tests/test_shared_schema_multipart.py b/apps/prototype-description-service/scene/tests/test_shared_schema_multipart.py
 --- a/apps/prototype-description-service/scene/tests/test_shared_schema_multipart.py
 +++ b/apps/prototype-description-service/scene/tests/test_shared_schema_multipart.py
@@ -288,42 +877,230 @@ diff --git a/apps/prototype-description-service/scene/tests/test_shared_schema_m
  from jsonschema import Draft7Validator
  from referencing import Registry, Resource
  
--from scene.tests.test_describe_route import TENANT_ID, _client, _post
-+from scene.tests.test_describe_route import TENANT_ID, _GpuAdapter, _client, _gpu_env, _post
+-from scene.tests.test_describe_route import TENANT_ID, _GpuAdapter, _client, _gpu_env, _post
++from scene.tests.test_describe_route import TENANT_ID, _client, _gpu_env, _GpuAdapter, _post
  
  _REPO_ROOT = Path(__file__).resolve().parents[4]
  _SCHEMA_DIR = _REPO_ROOT / "packages/shared-contracts/schemas"
-@@ -117,3 +117,33 @@ def test_production_route_success_validates_against_shared_schema():
-         assert cached_body["timing"]["ramp_up_ms"] == 0
-         assert cached_body["timing"]["processing_ms"] == 0
-         assert cached_body["timing"]["startup_ms"] is None
+@@ -74,6 +74,16 @@ def test_typed_error_envelopes_validate():
+         }
+     }
+     validator.validate(unavailable)
++    unavailable_null = {
++        "detail": {
++            "code": "description_service_unavailable",
++            "message": "Description service is unavailable",
++            "operation_id": None,
++            "startup_id": None,
++            "timing": TIMING,
++        }
++    }
++    validator.validate(unavailable_null)
+     assert not validator.is_valid(
+         {
+             "detail": {
+@@ -84,6 +94,14 @@ def test_typed_error_envelopes_validate():
+     )
+ 
+ 
++def test_success_envelope_allows_null_operation_id_and_rejects_empty():
++    payload = json.loads(_FIXTURE.read_text())
++    payload["operation_id"] = None
++    _multipart_validator().validate(payload)
++    payload["operation_id"] = ""
++    assert not _multipart_validator().is_valid(payload)
 +
 +
-+def test_production_route_starting_error_validates_against_shared_schema(monkeypatch, tmp_path):
-+    _gpu_env(monkeypatch, tmp_path, state="stopped")
+ _NAMING_PROVENANCE_SCHEMA_KEYS = {"injected_names", "naming_allowed", "reason", "mode"}
+ 
+ 
+@@ -92,7 +110,9 @@ def _schema_body(payload: dict) -> dict:
+     body = json.loads(json.dumps(payload))
+     provenance = body.get("naming_provenance")
+     if isinstance(provenance, dict):
+-        body["naming_provenance"] = {key: provenance[key] for key in _NAMING_PROVENANCE_SCHEMA_KEYS if key in provenance}
++        body["naming_provenance"] = {
++            key: provenance[key] for key in _NAMING_PROVENANCE_SCHEMA_KEYS if key in provenance
++        }
+     return body
+ 
+ 
+@@ -142,8 +162,21 @@ def test_production_route_unavailable_error_validates_against_shared_schema(monk
+         body = response.json()
+         validator.validate(body)
+         assert body["detail"]["code"] == "description_service_unavailable"
+-        assert body["detail"]["operation_id"]
++        assert "operation_id" in body["detail"]
++        assert body["detail"]["operation_id"] is None
+         assert "startup_id" in body["detail"]
+         assert body["detail"]["startup_id"] is None
+         assert "timing" in body["detail"]
+         assert "warmup_eta_seconds" not in body["detail"]
++
++
++def test_production_cpu_no_session_success_validates_null_operation_id():
 +    validator = _multipart_validator()
-+    with _client(adapter=_GpuAdapter()) as client:
++    with _client(db_absent=True) as client:
 +        response = _post(client, TENANT_ID)
-+        assert response.status_code == 503, response.text
++        assert response.status_code == 200, response.text
 +        body = response.json()
-+        validator.validate(body)
-+        assert body["detail"]["code"] == "description_service_starting"
-+        assert body["detail"]["operation_id"]
-+        assert "startup_id" in body["detail"]
-+        assert "timing" in body["detail"]
-+
-+
-+def test_production_route_unavailable_error_validates_against_shared_schema(monkeypatch, tmp_path):
-+    _gpu_env(monkeypatch, tmp_path, state="ready")
-+    validator = _multipart_validator()
-+    with _client(adapter=_GpuAdapter(), db_absent=True) as client:
-+        response = _post(client, TENANT_ID)
-+        assert response.status_code == 503, response.text
-+        body = response.json()
-+        validator.validate(body)
-+        assert body["detail"]["code"] == "description_service_unavailable"
-+        assert body["detail"]["operation_id"]
-+        assert "startup_id" in body["detail"]
-+        assert body["detail"]["startup_id"] is None
-+        assert "timing" in body["detail"]
-+        assert "warmup_eta_seconds" not in body["detail"]
++        validator.validate(_schema_body(body))
++        assert body["operation_id"] is None
++        assert "startup_id" in body
++        assert "timing" in body
+diff --git a/packages/shared-contracts/schemas/scene-describe-multipart.schema.json b/packages/shared-contracts/schemas/scene-describe-multipart.schema.json
+--- a/packages/shared-contracts/schemas/scene-describe-multipart.schema.json
++++ b/packages/shared-contracts/schemas/scene-describe-multipart.schema.json
+@@ -14,10 +14,24 @@
+             "operation_id",
+             "startup_id",
+             "timing"
+-          ]
++          ],
++          "properties": {
++            "operation_id": {
++              "type": [
++                "string",
++                "null"
++              ],
++              "minLength": 1,
++              "maxLength": 128,
++              "description": "null when no durable DescribeOperation was accepted (CPU/hosted, no session); clients must not poll a lease"
++            }
++          }
+         }
+       ]
+     },
++    {
++      "$ref": "#/definitions/successWithNullOperationId"
++    },
+     {
+       "type": "object",
+       "properties": {
+@@ -37,10 +51,13 @@
+               "type": "string"
+             },
+             "operation_id": {
+-              "type": "string",
++              "type": [
++                "string",
++                "null"
++              ],
+               "minLength": 1,
+               "maxLength": 128,
+-              "description": "Opaque service-minted id bound to tenant and request digest."
++              "description": "Opaque service-minted id bound to tenant and request digest. Null only when the failure occurred before an operation was durably accepted (no session, accept persistence failure)."
+             },
+             "startup_id": {
+               "type": [
+@@ -95,6 +112,110 @@
+     }
+   ],
+   "definitions": {
++    "successWithNullOperationId": {
++      "type": "object",
++      "additionalProperties": false,
++      "required": [
++        "tenant_id",
++        "media_id",
++        "image_hash",
++        "context_hash",
++        "adapter",
++        "model_id",
++        "model_version",
++        "prompt_or_task_version",
++        "visual_facts",
++        "alt_text_draft",
++        "context_used",
++        "provider_disclosure",
++        "cached",
++        "duration_ms",
++        "retention_class",
++        "tier",
++        "result_generation",
++        "operation_id",
++        "startup_id",
++        "timing"
++      ],
++      "properties": {
++        "tenant_id": {
++          "$ref": "image-description-response.schema.json#/properties/tenant_id"
++        },
++        "media_id": {
++          "$ref": "image-description-response.schema.json#/properties/media_id"
++        },
++        "image_hash": {
++          "$ref": "image-description-response.schema.json#/properties/image_hash"
++        },
++        "context_hash": {
++          "$ref": "image-description-response.schema.json#/properties/context_hash"
++        },
++        "adapter": {
++          "$ref": "image-description-response.schema.json#/properties/adapter"
++        },
++        "model_id": {
++          "$ref": "image-description-response.schema.json#/properties/model_id"
++        },
++        "model_version": {
++          "$ref": "image-description-response.schema.json#/properties/model_version"
++        },
++        "prompt_or_task_version": {
++          "$ref": "image-description-response.schema.json#/properties/prompt_or_task_version"
++        },
++        "visual_facts": {
++          "$ref": "image-description-response.schema.json#/properties/visual_facts"
++        },
++        "alt_text_draft": {
++          "$ref": "image-description-response.schema.json#/properties/alt_text_draft"
++        },
++        "context_used": {
++          "$ref": "image-description-response.schema.json#/properties/context_used"
++        },
++        "provider_disclosure": {
++          "$ref": "image-description-response.schema.json#/properties/provider_disclosure"
++        },
++        "cached": {
++          "$ref": "image-description-response.schema.json#/properties/cached"
++        },
++        "duration_ms": {
++          "$ref": "image-description-response.schema.json#/properties/duration_ms"
++        },
++        "retention_class": {
++          "$ref": "image-description-response.schema.json#/properties/retention_class"
++        },
++        "tier": {
++          "$ref": "image-description-response.schema.json#/properties/tier"
++        },
++        "result_generation": {
++          "$ref": "image-description-response.schema.json#/properties/result_generation"
++        },
++        "alt_text_long": {
++          "$ref": "image-description-response.schema.json#/properties/alt_text_long"
++        },
++        "generic_draft": {
++          "$ref": "image-description-response.schema.json#/properties/generic_draft"
++        },
++        "named_draft": {
++          "$ref": "image-description-response.schema.json#/properties/named_draft"
++        },
++        "naming_provenance": {
++          "$ref": "image-description-response.schema.json#/properties/naming_provenance"
++        },
++        "attachment_provenance": {
++          "$ref": "image-description-response.schema.json#/properties/attachment_provenance"
++        },
++        "operation_id": {
++          "type": "null",
++          "description": "null when no durable DescribeOperation was accepted (CPU/hosted, no session); clients must not poll a lease"
++        },
++        "startup_id": {
++          "$ref": "image-description-response.schema.json#/properties/startup_id"
++        },
++        "timing": {
++          "$ref": "image-description-response.schema.json#/properties/timing"
++        }
++      }
++    },
+     "retryFields": {
+       "type": "object",
+       "properties": {

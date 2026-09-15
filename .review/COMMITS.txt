@@ -1,1 +1,2 @@
-2927c23fb5ea offload: Closed SVCCOL-H-01/M-04/M-03/M-02 in describe.py: durable GPU
+529bf75aabf6 offload: Closed owned SVCCOL-H-01/M-03/M-04 plus Fix-6: one GPU cache
+86f5cf4993d9 offload: Closed SVCCOL-H-01/M-02/M-03/M-04 on the multipart describe

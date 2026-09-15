@@ -118,9 +118,12 @@ async def _describe_adapter(
     image_bytes: bytes,
     context: Mapping[str, Any] | None,
 ) -> tuple[AdapterResult, int]:
-    start = time.perf_counter()
-    result = await asyncio.to_thread(adapter.describe, image_bytes=image_bytes, context=context)
-    return result, _elapsed_ms(start)
+    def _dispatch() -> tuple[AdapterResult, int]:
+        start = time.perf_counter()
+        result = adapter.describe(image_bytes=image_bytes, context=context)
+        return result, _elapsed_ms(start)
+
+    return await asyncio.to_thread(_dispatch)
 
 
 async def run_async_describe_job(

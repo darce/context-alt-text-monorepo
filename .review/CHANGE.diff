@@ -1,451 +1,113 @@
-diff --git a/apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useDescribeRunProgress.test.tsx b/apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useDescribeRunProgress.test.tsx
---- a/apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useDescribeRunProgress.test.tsx
-+++ b/apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useDescribeRunProgress.test.tsx
-@@ -13,7 +13,13 @@ import {
-   useDescribeRunProgress,
- } from '../useDescribeRunProgress';
- import * as describeApi from '../../api/describeApi';
--import { GPU_STATE, type DescribeRunResponse, type DescribeRunTiming } from '../../api/describeApi';
-+import {
-+  DESCRIBE_RUN_PHASE,
-+  DESCRIBE_RUN_STATUS,
-+  GPU_STATE,
-+  type DescribeRunResponse,
-+  type DescribeRunTiming,
-+} from '../../api/describeApi';
- import { GpuTierStatus } from '../../pages/workbench/MediaSelection';
- import gpuflowBulkTiming from '../../pages/workbench/__tests__/fixtures/gpuflow-bulk-timing.json';
- 
-@@ -34,8 +40,8 @@ const gpuUxMap = JSON.parse(readFileSync(join(appRoot, 'docs', 'ux-maps', 'descr
- const runResponse = (overrides: Partial<DescribeRunResponse> = {}): DescribeRunResponse => ({
-   tenant_id: 'tenant',
-   run_id: 'run-1',
--  status: 'running',
--  phase: 'describing',
-+  status: DESCRIBE_RUN_STATUS.RUNNING,
-+  phase: DESCRIBE_RUN_PHASE.DESCRIBING,
-   completed: 0,
-   failed: 0,
-   skipped: 0,
-@@ -62,8 +68,8 @@ const gpuflowRun = (overrides: Partial<DescribeRunResponse> = {}): DescribeRunRe
-   runResponse({
-     tenant_id: gpuflowBulkTiming.run.tenant_id,
-     run_id: gpuflowBulkTiming.run.run_id,
--    status: 'completed_with_errors',
--    phase: 'complete',
-+    status: DESCRIBE_RUN_STATUS.COMPLETED_WITH_ERRORS,
-+    phase: DESCRIBE_RUN_PHASE.COMPLETE,
-     completed: gpuflowBulkTiming.run.completed,
-     failed: gpuflowBulkTiming.run.failed,
-     skipped: gpuflowBulkTiming.run.skipped,
-@@ -87,8 +93,8 @@ const gpuflowRunWithoutTiming = (): DescribeRunResponse => {
- 
- const gpuflowWarmingRun = (overrides: Partial<DescribeRunResponse> = {}): DescribeRunResponse => {
-   const run = gpuflowRun({
--    status: 'running',
--    phase: 'describing',
-+    status: DESCRIBE_RUN_STATUS.RUNNING,
-+    phase: DESCRIBE_RUN_PHASE.WARMING,
-     completed: gpuflowBulkTiming.run_warming.completed,
-     failed: gpuflowBulkTiming.run_warming.failed,
-     skipped: gpuflowBulkTiming.run_warming.skipped,
-@@ -609,28 +615,49 @@ describe('useDescribeRunProgress GPUFLOW timing passthrough', () => {
-     expect(result.current.startupId).toBeNull();
-   });
- 
--  it('sets isWarming when gpu_state is starting and the run has no eta', async () => {
--    fetchBulkDescribeRunMock.mockResolvedValue(gpuflowWarmingRun());
-+  it('does not set isWarming for a queued run when gpu_state is starting', async () => {
-+    fetchBulkDescribeRunMock.mockResolvedValue(
-+      runResponse({
-+        status: DESCRIBE_RUN_STATUS.PENDING,
-+        phase: DESCRIBE_RUN_PHASE.QUEUED,
-+        gpu_state: GPU_STATE.STARTING,
-+        eta_seconds: null,
-+      }),
-+    );
- 
-     const { result } = renderHook(() => useDescribeRunProgress('run-1'), { wrapper });
- 
--    await waitFor(() => expect(result.current.status).toBe('running'));
-+    await waitFor(() => expect(result.current.status).toBe(DESCRIBE_RUN_STATUS.PENDING));
-     expect(result.current.gpuState).toBe(GPU_STATE.STARTING);
-     expect(result.current.etaSeconds).toBeNull();
-+    expect(result.current.isWarming).toBe(false);
-+  });
-+
-+  it('sets isWarming when run.phase is warming regardless of gpu_state', async () => {
-+    fetchBulkDescribeRunMock.mockResolvedValue(
-+      gpuflowWarmingRun({ gpu_state: GPU_STATE.READY, eta_seconds: 12 }),
-+    );
-+
-+    const { result } = renderHook(() => useDescribeRunProgress('run-1'), { wrapper });
-+
-+    await waitFor(() => expect(result.current.status).toBe(DESCRIBE_RUN_STATUS.RUNNING));
-+    expect(result.current.gpuState).toBe(GPU_STATE.READY);
-+    expect(result.current.etaSeconds).toBe(12);
-     expect(result.current.isWarming).toBe(true);
-     expect(result.current.isTerminal).toBe(false);
-     expect(result.current.isPolling).toBe(true);
-     expect(result.current.stalledForSeconds).toBeNull();
-   });
- 
--  it('does not set isWarming when a starting GPU already reports an eta', async () => {
--    fetchBulkDescribeRunMock.mockResolvedValue(gpuflowWarmingRun({ eta_seconds: 12 }));
-+  it('sets isWarming from the fixture warming run even when gpu_state is starting', async () => {
-+    fetchBulkDescribeRunMock.mockResolvedValue(gpuflowWarmingRun());
- 
-     const { result } = renderHook(() => useDescribeRunProgress('run-1'), { wrapper });
- 
--    await waitFor(() => expect(result.current.status).toBe('running'));
--    expect(result.current.etaSeconds).toBe(12);
--    expect(result.current.isWarming).toBe(false);
-+    await waitFor(() => expect(result.current.status).toBe(DESCRIBE_RUN_STATUS.RUNNING));
-+    expect(result.current.gpuState).toBe(GPU_STATE.STARTING);
-+    expect(result.current.etaSeconds).toBeNull();
-+    expect(result.current.isWarming).toBe(true);
-   });
- 
-   it('passes a non-null startupId through unchanged', async () => {
 diff --git a/apps/prototype-wp-alt-context/js/admin/hooks/useDescribeRunProgress.ts b/apps/prototype-wp-alt-context/js/admin/hooks/useDescribeRunProgress.ts
 --- a/apps/prototype-wp-alt-context/js/admin/hooks/useDescribeRunProgress.ts
 +++ b/apps/prototype-wp-alt-context/js/admin/hooks/useDescribeRunProgress.ts
-@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
- import { useQuery } from '@tanstack/react-query';
- 
- import {
-+  DESCRIBE_RUN_PHASE,
-   fetchBulkDescribeRun,
-   GPU_STATE,
-   isDescribeRunTerminal,
-@@ -98,8 +99,8 @@ export interface DescribeRunProgress {
-   /** Opaque shared startup id from the polled envelope; null when absent. */
-   startupId?: string | null;
-   /**
--   * GPU is starting and the run has not yet reported an ETA. UI should say the
--   * service is starting instead of presenting a stalled bar.
-+   * True while the run's own phase is warming. Derived from `run.phase`, never
-+   * from the process-wide gpu_state snapshot (R-03).
-    */
-   isWarming?: boolean;
-   isTerminal: boolean;
-@@ -183,7 +184,9 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
-   const etaSeconds = run?.eta_seconds ?? null;
-   const timing = run?.timing ?? null;
+@@ -186,7 +186,7 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
    const startupId = run?.startup_id ?? null;
--  const isWarming = !isTerminal && gpuState === GPU_STATE.STARTING && etaSeconds === null;
-+  // Phase is the run's warmup signal; gpu_state is process-wide and would mark
-+  // queued/describing runs as warming (R-03).
-+  const isWarming = !isTerminal && run?.phase === DESCRIBE_RUN_PHASE.WARMING
+   // Phase is the run's warmup signal; gpu_state is process-wide and would mark
+   // queued/describing runs as warming (R-03).
+-  const isWarming = !isTerminal && run?.phase === DESCRIBE_RUN_PHASE.WARMING
++  const isWarming = !isTerminal && run?.phase === DESCRIBE_RUN_PHASE.WARMING;
    const frozenStreakExceeded = frozenPollStreak >= FROZEN_POLL_ESCALATION_THRESHOLD;
    const isFrozen = query.isError && isFrozenPollFailure(query.error) && !frozenStreakExceeded;
    const isError = query.isError && !isFrozen;
 diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelection.tsx b/apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelection.tsx
 --- a/apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelection.tsx
 +++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelection.tsx
-@@ -861,28 +861,39 @@ const formatEtaLabel = (etaSeconds: number | null): string => {
+@@ -861,12 +861,7 @@ const formatEtaLabel = (etaSeconds: number | null): string => {
  
  const formatTimingSeconds = (ms: number): string => String(ms / 1000);
  
--/** Wire-only terminal summary; null when elapsed time was not measured. */
-+const formatWarmingGpuLabel = (etaSeconds: number | null): string => {
-+  if (etaSeconds === null) {
-+    return __('Warming GPU (about 2 min, first run only)…', 'alt-context');
-+  }
-+  return sprintf(__('Warming GPU (%s)…', 'alt-context'), formatEtaLabel(etaSeconds));
-+};
-+
-+/**
-+ * Wire-only terminal summary. `server_elapsed_ms` is evidence-only and is never
-+ * rendered as "described in" (R-02). Always at least the count line.
-+ */
- const formatTerminalTimingAnnouncement = (
-   completed: number,
-   failed: number,
-   timing: DescribeRunTiming,
--): string | null => {
--  if (timing.server_elapsed_ms === null) {
--    return null;
-+): string => {
-+  const segments: string[] = [
-+    sprintf(__('%1$d described, %2$d failed', 'alt-context'), completed, failed),
-+  ];
-+  if (timing.ramp_up_ms !== null) {
-+    segments.push(
-+      sprintf(__('Waited for service %s s', 'alt-context'), formatTimingSeconds(timing.ramp_up_ms)),
-+    );
-   }
--  const summary = sprintf(
--    __('%1$d described, %2$d failed in %3$s s', 'alt-context'),
--    completed,
--    failed,
--    formatTimingSeconds(timing.server_elapsed_ms),
--  );
--  if (timing.startup_ms === null) {
--    return summary;
-+  if (timing.startup_ms !== null) {
-+    segments.push(
-+      sprintf(__('Started in %s s', 'alt-context'), formatTimingSeconds(timing.startup_ms)),
-+    );
-+  }
-+  if (timing.queue_ms !== null) {
-+    segments.push(sprintf(__('Queue %s s', 'alt-context'), formatTimingSeconds(timing.queue_ms)));
-   }
--  return `${summary}${sprintf(
--    __(' (GPU startup %s s)', 'alt-context'),
--    formatTimingSeconds(timing.startup_ms),
--  )}`;
-+  return segments.join('. ');
- };
+-const formatWarmingGpuLabel = (etaSeconds: number | null): string => {
+-  if (etaSeconds === null) {
+-    return __('Warming GPU (about 2 min, first run only)…', 'alt-context');
+-  }
+-  return sprintf(__('Warming GPU (%s)…', 'alt-context'), formatEtaLabel(etaSeconds));
+-};
++const formatWarmingGpuLabel = (): string => __('Warming GPU (first run only)…', 'alt-context');
  
- export const BulkDescribeProgress = ({
-@@ -991,7 +1002,7 @@ export const BulkDescribeProgress = ({
+ /**
+  * Wire-only terminal summary. `server_elapsed_ms` is evidence-only and is never
+@@ -1002,7 +997,7 @@ export const BulkDescribeProgress = ({
        <div className="acx-media-selection__bulk-describe-progress" role="status" aria-live="polite">
          <span className="acx-media-selection__bulk-describe-status acx-media-selection__bulk-describe-status--running">
            <Loader2 className="acx-media-selection__bulk-describe-spin" aria-hidden="true" size={16} />
--          {__('Description service is starting', 'alt-context')}
-+          {formatWarmingGpuLabel(etaSeconds)}
+-          {formatWarmingGpuLabel(etaSeconds)}
++          {formatWarmingGpuLabel()}
          </span>
          {cancelControl}
          {waitingNotice}
-@@ -1017,7 +1028,7 @@ export const BulkDescribeProgress = ({
+@@ -1028,7 +1023,7 @@ export const BulkDescribeProgress = ({
        <div className="acx-media-selection__bulk-describe-progress" role="status" aria-live="polite">
          <span className="acx-media-selection__bulk-describe-status acx-media-selection__bulk-describe-status--running">
            <Loader2 className="acx-media-selection__bulk-describe-spin" aria-hidden="true" size={16} />
--          {__('Warming GPU (about 2 min, first run only)…', 'alt-context')}
-+          {formatWarmingGpuLabel(etaSeconds)}
+-          {formatWarmingGpuLabel(etaSeconds)}
++          {formatWarmingGpuLabel()}
          </span>
          {cancelControl}
          {waitingNotice}
+diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/BulkDescribeProgress.phases.test.tsx b/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/BulkDescribeProgress.phases.test.tsx
+--- a/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/BulkDescribeProgress.phases.test.tsx
++++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/BulkDescribeProgress.phases.test.tsx
+@@ -79,7 +79,7 @@ describe('BulkDescribeProgress phase copy (WBUX-6 D2)', () => {
+       />,
+     );
+ 
+-    expect(screen.getByText('Warming GPU (about 2 min, first run only)…')).toBeInTheDocument();
++    expect(screen.getByText('Warming GPU (first run only)…')).toBeInTheDocument();
+     expect(screen.queryByRole('progressbar')).toBeNull();
+     const cancel = screen.getByRole('button', { name: /Cancel/ });
+     expect(cancel).toBeEnabled();
+@@ -221,7 +221,7 @@ describe('BulkDescribeProgress phase copy (WBUX-6 D2)', () => {
+     );
+ 
+     expect(screen.getByText('Failed')).toBeInTheDocument();
+-    expect(screen.queryByText('Warming GPU (about 2 min, first run only)…')).toBeNull();
++    expect(screen.queryByText('Warming GPU (first run only)…')).toBeNull();
+   });
+ 
+   it('keeps today\'s cancelled copy', () => {
 diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/MediaSelection.statusAnnouncement.test.tsx b/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/MediaSelection.statusAnnouncement.test.tsx
 --- a/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/MediaSelection.statusAnnouncement.test.tsx
 +++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/MediaSelection.statusAnnouncement.test.tsx
-@@ -4,13 +4,21 @@
-  * - debounced so keystroke fetch churn does not re-announce [B-01]
-  * - never carries per-correction success copy (row owns that) [B-02]
-  */
-+import React from 'react';
- import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
- import { act, cleanup, render, screen } from '@testing-library/react';
--import React from 'react';
- import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
- 
- import type { DescribeRunProgress } from '../../../hooks/useDescribeRunProgress';
--import { GPU_STATE, type DescribeRunResponse, type DescribeRunTiming } from '../../../api/describeApi';
-+import {
-+  DESCRIBE_RUN_PHASE,
-+  DESCRIBE_RUN_STATUS,
-+  GPU_STATE,
-+  isDescribeRunTerminal,
-+  isGpuState,
-+  type DescribeRunResponse,
-+  type DescribeRunTiming,
-+} from '../../../api/describeApi';
- import { BulkDescribeProgress, MediaSelection } from '../MediaSelection';
- import { MARK_DECORATIVE_SUCCESS_MESSAGE } from '../MediaAltSuggest';
- import gpuflowBulkTiming from './fixtures/gpuflow-bulk-timing.json';
-@@ -333,8 +341,6 @@ describe('MediaSelection toolbar status announcement [WBUX-5-D-02][B-01][B-02]',
-   });
- });
- 
--const TERMINAL_STATUSES = new Set(['completed', 'completed_with_errors', 'failed', 'cancelled']);
--
- const GPUFLOW_TIMING: DescribeRunTiming = {
-   queue_ms: gpuflowBulkTiming.run.timing.queue_ms,
-   ramp_up_ms: gpuflowBulkTiming.run.timing.ramp_up_ms,
-@@ -345,11 +351,21 @@ const GPUFLOW_TIMING: DescribeRunTiming = {
-   items_timed: gpuflowBulkTiming.run.timing.items_timed,
- };
- 
-+const NULL_TIMING: DescribeRunTiming = {
-+  queue_ms: null,
-+  ramp_up_ms: null,
-+  processing_ms_p50: null,
-+  processing_ms_max: null,
-+  startup_ms: null,
-+  server_elapsed_ms: null,
-+  items_timed: null,
-+};
-+
- const gpuflowRun = (overrides: Partial<DescribeRunResponse> = {}): DescribeRunResponse => ({
-   tenant_id: gpuflowBulkTiming.run.tenant_id,
-   run_id: gpuflowBulkTiming.run.run_id,
--  status: 'completed_with_errors',
--  phase: 'complete',
-+  status: DESCRIBE_RUN_STATUS.COMPLETED_WITH_ERRORS,
-+  phase: DESCRIBE_RUN_PHASE.COMPLETE,
-   completed: gpuflowBulkTiming.run.completed,
-   failed: gpuflowBulkTiming.run.failed,
-   skipped: gpuflowBulkTiming.run.skipped,
-@@ -371,10 +387,10 @@ const gpuflowRunWithoutTiming = (): DescribeRunResponse => {
-   return run;
- };
- 
--const gpuflowWarmingRun = (): DescribeRunResponse => {
-+const gpuflowWarmingRun = (overrides: Partial<DescribeRunResponse> = {}): DescribeRunResponse => {
-   const run = gpuflowRun({
--    status: 'running',
--    phase: 'describing',
-+    status: DESCRIBE_RUN_STATUS.RUNNING,
-+    phase: DESCRIBE_RUN_PHASE.WARMING,
-     completed: gpuflowBulkTiming.run_warming.completed,
-     failed: gpuflowBulkTiming.run_warming.failed,
-     skipped: gpuflowBulkTiming.run_warming.skipped,
-@@ -383,8 +399,11 @@ const gpuflowWarmingRun = (): DescribeRunResponse => {
-     eta_seconds: gpuflowBulkTiming.run_warming.eta_seconds,
-     operation_id: gpuflowBulkTiming.run_warming.operation_id,
-     startup_id: gpuflowBulkTiming.run_warming.startup_id,
-+    ...overrides,
-   });
--  Object.assign(run, { timing: gpuflowBulkTiming.run_warming.timing });
-+  if (!Object.hasOwn(overrides, 'timing')) {
-+    Object.assign(run, { timing: gpuflowBulkTiming.run_warming.timing });
-+  }
-   return run;
- };
- 
-@@ -396,10 +415,10 @@ const progressFromRun = (
-   status: run.status,
-   progressFraction: run.total > 0 ? (run.completed + run.failed + run.skipped) / run.total : 0,
-   etaSeconds: run.eta_seconds,
--  gpuState: typeof run.gpu_state === 'string' ? (run.gpu_state as DescribeRunProgress['gpuState']) : null,
--  isTerminal: TERMINAL_STATUSES.has(run.status),
-+  gpuState: isGpuState(run.gpu_state) ? run.gpu_state : null,
-+  isTerminal: isDescribeRunTerminal(run.status),
-   stalledForSeconds: null,
--  isPolling: !TERMINAL_STATUSES.has(run.status),
-+  isPolling: !isDescribeRunTerminal(run.status),
-   isFrozen: false,
-   isError: false,
-   error: null,
-@@ -411,30 +430,68 @@ const progressFromRun = (
- });
- 
- describe('MediaSelection bulk-describe timing announcement [GPUFLOW-1 B2]', () => {
--  it('announces measured elapsed time on a terminal run without fabricating startup', () => {
-+  it('announces ramp-up and queue from the fixture without rendering server elapsed as described-in', () => {
-     const run = gpuflowRun();
-     render(<BulkDescribeProgress progress={progressFromRun(run)} onRetry={vi.fn()} />);
- 
-     const live = screen.getByRole('status');
--    expect(live).toHaveTextContent('1 described, 1 failed in 0.04 s');
-+    expect(live).toHaveTextContent('1 described, 1 failed. Waited for service 0 s. Queue 0.01 s');
-+    expect(live).not.toHaveTextContent('described in');
-     expect(live).not.toHaveTextContent('GPU startup');
-+    expect(live).not.toHaveTextContent('in 0.04 s');
-     expect(screen.getAllByRole('status')).toHaveLength(1);
-     const visual = document.querySelector('.acx-media-selection__bulk-describe-status--success');
-     expect(visual).toHaveAttribute('aria-hidden', 'true');
-     expect(visual).toHaveTextContent('✔ 1 draft ready to review · 1 failed');
-   });
- 
--  it('appends GPU startup seconds only when startup_ms is non-null', () => {
--    const timing: DescribeRunTiming = { ...GPUFLOW_TIMING, startup_ms: 2500 };
-+  it('announces Waited for service when only ramp_up_ms is present', () => {
-+    const timing: DescribeRunTiming = { ...NULL_TIMING, ramp_up_ms: 800 };
-+    const run = gpuflowRun({ timing });
-+    render(<BulkDescribeProgress progress={progressFromRun(run, { timing })} onRetry={vi.fn()} />);
-+
-+    const live = screen.getByRole('status');
-+    expect(live).toHaveTextContent('1 described, 1 failed. Waited for service 0.8 s');
-+    expect(live).not.toHaveTextContent('Started in');
-+    expect(live).not.toHaveTextContent('Queue');
-+    expect(live).not.toHaveTextContent('described in');
-+    expect(screen.getAllByRole('status')).toHaveLength(1);
-+  });
-+
-+  it('announces Started in plus Waited for service when both startup_ms and ramp_up_ms are present', () => {
-+    const timing: DescribeRunTiming = { ...NULL_TIMING, ramp_up_ms: 800, startup_ms: 2500 };
-+    const run = gpuflowRun({ timing });
-+    render(<BulkDescribeProgress progress={progressFromRun(run, { timing })} onRetry={vi.fn()} />);
-+
-+    expect(screen.getByRole('status')).toHaveTextContent(
-+      '1 described, 1 failed. Waited for service 0.8 s. Started in 2.5 s',
-+    );
-+    expect(screen.getByRole('status')).not.toHaveTextContent('GPU startup');
-+    expect(screen.getAllByRole('status')).toHaveLength(1);
-+  });
-+
-+  it('announces ramp-up when server_elapsed_ms is null rather than returning no summary', () => {
-+    const timing: DescribeRunTiming = { ...GPUFLOW_TIMING, server_elapsed_ms: null };
-     const run = gpuflowRun({ timing });
-+    render(<BulkDescribeProgress progress={progressFromRun(run, { timing })} onRetry={vi.fn()} />);
-+
-+    const live = screen.getByRole('status');
-+    expect(live).toHaveTextContent('1 described, 1 failed. Waited for service 0 s. Queue 0.01 s');
-+    expect(live).not.toHaveTextContent('described in');
-+    expect(screen.getAllByRole('status')).toHaveLength(1);
-+  });
-+
-+  it('announces the count-only line when every timing field is null', () => {
-+    const run = gpuflowRun({ timing: NULL_TIMING });
-     render(
--      <BulkDescribeProgress
--        progress={progressFromRun({ ...run, timing }, { timing })}
--        onRetry={vi.fn()}
--      />,
-+      <BulkDescribeProgress progress={progressFromRun(run, { timing: NULL_TIMING })} onRetry={vi.fn()} />,
-     );
- 
--    expect(screen.getByRole('status')).toHaveTextContent('1 described, 1 failed in 0.04 s (GPU startup 2.5 s)');
-+    const live = screen.getByRole('status');
-+    expect(live).toHaveTextContent('1 described, 1 failed');
-+    expect(live).not.toHaveTextContent('Waited for service');
-+    expect(live).not.toHaveTextContent('Started in');
-+    expect(live).not.toHaveTextContent('Queue');
+@@ -505,24 +505,25 @@ describe('MediaSelection bulk-describe timing announcement [GPUFLOW-1 B2]', () =
      expect(screen.getAllByRole('status')).toHaveLength(1);
    });
  
-@@ -448,14 +505,13 @@ describe('MediaSelection bulk-describe timing announcement [GPUFLOW-1 B2]', () =
-     expect(screen.getAllByRole('status')).toHaveLength(1);
-   });
- 
--  it('announces Description service is starting once while isWarming, with no fabricated ETA', () => {
-+  it('announces Warming GPU with the about-2-min fallback while isWarming and eta is null', () => {
+-  it('announces Warming GPU with the about-2-min fallback while isWarming and eta is null', () => {
++  it('announces Warming GPU (first run only) while isWarming and never fabricates a duration', () => {
      const run = gpuflowWarmingRun();
      const warming = progressFromRun(run, { isWarming: true, isTerminal: false, isPolling: true });
      const { rerender } = render(<BulkDescribeProgress progress={warming} onRetry={vi.fn()} />);
  
      const live = screen.getByRole('status');
--    expect(live).toHaveTextContent('Description service is starting');
--    expect(live).not.toHaveTextContent('2 min');
-+    expect(live).toHaveTextContent('Warming GPU (about 2 min, first run only)…');
+-    expect(live).toHaveTextContent('Warming GPU (about 2 min, first run only)…');
++    expect(live).toHaveTextContent('Warming GPU (first run only)…');
      expect(live).not.toHaveTextContent('remaining');
      expect(live).not.toHaveTextContent('calculating');
++    expect(live).not.toHaveTextContent('about 2 min');
      expect(screen.queryByRole('progressbar')).toBeNull();
-@@ -463,6 +519,22 @@ describe('MediaSelection bulk-describe timing announcement [GPUFLOW-1 B2]', () =
+     expect(screen.getAllByRole('status')).toHaveLength(1);
  
      rerender(<BulkDescribeProgress progress={warming} onRetry={vi.fn()} />);
      expect(screen.getAllByRole('status')).toHaveLength(1);
--    expect(screen.getByRole('status')).toHaveTextContent('Description service is starting');
-+    expect(screen.getByRole('status')).toHaveTextContent('Warming GPU (about 2 min, first run only)…');
-+  });
-+
-+  it('uses the wire eta in warming copy when eta_seconds is present', () => {
-+    const run = gpuflowWarmingRun({ eta_seconds: 12 });
-+    const warming = progressFromRun(run, {
-+      isWarming: true,
-+      isTerminal: false,
-+      isPolling: true,
-+      etaSeconds: 12,
-+    });
-+    render(<BulkDescribeProgress progress={warming} onRetry={vi.fn()} />);
-+
-+    const live = screen.getByRole('status');
-+    expect(live).toHaveTextContent('Warming GPU (~12s remaining)…');
-+    expect(live).not.toHaveTextContent('about 2 min');
-+    expect(screen.getAllByRole('status')).toHaveLength(1);
+-    expect(screen.getByRole('status')).toHaveTextContent('Warming GPU (about 2 min, first run only)…');
++    expect(screen.getByRole('status')).toHaveTextContent('Warming GPU (first run only)…');
+   });
+ 
+-  it('uses the wire eta in warming copy when eta_seconds is present', () => {
++  it('does not render eta_seconds in the warming label', () => {
+     const run = gpuflowWarmingRun({ eta_seconds: 12 });
+     const warming = progressFromRun(run, {
+       isWarming: true,
+@@ -533,8 +534,10 @@ describe('MediaSelection bulk-describe timing announcement [GPUFLOW-1 B2]', () =
+     render(<BulkDescribeProgress progress={warming} onRetry={vi.fn()} />);
+ 
+     const live = screen.getByRole('status');
+-    expect(live).toHaveTextContent('Warming GPU (~12s remaining)…');
++    expect(live).toHaveTextContent('Warming GPU (first run only)…');
+     expect(live).not.toHaveTextContent('about 2 min');
++    expect(live).not.toHaveTextContent('~12s remaining');
++    expect(live).not.toHaveTextContent('remaining');
+     expect(screen.getAllByRole('status')).toHaveLength(1);
    });
  });
-diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/fixtures/gpuflow-bulk-timing.json b/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/fixtures/gpuflow-bulk-timing.json
---- a/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/fixtures/gpuflow-bulk-timing.json
-+++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/fixtures/gpuflow-bulk-timing.json
-@@ -71,7 +71,7 @@
-     "tenant_id": "00000000-0000-0000-0000-000000000001",
-     "run_id": "00000000-0000-0000-0000-000000000002",
-     "status": "running",
--    "phase": "describing",
-+    "phase": "warming",
-     "completed": 0,
-     "failed": 0,
-     "skipped": 0,

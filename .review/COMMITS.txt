@@ -1,1 +1,2 @@
-bef8a8ee0a85 offload: Lane spa-bulk-timing now derives isWarming from run.phase and
+95066e81fa09 test(bulk-timing): phases test expects duration-free warming label
+825a362f4128 offload: Fix-4 warming label no longer uses eta_seconds; lane tests are

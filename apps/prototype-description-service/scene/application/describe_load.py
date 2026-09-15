@@ -16,6 +16,7 @@ import math
 import os
 import tempfile
 import threading
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,7 @@ from db.models.scene import DescribeDemandLease, DescribeOperation, DescribeRun,
 from recognition.shared.db.dialect import is_sqlite
 from scene.application.describe_operation_repository import DescribeOperationRepository
 from scene.domain.describe_run import (
+    DEFAULT_ASYNC_JOB_RETENTION_HOURS,
     DemandLeaseState,
     DescribeItemStatus,
     DescribeRunStatus,
@@ -62,11 +64,100 @@ _LOAD_SNAPSHOT_WRITE_LOCK = threading.Lock()
 _COUNTING_LEASE_SECONDS = 1.0
 _SNAPSHOT_REVISION_TABLE = "describe_load_snapshot_revisions"
 _MAX_LEASE_REASON = "lease_cap"
+# Deployed demand-lease lifetime L. accept() callers must use this same bound.
+DEMAND_LEASE_SECONDS = 180.0
+# acx-gpu-start.timer default OnUnitActiveSec (START_INTERVAL=30s).
+CONTROLLER_POLL_PERIOD_SECONDS = 30.0
+# Bounded worst-case timer drift; no other in-process jitter source.
+SCHEDULING_JITTER_SECONDS = 15.0
+PUBLICATION_DELAY_SECONDS = LOAD_REFRESH_TIMEOUT_SECONDS
+PUBLIC_RETRY_AFTER_CEILING_SECONDS = 120.0
+# Bounded extra client delay after honouring Retry-After.
+CLIENT_RETRY_GAP_SECONDS = 15.0
+_DEMAND_BOUND_NAMES = (
+    "lease_seconds",
+    "poll_period_seconds",
+    "jitter_seconds",
+    "publication_delay_seconds",
+    "retry_after_seconds",
+    "client_retry_gap_seconds",
+    "refresh_seconds",
+    "freshness_seconds",
+    "retention_seconds",
+)
 
 # A bulk run occupying the GPU. Enumerated as the non-terminal set rather than
 # "not in (COMPLETED, ...)" so a newly added status defaults to *not* holding
 # the GPU open, instead of silently pinning an A10 forever [sr-007].
 _ACTIVE_BULK_RUN_STATUSES = (DescribeRunStatus.PENDING, DescribeRunStatus.RUNNING)
+
+
+@dataclass(frozen=True)
+class DemandLeaseBounds:
+    """Fail-closed deployment bounds for demand-lease publication (rg-008)."""
+
+    lease_seconds: float
+    poll_period_seconds: float
+    jitter_seconds: float
+    publication_delay_seconds: float
+    retry_after_seconds: float
+    client_retry_gap_seconds: float
+    refresh_seconds: float
+    freshness_seconds: float
+    retention_seconds: float
+
+    def validate(self) -> None:
+        """Raise ValueError when any bound is missing, non-finite, or illegal."""
+        for name in _DEMAND_BOUND_NAMES:
+            value = getattr(self, name)
+            if (
+                value is None
+                or isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+            ):
+                raise ValueError(f"demand lease bound {name} must be a finite number; got {value!r}")
+            if value < 0:
+                raise ValueError(f"demand lease bound {name} must be non-negative; got {value!r}")
+        poll_budget = self.poll_period_seconds + self.jitter_seconds + self.publication_delay_seconds
+        if self.lease_seconds <= poll_budget:
+            raise ValueError(f"demand lease L must exceed P+J+D ({self.lease_seconds} <= {poll_budget})")
+        retry_budget = self.retry_after_seconds + self.client_retry_gap_seconds
+        if self.lease_seconds <= retry_budget:
+            raise ValueError(
+                f"demand lease L must exceed Retry-After + client retry gap ({self.lease_seconds} <= {retry_budget})"
+            )
+        refresh_span = self.refresh_seconds + self.publication_delay_seconds
+        if refresh_span >= self.freshness_seconds:
+            raise ValueError(
+                f"demand refresh R+D must stay below freshness F ({refresh_span} >= {self.freshness_seconds})"
+            )
+        if self.lease_seconds > self.retention_seconds:
+            raise ValueError(
+                f"demand lease L must fit within async retention ({self.lease_seconds} > {self.retention_seconds})"
+            )
+
+
+def deployed_demand_lease_bounds() -> DemandLeaseBounds:
+    """Build bounds from in-process constants and the live refresh cadence."""
+    return DemandLeaseBounds(
+        lease_seconds=DEMAND_LEASE_SECONDS,
+        poll_period_seconds=CONTROLLER_POLL_PERIOD_SECONDS,
+        jitter_seconds=SCHEDULING_JITTER_SECONDS,
+        publication_delay_seconds=PUBLICATION_DELAY_SECONDS,
+        retry_after_seconds=PUBLIC_RETRY_AFTER_CEILING_SECONDS,
+        client_retry_gap_seconds=CLIENT_RETRY_GAP_SECONDS,
+        refresh_seconds=resolve_load_refresh_seconds(),
+        freshness_seconds=LOAD_SNAPSHOT_STALE_SECONDS,
+        retention_seconds=float(DEFAULT_ASYNC_JOB_RETENTION_HOURS * 3600),
+    )
+
+
+def validate_demand_lease_bounds(bounds: DemandLeaseBounds | None = None) -> DemandLeaseBounds:
+    """Fail closed on illegal demand-lease bounds before any publication."""
+    resolved = deployed_demand_lease_bounds() if bounds is None else bounds
+    resolved.validate()
+    return resolved
 
 
 def _open_load_snapshot_fence(target: Path) -> int:
@@ -167,13 +258,17 @@ async def _allocate_snapshot_revision(session: AsyncSession) -> int:
 
 
 def _published_revision(payload: object) -> int:
-    """Return the currently published revision; a missing key is revision 0."""
+    """Return the currently published revision; a missing key is revision 0.
+
+    An explicit ``0`` is malformed: missing files are revision 0, but allocated
+    revisions start at 1.
+    """
     if not isinstance(payload, dict):
         raise RuntimeError("published load snapshot is not an object")
     if "revision" not in payload:
         return 0
     revision = payload["revision"]
-    if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0:
+    if isinstance(revision, bool) or not isinstance(revision, int) or revision < 1:
         raise RuntimeError("malformed published load snapshot revision")
     return revision
 
@@ -185,10 +280,23 @@ def _max_lease_reached() -> bool:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return False
+        return True
     if not isinstance(payload, dict):
-        return False
+        return True
     return payload.get("last_transition_reason") == _MAX_LEASE_REASON
+
+
+def _gpu_excludes_lease_demand(*, now: datetime) -> bool:
+    from scene.application.gpu_state import GpuState, read_gpu_state
+
+    state = read_gpu_state(now=now.timestamp())
+    return state not in {
+        GpuState.STOPPED,
+        GpuState.STARTING,
+        GpuState.WARMING,
+        GpuState.READY,
+        GpuState.DEGRADED,
+    }
 
 
 def _demand_policy_flags(*, now: datetime) -> tuple[bool, bool]:
@@ -199,6 +307,19 @@ def _demand_policy_flags(*, now: datetime) -> tuple[bool, bool]:
     if intent is not None and intent.action is IntentAction.STOP and utc_observation(intent.expires_at) > now:
         stop_requested = True
     return stop_requested, _max_lease_reached()
+
+
+def _lease_demand_blocked(
+    *,
+    now: datetime,
+    stop_requested: bool | None,
+    max_lease_reached: bool | None,
+) -> bool:
+    """Live STOP / lease-cap always win; explicit True only adds a block."""
+    policy_stop, policy_max_lease = _demand_policy_flags(now=now)
+    blocked_by_stop = policy_stop or bool(stop_requested)
+    blocked_by_max_lease = policy_max_lease or bool(max_lease_reached)
+    return blocked_by_stop or blocked_by_max_lease or _gpu_excludes_lease_demand(now=now)
 
 
 async def _persist_first_ready(session: AsyncSession, *, now: datetime) -> None:
@@ -271,23 +392,26 @@ async def load_snapshot(
     bypass session [DIAG-02].
 
     STOP and lease-cap are resolved from the same policy files the periodic
-    publisher uses unless a caller passes an explicit override. The demand
-    transaction (revision allocation, expiry, first-ready) commits before this
-    returns so a later file write cannot publish an undurable revision.
+    publisher uses. An explicit True override can only add a block; False never
+    disables live policy. The demand transaction (revision allocation, expiry,
+    first-ready) commits before this returns so a later file write cannot
+    publish an undurable revision.
     """
     await _require_rls_bypass(session)
     observed_at = as_utc(now or datetime.now(UTC))
-    policy_stop, policy_max_lease = _demand_policy_flags(now=observed_at)
-    blocked_by_stop = policy_stop if stop_requested is None else stop_requested
-    blocked_by_max_lease = policy_max_lease if max_lease_reached is None else max_lease_reached
+    demand_blocked = _lease_demand_blocked(
+        now=observed_at,
+        stop_requested=stop_requested,
+        max_lease_reached=max_lease_reached,
+    )
     revision = await _allocate_snapshot_revision(session)
     await _persist_first_ready(session, now=observed_at)
     lease_demand = await DescribeOperationRepository(
         session, lease_seconds=_COUNTING_LEASE_SECONDS
     ).active_demand_count(
         now=observed_at,
-        stop_requested=blocked_by_stop,
-        max_lease_reached=blocked_by_max_lease,
+        stop_requested=demand_blocked,
+        max_lease_reached=False,
     )
     result = await session.execute(
         select(DescribeRunItem.status, func.count())
@@ -415,7 +539,7 @@ async def dump_load_snapshot(
     except Exception:  # noqa: BLE001 - reaper snapshot is best-effort
         if raise_on_error:
             raise
-        _logger.debug("describe load snapshot write failed path=%s", target, exc_info=True)
+        _logger.warning("describe load snapshot write failed path=%s", target, exc_info=True)
 
 
 async def refresh_load_snapshot_loop(
@@ -458,5 +582,7 @@ async def run_startup_load_snapshot(session_factory, path: str | Path | None = N
 
     Opens a dedicated short-lived RLS-bypassed session (never tenant-scoped).
     Best-effort from the lifespan caller; raises on failure for that try/except.
+    Fail-closed bound checks run before the first publication.
     """
+    validate_demand_lease_bounds()
     await dump_load_snapshot(session_factory, path, raise_on_error=True)

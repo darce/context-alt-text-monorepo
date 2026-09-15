@@ -10,7 +10,11 @@ generation cost (provenance).
 
 from __future__ import annotations
 
+import math
+
 from sqlalchemy import ForeignKeyConstraint
+from sqlalchemy.engine import Dialect
+from sqlalchemy.types import TypeDecorator
 
 from db.models.base_imports import (
     JSON,
@@ -36,6 +40,18 @@ from db.models.base_imports import (
     text,
     uuid,
 )
+
+
+class _TimingFloat(TypeDecorator[float]):
+    """Reject nonfinite binds before SQLite can silently turn NaN into NULL."""
+
+    impl = Float
+    cache_ok = True
+
+    def process_bind_param(self, value: float | None, dialect: Dialect) -> float | None:
+        if value is not None and not math.isfinite(value):
+            raise ValueError("timing must be finite")
+        return value
 
 
 def _json_col():
@@ -116,18 +132,37 @@ class DescribeOperation(Base):
     startup_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     first_ready_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    queue_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
-    ramp_up_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
-    processing_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
-    startup_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
-    server_elapsed_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    queue_ms: Mapped[float | None] = mapped_column(_TimingFloat, nullable=True)
+    ramp_up_ms: Mapped[float | None] = mapped_column(_TimingFloat, nullable=True)
+    processing_ms: Mapped[float | None] = mapped_column(_TimingFloat, nullable=True)
+    startup_ms: Mapped[float | None] = mapped_column(_TimingFloat, nullable=True)
+    server_elapsed_ms: Mapped[float | None] = mapped_column(_TimingFloat, nullable=True)
 
     __table_args__ = (
-        CheckConstraint("queue_ms >= 0", name="ck_describe_operation_queue_ms"),
-        CheckConstraint("ramp_up_ms >= 0", name="ck_describe_operation_ramp_up_ms"),
-        CheckConstraint("processing_ms >= 0", name="ck_describe_operation_processing_ms"),
-        CheckConstraint("startup_ms >= 0", name="ck_describe_operation_startup_ms"),
-        CheckConstraint("server_elapsed_ms >= 0", name="ck_describe_operation_server_elapsed_ms"),
+        CheckConstraint(
+            "(startup_id IS NOT NULL) OR (startup_ms IS NULL AND COALESCE(ramp_up_ms, 0) = 0)",
+            name="ck_describe_operation_startup_association",
+        ),
+        CheckConstraint(
+            "(queue_ms IS NULL OR (queue_ms >= 0 AND queue_ms = queue_ms AND queue_ms < 1e308))",
+            name="ck_describe_operation_queue_ms",
+        ),
+        CheckConstraint(
+            "(ramp_up_ms IS NULL OR (ramp_up_ms >= 0 AND ramp_up_ms = ramp_up_ms AND ramp_up_ms < 1e308))",
+            name="ck_describe_operation_ramp_up_ms",
+        ),
+        CheckConstraint(
+            "(processing_ms IS NULL OR (processing_ms >= 0 AND processing_ms = processing_ms AND processing_ms < 1e308))",
+            name="ck_describe_operation_processing_ms",
+        ),
+        CheckConstraint(
+            "(startup_ms IS NULL OR (startup_ms >= 0 AND startup_ms = startup_ms AND startup_ms < 1e308))",
+            name="ck_describe_operation_startup_ms",
+        ),
+        CheckConstraint(
+            "(server_elapsed_ms IS NULL OR (server_elapsed_ms >= 0 AND server_elapsed_ms = server_elapsed_ms AND server_elapsed_ms < 1e308))",
+            name="ck_describe_operation_server_elapsed_ms",
+        ),
         CheckConstraint("length(operation_id) BETWEEN 1 AND 128", name="ck_describe_operation_id"),
         CheckConstraint(
             "expires_at >= accepted_at AND expires_at <= retain_until", name="ck_describe_operation_expiry"
@@ -228,12 +263,12 @@ class DescribeRun(Base):
         lazy="selectin",
     )
 
-    queue_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
-    ramp_up_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
-    processing_ms_p50: Mapped[float | None] = mapped_column(Float, nullable=True)
-    processing_ms_max: Mapped[float | None] = mapped_column(Float, nullable=True)
-    startup_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
-    server_elapsed_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    queue_ms: Mapped[float | None] = mapped_column(_TimingFloat, nullable=True)
+    ramp_up_ms: Mapped[float | None] = mapped_column(_TimingFloat, nullable=True)
+    processing_ms_p50: Mapped[float | None] = mapped_column(_TimingFloat, nullable=True)
+    processing_ms_max: Mapped[float | None] = mapped_column(_TimingFloat, nullable=True)
+    startup_ms: Mapped[float | None] = mapped_column(_TimingFloat, nullable=True)
+    server_elapsed_ms: Mapped[float | None] = mapped_column(_TimingFloat, nullable=True)
     items_timed: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Snapshot IDs survive operation retention cleanup for long-lived bulk runs.
     operation_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -241,12 +276,34 @@ class DescribeRun(Base):
     first_ready_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
     __table_args__ = (
-        CheckConstraint("queue_ms >= 0", name="ck_image_description_runs_queue_ms"),
-        CheckConstraint("ramp_up_ms >= 0", name="ck_image_description_runs_ramp_up_ms"),
-        CheckConstraint("processing_ms_p50 >= 0", name="ck_image_description_runs_processing_ms_p50"),
-        CheckConstraint("processing_ms_max >= 0", name="ck_image_description_runs_processing_ms_max"),
-        CheckConstraint("startup_ms >= 0", name="ck_image_description_runs_startup_ms"),
-        CheckConstraint("server_elapsed_ms >= 0", name="ck_image_description_runs_server_elapsed_ms"),
+        CheckConstraint(
+            "(startup_id IS NOT NULL) OR (startup_ms IS NULL AND COALESCE(ramp_up_ms, 0) = 0)",
+            name="ck_image_description_runs_startup_association",
+        ),
+        CheckConstraint(
+            "(queue_ms IS NULL OR (queue_ms >= 0 AND queue_ms = queue_ms AND queue_ms < 1e308))",
+            name="ck_image_description_runs_queue_ms",
+        ),
+        CheckConstraint(
+            "(ramp_up_ms IS NULL OR (ramp_up_ms >= 0 AND ramp_up_ms = ramp_up_ms AND ramp_up_ms < 1e308))",
+            name="ck_image_description_runs_ramp_up_ms",
+        ),
+        CheckConstraint(
+            "(processing_ms_p50 IS NULL OR (processing_ms_p50 >= 0 AND processing_ms_p50 = processing_ms_p50 AND processing_ms_p50 < 1e308))",
+            name="ck_image_description_runs_processing_ms_p50",
+        ),
+        CheckConstraint(
+            "(processing_ms_max IS NULL OR (processing_ms_max >= 0 AND processing_ms_max = processing_ms_max AND processing_ms_max < 1e308))",
+            name="ck_image_description_runs_processing_ms_max",
+        ),
+        CheckConstraint(
+            "(startup_ms IS NULL OR (startup_ms >= 0 AND startup_ms = startup_ms AND startup_ms < 1e308))",
+            name="ck_image_description_runs_startup_ms",
+        ),
+        CheckConstraint(
+            "(server_elapsed_ms IS NULL OR (server_elapsed_ms >= 0 AND server_elapsed_ms = server_elapsed_ms AND server_elapsed_ms < 1e308))",
+            name="ck_image_description_runs_server_elapsed_ms",
+        ),
         CheckConstraint("items_timed >= 0", name="ck_image_description_runs_items_timed"),
         CheckConstraint(
             "status IN ('pending', 'running', 'completed', 'completed_with_errors', 'failed', 'cancelled')",
@@ -309,10 +366,13 @@ class DescribeRunItem(Base):
 
     run: Mapped[DescribeRun] = relationship(back_populates="items")
 
-    processing_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    processing_ms: Mapped[float | None] = mapped_column(_TimingFloat, nullable=True)
 
     __table_args__ = (
-        CheckConstraint("processing_ms >= 0", name="ck_image_description_run_items_processing_ms"),
+        CheckConstraint(
+            "(processing_ms IS NULL OR (processing_ms >= 0 AND processing_ms = processing_ms AND processing_ms < 1e308))",
+            name="ck_image_description_run_items_processing_ms",
+        ),
         UniqueConstraint("run_id", "media_id", name="uq_image_description_run_item_media"),
         CheckConstraint(
             "status IN ('queued', 'running', 'completed', 'failed', 'skipped')",

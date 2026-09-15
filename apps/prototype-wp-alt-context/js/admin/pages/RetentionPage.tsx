@@ -7,6 +7,7 @@ import type { RetentionMode } from '../api/recognition';
 import { useRetentionPageState, RETENTION_OPTIONS } from './retention/useRetentionPageState';
 import { ExportDialog, PurgeDialog, ImportDialog } from './retention/RetentionDialogs';
 import { formatTimestamp } from './retention/AuditTimeline';
+import { toUserMessage } from '../utils/appError';
 import { toDescriptionHistory } from '../navigation/appLinks';
 
 const EXPORT_JOB_STATUS = {
@@ -48,6 +49,11 @@ export const RetentionSection = (): React.JSX.Element => {
     <section className="acx-dashboard__panel acx-retention__panel">
       <h4>{__('Backend unavailable', 'alt-context')}</h4>
       <p>{__('Backend unavailable \u2014 retention status cannot be loaded.', 'alt-context')}</p>
+      {retentionQuery.isError ? (
+        <p role="alert">
+          {toUserMessage(retentionQuery.error, __('Unable to load retention status. Please try again.', 'alt-context'))}
+        </p>
+      ) : null}
       <button
         type="button"
         className="acx-button acx-button--secondary"

@@ -1,127 +1,236 @@
 diff --git a/apps/prototype-description-service/scene/interface_adapters/http/schemas/responses.py b/apps/prototype-description-service/scene/interface_adapters/http/schemas/responses.py
 --- a/apps/prototype-description-service/scene/interface_adapters/http/schemas/responses.py
 +++ b/apps/prototype-description-service/scene/interface_adapters/http/schemas/responses.py
-@@ -145,6 +145,9 @@ class VisualFactsResponse(BaseModel):
+@@ -11,7 +11,7 @@ from __future__ import annotations
  
+ from typing import Annotated
+ 
+-from pydantic import BaseModel, ConfigDict, Field
++from pydantic import BaseModel, ConfigDict, Field, model_serializer
+ 
+ from scene.application.gpu_state import GpuState
+ from scene.application.identity_merge import NamingRealizer
+@@ -138,7 +138,29 @@ class DescribeRunTiming(BaseModel):
+     items_timed: Annotated[int, Field(ge=0, strict=True)] | None
+ 
+ 
+-class VisualFactsResponse(BaseModel):
++class OmitAbsentOperationMetadata(BaseModel):
++    """Drop unobserved operation metadata instead of emitting JSON nulls.
++
++    ``startup_id`` may be JSON null only when ``operation_id`` or ``timing`` is
++    present (unobserved start). When all three are unobserved, omit them.
++    """
++
++    @model_serializer(mode="wrap")
++    def _omit_absent_operation_metadata(self, handler):
++        payload = handler(self)
++        if not isinstance(payload, dict):
++            return payload
++        keep_null_startup = payload.get("operation_id") is not None or payload.get("timing") is not None
++        for key in ("operation_id", "startup_id", "timing"):
++            if payload.get(key) is not None:
++                continue
++            if key == "startup_id" and keep_null_startup:
++                continue
++            payload.pop(key, None)
++        return payload
++
++
++class VisualFactsResponse(OmitAbsentOperationMetadata):
+     """The 15 contract-locked core fields plus additive optional preview /
+     fusion fields (``generic_draft``/``named_draft``/``naming_provenance``/
+     ``attachment_provenance``).
+@@ -146,8 +168,9 @@ class VisualFactsResponse(BaseModel):
      Preview fields are draft-only: nothing here writes
      ``_wp_attachment_image_alt`` (that write path is E19-2).
-+
-+    Builders MUST supply operation_id, startup_id (nullable), and timing.
-+    Unknown timing observations must be explicit nulls; timing itself is required.
+ 
+-    Builders MUST supply operation_id, startup_id (nullable), and timing.
+-    Unknown timing observations must be explicit nulls; timing itself is required.
++    ``operation_id``, ``startup_id``, and ``timing`` are additive optional.
++    Unknown timing observations stay explicit nulls inside ``timing``; older
++    builders may omit the three fields entirely. Never fabricate values.
      """
  
      model_config = ConfigDict(extra="forbid")
-@@ -175,10 +178,10 @@ class VisualFactsResponse(BaseModel):
+@@ -178,10 +201,10 @@ class VisualFactsResponse(BaseModel):
      # ALTQ-1 additive optional long-form surface (dual-length prompting).
      # None when the adapter produces only the short draft; never required.
      alt_text_long: str | None = None
--    # Absent on older responses; never fabricate correlation or measurements.
--    operation_id: str | None = Field(default=None, min_length=1, max_length=128)
--    startup_id: str | None = None
--    timing: DescribeTiming | None = None
-+    # Builders supply correlation and measurements; unknown observations stay null.
-+    operation_id: str = Field(min_length=1, max_length=128)
-+    startup_id: str | None
-+    timing: DescribeTiming
+-    # Builders supply correlation and measurements; unknown observations stay null.
+-    operation_id: str = Field(min_length=1, max_length=128)
+-    startup_id: str | None
+-    timing: DescribeTiming
++    # Additive optional: omit on the wire when unobserved; never fabricate.
++    operation_id: str | None = Field(default=None, min_length=1, max_length=128)
++    startup_id: str | None = None
++    timing: DescribeTiming | None = None
  
  
  class DescribeJobResult(BaseModel):
-@@ -195,7 +198,11 @@ class DescribeJobResult(BaseModel):
+@@ -197,11 +220,12 @@ class DescribeJobResult(BaseModel):
+     error: str | None = None
  
  
- class DescribeRunResponse(BaseModel):
--    """Async describe-run status returned by submit/status endpoints."""
-+    """Async describe-run status returned by submit/status endpoints.
-+
-+    Builders MUST supply operation_id, startup_id (nullable), and timing.
-+    Unknown timing observations must be explicit nulls; timing itself is required.
-+    """
+-class DescribeRunResponse(BaseModel):
++class DescribeRunResponse(OmitAbsentOperationMetadata):
+     """Async describe-run status returned by submit/status endpoints.
+ 
+-    Builders MUST supply operation_id, startup_id (nullable), and timing.
+-    Unknown timing observations must be explicit nulls; timing itself is required.
++    ``operation_id``, ``startup_id``, and ``timing`` are additive optional.
++    Unknown timing observations stay explicit nulls inside ``timing``; older
++    builders may omit the three fields entirely. Never fabricate values.
+     """
  
      model_config = ConfigDict(extra="forbid")
- 
-@@ -223,9 +230,9 @@ class DescribeRunResponse(BaseModel):
+@@ -230,9 +254,9 @@ class DescribeRunResponse(BaseModel):
      # snapshotted, so a later config change never moves an accepted run's number.
      # Null only for runs created outside the submit route (never via POST).
      deadline_seconds: float | None = None
--    operation_id: str | None = Field(default=None, min_length=1, max_length=128)
--    startup_id: str | None = None
--    timing: DescribeRunTiming | None = None
-+    operation_id: str = Field(min_length=1, max_length=128)
-+    startup_id: str | None
-+    timing: DescribeRunTiming
+-    operation_id: str = Field(min_length=1, max_length=128)
+-    startup_id: str | None
+-    timing: DescribeRunTiming
++    operation_id: str | None = Field(default=None, min_length=1, max_length=128)
++    startup_id: str | None = None
++    timing: DescribeRunTiming | None = None
  
  
  class DescribeRunItemResponse(BaseModel):
 diff --git a/apps/prototype-description-service/scene/tests/test_gpuflow_response_models.py b/apps/prototype-description-service/scene/tests/test_gpuflow_response_models.py
 --- a/apps/prototype-description-service/scene/tests/test_gpuflow_response_models.py
 +++ b/apps/prototype-description-service/scene/tests/test_gpuflow_response_models.py
-@@ -1,5 +1,9 @@
- """GPUFLOW timing stays typed and preserves unknown observations."""
+@@ -13,6 +13,17 @@ from scene.interface_adapters.http.schemas.responses import (
+     VisualFactsResponse,
+ )
  
-+import json
-+from pathlib import Path
++_REPO_ROOT = Path(__file__).resolve().parents[4]
++_SCHEMAS = {
++    VisualFactsResponse: json.loads(
++        (_REPO_ROOT / "packages/shared-contracts/schemas/image-description-response.schema.json").read_text()
++    ),
++    DescribeRunResponse: json.loads(
++        (_REPO_ROOT / "packages/shared-contracts/schemas/scene-describe-run.schema.json").read_text()
++    ),
++}
++_ABSENT_OPERATION_KEYS = ("operation_id", "startup_id", "timing")
 +
-+import jsonschema
- import pytest
- from pydantic import ValidationError
  
-@@ -63,13 +67,44 @@ def test_timing_and_opaque_correlation_round_trip(response_case):
+ @pytest.fixture(params=[VisualFactsResponse, DescribeRunResponse])
+ def response_case(request):
+@@ -33,18 +44,24 @@ def response_case(request):
+             "cached": False,
+             "duration_ms": 12,
+             "retention_class": "retain_all",
++            "tier": "provisional_cpu",
++            "result_generation": 1,
+         }
+         timing = {"queue_ms": None, "ramp_up_ms": 0, "processing_ms": 12.5, "startup_ms": None, "server_elapsed_ms": 15}
+     else:
+         payload = {
+-            "tenant_id": "tenant",
+-            "run_id": "run",
++            "tenant_id": "11111111-1111-4111-8111-111111111111",
++            "run_id": "22222222-2222-4222-8222-222222222222",
+             "status": "cancelled",
+             "phase": "cancelled",
+             "completed": 1,
+             "failed": 1,
+             "skipped": 1,
+             "total": 3,
++            "cancel_requested": False,
++            "eta_seconds": None,
++            "gpu_state": "unknown",
++            "recognition_enabled": True,
+         }
+         timing = {
+             "queue_ms": None,
+@@ -58,6 +75,20 @@ def response_case(request):
+     return request.param, payload, timing
+ 
+ 
++def _dumped_payloads(response):
++    return response.model_dump(mode="json"), json.loads(response.model_dump_json())
++
++
++def _assert_omits_operation_metadata(payload):
++    for key in _ABSENT_OPERATION_KEYS:
++        assert key not in payload
++        assert payload.get(key) is None
++
++
++def _validate_shared_schema(model, payload):
++    jsonschema.validate(payload, _SCHEMAS[model])
++
++
+ def test_timing_and_opaque_correlation_round_trip(response_case):
+     model, payload, timing = response_case
+     response = model(**payload, operation_id="opaque-operation", startup_id=None, timing=timing)
+@@ -67,39 +98,40 @@ def test_timing_and_opaque_correlation_round_trip(response_case):
      assert wire["startup_id"] is None
  
  
--def test_older_response_can_omit_timing(response_case):
--    model, payload, _ = response_case
--    assert "timing" not in model(**payload).model_dump(exclude_unset=True)
-+@pytest.mark.parametrize("field", ["operation_id", "startup_id", "timing"])
-+def test_response_requires_explicit_operation_metadata(response_case, field):
-+    model, payload, timing = response_case
-+    complete = {**payload, "operation_id": "opaque-operation", "startup_id": None, "timing": timing}
-+    del complete[field]
-+    with pytest.raises(ValidationError) as exc_info:
-+        model(**complete)
-+    assert [(error["loc"], error["type"]) for error in exc_info.value.errors()] == [
-+        ((field,), "missing"),
-+    ]
-+
-+
-+@pytest.mark.parametrize("field", ["operation_id", "timing"])
-+def test_response_rejects_null_required_values(response_case, field):
-+    model, payload, timing = response_case
-+    complete = {**payload, "operation_id": "opaque-operation", "startup_id": None, "timing": timing}
-+    complete[field] = None
-+    with pytest.raises(ValidationError) as exc_info:
-+        model(**complete)
-+    assert [error["loc"] for error in exc_info.value.errors()] == [(field,)]
-+
-+
-+def test_serialized_accepted_response_matches_shared_contract(response_case):
-+    model, payload, timing = response_case
-+    if model is not VisualFactsResponse:
-+        return
-+    response = model(**payload, operation_id="opaque-operation", startup_id=None, timing=timing)
-+    schema_path = (
-+        Path(__file__).resolve().parents[4]
-+        / "packages/shared-contracts/schemas/image-description-response.schema.json"
-+    )
-+    jsonschema.validate(json.loads(response.model_dump_json()), json.loads(schema_path.read_text()))
-+
+-@pytest.mark.parametrize("field", ["operation_id", "startup_id", "timing"])
+-def test_response_requires_explicit_operation_metadata(response_case, field):
+-    model, payload, timing = response_case
+-    complete = {**payload, "operation_id": "opaque-operation", "startup_id": None, "timing": timing}
+-    del complete[field]
+-    with pytest.raises(ValidationError) as exc_info:
+-        model(**complete)
+-    assert [(error["loc"], error["type"]) for error in exc_info.value.errors()] == [
+-        ((field,), "missing"),
+-    ]
++def test_builder_shaped_response_omits_absent_operation_metadata(response_case):
++    model, payload, _timing = response_case
++    response = model(**payload)
++    dumped, encoded = _dumped_payloads(response)
++    _assert_omits_operation_metadata(dumped)
++    _assert_omits_operation_metadata(encoded)
++    _validate_shared_schema(model, dumped)
++    _validate_shared_schema(model, encoded)
+ 
+ 
+-@pytest.mark.parametrize("field", ["operation_id", "timing"])
+-def test_response_rejects_null_required_values(response_case, field):
+-    model, payload, timing = response_case
+-    complete = {**payload, "operation_id": "opaque-operation", "startup_id": None, "timing": timing}
+-    complete[field] = None
+-    with pytest.raises(ValidationError) as exc_info:
+-        model(**complete)
+-    assert [error["loc"] for error in exc_info.value.errors()] == [(field,)]
++def test_explicit_none_operation_metadata_is_omitted(response_case):
++    model, payload, _timing = response_case
++    response = model(**payload, operation_id=None, startup_id=None, timing=None)
++    dumped, encoded = _dumped_payloads(response)
++    _assert_omits_operation_metadata(dumped)
++    _assert_omits_operation_metadata(encoded)
++    _validate_shared_schema(model, dumped)
++    _validate_shared_schema(model, encoded)
+ 
+ 
+-def test_serialized_accepted_response_matches_shared_contract(response_case):
++def test_populated_operation_metadata_validates_against_shared_schema(response_case):
+     model, payload, timing = response_case
+-    if model is not VisualFactsResponse:
+-        return
+-    response = model(**payload, operation_id="opaque-operation", startup_id=None, timing=timing)
+-    schema_path = (
+-        Path(__file__).resolve().parents[4]
+-        / "packages/shared-contracts/schemas/image-description-response.schema.json"
++    response = model(
++        **payload,
++        operation_id="opaque-operation",
++        startup_id="opaque-startup",
++        timing=timing,
+     )
+-    jsonschema.validate(json.loads(response.model_dump_json()), json.loads(schema_path.read_text()))
+-
++    dumped, encoded = _dumped_payloads(response)
++    for wire in (dumped, encoded):
++        assert wire["operation_id"] == "opaque-operation"
++        assert wire["startup_id"] == "opaque-startup"
++        assert wire["timing"] == timing
++        _validate_shared_schema(model, wire)
  
  
  def test_timing_rejects_unknown_missing_and_invalid_measurements(response_case):
-     model, payload, timing = response_case
-+    payload = {**payload, "operation_id": "opaque-operation", "startup_id": None}
-     for field in timing:
-         for invalid in (-1, float("inf"), float("nan"), "12", True):
-             with pytest.raises(ValidationError):
-@@ -80,9 +115,10 @@ def test_timing_rejects_unknown_missing_and_invalid_measurements(response_case):
-             model(**payload, timing=incomplete)
-     with pytest.raises(ValidationError):
-         model(**payload, timing={**timing, "extra": 1})
-+    del payload["operation_id"]
-     for operation_id in ("", "x" * 129):
-         with pytest.raises(ValidationError):
--            model(**payload, operation_id=operation_id)
-+            model(**payload, operation_id=operation_id, timing=timing)
- 
- 
- @pytest.mark.parametrize("status", ["queued", "running", "completed", "failed", "skipped"])

@@ -1,1 +1,1 @@
-867131e53fba offload: Resolved all seven contract findings in commit 255f6fd; 27
+08e93129cdd3 offload: Committed both fixes; one requested schema assertion needs

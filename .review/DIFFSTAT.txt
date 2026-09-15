@@ -1,7 +1,4 @@
- .../scene/tests/test_shared_schema_documents.py    | 65 +++++++++++++++++++++-
- docs/workbay/contracts/gpu-lifecycle.md            | 42 ++++++++++++--
- docs/workbay/contracts/image-description-api.md    | 13 ++++-
- .../schemas/image-description-response.schema.json | 27 +++++++++
- .../schemas/scene-describe-multipart.schema.json   |  6 +-
- .../schemas/scene-describe-run.schema.json         |  3 +-
- 6 files changed, 142 insertions(+), 14 deletions(-)
+ .../scene/tests/test_shared_schema_documents.py             | 13 +++++++++++--
+ docs/workbay/contracts/gpu-lifecycle.md                     |  8 ++++----
+ .../schemas/image-description-response.schema.json          |  3 +++
+ 3 files changed, 18 insertions(+), 6 deletions(-)

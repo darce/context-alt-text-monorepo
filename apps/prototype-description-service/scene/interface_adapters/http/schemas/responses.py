@@ -9,6 +9,8 @@ typed placeholders rather than nulls.
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from scene.application.gpu_state import GpuState
@@ -107,6 +109,35 @@ class AttachmentProvenance(BaseModel):
     facts: list[AttachmentFactProvenance] = Field(default_factory=list)
 
 
+MeasuredMilliseconds = Annotated[float, Field(ge=0, allow_inf_nan=False, strict=True)]
+
+
+class DescribeTiming(BaseModel):
+    """Measured operation phases; unknown observations must be explicit nulls."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    queue_ms: MeasuredMilliseconds | None
+    ramp_up_ms: MeasuredMilliseconds | None
+    processing_ms: MeasuredMilliseconds | None
+    startup_ms: MeasuredMilliseconds | None
+    server_elapsed_ms: MeasuredMilliseconds | None
+
+
+class DescribeRunTiming(BaseModel):
+    """Run wall timing and processing statistics over measured items only."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    queue_ms: MeasuredMilliseconds | None
+    ramp_up_ms: MeasuredMilliseconds | None
+    processing_ms_p50: MeasuredMilliseconds | None
+    processing_ms_max: MeasuredMilliseconds | None
+    startup_ms: MeasuredMilliseconds | None
+    server_elapsed_ms: MeasuredMilliseconds | None
+    items_timed: Annotated[int, Field(ge=0, strict=True)] | None
+
+
 class VisualFactsResponse(BaseModel):
     """The 15 contract-locked core fields plus additive optional preview /
     fusion fields (``generic_draft``/``named_draft``/``naming_provenance``/
@@ -144,6 +175,10 @@ class VisualFactsResponse(BaseModel):
     # ALTQ-1 additive optional long-form surface (dual-length prompting).
     # None when the adapter produces only the short draft; never required.
     alt_text_long: str | None = None
+    # Absent on older responses; never fabricate correlation or measurements.
+    operation_id: str | None = Field(default=None, min_length=1, max_length=128)
+    startup_id: str | None = None
+    timing: DescribeTiming | None = None
 
 
 class DescribeJobResult(BaseModel):
@@ -188,6 +223,9 @@ class DescribeRunResponse(BaseModel):
     # snapshotted, so a later config change never moves an accepted run's number.
     # Null only for runs created outside the submit route (never via POST).
     deadline_seconds: float | None = None
+    operation_id: str | None = Field(default=None, min_length=1, max_length=128)
+    startup_id: str | None = None
+    timing: DescribeRunTiming | None = None
 
 
 class DescribeRunItemResponse(BaseModel):
@@ -205,6 +243,7 @@ class DescribeRunItemResponse(BaseModel):
     error: str | None = None
     tier: DescriptionResultTier | None = None
     result_generation: int = Field(default=0, ge=0)
+    processing_ms: MeasuredMilliseconds | None = None
 
 
 class DescribeRunItemsResponse(BaseModel):

@@ -1,0 +1,5 @@
+ .../recognition/tests/api/test_metrics.py          | 16 +++--
+ .../scene/application/visual_facts_service.py      | 78 ++++++++++++++++------
+ .../interface_adapters/http/routers/describe.py    |  3 +
+ .../scene/tests/test_visual_facts_service.py       | 77 ++++++++++++++++++---
+ 4 files changed, 138 insertions(+), 36 deletions(-)

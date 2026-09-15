@@ -6,6 +6,7 @@ import json
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import func, select
@@ -44,17 +45,18 @@ async def test_details_exclude_candidate_representative(db_session, tenant, case
         db_session.add(identity)
         identities.append(identity)
     await db_session.flush()
+    member_start = 0 if case.get("candidate_is_member", False) else 1
+    members = identities[member_start:]
     cluster = ClusterModel(
         tenant_id=tenant.id,
         label="Target",
         user_confirmed=True,
-        identity_count=len(identities) - 1,
+        identity_count=len(members),
         representative_identity_id=identities[case["primary_index"]].id,
     )
     db_session.add(cluster)
     await db_session.flush()
-    member_start = 0 if case.get("candidate_is_member", False) else 1
-    for identity in identities[member_start:]:
+    for identity in members:
         db_session.add(
             IdentityMember(
                 tenant_id=tenant.id,
@@ -78,6 +80,7 @@ async def test_details_exclude_candidate_representative(db_session, tenant, case
     assert len(details) == 1
     detail = details[0]
     assert detail.status == SuggestionStatus.PENDING.value
+    assert detail.cluster_identity_count == len(members)
     assert detail.identity_media_id == 9500
     expected = case["expected_index"]
     assert detail.representative_media_id == (9500 + expected if expected is not None else None)
@@ -89,6 +92,70 @@ async def test_details_exclude_candidate_representative(db_session, tenant, case
     else:
         assert detail.representative_bbox is not None
     assert suggestion.resolution == case["resolution"]
+
+
+@pytest.mark.asyncio
+async def test_details_batch_member_lookup(db_session, tenant) -> None:
+    """A page uses two queries, with candidate exclusion applied per suggestion."""
+    expected = {}
+    for cluster_index in range(2):
+        identities = [
+            MediaIdentity(
+                tenant_id=tenant.id,
+                media_id=9600 + cluster_index * 10 + index,
+                media_url=f"http://example.test/batch-{cluster_index}-{index}.jpg",
+                bbox_x=0,
+                bbox_y=0,
+                bbox_width=20,
+                bbox_height=20,
+                confidence=0.99,
+                quality_score=quality,
+                embedding=_embedding(),
+                embedding_model="buffalo_l@insightface",
+            )
+            for index, quality in enumerate([1.0, 0.9, 0.3])
+        ]
+        db_session.add_all(identities)
+        await db_session.flush()
+        cluster = ClusterModel(
+            tenant_id=tenant.id,
+            label=f"Target {cluster_index}",
+            user_confirmed=True,
+            identity_count=len(identities),
+            representative_identity_id=identities[0].id,
+        )
+        db_session.add(cluster)
+        await db_session.flush()
+        for identity in identities:
+            db_session.add(
+                IdentityMember(
+                    tenant_id=tenant.id,
+                    cluster_id=cluster.id,
+                    identity_id=identity.id,
+                    similarity=0.8,
+                )
+            )
+        for index in range(2):
+            db_session.add(
+                IdentitySuggestion(
+                    tenant_id=tenant.id,
+                    identity_id=identities[index].id,
+                    suggested_cluster_id=cluster.id,
+                    representative_similarity=0.8,
+                    avg_member_similarity=0.8,
+                    confidence_score=0.8,
+                    resolution=SuggestionStatus.PENDING.value,
+                )
+            )
+            expected[str(identities[index].id)] = identities[1 - index].media_id
+    await db_session.flush()
+
+    with patch.object(db_session, "execute", new_callable=AsyncMock, wraps=db_session.execute) as execute:
+        details = await SqlAlchemySuggestionRepository(db_session).list_pending_with_details(str(tenant.id), 10, 0)
+        assert execute.await_count == 2
+
+    assert len(details) == 4
+    assert {detail.identity_id: detail.representative_media_id for detail in details} == expected
 
 
 @pytest.mark.asyncio

@@ -1,1 +1,1 @@
-99cf1d247235 offload: Landed Fix-4 GPU control confirmation and Return-to-automatic
+604f92c5fd39 offload: C2 SPA cards now show a placeholder instead of reusing the

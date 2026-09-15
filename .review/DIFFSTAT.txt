@@ -1,3 +1,4 @@
- ...class-abstract-recognition-proxy-controller.php | 18 +++++++----
- .../tests/Unit/ProxyRequestTest.php                | 37 ++++++++++++++++++++++
- 2 files changed, 49 insertions(+), 6 deletions(-)
+ .../js/admin/api/__tests__/describeApi.test.ts     | 21 +++++++++++++++++++--
+ .../__tests__/describeRunResponseContract.test.ts  | 21 ++++++++++++++++-----
+ .../js/admin/api/describeApi.ts                    | 22 ++++++++++++----------
+ 3 files changed, 47 insertions(+), 17 deletions(-)

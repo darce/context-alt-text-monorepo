@@ -79,7 +79,7 @@ describe('BulkDescribeProgress phase copy (WBUX-6 D2)', () => {
       />,
     );
 
-    expect(screen.getByText('Warming GPU (about 2 min, first run only)…')).toBeInTheDocument();
+    expect(screen.getByText('Warming GPU (first run only)…')).toBeInTheDocument();
     expect(screen.queryByRole('progressbar')).toBeNull();
     const cancel = screen.getByRole('button', { name: /Cancel/ });
     expect(cancel).toBeEnabled();
@@ -221,7 +221,7 @@ describe('BulkDescribeProgress phase copy (WBUX-6 D2)', () => {
     );
 
     expect(screen.getByText('Failed')).toBeInTheDocument();
-    expect(screen.queryByText('Warming GPU (about 2 min, first run only)…')).toBeNull();
+    expect(screen.queryByText('Warming GPU (first run only)…')).toBeNull();
   });
 
   it('keeps today\'s cancelled copy', () => {

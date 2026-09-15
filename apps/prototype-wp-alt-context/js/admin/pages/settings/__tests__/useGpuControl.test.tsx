@@ -1,4 +1,4 @@
-import React from 'react';
+import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -57,7 +57,7 @@ const statusResponse = ({
   ...overrides,
 });
 
-const wrapper = ({ children }: React.PropsWithChildren): React.JSX.Element => {
+const wrapper = ({ children }: { children: ReactNode }) => {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -99,7 +99,25 @@ describe('useGpuControl', () => {
     await waitFor(() => expect(result.current.data).toBeDefined());
 
     expect(result.current.canStart).toBe(false);
+    expect(result.current.canStop).toBe(false);
     expect(result.current.startBlockedReason).toBe('Lifecycle telemetry is stale — refresh before starting the GPU.');
+  });
+
+  it('keeps Stop disabled when a ready snapshot is stale even if work is in flight', async () => {
+    fetchGpuStatusMock.mockResolvedValue(
+      statusResponse({
+        gpu_state: { state: 'ready', instance_running_since: '2026-09-07T11:00:00Z' },
+        snapshot_age_seconds: 240,
+        snapshot_fresh: false,
+        load: { has_work: true },
+      }),
+    );
+
+    const { result } = renderHook(() => useGpuControl(), { wrapper });
+    await waitFor(() => expect(result.current.data).toBeDefined());
+
+    expect(result.current.canStart).toBe(false);
+    expect(result.current.canStop).toBe(false);
   });
 
   it('keeps Start disabled for a fresh snapshot that reports an unknown machine state', async () => {
@@ -109,6 +127,7 @@ describe('useGpuControl', () => {
     await waitFor(() => expect(result.current.data).toBeDefined());
 
     expect(result.current.canStart).toBe(false);
+    expect(result.current.canStop).toBe(false);
     expect(result.current.startBlockedReason).toBe('GPU state is unknown — refresh before starting the GPU.');
   });
 

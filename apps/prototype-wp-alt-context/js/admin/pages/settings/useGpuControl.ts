@@ -111,7 +111,9 @@ export const useGpuControl = () => {
   const canStart = data
     ? effectiveState !== undefined && stateCanStart(effectiveState) && data.gpu_state.intent !== GpuIntentAction.START
     : false;
-  const canStop = data ? stateCanStop(data.gpu_state.state) && data.gpu_state.intent !== GpuIntentAction.STOP : false;
+  const canStop = data
+    ? effectiveState !== undefined && stateCanStop(effectiveState) && data.gpu_state.intent !== GpuIntentAction.STOP
+    : false;
 
   return {
     ...statusQuery,

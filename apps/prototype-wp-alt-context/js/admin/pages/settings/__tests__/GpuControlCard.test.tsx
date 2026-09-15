@@ -41,15 +41,22 @@ const statusResponse = (overrides: Partial<GpuStatusResponse['gpu_state']> = {})
 const STOPPABLE_STATES = new Set(['starting', 'warming', 'ready', 'degraded']);
 
 const mockControl = (data: GpuStatusResponse, overrides: Partial<ReturnType<typeof gpuControl.useGpuControl>> = {}) => {
+  const effectiveState = data.snapshot_fresh ? data.gpu_state.state : undefined;
   useGpuControlMock.mockReturnValue({
     data,
     isLoading: false,
     isError: false,
     error: null,
     refetch: vi.fn(),
-    canStart: data.gpu_state.state === 'stopped',
+    canStart:
+      effectiveState !== undefined &&
+      (effectiveState === 'stopped' || effectiveState === 'degraded') &&
+      data.gpu_state.intent !== GPU_INTENT_ACTION.START,
     startBlockedReason: null,
-    canStop: STOPPABLE_STATES.has(data.gpu_state.state) && data.gpu_state.intent !== GPU_INTENT_ACTION.STOP,
+    canStop:
+      effectiveState !== undefined &&
+      STOPPABLE_STATES.has(effectiveState) &&
+      data.gpu_state.intent !== GPU_INTENT_ACTION.STOP,
     stopBlockedReason:
       data.gpu_state.state === 'stopped'
         ? 'already stopped'
@@ -163,20 +170,24 @@ describe('GpuControlCard', () => {
     expect(requestIntent).toHaveBeenCalledWith(GPU_INTENT_ACTION.START);
   });
 
-  it('renders warm-up ETA and the faster polling note', () => {
-    mockControl(
-      statusResponse({
-        state: 'warming',
-        intent: GPU_INTENT_ACTION.START,
-        instance_running_since: '2026-09-07T11:59:00Z',
-      }),
-    );
-    render(<GpuControlCard />);
+  it.each(['starting', 'warming'] as const)(
+    'shows warming copy without an invented countdown while %s',
+    (state) => {
+      mockControl(
+        statusResponse({
+          state,
+          intent: GPU_INTENT_ACTION.START,
+          instance_running_since: '2026-09-07T11:59:00Z',
+        }),
+      );
+      render(<GpuControlCard />);
 
-    expect(screen.getByText(`Service: ${GPU_STATE_VOCABULARY.warming}`)).toBeInTheDocument();
-    expect(screen.getByText(/Warming… about/)).toBeInTheDocument();
-    expect(screen.getByText(/polling every 5 s/)).toBeInTheDocument();
-  });
+      expect(screen.getByText(`Service: ${GPU_STATE_VOCABULARY[state]}`)).toBeInTheDocument();
+      const warmup = screen.getByTestId('gpu-warmup-eta');
+      expect(warmup).toHaveTextContent('Warming up, this can take a few minutes');
+      expect(warmup).not.toHaveTextContent(/\d/);
+    },
+  );
 
   it('keeps Stop enabled during work in flight and shows deferred-stop copy', () => {
     const requestIntent = vi.fn();
@@ -229,50 +240,61 @@ describe('GpuControlCard', () => {
     expect(screen.getByText(`Service: ${GPU_STATE_VOCABULARY.degraded}`)).toBeInTheDocument();
   });
 
-  it('disables Stop when the service is already stopped or unknown', () => {
-    mockControl(statusResponse({ state: 'unknown' }));
-    const { rerender } = render(<GpuControlCard />);
-    expect(screen.getByRole('button', { name: /Stop service/ })).toHaveAttribute('aria-disabled', 'true');
-
+  it('disables Stop when the service is already stopped', () => {
     mockControl(statusResponse({ state: 'stopped' }));
-    rerender(<GpuControlCard />);
+    render(<GpuControlCard />);
     expect(screen.getByRole('button', { name: /Stop service/ })).toHaveAttribute('aria-disabled', 'true');
   });
 
-  it('renders stale telemetry as not reported and disables Start with its age', () => {
+  it('hides Start and Stop when the snapshot is stale and keeps Refresh', () => {
     mockControl(
-      { ...statusResponse({ state: 'ready' }), snapshot_age_seconds: 240, snapshot_fresh: false },
+      {
+        ...statusResponse({ state: 'ready', intent: GPU_INTENT_ACTION.START }),
+        snapshot_age_seconds: 240,
+        snapshot_fresh: false,
+      },
       {
         canStart: false,
+        canStop: false,
+        canReturnToAuto: true,
         startBlockedReason: 'Lifecycle telemetry is stale — refresh before starting the GPU.',
       },
     );
     render(<GpuControlCard />);
 
-    expect(
-      screen.getByText(`Service: ${GPU_STATE_VOCABULARY.notReported}`),
-    ).toBeInTheDocument();
+    expect(screen.getByText(`Service: ${GPU_STATE_VOCABULARY.notReported}`)).toBeInTheDocument();
     expect(screen.getByText(/last snapshot 4 min ago \(stale\)/)).toBeInTheDocument();
     expect(screen.getByTestId('gpu-stale-notice')).toHaveTextContent('Service status is out of date');
-    expect(screen.getByRole('button', { name: 'Start service' })).toHaveAttribute('aria-disabled', 'true');
+    expect(screen.queryByRole('button', { name: 'Start service' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Stop service/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Return to automatic' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
+  });
+
+  it('hides Start and Stop when the service state is unknown and keeps Refresh', () => {
+    mockControl(statusResponse({ state: 'unknown', intent: GPU_INTENT_ACTION.START }), {
+      canStart: false,
+      canStop: false,
+      canReturnToAuto: true,
+    });
+    render(<GpuControlCard />);
+
+    expect(screen.getByText(`Service: ${GPU_STATE_VOCABULARY.notReported}`)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Start service' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Stop service/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Return to automatic' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
   });
 
   it.each([
-    [GPU_STATE.STOPPED, false, false, 'Service status is out of date'],
-    [GPU_STATE.DEGRADED, false, false, 'Service status is out of date'],
-    [GPU_STATE.UNKNOWN, true, false, 'Service state is unknown'],
-    [GPU_STATE.STOPPED, false, true, 'a service request is already in flight'],
-    [GPU_STATE.STARTING, true, true, 'a service request is already in flight'],
-  ] as const)('explains held Start for %s (fresh: %s, pending: %s)', (state, snapshotFresh, pending, expected) => {
+    [GPU_STATE.STOPPED, true, 'a service request is already in flight'],
+    [GPU_STATE.STARTING, true, 'a service request is already in flight'],
+  ] as const)('explains held Start for %s while pending', (state, pending, expected) => {
     mockControl(
-      { ...statusResponse({ state }), snapshot_fresh: snapshotFresh },
+      { ...statusResponse({ state }), snapshot_fresh: true },
       {
         canStart: false,
-        startBlockedReason: !snapshotFresh
-          ? 'Lifecycle telemetry is stale — refresh before starting the GPU.'
-          : state === GPU_STATE.UNKNOWN
-            ? 'GPU state is unknown — refresh before starting the GPU.'
-            : null,
+        startBlockedReason: null,
         isIntentPending: pending,
       },
     );

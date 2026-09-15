@@ -1,213 +1,97 @@
 diff --git a/apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php b/apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php
 --- a/apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php
 +++ b/apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php
-@@ -25,8 +25,11 @@ use function delete_transient;
- use function esc_url_raw;
- use function get_transient;
- use function get_option;
-+use function array_diff;
-+use function array_keys;
- use function in_array;
- use function is_array;
-+use function is_finite;
- use function is_float;
- use function is_int;
- use function is_numeric;
-@@ -70,6 +73,44 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
- 	public const ROUTE_FAMILY_UI_READ  = 'ui_read';
- 	public const ROUTE_FAMILY_CONTROL  = 'control';
- 
-+	/**
-+	 * image-description-response.schema.json#/properties/timing required keys.
-+	 *
-+	 * @var list<string>
-+	 */
-+	private const TIMING_KEYS = array(
-+		'queue_ms',
-+		'ramp_up_ms',
-+		'processing_ms',
-+		'startup_ms',
-+		'server_elapsed_ms',
-+	);
-+
-+	/**
-+	 * scene-describe-multipart.schema.json error branch top-level properties
-+	 * (additionalProperties: false).
-+	 *
-+	 * @var list<string>
-+	 */
-+	private const TYPED_ERROR_TOP_LEVEL_KEYS = array(
-+		'detail',
-+	);
-+
-+	/**
-+	 * scene-describe-multipart.schema.json error-branch detail properties
-+	 * (additionalProperties: false).
-+	 *
-+	 * @var list<string>
-+	 */
-+	private const TYPED_ERROR_DETAIL_KEYS = array(
-+		'code',
-+		'message',
-+		'operation_id',
-+		'startup_id',
-+		'warmup_eta_seconds',
-+		'timing',
-+	);
-+
- 	private ?RecognitionProxyPolicy $proxy_policy = null;
- 	private ?RecognitionEndpointResolver $endpoint_resolver = null;
- 
-@@ -569,11 +610,19 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
+@@ -632,7 +632,7 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
  			return false;
  		}
  
-+		if ( ! $this->has_closed_key_set( $decoded, self::TYPED_ERROR_TOP_LEVEL_KEYS ) ) {
-+			return false;
-+		}
-+
- 		$detail = $decoded['detail'] ?? null;
- 		if ( ! is_array( $detail ) ) {
+-		if ( ! array_key_exists( 'operation_id', $detail ) || ! $this->is_nullable_opaque_id( $detail['operation_id'] ) ) {
++		if ( ! array_key_exists( 'operation_id', $detail ) || ! $this->is_opaque_id( $detail['operation_id'] ) ) {
  			return false;
  		}
  
-+		if ( ! $this->has_closed_key_set( $detail, self::TYPED_ERROR_DETAIL_KEYS ) ) {
-+			return false;
-+		}
-+
- 		if ( self::TYPED_CODE_STARTING !== ( $detail['code'] ?? null ) ) {
- 			return false;
- 		}
-@@ -599,7 +648,7 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
- 			return false;
- 		}
- 		$eta = $detail['warmup_eta_seconds'];
--		if ( null !== $eta && ( ( ! is_int( $eta ) && ! is_float( $eta ) ) || $eta < 0 ) ) {
-+		if ( null !== $eta && ( ! $this->is_finite_number( $eta ) || $eta < 0 ) ) {
- 			return false;
- 		}
+@@ -657,12 +657,10 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
+ 	}
  
-@@ -633,10 +682,9 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
+ 	/**
+-	 * Opaque ids are string|null; strings must be non-empty and <= 128 chars.
++	 * Opaque ids are non-empty strings of at most 128 bytes.
++	 * Typed error `detail.operation_id` is never null.
+ 	 */
+-	private function is_nullable_opaque_id( mixed $value ): bool {
+-		if ( null === $value ) {
+-			return true;
+-		}
++	private function is_opaque_id( mixed $value ): bool {
+ 		if ( ! is_string( $value ) ) {
  			return false;
  		}
- 
--		$expected = array( 'queue_ms', 'ramp_up_ms', 'processing_ms', 'startup_ms', 'server_elapsed_ms' );
--		$keys     = array_keys( $timing );
-+		$keys = array_keys( $timing );
- 		sort( $keys );
--		$sorted_expected = $expected;
-+		$sorted_expected = self::TIMING_KEYS;
- 		sort( $sorted_expected );
- 		if ( $keys !== $sorted_expected ) {
- 			return false;
-@@ -646,7 +694,7 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
- 			if ( null === $value ) {
- 				continue;
- 			}
--			if ( ( ! is_int( $value ) && ! is_float( $value ) ) || $value < 0 ) {
-+			if ( ! $this->is_finite_number( $value ) || $value < 0 ) {
- 				return false;
- 			}
- 		}
-@@ -654,6 +702,17 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
- 		return true;
+@@ -671,6 +669,14 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
+ 		return $length >= 1 && $length <= 128;
  	}
  
 +	/**
-+	 * @param list<string> $allowed
++	 * Opaque ids are string|null; strings must be non-empty and <= 128 bytes.
++	 * Used for `startup_id` only.
 +	 */
-+	private function has_closed_key_set( array $value, array $allowed ): bool {
-+		return array() === array_diff( array_keys( $value ), $allowed );
++	private function is_nullable_opaque_id( mixed $value ): bool {
++		return null === $value || $this->is_opaque_id( $value );
 +	}
 +
-+	private function is_finite_number( mixed $value ): bool {
-+		return ( is_int( $value ) || is_float( $value ) ) && is_finite( (float) $value );
-+	}
-+
- 	private function is_typed_unavailable_response( int $status, ?string $typed_code ): bool {
- 		return 503 === $status && self::TYPED_CODE_UNAVAILABLE === $typed_code;
- 	}
-@@ -675,11 +734,18 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
- 			if ( 'retry-after' !== strtolower( trim( (string) $key ) ) ) {
- 				continue;
- 			}
--			if ( is_int( $value ) ) {
--				return $value;
-+			if ( $this->is_finite_number( $value ) ) {
-+				if ( is_int( $value ) ) {
-+					return $value;
-+				}
-+				if ( is_float( $value ) && (float) (int) $value === $value ) {
-+					return (int) $value;
-+				}
-+				return null;
- 			}
- 			if ( is_string( $value ) && '' !== $value && is_numeric( $value ) && (string) (int) $value === trim( $value ) ) {
--				return (int) $value;
-+				$parsed = (int) $value;
-+				return $this->is_finite_number( $parsed ) ? $parsed : null;
- 			}
- 		}
- 
-@@ -687,13 +753,12 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
- 	}
- 
- 	private function open_circuit_local_timing(): array {
--		return array(
--			'queue_ms'          => null,
--			'ramp_up_ms'        => null,
--			'processing_ms'     => null,
--			'startup_ms'        => null,
--			'server_elapsed_ms' => null,
--		);
-+		$timing = array();
-+		foreach ( self::TIMING_KEYS as $key ) {
-+			$timing[ $key ] = null;
-+		}
-+
-+		return $timing;
- 	}
- 
- 	private function open_circuit_response( string $route_family ): WP_REST_Response|WP_Error {
+ 	/**
+ 	 * Timing object keys must match image-description-response.schema.json
+ 	 * exactly, with number|null values (unknown => null).
 diff --git a/apps/prototype-wp-alt-context/tests/Unit/ProxyRequestTest.php b/apps/prototype-wp-alt-context/tests/Unit/ProxyRequestTest.php
 --- a/apps/prototype-wp-alt-context/tests/Unit/ProxyRequestTest.php
 +++ b/apps/prototype-wp-alt-context/tests/Unit/ProxyRequestTest.php
-@@ -1630,6 +1630,11 @@ PHP;
-         $negativeEta = $validDetail;
-         $negativeEta['warmup_eta_seconds'] = -1;
- 
-+        $extraDetail = $validDetail;
-+        $extraDetail['hint'] = 'not-in-schema';
-+
-+        $validJson = json_encode(['detail' => $validDetail]);
-+
-         return [
-             'missing_eta' => [[
-                 'response' => ['code' => 503, 'message' => 'Service Unavailable'],
-@@ -1676,6 +1681,26 @@ PHP;
+@@ -1666,6 +1666,11 @@ PHP;
                  'headers' => ['Retry-After' => '5'],
-                 'body' => json_encode(['detail' => $negativeEta]),
+                 'body' => json_encode(['detail' => $overlongId]),
              ]],
-+            'extra_top_level_key' => [[
++            'null_operation_id' => [[
 +                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
 +                'headers' => ['Retry-After' => '5'],
-+                'body' => json_encode(['detail' => $validDetail, 'unexpected' => true]),
++                'body' => json_encode(['detail' => array_merge($validDetail, ['operation_id' => null])]),
 +            ]],
-+            'extra_detail_key' => [[
-+                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
-+                'headers' => ['Retry-After' => '5'],
-+                'body' => json_encode(['detail' => $extraDetail]),
-+            ]],
-+            'inf_eta' => [[
-+                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
-+                'headers' => ['Retry-After' => '5'],
-+                'body' => str_replace('"warmup_eta_seconds":5', '"warmup_eta_seconds":1e400', (string) $validJson),
-+            ]],
-+            'inf_timing' => [[
-+                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
-+                'headers' => ['Retry-After' => '5'],
-+                'body' => str_replace('"queue_ms":0', '"queue_ms":1e400', (string) $validJson),
-+            ]],
-         ];
+             'retry_after_zero' => [[
+                 'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+                 'headers' => ['Retry-After' => '0'],
+@@ -1733,6 +1738,38 @@ PHP;
+         $this->assertFalse(get_transient($describeFailures), 'null ETA warming must not increment describe');
      }
  
++    public function testNullOperationIdStartingEnvelopeIsNotWarmingExempt(): void
++    {
++        global $wpdb;
++        $wpdb->mockVar = '1';
++
++        $harness = $this->makeFamilyHarness();
++        $describeCircuit = $this->familyCircuitKey($harness->resolvedBaseUrl(), 'describe');
++        $describeFailures = $this->familyFailureKey($harness->resolvedBaseUrl(), 'describe');
++
++        $valid = $this->validatedWarmingHttp();
++        $this->queueHttpResponse($valid);
++        $this->queueHttpResponse($valid);
++        $harness->call('POST', '/scene/describe/multipart', 'description');
++        $harness->call('POST', '/scene/describe/multipart', 'description');
++        $this->assertFalse(get_transient($describeCircuit), 'valid operation_id warming remains exempt');
++        $this->assertFalse(get_transient($describeFailures), 'valid operation_id warming must not increment describe');
++
++        $nullId = $valid;
++        $body = json_decode((string) $valid['body'], true);
++        $this->assertIsArray($body);
++        $body['detail']['operation_id'] = null;
++        $nullId['body'] = json_encode($body);
++
++        $this->queueHttpResponse($nullId);
++        $this->queueHttpResponse($nullId);
++        $harness->call('POST', '/scene/describe/multipart', 'description');
++        $harness->call('POST', '/scene/describe/multipart', 'description');
++
++        $this->assertNotFalse(get_transient($describeCircuit), 'null operation_id starting envelope must open describe');
++        $this->assertNotFalse(get_transient($describeFailures), 'null operation_id must increment describe failures');
++    }
++
+     /**
+      * @dataProvider typedOperationErrorProvider
+      */

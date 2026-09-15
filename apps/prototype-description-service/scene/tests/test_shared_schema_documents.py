@@ -80,7 +80,7 @@ def test_schema_is_well_formed(name):
 def test_success(name):
     validator(name).validate(SUCCESS)
     older = {k: v for k, v in SUCCESS.items() if k != "timing"}
-    validator(name).validate(older)
+    assert validator(name).is_valid(older) == (name == "image-description-response")
     bad = copy.deepcopy(SUCCESS)
     bad["timing"]["processing_ms"] = -1
     assert not validator(name).is_valid(bad)
@@ -102,6 +102,7 @@ def test_typed_errors(code):
     )
     v = validator("scene-describe-multipart")
     v.validate({"detail": detail})
+    assert not v.is_valid({"detail": {k: value for k, value in detail.items() if k != "timing"}})
     detail["warmup_eta_seconds"] = None
     assert v.is_valid({"detail": detail}) == (code == "description_service_starting")
     detail["warmup_eta_seconds"] = 4
@@ -147,7 +148,7 @@ def test_strict_errors_and_correlation():
         bad = copy.deepcopy(SUCCESS)
         bad[key] = value
         assert not v.is_valid(bad)
-    detail = dict(code="unrecognized", message="error", operation_id="op", startup_id=None)
+    detail = dict(code="unrecognized", message="error", operation_id="op", startup_id=None, timing=TIMING)
     assert not v.is_valid({"detail": detail})
     detail["code"] = "description_service_starting"
     detail["warmup_eta_seconds"] = -1
@@ -168,4 +169,62 @@ def test_item_status_vocabulary():
     item_validator = validator("scene-describe-run", "item")
     for status in ("queued", "running", "completed", "failed", "skipped"):
         item_validator.validate(dict(media_id=42, status=status, processing_ms=0))
-    assert not item_validator.is_valid(dict(media_id=42, status="cancelled"))
+    assert not item_validator.is_valid(dict(media_id=42, status="cancelled", processing_ms=None))
+
+
+@pytest.mark.parametrize("status", ["queued", "running", "completed", "failed", "skipped"])
+def test_item_requires_explicit_processing_timing(status):
+    v = validator("scene-describe-run", "item")
+    item = dict(media_id=42, status=status, processing_ms=None)
+    v.validate(item)
+    del item["processing_ms"]
+    assert not v.is_valid(item)
+
+
+@pytest.mark.parametrize("name", NAMES[:2])
+def test_cache_timing_consistency(name):
+    payload = copy.deepcopy(SUCCESS)
+    payload["cached"] = True
+    payload["timing"].update(ramp_up_ms=0, processing_ms=0)
+    v = validator(name)
+    v.validate(payload)
+    for field, value in (("startup_id", "startup"), ("ramp_up_ms", 1),
+                         ("processing_ms", 1), ("ramp_up_ms", None), ("processing_ms", None)):
+        bad = copy.deepcopy(payload)
+        target = bad if field == "startup_id" else bad["timing"]
+        target[field] = value
+        assert not v.is_valid(bad)
+    if name == "image-description-response":
+        del payload["timing"]
+        del payload["startup_id"]
+        v.validate(payload)
+
+
+@pytest.mark.parametrize(
+    "document, requirements",
+    [
+        ("gpu-lifecycle", (
+            "Each active, unexpired, policy-eligible lease contributes one to `in_flight`",
+            "`lease_demand` field is a nonnegative nullable integer",
+            "STOP-held and max-lease-blocked",
+            "has_work := (queue_depth + in_flight) > 0",
+        )),
+        ("gpu-lifecycle", (
+            "sequence inside the same transaction as the demand read",
+            "write-if-newer under the existing cross-process writer lock",
+            "candidate `revision` is greater than the currently published one",
+            "A must be dropped, leaving revision 11",
+        )),
+        ("image-description-api", (
+            "REQUIRED on every `description_service_starting` 503",
+            "integer delta-seconds in [1, 120]",
+            "MUST be absent on all other typed errors",
+        )),
+    ],
+)
+def test_documented_publisher_and_retry_requirements(document, requirements):
+    """Guard the normative clauses; runtime scenarios belong to producer lanes."""
+    path = ROOT.parents[2] / "docs/workbay/contracts" / f"{document}.md"
+    text = " ".join(path.read_text().split())
+    for requirement in requirements:
+        assert requirement in text

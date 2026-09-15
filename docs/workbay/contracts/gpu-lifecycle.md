@@ -373,12 +373,44 @@ Every unlisted state/event pair is a counted unadmitted no-op.
 
 Every periodic, async and sync publication aggregates unexpired eligible leases
 with queued/running async GPU work under the existing service writer/fence.
+Each active, unexpired, policy-eligible lease contributes one to `in_flight`,
+using the same tenant scope as async work. STOP-held and max-lease-blocked
+leases contribute zero, as do completed, expired and rejected leases.
+`queue_depth` remains the queued async GPU count; `in_flight` is the running
+async GPU count plus eligible lease count. Do not count a lease again as async
+work. The additive `lease_demand` field is a nonnegative nullable integer:
+the eligible lease count (zero when measured empty), or null for an unknown
+breakdown; null must never erase demand from `in_flight`.
+Count-based `has_work := (queue_depth + in_flight) > 0`; the existing
+`batch_in_progress` STOP guard remains independently authoritative across batch
+gaps. Readers ignoring `lease_demand` therefore retain correct demand protection.
 Global `load_snapshot` aggregation MUST use the dedicated RLS-bypassed system
-session and count all tenants; a tenant-scoped session fails closed. Serialize
-database snapshot and file publication so an older snapshot cannot overwrite
-newer demand. Do not add a lifecycle-state writer. Periodic publication also
-persists the first observed ready transition for active startup/operation records,
-including readiness between HTTP retries.
+session and count all tenants; a tenant-scoped session fails closed.
+
+Every snapshot carries a monotonic integer `revision`, allocated from the database
+sequence inside the same transaction as the demand read. Serialize revision
+allocation with acquisition of the demand snapshot, so an older database view
+cannot receive a newer revision. Commit that transaction before publication.
+All periodic, async and sync publishers use write-if-newer under the existing
+cross-process writer lock, scoped to the destination load file: read the currently
+published revision, compare, and atomically replace (temporary file plus rename)
+while holding that lock. Write only if the candidate `revision` is greater than
+the currently published one; drop equal or older candidates without refreshing
+`written_at`. A missing initial file has revision zero; revisions start at one.
+An unreadable file or malformed revision fails closed, never bypassing the fence.
+Do not add a lifecycle-state writer. Periodic publication also persists the first
+observed ready transition for active startup/operation records, including readiness
+between HTTP retries.
+
+Required implementation regression scenarios:
+- With zero async work and two eligible leases in different tenants, the global
+  snapshot has `queue_depth = 0`, `in_flight = 2`, `lease_demand = 2` and true
+  `has_work`. Holding one lease under STOP reduces both counts to one; holding
+  both reduces them to zero without deleting either lease.
+- Pause publisher A after its older demand read at revision 10. Publisher B reads
+  new demand at revision 11 and publishes it. Resume A after B's publication:
+  A must be dropped, leaving revision 11, its demand counts and `written_at`
+  unchanged. Repeat with equal revisions and across separate writer processes.
 
 At startup validate finite, explicit deployment bounds in seconds:
 

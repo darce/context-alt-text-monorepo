@@ -385,5 +385,32 @@
       "additionalProperties": false,
       "description": "Measured milliseconds; unknown values are null. Readiness and adapter attempts do not overlap; server elapsed excludes client rendering."
     }
+  },
+  "if": {
+    "properties": {
+      "cached": {
+        "const": true
+      }
+    },
+    "required": [
+      "cached"
+    ]
+  },
+  "then": {
+    "properties": {
+      "startup_id": {
+        "type": "null"
+      },
+      "timing": {
+        "properties": {
+          "ramp_up_ms": {
+            "const": 0
+          },
+          "processing_ms": {
+            "const": 0
+          }
+        }
+      }
+    }
   }
 }

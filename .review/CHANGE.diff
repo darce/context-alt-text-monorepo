@@ -1,425 +1,65 @@
 diff --git a/apps/prototype-description-service/scene/application/describe_async_worker.py b/apps/prototype-description-service/scene/application/describe_async_worker.py
 --- a/apps/prototype-description-service/scene/application/describe_async_worker.py
 +++ b/apps/prototype-description-service/scene/application/describe_async_worker.py
-@@ -118,9 +118,12 @@ async def _describe_adapter(
-     image_bytes: bytes,
-     context: Mapping[str, Any] | None,
+@@ -120,8 +120,13 @@ async def _describe_adapter(
  ) -> tuple[AdapterResult, int]:
--    start = time.perf_counter()
--    result = await asyncio.to_thread(adapter.describe, image_bytes=image_bytes, context=context)
--    return result, _elapsed_ms(start)
-+    def _dispatch() -> tuple[AdapterResult, int]:
-+        start = time.perf_counter()
-+        result = adapter.describe(image_bytes=image_bytes, context=context)
-+        return result, _elapsed_ms(start)
-+
-+    return await asyncio.to_thread(_dispatch)
+     def _dispatch() -> tuple[AdapterResult, int]:
+         start = time.perf_counter()
+-        result = adapter.describe(image_bytes=image_bytes, context=context)
+-        return result, _elapsed_ms(start)
++        try:
++            result = adapter.describe(image_bytes=image_bytes, context=context)
++            return result, _elapsed_ms(start)
++        except Exception as exc:
++            with contextlib.suppress(Exception):
++                exc.processing_ms = _elapsed_ms(start)  # type: ignore[attr-defined]
++            raise
  
+     return await asyncio.to_thread(_dispatch)
  
- async def run_async_describe_job(
+@@ -182,6 +187,7 @@ async def run_async_describe_job(
+         provisional_set = False
+         media_id: int | None = None
+         image_bytes = b""
++        cpu_duration_ms = 0
+ 
+         try:
+             # Phase: mark running + load image bytes (short session).
+@@ -350,6 +356,17 @@ async def run_async_describe_job(
+                     if item is None:
+                         return
+                     media_id = item.media_id
++                failed_ms = getattr(exc, "processing_ms", None)
++                if failed_ms is not None:
++                    total = float(failed_ms)
++                    if provisional_set:
++                        total += float(cpu_duration_ms)
++                    await repo.record_item_processing(
++                        tenant_id=tenant_id,
++                        run_id=run_id,
++                        media_id=media_id,
++                        processing_ms=total,
++                    )
+                 if provisional_set:
+                     await repo.set_item_degraded(
+                         tenant_id=tenant_id,
 diff --git a/apps/prototype-description-service/scene/application/describe_run_worker.py b/apps/prototype-description-service/scene/application/describe_run_worker.py
 --- a/apps/prototype-description-service/scene/application/describe_run_worker.py
 +++ b/apps/prototype-description-service/scene/application/describe_run_worker.py
-@@ -15,8 +15,11 @@ from datetime import UTC, datetime
- from typing import TYPE_CHECKING, Final, Literal, NamedTuple, Protocol, runtime_checkable
- 
- import httpx
-+from sqlalchemy import select
-+from sqlalchemy.exc import OperationalError, ProgrammingError
+@@ -19,7 +19,7 @@ from sqlalchemy import select
+ from sqlalchemy.exc import OperationalError, ProgrammingError
  from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
  
-+from db.models.scene import DescribeStartup
+-from db.models.scene import DescribeStartup
++from db.models.scene import DescribeOperation, DescribeStartup
  from db.tenant_context import get_tenant_record, set_tenant_context
  from scene.application.describe_load import load_snapshot, resolve_load_path, write_load_snapshot
  from scene.application.describe_run_repository import DescribeRunRepository
-@@ -109,6 +112,10 @@ class GpuRunPolicy:
- class _RunCancelledError(RuntimeError):
-     """Internal control-flow signal; cancellation is not a run failure."""
- 
-+    def __init__(self, message: str = "describe run cancelled", *, processing_ms: float | None = None):
-+        super().__init__(message)
-+        self.processing_ms = processing_ms
-+
- 
- class _GpuCircuitOpenError(RuntimeError):
-     """The run-local GPU breaker is open after an exhausted transient fault."""
-@@ -260,6 +267,29 @@ async def _record_run_pickup(
-         await session.commit()
- 
- 
-+async def _observed_startup(session: AsyncSession) -> tuple[str | None, float | None]:
-+    """Reuse the durable GPU startup row; never mint a per-run id.
-+
-+    ``startup_ms`` is defined only when both start and first-ready UTC
-+    observations exist. A missing table or unobserved row is untimed.
-+    """
-+    try:
-+        startup = await session.scalar(
-+            select(DescribeStartup)
-+            .where(DescribeStartup.retain_until > datetime.now(UTC))
-+            .order_by(DescribeStartup.started_at.desc().nulls_last())
-+            .limit(1)
-+        )
-+    except (OperationalError, ProgrammingError):
-+        return None, None
-+    if startup is None:
-+        return None, None
-+    startup_ms = None
-+    if startup.started_at is not None and startup.first_ready_at is not None:
-+        startup_ms = elapsed_ms(startup.started_at, startup.first_ready_at)
-+    return startup.startup_id, startup_ms
-+
-+
- async def _record_run_readiness(
-     *,
-     session_factory: async_sessionmaker[AsyncSession],
-@@ -267,15 +297,12 @@ async def _record_run_readiness(
-     run_id: uuid.UUID,
-     cold: bool,
- ) -> None:
--    operation_id = uuid.uuid4().hex
--    startup_id = uuid.uuid4().hex if cold else None
-     async with session_factory() as session:
-         await set_tenant_context(session, tenant_id)
-         repo = DescribeRunRepository(session)
-         run = await repo.get_run(tenant_id=tenant_id, run_id=run_id)
--        startup_ms = None
--        if cold and run is not None and run.started_at is not None and run.first_ready_at is None:
--            startup_ms = elapsed_ms(run.started_at, datetime.now(UTC))
-+        operation_id = (run.operation_id if run is not None else None) or uuid.uuid4().hex
-+        startup_id, startup_ms = await _observed_startup(session) if cold else (None, None)
-         await repo.record_readiness(
-             tenant_id=tenant_id,
-             run_id=run_id,
-@@ -366,9 +393,13 @@ async def _describe_with_transient_retry(
- ) -> DescribeItemOutcome | None:
-     max_attempts = _GPU_ITEM_MAX_ATTEMPTS if retry_transient else 1
-     measured: list[float | None] = []
-+
-+    def _cancel_error(message: str) -> _RunCancelledError:
-+        return _RunCancelledError(message, processing_ms=_sum_processing_ms(measured))
-+
-     for attempt in range(1, max_attempts + 1):
-         if cancel_requested is not None and await cancel_requested():
--            raise _RunCancelledError("describe run cancelled before item retry")
-+            raise _cancel_error("describe run cancelled before item retry")
-         try:
-             outcome = await asyncio.wait_for(
-                 _call_describe_one(describe_one, media_id, image_bytes, content_type, naming_inputs=naming_inputs),
-@@ -380,6 +411,8 @@ async def _describe_with_transient_retry(
-             if total is not None and outcome.processing_ms != total:
-                 return replace(outcome, processing_ms=total)
-             return outcome
-+        except _RunCancelledError:
-+            raise
-         except Exception as exc:  # noqa: BLE001 - classify before retrying
-             measured.append(_attempt_processing_ms(exc))
-             total = _sum_processing_ms(measured)
-@@ -397,6 +430,8 @@ async def _describe_with_transient_retry(
-             )
-             if delay:
-                 await asyncio.sleep(delay)
-+                if cancel_requested is not None and await cancel_requested():
-+                    raise _cancel_error("describe run cancelled during item retry backoff")
-     raise RuntimeError("unreachable")  # pragma: no cover
- 
- 
-@@ -638,147 +673,143 @@ async def run_describe_job(
-             for item in items:
-                 progressed = False
-                 if await cancel_requested():
--                    await repo.mark_item(
-+                    progressed = await repo.mark_item(
-                         tenant_id=tenant_id,
-                         run_id=run_id,
-                         media_id=item.media_id,
-                         status=DescribeItemStatus.SKIPPED,
-                     )
-                     await session.commit()
--                    no_progress = 0
--                    continue
--
--                image_bytes = item.image_bytes
--                content_type = item.image_content_type
--                await repo.mark_item(
--                    tenant_id=tenant_id,
--                    run_id=run_id,
--                    media_id=item.media_id,
--                    status=DescribeItemStatus.RUNNING,
--                )
--                processing_ms: float | None = None
--                try:
--                    if gpu_breaker_error is not None:
--                        raise _GpuCircuitOpenError(gpu_breaker_error)
--                    # HARM-F3 / DATA-19: one naming snapshot per item. Load first,
--                    # then share with Stage-2 fusion and Stage-3 preview so a
--                    # label/merge between two sessions cannot diverge the draft.
--                    # PERF-10 traded for DATA-19 (WBUX-6 S9-F1): serial envelope
--                    # is item_envelope_seconds(timeout), not max(naming, describe).
--                    # S9R2-F1: Stage-3 preview is charged against remaining envelope.
--                    item_started = time.monotonic()
--                    naming_inputs = await _naming_lookup_for_item(
--                        enabled=naming_enabled,
--                        session_factory=session_factory,
--                        tenant=tenant,
--                        tenant_id=tenant_id,
--                        media_id=item.media_id,
--                        image_bytes=image_bytes,
--                    )
--                    naming_budget_exceeded = naming_inputs is _NAMING_BUDGET_EXCEEDED
--                    if naming_inputs is not None and naming_inputs is not _NAMING_BUDGET_EXCEEDED:
--                        describe_naming_inputs: FusionNamingInputs | None = naming_inputs
--                    elif run is not None and run.recognition_enabled:
--                        describe_naming_inputs = EMPTY_NAMING_INPUTS
--                    else:
--                        describe_naming_inputs = None
--                    outcome = await _describe_with_transient_retry(
--                        describe_one=describe_one,
--                        media_id=item.media_id,
--                        image_bytes=image_bytes,
--                        content_type=content_type,
--                        timeout_seconds=timeout,
--                        retry_transient=gpu_policy is not None,
--                        cancel_requested=cancel_requested,
--                        naming_inputs=describe_naming_inputs,
--                    )
--                    processing_ms = None if outcome is None else outcome.processing_ms
--                    outcome = await _apply_naming_preview(
--                        enabled=naming_enabled,
--                        session=session,
--                        tenant=tenant,
--                        tenant_id=tenant_id,
--                        media_id=item.media_id,
--                        image_bytes=image_bytes,
--                        outcome=outcome or DescribeItemOutcome(),
--                        naming_inputs=naming_inputs,
--                        item_started=item_started,
--                        item_envelope=item_envelope,
--                        naming_budget_exceeded=naming_budget_exceeded,
--                    )
--                except _RunCancelledError:
--                    await _record_item_processing_ms(
--                        repo=repo,
--                        tenant_id=tenant_id,
--                        run_id=run_id,
--                        media_id=item.media_id,
--                        processing_ms=processing_ms,
--                    )
--                    await repo.mark_item(
--                        tenant_id=tenant_id,
--                        run_id=run_id,
--                        media_id=item.media_id,
--                        status=DescribeItemStatus.SKIPPED,
--                    )
--                    progressed = True
--                except Exception as exc:  # noqa: BLE001 - per-item failure must not abort the run
--                    logger.warning(
--                        "describe run item failed run_id=%s media_id=%s", run_id, item.media_id, exc_info=True
--                    )
--                    processing_ms = getattr(exc, "processing_ms", processing_ms)
--                    await _record_item_processing_ms(
--                        repo=repo,
--                        tenant_id=tenant_id,
--                        run_id=run_id,
--                        media_id=item.media_id,
--                        processing_ms=processing_ms,
--                    )
--                    await repo.record_item_result(
--                        tenant_id=tenant_id,
--                        run_id=run_id,
--                        media_id=item.media_id,
--                        alt_text_draft=None,
--                        caption=None,
--                        provenance=None,
--                    )
--                    await repo.mark_item(
--                        tenant_id=tenant_id,
--                        run_id=run_id,
--                        media_id=item.media_id,
--                        status=DescribeItemStatus.FAILED,
--                        error_message=str(exc),
--                    )
--                    if gpu_policy is not None and _is_transient_describe_error(exc):
--                        gpu_breaker_error = (
--                            f"GPU circuit open after transient retries were exhausted: {type(exc).__name__}: {exc}"
--                        )
--                    progressed = True
-                 else:
--                    outcome = outcome or DescribeItemOutcome()
--                    await _record_item_processing_ms(
--                        repo=repo,
--                        tenant_id=tenant_id,
--                        run_id=run_id,
--                        media_id=item.media_id,
--                        processing_ms=processing_ms if processing_ms is not None else outcome.processing_ms,
--                    )
--                    await repo.record_item_result(
--                        tenant_id=tenant_id,
--                        run_id=run_id,
--                        media_id=item.media_id,
--                        alt_text_draft=outcome.alt_text_draft,
--                        caption=outcome.caption,
--                        provenance=outcome.provenance or None,
--                        tier=outcome.tier,
--                    )
-+                    image_bytes = item.image_bytes
-+                    content_type = item.image_content_type
-                     await repo.mark_item(
-                         tenant_id=tenant_id,
-                         run_id=run_id,
-                         media_id=item.media_id,
--                        status=DescribeItemStatus.COMPLETED,
-+                        status=DescribeItemStatus.RUNNING,
-                     )
--                    progressed = True
--                await session.commit()
-+                    processing_ms: float | None = None
-+                    try:
-+                        if gpu_breaker_error is not None:
-+                            raise _GpuCircuitOpenError(gpu_breaker_error)
-+                        # HARM-F3 / DATA-19: one naming snapshot per item. Load first,
-+                        # then share with Stage-2 fusion and Stage-3 preview so a
-+                        # label/merge between two sessions cannot diverge the draft.
-+                        # PERF-10 traded for DATA-19 (WBUX-6 S9-F1): serial envelope
-+                        # is item_envelope_seconds(timeout), not max(naming, describe).
-+                        # S9R2-F1: Stage-3 preview is charged against remaining envelope.
-+                        item_started = time.monotonic()
-+                        naming_inputs = await _naming_lookup_for_item(
-+                            enabled=naming_enabled,
-+                            session_factory=session_factory,
-+                            tenant=tenant,
-+                            tenant_id=tenant_id,
-+                            media_id=item.media_id,
-+                            image_bytes=image_bytes,
-+                        )
-+                        naming_budget_exceeded = naming_inputs is _NAMING_BUDGET_EXCEEDED
-+                        if naming_inputs is not None and naming_inputs is not _NAMING_BUDGET_EXCEEDED:
-+                            describe_naming_inputs: FusionNamingInputs | None = naming_inputs
-+                        elif run is not None and run.recognition_enabled:
-+                            describe_naming_inputs = EMPTY_NAMING_INPUTS
-+                        else:
-+                            describe_naming_inputs = None
-+                        outcome = await _describe_with_transient_retry(
-+                            describe_one=describe_one,
-+                            media_id=item.media_id,
-+                            image_bytes=image_bytes,
-+                            content_type=content_type,
-+                            timeout_seconds=timeout,
-+                            retry_transient=gpu_policy is not None,
-+                            cancel_requested=cancel_requested,
-+                            naming_inputs=describe_naming_inputs,
-+                        )
-+                        processing_ms = None if outcome is None else outcome.processing_ms
-+                        outcome = await _apply_naming_preview(
-+                            enabled=naming_enabled,
-+                            session=session,
-+                            tenant=tenant,
-+                            tenant_id=tenant_id,
-+                            media_id=item.media_id,
-+                            image_bytes=image_bytes,
-+                            outcome=outcome or DescribeItemOutcome(),
-+                            naming_inputs=naming_inputs,
-+                            item_started=item_started,
-+                            item_envelope=item_envelope,
-+                            naming_budget_exceeded=naming_budget_exceeded,
-+                        )
-+                    except _RunCancelledError as exc:
-+                        processing_ms = getattr(exc, "processing_ms", processing_ms)
-+                        await _record_item_processing_ms(
-+                            repo=repo,
-+                            tenant_id=tenant_id,
-+                            run_id=run_id,
-+                            media_id=item.media_id,
-+                            processing_ms=processing_ms,
-+                        )
-+                        progressed = await repo.mark_item(
-+                            tenant_id=tenant_id,
-+                            run_id=run_id,
-+                            media_id=item.media_id,
-+                            status=DescribeItemStatus.SKIPPED,
-+                        )
-+                    except Exception as exc:  # noqa: BLE001 - per-item failure must not abort the run
-+                        logger.warning(
-+                            "describe run item failed run_id=%s media_id=%s", run_id, item.media_id, exc_info=True
-+                        )
-+                        processing_ms = getattr(exc, "processing_ms", processing_ms)
-+                        await _record_item_processing_ms(
-+                            repo=repo,
-+                            tenant_id=tenant_id,
-+                            run_id=run_id,
-+                            media_id=item.media_id,
-+                            processing_ms=processing_ms,
-+                        )
-+                        await repo.record_item_result(
-+                            tenant_id=tenant_id,
-+                            run_id=run_id,
-+                            media_id=item.media_id,
-+                            alt_text_draft=None,
-+                            caption=None,
-+                            provenance=None,
-+                        )
-+                        progressed = await repo.mark_item(
-+                            tenant_id=tenant_id,
-+                            run_id=run_id,
-+                            media_id=item.media_id,
-+                            status=DescribeItemStatus.FAILED,
-+                            error_message=str(exc),
-+                        )
-+                        if gpu_policy is not None and _is_transient_describe_error(exc):
-+                            gpu_breaker_error = (
-+                                f"GPU circuit open after transient retries were exhausted: {type(exc).__name__}: {exc}"
-+                            )
-+                    else:
-+                        outcome = outcome or DescribeItemOutcome()
-+                        await _record_item_processing_ms(
-+                            repo=repo,
-+                            tenant_id=tenant_id,
-+                            run_id=run_id,
-+                            media_id=item.media_id,
-+                            processing_ms=processing_ms if processing_ms is not None else outcome.processing_ms,
-+                        )
-+                        await repo.record_item_result(
-+                            tenant_id=tenant_id,
-+                            run_id=run_id,
-+                            media_id=item.media_id,
-+                            alt_text_draft=outcome.alt_text_draft,
-+                            caption=outcome.caption,
-+                            provenance=outcome.provenance or None,
-+                            tier=outcome.tier,
-+                        )
-+                        progressed = await repo.mark_item(
-+                            tenant_id=tenant_id,
-+                            run_id=run_id,
-+                            media_id=item.media_id,
-+                            status=DescribeItemStatus.COMPLETED,
-+                        )
-+                    await session.commit()
-                 if progressed:
-                     no_progress = 0
-                     continue
-diff --git a/apps/prototype-description-service/scene/tests/test_describe_run_worker_phases.py b/apps/prototype-description-service/scene/tests/test_describe_run_worker_phases.py
---- a/apps/prototype-description-service/scene/tests/test_describe_run_worker_phases.py
-+++ b/apps/prototype-description-service/scene/tests/test_describe_run_worker_phases.py
-@@ -6,16 +6,28 @@ import asyncio
- import json
- import os
- import uuid
-+from datetime import UTC, datetime, timedelta
- from pathlib import Path
-+from typing import cast
- 
-+import httpx
- from jsonschema import Draft7Validator, FormatChecker
- from referencing import Registry, Resource
-+from sqlalchemy import Table
- from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
- 
-+from db.models.base_imports import Base
-+from db.models.scene import DescribeStartup
- from scene.application.describe_run_repository import DescribeRunRepository
- from scene.application.describe_run_worker import DescribeItemOutcome, run_describe_job
- from scene.application.gpu_state import GpuState
--from scene.domain.describe_run import DescribeItemStatus, DescribeRunPhase, DescribeRunStatus
+@@ -31,7 +31,13 @@ from scene.application.naming_preview_service import (
+ )
+ from scene.application.settings.vlm import VlmSettings
+ from scene.config.settings import DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS, DescriptionSettings
+-from scene.domain.describe_run import DescribeItemStatus, DescribeRunPhase, DescribeRunStatus, elapsed_ms
 +from scene.domain.describe_run import (
 +    TERMINAL_ITEM_STATUSES,
 +    DescribeItemStatus,
@@ -427,249 +67,433 @@ diff --git a/apps/prototype-description-service/scene/tests/test_describe_run_wo
 +    DescribeRunStatus,
 +    elapsed_ms,
 +)
- from scene.interface_adapters.http.schemas.responses import DescribeRunResponse
- from scene.tests.test_describe_run_worker import TENANT_ID, _make_db_async
+ from scene.domain.description import DescriptionAdapterKind, DescriptionResultTier
  
-@@ -309,6 +321,14 @@ def test_seeded_run_records_queue_once_and_zero_warm_ramp_up(monkeypatch):
-     asyncio.run(body())
+ if TYPE_CHECKING:
+@@ -267,18 +273,36 @@ async def _record_run_pickup(
+         await session.commit()
  
  
-+async def _ensure_startup_table(engine) -> None:
-+    async with engine.begin() as conn:
-+        await conn.run_sync(
-+            Base.metadata.create_all,
-+            tables=cast(list[Table], [DescribeStartup.__table__]),
+-async def _observed_startup(session: AsyncSession) -> tuple[str | None, float | None]:
+-    """Reuse the durable GPU startup row; never mint a per-run id.
++def _terminal_transition(previous: DescribeItemStatus, marked: bool) -> bool:
++    """Progress is a real non-terminal → terminal mark, not a same-status no-op."""
++    return bool(marked) and previous not in TERMINAL_ITEM_STATUSES
++
++
++async def _observed_startup(
++    session: AsyncSession, *, tenant_id: uuid.UUID, operation_id: str | None
++) -> tuple[str | None, float | None]:
++    """Reuse the startup bound to this run's operation; never pick a global row.
+ 
+     ``startup_ms`` is defined only when both start and first-ready UTC
+-    observations exist. A missing table or unobserved row is untimed.
++    observations exist. A missing table, missing association, or unobserved
++    row stays untimed.
+     """
++    if not operation_id:
++        return None, None
++    try:
++        operation = await session.scalar(
++            select(DescribeOperation).where(
++                DescribeOperation.tenant_id == tenant_id,
++                DescribeOperation.operation_id == operation_id,
++            )
 +        )
++    except (OperationalError, ProgrammingError):
++        return None, None
++    if operation is None or not operation.startup_id:
++        return None, None
+     try:
+         startup = await session.scalar(
+-            select(DescribeStartup)
+-            .where(DescribeStartup.retain_until > datetime.now(UTC))
+-            .order_by(DescribeStartup.started_at.desc().nulls_last())
+-            .limit(1)
++            select(DescribeStartup).where(DescribeStartup.startup_id == operation.startup_id)
+         )
+     except (OperationalError, ProgrammingError):
+         return None, None
+@@ -290,6 +314,14 @@ async def _observed_startup(session: AsyncSession) -> tuple[str | None, float |
+     return startup.startup_id, startup_ms
+ 
+ 
++def _measured_ramp_up_ms(run, *, cold: bool) -> float | None:
++    if not cold:
++        return 0.0
++    if run is None or run.started_at is None or run.first_ready_at is None:
++        return None
++    return elapsed_ms(run.started_at, run.first_ready_at)
++
++
+ async def _record_run_readiness(
+     *,
+     session_factory: async_sessionmaker[AsyncSession],
+@@ -301,15 +333,34 @@ async def _record_run_readiness(
+         await set_tenant_context(session, tenant_id)
+         repo = DescribeRunRepository(session)
+         run = await repo.get_run(tenant_id=tenant_id, run_id=run_id)
+-        operation_id = (run.operation_id if run is not None else None) or uuid.uuid4().hex
+-        startup_id, startup_ms = await _observed_startup(session) if cold else (None, None)
+-        await repo.record_readiness(
+-            tenant_id=tenant_id,
+-            run_id=run_id,
+-            operation_id=operation_id,
+-            startup_id=startup_id,
+-            startup_ms=startup_ms,
+-        )
++        associated_operation_id = run.operation_id if run is not None else None
++        operation_id = associated_operation_id or uuid.uuid4().hex
++        startup_id, startup_ms = (None, None)
++        if cold:
++            startup_id, startup_ms = await _observed_startup(
++                session, tenant_id=tenant_id, operation_id=associated_operation_id
++            )
++        kwargs: dict = {
++            "tenant_id": tenant_id,
++            "run_id": run_id,
++            "operation_id": operation_id,
++            "startup_id": startup_id,
++            "startup_ms": startup_ms,
++        }
++        params = inspect.signature(repo.record_readiness).parameters
++        if "cold" in params:
++            kwargs["cold"] = cold
++        if "ramp_up_ms" in params and run is not None and run.started_at is not None:
++            now = datetime.now(UTC)
++            kwargs["now"] = now
++            kwargs["ramp_up_ms"] = elapsed_ms(run.started_at, now) if cold else 0.0
++        await repo.record_readiness(**kwargs)
++        # Repository currently maps null startup_id → ramp_up_ms=0; restore the
++        # measured readiness wait for cold runs independently of association.
++        run = await repo.get_run(tenant_id=tenant_id, run_id=run_id)
++        ramp_up_ms = _measured_ramp_up_ms(run, cold=cold)
++        if run is not None and ramp_up_ms is not None:
++            run.ramp_up_ms = ramp_up_ms
+         await session.commit()
+ 
+ 
+@@ -397,15 +448,24 @@ async def _describe_with_transient_retry(
+     def _cancel_error(message: str) -> _RunCancelledError:
+         return _RunCancelledError(message, processing_ms=_sum_processing_ms(measured))
+ 
++    def _dispatch_elapsed_ms(started: float) -> float:
++        return max(0.0, (time.monotonic() - started) * 1000.0)
++
++    def _measured_attempt_ms(result: object, started: float) -> float | None:
++        attempt_ms = _attempt_processing_ms(result)
++        return _dispatch_elapsed_ms(started) if attempt_ms is None else attempt_ms
++
+     for attempt in range(1, max_attempts + 1):
+         if cancel_requested is not None and await cancel_requested():
+             raise _cancel_error("describe run cancelled before item retry")
++        started = time.monotonic()
+         try:
+             outcome = await asyncio.wait_for(
+                 _call_describe_one(describe_one, media_id, image_bytes, content_type, naming_inputs=naming_inputs),
+                 timeout_seconds,
+             )
+-            total = _sum_processing_ms([*measured, _attempt_processing_ms(outcome)])
++            measured.append(_measured_attempt_ms(outcome, started))
++            total = _sum_processing_ms(measured)
+             if outcome is None:
+                 return None if total is None else DescribeItemOutcome(processing_ms=total)
+             if total is not None and outcome.processing_ms != total:
+@@ -414,7 +474,7 @@ async def _describe_with_transient_retry(
+         except _RunCancelledError:
+             raise
+         except Exception as exc:  # noqa: BLE001 - classify before retrying
+-            measured.append(_attempt_processing_ms(exc))
++            measured.append(_measured_attempt_ms(exc, started))
+             total = _sum_processing_ms(measured)
+             if total is not None:
+                 exc.processing_ms = total  # type: ignore[attr-defined]
+@@ -671,14 +731,16 @@ async def run_describe_job(
+             gpu_breaker_error: str | None = None
+             no_progress = 0
+             for item in items:
++                previous_status = DescribeItemStatus(item.status)
+                 progressed = False
+                 if await cancel_requested():
+-                    progressed = await repo.mark_item(
++                    marked = await repo.mark_item(
+                         tenant_id=tenant_id,
+                         run_id=run_id,
+                         media_id=item.media_id,
+                         status=DescribeItemStatus.SKIPPED,
+                     )
++                    progressed = _terminal_transition(previous_status, marked)
+                     await session.commit()
+                 else:
+                     image_bytes = item.image_bytes
+@@ -748,12 +810,13 @@ async def run_describe_job(
+                             media_id=item.media_id,
+                             processing_ms=processing_ms,
+                         )
+-                        progressed = await repo.mark_item(
++                        marked = await repo.mark_item(
+                             tenant_id=tenant_id,
+                             run_id=run_id,
+                             media_id=item.media_id,
+                             status=DescribeItemStatus.SKIPPED,
+                         )
++                        progressed = _terminal_transition(previous_status, marked)
+                     except Exception as exc:  # noqa: BLE001 - per-item failure must not abort the run
+                         logger.warning(
+                             "describe run item failed run_id=%s media_id=%s", run_id, item.media_id, exc_info=True
+@@ -774,13 +837,14 @@ async def run_describe_job(
+                             caption=None,
+                             provenance=None,
+                         )
+-                        progressed = await repo.mark_item(
++                        marked = await repo.mark_item(
+                             tenant_id=tenant_id,
+                             run_id=run_id,
+                             media_id=item.media_id,
+                             status=DescribeItemStatus.FAILED,
+                             error_message=str(exc),
+                         )
++                        progressed = _terminal_transition(previous_status, marked)
+                         if gpu_policy is not None and _is_transient_describe_error(exc):
+                             gpu_breaker_error = (
+                                 f"GPU circuit open after transient retries were exhausted: {type(exc).__name__}: {exc}"
+@@ -803,12 +867,13 @@ async def run_describe_job(
+                             provenance=outcome.provenance or None,
+                             tier=outcome.tier,
+                         )
+-                        progressed = await repo.mark_item(
++                        marked = await repo.mark_item(
+                             tenant_id=tenant_id,
+                             run_id=run_id,
+                             media_id=item.media_id,
+                             status=DescribeItemStatus.COMPLETED,
+                         )
++                        progressed = _terminal_transition(previous_status, marked)
+                     await session.commit()
+                 if progressed:
+                     no_progress = 0
+diff --git a/apps/prototype-description-service/scene/tests/test_describe_run_worker_phases.py b/apps/prototype-description-service/scene/tests/test_describe_run_worker_phases.py
+--- a/apps/prototype-description-service/scene/tests/test_describe_run_worker_phases.py
++++ b/apps/prototype-description-service/scene/tests/test_describe_run_worker_phases.py
+@@ -5,24 +5,25 @@ from __future__ import annotations
+ import asyncio
+ import json
+ import os
++import time
+ import uuid
+ from datetime import UTC, datetime, timedelta
+ from pathlib import Path
+ from typing import cast
+ 
+ import httpx
++import pytest
+ from jsonschema import Draft7Validator, FormatChecker
+ from referencing import Registry, Resource
+ from sqlalchemy import Table
+ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+ 
+ from db.models.base_imports import Base
+-from db.models.scene import DescribeStartup
++from db.models.scene import DescribeOperation, DescribeStartup
+ from scene.application.describe_run_repository import DescribeRunRepository
+ from scene.application.describe_run_worker import DescribeItemOutcome, run_describe_job
+ from scene.application.gpu_state import GpuState
+ from scene.domain.describe_run import (
+-    TERMINAL_ITEM_STATUSES,
+     DescribeItemStatus,
+     DescribeRunPhase,
+     DescribeRunStatus,
+@@ -325,10 +326,28 @@ async def _ensure_startup_table(engine) -> None:
+     async with engine.begin() as conn:
+         await conn.run_sync(
+             Base.metadata.create_all,
+-            tables=cast(list[Table], [DescribeStartup.__table__]),
++            tables=cast(list[Table], [DescribeStartup.__table__, DescribeOperation.__table__]),
+         )
+ 
+ 
++def _operation(
++    *,
++    operation_id: str,
++    startup_id: str,
++    accepted_at: datetime,
++    retain_until: datetime,
++) -> DescribeOperation:
++    return DescribeOperation(
++        tenant_id=TENANT_ID,
++        operation_id=operation_id,
++        request_digest="ab" * 32,
++        accepted_at=accepted_at,
++        expires_at=accepted_at + timedelta(minutes=30),
++        retain_until=retain_until,
++        startup_id=startup_id,
++    )
 +
 +
  def test_gpu_wait_records_cold_ramp_up_after_pickup(monkeypatch):
      import scene.application.describe_run_worker as wmod
  
-@@ -317,15 +337,26 @@ def test_gpu_wait_records_cold_ramp_up_after_pickup(monkeypatch):
-         return False
- 
-     monkeypatch.setattr(wmod, "_wait_for_gpu_ready", delayed_ready)
-+    started_at = datetime(2026, 1, 1, tzinfo=UTC)
-+    first_ready_at = started_at + timedelta(seconds=12)
- 
-     async def body():
-         path, url = await _make_db_async()
+@@ -345,18 +364,39 @@ def test_gpu_wait_records_cold_ramp_up_after_pickup(monkeypatch):
          engine = create_async_engine(url)
-+        await _ensure_startup_table(engine)
+         await _ensure_startup_table(engine)
          sf = async_sessionmaker(engine, expire_on_commit=False)
++        retain_until = datetime.now(UTC) + timedelta(hours=1)
++        newer_started = started_at + timedelta(seconds=60)
          async with sf() as s:
              run_id = await DescribeRunRepository(s).create_run(
                  tenant_id=TENANT_ID, media_ids=[1], images={1: (b"x", "image/png")}
              )
+             s.add(
+                 DescribeStartup(
+-                    startup_id="shared-boot",
++                    startup_id="older-boot",
+                     started_at=started_at,
+                     first_ready_at=first_ready_at,
+-                    retain_until=datetime.now(UTC) + timedelta(hours=1),
++                    retain_until=retain_until,
+                 )
+             )
 +            s.add(
 +                DescribeStartup(
-+                    startup_id="shared-boot",
-+                    started_at=started_at,
-+                    first_ready_at=first_ready_at,
-+                    retain_until=datetime.now(UTC) + timedelta(hours=1),
++                    startup_id="newer-boot",
++                    started_at=newer_started,
++                    first_ready_at=newer_started + timedelta(seconds=3),
++                    retain_until=retain_until,
 +                )
 +            )
++            s.add(
++                _operation(
++                    operation_id="op-older",
++                    startup_id="older-boot",
++                    accepted_at=started_at,
++                    retain_until=retain_until,
++                )
++            )
++            run = await DescribeRunRepository(s).get_run(tenant_id=TENANT_ID, run_id=run_id)
++            assert run is not None
++            run.operation_id = "op-older"
              await s.commit()
  
          async def describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
-@@ -345,8 +376,9 @@ def test_gpu_wait_records_cold_ramp_up_after_pickup(monkeypatch):
+@@ -376,7 +416,7 @@ def test_gpu_wait_records_cold_ramp_up_after_pickup(monkeypatch):
          assert run is not None
          assert run.queue_ms is not None
          assert run.ramp_up_ms is not None and run.ramp_up_ms >= 0
--        assert run.startup_id
--        assert run.startup_ms is not None
-+        assert run.startup_id == "shared-boot"
-+        assert run.startup_ms == elapsed_ms(started_at, first_ready_at)
-+        assert run.startup_ms != run.ramp_up_ms
+-        assert run.startup_id == "shared-boot"
++        assert run.startup_id == "older-boot"
+         assert run.startup_ms == elapsed_ms(started_at, first_ready_at)
+         assert run.startup_ms != run.ramp_up_ms
          assert run.items_timed == 1
+@@ -419,6 +459,7 @@ def test_cold_gpu_wait_without_startup_observation_leaves_ids_null(monkeypatch):
+         assert run is not None
+         assert run.startup_id is None
+         assert run.startup_ms is None
++        assert run.ramp_up_ms is not None and run.ramp_up_ms > 0
          await engine.dispose()
          os.unlink(path)
-@@ -354,6 +386,45 @@ def test_gpu_wait_records_cold_ramp_up_after_pickup(monkeypatch):
-     asyncio.run(body())
  
- 
-+def test_cold_gpu_wait_without_startup_observation_leaves_ids_null(monkeypatch):
-+    import scene.application.describe_run_worker as wmod
-+
-+    async def delayed_ready(**kwargs):
-+        await asyncio.sleep(0.01)
-+        return False
-+
-+    monkeypatch.setattr(wmod, "_wait_for_gpu_ready", delayed_ready)
-+
-+    async def body():
-+        path, url = await _make_db_async()
-+        engine = create_async_engine(url)
-+        sf = async_sessionmaker(engine, expire_on_commit=False)
-+        async with sf() as s:
-+            run_id = await DescribeRunRepository(s).create_run(
-+                tenant_id=TENANT_ID, media_ids=[1], images={1: (b"x", "image/png")}
-+            )
-+            await s.commit()
-+
-+        policy = wmod.GpuRunPolicy(endpoint_url="http://gpu.internal:8000", api_key=None, warmup_timeout_seconds=10)
-+        await run_describe_job(
-+            tenant_id=TENANT_ID,
-+            run_id=run_id,
-+            session_factory=sf,
-+            describe_one=lambda *_a, **_k: DescribeItemOutcome(alt_text_draft="ok", processing_ms=8),
-+            timeout_seconds=1.0,
-+            gpu_policy=policy,
-+        )
-+        async with sf() as s:
-+            run = await DescribeRunRepository(s).get_run(tenant_id=TENANT_ID, run_id=run_id)
-+        assert run is not None
-+        assert run.startup_id is None
-+        assert run.startup_ms is None
-+        await engine.dispose()
-+        os.unlink(path)
-+
-+    asyncio.run(body())
-+
-+
- def test_immediate_gpu_ready_is_warm_and_has_no_startup(monkeypatch):
+@@ -510,14 +551,21 @@ def test_worker_publishes_demand_snapshot_without_stop_flags(monkeypatch):
+ def test_cancel_during_retry_backoff_keeps_measured_attempt_ms(monkeypatch):
      import scene.application.describe_run_worker as wmod
  
-@@ -434,3 +505,153 @@ def test_worker_publishes_demand_snapshot_without_stop_flags(monkeypatch):
++    clock = {"t": 100.0}
++    attempt_s = 0.042
++
++    def fake_monotonic() -> float:
++        return clock["t"]
++
++    monkeypatch.setattr(wmod.time, "monotonic", fake_monotonic)
++
+     attempts = {"n": 0}
+ 
+     async def describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
+         attempts["n"] += 1
+         if attempts["n"] == 1:
+-            exc = httpx.ConnectError("transient")
+-            exc.processing_ms = 42
+-            raise exc
++            clock["t"] += attempt_s
++            raise httpx.ConnectError("transient")
+         raise AssertionError("retry must not dispatch after cancel")
+ 
+     async def already_ready(**kwargs):
+@@ -566,25 +614,14 @@ def test_cancel_during_retry_backoff_keeps_measured_attempt_ms(monkeypatch):
+             items = await DescribeRunRepository(s).list_run_items(tenant_id=TENANT_ID, run_id=run_id)
+         assert attempts["n"] == 1
+         assert items[0].status == DescribeItemStatus.SKIPPED
+-        assert items[0].processing_ms == 42
++        assert items[0].processing_ms == pytest.approx(attempt_s * 1000)
+         await engine.dispose()
+         os.unlink(path)
+ 
      asyncio.run(body())
-     assert calls == [{}]
-     assert written[0][0]["revision"] == 1
+ 
+ 
+-def test_three_noop_terminal_transitions_abort_run(monkeypatch):
+-    import scene.application.describe_run_worker as wmod
+-
+-    original = DescribeRunRepository.mark_item
+-
+-    async def no_op_terminal(self, *args, **kwargs):
+-        status = kwargs.get("status")
+-        if status in TERMINAL_ITEM_STATUSES:
+-            return False
+-        return await original(self, *args, **kwargs)
+-
+-    monkeypatch.setattr(DescribeRunRepository, "mark_item", no_op_terminal)
++def test_three_noop_terminal_transitions_abort_run():
+     described: list[int] = []
+ 
+     async def describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
+@@ -596,11 +633,19 @@ def test_three_noop_terminal_transitions_abort_run(monkeypatch):
+         engine = create_async_engine(url)
+         sf = async_sessionmaker(engine, expire_on_commit=False)
+         async with sf() as s:
+-            run_id = await DescribeRunRepository(s).create_run(
++            repo = DescribeRunRepository(s)
++            run_id = await repo.create_run(
+                 tenant_id=TENANT_ID,
+                 media_ids=[1, 2, 3, 4],
+                 images={1: (b"a", "image/png"), 2: (b"b", "image/png"), 3: (b"c", "image/png"), 4: (b"d", "image/png")},
+             )
++            for media_id in (1, 2, 3):
++                await repo.mark_item(
++                    tenant_id=TENANT_ID,
++                    run_id=run_id,
++                    media_id=media_id,
++                    status=DescribeItemStatus.COMPLETED,
++                )
+             await s.commit()
+         await run_describe_job(
+             tenant_id=TENANT_ID,
+@@ -655,3 +700,62 @@ def test_async_adapter_timing_excludes_thread_queue_delay(monkeypatch):
+         assert ms < 25
+ 
+     asyncio.run(body())
 +
 +
-+def test_cancel_during_retry_backoff_keeps_measured_attempt_ms(monkeypatch):
-+    import scene.application.describe_run_worker as wmod
-+
-+    attempts = {"n": 0}
-+
-+    async def describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
-+        attempts["n"] += 1
-+        if attempts["n"] == 1:
-+            exc = httpx.ConnectError("transient")
-+            exc.processing_ms = 42
-+            raise exc
-+        raise AssertionError("retry must not dispatch after cancel")
-+
-+    async def already_ready(**kwargs):
-+        return True
-+
-+    monkeypatch.setattr(wmod, "_wait_for_gpu_ready", already_ready)
-+    state = {"cancel": False}
-+    original_get_run = DescribeRunRepository.get_run
-+
-+    async def patched_get_run(self, *, tenant_id, run_id):
-+        run = await original_get_run(self, tenant_id=tenant_id, run_id=run_id)
-+        if run is not None and state["cancel"] and not run.cancel_requested:
-+            run.cancel_requested = True
-+        return run
-+
-+    monkeypatch.setattr(DescribeRunRepository, "get_run", patched_get_run)
-+
-+    async def body():
-+        path, url = await _make_db_async()
-+        engine = create_async_engine(url)
-+        sf = async_sessionmaker(engine, expire_on_commit=False)
-+        async with sf() as s:
-+            run_id = await DescribeRunRepository(s).create_run(
-+                tenant_id=TENANT_ID, media_ids=[1], images={1: (b"x", "image/png")}
-+            )
-+            await s.commit()
-+
-+        real_sleep = asyncio.sleep
-+
-+        async def cancel_during_backoff(_delay):
-+            state["cancel"] = True
-+            await real_sleep(0)
-+
-+        monkeypatch.setattr(wmod.asyncio, "sleep", cancel_during_backoff)
-+        await run_describe_job(
-+            tenant_id=TENANT_ID,
-+            run_id=run_id,
-+            session_factory=sf,
-+            describe_one=describe_one,
-+            timeout_seconds=1.0,
-+            gpu_policy=wmod.GpuRunPolicy(
-+                endpoint_url="http://gpu.internal:8000", api_key=None, warmup_timeout_seconds=10
-+            ),
-+        )
-+        async with sf() as s:
-+            items = await DescribeRunRepository(s).list_run_items(tenant_id=TENANT_ID, run_id=run_id)
-+        assert attempts["n"] == 1
-+        assert items[0].status == DescribeItemStatus.SKIPPED
-+        assert items[0].processing_ms == 42
-+        await engine.dispose()
-+        os.unlink(path)
-+
-+    asyncio.run(body())
-+
-+
-+def test_three_noop_terminal_transitions_abort_run(monkeypatch):
-+    import scene.application.describe_run_worker as wmod
-+
-+    original = DescribeRunRepository.mark_item
-+
-+    async def no_op_terminal(self, *args, **kwargs):
-+        status = kwargs.get("status")
-+        if status in TERMINAL_ITEM_STATUSES:
-+            return False
-+        return await original(self, *args, **kwargs)
-+
-+    monkeypatch.setattr(DescribeRunRepository, "mark_item", no_op_terminal)
-+    described: list[int] = []
-+
-+    async def describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
-+        described.append(media_id)
-+        return DescribeItemOutcome(alt_text_draft="ok", processing_ms=1)
-+
-+    async def body():
-+        path, url = await _make_db_async()
-+        engine = create_async_engine(url)
-+        sf = async_sessionmaker(engine, expire_on_commit=False)
-+        async with sf() as s:
-+            run_id = await DescribeRunRepository(s).create_run(
-+                tenant_id=TENANT_ID,
-+                media_ids=[1, 2, 3, 4],
-+                images={1: (b"a", "image/png"), 2: (b"b", "image/png"), 3: (b"c", "image/png"), 4: (b"d", "image/png")},
-+            )
-+            await s.commit()
-+        await run_describe_job(
-+            tenant_id=TENANT_ID,
-+            run_id=run_id,
-+            session_factory=sf,
-+            describe_one=describe_one,
-+            timeout_seconds=1.0,
-+        )
-+        async with sf() as s:
-+            run = await DescribeRunRepository(s).get_run(tenant_id=TENANT_ID, run_id=run_id)
-+        assert described == [1, 2, 3]
-+        assert run is not None
-+        assert run.status == DescribeRunStatus.FAILED
-+        assert run.error_message == "describe run stalled: no item progress"
-+        await engine.dispose()
-+        os.unlink(path)
-+
-+    asyncio.run(body())
-+
-+
-+def test_async_adapter_timing_excludes_thread_queue_delay(monkeypatch):
++def test_async_adapter_failure_persists_dispatch_ms_excluding_queue(monkeypatch):
 +    import scene.application.describe_async_worker as amod
-+    from scene.application.description_adapter import AdapterResult
 +    from scene.domain.description import DescriptionAdapterKind
 +
-+    class InstantAdapter:
++    class SlowFailAdapter:
 +        kind = DescriptionAdapterKind.SEEDED
 +        model_id = "seeded"
 +        model_version = "1"
 +        prompt_or_task_version = "1"
 +
 +        def describe(self, *, image_bytes, context):
-+            return AdapterResult(
-+                caption="c",
-+                objects=(),
-+                ocr_text=None,
-+                alt_text_draft="c",
-+                context_sources=(),
-+                context_applied=False,
-+            )
++            time.sleep(0.03)
++            raise RuntimeError("adapter boom")
++
++    class UnusedGpu:
++        kind = DescriptionAdapterKind.GPU
++        model_id = "gpu"
++        model_version = "1"
++        prompt_or_task_version = "1"
++
++        def describe(self, *, image_bytes, context):
++            raise AssertionError("gpu must not run after cpu failure")
 +
 +    real_to_thread = asyncio.to_thread
 +
@@ -680,7 +504,28 @@ diff --git a/apps/prototype-description-service/scene/tests/test_describe_run_wo
 +    monkeypatch.setattr(amod.asyncio, "to_thread", queued_to_thread)
 +
 +    async def body():
-+        _result, ms = await amod._describe_adapter(InstantAdapter(), image_bytes=b"x", context=None)
-+        assert ms < 25
++        path, url = await _make_db_async()
++        engine = create_async_engine(url)
++        sf = async_sessionmaker(engine, expire_on_commit=False)
++        async with sf() as s:
++            run_id = await DescribeRunRepository(s).create_single_run(
++                tenant_id=TENANT_ID, media_id=7, image_bytes=b"image"
++            )
++            await s.commit()
++        await amod.run_async_describe_job(
++            tenant_id=TENANT_ID,
++            run_id=run_id,
++            session_factory=sf,
++            cpu_adapter=SlowFailAdapter(),
++            gpu_adapter=UnusedGpu(),
++        )
++        async with sf() as s:
++            item = await DescribeRunRepository(s).get_single_run_item(tenant_id=TENANT_ID, run_id=run_id)
++        assert item is not None
++        assert item.status == DescribeItemStatus.FAILED
++        assert item.processing_ms is not None
++        assert 20 <= item.processing_ms < 70
++        await engine.dispose()
++        os.unlink(path)
 +
 +    asyncio.run(body())

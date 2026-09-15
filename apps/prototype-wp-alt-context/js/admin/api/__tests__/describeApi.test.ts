@@ -605,10 +605,9 @@ describe('describeApi', () => {
     expect(options?.body).toEqual({ media_id: 42, operation_id: 'op-lease-1' });
   });
 
-  it('accepts GPUFLOW multipart success keys including a null operation_id and nested timing', () => {
+  it('rejects a null operation_id on describe success while accepting an absent key', () => {
     const payload = {
       ...sampleResponse,
-      operation_id: null,
       startup_id: null,
       timing: {
         queue_ms: 1,
@@ -618,7 +617,11 @@ describe('describeApi', () => {
         server_elapsed_ms: 20,
       },
     };
+    expect(() => parseVisualFactsResponse({ ...payload, operation_id: null })).toThrow(
+      new MalformedVisualFactsResponseError('response.operation_id'),
+    );
     expect(parseVisualFactsResponse(payload)).toEqual(payload);
+    expect(parseVisualFactsResponse(payload).operation_id).toBeUndefined();
   });
 
   it('accepts a minted operation_id and startup_id on the describe success envelope', () => {
@@ -1012,6 +1015,20 @@ describe('resolveDescribeErrorDetailNumberField', () => {
   it('returns null for unstructured errors', () => {
     expect(resolveDescribeErrorDetailNumberField(new Error('network down'), 'warmup_eta_seconds')).toBeNull();
     expect(resolveDescribeErrorDetailNumberField(null, 'warmup_eta_seconds')).toBeNull();
+  });
+
+  it('returns null for a negative warmup_eta_seconds', () => {
+    const err = new Error(
+      'Request to .../describe failed (503): {"detail":{"code":"description_service_starting","message":"Description service is starting.","operation_id":"op-lease-1","startup_id":null,"warmup_eta_seconds":-3,"timing":{"queue_ms":0,"ramp_up_ms":null,"processing_ms":null,"startup_ms":null,"server_elapsed_ms":1}}}',
+    );
+    expect(resolveDescribeErrorDetailNumberField(err, 'warmup_eta_seconds')).toBeNull();
+  });
+
+  it('treats -0 warmup_eta_seconds as 0', () => {
+    const err = new Error(
+      'Request to .../describe failed (503): {"detail":{"code":"description_service_starting","message":"Description service is starting.","operation_id":"op-lease-1","startup_id":null,"warmup_eta_seconds":-0,"timing":{"queue_ms":0,"ramp_up_ms":null,"processing_ms":null,"startup_ms":null,"server_elapsed_ms":1}}}',
+    );
+    expect(resolveDescribeErrorDetailNumberField(err, 'warmup_eta_seconds')).toBe(0);
   });
 });
 

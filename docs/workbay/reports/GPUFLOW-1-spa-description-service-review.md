@@ -90,3 +90,20 @@ Verdict: pass_with_findings
 FINDINGS: []
 
 Verdict: pass_with_findings
+
+## Re-review r4c (87c03bd04..99cf1d247)
+
+VERIFIED: {"UXSERV-M-05":"partially_fixed","UXSERV-M-06":"fixed","GPUFLOW-1-SPADESCRIPTIONSERVICE-R-09":"fixed","GPUFLOW-1-SPADESCRIPTIONSERVICE-R-10":"fixed"}
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| `UXSERV-M-05` | `partially_fixed` | The delta only changes confirmation safety and action placement (`.review/CHANGE.diff:4-66`); it adds no `eta_seconds` field, status-boundary plumbing, or ETA rendering branch. The pre-existing generic warming message therefore remains the only surface, so a legitimate upstream ETA is still unavailable. |
+| `UXSERV-M-06` | `fixed` | The resulting card keeps the direct Start/Stop controls inside the known-state branch (`.review/CHANGE.diff:46-51`) and the new effect/click guard removes or rejects an open confirmation when the state becomes unknown or the action is no longer allowed (`.review/CHANGE.diff:9-29`). Stale and unknown card cases assert the controls are absent (`.review/CHANGE.diff:93-115`). |
+| `GPUFLOW-1-SPADESCRIPTIONSERVICE-R-09` | `fixed` | The effect clears confirmation on an unknown/stale effective state or lost eligibility, and `confirm()` rechecks `canStart`/`canStop` before calling `requestIntent` (`.review/CHANGE.diff:9-29`). Fresh-to-stale Start and Stop transition tests assert both confirmation strips disappear and no intent is sent (`.review/CHANGE.diff:117-159`). |
+| `GPUFLOW-1-SPADESCRIPTIONSERVICE-R-10` | `fixed` | `Return to automatic` is removed from the known-state-only fragment and re-rendered under the independent `canReturnToAuto` condition (`.review/CHANGE.diff:31-66`). Card stale/unknown cases and the hook stale non-AUTO case cover the recovery surface (`.review/CHANGE.diff:84-115,247-275`). |
+
+### FINDINGS
+
+FINDINGS: []
+
+Verdict: pass_with_findings

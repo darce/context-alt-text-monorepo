@@ -197,6 +197,13 @@ describe('ClusterLabelingPanel', () => {
     return user;
   };
 
+  const openNamingList = async (): Promise<HTMLElement> => {
+    const input = await screen.findByRole('combobox', { name: 'Name' });
+    input.focus();
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    return input;
+  };
+
   it('blocks save with pre-save duplicate guard for an existing cluster and merges with named target (PR-18/23/24)', async () => {
     // Predicted first failure: save calls updateClusterLabel without showing guard UI
     const onLabel = vi.fn();
@@ -1417,6 +1424,7 @@ describe('ClusterLabelingPanel', () => {
       }),
     );
     renderPanel();
+    await openNamingList();
     expect(screen.getByText('Suggested')).toBeInTheDocument();
     await typePanelName('Ada');
     expect(screen.getByText('Matches')).toBeInTheDocument();

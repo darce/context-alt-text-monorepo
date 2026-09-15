@@ -1,6 +1,6 @@
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -66,6 +66,14 @@ const renderControl = (
   return { onCommit, queryClient };
 };
 
+const openNamingList = async (input?: HTMLElement): Promise<HTMLElement> => {
+  const combobox = input ?? screen.getByRole('combobox', { name: INPUT_NAME });
+  await waitFor(() => expect(combobox).not.toBeDisabled());
+  combobox.focus();
+  fireEvent.keyDown(combobox, { key: 'ArrowDown' });
+  return combobox;
+};
+
 describe('PersonCommitControl single-gesture naming (UXW2-3)', () => {
   beforeEach(() => {
     vi.mocked(listRosterEntries).mockResolvedValue([]);
@@ -89,8 +97,8 @@ describe('PersonCommitControl single-gesture naming (UXW2-3)', () => {
     const user = userEvent.setup();
 
     // Wait for the roster typeahead to load before typing.
+    const input = await openNamingList();
     await screen.findByText('Alex Carter');
-    const input = screen.getByRole('combobox', { name: INPUT_NAME });
     await user.type(input, 'Alex Carter{Enter}');
 
     expect(onCommit).toHaveBeenCalledWith({
@@ -103,8 +111,8 @@ describe('PersonCommitControl single-gesture naming (UXW2-3)', () => {
     const { onCommit } = renderControl({}, [rosterEntry(42, 'Alex Carter')]);
     const user = userEvent.setup();
 
+    const input = await openNamingList();
     await screen.findByText('Alex Carter');
-    const input = screen.getByRole('combobox', { name: INPUT_NAME });
     await user.type(input, '  alex carter {Enter}');
 
     expect(onCommit).toHaveBeenCalledWith({
@@ -181,6 +189,7 @@ describe('PersonCommitControl single-gesture naming (UXW2-3)', () => {
     const { onCommit } = renderControl({}, [rosterEntry(42, 'Alex Carter')]);
     const user = userEvent.setup();
 
+    await openNamingList();
     const option = await screen.findByRole('option', { name: /Confirm match with Alex Carter/ });
     await user.click(option);
 
@@ -202,6 +211,7 @@ describe('PersonCommitControl single-gesture naming (UXW2-3)', () => {
 
     const input = screen.getByRole('combobox', { name: INPUT_NAME });
     await waitFor(() => expect(input).toHaveValue('Alex Carter'));
+    await openNamingList(input);
     await screen.findByRole('option', { name: /Alex Carter/ });
     await user.type(input, '{Enter}');
 
@@ -216,6 +226,7 @@ describe('PersonCommitControl single-gesture naming (UXW2-3)', () => {
 
   it('overlay header is People on a roster-only list (UXW2-3-R1-16b)', async () => {
     renderControl({}, [rosterEntry(42, 'Alex Carter')]);
+    await openNamingList();
     await screen.findByRole('option', { name: /Alex Carter/ });
     expect(screen.getByText('People')).toBeInTheDocument();
     expect(screen.queryByText('Suggested')).not.toBeInTheDocument();
@@ -223,6 +234,7 @@ describe('PersonCommitControl single-gesture naming (UXW2-3)', () => {
 
   it('omits whitespace-only roster names via buildNamingOptions (UXW2-3-R1-07)', async () => {
     renderControl({}, [rosterEntry(42, 'Alex Carter'), rosterEntry(7, '   ')]);
+    await openNamingList();
     await screen.findByRole('option', { name: /Alex Carter/ });
     expect(screen.getAllByRole('option')).toHaveLength(1);
   });

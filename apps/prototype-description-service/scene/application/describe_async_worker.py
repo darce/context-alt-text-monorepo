@@ -120,8 +120,13 @@ async def _describe_adapter(
 ) -> tuple[AdapterResult, int]:
     def _dispatch() -> tuple[AdapterResult, int]:
         start = time.perf_counter()
-        result = adapter.describe(image_bytes=image_bytes, context=context)
-        return result, _elapsed_ms(start)
+        try:
+            result = adapter.describe(image_bytes=image_bytes, context=context)
+            return result, _elapsed_ms(start)
+        except Exception as exc:
+            with contextlib.suppress(Exception):
+                exc.processing_ms = _elapsed_ms(start)  # type: ignore[attr-defined]
+            raise
 
     return await asyncio.to_thread(_dispatch)
 
@@ -182,6 +187,7 @@ async def run_async_describe_job(
         provisional_set = False
         media_id: int | None = None
         image_bytes = b""
+        cpu_duration_ms = 0
 
         try:
             # Phase: mark running + load image bytes (short session).
@@ -350,6 +356,17 @@ async def run_async_describe_job(
                     if item is None:
                         return
                     media_id = item.media_id
+                failed_ms = getattr(exc, "processing_ms", None)
+                if failed_ms is not None:
+                    total = float(failed_ms)
+                    if provisional_set:
+                        total += float(cpu_duration_ms)
+                    await repo.record_item_processing(
+                        tenant_id=tenant_id,
+                        run_id=run_id,
+                        media_id=media_id,
+                        processing_ms=total,
+                    )
                 if provisional_set:
                     await repo.set_item_degraded(
                         tenant_id=tenant_id,

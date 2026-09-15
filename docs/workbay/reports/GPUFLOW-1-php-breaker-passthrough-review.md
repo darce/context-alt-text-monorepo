@@ -120,3 +120,49 @@ File: `apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-co
 Evidence: A locally generated open-breaker error has no accepted operation and no measured upstream work, yet `open_circuit_local_timing()` reports `queue_ms`, `ramp_up_ms`, `processing_ms`, and `server_elapsed_ms` as zero. The timing contract says unknown/untimed values are null and zeroes must not be invented; the new test codifies the fabricated zeroes instead of catching them.
 
 Verdict: fail
+
+## Re-review r3 (872dcb23b..cfb38fc79)
+
+VERIFIED: {"GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-04":"partially_fixed","GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-09":"fixed","GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-10":"fixed"}
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-04 | partially_fixed | `.review/CHANGE.diff:4-87` now validates the 503 status, nested starting code/message, required ID fields, exact timing keys/value shape, ETA presence/range, and Retry-After range. However `is_nullable_opaque_id()` still admits a null operation_id, and the validator does not enforce the envelope's closed key set; schema-invalid warming can still be exempted. |
+| GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-09 | fixed | `.review/CHANGE.diff:106-127` keeps body-only/verbatim forwarding and drops empty or overlong strings; `.review/CHANGE.diff:132-194` adds empty, 129-character, and 128-character coverage. |
+| GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-10 | fixed | `.review/CHANGE.diff:90-104` changes every locally fabricated queue/ramp-up/processing/server-elapsed zero to null, and `.review/CHANGE.diff:290-305` updates the regression assertions accordingly. |
+
+### FINDINGS
+
+FINDINGS: [{"id":"GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-11","severity":"high","file_path":"apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php","line":586,"summary":"The warming exemption accepts a null operation_id even though typed errors require a service-minted ID","evidence":"The fix calls is_nullable_opaque_id() for operation_id, and that helper returns true for null (`.review/CHANGE.diff:8-17,39-51`; source :586-615). scene-describe-multipart.schema.json requires detail.operation_id to be a non-empty string (schema :39-47), so a 503 starting body with operation_id:null is contract-invalid but still skips breaker accounting."},{"id":"GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-12","severity":"high","file_path":"apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php","line":572,"summary":"The warming validator does not reject additional top-level or detail properties","evidence":"The new checks inspect selected fields but never compare decoded/detail keys against the closed schema (`.review/CHANGE.diff:4-37,54-87`; source :572-607). The typed envelope sets additionalProperties:false at scene-describe-multipart.schema.json :23-70, so a body with valid required fields plus an extra property is returned as warming and bypasses breaker accounting despite failing the published boundary schema [API-09]."},{"id":"GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-13","severity":"high","file_path":"apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php","line":649,"summary":"Timing and ETA validation admits positive infinity from JSON-decoded numbers","evidence":"The fix accepts every nonnegative PHP int/float but never calls is_finite() (`.review/CHANGE.diff:54-87`; source :601-603 and :645-651). PHP json_decode converts a JSON number such as 1e400 to INF, which passes the comparison; the shared timing/ETA contract permits finite nonnegative JSON numbers only, so malformed warming can again bypass failure accounting."}]
+
+#### GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-11 — high
+
+File: `apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php:586-615`; contract `packages/shared-contracts/schemas/scene-describe-multipart.schema.json:39-47`.
+
+Evidence: The fix routes both operation_id and startup_id through `is_nullable_opaque_id()`, whose first branch accepts null (`.review/CHANGE.diff:8-17,39-51`). The typed error schema permits nullable startup_id but requires operation_id to be a non-empty string. Because this helper is used before breaker accounting, a starting response with `operation_id:null` is treated as validated warming rather than as a malformed 503.
+
+Impact: A schema-invalid response can suppress failure accounting and remain outside the describe breaker, while downstream schema validation rejects the body and no service-minted retry identity exists.
+
+Fix: Use a non-null opaque-ID validator for operation_id and retain nullable validation only for startup_id; add a null-operation regression that proves the response counts as a real failure.
+
+#### GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-12 — high
+
+File: `apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php:572-607`; contract `packages/shared-contracts/schemas/scene-describe-multipart.schema.json:23-70`.
+
+Evidence: The fix checks selected required members but never asserts that the decoded response has only `detail` or that `detail` has only the typed-error members (`.review/CHANGE.diff:4-37,54-87`). The shared schema marks both objects `additionalProperties:false`. A valid-looking starting envelope with an extra key therefore returns through the warming exemption and bypasses failure accounting even though it is not a valid typed response [API-09].
+
+Impact: An upstream contract drift or malformed payload can be silently classified as warming, so the circuit remains closed while strict consumers reject the same response.
+
+Fix: Enforce the exact top-level and starting-detail key sets before exempting the response, with an extra-property regression.
+
+#### GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-13 — high
+
+File: `apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php:601-603,645-651`; timing contract `packages/shared-contracts/schemas/image-description-response.schema.json:339-385`.
+
+Evidence: Numeric validation accepts any nonnegative PHP int/float and does not reject non-finite values (`.review/CHANGE.diff:54-87`). PHP `json_decode()` represents a JSON number such as `1e400` as `INF`; `INF < 0` is false, so it passes both timing and ETA validation. The shared wire contract allows only nonnegative JSON numbers or null, not an infinite internal float.
+
+Impact: A malformed upstream 503 can be accepted as validated warming and skip breaker accounting with unusable timing/ETA metadata.
+
+Fix: Require `is_finite()` for every non-null timing and ETA number; add an oversized-exponent regression.
+
+Verdict: fail

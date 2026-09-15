@@ -1,6 +1,8 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
+import { AuthExpiredError } from '../../utils/http';
+import { SPA_SESSION_EXPIRED_COPY } from '../../utils/userFacingError';
 import { RetentionSection } from '../RetentionPage';
 import { retentionReducer, type RetentionDialogState } from '../retention/useRetentionPageState';
 import {
@@ -373,6 +375,29 @@ describe('RetentionSection', () => {
     render(<RetentionSection />);
 
     expect(screen.getByText('Backend unavailable — retention status cannot be loaded.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    {
+      error: new AuthExpiredError({ endpoint: '/retention', status: 401 }),
+      expected: SPA_SESSION_EXPIRED_COPY.sessionExpired,
+    },
+    {
+      error: new Error('Request to /retention failed: private response body'),
+      expected: 'Unable to load retention status. Please try again.',
+    },
+    {
+      error: null,
+      expected: 'Unable to load retention status. Please try again.',
+    },
+  ])('shows safe query error copy with Retry: $expected', ({ error, expected }) => {
+    mockedUseRetentionStatus.mockReturnValue(createMockQuery({ isError: true, error, refetch }));
+    const { container } = render(<RetentionSection />);
+    expect(screen.getByText('Backend unavailable — retention status cannot be loaded.')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent(expected);
+    expect(container).not.toHaveTextContent(/private response body|\/retention/);
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     expect(refetch).toHaveBeenCalledTimes(1);
   });

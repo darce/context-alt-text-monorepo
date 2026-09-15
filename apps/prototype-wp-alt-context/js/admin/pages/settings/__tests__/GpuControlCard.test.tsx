@@ -134,6 +134,18 @@ describe('GpuControlCard', () => {
     expect(screen.getAllByRole('status')).toHaveLength(1);
   });
 
+  it.each(['Start', 'Stop'] as const)('uses plain operator copy in the %s confirmation', (action) => {
+    mockControl(statusResponse({
+      state: action === 'Start' ? 'stopped' : 'ready',
+      instance_running_since: '2026-09-07T11:59:00Z',
+      lease_expires_at: '2026-09-07T12:59:00Z',
+    }));
+    const { container } = render(<GpuControlCard />);
+    fireEvent.click(screen.getByRole('button', { name: action + ' service' }));
+    expect(screen.getByTestId('z-gpu-lease')).toHaveTextContent('Run limit:');
+    expect(container).not.toHaveTextContent(/Burst GPU|A10|lease/i);
+  });
+
   it('shows the inline start preview before committing', () => {
     const requestIntent = vi.fn();
     mockControl(statusResponse(), { requestIntent });

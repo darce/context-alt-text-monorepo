@@ -1,612 +1,72 @@
-diff --git a/apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useDescribeRunProgress.test.tsx b/apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useDescribeRunProgress.test.tsx
---- a/apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useDescribeRunProgress.test.tsx
-+++ b/apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useDescribeRunProgress.test.tsx
-@@ -13,8 +13,9 @@ import {
-   useDescribeRunProgress,
- } from '../useDescribeRunProgress';
- import * as describeApi from '../../api/describeApi';
--import { GPU_STATE, type DescribeRunResponse } from '../../api/describeApi';
-+import { GPU_STATE, type DescribeRunResponse, type DescribeRunTiming } from '../../api/describeApi';
- import { GpuTierStatus } from '../../pages/workbench/MediaSelection';
-+import gpuflowBulkTiming from '../../pages/workbench/__tests__/fixtures/gpuflow-bulk-timing.json';
+diff --git a/apps/prototype-description-service/scene/tests/test_shared_schema_documents.py b/apps/prototype-description-service/scene/tests/test_shared_schema_documents.py
+--- a/apps/prototype-description-service/scene/tests/test_shared_schema_documents.py
++++ b/apps/prototype-description-service/scene/tests/test_shared_schema_documents.py
+@@ -189,7 +189,8 @@ def test_cache_timing_consistency(name):
+     v = validator(name)
+     v.validate(payload)
+     for field, value in (("startup_id", "startup"), ("ramp_up_ms", 1),
+-                         ("processing_ms", 1), ("ramp_up_ms", None), ("processing_ms", None)):
++                         ("processing_ms", 1), ("startup_ms", 7),
++                         ("ramp_up_ms", None), ("processing_ms", None)):
+         bad = copy.deepcopy(payload)
+         target = bad if field == "startup_id" else bad["timing"]
+         target[field] = value
+@@ -207,7 +208,7 @@ def test_cache_timing_consistency(name):
+             "Each active, unexpired, policy-eligible lease contributes one to `in_flight`",
+             "`lease_demand` field is a nonnegative nullable integer",
+             "STOP-held and max-lease-blocked",
+-            "has_work := (queue_depth + in_flight) > 0",
++            "has_work := ((queue_depth + in_flight) > 0) OR batch_in_progress",
+         )),
+         ("gpu-lifecycle", (
+             "sequence inside the same transaction as the demand read",
+@@ -228,3 +229,11 @@ def test_documented_publisher_and_retry_requirements(document, requirements):
+     text = " ".join(path.read_text().split())
+     for requirement in requirements:
+         assert requirement in text
++
++
++def test_publication_has_work_includes_batch_gaps():
++    path = ROOT.parents[2] / "docs/workbay/contracts/gpu-lifecycle.md"
++    section = path.read_text().split("### Publication and deployment bounds", 1)[1]
++    text = " ".join(section.split())
++    assert "has_work := ((queue_depth + in_flight) > 0) OR batch_in_progress" in text
++    assert "START and STOP, including batch gaps with both counts zero" in text
+diff --git a/docs/workbay/contracts/gpu-lifecycle.md b/docs/workbay/contracts/gpu-lifecycle.md
+--- a/docs/workbay/contracts/gpu-lifecycle.md
++++ b/docs/workbay/contracts/gpu-lifecycle.md
+@@ -16,7 +16,7 @@ tuples are `(action, instance_id)` with `action` ∈ `{START, STOP}`.
+ `python -m infra.oci.gpu_lifecycle --mode reap|start` (default `reap`).
  
- vi.mock('../../api/describeApi', async (importOriginal) => {
-   const actual = await importOriginal<typeof describeApi>();
-@@ -47,6 +48,63 @@ const runResponse = (overrides: Partial<DescribeRunResponse> = {}): DescribeRunR
-   ...overrides,
- });
+ `--mode start` emits START for STOPPED instances when the load snapshot has
+-work (`queue_depth > 0` or `in_flight > 0`). `--mode reap` remains the idle
++work (`queue_depth > 0` or `in_flight > 0` or `batch_in_progress`). `--mode reap` remains the idle
+ STOP path.
  
-+const GPUFLOW_TIMING: DescribeRunTiming = {
-+  queue_ms: gpuflowBulkTiming.run.timing.queue_ms,
-+  ramp_up_ms: gpuflowBulkTiming.run.timing.ramp_up_ms,
-+  processing_ms_p50: gpuflowBulkTiming.run.timing.processing_ms_p50,
-+  processing_ms_max: gpuflowBulkTiming.run.timing.processing_ms_max,
-+  startup_ms: gpuflowBulkTiming.run.timing.startup_ms,
-+  server_elapsed_ms: gpuflowBulkTiming.run.timing.server_elapsed_ms,
-+  items_timed: gpuflowBulkTiming.run.timing.items_timed,
-+};
-+
-+const gpuflowRun = (overrides: Partial<DescribeRunResponse> = {}): DescribeRunResponse =>
-+  runResponse({
-+    tenant_id: gpuflowBulkTiming.run.tenant_id,
-+    run_id: gpuflowBulkTiming.run.run_id,
-+    status: 'completed_with_errors',
-+    phase: 'complete',
-+    completed: gpuflowBulkTiming.run.completed,
-+    failed: gpuflowBulkTiming.run.failed,
-+    skipped: gpuflowBulkTiming.run.skipped,
-+    total: gpuflowBulkTiming.run.total,
-+    cancel_requested: gpuflowBulkTiming.run.cancel_requested,
-+    eta_seconds: gpuflowBulkTiming.run.eta_seconds,
-+    gpu_state: GPU_STATE.READY,
-+    recognition_enabled: gpuflowBulkTiming.run.recognition_enabled,
-+    deadline_seconds: gpuflowBulkTiming.run.deadline_seconds,
-+    operation_id: gpuflowBulkTiming.run.operation_id,
-+    startup_id: gpuflowBulkTiming.run.startup_id,
-+    timing: GPUFLOW_TIMING,
-+    ...overrides,
-+  });
-+
-+const gpuflowRunWithoutTiming = (): DescribeRunResponse => {
-+  const run = gpuflowRun();
-+  delete run.timing;
-+  return run;
-+};
-+
-+const gpuflowWarmingRun = (overrides: Partial<DescribeRunResponse> = {}): DescribeRunResponse => {
-+  const run = gpuflowRun({
-+    status: 'running',
-+    phase: 'describing',
-+    completed: gpuflowBulkTiming.run_warming.completed,
-+    failed: gpuflowBulkTiming.run_warming.failed,
-+    skipped: gpuflowBulkTiming.run_warming.skipped,
-+    total: gpuflowBulkTiming.run_warming.total,
-+    gpu_state: GPU_STATE.STARTING,
-+    eta_seconds: gpuflowBulkTiming.run_warming.eta_seconds,
-+    operation_id: gpuflowBulkTiming.run_warming.operation_id,
-+    startup_id: gpuflowBulkTiming.run_warming.startup_id,
-+    ...overrides,
-+  });
-+  if (!Object.hasOwn(overrides, 'timing')) {
-+    Object.assign(run, { timing: gpuflowBulkTiming.run_warming.timing });
-+  }
-+  return run;
-+};
-+
- const wrapper = ({ children }: React.PropsWithChildren): React.JSX.Element => {
-   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-   return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
-@@ -500,3 +558,87 @@ describe('useDescribeRunProgress recognition_enabled pass-through', () => {
-     expect(result.current.run?.recognition_enabled).toBe(enabled);
-   });
- });
-+
-+describe('useDescribeRunProgress GPUFLOW timing passthrough', () => {
-+  beforeEach(() => {
-+    vi.clearAllMocks();
-+  });
-+
-+  it('passes timing and startupId through verbatim from the polled run', async () => {
-+    const fixtureRun = gpuflowRun();
-+    fetchBulkDescribeRunMock.mockResolvedValue(fixtureRun);
-+
-+    const { result } = renderHook(() => useDescribeRunProgress(fixtureRun.run_id), { wrapper });
-+
-+    await waitFor(() => expect(result.current.status).toBe('completed_with_errors'));
-+    expect(result.current.timing).toBe(fixtureRun.timing);
-+    expect(result.current.timing).toEqual({
-+      queue_ms: 10,
-+      ramp_up_ms: 0,
-+      processing_ms_p50: 12.5,
-+      processing_ms_max: 30,
-+      startup_ms: null,
-+      server_elapsed_ms: 40,
-+      items_timed: 2,
-+    } satisfies DescribeRunTiming);
-+    expect(result.current.startupId).toBeNull();
-+    expect(result.current.isWarming).toBe(false);
-+    expect(result.current.isTerminal).toBe(true);
-+    expect(result.current.isPolling).toBe(false);
-+  });
-+
-+  it('returns null timing and startupId when those keys are absent', async () => {
-+    expect(gpuflowBulkTiming.run_no_timing).not.toHaveProperty('timing');
-+    fetchBulkDescribeRunMock.mockResolvedValue(gpuflowRunWithoutTiming());
-+
-+    const { result } = renderHook(() => useDescribeRunProgress('run-1'), { wrapper });
-+
-+    await waitFor(() => expect(result.current.status).toBe('completed_with_errors'));
-+    expect(result.current.timing).toBeNull();
-+    expect(result.current.startupId).toBeNull();
-+    expect(result.current.isWarming).toBe(false);
-+  });
-+
-+  it('returns null timing when the run reports timing: null', async () => {
-+    fetchBulkDescribeRunMock.mockResolvedValue(gpuflowWarmingRun());
-+
-+    const { result } = renderHook(() => useDescribeRunProgress('run-1'), { wrapper });
-+
-+    await waitFor(() => expect(result.current.status).toBe('running'));
-+    expect(result.current.timing).toBeNull();
-+    expect(result.current.startupId).toBeNull();
-+  });
-+
-+  it('sets isWarming when gpu_state is starting and the run has no eta', async () => {
-+    fetchBulkDescribeRunMock.mockResolvedValue(gpuflowWarmingRun());
-+
-+    const { result } = renderHook(() => useDescribeRunProgress('run-1'), { wrapper });
-+
-+    await waitFor(() => expect(result.current.status).toBe('running'));
-+    expect(result.current.gpuState).toBe(GPU_STATE.STARTING);
-+    expect(result.current.etaSeconds).toBeNull();
-+    expect(result.current.isWarming).toBe(true);
-+    expect(result.current.isTerminal).toBe(false);
-+    expect(result.current.isPolling).toBe(true);
-+    expect(result.current.stalledForSeconds).toBeNull();
-+  });
-+
-+  it('does not set isWarming when a starting GPU already reports an eta', async () => {
-+    fetchBulkDescribeRunMock.mockResolvedValue(gpuflowWarmingRun({ eta_seconds: 12 }));
-+
-+    const { result } = renderHook(() => useDescribeRunProgress('run-1'), { wrapper });
-+
-+    await waitFor(() => expect(result.current.status).toBe('running'));
-+    expect(result.current.etaSeconds).toBe(12);
-+    expect(result.current.isWarming).toBe(false);
-+  });
-+
-+  it('passes a non-null startupId through unchanged', async () => {
-+    fetchBulkDescribeRunMock.mockResolvedValue(gpuflowRun({ startup_id: 'startup-opaque' }));
-+
-+    const { result } = renderHook(() => useDescribeRunProgress('run-1'), { wrapper });
-+
-+    await waitFor(() => expect(result.current.status).toBe('completed_with_errors'));
-+    expect(result.current.startupId).toBe('startup-opaque');
-+  });
-+});
-diff --git a/apps/prototype-wp-alt-context/js/admin/hooks/useDescribeRunProgress.ts b/apps/prototype-wp-alt-context/js/admin/hooks/useDescribeRunProgress.ts
---- a/apps/prototype-wp-alt-context/js/admin/hooks/useDescribeRunProgress.ts
-+++ b/apps/prototype-wp-alt-context/js/admin/hooks/useDescribeRunProgress.ts
-@@ -8,6 +8,7 @@ import {
-   isGpuState,
-   type DescribeRunResponse,
-   type DescribeRunStatus,
-+  type DescribeRunTiming,
-   type GpuState,
- } from '../api/describeApi';
- import { getJobProgressStallThresholdMs } from './useJobProgressStream';
-@@ -89,6 +90,18 @@ export interface DescribeRunProgress {
-   etaSeconds: number | null;
-   /** GPU lifecycle snapshot carried by the existing run-status poll. */
-   gpuState?: GpuState | null;
-+  /**
-+   * Measured run timing from the polled envelope. Null when the key is absent
-+   * or null — never derived client-side (rg-015).
-+   */
-+  timing?: DescribeRunTiming | null;
-+  /** Opaque shared startup id from the polled envelope; null when absent. */
-+  startupId?: string | null;
-+  /**
-+   * GPU is starting and the run has not yet reported an ETA. UI should say the
-+   * service is starting instead of presenting a stalled bar.
-+   */
-+  isWarming?: boolean;
-   isTerminal: boolean;
-   stalledForSeconds: number | null;
-   isPolling: boolean;
-@@ -166,6 +179,11 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
-   const run = query.data ?? null;
-   const status = run?.status ?? null;
-   const isTerminal = status !== null && isDescribeRunTerminal(status);
-+  const gpuState = isGpuState(run?.gpu_state) ? run.gpu_state : GPU_STATE.UNKNOWN;
-+  const etaSeconds = run?.eta_seconds ?? null;
-+  const timing = run?.timing ?? null;
-+  const startupId = run?.startup_id ?? null;
-+  const isWarming = !isTerminal && gpuState === GPU_STATE.STARTING && etaSeconds === null;
-   const frozenStreakExceeded = frozenPollStreak >= FROZEN_POLL_ESCALATION_THRESHOLD;
-   const isFrozen = query.isError && isFrozenPollFailure(query.error) && !frozenStreakExceeded;
-   const isError = query.isError && !isFrozen;
-@@ -206,7 +224,7 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
-   // error surfaces its own Retry affordance, and a frozen poll already shows
-   // the paused notice, so suppress the speculative stall banner in both.
-   useEffect(() => {
--    if (runId === null || isTerminal || isError || isFrozen) {
-+    if (runId === null || isTerminal || isError || isFrozen || isWarming) {
-       setStalledForSeconds(null);
-       return;
-     }
-@@ -226,7 +244,7 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
-     updateStallState();
-     const intervalId = window.setInterval(updateStallState, 1_000);
-     return () => window.clearInterval(intervalId);
--  }, [runId, isTerminal, isError, isFrozen]);
-+  }, [runId, isTerminal, isError, isFrozen, isWarming]);
+ Instance states:
+@@ -381,9 +381,9 @@ async GPU count plus eligible lease count. Do not count a lease again as async
+ work. The additive `lease_demand` field is a nonnegative nullable integer:
+ the eligible lease count (zero when measured empty), or null for an unknown
+ breakdown; null must never erase demand from `in_flight`.
+-Count-based `has_work := (queue_depth + in_flight) > 0`; the existing
+-`batch_in_progress` STOP guard remains independently authoritative across batch
+-gaps. Readers ignoring `lease_demand` therefore retain correct demand protection.
++`has_work := ((queue_depth + in_flight) > 0) OR batch_in_progress` governs
++START and STOP, including batch gaps with both counts zero. Readers ignoring
++the informative `lease_demand` field therefore retain correct demand protection.
+ Global `load_snapshot` aggregation MUST use the dedicated RLS-bypassed system
+ session and count all tenants; a tenant-scoped session fails closed.
  
-   // Terminal (processed) items over total: completed + failed + skipped, so the
-   // bar reaches 100% when every item is done regardless of per-item outcome.
-@@ -239,8 +257,11 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
-     run,
-     status,
-     progressFraction,
--    etaSeconds: run?.eta_seconds ?? null,
--    gpuState: isGpuState(run?.gpu_state) ? run.gpu_state : GPU_STATE.UNKNOWN,
-+    etaSeconds,
-+    gpuState,
-+    timing,
-+    startupId,
-+    isWarming,
-     isTerminal,
-     stalledForSeconds,
-     isPolling: runId !== null && !isTerminal && !isError,
-diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelection.tsx b/apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelection.tsx
---- a/apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelection.tsx
-+++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelection.tsx
-@@ -36,6 +36,7 @@ import {
-   DESCRIBE_RUN_STATUS,
-   GPU_STATE,
-   type DescribeRunStatus,
-+  type DescribeRunTiming,
-   type GpuState,
- } from '../../api/describeApi';
- import { toDescriptionHistoryRun } from '../../navigation/appLinks';
-@@ -858,6 +859,32 @@ const formatEtaLabel = (etaSeconds: number | null): string => {
-   return sprintf(__('~%1$dm %2$ds remaining', 'alt-context'), minutes, seconds);
- };
- 
-+const formatTimingSeconds = (ms: number): string => String(ms / 1000);
-+
-+/** Wire-only terminal summary; null when elapsed time was not measured. */
-+const formatTerminalTimingAnnouncement = (
-+  completed: number,
-+  failed: number,
-+  timing: DescribeRunTiming,
-+): string | null => {
-+  if (timing.server_elapsed_ms === null) {
-+    return null;
-+  }
-+  const summary = sprintf(
-+    __('%1$d described, %2$d failed in %3$s s', 'alt-context'),
-+    completed,
-+    failed,
-+    formatTimingSeconds(timing.server_elapsed_ms),
-+  );
-+  if (timing.startup_ms === null) {
-+    return summary;
-+  }
-+  return `${summary}${sprintf(
-+    __(' (GPU startup %s s)', 'alt-context'),
-+    formatTimingSeconds(timing.startup_ms),
-+  )}`;
-+};
-+
- export const BulkDescribeProgress = ({
-   progress,
-   onRetry,
-@@ -873,7 +900,18 @@ export const BulkDescribeProgress = ({
-   onReviewDrafts?: () => void;
-   isCancelling?: boolean;
- }) => {
--  const { run, status, progressFraction, etaSeconds, stalledForSeconds, isTerminal, isError, isFrozen } = progress;
-+  const {
-+    run,
-+    status,
-+    progressFraction,
-+    etaSeconds,
-+    stalledForSeconds,
-+    isTerminal,
-+    isError,
-+    isFrozen,
-+    isWarming,
-+    timing,
-+  } = progress;
-   const cooldown = useRecognitionCooldown();
- 
-   useEffect(() => {
-@@ -948,6 +986,19 @@ export const BulkDescribeProgress = ({
-       </button>
-     ) : null;
- 
-+  if (isWarming) {
-+    return (
-+      <div className="acx-media-selection__bulk-describe-progress" role="status" aria-live="polite">
-+        <span className="acx-media-selection__bulk-describe-status acx-media-selection__bulk-describe-status--running">
-+          <Loader2 className="acx-media-selection__bulk-describe-spin" aria-hidden="true" size={16} />
-+          {__('Description service is starting', 'alt-context')}
-+        </span>
-+        {cancelControl}
-+        {waitingNotice}
-+      </div>
-+    );
-+  }
-+
-   if (run.phase === DESCRIBE_RUN_PHASE.QUEUED) {
-     return (
-       <div className="acx-media-selection__bulk-describe-progress" role="status" aria-live="polite">
-@@ -1009,12 +1060,21 @@ export const BulkDescribeProgress = ({
-     );
-     const failedSegment =
-       run.failed > 0 ? sprintf(_n(' · %1$d failed', ' · %1$d failed', run.failed, 'alt-context'), run.failed) : '';
-+    const visualCopy = `${draftsReady}${failedSegment}`;
-+    const measuredAnnouncement =
-+      timing != null ? formatTerminalTimingAnnouncement(run.completed, run.failed, timing) : null;
-     return (
-       <div className="acx-media-selection__bulk-describe-progress" role="status" aria-live="polite">
--        <span className="acx-media-selection__bulk-describe-status acx-media-selection__bulk-describe-status--success">
-+        <span
-+          className="acx-media-selection__bulk-describe-status acx-media-selection__bulk-describe-status--success"
-+          aria-hidden={measuredAnnouncement !== null ? true : undefined}
-+        >
-           <CheckCircle2 aria-hidden="true" size={16} />
--          {`${draftsReady}${failedSegment}`}
-+          {visualCopy}
-         </span>
-+        {measuredAnnouncement !== null ? (
-+          <span className="screen-reader-text">{measuredAnnouncement}</span>
-+        ) : null}
-         <a className="button button-secondary" href={toDescriptionHistoryRun(run.run_id)}>
-           {__('Review drafts', 'alt-context')}
-         </a>
-diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/MediaSelection.statusAnnouncement.test.tsx b/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/MediaSelection.statusAnnouncement.test.tsx
---- a/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/MediaSelection.statusAnnouncement.test.tsx
-+++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/MediaSelection.statusAnnouncement.test.tsx
-@@ -9,8 +9,11 @@ import { act, cleanup, render, screen } from '@testing-library/react';
- import React from 'react';
- import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
- 
--import { MediaSelection } from '../MediaSelection';
-+import type { DescribeRunProgress } from '../../../hooks/useDescribeRunProgress';
-+import { GPU_STATE, type DescribeRunResponse, type DescribeRunTiming } from '../../../api/describeApi';
-+import { BulkDescribeProgress, MediaSelection } from '../MediaSelection';
- import { MARK_DECORATIVE_SUCCESS_MESSAGE } from '../MediaAltSuggest';
-+import gpuflowBulkTiming from './fixtures/gpuflow-bulk-timing.json';
- 
- vi.mock('@wordpress/i18n', () => ({
-   __: (text: string) => text,
-@@ -329,3 +332,137 @@ describe('MediaSelection toolbar status announcement [WBUX-5-D-02][B-01][B-02]',
-     rowStatus.remove();
-   });
- });
-+
-+const TERMINAL_STATUSES = new Set(['completed', 'completed_with_errors', 'failed', 'cancelled']);
-+
-+const GPUFLOW_TIMING: DescribeRunTiming = {
-+  queue_ms: gpuflowBulkTiming.run.timing.queue_ms,
-+  ramp_up_ms: gpuflowBulkTiming.run.timing.ramp_up_ms,
-+  processing_ms_p50: gpuflowBulkTiming.run.timing.processing_ms_p50,
-+  processing_ms_max: gpuflowBulkTiming.run.timing.processing_ms_max,
-+  startup_ms: gpuflowBulkTiming.run.timing.startup_ms,
-+  server_elapsed_ms: gpuflowBulkTiming.run.timing.server_elapsed_ms,
-+  items_timed: gpuflowBulkTiming.run.timing.items_timed,
-+};
-+
-+const gpuflowRun = (overrides: Partial<DescribeRunResponse> = {}): DescribeRunResponse => ({
-+  tenant_id: gpuflowBulkTiming.run.tenant_id,
-+  run_id: gpuflowBulkTiming.run.run_id,
-+  status: 'completed_with_errors',
-+  phase: 'complete',
-+  completed: gpuflowBulkTiming.run.completed,
-+  failed: gpuflowBulkTiming.run.failed,
-+  skipped: gpuflowBulkTiming.run.skipped,
-+  total: gpuflowBulkTiming.run.total,
-+  cancel_requested: gpuflowBulkTiming.run.cancel_requested,
-+  eta_seconds: gpuflowBulkTiming.run.eta_seconds,
-+  gpu_state: GPU_STATE.READY,
-+  recognition_enabled: gpuflowBulkTiming.run.recognition_enabled,
-+  deadline_seconds: gpuflowBulkTiming.run.deadline_seconds,
-+  operation_id: gpuflowBulkTiming.run.operation_id,
-+  startup_id: gpuflowBulkTiming.run.startup_id,
-+  timing: GPUFLOW_TIMING,
-+  ...overrides,
-+});
-+
-+const gpuflowRunWithoutTiming = (): DescribeRunResponse => {
-+  const run = gpuflowRun();
-+  delete run.timing;
-+  return run;
-+};
-+
-+const gpuflowWarmingRun = (): DescribeRunResponse => {
-+  const run = gpuflowRun({
-+    status: 'running',
-+    phase: 'describing',
-+    completed: gpuflowBulkTiming.run_warming.completed,
-+    failed: gpuflowBulkTiming.run_warming.failed,
-+    skipped: gpuflowBulkTiming.run_warming.skipped,
-+    total: gpuflowBulkTiming.run_warming.total,
-+    gpu_state: GPU_STATE.STARTING,
-+    eta_seconds: gpuflowBulkTiming.run_warming.eta_seconds,
-+    operation_id: gpuflowBulkTiming.run_warming.operation_id,
-+    startup_id: gpuflowBulkTiming.run_warming.startup_id,
-+  });
-+  Object.assign(run, { timing: gpuflowBulkTiming.run_warming.timing });
-+  return run;
-+};
-+
-+const progressFromRun = (
-+  run: DescribeRunResponse,
-+  overrides: Partial<DescribeRunProgress> = {},
-+): DescribeRunProgress => ({
-+  run,
-+  status: run.status,
-+  progressFraction: run.total > 0 ? (run.completed + run.failed + run.skipped) / run.total : 0,
-+  etaSeconds: run.eta_seconds,
-+  gpuState: typeof run.gpu_state === 'string' ? (run.gpu_state as DescribeRunProgress['gpuState']) : null,
-+  isTerminal: TERMINAL_STATUSES.has(run.status),
-+  stalledForSeconds: null,
-+  isPolling: !TERMINAL_STATUSES.has(run.status),
-+  isFrozen: false,
-+  isError: false,
-+  error: null,
-+  retry: vi.fn(),
-+  timing: run.timing ?? null,
-+  startupId: run.startup_id ?? null,
-+  isWarming: false,
-+  ...overrides,
-+});
-+
-+describe('MediaSelection bulk-describe timing announcement [GPUFLOW-1 B2]', () => {
-+  it('announces measured elapsed time on a terminal run without fabricating startup', () => {
-+    const run = gpuflowRun();
-+    render(<BulkDescribeProgress progress={progressFromRun(run)} onRetry={vi.fn()} />);
-+
-+    const live = screen.getByRole('status');
-+    expect(live).toHaveTextContent('1 described, 1 failed in 0.04 s');
-+    expect(live).not.toHaveTextContent('GPU startup');
-+    expect(screen.getAllByRole('status')).toHaveLength(1);
-+    const visual = document.querySelector('.acx-media-selection__bulk-describe-status--success');
-+    expect(visual).toHaveAttribute('aria-hidden', 'true');
-+    expect(visual).toHaveTextContent('✔ 1 draft ready to review · 1 failed');
-+  });
-+
-+  it('appends GPU startup seconds only when startup_ms is non-null', () => {
-+    const timing: DescribeRunTiming = { ...GPUFLOW_TIMING, startup_ms: 2500 };
-+    const run = gpuflowRun({ timing });
-+    render(
-+      <BulkDescribeProgress
-+        progress={progressFromRun({ ...run, timing }, { timing })}
-+        onRetry={vi.fn()}
-+      />,
-+    );
-+
-+    expect(screen.getByRole('status')).toHaveTextContent('1 described, 1 failed in 0.04 s (GPU startup 2.5 s)');
-+    expect(screen.getAllByRole('status')).toHaveLength(1);
-+  });
-+
-+  it('keeps the legacy complete announcement when timing is absent', () => {
-+    expect(gpuflowBulkTiming.run_no_timing).not.toHaveProperty('timing');
-+    const run = gpuflowRunWithoutTiming();
-+    render(<BulkDescribeProgress progress={progressFromRun(run, { timing: null })} onRetry={vi.fn()} />);
-+
-+    expect(screen.getByRole('status')).toHaveTextContent('✔ 1 draft ready to review · 1 failed');
-+    expect(screen.queryByText(/described,/)).toBeNull();
-+    expect(screen.getAllByRole('status')).toHaveLength(1);
-+  });
-+
-+  it('announces Description service is starting once while isWarming, with no fabricated ETA', () => {
-+    const run = gpuflowWarmingRun();
-+    const warming = progressFromRun(run, { isWarming: true, isTerminal: false, isPolling: true });
-+    const { rerender } = render(<BulkDescribeProgress progress={warming} onRetry={vi.fn()} />);
-+
-+    const live = screen.getByRole('status');
-+    expect(live).toHaveTextContent('Description service is starting');
-+    expect(live).not.toHaveTextContent('2 min');
-+    expect(live).not.toHaveTextContent('remaining');
-+    expect(live).not.toHaveTextContent('calculating');
-+    expect(screen.queryByRole('progressbar')).toBeNull();
-+    expect(screen.getAllByRole('status')).toHaveLength(1);
-+
-+    rerender(<BulkDescribeProgress progress={warming} onRetry={vi.fn()} />);
-+    expect(screen.getAllByRole('status')).toHaveLength(1);
-+    expect(screen.getByRole('status')).toHaveTextContent('Description service is starting');
-+  });
-+});
-diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/fixtures/gpuflow-bulk-timing.json b/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/fixtures/gpuflow-bulk-timing.json
-new file mode 100644
---- /dev/null
-+++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/fixtures/gpuflow-bulk-timing.json
-@@ -0,0 +1,105 @@
-+{
-+  "run": {
-+    "tenant_id": "00000000-0000-0000-0000-000000000001",
-+    "run_id": "00000000-0000-0000-0000-000000000002",
-+    "status": "completed_with_errors",
-+    "phase": "complete",
-+    "completed": 1,
-+    "failed": 1,
-+    "skipped": 1,
-+    "total": 3,
-+    "cancel_requested": false,
-+    "eta_seconds": null,
-+    "gpu_state": "ready",
-+    "recognition_enabled": true,
-+    "deadline_seconds": 90.0,
-+    "operation_id": "run-operation-opaque",
-+    "startup_id": null,
-+    "timing": {
-+      "queue_ms": 10,
-+      "ramp_up_ms": 0,
-+      "processing_ms_p50": 12.5,
-+      "processing_ms_max": 30,
-+      "startup_ms": null,
-+      "server_elapsed_ms": 40,
-+      "items_timed": 2
-+    }
-+  },
-+  "items": {
-+    "tenant_id": "00000000-0000-0000-0000-000000000001",
-+    "run_id": "00000000-0000-0000-0000-000000000002",
-+    "items": [
-+      {
-+        "media_id": 70,
-+        "status": "completed",
-+        "alt_text_draft": "A dog resting on green grass",
-+        "caption": "a dog on grass",
-+        "provenance": {"adapter": "gpu"},
-+        "error": null,
-+        "tier": "final_gpu",
-+        "result_generation": 1,
-+        "processing_ms": 12.5,
-+        "existing_alt": false
-+      },
-+      {
-+        "media_id": 71,
-+        "status": "failed",
-+        "alt_text_draft": null,
-+        "caption": null,
-+        "provenance": null,
-+        "error": "adapter boom",
-+        "tier": null,
-+        "result_generation": 0,
-+        "processing_ms": 30,
-+        "existing_alt": false
-+      },
-+      {
-+        "media_id": 72,
-+        "status": "skipped",
-+        "alt_text_draft": null,
-+        "caption": null,
-+        "provenance": null,
-+        "error": null,
-+        "tier": null,
-+        "result_generation": 0,
-+        "processing_ms": null,
-+        "existing_alt": false
-+      }
-+    ]
-+  },
-+  "run_warming": {
-+    "tenant_id": "00000000-0000-0000-0000-000000000001",
-+    "run_id": "00000000-0000-0000-0000-000000000002",
-+    "status": "running",
-+    "phase": "describing",
-+    "completed": 0,
-+    "failed": 0,
-+    "skipped": 0,
-+    "total": 3,
-+    "cancel_requested": false,
-+    "eta_seconds": null,
-+    "gpu_state": "starting",
-+    "recognition_enabled": true,
-+    "deadline_seconds": 90.0,
-+    "operation_id": "run-operation-opaque",
-+    "startup_id": null,
-+    "timing": null
-+  },
-+  "run_no_timing": {
-+    "tenant_id": "00000000-0000-0000-0000-000000000001",
-+    "run_id": "00000000-0000-0000-0000-000000000002",
-+    "status": "completed_with_errors",
-+    "phase": "complete",
-+    "completed": 1,
-+    "failed": 1,
-+    "skipped": 1,
-+    "total": 3,
-+    "cancel_requested": false,
-+    "eta_seconds": null,
-+    "gpu_state": "ready",
-+    "recognition_enabled": true,
-+    "deadline_seconds": 90.0,
-+    "operation_id": "run-operation-opaque",
-+    "startup_id": null
-+  }
-+}
+diff --git a/packages/shared-contracts/schemas/image-description-response.schema.json b/packages/shared-contracts/schemas/image-description-response.schema.json
+--- a/packages/shared-contracts/schemas/image-description-response.schema.json
++++ b/packages/shared-contracts/schemas/image-description-response.schema.json
+@@ -408,6 +408,9 @@
+           },
+           "processing_ms": {
+             "const": 0
++          },
++          "startup_ms": {
++            "type": "null"
+           }
+         }
+       }

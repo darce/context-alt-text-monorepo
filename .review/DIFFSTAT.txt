@@ -1,6 +1,4 @@
- .../__tests__/useDescribeRunProgress.test.tsx      | 144 ++++++++++++++++++++-
- .../js/admin/hooks/useDescribeRunProgress.ts       |  29 ++++-
- .../js/admin/pages/workbench/MediaSelection.tsx    |  66 +++++++++-
- .../MediaSelection.statusAnnouncement.test.tsx     | 139 +++++++++++++++++++-
- .../__tests__/fixtures/gpuflow-bulk-timing.json    | 105 +++++++++++++++
- 5 files changed, 474 insertions(+), 9 deletions(-)
+ .../scene/tests/test_shared_schema_documents.py             | 13 +++++++++++--
+ docs/workbay/contracts/gpu-lifecycle.md                     |  8 ++++----
+ .../schemas/image-description-response.schema.json          |  3 +++
+ 3 files changed, 18 insertions(+), 6 deletions(-)

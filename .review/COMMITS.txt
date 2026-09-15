@@ -1,2 +1,1 @@
-f9cc4c8faebb offload: Fix-2: typed GPUFLOW run builders remove TS2352 fixture casts;
-8cb69f851a7a offload: Landed GPUFLOW-1 B2 spa-bulk-timing: wire timing passthrough,
+08e93129cdd3 offload: Committed both fixes; one requested schema assertion needs

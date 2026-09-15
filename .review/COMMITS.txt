@@ -1,1 +1,1 @@
-631795ff1665 offload: Fix-2 deferred-stop is committed: Stop stays enabled during
+883ff5d3d466 offload: Fix-3 landed: freshness-gated canStop, hidden stale/unknown

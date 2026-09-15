@@ -1,3 +1,4 @@
- .../js/admin/api/__tests__/describeApi.test.ts     | 337 +++++++++++++++++++++
- .../js/admin/api/describeApi.ts                    | 252 ++++++++++++++-
- 2 files changed, 585 insertions(+), 4 deletions(-)
+ .../js/admin/api/__tests__/describeApi.test.ts     | 21 +++++++++++++++++++--
+ .../__tests__/describeRunResponseContract.test.ts  | 21 ++++++++++++++++-----
+ .../js/admin/api/describeApi.ts                    | 22 ++++++++++++----------
+ 3 files changed, 47 insertions(+), 17 deletions(-)

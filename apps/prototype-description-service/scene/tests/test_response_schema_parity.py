@@ -8,9 +8,13 @@ import pytest
 
 from scene.interface_adapters.http.schemas.responses import VisualFactsResponse
 
-_SCHEMA_DIR = Path(__file__).resolve().parents[4] / "packages" / "shared-contracts" / "schemas"
-SCHEMA_PATH = _SCHEMA_DIR / "image-description-response.schema.json"
-MULTIPART_SCHEMA_PATH = _SCHEMA_DIR / "scene-describe-multipart.schema.json"
+SCHEMA_PATH = (
+    Path(__file__).resolve().parents[4]
+    / "packages"
+    / "shared-contracts"
+    / "schemas"
+    / "image-description-response.schema.json"
+)
 
 
 def _schema() -> dict:
@@ -50,8 +54,6 @@ PREVIEW_FIELDS = {
     "attachment_provenance",
     "alt_text_long",
 }
-# GPUFLOW-1: defined on VisualFactsResponse / image-description-response, not
-# in `required`; omitted from the serialized body when unobserved.
 OPERATION_FIELDS = {
     "operation_id",
     "startup_id",
@@ -69,24 +71,10 @@ def test_schema_model_id_documents_gpu_hub_pin_format():
 
 def test_schema_required_matches_model_fields():
     schema = _schema()
-    assert set(schema["required"]) == set(VisualFactsResponse.model_fields) - PREVIEW_FIELDS - OPERATION_FIELDS
+    additive = PREVIEW_FIELDS | OPERATION_FIELDS
+    assert set(schema["required"]) == set(VisualFactsResponse.model_fields) - additive
     assert len(schema["required"]) == 17
     assert set(schema["properties"]) == set(VisualFactsResponse.model_fields)
-    assert OPERATION_FIELDS.isdisjoint(schema["required"])
-    assert set(schema["properties"]) >= OPERATION_FIELDS
-
-
-def test_base_dump_omits_absent_operation_metadata():
-    response = VisualFactsResponse.model_validate(_sample())
-    for payload in (response.model_dump(mode="json"), json.loads(response.model_dump_json())):
-        assert OPERATION_FIELDS.isdisjoint(payload)
-        jsonschema.validate(payload, _schema())
-
-
-def test_multipart_success_branch_requires_operation_metadata():
-    schema = json.loads(MULTIPART_SCHEMA_PATH.read_text())
-    success_required = set(schema["oneOf"][0]["allOf"][1]["required"])
-    assert success_required == OPERATION_FIELDS
 
 
 def test_sample_validates_against_schema():

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, model_serializer
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer
 
 from scene.application.gpu_state import GpuState
 from scene.application.identity_merge import NamingRealizer
@@ -213,21 +213,42 @@ class VisualFactsResponse(OmitAbsentOperationMetadata):
 class MultipartDescribeResponse(VisualFactsResponse):
     """Strict multipart success envelope for ``/scene/describe/multipart``.
 
-    ``operation_id`` and ``timing`` are required and non-null; ``startup_id`` is
-    a required key that may be JSON null for warm/cache work. Base
-    ``VisualFactsResponse`` omission behaviour is unchanged.
+    ``operation_id`` is omitted on the wire when no durable DescribeOperation
+    was accepted (CPU/hosted, no session); clients must not poll a lease.
+    ``timing`` is required and non-null; ``startup_id`` is a required key that
+    may be JSON null for warm/cache work. Base ``VisualFactsResponse``
+    omission behaviour is unchanged.
     """
 
-    operation_id: str = Field(min_length=1, max_length=128)
+    operation_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        description=(
+            "Omitted when no durable DescribeOperation was accepted "
+            "(CPU/hosted, no session); clients must not poll a lease"
+        ),
+    )
     startup_id: str | None
     timing: DescribeTiming
+
+    @field_validator("operation_id", mode="before")
+    @classmethod
+    def _reject_explicit_null_operation_id(cls, value: object) -> object:
+        # Omitted keys use default=None (validator skipped). JSON null is present.
+        if value is None:
+            raise ValueError("operation_id must be omitted rather than null")
+        return value
 
     @model_serializer(mode="wrap")
     def _emit_required_operation_metadata(self, handler):
         payload = handler(self)
         if not isinstance(payload, dict):
             return payload
-        payload["operation_id"] = self.operation_id
+        if self.operation_id is None:
+            payload.pop("operation_id", None)
+        else:
+            payload["operation_id"] = self.operation_id
         payload["startup_id"] = self.startup_id
         if payload.get("timing") is None:
             payload["timing"] = self.timing.model_dump(mode="json")

@@ -1,0 +1,36 @@
+{
+  "tenant_id": "00000000-0000-0000-0000-000000000001",
+  "media_id": 42,
+  "image_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "context_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "adapter": "seeded",
+  "model_id": "seeded-fixtures",
+  "model_version": "1",
+  "prompt_or_task_version": "1",
+  "visual_facts": {
+    "caption": "A cat"
+  },
+  "alt_text_draft": "A cat.",
+  "context_used": {
+    "sources": [],
+    "applied": false
+  },
+  "provider_disclosure": {
+    "provider": "none",
+    "left_service_boundary": false
+  },
+  "cached": false,
+  "duration_ms": 12,
+  "retention_class": "retain_all",
+  "tier": "provisional_cpu",
+  "result_generation": 1,
+  "operation_id": "opaque operation",
+  "startup_id": null,
+  "timing": {
+    "queue_ms": null,
+    "ramp_up_ms": 0,
+    "processing_ms": 12,
+    "startup_ms": null,
+    "server_elapsed_ms": 12
+  }
+}

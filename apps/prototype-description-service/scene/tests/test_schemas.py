@@ -23,6 +23,11 @@ PREVIEW_FIELDS = {
     # the adapter produces only the short draft.
     "alt_text_long",
 }
+OPERATION_FIELDS = {
+    "operation_id",
+    "startup_id",
+    "timing",
+}
 EXPECTED_FIELDS = {
     "tenant_id",
     "media_id",

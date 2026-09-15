@@ -1,1 +1,1 @@
-7832601802ee offload: Committed Fix-2/Fix-3 cold-GPU route fixes:
+2927c23fb5ea offload: Closed SVCCOL-H-01/M-04/M-03/M-02 in describe.py: durable GPU

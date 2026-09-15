@@ -1,3 +1,4 @@
- .../interface_adapters/http/routers/describe.py    | 93 ++++++++++++++++------
- .../scene/tests/test_describe_route.py             | 92 ++++++++++++++++++++-
- 2 files changed, 157 insertions(+), 28 deletions(-)
+ .../interface_adapters/http/routers/describe.py    | 57 ++++++-------
+ .../scene/tests/test_describe_route.py             | 94 +++++++++++++++++++---
+ .../scene/tests/test_shared_schema_multipart.py    | 32 +++++++-
+ 3 files changed, 144 insertions(+), 39 deletions(-)

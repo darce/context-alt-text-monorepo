@@ -1,41 +1,35 @@
-FINDINGS: [{"id":"GPUFLOW-1-SVCINSTRUMENTATION-R-01","severity":"medium","file_path":"apps/prototype-description-service/recognition/interface_adapters/http/middleware/metrics.py","line":101,"summary":"The readiness-wait histogram has no production observation path.","evidence":"The delta registers acx_description_readiness_wait_seconds at metrics.py:101, but a production-tree scan finds no observe call or sink method; the only observation is the new test at recognition/tests/api/test_metrics.py:216. VisualFactsService's DescriptionMetrics protocol still exposes only observe_adapter_duration, and the route sink implements only that method."},{"id":"GPUFLOW-1-SVCINSTRUMENTATION-R-02","severity":"medium","file_path":"apps/prototype-description-service/scene/application/visual_facts_service.py","line":176,"summary":"Per-attempt processing timing is a write-only last-value side channel, so retries and failed items cannot be summed by the run consumer.","evidence":"last_processing_ms is overwritten at visual_facts_service.py:195 and :255. The real run adapter returns DescribeItemOutcome without this value (describe_run.py:268-275), while _describe_with_transient_retry returns only the latest outcome after each attempt (describe_run_worker.py:273-293); response.duration_ms remains the whole-service _elapsed_ms(start), not adapter processing."},{"id":"GPUFLOW-1-SVCINSTRUMENTATION-R-03","severity":"medium","file_path":"apps/prototype-description-service/scene/application/visual_facts_service.py","line":248,"summary":"Cancellation or timeout can race executor dispatch and leave an adapter attempt unmeasured.","evidence":"The delta submits asyncio.to_thread(dispatch) at visual_facts_service.py:244, then its cancellation/timeout finally block checks for the start marker at :248 and skips all recording when absent. If the executor future is already running but cancellation resumes the coroutine before dispatch executes its first marker assignment at :238, dispatch can still run and complete after the check without any metric or last_processing_ms publication; the added cancellation test starts only after that marker boundary."}]
+FINDINGS: [{"id":"GPUFLOW-1-SVCINSTRUMENTATION-R-04","severity":"medium","file_path":"apps/prototype-description-service/scene/application/describe_async_worker.py","line":121,"summary":"The live async describe worker still reports executor-queue time as adapter processing.","evidence":"_describe_adapter() starts perf_counter() before awaiting asyncio.to_thread(adapter.describe(...)) at lines 121-123, and the result is sent to the shared adapter-duration sink at lines 219-224 and 261-266. The delta's inside-worker timing wrapper in visual_facts_service.py does not cover this /describe/async path."},{"id":"GPUFLOW-1-SVCINSTRUMENTATION-R-05","severity":"low","file_path":"apps/prototype-description-service/recognition/tests/api/test_metrics.py","line":216,"summary":"lint(ruff): the added instrumentation tests fail configured Ruff checks and formatting.","evidence":"ruff check reports I001 in the newly added import block at recognition/tests/api/test_metrics.py:216 and in the new test import block at scene/tests/test_visual_facts_service.py:412, plus ASYNC110 for its polling sleep at :442; ruff format --check reports formatting changes on the delta's modified service and test lines."}]
 Verdict: pass_with_findings
 
 # GPUFLOW-1 svc-instrumentation review
 
 | scope | value |
 | --- | --- |
-| base | `112f262cd` |
-| tip | `1d251e12e` |
-| files | `apps/prototype-description-service/recognition/interface_adapters/http/middleware/metrics.py`; `apps/prototype-description-service/recognition/tests/api/test_metrics.py`; `apps/prototype-description-service/scene/application/visual_facts_service.py`; `apps/prototype-description-service/scene/tests/test_visual_facts_service.py` |
+| base | `15c55e8854dddae6261b3f75f45a5cad5aaf0e8e` |
+| tip | `fc30e30308d30a91b493a7de6d1dee8eef2587bd` |
+| files | `apps/prototype-description-service/recognition/tests/api/test_metrics.py`; `apps/prototype-description-service/scene/application/visual_facts_service.py`; `apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py`; `apps/prototype-description-service/scene/tests/test_visual_facts_service.py` |
 
-The four changed paths are exactly the supplied svc-instrumentation owned list; no sibling-lane implementation path is part of this delta. The dispatch wrapper correctly moves the normal adapter start marker inside the executor and records ordinary failures without including the executor queue, but the handoff does not yet provide a complete, race-safe timing stream for downstream builders.
+The four changed paths are within the supplied five-path svc-instrumentation owned list; no sibling-lane implementation path appears. Previously submitted svc-instrumentation findings remain open in the handoff database and are intentionally not repeated here.
 
 ## FINDINGS
 
-### GPUFLOW-1-SVCINSTRUMENTATION-R-01 — medium
+### GPUFLOW-1-SVCINSTRUMENTATION-R-04 — medium
 
-- **File:line:** `apps/prototype-description-service/recognition/interface_adapters/http/middleware/metrics.py:101`.
-- **Evidence:** `description_readiness_wait_seconds` is registered, but no production code observes it. The only `.observe(30)` is the new unit test; `VisualFactsService` and `_DescriptionMetricsSink` expose/implement adapter processing only.
-- **Impact:** Prometheus reports no readiness waits, so the claimed readiness/processing histogram split is not operational and the nonoverlap invariant cannot be monitored. A downstream route that forgets to wire the property will silently leave the series empty.
-- **Fix:** Add an explicit readiness-observation seam at the durable operation/readiness owner and emit one observation per operation (including the contract-defined zero for warm/cache paths). Test the production service/route seam rather than only manually observing both registry fields.
+- **File:line:** `apps/prototype-description-service/scene/application/describe_async_worker.py:121-123`, `:219-224`, `:261-266`.
+- **Evidence:** The production `/describe/async` worker starts its timer before `await asyncio.to_thread(adapter.describe(...))`, then publishes the resulting wall interval to the same `acx_description_adapter_duration_seconds` sink used by the new service seam. That interval includes any executor queue delay. The delta's wrapper starts its timer inside the executor in `visual_facts_service.py:280-287`, but that code is not used by this async worker path.
+- **Impact:** The shared adapter-processing histogram mixes scheduler queue time with actual adapter work, so processing latency is overstated and cannot be compared across sync and async descriptions under the slice's nonoverlap rule.
+- **Fix:** Measure the async adapter attempt inside its executor-side wrapper (or route the path through the common service), and add a gated-executor regression test proving queue delay is excluded.
 
-### GPUFLOW-1-SVCINSTRUMENTATION-R-02 — medium
+### GPUFLOW-1-SVCINSTRUMENTATION-R-05 — low
 
-- **File:line:** `apps/prototype-description-service/scene/application/visual_facts_service.py:176`.
-- **Evidence:** `last_processing_ms` is overwritten on each invocation. The real run adapter currently constructs `DescribeItemOutcome` without it, and `_describe_with_transient_retry` returns the latest outcome after each attempt; failed final attempts have no outcome at all. The only value handed to the current run provenance is the legacy `response.duration_ms`, which is measured from the beginning of `describe` and includes non-adapter work.
-- **Impact:** The run consumer cannot persist the schema's per-item `processing_ms` as the sum of measured attempts. Retries lose earlier attempt durations, and failed/cancelled items become indistinguishable from untimed items or receive the wrong whole-service duration, preventing honest `p50`, `max`, and `items_timed` values.
-- **Fix:** Expose the measured attempt as a typed result/field that survives success and failure, accumulate it in the retry loop, and persist nullable sums (zero only for a true cache path and null when no dispatch occurred). Do not substitute `duration_ms` for adapter processing.
-
-### GPUFLOW-1-SVCINSTRUMENTATION-R-03 — medium
-
-- **File:line:** `apps/prototype-description-service/scene/application/visual_facts_service.py:248`.
-- **Evidence:** The executor wrapper writes `attempt["start"]` only when `dispatch` begins, while the outer `finally` checks the dictionary immediately after cancellation/timeout. A running executor future can therefore be canceled from the awaiter's perspective before the wrapper executes that first assignment; the adapter still runs, but the outer block skips recording. The added cancellation test signals only after `dispatch` has crossed the start marker, so it does not exercise this boundary race.
-- **Impact:** A real adapter attempt can consume compute and finish with no histogram observation and `last_processing_ms=None`, undercounting processing and making downstream timing aggregates falsely report an untimed item.
-- **Fix:** Synchronize the dispatch-start/finish state and make exactly one publisher own the completed or canceled attempt, distinguishing a never-dispatched canceled future from work that actually entered the adapter. Add a forced executor-race test covering timeout/cancellation before the marker executes.
+- **File:line:** `apps/prototype-description-service/recognition/tests/api/test_metrics.py:216`; `apps/prototype-description-service/scene/tests/test_visual_facts_service.py:412`, `:442`.
+- **Evidence:** Configured `ruff check` reports I001 in the newly added import blocks and `ASYNC110` for the new test's `asyncio.sleep` polling loop; `ruff format --check` reports formatting changes on the delta's modified service and test lines.
+- **Impact:** The delta fails the repository's configured lint/format checks even though the functional tests are intended to cover the timing seam.
+- **Fix:** Apply Ruff's import sorting and formatter, and replace the polling loop with a synchronization primitive or a narrowly justified test-only wait.
 
 ## Verification
 
-- Repository lock test: passed (`1 passed`).
-- Lane test collection: passed (`17 tests collected`).
-- Lane test execution: blocked in this sandbox; the declared service/metrics invocation hung in the existing `asyncio.to_thread` path and was bounded/interrupted. No implementation files were changed by verification.
+- The mandatory repository lock test passed (`1 passed`).
+- The new cancellation-race test passed individually, and the new readiness/processing histogram test passed individually.
+- The full lane-local service/metrics command was attempted with a 30-second bound but could not complete in this sandbox. A faulthandler dump showed `asyncio.run()` waiting for the default `asyncio.to_thread` executor to shut down; a standalone `asyncio.to_thread(lambda: None)` reproduces the same hang. This is an environment verification blocker, not a source edit made by this review.
+- The owned package import resolves to this lane worktree.

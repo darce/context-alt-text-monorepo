@@ -1,4 +1,6 @@
- .../js/admin/pages/settings/GpuControlCard.tsx     | 39 +++++++++-----
- .../settings/__tests__/GpuControlCard.test.tsx     | 63 ++++++++++++++++++++--
- .../settings/__tests__/useGpuControl.test.tsx      | 39 ++++++++++----
- 3 files changed, 115 insertions(+), 26 deletions(-)
+ .../api/__tests__/settingsResponseContract.test.ts |  32 ++-
+ .../js/admin/api/settingsApi.ts                    |   3 +
+ .../pages/settings/__tests__/healthStatus.test.ts  |   9 +
+ .../__tests__/testConnectionBanner.test.ts         |  65 ++++++
+ .../admin/pages/settings/testConnectionBanner.ts   | 229 ++++++++++++---------
+ 5 files changed, 244 insertions(+), 94 deletions(-)

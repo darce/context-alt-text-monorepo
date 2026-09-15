@@ -7,7 +7,11 @@ from pydantic import ValidationError
 
 from scene.domain.description import DescriptionAdapterKind, DescriptionResultTier, ProviderMode, RetentionClass
 from scene.interface_adapters.http.schemas.requests import DescribeImageEnvelope
-from scene.interface_adapters.http.schemas.responses import DescribeRunItemResponse, VisualFactsResponse
+from scene.interface_adapters.http.schemas.responses import (
+    DescribeRunItemResponse,
+    MultipartDescribeResponse,
+    VisualFactsResponse,
+)
 
 # 15 contract-locked core fields + additive optional preview/fusion fields.
 PREVIEW_FIELDS = {
@@ -38,6 +42,12 @@ EXPECTED_FIELDS = {
     "tier",
     "result_generation",
 }
+# GPUFLOW-1: optional on VisualFactsResponse; required keys on MultipartDescribeResponse.
+OPERATION_FIELDS = {
+    "operation_id",
+    "startup_id",
+    "timing",
+}
 
 
 def _sample_response() -> dict:
@@ -63,8 +73,11 @@ def _sample_response() -> dict:
 
 
 def test_response_has_exactly_15_contract_fields():
-    assert set(VisualFactsResponse.model_fields) == EXPECTED_FIELDS | PREVIEW_FIELDS
+    assert set(VisualFactsResponse.model_fields) == EXPECTED_FIELDS | PREVIEW_FIELDS | OPERATION_FIELDS
     assert len(EXPECTED_FIELDS) == 17
+    for name in OPERATION_FIELDS:
+        assert not VisualFactsResponse.model_fields[name].is_required()
+        assert MultipartDescribeResponse.model_fields[name].is_required()
 
 
 def test_response_round_trip_typed_provenance():
@@ -72,7 +85,10 @@ def test_response_round_trip_typed_provenance():
     assert r.adapter is DescriptionAdapterKind.SEEDED
     assert r.retention_class is RetentionClass.RETAIN_ALL
     assert r.provider_disclosure.provider is ProviderMode.NONE
-    assert set(r.model_dump().keys()) == EXPECTED_FIELDS | PREVIEW_FIELDS
+    dumped = r.model_dump()
+    assert set(dumped.keys()) == EXPECTED_FIELDS | PREVIEW_FIELDS
+    assert OPERATION_FIELDS.isdisjoint(dumped)
+    assert OPERATION_FIELDS.isdisjoint(r.model_dump(mode="json"))
     # Preview fields default to None when the merge layer is not run.
     assert r.generic_draft is None and r.named_draft is None and r.naming_provenance is None
     # ALTQ-1: absent long surface defaults to None — old payloads stay valid.

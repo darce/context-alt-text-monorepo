@@ -1,1 +1,1 @@
-99cf1d247235 offload: Landed Fix-4 GPU control confirmation and Return-to-automatic
+1c03364082ee offload: C1 naming control is closed on load; preview fallback lives in

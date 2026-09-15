@@ -1,4 +1,4 @@
- .../js/admin/pages/settings/GpuControlCard.tsx     | 39 +++++++++-----
- .../settings/__tests__/GpuControlCard.test.tsx     | 63 ++++++++++++++++++++--
- .../settings/__tests__/useGpuControl.test.tsx      | 39 ++++++++++----
- 3 files changed, 115 insertions(+), 26 deletions(-)
+ .../__tests__/NameFaceControl.test.tsx             | 62 ++++++++++++----------
+ .../__tests__/buildNamingOptions.test.ts           | 10 ++++
+ .../identity-clusters/buildNamingOptions.ts        | 40 ++++++++++++++
+ 3 files changed, 83 insertions(+), 29 deletions(-)

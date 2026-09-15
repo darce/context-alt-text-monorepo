@@ -1,4 +1,5 @@
- .../hooks/__tests__/useDescribeMedia.test.tsx      | 32 +++++++++++++++-------
- .../js/admin/pages/workbench/MediaAltSuggest.tsx   | 11 ++++----
- .../workbench/__tests__/MediaAltSuggest.test.tsx   | 26 ++++++++++++++++++
- 3 files changed, 54 insertions(+), 15 deletions(-)
+ .../interface_adapters/http/routers/describe.py    | 86 +++++++++++++++++++++-
+ .../interface_adapters/http/schemas/responses.py   | 11 ++-
+ .../scene/tests/test_describe_route.py             | 46 ++++++++++--
+ .../scene/tests/test_gpuflow_response_models.py    | 16 +++-
+ 4 files changed, 148 insertions(+), 11 deletions(-)

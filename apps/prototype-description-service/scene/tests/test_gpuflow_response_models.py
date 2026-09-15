@@ -227,11 +227,29 @@ def test_multipart_populated_payload_validates_success_branch():
 
 def test_multipart_requires_operation_id_and_timing():
     with pytest.raises(ValidationError):
-        MultipartDescribeResponse(**_VISUAL_FACTS_PAYLOAD, startup_id=None, timing=_VISUAL_TIMING)
-    with pytest.raises(ValidationError):
         MultipartDescribeResponse(**_VISUAL_FACTS_PAYLOAD, operation_id="opaque-operation", startup_id=None)
     with pytest.raises(ValidationError):
         MultipartDescribeResponse(**_VISUAL_FACTS_PAYLOAD)
+    with pytest.raises(ValidationError):
+        MultipartDescribeResponse(**_VISUAL_FACTS_PAYLOAD, operation_id="opaque-operation", timing=_VISUAL_TIMING)
+
+
+def test_multipart_model_validate_omitted_operation_id_and_rejects_null():
+    payload = {**_VISUAL_FACTS_PAYLOAD, "startup_id": None, "timing": _VISUAL_TIMING}
+    response = MultipartDescribeResponse.model_validate(payload)
+    assert response.operation_id is None
+    dumped, encoded = _dumped_payloads(response)
+    validator = _multipart_validator()
+    for wire in (dumped, encoded):
+        assert "operation_id" not in wire
+        validator.validate(wire)
+    with pytest.raises(ValidationError):
+        MultipartDescribeResponse.model_validate({**payload, "operation_id": None})
+
+
+def test_multipart_omitting_startup_id_is_rejected():
+    with pytest.raises(ValidationError):
+        MultipartDescribeResponse(**_VISUAL_FACTS_PAYLOAD, operation_id="opaque-operation", timing=_VISUAL_TIMING)
 
 
 def test_multipart_emits_null_startup_id_and_validates():
@@ -247,6 +265,22 @@ def test_multipart_emits_null_startup_id_and_validates():
         assert "startup_id" in wire
         assert wire["startup_id"] is None
         assert wire["operation_id"] == "opaque-operation"
+        assert wire["timing"] == _VISUAL_TIMING
+        validator.validate(wire)
+
+
+def test_multipart_omits_null_operation_id():
+    response = MultipartDescribeResponse(
+        **_VISUAL_FACTS_PAYLOAD,
+        startup_id=None,
+        timing=_VISUAL_TIMING,
+    )
+    dumped, encoded = _dumped_payloads(response)
+    validator = _multipart_validator()
+    for wire in (dumped, encoded):
+        assert "operation_id" not in wire
+        assert "startup_id" in wire
+        assert wire["startup_id"] is None
         assert wire["timing"] == _VISUAL_TIMING
         validator.validate(wire)
 

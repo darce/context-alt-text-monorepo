@@ -1,146 +1,282 @@
-diff --git a/apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useDescribeMedia.test.tsx b/apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useDescribeMedia.test.tsx
---- a/apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useDescribeMedia.test.tsx
-+++ b/apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useDescribeMedia.test.tsx
-@@ -1,6 +1,6 @@
- import React from 'react';
- import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
--import { renderHook, waitFor } from '@testing-library/react';
-+import { act, renderHook, waitFor } from '@testing-library/react';
- import { beforeEach, describe, expect, it, vi } from 'vitest';
+diff --git a/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py b/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py
+--- a/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py
++++ b/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py
+@@ -322,6 +322,17 @@ class _LifecycleHoldHTTPException(HTTPException):
+     """Readiness-gate 503 that must keep the demand lease for retry."""
  
- import { useDescribeMedia } from '../useDescribeMedia';
-@@ -92,7 +92,7 @@ describe('useDescribeMedia', () => {
-   it('stores a starting lease and retry sends operation_id', async () => {
-     describeMediaMock
-       .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.starting_with_eta))
--      .mockResolvedValueOnce(suggestStates.success_with_timing);
-+      .mockResolvedValueOnce(suggestStates.success_with_timing as VisualFactsResponse);
-     const { result } = renderHook(() => useDescribeMedia(), { wrapper });
  
-     result.current.mutate(42);
-@@ -109,7 +109,9 @@ describe('useDescribeMedia', () => {
-     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-     expect(describeMediaMock).toHaveBeenNthCalledWith(2, 42, { operationId: 'op-lease-1' });
-     expect(result.current.warming).toBeNull();
--    expect(result.current.timing).toEqual(suggestStates.success_with_timing.timing);
-+    expect(result.current.timing).toEqual(
-+      (suggestStates.success_with_timing as VisualFactsResponse).timing,
-+    );
-   });
- 
-   it('stores a null ETA from the wire and a null operationId when the starting envelope omits it', async () => {
-@@ -134,8 +136,12 @@ describe('useDescribeMedia', () => {
-       warmupEtaSeconds: null,
-     });
- 
--    result.current.reset();
--    result.current.mutate(42);
-+    act(() => {
-+      result.current.reset();
-+    });
-+    act(() => {
-+      result.current.mutate(42);
-+    });
-     await waitFor(() => expect(result.current.warming?.warmupEtaSeconds).toBe(12));
-     expect(result.current.warming?.operationId).toBeNull();
-   });
-@@ -166,7 +172,7 @@ describe('useDescribeMedia', () => {
-     describeMediaMock
-       .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.starting_with_eta))
-       .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.mismatch))
--      .mockResolvedValueOnce(suggestStates.success_no_timing);
-+      .mockResolvedValueOnce(suggestStates.success_no_timing as VisualFactsResponse);
-     const { result } = renderHook(() => useDescribeMedia(), { wrapper });
- 
-     result.current.mutate(42);
-@@ -198,15 +204,21 @@ describe('useDescribeMedia', () => {
- 
-   it('exposes timing from the last success payload and null when the key is absent', async () => {
-     describeMediaMock
--      .mockResolvedValueOnce(suggestStates.success_with_timing)
--      .mockResolvedValueOnce(suggestStates.success_no_timing);
-+      .mockResolvedValueOnce(suggestStates.success_with_timing as VisualFactsResponse)
-+      .mockResolvedValueOnce(suggestStates.success_no_timing as VisualFactsResponse);
-     const { result } = renderHook(() => useDescribeMedia(), { wrapper });
- 
-     result.current.mutate(42);
--    await waitFor(() => expect(result.current.timing).toEqual(suggestStates.success_with_timing.timing));
-+    await waitFor(() =>
-+      expect(result.current.timing).toEqual(
-+        (suggestStates.success_with_timing as VisualFactsResponse).timing,
-+      ),
-+    );
- 
-     result.current.mutate(42);
--    await waitFor(() => expect(result.current.data).toEqual(suggestStates.success_no_timing));
-+    await waitFor(() =>
-+      expect(result.current.data).toEqual(suggestStates.success_no_timing as VisualFactsResponse),
-+    );
-     expect(result.current.timing).toBeNull();
-   });
- });
-diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaAltSuggest.tsx b/apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaAltSuggest.tsx
---- a/apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaAltSuggest.tsx
-+++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaAltSuggest.tsx
-@@ -156,14 +156,15 @@ export const formatOverLengthReadyAnnouncement = (length: number): string =>
- export const formatWithinLengthAnnouncement = (): string =>
-   __('Draft is within the recommended maximum length.', 'alt-context');
- 
--const formatMeasuredDuration = (milliseconds: number): string => {
--  const totalSeconds = milliseconds / 1000;
-+/** Round whole seconds first so 119500 ms is "2 m", never "1 m 60 s". */
-+export const formatMeasuredDuration = (milliseconds: number): string => {
-+  const totalSeconds = Math.round(milliseconds / 1000);
-   if (totalSeconds >= 60) {
-     const minutes = Math.floor(totalSeconds / 60);
--    const remainder = Math.round(totalSeconds % 60);
--    return remainder === 0 ? `${minutes} m` : `${minutes} m ${remainder} s`;
-+    const seconds = totalSeconds % 60;
-+    return seconds === 0 ? `${minutes} m` : `${minutes} m ${seconds} s`;
-   }
--  const roundedTenths = Math.round(totalSeconds * 10) / 10;
-+  const roundedTenths = Math.round((milliseconds / 1000) * 10) / 10;
-   return Number.isInteger(roundedTenths) ? `${roundedTenths} s` : `${roundedTenths.toFixed(1)} s`;
- };
- 
-diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/MediaAltSuggest.test.tsx b/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/MediaAltSuggest.test.tsx
---- a/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/MediaAltSuggest.test.tsx
-+++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/MediaAltSuggest.test.tsx
-@@ -7,6 +7,7 @@ import { MediaAltInlineEditor } from '../MediaAltInlineEditor';
- import {
-   ALT_SUGGEST_COMMIT_CONFLICT_MESSAGE,
-   formatAltLengthAdvisory,
-+  formatMeasuredDuration,
-   formatOverLengthReadyAnnouncement,
-   formatSuggestTimingLine,
-   formatWarmingStatus,
-@@ -2849,4 +2850,29 @@ describe('MediaAltSuggest GPUFLOW warming and timing', () => {
-       'Generated in 1.2 s, Waited for service 0 s, Started in 38 s',
-     );
-   });
++_MULTIPART_TYPED_ERROR_CODES = frozenset(
++    {
++        "description_service_starting",
++        "description_service_unavailable",
++        "description_service_error",
++        "operation_mismatch",
++        "operation_expired",
++    }
++)
 +
-+  it('rounds measured durations to whole seconds before splitting minutes', () => {
-+    expect(formatMeasuredDuration(119500)).toBe('2 m');
-+    expect(formatMeasuredDuration(59600)).toBe('1 m');
-+    expect(formatMeasuredDuration(60400)).toBe('1 m');
-+    expect(formatMeasuredDuration(90000)).toBe('1 m 30 s');
-+  });
 +
-+  it('retries mismatch once without operation_id then surfaces the error', async () => {
-+    describeMock
-+      .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.starting_with_eta))
-+      .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.mismatch))
-+      .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.mismatch));
-+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
+ def _typed_describe_error(
+     *,
+     status_code: int,
+@@ -348,6 +359,78 @@ def _typed_describe_error(
+     return exc_cls(status_code=status_code, detail=detail, headers=headers)
+ 
+ 
++def _http_exception_code(detail: Any) -> str | None:
++    if not isinstance(detail, dict):
++        return None
++    code = detail.get("code")
++    return code if isinstance(code, str) else None
 +
-+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
-+    fireEvent.click(await screen.findByRole('button', { name: /^retry$/i }));
 +
-+    const alert = await screen.findByRole('alert');
-+    expect(alert).toHaveTextContent('operation mismatch');
-+    expect(screen.queryByTestId('media-alt-suggest-warming')).not.toBeInTheDocument();
-+    expect(describeMock).toHaveBeenNthCalledWith(2, 42, { operationId: 'op-lease-1' });
-+    expect(describeMock).toHaveBeenNthCalledWith(3, 42);
-+    expect(describeMock).toHaveBeenCalledTimes(3);
-+  });
- });
++def _http_exception_message(detail: Any, *, fallback: str) -> str:
++    if isinstance(detail, dict):
++        message = detail.get("message")
++        if isinstance(message, str) and message:
++            return message
++    if isinstance(detail, str) and detail:
++        return detail
++    return fallback
++
++
++def _retry_after_header(exc: HTTPException) -> int | None:
++    if not exc.headers:
++        return None
++    raw = exc.headers.get("Retry-After")
++    if raw is None:
++        return None
++    try:
++        value = int(raw)
++    except (TypeError, ValueError):
++        return None
++    return value
++
++
++def _plain_typed_error_missing_operation_fields(exc: HTTPException) -> bool:
++    """True when a post-accept typed-error code lacks the multipart envelope."""
++    if isinstance(exc, _LifecycleHoldHTTPException):
++        return False
++    detail = exc.detail
++    code = _http_exception_code(detail)
++    if code not in _MULTIPART_TYPED_ERROR_CODES:
++        return False
++    if not isinstance(detail, dict):
++        return True
++    return any(key not in detail for key in ("operation_id", "startup_id", "timing"))
++
++
++def _rebuild_post_accept_typed_error(
++    exc: HTTPException,
++    *,
++    op,
++    server_start: float,
++) -> HTTPException:
++    detail = exc.detail
++    code = _http_exception_code(detail)
++    if code not in _MULTIPART_TYPED_ERROR_CODES:
++        return exc
++    warmup_eta_seconds = None
++    retry_after = None
++    if code == "description_service_starting" and isinstance(detail, dict):
++        eta = detail.get("warmup_eta_seconds")
++        if isinstance(eta, (int, float)) and not isinstance(eta, bool) and math.isfinite(eta):
++            warmup_eta_seconds = float(eta)
++        retry_after = _retry_after_header(exc)
++    return _typed_describe_error(
++        status_code=exc.status_code,
++        code=code,
++        message=_http_exception_message(detail, fallback="Description service error"),
++        operation_id=op.operation_id,
++        startup_id=op.startup_id,
++        timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
++        warmup_eta_seconds=warmup_eta_seconds,
++        retry_after=retry_after,
++    )
++
++
+ def _gpu_snapshot_fields() -> tuple[str | None, float | None]:
+     path = Path(resolve_gpu_state_path())
+     try:
+@@ -1126,7 +1209,6 @@ async def describe_image_multipart(
+                 raise RuntimeError("gpu describe succeeded without an accepted operation")
+             return MultipartDescribeResponse(
+                 **dumped,
+-                operation_id=None,
+                 startup_id=startup_id,
+                 timing=timing,
+             )
+@@ -1139,6 +1221,8 @@ async def describe_image_multipart(
+     except HTTPException as exc:
+         if not _preserves_demand_lease(exc):
+             await _cleanup_accepted()
++        if op is not None and _plain_typed_error_missing_operation_fields(exc):
++            raise _rebuild_post_accept_typed_error(exc, op=op, server_start=server_start) from exc
+         raise
+     except TimeoutError as exc:
+         await _cleanup_accepted()
+diff --git a/apps/prototype-description-service/scene/interface_adapters/http/schemas/responses.py b/apps/prototype-description-service/scene/interface_adapters/http/schemas/responses.py
+--- a/apps/prototype-description-service/scene/interface_adapters/http/schemas/responses.py
++++ b/apps/prototype-description-service/scene/interface_adapters/http/schemas/responses.py
+@@ -14,7 +14,7 @@ from __future__ import annotations
+ 
+ from typing import Annotated
+ 
+-from pydantic import BaseModel, ConfigDict, Field, model_serializer
++from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer
+ 
+ from scene.application.gpu_state import GpuState
+ from scene.application.identity_merge import NamingRealizer
+@@ -221,6 +221,7 @@ class MultipartDescribeResponse(VisualFactsResponse):
+     """
+ 
+     operation_id: str | None = Field(
++        default=None,
+         min_length=1,
+         max_length=128,
+         description=(
+@@ -231,6 +232,14 @@ class MultipartDescribeResponse(VisualFactsResponse):
+     startup_id: str | None
+     timing: DescribeTiming
+ 
++    @field_validator("operation_id", mode="before")
++    @classmethod
++    def _reject_explicit_null_operation_id(cls, value: object) -> object:
++        # Omitted keys use default=None (validator skipped). JSON null is present.
++        if value is None:
++            raise ValueError("operation_id must be omitted rather than null")
++        return value
++
+     @model_serializer(mode="wrap")
+     def _emit_required_operation_metadata(self, handler):
+         payload = handler(self)
+diff --git a/apps/prototype-description-service/scene/tests/test_describe_route.py b/apps/prototype-description-service/scene/tests/test_describe_route.py
+--- a/apps/prototype-description-service/scene/tests/test_describe_route.py
++++ b/apps/prototype-description-service/scene/tests/test_describe_route.py
+@@ -7,10 +7,13 @@ import tempfile
+ import time
+ import uuid
+ from contextlib import contextmanager, suppress
++from pathlib import Path
+ from typing import cast
+ 
+ from fastapi import FastAPI
+ from fastapi.testclient import TestClient
++from jsonschema import Draft7Validator
++from referencing import Registry, Resource
+ from sqlalchemy import Table, select, text, update
+ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+ 
+@@ -47,6 +50,26 @@ from scene.tests.demo_quota_harness import demo_quota_client as _demo_quota_clie
+ from scene.tests.demo_quota_harness import recognition_used as _recognition_used
+ 
+ TENANT_ID = "00000000-0000-0000-0000-0000000000bb"
++_SCHEMA_DIR = Path(__file__).resolve().parents[4] / "packages/shared-contracts/schemas"
++_SCHEMA_FILES = (
++    "image-description-response.schema.json",
++    "scene-describe-multipart.schema.json",
++)
++
++
++def _load_shared_schema(name: str):
++    return json.loads((_SCHEMA_DIR / name).read_text())
++
++
++def _retrieve_shared_schema(uri: str):
++    return Resource.from_contents(_load_shared_schema(Path(uri).name))
++
++
++def _multipart_schema_validator():
++    registry = Registry(retrieve=_retrieve_shared_schema).with_resources(
++        (name, Resource.from_contents(_load_shared_schema(name))) for name in _SCHEMA_FILES
++    )
++    return Draft7Validator(_load_shared_schema("scene-describe-multipart.schema.json"), registry=registry)
+ 
+ 
+ class _Auth:
+@@ -1263,11 +1286,16 @@ def test_gpu_adapter_unavailable_is_typed_503(monkeypatch, tmp_path):
+         response = _post(client, TENANT_ID)
+         assert response.status_code == 503, response.text
+         assert "Retry-After" not in response.headers
+-        detail = response.json()["detail"]
++        body = response.json()
++        _multipart_schema_validator().validate(body)
++        detail = body["detail"]
+         assert detail["code"] == "description_service_unavailable"
+         assert "warmup_eta_seconds" not in detail
+         assert detail["operation_id"]
++        assert "startup_id" in detail
++        assert "timing" in detail
+         assert adapter.calls == 1
++        assert adapter.kind is DescriptionAdapterKind.GPU
+         assert _lease_state(client, detail["operation_id"]) == "completed"
+         assert _active_lease_count(client) == 0
+ 
+@@ -1743,16 +1771,22 @@ def test_downstream_unavailable_http_exception_releases_lease(monkeypatch, tmp_p
+     with _client(adapter=adapter) as client:
+         response = _post(client, TENANT_ID)
+         assert response.status_code == 503, response.text
+-        detail = response.json()["detail"]
+-        assert detail == {
+-            "code": "description_service_unavailable",
+-            "message": "dependency unavailable",
+-        }
++        assert "Retry-After" not in response.headers
++        body = response.json()
++        _multipart_schema_validator().validate(body)
++        detail = body["detail"]
++        assert detail["code"] == "description_service_unavailable"
++        assert detail["message"] == "dependency unavailable"
++        assert detail["operation_id"]
++        assert "startup_id" in detail
++        assert "timing" in detail
++        assert "warmup_eta_seconds" not in detail
+         assert adapter.calls == 0
+         rows = _lease_rows(client)
+         assert rows
+         assert all(state == "completed" for _operation_id, state in rows)
+         assert _active_lease_count(client) == 0
++        assert _lease_state(client, detail["operation_id"]) == "completed"
+ 
+ 
+ def test_concurrent_ready_does_not_complete_failing_request(monkeypatch, tmp_path):
+diff --git a/apps/prototype-description-service/scene/tests/test_gpuflow_response_models.py b/apps/prototype-description-service/scene/tests/test_gpuflow_response_models.py
+--- a/apps/prototype-description-service/scene/tests/test_gpuflow_response_models.py
++++ b/apps/prototype-description-service/scene/tests/test_gpuflow_response_models.py
+@@ -226,8 +226,6 @@ def test_multipart_populated_payload_validates_success_branch():
+ 
+ 
+ def test_multipart_requires_operation_id_and_timing():
+-    with pytest.raises(ValidationError):
+-        MultipartDescribeResponse(**_VISUAL_FACTS_PAYLOAD, startup_id=None, timing=_VISUAL_TIMING)
+     with pytest.raises(ValidationError):
+         MultipartDescribeResponse(**_VISUAL_FACTS_PAYLOAD, operation_id="opaque-operation", startup_id=None)
+     with pytest.raises(ValidationError):
+@@ -236,6 +234,19 @@ def test_multipart_requires_operation_id_and_timing():
+         MultipartDescribeResponse(**_VISUAL_FACTS_PAYLOAD, operation_id="opaque-operation", timing=_VISUAL_TIMING)
+ 
+ 
++def test_multipart_model_validate_omitted_operation_id_and_rejects_null():
++    payload = {**_VISUAL_FACTS_PAYLOAD, "startup_id": None, "timing": _VISUAL_TIMING}
++    response = MultipartDescribeResponse.model_validate(payload)
++    assert response.operation_id is None
++    dumped, encoded = _dumped_payloads(response)
++    validator = _multipart_validator()
++    for wire in (dumped, encoded):
++        assert "operation_id" not in wire
++        validator.validate(wire)
++    with pytest.raises(ValidationError):
++        MultipartDescribeResponse.model_validate({**payload, "operation_id": None})
++
++
+ def test_multipart_omitting_startup_id_is_rejected():
+     with pytest.raises(ValidationError):
+         MultipartDescribeResponse(**_VISUAL_FACTS_PAYLOAD, operation_id="opaque-operation", timing=_VISUAL_TIMING)
+@@ -261,7 +272,6 @@ def test_multipart_emits_null_startup_id_and_validates():
+ def test_multipart_omits_null_operation_id():
+     response = MultipartDescribeResponse(
+         **_VISUAL_FACTS_PAYLOAD,
+-        operation_id=None,
+         startup_id=None,
+         timing=_VISUAL_TIMING,
+     )

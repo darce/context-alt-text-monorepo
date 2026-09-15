@@ -293,3 +293,41 @@ def describe_job_error(item: Any) -> str | None:
 
 def async_job_retention_hours() -> int:
     return int(os.environ.get("ACX_ASYNC_JOB_RETENTION_HOURS", str(DEFAULT_ASYNC_JOB_RETENTION_HOURS)))
+
+
+class DemandLeaseState(StrEnum):
+    """Finite lease control; timestamps and correlation stay outside state (sr-007)."""
+
+    ACTIVE = "active"
+    COMPLETED = "completed"
+    EXPIRED = "expired"
+    REJECTED = "rejected"
+
+
+class OperationMismatchError(ValueError):
+    code = "operation_mismatch"
+    status_code = 409
+
+
+class OperationExpiredError(ValueError):
+    code = "operation_expired"
+    status_code = 410
+
+
+def utc_observation(value: datetime) -> datetime:
+    """SQLite drops timezone metadata; stored naive observations are UTC."""
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
+def validate_duration_ms(value: float | None) -> float | None:
+    import math
+
+    if value is not None and (not math.isfinite(value) or value < 0):
+        raise ValueError("duration must be finite and nonnegative")
+    return value
+
+
+def elapsed_ms(start: datetime, end: datetime) -> float:
+    value = (utc_observation(end) - utc_observation(start)).total_seconds() * 1000
+    validate_duration_ms(value)
+    return value

@@ -7,6 +7,7 @@ import uuid
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
+from statistics import median
 from typing import Any
 
 from sqlalchemy import delete, or_, select, text, update
@@ -25,8 +26,10 @@ from scene.domain.describe_run import (
     async_job_retention_hours,
     compute_request_digest,
     describe_run_max_items,
+    elapsed_ms,
     phase_for_status,
     terminal_run_status,
+    validate_duration_ms,
 )
 from scene.domain.description import DescriptionResultTier
 
@@ -62,6 +65,87 @@ class DescribeRunRepository:
     def __init__(self, session: AsyncSession, *, max_items: int | None = None) -> None:
         self._session = session
         self._max_items = max_items or describe_run_max_items()
+
+    async def record_pickup(self, *, tenant_id: uuid.UUID, run_id: uuid.UUID, now: datetime | None = None) -> bool:
+        """Capture queue once at actual worker pickup, before readiness checks."""
+        run = await self._locked_run(tenant_id=tenant_id, run_id=run_id)
+        if run is None:
+            return False
+        if run.queue_ms is None:
+            now = now or datetime.now(UTC)
+            run.queue_ms = elapsed_ms(run.created_at, now)
+            run.started_at = run.started_at or now
+            await self._session.flush()
+        return True
+
+    async def record_readiness(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        run_id: uuid.UUID,
+        now: datetime | None = None,
+        operation_id: str | None = None,
+        startup_id: str | None = None,
+        startup_ms: float | None = None,
+    ) -> bool:
+        """Snapshot the first worker readiness observation; warm waits are zero."""
+        validate_duration_ms(startup_ms)
+        for token in (operation_id, startup_id):
+            if token is not None and not 1 <= len(token) <= 128:
+                raise ValueError("invalid correlation id")
+        if startup_id is None and startup_ms is not None:
+            raise ValueError("startup timing requires startup association")
+        run = await self._locked_run(tenant_id=tenant_id, run_id=run_id)
+        if run is None:
+            return False
+        if run.first_ready_at is None:
+            now = now or datetime.now(UTC)
+            if run.started_at is None:
+                raise ValueError("readiness requires worker pickup")
+            wait = elapsed_ms(run.started_at, now)
+            run.first_ready_at = now
+            run.operation_id, run.startup_id = operation_id, startup_id
+            run.ramp_up_ms = wait if startup_id is not None else 0
+            run.startup_ms = startup_ms
+            await self._session.flush()
+        return True
+
+    async def record_item_processing(
+        self, *, tenant_id: uuid.UUID, run_id: uuid.UUID, media_id: int, processing_ms: float
+    ) -> bool:
+        """Persist the caller's cumulative measured attempt total, never add a replay.
+
+        The adapter owns local monotonic attempt measurement and sums attempts;
+        failed/skipped items may carry measured work, while untimed stays NULL.
+        """
+        validate_duration_ms(processing_ms)
+        run = await self._locked_run(tenant_id=tenant_id, run_id=run_id)
+        if run is None:
+            return False
+        item = await self._get_item(tenant_id=tenant_id, run_id=run_id, media_id=media_id)
+        if item is None:
+            return False
+        if item.processing_ms is not None and processing_ms < item.processing_ms:
+            raise ValueError("cumulative processing cannot decrease")
+        item.processing_ms = processing_ms
+        items = await self.list_run_items(tenant_id=tenant_id, run_id=run_id)
+        measured = [i.processing_ms for i in items if i.processing_ms is not None]
+        run.items_timed = len(measured)
+        run.processing_ms_p50 = median(measured) if measured else None
+        run.processing_ms_max = max(measured) if measured else None
+        await self._session.flush()
+        return True
+
+    async def _locked_run(self, *, tenant_id: uuid.UUID, run_id: uuid.UUID) -> DescribeRun | None:
+        return await self._session.scalar(
+            select(DescribeRun)
+            .where(
+                DescribeRun.tenant_id == tenant_id,
+                DescribeRun.id == run_id,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
 
     async def create_run(
         self,
@@ -105,9 +189,7 @@ class DescribeRunRepository:
             request_digest=(
                 request_digest
                 if request_digest is not None
-                else compute_request_digest(
-                    media_ids=media_ids, recognition_enabled=request.recognition_enabled
-                )
+                else compute_request_digest(media_ids=media_ids, recognition_enabled=request.recognition_enabled)
             ),
             deadline_seconds=deadline_seconds,
         )
@@ -451,6 +533,7 @@ class DescribeRunRepository:
         run.phase = DescribeRunPhase.FAILED
         if run.completed_at is None:
             run.completed_at = now
+        run.server_elapsed_ms = elapsed_ms(run.created_at, run.completed_at)
         if error_message:
             run.error_message = error_message
         _release_idempotency_key_if_barren(run)
@@ -507,6 +590,7 @@ class DescribeRunRepository:
             run.status = DescribeRunStatus.CANCELLED
             run.phase = DescribeRunPhase.CANCELLED
             run.completed_at = datetime.now(tz=UTC)
+            run.server_elapsed_ms = elapsed_ms(run.created_at, run.completed_at)
             _release_idempotency_key_if_barren(run)
         await self._session.flush()
         return True
@@ -646,6 +730,7 @@ class DescribeRunRepository:
             run.status = status
             run.phase = phase_for_status(status)
             run.completed_at = now
+            run.server_elapsed_ms = elapsed_ms(run.created_at, now)
             if status in {DescribeRunStatus.FAILED, DescribeRunStatus.COMPLETED_WITH_ERRORS}:
                 run.error_message = run.error_message or _RECLAIM_INTERRUPT_ERROR
             # [S06] A restart-orphaned run driven to FAILED/CANCELLED must not
@@ -697,7 +782,8 @@ class DescribeRunRepository:
             )
             run.status = status
             run.phase = phase_for_status(status)
-            run.completed_at = now
+            run.completed_at = run.completed_at or now
+            run.server_elapsed_ms = elapsed_ms(run.created_at, run.completed_at)
             _release_idempotency_key_if_barren(run)
         elif running:
             run.status = DescribeRunStatus.RUNNING

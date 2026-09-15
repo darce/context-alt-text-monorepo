@@ -278,8 +278,18 @@ def _terminal_transition(previous: DescribeItemStatus, marked: bool) -> bool:
     return bool(marked) and previous not in TERMINAL_ITEM_STATUSES
 
 
+def _session_supports_row_lock(session: AsyncSession) -> bool:
+    bind = session.get_bind()
+    name = getattr(getattr(bind, "dialect", None), "name", "") or ""
+    return bool(name) and name != "sqlite"
+
+
 async def _observed_startup(
-    session: AsyncSession, *, tenant_id: uuid.UUID, operation_id: str | None
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    operation_id: str | None,
+    for_update: bool = False,
 ) -> tuple[str | None, float | None]:
     """Reuse the startup bound to this run's operation; never pick a global row.
 
@@ -289,13 +299,14 @@ async def _observed_startup(
     """
     if not operation_id:
         return None, None
+    stmt = select(DescribeOperation).where(
+        DescribeOperation.tenant_id == tenant_id,
+        DescribeOperation.operation_id == operation_id,
+    )
+    if for_update:
+        stmt = stmt.with_for_update()
     try:
-        operation = await session.scalar(
-            select(DescribeOperation).where(
-                DescribeOperation.tenant_id == tenant_id,
-                DescribeOperation.operation_id == operation_id,
-            )
-        )
+        operation = await session.scalar(stmt)
     except (OperationalError, ProgrammingError):
         return None, None
     if operation is None or not operation.startup_id:
@@ -333,13 +344,24 @@ async def _record_run_readiness(
         await set_tenant_context(session, tenant_id)
         repo = DescribeRunRepository(session)
         run = await repo.get_run(tenant_id=tenant_id, run_id=run_id)
-        associated_operation_id = run.operation_id if run is not None else None
+        first_ready_before = None if run is None else run.first_ready_at
+        associated_operation_id = None if run is None else run.operation_id
+        # Stale snapshot: association may land before the locked re-read below.
+        await _observed_startup(session, tenant_id=tenant_id, operation_id=associated_operation_id)
+        run = await repo.get_run(tenant_id=tenant_id, run_id=run_id)
+        if run is not None:
+            associated_operation_id = run.operation_id
+            if first_ready_before is None:
+                first_ready_before = run.first_ready_at
+        observed_id, observed_ms = await _observed_startup(
+            session,
+            tenant_id=tenant_id,
+            operation_id=associated_operation_id,
+            for_update=_session_supports_row_lock(session),
+        )
         operation_id = associated_operation_id or uuid.uuid4().hex
-        startup_id, startup_ms = (None, None)
-        if cold:
-            startup_id, startup_ms = await _observed_startup(
-                session, tenant_id=tenant_id, operation_id=associated_operation_id
-            )
+        startup_id = observed_id if cold else None
+        startup_ms = observed_ms if cold else None
         kwargs: dict = {
             "tenant_id": tenant_id,
             "run_id": run_id,
@@ -355,12 +377,20 @@ async def _record_run_readiness(
             kwargs["now"] = now
             kwargs["ramp_up_ms"] = elapsed_ms(run.started_at, now) if cold else 0.0
         await repo.record_readiness(**kwargs)
-        # Repository currently maps null startup_id → ramp_up_ms=0; restore the
-        # measured readiness wait for cold runs independently of association.
         run = await repo.get_run(tenant_id=tenant_id, run_id=run_id)
-        ramp_up_ms = _measured_ramp_up_ms(run, cold=cold)
-        if run is not None and ramp_up_ms is not None:
-            run.ramp_up_ms = ramp_up_ms
+        if run is None:
+            await session.commit()
+            return
+        newly_recorded = first_ready_before is None and run.first_ready_at is not None
+        if newly_recorded:
+            # Repository maps null startup_id → ramp_up_ms=0; restore the measured
+            # wait only when this invocation newly recorded first readiness.
+            ramp_up_ms = _measured_ramp_up_ms(run, cold=cold)
+            if ramp_up_ms is not None:
+                run.ramp_up_ms = ramp_up_ms
+        if run.startup_id is None and observed_id is not None and (cold or first_ready_before is not None):
+            run.startup_id = observed_id
+            run.startup_ms = observed_ms
         await session.commit()
 
 
@@ -424,6 +454,13 @@ def _attempt_processing_ms(result: object) -> float | None:
     return None if value is None else float(value)
 
 
+def _adapter_was_dispatched(result: object) -> bool:
+    timing = getattr(result, "attempt_timing", None)
+    if timing is not None and bool(getattr(timing, "entered_adapter", False)):
+        return True
+    return bool(getattr(result, "entered_adapter", False))
+
+
 def _sum_processing_ms(values: list[float | None]) -> float | None:
     measured = [value for value in values if value is not None]
     if not measured:
@@ -453,7 +490,11 @@ async def _describe_with_transient_retry(
 
     def _measured_attempt_ms(result: object, started: float) -> float | None:
         attempt_ms = _attempt_processing_ms(result)
-        return _dispatch_elapsed_ms(started) if attempt_ms is None else attempt_ms
+        if attempt_ms is not None:
+            return attempt_ms
+        if _adapter_was_dispatched(result):
+            return _dispatch_elapsed_ms(started)
+        return None
 
     for attempt in range(1, max_attempts + 1):
         if cancel_requested is not None and await cancel_requested():

@@ -15,7 +15,7 @@ import httpx
 import pytest
 from jsonschema import Draft7Validator, FormatChecker
 from referencing import Registry, Resource
-from sqlalchemy import Table
+from sqlalchemy import Table, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from db.models.base_imports import Base
@@ -562,10 +562,14 @@ def test_cancel_during_retry_backoff_keeps_measured_attempt_ms(monkeypatch):
     attempts = {"n": 0}
 
     async def describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
+        from scene.application.visual_facts_service import AdapterAttemptTiming
+
         attempts["n"] += 1
         if attempts["n"] == 1:
             clock["t"] += attempt_s
-            raise httpx.ConnectError("transient")
+            exc = httpx.ConnectError("transient")
+            exc.attempt_timing = AdapterAttemptTiming(entered_adapter=True)
+            raise exc
         raise AssertionError("retry must not dispatch after cancel")
 
     async def already_ready(**kwargs):
@@ -755,6 +759,205 @@ def test_async_adapter_failure_persists_dispatch_ms_excluding_queue(monkeypatch)
         assert item.status == DescribeItemStatus.FAILED
         assert item.processing_ms is not None
         assert 20 <= item.processing_ms < 70
+        await engine.dispose()
+        os.unlink(path)
+
+    asyncio.run(body())
+
+
+def test_warm_retry_keeps_retained_first_ramp_up():
+    import scene.application.describe_run_worker as wmod
+
+    async def body():
+        path, url = await _make_db_async()
+        engine = create_async_engine(url)
+        sf = async_sessionmaker(engine, expire_on_commit=False)
+        async with sf() as s:
+            run_id = await DescribeRunRepository(s).create_run(
+                tenant_id=TENANT_ID, media_ids=[1], images={1: (b"x", "image/png")}
+            )
+            await s.commit()
+        await wmod._record_run_pickup(session_factory=sf, tenant_id=TENANT_ID, run_id=run_id)
+        await asyncio.sleep(0.02)
+        await wmod._record_run_readiness(session_factory=sf, tenant_id=TENANT_ID, run_id=run_id, cold=True)
+        async with sf() as s:
+            run = await DescribeRunRepository(s).get_run(tenant_id=TENANT_ID, run_id=run_id)
+        assert run is not None
+        first_ramp = run.ramp_up_ms
+        assert first_ramp is not None and first_ramp > 0
+        await asyncio.sleep(0.02)
+        await wmod._record_run_readiness(session_factory=sf, tenant_id=TENANT_ID, run_id=run_id, cold=False)
+        async with sf() as s:
+            run = await DescribeRunRepository(s).get_run(tenant_id=TENANT_ID, run_id=run_id)
+        assert run is not None
+        assert run.ramp_up_ms == first_ramp
+        assert run.startup_id is None
+        await engine.dispose()
+        os.unlink(path)
+
+    asyncio.run(body())
+
+
+def test_pre_dispatch_failure_leaves_processing_ms_null():
+    async def describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
+        raise RuntimeError("quota exceeded")
+
+    async def body():
+        path, url = await _make_db_async()
+        engine = create_async_engine(url)
+        sf = async_sessionmaker(engine, expire_on_commit=False)
+        async with sf() as s:
+            run_id = await DescribeRunRepository(s).create_run(
+                tenant_id=TENANT_ID, media_ids=[1], images={1: (b"x", "image/png")}
+            )
+            await s.commit()
+        await run_describe_job(
+            tenant_id=TENANT_ID,
+            run_id=run_id,
+            session_factory=sf,
+            describe_one=describe_one,
+            timeout_seconds=1.0,
+        )
+        async with sf() as s:
+            repo = DescribeRunRepository(s)
+            run = await repo.get_run(tenant_id=TENANT_ID, run_id=run_id)
+            items = await repo.list_run_items(tenant_id=TENANT_ID, run_id=run_id)
+        assert run is not None
+        assert items[0].status == DescribeItemStatus.FAILED
+        assert items[0].processing_ms is None
+        assert run.items_timed == 0
+        await engine.dispose()
+        os.unlink(path)
+
+    asyncio.run(body())
+
+
+def test_readiness_uses_startup_associated_between_lookup_and_write(monkeypatch):
+    import scene.application.describe_run_worker as wmod
+
+    async def body():
+        path, url = await _make_db_async()
+        engine = create_async_engine(url)
+        await _ensure_startup_table(engine)
+        sf = async_sessionmaker(engine, expire_on_commit=False)
+        started_at = datetime(2026, 1, 1, tzinfo=UTC)
+        first_ready_at = started_at + timedelta(seconds=5)
+        retain_until = datetime.now(UTC) + timedelta(hours=1)
+        async with sf() as s:
+            run_id = await DescribeRunRepository(s).create_run(
+                tenant_id=TENANT_ID, media_ids=[1], images={1: (b"x", "image/png")}
+            )
+            s.add(
+                DescribeStartup(
+                    startup_id="raced-boot",
+                    started_at=started_at,
+                    first_ready_at=first_ready_at,
+                    retain_until=retain_until,
+                )
+            )
+            s.add(
+                DescribeOperation(
+                    tenant_id=TENANT_ID,
+                    operation_id="op-race",
+                    request_digest="ab" * 32,
+                    accepted_at=started_at,
+                    expires_at=started_at + timedelta(minutes=30),
+                    retain_until=retain_until,
+                    startup_id=None,
+                )
+            )
+            run = await DescribeRunRepository(s).get_run(tenant_id=TENANT_ID, run_id=run_id)
+            assert run is not None
+            run.operation_id = "op-race"
+            await s.commit()
+
+        calls = {"n": 0}
+        original = wmod._observed_startup
+
+        async def spy(session, *, tenant_id, operation_id, for_update=False):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                op = await session.scalar(
+                    select(DescribeOperation).where(
+                        DescribeOperation.tenant_id == TENANT_ID,
+                        DescribeOperation.operation_id == operation_id,
+                    )
+                )
+                assert op is not None
+                op.startup_id = "raced-boot"
+                return None, None
+            return await original(session, tenant_id=tenant_id, operation_id=operation_id, for_update=for_update)
+
+        monkeypatch.setattr(wmod, "_observed_startup", spy)
+        await wmod._record_run_pickup(session_factory=sf, tenant_id=TENANT_ID, run_id=run_id)
+        await wmod._record_run_readiness(session_factory=sf, tenant_id=TENANT_ID, run_id=run_id, cold=True)
+        assert calls["n"] >= 2
+        async with sf() as s:
+            run = await DescribeRunRepository(s).get_run(tenant_id=TENANT_ID, run_id=run_id)
+        assert run is not None
+        assert run.startup_id == "raced-boot"
+        assert run.startup_ms == elapsed_ms(started_at, first_ready_at)
+        await engine.dispose()
+        os.unlink(path)
+
+    asyncio.run(body())
+
+
+def test_later_readiness_repairs_null_startup_id():
+    import scene.application.describe_run_worker as wmod
+
+    async def body():
+        path, url = await _make_db_async()
+        engine = create_async_engine(url)
+        await _ensure_startup_table(engine)
+        sf = async_sessionmaker(engine, expire_on_commit=False)
+        async with sf() as s:
+            run_id = await DescribeRunRepository(s).create_run(
+                tenant_id=TENANT_ID, media_ids=[1], images={1: (b"x", "image/png")}
+            )
+            await s.commit()
+        await wmod._record_run_pickup(session_factory=sf, tenant_id=TENANT_ID, run_id=run_id)
+        await asyncio.sleep(0.02)
+        await wmod._record_run_readiness(session_factory=sf, tenant_id=TENANT_ID, run_id=run_id, cold=True)
+        async with sf() as s:
+            run = await DescribeRunRepository(s).get_run(tenant_id=TENANT_ID, run_id=run_id)
+        assert run is not None
+        assert run.startup_id is None
+        first_ramp = run.ramp_up_ms
+        assert first_ramp is not None and first_ramp > 0
+
+        started_at = datetime(2026, 1, 1, tzinfo=UTC)
+        first_ready_at = started_at + timedelta(seconds=9)
+        retain_until = datetime.now(UTC) + timedelta(hours=1)
+        async with sf() as s:
+            s.add(
+                DescribeStartup(
+                    startup_id="late-boot",
+                    started_at=started_at,
+                    first_ready_at=first_ready_at,
+                    retain_until=retain_until,
+                )
+            )
+            s.add(
+                _operation(
+                    operation_id="op-late",
+                    startup_id="late-boot",
+                    accepted_at=started_at,
+                    retain_until=retain_until,
+                )
+            )
+            run = await DescribeRunRepository(s).get_run(tenant_id=TENANT_ID, run_id=run_id)
+            assert run is not None
+            run.operation_id = "op-late"
+            await s.commit()
+
+        await wmod._record_run_readiness(session_factory=sf, tenant_id=TENANT_ID, run_id=run_id, cold=False)
+        async with sf() as s:
+            run = await DescribeRunRepository(s).get_run(tenant_id=TENANT_ID, run_id=run_id)
+        assert run is not None
+        assert run.startup_id == "late-boot"
+        assert run.startup_ms == elapsed_ms(started_at, first_ready_at)
+        assert run.ramp_up_ms == first_ramp
         await engine.dispose()
         os.unlink(path)
 

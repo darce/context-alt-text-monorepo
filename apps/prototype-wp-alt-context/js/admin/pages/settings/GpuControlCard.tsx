@@ -85,8 +85,11 @@ const formatWarmupEta = (data: GpuStatusResponse): string => {
 
 const intentLabel = (data: GpuStatusResponse): string => {
   const { intent, intent_status: intentStatus } = data.gpu_state;
-  if (intentStatus === GpuIntentStatus.BLOCKED_WORK_IN_FLIGHT) {
-    return 'Stop pending — a describe run is in flight; the service stops when it ends.';
+  if (
+    intentStatus === GpuIntentStatus.BLOCKED_WORK_IN_FLIGHT ||
+    (intent === GpuIntentAction.STOP && data.load.has_work)
+  ) {
+    return 'Stopping after the current work finishes';
   }
   if (intent === GpuIntentAction.AUTO) {
     return data.snapshot_fresh
@@ -345,10 +348,15 @@ export const GpuControlCard = (): React.JSX.Element => {
           {confirmation === GpuIntentAction.STOP ? (
             <div id="z-stop-preview" data-testid="z-stop-preview" className="notice inline notice-warning">
               <p>
-                {__(
-                  'Requests shutdown when idle. If a describe run is in flight, shutdown is deferred. The service run limit can still stop the service to limit costs.',
-                  'alt-context',
-                )}
+                {data.load.has_work
+                  ? __(
+                      'Stopping after the current work finishes. The service run limit can still stop the service to limit costs.',
+                      'alt-context',
+                    )
+                  : __(
+                      'Requests shutdown when idle. If a describe run is in flight, shutdown is deferred. The service run limit can still stop the service to limit costs.',
+                      'alt-context',
+                    )}
               </p>
               <div id="z-stop-actions" data-testid="z-stop-actions">
                 <button

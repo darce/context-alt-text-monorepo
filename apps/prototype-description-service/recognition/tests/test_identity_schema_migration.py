@@ -89,6 +89,9 @@ def test_identity_schema_upgrade_creates_demo_instances_table(monkeypatch) -> No
 
 def test_identity_schema_declares_expected_table_set() -> None:
     assert identity_schema.EXPECTED_SCHEMA_TABLES == [
+        "describe_startups",
+        "describe_operations",
+        "describe_demand_leases",
         "tenants",
         "api_keys",
         "demo_instances",
@@ -223,12 +226,9 @@ def test_ensure_table_fails_loudly_when_existing_table_missing_named_constraint(
     assert "uq_identity_atlas_points_id_run" in str(exc_info.value)
     assert "identity_atlas_points" in str(exc_info.value)
 
-    constraint_calls = [
-        (sql, params) for sql, params in op.executed if "pg_constraint" in sql.lower()
-    ]
+    constraint_calls = [(sql, params) for sql, params in op.executed if "pg_constraint" in sql.lower()]
     assert constraint_calls, (
-        "expected _existing_constraint_names to query pg_constraint; "
-        f"executed={[sql for sql, _ in op.executed]}"
+        f"expected _existing_constraint_names to query pg_constraint; executed={[sql for sql, _ in op.executed]}"
     )
     sql, params = constraint_calls[0]
     sql_l = sql.lower()
@@ -298,12 +298,8 @@ def test_existing_constraint_names_contract_on_real_postgres(pg_empty_engine) ->
 
         assert uq_a in names_a, f"unique on A missing; got {sorted(names_a)}"
         assert ck_a in names_a, f"check on A missing; got {sorted(names_a)}"
-        assert uq_b not in names_a, (
-            f"table A query must not return B's unique {uq_b!r}; got {sorted(names_a)}"
-        )
-        assert ck_b not in names_a, (
-            f"table A query must not return B's check {ck_b!r}; got {sorted(names_a)}"
-        )
+        assert uq_b not in names_a, f"table A query must not return B's unique {uq_b!r}; got {sorted(names_a)}"
+        assert ck_b not in names_a, f"table A query must not return B's check {ck_b!r}; got {sorted(names_a)}"
 
         assert uq_b in names_b and ck_b in names_b, f"B missing constraints; got {sorted(names_b)}"
         assert uq_a not in names_b and ck_a not in names_b, (
@@ -312,9 +308,7 @@ def test_existing_constraint_names_contract_on_real_postgres(pg_empty_engine) ->
 
         conn.execute(text(f"ALTER TABLE {table_a} DROP CONSTRAINT {ck_a}"))
         after_drop = identity_schema._existing_constraint_names(op, table_a)
-        assert ck_a not in after_drop, (
-            f"after DROP CONSTRAINT, {ck_a!r} must not appear; got {sorted(after_drop)}"
-        )
+        assert ck_a not in after_drop, f"after DROP CONSTRAINT, {ck_a!r} must not appear; got {sorted(after_drop)}"
         assert uq_a in after_drop, "unrelated unique must still be visible after check drop"
 
         ghost = identity_schema._existing_constraint_names(op, "no_such_table_b01")
@@ -491,3 +485,101 @@ def test_non_postgres_dialects_emit_no_alter_and_do_not_raise(monkeypatch) -> No
     )
     identity_schema._ensure_table(op, "image_description_runs", *columns, **kw)
     assert not [sql for sql in op.executed if "add constraint" in sql.lower()]
+
+
+@pytest.mark.parametrize("table_name", ["image_description_runs", "image_description_run_items"])
+def test_pre_timing_schema_heals_checks_and_columns_on_postgres(monkeypatch, pg_empty_engine, table_name):
+    """H-01 RED: the original healer raised on missing timing CHECKs."""
+    import sqlalchemy as sa
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+
+    captured = {}
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            identity_schema, "_ensure_table", lambda op, name, *args, **kw: captured.update({name: (args, kw)})
+        )
+        patch.setattr(identity_schema, "_ensure_index", lambda *args, **kw: None)
+        patch.setattr(identity_schema, "ensure_identity_vector_typmods", lambda op: None)
+        identity_schema.ensure_tables(None)
+    elements, kw = captured[table_name]
+    timing_columns = {
+        "queue_ms",
+        "ramp_up_ms",
+        "processing_ms",
+        "processing_ms_p50",
+        "processing_ms_max",
+        "startup_ms",
+        "server_elapsed_ms",
+        "items_timed",
+        "operation_id",
+        "startup_id",
+        "first_ready_at",
+    }
+    checks = {c.name for c in elements if isinstance(c, sa.CheckConstraint) and c.name in kw["heal_constraints"]}
+    # A transaction-local schema keeps this probe isolated from fixture tables.
+    with pg_empty_engine.begin() as connection:
+        connection.exec_driver_sql("CREATE SCHEMA timing_heal_probe")
+        connection.exec_driver_sql("SET LOCAL search_path TO timing_heal_probe, public")
+        op = Operations(MigrationContext.configure(connection))
+        metadata = sa.MetaData()
+        columns = [c for c in elements if isinstance(c, sa.Column)]
+        # FK parents are immaterial to additive timing healing.
+        old = sa.Table(
+            table_name,
+            metadata,
+            *(
+                sa.Column(
+                    c.name, c.type, nullable=c.nullable, primary_key=c.primary_key, server_default=c.server_default
+                )
+                for c in columns
+                if c.name not in timing_columns
+            ),
+            *(
+                sa.CheckConstraint(str(c.sqltext), name=c.name)
+                for c in elements
+                if isinstance(c, sa.CheckConstraint) and c.name not in checks
+            ),
+        )
+        for element in elements:
+            if isinstance(element, sa.UniqueConstraint):
+                names = identity_schema._constraint_column_names(element)
+                if not names:
+                    names = ["run_id", "media_id"]
+                old.append_constraint(sa.UniqueConstraint(*names, name=element.name))
+        metadata.create_all(connection)
+        identity_schema._ensure_table(op, table_name, *elements, **kw)
+        inspector = sa.inspect(connection)
+        actual = {c["name"]: c for c in inspector.get_columns(table_name, schema="timing_heal_probe")}
+        assert set(actual) == {c.name for c in columns}
+        assert all(actual[c.name]["nullable"] for c in columns if c.name in timing_columns)
+        assert checks <= identity_schema._existing_constraint_names(op, table_name)
+        identity_schema._ensure_table(op, table_name, *elements, **kw)
+        assert checks <= identity_schema._existing_constraint_names(op, table_name)
+        connection.exec_driver_sql("DROP SCHEMA timing_heal_probe CASCADE")
+
+
+def test_timing_checks_reject_nonfinite_sql_on_postgres(pg_empty_engine):
+    """M-03: PostgreSQL NaN equals itself, so the upper bound is essential."""
+    import sqlalchemy as sa
+    from db.models import scene
+
+    with pg_empty_engine.begin() as connection:
+        for model in (scene.DescribeOperation, scene.DescribeRun, scene.DescribeRunItem):
+            for check in model.__table__.constraints:
+                if not isinstance(check, sa.CheckConstraint) or "1e308" not in str(check.sqltext):
+                    continue
+                column = str(check.sqltext).split()[0].lstrip("(")
+                connection.exec_driver_sql(
+                    f'CREATE TEMP TABLE timing_finite_probe ("{column}" double precision, '
+                    f"CHECK ({check.sqltext})) ON COMMIT DROP"
+                )
+                for value in ("Infinity", "-Infinity", "NaN"):
+                    with pytest.raises(sa.exc.IntegrityError):
+                        with connection.begin_nested():
+                            connection.execute(
+                                sa.text(f"INSERT INTO timing_finite_probe VALUES (CAST(:value AS double precision))"),
+                                {"value": value},
+                            )
+                connection.exec_driver_sql("INSERT INTO timing_finite_probe VALUES (NULL), (0), (42)")
+                connection.exec_driver_sql("DROP TABLE timing_finite_probe")

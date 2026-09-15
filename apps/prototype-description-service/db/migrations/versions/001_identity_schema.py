@@ -267,7 +267,7 @@ def _ensure_unique_constraint(op, table_name: str, constraint) -> bool:
     GUIDEDFIX-2 [S02]: a UniqueConstraint newly declared on a table that already
     exists in a provisioned database can never land through ``create_table``,
     and ``_ensure_table_constraints`` would raise on every subsequent migrate.
-    UNIQUE is the one table-level constraint that is genuinely additive: Postgres
+    For this additive UNIQUE constraint, Postgres
     builds the backing index and fails loudly (23505) if live rows already
     violate it, so there is no value to guess and no silent half-heal.
 
@@ -317,6 +317,24 @@ def _is_unique_violation(exc: BaseException) -> bool:
     return False
 
 
+def _ensure_check_constraint(op, table_name: str, constraint: sa.CheckConstraint) -> bool:
+    """Validate live rows before adding an explicitly opted-in CHECK."""
+    bind = op.get_bind()
+    if bind.dialect.name != "postgresql":
+        return False
+    predicate = str(constraint.sqltext)
+    # CHECK accepts UNKNOWN, so only FALSE is a violation. ADD CONSTRAINT
+    # validates again under PostgreSQL's DDL lock, closing the probe/write race.
+    invalid = bind.execute(sa.text(f'SELECT 1 FROM "{table_name}" WHERE NOT ({predicate}) LIMIT 1')).scalar()
+    if invalid is not None:
+        raise RuntimeError(
+            f"cannot add check constraint {constraint.name} on {table_name}: "
+            "live rows violate the predicate (operator remediation required)"
+        )
+    op.create_check_constraint(constraint.name, table_name, constraint.sqltext)
+    return True
+
+
 def _ensure_table_constraints(op, table_name: str, *elements, heal_constraints: Sequence[str] = ()) -> None:
     """Fail loudly when an existing table is missing declared table-level constraints.
 
@@ -327,8 +345,8 @@ def _ensure_table_constraints(op, table_name: str, *elements, heal_constraints: 
     recreate or apply the constraints rather than running with a half-healed
     schema (FL30-B-01).
 
-    ``heal_constraints`` opts named UNIQUE constraints out of that refusal: they
-    are added additively via ``_ensure_unique_constraint`` instead. Opt-in by
+    ``heal_constraints`` opts named UNIQUE and CHECK constraints out of that refusal: they
+    are added additively after validating live rows. Opt-in by
     name so adding a constraint to an already-provisioned table is a deliberate
     declaration at the call site, not a blanket relaxation of the guard.
     """
@@ -353,6 +371,12 @@ def _ensure_table_constraints(op, table_name: str, *elements, heal_constraints: 
             name in healable
             and isinstance(element, sa.UniqueConstraint)
             and _ensure_unique_constraint(op, table_name, element)
+        ):
+            continue
+        if (
+            name in healable
+            and isinstance(element, sa.CheckConstraint)
+            and _ensure_check_constraint(op, table_name, element)
         ):
             continue
         unhealed.append(name)
@@ -382,7 +406,7 @@ def _ensure_table(op, table_name: str, *columns, **kw) -> None:
         _ensure_columns(op, table_name, *columns)
         # Table-level constraints are not additive via create_table; detect
         # and refuse silent partial heals (FL30-B-01 / FIR-9 composite FK),
-        # except for UNIQUE constraints explicitly declared heal-additive.
+        # except for UNIQUE and CHECK constraints explicitly declared heal-additive.
         _ensure_table_constraints(op, table_name, *columns, heal_constraints=heal_constraints)
 
 
@@ -1625,11 +1649,30 @@ def ensure_tables(op) -> None:
         sa.Column("processing_ms", sa.Float(), nullable=True),
         sa.Column("startup_ms", sa.Float(), nullable=True),
         sa.Column("server_elapsed_ms", sa.Float(), nullable=True),
-        sa.CheckConstraint("queue_ms >= 0", name="ck_describe_operation_queue_ms"),
-        sa.CheckConstraint("ramp_up_ms >= 0", name="ck_describe_operation_ramp_up_ms"),
-        sa.CheckConstraint("processing_ms >= 0", name="ck_describe_operation_processing_ms"),
-        sa.CheckConstraint("startup_ms >= 0", name="ck_describe_operation_startup_ms"),
-        sa.CheckConstraint("server_elapsed_ms >= 0", name="ck_describe_operation_server_elapsed_ms"),
+        sa.CheckConstraint(
+            "(startup_id IS NOT NULL) OR (startup_ms IS NULL AND COALESCE(ramp_up_ms, 0) = 0)",
+            name="ck_describe_operation_startup_association",
+        ),
+        sa.CheckConstraint(
+            "(queue_ms IS NULL OR (queue_ms >= 0 AND queue_ms = queue_ms AND queue_ms < 1e308))",
+            name="ck_describe_operation_queue_ms",
+        ),
+        sa.CheckConstraint(
+            "(ramp_up_ms IS NULL OR (ramp_up_ms >= 0 AND ramp_up_ms = ramp_up_ms AND ramp_up_ms < 1e308))",
+            name="ck_describe_operation_ramp_up_ms",
+        ),
+        sa.CheckConstraint(
+            "(processing_ms IS NULL OR (processing_ms >= 0 AND processing_ms = processing_ms AND processing_ms < 1e308))",
+            name="ck_describe_operation_processing_ms",
+        ),
+        sa.CheckConstraint(
+            "(startup_ms IS NULL OR (startup_ms >= 0 AND startup_ms = startup_ms AND startup_ms < 1e308))",
+            name="ck_describe_operation_startup_ms",
+        ),
+        sa.CheckConstraint(
+            "(server_elapsed_ms IS NULL OR (server_elapsed_ms >= 0 AND server_elapsed_ms = server_elapsed_ms AND server_elapsed_ms < 1e308))",
+            name="ck_describe_operation_server_elapsed_ms",
+        ),
         sa.CheckConstraint("length(operation_id) BETWEEN 1 AND 128", name="ck_describe_operation_id"),
         sa.CheckConstraint(
             "expires_at >= accepted_at AND expires_at <= retain_until", name="ck_describe_operation_expiry"
@@ -1674,12 +1717,34 @@ def ensure_tables(op) -> None:
         sa.Column("operation_id", sa.String(128), nullable=True),
         sa.Column("startup_id", sa.String(128), nullable=True),
         sa.Column("first_ready_at", sa.TIMESTAMP(timezone=True), nullable=True),
-        sa.CheckConstraint("queue_ms >= 0", name="ck_image_description_runs_queue_ms"),
-        sa.CheckConstraint("ramp_up_ms >= 0", name="ck_image_description_runs_ramp_up_ms"),
-        sa.CheckConstraint("processing_ms_p50 >= 0", name="ck_image_description_runs_processing_ms_p50"),
-        sa.CheckConstraint("processing_ms_max >= 0", name="ck_image_description_runs_processing_ms_max"),
-        sa.CheckConstraint("startup_ms >= 0", name="ck_image_description_runs_startup_ms"),
-        sa.CheckConstraint("server_elapsed_ms >= 0", name="ck_image_description_runs_server_elapsed_ms"),
+        sa.CheckConstraint(
+            "(startup_id IS NOT NULL) OR (startup_ms IS NULL AND COALESCE(ramp_up_ms, 0) = 0)",
+            name="ck_image_description_runs_startup_association",
+        ),
+        sa.CheckConstraint(
+            "(queue_ms IS NULL OR (queue_ms >= 0 AND queue_ms = queue_ms AND queue_ms < 1e308))",
+            name="ck_image_description_runs_queue_ms",
+        ),
+        sa.CheckConstraint(
+            "(ramp_up_ms IS NULL OR (ramp_up_ms >= 0 AND ramp_up_ms = ramp_up_ms AND ramp_up_ms < 1e308))",
+            name="ck_image_description_runs_ramp_up_ms",
+        ),
+        sa.CheckConstraint(
+            "(processing_ms_p50 IS NULL OR (processing_ms_p50 >= 0 AND processing_ms_p50 = processing_ms_p50 AND processing_ms_p50 < 1e308))",
+            name="ck_image_description_runs_processing_ms_p50",
+        ),
+        sa.CheckConstraint(
+            "(processing_ms_max IS NULL OR (processing_ms_max >= 0 AND processing_ms_max = processing_ms_max AND processing_ms_max < 1e308))",
+            name="ck_image_description_runs_processing_ms_max",
+        ),
+        sa.CheckConstraint(
+            "(startup_ms IS NULL OR (startup_ms >= 0 AND startup_ms = startup_ms AND startup_ms < 1e308))",
+            name="ck_image_description_runs_startup_ms",
+        ),
+        sa.CheckConstraint(
+            "(server_elapsed_ms IS NULL OR (server_elapsed_ms >= 0 AND server_elapsed_ms = server_elapsed_ms AND server_elapsed_ms < 1e308))",
+            name="ck_image_description_runs_server_elapsed_ms",
+        ),
         sa.CheckConstraint("items_timed >= 0", name="ck_image_description_runs_items_timed"),
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
@@ -1727,6 +1792,16 @@ def ensure_tables(op) -> None:
         # CONSTRAINT UNIQUE instead of a RuntimeError on every migrate.
         heal_constraints=tuple(
             name for table, name, _cols in HEAL_UNIQUE_CONSTRAINTS if table == "image_description_runs"
+        )
+        + (
+            "ck_image_description_runs_queue_ms",
+            "ck_image_description_runs_ramp_up_ms",
+            "ck_image_description_runs_processing_ms_p50",
+            "ck_image_description_runs_processing_ms_max",
+            "ck_image_description_runs_startup_ms",
+            "ck_image_description_runs_server_elapsed_ms",
+            "ck_image_description_runs_items_timed",
+            "ck_image_description_runs_startup_association",
         ),
     )
     _ensure_index(op, "idx_image_description_runs_tenant", "image_description_runs", ["tenant_id"])
@@ -1763,7 +1838,10 @@ def ensure_tables(op) -> None:
         op,
         "image_description_run_items",
         sa.Column("processing_ms", sa.Float(), nullable=True),
-        sa.CheckConstraint("processing_ms >= 0", name="ck_image_description_run_items_processing_ms"),
+        sa.CheckConstraint(
+            "(processing_ms IS NULL OR (processing_ms >= 0 AND processing_ms = processing_ms AND processing_ms < 1e308))",
+            name="ck_image_description_run_items_processing_ms",
+        ),
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
             "run_id",
@@ -1799,6 +1877,7 @@ def ensure_tables(op) -> None:
             "status IN ('queued', 'running', 'completed', 'failed', 'skipped')",
             name="valid_describe_item_status",
         ),
+        heal_constraints=("ck_image_description_run_items_processing_ms",),
     )
     _ensure_index(op, "idx_image_description_run_items_run", "image_description_run_items", ["run_id"])
     _ensure_index(
@@ -2333,19 +2412,25 @@ def _matview_owner_restore_blockers(op, *, owner: str, current_role: str) -> lis
     if owner == current_role:
         return []
     blockers: list[str] = []
-    exists = op.get_bind().execute(
-        sa.text("SELECT 1 FROM pg_roles WHERE rolname = :name"),
-        {"name": owner},
-    ).scalar()
+    exists = (
+        op.get_bind()
+        .execute(
+            sa.text("SELECT 1 FROM pg_roles WHERE rolname = :name"),
+            {"name": owner},
+        )
+        .scalar()
+    )
     if not exists:
         blockers.append(f"owner role {owner} does not exist in pg_roles")
         return blockers
-    row = op.get_bind().execute(
-        sa.text(
-            "SELECT current_schema(), has_schema_privilege(:owner, current_schema(), 'CREATE')"
-        ),
-        {"owner": owner},
-    ).one()
+    row = (
+        op.get_bind()
+        .execute(
+            sa.text("SELECT current_schema(), has_schema_privilege(:owner, current_schema(), 'CREATE')"),
+            {"owner": owner},
+        )
+        .one()
+    )
     schema_name, owner_create = row
     if not owner_create:
         blockers.append(f"CREATE on schema {schema_name} for owner {owner}")

@@ -1,2 +1,1 @@
-cfb38fc79f0d test(proxy): assert null warmup_eta_seconds via array_key_exists, not null-coalescing
-4493a813bf3a offload: Fix-2 R-04/R-09/R-10 landed: stricter warming exemption,
+983471fc1e36 offload: Closed R-12/R-13 warming validation and committed update

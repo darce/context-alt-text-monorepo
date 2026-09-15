@@ -1,8 +1,4 @@
- .../__tests__/ClusterEditForm.test.tsx             | 21 ++++++++++++
- .../__tests__/ClusterLabelingPanel.test.tsx        |  8 +++++
- .../__tests__/NameFaceControl.test.tsx             | 35 +++++++++++++++++++
- .../__tests__/PersonCommitControl.test.tsx         | 18 ++++++++--
- .../__tests__/ReviewQueue.test.tsx                 |  5 ++-
- .../__tests__/buildNamingOptions.test.ts           | 10 ------
- .../identity-clusters/buildNamingOptions.ts        | 40 ----------------------
- 7 files changed, 83 insertions(+), 54 deletions(-)
+ .../identity-clusters/SuggestionCards.tsx          |  1 +
+ .../__tests__/SuggestionCards.test.tsx             | 92 ++++++++++++++++++++++
+ .../fixtures/gpuflow-candidate-preview.json        |  6 +-
+ 3 files changed, 97 insertions(+), 2 deletions(-)

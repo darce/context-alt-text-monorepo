@@ -1,302 +1,329 @@
 diff --git a/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py b/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py
 --- a/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py
 +++ b/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py
-@@ -311,19 +311,21 @@ def _typed_describe_error(
-     status_code: int,
-     code: str,
-     message: str,
--    operation_id: str,
--    startup_id: str | None,
-     timing: DescribeTiming,
-+    operation_id: str | None = None,
-+    startup_id: str | None = None,
-     warmup_eta_seconds: float | None = None,
-     retry_after: int | None = None,
- ) -> HTTPException:
+@@ -39,7 +39,7 @@ from recognition.interface_adapters.http.deps.demo_quota import maybe_consume_de
+ from recognition.interface_adapters.http.middleware.metrics import get_default_metrics
+ from recognition.shared.db.dialect import is_postgres
+ from scene.application.describe_async_worker import run_async_describe_job
+-from scene.application.describe_load import load_snapshot, resolve_load_path, write_load_snapshot
++from scene.application.describe_load import dump_load_snapshot
+ from scene.application.describe_operation_repository import DescribeOperationRepository
+ from scene.application.describe_run_repository import DescribeRunRepository
+ from scene.application.description_repository import ImageDescriptionRepository
+@@ -320,12 +320,11 @@ def _typed_describe_error(
      detail: dict[str, Any] = {
          "code": code,
          "message": message,
--        "operation_id": operation_id,
--        "startup_id": startup_id,
++        # Schema requires both ids; mint only when no durable operation exists.
++        "operation_id": operation_id or _mint_operation_id(),
++        "startup_id": startup_id,
          "timing": _timing_payload(timing),
      }
-+    # Only emit ids that were persisted. No-session / accept-failure 503s omit both.
-+    if operation_id is not None:
-+        detail["operation_id"] = operation_id
-+        detail["startup_id"] = startup_id
+-    # Only emit ids that were persisted. No-session / accept-failure 503s omit both.
+-    if operation_id is not None:
+-        detail["operation_id"] = operation_id
+-        detail["startup_id"] = startup_id
      if code == "description_service_starting":
          detail["warmup_eta_seconds"] = warmup_eta_seconds
      headers = {"Retry-After": str(retry_after)} if retry_after is not None else None
-@@ -535,6 +537,40 @@ def _timing_from_operation(
-     )
- 
- 
-+async def _cached_gpu_description_row(
-+    *,
-+    repository: ImageDescriptionRepository | None,
-+    tenant_uuid: uuid.UUID,
-+    image_bytes: bytes,
-+    context: Mapping[str, Any] | None,
-+    adapter,
-+    server_start: float,
-+):
-+    """Look up the GPU description cache before accepting a demand lease."""
-+    if repository is None:
-+        return None
-+    try:
-+        return await repository.get_by_cache_key(
-+            tenant_id=tenant_uuid,
-+            image_hash=compute_image_hash(image_bytes),
-+            adapter=adapter.kind.value,
-+            model_id=adapter.model_id,
-+            model_version=adapter.model_version,
-+            prompt_or_task_version=adapter.prompt_or_task_version,
-+            context_hash=compute_context_hash(context),
-+        )
-+    except HTTPException:
-+        raise
-+    except Exception:
-+        _logger.error("gpu description cache lookup failed", exc_info=True)
-+        raise _typed_describe_error(
-+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-+            code="description_service_unavailable",
-+            message="Description service is unavailable",
-+            timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
-+        )
-+
-+
- async def _accept_operation(
-     *,
-     session: AsyncSession | None,
-@@ -546,15 +582,11 @@ async def _accept_operation(
- ) -> tuple[Any, str]:
+@@ -579,7 +578,7 @@ async def _accept_operation(
+     operation_id: str | None,
+     gpu_compute: bool,
+     server_start: float,
+-) -> tuple[Any, str]:
++) -> tuple[Any, str | None]:
      if session is None:
          if gpu_compute:
--            minted = operation_id or _mint_operation_id()
              raise _typed_describe_error(
-                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                 code="description_service_unavailable",
+@@ -588,7 +587,7 @@ async def _accept_operation(
                  message="Description service is unavailable",
--                operation_id=minted,
--                startup_id=None,
                  timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
--                retry_after=_retry_after_seconds(None),
              )
-         return None, operation_id or _mint_operation_id()
+-        return None, operation_id or _mint_operation_id()
++        return None, None
      repo = _operation_repo(session)
-@@ -594,18 +626,18 @@ async def _accept_operation(
-             await session.rollback()
-             await set_tenant_context(session, tenant_uuid)
-         if gpu_compute:
--            minted = operation_id or _mint_operation_id()
--            _logger.error("operation accept failed operation_id=%s", minted, exc_info=True)
-+            _logger.error("operation accept failed", exc_info=True)
-             raise _typed_describe_error(
+     try:
+         op = await repo.accept(tenant_id=tenant_uuid, request_digest=digest, operation_id=operation_id)
+@@ -631,14 +630,17 @@ async def _accept_operation(
                  status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                  code="description_service_unavailable",
                  message="Description service is unavailable",
--                operation_id=minted,
--                startup_id=None,
++                operation_id=operation_id,
++                startup_id=None,
                  timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
--                retry_after=_retry_after_seconds(None),
              )
--        _logger.debug("non-GPU operation persistence skipped", exc_info=True)
-+        # Non-GPU adapters stay usable without a demand lease (CPU/hosted/default).
-+        _logger.warning(
-+            "non-GPU operation persistence skipped; continuing without a durable operation",
-+            exc_info=True,
-+        )
-         return None, operation_id or _mint_operation_id()
+-        # Non-GPU adapters stay usable without a demand lease (CPU/hosted/default).
++        # CPU/hosted/default stay usable without demand. Do not echo an
++        # unaccepted client token; the success envelope still needs an id.
+         _logger.warning(
+             "non-GPU operation persistence skipped; continuing without a durable operation",
+             exc_info=True,
+         )
+-        return None, operation_id or _mint_operation_id()
++        return None, None
  
  
-@@ -788,14 +820,28 @@ async def describe_image_multipart(
-         effective_adapter = adapter
-     gpu_compute = effective_adapter.kind is DescriptionAdapterKind.GPU
+ async def _ensure_gpu_ready(
+@@ -822,7 +824,6 @@ async def describe_image_multipart(
      digest = _multipart_request_digest(media_id=envelope.media_id, image_bytes=image_bytes, context=submission.context)
--    op, operation_id = await _accept_operation(
--        session=session,
--        tenant_uuid=tenant_uuid,
--        digest=digest,
--        operation_id=submission.operation_id,
--        gpu_compute=gpu_compute,
--        server_start=server_start,
--    )
-+    cached_gpu = False
-+    op = None
-+    operation_id = submission.operation_id or _mint_operation_id()
-+    if gpu_compute:
-+        cached_row = await _cached_gpu_description_row(
-+            repository=repository,
-+            tenant_uuid=tenant_uuid,
-+            image_bytes=image_bytes,
-+            context=submission.context,
-+            adapter=effective_adapter,
-+            server_start=server_start,
-+        )
-+        cached_gpu = cached_row is not None
-+    if not cached_gpu:
-+        op, operation_id = await _accept_operation(
-+            session=session,
-+            tenant_uuid=tenant_uuid,
-+            digest=digest,
-+            operation_id=submission.operation_id,
-+            gpu_compute=gpu_compute,
-+            server_start=server_start,
-+        )
+     cached_gpu = False
+     op = None
+-    operation_id = submission.operation_id or _mint_operation_id()
+     if gpu_compute:
+         cached_row = await _cached_gpu_description_row(
+             repository=repository,
+@@ -833,14 +834,25 @@ async def describe_image_multipart(
+             server_start=server_start,
+         )
+         cached_gpu = cached_row is not None
+-    if not cached_gpu:
+-        op, operation_id = await _accept_operation(
++    op, operation_id = await _accept_operation(
++        session=session,
++        tenant_uuid=tenant_uuid,
++        digest=digest,
++        operation_id=submission.operation_id,
++        gpu_compute=gpu_compute,
++        server_start=server_start,
++    )
++    if cached_gpu:
++        # Cache hits still bind/validate the operation token (mismatch/expiry)
++        # and terminalize any active lease before returning the cached body.
++        op = await _complete_operation(
+             session=session,
+             tenant_uuid=tenant_uuid,
+-            digest=digest,
+-            operation_id=submission.operation_id,
+-            gpu_compute=gpu_compute,
+-            server_start=server_start,
++            op=op,
++            processing_ms=0,
++            server_elapsed_ms=_elapsed_ms(server_start),
++            gpu_compute=True,
++            cached=True,
+         )
      session_factory = worker_session_factory(session) if session is not None else None
      effective_timeout = _generation_timeout_seconds(settings, effective_adapter)
-     service = VisualFactsService(
-@@ -819,8 +865,6 @@ async def describe_image_multipart(
-                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                     code="description_service_unavailable",
-                     message="Description service is unavailable",
--                    operation_id=operation_id,
--                    startup_id=None,
-                     timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
-                 )
-             await _ensure_gpu_ready(
-@@ -859,7 +903,6 @@ async def describe_image_multipart(
-                 operation_id=operation_id,
-                 startup_id=None if op is None else op.startup_id,
-                 timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
--                retry_after=_retry_after_seconds(None),
-             ) from exc
-         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
-     except (GpuRemoteAdapterError, HostedProviderError) as exc:
+@@ -985,7 +997,7 @@ async def describe_image_multipart(
+     dumped = response.model_dump(exclude={"operation_id", "startup_id", "timing", "attempt_timing"})
+     return MultipartDescribeResponse(
+         **dumped,
+-        operation_id=operation_id,
++        operation_id=operation_id or _mint_operation_id(),
+         startup_id=startup_id,
+         timing=timing,
+     )
+@@ -1002,16 +1014,7 @@ async def _with_bypass_session(session_factory: async_sessionmaker[AsyncSession]
+ 
+ async def _maybe_dump_describe_load(session_factory: async_sessionmaker[AsyncSession] | None) -> None:
+     """Best-effort DB-derived load write for the GPU idle reaper (VLMFIX-S2-01)."""
+-    if session_factory is None:
+-        return
+-    path = resolve_load_path()
+-    try:
+-        async with session_factory() as dump_session:
+-            await enable_rls_bypass(dump_session)
+-            payload = await load_snapshot(dump_session)
+-        write_load_snapshot(payload, path)
+-    except Exception:  # noqa: BLE001 - reaper snapshot is best-effort
+-        _logger.debug("describe load snapshot write failed path=%s", path, exc_info=True)
++    await dump_load_snapshot(session_factory)
+ 
+ 
+ async def _maybe_purge_expired_single_runs(session_factory: async_sessionmaker[AsyncSession]) -> None:
 diff --git a/apps/prototype-description-service/scene/tests/test_describe_route.py b/apps/prototype-description-service/scene/tests/test_describe_route.py
 --- a/apps/prototype-description-service/scene/tests/test_describe_route.py
 +++ b/apps/prototype-description-service/scene/tests/test_describe_route.py
-@@ -1151,21 +1151,34 @@ def test_gpu_cold_wait_then_ready_records_startup_and_ramp_up(monkeypatch, tmp_p
- 
- def test_gpu_cache_hit_completes_operation_without_active_lease(monkeypatch, tmp_path):
-     _gpu_env(monkeypatch, tmp_path, state="ready")
-+    from scene.application.describe_operation_repository import DescribeOperationRepository
-+
-+    accepts: list[int] = []
-+    real_accept = DescribeOperationRepository.accept
-+
-+    async def spy_accept(self, **kwargs):
-+        accepts.append(1)
-+        return await real_accept(self, **kwargs)
-+
-+    monkeypatch.setattr(DescribeOperationRepository, "accept", spy_accept)
-     adapter = _GpuAdapter()
-     with _client(adapter=adapter) as client:
-         first = _post(client, TENANT_ID)
-         assert first.status_code == 200, first.text
-+        assert len(accepts) == 1
-         cached = _post(client, TENANT_ID)
-         assert cached.status_code == 200, cached.text
-         body = cached.json()
-         assert body["cached"] is True
-+        assert body["operation_id"]
-         assert body["startup_id"] is None
-         assert body["timing"]["ramp_up_ms"] == 0
+@@ -1176,9 +1176,10 @@ def test_gpu_cache_hit_completes_operation_without_active_lease(monkeypatch, tmp
          assert body["timing"]["processing_ms"] == 0
          assert body["timing"]["startup_ms"] is None
          assert adapter.calls == 1
-+        assert len(accepts) == 1
+-        assert len(accepts) == 1
++        assert len(accepts) == 2
          assert _active_lease_count(client) == 0
--        assert _lease_state(client, body["operation_id"]) == "completed"
-+        assert _lease_state(client, first.json()["operation_id"]) == "completed"
+         assert _lease_state(client, first.json()["operation_id"]) == "completed"
++        assert _lease_state(client, body["operation_id"]) == "completed"
  
  
  class _UnavailableGpuAdapter:
-@@ -1190,7 +1203,7 @@ def test_gpu_adapter_unavailable_is_typed_503(monkeypatch, tmp_path):
-     with _client(adapter=adapter) as client:
-         response = _post(client, TENANT_ID)
-         assert response.status_code == 503, response.text
--        assert response.headers.get("Retry-After")
-+        assert "Retry-After" not in response.headers
+@@ -1252,8 +1253,9 @@ def test_gpu_accept_failure_is_typed_503_without_adapter_work(monkeypatch, tmp_p
+         assert "Retry-After" not in response.headers
          detail = response.json()["detail"]
          assert detail["code"] == "description_service_unavailable"
-         assert "warmup_eta_seconds" not in detail
-@@ -1236,10 +1249,17 @@ def test_gpu_accept_failure_is_typed_503_without_adapter_work(monkeypatch, tmp_p
-     with _client(adapter=adapter) as client:
-         response = _post(client, TENANT_ID)
-         assert response.status_code == 503, response.text
--        assert response.headers.get("Retry-After")
-+        assert "Retry-After" not in response.headers
-         detail = response.json()["detail"]
-         assert detail["code"] == "description_service_unavailable"
-+        assert "operation_id" not in detail
-+        assert "startup_id" not in detail
+-        assert "operation_id" not in detail
+-        assert "startup_id" not in detail
++        assert detail["operation_id"]
++        assert "startup_id" in detail
++        assert "timing" in detail
          assert adapter.calls == 0
-+        monkeypatch.setattr(describe_module, "_operation_repo", real_repo)
-+        retry = _post(client, TENANT_ID)
+         monkeypatch.setattr(describe_module, "_operation_repo", real_repo)
+         retry = _post(client, TENANT_ID)
+@@ -1372,13 +1374,14 @@ def test_gpu_cache_exception_does_not_leak_active_operation(monkeypatch, tmp_pat
+         assert "Retry-After" not in response.headers
+         detail = response.json()["detail"]
+         assert detail["code"] == "description_service_unavailable"
+-        assert "operation_id" not in detail
+-        assert "startup_id" not in detail
++        assert detail["operation_id"]
++        assert "startup_id" in detail
++        assert "timing" in detail
+         assert adapter.calls == 0
+         assert _active_lease_count(client) == 0
+ 
+ 
+-def test_gpu_no_session_unavailable_omits_operation_id(monkeypatch, tmp_path):
++def test_gpu_no_session_unavailable_includes_operation_ids(monkeypatch, tmp_path):
+     _gpu_env(monkeypatch, tmp_path, state="ready")
+     adapter = _GpuAdapter()
+     with _client(adapter=adapter, db_absent=True) as client:
+@@ -1387,15 +1390,19 @@ def test_gpu_no_session_unavailable_omits_operation_id(monkeypatch, tmp_path):
+         assert "Retry-After" not in response.headers
+         detail = response.json()["detail"]
+         assert detail["code"] == "description_service_unavailable"
+-        assert "operation_id" not in detail
+-        assert "startup_id" not in detail
++        assert detail["operation_id"]
++        assert "startup_id" in detail
++        assert detail["startup_id"] is None
++        assert "timing" in detail
+         retry = _post(client, TENANT_ID)
+         assert retry.status_code == 503, retry.text
+-        assert "operation_id" not in retry.json()["detail"]
++        retry_detail = retry.json()["detail"]
++        assert retry_detail["operation_id"]
++        assert "startup_id" in retry_detail
+         assert adapter.calls == 0
+ 
+ 
+-def test_non_gpu_accept_failure_logs_warning_and_continues(monkeypatch, caplog):
++def test_non_gpu_accept_failure_logs_warning_and_does_not_echo_token(monkeypatch, caplog):
+     import logging
+ 
+     from scene.interface_adapters.http.routers import describe as describe_module
+@@ -1410,10 +1417,11 @@ def test_non_gpu_accept_failure_logs_warning_and_continues(monkeypatch, caplog):
+         caplog.at_level(logging.DEBUG, logger="scene.interface_adapters.http.routers.describe"),
+         _client() as client,
+     ):
+-        response = _post(client, TENANT_ID)
++        response = _post(client, TENANT_ID, extra_data={"operation_id": "client-token"})
+     assert response.status_code == 200, response.text
+     body = response.json()
+     assert body["operation_id"]
++    assert body["operation_id"] != "client-token"
+     assert body["adapter"] == "seeded"
+     records = [rec for rec in caplog.records if "non-GPU operation persistence skipped" in rec.getMessage()]
+     assert records
+@@ -1421,3 +1429,67 @@ def test_non_gpu_accept_failure_logs_warning_and_continues(monkeypatch, caplog):
+     assert not any(
+         rec.levelno < logging.WARNING and "operation persistence skipped" in rec.getMessage() for rec in caplog.records
+     )
++
++
++def test_gpu_cache_hit_retry_completes_existing_lease(monkeypatch, tmp_path):
++    state_path, _, _, _now = _gpu_env(monkeypatch, tmp_path, state="stopped")
++    adapter = _GpuAdapter()
++    with _client(adapter=adapter) as client:
++        first = _post(client, TENANT_ID)
++        assert first.status_code == 503, first.text
++        operation_id = first.json()["detail"]["operation_id"]
++        assert _lease_state(client, operation_id) == "active"
++        from scene.application import gpu_state as gpu_state_mod
++
++        gpu_state_mod.reset_gpu_state_observation_for_tests()
++        _write_gpu_state(state_path, state="ready", now=time.time())
++        warm = _post(client, TENANT_ID)
++        assert warm.status_code == 200, warm.text
++        assert warm.json()["cached"] is False
++        assert _lease_state(client, operation_id) == "active"
++        retry = _post(client, TENANT_ID, extra_data={"operation_id": operation_id})
 +        assert retry.status_code == 200, retry.text
-+        assert retry.json()["operation_id"]
-+        assert "detail" not in retry.json()
- 
- 
- def test_gpu_complete_failure_is_typed_502_not_success(monkeypatch, tmp_path):
-@@ -1335,3 +1355,69 @@ def test_operation_id_mismatch_is_409(monkeypatch, tmp_path):
-         assert mismatch.status_code == 409, mismatch.text
-         assert "Retry-After" not in mismatch.headers
-         assert mismatch.json()["detail"]["code"] == "operation_mismatch"
++        body = retry.json()
++        assert body["cached"] is True
++        assert body["operation_id"] == operation_id
++        assert body["startup_id"] is None
++        assert adapter.calls == 1
++        assert _lease_state(client, operation_id) == "completed"
++        assert _active_lease_count(client) == 0
 +
 +
-+def test_gpu_cache_exception_does_not_leak_active_operation(monkeypatch, tmp_path):
++def test_gpu_cache_hit_mismatch_is_409(monkeypatch, tmp_path):
 +    _gpu_env(monkeypatch, tmp_path, state="ready")
-+    from scene.application.description_repository import ImageDescriptionRepository
++    adapter = _GpuAdapter()
++    with _client(adapter=adapter) as client:
++        first = _post(client, TENANT_ID)
++        assert first.status_code == 200, first.text
++        mismatch = _post(client, TENANT_ID, extra_data={"operation_id": "not-this-operation"})
++        assert mismatch.status_code == 409, mismatch.text
++        detail = mismatch.json()["detail"]
++        assert detail["code"] == "operation_mismatch"
++        assert detail["operation_id"]
++        assert "startup_id" in detail
++        assert "timing" in detail
++        assert adapter.calls == 1
 +
-+    async def boom(self, **kwargs):
-+        raise RuntimeError("cache boom")
 +
-+    monkeypatch.setattr(ImageDescriptionRepository, "get_by_cache_key", boom)
++def test_gpu_starting_uses_canonical_dump_load_snapshot(monkeypatch, tmp_path):
++    _gpu_env(monkeypatch, tmp_path, state="stopped")
++    from scene.application.describe_load import dump_load_snapshot
++    from scene.interface_adapters.http.routers import describe as describe_module
++
++    calls: list[object] = []
++
++    async def spy(session_factory, *args, **kwargs):
++        calls.append(session_factory)
++        return await dump_load_snapshot(session_factory, *args, **kwargs)
++
++    monkeypatch.setattr(describe_module, "dump_load_snapshot", spy)
 +    adapter = _GpuAdapter()
 +    with _client(adapter=adapter) as client:
 +        response = _post(client, TENANT_ID)
 +        assert response.status_code == 503, response.text
-+        assert "Retry-After" not in response.headers
-+        detail = response.json()["detail"]
-+        assert detail["code"] == "description_service_unavailable"
-+        assert "operation_id" not in detail
-+        assert "startup_id" not in detail
-+        assert adapter.calls == 0
-+        assert _active_lease_count(client) == 0
++        assert response.json()["detail"]["code"] == "description_service_starting"
++    assert calls
++    assert adapter.calls == 0
+diff --git a/apps/prototype-description-service/scene/tests/test_shared_schema_multipart.py b/apps/prototype-description-service/scene/tests/test_shared_schema_multipart.py
+--- a/apps/prototype-description-service/scene/tests/test_shared_schema_multipart.py
++++ b/apps/prototype-description-service/scene/tests/test_shared_schema_multipart.py
+@@ -8,7 +8,7 @@ from pathlib import Path
+ from jsonschema import Draft7Validator
+ from referencing import Registry, Resource
+ 
+-from scene.tests.test_describe_route import TENANT_ID, _client, _post
++from scene.tests.test_describe_route import TENANT_ID, _GpuAdapter, _client, _gpu_env, _post
+ 
+ _REPO_ROOT = Path(__file__).resolve().parents[4]
+ _SCHEMA_DIR = _REPO_ROOT / "packages/shared-contracts/schemas"
+@@ -117,3 +117,33 @@ def test_production_route_success_validates_against_shared_schema():
+         assert cached_body["timing"]["ramp_up_ms"] == 0
+         assert cached_body["timing"]["processing_ms"] == 0
+         assert cached_body["timing"]["startup_ms"] is None
 +
 +
-+def test_gpu_no_session_unavailable_omits_operation_id(monkeypatch, tmp_path):
-+    _gpu_env(monkeypatch, tmp_path, state="ready")
-+    adapter = _GpuAdapter()
-+    with _client(adapter=adapter, db_absent=True) as client:
++def test_production_route_starting_error_validates_against_shared_schema(monkeypatch, tmp_path):
++    _gpu_env(monkeypatch, tmp_path, state="stopped")
++    validator = _multipart_validator()
++    with _client(adapter=_GpuAdapter()) as client:
 +        response = _post(client, TENANT_ID)
 +        assert response.status_code == 503, response.text
-+        assert "Retry-After" not in response.headers
-+        detail = response.json()["detail"]
-+        assert detail["code"] == "description_service_unavailable"
-+        assert "operation_id" not in detail
-+        assert "startup_id" not in detail
-+        retry = _post(client, TENANT_ID)
-+        assert retry.status_code == 503, retry.text
-+        assert "operation_id" not in retry.json()["detail"]
-+        assert adapter.calls == 0
++        body = response.json()
++        validator.validate(body)
++        assert body["detail"]["code"] == "description_service_starting"
++        assert body["detail"]["operation_id"]
++        assert "startup_id" in body["detail"]
++        assert "timing" in body["detail"]
 +
 +
-+def test_non_gpu_accept_failure_logs_warning_and_continues(monkeypatch, caplog):
-+    import logging
-+
-+    from scene.interface_adapters.http.routers import describe as describe_module
-+
-+    real_repo = describe_module._operation_repo
-+
-+    def boom_repo(session):
-+        return _RaisingOperationRepo(real_repo(session), fail_accept=True)
-+
-+    monkeypatch.setattr(describe_module, "_operation_repo", boom_repo)
-+    with (
-+        caplog.at_level(logging.DEBUG, logger="scene.interface_adapters.http.routers.describe"),
-+        _client() as client,
-+    ):
++def test_production_route_unavailable_error_validates_against_shared_schema(monkeypatch, tmp_path):
++    _gpu_env(monkeypatch, tmp_path, state="ready")
++    validator = _multipart_validator()
++    with _client(adapter=_GpuAdapter(), db_absent=True) as client:
 +        response = _post(client, TENANT_ID)
-+    assert response.status_code == 200, response.text
-+    body = response.json()
-+    assert body["operation_id"]
-+    assert body["adapter"] == "seeded"
-+    records = [rec for rec in caplog.records if "non-GPU operation persistence skipped" in rec.getMessage()]
-+    assert records
-+    assert all(rec.levelno >= logging.WARNING for rec in records)
-+    assert not any(
-+        rec.levelno < logging.WARNING and "operation persistence skipped" in rec.getMessage() for rec in caplog.records
-+    )
++        assert response.status_code == 503, response.text
++        body = response.json()
++        validator.validate(body)
++        assert body["detail"]["code"] == "description_service_unavailable"
++        assert body["detail"]["operation_id"]
++        assert "startup_id" in body["detail"]
++        assert body["detail"]["startup_id"] is None
++        assert "timing" in body["detail"]
++        assert "warmup_eta_seconds" not in body["detail"]

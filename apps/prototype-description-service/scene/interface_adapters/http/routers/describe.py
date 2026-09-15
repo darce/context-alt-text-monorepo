@@ -322,6 +322,17 @@ class _LifecycleHoldHTTPException(HTTPException):
     """Readiness-gate 503 that must keep the demand lease for retry."""
 
 
+_MULTIPART_TYPED_ERROR_CODES = frozenset(
+    {
+        "description_service_starting",
+        "description_service_unavailable",
+        "description_service_error",
+        "operation_mismatch",
+        "operation_expired",
+    }
+)
+
+
 def _typed_describe_error(
     *,
     status_code: int,
@@ -346,6 +357,78 @@ def _typed_describe_error(
     headers = {"Retry-After": str(retry_after)} if retry_after is not None else None
     exc_cls = _LifecycleHoldHTTPException if preserve_lease else HTTPException
     return exc_cls(status_code=status_code, detail=detail, headers=headers)
+
+
+def _http_exception_code(detail: Any) -> str | None:
+    if not isinstance(detail, dict):
+        return None
+    code = detail.get("code")
+    return code if isinstance(code, str) else None
+
+
+def _http_exception_message(detail: Any, *, fallback: str) -> str:
+    if isinstance(detail, dict):
+        message = detail.get("message")
+        if isinstance(message, str) and message:
+            return message
+    if isinstance(detail, str) and detail:
+        return detail
+    return fallback
+
+
+def _retry_after_header(exc: HTTPException) -> int | None:
+    if not exc.headers:
+        return None
+    raw = exc.headers.get("Retry-After")
+    if raw is None:
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return value
+
+
+def _plain_typed_error_missing_operation_fields(exc: HTTPException) -> bool:
+    """True when a post-accept typed-error code lacks the multipart envelope."""
+    if isinstance(exc, _LifecycleHoldHTTPException):
+        return False
+    detail = exc.detail
+    code = _http_exception_code(detail)
+    if code not in _MULTIPART_TYPED_ERROR_CODES:
+        return False
+    if not isinstance(detail, dict):
+        return True
+    return any(key not in detail for key in ("operation_id", "startup_id", "timing"))
+
+
+def _rebuild_post_accept_typed_error(
+    exc: HTTPException,
+    *,
+    op,
+    server_start: float,
+) -> HTTPException:
+    detail = exc.detail
+    code = _http_exception_code(detail)
+    if code not in _MULTIPART_TYPED_ERROR_CODES:
+        return exc
+    warmup_eta_seconds = None
+    retry_after = None
+    if code == "description_service_starting" and isinstance(detail, dict):
+        eta = detail.get("warmup_eta_seconds")
+        if isinstance(eta, (int, float)) and not isinstance(eta, bool) and math.isfinite(eta):
+            warmup_eta_seconds = float(eta)
+        retry_after = _retry_after_header(exc)
+    return _typed_describe_error(
+        status_code=exc.status_code,
+        code=code,
+        message=_http_exception_message(detail, fallback="Description service error"),
+        operation_id=op.operation_id,
+        startup_id=op.startup_id,
+        timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
+        warmup_eta_seconds=warmup_eta_seconds,
+        retry_after=retry_after,
+    )
 
 
 def _gpu_snapshot_fields() -> tuple[str | None, float | None]:
@@ -1126,7 +1209,6 @@ async def describe_image_multipart(
                 raise RuntimeError("gpu describe succeeded without an accepted operation")
             return MultipartDescribeResponse(
                 **dumped,
-                operation_id=None,
                 startup_id=startup_id,
                 timing=timing,
             )
@@ -1139,6 +1221,8 @@ async def describe_image_multipart(
     except HTTPException as exc:
         if not _preserves_demand_lease(exc):
             await _cleanup_accepted()
+        if op is not None and _plain_typed_error_missing_operation_fields(exc):
+            raise _rebuild_post_accept_typed_error(exc, op=op, server_start=server_start) from exc
         raise
     except TimeoutError as exc:
         await _cleanup_accepted()

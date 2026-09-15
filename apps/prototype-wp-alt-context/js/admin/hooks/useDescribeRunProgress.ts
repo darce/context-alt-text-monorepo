@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import {
+  DESCRIBE_RUN_PHASE,
   fetchBulkDescribeRun,
   GPU_STATE,
   isDescribeRunTerminal,
@@ -98,8 +99,8 @@ export interface DescribeRunProgress {
   /** Opaque shared startup id from the polled envelope; null when absent. */
   startupId?: string | null;
   /**
-   * GPU is starting and the run has not yet reported an ETA. UI should say the
-   * service is starting instead of presenting a stalled bar.
+   * True while the run's own phase is warming. Derived from `run.phase`, never
+   * from the process-wide gpu_state snapshot (R-03).
    */
   isWarming?: boolean;
   isTerminal: boolean;
@@ -183,7 +184,9 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
   const etaSeconds = run?.eta_seconds ?? null;
   const timing = run?.timing ?? null;
   const startupId = run?.startup_id ?? null;
-  const isWarming = !isTerminal && gpuState === GPU_STATE.STARTING && etaSeconds === null;
+  // Phase is the run's warmup signal; gpu_state is process-wide and would mark
+  // queued/describing runs as warming (R-03).
+  const isWarming = !isTerminal && run?.phase === DESCRIBE_RUN_PHASE.WARMING
   const frozenStreakExceeded = frozenPollStreak >= FROZEN_POLL_ESCALATION_THRESHOLD;
   const isFrozen = query.isError && isFrozenPollFailure(query.error) && !frozenStreakExceeded;
   const isError = query.isError && !isFrozen;

@@ -5,9 +5,9 @@
 
 ## Goals
 - Operator can always see Description Service state, effective intent, activity and load freshness in one place (INT-10 status–predict–stop, OBS-08 stale is shown as unknown with age).
-- Operator can request Start, Stop or Return to automatic; each request is acknowledged within one poll and its outcome (honoured, pending, blocked) is visible (HAI-04 activate–operate–override).
+- Operator can request Start, Stop or Return to automatic; each request is acknowledged within one poll and its outcome (honoured, pending, deferred until idle) is visible (HAI-04 activate–operate–override).
 - Cost is disclosed before commitment; the user is never surprised by an hourly charge (INT-07, CARD-15, COST-10).
-- Stop intent can be requested while busy and shutdown is deferred until idle. Stale or unknown telemetry blocks Start; unavailable with operator STOP is distinct from unknown (INT-10, FLOW-08, A11Y-18, PERC-02).
+- Stop stays available while load.has_work; confirm asks Stop after the current run finishes? and the pending indicator is Stopping after current work (N items left) until idle. Stale or unknown telemetry hides Start/Stop and offers Refresh; degraded copy may include typed description_service_unavailable Retry-After. gpu_state is unknown|stopped|starting|warming|ready|degraded (INT-10, FLOW-08, A11Y-18, PERC-02).
 
 ## Jobs
 - `job-prewarm-gpu` — Pre-warm Description Service before a demo so the first describe run is fast
@@ -24,18 +24,18 @@
 
 ### Settings › Description Service (`settings-burst-gpu`)
 
-Purpose: Card on the Settings page showing Description Service state, intent, activity and load, with Start / Stop / Return to automatic controls. Domain vocabulary behind the canonical states: stopped and ready = default; starting and warming = loading; snapshot missing = empty; service unreachable or unavailable (operator STOP) = error; lifecycle degraded or intent blocked = degraded. Primary copy uses Service: stopped / starting / warming / ready / unavailable; ETA and Retry-After are data, not extra states.
+Purpose: Card on the Settings page showing Description Service state, intent, activity and load, with Start / Stop / Return to automatic / Refresh controls. Domain vocabulary: stopped and ready = default; starting and warming = loading; snapshot missing or stale = empty; service unreachable = error; lifecycle degraded or intent pending = degraded. gpu_state is unknown|stopped|starting|warming|ready|degraded. Six fixture-state sketches: stopped → [PRIMARY] Start service; starting/warming with eta_seconds → Warming up, about {eta} left and [secondary] Stop service; starting/warming without eta → Warming up, this can take a few minutes; ready → Service: ready · idle|N in flight and [secondary] Stop service; unknown/stale → Status unavailable, last seen {age} with [PRIMARY] Refresh, Start/Stop hidden; degraded → Unavailable, retry in {retry_after}s, [PRIMARY] Start service, and 120 s retry-ceiling copy after the ceiling. Typed description_service_unavailable Suggest 503 Retry-After is copy on degraded/unknown, not a gpu_state. ETA and Retry-After are data, not extra states.
 
-Action states: stopped, unknown, starting, warming, ready, degraded, unavailable
+Action states: stopped, unknown, starting, warming, ready, degraded
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
-| `z-gpu-state-chip` | Service status chip — Service: not reported / stopped / starting / warming / ready / degraded / unavailable with snapshot age (icon + text) | status | default, loading, empty, error, degraded |
-| `z-gpu-intent` | Effective intent and expiry — automatic / start until HH:MM / stop (pending, blocked: describe run in flight) | status | default, loading, degraded |
+| `z-gpu-state-chip` | Service status chip — Service: not reported / stopped / starting / warming / ready / degraded with snapshot age (icon + text) | status | default, loading, empty, error, degraded |
+| `z-gpu-intent` | Effective intent and expiry — automatic / start until HH:MM / stop (pending: Stopping after current work (N items left) until idle) | status | default, loading, degraded |
 | `z-gpu-lease` | Service activity — idle or running since, auto-stops by HH:MM (run limit); never show lease ids | status | default, empty |
 | `z-gpu-load` | Describe load — work in flight yes/no with load snapshot freshness | status | default, empty, degraded |
 | `z-gpu-cost` | Cost disclosure — hourly rate and warm-up time before Start, not in the headline | content | default |
-| `z-gpu-controls` | Start service / Stop service / Return to automatic | form | default, loading, error, degraded |
+| `z-gpu-controls` | Start service / Stop service / Return to automatic / Refresh status | form | default, loading, error, degraded |
 
 ```
 +------------------------------------------------------------+
@@ -48,7 +48,7 @@ Action states: stopped, unknown, starting, warming, ready, degraded, unavailable
 |   - Service activity — idle or running since, auto-stops b…|
 |   - Describe load — work in flight yes/no with load snapsh…|
 |   - Cost disclosure — hourly rate and warm-up time before …|
-|   - Start service / Stop service / Return to automatic (fo…|
+|   - Start service / Stop service / Return to automatic / R…|
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 | when stopped                                               |
@@ -56,8 +56,8 @@ Action states: stopped, unknown, starting, warming, ready, degraded, unavailable
 |   [secondary] Return to automatic                          |
 |   [tertiary] Refresh status                                |
 | when unknown                                               |
+|   [PRIMARY] Refresh status                                 |
 |   [secondary] Return to automatic                          |
-|   [tertiary] Refresh status                                |
 | when starting                                              |
 |   [secondary] Stop service                                 |
 |   [secondary] Return to automatic                          |
@@ -76,12 +76,99 @@ Action states: stopped, unknown, starting, warming, ready, degraded, unavailable
 |   [secondary] Stop service                                 |
 |   [secondary] Return to automatic                          |
 |   [tertiary] Refresh status                                |
-| when unavailable                                           |
-|   [PRIMARY] Start service                                  |
-|   [secondary] Return to automatic                          |
-|   [tertiary] Refresh status                                |
 +------------------------------------------------------------+
 | states: default | loading | empty | error | degraded       |
++------------------------------------------------------------+
+```
+
+#### stopped
+
+```
++------------------------------------------------------------+
+| Settings › Description Service  [screen]  #/settings       |
+| [■] Service: stopped                        snapshot 12 s  |
+| Intent: Automatic                                          |
+| Service: idle                                              |
+| Load: no work in flight                                    |
+| Cost: about $2/hour · warm-up about 2 min                  |
+| [PRIMARY] Start service                                    |
+| [secondary] Return to automatic                            |
+| [tertiary] Refresh status                                  |
++------------------------------------------------------------+
+```
+
+#### starting/warming with ETA
+
+```
++------------------------------------------------------------+
+| Settings › Description Service  [screen]  #/settings       |
+| [~] Service: warming                                       |
+| Warming up, about 48 s left                                |
+| Intent: Start requested until 22:40                        |
+| Service: warming · no work in flight                       |
+| [secondary] Stop service                                   |
+| [secondary] Return to automatic                            |
+| [tertiary] Refresh status                                  |
++------------------------------------------------------------+
+```
+
+#### starting/warming without ETA
+
+```
++------------------------------------------------------------+
+| Settings › Description Service  [screen]  #/settings       |
+| [~] Service: starting                                      |
+| Warming up, this can take a few minutes                    |
+| Intent: Automatic                                          |
+| Service: starting · no work in flight                      |
+| [secondary] Stop service                                   |
+| [secondary] Return to automatic                            |
+| [tertiary] Refresh status                                  |
++------------------------------------------------------------+
+```
+
+#### ready
+
+```
++------------------------------------------------------------+
+| Settings › Description Service  [screen]  #/settings       |
+| [OK] Service: ready · idle|N in flight                     |
+| Intent: Automatic                                          |
+| Service: ready · idle                                      |
+| Load: no work in flight / N in flight                      |
+| [secondary] Stop service                                   |
+| [secondary] Return to automatic                            |
+| [tertiary] Refresh status                                  |
+| [secondary] Go to Workbench                                |
++------------------------------------------------------------+
+```
+
+#### unknown/stale
+
+```
++------------------------------------------------------------+
+| Settings › Description Service  [screen]  #/settings       |
+| [?] Status unavailable, last seen 4 min ago                |
+| Intent: Automatic (from last snapshot)                     |
+| Typed 503 description_service_unavailable is copy only.    |
+| Start/Stop hidden until status is known.                   |
+| [PRIMARY] Refresh status                                   |
+| [secondary] Return to automatic                            |
++------------------------------------------------------------+
+```
+
+#### degraded
+
+```
++------------------------------------------------------------+
+| Settings › Description Service  [screen]  #/settings       |
+| [!] Unavailable, retry in 15s                              |
+| Typed description_service_unavailable (Retry-After).       |
+| After 120 s ceiling: still starting — try again.           |
+| [PRIMARY] Start service                                    |
+| [secondary] Stop service                                   |
+| [secondary] Return to automatic                            |
+| [tertiary] Refresh status                                  |
 +------------------------------------------------------------+
 ```
 
@@ -113,20 +200,20 @@ Purpose: Inline confirm strip below the controls: names the hourly cost, the war
 
 ### Confirm Stop (`gpu-stop-confirm`)
 
-Purpose: Inline confirm strip: explains that a stop is honoured only when no describe run is in flight, otherwise it is deferred and shown as pending.
+Purpose: Inline confirm strip: Stop service stays available while load.has_work. Confirm copy is Stop after the current run finishes? After confirm, the pending-intent indicator is Stopping after current work (N items left) until idle, then the service stops. Never a disabled control.
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
-| `z-stop-preview` | Stop preview — immediate when idle, deferred while a describe run is in flight | content | default, degraded |
+| `z-stop-preview` | Stop preview — Stop after the current run finishes? then Stopping after current work (N items left) until idle | content | default, degraded |
 | `z-stop-actions` | Confirm stop / Cancel | form | default, loading, error |
 
 ```
 +------------------------------------------------------------+
 | Confirm Stop  [overlay]  #/settings (inline strip; no dedi…|
-| Inline confirm strip: explains that a stop is honoured onl…|
+| Inline confirm strip: Stop service stays available while l…|
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Stop preview — immediate when idle, deferred while a d…|
+|   - Stop preview — Stop after the current run finishes? th…|
 |   - Confirm stop / Cancel (form) states=[default,loading,e…|
 +------------------------------------------------------------+
 | ACTIONS                                                    |
@@ -162,12 +249,13 @@ url_params: `run_id`
 
 | id | verb | target | hierarchy | costly | irreversible | preview required | screen id | when (recovery state) |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `act-gpu-start` | Start service | `gpu-start-confirm` | primary | yes | no | yes | `settings-burst-gpu` | stopped, degraded, unavailable |
+| `act-gpu-start` | Start service | `gpu-start-confirm` | primary | yes | no | yes | `settings-burst-gpu` | stopped, degraded |
 | `act-gpu-confirm-start` | Confirm start | `POST recognition/gpu/intent {action: start}` | primary | yes | no | no | `gpu-start-confirm` | always |
 | `act-gpu-stop` | Stop service | `gpu-stop-confirm` | secondary | no | no | yes | `settings-burst-gpu` | starting, warming, ready, degraded |
 | `act-gpu-confirm-stop` | Confirm stop | `POST recognition/gpu/intent {action: stop}` | primary | no | no | no | `gpu-stop-confirm` | always |
 | `act-gpu-auto` | Return to automatic | `POST recognition/gpu/intent {action: auto}` | secondary | no | no | no | `settings-burst-gpu` | always |
-| `act-gpu-refresh` | Refresh status | `GET recognition/gpu/status` | tertiary | no | no | no | `settings-burst-gpu` | always |
+| `act-gpu-refresh` | Refresh status | `GET recognition/gpu/status` | primary | no | no | no | `settings-burst-gpu` | unknown |
+| `act-gpu-refresh-live` | Refresh status | `GET recognition/gpu/status` | tertiary | no | no | no | `settings-burst-gpu` | stopped, starting, warming, ready, degraded |
 | `act-cancel-confirm` | Cancel | `settings-burst-gpu` | secondary | no | no | no | `gpu-start-confirm` | always |
 | `act-goto-workbench` | Go to Workbench | `exit-workbench` | secondary | no | no | no | `settings-burst-gpu` | ready |
 
@@ -191,12 +279,12 @@ flowchart TD
 ```mermaid
 flowchart TD
   %% flow: Stop while a describe run is in flight job=job-stop-gpu
-  %% steps: [{"screen_id":"settings-burst-gpu","branch_label":"state ready, load.has_work → Stop service disabled with reason"},{"screen_id":"settings-burst-gpu","branch_label":"run finishes → Stop service enabled"},{"screen_id":"gpu-stop-confirm","branch_label":"Confirm stop (202)"},{"screen_id":"settings-burst-gpu","branch_label":"intent stop (pending) → stopped; reason operator"}]
+  %% steps: [{"screen_id":"settings-burst-gpu","branch_label":"state ready, load.has_work → Stop service available (deferred intent)"},{"screen_id":"gpu-stop-confirm","branch_label":"Stop after the current run finishes? → Confirm stop (202)"},{"screen_id":"settings-burst-gpu","branch_label":"Stopping after current work (N items left) until idle → service stops"}]
   n_settings_burst_gpu["Settings › Description Service (screen)"]
-  n_settings_burst_gpu -->|state ready, load.has_work → Stop service disabled with reason| n_settings_burst_gpu
   n_gpu_stop_confirm["Confirm Stop (overlay)"]
-  n_settings_burst_gpu -->|run finishes → Stop service enabled| n_gpu_stop_confirm
-  n_gpu_stop_confirm -->|Confirm stop (202)| n_settings_burst_gpu
+  n_settings_burst_gpu -->|state ready, load.has_work → Stop service available (deferred intent)| n_gpu_stop_confirm
+  n_gpu_stop_confirm -->|Stop after the current run finishes? → Confirm stop (202)| n_settings_burst_gpu
+  n_settings_burst_gpu -->|Stopping after current work (N items left) until idle → service stops| n_settings_burst_gpu
 ```
 
 ### Return to automatic (`flow-return-auto`)
@@ -223,19 +311,19 @@ hand-edit one side.
 
 Zone ids: z-gpu-state-chip z-gpu-intent z-gpu-lease z-gpu-load z-gpu-cost z-gpu-controls z-start-preview z-start-actions z-stop-preview z-stop-actions z-wb-entry
 
-Action ids: act-gpu-start act-gpu-confirm-start act-gpu-stop act-gpu-confirm-stop act-gpu-auto act-gpu-refresh act-cancel-confirm act-goto-workbench
+Action ids: act-gpu-start act-gpu-confirm-start act-gpu-stop act-gpu-confirm-stop act-gpu-auto act-gpu-refresh act-gpu-refresh-live act-cancel-confirm act-goto-workbench
 
 Zone labels (verbatim; the tables above escape `|` for markdown, this list does not):
 
-- Service status chip — Service: not reported / stopped / starting / warming / ready / degraded / unavailable with snapshot age (icon + text)
-- Effective intent and expiry — automatic / start until HH:MM / stop (pending, blocked: describe run in flight)
+- Service status chip — Service: not reported / stopped / starting / warming / ready / degraded with snapshot age (icon + text)
+- Effective intent and expiry — automatic / start until HH:MM / stop (pending: Stopping after current work (N items left) until idle)
 - Service activity — idle or running since, auto-stops by HH:MM (run limit); never show lease ids
 - Describe load — work in flight yes/no with load snapshot freshness
 - Cost disclosure — hourly rate and warm-up time before Start, not in the headline
-- Start service / Stop service / Return to automatic
+- Start service / Stop service / Return to automatic / Refresh status
 - Start preview — cost per hour, warm-up estimate, auto-return after TTL
 - Confirm start / Cancel
-- Stop preview — immediate when idle, deferred while a describe run is in flight
+- Stop preview — Stop after the current run finishes? then Stopping after current work (N items left) until idle
 - Confirm stop / Cancel
 - Workbench entry
 
@@ -246,3 +334,5 @@ States (all zones and screens): default loading empty error degraded
 - No per-poll toasts; useGpuStateToasts already covers transitions. Suppress toasts while a warming progress surface is mounted (GPUUX-1, PERC-07).
 - No direct OCI calls from PHP or the SPA; every field is pass-through from gpu-state.json and the intent file (rg-015).
 - Primary copy never names leases, lease ids, or demand-lease internals; those stay on the wire (UXSCRE-M-08).
+- gpu_state has no unavailable member; operator STOP is a reason. Typed description_service_unavailable Retry-After is copy on degraded/unknown Settings screens, not a new state or action.
+- Identity and suggestion copy never claims proof of identity; a representative is a proposal to review, not proof.

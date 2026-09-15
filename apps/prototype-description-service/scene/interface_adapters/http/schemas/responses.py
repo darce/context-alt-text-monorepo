@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, model_serializer
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer
 
 from scene.application.gpu_state import GpuState
 from scene.application.identity_merge import NamingRealizer
@@ -221,6 +221,7 @@ class MultipartDescribeResponse(VisualFactsResponse):
     """
 
     operation_id: str | None = Field(
+        default=None,
         min_length=1,
         max_length=128,
         description=(
@@ -230,6 +231,14 @@ class MultipartDescribeResponse(VisualFactsResponse):
     )
     startup_id: str | None
     timing: DescribeTiming
+
+    @field_validator("operation_id", mode="before")
+    @classmethod
+    def _reject_explicit_null_operation_id(cls, value: object) -> object:
+        # Omitted keys use default=None (validator skipped). JSON null is present.
+        if value is None:
+            raise ValueError("operation_id must be omitted rather than null")
+        return value
 
     @model_serializer(mode="wrap")
     def _emit_required_operation_metadata(self, handler):

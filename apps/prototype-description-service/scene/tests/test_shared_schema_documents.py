@@ -189,7 +189,8 @@ def test_cache_timing_consistency(name):
     v = validator(name)
     v.validate(payload)
     for field, value in (("startup_id", "startup"), ("ramp_up_ms", 1),
-                         ("processing_ms", 1), ("ramp_up_ms", None), ("processing_ms", None)):
+                         ("processing_ms", 1), ("startup_ms", 7),
+                         ("ramp_up_ms", None), ("processing_ms", None)):
         bad = copy.deepcopy(payload)
         target = bad if field == "startup_id" else bad["timing"]
         target[field] = value
@@ -207,7 +208,7 @@ def test_cache_timing_consistency(name):
             "Each active, unexpired, policy-eligible lease contributes one to `in_flight`",
             "`lease_demand` field is a nonnegative nullable integer",
             "STOP-held and max-lease-blocked",
-            "has_work := (queue_depth + in_flight) > 0",
+            "has_work := ((queue_depth + in_flight) > 0) OR batch_in_progress",
         )),
         ("gpu-lifecycle", (
             "sequence inside the same transaction as the demand read",
@@ -228,3 +229,11 @@ def test_documented_publisher_and_retry_requirements(document, requirements):
     text = " ".join(path.read_text().split())
     for requirement in requirements:
         assert requirement in text
+
+
+def test_publication_has_work_includes_batch_gaps():
+    path = ROOT.parents[2] / "docs/workbay/contracts/gpu-lifecycle.md"
+    section = path.read_text().split("### Publication and deployment bounds", 1)[1]
+    text = " ".join(section.split())
+    assert "has_work := ((queue_depth + in_flight) > 0) OR batch_in_progress" in text
+    assert "START and STOP, including batch gaps with both counts zero" in text

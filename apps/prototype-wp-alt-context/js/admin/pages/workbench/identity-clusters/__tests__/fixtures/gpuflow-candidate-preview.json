@@ -1,7 +1,8 @@
 {
   "candidate": {
     "identityMediaUrl": "https://example.test/candidate.jpg",
-    "identityBbox": { "x": 10, "y": 20, "width": 30, "height": 40 }
+    "identityBbox": { "x": 10, "y": 20, "width": 30, "height": 40 },
+    "identityMediaId": 101
   },
   "nullRepresentative": {
     "representativeMediaUrl": null,
@@ -10,7 +11,8 @@
   },
   "representative": {
     "representativeMediaUrl": "https://example.test/reference.jpg",
-    "representativeBbox": { "x": 100, "y": 200, "width": 80, "height": 90 }
+    "representativeBbox": { "x": 100, "y": 200, "width": 80, "height": 90 },
+    "representativeMediaId": 202
   },
   "nonCroppableBboxes": [
     { "x": 10, "y": 20, "width": 0, "height": 40 },

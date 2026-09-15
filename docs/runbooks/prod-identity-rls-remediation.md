@@ -34,6 +34,7 @@ SELECT t.relname,
        (SELECT count(*) FROM pg_policies p
          WHERE p.schemaname = 'public' AND p.tablename = t.relname) AS policies
 FROM unnest(ARRAY[
+  'describe_operations','describe_demand_leases',
     'media_identities','identity_clusters','identity_members','identity_name_suppressions',
     'identity_scan_jobs','identity_scan_job_items','identity_cluster_representatives','identity_clustering_jobs',
     'identity_suggestions','cluster_merge_suggestions','name_suggestions',

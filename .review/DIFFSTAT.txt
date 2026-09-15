@@ -1,6 +1,5 @@
- .../__tests__/useDescribeRunProgress.test.tsx      |  57 +++++++---
- .../js/admin/hooks/useDescribeRunProgress.ts       |   9 +-
- .../js/admin/pages/workbench/MediaSelection.tsx    |  47 +++++---
- .../MediaSelection.statusAnnouncement.test.tsx     | 124 ++++++++++++++++-----
- .../__tests__/fixtures/gpuflow-bulk-timing.json    |   2 +-
- 5 files changed, 176 insertions(+), 63 deletions(-)
+ .../js/admin/hooks/useDescribeRunProgress.ts                |  2 +-
+ .../js/admin/pages/workbench/MediaSelection.tsx             | 11 +++--------
+ .../__tests__/BulkDescribeProgress.phases.test.tsx          |  4 ++--
+ .../__tests__/MediaSelection.statusAnnouncement.test.tsx    | 13 ++++++++-----
+ 4 files changed, 14 insertions(+), 16 deletions(-)

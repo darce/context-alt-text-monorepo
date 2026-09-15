@@ -150,10 +150,11 @@ export interface VisualFactsResponse {
   alt_text_long?: string | null;
   alt_text_write?: AltTextWriteResult;
   /**
-   * Opaque service-minted lease id. Null means no lease to poll
-   * (GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-01). Absent on older adapters.
+   * Opaque service-minted lease id. Optional; when present it is a non-empty
+   * string (1..128) and never null. The service drops the key when unset
+   * (GPUFLOW-1-SPADESCRIBECLIENT-R-01). Absent means no lease to poll.
    */
-  operation_id?: string | null;
+  operation_id?: string;
   /** Opaque shared startup id; null for warm/cache work. Absent on older adapters. */
   startup_id?: string | null;
   /** Measured milliseconds; unknown values are null. Absent on older adapters. */
@@ -672,7 +673,7 @@ const validateVisualFactsResponse = (payload: unknown): string | null => {
       return altTextWriteError;
     }
   }
-  const operationIdError = validateOptionalOpaqueId(payload, 'operation_id', 'response', true);
+  const operationIdError = validateOptionalOpaqueId(payload, 'operation_id', 'response', false);
   if (operationIdError) {
     return operationIdError;
   }
@@ -1534,10 +1535,11 @@ export const resolveDescribeErrorDataField = (error: unknown, field: string): st
 };
 
 /**
- * Resolve a finite number from a typed FastAPI `detail` object when present.
+ * Resolve a nonnegative finite number from a typed FastAPI `detail` object.
  * Returns null when the error is unstructured, `detail` is not an object, or
- * the named field is absent / not a finite number — callers must not invent
- * a value ([rg-015]). Used for `warmup_eta_seconds`.
+ * the named field is absent / not a finite number / negative — callers must
+ * not invent a value ([rg-015]). `-0` is treated as `0`. Used for
+ * `warmup_eta_seconds`.
  */
 export const resolveDescribeErrorDetailNumberField = (
   error: unknown,
@@ -1551,10 +1553,10 @@ export const resolveDescribeErrorDetailNumberField = (
     return null;
   }
   const value = payload.detail[field];
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return value;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    return null;
   }
-  return null;
+  return value === 0 ? 0 : value;
 };
 
 /**

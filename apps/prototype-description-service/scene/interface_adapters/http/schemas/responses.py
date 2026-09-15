@@ -5,6 +5,9 @@ retention state are unavoidable on the wire; future adapters (local_cpu,
 hosted_provider) never change the shape (roadmap "Core Contract"). The seeded
 adapter fills expansion fields (``context_used``, ``provider_disclosure``) with
 typed placeholders rather than nulls.
+
+svc-cold-gpu consumes ``MultipartDescribeResponse`` as ``response_model`` on
+``/scene/describe/multipart``.
 """
 
 from __future__ import annotations
@@ -205,6 +208,30 @@ class VisualFactsResponse(OmitAbsentOperationMetadata):
     operation_id: str | None = Field(default=None, min_length=1, max_length=128)
     startup_id: str | None = None
     timing: DescribeTiming | None = None
+
+
+class MultipartDescribeResponse(VisualFactsResponse):
+    """Strict multipart success envelope for ``/scene/describe/multipart``.
+
+    ``operation_id`` and ``timing`` are required and non-null; ``startup_id`` is
+    a required key that may be JSON null for warm/cache work. Base
+    ``VisualFactsResponse`` omission behaviour is unchanged.
+    """
+
+    operation_id: str = Field(min_length=1, max_length=128)
+    startup_id: str | None
+    timing: DescribeTiming
+
+    @model_serializer(mode="wrap")
+    def _emit_required_operation_metadata(self, handler):
+        payload = handler(self)
+        if not isinstance(payload, dict):
+            return payload
+        payload["operation_id"] = self.operation_id
+        payload["startup_id"] = self.startup_id
+        if payload.get("timing") is None:
+            payload["timing"] = self.timing.model_dump(mode="json")
+        return payload
 
 
 class DescribeJobResult(BaseModel):

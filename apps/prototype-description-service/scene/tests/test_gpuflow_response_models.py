@@ -5,49 +5,76 @@ from pathlib import Path
 
 import jsonschema
 import pytest
+from jsonschema import Draft7Validator
 from pydantic import ValidationError
+from referencing import Registry, Resource
 
 from scene.interface_adapters.http.schemas.responses import (
     DescribeRunItemsResponse,
     DescribeRunResponse,
+    MultipartDescribeResponse,
     VisualFactsResponse,
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
+_SCHEMA_DIR = _REPO_ROOT / "packages/shared-contracts/schemas"
+_SCHEMA_FILES = (
+    "image-description-response.schema.json",
+    "scene-describe-multipart.schema.json",
+    "scene-describe-run.schema.json",
+)
+
+
+def _load_schema(name):
+    return json.loads((_SCHEMA_DIR / name).read_text())
+
+
+def _retrieve_schema(uri):
+    return Resource.from_contents(_load_schema(Path(uri).name))
+
+
+_REGISTRY = Registry(retrieve=_retrieve_schema).with_resources(
+    (name, Resource.from_contents(_load_schema(name))) for name in _SCHEMA_FILES
+)
 _SCHEMAS = {
-    VisualFactsResponse: json.loads(
-        (_REPO_ROOT / "packages/shared-contracts/schemas/image-description-response.schema.json").read_text()
-    ),
-    DescribeRunResponse: json.loads(
-        (_REPO_ROOT / "packages/shared-contracts/schemas/scene-describe-run.schema.json").read_text()
-    ),
+    VisualFactsResponse: _load_schema("image-description-response.schema.json"),
+    DescribeRunResponse: _load_schema("scene-describe-run.schema.json"),
+    MultipartDescribeResponse: _load_schema("scene-describe-multipart.schema.json"),
 }
 _ABSENT_OPERATION_KEYS = ("operation_id", "startup_id", "timing")
+_VISUAL_FACTS_PAYLOAD = {
+    "tenant_id": "tenant",
+    "media_id": 1,
+    "image_hash": "hash",
+    "context_hash": "context",
+    "adapter": "seeded",
+    "model_id": "model",
+    "model_version": "1",
+    "prompt_or_task_version": "1",
+    "visual_facts": {"caption": "A tree"},
+    "alt_text_draft": "A tree",
+    "context_used": {},
+    "provider_disclosure": {},
+    "cached": False,
+    "duration_ms": 12,
+    "retention_class": "retain_all",
+    "tier": "provisional_cpu",
+    "result_generation": 1,
+}
+_VISUAL_TIMING = {
+    "queue_ms": None,
+    "ramp_up_ms": 0,
+    "processing_ms": 12.5,
+    "startup_ms": None,
+    "server_elapsed_ms": 15,
+}
 
 
 @pytest.fixture(params=[VisualFactsResponse, DescribeRunResponse])
 def response_case(request):
     if request.param is VisualFactsResponse:
-        payload = {
-            "tenant_id": "tenant",
-            "media_id": 1,
-            "image_hash": "hash",
-            "context_hash": "context",
-            "adapter": "seeded",
-            "model_id": "model",
-            "model_version": "1",
-            "prompt_or_task_version": "1",
-            "visual_facts": {"caption": "A tree"},
-            "alt_text_draft": "A tree",
-            "context_used": {},
-            "provider_disclosure": {},
-            "cached": False,
-            "duration_ms": 12,
-            "retention_class": "retain_all",
-            "tier": "provisional_cpu",
-            "result_generation": 1,
-        }
-        timing = {"queue_ms": None, "ramp_up_ms": 0, "processing_ms": 12.5, "startup_ms": None, "server_elapsed_ms": 15}
+        payload = dict(_VISUAL_FACTS_PAYLOAD)
+        timing = dict(_VISUAL_TIMING)
     else:
         payload = {
             "tenant_id": "11111111-1111-4111-8111-111111111111",
@@ -86,7 +113,11 @@ def _assert_omits_operation_metadata(payload):
 
 
 def _validate_shared_schema(model, payload):
-    jsonschema.validate(payload, _SCHEMAS[model])
+    Draft7Validator(_SCHEMAS[model], registry=_REGISTRY).validate(payload)
+
+
+def _multipart_validator():
+    return Draft7Validator(_SCHEMAS[MultipartDescribeResponse], registry=_REGISTRY)
 
 
 def test_timing_and_opaque_correlation_round_trip(response_case):
@@ -176,3 +207,57 @@ def test_invalid_item_timing_rejected(processing_ms):
                 {"media_id": 1, "status": "failed", "processing_ms": processing_ms},
             ],
         )
+
+
+def test_multipart_populated_payload_validates_success_branch():
+    response = MultipartDescribeResponse(
+        **_VISUAL_FACTS_PAYLOAD,
+        operation_id="opaque-operation",
+        startup_id="opaque-startup",
+        timing=_VISUAL_TIMING,
+    )
+    dumped, encoded = _dumped_payloads(response)
+    validator = _multipart_validator()
+    for wire in (dumped, encoded):
+        assert wire["operation_id"] == "opaque-operation"
+        assert wire["startup_id"] == "opaque-startup"
+        assert wire["timing"] == _VISUAL_TIMING
+        validator.validate(wire)
+
+
+def test_multipart_requires_operation_id_and_timing():
+    with pytest.raises(ValidationError):
+        MultipartDescribeResponse(**_VISUAL_FACTS_PAYLOAD, startup_id=None, timing=_VISUAL_TIMING)
+    with pytest.raises(ValidationError):
+        MultipartDescribeResponse(**_VISUAL_FACTS_PAYLOAD, operation_id="opaque-operation", startup_id=None)
+    with pytest.raises(ValidationError):
+        MultipartDescribeResponse(**_VISUAL_FACTS_PAYLOAD)
+
+
+def test_multipart_emits_null_startup_id_and_validates():
+    response = MultipartDescribeResponse(
+        **_VISUAL_FACTS_PAYLOAD,
+        operation_id="opaque-operation",
+        startup_id=None,
+        timing=_VISUAL_TIMING,
+    )
+    dumped, encoded = _dumped_payloads(response)
+    validator = _multipart_validator()
+    for wire in (dumped, encoded):
+        assert "startup_id" in wire
+        assert wire["startup_id"] is None
+        assert wire["operation_id"] == "opaque-operation"
+        assert wire["timing"] == _VISUAL_TIMING
+        validator.validate(wire)
+
+
+def test_base_omission_validates_base_schema_but_fails_multipart_schema():
+    response = VisualFactsResponse(**_VISUAL_FACTS_PAYLOAD)
+    dumped, encoded = _dumped_payloads(response)
+    multipart = _multipart_validator()
+    for wire in (dumped, encoded):
+        _assert_omits_operation_metadata(wire)
+        _validate_shared_schema(VisualFactsResponse, wire)
+        assert not multipart.is_valid(wire)
+        with pytest.raises(jsonschema.ValidationError):
+            multipart.validate(wire)

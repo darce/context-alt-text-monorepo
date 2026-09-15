@@ -39,7 +39,7 @@ from recognition.interface_adapters.http.deps.demo_quota import maybe_consume_de
 from recognition.interface_adapters.http.middleware.metrics import get_default_metrics
 from recognition.shared.db.dialect import is_postgres
 from scene.application.describe_async_worker import run_async_describe_job
-from scene.application.describe_load import load_snapshot, resolve_load_path, write_load_snapshot
+from scene.application.describe_load import dump_load_snapshot
 from scene.application.describe_operation_repository import DescribeOperationRepository
 from scene.application.describe_run_repository import DescribeRunRepository
 from scene.application.description_repository import ImageDescriptionRepository
@@ -320,12 +320,11 @@ def _typed_describe_error(
     detail: dict[str, Any] = {
         "code": code,
         "message": message,
+        # Schema requires both ids; mint only when no durable operation exists.
+        "operation_id": operation_id or _mint_operation_id(),
+        "startup_id": startup_id,
         "timing": _timing_payload(timing),
     }
-    # Only emit ids that were persisted. No-session / accept-failure 503s omit both.
-    if operation_id is not None:
-        detail["operation_id"] = operation_id
-        detail["startup_id"] = startup_id
     if code == "description_service_starting":
         detail["warmup_eta_seconds"] = warmup_eta_seconds
     headers = {"Retry-After": str(retry_after)} if retry_after is not None else None
@@ -579,7 +578,7 @@ async def _accept_operation(
     operation_id: str | None,
     gpu_compute: bool,
     server_start: float,
-) -> tuple[Any, str]:
+) -> tuple[Any, str | None]:
     if session is None:
         if gpu_compute:
             raise _typed_describe_error(
@@ -588,7 +587,7 @@ async def _accept_operation(
                 message="Description service is unavailable",
                 timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
             )
-        return None, operation_id or _mint_operation_id()
+        return None, None
     repo = _operation_repo(session)
     try:
         op = await repo.accept(tenant_id=tenant_uuid, request_digest=digest, operation_id=operation_id)
@@ -631,14 +630,17 @@ async def _accept_operation(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 code="description_service_unavailable",
                 message="Description service is unavailable",
+                operation_id=operation_id,
+                startup_id=None,
                 timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
             )
-        # Non-GPU adapters stay usable without a demand lease (CPU/hosted/default).
+        # CPU/hosted/default stay usable without demand. Do not echo an
+        # unaccepted client token; the success envelope still needs an id.
         _logger.warning(
             "non-GPU operation persistence skipped; continuing without a durable operation",
             exc_info=True,
         )
-        return None, operation_id or _mint_operation_id()
+        return None, None
 
 
 async def _ensure_gpu_ready(
@@ -822,7 +824,6 @@ async def describe_image_multipart(
     digest = _multipart_request_digest(media_id=envelope.media_id, image_bytes=image_bytes, context=submission.context)
     cached_gpu = False
     op = None
-    operation_id = submission.operation_id or _mint_operation_id()
     if gpu_compute:
         cached_row = await _cached_gpu_description_row(
             repository=repository,
@@ -833,14 +834,25 @@ async def describe_image_multipart(
             server_start=server_start,
         )
         cached_gpu = cached_row is not None
-    if not cached_gpu:
-        op, operation_id = await _accept_operation(
+    op, operation_id = await _accept_operation(
+        session=session,
+        tenant_uuid=tenant_uuid,
+        digest=digest,
+        operation_id=submission.operation_id,
+        gpu_compute=gpu_compute,
+        server_start=server_start,
+    )
+    if cached_gpu:
+        # Cache hits still bind/validate the operation token (mismatch/expiry)
+        # and terminalize any active lease before returning the cached body.
+        op = await _complete_operation(
             session=session,
             tenant_uuid=tenant_uuid,
-            digest=digest,
-            operation_id=submission.operation_id,
-            gpu_compute=gpu_compute,
-            server_start=server_start,
+            op=op,
+            processing_ms=0,
+            server_elapsed_ms=_elapsed_ms(server_start),
+            gpu_compute=True,
+            cached=True,
         )
     session_factory = worker_session_factory(session) if session is not None else None
     effective_timeout = _generation_timeout_seconds(settings, effective_adapter)
@@ -985,7 +997,7 @@ async def describe_image_multipart(
     dumped = response.model_dump(exclude={"operation_id", "startup_id", "timing", "attempt_timing"})
     return MultipartDescribeResponse(
         **dumped,
-        operation_id=operation_id,
+        operation_id=operation_id or _mint_operation_id(),
         startup_id=startup_id,
         timing=timing,
     )
@@ -1002,16 +1014,7 @@ async def _with_bypass_session(session_factory: async_sessionmaker[AsyncSession]
 
 async def _maybe_dump_describe_load(session_factory: async_sessionmaker[AsyncSession] | None) -> None:
     """Best-effort DB-derived load write for the GPU idle reaper (VLMFIX-S2-01)."""
-    if session_factory is None:
-        return
-    path = resolve_load_path()
-    try:
-        async with session_factory() as dump_session:
-            await enable_rls_bypass(dump_session)
-            payload = await load_snapshot(dump_session)
-        write_load_snapshot(payload, path)
-    except Exception:  # noqa: BLE001 - reaper snapshot is best-effort
-        _logger.debug("describe load snapshot write failed path=%s", path, exc_info=True)
+    await dump_load_snapshot(session_factory)
 
 
 async def _maybe_purge_expired_single_runs(session_factory: async_sessionmaker[AsyncSession]) -> None:

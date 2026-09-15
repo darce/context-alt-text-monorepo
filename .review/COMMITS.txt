@@ -1,2 +1,1 @@
-35d7a3b85cd6 offload: Closed GPUFLOW-1-SVCCOLDGPU-R-20: multipart success now
-ab8e984565f6 offload: Committed `update svc-cold-gpu` closing SVCCOL-H-01/M-03/M-04
+670740157381 offload: Fix-10 rebuilds post-accept typed 503 envelopes and accepts

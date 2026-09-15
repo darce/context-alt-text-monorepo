@@ -216,6 +216,53 @@ def test_load_snapshot_requires_rls_bypass_on_non_sqlite(monkeypatch):
         asyncio.run(load_snapshot(_NotBypassedSession()))  # type: ignore[arg-type]
 
 
+def test_require_rls_bypass_fails_closed_unless_pg_setting_is_truthy(monkeypatch):
+    """Fail closed on tenant-scoped aggregation; sqlite skip is not the proof."""
+
+    class _Result:
+        def __init__(self, value: object):
+            self._value = value
+
+        def scalar(self):
+            return self._value
+
+    class _Session:
+        def __init__(self, value: object):
+            self._value = value
+
+        async def execute(self, *_args, **_kwargs):
+            return _Result(self._value)
+
+    monkeypatch.setattr(load_mod, "is_sqlite", lambda _session: False)
+    for value in (None, "", "off", "false", "0", "no"):
+        with pytest.raises(RuntimeError, match="RLS-bypassed"):
+            asyncio.run(load_mod._require_rls_bypass(_Session(value)))  # type: ignore[arg-type]
+    for value in ("true", "on", "1", "yes", "TRUE", "On"):
+        asyncio.run(load_mod._require_rls_bypass(_Session(value)))  # type: ignore[arg-type]
+
+
+def test_dump_load_snapshot_enables_rls_bypass_before_counting(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    async def body():
+        engine, sf = await _sessionmaker()
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        _publish_gpu_state(tmp_path, monkeypatch, now=start, state="stopped")
+        bypass_sessions: list[object] = []
+        import db.tenant_context as tenant_context
+
+        real_bypass = tenant_context.enable_rls_bypass
+
+        async def spy_bypass(session):
+            bypass_sessions.append(session)
+            return await real_bypass(session)
+
+        monkeypatch.setattr(tenant_context, "enable_rls_bypass", spy_bypass)
+        await dump_load_snapshot(sf, path=tmp_path / "describe-load.json", now=start, raise_on_error=True)
+        assert bypass_sessions
+        await engine.dispose()
+
+    asyncio.run(body())
+
+
 def test_write_load_snapshot_creates_parent_dirs():
     with tempfile.TemporaryDirectory() as tmp:
         target = Path(tmp) / "nested" / "run" / "describe-load.json"
@@ -811,7 +858,7 @@ def test_write_load_snapshot_fails_closed_on_malformed_published_revision(tmp_pa
     target.write_text("{not-json", encoding="utf-8")
     with pytest.raises(RuntimeError, match="unreadable published load snapshot"):
         write_load_snapshot({"revision": 1, "written_at": 1.0}, target)
-    for malformed in ("11", None, True, False, [11], {"nested": 1}, -1):
+    for malformed in ("11", None, True, False, [11], {"nested": 1}, -1, 0):
         target.write_text(json.dumps({"revision": malformed}), encoding="utf-8")
         with pytest.raises(RuntimeError, match="malformed published load snapshot revision"):
             write_load_snapshot({"revision": 12, "written_at": 2.0}, target)
@@ -1062,6 +1109,118 @@ def test_older_publisher_write_is_dropped_after_newer_publish(tmp_path: Path, mo
         assert loaded["revision"] == 2
         assert loaded["lease_demand"] == 1
         assert loaded["in_flight"] == 1
+        await engine.dispose()
+
+    asyncio.run(body())
+
+
+def test_maybe_dump_describe_load_drops_older_publish_after_demand_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Sync publisher path: older read is dropped after newer demand publishes."""
+    from scene.interface_adapters.http.routers import describe as describe_router
+
+    async def body():
+        engine, sf = await _sessionmaker()
+        target = tmp_path / "describe-load.json"
+        monkeypatch.setenv("ACX_DESCRIBE_LOAD_PATH", str(target))
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        _publish_gpu_state(tmp_path, monkeypatch, now=start, state="stopped")
+        async with sf() as session:
+            await DescribeOperationRepository(session, lease_seconds=180).accept(
+                tenant_id=uuid.uuid4(), request_digest=_DIGEST_A, now=start
+            )
+            await session.commit()
+        a_read = asyncio.Event()
+        b_published = asyncio.Event()
+        real_load = describe_router.load_snapshot
+        calls = 0
+
+        async def gated_load(session, **kwargs):
+            nonlocal calls
+            kwargs.setdefault("now", start)
+            snap = await real_load(session, **kwargs)
+            calls += 1
+            if calls == 1:
+                a_read.set()
+                await b_published.wait()
+            return snap
+
+        monkeypatch.setattr(describe_router, "load_snapshot", gated_load)
+
+        async def publisher_a() -> None:
+            await describe_router._maybe_dump_describe_load(sf)
+
+        async def publisher_b() -> None:
+            await a_read.wait()
+            async with sf() as session:
+                await DescribeOperationRepository(session, lease_seconds=180).accept(
+                    tenant_id=uuid.uuid4(), request_digest=_DIGEST_B, now=start
+                )
+                await session.commit()
+            await describe_router._maybe_dump_describe_load(sf)
+            b_published.set()
+
+        await asyncio.wait_for(asyncio.gather(publisher_a(), publisher_b()), timeout=5)
+        loaded = json.loads(target.read_text())
+        assert loaded["revision"] == 2
+        assert loaded["lease_demand"] == 2
+        assert loaded["in_flight"] == 2
+        await engine.dispose()
+
+    asyncio.run(body())
+
+
+def test_load_snapshot_live_stop_cannot_be_disabled_by_false_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from scene.application.gpu_intent import IntentAction, write_gpu_intent
+
+    intent_path = tmp_path / "gpu-intent.json"
+    monkeypatch.setenv("ACX_GPU_INTENT_PATH", str(intent_path))
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    _publish_gpu_state(tmp_path, monkeypatch, now=start, state="stopped")
+    write_gpu_intent(
+        intent_path,
+        action=IntentAction.STOP,
+        ttl_seconds=1800,
+        requested_by="operator",
+        now=start,
+    )
+
+    async def body():
+        engine, sf, tenant, token = await _one_active_lease(start)
+        async with sf() as session:
+            snap = await load_snapshot(session, now=start, stop_requested=False)
+            assert snap["lease_demand"] == 0
+            assert snap["in_flight"] == 0
+            assert _has_work(snap) is False
+            lease = await session.get(DescribeDemandLease, (tenant, token))
+            assert lease is not None and lease.state == DemandLeaseState.ACTIVE
+        await engine.dispose()
+
+    asyncio.run(body())
+
+
+def test_load_snapshot_live_lease_cap_cannot_be_disabled_by_false_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    _publish_gpu_state(
+        tmp_path,
+        monkeypatch,
+        now=start,
+        state="stopped",
+        last_transition_reason="lease_cap",
+    )
+
+    async def body():
+        engine, sf, tenant, token = await _one_active_lease(start)
+        async with sf() as session:
+            snap = await load_snapshot(session, now=start, max_lease_reached=False)
+            assert snap["lease_demand"] == 0
+            assert snap["in_flight"] == 0
+            assert _has_work(snap) is False
+            lease = await session.get(DescribeDemandLease, (tenant, token))
+            assert lease is not None and lease.state == DemandLeaseState.ACTIVE
         await engine.dispose()
 
     asyncio.run(body())

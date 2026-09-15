@@ -258,13 +258,17 @@ async def _allocate_snapshot_revision(session: AsyncSession) -> int:
 
 
 def _published_revision(payload: object) -> int:
-    """Return the currently published revision; a missing key is revision 0."""
+    """Return the currently published revision; a missing key is revision 0.
+
+    An explicit ``0`` is malformed: missing files are revision 0, but allocated
+    revisions start at 1.
+    """
     if not isinstance(payload, dict):
         raise RuntimeError("published load snapshot is not an object")
     if "revision" not in payload:
         return 0
     revision = payload["revision"]
-    if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0:
+    if isinstance(revision, bool) or not isinstance(revision, int) or revision < 1:
         raise RuntimeError("malformed published load snapshot revision")
     return revision
 
@@ -311,9 +315,10 @@ def _lease_demand_blocked(
     stop_requested: bool | None,
     max_lease_reached: bool | None,
 ) -> bool:
+    """Live STOP / lease-cap always win; explicit True only adds a block."""
     policy_stop, policy_max_lease = _demand_policy_flags(now=now)
-    blocked_by_stop = policy_stop if stop_requested is None else stop_requested
-    blocked_by_max_lease = policy_max_lease if max_lease_reached is None else max_lease_reached
+    blocked_by_stop = policy_stop or bool(stop_requested)
+    blocked_by_max_lease = policy_max_lease or bool(max_lease_reached)
     return blocked_by_stop or blocked_by_max_lease or _gpu_excludes_lease_demand(now=now)
 
 
@@ -387,9 +392,10 @@ async def load_snapshot(
     bypass session [DIAG-02].
 
     STOP and lease-cap are resolved from the same policy files the periodic
-    publisher uses unless a caller passes an explicit override. The demand
-    transaction (revision allocation, expiry, first-ready) commits before this
-    returns so a later file write cannot publish an undurable revision.
+    publisher uses. An explicit True override can only add a block; False never
+    disables live policy. The demand transaction (revision allocation, expiry,
+    first-ready) commits before this returns so a later file write cannot
+    publish an undurable revision.
     """
     await _require_rls_bypass(session)
     observed_at = as_utc(now or datetime.now(UTC))

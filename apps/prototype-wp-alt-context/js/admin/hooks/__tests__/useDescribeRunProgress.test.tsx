@@ -13,8 +13,9 @@ import {
   useDescribeRunProgress,
 } from '../useDescribeRunProgress';
 import * as describeApi from '../../api/describeApi';
-import { GPU_STATE, type DescribeRunResponse } from '../../api/describeApi';
+import { GPU_STATE, type DescribeRunResponse, type DescribeRunTiming } from '../../api/describeApi';
 import { GpuTierStatus } from '../../pages/workbench/MediaSelection';
+import gpuflowBulkTiming from '../../pages/workbench/__tests__/fixtures/gpuflow-bulk-timing.json';
 
 vi.mock('../../api/describeApi', async (importOriginal) => {
   const actual = await importOriginal<typeof describeApi>();
@@ -498,5 +499,95 @@ describe('useDescribeRunProgress recognition_enabled pass-through', () => {
 
     await waitFor(() => expect(result.current.status).toBe('running'));
     expect(result.current.run?.recognition_enabled).toBe(enabled);
+  });
+});
+
+describe('useDescribeRunProgress GPUFLOW timing passthrough', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('passes timing and startupId through verbatim from the polled run', async () => {
+    const fixtureRun = gpuflowBulkTiming.run as DescribeRunResponse;
+    fetchBulkDescribeRunMock.mockResolvedValue(fixtureRun);
+
+    const { result } = renderHook(() => useDescribeRunProgress(fixtureRun.run_id), { wrapper });
+
+    await waitFor(() => expect(result.current.status).toBe('completed_with_errors'));
+    expect(result.current.timing).toBe(fixtureRun.timing);
+    expect(result.current.timing).toEqual({
+      queue_ms: 10,
+      ramp_up_ms: 0,
+      processing_ms_p50: 12.5,
+      processing_ms_max: 30,
+      startup_ms: null,
+      server_elapsed_ms: 40,
+      items_timed: 2,
+    } satisfies DescribeRunTiming);
+    expect(result.current.startupId).toBeNull();
+    expect(result.current.isWarming).toBe(false);
+    expect(result.current.isTerminal).toBe(true);
+    expect(result.current.isPolling).toBe(false);
+  });
+
+  it('returns null timing and startupId when those keys are absent', async () => {
+    expect(gpuflowBulkTiming.run_no_timing).not.toHaveProperty('timing');
+    fetchBulkDescribeRunMock.mockResolvedValue(gpuflowBulkTiming.run_no_timing as DescribeRunResponse);
+
+    const { result } = renderHook(() => useDescribeRunProgress('run-1'), { wrapper });
+
+    await waitFor(() => expect(result.current.status).toBe('completed_with_errors'));
+    expect(result.current.timing).toBeNull();
+    expect(result.current.startupId).toBeNull();
+    expect(result.current.isWarming).toBe(false);
+  });
+
+  it('returns null timing when the run reports timing: null', async () => {
+    fetchBulkDescribeRunMock.mockResolvedValue(gpuflowBulkTiming.run_warming as DescribeRunResponse);
+
+    const { result } = renderHook(() => useDescribeRunProgress('run-1'), { wrapper });
+
+    await waitFor(() => expect(result.current.status).toBe('running'));
+    expect(result.current.timing).toBeNull();
+    expect(result.current.startupId).toBeNull();
+  });
+
+  it('sets isWarming when gpu_state is starting and the run has no eta', async () => {
+    fetchBulkDescribeRunMock.mockResolvedValue(gpuflowBulkTiming.run_warming as DescribeRunResponse);
+
+    const { result } = renderHook(() => useDescribeRunProgress('run-1'), { wrapper });
+
+    await waitFor(() => expect(result.current.status).toBe('running'));
+    expect(result.current.gpuState).toBe(GPU_STATE.STARTING);
+    expect(result.current.etaSeconds).toBeNull();
+    expect(result.current.isWarming).toBe(true);
+    expect(result.current.isTerminal).toBe(false);
+    expect(result.current.isPolling).toBe(true);
+    expect(result.current.stalledForSeconds).toBeNull();
+  });
+
+  it('does not set isWarming when a starting GPU already reports an eta', async () => {
+    fetchBulkDescribeRunMock.mockResolvedValue({
+      ...gpuflowBulkTiming.run_warming,
+      eta_seconds: 12,
+    } as DescribeRunResponse);
+
+    const { result } = renderHook(() => useDescribeRunProgress('run-1'), { wrapper });
+
+    await waitFor(() => expect(result.current.status).toBe('running'));
+    expect(result.current.etaSeconds).toBe(12);
+    expect(result.current.isWarming).toBe(false);
+  });
+
+  it('passes a non-null startupId through unchanged', async () => {
+    fetchBulkDescribeRunMock.mockResolvedValue({
+      ...gpuflowBulkTiming.run,
+      startup_id: 'startup-opaque',
+    } as DescribeRunResponse);
+
+    const { result } = renderHook(() => useDescribeRunProgress('run-1'), { wrapper });
+
+    await waitFor(() => expect(result.current.status).toBe('completed_with_errors'));
+    expect(result.current.startupId).toBe('startup-opaque');
   });
 });

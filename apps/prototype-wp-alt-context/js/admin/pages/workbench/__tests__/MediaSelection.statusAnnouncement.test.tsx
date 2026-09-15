@@ -9,8 +9,11 @@ import { act, cleanup, render, screen } from '@testing-library/react';
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { MediaSelection } from '../MediaSelection';
+import type { DescribeRunProgress } from '../../../hooks/useDescribeRunProgress';
+import type { DescribeRunResponse, DescribeRunTiming } from '../../../api/describeApi';
+import { BulkDescribeProgress, MediaSelection } from '../MediaSelection';
 import { MARK_DECORATIVE_SUCCESS_MESSAGE } from '../MediaAltSuggest';
+import gpuflowBulkTiming from './fixtures/gpuflow-bulk-timing.json';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -327,5 +330,86 @@ describe('MediaSelection toolbar status announcement [WBUX-5-D-02][B-01][B-02]',
     expect(correctionCarriers[0]).toHaveAttribute('data-testid', 'media-selection-row-status');
 
     rowStatus.remove();
+  });
+});
+
+const TERMINAL_STATUSES = new Set(['completed', 'completed_with_errors', 'failed', 'cancelled']);
+
+const progressFromRun = (
+  run: DescribeRunResponse,
+  overrides: Partial<DescribeRunProgress> = {},
+): DescribeRunProgress => ({
+  run,
+  status: run.status,
+  progressFraction: run.total > 0 ? (run.completed + run.failed + run.skipped) / run.total : 0,
+  etaSeconds: run.eta_seconds,
+  gpuState: typeof run.gpu_state === 'string' ? (run.gpu_state as DescribeRunProgress['gpuState']) : null,
+  isTerminal: TERMINAL_STATUSES.has(run.status),
+  stalledForSeconds: null,
+  isPolling: !TERMINAL_STATUSES.has(run.status),
+  isFrozen: false,
+  isError: false,
+  error: null,
+  retry: vi.fn(),
+  timing: run.timing ?? null,
+  startupId: run.startup_id ?? null,
+  isWarming: false,
+  ...overrides,
+});
+
+describe('MediaSelection bulk-describe timing announcement [GPUFLOW-1 B2]', () => {
+  it('announces measured elapsed time on a terminal run without fabricating startup', () => {
+    const run = gpuflowBulkTiming.run as DescribeRunResponse;
+    render(<BulkDescribeProgress progress={progressFromRun(run)} onRetry={vi.fn()} />);
+
+    const live = screen.getByRole('status');
+    expect(live).toHaveTextContent('1 described, 1 failed in 0.04 s');
+    expect(live).not.toHaveTextContent('GPU startup');
+    expect(screen.getAllByRole('status')).toHaveLength(1);
+    const visual = document.querySelector('.acx-media-selection__bulk-describe-status--success');
+    expect(visual).toHaveAttribute('aria-hidden', 'true');
+    expect(visual).toHaveTextContent('✔ 1 draft ready to review · 1 failed');
+  });
+
+  it('appends GPU startup seconds only when startup_ms is non-null', () => {
+    const run = gpuflowBulkTiming.run as DescribeRunResponse;
+    const timing: DescribeRunTiming = { ...run.timing!, startup_ms: 2500 };
+    render(
+      <BulkDescribeProgress
+        progress={progressFromRun({ ...run, timing }, { timing })}
+        onRetry={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('status')).toHaveTextContent('1 described, 1 failed in 0.04 s (GPU startup 2.5 s)');
+    expect(screen.getAllByRole('status')).toHaveLength(1);
+  });
+
+  it('keeps the legacy complete announcement when timing is absent', () => {
+    expect(gpuflowBulkTiming.run_no_timing).not.toHaveProperty('timing');
+    const run = gpuflowBulkTiming.run_no_timing as DescribeRunResponse;
+    render(<BulkDescribeProgress progress={progressFromRun(run, { timing: null })} onRetry={vi.fn()} />);
+
+    expect(screen.getByRole('status')).toHaveTextContent('✔ 1 draft ready to review · 1 failed');
+    expect(screen.queryByText(/described,/)).toBeNull();
+    expect(screen.getAllByRole('status')).toHaveLength(1);
+  });
+
+  it('announces Description service is starting once while isWarming, with no fabricated ETA', () => {
+    const run = gpuflowBulkTiming.run_warming as DescribeRunResponse;
+    const warming = progressFromRun(run, { isWarming: true, isTerminal: false, isPolling: true });
+    const { rerender } = render(<BulkDescribeProgress progress={warming} onRetry={vi.fn()} />);
+
+    const live = screen.getByRole('status');
+    expect(live).toHaveTextContent('Description service is starting');
+    expect(live).not.toHaveTextContent('2 min');
+    expect(live).not.toHaveTextContent('remaining');
+    expect(live).not.toHaveTextContent('calculating');
+    expect(screen.queryByRole('progressbar')).toBeNull();
+    expect(screen.getAllByRole('status')).toHaveLength(1);
+
+    rerender(<BulkDescribeProgress progress={warming} onRetry={vi.fn()} />);
+    expect(screen.getAllByRole('status')).toHaveLength(1);
+    expect(screen.getByRole('status')).toHaveTextContent('Description service is starting');
   });
 });

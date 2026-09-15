@@ -36,6 +36,7 @@ import {
   DESCRIBE_RUN_STATUS,
   GPU_STATE,
   type DescribeRunStatus,
+  type DescribeRunTiming,
   type GpuState,
 } from '../../api/describeApi';
 import { toDescriptionHistoryRun } from '../../navigation/appLinks';
@@ -858,6 +859,32 @@ const formatEtaLabel = (etaSeconds: number | null): string => {
   return sprintf(__('~%1$dm %2$ds remaining', 'alt-context'), minutes, seconds);
 };
 
+const formatTimingSeconds = (ms: number): string => String(ms / 1000);
+
+/** Wire-only terminal summary; null when elapsed time was not measured. */
+const formatTerminalTimingAnnouncement = (
+  completed: number,
+  failed: number,
+  timing: DescribeRunTiming,
+): string | null => {
+  if (timing.server_elapsed_ms === null) {
+    return null;
+  }
+  const summary = sprintf(
+    __('%1$d described, %2$d failed in %3$s s', 'alt-context'),
+    completed,
+    failed,
+    formatTimingSeconds(timing.server_elapsed_ms),
+  );
+  if (timing.startup_ms === null) {
+    return summary;
+  }
+  return `${summary}${sprintf(
+    __(' (GPU startup %s s)', 'alt-context'),
+    formatTimingSeconds(timing.startup_ms),
+  )}`;
+};
+
 export const BulkDescribeProgress = ({
   progress,
   onRetry,
@@ -873,7 +900,18 @@ export const BulkDescribeProgress = ({
   onReviewDrafts?: () => void;
   isCancelling?: boolean;
 }) => {
-  const { run, status, progressFraction, etaSeconds, stalledForSeconds, isTerminal, isError, isFrozen } = progress;
+  const {
+    run,
+    status,
+    progressFraction,
+    etaSeconds,
+    stalledForSeconds,
+    isTerminal,
+    isError,
+    isFrozen,
+    isWarming,
+    timing,
+  } = progress;
   const cooldown = useRecognitionCooldown();
 
   useEffect(() => {
@@ -948,6 +986,19 @@ export const BulkDescribeProgress = ({
       </button>
     ) : null;
 
+  if (isWarming) {
+    return (
+      <div className="acx-media-selection__bulk-describe-progress" role="status" aria-live="polite">
+        <span className="acx-media-selection__bulk-describe-status acx-media-selection__bulk-describe-status--running">
+          <Loader2 className="acx-media-selection__bulk-describe-spin" aria-hidden="true" size={16} />
+          {__('Description service is starting', 'alt-context')}
+        </span>
+        {cancelControl}
+        {waitingNotice}
+      </div>
+    );
+  }
+
   if (run.phase === DESCRIBE_RUN_PHASE.QUEUED) {
     return (
       <div className="acx-media-selection__bulk-describe-progress" role="status" aria-live="polite">
@@ -1009,12 +1060,21 @@ export const BulkDescribeProgress = ({
     );
     const failedSegment =
       run.failed > 0 ? sprintf(_n(' · %1$d failed', ' · %1$d failed', run.failed, 'alt-context'), run.failed) : '';
+    const visualCopy = `${draftsReady}${failedSegment}`;
+    const measuredAnnouncement =
+      timing != null ? formatTerminalTimingAnnouncement(run.completed, run.failed, timing) : null;
     return (
       <div className="acx-media-selection__bulk-describe-progress" role="status" aria-live="polite">
-        <span className="acx-media-selection__bulk-describe-status acx-media-selection__bulk-describe-status--success">
+        <span
+          className="acx-media-selection__bulk-describe-status acx-media-selection__bulk-describe-status--success"
+          aria-hidden={measuredAnnouncement !== null ? true : undefined}
+        >
           <CheckCircle2 aria-hidden="true" size={16} />
-          {`${draftsReady}${failedSegment}`}
+          {visualCopy}
         </span>
+        {measuredAnnouncement !== null ? (
+          <span className="screen-reader-text">{measuredAnnouncement}</span>
+        ) : null}
         <a className="button button-secondary" href={toDescriptionHistoryRun(run.run_id)}>
           {__('Review drafts', 'alt-context')}
         </a>

@@ -65,6 +65,14 @@ const assertTruthyLabel: (
   }
 };
 
+const SuggestionFacePlaceholder = (): React.JSX.Element => (
+  <Avatar
+    size="lg"
+    className="acx-suggestion-card__thumb"
+    missingLabel={REPRESENTATIVE_VOCABULARY.imageUnavailable}
+  />
+);
+
 const FaceCropControl = ({
   mediaUrl,
   bbox,
@@ -80,6 +88,10 @@ const FaceCropControl = ({
   mediaId?: number;
   identityId?: string;
 }): React.JSX.Element => {
+  if (!isCroppableBbox(bbox)) {
+    return <SuggestionFacePlaceholder />;
+  }
+
   if (!onOpen) {
     return (
       <FaceThumbnail
@@ -154,9 +166,8 @@ export const SuggestionCard = ({
           bbox: suggestion.enrichment.representativeBbox,
         }
       : null;
-  const identityThumbUrl = suggestion.enrichment?.identityThumbUrl ?? suggestion.enrichment?.identityMediaUrl ?? null;
-  const representativeThumbUrl =
-    suggestion.enrichment?.representativeThumbUrl ?? suggestion.enrichment?.representativeMediaUrl ?? null;
+  const identityThumbUrl = suggestion.enrichment?.identityThumbUrl ?? null;
+  const representativeThumbUrl = suggestion.enrichment?.representativeThumbUrl ?? null;
   const storedFaceCount =
     typeof suggestion.identityCount === 'number' &&
     Number.isInteger(suggestion.identityCount) &&
@@ -226,11 +237,7 @@ export const SuggestionCard = ({
               className="acx-suggestion-card__thumb"
             />
           ) : (
-            <Avatar
-              size="lg"
-              className="acx-suggestion-card__thumb"
-              missingLabel={REPRESENTATIVE_VOCABULARY.imageUnavailable}
-            />
+            <SuggestionFacePlaceholder />
           )}
           <span className="acx-suggestion-card__face-label">{__('Candidate', 'alt-context')}</span>
         </div>
@@ -251,11 +258,7 @@ export const SuggestionCard = ({
               className="acx-suggestion-card__thumb"
             />
           ) : (
-            <Avatar
-              size="lg"
-              className="acx-suggestion-card__thumb"
-              missingLabel={REPRESENTATIVE_VOCABULARY.imageUnavailable}
-            />
+            <SuggestionFacePlaceholder />
           )}
           <span className="acx-suggestion-card__face-label">{displayLabel}</span>
         </div>

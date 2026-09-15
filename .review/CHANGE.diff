@@ -1,445 +1,182 @@
-diff --git a/apps/prototype-wp-alt-context/js/admin/api/__tests__/settingsResponseContract.test.ts b/apps/prototype-wp-alt-context/js/admin/api/__tests__/settingsResponseContract.test.ts
---- a/apps/prototype-wp-alt-context/js/admin/api/__tests__/settingsResponseContract.test.ts
-+++ b/apps/prototype-wp-alt-context/js/admin/api/__tests__/settingsResponseContract.test.ts
-@@ -1,7 +1,14 @@
- import { beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
- 
- import * as httpModule from '../../utils/http';
--import { fetchSettings, UrlRejectionReason, type SettingsResponse } from '../settingsApi';
-+import {
-+  fetchSettings,
-+  isTestConnectionOutcome,
-+  TestConnectionOutcome,
-+  UrlRejectionReason,
-+  type SettingsResponse,
-+  type TestConnectionResponse,
-+} from '../settingsApi';
- 
- const mockConfig = {
-   nonce: 'test-nonce',
-@@ -158,3 +165,26 @@ describe('fetchSettings recognition_enabled parse', () => {
-     await expect(fetchSettings()).resolves.toMatchObject({ recognition_enabled: false });
-   });
- });
-+
-+describe('test-connection starting outcome', () => {
-+  it('accepts starting as a canonical probe outcome', () => {
-+    expect(TestConnectionOutcome.STARTING).toBe('starting');
-+    expect(isTestConnectionOutcome('starting')).toBe(true);
-+    expect(isTestConnectionOutcome('not_a_real_outcome')).toBe(false);
-+
-+    const withEta: TestConnectionResponse = {
-+      outcome: TestConnectionOutcome.STARTING,
-+      warmup_eta_seconds: 90,
-+      retry_after_seconds: 90,
-+      probe_mode: 'service_auth',
-+    };
-+    const withoutEta: TestConnectionResponse = {
-+      outcome: TestConnectionOutcome.STARTING,
-+      probe_mode: 'service_auth',
-+    };
-+    expectTypeOf(withEta).toMatchTypeOf<TestConnectionResponse>();
-+    expectTypeOf(withoutEta).toMatchTypeOf<TestConnectionResponse>();
-+    expect(withEta.outcome).toBe('starting');
-+    expect(withoutEta.warmup_eta_seconds).toBeUndefined();
-+  });
-+});
-diff --git a/apps/prototype-wp-alt-context/js/admin/api/settingsApi.ts b/apps/prototype-wp-alt-context/js/admin/api/settingsApi.ts
---- a/apps/prototype-wp-alt-context/js/admin/api/settingsApi.ts
-+++ b/apps/prototype-wp-alt-context/js/admin/api/settingsApi.ts
-@@ -128,6 +128,7 @@ export const TestConnectionOutcome = {
-   TENANT_MISMATCH: 'tenant_mismatch',
-   TENANT_PAIRING_CONFLICT: 'tenant_pairing_conflict',
-   RATE_LIMITED: 'rate_limited',
-+  STARTING: 'starting',
-   SERVER_ERROR: 'server_error',
-   NETWORK_ERROR: 'network_error',
-   TLS_ERROR: 'tls_error',
-@@ -148,6 +149,8 @@ export interface TestConnectionResponse {
-   outcome: TestConnectionOutcomeValue;
-   status_code?: number;
-   retry_after_seconds?: number;
-+  /** Warmup ETA for `starting` (GPUFLOW-1 probe). Prefer this over inventing a countdown. */
-+  warmup_eta_seconds?: number;
-   detail?: string;
-   body?: unknown;
-   probe_mode?: TestConnectionProbeMode;
-diff --git a/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/healthStatus.test.ts b/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/healthStatus.test.ts
---- a/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/healthStatus.test.ts
-+++ b/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/healthStatus.test.ts
-@@ -34,4 +34,13 @@ describe('healthStatusForService', () => {
- 
-     expect(healthStatusForService(result)).toBe(HealthStatus.UNREACHABLE);
-   });
-+
-+  it('does not treat a starting probe as a reachable connected pool', () => {
-+    const result: TestConnectionResponse = {
-+      outcome: TestConnectionOutcome.STARTING,
-+      probe_mode: 'service_auth',
-+    };
-+
-+    expect(healthStatusForService(result)).not.toBe(HealthStatus.REACHABLE);
-+  });
- });
-diff --git a/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/testConnectionBanner.test.ts b/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/testConnectionBanner.test.ts
-new file mode 100644
---- /dev/null
-+++ b/apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/testConnectionBanner.test.ts
-@@ -0,0 +1,65 @@
-+import { describe, expect, it, vi } from 'vitest';
-+
-+import { TestConnectionOutcome, type TestConnectionResponse } from '../../../api/settingsApi';
-+import { renderBanner, TONE_CLASS, TONE_ICON } from '../testConnectionBanner';
-+
-+vi.mock('@wordpress/i18n', () => ({
-+  __: (text: string) => text,
-+  sprintf: (format: string, ...args: (string | number)[]) => {
-+    let sequentialIndex = 0;
-+    return format.replace(/%((\d+)\$)?[sd]/g, (_match, _positional, explicitIndex) => {
-+      if (explicitIndex) {
-+        return String(args[Number(explicitIndex) - 1] ?? '');
-+      }
-+      return String(args[sequentialIndex++] ?? '');
-+    });
-+  },
-+}));
-+
-+const probe = (overrides: Partial<TestConnectionResponse> = {}): TestConnectionResponse => ({
-+  outcome: TestConnectionOutcome.STARTING,
-+  probe_mode: 'service_auth',
-+  ...overrides,
-+});
-+
-+describe('renderBanner starting outcome', () => {
-+  it('renders an info banner with ETA copy when warmup_eta_seconds is present', () => {
-+    const banner = renderBanner(probe({ warmup_eta_seconds: 90 }));
-+
-+    expect(banner.tone).toBe('info');
-+    expect(banner.role).toBe('status');
-+    expect(banner.icon).toBe(TONE_ICON.info);
-+    expect(TONE_CLASS[banner.tone]).toBe('notice-info');
-+    expect(banner.primary).toContain(TONE_ICON.info);
-+    expect(banner.primary).toContain('Description service is starting — ready in ~90 s');
-+    expect(banner.remediation).toContain('warming up');
-+  });
-+
-+  it('uses retry_after_seconds when warmup_eta_seconds is absent', () => {
-+    const banner = renderBanner(probe({ retry_after_seconds: 45 }));
-+
-+    expect(banner.tone).toBe('info');
-+    expect(banner.primary).toContain('Description service is starting — ready in ~45 s');
-+  });
-+
-+  it('renders starting copy without an invented countdown when no ETA is present', () => {
-+    const banner = renderBanner(probe());
-+
-+    expect(banner.tone).toBe('info');
-+    expect(banner.role).toBe('status');
-+    expect(banner.icon).toBe(TONE_ICON.info);
-+    expect(banner.primary).toContain(TONE_ICON.info);
-+    expect(banner.primary).toContain('Description service is starting.');
-+    expect(banner.primary).not.toMatch(/\d/);
-+    expect(banner.remediation).toBe('Warming up, this can take a few minutes');
-+    expect(banner.remediation).not.toMatch(/\d/);
-+  });
-+
-+  it('keeps connected copy unchanged', () => {
-+    const banner = renderBanner({ outcome: TestConnectionOutcome.CONNECTED, probe_mode: 'service_auth' });
-+
-+    expect(banner.tone).toBe('success');
-+    expect(banner.primary).toBe('Connection successful.');
-+    expect(banner.primary).not.toContain(TONE_ICON.success);
-+  });
-+});
-diff --git a/apps/prototype-wp-alt-context/js/admin/pages/settings/testConnectionBanner.ts b/apps/prototype-wp-alt-context/js/admin/pages/settings/testConnectionBanner.ts
---- a/apps/prototype-wp-alt-context/js/admin/pages/settings/testConnectionBanner.ts
-+++ b/apps/prototype-wp-alt-context/js/admin/pages/settings/testConnectionBanner.ts
-@@ -7,13 +7,15 @@ import {
-   type TestConnectionResponse,
- } from '../../api/settingsApi';
- 
--export type BannerTone = 'success' | 'warning' | 'error';
-+export type BannerTone = 'success' | 'warning' | 'error' | 'info';
- 
- export interface BannerCopy {
-   tone: BannerTone;
-   role: 'status' | 'alert';
-   primary: string;
-   remediation: string;
-+  /** Status glyph paired with tone colour ([sr-004]); do not rely on colour alone. */
-+  icon: string;
-   // When true, the banner offers a "confirm/adopt tenant pairing" action. Both the paired-elsewhere
-   // conflict and the first-time mismatch are recoverable by explicitly adopting the key's tenant.
-   confirmPairing?: boolean;
-@@ -23,17 +25,51 @@ export const TONE_CLASS: Record<BannerTone, string> = {
-   success: 'notice-success',
-   warning: 'notice-warning',
-   error: 'notice-error',
-+  info: 'notice-info',
+diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/SuggestionCards.tsx b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/SuggestionCards.tsx
+--- a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/SuggestionCards.tsx
++++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/SuggestionCards.tsx
+@@ -65,6 +65,14 @@ const assertTruthyLabel: (
+   }
  };
  
--const unknownOutcomeBanner = (): BannerCopy => ({
--  tone: 'error',
--  role: 'alert',
--  primary: __('Unexpected response from the recognition service.', 'alt-context'),
--  remediation: __(
--    'The probe returned a response the plugin does not recognize. Confirm the recognition service and plugin are on compatible versions.',
--    'alt-context',
--  ),
--});
-+export const TONE_ICON: Record<BannerTone, string> = {
-+  success: '\u2713',
-+  warning: '\u26a0',
-+  error: '\u26a0',
-+  info: '\u2139',
-+};
++const SuggestionFacePlaceholder = (): React.JSX.Element => (
++  <Avatar
++    size="lg"
++    className="acx-suggestion-card__thumb"
++    missingLabel={REPRESENTATIVE_VOCABULARY.imageUnavailable}
++  />
++);
 +
-+const banner = (
-+  tone: BannerTone,
-+  role: BannerCopy['role'],
-+  primary: string,
-+  remediation: string,
-+  extra: Pick<BannerCopy, 'confirmPairing'> & { prefixIcon?: boolean } = {},
-+): BannerCopy => {
-+  const icon = TONE_ICON[tone];
-+  const { prefixIcon, ...rest } = extra;
-+  return {
-+    tone,
-+    role,
-+    icon,
-+    primary: prefixIcon === true ? `${icon} ${primary}` : primary,
-+    remediation,
-+    ...rest,
-+  };
-+};
+ const FaceCropControl = ({
+   mediaUrl,
+   bbox,
+@@ -80,6 +88,10 @@ const FaceCropControl = ({
+   mediaId?: number;
+   identityId?: string;
+ }): React.JSX.Element => {
++  if (!isCroppableBbox(bbox)) {
++    return <SuggestionFacePlaceholder />;
++  }
 +
-+const unknownOutcomeBanner = (): BannerCopy =>
-+  banner(
-+    'error',
-+    'alert',
-+    __('Unexpected response from the recognition service.', 'alt-context'),
-+    __(
-+      'The probe returned a response the plugin does not recognize. Confirm the recognition service and plugin are on compatible versions.',
-+      'alt-context',
-+    ),
-+  );
-+
-+const positiveEtaSeconds = (value: unknown): number | null =>
-+  typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : null;
-+
-+const startingEtaSeconds = (result: TestConnectionResponse): number | null =>
-+  positiveEtaSeconds(result.warmup_eta_seconds) ?? positiveEtaSeconds(result.retry_after_seconds);
+   if (!onOpen) {
+     return (
+       <FaceThumbnail
+@@ -154,9 +166,8 @@ export const SuggestionCard = ({
+           bbox: suggestion.enrichment.representativeBbox,
+         }
+       : null;
+-  const identityThumbUrl = suggestion.enrichment?.identityThumbUrl ?? suggestion.enrichment?.identityMediaUrl ?? null;
+-  const representativeThumbUrl =
+-    suggestion.enrichment?.representativeThumbUrl ?? suggestion.enrichment?.representativeMediaUrl ?? null;
++  const identityThumbUrl = suggestion.enrichment?.identityThumbUrl ?? null;
++  const representativeThumbUrl = suggestion.enrichment?.representativeThumbUrl ?? null;
+   const storedFaceCount =
+     typeof suggestion.identityCount === 'number' &&
+     Number.isInteger(suggestion.identityCount) &&
+@@ -226,11 +237,7 @@ export const SuggestionCard = ({
+               className="acx-suggestion-card__thumb"
+             />
+           ) : (
+-            <Avatar
+-              size="lg"
+-              className="acx-suggestion-card__thumb"
+-              missingLabel={REPRESENTATIVE_VOCABULARY.imageUnavailable}
+-            />
++            <SuggestionFacePlaceholder />
+           )}
+           <span className="acx-suggestion-card__face-label">{__('Candidate', 'alt-context')}</span>
+         </div>
+@@ -251,11 +258,7 @@ export const SuggestionCard = ({
+               className="acx-suggestion-card__thumb"
+             />
+           ) : (
+-            <Avatar
+-              size="lg"
+-              className="acx-suggestion-card__thumb"
+-              missingLabel={REPRESENTATIVE_VOCABULARY.imageUnavailable}
+-            />
++            <SuggestionFacePlaceholder />
+           )}
+           <span className="acx-suggestion-card__face-label">{displayLabel}</span>
+         </div>
+diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/SuggestionCards.test.tsx b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/SuggestionCards.test.tsx
+--- a/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/SuggestionCards.test.tsx
++++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/SuggestionCards.test.tsx
+@@ -45,20 +45,58 @@ const baseSuggestion: ReviewSuggestion = {
+   identityCount: 3,
+ };
  
- export const renderBanner = (result: TestConnectionResponse): BannerCopy => {
-   if (!isTestConnectionOutcome(result.outcome)) {
-@@ -47,79 +83,73 @@ export const renderBanner = (result: TestConnectionResponse): BannerCopy => {
-           ? result.pairing_error.trim()
-           : null;
-       if (pairingError) {
--        return {
--          tone: 'warning',
--          role: 'alert',
--          primary: __('Connection successful, but tenant pairing failed.', 'alt-context'),
--          remediation: pairingError,
--        };
-+        return banner(
-+          'warning',
-+          'alert',
-+          __('Connection successful, but tenant pairing failed.', 'alt-context'),
-+          pairingError,
-+        );
-       }
--      return {
--        tone: 'success',
--        role: 'status',
--        primary: __('Connection successful.', 'alt-context'),
--        remediation: __('The plugin authenticated against the recognition service and the pool is healthy.', 'alt-context'),
--      };
-+      return banner(
-+        'success',
-+        'status',
-+        __('Connection successful.', 'alt-context'),
-+        __('The plugin authenticated against the recognition service and the pool is healthy.', 'alt-context'),
++const imageSrcCount = (src: string): number =>
++  screen.queryAllByRole('img').filter((element) => element.getAttribute('src') === src).length;
++
+ describe('SuggestionCard GPUFLOW-1 candidate preview', () => {
++  it('renders distinct candidate and representative avatars', () => {
++    render(
++      <SuggestionCard
++        suggestion={{
++          ...baseSuggestion,
++          enrichment: { ...preview.candidate, ...preview.representative },
++        }}
++        onAccept={vi.fn()}
++        onReject={vi.fn()}
++        isPending={false}
++        lowConfidenceThreshold={0.5}
++      />,
++    );
++
++    expect(screen.getByAltText('Candidate face, position 1 of 1')).toHaveAttribute(
++      'src',
++      preview.candidate.identityMediaUrl,
++    );
++    expect(screen.getByAltText('Alex stored face, position 1 of 3')).toHaveAttribute(
++      'src',
++      preview.representative.representativeMediaUrl,
++    );
++    expect(preview.candidate.identityMediaUrl).not.toBe(preview.representative.representativeMediaUrl);
++    expect(imageSrcCount(preview.candidate.identityMediaUrl)).toBe(1);
++    expect(imageSrcCount(preview.representative.representativeMediaUrl)).toBe(1);
++  });
++
+   it('shows an explicit placeholder when no noncandidate representative exists', () => {
+     render(
+       <SuggestionCard
+-        suggestion={{ ...baseSuggestion, enrichment: { ...preview.candidate, ...preview.nullRepresentative } }}
++        suggestion={{
++          ...baseSuggestion,
++          enrichment: { ...preview.candidate, ...preview.nullRepresentative },
++        }}
+         onAccept={vi.fn()}
+         onReject={vi.fn()}
+         isPending={false}
+         lowConfidenceThreshold={0.5}
+       />,
+     );
+-    expect(screen.getByAltText('Candidate face, position 1 of 1')).toHaveAttribute('src', preview.candidate.identityMediaUrl);
++
++    expect(screen.getByAltText('Candidate face, position 1 of 1')).toHaveAttribute(
++      'src',
++      preview.candidate.identityMediaUrl,
++    );
+     expect(screen.getByRole('img', { name: 'Representative image unavailable' })).toBeInTheDocument();
+     expect(screen.queryByAltText('Alex stored face, position 1 of 3')).toBeNull();
++    expect(imageSrcCount(preview.candidate.identityMediaUrl)).toBe(1);
+   });
+ 
+   it.each([
+@@ -84,11 +122,48 @@ describe('SuggestionCard GPUFLOW-1 candidate preview', () => {
+         lowConfidenceThreshold={0.5}
+       />,
+     );
++
+     expect(screen.queryByRole('button', { name: 'View original photo' })).toBeNull();
+     expect(container.querySelector('.acx-face-thumbnail')).toBeNull();
+-    expect(screen.getByAltText('Candidate face, position 1 of 1')).toHaveAttribute('src', preview.candidate.identityMediaUrl);
+-    expect(screen.getByAltText('Alex stored face, position 1 of 3')).toHaveAttribute('src', preview.representative.representativeMediaUrl);
++    expect(screen.queryByAltText('Candidate face, position 1 of 1')).toBeNull();
++    expect(screen.queryByAltText('Alex stored face, position 1 of 3')).toBeNull();
++    expect(screen.getAllByRole('img', { name: 'Representative image unavailable' })).toHaveLength(2);
++    expect(imageSrcCount(preview.candidate.identityMediaUrl)).toBe(0);
++    expect(imageSrcCount(preview.representative.representativeMediaUrl)).toBe(0);
+   });
++
++  it.each(preview.nonCroppableBboxes)(
++    'falls back to a placeholder when the representative bbox is not croppable %j',
++    (bbox) => {
++      const { container } = render(
++        <SuggestionCard
++          suggestion={{
++            ...baseSuggestion,
++            enrichment: {
++              ...preview.candidate,
++              ...preview.representative,
++              representativeBbox: bbox,
++            },
++          }}
++          onAccept={vi.fn()}
++          onReject={vi.fn()}
++          onOpenOriginal={vi.fn()}
++          isPending={false}
++          lowConfidenceThreshold={0.5}
++        />,
 +      );
-     }
-     case TestConnectionOutcome.NOT_CONFIGURED:
--      return {
--        tone: 'warning',
--        role: 'status',
--        primary: __('No recognition URL configured.', 'alt-context'),
--        remediation: __('Set the API URL above before testing.', 'alt-context'),
--      };
-+      return banner(
-+        'warning',
-+        'status',
-+        __('No recognition URL configured.', 'alt-context'),
-+        __('Set the API URL above before testing.', 'alt-context'),
++
++      expect(screen.getByAltText('Candidate face, position 1 of 1')).toHaveAttribute(
++        'src',
++        preview.candidate.identityMediaUrl,
 +      );
-     case TestConnectionOutcome.INVALID_KEY:
--      return {
--        tone: 'error',
--        role: 'alert',
--        primary: __('API key rejected.', 'alt-context'),
--        remediation: __(
-+      return banner(
-+        'error',
-+        'alert',
-+        __('API key rejected.', 'alt-context'),
-+        __(
-           'The recognition service returned 401/403. Check the API Key field above, or ask an operator to re-issue the key.',
-           'alt-context',
-         ),
--      };
-+      );
-     case TestConnectionOutcome.EXPIRED:
--      return {
--        tone: 'error',
--        role: 'alert',
--        primary: __('API key expired.', 'alt-context'),
--        remediation: __(
--          'Ask an operator to rotate the key with the recognition CLI, then paste the new value here.',
--          'alt-context',
--        ),
--      };
-+      return banner(
-+        'error',
-+        'alert',
-+        __('API key expired.', 'alt-context'),
-+        __('Ask an operator to rotate the key with the recognition CLI, then paste the new value here.', 'alt-context'),
-+      );
-     case TestConnectionOutcome.REVOKED:
--      return {
--        tone: 'error',
--        role: 'alert',
--        primary: __('API key revoked.', 'alt-context'),
--        remediation: __(
--          'This key has been revoked server-side. Request a fresh key and update the value above.',
--          'alt-context',
--        ),
--      };
-+      return banner(
-+        'error',
-+        'alert',
-+        __('API key revoked.', 'alt-context'),
-+        __('This key has been revoked server-side. Request a fresh key and update the value above.', 'alt-context'),
-+      );
-     case TestConnectionOutcome.TENANT_MISMATCH:
--      return {
--        tone: 'error',
--        role: 'alert',
--        primary: __('Tenant mismatch.', 'alt-context'),
--        remediation: __(
-+      return banner(
-+        'error',
-+        'alert',
-+        __('Tenant mismatch.', 'alt-context'),
-+        __(
-           'The API key belongs to a different site. Adopt the key’s tenant to pair this site, or confirm the key was issued for this WordPress tenant.',
-           'alt-context',
-         ),
--        confirmPairing: true,
--      };
-+        { confirmPairing: true },
-+      );
-     case TestConnectionOutcome.TENANT_PAIRING_CONFLICT:
--      return {
--        tone: 'warning',
--        role: 'alert',
--        primary: __('Tenant identity conflict.', 'alt-context'),
--        remediation: __(
-+      return banner(
-+        'warning',
-+        'alert',
-+        __('Tenant identity conflict.', 'alt-context'),
-+        __(
-           'The API key is bound to a different tenant than this site. Confirm adoption before re-keying local data.',
-           'alt-context',
-         ),
--        confirmPairing: true,
--      };
-+        { confirmPairing: true },
-+      );
-     case TestConnectionOutcome.RATE_LIMITED: {
-       const seconds = result.retry_after_seconds;
-       const wait =
-@@ -130,40 +160,53 @@ export const renderBanner = (result: TestConnectionResponse): BannerCopy => {
-               seconds,
-             )
-           : __('Retry after a few seconds.', 'alt-context');
--      return {
--        tone: 'warning',
--        role: 'status',
--        primary: __('Recognition service is rate limiting this site.', 'alt-context'),
--        remediation: wait,
--      };
-+      return banner(
-+        'warning',
-+        'status',
-+        __('Recognition service is rate limiting this site.', 'alt-context'),
-+        wait,
-+      );
-+    }
-+    case TestConnectionOutcome.STARTING: {
-+      const eta = startingEtaSeconds(result);
-+      const primary =
-+        eta !== null
-+          ? sprintf(
-+              /* translators: %d is the remaining warmup seconds. */
-+              __('Description service is starting — ready in ~%d s', 'alt-context'),
-+              eta,
-+            )
-+          : __('Description service is starting.', 'alt-context');
-+      const remediation =
-+        eta !== null
-+          ? __('The description service is warming up. Suggest and describe will retry automatically.', 'alt-context')
-+          : __('Warming up, this can take a few minutes', 'alt-context');
-+      return banner('info', 'status', primary, remediation, { prefixIcon: true });
-     }
-     case TestConnectionOutcome.SERVER_ERROR:
--      return {
--        tone: 'error',
--        role: 'alert',
--        primary: __('Recognition service returned a server error.', 'alt-context'),
--        remediation: __(
--          'Try again in a moment. If the problem persists, check the recognition service logs.',
--          'alt-context',
--        ),
--      };
-+      return banner(
-+        'error',
-+        'alert',
-+        __('Recognition service returned a server error.', 'alt-context'),
-+        __('Try again in a moment. If the problem persists, check the recognition service logs.', 'alt-context'),
-+      );
-     case TestConnectionOutcome.NETWORK_ERROR:
--      return {
--        tone: 'error',
--        role: 'alert',
--        primary: __('Could not reach the recognition service.', 'alt-context'),
--        remediation: __('Verify the API URL above and confirm the site can reach the recognition host.', 'alt-context'),
--      };
-+      return banner(
-+        'error',
-+        'alert',
-+        __('Could not reach the recognition service.', 'alt-context'),
-+        __('Verify the API URL above and confirm the site can reach the recognition host.', 'alt-context'),
-+      );
-     case TestConnectionOutcome.TLS_ERROR:
--      return {
--        tone: 'error',
--        role: 'alert',
--        primary: __('TLS handshake failed.', 'alt-context'),
--        remediation: __(
-+      return banner(
-+        'error',
-+        'alert',
-+        __('TLS handshake failed.', 'alt-context'),
-+        __(
-           'The recognition service certificate could not be validated. Check the HTTPS endpoint and trust chain.',
-           'alt-context',
-         ),
--      };
-+      );
-     default: {
-       const exhaustive: never = outcome;
-       return exhaustive;
++      expect(container.querySelectorAll('.acx-face-thumbnail')).toHaveLength(1);
++      expect(screen.getByRole('img', { name: 'Representative image unavailable' })).toBeInTheDocument();
++      expect(screen.queryByAltText('Alex stored face, position 1 of 3')).toBeNull();
++      expect(imageSrcCount(preview.candidate.identityMediaUrl)).toBe(1);
++      expect(imageSrcCount(preview.representative.representativeMediaUrl)).toBe(0);
++    },
++  );
+ });
+ 
+ describe('SuggestionCard BR-41 group accname', () => {

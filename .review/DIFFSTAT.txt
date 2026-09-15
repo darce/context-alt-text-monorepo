@@ -1,8 +1,4 @@
- .../scene/application/describe_async_worker.py     |  14 ++
- .../scene/application/describe_run_worker.py       | 183 ++++++++++++++++-
- .../http/routers/describe_run.py                   |  36 +++-
- .../scene/tests/fixtures/gpuflow-run-items.json    |  67 +++++++
- .../scene/tests/test_describe_run_items.py         |  67 +++++++
- .../scene/tests/test_describe_run_routes.py        |  65 ++++++
- .../scene/tests/test_describe_run_worker_phases.py | 218 ++++++++++++++++++++-
- 7 files changed, 630 insertions(+), 20 deletions(-)
+ .../scene/application/describe_async_worker.py     |   9 +-
+ .../scene/application/describe_run_worker.py       | 301 ++++++++++++---------
+ .../scene/tests/test_describe_run_worker_phases.py | 227 +++++++++++++++-
+ 3 files changed, 396 insertions(+), 141 deletions(-)

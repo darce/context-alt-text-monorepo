@@ -128,6 +128,7 @@ export const TestConnectionOutcome = {
   TENANT_MISMATCH: 'tenant_mismatch',
   TENANT_PAIRING_CONFLICT: 'tenant_pairing_conflict',
   RATE_LIMITED: 'rate_limited',
+  STARTING: 'starting',
   SERVER_ERROR: 'server_error',
   NETWORK_ERROR: 'network_error',
   TLS_ERROR: 'tls_error',
@@ -148,6 +149,8 @@ export interface TestConnectionResponse {
   outcome: TestConnectionOutcomeValue;
   status_code?: number;
   retry_after_seconds?: number;
+  /** Warmup ETA for `starting` (GPUFLOW-1 probe). Prefer this over inventing a countdown. */
+  warmup_eta_seconds?: number;
   detail?: string;
   body?: unknown;
   probe_mode?: TestConnectionProbeMode;

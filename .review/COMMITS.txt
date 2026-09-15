@@ -1,1 +1,1 @@
-a99333f6eca8 feat(gpuflow-1): svc-cold-gpu multipart describe route with typed 503 Retry-After and operation timing
+ecefefc9b1b4 offload: Closed R-01–R-05 on the multipart GPU describe route; committed

@@ -377,6 +377,24 @@ describe('RetentionSection', () => {
     expect(refetch).toHaveBeenCalledTimes(1);
   });
 
+  it.each([false, true])('shows retry progress and permits retry after failure (query error: %s)', (isError) => {
+    const unavailable = { available: false, policy: null, recent_audit_events: [] };
+    mockedUseRetentionStatus.mockReturnValue(createMockQuery({ data: unavailable, isError, refetch }));
+    const { rerender } = render(<RetentionSection />);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+    mockedUseRetentionStatus.mockReturnValue(createMockQuery({ data: unavailable, isError, isFetching: true, refetch }));
+    rerender(<RetentionSection />);
+    expect(screen.getByRole('button', { name: 'Fetching…' })).toBeDisabled();
+    expect(screen.getByRole('status')).toHaveTextContent('Fetching retention status…');
+    fireEvent.click(screen.getByRole('button', { name: 'Fetching…' }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+    mockedUseRetentionStatus.mockReturnValue(createMockQuery({ data: unavailable, isError, refetch }));
+    rerender(<RetentionSection />);
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled();
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
+  });
+
   it('opens import dialog and calls importMutateAsync on confirm', async () => {
     const fileContent = JSON.stringify({ schema_version: 2, clusters: [] });
     const user = userEvent.setup();

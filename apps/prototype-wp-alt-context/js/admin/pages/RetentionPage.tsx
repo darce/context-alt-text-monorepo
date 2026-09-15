@@ -52,9 +52,14 @@ export const RetentionSection = (): React.JSX.Element => {
         type="button"
         className="acx-button acx-button--secondary"
         onClick={() => void retentionQuery.refetch()}
+        disabled={retentionQuery.isFetching}
+        aria-busy={retentionQuery.isFetching}
       >
-        {__('Retry', 'alt-context')}
+        {retentionQuery.isFetching ? __('Fetching…', 'alt-context') : __('Retry', 'alt-context')}
       </button>
+      <p role="status" aria-live="polite">
+        {retentionQuery.isFetching ? __('Fetching retention status…', 'alt-context') : ''}
+      </p>
     </section>
   ) : (
     <>

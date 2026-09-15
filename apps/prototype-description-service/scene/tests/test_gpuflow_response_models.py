@@ -1,5 +1,9 @@
 """GPUFLOW timing stays typed and preserves unknown observations."""
 
+import json
+from pathlib import Path
+
+import jsonschema
 import pytest
 from pydantic import ValidationError
 
@@ -63,13 +67,44 @@ def test_timing_and_opaque_correlation_round_trip(response_case):
     assert wire["startup_id"] is None
 
 
-def test_older_response_can_omit_timing(response_case):
-    model, payload, _ = response_case
-    assert "timing" not in model(**payload).model_dump(exclude_unset=True)
+@pytest.mark.parametrize("field", ["operation_id", "startup_id", "timing"])
+def test_response_requires_explicit_operation_metadata(response_case, field):
+    model, payload, timing = response_case
+    complete = {**payload, "operation_id": "opaque-operation", "startup_id": None, "timing": timing}
+    del complete[field]
+    with pytest.raises(ValidationError) as exc_info:
+        model(**complete)
+    assert [(error["loc"], error["type"]) for error in exc_info.value.errors()] == [
+        ((field,), "missing"),
+    ]
+
+
+@pytest.mark.parametrize("field", ["operation_id", "timing"])
+def test_response_rejects_null_required_values(response_case, field):
+    model, payload, timing = response_case
+    complete = {**payload, "operation_id": "opaque-operation", "startup_id": None, "timing": timing}
+    complete[field] = None
+    with pytest.raises(ValidationError) as exc_info:
+        model(**complete)
+    assert [error["loc"] for error in exc_info.value.errors()] == [(field,)]
+
+
+def test_serialized_accepted_response_matches_shared_contract(response_case):
+    model, payload, timing = response_case
+    if model is not VisualFactsResponse:
+        return
+    response = model(**payload, operation_id="opaque-operation", startup_id=None, timing=timing)
+    schema_path = (
+        Path(__file__).resolve().parents[4]
+        / "packages/shared-contracts/schemas/image-description-response.schema.json"
+    )
+    jsonschema.validate(json.loads(response.model_dump_json()), json.loads(schema_path.read_text()))
+
 
 
 def test_timing_rejects_unknown_missing_and_invalid_measurements(response_case):
     model, payload, timing = response_case
+    payload = {**payload, "operation_id": "opaque-operation", "startup_id": None}
     for field in timing:
         for invalid in (-1, float("inf"), float("nan"), "12", True):
             with pytest.raises(ValidationError):
@@ -80,9 +115,10 @@ def test_timing_rejects_unknown_missing_and_invalid_measurements(response_case):
             model(**payload, timing=incomplete)
     with pytest.raises(ValidationError):
         model(**payload, timing={**timing, "extra": 1})
+    del payload["operation_id"]
     for operation_id in ("", "x" * 129):
         with pytest.raises(ValidationError):
-            model(**payload, operation_id=operation_id)
+            model(**payload, operation_id=operation_id, timing=timing)
 
 
 @pytest.mark.parametrize("status", ["queued", "running", "completed", "failed", "skipped"])

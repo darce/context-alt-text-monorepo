@@ -1,1 +1,1 @@
-3aa601740bf8 offload: Closed SVCCOL-H-01 and Fix-7 R-12–R-15 on the multipart
+ab8e984565f6 offload: Committed `update svc-cold-gpu` closing SVCCOL-H-01/M-03/M-04

@@ -107,3 +107,24 @@ VERIFIED: {"UXSERV-M-05":"partially_fixed","UXSERV-M-06":"fixed","GPUFLOW-1-SPAD
 FINDINGS: []
 
 Verdict: pass_with_findings
+
+## Re-review r5 (58ea6cfb6..2201468a6)
+
+VERIFIED: {"GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-08":"fixed"}
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| `GPUFLOW-1-PHPBREAKERPASSTHROUGH-R-08` | `fixed` | The fix adds `STARTING: 'starting'` to the canonical `TestConnectionOutcome` object, which feeds `KNOWN_TEST_CONNECTION_OUTCOMES` through `Object.values`, and adds a dedicated `STARTING` branch that renders an informational banner with ETA fallback handling (`.review/CHANGE.diff:50-66,227-231,382-396`). The added contract and banner tests exercise canonical recognition and ETA/no-ETA rendering (`.review/CHANGE.diff:25-46,113-152`). |
+
+### FINDINGS
+
+#### GPUFLOW-1-SPADESCRIPTIONSERVICE-R-11 — low
+
+- File: `apps/prototype-wp-alt-context/js/admin/pages/settings/testConnectionBanner.ts:63`
+- Evidence: The refactor adds the 140-column unknown-outcome string as a new line (`.review/CHANGE.diff:216-225`), while the lane Prettier configuration sets `printWidth` to 120 (`apps/prototype-wp-alt-context/.prettierrc:2`).
+- Impact: `lint(prettier)` only; the changed file will fail formatting checks until the message is wrapped.
+- Fix: Wrap the localized message at the configured print width.
+
+FINDINGS: [{"id":"GPUFLOW-1-SPADESCRIPTIONSERVICE-R-11","severity":"low","file_path":"apps/prototype-wp-alt-context/js/admin/pages/settings/testConnectionBanner.ts","line":63,"summary":"lint(prettier): newly added unknown-outcome message exceeds the 120-column print width","evidence":".review/CHANGE.diff:216-225 adds the 140-column line; .prettierrc:2 sets printWidth to 120."}]
+
+Verdict: pass_with_findings

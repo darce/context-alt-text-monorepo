@@ -207,3 +207,21 @@ def test_production_app_exposes_metrics_endpoint(monkeypatch) -> None:
     assert "http_requests_in_flight" in body
     # The /health request we made above must appear under its route template.
     assert 'path="/health"' in body
+
+
+def test_description_readiness_and_processing_histograms_are_independent():
+    from recognition.interface_adapters.http.middleware.metrics import MetricsRegistry
+
+    metrics = MetricsRegistry()
+    metrics.description_readiness_wait_seconds.labels(adapter="gpu").observe(30)
+    metrics.description_adapter_duration_seconds.labels(adapter="gpu").observe(2)
+    assert metrics.registry.get_sample_value(
+        "acx_description_readiness_wait_seconds_sum", {"adapter": "gpu"}
+    ) == 30
+    assert metrics.registry.get_sample_value(
+        "acx_description_adapter_duration_seconds_sum", {"adapter": "gpu"}
+    ) == 2
+    for name in ("readiness_wait", "adapter_duration"):
+        assert metrics.registry.get_sample_value(
+            f"acx_description_{name}_seconds_count", {"adapter": "gpu"}
+        ) == 1

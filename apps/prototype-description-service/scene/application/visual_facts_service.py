@@ -171,6 +171,9 @@ class VisualFactsService:
         # E19-4a S4: the freshly generated AdapterResult (None on cache hits).
         # The service is constructed per request, so this is request-scoped.
         self.last_adapter_result: AdapterResult | None = None
+        # Per-call measured attempt, including failures; consumers sum retries.
+        # None means no dispatch observed; a cache bypass explicitly sets zero.
+        self.last_processing_ms: float | None = None
         # Phrase-grounding boxes for the naming preview — from the adapter on
         # generation, restored from the cached row on cache hits so both paths
         # produce the same named draft (E19-4A-S4-BR-03).
@@ -189,6 +192,8 @@ class VisualFactsService:
         naming_policy: NamingPolicy | None = None,
         before_compute: Callable[[], Awaitable[None]] | None = None,
     ) -> VisualFactsResponse:
+        self.last_processing_ms = None
+        self.last_adapter_result = None
         start = time.perf_counter()
         image_hash = compute_image_hash(image_bytes)
         context_hash = compute_context_hash(context)
@@ -204,6 +209,7 @@ class VisualFactsService:
                 context_hash=context_hash,
             )
             if row is not None:
+                self.last_processing_ms = 0.0
                 response = self._cache_hit_response(
                     row,
                     start=start,
@@ -224,12 +230,32 @@ class VisualFactsService:
         # blocks the event loop — otherwise asyncpg drops the open DB connection
         # mid-request and the persist fails. Seeded is instant, so the overhead is
         # negligible. (A dedicated worker/queue is the heavier production option.)
-        adapter_start = time.perf_counter()
-        call = asyncio.to_thread(self._adapter.describe, image_bytes=image_bytes, context=context)
-        result = await (asyncio.wait_for(call, self._timeout) if self._timeout else call)
+        # Start inside the executor: its queue is not adapter processing.
+        # Keep observations local so a timed-out thread cannot overwrite a retry.
+        attempt: dict[str, float] = {}
+
+        def dispatch() -> AdapterResult:
+            attempt["start"] = time.perf_counter()
+            try:
+                return self._adapter.describe(image_bytes=image_bytes, context=context)
+            finally:
+                attempt["end"] = time.perf_counter()
+
+        call = asyncio.to_thread(dispatch)
+        try:
+            result = await (asyncio.wait_for(call, self._timeout) if self._timeout else call)
+        finally:
+            if "start" in attempt:
+                # Cancellation measures the observed dispatch interval only;
+                # executor work can continue, but must not publish twice.
+                end = attempt.get("end")
+                if end is None:
+                    end = time.perf_counter()
+                elapsed = max(0.0, end - attempt["start"])
+                self.last_processing_ms = elapsed * 1000
+                self._observe_adapter_duration(elapsed)
         self.last_adapter_result = result
         self.last_phrase_boxes = tuple(result.phrase_boxes)
-        self._observe_adapter_duration(time.perf_counter() - adapter_start)
 
         # E20-FUSION Stage-2 reconcile between adapter and response mapping.
         attachment_provenance = await self._run_fusion_stage(

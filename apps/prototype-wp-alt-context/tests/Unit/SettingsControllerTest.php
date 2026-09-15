@@ -1174,12 +1174,96 @@ class SettingsControllerTest extends TestCase
         $this->assertStringEndsWith('/scene/gpu/intent', $calls[1]['url']);
         $this->assertSame('POST', $calls[1]['method']);
         $this->assertSame('{"action":"start"}', $calls[1]['args']['body'] ?? null);
+        $this->assertSame(SettingsController::PROBE_OUTCOME_STARTING, $data['outcome'] ?? null);
         $this->assertSame('description_service_starting', $data['code'] ?? null);
         $this->assertSame(9, $data['warmup_eta_seconds'] ?? null);
         $this->assertSame(9, $data['retry_after_seconds'] ?? null);
         $this->assertSame(503, $data['status_code'] ?? null);
         $this->assertSame('Description service is starting.', $data['detail'] ?? null);
         $this->assertStringEndsWith('/scene/gpu/intent', (string) ($data['probed_url'] ?? ''));
+    }
+
+    public function testProbe200ReadyReportsConnected(): void
+    {
+        $this->configureProbe();
+        $keyTenant = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+        $this->setOption('acx_recognition_tenant_id', $keyTenant);
+        $this->queueHttpResponse($this->buildOkResponse());
+        $this->queueHttpResponse($this->buildWhoamiResponse($keyTenant));
+
+        $data = $this->controller
+            ->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'))
+            ->get_data();
+
+        $this->assertSame(ProbeOutcome::CONNECTED, $data['outcome']);
+        $this->assertSame(200, $data['status_code'] ?? null);
+        $this->assertStringEndsWith('/health/detailed', (string) ($data['probed_url'] ?? ''));
+    }
+
+    public function testProbe202StartingReportsStartingWithEta(): void
+    {
+        $this->configureProbe();
+        $this->queueHttpResponse([
+            'response' => ['code' => 202, 'message' => 'Accepted'],
+            'headers' => ['Retry-After' => '8'],
+            'body' => json_encode([
+                'detail' => [
+                    'code' => 'description_service_starting',
+                    'message' => 'Description service is starting.',
+                    'warmup_eta_seconds' => 8,
+                ],
+            ]),
+        ]);
+
+        $data = $this->controller
+            ->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'))
+            ->get_data();
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertStringEndsWith('/health/detailed', $calls[0]['url']);
+        $this->assertSame(SettingsController::PROBE_OUTCOME_STARTING, $data['outcome'] ?? null);
+        $this->assertNotSame(ProbeOutcome::CONNECTED, $data['outcome'] ?? null);
+        $this->assertSame('description_service_starting', $data['code'] ?? null);
+        $this->assertSame(8, $data['warmup_eta_seconds'] ?? null);
+        $this->assertSame(8, $data['retry_after_seconds'] ?? null);
+        $this->assertSame(202, $data['status_code'] ?? null);
+    }
+
+    public function testProbe503UnavailableReportsServerErrorWithTypedCode(): void
+    {
+        $this->configureProbe();
+        $this->queueHttpResponse([
+            'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+            'body' => json_encode([
+                'detail' => [
+                    'code' => 'description_service_unavailable',
+                    'message' => 'Description service is unavailable.',
+                ],
+            ]),
+        ]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+            'body' => json_encode([
+                'detail' => [
+                    'code' => 'description_service_unavailable',
+                    'message' => 'Description service is unavailable.',
+                ],
+            ]),
+        ]);
+
+        $data = $this->controller
+            ->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'))
+            ->get_data();
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(2, $calls);
+        $this->assertStringEndsWith('/health/detailed', $calls[0]['url']);
+        $this->assertStringEndsWith('/scene/gpu/intent', $calls[1]['url']);
+        $this->assertSame(ProbeOutcome::SERVER_ERROR, $data['outcome'] ?? null);
+        $this->assertSame('description_service_unavailable', $data['code'] ?? null);
+        $this->assertSame(503, $data['status_code'] ?? null);
+        $this->assertArrayNotHasKey('warmup_eta_seconds', $data);
     }
 
     /**
@@ -1821,7 +1905,7 @@ class SettingsControllerTest extends TestCase
     {
         return [
             'response' => ['code' => 200, 'message' => 'OK'],
-            'body'     => '{"pool":"healthy"}',
+            'body'     => '{"pool":"healthy","ready":true}',
         ];
     }
 

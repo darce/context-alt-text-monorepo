@@ -139,6 +139,46 @@ class RetentionControllerTest extends TestCase
         $this->assertArrayNotHasKey('acx_retention_status_' . $this->tenantId(), $GLOBALS['__ac_transients']);
     }
 
+    public function testGetStatusTypedUnavailableIsRetryablePayload(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+            'body' => json_encode([
+                'detail' => [
+                    'code' => 'description_service_unavailable',
+                    'message' => 'Description service is unavailable.',
+                    'operation_id' => null,
+                    'startup_id' => null,
+                    'timing' => [
+                        'queue_ms' => null,
+                        'ramp_up_ms' => null,
+                        'processing_ms' => null,
+                        'startup_ms' => null,
+                        'server_elapsed_ms' => null,
+                    ],
+                ],
+            ]),
+        ]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode(['items' => []]),
+        ]);
+
+        $controller = new RetentionController();
+        $response = $controller->get_status(new WP_REST_Request('GET', '/acx/v1/retention/status'));
+
+        $this->assertSame(200, $response->get_status());
+        $this->assertSame(
+            [
+                'available' => false,
+                'policy' => null,
+                'recent_audit_events' => [],
+            ],
+            $response->get_data()
+        );
+        $this->assertArrayNotHasKey('acx_retention_status_' . $this->tenantId(), $GLOBALS['__ac_transients']);
+    }
+
     public function testDescribeBreakerDoesNotBlankRetentionStatus(): void
     {
         global $wpdb;

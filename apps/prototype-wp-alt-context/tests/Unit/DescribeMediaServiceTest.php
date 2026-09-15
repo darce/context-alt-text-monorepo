@@ -1378,7 +1378,7 @@ class DescribeMediaServiceTest extends TestCase
         $req->set_param('media_id', 42);
         $operationId = $fixture['request']['operation_id'] ?? null;
         if (is_string($operationId)) {
-            $req->set_param('operation_id', $operationId);
+            $req->set_body_params(['operation_id' => $operationId]);
         }
 
         $result = $this->controller->describe_media($req);
@@ -1413,6 +1413,68 @@ class DescribeMediaServiceTest extends TestCase
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
         $req->set_param('media_id', 42);
+        $this->controller->describe_media($req);
+
+        $body = $this->getHttpCalls()[0]['args']['body'];
+        $this->assertIsString($body);
+        $this->assertStringNotContainsString('name="operation_id"', $body);
+    }
+
+    public function testQueryStringOperationIdIsIgnoredAndBodyFieldIsForwardedByteForByte(): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => (string) json_encode($this->validBackendBody(42)),
+        ]);
+
+        $verbatim = " op-pad\t";
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $req->set_param('media_id', 42);
+        $req->set_param('operation_id', 'from-query');
+        $req->set_body_params(['operation_id' => $verbatim]);
+
+        $this->controller->describe_media($req);
+
+        $body = $this->getHttpCalls()[0]['args']['body'];
+        $this->assertIsString($body);
+        $this->assertStringContainsString('name="operation_id"', $body);
+        $this->assertStringContainsString($verbatim, $body);
+        $this->assertStringNotContainsString('from-query', $body);
+    }
+
+    public function testQueryStringOperationIdAloneIsNotForwarded(): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => (string) json_encode($this->validBackendBody(42)),
+        ]);
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $req->set_param('media_id', 42);
+        $req->set_param('operation_id', 'from-query');
+
+        $this->controller->describe_media($req);
+
+        $body = $this->getHttpCalls()[0]['args']['body'];
+        $this->assertIsString($body);
+        $this->assertStringNotContainsString('name="operation_id"', $body);
+        $this->assertStringNotContainsString('from-query', $body);
+    }
+
+    public function testNonStringBodyOperationIdIsAbsent(): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => (string) json_encode($this->validBackendBody(42)),
+        ]);
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $req->set_param('media_id', 42);
+        $req->set_body_params(['operation_id' => ['not' => 'string']]);
+
         $this->controller->describe_media($req);
 
         $body = $this->getHttpCalls()[0]['args']['body'];

@@ -28,12 +28,12 @@ from db.models.scene import DescribeDemandLease, DescribeOperation, DescribeRun,
 from recognition.shared.db.dialect import is_sqlite
 from scene.application.describe_operation_repository import DescribeOperationRepository
 from scene.domain.describe_run import (
-    DEFAULT_ASYNC_JOB_RETENTION_HOURS,
     DemandLeaseState,
     DescribeItemStatus,
     DescribeRunStatus,
     RunKind,
     as_utc,
+    async_job_retention_hours,
     utc_observation,
 )
 
@@ -149,7 +149,7 @@ def deployed_demand_lease_bounds() -> DemandLeaseBounds:
         client_retry_gap_seconds=CLIENT_RETRY_GAP_SECONDS,
         refresh_seconds=resolve_load_refresh_seconds(),
         freshness_seconds=LOAD_SNAPSHOT_STALE_SECONDS,
-        retention_seconds=float(DEFAULT_ASYNC_JOB_RETENTION_HOURS * 3600),
+        retention_seconds=float(async_job_retention_hours() * 3600),
     )
 
 
@@ -194,24 +194,29 @@ def resolve_load_path() -> str:
 
 
 def resolve_load_refresh_seconds() -> float:
-    """Return a safe refresh cadence below the reaper's 120s stale guard."""
+    """Return a safe refresh cadence below the reaper's 120s stale guard.
+
+    An unset variable uses the documented default. An explicit value must be a
+    finite number strictly inside ``(0, MAX_LOAD_REFRESH_SECONDS)``; malformed
+    configuration fails closed instead of silently changing cadence [rg-008].
+    """
     raw = os.environ.get(LOAD_REFRESH_SECONDS_ENV)
     if raw is None:
         return DEFAULT_LOAD_REFRESH_SECONDS
     try:
         seconds = float(raw)
-    except ValueError:
-        seconds = 0.0
+    except ValueError as exc:
+        raise ValueError(
+            f"{LOAD_REFRESH_SECONDS_ENV} must be a finite number in the range "
+            f"0 < seconds < {MAX_LOAD_REFRESH_SECONDS}; got {raw!r}"
+        ) from exc
     # Leave room for a second refresh attempt inside the stale-file window. A
     # value merely below 120s is not sufficient once failures/latency occur.
     if not math.isfinite(seconds) or seconds <= 0 or seconds >= MAX_LOAD_REFRESH_SECONDS:
-        _logger.warning(
-            "invalid %s=%r; using default %.0fs",
-            LOAD_REFRESH_SECONDS_ENV,
-            raw,
-            DEFAULT_LOAD_REFRESH_SECONDS,
+        raise ValueError(
+            f"{LOAD_REFRESH_SECONDS_ENV} must be a finite number in the range "
+            f"0 < seconds < {MAX_LOAD_REFRESH_SECONDS}; got {raw!r}"
         )
-        return DEFAULT_LOAD_REFRESH_SECONDS
     return seconds
 
 
@@ -273,40 +278,50 @@ def _published_revision(payload: object) -> int:
     return revision
 
 
-def _max_lease_reached() -> bool:
+def _read_gpu_lifecycle_payload() -> dict[str, Any] | None:
+    """Read gpu-state.json once. None means missing, unreadable, or non-object."""
     from scene.application.gpu_state import resolve_gpu_state_path
 
     path = Path(resolve_gpu_state_path())
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return True
+        return None
     if not isinstance(payload, dict):
-        return True
-    return payload.get("last_transition_reason") == _MAX_LEASE_REASON
+        return None
+    return payload
 
 
-def _gpu_excludes_lease_demand(*, now: datetime) -> bool:
-    from scene.application.gpu_state import GpuState, read_gpu_state
+def _gpu_lifecycle_blocks(*, now: datetime) -> tuple[bool, bool]:
+    """Lease-cap and allow-list from one payload (fail closed if unreadable)."""
+    from scene.application.gpu_state import GpuState, _log_transition, _state_from_payload
 
-    state = read_gpu_state(now=now.timestamp())
-    return state not in {
+    payload = _read_gpu_lifecycle_payload()
+    if payload is None:
+        _log_transition(GpuState.UNKNOWN)
+        return True, True
+    state = _state_from_payload(payload, now=now.timestamp())
+    _log_transition(state)
+    max_lease = payload.get("last_transition_reason") == _MAX_LEASE_REASON
+    gpu_excludes = state not in {
         GpuState.STOPPED,
         GpuState.STARTING,
         GpuState.WARMING,
         GpuState.READY,
         GpuState.DEGRADED,
     }
+    return max_lease, gpu_excludes
 
 
-def _demand_policy_flags(*, now: datetime) -> tuple[bool, bool]:
+def _demand_policy_flags(*, now: datetime) -> tuple[bool, bool, bool]:
     from scene.application.gpu_intent import IntentAction, read_gpu_intent, resolve_gpu_intent_path
 
     stop_requested = False
     intent = read_gpu_intent(resolve_gpu_intent_path())
     if intent is not None and intent.action is IntentAction.STOP and utc_observation(intent.expires_at) > now:
         stop_requested = True
-    return stop_requested, _max_lease_reached()
+    max_lease, gpu_excludes = _gpu_lifecycle_blocks(now=now)
+    return stop_requested, max_lease, gpu_excludes
 
 
 def _lease_demand_blocked(
@@ -316,10 +331,10 @@ def _lease_demand_blocked(
     max_lease_reached: bool | None,
 ) -> bool:
     """Live STOP / lease-cap always win; explicit True only adds a block."""
-    policy_stop, policy_max_lease = _demand_policy_flags(now=now)
+    policy_stop, policy_max_lease, gpu_excludes = _demand_policy_flags(now=now)
     blocked_by_stop = policy_stop or bool(stop_requested)
     blocked_by_max_lease = policy_max_lease or bool(max_lease_reached)
-    return blocked_by_stop or blocked_by_max_lease or _gpu_excludes_lease_demand(now=now)
+    return blocked_by_stop or blocked_by_max_lease or gpu_excludes
 
 
 async def _persist_first_ready(session: AsyncSession, *, now: datetime) -> None:
@@ -549,7 +564,8 @@ async def refresh_load_snapshot_loop(
     timeout_seconds: float = LOAD_REFRESH_TIMEOUT_SECONDS,
 ) -> None:
     """Keep the reaper snapshot fresh for as long as the API is running."""
-    interval = refresh_seconds if refresh_seconds is not None else resolve_load_refresh_seconds()
+    bounds = validate_demand_lease_bounds()
+    interval = refresh_seconds if refresh_seconds is not None else bounds.refresh_seconds
     loop = asyncio.get_running_loop()
     next_refresh_at = loop.time() + interval
     while True:

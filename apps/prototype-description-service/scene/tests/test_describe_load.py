@@ -537,7 +537,10 @@ def test_describe_load_refresh_seconds_defaults_and_stays_inside_stale_guard(mon
 
     for invalid in ("invalid", "0", "-1", "60", "90", "119", "120", "nan", "inf"):
         monkeypatch.setenv(env_name, invalid)
-        assert resolve_load_refresh_seconds() == 45.0
+        with pytest.raises(ValueError, match=env_name):
+            resolve_load_refresh_seconds()
+        with pytest.raises(ValueError, match=env_name):
+            validate_demand_lease_bounds()
 
 
 def test_dump_load_snapshot_can_make_failures_visible_to_supervisor(tmp_path: Path, caplog: pytest.LogCaptureFixture):
@@ -1166,6 +1169,18 @@ def test_maybe_dump_describe_load_drops_older_publish_after_demand_change(
         assert loaded["revision"] == 2
         assert loaded["lease_demand"] == 2
         assert loaded["in_flight"] == 2
+        equal = {**loaded, "written_at": loaded["written_at"] + 50, "lease_demand": 0, "in_flight": 0}
+
+        async def equal_revision_load(session, **kwargs):
+            return equal
+
+        monkeypatch.setattr(describe_router, "load_snapshot", equal_revision_load)
+        await describe_router._maybe_dump_describe_load(sf)
+        replayed = json.loads(target.read_text())
+        assert replayed["revision"] == 2
+        assert replayed["lease_demand"] == 2
+        assert replayed["in_flight"] == 2
+        assert replayed["written_at"] == loaded["written_at"]
         await engine.dispose()
 
     asyncio.run(body())
@@ -1415,6 +1430,73 @@ def test_run_startup_load_snapshot_rejects_illegal_bounds_before_publish(
         with pytest.raises(ValueError, match=r"P\+J\+D"):
             await run_startup_load_snapshot(sf, path=target)
         assert not target.exists()
+        await engine.dispose()
+
+    asyncio.run(body())
+
+
+def test_deployed_bounds_use_repository_retention_env(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("ACX_ASYNC_JOB_RETENTION_HOURS", "12")
+    bounds = load_mod.deployed_demand_lease_bounds()
+    assert bounds.retention_seconds == 12 * 3600
+
+
+def test_refresh_loop_refuses_to_start_on_illegal_bounds(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(load_mod, "DEMAND_LEASE_SECONDS", 1.0)
+    dumped = False
+
+    async def fake_dump(_factory, *, raise_on_error=False):
+        nonlocal dumped
+        dumped = True
+
+    monkeypatch.setattr(load_mod, "dump_load_snapshot", fake_dump)
+
+    async def body():
+        with pytest.raises(ValueError, match=r"P\+J\+D"):
+            await refresh_load_snapshot_loop(object(), refresh_seconds=0)
+        assert dumped is False
+
+    asyncio.run(body())
+
+
+def test_load_snapshot_reads_gpu_state_once_for_lease_cap_and_allowlist(monkeypatch: pytest.MonkeyPatch):
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    generations = [
+        {
+            "state": "stopped",
+            "instance_id": "ocid1.gpu",
+            "written_at": start.timestamp(),
+            "reason": None,
+            "last_transition_reason": "lease_cap",
+        },
+        {
+            "state": "stopped",
+            "instance_id": "ocid1.gpu",
+            "written_at": start.timestamp(),
+            "reason": None,
+            "last_transition_reason": "work",
+        },
+    ]
+    reads = 0
+
+    def fake_reader() -> dict[str, object]:
+        nonlocal reads
+        payload = generations[min(reads, len(generations) - 1)]
+        reads += 1
+        return payload
+
+    monkeypatch.setattr(load_mod, "_read_gpu_lifecycle_payload", fake_reader)
+
+    async def body():
+        engine, sf, tenant, token = await _one_active_lease(start)
+        async with sf() as session:
+            snap = await load_snapshot(session, now=start)
+            assert snap["lease_demand"] == 0
+            assert snap["in_flight"] == 0
+            assert _has_work(snap) is False
+            lease = await session.get(DescribeDemandLease, (tenant, token))
+            assert lease is not None and lease.state == DemandLeaseState.ACTIVE
+        assert reads == 1
         await engine.dispose()
 
     asyncio.run(body())

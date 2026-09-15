@@ -1,3 +1,8 @@
- .../js/admin/pages/settings/GpuControlCard.tsx     | 20 +++++--
- .../settings/__tests__/GpuControlCard.test.tsx     | 70 +++++++++++++++++-----
- 2 files changed, 68 insertions(+), 22 deletions(-)
+ .../scene/application/describe_async_worker.py     |  14 ++
+ .../scene/application/describe_run_worker.py       | 183 ++++++++++++++++-
+ .../http/routers/describe_run.py                   |  36 +++-
+ .../scene/tests/fixtures/gpuflow-run-items.json    |  67 +++++++
+ .../scene/tests/test_describe_run_items.py         |  67 +++++++
+ .../scene/tests/test_describe_run_routes.py        |  65 ++++++
+ .../scene/tests/test_describe_run_worker_phases.py | 218 ++++++++++++++++++++-
+ 7 files changed, 630 insertions(+), 20 deletions(-)

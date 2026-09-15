@@ -1,1 +1,1 @@
-631795ff1665 offload: Fix-2 deferred-stop is committed: Stop stays enabled during
+cf86458995f6 offload: Lane svc-run-timing now records real run/item timing and

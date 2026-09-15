@@ -29,6 +29,7 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.datastructures import FormData, UploadFile
 
+from db.models.scene import DescribeDemandLease
 from db.tenant_context import enable_rls_bypass, require_tenant_record, set_tenant_context
 from recognition.infrastructure.repositories.audit_repository import AuditRepository
 from recognition.interface_adapters.http.deps import (
@@ -63,6 +64,7 @@ from scene.application.visual_facts_service import (
 )
 from scene.config.settings import DescriptionSettings
 from scene.domain.describe_run import (
+    DemandLeaseState,
     DescribeJobStatus,
     OperationExpiredError,
     OperationMismatchError,
@@ -279,9 +281,9 @@ def _lease_seconds() -> float:
 
 
 def _optional_operation_id(form: FormData) -> str | None:
-    raw = form.get("operation_id")
-    if raw is None:
+    if "operation_id" not in form:
         return None
+    raw = form.get("operation_id")
     if isinstance(raw, UploadFile):
         body = raw.file.read()
         text = body.decode("utf-8") if isinstance(body, (bytes, bytearray)) else str(body)
@@ -290,7 +292,12 @@ def _optional_operation_id(form: FormData) -> str | None:
     else:
         text = str(raw)
     stripped = text.strip()
-    return stripped or None
+    if not stripped or len(stripped) > 128:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "operation_id must be a non-empty string of at most 128 characters",
+        )
+    return stripped
 
 
 def _multipart_request_digest(*, media_id: int, image_bytes: bytes, context: Mapping[str, Any] | None) -> str:
@@ -392,13 +399,21 @@ def _untimed_with_elapsed(server_elapsed_ms: float | None) -> DescribeTiming:
 
 
 class _PreflightMissCacheRepository:
-    """Skip VisualFactsService's second cache read after a GPU preflight miss."""
+    """Skip VisualFactsService's first cache read after a GPU preflight miss.
+
+    Only the pre-compute lookup is suppressed. Later ``get_by_cache_key`` calls
+    (duplicate-key recovery in ``insert_or_get_existing``) delegate.
+    """
 
     def __init__(self, inner: ImageDescriptionRepository) -> None:
         self._inner = inner
+        self._preflight_miss_consumed = False
 
     async def get_by_cache_key(self, **kwargs):
-        return None
+        if not self._preflight_miss_consumed:
+            self._preflight_miss_consumed = True
+            return None
+        return await self._inner.get_by_cache_key(**kwargs)
 
     def __getattr__(self, name: str):
         return getattr(self._inner, name)
@@ -618,7 +633,7 @@ async def _accept_operation(
             status_code=status.HTTP_409_CONFLICT,
             code=OperationMismatchError.code,
             message=str(exc) or "operation does not match this tenant and request",
-            operation_id=operation_id,
+            operation_id=None,
             startup_id=None,
             timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
         ) from exc
@@ -782,6 +797,44 @@ async def _complete_operation(
         )
 
 
+def _preserves_demand_lease(exc: HTTPException) -> bool:
+    """503 starting/unavailable keep the lease so retries can renew demand."""
+    detail = exc.detail
+    if not isinstance(detail, dict):
+        return False
+    return detail.get("code") in {"description_service_starting", "description_service_unavailable"}
+
+
+def _http_exception_already_terminalized(exc: HTTPException) -> bool:
+    """502 from ``_complete_operation`` already attempted the terminal transition."""
+    detail = exc.detail
+    return isinstance(detail, dict) and detail.get("code") == "description_service_error"
+
+
+async def _release_unready_operation(
+    *,
+    session: AsyncSession,
+    tenant_uuid: uuid.UUID,
+    op,
+    server_elapsed_ms: float | None,
+) -> None:
+    """Release demand without fabricating a readiness observation."""
+    now = datetime.now(UTC)
+    lease = await session.get(
+        DescribeDemandLease,
+        (op.tenant_id, op.operation_id),
+        populate_existing=True,
+        with_for_update=True,
+    )
+    if lease is None or lease.state != DemandLeaseState.ACTIVE:
+        return
+    lease.state = DemandLeaseState.COMPLETED
+    op.completed_at = now
+    if server_elapsed_ms is not None:
+        op.server_elapsed_ms = server_elapsed_ms
+    await _commit_and_rescope(session, tenant_uuid)
+
+
 async def _terminalize_accepted_operation(
     *,
     session: AsyncSession | None,
@@ -793,6 +846,14 @@ async def _terminalize_accepted_operation(
     if session is None or op is None:
         return
     try:
+        if op.first_ready_at is None:
+            await _release_unready_operation(
+                session=session,
+                tenant_uuid=tenant_uuid,
+                op=op,
+                server_elapsed_ms=server_elapsed_ms,
+            )
+            return
         await _complete_operation(
             session=session,
             tenant_uuid=tenant_uuid,
@@ -1039,7 +1100,15 @@ async def describe_image_multipart(
             startup_id=startup_id,
             timing=timing,
         )
-    except HTTPException:
+    except HTTPException as exc:
+        if not _preserves_demand_lease(exc) and not _http_exception_already_terminalized(exc):
+            await _terminalize_accepted_operation(
+                session=session,
+                tenant_uuid=tenant_uuid,
+                op=op,
+                server_elapsed_ms=_elapsed_ms(server_start),
+                gpu_compute=gpu_compute,
+            )
         raise
     except TimeoutError as exc:
         await _terminalize_accepted_operation(

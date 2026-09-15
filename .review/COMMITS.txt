@@ -1,1 +1,1 @@
-b879db1f1155 offload: C1 closed-on-load naming control is committed; sibling overlay
+bef8a8ee0a85 offload: Lane spa-bulk-timing now derives isWarming from run.phase and

@@ -145,6 +145,9 @@ class VisualFactsResponse(BaseModel):
 
     Preview fields are draft-only: nothing here writes
     ``_wp_attachment_image_alt`` (that write path is E19-2).
+
+    Builders MUST supply operation_id, startup_id (nullable), and timing.
+    Unknown timing observations must be explicit nulls; timing itself is required.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -175,10 +178,10 @@ class VisualFactsResponse(BaseModel):
     # ALTQ-1 additive optional long-form surface (dual-length prompting).
     # None when the adapter produces only the short draft; never required.
     alt_text_long: str | None = None
-    # Absent on older responses; never fabricate correlation or measurements.
-    operation_id: str | None = Field(default=None, min_length=1, max_length=128)
-    startup_id: str | None = None
-    timing: DescribeTiming | None = None
+    # Builders supply correlation and measurements; unknown observations stay null.
+    operation_id: str = Field(min_length=1, max_length=128)
+    startup_id: str | None
+    timing: DescribeTiming
 
 
 class DescribeJobResult(BaseModel):
@@ -195,7 +198,11 @@ class DescribeJobResult(BaseModel):
 
 
 class DescribeRunResponse(BaseModel):
-    """Async describe-run status returned by submit/status endpoints."""
+    """Async describe-run status returned by submit/status endpoints.
+
+    Builders MUST supply operation_id, startup_id (nullable), and timing.
+    Unknown timing observations must be explicit nulls; timing itself is required.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -223,9 +230,9 @@ class DescribeRunResponse(BaseModel):
     # snapshotted, so a later config change never moves an accepted run's number.
     # Null only for runs created outside the submit route (never via POST).
     deadline_seconds: float | None = None
-    operation_id: str | None = Field(default=None, min_length=1, max_length=128)
-    startup_id: str | None = None
-    timing: DescribeRunTiming | None = None
+    operation_id: str = Field(min_length=1, max_length=128)
+    startup_id: str | None
+    timing: DescribeRunTiming
 
 
 class DescribeRunItemResponse(BaseModel):

@@ -25,8 +25,11 @@ use function delete_transient;
 use function esc_url_raw;
 use function get_transient;
 use function get_option;
+use function array_diff;
+use function array_keys;
 use function in_array;
 use function is_array;
+use function is_finite;
 use function is_float;
 use function is_int;
 use function is_numeric;
@@ -69,6 +72,44 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 	public const ROUTE_FAMILY_DESCRIBE = 'describe';
 	public const ROUTE_FAMILY_UI_READ  = 'ui_read';
 	public const ROUTE_FAMILY_CONTROL  = 'control';
+
+	/**
+	 * image-description-response.schema.json#/properties/timing required keys.
+	 *
+	 * @var list<string>
+	 */
+	private const TIMING_KEYS = array(
+		'queue_ms',
+		'ramp_up_ms',
+		'processing_ms',
+		'startup_ms',
+		'server_elapsed_ms',
+	);
+
+	/**
+	 * scene-describe-multipart.schema.json error branch top-level properties
+	 * (additionalProperties: false).
+	 *
+	 * @var list<string>
+	 */
+	private const TYPED_ERROR_TOP_LEVEL_KEYS = array(
+		'detail',
+	);
+
+	/**
+	 * scene-describe-multipart.schema.json error-branch detail properties
+	 * (additionalProperties: false).
+	 *
+	 * @var list<string>
+	 */
+	private const TYPED_ERROR_DETAIL_KEYS = array(
+		'code',
+		'message',
+		'operation_id',
+		'startup_id',
+		'warmup_eta_seconds',
+		'timing',
+	);
 
 	private ?RecognitionProxyPolicy $proxy_policy = null;
 	private ?RecognitionEndpointResolver $endpoint_resolver = null;
@@ -569,8 +610,16 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 			return false;
 		}
 
+		if ( ! $this->has_closed_key_set( $decoded, self::TYPED_ERROR_TOP_LEVEL_KEYS ) ) {
+			return false;
+		}
+
 		$detail = $decoded['detail'] ?? null;
 		if ( ! is_array( $detail ) ) {
+			return false;
+		}
+
+		if ( ! $this->has_closed_key_set( $detail, self::TYPED_ERROR_DETAIL_KEYS ) ) {
 			return false;
 		}
 
@@ -599,7 +648,7 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 			return false;
 		}
 		$eta = $detail['warmup_eta_seconds'];
-		if ( null !== $eta && ( ( ! is_int( $eta ) && ! is_float( $eta ) ) || $eta < 0 ) ) {
+		if ( null !== $eta && ( ! $this->is_finite_number( $eta ) || $eta < 0 ) ) {
 			return false;
 		}
 
@@ -633,10 +682,9 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 			return false;
 		}
 
-		$expected = array( 'queue_ms', 'ramp_up_ms', 'processing_ms', 'startup_ms', 'server_elapsed_ms' );
-		$keys     = array_keys( $timing );
+		$keys = array_keys( $timing );
 		sort( $keys );
-		$sorted_expected = $expected;
+		$sorted_expected = self::TIMING_KEYS;
 		sort( $sorted_expected );
 		if ( $keys !== $sorted_expected ) {
 			return false;
@@ -646,12 +694,23 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 			if ( null === $value ) {
 				continue;
 			}
-			if ( ( ! is_int( $value ) && ! is_float( $value ) ) || $value < 0 ) {
+			if ( ! $this->is_finite_number( $value ) || $value < 0 ) {
 				return false;
 			}
 		}
 
 		return true;
+	}
+
+	/**
+	 * @param list<string> $allowed
+	 */
+	private function has_closed_key_set( array $value, array $allowed ): bool {
+		return array() === array_diff( array_keys( $value ), $allowed );
+	}
+
+	private function is_finite_number( mixed $value ): bool {
+		return ( is_int( $value ) || is_float( $value ) ) && is_finite( (float) $value );
 	}
 
 	private function is_typed_unavailable_response( int $status, ?string $typed_code ): bool {
@@ -675,11 +734,18 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 			if ( 'retry-after' !== strtolower( trim( (string) $key ) ) ) {
 				continue;
 			}
-			if ( is_int( $value ) ) {
-				return $value;
+			if ( $this->is_finite_number( $value ) ) {
+				if ( is_int( $value ) ) {
+					return $value;
+				}
+				if ( is_float( $value ) && (float) (int) $value === $value ) {
+					return (int) $value;
+				}
+				return null;
 			}
 			if ( is_string( $value ) && '' !== $value && is_numeric( $value ) && (string) (int) $value === trim( $value ) ) {
-				return (int) $value;
+				$parsed = (int) $value;
+				return $this->is_finite_number( $parsed ) ? $parsed : null;
 			}
 		}
 
@@ -687,13 +753,12 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 	}
 
 	private function open_circuit_local_timing(): array {
-		return array(
-			'queue_ms'          => null,
-			'ramp_up_ms'        => null,
-			'processing_ms'     => null,
-			'startup_ms'        => null,
-			'server_elapsed_ms' => null,
-		);
+		$timing = array();
+		foreach ( self::TIMING_KEYS as $key ) {
+			$timing[ $key ] = null;
+		}
+
+		return $timing;
 	}
 
 	private function open_circuit_response( string $route_family ): WP_REST_Response|WP_Error {

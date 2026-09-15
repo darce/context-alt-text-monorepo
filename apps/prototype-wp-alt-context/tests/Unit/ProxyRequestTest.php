@@ -1630,6 +1630,11 @@ PHP;
         $negativeEta = $validDetail;
         $negativeEta['warmup_eta_seconds'] = -1;
 
+        $extraDetail = $validDetail;
+        $extraDetail['hint'] = 'not-in-schema';
+
+        $validJson = json_encode(['detail' => $validDetail]);
+
         return [
             'missing_eta' => [[
                 'response' => ['code' => 503, 'message' => 'Service Unavailable'],
@@ -1675,6 +1680,26 @@ PHP;
                 'response' => ['code' => 503, 'message' => 'Service Unavailable'],
                 'headers' => ['Retry-After' => '5'],
                 'body' => json_encode(['detail' => $negativeEta]),
+            ]],
+            'extra_top_level_key' => [[
+                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+                'headers' => ['Retry-After' => '5'],
+                'body' => json_encode(['detail' => $validDetail, 'unexpected' => true]),
+            ]],
+            'extra_detail_key' => [[
+                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+                'headers' => ['Retry-After' => '5'],
+                'body' => json_encode(['detail' => $extraDetail]),
+            ]],
+            'inf_eta' => [[
+                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+                'headers' => ['Retry-After' => '5'],
+                'body' => str_replace('"warmup_eta_seconds":5', '"warmup_eta_seconds":1e400', (string) $validJson),
+            ]],
+            'inf_timing' => [[
+                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+                'headers' => ['Retry-After' => '5'],
+                'body' => str_replace('"queue_ms":0', '"queue_ms":1e400', (string) $validJson),
             ]],
         ];
     }

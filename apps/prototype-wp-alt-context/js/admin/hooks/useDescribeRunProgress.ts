@@ -8,6 +8,7 @@ import {
   isGpuState,
   type DescribeRunResponse,
   type DescribeRunStatus,
+  type DescribeRunTiming,
   type GpuState,
 } from '../api/describeApi';
 import { getJobProgressStallThresholdMs } from './useJobProgressStream';
@@ -89,6 +90,18 @@ export interface DescribeRunProgress {
   etaSeconds: number | null;
   /** GPU lifecycle snapshot carried by the existing run-status poll. */
   gpuState?: GpuState | null;
+  /**
+   * Measured run timing from the polled envelope. Null when the key is absent
+   * or null — never derived client-side (rg-015).
+   */
+  timing?: DescribeRunTiming | null;
+  /** Opaque shared startup id from the polled envelope; null when absent. */
+  startupId?: string | null;
+  /**
+   * GPU is starting and the run has not yet reported an ETA. UI should say the
+   * service is starting instead of presenting a stalled bar.
+   */
+  isWarming?: boolean;
   isTerminal: boolean;
   stalledForSeconds: number | null;
   isPolling: boolean;
@@ -166,6 +179,11 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
   const run = query.data ?? null;
   const status = run?.status ?? null;
   const isTerminal = status !== null && isDescribeRunTerminal(status);
+  const gpuState = isGpuState(run?.gpu_state) ? run.gpu_state : GPU_STATE.UNKNOWN;
+  const etaSeconds = run?.eta_seconds ?? null;
+  const timing = run?.timing ?? null;
+  const startupId = run?.startup_id ?? null;
+  const isWarming = !isTerminal && gpuState === GPU_STATE.STARTING && etaSeconds === null;
   const frozenStreakExceeded = frozenPollStreak >= FROZEN_POLL_ESCALATION_THRESHOLD;
   const isFrozen = query.isError && isFrozenPollFailure(query.error) && !frozenStreakExceeded;
   const isError = query.isError && !isFrozen;
@@ -206,7 +224,7 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
   // error surfaces its own Retry affordance, and a frozen poll already shows
   // the paused notice, so suppress the speculative stall banner in both.
   useEffect(() => {
-    if (runId === null || isTerminal || isError || isFrozen) {
+    if (runId === null || isTerminal || isError || isFrozen || isWarming) {
       setStalledForSeconds(null);
       return;
     }
@@ -226,7 +244,7 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
     updateStallState();
     const intervalId = window.setInterval(updateStallState, 1_000);
     return () => window.clearInterval(intervalId);
-  }, [runId, isTerminal, isError, isFrozen]);
+  }, [runId, isTerminal, isError, isFrozen, isWarming]);
 
   // Terminal (processed) items over total: completed + failed + skipped, so the
   // bar reaches 100% when every item is done regardless of per-item outcome.
@@ -239,8 +257,11 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
     run,
     status,
     progressFraction,
-    etaSeconds: run?.eta_seconds ?? null,
-    gpuState: isGpuState(run?.gpu_state) ? run.gpu_state : GPU_STATE.UNKNOWN,
+    etaSeconds,
+    gpuState,
+    timing,
+    startupId,
+    isWarming,
     isTerminal,
     stalledForSeconds,
     isPolling: runId !== null && !isTerminal && !isError,

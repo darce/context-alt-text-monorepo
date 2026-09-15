@@ -1,1 +1,1 @@
-ecefefc9b1b4 offload: Closed R-01–R-05 on the multipart GPU describe route; committed
+7832601802ee offload: Committed Fix-2/Fix-3 cold-GPU route fixes:

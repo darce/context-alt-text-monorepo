@@ -65,3 +65,40 @@ Fix: Treat progress as the successful terminal transition (or re-read the item s
 - Changed paths in the supplied delta: 7; all are within the lane's stated owned-path list.
 - Mandated composer-lock test: passed (`1 passed`).
 - The lane service test command was attempted with the lane `.venv` interpreter; it emitted one dot and then hung in this sandbox, so its result is not trusted.
+
+## Re-review r2 (cf8645899..3601dc287)
+
+VERIFIED: {"GPUFLOW-1-SVCRUNTIMING-R-01":"partially_fixed","GPUFLOW-1-SVCRUNTIMING-R-03":"fixed","GPUFLOW-1-SVCRUNTIMING-R-04":"partially_fixed","GPUFLOW-1-SVCRUNTIMING-R-05":"partially_fixed"}
+
+FINDINGS: [{"id":"GPUFLOW-1-SVCRUNTIMING-R-06","severity":"high","file_path":"apps/prototype-description-service/scene/application/describe_run_worker.py","line":305,"summary":"Cold runs without a durable startup observation report zero readiness wait.","evidence":"The new cold path returns (None, None) when no retained DescribeStartup row is available (lines 270-290) and passes startup_id=None to record_readiness (lines 293-312). The existing repository maps that null association to ramp_up_ms=0, even though the worker just waited through a cold GPU gate. The added regression (test_describe_run_worker_phases.py:389-425) checks only null IDs and never checks ramp_up_ms."},{"id":"GPUFLOW-1-SVCRUNTIMING-R-07","severity":"medium","file_path":"apps/prototype-description-service/scene/tests/test_describe_run_worker_phases.py","line":518,"summary":"Retry-cancellation coverage injects timing instead of measuring an adapter attempt.","evidence":"The regression assigns exc.processing_ms = 42 to a synthetic ConnectError (lines 517-520) and then verifies propagation. It does not fake or assert the monotonic attempt clock, so a regression that leaves real adapter failures unmeasured can still pass this proof."}]
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| GPUFLOW-1-SVCRUNTIMING-R-01 | partially_fixed | `describe_run_worker.py:270-290` now reads a retained `DescribeStartup` row and leaves `startup_ms` null without observations, but it selects the newest retained global row rather than the run operation's durable `startup_id`; concurrent/restarted operations can still receive an unrelated startup correlation. |
+| GPUFLOW-1-SVCRUNTIMING-R-03 | fixed | `describe_run_worker.py:393-434` carries the cumulative retry measurements on `_RunCancelledError`, and `:742-756` persists that value before marking the item skipped; the added backoff-cancellation regression exercises the propagation. |
+| GPUFLOW-1-SVCRUNTIMING-R-04 | partially_fixed | `describe_async_worker.py:115-126` starts the clock inside the dispatched callable, removing executor queue delay on successful returns, but an adapter exception exits before `_elapsed_ms()` and no failure timing is attached or persisted. |
+| GPUFLOW-1-SVCRUNTIMING-R-05 | partially_fixed | `describe_run_worker.py:673-815` now uses terminal `mark_item()` results for progress, but the production repository returns `current == status` for an already-terminal item and the regression stub (`test_describe_run_worker_phases.py:576-587`) bypasses that no-op behavior. |
+
+### FINDINGS
+
+#### GPUFLOW-1-SVCRUNTIMING-R-06 — high
+
+File: `apps/prototype-description-service/scene/application/describe_run_worker.py:270-312`; regression coverage is `apps/prototype-description-service/scene/tests/test_describe_run_worker_phases.py:389-425`.
+
+Evidence: `_observed_startup()` returns `(None, None)` when no retained startup row is found, and `_record_run_readiness()` forwards that null `startup_id` for a cold wait. `DescribeRunRepository.record_readiness()` treats a null startup association as the warm path and writes `ramp_up_ms = 0`, so an actually delayed cold readiness wait is silently reported as zero. The new test asserts only `startup_id` and `startup_ms` are null, leaving this contract break green. This violates the “own wait stays `ramp_up_ms`” and no-fabricated-metadata rule `[rg-015]`.
+
+Impact: A cold run with an unobserved or temporarily unavailable startup underreports readiness latency and can make p50/max or operator diagnostics claim a warm path. The service must preserve the measured operation wait independently of whether whole-startup timing is available.
+
+Fix: Keep the `cold` state separate from startup association when calling the repository; persist the measured readiness wait for cold runs, while leaving only `startup_id`/`startup_ms` null when the durable observation is unavailable. Add an assertion for positive/nonzero cold `ramp_up_ms` with no startup row.
+
+#### GPUFLOW-1-SVCRUNTIMING-R-07 — medium
+
+File: `apps/prototype-description-service/scene/tests/test_describe_run_worker_phases.py:510-573`.
+
+Evidence: The cancellation regression sets `exc.processing_ms = 42` on a hand-built `httpx.ConnectError` before invoking the worker. It proves that an already-present timing attribute is carried through backoff cancellation, but it never advances or controls the monotonic clock and never measures a real adapter attempt. A failure in the adapter timing producer would therefore remain undetected. This leaves the required fake-clock/actual-attempt proof incomplete `[TEST-15]`.
+
+Impact: The test suite can stay green while cancelled retries persist a synthetic or absent duration, so measured failed/cancelled work can still disappear from run timing aggregates.
+
+Fix: Use a fake monotonic clock around a dispatched attempt (or the real adapter timing hook), raise a transient error after advancing it, cancel during backoff, and assert the persisted value is the measured elapsed duration.
+
+Verdict: fail

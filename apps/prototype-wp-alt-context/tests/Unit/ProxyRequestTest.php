@@ -1618,6 +1618,18 @@ PHP;
         $wrongCode = $validDetail;
         $wrongCode['code'] = 'description_service_error';
 
+        $emptyTiming = $validDetail;
+        $emptyTiming['timing'] = [];
+
+        $bogusTiming = $validDetail;
+        $bogusTiming['timing'] = array_merge($validDetail['timing'], ['bogus_ms' => 1]);
+
+        $overlongId = $validDetail;
+        $overlongId['operation_id'] = str_repeat('a', 129);
+
+        $negativeEta = $validDetail;
+        $negativeEta['warmup_eta_seconds'] = -1;
+
         return [
             'missing_eta' => [[
                 'response' => ['code' => 503, 'message' => 'Service Unavailable'],
@@ -1634,7 +1646,65 @@ PHP;
                 'headers' => ['Retry-After' => '5'],
                 'body' => json_encode(['detail' => $wrongCode]),
             ]],
+            'empty_timing' => [[
+                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+                'headers' => ['Retry-After' => '5'],
+                'body' => json_encode(['detail' => $emptyTiming]),
+            ]],
+            'bogus_timing_key' => [[
+                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+                'headers' => ['Retry-After' => '5'],
+                'body' => json_encode(['detail' => $bogusTiming]),
+            ]],
+            'overlong_id' => [[
+                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+                'headers' => ['Retry-After' => '5'],
+                'body' => json_encode(['detail' => $overlongId]),
+            ]],
+            'retry_after_zero' => [[
+                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+                'headers' => ['Retry-After' => '0'],
+                'body' => json_encode(['detail' => $validDetail]),
+            ]],
+            'retry_after_121' => [[
+                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+                'headers' => ['Retry-After' => '121'],
+                'body' => json_encode(['detail' => $validDetail]),
+            ]],
+            'negative_eta' => [[
+                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+                'headers' => ['Retry-After' => '5'],
+                'body' => json_encode(['detail' => $negativeEta]),
+            ]],
         ];
+    }
+
+    public function testNullWarmupEtaDoesNotCountTowardDescribeBreaker(): void
+    {
+        global $wpdb;
+        $wpdb->mockVar = '1';
+
+        $harness = $this->makeFamilyHarness();
+        $describeCircuit = $this->familyCircuitKey($harness->resolvedBaseUrl(), 'describe');
+        $describeFailures = $this->familyFailureKey($harness->resolvedBaseUrl(), 'describe');
+
+        $starting = $this->validatedWarmingHttp();
+        $body = json_decode((string) $starting['body'], true);
+        $this->assertIsArray($body);
+        $body['detail']['warmup_eta_seconds'] = null;
+        $starting['body'] = json_encode($body);
+
+        $this->queueHttpResponse($starting);
+        $this->queueHttpResponse($starting);
+        $first = $harness->call('POST', '/scene/describe/multipart', 'description');
+        $second = $harness->call('POST', '/scene/describe/multipart', 'description');
+
+        $this->assertInstanceOf(WP_REST_Response::class, $first);
+        $this->assertSame(503, $first->get_status());
+        $this->assertNull($first->get_data()['detail']['warmup_eta_seconds'] ?? 'missing');
+        $this->assertInstanceOf(WP_REST_Response::class, $second);
+        $this->assertFalse(get_transient($describeCircuit), 'null warmup_eta_seconds is contract-valid warming');
+        $this->assertFalse(get_transient($describeFailures), 'null ETA warming must not increment describe');
     }
 
     /**
@@ -1738,11 +1808,11 @@ PHP;
             ['queue_ms', 'ramp_up_ms', 'processing_ms', 'startup_ms', 'server_elapsed_ms'],
             array_keys($timing)
         );
-        $this->assertSame(0, $timing['queue_ms']);
-        $this->assertSame(0, $timing['ramp_up_ms']);
-        $this->assertSame(0, $timing['processing_ms']);
+        $this->assertNull($timing['queue_ms']);
+        $this->assertNull($timing['ramp_up_ms']);
+        $this->assertNull($timing['processing_ms']);
         $this->assertNull($timing['startup_ms']);
-        $this->assertSame(0, $timing['server_elapsed_ms']);
+        $this->assertNull($timing['server_elapsed_ms']);
         $this->assertEqualsCanonicalizing(
             ['code', 'message', 'operation_id', 'startup_id', 'timing'],
             array_keys($detail)

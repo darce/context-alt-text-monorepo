@@ -38,6 +38,8 @@ const statusResponse = (overrides: Partial<GpuStatusResponse['gpu_state']> = {})
   server_time: '2026-09-07T12:00:00Z',
 });
 
+const STOPPABLE_STATES = new Set(['starting', 'warming', 'ready', 'degraded']);
+
 const mockControl = (data: GpuStatusResponse, overrides: Partial<ReturnType<typeof gpuControl.useGpuControl>> = {}) => {
   useGpuControlMock.mockReturnValue({
     data,
@@ -47,12 +49,12 @@ const mockControl = (data: GpuStatusResponse, overrides: Partial<ReturnType<type
     refetch: vi.fn(),
     canStart: data.gpu_state.state === 'stopped',
     startBlockedReason: null,
-    canStop: data.gpu_state.state !== 'stopped' && !data.load.has_work,
+    canStop: STOPPABLE_STATES.has(data.gpu_state.state) && data.gpu_state.intent !== GPU_INTENT_ACTION.STOP,
     stopBlockedReason:
       data.gpu_state.state === 'stopped'
         ? 'already stopped'
-        : data.load.has_work
-          ? 'a describe run is in flight — stops once it finishes'
+        : data.gpu_state.intent === GPU_INTENT_ACTION.STOP
+          ? 'stop already requested'
           : null,
     canReturnToAuto: data.gpu_state.intent !== GPU_INTENT_ACTION.AUTO,
     requestIntent: vi.fn(),
@@ -176,29 +178,65 @@ describe('GpuControlCard', () => {
     expect(screen.getByText(/polling every 5 s/)).toBeInTheDocument();
   });
 
-  it('disables Stop with the work-in-flight reason', () => {
-    mockControl(statusResponse({ state: 'ready' }), {
-      canStop: false,
-      stopBlockedReason: 'a describe run is in flight — stops once it finishes',
-    });
-    render(<GpuControlCard />);
+  it('keeps Stop enabled during work in flight and shows deferred-stop copy', () => {
+    const requestIntent = vi.fn();
+    const busy = {
+      ...statusResponse({
+        state: 'ready',
+        instance_running_since: '2026-09-07T11:59:00Z',
+      }),
+      load: { has_work: true, written_at: 1_700_000_004, fresh: true },
+    };
+    mockControl(busy, { requestIntent });
+    const { rerender } = render(<GpuControlCard />);
 
-    expect(screen.getByRole('button', { name: /Stop service/ })).toHaveAttribute('aria-disabled', 'true');
-    expect(screen.getByText(/a describe run is in flight/)).toBeInTheDocument();
+    const stop = screen.getByRole('button', { name: /Stop service/ });
+    expect(stop).not.toHaveAttribute('disabled');
+    expect(stop).not.toHaveAttribute('aria-disabled');
+    fireEvent.click(stop);
+    expect(screen.getByText(/Stopping after the current work finishes/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm stop' }));
+    expect(requestIntent).toHaveBeenCalledWith(GPU_INTENT_ACTION.STOP);
+
+    mockControl(
+      {
+        ...busy,
+        gpu_state: {
+          ...busy.gpu_state,
+          intent: GPU_INTENT_ACTION.STOP,
+          intent_status: GPU_INTENT_STATUS.BLOCKED_WORK_IN_FLIGHT,
+        },
+      },
+      { requestIntent },
+    );
+    rerender(<GpuControlCard />);
+    expect(screen.getByText(`Service: ${GPU_STATE_VOCABULARY.ready}`)).toBeInTheDocument();
+    expect(screen.getByText(/Stopping after the current work finishes/)).toBeInTheDocument();
   });
 
   it('renders a pending stop notice for blocked work', () => {
-    mockControl(
-      statusResponse({
+    mockControl({
+      ...statusResponse({
         state: 'degraded',
         intent: GPU_INTENT_ACTION.STOP,
         intent_status: GPU_INTENT_STATUS.BLOCKED_WORK_IN_FLIGHT,
       }),
-    );
+      load: { has_work: true, written_at: 1_700_000_004, fresh: true },
+    });
     render(<GpuControlCard />);
 
-    expect(screen.getByText(/Stop pending/)).toBeInTheDocument();
-    expect(screen.getByText(/stops when it ends/)).toBeInTheDocument();
+    expect(screen.getByText(/Stopping after the current work finishes/)).toBeInTheDocument();
+    expect(screen.getByText(`Service: ${GPU_STATE_VOCABULARY.degraded}`)).toBeInTheDocument();
+  });
+
+  it('disables Stop when the service is already stopped or unknown', () => {
+    mockControl(statusResponse({ state: 'unknown' }));
+    const { rerender } = render(<GpuControlCard />);
+    expect(screen.getByRole('button', { name: /Stop service/ })).toHaveAttribute('aria-disabled', 'true');
+
+    mockControl(statusResponse({ state: 'stopped' }));
+    rerender(<GpuControlCard />);
+    expect(screen.getByRole('button', { name: /Stop service/ })).toHaveAttribute('aria-disabled', 'true');
   });
 
   it('renders stale telemetry as not reported and disables Start with its age', () => {

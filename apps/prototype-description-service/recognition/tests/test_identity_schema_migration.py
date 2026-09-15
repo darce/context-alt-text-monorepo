@@ -92,6 +92,7 @@ def test_identity_schema_declares_expected_table_set() -> None:
         "describe_startups",
         "describe_operations",
         "describe_demand_leases",
+        "describe_load_snapshot_revisions",
         "tenants",
         "api_keys",
         "demo_instances",
@@ -138,6 +139,40 @@ def test_identity_schema_refresh_status_constraint_matches_enum(monkeypatch) -> 
     expected_values = ", ".join(f"'{status.value}'" for status in CurationRefreshStatus)
 
     assert str(refresh_constraint.sqltext) == f"refresh_status IN ({expected_values})"
+
+
+def test_identity_schema_upgrade_creates_describe_load_snapshot_revisions(monkeypatch) -> None:
+    import sqlalchemy as sa
+
+    recorder = _RecordingOp()
+    monkeypatch.setattr(identity_schema, "op", recorder)
+
+    identity_schema.upgrade()
+
+    assert "describe_load_snapshot_revisions" in recorder.created_tables
+    args = recorder.created_table_args["describe_load_snapshot_revisions"]
+    columns = {column.name: column for column in args if isinstance(column, sa.Column)}
+    assert set(columns) == {"singleton", "revision"}
+    assert columns["singleton"].primary_key is True
+    assert columns["revision"].nullable is False
+    checks = [item for item in args if isinstance(item, CheckConstraint)]
+    assert len(checks) == 1
+    assert checks[0].name == "ck_describe_load_snapshot_revisions_singleton"
+    assert "singleton = 1" in str(checks[0].sqltext)
+
+
+def test_identity_schema_downgrade_drops_describe_load_snapshot_revisions_first(monkeypatch) -> None:
+    recorder = _RecordingOp()
+    monkeypatch.setattr(identity_schema, "op", recorder)
+
+    identity_schema.downgrade()
+
+    assert identity_schema.DOWNGRADE_TABLE_ORDER[0] == "describe_load_snapshot_revisions"
+    dropped = recorder.dropped_tables
+    assert "describe_load_snapshot_revisions" in dropped
+    assert dropped.index("describe_load_snapshot_revisions") < dropped.index("describe_demand_leases")
+    assert dropped.index("describe_load_snapshot_revisions") < dropped.index("describe_operations")
+    assert dropped.index("describe_load_snapshot_revisions") < dropped.index("describe_startups")
 
 
 def test_identity_schema_downgrade_drops_children_before_parents(monkeypatch) -> None:

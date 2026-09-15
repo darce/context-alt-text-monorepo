@@ -139,6 +139,57 @@ class RetentionControllerTest extends TestCase
         $this->assertArrayNotHasKey('acx_retention_status_' . $this->tenantId(), $GLOBALS['__ac_transients']);
     }
 
+    public function testDescribeBreakerDoesNotBlankRetentionStatus(): void
+    {
+        global $wpdb;
+        $wpdb->mockVar = '1';
+        $this->setOption('acx_recognition_api_key', 'test-key');
+
+        $describe = new class() extends RetentionController {
+            public function failDescribe()
+            {
+                return $this->proxy_request('POST', '/scene/describe/multipart', [], [], 'description');
+            }
+        };
+        $error = [
+            'response' => ['code' => 502, 'message' => 'Bad Gateway'],
+            'body' => json_encode([
+                'detail' => [
+                    'code' => 'description_service_error',
+                    'message' => 'adapter failed',
+                    'operation_id' => 'op-retry-opaque',
+                    'startup_id' => null,
+                ],
+            ]),
+        ];
+        $this->queueHttpResponse($error);
+        $this->queueHttpResponse($error);
+        $describe->failDescribe();
+        $describe->failDescribe();
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'retention_mode' => 'dispose_after_ack',
+                'last_export_at' => null,
+                'last_purge_at' => null,
+                'retention_updated_at' => '2026-03-12T10:00:00Z',
+            ]),
+        ]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode(['items' => []]),
+        ]);
+
+        $response = (new RetentionController())->get_status(
+            new WP_REST_Request('GET', '/acx/v1/retention/status')
+        );
+
+        $this->assertSame(200, $response->get_status());
+        $this->assertTrue($response->get_data()['available'] ?? false);
+        $this->assertSame('dispose_after_ack', $response->get_data()['policy']['retention_mode'] ?? null);
+    }
+
     public function testUpdatePolicyForwardsToBackendAndInvalidatesCache(): void
     {
         $tenantId = $this->tenantId();

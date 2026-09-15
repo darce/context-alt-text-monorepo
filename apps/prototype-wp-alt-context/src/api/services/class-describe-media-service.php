@@ -195,6 +195,11 @@ class DescribeMediaService {
 			),
 		);
 
+		$operation_id = $this->resolve_operation_id( $request );
+		if ( is_string( $operation_id ) ) {
+			$multipart_body['operation_id'] = $operation_id;
+		}
+
 		$response = $this->host->proxy_recognition_request(
 			'POST',
 			'/scene/describe/multipart',
@@ -294,6 +299,28 @@ class DescribeMediaService {
 		// entity-encoded instead of truncating the draft. update_post_meta does
 		// not apply KSES on its own.
 		return sanitize_text_field( $value );
+	}
+
+	/**
+	 * Optional multipart retry token. Opaque string, 1–128 chars; omitted on
+	 * first acceptance so the service can mint one. Never invent a value.
+	 */
+	private function resolve_operation_id( WP_REST_Request $request ): ?string {
+		$raw = $request->get_param( 'operation_id' );
+		if ( ! is_string( $raw ) ) {
+			$json = $request->get_json_params();
+			$raw  = is_array( $json ) ? ( $json['operation_id'] ?? null ) : null;
+		}
+		if ( ! is_string( $raw ) ) {
+			return null;
+		}
+
+		$value = trim( $raw );
+		if ( '' === $value || strlen( $value ) > 128 ) {
+			return null;
+		}
+
+		return $value;
 	}
 
 	private function should_write_alt_text( WP_REST_Request $request ): bool {
@@ -848,6 +875,11 @@ class DescribeMediaService {
 		$message = sprintf( 'Upstream description request failed with HTTP %d.', $status );
 		if ( is_array( $data ) && is_string( $data['detail'] ?? null ) && '' !== $data['detail'] ) {
 			$message = $data['detail'];
+		} elseif ( is_array( $data ) && is_array( $data['detail'] ?? null ) ) {
+			$detail_message = $data['detail']['message'] ?? null;
+			if ( is_string( $detail_message ) && '' !== $detail_message ) {
+				$message = $detail_message;
+			}
 		}
 
 		$this->budget_service->record_error(

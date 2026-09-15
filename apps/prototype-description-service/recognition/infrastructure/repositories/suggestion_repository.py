@@ -192,10 +192,28 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
             height=int(identity.bbox_height),
         )
 
-    def _to_details(self, model: SuggestionModel) -> SuggestionDetails:
+    async def _to_details(self, model: SuggestionModel) -> SuggestionDetails:
         identity: MediaIdentity | None = model.identity
         cluster: IdentityCluster | None = model.suggested_cluster
-        representative: MediaIdentity | None = cluster.representative_identity if cluster else None
+        representative: MediaIdentity | None = None
+        if cluster is not None and cluster.tenant_id == model.tenant_id:
+            # A stale primary may point at the candidate or a former member.
+            # Preserve a valid primary; otherwise use the best remaining member.
+            result = await self._session.execute(
+                select(MediaIdentity)
+                .join(IdentityMember, IdentityMember.identity_id == MediaIdentity.id)
+                .where(IdentityMember.cluster_id == model.suggested_cluster_id)
+                .where(IdentityMember.tenant_id == model.tenant_id)
+                .where(MediaIdentity.tenant_id == model.tenant_id)
+                .where(MediaIdentity.id != model.identity_id)
+                .order_by(
+                    (MediaIdentity.id == cluster.representative_identity_id).desc(),
+                    nulls_last(MediaIdentity.quality_score.desc()),
+                    MediaIdentity.id,
+                )
+                .limit(1)
+            )
+            representative = result.scalars().first()
 
         return SuggestionDetails(
             id=str(model.id),
@@ -309,7 +327,7 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
             .limit(limit)
             .options(
                 joinedload(SuggestionModel.identity),
-                joinedload(SuggestionModel.suggested_cluster).joinedload(IdentityCluster.representative_identity),
+                joinedload(SuggestionModel.suggested_cluster),
             )
         )
         result = await self._session.execute(stmt)
@@ -317,7 +335,7 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
 
         details_list = []
         for model in rows:
-            details = self._to_details(model)
+            details = await self._to_details(model)
             if model.resolution == SuggestionStatus.ACCEPTED.value:
                 details.status = SuggestionStatus.PENDING.value
 

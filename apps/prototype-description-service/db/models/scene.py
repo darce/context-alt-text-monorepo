@@ -10,6 +10,8 @@ generation cost (provenance).
 
 from __future__ import annotations
 
+from sqlalchemy import ForeignKeyConstraint
+
 from db.models.base_imports import (
     JSON,
     JSONB,
@@ -84,6 +86,90 @@ class ImageDescription(Base):
     )
 
 
+class DescribeStartup(Base):
+    """Global startup observations; an unobserved start stays NULL (rg-015)."""
+
+    __tablename__ = "describe_startups"
+
+    startup_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    first_ready_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    retain_until: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("first_ready_at >= started_at", name="ck_describe_startup_observations"),
+        Index("idx_describe_startups_retention", "retain_until"),
+    )
+
+
+class DescribeOperation(Base):
+    """Tenant/request binding and retained first observations across retries."""
+
+    __tablename__ = "describe_operations"
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    operation_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    request_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    accepted_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    retain_until: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    startup_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    first_ready_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    queue_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ramp_up_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    processing_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    startup_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    server_elapsed_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("queue_ms >= 0", name="ck_describe_operation_queue_ms"),
+        CheckConstraint("ramp_up_ms >= 0", name="ck_describe_operation_ramp_up_ms"),
+        CheckConstraint("processing_ms >= 0", name="ck_describe_operation_processing_ms"),
+        CheckConstraint("startup_ms >= 0", name="ck_describe_operation_startup_ms"),
+        CheckConstraint("server_elapsed_ms >= 0", name="ck_describe_operation_server_elapsed_ms"),
+        CheckConstraint("length(operation_id) BETWEEN 1 AND 128", name="ck_describe_operation_id"),
+        CheckConstraint(
+            "expires_at >= accepted_at AND expires_at <= retain_until", name="ck_describe_operation_expiry"
+        ),
+        CheckConstraint("first_ready_at >= accepted_at", name="ck_describe_operation_ready"),
+        CheckConstraint("completed_at >= accepted_at", name="ck_describe_operation_completed"),
+        ForeignKeyConstraint(["tenant_id"], ["tenants.id"], ondelete="CASCADE"),
+        ForeignKeyConstraint(["startup_id"], ["describe_startups.startup_id"]),
+        Index("idx_describe_operations_retention", "retain_until"),
+    )
+
+
+class DescribeDemandLease(Base):
+    """One demand state per operation, separate from retained timing.
+
+    The repository snapshots the operation retention deadline here and renews
+    both expiry fields atomically; terminal state transitions belong there.
+    """
+
+    __tablename__ = "describe_demand_leases"
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    operation_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'active'"))
+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    retain_until: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('active', 'completed', 'expired', 'rejected')", name="ck_describe_demand_lease_state"
+        ),
+        CheckConstraint("expires_at <= retain_until", name="ck_describe_demand_lease_expiry"),
+        ForeignKeyConstraint(
+            ["tenant_id", "operation_id"],
+            ["describe_operations.tenant_id", "describe_operations.operation_id"],
+            ondelete="CASCADE",
+        ),
+        Index("idx_describe_demand_leases_retention", "retain_until"),
+        Index("idx_describe_demand_leases_active", "state", "expires_at"),
+    )
+
+
 class DescribeRun(Base):
     __tablename__ = "image_description_runs"
 
@@ -142,7 +228,26 @@ class DescribeRun(Base):
         lazy="selectin",
     )
 
+    queue_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ramp_up_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    processing_ms_p50: Mapped[float | None] = mapped_column(Float, nullable=True)
+    processing_ms_max: Mapped[float | None] = mapped_column(Float, nullable=True)
+    startup_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    server_elapsed_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    items_timed: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Snapshot IDs survive operation retention cleanup for long-lived bulk runs.
+    operation_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    startup_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    first_ready_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+
     __table_args__ = (
+        CheckConstraint("queue_ms >= 0", name="ck_image_description_runs_queue_ms"),
+        CheckConstraint("ramp_up_ms >= 0", name="ck_image_description_runs_ramp_up_ms"),
+        CheckConstraint("processing_ms_p50 >= 0", name="ck_image_description_runs_processing_ms_p50"),
+        CheckConstraint("processing_ms_max >= 0", name="ck_image_description_runs_processing_ms_max"),
+        CheckConstraint("startup_ms >= 0", name="ck_image_description_runs_startup_ms"),
+        CheckConstraint("server_elapsed_ms >= 0", name="ck_image_description_runs_server_elapsed_ms"),
+        CheckConstraint("items_timed >= 0", name="ck_image_description_runs_items_timed"),
         CheckConstraint(
             "status IN ('pending', 'running', 'completed', 'completed_with_errors', 'failed', 'cancelled')",
             name="valid_describe_run_status",
@@ -204,7 +309,10 @@ class DescribeRunItem(Base):
 
     run: Mapped[DescribeRun] = relationship(back_populates="items")
 
+    processing_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+
     __table_args__ = (
+        CheckConstraint("processing_ms >= 0", name="ck_image_description_run_items_processing_ms"),
         UniqueConstraint("run_id", "media_id", name="uq_image_description_run_item_media"),
         CheckConstraint(
             "status IN ('queued', 'running', 'completed', 'failed', 'skipped')",
